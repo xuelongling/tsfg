@@ -80,10 +80,11 @@ refuse to start while any non-loopback route remains. The build creates a
 static sandbox runner with the locked Zig compiler. The runner creates fresh
 user, mount, and network namespaces for build, test, and package subprocesses,
 then pivots into a tmpfs root exposing only the materialized Build Input Set,
-the verified Toolchain Closure, and explicit working/output roots. The sandbox
-control protocol reserves process statuses 123, 124, and 125 for network
-boundary failure, undeclared input, and sandbox setup failure respectively;
-stable report categories never depend on parsing human stderr.
+the verified Toolchain Closure, and explicit working/output roots. Its ptrace
+supervisor audits path syscalls, fails even ignored undeclared reads or writes
+to read-only roots, and owns statuses 123, 124, and 125 for network boundary,
+undeclared-input, and setup failures. Colliding child statuses are remapped, so
+stable report categories never depend on tool cooperation or human stderr.
 
 Build Reports are versioned canonical JSON, written through a same-directory
 temporary file and atomic rename. Human diagnostics go only to stderr. This

@@ -1743,7 +1743,14 @@ async function writeLockedLlvmWrapper(
   if (process.platform !== "win32") await chmod(destination, 0o755);
 }
 
-function runBuildTool(toolId, executable, arguments_, cwd, environment) {
+function runBuildTool(
+  toolId,
+  executable,
+  arguments_,
+  cwd,
+  environment,
+  sandboxProtocol = false,
+) {
   try {
     if (process.platform === "win32" && /\.(?:cmd|bat)$/i.test(executable)) {
       execFileSync(process.env.ComSpec, ["/d", "/c", executable, ...arguments_], {
@@ -1766,7 +1773,7 @@ function runBuildTool(toolId, executable, arguments_, cwd, environment) {
       ? error.stderr.toString("utf8")
       : "";
     const detail = `${stdout}${stderr}`.trim() || error.message;
-    throwSandboxBoundaryFailure(detail, "build", error.status);
+    if (sandboxProtocol) throwSandboxBoundaryFailure(detail, "build", error.status);
     throw new BuildFailureError(`${toolId} failed${detail ? `: ${detail}` : ""}`);
   }
 }
@@ -1976,6 +1983,7 @@ async function buildLinuxDebug(options, runtime, workspaceState, networkCanary) 
           sandboxArguments(sandboxPolicy, command, commandArguments),
           sourceRoot,
           environment,
+          true,
         );
       } else {
         runBuildTool(step.tool, step.executable, step.arguments, sourceRoot, environment);
@@ -2101,7 +2109,7 @@ function runSmokeExecutable(
   );
   if (result.error || result.status !== 0) {
     const detail = `${result.stdout ?? ""}${result.stderr ?? ""}`.trim();
-    throwSandboxBoundaryFailure(detail, "test", result.status);
+    if (sandboxExecutable) throwSandboxBoundaryFailure(detail, "test", result.status);
     throw new TestFailureError(
       `${name} failed${detail ? `: ${detail}` : result.error ? `: ${result.error.message}` : ""}`,
     );
@@ -2433,7 +2441,7 @@ function createTar(entries, sourceDateEpoch) {
   return Buffer.concat(chunks);
 }
 
-function runPackageTool(executable, arguments_, cwd, environment) {
+function runPackageTool(executable, arguments_, cwd, environment, sandboxProtocol = false) {
   try {
     if (process.platform === "win32" && /\.(?:cmd|bat)$/i.test(executable)) {
       execFileSync(process.env.ComSpec, ["/d", "/c", executable, ...arguments_], {
@@ -2452,7 +2460,7 @@ function runPackageTool(executable, arguments_, cwd, environment) {
     const stdout = Buffer.isBuffer(error.stdout) ? error.stdout.toString("utf8") : "";
     const stderr = Buffer.isBuffer(error.stderr) ? error.stderr.toString("utf8") : "";
     const detail = `${stdout}${stderr}`.trim() || error.message;
-    throwSandboxBoundaryFailure(detail, "package", error.status);
+    if (sandboxProtocol) throwSandboxBoundaryFailure(detail, "package", error.status);
     throw new PackageFailureError(`llvm-objcopy failed${detail ? `: ${detail}` : ""}`);
   }
 }
@@ -2565,12 +2573,14 @@ async function packageLinuxDebug(options, runtime, workspaceState, networkCanary
         packageToolArguments(["--only-keep-debug", packagedPayload, packagedSymbol]),
         stagingRoot,
         packageEnvironment,
+        Boolean(sandboxExecutable),
       );
       runPackageTool(
         packageTool,
         packageToolArguments(["--strip-debug", packagedPayload]),
         stagingRoot,
         packageEnvironment,
+        Boolean(sandboxExecutable),
       );
       const symbolStat = await stat(packagedSymbol).catch(() => undefined);
       if (!symbolStat?.isFile()) {

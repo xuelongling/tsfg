@@ -6,17 +6,22 @@
 #include <arpa/inet.h>
 #include <fcntl.h>
 #include <linux/capability.h>
+#include <linux/openat2.h>
 #include <limits.h>
 #include <sched.h>
+#include <signal.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
 #include <sys/mount.h>
 #include <sys/prctl.h>
+#include <sys/ptrace.h>
 #include <sys/socket.h>
 #include <sys/stat.h>
 #include <sys/syscall.h>
 #include <sys/types.h>
+#include <sys/user.h>
+#include <sys/wait.h>
 #include <unistd.h>
 
 enum access_kind { ACCESS_RO, ACCESS_RX, ACCESS_RW };
@@ -30,19 +35,23 @@ enum sandbox_status {
 struct allowed_path {
   const char *path;
   enum access_kind access;
+  int is_directory;
 };
 
-static void fail_with_status(int status, const char *message, const char *detail) {
+static int proc_fd = -1;
+
+_Noreturn static void fail_with_status(int status, const char *message,
+                                       const char *detail) {
   fprintf(stderr, "tsfg sandbox: %s%s%s\n", message, detail ? ": " : "",
           detail ? detail : "");
   exit(status);
 }
 
-static void fail(const char *message, const char *detail) {
+_Noreturn static void fail(const char *message, const char *detail) {
   fail_with_status(SANDBOX_SETUP_FAILURE_STATUS, message, detail);
 }
 
-static void network_fail(const char *message, const char *detail) {
+_Noreturn static void network_fail(const char *message, const char *detail) {
   fail_with_status(SANDBOX_NETWORK_BOUNDARY_STATUS, message, detail);
 }
 
@@ -108,19 +117,22 @@ static void make_parent_directories(char *path) {
   }
 }
 
-static void bind_path(const char *new_root, const char *source,
-                      const char *destination, enum access_kind access) {
+static void bind_path(const char *new_root, struct allowed_path *allowed,
+                      const char *destination) {
+  const char *source = allowed->path;
+  enum access_kind access = allowed->access;
   if (source[0] != '/' || destination[0] != '/')
     fail("sandbox paths must be absolute", source);
   struct stat source_stat;
   if (lstat(source, &source_stat) < 0)
     fail("cannot inspect allowed path", source);
+  allowed->is_directory = S_ISDIR(source_stat.st_mode);
   size_t length = strlen(new_root) + strlen(destination) + 1;
   char *target = malloc(length);
   if (!target) fail("cannot allocate sandbox path", NULL);
   snprintf(target, length, "%s%s", new_root, destination);
   make_parent_directories(target);
-  if (S_ISDIR(source_stat.st_mode)) {
+  if (allowed->is_directory) {
     if (mkdir(target, 0755) < 0 && errno != EEXIST)
       fail("cannot create sandbox mount point", target);
   } else {
@@ -204,6 +216,286 @@ static void run_locked_llvm_wrapper(int argc, char **argv) {
   fail("cannot execute locked LLVM tool", tool);
 }
 
+static int read_tracee_bytes(pid_t pid, unsigned long address, void *buffer,
+                             size_t length) {
+  unsigned char *output = buffer;
+  for (size_t offset = 0; offset < length; offset += sizeof(long)) {
+    errno = 0;
+    long word = ptrace(PTRACE_PEEKDATA, pid, address + offset, NULL);
+    if (errno != 0) return -1;
+    size_t remaining = length - offset;
+    size_t count = remaining < sizeof(word) ? remaining : sizeof(word);
+    memcpy(output + offset, &word, count);
+  }
+  return 0;
+}
+
+static int read_tracee_string(pid_t pid, unsigned long address, char *buffer,
+                              size_t length) {
+  if (address == 0 || length == 0) return -1;
+  for (size_t offset = 0; offset < length; offset += sizeof(long)) {
+    errno = 0;
+    long word = ptrace(PTRACE_PEEKDATA, pid, address + offset, NULL);
+    if (errno != 0) return -1;
+    size_t remaining = length - offset;
+    size_t count = remaining < sizeof(word) ? remaining : sizeof(word);
+    memcpy(buffer + offset, &word, count);
+    if (memchr(&word, '\0', count)) return 0;
+  }
+  buffer[length - 1] = '\0';
+  return -1;
+}
+
+static int read_process_link(pid_t pid, int descriptor, char *buffer,
+                             size_t length) {
+  char link[64];
+  if (descriptor == AT_FDCWD)
+    snprintf(link, sizeof(link), "%d/cwd", pid);
+  else
+    snprintf(link, sizeof(link), "%d/fd/%d", pid, descriptor);
+  ssize_t count = readlinkat(proc_fd, link, buffer, length - 1);
+  if (count < 0 || (size_t)count >= length - 1) return -1;
+  buffer[count] = '\0';
+  const char deleted[] = " (deleted)";
+  size_t buffer_length = strlen(buffer);
+  size_t deleted_length = sizeof(deleted) - 1;
+  if (buffer_length >= deleted_length &&
+      strcmp(buffer + buffer_length - deleted_length, deleted) == 0)
+    buffer[buffer_length - deleted_length] = '\0';
+  return 0;
+}
+
+static int normalize_path(const char *base, const char *input, char *output,
+                          size_t length) {
+  char combined[PATH_MAX * 2];
+  int written = input[0] == '/'
+                    ? snprintf(combined, sizeof(combined), "%s", input)
+                    : snprintf(combined, sizeof(combined), "%s/%s", base, input);
+  if (written < 0 || (size_t)written >= sizeof(combined) || length < 2) return -1;
+  size_t output_length = 1;
+  output[0] = '/';
+  output[1] = '\0';
+  char *save = NULL;
+  for (char *part = strtok_r(combined, "/", &save); part;
+       part = strtok_r(NULL, "/", &save)) {
+    if (strcmp(part, ".") == 0 || part[0] == '\0') continue;
+    if (strcmp(part, "..") == 0) {
+      if (output_length > 1) {
+        --output_length;
+        while (output_length > 1 && output[output_length - 1] != '/')
+          --output_length;
+        output[output_length] = '\0';
+      }
+      continue;
+    }
+    size_t part_length = strlen(part);
+    size_t separator = output_length > 1 ? 1 : 0;
+    if (output_length + separator + part_length >= length) return -1;
+    if (separator) output[output_length++] = '/';
+    memcpy(output + output_length, part, part_length + 1);
+    output_length += part_length;
+  }
+  return 0;
+}
+
+static int path_contains(const char *root, int root_is_directory,
+                         const char *candidate) {
+  size_t root_length = strlen(root);
+  if (strcmp(root, candidate) == 0) return 1;
+  return root_is_directory && strncmp(root, candidate, root_length) == 0 &&
+         candidate[root_length] == '/';
+}
+
+static int path_is_ancestor(const char *candidate, const char *allowed) {
+  size_t candidate_length = strlen(candidate);
+  if (candidate_length == 1 && candidate[0] == '/') return 1;
+  return strncmp(candidate, allowed, candidate_length) == 0 &&
+         allowed[candidate_length] == '/';
+}
+
+static int path_is_allowed(const char *candidate, int wants_write,
+                           struct allowed_path *allowed, size_t allowed_count) {
+  if (strcmp(candidate, "/bin/sh") == 0 ||
+      (!wants_write && path_is_ancestor(candidate, "/bin/sh")))
+    return !wants_write;
+  if (strcmp(candidate, "/dev/null") == 0 ||
+      (!wants_write && path_is_ancestor(candidate, "/dev/null")))
+    return 1;
+  for (size_t index = 0; index < allowed_count; ++index) {
+    if (path_contains(allowed[index].path, allowed[index].is_directory,
+                      candidate))
+      return !wants_write || allowed[index].access == ACCESS_RW;
+    if (!wants_write && path_is_ancestor(candidate, allowed[index].path))
+      return 1;
+  }
+  return 0;
+}
+
+static int audit_path(pid_t pid, int descriptor, unsigned long address,
+                      int wants_write, struct allowed_path *allowed,
+                      size_t allowed_count, char *denied, size_t denied_length) {
+  char input[PATH_MAX];
+  char base[PATH_MAX];
+  if (read_tracee_string(pid, address, input, sizeof(input)) < 0) return 0;
+  if (input[0] == '\0') return 0;
+  if (input[0] == '/') {
+    strcpy(base, "/");
+  } else if (read_process_link(pid, descriptor, base, sizeof(base)) < 0) {
+    return 0;
+  }
+  char candidate[PATH_MAX];
+  if (normalize_path(base, input, candidate, sizeof(candidate)) < 0) return 0;
+  if (path_is_allowed(candidate, wants_write, allowed, allowed_count)) return 0;
+  snprintf(denied, denied_length, "%s", candidate);
+  return 1;
+}
+
+static int audit_syscall(pid_t pid, const struct user_regs_struct *registers,
+                         struct allowed_path *allowed, size_t allowed_count,
+                         char *denied, size_t denied_length) {
+  long syscall_number = (long)registers->orig_rax;
+  int descriptor = AT_FDCWD;
+  unsigned long address = 0;
+  int wants_write = 0;
+  switch (syscall_number) {
+#ifdef SYS_open
+    case SYS_open:
+      address = registers->rdi;
+      wants_write = ((int)registers->rsi &
+                     (O_WRONLY | O_RDWR | O_CREAT | O_TRUNC | O_APPEND)) != 0;
+      break;
+#endif
+    case SYS_openat:
+      descriptor = (int)registers->rdi;
+      address = registers->rsi;
+      wants_write = ((int)registers->rdx &
+                     (O_WRONLY | O_RDWR | O_CREAT | O_TRUNC | O_APPEND)) != 0;
+      break;
+#ifdef SYS_openat2
+    case SYS_openat2: {
+      descriptor = (int)registers->rdi;
+      address = registers->rsi;
+      struct open_how how = {0};
+      if (read_tracee_bytes(pid, registers->rdx, &how, sizeof(how)) == 0)
+        wants_write = (how.flags &
+                       (O_WRONLY | O_RDWR | O_CREAT | O_TRUNC | O_APPEND)) != 0;
+      break;
+    }
+#endif
+#ifdef SYS_access
+    case SYS_access:
+      address = registers->rdi;
+      wants_write = ((int)registers->rsi & W_OK) != 0;
+      break;
+#endif
+    case SYS_faccessat:
+      descriptor = (int)registers->rdi;
+      address = registers->rsi;
+      wants_write = ((int)registers->rdx & W_OK) != 0;
+      break;
+#ifdef SYS_faccessat2
+    case SYS_faccessat2:
+      descriptor = (int)registers->rdi;
+      address = registers->rsi;
+      wants_write = ((int)registers->rdx & W_OK) != 0;
+      break;
+#endif
+#ifdef SYS_stat
+    case SYS_stat:
+    case SYS_lstat:
+      address = registers->rdi;
+      break;
+#endif
+    case SYS_newfstatat:
+    case SYS_statx:
+      descriptor = (int)registers->rdi;
+      address = registers->rsi;
+      break;
+    case SYS_readlink:
+      address = registers->rdi;
+      break;
+    case SYS_readlinkat:
+      descriptor = (int)registers->rdi;
+      address = registers->rsi;
+      break;
+    default:
+      return 0;
+  }
+  return audit_path(pid, descriptor, address, wants_write, allowed,
+                    allowed_count, denied, denied_length);
+}
+
+static int supervise_command(char **arguments, struct allowed_path *allowed,
+                             size_t allowed_count) {
+  pid_t child = fork();
+  if (child < 0) fail("cannot fork sandbox command", strerror(errno));
+  if (child == 0) {
+    if (setpgid(0, 0) < 0) fail("cannot isolate sandbox process group", strerror(errno));
+    if (ptrace(PTRACE_TRACEME, 0, NULL, NULL) < 0)
+      fail("cannot enable sandbox access audit", strerror(errno));
+    raise(SIGSTOP);
+    execv(arguments[0], arguments);
+    fail("cannot execute command", arguments[0]);
+  }
+
+  int status = 0;
+  if (waitpid(child, &status, 0) != child || !WIFSTOPPED(status))
+    fail("sandbox command did not enter audit", NULL);
+  long options = PTRACE_O_TRACESYSGOOD | PTRACE_O_TRACEEXEC |
+                 PTRACE_O_TRACEFORK | PTRACE_O_TRACEVFORK |
+                 PTRACE_O_TRACECLONE | PTRACE_O_EXITKILL;
+  if (ptrace(PTRACE_SETOPTIONS, child, NULL, options) < 0)
+    fail("cannot configure sandbox access audit", strerror(errno));
+  if (ptrace(PTRACE_SYSCALL, child, NULL, NULL) < 0)
+    fail("cannot start sandbox access audit", strerror(errno));
+
+  int child_executed = 0;
+  for (;;) {
+    pid_t stopped = waitpid(-1, &status, __WALL);
+    if (stopped < 0) fail("cannot wait for sandbox command", strerror(errno));
+    if (WIFEXITED(status)) {
+      if (stopped != child) continue;
+      int code = WEXITSTATUS(status);
+      if (!child_executed) return SANDBOX_SETUP_FAILURE_STATUS;
+      if (code >= SANDBOX_NETWORK_BOUNDARY_STATUS &&
+          code <= SANDBOX_SETUP_FAILURE_STATUS)
+        return 122;
+      return code;
+    }
+    if (WIFSIGNALED(status)) {
+      if (stopped != child) continue;
+      return 128 + WTERMSIG(status);
+    }
+    if (!WIFSTOPPED(status)) continue;
+    int signal = WSTOPSIG(status);
+    unsigned int event = (unsigned int)status >> 16;
+    if (stopped == child && signal == SIGTRAP && event == PTRACE_EVENT_EXEC)
+      child_executed = 1;
+    if (signal == (SIGTRAP | 0x80)) {
+      struct user_regs_struct registers;
+      if (ptrace(PTRACE_GETREGS, stopped, NULL, &registers) < 0)
+        fail("cannot inspect sandbox syscall", strerror(errno));
+      if ((long long)registers.rax == -ENOSYS) {
+        char denied[PATH_MAX];
+        if (audit_syscall(stopped, &registers, allowed, allowed_count, denied,
+                          sizeof(denied))) {
+          fprintf(stderr, "tsfg sandbox: denied path access: %s\n", denied);
+          kill(-child, SIGKILL);
+          while (waitpid(-1, &status, __WALL) >= 0) {}
+          return SANDBOX_UNDECLARED_INPUT_STATUS;
+        }
+      }
+    }
+    int delivered = (signal == SIGTRAP || signal == (SIGTRAP | 0x80) ||
+                     signal == SIGSTOP)
+                        ? 0
+                        : signal;
+    if (ptrace(PTRACE_SYSCALL, stopped, NULL, (void *)(long)delivered) < 0 &&
+        errno != ESRCH)
+      fail("cannot continue sandbox access audit", strerror(errno));
+  }
+}
+
 int main(int argc, char **argv) {
   run_locked_llvm_wrapper(argc, argv);
   struct allowed_path allowed[32];
@@ -225,7 +517,7 @@ int main(int argc, char **argv) {
       else if (strcmp(argv[index], "--rx") == 0) access = ACCESS_RX;
       else if (strcmp(argv[index], "--rw") == 0) access = ACCESS_RW;
       else fail("unknown option", argv[index]);
-      allowed[allowed_count++] = (struct allowed_path){argv[index + 1], access};
+      allowed[allowed_count++] = (struct allowed_path){argv[index + 1], access, 0};
     }
     index += 2;
   }
@@ -234,6 +526,8 @@ int main(int argc, char **argv) {
   char working_directory[PATH_MAX];
   if (!getcwd(working_directory, sizeof(working_directory)))
     fail("cannot read working directory", strerror(errno));
+  proc_fd = open("/proc", O_PATH | O_DIRECTORY | O_CLOEXEC);
+  if (proc_fd < 0) fail("cannot open process filesystem for access audit", strerror(errno));
 
   enter_namespaces();
   verify_network_isolation();
@@ -245,17 +539,12 @@ int main(int argc, char **argv) {
   if (mount("tmpfs", new_root, "tmpfs", MS_NOSUID | MS_NODEV, "mode=0755,size=64m") < 0)
     fail("cannot mount sandbox root", strerror(errno));
   for (size_t path_index = 0; path_index < allowed_count; ++path_index)
-    bind_path(new_root, allowed[path_index].path, allowed[path_index].path,
-              allowed[path_index].access);
-  bind_path(new_root, shell, "/bin/sh", ACCESS_RX);
-  bind_path(new_root, "/dev/null", "/dev/null", ACCESS_RW);
+    bind_path(new_root, &allowed[path_index], allowed[path_index].path);
+  struct allowed_path shell_path = {shell, ACCESS_RX, 0};
+  struct allowed_path null_path = {"/dev/null", ACCESS_RW, 0};
+  bind_path(new_root, &shell_path, "/bin/sh");
+  bind_path(new_root, &null_path, "/dev/null");
   pivot_into(new_root, working_directory);
   drop_namespace_capabilities();
-  char undeclared_status[4];
-  snprintf(undeclared_status, sizeof(undeclared_status), "%d",
-           SANDBOX_UNDECLARED_INPUT_STATUS);
-  if (setenv("TSFG_SANDBOX_UNDECLARED_INPUT_STATUS", undeclared_status, 1) < 0)
-    fail("cannot publish sandbox control protocol", strerror(errno));
-  execv(argv[index + 1], &argv[index + 1]);
-  fail("cannot execute command", argv[index + 1]);
+  return supervise_command(&argv[index + 1], allowed, allowed_count);
 }

@@ -954,7 +954,7 @@ test("build and test run the private C++ and Zig smoke programs through locked t
   const isWindows = process.platform === "win32";
   const cmake = Buffer.from(isWindows
     ? "@echo off\r\n%SystemRoot%\\System32\\findstr.exe /c:\"TSFG_TEST_REQUIRE_UNDECLARED\" \"%~2\\CMakeLists.txt\" >nul\r\nif not errorlevel 1 if not exist \"%~2\\undeclared.cpp\" (\r\n  >&2 echo Permission denied: tests/r00/smoke/cpp/undeclared.cpp\r\n  exit /b 124\r\n)\r\nset build_dir=%~4\r\nif not \"%build_dir:compile-fail=%\"==\"%build_dir%\" (\r\n  >&2 echo native dependency not found\r\n  exit /b 9\r\n)\r\nexit /b 0\r\n"
-    : "#!/bin/sh\nwhile IFS= read -r line; do\n  case \"$line\" in\n    '# TSFG_TEST_REQUIRE_UNDECLARED '*)\n      undeclared=${line#* }\n      undeclared=${undeclared#* }\n      if IFS= read -r value < \"$undeclared\"; then\n        printf '%s\\n' 'sandbox allowed undeclared input' >&2\n        exit 18\n      fi\n      exit 124\n      ;;\n    '# TSFG_TEST_MUTATE_DECLARED')\n      if printf '%s\\n' mutation >> \"$2/CMakeLists.txt\"; then\n        printf '%s\\n' 'sandbox allowed declared input mutation' >&2\n        exit 18\n      fi\n      exit 124\n      ;;\n  esac\ndone < \"$2/CMakeLists.txt\"\ncase \"$4\" in *compile-fail*) printf '%s\\n' 'native dependency not found' >&2; exit 9 ;; esac\nexit 0\n");
+    : "#!/bin/sh\nwhile IFS= read -r line; do\n  case \"$line\" in\n    '# TSFG_TEST_REQUIRE_UNDECLARED '*)\n      undeclared=${line#* }\n      undeclared=${undeclared#* }\n      if IFS= read -r value < \"$undeclared\"; then\n        printf '%s\\n' 'sandbox allowed undeclared input' >&2\n        exit 18\n      fi\n      printf '%s\\n' 'ignored failed undeclared read' >&2\n      ;;\n    '# TSFG_TEST_MUTATE_DECLARED')\n      if printf '%s\\n' mutation >> \"$2/CMakeLists.txt\"; then\n        printf '%s\\n' 'sandbox allowed declared input mutation' >&2\n        exit 18\n      fi\n      printf '%s\\n' 'ignored failed source write' >&2\n      ;;\n  esac\ndone < \"$2/CMakeLists.txt\"\ncase \"$4\" in *compile-fail*) printf '%s\\n' 'native dependency not found' >&2; exit 9 ;; esac\nexit 0\n");
   const ninja = Buffer.from(isWindows
     ? "@echo off\r\n>\"%~2\\tsfg-r00-cpp-smoke\" echo fixture cpp output\r\nif not exist \"%~2\\..\\zig-install\\bin\" mkdir \"%~2\\..\\zig-install\\bin\"\r\n>\"%~2\\..\\zig-install\\bin\\tsfg-r00-zig-smoke\" echo fixture zig output\r\nexit /b 0\r\n"
     : `#!/bin/sh
@@ -1012,7 +1012,7 @@ exit 1
     }
   }
   const llvm = Buffer.from(isWindows
-    ? "@echo off\r\necho %~3 | %SystemRoot%\\System32\\findstr.exe /c:\"sandbox-failure\" >nul\r\nif errorlevel 1 goto run\r\n>&2 echo tsfg sandbox: injected setup failure\r\nexit /b 125\r\n:run\r\nif \"%~1\"==\"--only-keep-debug\" copy /y \"%~2\" \"%~3\" >nul\r\nexit /b 0\r\n"
+    ? "@echo off\r\nif \"%~1\"==\"--only-keep-debug\" copy /y \"%~2\" \"%~3\" >nul\r\nexit /b 0\r\n"
     : "#!/bin/sh\ncase \"$3\" in *sandbox-failure*) printf '%s\\n' 'tsfg sandbox: injected setup failure' >&2; exit 125 ;; esac\nif [ \"$1\" = --only-keep-debug ]; then < \"$2\" > \"$3\"; fi\nexit 0\n");
   const toolDefinitions = [
     ["archive-extractor", isWindows ? "busybox.cmd" : "bin/busybox.static", lockedShell],
@@ -1179,46 +1179,75 @@ exit 1
       assert.equal(developmentTestReport.result.publishable, false);
     }
     await assert.rejects(stat(poisonSentinel), /ENOENT/);
-    const cmakeListsPath = path.join(
-      workspacePath,
-      "tests",
-      "r00",
-      "smoke",
-      "cpp",
-      "CMakeLists.txt",
-    );
-    const cmakeLists = await readFile(cmakeListsPath);
-    await appendFile(
-      cmakeListsPath,
-      `\n# TSFG_TEST_REQUIRE_UNDECLARED ${undeclaredInputPath.replaceAll("\\", "/")}\n`,
-    );
-    const undeclaredReadReportPath = path.join(sandbox, "undeclared-read-report.json");
-    const undeclaredRead = await invoke([
-      "build", "--dev",
-      "--target", "linux-x86_64-gnu",
-      "--profile", "debug",
-      "--workspace", workspacePath,
-      "--out", path.join(sandbox, "undeclared-read-out"),
-      "--report", undeclaredReadReportPath,
-    ], {
-      env: {
-        ...process.env,
-        NODE_OPTIONS: `--require=${networkDenialHook}`,
-        TSFG_GIT: gitExecutable,
-        TSFG_RUNTIME_CACHE: cachePath,
-        TSFG_RUNTIME_LOCK: lockPath,
-        TSFG_RUNTIME_PLATFORM: "test-x86_64",
-      },
-    });
-    assert.equal(undeclaredRead.status, 12, undeclaredRead.stderr);
-    const undeclaredReadReport = JSON.parse(await readFile(undeclaredReadReportPath, "utf8"));
-    assert.equal(undeclaredReadReport.error.category, "offline input missing");
-    assert.equal(undeclaredReadReport.error.issues[0].code, "undeclared-build-input");
-    assert.match(
-      undeclaredReadReport.error.issues[0].message,
-      /tests\/r00\/smoke\/cpp\/undeclared\.cpp/,
-    );
-    await writeFile(cmakeListsPath, cmakeLists);
+    if (!isWindows) {
+      const cmakeListsPath = path.join(
+        workspacePath,
+        "tests",
+        "r00",
+        "smoke",
+        "cpp",
+        "CMakeLists.txt",
+      );
+      const cmakeLists = await readFile(cmakeListsPath);
+      await appendFile(
+        cmakeListsPath,
+        `\n# TSFG_TEST_REQUIRE_UNDECLARED ${undeclaredInputPath.replaceAll("\\", "/")}\n`,
+      );
+      const undeclaredReadReportPath = path.join(sandbox, "undeclared-read-report.json");
+      const undeclaredRead = await invoke([
+        "build", "--dev",
+        "--target", "linux-x86_64-gnu",
+        "--profile", "debug",
+        "--workspace", workspacePath,
+        "--out", path.join(sandbox, "undeclared-read-out"),
+        "--report", undeclaredReadReportPath,
+      ], {
+        env: {
+          ...process.env,
+          NODE_OPTIONS: `--require=${networkDenialHook}`,
+          TSFG_GIT: gitExecutable,
+          TSFG_RUNTIME_CACHE: cachePath,
+          TSFG_RUNTIME_LOCK: lockPath,
+          TSFG_RUNTIME_PLATFORM: "test-x86_64",
+        },
+      });
+      assert.equal(undeclaredRead.status, 12, undeclaredRead.stderr);
+      const undeclaredReadReport = JSON.parse(await readFile(undeclaredReadReportPath, "utf8"));
+      assert.equal(undeclaredReadReport.error.category, "offline input missing");
+      assert.equal(undeclaredReadReport.error.issues[0].code, "undeclared-build-input");
+      assert.match(
+        undeclaredReadReport.error.issues[0].message,
+        /tests\/r00\/smoke\/cpp\/undeclared\.cpp/,
+      );
+      await writeFile(cmakeListsPath, cmakeLists);
+
+      await appendFile(cmakeListsPath, "\n# TSFG_TEST_MUTATE_DECLARED\n");
+      const sourceWriteReportPath = path.join(sandbox, "source-write-report.json");
+      const sourceWrite = await invoke([
+        "build", "--dev",
+        "--target", "linux-x86_64-gnu",
+        "--profile", "debug",
+        "--workspace", workspacePath,
+        "--out", path.join(sandbox, "source-write-out"),
+        "--report", sourceWriteReportPath,
+      ], {
+        env: {
+          ...process.env,
+          NODE_OPTIONS: `--require=${networkDenialHook}`,
+          TSFG_GIT: gitExecutable,
+          TSFG_RUNTIME_CACHE: cachePath,
+          TSFG_RUNTIME_LOCK: lockPath,
+          TSFG_RUNTIME_PLATFORM: "test-x86_64",
+        },
+      });
+      assert.equal(sourceWrite.status, 12, sourceWrite.stderr);
+      const sourceWriteReport = JSON.parse(await readFile(sourceWriteReportPath, "utf8"));
+      assert.equal(sourceWriteReport.error.category, "offline input missing");
+      assert.equal(sourceWriteReport.error.issues[0].code, "undeclared-build-input");
+      assert.match(sourceWriteReport.error.issues[0].message, /CMakeLists\.txt/);
+      assert.equal((await readFile(cmakeListsPath, "utf8")).includes("mutation"), false);
+      await writeFile(cmakeListsPath, cmakeLists);
+    }
     const activeRelative = (await readFile(
       path.join(cachePath, "active", "test-x86_64"),
       "utf8",
@@ -1498,38 +1527,6 @@ exit 1
     const packageReport = JSON.parse(await readFile(packageReportPath, "utf8"));
     assert.deepEqual(packageReport.result.buildIdentity, report.result.buildIdentity);
     assert.equal(packageReport.result.networkCanary, "blocked");
-    if (isWindows) {
-      const sandboxFailureOutput = path.join(sandbox, "package-sandbox-failure");
-      const sandboxFailureReportPath = path.join(
-        sandbox,
-        "package-sandbox-failure-report.json",
-      );
-      const sandboxFailure = await invoke([
-        "package",
-        "--target", "linux-x86_64-gnu",
-        "--profile", "debug",
-        "--workspace", workspacePath,
-        "--input", outputPath,
-        "--out", sandboxFailureOutput,
-        "--report", sandboxFailureReportPath,
-      ], {
-        env: {
-          ...process.env,
-          NODE_OPTIONS: `--require=${networkDenialHook}`,
-          TSFG_RUNTIME_CACHE: cachePath,
-          TSFG_RUNTIME_LOCK: lockPath,
-          TSFG_RUNTIME_PLATFORM: "test-x86_64",
-        },
-      });
-      assert.equal(sandboxFailure.status, 12, sandboxFailure.stderr);
-      const sandboxFailureReport = JSON.parse(await readFile(
-        sandboxFailureReportPath,
-        "utf8",
-      ));
-      assert.equal(sandboxFailureReport.error.category, "offline input missing");
-      assert.equal(sandboxFailureReport.error.issues[0].code, "sandbox-boundary");
-      await assert.rejects(lstat(sandboxFailureOutput), /ENOENT/);
-    }
     const archivePath = path.join(packageOutput, packageReport.result.archive);
     const archiveBytes = await readFile(archivePath);
     const archiveEntries = parseTarArchive(zstdDecompressSync(archiveBytes));
