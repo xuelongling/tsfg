@@ -38,12 +38,14 @@ runtime_failure() {
 }
 
 usage_failure() {
-  message='unsupported operation'
+  report_command=$1
+  issue_code=$2
+  message=$3
   if [ -n "$report" ]; then
     parent=$(dirname -- "$report")
     temporary="$report.$$.tmp"
     if ! mkdir -p -- "$parent" ||
-      ! printf '%s\n' '{"command":"unsupported","error":{"category":"usage/configuration","code":"2","issues":[{"code":"unsupported-operation","message":"unsupported operation"}]},"network":"disabled","schemaVersion":"1","status":"failure","telemetry":false}' > "$temporary" ||
+      ! printf '%s\n' "{\"command\":\"$report_command\",\"error\":{\"category\":\"usage/configuration\",\"code\":\"2\",\"issues\":[{\"code\":\"$issue_code\",\"message\":\"$message\"}]},\"network\":\"disabled\",\"schemaVersion\":\"1\",\"status\":\"failure\",\"telemetry\":false}" > "$temporary" ||
       ! mv -f -- "$temporary" "$report"; then
       rm -f -- "$temporary"
       printf '%s\n' 'cannot write Build Report for unsupported operation' >&2
@@ -54,6 +56,50 @@ usage_failure() {
   exit 2
 }
 
+valid_verify_arguments() {
+  seen_workspace=false
+  seen_manifest_url=false
+  seen_manifest_revision=false
+  seen_manifest=false
+  seen_report=false
+  shift
+  while [ "$#" -gt 0 ]; do
+    option=$1
+    shift
+    if [ "$#" -eq 0 ] || [ -z "$1" ]; then
+      return 1
+    fi
+    case "$option" in
+      --workspace)
+        [ "$seen_workspace" = false ] || return 1
+        seen_workspace=true
+        ;;
+      --manifest-url)
+        [ "$seen_manifest_url" = false ] || return 1
+        seen_manifest_url=true
+        ;;
+      --manifest-revision)
+        [ "$seen_manifest_revision" = false ] || return 1
+        seen_manifest_revision=true
+        ;;
+      --manifest)
+        [ "$seen_manifest" = false ] || return 1
+        seen_manifest=true
+        ;;
+      --report)
+        [ "$seen_report" = false ] || return 1
+        seen_report=true
+        ;;
+      *) return 1 ;;
+    esac
+    shift
+  done
+  [ "$seen_workspace" = true ] &&
+    [ "$seen_manifest_url" = true ] &&
+    [ "$seen_manifest_revision" = true ] &&
+    [ "$seen_manifest" = true ]
+}
+
 if [ "${1:-}" = prefetch ]; then
   exec node "$script_dir/tsfg-build.mjs" "$@" \
     --lock "$script_dir/toolchains.lock.json" \
@@ -61,7 +107,10 @@ if [ "${1:-}" = prefetch ]; then
     --platform "$platform"
 fi
 if [ "${1:-}" != verify-workspace ]; then
-  usage_failure
+  usage_failure unsupported unsupported-operation 'unsupported operation'
+fi
+if ! valid_verify_arguments "$@"; then
+  usage_failure verify-workspace invalid-configuration 'invalid verify-workspace arguments'
 fi
 
 active="$cache/active/$platform"

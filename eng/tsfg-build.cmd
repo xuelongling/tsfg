@@ -16,7 +16,19 @@ if /i "%~1"=="prefetch" (
   node "%~dp0tsfg-build.mjs" %* --lock "%~dp0toolchains.lock.json" --cache "%TSFG_CACHE%" --platform windows-x86_64
   exit /b %errorlevel%
 )
-if /i not "%~1"=="verify-workspace" goto usage
+if /i not "%~1"=="verify-workspace" (
+  set "TSFG_USAGE_COMMAND=unsupported"
+  set "TSFG_USAGE_CODE=unsupported-operation"
+  set "TSFG_USAGE_MESSAGE=unsupported operation"
+  goto usage
+)
+call :validate_verify %*
+if errorlevel 1 (
+  set "TSFG_USAGE_COMMAND=verify-workspace"
+  set "TSFG_USAGE_CODE=invalid-configuration"
+  set "TSFG_USAGE_MESSAGE=invalid verify-workspace arguments"
+  goto usage
+)
 
 set "TSFG_ACTIVE=%TSFG_CACHE%\active\windows-x86_64"
 if not exist "%TSFG_ACTIVE%" (
@@ -52,6 +64,52 @@ if /i "%~1"=="--report" (
 shift
 goto find_report
 
+:validate_verify
+set "TSFG_SEEN_WORKSPACE="
+set "TSFG_SEEN_MANIFEST_URL="
+set "TSFG_SEEN_MANIFEST_REVISION="
+set "TSFG_SEEN_MANIFEST="
+set "TSFG_SEEN_REPORT="
+shift
+:validate_verify_loop
+if "%~1"=="" goto validate_verify_done
+if "%~2"=="" exit /b 1
+if /i "%~1"=="--workspace" goto validate_verify_workspace
+if /i "%~1"=="--manifest-url" goto validate_verify_manifest_url
+if /i "%~1"=="--manifest-revision" goto validate_verify_manifest_revision
+if /i "%~1"=="--manifest" goto validate_verify_manifest
+if /i "%~1"=="--report" goto validate_verify_report
+exit /b 1
+:validate_verify_workspace
+if defined TSFG_SEEN_WORKSPACE exit /b 1
+set "TSFG_SEEN_WORKSPACE=1"
+goto validate_verify_next
+:validate_verify_manifest_url
+if defined TSFG_SEEN_MANIFEST_URL exit /b 1
+set "TSFG_SEEN_MANIFEST_URL=1"
+goto validate_verify_next
+:validate_verify_manifest_revision
+if defined TSFG_SEEN_MANIFEST_REVISION exit /b 1
+set "TSFG_SEEN_MANIFEST_REVISION=1"
+goto validate_verify_next
+:validate_verify_manifest
+if defined TSFG_SEEN_MANIFEST exit /b 1
+set "TSFG_SEEN_MANIFEST=1"
+goto validate_verify_next
+:validate_verify_report
+if defined TSFG_SEEN_REPORT exit /b 1
+set "TSFG_SEEN_REPORT=1"
+:validate_verify_next
+shift
+shift
+goto validate_verify_loop
+:validate_verify_done
+if not defined TSFG_SEEN_WORKSPACE exit /b 1
+if not defined TSFG_SEEN_MANIFEST_URL exit /b 1
+if not defined TSFG_SEEN_MANIFEST_REVISION exit /b 1
+if not defined TSFG_SEEN_MANIFEST exit /b 1
+exit /b 0
+
 :runtime_failure
 set "TSFG_MESSAGE=locked Node.js closure is missing or invalid; run tsfg-build prefetch"
 if not defined TSFG_REPORT goto runtime_failure_stderr
@@ -70,11 +128,11 @@ del /q "%TSFG_REPORT_TEMP%" >nul 2>nul
 exit /b 30
 
 :usage
-set "TSFG_MESSAGE=unsupported operation"
+set "TSFG_MESSAGE=%TSFG_USAGE_MESSAGE%"
 if not defined TSFG_REPORT goto usage_failure_stderr
 for %%D in ("%TSFG_REPORT%") do if not exist "%%~dpD" mkdir "%%~dpD" >nul 2>nul
 set "TSFG_REPORT_TEMP=%TSFG_REPORT%.%RANDOM%.tmp"
->"%TSFG_REPORT_TEMP%" echo {"command":"unsupported","error":{"category":"usage/configuration","code":"2","issues":[{"code":"unsupported-operation","message":"unsupported operation"}]},"network":"disabled","schemaVersion":"1","status":"failure","telemetry":false}
+>"%TSFG_REPORT_TEMP%" echo {"command":"%TSFG_USAGE_COMMAND%","error":{"category":"usage/configuration","code":"2","issues":[{"code":"%TSFG_USAGE_CODE%","message":"%TSFG_USAGE_MESSAGE%"}]},"network":"disabled","schemaVersion":"1","status":"failure","telemetry":false}
 if errorlevel 1 goto usage_failure_report_error
 move /y "%TSFG_REPORT_TEMP%" "%TSFG_REPORT%" >nul 2>nul
 if errorlevel 1 goto usage_failure_report_error

@@ -24,6 +24,22 @@ const repositoryRoot = path.resolve(
 );
 const buildEntry = path.join(repositoryRoot, "eng", "tsfg-build.mjs");
 
+function validVerifyArguments(reportPath) {
+  return [
+    "verify-workspace",
+    "--workspace",
+    repositoryRoot,
+    "--manifest-url",
+    "https://github.com/xuelongling/manifests.git",
+    "--manifest-revision",
+    "0000000000000000000000000000000000000000",
+    "--manifest",
+    "bootstrap/r00.xml",
+    "--report",
+    reportPath,
+  ];
+}
+
 function testNodeInvocation(arguments_) {
   if (process.env.TSFG_TEST_NODE_LOADER && process.env.TSFG_TEST_NODE_BINARY) {
     return {
@@ -141,6 +157,52 @@ test("public launcher classifies an unsupported operation before a missing closu
     assert.equal(result.stdout, "");
     const report = JSON.parse(await readFile(reportPath, "utf8"));
     assert.equal(report.status, "failure");
+    assert.equal(report.error.category, "usage/configuration");
+    assert.equal(report.error.code, "2");
+  } finally {
+    await rm(sandbox, { recursive: true, force: true });
+  }
+});
+
+test("public launcher classifies invalid verify-workspace options before a missing closure", async (context) => {
+  const sandbox = await mkdtemp(path.join(tmpdir(), "tsfg-launcher-invalid-verify-"));
+  const reportPath = path.join(sandbox, "report.json");
+  const environment = {
+    ...process.env,
+    TSFG_CACHE_DIR: path.join(sandbox, "missing-cache"),
+  };
+  let result;
+  try {
+    if (process.platform === "win32") {
+      result = spawnSync(
+        process.env.ComSpec,
+        [
+          "/d",
+          "/c",
+          path.join(repositoryRoot, "eng", "tsfg-build.cmd"),
+          "verify-workspace",
+          "--bogus",
+          "value",
+          "--report",
+          reportPath,
+        ],
+        { cwd: repositoryRoot, encoding: "utf8", env: environment },
+      );
+    } else {
+      result = spawnSync(
+        path.join(repositoryRoot, "eng", "tsfg-build"),
+        ["verify-workspace", "--bogus", "value", "--report", reportPath],
+        { cwd: repositoryRoot, encoding: "utf8", env: environment },
+      );
+    }
+    if (result.error && "code" in result.error && result.error.code === "EACCES") {
+      context.skip("launcher is not executable on this filesystem");
+      return;
+    }
+    assert.equal(result.status, 2, result.stderr);
+    assert.equal(result.stdout, "");
+    const report = JSON.parse(await readFile(reportPath, "utf8"));
+    assert.equal(report.command, "verify-workspace");
     assert.equal(report.error.category, "usage/configuration");
     assert.equal(report.error.code, "2");
   } finally {
@@ -459,9 +521,7 @@ test("Windows launcher rejects an invalid closure without using PATH node or pnp
         "/d",
         "/c",
         path.join(repositoryRoot, "eng", "tsfg-build.cmd"),
-        "verify-workspace",
-        "--report",
-        reportPath,
+        ...validVerifyArguments(reportPath),
       ],
       {
         cwd: repositoryRoot,
@@ -511,9 +571,7 @@ test("Windows launcher verifies the locked Node executable before running it", {
         "/d",
         "/c",
         path.join(repositoryRoot, "eng", "tsfg-build.cmd"),
-        "verify-workspace",
-        "--report",
-        reportPath,
+        ...validVerifyArguments(reportPath),
       ],
       {
         cwd: repositoryRoot,
@@ -549,16 +607,14 @@ test("launcher reports a missing closure as lock/integrity failure", async (cont
           "/d",
           "/c",
           path.join(repositoryRoot, "eng", "tsfg-build.cmd"),
-          "verify-workspace",
-          "--report",
-          reportPath,
+          ...validVerifyArguments(reportPath),
         ],
         { cwd: repositoryRoot, encoding: "utf8", env: environment },
       );
     } else {
       result = spawnSync(
         path.join(repositoryRoot, "eng", "tsfg-build"),
-        ["verify-workspace", "--report", reportPath],
+        validVerifyArguments(reportPath),
         { cwd: repositoryRoot, encoding: "utf8", env: environment },
       );
     }
