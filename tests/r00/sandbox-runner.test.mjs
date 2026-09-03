@@ -80,6 +80,10 @@ int main(int argc, char **argv) {
     waitpid(child, &status, 0);
     return 0;
   }
+  if (strcmp(argv[1], "hardlink") == 0) {
+    link(argv[2], argv[3]);
+    return 0;
+  }
   return 3;
 }
 `);
@@ -98,7 +102,7 @@ int main(int argc, char **argv) {
       }
     }
 
-    const invoke = (scenario, target) => spawnSync(
+    const invoke = (scenario, ...targets) => spawnSync(
       runner,
       [
         "--root", sandboxRoot,
@@ -110,7 +114,7 @@ int main(int argc, char **argv) {
         "--",
         probe,
         scenario,
-        target,
+        ...targets,
       ],
       { cwd: workRoot, encoding: "utf8", timeout: 10_000 },
     );
@@ -129,6 +133,11 @@ int main(int argc, char **argv) {
     const ignoredWrite = invoke("write", declaredPath);
     assert.equal(ignoredWrite.status, 124, ignoredWrite.stderr);
     assert.equal(await readFile(declaredPath, "utf8"), "declared\n");
+
+    const hardlinkPath = path.join(workRoot, "declared-link.txt");
+    const ignoredHardlink = invoke("hardlink", declaredPath, hardlinkPath);
+    assert.equal(ignoredHardlink.status, 124, ignoredHardlink.stderr);
+    await assert.rejects(stat(hardlinkPath), /ENOENT/);
 
     const detachedDescendant = invoke("descendant", outsidePath);
     assert.equal(detachedDescendant.signal, null, detachedDescendant.error?.message);

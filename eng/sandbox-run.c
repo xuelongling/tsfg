@@ -341,7 +341,21 @@ static int audit_path(pid_t pid, int descriptor, unsigned long address,
     snprintf(denied, denied_length, "unreadable-tracee-path");
     return 1;
   }
-  if (input[0] == '\0') return 0;
+  if (input[0] == '\0') {
+    if (descriptor == AT_FDCWD) return 0;
+    if (read_process_link(pid, descriptor, base, sizeof(base)) < 0) {
+      snprintf(denied, denied_length, "unresolvable-tracee-directory");
+      return 1;
+    }
+    char candidate[PATH_MAX];
+    if (normalize_path("/", base, candidate, sizeof(candidate)) < 0) {
+      snprintf(denied, denied_length, "unnormalizable-tracee-path");
+      return 1;
+    }
+    if (path_is_allowed(candidate, wants_write, allowed, allowed_count)) return 0;
+    snprintf(denied, denied_length, "%s", candidate);
+    return 1;
+  }
   if (input[0] == '/') {
     strcpy(base, "/");
   } else if (read_process_link(pid, descriptor, base, sizeof(base)) < 0) {
@@ -506,14 +520,14 @@ static int audit_syscall(pid_t pid, const struct user_regs_struct *registers,
       wants_write = 1;
       break;
     case SYS_link:
-      if (audit_path(pid, AT_FDCWD, registers->rdi, 0, allowed,
+      if (audit_path(pid, AT_FDCWD, registers->rdi, 1, allowed,
                      allowed_count, denied, denied_length))
         return 1;
       address = registers->rsi;
       wants_write = 1;
       break;
     case SYS_linkat:
-      if (audit_path(pid, (int)registers->rdi, registers->rsi, 0, allowed,
+      if (audit_path(pid, (int)registers->rdi, registers->rsi, 1, allowed,
                      allowed_count, denied, denied_length))
         return 1;
       descriptor = (int)registers->rdx;
