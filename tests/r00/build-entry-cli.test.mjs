@@ -4,9 +4,11 @@ import assert from "node:assert/strict";
 import {
   appendFile,
   copyFile,
+  lstat,
   mkdir,
   mkdtemp,
   readFile,
+  readlink,
   readdir,
   rm,
   stat,
@@ -759,19 +761,19 @@ test("build and test run the private C++ and Zig smoke programs through locked t
   echo '#!/bin/sh'
   echo 'printf "tsfg-r00-cpp-smoke: ok\\n"'
 } > "$2/tsfg-r00-cpp-smoke"
-chmod +x "$2/tsfg-r00-cpp-smoke"
+/bin/chmod +x "$2/tsfg-r00-cpp-smoke"
 `);
   const zig = Buffer.from(isWindows
     ? "@echo off\r\nexit /b 0\r\n"
     : `#!/bin/sh
 while [ "$#" -gt 0 ]; do
   if [ "$1" = --prefix ]; then
-    mkdir -p "$2/bin"
+    /bin/mkdir -p "$2/bin"
     {
       echo '#!/bin/sh'
       echo 'printf "tsfg-r00-zig-smoke: ok\\n" >&2'
     } > "$2/bin/tsfg-r00-zig-smoke"
-    chmod +x "$2/bin/tsfg-r00-zig-smoke"
+    /bin/chmod +x "$2/bin/tsfg-r00-zig-smoke"
     exit 0
   fi
   shift
@@ -858,6 +860,13 @@ exit 1
     assert.equal(result.stdout, "");
     assert.ok((await stat(path.join(outputPath, "bin", "tsfg-r00-cpp-smoke"))).isFile());
     assert.ok((await stat(path.join(outputPath, "bin", "tsfg-r00-zig-smoke"))).isFile());
+    assert.ok((await lstat(outputPath)).isSymbolicLink());
+    assert.equal(
+      path.basename(
+        path.dirname(path.resolve(path.dirname(outputPath), await readlink(outputPath))),
+      ),
+      ".out.versions",
+    );
     const report = JSON.parse(await readFile(reportPath, "utf8"));
     assert.equal(report.command, "build");
     assert.equal(report.network, "offline");
@@ -880,20 +889,31 @@ exit 1
     assert.match(report.result.steps[0].arguments.join(" "), /-DCMAKE_AR=/);
     assert.match(report.result.steps[2].arguments.join(" "), /-Doptimize=Debug/);
 
-    const rebuilt = await invoke([
-      "build",
-      "--target", "linux-x86_64-gnu",
-      "--profile", "debug",
-      "--out", outputPath,
-    ], {
-      env: {
-        ...process.env,
-        TSFG_RUNTIME_CACHE: cachePath,
-        TSFG_RUNTIME_LOCK: lockPath,
-        TSFG_RUNTIME_PLATFORM: "test-x86_64",
-      },
-    });
-    assert.equal(rebuilt.status, 0, rebuilt.stderr);
+    if (!isWindows) {
+      const firstPublishedTarget = await readlink(outputPath);
+      const rebuilt = await invoke([
+        "build",
+        "--target", "linux-x86_64-gnu",
+        "--profile", "debug",
+        "--out", outputPath,
+      ], {
+        env: {
+          ...process.env,
+          TSFG_RUNTIME_CACHE: cachePath,
+          TSFG_RUNTIME_LOCK: lockPath,
+          TSFG_RUNTIME_PLATFORM: "test-x86_64",
+        },
+      });
+      assert.equal(rebuilt.status, 0, rebuilt.stderr);
+      assert.ok((await lstat(outputPath)).isSymbolicLink());
+      assert.notEqual(await readlink(outputPath), firstPublishedTarget);
+      assert.ok(
+        (await stat(
+          path.resolve(path.dirname(outputPath), firstPublishedTarget),
+        )).isDirectory(),
+      );
+      assert.equal((await readdir(path.join(sandbox, ".out.versions"))).length, 2);
+    }
 
     const tested = await invoke([
       "test",

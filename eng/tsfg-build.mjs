@@ -105,22 +105,54 @@ async function renameWithRetry(source, destination) {
 }
 
 async function publishDirectory(source, destination) {
-  if (!(await pathExists(destination))) {
-    await renameWithRetry(source, destination);
-    return;
-  }
-  const backup = path.join(
-    path.dirname(destination),
-    `.${path.basename(destination)}.${randomUUID()}.previous`,
-  );
-  await renameWithRetry(destination, backup);
+  const parent = path.dirname(destination);
+  const versionsRoot = path.join(parent, `.${path.basename(destination)}.versions`);
+  let previousVersion;
   try {
-    await renameWithRetry(source, destination);
+    const destinationStat = await lstat(destination);
+    if (!destinationStat.isSymbolicLink()) {
+      throw new Error(
+        `refusing to replace unmanaged output directory: ${destination}`,
+      );
+    }
+    const linkTarget = await readlink(destination);
+    previousVersion = path.resolve(parent, linkTarget);
+    if (path.dirname(previousVersion) !== versionsRoot) {
+      throw new Error(`output link escapes its managed versions directory: ${destination}`);
+    }
   } catch (error) {
-    await renameWithRetry(backup, destination);
+    if (error.code !== "ENOENT") throw error;
+  }
+
+  await mkdir(versionsRoot, { recursive: true });
+  for (const entry of await readdir(versionsRoot)) {
+    const candidate = path.join(versionsRoot, entry);
+    if (candidate !== previousVersion) {
+      await rm(candidate, { recursive: true, force: true });
+    }
+  }
+
+  const versionPath = path.join(versionsRoot, randomUUID());
+  const temporaryLink = path.join(
+    parent,
+    `.${path.basename(destination)}.${randomUUID()}.link`,
+  );
+  await renameWithRetry(source, versionPath);
+  try {
+    const linkTarget = process.platform === "win32"
+      ? versionPath
+      : path.relative(parent, versionPath);
+    await symlink(
+      linkTarget,
+      temporaryLink,
+      process.platform === "win32" ? "junction" : "dir",
+    );
+    await renameWithRetry(temporaryLink, destination);
+  } catch (error) {
+    await rm(temporaryLink, { force: true });
+    await rm(versionPath, { recursive: true, force: true });
     throw error;
   }
-  await rm(backup, { recursive: true, force: true }).catch(() => undefined);
 }
 
 function parseReportPath(arguments_) {
