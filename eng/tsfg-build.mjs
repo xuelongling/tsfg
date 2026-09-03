@@ -21,13 +21,19 @@ import { execFileSync, spawnSync } from "node:child_process";
 import path from "node:path";
 import process from "node:process";
 import { createHash, randomUUID } from "node:crypto";
-import { gunzipSync, inflateRawSync } from "node:zlib";
+import {
+  constants as zlibConstants,
+  gunzipSync,
+  inflateRawSync,
+  zstdCompressSync,
+} from "node:zlib";
 import { setTimeout as delay } from "node:timers/promises";
 import { fileURLToPath } from "node:url";
 
 class ConfigurationError extends Error {}
 class BuildFailureError extends Error {}
 class TestFailureError extends Error {}
+class PackageFailureError extends Error {}
 class WorkspaceMismatchError extends Error {
   constructor(code, message) {
     super(message);
@@ -1494,6 +1500,12 @@ async function buildLinuxDebug(options, runtime) {
   if (target !== "linux-x86_64-gnu" || profile !== "debug") {
     throw new ConfigurationError("R00-06 build supports only linux-x86_64-gnu debug");
   }
+  let identity;
+  try {
+    identity = await createBuildIdentity(runtime, target, profile);
+  } catch (error) {
+    throw new BuildFailureError(`cannot derive Build Identity: ${error.message}`);
+  }
 
   const output = path.resolve(outputOption);
   const stagingRoot = path.join(
@@ -1531,6 +1543,16 @@ async function buildLinuxDebug(options, runtime) {
     path.dirname(lld),
     path.dirname(zig),
   ]);
+  environment.SOURCE_DATE_EPOCH = identity.buildIdentity.source_date_epoch;
+  const debugPathFlags = [
+    `-ffile-prefix-map=${repositoryRoot}=.`,
+    `-fdebug-prefix-map=${repositoryRoot}=.`,
+    `-fmacro-prefix-map=${repositoryRoot}=.`,
+    `-ffile-prefix-map=${workRoot}=.build`,
+    `-fdebug-prefix-map=${workRoot}=.build`,
+    `-fmacro-prefix-map=${workRoot}=.build`,
+    "-fdebug-compilation-dir=.",
+  ];
   const cmakeArguments = [
     "-S", path.join(repositoryRoot, "tests", "r00", "smoke", "cpp"),
     "-B", cppWork,
@@ -1542,18 +1564,19 @@ async function buildLinuxDebug(options, runtime) {
     "-DCMAKE_BUILD_TYPE=Debug",
     "-DCMAKE_TRY_COMPILE_TARGET_TYPE=STATIC_LIBRARY",
     `-DCMAKE_SYSROOT=${sysroot}`,
-    "-DCMAKE_CXX_FLAGS_DEBUG=-O0 -g3 -UNDEBUG -fno-omit-frame-pointer",
+    `-DCMAKE_CXX_FLAGS_DEBUG=-O0 -g3 -UNDEBUG -fno-omit-frame-pointer ${debugPathFlags.join(" ")}`,
     `-DCMAKE_EXE_LINKER_FLAGS=-fuse-ld=${linkerWrapper} --rtlib=compiler-rt -unwindlib=none`,
   ];
   const ninjaArguments = ["-C", cppWork, "tsfg-r00-cpp-smoke"];
   const zigArguments = [
     "build",
-    "--build-file", path.join(repositoryRoot, "tests", "r00", "smoke", "zig", "build.zig"),
+    "--build-file", "tests/r00/smoke/zig/build.zig",
     "--prefix", zigPrefix,
     "--cache-dir", path.join(workRoot, "zig-cache"),
     "--global-cache-dir", path.join(workRoot, "zig-global-cache"),
     "-Dtarget=x86_64-linux-gnu",
     "-Doptimize=Debug",
+    "--seed", "0",
   ];
   const steps = [
     { tool: "cmake", executable: cmake, arguments: cmakeArguments },
@@ -1595,9 +1618,36 @@ async function buildLinuxDebug(options, runtime) {
       await chmod(publishedCpp, 0o755);
       await chmod(publishedZig, 0o755);
     }
+    const payloads = await Promise.all([
+      "bin/tsfg-r00-cpp-smoke",
+      "bin/tsfg-r00-zig-smoke",
+    ].map(async (payloadPath) => ({
+      path: payloadPath,
+      sha256: await digestFile(path.join(publishRoot, ...payloadPath.split("/"))),
+    })));
+    const metadata = {
+      buildIdentity: identity.buildIdentity,
+      buildInputSet: identity.buildInputSet,
+      contractSetId: identity.contractSetId,
+      payloads,
+      productVersion: identity.productVersion,
+      schemaVersion: "1",
+      toolchainClosureDigest: runtime.lockDigest,
+    };
+    await writeFile(
+      path.join(publishRoot, "build-metadata.json"),
+      `${canonicalize(metadata)}\n`,
+      { encoding: "utf8", flag: "wx" },
+    );
     await publishDirectory(publishRoot, output);
     return {
-      outputs: ["bin/tsfg-r00-cpp-smoke", "bin/tsfg-r00-zig-smoke"],
+      buildIdentity: identity.buildIdentity,
+      contractSetId: identity.contractSetId,
+      outputs: [
+        "bin/tsfg-r00-cpp-smoke",
+        "bin/tsfg-r00-zig-smoke",
+        "build-metadata.json",
+      ],
       profile,
       steps,
       target,
@@ -1673,6 +1723,373 @@ async function testLinuxDebug(options) {
     tests.push({ name: smoke.name, status: "passed" });
   }
   return { profile, target, tests };
+}
+
+async function readCanonicalJson(filePath, name) {
+  const bytes = await readFile(filePath, "utf8");
+  if (bytes.charCodeAt(0) === 0xfeff) {
+    throw new PackageFailureError(`${name} must not contain a BOM`);
+  }
+  let value;
+  try {
+    value = JSON.parse(bytes);
+  } catch (error) {
+    throw new PackageFailureError(`${name} is not valid JSON: ${error.message}`);
+  }
+  const canonical = canonicalize(value);
+  if (bytes !== canonical && bytes !== `${canonical}\n`) {
+    throw new PackageFailureError(`${name} must use canonical JSON`);
+  }
+  return value;
+}
+
+function compareInputEntries(left, right) {
+  const projectOrder = Buffer.from(left.projectId).compare(Buffer.from(right.projectId));
+  return projectOrder || Buffer.from(left.path).compare(Buffer.from(right.path));
+}
+
+async function buildInputSet() {
+  const declaration = await readCanonicalJson(
+    path.join(repositoryRoot, "eng", "build-inputs.json"),
+    "Build Input declaration",
+  );
+  if (declaration.schemaVersion !== "1" || !Array.isArray(declaration.entries)) {
+    throw new PackageFailureError("unsupported Build Input declaration schema");
+  }
+  const sortedDeclarations = [...declaration.entries].sort(compareInputEntries);
+  if (canonicalize(declaration.entries) !== canonicalize(sortedDeclarations)) {
+    throw new PackageFailureError("Build Input declaration must be sorted");
+  }
+  const identities = new Set();
+  const entries = [];
+  const epochs = [];
+  for (const declared of declaration.entries) {
+    if (
+      declared?.projectId !== "tsfg" ||
+      typeof declared.path !== "string" ||
+      declared.path.length === 0 ||
+      path.isAbsolute(declared.path) ||
+      declared.path.split("/").some((segment) => !segment || segment === "..")
+    ) {
+      throw new PackageFailureError("invalid Build Input declaration entry");
+    }
+    const identity = `${declared.projectId}\0${declared.path}`;
+    if (identities.has(identity)) {
+      throw new PackageFailureError("duplicate Build Input declaration entry");
+    }
+    identities.add(identity);
+    const indexLine = gitOutput(repositoryRoot, [
+      "ls-files",
+      "--stage",
+      "--",
+      declared.path,
+    ]).trim();
+    const match = /^(100644|100755) [0-9a-f]{40} 0\t/.exec(indexLine);
+    if (!match) {
+      throw new PackageFailureError(`Build Input is not a regular tracked file: ${declared.path}`);
+    }
+    const epoch = gitOutput(repositoryRoot, [
+      "log",
+      "-1",
+      "--format=%ct",
+      "--",
+      declared.path,
+    ]).trim();
+    if (!/^[1-9][0-9]*$/.test(epoch)) {
+      throw new PackageFailureError(`Build Input has no last-touch commit: ${declared.path}`);
+    }
+    epochs.push(BigInt(epoch));
+    entries.push({
+      projectId: declared.projectId,
+      repositoryRelativePath: declared.path,
+      normalizedMode: match[1],
+      sha256: await digestFile(path.join(repositoryRoot, ...declared.path.split("/"))),
+    });
+  }
+  const payload = { entries, schemaVersion: "1" };
+  return {
+    buildInputSet: {
+      digest: digest(canonicalize(payload)),
+      ...payload,
+    },
+    sourceDateEpoch: String(epochs.reduce((maximum, epoch) => epoch > maximum ? epoch : maximum)),
+  };
+}
+
+async function createBuildIdentity(runtime, target, profile) {
+  const version = await readCanonicalJson(path.join(repositoryRoot, "version.json"), "Product Version");
+  if (typeof version.version !== "string" || version.version.length === 0) {
+    throw new PackageFailureError("Product Version is missing");
+  }
+  const registry = await readCanonicalJson(
+    path.join(repositoryRoot, "contracts", "registry.json"),
+    "Contract Registry",
+  );
+  if (canonicalize(registry) !== "{}") {
+    throw new PackageFailureError("R00 Contract Registry must be empty");
+  }
+  const { buildInputSet: inputSet, sourceDateEpoch } = await buildInputSet();
+  const buildIdentityPayload = {
+    buildInputSetDigest: inputSet.digest,
+    options: {},
+    profile,
+    source_date_epoch: sourceDateEpoch,
+    target,
+    toolchainClosureDigest: runtime.lockDigest,
+  };
+  return {
+    buildIdentity: {
+      ...buildIdentityPayload,
+      digest: digest(canonicalize(buildIdentityPayload)),
+    },
+    buildInputSet: inputSet,
+    contractSetId: digest(canonicalize(registry)),
+    contractSet: canonicalize(registry),
+    productVersion: version.version,
+  };
+}
+
+function formatTarNumber(value, length) {
+  const encoded = value.toString(8).padStart(length - 1, "0");
+  if (encoded.length >= length) throw new PackageFailureError("tar number exceeds field width");
+  return `${encoded}\0`;
+}
+
+function tarHeader(entry, sourceDateEpoch) {
+  const header = Buffer.alloc(512);
+  const name = Buffer.from(entry.path, "utf8");
+  if (name.length === 0 || name.length > 100) {
+    throw new PackageFailureError(`package member path is not representable in ustar: ${entry.path}`);
+  }
+  name.copy(header, 0);
+  header.write(formatTarNumber(entry.mode, 8), 100, "ascii");
+  header.write(formatTarNumber(0, 8), 108, "ascii");
+  header.write(formatTarNumber(0, 8), 116, "ascii");
+  header.write(formatTarNumber(entry.bytes.length, 12), 124, "ascii");
+  header.write(formatTarNumber(sourceDateEpoch, 12), 136, "ascii");
+  header.fill(0x20, 148, 156);
+  header[156] = 0x30;
+  header.write("ustar\0", 257, "ascii");
+  header.write("00", 263, "ascii");
+  header.write(formatTarNumber(0, 8), 329, "ascii");
+  header.write(formatTarNumber(0, 8), 337, "ascii");
+  const checksum = header.reduce((sum, byte) => sum + byte, 0);
+  header.write(`${checksum.toString(8).padStart(6, "0")}\0 `, 148, "ascii");
+  return header;
+}
+
+function createTar(entries, sourceDateEpoch) {
+  const sorted = [...entries].sort((left, right) =>
+    Buffer.from(left.path).compare(Buffer.from(right.path)));
+  const chunks = [];
+  for (const entry of sorted) {
+    chunks.push(tarHeader(entry, sourceDateEpoch), entry.bytes);
+    const padding = (512 - (entry.bytes.length % 512)) % 512;
+    if (padding) chunks.push(Buffer.alloc(padding));
+  }
+  chunks.push(Buffer.alloc(1024));
+  return Buffer.concat(chunks);
+}
+
+function runPackageTool(executable, arguments_, cwd, environment) {
+  try {
+    if (process.platform === "win32" && /\.(?:cmd|bat)$/i.test(executable)) {
+      execFileSync(process.env.ComSpec, ["/d", "/c", executable, ...arguments_], {
+        cwd,
+        env: environment,
+        stdio: ["ignore", "pipe", "pipe"],
+      });
+    } else {
+      execFileSync(executable, arguments_, {
+        cwd,
+        env: environment,
+        stdio: ["ignore", "pipe", "pipe"],
+      });
+    }
+  } catch (error) {
+    const stdout = Buffer.isBuffer(error.stdout) ? error.stdout.toString("utf8") : "";
+    const stderr = Buffer.isBuffer(error.stderr) ? error.stderr.toString("utf8") : "";
+    const detail = `${stdout}${stderr}`.trim() || error.message;
+    throw new PackageFailureError(`llvm-objcopy failed${detail ? `: ${detail}` : ""}`);
+  }
+}
+
+async function packageLinuxDebug(options, runtime) {
+  const target = options.get("--target");
+  const profile = options.get("--profile");
+  const inputOption = options.get("--input");
+  const outputOption = options.get("--out");
+  if (!target || !profile || !inputOption || !outputOption) {
+    throw new ConfigurationError("package requires --target, --profile, --input, and --out");
+  }
+  if (target !== "linux-x86_64-gnu" || profile !== "debug") {
+    throw new ConfigurationError("R00-07 package supports only linux-x86_64-gnu debug");
+  }
+
+  const identity = await createBuildIdentity(runtime, target, profile);
+  const archiveName = `tsfg-v${identity.productVersion}-${target}-${profile}-${identity.buildIdentity.digest.slice(7, 23)}.tar.zst`;
+  const output = path.resolve(outputOption);
+  const stagingRoot = path.join(
+    path.dirname(output),
+    `.${path.basename(output)}.${randomUUID()}.tmp`,
+  );
+  const publishRoot = path.join(stagingRoot, "publish");
+  try {
+    await mkdir(publishRoot, { recursive: true });
+    const input = path.resolve(inputOption);
+    const metadata = await readCanonicalJson(
+      path.join(input, "build-metadata.json"),
+      "build metadata",
+    );
+    if (
+      canonicalize(metadata.buildIdentity) !== canonicalize(identity.buildIdentity) ||
+      canonicalize(metadata.buildInputSet) !== canonicalize(identity.buildInputSet) ||
+      metadata.contractSetId !== identity.contractSetId ||
+      metadata.productVersion !== identity.productVersion ||
+      metadata.toolchainClosureDigest !== runtime.lockDigest
+    ) {
+      throw new PackageFailureError("build metadata does not match the current Build Identity");
+    }
+    const expectedPayloads = [
+      "bin/tsfg-r00-cpp-smoke",
+      "bin/tsfg-r00-zig-smoke",
+    ];
+    if (
+      !Array.isArray(metadata.payloads) ||
+      canonicalize(metadata.payloads.map(({ path: payloadPath }) => payloadPath))
+        !== canonicalize(expectedPayloads)
+    ) {
+      throw new PackageFailureError("build metadata does not declare the expected smoke payloads");
+    }
+    const objcopy = closureToolPath(runtime, "llvm", "objcopy");
+    const packageEnvironment = buildEnvironment(stagingRoot, [path.dirname(objcopy)]);
+    packageEnvironment.SOURCE_DATE_EPOCH = identity.buildIdentity.source_date_epoch;
+    const members = [];
+    for (const payload of metadata.payloads) {
+      const source = path.join(input, ...payload.path.split("/"));
+      const sourceStat = await lstat(source).catch(() => undefined);
+      if (!sourceStat?.isFile() || sourceStat.isSymbolicLink()) {
+        throw new PackageFailureError(`smoke payload is missing or is not a regular file: ${payload.path}`);
+      }
+      if (await digestFile(source) !== payload.sha256) {
+        throw new PackageFailureError(`smoke payload digest does not match build metadata: ${payload.path}`);
+      }
+      const packagedPayload = path.join(stagingRoot, "members", ...payload.path.split("/"));
+      const symbolPath = `symbols/${path.posix.basename(payload.path)}.debug`;
+      const packagedSymbol = path.join(stagingRoot, "members", ...symbolPath.split("/"));
+      await mkdir(path.dirname(packagedPayload), { recursive: true });
+      await mkdir(path.dirname(packagedSymbol), { recursive: true });
+      await copyFile(source, packagedPayload);
+      await chmod(packagedPayload, 0o755);
+      runPackageTool(
+        objcopy,
+        ["--only-keep-debug", packagedPayload, packagedSymbol],
+        stagingRoot,
+        packageEnvironment,
+      );
+      runPackageTool(
+        objcopy,
+        ["--strip-debug", packagedPayload],
+        stagingRoot,
+        packageEnvironment,
+      );
+      const symbolStat = await stat(packagedSymbol).catch(() => undefined);
+      if (!symbolStat?.isFile()) {
+        throw new PackageFailureError(`detached symbols were not produced: ${symbolPath}`);
+      }
+      await chmod(packagedSymbol, 0o644);
+      members.push(
+        { bytes: await readFile(packagedPayload), mode: 0o755, path: payload.path },
+        { bytes: await readFile(packagedSymbol), mode: 0o644, path: symbolPath },
+      );
+    }
+    members.push({ bytes: Buffer.from(identity.contractSet), mode: 0o644, path: "contract-set.json" });
+    members.sort((left, right) => Buffer.from(left.path).compare(Buffer.from(right.path)));
+    const forbiddenValues = new Set([
+      repositoryRoot,
+      input,
+      output,
+      process.env.CI_RUN_ID,
+      process.env.GITHUB_RUN_ID,
+      process.env.HOSTNAME,
+      process.env.COMPUTERNAME,
+    ].filter((value) => typeof value === "string" && value.length > 0));
+    for (const value of [...forbiddenValues]) {
+      forbiddenValues.add(value.replaceAll("\\", "/"));
+      forbiddenValues.add(value.replaceAll("/", "\\"));
+    }
+    for (const member of members) {
+      for (const forbidden of forbiddenValues) {
+        if (member.bytes.includes(Buffer.from(forbidden))) {
+          throw new PackageFailureError(
+            `package member contains host-specific data: ${member.path}`,
+          );
+        }
+      }
+    }
+    const artifactManifest = {
+      buildIdentity: identity.buildIdentity,
+      buildInputSet: identity.buildInputSet,
+      contractSetId: identity.contractSetId,
+      members: members.map((member) => ({
+        path: member.path,
+        sha256: digest(member.bytes),
+      })),
+      productVersion: identity.productVersion,
+      schemaVersion: "1",
+      toolchainClosureDigest: runtime.lockDigest,
+    };
+    const artifactManifestBytes = Buffer.from(canonicalize(artifactManifest));
+    const archiveMembers = [
+      { bytes: artifactManifestBytes, mode: 0o644, path: "artifact-manifest.json" },
+      ...members,
+    ];
+    const tar = createTar(
+      archiveMembers,
+      Number.parseInt(identity.buildIdentity.source_date_epoch, 10),
+    );
+    const archive = zstdCompressSync(tar, {
+      params: {
+        [zlibConstants.ZSTD_c_checksumFlag]: 1,
+        [zlibConstants.ZSTD_c_compressionLevel]: 19,
+        [zlibConstants.ZSTD_c_contentSizeFlag]: 1,
+        [zlibConstants.ZSTD_c_nbWorkers]: 0,
+      },
+    });
+    const archivePath = path.join(publishRoot, archiveName);
+    await writeFile(archivePath, archive, { flag: "wx" });
+    await writeFile(
+      `${archivePath}.checksums.json`,
+      `${canonicalize({
+        archive: { name: archiveName, sha256: digest(archive) },
+        artifactManifest: {
+          path: "artifact-manifest.json",
+          sha256: digest(artifactManifestBytes),
+        },
+        schemaVersion: "1",
+      })}\n`,
+      { encoding: "utf8", flag: "wx" },
+    );
+    await publishDirectory(publishRoot, output);
+    return {
+      archive: archiveName,
+      buildIdentity: identity.buildIdentity,
+      buildInputSet: identity.buildInputSet,
+      checksums: `${archiveName}.checksums.json`,
+      contractSetId: identity.contractSetId,
+      input: path.resolve(inputOption),
+    };
+  } catch (error) {
+    if (error instanceof ConfigurationError || error instanceof PackageFailureError) throw error;
+    throw new PackageFailureError(error.message);
+  } finally {
+    await rm(stagingRoot, {
+      recursive: true,
+      force: true,
+      maxRetries: process.platform === "win32" ? 5 : 0,
+      retryDelay: 100,
+    });
+  }
 }
 
 const arguments_ = process.argv.slice(2);
@@ -1826,6 +2243,29 @@ if (runtimeIntegrityError) {
         code: isConfigurationError
           ? "invalid-configuration"
           : isTestFailure ? "native-test" : "internal-control-plane",
+        message: error.message,
+      },
+      reportPath,
+      "offline",
+    );
+  }
+} else if (command === "package") {
+  try {
+    const options = parseOptions(
+      arguments_,
+      new Set(["--target", "--profile", "--input", "--out", "--report"]),
+    );
+    if (!runtimeClosure) throw new PackageFailureError("locked runtime closure is unavailable");
+    const result = await packageLinuxDebug(options, runtimeClosure);
+    process.exitCode = await succeed(command, result, reportPath, "offline");
+  } catch (error) {
+    const isConfigurationError = error instanceof ConfigurationError;
+    process.exitCode = await fail(
+      command,
+      isConfigurationError ? 2 : 22,
+      isConfigurationError ? "usage/configuration" : "package failure",
+      {
+        code: isConfigurationError ? "invalid-configuration" : "artifact-package",
         message: error.message,
       },
       reportPath,

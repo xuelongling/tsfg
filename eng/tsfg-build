@@ -129,6 +129,7 @@ valid_smoke_arguments() {
   seen_target=false
   seen_profile=false
   seen_out=false
+  seen_input=false
   seen_report=false
   target=
   profile=
@@ -153,6 +154,11 @@ valid_smoke_arguments() {
         [ "$seen_out" = false ] || return 1
         seen_out=true
         ;;
+      --input)
+        [ "$expected_command" = package ] || return 1
+        [ "$seen_input" = false ] || return 1
+        seen_input=true
+        ;;
       --report)
         [ "$seen_report" = false ] || return 1
         seen_report=true
@@ -164,6 +170,7 @@ valid_smoke_arguments() {
   [ "$seen_target" = true ] &&
     [ "$seen_profile" = true ] &&
     [ "$seen_out" = true ] &&
+    { [ "$expected_command" != package ] || [ "$seen_input" = true ]; } &&
     [ "$target" = linux-x86_64-gnu ] &&
     [ "$profile" = debug ]
 }
@@ -174,13 +181,13 @@ if [ "${1:-}" = prefetch ]; then
     --cache "$cache" \
     --platform "$platform"
 fi
-if [ "$command" != verify-workspace ] && [ "$command" != build ] && [ "$command" != test ]; then
+if [ "$command" != verify-workspace ] && [ "$command" != build ] && [ "$command" != test ] && [ "$command" != package ]; then
   usage_failure unsupported unsupported-operation 'unsupported operation'
 fi
 if [ "$command" = verify-workspace ] && ! valid_verify_arguments "$@"; then
   usage_failure verify-workspace invalid-configuration 'invalid verify-workspace arguments'
 fi
-if { [ "$command" = build ] || [ "$command" = test ]; } && ! valid_smoke_arguments "$command" "$@"; then
+if { [ "$command" = build ] || [ "$command" = test ] || [ "$command" = package ]; } && ! valid_smoke_arguments "$command" "$@"; then
   usage_failure "$command" invalid-configuration "invalid $command arguments"
 fi
 

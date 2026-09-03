@@ -45,4 +45,16 @@ test("Build Input declaration includes only Linux smoke payload inputs", async (
       inputPath.endsWith(".test.mjs") || inputPath.includes("fixture") || inputPath.includes("report")),
     false,
   );
+  const toolchainLock = JSON.parse(await readFile(
+    path.join(repositoryRoot, "eng", "toolchains.lock.json"),
+    "utf8",
+  ));
+  assert.equal(
+    toolchainLock.tools.llvm.artifacts.find(
+      ({ platform }) => platform === "linux-x86_64-gnu",
+    ).executables.objcopy,
+    "bin/llvm-objcopy",
+  );
+  const launcher = await readFile(path.join(repositoryRoot, "eng", "tsfg-build"), "utf8");
+  assert.match(launcher, /\[ "\$command" = package \]/);
 });

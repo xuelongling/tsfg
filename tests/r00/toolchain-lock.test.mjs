@@ -81,6 +81,7 @@ test("toolchain lock content-locks the Linux debug closure and bootstrap tools",
     clang: "bin/clang",
     clangxx: "bin/clang++",
     lld: "bin/ld.lld",
+    objcopy: "bin/llvm-objcopy",
     ranlib: "bin/llvm-ranlib",
   });
   for (const tool of Object.values(lock.tools)) {

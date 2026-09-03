@@ -17,6 +17,7 @@ import {
 import { createHash } from "node:crypto";
 import { createServer } from "node:http";
 import { tmpdir } from "node:os";
+import { zstdDecompressSync } from "node:zlib";
 import path from "node:path";
 import { spawn, spawnSync } from "node:child_process";
 import test from "node:test";
@@ -92,6 +93,33 @@ async function startArtifactServer(artifacts) {
         server.close((error) => (error ? reject(error) : resolve())),
       ),
   };
+}
+
+function parseTarArchive(bytes) {
+  const entries = [];
+  for (let offset = 0; offset + 512 <= bytes.length; ) {
+    const header = bytes.subarray(offset, offset + 512);
+    if (header.every((byte) => byte === 0)) break;
+    const stringField = (start, length) => {
+      const field = header.subarray(start, start + length);
+      const end = field.indexOf(0);
+      return field.subarray(0, end === -1 ? field.length : end).toString("utf8");
+    };
+    const octalField = (start, length) =>
+      Number.parseInt(stringField(start, length).trim() || "0", 8);
+    const size = octalField(124, 12);
+    const contentStart = offset + 512;
+    entries.push({
+      bytes: bytes.subarray(contentStart, contentStart + size),
+      gid: octalField(116, 8),
+      mode: octalField(100, 8),
+      mtime: octalField(136, 12),
+      name: stringField(0, 100),
+      uid: octalField(108, 8),
+    });
+    offset = contentStart + Math.ceil(size / 512) * 512;
+  }
+  return entries;
 }
 
 test("unknown operation returns the stable usage category and an atomic report", async () => {
@@ -781,10 +809,13 @@ done
 exit 1
 `);
   const inert = Buffer.from(isWindows ? "@echo off\r\nexit /b 0\r\n" : "#!/bin/sh\nexit 0\n");
+  const llvm = Buffer.from(isWindows
+    ? "@echo off\r\nif \"%~1\"==\"--only-keep-debug\" copy /y \"%~2\" \"%~3\" >nul\r\nexit /b 0\r\n"
+    : "#!/bin/sh\nif [ \"$1\" = --only-keep-debug ]; then /bin/cp \"$2\" \"$3\"; fi\nexit 0\n");
   const toolDefinitions = [
     ["cmake", isWindows ? "bin/cmake.cmd" : "bin/cmake", cmake],
     ["debian-sysroot", "usr/include/assert.h", Buffer.from("fixture sysroot\n")],
-    ["llvm", isWindows ? "bin/llvm.cmd" : "bin/llvm", inert],
+    ["llvm", isWindows ? "bin/llvm.cmd" : "bin/llvm", llvm],
     ["ninja", isWindows ? "bin/ninja.cmd" : "bin/ninja", ninja],
     ["node", isWindows ? "node.cmd" : "bin/node", inert],
     ["pnpm", isWindows ? "pnpm.cmd" : "pnpm", inert],
@@ -811,6 +842,7 @@ exit 1
         clang: installPath,
         clangxx: installPath,
         lld: installPath,
+        objcopy: installPath,
         ranlib: installPath,
       };
     }
@@ -872,14 +904,76 @@ exit 1
     assert.equal(report.network, "offline");
     assert.equal(report.result.profile, "debug");
     assert.equal(report.result.target, "linux-x86_64-gnu");
+    assert.match(report.result.buildIdentity.digest, /^sha256:[0-9a-f]{64}$/);
+    assert.match(report.result.buildIdentity.buildInputSetDigest, /^sha256:[0-9a-f]{64}$/);
+    assert.match(report.result.buildIdentity.toolchainClosureDigest, /^sha256:[0-9a-f]{64}$/);
+    assert.match(report.result.buildIdentity.source_date_epoch, /^[1-9][0-9]*$/);
+    assert.deepEqual(report.result.buildIdentity.options, {});
+    assert.equal(
+      report.result.contractSetId,
+      "sha256:44136fa355b3678a1146ad16f7e8649e94fb4fc21fe77e8310c060f61caaff8a",
+    );
     assert.deepEqual(report.result.outputs, [
       "bin/tsfg-r00-cpp-smoke",
       "bin/tsfg-r00-zig-smoke",
+      "build-metadata.json",
     ]);
+    const metadataBytes = await readFile(path.join(outputPath, "build-metadata.json"), "utf8");
+    const metadata = JSON.parse(metadataBytes);
+    assert.equal(metadataBytes, `${JSON.stringify(metadata)}\n`);
+    assert.deepEqual(metadata.buildIdentity, report.result.buildIdentity);
+    assert.equal(metadata.buildInputSet.digest, report.result.buildIdentity.buildInputSetDigest);
+    const { digest: buildInputSetDigest, ...buildInputSetPayload } = metadata.buildInputSet;
+    assert.equal(buildInputSetDigest, fixtureDigest(JSON.stringify(buildInputSetPayload)));
+    const { digest: buildIdentityDigest, ...buildIdentityPayload } = metadata.buildIdentity;
+    assert.equal(buildIdentityDigest, fixtureDigest(JSON.stringify(buildIdentityPayload)));
+    assert.deepEqual(
+      metadata.buildInputSet.entries.map(({ projectId, repositoryRelativePath: inputPath }) => ({
+        path: inputPath,
+        projectId,
+      })),
+      JSON.parse(await readFile(path.join(repositoryRoot, "eng", "build-inputs.json"), "utf8")).entries,
+    );
+    assert.equal(
+      metadata.buildInputSet.entries.some(({ repositoryRelativePath: inputPath }) =>
+        inputPath.endsWith(".test.mjs") || inputPath.startsWith("docs/")),
+      false,
+    );
+    const expectedEpoch = metadata.buildInputSet.entries.reduce((maximum, { repositoryRelativePath: inputPath }) => {
+      const touched = spawnSync("git", ["log", "-1", "--format=%ct", "--", inputPath], {
+        cwd: repositoryRoot,
+        encoding: "utf8",
+      });
+      assert.equal(touched.status, 0, touched.stderr);
+      return Math.max(maximum, Number.parseInt(touched.stdout.trim(), 10));
+    }, 0);
+    assert.equal(report.result.buildIdentity.source_date_epoch, String(expectedEpoch));
+    for (const input of metadata.buildInputSet.entries) {
+      const inputPath = input.repositoryRelativePath;
+      assert.equal(
+        input.sha256,
+        fixtureDigest(await readFile(path.join(repositoryRoot, ...inputPath.split("/")))),
+      );
+      const indexed = spawnSync("git", ["ls-files", "--stage", "--", inputPath], {
+        cwd: repositoryRoot,
+        encoding: "utf8",
+      });
+      assert.equal(indexed.status, 0, indexed.stderr);
+      assert.equal(input.normalizedMode, indexed.stdout.slice(0, 6));
+    }
+    for (const output of metadata.payloads) {
+      assert.equal(
+        output.sha256,
+        fixtureDigest(await readFile(path.join(outputPath, ...output.path.split("/")))),
+      );
+    }
     assert.deepEqual(report.result.steps.map(({ tool }) => tool), ["cmake", "ninja", "zig"]);
     assert.match(report.result.steps[0].arguments.join(" "), /-O0/);
     assert.match(report.result.steps[0].arguments.join(" "), /-g3/);
     assert.match(report.result.steps[0].arguments.join(" "), /-UNDEBUG/);
+    assert.match(report.result.steps[0].arguments.join(" "), /-ffile-prefix-map=/);
+    assert.match(report.result.steps[0].arguments.join(" "), /-fdebug-prefix-map=/);
+    assert.match(report.result.steps[0].arguments.join(" "), /-fmacro-prefix-map=/);
     assert.match(
       report.result.steps[0].arguments.join(" "),
       /-DCMAKE_TRY_COMPILE_TARGET_TYPE=STATIC_LIBRARY/,
@@ -888,6 +982,144 @@ exit 1
     assert.match(report.result.steps[0].arguments.join(" "), /llvm/);
     assert.match(report.result.steps[0].arguments.join(" "), /-DCMAKE_AR=/);
     assert.match(report.result.steps[2].arguments.join(" "), /-Doptimize=Debug/);
+    assert.deepEqual(report.result.steps[2].arguments.slice(-2), ["--seed", "0"]);
+
+    const packageOutput = path.join(sandbox, "package");
+    const packageReportPath = path.join(sandbox, "package-report.json");
+    const packaged = await invoke([
+      "package",
+      "--target", "linux-x86_64-gnu",
+      "--profile", "debug",
+      "--input", outputPath,
+      "--out", packageOutput,
+      "--report", packageReportPath,
+    ], {
+      env: {
+        ...process.env,
+        TSFG_RUNTIME_CACHE: cachePath,
+        TSFG_RUNTIME_LOCK: lockPath,
+        TSFG_RUNTIME_PLATFORM: "test-x86_64",
+      },
+    });
+    assert.equal(packaged.status, 0, packaged.stderr);
+    assert.equal(packaged.stdout, "");
+    const packageReport = JSON.parse(await readFile(packageReportPath, "utf8"));
+    assert.deepEqual(packageReport.result.buildIdentity, report.result.buildIdentity);
+    const archivePath = path.join(packageOutput, packageReport.result.archive);
+    const archiveBytes = await readFile(archivePath);
+    const archiveEntries = parseTarArchive(zstdDecompressSync(archiveBytes));
+    assert.deepEqual(archiveEntries.map(({ name }) => name), [
+      "artifact-manifest.json",
+      "bin/tsfg-r00-cpp-smoke",
+      "bin/tsfg-r00-zig-smoke",
+      "contract-set.json",
+      "symbols/tsfg-r00-cpp-smoke.debug",
+      "symbols/tsfg-r00-zig-smoke.debug",
+    ]);
+    for (const entry of archiveEntries) {
+      assert.equal(entry.uid, 0);
+      assert.equal(entry.gid, 0);
+      assert.equal(entry.mtime, Number(report.result.buildIdentity.source_date_epoch));
+      assert.equal(entry.mode, entry.name.startsWith("bin/") ? 0o755 : 0o644);
+    }
+    const entriesByName = new Map(archiveEntries.map((entry) => [entry.name, entry]));
+    assert.equal(entriesByName.get("contract-set.json").bytes.toString("utf8"), "{}");
+    const manifestBytes = entriesByName.get("artifact-manifest.json").bytes;
+    const manifest = JSON.parse(manifestBytes.toString("utf8"));
+    assert.equal(manifestBytes.toString("utf8"), JSON.stringify(manifest));
+    assert.deepEqual(manifest.buildIdentity, report.result.buildIdentity);
+    assert.deepEqual(manifest.buildInputSet, metadata.buildInputSet);
+    assert.equal(manifest.contractSetId, report.result.contractSetId);
+    assert.equal(manifest.toolchainClosureDigest, report.result.buildIdentity.toolchainClosureDigest);
+    assert.equal(manifest.members.some(({ path: memberPath }) => memberPath === "artifact-manifest.json"), false);
+    assert.deepEqual(
+      manifest.members.map(({ path: memberPath }) => memberPath),
+      archiveEntries.slice(1).map(({ name }) => name),
+    );
+    for (const member of manifest.members) {
+      assert.equal(member.sha256, fixtureDigest(entriesByName.get(member.path).bytes));
+    }
+    const checksums = JSON.parse(await readFile(
+      path.join(packageOutput, packageReport.result.checksums),
+      "utf8",
+    ));
+    assert.deepEqual(checksums, {
+      archive: { name: packageReport.result.archive, sha256: fixtureDigest(archiveBytes) },
+      artifactManifest: {
+        path: "artifact-manifest.json",
+        sha256: fixtureDigest(manifestBytes),
+      },
+      schemaVersion: "1",
+    });
+    assert.equal(manifestBytes.includes(Buffer.from(packageReport.result.archive)), false);
+    assert.equal(manifestBytes.includes(Buffer.from(packageReport.result.checksums)), false);
+    assert.equal(
+      JSON.stringify(checksums).includes(packageReport.result.checksums),
+      false,
+      "external checksums must not hash themselves",
+    );
+    for (const forbidden of [repositoryRoot, outputPath, packageOutput, "ticket07-ci-run-id"]) {
+      const encoded = Buffer.from(forbidden);
+      assert.equal(
+        archiveEntries.some(({ bytes }) => bytes.includes(encoded)),
+        false,
+        `package payload must not contain ${JSON.stringify(forbidden)}`,
+      );
+    }
+
+    const firstArchive = Buffer.from(archiveBytes);
+    const firstChecksums = await readFile(path.join(packageOutput, packageReport.result.checksums));
+    const repackagedOutput = isWindows
+      ? path.join(sandbox, "package-repeat")
+      : packageOutput;
+    const repackaged = await invoke([
+      "package",
+      "--target", "linux-x86_64-gnu",
+      "--profile", "debug",
+      "--input", outputPath,
+      "--out", repackagedOutput,
+    ], {
+      env: {
+        ...process.env,
+        CI_RUN_ID: "ticket07-ci-run-id",
+        TSFG_RUNTIME_CACHE: cachePath,
+        TSFG_RUNTIME_LOCK: lockPath,
+        TSFG_RUNTIME_PLATFORM: "test-x86_64",
+      },
+    });
+    assert.equal(repackaged.status, 0, repackaged.stderr);
+    assert.deepEqual(
+      await readFile(path.join(repackagedOutput, packageReport.result.archive)),
+      firstArchive,
+    );
+    assert.deepEqual(
+      await readFile(path.join(repackagedOutput, packageReport.result.checksums)),
+      firstChecksums,
+    );
+
+    const failedPackageOutput = path.join(sandbox, "failed-package");
+    const failedPackageReport = path.join(sandbox, "failed-package-report.json");
+    const packageFailure = await invoke([
+      "package",
+      "--target", "linux-x86_64-gnu",
+      "--profile", "debug",
+      "--input", path.join(sandbox, "missing-build"),
+      "--out", failedPackageOutput,
+      "--report", failedPackageReport,
+    ], {
+      env: {
+        ...process.env,
+        TSFG_RUNTIME_CACHE: cachePath,
+        TSFG_RUNTIME_LOCK: lockPath,
+        TSFG_RUNTIME_PLATFORM: "test-x86_64",
+      },
+    });
+    assert.equal(packageFailure.status, 22, packageFailure.stderr);
+    assert.equal(
+      JSON.parse(await readFile(failedPackageReport, "utf8")).error.category,
+      "package failure",
+    );
+    await assert.rejects(lstat(failedPackageOutput), /ENOENT/);
 
     if (!isWindows) {
       const firstPublishedTarget = await readlink(outputPath);
