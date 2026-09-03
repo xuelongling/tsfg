@@ -122,7 +122,7 @@ async function materializeFixture(workspace) {
   return { manifestHead, productHead, agentsHead };
 }
 
-async function invoke(arguments_) {
+async function invoke(arguments_, environment = {}) {
   return await new Promise((resolve, reject) => {
     const executable = process.env.TSFG_TEST_NODE_LOADER ?? process.execPath;
     const prefix = process.env.TSFG_TEST_NODE_BINARY
@@ -132,6 +132,7 @@ async function invoke(arguments_) {
       cwd: repositoryRoot,
       env: {
         ...process.env,
+        ...environment,
         NODE_OPTIONS: `--require=${networkDenialHook}`,
       },
     });
@@ -172,7 +173,10 @@ test("verify-workspace accepts a clean complete materialized identity", async (c
       "--report",
       reportPath,
     ];
-    const first = await invoke(arguments_);
+    const first = await invoke(arguments_, {
+      GIT_DIR: path.join(sandbox, "poison-git-dir"),
+      GIT_WORK_TREE: path.join(sandbox, "poison-work-tree"),
+    });
     assert.equal(first.status, 0, first.stderr);
     assert.equal(first.stdout, "");
     const firstBytes = await readFile(reportPath, "utf8");

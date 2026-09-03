@@ -103,6 +103,20 @@ test("unknown operation returns the stable usage category and an atomic report",
   }
 });
 
+test("Build Report write failures use the stable internal-failure exit", async () => {
+  const sandbox = await mkdtemp(path.join(tmpdir(), "tsfg-report-failure-"));
+  const reportPath = path.join(sandbox, "report.json");
+  try {
+    await mkdir(reportPath);
+    const result = await invoke(["unknown", "--report", reportPath]);
+    assert.equal(result.status, 30);
+    assert.equal(result.stdout, "");
+    assert.match(result.stderr, /cannot write Build Report/);
+  } finally {
+    await rm(sandbox, { recursive: true, force: true });
+  }
+});
+
 test("prefetch atomically publishes and reuses a content-verified minimal closure", async () => {
   const sandbox = await mkdtemp(path.join(tmpdir(), "tsfg-prefetch-"));
   const nodeBytes = Buffer.from("fixture-node\n");
@@ -110,7 +124,9 @@ test("prefetch atomically publishes and reuses a content-verified minimal closur
   const server = await startArtifactServer(
     new Map([
       ["/node", nodeBytes],
+      ["/node-mirror", nodeBytes],
       ["/pnpm", pnpmBytes],
+      ["/pnpm-mirror", pnpmBytes],
     ]),
   );
   const lockPath = path.join(sandbox, "toolchains.lock.json");
@@ -206,6 +222,30 @@ test("prefetch atomically publishes and reuses a content-verified minimal closur
     const second = await invoke(arguments_);
     assert.equal(second.status, 0, second.stderr);
     assert.equal(await readFile(reportPath, "utf8"), firstReportBytes);
+
+    const mirrorLock = structuredClone(lock);
+    mirrorLock.tools.node.artifacts[0].url = `${server.baseUrl}/node-mirror`;
+    mirrorLock.tools.pnpm.artifacts[0].url = `${server.baseUrl}/pnpm-mirror`;
+    const mirrorLockPath = path.join(sandbox, "mirror-toolchains.lock.json");
+    const mirrorReportPath = path.join(sandbox, "mirror-report.json");
+    await writeFile(mirrorLockPath, `${JSON.stringify(mirrorLock)}\n`);
+    const mirrored = await invoke([
+      "prefetch",
+      "--lock",
+      mirrorLockPath,
+      "--cache",
+      path.join(sandbox, "mirror-cache"),
+      "--platform",
+      "test-x86_64",
+      "--report",
+      mirrorReportPath,
+    ]);
+    assert.equal(mirrored.status, 0, mirrored.stderr);
+    assert.equal(
+      JSON.parse(await readFile(mirrorReportPath, "utf8")).result.lockDigest,
+      firstReport.result.lockDigest,
+      "mirror location must not enter Toolchain Closure identity",
+    );
 
     await writeFile(
       path.join(closurePath, "node", "bin", "node"),
@@ -340,7 +380,7 @@ test("prefetch rejects incomplete lock metadata without publishing partial succe
   }
 });
 
-test("Windows launcher ignores PATH node and pnpm after prefetch", {
+test("Windows launcher rejects an invalid closure without using PATH node or pnpm", {
   skip: process.platform !== "win32",
 }, async () => {
   const sandbox = await mkdtemp(path.join(tmpdir(), "tsfg-launcher-path-"));
@@ -386,10 +426,63 @@ test("Windows launcher ignores PATH node and pnpm after prefetch", {
         },
       },
     );
-    assert.equal(result.status, 2, result.stderr);
-    assert.match(result.stderr, /verify-workspace requires/);
+    assert.equal(result.status, 11, result.stderr);
+    assert.match(result.stderr, /closure|integrity|digest/i);
     await assert.rejects(readFile(sentinel), /ENOENT/);
-    assert.equal(JSON.parse(await readFile(reportPath, "utf8")).error.code, "2");
+    assert.equal(JSON.parse(await readFile(reportPath, "utf8")).error.code, "11");
+  } finally {
+    await rm(sandbox, { recursive: true, force: true });
+  }
+});
+
+test("launcher reports a missing closure as lock/integrity failure", async (context) => {
+  const sandbox = await mkdtemp(path.join(tmpdir(), "tsfg-launcher-missing-"));
+  const reportPath = path.join(sandbox, "report.json");
+  const environment = {
+    ...process.env,
+    TSFG_CACHE_DIR: path.join(sandbox, "missing-cache"),
+  };
+  let result;
+  try {
+    if (process.platform === "win32") {
+      result = spawnSync(
+        process.env.ComSpec,
+        [
+          "/d",
+          "/c",
+          path.join(repositoryRoot, "eng", "tsfg-build.cmd"),
+          "verify-workspace",
+          "--report",
+          reportPath,
+        ],
+        { cwd: repositoryRoot, encoding: "utf8", env: environment },
+      );
+    } else {
+      result = spawnSync(
+        path.join(repositoryRoot, "eng", "tsfg-build"),
+        ["verify-workspace", "--report", reportPath],
+        { cwd: repositoryRoot, encoding: "utf8", env: environment },
+      );
+    }
+    if (result.error && "code" in result.error && result.error.code === "EACCES") {
+      context.skip("launcher is not executable on this filesystem");
+      return;
+    }
+    assert.equal(result.status, 11, result.stderr);
+    assert.equal(result.stdout, "");
+    const report = JSON.parse(await readFile(reportPath, "utf8"));
+    assert.equal(report.command, "verify-workspace");
+    assert.equal(report.status, "failure");
+    assert.deepEqual(report.error, {
+      category: "lock/integrity",
+      code: "11",
+      issues: [
+        {
+          code: "runtime-closure",
+          message: "locked Node.js closure is missing or invalid; run tsfg-build prefetch",
+        },
+      ],
+    });
   } finally {
     await rm(sandbox, { recursive: true, force: true });
   }

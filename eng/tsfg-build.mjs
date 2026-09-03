@@ -2,6 +2,7 @@
 // SPDX-License-Identifier: MIT
 
 import {
+  chmod,
   mkdir,
   lstat,
   readFile,
@@ -11,12 +12,15 @@ import {
   rename,
   rm,
   stat,
+  symlink,
   writeFile,
 } from "node:fs/promises";
 import { execFileSync } from "node:child_process";
 import path from "node:path";
 import process from "node:process";
 import { createHash, randomUUID } from "node:crypto";
+import { gunzipSync, inflateRawSync } from "node:zlib";
+import { setTimeout as delay } from "node:timers/promises";
 
 class ConfigurationError extends Error {}
 class WorkspaceMismatchError extends Error {
@@ -60,9 +64,27 @@ async function writeAtomicText(destinationPath, contents) {
       encoding: "utf8",
       flag: "wx",
     });
-    await rename(temporaryPath, absolutePath);
+    await renameWithRetry(temporaryPath, absolutePath);
   } finally {
     await rm(temporaryPath, { force: true });
+  }
+}
+
+async function renameWithRetry(source, destination) {
+  for (let attempt = 0; ; attempt += 1) {
+    try {
+      await rename(source, destination);
+      return;
+    } catch (error) {
+      if (
+        process.platform !== "win32" ||
+        !["EPERM", "EBUSY"].includes(error.code) ||
+        attempt >= 7
+      ) {
+        throw error;
+      }
+      await delay(50 * 2 ** Math.min(attempt, 4));
+    }
   }
 }
 
@@ -111,7 +133,7 @@ async function fail(command, code, category, issue, reportPath, network) {
       await writeReport(reportPath, report);
     } catch (error) {
       process.stderr.write(`cannot write Build Report: ${error.message}\n`);
-      return 2;
+      return 30;
     }
   }
   process.stderr.write(`${issue.message}\n`);
@@ -205,6 +227,20 @@ function selectArtifact(toolId, tool, platform) {
   return artifact;
 }
 
+function toolchainClosureDigest(lock, selections, platform) {
+  return digest(canonicalize({
+    schemaVersion: lock.schemaVersion,
+    target: platform,
+    tools: selections.map(({ id, tool, artifact }) => ({
+      id,
+      version: tool.version,
+      platform: artifact.platform,
+      archiveSha256: artifact.archiveSha256,
+      unpackedTreeSha256: artifact.unpackedTreeSha256,
+    })),
+  }));
+}
+
 function checkedInstallPath(toolRoot, installPath) {
   if (typeof installPath !== "string" || installPath.length === 0) {
     throw new Error("artifact installPath must be a non-empty string");
@@ -224,6 +260,191 @@ async function verifyInstalledTool(toolRoot, artifact) {
       `unpacked tree digest mismatch: expected ${artifact.unpackedTreeSha256}, got ${actualTreeDigest}`,
     );
   }
+}
+
+function archivePath(root, name, stripComponents) {
+  if (typeof name !== "string" || name.includes("\0") || name.includes("\\") || name.startsWith("/")) {
+    throw new Error(`unsafe archive path: ${JSON.stringify(name)}`);
+  }
+  const parts = name.split("/");
+  if (parts.some((part) => part === "." || part === "..")) {
+    throw new Error(`unsafe archive path: ${JSON.stringify(name)}`);
+  }
+  while (parts.at(-1) === "") parts.pop();
+  if (parts.length <= stripComponents) return undefined;
+  const retained = parts.slice(stripComponents);
+  if (retained.some((part) => part.length === 0)) {
+    throw new Error(`unsafe archive path: ${JSON.stringify(name)}`);
+  }
+  const destination = path.resolve(root, ...retained);
+  const relative = path.relative(root, destination);
+  if (relative.startsWith(`..${path.sep}`) || relative === ".." || path.isAbsolute(relative)) {
+    throw new Error(`archive path escapes tool root: ${name}`);
+  }
+  return destination;
+}
+
+function tarString(bytes, start, length) {
+  const end = bytes.indexOf(0, start);
+  return bytes.subarray(start, end === -1 || end > start + length ? start + length : end).toString("utf8");
+}
+
+function tarNumber(bytes, start, length) {
+  const value = tarString(bytes, start, length).trim();
+  if (!/^[0-7]*$/.test(value)) throw new Error(`invalid tar number: ${value}`);
+  return value === "" ? 0 : Number.parseInt(value, 8);
+}
+
+/** @returns {Record<string, string>} */
+function parsePax(bytes) {
+  /** @type {Record<string, string>} */
+  const attributes = {};
+  let offset = 0;
+  while (offset < bytes.length) {
+    const space = bytes.indexOf(0x20, offset);
+    if (space === -1) throw new Error("invalid pax record length");
+    const lengthText = bytes.subarray(offset, space).toString("ascii");
+    if (!/^[1-9][0-9]*$/.test(lengthText)) throw new Error("invalid pax record length");
+    const length = Number.parseInt(lengthText, 10);
+    const end = offset + length;
+    if (end > bytes.length || bytes[end - 1] !== 0x0a) throw new Error("truncated pax record");
+    const record = bytes.subarray(space + 1, end - 1).toString("utf8");
+    const equals = record.indexOf("=");
+    if (equals === -1) throw new Error("invalid pax record");
+    attributes[record.slice(0, equals)] = record.slice(equals + 1);
+    offset = end;
+  }
+  return attributes;
+}
+
+function parseTar(bytes) {
+  const entries = [];
+  let offset = 0;
+  /** @type {Record<string, string>} */
+  let extended = {};
+  /** @type {Record<string, string>} */
+  let global = {};
+  let longName;
+  let longLink;
+  while (offset + 512 <= bytes.length) {
+    const header = bytes.subarray(offset, offset + 512);
+    if (header.every((byte) => byte === 0)) break;
+    const expectedChecksum = tarNumber(header, 148, 8);
+    let actualChecksum = 0;
+    for (let index = 0; index < 512; index += 1) {
+      actualChecksum += index >= 148 && index < 156 ? 0x20 : header[index];
+    }
+    if (actualChecksum !== expectedChecksum) throw new Error("tar header checksum mismatch");
+    const size = tarNumber(header, 124, 12);
+    const type = String.fromCharCode(header[156] || 0x30);
+    const payloadStart = offset + 512;
+    const payloadEnd = payloadStart + size;
+    if (payloadEnd > bytes.length) throw new Error("truncated tar entry");
+    const payload = bytes.subarray(payloadStart, payloadEnd);
+    const name = tarString(header, 0, 100);
+    const prefix = tarString(header, 345, 155);
+    const headerName = prefix ? `${prefix}/${name}` : name;
+    if (type === "x" || type === "g") {
+      const values = parsePax(payload);
+      if (type === "g") global = { ...global, ...values };
+      else extended = values;
+    } else if (type === "L") {
+      longName = payload.subarray(0, payload.at(-1) === 0 ? -1 : undefined).toString("utf8");
+    } else if (type === "K") {
+      longLink = payload.subarray(0, payload.at(-1) === 0 ? -1 : undefined).toString("utf8");
+    } else {
+      const attributes = { ...global, ...extended };
+      entries.push({
+        name: attributes.path ?? longName ?? headerName,
+        linkName: attributes.linkpath ?? longLink ?? tarString(header, 157, 100),
+        mode: tarNumber(header, 100, 8) & 0o777,
+        type,
+        bytes: Buffer.from(payload),
+      });
+      extended = {};
+      longName = undefined;
+      longLink = undefined;
+    }
+    offset = payloadStart + Math.ceil(size / 512) * 512;
+  }
+  return entries;
+}
+
+function findZipEnd(bytes) {
+  const minimum = Math.max(0, bytes.length - 65_557);
+  for (let offset = bytes.length - 22; offset >= minimum; offset -= 1) {
+    if (bytes.readUInt32LE(offset) === 0x06054b50) return offset;
+  }
+  throw new Error("zip end record is missing");
+}
+
+function parseZip(bytes) {
+  const end = findZipEnd(bytes);
+  const count = bytes.readUInt16LE(end + 10);
+  let offset = bytes.readUInt32LE(end + 16);
+  const entries = [];
+  for (let index = 0; index < count; index += 1) {
+    if (bytes.readUInt32LE(offset) !== 0x02014b50) throw new Error("invalid zip central directory");
+    const method = bytes.readUInt16LE(offset + 10);
+    const compressedSize = bytes.readUInt32LE(offset + 20);
+    const uncompressedSize = bytes.readUInt32LE(offset + 24);
+    const nameLength = bytes.readUInt16LE(offset + 28);
+    const extraLength = bytes.readUInt16LE(offset + 30);
+    const commentLength = bytes.readUInt16LE(offset + 32);
+    const externalAttributes = bytes.readUInt32LE(offset + 38);
+    const localOffset = bytes.readUInt32LE(offset + 42);
+    const name = bytes.subarray(offset + 46, offset + 46 + nameLength).toString("utf8");
+    if (bytes.readUInt32LE(localOffset) !== 0x04034b50) throw new Error("invalid zip local header");
+    const localNameLength = bytes.readUInt16LE(localOffset + 26);
+    const localExtraLength = bytes.readUInt16LE(localOffset + 28);
+    const dataStart = localOffset + 30 + localNameLength + localExtraLength;
+    const compressed = bytes.subarray(dataStart, dataStart + compressedSize);
+    if (compressed.length !== compressedSize) throw new Error("truncated zip entry");
+    const contents = method === 0 ? Buffer.from(compressed) : method === 8 ? inflateRawSync(compressed) : undefined;
+    if (!contents) throw new Error(`unsupported zip compression method: ${method}`);
+    if (contents.length !== uncompressedSize) throw new Error(`zip size mismatch for ${name}`);
+    const unixMode = externalAttributes >>> 16;
+    if ((unixMode & 0o170000) === 0o120000) throw new Error(`zip symlink is unsupported: ${name}`);
+    entries.push({ name, type: name.endsWith("/") ? "5" : "0", mode: unixMode & 0o777, bytes: contents, linkName: "" });
+    offset += 46 + nameLength + extraLength + commentLength;
+  }
+  return entries;
+}
+
+async function extractEntries(entries, toolRoot, stripComponents) {
+  const prepared = [];
+  const destinations = new Set();
+  for (const entry of entries) {
+    const destination = archivePath(toolRoot, entry.name, stripComponents);
+    if (!destination) continue;
+    const key = process.platform === "win32" ? destination.toLowerCase() : destination;
+    if (destinations.has(key)) throw new Error(`duplicate archive path: ${entry.name}`);
+    destinations.add(key);
+    if (!["0", "5", "2"].includes(entry.type)) throw new Error(`unsupported archive entry type ${entry.type}: ${entry.name}`);
+    prepared.push({ ...entry, destination });
+  }
+  prepared.sort((left, right) => ({ "5": 0, "0": 1, "2": 2 })[left.type] - ({ "5": 0, "0": 1, "2": 2 })[right.type]);
+  for (const entry of prepared) {
+    await mkdir(entry.type === "5" ? entry.destination : path.dirname(entry.destination), { recursive: true });
+    if (entry.type === "5") {
+      if (entry.mode && process.platform !== "win32") await chmod(entry.destination, entry.mode);
+    } else if (entry.type === "0") {
+      await writeFile(entry.destination, entry.bytes, { flag: "wx", mode: entry.mode || 0o644 });
+      if (entry.mode && process.platform !== "win32") await chmod(entry.destination, entry.mode);
+    } else {
+      if (entry.linkName.includes("\0") || path.isAbsolute(entry.linkName)) throw new Error(`unsafe archive link target: ${entry.linkName}`);
+      const target = path.resolve(path.dirname(entry.destination), ...entry.linkName.split("/"));
+      const targetRelative = path.relative(toolRoot, target).split(path.sep).join("/");
+      archivePath(toolRoot, targetRelative, 0);
+      await symlink(entry.linkName, entry.destination);
+    }
+  }
+}
+
+async function extractArchive(bytes, format, toolRoot, stripComponents) {
+  if (format === "zip") await extractEntries(parseZip(bytes), toolRoot, stripComponents);
+  else if (format === "tar.gz") await extractEntries(parseTar(gunzipSync(bytes)), toolRoot, stripComponents);
+  else throw new Error(`unsupported archive format: ${format}`);
 }
 
 async function downloadArtifact(toolId, artifact, toolRoot) {
@@ -247,29 +468,16 @@ async function downloadArtifact(toolId, artifact, toolRoot) {
     const destination = checkedInstallPath(toolRoot, artifact.installPath);
     await mkdir(path.dirname(destination), { recursive: true });
     await writeFile(destination, bytes, { flag: "wx" });
-  } else if (["zip", "tar.gz", "tar.xz"].includes(artifact.archiveFormat)) {
-    const archivePath = `${toolRoot}.${toolId}.archive`;
+  } else if (["zip", "tar.gz"].includes(artifact.archiveFormat)) {
     const stripComponents = artifact.stripComponents ?? "0";
     if (!/^(0|[1-9][0-9]*)$/.test(stripComponents)) {
       throw new Error(`invalid stripComponents for ${toolId}`);
     }
     await mkdir(toolRoot, { recursive: true });
-    await writeFile(archivePath, bytes, { flag: "wx" });
     try {
-      const tarArguments = ["-xf", archivePath, "-C", toolRoot];
-      if (stripComponents !== "0") {
-        tarArguments.push("--strip-components", stripComponents);
-      }
-      execFileSync("tar", tarArguments, {
-        stdio: ["ignore", "pipe", "pipe"],
-      });
+      await extractArchive(bytes, artifact.archiveFormat, toolRoot, Number.parseInt(stripComponents, 10));
     } catch (error) {
-      const detail = Buffer.isBuffer(error.stderr)
-        ? error.stderr.toString("utf8").trim()
-        : error.message;
-      throw new Error(`${toolId} archive extraction failed: ${detail}`);
-    } finally {
-      await rm(archivePath, { force: true });
+      throw new Error(`${toolId} archive extraction failed: ${error.message}`);
     }
     const executable = checkedInstallPath(toolRoot, artifact.installPath);
     const executableStat = await stat(executable).catch(() => undefined);
@@ -314,7 +522,7 @@ async function prefetch(options) {
     tool: lock.tools[id],
     artifact: selectArtifact(id, lock.tools[id], platform),
   }));
-  const lockDigest = digest(canonicalize(lock));
+  const lockDigest = toolchainClosureDigest(lock, selections, platform);
   const lockHex = lockDigest.slice("sha256:".length);
   const absoluteCache = path.resolve(cachePath);
   const finalPath = path.join(
@@ -367,9 +575,14 @@ async function prefetch(options) {
         "utf8",
       );
       await mkdir(path.dirname(finalPath), { recursive: true });
-      await rename(stagingPath, finalPath);
+      await renameWithRetry(stagingPath, finalPath);
     } finally {
-      await rm(stagingPath, { recursive: true, force: true });
+      await rm(stagingPath, {
+        recursive: true,
+        force: true,
+        maxRetries: process.platform === "win32" ? 5 : 0,
+        retryDelay: 100,
+      });
     }
   }
 
@@ -391,6 +604,47 @@ async function prefetch(options) {
   };
 }
 
+async function verifyRuntimeClosure(lockPath, cachePath, platform) {
+  const lock = JSON.parse(await readFile(path.resolve(lockPath), "utf8"));
+  if (lock.schemaVersion !== "1" || typeof lock.tools !== "object") {
+    throw new Error("unsupported toolchain lock schema");
+  }
+  const toolIds = Object.keys(lock.tools).sort();
+  if (toolIds.join(",") !== "node,pnpm") {
+    throw new Error("minimal toolchain lock must contain only node and pnpm");
+  }
+  const selections = toolIds.map((id) => ({
+    id,
+    tool: lock.tools[id],
+    artifact: selectArtifact(id, lock.tools[id], platform),
+  }));
+  const lockDigest = toolchainClosureDigest(lock, selections, platform);
+  const expectedRelative = [
+    "closures",
+    "sha256",
+    lockDigest.slice("sha256:".length),
+    platform,
+  ].join("/");
+  const absoluteCache = path.resolve(cachePath);
+  const activePath = path.join(absoluteCache, "active", platform);
+  const activeBytes = await readFile(activePath, "utf8");
+  if (activeBytes !== `${expectedRelative}\n`) {
+    throw new Error("active closure identity does not match the toolchain lock");
+  }
+  const closurePath = path.resolve(absoluteCache, ...expectedRelative.split("/"));
+  const relative = path.relative(absoluteCache, closurePath);
+  if (relative.startsWith(`..${path.sep}`) || relative === ".." || path.isAbsolute(relative)) {
+    throw new Error("active closure escapes the toolchain cache");
+  }
+  const ready = JSON.parse(await readFile(path.join(closurePath, "ready.json"), "utf8"));
+  if (ready.status !== "ready" || ready.lockDigest !== lockDigest || ready.platform !== platform) {
+    throw new Error("cached closure readiness identity mismatch");
+  }
+  for (const selection of selections) {
+    await verifyInstalledTool(path.join(closurePath, selection.id), selection.artifact);
+  }
+}
+
 /**
  * @param {string} cwd
  * @param {string[]} arguments_
@@ -399,8 +653,38 @@ async function prefetch(options) {
  */
 function gitOutput(cwd, arguments_, encoding = "utf8") {
   try {
+    /** @type {NodeJS.ProcessEnv} */
+    const environment = {};
+    const allowed = [
+      "PATH",
+      "SystemRoot",
+      "ComSpec",
+      "PATHEXT",
+      "HOME",
+      "USERPROFILE",
+      "HOMEDRIVE",
+      "HOMEPATH",
+      "TEMP",
+      "TMP",
+      "TMPDIR",
+      "LANG",
+      "LC_ALL",
+    ];
+    for (const requested of allowed) {
+      const actual = Object.keys(process.env).find(
+        (name) => name.toLowerCase() === requested.toLowerCase(),
+      );
+      if (actual && process.env[actual] !== undefined) {
+        environment[requested] = process.env[actual];
+      }
+    }
+    environment.GIT_CONFIG_NOSYSTEM = "1";
+    environment.GIT_CONFIG_GLOBAL = process.platform === "win32" ? "NUL" : "/dev/null";
+    environment.GIT_OPTIONAL_LOCKS = "0";
+    environment.GIT_TERMINAL_PROMPT = "0";
     const bytes = execFileSync(process.env.TSFG_GIT ?? "git", arguments_, {
       cwd,
+      env: environment,
       stdio: ["ignore", "pipe", "pipe"],
     });
     return encoding === "buffer" ? bytes : bytes.toString(encoding);
@@ -787,8 +1071,40 @@ async function verifyWorkspace(options) {
 const arguments_ = process.argv.slice(2);
 const command = arguments_[0] ?? "";
 const reportPath = parseReportPath(arguments_);
+let runtimeIntegrityError;
+if (
+  process.env.TSFG_RUNTIME_LOCK ||
+  process.env.TSFG_RUNTIME_CACHE ||
+  process.env.TSFG_RUNTIME_PLATFORM
+) {
+  try {
+    if (
+      !process.env.TSFG_RUNTIME_LOCK ||
+      !process.env.TSFG_RUNTIME_CACHE ||
+      !process.env.TSFG_RUNTIME_PLATFORM
+    ) {
+      throw new Error("incomplete runtime closure identity");
+    }
+    await verifyRuntimeClosure(
+      process.env.TSFG_RUNTIME_LOCK,
+      process.env.TSFG_RUNTIME_CACHE,
+      process.env.TSFG_RUNTIME_PLATFORM,
+    );
+  } catch (error) {
+    runtimeIntegrityError = error;
+  }
+}
 
-if (command === "prefetch") {
+if (runtimeIntegrityError) {
+  process.exitCode = await fail(
+    command,
+    11,
+    "lock/integrity",
+    { code: "runtime-closure", message: runtimeIntegrityError.message },
+    reportPath,
+    "offline",
+  );
+} else if (command === "prefetch") {
   try {
     const options = parseOptions(
       arguments_,

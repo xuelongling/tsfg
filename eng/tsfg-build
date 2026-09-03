@@ -6,6 +6,35 @@ script_dir=$(CDPATH= cd -- "$(dirname -- "$0")" && pwd)
 repository=$(CDPATH= cd -- "$script_dir/.." && pwd)
 cache=${TSFG_CACHE_DIR:-"$repository/.tsfg-cache"}
 platform=linux-x86_64
+lock_id=af94259f095e563d0c3f6d370c9085e3fc10f406b56b368b22c6fea399804793
+report=
+expect_report=false
+for argument do
+  if [ "$expect_report" = true ]; then
+    report=$argument
+    break
+  fi
+  if [ "$argument" = --report ]; then
+    expect_report=true
+  fi
+done
+
+runtime_failure() {
+  message='locked Node.js closure is missing or invalid; run tsfg-build prefetch'
+  if [ -n "$report" ]; then
+    parent=$(dirname -- "$report")
+    temporary="$report.$$.tmp"
+    if ! mkdir -p -- "$parent" ||
+      ! printf '%s\n' "{\"command\":\"${1:-}\",\"error\":{\"category\":\"lock/integrity\",\"code\":\"11\",\"issues\":[{\"code\":\"runtime-closure\",\"message\":\"$message\"}]},\"network\":\"offline\",\"schemaVersion\":\"1\",\"status\":\"failure\",\"telemetry\":false}" > "$temporary" ||
+      ! mv -f -- "$temporary" "$report"; then
+      rm -f -- "$temporary"
+      printf '%s\n' 'cannot write Build Report for runtime closure failure' >&2
+      exit 30
+    fi
+  fi
+  printf '%s\n' "$message" >&2
+  exit 11
+}
 
 if [ "${1:-}" = prefetch ]; then
   exec node "$script_dir/tsfg-build.mjs" "$@" \
@@ -16,15 +45,20 @@ fi
 
 active="$cache/active/$platform"
 if [ ! -f "$active" ]; then
-  printf '%s\n' 'locked Node.js closure is missing; run tsfg-build prefetch first' >&2
-  exit 11
+  runtime_failure "${1:-}"
 fi
 closure=$(sed -n '1p' "$active")
+if [ "$closure" != "closures/sha256/$lock_id/$platform" ]; then
+  runtime_failure "${1:-}"
+fi
 node_path="$cache/$closure/node/bin/node"
 if [ ! -x "$node_path" ]; then
-  printf '%s\n' 'locked Node.js executable is missing or corrupt; rerun tsfg-build prefetch' >&2
-  exit 11
+  runtime_failure "${1:-}"
 fi
 TSFG_GIT=$(command -v git || true)
 export TSFG_GIT
+TSFG_RUNTIME_LOCK="$script_dir/toolchains.lock.json"
+TSFG_RUNTIME_CACHE=$cache
+TSFG_RUNTIME_PLATFORM=$platform
+export TSFG_RUNTIME_LOCK TSFG_RUNTIME_CACHE TSFG_RUNTIME_PLATFORM
 exec "$node_path" "$script_dir/tsfg-build.mjs" "$@"
