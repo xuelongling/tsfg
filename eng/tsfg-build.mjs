@@ -104,6 +104,25 @@ async function renameWithRetry(source, destination) {
   }
 }
 
+async function publishDirectory(source, destination) {
+  if (!(await pathExists(destination))) {
+    await renameWithRetry(source, destination);
+    return;
+  }
+  const backup = path.join(
+    path.dirname(destination),
+    `.${path.basename(destination)}.${randomUUID()}.previous`,
+  );
+  await renameWithRetry(destination, backup);
+  try {
+    await renameWithRetry(source, destination);
+  } catch (error) {
+    await renameWithRetry(backup, destination);
+    throw error;
+  }
+  await rm(backup, { recursive: true, force: true }).catch(() => undefined);
+}
+
 function parseReportPath(arguments_) {
   const index = arguments_.indexOf("--report");
   if (index === -1 || !arguments_[index + 1]) {
@@ -1544,8 +1563,7 @@ async function buildLinuxDebug(options, runtime) {
       await chmod(publishedCpp, 0o755);
       await chmod(publishedZig, 0o755);
     }
-    await rm(output, { recursive: true, force: true });
-    await renameWithRetry(publishRoot, output);
+    await publishDirectory(publishRoot, output);
     return {
       outputs: ["bin/tsfg-r00-cpp-smoke", "bin/tsfg-r00-zig-smoke"],
       profile,
@@ -1594,16 +1612,15 @@ async function testLinuxDebug(options) {
   }
 
   const output = path.resolve(outputOption);
-  const fixtureSuffix = process.platform === "win32" ? ".exe" : "";
   const cases = [
     {
-      executable: path.join(output, "bin", `tsfg-r00-cpp-smoke${fixtureSuffix}`),
+      executable: path.join(output, "bin", "tsfg-r00-cpp-smoke"),
       name: "cpp-smoke",
       stderr: "",
       stdout: "tsfg-r00-cpp-smoke: ok\n",
     },
     {
-      executable: path.join(output, "bin", `tsfg-r00-zig-smoke${fixtureSuffix}`),
+      executable: path.join(output, "bin", "tsfg-r00-zig-smoke"),
       name: "zig-smoke",
       stderr: "tsfg-r00-zig-smoke: ok\n",
       stdout: "",
@@ -1738,12 +1755,17 @@ if (runtimeIntegrityError) {
     process.exitCode = await succeed(command, result, reportPath, "offline");
   } catch (error) {
     const isConfigurationError = error instanceof ConfigurationError;
+    const isBuildFailure = error instanceof BuildFailureError;
     process.exitCode = await fail(
       command,
-      isConfigurationError ? 2 : 20,
-      isConfigurationError ? "usage/configuration" : "build failure",
+      isConfigurationError ? 2 : isBuildFailure ? 20 : 30,
+      isConfigurationError
+        ? "usage/configuration"
+        : isBuildFailure ? "build failure" : "internal control-plane failure",
       {
-        code: isConfigurationError ? "invalid-configuration" : "native-build",
+        code: isConfigurationError
+          ? "invalid-configuration"
+          : isBuildFailure ? "native-build" : "internal-control-plane",
         message: error.message,
       },
       reportPath,
@@ -1761,12 +1783,17 @@ if (runtimeIntegrityError) {
     process.exitCode = await succeed(command, result, reportPath, "offline");
   } catch (error) {
     const isConfigurationError = error instanceof ConfigurationError;
+    const isTestFailure = error instanceof TestFailureError;
     process.exitCode = await fail(
       command,
-      isConfigurationError ? 2 : 21,
-      isConfigurationError ? "usage/configuration" : "test failure",
+      isConfigurationError ? 2 : isTestFailure ? 21 : 30,
+      isConfigurationError
+        ? "usage/configuration"
+        : isTestFailure ? "test failure" : "internal control-plane failure",
       {
-        code: isConfigurationError ? "invalid-configuration" : "native-test",
+        code: isConfigurationError
+          ? "invalid-configuration"
+          : isTestFailure ? "native-test" : "internal-control-plane",
         message: error.message,
       },
       reportPath,

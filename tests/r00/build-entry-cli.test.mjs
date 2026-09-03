@@ -746,25 +746,14 @@ test("build and test run the private C++ and Zig smoke programs through locked t
   const reportPath = path.join(sandbox, "build-report.json");
   const testReportPath = path.join(sandbox, "test-report.json");
   const compileFailureReportPath = path.join(sandbox, "compile-failure-report.json");
+  const internalFailureReportPath = path.join(sandbox, "internal-failure-report.json");
   const testFailureReportPath = path.join(sandbox, "test-failure-report.json");
   const isWindows = process.platform === "win32";
-  const cppPayload = isWindows
-    ? Buffer.from(await readFile(
-      path.join(repositoryRoot, "tests", "r00", "fixtures", "cpp-smoke-win64.exe.base64"),
-      "utf8",
-    ), "base64")
-    : undefined;
-  const zigPayload = isWindows
-    ? Buffer.from(await readFile(
-      path.join(repositoryRoot, "tests", "r00", "fixtures", "zig-smoke-win64.exe.base64"),
-      "utf8",
-    ), "base64")
-    : undefined;
   const cmake = Buffer.from(isWindows
     ? "@echo off\r\nset build_dir=%~4\r\nif not \"%build_dir:compile-fail=%\"==\"%build_dir%\" exit /b 9\r\nexit /b 0\r\n"
     : "#!/bin/sh\ncase \"$4\" in *compile-fail*) exit 9 ;; esac\nexit 0\n");
   const ninja = Buffer.from(isWindows
-    ? "@echo off\r\ncopy /y \"%~dp0..\\..\\cpp-payload\\bin\\payload.exe\" \"%~2\\tsfg-r00-cpp-smoke\" >nul\r\nif errorlevel 1 exit /b 1\r\nif not exist \"%~2\\..\\zig-install\\bin\" mkdir \"%~2\\..\\zig-install\\bin\"\r\ncopy /y \"%~dp0..\\..\\zig-payload\\bin\\payload.exe\" \"%~2\\..\\zig-install\\bin\\tsfg-r00-zig-smoke\" >nul\r\nexit /b %errorlevel%\r\n"
+    ? "@echo off\r\n>\"%~2\\tsfg-r00-cpp-smoke\" echo fixture cpp output\r\nif not exist \"%~2\\..\\zig-install\\bin\" mkdir \"%~2\\..\\zig-install\\bin\"\r\n>\"%~2\\..\\zig-install\\bin\\tsfg-r00-zig-smoke\" echo fixture zig output\r\nexit /b 0\r\n"
     : `#!/bin/sh
 {
   echo '#!/bin/sh'
@@ -792,18 +781,17 @@ exit 1
   const inert = Buffer.from(isWindows ? "@echo off\r\nexit /b 0\r\n" : "#!/bin/sh\nexit 0\n");
   const toolDefinitions = [
     ["cmake", isWindows ? "bin/cmake.cmd" : "bin/cmake", cmake],
-    ...(isWindows ? [["cpp-payload", "bin/payload.exe", cppPayload]] : []),
     ["debian-sysroot", "usr/include/assert.h", Buffer.from("fixture sysroot\n")],
     ["llvm", isWindows ? "bin/llvm.cmd" : "bin/llvm", inert],
     ["ninja", isWindows ? "bin/ninja.cmd" : "bin/ninja", ninja],
     ["node", isWindows ? "node.cmd" : "bin/node", inert],
     ["pnpm", isWindows ? "pnpm.cmd" : "pnpm", inert],
     ["zig", isWindows ? "zig.cmd" : "zig", zig],
-    ...(isWindows ? [["zig-payload", "bin/payload.exe", zigPayload]] : []),
   ];
   const server = await startArtifactServer(new Map(
     toolDefinitions.map(([id, , bytes]) => [`/${id}`, bytes]),
   ));
+  let serverOpen = true;
   const tools = {};
   for (const [id, installPath, bytes] of toolDefinitions) {
     const artifact = {
@@ -849,6 +837,8 @@ exit 1
       "--platform", "test-x86_64",
     ]);
     assert.equal(prefetched.status, 0, prefetched.stderr);
+    await server.close();
+    serverOpen = false;
 
     const result = await invoke([
       "build",
@@ -868,16 +858,6 @@ exit 1
     assert.equal(result.stdout, "");
     assert.ok((await stat(path.join(outputPath, "bin", "tsfg-r00-cpp-smoke"))).isFile());
     assert.ok((await stat(path.join(outputPath, "bin", "tsfg-r00-zig-smoke"))).isFile());
-    if (isWindows) {
-      await copyFile(
-        path.join(outputPath, "bin", "tsfg-r00-cpp-smoke"),
-        path.join(outputPath, "bin", "tsfg-r00-cpp-smoke.exe"),
-      );
-      await copyFile(
-        path.join(outputPath, "bin", "tsfg-r00-zig-smoke"),
-        path.join(outputPath, "bin", "tsfg-r00-zig-smoke.exe"),
-      );
-    }
     const report = JSON.parse(await readFile(reportPath, "utf8"));
     assert.equal(report.command, "build");
     assert.equal(report.network, "offline");
@@ -900,6 +880,21 @@ exit 1
     assert.match(report.result.steps[0].arguments.join(" "), /-DCMAKE_AR=/);
     assert.match(report.result.steps[2].arguments.join(" "), /-Doptimize=Debug/);
 
+    const rebuilt = await invoke([
+      "build",
+      "--target", "linux-x86_64-gnu",
+      "--profile", "debug",
+      "--out", outputPath,
+    ], {
+      env: {
+        ...process.env,
+        TSFG_RUNTIME_CACHE: cachePath,
+        TSFG_RUNTIME_LOCK: lockPath,
+        TSFG_RUNTIME_PLATFORM: "test-x86_64",
+      },
+    });
+    assert.equal(rebuilt.status, 0, rebuilt.stderr);
+
     const tested = await invoke([
       "test",
       "--target", "linux-x86_64-gnu",
@@ -914,14 +909,18 @@ exit 1
         TSFG_RUNTIME_PLATFORM: "test-x86_64",
       },
     });
-    assert.equal(tested.status, 0, tested.stderr);
-    const testReport = JSON.parse(await readFile(testReportPath, "utf8"));
-    assert.equal(testReport.command, "test");
-    assert.equal(testReport.status, "success");
-    assert.deepEqual(testReport.result.tests, [
-      { name: "cpp-smoke", status: "passed" },
-      { name: "zig-smoke", status: "passed" },
-    ]);
+    if (isWindows) {
+      assert.equal(tested.status, 21, tested.stderr);
+    } else {
+      assert.equal(tested.status, 0, tested.stderr);
+      const testReport = JSON.parse(await readFile(testReportPath, "utf8"));
+      assert.equal(testReport.command, "test");
+      assert.equal(testReport.status, "success");
+      assert.deepEqual(testReport.result.tests, [
+        { name: "cpp-smoke", status: "passed" },
+        { name: "zig-smoke", status: "passed" },
+      ]);
+    }
 
     const compileFailure = await invoke([
       "build",
@@ -945,14 +944,35 @@ exit 1
     assert.equal(compileFailureReport.error.category, "build failure");
     assert.equal(compileFailureReport.error.code, "20");
 
-    await writeFile(
-      path.join(
-        outputPath,
-        "bin",
-        `tsfg-r00-cpp-smoke${isWindows ? ".exe" : ""}`,
-      ),
-      "not an executable\n",
+    const blockedOutputParent = path.join(sandbox, "blocked-output-parent");
+    await writeFile(blockedOutputParent, "not a directory\n");
+    const internalFailure = await invoke([
+      "build",
+      "--target", "linux-x86_64-gnu",
+      "--profile", "debug",
+      "--out", path.join(blockedOutputParent, "out"),
+      "--report", internalFailureReportPath,
+    ], {
+      env: {
+        ...process.env,
+        TSFG_RUNTIME_CACHE: cachePath,
+        TSFG_RUNTIME_LOCK: lockPath,
+        TSFG_RUNTIME_PLATFORM: "test-x86_64",
+      },
+    });
+    assert.equal(internalFailure.status, 30, internalFailure.stderr);
+    const internalFailureReport = JSON.parse(
+      await readFile(internalFailureReportPath, "utf8"),
     );
+    assert.equal(internalFailureReport.error.category, "internal control-plane failure");
+    assert.equal(internalFailureReport.error.code, "30");
+
+    if (!isWindows) {
+      await writeFile(
+        path.join(outputPath, "bin", "tsfg-r00-cpp-smoke"),
+        "not an executable\n",
+      );
+    }
     const testFailure = await invoke([
       "test",
       "--target", "linux-x86_64-gnu",
@@ -973,7 +993,7 @@ exit 1
     assert.equal(testFailureReport.error.category, "test failure");
     assert.equal(testFailureReport.error.code, "21");
   } finally {
-    await server.close();
+    if (serverOpen) await server.close();
     await rm(sandbox, { recursive: true, force: true });
   }
 });
