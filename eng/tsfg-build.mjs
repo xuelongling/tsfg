@@ -17,6 +17,7 @@ import {
   symlink,
   writeFile,
 } from "node:fs/promises";
+import { constants as fsConstants } from "node:fs";
 import { execFileSync, spawnSync } from "node:child_process";
 import { connect as connectNetwork } from "node:net";
 import path from "node:path";
@@ -37,6 +38,7 @@ class TestFailureError extends Error {}
 class PackageFailureError extends Error {}
 class OfflineBoundaryError extends Error {}
 class UndeclaredInputError extends Error {}
+class SandboxBoundaryError extends Error {}
 class WorkspaceMismatchError extends Error {
   constructor(code, message) {
     super(message);
@@ -70,6 +72,20 @@ async function digestFile(filePath) {
     await handle.close().catch(() => undefined);
   }
   return `sha256:${hasher.digest("hex")}`;
+}
+
+async function readRegularFile(filePath, description) {
+  let handle;
+  try {
+    handle = await open(filePath, fsConstants.O_RDONLY | fsConstants.O_NOFOLLOW);
+    const file = await handle.stat();
+    if (!file.isFile()) throw new Error("not a regular file");
+    return await handle.readFile();
+  } catch (error) {
+    throw new Error(`${description} is not a stable regular file: ${error.message}`);
+  } finally {
+    await handle?.close().catch(() => undefined);
+  }
 }
 
 async function writeReport(reportPath, report) {
@@ -1689,11 +1705,17 @@ function buildEnvironment(temporaryRoot, toolDirectories) {
   return environment;
 }
 
-function throwSandboxBoundaryFailure(detail, operation) {
+function throwSandboxBoundaryFailure(detail, operation, status) {
   if (/tsfg sandbox: .*network/i.test(detail)) {
     throw new OfflineBoundaryError(`sandbox network isolation failed during ${operation}: ${detail}`);
   }
-  if (/permission denied|operation not permitted|read-only file system|tsfg sandbox:/i.test(detail)) {
+  if (status === 125 && /tsfg sandbox:/i.test(detail)) {
+    throw new SandboxBoundaryError(`sandbox setup failed during ${operation}: ${detail}`);
+  }
+  if (
+    /permission denied|operation not permitted|read-only file system|no such file|not found|tsfg sandbox:/i
+      .test(detail)
+  ) {
     throw new UndeclaredInputError(`sandbox denied an undeclared ${operation} input: ${detail}`);
   }
 }
@@ -1743,7 +1765,7 @@ function runBuildTool(toolId, executable, arguments_, cwd, environment) {
       ? error.stderr.toString("utf8")
       : "";
     const detail = `${stdout}${stderr}`.trim() || error.message;
-    throwSandboxBoundaryFailure(detail, "build");
+    throwSandboxBoundaryFailure(detail, "build", error.status);
     throw new BuildFailureError(`${toolId} failed${detail ? `: ${detail}` : ""}`);
   }
 }
@@ -1763,6 +1785,29 @@ function sandboxArguments(
     executable,
     ...arguments_,
   ];
+}
+
+async function compileSandbox(runtime, sourceRoot, controlRoot) {
+  const zig = closureToolPath(runtime, "zig");
+  const executable = path.join(controlRoot, "sandbox-run");
+  await mkdir(controlRoot, { recursive: true });
+  runBuildTool(
+    "sandbox-bootstrap",
+    zig,
+    [
+      "cc",
+      "-target", "x86_64-linux-musl",
+      "-static",
+      "-O2",
+      path.join(sourceRoot, "eng", "sandbox-run.c"),
+      "-o", executable,
+    ],
+    sourceRoot,
+    buildEnvironment(controlRoot, [path.dirname(zig)]),
+  );
+  await readRegularFile(executable, "sandbox executable");
+  await chmod(executable, 0o755);
+  return { executable };
 }
 
 async function buildLinuxDebug(options, runtime, workspaceState, networkCanary) {
@@ -1879,25 +1924,7 @@ async function buildLinuxDebug(options, runtime, workspaceState, networkCanary) 
     await mkdir(path.join(zigPrefix, "bin"), { recursive: true });
     await mkdir(binRoot, { recursive: true });
     if (sandboxRequired) {
-      runBuildTool(
-        "sandbox-bootstrap",
-        zig,
-        [
-          "cc",
-          "-target", "x86_64-linux-musl",
-          "-static",
-          "-O2",
-          path.join(sourceRoot, "eng", "sandbox-run.c"),
-          "-o", sandboxExecutable,
-        ],
-        sourceRoot,
-        environment,
-      );
-      const sandboxStat = await stat(sandboxExecutable).catch(() => undefined);
-      if (!sandboxStat?.isFile()) {
-        throw new BuildFailureError("sandbox bootstrap produced no executable");
-      }
-      await chmod(sandboxExecutable, 0o755);
+      await compileSandbox(runtime, sourceRoot, controlRoot);
       environment.TSFG_LOCKED_LOADER = loader;
       environment.TSFG_LOCKED_LIBRARIES = runtimeLibraries;
       environment.TSFG_LOCKED_CLANGXX = clangxx;
@@ -1953,33 +1980,18 @@ async function buildLinuxDebug(options, runtime, workspaceState, networkCanary) 
         runBuildTool(step.tool, step.executable, step.arguments, sourceRoot, environment);
       }
     }
-    const cppStat = await stat(cppOutput).catch(() => undefined);
-    if (!cppStat?.isFile()) {
-      throw new BuildFailureError("C++ smoke build produced no executable");
-    }
+    const cppBytes = await readRegularFile(cppOutput, "C++ smoke build output")
+      .catch((error) => { throw new BuildFailureError(error.message); });
     const publishedCpp = path.join(binRoot, "tsfg-r00-cpp-smoke");
     const zigOutput = path.join(zigPrefix, "bin", "tsfg-r00-zig-smoke");
-    const zigStat = await stat(zigOutput).catch(() => undefined);
-    if (!zigStat?.isFile()) {
-      throw new BuildFailureError("Zig smoke build produced no executable");
-    }
+    const zigBytes = await readRegularFile(zigOutput, "Zig smoke build output")
+      .catch((error) => { throw new BuildFailureError(error.message); });
     const publishedZig = path.join(binRoot, "tsfg-r00-zig-smoke");
-    await copyFile(cppOutput, publishedCpp);
-    await copyFile(zigOutput, publishedZig);
+    await writeFile(publishedCpp, cppBytes, { flag: "wx" });
+    await writeFile(publishedZig, zigBytes, { flag: "wx" });
     if (process.platform !== "win32") {
       await chmod(publishedCpp, 0o755);
       await chmod(publishedZig, 0o755);
-    }
-    let controlSandbox;
-    if (sandboxRequired) {
-      const publishedSandbox = path.join(publishRoot, ".control", "sandbox-run");
-      await mkdir(path.dirname(publishedSandbox), { recursive: true });
-      await copyFile(sandboxExecutable, publishedSandbox);
-      await chmod(publishedSandbox, 0o755);
-      controlSandbox = {
-        path: ".control/sandbox-run",
-        sha256: await digestFile(publishedSandbox),
-      };
     }
     const payloads = await Promise.all([
       "bin/tsfg-r00-cpp-smoke",
@@ -1992,7 +2004,6 @@ async function buildLinuxDebug(options, runtime, workspaceState, networkCanary) 
       buildIdentity: identity.buildIdentity,
       buildInputSet: identity.buildInputSet,
       contractSetId: identity.contractSetId,
-      ...(controlSandbox ? { controlSandbox } : {}),
       development: workspaceState.development,
       dirty: workspaceState.dirty,
       inputAudit: {
@@ -2022,7 +2033,6 @@ async function buildLinuxDebug(options, runtime, workspaceState, networkCanary) 
       inputAudit: metadata.inputAudit,
       networkCanary,
       outputs: [
-        ...(controlSandbox ? [controlSandbox.path] : []),
         "bin/tsfg-r00-cpp-smoke",
         "bin/tsfg-r00-zig-smoke",
         "build-metadata.json",
@@ -2090,7 +2100,7 @@ function runSmokeExecutable(
   );
   if (result.error || result.status !== 0) {
     const detail = `${result.stdout ?? ""}${result.stderr ?? ""}`.trim();
-    throwSandboxBoundaryFailure(detail, "test");
+    throwSandboxBoundaryFailure(detail, "test", result.status);
     throw new TestFailureError(
       `${name} failed${detail ? `: ${detail}` : result.error ? `: ${result.error.message}` : ""}`,
     );
@@ -2132,6 +2142,18 @@ async function testLinuxDebug(options, runtime, workspaceState, networkCanary) {
   ) {
     throw new TestFailureError("Build Metadata does not match the requested test target");
   }
+  let identity;
+  try {
+    identity = await createBuildIdentity(runtime, target, profile, workspaceState.root);
+  } catch (error) {
+    throw new TestFailureError(`cannot derive test Build Identity: ${error.message}`);
+  }
+  if (
+    canonicalize(metadata.buildIdentity) !== canonicalize(identity.buildIdentity) ||
+    canonicalize(metadata.buildInputSet) !== canonicalize(identity.buildInputSet)
+  ) {
+    throw new TestFailureError("Build Metadata does not match the current Build Identity");
+  }
   if (metadata.development && !workspaceState.development) {
     throw new WorkspaceMismatchError(
       "development-mode-required",
@@ -2142,28 +2164,11 @@ async function testLinuxDebug(options, runtime, workspaceState, networkCanary) {
   let sandboxRoot;
   let lockedShell;
   if (process.platform === "linux") {
-    if (
-      typeof metadata.controlSandbox?.path !== "string" ||
-      typeof metadata.controlSandbox?.sha256 !== "string"
-    ) {
-      throw new TestFailureError("Build Metadata does not declare the Linux sandbox");
-    }
-    const sourceSandbox = path.join(output, ...metadata.controlSandbox.path.split("/"));
-    const sandboxStat = await lstat(sourceSandbox).catch(() => undefined);
-    if (
-      !sandboxStat?.isFile() ||
-      sandboxStat.isSymbolicLink() ||
-      await digestFile(sourceSandbox) !== metadata.controlSandbox.sha256
-    ) {
-      throw new TestFailureError("Linux sandbox does not match Build Metadata");
-    }
-    sandboxExecutable = path.join(testRoot, "control", "sandbox-run");
-    await mkdir(path.dirname(sandboxExecutable), { recursive: true });
-    await copyFile(sourceSandbox, sandboxExecutable);
-    if (await digestFile(sandboxExecutable) !== metadata.controlSandbox.sha256) {
-      throw new TestFailureError("Linux sandbox changed during test staging");
-    }
-    await chmod(sandboxExecutable, 0o755);
+    const sourceRoot = path.join(testRoot, "source");
+    const controlRoot = path.join(testRoot, "control");
+    await materializeBuildInputs(workspaceState.root, identity.buildInputSet, sourceRoot);
+    const compiled = await compileSandbox(runtime, sourceRoot, controlRoot);
+    sandboxExecutable = compiled.executable;
     sandboxRoot = path.join(
       path.dirname(output),
       `.${path.basename(output)}.${randomUUID()}.test-sandbox`,
@@ -2194,16 +2199,14 @@ async function testLinuxDebug(options, runtime, workspaceState, networkCanary) {
   const tests = [];
   try {
     for (const [index, smoke] of cases.entries()) {
-      const file = await stat(smoke.source).catch(() => undefined);
-      if (!file?.isFile()) {
-        throw new TestFailureError(`${smoke.name} executable is missing`);
-      }
+      const bytes = await readRegularFile(smoke.source, `${smoke.name} executable`)
+        .catch((error) => { throw new TestFailureError(error.message); });
       const executable = path.join(testRoot, ...metadata.payloads[index].path.split("/"));
       await mkdir(path.dirname(executable), { recursive: true });
-      await copyFile(smoke.source, executable);
-      if (await digestFile(executable) !== metadata.payloads[index].sha256) {
+      if (digest(bytes) !== metadata.payloads[index].sha256) {
         throw new TestFailureError(`${smoke.name} executable does not match Build Metadata`);
       }
+      await writeFile(executable, bytes, { flag: "wx" });
       if (process.platform !== "win32") await chmod(executable, 0o755);
       const observed = runSmokeExecutable(
         smoke.name,
@@ -2333,23 +2336,21 @@ async function materializeBuildInputs(workspaceRoot, buildInputSet, destination)
       workspaceRoot,
       ...entry.repositoryRelativePath.split("/"),
     );
-    const sourceStat = await lstat(source);
-    if (!sourceStat.isFile() || sourceStat.isSymbolicLink()) {
-      throw new BuildFailureError(
-        `declared Build Input is not a regular file: ${entry.repositoryRelativePath}`,
-      );
-    }
+    const bytes = await readRegularFile(
+      source,
+      `declared Build Input ${entry.repositoryRelativePath}`,
+    ).catch((error) => { throw new BuildFailureError(error.message); });
     const target = path.join(
       destination,
       ...entry.repositoryRelativePath.split("/"),
     );
     await mkdir(path.dirname(target), { recursive: true });
-    await copyFile(source, target);
-    if (await digestFile(target) !== entry.sha256) {
+    if (digest(bytes) !== entry.sha256) {
       throw new BuildFailureError(
         `declared Build Input changed during materialization: ${entry.repositoryRelativePath}`,
       );
     }
+    await writeFile(target, bytes, { flag: "wx" });
     if (process.platform !== "win32") {
       await chmod(target, entry.normalizedMode === "100755" ? 0o755 : 0o644);
     }
@@ -2476,6 +2477,7 @@ async function packageLinuxDebug(options, runtime, workspaceState, networkCanary
   );
   const packageSandboxRoot = `${stagingRoot}-sandbox`;
   const packageControlRoot = `${stagingRoot}-control`;
+  const packageSourceRoot = `${stagingRoot}-source`;
   const publishRoot = path.join(stagingRoot, "publish");
   try {
     await mkdir(publishRoot, { recursive: true });
@@ -2514,28 +2516,13 @@ async function packageLinuxDebug(options, runtime, workspaceState, networkCanary
     let loader;
     let runtimeLibraries;
     if (process.platform === "linux") {
-      if (
-        typeof metadata.controlSandbox?.path !== "string" ||
-        typeof metadata.controlSandbox?.sha256 !== "string"
-      ) {
-        throw new PackageFailureError("build metadata does not declare the Linux sandbox");
-      }
-      const sourceSandbox = path.join(input, ...metadata.controlSandbox.path.split("/"));
-      const sandboxStat = await lstat(sourceSandbox).catch(() => undefined);
-      if (
-        !sandboxStat?.isFile() ||
-        sandboxStat.isSymbolicLink() ||
-        await digestFile(sourceSandbox) !== metadata.controlSandbox.sha256
-      ) {
-        throw new PackageFailureError("Linux sandbox does not match build metadata");
-      }
-      sandboxExecutable = path.join(packageControlRoot, "sandbox-run");
-      await mkdir(path.dirname(sandboxExecutable), { recursive: true });
-      await copyFile(sourceSandbox, sandboxExecutable);
-      if (await digestFile(sandboxExecutable) !== metadata.controlSandbox.sha256) {
-        throw new PackageFailureError("Linux sandbox changed during staging");
-      }
-      await chmod(sandboxExecutable, 0o755);
+      await materializeBuildInputs(
+        workspaceState.root,
+        identity.buildInputSet,
+        packageSourceRoot,
+      );
+      const compiled = await compileSandbox(runtime, packageSourceRoot, packageControlRoot);
+      sandboxExecutable = compiled.executable;
       const sysroot = path.join(runtime.closurePath, "debian-sysroot");
       loader = path.join(sysroot, "lib", "x86_64-linux-gnu", "ld-linux-x86-64.so.2");
       runtimeLibraries = [
@@ -2560,19 +2547,17 @@ async function packageLinuxDebug(options, runtime, workspaceState, networkCanary
     const members = [];
     for (const payload of metadata.payloads) {
       const source = path.join(input, ...payload.path.split("/"));
-      const sourceStat = await lstat(source).catch(() => undefined);
-      if (!sourceStat?.isFile() || sourceStat.isSymbolicLink()) {
-        throw new PackageFailureError(`smoke payload is missing or is not a regular file: ${payload.path}`);
-      }
+      const bytes = await readRegularFile(source, `smoke payload ${payload.path}`)
+        .catch((error) => { throw new PackageFailureError(error.message); });
       const packagedPayload = path.join(stagingRoot, "members", ...payload.path.split("/"));
       const symbolPath = `symbols/${path.posix.basename(payload.path)}.debug`;
       const packagedSymbol = path.join(stagingRoot, "members", ...symbolPath.split("/"));
       await mkdir(path.dirname(packagedPayload), { recursive: true });
       await mkdir(path.dirname(packagedSymbol), { recursive: true });
-      await copyFile(source, packagedPayload);
-      if (await digestFile(packagedPayload) !== payload.sha256) {
+      if (digest(bytes) !== payload.sha256) {
         throw new PackageFailureError(`smoke payload digest does not match build metadata: ${payload.path}`);
       }
+      await writeFile(packagedPayload, bytes, { flag: "wx" });
       await chmod(packagedPayload, 0o755);
       runPackageTool(
         packageTool,
@@ -2692,6 +2677,7 @@ async function packageLinuxDebug(options, runtime, workspaceState, networkCanary
     });
     await rm(packageSandboxRoot, { recursive: true, force: true });
     await rm(packageControlRoot, { recursive: true, force: true });
+    await rm(packageSourceRoot, { recursive: true, force: true });
   }
 }
 
@@ -2823,18 +2809,21 @@ if (runtimeIntegrityError) {
     const isWorkspaceMismatch = error instanceof WorkspaceMismatchError;
     const isOfflineBoundary = error instanceof OfflineBoundaryError;
     const isUndeclaredInput = error instanceof UndeclaredInputError;
+    const isSandboxBoundary = error instanceof SandboxBoundaryError;
     process.exitCode = await fail(
       command,
       isConfigurationError
         ? 2
         : isWorkspaceMismatch
           ? 10
-          : (isOfflineBoundary || isUndeclaredInput) ? 12 : isBuildFailure ? 20 : 30,
+          : (isOfflineBoundary || isUndeclaredInput || isSandboxBoundary)
+            ? 12
+            : isBuildFailure ? 20 : 30,
       isConfigurationError
         ? "usage/configuration"
         : isWorkspaceMismatch
           ? "workspace mismatch"
-          : (isOfflineBoundary || isUndeclaredInput)
+          : (isOfflineBoundary || isUndeclaredInput || isSandboxBoundary)
             ? "offline input missing"
           : isBuildFailure ? "build failure" : "internal control-plane failure",
       {
@@ -2846,7 +2835,9 @@ if (runtimeIntegrityError) {
               ? "network-boundary"
               : isUndeclaredInput
                 ? "undeclared-build-input"
-            : isBuildFailure ? "native-build" : "internal-control-plane",
+                : isSandboxBoundary
+                  ? "sandbox-boundary"
+                  : isBuildFailure ? "native-build" : "internal-control-plane",
         message: error.message,
       },
       reportPath,
@@ -2872,18 +2863,21 @@ if (runtimeIntegrityError) {
     const isWorkspaceMismatch = error instanceof WorkspaceMismatchError;
     const isOfflineBoundary = error instanceof OfflineBoundaryError;
     const isUndeclaredInput = error instanceof UndeclaredInputError;
+    const isSandboxBoundary = error instanceof SandboxBoundaryError;
     process.exitCode = await fail(
       command,
       isConfigurationError
         ? 2
         : isWorkspaceMismatch
           ? 10
-          : (isOfflineBoundary || isUndeclaredInput) ? 12 : isTestFailure ? 21 : 30,
+          : (isOfflineBoundary || isUndeclaredInput || isSandboxBoundary)
+            ? 12
+            : isTestFailure ? 21 : 30,
       isConfigurationError
         ? "usage/configuration"
         : isWorkspaceMismatch
           ? "workspace mismatch"
-          : (isOfflineBoundary || isUndeclaredInput)
+          : (isOfflineBoundary || isUndeclaredInput || isSandboxBoundary)
             ? "offline input missing"
           : isTestFailure ? "test failure" : "internal control-plane failure",
       {
@@ -2895,7 +2889,9 @@ if (runtimeIntegrityError) {
               ? "network-boundary"
               : isUndeclaredInput
                 ? "undeclared-test-input"
-            : isTestFailure ? "native-test" : "internal-control-plane",
+                : isSandboxBoundary
+                  ? "sandbox-boundary"
+                  : isTestFailure ? "native-test" : "internal-control-plane",
         message: error.message,
       },
       reportPath,
@@ -2928,18 +2924,19 @@ if (runtimeIntegrityError) {
     const isWorkspaceMismatch = error instanceof WorkspaceMismatchError;
     const isOfflineBoundary = error instanceof OfflineBoundaryError;
     const isUndeclaredInput = error instanceof UndeclaredInputError;
+    const isSandboxBoundary = error instanceof SandboxBoundaryError;
     process.exitCode = await fail(
       command,
       isConfigurationError
         ? 2
         : isWorkspaceMismatch
           ? 10
-          : (isOfflineBoundary || isUndeclaredInput) ? 12 : 22,
+          : (isOfflineBoundary || isUndeclaredInput || isSandboxBoundary) ? 12 : 22,
       isConfigurationError
         ? "usage/configuration"
         : isWorkspaceMismatch
           ? "workspace mismatch"
-          : (isOfflineBoundary || isUndeclaredInput)
+          : (isOfflineBoundary || isUndeclaredInput || isSandboxBoundary)
             ? "offline input missing"
             : "package failure",
       {
@@ -2949,7 +2946,9 @@ if (runtimeIntegrityError) {
             ? error.issueCode
             : isOfflineBoundary
               ? "network-boundary"
-              : isUndeclaredInput ? "undeclared-package-input" : "artifact-package",
+              : isUndeclaredInput
+                ? "undeclared-package-input"
+                : isSandboxBoundary ? "sandbox-boundary" : "artifact-package",
         message: error.message,
       },
       reportPath,

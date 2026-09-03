@@ -59,6 +59,27 @@ usage_failure() {
   exit 2
 }
 
+snapshot_verified_node() {
+  source_node=$1
+  expected_digest=$2
+  mkdir -p -- "$cache" || runtime_failure 'cannot create Node snapshot directory'
+  snapshot_dir=$(/bin/mktemp -d "$cache/.node.XXXXXXXX") ||
+    runtime_failure 'cannot create private Node snapshot'
+  snapshot_node=$snapshot_dir/node
+  if ! /bin/cp -- "$source_node" "$snapshot_node" ||
+    ! /bin/chmod 0500 "$snapshot_node" ||
+    ! exec 9< "$snapshot_node"; then
+    /bin/rm -rf -- "$snapshot_dir"
+    runtime_failure 'cannot create private Node snapshot'
+  fi
+  /bin/rm -f -- "$snapshot_node" || runtime_failure 'cannot unlink private Node snapshot'
+  /bin/rmdir -- "$snapshot_dir" || runtime_failure 'cannot remove private Node snapshot directory'
+  actual_digest=$(/usr/bin/sha256sum /proc/self/fd/9) ||
+    runtime_failure 'cannot verify private Node snapshot'
+  actual_digest=${actual_digest%% *}
+  [ "$actual_digest" = "$expected_digest" ] || runtime_failure 'private Node snapshot digest mismatch'
+}
+
 valid_verify_arguments() {
   seen_workspace=false
   seen_manifest_url=false
@@ -202,10 +223,7 @@ if [ "${1:-}" = prefetch ]; then
     *) ;;
   esac
   [ -x "$bootstrap_node" ] || runtime_failure 'prefetch bootstrap Node is not executable'
-  exec 9< "$bootstrap_node" || runtime_failure 'cannot open prefetch bootstrap Node'
-  bootstrap_actual=$(/usr/bin/sha256sum /proc/self/fd/9) || runtime_failure 'cannot verify prefetch bootstrap Node'
-  bootstrap_actual=${bootstrap_actual%% *}
-  [ "$bootstrap_actual" = "$bootstrap_digest" ] || runtime_failure 'prefetch bootstrap Node digest mismatch'
+  snapshot_verified_node "$bootstrap_node" "$bootstrap_digest"
   exec /proc/self/fd/9 "$script_dir/tsfg-build.mjs" "$@" \
     --lock "$script_dir/toolchains.lock.json" \
     --cache "$cache" \
@@ -236,12 +254,7 @@ fi
 if [ ! -x /usr/bin/sha256sum ]; then
   runtime_failure
 fi
-exec 9< "$node_path" || runtime_failure
-node_actual=$(/usr/bin/sha256sum /proc/self/fd/9) || runtime_failure
-node_actual=${node_actual%% *}
-if [ "$node_actual" != "$node_id" ]; then
-  runtime_failure
-fi
+snapshot_verified_node "$node_path" "$node_id"
 TSFG_GIT=$(command -v git || true)
 export TSFG_GIT
 TSFG_RUNTIME_LOCK="$script_dir/toolchains.lock.json"
