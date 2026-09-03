@@ -1,5 +1,7 @@
 # tcfg（TypeScript for Game）整体架构方案
 
+> R00 已决定语言、产品、目录、文档、命令与产品扩展名的规范前缀统一为 `tsfg`。本文件名与正文中的 `tcfg` 是首次三仓切换前的遗留状态；实际重命名必须按 [`r00-engineering-charter.md`](./r00-engineering-charter.md) 的协调事务执行，不能据此视为已经完成。
+
 ## 远景与目标
 
 tcfg 是面向游戏引擎的静态语言、编译器和运行时。源码采用 TypeScript 语法与类型工具，宿主采用 Zig；同一份源码同时生成解释器字节码和原生机器码。tcfg 不是 JavaScript 实现，也不承诺 ECMAScript 运行时兼容。
@@ -11,7 +13,7 @@ tcfg 的核心目标：
 - 解释器和 AOT 共用类型、控制流、异常和内存语义。
 - 数据导向容器、查询、并行调度和向量化属于语言与编译器，不形成 Unity 式的多套 API。
 - `eval_bytecode` 只执行已经验证的 tcfg 字节码，不在运行时编译源码。
-- 编译器复用 TypeScript、Mojo、MLIR、LLVM 及相关开源实现中的代码；复用方式为固定源码快照、逐文件审计、按需迁入和本地改造，不依赖对方产品运行时。
+- 编译器可复用 TypeScript、Mojo、MLIR、LLVM 及相关开源实现中的代码；R00 只规定载体为同级 upstream fork、Integration Manifest 完整 commit OID、逐文件审计与 fork 特性分支，不批准任何具体来源或迁入内容，也不依赖对方产品运行时。
 
 ## 明确边界
 
@@ -204,11 +206,11 @@ export function integrate(
 
 因此，用户只编写组件、查询和普通函数；不存在 `NativeArray`、Job struct、手工 `Schedule/Complete` 和独立 Burst 标记。解释执行保持相同 API；原生后端将满足内核约束的代码编译为无 GC、无装箱的机器码。
 
-## 开源基础设施迁入规则
+## 开源基础设施复用规则
 
-tcfg 不嵌入其他语言运行时，也不把外部编译器当作黑盒子调用。仓库固定上游源码快照，逐文件记录来源、提交、许可证、本地修改和对应测试；迁入代码进入 tcfg 自己的类型、错误处理、构建和测试体系。
+tcfg 不嵌入其他语言运行时，也不把外部编译器当作黑盒子调用。经 R02a 批准的来源保留在与产品仓同级的 upstream fork 中，由 Integration Manifest 锁定完整 commit OID，tsfg 专用修改直接提交到 fork 特性分支；逐文件记录来源、base OID、许可证、本地修改和对应测试。产品构建可以消费这些锁定源码，但产品仓不保存 fork 副本。
 
-| 来源 | 迁入内容 | 明确排除 |
+| 来源 | 候选复用范围 | 明确排除 |
 |---|---|---|
 | TypeScript | scanner、parser、AST、类型检查、控制流收窄、模块解析、Language Service、source map | JS emitter、JS 运行时假设、`allowJs` 路径 |
 | scriptc | TS 到类型化 IR 的降低结构、静态子集诊断、IR 序列化与差分测试方法 | QuickJS 动态岛、Node API、JS 兼容层、仅 `f64` 的数值模型、其运行时内存模型 |
