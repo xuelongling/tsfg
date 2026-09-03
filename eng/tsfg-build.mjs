@@ -169,12 +169,11 @@ function parseReportPath(arguments_) {
   return arguments_[index + 1];
 }
 
-function parseOptions(arguments_, allowed) {
+function parseOptions(arguments_, allowed, flags = new Set()) {
   const options = new Map();
-  for (let index = 1; index < arguments_.length; index += 2) {
+  for (let index = 1; index < arguments_.length;) {
     const name = arguments_[index];
-    const value = arguments_[index + 1];
-    if (!name?.startsWith("--") || value === undefined) {
+    if (!name?.startsWith("--")) {
       throw new ConfigurationError(`invalid argument: ${name ?? "<missing>"}`);
     }
     if (!allowed.has(name)) {
@@ -183,9 +182,34 @@ function parseOptions(arguments_, allowed) {
     if (options.has(name)) {
       throw new ConfigurationError(`duplicate argument: ${name}`);
     }
+    if (flags.has(name)) {
+      options.set(name, true);
+      index += 1;
+      continue;
+    }
+    const value = arguments_[index + 1];
+    if (value === undefined) {
+      throw new ConfigurationError(`invalid argument: ${name}`);
+    }
     options.set(name, value);
+    index += 2;
   }
   return options;
+}
+
+function validateSmokeOptions(options, command, requireInput = false) {
+  const target = options.get("--target");
+  const profile = options.get("--profile");
+  const output = options.get("--out");
+  const input = options.get("--input");
+  if (!target || !profile || !output || (requireInput && !input)) {
+    throw new ConfigurationError(
+      `${command} requires --target, --profile, ${requireInput ? "--input, " : ""}and --out`,
+    );
+  }
+  if (target !== "linux-x86_64-gnu" || profile !== "debug") {
+    throw new ConfigurationError(`R00 ${command} supports only linux-x86_64-gnu debug`);
+  }
 }
 
 async function fail(command, code, category, issue, reportPath, network) {
@@ -1515,6 +1539,35 @@ const repositoryRoot = path.resolve(
   "..",
 );
 
+function inspectProductWorkspace(options, allowDevelopment) {
+  const workspace = path.resolve(options.get("--workspace") ?? repositoryRoot);
+  const status = gitOutput(workspace, [
+    "status",
+    "--porcelain=v1",
+    "-z",
+    "--untracked-files=all",
+    "--ignore-submodules=none",
+  ]);
+  const dirty = status.length !== 0;
+  const development = options.has("--dev");
+  if (development && !allowDevelopment) {
+    throw new WorkspaceMismatchError(
+      "development-mode-forbidden",
+      `${command} does not permit development mode`,
+    );
+  }
+  if (dirty && !development) {
+    throw new WorkspaceMismatchError("dirty-project", `${workspace} is dirty`);
+  }
+  requireVisibleTrackedFiles(workspace);
+  return {
+    development,
+    dirty,
+    publishable: !development && !dirty,
+    root: workspace,
+  };
+}
+
 function closureToolPath(runtime, toolId, executableId = toolId) {
   const selection = runtime.selections.find(({ id }) => id === toolId);
   if (!selection) throw new Error(`locked tool is not selected: ${toolId}`);
@@ -1593,7 +1646,7 @@ function runBuildTool(toolId, executable, arguments_, cwd, environment) {
   }
 }
 
-async function buildLinuxDebug(options, runtime) {
+async function buildLinuxDebug(options, runtime, workspaceState) {
   const target = options.get("--target");
   const profile = options.get("--profile");
   const outputOption = options.get("--out");
@@ -1605,7 +1658,7 @@ async function buildLinuxDebug(options, runtime) {
   }
   let identity;
   try {
-    identity = await createBuildIdentity(runtime, target, profile);
+    identity = await createBuildIdentity(runtime, target, profile, workspaceState.root);
   } catch (error) {
     throw new BuildFailureError(`cannot derive Build Identity: ${error.message}`);
   }
@@ -1648,9 +1701,9 @@ async function buildLinuxDebug(options, runtime) {
   ]);
   environment.SOURCE_DATE_EPOCH = identity.buildIdentity.source_date_epoch;
   const debugPathFlags = [
-    `-ffile-prefix-map=${repositoryRoot}=.`,
-    `-fdebug-prefix-map=${repositoryRoot}=.`,
-    `-fmacro-prefix-map=${repositoryRoot}=.`,
+    `-ffile-prefix-map=${workspaceState.root}=.`,
+    `-fdebug-prefix-map=${workspaceState.root}=.`,
+    `-fmacro-prefix-map=${workspaceState.root}=.`,
     `-ffile-prefix-map=${runtime.closurePath}=.toolchain`,
     `-fdebug-prefix-map=${runtime.closurePath}=.toolchain`,
     `-fmacro-prefix-map=${runtime.closurePath}=.toolchain`,
@@ -1660,7 +1713,7 @@ async function buildLinuxDebug(options, runtime) {
     "-fdebug-compilation-dir=.",
   ];
   const cmakeArguments = [
-    "-S", path.join(repositoryRoot, "tests", "r00", "smoke", "cpp"),
+    "-S", path.join(workspaceState.root, "tests", "r00", "smoke", "cpp"),
     "-B", cppWork,
     "-G", "Ninja",
     `-DCMAKE_MAKE_PROGRAM=${ninja}`,
@@ -1704,9 +1757,9 @@ async function buildLinuxDebug(options, runtime) {
     await writeLockedLlvmWrapper(linkerWrapper, loader, runtimeLibraries, lld);
     await writeLockedLlvmWrapper(arWrapper, loader, runtimeLibraries, llvmAr);
     await writeLockedLlvmWrapper(ranlibWrapper, loader, runtimeLibraries, llvmRanlib);
-    runBuildTool("cmake", cmake, cmakeArguments, repositoryRoot, environment);
-    runBuildTool("ninja", ninja, ninjaArguments, repositoryRoot, environment);
-    runBuildTool("zig", zig, zigArguments, repositoryRoot, environment);
+    runBuildTool("cmake", cmake, cmakeArguments, workspaceState.root, environment);
+    runBuildTool("ninja", ninja, ninjaArguments, workspaceState.root, environment);
+    runBuildTool("zig", zig, zigArguments, workspaceState.root, environment);
     const cppStat = await stat(cppOutput).catch(() => undefined);
     if (!cppStat?.isFile()) {
       throw new BuildFailureError("C++ smoke build produced no executable");
@@ -1735,8 +1788,11 @@ async function buildLinuxDebug(options, runtime) {
       buildIdentity: identity.buildIdentity,
       buildInputSet: identity.buildInputSet,
       contractSetId: identity.contractSetId,
+      development: workspaceState.development,
+      dirty: workspaceState.dirty,
       payloads,
       productVersion: identity.productVersion,
+      publishable: workspaceState.publishable,
       schemaVersion: "1",
       toolchainClosureDigest: runtime.lockDigest,
     };
@@ -1749,12 +1805,15 @@ async function buildLinuxDebug(options, runtime) {
     return {
       buildIdentity: identity.buildIdentity,
       contractSetId: identity.contractSetId,
+      development: workspaceState.development,
+      dirty: workspaceState.dirty,
       outputs: [
         "bin/tsfg-r00-cpp-smoke",
         "bin/tsfg-r00-zig-smoke",
         "build-metadata.json",
       ],
       profile,
+      publishable: workspaceState.publishable,
       steps,
       target,
     };
@@ -1788,7 +1847,7 @@ function runSmokeExecutable(name, executable, outputRoot) {
   return { stdout: result.stdout, stderr: result.stderr };
 }
 
-async function testLinuxDebug(options) {
+async function testLinuxDebug(options, workspaceState) {
   const target = options.get("--target");
   const profile = options.get("--profile");
   const outputOption = options.get("--out");
@@ -1828,7 +1887,14 @@ async function testLinuxDebug(options) {
     }
     tests.push({ name: smoke.name, status: "passed" });
   }
-  return { profile, target, tests };
+  return {
+    development: workspaceState.development,
+    dirty: workspaceState.dirty,
+    profile,
+    publishable: workspaceState.publishable,
+    target,
+    tests,
+  };
 }
 
 async function readCanonicalJson(filePath, name) {
@@ -1854,9 +1920,9 @@ function compareInputEntries(left, right) {
   return projectOrder || Buffer.from(left.path).compare(Buffer.from(right.path));
 }
 
-async function buildInputSet() {
+async function buildInputSet(workspaceRoot) {
   const declaration = await readCanonicalJson(
-    path.join(repositoryRoot, "eng", "build-inputs.json"),
+    path.join(workspaceRoot, "eng", "build-inputs.json"),
     "Build Input declaration",
   );
   if (declaration.schemaVersion !== "1" || !Array.isArray(declaration.entries)) {
@@ -1884,7 +1950,7 @@ async function buildInputSet() {
       throw new PackageFailureError("duplicate Build Input declaration entry");
     }
     identities.add(identity);
-    const indexLine = gitOutput(repositoryRoot, [
+    const indexLine = gitOutput(workspaceRoot, [
       "ls-files",
       "--stage",
       "--",
@@ -1894,7 +1960,7 @@ async function buildInputSet() {
     if (!match) {
       throw new PackageFailureError(`Build Input is not a regular tracked file: ${declared.path}`);
     }
-    const epoch = gitOutput(repositoryRoot, [
+    const epoch = gitOutput(workspaceRoot, [
       "log",
       "-1",
       "--format=%ct",
@@ -1909,7 +1975,7 @@ async function buildInputSet() {
       projectId: declared.projectId,
       repositoryRelativePath: declared.path,
       normalizedMode: match[1],
-      sha256: await digestFile(path.join(repositoryRoot, ...declared.path.split("/"))),
+      sha256: await digestFile(path.join(workspaceRoot, ...declared.path.split("/"))),
     });
   }
   const payload = { entries, schemaVersion: "1" };
@@ -1922,19 +1988,19 @@ async function buildInputSet() {
   };
 }
 
-async function createBuildIdentity(runtime, target, profile) {
-  const version = await readCanonicalJson(path.join(repositoryRoot, "version.json"), "Product Version");
+async function createBuildIdentity(runtime, target, profile, workspaceRoot = repositoryRoot) {
+  const version = await readCanonicalJson(path.join(workspaceRoot, "version.json"), "Product Version");
   if (typeof version.version !== "string" || version.version.length === 0) {
     throw new PackageFailureError("Product Version is missing");
   }
   const registry = await readCanonicalJson(
-    path.join(repositoryRoot, "contracts", "registry.json"),
+    path.join(workspaceRoot, "contracts", "registry.json"),
     "Contract Registry",
   );
   if (canonicalize(registry) !== "{}") {
     throw new PackageFailureError("R00 Contract Registry must be empty");
   }
-  const { buildInputSet: inputSet, sourceDateEpoch } = await buildInputSet();
+  const { buildInputSet: inputSet, sourceDateEpoch } = await buildInputSet(workspaceRoot);
   const buildIdentityPayload = {
     buildInputSetDigest: inputSet.digest,
     options: {},
@@ -2020,7 +2086,7 @@ function runPackageTool(executable, arguments_, cwd, environment) {
   }
 }
 
-async function packageLinuxDebug(options, runtime) {
+async function packageLinuxDebug(options, runtime, workspaceState) {
   const target = options.get("--target");
   const profile = options.get("--profile");
   const inputOption = options.get("--input");
@@ -2032,7 +2098,7 @@ async function packageLinuxDebug(options, runtime) {
     throw new ConfigurationError("R00-07 package supports only linux-x86_64-gnu debug");
   }
 
-  const identity = await createBuildIdentity(runtime, target, profile);
+  const identity = await createBuildIdentity(runtime, target, profile, workspaceState.root);
   const archiveName = `tsfg-v${identity.productVersion}-${target}-${profile}-${identity.buildIdentity.digest.slice(7, 23)}.tar.zst`;
   const output = path.resolve(outputOption);
   const stagingRoot = path.join(
@@ -2051,7 +2117,10 @@ async function packageLinuxDebug(options, runtime) {
       canonicalize(metadata.buildIdentity) !== canonicalize(identity.buildIdentity) ||
       canonicalize(metadata.buildInputSet) !== canonicalize(identity.buildInputSet) ||
       metadata.contractSetId !== identity.contractSetId ||
+      metadata.development !== false ||
+      metadata.dirty !== false ||
       metadata.productVersion !== identity.productVersion ||
+      metadata.publishable !== true ||
       metadata.toolchainClosureDigest !== runtime.lockDigest
     ) {
       throw new PackageFailureError("build metadata does not match the current Build Identity");
@@ -2112,7 +2181,7 @@ async function packageLinuxDebug(options, runtime) {
     members.push({ bytes: Buffer.from(identity.contractSet), mode: 0o644, path: "contract-set.json" });
     members.sort((left, right) => Buffer.from(left.path).compare(Buffer.from(right.path)));
     const forbiddenValues = new Set([
-      repositoryRoot,
+      workspaceState.root,
       runtime.closurePath,
       stagingRoot,
       input,
@@ -2185,7 +2254,10 @@ async function packageLinuxDebug(options, runtime) {
       buildInputSet: identity.buildInputSet,
       checksums: `${archiveName}.checksums.json`,
       contractSetId: identity.contractSetId,
+      development: false,
+      dirty: false,
       input: path.resolve(inputOption),
+      publishable: true,
     };
   } catch (error) {
     if (error instanceof ConfigurationError || error instanceof PackageFailureError) throw error;
@@ -2305,24 +2377,32 @@ if (runtimeIntegrityError) {
   try {
     const options = parseOptions(
       arguments_,
-      new Set(["--target", "--profile", "--out", "--report"]),
+      new Set(["--dev", "--target", "--profile", "--workspace", "--out", "--report"]),
+      new Set(["--dev"]),
     );
+    validateSmokeOptions(options, "build");
+    const workspaceState = inspectProductWorkspace(options, true);
     if (!runtimeClosure) throw new Error("locked runtime closure is unavailable");
-    const result = await buildLinuxDebug(options, runtimeClosure);
+    const result = await buildLinuxDebug(options, runtimeClosure, workspaceState);
     process.exitCode = await succeed(command, result, reportPath, "offline");
   } catch (error) {
     const isConfigurationError = error instanceof ConfigurationError;
     const isBuildFailure = error instanceof BuildFailureError;
+    const isWorkspaceMismatch = error instanceof WorkspaceMismatchError;
     process.exitCode = await fail(
       command,
-      isConfigurationError ? 2 : isBuildFailure ? 20 : 30,
+      isConfigurationError ? 2 : isWorkspaceMismatch ? 10 : isBuildFailure ? 20 : 30,
       isConfigurationError
         ? "usage/configuration"
-        : isBuildFailure ? "build failure" : "internal control-plane failure",
+        : isWorkspaceMismatch
+          ? "workspace mismatch"
+          : isBuildFailure ? "build failure" : "internal control-plane failure",
       {
         code: isConfigurationError
           ? "invalid-configuration"
-          : isBuildFailure ? "native-build" : "internal-control-plane",
+          : isWorkspaceMismatch
+            ? error.issueCode
+            : isBuildFailure ? "native-build" : "internal-control-plane",
         message: error.message,
       },
       reportPath,
@@ -2333,24 +2413,32 @@ if (runtimeIntegrityError) {
   try {
     const options = parseOptions(
       arguments_,
-      new Set(["--target", "--profile", "--out", "--report"]),
+      new Set(["--dev", "--target", "--profile", "--workspace", "--out", "--report"]),
+      new Set(["--dev"]),
     );
+    validateSmokeOptions(options, "test");
+    const workspaceState = inspectProductWorkspace(options, true);
     if (!runtimeClosure) throw new Error("locked runtime closure is unavailable");
-    const result = await testLinuxDebug(options);
+    const result = await testLinuxDebug(options, workspaceState);
     process.exitCode = await succeed(command, result, reportPath, "offline");
   } catch (error) {
     const isConfigurationError = error instanceof ConfigurationError;
     const isTestFailure = error instanceof TestFailureError;
+    const isWorkspaceMismatch = error instanceof WorkspaceMismatchError;
     process.exitCode = await fail(
       command,
-      isConfigurationError ? 2 : isTestFailure ? 21 : 30,
+      isConfigurationError ? 2 : isWorkspaceMismatch ? 10 : isTestFailure ? 21 : 30,
       isConfigurationError
         ? "usage/configuration"
-        : isTestFailure ? "test failure" : "internal control-plane failure",
+        : isWorkspaceMismatch
+          ? "workspace mismatch"
+          : isTestFailure ? "test failure" : "internal control-plane failure",
       {
         code: isConfigurationError
           ? "invalid-configuration"
-          : isTestFailure ? "native-test" : "internal-control-plane",
+          : isWorkspaceMismatch
+            ? error.issueCode
+            : isTestFailure ? "native-test" : "internal-control-plane",
         message: error.message,
       },
       reportPath,
@@ -2361,19 +2449,52 @@ if (runtimeIntegrityError) {
   try {
     const options = parseOptions(
       arguments_,
-      new Set(["--target", "--profile", "--input", "--out", "--report"]),
+      new Set(["--dev", "--target", "--profile", "--workspace", "--input", "--out", "--report"]),
+      new Set(["--dev"]),
     );
+    validateSmokeOptions(options, "package", true);
+    const workspaceState = inspectProductWorkspace(options, false);
     if (!runtimeClosure) throw new PackageFailureError("locked runtime closure is unavailable");
-    const result = await packageLinuxDebug(options, runtimeClosure);
+    const result = await packageLinuxDebug(options, runtimeClosure, workspaceState);
     process.exitCode = await succeed(command, result, reportPath, "offline");
   } catch (error) {
     const isConfigurationError = error instanceof ConfigurationError;
+    const isWorkspaceMismatch = error instanceof WorkspaceMismatchError;
     process.exitCode = await fail(
       command,
-      isConfigurationError ? 2 : 22,
-      isConfigurationError ? "usage/configuration" : "package failure",
+      isConfigurationError ? 2 : isWorkspaceMismatch ? 10 : 22,
+      isConfigurationError
+        ? "usage/configuration"
+        : isWorkspaceMismatch ? "workspace mismatch" : "package failure",
       {
-        code: isConfigurationError ? "invalid-configuration" : "artifact-package",
+        code: isConfigurationError
+          ? "invalid-configuration"
+          : isWorkspaceMismatch ? error.issueCode : "artifact-package",
+        message: error.message,
+      },
+      reportPath,
+      "offline",
+    );
+  }
+} else if (command === "repro-check") {
+  try {
+    const options = parseOptions(
+      arguments_,
+      new Set(["--dev", "--workspace", "--report"]),
+      new Set(["--dev"]),
+    );
+    if (!options.has("--dev")) {
+      throw new ConfigurationError("repro-check is not implemented before R00-12");
+    }
+    inspectProductWorkspace(options, false);
+  } catch (error) {
+    const isWorkspaceMismatch = error instanceof WorkspaceMismatchError;
+    process.exitCode = await fail(
+      command,
+      isWorkspaceMismatch ? 10 : 2,
+      isWorkspaceMismatch ? "workspace mismatch" : "usage/configuration",
+      {
+        code: isWorkspaceMismatch ? error.issueCode : "invalid-configuration",
         message: error.message,
       },
       reportPath,

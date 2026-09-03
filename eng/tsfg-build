@@ -131,11 +131,18 @@ valid_smoke_arguments() {
   seen_out=false
   seen_input=false
   seen_report=false
+  seen_workspace=false
+  seen_dev=false
   target=
   profile=
   while [ "$#" -gt 0 ]; do
     option=$1
     shift
+    if [ "$option" = --dev ]; then
+      [ "$seen_dev" = false ] || return 1
+      seen_dev=true
+      continue
+    fi
     if [ "$#" -eq 0 ] || [ -z "$1" ]; then
       return 1
     fi
@@ -162,6 +169,10 @@ valid_smoke_arguments() {
       --report)
         [ "$seen_report" = false ] || return 1
         seen_report=true
+        ;;
+      --workspace)
+        [ "$seen_workspace" = false ] || return 1
+        seen_workspace=true
         ;;
       *) return 1 ;;
     esac

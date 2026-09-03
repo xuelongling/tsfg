@@ -3,6 +3,7 @@
 import assert from "node:assert/strict";
 import {
   appendFile,
+  chmod,
   copyFile,
   lstat,
   mkdir,
@@ -818,6 +819,168 @@ function fixtureTreeDigest(installPath, bytes) {
   return fixtureDigest(payload);
 }
 
+test("dirty workspace fails closed before build execution", async () => {
+  const sandbox = await mkdtemp(path.join(tmpdir(), "tsfg-dirty-build-"));
+  const workspace = path.join(sandbox, "workspace");
+  const reportPath = path.join(sandbox, "report.json");
+  try {
+    await mkdir(workspace);
+    for (const arguments_ of [
+      ["init"],
+      ["config", "user.name", "tsfg test"],
+      ["config", "user.email", "tsfg-test@example.invalid"],
+    ]) {
+      const initialized = spawnSync("git", arguments_, {
+        cwd: workspace,
+        encoding: "utf8",
+      });
+      assert.equal(initialized.status, 0, initialized.stderr);
+    }
+    await writeFile(path.join(workspace, "tracked.txt"), "tracked\n");
+    for (const arguments_ of [["add", "tracked.txt"], ["commit", "-m", "fixture"]]) {
+      const committed = spawnSync("git", arguments_, {
+        cwd: workspace,
+        encoding: "utf8",
+      });
+      assert.equal(committed.status, 0, committed.stderr);
+    }
+    await writeFile(path.join(workspace, "undeclared.txt"), "dirty\n");
+
+    const arguments_ = [
+      "build",
+      "--target", "linux-x86_64-gnu",
+      "--profile", "debug",
+      "--workspace", workspace,
+      "--out", path.join(sandbox, "out"),
+      "--report", reportPath,
+    ];
+    for (let attempt = 0; attempt < 2; attempt += 1) {
+      const result = await invoke(arguments_);
+      assert.equal(result.status, 10, result.stderr);
+      const report = JSON.parse(await readFile(reportPath, "utf8"));
+      assert.equal(report.error.category, "workspace mismatch");
+      assert.equal(report.error.code, "10");
+      assert.equal(report.error.issues[0].code, "dirty-project");
+    }
+    for (const forbidden of [
+      [
+        "package", "--dev",
+        "--target", "linux-x86_64-gnu",
+        "--profile", "debug",
+        "--workspace", workspace,
+        "--input", path.join(sandbox, "input"),
+        "--out", path.join(sandbox, "package"),
+        "--report", reportPath,
+      ],
+      ["repro-check", "--dev", "--workspace", workspace, "--report", reportPath],
+    ]) {
+      const result = await invoke(forbidden);
+      assert.equal(result.status, 10, result.stderr);
+      const report = JSON.parse(await readFile(reportPath, "utf8"));
+      assert.equal(report.error.category, "workspace mismatch");
+      assert.equal(report.error.issues[0].code, "development-mode-forbidden");
+    }
+  } finally {
+    await rm(sandbox, { recursive: true, force: true });
+  }
+});
+
+test("development mode runs tests in a dirty workspace as non-publishable", {
+  skip: process.platform === "win32",
+}, async () => {
+  const sandbox = await mkdtemp(path.join(tmpdir(), "tsfg-dirty-test-dev-"));
+  const workspace = path.join(sandbox, "workspace");
+  const output = path.join(sandbox, "out");
+  const cachePath = path.join(sandbox, "cache");
+  const lockPath = path.join(sandbox, "toolchains.lock.json");
+  const reportPath = path.join(sandbox, "report.json");
+  const nodeBytes = Buffer.from("#!/bin/sh\nexit 0\n");
+  const server = await startArtifactServer(new Map([["/node", nodeBytes]]));
+  let serverOpen = true;
+  try {
+    await mkdir(workspace);
+    for (const arguments_ of [
+      ["init"],
+      ["config", "user.name", "tsfg test"],
+      ["config", "user.email", "tsfg-test@example.invalid"],
+    ]) {
+      const initialized = spawnSync("git", arguments_, { cwd: workspace, encoding: "utf8" });
+      assert.equal(initialized.status, 0, initialized.stderr);
+    }
+    await writeFile(path.join(workspace, "tracked.txt"), "tracked\n");
+    for (const arguments_ of [["add", "tracked.txt"], ["commit", "-m", "fixture"]]) {
+      const committed = spawnSync("git", arguments_, { cwd: workspace, encoding: "utf8" });
+      assert.equal(committed.status, 0, committed.stderr);
+    }
+    await writeFile(path.join(workspace, "dirty.txt"), "dirty\n");
+    for (const [name, stdout, stderr] of [
+      ["tsfg-r00-cpp-smoke", "tsfg-r00-cpp-smoke: ok\n", ""],
+      ["tsfg-r00-zig-smoke", "", "tsfg-r00-zig-smoke: ok\n"],
+    ]) {
+      const executable = path.join(output, "bin", name);
+      await mkdir(path.dirname(executable), { recursive: true });
+      await writeFile(
+        executable,
+        `#!/bin/sh\n${stdout ? `printf '${stdout}'` : `printf '${stderr}' >&2`}\n`,
+      );
+      await chmod(executable, 0o755);
+    }
+    const lock = {
+      dependencyLocks: [],
+      schemaVersion: "1",
+      targets: { "test-x86_64": { tools: ["node"] } },
+      tools: {
+        node: {
+          artifacts: [{
+            archiveFormat: "raw",
+            archiveSha256: fixtureDigest(nodeBytes),
+            byteSize: String(nodeBytes.length),
+            installPath: "bin/node",
+            platform: "test-x86_64",
+            unpackedTreeSha256: fixtureTreeDigest("bin/node", nodeBytes),
+            url: `${server.baseUrl}/node`,
+          }],
+          license: "MIT",
+          signature: { kind: "fixture", signer: "tsfg test fixture" },
+          version: "fixture",
+        },
+      },
+    };
+    await writeFile(lockPath, `${JSON.stringify(lock)}\n`);
+    const prefetched = await invoke([
+      "prefetch", "--lock", lockPath, "--cache", cachePath,
+      "--platform", "test-x86_64",
+    ]);
+    assert.equal(prefetched.status, 0, prefetched.stderr);
+    await server.close();
+    serverOpen = false;
+
+    const result = await invoke([
+      "test", "--dev",
+      "--target", "linux-x86_64-gnu",
+      "--profile", "debug",
+      "--workspace", workspace,
+      "--out", output,
+      "--report", reportPath,
+    ], {
+      env: {
+        ...process.env,
+        TSFG_RUNTIME_CACHE: cachePath,
+        TSFG_RUNTIME_LOCK: lockPath,
+        TSFG_RUNTIME_PLATFORM: "test-x86_64",
+      },
+    });
+    assert.equal(result.status, 0, result.stderr);
+    const report = JSON.parse(await readFile(reportPath, "utf8"));
+    assert.equal(report.result.development, true);
+    assert.equal(report.result.dirty, true);
+    assert.equal(report.result.publishable, false);
+  } finally {
+    if (serverOpen) await server.close();
+    await rm(sandbox, { recursive: true, force: true });
+  }
+});
+
 test("build and test run the private C++ and Zig smoke programs through locked tools", async () => {
   const sandbox = await mkdtemp(path.join(tmpdir(), "tsfg-linux-cpp-build-"));
   const cachePath = path.join(sandbox, "cache");
@@ -924,10 +1087,73 @@ exit 1
     await server.close();
     serverOpen = false;
 
+    const workspacePath = path.join(sandbox, "workspace");
+    const cloned = spawnSync(
+      "git",
+      ["-c", "core.autocrlf=false", "clone", "--quiet", "--no-hardlinks", repositoryRoot, workspacePath],
+      { encoding: "utf8" },
+    );
+    assert.equal(cloned.status, 0, cloned.stderr);
+    const dirtyPath = path.join(workspacePath, "dirty.txt");
+    await writeFile(dirtyPath, "dirty\n");
+    const developmentOutput = path.join(sandbox, "development-out");
+    const developmentReportPath = path.join(sandbox, "development-report.json");
+    const developed = await invoke([
+      "build", "--dev",
+      "--target", "linux-x86_64-gnu",
+      "--profile", "debug",
+      "--workspace", workspacePath,
+      "--out", developmentOutput,
+      "--report", developmentReportPath,
+    ], {
+      env: {
+        ...process.env,
+        TSFG_RUNTIME_CACHE: cachePath,
+        TSFG_RUNTIME_LOCK: lockPath,
+        TSFG_RUNTIME_PLATFORM: "test-x86_64",
+      },
+    });
+    assert.equal(developed.status, 0, developed.stderr);
+    const developmentReport = JSON.parse(await readFile(developmentReportPath, "utf8"));
+    assert.equal(developmentReport.result.development, true);
+    assert.equal(developmentReport.result.dirty, true);
+    assert.equal(developmentReport.result.publishable, false);
+    const developmentMetadata = JSON.parse(await readFile(
+      path.join(developmentOutput, "build-metadata.json"),
+      "utf8",
+    ));
+    assert.equal(developmentMetadata.development, true);
+    assert.equal(developmentMetadata.dirty, true);
+    assert.equal(developmentMetadata.publishable, false);
+    await rm(dirtyPath);
+    const developmentPackageReportPath = path.join(
+      sandbox,
+      "development-package-report.json",
+    );
+    const developmentPackage = await invoke([
+      "package",
+      "--target", "linux-x86_64-gnu",
+      "--profile", "debug",
+      "--workspace", workspacePath,
+      "--input", developmentOutput,
+      "--out", path.join(sandbox, "development-package"),
+      "--report", developmentPackageReportPath,
+    ], {
+      env: {
+        ...process.env,
+        TSFG_RUNTIME_CACHE: cachePath,
+        TSFG_RUNTIME_LOCK: lockPath,
+        TSFG_RUNTIME_PLATFORM: "test-x86_64",
+      },
+    });
+    assert.equal(developmentPackage.status, 22, developmentPackage.stderr);
+    assert.match(developmentPackage.stderr, /does not match the current Build Identity/);
+
     const result = await invoke([
       "build",
       "--target", "linux-x86_64-gnu",
       "--profile", "debug",
+      "--workspace", workspacePath,
       "--out", outputPath,
       "--report", reportPath,
     ], {
@@ -952,6 +1178,9 @@ exit 1
     const report = JSON.parse(await readFile(reportPath, "utf8"));
     assert.equal(report.command, "build");
     assert.equal(report.network, "offline");
+    assert.equal(report.result.development, false);
+    assert.equal(report.result.dirty, false);
+    assert.equal(report.result.publishable, true);
     assert.equal(report.result.profile, "debug");
     assert.equal(report.result.target, "linux-x86_64-gnu");
     assert.match(report.result.buildIdentity.digest, /^sha256:[0-9a-f]{64}$/);
@@ -972,6 +1201,9 @@ exit 1
     const metadata = JSON.parse(metadataBytes);
     assert.equal(metadataBytes, `${JSON.stringify(metadata)}\n`);
     assert.deepEqual(metadata.buildIdentity, report.result.buildIdentity);
+    assert.equal(metadata.development, false);
+    assert.equal(metadata.dirty, false);
+    assert.equal(metadata.publishable, true);
     assert.equal(metadata.buildInputSet.digest, report.result.buildIdentity.buildInputSetDigest);
     const { digest: buildInputSetDigest, ...buildInputSetPayload } = metadata.buildInputSet;
     assert.equal(buildInputSetDigest, fixtureDigest(JSON.stringify(buildInputSetPayload)));
@@ -982,7 +1214,7 @@ exit 1
         path: inputPath,
         projectId,
       })),
-      JSON.parse(await readFile(path.join(repositoryRoot, "eng", "build-inputs.json"), "utf8")).entries,
+      JSON.parse(await readFile(path.join(workspacePath, "eng", "build-inputs.json"), "utf8")).entries,
     );
     assert.equal(
       metadata.buildInputSet.entries.some(({ repositoryRelativePath: inputPath }) =>
@@ -991,7 +1223,7 @@ exit 1
     );
     const expectedEpoch = metadata.buildInputSet.entries.reduce((maximum, { repositoryRelativePath: inputPath }) => {
       const touched = spawnSync("git", ["log", "-1", "--format=%ct", "--", inputPath], {
-        cwd: repositoryRoot,
+        cwd: workspacePath,
         encoding: "utf8",
       });
       assert.equal(touched.status, 0, touched.stderr);
@@ -1002,10 +1234,10 @@ exit 1
       const inputPath = input.repositoryRelativePath;
       assert.equal(
         input.sha256,
-        fixtureDigest(await readFile(path.join(repositoryRoot, ...inputPath.split("/")))),
+        fixtureDigest(await readFile(path.join(workspacePath, ...inputPath.split("/")))),
       );
       const indexed = spawnSync("git", ["ls-files", "--stage", "--", inputPath], {
-        cwd: repositoryRoot,
+        cwd: workspacePath,
         encoding: "utf8",
       });
       assert.equal(indexed.status, 0, indexed.stderr);
@@ -1050,6 +1282,7 @@ exit 1
       "package",
       "--target", "linux-x86_64-gnu",
       "--profile", "debug",
+      "--workspace", workspacePath,
       "--input", outputPath,
       "--out", packageOutput,
       "--report", packageReportPath,
@@ -1143,6 +1376,7 @@ exit 1
       "package",
       "--target", "linux-x86_64-gnu",
       "--profile", "debug",
+      "--workspace", workspacePath,
       "--input", outputPath,
       "--out", repackagedOutput,
     ], {
@@ -1170,6 +1404,7 @@ exit 1
       "package",
       "--target", "linux-x86_64-gnu",
       "--profile", "debug",
+      "--workspace", workspacePath,
       "--input", path.join(sandbox, "missing-build"),
       "--out", failedPackageOutput,
       "--report", failedPackageReport,
@@ -1194,6 +1429,7 @@ exit 1
         "build",
         "--target", "linux-x86_64-gnu",
         "--profile", "debug",
+        "--workspace", workspacePath,
         "--out", outputPath,
       ], {
         env: {
@@ -1218,6 +1454,7 @@ exit 1
       "test",
       "--target", "linux-x86_64-gnu",
       "--profile", "debug",
+      "--workspace", workspacePath,
       "--out", outputPath,
       "--report", testReportPath,
     ], {
@@ -1245,6 +1482,7 @@ exit 1
       "build",
       "--target", "linux-x86_64-gnu",
       "--profile", "debug",
+      "--workspace", workspacePath,
       "--out", path.join(sandbox, "compile-fail"),
       "--report", compileFailureReportPath,
     ], {
@@ -1269,6 +1507,7 @@ exit 1
       "build",
       "--target", "linux-x86_64-gnu",
       "--profile", "debug",
+      "--workspace", workspacePath,
       "--out", path.join(blockedOutputParent, "out"),
       "--report", internalFailureReportPath,
     ], {
@@ -1296,6 +1535,7 @@ exit 1
       "test",
       "--target", "linux-x86_64-gnu",
       "--profile", "debug",
+      "--workspace", workspacePath,
       "--out", outputPath,
       "--report", testFailureReportPath,
     ], {
