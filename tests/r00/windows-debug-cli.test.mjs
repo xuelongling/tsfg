@@ -25,7 +25,7 @@ function zipEntries(bytes) {
     const name = bytes.subarray(offset + 30, offset + 30 + nameLength).toString("utf8");
     const dataOffset = offset + 30 + nameLength + extraLength;
     assert.equal(method, 0, `${name} must use deterministic STORE compression`);
-    entries.push({ bytes: bytes.subarray(dataOffset, dataOffset + size), date, name, time });
+    entries.push({ bytes: bytes.subarray(dataOffset, dataOffset + size), date, mode: 0, name, time });
     offset = dataOffset + size;
   }
   assert.equal(bytes.readUInt32LE(offset), 0x02014b50);
