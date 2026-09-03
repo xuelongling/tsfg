@@ -1,10 +1,8 @@
-# tcfg 完整方案交付 Roadmap
-
-> R00 已决定语言、产品、目录、文档、命令与产品扩展名的规范前缀统一为 `tsfg`。本文件名与正文中的 `tcfg` 是首次三仓切换前的遗留状态；实际重命名必须按 [`r00-engineering-charter.md`](./r00-engineering-charter.md) 的协调事务执行，不能据此视为已经完成。
+# tsfg 完整方案交付 Roadmap
 
 ## 1. 文档目的
 
-本文把 [`tcfg-architecture.md`](./tcfg-architecture.md) 描述的完整方案拆成可逐一经历 **grill with docs → to spec → to tickets → implement** 的大任务。
+本文把 [`tsfg-architecture.md`](./tsfg-architecture.md) 描述的完整方案拆成可逐一经历 **grill with docs → to spec → to tickets → implement** 的大任务。
 
 这里的阶段是验证门，不是产品裁剪：
 
@@ -16,7 +14,7 @@
 ## 2. 拆分原则
 
 1. **按稳定 seam 拆分，而不是按目录拆分。** 每个大任务应产生少量、明确、可版本化的 interface，并隐藏足够多的实现复杂度。
-2. **契约先于消费者。** 语言语义、Core IR、`.tbc`、`.tmeta`、`.tcfgabi` 和热更协议必须有规范、版本与测试向量，编译器和运行时才能跨 Git 并行。
+2. **契约先于消费者。** 语言语义、Core IR、`.tbc`、`.tmeta`、`.tsfgabi` 和热更协议必须有规范、版本与测试向量，编译器和运行时才能跨 Git 并行。
 3. **同一语义只实现一次。** HIR 到 Core IR 完成语义归一化；字节码和 AOT 后端不得各自补做一套语言语义。
 4. **测试穿过正式 interface。** 测试与真实调用方使用相同的序列化格式、加载路径和执行入口，不建立只供测试绕行的特殊入口。
 5. **兼容性变更采用扩展—迁移—移除。** 跨仓格式先增加兼容字段与读路径，所有生产者/消费者迁移后才移除旧版本。
@@ -33,15 +31,15 @@
 | Bytecode trust gate | `verify(bytes, host, limits) -> VerifiedModule` | 安全解析、CFG/type/root/ABI 检查 |
 | Runtime execution | `invoke(verified, function, frame, capabilities, limits) -> Outcome` | VM dispatch、调用缓存、GC 和异常展开 |
 | Patch install | `preparePatch(package) -> PreparedPatch`；`commit(prepared) -> InstalledVersion` | 动态加载、stack map、epoch 和回滚实现 |
-| Language intelligence | `query(snapshot, request) -> response` | TypeScript Language Service 与 tcfg 诊断合并 |
+| Language intelligence | `query(snapshot, request) -> response` | TypeScript Language Service 与 tsfg 诊断合并 |
 
 ## 3. 完整交付的定义
 
-只有同时满足以下条件，tcfg 整体方案才算完成：
+只有同时满足以下条件，tsfg 整体方案才算完成：
 
-- `.ts` / `.d.ts` 经 tcfg 前端和静态语义检查生成 HIR、唯一的 Core IR、`.tbc`、`.tmeta` 与目标平台原生对象；流程中没有 JavaScript 输出或运行时回退。
+- `.ts` / `.d.ts` 经 tsfg 前端和静态语义检查生成 HIR、唯一的 Core IR、`.tbc`、`.tmeta` 与目标平台原生对象；流程中没有 JavaScript 输出或运行时回退。
 - 同一 Core IR 在解释器与同目标 AOT 严格模式下满足 Execution Equivalence；fast-math、并行归约和 GPU 使用各自明确的等价契约。
-- Zig 与 tcfg 的 ABI 由同一事实源生成并验证；AOT 边界无序列化、无布局转换、无复制，受管对象只以带代数的句柄跨越 ABI。
+- Zig 与 tsfg 的 ABI 由同一事实源生成并验证；AOT 边界无序列化、无布局转换、无复制，受管对象只以带代数的句柄跨越 ABI。
 - 发布运行时包含验证器、解释器、GC、模块加载、FunctionCell、调度器、ABI 桥和代码回收，但不包含 TypeScript、Mojo、MLIR、LLVM、scriptc 或 JS VM。
 - 函数热更新完整实现“旧 native → bytecode → 新 native”，包含签名/效果/捕获/状态校验、并发切换、旧栈帧完成和 epoch 安全卸载。
 - `@component`、Query、访问集合、chunk、冲突图、自动并行、CPU 向量化和显式 GPU kernel 走统一语言与 Core IR 路径，不形成第二套用户编程模型。
@@ -103,16 +101,16 @@
 
 ### R02b：TypeScript 前端产品化
 
-**目标**：形成只服务 tcfg 的 scanner、parser、AST、类型分析、模块解析和 Language Service 基础，不携带 JS 输出路径。
+**目标**：形成只服务 tsfg 的 scanner、parser、AST、类型分析、模块解析和 Language Service 基础，不携带 JS 输出路径。
 
 **主要产出**：
 
-- tcfg Program 输入管线、模块图、诊断合并与增量前端 interface。
-- tcfg 额外标量、装饰器、值类型、Span、Handle、Query 等声明和解析/类型接入。
+- tsfg Program 输入管线、模块图、诊断合并与增量前端 interface。
+- tsfg 额外标量、装饰器、值类型、Span、Handle、Query 等声明和解析/类型接入。
 - 对 `.js`、动态对象语义、`any`、运行时泛型等禁止项的结构化诊断。
 - 隐藏 TypeScript Program、AST、Checker 和缓存细节的 `FrontendSnapshot` interface；下游不暴露上游类型。
 
-**阶段验收**：R01 全部前端正负例通过；输入图中不能进入 JS 文件；禁用 emitter 后仍能完成 tcfg 编译前端；冷编译与增量编译产生相同 snapshot、诊断和源码位置；TypeScript 内部对象不跨越前端 seam。
+**阶段验收**：R01 全部前端正负例通过；输入图中不能进入 JS 文件；禁用 emitter 后仍能完成 tsfg 编译前端；冷编译与增量编译产生相同 snapshot、诊断和源码位置；TypeScript 内部对象不跨越前端 seam。
 
 **依赖**：R01、R02a。可与 R04 的格式设计并行。
 
@@ -138,11 +136,11 @@
 
 **主要产出**：
 
-- `.tbc`、`.tmeta`、`.tcfgabi`、Core IR exchange form 的规范、版本、校验和前后兼容规则。
+- `.tbc`、`.tmeta`、`.tsfgabi`、Core IR exchange form 的规范、版本、校验和前后兼容规则。
 - FunctionId、TypeId、资源句柄、签名/效果/schema hash 的规范化算法。
 - 原生补丁包、模块重载事务和 compiler-service 请求/响应的版本化协议。
 - DataLayout 驱动的 size、align、offset、调用约定、符号性和枚举底层类型模型。
-- tcfg 声明与 Zig `extern` 类型/绑定生成器；两端静态断言与运行时握手。
+- tsfg 声明与 Zig `extern` 类型/绑定生成器；两端静态断言与运行时握手。
 - 独立 contract test kit、二进制 fixtures、fuzzer seed corpus 与旧版本 fixtures。
 
 **阶段验收**：至少两个独立实现读取同一 fixtures 得到一致结果；多目标 ABI 与 Zig/C 探针逐字段一致；未知/损坏/不兼容版本 fail closed；不依赖手写布局常量。
@@ -181,14 +179,14 @@
 
 **依赖**：R01、R04。可与 R02b、R03 主体并行，随后与 R05/R07 联调。
 
-### R07：tcfg MLIR Dialect、优化流水线与 AOT 后端
+### R07：tsfg MLIR Dialect、优化流水线与 AOT 后端
 
 **目标**：从同一 Core IR 生成可装载的 CPU/GPU 原生制品，不把编译器带入发布运行时。
 
 **主要产出**：
 
-- `tcfg` dialect 的类型、操作、verifier 和 canonicalization。
-- Core IR→tcfg/官方 dialect→LLVM IR lowering；DataLayout、PIC、对象、重定位和调试信息。
+- `tsfg` dialect 的类型、操作、verifier 和 canonicalization。
+- Core IR→tsfg/官方 dialect→LLVM IR lowering；DataLayout、PIC、对象、重定位和调试信息。
 - GC statepoint/stack map、热更调用槽、借用和查询操作的 lowering。
 - LLD 补丁库链接、目标平台加载所需的对象/导出约定。
 - 优化 pass 契约、严格浮点模式、可审计的 pass pipeline 与 miscompile 回归语料。
@@ -239,7 +237,7 @@
 - `@component` 固定布局、反射、序列化和 `.tmeta` 生成。
 - archetype/chunk/连续列存储，结构变更、实体/组件生命周期和句柄规则。
 - `Read<T>`/`Write<T>`/Query 借用 interface、静态读写集合和冲突图。
-- `tcfg.query`、`tcfg.chunk`、`tcfg.parallel_for` lowering，循环融合、别名/边界分析和向量化。
+- `tsfg.query`、`tsfg.chunk`、`tsfg.parallel_for` lowering，循环融合、别名/边界分析和向量化。
 - Zig work-stealing JobSystem、确定性/非确定性模式、取消、错误与调试检查。
 - 解释执行与 AOT 使用同一用户模型和 `.tmeta`，无手工 Job/Burst 旁路。
 
@@ -249,7 +247,7 @@
 
 ### R11：显式 GPU Kernel 与设备后端
 
-**目标**：在同一 tcfg 内核模型上完成选定 GPU 平台的编译、加载、执行与验证。
+**目标**：在同一 tsfg 内核模型上完成选定 GPU 平台的编译、加载、执行与验证。
 
 **主要产出**：
 
@@ -270,8 +268,8 @@
 
 **主要产出**：
 
-- `tcfgc` CLI/build interface、项目清单、模块解析、增量缓存和预编译包格式。
-- `tcfg-lsp`：TypeScript Language Service 与 tcfg 语义、内核、ABI、热更诊断合并。
+- `tsfgc` CLI/build interface、项目清单、模块解析、增量缓存和预编译包格式。
+- `tsfg-lsp`：TypeScript Language Service 与 tsfg 语义、内核、ABI、热更诊断合并。
 - `.tbc`/`.tmeta`/Core IR 查看器，源映射，解释器/AOT 统一断点、栈帧和变量模型。
 - 热更状态、函数版本、GC、Jobs 和设备执行的 tracing/profiling interface。
 - Zig 绑定生成和宿主集成样例；兼容升级、包发布与离线构建流程。
@@ -288,7 +286,7 @@
 
 - 全平台/架构/配置测试矩阵，长稳、并发、OOM、fuzz、安全、性能和确定性基线。
 - 制品签名、SBOM、NOTICE、漏洞响应、崩溃符号、遥测边界和发布/回滚手册。
-- 跨版本 `.tbc`/`.tmeta`/`.tcfgabi`/包/热更兼容矩阵和迁移工具。
+- 跨版本 `.tbc`/`.tmeta`/`.tsfgabi`/包/热更兼容矩阵和迁移工具。
 - 发布 runtime 依赖封闭性审计、可复现构建证明和第三方许可证总审计。
 - 完整文档：语言、宿主、ABI、性能、调试、部署、升级与故障排查。
 - 分层 CI：PR 快速确定性测试，merge 全平台组合，nightly fuzz/stress/performance/GPU，release 全支持矩阵与长稳认证。

@@ -1,23 +1,21 @@
-# tcfg（TypeScript for Game）整体架构方案
-
-> R00 已决定语言、产品、目录、文档、命令与产品扩展名的规范前缀统一为 `tsfg`。本文件名与正文中的 `tcfg` 是首次三仓切换前的遗留状态；实际重命名必须按 [`r00-engineering-charter.md`](./r00-engineering-charter.md) 的协调事务执行，不能据此视为已经完成。
+# tsfg（TypeScript for Game）整体架构方案
 
 ## 远景与目标
 
-tcfg 是面向游戏引擎的静态语言、编译器和运行时。源码采用 TypeScript 语法与类型工具，宿主采用 Zig；同一份源码同时生成解释器字节码和原生机器码。tcfg 不是 JavaScript 实现，也不承诺 ECMAScript 运行时兼容。
+tsfg 是面向游戏引擎的静态语言、编译器和运行时。源码采用 TypeScript 语法与类型工具，宿主采用 Zig；同一份源码同时生成解释器字节码和原生机器码。tsfg 不是 JavaScript 实现，也不承诺 ECMAScript 运行时兼容。
 
-tcfg 的核心目标：
+tsfg 的核心目标：
 
 - TypeScript 与 Zig 共享固定内存布局；AOT 调用零封送、零复制。
 - 函数级热更新按“旧原生代码 → 字节码解释执行 → 新原生代码”切换。
 - 解释器和 AOT 共用类型、控制流、异常和内存语义。
 - 数据导向容器、查询、并行调度和向量化属于语言与编译器，不形成 Unity 式的多套 API。
-- `eval_bytecode` 只执行已经验证的 tcfg 字节码，不在运行时编译源码。
+- `eval_bytecode` 只执行已经验证的 tsfg 字节码，不在运行时编译源码。
 - 编译器可复用 TypeScript、Mojo、MLIR、LLVM 及相关开源实现中的代码；R00 只规定载体为同级 upstream fork、Integration Manifest 完整 commit OID、逐文件审计与 fork 特性分支，不批准任何具体来源或迁入内容，也不依赖对方产品运行时。
 
 ## 明确边界
 
-tcfg 不支持以下内容：
+tsfg 不支持以下内容：
 
 - `.js`、`.mjs`、`.cjs`、JS 字节码和 JS 包。
 - `any`、`eval`、`Function(string)`、原型链修改、`Proxy`、动态属性增删。
@@ -31,11 +29,11 @@ tcfg 不支持以下内容：
 
 ```mermaid
 flowchart TD
-    S[".ts 源码与 .d.ts 声明"] --> F["TypeScript 前端 + tcfg 语义检查"]
-    F --> H["tcfg HIR"]
-    H --> C["tcfg Core IR"]
-    C --> B["tcfg Bytecode"]
-    C --> M["tcfg MLIR Dialect"]
+    S[".ts 源码与 .d.ts 声明"] --> F["TypeScript 前端 + tsfg 语义检查"]
+    F --> H["tsfg HIR"]
+    H --> C["tsfg Core IR"]
+    C --> B["tsfg Bytecode"]
+    C --> M["tsfg MLIR Dialect"]
     B --> V["Zig 解释器"]
     M --> L["MLIR/LLVM 原生对象"]
     V --> R["Zig Runtime"]
@@ -50,24 +48,24 @@ flowchart TD
 | `.tmeta` | ABI、反射、组件、查询、读写集合、热更签名 | Zig Runtime 与工具链 |
 | 原生对象 | 平台机器码、重定位、调试信息 | Zig 宿主与代码加载器 |
 
-发布运行时只包含 Zig Runtime、解释器、字节码验证器、GC、函数注册表、任务调度器和 ABI 桥。编译器进程包含 TypeScript 前端、tcfg IR、MLIR、LLVM 与原生链接服务。
+发布运行时只包含 Zig Runtime、解释器、字节码验证器、GC、函数注册表、任务调度器和 ABI 桥。编译器进程包含 TypeScript 前端、tsfg IR、MLIR、LLVM 与原生链接服务。
 
 ## 语言模型
 
 ### TypeScript 前端
 
-前端迁入微软 TypeScript 的 scanner、parser、AST、类型检查、控制流收窄、模块解析、诊断和 Language Service 代码。tcfg 在其后执行更严格的语义检查，并直接生成 tcfg HIR；流程中不存在 JavaScript 输出。
+前端迁入微软 TypeScript 的 scanner、parser、AST、类型检查、控制流收窄、模块解析、诊断和 Language Service 代码。tsfg 在其后执行更严格的语义检查，并直接生成 tsfg HIR；流程中不存在 JavaScript 输出。
 
 输入规则固定为：
 
-- 只接收 `.ts`、`.d.ts` 和预编译 tcfg 包。
-- 第三方包必须提供符合 tcfg 子集的 TypeScript 源码或 tcfg 编译产物。
+- 只接收 `.ts`、`.d.ts` 和预编译 tsfg 包。
+- 第三方包必须提供符合 tsfg 子集的 TypeScript 源码或 tsfg 编译产物。
 - `.d.ts` 只描述编译期类型和原生接口，不代表 JS 实现。
 - `interface`、条件类型、映射类型和泛型只参与编译期分析，不产生运行时对象。
 
 ### 类型与语义
 
-| 类别 | tcfg 语义 |
+| 类别 | tsfg 语义 |
 |---|---|
 | `i8…i64`、`u8…u64`、`isize`、`usize` | 定宽整数；算术按位宽回绕，除零和非法移位触发 trap |
 | `f16`、`f32`、`f64` | IEEE 浮点；`number` 固定等价于 `f64` |
@@ -77,7 +75,7 @@ flowchart TD
 | `string` | 不变 UTF-8 字符串；ABI 使用 `StringView { ptr, len }` |
 | `@value class` | 固定布局值类型 |
 | `@component class` | 固定布局 ECS 组件 |
-| 普通 `class` | 密封引用类型，由 tcfg GC 管理 |
+| 普通 `class` | 密封引用类型，由 tsfg GC 管理 |
 | 联合类型 | 编译期联合或显式带标签联合；不生成隐式动态值 |
 | 泛型 | 全程序特化；原生 ABI 不暴露未特化泛型 |
 
@@ -85,16 +83,16 @@ flowchart TD
 
 ## 内存模型与 Zig ABI
 
-tcfg 将内存分为两个平面：
+tsfg 将内存分为两个平面：
 
 1. **值平面**：值类型、组件、Span 和原生容器。数据位于 Zig 分配器、ECS chunk 或显式 arena 中，无 GC、无装箱。
 2. **引用平面**：普通类、闭包环境和字符串。运行时采用增量分代追踪 GC；年轻代移动，老年代不移动。AOT 使用 LLVM statepoint/stack map，解释器使用寄存器根表。
 
-Zig 与 tcfg 之间只暴露 ABI 安全类型：定宽标量、`extern struct`、显式标签联合、Span、StringView、资源句柄和固定签名函数指针。引用对象通过 `Handle<T> { index: u32, generation: u32 }` 传递；Zig 不持有受管裸指针。
+Zig 与 tsfg 之间只暴露 ABI 安全类型：定宽标量、`extern struct`、显式标签联合、Span、StringView、资源句柄和固定签名函数指针。引用对象通过 `Handle<T> { index: u32, generation: u32 }` 传递；Zig 不持有受管裸指针。
 
 ### ABI 单一事实源
 
-tcfg 源码中的 `@abi` 声明生成规范化 `.tcfgabi`；既有 Zig API 由 Zig comptime 导出同一格式。绑定生成器分别生成 tcfg 声明和 Zig `extern` 类型，并在两端生成：
+tsfg 源码中的 `@abi` 声明生成规范化 `.tsfgabi`；既有 Zig API 由 Zig comptime 导出同一格式。绑定生成器分别生成 tsfg 声明和 Zig `extern` 类型，并在两端生成：
 
 - `size`、`align`、字段 offset 断言；
 - 调用约定、整数符号、枚举底层类型断言；
@@ -104,22 +102,22 @@ tcfg 源码中的 `@abi` 声明生成规范化 `.tcfgabi`；既有 Zig API 由 Z
 
 ## 统一 IR 与后端
 
-### tcfg HIR
+### tsfg HIR
 
 HIR 保留 TypeScript 源位置、泛型、空值收窄、闭包、异常和高层容器语义，负责产出清晰诊断。
 
-### tcfg Core IR
+### tsfg Core IR
 
 Core IR 是类型化 SSA 表示，完成泛型特化、闭包显式化、值/引用分类、逃逸分析、借用检查、效果分析和异常边转换。字节码与原生后端都从 Core IR 降低，禁止两套语义实现。
 
 ### MLIR/LLVM 路径
 
-tcfg 定义小型 `tcfg` dialect，保留下列领域操作：
+tsfg 定义小型 `tsfg` dialect，保留下列领域操作：
 
-- `tcfg.handle`、`tcfg.safepoint`：受管引用与 GC；
-- `tcfg.call_hot`：热更函数调用；
-- `tcfg.borrow`：Span 与借用范围；
-- `tcfg.query`、`tcfg.chunk`、`tcfg.parallel_for`：数据导向查询和并行执行。
+- `tsfg.handle`、`tsfg.safepoint`：受管引用与 GC；
+- `tsfg.call_hot`：热更函数调用；
+- `tsfg.borrow`：Span 与借用范围；
+- `tsfg.query`、`tsfg.chunk`、`tsfg.parallel_for`：数据导向查询和并行执行。
 
 普通计算降低到 MLIR 官方 `func`、`arith`、`math`、`cf`、`scf`、`memref`、`affine`、`vector`、`gpu` 和 `LLVM` dialect。数据布局由 MLIR DataLayout 与 LLVM target DataLayout 驱动。CPU 路径输出 LLVM IR 和位置无关对象；编译服务通过 LLD 生成平台补丁库。显式 GPU kernel 经 GPU dialect 输出对应设备后端。Zig Runtime 通过平台加载器装入补丁库，不链接 LLVM。
 
@@ -127,7 +125,7 @@ tcfg 定义小型 `tcfg` dialect，保留下列领域操作：
 
 ## 字节码与解释器
 
-tcfg Bytecode 是稳定、类型化、寄存器式指令集，包含函数签名、寄存器类型、控制流边界、异常表、GC 根图和源映射。验证器在加载前检查类型、跳转、调用签名、资源上限和 ABI 哈希。
+tsfg Bytecode 是稳定、类型化、寄存器式指令集，包含函数签名、寄存器类型、控制流边界、异常表、GC 根图和源映射。验证器在加载前检查类型、跳转、调用签名、资源上限和 ABI 哈希。
 
 Zig 解释器采用：
 
@@ -201,14 +199,14 @@ export function integrate(
 - 系统按 chunk 自动拆分；Zig JobSystem 对无冲突 chunk 并行执行。
 - Query 直接产生借用视图，不创建对象、不复制组件、不执行虚调用。
 - 内核禁止受管分配、GC 引用、异常、`await`、锁和逃逸借用。
-- Core IR 将查询循环变为 `tcfg.parallel_for`；MLIR 完成循环融合、别名分析、边界消除、向量化和目标指令选择。
+- Core IR 将查询循环变为 `tsfg.parallel_for`；MLIR 完成循环融合、别名分析、边界消除、向量化和目标指令选择。
 - 调试构建启用越界、生命周期、并发读写和句柄代数检查；发布构建移除已经静态证明的检查。
 
 因此，用户只编写组件、查询和普通函数；不存在 `NativeArray`、Job struct、手工 `Schedule/Complete` 和独立 Burst 标记。解释执行保持相同 API；原生后端将满足内核约束的代码编译为无 GC、无装箱的机器码。
 
 ## 开源基础设施复用规则
 
-tcfg 不嵌入其他语言运行时，也不把外部编译器当作黑盒子调用。经 R02a 批准的来源保留在与产品仓同级的 upstream fork 中，由 Integration Manifest 锁定完整 commit OID，tsfg 专用修改直接提交到 fork 特性分支；逐文件记录来源、base OID、许可证、本地修改和对应测试。产品构建可以消费这些锁定源码，但产品仓不保存 fork 副本。
+tsfg 不嵌入其他语言运行时，也不把外部编译器当作黑盒子调用。经 R02a 批准的来源保留在与产品仓同级的 upstream fork 中，由 Integration Manifest 锁定完整 commit OID，tsfg 专用修改直接提交到 fork 特性分支；逐文件记录来源、base OID、许可证、本地修改和对应测试。产品构建可以消费这些锁定源码，但产品仓不保存 fork 副本。
 
 | 来源 | 候选复用范围 | 明确排除 |
 |---|---|---|
@@ -218,21 +216,21 @@ tcfg 不嵌入其他语言运行时，也不把外部编译器当作黑盒子调
 | MLIR | ODS、类型与操作接口、PassManager、PatternRewriter、Dialect Conversion、DataLayout、官方 dialect 与 LLVM IR 转换 | MLIR 字节码运行时 |
 | LLVM | 优化器、目标代码生成、对象文件、调试信息、ORC/JITLink、statepoint、stack map | 将 LLVM 装入发布运行时 |
 | Hermes / QuickJS | 字节码验证、GC 根图、解释器测试与模糊测试方法 | ECMAScript 语义、对象模型、JSI、JS 标准库 |
-| WAMR / Porffor | 预解码、tier 切换、代码缓存、AOT 差分测试实现 | Wasm 作为 tcfg 语义层、JS 前端与 JS 运行时 |
+| WAMR / Porffor | 预解码、tier 切换、代码缓存、AOT 差分测试实现 | Wasm 作为 tsfg 语义层、JS 前端与 JS 运行时 |
 
-Mojo、LLVM/MLIR 及 TypeScript 的迁入代码保留各自许可证和 NOTICE；其他来源按文件许可证执行。许可证不清晰的文件不进入 tcfg。
+Mojo、LLVM/MLIR 及 TypeScript 的迁入代码保留各自许可证和 NOTICE；其他来源按文件许可证执行。许可证不清晰的文件不进入 tsfg。
 
 ## 工具与模块边界
 
 | 模块 | 职责 |
 |---|---|
-| `tcfgc` | TypeScript 前端、语义检查、HIR/Core IR、字节码与原生编译 |
-| `tcfg-vm` | Zig 寄存器解释器、验证器、调试器接口 |
-| `tcfg-runtime` | GC、FunctionCell、模块加载、句柄、异常和宿主服务 |
-| `tcfg-jobs` | chunk、查询、访问冲突图、工作窃取调度器 |
-| `tcfg-abi` | `.tcfgabi`、Zig/TypeScript 绑定和布局断言 |
-| `tcfg-compiler-service` | 热更编译、对象链接、补丁打包和代码回收协调 |
-| `tcfg-lsp` | TypeScript 语言服务与 tcfg 语义诊断合并 |
+| `tsfgc` | TypeScript 前端、语义检查、HIR/Core IR、字节码与原生编译 |
+| `tsfg-vm` | Zig 寄存器解释器、验证器、调试器接口 |
+| `tsfg-runtime` | GC、FunctionCell、模块加载、句柄、异常和宿主服务 |
+| `tsfg-jobs` | chunk、查询、访问冲突图、工作窃取调度器 |
+| `tsfg-abi` | `.tsfgabi`、Zig/TypeScript 绑定和布局断言 |
+| `tsfg-compiler-service` | 热更编译、对象链接、补丁打包和代码回收协调 |
+| `tsfg-lsp` | TypeScript 语言服务与 tsfg 语义诊断合并 |
 
 ## 必须保持的工程不变量
 
@@ -246,7 +244,7 @@ Mojo、LLVM/MLIR 及 TypeScript 的迁入代码保留各自许可证和 NOTICE�
 
 ## 结论
 
-tcfg 的正确形态不是“嵌入一个 TypeScript VM”，而是“自建 TypeScript 语法的静态游戏语言”：TypeScript 负责源码与编辑器体验，tcfg Core IR 统一解释器和原生语义，MLIR/LLVM 负责优化与机器码，Zig 负责宿主、运行时和任务系统。固定布局值平面解决 Zig 互操作，受管引用平面隔离 GC，FunctionCell 解决函数热更新，编译器内建 Query/Job 语义解决高性能游戏计算。
+tsfg 的正确形态不是“嵌入一个 TypeScript VM”，而是“自建 TypeScript 语法的静态游戏语言”：TypeScript 负责源码与编辑器体验，tsfg Core IR 统一解释器和原生语义，MLIR/LLVM 负责优化与机器码，Zig 负责宿主、运行时和任务系统。固定布局值平面解决 Zig 互操作，受管引用平面隔离 GC，FunctionCell 解决函数热更新，编译器内建 Query/Job 语义解决高性能游戏计算。
 
 ## 参考基础设施
 

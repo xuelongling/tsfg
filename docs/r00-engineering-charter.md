@@ -3,18 +3,18 @@
 状态：**设计已澄清，尚未实现**  
 日期：2026-09-03  
 范围：仅 R00  
-上位事实来源：`tcfg-architecture.md`、`tcfg-roadmap.md`（文件名仍处于切换前状态）
+上位事实来源：`tsfg-architecture.md`、`tsfg-roadmap.md`
 
 本文把 R00 的已批准决定改写为可实现、可验收的工程章程。本文中的“必须”“禁止”描述 R00 完成时的目标状态，不表示当前仓库已经具备相应源码、工具、制品或 CI。
 
-## 1. 当前仓库事实
+## 1. 切换前仓库事实
 
-截至 2026-09-03，实际状态如下：
+以下事实记录 2026-09-03 命名切换前的迁移 provenance：
 
 - workspace 根 `E:\ws\pro_tsfg` 不是 Git 仓库；唯一已检出的 Git 仓库是子目录 `tcfg`。
 - 本地产品仓 HEAD 为 `6721f81847357400c3cdcd795b79fb7764853d0e`，`origin` 仍是 `https://github.com/langofgame/tcfg.git`。
-- 当前 HEAD 只跟踪 `.gitignore`、`LICENSE`、`README.md` 与 `docs/tcfg-architecture.md`。
-- `CONTEXT.md`、`docs/adr/` 与 `docs/tcfg-roadmap.md` 目前仍是未跟踪文档。
+- 基线 HEAD 只跟踪 `.gitignore`、`LICENSE`、`README.md` 与旧名架构文档。
+- `CONTEXT.md`、`docs/adr/` 与旧名 roadmap 文档在基线中尚未跟踪。
 - 仓库没有可维护产品源码、构建入口、锁文件、CI、测试、schema 或已验证 dist；不能从产物名称或 `.gitignore` 推断这些能力存在。
 - 仓库尚未跟踪 `.gitattributes`；当前用户级 Git 配置为 `core.autocrlf=true`，因此 §12.1 的 LF/CRLF 规则也尚未由仓库强制执行。
 - `https://github.com/xuelongling/tsfg`、`https://github.com/xuelongling/manifests.git` 与 `https://github.com/xuelongling/.agents.git` 已存在，main 分别为：
