@@ -284,6 +284,7 @@ static int normalize_path(const char *base, const char *input, char *output,
         --output_length;
         while (output_length > 1 && output[output_length - 1] != '/')
           --output_length;
+        if (output_length > 1) --output_length;
         output[output_length] = '\0';
       }
       continue;
@@ -336,15 +337,22 @@ static int audit_path(pid_t pid, int descriptor, unsigned long address,
                       size_t allowed_count, char *denied, size_t denied_length) {
   char input[PATH_MAX];
   char base[PATH_MAX];
-  if (read_tracee_string(pid, address, input, sizeof(input)) < 0) return 0;
+  if (read_tracee_string(pid, address, input, sizeof(input)) < 0) {
+    snprintf(denied, denied_length, "unreadable-tracee-path");
+    return 1;
+  }
   if (input[0] == '\0') return 0;
   if (input[0] == '/') {
     strcpy(base, "/");
   } else if (read_process_link(pid, descriptor, base, sizeof(base)) < 0) {
-    return 0;
+    snprintf(denied, denied_length, "unresolvable-tracee-directory");
+    return 1;
   }
   char candidate[PATH_MAX];
-  if (normalize_path(base, input, candidate, sizeof(candidate)) < 0) return 0;
+  if (normalize_path(base, input, candidate, sizeof(candidate)) < 0) {
+    snprintf(denied, denied_length, "unnormalizable-tracee-path");
+    return 1;
+  }
   if (path_is_allowed(candidate, wants_write, allowed, allowed_count)) return 0;
   snprintf(denied, denied_length, "%s", candidate);
   return 1;
@@ -358,6 +366,12 @@ static int audit_syscall(pid_t pid, const struct user_regs_struct *registers,
   unsigned long address = 0;
   int wants_write = 0;
   switch (syscall_number) {
+#ifdef SYS_creat
+    case SYS_creat:
+      address = registers->rdi;
+      wants_write = 1;
+      break;
+#endif
 #ifdef SYS_open
     case SYS_open:
       address = registers->rdi;
@@ -406,6 +420,17 @@ static int audit_syscall(pid_t pid, const struct user_regs_struct *registers,
       address = registers->rdi;
       break;
 #endif
+    case SYS_execve:
+    case SYS_chdir:
+    case SYS_statfs:
+      address = registers->rdi;
+      break;
+#ifdef SYS_execveat
+    case SYS_execveat:
+      descriptor = (int)registers->rdi;
+      address = registers->rsi;
+      break;
+#endif
     case SYS_newfstatat:
     case SYS_statx:
       descriptor = (int)registers->rdi;
@@ -418,6 +443,171 @@ static int audit_syscall(pid_t pid, const struct user_regs_struct *registers,
       descriptor = (int)registers->rdi;
       address = registers->rsi;
       break;
+#ifdef SYS_truncate
+    case SYS_truncate:
+    case SYS_unlink:
+    case SYS_rmdir:
+    case SYS_mkdir:
+    case SYS_mknod:
+    case SYS_chmod:
+    case SYS_chown:
+    case SYS_lchown:
+    case SYS_utime:
+    case SYS_utimes:
+    case SYS_setxattr:
+    case SYS_lsetxattr:
+    case SYS_removexattr:
+    case SYS_lremovexattr:
+    case SYS_chroot:
+      address = registers->rdi;
+      wants_write = 1;
+      break;
+#endif
+    case SYS_unlinkat:
+    case SYS_mkdirat:
+    case SYS_mknodat:
+    case SYS_fchmodat:
+    case SYS_fchownat:
+    case SYS_futimesat:
+    case SYS_utimensat:
+      descriptor = (int)registers->rdi;
+      address = registers->rsi;
+      wants_write = 1;
+      break;
+#ifdef SYS_fchmodat2
+    case SYS_fchmodat2:
+      descriptor = (int)registers->rdi;
+      address = registers->rsi;
+      wants_write = 1;
+      break;
+#endif
+    case SYS_getxattr:
+    case SYS_lgetxattr:
+    case SYS_listxattr:
+    case SYS_llistxattr:
+      address = registers->rdi;
+      break;
+    case SYS_rename:
+      if (audit_path(pid, AT_FDCWD, registers->rdi, 1, allowed,
+                     allowed_count, denied, denied_length))
+        return 1;
+      address = registers->rsi;
+      wants_write = 1;
+      break;
+    case SYS_renameat:
+#ifdef SYS_renameat2
+    case SYS_renameat2:
+#endif
+      if (audit_path(pid, (int)registers->rdi, registers->rsi, 1, allowed,
+                     allowed_count, denied, denied_length))
+        return 1;
+      descriptor = (int)registers->rdx;
+      address = registers->r10;
+      wants_write = 1;
+      break;
+    case SYS_link:
+      if (audit_path(pid, AT_FDCWD, registers->rdi, 0, allowed,
+                     allowed_count, denied, denied_length))
+        return 1;
+      address = registers->rsi;
+      wants_write = 1;
+      break;
+    case SYS_linkat:
+      if (audit_path(pid, (int)registers->rdi, registers->rsi, 0, allowed,
+                     allowed_count, denied, denied_length))
+        return 1;
+      descriptor = (int)registers->rdx;
+      address = registers->r10;
+      wants_write = 1;
+      break;
+    case SYS_symlink:
+      address = registers->rsi;
+      wants_write = 1;
+      break;
+    case SYS_symlinkat:
+      descriptor = (int)registers->rsi;
+      address = registers->rdx;
+      wants_write = 1;
+      break;
+#ifdef SYS_name_to_handle_at
+    case SYS_name_to_handle_at:
+      descriptor = (int)registers->rdi;
+      address = registers->rsi;
+      break;
+#endif
+    case SYS_inotify_add_watch:
+      descriptor = AT_FDCWD;
+      address = registers->rsi;
+      break;
+#ifdef SYS_fanotify_mark
+    case SYS_fanotify_mark:
+      descriptor = (int)registers->r10;
+      address = registers->r8;
+      break;
+#endif
+    case SYS_acct:
+    case SYS_swapon:
+      address = registers->rdi;
+      wants_write = 1;
+      break;
+    case SYS_quotactl:
+      address = registers->rsi;
+      wants_write = 1;
+      break;
+    case SYS_mount:
+      address = registers->rsi;
+      wants_write = 1;
+      break;
+    case SYS_umount2:
+    case SYS_swapoff:
+      address = registers->rdi;
+      wants_write = 1;
+      break;
+    case SYS_pivot_root:
+      if (audit_path(pid, AT_FDCWD, registers->rdi, 1, allowed,
+                     allowed_count, denied, denied_length))
+        return 1;
+      address = registers->rsi;
+      wants_write = 1;
+      break;
+#ifdef SYS_open_tree
+    case SYS_open_tree:
+    case SYS_fspick:
+      descriptor = (int)registers->rdi;
+      address = registers->rsi;
+      break;
+#endif
+#ifdef SYS_move_mount
+    case SYS_move_mount:
+      if (audit_path(pid, (int)registers->rdi, registers->rsi, 1, allowed,
+                     allowed_count, denied, denied_length))
+        return 1;
+      descriptor = (int)registers->rdx;
+      address = registers->r10;
+      wants_write = 1;
+      break;
+#endif
+#ifdef SYS_mount_setattr
+    case SYS_mount_setattr:
+      descriptor = (int)registers->rdi;
+      address = registers->rsi;
+      wants_write = 1;
+      break;
+#endif
+#ifdef SYS_open_by_handle_at
+    case SYS_open_by_handle_at:
+#endif
+#ifdef SYS_io_uring_setup
+    case SYS_io_uring_setup:
+#endif
+#ifdef SYS_fsopen
+    case SYS_fsopen:
+    case SYS_fsconfig:
+    case SYS_fsmount:
+#endif
+      snprintf(denied, denied_length, "unsupported-filesystem-syscall:%ld",
+               syscall_number);
+      return 1;
     default:
       return 0;
   }
@@ -427,6 +617,9 @@ static int audit_syscall(pid_t pid, const struct user_regs_struct *registers,
 
 static int supervise_command(char **arguments, struct allowed_path *allowed,
                              size_t allowed_count) {
+  enum { MAX_TRACED_PROCESSES = 4096 };
+  pid_t traced[MAX_TRACED_PROCESSES];
+  size_t traced_count = 0;
   pid_t child = fork();
   if (child < 0) fail("cannot fork sandbox command", strerror(errno));
   if (child == 0) {
@@ -448,12 +641,16 @@ static int supervise_command(char **arguments, struct allowed_path *allowed,
     fail("cannot configure sandbox access audit", strerror(errno));
   if (ptrace(PTRACE_SYSCALL, child, NULL, NULL) < 0)
     fail("cannot start sandbox access audit", strerror(errno));
+  traced[traced_count++] = child;
 
   int child_executed = 0;
   for (;;) {
     pid_t stopped = waitpid(-1, &status, __WALL);
     if (stopped < 0) fail("cannot wait for sandbox command", strerror(errno));
     if (WIFEXITED(status)) {
+      for (size_t index = 0; index < traced_count; ++index) {
+        if (traced[index] == stopped) traced[index] = -1;
+      }
       if (stopped != child) continue;
       int code = WEXITSTATUS(status);
       if (!child_executed) return SANDBOX_SETUP_FAILURE_STATUS;
@@ -463,12 +660,25 @@ static int supervise_command(char **arguments, struct allowed_path *allowed,
       return code;
     }
     if (WIFSIGNALED(status)) {
+      for (size_t index = 0; index < traced_count; ++index) {
+        if (traced[index] == stopped) traced[index] = -1;
+      }
       if (stopped != child) continue;
       return 128 + WTERMSIG(status);
     }
     if (!WIFSTOPPED(status)) continue;
     int signal = WSTOPSIG(status);
     unsigned int event = (unsigned int)status >> 16;
+    if (signal == SIGTRAP &&
+        (event == PTRACE_EVENT_FORK || event == PTRACE_EVENT_VFORK ||
+         event == PTRACE_EVENT_CLONE)) {
+      unsigned long descendant = 0;
+      if (ptrace(PTRACE_GETEVENTMSG, stopped, NULL, &descendant) < 0)
+        fail("cannot identify sandbox descendant", strerror(errno));
+      if (traced_count == MAX_TRACED_PROCESSES)
+        fail("sandbox descendant limit exceeded", NULL);
+      traced[traced_count++] = (pid_t)descendant;
+    }
     if (stopped == child && signal == SIGTRAP && event == PTRACE_EVENT_EXEC)
       child_executed = 1;
     if (signal == (SIGTRAP | 0x80)) {
@@ -480,8 +690,18 @@ static int supervise_command(char **arguments, struct allowed_path *allowed,
         if (audit_syscall(stopped, &registers, allowed, allowed_count, denied,
                           sizeof(denied))) {
           fprintf(stderr, "tsfg sandbox: denied path access: %s\n", denied);
-          kill(-child, SIGKILL);
-          while (waitpid(-1, &status, __WALL) >= 0) {}
+          for (size_t index = 0; index < traced_count; ++index) {
+            if (traced[index] > 0 && kill(traced[index], SIGKILL) < 0 &&
+                errno != ESRCH)
+              fail("cannot terminate denied sandbox process", strerror(errno));
+          }
+          for (;;) {
+            if (waitpid(-1, &status, __WALL) >= 0) continue;
+            if (errno == EINTR) continue;
+            if (errno != ECHILD)
+              fail("cannot drain denied sandbox processes", strerror(errno));
+            break;
+          }
           return SANDBOX_UNDECLARED_INPUT_STATUS;
         }
       }
