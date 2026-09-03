@@ -639,6 +639,78 @@ async function downloadToFile(toolId, source, destination) {
   }
 }
 
+function archiveSources(selections) {
+  return selections.flatMap(({ artifact }) => artifact.archives ?? [artifact]);
+}
+
+async function verifyCachedArchive(source, archivePath) {
+  const archiveStat = await lstat(archivePath).catch(() => undefined);
+  if (!archiveStat?.isFile() || archiveStat.isSymbolicLink()) {
+    throw new Error(`cached archive is missing or has invalid type: ${source.archiveSha256}`);
+  }
+  if (String(archiveStat.size) !== source.byteSize) {
+    throw new Error(`cached archive byte size mismatch: ${source.archiveSha256}`);
+  }
+  const actual = await digestFile(archivePath);
+  if (actual !== source.archiveSha256) {
+    throw new Error(
+      `cached archive digest mismatch: expected ${source.archiveSha256}, got ${actual}`,
+    );
+  }
+}
+
+async function publishCachedArchive(sourcePath, archivePath) {
+  const parent = path.dirname(archivePath);
+  const temporaryPath = path.join(parent, `.${path.basename(archivePath)}.${randomUUID()}.tmp`);
+  await mkdir(parent, { recursive: true });
+  try {
+    await copyFile(sourcePath, temporaryPath);
+    await renameWithRetry(temporaryPath, archivePath);
+  } finally {
+    await rm(temporaryPath, { force: true });
+  }
+}
+
+async function acquireArchive(toolId, source, destination, archiveCacheRoot) {
+  const archivePath = path.join(
+    archiveCacheRoot,
+    source.archiveSha256.slice("sha256:".length),
+  );
+  if (await pathExists(archivePath)) {
+    await verifyCachedArchive(source, archivePath);
+    await copyFile(archivePath, destination);
+    return;
+  }
+  await downloadToFile(toolId, source, destination);
+  await publishCachedArchive(destination, archivePath);
+}
+
+async function verifyArchiveCache(archiveCacheRoot, selections, requireComplete) {
+  const sources = archiveSources(selections);
+  const expected = new Map(sources.map((source) => [
+    source.archiveSha256.slice("sha256:".length),
+    source,
+  ]));
+  const entries = await readdir(archiveCacheRoot, { withFileTypes: true }).catch((error) => {
+    if (error.code === "ENOENT") return undefined;
+    throw error;
+  });
+  if (!entries) {
+    if (requireComplete) throw new Error("cached archive set is missing");
+    return;
+  }
+  for (const entry of entries) {
+    const source = expected.get(entry.name);
+    if (!source) throw new Error(`unexpected cached archive object: ${entry.name}`);
+    if (!entry.isFile()) throw new Error(`cached archive has invalid type: ${entry.name}`);
+    await verifyCachedArchive(source, path.join(archiveCacheRoot, entry.name));
+    expected.delete(entry.name);
+  }
+  if (requireComplete && expected.size > 0) {
+    throw new Error(`cached archive is missing: ${[...expected.keys()][0]}`);
+  }
+}
+
 function extractionEnvironment(temporaryRoot) {
   return {
     HOME: temporaryRoot,
@@ -736,13 +808,20 @@ async function normalizeSysrootLinks(root) {
   await visit(root);
 }
 
-async function downloadArtifact(toolId, artifact, toolRoot, downloadsRoot, extractor) {
+async function downloadArtifact(
+  toolId,
+  artifact,
+  toolRoot,
+  downloadsRoot,
+  extractor,
+  archiveCacheRoot,
+) {
   await mkdir(downloadsRoot, { recursive: true });
   if (artifact.archiveFormat === "deb-xz-set") {
     if (!extractor) throw new Error("locked archive extractor is unavailable");
     for (const member of artifact.archives) {
       const archive = path.join(downloadsRoot, `${toolId}-${member.id}.deb`);
-      await downloadToFile(`${toolId}/${member.id}`, member, archive);
+      await acquireArchive(`${toolId}/${member.id}`, member, archive, archiveCacheRoot);
       const dataArchive = path.join(downloadsRoot, `${toolId}-${member.id}.data.tar.xz`);
       await writeFile(dataArchive, debianDataArchive(await readFile(archive)), { flag: "wx" });
       await extractTar(extractor, dataArchive, toolRoot, 0, downloadsRoot, "xz");
@@ -750,7 +829,7 @@ async function downloadArtifact(toolId, artifact, toolRoot, downloadsRoot, extra
     await normalizeSysrootLinks(toolRoot);
   } else {
     const archive = path.join(downloadsRoot, `${toolId}.archive`);
-    await downloadToFile(toolId, artifact, archive);
+    await acquireArchive(toolId, artifact, archive, archiveCacheRoot);
     if (artifact.archiveFormat === "raw") {
       const destination = checkedInstallPath(toolRoot, artifact.installPath);
       await mkdir(path.dirname(destination), { recursive: true });
@@ -821,6 +900,37 @@ async function pathExists(candidate) {
   }
 }
 
+async function verifyCachedClosure(closurePath, selections, lockDigest, platform) {
+  const expected = new Set(["ready.json", ...selections.map(({ id }) => id)]);
+  const entries = await readdir(closurePath, { withFileTypes: true });
+  for (const entry of entries) {
+    if (!expected.has(entry.name)) {
+      throw new Error(`unexpected cached closure object: ${entry.name}`);
+    }
+    if (entry.name === "ready.json" ? !entry.isFile() : !entry.isDirectory()) {
+      throw new Error(`cached closure object has invalid type: ${entry.name}`);
+    }
+    expected.delete(entry.name);
+  }
+  if (expected.size > 0) {
+    throw new Error(`cached closure object is missing: ${[...expected][0]}`);
+  }
+  const ready = JSON.parse(await readFile(path.join(closurePath, "ready.json"), "utf8"));
+  if (
+    ready.status !== "ready" ||
+    ready.lockDigest !== lockDigest ||
+    ready.platform !== platform
+  ) {
+    throw new Error("cached closure readiness identity mismatch");
+  }
+  for (const selection of selections) {
+    await verifyInstalledTool(
+      path.join(closurePath, selection.id),
+      selection.artifact,
+    );
+  }
+}
+
 async function prefetch(options) {
   const lockPath = options.get("--lock");
   const cachePath = options.get("--cache");
@@ -846,23 +956,18 @@ async function prefetch(options) {
     platform,
   );
   const activePath = path.join(absoluteCache, "active", platform);
+  const archiveCacheRoot = path.join(
+    absoluteCache,
+    "archives",
+    "sha256",
+    lockHex,
+    platform,
+  );
 
   if (await pathExists(finalPath)) {
     try {
-      const ready = JSON.parse(await readFile(path.join(finalPath, "ready.json"), "utf8"));
-      if (
-        ready.status !== "ready" ||
-        ready.lockDigest !== lockDigest ||
-        ready.platform !== platform
-      ) {
-        throw new Error("cached closure readiness identity mismatch");
-      }
-      for (const selection of selections) {
-        await verifyInstalledTool(
-          path.join(finalPath, selection.id),
-          selection.artifact,
-        );
-      }
+      await verifyArchiveCache(archiveCacheRoot, selections, true);
+      await verifyCachedClosure(finalPath, selections, lockDigest, platform);
     } catch (error) {
       await rm(activePath, { force: true });
       throw error;
@@ -874,6 +979,7 @@ async function prefetch(options) {
       `${lockHex}.${platform}.${randomUUID()}`,
     );
     try {
+      await verifyArchiveCache(archiveCacheRoot, selections, false);
       await mkdir(stagingPath, { recursive: true });
       const downloadsRoot = path.join(stagingPath, ".downloads");
       let extractor;
@@ -884,6 +990,7 @@ async function prefetch(options) {
           path.join(stagingPath, selection.id),
           downloadsRoot,
           extractor,
+          archiveCacheRoot,
         );
         if (selection.id === "archive-extractor") {
           extractor = checkedInstallPath(
@@ -893,6 +1000,7 @@ async function prefetch(options) {
         }
       }
       await rm(downloadsRoot, { recursive: true, force: true });
+      await verifyArchiveCache(archiveCacheRoot, selections, true);
       await writeFile(
         path.join(stagingPath, "ready.json"),
         `${canonicalize({ status: "ready", lockDigest, platform })}\n`,
@@ -922,6 +1030,7 @@ async function prefetch(options) {
   );
 
   return {
+    cacheKey: `${platform}/sha256/${lockHex}`,
     lockDigest,
     platform,
     tools: selections.map(({ id, tool }) => ({ id, version: tool.version })),
@@ -952,13 +1061,7 @@ async function verifyRuntimeClosure(lockPath, cachePath, platform) {
   if (relative.startsWith(`..${path.sep}`) || relative === ".." || path.isAbsolute(relative)) {
     throw new Error("active closure escapes the toolchain cache");
   }
-  const ready = JSON.parse(await readFile(path.join(closurePath, "ready.json"), "utf8"));
-  if (ready.status !== "ready" || ready.lockDigest !== lockDigest || ready.platform !== platform) {
-    throw new Error("cached closure readiness identity mismatch");
-  }
-  for (const selection of selections) {
-    await verifyInstalledTool(path.join(closurePath, selection.id), selection.artifact);
-  }
+  await verifyCachedClosure(closurePath, selections, lockDigest, platform);
   return { closurePath, lock, lockDigest, platform, selections };
 }
 

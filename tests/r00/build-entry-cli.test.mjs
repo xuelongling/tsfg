@@ -414,6 +414,10 @@ test("prefetch atomically publishes and reuses a content-verified minimal closur
     assert.equal(firstReport.network, "online");
     assert.equal(firstReport.status, "success");
     assert.equal(firstReport.telemetry, false);
+    assert.equal(
+      firstReport.result.cacheKey,
+      `test-x86_64/sha256/${firstReport.result.lockDigest.slice("sha256:".length)}`,
+    );
     assert.deepEqual(firstReport.result.tools, [
       { id: "node", version: "24.20.0" },
       { id: "pnpm", version: "11.25.0" },
@@ -440,10 +444,56 @@ test("prefetch atomically publishes and reuses a content-verified minimal closur
       "fixture-zig\n",
     );
     assert.equal(JSON.parse(await readFile(path.join(closurePath, "ready.json"), "utf8")).status, "ready");
+    const archiveCacheRoot = path.join(
+      cachePath,
+      "archives",
+      "sha256",
+      firstReport.result.lockDigest.slice("sha256:".length),
+      "test-x86_64",
+    );
+    assert.deepEqual(
+      (await readdir(archiveCacheRoot)).sort(),
+      [
+        lock.tools.zig.artifacts[0].archiveSha256.slice("sha256:".length),
+        lock.tools.node.artifacts[0].archiveSha256.slice("sha256:".length),
+        lock.tools.pnpm.artifacts[0].archiveSha256.slice("sha256:".length),
+      ].sort(),
+    );
+
+    const nodeArchive = path.join(
+      archiveCacheRoot,
+      lock.tools.node.artifacts[0].archiveSha256.slice("sha256:".length),
+    );
+    await writeFile(nodeArchive, "poison\n");
+    const corruptedArchive = await invoke(arguments_);
+    assert.equal(corruptedArchive.status, 11);
+    assert.match(corruptedArchive.stderr, /cached archive byte size mismatch/);
+    await assert.rejects(
+      readFile(path.join(cachePath, "active", "test-x86_64")),
+      /ENOENT/,
+    );
+    await writeFile(nodeArchive, nodeBytes);
 
     const second = await invoke(arguments_);
     assert.equal(second.status, 0, second.stderr);
     assert.equal(await readFile(reportPath, "utf8"), firstReportBytes);
+
+    await writeFile(path.join(closurePath, "unexpected-object"), "poison\n");
+    const unexpectedObject = await invoke(arguments_);
+    assert.equal(unexpectedObject.status, 11);
+    assert.match(unexpectedObject.stderr, /unexpected cached closure object/);
+    assert.equal(
+      JSON.parse(await readFile(reportPath, "utf8")).error.category,
+      "lock/integrity",
+    );
+    await assert.rejects(
+      readFile(path.join(cachePath, "active", "test-x86_64")),
+      /ENOENT/,
+    );
+    await rm(path.join(closurePath, "unexpected-object"));
+
+    const restored = await invoke(arguments_);
+    assert.equal(restored.status, 0, restored.stderr);
 
     const mirrorLock = structuredClone(lock);
     mirrorLock.tools.node.artifacts[0].url = `${server.baseUrl}/node-mirror`;
