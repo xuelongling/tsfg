@@ -12,7 +12,7 @@ const repositoryRoot = path.resolve(
   "..",
 );
 
-test("Build Input declaration includes only Linux smoke payload inputs", async () => {
+test("Build Input declaration includes both debug target control and smoke inputs", async () => {
   const declarationBytes = await readFile(
     path.join(repositoryRoot, "eng", "build-inputs.json"),
     "utf8",
@@ -27,7 +27,9 @@ test("Build Input declaration includes only Linux smoke payload inputs", async (
       { path: "eng/sandbox-run.c", projectId: "tsfg" },
       { path: "eng/toolchains.lock.json", projectId: "tsfg" },
       { path: "eng/tsfg-build", projectId: "tsfg" },
+      { path: "eng/tsfg-build.cmd", projectId: "tsfg" },
       { path: "eng/tsfg-build.mjs", projectId: "tsfg" },
+      { path: "eng/windows-sandbox-run.c", projectId: "tsfg" },
       { path: "pnpm-lock.yaml", projectId: "tsfg" },
       { path: "tests/r00/smoke/cpp/CMakeLists.txt", projectId: "tsfg" },
       { path: "tests/r00/smoke/cpp/main.cpp", projectId: "tsfg" },

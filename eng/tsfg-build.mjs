@@ -271,8 +271,8 @@ function validateSmokeOptions(options, command, requireInput = false) {
       `${command} requires --target, --profile, ${requireInput ? "--input, " : ""}and --out`,
     );
   }
-  if (target !== "linux-x86_64-gnu" || profile !== "debug") {
-    throw new ConfigurationError(`R00 ${command} supports only linux-x86_64-gnu debug`);
+  if (!["linux-x86_64-gnu", "windows-x86_64-msvc"].includes(target) || profile !== "debug") {
+    throw new ConfigurationError(`R00 ${command} supports only declared Linux and Windows debug targets`);
   }
 }
 
@@ -429,8 +429,13 @@ function selectArtifact(toolId, tool, platform) {
     /^(0|[1-9][0-9]*)$/.test(artifact.byteSize) &&
     digestPattern.test(artifact.archiveSha256) &&
     digestPattern.test(artifact.unpackedTreeSha256);
+  const bootstrapValid = artifact.archiveFormat !== "7zip-bootstrap" || (
+    /^https?:\/\//.test(artifact.bootstrap?.url) &&
+    /^(0|[1-9][0-9]*)$/.test(artifact.bootstrap?.byteSize) &&
+    digestPattern.test(artifact.bootstrap?.archiveSha256)
+  );
   const archiveSetValid =
-    artifact.archiveFormat === "deb-xz-set" &&
+    ["deb-xz-set", "zip-set"].includes(artifact.archiveFormat) &&
     Array.isArray(artifact.archives) &&
     artifact.archives.length > 0 &&
     artifact.archives.every((member) =>
@@ -439,10 +444,12 @@ function selectArtifact(toolId, tool, platform) {
       /^https?:\/\//.test(member.url) &&
       /^(0|[1-9][0-9]*)$/.test(member.byteSize) &&
       digestPattern.test(member.archiveSha256) &&
+      (artifact.archiveFormat !== "zip-set" || member.archiveFormat === "zip") &&
       typeof member.license === "string" &&
       member.license.length > 0);
   if (
     !commonMetadataValid ||
+    !bootstrapValid ||
     (!archiveSetValid && !/^https?:\/\//.test(artifact.url))
   ) {
     throw new Error(`invalid lock artifact metadata for ${toolId}`);
@@ -737,10 +744,13 @@ async function extractEntries(entries, toolRoot, stripComponents) {
   }
 }
 
-async function extractArchive(bytes, format, toolRoot, stripComponents) {
-  if (format === "zip") await extractEntries(parseZip(bytes), toolRoot, stripComponents);
+async function extractArchive(bytes, format, toolRoot, stripComponents, includePrefix) {
+  const included = (entries) => includePrefix
+    ? entries.filter(({ name }) => name.startsWith(includePrefix))
+    : entries;
+  if (format === "zip") await extractEntries(included(parseZip(bytes)), toolRoot, stripComponents);
   else if (["tar.gz", "apk-v2"].includes(format)) {
-    await extractEntries(parseTar(gunzipSync(bytes)), toolRoot, stripComponents);
+    await extractEntries(included(parseTar(gunzipSync(bytes))), toolRoot, stripComponents);
   }
   else throw new Error(`unsupported archive format: ${format}`);
 }
@@ -776,7 +786,10 @@ async function downloadToFile(toolId, source, destination) {
 }
 
 function archiveSources(selections) {
-  return selections.flatMap(({ artifact }) => artifact.archives ?? [artifact]);
+  return selections.flatMap(({ artifact }) => [
+    ...(artifact.archives ?? [artifact]),
+    ...(artifact.bootstrap ? [artifact.bootstrap] : []),
+  ]);
 }
 
 async function verifyCachedArchive(source, archivePath) {
@@ -907,8 +920,44 @@ async function extractTar(
   compression,
 ) {
   await mkdir(toolRoot, { recursive: true });
+  if (extractor.kind === "7zip") {
+    const extractionRoot = path.join(temporaryRoot, `.extract.${randomUUID()}`);
+    const expandedRoot = path.join(extractionRoot, "expanded");
+    await mkdir(expandedRoot, { recursive: true });
+    try {
+      runArchiveExtractor(
+        extractor.executable,
+        ["x", "-y", "-bd", "-bb0", `-o${extractionRoot}`, archive],
+        temporaryRoot,
+      );
+      const firstPass = (await readdir(extractionRoot, { withFileTypes: true }))
+        .filter(({ name }) => name !== "expanded");
+      if (firstPass.length !== 1 || !firstPass[0].isFile()) {
+        throw new Error("7-Zip xz extraction did not produce exactly one tar archive");
+      }
+      runArchiveExtractor(
+        extractor.executable,
+        ["x", "-y", "-bd", "-bb0", `-o${expandedRoot}`, path.join(extractionRoot, firstPass[0].name)],
+        temporaryRoot,
+      );
+      let sourceRoot = expandedRoot;
+      for (let depth = 0; depth < stripComponents; depth += 1) {
+        const children = await readdir(sourceRoot, { withFileTypes: true });
+        if (children.length !== 1 || !children[0].isDirectory()) {
+          throw new Error("7-Zip archive cannot apply the requested stripComponents");
+        }
+        sourceRoot = path.join(sourceRoot, children[0].name);
+      }
+      for (const child of await readdir(sourceRoot)) {
+        await rename(path.join(sourceRoot, child), path.join(toolRoot, child));
+      }
+    } finally {
+      await rm(extractionRoot, { recursive: true, force: true });
+    }
+    return;
+  }
   runArchiveExtractor(
-    extractor,
+    extractor.executable,
     [
       "tar",
       compression === "xz" ? "-xJf" : "-xzf",
@@ -963,10 +1012,48 @@ async function downloadArtifact(
       await extractTar(extractor, dataArchive, toolRoot, 0, downloadsRoot, "xz");
     }
     await normalizeSysrootLinks(toolRoot);
+  } else if (artifact.archiveFormat === "zip-set") {
+    const stripComponents = artifact.stripComponents ?? "0";
+    if (!/^(0|[1-9][0-9]*)$/.test(stripComponents)) {
+      throw new Error(`invalid stripComponents for ${toolId}`);
+    }
+    if (
+      typeof artifact.includePrefix !== "string" ||
+      !artifact.includePrefix.endsWith("/") ||
+      artifact.includePrefix.startsWith("/") ||
+      artifact.includePrefix.includes("..")
+    ) {
+      throw new Error(`invalid includePrefix for ${toolId}`);
+    }
+    await mkdir(toolRoot, { recursive: true });
+    for (const member of artifact.archives) {
+      const archive = path.join(downloadsRoot, `${toolId}-${member.id}.zip`);
+      await acquireArchive(`${toolId}/${member.id}`, member, archive, archiveCacheRoot);
+      try {
+        await extractArchive(
+          await readFile(archive),
+          member.archiveFormat,
+          toolRoot,
+          Number.parseInt(stripComponents, 10),
+          artifact.includePrefix,
+        );
+      } catch (error) {
+        throw new Error(`${toolId}/${member.id} archive extraction failed: ${error.message}`);
+      }
+    }
   } else {
     const archive = path.join(downloadsRoot, `${toolId}.archive`);
     await acquireArchive(toolId, artifact, archive, archiveCacheRoot);
-    if (artifact.archiveFormat === "raw") {
+    if (artifact.archiveFormat === "7zip-bootstrap") {
+      const bootstrap = path.join(downloadsRoot, `${toolId}-bootstrap.exe`);
+      await acquireArchive(`${toolId}/bootstrap`, artifact.bootstrap, bootstrap, archiveCacheRoot);
+      await mkdir(toolRoot, { recursive: true });
+      runArchiveExtractor(
+        bootstrap,
+        ["x", "-y", "-bd", "-bb0", `-o${toolRoot}`, archive],
+        downloadsRoot,
+      );
+    } else if (artifact.archiveFormat === "raw") {
       const destination = checkedInstallPath(toolRoot, artifact.installPath);
       await mkdir(path.dirname(destination), { recursive: true });
       await rename(archive, destination);
@@ -1128,11 +1215,14 @@ async function prefetch(options) {
           extractor,
           archiveCacheRoot,
         );
-        if (selection.id === "archive-extractor") {
-          extractor = checkedInstallPath(
-            path.join(stagingPath, selection.id),
-            selection.artifact.installPath,
-          );
+        if (selection.id.includes("archive-extractor")) {
+          extractor = {
+            executable: checkedInstallPath(
+              path.join(stagingPath, selection.id),
+              selection.artifact.installPath,
+            ),
+            kind: selection.artifact.extractorKind ?? "busybox",
+          };
         }
       }
       await rm(downloadsRoot, { recursive: true, force: true });
@@ -1701,10 +1791,13 @@ function buildEnvironment(temporaryRoot, toolDirectories) {
     TZ: "UTC",
   };
   if (process.platform === "win32") {
+    environment.APPDATA = temporaryRoot;
     environment.ComSpec = process.env.ComSpec;
+    environment.LOCALAPPDATA = temporaryRoot;
     environment.SystemRoot = process.env.SystemRoot;
     environment.TEMP = temporaryRoot;
     environment.TMP = temporaryRoot;
+    environment.USERPROFILE = temporaryRoot;
   }
   return environment;
 }
@@ -1816,6 +1909,79 @@ async function compileSandbox(runtime, sourceRoot, controlRoot) {
   await readRegularFile(executable, "sandbox executable");
   await chmod(executable, 0o755);
   return { executable };
+}
+
+function windowsSandboxArguments(policy, executable, arguments_) {
+  return [
+    ...policy.readOnly.flatMap((allowedPath) => ["--ro", allowedPath]),
+    ...policy.readExecute.flatMap((allowedPath) => ["--rx", allowedPath]),
+    ...policy.readWrite.flatMap((allowedPath) => ["--rw", allowedPath]),
+    "--",
+    executable,
+    ...arguments_,
+  ];
+}
+
+async function compileWindowsSandbox(runtime, sourceRoot, controlRoot) {
+  const zig = closureToolPath(runtime, "zig");
+  const executable = path.join(controlRoot, "windows-sandbox-run.exe");
+  await mkdir(controlRoot, { recursive: true });
+  runBuildTool(
+    "windows-sandbox-bootstrap",
+    zig,
+    [
+      "cc",
+      "-target", "x86_64-windows-msvc",
+      "-O2",
+      "-municode",
+      path.join(sourceRoot, "eng", "windows-sandbox-run.c"),
+      "-ladvapi32",
+      "-luserenv",
+      "-o", executable,
+    ],
+    sourceRoot,
+    buildEnvironment(controlRoot, [path.dirname(zig)]),
+  );
+  await readRegularFile(executable, "Windows sandbox executable");
+  return { executable };
+}
+
+function verifyWindowsSandboxBoundary(
+  sandboxExecutable,
+  runtime,
+  sourceRoot,
+  workRoot,
+  undeclaredRoot,
+) {
+  const node = closureToolPath(runtime, "node");
+  const policy = {
+    readOnly: [sourceRoot],
+    readExecute: [runtime.closurePath, path.dirname(sourceRoot)],
+    readWrite: [workRoot],
+  };
+  const environment = buildEnvironment(workRoot, [path.dirname(node)]);
+  runBuildTool(
+    "network-canary",
+    sandboxExecutable,
+    windowsSandboxArguments(policy, node, [
+      "-e",
+      "const n=require('node:net').connect({host:'1.1.1.1',port:443});n.on('connect',()=>process.exit(123));n.on('error',()=>process.exit(0));setTimeout(()=>process.exit(0),1500)",
+    ]),
+    sourceRoot,
+    environment,
+    true,
+  );
+  runBuildTool(
+    "undeclared-input-canary",
+    sandboxExecutable,
+    windowsSandboxArguments(policy, node, [
+      "-e",
+      `require('node:fs').readFile(${JSON.stringify(path.join(undeclaredRoot, "version.json"))},e=>process.exit(e?0:124))`,
+    ]),
+    sourceRoot,
+    environment,
+    true,
+  );
 }
 
 async function buildLinuxDebug(options, runtime, workspaceState, networkCanary) {
@@ -2064,6 +2230,273 @@ async function buildLinuxDebug(options, runtime, workspaceState, networkCanary) 
   }
 }
 
+function windowsToolchain(runtime) {
+  const msvcRoot = path.join(runtime.closurePath, "msvc-tools", "VC", "Tools", "MSVC", "14.44.35207");
+  const sdkRoot = path.join(runtime.closurePath, "windows-sdk", "c");
+  const sdkVersion = "10.0.26100.0";
+  return {
+    clangcl: closureToolPath(runtime, "llvm", "clangcl"),
+    cl: closureToolPath(runtime, "msvc-tools", "cl"),
+    cmake: closureToolPath(runtime, "cmake"),
+    include: [
+      path.join(msvcRoot, "include"),
+      ...["ucrt", "shared", "um", "winrt", "cppwinrt"].map((directory) =>
+        path.join(sdkRoot, "Include", sdkVersion, directory)),
+    ],
+    lib: [
+      path.join(msvcRoot, "lib", "x64"),
+      path.join(sdkRoot, "ucrt", "x64"),
+      path.join(sdkRoot, "um", "x64"),
+    ],
+    link: closureToolPath(runtime, "msvc-tools", "link"),
+    lld: closureToolPath(runtime, "llvm", "lld"),
+    mt: closureToolPath(runtime, "windows-sdk", "mt"),
+    ninja: closureToolPath(runtime, "ninja"),
+    pdbutil: closureToolPath(runtime, "llvm", "pdbutil"),
+    rc: closureToolPath(runtime, "windows-sdk", "rc"),
+    zig: closureToolPath(runtime, "zig"),
+  };
+}
+
+async function normalizeWindowsPdb(pdbPath, pdbutil, pathMappings, workRoot, environment) {
+  const yamlPath = path.join(workRoot, `${path.basename(pdbPath)}.${randomUUID()}.yaml`);
+  const normalizedPath = path.join(workRoot, `${path.basename(pdbPath)}.${randomUUID()}.pdb`);
+  const dumped = spawnSync(pdbutil, ["pdb2yaml", "--all", pdbPath], {
+    cwd: workRoot,
+    encoding: "utf8",
+    env: environment,
+    maxBuffer: 256 * 1024 * 1024,
+    stdio: ["ignore", "pipe", "pipe"],
+  });
+  if (dumped.error || dumped.status !== 0) {
+    throw new BuildFailureError(
+      `llvm-pdbutil pdb2yaml failed: ${(dumped.stderr || dumped.error?.message || "unknown failure").trim()}`,
+    );
+  }
+  let yaml = dumped.stdout;
+  for (const [source, replacement] of pathMappings) {
+    yaml = yaml.replaceAll(source, replacement);
+    yaml = yaml.replaceAll(source.replaceAll("\\", "/"), replacement);
+  }
+  await writeFile(yamlPath, yaml, { encoding: "utf8", flag: "wx" });
+  try {
+    runBuildTool(
+      "llvm-pdbutil",
+      pdbutil,
+      ["yaml2pdb", `--pdb=${normalizedPath}`, yamlPath],
+      workRoot,
+      environment,
+    );
+    await copyFile(normalizedPath, pdbPath);
+  } finally {
+    await rm(yamlPath, { force: true });
+    await rm(normalizedPath, { force: true });
+  }
+}
+
+async function buildWindowsDebug(options, runtime, workspaceState, networkCanary) {
+  const target = options.get("--target");
+  const profile = options.get("--profile");
+  const outputOption = options.get("--out");
+  if (!target || !profile || !outputOption) {
+    throw new ConfigurationError("build requires --target, --profile, and --out");
+  }
+  if (target !== "windows-x86_64-msvc" || profile !== "debug") {
+    throw new ConfigurationError("R00-09 Windows build supports only windows-x86_64-msvc debug");
+  }
+  if (process.platform !== "win32") {
+    throw new ConfigurationError("windows-x86_64-msvc debug builds require a Windows host");
+  }
+
+  let identity;
+  try {
+    identity = await createBuildIdentity(runtime, target, profile, workspaceState.root);
+  } catch (error) {
+    throw new BuildFailureError(`cannot derive Build Identity: ${error.message}`);
+  }
+  const output = path.resolve(outputOption);
+  const stagingRoot = path.join(path.dirname(output), `.${path.basename(output)}.${randomUUID()}.tmp`);
+  const sourceRoot = path.join(stagingRoot, "source");
+  const workRoot = path.join(stagingRoot, "work");
+  const controlRoot = path.join(stagingRoot, "control");
+  const publishRoot = path.join(stagingRoot, "publish");
+  const cppWork = path.join(workRoot, "cpp");
+  const zigPrefix = path.join(workRoot, "zig-install");
+  const compatibilityRoot = path.join(workRoot, "msvc-compatibility");
+  const binRoot = path.join(publishRoot, "bin");
+  const symbolRoot = path.join(publishRoot, "symbols");
+  const tools = windowsToolchain(runtime);
+  const environment = buildEnvironment(workRoot, [
+    path.dirname(tools.cmake),
+    path.dirname(tools.ninja),
+    path.dirname(tools.clangcl),
+    path.dirname(tools.lld),
+    path.dirname(tools.rc),
+    path.dirname(tools.zig),
+  ]);
+  environment.INCLUDE = tools.include.join(";");
+  environment.LIB = tools.lib.join(";");
+  environment.LIBPATH = tools.lib.join(";");
+  environment.SOURCE_DATE_EPOCH = identity.buildIdentity.source_date_epoch;
+  const msvcPathMapFlags = [sourceRoot, runtime.closurePath, workRoot]
+    .map((source, index) => `/pathmap:${source}=${[".", ".toolchain", ".build"][index]}`);
+  const clangPathMapFlags = [sourceRoot, runtime.closurePath, workRoot]
+    .flatMap((source, index) => [
+      `/clang:-ffile-prefix-map=${source}=${[".", ".toolchain", ".build"][index]}`,
+      `/clang:-fdebug-prefix-map=${source}=${[".", ".toolchain", ".build"][index]}`,
+    ]);
+  const cmakePath = (value) => value.replaceAll("\\", "/");
+  const cmakeArguments = [
+    "-S", cmakePath(path.join(sourceRoot, "tests", "r00", "smoke", "cpp")),
+    "-B", cmakePath(cppWork),
+    "-G", "Ninja",
+    `-DCMAKE_MAKE_PROGRAM=${cmakePath(tools.ninja)}`,
+    `-DCMAKE_CXX_COMPILER=${cmakePath(tools.clangcl)}`,
+    `-DCMAKE_LINKER=${cmakePath(tools.lld)}`,
+    `-DCMAKE_RC_COMPILER=${cmakePath(tools.rc)}`,
+    `-DCMAKE_MT=${cmakePath(tools.mt)}`,
+    "-DCMAKE_BUILD_TYPE=Debug",
+    "-DCMAKE_TRY_COMPILE_TARGET_TYPE=STATIC_LIBRARY",
+    "-DCMAKE_MSVC_RUNTIME_LIBRARY=MultiThreadedDebug",
+    `-DCMAKE_CXX_FLAGS_DEBUG=/Od /Zi /UNDEBUG /Brepro ${clangPathMapFlags.join(" ")} /clang:-fdebug-compilation-dir=.`,
+    "-DCMAKE_EXE_LINKER_FLAGS=/debug:full /Brepro /pdbaltpath:%_PDB% /nodefaultlib libcmtd.lib libvcruntimed.lib libucrtd.lib kernel32.lib /entry:mainCRTStartup",
+  ];
+  const zigArguments = [
+    "build",
+    "--build-file", "tests/r00/smoke/zig/build.zig",
+    "--prefix", zigPrefix,
+    "--cache-dir", path.join(workRoot, "zig-cache"),
+    "--global-cache-dir", path.join(workRoot, "zig-global-cache"),
+    "-Dtarget=x86_64-windows-msvc",
+    "-Doptimize=Debug",
+    "--seed", "0",
+  ];
+  const compatibilityObject = path.join(compatibilityRoot, "main.obj");
+  const compatibilityExecutable = path.join(compatibilityRoot, "tsfg-r00-msvc-compat.exe");
+  const steps = [
+    { role: "normative", tool: "cmake", executable: tools.cmake, arguments: cmakeArguments },
+    { role: "normative", tool: "ninja", executable: tools.ninja, arguments: ["-C", cppWork, "tsfg-r00-cpp-smoke"] },
+    { role: "normative", tool: "zig", executable: tools.zig, arguments: zigArguments },
+    {
+      role: "compatibility-only",
+      tool: "cl",
+      executable: tools.cl,
+      arguments: ["/nologo", "/c", "/Od", "/Zi", "/MTd", "/Brepro", ...msvcPathMapFlags,
+        path.join(sourceRoot, "tests", "r00", "smoke", "cpp", "main.cpp"), `/Fo${compatibilityObject}`],
+    },
+    {
+      role: "compatibility-only",
+      tool: "link",
+      executable: tools.link,
+      arguments: ["/nologo", "/debug:full", "/Brepro", "/pdbaltpath:%_PDB%", "/nodefaultlib",
+        "/subsystem:console", "/entry:mainCRTStartup", compatibilityObject, "libcmtd.lib",
+        "libvcruntimed.lib", "libucrtd.lib", "kernel32.lib", `/out:${compatibilityExecutable}`],
+    },
+  ];
+
+  try {
+    await materializeBuildInputs(workspaceState.root, identity.buildInputSet, sourceRoot);
+    await Promise.all([cppWork, path.join(zigPrefix, "bin"), compatibilityRoot, binRoot, symbolRoot]
+      .map((directory) => mkdir(directory, { recursive: true })));
+    let sandboxExecutable;
+    if (runtime.platform === target) {
+      ({ executable: sandboxExecutable } = await compileWindowsSandbox(runtime, sourceRoot, controlRoot));
+      verifyWindowsSandboxBoundary(
+        sandboxExecutable,
+        runtime,
+        sourceRoot,
+        workRoot,
+        workspaceState.root,
+      );
+    }
+    for (const step of steps) {
+      runBuildTool(
+        step.tool,
+        step.executable,
+        step.arguments,
+        sourceRoot,
+        environment,
+      );
+    }
+    const outputs = [
+      {
+        source: path.join(cppWork, "tsfg-r00-cpp-smoke.exe"),
+        destination: "bin/tsfg-r00-cpp-smoke.exe",
+        symbolSource: path.join(cppWork, "tsfg-r00-cpp-smoke.pdb"),
+        symbolDestination: "symbols/tsfg-r00-cpp-smoke.pdb",
+      },
+      {
+        source: path.join(zigPrefix, "bin", "tsfg-r00-zig-smoke.exe"),
+        destination: "bin/tsfg-r00-zig-smoke.exe",
+        symbolSource: path.join(zigPrefix, "bin", "tsfg-r00-zig-smoke.pdb"),
+        symbolDestination: "symbols/tsfg-r00-zig-smoke.pdb",
+      },
+    ];
+    const payloads = [];
+    const symbols = [];
+    for (const item of outputs) {
+      const executableBytes = await readRegularFile(item.source, item.destination)
+        .catch((error) => { throw new BuildFailureError(error.message); });
+      await normalizeWindowsPdb(
+        item.symbolSource,
+        tools.pdbutil,
+        [
+          [sourceRoot, "."],
+          [runtime.closurePath, ".toolchain"],
+          [workRoot, ".build"],
+          [stagingRoot, ".build"],
+        ],
+        workRoot,
+        environment,
+      );
+      const symbolBytes = await readRegularFile(item.symbolSource, item.symbolDestination)
+        .catch((error) => { throw new BuildFailureError(error.message); });
+      await writeFile(path.join(publishRoot, ...item.destination.split("/")), executableBytes, { flag: "wx" });
+      await writeFile(path.join(publishRoot, ...item.symbolDestination.split("/")), symbolBytes, { flag: "wx" });
+      payloads.push({ path: item.destination, sha256: digest(executableBytes) });
+      symbols.push({ path: item.symbolDestination, sha256: digest(symbolBytes) });
+    }
+    const metadata = {
+      buildIdentity: identity.buildIdentity,
+      buildInputSet: identity.buildInputSet,
+      contractSetId: identity.contractSetId,
+      development: workspaceState.development,
+      dirty: workspaceState.dirty,
+      inputAudit: { mode: "materialized-build-input-set+appcontainer-canaries", undeclaredReads: "blocked" },
+      networkCanary,
+      payloads,
+      productVersion: identity.productVersion,
+      publishable: workspaceState.publishable,
+      schemaVersion: "1",
+      symbols,
+      toolchainClosureDigest: runtime.lockDigest,
+      toolchainRoles: { compatibilityOnly: ["cl", "link"], normative: ["clang-cl", "lld-link", "zig"] },
+    };
+    await writeFile(path.join(publishRoot, "build-metadata.json"), `${canonicalize(metadata)}\n`, {
+      encoding: "utf8",
+      flag: "wx",
+    });
+    const publication = await publishDirectory(publishRoot, output);
+    const result = {
+      buildIdentity: identity.buildIdentity,
+      contractSetId: identity.contractSetId,
+      development: workspaceState.development,
+      dirty: workspaceState.dirty,
+      inputAudit: metadata.inputAudit,
+      networkCanary,
+      outputs: [...payloads, ...symbols].map(({ path: outputPath }) => outputPath).concat("build-metadata.json"),
+      profile,
+      publishable: workspaceState.publishable,
+      steps,
+      target,
+    };
+    Object.defineProperty(result, "publication", { value: publication });
+    return result;
+  } finally {
+    await rm(stagingRoot, { recursive: true, force: true, maxRetries: 5, retryDelay: 100 });
+  }
+}
+
 function runSmokeExecutable(
   name,
   executable,
@@ -2090,7 +2523,13 @@ function runSmokeExecutable(
   const result = spawnSync(
     sandboxExecutable ?? command,
     sandboxExecutable
-      ? sandboxArguments(
+      ? runtime.platform === "windows-x86_64-msvc"
+        ? windowsSandboxArguments(
+          { readOnly: [], readExecute: [outputRoot, runtime.closurePath], readWrite: [] },
+          command,
+          commandArguments,
+        )
+        : sandboxArguments(
           {
             readExecute: [outputRoot, runtime.closurePath],
             root: sandboxRoot,
@@ -2117,15 +2556,18 @@ function runSmokeExecutable(
   return { stdout: result.stdout, stderr: result.stderr };
 }
 
-async function testLinuxDebug(options, runtime, workspaceState, networkCanary) {
+async function testDebug(options, runtime, workspaceState, networkCanary) {
   const target = options.get("--target");
   const profile = options.get("--profile");
   const outputOption = options.get("--out");
   if (!target || !profile || !outputOption) {
     throw new ConfigurationError("test requires --target, --profile, and --out");
   }
-  if (target !== "linux-x86_64-gnu" || profile !== "debug") {
-    throw new ConfigurationError("R00-06 test supports only linux-x86_64-gnu debug");
+  if (!["linux-x86_64-gnu", "windows-x86_64-msvc"].includes(target) || profile !== "debug") {
+    throw new ConfigurationError("R00 debug test supports only declared Linux and Windows targets");
+  }
+  if (target === "windows-x86_64-msvc" && process.platform !== "win32") {
+    throw new ConfigurationError("windows-x86_64-msvc debug tests require a Windows host");
   }
 
   const output = path.resolve(outputOption);
@@ -2183,16 +2625,34 @@ async function testLinuxDebug(options, runtime, workspaceState, networkCanary) {
       `.${path.basename(output)}.${randomUUID()}.test-sandbox`,
     );
     lockedShell = closureToolPath(runtime, "archive-extractor");
+  } else if (target === "windows-x86_64-msvc" && runtime.platform === target) {
+    const sourceRoot = path.join(testRoot, "source");
+    const controlRoot = path.join(testRoot, "control");
+    await materializeBuildInputs(workspaceState.root, identity.buildInputSet, sourceRoot);
+    const compiled = await compileWindowsSandbox(runtime, sourceRoot, controlRoot);
+    sandboxExecutable = compiled.executable;
+    sandboxRoot = path.join(testRoot, "work");
+    await mkdir(sandboxRoot, { recursive: true });
+    verifyWindowsSandboxBoundary(
+      sandboxExecutable,
+      runtime,
+      sourceRoot,
+      sandboxRoot,
+      workspaceState.root,
+    );
   }
+  const executableSuffix = target === "windows-x86_64-msvc" ? ".exe" : "";
   const cases = [
     {
-      source: path.join(output, "bin", "tsfg-r00-cpp-smoke"),
+      source: path.join(output, "bin", `tsfg-r00-cpp-smoke${executableSuffix}`),
       name: "cpp-smoke",
       stderr: "",
-      stdout: "tsfg-r00-cpp-smoke: ok\n",
+      stdout: target === "windows-x86_64-msvc"
+        ? "tsfg-r00-cpp-smoke: ok\r\n"
+        : "tsfg-r00-cpp-smoke: ok\n",
     },
     {
-      source: path.join(output, "bin", "tsfg-r00-zig-smoke"),
+      source: path.join(output, "bin", `tsfg-r00-zig-smoke${executableSuffix}`),
       name: "zig-smoke",
       stderr: "tsfg-r00-zig-smoke: ok\n",
       stdout: "",
@@ -2439,6 +2899,70 @@ function createTar(entries, sourceDateEpoch) {
   }
   chunks.push(Buffer.alloc(1024));
   return Buffer.concat(chunks);
+}
+
+function crc32(bytes) {
+  let checksum = 0xffffffff;
+  for (const byte of bytes) {
+    checksum ^= byte;
+    for (let bit = 0; bit < 8; bit += 1) {
+      checksum = (checksum >>> 1) ^ ((checksum & 1) ? 0xedb88320 : 0);
+    }
+  }
+  return (checksum ^ 0xffffffff) >>> 0;
+}
+
+function createZip(entries, sourceDateEpoch) {
+  const date = new Date(Math.max(sourceDateEpoch * 1000, Date.UTC(1980, 0, 1)));
+  const dosTime = (date.getUTCHours() << 11) | (date.getUTCMinutes() << 5)
+    | Math.floor(date.getUTCSeconds() / 2);
+  const dosDate = ((date.getUTCFullYear() - 1980) << 9) | ((date.getUTCMonth() + 1) << 5)
+    | date.getUTCDate();
+  const sorted = [...entries].sort((left, right) =>
+    Buffer.from(left.path).compare(Buffer.from(right.path)));
+  const localParts = [];
+  const centralParts = [];
+  let offset = 0;
+  for (const entry of sorted) {
+    const name = Buffer.from(entry.path, "utf8");
+    const checksum = crc32(entry.bytes);
+    const local = Buffer.alloc(30);
+    local.writeUInt32LE(0x04034b50, 0);
+    local.writeUInt16LE(20, 4);
+    local.writeUInt16LE(0x0800, 6);
+    local.writeUInt16LE(0, 8);
+    local.writeUInt16LE(dosTime, 10);
+    local.writeUInt16LE(dosDate, 12);
+    local.writeUInt32LE(checksum, 14);
+    local.writeUInt32LE(entry.bytes.length, 18);
+    local.writeUInt32LE(entry.bytes.length, 22);
+    local.writeUInt16LE(name.length, 26);
+    const central = Buffer.alloc(46);
+    central.writeUInt32LE(0x02014b50, 0);
+    central.writeUInt16LE(0x0314, 4);
+    central.writeUInt16LE(20, 6);
+    central.writeUInt16LE(0x0800, 8);
+    central.writeUInt16LE(0, 10);
+    central.writeUInt16LE(dosTime, 12);
+    central.writeUInt16LE(dosDate, 14);
+    central.writeUInt32LE(checksum, 16);
+    central.writeUInt32LE(entry.bytes.length, 20);
+    central.writeUInt32LE(entry.bytes.length, 24);
+    central.writeUInt16LE(name.length, 28);
+    central.writeUInt32LE((entry.mode << 16) >>> 0, 38);
+    central.writeUInt32LE(offset, 42);
+    localParts.push(local, name, entry.bytes);
+    centralParts.push(central, name);
+    offset += local.length + name.length + entry.bytes.length;
+  }
+  const centralDirectory = Buffer.concat(centralParts);
+  const end = Buffer.alloc(22);
+  end.writeUInt32LE(0x06054b50, 0);
+  end.writeUInt16LE(sorted.length, 8);
+  end.writeUInt16LE(sorted.length, 10);
+  end.writeUInt32LE(centralDirectory.length, 12);
+  end.writeUInt32LE(offset, 16);
+  return Buffer.concat([...localParts, centralDirectory, end]);
 }
 
 function runPackageTool(executable, arguments_, cwd, environment, sandboxProtocol = false) {
@@ -2698,6 +3222,150 @@ async function packageLinuxDebug(options, runtime, workspaceState, networkCanary
   }
 }
 
+async function packageWindowsDebug(options, runtime, workspaceState, networkCanary) {
+  const target = options.get("--target");
+  const profile = options.get("--profile");
+  const inputOption = options.get("--input");
+  const outputOption = options.get("--out");
+  if (!target || !profile || !inputOption || !outputOption) {
+    throw new ConfigurationError("package requires --target, --profile, --input, and --out");
+  }
+  if (target !== "windows-x86_64-msvc" || profile !== "debug") {
+    throw new ConfigurationError("R00-09 Windows package supports only windows-x86_64-msvc debug");
+  }
+  if (process.platform !== "win32") {
+    throw new ConfigurationError("windows-x86_64-msvc debug packages require a Windows host");
+  }
+
+  const identity = await createBuildIdentity(runtime, target, profile, workspaceState.root);
+  const archiveName = `tsfg-v${identity.productVersion}-${target}-${profile}-${identity.buildIdentity.digest.slice(7, 23)}.zip`;
+  const output = path.resolve(outputOption);
+  const input = path.resolve(inputOption);
+  const stagingRoot = path.join(path.dirname(output), `.${path.basename(output)}.${randomUUID()}.tmp`);
+  const sourceRoot = path.join(stagingRoot, "source");
+  const workRoot = path.join(stagingRoot, "work");
+  const controlRoot = path.join(stagingRoot, "control");
+  const publishRoot = path.join(stagingRoot, "publish");
+  try {
+    await Promise.all([workRoot, publishRoot].map((directory) => mkdir(directory, { recursive: true })));
+    const metadata = await readCanonicalJson(path.join(input, "build-metadata.json"), "build metadata");
+    if (
+      canonicalize(metadata.buildIdentity) !== canonicalize(identity.buildIdentity) ||
+      canonicalize(metadata.buildInputSet) !== canonicalize(identity.buildInputSet) ||
+      metadata.contractSetId !== identity.contractSetId ||
+      metadata.development !== false ||
+      metadata.dirty !== false ||
+      metadata.productVersion !== identity.productVersion ||
+      metadata.publishable !== true ||
+      metadata.toolchainClosureDigest !== runtime.lockDigest
+    ) {
+      throw new PackageFailureError("build metadata does not match the current Build Identity");
+    }
+    const expectedPayloads = ["bin/tsfg-r00-cpp-smoke.exe", "bin/tsfg-r00-zig-smoke.exe"];
+    const expectedSymbols = ["symbols/tsfg-r00-cpp-smoke.pdb", "symbols/tsfg-r00-zig-smoke.pdb"];
+    if (
+      !Array.isArray(metadata.payloads) ||
+      !Array.isArray(metadata.symbols) ||
+      canonicalize(metadata.payloads.map(({ path: memberPath }) => memberPath)) !== canonicalize(expectedPayloads) ||
+      canonicalize(metadata.symbols.map(({ path: memberPath }) => memberPath)) !== canonicalize(expectedSymbols)
+    ) {
+      throw new PackageFailureError("build metadata does not declare the expected Windows payload and symbol set");
+    }
+    if (runtime.platform === target) {
+      await materializeBuildInputs(workspaceState.root, identity.buildInputSet, sourceRoot);
+      const { executable } = await compileWindowsSandbox(runtime, sourceRoot, controlRoot);
+      verifyWindowsSandboxBoundary(executable, runtime, sourceRoot, workRoot, workspaceState.root);
+    }
+    const members = [];
+    for (const declared of [...metadata.payloads, ...metadata.symbols]) {
+      const bytes = await readRegularFile(
+        path.join(input, ...declared.path.split("/")),
+        `Windows package member ${declared.path}`,
+      ).catch((error) => { throw new PackageFailureError(error.message); });
+      if (digest(bytes) !== declared.sha256) {
+        throw new PackageFailureError(`package member digest does not match build metadata: ${declared.path}`);
+      }
+      members.push({
+        bytes,
+        mode: declared.path.startsWith("bin/") ? 0o755 : 0o644,
+        path: declared.path,
+      });
+    }
+    members.push({ bytes: Buffer.from(identity.contractSet), mode: 0o644, path: "contract-set.json" });
+    const forbiddenValues = new Set([
+      workspaceState.root,
+      runtime.closurePath,
+      stagingRoot,
+      input,
+      output,
+      process.env.CI_RUN_ID,
+      process.env.GITHUB_RUN_ID,
+      process.env.HOSTNAME,
+      process.env.COMPUTERNAME,
+    ].filter((value) => typeof value === "string" && value.length > 0));
+    for (const value of [...forbiddenValues]) {
+      forbiddenValues.add(value.replaceAll("\\", "/"));
+      forbiddenValues.add(value.replaceAll("/", "\\"));
+    }
+    for (const member of members) {
+      for (const forbidden of forbiddenValues) {
+        if (member.bytes.includes(Buffer.from(forbidden))) {
+          throw new PackageFailureError(`package member contains host-specific data: ${member.path}`);
+        }
+      }
+    }
+    members.sort((left, right) => Buffer.from(left.path).compare(Buffer.from(right.path)));
+    const artifactManifest = {
+      buildIdentity: identity.buildIdentity,
+      buildInputSet: identity.buildInputSet,
+      contractSetId: identity.contractSetId,
+      members: members.map((member) => ({ path: member.path, sha256: digest(member.bytes) })),
+      productVersion: identity.productVersion,
+      schemaVersion: "1",
+      toolchainClosureDigest: runtime.lockDigest,
+    };
+    const artifactManifestBytes = Buffer.from(canonicalize(artifactManifest));
+    const archive = createZip([
+      { bytes: artifactManifestBytes, mode: 0o644, path: "artifact-manifest.json" },
+      ...members,
+    ], Number.parseInt(identity.buildIdentity.source_date_epoch, 10));
+    const archivePath = path.join(publishRoot, archiveName);
+    await writeFile(archivePath, archive, { flag: "wx" });
+    await writeFile(`${archivePath}.checksums.json`, `${canonicalize({
+      archive: { name: archiveName, sha256: digest(archive) },
+      artifactManifest: { path: "artifact-manifest.json", sha256: digest(artifactManifestBytes) },
+      buildIdentity: identity.buildIdentity,
+      schemaVersion: "1",
+    })}\n`, { encoding: "utf8", flag: "wx" });
+    const publication = await publishDirectory(publishRoot, output);
+    const result = {
+      archive: archiveName,
+      buildIdentity: identity.buildIdentity,
+      buildInputSet: identity.buildInputSet,
+      checksums: `${archiveName}.checksums.json`,
+      contractSetId: identity.contractSetId,
+      development: false,
+      dirty: false,
+      input,
+      networkCanary,
+      publishable: true,
+    };
+    Object.defineProperty(result, "publication", { value: publication });
+    return result;
+  } catch (error) {
+    if (
+      error instanceof ConfigurationError ||
+      error instanceof OfflineBoundaryError ||
+      error instanceof PackageFailureError ||
+      error instanceof SandboxBoundaryError ||
+      error instanceof UndeclaredInputError
+    ) throw error;
+    throw new PackageFailureError(error.message);
+  } finally {
+    await rm(stagingRoot, { recursive: true, force: true, maxRetries: 5, retryDelay: 100 });
+  }
+}
+
 const arguments_ = process.argv.slice(2);
 const command = arguments_[0] ?? "";
 const reportPath = parseReportPath(arguments_);
@@ -2810,13 +3478,17 @@ if (runtimeIntegrityError) {
     validateSmokeOptions(options, "build");
     const workspaceState = inspectProductWorkspace(options, true);
     if (!runtimeClosure) throw new Error("locked runtime closure is unavailable");
-    const networkCanary = await verifyOfflineBoundary();
-    const result = await buildLinuxDebug(
+    const networkCanary = options.get("--target") === "windows-x86_64-msvc"
+      ? "blocked"
+      : await verifyOfflineBoundary();
+    const result = options.get("--target") === "windows-x86_64-msvc"
+      ? await buildWindowsDebug(options, runtimeClosure, workspaceState, networkCanary)
+      : await buildLinuxDebug(
       options,
       runtimeClosure,
       workspaceState,
       networkCanary,
-    );
+      );
     publication = result.publication;
     process.exitCode = await succeed(command, result, reportPath, "offline");
   } catch (error) {
@@ -2871,8 +3543,10 @@ if (runtimeIntegrityError) {
     validateSmokeOptions(options, "test");
     const workspaceState = inspectProductWorkspace(options, true);
     if (!runtimeClosure) throw new Error("locked runtime closure is unavailable");
-    const networkCanary = await verifyOfflineBoundary();
-    const result = await testLinuxDebug(options, runtimeClosure, workspaceState, networkCanary);
+    const networkCanary = options.get("--target") === "windows-x86_64-msvc"
+      ? "blocked"
+      : await verifyOfflineBoundary();
+    const result = await testDebug(options, runtimeClosure, workspaceState, networkCanary);
     process.exitCode = await succeed(command, result, reportPath, "offline");
   } catch (error) {
     const isConfigurationError = error instanceof ConfigurationError;
@@ -2926,13 +3600,12 @@ if (runtimeIntegrityError) {
     validateSmokeOptions(options, "package", true);
     const workspaceState = inspectProductWorkspace(options, false);
     if (!runtimeClosure) throw new PackageFailureError("locked runtime closure is unavailable");
-    const networkCanary = await verifyOfflineBoundary();
-    const result = await packageLinuxDebug(
-      options,
-      runtimeClosure,
-      workspaceState,
-      networkCanary,
-    );
+    const networkCanary = options.get("--target") === "windows-x86_64-msvc"
+      ? "blocked"
+      : await verifyOfflineBoundary();
+    const result = options.get("--target") === "windows-x86_64-msvc"
+      ? await packageWindowsDebug(options, runtimeClosure, workspaceState, networkCanary)
+      : await packageLinuxDebug(options, runtimeClosure, workspaceState, networkCanary);
     publication = result.publication;
     process.exitCode = await succeed(command, result, reportPath, "offline");
   } catch (error) {

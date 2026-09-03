@@ -740,6 +740,36 @@ test("Linux prefetch refuses PATH Node without an explicit verified bootstrap", 
   }
 });
 
+test("Windows prefetch refuses PATH Node without an explicit verified bootstrap", {
+  skip: process.platform !== "win32",
+}, async () => {
+  const sandbox = await mkdtemp(path.join(tmpdir(), "tsfg-windows-bootstrap-"));
+  const poisonRoot = path.join(sandbox, "poison");
+  const sentinel = path.join(sandbox, "poison-node-ran");
+  const reportPath = path.join(sandbox, "report.json");
+  try {
+    await mkdir(poisonRoot);
+    await writeFile(
+      path.join(poisonRoot, "node.cmd"),
+      `@echo off\r\n>"${sentinel}" echo poison\r\nexit /b 99\r\n`,
+    );
+    const result = spawnSync(process.env.ComSpec, [
+      "/d", "/c", path.join(repositoryRoot, "eng", "tsfg-build.cmd"),
+      "prefetch", "--report", reportPath,
+    ], {
+      cwd: repositoryRoot,
+      encoding: "utf8",
+      env: { ...process.env, PATH: poisonRoot, TSFG_CACHE_DIR: path.join(sandbox, "cache") },
+    });
+    assert.equal(result.status, 11, result.stderr);
+    assert.match(result.stderr, /absolute TSFG_BOOTSTRAP_NODE/);
+    await assert.rejects(stat(sentinel), /ENOENT/);
+    assert.equal(JSON.parse(await readFile(reportPath, "utf8")).error.category, "lock/integrity");
+  } finally {
+    await rm(sandbox, { recursive: true, force: true });
+  }
+});
+
 test("Windows launcher verifies the locked Node executable before running it", {
   skip: process.platform !== "win32",
 }, async () => {
