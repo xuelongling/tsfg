@@ -202,10 +202,11 @@ if [ "${1:-}" = prefetch ]; then
     *) ;;
   esac
   [ -x "$bootstrap_node" ] || runtime_failure 'prefetch bootstrap Node is not executable'
-  bootstrap_actual=$(/usr/bin/sha256sum "$bootstrap_node") || runtime_failure 'cannot verify prefetch bootstrap Node'
+  exec 9< "$bootstrap_node" || runtime_failure 'cannot open prefetch bootstrap Node'
+  bootstrap_actual=$(/usr/bin/sha256sum /proc/self/fd/9) || runtime_failure 'cannot verify prefetch bootstrap Node'
   bootstrap_actual=${bootstrap_actual%% *}
   [ "$bootstrap_actual" = "$bootstrap_digest" ] || runtime_failure 'prefetch bootstrap Node digest mismatch'
-  exec "$bootstrap_node" "$script_dir/tsfg-build.mjs" "$@" \
+  exec /proc/self/fd/9 "$script_dir/tsfg-build.mjs" "$@" \
     --lock "$script_dir/toolchains.lock.json" \
     --cache "$cache" \
     --platform "$platform"
@@ -235,7 +236,8 @@ fi
 if [ ! -x /usr/bin/sha256sum ]; then
   runtime_failure
 fi
-node_actual=$(/usr/bin/sha256sum "$node_path") || runtime_failure
+exec 9< "$node_path" || runtime_failure
+node_actual=$(/usr/bin/sha256sum /proc/self/fd/9) || runtime_failure
 node_actual=${node_actual%% *}
 if [ "$node_actual" != "$node_id" ]; then
   runtime_failure
@@ -246,4 +248,4 @@ TSFG_RUNTIME_LOCK="$script_dir/toolchains.lock.json"
 TSFG_RUNTIME_CACHE=$cache
 TSFG_RUNTIME_PLATFORM=$platform
 export TSFG_RUNTIME_LOCK TSFG_RUNTIME_CACHE TSFG_RUNTIME_PLATFORM
-exec "$node_path" "$script_dir/tsfg-build.mjs" "$@"
+exec /proc/self/fd/9 "$script_dir/tsfg-build.mjs" "$@"

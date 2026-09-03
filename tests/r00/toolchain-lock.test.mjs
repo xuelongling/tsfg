@@ -211,7 +211,7 @@ test("toolchain lock content-locks the Linux debug closure and bootstrap tools",
   const environmentReset = linuxLauncher.indexOf(
     "unset NODE_OPTIONS NODE_PATH NODE_REPL_EXTERNAL_MODULE NODE_EXTRA_CA_CERTS OPENSSL_CONF",
   );
-  const lockedNodeExecution = linuxLauncher.indexOf('exec "$node_path"');
+  const lockedNodeExecution = linuxLauncher.lastIndexOf("exec /proc/self/fd/9");
   assert.ok(environmentReset >= 0, "Linux launcher must clear Node injection variables");
   assert.ok(
     environmentReset < lockedNodeExecution,

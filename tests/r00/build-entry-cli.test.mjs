@@ -154,7 +154,6 @@ test("unknown operation returns the stable usage category and an atomic report",
     await rm(sandbox, { recursive: true, force: true });
   }
 });
-
 test("public launcher classifies an unsupported operation before a missing closure", async (context) => {
   const sandbox = await mkdtemp(path.join(tmpdir(), "tsfg-launcher-usage-"));
   const reportPath = path.join(sandbox, "report.json");
@@ -942,119 +941,7 @@ test("dirty workspace fails closed before build execution", async () => {
   }
 });
 
-test("development mode runs tests in a dirty workspace as non-publishable", {
-  skip: process.platform === "win32",
-}, async () => {
-  const sandbox = await mkdtemp(path.join(tmpdir(), "tsfg-dirty-test-dev-"));
-  const workspace = path.join(sandbox, "workspace");
-  const output = path.join(sandbox, "out");
-  const cachePath = path.join(sandbox, "cache");
-  const lockPath = path.join(sandbox, "toolchains.lock.json");
-  const reportPath = path.join(sandbox, "report.json");
-  const nodeBytes = Buffer.from("#!/bin/sh\nexit 0\n");
-  const server = await startArtifactServer(new Map([["/node", nodeBytes]]));
-  let serverOpen = true;
-  try {
-    await mkdir(workspace);
-    for (const arguments_ of [
-      ["init"],
-      ["config", "user.name", "tsfg test"],
-      ["config", "user.email", "tsfg-test@example.invalid"],
-    ]) {
-      const initialized = spawnSync("git", arguments_, { cwd: workspace, encoding: "utf8" });
-      assert.equal(initialized.status, 0, initialized.stderr);
-    }
-    await writeFile(path.join(workspace, "tracked.txt"), "tracked\n");
-    for (const arguments_ of [["add", "tracked.txt"], ["commit", "-m", "fixture"]]) {
-      const committed = spawnSync("git", arguments_, { cwd: workspace, encoding: "utf8" });
-      assert.equal(committed.status, 0, committed.stderr);
-    }
-    await writeFile(path.join(workspace, "dirty.txt"), "dirty\n");
-    for (const [name, stdout, stderr] of [
-      ["tsfg-r00-cpp-smoke", "tsfg-r00-cpp-smoke: ok\n", ""],
-      ["tsfg-r00-zig-smoke", "", "tsfg-r00-zig-smoke: ok\n"],
-    ]) {
-      const executable = path.join(output, "bin", name);
-      await mkdir(path.dirname(executable), { recursive: true });
-      await writeFile(
-        executable,
-        `#!/bin/sh\n${stdout ? `printf '${stdout}'` : `printf '${stderr}' >&2`}\n`,
-      );
-      await chmod(executable, 0o755);
-    }
-    const testPayloads = await Promise.all([
-      "bin/tsfg-r00-cpp-smoke",
-      "bin/tsfg-r00-zig-smoke",
-    ].map(async (payloadPath) => ({
-      path: payloadPath,
-      sha256: fixtureDigest(await readFile(path.join(output, ...payloadPath.split("/")))),
-    })));
-    await writeFile(path.join(output, "build-metadata.json"), `${JSON.stringify({
-      buildIdentity: { profile: "debug", target: "linux-x86_64-gnu" },
-      development: true,
-      dirty: true,
-      payloads: testPayloads,
-      publishable: false,
-      schemaVersion: "1",
-    })}\n`);
-    const lock = {
-      dependencyLocks: [],
-      schemaVersion: "1",
-      targets: { "test-x86_64": { tools: ["node"] } },
-      tools: {
-        node: {
-          artifacts: [{
-            archiveFormat: "raw",
-            archiveSha256: fixtureDigest(nodeBytes),
-            byteSize: String(nodeBytes.length),
-            installPath: "bin/node",
-            platform: "test-x86_64",
-            unpackedTreeSha256: fixtureTreeDigest("bin/node", nodeBytes),
-            url: `${server.baseUrl}/node`,
-          }],
-          license: "MIT",
-          signature: { kind: "fixture", signer: "tsfg test fixture" },
-          version: "fixture",
-        },
-      },
-    };
-    await writeFile(lockPath, `${JSON.stringify(lock)}\n`);
-    const prefetched = await invoke([
-      "prefetch", "--lock", lockPath, "--cache", cachePath,
-      "--platform", "test-x86_64",
-    ]);
-    assert.equal(prefetched.status, 0, prefetched.stderr);
-    await server.close();
-    serverOpen = false;
-
-    const result = await invoke([
-      "test", "--dev",
-      "--target", "linux-x86_64-gnu",
-      "--profile", "debug",
-      "--workspace", workspace,
-      "--out", output,
-      "--report", reportPath,
-    ], {
-      env: {
-        ...process.env,
-        NODE_OPTIONS: `--require=${networkDenialHook}`,
-        TSFG_RUNTIME_CACHE: cachePath,
-        TSFG_RUNTIME_LOCK: lockPath,
-        TSFG_RUNTIME_PLATFORM: "test-x86_64",
-      },
-    });
-    assert.equal(result.status, 0, result.stderr);
-    const report = JSON.parse(await readFile(reportPath, "utf8"));
-    assert.equal(report.result.development, true);
-    assert.equal(report.result.dirty, true);
-    assert.equal(report.result.publishable, false);
-  } finally {
-    if (serverOpen) await server.close();
-    await rm(sandbox, { recursive: true, force: true });
-  }
-});
-
-test("build and test run the private C++ and Zig smoke programs through locked tools", async () => {
+test("build and test run the private C++ and Zig smoke programs through locked tools", async (context) => {
   const sandbox = await mkdtemp(path.join(tmpdir(), "tsfg-linux-cpp-build-"));
   const cachePath = path.join(sandbox, "cache");
   const lockPath = path.join(sandbox, "toolchains.lock.json");
@@ -1067,7 +954,7 @@ test("build and test run the private C++ and Zig smoke programs through locked t
   const isWindows = process.platform === "win32";
   const cmake = Buffer.from(isWindows
     ? "@echo off\r\n%SystemRoot%\\System32\\findstr.exe /c:\"TSFG_TEST_REQUIRE_UNDECLARED\" \"%~2\\CMakeLists.txt\" >nul\r\nif not errorlevel 1 if not exist \"%~2\\undeclared.cpp\" (\r\n  >&2 echo Permission denied: tests/r00/smoke/cpp/undeclared.cpp\r\n  exit /b 19\r\n)\r\nset build_dir=%~4\r\nif not \"%build_dir:compile-fail=%\"==\"%build_dir%\" exit /b 9\r\nexit /b 0\r\n"
-    : "#!/bin/sh\ncase \"$(/bin/cat \"$2/CMakeLists.txt\")\" in *TSFG_TEST_REQUIRE_UNDECLARED*)\n  if [ ! -f \"$2/undeclared.cpp\" ]; then\n    printf '%s\\n' 'Permission denied: tests/r00/smoke/cpp/undeclared.cpp' >&2\n    exit 19\n  fi\n;; esac\ncase \"$4\" in *compile-fail*) exit 9 ;; esac\nexit 0\n");
+    : "#!/bin/sh\nwhile IFS= read -r line; do\n  case \"$line\" in\n    '# TSFG_TEST_REQUIRE_UNDECLARED '*)\n      undeclared=${line#* }\n      undeclared=${undeclared#* }\n      if IFS= read -r value < \"$undeclared\"; then\n        printf '%s\\n' 'sandbox allowed undeclared input' >&2\n        exit 18\n      fi\n      exit 19\n      ;;\n    '# TSFG_TEST_MUTATE_DECLARED')\n      if printf '%s\\n' mutation >> \"$2/CMakeLists.txt\"; then\n        printf '%s\\n' 'sandbox allowed declared input mutation' >&2\n        exit 18\n      fi\n      exit 19\n      ;;\n  esac\ndone < \"$2/CMakeLists.txt\"\ncase \"$4\" in *compile-fail*) exit 9 ;; esac\nexit 0\n");
   const ninja = Buffer.from(isWindows
     ? "@echo off\r\n>\"%~2\\tsfg-r00-cpp-smoke\" echo fixture cpp output\r\nif not exist \"%~2\\..\\zig-install\\bin\" mkdir \"%~2\\..\\zig-install\\bin\"\r\n>\"%~2\\..\\zig-install\\bin\\tsfg-r00-zig-smoke\" echo fixture zig output\r\nexit /b 0\r\n"
     : `#!/bin/sh
@@ -1075,31 +962,23 @@ test("build and test run the private C++ and Zig smoke programs through locked t
   echo '#!/bin/sh'
   echo 'printf "tsfg-r00-cpp-smoke: ok\\n"'
 } > "$2/tsfg-r00-cpp-smoke"
-/bin/chmod +x "$2/tsfg-r00-cpp-smoke"
 `);
   const zig = Buffer.from(isWindows
     ? "@echo off\r\nexit /b 0\r\n"
     : `#!/bin/sh
 if [ "$1" = cc ]; then
+  previous=
   while [ "$#" -gt 0 ]; do
     if [ "$1" = -o ]; then
-      sandbox=$2
-      {
-        echo '#!/bin/sh'
-        echo 'while [ "$1" != -- ]; do shift 2; done'
-        echo 'shift'
-        echo 'exec "$@"'
-      } > "$sandbox"
-      /bin/chmod +x "$sandbox"
-      exit 0
+      exec /usr/bin/cc -O2 "$previous" -o "$2"
     fi
+    previous=$1
     shift
   done
   exit 1
 fi
 while [ "$#" -gt 0 ]; do
   if [ "$1" = --prefix ]; then
-    /bin/mkdir -p "$2/bin"
     {
       echo '#!/bin/sh'
       echo 'printf "tsfg-r00-zig-smoke: ok\\n" >&2'
@@ -1112,10 +991,31 @@ done
 exit 1
 `);
   const inert = Buffer.from(isWindows ? "@echo off\r\nexit /b 0\r\n" : "#!/bin/sh\nexit 0\n");
+  let lockedShell = inert;
+  if (!isWindows) {
+    try {
+      lockedShell = Buffer.from(await readFile("/usr/bin/busybox"));
+      await stat("/usr/bin/cc");
+      const routes = await readFile("/proc/net/route", "utf8");
+      if (routes.split("\n").slice(1).some((line) => {
+        const fields = line.trim().split(/\s+/);
+        return fields.length > 1 && fields[0] !== "lo";
+      })) {
+        context.skip("Linux sandbox acceptance requires a loopback-only namespace");
+        await rm(sandbox, { recursive: true, force: true });
+        return;
+      }
+    } catch {
+      context.skip("Linux sandbox acceptance requires /usr/bin/busybox and /usr/bin/cc");
+      await rm(sandbox, { recursive: true, force: true });
+      return;
+    }
+  }
   const llvm = Buffer.from(isWindows
     ? "@echo off\r\nif \"%~1\"==\"--only-keep-debug\" copy /y \"%~2\" \"%~3\" >nul\r\nexit /b 0\r\n"
-    : "#!/bin/sh\nif [ \"$1\" = --only-keep-debug ]; then /bin/cp \"$2\" \"$3\"; fi\nexit 0\n");
+    : "#!/bin/sh\nif [ \"$1\" = --only-keep-debug ]; then < \"$2\" > \"$3\"; fi\nexit 0\n");
   const toolDefinitions = [
+    ["archive-extractor", isWindows ? "busybox.cmd" : "bin/busybox.static", lockedShell],
     ["cmake", isWindows ? "bin/cmake.cmd" : "bin/cmake", cmake],
     ["debian-sysroot", "usr/include/assert.h", Buffer.from("fixture sysroot\n")],
     ["llvm", isWindows ? "bin/llvm.cmd" : "bin/llvm", llvm],
@@ -1251,6 +1151,33 @@ exit 1
     assert.equal(developmentMetadata.development, true);
     assert.equal(developmentMetadata.dirty, true);
     assert.equal(developmentMetadata.publishable, false);
+    if (!isWindows) {
+      const developmentTestReportPath = path.join(sandbox, "development-test-report.json");
+      const developmentTest = await invoke([
+      "test", "--dev",
+      "--target", "linux-x86_64-gnu",
+      "--profile", "debug",
+      "--workspace", workspacePath,
+      "--out", developmentOutput,
+      "--report", developmentTestReportPath,
+    ], {
+      env: {
+        ...process.env,
+        NODE_OPTIONS: `--require=${networkDenialHook}`,
+        TSFG_RUNTIME_CACHE: cachePath,
+        TSFG_RUNTIME_LOCK: lockPath,
+        TSFG_RUNTIME_PLATFORM: "test-x86_64",
+      },
+    });
+      assert.equal(developmentTest.status, 0, developmentTest.stderr);
+      const developmentTestReport = JSON.parse(await readFile(
+        developmentTestReportPath,
+        "utf8",
+      ));
+      assert.equal(developmentTestReport.result.development, true);
+      assert.equal(developmentTestReport.result.dirty, true);
+      assert.equal(developmentTestReport.result.publishable, false);
+    }
     await assert.rejects(stat(poisonSentinel), /ENOENT/);
     const cmakeListsPath = path.join(
       workspacePath,
@@ -1261,7 +1188,10 @@ exit 1
       "CMakeLists.txt",
     );
     const cmakeLists = await readFile(cmakeListsPath);
-    await appendFile(cmakeListsPath, "\n# TSFG_TEST_REQUIRE_UNDECLARED\n");
+    await appendFile(
+      cmakeListsPath,
+      `\n# TSFG_TEST_REQUIRE_UNDECLARED ${undeclaredInputPath.replaceAll("\\", "/")}\n`,
+    );
     const undeclaredReadReportPath = path.join(sandbox, "undeclared-read-report.json");
     const undeclaredRead = await invoke([
       "build", "--dev",
@@ -1439,7 +1369,7 @@ exit 1
     assert.equal(report.result.dirty, false);
     assert.deepEqual(report.result.inputAudit, {
       mode: process.platform === "linux"
-        ? "materialized-build-input-set+landlock"
+        ? "materialized-build-input-set+namespaces"
         : "materialized-build-input-set",
       undeclaredReads: "blocked",
     });

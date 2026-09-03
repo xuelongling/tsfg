@@ -1689,6 +1689,15 @@ function buildEnvironment(temporaryRoot, toolDirectories) {
   return environment;
 }
 
+function throwSandboxBoundaryFailure(detail, operation) {
+  if (/tsfg sandbox: .*network/i.test(detail)) {
+    throw new OfflineBoundaryError(`sandbox network isolation failed during ${operation}: ${detail}`);
+  }
+  if (/permission denied|operation not permitted|read-only file system|tsfg sandbox:/i.test(detail)) {
+    throw new UndeclaredInputError(`sandbox denied an undeclared ${operation} input: ${detail}`);
+  }
+}
+
 function shellQuote(value) {
   return `'${value.replaceAll("'", `'"'"'`)}'`;
 }
@@ -1734,15 +1743,19 @@ function runBuildTool(toolId, executable, arguments_, cwd, environment) {
       ? error.stderr.toString("utf8")
       : "";
     const detail = `${stdout}${stderr}`.trim() || error.message;
-    if (/permission denied|operation not permitted|tsfg sandbox:/i.test(detail)) {
-      throw new UndeclaredInputError(`sandbox denied an undeclared build input: ${detail}`);
-    }
+    throwSandboxBoundaryFailure(detail, "build");
     throw new BuildFailureError(`${toolId} failed${detail ? `: ${detail}` : ""}`);
   }
 }
 
-function sandboxArguments({ readOnly = [], readExecute = [], readWrite = [] }, executable, arguments_) {
+function sandboxArguments(
+  { readOnly = [], readExecute = [], readWrite = [], root, shell },
+  executable,
+  arguments_,
+) {
   return [
+    "--root", root,
+    "--shell", shell,
     ...readOnly.flatMap((allowedPath) => ["--ro", allowedPath]),
     ...readExecute.flatMap((allowedPath) => ["--rx", allowedPath]),
     ...readWrite.flatMap((allowedPath) => ["--rw", allowedPath]),
@@ -1774,13 +1787,15 @@ async function buildLinuxDebug(options, runtime, workspaceState, networkCanary) 
     path.dirname(output),
     `.${path.basename(output)}.${randomUUID()}.tmp`,
   );
+  const sourceRoot = path.join(stagingRoot, "source");
   const workRoot = path.join(stagingRoot, "work");
-  const sourceRoot = path.join(workRoot, "source");
+  const controlRoot = path.join(stagingRoot, "control");
+  const sandboxRoot = `${stagingRoot}-sandbox`;
   const publishRoot = path.join(stagingRoot, "publish");
   const cppWork = path.join(workRoot, "cpp");
-  const wrapperRoot = path.join(workRoot, "llvm-wrappers");
+  const wrapperRoot = path.join(controlRoot, "llvm-wrappers");
   const zigPrefix = path.join(workRoot, "zig-install");
-  const sandboxExecutable = path.join(workRoot, "landlock-run");
+  const sandboxExecutable = path.join(controlRoot, "sandbox-run");
   const sandboxRequired = process.platform === "linux";
   const binRoot = path.join(publishRoot, "bin");
   const cppOutput = path.join(cppWork, "tsfg-r00-cpp-smoke");
@@ -1792,6 +1807,7 @@ async function buildLinuxDebug(options, runtime, workspaceState, networkCanary) 
   const llvmAr = closureToolPath(runtime, "llvm", "ar");
   const llvmRanlib = closureToolPath(runtime, "llvm", "ranlib");
   const sysroot = path.join(runtime.closurePath, "debian-sysroot");
+  const lockedShell = closureToolPath(runtime, "archive-extractor");
   const loader = path.join(sysroot, "lib", "x86_64-linux-gnu", "ld-linux-x86-64.so.2");
   const runtimeLibraries = [
     path.join(sysroot, "lib", "x86_64-linux-gnu"),
@@ -1860,6 +1876,7 @@ async function buildLinuxDebug(options, runtime, workspaceState, networkCanary) 
     );
     await mkdir(cppWork, { recursive: true });
     await mkdir(wrapperRoot, { recursive: true });
+    await mkdir(path.join(zigPrefix, "bin"), { recursive: true });
     await mkdir(binRoot, { recursive: true });
     if (sandboxRequired) {
       runBuildTool(
@@ -1870,7 +1887,7 @@ async function buildLinuxDebug(options, runtime, workspaceState, networkCanary) 
           "-target", "x86_64-linux-musl",
           "-static",
           "-O2",
-          path.join(sourceRoot, "eng", "landlock-run.c"),
+          path.join(sourceRoot, "eng", "sandbox-run.c"),
           "-o", sandboxExecutable,
         ],
         sourceRoot,
@@ -1914,8 +1931,10 @@ async function buildLinuxDebug(options, runtime, workspaceState, networkCanary) 
     }
     const sandboxPolicy = {
       readOnly: [sourceRoot],
-      readExecute: [runtime.closurePath],
+      readExecute: [runtime.closurePath, controlRoot],
       readWrite: [workRoot],
+      root: sandboxRoot,
+      shell: lockedShell,
     };
     for (const step of steps) {
       if (sandboxRequired) {
@@ -1953,12 +1972,12 @@ async function buildLinuxDebug(options, runtime, workspaceState, networkCanary) 
     }
     let controlSandbox;
     if (sandboxRequired) {
-      const publishedSandbox = path.join(publishRoot, ".control", "landlock-run");
+      const publishedSandbox = path.join(publishRoot, ".control", "sandbox-run");
       await mkdir(path.dirname(publishedSandbox), { recursive: true });
       await copyFile(sandboxExecutable, publishedSandbox);
       await chmod(publishedSandbox, 0o755);
       controlSandbox = {
-        path: ".control/landlock-run",
+        path: ".control/sandbox-run",
         sha256: await digestFile(publishedSandbox),
       };
     }
@@ -1978,7 +1997,7 @@ async function buildLinuxDebug(options, runtime, workspaceState, networkCanary) 
       dirty: workspaceState.dirty,
       inputAudit: {
         mode: sandboxRequired
-          ? "materialized-build-input-set+landlock"
+          ? "materialized-build-input-set+namespaces"
           : "materialized-build-input-set",
         undeclaredReads: "blocked",
       },
@@ -2022,10 +2041,19 @@ async function buildLinuxDebug(options, runtime, workspaceState, networkCanary) 
       maxRetries: process.platform === "win32" ? 5 : 0,
       retryDelay: 100,
     });
+    await rm(sandboxRoot, { recursive: true, force: true });
   }
 }
 
-function runSmokeExecutable(name, executable, outputRoot, runtime, sandboxExecutable) {
+function runSmokeExecutable(
+  name,
+  executable,
+  outputRoot,
+  runtime,
+  sandboxExecutable,
+  sandboxRoot,
+  lockedShell,
+) {
   const sysroot = path.join(runtime.closurePath, "debian-sysroot");
   const command = runtime.platform === "linux-x86_64-gnu"
     ? path.join(sysroot, "lib", "x86_64-linux-gnu", "ld-linux-x86-64.so.2")
@@ -2044,7 +2072,11 @@ function runSmokeExecutable(name, executable, outputRoot, runtime, sandboxExecut
     sandboxExecutable ?? command,
     sandboxExecutable
       ? sandboxArguments(
-          { readExecute: [outputRoot, runtime.closurePath] },
+          {
+            readExecute: [outputRoot, runtime.closurePath],
+            root: sandboxRoot,
+            shell: lockedShell,
+          },
           command,
           commandArguments,
         )
@@ -2058,9 +2090,7 @@ function runSmokeExecutable(name, executable, outputRoot, runtime, sandboxExecut
   );
   if (result.error || result.status !== 0) {
     const detail = `${result.stdout ?? ""}${result.stderr ?? ""}`.trim();
-    if (/permission denied|operation not permitted|tsfg sandbox:/i.test(detail)) {
-      throw new UndeclaredInputError(`sandbox denied an undeclared test input: ${detail}`);
-    }
+    throwSandboxBoundaryFailure(detail, "test");
     throw new TestFailureError(
       `${name} failed${detail ? `: ${detail}` : result.error ? `: ${result.error.message}` : ""}`,
     );
@@ -2080,6 +2110,10 @@ async function testLinuxDebug(options, runtime, workspaceState, networkCanary) {
   }
 
   const output = path.resolve(outputOption);
+  const testRoot = path.join(
+    path.dirname(output),
+    `.${path.basename(output)}.${randomUUID()}.test`,
+  );
   let metadata;
   try {
     metadata = await readCanonicalJson(
@@ -2098,7 +2132,15 @@ async function testLinuxDebug(options, runtime, workspaceState, networkCanary) {
   ) {
     throw new TestFailureError("Build Metadata does not match the requested test target");
   }
+  if (metadata.development && !workspaceState.development) {
+    throw new WorkspaceMismatchError(
+      "development-mode-required",
+      "testing a development build requires --dev",
+    );
+  }
   let sandboxExecutable;
+  let sandboxRoot;
+  let lockedShell;
   if (process.platform === "linux") {
     if (
       typeof metadata.controlSandbox?.path !== "string" ||
@@ -2106,31 +2148,37 @@ async function testLinuxDebug(options, runtime, workspaceState, networkCanary) {
     ) {
       throw new TestFailureError("Build Metadata does not declare the Linux sandbox");
     }
-    sandboxExecutable = path.join(output, ...metadata.controlSandbox.path.split("/"));
-    const sandboxStat = await lstat(sandboxExecutable).catch(() => undefined);
+    const sourceSandbox = path.join(output, ...metadata.controlSandbox.path.split("/"));
+    const sandboxStat = await lstat(sourceSandbox).catch(() => undefined);
     if (
       !sandboxStat?.isFile() ||
       sandboxStat.isSymbolicLink() ||
-      await digestFile(sandboxExecutable) !== metadata.controlSandbox.sha256
+      await digestFile(sourceSandbox) !== metadata.controlSandbox.sha256
     ) {
       throw new TestFailureError("Linux sandbox does not match Build Metadata");
     }
-  }
-  if (metadata.development && !workspaceState.development) {
-    throw new WorkspaceMismatchError(
-      "development-mode-required",
-      "testing a development build requires --dev",
+    sandboxExecutable = path.join(testRoot, "control", "sandbox-run");
+    await mkdir(path.dirname(sandboxExecutable), { recursive: true });
+    await copyFile(sourceSandbox, sandboxExecutable);
+    if (await digestFile(sandboxExecutable) !== metadata.controlSandbox.sha256) {
+      throw new TestFailureError("Linux sandbox changed during test staging");
+    }
+    await chmod(sandboxExecutable, 0o755);
+    sandboxRoot = path.join(
+      path.dirname(output),
+      `.${path.basename(output)}.${randomUUID()}.test-sandbox`,
     );
+    lockedShell = closureToolPath(runtime, "archive-extractor");
   }
   const cases = [
     {
-      executable: path.join(output, "bin", "tsfg-r00-cpp-smoke"),
+      source: path.join(output, "bin", "tsfg-r00-cpp-smoke"),
       name: "cpp-smoke",
       stderr: "",
       stdout: "tsfg-r00-cpp-smoke: ok\n",
     },
     {
-      executable: path.join(output, "bin", "tsfg-r00-zig-smoke"),
+      source: path.join(output, "bin", "tsfg-r00-zig-smoke"),
       name: "zig-smoke",
       stderr: "tsfg-r00-zig-smoke: ok\n",
       stdout: "",
@@ -2139,32 +2187,43 @@ async function testLinuxDebug(options, runtime, workspaceState, networkCanary) {
   if (
     !Array.isArray(metadata.payloads) ||
     canonicalize(metadata.payloads.map(({ path: payloadPath }) => payloadPath))
-      !== canonicalize(cases.map(({ executable }) => path.relative(output, executable).replaceAll("\\", "/")))
+      !== canonicalize(cases.map(({ source }) => path.relative(output, source).replaceAll("\\", "/")))
   ) {
     throw new TestFailureError("Build Metadata does not declare the expected smoke payloads");
   }
   const tests = [];
-  for (const [index, smoke] of cases.entries()) {
-    const file = await stat(smoke.executable).catch(() => undefined);
-    if (!file?.isFile()) {
-      throw new TestFailureError(`${smoke.name} executable is missing`);
-    }
-    if (await digestFile(smoke.executable) !== metadata.payloads[index].sha256) {
-      throw new TestFailureError(`${smoke.name} executable does not match Build Metadata`);
-    }
-    const observed = runSmokeExecutable(
-      smoke.name,
-      smoke.executable,
-      output,
-      runtime,
-      sandboxExecutable,
-    );
-    if (observed.stdout !== smoke.stdout || observed.stderr !== smoke.stderr) {
-      throw new TestFailureError(
-        `${smoke.name} produced unexpected output: ${JSON.stringify(observed)}`,
+  try {
+    for (const [index, smoke] of cases.entries()) {
+      const file = await stat(smoke.source).catch(() => undefined);
+      if (!file?.isFile()) {
+        throw new TestFailureError(`${smoke.name} executable is missing`);
+      }
+      const executable = path.join(testRoot, ...metadata.payloads[index].path.split("/"));
+      await mkdir(path.dirname(executable), { recursive: true });
+      await copyFile(smoke.source, executable);
+      if (await digestFile(executable) !== metadata.payloads[index].sha256) {
+        throw new TestFailureError(`${smoke.name} executable does not match Build Metadata`);
+      }
+      if (process.platform !== "win32") await chmod(executable, 0o755);
+      const observed = runSmokeExecutable(
+        smoke.name,
+        executable,
+        testRoot,
+        runtime,
+        sandboxExecutable,
+        sandboxRoot,
+        lockedShell,
       );
+      if (observed.stdout !== smoke.stdout || observed.stderr !== smoke.stderr) {
+        throw new TestFailureError(
+          `${smoke.name} produced unexpected output: ${JSON.stringify(observed)}`,
+        );
+      }
+      tests.push({ name: smoke.name, status: "passed" });
     }
-    tests.push({ name: smoke.name, status: "passed" });
+  } finally {
+    if (sandboxRoot) await rm(sandboxRoot, { recursive: true, force: true });
+    await rm(testRoot, { recursive: true, force: true });
   }
   return {
     development: metadata.development || workspaceState.development,
@@ -2391,9 +2450,7 @@ function runPackageTool(executable, arguments_, cwd, environment) {
     const stdout = Buffer.isBuffer(error.stdout) ? error.stdout.toString("utf8") : "";
     const stderr = Buffer.isBuffer(error.stderr) ? error.stderr.toString("utf8") : "";
     const detail = `${stdout}${stderr}`.trim() || error.message;
-    if (/permission denied|operation not permitted|tsfg sandbox:/i.test(detail)) {
-      throw new UndeclaredInputError(`sandbox denied an undeclared package input: ${detail}`);
-    }
+    throwSandboxBoundaryFailure(detail, "package");
     throw new PackageFailureError(`llvm-objcopy failed${detail ? `: ${detail}` : ""}`);
   }
 }
@@ -2417,6 +2474,8 @@ async function packageLinuxDebug(options, runtime, workspaceState, networkCanary
     path.dirname(output),
     `.${path.basename(output)}.${randomUUID()}.tmp`,
   );
+  const packageSandboxRoot = `${stagingRoot}-sandbox`;
+  const packageControlRoot = `${stagingRoot}-control`;
   const publishRoot = path.join(stagingRoot, "publish");
   try {
     await mkdir(publishRoot, { recursive: true });
@@ -2470,7 +2529,7 @@ async function packageLinuxDebug(options, runtime, workspaceState, networkCanary
       ) {
         throw new PackageFailureError("Linux sandbox does not match build metadata");
       }
-      sandboxExecutable = path.join(stagingRoot, "control", "landlock-run");
+      sandboxExecutable = path.join(packageControlRoot, "sandbox-run");
       await mkdir(path.dirname(sandboxExecutable), { recursive: true });
       await copyFile(sourceSandbox, sandboxExecutable);
       if (await digestFile(sandboxExecutable) !== metadata.controlSandbox.sha256) {
@@ -2484,9 +2543,15 @@ async function packageLinuxDebug(options, runtime, workspaceState, networkCanary
         path.join(sysroot, "usr", "lib", "x86_64-linux-gnu"),
       ].join(":");
     }
+    const lockedShell = closureToolPath(runtime, "archive-extractor");
     const packageToolArguments = (toolArguments) => sandboxExecutable
       ? sandboxArguments(
-          { readExecute: [runtime.closurePath], readWrite: [stagingRoot] },
+          {
+            readExecute: [runtime.closurePath, packageControlRoot],
+            readWrite: [stagingRoot],
+            root: packageSandboxRoot,
+            shell: lockedShell,
+          },
           loader,
           ["--library-path", runtimeLibraries, objcopy, ...toolArguments],
         )
@@ -2625,6 +2690,8 @@ async function packageLinuxDebug(options, runtime, workspaceState, networkCanary
       maxRetries: process.platform === "win32" ? 5 : 0,
       retryDelay: 100,
     });
+    await rm(packageSandboxRoot, { recursive: true, force: true });
+    await rm(packageControlRoot, { recursive: true, force: true });
   }
 }
 

@@ -77,9 +77,10 @@ C/Zig ABI.
 
 Linux result-producing commands require a loopback-only network namespace and
 refuse to start while any non-loopback route remains. The build creates a
-static Landlock runner with the locked Zig compiler and uses it for build,
-test, and package subprocesses, exposing only the materialized Build Input
-Set, the verified Toolchain Closure, and explicit working/output roots.
+static sandbox runner with the locked Zig compiler. The runner creates fresh
+user, mount, and network namespaces for build, test, and package subprocesses,
+then pivots into a tmpfs root exposing only the materialized Build Input Set,
+the verified Toolchain Closure, and explicit working/output roots.
 
 Build Reports are versioned canonical JSON, written through a same-directory
 temporary file and atomic rename. Human diagnostics go only to stderr. This
