@@ -1,0 +1,30 @@
+#!/bin/sh
+# SPDX-License-Identifier: MIT
+set -eu
+
+script_dir=$(CDPATH= cd -- "$(dirname -- "$0")" && pwd)
+repository=$(CDPATH= cd -- "$script_dir/.." && pwd)
+cache=${TSFG_CACHE_DIR:-"$repository/.tsfg-cache"}
+platform=linux-x86_64
+
+if [ "${1:-}" = prefetch ]; then
+  exec node "$script_dir/tsfg-build.mjs" "$@" \
+    --lock "$script_dir/toolchains.lock.json" \
+    --cache "$cache" \
+    --platform "$platform"
+fi
+
+active="$cache/active/$platform"
+if [ ! -f "$active" ]; then
+  printf '%s\n' 'locked Node.js closure is missing; run tsfg-build prefetch first' >&2
+  exit 11
+fi
+closure=$(sed -n '1p' "$active")
+node_path="$cache/$closure/node/bin/node"
+if [ ! -x "$node_path" ]; then
+  printf '%s\n' 'locked Node.js executable is missing or corrupt; rerun tsfg-build prefetch' >&2
+  exit 11
+fi
+TSFG_GIT=$(command -v git || true)
+export TSFG_GIT
+exec "$node_path" "$script_dir/tsfg-build.mjs" "$@"

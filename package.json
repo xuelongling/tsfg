@@ -1,0 +1,20 @@
+{
+  "name": "@tsfg/engineering-control",
+  "version": "0.1.0-dev.0",
+  "private": true,
+  "type": "module",
+  "engines": {
+    "node": "24.20.0",
+    "pnpm": "11.25.0"
+  },
+  "packageManager": "pnpm@11.25.0",
+  "scripts": {
+    "test": "node --test tests/r00/*.test.mjs",
+    "typecheck": "tsc --noEmit",
+    "verify": "tsc --noEmit && node --test tests/r00/*.test.mjs"
+  },
+  "devDependencies": {
+    "@types/node": "24.3.0",
+    "typescript": "5.9.2"
+  }
+}
