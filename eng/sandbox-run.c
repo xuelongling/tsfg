@@ -5,12 +5,14 @@
 #include <errno.h>
 #include <arpa/inet.h>
 #include <fcntl.h>
+#include <linux/capability.h>
 #include <limits.h>
 #include <sched.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
 #include <sys/mount.h>
+#include <sys/prctl.h>
 #include <sys/socket.h>
 #include <sys/stat.h>
 #include <sys/syscall.h>
@@ -137,6 +139,22 @@ static void pivot_into(const char *new_root, const char *working_directory) {
     fail("sandbox working directory is not allowed", working_directory);
 }
 
+static void drop_namespace_capabilities(void) {
+  for (int capability = 0; capability <= 63; ++capability) {
+    if (prctl(PR_CAPBSET_DROP, capability, 0, 0, 0) < 0 && errno != EINVAL)
+      fail("cannot drop capability bounding set", strerror(errno));
+  }
+  struct __user_cap_header_struct header = {
+      .version = _LINUX_CAPABILITY_VERSION_3,
+      .pid = 0,
+  };
+  struct __user_cap_data_struct data[2] = {{0}, {0}};
+  if (syscall(SYS_capset, &header, data) < 0)
+    fail("cannot clear namespace capabilities", strerror(errno));
+  if (prctl(PR_SET_NO_NEW_PRIVS, 1, 0, 0, 0) < 0)
+    fail("cannot set no_new_privs", strerror(errno));
+}
+
 static void run_locked_llvm_wrapper(int argc, char **argv) {
   const char *loader = getenv("TSFG_LOCKED_LOADER");
   if (!loader) return;
@@ -218,6 +236,7 @@ int main(int argc, char **argv) {
   bind_path(new_root, shell, "/bin/sh", ACCESS_RX);
   bind_path(new_root, "/dev/null", "/dev/null", ACCESS_RW);
   pivot_into(new_root, working_directory);
+  drop_namespace_capabilities();
   execv(argv[index + 1], &argv[index + 1]);
   fail("cannot execute command", argv[index + 1]);
 }
