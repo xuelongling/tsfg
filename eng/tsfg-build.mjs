@@ -18,6 +18,7 @@ import {
   writeFile,
 } from "node:fs/promises";
 import { execFileSync, spawnSync } from "node:child_process";
+import { connect as connectNetwork } from "node:net";
 import path from "node:path";
 import process from "node:process";
 import { createHash, randomUUID } from "node:crypto";
@@ -34,6 +35,8 @@ class ConfigurationError extends Error {}
 class BuildFailureError extends Error {}
 class TestFailureError extends Error {}
 class PackageFailureError extends Error {}
+class OfflineBoundaryError extends Error {}
+class UndeclaredInputError extends Error {}
 class WorkspaceMismatchError extends Error {
   constructor(code, message) {
     super(message);
@@ -86,9 +89,16 @@ async function writeAtomicText(destinationPath, contents) {
       encoding: "utf8",
       flag: "wx",
     });
+    injectPublishFailure("report-before-rename");
     await renameWithRetry(temporaryPath, absolutePath);
   } finally {
     await rm(temporaryPath, { force: true });
+  }
+}
+
+function injectPublishFailure(point) {
+  if (process.env.TSFG_TEST_FAIL_PUBLISH_AT === point) {
+    throw new Error(`injected publish failure at ${point}`);
   }
 }
 
@@ -114,6 +124,7 @@ async function publishDirectory(source, destination) {
   const parent = path.dirname(destination);
   const versionsRoot = path.join(parent, `.${path.basename(destination)}.versions`);
   let previousVersion;
+  let previousLinkTarget;
   try {
     const destinationStat = await lstat(destination);
     if (!destinationStat.isSymbolicLink()) {
@@ -122,6 +133,7 @@ async function publishDirectory(source, destination) {
       );
     }
     const linkTarget = await readlink(destination);
+    previousLinkTarget = linkTarget;
     previousVersion = path.resolve(parent, linkTarget);
     if (path.dirname(previousVersion) !== versionsRoot) {
       throw new Error(`output link escapes its managed versions directory: ${destination}`);
@@ -143,8 +155,36 @@ async function publishDirectory(source, destination) {
     parent,
     `.${path.basename(destination)}.${randomUUID()}.link`,
   );
+  let swapped = false;
+  let rolledBack = false;
+  const rollback = async () => {
+    if (rolledBack) return;
+    rolledBack = true;
+    if (swapped) {
+      if (previousVersion) {
+        const rollbackLink = path.join(
+          parent,
+          `.${path.basename(destination)}.${randomUUID()}.rollback`,
+        );
+        try {
+          await symlink(
+            previousLinkTarget,
+            rollbackLink,
+            process.platform === "win32" ? "junction" : "dir",
+          );
+          await renameWithRetry(rollbackLink, destination);
+        } finally {
+          await rm(rollbackLink, { force: true });
+        }
+      } else {
+        await rm(destination, { force: true });
+      }
+    }
+    await rm(versionPath, { recursive: true, force: true });
+  };
   await renameWithRetry(source, versionPath);
   try {
+    injectPublishFailure("output-version");
     const linkTarget = process.platform === "win32"
       ? versionPath
       : path.relative(parent, versionPath);
@@ -153,12 +193,16 @@ async function publishDirectory(source, destination) {
       temporaryLink,
       process.platform === "win32" ? "junction" : "dir",
     );
+    injectPublishFailure("output-link");
     await renameWithRetry(temporaryLink, destination);
+    swapped = true;
+    injectPublishFailure("output-swapped");
   } catch (error) {
     await rm(temporaryLink, { force: true });
-    await rm(versionPath, { recursive: true, force: true });
+    await rollback();
     throw error;
   }
+  return { rollback };
 }
 
 function parseReportPath(arguments_) {
@@ -251,6 +295,54 @@ async function succeed(command, result, reportPath, network) {
   }
   process.stderr.write(`${command} completed\n`);
   return 0;
+}
+
+async function networkCanaryConnects(host) {
+  return await new Promise((resolve) => {
+    let socket;
+    try {
+      socket = connectNetwork({ host, port: 443 });
+    } catch {
+      resolve(false);
+      return;
+    }
+    const finish = (connected) => {
+      socket.destroy();
+      resolve(connected);
+    };
+    socket.once("connect", () => finish(true));
+    socket.once("error", () => finish(false));
+    socket.setTimeout(300, () => finish(false));
+  });
+}
+
+async function verifyOfflineBoundary() {
+  for (const host of ["1.1.1.1", "8.8.8.8"]) {
+    if (await networkCanaryConnects(host)) {
+      throw new OfflineBoundaryError(
+        `network canary unexpectedly connected to ${host}:443`,
+      );
+    }
+  }
+  if (process.platform === "linux") {
+    const ipv4Routes = await readFile("/proc/net/route", "utf8");
+    const externalIpv4Route = ipv4Routes
+      .split("\n")
+      .slice(1)
+      .map((line) => line.trim().split(/\s+/))
+      .some((fields) => fields.length > 1 && fields[0] !== "lo");
+    const ipv6Routes = await readFile("/proc/net/ipv6_route", "utf8");
+    const externalIpv6Route = ipv6Routes
+      .split("\n")
+      .map((line) => line.trim().split(/\s+/))
+      .some((fields) => fields.length > 9 && fields[9] !== "lo");
+    if (externalIpv4Route || externalIpv6Route) {
+      throw new OfflineBoundaryError(
+        "offline network isolation is not established: a non-loopback route is present",
+      );
+    }
+  }
+  return "blocked";
 }
 
 async function hashTree(root) {
@@ -1642,11 +1734,17 @@ function runBuildTool(toolId, executable, arguments_, cwd, environment) {
       ? error.stderr.toString("utf8")
       : "";
     const detail = `${stdout}${stderr}`.trim() || error.message;
+    const undeclaredInput = /(?:^|\n)undeclared build input: ([^\r\n]+)/.exec(detail);
+    if (undeclaredInput) {
+      throw new UndeclaredInputError(
+        `build requested undeclared input: ${undeclaredInput[1]}`,
+      );
+    }
     throw new BuildFailureError(`${toolId} failed${detail ? `: ${detail}` : ""}`);
   }
 }
 
-async function buildLinuxDebug(options, runtime, workspaceState) {
+async function buildLinuxDebug(options, runtime, workspaceState, networkCanary) {
   const target = options.get("--target");
   const profile = options.get("--profile");
   const outputOption = options.get("--out");
@@ -1669,6 +1767,7 @@ async function buildLinuxDebug(options, runtime, workspaceState) {
     `.${path.basename(output)}.${randomUUID()}.tmp`,
   );
   const workRoot = path.join(stagingRoot, "work");
+  const sourceRoot = path.join(workRoot, "source");
   const publishRoot = path.join(stagingRoot, "publish");
   const cppWork = path.join(workRoot, "cpp");
   const wrapperRoot = path.join(workRoot, "llvm-wrappers");
@@ -1701,9 +1800,9 @@ async function buildLinuxDebug(options, runtime, workspaceState) {
   ]);
   environment.SOURCE_DATE_EPOCH = identity.buildIdentity.source_date_epoch;
   const debugPathFlags = [
-    `-ffile-prefix-map=${workspaceState.root}=.`,
-    `-fdebug-prefix-map=${workspaceState.root}=.`,
-    `-fmacro-prefix-map=${workspaceState.root}=.`,
+    `-ffile-prefix-map=${sourceRoot}=.`,
+    `-fdebug-prefix-map=${sourceRoot}=.`,
+    `-fmacro-prefix-map=${sourceRoot}=.`,
     `-ffile-prefix-map=${runtime.closurePath}=.toolchain`,
     `-fdebug-prefix-map=${runtime.closurePath}=.toolchain`,
     `-fmacro-prefix-map=${runtime.closurePath}=.toolchain`,
@@ -1713,7 +1812,7 @@ async function buildLinuxDebug(options, runtime, workspaceState) {
     "-fdebug-compilation-dir=.",
   ];
   const cmakeArguments = [
-    "-S", path.join(workspaceState.root, "tests", "r00", "smoke", "cpp"),
+    "-S", path.join(sourceRoot, "tests", "r00", "smoke", "cpp"),
     "-B", cppWork,
     "-G", "Ninja",
     `-DCMAKE_MAKE_PROGRAM=${ninja}`,
@@ -1744,6 +1843,11 @@ async function buildLinuxDebug(options, runtime, workspaceState) {
   ];
 
   try {
+    await materializeBuildInputs(
+      workspaceState.root,
+      identity.buildInputSet,
+      sourceRoot,
+    );
     await mkdir(cppWork, { recursive: true });
     await mkdir(wrapperRoot, { recursive: true });
     await mkdir(binRoot, { recursive: true });
@@ -1757,9 +1861,9 @@ async function buildLinuxDebug(options, runtime, workspaceState) {
     await writeLockedLlvmWrapper(linkerWrapper, loader, runtimeLibraries, lld);
     await writeLockedLlvmWrapper(arWrapper, loader, runtimeLibraries, llvmAr);
     await writeLockedLlvmWrapper(ranlibWrapper, loader, runtimeLibraries, llvmRanlib);
-    runBuildTool("cmake", cmake, cmakeArguments, workspaceState.root, environment);
-    runBuildTool("ninja", ninja, ninjaArguments, workspaceState.root, environment);
-    runBuildTool("zig", zig, zigArguments, workspaceState.root, environment);
+    runBuildTool("cmake", cmake, cmakeArguments, sourceRoot, environment);
+    runBuildTool("ninja", ninja, ninjaArguments, sourceRoot, environment);
+    runBuildTool("zig", zig, zigArguments, sourceRoot, environment);
     const cppStat = await stat(cppOutput).catch(() => undefined);
     if (!cppStat?.isFile()) {
       throw new BuildFailureError("C++ smoke build produced no executable");
@@ -1790,6 +1894,11 @@ async function buildLinuxDebug(options, runtime, workspaceState) {
       contractSetId: identity.contractSetId,
       development: workspaceState.development,
       dirty: workspaceState.dirty,
+      inputAudit: {
+        mode: "materialized-build-input-set",
+        undeclaredReads: "blocked",
+      },
+      networkCanary,
       payloads,
       productVersion: identity.productVersion,
       publishable: workspaceState.publishable,
@@ -1801,12 +1910,14 @@ async function buildLinuxDebug(options, runtime, workspaceState) {
       `${canonicalize(metadata)}\n`,
       { encoding: "utf8", flag: "wx" },
     );
-    await publishDirectory(publishRoot, output);
-    return {
+    const publication = await publishDirectory(publishRoot, output);
+    const result = {
       buildIdentity: identity.buildIdentity,
       contractSetId: identity.contractSetId,
       development: workspaceState.development,
       dirty: workspaceState.dirty,
+      inputAudit: metadata.inputAudit,
+      networkCanary,
       outputs: [
         "bin/tsfg-r00-cpp-smoke",
         "bin/tsfg-r00-zig-smoke",
@@ -1817,6 +1928,8 @@ async function buildLinuxDebug(options, runtime, workspaceState) {
       steps,
       target,
     };
+    Object.defineProperty(result, "publication", { value: publication });
+    return result;
   } finally {
     await rm(stagingRoot, {
       recursive: true,
@@ -1847,7 +1960,7 @@ function runSmokeExecutable(name, executable, outputRoot) {
   return { stdout: result.stdout, stderr: result.stderr };
 }
 
-async function testLinuxDebug(options, workspaceState) {
+async function testLinuxDebug(options, workspaceState, networkCanary) {
   const target = options.get("--target");
   const profile = options.get("--profile");
   const outputOption = options.get("--out");
@@ -1890,6 +2003,7 @@ async function testLinuxDebug(options, workspaceState) {
   return {
     development: workspaceState.development,
     dirty: workspaceState.dirty,
+    networkCanary,
     profile,
     publishable: workspaceState.publishable,
     target,
@@ -1986,6 +2100,35 @@ async function buildInputSet(workspaceRoot) {
     },
     sourceDateEpoch: String(epochs.reduce((maximum, epoch) => epoch > maximum ? epoch : maximum)),
   };
+}
+
+async function materializeBuildInputs(workspaceRoot, buildInputSet, destination) {
+  for (const entry of buildInputSet.entries) {
+    const source = path.join(
+      workspaceRoot,
+      ...entry.repositoryRelativePath.split("/"),
+    );
+    const sourceStat = await lstat(source);
+    if (!sourceStat.isFile() || sourceStat.isSymbolicLink()) {
+      throw new BuildFailureError(
+        `declared Build Input is not a regular file: ${entry.repositoryRelativePath}`,
+      );
+    }
+    if (await digestFile(source) !== entry.sha256) {
+      throw new BuildFailureError(
+        `declared Build Input changed during materialization: ${entry.repositoryRelativePath}`,
+      );
+    }
+    const target = path.join(
+      destination,
+      ...entry.repositoryRelativePath.split("/"),
+    );
+    await mkdir(path.dirname(target), { recursive: true });
+    await copyFile(source, target);
+    if (process.platform !== "win32") {
+      await chmod(target, entry.normalizedMode === "100755" ? 0o755 : 0o644);
+    }
+  }
 }
 
 async function createBuildIdentity(runtime, target, profile, workspaceRoot = repositoryRoot) {
@@ -2086,7 +2229,7 @@ function runPackageTool(executable, arguments_, cwd, environment) {
   }
 }
 
-async function packageLinuxDebug(options, runtime, workspaceState) {
+async function packageLinuxDebug(options, runtime, workspaceState, networkCanary) {
   const target = options.get("--target");
   const profile = options.get("--profile");
   const inputOption = options.get("--input");
@@ -2247,8 +2390,8 @@ async function packageLinuxDebug(options, runtime, workspaceState) {
       })}\n`,
       { encoding: "utf8", flag: "wx" },
     );
-    await publishDirectory(publishRoot, output);
-    return {
+    const publication = await publishDirectory(publishRoot, output);
+    const result = {
       archive: archiveName,
       buildIdentity: identity.buildIdentity,
       buildInputSet: identity.buildInputSet,
@@ -2257,8 +2400,11 @@ async function packageLinuxDebug(options, runtime, workspaceState) {
       development: false,
       dirty: false,
       input: path.resolve(inputOption),
+      networkCanary,
       publishable: true,
     };
+    Object.defineProperty(result, "publication", { value: publication });
+    return result;
   } catch (error) {
     if (error instanceof ConfigurationError || error instanceof PackageFailureError) throw error;
     throw new PackageFailureError(error.message);
@@ -2374,6 +2520,7 @@ if (runtimeIntegrityError) {
     );
   }
 } else if (command === "build") {
+  let publication;
   try {
     const options = parseOptions(
       arguments_,
@@ -2383,25 +2530,45 @@ if (runtimeIntegrityError) {
     validateSmokeOptions(options, "build");
     const workspaceState = inspectProductWorkspace(options, true);
     if (!runtimeClosure) throw new Error("locked runtime closure is unavailable");
-    const result = await buildLinuxDebug(options, runtimeClosure, workspaceState);
+    const networkCanary = await verifyOfflineBoundary();
+    const result = await buildLinuxDebug(
+      options,
+      runtimeClosure,
+      workspaceState,
+      networkCanary,
+    );
+    publication = result.publication;
     process.exitCode = await succeed(command, result, reportPath, "offline");
   } catch (error) {
+    if (publication) await publication.rollback();
     const isConfigurationError = error instanceof ConfigurationError;
     const isBuildFailure = error instanceof BuildFailureError;
     const isWorkspaceMismatch = error instanceof WorkspaceMismatchError;
+    const isOfflineBoundary = error instanceof OfflineBoundaryError;
+    const isUndeclaredInput = error instanceof UndeclaredInputError;
     process.exitCode = await fail(
       command,
-      isConfigurationError ? 2 : isWorkspaceMismatch ? 10 : isBuildFailure ? 20 : 30,
+      isConfigurationError
+        ? 2
+        : isWorkspaceMismatch
+          ? 10
+          : (isOfflineBoundary || isUndeclaredInput) ? 12 : isBuildFailure ? 20 : 30,
       isConfigurationError
         ? "usage/configuration"
         : isWorkspaceMismatch
           ? "workspace mismatch"
+          : (isOfflineBoundary || isUndeclaredInput)
+            ? "offline input missing"
           : isBuildFailure ? "build failure" : "internal control-plane failure",
       {
         code: isConfigurationError
           ? "invalid-configuration"
           : isWorkspaceMismatch
             ? error.issueCode
+            : isOfflineBoundary
+              ? "network-boundary"
+              : isUndeclaredInput
+                ? "undeclared-build-input"
             : isBuildFailure ? "native-build" : "internal-control-plane",
         message: error.message,
       },
@@ -2419,25 +2586,33 @@ if (runtimeIntegrityError) {
     validateSmokeOptions(options, "test");
     const workspaceState = inspectProductWorkspace(options, true);
     if (!runtimeClosure) throw new Error("locked runtime closure is unavailable");
-    const result = await testLinuxDebug(options, workspaceState);
+    const networkCanary = await verifyOfflineBoundary();
+    const result = await testLinuxDebug(options, workspaceState, networkCanary);
     process.exitCode = await succeed(command, result, reportPath, "offline");
   } catch (error) {
     const isConfigurationError = error instanceof ConfigurationError;
     const isTestFailure = error instanceof TestFailureError;
     const isWorkspaceMismatch = error instanceof WorkspaceMismatchError;
+    const isOfflineBoundary = error instanceof OfflineBoundaryError;
     process.exitCode = await fail(
       command,
-      isConfigurationError ? 2 : isWorkspaceMismatch ? 10 : isTestFailure ? 21 : 30,
+      isConfigurationError
+        ? 2
+        : isWorkspaceMismatch ? 10 : isOfflineBoundary ? 12 : isTestFailure ? 21 : 30,
       isConfigurationError
         ? "usage/configuration"
         : isWorkspaceMismatch
           ? "workspace mismatch"
+          : isOfflineBoundary
+            ? "offline input missing"
           : isTestFailure ? "test failure" : "internal control-plane failure",
       {
         code: isConfigurationError
           ? "invalid-configuration"
           : isWorkspaceMismatch
             ? error.issueCode
+            : isOfflineBoundary
+              ? "network-boundary"
             : isTestFailure ? "native-test" : "internal-control-plane",
         message: error.message,
       },
@@ -2446,6 +2621,7 @@ if (runtimeIntegrityError) {
     );
   }
 } else if (command === "package") {
+  let publication;
   try {
     const options = parseOptions(
       arguments_,
@@ -2455,21 +2631,34 @@ if (runtimeIntegrityError) {
     validateSmokeOptions(options, "package", true);
     const workspaceState = inspectProductWorkspace(options, false);
     if (!runtimeClosure) throw new PackageFailureError("locked runtime closure is unavailable");
-    const result = await packageLinuxDebug(options, runtimeClosure, workspaceState);
+    const networkCanary = await verifyOfflineBoundary();
+    const result = await packageLinuxDebug(
+      options,
+      runtimeClosure,
+      workspaceState,
+      networkCanary,
+    );
+    publication = result.publication;
     process.exitCode = await succeed(command, result, reportPath, "offline");
   } catch (error) {
+    if (publication) await publication.rollback();
     const isConfigurationError = error instanceof ConfigurationError;
     const isWorkspaceMismatch = error instanceof WorkspaceMismatchError;
+    const isOfflineBoundary = error instanceof OfflineBoundaryError;
     process.exitCode = await fail(
       command,
-      isConfigurationError ? 2 : isWorkspaceMismatch ? 10 : 22,
+      isConfigurationError ? 2 : isWorkspaceMismatch ? 10 : isOfflineBoundary ? 12 : 22,
       isConfigurationError
         ? "usage/configuration"
-        : isWorkspaceMismatch ? "workspace mismatch" : "package failure",
+        : isWorkspaceMismatch
+          ? "workspace mismatch"
+          : isOfflineBoundary ? "offline input missing" : "package failure",
       {
         code: isConfigurationError
           ? "invalid-configuration"
-          : isWorkspaceMismatch ? error.issueCode : "artifact-package",
+          : isWorkspaceMismatch
+            ? error.issueCode
+            : isOfflineBoundary ? "network-boundary" : "artifact-package",
         message: error.message,
       },
       reportPath,

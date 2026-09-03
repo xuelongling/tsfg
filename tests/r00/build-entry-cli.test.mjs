@@ -29,6 +29,8 @@ const repositoryRoot = path.resolve(
   "../..",
 );
 const buildEntry = path.join(repositoryRoot, "eng", "tsfg-build.mjs");
+const networkDenialHook = path.join(repositoryRoot, "tests", "r00", "deny-network.cjs");
+const networkAccessHook = path.join(repositoryRoot, "tests", "r00", "allow-network.cjs");
 
 function validVerifyArguments(reportPath) {
   return [
@@ -846,15 +848,34 @@ test("dirty workspace fails closed before build execution", async () => {
     }
     await writeFile(path.join(workspace, "undeclared.txt"), "dirty\n");
 
-    const arguments_ = [
-      "build",
-      "--target", "linux-x86_64-gnu",
-      "--profile", "debug",
-      "--workspace", workspace,
-      "--out", path.join(sandbox, "out"),
-      "--report", reportPath,
+    const dirtyCommands = [
+      [
+        "build",
+        "--target", "linux-x86_64-gnu",
+        "--profile", "debug",
+        "--workspace", workspace,
+        "--out", path.join(sandbox, "out"),
+        "--report", reportPath,
+      ],
+      [
+        "test",
+        "--target", "linux-x86_64-gnu",
+        "--profile", "debug",
+        "--workspace", workspace,
+        "--out", path.join(sandbox, "out"),
+        "--report", reportPath,
+      ],
+      [
+        "package",
+        "--target", "linux-x86_64-gnu",
+        "--profile", "debug",
+        "--workspace", workspace,
+        "--input", path.join(sandbox, "input"),
+        "--out", path.join(sandbox, "package"),
+        "--report", reportPath,
+      ],
     ];
-    for (let attempt = 0; attempt < 2; attempt += 1) {
+    for (const arguments_ of dirtyCommands) {
       const result = await invoke(arguments_);
       assert.equal(result.status, 10, result.stderr);
       const report = JSON.parse(await readFile(reportPath, "utf8"));
@@ -862,6 +883,10 @@ test("dirty workspace fails closed before build execution", async () => {
       assert.equal(report.error.code, "10");
       assert.equal(report.error.issues[0].code, "dirty-project");
     }
+    const repeated = await invoke(dirtyCommands[0]);
+    assert.equal(repeated.status, 10, repeated.stderr);
+    const repeatedReport = JSON.parse(await readFile(reportPath, "utf8"));
+    assert.equal(repeatedReport.error.issues[0].code, "dirty-project");
     for (const forbidden of [
       [
         "package", "--dev",
@@ -965,6 +990,7 @@ test("development mode runs tests in a dirty workspace as non-publishable", {
     ], {
       env: {
         ...process.env,
+        NODE_OPTIONS: `--require=${networkDenialHook}`,
         TSFG_RUNTIME_CACHE: cachePath,
         TSFG_RUNTIME_LOCK: lockPath,
         TSFG_RUNTIME_PLATFORM: "test-x86_64",
@@ -993,8 +1019,8 @@ test("build and test run the private C++ and Zig smoke programs through locked t
   const testFailureReportPath = path.join(sandbox, "test-failure-report.json");
   const isWindows = process.platform === "win32";
   const cmake = Buffer.from(isWindows
-    ? "@echo off\r\nset build_dir=%~4\r\nif not \"%build_dir:compile-fail=%\"==\"%build_dir%\" exit /b 9\r\nexit /b 0\r\n"
-    : "#!/bin/sh\ncase \"$4\" in *compile-fail*) exit 9 ;; esac\nexit 0\n");
+    ? "@echo off\r\n%SystemRoot%\\System32\\findstr.exe /c:\"TSFG_TEST_REQUIRE_UNDECLARED\" \"%~2\\CMakeLists.txt\" >nul\r\nif not errorlevel 1 if not exist \"%~2\\undeclared.cpp\" (\r\n  >&2 echo undeclared build input: tests/r00/smoke/cpp/undeclared.cpp\r\n  exit /b 19\r\n)\r\nset build_dir=%~4\r\nif not \"%build_dir:compile-fail=%\"==\"%build_dir%\" exit /b 9\r\nexit /b 0\r\n"
+    : "#!/bin/sh\ncase \"$(/bin/cat \"$2/CMakeLists.txt\")\" in *TSFG_TEST_REQUIRE_UNDECLARED*)\n  if [ ! -f \"$2/undeclared.cpp\" ]; then\n    printf '%s\\n' 'undeclared build input: tests/r00/smoke/cpp/undeclared.cpp' >&2\n    exit 19\n  fi\n;; esac\ncase \"$4\" in *compile-fail*) exit 9 ;; esac\nexit 0\n");
   const ninja = Buffer.from(isWindows
     ? "@echo off\r\n>\"%~2\\tsfg-r00-cpp-smoke\" echo fixture cpp output\r\nif not exist \"%~2\\..\\zig-install\\bin\" mkdir \"%~2\\..\\zig-install\\bin\"\r\n>\"%~2\\..\\zig-install\\bin\\tsfg-r00-zig-smoke\" echo fixture zig output\r\nexit /b 0\r\n"
     : `#!/bin/sh
@@ -1094,8 +1120,40 @@ exit 1
       { encoding: "utf8" },
     );
     assert.equal(cloned.status, 0, cloned.stderr);
+    const locatedGit = spawnSync(
+      process.platform === "win32" ? "where.exe" : "which",
+      ["git"],
+      { encoding: "utf8" },
+    );
+    assert.equal(locatedGit.status, 0, locatedGit.stderr);
+    const gitExecutable = locatedGit.stdout.split(/\r?\n/).find(Boolean);
+    const poisonPath = path.join(sandbox, "poison-path");
+    const poisonSentinel = path.join(sandbox, "poison-tool-ran");
+    await mkdir(poisonPath);
+    for (const tool of ["node", "pnpm", "zig", "clang", "cmake", "ninja"]) {
+      const poisonTool = path.join(
+        poisonPath,
+        process.platform === "win32" ? `${tool}.cmd` : tool,
+      );
+      await writeFile(
+        poisonTool,
+        process.platform === "win32"
+          ? `@echo off\r\n>"${poisonSentinel}" echo poison\r\nexit /b 91\r\n`
+          : `#!/bin/sh\nprintf poison > '${poisonSentinel}'\nexit 91\n`,
+      );
+      if (process.platform !== "win32") await chmod(poisonTool, 0o755);
+    }
     const dirtyPath = path.join(workspacePath, "dirty.txt");
     await writeFile(dirtyPath, "dirty\n");
+    const undeclaredInputPath = path.join(
+      workspacePath,
+      "tests",
+      "r00",
+      "smoke",
+      "cpp",
+      "undeclared.cpp",
+    );
+    await writeFile(undeclaredInputPath, "undeclared input\n");
     const developmentOutput = path.join(sandbox, "development-out");
     const developmentReportPath = path.join(sandbox, "development-report.json");
     const developed = await invoke([
@@ -1108,6 +1166,9 @@ exit 1
     ], {
       env: {
         ...process.env,
+        NODE_OPTIONS: `--require=${networkDenialHook}`,
+        PATH: poisonPath,
+        TSFG_GIT: gitExecutable,
         TSFG_RUNTIME_CACHE: cachePath,
         TSFG_RUNTIME_LOCK: lockPath,
         TSFG_RUNTIME_PLATFORM: "test-x86_64",
@@ -1117,6 +1178,7 @@ exit 1
     const developmentReport = JSON.parse(await readFile(developmentReportPath, "utf8"));
     assert.equal(developmentReport.result.development, true);
     assert.equal(developmentReport.result.dirty, true);
+    assert.equal(developmentReport.result.networkCanary, "blocked");
     assert.equal(developmentReport.result.publishable, false);
     const developmentMetadata = JSON.parse(await readFile(
       path.join(developmentOutput, "build-metadata.json"),
@@ -1125,7 +1187,107 @@ exit 1
     assert.equal(developmentMetadata.development, true);
     assert.equal(developmentMetadata.dirty, true);
     assert.equal(developmentMetadata.publishable, false);
+    await assert.rejects(stat(poisonSentinel), /ENOENT/);
+    const cmakeListsPath = path.join(
+      workspacePath,
+      "tests",
+      "r00",
+      "smoke",
+      "cpp",
+      "CMakeLists.txt",
+    );
+    const cmakeLists = await readFile(cmakeListsPath);
+    await appendFile(cmakeListsPath, "\n# TSFG_TEST_REQUIRE_UNDECLARED\n");
+    const undeclaredReadReportPath = path.join(sandbox, "undeclared-read-report.json");
+    const undeclaredRead = await invoke([
+      "build", "--dev",
+      "--target", "linux-x86_64-gnu",
+      "--profile", "debug",
+      "--workspace", workspacePath,
+      "--out", path.join(sandbox, "undeclared-read-out"),
+      "--report", undeclaredReadReportPath,
+    ], {
+      env: {
+        ...process.env,
+        NODE_OPTIONS: `--require=${networkDenialHook}`,
+        TSFG_GIT: gitExecutable,
+        TSFG_RUNTIME_CACHE: cachePath,
+        TSFG_RUNTIME_LOCK: lockPath,
+        TSFG_RUNTIME_PLATFORM: "test-x86_64",
+      },
+    });
+    assert.equal(undeclaredRead.status, 12, undeclaredRead.stderr);
+    const undeclaredReadReport = JSON.parse(await readFile(undeclaredReadReportPath, "utf8"));
+    assert.equal(undeclaredReadReport.error.category, "offline input missing");
+    assert.equal(undeclaredReadReport.error.issues[0].code, "undeclared-build-input");
+    assert.match(
+      undeclaredReadReport.error.issues[0].message,
+      /tests\/r00\/smoke\/cpp\/undeclared\.cpp/,
+    );
+    await writeFile(cmakeListsPath, cmakeLists);
+    const activeRelative = (await readFile(
+      path.join(cachePath, "active", "test-x86_64"),
+      "utf8",
+    )).trim();
+    const lockedZig = path.join(
+      cachePath,
+      ...activeRelative.split("/"),
+      "zig",
+      ...tools.zig.artifacts[0].installPath.split("/"),
+    );
+    await rm(lockedZig);
+    for (let attempt = 0; attempt < 2; attempt += 1) {
+      const missingTool = await invoke([
+        "build", "--dev",
+        "--target", "linux-x86_64-gnu",
+        "--profile", "debug",
+        "--workspace", workspacePath,
+        "--out", path.join(sandbox, "missing-tool-out"),
+        "--report", developmentReportPath,
+      ], {
+        env: {
+          ...process.env,
+          NODE_OPTIONS: `--require=${networkDenialHook}`,
+          PATH: poisonPath,
+          TSFG_GIT: gitExecutable,
+          TSFG_RUNTIME_CACHE: cachePath,
+          TSFG_RUNTIME_LOCK: lockPath,
+          TSFG_RUNTIME_PLATFORM: "test-x86_64",
+        },
+      });
+      assert.equal(missingTool.status, 11, missingTool.stderr);
+      const missingToolReport = JSON.parse(await readFile(developmentReportPath, "utf8"));
+      assert.equal(missingToolReport.error.category, "lock/integrity");
+      assert.equal(missingToolReport.error.issues[0].code, "runtime-closure");
+      await assert.rejects(stat(poisonSentinel), /ENOENT/);
+    }
+    await writeFile(lockedZig, zig);
+    if (process.platform !== "win32") await chmod(lockedZig, 0o755);
     await rm(dirtyPath);
+    await rm(undeclaredInputPath);
+    const networkFailureOutput = path.join(sandbox, "network-failure-out");
+    const networkFailureReport = path.join(sandbox, "network-failure-report.json");
+    const networkFailure = await invoke([
+      "build",
+      "--target", "linux-x86_64-gnu",
+      "--profile", "debug",
+      "--workspace", workspacePath,
+      "--out", networkFailureOutput,
+      "--report", networkFailureReport,
+    ], {
+      env: {
+        ...process.env,
+        NODE_OPTIONS: `--require=${networkAccessHook}`,
+        TSFG_RUNTIME_CACHE: cachePath,
+        TSFG_RUNTIME_LOCK: lockPath,
+        TSFG_RUNTIME_PLATFORM: "test-x86_64",
+      },
+    });
+    assert.equal(networkFailure.status, 12, networkFailure.stderr);
+    const networkReport = JSON.parse(await readFile(networkFailureReport, "utf8"));
+    assert.equal(networkReport.error.category, "offline input missing");
+    assert.equal(networkReport.error.issues[0].code, "network-boundary");
+    await assert.rejects(lstat(networkFailureOutput), /ENOENT/);
     const developmentPackageReportPath = path.join(
       sandbox,
       "development-package-report.json",
@@ -1141,6 +1303,7 @@ exit 1
     ], {
       env: {
         ...process.env,
+        NODE_OPTIONS: `--require=${networkDenialHook}`,
         TSFG_RUNTIME_CACHE: cachePath,
         TSFG_RUNTIME_LOCK: lockPath,
         TSFG_RUNTIME_PLATFORM: "test-x86_64",
@@ -1159,6 +1322,7 @@ exit 1
     ], {
       env: {
         ...process.env,
+        NODE_OPTIONS: `--require=${networkDenialHook}`,
         TSFG_RUNTIME_CACHE: cachePath,
         TSFG_RUNTIME_LOCK: lockPath,
         TSFG_RUNTIME_PLATFORM: "test-x86_64",
@@ -1180,7 +1344,16 @@ exit 1
     assert.equal(report.network, "offline");
     assert.equal(report.result.development, false);
     assert.equal(report.result.dirty, false);
+    assert.deepEqual(report.result.inputAudit, {
+      mode: "materialized-build-input-set",
+      undeclaredReads: "blocked",
+    });
     assert.equal(report.result.publishable, true);
+    assert.equal(
+      report.result.steps.some(({ arguments: toolArguments }) =>
+        toolArguments.some((argument) => argument.includes(workspacePath))),
+      false,
+    );
     assert.equal(report.result.profile, "debug");
     assert.equal(report.result.target, "linux-x86_64-gnu");
     assert.match(report.result.buildIdentity.digest, /^sha256:[0-9a-f]{64}$/);
@@ -1289,6 +1462,7 @@ exit 1
     ], {
       env: {
         ...process.env,
+        NODE_OPTIONS: `--require=${networkDenialHook}`,
         TSFG_RUNTIME_CACHE: cachePath,
         TSFG_RUNTIME_LOCK: lockPath,
         TSFG_RUNTIME_PLATFORM: "test-x86_64",
@@ -1298,6 +1472,7 @@ exit 1
     assert.equal(packaged.stdout, "");
     const packageReport = JSON.parse(await readFile(packageReportPath, "utf8"));
     assert.deepEqual(packageReport.result.buildIdentity, report.result.buildIdentity);
+    assert.equal(packageReport.result.networkCanary, "blocked");
     const archivePath = path.join(packageOutput, packageReport.result.archive);
     const archiveBytes = await readFile(archivePath);
     const archiveEntries = parseTarArchive(zstdDecompressSync(archiveBytes));
@@ -1351,6 +1526,42 @@ exit 1
       false,
       "external checksums must not hash themselves",
     );
+    for (const [failurePoint, expectedStatus] of [
+      ["output-version", 22],
+      ["output-link", 22],
+      ["output-swapped", 22],
+      ["report-before-rename", 30],
+    ]) {
+      const injectedOutput = path.join(sandbox, `injected-${failurePoint}`);
+      const injectedReport = path.join(sandbox, `injected-${failurePoint}.json`);
+      const injected = await invoke([
+        "package",
+        "--target", "linux-x86_64-gnu",
+        "--profile", "debug",
+        "--workspace", workspacePath,
+        "--input", outputPath,
+        "--out", injectedOutput,
+        "--report", injectedReport,
+      ], {
+        env: {
+          ...process.env,
+          NODE_OPTIONS: `--require=${networkDenialHook}`,
+          TSFG_RUNTIME_CACHE: cachePath,
+          TSFG_RUNTIME_LOCK: lockPath,
+          TSFG_RUNTIME_PLATFORM: "test-x86_64",
+          TSFG_TEST_FAIL_PUBLISH_AT: failurePoint,
+        },
+      });
+      assert.equal(injected.status, expectedStatus, injected.stderr);
+      await assert.rejects(lstat(injectedOutput), /ENOENT/);
+      if (failurePoint === "report-before-rename") {
+        await assert.rejects(lstat(injectedReport), /ENOENT/);
+      } else {
+        const failureReport = JSON.parse(await readFile(injectedReport, "utf8"));
+        assert.equal(failureReport.status, "failure");
+        assert.equal(failureReport.error.code, "22");
+      }
+    }
     for (const forbidden of [
       repositoryRoot,
       cachePath,
@@ -1383,6 +1594,7 @@ exit 1
       env: {
         ...process.env,
         CI_RUN_ID: "ticket07-ci-run-id",
+        NODE_OPTIONS: `--require=${networkDenialHook}`,
         TSFG_RUNTIME_CACHE: cachePath,
         TSFG_RUNTIME_LOCK: lockPath,
         TSFG_RUNTIME_PLATFORM: "test-x86_64",
@@ -1411,6 +1623,7 @@ exit 1
     ], {
       env: {
         ...process.env,
+        NODE_OPTIONS: `--require=${networkDenialHook}`,
         TSFG_RUNTIME_CACHE: cachePath,
         TSFG_RUNTIME_LOCK: lockPath,
         TSFG_RUNTIME_PLATFORM: "test-x86_64",
@@ -1434,6 +1647,7 @@ exit 1
       ], {
         env: {
           ...process.env,
+          NODE_OPTIONS: `--require=${networkDenialHook}`,
           TSFG_RUNTIME_CACHE: cachePath,
           TSFG_RUNTIME_LOCK: lockPath,
           TSFG_RUNTIME_PLATFORM: "test-x86_64",
@@ -1460,6 +1674,7 @@ exit 1
     ], {
       env: {
         ...process.env,
+        NODE_OPTIONS: `--require=${networkDenialHook}`,
         TSFG_RUNTIME_CACHE: cachePath,
         TSFG_RUNTIME_LOCK: lockPath,
         TSFG_RUNTIME_PLATFORM: "test-x86_64",
@@ -1488,6 +1703,7 @@ exit 1
     ], {
       env: {
         ...process.env,
+        NODE_OPTIONS: `--require=${networkDenialHook}`,
         TSFG_RUNTIME_CACHE: cachePath,
         TSFG_RUNTIME_LOCK: lockPath,
         TSFG_RUNTIME_PLATFORM: "test-x86_64",
@@ -1513,6 +1729,7 @@ exit 1
     ], {
       env: {
         ...process.env,
+        NODE_OPTIONS: `--require=${networkDenialHook}`,
         TSFG_RUNTIME_CACHE: cachePath,
         TSFG_RUNTIME_LOCK: lockPath,
         TSFG_RUNTIME_PLATFORM: "test-x86_64",
@@ -1541,6 +1758,7 @@ exit 1
     ], {
       env: {
         ...process.env,
+        NODE_OPTIONS: `--require=${networkDenialHook}`,
         TSFG_RUNTIME_CACHE: cachePath,
         TSFG_RUNTIME_LOCK: lockPath,
         TSFG_RUNTIME_PLATFORM: "test-x86_64",

@@ -21,6 +21,8 @@ for argument do
   fi
 done
 
+unset NODE_OPTIONS NODE_PATH NODE_REPL_EXTERNAL_MODULE NODE_EXTRA_CA_CERTS OPENSSL_CONF
+
 runtime_failure() {
   message='locked Node.js closure is missing or invalid; run tsfg-build prefetch'
   if [ -n "$report" ]; then
