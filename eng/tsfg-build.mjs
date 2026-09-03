@@ -3,8 +3,10 @@
 
 import {
   chmod,
+  copyFile,
   mkdir,
   lstat,
+  open,
   readFile,
   readlink,
   readdir,
@@ -15,14 +17,17 @@ import {
   symlink,
   writeFile,
 } from "node:fs/promises";
-import { execFileSync } from "node:child_process";
+import { execFileSync, spawnSync } from "node:child_process";
 import path from "node:path";
 import process from "node:process";
 import { createHash, randomUUID } from "node:crypto";
 import { gunzipSync, inflateRawSync } from "node:zlib";
 import { setTimeout as delay } from "node:timers/promises";
+import { fileURLToPath } from "node:url";
 
 class ConfigurationError extends Error {}
+class BuildFailureError extends Error {}
+class TestFailureError extends Error {}
 class WorkspaceMismatchError extends Error {
   constructor(code, message) {
     super(message);
@@ -45,6 +50,17 @@ function canonicalize(value) {
 
 function digest(bytes) {
   return `sha256:${createHash("sha256").update(bytes).digest("hex")}`;
+}
+
+async function digestFile(filePath) {
+  const hasher = createHash("sha256");
+  const handle = await open(filePath, "r");
+  try {
+    for await (const chunk of handle.createReadStream()) hasher.update(chunk);
+  } finally {
+    await handle.close().catch(() => undefined);
+  }
+  return `sha256:${hasher.digest("hex")}`;
 }
 
 async function writeReport(reportPath, report) {
@@ -178,7 +194,7 @@ async function hashTree(root) {
         entries.push({
           path: relativePath,
           type: "file",
-          sha256: digest(await readFile(absolutePath)),
+          sha256: await digestFile(absolutePath),
         });
       } else {
         throw new Error(`unsupported unpacked entry type: ${relativePath}`);
@@ -216,15 +232,71 @@ function selectArtifact(toolId, tool, platform) {
   }
   const artifact = matches[0];
   const digestPattern = /^sha256:[0-9a-f]{64}$/;
+  const commonMetadataValid =
+    /^(0|[1-9][0-9]*)$/.test(artifact.byteSize) &&
+    digestPattern.test(artifact.archiveSha256) &&
+    digestPattern.test(artifact.unpackedTreeSha256);
+  const archiveSetValid =
+    artifact.archiveFormat === "deb-xz-set" &&
+    Array.isArray(artifact.archives) &&
+    artifact.archives.length > 0 &&
+    artifact.archives.every((member) =>
+      typeof member.id === "string" &&
+      member.id.length > 0 &&
+      /^https?:\/\//.test(member.url) &&
+      /^(0|[1-9][0-9]*)$/.test(member.byteSize) &&
+      digestPattern.test(member.archiveSha256) &&
+      typeof member.license === "string" &&
+      member.license.length > 0);
   if (
-    !/^https?:\/\//.test(artifact.url) ||
-    !/^(0|[1-9][0-9]*)$/.test(artifact.byteSize) ||
-    !digestPattern.test(artifact.archiveSha256) ||
-    !digestPattern.test(artifact.unpackedTreeSha256)
+    !commonMetadataValid ||
+    (!archiveSetValid && !/^https?:\/\//.test(artifact.url))
   ) {
     throw new Error(`invalid lock artifact metadata for ${toolId}`);
   }
+  if (archiveSetValid) {
+    const identities = artifact.archives.map(({ id, byteSize, archiveSha256 }) => ({
+      id,
+      byteSize,
+      archiveSha256,
+    }));
+    const sorted = [...identities].sort((left, right) =>
+      Buffer.from(left.id).compare(Buffer.from(right.id)),
+    );
+    if (
+      canonicalize(identities) !== canonicalize(sorted) ||
+      new Set(identities.map(({ id }) => id)).size !== identities.length ||
+      digest(canonicalize(identities)) !== artifact.archiveSha256 ||
+      String(identities.reduce((total, member) => total + Number(member.byteSize), 0)) !== artifact.byteSize
+    ) {
+      throw new Error(`invalid archive set metadata for ${toolId}`);
+    }
+  }
   return artifact;
+}
+
+function selectToolchain(lock, platform) {
+  const configured = lock.targets?.[platform]?.tools;
+  const toolIds = configured ?? Object.keys(lock.tools).sort();
+  if (
+    !Array.isArray(toolIds) ||
+    toolIds.length === 0 ||
+    toolIds.some((id) => typeof id !== "string" || !(id in lock.tools)) ||
+    new Set(toolIds).size !== toolIds.length
+  ) {
+    throw new Error(`invalid tool selection for ${platform}`);
+  }
+  const sortedToolIds = [...toolIds].sort((left, right) =>
+    Buffer.from(left).compare(Buffer.from(right)),
+  );
+  if (canonicalize(toolIds) !== canonicalize(sortedToolIds)) {
+    throw new Error(`tool selection for ${platform} must be sorted`);
+  }
+  return toolIds.map((id) => ({
+    id,
+    tool: lock.tools[id],
+    artifact: selectArtifact(id, lock.tools[id], platform),
+  }));
 }
 
 function toolchainClosureDigest(lock, selections, platform) {
@@ -356,7 +428,10 @@ function parseTar(bytes) {
   let longLink;
   while (offset + 512 <= bytes.length) {
     const header = bytes.subarray(offset, offset + 512);
-    if (header.every((byte) => byte === 0)) break;
+    if (header.every((byte) => byte === 0)) {
+      offset += 512;
+      continue;
+    }
     const expectedChecksum = tarNumber(header, 148, 8);
     let actualChecksum = 0;
     for (let index = 0; index < 512; index += 1) {
@@ -471,49 +546,210 @@ async function extractEntries(entries, toolRoot, stripComponents) {
 
 async function extractArchive(bytes, format, toolRoot, stripComponents) {
   if (format === "zip") await extractEntries(parseZip(bytes), toolRoot, stripComponents);
-  else if (format === "tar.gz") await extractEntries(parseTar(gunzipSync(bytes)), toolRoot, stripComponents);
+  else if (["tar.gz", "apk-v2"].includes(format)) {
+    await extractEntries(parseTar(gunzipSync(bytes)), toolRoot, stripComponents);
+  }
   else throw new Error(`unsupported archive format: ${format}`);
 }
 
-async function downloadArtifact(toolId, artifact, toolRoot) {
-  const response = await fetch(artifact.url, { redirect: "follow" });
-  if (!response.ok) {
+async function downloadToFile(toolId, source, destination) {
+  const response = await fetch(source.url, { redirect: "follow" });
+  if (!response.ok || !response.body) {
     throw new Error(`${toolId} download failed with HTTP ${response.status}`);
   }
-  const bytes = Buffer.from(await response.arrayBuffer());
-  if (String(bytes.length) !== artifact.byteSize) {
+  const hasher = createHash("sha256");
+  let byteSize = 0;
+  const handle = await open(destination, "wx");
+  try {
+    for await (const chunk of response.body) {
+      hasher.update(chunk);
+      byteSize += chunk.length;
+      await handle.write(chunk);
+    }
+  } finally {
+    await handle.close();
+  }
+  if (String(byteSize) !== source.byteSize) {
     throw new Error(
-      `${toolId} byte size mismatch: expected ${artifact.byteSize}, got ${bytes.length}`,
+      `${toolId} byte size mismatch: expected ${source.byteSize}, got ${byteSize}`,
     );
   }
-  const actualArchiveDigest = digest(bytes);
-  if (actualArchiveDigest !== artifact.archiveSha256) {
+  const actualArchiveDigest = `sha256:${hasher.digest("hex")}`;
+  if (actualArchiveDigest !== source.archiveSha256) {
     throw new Error(
-      `${toolId} archive digest mismatch: expected ${artifact.archiveSha256}, got ${actualArchiveDigest}`,
+      `${toolId} archive digest mismatch: expected ${source.archiveSha256}, got ${actualArchiveDigest}`,
     );
   }
-  if (artifact.archiveFormat === "raw") {
-    const destination = checkedInstallPath(toolRoot, artifact.installPath);
-    await mkdir(path.dirname(destination), { recursive: true });
-    await writeFile(destination, bytes, { flag: "wx" });
-  } else if (["zip", "tar.gz"].includes(artifact.archiveFormat)) {
-    const stripComponents = artifact.stripComponents ?? "0";
-    if (!/^(0|[1-9][0-9]*)$/.test(stripComponents)) {
-      throw new Error(`invalid stripComponents for ${toolId}`);
+}
+
+function extractionEnvironment(temporaryRoot) {
+  return {
+    HOME: temporaryRoot,
+    LANG: "C.UTF-8",
+    LC_ALL: "C.UTF-8",
+    PATH: "",
+    TMPDIR: temporaryRoot,
+    TZ: "UTC",
+  };
+}
+
+function runArchiveExtractor(extractor, arguments_, temporaryRoot) {
+  try {
+    execFileSync(extractor, arguments_, {
+      cwd: temporaryRoot,
+      env: extractionEnvironment(temporaryRoot),
+      stdio: ["ignore", "ignore", "pipe"],
+    });
+  } catch (error) {
+    const detail = Buffer.isBuffer(error.stderr)
+      ? error.stderr.toString("utf8").trim()
+      : error.message;
+    throw new Error(detail || "archive extractor failed");
+  }
+}
+
+function debianDataArchive(bytes) {
+  if (bytes.subarray(0, 8).toString("ascii") !== "!<arch>\n") {
+    throw new Error("invalid Debian ar archive");
+  }
+  let offset = 8;
+  while (offset + 60 <= bytes.length) {
+    const header = bytes.subarray(offset, offset + 60);
+    if (header.subarray(58, 60).toString("ascii") !== "`\n") {
+      throw new Error("invalid Debian ar member");
     }
-    await mkdir(toolRoot, { recursive: true });
-    try {
-      await extractArchive(bytes, artifact.archiveFormat, toolRoot, Number.parseInt(stripComponents, 10));
-    } catch (error) {
-      throw new Error(`${toolId} archive extraction failed: ${error.message}`);
+    const name = header.subarray(0, 16).toString("ascii").trim().replace(/\/$/, "");
+    const sizeText = header.subarray(48, 58).toString("ascii").trim();
+    if (!/^(0|[1-9][0-9]*)$/.test(sizeText)) {
+      throw new Error("invalid Debian ar member size");
     }
-    const executable = checkedInstallPath(toolRoot, artifact.installPath);
-    const executableStat = await stat(executable).catch(() => undefined);
-    if (!executableStat?.isFile()) {
-      throw new Error(`${toolId} executable is missing after extraction`);
+    const size = Number.parseInt(sizeText, 10);
+    const start = offset + 60;
+    const end = start + size;
+    if (end > bytes.length) throw new Error("truncated Debian ar member");
+    if (name === "data.tar.xz") return Buffer.from(bytes.subarray(start, end));
+    offset = end + (size % 2);
+  }
+  throw new Error("Debian package has no data.tar.xz member");
+}
+
+async function extractTar(
+  extractor,
+  archive,
+  toolRoot,
+  stripComponents,
+  temporaryRoot,
+  compression,
+) {
+  await mkdir(toolRoot, { recursive: true });
+  runArchiveExtractor(
+    extractor,
+    [
+      "tar",
+      compression === "xz" ? "-xJf" : "-xzf",
+      archive,
+      "-C",
+      toolRoot,
+      "--strip-components",
+      String(stripComponents),
+      "--numeric-owner",
+    ],
+    temporaryRoot,
+  );
+}
+
+async function normalizeSysrootLinks(root) {
+  async function visit(directory) {
+    const children = await readdir(directory, { withFileTypes: true });
+    for (const child of children) {
+      const childPath = path.join(directory, child.name);
+      if (child.isDirectory()) {
+        await visit(childPath);
+      } else if (child.isSymbolicLink()) {
+        const target = await readlink(childPath);
+        if (path.posix.isAbsolute(target)) {
+          const lockedTarget = checkedInstallPath(root, target.slice(1));
+          const relativeTarget = path.relative(path.dirname(childPath), lockedTarget);
+          await rm(childPath);
+          await symlink(relativeTarget, childPath);
+        }
+      }
     }
+  }
+  await visit(root);
+}
+
+async function downloadArtifact(toolId, artifact, toolRoot, downloadsRoot, extractor) {
+  await mkdir(downloadsRoot, { recursive: true });
+  if (artifact.archiveFormat === "deb-xz-set") {
+    if (!extractor) throw new Error("locked archive extractor is unavailable");
+    for (const member of artifact.archives) {
+      const archive = path.join(downloadsRoot, `${toolId}-${member.id}.deb`);
+      await downloadToFile(`${toolId}/${member.id}`, member, archive);
+      const dataArchive = path.join(downloadsRoot, `${toolId}-${member.id}.data.tar.xz`);
+      await writeFile(dataArchive, debianDataArchive(await readFile(archive)), { flag: "wx" });
+      await extractTar(extractor, dataArchive, toolRoot, 0, downloadsRoot, "xz");
+    }
+    await normalizeSysrootLinks(toolRoot);
   } else {
-    throw new Error(`unsupported archive format: ${artifact.archiveFormat}`);
+    const archive = path.join(downloadsRoot, `${toolId}.archive`);
+    await downloadToFile(toolId, artifact, archive);
+    if (artifact.archiveFormat === "raw") {
+      const destination = checkedInstallPath(toolRoot, artifact.installPath);
+      await mkdir(path.dirname(destination), { recursive: true });
+      await rename(archive, destination);
+      if (process.platform !== "win32") await chmod(destination, 0o755);
+    } else if (artifact.archiveFormat === "tar.gz" && extractor) {
+      const stripComponents = artifact.stripComponents ?? "0";
+      if (!/^(0|[1-9][0-9]*)$/.test(stripComponents)) {
+        throw new Error(`invalid stripComponents for ${toolId}`);
+      }
+      await extractTar(
+        extractor,
+        archive,
+        toolRoot,
+        Number.parseInt(stripComponents, 10),
+        downloadsRoot,
+        "gz",
+      );
+    } else if (["zip", "tar.gz", "apk-v2"].includes(artifact.archiveFormat)) {
+      const stripComponents = artifact.stripComponents ?? "0";
+      if (!/^(0|[1-9][0-9]*)$/.test(stripComponents)) {
+        throw new Error(`invalid stripComponents for ${toolId}`);
+      }
+      await mkdir(toolRoot, { recursive: true });
+      try {
+        await extractArchive(
+          await readFile(archive),
+          artifact.archiveFormat,
+          toolRoot,
+          Number.parseInt(stripComponents, 10),
+        );
+      } catch (error) {
+        throw new Error(`${toolId} archive extraction failed: ${error.message}`);
+      }
+    } else if (artifact.archiveFormat === "tar.xz") {
+      if (!extractor) throw new Error("locked archive extractor is unavailable");
+      const stripComponents = artifact.stripComponents ?? "0";
+      if (!/^(0|[1-9][0-9]*)$/.test(stripComponents)) {
+        throw new Error(`invalid stripComponents for ${toolId}`);
+      }
+      await extractTar(
+        extractor,
+        archive,
+        toolRoot,
+        Number.parseInt(stripComponents, 10),
+        downloadsRoot,
+        "xz",
+      );
+    } else {
+      throw new Error(`unsupported archive format: ${artifact.archiveFormat}`);
+    }
+  }
+  const installed = checkedInstallPath(toolRoot, artifact.installPath);
+  const installedStat = await stat(installed).catch(() => undefined);
+  if (!installedStat) {
+    throw new Error(`${toolId} install path is missing after extraction`);
   }
   await verifyInstalledTool(toolRoot, artifact);
 }
@@ -541,15 +777,7 @@ async function prefetch(options) {
   if (lock.schemaVersion !== "1" || typeof lock.tools !== "object") {
     throw new Error("unsupported toolchain lock schema");
   }
-  const toolIds = Object.keys(lock.tools).sort();
-  if (toolIds.join(",") !== "node,pnpm") {
-    throw new Error("minimal toolchain lock must contain only node and pnpm");
-  }
-  const selections = toolIds.map((id) => ({
-    id,
-    tool: lock.tools[id],
-    artifact: selectArtifact(id, lock.tools[id], platform),
-  }));
+  const selections = selectToolchain(lock, platform);
   const lockDigest = toolchainClosureDigest(lock, selections, platform);
   const lockHex = lockDigest.slice("sha256:".length);
   const absoluteCache = path.resolve(cachePath);
@@ -590,13 +818,24 @@ async function prefetch(options) {
     );
     try {
       await mkdir(stagingPath, { recursive: true });
+      const downloadsRoot = path.join(stagingPath, ".downloads");
+      let extractor;
       for (const selection of selections) {
         await downloadArtifact(
           selection.id,
           selection.artifact,
           path.join(stagingPath, selection.id),
+          downloadsRoot,
+          extractor,
         );
+        if (selection.id === "archive-extractor") {
+          extractor = checkedInstallPath(
+            path.join(stagingPath, selection.id),
+            selection.artifact.installPath,
+          );
+        }
       }
+      await rm(downloadsRoot, { recursive: true, force: true });
       await writeFile(
         path.join(stagingPath, "ready.json"),
         `${canonicalize({ status: "ready", lockDigest, platform })}\n`,
@@ -637,15 +876,7 @@ async function verifyRuntimeClosure(lockPath, cachePath, platform) {
   if (lock.schemaVersion !== "1" || typeof lock.tools !== "object") {
     throw new Error("unsupported toolchain lock schema");
   }
-  const toolIds = Object.keys(lock.tools).sort();
-  if (toolIds.join(",") !== "node,pnpm") {
-    throw new Error("minimal toolchain lock must contain only node and pnpm");
-  }
-  const selections = toolIds.map((id) => ({
-    id,
-    tool: lock.tools[id],
-    artifact: selectArtifact(id, lock.tools[id], platform),
-  }));
+  const selections = selectToolchain(lock, platform);
   const lockDigest = toolchainClosureDigest(lock, selections, platform);
   const expectedRelative = [
     "closures",
@@ -671,6 +902,7 @@ async function verifyRuntimeClosure(lockPath, cachePath, platform) {
   for (const selection of selections) {
     await verifyInstalledTool(path.join(closurePath, selection.id), selection.artifact);
   }
+  return { closurePath, lock, lockDigest, platform, selections };
 }
 
 /**
@@ -1118,10 +1350,287 @@ async function verifyWorkspace(options) {
   };
 }
 
+const repositoryRoot = path.resolve(
+  path.dirname(fileURLToPath(import.meta.url)),
+  "..",
+);
+
+function closureToolPath(runtime, toolId, executableId = toolId) {
+  const selection = runtime.selections.find(({ id }) => id === toolId);
+  if (!selection) throw new Error(`locked tool is not selected: ${toolId}`);
+  const installPath = selection.artifact.executables?.[executableId]
+    ?? selection.artifact.installPath;
+  return checkedInstallPath(
+    path.join(runtime.closurePath, toolId),
+    installPath,
+  );
+}
+
+function buildEnvironment(temporaryRoot, toolDirectories) {
+  const environment = {
+    HOME: temporaryRoot,
+    LANG: "C.UTF-8",
+    LC_ALL: "C.UTF-8",
+    PATH: toolDirectories.join(path.delimiter),
+    TMPDIR: temporaryRoot,
+    TZ: "UTC",
+  };
+  if (process.platform === "win32") {
+    environment.ComSpec = process.env.ComSpec;
+    environment.SystemRoot = process.env.SystemRoot;
+    environment.TEMP = temporaryRoot;
+    environment.TMP = temporaryRoot;
+  }
+  return environment;
+}
+
+function shellQuote(value) {
+  return `'${value.replaceAll("'", `'"'"'`)}'`;
+}
+
+async function writeLockedLlvmWrapper(
+  destination,
+  loader,
+  libraries,
+  executable,
+  leadingArguments = [],
+) {
+  const command = [loader, "--library-path", libraries, executable, ...leadingArguments]
+    .map(shellQuote)
+    .join(" ");
+  await writeFile(destination, `#!/bin/sh\nexec ${command} "$@"\n`, {
+    encoding: "utf8",
+    flag: "wx",
+    mode: 0o755,
+  });
+  if (process.platform !== "win32") await chmod(destination, 0o755);
+}
+
+function runBuildTool(toolId, executable, arguments_, cwd, environment) {
+  try {
+    if (process.platform === "win32" && /\.(?:cmd|bat)$/i.test(executable)) {
+      execFileSync(process.env.ComSpec, ["/d", "/c", executable, ...arguments_], {
+        cwd,
+        env: environment,
+        stdio: ["ignore", "pipe", "pipe"],
+      });
+    } else {
+      execFileSync(executable, arguments_, {
+        cwd,
+        env: environment,
+        stdio: ["ignore", "pipe", "pipe"],
+      });
+    }
+  } catch (error) {
+    const stdout = Buffer.isBuffer(error.stdout)
+      ? error.stdout.toString("utf8")
+      : "";
+    const stderr = Buffer.isBuffer(error.stderr)
+      ? error.stderr.toString("utf8")
+      : "";
+    const detail = `${stdout}${stderr}`.trim() || error.message;
+    throw new BuildFailureError(`${toolId} failed${detail ? `: ${detail}` : ""}`);
+  }
+}
+
+async function buildLinuxDebug(options, runtime) {
+  const target = options.get("--target");
+  const profile = options.get("--profile");
+  const outputOption = options.get("--out");
+  if (!target || !profile || !outputOption) {
+    throw new ConfigurationError("build requires --target, --profile, and --out");
+  }
+  if (target !== "linux-x86_64-gnu" || profile !== "debug") {
+    throw new ConfigurationError("R00-06 build supports only linux-x86_64-gnu debug");
+  }
+
+  const output = path.resolve(outputOption);
+  const stagingRoot = path.join(
+    path.dirname(output),
+    `.${path.basename(output)}.${randomUUID()}.tmp`,
+  );
+  const workRoot = path.join(stagingRoot, "work");
+  const publishRoot = path.join(stagingRoot, "publish");
+  const cppWork = path.join(workRoot, "cpp");
+  const wrapperRoot = path.join(workRoot, "llvm-wrappers");
+  const zigPrefix = path.join(workRoot, "zig-install");
+  const binRoot = path.join(publishRoot, "bin");
+  const cppOutput = path.join(cppWork, "tsfg-r00-cpp-smoke");
+  const cmake = closureToolPath(runtime, "cmake");
+  const ninja = closureToolPath(runtime, "ninja");
+  const zig = closureToolPath(runtime, "zig");
+  const clangxx = closureToolPath(runtime, "llvm", "clangxx");
+  const lld = closureToolPath(runtime, "llvm", "lld");
+  const llvmAr = closureToolPath(runtime, "llvm", "ar");
+  const llvmRanlib = closureToolPath(runtime, "llvm", "ranlib");
+  const sysroot = path.join(runtime.closurePath, "debian-sysroot");
+  const loader = path.join(sysroot, "lib", "x86_64-linux-gnu", "ld-linux-x86-64.so.2");
+  const runtimeLibraries = [
+    path.join(sysroot, "lib", "x86_64-linux-gnu"),
+    path.join(sysroot, "usr", "lib", "x86_64-linux-gnu"),
+  ].join(":");
+  const compilerWrapper = path.join(wrapperRoot, "clang++");
+  const linkerWrapper = path.join(wrapperRoot, "ld.lld");
+  const arWrapper = path.join(wrapperRoot, "llvm-ar");
+  const ranlibWrapper = path.join(wrapperRoot, "llvm-ranlib");
+  const environment = buildEnvironment(workRoot, [
+    path.dirname(cmake),
+    path.dirname(ninja),
+    path.dirname(clangxx),
+    path.dirname(lld),
+    path.dirname(zig),
+  ]);
+  const cmakeArguments = [
+    "-S", path.join(repositoryRoot, "tests", "r00", "smoke", "cpp"),
+    "-B", cppWork,
+    "-G", "Ninja",
+    `-DCMAKE_MAKE_PROGRAM=${ninja}`,
+    `-DCMAKE_CXX_COMPILER=${compilerWrapper}`,
+    `-DCMAKE_AR=${arWrapper}`,
+    `-DCMAKE_RANLIB=${ranlibWrapper}`,
+    "-DCMAKE_BUILD_TYPE=Debug",
+    "-DCMAKE_TRY_COMPILE_TARGET_TYPE=STATIC_LIBRARY",
+    `-DCMAKE_SYSROOT=${sysroot}`,
+    "-DCMAKE_CXX_FLAGS_DEBUG=-O0 -g3 -UNDEBUG -fno-omit-frame-pointer",
+    `-DCMAKE_EXE_LINKER_FLAGS=-fuse-ld=${linkerWrapper} --rtlib=compiler-rt -unwindlib=none`,
+  ];
+  const ninjaArguments = ["-C", cppWork, "tsfg-r00-cpp-smoke"];
+  const zigArguments = [
+    "build",
+    "--build-file", path.join(repositoryRoot, "tests", "r00", "smoke", "zig", "build.zig"),
+    "--prefix", zigPrefix,
+    "--cache-dir", path.join(workRoot, "zig-cache"),
+    "--global-cache-dir", path.join(workRoot, "zig-global-cache"),
+    "-Dtarget=x86_64-linux-gnu",
+    "-Doptimize=Debug",
+  ];
+  const steps = [
+    { tool: "cmake", executable: cmake, arguments: cmakeArguments },
+    { tool: "ninja", executable: ninja, arguments: ninjaArguments },
+    { tool: "zig", executable: zig, arguments: zigArguments },
+  ];
+
+  try {
+    await mkdir(cppWork, { recursive: true });
+    await mkdir(wrapperRoot, { recursive: true });
+    await mkdir(binRoot, { recursive: true });
+    await writeLockedLlvmWrapper(
+      compilerWrapper,
+      loader,
+      runtimeLibraries,
+      clangxx,
+      [`-resource-dir=${path.join(runtime.closurePath, "llvm", "lib", "clang", "22")}`],
+    );
+    await writeLockedLlvmWrapper(linkerWrapper, loader, runtimeLibraries, lld);
+    await writeLockedLlvmWrapper(arWrapper, loader, runtimeLibraries, llvmAr);
+    await writeLockedLlvmWrapper(ranlibWrapper, loader, runtimeLibraries, llvmRanlib);
+    runBuildTool("cmake", cmake, cmakeArguments, repositoryRoot, environment);
+    runBuildTool("ninja", ninja, ninjaArguments, repositoryRoot, environment);
+    runBuildTool("zig", zig, zigArguments, repositoryRoot, environment);
+    const cppStat = await stat(cppOutput).catch(() => undefined);
+    if (!cppStat?.isFile()) {
+      throw new BuildFailureError("C++ smoke build produced no executable");
+    }
+    const publishedCpp = path.join(binRoot, "tsfg-r00-cpp-smoke");
+    const zigOutput = path.join(zigPrefix, "bin", "tsfg-r00-zig-smoke");
+    const zigStat = await stat(zigOutput).catch(() => undefined);
+    if (!zigStat?.isFile()) {
+      throw new BuildFailureError("Zig smoke build produced no executable");
+    }
+    const publishedZig = path.join(binRoot, "tsfg-r00-zig-smoke");
+    await copyFile(cppOutput, publishedCpp);
+    await copyFile(zigOutput, publishedZig);
+    if (process.platform !== "win32") {
+      await chmod(publishedCpp, 0o755);
+      await chmod(publishedZig, 0o755);
+    }
+    await rm(output, { recursive: true, force: true });
+    await renameWithRetry(publishRoot, output);
+    return {
+      outputs: ["bin/tsfg-r00-cpp-smoke", "bin/tsfg-r00-zig-smoke"],
+      profile,
+      steps,
+      target,
+    };
+  } finally {
+    await rm(stagingRoot, {
+      recursive: true,
+      force: true,
+      maxRetries: process.platform === "win32" ? 5 : 0,
+      retryDelay: 100,
+    });
+  }
+}
+
+function runSmokeExecutable(name, executable, outputRoot) {
+  const result = spawnSync(
+    executable,
+    [],
+    {
+      cwd: outputRoot,
+      encoding: "utf8",
+      env: buildEnvironment(outputRoot, []),
+      stdio: ["ignore", "pipe", "pipe"],
+    },
+  );
+  if (result.error || result.status !== 0) {
+    const detail = `${result.stdout ?? ""}${result.stderr ?? ""}`.trim();
+    throw new TestFailureError(
+      `${name} failed${detail ? `: ${detail}` : result.error ? `: ${result.error.message}` : ""}`,
+    );
+  }
+  return { stdout: result.stdout, stderr: result.stderr };
+}
+
+async function testLinuxDebug(options) {
+  const target = options.get("--target");
+  const profile = options.get("--profile");
+  const outputOption = options.get("--out");
+  if (!target || !profile || !outputOption) {
+    throw new ConfigurationError("test requires --target, --profile, and --out");
+  }
+  if (target !== "linux-x86_64-gnu" || profile !== "debug") {
+    throw new ConfigurationError("R00-06 test supports only linux-x86_64-gnu debug");
+  }
+
+  const output = path.resolve(outputOption);
+  const fixtureSuffix = process.platform === "win32" ? ".exe" : "";
+  const cases = [
+    {
+      executable: path.join(output, "bin", `tsfg-r00-cpp-smoke${fixtureSuffix}`),
+      name: "cpp-smoke",
+      stderr: "",
+      stdout: "tsfg-r00-cpp-smoke: ok\n",
+    },
+    {
+      executable: path.join(output, "bin", `tsfg-r00-zig-smoke${fixtureSuffix}`),
+      name: "zig-smoke",
+      stderr: "tsfg-r00-zig-smoke: ok\n",
+      stdout: "",
+    },
+  ];
+  const tests = [];
+  for (const smoke of cases) {
+    const file = await stat(smoke.executable).catch(() => undefined);
+    if (!file?.isFile()) {
+      throw new TestFailureError(`${smoke.name} executable is missing`);
+    }
+    const observed = runSmokeExecutable(smoke.name, smoke.executable, output);
+    if (observed.stdout !== smoke.stdout || observed.stderr !== smoke.stderr) {
+      throw new TestFailureError(
+        `${smoke.name} produced unexpected output: ${JSON.stringify(observed)}`,
+      );
+    }
+    tests.push({ name: smoke.name, status: "passed" });
+  }
+  return { profile, target, tests };
+}
+
 const arguments_ = process.argv.slice(2);
 const command = arguments_[0] ?? "";
 const reportPath = parseReportPath(arguments_);
 let runtimeIntegrityError;
+let runtimeClosure;
 if (
   process.env.TSFG_RUNTIME_LOCK ||
   process.env.TSFG_RUNTIME_CACHE ||
@@ -1135,7 +1644,7 @@ if (
     ) {
       throw new Error("incomplete runtime closure identity");
     }
-    await verifyRuntimeClosure(
+    runtimeClosure = await verifyRuntimeClosure(
       process.env.TSFG_RUNTIME_LOCK,
       process.env.TSFG_RUNTIME_CACHE,
       process.env.TSFG_RUNTIME_PLATFORM,
@@ -1212,6 +1721,52 @@ if (runtimeIntegrityError) {
         code: isConfigurationError
           ? "invalid-configuration"
           : (error.issueCode ?? "workspace-state"),
+        message: error.message,
+      },
+      reportPath,
+      "offline",
+    );
+  }
+} else if (command === "build") {
+  try {
+    const options = parseOptions(
+      arguments_,
+      new Set(["--target", "--profile", "--out", "--report"]),
+    );
+    if (!runtimeClosure) throw new Error("locked runtime closure is unavailable");
+    const result = await buildLinuxDebug(options, runtimeClosure);
+    process.exitCode = await succeed(command, result, reportPath, "offline");
+  } catch (error) {
+    const isConfigurationError = error instanceof ConfigurationError;
+    process.exitCode = await fail(
+      command,
+      isConfigurationError ? 2 : 20,
+      isConfigurationError ? "usage/configuration" : "build failure",
+      {
+        code: isConfigurationError ? "invalid-configuration" : "native-build",
+        message: error.message,
+      },
+      reportPath,
+      "offline",
+    );
+  }
+} else if (command === "test") {
+  try {
+    const options = parseOptions(
+      arguments_,
+      new Set(["--target", "--profile", "--out", "--report"]),
+    );
+    if (!runtimeClosure) throw new Error("locked runtime closure is unavailable");
+    const result = await testLinuxDebug(options);
+    process.exitCode = await succeed(command, result, reportPath, "offline");
+  } catch (error) {
+    const isConfigurationError = error instanceof ConfigurationError;
+    process.exitCode = await fail(
+      command,
+      isConfigurationError ? 2 : 21,
+      isConfigurationError ? "usage/configuration" : "test failure",
+      {
+        code: isConfigurationError ? "invalid-configuration" : "native-test",
         message: error.message,
       },
       reportPath,

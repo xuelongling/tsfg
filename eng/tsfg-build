@@ -5,9 +5,10 @@ set -eu
 script_dir=$(CDPATH= cd -- "$(dirname -- "$0")" && pwd)
 repository=$(CDPATH= cd -- "$script_dir/.." && pwd)
 cache=${TSFG_CACHE_DIR:-"$repository/.tsfg-cache"}
-platform=linux-x86_64
-lock_id=1f4160eba269402f43eb239bde453f59b0a5f844d86f19d71103289425f4c007
+platform=linux-x86_64-gnu
+lock_id=99df577d8c78ae99ffe8ee04dc2034521b023e9e19b177f696d1f0fa2412e9d5
 node_id=89af8424dd53e560b1933f87ba650d8bf57c83ca5a04600eefb31f416aabbae7
+command=${1:-}
 report=
 expect_report=false
 for argument do
@@ -26,7 +27,7 @@ runtime_failure() {
     parent=$(dirname -- "$report")
     temporary="$report.$$.tmp"
     if ! mkdir -p -- "$parent" ||
-      ! printf '%s\n' "{\"command\":\"verify-workspace\",\"error\":{\"category\":\"lock/integrity\",\"code\":\"11\",\"issues\":[{\"code\":\"runtime-closure\",\"message\":\"$message\"}]},\"network\":\"offline\",\"schemaVersion\":\"1\",\"status\":\"failure\",\"telemetry\":false}" > "$temporary" ||
+      ! printf '%s\n' "{\"command\":\"$command\",\"error\":{\"category\":\"lock/integrity\",\"code\":\"11\",\"issues\":[{\"code\":\"runtime-closure\",\"message\":\"$message\"}]},\"network\":\"offline\",\"schemaVersion\":\"1\",\"status\":\"failure\",\"telemetry\":false}" > "$temporary" ||
       ! mv -f -- "$temporary" "$report"; then
       rm -f -- "$temporary"
       printf '%s\n' 'cannot write Build Report for runtime closure failure' >&2
@@ -120,17 +121,67 @@ valid_verify_arguments() {
   [ -n "$segment" ] && [ "$segment" != .. ]
 }
 
+valid_smoke_arguments() {
+  expected_command=$1
+  shift
+  [ "${1:-}" = "$expected_command" ] || return 1
+  shift
+  seen_target=false
+  seen_profile=false
+  seen_out=false
+  seen_report=false
+  target=
+  profile=
+  while [ "$#" -gt 0 ]; do
+    option=$1
+    shift
+    if [ "$#" -eq 0 ] || [ -z "$1" ]; then
+      return 1
+    fi
+    case "$option" in
+      --target)
+        [ "$seen_target" = false ] || return 1
+        seen_target=true
+        target=$1
+        ;;
+      --profile)
+        [ "$seen_profile" = false ] || return 1
+        seen_profile=true
+        profile=$1
+        ;;
+      --out)
+        [ "$seen_out" = false ] || return 1
+        seen_out=true
+        ;;
+      --report)
+        [ "$seen_report" = false ] || return 1
+        seen_report=true
+        ;;
+      *) return 1 ;;
+    esac
+    shift
+  done
+  [ "$seen_target" = true ] &&
+    [ "$seen_profile" = true ] &&
+    [ "$seen_out" = true ] &&
+    [ "$target" = linux-x86_64-gnu ] &&
+    [ "$profile" = debug ]
+}
+
 if [ "${1:-}" = prefetch ]; then
   exec node "$script_dir/tsfg-build.mjs" "$@" \
     --lock "$script_dir/toolchains.lock.json" \
     --cache "$cache" \
     --platform "$platform"
 fi
-if [ "${1:-}" != verify-workspace ]; then
+if [ "$command" != verify-workspace ] && [ "$command" != build ] && [ "$command" != test ]; then
   usage_failure unsupported unsupported-operation 'unsupported operation'
 fi
-if ! valid_verify_arguments "$@"; then
+if [ "$command" = verify-workspace ] && ! valid_verify_arguments "$@"; then
   usage_failure verify-workspace invalid-configuration 'invalid verify-workspace arguments'
+fi
+if { [ "$command" = build ] || [ "$command" = test ]; } && ! valid_smoke_arguments "$command" "$@"; then
+  usage_failure "$command" invalid-configuration "invalid $command arguments"
 fi
 
 active="$cache/active/$platform"

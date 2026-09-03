@@ -20,7 +20,7 @@ function canonicalize(value) {
   return JSON.stringify(value);
 }
 
-test("minimal toolchain lock content-locks Node.js and pnpm for both R00 hosts", async () => {
+test("toolchain lock content-locks the Linux debug closure and bootstrap tools", async () => {
   const lockBytes = await readFile(path.join(repositoryRoot, "eng", "toolchains.lock.json"), "utf8");
   const lock = JSON.parse(lockBytes);
   assert.equal(lock.schemaVersion, "1");
@@ -38,19 +38,68 @@ test("minimal toolchain lock content-locks Node.js and pnpm for both R00 hosts",
       .digest("hex"),
     lock.dependencyLocks[0].sha256.slice("sha256:".length),
   );
-  assert.deepEqual(Object.keys(lock.tools).sort(), ["node", "pnpm"]);
+  assert.deepEqual(lock.targets, {
+    "linux-x86_64-gnu": {
+      tools: ["archive-extractor", "cmake", "debian-sysroot", "llvm", "ninja", "node", "pnpm", "zig"],
+    },
+    "windows-x86_64": { tools: ["node", "pnpm"] },
+  });
+  assert.deepEqual(Object.keys(lock.tools).sort(), [
+    "archive-extractor",
+    "cmake",
+    "debian-sysroot",
+    "llvm",
+    "ninja",
+    "node",
+    "pnpm",
+    "zig",
+  ]);
+  assert.equal(lock.tools.cmake.version, "4.4.3");
+  assert.equal(lock.tools["debian-sysroot"].version, "12.15");
+  assert.equal(lock.tools.llvm.version, "22.1.6");
+  assert.equal(lock.tools.ninja.version, "1.13.2");
   assert.equal(lock.tools.node.version, "24.20.0");
   assert.equal(lock.tools.pnpm.version, "11.25.0");
+  assert.equal(lock.tools.zig.version, "0.16.0");
+  assert.deepEqual(
+    lock.tools["debian-sysroot"].artifacts[0].archives.map(({ id }) => id),
+    [
+      "gcc-12-base",
+      "libc6",
+      "libc6-dev",
+      "libgcc-s1",
+      "libicu72",
+      "liblzma5",
+      "libstdc++6",
+      "libxml2",
+      "linux-libc-dev",
+      "zlib1g",
+    ],
+  );
+  assert.deepEqual(lock.tools.llvm.artifacts[0].executables, {
+    ar: "bin/llvm-ar",
+    clang: "bin/clang",
+    clangxx: "bin/clang++",
+    lld: "bin/ld.lld",
+    ranlib: "bin/llvm-ranlib",
+  });
   for (const tool of Object.values(lock.tools)) {
-    assert.equal(tool.license, "MIT");
+    assert.notEqual(tool.license, "");
     assert.notEqual(tool.signature.kind, "");
     assert.notEqual(tool.signature.signer, "");
-    assert.deepEqual(
-      tool.artifacts.map(({ platform }) => platform).sort(),
-      ["linux-x86_64", "windows-x86_64"],
-    );
+    assert.ok(tool.artifacts.length > 0);
     for (const artifact of tool.artifacts) {
-      assert.match(artifact.url, /^https:\/\//);
+      if (artifact.archiveFormat === "deb-xz-set") {
+        assert.ok(artifact.archives.length > 0);
+        for (const member of artifact.archives) {
+          assert.match(member.url, /^https:\/\//);
+          assert.match(member.byteSize, /^[1-9][0-9]*$/);
+          assert.match(member.archiveSha256, /^sha256:[0-9a-f]{64}$/);
+          assert.notEqual(member.license, "");
+        }
+      } else {
+        assert.match(artifact.url, /^https:\/\//);
+      }
       assert.match(artifact.byteSize, /^[1-9][0-9]*$/);
       assert.match(artifact.archiveSha256, /^sha256:[0-9a-f]{64}$/);
       assert.match(artifact.unpackedTreeSha256, /^sha256:[0-9a-f]{64}$/);
@@ -66,7 +115,7 @@ test("minimal toolchain lock content-locks Node.js and pnpm for both R00 hosts",
     })),
     [
       {
-        platform: "linux-x86_64",
+        platform: "linux-x86_64-gnu",
         byteSize: "58006679",
         archiveSha256: "sha256:855d581f8a4eb1a8117e3426de25fe02770592febcfb31369aee1ffbfee9e8ec",
         unpackedTreeSha256: "sha256:bc82944c0f67b447ef59239765344b4a1be75aa2752a7a958693c8ba6e118427",
@@ -88,7 +137,7 @@ test("minimal toolchain lock content-locks Node.js and pnpm for both R00 hosts",
     })),
     [
       {
-        platform: "linux-x86_64",
+        platform: "linux-x86_64-gnu",
         byteSize: "51293579",
         archiveSha256: "sha256:11caeed8b581d460638f836f10f6ead19cbf08d774a5b8e502628b20ebf3ac43",
         unpackedTreeSha256: "sha256:286c1dc4795dd9e1344075a0587eef58d57866ccfd6588e9679363e0727cb178",
@@ -108,7 +157,7 @@ test("minimal toolchain lock content-locks Node.js and pnpm for both R00 hosts",
     })),
     [
       {
-        platform: "linux-x86_64",
+        platform: "linux-x86_64-gnu",
         executableSha256: "sha256:89af8424dd53e560b1933f87ba650d8bf57c83ca5a04600eefb31f416aabbae7",
       },
       {
@@ -119,10 +168,10 @@ test("minimal toolchain lock content-locks Node.js and pnpm for both R00 hosts",
   );
 
   const closureIdentities = {};
-  for (const target of ["linux-x86_64", "windows-x86_64"]) {
+  for (const target of Object.keys(lock.targets).sort()) {
     const dependencyLocks = [...lock.dependencyLocks].sort((left, right) =>
       left.projectId.localeCompare(right.projectId) || left.path.localeCompare(right.path));
-    const tools = Object.keys(lock.tools).sort().map((id) => {
+    const tools = lock.targets[target].tools.map((id) => {
       const tool = lock.tools[id];
       const artifact = tool.artifacts.find(({ platform }) => platform === target);
       return {
@@ -137,11 +186,7 @@ test("minimal toolchain lock content-locks Node.js and pnpm for both R00 hosts",
       .update(canonicalize({ dependencyLocks, schemaVersion: lock.schemaVersion, target, tools }))
       .digest("hex");
   }
-  assert.deepEqual(closureIdentities, {
-    "linux-x86_64": "1f4160eba269402f43eb239bde453f59b0a5f844d86f19d71103289425f4c007",
-    "windows-x86_64": "9df4062f8570fb8b396287c973ec2348814db660ef1cfd428d1895eaaefe623a",
-  });
-  for (const [launcher, target] of [["tsfg-build", "linux-x86_64"], ["tsfg-build.cmd", "windows-x86_64"]]) {
+  for (const [launcher, target] of [["tsfg-build", "linux-x86_64-gnu"], ["tsfg-build.cmd", "windows-x86_64"]]) {
     const nodeArtifact = lock.tools.node.artifacts.find(({ platform }) => platform === target);
     const launcherBytes = await readFile(path.join(repositoryRoot, "eng", launcher), "utf8");
     assert.match(

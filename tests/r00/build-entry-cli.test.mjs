@@ -9,8 +9,10 @@ import {
   readFile,
   readdir,
   rm,
+  stat,
   writeFile,
 } from "node:fs/promises";
+import { createHash } from "node:crypto";
 import { createServer } from "node:http";
 import { tmpdir } from "node:os";
 import path from "node:path";
@@ -282,12 +284,14 @@ test("prefetch atomically publishes and reuses a content-verified minimal closur
   const sandbox = await mkdtemp(path.join(tmpdir(), "tsfg-prefetch-"));
   const nodeBytes = Buffer.from("fixture-node\n");
   const pnpmBytes = Buffer.from("fixture-pnpm\n");
+  const zigBytes = Buffer.from("fixture-zig\n");
   const server = await startArtifactServer(
     new Map([
       ["/node", nodeBytes],
       ["/node-mirror", nodeBytes],
       ["/pnpm", pnpmBytes],
       ["/pnpm-mirror", pnpmBytes],
+      ["/zig", zigBytes],
     ]),
   );
   const lockPath = path.join(sandbox, "toolchains.lock.json");
@@ -296,6 +300,9 @@ test("prefetch atomically publishes and reuses a content-verified minimal closur
   const lock = {
     dependencyLocks: [],
     schemaVersion: "1",
+    targets: {
+      "test-x86_64": { tools: ["node", "pnpm", "zig"] },
+    },
     tools: {
       node: {
         version: "24.20.0",
@@ -333,6 +340,24 @@ test("prefetch atomically publishes and reuses a content-verified minimal closur
           },
         ],
       },
+      zig: {
+        version: "0.16.0",
+        license: "MIT",
+        signature: { kind: "fixture", signer: "tsfg test fixture" },
+        artifacts: [
+          {
+            platform: "test-x86_64",
+            url: `${server.baseUrl}/zig`,
+            byteSize: "12",
+            archiveFormat: "raw",
+            archiveSha256:
+              "sha256:30ccc2b3eddab64e55e66d69c1741102bd114307d82d598bd15bd1118ce41417",
+            installPath: "bin/zig",
+            unpackedTreeSha256:
+              "sha256:0e433afb4c00e1999c50e0bbc06e085b30c11a57e813a7bf8d9dbb16981a3a68",
+          },
+        ],
+      },
     },
   };
 
@@ -362,6 +387,7 @@ test("prefetch atomically publishes and reuses a content-verified minimal closur
     assert.deepEqual(firstReport.result.tools, [
       { id: "node", version: "24.20.0" },
       { id: "pnpm", version: "11.25.0" },
+      { id: "zig", version: "0.16.0" },
     ]);
 
     const closurePath = path.join(
@@ -378,6 +404,10 @@ test("prefetch atomically publishes and reuses a content-verified minimal closur
     assert.equal(
       await readFile(path.join(closurePath, "pnpm", "bin", "pnpm"), "utf8"),
       "fixture-pnpm\n",
+    );
+    assert.equal(
+      await readFile(path.join(closurePath, "zig", "bin", "zig"), "utf8"),
+      "fixture-zig\n",
     );
     assert.equal(JSON.parse(await readFile(path.join(closurePath, "ready.json"), "utf8")).status, "ready");
 
@@ -692,6 +722,258 @@ test("launcher reports a missing closure as lock/integrity failure", async (cont
       ],
     });
   } finally {
+    await rm(sandbox, { recursive: true, force: true });
+  }
+});
+
+function fixtureDigest(bytes) {
+  return `sha256:${createHash("sha256").update(bytes).digest("hex")}`;
+}
+
+function fixtureTreeDigest(installPath, bytes) {
+  const payload = JSON.stringify({
+    entries: [{ path: installPath, sha256: fixtureDigest(bytes), type: "file" }],
+    schemaVersion: "1",
+  });
+  return fixtureDigest(payload);
+}
+
+test("build and test run the private C++ and Zig smoke programs through locked tools", async () => {
+  const sandbox = await mkdtemp(path.join(tmpdir(), "tsfg-linux-cpp-build-"));
+  const cachePath = path.join(sandbox, "cache");
+  const lockPath = path.join(sandbox, "toolchains.lock.json");
+  const outputPath = path.join(sandbox, "out");
+  const reportPath = path.join(sandbox, "build-report.json");
+  const testReportPath = path.join(sandbox, "test-report.json");
+  const compileFailureReportPath = path.join(sandbox, "compile-failure-report.json");
+  const testFailureReportPath = path.join(sandbox, "test-failure-report.json");
+  const isWindows = process.platform === "win32";
+  const cppPayload = isWindows
+    ? Buffer.from(await readFile(
+      path.join(repositoryRoot, "tests", "r00", "fixtures", "cpp-smoke-win64.exe.base64"),
+      "utf8",
+    ), "base64")
+    : undefined;
+  const zigPayload = isWindows
+    ? Buffer.from(await readFile(
+      path.join(repositoryRoot, "tests", "r00", "fixtures", "zig-smoke-win64.exe.base64"),
+      "utf8",
+    ), "base64")
+    : undefined;
+  const cmake = Buffer.from(isWindows
+    ? "@echo off\r\nset build_dir=%~4\r\nif not \"%build_dir:compile-fail=%\"==\"%build_dir%\" exit /b 9\r\nexit /b 0\r\n"
+    : "#!/bin/sh\ncase \"$4\" in *compile-fail*) exit 9 ;; esac\nexit 0\n");
+  const ninja = Buffer.from(isWindows
+    ? "@echo off\r\ncopy /y \"%~dp0..\\..\\cpp-payload\\bin\\payload.exe\" \"%~2\\tsfg-r00-cpp-smoke\" >nul\r\nif errorlevel 1 exit /b 1\r\nif not exist \"%~2\\..\\zig-install\\bin\" mkdir \"%~2\\..\\zig-install\\bin\"\r\ncopy /y \"%~dp0..\\..\\zig-payload\\bin\\payload.exe\" \"%~2\\..\\zig-install\\bin\\tsfg-r00-zig-smoke\" >nul\r\nexit /b %errorlevel%\r\n"
+    : `#!/bin/sh
+{
+  echo '#!/bin/sh'
+  echo 'printf "tsfg-r00-cpp-smoke: ok\\n"'
+} > "$2/tsfg-r00-cpp-smoke"
+chmod +x "$2/tsfg-r00-cpp-smoke"
+`);
+  const zig = Buffer.from(isWindows
+    ? "@echo off\r\nexit /b 0\r\n"
+    : `#!/bin/sh
+while [ "$#" -gt 0 ]; do
+  if [ "$1" = --prefix ]; then
+    mkdir -p "$2/bin"
+    {
+      echo '#!/bin/sh'
+      echo 'printf "tsfg-r00-zig-smoke: ok\\n" >&2'
+    } > "$2/bin/tsfg-r00-zig-smoke"
+    chmod +x "$2/bin/tsfg-r00-zig-smoke"
+    exit 0
+  fi
+  shift
+done
+exit 1
+`);
+  const inert = Buffer.from(isWindows ? "@echo off\r\nexit /b 0\r\n" : "#!/bin/sh\nexit 0\n");
+  const toolDefinitions = [
+    ["cmake", isWindows ? "bin/cmake.cmd" : "bin/cmake", cmake],
+    ...(isWindows ? [["cpp-payload", "bin/payload.exe", cppPayload]] : []),
+    ["debian-sysroot", "usr/include/assert.h", Buffer.from("fixture sysroot\n")],
+    ["llvm", isWindows ? "bin/llvm.cmd" : "bin/llvm", inert],
+    ["ninja", isWindows ? "bin/ninja.cmd" : "bin/ninja", ninja],
+    ["node", isWindows ? "node.cmd" : "bin/node", inert],
+    ["pnpm", isWindows ? "pnpm.cmd" : "pnpm", inert],
+    ["zig", isWindows ? "zig.cmd" : "zig", zig],
+    ...(isWindows ? [["zig-payload", "bin/payload.exe", zigPayload]] : []),
+  ];
+  const server = await startArtifactServer(new Map(
+    toolDefinitions.map(([id, , bytes]) => [`/${id}`, bytes]),
+  ));
+  const tools = {};
+  for (const [id, installPath, bytes] of toolDefinitions) {
+    const artifact = {
+      archiveFormat: "raw",
+      archiveSha256: fixtureDigest(bytes),
+      byteSize: String(bytes.length),
+      installPath,
+      platform: "test-x86_64",
+      unpackedTreeSha256: fixtureTreeDigest(installPath, bytes),
+      url: `${server.baseUrl}/${id}`,
+    };
+    if (id === "llvm") {
+      artifact.executables = {
+        ar: installPath,
+        clang: installPath,
+        clangxx: installPath,
+        lld: installPath,
+        ranlib: installPath,
+      };
+    }
+    tools[id] = {
+      artifacts: [artifact],
+      license: "MIT",
+      signature: { kind: "fixture", signer: "tsfg test fixture" },
+      version: "fixture",
+    };
+  }
+  const lock = {
+    dependencyLocks: [],
+    schemaVersion: "1",
+    targets: {
+      "test-x86_64": { tools: toolDefinitions.map(([id]) => id) },
+    },
+    tools,
+  };
+
+  try {
+    await writeFile(lockPath, `${JSON.stringify(lock)}\n`);
+    const prefetched = await invoke([
+      "prefetch",
+      "--lock", lockPath,
+      "--cache", cachePath,
+      "--platform", "test-x86_64",
+    ]);
+    assert.equal(prefetched.status, 0, prefetched.stderr);
+
+    const result = await invoke([
+      "build",
+      "--target", "linux-x86_64-gnu",
+      "--profile", "debug",
+      "--out", outputPath,
+      "--report", reportPath,
+    ], {
+      env: {
+        ...process.env,
+        TSFG_RUNTIME_CACHE: cachePath,
+        TSFG_RUNTIME_LOCK: lockPath,
+        TSFG_RUNTIME_PLATFORM: "test-x86_64",
+      },
+    });
+    assert.equal(result.status, 0, result.stderr);
+    assert.equal(result.stdout, "");
+    assert.ok((await stat(path.join(outputPath, "bin", "tsfg-r00-cpp-smoke"))).isFile());
+    assert.ok((await stat(path.join(outputPath, "bin", "tsfg-r00-zig-smoke"))).isFile());
+    if (isWindows) {
+      await copyFile(
+        path.join(outputPath, "bin", "tsfg-r00-cpp-smoke"),
+        path.join(outputPath, "bin", "tsfg-r00-cpp-smoke.exe"),
+      );
+      await copyFile(
+        path.join(outputPath, "bin", "tsfg-r00-zig-smoke"),
+        path.join(outputPath, "bin", "tsfg-r00-zig-smoke.exe"),
+      );
+    }
+    const report = JSON.parse(await readFile(reportPath, "utf8"));
+    assert.equal(report.command, "build");
+    assert.equal(report.network, "offline");
+    assert.equal(report.result.profile, "debug");
+    assert.equal(report.result.target, "linux-x86_64-gnu");
+    assert.deepEqual(report.result.outputs, [
+      "bin/tsfg-r00-cpp-smoke",
+      "bin/tsfg-r00-zig-smoke",
+    ]);
+    assert.deepEqual(report.result.steps.map(({ tool }) => tool), ["cmake", "ninja", "zig"]);
+    assert.match(report.result.steps[0].arguments.join(" "), /-O0/);
+    assert.match(report.result.steps[0].arguments.join(" "), /-g3/);
+    assert.match(report.result.steps[0].arguments.join(" "), /-UNDEBUG/);
+    assert.match(
+      report.result.steps[0].arguments.join(" "),
+      /-DCMAKE_TRY_COMPILE_TARGET_TYPE=STATIC_LIBRARY/,
+    );
+    assert.match(report.result.steps[0].arguments.join(" "), /debian-sysroot/);
+    assert.match(report.result.steps[0].arguments.join(" "), /llvm/);
+    assert.match(report.result.steps[0].arguments.join(" "), /-DCMAKE_AR=/);
+    assert.match(report.result.steps[2].arguments.join(" "), /-Doptimize=Debug/);
+
+    const tested = await invoke([
+      "test",
+      "--target", "linux-x86_64-gnu",
+      "--profile", "debug",
+      "--out", outputPath,
+      "--report", testReportPath,
+    ], {
+      env: {
+        ...process.env,
+        TSFG_RUNTIME_CACHE: cachePath,
+        TSFG_RUNTIME_LOCK: lockPath,
+        TSFG_RUNTIME_PLATFORM: "test-x86_64",
+      },
+    });
+    assert.equal(tested.status, 0, tested.stderr);
+    const testReport = JSON.parse(await readFile(testReportPath, "utf8"));
+    assert.equal(testReport.command, "test");
+    assert.equal(testReport.status, "success");
+    assert.deepEqual(testReport.result.tests, [
+      { name: "cpp-smoke", status: "passed" },
+      { name: "zig-smoke", status: "passed" },
+    ]);
+
+    const compileFailure = await invoke([
+      "build",
+      "--target", "linux-x86_64-gnu",
+      "--profile", "debug",
+      "--out", path.join(sandbox, "compile-fail"),
+      "--report", compileFailureReportPath,
+    ], {
+      env: {
+        ...process.env,
+        TSFG_RUNTIME_CACHE: cachePath,
+        TSFG_RUNTIME_LOCK: lockPath,
+        TSFG_RUNTIME_PLATFORM: "test-x86_64",
+      },
+    });
+    assert.equal(compileFailure.status, 20, compileFailure.stderr);
+    const compileFailureReport = JSON.parse(
+      await readFile(compileFailureReportPath, "utf8"),
+    );
+    assert.equal(compileFailureReport.status, "failure");
+    assert.equal(compileFailureReport.error.category, "build failure");
+    assert.equal(compileFailureReport.error.code, "20");
+
+    await writeFile(
+      path.join(
+        outputPath,
+        "bin",
+        `tsfg-r00-cpp-smoke${isWindows ? ".exe" : ""}`,
+      ),
+      "not an executable\n",
+    );
+    const testFailure = await invoke([
+      "test",
+      "--target", "linux-x86_64-gnu",
+      "--profile", "debug",
+      "--out", outputPath,
+      "--report", testFailureReportPath,
+    ], {
+      env: {
+        ...process.env,
+        TSFG_RUNTIME_CACHE: cachePath,
+        TSFG_RUNTIME_LOCK: lockPath,
+        TSFG_RUNTIME_PLATFORM: "test-x86_64",
+      },
+    });
+    assert.equal(testFailure.status, 21, testFailure.stderr);
+    const testFailureReport = JSON.parse(await readFile(testFailureReportPath, "utf8"));
+    assert.equal(testFailureReport.status, "failure");
+    assert.equal(testFailureReport.error.category, "test failure");
+    assert.equal(testFailureReport.error.code, "21");
+  } finally {
+    await server.close();
     await rm(sandbox, { recursive: true, force: true });
   }
 });
