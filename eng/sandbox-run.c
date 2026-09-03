@@ -21,15 +21,29 @@
 
 enum access_kind { ACCESS_RO, ACCESS_RX, ACCESS_RW };
 
+enum sandbox_status {
+  SANDBOX_NETWORK_BOUNDARY_STATUS = 123,
+  SANDBOX_UNDECLARED_INPUT_STATUS = 124,
+  SANDBOX_SETUP_FAILURE_STATUS = 125,
+};
+
 struct allowed_path {
   const char *path;
   enum access_kind access;
 };
 
-static void fail(const char *message, const char *detail) {
+static void fail_with_status(int status, const char *message, const char *detail) {
   fprintf(stderr, "tsfg sandbox: %s%s%s\n", message, detail ? ": " : "",
           detail ? detail : "");
-  exit(125);
+  exit(status);
+}
+
+static void fail(const char *message, const char *detail) {
+  fail_with_status(SANDBOX_SETUP_FAILURE_STATUS, message, detail);
+}
+
+static void network_fail(const char *message, const char *detail) {
+  fail_with_status(SANDBOX_NETWORK_BOUNDARY_STATUS, message, detail);
 }
 
 static void write_mapping(const char *path, unsigned int outside_id) {
@@ -67,21 +81,21 @@ static void enter_namespaces(void) {
 
 static void verify_network_isolation(void) {
   int socket_fd = socket(AF_INET, SOCK_STREAM | SOCK_CLOEXEC, 0);
-  if (socket_fd < 0) fail("cannot create network canary socket", strerror(errno));
+  if (socket_fd < 0) network_fail("cannot create network canary socket", strerror(errno));
   struct sockaddr_in destination = {
       .sin_family = AF_INET,
       .sin_port = htons(443),
   };
   if (inet_pton(AF_INET, "1.1.1.1", &destination.sin_addr) != 1)
-    fail("cannot configure network canary", NULL);
+    network_fail("cannot configure network canary", NULL);
   if (connect(socket_fd, (struct sockaddr *)&destination, sizeof(destination)) == 0) {
     close(socket_fd);
-    fail("network canary unexpectedly connected", "1.1.1.1:443");
+    network_fail("network canary unexpectedly connected", "1.1.1.1:443");
   }
   int failure = errno;
   close(socket_fd);
   if (failure != ENETUNREACH && failure != EHOSTUNREACH && failure != ENETDOWN)
-    fail("network canary did not prove isolation", strerror(failure));
+    network_fail("network canary did not prove isolation", strerror(failure));
 }
 
 static void make_parent_directories(char *path) {
@@ -237,6 +251,11 @@ int main(int argc, char **argv) {
   bind_path(new_root, "/dev/null", "/dev/null", ACCESS_RW);
   pivot_into(new_root, working_directory);
   drop_namespace_capabilities();
+  char undeclared_status[4];
+  snprintf(undeclared_status, sizeof(undeclared_status), "%d",
+           SANDBOX_UNDECLARED_INPUT_STATUS);
+  if (setenv("TSFG_SANDBOX_UNDECLARED_INPUT_STATUS", undeclared_status, 1) < 0)
+    fail("cannot publish sandbox control protocol", strerror(errno));
   execv(argv[index + 1], &argv[index + 1]);
   fail("cannot execute command", argv[index + 1]);
 }

@@ -39,6 +39,10 @@ class PackageFailureError extends Error {}
 class OfflineBoundaryError extends Error {}
 class UndeclaredInputError extends Error {}
 class SandboxBoundaryError extends Error {}
+
+const SANDBOX_NETWORK_BOUNDARY_STATUS = 123;
+const SANDBOX_UNDECLARED_INPUT_STATUS = 124;
+const SANDBOX_SETUP_FAILURE_STATUS = 125;
 class WorkspaceMismatchError extends Error {
   constructor(code, message) {
     super(message);
@@ -1706,17 +1710,14 @@ function buildEnvironment(temporaryRoot, toolDirectories) {
 }
 
 function throwSandboxBoundaryFailure(detail, operation, status) {
-  if (/tsfg sandbox: .*network/i.test(detail)) {
+  if (status === SANDBOX_NETWORK_BOUNDARY_STATUS) {
     throw new OfflineBoundaryError(`sandbox network isolation failed during ${operation}: ${detail}`);
   }
-  if (status === 125 && /tsfg sandbox:/i.test(detail)) {
-    throw new SandboxBoundaryError(`sandbox setup failed during ${operation}: ${detail}`);
-  }
-  if (
-    /permission denied|operation not permitted|read-only file system|no such file|not found|tsfg sandbox:/i
-      .test(detail)
-  ) {
+  if (status === SANDBOX_UNDECLARED_INPUT_STATUS) {
     throw new UndeclaredInputError(`sandbox denied an undeclared ${operation} input: ${detail}`);
+  }
+  if (status === SANDBOX_SETUP_FAILURE_STATUS) {
+    throw new SandboxBoundaryError(`sandbox setup failed during ${operation}: ${detail}`);
   }
 }
 
@@ -2451,7 +2452,7 @@ function runPackageTool(executable, arguments_, cwd, environment) {
     const stdout = Buffer.isBuffer(error.stdout) ? error.stdout.toString("utf8") : "";
     const stderr = Buffer.isBuffer(error.stderr) ? error.stderr.toString("utf8") : "";
     const detail = `${stdout}${stderr}`.trim() || error.message;
-    throwSandboxBoundaryFailure(detail, "package");
+    throwSandboxBoundaryFailure(detail, "package", error.status);
     throw new PackageFailureError(`llvm-objcopy failed${detail ? `: ${detail}` : ""}`);
   }
 }
@@ -2666,7 +2667,13 @@ async function packageLinuxDebug(options, runtime, workspaceState, networkCanary
     Object.defineProperty(result, "publication", { value: publication });
     return result;
   } catch (error) {
-    if (error instanceof ConfigurationError || error instanceof PackageFailureError) throw error;
+    if (
+      error instanceof ConfigurationError ||
+      error instanceof OfflineBoundaryError ||
+      error instanceof PackageFailureError ||
+      error instanceof SandboxBoundaryError ||
+      error instanceof UndeclaredInputError
+    ) throw error;
     throw new PackageFailureError(error.message);
   } finally {
     await rm(stagingRoot, {
