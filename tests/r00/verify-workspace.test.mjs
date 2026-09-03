@@ -376,6 +376,24 @@ const mismatchScenarios = [
     },
   },
   {
+    name: "tracked dirty project hidden by assume-unchanged",
+    issueCode: "dirty-project",
+    mutate: async ({ workspace }) => {
+      const root = path.join(workspace, "tsfg");
+      git(root, "update-index", "--assume-unchanged", "README.md");
+      await writeFile(path.join(root, "README.md"), "dirty but hidden\n");
+    },
+  },
+  {
+    name: "tracked dirty project hidden by skip-worktree",
+    issueCode: "dirty-project",
+    mutate: async ({ workspace }) => {
+      const root = path.join(workspace, "tsfg");
+      git(root, "update-index", "--skip-worktree", "README.md");
+      await writeFile(path.join(root, "README.md"), "dirty but skipped\n");
+    },
+  },
+  {
     name: "staged dirty project",
     mutate: async ({ workspace }) => {
       const root = path.join(workspace, "tsfg");
@@ -477,6 +495,9 @@ for (const scenario of mismatchScenarios) {
       assert.equal(report.telemetry, false);
       assert.equal(report.error.category, "workspace mismatch");
       assert.equal(report.error.code, "10");
+      if (scenario.issueCode) {
+        assert.equal(report.error.issues[0].code, scenario.issueCode);
+      }
       const second = await invoke(arguments_);
       assert.equal(second.status, 10);
       assert.equal(await readFile(reportPath, "utf8"), firstBytes);

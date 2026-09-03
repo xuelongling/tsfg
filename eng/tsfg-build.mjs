@@ -228,7 +228,35 @@ function selectArtifact(toolId, tool, platform) {
 }
 
 function toolchainClosureDigest(lock, selections, platform) {
+  if (!Array.isArray(lock.dependencyLocks)) {
+    throw new Error("toolchain lock must declare dependencyLocks");
+  }
+  const dependencyLocks = lock.dependencyLocks.map((dependency) => {
+    if (
+      typeof dependency?.projectId !== "string" ||
+      dependency.projectId.length === 0 ||
+      typeof dependency.path !== "string" ||
+      dependency.path.length === 0 ||
+      !/^sha256:[0-9a-f]{64}$/.test(dependency.sha256)
+    ) {
+      throw new Error("invalid dependency lock identity");
+    }
+    return {
+      projectId: dependency.projectId,
+      path: dependency.path,
+      sha256: dependency.sha256,
+    };
+  }).sort((left, right) => {
+    const projectOrder = Buffer.from(left.projectId).compare(Buffer.from(right.projectId));
+    return projectOrder || Buffer.from(left.path).compare(Buffer.from(right.path));
+  });
+  const identities = dependencyLocks.map(({ projectId, path: dependencyPath }) =>
+    `${projectId}\0${dependencyPath}`);
+  if (new Set(identities).size !== identities.length) {
+    throw new Error("duplicate dependency lock identity");
+  }
   return digest(canonicalize({
+    dependencyLocks,
     schemaVersion: lock.schemaVersion,
     target: platform,
     tools: selections.map(({ id, tool, artifact }) => ({
@@ -699,6 +727,26 @@ function gitOutput(cwd, arguments_, encoding = "utf8") {
   }
 }
 
+function requireVisibleTrackedFiles(repositoryRoot) {
+  const assumeUnchanged = gitOutput(repositoryRoot, ["ls-files", "-v", "-z"])
+    .split("\0")
+    .filter((entry) => /^[a-z] /.test(entry))
+    .map((entry) => entry.slice(2));
+  const skipWorktree = gitOutput(repositoryRoot, ["ls-files", "-t", "-z"])
+    .split("\0")
+    .filter((entry) => entry.startsWith("S "))
+    .map((entry) => entry.slice(2));
+  const hidden = [...new Set([...assumeUnchanged, ...skipWorktree])].sort(
+    (left, right) => Buffer.from(left).compare(Buffer.from(right)),
+  );
+  if (hidden.length !== 0) {
+    throw new WorkspaceMismatchError(
+      "dirty-project",
+      `tracked files are hidden from workspace status: ${hidden.join(",")}`,
+    );
+  }
+}
+
 function decodeXml(value) {
   return value
     .replaceAll("&quot;", '"')
@@ -943,6 +991,7 @@ async function verifyWorkspace(options) {
       "manifest repository is dirty",
     );
   }
+  requireVisibleTrackedFiles(manifestsRoot);
   const expectedProjects = parseManifest(actualManifestBytes.toString("utf8"));
   const actualProjectList = (await readFile(
     path.join(workspace, ".repo", "project.list"),
@@ -1009,6 +1058,7 @@ async function verifyWorkspace(options) {
         `${project.path} is dirty`,
       );
     }
+    requireVisibleTrackedFiles(projectRoot);
     projects.push({
       id: project.id,
       path: project.path,

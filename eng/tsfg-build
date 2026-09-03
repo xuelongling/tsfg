@@ -6,7 +6,8 @@ script_dir=$(CDPATH= cd -- "$(dirname -- "$0")" && pwd)
 repository=$(CDPATH= cd -- "$script_dir/.." && pwd)
 cache=${TSFG_CACHE_DIR:-"$repository/.tsfg-cache"}
 platform=linux-x86_64
-lock_id=af94259f095e563d0c3f6d370c9085e3fc10f406b56b368b22c6fea399804793
+lock_id=1f4160eba269402f43eb239bde453f59b0a5f844d86f19d71103289425f4c007
+node_id=89af8424dd53e560b1933f87ba650d8bf57c83ca5a04600eefb31f416aabbae7
 report=
 expect_report=false
 for argument do
@@ -25,7 +26,7 @@ runtime_failure() {
     parent=$(dirname -- "$report")
     temporary="$report.$$.tmp"
     if ! mkdir -p -- "$parent" ||
-      ! printf '%s\n' "{\"command\":\"${1:-}\",\"error\":{\"category\":\"lock/integrity\",\"code\":\"11\",\"issues\":[{\"code\":\"runtime-closure\",\"message\":\"$message\"}]},\"network\":\"offline\",\"schemaVersion\":\"1\",\"status\":\"failure\",\"telemetry\":false}" > "$temporary" ||
+      ! printf '%s\n' "{\"command\":\"verify-workspace\",\"error\":{\"category\":\"lock/integrity\",\"code\":\"11\",\"issues\":[{\"code\":\"runtime-closure\",\"message\":\"$message\"}]},\"network\":\"offline\",\"schemaVersion\":\"1\",\"status\":\"failure\",\"telemetry\":false}" > "$temporary" ||
       ! mv -f -- "$temporary" "$report"; then
       rm -f -- "$temporary"
       printf '%s\n' 'cannot write Build Report for runtime closure failure' >&2
@@ -36,24 +37,52 @@ runtime_failure() {
   exit 11
 }
 
+usage_failure() {
+  message='unsupported operation'
+  if [ -n "$report" ]; then
+    parent=$(dirname -- "$report")
+    temporary="$report.$$.tmp"
+    if ! mkdir -p -- "$parent" ||
+      ! printf '%s\n' '{"command":"unsupported","error":{"category":"usage/configuration","code":"2","issues":[{"code":"unsupported-operation","message":"unsupported operation"}]},"network":"disabled","schemaVersion":"1","status":"failure","telemetry":false}' > "$temporary" ||
+      ! mv -f -- "$temporary" "$report"; then
+      rm -f -- "$temporary"
+      printf '%s\n' 'cannot write Build Report for unsupported operation' >&2
+      exit 30
+    fi
+  fi
+  printf '%s\n' "$message" >&2
+  exit 2
+}
+
 if [ "${1:-}" = prefetch ]; then
   exec node "$script_dir/tsfg-build.mjs" "$@" \
     --lock "$script_dir/toolchains.lock.json" \
     --cache "$cache" \
     --platform "$platform"
 fi
+if [ "${1:-}" != verify-workspace ]; then
+  usage_failure
+fi
 
 active="$cache/active/$platform"
 if [ ! -f "$active" ]; then
-  runtime_failure "${1:-}"
+  runtime_failure
 fi
 closure=$(sed -n '1p' "$active")
 if [ "$closure" != "closures/sha256/$lock_id/$platform" ]; then
-  runtime_failure "${1:-}"
+  runtime_failure
 fi
 node_path="$cache/$closure/node/bin/node"
 if [ ! -x "$node_path" ]; then
-  runtime_failure "${1:-}"
+  runtime_failure
+fi
+if [ ! -x /usr/bin/sha256sum ]; then
+  runtime_failure
+fi
+node_actual=$(/usr/bin/sha256sum "$node_path") || runtime_failure
+node_actual=${node_actual%% *}
+if [ "$node_actual" != "$node_id" ]; then
+  runtime_failure
 fi
 TSFG_GIT=$(command -v git || true)
 export TSFG_GIT

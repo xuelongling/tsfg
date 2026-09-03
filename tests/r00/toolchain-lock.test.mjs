@@ -25,6 +25,19 @@ test("minimal toolchain lock content-locks Node.js and pnpm for both R00 hosts",
   const lock = JSON.parse(lockBytes);
   assert.equal(lock.schemaVersion, "1");
   assert.equal(lock.unpackedTreeAlgorithm, "tsfg-tree-sha256-v1");
+  assert.deepEqual(lock.dependencyLocks, [
+    {
+      projectId: "tsfg",
+      path: "pnpm-lock.yaml",
+      sha256: "sha256:e110b44300bc75e28489500b7d2165b27414e2c6283853d7e4220b5fc27e06db",
+    },
+  ]);
+  assert.equal(
+    createHash("sha256")
+      .update(await readFile(path.join(repositoryRoot, "pnpm-lock.yaml")))
+      .digest("hex"),
+    lock.dependencyLocks[0].sha256.slice("sha256:".length),
+  );
   assert.deepEqual(Object.keys(lock.tools).sort(), ["node", "pnpm"]);
   assert.equal(lock.tools.node.version, "24.20.0");
   assert.equal(lock.tools.pnpm.version, "11.25.0");
@@ -88,9 +101,27 @@ test("minimal toolchain lock content-locks Node.js and pnpm for both R00 hosts",
       },
     ],
   );
+  assert.deepEqual(
+    lock.tools.node.artifacts.map(({ platform, executableSha256 }) => ({
+      platform,
+      executableSha256,
+    })),
+    [
+      {
+        platform: "linux-x86_64",
+        executableSha256: "sha256:89af8424dd53e560b1933f87ba650d8bf57c83ca5a04600eefb31f416aabbae7",
+      },
+      {
+        platform: "windows-x86_64",
+        executableSha256: "sha256:5c976096e04e5c2c1f091938926234cc9fbebfe9787ddd149351b3b0ecc707b5",
+      },
+    ],
+  );
 
   const closureIdentities = {};
   for (const target of ["linux-x86_64", "windows-x86_64"]) {
+    const dependencyLocks = [...lock.dependencyLocks].sort((left, right) =>
+      left.projectId.localeCompare(right.projectId) || left.path.localeCompare(right.path));
     const tools = Object.keys(lock.tools).sort().map((id) => {
       const tool = lock.tools[id];
       const artifact = tool.artifacts.find(({ platform }) => platform === target);
@@ -103,17 +134,23 @@ test("minimal toolchain lock content-locks Node.js and pnpm for both R00 hosts",
       };
     });
     closureIdentities[target] = createHash("sha256")
-      .update(canonicalize({ schemaVersion: lock.schemaVersion, target, tools }))
+      .update(canonicalize({ dependencyLocks, schemaVersion: lock.schemaVersion, target, tools }))
       .digest("hex");
   }
   assert.deepEqual(closureIdentities, {
-    "linux-x86_64": "af94259f095e563d0c3f6d370c9085e3fc10f406b56b368b22c6fea399804793",
-    "windows-x86_64": "120ce553cd29c0cf5584101ec422491570410560797b9ca6e253e79580304291",
+    "linux-x86_64": "1f4160eba269402f43eb239bde453f59b0a5f844d86f19d71103289425f4c007",
+    "windows-x86_64": "9df4062f8570fb8b396287c973ec2348814db660ef1cfd428d1895eaaefe623a",
   });
   for (const [launcher, target] of [["tsfg-build", "linux-x86_64"], ["tsfg-build.cmd", "windows-x86_64"]]) {
+    const nodeArtifact = lock.tools.node.artifacts.find(({ platform }) => platform === target);
+    const launcherBytes = await readFile(path.join(repositoryRoot, "eng", launcher), "utf8");
     assert.match(
-      await readFile(path.join(repositoryRoot, "eng", launcher), "utf8"),
+      launcherBytes,
       new RegExp(closureIdentities[target]),
+    );
+    assert.match(
+      launcherBytes,
+      new RegExp(nodeArtifact.executableSha256.slice("sha256:".length)),
     );
   }
   assert.doesNotMatch(

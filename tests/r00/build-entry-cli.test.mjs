@@ -2,6 +2,7 @@
 
 import assert from "node:assert/strict";
 import {
+  appendFile,
   copyFile,
   mkdir,
   mkdtemp,
@@ -103,6 +104,50 @@ test("unknown operation returns the stable usage category and an atomic report",
   }
 });
 
+test("public launcher classifies an unsupported operation before a missing closure", async (context) => {
+  const sandbox = await mkdtemp(path.join(tmpdir(), "tsfg-launcher-usage-"));
+  const reportPath = path.join(sandbox, "report.json");
+  const environment = {
+    ...process.env,
+    TSFG_CACHE_DIR: path.join(sandbox, "missing-cache"),
+  };
+  let result;
+  try {
+    if (process.platform === "win32") {
+      result = spawnSync(
+        process.env.ComSpec,
+        [
+          "/d",
+          "/c",
+          path.join(repositoryRoot, "eng", "tsfg-build.cmd"),
+          "unsupported-operation",
+          "--report",
+          reportPath,
+        ],
+        { cwd: repositoryRoot, encoding: "utf8", env: environment },
+      );
+    } else {
+      result = spawnSync(
+        path.join(repositoryRoot, "eng", "tsfg-build"),
+        ["unsupported-operation", "--report", reportPath],
+        { cwd: repositoryRoot, encoding: "utf8", env: environment },
+      );
+    }
+    if (result.error && "code" in result.error && result.error.code === "EACCES") {
+      context.skip("launcher is not executable on this filesystem");
+      return;
+    }
+    assert.equal(result.status, 2, result.stderr);
+    assert.equal(result.stdout, "");
+    const report = JSON.parse(await readFile(reportPath, "utf8"));
+    assert.equal(report.status, "failure");
+    assert.equal(report.error.category, "usage/configuration");
+    assert.equal(report.error.code, "2");
+  } finally {
+    await rm(sandbox, { recursive: true, force: true });
+  }
+});
+
 test("Build Report write failures use the stable internal-failure exit", async () => {
   const sandbox = await mkdtemp(path.join(tmpdir(), "tsfg-report-failure-"));
   const reportPath = path.join(sandbox, "report.json");
@@ -133,6 +178,7 @@ test("prefetch atomically publishes and reuses a content-verified minimal closur
   const cachePath = path.join(sandbox, "cache");
   const reportPath = path.join(sandbox, "report.json");
   const lock = {
+    dependencyLocks: [],
     schemaVersion: "1",
     tools: {
       node: {
@@ -336,6 +382,7 @@ test("prefetch rejects incomplete lock metadata without publishing partial succe
       "sha256:3693f6aaa8a9360c66028c75f3e3b280d22a09ff0b998ed7ace9b4c12c13530d",
   };
   const lock = {
+    dependencyLocks: [],
     schemaVersion: "1",
     tools: {
       node: {
@@ -428,6 +475,57 @@ test("Windows launcher rejects an invalid closure without using PATH node or pnp
     );
     assert.equal(result.status, 11, result.stderr);
     assert.match(result.stderr, /closure|integrity|digest/i);
+    await assert.rejects(readFile(sentinel), /ENOENT/);
+    assert.equal(JSON.parse(await readFile(reportPath, "utf8")).error.code, "11");
+  } finally {
+    await rm(sandbox, { recursive: true, force: true });
+  }
+});
+
+test("Windows launcher verifies the locked Node executable before running it", {
+  skip: process.platform !== "win32",
+}, async () => {
+  const sandbox = await mkdtemp(path.join(tmpdir(), "tsfg-launcher-node-integrity-"));
+  const cachePath = path.join(sandbox, "cache");
+  const closureRelative = "closures/sha256/9df4062f8570fb8b396287c973ec2348814db660ef1cfd428d1895eaaefe623a/windows-x86_64";
+  const cachedNode = path.join(cachePath, ...closureRelative.split("/"), "node", "node.exe");
+  const sentinel = path.join(sandbox, "cached-node-ran.txt");
+  const preload = path.join(sandbox, "poison-preload.cjs");
+  const reportPath = path.join(sandbox, "report.json");
+  try {
+    await mkdir(path.dirname(cachedNode), { recursive: true });
+    await copyFile(process.execPath, cachedNode);
+    await appendFile(cachedNode, "tampered");
+    await mkdir(path.join(cachePath, "active"), { recursive: true });
+    await writeFile(
+      path.join(cachePath, "active", "windows-x86_64"),
+      `${closureRelative}\n`,
+    );
+    await writeFile(
+      preload,
+      `require("node:fs").writeFileSync(${JSON.stringify(sentinel)}, "executed");\n`,
+    );
+    const result = spawnSync(
+      process.env.ComSpec,
+      [
+        "/d",
+        "/c",
+        path.join(repositoryRoot, "eng", "tsfg-build.cmd"),
+        "verify-workspace",
+        "--report",
+        reportPath,
+      ],
+      {
+        cwd: repositoryRoot,
+        encoding: "utf8",
+        env: {
+          ...process.env,
+          NODE_OPTIONS: `--require=${preload}`,
+          TSFG_CACHE_DIR: cachePath,
+        },
+      },
+    );
+    assert.equal(result.status, 11, result.stderr);
     await assert.rejects(readFile(sentinel), /ENOENT/);
     assert.equal(JSON.parse(await readFile(reportPath, "utf8")).error.code, "11");
   } finally {
