@@ -210,6 +210,60 @@ test("public launcher classifies invalid verify-workspace options before a missi
   }
 });
 
+test("public launcher validates verify-workspace identities before a missing closure", async (context) => {
+  const sandbox = await mkdtemp(path.join(tmpdir(), "tsfg-launcher-invalid-identity-"));
+  const environment = {
+    ...process.env,
+    TSFG_CACHE_DIR: path.join(sandbox, "missing-cache"),
+  };
+  const scenarios = [
+    {
+      name: "moving manifest revision",
+      mutate: (arguments_) =>
+        (arguments_[arguments_.indexOf("--manifest-revision") + 1] = "main"),
+    },
+    {
+      name: "escaping manifest path",
+      mutate: (arguments_) =>
+        (arguments_[arguments_.indexOf("--manifest") + 1] = "../escape.xml"),
+    },
+    {
+      name: "case-mismatched option",
+      mutate: (arguments_) =>
+        (arguments_[arguments_.indexOf("--workspace")] = "--WORKSPACE"),
+    },
+  ];
+  try {
+    for (const [index, scenario] of scenarios.entries()) {
+      const reportPath = path.join(sandbox, `report-${index}.json`);
+      const arguments_ = validVerifyArguments(reportPath);
+      scenario.mutate(arguments_);
+      const result = process.platform === "win32"
+        ? spawnSync(
+          process.env.ComSpec,
+          ["/d", "/c", path.join(repositoryRoot, "eng", "tsfg-build.cmd"), ...arguments_],
+          { cwd: repositoryRoot, encoding: "utf8", env: environment },
+        )
+        : spawnSync(
+          path.join(repositoryRoot, "eng", "tsfg-build"),
+          arguments_,
+          { cwd: repositoryRoot, encoding: "utf8", env: environment },
+        );
+      if (result.error && "code" in result.error && result.error.code === "EACCES") {
+        context.skip("launcher is not executable on this filesystem");
+        return;
+      }
+      assert.equal(result.status, 2, `${scenario.name}: ${result.stderr}`);
+      assert.equal(result.stdout, "");
+      const report = JSON.parse(await readFile(reportPath, "utf8"));
+      assert.equal(report.command, "verify-workspace");
+      assert.equal(report.error.category, "usage/configuration");
+    }
+  } finally {
+    await rm(sandbox, { recursive: true, force: true });
+  }
+});
+
 test("Build Report write failures use the stable internal-failure exit", async () => {
   const sandbox = await mkdtemp(path.join(tmpdir(), "tsfg-report-failure-"));
   const reportPath = path.join(sandbox, "report.json");

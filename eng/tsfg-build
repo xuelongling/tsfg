@@ -62,6 +62,8 @@ valid_verify_arguments() {
   seen_manifest_revision=false
   seen_manifest=false
   seen_report=false
+  manifest_revision=
+  manifest_name=
   shift
   while [ "$#" -gt 0 ]; do
     option=$1
@@ -81,10 +83,12 @@ valid_verify_arguments() {
       --manifest-revision)
         [ "$seen_manifest_revision" = false ] || return 1
         seen_manifest_revision=true
+        manifest_revision=$1
         ;;
       --manifest)
         [ "$seen_manifest" = false ] || return 1
         seen_manifest=true
+        manifest_name=$1
         ;;
       --report)
         [ "$seen_report" = false ] || return 1
@@ -97,7 +101,23 @@ valid_verify_arguments() {
   [ "$seen_workspace" = true ] &&
     [ "$seen_manifest_url" = true ] &&
     [ "$seen_manifest_revision" = true ] &&
-    [ "$seen_manifest" = true ]
+    [ "$seen_manifest" = true ] || return 1
+  [ "${#manifest_revision}" -eq 40 ] || return 1
+  case "$manifest_revision" in *[!0-9a-f]*) return 1 ;; esac
+  rest=$manifest_name
+  segment=
+  while [ -n "$rest" ]; do
+    character=${rest%"${rest#?}"}
+    rest=${rest#?}
+    case "$character" in
+      /|\\)
+        [ -n "$segment" ] && [ "$segment" != .. ] || return 1
+        segment=
+        ;;
+      *) segment=$segment$character ;;
+    esac
+  done
+  [ -n "$segment" ] && [ "$segment" != .. ]
 }
 
 if [ "${1:-}" = prefetch ]; then

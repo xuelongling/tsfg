@@ -12,11 +12,11 @@ if defined TSFG_CACHE_DIR (
   set "TSFG_CACHE=%TSFG_REPOSITORY%\.tsfg-cache"
 )
 
-if /i "%~1"=="prefetch" (
+if "%~1"=="prefetch" (
   node "%~dp0tsfg-build.mjs" %* --lock "%~dp0toolchains.lock.json" --cache "%TSFG_CACHE%" --platform windows-x86_64
   exit /b %errorlevel%
 )
-if /i not "%~1"=="verify-workspace" (
+if not "%~1"=="verify-workspace" (
   set "TSFG_USAGE_COMMAND=unsupported"
   set "TSFG_USAGE_CODE=unsupported-operation"
   set "TSFG_USAGE_MESSAGE=unsupported operation"
@@ -57,7 +57,7 @@ exit /b %errorlevel%
 
 :find_report
 if "%~1"=="" exit /b 0
-if /i "%~1"=="--report" (
+if "%~1"=="--report" (
   set "TSFG_REPORT=%~2"
   exit /b 0
 )
@@ -70,15 +70,17 @@ set "TSFG_SEEN_MANIFEST_URL="
 set "TSFG_SEEN_MANIFEST_REVISION="
 set "TSFG_SEEN_MANIFEST="
 set "TSFG_SEEN_REPORT="
+set "TSFG_MANIFEST_REVISION="
+set "TSFG_MANIFEST="
 shift
 :validate_verify_loop
 if "%~1"=="" goto validate_verify_done
 if "%~2"=="" exit /b 1
-if /i "%~1"=="--workspace" goto validate_verify_workspace
-if /i "%~1"=="--manifest-url" goto validate_verify_manifest_url
-if /i "%~1"=="--manifest-revision" goto validate_verify_manifest_revision
-if /i "%~1"=="--manifest" goto validate_verify_manifest
-if /i "%~1"=="--report" goto validate_verify_report
+if "%~1"=="--workspace" goto validate_verify_workspace
+if "%~1"=="--manifest-url" goto validate_verify_manifest_url
+if "%~1"=="--manifest-revision" goto validate_verify_manifest_revision
+if "%~1"=="--manifest" goto validate_verify_manifest
+if "%~1"=="--report" goto validate_verify_report
 exit /b 1
 :validate_verify_workspace
 if defined TSFG_SEEN_WORKSPACE exit /b 1
@@ -91,10 +93,12 @@ goto validate_verify_next
 :validate_verify_manifest_revision
 if defined TSFG_SEEN_MANIFEST_REVISION exit /b 1
 set "TSFG_SEEN_MANIFEST_REVISION=1"
+set "TSFG_MANIFEST_REVISION=%~2"
 goto validate_verify_next
 :validate_verify_manifest
 if defined TSFG_SEEN_MANIFEST exit /b 1
 set "TSFG_SEEN_MANIFEST=1"
+set "TSFG_MANIFEST=%~2"
 goto validate_verify_next
 :validate_verify_report
 if defined TSFG_SEEN_REPORT exit /b 1
@@ -108,6 +112,61 @@ if not defined TSFG_SEEN_WORKSPACE exit /b 1
 if not defined TSFG_SEEN_MANIFEST_URL exit /b 1
 if not defined TSFG_SEEN_MANIFEST_REVISION exit /b 1
 if not defined TSFG_SEEN_MANIFEST exit /b 1
+call :validate_oid "%TSFG_MANIFEST_REVISION%"
+if errorlevel 1 exit /b 1
+call :validate_manifest_path "%TSFG_MANIFEST%"
+if errorlevel 1 exit /b 1
+exit /b 0
+
+:validate_oid
+set "TSFG_VALUE=%~1"
+if "%TSFG_VALUE:~39,1%"=="" exit /b 1
+if not "%TSFG_VALUE:~40,1%"=="" exit /b 1
+:validate_oid_loop
+if "%TSFG_VALUE%"=="" exit /b 0
+set "TSFG_CHARACTER=%TSFG_VALUE:~0,1%"
+set "TSFG_VALUE=%TSFG_VALUE:~1%"
+if "%TSFG_CHARACTER%"=="0" goto validate_oid_loop
+if "%TSFG_CHARACTER%"=="1" goto validate_oid_loop
+if "%TSFG_CHARACTER%"=="2" goto validate_oid_loop
+if "%TSFG_CHARACTER%"=="3" goto validate_oid_loop
+if "%TSFG_CHARACTER%"=="4" goto validate_oid_loop
+if "%TSFG_CHARACTER%"=="5" goto validate_oid_loop
+if "%TSFG_CHARACTER%"=="6" goto validate_oid_loop
+if "%TSFG_CHARACTER%"=="7" goto validate_oid_loop
+if "%TSFG_CHARACTER%"=="8" goto validate_oid_loop
+if "%TSFG_CHARACTER%"=="9" goto validate_oid_loop
+if "%TSFG_CHARACTER%"=="a" goto validate_oid_loop
+if "%TSFG_CHARACTER%"=="b" goto validate_oid_loop
+if "%TSFG_CHARACTER%"=="c" goto validate_oid_loop
+if "%TSFG_CHARACTER%"=="d" goto validate_oid_loop
+if "%TSFG_CHARACTER%"=="e" goto validate_oid_loop
+if "%TSFG_CHARACTER%"=="f" goto validate_oid_loop
+exit /b 1
+
+:validate_manifest_path
+set "TSFG_VALUE=%~1"
+if "%TSFG_VALUE:~0,1%"=="/" exit /b 1
+if "%TSFG_VALUE:~0,1%"=="\" exit /b 1
+if "%TSFG_VALUE:~1,2%"==":/" exit /b 1
+if "%TSFG_VALUE:~1,2%"==":\" exit /b 1
+set "TSFG_SEGMENT="
+:validate_manifest_path_loop
+if "%TSFG_VALUE%"=="" goto validate_manifest_path_done
+set "TSFG_CHARACTER=%TSFG_VALUE:~0,1%"
+set "TSFG_VALUE=%TSFG_VALUE:~1%"
+if "%TSFG_CHARACTER%"=="/" goto validate_manifest_path_separator
+if "%TSFG_CHARACTER%"=="\" goto validate_manifest_path_separator
+set "TSFG_SEGMENT=%TSFG_SEGMENT%%TSFG_CHARACTER%"
+goto validate_manifest_path_loop
+:validate_manifest_path_separator
+if "%TSFG_SEGMENT%"=="" exit /b 1
+if "%TSFG_SEGMENT%"==".." exit /b 1
+set "TSFG_SEGMENT="
+goto validate_manifest_path_loop
+:validate_manifest_path_done
+if "%TSFG_SEGMENT%"=="" exit /b 1
+if "%TSFG_SEGMENT%"==".." exit /b 1
 exit /b 0
 
 :runtime_failure
