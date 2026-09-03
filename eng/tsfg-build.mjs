@@ -1548,6 +1548,9 @@ async function buildLinuxDebug(options, runtime) {
     `-ffile-prefix-map=${repositoryRoot}=.`,
     `-fdebug-prefix-map=${repositoryRoot}=.`,
     `-fmacro-prefix-map=${repositoryRoot}=.`,
+    `-ffile-prefix-map=${runtime.closurePath}=.toolchain`,
+    `-fdebug-prefix-map=${runtime.closurePath}=.toolchain`,
+    `-fmacro-prefix-map=${runtime.closurePath}=.toolchain`,
     `-ffile-prefix-map=${workRoot}=.build`,
     `-fdebug-prefix-map=${workRoot}=.build`,
     `-fmacro-prefix-map=${workRoot}=.build`,
@@ -2007,6 +2010,8 @@ async function packageLinuxDebug(options, runtime) {
     members.sort((left, right) => Buffer.from(left.path).compare(Buffer.from(right.path)));
     const forbiddenValues = new Set([
       repositoryRoot,
+      runtime.closurePath,
+      stagingRoot,
       input,
       output,
       process.env.CI_RUN_ID,

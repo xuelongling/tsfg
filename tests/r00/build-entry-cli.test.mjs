@@ -974,6 +974,16 @@ exit 1
     assert.match(report.result.steps[0].arguments.join(" "), /-ffile-prefix-map=/);
     assert.match(report.result.steps[0].arguments.join(" "), /-fdebug-prefix-map=/);
     assert.match(report.result.steps[0].arguments.join(" "), /-fmacro-prefix-map=/);
+    const closureRoot = path.dirname(path.dirname(path.dirname(
+      report.result.steps[0].executable,
+    )));
+    const cmakeInvocation = report.result.steps[0].arguments.join(" ");
+    for (const kind of ["file", "debug", "macro"]) {
+      assert.ok(
+        cmakeInvocation.includes(`-f${kind}-prefix-map=${closureRoot}=.toolchain`),
+        "debug paths must remap the verified closure",
+      );
+    }
     assert.match(
       report.result.steps[0].arguments.join(" "),
       /-DCMAKE_TRY_COMPILE_TARGET_TYPE=STATIC_LIBRARY/,
@@ -1058,7 +1068,14 @@ exit 1
       false,
       "external checksums must not hash themselves",
     );
-    for (const forbidden of [repositoryRoot, outputPath, packageOutput, "ticket07-ci-run-id"]) {
+    for (const forbidden of [
+      repositoryRoot,
+      cachePath,
+      sandbox,
+      outputPath,
+      packageOutput,
+      "ticket07-ci-run-id",
+    ]) {
       const encoded = Buffer.from(forbidden);
       assert.equal(
         archiveEntries.some(({ bytes }) => bytes.includes(encoded)),

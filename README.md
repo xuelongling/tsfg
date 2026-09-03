@@ -40,6 +40,12 @@ eng/tsfg-build test \
   --profile debug \
   --out out/linux-debug \
   --report out/test-report.json
+eng/tsfg-build package \
+  --target linux-x86_64-gnu \
+  --profile debug \
+  --input out/linux-debug \
+  --out out/linux-package \
+  --report out/package-report.json
 ```
 
 After prefetch, both launchers execute the cached Node binary by absolute path;
@@ -57,8 +63,11 @@ LLVM/Clang/LLD, Debian sysroot, and Zig in addition to the Node.js control
 plane. `build` invokes those tools only by verified closure paths under a
 sanitized environment. It builds a private C++ smoke with assertions, `-O0`,
 and debug information, plus an independent Zig Debug smoke. `test` executes
-both artifacts and checks their fixed observable output. Neither smoke exposes
-a product API or establishes a C/Zig ABI.
+both artifacts and checks their fixed observable output. `package` validates
+the build's identity and payload digests, splits debug symbols with the locked
+LLVM tools, and emits a deterministic `tar.zst`, an Artifact Manifest, and an
+external checksums file. Neither smoke exposes a product API or establishes a
+C/Zig ABI.
 
 Build Reports are versioned canonical JSON, written through a same-directory
 temporary file and atomic rename. Human diagnostics go only to stderr. This
