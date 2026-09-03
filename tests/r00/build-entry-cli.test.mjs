@@ -709,6 +709,38 @@ test("Windows launcher rejects an invalid closure without using PATH node or pnp
   }
 });
 
+test("Linux prefetch refuses PATH Node without an explicit verified bootstrap", {
+  skip: process.platform !== "linux",
+}, async () => {
+  const sandbox = await mkdtemp(path.join(tmpdir(), "tsfg-linux-bootstrap-"));
+  const poisonRoot = path.join(sandbox, "poison");
+  const sentinel = path.join(sandbox, "poison-node-ran");
+  const reportPath = path.join(sandbox, "report.json");
+  try {
+    await mkdir(poisonRoot);
+    const poisonNode = path.join(poisonRoot, "node");
+    await writeFile(poisonNode, `#!/bin/sh\n: > ${JSON.stringify(sentinel)}\nexit 0\n`);
+    await chmod(poisonNode, 0o755);
+    const result = spawnSync(path.join(repositoryRoot, "eng", "tsfg-build"), [
+      "prefetch", "--report", reportPath,
+    ], {
+      cwd: repositoryRoot,
+      encoding: "utf8",
+      env: {
+        PATH: `${poisonRoot}:/usr/bin:/bin`,
+        TSFG_CACHE_DIR: path.join(sandbox, "cache"),
+      },
+    });
+    assert.equal(result.status, 11, result.stderr);
+    assert.match(result.stderr, /absolute TSFG_BOOTSTRAP_NODE/);
+    await assert.rejects(stat(sentinel), /ENOENT/);
+    const report = JSON.parse(await readFile(reportPath, "utf8"));
+    assert.equal(report.error.category, "lock/integrity");
+  } finally {
+    await rm(sandbox, { recursive: true, force: true });
+  }
+});
+
 test("Windows launcher verifies the locked Node executable before running it", {
   skip: process.platform !== "win32",
 }, async () => {
@@ -950,6 +982,21 @@ test("development mode runs tests in a dirty workspace as non-publishable", {
       );
       await chmod(executable, 0o755);
     }
+    const testPayloads = await Promise.all([
+      "bin/tsfg-r00-cpp-smoke",
+      "bin/tsfg-r00-zig-smoke",
+    ].map(async (payloadPath) => ({
+      path: payloadPath,
+      sha256: fixtureDigest(await readFile(path.join(output, ...payloadPath.split("/")))),
+    })));
+    await writeFile(path.join(output, "build-metadata.json"), `${JSON.stringify({
+      buildIdentity: { profile: "debug", target: "linux-x86_64-gnu" },
+      development: true,
+      dirty: true,
+      payloads: testPayloads,
+      publishable: false,
+      schemaVersion: "1",
+    })}\n`);
     const lock = {
       dependencyLocks: [],
       schemaVersion: "1",
@@ -1019,8 +1066,8 @@ test("build and test run the private C++ and Zig smoke programs through locked t
   const testFailureReportPath = path.join(sandbox, "test-failure-report.json");
   const isWindows = process.platform === "win32";
   const cmake = Buffer.from(isWindows
-    ? "@echo off\r\n%SystemRoot%\\System32\\findstr.exe /c:\"TSFG_TEST_REQUIRE_UNDECLARED\" \"%~2\\CMakeLists.txt\" >nul\r\nif not errorlevel 1 if not exist \"%~2\\undeclared.cpp\" (\r\n  >&2 echo undeclared build input: tests/r00/smoke/cpp/undeclared.cpp\r\n  exit /b 19\r\n)\r\nset build_dir=%~4\r\nif not \"%build_dir:compile-fail=%\"==\"%build_dir%\" exit /b 9\r\nexit /b 0\r\n"
-    : "#!/bin/sh\ncase \"$(/bin/cat \"$2/CMakeLists.txt\")\" in *TSFG_TEST_REQUIRE_UNDECLARED*)\n  if [ ! -f \"$2/undeclared.cpp\" ]; then\n    printf '%s\\n' 'undeclared build input: tests/r00/smoke/cpp/undeclared.cpp' >&2\n    exit 19\n  fi\n;; esac\ncase \"$4\" in *compile-fail*) exit 9 ;; esac\nexit 0\n");
+    ? "@echo off\r\n%SystemRoot%\\System32\\findstr.exe /c:\"TSFG_TEST_REQUIRE_UNDECLARED\" \"%~2\\CMakeLists.txt\" >nul\r\nif not errorlevel 1 if not exist \"%~2\\undeclared.cpp\" (\r\n  >&2 echo Permission denied: tests/r00/smoke/cpp/undeclared.cpp\r\n  exit /b 19\r\n)\r\nset build_dir=%~4\r\nif not \"%build_dir:compile-fail=%\"==\"%build_dir%\" exit /b 9\r\nexit /b 0\r\n"
+    : "#!/bin/sh\ncase \"$(/bin/cat \"$2/CMakeLists.txt\")\" in *TSFG_TEST_REQUIRE_UNDECLARED*)\n  if [ ! -f \"$2/undeclared.cpp\" ]; then\n    printf '%s\\n' 'Permission denied: tests/r00/smoke/cpp/undeclared.cpp' >&2\n    exit 19\n  fi\n;; esac\ncase \"$4\" in *compile-fail*) exit 9 ;; esac\nexit 0\n");
   const ninja = Buffer.from(isWindows
     ? "@echo off\r\n>\"%~2\\tsfg-r00-cpp-smoke\" echo fixture cpp output\r\nif not exist \"%~2\\..\\zig-install\\bin\" mkdir \"%~2\\..\\zig-install\\bin\"\r\n>\"%~2\\..\\zig-install\\bin\\tsfg-r00-zig-smoke\" echo fixture zig output\r\nexit /b 0\r\n"
     : `#!/bin/sh
@@ -1033,6 +1080,23 @@ test("build and test run the private C++ and Zig smoke programs through locked t
   const zig = Buffer.from(isWindows
     ? "@echo off\r\nexit /b 0\r\n"
     : `#!/bin/sh
+if [ "$1" = cc ]; then
+  while [ "$#" -gt 0 ]; do
+    if [ "$1" = -o ]; then
+      sandbox=$2
+      {
+        echo '#!/bin/sh'
+        echo 'while [ "$1" != -- ]; do shift 2; done'
+        echo 'shift'
+        echo 'exec "$@"'
+      } > "$sandbox"
+      /bin/chmod +x "$sandbox"
+      exit 0
+    fi
+    shift
+  done
+  exit 1
+fi
 while [ "$#" -gt 0 ]; do
   if [ "$1" = --prefix ]; then
     /bin/mkdir -p "$2/bin"
@@ -1265,6 +1329,35 @@ exit 1
     if (process.platform !== "win32") await chmod(lockedZig, 0o755);
     await rm(dirtyPath);
     await rm(undeclaredInputPath);
+    const implicitDevelopmentReportPath = path.join(
+      sandbox,
+      "implicit-development-test-report.json",
+    );
+    const implicitDevelopment = await invoke([
+      "test",
+      "--target", "linux-x86_64-gnu",
+      "--profile", "debug",
+      "--workspace", workspacePath,
+      "--out", developmentOutput,
+      "--report", implicitDevelopmentReportPath,
+    ], {
+      env: {
+        ...process.env,
+        NODE_OPTIONS: `--require=${networkDenialHook}`,
+        TSFG_RUNTIME_CACHE: cachePath,
+        TSFG_RUNTIME_LOCK: lockPath,
+        TSFG_RUNTIME_PLATFORM: "test-x86_64",
+      },
+    });
+    assert.equal(implicitDevelopment.status, 10, implicitDevelopment.stderr);
+    const implicitDevelopmentReport = JSON.parse(await readFile(
+      implicitDevelopmentReportPath,
+      "utf8",
+    ));
+    assert.equal(
+      implicitDevelopmentReport.error.issues[0].code,
+      "development-mode-required",
+    );
     const networkFailureOutput = path.join(sandbox, "network-failure-out");
     const networkFailureReport = path.join(sandbox, "network-failure-report.json");
     const networkFailure = await invoke([
@@ -1345,7 +1438,9 @@ exit 1
     assert.equal(report.result.development, false);
     assert.equal(report.result.dirty, false);
     assert.deepEqual(report.result.inputAudit, {
-      mode: "materialized-build-input-set",
+      mode: process.platform === "linux"
+        ? "materialized-build-input-set+landlock"
+        : "materialized-build-input-set",
       undeclaredReads: "blocked",
     });
     assert.equal(report.result.publishable, true);

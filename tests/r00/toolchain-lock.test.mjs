@@ -217,4 +217,11 @@ test("toolchain lock content-locks the Linux debug closure and bootstrap tools",
     environmentReset < lockedNodeExecution,
     "Node injection variables must be cleared before the locked Node executable starts",
   );
+  assert.match(linuxLauncher, /TSFG_BOOTSTRAP_NODE/);
+  assert.match(linuxLauncher, /TSFG_BOOTSTRAP_NODE_SHA256/);
+  assert.doesNotMatch(
+    linuxLauncher,
+    /exec node /,
+    "Linux prefetch must not select its bootstrap Node from PATH",
+  );
 });

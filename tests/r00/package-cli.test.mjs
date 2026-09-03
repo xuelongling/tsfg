@@ -24,6 +24,7 @@ test("Build Input declaration includes only Linux smoke payload inputs", async (
     entries: [
       { path: "contracts/registry.json", projectId: "tsfg" },
       { path: "eng/build-inputs.json", projectId: "tsfg" },
+      { path: "eng/landlock-run.c", projectId: "tsfg" },
       { path: "eng/toolchains.lock.json", projectId: "tsfg" },
       { path: "eng/tsfg-build", projectId: "tsfg" },
       { path: "eng/tsfg-build.mjs", projectId: "tsfg" },

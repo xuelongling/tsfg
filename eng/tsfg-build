@@ -24,7 +24,7 @@ done
 unset NODE_OPTIONS NODE_PATH NODE_REPL_EXTERNAL_MODULE NODE_EXTRA_CA_CERTS OPENSSL_CONF
 
 runtime_failure() {
-  message='locked Node.js closure is missing or invalid; run tsfg-build prefetch'
+  message=${1:-'locked Node.js closure is missing or invalid; run tsfg-build prefetch'}
   if [ -n "$report" ]; then
     parent=$(dirname -- "$report")
     temporary="$report.$$.tmp"
@@ -189,7 +189,23 @@ valid_smoke_arguments() {
 }
 
 if [ "${1:-}" = prefetch ]; then
-  exec node "$script_dir/tsfg-build.mjs" "$@" \
+  bootstrap_node=${TSFG_BOOTSTRAP_NODE:-}
+  bootstrap_digest=${TSFG_BOOTSTRAP_NODE_SHA256:-}
+  case "$bootstrap_node" in
+    /*) ;;
+    *) runtime_failure 'prefetch requires an absolute TSFG_BOOTSTRAP_NODE' ;;
+  esac
+  [ "${#bootstrap_digest}" -eq 64 ] ||
+    runtime_failure 'prefetch requires a full lowercase TSFG_BOOTSTRAP_NODE_SHA256'
+  case "$bootstrap_digest" in
+    *[!0-9a-f]*) runtime_failure 'prefetch requires a full lowercase TSFG_BOOTSTRAP_NODE_SHA256' ;;
+    *) ;;
+  esac
+  [ -x "$bootstrap_node" ] || runtime_failure 'prefetch bootstrap Node is not executable'
+  bootstrap_actual=$(/usr/bin/sha256sum "$bootstrap_node") || runtime_failure 'cannot verify prefetch bootstrap Node'
+  bootstrap_actual=${bootstrap_actual%% *}
+  [ "$bootstrap_actual" = "$bootstrap_digest" ] || runtime_failure 'prefetch bootstrap Node digest mismatch'
+  exec "$bootstrap_node" "$script_dir/tsfg-build.mjs" "$@" \
     --lock "$script_dir/toolchains.lock.json" \
     --cache "$cache" \
     --platform "$platform"
