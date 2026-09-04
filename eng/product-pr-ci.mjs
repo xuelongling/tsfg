@@ -1,0 +1,433 @@
+// SPDX-License-Identifier: MIT
+
+import { createHash, randomUUID } from "node:crypto";
+import { mkdir, readFile, readdir, rename, rm, stat, writeFile } from "node:fs/promises";
+import path from "node:path";
+import process from "node:process";
+
+const manifestRepository = "https://github.com/xuelongling/manifests.git";
+const completeOid = /^[0-9a-f]{40}$/;
+
+class ProductPrError extends Error {}
+
+function parseOptions(arguments_, allowed) {
+  const options = new Map();
+  for (let index = 0; index < arguments_.length; index += 2) {
+    const name = arguments_[index];
+    const value = arguments_[index + 1];
+    if (!allowed.has(name) || value === undefined || value === "" || options.has(name)) {
+      throw new ProductPrError(`invalid option: ${name ?? "<missing>"}`);
+    }
+    options.set(name, value);
+  }
+  return options;
+}
+
+function requireOption(options, name) {
+  const value = options.get(name);
+  if (!value) throw new ProductPrError(`missing required option: ${name}`);
+  return value;
+}
+
+function requireOid(value, label) {
+  if (!completeOid.test(value)) {
+    throw new ProductPrError(`${label} must be a complete lowercase commit OID`);
+  }
+  return value;
+}
+
+function sha256(bytes) {
+  return `sha256:${createHash("sha256").update(bytes).digest("hex")}`;
+}
+
+function jsonBytes(value) {
+  return Buffer.from(`${JSON.stringify(value)}\n`);
+}
+
+function canonicalJsonBytes(value) {
+  return Buffer.from(canonicalize(value));
+}
+
+function canonicalize(value) {
+  if (value === null || typeof value === "boolean" || typeof value === "string") {
+    return JSON.stringify(value);
+  }
+  if (typeof value === "number" && Number.isFinite(value)) return JSON.stringify(value);
+  if (Array.isArray(value)) return `[${value.map(canonicalize).join(",")}]`;
+  if (value && typeof value === "object") {
+    return `{${Object.keys(value).sort().map((key) => `${JSON.stringify(key)}:${canonicalize(value[key])}`).join(",")}}`;
+  }
+  throw new ProductPrError("candidate evidence contains a non-I-JSON value");
+}
+
+function attributes(tag) {
+  return new Map([...tag.matchAll(/([A-Za-z][A-Za-z0-9_-]*)="([^"]*)"/g)]
+    .map((match) => [match[1], match[2]]));
+}
+
+function projectsFromManifest(xml) {
+  const projects = [];
+  const identities = new Set();
+  for (const match of xml.matchAll(/<project\b[^>]*>/g)) {
+    const values = attributes(match[0]);
+    const name = values.get("name");
+    const projectPath = values.get("path");
+    const revision = values.get("revision");
+    if (!name || !projectPath || !revision) {
+      throw new ProductPrError("every Integration Snapshot project requires name, path, and revision");
+    }
+    requireOid(revision, `${name} baseline revision`);
+    if (identities.has(name) || projects.some((project) => project.path === projectPath)) {
+      throw new ProductPrError("Integration Snapshot project names and paths must be unique");
+    }
+    identities.add(name);
+    projects.push({ name, path: projectPath, revision });
+  }
+  if (projects.length === 0) throw new ProductPrError("Integration Snapshot contains no projects");
+  return projects;
+}
+
+async function atomicWrite(directory, name, bytes) {
+  const destination = path.join(directory, name);
+  const temporary = `${destination}.tmp-${process.pid}`;
+  await writeFile(temporary, bytes, { flag: "wx" });
+  await rename(temporary, destination);
+}
+
+async function writeCandidateIdentity(options) {
+  const manifestPath = path.resolve(requireOption(options, "--manifest"));
+  const manifestName = requireOption(options, "--manifest-name");
+  const manifestRevision = requireOid(
+    requireOption(options, "--manifest-revision"),
+    "manifest revision",
+  );
+  const candidateRevision = requireOid(
+    requireOption(options, "--candidate-revision"),
+    "candidate revision",
+  );
+  const outputPath = path.resolve(requireOption(options, "--out"));
+  if (manifestName !== "bootstrap/r00.xml") {
+    throw new ProductPrError("product PRs must use the fixed bootstrap/r00.xml Integration Snapshot");
+  }
+
+  const projects = projectsFromManifest(await readFile(manifestPath, "utf8"));
+  const product = projects.find((project) => project.name === "tsfg.git" && project.path === "tsfg");
+  if (!product) throw new ProductPrError("Integration Snapshot does not contain canonical tsfg.git project");
+  const baseline = {
+    manifest: manifestName,
+    repository: manifestRepository,
+    revision: manifestRevision,
+  };
+  const overlay = {
+    baseline,
+    replacements: [{ project: "tsfg.git", revision: candidateRevision }],
+    schemaVersion: "1",
+  };
+  const resolvedManifest = {
+    baseline,
+    projects: projects
+      .map((project) => project.name === "tsfg.git"
+        ? { ...project, revision: candidateRevision }
+        : project)
+      .sort((left, right) => Buffer.from(left.name).compare(Buffer.from(right.name))),
+    schemaVersion: "1",
+  };
+  const overlayBytes = jsonBytes(overlay);
+  const resolvedBytes = jsonBytes(resolvedManifest);
+  const reportBytes = jsonBytes({
+    candidateRevision,
+    overlayDigest: sha256(canonicalJsonBytes(overlay)),
+    resolvedManifestDigest: sha256(canonicalJsonBytes(resolvedManifest)),
+    schemaVersion: "1",
+  });
+
+  await mkdir(path.dirname(outputPath), { recursive: true });
+  const stagingPath = path.join(
+    path.dirname(outputPath),
+    `.${path.basename(outputPath)}.${randomUUID()}.tmp`,
+  );
+  await mkdir(stagingPath);
+  try {
+    await writeFile(path.join(stagingPath, "candidate-overlay.json"), overlayBytes, { flag: "wx" });
+    await writeFile(path.join(stagingPath, "resolved-manifest.json"), resolvedBytes, { flag: "wx" });
+    await writeFile(path.join(stagingPath, "candidate-identity.json"), reportBytes, { flag: "wx" });
+    await rename(stagingPath, outputPath);
+  } catch (error) {
+    await rm(stagingPath, { recursive: true, force: true });
+    throw error;
+  }
+}
+
+async function writePlan(options) {
+  const outputPath = path.resolve(requireOption(options, "--out"));
+  const platforms = [
+    { os: "ubuntu-24.04", target: "linux-x86_64-gnu" },
+    { os: "windows-2025", target: "windows-x86_64-msvc" },
+  ];
+  const profiles = ["debug", "release"];
+  const producerMatrix = [];
+  const comparatorMatrix = [];
+  for (const platform of platforms) {
+    for (const profile of profiles) {
+      for (const producer of ["a", "b"]) {
+        producerMatrix.push({ os: platform.os, producer, profile, target: platform.target });
+      }
+      comparatorMatrix.push({ os: platform.os, profile, target: platform.target });
+    }
+  }
+  const plan = {
+    comparatorMatrix,
+    compatibilityMatrix: platforms.map(({ os, target }) => ({ os, target })),
+    evidenceRetentionDays: "90",
+    producerMatrix,
+    requiredJobs: [
+      "candidate-identity",
+      "repository-gates",
+      "workspace-verification",
+      "product-build",
+      "compatibility",
+      "reproducibility",
+      "candidate-evidence",
+    ],
+    schemaVersion: "1",
+  };
+  await mkdir(path.dirname(outputPath), { recursive: true });
+  await atomicWrite(path.dirname(outputPath), path.basename(outputPath), jsonBytes(plan));
+}
+
+async function readJson(filePath, label) {
+  let value;
+  try {
+    value = JSON.parse(await readFile(filePath, "utf8"));
+  } catch (error) {
+    throw new ProductPrError(`${label} is missing or invalid: ${error instanceof Error ? error.message : String(error)}`);
+  }
+  return value;
+}
+
+function requireSuccessfulReport(report, label, command) {
+  if (report?.schemaVersion !== "1" || report.status !== "success") {
+    throw new ProductPrError(`${label} is not a successful version 1 report`);
+  }
+  if (command && report.command !== command) {
+    throw new ProductPrError(`${label} does not report ${command}`);
+  }
+  return report;
+}
+
+async function evidenceFiles(root, current = "") {
+  const directory = path.join(root, ...current.split("/").filter(Boolean));
+  const entries = await readdir(directory, { withFileTypes: true });
+  const files = [];
+  for (const entry of entries.sort((left, right) => Buffer.from(left.name).compare(Buffer.from(right.name)))) {
+    const relative = current ? `${current}/${entry.name}` : entry.name;
+    if (entry.isDirectory()) files.push(...await evidenceFiles(root, relative));
+    else if (entry.isFile()) files.push(relative);
+    else throw new ProductPrError(`evidence entry must be a regular file: ${relative}`);
+  }
+  return files;
+}
+
+async function writeVerdict(options) {
+  const root = path.resolve(requireOption(options, "--evidence"));
+  const jobResults = await readJson(
+    path.resolve(requireOption(options, "--job-results")),
+    "required job results",
+  );
+  const outputPath = path.resolve(requireOption(options, "--out"));
+  const requiredJobs = [
+    "candidate-identity",
+    "repository-gates",
+    "workspace-verification",
+    "product-build",
+    "compatibility",
+    "reproducibility",
+    "candidate-evidence",
+  ];
+  for (const job of requiredJobs) {
+    if (jobResults?.[job] !== "success") {
+      throw new ProductPrError(`required job ${job} did not succeed (observed ${jobResults?.[job] ?? "missing"})`);
+    }
+  }
+
+  const identityRoot = path.join(root, "identity");
+  const identity = await readJson(path.join(identityRoot, "candidate-identity.json"), "candidate identity");
+  requireOid(identity?.candidateRevision, "candidate revision");
+  const overlay = await readJson(path.join(identityRoot, "candidate-overlay.json"), "Candidate Overlay");
+  const resolvedManifest = await readJson(
+    path.join(identityRoot, "resolved-manifest.json"),
+    "resolved manifest",
+  );
+  if (
+    identity.schemaVersion !== "1" ||
+    identity.overlayDigest !== sha256(canonicalJsonBytes(overlay)) ||
+    identity.resolvedManifestDigest !== sha256(canonicalJsonBytes(resolvedManifest))
+  ) {
+    throw new ProductPrError("candidate identity digests do not bind the archived overlay and resolved manifest");
+  }
+
+  const gateReport = requireSuccessfulReport(
+    await readJson(path.join(root, "repository-gates", "report.json"), "repository gates"),
+    "repository gates",
+  );
+  for (const gate of ["format", "policy", "license", "lock"]) {
+    if (gateReport.gates?.[gate] !== "passed") {
+      throw new ProductPrError(`repository ${gate} gate is missing or failed`);
+    }
+  }
+  requireSuccessfulReport(
+    await readJson(
+      path.join(root, "workspace-verification", "report.json"),
+      "Workspace Verification",
+    ),
+    "Workspace Verification",
+  );
+
+  const targets = ["linux-x86_64-gnu", "windows-x86_64-msvc"];
+  const profiles = ["debug", "release"];
+  let producerCount = 0;
+  let reproCount = 0;
+  for (const target of targets) {
+    const compatibility = requireSuccessfulReport(
+      await readJson(path.join(root, "compatibility", target, "report.json"), `${target} compatibility`),
+      `${target} compatibility`,
+    );
+    const combinations = compatibility.result?.compatibility?.combinations;
+    const expectedCombinations = [
+      ["baseline", "baseline"],
+      ["candidate", "baseline"],
+      ["baseline", "candidate"],
+      ["candidate", "candidate"],
+    ];
+    if (
+      compatibility.result?.target !== target ||
+      compatibility.result?.compatibility?.artifacts?.candidate?.productOid !== identity.candidateRevision ||
+      !Array.isArray(combinations) ||
+      expectedCombinations.some(([producer, consumer], index) =>
+        combinations[index]?.producer !== producer ||
+        combinations[index]?.consumer !== consumer ||
+        combinations[index]?.status !== "passed")
+    ) {
+      throw new ProductPrError(`${target} compatibility evidence does not contain the complete candidate-bound matrix`);
+    }
+
+    for (const profile of profiles) {
+      let producerIdentity;
+      for (const producer of ["a", "b"]) {
+        const producerRoot = path.join(root, "producers", target, profile, producer);
+        const build = requireSuccessfulReport(
+          await readJson(path.join(producerRoot, "build-report.json"), `${target}/${profile}/${producer} build`),
+          `${target}/${profile}/${producer} build`,
+          "build",
+        );
+        requireSuccessfulReport(
+          await readJson(path.join(producerRoot, "test-report.json"), `${target}/${profile}/${producer} test`),
+          `${target}/${profile}/${producer} test`,
+          "test",
+        );
+        const packageReport = requireSuccessfulReport(
+          await readJson(path.join(producerRoot, "package-report.json"), `${target}/${profile}/${producer} package`),
+          `${target}/${profile}/${producer} package`,
+          "package",
+        );
+        if (
+          build.result?.target !== target || build.result?.profile !== profile ||
+          packageReport.result?.buildIdentity?.target !== target ||
+          packageReport.result?.buildIdentity?.profile !== profile ||
+          build.result?.buildIdentity?.digest !== packageReport.result?.buildIdentity?.digest
+        ) {
+          throw new ProductPrError(`${target}/${profile}/${producer} reports disagree on Build Identity`);
+        }
+        const digestValue = packageReport.result.buildIdentity.digest;
+        if (producerIdentity && producerIdentity !== digestValue) {
+          throw new ProductPrError(`${target}/${profile} producers have different Build Identities`);
+        }
+        producerIdentity = digestValue;
+        const packageRoot = path.join(producerRoot, "package");
+        const archiveName = packageReport.result.archive;
+        if (typeof archiveName !== "string" || archiveName === "" || archiveName.includes("/") || archiveName.includes("\\")) {
+          throw new ProductPrError(`${target}/${profile}/${producer} package report has an invalid archive name`);
+        }
+        for (const member of [archiveName, `${archiveName}.checksums.json`, "producer-attestation.json"]) {
+          const metadata = await stat(path.join(packageRoot, member)).catch(() => undefined);
+          if (!metadata?.isFile()) throw new ProductPrError(`${target}/${profile}/${producer} is missing ${member}`);
+        }
+        const attestation = await readJson(
+          path.join(packageRoot, "producer-attestation.json"),
+          `${target}/${profile}/${producer} producer attestation`,
+        );
+        if (
+          attestation.schemaVersion !== "1" || attestation.target !== target ||
+          attestation.profile !== profile || attestation.buildIdentityDigest !== digestValue
+        ) {
+          throw new ProductPrError(`${target}/${profile}/${producer} producer attestation is inconsistent`);
+        }
+        producerCount += 1;
+      }
+      const repro = requireSuccessfulReport(
+        await readJson(
+          path.join(root, "reproducibility", target, profile, "report.json"),
+          `${target}/${profile} reproducibility`,
+        ),
+        `${target}/${profile} reproducibility`,
+        "repro-check",
+      );
+      if (
+        repro.result?.target !== target || repro.result?.profile !== profile ||
+        repro.result?.buildExecuted !== false || repro.result?.producers?.length !== 2
+      ) {
+        throw new ProductPrError(`${target}/${profile} comparator evidence is incomplete or executed a build`);
+      }
+      reproCount += 1;
+    }
+  }
+
+  const files = await evidenceFiles(root);
+  const entries = await Promise.all(files.map(async (relativePath) => ({
+    path: relativePath,
+    sha256: sha256(await readFile(path.join(root, ...relativePath.split("/")))),
+  })));
+  const evidenceDigest = sha256(canonicalJsonBytes({ entries, schemaVersion: "1" }));
+  const verdict = {
+    candidateRevision: identity.candidateRevision,
+    evidenceDigest,
+    evidenceRetentionDays: "90",
+    promotionState: "Verified Candidate",
+    requiredEvidence: {
+      compatibility: "2/2",
+      producers: `${producerCount}/8`,
+      reproducibility: `${reproCount}/4`,
+      workspaceVerification: "1/1",
+    },
+    schemaVersion: "1",
+  };
+  await mkdir(path.dirname(outputPath), { recursive: true });
+  await atomicWrite(path.dirname(outputPath), path.basename(outputPath), jsonBytes(verdict));
+}
+
+async function main() {
+  const [command, ...arguments_] = process.argv.slice(2);
+  if (command === "identity") {
+    const options = parseOptions(arguments_, new Set([
+      "--manifest",
+      "--manifest-name",
+      "--manifest-revision",
+      "--candidate-revision",
+      "--out",
+    ]));
+    await writeCandidateIdentity(options);
+  } else if (command === "plan") {
+    await writePlan(parseOptions(arguments_, new Set(["--out"])));
+  } else if (command === "verdict") {
+    await writeVerdict(parseOptions(arguments_, new Set(["--evidence", "--job-results", "--out"])));
+  } else {
+    throw new ProductPrError(`unsupported command: ${command ?? "<missing>"}`);
+  }
+}
+
+try {
+  await main();
+} catch (error) {
+  console.error(error instanceof Error ? error.message : String(error));
+  process.exitCode = 1;
+}
