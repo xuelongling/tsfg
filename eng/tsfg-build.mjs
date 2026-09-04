@@ -1614,6 +1614,7 @@ function gitOutput(cwd, arguments_, encoding = "utf8") {
     const bytes = execFileSync(process.env.TSFG_GIT ?? "git", arguments_, {
       cwd,
       env: environment,
+      maxBuffer: 16 * 1024 * 1024,
       stdio: ["ignore", "pipe", "pipe"],
     });
     return encoding === "buffer" ? bytes : bytes.toString(encoding);
@@ -1646,6 +1647,826 @@ function requireVisibleTrackedFiles(repositoryRoot) {
       `tracked files are hidden from workspace status: ${hidden.join(",")}`,
     );
   }
+}
+
+function splitNullTerminated(bytes) {
+  const entries = [];
+  let start = 0;
+  for (let index = 0; index < bytes.length; index += 1) {
+    if (bytes[index] !== 0) continue;
+    if (index !== start) entries.push(bytes.subarray(start, index));
+    start = index + 1;
+  }
+  if (start !== bytes.length) {
+    throw new WorkspaceMismatchError("repository-tree", "Git returned a truncated tree entry");
+  }
+  return entries;
+}
+
+function committedTree(repositoryRoot, revision) {
+  const output = gitOutput(
+    repositoryRoot,
+    ["ls-tree", "-rz", "--full-tree", revision],
+    "buffer",
+  );
+  return splitNullTerminated(output).map((record) => {
+    const separator = record.indexOf(0x09);
+    if (separator < 0) {
+      throw new WorkspaceMismatchError("repository-tree", "Git returned an invalid tree entry");
+    }
+    const header = record.subarray(0, separator).toString("ascii").split(" ");
+    if (header.length !== 3 || header[1] !== "blob") {
+      throw new WorkspaceMismatchError("repository-tree", "Git returned an unsupported tree entry");
+    }
+    return {
+      mode: header[0],
+      oid: header[2],
+      pathBytes: record.subarray(separator + 1),
+    };
+  });
+}
+
+const committedBlobCache = new Map();
+
+function committedBlob(repositoryRoot, oid) {
+  const key = `${repositoryRoot}\0${oid}`;
+  let bytes = committedBlobCache.get(key);
+  if (!bytes) {
+    bytes = gitOutput(repositoryRoot, ["cat-file", "blob", oid], "buffer");
+    committedBlobCache.set(key, bytes);
+  }
+  return bytes;
+}
+
+function decodePortablePath(repository, entry) {
+  if (entry.pathBytes.some((byte) => byte < 0x20 || byte > 0x7e)) {
+    throw new WorkspaceMismatchError(
+      "path-ascii-lowercase",
+      `${repository.workspacePath} contains a non-ASCII repository path`,
+    );
+  }
+  return entry.pathBytes.toString("ascii");
+}
+
+function verifyPortablePaths(repository, entries, definition) {
+  const paths = entries.map((entry) => decodePortablePath(repository, entry));
+  const folded = new Map();
+  for (const relativePath of paths) {
+    const key = relativePath.toLowerCase();
+    const previous = folded.get(key);
+    if (previous !== undefined && previous !== relativePath) {
+      throw new WorkspaceMismatchError(
+        "path-case-collision",
+        `${repository.workspacePath}/${relativePath} collides with ${repository.workspacePath}/${previous}`,
+      );
+    }
+    folded.set(key, relativePath);
+  }
+
+  const whitelist = new Set(definition.pathCasingWhitelist);
+  const maximum = Number.parseInt(definition.maxRelativePathLength, 10);
+  for (const [index, relativePath] of paths.entries()) {
+    if (Buffer.byteLength(relativePath, "ascii") > maximum) {
+      throw new WorkspaceMismatchError(
+        "path-too-long",
+        `${repository.workspacePath}/${relativePath} exceeds ${maximum} repository-relative characters`,
+      );
+    }
+    for (const segment of relativePath.split("/")) {
+      if (/[. ]$/.test(segment)) {
+        throw new WorkspaceMismatchError(
+          "path-trailing-dot-space",
+          `${repository.workspacePath}/${relativePath} contains a trailing dot or space`,
+        );
+      }
+      const stem = segment.split(".", 1)[0].toLowerCase();
+      if (/^(?:con|prn|aux|nul|com[1-9]|lpt[1-9])$/.test(stem)) {
+        throw new WorkspaceMismatchError(
+          "path-windows-reserved",
+          `${repository.workspacePath}/${relativePath} contains a Windows reserved name`,
+        );
+      }
+      if (!/^[a-z0-9._-]+$/.test(segment) && !whitelist.has(segment)) {
+        throw new WorkspaceMismatchError(
+          "path-ascii-lowercase",
+          `${repository.workspacePath}/${relativePath} is not a portable lowercase path or a versioned exception`,
+        );
+      }
+    }
+    if (entries[index].mode === "120000") {
+      throw new WorkspaceMismatchError(
+        "repository-symlink",
+        `${repository.workspacePath}/${relativePath} is a repository symlink; only manifest-managed Agent Activation Surface links are allowed outside repositories`,
+      );
+    }
+  }
+}
+
+function matchesPolicyPattern(relativePath, pattern) {
+  if (pattern.startsWith("**/*")) return relativePath.endsWith(pattern.slice(4));
+  if (pattern.endsWith("/**")) {
+    const prefix = pattern.slice(0, -3);
+    return relativePath === prefix || relativePath.startsWith(`${prefix}/`);
+  }
+  return relativePath === pattern;
+}
+
+function licenseMapping(relativePath, definition) {
+  return definition.licenseMappings.find((mapping) =>
+    matchesPolicyPattern(relativePath, mapping.pattern),
+  );
+}
+
+function verifyTrackedText(repository, entry, mapping) {
+  if (entry.mode === "120000") return;
+  if (mapping?.contentKind === "binary") return;
+  const bytes = committedBlob(repository.root, entry.oid);
+  const relativePath = entry.pathBytes.toString("utf8");
+  if (bytes.length >= 3 && bytes[0] === 0xef && bytes[1] === 0xbb && bytes[2] === 0xbf) {
+    throw new WorkspaceMismatchError(
+      "text-bom",
+      `${repository.workspacePath}/${relativePath} contains a UTF-8 BOM`,
+    );
+  }
+  if (bytes.includes(0x00)) {
+    throw new WorkspaceMismatchError(
+      "text-encoding",
+      `${repository.workspacePath}/${relativePath} is not valid UTF-8 text`,
+    );
+  }
+  try {
+    new TextDecoder("utf-8", { fatal: true }).decode(bytes);
+  } catch {
+    throw new WorkspaceMismatchError(
+      "text-encoding",
+      `${repository.workspacePath}/${relativePath} is not valid UTF-8`,
+    );
+  }
+  if (bytes.includes(0x0d)) {
+    throw new WorkspaceMismatchError(
+      "text-line-endings",
+      `${repository.workspacePath}/${relativePath} does not use canonical LF line endings`,
+    );
+  }
+}
+
+function verifyLineEndingAttributes(repository, entries) {
+  const attributes = entries.find(
+    (entry) => entry.pathBytes.toString("ascii") === ".gitattributes",
+  );
+  if (!attributes || attributes.mode === "120000") {
+    throw new WorkspaceMismatchError(
+      "text-attributes",
+      `${repository.workspacePath}/.gitattributes is missing`,
+    );
+  }
+  const lines = committedBlob(repository.root, attributes.oid)
+    .toString("utf8")
+    .split("\n")
+    .filter(Boolean)
+    .sort();
+  const expected = [
+    "* text=auto eol=lf",
+    "*.bat text eol=crlf",
+    "*.cmd text eol=crlf",
+  ].sort();
+  if (canonicalize(lines) !== canonicalize(expected)) {
+    throw new WorkspaceMismatchError(
+      "text-attributes",
+      `${repository.workspacePath}/.gitattributes must enforce LF Git text and CRLF checkout only for .cmd/.bat`,
+    );
+  }
+}
+
+function isSpdxSource(relativePath, bytes, definition) {
+  const basename = path.posix.basename(relativePath);
+  const extension = path.posix.extname(relativePath).toLowerCase();
+  return (
+    definition.spdxSourceNames.includes(basename) ||
+    definition.spdxSourceExtensions.includes(extension) ||
+    (extension === "" && bytes.subarray(0, 2).toString("ascii") === "#!")
+  );
+}
+
+function verifyFirstPartyLicense(repository, entries, definition) {
+  const licenseEntry = entries.find(
+    (entry) => entry.pathBytes.toString("ascii") === "LICENSE" && entry.mode !== "120000",
+  );
+  const licenseBytes = licenseEntry
+    ? committedBlob(repository.root, licenseEntry.oid)
+    : Buffer.alloc(0);
+  const licenseText = new TextDecoder("utf-8", { fatal: true }).decode(licenseBytes);
+  if (
+    !licenseText.startsWith("MIT License\n") ||
+    !licenseText.includes("Copyright (c) 2026 xuelongling\n")
+  ) {
+    throw new WorkspaceMismatchError(
+      "license-root",
+      `${repository.workspacePath}/LICENSE must declare MIT and copyright holder xuelongling`,
+    );
+  }
+
+  const coverage = [];
+  for (const entry of entries) {
+    const relativePath = entry.pathBytes.toString("ascii");
+    const bytes = committedBlob(repository.root, entry.oid);
+    const mapping = licenseMapping(relativePath, definition);
+    if (isSpdxSource(relativePath, bytes, definition)) {
+      const text = new TextDecoder("utf-8", { fatal: true }).decode(bytes);
+      if (!/^(?:\/\/|#|@?rem) SPDX-License-Identifier: MIT$/imu.test(text)) {
+        throw new WorkspaceMismatchError(
+          "license-spdx",
+          `${repository.workspacePath}/${relativePath} lacks SPDX-License-Identifier: MIT`,
+        );
+      }
+      coverage.push({ mechanism: "spdx", path: relativePath });
+    } else if (mapping !== undefined) {
+      coverage.push({ mechanism: "mapping", path: relativePath });
+    } else {
+      throw new WorkspaceMismatchError(
+        "license-coverage",
+        `${repository.workspacePath}/${relativePath} has no machine-readable MIT license mapping`,
+      );
+    }
+  }
+  return coverage;
+}
+
+function committedEntryMap(repository, entries) {
+  return new Map(
+    entries.map((entry) => [
+      entry.pathBytes.toString("ascii"),
+      { ...entry, bytes: committedBlob(repository.root, entry.oid) },
+    ]),
+  );
+}
+
+function parseCommittedCanonicalJson(repository, entryMap, relativePath, code) {
+  const entry = entryMap.get(relativePath);
+  if (!entry || entry.mode === "120000") {
+    throw new WorkspaceMismatchError(code, `${repository.workspacePath}/${relativePath} is missing`);
+  }
+  const text = new TextDecoder("utf-8", { fatal: true }).decode(entry.bytes);
+  let value;
+  try {
+    value = JSON.parse(text);
+  } catch {
+    throw new WorkspaceMismatchError(
+      code,
+      `${repository.workspacePath}/${relativePath} is not valid JSON`,
+    );
+  }
+  const canonical = canonicalize(value);
+  if (text !== canonical && text !== `${canonical}\n`) {
+    throw new WorkspaceMismatchError(
+      code,
+      `${repository.workspacePath}/${relativePath} is not canonical JSON`,
+    );
+  }
+  return value;
+}
+
+function knownLicense(value) {
+  return (
+    typeof value === "string" &&
+    value.length !== 0 &&
+    !/^(?:NOASSERTION|unknown)$/i.test(value)
+  );
+}
+
+function dependencyNotice(entry, product, entryMap) {
+  if (entry.notice?.status === "not-required" && Object.keys(entry.notice).length === 1) {
+    return "not-required";
+  }
+  if (
+    entry.notice?.status !== "required" ||
+    typeof entry.notice.path !== "string" ||
+    !entryMap.has(entry.notice.path)
+  ) {
+    throw new WorkspaceMismatchError(
+      "dependency-notice",
+      `${product.workspacePath} dependency ${entry.id} has no required notice`,
+    );
+  }
+  return entry.notice.path;
+}
+
+function pnpmPackages(bytes) {
+  const text = new TextDecoder("utf-8", { fatal: true }).decode(bytes);
+  const packages = /(?:^|\n)packages:\n([\s\S]*?)(?:\nsnapshots:|$)/.exec(text)?.[1] ?? "";
+  return [...packages.matchAll(/^  (.+):$/gm)].map((match) =>
+    match[1].replace(/^['"]|['"]$/g, ""),
+  );
+}
+
+function validDependencyLocation(value) {
+  if (typeof value !== "string") return false;
+  try {
+    return new URL(value).protocol === "https:";
+  } catch {
+    return false;
+  }
+}
+
+function requireDependencyIdentity(id, input) {
+  if (
+    !/^sha256:[0-9a-f]{64}$/.test(input?.archiveSha256) ||
+    !validDependencyLocation(input?.url)
+  ) {
+    throw new WorkspaceMismatchError(
+      "dependency-provenance",
+      `dependency input ${id} has no authenticated HTTPS source identity`,
+    );
+  }
+}
+
+function dependencyInputs(toolId, tool) {
+  const inputs = [];
+  for (const artifact of tool.artifacts ?? []) {
+    if (Array.isArray(artifact.archives) && artifact.archives.length !== 0) {
+      for (const member of artifact.archives) {
+        if (!knownLicense(member.license)) {
+          throw new WorkspaceMismatchError(
+            "dependency-license",
+            `toolchain input ${toolId}/${member.id ?? "member"} has an unknown license`,
+          );
+        }
+        requireDependencyIdentity(`${toolId}/${member.id ?? "member"}`, member);
+        inputs.push({
+          id: `${toolId}/${member.id}`,
+          license: member.license,
+          sha256: member.archiveSha256,
+          source: member.url,
+        });
+      }
+    } else {
+      requireDependencyIdentity(toolId, artifact);
+      inputs.push({
+        id: toolId,
+        license: tool.license,
+        sha256: artifact.archiveSha256,
+        source: artifact.url,
+      });
+    }
+    if (artifact.bootstrap) {
+      requireDependencyIdentity(`${toolId}/bootstrap`, artifact.bootstrap);
+      inputs.push({
+        id: `${toolId}/bootstrap`,
+        license: tool.license,
+        sha256: artifact.bootstrap.archiveSha256,
+        source: artifact.bootstrap.url,
+      });
+    }
+  }
+  return inputs;
+}
+
+function verifyDependencyProvenance(product, entries) {
+  const entryMap = committedEntryMap(product, entries);
+  const metadata = parseCommittedCanonicalJson(
+    product,
+    entryMap,
+    "eng/dependency-sources.json",
+    "dependency-metadata",
+  );
+  const lock = parseCommittedCanonicalJson(
+    product,
+    entryMap,
+    "eng/toolchains.lock.json",
+    "dependency-metadata",
+  );
+  if (
+    metadata.schemaVersion !== "1" ||
+    !Array.isArray(metadata.dependencies) ||
+    typeof lock.tools !== "object" ||
+    lock.tools === null ||
+    !Array.isArray(lock.dependencyLocks)
+  ) {
+    throw new WorkspaceMismatchError(
+      "dependency-metadata",
+      "dependency source or toolchain metadata has an invalid shape",
+    );
+  }
+
+  const expected = new Map();
+  for (const [toolId, tool] of Object.entries(lock.tools)) {
+    if (!knownLicense(tool?.license)) {
+      throw new WorkspaceMismatchError(
+        "dependency-license",
+        `toolchain input ${toolId} has an unknown license`,
+      );
+    }
+    dependencyInputs(toolId, tool);
+    expected.set(`tool:${toolId}`, {
+      license: tool.license,
+      source: { kind: "toolchain", toolId },
+      inputs: dependencyInputs(toolId, tool),
+    });
+  }
+  for (const dependencyLock of lock.dependencyLocks) {
+    const lockEntry = entryMap.get(dependencyLock.path);
+    if (!lockEntry || dependencyLock.projectId !== "tsfg") {
+      throw new WorkspaceMismatchError(
+        "dependency-coverage",
+        `dependency lock ${dependencyLock.path} is not traceable to the product repository`,
+      );
+    }
+    if (
+      !/^sha256:[0-9a-f]{64}$/.test(dependencyLock.sha256) ||
+      digest(lockEntry.bytes) !== dependencyLock.sha256
+    ) {
+      throw new WorkspaceMismatchError(
+        "dependency-provenance",
+        `dependency lock ${dependencyLock.path} does not match its declared digest`,
+      );
+    }
+    for (const packageId of pnpmPackages(lockEntry.bytes)) {
+      expected.set(`pnpm:${packageId}`, {
+        source: { kind: "dependency-lock", lockPath: dependencyLock.path, package: packageId },
+        inputs: [{ id: packageId, sha256: dependencyLock.sha256, source: dependencyLock.path }],
+      });
+    }
+  }
+
+  const seen = new Set();
+  const report = { buildOnly: [], payload: [] };
+  for (const entry of metadata.dependencies) {
+    const expectedEntry = expected.get(entry?.id);
+    if (
+      !expectedEntry ||
+      seen.has(entry.id) ||
+      (entry.scope !== "build-only" && entry.scope !== "payload") ||
+      canonicalize(entry.source) !== canonicalize(expectedEntry.source)
+    ) {
+      throw new WorkspaceMismatchError(
+        "dependency-coverage",
+        `dependency metadata entry ${entry?.id ?? "<invalid>"} does not trace an actual input`,
+      );
+    }
+    if (
+      !knownLicense(entry.license) ||
+      (expectedEntry.license !== undefined && entry.license !== expectedEntry.license)
+    ) {
+      throw new WorkspaceMismatchError(
+        "dependency-license",
+        `dependency ${entry.id} has an unknown or mismatched license`,
+      );
+    }
+    const notice = dependencyNotice(entry, product, entryMap);
+    const item = {
+      id: entry.id,
+      inputs: expectedEntry.inputs,
+      license: entry.license,
+      notice,
+    };
+    report[entry.scope === "build-only" ? "buildOnly" : "payload"].push(item);
+    seen.add(entry.id);
+  }
+  const missing = [...expected.keys()].filter((id) => !seen.has(id));
+  if (missing.length !== 0) {
+    throw new WorkspaceMismatchError(
+      "dependency-coverage",
+      `actual dependency inputs lack review metadata: ${missing.join(",")}`,
+    );
+  }
+  report.buildOnly.sort((left, right) => Buffer.from(left.id).compare(Buffer.from(right.id)));
+  report.payload.sort((left, right) => Buffer.from(left.id).compare(Buffer.from(right.id)));
+  return report;
+}
+
+function verifyBuildInputLicenses(product, entries, coverage) {
+  const entryMap = committedEntryMap(product, entries);
+  const declaration = parseCommittedCanonicalJson(
+    product,
+    entryMap,
+    "eng/build-inputs.json",
+    "license-input-coverage",
+  );
+  if (declaration.schemaVersion !== "1" || !Array.isArray(declaration.entries)) {
+    throw new WorkspaceMismatchError(
+      "license-input-coverage",
+      "Build Input Set declaration has an invalid shape",
+    );
+  }
+  const mechanisms = new Map(coverage.map((entry) => [entry.path, entry.mechanism]));
+  const report = [];
+  for (const entry of declaration.entries) {
+    if (
+      entry?.projectId !== "tsfg" ||
+      typeof entry.path !== "string" ||
+      !entryMap.has(entry.path) ||
+      !mechanisms.has(entry.path)
+    ) {
+      throw new WorkspaceMismatchError(
+        "license-input-coverage",
+        `Build Input ${entry?.projectId ?? "<invalid>"}:${entry?.path ?? "<invalid>"} lacks first-party license provenance`,
+      );
+    }
+    report.push({
+      license: "MIT",
+      mechanism: mechanisms.get(entry.path),
+      path: entry.path,
+      projectId: entry.projectId,
+    });
+  }
+  report.sort(compareInputEntries);
+  return report;
+}
+
+function agentStatePathIssue(relativePath) {
+  const lower = relativePath.toLowerCase();
+  const segments = lower.split("/");
+  const basename = segments.at(-1) ?? "";
+  if (
+    /^(?:auth|credentials|oauth(?:[-_.]?(?:session|tokens?))?|session|tokens?)(?:[-_.].*)?\.(?:db|json|jsonl|sqlite|sqlite3)$/.test(
+      basename,
+    ) ||
+    segments.includes("node_modules") ||
+    segments.some((segment) =>
+      [".cache", ".mypy_cache", ".pytest_cache", ".ruff_cache", "__pycache__", "cache", "caches", "logs"].includes(segment),
+    ) ||
+    /\.(?:db|log|sqlite|sqlite3|wal)$/.test(lower) ||
+    basename === ".codex-global-state.json" ||
+    /^(?:events|history|sessions)(?:[-_.].*)?\.jsonl$/.test(basename)
+  ) {
+    return "agent-personal-state";
+  }
+  return undefined;
+}
+
+function agentSecretContent(content) {
+  const knownToken = /sk-[A-Za-z0-9_-]{16,}|gh[oprsu]_[A-Za-z0-9]{20,}|github_pat_[A-Za-z0-9_]{20,}/;
+  const privateKey = /-----BEGIN (?:RSA |EC |OPENSSH )?PRIVATE KEY-----/;
+  const credential = /(?:^|[^A-Za-z0-9_])["']?(?:client[_ -]?secret|access[_ -]?token|refresh[_ -]?token|id[_ -]?token|api[_ -]?key|token|authorization)["']?\s*[:=]\s*["']?(?!<|\$\{|%)[^\s"']{8,}/i;
+  const windowsAbsolute = /(?:^|[^A-Za-z0-9_])(?:[A-Za-z]:[\\/]|\\\\[A-Za-z0-9._-]+\\[A-Za-z0-9$._-]+\\)/im;
+  const posixHome = /\/(?:home|Users)\/[^/\s"']+/;
+  return knownToken.test(content) || privateKey.test(content) || credential.test(content) ||
+    windowsAbsolute.test(content) || posixHome.test(content);
+}
+
+function verifyAgentPrivateState(repository, entries, definition) {
+  if (repository.id !== ".agents.git") return;
+  for (const entry of entries) {
+    const relativePath = entry.pathBytes.toString("ascii");
+    const stateIssue = agentStatePathIssue(relativePath);
+    if (stateIssue) {
+      throw new WorkspaceMismatchError(
+        stateIssue,
+        `${repository.workspacePath}/${relativePath} is credential, cache, log, or personal agent state`,
+      );
+    }
+    if (licenseMapping(relativePath, definition)?.contentKind === "binary") continue;
+    const content = new TextDecoder("utf-8", { fatal: true }).decode(
+      committedBlob(repository.root, entry.oid),
+    );
+    if (agentSecretContent(content)) {
+      throw new WorkspaceMismatchError(
+        "agent-secret",
+        `${repository.workspacePath}/${relativePath} contains a credential or personal absolute path`,
+      );
+    }
+  }
+}
+
+function generatedProjectRoot(relativePath) {
+  const segments = relativePath.split("/");
+  const index = segments.findIndex((segment) =>
+    ["build", "dist", "generated", "out"].includes(segment),
+  );
+  if (index < 0 || index === segments.length - 1) return undefined;
+  return segments.slice(0, index).join("/");
+}
+
+function joinedRepositoryPath(prefix, relativePath) {
+  const joined = path.posix.normalize(prefix ? `${prefix}/${relativePath}` : relativePath);
+  if (joined === ".." || joined.startsWith("../") || path.posix.isAbsolute(joined)) return undefined;
+  return joined;
+}
+
+function verifyGeneratedProvenance(repository, entries) {
+  const entryMap = committedEntryMap(repository, entries);
+  const generated = new Map();
+  for (const relativePath of entryMap.keys()) {
+    const projectRoot = generatedProjectRoot(relativePath);
+    if (projectRoot === undefined) continue;
+    const outputs = generated.get(projectRoot) ?? [];
+    outputs.push(relativePath);
+    generated.set(projectRoot, outputs);
+  }
+  for (const [projectRoot, outputs] of generated) {
+    const provenancePath = projectRoot
+      ? `${projectRoot}/artifact-provenance.json`
+      : "artifact-provenance.json";
+    const issueCode =
+      repository.id === ".agents.git" && projectRoot.startsWith("mcp/")
+        ? "agent-dist-only-mcp"
+        : "generated-provenance";
+    const provenanceEntry = entryMap.get(provenancePath);
+    if (!provenanceEntry) {
+      throw new WorkspaceMismatchError(
+        issueCode,
+        `${repository.workspacePath}/${outputs[0]} is an unexplained generated output`,
+      );
+    }
+    const provenance = parseCommittedCanonicalJson(
+      repository,
+      entryMap,
+      provenancePath,
+      issueCode,
+    );
+    if (provenance.schema_version !== "1" || !Array.isArray(provenance.artifacts)) {
+      throw new WorkspaceMismatchError(issueCode, `${provenancePath} has invalid provenance`);
+    }
+    const declared = new Set();
+    for (const artifact of provenance.artifacts) {
+      const outputPath = joinedRepositoryPath(projectRoot, artifact?.path);
+      const output = outputPath ? entryMap.get(outputPath) : undefined;
+      if (
+        !output ||
+        !/^sha256:[0-9a-f]{64}$/.test(artifact.digest) ||
+        digest(output.bytes) !== artifact.digest ||
+        !Array.isArray(artifact.sources) ||
+        artifact.sources.length === 0 ||
+        !Array.isArray(artifact.locks) ||
+        artifact.locks.length === 0
+      ) {
+        throw new WorkspaceMismatchError(issueCode, `${provenancePath} does not explain its output`);
+      }
+      for (const input of [...artifact.sources, ...artifact.locks]) {
+        const inputPath = joinedRepositoryPath(projectRoot, input?.path);
+        const inputEntry = inputPath ? entryMap.get(inputPath) : undefined;
+        if (
+          !inputEntry ||
+          !/^sha256:[0-9a-f]{64}$/.test(input.digest) ||
+          digest(inputEntry.bytes) !== input.digest
+        ) {
+          throw new WorkspaceMismatchError(issueCode, `${provenancePath} has an unknown source or lock`);
+        }
+      }
+      declared.add(outputPath);
+    }
+    const unexplained = outputs.find((output) => !declared.has(output));
+    if (unexplained) {
+      throw new WorkspaceMismatchError(
+        issueCode,
+        `${repository.workspacePath}/${unexplained} is not declared by ${provenancePath}`,
+      );
+    }
+  }
+}
+
+function parseUpstreamToml(bytes) {
+  const values = {};
+  const text = new TextDecoder("utf-8", { fatal: true }).decode(bytes);
+  for (const sourceLine of text.split("\n")) {
+    const line = sourceLine.trim();
+    if (line === "" || line.startsWith("#")) continue;
+    const match = /^([a-z_]+)\s*=\s*"([^"\r\n]+)"$/.exec(line);
+    if (!match || Object.hasOwn(values, match[1])) return undefined;
+    values[match[1]] = match[2];
+  }
+  return values;
+}
+
+function verifyUpstreamProvenance(repository, entries) {
+  const entryMap = committedEntryMap(repository, entries);
+  const upstream = entryMap.get("UPSTREAM.toml");
+  const license = entryMap.get("LICENSE");
+  const notice = entryMap.get("NOTICE");
+  if (!upstream || !license || !notice || license.bytes.length === 0 || notice.bytes.length === 0) {
+    throw new WorkspaceMismatchError(
+      "upstream-provenance",
+      `${repository.workspacePath} must preserve LICENSE, NOTICE, and UPSTREAM.toml`,
+    );
+  }
+  const values = parseUpstreamToml(upstream.bytes);
+  const required = ["base_oid", "canonical_url", "license", "local_changes", "sync_branch"];
+  if (!values || canonicalize(Object.keys(values).sort()) !== canonicalize(required)) {
+    throw new WorkspaceMismatchError(
+      "upstream-provenance",
+      `${repository.workspacePath}/UPSTREAM.toml has an invalid provenance shape`,
+    );
+  }
+  if (!/^[0-9a-f]{40}$/.test(values.base_oid)) {
+    throw new WorkspaceMismatchError(
+      "upstream-provenance",
+      `${repository.workspacePath}/UPSTREAM.toml has an unknown base OID`,
+    );
+  }
+  let canonicalUrl;
+  try {
+    canonicalUrl = new URL(values.canonical_url);
+  } catch {
+    canonicalUrl = undefined;
+  }
+  if (
+    canonicalUrl?.protocol !== "https:" ||
+    !knownLicense(values.license) ||
+    !values.sync_branch.startsWith("refs/heads/") ||
+    values.local_changes.trim() === ""
+  ) {
+    throw new WorkspaceMismatchError(
+      "upstream-provenance",
+      `${repository.workspacePath}/UPSTREAM.toml contains incomplete origin metadata`,
+    );
+  }
+  return {
+    approval: "not-evaluated",
+    baseOid: values.base_oid,
+    canonicalUrl: canonicalUrl.href,
+    id: repository.id,
+    license: values.license,
+    localChanges: values.local_changes,
+    path: repository.workspacePath,
+    syncBranch: values.sync_branch,
+  };
+}
+
+async function verifyWorkspacePolicy(manifestsRoot, manifestRevision, expectedProjects, workspace) {
+  const definition = JSON.parse(
+    await readFile(path.join(repositoryRoot, "eng", "workspace-policy.json"), "utf8"),
+  );
+  if (
+    definition.schemaVersion !== "1" ||
+    !/^[1-9][0-9]*$/.test(definition.maxRelativePathLength) ||
+    !Array.isArray(definition.pathCasingWhitelist) ||
+    !definition.pathCasingWhitelist.every((entry) => typeof entry === "string") ||
+    !Array.isArray(definition.licenseMappings) ||
+    !definition.licenseMappings.every(
+      (entry) =>
+        typeof entry?.pattern === "string" &&
+        (entry.contentKind === "text" || entry.contentKind === "binary"),
+    ) ||
+    !Array.isArray(definition.spdxSourceExtensions) ||
+    !Array.isArray(definition.spdxSourceNames)
+  ) {
+    throw new ConfigurationError("invalid workspace policy definition");
+  }
+  const repositories = [
+    {
+      id: "manifests",
+      workspacePath: ".repo/manifests",
+      root: manifestsRoot,
+      revision: manifestRevision,
+    },
+    ...expectedProjects.map((project) => ({
+      id: project.id,
+      workspacePath: project.path,
+      root: path.resolve(workspace, ...project.path.split("/")),
+      revision: project.revision,
+    })),
+  ];
+  const result = [];
+  const upstreamForks = [];
+  let covered = 0;
+  let product;
+  let productEntries;
+  let productCoverage;
+  for (const repository of repositories) {
+    const entries = committedTree(repository.root, repository.revision);
+    verifyPortablePaths(repository, entries, definition);
+    verifyLineEndingAttributes(repository, entries);
+    for (const entry of entries) {
+      const relativePath = entry.pathBytes.toString("ascii");
+      verifyTrackedText(repository, entry, licenseMapping(relativePath, definition));
+    }
+    verifyAgentPrivateState(repository, entries, definition);
+    verifyGeneratedProvenance(repository, entries);
+    const firstParty = ["manifests", "tsfg.git", ".agents.git"].includes(repository.id);
+    const coverage = firstParty ? verifyFirstPartyLicense(repository, entries, definition) : [];
+    let repositoryLicense = "MIT";
+    if (firstParty) {
+      covered += coverage.length;
+      if (repository.id === "tsfg.git") {
+        product = repository;
+        productEntries = entries;
+        productCoverage = coverage;
+      }
+    } else {
+      const upstream = verifyUpstreamProvenance(repository, entries);
+      upstreamForks.push(upstream);
+      repositoryLicense = upstream.license;
+    }
+    result.push({
+      files: entries.length,
+      id: repository.id,
+      license: repositoryLicense,
+      path: repository.workspacePath,
+    });
+  }
+  result.sort((left, right) => Buffer.from(left.path).compare(Buffer.from(right.path)));
+  if (!product || !productEntries || !productCoverage) {
+    throw new WorkspaceMismatchError("dependency-coverage", "workspace has no tsfg product project");
+  }
+  return {
+    licenseReport: {
+      coverage: { covered, percent: "100", total: covered },
+      dependencies: verifyDependencyProvenance(product, productEntries),
+      inputs: verifyBuildInputLicenses(product, productEntries, productCoverage),
+    },
+    repositories: result,
+    upstreamForks,
+  };
 }
 
 function decodeXml(value) {
@@ -1866,7 +2687,6 @@ async function verifyWorkspace(options) {
       `manifest repository URL mismatch: expected ${manifestUrl}`,
     );
   }
-  await requireCanonicalSymlink(workspace, manifestLink, manifestPath);
   const expectedManifestBytes = gitOutput(
     manifestsRoot,
     ["show", `${manifestRevision}:${manifestName}`],
@@ -1879,6 +2699,14 @@ async function verifyWorkspace(options) {
       "selected manifest does not match the locked manifest commit",
     );
   }
+  const expectedProjects = parseManifest(expectedManifestBytes.toString("utf8"));
+  const policy = await verifyWorkspacePolicy(
+    manifestsRoot,
+    manifestRevision,
+    expectedProjects,
+    workspace,
+  );
+  await requireCanonicalSymlink(workspace, manifestLink, manifestPath);
   const manifestStatus = gitOutput(manifestsRoot, [
     "status",
     "--porcelain=v1",
@@ -1893,7 +2721,6 @@ async function verifyWorkspace(options) {
     );
   }
   requireVisibleTrackedFiles(manifestsRoot);
-  const expectedProjects = parseManifest(actualManifestBytes.toString("utf8"));
   const actualProjectList = (await readFile(
     path.join(workspace, ".repo", "project.list"),
     "utf8",
@@ -2015,6 +2842,7 @@ async function verifyWorkspace(options) {
     },
     projects,
     activation,
+    policy,
     dirty: false,
   };
 }

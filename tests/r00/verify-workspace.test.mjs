@@ -62,15 +62,26 @@ async function createFixtureSymlink(target, destination) {
 }
 
 async function materializeFixture(workspace) {
+  const license = await readFile(path.join(repositoryRoot, "LICENSE"));
   const productHead = await initializeRepository(
     path.join(workspace, "tsfg"),
-    { "README.md": "# fixture product\n" },
+    {
+      ".gitattributes": "* text=auto eol=lf\n*.cmd text eol=crlf\n*.bat text eol=crlf\n",
+      "LICENSE": license,
+      "README.md": "# fixture product\n",
+      "eng/build-inputs.json": '{"entries":[],"schemaVersion":"1"}\n',
+      "eng/dependency-sources.json": '{"dependencies":[],"schemaVersion":"1"}\n',
+      "eng/toolchains.lock.json":
+        '{"dependencyLocks":[],"schemaVersion":"1","targets":{},"tools":{}}\n',
+    },
     "https://github.com/xuelongling/tsfg.git",
   );
   const agentsHead = await initializeRepository(
     path.join(workspace, ".agents"),
     {
+      ".gitattributes": "* text=auto eol=lf\n*.cmd text eol=crlf\n*.bat text eol=crlf\n",
       "AGENTS.md": "# fixture agents\n",
+      "LICENSE": license,
       "codex/config.toml": "model = \"fixture\"\n",
       "codex/hooks.json": "{}\n",
     },
@@ -90,7 +101,11 @@ async function materializeFixture(workspace) {
   const manifestsRoot = path.join(workspace, ".repo", "manifests");
   const manifestHead = await initializeRepository(
     manifestsRoot,
-    { "bootstrap/r00.xml": manifest },
+    {
+      ".gitattributes": "* text=auto eol=lf\n*.cmd text eol=crlf\n*.bat text eol=crlf\n",
+      "LICENSE": license,
+      "bootstrap/r00.xml": manifest,
+    },
     manifestUrl,
     "origin",
   );
@@ -220,7 +235,7 @@ test("verify-workspace accepts a clean complete materialized identity", async (c
     assert.equal(second.status, 0, second.stderr);
     assert.equal(await readFile(reportPath, "utf8"), firstBytes);
   } finally {
-    await rm(sandbox, { recursive: true, force: true });
+    await rm(sandbox, { recursive: true, force: true, maxRetries: 10, retryDelay: 100 });
   }
 });
 
@@ -264,7 +279,7 @@ test("verify-workspace rejects an extra Git project omitted from repo metadata",
     assert.equal(report.error.issues[0].code, "project-set");
     assert.match(report.error.issues[0].message, /unexpected-project/);
   } finally {
-    await rm(sandbox, { recursive: true, force: true });
+    await rm(sandbox, { recursive: true, force: true, maxRetries: 10, retryDelay: 100 });
   }
 });
 
@@ -313,7 +328,7 @@ test("verify-workspace rejects an activation parent redirected through a symlink
     const report = JSON.parse(await readFile(reportPath, "utf8"));
     assert.equal(report.error.issues[0].code, "activation-link-parent");
   } finally {
-    await rm(sandbox, { recursive: true, force: true });
+    await rm(sandbox, { recursive: true, force: true, maxRetries: 10, retryDelay: 100 });
   }
 });
 
@@ -502,7 +517,7 @@ for (const scenario of mismatchScenarios) {
       assert.equal(second.status, 10);
       assert.equal(await readFile(reportPath, "utf8"), firstBytes);
     } finally {
-      await rm(sandbox, { recursive: true, force: true });
+      await rm(sandbox, { recursive: true, force: true, maxRetries: 10, retryDelay: 100 });
     }
   });
 }
