@@ -45,8 +45,8 @@ function workspaceReport(productRevision) {
         selected: "bootstrap/r00.xml",
       },
       projects: [
-        { dirty: false, head: agentRevision, id: ".agents.git", path: ".agents" },
         { dirty: false, head: productRevision, id: "tsfg.git", path: "tsfg" },
+        { dirty: false, head: agentRevision, id: ".agents.git", path: ".agents" },
       ],
     },
     schemaVersion: "1",

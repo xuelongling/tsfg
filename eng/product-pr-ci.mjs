@@ -218,18 +218,23 @@ function requireSuccessfulReport(report, label, command) {
 
 function requireResolvedWorkspace(report, resolvedManifest, label) {
   requireSuccessfulReport(report, label, "verify-workspace");
-  const expectedProjects = resolvedManifest.projects.map(({ name, path: projectPath, revision }) => ({
-    dirty: false,
-    head: revision,
-    id: name,
-    path: projectPath,
-  }));
-  const actualProjects = report.result?.projects?.map(({ dirty, head, id, path: projectPath }) => ({
-    dirty,
-    head,
-    id,
-    path: projectPath,
-  }));
+  const byProjectId = (left, right) => Buffer.from(left.id).compare(Buffer.from(right.id));
+  const expectedProjects = resolvedManifest.projects
+    .map(({ name, path: projectPath, revision }) => ({
+      dirty: false,
+      head: revision,
+      id: name,
+      path: projectPath,
+    }))
+    .sort(byProjectId);
+  const actualProjects = report.result?.projects
+    ?.map(({ dirty, head, id, path: projectPath }) => ({
+      dirty,
+      head,
+      id,
+      path: projectPath,
+    }))
+    .sort(byProjectId);
   const actualManifest = report.result?.manifest;
   if (
     !Array.isArray(actualProjects) ||
