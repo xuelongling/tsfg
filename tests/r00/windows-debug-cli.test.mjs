@@ -55,12 +55,21 @@ test("Windows debug build, smoke test, and package share one normalized Build Id
     assert.equal(report.status, "success");
     assert.equal(report.network, "offline");
     assert.equal(report.result.networkCanary, "blocked");
+    assert.deepEqual(report.result.networkIsolation, {
+      mode: "wfp-dynamic-app-id",
+      scope: "operation-and-descendants",
+      status: "blocked",
+    });
   }
   assert.deepEqual(testReport.result.tests, [
     { name: "cpp-smoke", status: "passed" },
     { name: "zig-smoke", status: "passed" },
   ]);
   assert.equal(buildReport.result.publishable, true);
+  assert.deepEqual(buildReport.result.inputAudit, {
+    mode: "materialized-build-input-set+restricted-token",
+    undeclaredReads: "blocked",
+  });
   assert.deepEqual(buildReport.result.steps, [
     { role: "normative", tool: "cmake" },
     { role: "normative", tool: "ninja" },

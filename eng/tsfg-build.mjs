@@ -4,6 +4,7 @@
 import {
   chmod,
   copyFile,
+  mkdtemp,
   mkdir,
   lstat,
   open,
@@ -20,6 +21,7 @@ import {
 import { constants as fsConstants } from "node:fs";
 import { execFileSync, spawnSync } from "node:child_process";
 import { connect as connectNetwork } from "node:net";
+import { tmpdir } from "node:os";
 import path from "node:path";
 import process from "node:process";
 import { createHash, randomUUID } from "node:crypto";
@@ -43,6 +45,11 @@ class SandboxBoundaryError extends Error {}
 const SANDBOX_NETWORK_BOUNDARY_STATUS = 123;
 const SANDBOX_UNDECLARED_INPUT_STATUS = 124;
 const SANDBOX_SETUP_FAILURE_STATUS = 125;
+const WINDOWS_NETWORK_ISOLATION = Object.freeze({
+  mode: "wfp-dynamic-app-id",
+  scope: "operation-and-descendants",
+  status: "blocked",
+});
 class WorkspaceMismatchError extends Error {
   constructor(code, message) {
     super(message);
@@ -1866,9 +1873,44 @@ function runBuildTool(
       ? error.stderr.toString("utf8")
       : "";
     const detail = `${stdout}${stderr}`.trim() || error.message;
-    if (sandboxProtocol) throwSandboxBoundaryFailure(detail, "build", error.status);
+    if (sandboxProtocol) {
+      throwSandboxBoundaryFailure(detail, "build", error.status);
+      if (/\b(?:access is denied|permission denied)\b/i.test(detail)) {
+        throw new UndeclaredInputError(`sandbox denied an undeclared build input: ${detail}`);
+      }
+    }
     throw new BuildFailureError(`${toolId} failed${detail ? `: ${detail}` : ""}`);
   }
+}
+
+function runWindowsSandboxedCapture(
+  toolId,
+  sandboxExecutable,
+  sandboxPolicy,
+  executable,
+  arguments_,
+  cwd,
+  environment,
+) {
+  const result = spawnSync(
+    sandboxExecutable,
+    windowsSandboxArguments(sandboxPolicy, executable, arguments_),
+    {
+      cwd,
+      encoding: "utf8",
+      env: environment,
+      maxBuffer: 256 * 1024 * 1024,
+      stdio: ["ignore", "pipe", "pipe"],
+    },
+  );
+  if (result.error || result.status !== 0) {
+    const detail = `${result.stdout ?? ""}${result.stderr ?? ""}`.trim()
+      || result.error?.message
+      || "unknown failure";
+    throwSandboxBoundaryFailure(detail, "build", result.status);
+    throw new BuildFailureError(`${toolId} failed: ${detail}`);
+  }
+  return result;
 }
 
 function sandboxArguments(
@@ -1913,6 +1955,8 @@ async function compileSandbox(runtime, sourceRoot, controlRoot) {
 
 function windowsSandboxArguments(policy, executable, arguments_) {
   return [
+    ...(policy.networkDenied ?? []).flatMap((allowedPath) => ["--deny-network", allowedPath]),
+    ...(policy.deniedRead ?? []).flatMap((deniedPath) => ["--deny-read", deniedPath]),
     ...policy.readOnly.flatMap((allowedPath) => ["--ro", allowedPath]),
     ...policy.readExecute.flatMap((allowedPath) => ["--rx", allowedPath]),
     ...policy.readWrite.flatMap((allowedPath) => ["--rw", allowedPath]),
@@ -1936,7 +1980,8 @@ async function compileWindowsSandbox(runtime, sourceRoot, controlRoot) {
       "-municode",
       path.join(sourceRoot, "eng", "windows-sandbox-run.c"),
       "-ladvapi32",
-      "-luserenv",
+      "-lfwpuclnt",
+      "-lole32",
       "-o", executable,
     ],
     sourceRoot,
@@ -1944,6 +1989,27 @@ async function compileWindowsSandbox(runtime, sourceRoot, controlRoot) {
   );
   await readRegularFile(executable, "Windows sandbox executable");
   return { executable };
+}
+
+function windowsNetworkPrograms(runtime, additional = []) {
+  const tools = windowsToolchain(runtime);
+  return [...new Set([
+    closureToolPath(runtime, "node"),
+    tools.cmake,
+    tools.ninja,
+    tools.clangcl,
+    tools.lld,
+    tools.rc,
+    tools.mt,
+    tools.zig,
+    tools.cl,
+    tools.link,
+    tools.pdbutil,
+    process.env.ComSpec,
+    process.env.TSFG_GIT,
+    ...additional,
+  ].filter((program) => typeof program === "string" && program.length > 0)
+    .map((program) => path.resolve(program)))];
 }
 
 function verifyWindowsSandboxBoundary(
@@ -1955,6 +2021,8 @@ function verifyWindowsSandboxBoundary(
 ) {
   const node = closureToolPath(runtime, "node");
   const policy = {
+    networkDenied: windowsNetworkPrograms(runtime),
+    deniedRead: [undeclaredRoot],
     readOnly: [sourceRoot],
     readExecute: [runtime.closurePath, path.dirname(sourceRoot)],
     readWrite: [workRoot],
@@ -2258,21 +2326,26 @@ function windowsToolchain(runtime) {
   };
 }
 
-async function normalizeWindowsPdb(pdbPath, pdbutil, pathMappings, workRoot, environment) {
+async function normalizeWindowsPdb(
+  pdbPath,
+  pdbutil,
+  pathMappings,
+  workRoot,
+  environment,
+  sandboxExecutable,
+  sandboxPolicy,
+) {
   const yamlPath = path.join(workRoot, `${path.basename(pdbPath)}.${randomUUID()}.yaml`);
   const normalizedPath = path.join(workRoot, `${path.basename(pdbPath)}.${randomUUID()}.pdb`);
-  const dumped = spawnSync(pdbutil, ["pdb2yaml", "--all", pdbPath], {
-    cwd: workRoot,
-    encoding: "utf8",
-    env: environment,
-    maxBuffer: 256 * 1024 * 1024,
-    stdio: ["ignore", "pipe", "pipe"],
-  });
-  if (dumped.error || dumped.status !== 0) {
-    throw new BuildFailureError(
-      `llvm-pdbutil pdb2yaml failed: ${(dumped.stderr || dumped.error?.message || "unknown failure").trim()}`,
-    );
-  }
+  const dumped = runWindowsSandboxedCapture(
+    "llvm-pdbutil pdb2yaml",
+    sandboxExecutable,
+    sandboxPolicy,
+    pdbutil,
+    ["pdb2yaml", "--all", pdbPath],
+    workRoot,
+    environment,
+  );
   let yaml = dumped.stdout;
   for (const [source, replacement] of pathMappings) {
     yaml = yaml.replaceAll(source, replacement);
@@ -2285,20 +2358,27 @@ async function normalizeWindowsPdb(pdbPath, pdbutil, pathMappings, workRoot, env
   try {
     runBuildTool(
       "llvm-pdbutil",
+      sandboxExecutable,
+      windowsSandboxArguments(
+        sandboxPolicy,
+        pdbutil,
+        ["yaml2pdb", `--pdb=${normalizedPath}`, yamlPath],
+      ),
+      workRoot,
+      environment,
+      true,
+    );
+    await copyFile(normalizedPath, pdbPath);
+    const verified = runWindowsSandboxedCapture(
+      "llvm-pdbutil verification",
+      sandboxExecutable,
+      sandboxPolicy,
       pdbutil,
-      ["yaml2pdb", `--pdb=${normalizedPath}`, yamlPath],
+      ["pdb2yaml", "--all", pdbPath],
       workRoot,
       environment,
     );
-    await copyFile(normalizedPath, pdbPath);
-    const verified = spawnSync(pdbutil, ["pdb2yaml", "--all", pdbPath], {
-      cwd: workRoot,
-      encoding: "utf8",
-      env: environment,
-      maxBuffer: 256 * 1024 * 1024,
-      stdio: ["ignore", "pipe", "pipe"],
-    });
-    if (verified.error || verified.status !== 0 || /[A-Za-z]:[\\/]/.test(verified.stdout)) {
+    if (/[A-Za-z]:[\\/]/.test(verified.stdout)) {
       throw new BuildFailureError("normalized PDB still contains an absolute Windows path");
     }
   } finally {
@@ -2328,10 +2408,11 @@ async function buildWindowsDebug(options, runtime, workspaceState, networkCanary
     throw new BuildFailureError(`cannot derive Build Identity: ${error.message}`);
   }
   const output = path.resolve(outputOption);
+  const boundaryRoot = await mkdtemp(path.join(tmpdir(), "tsfg-windows-build-"));
   const stagingRoot = path.join(path.dirname(output), `.${path.basename(output)}.${randomUUID()}.tmp`);
-  const sourceRoot = path.join(stagingRoot, "source");
-  const workRoot = path.join(stagingRoot, "work");
-  const controlRoot = path.join(stagingRoot, "control");
+  const sourceRoot = path.join(boundaryRoot, "source");
+  const workRoot = path.join(boundaryRoot, "work");
+  const controlRoot = path.join(boundaryRoot, "control");
   const publishRoot = path.join(stagingRoot, "publish");
   const cppWork = path.join(workRoot, "cpp");
   const zigPrefix = path.join(workRoot, "zig-install");
@@ -2411,24 +2492,36 @@ async function buildWindowsDebug(options, runtime, workspaceState, networkCanary
     await materializeBuildInputs(workspaceState.root, identity.buildInputSet, sourceRoot);
     await Promise.all([cppWork, path.join(zigPrefix, "bin"), compatibilityRoot, binRoot, symbolRoot]
       .map((directory) => mkdir(directory, { recursive: true })));
-    let sandboxExecutable;
-    if (runtime.platform === target) {
-      ({ executable: sandboxExecutable } = await compileWindowsSandbox(runtime, sourceRoot, controlRoot));
-      verifyWindowsSandboxBoundary(
-        sandboxExecutable,
-        runtime,
-        sourceRoot,
-        workRoot,
-        workspaceState.root,
-      );
+    if (runtime.platform !== target) {
+      throw new SandboxBoundaryError("Windows runtime closure cannot establish the target boundary");
     }
+    const { executable: sandboxExecutable } = await compileWindowsSandbox(
+      runtime,
+      sourceRoot,
+      controlRoot,
+    );
+    verifyWindowsSandboxBoundary(
+      sandboxExecutable,
+      runtime,
+      sourceRoot,
+      workRoot,
+      workspaceState.root,
+    );
+    const sandboxPolicy = {
+      networkDenied: windowsNetworkPrograms(runtime),
+      deniedRead: [workspaceState.root],
+      readOnly: [sourceRoot],
+      readExecute: [runtime.closurePath],
+      readWrite: [workRoot],
+    };
     for (const step of steps) {
       runBuildTool(
         step.tool,
-        step.executable,
-        step.arguments,
+        sandboxExecutable,
+        windowsSandboxArguments(sandboxPolicy, step.executable, step.arguments),
         sourceRoot,
         environment,
+        true,
       );
     }
     const outputs = [
@@ -2457,10 +2550,12 @@ async function buildWindowsDebug(options, runtime, workspaceState, networkCanary
           [sourceRoot, "."],
           [runtime.closurePath, ".toolchain"],
           [workRoot, ".build"],
-          [stagingRoot, ".build"],
+          [boundaryRoot, ".build"],
         ],
         workRoot,
         environment,
+        sandboxExecutable,
+        sandboxPolicy,
       );
       const symbolBytes = await readRegularFile(item.symbolSource, item.symbolDestination)
         .catch((error) => { throw new BuildFailureError(error.message); });
@@ -2475,8 +2570,12 @@ async function buildWindowsDebug(options, runtime, workspaceState, networkCanary
       contractSetId: identity.contractSetId,
       development: workspaceState.development,
       dirty: workspaceState.dirty,
-      inputAudit: { mode: "materialized-build-input-set+appcontainer-canaries", undeclaredReads: "blocked" },
+      inputAudit: {
+        mode: "materialized-build-input-set+restricted-token",
+        undeclaredReads: "blocked",
+      },
       networkCanary,
+      networkIsolation: WINDOWS_NETWORK_ISOLATION,
       payloads,
       productVersion: identity.productVersion,
       publishable: workspaceState.publishable,
@@ -2497,6 +2596,7 @@ async function buildWindowsDebug(options, runtime, workspaceState, networkCanary
       dirty: workspaceState.dirty,
       inputAudit: metadata.inputAudit,
       networkCanary,
+      networkIsolation: WINDOWS_NETWORK_ISOLATION,
       outputs: [...payloads, ...symbols].map(({ path: outputPath }) => outputPath).concat("build-metadata.json"),
       profile,
       publishable: workspaceState.publishable,
@@ -2507,6 +2607,7 @@ async function buildWindowsDebug(options, runtime, workspaceState, networkCanary
     return result;
   } finally {
     await rm(stagingRoot, { recursive: true, force: true, maxRetries: 5, retryDelay: 100 });
+    await rm(boundaryRoot, { recursive: true, force: true, maxRetries: 5, retryDelay: 100 });
   }
 }
 
@@ -2518,6 +2619,7 @@ function runSmokeExecutable(
   sandboxExecutable,
   sandboxRoot,
   lockedShell,
+  deniedRoot,
 ) {
   const sysroot = path.join(runtime.closurePath, "debian-sysroot");
   const command = runtime.platform === "linux-x86_64-gnu"
@@ -2538,7 +2640,13 @@ function runSmokeExecutable(
     sandboxExecutable
       ? runtime.platform === "windows-x86_64-msvc"
         ? windowsSandboxArguments(
-          { readOnly: [], readExecute: [outputRoot, runtime.closurePath], readWrite: [] },
+          {
+            networkDenied: windowsNetworkPrograms(runtime, [command]),
+            deniedRead: [deniedRoot],
+            readOnly: [],
+            readExecute: [outputRoot, runtime.closurePath],
+            readWrite: [],
+          },
           command,
           commandArguments,
         )
@@ -2561,7 +2669,12 @@ function runSmokeExecutable(
   );
   if (result.error || result.status !== 0) {
     const detail = `${result.stdout ?? ""}${result.stderr ?? ""}`.trim();
-    if (sandboxExecutable) throwSandboxBoundaryFailure(detail, "test", result.status);
+    if (sandboxExecutable) {
+      throwSandboxBoundaryFailure(detail, "test", result.status);
+      if (/\b(?:access is denied|permission denied)\b/i.test(detail)) {
+        throw new UndeclaredInputError(`sandbox denied an undeclared test input: ${detail}`);
+      }
+    }
     throw new TestFailureError(
       `${name} failed${detail ? `: ${detail}` : result.error ? `: ${result.error.message}` : ""}`,
     );
@@ -2584,10 +2697,9 @@ async function testDebug(options, runtime, workspaceState, networkCanary) {
   }
 
   const output = path.resolve(outputOption);
-  const testRoot = path.join(
-    path.dirname(output),
-    `.${path.basename(output)}.${randomUUID()}.test`,
-  );
+  const testRoot = target === "windows-x86_64-msvc"
+    ? await mkdtemp(path.join(tmpdir(), "tsfg-windows-test-"))
+    : path.join(path.dirname(output), `.${path.basename(output)}.${randomUUID()}.test`);
   let metadata;
   try {
     metadata = await readCanonicalJson(
@@ -2605,6 +2717,12 @@ async function testDebug(options, runtime, workspaceState, networkCanary) {
     typeof metadata.publishable !== "boolean"
   ) {
     throw new TestFailureError("Build Metadata does not match the requested test target");
+  }
+  if (
+    target === "windows-x86_64-msvc" &&
+    canonicalize(metadata.networkIsolation) !== canonicalize(WINDOWS_NETWORK_ISOLATION)
+  ) {
+    throw new TestFailureError("Build Metadata does not prove Windows network isolation");
   }
   let identity;
   try {
@@ -2698,6 +2816,7 @@ async function testDebug(options, runtime, workspaceState, networkCanary) {
         sandboxExecutable,
         sandboxRoot,
         lockedShell,
+        workspaceState.root,
       );
       if (observed.stdout !== smoke.stdout || observed.stderr !== smoke.stderr) {
         throw new TestFailureError(
@@ -2714,6 +2833,9 @@ async function testDebug(options, runtime, workspaceState, networkCanary) {
     development: metadata.development || workspaceState.development,
     dirty: metadata.dirty || workspaceState.dirty,
     networkCanary,
+    ...(target === "windows-x86_64-msvc"
+      ? { networkIsolation: WINDOWS_NETWORK_ISOLATION }
+      : {}),
     profile,
     publishable: metadata.publishable && workspaceState.publishable,
     target,
@@ -3254,10 +3376,11 @@ async function packageWindowsDebug(options, runtime, workspaceState, networkCana
   const archiveName = `tsfg-v${identity.productVersion}-${target}-${profile}-${identity.buildIdentity.digest.slice(7, 23)}.zip`;
   const output = path.resolve(outputOption);
   const input = path.resolve(inputOption);
+  const boundaryRoot = await mkdtemp(path.join(tmpdir(), "tsfg-windows-package-"));
   const stagingRoot = path.join(path.dirname(output), `.${path.basename(output)}.${randomUUID()}.tmp`);
-  const sourceRoot = path.join(stagingRoot, "source");
-  const workRoot = path.join(stagingRoot, "work");
-  const controlRoot = path.join(stagingRoot, "control");
+  const sourceRoot = path.join(boundaryRoot, "source");
+  const workRoot = path.join(boundaryRoot, "work");
+  const controlRoot = path.join(boundaryRoot, "control");
   const publishRoot = path.join(stagingRoot, "publish");
   try {
     await Promise.all([workRoot, publishRoot].map((directory) => mkdir(directory, { recursive: true })));
@@ -3270,7 +3393,8 @@ async function packageWindowsDebug(options, runtime, workspaceState, networkCana
       metadata.dirty !== false ||
       metadata.productVersion !== identity.productVersion ||
       metadata.publishable !== true ||
-      metadata.toolchainClosureDigest !== runtime.lockDigest
+      metadata.toolchainClosureDigest !== runtime.lockDigest ||
+      canonicalize(metadata.networkIsolation) !== canonicalize(WINDOWS_NETWORK_ISOLATION)
     ) {
       throw new PackageFailureError("build metadata does not match the current Build Identity");
     }
@@ -3361,6 +3485,7 @@ async function packageWindowsDebug(options, runtime, workspaceState, networkCana
       dirty: false,
       input,
       networkCanary,
+      networkIsolation: WINDOWS_NETWORK_ISOLATION,
       publishable: true,
     };
     Object.defineProperty(result, "publication", { value: publication });
@@ -3376,6 +3501,99 @@ async function packageWindowsDebug(options, runtime, workspaceState, networkCana
     throw new PackageFailureError(error.message);
   } finally {
     await rm(stagingRoot, { recursive: true, force: true, maxRetries: 5, retryDelay: 100 });
+    await rm(boundaryRoot, { recursive: true, force: true, maxRetries: 5, retryDelay: 100 });
+  }
+}
+
+function shouldEnterWindowsOfflineBoundary(arguments_, runtime) {
+  if (
+    process.platform !== "win32" ||
+    process.env.TSFG_WINDOWS_OFFLINE_ACTIVE === "1" ||
+    runtime?.platform !== "windows-x86_64-msvc"
+  ) return false;
+  const command = arguments_[0];
+  if (!["build", "test", "package"].includes(command)) return false;
+  try {
+    const requireInput = command === "package";
+    const options = parseOptions(
+      arguments_,
+      new Set([
+        "--dev",
+        "--target",
+        "--profile",
+        "--workspace",
+        ...(requireInput ? ["--input"] : []),
+        "--out",
+        "--report",
+      ]),
+      new Set(["--dev"]),
+    );
+    validateSmokeOptions(options, command, requireInput);
+    if (options.get("--target") !== "windows-x86_64-msvc") return false;
+    inspectProductWorkspace(options, command !== "package");
+    return true;
+  } catch {
+    return false;
+  }
+}
+
+async function enterWindowsOfflineBoundary(arguments_, runtime, reportPath) {
+  const repositoryRoot = path.dirname(path.dirname(fileURLToPath(import.meta.url)));
+  const controlRoot = await mkdtemp(path.join(tmpdir(), "tsfg-windows-offline-"));
+  try {
+    const { executable } = await compileWindowsSandbox(runtime, repositoryRoot, controlRoot);
+    const deniedPrograms = windowsNetworkPrograms(runtime, [process.execPath]);
+    const child = spawnSync(
+      executable,
+      [
+        "--network-only",
+        ...deniedPrograms.flatMap((program) => ["--deny-network", program]),
+        "--",
+        process.execPath,
+        fileURLToPath(import.meta.url),
+        ...arguments_,
+      ],
+      {
+        cwd: process.cwd(),
+        encoding: "utf8",
+        env: { ...process.env, TSFG_WINDOWS_OFFLINE_ACTIVE: "1" },
+        maxBuffer: 256 * 1024 * 1024,
+        stdio: ["ignore", "pipe", "pipe"],
+      },
+    );
+    if (child.stdout) process.stdout.write(child.stdout);
+    if (child.stderr) process.stderr.write(child.stderr);
+    if (child.error || child.status === SANDBOX_SETUP_FAILURE_STATUS) {
+      const detail = child.error?.message
+        ?? `${child.stdout ?? ""}${child.stderr ?? ""}`.trim()
+        ?? "Windows offline supervisor failed";
+      return await fail(
+        arguments_[0],
+        12,
+        "offline input missing",
+        {
+          code: "sandbox-boundary",
+          message: `Windows offline boundary is unavailable: ${detail}`,
+        },
+        reportPath,
+        "offline",
+      );
+    }
+    return child.status ?? 30;
+  } catch (error) {
+    return await fail(
+      arguments_[0],
+      12,
+      "offline input missing",
+      {
+        code: "sandbox-boundary",
+        message: `Windows offline boundary is unavailable: ${error.message}`,
+      },
+      reportPath,
+      "offline",
+    );
+  } finally {
+    await rm(controlRoot, { recursive: true, force: true, maxRetries: 5, retryDelay: 100 });
   }
 }
 
@@ -3407,7 +3625,21 @@ if (
   }
 }
 
-if (runtimeIntegrityError) {
+let delegatedWindowsStatus;
+if (
+  !runtimeIntegrityError &&
+  shouldEnterWindowsOfflineBoundary(arguments_, runtimeClosure)
+) {
+  delegatedWindowsStatus = await enterWindowsOfflineBoundary(
+    arguments_,
+    runtimeClosure,
+    reportPath,
+  );
+}
+
+if (delegatedWindowsStatus !== undefined) {
+  process.exitCode = delegatedWindowsStatus;
+} else if (runtimeIntegrityError) {
   process.exitCode = await fail(
     command,
     11,
@@ -3491,9 +3723,7 @@ if (runtimeIntegrityError) {
     validateSmokeOptions(options, "build");
     const workspaceState = inspectProductWorkspace(options, true);
     if (!runtimeClosure) throw new Error("locked runtime closure is unavailable");
-    const networkCanary = options.get("--target") === "windows-x86_64-msvc"
-      ? "blocked"
-      : await verifyOfflineBoundary();
+    const networkCanary = await verifyOfflineBoundary();
     const result = options.get("--target") === "windows-x86_64-msvc"
       ? await buildWindowsDebug(options, runtimeClosure, workspaceState, networkCanary)
       : await buildLinuxDebug(
@@ -3556,9 +3786,7 @@ if (runtimeIntegrityError) {
     validateSmokeOptions(options, "test");
     const workspaceState = inspectProductWorkspace(options, true);
     if (!runtimeClosure) throw new Error("locked runtime closure is unavailable");
-    const networkCanary = options.get("--target") === "windows-x86_64-msvc"
-      ? "blocked"
-      : await verifyOfflineBoundary();
+    const networkCanary = await verifyOfflineBoundary();
     const result = await testDebug(options, runtimeClosure, workspaceState, networkCanary);
     process.exitCode = await succeed(command, result, reportPath, "offline");
   } catch (error) {
@@ -3613,9 +3841,7 @@ if (runtimeIntegrityError) {
     validateSmokeOptions(options, "package", true);
     const workspaceState = inspectProductWorkspace(options, false);
     if (!runtimeClosure) throw new PackageFailureError("locked runtime closure is unavailable");
-    const networkCanary = options.get("--target") === "windows-x86_64-msvc"
-      ? "blocked"
-      : await verifyOfflineBoundary();
+    const networkCanary = await verifyOfflineBoundary();
     const result = options.get("--target") === "windows-x86_64-msvc"
       ? await packageWindowsDebug(options, runtimeClosure, workspaceState, networkCanary)
       : await packageLinuxDebug(options, runtimeClosure, workspaceState, networkCanary);

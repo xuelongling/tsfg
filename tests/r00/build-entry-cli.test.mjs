@@ -935,6 +935,31 @@ test("dirty workspace fails closed before build execution", async () => {
         "--out", path.join(sandbox, "package"),
         "--report", reportPath,
       ],
+      [
+        "build",
+        "--target", "windows-x86_64-msvc",
+        "--profile", "debug",
+        "--workspace", workspace,
+        "--out", path.join(sandbox, "windows-out"),
+        "--report", reportPath,
+      ],
+      [
+        "test",
+        "--target", "windows-x86_64-msvc",
+        "--profile", "debug",
+        "--workspace", workspace,
+        "--out", path.join(sandbox, "windows-out"),
+        "--report", reportPath,
+      ],
+      [
+        "package",
+        "--target", "windows-x86_64-msvc",
+        "--profile", "debug",
+        "--workspace", workspace,
+        "--input", path.join(sandbox, "windows-input"),
+        "--out", path.join(sandbox, "windows-package"),
+        "--report", reportPath,
+      ],
     ];
     for (const arguments_ of dirtyCommands) {
       const result = await invoke(arguments_);
