@@ -2,11 +2,15 @@
 
 import assert from "node:assert/strict";
 import { createHash } from "node:crypto";
-import { readFile, readdir } from "node:fs/promises";
+import { mkdtemp, mkdir, readFile, readdir, rm, stat, writeFile } from "node:fs/promises";
+import { spawnSync } from "node:child_process";
+import { fileURLToPath } from "node:url";
 import path from "node:path";
 import test from "node:test";
 
 const acceptanceRoot = process.env.TSFG_WINDOWS_ACCEPTANCE_ROOT;
+const closureCache = process.env.TSFG_WINDOWS_CLOSURE_CACHE;
+const repositoryRoot = path.dirname(path.dirname(path.dirname(fileURLToPath(import.meta.url))));
 
 function sha256(bytes) {
   return `sha256:${createHash("sha256").update(bytes).digest("hex")}`;
@@ -56,7 +60,7 @@ test("Windows debug build, smoke test, and package share one normalized Build Id
     assert.equal(report.network, "offline");
     assert.equal(report.result.networkCanary, "blocked");
     assert.deepEqual(report.result.networkIsolation, {
-      mode: "wfp-dynamic-app-id",
+      mode: "wfp-dynamic-host-egress",
       scope: "operation-and-descendants",
       status: "blocked",
     });
@@ -111,5 +115,111 @@ test("Windows debug build, smoke test, and package share one normalized Build Id
       assert.doesNotMatch(entry.bytes.toString("latin1"), /[A-Za-z]:[\\/]/, entry.name);
       assert.doesNotMatch(entry.bytes.toString("utf16le"), /[A-Za-z]:[\\/]/, entry.name);
     }
+  }
+});
+
+test("Windows public build seam blocks network, PATH tools, and undeclared workspace reads", {
+  skip: process.platform !== "win32" || !acceptanceRoot || !closureCache,
+  timeout: 10 * 60 * 1000,
+}, async () => {
+  const root = await mkdtemp(path.join(acceptanceRoot, "tsfg-r00-windows-live-"));
+  const launcher = path.join(repositoryRoot, "eng", "tsfg-build.cmd");
+  const invoke = (arguments_, environment = {}) => spawnSync(launcher, arguments_, {
+    cwd: repositoryRoot,
+    encoding: "utf8",
+    env: {
+      ...process.env,
+      TSFG_CACHE_DIR: closureCache,
+      ...environment,
+    },
+  });
+  try {
+    const poisonRoot = path.join(root, "poison-path");
+    const poisonSentinel = path.join(root, "poison-ran");
+    await mkdir(poisonRoot);
+    for (const tool of ["clang-cl", "cmake", "ninja", "node", "pnpm", "zig"]) {
+      await writeFile(
+        path.join(poisonRoot, `${tool}.cmd`),
+        `@echo off\r\n>"${poisonSentinel}" echo poison\r\nexit /b 91\r\n`,
+      );
+    }
+    const locatedGit = spawnSync("where.exe", ["git"], { encoding: "utf8" });
+    assert.equal(locatedGit.status, 0, locatedGit.stderr);
+    const gitDirectory = path.dirname(locatedGit.stdout.split(/\r?\n/).find(Boolean));
+    const isolatedPath = [poisonRoot, gitDirectory].join(path.delimiter);
+    const buildRoot = path.join(root, "build");
+    const buildReportPath = path.join(root, "build-report.json");
+    const built = invoke([
+      "build",
+      "--target", "windows-x86_64-msvc",
+      "--profile", "debug",
+      "--workspace", repositoryRoot,
+      "--out", buildRoot,
+      "--report", buildReportPath,
+    ], { PATH: isolatedPath });
+    assert.equal(built.status, 0, built.stderr);
+    await assert.rejects(stat(poisonSentinel), /ENOENT/);
+    const buildReport = JSON.parse(await readFile(buildReportPath, "utf8"));
+    assert.equal(buildReport.result.networkCanary, "blocked");
+    assert.deepEqual(buildReport.result.networkIsolation, {
+      mode: "wfp-dynamic-host-egress",
+      scope: "operation-and-descendants",
+      status: "blocked",
+    });
+
+    const testReportPath = path.join(root, "test-report.json");
+    const tested = invoke([
+      "test",
+      "--target", "windows-x86_64-msvc",
+      "--profile", "debug",
+      "--workspace", repositoryRoot,
+      "--out", buildRoot,
+      "--report", testReportPath,
+    ], { PATH: isolatedPath });
+    assert.equal(tested.status, 0, tested.stderr);
+
+    const packageRoot = path.join(root, "package");
+    const packageReportPath = path.join(root, "package-report.json");
+    const packaged = invoke([
+      "package",
+      "--target", "windows-x86_64-msvc",
+      "--profile", "debug",
+      "--workspace", repositoryRoot,
+      "--input", buildRoot,
+      "--out", packageRoot,
+      "--report", packageReportPath,
+    ], { PATH: isolatedPath });
+    assert.equal(packaged.status, 0, packaged.stderr);
+
+    const dirtyWorkspace = path.join(root, "dirty-workspace");
+    const cloned = spawnSync("git", [
+      "-c", "core.autocrlf=false", "clone", "--quiet", "--no-hardlinks",
+      repositoryRoot, dirtyWorkspace,
+    ], { encoding: "utf8" });
+    assert.equal(cloned.status, 0, cloned.stderr);
+    const undeclaredHeader = path.join(dirtyWorkspace, "undeclared-input.h");
+    await writeFile(undeclaredHeader, "#define TSFG_UNDECLARED_INPUT 1\n");
+    const smokeSource = path.join(dirtyWorkspace, "tests", "r00", "smoke", "cpp", "main.cpp");
+    await writeFile(
+      smokeSource,
+      `#include ${JSON.stringify(undeclaredHeader.replaceAll("\\", "/"))}\n${await readFile(smokeSource, "utf8")}`,
+    );
+    const deniedOutput = path.join(root, "undeclared-output");
+    const deniedReportPath = path.join(root, "undeclared-report.json");
+    const denied = invoke([
+      "build", "--dev",
+      "--target", "windows-x86_64-msvc",
+      "--profile", "debug",
+      "--workspace", dirtyWorkspace,
+      "--out", deniedOutput,
+      "--report", deniedReportPath,
+    ]);
+    assert.equal(denied.status, 12, denied.stderr);
+    const deniedReport = JSON.parse(await readFile(deniedReportPath, "utf8"));
+    assert.equal(deniedReport.error.category, "offline input missing");
+    assert.equal(deniedReport.error.issues[0].code, "undeclared-build-input");
+    await assert.rejects(stat(deniedOutput), /ENOENT/);
+  } finally {
+    await rm(root, { recursive: true, force: true, maxRetries: 5, retryDelay: 100 });
   }
 });
