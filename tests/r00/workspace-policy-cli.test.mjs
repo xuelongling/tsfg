@@ -496,6 +496,12 @@ test("verify-workspace requires machine-complete first-party MIT coverage", asyn
       productFiles: { "LICENSE": "MIT License\n\nCopyright (c) 2026 somebody-else\n" },
     },
     {
+      code: "license-root",
+      productFiles: {
+        "LICENSE": "MIT License\n\nCopyright (c) 2026 xuelongling\n\ntruncated\n",
+      },
+    },
+    {
       code: "license-spdx",
       productFiles: { "eng/example.mjs": "export {};\n" },
     },
@@ -597,6 +603,15 @@ test("verify-workspace rejects incomplete dependency license provenance", async 
         status: "required",
       }),
       productFiles: { "third_party/notices/example.txt": "" },
+      toolchainLock: lock("MIT"),
+    },
+    {
+      code: "dependency-notice",
+      dependencySources: source("MIT", {
+        path: "third_party/notices/example.txt",
+        status: "required",
+      }),
+      productFiles: { "third_party/notices/example.txt": "  \n\t\n" },
       toolchainLock: lock("MIT"),
     },
     {
@@ -718,6 +733,18 @@ test("verify-workspace rejects agent private state and unexplained generated out
     },
     {
       code: "agent-secret",
+      agentFiles: { "codex/private.toml": 'OPENAI_API_KEY = "x"\n' },
+    },
+    {
+      code: "agent-secret",
+      agentFiles: { "codex/private.toml": 'GITHUB_TOKEN = "short secret"\n' },
+    },
+    {
+      code: "agent-secret",
+      agentFiles: { "codex/private.toml": 'oauth_session = "short secret"\n' },
+    },
+    {
+      code: "agent-secret",
       agentFiles: { "codex/private.toml": 'session_cookie = "concrete-private-value"\n' },
     },
     {
@@ -744,6 +771,39 @@ test("verify-workspace rejects agent private state and unexplained generated out
         "mcp/example/artifact-provenance.json": selfReferentialProvenance,
         "mcp/example/dist/server.js": dist,
       },
+    },
+    {
+      code: "agent-dist-only-mcp",
+      agentFiles: (() => {
+        const readme = "<!-- SPDX-License-Identifier: MIT -->\n\n# not source\n";
+        const lock = '{"lockfileVersion":1}\n';
+        return {
+          "mcp/example/README.md": readme,
+          "mcp/example/artifact-provenance.json": `${JSON.stringify({
+            artifacts: [
+              {
+                digest: distDigest,
+                locks: [
+                  {
+                    digest: `sha256:${createHash("sha256").update(lock).digest("hex")}`,
+                    path: "package-lock.json",
+                  },
+                ],
+                path: "dist/server.js",
+                sources: [
+                  {
+                    digest: `sha256:${createHash("sha256").update(readme).digest("hex")}`,
+                    path: "README.md",
+                  },
+                ],
+              },
+            ],
+            schema_version: "1",
+          })}\n`,
+          "mcp/example/dist/server.js": dist,
+          "mcp/example/package-lock.json": lock,
+        };
+      })(),
     },
     {
       code: "repository-local-output",

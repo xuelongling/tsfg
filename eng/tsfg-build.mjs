@@ -1872,7 +1872,7 @@ function verifyFirstPartyLicense(repository, entries, definition) {
     : Buffer.alloc(0);
   const licenseText = new TextDecoder("utf-8", { fatal: true }).decode(licenseBytes);
   if (
-    !licenseText.startsWith("MIT License\n") ||
+    digest(licenseBytes) !== definition.firstPartyLicenseSha256 ||
     !licenseText.includes("Copyright (c) 2026 xuelongling\n")
   ) {
     throw new WorkspaceMismatchError(
@@ -1957,7 +1957,7 @@ function dependencyNotice(entry, product, entryMap) {
     typeof entry.notice.path !== "string" ||
     !/^(?:NOTICE|third_party\/notices\/[a-z0-9._/-]+)$/.test(entry.notice.path) ||
     entryMap.get(entry.notice.path)?.mode === "120000" ||
-    !entryMap.get(entry.notice.path)?.bytes.length
+    !entryMap.get(entry.notice.path)?.bytes.toString("utf8").trim()
   ) {
     throw new WorkspaceMismatchError(
       "dependency-notice",
@@ -2212,7 +2212,7 @@ function agentStatePathIssue(relativePath) {
 function agentSecretContent(content) {
   const knownToken = /sk-[A-Za-z0-9_-]{16,}|gh[oprsu]_[A-Za-z0-9]{20,}|github_pat_[A-Za-z0-9_]{20,}/;
   const privateKey = /-----BEGIN (?:RSA |EC |OPENSSH )?PRIVATE KEY-----/;
-  const credential = /(?:^|[^A-Za-z0-9_])["']?(?:client[_ -]?secret|access[_ -]?token|refresh[_ -]?token|id[_ -]?token|api[_ -]?key|token|authorization|password|passwd|session[_ -]?cookie)["']?\s*[:=]\s*(?:"(?!<|\$\{|%)[^"\r\n]+"|'(?!<|\$\{|%)[^'\r\n]+'|(?!["'<$%])[^\s#;,]+)/i;
+  const credential = /(?:^|[,{;\r\n])\s*["']?(?:[A-Za-z0-9]+[_. -]+)*(?:client[_ -]?secret|access[_ -]?token|refresh[_ -]?token|id[_ -]?token|api[_ -]?key|oauth[_ -]?(?:session|token)|token|authorization|password|passwd|session[_ -]?cookie)["']?\s*[:=]\s*(?:"(?!<|\$\{|%)[^"\r\n]+"|'(?!<|\$\{|%)[^'\r\n]+'|(?!["'<$%])[^\s#;,]+)/im;
   const windowsAbsolute = /(?:^|[^A-Za-z0-9_])(?:[A-Za-z]:[\\/]|\\\\[A-Za-z0-9._-]+\\[A-Za-z0-9$._-]+\\)/im;
   const posixHome = /\/(?:home|Users)\/[^/\s"']+|\/root(?:\/|\b)/;
   return knownToken.test(content) || privateKey.test(content) || credential.test(content) ||
@@ -2258,7 +2258,7 @@ function joinedRepositoryPath(prefix, relativePath) {
   return joined;
 }
 
-function verifyGeneratedProvenance(repository, entries) {
+function verifyGeneratedProvenance(repository, entries, definition) {
   const entryMap = committedEntryMap(repository, entries);
   const generated = new Map();
   for (const relativePath of entryMap.keys()) {
@@ -2313,6 +2313,7 @@ function verifyGeneratedProvenance(repository, entries) {
       ) {
         throw new WorkspaceMismatchError(issueCode, `${provenancePath} does not explain its output`);
       }
+      let hasMaintainedMcpSource = false;
       for (const [kind, inputs] of [
         ["source", artifact.sources],
         ["lock", artifact.locks],
@@ -2339,7 +2340,19 @@ function verifyGeneratedProvenance(repository, entries) {
               `${provenancePath} has an unknown source or lock`,
             );
           }
+          if (
+            kind === "source" &&
+            inputPath.startsWith(`${projectRoot}/${definition.agentMcpSourceDirectory}/`)
+          ) {
+            hasMaintainedMcpSource = true;
+          }
         }
+      }
+      if (issueCode === "agent-dist-only-mcp" && !hasMaintainedMcpSource) {
+        throw new WorkspaceMismatchError(
+          issueCode,
+          `${provenancePath} has no maintained MCP source under ${definition.agentMcpSourceDirectory}/`,
+        );
       }
       declared.add(outputPath);
     }
@@ -2434,9 +2447,11 @@ async function verifyWorkspacePolicy(manifestsRoot, manifestRevision, expectedPr
   );
   if (
     definition.schemaVersion !== "1" ||
+    !/^[a-z0-9._-]+$/.test(definition.agentMcpSourceDirectory) ||
     !/^[1-9][0-9]*$/.test(definition.maxRelativePathLength) ||
     !Array.isArray(definition.approvedLicenseExpressions) ||
     !definition.approvedLicenseExpressions.every((entry) => typeof entry === "string") ||
+    !/^sha256:[0-9a-f]{64}$/.test(definition.firstPartyLicenseSha256) ||
     !Array.isArray(definition.pathCasingWhitelist) ||
     !definition.pathCasingWhitelist.every((entry) => typeof entry === "string") ||
     !Array.isArray(definition.controlPathCasingWhitelist) ||
@@ -2485,7 +2500,7 @@ async function verifyWorkspacePolicy(manifestsRoot, manifestRevision, expectedPr
       verifyTrackedText(repository, entry, licenseMapping(relativePath, definition));
     }
     verifyAgentPrivateState(repository, entries, definition);
-    verifyGeneratedProvenance(repository, entries);
+    verifyGeneratedProvenance(repository, entries, definition);
     const firstParty = ["manifests", "tsfg.git", ".agents.git"].includes(repository.id);
     const coverage = firstParty ? verifyFirstPartyLicense(repository, entries, definition) : [];
     let repositoryLicense = "MIT";
