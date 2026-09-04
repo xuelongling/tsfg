@@ -764,7 +764,10 @@ test("Windows prefetch refuses PATH Node without an explicit verified bootstrap"
     assert.equal(result.status, 11, result.stderr);
     assert.match(result.stderr, /absolute TSFG_BOOTSTRAP_NODE/);
     await assert.rejects(stat(sentinel), /ENOENT/);
-    assert.equal(JSON.parse(await readFile(reportPath, "utf8")).error.category, "lock/integrity");
+    const report = JSON.parse(await readFile(reportPath, "utf8"));
+    assert.equal(report.command, "prefetch");
+    assert.equal(report.network, "online");
+    assert.equal(report.error.category, "lock/integrity");
   } finally {
     await rm(sandbox, { recursive: true, force: true });
   }

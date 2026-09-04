@@ -263,6 +263,8 @@ if "%TSFG_SEGMENT%"==".." exit /b 1
 exit /b 0
 
 :runtime_failure
+set "TSFG_FAILURE_NETWORK=offline"
+if "%TSFG_COMMAND%"=="prefetch" set "TSFG_FAILURE_NETWORK=online"
 if defined TSFG_RUNTIME_MESSAGE (
   set "TSFG_MESSAGE=%TSFG_RUNTIME_MESSAGE%"
 ) else (
@@ -271,7 +273,7 @@ if defined TSFG_RUNTIME_MESSAGE (
 if not defined TSFG_REPORT goto runtime_failure_stderr
 for %%D in ("%TSFG_REPORT%") do if not exist "%%~dpD" mkdir "%%~dpD" >nul 2>nul
 set "TSFG_REPORT_TEMP=%TSFG_REPORT%.%RANDOM%.tmp"
->"%TSFG_REPORT_TEMP%" echo {"command":"verify-workspace","error":{"category":"lock/integrity","code":"11","issues":[{"code":"runtime-closure","message":"%TSFG_MESSAGE%"}]},"network":"offline","schemaVersion":"1","status":"failure","telemetry":false}
+>"%TSFG_REPORT_TEMP%" echo {"command":"%TSFG_COMMAND%","error":{"category":"lock/integrity","code":"11","issues":[{"code":"runtime-closure","message":"%TSFG_MESSAGE%"}]},"network":"%TSFG_FAILURE_NETWORK%","schemaVersion":"1","status":"failure","telemetry":false}
 if errorlevel 1 goto runtime_failure_report_error
 move /y "%TSFG_REPORT_TEMP%" "%TSFG_REPORT%" >nul 2>nul
 if errorlevel 1 goto runtime_failure_report_error

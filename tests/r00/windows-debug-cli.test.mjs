@@ -72,6 +72,7 @@ test("Windows debug build, smoke test, and package share one normalized Build Id
   assert.equal(buildReport.result.publishable, true);
   assert.deepEqual(buildReport.result.inputAudit, {
     mode: "materialized-build-input-set+restricted-token",
+    scope: "repository-workspace",
     undeclaredReads: "blocked",
   });
   assert.deepEqual(buildReport.result.steps, [

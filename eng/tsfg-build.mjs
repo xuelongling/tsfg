@@ -2741,6 +2741,7 @@ async function buildWindowsDebug(options, runtime, workspaceState, networkCanary
       dirty: workspaceState.dirty,
       inputAudit: {
         mode: "materialized-build-input-set+restricted-token",
+        scope: "repository-workspace",
         undeclaredReads: "blocked",
       },
       networkCanary,
