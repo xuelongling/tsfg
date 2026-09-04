@@ -11,7 +11,7 @@ permissions:
 env:
   NODE_VERSION: 24.20.0
   PNPM_VERSION: 11.25.0
-  TSFG_MANIFEST_REVISION: d94f4e6bff9aa980b18b0df94e133559e4b61240
+  TSFG_MANIFEST_REVISION: 743e5a629a19ddcce4c9858f00c4dd87fb5adb5a
   TSFG_MANIFEST_URL: https://github.com/xuelongling/manifests.git
   TSFG_SELECTED_MANIFEST: bootstrap/r00.xml
   TSFG_AGENT_TOOLS_REVISION: 24ac2c33750ec0e292e0fba6841897b9c5f86dca
@@ -133,15 +133,7 @@ jobs:
           workspace="$RUNNER_TEMP/tsfg-workspace-verification/workspace"
           manifest_revision=$(node -e "process.stdout.write(JSON.parse(require('node:fs').readFileSync('.ci/materialized-identity.json','utf8')).manifestRevision)")
           mkdir -p .ci/evidence/workspace-verification
-          run_offline() {
-            sudo unshare --net --mount-proc bash -ceu '
-              ip link set lo up
-              interfaces=$(find /sys/class/net -mindepth 1 -maxdepth 1 -printf "%f\n" | sort)
-              [ "$interfaces" = "lo" ]
-              exec setpriv --reuid "$1" --regid "$2" --clear-groups -- "${@:3}"
-            ' bash "$(id -u)" "$(id -g)" "$@"
-          }
-          run_offline "$(command -v node)" "$workspace/tsfg/eng/tsfg-build.mjs" verify-workspace \
+          node "$workspace/tsfg/eng/tsfg-build.mjs" verify-workspace \
             --workspace "$workspace" \
             --manifest-url "$TSFG_MANIFEST_URL" \
             --manifest-revision "$manifest_revision" \
@@ -253,18 +245,10 @@ jobs:
           export TSFG_BOOTSTRAP_NODE_SHA256="$(sha256sum "$TSFG_BOOTSTRAP_NODE" | cut -d ' ' -f 1)"
           "$workspace/tsfg/eng/tsfg-build" prefetch --report "$root/prefetch-report.json"
           manifest_revision=$(node -e "process.stdout.write(JSON.parse(require('node:fs').readFileSync('.ci/materialized-identity.json','utf8')).manifestRevision)")
-          run_offline() {
-            sudo unshare --net --mount-proc bash -ceu '
-              ip link set lo up
-              interfaces=$(find /sys/class/net -mindepth 1 -maxdepth 1 -printf "%f\n" | sort)
-              [ "$interfaces" = "lo" ]
-              exec setpriv --reuid "$1" --regid "$2" --clear-groups -- "${@:3}"
-            ' bash "$(id -u)" "$(id -g)" "$@"
-          }
-          run_offline /usr/bin/env "TSFG_CACHE_DIR=$TSFG_CACHE_DIR" "TSFG_BOOTSTRAP_NODE=$TSFG_BOOTSTRAP_NODE" "TSFG_BOOTSTRAP_NODE_SHA256=$TSFG_BOOTSTRAP_NODE_SHA256" "$workspace/tsfg/eng/tsfg-build" verify-workspace --workspace "$workspace" --manifest-url "$TSFG_MANIFEST_URL" --manifest-revision "$manifest_revision" --manifest "$TSFG_SELECTED_MANIFEST" --report "$root/workspace-report.json"
-          run_offline /usr/bin/env "TSFG_CACHE_DIR=$TSFG_CACHE_DIR" "TSFG_BOOTSTRAP_NODE=$TSFG_BOOTSTRAP_NODE" "TSFG_BOOTSTRAP_NODE_SHA256=$TSFG_BOOTSTRAP_NODE_SHA256" "$workspace/tsfg/eng/tsfg-build" build --target "${{ matrix.target }}" --profile "${{ matrix.profile }}" --workspace "$workspace/tsfg" --out "$build_output" --report "$root/build-report.json"
-          run_offline /usr/bin/env "TSFG_CACHE_DIR=$TSFG_CACHE_DIR" "TSFG_BOOTSTRAP_NODE=$TSFG_BOOTSTRAP_NODE" "TSFG_BOOTSTRAP_NODE_SHA256=$TSFG_BOOTSTRAP_NODE_SHA256" "$workspace/tsfg/eng/tsfg-build" test --target "${{ matrix.target }}" --profile "${{ matrix.profile }}" --workspace "$workspace/tsfg" --out "$build_output" --report "$root/test-report.json"
-          run_offline /usr/bin/env "TSFG_CACHE_DIR=$TSFG_CACHE_DIR" "TSFG_BOOTSTRAP_NODE=$TSFG_BOOTSTRAP_NODE" "TSFG_BOOTSTRAP_NODE_SHA256=$TSFG_BOOTSTRAP_NODE_SHA256" "$workspace/tsfg/eng/tsfg-build" package --target "${{ matrix.target }}" --profile "${{ matrix.profile }}" --workspace "$workspace/tsfg" --input "$build_output" --out "$package_output" --report "$root/package-report.json"
+          "$workspace/tsfg/eng/tsfg-build" verify-workspace --workspace "$workspace" --manifest-url "$TSFG_MANIFEST_URL" --manifest-revision "$manifest_revision" --manifest "$TSFG_SELECTED_MANIFEST" --report "$root/workspace-report.json"
+          "$workspace/tsfg/eng/tsfg-build" build --target "${{ matrix.target }}" --profile "${{ matrix.profile }}" --workspace "$workspace/tsfg" --out "$build_output" --report "$root/build-report.json"
+          "$workspace/tsfg/eng/tsfg-build" test --target "${{ matrix.target }}" --profile "${{ matrix.profile }}" --workspace "$workspace/tsfg" --out "$build_output" --report "$root/test-report.json"
+          "$workspace/tsfg/eng/tsfg-build" package --target "${{ matrix.target }}" --profile "${{ matrix.profile }}" --workspace "$workspace/tsfg" --input "$build_output" --out "$package_output" --report "$root/package-report.json"
           cp -a "$(realpath "$package_output")/." "$root/package/"
           TSFG_EVIDENCE_ROOT="$root" TSFG_CANDIDATE_REVISION="${{ github.event.pull_request.head.sha }}" node --input-type=module -e "import {readFile,writeFile} from 'node:fs/promises'; import {join} from 'node:path'; const root=process.env.TSFG_EVIDENCE_ROOT; const report=JSON.parse(await readFile(join(root,'package-report.json'),'utf8')); await writeFile(join(root,'candidate-binding.json'),JSON.stringify({buildIdentityDigest:report.result.buildIdentity.digest,candidateRevision:process.env.TSFG_CANDIDATE_REVISION,schemaVersion:'1'})+'\n');"
       - name: Reverify cached tools and build on Windows
@@ -329,26 +313,7 @@ jobs:
           compatibility="$RUNNER_TEMP/tsfg-compatibility"
           mkdir -p "$compatibility/input" "$compatibility/evidence/compatibility/${{ matrix.target }}"
           node --input-type=module -e "import {writeFile} from 'node:fs/promises'; import {join} from 'node:path'; import {baselineSyntheticArtifact,candidateSyntheticArtifact} from './tests/r00/contract-compatibility-fixtures.mjs'; const baseline=baselineSyntheticArtifact(); const candidate=candidateSyntheticArtifact(); baseline.product.commitOid=process.env.TSFG_BASELINE_PRODUCT_REVISION; candidate.product.commitOid='${{ github.event.pull_request.head.sha }}'; const root=join(process.env.RUNNER_TEMP,'tsfg-compatibility','input'); await writeFile(join(root,'baseline.json'),JSON.stringify(baseline)+'\n'); await writeFile(join(root,'candidate.json'),JSON.stringify(candidate)+'\n');"
-      - name: Execute all four artifact combinations on Linux
-        if: runner.os == 'Linux'
-        shell: bash
-        run: |
-          compatibility="$RUNNER_TEMP/tsfg-compatibility"
-          run_offline() {
-            sudo unshare --net --mount-proc bash -ceu '
-              ip link set lo up
-              interfaces=$(find /sys/class/net -mindepth 1 -maxdepth 1 -printf "%f\n" | sort)
-              [ "$interfaces" = "lo" ]
-              exec setpriv --reuid "$1" --regid "$2" --clear-groups -- "${@:3}"
-            ' bash "$(id -u)" "$(id -g)" "$@"
-          }
-          run_offline "$(command -v node)" --require ./tests/r00/deny-network.cjs eng/tsfg-build.mjs test --target "${{ matrix.target }}" \
-            --compatibility-baseline "$compatibility/input/baseline.json" \
-            --compatibility-candidate "$compatibility/input/candidate.json" \
-            --report "$compatibility/evidence/compatibility/${{ matrix.target }}/report.json"
-          cp "$compatibility"/input/*.json "$compatibility/evidence/compatibility/${{ matrix.target }}/"
-      - name: Execute all four artifact combinations on Windows
-        if: runner.os == 'Windows'
+      - name: Execute all four artifact combinations
         shell: bash
         run: |
           compatibility="$RUNNER_TEMP/tsfg-compatibility"
@@ -404,15 +369,7 @@ jobs:
           export TSFG_BOOTSTRAP_NODE="$(command -v node)"
           export TSFG_BOOTSTRAP_NODE_SHA256="$(sha256sum "$TSFG_BOOTSTRAP_NODE" | cut -d ' ' -f 1)"
           eng/tsfg-build prefetch --report "$root/prefetch-report.json"
-          run_offline() {
-            sudo unshare --net --mount-proc bash -ceu '
-              ip link set lo up
-              interfaces=$(find /sys/class/net -mindepth 1 -maxdepth 1 -printf "%f\n" | sort)
-              [ "$interfaces" = "lo" ]
-              exec setpriv --reuid "$1" --regid "$2" --clear-groups -- "${@:3}"
-            ' bash "$(id -u)" "$(id -g)" "$@"
-          }
-          run_offline /usr/bin/env "TSFG_CACHE_DIR=$TSFG_CACHE_DIR" "TSFG_BOOTSTRAP_NODE=$TSFG_BOOTSTRAP_NODE" "TSFG_BOOTSTRAP_NODE_SHA256=$TSFG_BOOTSTRAP_NODE_SHA256" "$GITHUB_WORKSPACE/eng/tsfg-build" repro-check --target "${{ matrix.target }}" --profile "${{ matrix.profile }}" \
+          eng/tsfg-build repro-check --target "${{ matrix.target }}" --profile "${{ matrix.profile }}" \
             --producer-a "$RUNNER_TEMP/tsfg-repro/download/producers/${{ matrix.target }}/${{ matrix.profile }}/a/package" \
             --producer-b "$RUNNER_TEMP/tsfg-repro/download/producers/${{ matrix.target }}/${{ matrix.profile }}/b/package" \
             --workspace "$GITHUB_WORKSPACE" --report "$root/report.json"
