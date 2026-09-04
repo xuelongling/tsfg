@@ -46,12 +46,12 @@ const SANDBOX_NETWORK_BOUNDARY_STATUS = 123;
 const SANDBOX_UNDECLARED_INPUT_STATUS = 124;
 const SANDBOX_SETUP_FAILURE_STATUS = 125;
 const WINDOWS_NETWORK_ISOLATION = Object.freeze({
-  mode: "wfp-dynamic-host-egress",
-  scope: "operation-and-descendants",
+  mode: "wfp-dynamic-app-id",
+  scope: "locked-process-set",
   status: "blocked",
 });
 const WINDOWS_SANDBOX_EXECUTABLE_DIGEST =
-  "sha256:35a4731ecc95535c6633c6f9776b5972e932be1930d48cad4c39fa19e4f7fbc4";
+  "sha256:d05184737f779408dba588af02dc9448cab5db00dd289fd25c248692f6ee6b13";
 class WorkspaceMismatchError extends Error {
   constructor(code, message) {
     super(message);
@@ -1979,6 +1979,7 @@ async function compileSandbox(runtime, sourceRoot, controlRoot) {
 
 function windowsSandboxArguments(policy, executable, arguments_) {
   return [
+    ...(policy.networkDenied ?? []).flatMap((program) => ["--deny-network", program]),
     ...(policy.boundaryStatus ? ["--allow-boundary-status", String(policy.boundaryStatus)] : []),
     ...(policy.deniedRead ?? []).flatMap((deniedPath) => ["--deny-read", deniedPath]),
     ...policy.readOnly.flatMap((allowedPath) => ["--ro", allowedPath]),
@@ -2040,8 +2041,8 @@ function windowsSandboxControlPath(runtime) {
   );
 }
 
-async function digestWindowsSandboxControl(executable) {
-  const normalized = Buffer.from(await readRegularFile(executable, "Windows sandbox control"));
+function normalizeWindowsSandboxControl(bytes) {
+  const normalized = Buffer.from(bytes);
   if (
     normalized.length < 0x40 ||
     normalized.readUInt16LE(0) !== 0x5a4d
@@ -2089,13 +2090,13 @@ async function digestWindowsSandboxControl(executable) {
       normalized.toString("ascii", dataOffset, dataOffset + 4) === "RSDS"
     ) normalized.fill(0, dataOffset + 4, dataOffset + 20);
   }
-  return digest(normalized);
+  return normalized;
 }
 
 async function verifyWindowsSandboxControl(runtime) {
   const executable = windowsSandboxControlPath(runtime);
   await readRegularFile(executable, "Windows sandbox control");
-  const actual = await digestWindowsSandboxControl(executable);
+  const actual = await digestFile(executable);
   if (actual !== WINDOWS_SANDBOX_EXECUTABLE_DIGEST) {
     throw new Error(
       `Windows sandbox control digest mismatch: expected ${WINDOWS_SANDBOX_EXECUTABLE_DIGEST}, got ${actual}`,
@@ -2106,18 +2107,31 @@ async function verifyWindowsSandboxControl(runtime) {
 
 async function provisionWindowsSandboxControl(runtime) {
   const executable = windowsSandboxControlPath(runtime);
-  if (await pathExists(executable)) return await verifyWindowsSandboxControl(runtime);
+  if (await pathExists(executable)) {
+    const bytes = await readRegularFile(executable, "Windows sandbox control");
+    const normalized = normalizeWindowsSandboxControl(bytes);
+    if (digest(normalized) !== WINDOWS_SANDBOX_EXECUTABLE_DIGEST) {
+      return await verifyWindowsSandboxControl(runtime);
+    }
+    if (digest(bytes) !== WINDOWS_SANDBOX_EXECUTABLE_DIGEST) {
+      await writeFile(executable, normalized);
+    }
+    return await verifyWindowsSandboxControl(runtime);
+  }
   const repositoryRoot = path.dirname(path.dirname(fileURLToPath(import.meta.url)));
   await mkdir(runtime.cachePath, { recursive: true });
   const stagingRoot = await mkdtemp(path.join(runtime.cachePath, ".windows-control-"));
   try {
     const compiled = await compileWindowsSandbox(runtime, repositoryRoot, stagingRoot);
-    const actual = await digestWindowsSandboxControl(compiled.executable);
+    const bytes = await readRegularFile(compiled.executable, "Windows sandbox control");
+    const normalized = normalizeWindowsSandboxControl(bytes);
+    const actual = digest(normalized);
     if (actual !== WINDOWS_SANDBOX_EXECUTABLE_DIGEST) {
       throw new Error(
         `Windows sandbox control build mismatch: expected ${WINDOWS_SANDBOX_EXECUTABLE_DIGEST}, got ${actual}`,
       );
     }
+    await writeFile(compiled.executable, normalized);
     await mkdir(path.dirname(executable), { recursive: true });
     try {
       await renameWithRetry(compiled.executable, executable);
@@ -2130,6 +2144,49 @@ async function provisionWindowsSandboxControl(runtime) {
   }
 }
 
+function windowsNetworkPrograms(runtime, additional = []) {
+  const tools = windowsToolchain(runtime);
+  return [...new Set([
+    closureToolPath(runtime, "node"),
+    tools.cmake,
+    tools.ninja,
+    tools.clangcl,
+    tools.lld,
+    tools.rc,
+    tools.mt,
+    tools.mspdbsrv,
+    tools.zig,
+    tools.cl,
+    tools.link,
+    tools.pdbutil,
+    process.env.ComSpec,
+    process.env.TSFG_GIT,
+    ...additional,
+  ].filter((program) => typeof program === "string" && program.length > 0)
+    .map((program) => path.resolve(program)))];
+}
+
+function windowsSandboxPolicy(
+  runtime,
+  {
+    additionalNetwork = [],
+    boundaryStatus = undefined,
+    deniedRead = [],
+    readExecute = [],
+    readOnly = [],
+    readWrite = [],
+  },
+) {
+  return {
+    boundaryStatus,
+    deniedRead,
+    networkDenied: windowsNetworkPrograms(runtime, additionalNetwork),
+    readExecute,
+    readOnly,
+    readWrite,
+  };
+}
+
 function verifyWindowsSandboxBoundary(
   sandboxExecutable,
   runtime,
@@ -2138,12 +2195,12 @@ function verifyWindowsSandboxBoundary(
   undeclaredRoot,
 ) {
   const node = closureToolPath(runtime, "node");
-  const basePolicy = {
+  const basePolicy = windowsSandboxPolicy(runtime, {
     deniedRead: [undeclaredRoot],
     readOnly: [sourceRoot],
     readExecute: [runtime.closurePath, path.dirname(sourceRoot)],
     readWrite: [workRoot],
-  };
+  });
   const environment = buildEnvironment(workRoot, [path.dirname(node)]);
   runBuildTool(
     "network-canary",
@@ -2436,6 +2493,7 @@ function windowsToolchain(runtime) {
     link: closureToolPath(runtime, "msvc-tools", "link"),
     lld: closureToolPath(runtime, "llvm", "lld"),
     mt: closureToolPath(runtime, "windows-sdk", "mt"),
+    mspdbsrv: path.join(msvcRoot, "bin", "Hostx64", "x64", "mspdbsrv.exe"),
     ninja: closureToolPath(runtime, "ninja"),
     pdbutil: closureToolPath(runtime, "llvm", "pdbutil"),
     rc: closureToolPath(runtime, "windows-sdk", "rc"),
@@ -2619,12 +2677,12 @@ async function buildWindowsDebug(options, runtime, workspaceState, networkCanary
       workRoot,
       workspaceState.root,
     );
-    const sandboxPolicy = {
+    const sandboxPolicy = windowsSandboxPolicy(runtime, {
       deniedRead: [workspaceState.root],
       readOnly: [sourceRoot],
       readExecute: [runtime.closurePath],
       readWrite: [workRoot],
-    };
+    });
     for (const step of steps) {
       runBuildTool(
         step.tool,
@@ -2751,12 +2809,13 @@ function runSmokeExecutable(
     sandboxExecutable
       ? runtime.platform === "windows-x86_64-msvc"
         ? windowsSandboxArguments(
-          {
+          windowsSandboxPolicy(runtime, {
+            additionalNetwork: [command],
             deniedRead: [deniedRoot],
             readOnly: [],
             readExecute: [outputRoot, runtime.closurePath],
             readWrite: [],
-          },
+          }),
           command,
           commandArguments,
         )
@@ -3651,6 +3710,8 @@ async function enterWindowsOfflineBoundary(arguments_, runtime, reportPath) {
       executable,
       [
         "--network-only",
+        ...windowsNetworkPrograms(runtime, [process.execPath])
+          .flatMap((program) => ["--deny-network", program]),
         "--",
         process.execPath,
         fileURLToPath(import.meta.url),
@@ -3701,12 +3762,16 @@ async function enterWindowsOfflineBoundary(arguments_, runtime, reportPath) {
 const arguments_ = process.argv.slice(2);
 const command = arguments_[0] ?? "";
 const reportPath = parseReportPath(arguments_);
+const windowsBoundaryBootstrapError = process.env.TSFG_WINDOWS_BOUNDARY_ERROR;
 let runtimeIntegrityError;
 let runtimeClosure;
 if (
-  process.env.TSFG_RUNTIME_LOCK ||
-  process.env.TSFG_RUNTIME_CACHE ||
-  process.env.TSFG_RUNTIME_PLATFORM
+  !windowsBoundaryBootstrapError &&
+  (
+    process.env.TSFG_RUNTIME_LOCK ||
+    process.env.TSFG_RUNTIME_CACHE ||
+    process.env.TSFG_RUNTIME_PLATFORM
+  )
 ) {
   try {
     if (
@@ -3727,7 +3792,19 @@ if (
 }
 
 let delegatedWindowsStatus;
-if (
+if (windowsBoundaryBootstrapError) {
+  delegatedWindowsStatus = await fail(
+    command,
+    12,
+    "offline input missing",
+    {
+      code: "sandbox-boundary",
+      message: windowsBoundaryBootstrapError,
+    },
+    reportPath,
+    "offline",
+  );
+} else if (
   !runtimeIntegrityError &&
   shouldEnterWindowsOfflineBoundary(arguments_, runtimeClosure)
 ) {

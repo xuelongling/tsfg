@@ -43,6 +43,12 @@ struct applied_grant {
   int applied;
 };
 
+struct path_list {
+  wchar_t **items;
+  size_t count;
+  size_t capacity;
+};
+
 struct wide_buffer {
   wchar_t *data;
   size_t length;
@@ -190,6 +196,34 @@ static wchar_t *absolute_path(const wchar_t *input) {
   return result;
 }
 
+static int append_path(struct path_list *list, const wchar_t *input) {
+  if (list->count == list->capacity) {
+    size_t capacity = list->capacity == 0 ? 8 : list->capacity * 2;
+    if (capacity < list->capacity || capacity > SIZE_MAX / sizeof(*list->items)) {
+      SetLastError(ERROR_OUTOFMEMORY);
+      return 0;
+    }
+    wchar_t **replacement = (wchar_t **)realloc(
+        list->items, capacity * sizeof(*list->items));
+    if (replacement == NULL) {
+      SetLastError(ERROR_OUTOFMEMORY);
+      return 0;
+    }
+    list->items = replacement;
+    list->capacity = capacity;
+  }
+  wchar_t *normalized = absolute_path(input);
+  if (normalized == NULL) return 0;
+  list->items[list->count++] = normalized;
+  return 1;
+}
+
+static void free_paths(struct path_list *list) {
+  for (size_t index = 0; index < list->count; ++index) free(list->items[index]);
+  free(list->items);
+  ZeroMemory(list, sizeof(*list));
+}
+
 static DWORD access_mask(enum grant_kind kind) {
   switch (kind) {
     case GRANT_READ_ONLY: return GENERIC_READ;
@@ -269,22 +303,35 @@ static void free_applied_grant(struct applied_grant *applied) {
   ZeroMemory(applied, sizeof(*applied));
 }
 
-static DWORD add_network_filter(HANDLE engine, const GUID *sublayer,
-                                const GUID *layer) {
+static DWORD add_app_filter(HANDLE engine, const GUID *sublayer,
+                            const GUID *layer, const wchar_t *program) {
+  FWP_BYTE_BLOB *app_id = NULL;
+  DWORD result = FwpmGetAppIdFromFileName0(program, &app_id);
+  if (result != ERROR_SUCCESS) return result;
+  FWPM_FILTER_CONDITION0 condition;
+  ZeroMemory(&condition, sizeof(condition));
+  condition.fieldKey = FWPM_CONDITION_ALE_APP_ID;
+  condition.matchType = FWP_MATCH_EQUAL;
+  condition.conditionValue.type = FWP_BYTE_BLOB_TYPE;
+  condition.conditionValue.byteBlob = app_id;
   UINT8 weight = 15;
   FWPM_FILTER0 filter;
   ZeroMemory(&filter, sizeof(filter));
-  filter.displayData.name = L"tsfg offline outbound block";
+  filter.displayData.name = L"tsfg offline executable block";
   filter.layerKey = *layer;
   filter.subLayerKey = *sublayer;
   filter.weight.type = FWP_UINT8;
   filter.weight.uint8 = weight;
-  filter.flags = FWPM_FILTER_FLAG_CLEAR_ACTION_RIGHT;
+  filter.numFilterConditions = 1;
+  filter.filterCondition = &condition;
   filter.action.type = FWP_ACTION_BLOCK;
-  return FwpmFilterAdd0(engine, &filter, NULL, NULL);
+  result = FwpmFilterAdd0(engine, &filter, NULL, NULL);
+  FwpmFreeMemory0((void **)&app_id);
+  return result;
 }
 
-static DWORD establish_network_boundary(HANDLE *engine) {
+static DWORD establish_network_boundary(const struct path_list *programs,
+                                        HANDLE *engine) {
   FWPM_SESSION0 session;
   ZeroMemory(&session, sizeof(session));
   session.displayData.name = L"tsfg offline dynamic session";
@@ -303,11 +350,15 @@ static DWORD establish_network_boundary(HANDLE *engine) {
   if (result != ERROR_SUCCESS) return result;
   result = FwpmTransactionBegin0(*engine, 0);
   if (result != ERROR_SUCCESS) return result;
-  result = add_network_filter(*engine, &sublayer_key,
-                              &FWPM_LAYER_ALE_AUTH_CONNECT_V4);
-  if (result == ERROR_SUCCESS) {
-    result = add_network_filter(*engine, &sublayer_key,
-                                &FWPM_LAYER_ALE_AUTH_CONNECT_V6);
+  for (size_t index = 0; index < programs->count && result == ERROR_SUCCESS; ++index) {
+    result = add_app_filter(*engine, &sublayer_key,
+                            &FWPM_LAYER_ALE_AUTH_CONNECT_V4,
+                            programs->items[index]);
+    if (result == ERROR_SUCCESS) {
+      result = add_app_filter(*engine, &sublayer_key,
+                              &FWPM_LAYER_ALE_AUTH_CONNECT_V6,
+                              programs->items[index]);
+    }
   }
   if (result == ERROR_SUCCESS) result = FwpmTransactionCommit0(*engine);
   else FwpmTransactionAbort0(*engine);
@@ -317,6 +368,7 @@ static DWORD establish_network_boundary(HANDLE *engine) {
 static int parse_arguments(int argc, wchar_t **argv,
                            struct requested_grant **grants,
                            size_t *grant_count,
+                           struct path_list *programs,
                            int *network_only,
                            DWORD *boundary_status,
                            int *command_index) {
@@ -334,6 +386,11 @@ static int parse_arguments(int argc, wchar_t **argv,
     }
     if (wcscmp(argv[index], L"--network-only") == 0) {
       *network_only = 1;
+      ++index;
+      continue;
+    }
+    if (wcscmp(argv[index], L"--deny-network") == 0) {
+      if (++index >= argc || !append_path(programs, argv[index])) return 0;
       ++index;
       continue;
     }
@@ -390,6 +447,7 @@ int wmain(int argc, wchar_t **argv) {
   size_t requested_count = 0;
   struct applied_grant *applied = NULL;
   size_t applied_count = 0;
+  struct path_list programs = {0};
   wchar_t *command_path = NULL;
   wchar_t *command_line = NULL;
   BYTE restricted_sid_buffer[SECURITY_MAX_SID_SIZE];
@@ -413,10 +471,12 @@ int wmain(int argc, wchar_t **argv) {
   ZeroMemory(&startup, sizeof(startup));
 
   if (!parse_arguments(argc, argv, &requested, &requested_count,
-                       &network_only, &boundary_status, &command_index)) {
+                       &programs, &network_only, &boundary_status,
+                       &command_index)) {
     fwprintf(stderr,
              L"usage: windows-sandbox-run [--network-only] "
-             L"[--allow-boundary-status 123|124] [--ro PATH] [--rx PATH] "
+             L"[--deny-network PATH] [--allow-boundary-status 123|124] "
+             L"[--ro PATH] [--rx PATH] "
              L"[--rw PATH] [--deny-read PATH] -- COMMAND [ARG ...]\n");
     goto cleanup;
   }
@@ -442,7 +502,11 @@ int wmain(int argc, wchar_t **argv) {
     print_win32_error(L"build command line", ERROR_OUTOFMEMORY);
     goto cleanup;
   }
-  DWORD boundary_result = establish_network_boundary(&filter_engine);
+  if (!append_path(&programs, command_path)) {
+    print_win32_error(L"record network-denied command", GetLastError());
+    goto cleanup;
+  }
+  DWORD boundary_result = establish_network_boundary(&programs, &filter_engine);
   if (boundary_result != ERROR_SUCCESS) {
     print_win32_error(L"establish dynamic WFP boundary", boundary_result);
     goto cleanup;
@@ -622,6 +686,7 @@ cleanup:
   free(command_line);
   free(command_path);
   free_requested_grants(requested, requested_count);
+  free_paths(&programs);
   if (cleanup_failed) return SANDBOX_SETUP_FAILURE_STATUS;
   return status;
 }

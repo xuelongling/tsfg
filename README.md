@@ -11,6 +11,10 @@ atomically activates the completed cache.
 On Windows:
 
 ```text
+set TSFG_BOOTSTRAP_NODE=C:\absolute\path\to\reviewed-bootstrap-node.exe
+set TSFG_BOOTSTRAP_NODE_SHA256=<full-lowercase-sha256>
+set TSFG_BOOTSTRAP_GIT=C:\absolute\path\to\reviewed-git.exe
+set TSFG_BOOTSTRAP_GIT_SHA256=<full-lowercase-sha256>
 eng\tsfg-build.cmd prefetch --report out\prefetch-report.json
 eng\tsfg-build.cmd verify-workspace ^
   --workspace <repo-workspace> ^
@@ -50,9 +54,10 @@ eng/tsfg-build package \
   --report out/package-report.json
 ```
 
-The Linux bootstrap Node is an explicit acquisition prerequisite: its absolute
-path and complete SHA-256 must be supplied for `prefetch`. The launcher never
-selects this bootstrap from `PATH`.
+The bootstrap Node is an explicit acquisition prerequisite: its absolute path
+and complete SHA-256 must be supplied for `prefetch`. Windows offline commands
+also require an absolute Bootstrap Git path and complete SHA-256. The launchers
+never select either bootstrap executable from `PATH`.
 
 After prefetch, both launchers execute the cached Node binary by absolute path;
 the launcher verifies its pinned executable digest before first execution, and

@@ -6,6 +6,7 @@ set "TSFG_COMMAND=%~1"
 set "TSFG_REPOSITORY=%~dp0.."
 set "TSFG_LOCK_ID=a39365994497d56ea791866f5d30580f4793a15f4ba2eb2c7fd861aa3fc1dc85"
 set "TSFG_NODE_ID=5c976096e04e5c2c1f091938926234cc9fbebfe9787ddd149351b3b0ecc707b5"
+set "TSFG_CONTROL_ID=d05184737f779408dba588af02dc9448cab5db00dd289fd25c248692f6ee6b13"
 if defined TSFG_CACHE_DIR (
   set "TSFG_CACHE=%TSFG_CACHE_DIR%"
 ) else (
@@ -52,18 +53,72 @@ set "TSFG_NODE_ACTUAL="
 for /f "skip=1 delims=" %%H in ('%SystemRoot%\System32\certutil.exe -hashfile "%TSFG_NODE%" SHA256 2^>nul') do if not defined TSFG_NODE_ACTUAL set "TSFG_NODE_ACTUAL=%%H"
 set "TSFG_NODE_ACTUAL=%TSFG_NODE_ACTUAL: =%"
 if /i not "%TSFG_NODE_ACTUAL%"=="%TSFG_NODE_ID%" goto runtime_failure
-for %%G in (git.exe) do set "TSFG_GIT=%%~$PATH:G"
+call :trusted_git
+if errorlevel 1 goto runtime_failure
+set "TSFG_CONTROL=%TSFG_CACHE%\controls\%TSFG_CONTROL_ID%\windows-sandbox-run.exe"
+if not exist "%TSFG_CONTROL%" (
+  set "TSFG_RUNTIME_MESSAGE=Windows sandbox control is missing; run tsfg-build prefetch"
+  goto runtime_failure
+)
+set "TSFG_CONTROL_ACTUAL="
+for /f "skip=1 delims=" %%H in ('%SystemRoot%\System32\certutil.exe -hashfile "%TSFG_CONTROL%" SHA256 2^>nul') do if not defined TSFG_CONTROL_ACTUAL set "TSFG_CONTROL_ACTUAL=%%H"
+set "TSFG_CONTROL_ACTUAL=%TSFG_CONTROL_ACTUAL: =%"
+if /i not "%TSFG_CONTROL_ACTUAL%"=="%TSFG_CONTROL_ID%" (
+  set "TSFG_RUNTIME_MESSAGE=Windows sandbox control digest mismatch"
+  goto runtime_failure
+)
 set "TSFG_RUNTIME_LOCK=%~dp0toolchains.lock.json"
 set "TSFG_RUNTIME_CACHE=%TSFG_CACHE%"
 set "TSFG_RUNTIME_PLATFORM=windows-x86_64-msvc"
 set "NODE_OPTIONS="
 set "NODE_PATH="
 set "TSFG_WINDOWS_OFFLINE_ACTIVE="
+set "TSFG_WINDOWS_BOUNDARY_ERROR="
 set "NODE_REPL_EXTERNAL_MODULE="
 set "NODE_EXTRA_CA_CERTS="
 set "OPENSSL_CONF="
+if "%TSFG_COMMAND%"=="build" goto offline_runtime
+if "%TSFG_COMMAND%"=="test" goto offline_runtime
+if "%TSFG_COMMAND%"=="package" goto offline_runtime
 "%TSFG_NODE%" "%~dp0tsfg-build.mjs" %*
 exit /b %errorlevel%
+
+:offline_runtime
+set "TSFG_WINDOWS_OFFLINE_ACTIVE=1"
+"%TSFG_CONTROL%" --network-only --deny-network "%TSFG_NODE%" --deny-network "%TSFG_GIT%" --deny-network "%ComSpec%" -- "%TSFG_NODE%" "%~dp0tsfg-build.mjs" %*
+set "TSFG_OFFLINE_STATUS=%errorlevel%"
+if not "%TSFG_OFFLINE_STATUS%"=="125" exit /b %TSFG_OFFLINE_STATUS%
+set "TSFG_WINDOWS_BOUNDARY_ERROR=Windows process-level WFP boundary is unavailable"
+"%TSFG_NODE%" "%~dp0tsfg-build.mjs" %*
+exit /b %errorlevel%
+
+:trusted_git
+if not defined TSFG_BOOTSTRAP_GIT (
+  set "TSFG_RUNTIME_MESSAGE=offline commands require an absolute TSFG_BOOTSTRAP_GIT"
+  exit /b 1
+)
+for %%I in ("%TSFG_BOOTSTRAP_GIT%") do set "TSFG_GIT_FULL=%%~fI"
+if /i not "%TSFG_BOOTSTRAP_GIT%"=="%TSFG_GIT_FULL%" (
+  set "TSFG_RUNTIME_MESSAGE=offline commands require an absolute TSFG_BOOTSTRAP_GIT"
+  exit /b 1
+)
+if not exist "%TSFG_BOOTSTRAP_GIT%" (
+  set "TSFG_RUNTIME_MESSAGE=bootstrap Git does not exist"
+  exit /b 1
+)
+if not defined TSFG_BOOTSTRAP_GIT_SHA256 (
+  set "TSFG_RUNTIME_MESSAGE=offline commands require a full TSFG_BOOTSTRAP_GIT_SHA256"
+  exit /b 1
+)
+set "TSFG_GIT_ACTUAL="
+for /f "skip=1 delims=" %%H in ('%SystemRoot%\System32\certutil.exe -hashfile "%TSFG_BOOTSTRAP_GIT%" SHA256 2^>nul') do if not defined TSFG_GIT_ACTUAL set "TSFG_GIT_ACTUAL=%%H"
+set "TSFG_GIT_ACTUAL=%TSFG_GIT_ACTUAL: =%"
+if /i not "%TSFG_GIT_ACTUAL%"=="%TSFG_BOOTSTRAP_GIT_SHA256%" (
+  set "TSFG_RUNTIME_MESSAGE=bootstrap Git digest mismatch"
+  exit /b 1
+)
+set "TSFG_GIT=%TSFG_BOOTSTRAP_GIT%"
+exit /b 0
 
 :prefetch
 if not defined TSFG_BOOTSTRAP_NODE (

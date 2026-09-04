@@ -60,8 +60,8 @@ test("Windows debug build, smoke test, and package share one normalized Build Id
     assert.equal(report.network, "offline");
     assert.equal(report.result.networkCanary, "blocked");
     assert.deepEqual(report.result.networkIsolation, {
-      mode: "wfp-dynamic-host-egress",
-      scope: "operation-and-descendants",
+      mode: "wfp-dynamic-app-id",
+      scope: "locked-process-set",
       status: "blocked",
     });
   }
@@ -137,7 +137,7 @@ test("Windows public build seam blocks network, PATH tools, and undeclared works
     const poisonRoot = path.join(root, "poison-path");
     const poisonSentinel = path.join(root, "poison-ran");
     await mkdir(poisonRoot);
-    for (const tool of ["clang-cl", "cmake", "ninja", "node", "pnpm", "zig"]) {
+    for (const tool of ["clang-cl", "cmake", "git", "ninja", "node", "pnpm", "zig"]) {
       await writeFile(
         path.join(poisonRoot, `${tool}.cmd`),
         `@echo off\r\n>"${poisonSentinel}" echo poison\r\nexit /b 91\r\n`,
@@ -146,6 +146,8 @@ test("Windows public build seam blocks network, PATH tools, and undeclared works
     const locatedGit = spawnSync("where.exe", ["git"], { encoding: "utf8" });
     assert.equal(locatedGit.status, 0, locatedGit.stderr);
     const gitDirectory = path.dirname(locatedGit.stdout.split(/\r?\n/).find(Boolean));
+    const gitExecutable = path.join(gitDirectory, "git.exe");
+    const gitDigest = sha256(await readFile(gitExecutable)).slice("sha256:".length);
     const isolatedPath = [poisonRoot, gitDirectory].join(path.delimiter);
     const buildRoot = path.join(root, "build");
     const buildReportPath = path.join(root, "build-report.json");
@@ -156,14 +158,18 @@ test("Windows public build seam blocks network, PATH tools, and undeclared works
       "--workspace", repositoryRoot,
       "--out", buildRoot,
       "--report", buildReportPath,
-    ], { PATH: isolatedPath });
+    ], {
+      PATH: isolatedPath,
+      TSFG_BOOTSTRAP_GIT: gitExecutable,
+      TSFG_BOOTSTRAP_GIT_SHA256: gitDigest,
+    });
     assert.equal(built.status, 0, built.stderr);
     await assert.rejects(stat(poisonSentinel), /ENOENT/);
     const buildReport = JSON.parse(await readFile(buildReportPath, "utf8"));
     assert.equal(buildReport.result.networkCanary, "blocked");
     assert.deepEqual(buildReport.result.networkIsolation, {
-      mode: "wfp-dynamic-host-egress",
-      scope: "operation-and-descendants",
+      mode: "wfp-dynamic-app-id",
+      scope: "locked-process-set",
       status: "blocked",
     });
 
@@ -175,7 +181,11 @@ test("Windows public build seam blocks network, PATH tools, and undeclared works
       "--workspace", repositoryRoot,
       "--out", buildRoot,
       "--report", testReportPath,
-    ], { PATH: isolatedPath });
+    ], {
+      PATH: isolatedPath,
+      TSFG_BOOTSTRAP_GIT: gitExecutable,
+      TSFG_BOOTSTRAP_GIT_SHA256: gitDigest,
+    });
     assert.equal(tested.status, 0, tested.stderr);
 
     const packageRoot = path.join(root, "package");
@@ -188,7 +198,11 @@ test("Windows public build seam blocks network, PATH tools, and undeclared works
       "--input", buildRoot,
       "--out", packageRoot,
       "--report", packageReportPath,
-    ], { PATH: isolatedPath });
+    ], {
+      PATH: isolatedPath,
+      TSFG_BOOTSTRAP_GIT: gitExecutable,
+      TSFG_BOOTSTRAP_GIT_SHA256: gitDigest,
+    });
     assert.equal(packaged.status, 0, packaged.stderr);
 
     const dirtyWorkspace = path.join(root, "dirty-workspace");
@@ -213,7 +227,10 @@ test("Windows public build seam blocks network, PATH tools, and undeclared works
       "--workspace", dirtyWorkspace,
       "--out", deniedOutput,
       "--report", deniedReportPath,
-    ]);
+    ], {
+      TSFG_BOOTSTRAP_GIT: gitExecutable,
+      TSFG_BOOTSTRAP_GIT_SHA256: gitDigest,
+    });
     assert.equal(denied.status, 12, denied.stderr);
     const deniedReport = JSON.parse(await readFile(deniedReportPath, "utf8"));
     assert.equal(deniedReport.error.category, "offline input missing");
