@@ -2,6 +2,8 @@
 status: accepted
 ---
 
+<!-- SPDX-License-Identifier: MIT -->
+
 # 用稳定 Manifest、候选 Overlay 与 Build Input Set 分离重放和制品身份
 
 Manifest Repository 的 `default.xml` 只在首个 Stable 的提交点创建，此后始终解析为当前 Stable Integration。首次 Stable 产生前，以 Manifest Repository 完整 commit OID 和 `bootstrap/r00.xml` 文件名共同锁定不可变 Bootstrap Integration Snapshot，不得依赖 feature branch tip 或伪造 stable default。`snapshots/tsfg-v<semver>.xml` 一旦合入 main 就禁止修改、删除、重命名和版本名复用；`tsfg`、`.agents` 与参与集成的所有 fork 均用完整 40 位 commit OID 锁定，branch 只作获取提示，R00 不使用 shallow clone。普通 PR 不为每个失败组合永久写入 manifest 历史，而是由 CI 在固定 baseline snapshot 上应用内容寻址的 project OID Candidate Overlay，并归档 overlay、解析后的完整 manifest 和哈希；首个 Stable 前 baseline 是 bootstrap，之后是当前 Stable。producer/consumer 四组合在兼容测试层组合 baseline/candidate artifacts，不拼接不同产品 OID 的源码树；R00 用专用 fixture artifacts。晋升 Stable 或需永久保存的协调组合必须通过 manifest PR 固化。

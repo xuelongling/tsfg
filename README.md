@@ -1,3 +1,5 @@
+<!-- SPDX-License-Identifier: MIT -->
+
 # tsfg
 
 ## R00 Hermetic Build Entry and Tier 1 smoke profiles

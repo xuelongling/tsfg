@@ -2,6 +2,8 @@
 status: accepted
 ---
 
+<!-- SPDX-License-Identifier: MIT -->
+
 # 解耦产品版本与契约版本
 
 tsfg 整体使用一个 Product SemVer，每个 contract family 独立使用 Contract SemVer 并绑定规范化 Schema Hash；Contract Set ID 由排序后的 `family -> version + hash` 映射派生，不再人工维护独立版本号。R00 开发版本为 `0.1.0-dev.0`，验收后的首个 Stable Integration 为 `0.1.0`，随后 main 进入 `0.2.0-dev.0`；产品仓根 `version.json` 是源码内事实源，release tag 使用 `tsfg-v<semver>`。R00 尚无正式 contract family，Contract Set 是规范化空映射及其 SHA-256；兼容拒绝验收使用不进入产品 Contract Set 的测试专用 fixture。

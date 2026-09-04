@@ -1,3 +1,5 @@
+<!-- SPDX-License-Identifier: MIT -->
+
 # tsfg Context
 
 tsfg 是面向游戏计算的独立静态语言。它采用 TypeScript 语法与部分类型工具，但不承诺 ECMAScript 运行时或 TypeScript 生态兼容。
