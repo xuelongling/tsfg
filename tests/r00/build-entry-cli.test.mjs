@@ -2316,7 +2316,7 @@ exit 1
     assert.equal(testFailure.status, 21, testFailure.stderr);
     const testFailureReport = JSON.parse(await readFile(testFailureReportPath, "utf8"));
     assert.equal(testFailureReport.status, "failure");
-    assert.equal(testFailureReport.error.category, "test failure");
+    assert.equal(testFailureReport.error.category, "test/compatibility failure");
     assert.equal(testFailureReport.error.code, "21");
   } finally {
     if (serverOpen) await server.close();

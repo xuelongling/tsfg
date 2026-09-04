@@ -52,6 +52,11 @@ eng/tsfg-build test \
   --profile debug \
   --out out/linux-debug \
   --report out/test-report.json
+eng/tsfg-build test \
+  --target linux-x86_64-gnu \
+  --compatibility-baseline tests/r00/fixtures/compatibility/baseline.json \
+  --compatibility-candidate tests/r00/fixtures/compatibility/candidate.json \
+  --report out/compatibility-report.json
 eng/tsfg-build package \
   --target linux-x86_64-gnu \
   --profile debug \
@@ -82,6 +87,16 @@ Build Identity and defaults to `runtime-detected`. In that mode the C++ smoke
 can select its isolated AVX2 implementation only after CPUID and OS state
 checks. `test --cpu-fixture x86-64-v2` forces and verifies the safe baseline
 fallback without changing Build Identity.
+
+The compatibility form of `test` accepts two canonical, test-only synthetic
+artifacts and executes baseline/baseline, candidate/baseline,
+baseline/candidate, and candidate/candidate producer/consumer combinations.
+Only serialized payloads cross the seam. The report binds both artifact
+digests and product commit OIDs, derives the product Contract Set from the
+empty registry, and records every combination and version gate. Synthetic
+families remain outside `contracts/registry.json`, the Build Input Set, and
+release packages. Product SemVer and synthetic Contract SemVer are reported
+separately and never substitute for one another.
 
 The bootstrap Node is an explicit acquisition prerequisite: its absolute path
 and complete SHA-256 must be supplied for `prefetch`. Windows offline commands
@@ -138,5 +153,6 @@ Build Reports are versioned canonical JSON, written through a same-directory
 temporary file and atomic rename. Human diagnostics go only to stderr. This
 slice uses exit 2 for usage/configuration, 10 for workspace mismatch, and 11
 for lock/cache integrity failure, 12 for offline or sandbox input-boundary
-failure, 20 for build failure, 21 for test failure, and 22 for package failure.
+failure, 20 for build failure, 21 for test/compatibility failure, and 22 for
+package failure.
 It uses 23 for a reproducibility mismatch. It emits no telemetry.

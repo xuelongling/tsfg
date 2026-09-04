@@ -158,6 +158,8 @@ valid_smoke_arguments() {
   seen_dev=false
   seen_simd_dispatch=false
   seen_cpu_fixture=false
+  seen_compatibility_baseline=false
+  seen_compatibility_candidate=false
   target=
   profile=
   while [ "$#" -gt 0 ]; do
@@ -193,6 +195,16 @@ valid_smoke_arguments() {
         seen_cpu_fixture=true
         [ "$1" = x86-64-v2 ] || return 1
         ;;
+      --compatibility-baseline)
+        [ "$expected_command" = test ] || return 1
+        [ "$seen_compatibility_baseline" = false ] || return 1
+        seen_compatibility_baseline=true
+        ;;
+      --compatibility-candidate)
+        [ "$expected_command" = test ] || return 1
+        [ "$seen_compatibility_candidate" = false ] || return 1
+        seen_compatibility_candidate=true
+        ;;
       --out)
         [ "$seen_out" = false ] || return 1
         seen_out=true
@@ -214,6 +226,19 @@ valid_smoke_arguments() {
     esac
     shift
   done
+  if [ "$seen_compatibility_baseline" = true ] || [ "$seen_compatibility_candidate" = true ]; then
+    [ "$expected_command" = test ] &&
+      [ "$seen_target" = true ] &&
+      [ "$seen_compatibility_baseline" = true ] &&
+      [ "$seen_compatibility_candidate" = true ] &&
+      [ "$seen_profile" = false ] &&
+      [ "$seen_out" = false ] &&
+      [ "$seen_input" = false ] &&
+      [ "$seen_simd_dispatch" = false ] &&
+      [ "$seen_cpu_fixture" = false ] &&
+      [ "$target" = linux-x86_64-gnu ]
+    return
+  fi
   [ "$seen_target" = true ] &&
     [ "$seen_profile" = true ] &&
     [ "$seen_out" = true ] &&

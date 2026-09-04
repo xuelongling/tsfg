@@ -44,6 +44,13 @@ class ConfigurationError extends Error {
 class BuildFailureError extends Error {}
 class BuildPolicyError extends BuildFailureError {}
 class TestFailureError extends Error {}
+class CompatibilityFailureError extends TestFailureError {
+  constructor(issueCode, message, compatibility) {
+    super(message);
+    this.issueCode = issueCode;
+    this.compatibility = compatibility;
+  }
+}
 class PackageFailureError extends Error {}
 class OfflineBoundaryError extends Error {}
 class UndeclaredInputError extends Error {}
@@ -317,6 +324,23 @@ function validateSmokeOptions(options, command, requireInput = false) {
     throw new ConfigurationError("--cpu-fixture supports only x86-64-v2 on test");
   }
   validateAmbientBuildPolicy();
+}
+
+function validateCompatibilityOptions(options) {
+  const target = options.get("--target");
+  if (!target || !options.get("--compatibility-baseline") || !options.get("--compatibility-candidate")) {
+    throw new ConfigurationError(
+      "compatibility test requires --target, --compatibility-baseline, and --compatibility-candidate",
+    );
+  }
+  if (!["linux-x86_64-gnu", "windows-x86_64-msvc"].includes(target)) {
+    throw new ConfigurationError("R00 compatibility test supports only declared Linux and Windows targets");
+  }
+  for (const incompatible of ["--profile", "--simd-dispatch", "--cpu-fixture", "--out"]) {
+    if (options.has(incompatible)) {
+      throw new ConfigurationError(`${incompatible} is not valid for a compatibility artifact test`);
+    }
+  }
 }
 
 /** @type {Array<[string, RegExp]>} */
@@ -3330,6 +3354,214 @@ async function testSmoke(options, runtime, workspaceState, networkCanary) {
   };
 }
 
+function validateSyntheticArtifact(artifact, label, contractSetId) {
+  if (
+    artifact?.schemaVersion !== "1" ||
+    artifact.artifactKind !== "r00-synthetic-contract-artifact" ||
+    artifact.product?.contractSetId !== contractSetId ||
+    !/^[0-9a-f]{40}$/.test(artifact.product?.commitOid) ||
+    typeof artifact.product?.semver !== "string" ||
+    typeof artifact.contract?.familyId !== "string" ||
+    !/^sha256:[0-9a-f]{64}$/.test(artifact.contract?.schemaHash) ||
+    typeof artifact.contract?.semver !== "string" ||
+    artifact.producer?.payload === null ||
+    typeof artifact.producer?.payload !== "object" ||
+    !Array.isArray(artifact.consumer?.requiredFields) ||
+    !Array.isArray(artifact.consumer?.optionalFields) ||
+    typeof artifact.consumer?.acceptsUnknownFields !== "boolean"
+  ) {
+    throw new TestFailureError(`${label} synthetic compatibility artifact is invalid`);
+  }
+}
+
+function consumeSyntheticPayload(producer, consumer) {
+  if (
+    consumer.contract.compatibility === "exact" &&
+    (
+      producer.contract.semver !== consumer.contract.semver ||
+      producer.contract.schemaHash !== consumer.contract.schemaHash ||
+      producer.contract.semanticRevision !== consumer.contract.semanticRevision
+    )
+  ) {
+    return {
+      code: "exact-match-version-mixed",
+      message: "exact-match synthetic contract versions cannot be mixed",
+    };
+  }
+  const payload = producer.producer.payload;
+  const required = new Set(consumer.consumer.requiredFields);
+  const allowed = new Set([
+    ...consumer.consumer.requiredFields,
+    ...consumer.consumer.optionalFields,
+  ]);
+  const missing = [...required].filter((field) => !(field in payload));
+  const unknown = Object.keys(payload).filter((field) => !allowed.has(field));
+  if (missing.length > 0) {
+    return {
+      code: "serialized-payload-incompatible",
+      message: `missing required fields: ${missing.join(", ")}`,
+    };
+  }
+  if (!consumer.consumer.acceptsUnknownFields && unknown.length > 0) {
+    return {
+      code: "serialized-payload-incompatible",
+      message: `unknown fields: ${unknown.join(", ")}`,
+    };
+  }
+  return undefined;
+}
+
+function parseSyntheticContractSemver(value) {
+  const match = /^(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)$/.exec(value);
+  if (!match) return undefined;
+  return match.slice(1).map((part) => Number.parseInt(part, 10));
+}
+
+function hasCompleteSyntheticMigrationWindow(change) {
+  const phases = change?.migration?.phases;
+  const stableProductMinors = change?.migration?.stableProductMinors;
+  if (
+    canonicalize(phases) !== canonicalize(["expand", "migrate", "remove"]) ||
+    !Array.isArray(stableProductMinors) ||
+    stableProductMinors.length !== 3
+  ) {
+    return false;
+  }
+  const parsed = stableProductMinors.map((minor) =>
+    /^(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)$/.exec(minor),
+  );
+  return parsed.every(Boolean) &&
+    parsed.every((minor) => minor[1] === parsed[0][1]) &&
+    Number.parseInt(parsed[1][2], 10) === Number.parseInt(parsed[0][2], 10) + 1 &&
+    Number.parseInt(parsed[2][2], 10) === Number.parseInt(parsed[1][2], 10) + 1;
+}
+
+async function testCompatibility(options, workspaceState, networkCanary) {
+  const baselinePath = path.resolve(options.get("--compatibility-baseline"));
+  const candidatePath = path.resolve(options.get("--compatibility-candidate"));
+  let registry;
+  let baseline;
+  let candidate;
+  try {
+    registry = await readCanonicalJson(
+      path.join(workspaceState.root, "contracts", "registry.json"),
+      "Contract Registry",
+    );
+    baseline = await readCanonicalJson(
+      baselinePath,
+      "baseline synthetic compatibility artifact",
+    );
+    candidate = await readCanonicalJson(
+      candidatePath,
+      "candidate synthetic compatibility artifact",
+    );
+  } catch (error) {
+    throw new TestFailureError(error.message);
+  }
+  const canonicalContractSet = canonicalize(registry);
+  const contractSetId = digest(canonicalContractSet);
+  if (canonicalContractSet !== "{}" || contractSetId !== R00_CONTRACT_SET_ID) {
+    throw new TestFailureError("R00 product Contract Set must be the approved empty mapping");
+  }
+  validateSyntheticArtifact(baseline, "baseline", contractSetId);
+  validateSyntheticArtifact(candidate, "candidate", contractSetId);
+
+  const artifacts = { baseline, candidate };
+  const combinations = [];
+  for (const [producerName, consumerName] of [
+    ["baseline", "baseline"],
+    ["candidate", "baseline"],
+    ["baseline", "candidate"],
+    ["candidate", "candidate"],
+  ]) {
+    const producer = artifacts[producerName];
+    const consumer = artifacts[consumerName];
+    const issue = consumeSyntheticPayload(producer, consumer);
+    combinations.push({
+      consumer: consumerName,
+      consumerProductOid: consumer.product.commitOid,
+      exchange: "serialized-payload",
+      ...(issue ? { issue: issue.message, issueCode: issue.code } : {}),
+      producer: producerName,
+      producerProductOid: producer.product.commitOid,
+      status: issue ? "failed" : "passed",
+    });
+  }
+  const gateIssues = [];
+  const semanticChange = baseline.contract.schemaHash !== candidate.contract.schemaHash ||
+    baseline.contract.semanticRevision !== candidate.contract.semanticRevision;
+  if (semanticChange && baseline.contract.semver === candidate.contract.semver) {
+    gateIssues.push({
+      code: "contract-version-not-bumped",
+      message: "synthetic contract semantics or Schema Hash changed without a Contract SemVer bump",
+    });
+  } else if (candidate.contract.change?.class === "compatible-extension") {
+    const baselineVersion = parseSyntheticContractSemver(baseline.contract.semver);
+    const candidateVersion = parseSyntheticContractSemver(candidate.contract.semver);
+    if (
+      !baselineVersion ||
+      !candidateVersion ||
+      candidateVersion[0] !== baselineVersion[0] ||
+      candidateVersion[1] <= baselineVersion[1] ||
+      candidateVersion[2] !== 0
+    ) {
+      gateIssues.push({
+        code: "compatible-extension-requires-minor",
+        message: "backward-compatible synthetic extension requires a Contract SemVer minor bump",
+      });
+    }
+  } else if (
+    candidate.contract.change?.class === "breaking" &&
+    !hasCompleteSyntheticMigrationWindow(candidate.contract.change)
+  ) {
+    gateIssues.push({
+      code: "breaking-migration-window-incomplete",
+      message: "breaking synthetic change requires a complete expand-migrate-remove window",
+    });
+  }
+  const compatibility = {
+    artifacts: {
+      baseline: {
+        productOid: baseline.product.commitOid,
+        productSemver: baseline.product.semver,
+        sha256: await digestFile(baselinePath),
+        syntheticContractSemver: baseline.contract.semver,
+      },
+      candidate: {
+        productOid: candidate.product.commitOid,
+        productSemver: candidate.product.semver,
+        sha256: await digestFile(candidatePath),
+        syntheticContractSemver: candidate.contract.semver,
+      },
+    },
+    artifactTransport: "serialized-json-only",
+    combinations,
+    gate: {
+      issues: gateIssues,
+      status: gateIssues.length > 0 ? "failed" : "passed",
+    },
+    syntheticFamilyRegistered: false,
+  };
+  const failedCombination = combinations.find(({ status }) => status === "failed");
+  const firstIssue = gateIssues[0];
+  if (firstIssue || failedCombination) {
+    throw new CompatibilityFailureError(
+      firstIssue?.code ?? failedCombination.issueCode,
+      firstIssue?.message ?? failedCombination.issue,
+      compatibility,
+    );
+  }
+  return {
+    compatibility,
+    contractSet: { canonical: canonicalContractSet, id: contractSetId },
+    development: workspaceState.development,
+    dirty: workspaceState.dirty,
+    networkCanary,
+    publishable: workspaceState.publishable,
+    target: options.get("--target"),
+  };
+}
+
 async function readCanonicalJson(filePath, name) {
   const bytes = await readFile(filePath, "utf8");
   if (bytes.charCodeAt(0) === 0xfeff) {
@@ -4877,18 +5109,28 @@ if (delegatedWindowsStatus !== undefined) {
       arguments_,
       new Set([
         "--dev", "--target", "--profile", "--simd-dispatch", "--cpu-fixture", "--workspace", "--out", "--report",
+        "--compatibility-baseline", "--compatibility-candidate",
       ]),
       new Set(["--dev"]),
     );
-    validateSmokeOptions(options, "test");
+    const compatibilityMode = options.has("--compatibility-baseline") ||
+      options.has("--compatibility-candidate");
+    if (compatibilityMode) validateCompatibilityOptions(options);
+    else validateSmokeOptions(options, "test");
     const workspaceState = inspectProductWorkspace(options, true);
-    if (!runtimeClosure) throw new Error("locked runtime closure is unavailable");
     const networkCanary = await verifyOfflineBoundary();
-    const result = await testSmoke(options, runtimeClosure, workspaceState, networkCanary);
+    let result;
+    if (compatibilityMode) {
+      result = await testCompatibility(options, workspaceState, networkCanary);
+    } else {
+      if (!runtimeClosure) throw new Error("locked runtime closure is unavailable");
+      result = await testSmoke(options, runtimeClosure, workspaceState, networkCanary);
+    }
     process.exitCode = await succeed(command, result, reportPath, "offline");
   } catch (error) {
     const isConfigurationError = error instanceof ConfigurationError;
     const isTestFailure = error instanceof TestFailureError;
+    const isCompatibilityFailure = error instanceof CompatibilityFailureError;
     const isWorkspaceMismatch = error instanceof WorkspaceMismatchError;
     const isOfflineBoundary = error instanceof OfflineBoundaryError;
     const isUndeclaredInput = error instanceof UndeclaredInputError;
@@ -4908,7 +5150,7 @@ if (delegatedWindowsStatus !== undefined) {
           ? "workspace mismatch"
           : (isOfflineBoundary || isUndeclaredInput || isSandboxBoundary)
             ? "offline input missing"
-          : isTestFailure ? "test failure" : "internal control-plane failure",
+          : isTestFailure ? "test/compatibility failure" : "internal control-plane failure",
       {
         code: isConfigurationError
           ? (error.issueCode ?? "invalid-configuration")
@@ -4920,7 +5162,10 @@ if (delegatedWindowsStatus !== undefined) {
                 ? "undeclared-test-input"
                 : isSandboxBoundary
                   ? "sandbox-boundary"
-                  : isTestFailure ? "native-test" : "internal-control-plane",
+                  : isCompatibilityFailure
+                    ? error.issueCode
+                    : isTestFailure ? "native-test" : "internal-control-plane",
+        ...(isCompatibilityFailure ? { compatibility: error.compatibility } : {}),
         message: error.message,
       },
       reportPath,
