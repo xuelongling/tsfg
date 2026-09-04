@@ -151,7 +151,7 @@ async function materializePolicyFixture(workspace, overrides = {}) {
 <manifest>
   <remote name="github-xuelongling" fetch="https://github.com/xuelongling/" />
   <project name="tsfg.git" path="tsfg" remote="github-xuelongling" revision="${productHead}" />
-${upstream ?? ""}  
+${upstream ?? ""}
   <project name=".agents.git" path=".agents" remote="github-xuelongling" revision="${agentsHead}">
     <linkfile src="AGENTS.md" dest="AGENTS.md" />
     <linkfile src="codex/config.toml" dest=".codex/config.toml" />
