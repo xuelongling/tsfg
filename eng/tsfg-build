@@ -80,6 +80,28 @@ snapshot_verified_node() {
   [ "$actual_digest" = "$expected_digest" ] || runtime_failure 'private Node snapshot digest mismatch'
 }
 
+trusted_git() {
+  bootstrap_git=${TSFG_BOOTSTRAP_GIT:-}
+  bootstrap_digest=${TSFG_BOOTSTRAP_GIT_SHA256:-}
+  case "$bootstrap_git" in
+    /*) ;;
+    *) runtime_failure 'offline commands require an absolute TSFG_BOOTSTRAP_GIT' ;;
+  esac
+  [ -x "$bootstrap_git" ] || runtime_failure 'bootstrap Git does not exist or is not executable'
+  [ "${#bootstrap_digest}" -eq 64 ] ||
+    runtime_failure 'offline commands require a full lowercase TSFG_BOOTSTRAP_GIT_SHA256'
+  case "$bootstrap_digest" in
+    *[!0-9a-f]*) runtime_failure 'offline commands require a full lowercase TSFG_BOOTSTRAP_GIT_SHA256' ;;
+    *) ;;
+  esac
+  actual_digest=$(/usr/bin/sha256sum "$bootstrap_git") ||
+    runtime_failure 'cannot verify bootstrap Git digest'
+  actual_digest=${actual_digest%% *}
+  [ "$actual_digest" = "$bootstrap_digest" ] || runtime_failure 'bootstrap Git digest mismatch'
+  TSFG_GIT=$bootstrap_git
+  export TSFG_GIT
+}
+
 valid_verify_arguments() {
   seen_workspace=false
   seen_manifest_url=false
@@ -374,8 +396,7 @@ if [ ! -x /usr/bin/sha256sum ]; then
   runtime_failure
 fi
 snapshot_verified_node "$node_path" "$node_id"
-TSFG_GIT=$(command -v git || true)
-export TSFG_GIT
+trusted_git
 TSFG_RUNTIME_LOCK="$script_dir/toolchains.lock.json"
 TSFG_RUNTIME_CACHE=$cache
 TSFG_RUNTIME_PLATFORM=$platform

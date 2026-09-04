@@ -37,6 +37,8 @@ On Linux:
 ```text
 export TSFG_BOOTSTRAP_NODE=/absolute/path/to/reviewed-bootstrap-node
 export TSFG_BOOTSTRAP_NODE_SHA256=<full-lowercase-sha256>
+export TSFG_BOOTSTRAP_GIT=/absolute/path/to/reviewed-git
+export TSFG_BOOTSTRAP_GIT_SHA256=<full-lowercase-sha256>
 eng/tsfg-build prefetch --report out/prefetch-report.json
 eng/tsfg-build verify-workspace \
   --workspace <repo-workspace> \

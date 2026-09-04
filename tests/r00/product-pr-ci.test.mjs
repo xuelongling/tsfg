@@ -241,6 +241,8 @@ test("product PR workflow composes every gate, producer, compatibility lane, and
   assert.match(productBuild, /key: tsfg-tools-\$\{\{ matrix\.target \}\}-\$\{\{ hashFiles\('eng\/toolchains\.lock\.json', 'pnpm-lock\.yaml'\) \}\}/);
   assert.doesNotMatch(productBuild, /restore-keys:/);
   assert.ok(productBuild.indexOf("actions/cache@") < productBuild.indexOf(" prefetch"));
+  assert.match(productBuild, /export TSFG_BOOTSTRAP_GIT="\$\(command -v git\)"/);
+  assert.match(productBuild, /"TSFG_BOOTSTRAP_GIT_SHA256=\$TSFG_BOOTSTRAP_GIT_SHA256" "\$workspace\/tsfg\/eng\/tsfg-build" build/);
 
   const compatibility = workflowJob(workflow, "compatibility");
   assert.match(compatibility, /--compatibility-baseline/);
@@ -253,6 +255,8 @@ test("product PR workflow composes every gate, producer, compatibility lane, and
   assert.match(reproducibility, /RUNNER_TEMP\/tsfg-repro/);
   assert.doesNotMatch(reproducibility, /\.ci\/(?:download|evidence)/);
   assert.doesNotMatch(reproducibility, /tsfg-build(?:\.cmd)? (?:build|package)/);
+  assert.match(reproducibility, /export TSFG_BOOTSTRAP_GIT="\$\(command -v git\)"/);
+  assert.match(reproducibility, /"TSFG_BOOTSTRAP_GIT_SHA256=\$TSFG_BOOTSTRAP_GIT_SHA256" "\$GITHUB_WORKSPACE\/eng\/tsfg-build" repro-check/);
 
   const evidence = workflowJob(workflow, "candidate-evidence");
   assert.match(evidence, /actions\/download-artifact@[0-9a-f]{40}/);

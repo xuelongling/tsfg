@@ -251,6 +251,8 @@ jobs:
           export TSFG_CACHE_DIR="$RUNNER_TEMP/tsfg-tool-cache/${{ matrix.target }}"
           export TSFG_BOOTSTRAP_NODE="$(command -v node)"
           export TSFG_BOOTSTRAP_NODE_SHA256="$(sha256sum "$TSFG_BOOTSTRAP_NODE" | cut -d ' ' -f 1)"
+          export TSFG_BOOTSTRAP_GIT="$(command -v git)"
+          export TSFG_BOOTSTRAP_GIT_SHA256="$(sha256sum "$TSFG_BOOTSTRAP_GIT" | cut -d ' ' -f 1)"
           "$workspace/tsfg/eng/tsfg-build" prefetch --report "$root/prefetch-report.json"
           manifest_revision=$(node -e "process.stdout.write(JSON.parse(require('node:fs').readFileSync('.ci/materialized-identity.json','utf8')).manifestRevision)")
           run_offline() {
@@ -261,10 +263,10 @@ jobs:
               exec setpriv --reuid "$1" --regid "$2" --clear-groups -- "${@:3}"
             ' bash "$(id -u)" "$(id -g)" "$@"
           }
-          run_offline /usr/bin/env "TSFG_CACHE_DIR=$TSFG_CACHE_DIR" "TSFG_BOOTSTRAP_NODE=$TSFG_BOOTSTRAP_NODE" "TSFG_BOOTSTRAP_NODE_SHA256=$TSFG_BOOTSTRAP_NODE_SHA256" "$workspace/tsfg/eng/tsfg-build" verify-workspace --workspace "$workspace" --manifest-url "$TSFG_MANIFEST_URL" --manifest-revision "$manifest_revision" --manifest "$TSFG_SELECTED_MANIFEST" --report "$root/workspace-report.json"
-          run_offline /usr/bin/env "TSFG_CACHE_DIR=$TSFG_CACHE_DIR" "TSFG_BOOTSTRAP_NODE=$TSFG_BOOTSTRAP_NODE" "TSFG_BOOTSTRAP_NODE_SHA256=$TSFG_BOOTSTRAP_NODE_SHA256" "$workspace/tsfg/eng/tsfg-build" build --target "${{ matrix.target }}" --profile "${{ matrix.profile }}" --workspace "$workspace/tsfg" --out "$build_output" --report "$root/build-report.json"
-          run_offline /usr/bin/env "TSFG_CACHE_DIR=$TSFG_CACHE_DIR" "TSFG_BOOTSTRAP_NODE=$TSFG_BOOTSTRAP_NODE" "TSFG_BOOTSTRAP_NODE_SHA256=$TSFG_BOOTSTRAP_NODE_SHA256" "$workspace/tsfg/eng/tsfg-build" test --target "${{ matrix.target }}" --profile "${{ matrix.profile }}" --workspace "$workspace/tsfg" --out "$build_output" --report "$root/test-report.json"
-          run_offline /usr/bin/env "TSFG_CACHE_DIR=$TSFG_CACHE_DIR" "TSFG_BOOTSTRAP_NODE=$TSFG_BOOTSTRAP_NODE" "TSFG_BOOTSTRAP_NODE_SHA256=$TSFG_BOOTSTRAP_NODE_SHA256" "$workspace/tsfg/eng/tsfg-build" package --target "${{ matrix.target }}" --profile "${{ matrix.profile }}" --workspace "$workspace/tsfg" --input "$build_output" --out "$package_output" --report "$root/package-report.json"
+          run_offline /usr/bin/env "TSFG_CACHE_DIR=$TSFG_CACHE_DIR" "TSFG_BOOTSTRAP_GIT=$TSFG_BOOTSTRAP_GIT" "TSFG_BOOTSTRAP_GIT_SHA256=$TSFG_BOOTSTRAP_GIT_SHA256" "$workspace/tsfg/eng/tsfg-build" verify-workspace --workspace "$workspace" --manifest-url "$TSFG_MANIFEST_URL" --manifest-revision "$manifest_revision" --manifest "$TSFG_SELECTED_MANIFEST" --report "$root/workspace-report.json"
+          run_offline /usr/bin/env "TSFG_CACHE_DIR=$TSFG_CACHE_DIR" "TSFG_BOOTSTRAP_GIT=$TSFG_BOOTSTRAP_GIT" "TSFG_BOOTSTRAP_GIT_SHA256=$TSFG_BOOTSTRAP_GIT_SHA256" "$workspace/tsfg/eng/tsfg-build" build --target "${{ matrix.target }}" --profile "${{ matrix.profile }}" --workspace "$workspace/tsfg" --out "$build_output" --report "$root/build-report.json"
+          run_offline /usr/bin/env "TSFG_CACHE_DIR=$TSFG_CACHE_DIR" "TSFG_BOOTSTRAP_GIT=$TSFG_BOOTSTRAP_GIT" "TSFG_BOOTSTRAP_GIT_SHA256=$TSFG_BOOTSTRAP_GIT_SHA256" "$workspace/tsfg/eng/tsfg-build" test --target "${{ matrix.target }}" --profile "${{ matrix.profile }}" --workspace "$workspace/tsfg" --out "$build_output" --report "$root/test-report.json"
+          run_offline /usr/bin/env "TSFG_CACHE_DIR=$TSFG_CACHE_DIR" "TSFG_BOOTSTRAP_GIT=$TSFG_BOOTSTRAP_GIT" "TSFG_BOOTSTRAP_GIT_SHA256=$TSFG_BOOTSTRAP_GIT_SHA256" "$workspace/tsfg/eng/tsfg-build" package --target "${{ matrix.target }}" --profile "${{ matrix.profile }}" --workspace "$workspace/tsfg" --input "$build_output" --out "$package_output" --report "$root/package-report.json"
           cp -a "$(realpath "$package_output")/." "$root/package/"
           TSFG_EVIDENCE_ROOT="$root" TSFG_CANDIDATE_REVISION="${{ github.event.pull_request.head.sha }}" node --input-type=module -e "import {readFile,writeFile} from 'node:fs/promises'; import {join} from 'node:path'; const root=process.env.TSFG_EVIDENCE_ROOT; const report=JSON.parse(await readFile(join(root,'package-report.json'),'utf8')); await writeFile(join(root,'candidate-binding.json'),JSON.stringify({buildIdentityDigest:report.result.buildIdentity.digest,candidateRevision:process.env.TSFG_CANDIDATE_REVISION,schemaVersion:'1'})+'\n');"
       - name: Reverify cached tools and build on Windows
@@ -403,6 +405,8 @@ jobs:
           export TSFG_CACHE_DIR="$RUNNER_TEMP/tsfg-tool-cache/${{ matrix.target }}"
           export TSFG_BOOTSTRAP_NODE="$(command -v node)"
           export TSFG_BOOTSTRAP_NODE_SHA256="$(sha256sum "$TSFG_BOOTSTRAP_NODE" | cut -d ' ' -f 1)"
+          export TSFG_BOOTSTRAP_GIT="$(command -v git)"
+          export TSFG_BOOTSTRAP_GIT_SHA256="$(sha256sum "$TSFG_BOOTSTRAP_GIT" | cut -d ' ' -f 1)"
           eng/tsfg-build prefetch --report "$root/prefetch-report.json"
           run_offline() {
             sudo unshare --net --mount-proc bash -ceu '
@@ -412,7 +416,7 @@ jobs:
               exec setpriv --reuid "$1" --regid "$2" --clear-groups -- "${@:3}"
             ' bash "$(id -u)" "$(id -g)" "$@"
           }
-          run_offline /usr/bin/env "TSFG_CACHE_DIR=$TSFG_CACHE_DIR" "TSFG_BOOTSTRAP_NODE=$TSFG_BOOTSTRAP_NODE" "TSFG_BOOTSTRAP_NODE_SHA256=$TSFG_BOOTSTRAP_NODE_SHA256" "$GITHUB_WORKSPACE/eng/tsfg-build" repro-check --target "${{ matrix.target }}" --profile "${{ matrix.profile }}" \
+          run_offline /usr/bin/env "TSFG_CACHE_DIR=$TSFG_CACHE_DIR" "TSFG_BOOTSTRAP_GIT=$TSFG_BOOTSTRAP_GIT" "TSFG_BOOTSTRAP_GIT_SHA256=$TSFG_BOOTSTRAP_GIT_SHA256" "$GITHUB_WORKSPACE/eng/tsfg-build" repro-check --target "${{ matrix.target }}" --profile "${{ matrix.profile }}" \
             --producer-a "$RUNNER_TEMP/tsfg-repro/download/producers/${{ matrix.target }}/${{ matrix.profile }}/a/package" \
             --producer-b "$RUNNER_TEMP/tsfg-repro/download/producers/${{ matrix.target }}/${{ matrix.profile }}/b/package" \
             --workspace "$GITHUB_WORKSPACE" --report "$root/report.json"
