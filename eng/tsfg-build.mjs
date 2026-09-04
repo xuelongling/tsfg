@@ -1853,6 +1853,7 @@ function verifyLineEndingAttributes(repository, entries) {
 }
 
 function isSpdxSource(relativePath, bytes, definition) {
+  if (definition.nonAnnotatablePaths.includes(relativePath)) return false;
   const basename = path.posix.basename(relativePath);
   const extension = path.posix.extname(relativePath).toLowerCase();
   return (
@@ -1887,7 +1888,10 @@ function verifyFirstPartyLicense(repository, entries, definition) {
     const mapping = licenseMapping(relativePath, definition);
     if (isSpdxSource(relativePath, bytes, definition)) {
       const text = new TextDecoder("utf-8", { fatal: true }).decode(bytes);
-      if (!/^(?:\/\/|#|@?rem) SPDX-License-Identifier: MIT$/imu.test(text)) {
+      if (
+        !/^(?:\/\/|#|@?rem) SPDX-License-Identifier: MIT$/imu.test(text) &&
+        !/^<!-- SPDX-License-Identifier: MIT -->$/mu.test(text)
+      ) {
         throw new WorkspaceMismatchError(
           "license-spdx",
           `${repository.workspacePath}/${relativePath} lacks SPDX-License-Identifier: MIT`,
@@ -1951,7 +1955,9 @@ function dependencyNotice(entry, product, entryMap) {
   if (
     entry.notice?.status !== "required" ||
     typeof entry.notice.path !== "string" ||
-    !entryMap.has(entry.notice.path)
+    !/^(?:NOTICE|third_party\/notices\/[a-z0-9._/-]+)$/.test(entry.notice.path) ||
+    entryMap.get(entry.notice.path)?.mode === "120000" ||
+    !entryMap.get(entry.notice.path)?.bytes.length
   ) {
     throw new WorkspaceMismatchError(
       "dependency-notice",
@@ -2206,7 +2212,7 @@ function agentStatePathIssue(relativePath) {
 function agentSecretContent(content) {
   const knownToken = /sk-[A-Za-z0-9_-]{16,}|gh[oprsu]_[A-Za-z0-9]{20,}|github_pat_[A-Za-z0-9_]{20,}/;
   const privateKey = /-----BEGIN (?:RSA |EC |OPENSSH )?PRIVATE KEY-----/;
-  const credential = /(?:^|[^A-Za-z0-9_])["']?(?:client[_ -]?secret|access[_ -]?token|refresh[_ -]?token|id[_ -]?token|api[_ -]?key|token|authorization|password|passwd|session[_ -]?cookie)["']?\s*[:=]\s*["']?(?!<|\$\{|%)[^\s"']{8,}/i;
+  const credential = /(?:^|[^A-Za-z0-9_])["']?(?:client[_ -]?secret|access[_ -]?token|refresh[_ -]?token|id[_ -]?token|api[_ -]?key|token|authorization|password|passwd|session[_ -]?cookie)["']?\s*[:=]\s*(?:"(?!<|\$\{|%)[^"\r\n]+"|'(?!<|\$\{|%)[^'\r\n]+'|(?!["'<$%])[^\s#;,]+)/i;
   const windowsAbsolute = /(?:^|[^A-Za-z0-9_])(?:[A-Za-z]:[\\/]|\\\\[A-Za-z0-9._-]+\\[A-Za-z0-9$._-]+\\)/im;
   const posixHome = /\/(?:home|Users)\/[^/\s"']+|\/root(?:\/|\b)/;
   return knownToken.test(content) || privateKey.test(content) || credential.test(content) ||
@@ -2443,6 +2449,8 @@ async function verifyWorkspacePolicy(manifestsRoot, manifestRevision, expectedPr
         typeof entry?.pattern === "string" &&
         (entry.contentKind === "text" || entry.contentKind === "binary"),
     ) ||
+    !Array.isArray(definition.nonAnnotatablePaths) ||
+    !definition.nonAnnotatablePaths.every((entry) => typeof entry === "string") ||
     !Array.isArray(definition.spdxSourceExtensions) ||
     !Array.isArray(definition.spdxSourceNames)
   ) {

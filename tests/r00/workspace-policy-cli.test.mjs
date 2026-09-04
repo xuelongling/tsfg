@@ -98,7 +98,7 @@ async function materializePolicyFixture(workspace, overrides = {}) {
     {
       ".gitattributes": gitAttributes,
       "LICENSE": license,
-      "README.md": "# fixture product\n",
+      "README.md": "<!-- SPDX-License-Identifier: MIT -->\n\n# fixture product\n",
       "eng/build-inputs.json":
         '{"entries":[{"path":"eng/example.mjs","projectId":"tsfg"}],"schemaVersion":"1"}\n',
       "eng/dependency-sources.json": '{"dependencies":[],"schemaVersion":"1"}\n',
@@ -115,9 +115,9 @@ async function materializePolicyFixture(workspace, overrides = {}) {
     path.join(workspace, ".agents"),
     {
       ".gitattributes": gitAttributes,
-      "AGENTS.md": "# fixture agents\n",
+      "AGENTS.md": "<!-- SPDX-License-Identifier: MIT -->\n\n# fixture agents\n",
       "LICENSE": license,
-      "codex/config.toml": "model = \"fixture\"\n",
+      "codex/config.toml": "# SPDX-License-Identifier: MIT\nmodel = \"fixture\"\n",
       "codex/hooks.json": "{}\n",
       ...(overrides.agentFiles ?? {}),
     },
@@ -147,6 +147,7 @@ async function materializePolicyFixture(workspace, overrides = {}) {
     upstream = `  <project name="future-upstream.git" path="future-upstream" remote="github-xuelongling" revision="${upstreamHead}" />\n`;
   }
   const manifest = `<?xml version="1.0" encoding="UTF-8"?>
+<!-- SPDX-License-Identifier: MIT -->
 <manifest>
   <remote name="github-xuelongling" fetch="https://github.com/xuelongling/" />
   <project name="tsfg.git" path="tsfg" remote="github-xuelongling" revision="${productHead}" />
@@ -245,6 +246,107 @@ test("verify-workspace reports complete three-repository policy coverage", async
       payload: [],
     });
     assert.deepEqual(report.result.policy.upstreamForks, []);
+  } finally {
+    await rm(sandbox, { recursive: true, force: true, maxRetries: 10, retryDelay: 100 });
+  }
+});
+
+test("verify-workspace reports traced build-only and payload dependencies separately", async (context) => {
+  const sandbox = await mkdtemp(path.join(tmpdir(), "tsfg-policy-dependency-report-"));
+  const workspace = path.join(sandbox, "workspace");
+  const reportPath = path.join(sandbox, "report.json");
+  const buildDigest = `sha256:${"a".repeat(64)}`;
+  const payloadDigest = `sha256:${"b".repeat(64)}`;
+  const dependencySources = {
+    dependencies: [
+      {
+        id: "tool:build-tool",
+        license: "MIT",
+        notice: { status: "not-required" },
+        scope: "build-only",
+        source: { kind: "toolchain", toolId: "build-tool" },
+      },
+      {
+        id: "tool:payload-sdk",
+        license: "Apache-2.0",
+        notice: { status: "not-required" },
+        scope: "payload",
+        source: { kind: "toolchain", toolId: "payload-sdk" },
+      },
+    ],
+    schemaVersion: "1",
+  };
+  const toolchainLock = {
+    dependencyLocks: [],
+    schemaVersion: "1",
+    targets: {},
+    tools: {
+      "build-tool": {
+        artifacts: [
+          {
+            archiveSha256: buildDigest,
+            url: "https://example.invalid/build-tool",
+          },
+        ],
+        license: "MIT",
+      },
+      "payload-sdk": {
+        artifacts: [
+          {
+            archiveSha256: payloadDigest,
+            url: "https://example.invalid/payload-sdk",
+          },
+        ],
+        license: "Apache-2.0",
+      },
+    },
+  };
+  try {
+    const { manifestHead } = await materializePolicyFixture(workspace, {
+      productFiles: {
+        "eng/dependency-sources.json": `${JSON.stringify(dependencySources)}\n`,
+        "eng/toolchains.lock.json": `${JSON.stringify(toolchainLock)}\n`,
+      },
+    });
+    const result = await invokeVerify(workspace, manifestHead, reportPath);
+    if (process.platform === "win32" && result.status === 10 && /EACCES.*realpath/.test(result.stderr)) {
+      context.skip("Windows host does not grant a traversable symbolic-link capability");
+      return;
+    }
+    assert.equal(result.status, 0, result.stderr);
+    const report = JSON.parse(await readFile(reportPath, "utf8"));
+    assert.deepEqual(report.result.policy.licenseReport.dependencies, {
+      buildOnly: [
+        {
+          id: "tool:build-tool",
+          inputs: [
+            {
+              id: "build-tool",
+              license: "MIT",
+              sha256: buildDigest,
+              source: "https://example.invalid/build-tool",
+            },
+          ],
+          license: "MIT",
+          notice: "not-required",
+        },
+      ],
+      payload: [
+        {
+          id: "tool:payload-sdk",
+          inputs: [
+            {
+              id: "payload-sdk",
+              license: "Apache-2.0",
+              sha256: payloadDigest,
+              source: "https://example.invalid/payload-sdk",
+            },
+          ],
+          license: "Apache-2.0",
+          notice: "not-required",
+        },
+      ],
+    });
   } finally {
     await rm(sandbox, { recursive: true, force: true, maxRetries: 10, retryDelay: 100 });
   }
@@ -397,6 +499,15 @@ test("verify-workspace requires machine-complete first-party MIT coverage", asyn
       code: "license-spdx",
       productFiles: { "eng/example.mjs": "export {};\n" },
     },
+    ...[
+      ["docs/guide.md", "# rejected\n"],
+      ["config/example.toml", "value = true\n"],
+      ["config/example.xml", "<value>true</value>\n"],
+      ["config/example.yaml", "value: true\n"],
+    ].map(([relativePath, contents]) => ({
+      code: "license-spdx",
+      productFiles: { [relativePath]: contents },
+    })),
     {
       code: "license-coverage",
       productFiles: { "data/unmapped.dat": "no machine mapping\n" },
@@ -479,6 +590,20 @@ test("verify-workspace rejects incomplete dependency license provenance", async 
       }),
       toolchainLock: lock("MIT"),
     },
+    {
+      code: "dependency-notice",
+      dependencySources: source("MIT", {
+        path: "third_party/notices/example.txt",
+        status: "required",
+      }),
+      productFiles: { "third_party/notices/example.txt": "" },
+      toolchainLock: lock("MIT"),
+    },
+    {
+      code: "dependency-notice",
+      dependencySources: source("MIT", { path: "README.md", status: "required" }),
+      toolchainLock: lock("MIT"),
+    },
   ];
   for (const scenario of scenarios) {
     const sandbox = await mkdtemp(path.join(tmpdir(), `tsfg-policy-${scenario.code}-`));
@@ -489,6 +614,7 @@ test("verify-workspace rejects incomplete dependency license provenance", async 
         productFiles: {
           "eng/dependency-sources.json": `${JSON.stringify(scenario.dependencySources)}\n`,
           "eng/toolchains.lock.json": `${JSON.stringify(scenario.toolchainLock)}\n`,
+          ...(scenario.productFiles ?? {}),
         },
       });
       const result = await invokeVerify(workspace, manifestHead, reportPath);
@@ -581,6 +707,14 @@ test("verify-workspace rejects agent private state and unexplained generated out
     {
       code: "agent-secret",
       agentFiles: { "codex/private.toml": 'password = "concrete-private-value"\n' },
+    },
+    {
+      code: "agent-secret",
+      agentFiles: { "codex/private.toml": 'password = "hunter2"\n' },
+    },
+    {
+      code: "agent-secret",
+      agentFiles: { "codex/private.toml": 'password = "multi word secret"\n' },
     },
     {
       code: "agent-secret",
