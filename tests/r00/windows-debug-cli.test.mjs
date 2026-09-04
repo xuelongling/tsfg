@@ -61,6 +61,13 @@ test("Windows debug build, smoke test, and package share one normalized Build Id
     { name: "zig-smoke", status: "passed" },
   ]);
   assert.equal(buildReport.result.publishable, true);
+  assert.deepEqual(buildReport.result.steps, [
+    { role: "normative", tool: "cmake" },
+    { role: "normative", tool: "ninja" },
+    { role: "normative", tool: "zig" },
+    { role: "compatibility-only", tool: "cl" },
+    { role: "compatibility-only", tool: "link" },
+  ]);
   assert.deepEqual(packageReport.result.buildIdentity, buildReport.result.buildIdentity);
 
   const files = await readdir(packageRoot);
@@ -91,5 +98,9 @@ test("Windows debug build, smoke test, and package share one normalized Build Id
   for (const entry of entries) {
     assert.equal(entry.bytes.includes(Buffer.from(acceptanceRoot)), false, entry.name);
     assert.equal(entry.bytes.includes(Buffer.from(buildRoot)), false, entry.name);
+    if (entry.name.endsWith(".pdb")) {
+      assert.doesNotMatch(entry.bytes.toString("latin1"), /[A-Za-z]:[\\/]/, entry.name);
+      assert.doesNotMatch(entry.bytes.toString("utf16le"), /[A-Za-z]:[\\/]/, entry.name);
+    }
   }
 });

@@ -75,6 +75,11 @@ test("toolchain lock content-locks both debug closures and bootstrap tools", asy
     platform: "windows-x86_64-msvc",
     unpackedTreeSha256: "sha256:962f54dcf4c2679882d5408de12725373c29c921c1712439f71f337ef8881a7b",
     url: "https://www.7-zip.org/a/7z2602-x64.exe",
+    verification: {
+      kind: "authenticode+github-release-asset-digest",
+      signer: "Igor Pavlov",
+      verificationUrl: "https://www.7-zip.org/download.html",
+    },
   });
   assert.equal(lock.tools["debian-sysroot"].version, "12.15");
   assert.equal(lock.tools.llvm.version, "22.1.6");
@@ -141,6 +146,9 @@ test("toolchain lock content-locks both debug closures and bootstrap tools", asy
     assert.notEqual(tool.signature.signer, "");
     assert.ok(tool.artifacts.length > 0);
     for (const artifact of tool.artifacts) {
+      assert.notEqual(artifact.verification?.kind, "");
+      assert.notEqual(artifact.verification?.signer, "");
+      assert.match(artifact.verification?.verificationUrl ?? "", /^https:\/\//);
       if (artifact.archiveFormat.endsWith("-set")) {
         assert.ok(artifact.archives.length > 0);
         for (const member of artifact.archives) {

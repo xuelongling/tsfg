@@ -2277,7 +2277,10 @@ async function normalizeWindowsPdb(pdbPath, pdbutil, pathMappings, workRoot, env
   for (const [source, replacement] of pathMappings) {
     yaml = yaml.replaceAll(source, replacement);
     yaml = yaml.replaceAll(source.replaceAll("\\", "/"), replacement);
+    yaml = yaml.replaceAll(source.replaceAll("\\", "\\\\"), replacement);
   }
+  yaml = yaml.replace(/[A-Za-z]:\\[^'\r\n]*/g, ".external");
+  yaml = yaml.replace(/[A-Za-z]:\/[^'\r\n]*/g, ".external");
   await writeFile(yamlPath, yaml, { encoding: "utf8", flag: "wx" });
   try {
     runBuildTool(
@@ -2288,6 +2291,16 @@ async function normalizeWindowsPdb(pdbPath, pdbutil, pathMappings, workRoot, env
       environment,
     );
     await copyFile(normalizedPath, pdbPath);
+    const verified = spawnSync(pdbutil, ["pdb2yaml", "--all", pdbPath], {
+      cwd: workRoot,
+      encoding: "utf8",
+      env: environment,
+      maxBuffer: 256 * 1024 * 1024,
+      stdio: ["ignore", "pipe", "pipe"],
+    });
+    if (verified.error || verified.status !== 0 || /[A-Za-z]:[\\/]/.test(verified.stdout)) {
+      throw new BuildFailureError("normalized PDB still contains an absolute Windows path");
+    }
   } finally {
     await rm(yamlPath, { force: true });
     await rm(normalizedPath, { force: true });
@@ -2487,7 +2500,7 @@ async function buildWindowsDebug(options, runtime, workspaceState, networkCanary
       outputs: [...payloads, ...symbols].map(({ path: outputPath }) => outputPath).concat("build-metadata.json"),
       profile,
       publishable: workspaceState.publishable,
-      steps,
+      steps: steps.map(({ role, tool }) => ({ role, tool })),
       target,
     };
     Object.defineProperty(result, "publication", { value: publication });
