@@ -1772,6 +1772,13 @@ async function verifyRuntimeClosure(lockPath, cachePath, platform) {
  * @returns {any}
  */
 function gitOutput(cwd, arguments_, encoding = "utf8") {
+  const gitExecutable = process.env.TSFG_GIT;
+  if (!gitExecutable || !path.isAbsolute(gitExecutable)) {
+    throw new WorkspaceMismatchError(
+      "git-state",
+      "Git inspection requires an absolute TSFG_GIT selected by the verified launcher",
+    );
+  }
   try {
     /** @type {NodeJS.ProcessEnv} */
     const environment = {};
@@ -1802,7 +1809,7 @@ function gitOutput(cwd, arguments_, encoding = "utf8") {
     environment.GIT_CONFIG_GLOBAL = process.platform === "win32" ? "NUL" : "/dev/null";
     environment.GIT_OPTIONAL_LOCKS = "0";
     environment.GIT_TERMINAL_PROMPT = "0";
-    const bytes = execFileSync(process.env.TSFG_GIT ?? "git", arguments_, {
+    const bytes = execFileSync(gitExecutable, arguments_, {
       cwd,
       env: environment,
       maxBuffer: 16 * 1024 * 1024,

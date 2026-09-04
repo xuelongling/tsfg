@@ -31,6 +31,13 @@ const repositoryRoot = path.resolve(
 const buildEntry = path.join(repositoryRoot, "eng", "tsfg-build.mjs");
 const networkDenialHook = path.join(repositoryRoot, "tests", "r00", "deny-network.cjs");
 const networkAccessHook = path.join(repositoryRoot, "tests", "r00", "allow-network.cjs");
+const gitLookup = spawnSync(process.platform === "win32" ? "where.exe" : "which", ["git"], {
+  encoding: "utf8",
+});
+const testGitExecutable = gitLookup.stdout.split(/\r?\n/).find(Boolean);
+if (gitLookup.status !== 0 || !testGitExecutable || !path.isAbsolute(testGitExecutable)) {
+  throw new Error(`tests require an absolute Git executable: ${gitLookup.stderr}`);
+}
 
 function validVerifyArguments(reportPath) {
   return [
@@ -61,9 +68,15 @@ function testNodeInvocation(arguments_) {
 async function invoke(arguments_, options = {}) {
   return await new Promise((resolve, reject) => {
     const invocation = testNodeInvocation([buildEntry, ...arguments_]);
+    const { env = process.env, ...spawnOptions } = options;
+    const childEnvironment = { ...env };
+    if (!Object.hasOwn(childEnvironment, "TSFG_GIT")) {
+      childEnvironment.TSFG_GIT = testGitExecutable;
+    }
     const child = spawn(invocation.executable, invocation.arguments, {
       cwd: repositoryRoot,
-      ...options,
+      ...spawnOptions,
+      env: childEnvironment,
     });
     let stdout = "";
     let stderr = "";
@@ -1016,6 +1029,29 @@ test("dirty workspace fails closed before build execution", async () => {
     assert.equal(failureReport.error.issues[0].code, "invalid-configuration");
   } finally {
     await rm(sandbox, { recursive: true, force: true });
+  }
+});
+
+test("control plane refuses Git inspection without an explicit executable", async () => {
+  const sandbox = await mkdtemp(path.join(tmpdir(), "tsfg-explicit-git-"));
+  const reportPath = path.join(sandbox, "report.json");
+  try {
+    const result = await invoke([
+      "build", "--dev",
+      "--target", "linux-x86_64-gnu",
+      "--profile", "debug",
+      "--workspace", repositoryRoot,
+      "--out", path.join(sandbox, "out"),
+      "--report", reportPath,
+    ], {
+      env: { ...process.env, TSFG_GIT: "" },
+    });
+    assert.equal(result.status, 10, result.stderr);
+    const report = JSON.parse(await readFile(reportPath, "utf8"));
+    assert.equal(report.error.issues[0].code, "git-state");
+    assert.match(report.error.issues[0].message, /requires an absolute TSFG_GIT/);
+  } finally {
+    await rm(sandbox, { recursive: true, force: true, maxRetries: 10, retryDelay: 100 });
   }
 });
 

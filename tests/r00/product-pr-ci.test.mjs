@@ -282,12 +282,12 @@ test("product PR workflow isolates every Linux offline phase in a loopback-only 
   }
 
   const assertions = [
-    [jobs[0], /tsfg-build\.mjs" verify-workspace/],
+    [jobs[0], /eng\/tsfg-build" verify-workspace/],
     [jobs[1], /eng\/tsfg-build" verify-workspace/],
     [jobs[1], /eng\/tsfg-build" build/],
     [jobs[1], /eng\/tsfg-build" test/],
     [jobs[1], /eng\/tsfg-build" package/],
-    [jobs[2], /eng\/tsfg-build\.mjs test/],
+    [jobs[2], /eng\/tsfg-build" test/],
     [jobs[3], /eng\/tsfg-build" repro-check/],
   ];
   for (const [job, command] of assertions) {
@@ -298,6 +298,27 @@ test("product PR workflow isolates every Linux offline phase in a loopback-only 
 
   assert.doesNotMatch(jobs[1], /^\s*run_offline .* prefetch /m);
   assert.doesNotMatch(jobs[3], /^\s*run_offline .* prefetch /m);
+});
+
+test("product PR result commands enter through verified public launchers", async () => {
+  const workflow = await readFile(workflowPath, "utf8");
+  const workspaceVerification = workflowJob(workflow, "workspace-verification");
+  const compatibility = workflowJob(workflow, "compatibility");
+
+  assert.match(workspaceVerification, /actions\/cache@[0-9a-f]{40}/);
+  assert.match(workspaceVerification, /TSFG_BOOTSTRAP_NODE_SHA256/);
+  assert.match(workspaceVerification, /TSFG_BOOTSTRAP_GIT_SHA256/);
+  assert.match(workspaceVerification, /eng\/tsfg-build" prefetch/);
+  assert.match(workspaceVerification, /eng\/tsfg-build" verify-workspace/);
+  assert.doesNotMatch(workspaceVerification, /tsfg-build\.mjs" verify-workspace/);
+
+  assert.match(compatibility, /TSFG_BOOTSTRAP_NODE_SHA256/);
+  assert.match(compatibility, /TSFG_BOOTSTRAP_GIT_SHA256/);
+  assert.match(compatibility, /eng\/tsfg-build prefetch/);
+  assert.match(compatibility, /eng\\tsfg-build\.cmd prefetch/);
+  assert.match(compatibility, /eng\/tsfg-build" test/);
+  assert.match(compatibility, /eng\\tsfg-build\.cmd test/);
+  assert.doesNotMatch(compatibility, /eng\/tsfg-build\.mjs test/);
 });
 
 test("candidate verdict requires complete successful matrix evidence before declaring Verified Candidate", async () => {

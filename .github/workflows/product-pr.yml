@@ -112,6 +112,10 @@ jobs:
       - uses: actions/setup-node@249970729cb0ef3589644e2896645e5dc5ba9c38 # v6
         with:
           node-version: ${{ env.NODE_VERSION }}
+      - uses: actions/cache@0057852bfaa89a56745cba8c7296529d2fc39830 # v4.3.0
+        with:
+          path: ${{ runner.temp }}/tsfg-tool-cache/linux-x86_64-gnu
+          key: tsfg-tools-linux-x86_64-gnu-${{ hashFiles('eng/toolchains.lock.json', 'pnpm-lock.yaml') }}
       - name: Verify the pinned Repo launcher
         shell: bash
         run: |
@@ -133,6 +137,12 @@ jobs:
           workspace="$RUNNER_TEMP/tsfg-workspace-verification/workspace"
           manifest_revision=$(node -e "process.stdout.write(JSON.parse(require('node:fs').readFileSync('.ci/materialized-identity.json','utf8')).manifestRevision)")
           mkdir -p .ci/evidence/workspace-verification
+          export TSFG_CACHE_DIR="$RUNNER_TEMP/tsfg-tool-cache/linux-x86_64-gnu"
+          export TSFG_BOOTSTRAP_NODE="$(command -v node)"
+          export TSFG_BOOTSTRAP_NODE_SHA256="$(sha256sum "$TSFG_BOOTSTRAP_NODE" | cut -d ' ' -f 1)"
+          export TSFG_BOOTSTRAP_GIT="$(command -v git)"
+          export TSFG_BOOTSTRAP_GIT_SHA256="$(sha256sum "$TSFG_BOOTSTRAP_GIT" | cut -d ' ' -f 1)"
+          "$workspace/tsfg/eng/tsfg-build" prefetch --report .ci/evidence/workspace-verification/prefetch-report.json
           run_offline() {
             sudo unshare --net --mount-proc bash -ceu '
               ip link set lo up
@@ -141,7 +151,7 @@ jobs:
               exec setpriv --reuid "$1" --regid "$2" --clear-groups -- "${@:3}"
             ' bash "$(id -u)" "$(id -g)" "$@"
           }
-          run_offline "$(command -v node)" "$workspace/tsfg/eng/tsfg-build.mjs" verify-workspace \
+          run_offline /usr/bin/env "TSFG_CACHE_DIR=$TSFG_CACHE_DIR" "TSFG_BOOTSTRAP_GIT=$TSFG_BOOTSTRAP_GIT" "TSFG_BOOTSTRAP_GIT_SHA256=$TSFG_BOOTSTRAP_GIT_SHA256" "$workspace/tsfg/eng/tsfg-build" verify-workspace \
             --workspace "$workspace" \
             --manifest-url "$TSFG_MANIFEST_URL" \
             --manifest-revision "$manifest_revision" \
@@ -325,17 +335,47 @@ jobs:
       - uses: actions/setup-node@249970729cb0ef3589644e2896645e5dc5ba9c38 # v6
         with:
           node-version: ${{ env.NODE_VERSION }}
+      - uses: actions/cache@0057852bfaa89a56745cba8c7296529d2fc39830 # v4.3.0
+        with:
+          path: ${{ runner.temp }}/tsfg-tool-cache/${{ matrix.target }}
+          key: tsfg-tools-${{ matrix.target }}-${{ hashFiles('eng/toolchains.lock.json', 'pnpm-lock.yaml') }}
       - name: Create candidate-bound synthetic compatibility artifacts
         shell: bash
         run: |
           compatibility="$RUNNER_TEMP/tsfg-compatibility"
           mkdir -p "$compatibility/input" "$compatibility/evidence/compatibility/${{ matrix.target }}"
           node --input-type=module -e "import {writeFile} from 'node:fs/promises'; import {join} from 'node:path'; import {baselineSyntheticArtifact,candidateSyntheticArtifact} from './tests/r00/contract-compatibility-fixtures.mjs'; const baseline=baselineSyntheticArtifact(); const candidate=candidateSyntheticArtifact(); baseline.product.commitOid=process.env.TSFG_BASELINE_PRODUCT_REVISION; candidate.product.commitOid='${{ github.event.pull_request.head.sha }}'; const root=join(process.env.RUNNER_TEMP,'tsfg-compatibility','input'); await writeFile(join(root,'baseline.json'),JSON.stringify(baseline)+'\n'); await writeFile(join(root,'candidate.json'),JSON.stringify(candidate)+'\n');"
+      - name: Prefetch the verified Linux compatibility runtime
+        if: runner.os == 'Linux'
+        shell: bash
+        run: |
+          compatibility="$RUNNER_TEMP/tsfg-compatibility"
+          export TSFG_CACHE_DIR="$RUNNER_TEMP/tsfg-tool-cache/${{ matrix.target }}"
+          export TSFG_BOOTSTRAP_NODE="$(command -v node)"
+          export TSFG_BOOTSTRAP_NODE_SHA256="$(sha256sum "$TSFG_BOOTSTRAP_NODE" | cut -d ' ' -f 1)"
+          export TSFG_BOOTSTRAP_GIT="$(command -v git)"
+          export TSFG_BOOTSTRAP_GIT_SHA256="$(sha256sum "$TSFG_BOOTSTRAP_GIT" | cut -d ' ' -f 1)"
+          eng/tsfg-build prefetch --report "$compatibility/prefetch-report.json"
+      - name: Prefetch the verified Windows compatibility runtime
+        if: runner.os == 'Windows'
+        shell: pwsh
+        run: |
+          $compatibility = Join-Path $env:RUNNER_TEMP 'tsfg-compatibility'
+          $env:TSFG_CACHE_DIR = Join-Path $env:RUNNER_TEMP 'tsfg-tool-cache/${{ matrix.target }}'
+          $env:TSFG_BOOTSTRAP_NODE = (Get-Command node.exe -ErrorAction Stop).Source
+          $env:TSFG_BOOTSTRAP_NODE_SHA256 = (Get-FileHash -Algorithm SHA256 -LiteralPath $env:TSFG_BOOTSTRAP_NODE).Hash.ToLowerInvariant()
+          $env:TSFG_BOOTSTRAP_GIT = (Get-Command git.exe -ErrorAction Stop).Source
+          $env:TSFG_BOOTSTRAP_GIT_SHA256 = (Get-FileHash -Algorithm SHA256 -LiteralPath $env:TSFG_BOOTSTRAP_GIT).Hash.ToLowerInvariant()
+          & .\eng\tsfg-build.cmd prefetch --report (Join-Path $compatibility 'prefetch-report.json')
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
       - name: Execute all four artifact combinations on Linux
         if: runner.os == 'Linux'
         shell: bash
         run: |
           compatibility="$RUNNER_TEMP/tsfg-compatibility"
+          export TSFG_CACHE_DIR="$RUNNER_TEMP/tsfg-tool-cache/${{ matrix.target }}"
+          export TSFG_BOOTSTRAP_GIT="$(command -v git)"
+          export TSFG_BOOTSTRAP_GIT_SHA256="$(sha256sum "$TSFG_BOOTSTRAP_GIT" | cut -d ' ' -f 1)"
           run_offline() {
             sudo unshare --net --mount-proc bash -ceu '
               ip link set lo up
@@ -344,21 +384,25 @@ jobs:
               exec setpriv --reuid "$1" --regid "$2" --clear-groups -- "${@:3}"
             ' bash "$(id -u)" "$(id -g)" "$@"
           }
-          run_offline "$(command -v node)" --require ./tests/r00/deny-network.cjs eng/tsfg-build.mjs test --target "${{ matrix.target }}" \
+          run_offline /usr/bin/env "TSFG_CACHE_DIR=$TSFG_CACHE_DIR" "TSFG_BOOTSTRAP_GIT=$TSFG_BOOTSTRAP_GIT" "TSFG_BOOTSTRAP_GIT_SHA256=$TSFG_BOOTSTRAP_GIT_SHA256" "$GITHUB_WORKSPACE/eng/tsfg-build" test --target "${{ matrix.target }}" \
             --compatibility-baseline "$compatibility/input/baseline.json" \
             --compatibility-candidate "$compatibility/input/candidate.json" \
             --report "$compatibility/evidence/compatibility/${{ matrix.target }}/report.json"
           cp "$compatibility"/input/*.json "$compatibility/evidence/compatibility/${{ matrix.target }}/"
       - name: Execute all four artifact combinations on Windows
         if: runner.os == 'Windows'
-        shell: bash
+        shell: pwsh
         run: |
-          compatibility="$RUNNER_TEMP/tsfg-compatibility"
-          node --require ./tests/r00/deny-network.cjs eng/tsfg-build.mjs test --target "${{ matrix.target }}" \
-            --compatibility-baseline "$compatibility/input/baseline.json" \
-            --compatibility-candidate "$compatibility/input/candidate.json" \
-            --report "$compatibility/evidence/compatibility/${{ matrix.target }}/report.json"
-          cp "$compatibility"/input/*.json "$compatibility/evidence/compatibility/${{ matrix.target }}/"
+          $compatibility = Join-Path $env:RUNNER_TEMP 'tsfg-compatibility'
+          $env:TSFG_CACHE_DIR = Join-Path $env:RUNNER_TEMP 'tsfg-tool-cache/${{ matrix.target }}'
+          $env:TSFG_BOOTSTRAP_GIT = (Get-Command git.exe -ErrorAction Stop).Source
+          $env:TSFG_BOOTSTRAP_GIT_SHA256 = (Get-FileHash -Algorithm SHA256 -LiteralPath $env:TSFG_BOOTSTRAP_GIT).Hash.ToLowerInvariant()
+          & .\eng\tsfg-build.cmd test --target "${{ matrix.target }}" `
+            --compatibility-baseline (Join-Path $compatibility 'input/baseline.json') `
+            --compatibility-candidate (Join-Path $compatibility 'input/candidate.json') `
+            --report (Join-Path $compatibility 'evidence/compatibility/${{ matrix.target }}/report.json')
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          Copy-Item -LiteralPath (Join-Path $compatibility 'input/baseline.json'), (Join-Path $compatibility 'input/candidate.json') -Destination (Join-Path $compatibility 'evidence/compatibility/${{ matrix.target }}')
       - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
         with:
           if-no-files-found: error
