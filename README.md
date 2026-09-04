@@ -54,8 +54,8 @@ eng/tsfg-build test \
   --report out/test-report.json
 eng/tsfg-build test \
   --target linux-x86_64-gnu \
-  --compatibility-baseline tests/r00/fixtures/compatibility/baseline.json \
-  --compatibility-candidate tests/r00/fixtures/compatibility/candidate.json \
+  --compatibility-baseline /absolute/path/to/baseline-artifact.json \
+  --compatibility-candidate /absolute/path/to/candidate-artifact.json \
   --report out/compatibility-report.json
 eng/tsfg-build package \
   --target linux-x86_64-gnu \

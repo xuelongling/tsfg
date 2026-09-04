@@ -43,7 +43,12 @@ class ConfigurationError extends Error {
 }
 class BuildFailureError extends Error {}
 class BuildPolicyError extends BuildFailureError {}
-class TestFailureError extends Error {}
+class TestFailureError extends Error {
+  constructor(message, issueCode = "native-test") {
+    super(message);
+    this.issueCode = issueCode;
+  }
+}
 class CompatibilityFailureError extends TestFailureError {
   constructor(issueCode, message, compatibility) {
     super(message);
@@ -3355,22 +3360,41 @@ async function testSmoke(options, runtime, workspaceState, networkCanary) {
 }
 
 function validateSyntheticArtifact(artifact, label, contractSetId) {
+  const requiredFields = artifact?.consumer?.requiredFields;
+  const optionalFields = artifact?.consumer?.optionalFields;
+  const fields = [...(requiredFields ?? []), ...(optionalFields ?? [])];
+  const allowedChangeClasses = label === "baseline"
+    ? ["baseline"]
+    : ["unchanged", "editorial", "compatible-extension", "breaking", "exact-change"];
   if (
     artifact?.schemaVersion !== "1" ||
     artifact.artifactKind !== "r00-synthetic-contract-artifact" ||
     artifact.product?.contractSetId !== contractSetId ||
     !/^[0-9a-f]{40}$/.test(artifact.product?.commitOid) ||
-    typeof artifact.product?.semver !== "string" ||
+    !/^(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)(?:-[0-9A-Za-z.-]+)?$/.test(
+      artifact.product?.semver,
+    ) ||
     typeof artifact.contract?.familyId !== "string" ||
+    artifact.contract.familyId.length === 0 ||
+    !["backward", "bidirectional", "exact"].includes(artifact.contract?.compatibility) ||
     !/^sha256:[0-9a-f]{64}$/.test(artifact.contract?.schemaHash) ||
-    typeof artifact.contract?.semver !== "string" ||
+    typeof artifact.contract?.semanticRevision !== "string" ||
+    artifact.contract.semanticRevision.length === 0 ||
+    !parseSyntheticContractSemver(artifact.contract?.semver) ||
+    !allowedChangeClasses.includes(artifact.contract?.change?.class) ||
     artifact.producer?.payload === null ||
     typeof artifact.producer?.payload !== "object" ||
-    !Array.isArray(artifact.consumer?.requiredFields) ||
-    !Array.isArray(artifact.consumer?.optionalFields) ||
-    typeof artifact.consumer?.acceptsUnknownFields !== "boolean"
+    Array.isArray(artifact.producer.payload) ||
+    !Array.isArray(requiredFields) ||
+    !Array.isArray(optionalFields) ||
+    fields.some((field) => typeof field !== "string" || field.length === 0) ||
+    new Set(fields).size !== fields.length ||
+    typeof artifact.consumer.acceptsUnknownFields !== "boolean"
   ) {
-    throw new TestFailureError(`${label} synthetic compatibility artifact is invalid`);
+    throw new TestFailureError(
+      `${label} synthetic compatibility artifact is invalid`,
+      "invalid-synthetic-artifact",
+    );
   }
 }
 
@@ -3417,7 +3441,11 @@ function parseSyntheticContractSemver(value) {
   return match.slice(1).map((part) => Number.parseInt(part, 10));
 }
 
-function hasCompleteSyntheticMigrationWindow(change) {
+function hasCompleteSyntheticMigrationWindow(
+  change,
+  baselineProductSemver,
+  candidateProductSemver,
+) {
   const phases = change?.migration?.phases;
   const stableProductMinors = change?.migration?.stableProductMinors;
   if (
@@ -3433,7 +3461,18 @@ function hasCompleteSyntheticMigrationWindow(change) {
   return parsed.every(Boolean) &&
     parsed.every((minor) => minor[1] === parsed[0][1]) &&
     Number.parseInt(parsed[1][2], 10) === Number.parseInt(parsed[0][2], 10) + 1 &&
-    Number.parseInt(parsed[2][2], 10) === Number.parseInt(parsed[1][2], 10) + 1;
+    Number.parseInt(parsed[2][2], 10) === Number.parseInt(parsed[1][2], 10) + 1 &&
+    baselineProductSemver === `${parsed[0][1]}.${parsed[0][2]}.0` &&
+    candidateProductSemver === `${parsed[2][1]}.${parsed[2][2]}.0`;
+}
+
+function hasValidBreakingContractBump(baselineSemver, candidateSemver) {
+  const baseline = parseSyntheticContractSemver(baselineSemver);
+  const candidate = parseSyntheticContractSemver(candidateSemver);
+  if (!baseline || !candidate || candidate[2] !== 0) return false;
+  return baseline[0] === 0
+    ? candidate[0] === 0 && candidate[1] > baseline[1]
+    : candidate[0] > baseline[0] && candidate[1] === 0;
 }
 
 async function testCompatibility(options, workspaceState, networkCanary) {
@@ -3465,6 +3504,23 @@ async function testCompatibility(options, workspaceState, networkCanary) {
   }
   validateSyntheticArtifact(baseline, "baseline", contractSetId);
   validateSyntheticArtifact(candidate, "candidate", contractSetId);
+  const semanticChange = baseline.contract.schemaHash !== candidate.contract.schemaHash ||
+    baseline.contract.semanticRevision !== candidate.contract.semanticRevision;
+  if (
+    baseline.contract.familyId !== candidate.contract.familyId ||
+    baseline.contract.compatibility !== candidate.contract.compatibility ||
+    candidate.contract.change.fromSemver !== baseline.contract.semver ||
+    (candidate.contract.change.class === "unchanged") !== !semanticChange ||
+    (candidate.contract.compatibility === "exact" &&
+      semanticChange && candidate.contract.change.class !== "exact-change") ||
+    (candidate.contract.change.class === "exact-change" &&
+      candidate.contract.compatibility !== "exact")
+  ) {
+    throw new TestFailureError(
+      "baseline and candidate synthetic compatibility metadata is inconsistent",
+      "invalid-synthetic-artifact",
+    );
+  }
 
   const artifacts = { baseline, candidate };
   const combinations = [];
@@ -3488,8 +3544,6 @@ async function testCompatibility(options, workspaceState, networkCanary) {
     });
   }
   const gateIssues = [];
-  const semanticChange = baseline.contract.schemaHash !== candidate.contract.schemaHash ||
-    baseline.contract.semanticRevision !== candidate.contract.semanticRevision;
   if (semanticChange && baseline.contract.semver === candidate.contract.semver) {
     gateIssues.push({
       code: "contract-version-not-bumped",
@@ -3512,11 +3566,18 @@ async function testCompatibility(options, workspaceState, networkCanary) {
     }
   } else if (
     candidate.contract.change?.class === "breaking" &&
-    !hasCompleteSyntheticMigrationWindow(candidate.contract.change)
+    (
+      !hasValidBreakingContractBump(baseline.contract.semver, candidate.contract.semver) ||
+      !hasCompleteSyntheticMigrationWindow(
+        candidate.contract.change,
+        baseline.product.semver,
+        candidate.product.semver,
+      )
+    )
   ) {
     gateIssues.push({
       code: "breaking-migration-window-incomplete",
-      message: "breaking synthetic change requires a complete expand-migrate-remove window",
+      message: "breaking synthetic change requires a complete expand-migrate-remove window bound to baseline and candidate stable Product SemVer",
     });
   }
   const compatibility = {
@@ -5164,7 +5225,7 @@ if (delegatedWindowsStatus !== undefined) {
                   ? "sandbox-boundary"
                   : isCompatibilityFailure
                     ? error.issueCode
-                    : isTestFailure ? "native-test" : "internal-control-plane",
+                    : isTestFailure ? error.issueCode : "internal-control-plane",
         ...(isCompatibilityFailure ? { compatibility: error.compatibility } : {}),
         message: error.message,
       },
