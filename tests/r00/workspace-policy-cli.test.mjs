@@ -778,7 +778,7 @@ test("verify-workspace rejects agent private state and unexplained generated out
         const readme = "<!-- SPDX-License-Identifier: MIT -->\n\n# not source\n";
         const lock = '{"lockfileVersion":1}\n';
         return {
-          "mcp/example/README.md": readme,
+          "mcp/example/src/README.md": readme,
           "mcp/example/artifact-provenance.json": `${JSON.stringify({
             artifacts: [
               {
@@ -793,7 +793,7 @@ test("verify-workspace rejects agent private state and unexplained generated out
                 sources: [
                   {
                     digest: `sha256:${createHash("sha256").update(readme).digest("hex")}`,
-                    path: "README.md",
+                    path: "src/README.md",
                   },
                 ],
               },

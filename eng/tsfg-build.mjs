@@ -2342,7 +2342,8 @@ function verifyGeneratedProvenance(repository, entries, definition) {
           }
           if (
             kind === "source" &&
-            inputPath.startsWith(`${projectRoot}/${definition.agentMcpSourceDirectory}/`)
+            inputPath.startsWith(`${projectRoot}/${definition.agentMcpSourceDirectory}/`) &&
+            definition.agentMcpSourceExtensions.includes(path.posix.extname(inputPath))
           ) {
             hasMaintainedMcpSource = true;
           }
@@ -2448,6 +2449,8 @@ async function verifyWorkspacePolicy(manifestsRoot, manifestRevision, expectedPr
   if (
     definition.schemaVersion !== "1" ||
     !/^[a-z0-9._-]+$/.test(definition.agentMcpSourceDirectory) ||
+    !Array.isArray(definition.agentMcpSourceExtensions) ||
+    !definition.agentMcpSourceExtensions.every((entry) => /^\.[a-z0-9]+$/.test(entry)) ||
     !/^[1-9][0-9]*$/.test(definition.maxRelativePathLength) ||
     !Array.isArray(definition.approvedLicenseExpressions) ||
     !definition.approvedLicenseExpressions.every((entry) => typeof entry === "string") ||
