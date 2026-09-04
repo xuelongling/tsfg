@@ -302,6 +302,7 @@ function validateSmokeOptions(options, command, requireInput = false) {
   validateAmbientBuildPolicy();
 }
 
+/** @type {Array<[string, RegExp]>} */
 const FORBIDDEN_BUILD_POLICIES = [
   ["lto", /(?:-flto(?:=[^\s)"']+)?|\/gl\b|\/ltcg(?::[^\s)"']+)?)/i],
   ["pgo", /(?:-f(?:cs-)?profile(?:-instr)?-(?:generate|use)(?:=[^\s)"']+)?|\/(?:genprofile|useprofile)\b)/i],
