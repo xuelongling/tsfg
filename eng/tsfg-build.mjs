@@ -3353,6 +3353,10 @@ function compareInputEntries(left, right) {
   return projectOrder || Buffer.from(left.path).compare(Buffer.from(right.path));
 }
 
+function sortedUtf8Strings(values) {
+  return [...values].sort((left, right) => Buffer.from(left).compare(Buffer.from(right)));
+}
+
 async function buildInputSet(workspaceRoot) {
   const declaration = await readCanonicalJson(
     path.join(workspaceRoot, "eng", "build-inputs.json"),
@@ -3674,7 +3678,7 @@ async function packageLinux(options, runtime, workspaceState, networkCanary) {
     ];
     if (
       !Array.isArray(metadata.payloads) ||
-      canonicalize(metadata.payloads.map(({ path: payloadPath }) => payloadPath))
+      canonicalize(sortedUtf8Strings(metadata.payloads.map(({ path: payloadPath }) => payloadPath)))
         !== canonicalize(expectedPayloads)
     ) {
       throw new PackageFailureError("build metadata does not declare the expected smoke payloads");
@@ -3922,8 +3926,10 @@ async function packageWindows(options, runtime, workspaceState, networkCanary) {
     if (
       !Array.isArray(metadata.payloads) ||
       !Array.isArray(metadata.symbols) ||
-      canonicalize(metadata.payloads.map(({ path: memberPath }) => memberPath)) !== canonicalize(expectedPayloads) ||
-      canonicalize(metadata.symbols.map(({ path: memberPath }) => memberPath)) !== canonicalize(expectedSymbols)
+      canonicalize(sortedUtf8Strings(metadata.payloads.map(({ path: memberPath }) => memberPath)))
+        !== canonicalize(expectedPayloads) ||
+      canonicalize(sortedUtf8Strings(metadata.symbols.map(({ path: memberPath }) => memberPath)))
+        !== canonicalize(expectedSymbols)
     ) {
       throw new PackageFailureError("build metadata does not declare the expected Windows payload and symbol set");
     }

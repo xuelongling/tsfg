@@ -1987,6 +1987,10 @@ exit 1
       "--report", secondBuildReportPath,
     ], { env: independentEnvironment });
     assert.equal(secondBuild.status, 0, secondBuild.stderr);
+    const independentMetadataPath = path.join(secondBuildOutput, "build-metadata.json");
+    const independentMetadata = JSON.parse(await readFile(independentMetadataPath, "utf8"));
+    independentMetadata.payloads.reverse();
+    await writeFile(independentMetadataPath, `${JSON.stringify(independentMetadata)}\n`);
     const secondPackageOutput = path.join(sandbox, "independent-package");
     const secondPackageReportPath = path.join(sandbox, "independent-package-report.json");
     const secondPackage = await invoke([
