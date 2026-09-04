@@ -8,6 +8,7 @@ import { tmpdir } from "node:os";
 import path from "node:path";
 import test from "node:test";
 import { fileURLToPath } from "node:url";
+import { TEST_GIT_EXECUTABLE } from "./test-tools.mjs";
 
 const repositoryRoot = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "../..");
 const buildEntry = path.join(repositoryRoot, "eng", "tsfg-build.mjs");
@@ -208,7 +209,11 @@ async function invokeVerify(workspace, manifestHead, reportPath) {
       ],
       {
         cwd: repositoryRoot,
-        env: { ...process.env, NODE_OPTIONS: `--require=${networkDenialHook}` },
+        env: {
+          ...process.env,
+          NODE_OPTIONS: `--require=${networkDenialHook}`,
+          TSFG_GIT: TEST_GIT_EXECUTABLE,
+        },
       },
     );
     let stderr = "";

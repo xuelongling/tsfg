@@ -15,6 +15,7 @@ import { tmpdir } from "node:os";
 import path from "node:path";
 import test from "node:test";
 import { fileURLToPath } from "node:url";
+import { TEST_GIT_EXECUTABLE } from "./test-tools.mjs";
 
 const repositoryRoot = path.resolve(
   path.dirname(fileURLToPath(import.meta.url)),
@@ -149,6 +150,7 @@ async function invoke(arguments_, environment = {}) {
         ...process.env,
         ...environment,
         NODE_OPTIONS: `--require=${networkDenialHook}`,
+        TSFG_GIT: TEST_GIT_EXECUTABLE,
       },
     });
     let stdout = "";

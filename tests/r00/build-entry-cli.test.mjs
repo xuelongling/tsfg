@@ -23,6 +23,7 @@ import path from "node:path";
 import { spawn, spawnSync } from "node:child_process";
 import test from "node:test";
 import { fileURLToPath } from "node:url";
+import { TEST_GIT_EXECUTABLE } from "./test-tools.mjs";
 
 const repositoryRoot = path.resolve(
   path.dirname(fileURLToPath(import.meta.url)),
@@ -31,13 +32,6 @@ const repositoryRoot = path.resolve(
 const buildEntry = path.join(repositoryRoot, "eng", "tsfg-build.mjs");
 const networkDenialHook = path.join(repositoryRoot, "tests", "r00", "deny-network.cjs");
 const networkAccessHook = path.join(repositoryRoot, "tests", "r00", "allow-network.cjs");
-const gitLookup = spawnSync(process.platform === "win32" ? "where.exe" : "which", ["git"], {
-  encoding: "utf8",
-});
-const testGitExecutable = gitLookup.stdout.split(/\r?\n/).find(Boolean);
-if (gitLookup.status !== 0 || !testGitExecutable || !path.isAbsolute(testGitExecutable)) {
-  throw new Error(`tests require an absolute Git executable: ${gitLookup.stderr}`);
-}
 
 function validVerifyArguments(reportPath) {
   return [
@@ -71,7 +65,7 @@ async function invoke(arguments_, options = {}) {
     const { env = process.env, ...spawnOptions } = options;
     const childEnvironment = { ...env };
     if (!Object.hasOwn(childEnvironment, "TSFG_GIT")) {
-      childEnvironment.TSFG_GIT = testGitExecutable;
+      childEnvironment.TSFG_GIT = TEST_GIT_EXECUTABLE;
     }
     const child = spawn(invocation.executable, invocation.arguments, {
       cwd: repositoryRoot,

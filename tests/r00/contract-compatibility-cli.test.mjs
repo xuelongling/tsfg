@@ -13,6 +13,7 @@ import {
   candidateSyntheticArtifact,
   emptyContractSetId,
 } from "./contract-compatibility-fixtures.mjs";
+import { TEST_GIT_EXECUTABLE } from "./test-tools.mjs";
 
 const repositoryRoot = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "../..");
 const buildEntry = path.join(repositoryRoot, "eng", "tsfg-build.mjs");
@@ -35,7 +36,11 @@ async function invokeCompatibility(target, reportPath, baseline, candidate) {
       "--report", reportPath,
     ], {
       cwd: repositoryRoot,
-      env: { ...process.env, NODE_OPTIONS: `--require=${networkDenialHook}` },
+      env: {
+        ...process.env,
+        NODE_OPTIONS: `--require=${networkDenialHook}`,
+        TSFG_GIT: TEST_GIT_EXECUTABLE,
+      },
     });
     let stdout = "";
     let stderr = "";

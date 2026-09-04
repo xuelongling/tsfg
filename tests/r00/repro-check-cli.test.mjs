@@ -9,6 +9,7 @@ import { spawn, spawnSync } from "node:child_process";
 import test from "node:test";
 import { fileURLToPath } from "node:url";
 import { zstdCompressSync } from "node:zlib";
+import { TEST_GIT_EXECUTABLE } from "./test-tools.mjs";
 
 const repositoryRoot = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "../..");
 const buildEntry = path.join(repositoryRoot, "eng", "tsfg-build.mjs");
@@ -296,7 +297,11 @@ async function invoke(arguments_) {
       : arguments_;
     const child = spawn(process.execPath, [buildEntry, ...completeArguments], {
       cwd: repositoryRoot,
-      env: { ...process.env, NODE_OPTIONS: `--require=${networkDenialHook}` },
+      env: {
+        ...process.env,
+        NODE_OPTIONS: `--require=${networkDenialHook}`,
+        TSFG_GIT: TEST_GIT_EXECUTABLE,
+      },
     });
     let stdout = "";
     let stderr = "";
