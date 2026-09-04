@@ -65,6 +65,12 @@ eng/tsfg-build package \
   --input out/linux-debug \
   --out out/linux-package \
   --report out/package-report.json
+eng/tsfg-build test \
+  --target linux-x86_64-gnu \
+  --profile debug \
+  --workspace /absolute/path/to/clean-candidate-checkout \
+  --package out/linux-package \
+  --report out/package-runtime-report.json
 eng/tsfg-build repro-check \
   --target linux-x86_64-gnu \
   --profile debug \
@@ -128,6 +134,15 @@ external sidecar. The attestation records the producer's absolute workspace,
 fresh private compilation-state root, build execution identity, and complete
 Toolchain Closure object verification; none of those host-specific fields
 enter the archive or checksums.
+
+The `test --package` form verifies that complete package bundle, binds its
+Build Identity to the selected candidate workspace and verified Toolchain
+Closure, extracts the packaged C++ and Zig payloads, and runs them through the
+target host's native runtime. Its report records observed OS, architecture,
+kernel/build and libc facts plus network canaries before and after execution.
+Windows additionally records and applies the locked process-level WFP
+isolation policy. Minimum-OS acceptance and virtual-network isolation remain
+external VM evidence checks; missing or mismatched evidence must fail closed.
 
 `repro-check` is the build-free third comparator. It requires two package
 directories from different absolute workspaces and build executions, verifies

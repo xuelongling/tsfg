@@ -153,6 +153,7 @@ valid_smoke_arguments() {
   seen_profile=false
   seen_out=false
   seen_input=false
+  seen_package=false
   seen_report=false
   seen_workspace=false
   seen_dev=false
@@ -214,6 +215,11 @@ valid_smoke_arguments() {
         [ "$seen_input" = false ] || return 1
         seen_input=true
         ;;
+      --package)
+        [ "$expected_command" = test ] || return 1
+        [ "$seen_package" = false ] || return 1
+        seen_package=true
+        ;;
       --report)
         [ "$seen_report" = false ] || return 1
         seen_report=true
@@ -234,8 +240,25 @@ valid_smoke_arguments() {
       [ "$seen_profile" = false ] &&
       [ "$seen_out" = false ] &&
       [ "$seen_input" = false ] &&
+      [ "$seen_package" = false ] &&
       [ "$seen_simd_dispatch" = false ] &&
       [ "$seen_cpu_fixture" = false ] &&
+      [ "$target" = linux-x86_64-gnu ]
+    return
+  fi
+  if [ "$seen_package" = true ]; then
+    [ "$expected_command" = test ] &&
+      [ "$seen_target" = true ] &&
+      [ "$seen_profile" = true ] &&
+      [ "$seen_workspace" = true ] &&
+      [ "$seen_out" = false ] &&
+      [ "$seen_input" = false ] &&
+      [ "$seen_dev" = false ] &&
+      [ "$seen_simd_dispatch" = false ] &&
+      [ "$seen_cpu_fixture" = false ] &&
+      [ "$seen_compatibility_baseline" = false ] &&
+      [ "$seen_compatibility_candidate" = false ] &&
+      { [ "$profile" = debug ] || [ "$profile" = release ]; } &&
       [ "$target" = linux-x86_64-gnu ]
     return
   fi

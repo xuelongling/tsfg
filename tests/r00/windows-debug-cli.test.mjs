@@ -354,6 +354,50 @@ test("Windows release build uses the safe release profile and x86-64-v2 baseline
     const packageReport = JSON.parse(await readFile(packageReportPath, "utf8"));
     assert.deepEqual(packageReport.result.buildPolicy, report.result.buildPolicy);
     assert.deepEqual(packageReport.result.buildIdentity, report.result.buildIdentity);
+    const packageRuntimeReportPath = path.join(root, "package-runtime-report.json");
+    const packageRuntime = invoke([
+      "test",
+      "--target", "windows-x86_64-msvc",
+      "--profile", "release",
+      "--workspace", workspace,
+      "--package", packageRoot,
+      "--report", packageRuntimeReportPath,
+    ]);
+    assert.equal(packageRuntime.status, 0, packageRuntime.stderr);
+    const packageRuntimeReport = JSON.parse(await readFile(packageRuntimeReportPath, "utf8"));
+    assert.deepEqual(packageRuntimeReport.result.buildIdentity, report.result.buildIdentity);
+    assert.equal(packageRuntimeReport.result.host.operatingSystem, "windows");
+    assert.equal(packageRuntimeReport.result.host.architecture, "x86_64");
+    assert.match(packageRuntimeReport.result.host.windowsBuild, /^\d+$/);
+    assert.deepEqual(packageRuntimeReport.result.networkCanaries, {
+      after: "blocked",
+      before: "blocked",
+    });
+    assert.deepEqual(packageRuntimeReport.result.networkIsolation, {
+      mode: "wfp-dynamic-app-id",
+      scope: "locked-process-set",
+      status: "blocked",
+    });
+    assert.deepEqual(packageRuntimeReport.result.tests, [
+      { name: "cpp-package-smoke", status: "passed" },
+      { name: "zig-package-smoke", status: "passed" },
+    ]);
+    const versionPath = path.join(workspace, "version.json");
+    const versionBytes = await readFile(versionPath);
+    await writeFile(versionPath, '{"version":"package-runtime-mismatch"}');
+    const mismatchedRuntimeReportPath = path.join(root, "package-runtime-mismatch-report.json");
+    const mismatchedRuntime = invoke([
+      "test",
+      "--target", "windows-x86_64-msvc",
+      "--profile", "release",
+      "--workspace", workspace,
+      "--package", packageRoot,
+      "--report", mismatchedRuntimeReportPath,
+    ]);
+    assert.equal(mismatchedRuntime.status, 21, mismatchedRuntime.stderr);
+    const mismatchedRuntimeReport = JSON.parse(await readFile(mismatchedRuntimeReportPath, "utf8"));
+    assert.equal(mismatchedRuntimeReport.error.issues[0].code, "build-identity-mismatch");
+    await writeFile(versionPath, versionBytes);
     const archiveBytes = await readFile(path.join(packageRoot, packageReport.result.archive));
     const entries = zipEntries(archiveBytes);
     const manifest = JSON.parse(entries[0].bytes.toString("utf8"));

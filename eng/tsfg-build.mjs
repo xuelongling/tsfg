@@ -21,7 +21,7 @@ import {
 import { constants as fsConstants } from "node:fs";
 import { execFileSync, spawnSync } from "node:child_process";
 import { connect as connectNetwork } from "node:net";
-import { tmpdir } from "node:os";
+import { arch as hostArchitecture, release as hostRelease, tmpdir, version as hostVersion } from "node:os";
 import path from "node:path";
 import process from "node:process";
 import { createHash, randomUUID } from "node:crypto";
@@ -345,6 +345,197 @@ function validateCompatibilityOptions(options) {
     if (options.has(incompatible)) {
       throw new ConfigurationError(`${incompatible} is not valid for a compatibility artifact test`);
     }
+  }
+}
+
+function validatePackageRuntimeOptions(options) {
+  const target = options.get("--target");
+  const profile = options.get("--profile");
+  if (!target || !profile || !options.get("--workspace") || !options.get("--package")) {
+    throw new ConfigurationError(
+      "package runtime test requires --target, --profile, --workspace, and --package",
+    );
+  }
+  if (
+    !["linux-x86_64-gnu", "windows-x86_64-msvc"].includes(target) ||
+    !["debug", "release"].includes(profile)
+  ) {
+    throw new ConfigurationError(
+      "R00 package runtime test supports only declared Linux and Windows debug/release targets",
+    );
+  }
+  const incompatible = ["--dev", "--out", "--simd-dispatch", "--cpu-fixture"]
+    .find((option) => options.has(option));
+  if (incompatible) {
+    throw new ConfigurationError(`${incompatible} is not valid for package runtime test`);
+  }
+}
+
+async function observeHostPlatform(target) {
+  const expectedPlatform = target === "linux-x86_64-gnu" ? "linux" : "win32";
+  if (process.platform !== expectedPlatform || hostArchitecture() !== "x64") {
+    throw new TestFailureError(
+      `${target} package runtime smoke requires its x86_64 target host`,
+      "minimum-platform",
+    );
+  }
+  const observed = {
+    architecture: "x86_64",
+    kernelRelease: hostRelease(),
+    operatingSystem: process.platform === "linux" ? "linux" : "windows",
+    osVersion: hostVersion(),
+  };
+  if (process.platform === "linux") {
+    const diagnosticReport = /** @type {{header?: {glibcVersionRuntime?: string}}} */ (
+      process.report.getReport()
+    );
+    const values = new Map();
+    for (const line of (await readFile("/etc/os-release", "utf8")).split("\n")) {
+      const match = /^([A-Z0-9_]+)=(.*)$/.exec(line);
+      if (match) values.set(match[1], match[2].replace(/^"|"$/g, ""));
+    }
+    return {
+      ...observed,
+      distribution: {
+        id: values.get("ID") ?? "",
+        pointRelease: (await readFile("/etc/debian_version", "utf8").catch(() => "")).trim(),
+        versionId: values.get("VERSION_ID") ?? "",
+      },
+      glibcVersion: diagnosticReport.header?.glibcVersionRuntime ?? "",
+    };
+  }
+  return {
+    ...observed,
+    windowsBuild: hostRelease().split(".")[2] ?? "",
+  };
+}
+
+async function testPackageRuntime(options, runtime, workspaceState, networkCanary) {
+  const target = options.get("--target");
+  const profile = options.get("--profile");
+  const host = await observeHostPlatform(target);
+  if (!runtime) {
+    throw new TestFailureError(
+      "package runtime smoke requires the verified target Toolchain Closure",
+      "runtime-closure",
+    );
+  }
+  let bundle;
+  try {
+    bundle = await loadReproProducer(
+      options.get("--package"),
+      target,
+      profile,
+      "runtime smoke",
+    );
+  } catch (error) {
+    throw new TestFailureError(error.message, "package-integrity");
+  }
+  let identity;
+  try {
+    identity = await createBuildIdentity(
+      runtime,
+      target,
+      profile,
+      workspaceState.root,
+      bundle.manifest.buildIdentity.options,
+    );
+  } catch (error) {
+    throw new TestFailureError(
+      `cannot derive package runtime Build Identity: ${error.message}`,
+      "build-identity-mismatch",
+    );
+  }
+  if (
+    canonicalize(bundle.manifest.buildIdentity) !== canonicalize(identity.buildIdentity) ||
+    canonicalize(bundle.manifest.buildInputSet) !== canonicalize(identity.buildInputSet) ||
+    bundle.manifest.contractSetId !== identity.contractSetId
+  ) {
+    throw new TestFailureError(
+      "package Build Identity does not match the current workspace and Toolchain Closure",
+      "build-identity-mismatch",
+    );
+  }
+  const runtimeRoot = await mkdtemp(path.join(tmpdir(), "tsfg-package-runtime-"));
+  try {
+    const suffix = target === "windows-x86_64-msvc" ? ".exe" : "";
+    const cases = [
+      {
+        name: "cpp-package-smoke",
+        path: `bin/tsfg-r00-cpp-smoke${suffix}`,
+        stderr: "",
+        stdout: target === "windows-x86_64-msvc"
+          ? "tsfg-r00-cpp-smoke: ok\r\n"
+          : "tsfg-r00-cpp-smoke: ok\n",
+      },
+      {
+        name: "zig-package-smoke",
+        path: `bin/tsfg-r00-zig-smoke${suffix}`,
+        stderr: "tsfg-r00-zig-smoke: ok\n",
+        stdout: "",
+      },
+    ];
+    let sandboxExecutable;
+    if (target === "windows-x86_64-msvc") {
+      if (!runtime || runtime.platform !== target) {
+        throw new TestFailureError(
+          "Windows package runtime smoke requires the verified target Toolchain Closure",
+          "package-runtime-smoke",
+        );
+      }
+      sandboxExecutable = (await verifyWindowsSandboxControl(runtime)).executable;
+    }
+    const entries = new Map(bundle.archiveEntries.map(
+      (entry) => /** @type {[string, any]} */ ([entry.name, entry]),
+    ));
+    const tests = [];
+    for (const smoke of cases) {
+      const entry = entries.get(smoke.path);
+      if (!entry) throw new TestFailureError(`package member is missing: ${smoke.path}`, "package-integrity");
+      const executable = path.join(runtimeRoot, path.basename(smoke.path));
+      await writeFile(executable, entry.bytes, { flag: "wx" });
+      if (process.platform !== "win32") await chmod(executable, 0o755);
+      const observed = runSmokeExecutable(
+        smoke.name,
+        executable,
+        runtimeRoot,
+        runtime,
+        sandboxExecutable,
+        runtimeRoot,
+        undefined,
+        workspaceState.root,
+        [],
+        "native-host",
+      );
+      if (observed.stdout !== smoke.stdout || observed.stderr !== smoke.stderr) {
+        throw new TestFailureError(
+          `${smoke.name} produced unexpected output: ${JSON.stringify(observed)}`,
+          "package-runtime-smoke",
+        );
+      }
+      tests.push({ name: smoke.name, status: "passed" });
+    }
+    const afterCanary = await verifyOfflineBoundary();
+    return {
+      buildIdentity: bundle.manifest.buildIdentity,
+      contractSetId: bundle.manifest.contractSetId,
+      host,
+      networkCanary,
+      networkCanaries: { before: networkCanary, after: afterCanary },
+      ...(target === "windows-x86_64-msvc" ? { networkIsolation: WINDOWS_NETWORK_ISOLATION } : {}),
+      package: {
+        archive: bundle.attestation.archive,
+        archiveSha256: digest(bundle.archiveBytes),
+        artifactManifestSha256: digest(bundle.manifestBytes),
+      },
+      profile,
+      publishable: true,
+      target,
+      tests,
+      toolchainClosureDigest: bundle.manifest.toolchainClosureDigest,
+    };
+  } finally {
+    await rm(runtimeRoot, { recursive: true, force: true, maxRetries: 5, retryDelay: 100 });
   }
 }
 
@@ -4002,12 +4193,17 @@ function runSmokeExecutable(
   lockedShell,
   deniedRoot,
   executableArguments = [],
+  executionMode = "toolchain-runtime",
 ) {
-  const sysroot = path.join(runtime.closurePath, "debian-sysroot");
-  const command = runtime.platform === "linux-x86_64-gnu"
+  const useToolchainSysroot = runtime.platform === "linux-x86_64-gnu" &&
+    executionMode !== "native-host";
+  const sysroot = useToolchainSysroot
+    ? path.join(runtime.closurePath, "debian-sysroot")
+    : undefined;
+  const command = useToolchainSysroot
     ? path.join(sysroot, "lib", "x86_64-linux-gnu", "ld-linux-x86-64.so.2")
     : executable;
-  const commandArguments = runtime.platform === "linux-x86_64-gnu"
+  const commandArguments = useToolchainSysroot
     ? [
         "--library-path",
         [
@@ -5828,13 +6024,15 @@ function shouldEnterWindowsOfflineBoundary(arguments_, runtime) {
         "--simd-dispatch",
         ...(command === "test" ? ["--cpu-fixture"] : []),
         "--workspace",
+        ...(command === "test" ? ["--package"] : []),
         ...(requireInput ? ["--input"] : []),
         "--out",
         "--report",
       ]),
       new Set(["--dev"]),
     );
-    validateSmokeOptions(options, command, requireInput);
+    if (command === "test" && options.has("--package")) validatePackageRuntimeOptions(options);
+    else validateSmokeOptions(options, command, requireInput);
     if (options.get("--target") !== "windows-x86_64-msvc") return false;
     return true;
   } catch {
@@ -6052,6 +6250,10 @@ if (delegatedWindowsStatus !== undefined) {
       networkCanary,
       );
     publication = result.publication;
+    result.networkCanaries = {
+      before: networkCanary,
+      after: await verifyOfflineBoundary(),
+    };
     process.exitCode = await succeed(command, result, reportPath, "offline");
   } catch (error) {
     if (publication) await publication.rollback();
@@ -6103,20 +6305,27 @@ if (delegatedWindowsStatus !== undefined) {
     const options = parseOptions(
       arguments_,
       new Set([
-        "--dev", "--target", "--profile", "--simd-dispatch", "--cpu-fixture", "--workspace", "--out", "--report",
+        "--dev", "--target", "--profile", "--simd-dispatch", "--cpu-fixture", "--workspace", "--out", "--package", "--report",
         "--compatibility-baseline", "--compatibility-candidate",
       ]),
       new Set(["--dev"]),
     );
     const compatibilityMode = options.has("--compatibility-baseline") ||
       options.has("--compatibility-candidate");
+    const packageRuntimeMode = options.has("--package");
+    if (compatibilityMode && packageRuntimeMode) {
+      throw new ConfigurationError("package runtime and compatibility test inputs are mutually exclusive");
+    }
     if (compatibilityMode) validateCompatibilityOptions(options);
+    else if (packageRuntimeMode) validatePackageRuntimeOptions(options);
     else validateSmokeOptions(options, "test");
-    const workspaceState = inspectProductWorkspace(options, true);
+    const workspaceState = inspectProductWorkspace(options, !packageRuntimeMode);
     const networkCanary = await verifyOfflineBoundary();
     let result;
     if (compatibilityMode) {
       result = await testCompatibility(options, workspaceState, networkCanary);
+    } else if (packageRuntimeMode) {
+      result = await testPackageRuntime(options, runtimeClosure, workspaceState, networkCanary);
     } else {
       if (!runtimeClosure) throw new Error("locked runtime closure is unavailable");
       result = await testSmoke(options, runtimeClosure, workspaceState, networkCanary);

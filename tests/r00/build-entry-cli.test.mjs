@@ -1054,6 +1054,68 @@ test("forbidden ambient build options fail policy before tool execution", async 
   }
 });
 
+test("package runtime smoke fails closed when the host is not the target minimum platform", async () => {
+  const sandbox = await mkdtemp(path.join(tmpdir(), "tsfg-package-runtime-platform-"));
+  const workspace = path.join(sandbox, "workspace");
+  const reportPath = path.join(sandbox, "report.json");
+  const target = process.platform === "win32"
+    ? "linux-x86_64-gnu"
+    : "windows-x86_64-msvc";
+  try {
+    const cloned = spawnSync(
+      "git",
+      ["-c", "core.autocrlf=false", "clone", "--quiet", "--no-hardlinks", repositoryRoot, workspace],
+      { encoding: "utf8" },
+    );
+    assert.equal(cloned.status, 0, cloned.stderr);
+    const result = await invoke([
+      "test",
+      "--target", target,
+      "--profile", "release",
+      "--workspace", workspace,
+      "--package", path.join(sandbox, "package"),
+      "--report", reportPath,
+    ], {
+      env: { ...process.env, NODE_OPTIONS: `--require=${networkDenialHook}` },
+    });
+    assert.equal(result.status, 21, result.stderr);
+    const report = JSON.parse(await readFile(reportPath, "utf8"));
+    assert.equal(report.error.category, "test/compatibility failure");
+    assert.equal(report.error.issues[0].code, "minimum-platform");
+    await assert.rejects(lstat(path.join(sandbox, "package-runtime")), /ENOENT/);
+  } finally {
+    await rm(sandbox, { recursive: true, force: true, maxRetries: 10, retryDelay: 100 });
+  }
+});
+
+test("package runtime smoke rejects build-only options before package inspection", async () => {
+  const sandbox = await mkdtemp(path.join(tmpdir(), "tsfg-package-runtime-options-"));
+  const reportPath = path.join(sandbox, "report.json");
+  const target = process.platform === "win32"
+    ? "windows-x86_64-msvc"
+    : "linux-x86_64-gnu";
+  try {
+    const result = await invoke([
+      "test",
+      "--dev",
+      "--target", target,
+      "--profile", "release",
+      "--workspace", repositoryRoot,
+      "--package", path.join(sandbox, "package"),
+      "--out", path.join(sandbox, "out"),
+      "--report", reportPath,
+    ], {
+      env: { ...process.env, NODE_OPTIONS: `--require=${networkDenialHook}` },
+    });
+    assert.equal(result.status, 2, result.stderr);
+    const report = JSON.parse(await readFile(reportPath, "utf8"));
+    assert.equal(report.error.category, "usage/configuration");
+    assert.equal(report.error.issues[0].code, "invalid-configuration");
+  } finally {
+    await rm(sandbox, { recursive: true, force: true, maxRetries: 10, retryDelay: 100 });
+  }
+});
+
 test("build and test run the private C++ and Zig smoke programs through locked tools", async (context) => {
   const sandbox = await mkdtemp(path.join(tmpdir(), "tsfg-linux-cpp-build-"));
   const cachePath = path.join(sandbox, "cache");
@@ -1181,7 +1243,6 @@ exit 1
     },
     tools,
   };
-
   try {
     await writeFile(lockPath, `${JSON.stringify(lock)}\n`);
     const prefetched = await invoke([
@@ -1260,7 +1321,47 @@ exit 1
     assert.equal(developmentReport.result.development, true);
     assert.equal(developmentReport.result.dirty, true);
     assert.equal(developmentReport.result.networkCanary, "blocked");
+    assert.deepEqual(developmentReport.result.networkCanaries, {
+      after: "blocked",
+      before: "blocked",
+    });
     assert.equal(developmentReport.result.publishable, false);
+    const postCanaryHook = path.join(sandbox, "allow-network-after-before-canary.cjs");
+    await writeFile(postCanaryHook, `
+const net = require("node:net");
+const { EventEmitter } = require("node:events");
+let attempts = 0;
+net.connect = () => {
+  const socket = new EventEmitter();
+  socket.destroy = () => undefined;
+  socket.setTimeout = () => socket;
+  attempts += 1;
+  process.nextTick(() => socket.emit(attempts > 2 ? "connect" : "error", new Error("blocked")));
+  return socket;
+};
+`);
+    const postCanaryOutput = path.join(sandbox, "post-canary-output");
+    const postCanaryReportPath = path.join(sandbox, "post-canary-report.json");
+    const postCanaryFailure = await invoke([
+      "build", "--dev",
+      "--target", "linux-x86_64-gnu",
+      "--profile", "debug",
+      "--workspace", workspacePath,
+      "--out", postCanaryOutput,
+      "--report", postCanaryReportPath,
+    ], {
+      env: {
+        ...process.env,
+        NODE_OPTIONS: `--require=${postCanaryHook}`,
+        TSFG_RUNTIME_CACHE: cachePath,
+        TSFG_RUNTIME_LOCK: lockPath,
+        TSFG_RUNTIME_PLATFORM: "test-x86_64",
+      },
+    });
+    assert.equal(postCanaryFailure.status, 12, postCanaryFailure.stderr);
+    const postCanaryReport = JSON.parse(await readFile(postCanaryReportPath, "utf8"));
+    assert.equal(postCanaryReport.error.issues[0].code, "network-boundary");
+    await assert.rejects(lstat(postCanaryOutput), /ENOENT/);
     const developmentMetadata = JSON.parse(await readFile(
       path.join(developmentOutput, "build-metadata.json"),
       "utf8",
@@ -1871,6 +1972,61 @@ exit 1
     assert.deepEqual(releaseManifest.buildPolicy, releaseReport.result.buildPolicy);
     assert.deepEqual(releaseManifest.buildIdentity, releaseReport.result.buildIdentity);
     if (!isWindows) {
+      const packageRuntimeReportPath = path.join(sandbox, "package-runtime-report.json");
+      const packageRuntime = await invoke([
+        "test",
+        "--target", "linux-x86_64-gnu",
+        "--profile", "release",
+        "--workspace", workspacePath,
+        "--package", releasePackageOutput,
+        "--report", packageRuntimeReportPath,
+      ], {
+        env: {
+          ...process.env,
+          NODE_OPTIONS: `--require=${networkDenialHook}`,
+          TSFG_RUNTIME_CACHE: cachePath,
+          TSFG_RUNTIME_LOCK: lockPath,
+          TSFG_RUNTIME_PLATFORM: "test-x86_64",
+        },
+      });
+      assert.equal(packageRuntime.status, 0, packageRuntime.stderr);
+      const packageRuntimeReport = JSON.parse(await readFile(packageRuntimeReportPath, "utf8"));
+      assert.deepEqual(packageRuntimeReport.result.buildIdentity, releaseReport.result.buildIdentity);
+      assert.equal(packageRuntimeReport.result.host.operatingSystem, "linux");
+      assert.match(packageRuntimeReport.result.host.kernelRelease, /\S/);
+      assert.deepEqual(packageRuntimeReport.result.networkCanaries, {
+        after: "blocked",
+        before: "blocked",
+      });
+      assert.equal(packageRuntimeReport.result.package.archive, releasePackageReport.result.archive);
+      assert.deepEqual(packageRuntimeReport.result.tests, [
+        { name: "cpp-package-smoke", status: "passed" },
+        { name: "zig-package-smoke", status: "passed" },
+      ]);
+      const versionPath = path.join(workspacePath, "version.json");
+      const versionBytes = await readFile(versionPath);
+      await writeFile(versionPath, '{"version":"package-runtime-mismatch"}');
+      const mismatchedRuntimeReportPath = path.join(sandbox, "package-runtime-mismatch-report.json");
+      const mismatchedRuntime = await invoke([
+        "test",
+        "--target", "linux-x86_64-gnu",
+        "--profile", "release",
+        "--workspace", workspacePath,
+        "--package", releasePackageOutput,
+        "--report", mismatchedRuntimeReportPath,
+      ], {
+        env: {
+          ...process.env,
+          NODE_OPTIONS: `--require=${networkDenialHook}`,
+          TSFG_RUNTIME_CACHE: cachePath,
+          TSFG_RUNTIME_LOCK: lockPath,
+          TSFG_RUNTIME_PLATFORM: "test-x86_64",
+        },
+      });
+      assert.equal(mismatchedRuntime.status, 21, mismatchedRuntime.stderr);
+      const mismatchedRuntimeReport = JSON.parse(await readFile(mismatchedRuntimeReportPath, "utf8"));
+      assert.equal(mismatchedRuntimeReport.error.issues[0].code, "build-identity-mismatch");
+      await writeFile(versionPath, versionBytes);
       const releaseTestReportPath = path.join(sandbox, "release-test-report.json");
       const releaseTest = await invoke([
         "test",
@@ -2012,6 +2168,7 @@ exit 1
       "--profile", "debug",
       "--producer-a", packageOutput,
       "--producer-b", secondPackageOutput,
+      "--workspace", secondWorkspacePath,
       "--report", reproReportPath,
     ], { env: independentEnvironment });
     assert.equal(compared.status, 0, compared.stderr);
