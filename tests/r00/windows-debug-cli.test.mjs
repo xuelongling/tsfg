@@ -86,7 +86,24 @@ test("Windows debug build, smoke test, and package share one normalized Build Id
   assert.deepEqual(packageReport.result.buildIdentity, buildReport.result.buildIdentity);
 
   const files = await readdir(packageRoot);
-  assert.deepEqual(files.sort(), [packageReport.result.archive, packageReport.result.checksums].sort());
+  assert.deepEqual(files.sort(), [
+    packageReport.result.archive,
+    packageReport.result.checksums,
+    packageReport.result.producerAttestation,
+  ].sort());
+  const producerAttestation = JSON.parse(await readFile(
+    path.join(packageRoot, packageReport.result.producerAttestation),
+    "utf8",
+  ));
+  assert.equal(producerAttestation.archive, packageReport.result.archive);
+  assert.equal(producerAttestation.buildIdentityDigest, buildReport.result.buildIdentity.digest);
+  assert.equal(producerAttestation.workspacePath, repositoryRoot);
+  assert.deepEqual({
+    initialState: producerAttestation.compilationCache.initialState,
+    sharing: producerAttestation.compilationCache.sharing,
+  }, { initialState: "empty", sharing: "none" });
+  assert.ok(path.isAbsolute(producerAttestation.compilationCache.root));
+  assert.equal(producerAttestation.toolchainClosure.objectVerification, "complete");
   const archiveBytes = await readFile(path.join(packageRoot, packageReport.result.archive));
   const checksums = JSON.parse(await readFile(path.join(packageRoot, packageReport.result.checksums), "utf8"));
   assert.equal(checksums.archive.sha256, sha256(archiveBytes));

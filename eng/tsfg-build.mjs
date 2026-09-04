@@ -30,6 +30,7 @@ import {
   gunzipSync,
   inflateRawSync,
   zstdCompressSync,
+  zstdDecompressSync,
 } from "node:zlib";
 import { setTimeout as delay } from "node:timers/promises";
 import { fileURLToPath } from "node:url";
@@ -47,6 +48,22 @@ class PackageFailureError extends Error {}
 class OfflineBoundaryError extends Error {}
 class UndeclaredInputError extends Error {}
 class SandboxBoundaryError extends Error {}
+class ReproducibilityMismatchError extends Error {
+  /**
+   * @param {string} member
+   * @param {string} message
+   * @param {string} [issueCode]
+   * @param {{leftSha256?: string, offset?: string, rightSha256?: string}} [details]
+   */
+  constructor(member, message, issueCode = "reproducibility-set", details = {}) {
+    super(message);
+    this.member = member;
+    this.issueCode = issueCode;
+    this.leftSha256 = details.leftSha256;
+    this.offset = details.offset;
+    this.rightSha256 = details.rightSha256;
+  }
+}
 
 const SANDBOX_NETWORK_BOUNDARY_STATUS = 123;
 const SANDBOX_UNDECLARED_INPUT_STATUS = 124;
@@ -401,6 +418,42 @@ function createBuildPolicy(target, profile, buildOptions) {
       safetyChecks: true,
     },
   };
+}
+
+function createProducerEvidence(identity, target, profile, workspacePath, compilationRoot) {
+  return {
+    buildExecutionId: randomUUID(),
+    compilationCache: {
+      initialState: "empty",
+      root: compilationRoot,
+      sharing: "none",
+    },
+    profile,
+    target,
+    toolchainClosure: {
+      cacheAddressing: "sha256",
+      digest: identity.buildIdentity.toolchainClosureDigest,
+      objectVerification: "complete",
+    },
+    workspacePath,
+  };
+}
+
+function validProducerEvidence(producer, identity, target, profile, workspacePath) {
+  return (
+    typeof producer?.buildExecutionId === "string" &&
+    producer.buildExecutionId.length > 0 &&
+    producer.compilationCache?.initialState === "empty" &&
+    typeof producer.compilationCache?.root === "string" &&
+    path.isAbsolute(producer.compilationCache.root) &&
+    producer.compilationCache.sharing === "none" &&
+    producer.profile === profile &&
+    producer.target === target &&
+    producer.toolchainClosure?.cacheAddressing === "sha256" &&
+    producer.toolchainClosure?.digest === identity.buildIdentity.toolchainClosureDigest &&
+    producer.toolchainClosure?.objectVerification === "complete" &&
+    producer.workspacePath === workspacePath
+  );
 }
 
 async function fail(command, code, category, issue, reportPath, network) {
@@ -787,8 +840,11 @@ function parseTar(bytes) {
       entries.push({
         name: attributes.path ?? longName ?? headerName,
         linkName: attributes.linkpath ?? longLink ?? tarString(header, 157, 100),
+        gid: tarNumber(header, 116, 8),
         mode: tarNumber(header, 100, 8) & 0o777,
+        mtime: tarNumber(header, 136, 12),
         type,
+        uid: tarNumber(header, 108, 8),
         bytes: Buffer.from(payload),
       });
       extended = {};
@@ -816,6 +872,9 @@ function parseZip(bytes) {
   for (let index = 0; index < count; index += 1) {
     if (bytes.readUInt32LE(offset) !== 0x02014b50) throw new Error("invalid zip central directory");
     const method = bytes.readUInt16LE(offset + 10);
+    const expectedCrc = bytes.readUInt32LE(offset + 16);
+    const dosTime = bytes.readUInt16LE(offset + 12);
+    const dosDate = bytes.readUInt16LE(offset + 14);
     const compressedSize = bytes.readUInt32LE(offset + 20);
     const uncompressedSize = bytes.readUInt32LE(offset + 24);
     const nameLength = bytes.readUInt16LE(offset + 28);
@@ -825,17 +884,34 @@ function parseZip(bytes) {
     const localOffset = bytes.readUInt32LE(offset + 42);
     const name = bytes.subarray(offset + 46, offset + 46 + nameLength).toString("utf8");
     if (bytes.readUInt32LE(localOffset) !== 0x04034b50) throw new Error("invalid zip local header");
+    if (
+      bytes.readUInt16LE(localOffset + 10) !== dosTime ||
+      bytes.readUInt16LE(localOffset + 12) !== dosDate ||
+      bytes.readUInt32LE(localOffset + 14) !== expectedCrc
+    ) throw new Error(`zip headers disagree for ${name}`);
     const localNameLength = bytes.readUInt16LE(localOffset + 26);
     const localExtraLength = bytes.readUInt16LE(localOffset + 28);
+    if (
+      bytes.subarray(localOffset + 30, localOffset + 30 + localNameLength).toString("utf8") !== name
+    ) throw new Error(`zip local name mismatch for ${name}`);
     const dataStart = localOffset + 30 + localNameLength + localExtraLength;
     const compressed = bytes.subarray(dataStart, dataStart + compressedSize);
     if (compressed.length !== compressedSize) throw new Error("truncated zip entry");
     const contents = method === 0 ? Buffer.from(compressed) : method === 8 ? inflateRawSync(compressed) : undefined;
     if (!contents) throw new Error(`unsupported zip compression method: ${method}`);
     if (contents.length !== uncompressedSize) throw new Error(`zip size mismatch for ${name}`);
+    if (crc32(contents) !== expectedCrc) throw new Error(`zip CRC mismatch for ${name}`);
     const unixMode = externalAttributes >>> 16;
     if ((unixMode & 0o170000) === 0o120000) throw new Error(`zip symlink is unsupported: ${name}`);
-    entries.push({ name, type: name.endsWith("/") ? "5" : "0", mode: unixMode & 0o777, bytes: contents, linkName: "" });
+    entries.push({
+      name,
+      type: name.endsWith("/") ? "5" : "0",
+      mode: unixMode & 0o777,
+      bytes: contents,
+      dosDate,
+      dosTime,
+      linkName: "",
+    });
     offset += 46 + nameLength + extraLength + commentLength;
   }
   return entries;
@@ -2575,6 +2651,7 @@ async function buildLinux(options, runtime, workspaceState, networkCanary) {
       },
       networkCanary,
       payloads,
+      producer: createProducerEvidence(identity, target, profile, workspaceState.root, workRoot),
       productVersion: identity.productVersion,
       publishable: workspaceState.publishable,
       schemaVersion: "1",
@@ -2923,6 +3000,7 @@ async function buildWindows(options, runtime, workspaceState, networkCanary) {
       networkCanary,
       networkIsolation: WINDOWS_NETWORK_ISOLATION,
       payloads,
+      producer: createProducerEvidence(identity, target, profile, workspaceState.root, workRoot),
       productVersion: identity.productVersion,
       publishable: workspaceState.publishable,
       schemaVersion: "1",
@@ -3555,6 +3633,7 @@ async function packageLinux(options, runtime, workspaceState, networkCanary) {
       metadata.development !== false ||
       metadata.dirty !== false ||
       metadata.productVersion !== identity.productVersion ||
+      !validProducerEvidence(metadata.producer, identity, target, profile, workspaceState.root) ||
       metadata.publishable !== true ||
       metadata.toolchainClosureDigest !== runtime.lockDigest
     ) {
@@ -3715,6 +3794,17 @@ async function packageLinux(options, runtime, workspaceState, networkCanary) {
       })}\n`,
       { encoding: "utf8", flag: "wx" },
     );
+    const producerAttestation = "producer-attestation.json";
+    await writeFile(
+      path.join(publishRoot, producerAttestation),
+      `${canonicalize({
+        archive: archiveName,
+        buildIdentityDigest: identity.buildIdentity.digest,
+        ...metadata.producer,
+        schemaVersion: "1",
+      })}\n`,
+      { encoding: "utf8", flag: "wx" },
+    );
     const publication = await publishDirectory(publishRoot, output);
     const result = {
       archive: archiveName,
@@ -3727,6 +3817,7 @@ async function packageLinux(options, runtime, workspaceState, networkCanary) {
       dirty: false,
       input: path.resolve(inputOption),
       networkCanary,
+      producerAttestation,
       publishable: true,
     };
     Object.defineProperty(result, "publication", { value: publication });
@@ -3795,6 +3886,7 @@ async function packageWindows(options, runtime, workspaceState, networkCanary) {
       metadata.development !== false ||
       metadata.dirty !== false ||
       metadata.productVersion !== identity.productVersion ||
+      !validProducerEvidence(metadata.producer, identity, target, profile, workspaceState.root) ||
       metadata.publishable !== true ||
       metadata.toolchainClosureDigest !== runtime.lockDigest ||
       canonicalize(metadata.networkIsolation) !== canonicalize(WINDOWS_NETWORK_ISOLATION)
@@ -3878,6 +3970,17 @@ async function packageWindows(options, runtime, workspaceState, networkCanary) {
       buildIdentity: identity.buildIdentity,
       schemaVersion: "1",
     })}\n`, { encoding: "utf8", flag: "wx" });
+    const producerAttestation = "producer-attestation.json";
+    await writeFile(
+      path.join(publishRoot, producerAttestation),
+      `${canonicalize({
+        archive: archiveName,
+        buildIdentityDigest: identity.buildIdentity.digest,
+        ...metadata.producer,
+        schemaVersion: "1",
+      })}\n`,
+      { encoding: "utf8", flag: "wx" },
+    );
     const publication = await publishDirectory(publishRoot, output);
     const result = {
       archive: archiveName,
@@ -3891,6 +3994,7 @@ async function packageWindows(options, runtime, workspaceState, networkCanary) {
       input,
       networkCanary,
       networkIsolation: WINDOWS_NETWORK_ISOLATION,
+      producerAttestation,
       publishable: true,
     };
     Object.defineProperty(result, "publication", { value: publication });
@@ -3910,6 +4014,475 @@ async function packageWindows(options, runtime, workspaceState, networkCanary) {
   }
 }
 
+function parseReproJson(bytes, name, trailingNewline) {
+  const text = bytes.toString("utf8");
+  if (text.charCodeAt(0) === 0xfeff) {
+    throw new ReproducibilityMismatchError(name, `${name} must not contain a BOM`);
+  }
+  let value;
+  try {
+    value = JSON.parse(text);
+  } catch (error) {
+    throw new ReproducibilityMismatchError(name, `${name} is not valid JSON: ${error.message}`);
+  }
+  const expected = `${canonicalize(value)}${trailingNewline ? "\n" : ""}`;
+  if (text !== expected) {
+    throw new ReproducibilityMismatchError(name, `${name} must use canonical JSON`);
+  }
+  return value;
+}
+
+function reproSidecarKind(name) {
+  if (name === "producer-attestation.json" || name.endsWith(".attestation.json")) {
+    return "external-attestation";
+  }
+  if (name === "build-report.json" || name.endsWith(".report.json")) return "build-report";
+  if (name.endsWith(".log")) return "log";
+  if (name.endsWith(".sig") || name.endsWith(".signature")) return "signature";
+  if (name.endsWith(".trusted-timestamp.json") || name.endsWith(".timestamp")) {
+    return "trusted-timestamp";
+  }
+  return undefined;
+}
+
+async function loadReproProducer(rootOption, target, profile, label) {
+  const root = path.resolve(rootOption);
+  const attestationPath = path.join(root, "producer-attestation.json");
+  const attestationBytes = await readRegularFile(
+    attestationPath,
+    `${label} producer attestation`,
+  ).catch((error) => {
+    throw new ReproducibilityMismatchError("producer-attestation.json", error.message);
+  });
+  const attestation = parseReproJson(
+    attestationBytes,
+    "producer-attestation.json",
+    true,
+  );
+  if (
+    attestation.schemaVersion !== "1" ||
+    attestation.target !== target ||
+    attestation.profile !== profile ||
+    typeof attestation.archive !== "string" ||
+    typeof attestation.workspacePath !== "string" ||
+    !path.isAbsolute(attestation.workspacePath) ||
+    attestation.compilationCache?.initialState !== "empty" ||
+    typeof attestation.compilationCache?.root !== "string" ||
+    !path.isAbsolute(attestation.compilationCache.root) ||
+    attestation.compilationCache?.sharing !== "none" ||
+    typeof attestation.buildExecutionId !== "string" ||
+    attestation.buildExecutionId.length === 0 ||
+    attestation.toolchainClosure?.cacheAddressing !== "sha256" ||
+    attestation.toolchainClosure?.objectVerification !== "complete" ||
+    typeof attestation.toolchainClosure?.digest !== "string"
+  ) {
+    throw new ReproducibilityMismatchError(
+      "producer-attestation.json",
+      `${label} producer does not prove an independent empty compilation cache and reverified content-addressed Toolchain Closure`,
+      "producer-independence",
+    );
+  }
+  const extension = target === "windows-x86_64-msvc" ? ".zip" : ".tar.zst";
+  if (!attestation.archive.endsWith(extension) || path.basename(attestation.archive) !== attestation.archive) {
+    throw new ReproducibilityMismatchError(
+      "producer-attestation.json",
+      `${label} producer archive does not match target ${target}`,
+    );
+  }
+  const archiveBytes = await readRegularFile(
+    path.join(root, attestation.archive),
+    `${label} producer archive`,
+  ).catch((error) => {
+    throw new ReproducibilityMismatchError(attestation.archive, error.message);
+  });
+  /** @type {any[]} */
+  let archiveEntries;
+  try {
+    archiveEntries = target === "windows-x86_64-msvc"
+      ? parseZip(archiveBytes)
+      : parseTar(zstdDecompressSync(archiveBytes));
+  } catch (error) {
+    throw new ReproducibilityMismatchError(attestation.archive, `${label} archive is invalid: ${error.message}`);
+  }
+  const entryNames = archiveEntries.map(({ name }) => name);
+  const sortedNames = [...entryNames].sort((left, right) => Buffer.from(left).compare(Buffer.from(right)));
+  if (canonicalize(entryNames) !== canonicalize(sortedNames) || new Set(entryNames).size !== entryNames.length) {
+    throw new ReproducibilityMismatchError(attestation.archive, `${label} archive member order is not canonical`);
+  }
+  const expectedArchiveMembers = target === "windows-x86_64-msvc"
+    ? [
+        "artifact-manifest.json",
+        "bin/tsfg-r00-cpp-smoke.exe",
+        "bin/tsfg-r00-zig-smoke.exe",
+        "contract-set.json",
+        "symbols/tsfg-r00-cpp-smoke.pdb",
+        "symbols/tsfg-r00-zig-smoke.pdb",
+      ]
+    : [
+        "artifact-manifest.json",
+        "bin/tsfg-r00-cpp-smoke",
+        "bin/tsfg-r00-zig-smoke",
+        "contract-set.json",
+        "symbols/tsfg-r00-cpp-smoke.debug",
+        "symbols/tsfg-r00-zig-smoke.debug",
+      ];
+  if (canonicalize(entryNames) !== canonicalize(expectedArchiveMembers)) {
+    const member = expectedArchiveMembers.find((name) => !entryNames.includes(name))
+      ?? entryNames.find((name) => !expectedArchiveMembers.includes(name))
+      ?? attestation.archive;
+    throw new ReproducibilityMismatchError(
+      member,
+      `${label} archive does not contain the complete R00 Reproducibility Set`,
+      "member-mismatch",
+    );
+  }
+  const entries = new Map(archiveEntries.map(
+    (entry) => /** @type {[string, any]} */ ([entry.name, entry]),
+  ));
+  const manifestEntry = entries.get("artifact-manifest.json");
+  if (!manifestEntry) {
+    throw new ReproducibilityMismatchError("artifact-manifest.json", `${label} artifact manifest is missing`);
+  }
+  const manifest = parseReproJson(
+    manifestEntry.bytes,
+    "artifact-manifest.json",
+    false,
+  );
+  if (
+    manifest.schemaVersion !== "1" ||
+    manifest.buildIdentity?.digest !== attestation.buildIdentityDigest ||
+    manifest.buildIdentity?.target !== target ||
+    manifest.buildIdentity?.profile !== profile ||
+    manifest.toolchainClosureDigest !== attestation.toolchainClosure.digest ||
+    !Array.isArray(manifest.members)
+  ) {
+    throw new ReproducibilityMismatchError(
+      "artifact-manifest.json",
+      `${label} artifact manifest identity does not match its producer attestation`,
+    );
+  }
+  const fullDigest = /^sha256:[0-9a-f]{64}$/;
+  const inputSet = manifest.buildInputSet;
+  const inputSetPayload = {
+    entries: inputSet?.entries,
+    schemaVersion: inputSet?.schemaVersion,
+  };
+  if (
+    inputSet?.schemaVersion !== "1" ||
+    !Array.isArray(inputSet.entries) ||
+    !fullDigest.test(inputSet.digest) ||
+    digest(canonicalize(inputSetPayload)) !== inputSet.digest ||
+    manifest.buildIdentity.buildInputSetDigest !== inputSet.digest
+  ) {
+    throw new ReproducibilityMismatchError(
+      "artifact-manifest.json#buildInputSet",
+      `${label} Build Input Set digest is invalid`,
+      "build-identity-mismatch",
+    );
+  }
+  const claimedBuildIdentityDigest = manifest.buildIdentity.digest;
+  const buildIdentityPayload = {
+    buildInputSetDigest: manifest.buildIdentity.buildInputSetDigest,
+    options: manifest.buildIdentity.options,
+    profile: manifest.buildIdentity.profile,
+    source_date_epoch: manifest.buildIdentity.source_date_epoch,
+    target: manifest.buildIdentity.target,
+    toolchainClosureDigest: manifest.buildIdentity.toolchainClosureDigest,
+  };
+  if (
+    !fullDigest.test(claimedBuildIdentityDigest) ||
+    !/^[1-9][0-9]*$/.test(manifest.buildIdentity.source_date_epoch) ||
+    digest(canonicalize(buildIdentityPayload)) !== claimedBuildIdentityDigest
+  ) {
+    throw new ReproducibilityMismatchError(
+      "artifact-manifest.json#buildIdentity",
+      `${label} Build Identity digest is invalid`,
+      "build-identity-mismatch",
+    );
+  }
+  const expectedArchive = `tsfg-v${manifest.productVersion}-${target}-${profile}-${claimedBuildIdentityDigest.slice(7, 23)}${extension}`;
+  if (attestation.archive !== expectedArchive) {
+    throw new ReproducibilityMismatchError(
+      "producer-attestation.json",
+      `${label} archive name does not represent its complete Build Identity`,
+      "build-identity-mismatch",
+    );
+  }
+  const sourceDateEpoch = Number.parseInt(manifest.buildIdentity.source_date_epoch, 10);
+  const zipDate = new Date(Math.max(sourceDateEpoch * 1000, Date.UTC(1980, 0, 1)));
+  const expectedDosTime = (zipDate.getUTCHours() << 11) | (zipDate.getUTCMinutes() << 5)
+    | Math.floor(zipDate.getUTCSeconds() / 2);
+  const expectedDosDate = ((zipDate.getUTCFullYear() - 1980) << 9)
+    | ((zipDate.getUTCMonth() + 1) << 5) | zipDate.getUTCDate();
+  for (const entry of archiveEntries) {
+    const expectedMode = entry.name.startsWith("bin/") ? 0o755 : 0o644;
+    const normalizedPath = path.posix.normalize(entry.name);
+    const unsafePath = (
+      !entry.name ||
+      normalizedPath !== entry.name ||
+      normalizedPath.startsWith("../") ||
+      normalizedPath.startsWith("/") ||
+      entry.name.includes("\\")
+    );
+    const nonCanonicalMetadata = target === "linux-x86_64-gnu"
+      ? entry.uid !== 0 || entry.gid !== 0 || entry.mtime !== sourceDateEpoch
+      : entry.dosTime !== expectedDosTime || entry.dosDate !== expectedDosDate;
+    if (
+      unsafePath ||
+      entry.type !== "0" ||
+      entry.mode !== expectedMode ||
+      nonCanonicalMetadata
+    ) {
+      throw new ReproducibilityMismatchError(
+        entry.name || attestation.archive,
+        `${label} archive member metadata is not canonical: ${entry.name || "<empty>"}`,
+        "archive-normalization",
+      );
+    }
+  }
+  const declaredPaths = manifest.members.map(({ path: memberPath }) => memberPath);
+  if (
+    new Set(declaredPaths).size !== declaredPaths.length ||
+    canonicalize(declaredPaths) !== canonicalize(
+      [...declaredPaths].sort((left, right) => Buffer.from(left).compare(Buffer.from(right))),
+    ) ||
+    canonicalize(declaredPaths) !== canonicalize(entryNames.filter((name) => name !== "artifact-manifest.json"))
+  ) {
+    throw new ReproducibilityMismatchError(
+      "artifact-manifest.json",
+      `${label} artifact manifest does not declare every archive member`,
+    );
+  }
+  for (const member of manifest.members) {
+    const entry = entries.get(member.path);
+    if (!entry || digest(entry.bytes) !== member.sha256) {
+      throw new ReproducibilityMismatchError(
+        member.path,
+        `${label} archive member does not match Artifact Manifest: ${member.path}`,
+      );
+    }
+  }
+  const contractSetEntry = entries.get("contract-set.json");
+  if (!contractSetEntry) {
+    throw new ReproducibilityMismatchError(
+      "contract-set.json",
+      `${label} Contract Set is missing`,
+      "member-mismatch",
+    );
+  }
+  const contractSet = parseReproJson(contractSetEntry.bytes, "contract-set.json", false);
+  if (digest(canonicalize(contractSet)) !== manifest.contractSetId) {
+    throw new ReproducibilityMismatchError(
+      "contract-set.json",
+      `${label} Contract Set ID is invalid`,
+      "member-mismatch",
+    );
+  }
+  const checksumsName = `${attestation.archive}.checksums.json`;
+  const checksumsBytes = await readRegularFile(
+    path.join(root, checksumsName),
+    `${label} external checksums`,
+  ).catch((error) => {
+    throw new ReproducibilityMismatchError(checksumsName, error.message);
+  });
+  const checksums = parseReproJson(checksumsBytes, checksumsName, true);
+  if (
+    checksums.schemaVersion !== "1" ||
+    checksums.archive?.name !== attestation.archive ||
+    checksums.archive?.sha256 !== digest(archiveBytes) ||
+    checksums.artifactManifest?.path !== "artifact-manifest.json" ||
+    checksums.artifactManifest?.sha256 !== digest(manifestEntry.bytes)
+  ) {
+    throw new ReproducibilityMismatchError(
+      checksumsName,
+      `${label} external checksums do not bind the archive and Artifact Manifest`,
+    );
+  }
+  const expectedBundleEntries = new Set([
+    attestation.archive,
+    checksumsName,
+    "producer-attestation.json",
+  ]);
+  const sidecars = [];
+  const bundleEntries = await readdir(root, { withFileTypes: true });
+  bundleEntries.sort((left, right) => Buffer.from(left.name).compare(Buffer.from(right.name)));
+  for (const entry of bundleEntries) {
+    if (expectedBundleEntries.has(entry.name)) {
+      if (!entry.isFile()) {
+        throw new ReproducibilityMismatchError(
+          entry.name,
+          `${label} bundle member is not a regular file: ${entry.name}`,
+          "unexpected-bundle-member",
+        );
+      }
+      continue;
+    }
+    const kind = entry.isFile() ? reproSidecarKind(entry.name) : undefined;
+    if (!kind) {
+      throw new ReproducibilityMismatchError(
+        entry.name,
+        `${label} bundle contains an unclassified member: ${entry.name}`,
+        "unexpected-bundle-member",
+      );
+    }
+    sidecars.push({ kind, path: entry.name });
+  }
+  sidecars.push({ kind: "external-attestation", path: "producer-attestation.json" });
+  sidecars.sort((left, right) => Buffer.from(left.path).compare(Buffer.from(right.path)));
+  const compared = archiveEntries.map((entry) => ({
+    path: `archive/${entry.name}`,
+    sha256: digest(entry.bytes),
+  }));
+  compared.push(
+    { path: `package/${attestation.archive}`, sha256: digest(archiveBytes) },
+    { path: `package/${checksumsName}`, sha256: digest(checksumsBytes) },
+  );
+  return {
+    archiveBytes,
+    archiveEntries,
+    attestation,
+    checksumsBytes,
+    compared,
+    manifest,
+    manifestBytes: manifestEntry.bytes,
+    root,
+    sidecars,
+  };
+}
+
+function firstDifferentByte(left, right) {
+  const sharedLength = Math.min(left.length, right.length);
+  for (let index = 0; index < sharedLength; index += 1) {
+    if (left[index] !== right[index]) return index;
+  }
+  return left.length === right.length ? undefined : sharedLength;
+}
+
+function compareReproBytes(member, left, right, issueCode = "member-mismatch") {
+  if (left.equals(right)) return;
+  const offset = firstDifferentByte(left, right);
+  throw new ReproducibilityMismatchError(
+    member,
+    `Reproducibility Set differs at ${member}, byte ${offset}`,
+    issueCode,
+    { leftSha256: digest(left), offset: String(offset), rightSha256: digest(right) },
+  );
+}
+
+function validateReproOptions(options) {
+  const target = options.get("--target");
+  const profile = options.get("--profile");
+  const producerA = options.get("--producer-a");
+  const producerB = options.get("--producer-b");
+  if (!target || !profile || !producerA || !producerB) {
+    throw new ConfigurationError(
+      "repro-check requires --target, --profile, --producer-a, and --producer-b",
+    );
+  }
+  if (
+    !["linux-x86_64-gnu", "windows-x86_64-msvc"].includes(target) ||
+    !["debug", "release"].includes(profile)
+  ) {
+    throw new ConfigurationError("R00 repro-check supports only declared Tier 1 targets and profiles");
+  }
+  return { producerA, producerB, profile, target };
+}
+
+async function reproCheck(options, networkCanary) {
+  const { producerA, producerB, profile, target } = validateReproOptions(options);
+  const first = await loadReproProducer(producerA, target, profile, "first");
+  const second = await loadReproProducer(producerB, target, profile, "second");
+  if (
+    path.resolve(first.attestation.workspacePath) === path.resolve(second.attestation.workspacePath) ||
+    path.resolve(first.attestation.compilationCache.root) === path.resolve(second.attestation.compilationCache.root) ||
+    first.attestation.buildExecutionId === second.attestation.buildExecutionId ||
+    first.root === second.root
+  ) {
+    throw new ReproducibilityMismatchError(
+      "producer-attestation.json",
+      "producers must use different absolute workspace and artifact paths",
+      "producer-independence",
+    );
+  }
+  if (canonicalize(first.manifest.buildIdentity) !== canonicalize(second.manifest.buildIdentity)) {
+    throw new ReproducibilityMismatchError(
+      "artifact-manifest.json",
+      "producer Build Identities differ",
+      "build-identity-mismatch",
+    );
+  }
+  const firstEntries = new Map(first.archiveEntries.map(
+    (entry) => /** @type {[string, any]} */ ([entry.name, entry]),
+  ));
+  const secondEntries = new Map(second.archiveEntries.map(
+    (entry) => /** @type {[string, any]} */ ([entry.name, entry]),
+  ));
+  const memberNames = [...new Set([
+    ...firstEntries.keys(),
+    ...secondEntries.keys(),
+  ])]
+    .filter((name) => name !== "artifact-manifest.json")
+    .sort((left, right) => Buffer.from(left).compare(Buffer.from(right)));
+  for (const member of memberNames) {
+    const left = firstEntries.get(member);
+    const right = secondEntries.get(member);
+    if (!left || !right) {
+      throw new ReproducibilityMismatchError(
+        member,
+        `Reproducibility Set member is ${left ? "missing from second" : "missing from first"}: ${member}`,
+        "member-mismatch",
+      );
+    }
+    if (left.mode !== right.mode || left.type !== right.type) {
+      throw new ReproducibilityMismatchError(
+        member,
+        `Reproducibility Set member metadata differs at ${member}`,
+        "member-mismatch",
+      );
+    }
+    compareReproBytes(member, left.bytes, right.bytes);
+  }
+  compareReproBytes(
+    "artifact-manifest.json",
+    first.manifestBytes,
+    second.manifestBytes,
+    "manifest-mismatch",
+  );
+  compareReproBytes(
+    first.attestation.archive,
+    first.archiveBytes,
+    second.archiveBytes,
+    "archive-mismatch",
+  );
+  compareReproBytes(
+    `${first.attestation.archive}.checksums.json`,
+    first.checksumsBytes,
+    second.checksumsBytes,
+    "checksums-mismatch",
+  );
+  return {
+    buildExecuted: false,
+    buildIdentity: first.manifest.buildIdentity,
+    compared: first.compared,
+    excludedSidecars: [
+      "build-report",
+      "external-attestation",
+      "log",
+      "signature",
+      "trusted-timestamp",
+    ],
+    networkCanary,
+    observedSidecars: { a: first.sidecars, b: second.sidecars },
+    producers: [
+      { label: "a", workspacePath: first.attestation.workspacePath },
+      { label: "b", workspacePath: second.attestation.workspacePath },
+    ],
+    profile,
+    reproducibilitySetDigest: digest(canonicalize({ entries: first.compared, schemaVersion: "1" })),
+    target,
+  };
+}
+
 function shouldEnterWindowsOfflineBoundary(arguments_, runtime) {
   if (
     process.platform !== "win32" ||
@@ -3917,8 +4490,15 @@ function shouldEnterWindowsOfflineBoundary(arguments_, runtime) {
     runtime?.platform !== "windows-x86_64-msvc"
   ) return false;
   const command = arguments_[0];
-  if (!["build", "test", "package"].includes(command)) return false;
+  if (!["build", "test", "package", "repro-check"].includes(command)) return false;
   try {
+    if (command === "repro-check") {
+      const options = parseOptions(
+        arguments_,
+        new Set(["--target", "--profile", "--producer-a", "--producer-b", "--report"]),
+      );
+      return options.get("--target") === "windows-x86_64-msvc";
+    }
     const requireInput = command === "package";
     const options = parseOptions(
       arguments_,
@@ -4315,21 +4895,33 @@ if (delegatedWindowsStatus !== undefined) {
   try {
     const options = parseOptions(
       arguments_,
-      new Set(["--dev", "--workspace", "--report"]),
-      new Set(["--dev"]),
+      new Set(["--target", "--profile", "--producer-a", "--producer-b", "--report"]),
     );
-    if (!options.has("--dev")) {
-      throw new ConfigurationError("repro-check is not implemented before R00-12");
-    }
-    inspectProductWorkspace(options, false);
+    validateReproOptions(options);
+    const networkCanary = await verifyOfflineBoundary();
+    const result = await reproCheck(options, networkCanary);
+    process.exitCode = await succeed(command, result, reportPath, "offline");
   } catch (error) {
-    const isWorkspaceMismatch = error instanceof WorkspaceMismatchError;
+    const isConfigurationError = error instanceof ConfigurationError;
+    const isOfflineBoundary = error instanceof OfflineBoundaryError;
     process.exitCode = await fail(
       command,
-      isWorkspaceMismatch ? 10 : 2,
-      isWorkspaceMismatch ? "workspace mismatch" : "usage/configuration",
+      isConfigurationError ? 2 : isOfflineBoundary ? 12 : 23,
+      isConfigurationError
+        ? "usage/configuration"
+        : isOfflineBoundary ? "offline input missing" : "reproducibility mismatch",
       {
-        code: isWorkspaceMismatch ? error.issueCode : "invalid-configuration",
+        code: isConfigurationError
+          ? (error.issueCode ?? "invalid-configuration")
+          : isOfflineBoundary ? "network-boundary" : (error.issueCode ?? "reproducibility-set"),
+        ...(error instanceof ReproducibilityMismatchError
+          ? {
+              member: error.member,
+              ...(error.leftSha256 ? { leftSha256: error.leftSha256 } : {}),
+              ...(error.offset !== undefined ? { offset: error.offset } : {}),
+              ...(error.rightSha256 ? { rightSha256: error.rightSha256 } : {}),
+            }
+          : {}),
         message: error.message,
       },
       reportPath,

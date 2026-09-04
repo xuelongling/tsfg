@@ -993,24 +993,27 @@ test("dirty workspace fails closed before build execution", async () => {
     assert.equal(repeated.status, 10, repeated.stderr);
     const repeatedReport = JSON.parse(await readFile(reportPath, "utf8"));
     assert.equal(repeatedReport.error.issues[0].code, "dirty-project");
-    for (const forbidden of [
-      [
-        "package", "--dev",
-        "--target", "linux-x86_64-gnu",
-        "--profile", "debug",
-        "--workspace", workspace,
-        "--input", path.join(sandbox, "input"),
-        "--out", path.join(sandbox, "package"),
-        "--report", reportPath,
-      ],
-      ["repro-check", "--dev", "--workspace", workspace, "--report", reportPath],
-    ]) {
-      const result = await invoke(forbidden);
-      assert.equal(result.status, 10, result.stderr);
-      const report = JSON.parse(await readFile(reportPath, "utf8"));
-      assert.equal(report.error.category, "workspace mismatch");
-      assert.equal(report.error.issues[0].code, "development-mode-forbidden");
-    }
+    const forbiddenPackage = await invoke([
+      "package", "--dev",
+      "--target", "linux-x86_64-gnu",
+      "--profile", "debug",
+      "--workspace", workspace,
+      "--input", path.join(sandbox, "input"),
+      "--out", path.join(sandbox, "package"),
+      "--report", reportPath,
+    ]);
+    assert.equal(forbiddenPackage.status, 10, forbiddenPackage.stderr);
+    let failureReport = JSON.parse(await readFile(reportPath, "utf8"));
+    assert.equal(failureReport.error.category, "workspace mismatch");
+    assert.equal(failureReport.error.issues[0].code, "development-mode-forbidden");
+
+    const forbiddenReproDevelopmentMode = await invoke([
+      "repro-check", "--dev", "--workspace", workspace, "--report", reportPath,
+    ]);
+    assert.equal(forbiddenReproDevelopmentMode.status, 2, forbiddenReproDevelopmentMode.stderr);
+    failureReport = JSON.parse(await readFile(reportPath, "utf8"));
+    assert.equal(failureReport.error.category, "usage/configuration");
+    assert.equal(failureReport.error.issues[0].code, "invalid-configuration");
   } finally {
     await rm(sandbox, { recursive: true, force: true });
   }
@@ -1921,6 +1924,99 @@ exit 1
     const packageReport = JSON.parse(await readFile(packageReportPath, "utf8"));
     assert.deepEqual(packageReport.result.buildIdentity, report.result.buildIdentity);
     assert.equal(packageReport.result.networkCanary, "blocked");
+    assert.equal(packageReport.result.producerAttestation, "producer-attestation.json");
+    const producerAttestationBytes = await readFile(
+      path.join(packageOutput, packageReport.result.producerAttestation),
+      "utf8",
+    );
+    const producerAttestation = JSON.parse(producerAttestationBytes);
+    assert.equal(producerAttestationBytes, `${JSON.stringify(producerAttestation)}\n`);
+    assert.match(producerAttestation.buildExecutionId, /^[0-9a-f-]{36}$/);
+    assert.ok(path.isAbsolute(producerAttestation.compilationCache.root));
+    assert.deepEqual({
+      ...producerAttestation,
+      buildExecutionId: "<build-execution-id>",
+      compilationCache: {
+        ...producerAttestation.compilationCache,
+        root: "<fresh-compilation-root>",
+      },
+    }, {
+      archive: packageReport.result.archive,
+      buildExecutionId: "<build-execution-id>",
+      buildIdentityDigest: report.result.buildIdentity.digest,
+      compilationCache: {
+        initialState: "empty",
+        root: "<fresh-compilation-root>",
+        sharing: "none",
+      },
+      profile: "debug",
+      schemaVersion: "1",
+      target: "linux-x86_64-gnu",
+      toolchainClosure: {
+        cacheAddressing: "sha256",
+        digest: report.result.buildIdentity.toolchainClosureDigest,
+        objectVerification: "complete",
+      },
+      workspacePath,
+    });
+    const secondWorkspacePath = path.join(sandbox, "workspace-independent");
+    const secondClone = spawnSync(
+      "git",
+      ["-c", "core.autocrlf=false", "clone", "--quiet", "--no-hardlinks", repositoryRoot, secondWorkspacePath],
+      { encoding: "utf8" },
+    );
+    assert.equal(secondClone.status, 0, secondClone.stderr);
+    const secondBuildOutput = path.join(sandbox, "independent-build");
+    const secondBuildReportPath = path.join(sandbox, "independent-build-report.json");
+    const independentEnvironment = {
+      ...process.env,
+      CI_RUN_ID: "independent-producer-ci-run",
+      NODE_OPTIONS: `--require=${networkDenialHook}`,
+      TSFG_RUNTIME_CACHE: cachePath,
+      TSFG_RUNTIME_LOCK: lockPath,
+      TSFG_RUNTIME_PLATFORM: "test-x86_64",
+      TZ: "Pacific/Kiritimati",
+    };
+    const secondBuild = await invoke([
+      "build",
+      "--target", "linux-x86_64-gnu",
+      "--profile", "debug",
+      "--workspace", secondWorkspacePath,
+      "--out", secondBuildOutput,
+      "--report", secondBuildReportPath,
+    ], { env: independentEnvironment });
+    assert.equal(secondBuild.status, 0, secondBuild.stderr);
+    const secondPackageOutput = path.join(sandbox, "independent-package");
+    const secondPackageReportPath = path.join(sandbox, "independent-package-report.json");
+    const secondPackage = await invoke([
+      "package",
+      "--target", "linux-x86_64-gnu",
+      "--profile", "debug",
+      "--workspace", secondWorkspacePath,
+      "--input", secondBuildOutput,
+      "--out", secondPackageOutput,
+      "--report", secondPackageReportPath,
+    ], { env: independentEnvironment });
+    assert.equal(secondPackage.status, 0, secondPackage.stderr);
+    const secondPackageReport = JSON.parse(await readFile(secondPackageReportPath, "utf8"));
+    assert.deepEqual(secondPackageReport.result.buildIdentity, packageReport.result.buildIdentity);
+    const reproReportPath = path.join(sandbox, "repro-report.json");
+    const compared = await invoke([
+      "repro-check",
+      "--target", "linux-x86_64-gnu",
+      "--profile", "debug",
+      "--producer-a", packageOutput,
+      "--producer-b", secondPackageOutput,
+      "--report", reproReportPath,
+    ], { env: independentEnvironment });
+    assert.equal(compared.status, 0, compared.stderr);
+    const reproReport = JSON.parse(await readFile(reproReportPath, "utf8"));
+    assert.equal(reproReport.result.buildExecuted, false);
+    assert.deepEqual(
+      reproReport.result.producers.map(({ workspacePath: producerWorkspace }) => producerWorkspace),
+      [workspacePath, secondWorkspacePath],
+    );
+    assert.equal(reproReport.result.buildIdentity.digest, packageReport.result.buildIdentity.digest);
     const archivePath = path.join(packageOutput, packageReport.result.archive);
     const archiveBytes = await readFile(archivePath);
     const archiveEntries = parseTarArchive(zstdDecompressSync(archiveBytes));

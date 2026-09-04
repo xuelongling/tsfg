@@ -58,6 +58,12 @@ eng/tsfg-build package \
   --input out/linux-debug \
   --out out/linux-package \
   --report out/package-report.json
+eng/tsfg-build repro-check \
+  --target linux-x86_64-gnu \
+  --profile debug \
+  --producer-a /absolute/path/to/producer-a-package \
+  --producer-b /different/absolute/path/to/producer-b-package \
+  --report out/repro-report.json
 ```
 
 Both Tier 1 targets accept `--profile debug` and `--profile release` on
@@ -99,8 +105,22 @@ to the selected safe profile. `test` executes both artifacts and checks their
 fixed observable output. `package` validates
 the build's identity and payload digests, splits debug symbols with the locked
 LLVM tools, and emits a deterministic `tar.zst`, an Artifact Manifest, and an
-external checksums file. Neither smoke exposes a product API or establishes a
-C/Zig ABI.
+external checksums file. It also emits `producer-attestation.json` as an
+external sidecar. The attestation records the producer's absolute workspace,
+fresh private compilation-state root, build execution identity, and complete
+Toolchain Closure object verification; none of those host-specific fields
+enter the archive or checksums.
+
+`repro-check` is the build-free third comparator. It requires two package
+directories from different absolute workspaces and build executions, verifies
+that neither producer shared or warmed incremental state, independently
+recomputes Build Input Set, Build Identity, Contract Set, member, Artifact
+Manifest, archive, and external checksum digests, and then compares their
+canonical Reproducibility Sets byte for byte. Signatures, trusted timestamps,
+Build Reports, logs, and external attestations are classified sidecars and are
+excluded; unclassified bundle files fail closed. A difference returns exit 23
+and reports the first payload member and byte offset that can localize it.
+Neither smoke exposes a product API or establishes a C/Zig ABI.
 
 Linux result-producing commands require a loopback-only network namespace and
 refuse to start while any non-loopback route remains. The build creates a
@@ -118,4 +138,4 @@ temporary file and atomic rename. Human diagnostics go only to stderr. This
 slice uses exit 2 for usage/configuration, 10 for workspace mismatch, and 11
 for lock/cache integrity failure, 12 for offline or sandbox input-boundary
 failure, 20 for build failure, 21 for test failure, and 22 for package failure.
-It emits no telemetry.
+It uses 23 for a reproducibility mismatch. It emits no telemetry.

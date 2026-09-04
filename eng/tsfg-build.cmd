@@ -27,6 +27,7 @@ if "%~1"=="verify-workspace" (
 if "%~1"=="build" goto runtime
 if "%~1"=="test" goto runtime
 if "%~1"=="package" goto runtime
+if "%~1"=="repro-check" goto runtime
 (
   set "TSFG_USAGE_COMMAND=unsupported"
   set "TSFG_USAGE_CODE=unsupported-operation"
@@ -80,6 +81,7 @@ set "OPENSSL_CONF="
 if "%TSFG_COMMAND%"=="build" goto offline_runtime
 if "%TSFG_COMMAND%"=="test" goto offline_runtime
 if "%TSFG_COMMAND%"=="package" goto offline_runtime
+if "%TSFG_COMMAND%"=="repro-check" goto offline_runtime
 "%TSFG_NODE%" "%~dp0tsfg-build.mjs" %*
 exit /b %errorlevel%
 

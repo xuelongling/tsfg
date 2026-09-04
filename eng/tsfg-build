@@ -222,6 +222,56 @@ valid_smoke_arguments() {
     { [ "$profile" = debug ] || [ "$profile" = release ]; }
 }
 
+valid_repro_arguments() {
+  shift
+  seen_target=false
+  seen_profile=false
+  seen_producer_a=false
+  seen_producer_b=false
+  seen_report=false
+  target=
+  profile=
+  while [ "$#" -gt 0 ]; do
+    option=$1
+    shift
+    if [ "$#" -eq 0 ] || [ -z "$1" ]; then
+      return 1
+    fi
+    case "$option" in
+      --target)
+        [ "$seen_target" = false ] || return 1
+        seen_target=true
+        target=$1
+        ;;
+      --profile)
+        [ "$seen_profile" = false ] || return 1
+        seen_profile=true
+        profile=$1
+        ;;
+      --producer-a)
+        [ "$seen_producer_a" = false ] || return 1
+        seen_producer_a=true
+        ;;
+      --producer-b)
+        [ "$seen_producer_b" = false ] || return 1
+        seen_producer_b=true
+        ;;
+      --report)
+        [ "$seen_report" = false ] || return 1
+        seen_report=true
+        ;;
+      *) return 1 ;;
+    esac
+    shift
+  done
+  [ "$seen_target" = true ] &&
+    [ "$seen_profile" = true ] &&
+    [ "$seen_producer_a" = true ] &&
+    [ "$seen_producer_b" = true ] &&
+    [ "$target" = linux-x86_64-gnu ] &&
+    { [ "$profile" = debug ] || [ "$profile" = release ]; }
+}
+
 if [ "${1:-}" = prefetch ]; then
   bootstrap_node=${TSFG_BOOTSTRAP_NODE:-}
   bootstrap_digest=${TSFG_BOOTSTRAP_NODE_SHA256:-}
@@ -242,7 +292,7 @@ if [ "${1:-}" = prefetch ]; then
     --cache "$cache" \
     --platform "$platform"
 fi
-if [ "$command" != verify-workspace ] && [ "$command" != build ] && [ "$command" != test ] && [ "$command" != package ]; then
+if [ "$command" != verify-workspace ] && [ "$command" != build ] && [ "$command" != test ] && [ "$command" != package ] && [ "$command" != repro-check ]; then
   usage_failure unsupported unsupported-operation 'unsupported operation'
 fi
 if [ "$command" = verify-workspace ] && ! valid_verify_arguments "$@"; then
@@ -250,6 +300,9 @@ if [ "$command" = verify-workspace ] && ! valid_verify_arguments "$@"; then
 fi
 if { [ "$command" = build ] || [ "$command" = test ] || [ "$command" = package ]; } && ! valid_smoke_arguments "$command" "$@"; then
   usage_failure "$command" invalid-configuration "invalid $command arguments"
+fi
+if [ "$command" = repro-check ] && ! valid_repro_arguments "$@"; then
+  usage_failure repro-check invalid-configuration 'invalid repro-check arguments'
 fi
 
 active="$cache/active/$platform"
