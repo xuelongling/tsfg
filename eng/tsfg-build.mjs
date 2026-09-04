@@ -34,8 +34,14 @@ import {
 import { setTimeout as delay } from "node:timers/promises";
 import { fileURLToPath } from "node:url";
 
-class ConfigurationError extends Error {}
+class ConfigurationError extends Error {
+  constructor(message, issueCode = "invalid-configuration") {
+    super(message);
+    this.issueCode = issueCode;
+  }
+}
 class BuildFailureError extends Error {}
+class BuildPolicyError extends BuildFailureError {}
 class TestFailureError extends Error {}
 class PackageFailureError extends Error {}
 class OfflineBoundaryError extends Error {}
@@ -280,9 +286,101 @@ function validateSmokeOptions(options, command, requireInput = false) {
       `${command} requires --target, --profile, ${requireInput ? "--input, " : ""}and --out`,
     );
   }
-  if (!["linux-x86_64-gnu", "windows-x86_64-msvc"].includes(target) || profile !== "debug") {
-    throw new ConfigurationError(`R00 ${command} supports only declared Linux and Windows debug targets`);
+  if (
+    !["linux-x86_64-gnu", "windows-x86_64-msvc"].includes(target) ||
+    !["debug", "release"].includes(profile)
+  ) {
+    throw new ConfigurationError(
+      `R00 ${command} supports only declared Linux and Windows debug/release targets`,
+    );
   }
+  payloadOptions(options);
+  const cpuFixture = options.get("--cpu-fixture");
+  if (cpuFixture && (command !== "test" || cpuFixture !== "x86-64-v2")) {
+    throw new ConfigurationError("--cpu-fixture supports only x86-64-v2 on test");
+  }
+  validateAmbientBuildPolicy();
+}
+
+const FORBIDDEN_BUILD_POLICIES = [
+  ["lto", /(?:-flto(?:=[^\s)"']+)?|\/gl\b|\/ltcg(?::[^\s)"']+)?)/i],
+  ["pgo", /(?:-f(?:cs-)?profile(?:-instr)?-(?:generate|use)(?:=[^\s)"']+)?|\/(?:genprofile|useprofile)\b)/i],
+  ["fast-math", /(?:-ffast-math\b|-ofast\b|\/fp:fast\b)/i],
+  ["native-tuning", /(?:-(?:march|mcpu|mtune)=native\b|-dcpu=native\b)/i],
+  ["static-higher-simd", /(?:-mavx[^\s)"']*|\/arch:avx[^\s)"']*)/i],
+];
+
+function forbiddenBuildPolicy(contents) {
+  return FORBIDDEN_BUILD_POLICIES.find(([, pattern]) => pattern.test(contents))?.[0];
+}
+
+function validateAmbientBuildPolicy() {
+  for (const variable of ["CFLAGS", "CPPFLAGS", "CXXFLAGS", "LDFLAGS", "ZIGFLAGS"]) {
+    const value = process.env[variable];
+    if (!value) continue;
+    const policy = forbiddenBuildPolicy(value);
+    if (policy) {
+      throw new ConfigurationError(
+        `${policy} option is forbidden by the R00 build policy (${variable})`,
+        "forbidden-build-option",
+      );
+    }
+  }
+}
+
+async function validateDeclaredBuildPolicy(sourceRoot) {
+  for (const relativePath of [
+    "tests/r00/smoke/cpp/CMakeLists.txt",
+    "tests/r00/smoke/zig/build.zig",
+  ]) {
+    const contents = await readFile(path.join(sourceRoot, ...relativePath.split("/")), "utf8");
+    const policy = forbiddenBuildPolicy(contents);
+    if (policy) {
+      throw new BuildPolicyError(
+        `${policy} option is forbidden in declared build input ${relativePath}`,
+      );
+    }
+  }
+}
+
+function payloadOptions(options) {
+  const simdDispatch = options.get("--simd-dispatch") ?? "runtime-detected";
+  if (!["runtime-detected", "baseline-only"].includes(simdDispatch)) {
+    throw new ConfigurationError(
+      "--simd-dispatch must be runtime-detected or baseline-only",
+    );
+  }
+  return { simdDispatch };
+}
+
+function createBuildPolicy(target, profile, buildOptions) {
+  const windows = target === "windows-x86_64-msvc";
+  return {
+    cpuBaseline: "x86-64-v2",
+    cxx: {
+      assertions: true,
+      debugInformation: "full",
+      optimization: profile === "debug" ? (windows ? "/Od" : "-O0") : (windows ? "/O2" : "-O2"),
+    },
+    detachedSymbols: "package",
+    forbidden: {
+      fastMath: false,
+      lto: false,
+      nativeTuning: false,
+      pgo: false,
+    },
+    profile,
+    simd: {
+      baselineFixture: "x86-64-v2",
+      dispatch: buildOptions.simdDispatch,
+      higherFeatures: buildOptions.simdDispatch === "runtime-detected" ? ["avx2"] : [],
+    },
+    target,
+    zig: {
+      optimization: profile === "debug" ? "Debug" : "ReleaseSafe",
+      safetyChecks: true,
+    },
+  };
 }
 
 async function fail(command, code, category, issue, reportPath, network) {
@@ -2226,22 +2324,29 @@ function verifyWindowsSandboxBoundary(
   );
 }
 
-async function buildLinuxDebug(options, runtime, workspaceState, networkCanary) {
+async function buildLinux(options, runtime, workspaceState, networkCanary) {
   const target = options.get("--target");
   const profile = options.get("--profile");
   const outputOption = options.get("--out");
   if (!target || !profile || !outputOption) {
     throw new ConfigurationError("build requires --target, --profile, and --out");
   }
-  if (target !== "linux-x86_64-gnu" || profile !== "debug") {
-    throw new ConfigurationError("R00-06 build supports only linux-x86_64-gnu debug");
+  if (target !== "linux-x86_64-gnu" || !["debug", "release"].includes(profile)) {
+    throw new ConfigurationError("R00 build supports only linux-x86_64-gnu debug/release");
   }
   let identity;
   try {
-    identity = await createBuildIdentity(runtime, target, profile, workspaceState.root);
+    identity = await createBuildIdentity(
+      runtime,
+      target,
+      profile,
+      workspaceState.root,
+      payloadOptions(options),
+    );
   } catch (error) {
     throw new BuildFailureError(`cannot derive Build Identity: ${error.message}`);
   }
+  const buildPolicy = createBuildPolicy(target, profile, identity.buildIdentity.options);
 
   const output = path.resolve(outputOption);
   const stagingRoot = path.join(
@@ -2298,6 +2403,20 @@ async function buildLinuxDebug(options, runtime, workspaceState, networkCanary) 
     `-fmacro-prefix-map=${workRoot}=.build`,
     "-fdebug-compilation-dir=.",
   ];
+  const cmakeBuildType = profile === "debug" ? "Debug" : "Release";
+  const cxxProfileFlags = [
+    profile === "debug" ? "-O0 -g3" : "-O2 -g2",
+    "-UNDEBUG",
+    "-fno-omit-frame-pointer",
+    "-march=x86-64-v2",
+    "-mtune=generic",
+    "-mno-avx",
+    "-fno-lto",
+    "-fno-profile-generate",
+    "-fno-profile-use",
+    "-fno-fast-math",
+  ].join(" ");
+  const zigOptimize = buildPolicy.zig.optimization;
   const cmakeArguments = [
     "-S", path.join(sourceRoot, "tests", "r00", "smoke", "cpp"),
     "-B", cppWork,
@@ -2306,11 +2425,13 @@ async function buildLinuxDebug(options, runtime, workspaceState, networkCanary) 
     `-DCMAKE_CXX_COMPILER=${compilerWrapper}`,
     `-DCMAKE_AR=${arWrapper}`,
     `-DCMAKE_RANLIB=${ranlibWrapper}`,
-    "-DCMAKE_BUILD_TYPE=Debug",
+    `-DCMAKE_BUILD_TYPE=${cmakeBuildType}`,
     "-DCMAKE_TRY_COMPILE_TARGET_TYPE=STATIC_LIBRARY",
     `-DCMAKE_SYSROOT=${sysroot}`,
-    `-DCMAKE_CXX_FLAGS_DEBUG=-O0 -g3 -UNDEBUG -fno-omit-frame-pointer ${debugPathFlags.join(" ")}`,
-    `-DCMAKE_EXE_LINKER_FLAGS=-fuse-ld=${linkerWrapper} --rtlib=compiler-rt -unwindlib=none`,
+    `-DCMAKE_CXX_FLAGS_${cmakeBuildType.toUpperCase()}=${cxxProfileFlags} ${debugPathFlags.join(" ")}`,
+    `-DTSFG_R00_SIMD_DISPATCH_RUNTIME=${buildPolicy.simd.dispatch === "runtime-detected" ? "1" : "0"}`,
+    "-DCMAKE_INTERPROCEDURAL_OPTIMIZATION=OFF",
+    `-DCMAKE_EXE_LINKER_FLAGS=-fno-lto -fuse-ld=${linkerWrapper} --rtlib=compiler-rt -unwindlib=none`,
   ];
   const ninjaArguments = ["-C", cppWork, "tsfg-r00-cpp-smoke"];
   const zigArguments = [
@@ -2320,7 +2441,8 @@ async function buildLinuxDebug(options, runtime, workspaceState, networkCanary) 
     "--cache-dir", path.join(workRoot, "zig-cache"),
     "--global-cache-dir", path.join(workRoot, "zig-global-cache"),
     "-Dtarget=x86_64-linux-gnu",
-    "-Doptimize=Debug",
+    `-Doptimize=${zigOptimize}`,
+    "-Dcpu=x86_64_v2",
     "--seed", "0",
   ];
   const steps = [
@@ -2335,6 +2457,7 @@ async function buildLinuxDebug(options, runtime, workspaceState, networkCanary) 
       identity.buildInputSet,
       sourceRoot,
     );
+    await validateDeclaredBuildPolicy(sourceRoot);
     await mkdir(cppWork, { recursive: true });
     await mkdir(wrapperRoot, { recursive: true });
     await mkdir(path.join(zigPrefix, "bin"), { recursive: true });
@@ -2418,6 +2541,7 @@ async function buildLinuxDebug(options, runtime, workspaceState, networkCanary) 
       sha256: await digestFile(path.join(publishRoot, ...payloadPath.split("/"))),
     })));
     const metadata = {
+      buildPolicy,
       buildIdentity: identity.buildIdentity,
       buildInputSet: identity.buildInputSet,
       contractSetId: identity.contractSetId,
@@ -2443,6 +2567,7 @@ async function buildLinuxDebug(options, runtime, workspaceState, networkCanary) 
     );
     const publication = await publishDirectory(publishRoot, output);
     const result = {
+      buildPolicy,
       buildIdentity: identity.buildIdentity,
       contractSetId: identity.contractSetId,
       development: workspaceState.development,
@@ -2562,26 +2687,33 @@ async function normalizeWindowsPdb(
   }
 }
 
-async function buildWindowsDebug(options, runtime, workspaceState, networkCanary) {
+async function buildWindows(options, runtime, workspaceState, networkCanary) {
   const target = options.get("--target");
   const profile = options.get("--profile");
   const outputOption = options.get("--out");
   if (!target || !profile || !outputOption) {
     throw new ConfigurationError("build requires --target, --profile, and --out");
   }
-  if (target !== "windows-x86_64-msvc" || profile !== "debug") {
-    throw new ConfigurationError("R00-09 Windows build supports only windows-x86_64-msvc debug");
+  if (target !== "windows-x86_64-msvc" || !["debug", "release"].includes(profile)) {
+    throw new ConfigurationError("R00 build supports only windows-x86_64-msvc debug/release");
   }
   if (process.platform !== "win32") {
-    throw new ConfigurationError("windows-x86_64-msvc debug builds require a Windows host");
+    throw new ConfigurationError("windows-x86_64-msvc builds require a Windows host");
   }
 
   let identity;
   try {
-    identity = await createBuildIdentity(runtime, target, profile, workspaceState.root);
+    identity = await createBuildIdentity(
+      runtime,
+      target,
+      profile,
+      workspaceState.root,
+      payloadOptions(options),
+    );
   } catch (error) {
     throw new BuildFailureError(`cannot derive Build Identity: ${error.message}`);
   }
+  const buildPolicy = createBuildPolicy(target, profile, identity.buildIdentity.options);
   const output = path.resolve(outputOption);
   const boundaryRoot = await mkdtemp(path.join(tmpdir(), "tsfg-windows-build-"));
   const stagingRoot = path.join(path.dirname(output), `.${path.basename(output)}.${randomUUID()}.tmp`);
@@ -2614,6 +2746,24 @@ async function buildWindowsDebug(options, runtime, workspaceState, networkCanary
       `/clang:-fdebug-prefix-map=${source}=${[".", ".toolchain", ".build"][index]}`,
     ]);
   const cmakePath = (value) => value.replaceAll("\\", "/");
+  const cmakeBuildType = profile === "debug" ? "Debug" : "Release";
+  const runtimeLibrary = profile === "debug" ? "MultiThreadedDebug" : "MultiThreaded";
+  const runtimeLibraries = profile === "debug"
+    ? ["libcmtd.lib", "libvcruntimed.lib", "libucrtd.lib"]
+    : ["libcmt.lib", "libvcruntime.lib", "libucrt.lib"];
+  const cxxProfileFlags = [
+    profile === "debug" ? "/Od" : "/O2",
+    "/Zi",
+    "/UNDEBUG",
+    "/Brepro",
+    "/clang:-march=x86-64-v2",
+    "/clang:-mtune=generic",
+    "/clang:-mno-avx",
+    "/clang:-fno-lto",
+    "/clang:-fno-profile-generate",
+    "/clang:-fno-profile-use",
+    "/clang:-fno-fast-math",
+  ].join(" ");
   const cmakeArguments = [
     "-S", cmakePath(path.join(sourceRoot, "tests", "r00", "smoke", "cpp")),
     "-B", cmakePath(cppWork),
@@ -2623,11 +2773,13 @@ async function buildWindowsDebug(options, runtime, workspaceState, networkCanary
     `-DCMAKE_LINKER=${cmakePath(tools.lld)}`,
     `-DCMAKE_RC_COMPILER=${cmakePath(tools.rc)}`,
     `-DCMAKE_MT=${cmakePath(tools.mt)}`,
-    "-DCMAKE_BUILD_TYPE=Debug",
+    `-DCMAKE_BUILD_TYPE=${cmakeBuildType}`,
     "-DCMAKE_TRY_COMPILE_TARGET_TYPE=STATIC_LIBRARY",
-    "-DCMAKE_MSVC_RUNTIME_LIBRARY=MultiThreadedDebug",
-    `-DCMAKE_CXX_FLAGS_DEBUG=/Od /Zi /UNDEBUG /Brepro ${clangPathMapFlags.join(" ")} /clang:-fdebug-compilation-dir=.`,
-    "-DCMAKE_EXE_LINKER_FLAGS=/debug:full /Brepro /pdbaltpath:%_PDB% /nodefaultlib libcmtd.lib libvcruntimed.lib libucrtd.lib kernel32.lib /entry:mainCRTStartup",
+    `-DCMAKE_MSVC_RUNTIME_LIBRARY=${runtimeLibrary}`,
+    "-DCMAKE_INTERPROCEDURAL_OPTIMIZATION=OFF",
+    `-DCMAKE_CXX_FLAGS_${cmakeBuildType.toUpperCase()}=${cxxProfileFlags} ${clangPathMapFlags.join(" ")} /clang:-fdebug-compilation-dir=.`,
+    `-DTSFG_R00_SIMD_DISPATCH_RUNTIME=${buildPolicy.simd.dispatch === "runtime-detected" ? "1" : "0"}`,
+    `-DCMAKE_EXE_LINKER_FLAGS=/debug:full /Brepro /pdbaltpath:%_PDB% /nodefaultlib ${runtimeLibraries.join(" ")} kernel32.lib /entry:mainCRTStartup`,
   ];
   const zigArguments = [
     "build",
@@ -2636,7 +2788,8 @@ async function buildWindowsDebug(options, runtime, workspaceState, networkCanary
     "--cache-dir", path.join(workRoot, "zig-cache"),
     "--global-cache-dir", path.join(workRoot, "zig-global-cache"),
     "-Dtarget=x86_64-windows-msvc",
-    "-Doptimize=Debug",
+    `-Doptimize=${buildPolicy.zig.optimization}`,
+    "-Dcpu=x86_64_v2",
     "--seed", "0",
   ];
   const compatibilityObject = path.join(compatibilityRoot, "main.obj");
@@ -2649,7 +2802,8 @@ async function buildWindowsDebug(options, runtime, workspaceState, networkCanary
       role: "compatibility-only",
       tool: "cl",
       executable: tools.cl,
-      arguments: ["/nologo", "/c", "/Od", "/Zi", "/MTd", "/Brepro", ...msvcPathMapFlags,
+      arguments: ["/nologo", "/c", profile === "debug" ? "/Od" : "/O2", "/Zi",
+        profile === "debug" ? "/MTd" : "/MT", "/Brepro", ...msvcPathMapFlags,
         path.join(sourceRoot, "tests", "r00", "smoke", "cpp", "main.cpp"), `/Fo${compatibilityObject}`],
     },
     {
@@ -2657,13 +2811,14 @@ async function buildWindowsDebug(options, runtime, workspaceState, networkCanary
       tool: "link",
       executable: tools.link,
       arguments: ["/nologo", "/debug:full", "/Brepro", "/pdbaltpath:%_PDB%", "/nodefaultlib",
-        "/subsystem:console", "/entry:mainCRTStartup", compatibilityObject, "libcmtd.lib",
-        "libvcruntimed.lib", "libucrtd.lib", "kernel32.lib", `/out:${compatibilityExecutable}`],
+        "/subsystem:console", "/entry:mainCRTStartup", compatibilityObject, ...runtimeLibraries,
+        "kernel32.lib", `/out:${compatibilityExecutable}`],
     },
   ];
 
   try {
     await materializeBuildInputs(workspaceState.root, identity.buildInputSet, sourceRoot);
+    await validateDeclaredBuildPolicy(sourceRoot);
     await Promise.all([cppWork, path.join(zigPrefix, "bin"), compatibilityRoot, binRoot, symbolRoot]
       .map((directory) => mkdir(directory, { recursive: true })));
     if (runtime.platform !== target) {
@@ -2734,6 +2889,7 @@ async function buildWindowsDebug(options, runtime, workspaceState, networkCanary
       symbols.push({ path: item.symbolDestination, sha256: digest(symbolBytes) });
     }
     const metadata = {
+      buildPolicy,
       buildIdentity: identity.buildIdentity,
       buildInputSet: identity.buildInputSet,
       contractSetId: identity.contractSetId,
@@ -2760,6 +2916,7 @@ async function buildWindowsDebug(options, runtime, workspaceState, networkCanary
     });
     const publication = await publishDirectory(publishRoot, output);
     const result = {
+      buildPolicy,
       buildIdentity: identity.buildIdentity,
       contractSetId: identity.contractSetId,
       development: workspaceState.development,
@@ -2790,6 +2947,7 @@ function runSmokeExecutable(
   sandboxRoot,
   lockedShell,
   deniedRoot,
+  executableArguments = [],
 ) {
   const sysroot = path.join(runtime.closurePath, "debian-sysroot");
   const command = runtime.platform === "linux-x86_64-gnu"
@@ -2803,8 +2961,9 @@ function runSmokeExecutable(
           path.join(sysroot, "usr", "lib", "x86_64-linux-gnu"),
         ].join(":"),
         executable,
+        ...executableArguments,
       ]
-    : [];
+    : executableArguments;
   const result = spawnSync(
     sandboxExecutable ?? command,
     sandboxExecutable
@@ -2852,18 +3011,21 @@ function runSmokeExecutable(
   return { stdout: result.stdout, stderr: result.stderr };
 }
 
-async function testDebug(options, runtime, workspaceState, networkCanary) {
+async function testSmoke(options, runtime, workspaceState, networkCanary) {
   const target = options.get("--target");
   const profile = options.get("--profile");
   const outputOption = options.get("--out");
   if (!target || !profile || !outputOption) {
     throw new ConfigurationError("test requires --target, --profile, and --out");
   }
-  if (!["linux-x86_64-gnu", "windows-x86_64-msvc"].includes(target) || profile !== "debug") {
-    throw new ConfigurationError("R00 debug test supports only declared Linux and Windows targets");
+  if (
+    !["linux-x86_64-gnu", "windows-x86_64-msvc"].includes(target) ||
+    !["debug", "release"].includes(profile)
+  ) {
+    throw new ConfigurationError("R00 test supports only declared Linux and Windows debug/release targets");
   }
   if (target === "windows-x86_64-msvc" && process.platform !== "win32") {
-    throw new ConfigurationError("windows-x86_64-msvc debug tests require a Windows host");
+    throw new ConfigurationError("windows-x86_64-msvc tests require a Windows host");
   }
 
   const output = path.resolve(outputOption);
@@ -2882,6 +3044,9 @@ async function testDebug(options, runtime, workspaceState, networkCanary) {
   if (
     metadata?.buildIdentity?.target !== target ||
     metadata?.buildIdentity?.profile !== profile ||
+    canonicalize(metadata?.buildPolicy) !== canonicalize(
+      createBuildPolicy(target, profile, payloadOptions(options)),
+    ) ||
     typeof metadata.development !== "boolean" ||
     typeof metadata.dirty !== "boolean" ||
     typeof metadata.publishable !== "boolean"
@@ -2896,7 +3061,13 @@ async function testDebug(options, runtime, workspaceState, networkCanary) {
   }
   let identity;
   try {
-    identity = await createBuildIdentity(runtime, target, profile, workspaceState.root);
+    identity = await createBuildIdentity(
+      runtime,
+      target,
+      profile,
+      workspaceState.root,
+      payloadOptions(options),
+    );
   } catch (error) {
     throw new TestFailureError(`cannot derive test Build Identity: ${error.message}`);
   }
@@ -2942,8 +3113,10 @@ async function testDebug(options, runtime, workspaceState, networkCanary) {
     );
   }
   const executableSuffix = target === "windows-x86_64-msvc" ? ".exe" : "";
+  const cpuFixture = options.get("--cpu-fixture");
   const cases = [
     {
+      arguments: [],
       source: path.join(output, "bin", `tsfg-r00-cpp-smoke${executableSuffix}`),
       name: "cpp-smoke",
       stderr: "",
@@ -2951,7 +3124,17 @@ async function testDebug(options, runtime, workspaceState, networkCanary) {
         ? "tsfg-r00-cpp-smoke: ok\r\n"
         : "tsfg-r00-cpp-smoke: ok\n",
     },
+    ...(cpuFixture === "x86-64-v2" ? [{
+      arguments: ["--cpu-fixture=x86-64-v2"],
+      source: path.join(output, "bin", `tsfg-r00-cpp-smoke${executableSuffix}`),
+      name: "cpp-smoke-baseline-fallback",
+      stderr: "",
+      stdout: target === "windows-x86_64-msvc"
+        ? "tsfg-r00-cpp-smoke: baseline fallback ok\r\n"
+        : "tsfg-r00-cpp-smoke: baseline fallback ok\n",
+    }] : []),
     {
+      arguments: [],
       source: path.join(output, "bin", `tsfg-r00-zig-smoke${executableSuffix}`),
       name: "zig-smoke",
       stderr: "tsfg-r00-zig-smoke: ok\n",
@@ -2961,18 +3144,23 @@ async function testDebug(options, runtime, workspaceState, networkCanary) {
   if (
     !Array.isArray(metadata.payloads) ||
     canonicalize(metadata.payloads.map(({ path: payloadPath }) => payloadPath))
-      !== canonicalize(cases.map(({ source }) => path.relative(output, source).replaceAll("\\", "/")))
+      !== canonicalize([...new Set(cases.map(
+        ({ source }) => path.relative(output, source).replaceAll("\\", "/"),
+      ))])
   ) {
     throw new TestFailureError("Build Metadata does not declare the expected smoke payloads");
   }
   const tests = [];
   try {
-    for (const [index, smoke] of cases.entries()) {
+    for (const smoke of cases) {
       const bytes = await readRegularFile(smoke.source, `${smoke.name} executable`)
         .catch((error) => { throw new TestFailureError(error.message); });
-      const executable = path.join(testRoot, ...metadata.payloads[index].path.split("/"));
+      const relativeSource = path.relative(output, smoke.source).replaceAll("\\", "/");
+      const declaredPayload = metadata.payloads.find(({ path: payloadPath }) =>
+        payloadPath === relativeSource);
+      const executable = path.join(testRoot, ...declaredPayload.path.split("/"));
       await mkdir(path.dirname(executable), { recursive: true });
-      if (digest(bytes) !== metadata.payloads[index].sha256) {
+      if (digest(bytes) !== declaredPayload.sha256) {
         throw new TestFailureError(`${smoke.name} executable does not match Build Metadata`);
       }
       await writeFile(executable, bytes, { flag: "wx" });
@@ -2986,6 +3174,7 @@ async function testDebug(options, runtime, workspaceState, networkCanary) {
         sandboxRoot,
         lockedShell,
         workspaceState.root,
+        smoke.arguments,
       );
       if (observed.stdout !== smoke.stdout || observed.stderr !== smoke.stderr) {
         throw new TestFailureError(
@@ -2999,8 +3188,10 @@ async function testDebug(options, runtime, workspaceState, networkCanary) {
     await rm(testRoot, { recursive: true, force: true });
   }
   return {
+    buildPolicy: metadata.buildPolicy,
     development: metadata.development || workspaceState.development,
     dirty: metadata.dirty || workspaceState.dirty,
+    ...(cpuFixture ? { cpuFixture } : {}),
     networkCanary,
     ...(target === "windows-x86_64-msvc"
       ? { networkIsolation: WINDOWS_NETWORK_ISOLATION }
@@ -3130,7 +3321,13 @@ async function materializeBuildInputs(workspaceRoot, buildInputSet, destination)
   }
 }
 
-async function createBuildIdentity(runtime, target, profile, workspaceRoot = repositoryRoot) {
+async function createBuildIdentity(
+  runtime,
+  target,
+  profile,
+  workspaceRoot = repositoryRoot,
+  buildOptions = { simdDispatch: "runtime-detected" },
+) {
   const version = await readCanonicalJson(path.join(workspaceRoot, "version.json"), "Product Version");
   if (typeof version.version !== "string" || version.version.length === 0) {
     throw new PackageFailureError("Product Version is missing");
@@ -3145,7 +3342,7 @@ async function createBuildIdentity(runtime, target, profile, workspaceRoot = rep
   const { buildInputSet: inputSet, sourceDateEpoch } = await buildInputSet(workspaceRoot);
   const buildIdentityPayload = {
     buildInputSetDigest: inputSet.digest,
-    options: {},
+    options: buildOptions,
     profile,
     source_date_epoch: sourceDateEpoch,
     target,
@@ -3293,7 +3490,7 @@ function runPackageTool(executable, arguments_, cwd, environment, sandboxProtoco
   }
 }
 
-async function packageLinuxDebug(options, runtime, workspaceState, networkCanary) {
+async function packageLinux(options, runtime, workspaceState, networkCanary) {
   const target = options.get("--target");
   const profile = options.get("--profile");
   const inputOption = options.get("--input");
@@ -3301,11 +3498,18 @@ async function packageLinuxDebug(options, runtime, workspaceState, networkCanary
   if (!target || !profile || !inputOption || !outputOption) {
     throw new ConfigurationError("package requires --target, --profile, --input, and --out");
   }
-  if (target !== "linux-x86_64-gnu" || profile !== "debug") {
-    throw new ConfigurationError("R00-07 package supports only linux-x86_64-gnu debug");
+  if (target !== "linux-x86_64-gnu" || !["debug", "release"].includes(profile)) {
+    throw new ConfigurationError("R00 package supports only linux-x86_64-gnu debug/release");
   }
 
-  const identity = await createBuildIdentity(runtime, target, profile, workspaceState.root);
+  const identity = await createBuildIdentity(
+    runtime,
+    target,
+    profile,
+    workspaceState.root,
+    payloadOptions(options),
+  );
+  const buildPolicy = createBuildPolicy(target, profile, identity.buildIdentity.options);
   const archiveName = `tsfg-v${identity.productVersion}-${target}-${profile}-${identity.buildIdentity.digest.slice(7, 23)}.tar.zst`;
   const output = path.resolve(outputOption);
   const stagingRoot = path.join(
@@ -3326,6 +3530,7 @@ async function packageLinuxDebug(options, runtime, workspaceState, networkCanary
     if (
       canonicalize(metadata.buildIdentity) !== canonicalize(identity.buildIdentity) ||
       canonicalize(metadata.buildInputSet) !== canonicalize(identity.buildInputSet) ||
+      canonicalize(metadata.buildPolicy) !== canonicalize(buildPolicy) ||
       metadata.contractSetId !== identity.contractSetId ||
       metadata.development !== false ||
       metadata.dirty !== false ||
@@ -3447,6 +3652,7 @@ async function packageLinuxDebug(options, runtime, workspaceState, networkCanary
       }
     }
     const artifactManifest = {
+      buildPolicy,
       buildIdentity: identity.buildIdentity,
       buildInputSet: identity.buildInputSet,
       contractSetId: identity.contractSetId,
@@ -3492,6 +3698,7 @@ async function packageLinuxDebug(options, runtime, workspaceState, networkCanary
     const publication = await publishDirectory(publishRoot, output);
     const result = {
       archive: archiveName,
+      buildPolicy,
       buildIdentity: identity.buildIdentity,
       buildInputSet: identity.buildInputSet,
       checksums: `${archiveName}.checksums.json`,
@@ -3526,7 +3733,7 @@ async function packageLinuxDebug(options, runtime, workspaceState, networkCanary
   }
 }
 
-async function packageWindowsDebug(options, runtime, workspaceState, networkCanary) {
+async function packageWindows(options, runtime, workspaceState, networkCanary) {
   const target = options.get("--target");
   const profile = options.get("--profile");
   const inputOption = options.get("--input");
@@ -3534,14 +3741,21 @@ async function packageWindowsDebug(options, runtime, workspaceState, networkCana
   if (!target || !profile || !inputOption || !outputOption) {
     throw new ConfigurationError("package requires --target, --profile, --input, and --out");
   }
-  if (target !== "windows-x86_64-msvc" || profile !== "debug") {
-    throw new ConfigurationError("R00-09 Windows package supports only windows-x86_64-msvc debug");
+  if (target !== "windows-x86_64-msvc" || !["debug", "release"].includes(profile)) {
+    throw new ConfigurationError("R00 package supports only windows-x86_64-msvc debug/release");
   }
   if (process.platform !== "win32") {
-    throw new ConfigurationError("windows-x86_64-msvc debug packages require a Windows host");
+    throw new ConfigurationError("windows-x86_64-msvc packages require a Windows host");
   }
 
-  const identity = await createBuildIdentity(runtime, target, profile, workspaceState.root);
+  const identity = await createBuildIdentity(
+    runtime,
+    target,
+    profile,
+    workspaceState.root,
+    payloadOptions(options),
+  );
+  const buildPolicy = createBuildPolicy(target, profile, identity.buildIdentity.options);
   const archiveName = `tsfg-v${identity.productVersion}-${target}-${profile}-${identity.buildIdentity.digest.slice(7, 23)}.zip`;
   const output = path.resolve(outputOption);
   const input = path.resolve(inputOption);
@@ -3556,6 +3770,7 @@ async function packageWindowsDebug(options, runtime, workspaceState, networkCana
     if (
       canonicalize(metadata.buildIdentity) !== canonicalize(identity.buildIdentity) ||
       canonicalize(metadata.buildInputSet) !== canonicalize(identity.buildInputSet) ||
+      canonicalize(metadata.buildPolicy) !== canonicalize(buildPolicy) ||
       metadata.contractSetId !== identity.contractSetId ||
       metadata.development !== false ||
       metadata.dirty !== false ||
@@ -3621,6 +3836,7 @@ async function packageWindowsDebug(options, runtime, workspaceState, networkCana
     }
     members.sort((left, right) => Buffer.from(left.path).compare(Buffer.from(right.path)));
     const artifactManifest = {
+      buildPolicy,
       buildIdentity: identity.buildIdentity,
       buildInputSet: identity.buildInputSet,
       contractSetId: identity.contractSetId,
@@ -3645,6 +3861,7 @@ async function packageWindowsDebug(options, runtime, workspaceState, networkCana
     const publication = await publishDirectory(publishRoot, output);
     const result = {
       archive: archiveName,
+      buildPolicy,
       buildIdentity: identity.buildIdentity,
       buildInputSet: identity.buildInputSet,
       checksums: `${archiveName}.checksums.json`,
@@ -3689,6 +3906,8 @@ function shouldEnterWindowsOfflineBoundary(arguments_, runtime) {
         "--dev",
         "--target",
         "--profile",
+        "--simd-dispatch",
+        ...(command === "test" ? ["--cpu-fixture"] : []),
         "--workspace",
         ...(requireInput ? ["--input"] : []),
         "--out",
@@ -3848,7 +4067,7 @@ if (delegatedWindowsStatus !== undefined) {
       isConfigurationError ? "usage/configuration" : "lock/integrity",
       {
         code: isConfigurationError
-          ? "invalid-configuration"
+          ? (error.issueCode ?? "invalid-configuration")
           : "prefetch-integrity",
         message: error.message,
       },
@@ -3883,7 +4102,7 @@ if (delegatedWindowsStatus !== undefined) {
       isConfigurationError ? "usage/configuration" : "workspace mismatch",
       {
         code: isConfigurationError
-          ? "invalid-configuration"
+          ? (error.issueCode ?? "invalid-configuration")
           : (error.issueCode ?? "workspace-state"),
         message: error.message,
       },
@@ -3896,7 +4115,9 @@ if (delegatedWindowsStatus !== undefined) {
   try {
     const options = parseOptions(
       arguments_,
-      new Set(["--dev", "--target", "--profile", "--workspace", "--out", "--report"]),
+      new Set([
+        "--dev", "--target", "--profile", "--simd-dispatch", "--workspace", "--out", "--report",
+      ]),
       new Set(["--dev"]),
     );
     validateSmokeOptions(options, "build");
@@ -3904,8 +4125,8 @@ if (delegatedWindowsStatus !== undefined) {
     if (!runtimeClosure) throw new Error("locked runtime closure is unavailable");
     const networkCanary = await verifyOfflineBoundary();
     const result = options.get("--target") === "windows-x86_64-msvc"
-      ? await buildWindowsDebug(options, runtimeClosure, workspaceState, networkCanary)
-      : await buildLinuxDebug(
+      ? await buildWindows(options, runtimeClosure, workspaceState, networkCanary)
+      : await buildLinux(
       options,
       runtimeClosure,
       workspaceState,
@@ -3917,6 +4138,7 @@ if (delegatedWindowsStatus !== undefined) {
     if (publication) await publication.rollback();
     const isConfigurationError = error instanceof ConfigurationError;
     const isBuildFailure = error instanceof BuildFailureError;
+    const isBuildPolicy = error instanceof BuildPolicyError;
     const isWorkspaceMismatch = error instanceof WorkspaceMismatchError;
     const isOfflineBoundary = error instanceof OfflineBoundaryError;
     const isUndeclaredInput = error instanceof UndeclaredInputError;
@@ -3939,7 +4161,7 @@ if (delegatedWindowsStatus !== undefined) {
           : isBuildFailure ? "build failure" : "internal control-plane failure",
       {
         code: isConfigurationError
-          ? "invalid-configuration"
+          ? (error.issueCode ?? "invalid-configuration")
           : isWorkspaceMismatch
             ? error.issueCode
             : isOfflineBoundary
@@ -3948,7 +4170,9 @@ if (delegatedWindowsStatus !== undefined) {
                 ? "undeclared-build-input"
                 : isSandboxBoundary
                   ? "sandbox-boundary"
-                  : isBuildFailure ? "native-build" : "internal-control-plane",
+                  : isBuildPolicy
+                    ? "forbidden-build-option"
+                    : isBuildFailure ? "native-build" : "internal-control-plane",
         message: error.message,
       },
       reportPath,
@@ -3959,14 +4183,16 @@ if (delegatedWindowsStatus !== undefined) {
   try {
     const options = parseOptions(
       arguments_,
-      new Set(["--dev", "--target", "--profile", "--workspace", "--out", "--report"]),
+      new Set([
+        "--dev", "--target", "--profile", "--simd-dispatch", "--cpu-fixture", "--workspace", "--out", "--report",
+      ]),
       new Set(["--dev"]),
     );
     validateSmokeOptions(options, "test");
     const workspaceState = inspectProductWorkspace(options, true);
     if (!runtimeClosure) throw new Error("locked runtime closure is unavailable");
     const networkCanary = await verifyOfflineBoundary();
-    const result = await testDebug(options, runtimeClosure, workspaceState, networkCanary);
+    const result = await testSmoke(options, runtimeClosure, workspaceState, networkCanary);
     process.exitCode = await succeed(command, result, reportPath, "offline");
   } catch (error) {
     const isConfigurationError = error instanceof ConfigurationError;
@@ -3993,7 +4219,7 @@ if (delegatedWindowsStatus !== undefined) {
           : isTestFailure ? "test failure" : "internal control-plane failure",
       {
         code: isConfigurationError
-          ? "invalid-configuration"
+          ? (error.issueCode ?? "invalid-configuration")
           : isWorkspaceMismatch
             ? error.issueCode
             : isOfflineBoundary
@@ -4014,7 +4240,9 @@ if (delegatedWindowsStatus !== undefined) {
   try {
     const options = parseOptions(
       arguments_,
-      new Set(["--dev", "--target", "--profile", "--workspace", "--input", "--out", "--report"]),
+      new Set([
+        "--dev", "--target", "--profile", "--simd-dispatch", "--workspace", "--input", "--out", "--report",
+      ]),
       new Set(["--dev"]),
     );
     validateSmokeOptions(options, "package", true);
@@ -4022,8 +4250,8 @@ if (delegatedWindowsStatus !== undefined) {
     if (!runtimeClosure) throw new PackageFailureError("locked runtime closure is unavailable");
     const networkCanary = await verifyOfflineBoundary();
     const result = options.get("--target") === "windows-x86_64-msvc"
-      ? await packageWindowsDebug(options, runtimeClosure, workspaceState, networkCanary)
-      : await packageLinuxDebug(options, runtimeClosure, workspaceState, networkCanary);
+      ? await packageWindows(options, runtimeClosure, workspaceState, networkCanary)
+      : await packageLinux(options, runtimeClosure, workspaceState, networkCanary);
     publication = result.publication;
     process.exitCode = await succeed(command, result, reportPath, "offline");
   } catch (error) {
@@ -4049,7 +4277,7 @@ if (delegatedWindowsStatus !== undefined) {
             : "package failure",
       {
         code: isConfigurationError
-          ? "invalid-configuration"
+          ? (error.issueCode ?? "invalid-configuration")
           : isWorkspaceMismatch
             ? error.issueCode
             : isOfflineBoundary

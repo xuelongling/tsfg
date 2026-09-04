@@ -963,6 +963,23 @@ test("dirty workspace fails closed before build execution", async () => {
         "--out", path.join(sandbox, "windows-package"),
         "--report", reportPath,
       ],
+      [
+        "build",
+        "--target", "linux-x86_64-gnu",
+        "--profile", "release",
+        "--workspace", workspace,
+        "--out", path.join(sandbox, "release-out"),
+        "--report", reportPath,
+      ],
+      [
+        "test",
+        "--target", "linux-x86_64-gnu",
+        "--profile", "release",
+        "--cpu-fixture", "x86-64-v2",
+        "--workspace", workspace,
+        "--out", path.join(sandbox, "release-out"),
+        "--report", reportPath,
+      ],
     ];
     for (const arguments_ of dirtyCommands) {
       const result = await invoke(arguments_);
@@ -999,6 +1016,41 @@ test("dirty workspace fails closed before build execution", async () => {
   }
 });
 
+test("forbidden ambient build options fail policy before tool execution", async () => {
+  const sandbox = await mkdtemp(path.join(tmpdir(), "tsfg-forbidden-build-options-"));
+  try {
+    const scenarios = [
+      ["CXXFLAGS", "-flto", "lto"],
+      ["LDFLAGS", "-fprofile-use=profile.profdata", "pgo"],
+      ["CFLAGS", "-ffast-math", "fast-math"],
+      ["CXXFLAGS", "-march=native", "native-tuning"],
+      ["CXXFLAGS", "-mavx2", "static-higher-simd"],
+    ];
+    for (const [variable, value, policy] of scenarios) {
+      const reportPath = path.join(sandbox, `${policy}.json`);
+      const outputPath = path.join(sandbox, `${policy}-out`);
+      const result = await invoke([
+        "build", "--dev",
+        "--target", "linux-x86_64-gnu",
+        "--profile", "release",
+        "--workspace", repositoryRoot,
+        "--out", outputPath,
+        "--report", reportPath,
+      ], {
+        env: { ...process.env, [variable]: value },
+      });
+      assert.equal(result.status, 2, `${policy}: ${result.stderr}`);
+      const report = JSON.parse(await readFile(reportPath, "utf8"));
+      assert.equal(report.error.category, "usage/configuration");
+      assert.equal(report.error.issues[0].code, "forbidden-build-option");
+      assert.match(report.error.issues[0].message, new RegExp(policy));
+      await assert.rejects(lstat(outputPath), /ENOENT/);
+    }
+  } finally {
+    await rm(sandbox, { recursive: true, force: true });
+  }
+});
+
 test("build and test run the private C++ and Zig smoke programs through locked tools", async (context) => {
   const sandbox = await mkdtemp(path.join(tmpdir(), "tsfg-linux-cpp-build-"));
   const cachePath = path.join(sandbox, "cache");
@@ -1018,7 +1070,11 @@ test("build and test run the private C++ and Zig smoke programs through locked t
     : `#!/bin/sh
 {
   echo '#!/bin/sh'
-  echo 'printf "tsfg-r00-cpp-smoke: ok\\n"'
+  echo 'if [ "$1" = --cpu-fixture=x86-64-v2 ]; then'
+  echo '  printf "tsfg-r00-cpp-smoke: baseline fallback ok\\n"'
+  echo 'else'
+  echo '  printf "tsfg-r00-cpp-smoke: ok\\n"'
+  echo 'fi'
 } > "$2/tsfg-r00-cpp-smoke"
 `);
   const zig = Buffer.from(isWindows
@@ -1306,6 +1362,44 @@ exit 1
       assert.equal((await readFile(cmakeListsPath, "utf8")).includes("mutation"), false);
       await writeFile(cmakeListsPath, cmakeLists);
     }
+    const policyCmakePath = path.join(
+      workspacePath,
+      "tests",
+      "r00",
+      "smoke",
+      "cpp",
+      "CMakeLists.txt",
+    );
+    const policyCmake = await readFile(policyCmakePath);
+    await appendFile(
+      policyCmakePath,
+      "\ntarget_compile_options(tsfg-r00-cpp-smoke PRIVATE -flto)\n",
+    );
+    const policyOutput = path.join(sandbox, "forbidden-declared-policy-out");
+    const policyReportPath = path.join(sandbox, "forbidden-declared-policy-report.json");
+    const forbiddenDeclaredPolicy = await invoke([
+      "build", "--dev",
+      "--target", "linux-x86_64-gnu",
+      "--profile", "release",
+      "--workspace", workspacePath,
+      "--out", policyOutput,
+      "--report", policyReportPath,
+    ], {
+      env: {
+        ...process.env,
+        NODE_OPTIONS: `--require=${networkDenialHook}`,
+        TSFG_GIT: gitExecutable,
+        TSFG_RUNTIME_CACHE: cachePath,
+        TSFG_RUNTIME_LOCK: lockPath,
+        TSFG_RUNTIME_PLATFORM: "test-x86_64",
+      },
+    });
+    assert.equal(forbiddenDeclaredPolicy.status, 20, forbiddenDeclaredPolicy.stderr);
+    const policyReport = JSON.parse(await readFile(policyReportPath, "utf8"));
+    assert.equal(policyReport.error.category, "build failure");
+    assert.equal(policyReport.error.issues[0].code, "forbidden-build-option");
+    await assert.rejects(lstat(policyOutput), /ENOENT/);
+    await writeFile(policyCmakePath, policyCmake);
     const activeRelative = (await readFile(
       path.join(cachePath, "active", "test-x86_64"),
       "utf8",
@@ -1472,7 +1566,9 @@ exit 1
     assert.match(report.result.buildIdentity.buildInputSetDigest, /^sha256:[0-9a-f]{64}$/);
     assert.match(report.result.buildIdentity.toolchainClosureDigest, /^sha256:[0-9a-f]{64}$/);
     assert.match(report.result.buildIdentity.source_date_epoch, /^[1-9][0-9]*$/);
-    assert.deepEqual(report.result.buildIdentity.options, {});
+    assert.deepEqual(report.result.buildIdentity.options, {
+      simdDispatch: "runtime-detected",
+    });
     assert.equal(
       report.result.contractSetId,
       "sha256:44136fa355b3678a1146ad16f7e8649e94fb4fc21fe77e8310c060f61caaff8a",
@@ -1560,6 +1656,179 @@ exit 1
     assert.match(report.result.steps[0].arguments.join(" "), /-DCMAKE_AR=/);
     assert.match(report.result.steps[2].arguments.join(" "), /-Doptimize=Debug/);
     assert.deepEqual(report.result.steps[2].arguments.slice(-2), ["--seed", "0"]);
+
+    const releaseOutput = path.join(sandbox, "release-out");
+    const releaseReportPath = path.join(sandbox, "release-build-report.json");
+    const released = await invoke([
+      "build",
+      "--target", "linux-x86_64-gnu",
+      "--profile", "release",
+      "--workspace", workspacePath,
+      "--out", releaseOutput,
+      "--report", releaseReportPath,
+    ], {
+      env: {
+        ...process.env,
+        NODE_OPTIONS: `--require=${networkDenialHook}`,
+        TSFG_RUNTIME_CACHE: cachePath,
+        TSFG_RUNTIME_LOCK: lockPath,
+        TSFG_RUNTIME_PLATFORM: "test-x86_64",
+      },
+    });
+    assert.equal(released.status, 0, released.stderr);
+    const releaseReport = JSON.parse(await readFile(releaseReportPath, "utf8"));
+    assert.equal(releaseReport.result.profile, "release");
+    assert.deepEqual(releaseReport.result.buildPolicy, {
+      cpuBaseline: "x86-64-v2",
+      cxx: {
+        assertions: true,
+        debugInformation: "full",
+        optimization: "-O2",
+      },
+      detachedSymbols: "package",
+      forbidden: {
+        fastMath: false,
+        lto: false,
+        nativeTuning: false,
+        pgo: false,
+      },
+      profile: "release",
+      simd: {
+        baselineFixture: "x86-64-v2",
+        dispatch: "runtime-detected",
+        higherFeatures: ["avx2"],
+      },
+      target: "linux-x86_64-gnu",
+      zig: {
+        optimization: "ReleaseSafe",
+        safetyChecks: true,
+      },
+    });
+    assert.notEqual(
+      releaseReport.result.buildIdentity.digest,
+      report.result.buildIdentity.digest,
+    );
+    const releaseCmakeArguments = releaseReport.result.steps[0].arguments.join(" ");
+    for (const flag of [
+      "-O2",
+      "-g2",
+      "-UNDEBUG",
+      "-march=x86-64-v2",
+      "-mtune=generic",
+      "-mno-avx",
+      "-fno-lto",
+      "-fno-profile-generate",
+      "-fno-profile-use",
+      "-fno-fast-math",
+    ]) assert.ok(releaseCmakeArguments.includes(flag), `missing release flag ${flag}`);
+    assert.match(releaseCmakeArguments, /-DCMAKE_INTERPROCEDURAL_OPTIMIZATION=OFF/);
+    assert.match(releaseReport.result.steps[2].arguments.join(" "), /-Doptimize=ReleaseSafe/);
+    assert.match(releaseReport.result.steps[2].arguments.join(" "), /-Dcpu=x86_64_v2/);
+    const releaseMetadata = JSON.parse(await readFile(
+      path.join(releaseOutput, "build-metadata.json"),
+      "utf8",
+    ));
+    assert.deepEqual(releaseMetadata.buildPolicy, releaseReport.result.buildPolicy);
+    const baselineOnlyOutput = path.join(sandbox, "baseline-only-out");
+    const baselineOnlyReportPath = path.join(sandbox, "baseline-only-report.json");
+    const baselineOnly = await invoke([
+      "build",
+      "--target", "linux-x86_64-gnu",
+      "--profile", "release",
+      "--simd-dispatch", "baseline-only",
+      "--workspace", workspacePath,
+      "--out", baselineOnlyOutput,
+      "--report", baselineOnlyReportPath,
+    ], {
+      env: {
+        ...process.env,
+        NODE_OPTIONS: `--require=${networkDenialHook}`,
+        TSFG_RUNTIME_CACHE: cachePath,
+        TSFG_RUNTIME_LOCK: lockPath,
+        TSFG_RUNTIME_PLATFORM: "test-x86_64",
+      },
+    });
+    assert.equal(baselineOnly.status, 0, baselineOnly.stderr);
+    const baselineOnlyReport = JSON.parse(await readFile(baselineOnlyReportPath, "utf8"));
+    assert.deepEqual(baselineOnlyReport.result.buildIdentity.options, {
+      simdDispatch: "baseline-only",
+    });
+    assert.notEqual(
+      baselineOnlyReport.result.buildIdentity.digest,
+      releaseReport.result.buildIdentity.digest,
+    );
+    assert.equal(baselineOnlyReport.result.buildPolicy.simd.dispatch, "baseline-only");
+    const releasePackageOutput = path.join(sandbox, "release-package");
+    const releasePackageReportPath = path.join(sandbox, "release-package-report.json");
+    const releasePackaged = await invoke([
+      "package",
+      "--target", "linux-x86_64-gnu",
+      "--profile", "release",
+      "--workspace", workspacePath,
+      "--input", releaseOutput,
+      "--out", releasePackageOutput,
+      "--report", releasePackageReportPath,
+    ], {
+      env: {
+        ...process.env,
+        NODE_OPTIONS: `--require=${networkDenialHook}`,
+        TSFG_RUNTIME_CACHE: cachePath,
+        TSFG_RUNTIME_LOCK: lockPath,
+        TSFG_RUNTIME_PLATFORM: "test-x86_64",
+      },
+    });
+    assert.equal(releasePackaged.status, 0, releasePackaged.stderr);
+    const releasePackageReport = JSON.parse(await readFile(
+      releasePackageReportPath,
+      "utf8",
+    ));
+    assert.deepEqual(releasePackageReport.result.buildIdentity, releaseReport.result.buildIdentity);
+    assert.deepEqual(releasePackageReport.result.buildPolicy, releaseReport.result.buildPolicy);
+    const releaseArchiveBytes = await readFile(path.join(
+      releasePackageOutput,
+      releasePackageReport.result.archive,
+    ));
+    const releaseArchiveEntries = parseTarArchive(zstdDecompressSync(releaseArchiveBytes));
+    assert.deepEqual(releaseArchiveEntries.map(({ name }) => name), [
+      "artifact-manifest.json",
+      "bin/tsfg-r00-cpp-smoke",
+      "bin/tsfg-r00-zig-smoke",
+      "contract-set.json",
+      "symbols/tsfg-r00-cpp-smoke.debug",
+      "symbols/tsfg-r00-zig-smoke.debug",
+    ]);
+    const releaseManifest = JSON.parse(releaseArchiveEntries[0].bytes.toString("utf8"));
+    assert.deepEqual(releaseManifest.buildPolicy, releaseReport.result.buildPolicy);
+    assert.deepEqual(releaseManifest.buildIdentity, releaseReport.result.buildIdentity);
+    if (!isWindows) {
+      const releaseTestReportPath = path.join(sandbox, "release-test-report.json");
+      const releaseTest = await invoke([
+        "test",
+        "--target", "linux-x86_64-gnu",
+        "--profile", "release",
+        "--cpu-fixture", "x86-64-v2",
+        "--workspace", workspacePath,
+        "--out", releaseOutput,
+        "--report", releaseTestReportPath,
+      ], {
+        env: {
+          ...process.env,
+          NODE_OPTIONS: `--require=${networkDenialHook}`,
+          TSFG_RUNTIME_CACHE: cachePath,
+          TSFG_RUNTIME_LOCK: lockPath,
+          TSFG_RUNTIME_PLATFORM: "test-x86_64",
+        },
+      });
+      assert.equal(releaseTest.status, 0, releaseTest.stderr);
+      const releaseTestReport = JSON.parse(await readFile(releaseTestReportPath, "utf8"));
+      assert.equal(releaseTestReport.result.profile, "release");
+      assert.equal(releaseTestReport.result.cpuFixture, "x86-64-v2");
+      assert.deepEqual(releaseTestReport.result.tests, [
+        { name: "cpp-smoke", status: "passed" },
+        { name: "cpp-smoke-baseline-fallback", status: "passed" },
+        { name: "zig-smoke", status: "passed" },
+      ]);
+    }
 
     const packageOutput = path.join(sandbox, "package");
     const packageReportPath = path.join(sandbox, "package-report.json");

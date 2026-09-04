@@ -13,5 +13,6 @@ pub fn build(b: *std.Build) void {
             .optimize = optimize,
         }),
     });
+    executable.lto = .none;
     b.installArtifact(executable);
 }

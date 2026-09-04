@@ -5,6 +5,7 @@ import { createHash } from "node:crypto";
 import { mkdtemp, mkdir, readFile, readdir, rm, stat, writeFile } from "node:fs/promises";
 import { spawnSync } from "node:child_process";
 import { fileURLToPath } from "node:url";
+import { tmpdir } from "node:os";
 import path from "node:path";
 import test from "node:test";
 
@@ -237,6 +238,116 @@ test("Windows public build seam blocks network, PATH tools, and undeclared works
     assert.equal(deniedReport.error.category, "offline input missing");
     assert.equal(deniedReport.error.issues[0].code, "undeclared-build-input");
     await assert.rejects(stat(deniedOutput), /ENOENT/);
+  } finally {
+    await rm(root, { recursive: true, force: true, maxRetries: 5, retryDelay: 100 });
+  }
+});
+
+test("Windows release build uses the safe release profile and x86-64-v2 baseline", {
+  skip: process.platform !== "win32" || !closureCache,
+  timeout: 10 * 60 * 1000,
+}, async () => {
+  const root = await mkdtemp(path.join(tmpdir(), "tsfg-r00-windows-release-"));
+  try {
+    const locatedGit = spawnSync("where.exe", ["git"], { encoding: "utf8" });
+    assert.equal(locatedGit.status, 0, locatedGit.stderr);
+    const gitExecutable = locatedGit.stdout.split(/\r?\n/).find(Boolean);
+    const workspace = path.join(root, "workspace");
+    const cloned = spawnSync(gitExecutable, [
+      "-c", "core.autocrlf=false", "clone", "--quiet", "--no-hardlinks", repositoryRoot, workspace,
+    ], { encoding: "utf8" });
+    assert.equal(cloned.status, 0, cloned.stderr);
+    const launcher = path.join(workspace, "eng", "tsfg-build.cmd");
+    const gitDigest = sha256(await readFile(gitExecutable)).slice("sha256:".length);
+    const invoke = (arguments_) => spawnSync(process.env.ComSpec, [
+      "/d", "/c", launcher, ...arguments_,
+    ], {
+      cwd: workspace,
+      encoding: "utf8",
+      env: {
+        ...process.env,
+        TSFG_BOOTSTRAP_GIT: gitExecutable,
+        TSFG_BOOTSTRAP_GIT_SHA256: gitDigest,
+        TSFG_CACHE_DIR: closureCache,
+      },
+    });
+    const buildRoot = path.join(root, "build");
+    const reportPath = path.join(root, "build-report.json");
+    const built = invoke([
+      "build",
+      "--target", "windows-x86_64-msvc",
+      "--profile", "release",
+      "--workspace", workspace,
+      "--out", buildRoot,
+      "--report", reportPath,
+    ]);
+    assert.equal(built.status, 0, built.stderr);
+    const report = JSON.parse(await readFile(reportPath, "utf8"));
+    assert.equal(report.result.profile, "release");
+    assert.deepEqual(report.result.buildPolicy, {
+      cpuBaseline: "x86-64-v2",
+      cxx: { assertions: true, debugInformation: "full", optimization: "/O2" },
+      detachedSymbols: "package",
+      forbidden: { fastMath: false, lto: false, nativeTuning: false, pgo: false },
+      profile: "release",
+      simd: {
+        baselineFixture: "x86-64-v2",
+        dispatch: "runtime-detected",
+        higherFeatures: ["avx2"],
+      },
+      target: "windows-x86_64-msvc",
+      zig: { optimization: "ReleaseSafe", safetyChecks: true },
+    });
+    for (const relative of [
+      "bin/tsfg-r00-cpp-smoke.exe",
+      "bin/tsfg-r00-zig-smoke.exe",
+      "symbols/tsfg-r00-cpp-smoke.pdb",
+      "symbols/tsfg-r00-zig-smoke.pdb",
+    ]) assert.ok((await stat(path.join(buildRoot, ...relative.split("/")))).isFile());
+    const testReportPath = path.join(root, "test-report.json");
+    const tested = invoke([
+      "test",
+      "--target", "windows-x86_64-msvc",
+      "--profile", "release",
+      "--cpu-fixture", "x86-64-v2",
+      "--workspace", workspace,
+      "--out", buildRoot,
+      "--report", testReportPath,
+    ]);
+    assert.equal(tested.status, 0, tested.stderr);
+    const testReport = JSON.parse(await readFile(testReportPath, "utf8"));
+    assert.equal(testReport.result.cpuFixture, "x86-64-v2");
+    assert.deepEqual(testReport.result.tests, [
+      { name: "cpp-smoke", status: "passed" },
+      { name: "cpp-smoke-baseline-fallback", status: "passed" },
+      { name: "zig-smoke", status: "passed" },
+    ]);
+    const packageRoot = path.join(root, "package");
+    const packageReportPath = path.join(root, "package-report.json");
+    const packaged = invoke([
+      "package",
+      "--target", "windows-x86_64-msvc",
+      "--profile", "release",
+      "--workspace", workspace,
+      "--input", buildRoot,
+      "--out", packageRoot,
+      "--report", packageReportPath,
+    ]);
+    assert.equal(packaged.status, 0, packaged.stderr);
+    const packageReport = JSON.parse(await readFile(packageReportPath, "utf8"));
+    assert.deepEqual(packageReport.result.buildPolicy, report.result.buildPolicy);
+    assert.deepEqual(packageReport.result.buildIdentity, report.result.buildIdentity);
+    const archiveBytes = await readFile(path.join(packageRoot, packageReport.result.archive));
+    const entries = zipEntries(archiveBytes);
+    const manifest = JSON.parse(entries[0].bytes.toString("utf8"));
+    assert.deepEqual(manifest.buildPolicy, report.result.buildPolicy);
+    assert.deepEqual(manifest.buildIdentity, report.result.buildIdentity);
+    const checksums = JSON.parse(await readFile(
+      path.join(packageRoot, packageReport.result.checksums),
+      "utf8",
+    ));
+    assert.equal(checksums.archive.sha256, sha256(archiveBytes));
+    assert.equal(checksums.artifactManifest.sha256, sha256(entries[0].bytes));
   } finally {
     await rm(root, { recursive: true, force: true, maxRetries: 5, retryDelay: 100 });
   }

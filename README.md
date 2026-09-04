@@ -1,6 +1,6 @@
 # tsfg
 
-## R00 Hermetic Build Entry and Linux debug smoke
+## R00 Hermetic Build Entry and Tier 1 smoke profiles
 
 `prefetch` is the only operation that may use the network. It downloads the
 target's complete content-locked tool closure from
@@ -22,6 +22,12 @@ eng\tsfg-build.cmd verify-workspace ^
   --manifest-revision <complete-manifest-commit-oid> ^
   --manifest bootstrap/r00.xml ^
   --report out\workspace-report.json
+eng\tsfg-build.cmd build ^
+  --target windows-x86_64-msvc ^
+  --profile release ^
+  --workspace . ^
+  --out out\windows-release ^
+  --report out\windows-release-build-report.json
 ```
 
 On Linux:
@@ -54,6 +60,22 @@ eng/tsfg-build package \
   --report out/package-report.json
 ```
 
+Both Tier 1 targets accept `--profile debug` and `--profile release` on
+`build`, `test`, and `package`. Debug maps to C/C++ `-O0` (or `/Od`) and Zig
+Debug; release maps to C/C++ `-O2` (or `/O2`) and Zig ReleaseSafe. Both retain
+assertions, safety checks, and full debug information. Packages contain
+detached `.debug` or PDB symbols. The Build Report, build metadata, and package
+Artifact Manifest carry the same canonical build-policy evidence.
+
+Every normative payload is compiled for `x86-64-v2` with generic tuning. LTO,
+PGO, fast-math, native tuning, and static higher-SIMD injection are rejected
+from ambient build flags and declared smoke build descriptions. The optional
+payload setting `--simd-dispatch runtime-detected|baseline-only` is part of
+Build Identity and defaults to `runtime-detected`. In that mode the C++ smoke
+can select its isolated AVX2 implementation only after CPUID and OS state
+checks. `test --cpu-fixture x86-64-v2` forces and verifies the safe baseline
+fallback without changing Build Identity.
+
 The bootstrap Node is an explicit acquisition prerequisite: its absolute path
 and complete SHA-256 must be supplied for `prefetch`. Windows offline commands
 also require an absolute Bootstrap Git path and complete SHA-256. The launchers
@@ -69,12 +91,12 @@ checks the manifest repository identity and selected manifest, the exact
 project set/paths/HEADs/remotes/clean state, and every manifest-managed Agent
 Activation Surface link and pinned content identity.
 
-The Linux debug closure contains the pinned archive extractor, CMake, Ninja,
+The Linux closure contains the pinned archive extractor, CMake, Ninja,
 LLVM/Clang/LLD, Debian sysroot, and Zig in addition to the Node.js control
 plane. `build` invokes those tools only by verified closure paths under a
-sanitized environment. It builds a private C++ smoke with assertions, `-O0`,
-and debug information, plus an independent Zig Debug smoke. `test` executes
-both artifacts and checks their fixed observable output. `package` validates
+sanitized environment. It builds private C++ and Zig smoke programs according
+to the selected safe profile. `test` executes both artifacts and checks their
+fixed observable output. `package` validates
 the build's identity and payload digests, splits debug symbols with the locked
 LLVM tools, and emits a deterministic `tar.zst`, an Artifact Manifest, and an
 external checksums file. Neither smoke exposes a product API or establishes a

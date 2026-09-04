@@ -156,6 +156,8 @@ valid_smoke_arguments() {
   seen_report=false
   seen_workspace=false
   seen_dev=false
+  seen_simd_dispatch=false
+  seen_cpu_fixture=false
   target=
   profile=
   while [ "$#" -gt 0 ]; do
@@ -179,6 +181,17 @@ valid_smoke_arguments() {
         [ "$seen_profile" = false ] || return 1
         seen_profile=true
         profile=$1
+        ;;
+      --simd-dispatch)
+        [ "$seen_simd_dispatch" = false ] || return 1
+        seen_simd_dispatch=true
+        [ "$1" = runtime-detected ] || [ "$1" = baseline-only ] || return 1
+        ;;
+      --cpu-fixture)
+        [ "$expected_command" = test ] || return 1
+        [ "$seen_cpu_fixture" = false ] || return 1
+        seen_cpu_fixture=true
+        [ "$1" = x86-64-v2 ] || return 1
         ;;
       --out)
         [ "$seen_out" = false ] || return 1
@@ -206,7 +219,7 @@ valid_smoke_arguments() {
     [ "$seen_out" = true ] &&
     { [ "$expected_command" != package ] || [ "$seen_input" = true ]; } &&
     [ "$target" = linux-x86_64-gnu ] &&
-    [ "$profile" = debug ]
+    { [ "$profile" = debug ] || [ "$profile" = release ]; }
 }
 
 if [ "${1:-}" = prefetch ]; then
