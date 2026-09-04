@@ -1402,7 +1402,7 @@ exit 1
     await writeFile(policyCmakePath, policyCmake);
     await appendFile(
       policyCmakePath,
-      "\nset_property(TARGET tsfg-r00-cpp-smoke PROPERTY INTERPROCEDURAL_OPTIMIZATION TRUE)\n",
+      "\nset(TSFG_TEST_IPO TRUE)\nset_property(TARGET tsfg-r00-cpp-smoke PROPERTY INTERPROCEDURAL_OPTIMIZATION ${TSFG_TEST_IPO})\n",
     );
     const ipoPolicyOutput = path.join(sandbox, "forbidden-cmake-ipo-out");
     const ipoPolicyReportPath = path.join(sandbox, "forbidden-cmake-ipo-report.json");
@@ -1438,7 +1438,10 @@ exit 1
       "build.zig",
     );
     const policyZig = await readFile(policyZigPath);
-    await appendFile(policyZigPath, "\n// injected policy probe\nexecutable.lto = .full;\n");
+    await appendFile(
+      policyZigPath,
+      "\n// injected policy probe\nconst tsfg_test_lto = .full;\nexecutable.lto = tsfg_test_lto;\n",
+    );
     const zigLtoPolicyOutput = path.join(sandbox, "forbidden-zig-lto-out");
     const zigLtoPolicyReportPath = path.join(sandbox, "forbidden-zig-lto-report.json");
     const forbiddenZigLto = await invoke([

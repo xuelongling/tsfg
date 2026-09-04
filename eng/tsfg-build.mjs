@@ -329,13 +329,32 @@ function validateAmbientBuildPolicy() {
   }
 }
 
+function declaredBuildPolicy(relativePath, contents) {
+  const flagPolicy = forbiddenBuildPolicy(contents);
+  if (flagPolicy) return flagPolicy;
+  if (
+    relativePath.endsWith("CMakeLists.txt") &&
+    /\b(?:cmake_)?interprocedural_optimization(?:_[a-z0-9_]+)?\b/i.test(contents)
+  ) {
+    return "lto";
+  }
+  if (relativePath.endsWith("build.zig")) {
+    const withoutRequiredLtoDisable = contents.replace(
+      /\bexecutable\s*\.\s*lto\s*=\s*\.none\s*;/gi,
+      "",
+    );
+    if (/\blto\b/i.test(withoutRequiredLtoDisable)) return "lto";
+  }
+  return undefined;
+}
+
 async function validateDeclaredBuildPolicy(sourceRoot) {
   for (const relativePath of [
     "tests/r00/smoke/cpp/CMakeLists.txt",
     "tests/r00/smoke/zig/build.zig",
   ]) {
     const contents = await readFile(path.join(sourceRoot, ...relativePath.split("/")), "utf8");
-    const policy = forbiddenBuildPolicy(contents);
+    const policy = declaredBuildPolicy(relativePath, contents);
     if (policy) {
       throw new BuildPolicyError(
         `${policy} option is forbidden in declared build input ${relativePath}`,
