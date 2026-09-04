@@ -35,6 +35,25 @@ async function writeJson(filePath, value) {
   await writeFile(filePath, `${JSON.stringify(value)}\n`);
 }
 
+function workspaceReport(productRevision) {
+  return {
+    command: "verify-workspace",
+    result: {
+      manifest: {
+        repositoryUrl: "https://github.com/xuelongling/manifests.git",
+        revision: "5".repeat(40),
+        selected: "bootstrap/r00.xml",
+      },
+      projects: [
+        { dirty: false, head: agentRevision, id: ".agents.git", path: ".agents" },
+        { dirty: false, head: productRevision, id: "tsfg.git", path: "tsfg" },
+      ],
+    },
+    schemaVersion: "1",
+    status: "success",
+  };
+}
+
 function workflowJob(workflow, name) {
   const marker = `  ${name}:\n`;
   const start = workflow.indexOf(marker);
@@ -202,10 +221,13 @@ test("product PR workflow composes every gate, producer, compatibility lane, and
 
   const workspaceVerification = workflowJob(workflow, "workspace-verification");
   assert.match(workspaceVerification, /verify-workspace/);
+  assert.match(workspaceVerification, /git -C "\$workspace\/tsfg" fetch --no-tags "\$GITHUB_WORKSPACE"/);
+  assert.doesNotMatch(workspaceVerification, /\.ci\/candidate-product/);
   const productBuild = workflowJob(workflow, "product-build");
   assert.match(productBuild, /eng[\\/]tsfg-build(?:\.cmd)?"? build/);
   assert.match(productBuild, /eng[\\/]tsfg-build(?:\.cmd)?"? test/);
   assert.match(productBuild, /eng[\\/]tsfg-build(?:\.cmd)?"? package/);
+  assert.match(productBuild, /candidate-binding\.json/);
   assert.match(productBuild, /producer-\$\{\{ matrix\.producer \}\}/);
   assert.match(productBuild, /actions\/cache@[0-9a-f]{40}/);
   assert.match(productBuild, /key: tsfg-tools-\$\{\{ matrix\.target \}\}-\$\{\{ hashFiles\('eng\/toolchains\.lock\.json', 'pnpm-lock\.yaml'\) \}\}/);
@@ -215,9 +237,13 @@ test("product PR workflow composes every gate, producer, compatibility lane, and
   const compatibility = workflowJob(workflow, "compatibility");
   assert.match(compatibility, /--compatibility-baseline/);
   assert.match(compatibility, /--compatibility-candidate/);
+  assert.match(compatibility, /RUNNER_TEMP\/tsfg-compatibility/);
+  assert.doesNotMatch(compatibility, /\.ci\/(?:compatibility|evidence)/);
   const reproducibility = workflowJob(workflow, "reproducibility");
   assert.match(reproducibility, /needs:.*product-build/s);
   assert.match(reproducibility, /repro-check/);
+  assert.match(reproducibility, /RUNNER_TEMP\/tsfg-repro/);
+  assert.doesNotMatch(reproducibility, /\.ci\/(?:download|evidence)/);
   assert.doesNotMatch(reproducibility, /tsfg-build(?:\.cmd)? (?:build|package)/);
 
   const evidence = workflowJob(workflow, "candidate-evidence");
@@ -254,11 +280,15 @@ test("candidate verdict requires complete successful matrix evidence before decl
       gates: { format: "passed", license: "passed", lock: "passed", policy: "passed" },
       ...success,
     });
-    await writeJson(path.join(evidence, "workspace-verification", "report.json"), success);
+    await writeJson(
+      path.join(evidence, "workspace-verification", "report.json"),
+      workspaceReport(candidateRevision),
+    );
     for (const target of targets) {
       await writeJson(path.join(evidence, "compatibility", target, "report.json"), {
         ...success,
         result: {
+          contractSet: { canonical: "{}", id: digest("{}") },
           compatibility: {
             artifacts: { candidate: { productOid: candidateRevision } },
             combinations: [
@@ -275,6 +305,7 @@ test("candidate verdict requires complete successful matrix evidence before decl
         const identityDigest = digest(`${target}/${profile}`);
         for (const producer of ["a", "b"]) {
           const root = path.join(evidence, "producers", target, profile, producer);
+          await writeJson(path.join(root, "workspace-report.json"), workspaceReport(candidateRevision));
           for (const [command, name] of [["build", "build-report.json"], ["test", "test-report.json"]]) {
             await writeJson(path.join(root, name), {
               command,
@@ -297,6 +328,11 @@ test("candidate verdict requires complete successful matrix evidence before decl
             producer,
             schemaVersion: "1",
             target,
+          });
+          await writeJson(path.join(root, "candidate-binding.json"), {
+            buildIdentityDigest: identityDigest,
+            candidateRevision,
+            schemaVersion: "1",
           });
         }
         await writeJson(path.join(evidence, "reproducibility", target, profile, "report.json"), {
@@ -330,6 +366,42 @@ test("candidate verdict requires complete successful matrix evidence before decl
     assert.equal(verdict.requiredEvidence.producers, "8/8");
     assert.equal(verdict.requiredEvidence.reproducibility, "4/4");
     assert.match(verdict.evidenceDigest, /^sha256:[0-9a-f]{64}$/);
+
+    await writeJson(
+      path.join(evidence, "workspace-verification", "report.json"),
+      workspaceReport(baselineProductRevision),
+    );
+    const foreignWorkspaceOutput = path.join(sandbox, "foreign-workspace-evidence.json");
+    const foreignWorkspace = invoke([
+      "verdict", "--evidence", evidence,
+      "--job-results", jobResultsPath,
+      "--out", foreignWorkspaceOutput,
+    ]);
+    assert.notEqual(foreignWorkspace.status, 0);
+    await assert.rejects(readFile(foreignWorkspaceOutput));
+
+    await writeJson(
+      path.join(evidence, "workspace-verification", "report.json"),
+      workspaceReport(candidateRevision),
+    );
+    const foreignBindingPath = path.join(
+      evidence,
+      "producers",
+      targets[0],
+      profiles[0],
+      "a",
+      "candidate-binding.json",
+    );
+    const foreignBinding = JSON.parse(await readFile(foreignBindingPath, "utf8"));
+    await writeJson(foreignBindingPath, { ...foreignBinding, candidateRevision: baselineProductRevision });
+    const foreignBuildOutput = path.join(sandbox, "foreign-build-evidence.json");
+    const foreignBuild = invoke([
+      "verdict", "--evidence", evidence,
+      "--job-results", jobResultsPath,
+      "--out", foreignBuildOutput,
+    ]);
+    assert.notEqual(foreignBuild.status, 0);
+    await assert.rejects(readFile(foreignBuildOutput));
   } finally {
     await rm(sandbox, { recursive: true, force: true });
   }

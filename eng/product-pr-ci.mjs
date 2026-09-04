@@ -7,6 +7,15 @@ import process from "node:process";
 
 const manifestRepository = "https://github.com/xuelongling/manifests.git";
 const completeOid = /^[0-9a-f]{40}$/;
+const requiredJobs = [
+  "candidate-identity",
+  "repository-gates",
+  "workspace-verification",
+  "product-build",
+  "compatibility",
+  "reproducibility",
+  "candidate-evidence",
+];
 
 class ProductPrError extends Error {}
 
@@ -180,15 +189,7 @@ async function writePlan(options) {
     compatibilityMatrix: platforms.map(({ os, target }) => ({ os, target })),
     evidenceRetentionDays: "90",
     producerMatrix,
-    requiredJobs: [
-      "candidate-identity",
-      "repository-gates",
-      "workspace-verification",
-      "product-build",
-      "compatibility",
-      "reproducibility",
-      "candidate-evidence",
-    ],
+    requiredJobs,
     schemaVersion: "1",
   };
   await mkdir(path.dirname(outputPath), { recursive: true });
@@ -215,6 +216,33 @@ function requireSuccessfulReport(report, label, command) {
   return report;
 }
 
+function requireResolvedWorkspace(report, resolvedManifest, label) {
+  requireSuccessfulReport(report, label, "verify-workspace");
+  const expectedProjects = resolvedManifest.projects.map(({ name, path: projectPath, revision }) => ({
+    dirty: false,
+    head: revision,
+    id: name,
+    path: projectPath,
+  }));
+  const actualProjects = report.result?.projects?.map(({ dirty, head, id, path: projectPath }) => ({
+    dirty,
+    head,
+    id,
+    path: projectPath,
+  }));
+  const actualManifest = report.result?.manifest;
+  if (
+    !Array.isArray(actualProjects) ||
+    canonicalize(actualProjects) !== canonicalize(expectedProjects) ||
+    actualManifest?.repositoryUrl !== resolvedManifest.baseline.repository ||
+    actualManifest?.selected !== resolvedManifest.baseline.manifest ||
+    !completeOid.test(actualManifest?.revision)
+  ) {
+    throw new ProductPrError(`${label} is not bound to the resolved Candidate Overlay`);
+  }
+  return report;
+}
+
 async function evidenceFiles(root, current = "") {
   const directory = path.join(root, ...current.split("/").filter(Boolean));
   const entries = await readdir(directory, { withFileTypes: true });
@@ -235,15 +263,6 @@ async function writeVerdict(options) {
     "required job results",
   );
   const outputPath = path.resolve(requireOption(options, "--out"));
-  const requiredJobs = [
-    "candidate-identity",
-    "repository-gates",
-    "workspace-verification",
-    "product-build",
-    "compatibility",
-    "reproducibility",
-    "candidate-evidence",
-  ];
   for (const job of requiredJobs) {
     if (jobResults?.[job] !== "success") {
       throw new ProductPrError(`required job ${job} did not succeed (observed ${jobResults?.[job] ?? "missing"})`);
@@ -275,11 +294,12 @@ async function writeVerdict(options) {
       throw new ProductPrError(`repository ${gate} gate is missing or failed`);
     }
   }
-  requireSuccessfulReport(
+  requireResolvedWorkspace(
     await readJson(
       path.join(root, "workspace-verification", "report.json"),
       "Workspace Verification",
     ),
+    resolvedManifest,
     "Workspace Verification",
   );
 
@@ -302,6 +322,8 @@ async function writeVerdict(options) {
     if (
       compatibility.result?.target !== target ||
       compatibility.result?.compatibility?.artifacts?.candidate?.productOid !== identity.candidateRevision ||
+      compatibility.result?.contractSet?.canonical !== "{}" ||
+      compatibility.result?.contractSet?.id !== sha256(canonicalJsonBytes({})) ||
       !Array.isArray(combinations) ||
       expectedCombinations.some(([producer, consumer], index) =>
         combinations[index]?.producer !== producer ||
@@ -315,12 +337,20 @@ async function writeVerdict(options) {
       let producerIdentity;
       for (const producer of ["a", "b"]) {
         const producerRoot = path.join(root, "producers", target, profile, producer);
+        requireResolvedWorkspace(
+          await readJson(
+            path.join(producerRoot, "workspace-report.json"),
+            `${target}/${profile}/${producer} workspace`,
+          ),
+          resolvedManifest,
+          `${target}/${profile}/${producer} workspace`,
+        );
         const build = requireSuccessfulReport(
           await readJson(path.join(producerRoot, "build-report.json"), `${target}/${profile}/${producer} build`),
           `${target}/${profile}/${producer} build`,
           "build",
         );
-        requireSuccessfulReport(
+        const test = requireSuccessfulReport(
           await readJson(path.join(producerRoot, "test-report.json"), `${target}/${profile}/${producer} test`),
           `${target}/${profile}/${producer} test`,
           "test",
@@ -334,7 +364,8 @@ async function writeVerdict(options) {
           build.result?.target !== target || build.result?.profile !== profile ||
           packageReport.result?.buildIdentity?.target !== target ||
           packageReport.result?.buildIdentity?.profile !== profile ||
-          build.result?.buildIdentity?.digest !== packageReport.result?.buildIdentity?.digest
+          build.result?.buildIdentity?.digest !== packageReport.result?.buildIdentity?.digest ||
+          test.result?.buildIdentity?.digest !== packageReport.result?.buildIdentity?.digest
         ) {
           throw new ProductPrError(`${target}/${profile}/${producer} reports disagree on Build Identity`);
         }
@@ -361,6 +392,17 @@ async function writeVerdict(options) {
           attestation.profile !== profile || attestation.buildIdentityDigest !== digestValue
         ) {
           throw new ProductPrError(`${target}/${profile}/${producer} producer attestation is inconsistent`);
+        }
+        const binding = await readJson(
+          path.join(producerRoot, "candidate-binding.json"),
+          `${target}/${profile}/${producer} candidate binding`,
+        );
+        if (
+          binding.schemaVersion !== "1" ||
+          binding.candidateRevision !== identity.candidateRevision ||
+          binding.buildIdentityDigest !== digestValue
+        ) {
+          throw new ProductPrError(`${target}/${profile}/${producer} build evidence is not bound to the candidate`);
         }
         producerCount += 1;
       }
