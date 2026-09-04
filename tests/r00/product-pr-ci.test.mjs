@@ -262,6 +262,40 @@ test("product PR workflow composes every gate, producer, compatibility lane, and
   assert.match(verified, /product-pr-ci\.mjs verdict/);
 });
 
+test("product PR workflow isolates every Linux offline phase in a loopback-only namespace", async () => {
+  const workflow = await readFile(workflowPath, "utf8");
+  const jobs = [
+    workflowJob(workflow, "workspace-verification"),
+    workflowJob(workflow, "product-build"),
+    workflowJob(workflow, "compatibility"),
+    workflowJob(workflow, "reproducibility"),
+  ];
+  for (const job of jobs) {
+    assert.match(job, /sudo unshare --net --mount-proc bash -ceu/);
+    assert.match(job, /ip link set lo up/);
+    assert.match(job, /find \/sys\/class\/net -mindepth 1 -maxdepth 1 -printf/);
+    assert.match(job, /exec setpriv --reuid "\$1" --regid "\$2" --clear-groups -- "\$\{@:3\}"/);
+  }
+
+  const assertions = [
+    [jobs[0], /tsfg-build\.mjs" verify-workspace/],
+    [jobs[1], /eng\/tsfg-build" verify-workspace/],
+    [jobs[1], /eng\/tsfg-build" build/],
+    [jobs[1], /eng\/tsfg-build" test/],
+    [jobs[1], /eng\/tsfg-build" package/],
+    [jobs[2], /eng\/tsfg-build\.mjs test/],
+    [jobs[3], /eng\/tsfg-build" repro-check/],
+  ];
+  for (const [job, command] of assertions) {
+    const line = job.split("\n").find((candidate) => command.test(candidate));
+    assert.ok(line, `missing offline command ${command}`);
+    assert.match(line, /^\s*run_offline /, `${command} bypasses the offline namespace`);
+  }
+
+  assert.doesNotMatch(jobs[1], /^\s*run_offline .* prefetch /m);
+  assert.doesNotMatch(jobs[3], /^\s*run_offline .* prefetch /m);
+});
+
 test("candidate verdict requires complete successful matrix evidence before declaring Verified Candidate", async () => {
   const sandbox = await mkdtemp(path.join(tmpdir(), "tsfg-product-pr-verdict-"));
   const evidence = path.join(sandbox, "evidence");
