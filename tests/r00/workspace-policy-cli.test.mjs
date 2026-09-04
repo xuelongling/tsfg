@@ -2,6 +2,7 @@
 
 import assert from "node:assert/strict";
 import { spawn, spawnSync } from "node:child_process";
+import { createHash } from "node:crypto";
 import { mkdir, mkdtemp, readFile, rm, symlink, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import path from "node:path";
@@ -125,12 +126,24 @@ async function materializePolicyFixture(workspace, overrides = {}) {
   );
   let upstream;
   if (overrides.upstreamFiles) {
-    const upstreamHead = await initializeRepository(
-      path.join(workspace, "future-upstream"),
-      overrides.upstreamFiles,
+    const upstreamRoot = path.join(workspace, "future-upstream");
+    const upstreamFiles = { ...overrides.upstreamFiles };
+    const upstreamToml = upstreamFiles["UPSTREAM.toml"];
+    delete upstreamFiles["UPSTREAM.toml"];
+    let upstreamHead = await initializeRepository(
+      upstreamRoot,
+      upstreamFiles,
       "https://github.com/xuelongling/future-upstream.git",
       "github-xuelongling",
     );
+    if (upstreamToml !== undefined) {
+      const contents =
+        typeof upstreamToml === "function" ? upstreamToml(upstreamHead) : upstreamToml;
+      await writeFile(path.join(upstreamRoot, "UPSTREAM.toml"), contents);
+      git(upstreamRoot, "add", "UPSTREAM.toml");
+      git(upstreamRoot, "commit", "--quiet", "-m", "add upstream provenance");
+      upstreamHead = git(upstreamRoot, "rev-parse", "HEAD");
+    }
     upstream = `  <project name="future-upstream.git" path="future-upstream" remote="github-xuelongling" revision="${upstreamHead}" />\n`;
   }
   const manifest = `<?xml version="1.0" encoding="UTF-8"?>
@@ -329,6 +342,17 @@ test("verify-workspace rejects non-portable Git paths and repository symlinks", 
       ],
     },
     {
+      code: "path-case-collision",
+      entries: [
+        { path: "src/Case/one.mjs", contents: source },
+        { path: "src/case/two.mjs", contents: source },
+      ],
+    },
+    {
+      code: "path-ascii-lowercase",
+      entries: [{ path: "docs/README.md/child.md", contents: "# rejected\n" }],
+    },
+    {
       code: "path-windows-reserved",
       entries: [{ path: "src/con.txt", contents: "reserved\n" }],
     },
@@ -437,6 +461,11 @@ test("verify-workspace rejects incomplete dependency license provenance", async 
       dependencySources: source("MIT"),
       toolchainLock: lock("MIT", "unknown"),
     },
+    ...["???", " NOASSERTION ", "NOASSERTION OR MIT"].map((license) => ({
+      code: "dependency-license",
+      dependencySources: source(license),
+      toolchainLock: lock(license),
+    })),
     {
       code: "dependency-coverage",
       dependencySources: { dependencies: [], schemaVersion: "1" },
@@ -531,10 +560,35 @@ test("verify-workspace authenticates every dependency source identity", async ()
 });
 
 test("verify-workspace rejects agent private state and unexplained generated outputs", async () => {
+  const dist = "// SPDX-License-Identifier: MIT\nexport {};\n";
+  const distDigest = `sha256:${createHash("sha256").update(dist).digest("hex")}`;
+  const selfReferentialProvenance = `${JSON.stringify({
+    artifacts: [
+      {
+        digest: distDigest,
+        locks: [{ digest: distDigest, path: "dist/server.js" }],
+        path: "dist/server.js",
+        sources: [{ digest: distDigest, path: "dist/server.js" }],
+      },
+    ],
+    schema_version: "1",
+  })}\n`;
   const scenarios = [
     {
       code: "agent-secret",
       agentFiles: { "codex/private.toml": 'client_secret = "concrete-private-value"\n' },
+    },
+    {
+      code: "agent-secret",
+      agentFiles: { "codex/private.toml": 'password = "concrete-private-value"\n' },
+    },
+    {
+      code: "agent-secret",
+      agentFiles: { "codex/private.toml": 'session_cookie = "concrete-private-value"\n' },
+    },
+    {
+      code: "agent-secret",
+      agentFiles: { "codex/private.toml": 'state = "/root/private-state"\n' },
     },
     {
       code: "agent-personal-state",
@@ -548,6 +602,19 @@ test("verify-workspace rejects agent private state and unexplained generated out
       code: "agent-dist-only-mcp",
       agentFiles: {
         "mcp/example/dist/server.js": "// SPDX-License-Identifier: MIT\nexport {};\n",
+      },
+    },
+    {
+      code: "agent-dist-only-mcp",
+      agentFiles: {
+        "mcp/example/artifact-provenance.json": selfReferentialProvenance,
+        "mcp/example/dist/server.js": dist,
+      },
+    },
+    {
+      code: "repository-local-output",
+      productFiles: {
+        "out/result.mjs": "// SPDX-License-Identifier: MIT\nexport {};\n",
       },
     },
     {
@@ -575,31 +642,38 @@ test("verify-workspace rejects agent private state and unexplained generated out
 });
 
 test("verify-workspace rejects an unknown future upstream base OID without approving a fork", async () => {
-  const sandbox = await mkdtemp(path.join(tmpdir(), "tsfg-policy-upstream-"));
-  const workspace = path.join(sandbox, "workspace");
-  const reportPath = path.join(sandbox, "report.json");
-  try {
-    const { manifestHead } = await materializePolicyFixture(workspace, {
-      upstreamFiles: {
-        ".gitattributes": gitAttributes,
-        "LICENSE": "Apache License 2.0\n",
-        "NOTICE": "Future upstream notice\n",
-        "UPSTREAM.toml": [
-          'canonical_url = "https://github.com/upstream/future-upstream.git"',
-          'base_oid = "unknown"',
-          'license = "Apache-2.0"',
-          'sync_branch = "refs/heads/tsfg-r00-shape-fixture"',
-          'local_changes = "shape fixture only"',
-          "",
-        ].join("\n"),
-      },
-    });
-    const result = await invokeVerify(workspace, manifestHead, reportPath);
-    assert.equal(result.status, 10, result.stderr);
-    const report = JSON.parse(await readFile(reportPath, "utf8"));
-    assert.equal(report.error.issues[0].code, "upstream-provenance");
-    assert.match(report.error.issues[0].message, /base OID/);
-  } finally {
-    await rm(sandbox, { recursive: true, force: true, maxRetries: 10, retryDelay: 100 });
+  const scenarios = [
+    { baseOid: "unknown", message: /base OID/ },
+    { baseOid: "a".repeat(40), message: /base OID/ },
+    { baseOid: (commit) => commit, code: "upstream-not-approved", message: /not approved/ },
+  ];
+  for (const scenario of scenarios) {
+    const sandbox = await mkdtemp(path.join(tmpdir(), "tsfg-policy-upstream-"));
+    const workspace = path.join(sandbox, "workspace");
+    const reportPath = path.join(sandbox, "report.json");
+    try {
+      const { manifestHead } = await materializePolicyFixture(workspace, {
+        upstreamFiles: {
+          ".gitattributes": gitAttributes,
+          "LICENSE": "Apache License 2.0\n",
+          "NOTICE": "Future upstream notice\n",
+          "UPSTREAM.toml": (commit) => [
+            'canonical_url = "https://github.com/upstream/future-upstream.git"',
+            `base_oid = "${typeof scenario.baseOid === "function" ? scenario.baseOid(commit) : scenario.baseOid}"`,
+            'license = "Apache-2.0"',
+            'sync_branch = "refs/heads/tsfg-r00-shape-fixture"',
+            'local_changes = "shape fixture only"',
+            "",
+          ].join("\n"),
+        },
+      });
+      const result = await invokeVerify(workspace, manifestHead, reportPath);
+      assert.equal(result.status, 10, result.stderr);
+      const report = JSON.parse(await readFile(reportPath, "utf8"));
+      assert.equal(report.error.issues[0].code, scenario.code ?? "upstream-provenance");
+      assert.match(report.error.issues[0].message, scenario.message);
+    } finally {
+      await rm(sandbox, { recursive: true, force: true, maxRetries: 10, retryDelay: 100 });
+    }
   }
 });

@@ -1712,15 +1712,19 @@ function verifyPortablePaths(repository, entries, definition) {
   const paths = entries.map((entry) => decodePortablePath(repository, entry));
   const folded = new Map();
   for (const relativePath of paths) {
-    const key = relativePath.toLowerCase();
-    const previous = folded.get(key);
-    if (previous !== undefined && previous !== relativePath) {
-      throw new WorkspaceMismatchError(
-        "path-case-collision",
-        `${repository.workspacePath}/${relativePath} collides with ${repository.workspacePath}/${previous}`,
-      );
+    const segments = relativePath.split("/");
+    for (let length = 1; length <= segments.length; length += 1) {
+      const prefix = segments.slice(0, length).join("/");
+      const key = prefix.toLowerCase();
+      const previous = folded.get(key);
+      if (previous !== undefined && previous !== prefix) {
+        throw new WorkspaceMismatchError(
+          "path-case-collision",
+          `${repository.workspacePath}/${prefix} collides with ${repository.workspacePath}/${previous}`,
+        );
+      }
+      folded.set(key, prefix);
     }
-    folded.set(key, relativePath);
   }
 
   const whitelist = new Set(definition.pathCasingWhitelist);
@@ -1732,7 +1736,8 @@ function verifyPortablePaths(repository, entries, definition) {
         `${repository.workspacePath}/${relativePath} exceeds ${maximum} repository-relative characters`,
       );
     }
-    for (const segment of relativePath.split("/")) {
+    const segments = relativePath.split("/");
+    for (const [segmentIndex, segment] of segments.entries()) {
       if (/[. ]$/.test(segment)) {
         throw new WorkspaceMismatchError(
           "path-trailing-dot-space",
@@ -1746,7 +1751,16 @@ function verifyPortablePaths(repository, entries, definition) {
           `${repository.workspacePath}/${relativePath} contains a Windows reserved name`,
         );
       }
-      if (!/^[a-z0-9._-]+$/.test(segment) && !whitelist.has(segment)) {
+      const controlException = definition.controlPathCasingWhitelist.some(
+        (entry) =>
+          entry.projectId === repository.id &&
+          (relativePath === entry.path ||
+            (entry.path === "skills/**/SKILL.md" &&
+              /^skills\/(?:[a-z0-9._-]+\/)+SKILL\.md$/.test(relativePath))),
+      );
+      const basenameException =
+        segmentIndex === segments.length - 1 && whitelist.has(segment);
+      if (!/^[a-z0-9._-]+$/.test(segment) && !basenameException && !controlException) {
         throw new WorkspaceMismatchError(
           "path-ascii-lowercase",
           `${repository.workspacePath}/${relativePath} is not a portable lowercase path or a versioned exception`,
@@ -1926,12 +1940,8 @@ function parseCommittedCanonicalJson(repository, entryMap, relativePath, code) {
   return value;
 }
 
-function knownLicense(value) {
-  return (
-    typeof value === "string" &&
-    value.length !== 0 &&
-    !/^(?:NOASSERTION|unknown)$/i.test(value)
-  );
+function knownLicense(value, definition) {
+  return typeof value === "string" && definition.approvedLicenseExpressions.includes(value);
 }
 
 function dependencyNotice(entry, product, entryMap) {
@@ -1980,12 +1990,12 @@ function requireDependencyIdentity(id, input) {
   }
 }
 
-function dependencyInputs(toolId, tool) {
+function dependencyInputs(toolId, tool, definition) {
   const inputs = [];
   for (const artifact of tool.artifacts ?? []) {
     if (Array.isArray(artifact.archives) && artifact.archives.length !== 0) {
       for (const member of artifact.archives) {
-        if (!knownLicense(member.license)) {
+        if (!knownLicense(member.license, definition)) {
           throw new WorkspaceMismatchError(
             "dependency-license",
             `toolchain input ${toolId}/${member.id ?? "member"} has an unknown license`,
@@ -2021,7 +2031,7 @@ function dependencyInputs(toolId, tool) {
   return inputs;
 }
 
-function verifyDependencyProvenance(product, entries) {
+function verifyDependencyProvenance(product, entries, definition) {
   const entryMap = committedEntryMap(product, entries);
   const metadata = parseCommittedCanonicalJson(
     product,
@@ -2050,17 +2060,16 @@ function verifyDependencyProvenance(product, entries) {
 
   const expected = new Map();
   for (const [toolId, tool] of Object.entries(lock.tools)) {
-    if (!knownLicense(tool?.license)) {
+    if (!knownLicense(tool?.license, definition)) {
       throw new WorkspaceMismatchError(
         "dependency-license",
         `toolchain input ${toolId} has an unknown license`,
       );
     }
-    dependencyInputs(toolId, tool);
     expected.set(`tool:${toolId}`, {
       license: tool.license,
       source: { kind: "toolchain", toolId },
-      inputs: dependencyInputs(toolId, tool),
+      inputs: dependencyInputs(toolId, tool, definition),
     });
   }
   for (const dependencyLock of lock.dependencyLocks) {
@@ -2104,7 +2113,7 @@ function verifyDependencyProvenance(product, entries) {
       );
     }
     if (
-      !knownLicense(entry.license) ||
+      !knownLicense(entry.license, definition) ||
       (expectedEntry.license !== undefined && entry.license !== expectedEntry.license)
     ) {
       throw new WorkspaceMismatchError(
@@ -2197,9 +2206,9 @@ function agentStatePathIssue(relativePath) {
 function agentSecretContent(content) {
   const knownToken = /sk-[A-Za-z0-9_-]{16,}|gh[oprsu]_[A-Za-z0-9]{20,}|github_pat_[A-Za-z0-9_]{20,}/;
   const privateKey = /-----BEGIN (?:RSA |EC |OPENSSH )?PRIVATE KEY-----/;
-  const credential = /(?:^|[^A-Za-z0-9_])["']?(?:client[_ -]?secret|access[_ -]?token|refresh[_ -]?token|id[_ -]?token|api[_ -]?key|token|authorization)["']?\s*[:=]\s*["']?(?!<|\$\{|%)[^\s"']{8,}/i;
+  const credential = /(?:^|[^A-Za-z0-9_])["']?(?:client[_ -]?secret|access[_ -]?token|refresh[_ -]?token|id[_ -]?token|api[_ -]?key|token|authorization|password|passwd|session[_ -]?cookie)["']?\s*[:=]\s*["']?(?!<|\$\{|%)[^\s"']{8,}/i;
   const windowsAbsolute = /(?:^|[^A-Za-z0-9_])(?:[A-Za-z]:[\\/]|\\\\[A-Za-z0-9._-]+\\[A-Za-z0-9$._-]+\\)/im;
-  const posixHome = /\/(?:home|Users)\/[^/\s"']+/;
+  const posixHome = /\/(?:home|Users)\/[^/\s"']+|\/root(?:\/|\b)/;
   return knownToken.test(content) || privateKey.test(content) || credential.test(content) ||
     windowsAbsolute.test(content) || posixHome.test(content);
 }
@@ -2247,6 +2256,12 @@ function verifyGeneratedProvenance(repository, entries) {
   const entryMap = committedEntryMap(repository, entries);
   const generated = new Map();
   for (const relativePath of entryMap.keys()) {
+    if (relativePath.split("/").includes("out")) {
+      throw new WorkspaceMismatchError(
+        "repository-local-output",
+        `${repository.workspacePath}/${relativePath} is repository-local output and must remain untracked`,
+      );
+    }
     const projectRoot = generatedProjectRoot(relativePath);
     if (projectRoot === undefined) continue;
     const outputs = generated.get(projectRoot) ?? [];
@@ -2292,15 +2307,32 @@ function verifyGeneratedProvenance(repository, entries) {
       ) {
         throw new WorkspaceMismatchError(issueCode, `${provenancePath} does not explain its output`);
       }
-      for (const input of [...artifact.sources, ...artifact.locks]) {
-        const inputPath = joinedRepositoryPath(projectRoot, input?.path);
-        const inputEntry = inputPath ? entryMap.get(inputPath) : undefined;
-        if (
-          !inputEntry ||
-          !/^sha256:[0-9a-f]{64}$/.test(input.digest) ||
-          digest(inputEntry.bytes) !== input.digest
-        ) {
-          throw new WorkspaceMismatchError(issueCode, `${provenancePath} has an unknown source or lock`);
+      for (const [kind, inputs] of [
+        ["source", artifact.sources],
+        ["lock", artifact.locks],
+      ]) {
+        for (const input of inputs) {
+          const inputPath = joinedRepositoryPath(projectRoot, input?.path);
+          const inputEntry = inputPath ? entryMap.get(inputPath) : undefined;
+          const generatedInput = inputPath ? generatedProjectRoot(inputPath) : undefined;
+          const authoritativeLock =
+            kind !== "lock" ||
+            /(?:^|\/)(?:[^/]+\.lock|[^/]+-lock\.(?:json|ya?ml)|package-lock\.json|pnpm-lock\.yaml|yarn\.lock)$/.test(
+              inputPath ?? "",
+            );
+          if (
+            !inputEntry ||
+            inputPath === outputPath ||
+            generatedInput !== undefined ||
+            !authoritativeLock ||
+            !/^sha256:[0-9a-f]{64}$/.test(input.digest) ||
+            digest(inputEntry.bytes) !== input.digest
+          ) {
+            throw new WorkspaceMismatchError(
+              issueCode,
+              `${provenancePath} has an unknown source or lock`,
+            );
+          }
         }
       }
       declared.add(outputPath);
@@ -2328,7 +2360,7 @@ function parseUpstreamToml(bytes) {
   return values;
 }
 
-function verifyUpstreamProvenance(repository, entries) {
+function verifyUpstreamProvenance(repository, entries, definition) {
   const entryMap = committedEntryMap(repository, entries);
   const upstream = entryMap.get("UPSTREAM.toml");
   const license = entryMap.get("LICENSE");
@@ -2353,6 +2385,20 @@ function verifyUpstreamProvenance(repository, entries) {
       `${repository.workspacePath}/UPSTREAM.toml has an unknown base OID`,
     );
   }
+  try {
+    gitOutput(repository.root, ["cat-file", "-e", `${values.base_oid}^{commit}`]);
+    gitOutput(repository.root, [
+      "merge-base",
+      "--is-ancestor",
+      values.base_oid,
+      repository.revision,
+    ]);
+  } catch {
+    throw new WorkspaceMismatchError(
+      "upstream-provenance",
+      `${repository.workspacePath}/UPSTREAM.toml has an unknown base OID`,
+    );
+  }
   let canonicalUrl;
   try {
     canonicalUrl = new URL(values.canonical_url);
@@ -2361,7 +2407,7 @@ function verifyUpstreamProvenance(repository, entries) {
   }
   if (
     canonicalUrl?.protocol !== "https:" ||
-    !knownLicense(values.license) ||
+    !knownLicense(values.license, definition) ||
     !values.sync_branch.startsWith("refs/heads/") ||
     values.local_changes.trim() === ""
   ) {
@@ -2370,16 +2416,10 @@ function verifyUpstreamProvenance(repository, entries) {
       `${repository.workspacePath}/UPSTREAM.toml contains incomplete origin metadata`,
     );
   }
-  return {
-    approval: "not-evaluated",
-    baseOid: values.base_oid,
-    canonicalUrl: canonicalUrl.href,
-    id: repository.id,
-    license: values.license,
-    localChanges: values.local_changes,
-    path: repository.workspacePath,
-    syncBranch: values.sync_branch,
-  };
+  throw new WorkspaceMismatchError(
+    "upstream-not-approved",
+    `${repository.workspacePath} has valid fork provenance but is not approved in R00`,
+  );
 }
 
 async function verifyWorkspacePolicy(manifestsRoot, manifestRevision, expectedProjects, workspace) {
@@ -2389,8 +2429,14 @@ async function verifyWorkspacePolicy(manifestsRoot, manifestRevision, expectedPr
   if (
     definition.schemaVersion !== "1" ||
     !/^[1-9][0-9]*$/.test(definition.maxRelativePathLength) ||
+    !Array.isArray(definition.approvedLicenseExpressions) ||
+    !definition.approvedLicenseExpressions.every((entry) => typeof entry === "string") ||
     !Array.isArray(definition.pathCasingWhitelist) ||
     !definition.pathCasingWhitelist.every((entry) => typeof entry === "string") ||
+    !Array.isArray(definition.controlPathCasingWhitelist) ||
+    !definition.controlPathCasingWhitelist.every(
+      (entry) => typeof entry?.projectId === "string" && typeof entry.path === "string",
+    ) ||
     !Array.isArray(definition.licenseMappings) ||
     !definition.licenseMappings.every(
       (entry) =>
@@ -2443,9 +2489,7 @@ async function verifyWorkspacePolicy(manifestsRoot, manifestRevision, expectedPr
         productCoverage = coverage;
       }
     } else {
-      const upstream = verifyUpstreamProvenance(repository, entries);
-      upstreamForks.push(upstream);
-      repositoryLicense = upstream.license;
+      verifyUpstreamProvenance(repository, entries, definition);
     }
     result.push({
       files: entries.length,
@@ -2461,7 +2505,7 @@ async function verifyWorkspacePolicy(manifestsRoot, manifestRevision, expectedPr
   return {
     licenseReport: {
       coverage: { covered, percent: "100", total: covered },
-      dependencies: verifyDependencyProvenance(product, productEntries),
+      dependencies: verifyDependencyProvenance(product, productEntries, definition),
       inputs: verifyBuildInputLicenses(product, productEntries, productCoverage),
     },
     repositories: result,
