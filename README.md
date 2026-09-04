@@ -63,6 +63,7 @@ eng/tsfg-build repro-check \
   --profile debug \
   --producer-a /absolute/path/to/producer-a-package \
   --producer-b /different/absolute/path/to/producer-b-package \
+  --workspace /absolute/path/to/clean-comparator-checkout \
   --report out/repro-report.json
 ```
 

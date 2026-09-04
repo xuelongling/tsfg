@@ -1949,6 +1949,7 @@ exit 1
         root: "<fresh-compilation-root>",
         sharing: "none",
       },
+      pathCanonicalization: "realpath",
       profile: "debug",
       schemaVersion: "1",
       target: "linux-x86_64-gnu",

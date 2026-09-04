@@ -420,14 +420,15 @@ function createBuildPolicy(target, profile, buildOptions) {
   };
 }
 
-function createProducerEvidence(identity, target, profile, workspacePath, compilationRoot) {
+async function createProducerEvidence(identity, target, profile, workspacePath, compilationRoot) {
   return {
     buildExecutionId: randomUUID(),
     compilationCache: {
       initialState: "empty",
-      root: compilationRoot,
+      root: await realpath(compilationRoot),
       sharing: "none",
     },
+    pathCanonicalization: "realpath",
     profile,
     target,
     toolchainClosure: {
@@ -435,25 +436,53 @@ function createProducerEvidence(identity, target, profile, workspacePath, compil
       digest: identity.buildIdentity.toolchainClosureDigest,
       objectVerification: "complete",
     },
-    workspacePath,
+    workspacePath: await realpath(workspacePath),
   };
 }
 
-function validProducerEvidence(producer, identity, target, profile, workspacePath) {
+function producerEvidenceIssue(producer, target, profile) {
+  if (
+    typeof producer?.buildExecutionId !== "string" ||
+    producer.buildExecutionId.length === 0 ||
+    producer.compilationCache?.initialState !== "empty" ||
+    typeof producer.compilationCache?.root !== "string" ||
+    !path.isAbsolute(producer.compilationCache.root) ||
+    producer.compilationCache.sharing !== "none" ||
+    producer.pathCanonicalization !== "realpath" ||
+    producer.profile !== profile ||
+    producer.target !== target ||
+    producer.toolchainClosure?.cacheAddressing !== "sha256" ||
+    !/^sha256:[0-9a-f]{64}$/.test(producer.toolchainClosure?.digest) ||
+    producer.toolchainClosure?.objectVerification !== "complete" ||
+    typeof producer.workspacePath !== "string" ||
+    !path.isAbsolute(producer.workspacePath)
+  ) {
+    return "producer does not prove an independent empty compilation cache and reverified content-addressed Toolchain Closure";
+  }
+  return undefined;
+}
+
+async function validProducerEvidence(producer, identity, target, profile, workspacePath) {
   return (
-    typeof producer?.buildExecutionId === "string" &&
-    producer.buildExecutionId.length > 0 &&
-    producer.compilationCache?.initialState === "empty" &&
-    typeof producer.compilationCache?.root === "string" &&
-    path.isAbsolute(producer.compilationCache.root) &&
-    producer.compilationCache.sharing === "none" &&
-    producer.profile === profile &&
-    producer.target === target &&
-    producer.toolchainClosure?.cacheAddressing === "sha256" &&
+    !producerEvidenceIssue(producer, target, profile) &&
     producer.toolchainClosure?.digest === identity.buildIdentity.toolchainClosureDigest &&
-    producer.toolchainClosure?.objectVerification === "complete" &&
-    producer.workspacePath === workspacePath
+    producer.workspacePath === await realpath(workspacePath)
   );
+}
+
+async function writeProducerAttestation(publishRoot, archiveName, identity, producer) {
+  const name = "producer-attestation.json";
+  await writeFile(
+    path.join(publishRoot, name),
+    `${canonicalize({
+      archive: archiveName,
+      buildIdentityDigest: identity.buildIdentity.digest,
+      ...producer,
+      schemaVersion: "1",
+    })}\n`,
+    { encoding: "utf8", flag: "wx" },
+  );
+  return name;
 }
 
 async function fail(command, code, category, issue, reportPath, network) {
@@ -2651,7 +2680,7 @@ async function buildLinux(options, runtime, workspaceState, networkCanary) {
       },
       networkCanary,
       payloads,
-      producer: createProducerEvidence(identity, target, profile, workspaceState.root, workRoot),
+      producer: await createProducerEvidence(identity, target, profile, workspaceState.root, workRoot),
       productVersion: identity.productVersion,
       publishable: workspaceState.publishable,
       schemaVersion: "1",
@@ -3000,7 +3029,7 @@ async function buildWindows(options, runtime, workspaceState, networkCanary) {
       networkCanary,
       networkIsolation: WINDOWS_NETWORK_ISOLATION,
       payloads,
-      producer: createProducerEvidence(identity, target, profile, workspaceState.root, workRoot),
+      producer: await createProducerEvidence(identity, target, profile, workspaceState.root, workRoot),
       productVersion: identity.productVersion,
       publishable: workspaceState.publishable,
       schemaVersion: "1",
@@ -3633,7 +3662,7 @@ async function packageLinux(options, runtime, workspaceState, networkCanary) {
       metadata.development !== false ||
       metadata.dirty !== false ||
       metadata.productVersion !== identity.productVersion ||
-      !validProducerEvidence(metadata.producer, identity, target, profile, workspaceState.root) ||
+      !(await validProducerEvidence(metadata.producer, identity, target, profile, workspaceState.root)) ||
       metadata.publishable !== true ||
       metadata.toolchainClosureDigest !== runtime.lockDigest
     ) {
@@ -3794,16 +3823,11 @@ async function packageLinux(options, runtime, workspaceState, networkCanary) {
       })}\n`,
       { encoding: "utf8", flag: "wx" },
     );
-    const producerAttestation = "producer-attestation.json";
-    await writeFile(
-      path.join(publishRoot, producerAttestation),
-      `${canonicalize({
-        archive: archiveName,
-        buildIdentityDigest: identity.buildIdentity.digest,
-        ...metadata.producer,
-        schemaVersion: "1",
-      })}\n`,
-      { encoding: "utf8", flag: "wx" },
+    const producerAttestation = await writeProducerAttestation(
+      publishRoot,
+      archiveName,
+      identity,
+      metadata.producer,
     );
     const publication = await publishDirectory(publishRoot, output);
     const result = {
@@ -3886,7 +3910,7 @@ async function packageWindows(options, runtime, workspaceState, networkCanary) {
       metadata.development !== false ||
       metadata.dirty !== false ||
       metadata.productVersion !== identity.productVersion ||
-      !validProducerEvidence(metadata.producer, identity, target, profile, workspaceState.root) ||
+      !(await validProducerEvidence(metadata.producer, identity, target, profile, workspaceState.root)) ||
       metadata.publishable !== true ||
       metadata.toolchainClosureDigest !== runtime.lockDigest ||
       canonicalize(metadata.networkIsolation) !== canonicalize(WINDOWS_NETWORK_ISOLATION)
@@ -3970,16 +3994,11 @@ async function packageWindows(options, runtime, workspaceState, networkCanary) {
       buildIdentity: identity.buildIdentity,
       schemaVersion: "1",
     })}\n`, { encoding: "utf8", flag: "wx" });
-    const producerAttestation = "producer-attestation.json";
-    await writeFile(
-      path.join(publishRoot, producerAttestation),
-      `${canonicalize({
-        archive: archiveName,
-        buildIdentityDigest: identity.buildIdentity.digest,
-        ...metadata.producer,
-        schemaVersion: "1",
-      })}\n`,
-      { encoding: "utf8", flag: "wx" },
+    const producerAttestation = await writeProducerAttestation(
+      publishRoot,
+      archiveName,
+      identity,
+      metadata.producer,
     );
     const publication = await publishDirectory(publishRoot, output);
     const result = {
@@ -4045,6 +4064,52 @@ function reproSidecarKind(name) {
   return undefined;
 }
 
+const REPRO_FULL_DIGEST = /^sha256:[0-9a-f]{64}$/;
+const R00_CONTRACT_SET = Buffer.from("{}");
+const R00_CONTRACT_SET_ID =
+  "sha256:44136fa355b3678a1146ad16f7e8649e94fb4fc21fe77e8310c060f61caaff8a";
+
+function hasExactKeys(value, keys) {
+  return (
+    value !== null &&
+    typeof value === "object" &&
+    !Array.isArray(value) &&
+    canonicalize(Object.keys(value).sort()) === canonicalize([...keys].sort())
+  );
+}
+
+function compareBuildInputEntries(left, right) {
+  const projectOrder = Buffer.from(left.projectId).compare(Buffer.from(right.projectId));
+  return projectOrder || Buffer.from(left.repositoryRelativePath).compare(
+    Buffer.from(right.repositoryRelativePath),
+  );
+}
+
+function validBuildInputEntry(entry) {
+  if (!hasExactKeys(entry, [
+    "normalizedMode",
+    "projectId",
+    "repositoryRelativePath",
+    "sha256",
+  ])) return false;
+  if (
+    typeof entry.projectId !== "string" ||
+    entry.projectId.length === 0 ||
+    typeof entry.repositoryRelativePath !== "string" ||
+    entry.repositoryRelativePath.length === 0 ||
+    !["100644", "100755"].includes(entry.normalizedMode) ||
+    !REPRO_FULL_DIGEST.test(entry.sha256)
+  ) return false;
+  const normalized = path.posix.normalize(entry.repositoryRelativePath);
+  return (
+    normalized === entry.repositoryRelativePath &&
+    normalized !== "." &&
+    !normalized.startsWith("../") &&
+    !normalized.startsWith("/") &&
+    !entry.repositoryRelativePath.includes("\\")
+  );
+}
+
 async function loadReproProducer(rootOption, target, profile, label) {
   const root = path.resolve(rootOption);
   const attestationPath = path.join(root, "producer-attestation.json");
@@ -4059,26 +4124,16 @@ async function loadReproProducer(rootOption, target, profile, label) {
     "producer-attestation.json",
     true,
   );
+  const evidenceIssue = producerEvidenceIssue(attestation, target, profile);
   if (
+    evidenceIssue ||
     attestation.schemaVersion !== "1" ||
-    attestation.target !== target ||
-    attestation.profile !== profile ||
     typeof attestation.archive !== "string" ||
-    typeof attestation.workspacePath !== "string" ||
-    !path.isAbsolute(attestation.workspacePath) ||
-    attestation.compilationCache?.initialState !== "empty" ||
-    typeof attestation.compilationCache?.root !== "string" ||
-    !path.isAbsolute(attestation.compilationCache.root) ||
-    attestation.compilationCache?.sharing !== "none" ||
-    typeof attestation.buildExecutionId !== "string" ||
-    attestation.buildExecutionId.length === 0 ||
-    attestation.toolchainClosure?.cacheAddressing !== "sha256" ||
-    attestation.toolchainClosure?.objectVerification !== "complete" ||
-    typeof attestation.toolchainClosure?.digest !== "string"
+    !REPRO_FULL_DIGEST.test(attestation.buildIdentityDigest)
   ) {
     throw new ReproducibilityMismatchError(
       "producer-attestation.json",
-      `${label} producer does not prove an independent empty compilation cache and reverified content-addressed Toolchain Closure`,
+      `${label} ${evidenceIssue ?? "producer attestation is invalid"}`,
       "producer-independence",
     );
   }
@@ -4161,16 +4216,25 @@ async function loadReproProducer(rootOption, target, profile, label) {
       `${label} artifact manifest identity does not match its producer attestation`,
     );
   }
-  const fullDigest = /^sha256:[0-9a-f]{64}$/;
   const inputSet = manifest.buildInputSet;
   const inputSetPayload = {
     entries: inputSet?.entries,
     schemaVersion: inputSet?.schemaVersion,
   };
+  const sortedInputEntries = Array.isArray(inputSet?.entries)
+    ? [...inputSet.entries].sort(compareBuildInputEntries)
+    : [];
+  const inputIdentities = new Set(
+    sortedInputEntries.map((entry) => `${entry?.projectId}\0${entry?.repositoryRelativePath}`),
+  );
   if (
+    !hasExactKeys(inputSet, ["digest", "entries", "schemaVersion"]) ||
     inputSet?.schemaVersion !== "1" ||
     !Array.isArray(inputSet.entries) ||
-    !fullDigest.test(inputSet.digest) ||
+    !inputSet.entries.every(validBuildInputEntry) ||
+    inputIdentities.size !== inputSet.entries.length ||
+    canonicalize(inputSet.entries) !== canonicalize(sortedInputEntries) ||
+    !REPRO_FULL_DIGEST.test(inputSet.digest) ||
     digest(canonicalize(inputSetPayload)) !== inputSet.digest ||
     manifest.buildIdentity.buildInputSetDigest !== inputSet.digest
   ) {
@@ -4190,7 +4254,18 @@ async function loadReproProducer(rootOption, target, profile, label) {
     toolchainClosureDigest: manifest.buildIdentity.toolchainClosureDigest,
   };
   if (
-    !fullDigest.test(claimedBuildIdentityDigest) ||
+    !hasExactKeys(manifest.buildIdentity, [
+      "buildInputSetDigest",
+      "digest",
+      "options",
+      "profile",
+      "source_date_epoch",
+      "target",
+      "toolchainClosureDigest",
+    ]) ||
+    !REPRO_FULL_DIGEST.test(claimedBuildIdentityDigest) ||
+    !REPRO_FULL_DIGEST.test(manifest.buildIdentity.buildInputSetDigest) ||
+    !REPRO_FULL_DIGEST.test(manifest.buildIdentity.toolchainClosureDigest) ||
     !/^[1-9][0-9]*$/.test(manifest.buildIdentity.source_date_epoch) ||
     digest(canonicalize(buildIdentityPayload)) !== claimedBuildIdentityDigest
   ) {
@@ -4271,7 +4346,11 @@ async function loadReproProducer(rootOption, target, profile, label) {
     );
   }
   const contractSet = parseReproJson(contractSetEntry.bytes, "contract-set.json", false);
-  if (digest(canonicalize(contractSet)) !== manifest.contractSetId) {
+  if (
+    !contractSetEntry.bytes.equals(R00_CONTRACT_SET) ||
+    canonicalize(contractSet) !== "{}" ||
+    manifest.contractSetId !== R00_CONTRACT_SET_ID
+  ) {
     throw new ReproducibilityMismatchError(
       "contract-set.json",
       `${label} Contract Set ID is invalid`,
@@ -4388,13 +4467,20 @@ function validateReproOptions(options) {
   return { producerA, producerB, profile, target };
 }
 
+function producerPathIdentity(target, value) {
+  const normalized = path.normalize(value).replaceAll("\\", "/");
+  return target === "windows-x86_64-msvc" ? normalized.toLowerCase() : normalized;
+}
+
 async function reproCheck(options, networkCanary) {
   const { producerA, producerB, profile, target } = validateReproOptions(options);
   const first = await loadReproProducer(producerA, target, profile, "first");
   const second = await loadReproProducer(producerB, target, profile, "second");
   if (
-    path.resolve(first.attestation.workspacePath) === path.resolve(second.attestation.workspacePath) ||
-    path.resolve(first.attestation.compilationCache.root) === path.resolve(second.attestation.compilationCache.root) ||
+    producerPathIdentity(target, first.attestation.workspacePath)
+      === producerPathIdentity(target, second.attestation.workspacePath) ||
+    producerPathIdentity(target, first.attestation.compilationCache.root)
+      === producerPathIdentity(target, second.attestation.compilationCache.root) ||
     first.attestation.buildExecutionId === second.attestation.buildExecutionId ||
     first.root === second.root
   ) {
@@ -4495,7 +4581,7 @@ function shouldEnterWindowsOfflineBoundary(arguments_, runtime) {
     if (command === "repro-check") {
       const options = parseOptions(
         arguments_,
-        new Set(["--target", "--profile", "--producer-a", "--producer-b", "--report"]),
+        new Set(["--target", "--profile", "--producer-a", "--producer-b", "--workspace", "--report"]),
       );
       return options.get("--target") === "windows-x86_64-msvc";
     }
@@ -4895,25 +4981,31 @@ if (delegatedWindowsStatus !== undefined) {
   try {
     const options = parseOptions(
       arguments_,
-      new Set(["--target", "--profile", "--producer-a", "--producer-b", "--report"]),
+      new Set(["--target", "--profile", "--producer-a", "--producer-b", "--workspace", "--report"]),
     );
     validateReproOptions(options);
+    inspectProductWorkspace(options, false);
     const networkCanary = await verifyOfflineBoundary();
     const result = await reproCheck(options, networkCanary);
     process.exitCode = await succeed(command, result, reportPath, "offline");
   } catch (error) {
     const isConfigurationError = error instanceof ConfigurationError;
     const isOfflineBoundary = error instanceof OfflineBoundaryError;
+    const isWorkspaceMismatch = error instanceof WorkspaceMismatchError;
     process.exitCode = await fail(
       command,
-      isConfigurationError ? 2 : isOfflineBoundary ? 12 : 23,
+      isConfigurationError ? 2 : isWorkspaceMismatch ? 10 : isOfflineBoundary ? 12 : 23,
       isConfigurationError
         ? "usage/configuration"
-        : isOfflineBoundary ? "offline input missing" : "reproducibility mismatch",
+        : isWorkspaceMismatch
+          ? "workspace mismatch"
+          : isOfflineBoundary ? "offline input missing" : "reproducibility mismatch",
       {
         code: isConfigurationError
           ? (error.issueCode ?? "invalid-configuration")
-          : isOfflineBoundary ? "network-boundary" : (error.issueCode ?? "reproducibility-set"),
+          : isWorkspaceMismatch
+            ? error.issueCode
+            : isOfflineBoundary ? "network-boundary" : (error.issueCode ?? "reproducibility-set"),
         ...(error instanceof ReproducibilityMismatchError
           ? {
               member: error.member,

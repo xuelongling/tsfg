@@ -228,6 +228,7 @@ valid_repro_arguments() {
   seen_profile=false
   seen_producer_a=false
   seen_producer_b=false
+  seen_workspace=false
   seen_report=false
   target=
   profile=
@@ -255,6 +256,10 @@ valid_repro_arguments() {
       --producer-b)
         [ "$seen_producer_b" = false ] || return 1
         seen_producer_b=true
+        ;;
+      --workspace)
+        [ "$seen_workspace" = false ] || return 1
+        seen_workspace=true
         ;;
       --report)
         [ "$seen_report" = false ] || return 1

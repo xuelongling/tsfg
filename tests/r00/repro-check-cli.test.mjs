@@ -14,14 +14,44 @@ const repositoryRoot = path.resolve(path.dirname(fileURLToPath(import.meta.url))
 const buildEntry = path.join(repositoryRoot, "eng", "tsfg-build.mjs");
 const networkDenialHook = path.join(repositoryRoot, "tests", "r00", "deny-network.cjs");
 const TOOLCHAIN_DIGEST = `sha256:${"2".repeat(64)}`;
+let comparatorWorkspaceContainer;
+let comparatorWorkspace;
+
+test.before(async () => {
+  comparatorWorkspaceContainer = await mkdtemp(path.join(tmpdir(), "tsfg-repro-comparator-"));
+  comparatorWorkspace = path.join(comparatorWorkspaceContainer, "workspace");
+  await mkdir(comparatorWorkspace);
+  assert.equal(spawnSync("git", ["init", "--quiet"], {
+    cwd: comparatorWorkspace,
+    encoding: "utf8",
+  }).status, 0);
+  await writeFile(path.join(comparatorWorkspace, "README.md"), "comparator fixture\n");
+  for (const arguments_ of [
+    ["config", "user.name", "tsfg test"],
+    ["config", "user.email", "test@tsfg.invalid"],
+    ["add", "README.md"],
+    ["commit", "--quiet", "-m", "fixture"],
+  ]) {
+    const result = spawnSync("git", arguments_, { cwd: comparatorWorkspace, encoding: "utf8" });
+    assert.equal(result.status, 0, result.stderr);
+  }
+});
+
+test.after(async () => {
+  await rm(comparatorWorkspaceContainer, { recursive: true, force: true });
+});
 
 function sha256(bytes) {
   return `sha256:${createHash("sha256").update(bytes).digest("hex")}`;
 }
 
-function fixtureBuildIdentity(target, profile) {
+function fixtureBuildIdentity(
+  target,
+  profile,
+  buildInputSetDigest = sha256('{"entries":[],"schemaVersion":"1"}'),
+) {
   const payload = {
-    buildInputSetDigest: sha256('{"entries":[],"schemaVersion":"1"}'),
+    buildInputSetDigest,
     options: { simdDispatch: "runtime-detected" },
     profile,
     source_date_epoch: "1700000000",
@@ -140,20 +170,33 @@ async function writeWindowsProducer(
 ) {
   await mkdir(root, { recursive: true });
   const target = "windows-x86_64-msvc";
-  const derivedIdentity = fixtureBuildIdentity(target, profile);
+  const buildInputEntries = evidence.buildInputEntries ?? [];
+  const buildInputSetDigest = sha256(JSON.stringify({
+    entries: buildInputEntries,
+    schemaVersion: "1",
+  }));
+  const derivedIdentity = fixtureBuildIdentity(target, profile, buildInputSetDigest);
   const buildIdentityDigest = evidence.identityDigest ?? derivedIdentity.digest;
   const buildIdentity = { ...derivedIdentity, digest: buildIdentityDigest };
   const members = [
     { bytes: Buffer.from(cppPayload), mode: evidence.cppMode ?? 0o755, path: "bin/tsfg-r00-cpp-smoke.exe" },
     { bytes: Buffer.from("zig payload\n"), mode: 0o755, path: "bin/tsfg-r00-zig-smoke.exe" },
-    { bytes: Buffer.from("{}"), mode: 0o644, path: "contract-set.json" },
+    {
+      bytes: Buffer.from(JSON.stringify(evidence.contractSet ?? {})),
+      mode: 0o644,
+      path: "contract-set.json",
+    },
     { bytes: Buffer.from("debug symbols\n"), mode: 0o644, path: "symbols/tsfg-r00-cpp-smoke.pdb" },
     { bytes: Buffer.from("zig debug symbols\n"), mode: 0o644, path: "symbols/tsfg-r00-zig-smoke.pdb" },
   ];
   const artifactManifest = Buffer.from(JSON.stringify({
     buildIdentity,
-    buildInputSet: { digest: buildIdentity.buildInputSetDigest, entries: [], schemaVersion: "1" },
-    contractSetId: "sha256:44136fa355b3678a1146ad16f7e8649e94fb4fc21fe77e8310c060f61caaff8a",
+    buildInputSet: {
+      digest: buildIdentity.buildInputSetDigest,
+      entries: buildInputEntries,
+      schemaVersion: "1",
+    },
+    contractSetId: sha256(JSON.stringify(evidence.contractSet ?? {})),
     members: members.map((member) => ({ path: member.path, sha256: sha256(member.bytes) })),
     productVersion: "0.1.0-dev.0",
     schemaVersion: "1",
@@ -179,6 +222,7 @@ async function writeWindowsProducer(
       root: evidence.cacheRoot ?? path.join(workspacePath, ".empty-build-cache"),
       sharing: evidence.sharing ?? "none",
     },
+    pathCanonicalization: "realpath",
     profile,
     schemaVersion: "1",
     target,
@@ -232,6 +276,7 @@ async function writeLinuxProducer(root, workspacePath, profile, archiveMetadata 
       root: path.join(workspacePath, ".empty-build-cache"),
       sharing: "none",
     },
+    pathCanonicalization: "realpath",
     profile,
     schemaVersion: "1",
     target,
@@ -246,7 +291,10 @@ async function writeLinuxProducer(root, workspacePath, profile, archiveMetadata 
 
 async function invoke(arguments_) {
   return await new Promise((resolve, reject) => {
-    const child = spawn(process.execPath, [buildEntry, ...arguments_], {
+    const completeArguments = arguments_[0] === "repro-check" && !arguments_.includes("--workspace")
+      ? [...arguments_, "--workspace", comparatorWorkspace]
+      : arguments_;
+    const child = spawn(process.execPath, [buildEntry, ...completeArguments], {
       cwd: repositoryRoot,
       env: { ...process.env, NODE_OPTIONS: `--require=${networkDenialHook}` },
     });
@@ -307,6 +355,7 @@ test("public launcher recognizes the repro-check comparator before loading its r
     "--profile", "debug",
     "--producer-a", path.join(sandbox, "producer-a"),
     "--producer-b", path.join(sandbox, "producer-b"),
+    "--workspace", comparatorWorkspace,
     "--report", reportPath,
   ];
   try {
@@ -326,6 +375,30 @@ test("public launcher recognizes the repro-check comparator before loading its r
     assert.equal(report.command, "repro-check");
     assert.equal(report.error.category, "lock/integrity");
   } finally {
+    await rm(sandbox, { recursive: true, force: true });
+  }
+});
+
+test("repro-check rejects a dirty comparator workspace", async () => {
+  const sandbox = await mkdtemp(path.join(tmpdir(), "tsfg-repro-dirty-comparator-"));
+  const first = path.join(sandbox, "producer-a");
+  const second = path.join(sandbox, "producer-b");
+  const dirtyFile = path.join(comparatorWorkspace, "dirty.txt");
+  const reportPath = path.join(sandbox, "report.json");
+  try {
+    await writeWindowsProducer(first, path.join(sandbox, "workspace-a"));
+    await writeWindowsProducer(second, path.join(sandbox, "workspace-b"));
+    await writeFile(dirtyFile, "dirty\n");
+    const result = await invoke([
+      "repro-check", "--target", "windows-x86_64-msvc", "--profile", "debug",
+      "--producer-a", first, "--producer-b", second, "--report", reportPath,
+    ]);
+    assert.equal(result.status, 10, result.stderr);
+    const report = JSON.parse(await readFile(reportPath, "utf8"));
+    assert.equal(report.error.category, "workspace mismatch");
+    assert.equal(report.error.issues[0].code, "dirty-project");
+  } finally {
+    await rm(dirtyFile, { force: true });
     await rm(sandbox, { recursive: true, force: true });
   }
 });
@@ -374,6 +447,13 @@ test("repro-check rejects producers that do not prove independent empty build st
       secondWorkspace: path.join(sandbox, "workspace-b"),
       firstEvidence: { cacheRoot: path.join(sandbox, "shared-cache") },
       secondEvidence: { cacheRoot: path.join(sandbox, "shared-cache") },
+    },
+    {
+      name: "Windows path alias differs only by case",
+      firstWorkspace: path.join(sandbox, "case-workspace"),
+      secondWorkspace: path.join(sandbox, "case-workspace").toUpperCase(),
+      firstEvidence: {},
+      secondEvidence: {},
     },
     {
       name: "reused build execution",
@@ -436,6 +516,71 @@ test("repro-check independently derives rather than trusts the claimed Build Ide
     const report = JSON.parse(await readFile(reportPath, "utf8"));
     assert.equal(report.error.issues[0].code, "build-identity-mismatch");
     assert.equal(report.error.issues[0].member, "artifact-manifest.json#buildIdentity");
+  } finally {
+    await rm(sandbox, { recursive: true, force: true });
+  }
+});
+
+test("repro-check rejects non-canonical Build Input entries and a non-empty R00 Contract Set", async () => {
+  const sandbox = await mkdtemp(path.join(tmpdir(), "tsfg-repro-canonical-inputs-"));
+  const scenarios = [
+    {
+      name: "invalid normalized mode",
+      evidence: {
+        buildInputEntries: [{
+          normalizedMode: "100777",
+          projectId: "tsfg",
+          repositoryRelativePath: "eng/tsfg-build.mjs",
+          sha256: `sha256:${"7".repeat(64)}`,
+        }],
+      },
+      code: "build-identity-mismatch",
+      member: "artifact-manifest.json#buildInputSet",
+    },
+    {
+      name: "unsorted Build Input entries",
+      evidence: {
+        buildInputEntries: [
+          {
+            normalizedMode: "100644",
+            projectId: "tsfg",
+            repositoryRelativePath: "z-last",
+            sha256: `sha256:${"8".repeat(64)}`,
+          },
+          {
+            normalizedMode: "100644",
+            projectId: "tsfg",
+            repositoryRelativePath: "a-first",
+            sha256: `sha256:${"9".repeat(64)}`,
+          },
+        ],
+      },
+      code: "build-identity-mismatch",
+      member: "artifact-manifest.json#buildInputSet",
+    },
+    {
+      name: "invented contract family",
+      evidence: { contractSet: { invented: { version: "1.0.0" } } },
+      code: "member-mismatch",
+      member: "contract-set.json",
+    },
+  ];
+  try {
+    for (const [index, scenario] of scenarios.entries()) {
+      const first = path.join(sandbox, `producer-a-${index}`);
+      const second = path.join(sandbox, `producer-b-${index}`);
+      await writeWindowsProducer(first, path.join(sandbox, `workspace-a-${index}`), "cpp payload\n", scenario.evidence);
+      await writeWindowsProducer(second, path.join(sandbox, `workspace-b-${index}`), "cpp payload\n", scenario.evidence);
+      const reportPath = path.join(sandbox, `report-${index}.json`);
+      const result = await invoke([
+        "repro-check", "--target", "windows-x86_64-msvc", "--profile", "debug",
+        "--producer-a", first, "--producer-b", second, "--report", reportPath,
+      ]);
+      assert.equal(result.status, 23, `${scenario.name}: ${result.stderr}`);
+      const report = JSON.parse(await readFile(reportPath, "utf8"));
+      assert.equal(report.error.issues[0].code, scenario.code, scenario.name);
+      assert.equal(report.error.issues[0].member, scenario.member, scenario.name);
+    }
   } finally {
     await rm(sandbox, { recursive: true, force: true });
   }
