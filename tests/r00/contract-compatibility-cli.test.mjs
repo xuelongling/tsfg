@@ -211,6 +211,20 @@ test("a compatible extension mislabeled as a patch fails the Contract SemVer gat
   }]);
 });
 
+test("an editorial-only synthetic contract change accepts a patch bump", async () => {
+  const candidate = baselineSyntheticArtifact();
+  candidate.contract.change = { class: "editorial", fromSemver: "0.1.0" };
+  candidate.contract.semver = "0.1.1";
+  candidate.product.commitOid = "4".repeat(40);
+  const { report, result } = await runCompatibilityCase({ candidate });
+  assert.equal(result.status, 0, result.stderr);
+  assert.equal(report.result.compatibility.gate.status, "passed");
+  assert.equal(
+    report.result.compatibility.combinations.every(({ status }) => status === "passed"),
+    true,
+  );
+});
+
 test("an unknown change class cannot bypass the compatible-extension version gate", async () => {
   const candidate = candidateSyntheticArtifact();
   candidate.contract.change.class = "unknown";
@@ -290,5 +304,27 @@ test("an exact-match seam rejects mixed baseline and candidate contract versions
       },
       { consumer: "candidate", producer: "candidate", status: "passed" },
     ],
+  );
+});
+
+test("consumer requirements cannot be satisfied by inherited payload properties", async () => {
+  const baseline = baselineSyntheticArtifact();
+  const candidate = baselineSyntheticArtifact();
+  baseline.consumer.requiredFields = ["toString"];
+  baseline.producer.payload = {};
+  candidate.consumer.requiredFields = ["toString"];
+  candidate.producer.payload = {};
+  candidate.product.commitOid = "5".repeat(40);
+  candidate.contract.change = { class: "unchanged", fromSemver: "0.1.0" };
+
+  const { report, result } = await runCompatibilityCase({ baseline, candidate });
+  assert.equal(result.status, 21, result.stderr);
+  assert.equal(report.error.issues[0].code, "serialized-payload-incompatible");
+  assert.equal(
+    report.error.issues[0].compatibility.combinations.every(
+      ({ issueCode, status }) =>
+        issueCode === "serialized-payload-incompatible" && status === "failed",
+    ),
+    true,
   );
 });

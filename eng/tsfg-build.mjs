@@ -3359,13 +3359,22 @@ async function testSmoke(options, runtime, workspaceState, networkCanary) {
   };
 }
 
+const SYNTHETIC_CHANGE_SEMANTICS = Object.freeze({
+  "breaking": "changed",
+  "compatible-extension": "changed",
+  "editorial": "unchanged",
+  "exact-change": "changed",
+  "unchanged": "unchanged",
+});
+
 function validateSyntheticArtifact(artifact, label, contractSetId) {
   const requiredFields = artifact?.consumer?.requiredFields;
   const optionalFields = artifact?.consumer?.optionalFields;
   const fields = [...(requiredFields ?? []), ...(optionalFields ?? [])];
-  const allowedChangeClasses = label === "baseline"
-    ? ["baseline"]
-    : ["unchanged", "editorial", "compatible-extension", "breaking", "exact-change"];
+  const changeClass = artifact?.contract?.change?.class;
+  const validChangeClass = label === "baseline"
+    ? changeClass === "baseline"
+    : Object.hasOwn(SYNTHETIC_CHANGE_SEMANTICS, changeClass);
   if (
     artifact?.schemaVersion !== "1" ||
     artifact.artifactKind !== "r00-synthetic-contract-artifact" ||
@@ -3381,7 +3390,7 @@ function validateSyntheticArtifact(artifact, label, contractSetId) {
     typeof artifact.contract?.semanticRevision !== "string" ||
     artifact.contract.semanticRevision.length === 0 ||
     !parseSyntheticContractSemver(artifact.contract?.semver) ||
-    !allowedChangeClasses.includes(artifact.contract?.change?.class) ||
+    !validChangeClass ||
     artifact.producer?.payload === null ||
     typeof artifact.producer?.payload !== "object" ||
     Array.isArray(artifact.producer.payload) ||
@@ -3418,7 +3427,7 @@ function consumeSyntheticPayload(producer, consumer) {
     ...consumer.consumer.requiredFields,
     ...consumer.consumer.optionalFields,
   ]);
-  const missing = [...required].filter((field) => !(field in payload));
+  const missing = [...required].filter((field) => !Object.hasOwn(payload, field));
   const unknown = Object.keys(payload).filter((field) => !allowed.has(field));
   if (missing.length > 0) {
     return {
@@ -3475,6 +3484,67 @@ function hasValidBreakingContractBump(baselineSemver, candidateSemver) {
     : candidate[0] > baseline[0] && candidate[1] === 0;
 }
 
+function syntheticVersionGateIssue(baseline, candidate, semanticChange) {
+  if (semanticChange && baseline.contract.semver === candidate.contract.semver) {
+    return {
+      code: "contract-version-not-bumped",
+      message: "synthetic contract semantics or Schema Hash changed without a Contract SemVer bump",
+    };
+  }
+  const baselineVersion = parseSyntheticContractSemver(baseline.contract.semver);
+  const candidateVersion = parseSyntheticContractSemver(candidate.contract.semver);
+  const patchBump = candidateVersion[0] === baselineVersion[0] &&
+    candidateVersion[1] === baselineVersion[1] &&
+    candidateVersion[2] > baselineVersion[2];
+  const minorBump = candidateVersion[0] === baselineVersion[0] &&
+    candidateVersion[1] > baselineVersion[1] &&
+    candidateVersion[2] === 0;
+  const versionIncreased = candidateVersion[0] > baselineVersion[0] ||
+    (candidateVersion[0] === baselineVersion[0] && candidateVersion[1] > baselineVersion[1]) ||
+    (candidateVersion[0] === baselineVersion[0] &&
+      candidateVersion[1] === baselineVersion[1] &&
+      candidateVersion[2] > baselineVersion[2]);
+  const gates = {
+    breaking: () =>
+      hasValidBreakingContractBump(baseline.contract.semver, candidate.contract.semver) &&
+      hasCompleteSyntheticMigrationWindow(
+        candidate.contract.change,
+        baseline.product.semver,
+        candidate.product.semver,
+      )
+        ? undefined
+        : {
+            code: "breaking-migration-window-incomplete",
+            message: "breaking synthetic change requires a complete expand-migrate-remove window bound to baseline and candidate stable Product SemVer",
+          },
+    "compatible-extension": () => minorBump
+      ? undefined
+      : {
+          code: "compatible-extension-requires-minor",
+          message: "backward-compatible synthetic extension requires a Contract SemVer minor bump",
+        },
+    editorial: () => patchBump
+      ? undefined
+      : {
+          code: "editorial-change-requires-patch",
+          message: "editorial synthetic change requires a Contract SemVer patch bump",
+        },
+    "exact-change": () => versionIncreased
+      ? undefined
+      : {
+          code: "exact-change-requires-version-bump",
+          message: "exact-match synthetic change requires a Contract SemVer bump",
+        },
+    unchanged: () => candidate.contract.semver === baseline.contract.semver
+      ? undefined
+      : {
+          code: "unchanged-contract-version-changed",
+          message: "unchanged synthetic contract cannot change Contract SemVer",
+        },
+  };
+  return gates[candidate.contract.change.class]();
+}
+
 async function testCompatibility(options, workspaceState, networkCanary) {
   const baselinePath = path.resolve(options.get("--compatibility-baseline"));
   const candidatePath = path.resolve(options.get("--compatibility-candidate"));
@@ -3506,11 +3576,12 @@ async function testCompatibility(options, workspaceState, networkCanary) {
   validateSyntheticArtifact(candidate, "candidate", contractSetId);
   const semanticChange = baseline.contract.schemaHash !== candidate.contract.schemaHash ||
     baseline.contract.semanticRevision !== candidate.contract.semanticRevision;
+  const expectedSemanticChange = SYNTHETIC_CHANGE_SEMANTICS[candidate.contract.change.class];
   if (
     baseline.contract.familyId !== candidate.contract.familyId ||
     baseline.contract.compatibility !== candidate.contract.compatibility ||
     candidate.contract.change.fromSemver !== baseline.contract.semver ||
-    (candidate.contract.change.class === "unchanged") !== !semanticChange ||
+    (expectedSemanticChange === "changed") !== semanticChange ||
     (candidate.contract.compatibility === "exact" &&
       semanticChange && candidate.contract.change.class !== "exact-change") ||
     (candidate.contract.change.class === "exact-change" &&
@@ -3543,43 +3614,8 @@ async function testCompatibility(options, workspaceState, networkCanary) {
       status: issue ? "failed" : "passed",
     });
   }
-  const gateIssues = [];
-  if (semanticChange && baseline.contract.semver === candidate.contract.semver) {
-    gateIssues.push({
-      code: "contract-version-not-bumped",
-      message: "synthetic contract semantics or Schema Hash changed without a Contract SemVer bump",
-    });
-  } else if (candidate.contract.change?.class === "compatible-extension") {
-    const baselineVersion = parseSyntheticContractSemver(baseline.contract.semver);
-    const candidateVersion = parseSyntheticContractSemver(candidate.contract.semver);
-    if (
-      !baselineVersion ||
-      !candidateVersion ||
-      candidateVersion[0] !== baselineVersion[0] ||
-      candidateVersion[1] <= baselineVersion[1] ||
-      candidateVersion[2] !== 0
-    ) {
-      gateIssues.push({
-        code: "compatible-extension-requires-minor",
-        message: "backward-compatible synthetic extension requires a Contract SemVer minor bump",
-      });
-    }
-  } else if (
-    candidate.contract.change?.class === "breaking" &&
-    (
-      !hasValidBreakingContractBump(baseline.contract.semver, candidate.contract.semver) ||
-      !hasCompleteSyntheticMigrationWindow(
-        candidate.contract.change,
-        baseline.product.semver,
-        candidate.product.semver,
-      )
-    )
-  ) {
-    gateIssues.push({
-      code: "breaking-migration-window-incomplete",
-      message: "breaking synthetic change requires a complete expand-migrate-remove window bound to baseline and candidate stable Product SemVer",
-    });
-  }
+  const versionGateIssue = syntheticVersionGateIssue(baseline, candidate, semanticChange);
+  const gateIssues = versionGateIssue ? [versionGateIssue] : [];
   const compatibility = {
     artifacts: {
       baseline: {

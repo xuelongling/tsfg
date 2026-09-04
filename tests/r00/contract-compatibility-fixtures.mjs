@@ -3,6 +3,7 @@
 export const emptyContractSetId =
   "sha256:44136fa355b3678a1146ad16f7e8649e94fb4fc21fe77e8310c060f61caaff8a";
 
+/** @returns {Record<string, any>} */
 export function baselineSyntheticArtifact() {
   return {
     artifactKind: "r00-synthetic-contract-artifact",
@@ -29,6 +30,7 @@ export function baselineSyntheticArtifact() {
   };
 }
 
+/** @returns {Record<string, any>} */
 export function candidateSyntheticArtifact() {
   return {
     artifactKind: "r00-synthetic-contract-artifact",
