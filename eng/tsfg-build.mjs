@@ -304,7 +304,7 @@ function validateSmokeOptions(options, command, requireInput = false) {
 
 /** @type {Array<[string, RegExp]>} */
 const FORBIDDEN_BUILD_POLICIES = [
-  ["lto", /(?:-flto(?:=[^\s)"']+)?|\/gl\b|\/ltcg(?::[^\s)"']+)?)/i],
+  ["lto", /(?:-flto(?:=[^\s)"']+)?|\/gl\b|\/ltcg(?::[^\s)"']+)?|\b(?:cmake_)?interprocedural_optimization(?:_[a-z0-9_]+)?\s+(?:on|true|1)\b|\.\s*lto\s*=\s*\.(?:full|thin)\b)/i],
   ["pgo", /(?:-f(?:cs-)?profile(?:-instr)?-(?:generate|use)(?:=[^\s)"']+)?|\/(?:genprofile|useprofile)\b)/i],
   ["fast-math", /(?:-ffast-math\b|-ofast\b|\/fp:fast\b)/i],
   ["native-tuning", /(?:-(?:march|mcpu|mtune)=native\b|-dcpu=native\b)/i],

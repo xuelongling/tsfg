@@ -1400,6 +1400,70 @@ exit 1
     assert.equal(policyReport.error.issues[0].code, "forbidden-build-option");
     await assert.rejects(lstat(policyOutput), /ENOENT/);
     await writeFile(policyCmakePath, policyCmake);
+    await appendFile(
+      policyCmakePath,
+      "\nset_property(TARGET tsfg-r00-cpp-smoke PROPERTY INTERPROCEDURAL_OPTIMIZATION TRUE)\n",
+    );
+    const ipoPolicyOutput = path.join(sandbox, "forbidden-cmake-ipo-out");
+    const ipoPolicyReportPath = path.join(sandbox, "forbidden-cmake-ipo-report.json");
+    const forbiddenCmakeIpo = await invoke([
+      "build", "--dev",
+      "--target", "linux-x86_64-gnu",
+      "--profile", "release",
+      "--workspace", workspacePath,
+      "--out", ipoPolicyOutput,
+      "--report", ipoPolicyReportPath,
+    ], {
+      env: {
+        ...process.env,
+        NODE_OPTIONS: `--require=${networkDenialHook}`,
+        TSFG_GIT: gitExecutable,
+        TSFG_RUNTIME_CACHE: cachePath,
+        TSFG_RUNTIME_LOCK: lockPath,
+        TSFG_RUNTIME_PLATFORM: "test-x86_64",
+      },
+    });
+    assert.equal(forbiddenCmakeIpo.status, 20, forbiddenCmakeIpo.stderr);
+    const ipoPolicyReport = JSON.parse(await readFile(ipoPolicyReportPath, "utf8"));
+    assert.equal(ipoPolicyReport.error.category, "build failure");
+    assert.equal(ipoPolicyReport.error.issues[0].code, "forbidden-build-option");
+    await assert.rejects(lstat(ipoPolicyOutput), /ENOENT/);
+    await writeFile(policyCmakePath, policyCmake);
+    const policyZigPath = path.join(
+      workspacePath,
+      "tests",
+      "r00",
+      "smoke",
+      "zig",
+      "build.zig",
+    );
+    const policyZig = await readFile(policyZigPath);
+    await appendFile(policyZigPath, "\n// injected policy probe\nexecutable.lto = .full;\n");
+    const zigLtoPolicyOutput = path.join(sandbox, "forbidden-zig-lto-out");
+    const zigLtoPolicyReportPath = path.join(sandbox, "forbidden-zig-lto-report.json");
+    const forbiddenZigLto = await invoke([
+      "build", "--dev",
+      "--target", "linux-x86_64-gnu",
+      "--profile", "release",
+      "--workspace", workspacePath,
+      "--out", zigLtoPolicyOutput,
+      "--report", zigLtoPolicyReportPath,
+    ], {
+      env: {
+        ...process.env,
+        NODE_OPTIONS: `--require=${networkDenialHook}`,
+        TSFG_GIT: gitExecutable,
+        TSFG_RUNTIME_CACHE: cachePath,
+        TSFG_RUNTIME_LOCK: lockPath,
+        TSFG_RUNTIME_PLATFORM: "test-x86_64",
+      },
+    });
+    assert.equal(forbiddenZigLto.status, 20, forbiddenZigLto.stderr);
+    const zigLtoPolicyReport = JSON.parse(await readFile(zigLtoPolicyReportPath, "utf8"));
+    assert.equal(zigLtoPolicyReport.error.category, "build failure");
+    assert.equal(zigLtoPolicyReport.error.issues[0].code, "forbidden-build-option");
+    await assert.rejects(lstat(zigLtoPolicyOutput), /ENOENT/);
+    await writeFile(policyZigPath, policyZig);
     const activeRelative = (await readFile(
       path.join(cachePath, "active", "test-x86_64"),
       "utf8",
