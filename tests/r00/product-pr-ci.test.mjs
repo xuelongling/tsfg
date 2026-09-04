@@ -211,6 +211,14 @@ test("product PR workflow has a read-only, secret-free, commit-pinned pull_reque
   assert.doesNotMatch(workflow, /persist-credentials:\s*true/);
 });
 
+test("product PR workflow uses the published Bootstrap Integration Snapshot identity", async () => {
+  const workflow = await readFile(workflowPath, "utf8");
+  assert.match(
+    workflow,
+    /^  TSFG_MANIFEST_REVISION: d94f4e6bff9aa980b18b0df94e133559e4b61240$/m,
+  );
+});
+
 test("product PR workflow composes every gate, producer, compatibility lane, and build-free comparator", async () => {
   const workflow = await readFile(workflowPath, "utf8");
   const repositoryGates = workflowJob(workflow, "repository-gates");
