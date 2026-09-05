@@ -407,6 +407,31 @@ async function writeVerdict(options) {
   if (!verifiedBaselineManifestBytes.equals(baselineManifestBytes)) {
     throw new ProductPrError("Workspace Verification and candidate identity used different baseline manifests");
   }
+  const workspaceVerificationRoot = path.join(root, "workspace-verification");
+  const verifiedManifestIdentity = await readJson(
+    path.join(workspaceVerificationRoot, "verified-manifest-identity.json"),
+    "verified manifest identity",
+  );
+  const verifiedResolvedManifestBytes = await readFile(
+    path.join(workspaceVerificationRoot, "verified-resolved-manifest.xml"),
+  ).catch((error) => {
+    throw new ProductPrError(`verified resolved manifest is missing: ${error.message}`);
+  });
+  const verifiedResolvedFacts = projectsFromManifest(verifiedResolvedManifestBytes.toString("utf8"));
+  verifiedResolvedFacts.projects.sort(
+    (left, right) => Buffer.from(left.name).compare(Buffer.from(right.name)),
+  );
+  if (
+    verifiedManifestIdentity?.manifestUrl !== resolvedManifest.baseline.repository ||
+    verifiedManifestIdentity?.selectedManifest !== resolvedManifest.baseline.manifest ||
+    !completeOid.test(verifiedManifestIdentity?.manifestRevision) ||
+    canonicalize(verifiedResolvedFacts) !== canonicalize({
+      activation: resolvedManifest.activation,
+      projects: resolvedManifest.projects,
+    })
+  ) {
+    throw new ProductPrError("Workspace Verification did not archive the resolved manifest identity and content");
+  }
 
   const gateReport = requireSuccessfulReport(
     await readJson(path.join(root, "repository-gates", "report.json"), "repository gates"),
@@ -417,14 +442,18 @@ async function writeVerdict(options) {
       throw new ProductPrError(`repository ${gate} gate is missing or failed`);
     }
   }
+  const workspaceReport = await readJson(
+    path.join(workspaceVerificationRoot, "report.json"),
+    "Workspace Verification",
+  );
   const workspaceBinding = requireResolvedWorkspace(
-    await readJson(
-      path.join(root, "workspace-verification", "report.json"),
-      "Workspace Verification",
-    ),
+    workspaceReport,
     resolvedManifest,
     "Workspace Verification",
   );
+  if (workspaceReport.result.manifest.revision !== verifiedManifestIdentity.manifestRevision) {
+    throw new ProductPrError("Workspace Verification report disagrees with the archived manifest HEAD");
+  }
 
   const targets = ["linux-x86_64-gnu", "windows-x86_64-msvc"];
   const profiles = ["debug", "release"];
@@ -483,11 +512,12 @@ async function writeVerdict(options) {
       const producerEvidence = new Map();
       for (const producer of ["a", "b"]) {
         const producerRoot = path.join(root, "producers", target, profile, producer);
+        const producerWorkspaceReport = await readJson(
+          path.join(producerRoot, "workspace-report.json"),
+          `${target}/${profile}/${producer} workspace`,
+        );
         requireResolvedWorkspace(
-          await readJson(
-            path.join(producerRoot, "workspace-report.json"),
-            `${target}/${profile}/${producer} workspace`,
-          ),
+          producerWorkspaceReport,
           resolvedManifest,
           `${target}/${profile}/${producer} workspace`,
           workspaceBinding,
@@ -553,6 +583,7 @@ async function writeVerdict(options) {
         if (
           attestation.schemaVersion !== "1" || attestation.target !== target ||
           attestation.profile !== profile || attestation.buildIdentityDigest !== digestValue ||
+          typeof attestation.buildExecutionId !== "string" || attestation.buildExecutionId.length === 0 ||
           typeof attestation.workspacePath !== "string" ||
           attestation.workspacePath.length === 0
         ) {
@@ -565,13 +596,15 @@ async function writeVerdict(options) {
         if (
           binding.schemaVersion !== "1" ||
           binding.candidateRevision !== identity.candidateRevision ||
-          binding.buildIdentityDigest !== digestValue
+          binding.buildIdentityDigest !== digestValue ||
+          binding.manifestRevision !== producerWorkspaceReport.result.manifest.revision
         ) {
           throw new ProductPrError(`${target}/${profile}/${producer} build evidence is not bound to the candidate`);
         }
         producerEvidence.set(producer, {
           archiveName,
           archiveSha256: sha256(await readFile(path.join(packageRoot, archiveName))),
+          buildExecutionId: attestation.buildExecutionId,
           buildIdentity: packageReport.result.buildIdentity,
           buildIdentityDigest: digestValue,
           buildInputSet: packageInputSet,
@@ -621,6 +654,10 @@ async function writeVerdict(options) {
             : "";
           const expectedSuffix = `/producers/${target}/${profile}/${producer}/package`.toLowerCase();
           return actual?.label !== producer ||
+            actual?.archive !== expected?.archiveName ||
+            actual?.archiveSha256 !== expected?.archiveSha256 ||
+            actual?.checksumsSha256 !== expected?.checksumsSha256 ||
+            actual?.buildExecutionId !== expected?.buildExecutionId ||
             !normalizedArtifactPath.endsWith(expectedSuffix) ||
             actual?.workspacePath !== expected?.workspacePath ||
             actual?.buildIdentityDigest !== expected?.buildIdentityDigest ||
