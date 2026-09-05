@@ -371,15 +371,13 @@ test("product PR workflow isolates every Linux offline phase in a loopback-only 
   ];
   for (const job of jobs) {
     assert.match(job, /sudo sysctl -q kernel\.apparmor_restrict_unprivileged_userns=0/);
-    assert.match(job, /unshare --user --map-root-user --mount --net/);
-    assert.doesNotMatch(job, /sudo(?:\s+--[^\s]+)*\s+unshare/);
-    assert.match(job, /--map-root-user --mount --net bash -ceu/);
+    assert.match(job, /sudo unshare --mount --net bash -ceu/);
+    assert.doesNotMatch(job, /unshare --user/);
     assert.match(job, /mount -t sysfs -o ro,nosuid,nodev,noexec sysfs \/sys/);
     assert.match(job, /ip link set lo up/);
     assert.match(job, /find \/sys\/class\/net -mindepth 1 -maxdepth 1 -printf/);
     assert.doesNotMatch(job, /-printf "%f\\\\n"/);
-    assert.match(job, /exec "\$@"/);
-    assert.doesNotMatch(job, /exec setpriv/);
+    assert.match(job, /exec setpriv --reuid "\$SUDO_UID" --regid "\$SUDO_GID" --clear-groups --bounding-set=-all --inh-caps=-all --ambient-caps=-all --no-new-privs -- "\$@"/);
   }
 
   const assertions = [

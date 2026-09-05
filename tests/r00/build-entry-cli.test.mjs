@@ -51,6 +51,27 @@ test("Windows sandbox control uses the locked normative compiler and R00 CPU bas
   assert.match(launcher, new RegExp(`set "TSFG_CONTROL_ID=${digest}"`));
 });
 
+test("Windows network canary starts Node under WFP without the path-restricted token", async () => {
+  const source = await readFile(buildEntry, "utf8");
+  const argumentsStart = source.indexOf("function windowsSandboxArguments");
+  const argumentsEnd = source.indexOf("async function compileWindowsSandbox", argumentsStart);
+  const verifierStart = source.indexOf("function verifyWindowsSandboxBoundary");
+  const verifierEnd = source.indexOf("async function buildLinux", verifierStart);
+  assert.notEqual(argumentsStart, -1);
+  assert.notEqual(argumentsEnd, -1);
+  assert.notEqual(verifierStart, -1);
+  assert.notEqual(verifierEnd, -1);
+  const argumentsSource = source.slice(argumentsStart, argumentsEnd);
+  const verifier = source.slice(verifierStart, verifierEnd);
+  assert.match(argumentsSource, /if \(policy\.networkOnly\)[\s\S]*"--network-only"/);
+  assert.match(verifier, /"network-canary"[\s\S]*boundaryStatus: 123, networkOnly: true/);
+  assert.match(verifier, /"undeclared-input-canary"[\s\S]*boundaryStatus: 124[\s\S]*process\.env\.ComSpec/);
+  assert.doesNotMatch(
+    verifier.slice(verifier.indexOf('"undeclared-input-canary"')),
+    /networkOnly: true/,
+  );
+});
+
 function validVerifyArguments(reportPath) {
   return [
     "verify-workspace",

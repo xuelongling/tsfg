@@ -78,17 +78,17 @@ jobs:
       - name: Contract compatibility gate
         shell: bash
         run: |
-          sudo sysctl -q kernel.apparmor_restrict_unprivileged_userns=0
           run_offline() {
-            unshare --user --map-root-user --mount --net bash -ceu '
+            sudo sysctl -q kernel.apparmor_restrict_unprivileged_userns=0
+            sudo unshare --mount --net bash -ceu '
               mount -t sysfs -o ro,nosuid,nodev,noexec sysfs /sys
               ip link set lo up
               interfaces=$(find /sys/class/net -mindepth 1 -maxdepth 1 -printf "%f\n" | sort)
               [ "$interfaces" = "lo" ]
-              exec "$@"
+              exec setpriv --reuid "$SUDO_UID" --regid "$SUDO_GID" --clear-groups --bounding-set=-all --inh-caps=-all --ambient-caps=-all --no-new-privs -- "$@"
             ' bash "$@"
           }
-          run_offline node --test --test-concurrency=1 tests/r00/contract-compatibility-cli.test.mjs
+          run_offline "$(command -v node)" --test --test-concurrency=1 tests/r00/contract-compatibility-cli.test.mjs
       - name: Typecheck
         run: node node_modules/typescript/bin/tsc --noEmit
       - name: Record repository gate evidence
@@ -160,14 +160,14 @@ jobs:
           export TSFG_BOOTSTRAP_GIT="$(command -v git)"
           export TSFG_BOOTSTRAP_GIT_SHA256="$(sha256sum "$TSFG_BOOTSTRAP_GIT" | cut -d ' ' -f 1)"
           "$workspace/tsfg/eng/tsfg-build" prefetch --report .ci/evidence/workspace-verification/prefetch-report.json
-          sudo sysctl -q kernel.apparmor_restrict_unprivileged_userns=0
           run_offline() {
-            unshare --user --map-root-user --mount --net bash -ceu '
+            sudo sysctl -q kernel.apparmor_restrict_unprivileged_userns=0
+            sudo unshare --mount --net bash -ceu '
               mount -t sysfs -o ro,nosuid,nodev,noexec sysfs /sys
               ip link set lo up
               interfaces=$(find /sys/class/net -mindepth 1 -maxdepth 1 -printf "%f\n" | sort)
               [ "$interfaces" = "lo" ]
-              exec "$@"
+              exec setpriv --reuid "$SUDO_UID" --regid "$SUDO_GID" --clear-groups --bounding-set=-all --inh-caps=-all --ambient-caps=-all --no-new-privs -- "$@"
             ' bash "$@"
           }
           run_offline /usr/bin/env "TSFG_CACHE_DIR=$TSFG_CACHE_DIR" "TSFG_BOOTSTRAP_GIT=$TSFG_BOOTSTRAP_GIT" "TSFG_BOOTSTRAP_GIT_SHA256=$TSFG_BOOTSTRAP_GIT_SHA256" "$workspace/tsfg/eng/tsfg-build" verify-workspace \
@@ -292,14 +292,14 @@ jobs:
           export TSFG_BOOTSTRAP_GIT_SHA256="$(sha256sum "$TSFG_BOOTSTRAP_GIT" | cut -d ' ' -f 1)"
           "$workspace/tsfg/eng/tsfg-build" prefetch --report "$root/prefetch-report.json"
           manifest_revision=$(node -e "process.stdout.write(JSON.parse(require('node:fs').readFileSync('.ci/materialized-identity.json','utf8')).manifestRevision)")
-          sudo sysctl -q kernel.apparmor_restrict_unprivileged_userns=0
           run_offline() {
-            unshare --user --map-root-user --mount --net bash -ceu '
+            sudo sysctl -q kernel.apparmor_restrict_unprivileged_userns=0
+            sudo unshare --mount --net bash -ceu '
               mount -t sysfs -o ro,nosuid,nodev,noexec sysfs /sys
               ip link set lo up
               interfaces=$(find /sys/class/net -mindepth 1 -maxdepth 1 -printf "%f\n" | sort)
               [ "$interfaces" = "lo" ]
-              exec "$@"
+              exec setpriv --reuid "$SUDO_UID" --regid "$SUDO_GID" --clear-groups --bounding-set=-all --inh-caps=-all --ambient-caps=-all --no-new-privs -- "$@"
             ' bash "$@"
           }
           run_offline /usr/bin/env "TSFG_CACHE_DIR=$TSFG_CACHE_DIR" "TSFG_BOOTSTRAP_GIT=$TSFG_BOOTSTRAP_GIT" "TSFG_BOOTSTRAP_GIT_SHA256=$TSFG_BOOTSTRAP_GIT_SHA256" "$workspace/tsfg/eng/tsfg-build" verify-workspace --workspace "$workspace" --manifest-url "$TSFG_MANIFEST_URL" --manifest-revision "$manifest_revision" --manifest "$TSFG_SELECTED_MANIFEST" --report "$root/workspace-report.json"
@@ -410,14 +410,14 @@ jobs:
           export TSFG_CACHE_DIR="$RUNNER_TEMP/tsfg-tool-cache/${{ matrix.target }}"
           export TSFG_BOOTSTRAP_GIT="$(command -v git)"
           export TSFG_BOOTSTRAP_GIT_SHA256="$(sha256sum "$TSFG_BOOTSTRAP_GIT" | cut -d ' ' -f 1)"
-          sudo sysctl -q kernel.apparmor_restrict_unprivileged_userns=0
           run_offline() {
-            unshare --user --map-root-user --mount --net bash -ceu '
+            sudo sysctl -q kernel.apparmor_restrict_unprivileged_userns=0
+            sudo unshare --mount --net bash -ceu '
               mount -t sysfs -o ro,nosuid,nodev,noexec sysfs /sys
               ip link set lo up
               interfaces=$(find /sys/class/net -mindepth 1 -maxdepth 1 -printf "%f\n" | sort)
               [ "$interfaces" = "lo" ]
-              exec "$@"
+              exec setpriv --reuid "$SUDO_UID" --regid "$SUDO_GID" --clear-groups --bounding-set=-all --inh-caps=-all --ambient-caps=-all --no-new-privs -- "$@"
             ' bash "$@"
           }
           run_offline /usr/bin/env "TSFG_CACHE_DIR=$TSFG_CACHE_DIR" "TSFG_BOOTSTRAP_GIT=$TSFG_BOOTSTRAP_GIT" "TSFG_BOOTSTRAP_GIT_SHA256=$TSFG_BOOTSTRAP_GIT_SHA256" "$GITHUB_WORKSPACE/eng/tsfg-build" test --target "${{ matrix.target }}" \
@@ -488,14 +488,14 @@ jobs:
           export TSFG_BOOTSTRAP_GIT="$(command -v git)"
           export TSFG_BOOTSTRAP_GIT_SHA256="$(sha256sum "$TSFG_BOOTSTRAP_GIT" | cut -d ' ' -f 1)"
           eng/tsfg-build prefetch --report "$root/prefetch-report.json"
-          sudo sysctl -q kernel.apparmor_restrict_unprivileged_userns=0
           run_offline() {
-            unshare --user --map-root-user --mount --net bash -ceu '
+            sudo sysctl -q kernel.apparmor_restrict_unprivileged_userns=0
+            sudo unshare --mount --net bash -ceu '
               mount -t sysfs -o ro,nosuid,nodev,noexec sysfs /sys
               ip link set lo up
               interfaces=$(find /sys/class/net -mindepth 1 -maxdepth 1 -printf "%f\n" | sort)
               [ "$interfaces" = "lo" ]
-              exec "$@"
+              exec setpriv --reuid "$SUDO_UID" --regid "$SUDO_GID" --clear-groups --bounding-set=-all --inh-caps=-all --ambient-caps=-all --no-new-privs -- "$@"
             ' bash "$@"
           }
           run_offline /usr/bin/env "TSFG_CACHE_DIR=$TSFG_CACHE_DIR" "TSFG_BOOTSTRAP_GIT=$TSFG_BOOTSTRAP_GIT" "TSFG_BOOTSTRAP_GIT_SHA256=$TSFG_BOOTSTRAP_GIT_SHA256" "$GITHUB_WORKSPACE/eng/tsfg-build" repro-check --target "${{ matrix.target }}" --profile "${{ matrix.profile }}" \

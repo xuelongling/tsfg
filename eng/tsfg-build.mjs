@@ -3401,6 +3401,16 @@ async function compileSandbox(runtime, sourceRoot, controlRoot) {
 }
 
 function windowsSandboxArguments(policy, executable, arguments_) {
+  if (policy.networkOnly) {
+    return [
+      "--network-only",
+      ...(policy.networkDenied ?? []).flatMap((program) => ["--deny-network", program]),
+      ...(policy.boundaryStatus ? ["--allow-boundary-status", String(policy.boundaryStatus)] : []),
+      "--",
+      executable,
+      ...arguments_,
+    ];
+  }
   return [
     ...(policy.networkDenied ?? []).flatMap((program) => ["--deny-network", program]),
     ...(policy.boundaryStatus ? ["--allow-boundary-status", String(policy.boundaryStatus)] : []),
@@ -3650,7 +3660,7 @@ function verifyWindowsSandboxBoundary(
   runBuildTool(
     "network-canary",
     sandboxExecutable,
-    windowsSandboxArguments({ ...basePolicy, boundaryStatus: 123 }, node, [
+    windowsSandboxArguments({ ...basePolicy, boundaryStatus: 123, networkOnly: true }, node, [
       "-e",
       "const n=require('node:net').connect({host:'1.1.1.1',port:443});n.on('connect',()=>process.exit(123));n.on('error',()=>process.exit(0));setTimeout(()=>process.exit(0),1500)",
     ]),
@@ -3661,9 +3671,11 @@ function verifyWindowsSandboxBoundary(
   runBuildTool(
     "undeclared-input-canary",
     sandboxExecutable,
-    windowsSandboxArguments({ ...basePolicy, boundaryStatus: 124 }, node, [
-      "-e",
-      `require('node:fs').readFile(${JSON.stringify(path.join(undeclaredRoot, "version.json"))},e=>process.exit(e?0:124))`,
+    windowsSandboxArguments({ ...basePolicy, boundaryStatus: 124 }, process.env.ComSpec, [
+      "/d",
+      "/s",
+      "/c",
+      `type "${path.join(undeclaredRoot, "version.json")}" >NUL 2>&1 && exit 124 || exit 0`,
     ]),
     sourceRoot,
     environment,
