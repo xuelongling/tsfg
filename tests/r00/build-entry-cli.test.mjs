@@ -107,7 +107,7 @@ test("Windows executable normalization fails closed on malformed PE data directo
 
 test("native debug identities exclude serializer layout noise and embedded build roots", async () => {
   const source = await readFile(buildEntry, "utf8");
-  const pdbStart = source.indexOf("function canonicalWindowsPdbSemantics");
+  const pdbStart = source.indexOf("function canonicalWindowsPdbStringTable");
   const pdbEnd = source.indexOf("async function normalizeWindowsExecutable", pdbStart);
   const linuxStart = source.indexOf("function normalizeEmbeddedPaths");
   const linuxEnd = source.indexOf("function canonicalWindowsPdbSemantics", linuxStart);
@@ -121,6 +121,7 @@ test("native debug identities exclude serializer layout noise and embedded build
   assert.match(pdbNormalizer, /new Set\(features\.split\(","\)/);
   assert.match(pdbNormalizer, /canonicalWindowsPdbSemantics\(preliminaryNeutral\) !== semanticIdentityYaml/);
   assert.match(pdbNormalizer, /fixed-point canonicalization/);
+  assert.match(pdbNormalizer, /canonicalWindowsPdbStringTable\(preliminaryNeutral\)/);
   assert.match(pdbNormalizer, /neutralizeWindowsPdbIdentity\(verified\)/);
   assert.match(pdbNormalizer, /replace\(\/\^MSF:[\s\S]*StringTable:/);
   assert.match(pdbNormalizer, /new Set\(entries\)/);

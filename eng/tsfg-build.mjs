@@ -4115,7 +4115,7 @@ function windowsToolchain(runtime) {
   };
 }
 
-function canonicalWindowsPdbSemantics(yaml) {
+function canonicalWindowsPdbStringTable(yaml) {
   const stringTable = yaml.match(/^StringTable:\r?\n([\s\S]*?)(?=^PdbStream:)/m);
   if (stringTable === null) {
     throw new BuildFailureError("PDB normalization could not locate its string table");
@@ -4128,14 +4128,19 @@ function canonicalWindowsPdbSemantics(yaml) {
   }
   const canonicalEntries = [...new Set(entries)]
     .sort((left, right) => Buffer.compare(Buffer.from(left), Buffer.from(right)));
-  let semantic = yaml
-    // The MSF superblock, stream sizes, and stream-to-block map describe only
-    // the physical container. yaml2pdb always regenerates them.
-    .replace(/^MSF:\r?\n[\s\S]*?(?=^StringTable:)/m, "")
-    // yaml2pdb deduplicates this set and may remove quotes from a plain scalar.
+  return yaml
+    // yaml2pdb assigns string offsets in input order, so canonicalize this set
+    // before producing the final PDB as well as before comparing semantics.
     .replace(stringTable[0], `StringTable:\n${canonicalEntries.join("\n")}\n`)
     .replaceAll("'.external'", ".external")
     .replaceAll("'.'", ".");
+}
+
+function canonicalWindowsPdbSemantics(yaml) {
+  let semantic = canonicalWindowsPdbStringTable(yaml)
+    // The MSF superblock, stream sizes, and stream-to-block map describe only
+    // the physical container. yaml2pdb always regenerates them.
+    .replace(/^MSF:\r?\n[\s\S]*?(?=^StringTable:)/m, "");
   const publics = semantic.match(
     /^PublicsStream:\r?\n  Records:\r?\n([\s\S]*?)(?=^\.\.\.)/m,
   );
@@ -4264,7 +4269,7 @@ async function normalizeWindowsPdb(
     if (canonicalWindowsPdbSemantics(preliminaryNeutral) !== semanticIdentityYaml) {
       throw new BuildFailureError("normalized PDB semantic content changed during canonicalization");
     }
-    yaml = preliminaryNeutral
+    yaml = canonicalWindowsPdbStringTable(preliminaryNeutral)
       .replace("'{00000000-0000-0000-0000-000000000000}'", `'${guidText}'`)
       .replace(
         /^  Signature:\s+0$/m,
