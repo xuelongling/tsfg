@@ -296,7 +296,14 @@ test("product PR workflow composes every gate, producer, compatibility lane, and
 
   const workspaceVerification = workflowJob(workflow, "workspace-verification");
   assert.match(workspaceVerification, /verify-workspace/);
-  assert.match(workspaceVerification, /verified-baseline-manifest\.xml/);
+  assert.match(
+    workspaceVerification,
+    /cp "\$GITHUB_WORKSPACE\/\.ci\/manifests\/\$TSFG_SELECTED_MANIFEST" \.ci\/evidence\/workspace-verification\/verified-baseline-manifest\.xml/,
+  );
+  assert.doesNotMatch(
+    workspaceVerification,
+    /cp "\$workspace\/\.repo\/manifests\/\$TSFG_SELECTED_MANIFEST" \.ci\/evidence\/workspace-verification\/verified-baseline-manifest\.xml/,
+  );
   assert.match(workspaceVerification, /git -C "\$workspace\/tsfg" fetch --no-tags "\$GITHUB_WORKSPACE"/);
   assert.doesNotMatch(workspaceVerification, /\.ci\/candidate-product/);
   const productBuild = workflowJob(workflow, "product-build");
