@@ -178,17 +178,18 @@ static void bind_path(const char *new_root, struct allowed_path *allowed,
 
 static void bind_locked_runtime_alias(
     const char *new_root, const char *environment_name,
-    const char *destination, struct allowed_path *allowed,
+    const char *destination, enum access_kind access,
+    struct allowed_path *allowed,
     size_t *allowed_count, size_t allowed_capacity) {
   const char *source = getenv(environment_name);
   if (!source || source[0] != '/')
     fail("missing locked runtime alias", environment_name);
   if (*allowed_count == allowed_capacity)
     fail("too many allowed paths for locked runtime aliases", NULL);
-  struct allowed_path mounted = {source, ACCESS_RX, 0};
+  struct allowed_path mounted = {source, access, 0};
   bind_path(new_root, &mounted, destination);
   allowed[(*allowed_count)++] =
-      (struct allowed_path){destination, ACCESS_RX, mounted.is_directory};
+      (struct allowed_path){destination, access, mounted.is_directory};
 }
 
 static void pivot_into(const char *new_root, const char *working_directory) {
@@ -1035,20 +1036,36 @@ int main(int argc, char **argv) {
   if (getenv("TSFG_LOCKED_LOADER")) {
     size_t allowed_capacity = sizeof(allowed) / sizeof(allowed[0]);
     bind_locked_runtime_alias(new_root, "TSFG_LOCKED_LOADER",
-                              "/lib64/ld-linux-x86-64.so.2", allowed,
+                              "/lib64/ld-linux-x86-64.so.2", ACCESS_RX, allowed,
                               &allowed_count, allowed_capacity);
     bind_locked_runtime_alias(new_root, "TSFG_LOCKED_LIB_DIRECTORY",
-                              "/lib/x86_64-linux-gnu", allowed,
+                              "/lib/x86_64-linux-gnu", ACCESS_RX, allowed,
                               &allowed_count, allowed_capacity);
     bind_locked_runtime_alias(new_root, "TSFG_LOCKED_USR_LIB_DIRECTORY",
-                              "/usr/lib/x86_64-linux-gnu", allowed,
+                              "/usr/lib/x86_64-linux-gnu", ACCESS_RX, allowed,
+                              &allowed_count, allowed_capacity);
+  }
+  if (getenv("TSFG_CANONICAL_SOURCE")) {
+    size_t allowed_capacity = sizeof(allowed) / sizeof(allowed[0]);
+    bind_locked_runtime_alias(new_root, "TSFG_CANONICAL_SOURCE",
+                              "/workspace", ACCESS_RO, allowed,
+                              &allowed_count, allowed_capacity);
+    bind_locked_runtime_alias(new_root, "TSFG_CANONICAL_WORK",
+                              "/build", ACCESS_RW, allowed,
+                              &allowed_count, allowed_capacity);
+    bind_locked_runtime_alias(new_root, "TSFG_CANONICAL_TOOLCHAIN",
+                              "/toolchain", ACCESS_RX, allowed,
                               &allowed_count, allowed_capacity);
   }
   struct allowed_path shell_path = {shell, ACCESS_RX, 0};
   struct allowed_path null_path = {"/dev/null", ACCESS_RW, 0};
   bind_path(new_root, &shell_path, "/bin/sh");
   bind_path(new_root, &null_path, "/dev/null");
-  pivot_into(new_root, working_directory);
+  const char *sandbox_working_directory =
+      getenv("TSFG_SANDBOX_WORKING_DIRECTORY");
+  pivot_into(new_root, sandbox_working_directory
+                           ? sandbox_working_directory
+                           : working_directory);
   drop_namespace_capabilities();
   return supervise_command(&argv[index + 1], allowed, allowed_count);
 }

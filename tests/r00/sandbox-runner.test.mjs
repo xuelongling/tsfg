@@ -35,6 +35,9 @@ test("Linux sandbox accepts only a precreated root mapping to an unprivileged ho
   assert.match(source, /TSFG_LOCKED_LOADER[\s\S]*\/lib64\/ld-linux-x86-64\.so\.2/);
   assert.match(source, /TSFG_LOCKED_LIB_DIRECTORY[\s\S]*\/lib\/x86_64-linux-gnu/);
   assert.match(source, /TSFG_LOCKED_USR_LIB_DIRECTORY[\s\S]*\/usr\/lib\/x86_64-linux-gnu/);
+  assert.match(source, /TSFG_CANONICAL_SOURCE[\s\S]*\/workspace[\s\S]*ACCESS_RO/);
+  assert.match(source, /TSFG_CANONICAL_WORK[\s\S]*\/build[\s\S]*ACCESS_RW/);
+  assert.match(source, /TSFG_CANONICAL_TOOLCHAIN[\s\S]*\/toolchain[\s\S]*ACCESS_RX/);
   assert.match(
     source,
     /process_index = traced_count;\s+traced\[traced_count\+\+\]\.pid = stopped/,

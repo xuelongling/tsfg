@@ -3792,6 +3792,14 @@ async function buildLinux(options, runtime, workspaceState, networkCanary) {
     "-fno-fast-math",
   ].join(" ");
   const zigOptimize = buildPolicy.zig.optimization;
+  const zigLibraryRoot = sandboxRequired
+    ? "/toolchain/zig/lib"
+    : path.join(path.dirname(zig), "lib");
+  const zigInstallRoot = sandboxRequired ? "/build/zig-install" : zigPrefix;
+  const zigCacheRoot = sandboxRequired ? "/build/zig-cache" : path.join(workRoot, "zig-cache");
+  const zigGlobalCacheRoot = sandboxRequired
+    ? "/build/zig-global-cache"
+    : path.join(workRoot, "zig-global-cache");
   const cmakeArguments = [
     "-S", path.join(sourceRoot, "tests", "r00", "smoke", "cpp"),
     "-B", cppWork,
@@ -3812,10 +3820,10 @@ async function buildLinux(options, runtime, workspaceState, networkCanary) {
   const zigArguments = [
     "build",
     "--build-file", "tests/r00/smoke/zig/build.zig",
-    "--zig-lib-dir", path.join(path.dirname(zig), "lib"),
-    "--prefix", zigPrefix,
-    "--cache-dir", path.join(workRoot, "zig-cache"),
-    "--global-cache-dir", path.join(workRoot, "zig-global-cache"),
+    "--zig-lib-dir", zigLibraryRoot,
+    "--prefix", zigInstallRoot,
+    "--cache-dir", zigCacheRoot,
+    "--global-cache-dir", zigGlobalCacheRoot,
     "-Dtarget=x86_64-linux-gnu",
     `-Doptimize=${zigOptimize}`,
     "-Dcpu=x86_64_v2",
@@ -3861,6 +3869,13 @@ async function buildLinux(options, runtime, workspaceState, networkCanary) {
       environment.TSFG_LOCKED_AR = llvmAr;
       environment.TSFG_LOCKED_RANLIB = llvmRanlib;
       environment.TSFG_LOCKED_NINJA = ninja;
+      environment.TSFG_CANONICAL_SOURCE = sourceRoot;
+      environment.TSFG_CANONICAL_WORK = workRoot;
+      environment.TSFG_CANONICAL_TOOLCHAIN = runtime.closurePath;
+      environment.TSFG_SANDBOX_WORKING_DIRECTORY = "/workspace";
+      environment.HOME = "/build";
+      environment.PWD = "/workspace";
+      environment.TMPDIR = "/build";
     }
     if (sandboxRequired) {
       for (const wrapper of [compilerWrapper, linkerWrapper, arWrapper, ranlibWrapper, ninjaWrapper]) {
