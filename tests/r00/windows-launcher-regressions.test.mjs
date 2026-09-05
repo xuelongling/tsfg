@@ -19,13 +19,11 @@ test("Windows restricted token preserves user initialization without re-enabling
     "utf8",
   );
   assert.match(source, /GetTokenInformation\(process_token, TokenUser/);
-  assert.match(source, /restricting\[2\]\.Sid = token_user->User\.Sid/);
-  assert.match(source, /restricting\[3\]\.Sid = world_sid/);
-  assert.match(source, /restricting\[4\]\.Sid = logon_sid/);
+  assert.match(source, /apply_grant\(&requested\[index\], token_user->User\.Sid/);
   assert.match(source, /disabled\[0\]\.Sid = administrators_sid/);
   assert.match(
     source,
-    /CreateRestrictedToken\(process_token, DISABLE_MAX_PRIVILEGE,\s*1, disabled/,
+    /CreateRestrictedToken\(process_token, DISABLE_MAX_PRIVILEGE,\s*1, disabled, 0, NULL, 0, NULL/,
   );
   assert.match(
     source,

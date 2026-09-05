@@ -65,6 +65,7 @@ test("Linux sandbox supervisor owns boundary statuses and audits descendants", a
 #include <fcntl.h>
 #include <stdlib.h>
 #include <string.h>
+#include <sys/stat.h>
 #include <sys/types.h>
 #include <sys/wait.h>
 #include <unistd.h>
@@ -88,6 +89,10 @@ int main(int argc, char **argv) {
   }
   if (strcmp(argv[1], "access") == 0) {
     access(argv[2], W_OK);
+    return 0;
+  }
+  if (strcmp(argv[1], "mkdir") == 0) {
+    mkdir(argv[2], 0755);
     return 0;
   }
   if (strcmp(argv[1], "descendant") == 0) {
@@ -152,6 +157,13 @@ int main(int argc, char **argv) {
 
     const allowedPermissionProbe = invoke("access", sourceRoot);
     assert.equal(allowedPermissionProbe.status, 0, allowedPermissionProbe.stderr);
+
+    const allowedAncestorCreationProbe = invoke("mkdir", temporaryRoot);
+    assert.equal(
+      allowedAncestorCreationProbe.status,
+      0,
+      allowedAncestorCreationProbe.stderr,
+    );
 
     const ignoredRead = invoke("read", outsidePath);
     assert.equal(ignoredRead.status, 124, ignoredRead.stderr);

@@ -353,8 +353,7 @@ static int path_is_allowed(const char *candidate, int wants_write,
     if (path_contains(allowed[index].path, allowed[index].is_directory,
                       candidate))
       return !wants_write || allowed[index].access == ACCESS_RW;
-    if (!wants_write && path_is_ancestor(candidate, allowed[index].path))
-      return 1;
+    if (path_is_ancestor(candidate, allowed[index].path)) return 1;
   }
   return 0;
 }

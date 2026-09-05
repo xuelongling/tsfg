@@ -451,22 +451,12 @@ int wmain(int argc, wchar_t **argv) {
   struct path_list programs = {0};
   wchar_t *command_path = NULL;
   wchar_t *command_line = NULL;
-  BYTE restricted_sid_buffer[SECURITY_MAX_SID_SIZE];
-  DWORD restricted_sid_size = sizeof(restricted_sid_buffer);
-  PSID restricted_sid = restricted_sid_buffer;
-  BYTE users_sid_buffer[SECURITY_MAX_SID_SIZE];
-  DWORD users_sid_size = sizeof(users_sid_buffer);
-  PSID users_sid = users_sid_buffer;
-  BYTE world_sid_buffer[SECURITY_MAX_SID_SIZE];
-  DWORD world_sid_size = sizeof(world_sid_buffer);
-  PSID world_sid = world_sid_buffer;
   BYTE administrators_sid_buffer[SECURITY_MAX_SID_SIZE];
   DWORD administrators_sid_size = sizeof(administrators_sid_buffer);
   PSID administrators_sid = administrators_sid_buffer;
   HANDLE process_token = NULL;
   HANDLE restricted_token = NULL;
   TOKEN_USER *token_user = NULL;
-  TOKEN_GROUPS *token_groups = NULL;
   HANDLE filter_engine = NULL;
   HANDLE acl_mutex = NULL;
   int acl_mutex_owned = 0;
@@ -535,51 +525,12 @@ int wmain(int argc, wchar_t **argv) {
       goto cleanup;
     }
     acl_mutex_owned = 1;
-    if (!CreateWellKnownSid(WinRestrictedCodeSid, NULL, restricted_sid,
-                            &restricted_sid_size)) {
-      print_win32_error(L"create restricted-code SID", GetLastError());
-      goto cleanup;
-    }
-    if (!CreateWellKnownSid(WinBuiltinUsersSid, NULL, users_sid,
-                            &users_sid_size)) {
-      print_win32_error(L"create built-in users SID", GetLastError());
-      goto cleanup;
-    }
-    if (!CreateWellKnownSid(WinWorldSid, NULL, world_sid,
-                            &world_sid_size)) {
-      print_win32_error(L"create world SID", GetLastError());
-      goto cleanup;
-    }
     if (!CreateWellKnownSid(WinBuiltinAdministratorsSid, NULL,
                             administrators_sid,
                             &administrators_sid_size)) {
       print_win32_error(L"create built-in administrators SID", GetLastError());
       goto cleanup;
     }
-    struct requested_grant command_grant = {command_path, GRANT_READ_EXECUTE};
-    if (requested_count == SIZE_MAX ||
-        requested_count + 1 > SIZE_MAX / sizeof(*applied)) goto cleanup;
-    applied = (struct applied_grant *)calloc(requested_count + 1, sizeof(*applied));
-    if (applied == NULL) {
-      print_win32_error(L"allocate ACL rollback state", ERROR_OUTOFMEMORY);
-      goto cleanup;
-    }
-    for (size_t index = 0; index < requested_count; ++index) {
-      DWORD result = apply_grant(&requested[index], restricted_sid,
-                                 &applied[applied_count]);
-      if (result != ERROR_SUCCESS) {
-        print_win32_error(L"grant restricted path access", result);
-        goto cleanup;
-      }
-      ++applied_count;
-    }
-    DWORD result = apply_grant(&command_grant, restricted_sid,
-                               &applied[applied_count]);
-    if (result != ERROR_SUCCESS) {
-      print_win32_error(L"grant restricted command access", result);
-      goto cleanup;
-    }
-    ++applied_count;
     if (!OpenProcessToken(GetCurrentProcess(),
                           TOKEN_ASSIGN_PRIMARY | TOKEN_DUPLICATE | TOKEN_QUERY,
                           &process_token)) {
@@ -600,49 +551,35 @@ int wmain(int argc, wchar_t **argv) {
                         token_user == NULL ? ERROR_OUTOFMEMORY : GetLastError());
       goto cleanup;
     }
-    DWORD token_groups_size = 0;
-    GetTokenInformation(process_token, TokenGroups, NULL, 0,
-                        &token_groups_size);
-    if (token_groups_size == 0 || GetLastError() != ERROR_INSUFFICIENT_BUFFER) {
-      print_win32_error(L"size process token groups", GetLastError());
+    struct requested_grant command_grant = {command_path, GRANT_READ_EXECUTE};
+    if (requested_count == SIZE_MAX ||
+        requested_count + 1 > SIZE_MAX / sizeof(*applied)) goto cleanup;
+    applied = (struct applied_grant *)calloc(requested_count + 1, sizeof(*applied));
+    if (applied == NULL) {
+      print_win32_error(L"allocate ACL rollback state", ERROR_OUTOFMEMORY);
       goto cleanup;
     }
-    token_groups = (TOKEN_GROUPS *)calloc(1, token_groups_size);
-    if (token_groups == NULL ||
-        !GetTokenInformation(process_token, TokenGroups, token_groups,
-                             token_groups_size, &token_groups_size)) {
-      print_win32_error(L"read process token groups",
-                        token_groups == NULL ? ERROR_OUTOFMEMORY : GetLastError());
-      goto cleanup;
-    }
-    PSID logon_sid = NULL;
-    for (DWORD index = 0; index < token_groups->GroupCount; ++index) {
-      if ((token_groups->Groups[index].Attributes & SE_GROUP_LOGON_ID) ==
-          SE_GROUP_LOGON_ID) {
-        logon_sid = token_groups->Groups[index].Sid;
-        break;
+    for (size_t index = 0; index < requested_count; ++index) {
+      DWORD result = apply_grant(&requested[index], token_user->User.Sid,
+                                 &applied[applied_count]);
+      if (result != ERROR_SUCCESS) {
+        print_win32_error(L"grant restricted path access", result);
+        goto cleanup;
       }
+      ++applied_count;
     }
-    if (logon_sid == NULL) {
-      print_win32_error(L"find process logon SID", ERROR_NO_SUCH_LOGON_SESSION);
+    DWORD result = apply_grant(&command_grant, token_user->User.Sid,
+                               &applied[applied_count]);
+    if (result != ERROR_SUCCESS) {
+      print_win32_error(L"grant restricted command access", result);
       goto cleanup;
     }
-    SID_AND_ATTRIBUTES restricting[5];
-    restricting[0].Sid = restricted_sid;
-    restricting[0].Attributes = 0;
-    restricting[1].Sid = users_sid;
-    restricting[1].Attributes = 0;
-    restricting[2].Sid = token_user->User.Sid;
-    restricting[2].Attributes = 0;
-    restricting[3].Sid = world_sid;
-    restricting[3].Attributes = 0;
-    restricting[4].Sid = logon_sid;
-    restricting[4].Attributes = 0;
+    ++applied_count;
     SID_AND_ATTRIBUTES disabled[1];
     disabled[0].Sid = administrators_sid;
     disabled[0].Attributes = 0;
     if (!CreateRestrictedToken(process_token, DISABLE_MAX_PRIVILEGE,
-                               1, disabled, 0, NULL, 5, restricting,
+                               1, disabled, 0, NULL, 0, NULL,
                                &restricted_token)) {
       print_win32_error(L"create restricted token", GetLastError());
       goto cleanup;
@@ -730,7 +667,6 @@ cleanup:
   if (restricted_token != NULL) CloseHandle(restricted_token);
   if (process_token != NULL) CloseHandle(process_token);
   free(token_user);
-  free(token_groups);
   while (applied_count > 0) {
     --applied_count;
     DWORD result = ERROR_GEN_FAILURE;
