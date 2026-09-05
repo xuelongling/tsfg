@@ -2940,6 +2940,31 @@ async function requireCanonicalSymlink(workspace, destination, source) {
   }
 }
 
+async function requireSelectedManifestControl(workspace, controlPath, manifestName) {
+  const metadata = await lstat(controlPath).catch(() => undefined);
+  if (!metadata?.isFile() || metadata.isSymbolicLink() || metadata.nlink !== 1) {
+    throw new WorkspaceMismatchError(
+      "manifest-selection",
+      normalizedRelative(workspace, controlPath) + " must be an ordinary Repo control file",
+    );
+  }
+  const normalized = (await readFile(controlPath, "utf8"))
+    .replace(/^\uFEFF/, "")
+    .replace(/<\?xml[^?]*\?>/g, "")
+    .replace(/<!--[\s\S]*?-->/g, "")
+    .trim();
+  const include = manifestName.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+  const expected = new RegExp(
+    '^<manifest>\\s*<include\\s+name="' + include + '"\\s*/>\\s*</manifest>$',
+  );
+  if (!expected.test(normalized)) {
+    throw new WorkspaceMismatchError(
+      "manifest-selection",
+      normalizedRelative(workspace, controlPath) + " does not select only " + manifestName,
+    );
+  }
+}
+
 function validateVerifyWorkspaceOptions(options) {
   const workspaceOption = options.get("--workspace");
   const manifestUrl = options.get("--manifest-url");
@@ -3024,7 +3049,7 @@ async function verifyWorkspace(options) {
     expectedProjects,
     workspace,
   );
-  await requireCanonicalSymlink(workspace, manifestLink, manifestPath);
+  await requireSelectedManifestControl(workspace, manifestLink, manifestName);
   const manifestStatus = gitOutput(manifestsRoot, [
     "status",
     "--porcelain=v1",

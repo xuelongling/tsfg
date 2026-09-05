@@ -81,7 +81,7 @@ jobs:
           run_offline() {
             sudo unshare --net --mount-proc bash -ceu '
               ip link set lo up
-              interfaces=$(find /sys/class/net -mindepth 1 -maxdepth 1 -printf "%f\\n" | sort)
+              interfaces=$(find /sys/class/net -mindepth 1 -maxdepth 1 -printf "%f\n" | sort)
               [ "$interfaces" = "lo" ]
               exec setpriv --reuid "$1" --regid "$2" --clear-groups -- "${@:3}"
             ' bash "$(id -u)" "$(id -g)" "$@"

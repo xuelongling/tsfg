@@ -119,9 +119,9 @@ async function materializeFixture(workspace) {
     path.join(workspace, ".repo", "project.list"),
     ".agents\ntsfg\n",
   );
-  await createFixtureSymlink(
-    "manifests/bootstrap/r00.xml",
+  await writeFile(
     path.join(workspace, ".repo", "manifest.xml"),
+    '<?xml version="1.0" encoding="UTF-8"?>\n<manifest>\n  <include name="bootstrap/r00.xml" />\n</manifest>\n',
   );
   await createFixtureSymlink(
     ".agents/AGENTS.md",
@@ -349,8 +349,10 @@ const mismatchScenarios = [
     name: "wrong selected manifest",
     mutate: async ({ workspace }) => {
       const destination = path.join(workspace, ".repo", "manifest.xml");
-      await rm(destination);
-      await createFixtureSymlink("manifests/other.xml", destination);
+      await writeFile(
+        destination,
+        '<?xml version="1.0" encoding="UTF-8"?>\n<manifest>\n  <include name="other.xml" />\n</manifest>\n',
+      );
     },
   },
   {

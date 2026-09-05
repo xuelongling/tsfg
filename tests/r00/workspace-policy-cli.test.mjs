@@ -176,7 +176,10 @@ ${upstream ?? ""}
     path.join(workspace, ".repo", "project.list"),
     `.agents\n${overrides.upstreamFiles ? "future-upstream\n" : ""}tsfg\n`,
   );
-  await createFixtureSymlink("manifests/bootstrap/r00.xml", path.join(workspace, ".repo", "manifest.xml"));
+  await writeFile(
+    path.join(workspace, ".repo", "manifest.xml"),
+    '<?xml version="1.0" encoding="UTF-8"?>\n<manifest>\n  <include name="bootstrap/r00.xml" />\n</manifest>\n',
+  );
   await createFixtureSymlink(".agents/AGENTS.md", path.join(workspace, "AGENTS.md"));
   await createFixtureSymlink(
     "../.agents/codex/config.toml",

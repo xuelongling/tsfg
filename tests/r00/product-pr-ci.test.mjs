@@ -364,6 +364,7 @@ test("product PR workflow isolates every Linux offline phase in a loopback-only 
     assert.match(job, /sudo unshare --net --mount-proc bash -ceu/);
     assert.match(job, /ip link set lo up/);
     assert.match(job, /find \/sys\/class\/net -mindepth 1 -maxdepth 1 -printf/);
+    assert.doesNotMatch(job, /-printf "%f\\\\n"/);
     assert.match(job, /exec setpriv --reuid "\$1" --regid "\$2" --clear-groups -- "\$\{@:3\}"/);
   }
 
