@@ -14,5 +14,9 @@ target_compile_definitions(
   tsfg-r00-cpp-smoke
   PRIVATE TSFG_R00_SIMD_DISPATCH_RUNTIME=${TSFG_R00_SIMD_DISPATCH_RUNTIME}
 )
-target_compile_options(tsfg-r00-cpp-smoke PRIVATE -fno-exceptions -fno-rtti)
+if(MSVC)
+  target_compile_options(tsfg-r00-cpp-smoke PRIVATE /EHs-c- /GR- /Brepro)
+else()
+  target_compile_options(tsfg-r00-cpp-smoke PRIVATE -fno-exceptions -fno-rtti)
+endif()
 target_link_options(tsfg-r00-cpp-smoke PRIVATE -nostdlib++)

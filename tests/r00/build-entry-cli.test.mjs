@@ -79,6 +79,40 @@ test("Windows network canary starts Node under WFP without the path-restricted t
   assert.match(sandboxSource, /command_grant/);
 });
 
+test("Windows executable normalization fails closed on malformed PE data directories", async () => {
+  const source = await readFile(buildEntry, "utf8");
+  const start = source.indexOf("async function normalizeWindowsExecutable");
+  const end = source.indexOf("async function buildWindows", start);
+  assert.notEqual(start, -1);
+  assert.notEqual(end, -1);
+  const normalizer = source.slice(start, end);
+  assert.match(normalizer, /readUInt32LE\(optionalOffset \+ 108\) < 7/);
+  assert.match(normalizer, /debugDirectorySize <= rawSize - relativeOffset/);
+  assert.match(normalizer, /debugDirectorySize <= bytes\.length - rawOffset - relativeOffset/);
+});
+
+test("native debug identities exclude serializer layout noise and embedded build roots", async () => {
+  const source = await readFile(buildEntry, "utf8");
+  const pdbStart = source.indexOf("async function normalizeWindowsPdb");
+  const pdbEnd = source.indexOf("async function normalizeWindowsExecutable", pdbStart);
+  const linuxStart = source.indexOf("function normalizeEmbeddedPaths");
+  const linuxEnd = source.indexOf("async function normalizeWindowsPdb", linuxStart);
+  assert.notEqual(pdbStart, -1);
+  assert.notEqual(pdbEnd, -1);
+  assert.notEqual(linuxStart, -1);
+  assert.notEqual(linuxEnd, -1);
+  const pdbNormalizer = source.slice(pdbStart, pdbEnd);
+  const linuxNormalizer = source.slice(linuxStart, linuxEnd);
+  assert.match(pdbNormalizer, /StreamSizes:[\s\S]*\[ 0, 0,/);
+  assert.match(pdbNormalizer, /new Set\(features\.split\(","\)/);
+  assert.match(pdbNormalizer, /verifiedNeutral !== identityNeutralYaml/);
+  assert.match(linuxNormalizer, /normalizeEmbeddedPaths\(zigBytes/);
+  assert.match(linuxNormalizer, /\[sourceRoot, "\.workspace"\]/);
+  assert.match(linuxNormalizer, /\[runtime\.closurePath, "\.toolchain"\]/);
+  assert.match(linuxNormalizer, /\[workRoot, "\.build"\]/);
+  assert.match(linuxNormalizer, /writeFile\(publishedZig, normalizedZigBytes/);
+});
+
 function validVerifyArguments(reportPath) {
   return [
     "verify-workspace",
@@ -988,7 +1022,11 @@ test("Windows verify-workspace enters the JS offline supervisor before workspace
   const preloadPath = path.join(sandbox, "control-digest.cjs");
   const reportPath = path.join(sandbox, "report.json");
   const platform = "windows-x86_64-msvc";
-  const controlDigest = "3c8c29940279ad20557dc35d97e75ea0f0ce25c7d20019efcf47aa126f7bc22d";
+  const buildSource = await readFile(buildEntry, "utf8");
+  const controlDigest = buildSource.match(
+    /WINDOWS_SANDBOX_EXECUTABLE_DIGEST\s*=\s*\n\s*"sha256:([0-9a-f]{64})"/,
+  )?.[1];
+  assert.ok(controlDigest);
   const controlBytes = Buffer.from("tsfg test WFP supervisor marker\n");
   const emptyTreeDigest = fixtureDigest('{"entries":[],"schemaVersion":"1"}');
   const toolIds = ["cmake", "llvm", "msvc-tools", "ninja", "node", "windows-sdk", "zig"];
@@ -2098,7 +2136,7 @@ net.connect = () => {
         fixtureDigest(await readFile(path.join(outputPath, ...output.path.split("/")))),
       );
     }
-    assert.deepEqual(report.result.steps.map(({ tool }) => tool), ["cmake", "ninja", "zig"]);
+    assert.deepEqual(report.result.steps.map(({ tool }) => tool), ["cmake", "ninja", "zig", "zig"]);
     assert.match(report.result.steps[0].arguments.join(" "), /-O0/);
     assert.match(report.result.steps[0].arguments.join(" "), /-g3/);
     assert.match(report.result.steps[0].arguments.join(" "), /-UNDEBUG/);
@@ -2122,9 +2160,10 @@ net.connect = () => {
     assert.match(report.result.steps[0].arguments.join(" "), /debian-sysroot/);
     assert.match(report.result.steps[0].arguments.join(" "), /llvm/);
     assert.match(report.result.steps[0].arguments.join(" "), /-DCMAKE_AR=/);
-    assert.match(report.result.steps[2].arguments.join(" "), /-Doptimize=Debug/);
+    assert.match(report.result.steps[2].arguments.join(" "), /-ODebug/);
     assert.match(report.result.steps[2].arguments.join(" "), /--zig-lib-dir .*zig[\\/]lib/);
-    assert.deepEqual(report.result.steps[2].arguments.slice(-2), ["--seed", "0"]);
+    assert.match(report.result.steps[2].arguments.join(" "), /-fno-incremental/);
+    assert.match(report.result.steps[3].arguments.join(" "), /build-exe .* -fentry=_start/);
 
     const releaseOutput = path.join(sandbox, "release-out");
     const releaseReportPath = path.join(sandbox, "release-build-report.json");
@@ -2191,8 +2230,8 @@ net.connect = () => {
       "-fno-fast-math",
     ]) assert.ok(releaseCmakeArguments.includes(flag), `missing release flag ${flag}`);
     assert.match(releaseCmakeArguments, /-DCMAKE_INTERPROCEDURAL_OPTIMIZATION=OFF/);
-    assert.match(releaseReport.result.steps[2].arguments.join(" "), /-Doptimize=ReleaseSafe/);
-    assert.match(releaseReport.result.steps[2].arguments.join(" "), /-Dcpu=x86_64_v2/);
+    assert.match(releaseReport.result.steps[2].arguments.join(" "), /-OReleaseSafe/);
+    assert.match(releaseReport.result.steps[2].arguments.join(" "), /-mcpu x86_64_v2/);
     const releaseMetadata = JSON.parse(await readFile(
       path.join(releaseOutput, "build-metadata.json"),
       "utf8",

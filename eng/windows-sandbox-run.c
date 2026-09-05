@@ -251,21 +251,37 @@ static DWORD apply_grant(const struct requested_grant *requested, PSID sid,
                                     &applied->original_control, &revision)) {
     return GetLastError();
   }
-  EXPLICIT_ACCESS_W access;
-  ZeroMemory(&access, sizeof(access));
-  access.grfAccessPermissions = access_mask(requested->kind);
-  access.grfAccessMode = requested->kind == GRANT_DENY_READ
+  EXPLICIT_ACCESS_W access[3];
+  ZeroMemory(access, sizeof(access));
+  ULONG access_count = 1;
+  DWORD inheritance = (attributes & FILE_ATTRIBUTE_DIRECTORY)
+                          ? SUB_CONTAINERS_AND_OBJECTS_INHERIT
+                          : NO_INHERITANCE;
+  if (requested->kind == GRANT_READ_ONLY ||
+      requested->kind == GRANT_READ_EXECUTE) {
+    access[0].grfAccessPermissions = GENERIC_WRITE | DELETE;
+    access[0].grfAccessMode = DENY_ACCESS;
+    access[0].grfInheritance = inheritance;
+    access_count = 2;
+    if (attributes & FILE_ATTRIBUTE_DIRECTORY) {
+      access[1].grfAccessPermissions = FILE_DELETE_CHILD;
+      access[1].grfAccessMode = DENY_ACCESS;
+      access[1].grfInheritance = SUB_CONTAINERS_ONLY_INHERIT;
+      access_count = 3;
+    }
+  }
+  EXPLICIT_ACCESS_W *grant = &access[access_count - 1];
+  grant->grfAccessPermissions = access_mask(requested->kind);
+  grant->grfAccessMode = requested->kind == GRANT_DENY_READ
                              ? DENY_ACCESS
                              : GRANT_ACCESS;
-  access.grfInheritance = requested->kind == GRANT_DENY_READ
-                              ? SUB_CONTAINERS_AND_OBJECTS_INHERIT
-                              : (attributes & FILE_ATTRIBUTE_DIRECTORY)
-                              ? SUB_CONTAINERS_AND_OBJECTS_INHERIT
-                              : NO_INHERITANCE;
-  access.Trustee.TrusteeForm = TRUSTEE_IS_SID;
-  access.Trustee.TrusteeType = TRUSTEE_IS_WELL_KNOWN_GROUP;
-  access.Trustee.ptstrName = (LPWSTR)sid;
-  result = SetEntriesInAclW(1, &access, original_dacl,
+  grant->grfInheritance = inheritance;
+  for (ULONG index = 0; index < access_count; ++index) {
+    access[index].Trustee.TrusteeForm = TRUSTEE_IS_SID;
+    access[index].Trustee.TrusteeType = TRUSTEE_IS_USER;
+    access[index].Trustee.ptstrName = (LPWSTR)sid;
+  }
+  result = SetEntriesInAclW(access_count, access, original_dacl,
                             &applied->replacement_dacl);
   if (result != ERROR_SUCCESS) return result;
   SECURITY_INFORMATION information = DACL_SECURITY_INFORMATION;
@@ -453,7 +469,9 @@ int wmain(int argc, wchar_t **argv) {
   wchar_t *command_line = NULL;
   HANDLE process_token = NULL;
   HANDLE restricted_token = NULL;
-  TOKEN_USER *token_user = NULL;
+  BYTE restricted_sid_buffer[SECURITY_MAX_SID_SIZE];
+  DWORD restricted_sid_size = sizeof(restricted_sid_buffer);
+  PSID restricted_sid = (PSID)restricted_sid_buffer;
   HANDLE filter_engine = NULL;
   HANDLE acl_mutex = NULL;
   int acl_mutex_owned = 0;
@@ -528,18 +546,9 @@ int wmain(int argc, wchar_t **argv) {
       print_win32_error(L"open process token", GetLastError());
       goto cleanup;
     }
-    DWORD token_user_size = 0;
-    GetTokenInformation(process_token, TokenUser, NULL, 0, &token_user_size);
-    if (token_user_size == 0 || GetLastError() != ERROR_INSUFFICIENT_BUFFER) {
-      print_win32_error(L"size process token user", GetLastError());
-      goto cleanup;
-    }
-    token_user = (TOKEN_USER *)calloc(1, token_user_size);
-    if (token_user == NULL ||
-        !GetTokenInformation(process_token, TokenUser, token_user,
-                             token_user_size, &token_user_size)) {
-      print_win32_error(L"read process token user",
-                        token_user == NULL ? ERROR_OUTOFMEMORY : GetLastError());
+    if (!CreateWellKnownSid(WinRestrictedCodeSid, NULL, restricted_sid,
+                            &restricted_sid_size)) {
+      print_win32_error(L"create restricted-code SID", GetLastError());
       goto cleanup;
     }
     struct requested_grant command_grant = {command_path, GRANT_READ_EXECUTE};
@@ -551,7 +560,7 @@ int wmain(int argc, wchar_t **argv) {
       goto cleanup;
     }
     for (size_t index = 0; index < requested_count; ++index) {
-      DWORD result = apply_grant(&requested[index], token_user->User.Sid,
+      DWORD result = apply_grant(&requested[index], restricted_sid,
                                  &applied[applied_count]);
       if (result != ERROR_SUCCESS) {
         print_win32_error(L"grant restricted path access", result);
@@ -559,15 +568,16 @@ int wmain(int argc, wchar_t **argv) {
       }
       ++applied_count;
     }
-    DWORD result = apply_grant(&command_grant, token_user->User.Sid,
+    DWORD result = apply_grant(&command_grant, restricted_sid,
                                &applied[applied_count]);
     if (result != ERROR_SUCCESS) {
       print_win32_error(L"grant restricted command access", result);
       goto cleanup;
     }
     ++applied_count;
+    SID_AND_ATTRIBUTES restricting_sid = {restricted_sid, 0};
     if (!CreateRestrictedToken(process_token, DISABLE_MAX_PRIVILEGE,
-                               0, NULL, 0, NULL, 0, NULL,
+                               0, NULL, 0, NULL, 1, &restricting_sid,
                                &restricted_token)) {
       print_win32_error(L"create restricted token", GetLastError());
       goto cleanup;
@@ -654,7 +664,6 @@ cleanup:
   if (job != NULL) CloseHandle(job);
   if (restricted_token != NULL) CloseHandle(restricted_token);
   if (process_token != NULL) CloseHandle(process_token);
-  free(token_user);
   while (applied_count > 0) {
     --applied_count;
     DWORD result = ERROR_GEN_FAILURE;

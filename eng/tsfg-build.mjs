@@ -87,7 +87,7 @@ const WINDOWS_NETWORK_ISOLATION = Object.freeze({
   status: "blocked",
 });
 const WINDOWS_SANDBOX_EXECUTABLE_DIGEST =
-  "sha256:3c8c29940279ad20557dc35d97e75ea0f0ce25c7d20019efcf47aa126f7bc22d";
+  "sha256:7b149371b46e879753d7bdd11652020dcbf116f997257a8fe11a682be6b48af8";
 class WorkspaceMismatchError extends Error {
   constructor(code, message) {
     super(message);
@@ -96,13 +96,24 @@ class WorkspaceMismatchError extends Error {
 }
 
 function canonicalize(value) {
+  if (typeof value === "string") {
+    if (hasLoneSurrogate(value)) {
+      throw new TypeError("canonical JSON must use I-JSON strings without lone surrogate code units");
+    }
+    return JSON.stringify(value);
+  }
   if (Array.isArray(value)) {
     return `[${value.map(canonicalize).join(",")}]`;
   }
   if (value !== null && typeof value === "object") {
     return `{${Object.keys(value)
       .sort()
-      .map((key) => `${JSON.stringify(key)}:${canonicalize(value[key])}`)
+      .map((key) => {
+        if (hasLoneSurrogate(key)) {
+          throw new TypeError("canonical JSON must use I-JSON keys without lone surrogate code units");
+        }
+        return `${JSON.stringify(key)}:${canonicalize(value[key])}`;
+      })
       .join(",")}}`;
   }
   return JSON.stringify(value);
@@ -2166,7 +2177,15 @@ function parseCommittedCanonicalJson(repository, entryMap, relativePath, code) {
   if (!entry || entry.mode === "120000") {
     throw new WorkspaceMismatchError(code, `${repository.workspacePath}/${relativePath} is missing`);
   }
-  const text = new TextDecoder("utf-8", { fatal: true }).decode(entry.bytes);
+  let text;
+  try {
+    text = new TextDecoder("utf-8", { fatal: true, ignoreBOM: true }).decode(entry.bytes);
+  } catch {
+    throw new WorkspaceMismatchError(
+      code,
+      `${repository.workspacePath}/${relativePath} must be I-JSON encoded as UTF-8`,
+    );
+  }
   let value;
   try {
     value = JSON.parse(text);
@@ -2176,7 +2195,15 @@ function parseCommittedCanonicalJson(repository, entryMap, relativePath, code) {
       `${repository.workspacePath}/${relativePath} is not valid JSON`,
     );
   }
-  const canonical = canonicalize(value);
+  let canonical;
+  try {
+    canonical = canonicalize(value);
+  } catch (error) {
+    throw new WorkspaceMismatchError(
+      code,
+      `${repository.workspacePath}/${relativePath} is not I-JSON: ${error.message}`,
+    );
+  }
   if (text !== canonical && text !== `${canonical}\n`) {
     throw new WorkspaceMismatchError(
       code,
@@ -3697,6 +3724,30 @@ function verifyWindowsSandboxBoundary(
   );
 }
 
+function normalizeEmbeddedPaths(bytes, mappings) {
+  const normalized = Buffer.from(bytes);
+  const unique = new Map();
+  for (const [source, label] of mappings) {
+    for (const form of [source, source.replaceAll("\\", "/")]) {
+      if (form.length > 1) unique.set(form, label);
+    }
+  }
+  for (const [source, label] of [...unique].sort((left, right) => right[0].length - left[0].length)) {
+    const sourceBytes = Buffer.from(source);
+    const labelBytes = Buffer.from(label);
+    if (labelBytes.length > sourceBytes.length) {
+      throw new BuildFailureError(`embedded path label ${label} is longer than ${source}`);
+    }
+    const replacement = Buffer.alloc(sourceBytes.length, 0x5f);
+    labelBytes.copy(replacement);
+    for (let offset = normalized.indexOf(sourceBytes); offset !== -1;) {
+      replacement.copy(normalized, offset);
+      offset = normalized.indexOf(sourceBytes, offset + replacement.length);
+    }
+  }
+  return normalized;
+}
+
 async function buildLinux(options, runtime, workspaceState, networkCanary) {
   const target = options.get("--target");
   const profile = options.get("--profile");
@@ -3795,11 +3846,20 @@ async function buildLinux(options, runtime, workspaceState, networkCanary) {
   const zigLibraryRoot = sandboxRequired
     ? "/toolchain/zig/lib"
     : path.join(path.dirname(zig), "lib");
-  const zigInstallRoot = sandboxRequired ? "/build/zig-install" : zigPrefix;
   const zigCacheRoot = sandboxRequired ? "/build/zig-cache" : path.join(workRoot, "zig-cache");
   const zigGlobalCacheRoot = sandboxRequired
     ? "/build/zig-global-cache"
     : path.join(workRoot, "zig-global-cache");
+  const zigObject = path.join(workRoot, "zig-main.o");
+  const zigObjectArgument = sandboxRequired ? "/build/zig-main.o" : zigObject;
+  const zigOutput = path.join(zigPrefix, "bin", "tsfg-r00-zig-smoke");
+  const zigOutputArgument = sandboxRequired ? "/build/zig-install/bin/tsfg-r00-zig-smoke" : zigOutput;
+  const zigLinkCacheRoot = sandboxRequired
+    ? "/build/zig-link-cache"
+    : path.join(workRoot, "zig-link-cache");
+  const zigLinkGlobalCacheRoot = sandboxRequired
+    ? "/build/zig-link-global-cache"
+    : path.join(workRoot, "zig-link-global-cache");
   const cmakeArguments = [
     "-S", path.join(sourceRoot, "tests", "r00", "smoke", "cpp"),
     "-B", cppWork,
@@ -3818,21 +3878,37 @@ async function buildLinux(options, runtime, workspaceState, networkCanary) {
   ];
   const ninjaArguments = ["-C", cppWork, "tsfg-r00-cpp-smoke"];
   const zigArguments = [
-    "build",
-    "--build-file", "tests/r00/smoke/zig/build.zig",
+    "build-obj",
+    "tests/r00/smoke/zig/main.zig",
     "--zig-lib-dir", zigLibraryRoot,
-    "--prefix", zigInstallRoot,
+    "-target", "x86_64-linux-gnu",
+    "-mcpu", "x86_64_v2",
+    `-O${zigOptimize}`,
+    "-fno-lto",
+    "-fno-incremental",
+    `-femit-bin=${zigObjectArgument}`,
     "--cache-dir", zigCacheRoot,
     "--global-cache-dir", zigGlobalCacheRoot,
-    "-Dtarget=x86_64-linux-gnu",
-    `-Doptimize=${zigOptimize}`,
-    "-Dcpu=x86_64_v2",
-    "--seed", "0",
+  ];
+  const zigLinkArguments = [
+    "build-exe",
+    zigObjectArgument,
+    "--zig-lib-dir", zigLibraryRoot,
+    "-target", "x86_64-linux-gnu",
+    "-mcpu", "x86_64_v2",
+    `-O${zigOptimize}`,
+    "-fentry=_start",
+    "-fno-lto",
+    "-fno-incremental",
+    `-femit-bin=${zigOutputArgument}`,
+    "--cache-dir", zigLinkCacheRoot,
+    "--global-cache-dir", zigLinkGlobalCacheRoot,
   ];
   const steps = [
     { tool: "cmake", executable: cmake, arguments: cmakeArguments },
     { tool: "ninja", executable: selectedNinja, arguments: ninjaArguments },
     { tool: "zig", executable: zig, arguments: zigArguments },
+    { tool: "zig", executable: zig, arguments: zigLinkArguments },
   ];
 
   try {
@@ -3928,12 +4004,19 @@ async function buildLinux(options, runtime, workspaceState, networkCanary) {
     const cppBytes = await readRegularFile(cppOutput, "C++ smoke build output")
       .catch((error) => { throw new BuildFailureError(error.message); });
     const publishedCpp = path.join(binRoot, "tsfg-r00-cpp-smoke");
-    const zigOutput = path.join(zigPrefix, "bin", "tsfg-r00-zig-smoke");
     const zigBytes = await readRegularFile(zigOutput, "Zig smoke build output")
       .catch((error) => { throw new BuildFailureError(error.message); });
+    const normalizedZigBytes = normalizeEmbeddedPaths(zigBytes, [
+      [sourceRoot, ".workspace"],
+      [runtime.closurePath, ".toolchain"],
+      [workRoot, ".build"],
+      ["/workspace", ".workspace"],
+      ["/toolchain", ".toolchain"],
+      ["/build", ".build"],
+    ]);
     const publishedZig = path.join(binRoot, "tsfg-r00-zig-smoke");
     await writeFile(publishedCpp, cppBytes, { flag: "wx" });
-    await writeFile(publishedZig, zigBytes, { flag: "wx" });
+    await writeFile(publishedZig, normalizedZigBytes, { flag: "wx" });
     if (process.platform !== "win32") {
       await chmod(publishedCpp, 0o755);
       await chmod(publishedZig, 0o755);
@@ -4068,16 +4151,34 @@ async function normalizeWindowsPdb(
   }
   const identityNeutralYaml = yaml
     .replace(/^  Guid:\s+.*$/m, "  Guid:            '{00000000-0000-0000-0000-000000000000}'")
-    .replace(/^  Signature:\s+.*$/m, "  Signature:       0");
-  const identityHex = createHash("sha256").update(identityNeutralYaml).digest("hex");
-  const guidText = `{${identityHex.slice(0, 8)}-${identityHex.slice(8, 12)}-${identityHex.slice(12, 16)}-${identityHex.slice(16, 20)}-${identityHex.slice(20, 32)}}`.toUpperCase();
-  yaml = identityNeutralYaml
-    .replace("'{00000000-0000-0000-0000-000000000000}'", `'${guidText}'`)
-    .replace(/^  Signature:\s+0$/m, `  Signature:       ${Number.parseInt(identityHex.slice(0, 8), 16)}`);
-  await writeFile(yamlPath, yaml, { encoding: "utf8", flag: "wx" });
+    .replace(/^  Signature:\s+.*$/m, "  Signature:       0")
+    // llvm-pdbutil yaml2pdb appends VC140 on every round-trip and adjusts
+    // StreamSizes[1] to match.  Neither value describes program semantics, so
+    // canonical PDB identity excludes that serializer-induced layout noise.
+    .replace(/^StreamSizes:\s+\[\s*0,\s*\d+,/m, "StreamSizes:     [ 0, 0,")
+    .replace(/^  Features:\s+\[([^\]]*)\]$/m, (_match, features) => {
+      const unique = [...new Set(features.split(",").map((feature) => feature.trim()).filter(Boolean))];
+      return `  Features:        [ ${unique.join(", ")} ]`;
+    });
+  if (
+    [...identityNeutralYaml.matchAll(/^StreamSizes:\s+\[\s*0,\s*0,/gm)].length !== 1 ||
+    [...identityNeutralYaml.matchAll(/^  Features:\s+\[[^\]]*\]$/gm)].length !== 1
+  ) {
+    throw new BuildFailureError("PDB normalization could not locate its semantic layout fields");
+  }
+  await writeFile(yamlPath, identityNeutralYaml, { encoding: "utf8", flag: "wx" });
   try {
+    const identityHex = createHash("sha256").update(identityNeutralYaml).digest("hex");
+    const guidText = `{${identityHex.slice(0, 8)}-${identityHex.slice(8, 12)}-${identityHex.slice(12, 16)}-${identityHex.slice(16, 20)}-${identityHex.slice(20, 32)}}`.toUpperCase();
+    yaml = identityNeutralYaml
+      .replace("'{00000000-0000-0000-0000-000000000000}'", `'${guidText}'`)
+      .replace(
+        /^  Signature:\s+0$/m,
+        `  Signature:       ${Number.parseInt(identityHex.slice(0, 8), 16)}`,
+      );
+    await writeFile(yamlPath, yaml, { encoding: "utf8" });
     runBuildTool(
-      "llvm-pdbutil",
+      "llvm-pdbutil canonicalization",
       sandboxExecutable,
       windowsSandboxArguments(
         sandboxPolicy,
@@ -4088,22 +4189,37 @@ async function normalizeWindowsPdb(
       environment,
       true,
     );
-    await copyFile(normalizedPath, pdbPath);
     const verified = runWindowsSandboxedCapture(
       "llvm-pdbutil verification",
       sandboxExecutable,
       sandboxPolicy,
       pdbutil,
-      ["pdb2yaml", "--all", pdbPath],
+      ["pdb2yaml", "--all", normalizedPath],
       workRoot,
       environment,
-    );
-    if (/[A-Za-z]:[\\/]/.test(verified.stdout)) {
+    ).stdout;
+    if (/[A-Za-z]:[\\/]/.test(verified)) {
       throw new BuildFailureError("normalized PDB still contains an absolute Windows path");
     }
-    if (!verified.stdout.includes(`Guid:            '${guidText}'`)) {
-      throw new BuildFailureError("normalized PDB identity does not match its canonical content");
+    if (
+      [...verified.matchAll(/^  Guid:\s+.*$/gm)].length !== 1 ||
+      [...verified.matchAll(/^  Signature:\s+.*$/gm)].length !== 1 ||
+      !verified.includes(`Guid:            '${guidText}'`)
+    ) {
+      throw new BuildFailureError("normalized PDB identity fields are invalid");
     }
+    const verifiedNeutral = verified
+      .replace(/^  Guid:\s+.*$/m, "  Guid:            '{00000000-0000-0000-0000-000000000000}'")
+      .replace(/^  Signature:\s+.*$/m, "  Signature:       0")
+      .replace(/^StreamSizes:\s+\[\s*0,\s*\d+,/m, "StreamSizes:     [ 0, 0,")
+      .replace(/^  Features:\s+\[([^\]]*)\]$/m, (_match, features) => {
+        const unique = [...new Set(features.split(",").map((feature) => feature.trim()).filter(Boolean))];
+        return `  Features:        [ ${unique.join(", ")} ]`;
+      });
+    if (verifiedNeutral !== identityNeutralYaml) {
+      throw new BuildFailureError("normalized PDB semantic content changed during canonicalization");
+    }
+    await copyFile(normalizedPath, pdbPath);
     const guidBytes = Buffer.alloc(16);
     guidBytes.writeUInt32LE(Number.parseInt(identityHex.slice(0, 8), 16), 0);
     guidBytes.writeUInt16LE(Number.parseInt(identityHex.slice(8, 12), 16), 4);
@@ -4132,7 +4248,12 @@ async function normalizeWindowsExecutable(executablePath, pdbGuid, timestamp) {
   const sectionCount = bytes.readUInt16LE(coffOffset + 2);
   const optionalHeaderSize = bytes.readUInt16LE(coffOffset + 16);
   const optionalOffset = coffOffset + 20;
-  if (bytes.readUInt16LE(optionalOffset) !== 0x20b || optionalHeaderSize < 112 + 8 * 7) {
+  if (
+    optionalHeaderSize < 112 + 8 * 7 ||
+    optionalOffset + optionalHeaderSize > bytes.length ||
+    bytes.readUInt16LE(optionalOffset) !== 0x20b ||
+    bytes.readUInt32LE(optionalOffset + 108) < 7
+  ) {
     throw new BuildFailureError("Windows executable has an unsupported optional header");
   }
   const debugDirectoryRva = bytes.readUInt32LE(optionalOffset + 112 + 8 * 6);
@@ -4142,15 +4263,22 @@ async function normalizeWindowsExecutable(executablePath, pdbGuid, timestamp) {
   for (let index = 0; index < sectionCount; index += 1) {
     const sectionOffset = sectionTableOffset + 40 * index;
     if (sectionOffset + 40 > bytes.length) break;
-    const virtualSize = bytes.readUInt32LE(sectionOffset + 8);
     const virtualAddress = bytes.readUInt32LE(sectionOffset + 12);
     const rawSize = bytes.readUInt32LE(sectionOffset + 16);
     const rawOffset = bytes.readUInt32LE(sectionOffset + 20);
-    if (
-      debugDirectoryRva >= virtualAddress &&
-      debugDirectoryRva < virtualAddress + Math.max(virtualSize, rawSize)
-    ) {
-      debugDirectoryOffset = rawOffset + debugDirectoryRva - virtualAddress;
+    if (debugDirectoryRva >= virtualAddress) {
+      const relativeOffset = debugDirectoryRva - virtualAddress;
+      if (
+        relativeOffset <= rawSize &&
+        debugDirectorySize <= rawSize - relativeOffset &&
+        rawOffset <= bytes.length &&
+        relativeOffset <= bytes.length - rawOffset &&
+        debugDirectorySize <= bytes.length - rawOffset - relativeOffset
+      ) {
+        debugDirectoryOffset = rawOffset + relativeOffset;
+      }
+    }
+    if (debugDirectoryOffset !== undefined) {
       break;
     }
   }
@@ -4254,7 +4382,6 @@ async function buildWindows(options, runtime, workspaceState, networkCanary) {
     profile === "debug" ? "/Od" : "/O2",
     "/Zi",
     "/UNDEBUG",
-    "/Brepro",
     "/clang:-march=x86-64-v2",
     "/clang:-mtune=generic",
     "/clang:-mno-avx",
@@ -4290,6 +4417,8 @@ async function buildWindows(options, runtime, workspaceState, networkCanary) {
     "-Dtarget=x86_64-windows-msvc",
     `-Doptimize=${buildPolicy.zig.optimization}`,
     "-Dcpu=x86_64_v2",
+    "-j1",
+    "-fno-incremental",
     "--seed", "0",
   ];
   const compatibilityObject = path.join(compatibilityRoot, "main.obj");
@@ -4455,7 +4584,7 @@ function runSmokeExecutable(
   executionMode = "toolchain-runtime",
 ) {
   const useToolchainSysroot = runtime.platform === "linux-x86_64-gnu" &&
-    executionMode !== "native-host";
+    executionMode === "toolchain-runtime";
   const sysroot = useToolchainSysroot
     ? path.join(runtime.closurePath, "debian-sysroot")
     : undefined;
@@ -4685,6 +4814,9 @@ async function testSmoke(options, runtime, workspaceState, networkCanary) {
         lockedShell,
         workspaceState.root,
         smoke.arguments,
+        target === "linux-x86_64-gnu" && smoke.name === "zig-smoke"
+          ? "direct-executable"
+          : "toolchain-runtime",
       );
       if (observed.stdout !== smoke.stdout || observed.stderr !== smoke.stderr) {
         throw new TestFailureError(
@@ -5015,18 +5147,29 @@ async function testCompatibility(options, workspaceState, networkCanary) {
 }
 
 async function readCanonicalJson(filePath, name) {
-  const bytes = await readFile(filePath, "utf8");
-  if (bytes.charCodeAt(0) === 0xfeff) {
+  const bytes = await readRegularFile(filePath, name);
+  let text;
+  try {
+    text = new TextDecoder("utf-8", { fatal: true, ignoreBOM: true }).decode(bytes);
+  } catch {
+    throw new PackageFailureError(`${name} must be I-JSON encoded as UTF-8`);
+  }
+  if (text.charCodeAt(0) === 0xfeff) {
     throw new PackageFailureError(`${name} must not contain a BOM`);
   }
   let value;
   try {
-    value = JSON.parse(bytes);
+    value = JSON.parse(text);
   } catch (error) {
     throw new PackageFailureError(`${name} is not valid JSON: ${error.message}`);
   }
-  const canonical = canonicalize(value);
-  if (bytes !== canonical && bytes !== `${canonical}\n`) {
+  let canonical;
+  try {
+    canonical = canonicalize(value);
+  } catch (error) {
+    throw new PackageFailureError(`${name} is not I-JSON: ${error.message}`);
+  }
+  if (text !== canonical && text !== `${canonical}\n`) {
     throw new PackageFailureError(`${name} must use canonical JSON`);
   }
   return value;

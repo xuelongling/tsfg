@@ -379,6 +379,27 @@ test("verify-workspace rejects a UTF-8 BOM from the pinned repository tree", asy
   }
 });
 
+test("verify-workspace rejects lone surrogate code units in committed canonical JSON", async () => {
+  const sandbox = await mkdtemp(path.join(tmpdir(), "tsfg-policy-ijson-surrogate-"));
+  const workspace = path.join(sandbox, "workspace");
+  const reportPath = path.join(sandbox, "report.json");
+  try {
+    const { manifestHead } = await materializePolicyFixture(workspace, {
+      productFiles: {
+        "eng/dependency-sources.json":
+          '{"dependencies":[],"schemaVersion":"\\ud800"}\n',
+      },
+    });
+    const result = await invokeVerify(workspace, manifestHead, reportPath);
+    assert.equal(result.status, 10, result.stderr);
+    const report = JSON.parse(await readFile(reportPath, "utf8"));
+    assert.equal(report.error.issues[0].code, "dependency-metadata");
+    assert.match(report.error.issues[0].message, /I-JSON.*surrogate/);
+  } finally {
+    await rm(sandbox, { recursive: true, force: true, maxRetries: 10, retryDelay: 100 });
+  }
+});
+
 test("verify-workspace rejects non-UTF-8 bytes and non-LF Git text", async () => {
   const scenarios = [
     {

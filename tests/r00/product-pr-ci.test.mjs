@@ -660,6 +660,37 @@ test("candidate verdict requires complete successful matrix evidence before decl
     assert.equal(verdict.requiredEvidence.reproducibility, "4/4");
     assert.match(verdict.evidenceDigest, /^sha256:[0-9a-f]{64}$/);
 
+    const overlayPath = path.join(evidence, "identity", "candidate-overlay.json");
+    const canonicalOverlayBytes = await readFile(overlayPath);
+    await writeFile(
+      overlayPath,
+      `${JSON.stringify(JSON.parse(canonicalOverlayBytes.toString("utf8")), null, 2)}\n`,
+    );
+    const noncanonicalOverlayOutput = path.join(sandbox, "noncanonical-overlay-evidence.json");
+    const noncanonicalOverlay = invoke([
+      "verdict", "--evidence", evidence,
+      "--job-results", jobResultsPath,
+      "--out", noncanonicalOverlayOutput,
+    ]);
+    assert.notEqual(noncanonicalOverlay.status, 0);
+    assert.match(noncanonicalOverlay.stderr, /Candidate Overlay must use canonical JSON/);
+    await assert.rejects(readFile(noncanonicalOverlayOutput));
+    await writeFile(overlayPath, canonicalOverlayBytes);
+
+    const loneSurrogateOverlay = canonicalOverlayBytes.toString("utf8").trimEnd()
+      .replace(/}$/, ',"x":"\\ud800"}');
+    await writeFile(overlayPath, `${loneSurrogateOverlay}\n`);
+    const nonIJsonOverlayOutput = path.join(sandbox, "non-ijson-overlay-evidence.json");
+    const nonIJsonOverlay = invoke([
+      "verdict", "--evidence", evidence,
+      "--job-results", jobResultsPath,
+      "--out", nonIJsonOverlayOutput,
+    ]);
+    assert.notEqual(nonIJsonOverlay.status, 0);
+    assert.match(nonIJsonOverlay.stderr, /non-I-JSON string/);
+    await assert.rejects(readFile(nonIJsonOverlayOutput));
+    await writeFile(overlayPath, canonicalOverlayBytes);
+
     const verifiedManifestIdentityPath = path.join(
       evidence,
       "workspace-verification",

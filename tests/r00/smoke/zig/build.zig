@@ -14,5 +14,9 @@ pub fn build(b: *std.Build) void {
         }),
     });
     executable.lto = .none;
+    if (target.result.os.tag == .windows) {
+        executable.root_module.link_libc = true;
+        executable.root_module.linkSystemLibrary("kernel32", .{});
+    }
     b.installArtifact(executable);
 }

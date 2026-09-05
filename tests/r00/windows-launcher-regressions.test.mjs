@@ -13,16 +13,16 @@ const repositoryRoot = path.resolve(
   "../..",
 );
 
-test("Windows restricted token strips privileges without disabling access groups", async () => {
+test("Windows restricted token caps path access with a restricting SID", async () => {
   const source = await readFile(
     path.join(repositoryRoot, "eng", "windows-sandbox-run.c"),
     "utf8",
   );
-  assert.match(source, /GetTokenInformation\(process_token, TokenUser/);
-  assert.match(source, /apply_grant\(&requested\[index\], token_user->User\.Sid/);
+  assert.match(source, /CreateWellKnownSid\(WinRestrictedCodeSid/);
+  assert.match(source, /apply_grant\(&requested\[index\], restricted_sid/);
   assert.match(
     source,
-    /CreateRestrictedToken\(process_token, DISABLE_MAX_PRIVILEGE,\s*0, NULL, 0, NULL, 0, NULL/,
+    /CreateRestrictedToken\(process_token, DISABLE_MAX_PRIVILEGE,\s*0, NULL, 0, NULL, 1, &restricting_sid/,
   );
   assert.doesNotMatch(source, /WinBuiltinAdministratorsSid|SID_AND_ATTRIBUTES disabled/);
   assert.match(
@@ -30,6 +30,10 @@ test("Windows restricted token strips privileges without disabling access groups
     /GRANT_READ_WRITE:[\s\S]*GENERIC_READ \| GENERIC_WRITE \| GENERIC_EXECUTE \| DELETE/,
   );
   assert.match(source, /GRANT_READ_ONLY: return GENERIC_READ \| GENERIC_EXECUTE/);
+  assert.match(
+    source,
+    /GRANT_READ_ONLY \|\|[\s\S]*GRANT_READ_EXECUTE\)[\s\S]*GENERIC_WRITE \| DELETE[\s\S]*FILE_DELETE_CHILD[\s\S]*DENY_ACCESS/,
+  );
 });
 const windowsLauncher = path.join(repositoryRoot, "eng", "tsfg-build.cmd");
 

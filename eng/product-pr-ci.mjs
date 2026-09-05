@@ -59,14 +59,40 @@ function canonicalJsonBytes(value) {
   return Buffer.from(canonicalize(value));
 }
 
+function hasLoneSurrogate(value) {
+  for (let index = 0; index < value.length; index += 1) {
+    const codeUnit = value.charCodeAt(index);
+    if (codeUnit >= 0xd800 && codeUnit <= 0xdbff) {
+      if (index + 1 >= value.length) return true;
+      const next = value.charCodeAt(index + 1);
+      if (next < 0xdc00 || next > 0xdfff) return true;
+      index += 1;
+    } else if (codeUnit >= 0xdc00 && codeUnit <= 0xdfff) {
+      return true;
+    }
+  }
+  return false;
+}
+
 function canonicalize(value) {
-  if (value === null || typeof value === "boolean" || typeof value === "string") {
+  if (typeof value === "string") {
+    if (hasLoneSurrogate(value)) {
+      throw new ProductPrError("candidate evidence contains a non-I-JSON string");
+    }
+    return JSON.stringify(value);
+  }
+  if (value === null || typeof value === "boolean") {
     return JSON.stringify(value);
   }
   if (typeof value === "number" && Number.isFinite(value)) return JSON.stringify(value);
   if (Array.isArray(value)) return `[${value.map(canonicalize).join(",")}]`;
   if (value && typeof value === "object") {
-    return `{${Object.keys(value).sort().map((key) => `${JSON.stringify(key)}:${canonicalize(value[key])}`).join(",")}}`;
+    return `{${Object.keys(value).sort().map((key) => {
+      if (hasLoneSurrogate(key)) {
+        throw new ProductPrError("candidate evidence contains a non-I-JSON key");
+      }
+      return `${JSON.stringify(key)}:${canonicalize(value[key])}`;
+    }).join(",")}}`;
   }
   throw new ProductPrError("candidate evidence contains a non-I-JSON value");
 }
@@ -264,11 +290,47 @@ async function writePlan(options) {
 }
 
 async function readJson(filePath, label) {
+  let text;
+  try {
+    const bytes = await readFile(filePath);
+    text = new TextDecoder("utf-8", { fatal: true, ignoreBOM: true }).decode(bytes);
+  } catch (error) {
+    throw new ProductPrError(`${label} is missing or not I-JSON UTF-8: ${error instanceof Error ? error.message : String(error)}`);
+  }
+  if (text.charCodeAt(0) === 0xfeff) {
+    throw new ProductPrError(`${label} must not contain a BOM`);
+  }
   let value;
   try {
-    value = JSON.parse(await readFile(filePath, "utf8"));
+    value = JSON.parse(text);
   } catch (error) {
     throw new ProductPrError(`${label} is missing or invalid: ${error instanceof Error ? error.message : String(error)}`);
+  }
+  return value;
+}
+
+async function readCanonicalJson(filePath, label) {
+  const bytes = await readFile(filePath).catch((error) => {
+    throw new ProductPrError(`${label} is missing: ${error.message}`);
+  });
+  let text;
+  try {
+    text = new TextDecoder("utf-8", { fatal: true, ignoreBOM: true }).decode(bytes);
+  } catch {
+    throw new ProductPrError(`${label} must be I-JSON encoded as UTF-8`);
+  }
+  if (text.charCodeAt(0) === 0xfeff) {
+    throw new ProductPrError(`${label} must not contain a BOM`);
+  }
+  let value;
+  try {
+    value = JSON.parse(text);
+  } catch (error) {
+    throw new ProductPrError(`${label} is not valid JSON: ${error.message}`);
+  }
+  const canonical = canonicalize(value);
+  if (text !== canonical && text !== `${canonical}\n`) {
+    throw new ProductPrError(`${label} must use canonical JSON`);
   }
   return value;
 }
@@ -389,8 +451,8 @@ async function writeVerdict(options) {
   const identity = await readJson(path.join(identityRoot, "candidate-identity.json"), "candidate identity");
   requireOid(identity?.candidateRevision, "candidate revision");
   requireOid(identity?.baselineProductRevision, "baseline product revision");
-  const overlay = await readJson(path.join(identityRoot, "candidate-overlay.json"), "Candidate Overlay");
-  const resolvedManifest = await readJson(
+  const overlay = await readCanonicalJson(path.join(identityRoot, "candidate-overlay.json"), "Candidate Overlay");
+  const resolvedManifest = await readCanonicalJson(
     path.join(identityRoot, "resolved-manifest.json"),
     "resolved manifest",
   );
