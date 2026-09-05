@@ -354,6 +354,7 @@ test("product PR workflow composes every gate, producer, compatibility lane, and
 test("product PR workflow isolates every Linux offline phase in a loopback-only namespace", async () => {
   const workflow = await readFile(workflowPath, "utf8");
   const jobs = [
+    workflowJob(workflow, "repository-gates"),
     workflowJob(workflow, "workspace-verification"),
     workflowJob(workflow, "product-build"),
     workflowJob(workflow, "compatibility"),
@@ -367,13 +368,14 @@ test("product PR workflow isolates every Linux offline phase in a loopback-only 
   }
 
   const assertions = [
-    [jobs[0], /eng\/tsfg-build" verify-workspace/],
+    [jobs[0], /contract-compatibility-cli\.test\.mjs/],
     [jobs[1], /eng\/tsfg-build" verify-workspace/],
-    [jobs[1], /eng\/tsfg-build" build/],
-    [jobs[1], /eng\/tsfg-build" test/],
-    [jobs[1], /eng\/tsfg-build" package/],
+    [jobs[2], /eng\/tsfg-build" verify-workspace/],
+    [jobs[2], /eng\/tsfg-build" build/],
     [jobs[2], /eng\/tsfg-build" test/],
-    [jobs[3], /eng\/tsfg-build" repro-check/],
+    [jobs[2], /eng\/tsfg-build" package/],
+    [jobs[3], /eng\/tsfg-build" test/],
+    [jobs[4], /eng\/tsfg-build" repro-check/],
   ];
   for (const [job, command] of assertions) {
     const line = job.split("\n").find((candidate) => command.test(candidate));

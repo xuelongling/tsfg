@@ -14,7 +14,7 @@ env:
   TSFG_MANIFEST_REVISION: d94f4e6bff9aa980b18b0df94e133559e4b61240
   TSFG_MANIFEST_URL: https://github.com/xuelongling/manifests.git
   TSFG_SELECTED_MANIFEST: bootstrap/r00.xml
-  TSFG_AGENT_TOOLS_REVISION: 24ac2c33750ec0e292e0fba6841897b9c5f86dca
+  TSFG_AGENT_TOOLS_REVISION: dd2b6732219e8e0b03de0a88392002ab8e985573
   TSFG_BASELINE_PRODUCT_REVISION: eb2838e4c4910113b23072b40c526a8b2843f744
   TSFG_BASELINE_COMPATIBILITY_SHA256: 1602d13ccbedf7c0fe449d3213ecf330660f7683ac892f22702942d9680c3459
   TSFG_REPO_LAUNCHER_SHA256: 1211b57b57e4122a9c546295a59b37d24068f1164d0e87bef096d5323c413e4f
@@ -76,7 +76,17 @@ jobs:
       - name: Lock gate
         run: node --test --test-concurrency=1 tests/r00/toolchain-lock.test.mjs
       - name: Contract compatibility gate
-        run: node --test --test-concurrency=1 tests/r00/contract-compatibility-cli.test.mjs
+        shell: bash
+        run: |
+          run_offline() {
+            sudo unshare --net --mount-proc bash -ceu '
+              ip link set lo up
+              interfaces=$(find /sys/class/net -mindepth 1 -maxdepth 1 -printf "%f\\n" | sort)
+              [ "$interfaces" = "lo" ]
+              exec setpriv --reuid "$1" --regid "$2" --clear-groups -- "${@:3}"
+            ' bash "$(id -u)" "$(id -g)" "$@"
+          }
+          run_offline node --test --test-concurrency=1 tests/r00/contract-compatibility-cli.test.mjs
       - name: Typecheck
         run: node node_modules/typescript/bin/tsc --noEmit
       - name: Record repository gate evidence
