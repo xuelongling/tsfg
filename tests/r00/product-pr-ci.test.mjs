@@ -314,6 +314,9 @@ test("product PR workflow composes every gate, producer, compatibility lane, and
   const productBuild = workflowJob(workflow, "product-build");
   assert.equal((productBuild.match(/git -C .*\.agents.* fetch --no-tags /g) ?? []).length, 2);
   assert.equal((productBuild.match(/git -C .*\.agents.* checkout --detach FETCH_HEAD/g) ?? []).length, 2);
+  assert.match(productBuild, /python "\$env:GITHUB_WORKSPACE\/\.ci\/bootstrap\/repo\.py" init/);
+  assert.match(productBuild, /python "\$env:GITHUB_WORKSPACE\/\.ci\/bootstrap\/repo\.py" sync --verify/);
+  assert.doesNotMatch(productBuild, /repo\.cmd" (?:init|sync)/);
   assert.match(productBuild, /eng[\\/]tsfg-build(?:\.cmd)?"? build/);
   assert.match(productBuild, /eng[\\/]tsfg-build(?:\.cmd)?"? test/);
   assert.match(productBuild, /eng[\\/]tsfg-build(?:\.cmd)?"? package/);
@@ -333,6 +336,8 @@ test("product PR workflow composes every gate, producer, compatibility lane, and
   assert.doesNotMatch(compatibility, /baselineSyntheticArtifact/);
   assert.match(compatibility, /TSFG_BASELINE_COMPATIBILITY_SHA256/);
   assert.match(compatibility, /process\.env\.TSFG_BASELINE_PRODUCT_REVISION/);
+  assert.match(compatibility, /join\(process\.env\.RUNNER_TEMP,'tsfg-compatibility','input','baseline\.json'\)/);
+  assert.doesNotMatch(compatibility, /readFileSync\('\$compatibility\/input/);
   assert.match(compatibility, /sha256sum --check --strict/);
   assert.match(compatibility, /eb2838e4c4910113b23072b40c526a8b2843f744/);
   assert.match(compatibility, /candidateSyntheticArtifact/);

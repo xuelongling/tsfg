@@ -259,9 +259,9 @@ jobs:
         run: |
           $workspace = "$env:RUNNER_TEMP/tsfg-producer-${{ matrix.producer }}/workspace"
           Push-Location $workspace
-          & "$env:GITHUB_WORKSPACE/.ci/bootstrap/repo.cmd" init -u $env:TSFG_MANIFEST_URL -b $env:TSFG_MANIFEST_REVISION -m $env:TSFG_SELECTED_MANIFEST --repo-rev=v2.65
+          python "$env:GITHUB_WORKSPACE/.ci/bootstrap/repo.py" init -u $env:TSFG_MANIFEST_URL -b $env:TSFG_MANIFEST_REVISION -m $env:TSFG_SELECTED_MANIFEST --repo-rev=v2.65 --worktree
           if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
-          & "$env:GITHUB_WORKSPACE/.ci/bootstrap/repo.cmd" sync --verify
+          python "$env:GITHUB_WORKSPACE/.ci/bootstrap/repo.py" sync --verify
           if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
           Pop-Location
           git -C "$workspace/tsfg" fetch --no-tags "$env:GITHUB_WORKSPACE" '${{ github.event.pull_request.head.sha }}'
@@ -374,7 +374,7 @@ jobs:
           {"artifactKind":"r00-synthetic-contract-artifact","consumer":{"acceptsUnknownFields":true,"optionalFields":[],"requiredFields":["id"]},"contract":{"change":{"class":"baseline"},"compatibility":"bidirectional","familyId":"r00.synthetic.compatibility","schemaHash":"sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa","semanticRevision":"baseline","semver":"0.1.0"},"producer":{"payload":{"id":"baseline"}},"product":{"commitOid":"eb2838e4c4910113b23072b40c526a8b2843f744","contractSetId":"sha256:44136fa355b3678a1146ad16f7e8649e94fb4fc21fe77e8310c060f61caaff8a","semver":"0.1.0-dev.0"},"schemaVersion":"1"}
           JSON
           echo "$TSFG_BASELINE_COMPATIBILITY_SHA256  $compatibility/input/baseline.json" | sha256sum --check --strict
-          node -e "const artifact=JSON.parse(require('node:fs').readFileSync('$compatibility/input/baseline.json','utf8')); if (artifact.product.commitOid !== process.env.TSFG_BASELINE_PRODUCT_REVISION) throw new Error('fixed compatibility baseline Product OID mismatch');"
+          node -e "const {join}=require('node:path'); const artifact=JSON.parse(require('node:fs').readFileSync(join(process.env.RUNNER_TEMP,'tsfg-compatibility','input','baseline.json'),'utf8')); if (artifact.product.commitOid !== process.env.TSFG_BASELINE_PRODUCT_REVISION) throw new Error('fixed compatibility baseline Product OID mismatch');"
           node --input-type=module -e "import {writeFile} from 'node:fs/promises'; import {join} from 'node:path'; import {candidateSyntheticArtifact} from './tests/r00/contract-compatibility-fixtures.mjs'; const candidate=candidateSyntheticArtifact(); candidate.product.commitOid='${{ github.event.pull_request.head.sha }}'; const root=join(process.env.RUNNER_TEMP,'tsfg-compatibility','input'); await writeFile(join(root,'candidate.json'),JSON.stringify(candidate)+'\n');"
       - name: Prefetch the verified Linux compatibility runtime
         if: runner.os == 'Linux'

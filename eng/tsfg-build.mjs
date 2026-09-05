@@ -3551,6 +3551,13 @@ async function provisionWindowsSandboxControl(runtime) {
     const normalized = normalizeWindowsSandboxControl(bytes);
     const actual = digest(normalized);
     if (actual !== WINDOWS_SANDBOX_EXECUTABLE_DIGEST) {
+      const diagnosticRoot = path.join(runtime.cachePath, "windows-sandbox-control-failure");
+      await mkdir(diagnosticRoot, { recursive: true });
+      await writeFile(path.join(diagnosticRoot, "windows-sandbox-run.exe"), normalized);
+      await writeFile(
+        path.join(diagnosticRoot, "digest.json"),
+        `${JSON.stringify({ actual, expected: WINDOWS_SANDBOX_EXECUTABLE_DIGEST, schemaVersion: "1" })}\n`,
+      );
       throw new Error(
         `Windows sandbox control build mismatch: expected ${WINDOWS_SANDBOX_EXECUTABLE_DIGEST}, got ${actual}`,
       );
