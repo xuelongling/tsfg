@@ -3431,7 +3431,7 @@ async function compileWindowsSandbox(runtime, sourceRoot, controlRoot) {
     [
       "cc",
       "-target", "x86_64-windows-msvc",
-      "-mcpu", "x86_64_v2",
+      "-mcpu=x86_64_v2",
       "-O2",
       "-g0",
       "-municode",

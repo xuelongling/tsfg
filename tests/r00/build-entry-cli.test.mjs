@@ -39,7 +39,7 @@ test("Windows sandbox control pins the R00 CPU baseline", async () => {
   const end = source.indexOf("function windowsSandboxControlPath", start);
   assert.notEqual(start, -1);
   assert.notEqual(end, -1);
-  assert.match(source.slice(start, end), /"-mcpu", "x86_64_v2"/);
+  assert.match(source.slice(start, end), /"-mcpu=x86_64_v2"/);
 });
 
 function validVerifyArguments(reportPath) {
