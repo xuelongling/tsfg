@@ -87,7 +87,7 @@ const WINDOWS_NETWORK_ISOLATION = Object.freeze({
   status: "blocked",
 });
 const WINDOWS_SANDBOX_EXECUTABLE_DIGEST =
-  "sha256:2f2553abb4952fd6f0683b233a31135ad45a603a8829a9ad95903e4617ad64b9";
+  "sha256:3852de1f36b1a8e4611d0619f7b131a8635d4889a3f2936bafabd6e0922d5d61";
 class WorkspaceMismatchError extends Error {
   constructor(code, message) {
     super(message);
@@ -3415,39 +3415,53 @@ function windowsSandboxArguments(policy, executable, arguments_) {
 }
 
 async function compileWindowsSandbox(runtime, sourceRoot, controlRoot) {
-  const zig = closureToolPath(runtime, "zig");
   const tools = windowsToolchain(runtime);
   const executable = path.join(controlRoot, "windows-sandbox-run.exe");
   await mkdir(controlRoot, { recursive: true });
-  const environment = buildEnvironment(controlRoot, [path.dirname(zig)]);
+  const environment = buildEnvironment(controlRoot, [
+    path.dirname(tools.clangcl),
+    path.dirname(tools.lld),
+  ]);
   environment.INCLUDE = tools.include.join(";");
   environment.LIB = tools.lib.join(";");
   environment.LIBPATH = tools.lib.join(";");
-  environment.ZIG_GLOBAL_CACHE_DIR = path.join(controlRoot, "zig-global-cache");
-  environment.ZIG_LOCAL_CACHE_DIR = path.join(controlRoot, "zig-local-cache");
   runBuildTool(
     "windows-sandbox-bootstrap",
-    zig,
+    tools.clangcl,
     [
-      "cc",
-      "-target", "x86_64-windows-msvc",
-      "-mcpu=x86_64_v2",
-      "-O2",
-      "-g0",
-      "-municode",
-      "-Wl,/Brepro",
-      "-frandom-seed=0",
-      "-fdebug-compilation-dir=.",
-      "-fcoverage-compilation-dir=.",
-      "-nostdinc",
-      "-isystem", path.join(path.dirname(zig), "lib", "include"),
-      ...tools.include.flatMap((includePath) => ["-isystem", includePath]),
-      ...tools.lib.flatMap((libraryPath) => ["-L", libraryPath]),
+      "/nologo",
+      "/TC",
+      "/O2",
+      "/MT",
+      "/Brepro",
+      "/DUNICODE",
+      "/D_UNICODE",
+      "/X",
+      "/clang:-march=x86-64-v2",
+      "/clang:-mtune=generic",
+      "/clang:-mno-avx",
+      "/clang:-fno-lto",
+      "/clang:-fno-profile-generate",
+      "/clang:-fno-profile-use",
+      "/clang:-fno-fast-math",
+      "/clang:-fdebug-compilation-dir=.",
+      "/clang:-fuse-ld=lld",
+      ...tools.include.flatMap((includePath) => ["/imsvc", includePath]),
       path.join(sourceRoot, "eng", "windows-sandbox-run.c"),
-      "-ladvapi32",
-      "-lfwpuclnt",
-      "-lole32",
-      "-o", executable,
+      "/link",
+      "/Brepro",
+      "/nodefaultlib",
+      "libcmt.lib",
+      "libvcruntime.lib",
+      "libucrt.lib",
+      "advapi32.lib",
+      "fwpuclnt.lib",
+      "ole32.lib",
+      "uuid.lib",
+      "kernel32.lib",
+      "/subsystem:console",
+      "/entry:wmainCRTStartup",
+      `/out:${executable}`,
     ],
     sourceRoot,
     environment,
