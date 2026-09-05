@@ -228,7 +228,8 @@ static DWORD access_mask(enum grant_kind kind) {
   switch (kind) {
     case GRANT_READ_ONLY: return GENERIC_READ;
     case GRANT_READ_EXECUTE: return GENERIC_READ | GENERIC_EXECUTE;
-    case GRANT_READ_WRITE: return GENERIC_READ | GENERIC_WRITE | DELETE;
+    case GRANT_READ_WRITE:
+      return GENERIC_READ | GENERIC_WRITE | GENERIC_EXECUTE | DELETE;
     case GRANT_DENY_READ: return GENERIC_READ | GENERIC_EXECUTE;
   }
   return 0;
@@ -456,8 +457,12 @@ int wmain(int argc, wchar_t **argv) {
   BYTE users_sid_buffer[SECURITY_MAX_SID_SIZE];
   DWORD users_sid_size = sizeof(users_sid_buffer);
   PSID users_sid = users_sid_buffer;
+  BYTE administrators_sid_buffer[SECURITY_MAX_SID_SIZE];
+  DWORD administrators_sid_size = sizeof(administrators_sid_buffer);
+  PSID administrators_sid = administrators_sid_buffer;
   HANDLE process_token = NULL;
   HANDLE restricted_token = NULL;
+  TOKEN_USER *token_user = NULL;
   HANDLE filter_engine = NULL;
   HANDLE acl_mutex = NULL;
   int acl_mutex_owned = 0;
@@ -536,6 +541,12 @@ int wmain(int argc, wchar_t **argv) {
       print_win32_error(L"create built-in users SID", GetLastError());
       goto cleanup;
     }
+    if (!CreateWellKnownSid(WinBuiltinAdministratorsSid, NULL,
+                            administrators_sid,
+                            &administrators_sid_size)) {
+      print_win32_error(L"create built-in administrators SID", GetLastError());
+      goto cleanup;
+    }
     struct requested_grant command_grant = {command_path, GRANT_READ_EXECUTE};
     if (requested_count == SIZE_MAX ||
         requested_count + 1 > SIZE_MAX / sizeof(*applied)) goto cleanup;
@@ -566,13 +577,34 @@ int wmain(int argc, wchar_t **argv) {
       print_win32_error(L"open process token", GetLastError());
       goto cleanup;
     }
-    SID_AND_ATTRIBUTES restricting[2];
+    DWORD token_user_size = 0;
+    GetTokenInformation(process_token, TokenUser, NULL, 0, &token_user_size);
+    if (token_user_size == 0 || GetLastError() != ERROR_INSUFFICIENT_BUFFER) {
+      print_win32_error(L"size process token user", GetLastError());
+      goto cleanup;
+    }
+    token_user = (TOKEN_USER *)calloc(1, token_user_size);
+    if (token_user == NULL ||
+        !GetTokenInformation(process_token, TokenUser, token_user,
+                             token_user_size, &token_user_size)) {
+      print_win32_error(L"read process token user",
+                        token_user == NULL ? ERROR_OUTOFMEMORY : GetLastError());
+      goto cleanup;
+    }
+    SID_AND_ATTRIBUTES restricting[4];
     restricting[0].Sid = restricted_sid;
     restricting[0].Attributes = 0;
     restricting[1].Sid = users_sid;
     restricting[1].Attributes = 0;
+    restricting[2].Sid = token_user->User.Sid;
+    restricting[2].Attributes = 0;
+    restricting[3].Sid = administrators_sid;
+    restricting[3].Attributes = 0;
+    SID_AND_ATTRIBUTES disabled[1];
+    disabled[0].Sid = administrators_sid;
+    disabled[0].Attributes = 0;
     if (!CreateRestrictedToken(process_token, DISABLE_MAX_PRIVILEGE,
-                               0, NULL, 0, NULL, 2, restricting,
+                               1, disabled, 0, NULL, 4, restricting,
                                &restricted_token)) {
       print_win32_error(L"create restricted token", GetLastError());
       goto cleanup;
@@ -659,6 +691,7 @@ cleanup:
   if (job != NULL) CloseHandle(job);
   if (restricted_token != NULL) CloseHandle(restricted_token);
   if (process_token != NULL) CloseHandle(process_token);
+  free(token_user);
   while (applied_count > 0) {
     --applied_count;
     DWORD result = ERROR_GEN_FAILURE;

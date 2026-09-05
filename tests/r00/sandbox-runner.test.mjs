@@ -45,6 +45,7 @@ test("Linux sandbox supervisor owns boundary statuses and audits descendants", a
   const sandboxRoot = path.join(temporaryRoot, "sandbox");
   const declaredPath = path.join(sourceRoot, "declared.txt");
   const outsidePath = path.join(temporaryRoot, "outside.txt");
+  const missingOutsidePath = path.join(temporaryRoot, "missing-outside.txt");
   const runner = path.join(controlRoot, "sandbox-run");
   const probe = path.join(controlRoot, "probe");
   const probeSource = path.join(controlRoot, "probe.c");
@@ -136,6 +137,9 @@ int main(int argc, char **argv) {
       return;
     }
     assert.equal(allowed.status, 0, allowed.stderr);
+
+    const failedProbe = invoke("read", missingOutsidePath);
+    assert.equal(failedProbe.status, 0, failedProbe.stderr);
 
     const ignoredRead = invoke("read", outsidePath);
     assert.equal(ignoredRead.status, 124, ignoredRead.stderr);

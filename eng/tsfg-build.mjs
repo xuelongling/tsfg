@@ -87,7 +87,7 @@ const WINDOWS_NETWORK_ISOLATION = Object.freeze({
   status: "blocked",
 });
 const WINDOWS_SANDBOX_EXECUTABLE_DIGEST =
-  "sha256:3852de1f36b1a8e4611d0619f7b131a8635d4889a3f2936bafabd6e0922d5d61";
+  "sha256:dd95c926b000b584d65dca4f4d69a92cb57eea3daeb4c85b539fc5ebc4691f6c";
 class WorkspaceMismatchError extends Error {
   constructor(code, message) {
     super(message);

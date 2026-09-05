@@ -398,9 +398,26 @@ static int audit_path(pid_t pid, int descriptor, unsigned long address,
   return 1;
 }
 
-static int audit_syscall(pid_t pid, const struct user_regs_struct *registers,
-                         struct allowed_path *allowed, size_t allowed_count,
-                         char *denied, size_t denied_length) {
+enum audit_result {
+  AUDIT_ALLOWED,
+  AUDIT_DEFERRED_DENIAL,
+  AUDIT_IMMEDIATE_DENIAL,
+};
+
+struct traced_process {
+  pid_t pid;
+  int deferred_denial;
+  char denied_path[PATH_MAX];
+};
+
+static enum audit_result denied_path_result(int wants_write) {
+  return wants_write ? AUDIT_IMMEDIATE_DENIAL : AUDIT_DEFERRED_DENIAL;
+}
+
+static enum audit_result audit_syscall(
+    pid_t pid, const struct user_regs_struct *registers,
+    struct allowed_path *allowed, size_t allowed_count,
+    char *denied, size_t denied_length) {
   long syscall_number = (long)registers->orig_rax;
   int descriptor = AT_FDCWD;
   unsigned long address = 0;
@@ -530,7 +547,7 @@ static int audit_syscall(pid_t pid, const struct user_regs_struct *registers,
     case SYS_rename:
       if (audit_path(pid, AT_FDCWD, registers->rdi, 1, allowed,
                      allowed_count, denied, denied_length))
-        return 1;
+        return AUDIT_IMMEDIATE_DENIAL;
       address = registers->rsi;
       wants_write = 1;
       break;
@@ -540,7 +557,7 @@ static int audit_syscall(pid_t pid, const struct user_regs_struct *registers,
 #endif
       if (audit_path(pid, (int)registers->rdi, registers->rsi, 1, allowed,
                      allowed_count, denied, denied_length))
-        return 1;
+        return AUDIT_IMMEDIATE_DENIAL;
       descriptor = (int)registers->rdx;
       address = registers->r10;
       wants_write = 1;
@@ -548,14 +565,14 @@ static int audit_syscall(pid_t pid, const struct user_regs_struct *registers,
     case SYS_link:
       if (audit_path(pid, AT_FDCWD, registers->rdi, 1, allowed,
                      allowed_count, denied, denied_length))
-        return 1;
+        return AUDIT_IMMEDIATE_DENIAL;
       address = registers->rsi;
       wants_write = 1;
       break;
     case SYS_linkat:
       if (audit_path(pid, (int)registers->rdi, registers->rsi, 1, allowed,
                      allowed_count, denied, denied_length))
-        return 1;
+        return AUDIT_IMMEDIATE_DENIAL;
       descriptor = (int)registers->rdx;
       address = registers->r10;
       wants_write = 1;
@@ -606,7 +623,7 @@ static int audit_syscall(pid_t pid, const struct user_regs_struct *registers,
     case SYS_pivot_root:
       if (audit_path(pid, AT_FDCWD, registers->rdi, 1, allowed,
                      allowed_count, denied, denied_length))
-        return 1;
+        return AUDIT_IMMEDIATE_DENIAL;
       address = registers->rsi;
       wants_write = 1;
       break;
@@ -621,7 +638,7 @@ static int audit_syscall(pid_t pid, const struct user_regs_struct *registers,
     case SYS_move_mount:
       if (audit_path(pid, (int)registers->rdi, registers->rsi, 1, allowed,
                      allowed_count, denied, denied_length))
-        return 1;
+        return AUDIT_IMMEDIATE_DENIAL;
       descriptor = (int)registers->rdx;
       address = registers->r10;
       wants_write = 1;
@@ -647,18 +664,48 @@ static int audit_syscall(pid_t pid, const struct user_regs_struct *registers,
 #endif
       snprintf(denied, denied_length, "unsupported-filesystem-syscall:%ld",
                syscall_number);
-      return 1;
+      return AUDIT_IMMEDIATE_DENIAL;
     default:
-      return 0;
+      return AUDIT_ALLOWED;
   }
-  return audit_path(pid, descriptor, address, wants_write, allowed,
-                    allowed_count, denied, denied_length);
+  if (!audit_path(pid, descriptor, address, wants_write, allowed,
+                  allowed_count, denied, denied_length))
+    return AUDIT_ALLOWED;
+  return denied_path_result(wants_write);
+}
+
+static size_t traced_process_index(struct traced_process *traced,
+                                   size_t traced_count, pid_t pid) {
+  for (size_t index = 0; index < traced_count; ++index) {
+    if (traced[index].pid == pid) return index;
+  }
+  return traced_count;
+}
+
+static int terminate_denied_processes(struct traced_process *traced,
+                                      size_t traced_count,
+                                      const char *denied_path) {
+  fprintf(stderr, "tsfg sandbox: denied path access: %s\n", denied_path);
+  for (size_t index = 0; index < traced_count; ++index) {
+    if (traced[index].pid > 0 && kill(traced[index].pid, SIGKILL) < 0 &&
+        errno != ESRCH)
+      fail("cannot terminate denied sandbox process", strerror(errno));
+  }
+  int status = 0;
+  for (;;) {
+    if (waitpid(-1, &status, __WALL) >= 0) continue;
+    if (errno == EINTR) continue;
+    if (errno != ECHILD)
+      fail("cannot drain denied sandbox processes", strerror(errno));
+    break;
+  }
+  return SANDBOX_UNDECLARED_INPUT_STATUS;
 }
 
 static int supervise_command(char **arguments, struct allowed_path *allowed,
                              size_t allowed_count) {
   enum { MAX_TRACED_PROCESSES = 4096 };
-  pid_t traced[MAX_TRACED_PROCESSES];
+  struct traced_process traced[MAX_TRACED_PROCESSES] = {0};
   size_t traced_count = 0;
   pid_t child = fork();
   if (child < 0) fail("cannot fork sandbox command", strerror(errno));
@@ -681,7 +728,7 @@ static int supervise_command(char **arguments, struct allowed_path *allowed,
     fail("cannot configure sandbox access audit", strerror(errno));
   if (ptrace(PTRACE_SYSCALL, child, NULL, NULL) < 0)
     fail("cannot start sandbox access audit", strerror(errno));
-  traced[traced_count++] = child;
+  traced[traced_count++].pid = child;
 
   int child_executed = 0;
   for (;;) {
@@ -689,7 +736,7 @@ static int supervise_command(char **arguments, struct allowed_path *allowed,
     if (stopped < 0) fail("cannot wait for sandbox command", strerror(errno));
     if (WIFEXITED(status)) {
       for (size_t index = 0; index < traced_count; ++index) {
-        if (traced[index] == stopped) traced[index] = -1;
+        if (traced[index].pid == stopped) traced[index].pid = -1;
       }
       if (stopped != child) continue;
       int code = WEXITSTATUS(status);
@@ -701,7 +748,7 @@ static int supervise_command(char **arguments, struct allowed_path *allowed,
     }
     if (WIFSIGNALED(status)) {
       for (size_t index = 0; index < traced_count; ++index) {
-        if (traced[index] == stopped) traced[index] = -1;
+        if (traced[index].pid == stopped) traced[index].pid = -1;
       }
       if (stopped != child) continue;
       return 128 + WTERMSIG(status);
@@ -717,7 +764,7 @@ static int supervise_command(char **arguments, struct allowed_path *allowed,
         fail("cannot identify sandbox descendant", strerror(errno));
       if (traced_count == MAX_TRACED_PROCESSES)
         fail("sandbox descendant limit exceeded", NULL);
-      traced[traced_count++] = (pid_t)descendant;
+      traced[traced_count++].pid = (pid_t)descendant;
     }
     if (stopped == child && signal == SIGTRAP && event == PTRACE_EVENT_EXEC)
       child_executed = 1;
@@ -725,24 +772,25 @@ static int supervise_command(char **arguments, struct allowed_path *allowed,
       struct user_regs_struct registers;
       if (ptrace(PTRACE_GETREGS, stopped, NULL, &registers) < 0)
         fail("cannot inspect sandbox syscall", strerror(errno));
-      if ((long long)registers.rax == -ENOSYS) {
+      size_t process_index = traced_process_index(traced, traced_count, stopped);
+      if (process_index == traced_count)
+        fail("cannot identify traced sandbox process", NULL);
+      if (traced[process_index].deferred_denial) {
+        traced[process_index].deferred_denial = 0;
+        if ((long long)registers.rax >= 0)
+          return terminate_denied_processes(
+              traced, traced_count, traced[process_index].denied_path);
+      } else if ((long long)registers.rax == -ENOSYS) {
         char denied[PATH_MAX];
-        if (audit_syscall(stopped, &registers, allowed, allowed_count, denied,
-                          sizeof(denied))) {
-          fprintf(stderr, "tsfg sandbox: denied path access: %s\n", denied);
-          for (size_t index = 0; index < traced_count; ++index) {
-            if (traced[index] > 0 && kill(traced[index], SIGKILL) < 0 &&
-                errno != ESRCH)
-              fail("cannot terminate denied sandbox process", strerror(errno));
-          }
-          for (;;) {
-            if (waitpid(-1, &status, __WALL) >= 0) continue;
-            if (errno == EINTR) continue;
-            if (errno != ECHILD)
-              fail("cannot drain denied sandbox processes", strerror(errno));
-            break;
-          }
-          return SANDBOX_UNDECLARED_INPUT_STATUS;
+        enum audit_result result = audit_syscall(
+            stopped, &registers, allowed, allowed_count, denied,
+            sizeof(denied));
+        if (result == AUDIT_IMMEDIATE_DENIAL)
+          return terminate_denied_processes(traced, traced_count, denied);
+        if (result == AUDIT_DEFERRED_DENIAL) {
+          traced[process_index].deferred_denial = 1;
+          snprintf(traced[process_index].denied_path,
+                   sizeof(traced[process_index].denied_path), "%s", denied);
         }
       }
     }
