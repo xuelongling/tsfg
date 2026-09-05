@@ -414,13 +414,17 @@ static int path_is_allowed(const char *candidate, int wants_write,
   return 0;
 }
 
-static int audit_path(pid_t pid, int descriptor, unsigned long address,
-                      int wants_write, struct allowed_path *allowed,
+static int audit_path(pid_t pid, long syscall_number, int descriptor,
+                      unsigned long address, int wants_write,
+                      struct allowed_path *allowed,
                       size_t allowed_count, char *denied, size_t denied_length) {
   char input[PATH_MAX];
   char base[PATH_MAX];
   if (read_tracee_string(pid, address, input, sizeof(input)) < 0) {
-    snprintf(denied, denied_length, "unreadable-tracee-path");
+    int read_errno = errno;
+    snprintf(denied, denied_length,
+             "unreadable-tracee-path:syscall=%ld:address=0x%lx:errno=%d",
+             syscall_number, address, read_errno);
     return 1;
   }
   if (input[0] == '\0') {
@@ -643,7 +647,7 @@ static enum audit_result audit_syscall(
       address = registers->rdi;
       break;
     case SYS_rename:
-      if (audit_path(pid, AT_FDCWD, registers->rdi, 1, allowed,
+      if (audit_path(pid, syscall_number, AT_FDCWD, registers->rdi, 1, allowed,
                      allowed_count, denied, denied_length))
         return AUDIT_IMMEDIATE_DENIAL;
       address = registers->rsi;
@@ -653,7 +657,8 @@ static enum audit_result audit_syscall(
 #ifdef SYS_renameat2
     case SYS_renameat2:
 #endif
-      if (audit_path(pid, (int)registers->rdi, registers->rsi, 1, allowed,
+      if (audit_path(pid, syscall_number, (int)registers->rdi, registers->rsi,
+                     1, allowed,
                      allowed_count, denied, denied_length))
         return AUDIT_IMMEDIATE_DENIAL;
       descriptor = (int)registers->rdx;
@@ -661,14 +666,15 @@ static enum audit_result audit_syscall(
       wants_write = 1;
       break;
     case SYS_link:
-      if (audit_path(pid, AT_FDCWD, registers->rdi, 1, allowed,
+      if (audit_path(pid, syscall_number, AT_FDCWD, registers->rdi, 1, allowed,
                      allowed_count, denied, denied_length))
         return AUDIT_IMMEDIATE_DENIAL;
       address = registers->rsi;
       wants_write = 1;
       break;
     case SYS_linkat:
-      if (audit_path(pid, (int)registers->rdi, registers->rsi, 1, allowed,
+      if (audit_path(pid, syscall_number, (int)registers->rdi, registers->rsi,
+                     1, allowed,
                      allowed_count, denied, denied_length))
         return AUDIT_IMMEDIATE_DENIAL;
       descriptor = (int)registers->rdx;
@@ -719,7 +725,7 @@ static enum audit_result audit_syscall(
       wants_write = 1;
       break;
     case SYS_pivot_root:
-      if (audit_path(pid, AT_FDCWD, registers->rdi, 1, allowed,
+      if (audit_path(pid, syscall_number, AT_FDCWD, registers->rdi, 1, allowed,
                      allowed_count, denied, denied_length))
         return AUDIT_IMMEDIATE_DENIAL;
       address = registers->rsi;
@@ -734,7 +740,8 @@ static enum audit_result audit_syscall(
 #endif
 #ifdef SYS_move_mount
     case SYS_move_mount:
-      if (audit_path(pid, (int)registers->rdi, registers->rsi, 1, allowed,
+      if (audit_path(pid, syscall_number, (int)registers->rdi, registers->rsi,
+                     1, allowed,
                      allowed_count, denied, denied_length))
         return AUDIT_IMMEDIATE_DENIAL;
       descriptor = (int)registers->rdx;
@@ -772,7 +779,7 @@ static enum audit_result audit_syscall(
     default:
       return AUDIT_ALLOWED;
   }
-  if (!audit_path(pid, descriptor, address, wants_write, allowed,
+  if (!audit_path(pid, syscall_number, descriptor, address, wants_write, allowed,
                   allowed_count, denied, denied_length))
     return AUDIT_ALLOWED;
   return denied_path_result(wants_write);
