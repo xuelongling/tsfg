@@ -3326,7 +3326,12 @@ function runBuildTool(
     const stderr = Buffer.isBuffer(error.stderr)
       ? error.stderr.toString("utf8")
       : "";
-    const detail = `${stdout}${stderr}`.trim() || error.message;
+    const processOutcome = Number.isInteger(error.status)
+      ? `process exited with status ${error.status}`
+      : typeof error.signal === "string"
+      ? `process terminated by signal ${error.signal}`
+      : error.message;
+    const detail = `${stdout}${stderr}`.trim() || processOutcome;
     if (sandboxProtocol) {
       throwSandboxBoundaryFailure(detail, "build", error.status);
       if (/\b(?:access is denied|permission denied)\b/i.test(detail)) {
