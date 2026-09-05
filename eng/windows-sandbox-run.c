@@ -727,7 +727,7 @@ cleanup:
     }
   }
   if (applied != NULL) {
-    for (size_t index = 0; index < requested_count + 1; ++index) {
+    for (size_t index = 0; index < requested_count; ++index) {
       free_applied_grant(&applied[index]);
     }
     free(applied);

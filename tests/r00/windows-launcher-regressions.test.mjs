@@ -38,6 +38,11 @@ test("Windows restricted token uses mandatory integrity to seal read-only path A
     source,
     /requested\[index\]\.kind == GRANT_READ_ONLY \|\|[\s\S]*GRANT_READ_EXECUTE\)[\s\S]*continue;/,
   );
+  assert.match(
+    source,
+    /for \(size_t index = 0; index < requested_count; \+\+index\) \{\s*free_applied_grant\(&applied\[index\]\);/,
+  );
+  assert.doesNotMatch(source, /index < requested_count \+ 1/);
   assert.doesNotMatch(source, /command_grant/);
 });
 const windowsLauncher = path.join(repositoryRoot, "eng", "tsfg-build.cmd");
