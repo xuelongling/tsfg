@@ -437,13 +437,15 @@ function requireResolvedWorkspace(report, resolvedManifest, label, expectedBindi
     path: repositoryPath,
   }));
   const coverage = policy?.licenseReport?.coverage;
+  const dependencies = policy?.licenseReport?.dependencies;
   if (
     !Array.isArray(actualRepositories) ||
     canonicalize(repositoryFacts) !== canonicalize(expectedRepositories) ||
     actualRepositories.some(({ files, license }) => !Number.isSafeInteger(files) || files < 1 || license !== "MIT") ||
     !Number.isSafeInteger(coverage?.covered) || coverage.covered < 1 ||
     coverage.total !== coverage.covered || coverage.percent !== "100" ||
-    !Array.isArray(policy?.licenseReport?.dependencies) ||
+    !Array.isArray(dependencies?.buildOnly) ||
+    !Array.isArray(dependencies?.payload) ||
     !Array.isArray(policy?.licenseReport?.inputs) ||
     !Array.isArray(policy?.upstreamForks) || policy.upstreamForks.length !== 0
   ) {

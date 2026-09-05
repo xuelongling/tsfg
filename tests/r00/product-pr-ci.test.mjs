@@ -81,7 +81,7 @@ function workspaceReport(productRevision, manifestHead = resolvedManifestRevisio
       policy: {
         licenseReport: {
           coverage: { covered: 3, percent: "100", total: 3 },
-          dependencies: [],
+        dependencies: { buildOnly: [], payload: [] },
           inputs: [],
         },
         repositories: [
@@ -679,6 +679,22 @@ test("candidate verdict requires complete successful matrix evidence before decl
     assert.equal(verdict.requiredEvidence.producers, "8/8");
     assert.equal(verdict.requiredEvidence.reproducibility, "4/4");
     assert.match(verdict.evidenceDigest, /^sha256:[0-9a-f]{64}$/);
+
+    const workspaceReportPath = path.join(evidence, "workspace-verification", "report.json");
+    const malformedWorkspaceReport = workspaceReport(candidateRevision);
+    // @ts-expect-error Deliberately replace the schema with stale evidence.
+    malformedWorkspaceReport.result.policy.licenseReport.dependencies = [];
+    await writeJson(workspaceReportPath, malformedWorkspaceReport);
+    const malformedPolicyOutput = path.join(sandbox, "malformed-policy-evidence.json");
+    const malformedPolicy = invoke([
+      "verdict", "--evidence", evidence,
+      "--job-results", jobResultsPath,
+      "--out", malformedPolicyOutput,
+    ]);
+    assert.notEqual(malformedPolicy.status, 0);
+    assert.match(malformedPolicy.stderr, /complete workspace policy evidence/);
+    await assert.rejects(readFile(malformedPolicyOutput));
+    await writeJson(workspaceReportPath, workspaceReport(candidateRevision));
 
     const overlayPath = path.join(evidence, "identity", "candidate-overlay.json");
     const canonicalOverlayBytes = await readFile(overlayPath);
