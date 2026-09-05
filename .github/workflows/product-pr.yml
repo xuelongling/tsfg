@@ -82,8 +82,8 @@ jobs:
             sudo sysctl -q kernel.apparmor_restrict_unprivileged_userns=0
             sudo unshare --net bash -ceu '
               ip link set lo up
-              interfaces=$(ip -o link show | awk -F': ' '{print $2}' | sed 's/@.*//' | sort)
-              [ "$interfaces" = "lo" ]
+              [ "$(ip -o link show | wc -l)" -eq 1 ]
+              ip -o link show dev lo >/dev/null
               exec setpriv --reuid "$SUDO_UID" --regid "$SUDO_GID" --clear-groups --bounding-set=-all --inh-caps=-all --ambient-caps=-all --no-new-privs -- "$@"
             ' bash "$@"
           }
@@ -163,8 +163,8 @@ jobs:
             sudo sysctl -q kernel.apparmor_restrict_unprivileged_userns=0
             sudo unshare --net bash -ceu '
               ip link set lo up
-              interfaces=$(ip -o link show | awk -F': ' '{print $2}' | sed 's/@.*//' | sort)
-              [ "$interfaces" = "lo" ]
+              [ "$(ip -o link show | wc -l)" -eq 1 ]
+              ip -o link show dev lo >/dev/null
               exec setpriv --reuid "$SUDO_UID" --regid "$SUDO_GID" --clear-groups --bounding-set=-all --inh-caps=-all --ambient-caps=-all --no-new-privs -- "$@"
             ' bash "$@"
           }
@@ -294,8 +294,8 @@ jobs:
             sudo sysctl -q kernel.apparmor_restrict_unprivileged_userns=0
             sudo unshare --net bash -ceu '
               ip link set lo up
-              interfaces=$(ip -o link show | awk -F': ' '{print $2}' | sed 's/@.*//' | sort)
-              [ "$interfaces" = "lo" ]
+              [ "$(ip -o link show | wc -l)" -eq 1 ]
+              ip -o link show dev lo >/dev/null
               exec setpriv --reuid "$SUDO_UID" --regid "$SUDO_GID" --clear-groups --bounding-set=-all --inh-caps=-all --ambient-caps=-all --no-new-privs -- "$@"
             ' bash "$@"
           }
@@ -411,8 +411,8 @@ jobs:
             sudo sysctl -q kernel.apparmor_restrict_unprivileged_userns=0
             sudo unshare --net bash -ceu '
               ip link set lo up
-              interfaces=$(ip -o link show | awk -F': ' '{print $2}' | sed 's/@.*//' | sort)
-              [ "$interfaces" = "lo" ]
+              [ "$(ip -o link show | wc -l)" -eq 1 ]
+              ip -o link show dev lo >/dev/null
               exec setpriv --reuid "$SUDO_UID" --regid "$SUDO_GID" --clear-groups --bounding-set=-all --inh-caps=-all --ambient-caps=-all --no-new-privs -- "$@"
             ' bash "$@"
           }
@@ -488,8 +488,8 @@ jobs:
             sudo sysctl -q kernel.apparmor_restrict_unprivileged_userns=0
             sudo unshare --net bash -ceu '
               ip link set lo up
-              interfaces=$(ip -o link show | awk -F': ' '{print $2}' | sed 's/@.*//' | sort)
-              [ "$interfaces" = "lo" ]
+              [ "$(ip -o link show | wc -l)" -eq 1 ]
+              ip -o link show dev lo >/dev/null
               exec setpriv --reuid "$SUDO_UID" --regid "$SUDO_GID" --clear-groups --bounding-set=-all --inh-caps=-all --ambient-caps=-all --no-new-privs -- "$@"
             ' bash "$@"
           }
