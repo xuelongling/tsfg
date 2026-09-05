@@ -32,11 +32,11 @@ function canonicalize(value) {
   return `{${Object.keys(value).sort().map((key) => `${JSON.stringify(key)}:${canonicalize(value[key])}`).join(",")}}`;
 }
 
-function invoke(arguments_) {
+function invoke(arguments_, environment = {}) {
   return spawnSync(process.execPath, [productPrCi, ...arguments_], {
     cwd: repositoryRoot,
     encoding: "utf8",
-    env: { ...process.env },
+    env: { ...process.env, ...environment },
   });
 }
 
@@ -187,6 +187,35 @@ test("candidate identity binds a complete product overlay to the fixed Integrati
     });
   } finally {
     await rm(sandbox, { recursive: true, force: true });
+  }
+});
+
+test("candidate identity retries a transient Windows rename denial", {
+  skip: process.platform !== "win32" && "Windows rename retry is Windows-only",
+}, async () => {
+  const sandbox = await mkdtemp(path.join(tmpdir(), "tsfg-product-pr-rename-retry-"));
+  const manifestPath = path.join(sandbox, "bootstrap", "r00.xml");
+  const outputPath = path.join(sandbox, "identity");
+  await mkdir(path.dirname(manifestPath), { recursive: true });
+  await writeFile(manifestPath, `<manifest>
+  <remote name="github-xuelongling" fetch="https://github.com/xuelongling/" />
+  <project name="tsfg.git" path="tsfg" remote="github-xuelongling" revision="${baselineProductRevision}" />
+  <project name=".agents.git" path=".agents" remote="github-xuelongling" revision="${agentRevision}" />
+</manifest>\n`);
+
+  try {
+    const result = invoke([
+      "identity", "--manifest", manifestPath,
+      "--manifest-name", "bootstrap/r00.xml",
+      "--manifest-revision", manifestRevision,
+      "--candidate-revision", candidateRevision,
+      "--out", outputPath,
+    ], { TSFG_TEST_CANDIDATE_IDENTITY_RENAME_EPERM_ONCE: "1" });
+    assert.equal(result.status, 0, result.stderr);
+    const report = JSON.parse(await readFile(path.join(outputPath, "candidate-identity.json"), "utf8"));
+    assert.equal(report.candidateRevision, candidateRevision);
+  } finally {
+    await rm(sandbox, { recursive: true, force: true, maxRetries: 10, retryDelay: 100 });
   }
 });
 

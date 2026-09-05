@@ -4,6 +4,7 @@ import { createHash, randomUUID } from "node:crypto";
 import { mkdir, readFile, readdir, rename, rm, stat, writeFile } from "node:fs/promises";
 import path from "node:path";
 import process from "node:process";
+import { setTimeout as delay } from "node:timers/promises";
 
 const manifestRepository = "https://github.com/xuelongling/manifests.git";
 const completeOid = /^[0-9a-f]{40}$/;
@@ -16,6 +17,7 @@ const requiredJobs = [
   "reproducibility",
   "candidate-evidence",
 ];
+let injectedCandidateIdentityRenameFailure = false;
 
 class ProductPrError extends Error {}
 
@@ -132,7 +134,35 @@ async function atomicWrite(directory, name, bytes) {
   const destination = path.join(directory, name);
   const temporary = `${destination}.tmp-${process.pid}`;
   await writeFile(temporary, bytes, { flag: "wx" });
-  await rename(temporary, destination);
+  await renameWithRetry(temporary, destination);
+}
+
+async function renameWithRetry(source, destination, injectCandidateIdentityFailure = false) {
+  for (let attempt = 0; ; attempt += 1) {
+    try {
+      if (
+        injectCandidateIdentityFailure &&
+        process.env.TSFG_TEST_CANDIDATE_IDENTITY_RENAME_EPERM_ONCE === "1" &&
+        !injectedCandidateIdentityRenameFailure
+      ) {
+        injectedCandidateIdentityRenameFailure = true;
+        throw Object.assign(new Error("injected transient candidate identity rename denial"), {
+          code: "EPERM",
+        });
+      }
+      await rename(source, destination);
+      return;
+    } catch (error) {
+      if (
+        process.platform !== "win32" ||
+        !["EPERM", "EBUSY"].includes(error.code) ||
+        attempt >= 7
+      ) {
+        throw error;
+      }
+      await delay(50 * 2 ** Math.min(attempt, 4));
+    }
+  }
 }
 
 async function writeCandidateIdentity(options) {
@@ -197,7 +227,7 @@ async function writeCandidateIdentity(options) {
     await writeFile(path.join(stagingPath, "candidate-overlay.json"), overlayBytes, { flag: "wx" });
     await writeFile(path.join(stagingPath, "resolved-manifest.json"), resolvedBytes, { flag: "wx" });
     await writeFile(path.join(stagingPath, "candidate-identity.json"), reportBytes, { flag: "wx" });
-    await rename(stagingPath, outputPath);
+    await renameWithRetry(stagingPath, outputPath, true);
   } catch (error) {
     await rm(stagingPath, { recursive: true, force: true });
     throw error;
