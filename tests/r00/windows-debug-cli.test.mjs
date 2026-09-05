@@ -17,6 +17,13 @@ function sha256(bytes) {
   return `sha256:${createHash("sha256").update(bytes).digest("hex")}`;
 }
 
+function peTimestamp(bytes) {
+  assert.equal(bytes.toString("ascii", 0, 2), "MZ");
+  const peOffset = bytes.readUInt32LE(0x3c);
+  assert.equal(bytes.toString("ascii", peOffset, peOffset + 4), "PE\0\0");
+  return bytes.readUInt32LE(peOffset + 8);
+}
+
 function zipEntries(bytes) {
   const entries = [];
   let offset = 0;
@@ -130,6 +137,13 @@ test("Windows debug build, smoke test, and package share one normalized Build Id
   for (const entry of entries) {
     assert.equal(entry.bytes.includes(Buffer.from(acceptanceRoot)), false, entry.name);
     assert.equal(entry.bytes.includes(Buffer.from(buildRoot)), false, entry.name);
+    if (entry.name.endsWith(".exe")) {
+      assert.equal(
+        peTimestamp(entry.bytes),
+        Number.parseInt(buildReport.result.buildIdentity.source_date_epoch, 10),
+        `${entry.name} must use the normalized source epoch`,
+      );
+    }
     if (entry.name.endsWith(".pdb")) {
       assert.doesNotMatch(entry.bytes.toString("latin1"), /[A-Za-z]:[\\/]/, entry.name);
       assert.doesNotMatch(entry.bytes.toString("utf16le"), /[A-Za-z]:[\\/]/, entry.name);

@@ -4060,6 +4060,20 @@ async function normalizeWindowsPdb(
   }
   yaml = yaml.replace(/[A-Za-z]:\\[^'\r\n]*/g, ".external");
   yaml = yaml.replace(/[A-Za-z]:\/[^'\r\n]*/g, ".external");
+  if (
+    [...yaml.matchAll(/^  Guid:\s+.*$/gm)].length !== 1 ||
+    [...yaml.matchAll(/^  Signature:\s+.*$/gm)].length !== 1
+  ) {
+    throw new BuildFailureError("PDB normalization could not locate its unique identity fields");
+  }
+  const identityNeutralYaml = yaml
+    .replace(/^  Guid:\s+.*$/m, "  Guid:            '{00000000-0000-0000-0000-000000000000}'")
+    .replace(/^  Signature:\s+.*$/m, "  Signature:       0");
+  const identityHex = createHash("sha256").update(identityNeutralYaml).digest("hex");
+  const guidText = `{${identityHex.slice(0, 8)}-${identityHex.slice(8, 12)}-${identityHex.slice(12, 16)}-${identityHex.slice(16, 20)}-${identityHex.slice(20, 32)}}`.toUpperCase();
+  yaml = identityNeutralYaml
+    .replace("'{00000000-0000-0000-0000-000000000000}'", `'${guidText}'`)
+    .replace(/^  Signature:\s+0$/m, `  Signature:       ${Number.parseInt(identityHex.slice(0, 8), 16)}`);
   await writeFile(yamlPath, yaml, { encoding: "utf8", flag: "wx" });
   try {
     runBuildTool(
@@ -4087,10 +4101,89 @@ async function normalizeWindowsPdb(
     if (/[A-Za-z]:[\\/]/.test(verified.stdout)) {
       throw new BuildFailureError("normalized PDB still contains an absolute Windows path");
     }
+    if (!verified.stdout.includes(`Guid:            '${guidText}'`)) {
+      throw new BuildFailureError("normalized PDB identity does not match its canonical content");
+    }
+    const guidBytes = Buffer.alloc(16);
+    guidBytes.writeUInt32LE(Number.parseInt(identityHex.slice(0, 8), 16), 0);
+    guidBytes.writeUInt16LE(Number.parseInt(identityHex.slice(8, 12), 16), 4);
+    guidBytes.writeUInt16LE(Number.parseInt(identityHex.slice(12, 16), 16), 6);
+    Buffer.from(identityHex.slice(16, 32), "hex").copy(guidBytes, 8);
+    return guidBytes;
   } finally {
     await rm(yamlPath, { force: true });
     await rm(normalizedPath, { force: true });
   }
+}
+
+async function normalizeWindowsExecutable(executablePath, pdbGuid, timestamp) {
+  if (!Number.isSafeInteger(timestamp) || timestamp <= 0 || timestamp > 0xffff_ffff) {
+    throw new BuildFailureError("Windows executable timestamp is outside the PE range");
+  }
+  const bytes = await readRegularFile(executablePath, path.basename(executablePath));
+  if (bytes.length < 0x40 || bytes.toString("ascii", 0, 2) !== "MZ") {
+    throw new BuildFailureError("Windows executable is missing its DOS header");
+  }
+  const peOffset = bytes.readUInt32LE(0x3c);
+  if (peOffset + 24 > bytes.length || bytes.toString("ascii", peOffset, peOffset + 4) !== "PE\0\0") {
+    throw new BuildFailureError("Windows executable is missing its PE header");
+  }
+  const coffOffset = peOffset + 4;
+  const sectionCount = bytes.readUInt16LE(coffOffset + 2);
+  const optionalHeaderSize = bytes.readUInt16LE(coffOffset + 16);
+  const optionalOffset = coffOffset + 20;
+  if (bytes.readUInt16LE(optionalOffset) !== 0x20b || optionalHeaderSize < 112 + 8 * 7) {
+    throw new BuildFailureError("Windows executable has an unsupported optional header");
+  }
+  const debugDirectoryRva = bytes.readUInt32LE(optionalOffset + 112 + 8 * 6);
+  const debugDirectorySize = bytes.readUInt32LE(optionalOffset + 112 + 8 * 6 + 4);
+  const sectionTableOffset = optionalOffset + optionalHeaderSize;
+  let debugDirectoryOffset;
+  for (let index = 0; index < sectionCount; index += 1) {
+    const sectionOffset = sectionTableOffset + 40 * index;
+    if (sectionOffset + 40 > bytes.length) break;
+    const virtualSize = bytes.readUInt32LE(sectionOffset + 8);
+    const virtualAddress = bytes.readUInt32LE(sectionOffset + 12);
+    const rawSize = bytes.readUInt32LE(sectionOffset + 16);
+    const rawOffset = bytes.readUInt32LE(sectionOffset + 20);
+    if (
+      debugDirectoryRva >= virtualAddress &&
+      debugDirectoryRva < virtualAddress + Math.max(virtualSize, rawSize)
+    ) {
+      debugDirectoryOffset = rawOffset + debugDirectoryRva - virtualAddress;
+      break;
+    }
+  }
+  if (
+    debugDirectoryOffset === undefined ||
+    debugDirectorySize === 0 ||
+    debugDirectorySize % 28 !== 0 ||
+    debugDirectoryOffset + debugDirectorySize > bytes.length
+  ) {
+    throw new BuildFailureError("Windows executable has an invalid debug directory");
+  }
+  let codeViewRecords = 0;
+  for (let offset = debugDirectoryOffset; offset < debugDirectoryOffset + debugDirectorySize; offset += 28) {
+    bytes.writeUInt32LE(timestamp, offset + 4);
+    if (bytes.readUInt32LE(offset + 12) !== 2) continue;
+    const dataSize = bytes.readUInt32LE(offset + 16);
+    const dataOffset = bytes.readUInt32LE(offset + 24);
+    if (
+      dataSize < 24 ||
+      dataOffset + dataSize > bytes.length ||
+      bytes.toString("ascii", dataOffset, dataOffset + 4) !== "RSDS"
+    ) {
+      throw new BuildFailureError("Windows executable has an invalid CodeView record");
+    }
+    pdbGuid.copy(bytes, dataOffset + 4);
+    codeViewRecords += 1;
+  }
+  if (codeViewRecords !== 1) {
+    throw new BuildFailureError("Windows executable must contain exactly one CodeView record");
+  }
+  bytes.writeUInt32LE(timestamp, coffOffset + 4);
+  await writeFile(executablePath, bytes);
+  return bytes;
 }
 
 async function buildWindows(options, runtime, workspaceState, networkCanary) {
@@ -4185,7 +4278,7 @@ async function buildWindows(options, runtime, workspaceState, networkCanary) {
     "-DCMAKE_INTERPROCEDURAL_OPTIMIZATION=OFF",
     `-DCMAKE_CXX_FLAGS_${cmakeBuildType.toUpperCase()}=${cxxProfileFlags} ${clangPathMapFlags.join(" ")} /clang:-fdebug-compilation-dir=.`,
     `-DTSFG_R00_SIMD_DISPATCH_RUNTIME=${buildPolicy.simd.dispatch === "runtime-detected" ? "1" : "0"}`,
-    `-DCMAKE_EXE_LINKER_FLAGS=/debug:full /Brepro /pdbaltpath:%_PDB% /nodefaultlib ${runtimeLibraries.join(" ")} kernel32.lib /entry:mainCRTStartup`,
+    `-DCMAKE_EXE_LINKER_FLAGS=/debug:full /timestamp:${identity.buildIdentity.source_date_epoch} /pdbaltpath:%_PDB% /nodefaultlib ${runtimeLibraries.join(" ")} kernel32.lib /entry:mainCRTStartup`,
   ];
   const zigArguments = [
     "build",
@@ -4272,9 +4365,7 @@ async function buildWindows(options, runtime, workspaceState, networkCanary) {
     const payloads = [];
     const symbols = [];
     for (const item of outputs) {
-      const executableBytes = await readRegularFile(item.source, item.destination)
-        .catch((error) => { throw new BuildFailureError(error.message); });
-      await normalizeWindowsPdb(
+      const pdbGuid = await normalizeWindowsPdb(
         item.symbolSource,
         tools.pdbutil,
         [
@@ -4288,6 +4379,11 @@ async function buildWindows(options, runtime, workspaceState, networkCanary) {
         sandboxExecutable,
         sandboxPolicy,
       );
+      const executableBytes = await normalizeWindowsExecutable(
+        item.source,
+        pdbGuid,
+        Number.parseInt(identity.buildIdentity.source_date_epoch, 10),
+      ).catch((error) => { throw new BuildFailureError(error.message); });
       const symbolBytes = await readRegularFile(item.symbolSource, item.symbolDestination)
         .catch((error) => { throw new BuildFailureError(error.message); });
       await writeFile(path.join(publishRoot, ...item.destination.split("/")), executableBytes, { flag: "wx" });
