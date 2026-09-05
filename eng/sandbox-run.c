@@ -795,9 +795,12 @@ static int supervise_command(char **arguments, struct allowed_path *allowed,
       unsigned long descendant = 0;
       if (ptrace(PTRACE_GETEVENTMSG, stopped, NULL, &descendant) < 0)
         fail("cannot identify sandbox descendant", strerror(errno));
-      if (traced_count == MAX_TRACED_PROCESSES)
-        fail("sandbox descendant limit exceeded", NULL);
-      traced[traced_count++].pid = (pid_t)descendant;
+      if (traced_process_index(traced, traced_count, (pid_t)descendant) ==
+          traced_count) {
+        if (traced_count == MAX_TRACED_PROCESSES)
+          fail("sandbox descendant limit exceeded", NULL);
+        traced[traced_count++].pid = (pid_t)descendant;
+      }
     }
     if (stopped == child && signal == SIGTRAP && event == PTRACE_EVENT_EXEC)
       child_executed = 1;
@@ -806,8 +809,12 @@ static int supervise_command(char **arguments, struct allowed_path *allowed,
       if (ptrace(PTRACE_GETREGS, stopped, NULL, &registers) < 0)
         fail("cannot inspect sandbox syscall", strerror(errno));
       size_t process_index = traced_process_index(traced, traced_count, stopped);
-      if (process_index == traced_count)
-        fail("cannot identify traced sandbox process", NULL);
+      if (process_index == traced_count) {
+        if (traced_count == MAX_TRACED_PROCESSES)
+          fail("sandbox descendant limit exceeded", NULL);
+        process_index = traced_count;
+        traced[traced_count++].pid = stopped;
+      }
       if (traced[process_index].emulated_enosys) {
         traced[process_index].emulated_enosys = 0;
       } else if (traced[process_index].deferred_denial) {
