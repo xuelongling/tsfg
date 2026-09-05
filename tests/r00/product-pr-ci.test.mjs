@@ -152,7 +152,10 @@ test("candidate identity binds a complete product overlay to the fixed Integrati
         repository: "https://github.com/xuelongling/manifests.git",
         revision: manifestRevision,
       },
-      replacements: [{ project: "tsfg.git", revision: candidateRevision }],
+      replacements: [
+        { project: ".agents.git", revision: candidateAgentRevision },
+        { project: "tsfg.git", revision: candidateRevision },
+      ],
       schemaVersion: "1",
     });
     assert.deepEqual(JSON.parse(resolvedBytes.toString("utf8")), {
@@ -184,7 +187,7 @@ test("candidate identity binds a complete product overlay to the fixed Integrati
       ],
       schemaVersion: "1",
     });
-    const canonicalOverlay = `{"baseline":{"manifest":"bootstrap/r00.xml","repository":"https://github.com/xuelongling/manifests.git","revision":"${manifestRevision}"},"replacements":[{"project":"tsfg.git","revision":"${candidateRevision}"}],"schemaVersion":"1"}`;
+    const canonicalOverlay = `{"baseline":{"manifest":"bootstrap/r00.xml","repository":"https://github.com/xuelongling/manifests.git","revision":"${manifestRevision}"},"replacements":[{"project":".agents.git","revision":"${candidateAgentRevision}"},{"project":"tsfg.git","revision":"${candidateRevision}"}],"schemaVersion":"1"}`;
     const canonicalResolved = `{"activation":[{"destination":"AGENTS.md","source":".agents/AGENTS.md","type":"symbolic-link"}],"baseline":{"manifest":"bootstrap/r00.xml","repository":"https://github.com/xuelongling/manifests.git","revision":"${manifestRevision}"},"projects":[{"name":".agents.git","path":".agents","remote":"https://github.com/xuelongling/.agents.git","revision":"${candidateAgentRevision}"},{"name":"tsfg.git","path":"tsfg","remote":"https://github.com/xuelongling/tsfg.git","revision":"${candidateRevision}"}],"schemaVersion":"1"}`;
     assert.deepEqual(report, {
       agentRevision: candidateAgentRevision,

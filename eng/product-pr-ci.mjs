@@ -246,7 +246,10 @@ async function writeCandidateIdentity(options) {
   };
   const overlay = {
     baseline,
-    replacements: [{ project: "tsfg.git", revision: candidateRevision }],
+    replacements: [
+      { project: ".agents.git", revision: agentRevision },
+      { project: "tsfg.git", revision: candidateRevision },
+    ],
     schemaVersion: "1",
   };
   const resolvedManifest = {
@@ -520,6 +523,7 @@ async function writeVerdict(options) {
     identity.resolvedManifestDigest !== sha256(canonicalJsonBytes(resolvedManifest)) ||
     canonicalize(overlay?.baseline) !== canonicalize(resolvedManifest?.baseline) ||
     canonicalize(overlay?.replacements) !== canonicalize([
+      { project: ".agents.git", revision: identity.agentRevision },
       { project: "tsfg.git", revision: identity.candidateRevision },
     ]) ||
     resolvedManifest?.projects?.find(({ name }) => name === "tsfg.git")?.revision
