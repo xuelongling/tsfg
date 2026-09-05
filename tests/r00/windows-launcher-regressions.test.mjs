@@ -13,18 +13,18 @@ const repositoryRoot = path.resolve(
   "../..",
 );
 
-test("Windows restricted token preserves user initialization without re-enabling administrators", async () => {
+test("Windows restricted token strips privileges without disabling access groups", async () => {
   const source = await readFile(
     path.join(repositoryRoot, "eng", "windows-sandbox-run.c"),
     "utf8",
   );
   assert.match(source, /GetTokenInformation\(process_token, TokenUser/);
   assert.match(source, /apply_grant\(&requested\[index\], token_user->User\.Sid/);
-  assert.match(source, /disabled\[0\]\.Sid = administrators_sid/);
   assert.match(
     source,
-    /CreateRestrictedToken\(process_token, DISABLE_MAX_PRIVILEGE,\s*1, disabled, 0, NULL, 0, NULL/,
+    /CreateRestrictedToken\(process_token, DISABLE_MAX_PRIVILEGE,\s*0, NULL, 0, NULL, 0, NULL/,
   );
+  assert.doesNotMatch(source, /WinBuiltinAdministratorsSid|SID_AND_ATTRIBUTES disabled/);
   assert.match(
     source,
     /GRANT_READ_WRITE:[\s\S]*GENERIC_READ \| GENERIC_WRITE \| GENERIC_EXECUTE \| DELETE/,

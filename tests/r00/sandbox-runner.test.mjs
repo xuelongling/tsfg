@@ -63,9 +63,12 @@ test("Linux sandbox supervisor owns boundary statuses and audits descendants", a
     await writeFile(outsidePath, "outside\n");
     await writeFile(probeSource, `
 #include <fcntl.h>
+#include <errno.h>
+#include <linux/io_uring.h>
 #include <stdlib.h>
 #include <string.h>
 #include <sys/stat.h>
+#include <sys/syscall.h>
 #include <sys/types.h>
 #include <sys/wait.h>
 #include <unistd.h>
@@ -94,6 +97,13 @@ int main(int argc, char **argv) {
   if (strcmp(argv[1], "mkdir") == 0) {
     mkdir(argv[2], 0755);
     return 0;
+  }
+  if (strcmp(argv[1], "io-uring") == 0) {
+    struct io_uring_params parameters = {0};
+    errno = 0;
+    return syscall(SYS_io_uring_setup, 1, &parameters) == -1 && errno == ENOSYS
+      ? 0
+      : 4;
   }
   if (strcmp(argv[1], "descendant") == 0) {
     pid_t child = fork();
@@ -164,6 +174,9 @@ int main(int argc, char **argv) {
       0,
       allowedAncestorCreationProbe.stderr,
     );
+
+    const unavailableIoUring = invoke("io-uring");
+    assert.equal(unavailableIoUring.status, 0, unavailableIoUring.stderr);
 
     const ignoredRead = invoke("read", outsidePath);
     assert.equal(ignoredRead.status, 124, ignoredRead.stderr);

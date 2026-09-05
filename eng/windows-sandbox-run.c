@@ -451,9 +451,6 @@ int wmain(int argc, wchar_t **argv) {
   struct path_list programs = {0};
   wchar_t *command_path = NULL;
   wchar_t *command_line = NULL;
-  BYTE administrators_sid_buffer[SECURITY_MAX_SID_SIZE];
-  DWORD administrators_sid_size = sizeof(administrators_sid_buffer);
-  PSID administrators_sid = administrators_sid_buffer;
   HANDLE process_token = NULL;
   HANDLE restricted_token = NULL;
   TOKEN_USER *token_user = NULL;
@@ -525,12 +522,6 @@ int wmain(int argc, wchar_t **argv) {
       goto cleanup;
     }
     acl_mutex_owned = 1;
-    if (!CreateWellKnownSid(WinBuiltinAdministratorsSid, NULL,
-                            administrators_sid,
-                            &administrators_sid_size)) {
-      print_win32_error(L"create built-in administrators SID", GetLastError());
-      goto cleanup;
-    }
     if (!OpenProcessToken(GetCurrentProcess(),
                           TOKEN_ASSIGN_PRIMARY | TOKEN_DUPLICATE | TOKEN_QUERY,
                           &process_token)) {
@@ -575,11 +566,8 @@ int wmain(int argc, wchar_t **argv) {
       goto cleanup;
     }
     ++applied_count;
-    SID_AND_ATTRIBUTES disabled[1];
-    disabled[0].Sid = administrators_sid;
-    disabled[0].Attributes = 0;
     if (!CreateRestrictedToken(process_token, DISABLE_MAX_PRIVILEGE,
-                               1, disabled, 0, NULL, 0, NULL,
+                               0, NULL, 0, NULL, 0, NULL,
                                &restricted_token)) {
       print_win32_error(L"create restricted token", GetLastError());
       goto cleanup;

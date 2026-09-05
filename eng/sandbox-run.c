@@ -402,11 +402,13 @@ enum audit_result {
   AUDIT_ALLOWED,
   AUDIT_DEFERRED_DENIAL,
   AUDIT_IMMEDIATE_DENIAL,
+  AUDIT_EMULATE_ENOSYS,
 };
 
 struct traced_process {
   pid_t pid;
   int deferred_denial;
+  int emulated_enosys;
   char denied_path[PATH_MAX];
 };
 
@@ -650,9 +652,15 @@ static enum audit_result audit_syscall(
 #endif
 #ifdef SYS_open_by_handle_at
     case SYS_open_by_handle_at:
+      snprintf(denied, denied_length, "unsupported-filesystem-syscall:%ld",
+               syscall_number);
+      return AUDIT_IMMEDIATE_DENIAL;
 #endif
 #ifdef SYS_io_uring_setup
     case SYS_io_uring_setup:
+      /* io_uring operations are not visible as ptrace syscall stops. Make the
+         facility unavailable so callers use their ordinary audited fallback. */
+      return AUDIT_EMULATE_ENOSYS;
 #endif
 #ifdef SYS_fsopen
     case SYS_fsopen:
@@ -782,7 +790,9 @@ static int supervise_command(char **arguments, struct allowed_path *allowed,
       size_t process_index = traced_process_index(traced, traced_count, stopped);
       if (process_index == traced_count)
         fail("cannot identify traced sandbox process", NULL);
-      if (traced[process_index].deferred_denial) {
+      if (traced[process_index].emulated_enosys) {
+        traced[process_index].emulated_enosys = 0;
+      } else if (traced[process_index].deferred_denial) {
         traced[process_index].deferred_denial = 0;
         if ((long long)registers.rax >= 0) {
           int code = terminate_denied_processes(
@@ -804,6 +814,13 @@ static int supervise_command(char **arguments, struct allowed_path *allowed,
           traced[process_index].deferred_denial = 1;
           snprintf(traced[process_index].denied_path,
                    sizeof(traced[process_index].denied_path), "%s", denied);
+        }
+        if (result == AUDIT_EMULATE_ENOSYS) {
+          registers.orig_rax = (unsigned long long)-1;
+          if (ptrace(PTRACE_SETREGS, stopped, NULL, &registers) < 0)
+            fail("cannot suppress unauditable filesystem syscall",
+                 strerror(errno));
+          traced[process_index].emulated_enosys = 1;
         }
       }
     }
