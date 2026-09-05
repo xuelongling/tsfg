@@ -107,10 +107,10 @@ test("Windows executable normalization fails closed on malformed PE data directo
 
 test("native debug identities exclude serializer layout noise and embedded build roots", async () => {
   const source = await readFile(buildEntry, "utf8");
-  const pdbStart = source.indexOf("async function normalizeWindowsPdb");
+  const pdbStart = source.indexOf("function canonicalWindowsPdbSemantics");
   const pdbEnd = source.indexOf("async function normalizeWindowsExecutable", pdbStart);
   const linuxStart = source.indexOf("function normalizeEmbeddedPaths");
-  const linuxEnd = source.indexOf("async function normalizeWindowsPdb", linuxStart);
+  const linuxEnd = source.indexOf("function canonicalWindowsPdbSemantics", linuxStart);
   assert.notEqual(pdbStart, -1);
   assert.notEqual(pdbEnd, -1);
   assert.notEqual(linuxStart, -1);
@@ -119,7 +119,11 @@ test("native debug identities exclude serializer layout noise and embedded build
   const linuxNormalizer = source.slice(linuxStart, linuxEnd);
   assert.match(pdbNormalizer, /StreamSizes:[\s\S]*\[ 0, 0,/);
   assert.match(pdbNormalizer, /new Set\(features\.split\(","\)/);
-  assert.match(pdbNormalizer, /verifiedNeutral !== identityNeutralYaml/);
+  assert.match(pdbNormalizer, /canonicalWindowsPdbSemantics\(verifiedNeutral\) !== semanticIdentityYaml/);
+  assert.match(pdbNormalizer, /replace\(\/\^MSF:[\s\S]*StringTable:/);
+  assert.match(pdbNormalizer, /new Set\(entries\)/);
+  assert.match(pdbNormalizer, /entry === "  - '\.external'" \? "  - \.external"/);
+  assert.match(pdbNormalizer, /replaceAll\("'\.external'", "\.external"\)/);
   assert.match(linuxNormalizer, /normalizeEmbeddedPaths\(zigBytes/);
   assert.match(linuxNormalizer, /\[sourceRoot, "\.workspace"\]/);
   assert.match(linuxNormalizer, /\[runtime\.closurePath, "\.toolchain"\]/);

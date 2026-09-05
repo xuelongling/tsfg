@@ -4115,6 +4115,31 @@ function windowsToolchain(runtime) {
   };
 }
 
+function canonicalWindowsPdbSemantics(yaml) {
+  const stringTable = yaml.match(/^StringTable:\r?\n([\s\S]*?)(?=^PdbStream:)/m);
+  if (stringTable === null) {
+    throw new BuildFailureError("PDB normalization could not locate its string table");
+  }
+  const entries = stringTable[1].split(/\r?\n/).filter(Boolean)
+    .map((entry) => entry === "  - '.external'" ? "  - .external" : entry);
+  if (entries.some((entry) => !entry.startsWith("  - "))) {
+    throw new BuildFailureError("PDB normalization found an invalid string table entry");
+  }
+  const canonicalEntries = [...new Set(entries)]
+    .sort((left, right) => Buffer.compare(Buffer.from(left), Buffer.from(right)));
+  const semantic = yaml
+    // The MSF superblock, stream sizes, and stream-to-block map describe only
+    // the physical container. yaml2pdb always regenerates them.
+    .replace(/^MSF:\r?\n[\s\S]*?(?=^StringTable:)/m, "")
+    // yaml2pdb deduplicates this set and may remove quotes from a plain scalar.
+    .replace(stringTable[0], `StringTable:\n${canonicalEntries.join("\n")}\n`)
+    .replaceAll("'.external'", ".external");
+  if (semantic === yaml) {
+    throw new BuildFailureError("PDB normalization could not isolate physical layout metadata");
+  }
+  return semantic;
+}
+
 async function normalizeWindowsPdb(
   pdbPath,
   pdbutil,
@@ -4166,9 +4191,10 @@ async function normalizeWindowsPdb(
   ) {
     throw new BuildFailureError("PDB normalization could not locate its semantic layout fields");
   }
+  const semanticIdentityYaml = canonicalWindowsPdbSemantics(identityNeutralYaml);
   await writeFile(yamlPath, identityNeutralYaml, { encoding: "utf8", flag: "wx" });
   try {
-    const identityHex = createHash("sha256").update(identityNeutralYaml).digest("hex");
+    const identityHex = createHash("sha256").update(semanticIdentityYaml).digest("hex");
     const guidText = `{${identityHex.slice(0, 8)}-${identityHex.slice(8, 12)}-${identityHex.slice(12, 16)}-${identityHex.slice(16, 20)}-${identityHex.slice(20, 32)}}`.toUpperCase();
     yaml = identityNeutralYaml
       .replace("'{00000000-0000-0000-0000-000000000000}'", `'${guidText}'`)
@@ -4216,7 +4242,7 @@ async function normalizeWindowsPdb(
         const unique = [...new Set(features.split(",").map((feature) => feature.trim()).filter(Boolean))];
         return `  Features:        [ ${unique.join(", ")} ]`;
       });
-    if (verifiedNeutral !== identityNeutralYaml) {
+    if (canonicalWindowsPdbSemantics(verifiedNeutral) !== semanticIdentityYaml) {
       throw new BuildFailureError("normalized PDB semantic content changed during canonicalization");
     }
     await copyFile(normalizedPath, pdbPath);
