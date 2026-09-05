@@ -119,11 +119,16 @@ test("native debug identities exclude serializer layout noise and embedded build
   const linuxNormalizer = source.slice(linuxStart, linuxEnd);
   assert.match(pdbNormalizer, /StreamSizes:[\s\S]*\[ 0, 0,/);
   assert.match(pdbNormalizer, /new Set\(features\.split\(","\)/);
-  assert.match(pdbNormalizer, /canonicalWindowsPdbSemantics\(verifiedNeutral\) !== semanticIdentityYaml/);
+  assert.match(pdbNormalizer, /canonicalWindowsPdbSemantics\(preliminaryNeutral\) !== semanticIdentityYaml/);
+  assert.match(pdbNormalizer, /fixed-point canonicalization/);
+  assert.match(pdbNormalizer, /neutralizeWindowsPdbIdentity\(verified\)/);
   assert.match(pdbNormalizer, /replace\(\/\^MSF:[\s\S]*StringTable:/);
   assert.match(pdbNormalizer, /new Set\(entries\)/);
   assert.match(pdbNormalizer, /entry === "  - '\.external'" \? "  - \.external"/);
   assert.match(pdbNormalizer, /replaceAll\("'\.external'", "\.external"\)/);
+  assert.match(pdbNormalizer, /replaceAll\("'\.'", "\."\)/);
+  assert.match(pdbNormalizer, /publicRecords\.sort\(/);
+  assert.match(pdbNormalizer, /PublicsStream:\\n  Records:/);
   assert.match(linuxNormalizer, /normalizeEmbeddedPaths\(zigBytes/);
   assert.match(linuxNormalizer, /\[sourceRoot, "\.workspace"\]/);
   assert.match(linuxNormalizer, /\[runtime\.closurePath, "\.toolchain"\]/);

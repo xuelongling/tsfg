@@ -4121,23 +4121,65 @@ function canonicalWindowsPdbSemantics(yaml) {
     throw new BuildFailureError("PDB normalization could not locate its string table");
   }
   const entries = stringTable[1].split(/\r?\n/).filter(Boolean)
-    .map((entry) => entry === "  - '.external'" ? "  - .external" : entry);
+    .map((entry) => entry === "  - '.external'" ? "  - .external"
+      : entry === "  - '.'" ? "  - ." : entry);
   if (entries.some((entry) => !entry.startsWith("  - "))) {
     throw new BuildFailureError("PDB normalization found an invalid string table entry");
   }
   const canonicalEntries = [...new Set(entries)]
     .sort((left, right) => Buffer.compare(Buffer.from(left), Buffer.from(right)));
-  const semantic = yaml
+  let semantic = yaml
     // The MSF superblock, stream sizes, and stream-to-block map describe only
     // the physical container. yaml2pdb always regenerates them.
     .replace(/^MSF:\r?\n[\s\S]*?(?=^StringTable:)/m, "")
     // yaml2pdb deduplicates this set and may remove quotes from a plain scalar.
     .replace(stringTable[0], `StringTable:\n${canonicalEntries.join("\n")}\n`)
-    .replaceAll("'.external'", ".external");
+    .replaceAll("'.external'", ".external")
+    .replaceAll("'.'", ".");
+  const publics = semantic.match(
+    /^PublicsStream:\r?\n  Records:\r?\n([\s\S]*?)(?=^\.\.\.)/m,
+  );
+  if (publics === null) {
+    throw new BuildFailureError("PDB normalization could not locate its public symbols");
+  }
+  const publicRecords = publics[1].split(/(?=^    - Kind:)/m).filter(Boolean);
+  if (publicRecords.some((record) => !record.startsWith("    - Kind:"))) {
+    throw new BuildFailureError("PDB normalization found an invalid public symbol record");
+  }
+  publicRecords.sort((left, right) => Buffer.compare(Buffer.from(left), Buffer.from(right)));
+  // The publics hash stream does not preserve record order across yaml2pdb.
+  semantic = semantic.replace(
+    publics[0],
+    `PublicsStream:\n  Records:\n${publicRecords.join("")}`,
+  );
   if (semantic === yaml) {
     throw new BuildFailureError("PDB normalization could not isolate physical layout metadata");
   }
   return semantic;
+}
+
+function neutralizeWindowsPdbIdentity(yaml) {
+  return yaml
+    .replace(/^  Guid:\s+.*$/m, "  Guid:            '{00000000-0000-0000-0000-000000000000}'")
+    .replace(/^  Signature:\s+.*$/m, "  Signature:       0")
+    .replace(/^StreamSizes:\s+\[\s*0,\s*\d+,/m, "StreamSizes:     [ 0, 0,")
+    .replace(/^  Features:\s+\[([^\]]*)\]$/m, (_match, features) => {
+      const unique = [...new Set(features.split(",").map((feature) => feature.trim()).filter(Boolean))];
+      return `  Features:        [ ${unique.join(", ")} ]`;
+    });
+}
+
+function assertWindowsPdbIdentity(yaml, guidText) {
+  if (/[A-Za-z]:[\\/]/.test(yaml)) {
+    throw new BuildFailureError("normalized PDB still contains an absolute Windows path");
+  }
+  if (
+    [...yaml.matchAll(/^  Guid:\s+.*$/gm)].length !== 1 ||
+    [...yaml.matchAll(/^  Signature:\s+.*$/gm)].length !== 1 ||
+    !yaml.includes(`Guid:            '${guidText}'`)
+  ) {
+    throw new BuildFailureError("normalized PDB identity fields are invalid");
+  }
 }
 
 async function normalizeWindowsPdb(
@@ -4150,6 +4192,7 @@ async function normalizeWindowsPdb(
   sandboxPolicy,
 ) {
   const yamlPath = path.join(workRoot, `${path.basename(pdbPath)}.${randomUUID()}.yaml`);
+  const preliminaryPath = path.join(workRoot, `${path.basename(pdbPath)}.${randomUUID()}.preliminary.pdb`);
   const normalizedPath = path.join(workRoot, `${path.basename(pdbPath)}.${randomUUID()}.pdb`);
   const dumped = runWindowsSandboxedCapture(
     "llvm-pdbutil pdb2yaml",
@@ -4174,17 +4217,9 @@ async function normalizeWindowsPdb(
   ) {
     throw new BuildFailureError("PDB normalization could not locate its unique identity fields");
   }
-  const identityNeutralYaml = yaml
-    .replace(/^  Guid:\s+.*$/m, "  Guid:            '{00000000-0000-0000-0000-000000000000}'")
-    .replace(/^  Signature:\s+.*$/m, "  Signature:       0")
-    // llvm-pdbutil yaml2pdb appends VC140 on every round-trip and adjusts
-    // StreamSizes[1] to match.  Neither value describes program semantics, so
-    // canonical PDB identity excludes that serializer-induced layout noise.
-    .replace(/^StreamSizes:\s+\[\s*0,\s*\d+,/m, "StreamSizes:     [ 0, 0,")
-    .replace(/^  Features:\s+\[([^\]]*)\]$/m, (_match, features) => {
-      const unique = [...new Set(features.split(",").map((feature) => feature.trim()).filter(Boolean))];
-      return `  Features:        [ ${unique.join(", ")} ]`;
-    });
+  // llvm-pdbutil adjusts physical stream sizes and appends VC140 on each
+  // round-trip. Neither value describes program semantics.
+  const identityNeutralYaml = neutralizeWindowsPdbIdentity(yaml);
   if (
     [...identityNeutralYaml.matchAll(/^StreamSizes:\s+\[\s*0,\s*0,/gm)].length !== 1 ||
     [...identityNeutralYaml.matchAll(/^  Features:\s+\[[^\]]*\]$/gm)].length !== 1
@@ -4209,6 +4244,39 @@ async function normalizeWindowsPdb(
       windowsSandboxArguments(
         sandboxPolicy,
         pdbutil,
+        ["yaml2pdb", `--pdb=${preliminaryPath}`, yamlPath],
+      ),
+      workRoot,
+      environment,
+      true,
+    );
+    const preliminary = runWindowsSandboxedCapture(
+      "llvm-pdbutil preliminary verification",
+      sandboxExecutable,
+      sandboxPolicy,
+      pdbutil,
+      ["pdb2yaml", "--all", preliminaryPath],
+      workRoot,
+      environment,
+    ).stdout;
+    assertWindowsPdbIdentity(preliminary, guidText);
+    const preliminaryNeutral = neutralizeWindowsPdbIdentity(preliminary);
+    if (canonicalWindowsPdbSemantics(preliminaryNeutral) !== semanticIdentityYaml) {
+      throw new BuildFailureError("normalized PDB semantic content changed during canonicalization");
+    }
+    yaml = preliminaryNeutral
+      .replace("'{00000000-0000-0000-0000-000000000000}'", `'${guidText}'`)
+      .replace(
+        /^  Signature:\s+0$/m,
+        `  Signature:       ${Number.parseInt(identityHex.slice(0, 8), 16)}`,
+      );
+    await writeFile(yamlPath, yaml, { encoding: "utf8" });
+    runBuildTool(
+      "llvm-pdbutil fixed-point canonicalization",
+      sandboxExecutable,
+      windowsSandboxArguments(
+        sandboxPolicy,
+        pdbutil,
         ["yaml2pdb", `--pdb=${normalizedPath}`, yamlPath],
       ),
       workRoot,
@@ -4216,7 +4284,7 @@ async function normalizeWindowsPdb(
       true,
     );
     const verified = runWindowsSandboxedCapture(
-      "llvm-pdbutil verification",
+      "llvm-pdbutil fixed-point verification",
       sandboxExecutable,
       sandboxPolicy,
       pdbutil,
@@ -4224,26 +4292,12 @@ async function normalizeWindowsPdb(
       workRoot,
       environment,
     ).stdout;
-    if (/[A-Za-z]:[\\/]/.test(verified)) {
-      throw new BuildFailureError("normalized PDB still contains an absolute Windows path");
-    }
+    assertWindowsPdbIdentity(verified, guidText);
     if (
-      [...verified.matchAll(/^  Guid:\s+.*$/gm)].length !== 1 ||
-      [...verified.matchAll(/^  Signature:\s+.*$/gm)].length !== 1 ||
-      !verified.includes(`Guid:            '${guidText}'`)
+      canonicalWindowsPdbSemantics(neutralizeWindowsPdbIdentity(verified)) !==
+      semanticIdentityYaml
     ) {
-      throw new BuildFailureError("normalized PDB identity fields are invalid");
-    }
-    const verifiedNeutral = verified
-      .replace(/^  Guid:\s+.*$/m, "  Guid:            '{00000000-0000-0000-0000-000000000000}'")
-      .replace(/^  Signature:\s+.*$/m, "  Signature:       0")
-      .replace(/^StreamSizes:\s+\[\s*0,\s*\d+,/m, "StreamSizes:     [ 0, 0,")
-      .replace(/^  Features:\s+\[([^\]]*)\]$/m, (_match, features) => {
-        const unique = [...new Set(features.split(",").map((feature) => feature.trim()).filter(Boolean))];
-        return `  Features:        [ ${unique.join(", ")} ]`;
-      });
-    if (canonicalWindowsPdbSemantics(verifiedNeutral) !== semanticIdentityYaml) {
-      throw new BuildFailureError("normalized PDB semantic content changed during canonicalization");
+      throw new BuildFailureError("normalized PDB semantic content changed at its fixed point");
     }
     await copyFile(normalizedPath, pdbPath);
     const guidBytes = Buffer.alloc(16);
@@ -4254,6 +4308,7 @@ async function normalizeWindowsPdb(
     return guidBytes;
   } finally {
     await rm(yamlPath, { force: true });
+    await rm(preliminaryPath, { force: true });
     await rm(normalizedPath, { force: true });
   }
 }
