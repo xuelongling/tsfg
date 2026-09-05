@@ -79,6 +79,20 @@ test("Windows network canary starts Node under WFP without the path-restricted t
   assert.match(sandboxSource, /validate restricted read path/);
 });
 
+test("MSVC compatibility compilation writes its compiler PDB inside the writable boundary", async () => {
+  const source = await readFile(buildEntry, "utf8");
+  const start = source.indexOf("async function buildWindows");
+  const end = source.indexOf("async function packageLinux", start);
+  assert.notEqual(start, -1);
+  assert.notEqual(end, -1);
+  const buildWindowsSource = source.slice(start, end);
+  assert.match(
+    buildWindowsSource,
+    /const compatibilityPdb = path\.join\(compatibilityRoot, "compiler\.pdb"\)/,
+  );
+  assert.match(buildWindowsSource, /`\/Fd\$\{compatibilityPdb\}`/);
+});
+
 test("Windows executable normalization fails closed on malformed PE data directories", async () => {
   const source = await readFile(buildEntry, "utf8");
   const start = source.indexOf("async function normalizeWindowsExecutable");

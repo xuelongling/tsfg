@@ -4422,6 +4422,7 @@ async function buildWindows(options, runtime, workspaceState, networkCanary) {
     "--seed", "0",
   ];
   const compatibilityObject = path.join(compatibilityRoot, "main.obj");
+  const compatibilityPdb = path.join(compatibilityRoot, "compiler.pdb");
   const compatibilityExecutable = path.join(compatibilityRoot, "tsfg-r00-msvc-compat.exe");
   const steps = [
     { role: "normative", tool: "cmake", executable: tools.cmake, arguments: cmakeArguments },
@@ -4433,7 +4434,8 @@ async function buildWindows(options, runtime, workspaceState, networkCanary) {
       executable: tools.cl,
       arguments: ["/nologo", "/c", profile === "debug" ? "/Od" : "/O2", "/Zi",
         profile === "debug" ? "/MTd" : "/MT", "/Brepro", ...msvcPathMapFlags,
-        path.join(sourceRoot, "tests", "r00", "smoke", "cpp", "main.cpp"), `/Fo${compatibilityObject}`],
+        path.join(sourceRoot, "tests", "r00", "smoke", "cpp", "main.cpp"),
+        `/Fo${compatibilityObject}`, `/Fd${compatibilityPdb}`],
     },
     {
       role: "compatibility-only",
