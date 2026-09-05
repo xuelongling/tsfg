@@ -82,7 +82,7 @@ jobs:
             sudo sysctl -q kernel.apparmor_restrict_unprivileged_userns=0
             sudo unshare --net bash -ceu '
               ip link set lo up
-              interfaces=$(find /sys/class/net -mindepth 1 -maxdepth 1 -printf "%f\n" | sort)
+              interfaces=$(ip -o link show | awk -F': ' '{print $2}' | sed 's/@.*//' | sort)
               [ "$interfaces" = "lo" ]
               exec setpriv --reuid "$SUDO_UID" --regid "$SUDO_GID" --clear-groups --bounding-set=-all --inh-caps=-all --ambient-caps=-all --no-new-privs -- "$@"
             ' bash "$@"
@@ -163,7 +163,7 @@ jobs:
             sudo sysctl -q kernel.apparmor_restrict_unprivileged_userns=0
             sudo unshare --net bash -ceu '
               ip link set lo up
-              interfaces=$(find /sys/class/net -mindepth 1 -maxdepth 1 -printf "%f\n" | sort)
+              interfaces=$(ip -o link show | awk -F': ' '{print $2}' | sed 's/@.*//' | sort)
               [ "$interfaces" = "lo" ]
               exec setpriv --reuid "$SUDO_UID" --regid "$SUDO_GID" --clear-groups --bounding-set=-all --inh-caps=-all --ambient-caps=-all --no-new-privs -- "$@"
             ' bash "$@"
@@ -294,7 +294,7 @@ jobs:
             sudo sysctl -q kernel.apparmor_restrict_unprivileged_userns=0
             sudo unshare --net bash -ceu '
               ip link set lo up
-              interfaces=$(find /sys/class/net -mindepth 1 -maxdepth 1 -printf "%f\n" | sort)
+              interfaces=$(ip -o link show | awk -F': ' '{print $2}' | sed 's/@.*//' | sort)
               [ "$interfaces" = "lo" ]
               exec setpriv --reuid "$SUDO_UID" --regid "$SUDO_GID" --clear-groups --bounding-set=-all --inh-caps=-all --ambient-caps=-all --no-new-privs -- "$@"
             ' bash "$@"
@@ -411,7 +411,7 @@ jobs:
             sudo sysctl -q kernel.apparmor_restrict_unprivileged_userns=0
             sudo unshare --net bash -ceu '
               ip link set lo up
-              interfaces=$(find /sys/class/net -mindepth 1 -maxdepth 1 -printf "%f\n" | sort)
+              interfaces=$(ip -o link show | awk -F': ' '{print $2}' | sed 's/@.*//' | sort)
               [ "$interfaces" = "lo" ]
               exec setpriv --reuid "$SUDO_UID" --regid "$SUDO_GID" --clear-groups --bounding-set=-all --inh-caps=-all --ambient-caps=-all --no-new-privs -- "$@"
             ' bash "$@"
@@ -488,7 +488,7 @@ jobs:
             sudo sysctl -q kernel.apparmor_restrict_unprivileged_userns=0
             sudo unshare --net bash -ceu '
               ip link set lo up
-              interfaces=$(find /sys/class/net -mindepth 1 -maxdepth 1 -printf "%f\n" | sort)
+              interfaces=$(ip -o link show | awk -F': ' '{print $2}' | sed 's/@.*//' | sort)
               [ "$interfaces" = "lo" ]
               exec setpriv --reuid "$SUDO_UID" --regid "$SUDO_GID" --clear-groups --bounding-set=-all --inh-caps=-all --ambient-caps=-all --no-new-privs -- "$@"
             ' bash "$@"
