@@ -274,6 +274,26 @@ static int read_tracee_bytes(pid_t pid, unsigned long address, void *buffer,
   return 0;
 }
 
+static int write_tracee_bytes(pid_t pid, unsigned long address,
+                              const void *buffer, size_t length) {
+  const unsigned char *input = buffer;
+  for (size_t offset = 0; offset < length; offset += sizeof(long)) {
+    long word = 0;
+    size_t remaining = length - offset;
+    size_t count = remaining < sizeof(word) ? remaining : sizeof(word);
+    if (count != sizeof(word)) {
+      errno = 0;
+      word = ptrace(PTRACE_PEEKDATA, pid, address + offset, NULL);
+      if (errno != 0) return -1;
+    }
+    memcpy(&word, input + offset, count);
+    if (ptrace(PTRACE_POKEDATA, pid, address + offset,
+               (void *)(uintptr_t)word) < 0)
+      return -1;
+  }
+  return 0;
+}
+
 static int read_tracee_string(pid_t pid, unsigned long address, char *buffer,
                               size_t length) {
   if (address == 0 || length == 0) return -1;
@@ -426,9 +446,51 @@ enum audit_result {
 struct traced_process {
   pid_t pid;
   int deferred_denial;
-  int emulated_enosys;
+  int emulated_syscall;
+  long long emulated_result;
   char denied_path[PATH_MAX];
 };
+
+static int emulate_proc_self_exe(
+    pid_t pid, const struct user_regs_struct *registers,
+    long long *result) {
+  unsigned long path_address = 0;
+  unsigned long output_address = 0;
+  size_t output_length = 0;
+  switch ((long)registers->orig_rax) {
+#ifdef SYS_readlink
+    case SYS_readlink:
+      path_address = registers->rdi;
+      output_address = registers->rsi;
+      output_length = (size_t)registers->rdx;
+      break;
+#endif
+    case SYS_readlinkat:
+      path_address = registers->rsi;
+      output_address = registers->rdx;
+      output_length = (size_t)registers->r10;
+      break;
+    default:
+      return 0;
+  }
+  char requested[PATH_MAX];
+  if (read_tracee_string(pid, path_address, requested, sizeof(requested)) < 0)
+    return 0;
+  if (strcmp(requested, "/proc/self/exe") != 0 &&
+      strcmp(requested, "/proc/thread-self/exe") != 0)
+    return 0;
+  char link[64];
+  snprintf(link, sizeof(link), "%d/exe", pid);
+  char executable[PATH_MAX];
+  ssize_t count = readlinkat(proc_fd, link, executable, sizeof(executable));
+  if (count < 0 || (size_t)count >= sizeof(executable)) return -1;
+  size_t copied = (size_t)count < output_length ? (size_t)count : output_length;
+  if (copied > 0 &&
+      write_tracee_bytes(pid, output_address, executable, copied) < 0)
+    return -1;
+  *result = (long long)copied;
+  return 1;
+}
 
 static enum audit_result denied_path_result(int wants_write) {
   return wants_write ? AUDIT_IMMEDIATE_DENIAL : AUDIT_DEFERRED_DENIAL;
@@ -825,8 +887,11 @@ static int supervise_command(char **arguments, struct allowed_path *allowed,
         process_index = traced_count;
         traced[traced_count++].pid = stopped;
       }
-      if (traced[process_index].emulated_enosys) {
-        traced[process_index].emulated_enosys = 0;
+      if (traced[process_index].emulated_syscall) {
+        registers.rax = (unsigned long long)traced[process_index].emulated_result;
+        if (ptrace(PTRACE_SETREGS, stopped, NULL, &registers) < 0)
+          fail("cannot complete emulated sandbox syscall", strerror(errno));
+        traced[process_index].emulated_syscall = 0;
       } else if (traced[process_index].deferred_denial) {
         traced[process_index].deferred_denial = 0;
         if ((long long)registers.rax >= 0) {
@@ -840,6 +905,19 @@ static int supervise_command(char **arguments, struct allowed_path *allowed,
           ++failed_probe_count;
         }
       } else if ((long long)registers.rax == -ENOSYS) {
+        long long emulated_result = 0;
+        int emulation = emulate_proc_self_exe(stopped, &registers,
+                                              &emulated_result);
+        if (emulation < 0)
+          fail("cannot emulate process executable link", strerror(errno));
+        if (emulation > 0) {
+          registers.orig_rax = (unsigned long long)-1;
+          if (ptrace(PTRACE_SETREGS, stopped, NULL, &registers) < 0)
+            fail("cannot suppress emulated sandbox syscall", strerror(errno));
+          traced[process_index].emulated_syscall = 1;
+          traced[process_index].emulated_result = emulated_result;
+          goto continue_tracee;
+        }
         char denied[PATH_MAX];
         enum audit_result result = audit_syscall(
             stopped, &registers, allowed, allowed_count, denied,
@@ -859,10 +937,12 @@ static int supervise_command(char **arguments, struct allowed_path *allowed,
           if (ptrace(PTRACE_SETREGS, stopped, NULL, &registers) < 0)
             fail("cannot suppress unauditable filesystem syscall",
                  strerror(errno));
-          traced[process_index].emulated_enosys = 1;
+          traced[process_index].emulated_syscall = 1;
+          traced[process_index].emulated_result = -ENOSYS;
         }
       }
     }
+continue_tracee:;
     int delivered = (signal == SIGTRAP || signal == (SIGTRAP | 0x80) ||
                      signal == SIGSTOP)
                         ? 0

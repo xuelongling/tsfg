@@ -78,6 +78,7 @@ test("Linux sandbox supervisor owns boundary statuses and audits descendants", a
 #include <fcntl.h>
 #include <errno.h>
 #include <linux/io_uring.h>
+#include <limits.h>
 #include <stdlib.h>
 #include <string.h>
 #include <sys/stat.h>
@@ -130,6 +131,11 @@ int main(int argc, char **argv) {
     int result = syscall(SYS_newfstatat, fd, "", &metadata, AT_EMPTY_PATH);
     close(fd);
     return result == 0 ? 0 : 6;
+  }
+  if (strcmp(argv[1], "self-exe") == 0) {
+    char executable[PATH_MAX];
+    ssize_t length = readlink("/proc/self/exe", executable, sizeof(executable));
+    return length > 0 ? 0 : 8;
   }
   if (strcmp(argv[1], "descendant") == 0) {
     pid_t child = fork();
@@ -211,6 +217,9 @@ int main(int argc, char **argv) {
 
     const socketMetadata = invoke("socket-stat");
     assert.equal(socketMetadata.status, 0, socketMetadata.stderr);
+
+    const processExecutable = invoke("self-exe");
+    assert.equal(processExecutable.status, 0, processExecutable.stderr);
 
     const ignoredRead = invoke("read", outsidePath);
     assert.equal(ignoredRead.status, 124, ignoredRead.stderr);
