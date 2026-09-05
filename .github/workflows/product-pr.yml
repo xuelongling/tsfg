@@ -78,8 +78,9 @@ jobs:
       - name: Contract compatibility gate
         shell: bash
         run: |
+          sudo sysctl -q kernel.apparmor_restrict_unprivileged_userns=0
           run_offline() {
-            sudo unshare --user --map-users "0:$(id -u):1" --map-groups "0:$(id -g):1" --setgroups=deny --setuid 0 --setgid 0 --mount --net bash -ceu '
+            unshare --user --map-users "0:$(id -u):1" --map-groups "0:$(id -g):1" --setgroups=deny --setuid 0 --setgid 0 --mount --net bash -ceu '
               mount -t sysfs -o ro,nosuid,nodev,noexec sysfs /sys
               ip link set lo up
               interfaces=$(find /sys/class/net -mindepth 1 -maxdepth 1 -printf "%f\n" | sort)
@@ -159,8 +160,9 @@ jobs:
           export TSFG_BOOTSTRAP_GIT="$(command -v git)"
           export TSFG_BOOTSTRAP_GIT_SHA256="$(sha256sum "$TSFG_BOOTSTRAP_GIT" | cut -d ' ' -f 1)"
           "$workspace/tsfg/eng/tsfg-build" prefetch --report .ci/evidence/workspace-verification/prefetch-report.json
+          sudo sysctl -q kernel.apparmor_restrict_unprivileged_userns=0
           run_offline() {
-            sudo unshare --user --map-users "0:$(id -u):1" --map-groups "0:$(id -g):1" --setgroups=deny --setuid 0 --setgid 0 --mount --net bash -ceu '
+            unshare --user --map-users "0:$(id -u):1" --map-groups "0:$(id -g):1" --setgroups=deny --setuid 0 --setgid 0 --mount --net bash -ceu '
               mount -t sysfs -o ro,nosuid,nodev,noexec sysfs /sys
               ip link set lo up
               interfaces=$(find /sys/class/net -mindepth 1 -maxdepth 1 -printf "%f\n" | sort)
@@ -290,8 +292,9 @@ jobs:
           export TSFG_BOOTSTRAP_GIT_SHA256="$(sha256sum "$TSFG_BOOTSTRAP_GIT" | cut -d ' ' -f 1)"
           "$workspace/tsfg/eng/tsfg-build" prefetch --report "$root/prefetch-report.json"
           manifest_revision=$(node -e "process.stdout.write(JSON.parse(require('node:fs').readFileSync('.ci/materialized-identity.json','utf8')).manifestRevision)")
+          sudo sysctl -q kernel.apparmor_restrict_unprivileged_userns=0
           run_offline() {
-            sudo unshare --user --map-users "0:$(id -u):1" --map-groups "0:$(id -g):1" --setgroups=deny --setuid 0 --setgid 0 --mount --net bash -ceu '
+            unshare --user --map-users "0:$(id -u):1" --map-groups "0:$(id -g):1" --setgroups=deny --setuid 0 --setgid 0 --mount --net bash -ceu '
               mount -t sysfs -o ro,nosuid,nodev,noexec sysfs /sys
               ip link set lo up
               interfaces=$(find /sys/class/net -mindepth 1 -maxdepth 1 -printf "%f\n" | sort)
@@ -407,8 +410,9 @@ jobs:
           export TSFG_CACHE_DIR="$RUNNER_TEMP/tsfg-tool-cache/${{ matrix.target }}"
           export TSFG_BOOTSTRAP_GIT="$(command -v git)"
           export TSFG_BOOTSTRAP_GIT_SHA256="$(sha256sum "$TSFG_BOOTSTRAP_GIT" | cut -d ' ' -f 1)"
+          sudo sysctl -q kernel.apparmor_restrict_unprivileged_userns=0
           run_offline() {
-            sudo unshare --user --map-users "0:$(id -u):1" --map-groups "0:$(id -g):1" --setgroups=deny --setuid 0 --setgid 0 --mount --net bash -ceu '
+            unshare --user --map-users "0:$(id -u):1" --map-groups "0:$(id -g):1" --setgroups=deny --setuid 0 --setgid 0 --mount --net bash -ceu '
               mount -t sysfs -o ro,nosuid,nodev,noexec sysfs /sys
               ip link set lo up
               interfaces=$(find /sys/class/net -mindepth 1 -maxdepth 1 -printf "%f\n" | sort)
@@ -484,8 +488,9 @@ jobs:
           export TSFG_BOOTSTRAP_GIT="$(command -v git)"
           export TSFG_BOOTSTRAP_GIT_SHA256="$(sha256sum "$TSFG_BOOTSTRAP_GIT" | cut -d ' ' -f 1)"
           eng/tsfg-build prefetch --report "$root/prefetch-report.json"
+          sudo sysctl -q kernel.apparmor_restrict_unprivileged_userns=0
           run_offline() {
-            sudo unshare --user --map-users "0:$(id -u):1" --map-groups "0:$(id -g):1" --setgroups=deny --setuid 0 --setgid 0 --mount --net bash -ceu '
+            unshare --user --map-users "0:$(id -u):1" --map-groups "0:$(id -g):1" --setgroups=deny --setuid 0 --setgid 0 --mount --net bash -ceu '
               mount -t sysfs -o ro,nosuid,nodev,noexec sysfs /sys
               ip link set lo up
               interfaces=$(find /sys/class/net -mindepth 1 -maxdepth 1 -printf "%f\n" | sort)
