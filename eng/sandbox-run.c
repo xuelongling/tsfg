@@ -706,7 +706,9 @@ static int terminate_denied_processes(struct traced_process *traced,
 static int supervise_command(char **arguments, struct allowed_path *allowed,
                              size_t allowed_count) {
   enum { MAX_TRACED_PROCESSES = 4096 };
-  struct traced_process traced[MAX_TRACED_PROCESSES] = {0};
+  struct traced_process *traced = calloc(
+      MAX_TRACED_PROCESSES, sizeof(*traced));
+  if (!traced) fail("cannot allocate sandbox process audit", NULL);
   size_t traced_count = 0;
   pid_t child = fork();
   if (child < 0) fail("cannot fork sandbox command", strerror(errno));
@@ -741,10 +743,16 @@ static int supervise_command(char **arguments, struct allowed_path *allowed,
       }
       if (stopped != child) continue;
       int code = WEXITSTATUS(status);
-      if (!child_executed) return SANDBOX_SETUP_FAILURE_STATUS;
+      if (!child_executed) {
+        free(traced);
+        return SANDBOX_SETUP_FAILURE_STATUS;
+      }
       if (code >= SANDBOX_NETWORK_BOUNDARY_STATUS &&
-          code <= SANDBOX_SETUP_FAILURE_STATUS)
+          code <= SANDBOX_SETUP_FAILURE_STATUS) {
+        free(traced);
         return 122;
+      }
+      free(traced);
       return code;
     }
     if (WIFSIGNALED(status)) {
@@ -752,7 +760,9 @@ static int supervise_command(char **arguments, struct allowed_path *allowed,
         if (traced[index].pid == stopped) traced[index].pid = -1;
       }
       if (stopped != child) continue;
-      return 128 + WTERMSIG(status);
+      int code = 128 + WTERMSIG(status);
+      free(traced);
+      return code;
     }
     if (!WIFSTOPPED(status)) continue;
     int signal = WSTOPSIG(status);
@@ -778,16 +788,22 @@ static int supervise_command(char **arguments, struct allowed_path *allowed,
         fail("cannot identify traced sandbox process", NULL);
       if (traced[process_index].deferred_denial) {
         traced[process_index].deferred_denial = 0;
-        if ((long long)registers.rax >= 0)
-          return terminate_denied_processes(
+        if ((long long)registers.rax >= 0) {
+          int code = terminate_denied_processes(
               traced, traced_count, traced[process_index].denied_path);
+          free(traced);
+          return code;
+        }
       } else if ((long long)registers.rax == -ENOSYS) {
         char denied[PATH_MAX];
         enum audit_result result = audit_syscall(
             stopped, &registers, allowed, allowed_count, denied,
             sizeof(denied));
-        if (result == AUDIT_IMMEDIATE_DENIAL)
-          return terminate_denied_processes(traced, traced_count, denied);
+        if (result == AUDIT_IMMEDIATE_DENIAL) {
+          int code = terminate_denied_processes(traced, traced_count, denied);
+          free(traced);
+          return code;
+        }
         if (result == AUDIT_DEFERRED_DENIAL) {
           traced[process_index].deferred_denial = 1;
           snprintf(traced[process_index].denied_path,

@@ -20,7 +20,7 @@ test("Windows restricted token preserves user initialization without re-enabling
   );
   assert.match(source, /GetTokenInformation\(process_token, TokenUser/);
   assert.match(source, /restricting\[2\]\.Sid = token_user->User\.Sid/);
-  assert.match(source, /restricting\[3\]\.Sid = administrators_sid/);
+  assert.match(source, /restricting\[3\]\.Sid = world_sid/);
   assert.match(source, /disabled\[0\]\.Sid = administrators_sid/);
   assert.match(
     source,
@@ -30,6 +30,7 @@ test("Windows restricted token preserves user initialization without re-enabling
     source,
     /GRANT_READ_WRITE:[\s\S]*GENERIC_READ \| GENERIC_WRITE \| GENERIC_EXECUTE \| DELETE/,
   );
+  assert.match(source, /GRANT_READ_ONLY: return GENERIC_READ \| GENERIC_EXECUTE/);
 });
 const windowsLauncher = path.join(repositoryRoot, "eng", "tsfg-build.cmd");
 

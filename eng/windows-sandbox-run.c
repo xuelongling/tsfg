@@ -226,7 +226,7 @@ static void free_paths(struct path_list *list) {
 
 static DWORD access_mask(enum grant_kind kind) {
   switch (kind) {
-    case GRANT_READ_ONLY: return GENERIC_READ;
+    case GRANT_READ_ONLY: return GENERIC_READ | GENERIC_EXECUTE;
     case GRANT_READ_EXECUTE: return GENERIC_READ | GENERIC_EXECUTE;
     case GRANT_READ_WRITE:
       return GENERIC_READ | GENERIC_WRITE | GENERIC_EXECUTE | DELETE;
@@ -457,6 +457,9 @@ int wmain(int argc, wchar_t **argv) {
   BYTE users_sid_buffer[SECURITY_MAX_SID_SIZE];
   DWORD users_sid_size = sizeof(users_sid_buffer);
   PSID users_sid = users_sid_buffer;
+  BYTE world_sid_buffer[SECURITY_MAX_SID_SIZE];
+  DWORD world_sid_size = sizeof(world_sid_buffer);
+  PSID world_sid = world_sid_buffer;
   BYTE administrators_sid_buffer[SECURITY_MAX_SID_SIZE];
   DWORD administrators_sid_size = sizeof(administrators_sid_buffer);
   PSID administrators_sid = administrators_sid_buffer;
@@ -541,6 +544,11 @@ int wmain(int argc, wchar_t **argv) {
       print_win32_error(L"create built-in users SID", GetLastError());
       goto cleanup;
     }
+    if (!CreateWellKnownSid(WinWorldSid, NULL, world_sid,
+                            &world_sid_size)) {
+      print_win32_error(L"create world SID", GetLastError());
+      goto cleanup;
+    }
     if (!CreateWellKnownSid(WinBuiltinAdministratorsSid, NULL,
                             administrators_sid,
                             &administrators_sid_size)) {
@@ -598,7 +606,7 @@ int wmain(int argc, wchar_t **argv) {
     restricting[1].Attributes = 0;
     restricting[2].Sid = token_user->User.Sid;
     restricting[2].Attributes = 0;
-    restricting[3].Sid = administrators_sid;
+    restricting[3].Sid = world_sid;
     restricting[3].Attributes = 0;
     SID_AND_ATTRIBUTES disabled[1];
     disabled[0].Sid = administrators_sid;
