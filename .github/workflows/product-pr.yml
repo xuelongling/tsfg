@@ -14,7 +14,7 @@ env:
   TSFG_MANIFEST_REVISION: d94f4e6bff9aa980b18b0df94e133559e4b61240
   TSFG_MANIFEST_URL: https://github.com/xuelongling/manifests.git
   TSFG_SELECTED_MANIFEST: bootstrap/r00.xml
-  TSFG_AGENT_TOOLS_REVISION: 8041bb6de12ca1dcd75563409b3c8c40d70d58e9
+  TSFG_AGENT_TOOLS_REVISION: 631518972aaade58f354a63b2c220a91323fd057
   TSFG_BASELINE_PRODUCT_REVISION: eb2838e4c4910113b23072b40c526a8b2843f744
   TSFG_BASELINE_COMPATIBILITY_SHA256: 1602d13ccbedf7c0fe449d3213ecf330660f7683ac892f22702942d9680c3459
   TSFG_REPO_LAUNCHER_SHA256: 1211b57b57e4122a9c546295a59b37d24068f1164d0e87bef096d5323c413e4f
@@ -144,6 +144,8 @@ jobs:
           (cd "$workspace" && python3 "$GITHUB_WORKSPACE/.ci/bootstrap/repo.py" sync --verify)
           git -C "$workspace/tsfg" fetch --no-tags "$GITHUB_WORKSPACE" "${{ github.event.pull_request.head.sha }}"
           git -C "$workspace/tsfg" checkout --detach FETCH_HEAD
+          git -C "$workspace/.agents" fetch --no-tags "$GITHUB_WORKSPACE/.ci/agent-tools" "$TSFG_AGENT_TOOLS_REVISION"
+          git -C "$workspace/.agents" checkout --detach FETCH_HEAD
           node .ci/agent-tools/tools/materialize-agent-workspace.ts --workspace "$workspace" > .ci/materialized-identity.json
       - name: Verify the Repo Workspace
         shell: bash
@@ -248,6 +250,8 @@ jobs:
           (cd "$workspace" && python3 "$GITHUB_WORKSPACE/.ci/bootstrap/repo.py" sync --verify)
           git -C "$workspace/tsfg" fetch --no-tags "$GITHUB_WORKSPACE" "${{ github.event.pull_request.head.sha }}"
           git -C "$workspace/tsfg" checkout --detach FETCH_HEAD
+          git -C "$workspace/.agents" fetch --no-tags "$GITHUB_WORKSPACE/.ci/agent-tools" "$TSFG_AGENT_TOOLS_REVISION"
+          git -C "$workspace/.agents" checkout --detach FETCH_HEAD
           node .ci/agent-tools/tools/materialize-agent-workspace.ts --workspace "$workspace" > .ci/materialized-identity.json
       - name: Materialize candidate workspace on Windows
         if: runner.os == 'Windows'
@@ -263,6 +267,10 @@ jobs:
           git -C "$workspace/tsfg" fetch --no-tags "$env:GITHUB_WORKSPACE" '${{ github.event.pull_request.head.sha }}'
           if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
           git -C "$workspace/tsfg" checkout --detach FETCH_HEAD
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          git -C "$workspace/.agents" fetch --no-tags "$env:GITHUB_WORKSPACE/.ci/agent-tools" $env:TSFG_AGENT_TOOLS_REVISION
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          git -C "$workspace/.agents" checkout --detach FETCH_HEAD
           if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
           node .ci/agent-tools/tools/materialize-agent-workspace.ts --workspace $workspace | Out-File .ci/materialized-identity.json -Encoding utf8NoBOM
           if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }

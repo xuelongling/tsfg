@@ -308,8 +308,12 @@ test("product PR workflow composes every gate, producer, compatibility lane, and
     /cp "\$workspace\/\.repo\/manifests\/\$TSFG_SELECTED_MANIFEST" \.ci\/evidence\/workspace-verification\/verified-baseline-manifest\.xml/,
   );
   assert.match(workspaceVerification, /git -C "\$workspace\/tsfg" fetch --no-tags "\$GITHUB_WORKSPACE"/);
+  assert.match(workspaceVerification, /git -C "\$workspace\/\.agents" fetch --no-tags "\$GITHUB_WORKSPACE\/\.ci\/agent-tools" "\$TSFG_AGENT_TOOLS_REVISION"/);
+  assert.match(workspaceVerification, /git -C "\$workspace\/\.agents" checkout --detach FETCH_HEAD/);
   assert.doesNotMatch(workspaceVerification, /\.ci\/candidate-product/);
   const productBuild = workflowJob(workflow, "product-build");
+  assert.equal((productBuild.match(/git -C .*\.agents.* fetch --no-tags /g) ?? []).length, 2);
+  assert.equal((productBuild.match(/git -C .*\.agents.* checkout --detach FETCH_HEAD/g) ?? []).length, 2);
   assert.match(productBuild, /eng[\\/]tsfg-build(?:\.cmd)?"? build/);
   assert.match(productBuild, /eng[\\/]tsfg-build(?:\.cmd)?"? test/);
   assert.match(productBuild, /eng[\\/]tsfg-build(?:\.cmd)?"? package/);
