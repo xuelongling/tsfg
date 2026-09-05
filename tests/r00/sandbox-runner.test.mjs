@@ -86,9 +86,10 @@ test("Linux sandbox supervisor owns boundary statuses and audits descendants", a
 #include <limits.h>
 #include <stdlib.h>
 #include <string.h>
+#include <sys/mman.h>
+#include <sys/socket.h>
 #include <sys/stat.h>
 #include <sys/syscall.h>
-#include <sys/socket.h>
 #include <sys/types.h>
 #include <sys/wait.h>
 #include <unistd.h>
@@ -141,6 +142,21 @@ int main(int argc, char **argv) {
     char executable[PATH_MAX];
     ssize_t length = readlink("/proc/self/exe", executable, sizeof(executable));
     return length > 0 ? 0 : 8;
+  }
+  if (strcmp(argv[1], "page-edge-read") == 0) {
+    long page_size = sysconf(_SC_PAGESIZE);
+    if (page_size <= 0) return 9;
+    char *pages = mmap(NULL, (size_t)page_size * 2, PROT_READ | PROT_WRITE,
+                       MAP_PRIVATE | MAP_ANONYMOUS, -1, 0);
+    if (pages == MAP_FAILED || mprotect(pages + page_size, (size_t)page_size,
+                                        PROT_NONE) != 0)
+      return 10;
+    size_t length = strlen(argv[2]) + 1;
+    char *page_edge_path = pages + page_size - length;
+    memcpy(page_edge_path, argv[2], length);
+    int fd = open(page_edge_path, O_RDONLY);
+    if (fd >= 0) close(fd);
+    return fd >= 0 ? 0 : 11;
   }
   if (strcmp(argv[1], "descendant") == 0) {
     pid_t child = fork();
@@ -225,6 +241,9 @@ int main(int argc, char **argv) {
 
     const processExecutable = invoke("self-exe");
     assert.equal(processExecutable.status, 0, processExecutable.stderr);
+
+    const pageEdgeRead = invoke("page-edge-read", declaredPath);
+    assert.equal(pageEdgeRead.status, 0, pageEdgeRead.stderr);
 
     const ignoredRead = invoke("read", outsidePath);
     assert.equal(ignoredRead.status, 124, ignoredRead.stderr);

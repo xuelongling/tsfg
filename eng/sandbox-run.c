@@ -263,13 +263,19 @@ static void run_locked_tool_wrapper(int argc, char **argv) {
 static int read_tracee_bytes(pid_t pid, unsigned long address, void *buffer,
                              size_t length) {
   unsigned char *output = buffer;
-  for (size_t offset = 0; offset < length; offset += sizeof(long)) {
+  size_t offset = 0;
+  while (offset < length) {
+    unsigned long current = address + offset;
+    unsigned long aligned = current & ~(unsigned long)(sizeof(long) - 1);
+    size_t word_offset = (size_t)(current - aligned);
     errno = 0;
-    long word = ptrace(PTRACE_PEEKDATA, pid, address + offset, NULL);
+    long word = ptrace(PTRACE_PEEKDATA, pid, aligned, NULL);
     if (errno != 0) return -1;
     size_t remaining = length - offset;
-    size_t count = remaining < sizeof(word) ? remaining : sizeof(word);
-    memcpy(output + offset, &word, count);
+    size_t available = sizeof(word) - word_offset;
+    size_t count = remaining < available ? remaining : available;
+    memcpy(output + offset, (unsigned char *)&word + word_offset, count);
+    offset += count;
   }
   return 0;
 }
@@ -277,19 +283,25 @@ static int read_tracee_bytes(pid_t pid, unsigned long address, void *buffer,
 static int write_tracee_bytes(pid_t pid, unsigned long address,
                               const void *buffer, size_t length) {
   const unsigned char *input = buffer;
-  for (size_t offset = 0; offset < length; offset += sizeof(long)) {
+  size_t offset = 0;
+  while (offset < length) {
+    unsigned long current = address + offset;
+    unsigned long aligned = current & ~(unsigned long)(sizeof(long) - 1);
+    size_t word_offset = (size_t)(current - aligned);
     long word = 0;
     size_t remaining = length - offset;
-    size_t count = remaining < sizeof(word) ? remaining : sizeof(word);
-    if (count != sizeof(word)) {
+    size_t available = sizeof(word) - word_offset;
+    size_t count = remaining < available ? remaining : available;
+    if (word_offset != 0 || count != sizeof(word)) {
       errno = 0;
-      word = ptrace(PTRACE_PEEKDATA, pid, address + offset, NULL);
+      word = ptrace(PTRACE_PEEKDATA, pid, aligned, NULL);
       if (errno != 0) return -1;
     }
-    memcpy(&word, input + offset, count);
-    if (ptrace(PTRACE_POKEDATA, pid, address + offset,
+    memcpy((unsigned char *)&word + word_offset, input + offset, count);
+    if (ptrace(PTRACE_POKEDATA, pid, aligned,
                (void *)(uintptr_t)word) < 0)
       return -1;
+    offset += count;
   }
   return 0;
 }
@@ -297,14 +309,21 @@ static int write_tracee_bytes(pid_t pid, unsigned long address,
 static int read_tracee_string(pid_t pid, unsigned long address, char *buffer,
                               size_t length) {
   if (address == 0 || length == 0) return -1;
-  for (size_t offset = 0; offset < length; offset += sizeof(long)) {
+  size_t offset = 0;
+  while (offset < length) {
+    unsigned long current = address + offset;
+    unsigned long aligned = current & ~(unsigned long)(sizeof(long) - 1);
+    size_t word_offset = (size_t)(current - aligned);
     errno = 0;
-    long word = ptrace(PTRACE_PEEKDATA, pid, address + offset, NULL);
+    long word = ptrace(PTRACE_PEEKDATA, pid, aligned, NULL);
     if (errno != 0) return -1;
     size_t remaining = length - offset;
-    size_t count = remaining < sizeof(word) ? remaining : sizeof(word);
-    memcpy(buffer + offset, &word, count);
-    if (memchr(&word, '\0', count)) return 0;
+    size_t available = sizeof(word) - word_offset;
+    size_t count = remaining < available ? remaining : available;
+    const unsigned char *source = (unsigned char *)&word + word_offset;
+    memcpy(buffer + offset, source, count);
+    if (memchr(source, '\0', count)) return 0;
+    offset += count;
   }
   buffer[length - 1] = '\0';
   return -1;
