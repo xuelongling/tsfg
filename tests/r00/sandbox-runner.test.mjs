@@ -86,6 +86,10 @@ int main(int argc, char **argv) {
     if (fd >= 0) close(fd);
     return 0;
   }
+  if (strcmp(argv[1], "access") == 0) {
+    access(argv[2], W_OK);
+    return 0;
+  }
   if (strcmp(argv[1], "descendant") == 0) {
     pid_t child = fork();
     if (child == 0) {
@@ -145,6 +149,9 @@ int main(int argc, char **argv) {
 
     const failedProbe = invoke("read", missingOutsidePath);
     assert.equal(failedProbe.status, 0, failedProbe.stderr);
+
+    const allowedPermissionProbe = invoke("access", sourceRoot);
+    assert.equal(allowedPermissionProbe.status, 0, allowedPermissionProbe.stderr);
 
     const ignoredRead = invoke("read", outsidePath);
     assert.equal(ignoredRead.status, 124, ignoredRead.stderr);

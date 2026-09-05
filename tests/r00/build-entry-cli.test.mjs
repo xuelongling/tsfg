@@ -988,7 +988,7 @@ test("Windows verify-workspace enters the JS offline supervisor before workspace
   const preloadPath = path.join(sandbox, "control-digest.cjs");
   const reportPath = path.join(sandbox, "report.json");
   const platform = "windows-x86_64-msvc";
-  const controlDigest = "5cb21ae27aead02e565d5f476e7e29b8216fa3f125e8a23fbd83b84f5bb14fe5";
+  const controlDigest = "95447eeea7dc85c2600dc0c6b3fee80cb6983562028d8aba3237bc247d30a192";
   const controlBytes = Buffer.from("tsfg test WFP supervisor marker\n");
   const emptyTreeDigest = fixtureDigest('{"entries":[],"schemaVersion":"1"}');
   const toolIds = ["cmake", "llvm", "msvc-tools", "ninja", "node", "windows-sdk", "zig"];

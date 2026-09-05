@@ -21,6 +21,7 @@ test("Windows restricted token preserves user initialization without re-enabling
   assert.match(source, /GetTokenInformation\(process_token, TokenUser/);
   assert.match(source, /restricting\[2\]\.Sid = token_user->User\.Sid/);
   assert.match(source, /restricting\[3\]\.Sid = world_sid/);
+  assert.match(source, /restricting\[4\]\.Sid = logon_sid/);
   assert.match(source, /disabled\[0\]\.Sid = administrators_sid/);
   assert.match(
     source,

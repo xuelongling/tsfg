@@ -457,19 +457,16 @@ static enum audit_result audit_syscall(
 #ifdef SYS_access
     case SYS_access:
       address = registers->rdi;
-      wants_write = ((int)registers->rsi & W_OK) != 0;
       break;
 #endif
     case SYS_faccessat:
       descriptor = (int)registers->rdi;
       address = registers->rsi;
-      wants_write = ((int)registers->rdx & W_OK) != 0;
       break;
 #ifdef SYS_faccessat2
     case SYS_faccessat2:
       descriptor = (int)registers->rdi;
       address = registers->rsi;
-      wants_write = ((int)registers->rdx & W_OK) != 0;
       break;
 #endif
 #ifdef SYS_stat
