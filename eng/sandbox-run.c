@@ -232,6 +232,7 @@ static void run_locked_llvm_wrapper(int argc, char **argv) {
   if (!child_argv) fail("cannot allocate wrapper arguments", NULL);
   int child_index = 0;
   child_argv[child_index++] = (char *)loader;
+  child_argv[child_index++] = "--inhibit-cache";
   child_argv[child_index++] = "--library-path";
   child_argv[child_index++] = (char *)libraries;
   child_argv[child_index++] = (char *)tool;

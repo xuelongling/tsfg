@@ -22,6 +22,11 @@ test("Linux sandbox accepts only a precreated root mapping to an unprivileged ho
     source,
     /mount\(source, target, NULL, MS_BIND, NULL\)[\s\S]*strcmp\(destination, "\/dev\/null"\) == 0[\s\S]*MS_BIND \| MS_REMOUNT/,
   );
+  assert.match(
+    source,
+    /child_argv\[child_index\+\+\] = "--inhibit-cache"/,
+    "locked dynamic-loader wrappers must not consult the host ld.so cache",
+  );
 });
 
 test("Linux sandbox supervisor owns boundary statuses and audits descendants", async (context) => {

@@ -87,7 +87,7 @@ const WINDOWS_NETWORK_ISOLATION = Object.freeze({
   status: "blocked",
 });
 const WINDOWS_SANDBOX_EXECUTABLE_DIGEST =
-  "sha256:dd95c926b000b584d65dca4f4d69a92cb57eea3daeb4c85b539fc5ebc4691f6c";
+  "sha256:7de38541e8af071bda1150f7806ae56893938cb55a375ea210adcd6a8ba2e72a";
 class WorkspaceMismatchError extends Error {
   constructor(code, message) {
     super(message);
@@ -3279,7 +3279,14 @@ async function writeLockedLlvmWrapper(
   executable,
   leadingArguments = [],
 ) {
-  const command = [loader, "--library-path", libraries, executable, ...leadingArguments]
+  const command = [
+    loader,
+    "--inhibit-cache",
+    "--library-path",
+    libraries,
+    executable,
+    ...leadingArguments,
+  ]
     .map(shellQuote)
     .join(" ");
   await writeFile(destination, `#!/bin/sh\nexec ${command} "$@"\n`, {
@@ -3867,7 +3874,13 @@ async function buildLinux(options, runtime, workspaceState, networkCanary) {
       if (sandboxRequired) {
         const command = step.tool === "cmake" ? loader : step.executable;
         const commandArguments = step.tool === "cmake"
-          ? ["--library-path", runtimeLibraries, step.executable, ...step.arguments]
+          ? [
+              "--inhibit-cache",
+              "--library-path",
+              runtimeLibraries,
+              step.executable,
+              ...step.arguments,
+            ]
           : step.arguments;
         runBuildTool(
           step.tool,
@@ -4323,6 +4336,7 @@ function runSmokeExecutable(
     : executable;
   const commandArguments = useToolchainSysroot
     ? [
+        "--inhibit-cache",
         "--library-path",
         [
           path.join(sysroot, "lib", "x86_64-linux-gnu"),
@@ -5256,7 +5270,7 @@ async function packageLinux(options, runtime, workspaceState, networkCanary) {
             shell: lockedShell,
           },
           loader,
-          ["--library-path", runtimeLibraries, objcopy, ...toolArguments],
+          ["--inhibit-cache", "--library-path", runtimeLibraries, objcopy, ...toolArguments],
         )
       : toolArguments;
     const packageTool = sandboxExecutable ?? objcopy;
