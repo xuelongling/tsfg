@@ -2123,6 +2123,7 @@ net.connect = () => {
     assert.match(report.result.steps[0].arguments.join(" "), /llvm/);
     assert.match(report.result.steps[0].arguments.join(" "), /-DCMAKE_AR=/);
     assert.match(report.result.steps[2].arguments.join(" "), /-Doptimize=Debug/);
+    assert.match(report.result.steps[2].arguments.join(" "), /--zig-lib-dir .*zig[\\/]lib/);
     assert.deepEqual(report.result.steps[2].arguments.slice(-2), ["--seed", "0"]);
 
     const releaseOutput = path.join(sandbox, "release-out");

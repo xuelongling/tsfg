@@ -3812,6 +3812,7 @@ async function buildLinux(options, runtime, workspaceState, networkCanary) {
   const zigArguments = [
     "build",
     "--build-file", "tests/r00/smoke/zig/build.zig",
+    "--zig-lib-dir", path.join(path.dirname(zig), "lib"),
     "--prefix", zigPrefix,
     "--cache-dir", path.join(workRoot, "zig-cache"),
     "--global-cache-dir", path.join(workRoot, "zig-global-cache"),
@@ -4174,6 +4175,7 @@ async function buildWindows(options, runtime, workspaceState, networkCanary) {
   const zigArguments = [
     "build",
     "--build-file", "tests/r00/smoke/zig/build.zig",
+    "--zig-lib-dir", path.join(path.dirname(tools.zig), "lib"),
     "--prefix", zigPrefix,
     "--cache-dir", path.join(workRoot, "zig-cache"),
     "--global-cache-dir", path.join(workRoot, "zig-global-cache"),
