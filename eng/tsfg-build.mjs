@@ -1121,6 +1121,7 @@ function parseZip(bytes) {
   const entries = [];
   for (let index = 0; index < count; index += 1) {
     if (bytes.readUInt32LE(offset) !== 0x02014b50) throw new Error("invalid zip central directory");
+    const flags = bytes.readUInt16LE(offset + 8);
     const method = bytes.readUInt16LE(offset + 10);
     const expectedCrc = bytes.readUInt32LE(offset + 16);
     const dosTime = bytes.readUInt16LE(offset + 12);
@@ -1134,11 +1135,36 @@ function parseZip(bytes) {
     const localOffset = bytes.readUInt32LE(offset + 42);
     const name = bytes.subarray(offset + 46, offset + 46 + nameLength).toString("utf8");
     if (bytes.readUInt32LE(localOffset) !== 0x04034b50) throw new Error("invalid zip local header");
+    const localFlags = bytes.readUInt16LE(localOffset + 6);
+    const localMethod = bytes.readUInt16LE(localOffset + 8);
+    const localCrc = bytes.readUInt32LE(localOffset + 14);
+    const localCompressedSize = bytes.readUInt32LE(localOffset + 18);
+    const localUncompressedSize = bytes.readUInt32LE(localOffset + 22);
     if (
+      localFlags !== flags ||
+      localMethod !== method ||
       bytes.readUInt16LE(localOffset + 10) !== dosTime ||
-      bytes.readUInt16LE(localOffset + 12) !== dosDate ||
-      bytes.readUInt32LE(localOffset + 14) !== expectedCrc
+      bytes.readUInt16LE(localOffset + 12) !== dosDate
     ) throw new Error(`zip headers disagree for ${name}`);
+    if ((flags & 0x0001) !== 0) throw new Error(`encrypted zip entry is unsupported: ${name}`);
+    const usesDataDescriptor = (flags & 0x0008) !== 0;
+    if (usesDataDescriptor) {
+      const localValuesAreEmpty =
+        localCrc === 0 && localCompressedSize === 0 && localUncompressedSize === 0;
+      const localValuesAgree =
+        localCrc === expectedCrc &&
+        localCompressedSize === compressedSize &&
+        localUncompressedSize === uncompressedSize;
+      if (!localValuesAreEmpty && !localValuesAgree) {
+        throw new Error(`zip headers disagree for ${name}`);
+      }
+    } else if (
+      localCrc !== expectedCrc ||
+      localCompressedSize !== compressedSize ||
+      localUncompressedSize !== uncompressedSize
+    ) {
+      throw new Error(`zip headers disagree for ${name}`);
+    }
     const localNameLength = bytes.readUInt16LE(localOffset + 26);
     const localExtraLength = bytes.readUInt16LE(localOffset + 28);
     if (
@@ -1147,6 +1173,23 @@ function parseZip(bytes) {
     const dataStart = localOffset + 30 + localNameLength + localExtraLength;
     const compressed = bytes.subarray(dataStart, dataStart + compressedSize);
     if (compressed.length !== compressedSize) throw new Error("truncated zip entry");
+    if (usesDataDescriptor) {
+      let descriptorOffset = dataStart + compressedSize;
+      if (
+        descriptorOffset + 4 <= bytes.length &&
+        bytes.readUInt32LE(descriptorOffset) === 0x08074b50
+      ) {
+        descriptorOffset += 4;
+      }
+      if (
+        descriptorOffset + 12 > bytes.length ||
+        bytes.readUInt32LE(descriptorOffset) !== expectedCrc ||
+        bytes.readUInt32LE(descriptorOffset + 4) !== compressedSize ||
+        bytes.readUInt32LE(descriptorOffset + 8) !== uncompressedSize
+      ) {
+        throw new Error(`zip data descriptor mismatch for ${name}`);
+      }
+    }
     const contents = method === 0 ? Buffer.from(compressed) : method === 8 ? inflateRawSync(compressed) : undefined;
     if (!contents) throw new Error(`unsupported zip compression method: ${method}`);
     if (contents.length !== uncompressedSize) throw new Error(`zip size mismatch for ${name}`);

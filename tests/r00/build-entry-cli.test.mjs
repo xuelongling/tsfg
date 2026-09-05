@@ -549,6 +549,59 @@ test("prefetch atomically publishes and reuses a content-verified minimal closur
   }
 });
 
+test("prefetch accepts authenticated ZIP entries that use a data descriptor", async () => {
+  const sandbox = await mkdtemp(path.join(tmpdir(), "tsfg-prefetch-zip-descriptor-"));
+  const toolBytes = Buffer.from("fixture tool\n");
+  const archiveBytes = dataDescriptorZip("package/bin/tool.exe", toolBytes);
+  const server = await startArtifactServer(new Map([["/tool.zip", archiveBytes]]));
+  const lockPath = path.join(sandbox, "toolchains.lock.json");
+  const cachePath = path.join(sandbox, "cache");
+  const reportPath = path.join(sandbox, "report.json");
+  const lock = {
+    dependencyLocks: [],
+    schemaVersion: "1",
+    targets: { "test-x86_64": { tools: ["cmake"] } },
+    tools: {
+      cmake: {
+        artifacts: [{
+          archiveFormat: "zip",
+          archiveSha256: fixtureDigest(archiveBytes),
+          byteSize: String(archiveBytes.length),
+          installPath: "bin/tool.exe",
+          platform: "test-x86_64",
+          stripComponents: "1",
+          unpackedTreeSha256: fixtureTreeDigest("bin/tool.exe", toolBytes),
+          url: `${server.baseUrl}/tool.zip`,
+        }],
+        license: "BSD-3-Clause",
+        signature: { kind: "fixture", signer: "tsfg test fixture" },
+        version: "fixture",
+      },
+    },
+  };
+  try {
+    await writeFile(lockPath, `${JSON.stringify(lock)}\n`);
+    const result = await invoke([
+      "prefetch",
+      "--lock", lockPath,
+      "--cache", cachePath,
+      "--platform", "test-x86_64",
+      "--report", reportPath,
+    ]);
+    assert.equal(result.status, 0, result.stderr);
+    const report = JSON.parse(await readFile(reportPath, "utf8"));
+    assert.equal(report.status, "success");
+    assert.equal(
+      await readFile(path.join(cachePath, "closures", "sha256",
+        report.result.lockDigest.slice("sha256:".length), "test-x86_64", "cmake", "bin", "tool.exe"), "utf8"),
+      "fixture tool\n",
+    );
+  } finally {
+    await server.close();
+    await rm(sandbox, { recursive: true, force: true });
+  }
+});
+
 test("prefetch configuration errors use the stable usage category", async () => {
   const sandbox = await mkdtemp(path.join(tmpdir(), "tsfg-prefetch-config-"));
   const reportPath = path.join(sandbox, "report.json");
@@ -1005,6 +1058,51 @@ syncBuiltinESMExports();
 
 function fixtureDigest(bytes) {
   return `sha256:${createHash("sha256").update(bytes).digest("hex")}`;
+}
+
+function fixtureCrc32(bytes) {
+  let value = 0xffffffff;
+  for (const byte of bytes) {
+    value ^= byte;
+    for (let bit = 0; bit < 8; bit += 1) {
+      value = (value >>> 1) ^ (0xedb88320 & -(value & 1));
+    }
+  }
+  return (value ^ 0xffffffff) >>> 0;
+}
+
+function dataDescriptorZip(entryPath, bytes) {
+  const name = Buffer.from(entryPath, "utf8");
+  const checksum = fixtureCrc32(bytes);
+  const flags = 0x0808;
+  const local = Buffer.alloc(30);
+  local.writeUInt32LE(0x04034b50, 0);
+  local.writeUInt16LE(20, 4);
+  local.writeUInt16LE(flags, 6);
+  local.writeUInt16LE(name.length, 26);
+  const descriptor = Buffer.alloc(16);
+  descriptor.writeUInt32LE(0x08074b50, 0);
+  descriptor.writeUInt32LE(checksum, 4);
+  descriptor.writeUInt32LE(bytes.length, 8);
+  descriptor.writeUInt32LE(bytes.length, 12);
+  const central = Buffer.alloc(46);
+  central.writeUInt32LE(0x02014b50, 0);
+  central.writeUInt16LE(0x0314, 4);
+  central.writeUInt16LE(20, 6);
+  central.writeUInt16LE(flags, 8);
+  central.writeUInt32LE(checksum, 16);
+  central.writeUInt32LE(bytes.length, 20);
+  central.writeUInt32LE(bytes.length, 24);
+  central.writeUInt16LE(name.length, 28);
+  central.writeUInt32LE((0o100644 << 16) >>> 0, 38);
+  const centralOffset = local.length + name.length + bytes.length + descriptor.length;
+  const end = Buffer.alloc(22);
+  end.writeUInt32LE(0x06054b50, 0);
+  end.writeUInt16LE(1, 8);
+  end.writeUInt16LE(1, 10);
+  end.writeUInt32LE(central.length + name.length, 12);
+  end.writeUInt32LE(centralOffset, 16);
+  return Buffer.concat([local, name, bytes, descriptor, central, name, end]);
 }
 
 function fixtureTreeDigest(installPath, bytes) {
