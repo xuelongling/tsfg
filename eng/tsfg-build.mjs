@@ -5332,26 +5332,28 @@ async function packageLinux(options, runtime, workspaceState, networkCanary) {
     }
     members.push({ bytes: Buffer.from(identity.contractSet), mode: 0o644, path: "contract-set.json" });
     members.sort((left, right) => Buffer.from(left.path).compare(Buffer.from(right.path)));
-    const forbiddenValues = new Set([
-      workspaceState.root,
-      runtime.closurePath,
-      stagingRoot,
-      input,
-      output,
-      process.env.CI_RUN_ID,
-      process.env.GITHUB_RUN_ID,
-      process.env.HOSTNAME,
-      process.env.COMPUTERNAME,
-    ].filter((value) => typeof value === "string" && value.length > 0));
-    for (const value of [...forbiddenValues]) {
-      forbiddenValues.add(value.replaceAll("\\", "/"));
-      forbiddenValues.add(value.replaceAll("/", "\\"));
+    const forbiddenValues = [
+      { kind: "workspace", value: workspaceState.root },
+      { kind: "toolchain", value: runtime.closurePath },
+      { kind: "package-staging", value: stagingRoot },
+      { kind: "build-input", value: input },
+      { kind: "package-output", value: output },
+      { kind: "ci-run-id", value: process.env.CI_RUN_ID },
+      { kind: "github-run-id", value: process.env.GITHUB_RUN_ID },
+      { kind: "hostname", value: process.env.HOSTNAME },
+      { kind: "computer-name", value: process.env.COMPUTERNAME },
+    ].filter(({ value }) => typeof value === "string" && value.length > 0);
+    for (const { kind, value } of [...forbiddenValues]) {
+      forbiddenValues.push(
+        { kind, value: value.replaceAll("\\", "/") },
+        { kind, value: value.replaceAll("/", "\\") },
+      );
     }
     for (const member of members) {
-      for (const forbidden of forbiddenValues) {
-        if (member.bytes.includes(Buffer.from(forbidden))) {
+      for (const { kind, value } of forbiddenValues) {
+        if (member.bytes.includes(Buffer.from(value))) {
           throw new PackageFailureError(
-            `package member contains host-specific data: ${member.path}`,
+            `package member contains host-specific ${kind} data: ${member.path}`,
           );
         }
       }
