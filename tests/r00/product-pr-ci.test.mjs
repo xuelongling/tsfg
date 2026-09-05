@@ -134,9 +134,14 @@ test("candidate identity binds a complete product overlay to the fixed Integrati
 
     const overlayBytes = await readFile(path.join(outputPath, "candidate-overlay.json"));
     const resolvedBytes = await readFile(path.join(outputPath, "resolved-manifest.json"));
+    const resolvedManifestBytes = await readFile(path.join(outputPath, "resolved-manifest.xml"));
     const archivedBaselineBytes = await readFile(path.join(outputPath, "baseline-manifest.xml"));
     const report = JSON.parse(await readFile(path.join(outputPath, "candidate-identity.json"), "utf8"));
     assert.equal(archivedBaselineBytes.toString("utf8"), manifestBytes);
+    assert.equal(
+      resolvedManifestBytes.toString("utf8"),
+      manifestBytes.replace(baselineProductRevision, candidateRevision),
+    );
     assert.deepEqual(JSON.parse(overlayBytes.toString("utf8")), {
       baseline: {
         manifest: "bootstrap/r00.xml",
@@ -332,6 +337,10 @@ test("product PR workflow composes every gate, producer, compatibility lane, and
   );
   assert.match(workspaceVerification, /verified-manifest-identity\.json/);
   assert.match(workspaceVerification, /verified-resolved-manifest\.xml/);
+  assert.match(
+    workspaceVerification,
+    /cp \.ci\/workspace-resolved-identity\/resolved-manifest\.xml \.ci\/evidence\/workspace-verification\/verified-resolved-manifest\.xml/,
+  );
   assert.doesNotMatch(
     workspaceVerification,
     /cp "\$workspace\/\.repo\/manifests\/\$TSFG_SELECTED_MANIFEST" \.ci\/evidence\/workspace-verification\/verified-baseline-manifest\.xml/,

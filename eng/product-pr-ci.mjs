@@ -156,6 +156,24 @@ function projectsFromManifest(xml) {
   return { activation, projects };
 }
 
+function resolveProductManifest(xml, candidateRevision) {
+  let replacements = 0;
+  const resolved = xml.replace(/<project\b[^>]*>/g, (tag) => {
+    const values = attributes(tag);
+    if (values.get("name") !== "tsfg.git" || values.get("path") !== "tsfg") return tag;
+    const revisionAttributes = [...tag.matchAll(/\brevision="[^"]*"/g)];
+    if (revisionAttributes.length !== 1) {
+      throw new ProductPrError("canonical tsfg.git project must have one revision attribute");
+    }
+    replacements += 1;
+    return tag.replace(revisionAttributes[0][0], `revision="${candidateRevision}"`);
+  });
+  if (replacements !== 1) {
+    throw new ProductPrError("Integration Snapshot must contain one canonical tsfg.git project");
+  }
+  return Buffer.from(resolved);
+}
+
 async function atomicWrite(directory, name, bytes) {
   const destination = path.join(directory, name);
   const temporary = `${destination}.tmp-${process.pid}`;
@@ -233,6 +251,7 @@ async function writeCandidateIdentity(options) {
   };
   const overlayBytes = jsonBytes(overlay);
   const resolvedBytes = jsonBytes(resolvedManifest);
+  const resolvedManifestBytes = resolveProductManifest(manifestBytes.toString("utf8"), candidateRevision);
   const reportBytes = jsonBytes({
     baselineManifestDigest: sha256(manifestBytes),
     baselineProductRevision: product.revision,
@@ -252,6 +271,7 @@ async function writeCandidateIdentity(options) {
     await writeFile(path.join(stagingPath, "baseline-manifest.xml"), manifestBytes, { flag: "wx" });
     await writeFile(path.join(stagingPath, "candidate-overlay.json"), overlayBytes, { flag: "wx" });
     await writeFile(path.join(stagingPath, "resolved-manifest.json"), resolvedBytes, { flag: "wx" });
+    await writeFile(path.join(stagingPath, "resolved-manifest.xml"), resolvedManifestBytes, { flag: "wx" });
     await writeFile(path.join(stagingPath, "candidate-identity.json"), reportBytes, { flag: "wx" });
     await renameWithRetry(stagingPath, outputPath, true);
   } catch (error) {

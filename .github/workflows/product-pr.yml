@@ -174,9 +174,15 @@ jobs:
             --manifest-revision "$manifest_revision" \
             --manifest "$TSFG_SELECTED_MANIFEST" \
             --report .ci/evidence/workspace-verification/report.json
+          node eng/product-pr-ci.mjs identity \
+            --manifest ".ci/manifests/$TSFG_SELECTED_MANIFEST" \
+            --manifest-name "$TSFG_SELECTED_MANIFEST" \
+            --manifest-revision "$TSFG_MANIFEST_REVISION" \
+            --candidate-revision "${{ github.event.pull_request.head.sha }}" \
+            --out .ci/workspace-resolved-identity
           cp "$GITHUB_WORKSPACE/.ci/manifests/$TSFG_SELECTED_MANIFEST" .ci/evidence/workspace-verification/verified-baseline-manifest.xml
           cp .ci/materialized-identity.json .ci/evidence/workspace-verification/verified-manifest-identity.json
-          cp "$workspace/.repo/manifests/$TSFG_SELECTED_MANIFEST" .ci/evidence/workspace-verification/verified-resolved-manifest.xml
+          cp .ci/workspace-resolved-identity/resolved-manifest.xml .ci/evidence/workspace-verification/verified-resolved-manifest.xml
       - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
         with:
           if-no-files-found: error
