@@ -6,6 +6,7 @@
 #include <aclapi.h>
 #include <fwpmu.h>
 #include <objbase.h>
+#include <sddl.h>
 
 #include <stdint.h>
 #include <stdio.h>
@@ -38,6 +39,10 @@ struct requested_grant {
 struct applied_grant {
   wchar_t *path;
   PSECURITY_DESCRIPTOR original_descriptor;
+  PSECURITY_DESCRIPTOR original_label_descriptor;
+  PSECURITY_DESCRIPTOR low_label_descriptor;
+  PACL original_label_sacl;
+  PACL low_label_sacl;
   PACL replacement_dacl;
   SECURITY_DESCRIPTOR_CONTROL original_control;
   int applied;
@@ -251,46 +256,53 @@ static DWORD apply_grant(const struct requested_grant *requested, PSID sid,
                                     &applied->original_control, &revision)) {
     return GetLastError();
   }
-  EXPLICIT_ACCESS_W access[3];
-  ZeroMemory(access, sizeof(access));
-  ULONG access_count = 1;
+  EXPLICIT_ACCESS_W access;
+  ZeroMemory(&access, sizeof(access));
   DWORD inheritance = (attributes & FILE_ATTRIBUTE_DIRECTORY)
                           ? SUB_CONTAINERS_AND_OBJECTS_INHERIT
                           : NO_INHERITANCE;
-  if (requested->kind == GRANT_READ_ONLY ||
-      requested->kind == GRANT_READ_EXECUTE) {
-    access[0].grfAccessPermissions = GENERIC_WRITE | DELETE;
-    access[0].grfAccessMode = DENY_ACCESS;
-    access[0].grfInheritance = inheritance;
-    access_count = 2;
-    if (attributes & FILE_ATTRIBUTE_DIRECTORY) {
-      access[1].grfAccessPermissions = FILE_DELETE_CHILD;
-      access[1].grfAccessMode = DENY_ACCESS;
-      access[1].grfInheritance = SUB_CONTAINERS_ONLY_INHERIT;
-      access_count = 3;
-    }
-  }
-  EXPLICIT_ACCESS_W *grant = &access[access_count - 1];
-  grant->grfAccessPermissions = access_mask(requested->kind);
-  grant->grfAccessMode = requested->kind == GRANT_DENY_READ
+  access.grfAccessPermissions = access_mask(requested->kind);
+  access.grfAccessMode = requested->kind == GRANT_DENY_READ
                              ? DENY_ACCESS
                              : GRANT_ACCESS;
-  grant->grfInheritance = inheritance;
-  for (ULONG index = 0; index < access_count; ++index) {
-    access[index].Trustee.TrusteeForm = TRUSTEE_IS_SID;
-    access[index].Trustee.TrusteeType = TRUSTEE_IS_USER;
-    access[index].Trustee.ptstrName = (LPWSTR)sid;
-  }
-  result = SetEntriesInAclW(access_count, access, original_dacl,
+  access.grfInheritance = inheritance;
+  access.Trustee.TrusteeForm = TRUSTEE_IS_SID;
+  access.Trustee.TrusteeType = TRUSTEE_IS_USER;
+  access.Trustee.ptstrName = (LPWSTR)sid;
+  result = SetEntriesInAclW(1, &access, original_dacl,
                             &applied->replacement_dacl);
   if (result != ERROR_SUCCESS) return result;
   SECURITY_INFORMATION information = DACL_SECURITY_INFORMATION;
   information |= (applied->original_control & SE_DACL_PROTECTED)
                      ? PROTECTED_DACL_SECURITY_INFORMATION
                      : UNPROTECTED_DACL_SECURITY_INFORMATION;
+  if (requested->kind == GRANT_READ_WRITE) {
+    result = GetNamedSecurityInfoW(
+        requested->path, SE_FILE_OBJECT, LABEL_SECURITY_INFORMATION,
+        NULL, NULL, NULL, &applied->original_label_sacl,
+        &applied->original_label_descriptor);
+    if (result != ERROR_SUCCESS) return result;
+    const wchar_t *low_label = (attributes & FILE_ATTRIBUTE_DIRECTORY)
+                                   ? L"S:(ML;OICI;NW;;;LW)"
+                                   : L"S:(ML;;NW;;;LW)";
+    if (!ConvertStringSecurityDescriptorToSecurityDescriptorW(
+            low_label, SDDL_REVISION_1, &applied->low_label_descriptor,
+            NULL)) return GetLastError();
+    BOOL present = FALSE;
+    BOOL defaulted = FALSE;
+    if (!GetSecurityDescriptorSacl(applied->low_label_descriptor, &present,
+                                   &applied->low_label_sacl, &defaulted)) {
+      return GetLastError();
+    }
+    if (!present || applied->low_label_sacl == NULL) {
+      return ERROR_INVALID_SECURITY_DESCR;
+    }
+    information |= LABEL_SECURITY_INFORMATION;
+  }
   result = SetNamedSecurityInfoW(requested->path, SE_FILE_OBJECT,
                                  information, NULL, NULL,
-                                 applied->replacement_dacl, NULL);
+                                 applied->replacement_dacl,
+                                 applied->low_label_sacl);
   if (result == ERROR_SUCCESS) applied->applied = 1;
   return result;
 }
@@ -307,15 +319,24 @@ static DWORD restore_grant(struct applied_grant *applied) {
   information |= (applied->original_control & SE_DACL_PROTECTED)
                      ? PROTECTED_DACL_SECURITY_INFORMATION
                      : UNPROTECTED_DACL_SECURITY_INFORMATION;
-  DWORD result = SetNamedSecurityInfoW(applied->path, SE_FILE_OBJECT,
-                                       information, NULL, NULL,
-                                       original_dacl, NULL);
+  if (applied->original_label_descriptor != NULL) {
+    information |= LABEL_SECURITY_INFORMATION;
+  }
+  DWORD result = SetNamedSecurityInfoW(
+      applied->path, SE_FILE_OBJECT, information, NULL, NULL,
+      original_dacl, applied->original_label_sacl);
   if (result == ERROR_SUCCESS) applied->applied = 0;
   return result;
 }
 
 static void free_applied_grant(struct applied_grant *applied) {
   if (applied->replacement_dacl != NULL) LocalFree(applied->replacement_dacl);
+  if (applied->low_label_descriptor != NULL) {
+    LocalFree(applied->low_label_descriptor);
+  }
+  if (applied->original_label_descriptor != NULL) {
+    LocalFree(applied->original_label_descriptor);
+  }
   if (applied->original_descriptor != NULL) LocalFree(applied->original_descriptor);
   ZeroMemory(applied, sizeof(*applied));
 }
@@ -469,9 +490,10 @@ int wmain(int argc, wchar_t **argv) {
   wchar_t *command_line = NULL;
   HANDLE process_token = NULL;
   HANDLE restricted_token = NULL;
-  BYTE restricted_sid_buffer[SECURITY_MAX_SID_SIZE];
-  DWORD restricted_sid_size = sizeof(restricted_sid_buffer);
-  PSID restricted_sid = (PSID)restricted_sid_buffer;
+  TOKEN_USER *token_user = NULL;
+  BYTE low_integrity_sid_buffer[SECURITY_MAX_SID_SIZE];
+  DWORD low_integrity_sid_size = sizeof(low_integrity_sid_buffer);
+  PSID low_integrity_sid = (PSID)low_integrity_sid_buffer;
   HANDLE filter_engine = NULL;
   HANDLE acl_mutex = NULL;
   int acl_mutex_owned = 0;
@@ -541,26 +563,49 @@ int wmain(int argc, wchar_t **argv) {
     }
     acl_mutex_owned = 1;
     if (!OpenProcessToken(GetCurrentProcess(),
-                          TOKEN_ASSIGN_PRIMARY | TOKEN_DUPLICATE | TOKEN_QUERY,
+                          TOKEN_ADJUST_DEFAULT | TOKEN_ASSIGN_PRIMARY |
+                              TOKEN_DUPLICATE | TOKEN_QUERY,
                           &process_token)) {
       print_win32_error(L"open process token", GetLastError());
       goto cleanup;
     }
-    if (!CreateWellKnownSid(WinRestrictedCodeSid, NULL, restricted_sid,
-                            &restricted_sid_size)) {
-      print_win32_error(L"create restricted-code SID", GetLastError());
+    DWORD token_user_size = 0;
+    GetTokenInformation(process_token, TokenUser, NULL, 0, &token_user_size);
+    if (token_user_size == 0 || GetLastError() != ERROR_INSUFFICIENT_BUFFER) {
+      print_win32_error(L"size process token user", GetLastError());
       goto cleanup;
     }
-    struct requested_grant command_grant = {command_path, GRANT_READ_EXECUTE};
-    if (requested_count == SIZE_MAX ||
-        requested_count + 1 > SIZE_MAX / sizeof(*applied)) goto cleanup;
-    applied = (struct applied_grant *)calloc(requested_count + 1, sizeof(*applied));
-    if (applied == NULL) {
+    token_user = (TOKEN_USER *)calloc(1, token_user_size);
+    if (token_user == NULL ||
+        !GetTokenInformation(process_token, TokenUser, token_user,
+                             token_user_size, &token_user_size)) {
+      print_win32_error(L"read process token user",
+                        token_user == NULL ? ERROR_OUTOFMEMORY : GetLastError());
+      goto cleanup;
+    }
+    if (!CreateWellKnownSid(WinLowLabelSid, NULL, low_integrity_sid,
+                            &low_integrity_sid_size)) {
+      print_win32_error(L"create low-integrity SID", GetLastError());
+      goto cleanup;
+    }
+    if (requested_count > SIZE_MAX / sizeof(*applied)) goto cleanup;
+    applied = requested_count == 0 ? NULL
+                                   : (struct applied_grant *)calloc(
+                                         requested_count, sizeof(*applied));
+    if (requested_count != 0 && applied == NULL) {
       print_win32_error(L"allocate ACL rollback state", ERROR_OUTOFMEMORY);
       goto cleanup;
     }
     for (size_t index = 0; index < requested_count; ++index) {
-      DWORD result = apply_grant(&requested[index], restricted_sid,
+      if (requested[index].kind == GRANT_READ_ONLY ||
+          requested[index].kind == GRANT_READ_EXECUTE) {
+        if (GetFileAttributesW(requested[index].path) == INVALID_FILE_ATTRIBUTES) {
+          print_win32_error(L"validate restricted read path", GetLastError());
+          goto cleanup;
+        }
+        continue;
+      }
+      DWORD result = apply_grant(&requested[index], token_user->User.Sid,
                                  &applied[applied_count]);
       if (result != ERROR_SUCCESS) {
         print_win32_error(L"grant restricted path access", result);
@@ -568,18 +613,21 @@ int wmain(int argc, wchar_t **argv) {
       }
       ++applied_count;
     }
-    DWORD result = apply_grant(&command_grant, restricted_sid,
-                               &applied[applied_count]);
-    if (result != ERROR_SUCCESS) {
-      print_win32_error(L"grant restricted command access", result);
-      goto cleanup;
-    }
-    ++applied_count;
-    SID_AND_ATTRIBUTES restricting_sid = {restricted_sid, 0};
     if (!CreateRestrictedToken(process_token, DISABLE_MAX_PRIVILEGE,
-                               0, NULL, 0, NULL, 1, &restricting_sid,
+                               0, NULL, 0, NULL, 0, NULL,
                                &restricted_token)) {
       print_win32_error(L"create restricted token", GetLastError());
+      goto cleanup;
+    }
+    TOKEN_MANDATORY_LABEL mandatory_label;
+    ZeroMemory(&mandatory_label, sizeof(mandatory_label));
+    mandatory_label.Label.Sid = low_integrity_sid;
+    mandatory_label.Label.Attributes =
+        SE_GROUP_INTEGRITY | SE_GROUP_INTEGRITY_ENABLED;
+    if (!SetTokenInformation(
+            restricted_token, TokenIntegrityLevel, &mandatory_label,
+            sizeof(mandatory_label) + GetLengthSid(low_integrity_sid))) {
+      print_win32_error(L"set restricted token integrity", GetLastError());
       goto cleanup;
     }
   }
@@ -664,6 +712,7 @@ cleanup:
   if (job != NULL) CloseHandle(job);
   if (restricted_token != NULL) CloseHandle(restricted_token);
   if (process_token != NULL) CloseHandle(process_token);
+  free(token_user);
   while (applied_count > 0) {
     --applied_count;
     DWORD result = ERROR_GEN_FAILURE;

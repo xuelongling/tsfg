@@ -75,8 +75,8 @@ test("Windows network canary starts Node under WFP without the path-restricted t
     verifier.slice(verifier.indexOf('"undeclared-input-canary"')),
     /networkOnly: true/,
   );
-  assert.match(sandboxSource, /grant restricted command access/);
-  assert.match(sandboxSource, /command_grant/);
+  assert.doesNotMatch(sandboxSource, /command_grant/);
+  assert.match(sandboxSource, /validate restricted read path/);
 });
 
 test("Windows executable normalization fails closed on malformed PE data directories", async () => {
