@@ -163,7 +163,11 @@ ${upstream ?? ""}
   const manifestsRoot = path.join(workspace, ".repo", "manifests");
   const manifestHead = await initializeRepository(
     manifestsRoot,
-    { ".gitattributes": gitAttributes, "LICENSE": license, "bootstrap/r00.xml": manifest },
+    {
+      ".gitattributes": gitAttributes,
+      "LICENSE": license,
+      "bootstrap/r00.xml": overrides.manifestTransform?.(manifest) ?? manifest,
+    },
     manifestUrl,
     "origin",
   );
@@ -254,6 +258,25 @@ test("verify-workspace reports complete three-repository policy coverage", async
       payload: [],
     });
     assert.deepEqual(report.result.policy.upstreamForks, []);
+  } finally {
+    await rm(sandbox, { recursive: true, force: true, maxRetries: 10, retryDelay: 100 });
+  }
+});
+
+test("verify-workspace maps the immutable bootstrap manifest without rewriting it", async (context) => {
+  const sandbox = await mkdtemp(path.join(tmpdir(), "tsfg-policy-bootstrap-license-"));
+  const workspace = path.join(sandbox, "workspace");
+  const reportPath = path.join(sandbox, "report.json");
+  try {
+    const { manifestHead } = await materializePolicyFixture(workspace, {
+      manifestTransform: (manifest) => manifest.replace("<!-- SPDX-License-Identifier: MIT -->\n", ""),
+    });
+    const result = await invokeVerify(workspace, manifestHead, reportPath);
+    if (process.platform === "win32" && result.status === 10 && /EACCES.*realpath/.test(result.stderr)) {
+      context.skip("Windows host does not grant a traversable symbolic-link capability");
+      return;
+    }
+    assert.equal(result.status, 0, result.stderr);
   } finally {
     await rm(sandbox, { recursive: true, force: true, maxRetries: 10, retryDelay: 100 });
   }
