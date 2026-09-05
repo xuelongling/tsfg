@@ -79,13 +79,13 @@ jobs:
         shell: bash
         run: |
           run_offline() {
-            sudo unshare --net --mount-proc bash -ceu '
+            sudo unshare --user --map-users "0:$(id -u):1" --map-groups "0:$(id -g):1" --setgroups=deny --setuid 0 --setgid 0 --mount --net bash -ceu '
               mount -t sysfs -o ro,nosuid,nodev,noexec sysfs /sys
               ip link set lo up
               interfaces=$(find /sys/class/net -mindepth 1 -maxdepth 1 -printf "%f\n" | sort)
               [ "$interfaces" = "lo" ]
-              exec setpriv --reuid "$1" --regid "$2" --clear-groups -- "${@:3}"
-            ' bash "$(id -u)" "$(id -g)" "$@"
+              exec "$@"
+            ' bash "$@"
           }
           run_offline node --test --test-concurrency=1 tests/r00/contract-compatibility-cli.test.mjs
       - name: Typecheck
@@ -160,13 +160,13 @@ jobs:
           export TSFG_BOOTSTRAP_GIT_SHA256="$(sha256sum "$TSFG_BOOTSTRAP_GIT" | cut -d ' ' -f 1)"
           "$workspace/tsfg/eng/tsfg-build" prefetch --report .ci/evidence/workspace-verification/prefetch-report.json
           run_offline() {
-            sudo unshare --net --mount-proc bash -ceu '
+            sudo unshare --user --map-users "0:$(id -u):1" --map-groups "0:$(id -g):1" --setgroups=deny --setuid 0 --setgid 0 --mount --net bash -ceu '
               mount -t sysfs -o ro,nosuid,nodev,noexec sysfs /sys
               ip link set lo up
               interfaces=$(find /sys/class/net -mindepth 1 -maxdepth 1 -printf "%f\n" | sort)
               [ "$interfaces" = "lo" ]
-              exec setpriv --reuid "$1" --regid "$2" --clear-groups -- "${@:3}"
-            ' bash "$(id -u)" "$(id -g)" "$@"
+              exec "$@"
+            ' bash "$@"
           }
           run_offline /usr/bin/env "TSFG_CACHE_DIR=$TSFG_CACHE_DIR" "TSFG_BOOTSTRAP_GIT=$TSFG_BOOTSTRAP_GIT" "TSFG_BOOTSTRAP_GIT_SHA256=$TSFG_BOOTSTRAP_GIT_SHA256" "$workspace/tsfg/eng/tsfg-build" verify-workspace \
             --workspace "$workspace" \
@@ -291,13 +291,13 @@ jobs:
           "$workspace/tsfg/eng/tsfg-build" prefetch --report "$root/prefetch-report.json"
           manifest_revision=$(node -e "process.stdout.write(JSON.parse(require('node:fs').readFileSync('.ci/materialized-identity.json','utf8')).manifestRevision)")
           run_offline() {
-            sudo unshare --net --mount-proc bash -ceu '
+            sudo unshare --user --map-users "0:$(id -u):1" --map-groups "0:$(id -g):1" --setgroups=deny --setuid 0 --setgid 0 --mount --net bash -ceu '
               mount -t sysfs -o ro,nosuid,nodev,noexec sysfs /sys
               ip link set lo up
               interfaces=$(find /sys/class/net -mindepth 1 -maxdepth 1 -printf "%f\n" | sort)
               [ "$interfaces" = "lo" ]
-              exec setpriv --reuid "$1" --regid "$2" --clear-groups -- "${@:3}"
-            ' bash "$(id -u)" "$(id -g)" "$@"
+              exec "$@"
+            ' bash "$@"
           }
           run_offline /usr/bin/env "TSFG_CACHE_DIR=$TSFG_CACHE_DIR" "TSFG_BOOTSTRAP_GIT=$TSFG_BOOTSTRAP_GIT" "TSFG_BOOTSTRAP_GIT_SHA256=$TSFG_BOOTSTRAP_GIT_SHA256" "$workspace/tsfg/eng/tsfg-build" verify-workspace --workspace "$workspace" --manifest-url "$TSFG_MANIFEST_URL" --manifest-revision "$manifest_revision" --manifest "$TSFG_SELECTED_MANIFEST" --report "$root/workspace-report.json"
           run_offline /usr/bin/env "TSFG_CACHE_DIR=$TSFG_CACHE_DIR" "TSFG_BOOTSTRAP_GIT=$TSFG_BOOTSTRAP_GIT" "TSFG_BOOTSTRAP_GIT_SHA256=$TSFG_BOOTSTRAP_GIT_SHA256" "$workspace/tsfg/eng/tsfg-build" build --target "${{ matrix.target }}" --profile "${{ matrix.profile }}" --workspace "$workspace/tsfg" --out "$build_output" --report "$root/build-report.json"
@@ -408,13 +408,13 @@ jobs:
           export TSFG_BOOTSTRAP_GIT="$(command -v git)"
           export TSFG_BOOTSTRAP_GIT_SHA256="$(sha256sum "$TSFG_BOOTSTRAP_GIT" | cut -d ' ' -f 1)"
           run_offline() {
-            sudo unshare --net --mount-proc bash -ceu '
+            sudo unshare --user --map-users "0:$(id -u):1" --map-groups "0:$(id -g):1" --setgroups=deny --setuid 0 --setgid 0 --mount --net bash -ceu '
               mount -t sysfs -o ro,nosuid,nodev,noexec sysfs /sys
               ip link set lo up
               interfaces=$(find /sys/class/net -mindepth 1 -maxdepth 1 -printf "%f\n" | sort)
               [ "$interfaces" = "lo" ]
-              exec setpriv --reuid "$1" --regid "$2" --clear-groups -- "${@:3}"
-            ' bash "$(id -u)" "$(id -g)" "$@"
+              exec "$@"
+            ' bash "$@"
           }
           run_offline /usr/bin/env "TSFG_CACHE_DIR=$TSFG_CACHE_DIR" "TSFG_BOOTSTRAP_GIT=$TSFG_BOOTSTRAP_GIT" "TSFG_BOOTSTRAP_GIT_SHA256=$TSFG_BOOTSTRAP_GIT_SHA256" "$GITHUB_WORKSPACE/eng/tsfg-build" test --target "${{ matrix.target }}" \
             --compatibility-baseline "$compatibility/input/baseline.json" \
@@ -485,13 +485,13 @@ jobs:
           export TSFG_BOOTSTRAP_GIT_SHA256="$(sha256sum "$TSFG_BOOTSTRAP_GIT" | cut -d ' ' -f 1)"
           eng/tsfg-build prefetch --report "$root/prefetch-report.json"
           run_offline() {
-            sudo unshare --net --mount-proc bash -ceu '
+            sudo unshare --user --map-users "0:$(id -u):1" --map-groups "0:$(id -g):1" --setgroups=deny --setuid 0 --setgid 0 --mount --net bash -ceu '
               mount -t sysfs -o ro,nosuid,nodev,noexec sysfs /sys
               ip link set lo up
               interfaces=$(find /sys/class/net -mindepth 1 -maxdepth 1 -printf "%f\n" | sort)
               [ "$interfaces" = "lo" ]
-              exec setpriv --reuid "$1" --regid "$2" --clear-groups -- "${@:3}"
-            ' bash "$(id -u)" "$(id -g)" "$@"
+              exec "$@"
+            ' bash "$@"
           }
           run_offline /usr/bin/env "TSFG_CACHE_DIR=$TSFG_CACHE_DIR" "TSFG_BOOTSTRAP_GIT=$TSFG_BOOTSTRAP_GIT" "TSFG_BOOTSTRAP_GIT_SHA256=$TSFG_BOOTSTRAP_GIT_SHA256" "$GITHUB_WORKSPACE/eng/tsfg-build" repro-check --target "${{ matrix.target }}" --profile "${{ matrix.profile }}" \
             --producer-a "$RUNNER_TEMP/tsfg-repro/download/producers/${{ matrix.target }}/${{ matrix.profile }}/a/package" \

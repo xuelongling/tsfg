@@ -370,12 +370,14 @@ test("product PR workflow isolates every Linux offline phase in a loopback-only 
     workflowJob(workflow, "reproducibility"),
   ];
   for (const job of jobs) {
-    assert.match(job, /sudo unshare --net --mount-proc bash -ceu/);
+    assert.match(job, /sudo unshare --user --map-users "0:\$\(id -u\):1" --map-groups "0:\$\(id -g\):1"/);
+    assert.match(job, /--setgroups=deny --setuid 0 --setgid 0 --mount --net bash -ceu/);
     assert.match(job, /mount -t sysfs -o ro,nosuid,nodev,noexec sysfs \/sys/);
     assert.match(job, /ip link set lo up/);
     assert.match(job, /find \/sys\/class\/net -mindepth 1 -maxdepth 1 -printf/);
     assert.doesNotMatch(job, /-printf "%f\\\\n"/);
-    assert.match(job, /exec setpriv --reuid "\$1" --regid "\$2" --clear-groups -- "\$\{@:3\}"/);
+    assert.match(job, /exec "\$@"/);
+    assert.doesNotMatch(job, /exec setpriv/);
   }
 
   const assertions = [

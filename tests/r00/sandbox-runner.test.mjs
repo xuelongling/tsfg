@@ -13,6 +13,13 @@ const repositoryRoot = path.resolve(
   "../..",
 );
 
+test("Linux sandbox accepts only a precreated root mapping to an unprivileged host identity", async () => {
+  const source = await readFile(path.join(repositoryRoot, "eng", "sandbox-run.c"), "utf8");
+  assert.match(source, /root_is_mapped_to_unprivileged\("\/proc\/self\/uid_map"\)/);
+  assert.match(source, /root_is_mapped_to_unprivileged\("\/proc\/self\/gid_map"\)/);
+  assert.match(source, /outside_id != 0 &&\s+mapping_length == 1/);
+});
+
 test("Linux sandbox supervisor owns boundary statuses and audits descendants", async (context) => {
   if (process.platform !== "linux") {
     context.skip("ptrace sandbox acceptance is Linux-only");

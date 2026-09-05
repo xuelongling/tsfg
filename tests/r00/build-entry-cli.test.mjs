@@ -30,11 +30,13 @@ const repositoryRoot = path.resolve(
   "../..",
 );
 const buildEntry = path.join(repositoryRoot, "eng", "tsfg-build.mjs");
+const windowsLauncher = path.join(repositoryRoot, "eng", "tsfg-build.cmd");
 const networkDenialHook = path.join(repositoryRoot, "tests", "r00", "deny-network.cjs");
 const networkAccessHook = path.join(repositoryRoot, "tests", "r00", "allow-network.cjs");
 
 test("Windows sandbox control uses the locked normative compiler and R00 CPU baseline", async () => {
   const source = await readFile(buildEntry, "utf8");
+  const launcher = await readFile(windowsLauncher, "utf8");
   const start = source.indexOf("async function compileWindowsSandbox");
   const end = source.indexOf("function windowsSandboxControlPath", start);
   assert.notEqual(start, -1);
@@ -44,6 +46,9 @@ test("Windows sandbox control uses the locked normative compiler and R00 CPU bas
   assert.match(controlCompiler, /"\/clang:-march=x86-64-v2"/);
   assert.match(controlCompiler, /"\/clang:-mtune=generic"/);
   assert.doesNotMatch(controlCompiler, /const zig =/);
+  const digest = source.match(/WINDOWS_SANDBOX_EXECUTABLE_DIGEST\s*=\s*\n\s*"sha256:([0-9a-f]{64})"/)?.[1];
+  assert.ok(digest);
+  assert.match(launcher, new RegExp(`set "TSFG_CONTROL_ID=${digest}"`));
 });
 
 function validVerifyArguments(reportPath) {

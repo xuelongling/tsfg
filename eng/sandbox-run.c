@@ -67,21 +67,43 @@ static void write_mapping(const char *path, unsigned int outside_id) {
   close(fd);
 }
 
+static int root_is_mapped_to_unprivileged(const char *path) {
+  FILE *mapping = fopen(path, "re");
+  if (!mapping) return 0;
+  unsigned long inside_id = 0;
+  unsigned long outside_id = 0;
+  unsigned long mapping_length = 0;
+  char extra = '\0';
+  int fields = fscanf(mapping, "%lu %lu %lu %c", &inside_id, &outside_id,
+                      &mapping_length, &extra);
+  fclose(mapping);
+  return fields == 3 && inside_id == 0 && outside_id != 0 &&
+         mapping_length == 1;
+}
+
+static int has_precreated_unprivileged_user_namespace(void) {
+  return geteuid() == 0 && getegid() == 0 &&
+         root_is_mapped_to_unprivileged("/proc/self/uid_map") &&
+         root_is_mapped_to_unprivileged("/proc/self/gid_map");
+}
+
 static void enter_namespaces(void) {
-  uid_t uid = getuid();
-  gid_t gid = getgid();
-  if (unshare(CLONE_NEWUSER) < 0)
-    fail("cannot create user namespace", strerror(errno));
-  int setgroups = open("/proc/self/setgroups", O_WRONLY | O_CLOEXEC);
-  if (setgroups >= 0) {
-    if (write(setgroups, "deny\n", 5) != 5) {
+  if (!has_precreated_unprivileged_user_namespace()) {
+    uid_t uid = getuid();
+    gid_t gid = getgid();
+    if (unshare(CLONE_NEWUSER) < 0)
+      fail("cannot create user namespace", strerror(errno));
+    int setgroups = open("/proc/self/setgroups", O_WRONLY | O_CLOEXEC);
+    if (setgroups >= 0) {
+      if (write(setgroups, "deny\n", 5) != 5) {
+        close(setgroups);
+        fail("cannot disable namespace setgroups", strerror(errno));
+      }
       close(setgroups);
-      fail("cannot disable namespace setgroups", strerror(errno));
     }
-    close(setgroups);
+    write_mapping("/proc/self/uid_map", (unsigned int)uid);
+    write_mapping("/proc/self/gid_map", (unsigned int)gid);
   }
-  write_mapping("/proc/self/uid_map", (unsigned int)uid);
-  write_mapping("/proc/self/gid_map", (unsigned int)gid);
   if (unshare(CLONE_NEWNS | CLONE_NEWNET) < 0)
     fail("cannot create mount/network namespace", strerror(errno));
   if (mount(NULL, "/", NULL, MS_REC | MS_PRIVATE, NULL) < 0)
