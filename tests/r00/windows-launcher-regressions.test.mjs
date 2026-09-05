@@ -207,6 +207,6 @@ test("Windows launcher routes verify-workspace through the authenticated offline
   const launcher = await readFile(windowsLauncher, "utf8");
   assert.match(
     launcher,
-    /if "%TSFG_COMMAND%"=="verify-workspace" goto offline_runtime/,
+    /set "OPENSSL_CONF="\r?\ngoto offline_runtime\r?\n\r?\n:offline_runtime/,
   );
 });

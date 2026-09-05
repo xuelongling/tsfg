@@ -14,60 +14,20 @@ if defined TSFG_CACHE_DIR (
 )
 
 if "%~1"=="prefetch" goto prefetch
-if "%~1"=="verify-workspace" (
-  call :validate_verify %*
-  if errorlevel 1 (
-    set "TSFG_USAGE_COMMAND=verify-workspace"
-    set "TSFG_USAGE_CODE=invalid-configuration"
-    set "TSFG_USAGE_MESSAGE=invalid verify-workspace arguments"
-    goto usage
-  )
-  goto runtime
-)
-if "%~1"=="build" (
-  call :validate_smoke build %*
-  if errorlevel 1 (
-    set "TSFG_USAGE_COMMAND=build"
-    set "TSFG_USAGE_CODE=invalid-configuration"
-    set "TSFG_USAGE_MESSAGE=invalid build arguments"
-    goto usage
-  )
-  goto runtime
-)
-if "%~1"=="test" (
-  call :validate_smoke test %*
-  if errorlevel 1 (
-    set "TSFG_USAGE_COMMAND=test"
-    set "TSFG_USAGE_CODE=invalid-configuration"
-    set "TSFG_USAGE_MESSAGE=invalid test arguments"
-    goto usage
-  )
-  goto runtime
-)
-if "%~1"=="package" (
-  call :validate_smoke package %*
-  if errorlevel 1 (
-    set "TSFG_USAGE_COMMAND=package"
-    set "TSFG_USAGE_CODE=invalid-configuration"
-    set "TSFG_USAGE_MESSAGE=invalid package arguments"
-    goto usage
-  )
-  goto runtime
-)
-if "%~1"=="repro-check" (
-  call :validate_repro %*
-  if errorlevel 1 (
-    set "TSFG_USAGE_COMMAND=repro-check"
-    set "TSFG_USAGE_CODE=invalid-configuration"
-    set "TSFG_USAGE_MESSAGE=invalid repro-check arguments"
-    goto usage
-  )
-  goto runtime
-)
+for %%C in (verify-workspace build test package repro-check) do if "%~1"=="%%C" goto validate_offline_command
 (
   set "TSFG_USAGE_COMMAND=unsupported"
   set "TSFG_USAGE_CODE=unsupported-operation"
   set "TSFG_USAGE_MESSAGE=unsupported operation"
+  goto usage
+)
+
+:validate_offline_command
+call :validate_arguments %*
+if errorlevel 1 (
+  set "TSFG_USAGE_COMMAND=%TSFG_COMMAND%"
+  set "TSFG_USAGE_CODE=invalid-configuration"
+  set "TSFG_USAGE_MESSAGE=invalid %TSFG_COMMAND% arguments"
   goto usage
 )
 
@@ -114,13 +74,7 @@ set "TSFG_WINDOWS_BOUNDARY_ERROR="
 set "NODE_REPL_EXTERNAL_MODULE="
 set "NODE_EXTRA_CA_CERTS="
 set "OPENSSL_CONF="
-if "%TSFG_COMMAND%"=="verify-workspace" goto offline_runtime
-if "%TSFG_COMMAND%"=="build" goto offline_runtime
-if "%TSFG_COMMAND%"=="test" goto offline_runtime
-if "%TSFG_COMMAND%"=="package" goto offline_runtime
-if "%TSFG_COMMAND%"=="repro-check" goto offline_runtime
-"%TSFG_NODE%" "%~dp0tsfg-build.mjs" %*
-exit /b %errorlevel%
+goto offline_runtime
 
 :offline_runtime
 set "TSFG_WINDOWS_OFFLINE_ACTIVE=1"
@@ -196,254 +150,118 @@ if "%~1"=="--report" (
 shift
 goto find_report
 
-:validate_verify
-set "TSFG_SEEN_WORKSPACE="
-set "TSFG_SEEN_MANIFEST_URL="
-set "TSFG_SEEN_MANIFEST_REVISION="
-set "TSFG_SEEN_MANIFEST="
-set "TSFG_SEEN_REPORT="
-set "TSFG_MANIFEST_REVISION="
-set "TSFG_MANIFEST="
+:validate_arguments
+setlocal DisableDelayedExpansion
+set "TSFG_ARGUMENT_COMMAND=%~1"
+if "%~1"=="verify-workspace" goto validate_arguments_verify
+if "%~1"=="build" goto validate_arguments_build
+if "%~1"=="test" goto validate_arguments_test
+if "%~1"=="package" goto validate_arguments_package
+if "%~1"=="repro-check" goto validate_arguments_repro
+goto validate_arguments_fail
+:validate_arguments_verify
+set "TSFG_ALLOWED=--workspace --manifest-url --manifest-revision --manifest --report"
+set "TSFG_FLAGS="
+set "TSFG_REQUIRED=workspace manifest_url manifest_revision manifest"
+goto validate_arguments_ready
+:validate_arguments_build
+set "TSFG_ALLOWED=--dev --target --profile --simd-dispatch --workspace --out --report"
+set "TSFG_FLAGS=--dev"
+set "TSFG_REQUIRED=target profile out"
+goto validate_arguments_ready
+:validate_arguments_test
+set "TSFG_ALLOWED=--dev --target --profile --simd-dispatch --cpu-fixture --workspace --out --package --report --compatibility-baseline --compatibility-candidate"
+set "TSFG_FLAGS=--dev"
+set "TSFG_REQUIRED="
+goto validate_arguments_ready
+:validate_arguments_package
+set "TSFG_ALLOWED=--dev --target --profile --simd-dispatch --workspace --input --out --report"
+set "TSFG_FLAGS=--dev"
+set "TSFG_REQUIRED=target profile input out"
+goto validate_arguments_ready
+:validate_arguments_repro
+set "TSFG_ALLOWED=--target --profile --producer-a --producer-b --workspace --report"
+set "TSFG_FLAGS="
+set "TSFG_REQUIRED=target profile producer_a producer_b"
+:validate_arguments_ready
 shift
-:validate_verify_loop
-if "%~1"=="" goto validate_verify_done
-if "%~2"=="" exit /b 1
-if "%~1"=="--workspace" goto validate_verify_workspace
-if "%~1"=="--manifest-url" goto validate_verify_manifest_url
-if "%~1"=="--manifest-revision" goto validate_verify_manifest_revision
-if "%~1"=="--manifest" goto validate_verify_manifest
-if "%~1"=="--report" goto validate_verify_report
-exit /b 1
-:validate_verify_workspace
-if defined TSFG_SEEN_WORKSPACE exit /b 1
-set "TSFG_SEEN_WORKSPACE=1"
-goto validate_verify_next
-:validate_verify_manifest_url
-if defined TSFG_SEEN_MANIFEST_URL exit /b 1
-set "TSFG_SEEN_MANIFEST_URL=1"
-goto validate_verify_next
-:validate_verify_manifest_revision
-if defined TSFG_SEEN_MANIFEST_REVISION exit /b 1
-set "TSFG_SEEN_MANIFEST_REVISION=1"
-set "TSFG_MANIFEST_REVISION=%~2"
-goto validate_verify_next
-:validate_verify_manifest
-if defined TSFG_SEEN_MANIFEST exit /b 1
-set "TSFG_SEEN_MANIFEST=1"
-set "TSFG_MANIFEST=%~2"
-goto validate_verify_next
-:validate_verify_report
-if defined TSFG_SEEN_REPORT exit /b 1
-set "TSFG_SEEN_REPORT=1"
-:validate_verify_next
+:validate_arguments_loop
+if "%~1"=="" goto validate_arguments_done
+set "TSFG_KNOWN="
+for %%O in (%TSFG_ALLOWED%) do if "%%O"=="%~1" set "TSFG_KNOWN=1"
+if not defined TSFG_KNOWN goto validate_arguments_fail
+set "TSFG_KEY=%~1"
+set "TSFG_KEY=%TSFG_KEY:--=%"
+set "TSFG_KEY=%TSFG_KEY:-=_%"
+call set "TSFG_DUPLICATE=%%TSFG_SEEN_%TSFG_KEY%%%"
+if defined TSFG_DUPLICATE goto validate_arguments_fail
+set "TSFG_SEEN_%TSFG_KEY%=1"
+set "TSFG_FLAG="
+for %%O in (%TSFG_FLAGS%) do if "%%O"=="%~1" set "TSFG_FLAG=1"
+if defined TSFG_FLAG (
+  shift
+  goto validate_arguments_loop
+)
+if "%~2"=="" goto validate_arguments_fail
+if "%~1"=="--target" set "TSFG_TARGET=%~2"
+if "%~1"=="--profile" set "TSFG_PROFILE=%~2"
+if "%~1"=="--simd-dispatch" set "TSFG_SIMD_DISPATCH=%~2"
+if "%~1"=="--cpu-fixture" set "TSFG_CPU_FIXTURE=%~2"
+if "%~1"=="--manifest-revision" set "TSFG_MANIFEST_REVISION=%~2"
+if "%~1"=="--manifest" set "TSFG_MANIFEST=%~2"
 shift
 shift
-goto validate_verify_loop
-:validate_verify_done
-if not defined TSFG_SEEN_WORKSPACE exit /b 1
-if not defined TSFG_SEEN_MANIFEST_URL exit /b 1
-if not defined TSFG_SEEN_MANIFEST_REVISION exit /b 1
-if not defined TSFG_SEEN_MANIFEST exit /b 1
-call :validate_oid "%TSFG_MANIFEST_REVISION%"
-if errorlevel 1 exit /b 1
-call :validate_manifest_path "%TSFG_MANIFEST%"
-if errorlevel 1 exit /b 1
-exit /b 0
+goto validate_arguments_loop
+:validate_arguments_done
+call :require_options %TSFG_REQUIRED%
+if errorlevel 1 goto validate_arguments_fail
+if defined TSFG_SEEN_target if not "%TSFG_TARGET%"=="windows-x86_64-msvc" goto validate_arguments_fail
+if defined TSFG_SEEN_profile if not "%TSFG_PROFILE%"=="debug" if not "%TSFG_PROFILE%"=="release" goto validate_arguments_fail
+if defined TSFG_SEEN_simd_dispatch if not "%TSFG_SIMD_DISPATCH%"=="runtime-detected" if not "%TSFG_SIMD_DISPATCH%"=="baseline-only" goto validate_arguments_fail
+if defined TSFG_SEEN_cpu_fixture if not "%TSFG_CPU_FIXTURE%"=="x86-64-v2" goto validate_arguments_fail
+if "%TSFG_ARGUMENT_COMMAND%"=="verify-workspace" (
+  call :validate_oid "%TSFG_MANIFEST_REVISION%"
+  if errorlevel 1 goto validate_arguments_fail
+  call :validate_manifest_path "%TSFG_MANIFEST%"
+  if errorlevel 1 goto validate_arguments_fail
+)
+if "%TSFG_ARGUMENT_COMMAND%"=="test" goto validate_test_arguments
+endlocal & exit /b 0
+:validate_test_arguments
+if defined TSFG_SEEN_compatibility_baseline goto validate_compatibility_arguments
+if defined TSFG_SEEN_compatibility_candidate goto validate_compatibility_arguments
+if defined TSFG_SEEN_package goto validate_package_runtime_arguments
+call :require_options target profile out
+if errorlevel 1 goto validate_arguments_fail
+endlocal & exit /b 0
+:validate_compatibility_arguments
+call :require_options target compatibility_baseline compatibility_candidate
+if errorlevel 1 goto validate_arguments_fail
+call :forbid_options profile simd_dispatch cpu_fixture out package
+if errorlevel 1 goto validate_arguments_fail
+endlocal & exit /b 0
+:validate_package_runtime_arguments
+call :require_options target profile workspace package
+if errorlevel 1 goto validate_arguments_fail
+call :forbid_options dev out simd_dispatch cpu_fixture compatibility_baseline compatibility_candidate
+if errorlevel 1 goto validate_arguments_fail
+endlocal & exit /b 0
+:validate_arguments_fail
+endlocal & exit /b 1
 
-:validate_smoke
-set "TSFG_EXPECTED_COMMAND=%~1"
-set "TSFG_SEEN_DEV="
-set "TSFG_SEEN_TARGET="
-set "TSFG_SEEN_PROFILE="
-set "TSFG_SEEN_SIMD_DISPATCH="
-set "TSFG_SEEN_CPU_FIXTURE="
-set "TSFG_SEEN_COMPATIBILITY_BASELINE="
-set "TSFG_SEEN_COMPATIBILITY_CANDIDATE="
-set "TSFG_SEEN_WORKSPACE="
-set "TSFG_SEEN_INPUT="
-set "TSFG_SEEN_PACKAGE="
-set "TSFG_SEEN_OUT="
-set "TSFG_SEEN_REPORT="
-set "TSFG_TARGET="
-set "TSFG_PROFILE="
+:require_options
+if "%~1"=="" exit /b 0
+call set "TSFG_OPTION_STATE=%%TSFG_SEEN_%~1%%"
+if not defined TSFG_OPTION_STATE exit /b 1
 shift
-if not "%~1"=="%TSFG_EXPECTED_COMMAND%" exit /b 1
-shift
-:validate_smoke_loop
-if "%~1"=="" goto validate_smoke_done
-if "%~1"=="--dev" goto validate_smoke_dev
-if "%~2"=="" exit /b 1
-if "%~1"=="--target" goto validate_smoke_target
-if "%~1"=="--profile" goto validate_smoke_profile
-if "%~1"=="--simd-dispatch" goto validate_smoke_simd_dispatch
-if "%~1"=="--cpu-fixture" goto validate_smoke_cpu_fixture
-if "%~1"=="--compatibility-baseline" goto validate_smoke_compatibility_baseline
-if "%~1"=="--compatibility-candidate" goto validate_smoke_compatibility_candidate
-if "%~1"=="--workspace" goto validate_smoke_workspace
-if "%~1"=="--input" goto validate_smoke_input
-if "%~1"=="--package" goto validate_smoke_package
-if "%~1"=="--out" goto validate_smoke_out
-if "%~1"=="--report" goto validate_smoke_report
-exit /b 1
-:validate_smoke_dev
-if defined TSFG_SEEN_DEV exit /b 1
-set "TSFG_SEEN_DEV=1"
-shift
-goto validate_smoke_loop
-:validate_smoke_target
-if defined TSFG_SEEN_TARGET exit /b 1
-set "TSFG_SEEN_TARGET=1"
-set "TSFG_TARGET=%~2"
-goto validate_smoke_next
-:validate_smoke_profile
-if defined TSFG_SEEN_PROFILE exit /b 1
-set "TSFG_SEEN_PROFILE=1"
-set "TSFG_PROFILE=%~2"
-goto validate_smoke_next
-:validate_smoke_simd_dispatch
-if defined TSFG_SEEN_SIMD_DISPATCH exit /b 1
-if not "%~2"=="runtime-detected" if not "%~2"=="baseline-only" exit /b 1
-set "TSFG_SEEN_SIMD_DISPATCH=1"
-goto validate_smoke_next
-:validate_smoke_cpu_fixture
-if not "%TSFG_EXPECTED_COMMAND%"=="test" exit /b 1
-if defined TSFG_SEEN_CPU_FIXTURE exit /b 1
-if not "%~2"=="x86-64-v2" exit /b 1
-set "TSFG_SEEN_CPU_FIXTURE=1"
-goto validate_smoke_next
-:validate_smoke_compatibility_baseline
-if not "%TSFG_EXPECTED_COMMAND%"=="test" exit /b 1
-if defined TSFG_SEEN_COMPATIBILITY_BASELINE exit /b 1
-set "TSFG_SEEN_COMPATIBILITY_BASELINE=1"
-goto validate_smoke_next
-:validate_smoke_compatibility_candidate
-if not "%TSFG_EXPECTED_COMMAND%"=="test" exit /b 1
-if defined TSFG_SEEN_COMPATIBILITY_CANDIDATE exit /b 1
-set "TSFG_SEEN_COMPATIBILITY_CANDIDATE=1"
-goto validate_smoke_next
-:validate_smoke_workspace
-if defined TSFG_SEEN_WORKSPACE exit /b 1
-set "TSFG_SEEN_WORKSPACE=1"
-goto validate_smoke_next
-:validate_smoke_input
-if not "%TSFG_EXPECTED_COMMAND%"=="package" exit /b 1
-if defined TSFG_SEEN_INPUT exit /b 1
-set "TSFG_SEEN_INPUT=1"
-goto validate_smoke_next
-:validate_smoke_package
-if not "%TSFG_EXPECTED_COMMAND%"=="test" exit /b 1
-if defined TSFG_SEEN_PACKAGE exit /b 1
-set "TSFG_SEEN_PACKAGE=1"
-goto validate_smoke_next
-:validate_smoke_out
-if defined TSFG_SEEN_OUT exit /b 1
-set "TSFG_SEEN_OUT=1"
-goto validate_smoke_next
-:validate_smoke_report
-if defined TSFG_SEEN_REPORT exit /b 1
-set "TSFG_SEEN_REPORT=1"
-:validate_smoke_next
-shift
-shift
-goto validate_smoke_loop
-:validate_smoke_done
-if defined TSFG_SEEN_COMPATIBILITY_BASELINE goto validate_smoke_compatibility_done
-if defined TSFG_SEEN_COMPATIBILITY_CANDIDATE goto validate_smoke_compatibility_done
-if defined TSFG_SEEN_PACKAGE goto validate_smoke_package_done
-if not defined TSFG_SEEN_TARGET exit /b 1
-if not defined TSFG_SEEN_PROFILE exit /b 1
-if not defined TSFG_SEEN_OUT exit /b 1
-if "%TSFG_EXPECTED_COMMAND%"=="package" if not defined TSFG_SEEN_INPUT exit /b 1
-if not "%TSFG_TARGET%"=="windows-x86_64-msvc" exit /b 1
-if "%TSFG_PROFILE%"=="debug" exit /b 0
-if "%TSFG_PROFILE%"=="release" exit /b 0
-exit /b 1
-:validate_smoke_compatibility_done
-if not "%TSFG_EXPECTED_COMMAND%"=="test" exit /b 1
-if not defined TSFG_SEEN_TARGET exit /b 1
-if not defined TSFG_SEEN_COMPATIBILITY_BASELINE exit /b 1
-if not defined TSFG_SEEN_COMPATIBILITY_CANDIDATE exit /b 1
-if defined TSFG_SEEN_PROFILE exit /b 1
-if defined TSFG_SEEN_SIMD_DISPATCH exit /b 1
-if defined TSFG_SEEN_CPU_FIXTURE exit /b 1
-if defined TSFG_SEEN_OUT exit /b 1
-if defined TSFG_SEEN_PACKAGE exit /b 1
-if not "%TSFG_TARGET%"=="windows-x86_64-msvc" exit /b 1
-exit /b 0
-:validate_smoke_package_done
-if not "%TSFG_EXPECTED_COMMAND%"=="test" exit /b 1
-if not defined TSFG_SEEN_TARGET exit /b 1
-if not defined TSFG_SEEN_PROFILE exit /b 1
-if not defined TSFG_SEEN_WORKSPACE exit /b 1
-if defined TSFG_SEEN_DEV exit /b 1
-if defined TSFG_SEEN_OUT exit /b 1
-if defined TSFG_SEEN_SIMD_DISPATCH exit /b 1
-if defined TSFG_SEEN_CPU_FIXTURE exit /b 1
-if defined TSFG_SEEN_COMPATIBILITY_BASELINE exit /b 1
-if defined TSFG_SEEN_COMPATIBILITY_CANDIDATE exit /b 1
-if not "%TSFG_TARGET%"=="windows-x86_64-msvc" exit /b 1
-if "%TSFG_PROFILE%"=="debug" exit /b 0
-if "%TSFG_PROFILE%"=="release" exit /b 0
-exit /b 1
+goto require_options
 
-:validate_repro
-set "TSFG_SEEN_TARGET="
-set "TSFG_SEEN_PROFILE="
-set "TSFG_SEEN_PRODUCER_A="
-set "TSFG_SEEN_PRODUCER_B="
-set "TSFG_SEEN_WORKSPACE="
-set "TSFG_SEEN_REPORT="
-set "TSFG_TARGET="
-set "TSFG_PROFILE="
+:forbid_options
+if "%~1"=="" exit /b 0
+call set "TSFG_OPTION_STATE=%%TSFG_SEEN_%~1%%"
+if defined TSFG_OPTION_STATE exit /b 1
 shift
-:validate_repro_loop
-if "%~1"=="" goto validate_repro_done
-if "%~2"=="" exit /b 1
-if "%~1"=="--target" goto validate_repro_target
-if "%~1"=="--profile" goto validate_repro_profile
-if "%~1"=="--producer-a" goto validate_repro_producer_a
-if "%~1"=="--producer-b" goto validate_repro_producer_b
-if "%~1"=="--workspace" goto validate_repro_workspace
-if "%~1"=="--report" goto validate_repro_report
-exit /b 1
-:validate_repro_target
-if defined TSFG_SEEN_TARGET exit /b 1
-set "TSFG_SEEN_TARGET=1"
-set "TSFG_TARGET=%~2"
-goto validate_repro_next
-:validate_repro_profile
-if defined TSFG_SEEN_PROFILE exit /b 1
-set "TSFG_SEEN_PROFILE=1"
-set "TSFG_PROFILE=%~2"
-goto validate_repro_next
-:validate_repro_producer_a
-if defined TSFG_SEEN_PRODUCER_A exit /b 1
-set "TSFG_SEEN_PRODUCER_A=1"
-goto validate_repro_next
-:validate_repro_producer_b
-if defined TSFG_SEEN_PRODUCER_B exit /b 1
-set "TSFG_SEEN_PRODUCER_B=1"
-goto validate_repro_next
-:validate_repro_workspace
-if defined TSFG_SEEN_WORKSPACE exit /b 1
-set "TSFG_SEEN_WORKSPACE=1"
-goto validate_repro_next
-:validate_repro_report
-if defined TSFG_SEEN_REPORT exit /b 1
-set "TSFG_SEEN_REPORT=1"
-:validate_repro_next
-shift
-shift
-goto validate_repro_loop
-:validate_repro_done
-if not defined TSFG_SEEN_TARGET exit /b 1
-if not defined TSFG_SEEN_PROFILE exit /b 1
-if not defined TSFG_SEEN_PRODUCER_A exit /b 1
-if not defined TSFG_SEEN_PRODUCER_B exit /b 1
-if not "%TSFG_TARGET%"=="windows-x86_64-msvc" exit /b 1
-if "%TSFG_PROFILE%"=="debug" exit /b 0
-if "%TSFG_PROFILE%"=="release" exit /b 0
-exit /b 1
+goto forbid_options
 
 :validate_oid
 set "TSFG_VALUE=%~1"
