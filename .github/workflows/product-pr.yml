@@ -80,8 +80,7 @@ jobs:
         run: |
           run_offline() {
             sudo sysctl -q kernel.apparmor_restrict_unprivileged_userns=0
-            sudo unshare --mount --net bash -ceu '
-              mount -t sysfs -o ro,nosuid,nodev,noexec sysfs /sys
+            sudo unshare --net bash -ceu '
               ip link set lo up
               interfaces=$(find /sys/class/net -mindepth 1 -maxdepth 1 -printf "%f\n" | sort)
               [ "$interfaces" = "lo" ]
@@ -162,8 +161,7 @@ jobs:
           "$workspace/tsfg/eng/tsfg-build" prefetch --report .ci/evidence/workspace-verification/prefetch-report.json
           run_offline() {
             sudo sysctl -q kernel.apparmor_restrict_unprivileged_userns=0
-            sudo unshare --mount --net bash -ceu '
-              mount -t sysfs -o ro,nosuid,nodev,noexec sysfs /sys
+            sudo unshare --net bash -ceu '
               ip link set lo up
               interfaces=$(find /sys/class/net -mindepth 1 -maxdepth 1 -printf "%f\n" | sort)
               [ "$interfaces" = "lo" ]
@@ -294,8 +292,7 @@ jobs:
           manifest_revision=$(node -e "process.stdout.write(JSON.parse(require('node:fs').readFileSync('.ci/materialized-identity.json','utf8')).manifestRevision)")
           run_offline() {
             sudo sysctl -q kernel.apparmor_restrict_unprivileged_userns=0
-            sudo unshare --mount --net bash -ceu '
-              mount -t sysfs -o ro,nosuid,nodev,noexec sysfs /sys
+            sudo unshare --net bash -ceu '
               ip link set lo up
               interfaces=$(find /sys/class/net -mindepth 1 -maxdepth 1 -printf "%f\n" | sort)
               [ "$interfaces" = "lo" ]
@@ -412,8 +409,7 @@ jobs:
           export TSFG_BOOTSTRAP_GIT_SHA256="$(sha256sum "$TSFG_BOOTSTRAP_GIT" | cut -d ' ' -f 1)"
           run_offline() {
             sudo sysctl -q kernel.apparmor_restrict_unprivileged_userns=0
-            sudo unshare --mount --net bash -ceu '
-              mount -t sysfs -o ro,nosuid,nodev,noexec sysfs /sys
+            sudo unshare --net bash -ceu '
               ip link set lo up
               interfaces=$(find /sys/class/net -mindepth 1 -maxdepth 1 -printf "%f\n" | sort)
               [ "$interfaces" = "lo" ]
@@ -490,8 +486,7 @@ jobs:
           eng/tsfg-build prefetch --report "$root/prefetch-report.json"
           run_offline() {
             sudo sysctl -q kernel.apparmor_restrict_unprivileged_userns=0
-            sudo unshare --mount --net bash -ceu '
-              mount -t sysfs -o ro,nosuid,nodev,noexec sysfs /sys
+            sudo unshare --net bash -ceu '
               ip link set lo up
               interfaces=$(find /sys/class/net -mindepth 1 -maxdepth 1 -printf "%f\n" | sort)
               [ "$interfaces" = "lo" ]

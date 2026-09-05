@@ -53,6 +53,10 @@ test("Windows sandbox control uses the locked normative compiler and R00 CPU bas
 
 test("Windows network canary starts Node under WFP without the path-restricted token", async () => {
   const source = await readFile(buildEntry, "utf8");
+  const sandboxSource = await readFile(
+    path.join(repositoryRoot, "eng", "windows-sandbox-run.c"),
+    "utf8",
+  );
   const argumentsStart = source.indexOf("function windowsSandboxArguments");
   const argumentsEnd = source.indexOf("async function compileWindowsSandbox", argumentsStart);
   const verifierStart = source.indexOf("function verifyWindowsSandboxBoundary");
@@ -70,6 +74,8 @@ test("Windows network canary starts Node under WFP without the path-restricted t
     verifier.slice(verifier.indexOf('"undeclared-input-canary"')),
     /networkOnly: true/,
   );
+  assert.doesNotMatch(sandboxSource, /grant restricted command access/);
+  assert.doesNotMatch(sandboxSource, /command_grant/);
 });
 
 function validVerifyArguments(reportPath) {
