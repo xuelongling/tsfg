@@ -727,10 +727,12 @@ static int terminate_denied_processes(struct traced_process *traced,
 
 static int supervise_command(char **arguments, struct allowed_path *allowed,
                              size_t allowed_count) {
-  enum { MAX_TRACED_PROCESSES = 4096 };
+  enum { MAX_TRACED_PROCESSES = 4096, MAX_FAILED_PROBES = 8 };
   struct traced_process *traced = calloc(
       MAX_TRACED_PROCESSES, sizeof(*traced));
   if (!traced) fail("cannot allocate sandbox process audit", NULL);
+  char failed_probes[MAX_FAILED_PROBES][PATH_MAX] = {{0}};
+  size_t failed_probe_count = 0;
   size_t traced_count = 0;
   pid_t child = fork();
   if (child < 0) fail("cannot fork sandbox command", strerror(errno));
@@ -773,6 +775,14 @@ static int supervise_command(char **arguments, struct allowed_path *allowed,
           code <= SANDBOX_SETUP_FAILURE_STATUS) {
         free(traced);
         return 122;
+      }
+      if (code != 0) {
+        size_t first = failed_probe_count > MAX_FAILED_PROBES
+                           ? failed_probe_count - MAX_FAILED_PROBES
+                           : 0;
+        for (size_t index = first; index < failed_probe_count; ++index)
+          fprintf(stderr, "tsfg sandbox: failed undeclared read probe: %s\n",
+                  failed_probes[index % MAX_FAILED_PROBES]);
       }
       free(traced);
       return code;
@@ -824,6 +834,10 @@ static int supervise_command(char **arguments, struct allowed_path *allowed,
               traced, traced_count, traced[process_index].denied_path);
           free(traced);
           return code;
+        } else {
+          snprintf(failed_probes[failed_probe_count % MAX_FAILED_PROBES],
+                   PATH_MAX, "%s", traced[process_index].denied_path);
+          ++failed_probe_count;
         }
       } else if ((long long)registers.rax == -ENOSYS) {
         char denied[PATH_MAX];

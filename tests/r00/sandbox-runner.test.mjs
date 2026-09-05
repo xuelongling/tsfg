@@ -99,6 +99,10 @@ int main(int argc, char **argv) {
     ignored_read(argv[2]);
     return 0;
   }
+  if (strcmp(argv[1], "failed-read-error") == 0) {
+    ignored_read(argv[2]);
+    return 7;
+  }
   if (strcmp(argv[1], "write") == 0) {
     int fd = open(argv[2], O_WRONLY | O_APPEND);
     if (fd >= 0) close(fd);
@@ -186,6 +190,11 @@ int main(int argc, char **argv) {
 
     const failedProbe = invoke("read", missingOutsidePath);
     assert.equal(failedProbe.status, 0, failedProbe.stderr);
+
+    const diagnosedFailedProbe = invoke("failed-read-error", missingOutsidePath);
+    assert.equal(diagnosedFailedProbe.status, 7, diagnosedFailedProbe.stderr);
+    assert.match(diagnosedFailedProbe.stderr, /failed undeclared read probe/);
+    assert.match(diagnosedFailedProbe.stderr, /missing-outside\.txt/);
 
     const allowedPermissionProbe = invoke("access", sourceRoot);
     assert.equal(allowedPermissionProbe.status, 0, allowedPermissionProbe.stderr);
