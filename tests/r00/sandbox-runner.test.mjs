@@ -40,6 +40,11 @@ test("Linux sandbox accepts only a precreated root mapping to an unprivileged ho
     /process_index = traced_count;\s+traced\[traced_count\+\+\]\.pid = stopped/,
     "ptrace descendants must be registered idempotently when syscall stops race clone events",
   );
+  assert.match(
+    source,
+    /PTRACE_GET_SYSCALL_INFO[\s\S]*PTRACE_SYSCALL_INFO_ENTRY[\s\S]*audit_syscall/,
+    "syscall entry and exit stops must be classified explicitly",
+  );
 });
 
 test("Linux sandbox supervisor owns boundary statuses and audits descendants", async (context) => {

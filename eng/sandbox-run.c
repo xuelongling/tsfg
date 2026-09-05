@@ -880,6 +880,11 @@ static int supervise_command(char **arguments, struct allowed_path *allowed,
       struct user_regs_struct registers;
       if (ptrace(PTRACE_GETREGS, stopped, NULL, &registers) < 0)
         fail("cannot inspect sandbox syscall", strerror(errno));
+      struct __ptrace_syscall_info syscall_info;
+      long syscall_info_size = ptrace(PTRACE_GET_SYSCALL_INFO, stopped,
+                                      sizeof(syscall_info), &syscall_info);
+      if (syscall_info_size < 0)
+        fail("cannot classify sandbox syscall stop", strerror(errno));
       size_t process_index = traced_process_index(traced, traced_count, stopped);
       if (process_index == traced_count) {
         if (traced_count == MAX_TRACED_PROCESSES)
@@ -887,12 +892,14 @@ static int supervise_command(char **arguments, struct allowed_path *allowed,
         process_index = traced_count;
         traced[traced_count++].pid = stopped;
       }
-      if (traced[process_index].emulated_syscall) {
+      if (syscall_info.op == PTRACE_SYSCALL_INFO_EXIT &&
+          traced[process_index].emulated_syscall) {
         registers.rax = (unsigned long long)traced[process_index].emulated_result;
         if (ptrace(PTRACE_SETREGS, stopped, NULL, &registers) < 0)
           fail("cannot complete emulated sandbox syscall", strerror(errno));
         traced[process_index].emulated_syscall = 0;
-      } else if (traced[process_index].deferred_denial) {
+      } else if (syscall_info.op == PTRACE_SYSCALL_INFO_EXIT &&
+                 traced[process_index].deferred_denial) {
         traced[process_index].deferred_denial = 0;
         if ((long long)registers.rax >= 0) {
           int code = terminate_denied_processes(
@@ -904,7 +911,7 @@ static int supervise_command(char **arguments, struct allowed_path *allowed,
                    PATH_MAX, "%s", traced[process_index].denied_path);
           ++failed_probe_count;
         }
-      } else if ((long long)registers.rax == -ENOSYS) {
+      } else if (syscall_info.op == PTRACE_SYSCALL_INFO_ENTRY) {
         long long emulated_result = 0;
         int emulation = emulate_proc_self_exe(stopped, &registers,
                                               &emulated_result);
