@@ -27,6 +27,11 @@ test("Linux sandbox accepts only a precreated root mapping to an unprivileged ho
     /child_argv\[child_index\+\+\] = "--inhibit-cache"/,
     "locked dynamic-loader wrappers must not consult the host ld.so cache",
   );
+  assert.match(
+    source,
+    /strcmp\(name, "ninja"\)[\s\S]*TSFG_LOCKED_NINJA/,
+    "CMake's Ninja probe must enter through the locked loader wrapper",
+  );
 });
 
 test("Linux sandbox supervisor owns boundary statuses and audits descendants", async (context) => {

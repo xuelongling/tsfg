@@ -3756,6 +3756,8 @@ async function buildLinux(options, runtime, workspaceState, networkCanary) {
   const linkerWrapper = path.join(wrapperRoot, "ld.lld");
   const arWrapper = path.join(wrapperRoot, "llvm-ar");
   const ranlibWrapper = path.join(wrapperRoot, "llvm-ranlib");
+  const ninjaWrapper = path.join(wrapperRoot, "ninja");
+  const selectedNinja = sandboxRequired ? ninjaWrapper : ninja;
   const environment = buildEnvironment(workRoot, [
     path.dirname(cmake),
     path.dirname(ninja),
@@ -3794,7 +3796,7 @@ async function buildLinux(options, runtime, workspaceState, networkCanary) {
     "-S", path.join(sourceRoot, "tests", "r00", "smoke", "cpp"),
     "-B", cppWork,
     "-G", "Ninja",
-    `-DCMAKE_MAKE_PROGRAM=${ninja}`,
+    `-DCMAKE_MAKE_PROGRAM=${selectedNinja}`,
     `-DCMAKE_CXX_COMPILER=${compilerWrapper}`,
     `-DCMAKE_AR=${arWrapper}`,
     `-DCMAKE_RANLIB=${ranlibWrapper}`,
@@ -3820,7 +3822,7 @@ async function buildLinux(options, runtime, workspaceState, networkCanary) {
   ];
   const steps = [
     { tool: "cmake", executable: cmake, arguments: cmakeArguments },
-    { tool: "ninja", executable: ninja, arguments: ninjaArguments },
+    { tool: "ninja", executable: selectedNinja, arguments: ninjaArguments },
     { tool: "zig", executable: zig, arguments: zigArguments },
   ];
 
@@ -3850,9 +3852,10 @@ async function buildLinux(options, runtime, workspaceState, networkCanary) {
       environment.TSFG_LOCKED_LLD = lld;
       environment.TSFG_LOCKED_AR = llvmAr;
       environment.TSFG_LOCKED_RANLIB = llvmRanlib;
+      environment.TSFG_LOCKED_NINJA = ninja;
     }
     if (sandboxRequired) {
-      for (const wrapper of [compilerWrapper, linkerWrapper, arWrapper, ranlibWrapper]) {
+      for (const wrapper of [compilerWrapper, linkerWrapper, arWrapper, ranlibWrapper, ninjaWrapper]) {
         await copyFile(sandboxExecutable, wrapper);
         await chmod(wrapper, 0o755);
       }

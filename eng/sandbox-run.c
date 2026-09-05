@@ -207,7 +207,7 @@ static void drop_namespace_capabilities(void) {
     fail("cannot set no_new_privs", strerror(errno));
 }
 
-static void run_locked_llvm_wrapper(int argc, char **argv) {
+static void run_locked_tool_wrapper(int argc, char **argv) {
   const char *loader = getenv("TSFG_LOCKED_LOADER");
   if (!loader) return;
   const char *name = strrchr(argv[0], '/');
@@ -223,6 +223,8 @@ static void run_locked_llvm_wrapper(int argc, char **argv) {
     tool = getenv("TSFG_LOCKED_AR");
   } else if (strcmp(name, "llvm-ranlib") == 0) {
     tool = getenv("TSFG_LOCKED_RANLIB");
+  } else if (strcmp(name, "ninja") == 0) {
+    tool = getenv("TSFG_LOCKED_NINJA");
   } else {
     return;
   }
@@ -836,7 +838,7 @@ static int supervise_command(char **arguments, struct allowed_path *allowed,
 }
 
 int main(int argc, char **argv) {
-  run_locked_llvm_wrapper(argc, argv);
+  run_locked_tool_wrapper(argc, argv);
   struct allowed_path allowed[32];
   size_t allowed_count = 0;
   const char *new_root = NULL;
