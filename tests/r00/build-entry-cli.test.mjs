@@ -880,6 +880,129 @@ test("launcher reports a missing closure as lock/integrity failure", async (cont
   }
 });
 
+test("Windows verify-workspace enters the JS offline supervisor before workspace inspection", {
+  skip: process.platform !== "win32",
+}, async () => {
+  const sandbox = await mkdtemp(path.join(tmpdir(), "tsfg-verify-offline-boundary-"));
+  const cachePath = path.join(sandbox, "cache");
+  const lockPath = path.join(sandbox, "toolchains.lock.json");
+  const preloadPath = path.join(sandbox, "control-digest.cjs");
+  const reportPath = path.join(sandbox, "report.json");
+  const platform = "windows-x86_64-msvc";
+  const controlDigest = "d05184737f779408dba588af02dc9448cab5db00dd289fd25c248692f6ee6b13";
+  const controlBytes = Buffer.from("tsfg test WFP supervisor marker\n");
+  const emptyTreeDigest = fixtureDigest('{"entries":[],"schemaVersion":"1"}');
+  const toolIds = ["cmake", "llvm", "msvc-tools", "ninja", "node", "windows-sdk", "zig"];
+  const artifacts = Object.fromEntries(toolIds.map((id) => {
+    const artifact = {
+      archiveFormat: "raw",
+      archiveSha256: fixtureDigest(""),
+      byteSize: "0",
+      installPath: `${id}.exe`,
+      platform,
+      unpackedTreeSha256: emptyTreeDigest,
+      url: `https://fixtures.tsfg.invalid/${id}`,
+    };
+    if (id === "llvm") {
+      artifact.executables = { clangcl: "clang-cl.exe", lld: "lld-link.exe", pdbutil: "llvm-pdbutil.exe" };
+    } else if (id === "msvc-tools") {
+      artifact.executables = { cl: "cl.exe", link: "link.exe" };
+    } else if (id === "windows-sdk") {
+      artifact.executables = { mt: "mt.exe", rc: "rc.exe" };
+    }
+    return [id, artifact];
+  }));
+  const lock = {
+    dependencyLocks: [],
+    schemaVersion: "1",
+    targets: { [platform]: { tools: toolIds } },
+    tools: Object.fromEntries(toolIds.map((id) => [id, {
+      artifacts: [artifacts[id]],
+      license: "MIT",
+      signature: { kind: "fixture", signer: "tsfg test fixture" },
+      version: "fixture",
+    }])),
+  };
+  const lockDigest = fixtureDigest(JSON.stringify({
+    dependencyLocks: [],
+    schemaVersion: "1",
+    target: platform,
+    tools: toolIds.map((id) => ({
+      archiveSha256: artifacts[id].archiveSha256,
+      id,
+      platform,
+      unpackedTreeSha256: emptyTreeDigest,
+      version: "fixture",
+    })),
+  }));
+  const closureRelative = path.join(
+    "closures", "sha256", lockDigest.slice("sha256:".length), platform,
+  );
+  const closurePath = path.join(cachePath, closureRelative);
+  const controlPath = path.join(cachePath, "controls", controlDigest, "windows-sandbox-run.exe");
+  try {
+    for (const id of toolIds) await mkdir(path.join(closurePath, id), { recursive: true });
+    await mkdir(path.join(cachePath, "active"), { recursive: true });
+    await mkdir(path.dirname(controlPath), { recursive: true });
+    await writeFile(lockPath, `${JSON.stringify(lock)}\n`);
+    await writeFile(
+      path.join(closurePath, "ready.json"),
+      `${JSON.stringify({ lockDigest, platform, status: "ready" })}\n`,
+    );
+    await writeFile(
+      path.join(cachePath, "active", platform),
+      `${closureRelative.replaceAll("\\", "/")}\n`,
+    );
+    await writeFile(controlPath, controlBytes);
+    await writeFile(preloadPath, `
+const crypto = require("node:crypto");
+const { syncBuiltinESMExports } = require("node:module");
+const originalCreateHash = crypto.createHash;
+const marker = Buffer.from(${JSON.stringify(controlBytes.toString("base64"))}, "base64");
+crypto.createHash = function createHash(algorithm, options) {
+  const hash = originalCreateHash.call(this, algorithm, options);
+  const chunks = [];
+  const wrapper = {
+    update(value, encoding) {
+      const bytes = Buffer.isBuffer(value) ? value : Buffer.from(value, encoding);
+      chunks.push(bytes);
+      hash.update(value, encoding);
+      return wrapper;
+    },
+    digest(encoding) {
+      const observed = Buffer.concat(chunks);
+      if (algorithm === "sha256" && observed.equals(marker)) {
+        const fixed = Buffer.from(${JSON.stringify(controlDigest)}, "hex");
+        return encoding ? fixed.toString(encoding) : fixed;
+      }
+      return hash.digest(encoding);
+    },
+  };
+  return wrapper;
+};
+syncBuiltinESMExports();
+`);
+
+    const result = await invoke(validVerifyArguments(reportPath), {
+      env: {
+        ...process.env,
+        NODE_OPTIONS: `--require=${preloadPath}`,
+        TSFG_GIT: TEST_GIT_EXECUTABLE,
+        TSFG_RUNTIME_CACHE: cachePath,
+        TSFG_RUNTIME_LOCK: lockPath,
+        TSFG_RUNTIME_PLATFORM: platform,
+      },
+    });
+
+    assert.equal(result.status, 12, result.stderr);
+    const report = JSON.parse(await readFile(reportPath, "utf8"));
+    assert.equal(report.error.category, "offline input missing");
+    assert.equal(report.error.issues[0].code, "sandbox-boundary");
+  } finally {
+    await rm(sandbox, { recursive: true, force: true });
+  }
+});
+
 function fixtureDigest(bytes) {
   return `sha256:${createHash("sha256").update(bytes).digest("hex")}`;
 }
@@ -2077,6 +2200,7 @@ net.connect = () => {
       });
       assert.equal(releaseTest.status, 0, releaseTest.stderr);
       const releaseTestReport = JSON.parse(await readFile(releaseTestReportPath, "utf8"));
+      assert.deepEqual(releaseTestReport.result.buildIdentity, releaseReport.result.buildIdentity);
       assert.equal(releaseTestReport.result.profile, "release");
       assert.equal(releaseTestReport.result.cpuFixture, "x86-64-v2");
       assert.deepEqual(releaseTestReport.result.tests, [

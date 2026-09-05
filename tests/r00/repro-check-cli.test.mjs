@@ -14,28 +14,125 @@ import { TEST_GIT_EXECUTABLE } from "./test-tools.mjs";
 const repositoryRoot = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "../..");
 const buildEntry = path.join(repositoryRoot, "eng", "tsfg-build.mjs");
 const networkDenialHook = path.join(repositoryRoot, "tests", "r00", "deny-network.cjs");
-const TOOLCHAIN_DIGEST = `sha256:${"2".repeat(64)}`;
+const runtimePlatform = "test-repro-x86_64";
 let comparatorWorkspaceContainer;
 let comparatorWorkspace;
+let comparatorBuildInputEntries;
+let comparatorBuildInputSetDigest;
+let fixtureDigest;
+let runtimeCachePath;
+let runtimeLockPath;
+let toolchainDigest;
+
+function canonicalJson(value) {
+  if (Array.isArray(value)) return `[${value.map(canonicalJson).join(",")}]`;
+  if (value !== null && typeof value === "object") {
+    return `{${Object.keys(value).sort().map(
+      (key) => `${JSON.stringify(key)}:${canonicalJson(value[key])}`,
+    ).join(",")}}`;
+  }
+  return JSON.stringify(value);
+}
 
 test.before(async () => {
   comparatorWorkspaceContainer = await mkdtemp(path.join(tmpdir(), "tsfg-repro-comparator-"));
+  runtimeCachePath = path.join(comparatorWorkspaceContainer, "runtime-cache");
+  runtimeLockPath = path.join(comparatorWorkspaceContainer, "toolchains.lock.json");
+  const emptyTreeDigest = sha256(canonicalJson({ entries: [], schemaVersion: "1" }));
+  const artifact = {
+    archiveFormat: "raw",
+    archiveSha256: sha256(""),
+    byteSize: "0",
+    installPath: "noop",
+    platform: runtimePlatform,
+    unpackedTreeSha256: emptyTreeDigest,
+    url: "https://fixtures.tsfg.invalid/noop",
+  };
+  const lock = {
+    dependencyLocks: [],
+    schemaVersion: "1",
+    targets: { [runtimePlatform]: { tools: ["fixture"] } },
+    tools: {
+      fixture: {
+        artifacts: [artifact],
+        license: "MIT",
+        signature: { kind: "fixture", signer: "tsfg test fixture" },
+        version: "fixture",
+      },
+    },
+  };
+  toolchainDigest = sha256(canonicalJson({
+    dependencyLocks: [],
+    schemaVersion: "1",
+    target: runtimePlatform,
+    tools: [{
+      archiveSha256: artifact.archiveSha256,
+      id: "fixture",
+      platform: runtimePlatform,
+      unpackedTreeSha256: emptyTreeDigest,
+      version: "fixture",
+    }],
+  }));
+  const closureRelative = path.join(
+    "closures",
+    "sha256",
+    toolchainDigest.slice("sha256:".length),
+    runtimePlatform,
+  );
+  const closurePath = path.join(runtimeCachePath, closureRelative);
+  await mkdir(path.join(closurePath, "fixture"), { recursive: true });
+  await mkdir(path.join(runtimeCachePath, "active"), { recursive: true });
+  await writeFile(runtimeLockPath, `${canonicalJson(lock)}\n`);
+  await writeFile(
+    path.join(closurePath, "ready.json"),
+    `${canonicalJson({ lockDigest: toolchainDigest, platform: runtimePlatform, status: "ready" })}\n`,
+  );
+  await writeFile(
+    path.join(runtimeCachePath, "active", runtimePlatform),
+    `${closureRelative.replaceAll("\\", "/")}\n`,
+  );
   comparatorWorkspace = path.join(comparatorWorkspaceContainer, "workspace");
-  await mkdir(comparatorWorkspace);
+  await mkdir(path.join(comparatorWorkspace, "contracts"), { recursive: true });
+  await mkdir(path.join(comparatorWorkspace, "eng"), { recursive: true });
   assert.equal(spawnSync("git", ["init", "--quiet"], {
     cwd: comparatorWorkspace,
     encoding: "utf8",
   }).status, 0);
   await writeFile(path.join(comparatorWorkspace, "README.md"), "comparator fixture\n");
+  await writeFile(path.join(comparatorWorkspace, "contracts", "registry.json"), "{}\n");
+  await writeFile(
+    path.join(comparatorWorkspace, "eng", "build-inputs.json"),
+    '{"entries":[{"path":"README.md","projectId":"tsfg"}],"schemaVersion":"1"}\n',
+  );
+  await writeFile(path.join(comparatorWorkspace, "version.json"), '{"version":"0.1.0-dev.0"}\n');
   for (const arguments_ of [
     ["config", "user.name", "tsfg test"],
     ["config", "user.email", "test@tsfg.invalid"],
-    ["add", "README.md"],
+    ["add", "."],
     ["commit", "--quiet", "-m", "fixture"],
   ]) {
-    const result = spawnSync("git", arguments_, { cwd: comparatorWorkspace, encoding: "utf8" });
+    const result = spawnSync("git", arguments_, {
+      cwd: comparatorWorkspace,
+      encoding: "utf8",
+      env: {
+        ...process.env,
+        GIT_AUTHOR_DATE: "@1700000000 +0000",
+        GIT_COMMITTER_DATE: "@1700000000 +0000",
+      },
+    });
     assert.equal(result.status, 0, result.stderr);
   }
+  comparatorBuildInputEntries = [{
+    normalizedMode: "100644",
+    projectId: "tsfg",
+    repositoryRelativePath: "README.md",
+    sha256: sha256("comparator fixture\n"),
+  }];
+  comparatorBuildInputSetDigest = sha256(JSON.stringify({
+    entries: comparatorBuildInputEntries,
+    schemaVersion: "1",
+  }));
+  fixtureDigest = fixtureBuildIdentity("windows-x86_64-msvc", "debug").digest;
 });
 
 test.after(async () => {
@@ -49,7 +146,7 @@ function sha256(bytes) {
 function fixtureBuildIdentity(
   target,
   profile,
-  buildInputSetDigest = sha256('{"entries":[],"schemaVersion":"1"}'),
+  buildInputSetDigest = comparatorBuildInputSetDigest,
 ) {
   const payload = {
     buildInputSetDigest,
@@ -57,7 +154,7 @@ function fixtureBuildIdentity(
     profile,
     source_date_epoch: "1700000000",
     target,
-    toolchainClosureDigest: TOOLCHAIN_DIGEST,
+    toolchainClosureDigest: toolchainDigest,
   };
   return {
     buildInputSetDigest: payload.buildInputSetDigest,
@@ -69,8 +166,6 @@ function fixtureBuildIdentity(
     toolchainClosureDigest: payload.toolchainClosureDigest,
   };
 }
-
-const FIXTURE_DIGEST = fixtureBuildIdentity("windows-x86_64-msvc", "debug").digest;
 
 function crc32(bytes) {
   let checksum = 0xffffffff;
@@ -171,7 +266,7 @@ async function writeWindowsProducer(
 ) {
   await mkdir(root, { recursive: true });
   const target = "windows-x86_64-msvc";
-  const buildInputEntries = evidence.buildInputEntries ?? [];
+  const buildInputEntries = evidence.buildInputEntries ?? comparatorBuildInputEntries;
   const buildInputSetDigest = sha256(JSON.stringify({
     entries: buildInputEntries,
     schemaVersion: "1",
@@ -201,7 +296,7 @@ async function writeWindowsProducer(
     members: members.map((member) => ({ path: member.path, sha256: sha256(member.bytes) })),
     productVersion: "0.1.0-dev.0",
     schemaVersion: "1",
-    toolchainClosureDigest: TOOLCHAIN_DIGEST,
+    toolchainClosureDigest: toolchainDigest,
   }));
   const archive = createZip([
     { bytes: artifactManifest, mode: 0o644, path: "artifact-manifest.json" },
@@ -229,7 +324,7 @@ async function writeWindowsProducer(
     target,
     toolchainClosure: {
       cacheAddressing: "sha256",
-      digest: TOOLCHAIN_DIGEST,
+      digest: toolchainDigest,
       objectVerification: evidence.objectVerification ?? "complete",
     },
     workspacePath,
@@ -250,12 +345,16 @@ async function writeLinuxProducer(root, workspacePath, profile, archiveMetadata 
   ];
   const artifactManifest = Buffer.from(JSON.stringify({
     buildIdentity,
-    buildInputSet: { digest: buildIdentity.buildInputSetDigest, entries: [], schemaVersion: "1" },
+    buildInputSet: {
+      digest: buildIdentity.buildInputSetDigest,
+      entries: comparatorBuildInputEntries,
+      schemaVersion: "1",
+    },
     contractSetId: "sha256:44136fa355b3678a1146ad16f7e8649e94fb4fc21fe77e8310c060f61caaff8a",
     members: members.map((member) => ({ path: member.path, sha256: sha256(member.bytes) })),
     productVersion: "0.1.0-dev.0",
     schemaVersion: "1",
-    toolchainClosureDigest: TOOLCHAIN_DIGEST,
+    toolchainClosureDigest: toolchainDigest,
   }));
   const archive = zstdCompressSync(createTar([
     { bytes: artifactManifest, mode: 0o644, path: "artifact-manifest.json" },
@@ -283,7 +382,7 @@ async function writeLinuxProducer(root, workspacePath, profile, archiveMetadata 
     target,
     toolchainClosure: {
       cacheAddressing: "sha256",
-      digest: TOOLCHAIN_DIGEST,
+      digest: toolchainDigest,
       objectVerification: "complete",
     },
     workspacePath,
@@ -301,6 +400,9 @@ async function invoke(arguments_) {
         ...process.env,
         NODE_OPTIONS: `--require=${networkDenialHook}`,
         TSFG_GIT: TEST_GIT_EXECUTABLE,
+        TSFG_RUNTIME_CACHE: runtimeCachePath,
+        TSFG_RUNTIME_LOCK: runtimeLockPath,
+        TSFG_RUNTIME_PLATFORM: runtimePlatform,
       },
     });
     let stdout = "";
@@ -335,7 +437,46 @@ test("repro-check independently accepts identical Windows debug Reproducibility 
     const report = JSON.parse(await readFile(reportPath, "utf8"));
     assert.equal(report.status, "success");
     assert.equal(report.result.buildExecuted, false);
-    assert.equal(report.result.buildIdentity.digest, FIXTURE_DIGEST);
+    assert.equal(report.result.buildIdentity.digest, fixtureDigest);
+    assert.equal(report.result.buildIdentity.toolchainClosureDigest, toolchainDigest);
+    assert.deepEqual(report.result.buildInputSet, {
+      digest: comparatorBuildInputSetDigest,
+      entries: comparatorBuildInputEntries,
+      schemaVersion: "1",
+    });
+    assert.deepEqual(report.result.comparator, {
+      buildIdentityDigest: fixtureDigest,
+      buildInputSetDigest: comparatorBuildInputSetDigest,
+      workspacePath: comparatorWorkspace,
+    });
+    assert.equal(
+      report.result.contractSetId,
+      "sha256:44136fa355b3678a1146ad16f7e8649e94fb4fc21fe77e8310c060f61caaff8a",
+    );
+    assert.equal(report.result.productVersion, "0.1.0-dev.0");
+    const archive = `tsfg-v0.1.0-dev.0-windows-x86_64-msvc-debug-${fixtureDigest.slice(7, 23)}.zip`;
+    assert.deepEqual(report.result.producers, [
+      {
+        archive,
+        archiveSha256: sha256(await readFile(path.join(first, archive))),
+        artifactPath: first,
+        buildExecutionId: sha256(path.join(sandbox, "workspace-a")),
+        buildIdentityDigest: fixtureDigest,
+        checksumsSha256: sha256(await readFile(path.join(first, `${archive}.checksums.json`))),
+        label: "a",
+        workspacePath: path.join(sandbox, "workspace-a"),
+      },
+      {
+        archive,
+        archiveSha256: sha256(await readFile(path.join(second, archive))),
+        artifactPath: second,
+        buildExecutionId: sha256(path.join(sandbox, "workspace-b")),
+        buildIdentityDigest: fixtureDigest,
+        checksumsSha256: sha256(await readFile(path.join(second, `${archive}.checksums.json`))),
+        label: "b",
+        workspacePath: path.join(sandbox, "workspace-b"),
+      },
+    ]);
     assert.equal(report.result.target, "windows-x86_64-msvc");
     assert.equal(report.result.profile, "debug");
     assert.deepEqual(report.result.excludedSidecars, [
@@ -404,6 +545,48 @@ test("repro-check rejects a dirty comparator workspace", async () => {
     assert.equal(report.error.issues[0].code, "dirty-project");
   } finally {
     await rm(dirtyFile, { force: true });
+    await rm(sandbox, { recursive: true, force: true });
+  }
+});
+
+test("repro-check rejects identical stale packages from a different Build Input Set", async () => {
+  const sandbox = await mkdtemp(path.join(tmpdir(), "tsfg-repro-stale-source-"));
+  const first = path.join(sandbox, "producer-a");
+  const second = path.join(sandbox, "producer-b");
+  const currentWorkspace = path.join(sandbox, "current-workspace");
+  const reportPath = path.join(sandbox, "report.json");
+  try {
+    const cloned = spawnSync("git", [
+      "-c", "core.autocrlf=false", "clone", "--quiet", comparatorWorkspace, currentWorkspace,
+    ], {
+      encoding: "utf8",
+    });
+    assert.equal(cloned.status, 0, cloned.stderr);
+    await writeFile(path.join(currentWorkspace, "README.md"), "current comparator input\n");
+    const committed = spawnSync("git", ["commit", "--quiet", "-am", "change build input"], {
+      cwd: currentWorkspace,
+      encoding: "utf8",
+      env: {
+        ...process.env,
+        GIT_AUTHOR_DATE: "@1700000100 +0000",
+        GIT_COMMITTER_DATE: "@1700000100 +0000",
+      },
+    });
+    assert.equal(committed.status, 0, committed.stderr);
+    await writeWindowsProducer(first, path.join(sandbox, "workspace-a"));
+    await writeWindowsProducer(second, path.join(sandbox, "workspace-b"));
+
+    const result = await invoke([
+      "repro-check", "--target", "windows-x86_64-msvc", "--profile", "debug",
+      "--producer-a", first, "--producer-b", second,
+      "--workspace", currentWorkspace, "--report", reportPath,
+    ]);
+
+    assert.equal(result.status, 23, result.stderr);
+    const report = JSON.parse(await readFile(reportPath, "utf8"));
+    assert.equal(report.error.issues[0].code, "build-identity-mismatch");
+    assert.equal(report.error.issues[0].member, "comparator-workspace#buildIdentity");
+  } finally {
     await rm(sandbox, { recursive: true, force: true });
   }
 });
@@ -586,6 +769,117 @@ test("repro-check rejects non-canonical Build Input entries and a non-empty R00 
       assert.equal(report.error.issues[0].code, scenario.code, scenario.name);
       assert.equal(report.error.issues[0].member, scenario.member, scenario.name);
     }
+  } finally {
+    await rm(sandbox, { recursive: true, force: true });
+  }
+});
+
+test("repro-check rejects non-UTF-8 JSON before interpreting producer evidence", async () => {
+  const sandbox = await mkdtemp(path.join(tmpdir(), "tsfg-repro-utf8-"));
+  const first = path.join(sandbox, "producer-a");
+  const second = path.join(sandbox, "producer-b");
+  const reportPath = path.join(sandbox, "report.json");
+  try {
+    await writeWindowsProducer(first, path.join(sandbox, "workspace-a"));
+    await writeWindowsProducer(second, path.join(sandbox, "workspace-b"));
+    const attestationPath = path.join(first, "producer-attestation.json");
+    const bytes = await readFile(attestationPath);
+    const offset = bytes.indexOf(Buffer.from("workspace-a"));
+    assert.notEqual(offset, -1);
+    bytes[offset] = 0xff;
+    await writeFile(attestationPath, bytes);
+
+    const result = await invoke([
+      "repro-check", "--target", "windows-x86_64-msvc", "--profile", "debug",
+      "--producer-a", first, "--producer-b", second, "--report", reportPath,
+    ]);
+
+    assert.equal(result.status, 23, result.stderr);
+    const report = JSON.parse(await readFile(reportPath, "utf8"));
+    assert.equal(report.error.issues[0].member, "producer-attestation.json");
+    assert.match(report.error.issues[0].message, /UTF-8|I-JSON/);
+  } finally {
+    await rm(sandbox, { recursive: true, force: true });
+  }
+});
+
+test("repro-check rejects a UTF-8 BOM before interpreting producer evidence", async () => {
+  const sandbox = await mkdtemp(path.join(tmpdir(), "tsfg-repro-bom-"));
+  const first = path.join(sandbox, "producer-a");
+  const second = path.join(sandbox, "producer-b");
+  const reportPath = path.join(sandbox, "report.json");
+  try {
+    await writeWindowsProducer(first, path.join(sandbox, "workspace-a"));
+    await writeWindowsProducer(second, path.join(sandbox, "workspace-b"));
+    const attestationPath = path.join(first, "producer-attestation.json");
+    const bytes = await readFile(attestationPath);
+    await writeFile(attestationPath, Buffer.concat([Buffer.from([0xef, 0xbb, 0xbf]), bytes]));
+
+    const result = await invoke([
+      "repro-check", "--target", "windows-x86_64-msvc", "--profile", "debug",
+      "--producer-a", first, "--producer-b", second, "--report", reportPath,
+    ]);
+
+    assert.equal(result.status, 23, result.stderr);
+    const report = JSON.parse(await readFile(reportPath, "utf8"));
+    assert.equal(report.error.issues[0].member, "producer-attestation.json");
+    assert.match(report.error.issues[0].message, /BOM/);
+  } finally {
+    await rm(sandbox, { recursive: true, force: true });
+  }
+});
+
+test("repro-check rejects lone surrogate code units in I-JSON string values", async () => {
+  const sandbox = await mkdtemp(path.join(tmpdir(), "tsfg-repro-surrogate-"));
+  const first = path.join(sandbox, "producer-a");
+  const second = path.join(sandbox, "producer-b");
+  const reportPath = path.join(sandbox, "report.json");
+  try {
+    await writeWindowsProducer(first, path.join(sandbox, "workspace-a"));
+    await writeWindowsProducer(second, path.join(sandbox, "workspace-b"));
+    const attestationPath = path.join(first, "producer-attestation.json");
+    const attestation = JSON.parse(await readFile(attestationPath, "utf8"));
+    attestation.workspacePath = `${attestation.workspacePath}\ud800`;
+    await writeFile(attestationPath, `${canonicalJson(attestation)}\n`);
+    const reparsed = JSON.parse(await readFile(attestationPath, "utf8"));
+    assert.equal(reparsed.workspacePath.charCodeAt(reparsed.workspacePath.length - 1), 0xd800);
+
+    const result = await invoke([
+      "repro-check", "--target", "windows-x86_64-msvc", "--profile", "debug",
+      "--producer-a", first, "--producer-b", second, "--report", reportPath,
+    ]);
+
+    assert.equal(result.status, 23, result.stderr);
+    const report = JSON.parse(await readFile(reportPath, "utf8"));
+    assert.equal(report.error.issues[0].member, "producer-attestation.json");
+    assert.match(report.error.issues[0].message, /I-JSON.*surrogate/);
+  } finally {
+    await rm(sandbox, { recursive: true, force: true });
+  }
+});
+
+test("repro-check rejects lone surrogate code units in I-JSON object keys", async () => {
+  const sandbox = await mkdtemp(path.join(tmpdir(), "tsfg-repro-surrogate-key-"));
+  const first = path.join(sandbox, "producer-a");
+  const second = path.join(sandbox, "producer-b");
+  const reportPath = path.join(sandbox, "report.json");
+  try {
+    await writeWindowsProducer(first, path.join(sandbox, "workspace-a"));
+    await writeWindowsProducer(second, path.join(sandbox, "workspace-b"));
+    const attestationPath = path.join(first, "producer-attestation.json");
+    const attestation = JSON.parse(await readFile(attestationPath, "utf8"));
+    attestation[`invalid\ud800`] = null;
+    await writeFile(attestationPath, `${canonicalJson(attestation)}\n`);
+
+    const result = await invoke([
+      "repro-check", "--target", "windows-x86_64-msvc", "--profile", "debug",
+      "--producer-a", first, "--producer-b", second, "--report", reportPath,
+    ]);
+
+    assert.equal(result.status, 23, result.stderr);
+    const report = JSON.parse(await readFile(reportPath, "utf8"));
+    assert.equal(report.error.issues[0].member, "producer-attestation.json");
+    assert.match(report.error.issues[0].message, /I-JSON.*surrogate/);
   } finally {
     await rm(sandbox, { recursive: true, force: true });
   }

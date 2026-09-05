@@ -34,6 +34,7 @@ import {
 } from "node:zlib";
 import { setTimeout as delay } from "node:timers/promises";
 import { fileURLToPath } from "node:url";
+import { TextDecoder } from "node:util";
 
 class ConfigurationError extends Error {
   constructor(message, issueCode = "invalid-configuration") {
@@ -2896,7 +2897,7 @@ async function requireCanonicalSymlink(workspace, destination, source) {
   }
 }
 
-async function verifyWorkspace(options) {
+function validateVerifyWorkspaceOptions(options) {
   const workspaceOption = options.get("--workspace");
   const manifestUrl = options.get("--manifest-url");
   const manifestRevision = options.get("--manifest-revision");
@@ -2915,6 +2916,12 @@ async function verifyWorkspace(options) {
   ) {
     throw new ConfigurationError("--manifest must be a repository-relative path");
   }
+  return { manifestName, manifestRevision, manifestUrl, workspaceOption };
+}
+
+async function verifyWorkspace(options) {
+  const { manifestName, manifestRevision, manifestUrl, workspaceOption } =
+    validateVerifyWorkspaceOptions(options);
   const workspace = path.resolve(workspaceOption);
   const manifestsRoot = path.join(workspace, ".repo", "manifests");
   const manifestGit = path.join(workspace, ".repo", "manifests.git");
@@ -4445,6 +4452,7 @@ async function testSmoke(options, runtime, workspaceState, networkCanary) {
     await rm(testRoot, { recursive: true, force: true });
   }
   return {
+    buildIdentity: identity.buildIdentity,
     buildPolicy: metadata.buildPolicy,
     development: metadata.development || workspaceState.development,
     dirty: metadata.dirty || workspaceState.dirty,
@@ -5469,8 +5477,39 @@ async function packageWindows(options, runtime, workspaceState, networkCanary) {
   }
 }
 
+function hasLoneSurrogate(value) {
+  for (let index = 0; index < value.length; index += 1) {
+    const codeUnit = value.charCodeAt(index);
+    if (codeUnit >= 0xd800 && codeUnit <= 0xdbff) {
+      if (index + 1 >= value.length) return true;
+      const next = value.charCodeAt(index + 1);
+      if (next < 0xdc00 || next > 0xdfff) return true;
+      index += 1;
+    } else if (codeUnit >= 0xdc00 && codeUnit <= 0xdfff) {
+      return true;
+    }
+  }
+  return false;
+}
+
+function hasLoneSurrogateInJson(value) {
+  if (typeof value === "string") return hasLoneSurrogate(value);
+  if (Array.isArray(value)) return value.some(hasLoneSurrogateInJson);
+  if (value !== null && typeof value === "object") {
+    return Object.entries(value).some(
+      ([key, member]) => hasLoneSurrogate(key) || hasLoneSurrogateInJson(member),
+    );
+  }
+  return false;
+}
+
 function parseReproJson(bytes, name, trailingNewline) {
-  const text = bytes.toString("utf8");
+  let text;
+  try {
+    text = new TextDecoder("utf-8", { fatal: true, ignoreBOM: true }).decode(bytes);
+  } catch {
+    throw new ReproducibilityMismatchError(name, `${name} must be I-JSON encoded as UTF-8`);
+  }
   if (text.charCodeAt(0) === 0xfeff) {
     throw new ReproducibilityMismatchError(name, `${name} must not contain a BOM`);
   }
@@ -5479,6 +5518,12 @@ function parseReproJson(bytes, name, trailingNewline) {
     value = JSON.parse(text);
   } catch (error) {
     throw new ReproducibilityMismatchError(name, `${name} is not valid JSON: ${error.message}`);
+  }
+  if (hasLoneSurrogateInJson(value)) {
+    throw new ReproducibilityMismatchError(
+      name,
+      `${name} must use I-JSON strings without lone surrogate code units`,
+    );
   }
   const expected = `${canonicalize(value)}${trailingNewline ? "\n" : ""}`;
   if (text !== expected) {
@@ -5908,7 +5953,7 @@ function producerPathIdentity(target, value) {
   return target === "windows-x86_64-msvc" ? normalized.toLowerCase() : normalized;
 }
 
-async function reproCheck(options, networkCanary) {
+async function reproCheck(options, runtime, workspaceState, networkCanary) {
   const { producerA, producerB, profile, target } = validateReproOptions(options);
   const first = await loadReproProducer(producerA, target, profile, "first");
   const second = await loadReproProducer(producerB, target, profile, "second");
@@ -5930,6 +5975,34 @@ async function reproCheck(options, networkCanary) {
     throw new ReproducibilityMismatchError(
       "artifact-manifest.json",
       "producer Build Identities differ",
+      "build-identity-mismatch",
+    );
+  }
+  let comparatorIdentity;
+  try {
+    comparatorIdentity = await createBuildIdentity(
+      runtime,
+      target,
+      profile,
+      workspaceState.root,
+      first.manifest.buildIdentity.options,
+    );
+  } catch (error) {
+    throw new ReproducibilityMismatchError(
+      "comparator-workspace#buildIdentity",
+      `cannot derive the current comparator Build Identity: ${error.message}`,
+      "build-identity-mismatch",
+    );
+  }
+  if (
+    canonicalize(first.manifest.buildIdentity) !== canonicalize(comparatorIdentity.buildIdentity) ||
+    canonicalize(first.manifest.buildInputSet) !== canonicalize(comparatorIdentity.buildInputSet) ||
+    first.manifest.contractSetId !== comparatorIdentity.contractSetId ||
+    first.manifest.productVersion !== comparatorIdentity.productVersion
+  ) {
+    throw new ReproducibilityMismatchError(
+      "comparator-workspace#buildIdentity",
+      "producer packages do not match the current comparator Build Identity",
       "build-identity-mismatch",
     );
   }
@@ -5984,8 +6057,15 @@ async function reproCheck(options, networkCanary) {
   );
   return {
     buildExecuted: false,
-    buildIdentity: first.manifest.buildIdentity,
+    buildIdentity: comparatorIdentity.buildIdentity,
+    buildInputSet: comparatorIdentity.buildInputSet,
     compared: first.compared,
+    comparator: {
+      buildIdentityDigest: comparatorIdentity.buildIdentity.digest,
+      buildInputSetDigest: comparatorIdentity.buildInputSet.digest,
+      workspacePath: workspaceState.root,
+    },
+    contractSetId: comparatorIdentity.contractSetId,
     excludedSidecars: [
       "build-report",
       "external-attestation",
@@ -5996,10 +6076,29 @@ async function reproCheck(options, networkCanary) {
     networkCanary,
     observedSidecars: { a: first.sidecars, b: second.sidecars },
     producers: [
-      { label: "a", workspacePath: first.attestation.workspacePath },
-      { label: "b", workspacePath: second.attestation.workspacePath },
+      {
+        archive: first.attestation.archive,
+        archiveSha256: digest(first.archiveBytes),
+        artifactPath: first.root,
+        buildExecutionId: first.attestation.buildExecutionId,
+        buildIdentityDigest: first.manifest.buildIdentity.digest,
+        checksumsSha256: digest(first.checksumsBytes),
+        label: "a",
+        workspacePath: first.attestation.workspacePath,
+      },
+      {
+        archive: second.attestation.archive,
+        archiveSha256: digest(second.archiveBytes),
+        artifactPath: second.root,
+        buildExecutionId: second.attestation.buildExecutionId,
+        buildIdentityDigest: second.manifest.buildIdentity.digest,
+        checksumsSha256: digest(second.checksumsBytes),
+        label: "b",
+        workspacePath: second.attestation.workspacePath,
+      },
     ],
     profile,
+    productVersion: comparatorIdentity.productVersion,
     reproducibilitySetDigest: digest(canonicalize({ entries: first.compared, schemaVersion: "1" })),
     target,
   };
@@ -6012,8 +6111,24 @@ function shouldEnterWindowsOfflineBoundary(arguments_, runtime) {
     runtime?.platform !== "windows-x86_64-msvc"
   ) return false;
   const command = arguments_[0];
-  if (!["build", "test", "package", "repro-check"].includes(command)) return false;
+  if (!["verify-workspace", "build", "test", "package", "repro-check"].includes(command)) {
+    return false;
+  }
   try {
+    if (command === "verify-workspace") {
+      const options = parseOptions(
+        arguments_,
+        new Set([
+          "--workspace",
+          "--manifest-url",
+          "--manifest-revision",
+          "--manifest",
+          "--report",
+        ]),
+      );
+      validateVerifyWorkspaceOptions(options);
+      return true;
+    }
     if (command === "repro-check") {
       const options = parseOptions(
         arguments_,
@@ -6446,9 +6561,16 @@ if (delegatedWindowsStatus !== undefined) {
       new Set(["--target", "--profile", "--producer-a", "--producer-b", "--workspace", "--report"]),
     );
     validateReproOptions(options);
-    inspectProductWorkspace(options, false);
+    if (!runtimeClosure) {
+      throw new ReproducibilityMismatchError(
+        "runtime-closure",
+        "repro-check requires a verified runtime closure",
+        "build-identity-mismatch",
+      );
+    }
+    const workspaceState = inspectProductWorkspace(options, false);
     const networkCanary = await verifyOfflineBoundary();
-    const result = await reproCheck(options, networkCanary);
+    const result = await reproCheck(options, runtimeClosure, workspaceState, networkCanary);
     process.exitCode = await succeed(command, result, reportPath, "offline");
   } catch (error) {
     const isConfigurationError = error instanceof ConfigurationError;
