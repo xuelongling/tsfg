@@ -373,6 +373,7 @@ static int audit_path(pid_t pid, int descriptor, unsigned long address,
       snprintf(denied, denied_length, "unresolvable-tracee-directory");
       return 1;
     }
+    if (base[0] != '/') return 0;
     char candidate[PATH_MAX];
     if (normalize_path("/", base, candidate, sizeof(candidate)) < 0) {
       snprintf(denied, denied_length, "unnormalizable-tracee-path");

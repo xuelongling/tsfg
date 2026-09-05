@@ -69,6 +69,7 @@ test("Linux sandbox supervisor owns boundary statuses and audits descendants", a
 #include <string.h>
 #include <sys/stat.h>
 #include <sys/syscall.h>
+#include <sys/socket.h>
 #include <sys/types.h>
 #include <sys/wait.h>
 #include <unistd.h>
@@ -104,6 +105,14 @@ int main(int argc, char **argv) {
     return syscall(SYS_io_uring_setup, 1, &parameters) == -1 && errno == ENOSYS
       ? 0
       : 4;
+  }
+  if (strcmp(argv[1], "socket-stat") == 0) {
+    int fd = socket(AF_UNIX, SOCK_STREAM, 0);
+    struct stat metadata;
+    if (fd < 0) return 5;
+    int result = syscall(SYS_newfstatat, fd, "", &metadata, AT_EMPTY_PATH);
+    close(fd);
+    return result == 0 ? 0 : 6;
   }
   if (strcmp(argv[1], "descendant") == 0) {
     pid_t child = fork();
@@ -177,6 +186,9 @@ int main(int argc, char **argv) {
 
     const unavailableIoUring = invoke("io-uring");
     assert.equal(unavailableIoUring.status, 0, unavailableIoUring.stderr);
+
+    const socketMetadata = invoke("socket-stat");
+    assert.equal(socketMetadata.status, 0, socketMetadata.stderr);
 
     const ignoredRead = invoke("read", outsidePath);
     assert.equal(ignoredRead.status, 124, ignoredRead.stderr);
