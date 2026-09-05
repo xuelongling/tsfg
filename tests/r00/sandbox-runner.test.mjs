@@ -18,6 +18,10 @@ test("Linux sandbox accepts only a precreated root mapping to an unprivileged ho
   assert.match(source, /root_is_mapped_to_unprivileged\("\/proc\/self\/uid_map"\)/);
   assert.match(source, /root_is_mapped_to_unprivileged\("\/proc\/self\/gid_map"\)/);
   assert.match(source, /outside_id != 0 &&\s+mapping_length == 1/);
+  assert.match(
+    source,
+    /mount\(source, target, NULL, MS_BIND, NULL\)[\s\S]*strcmp\(destination, "\/dev\/null"\) == 0[\s\S]*MS_BIND \| MS_REMOUNT/,
+  );
 });
 
 test("Linux sandbox supervisor owns boundary statuses and audits descendants", async (context) => {

@@ -69,13 +69,14 @@ test("Windows network canary starts Node under WFP without the path-restricted t
   const verifier = source.slice(verifierStart, verifierEnd);
   assert.match(argumentsSource, /if \(policy\.networkOnly\)[\s\S]*"--network-only"/);
   assert.match(verifier, /"network-canary"[\s\S]*boundaryStatus: 123, networkOnly: true/);
-  assert.match(verifier, /"undeclared-input-canary"[\s\S]*boundaryStatus: 124[\s\S]*process\.env\.ComSpec/);
+  assert.match(verifier, /copyFileSync\(process\.env\.ComSpec, undeclaredInputCanary\)/);
+  assert.match(verifier, /"undeclared-input-canary"[\s\S]*boundaryStatus: 124[\s\S]*undeclaredInputCanary/);
   assert.doesNotMatch(
     verifier.slice(verifier.indexOf('"undeclared-input-canary"')),
     /networkOnly: true/,
   );
-  assert.doesNotMatch(sandboxSource, /grant restricted command access/);
-  assert.doesNotMatch(sandboxSource, /command_grant/);
+  assert.match(sandboxSource, /grant restricted command access/);
+  assert.match(sandboxSource, /command_grant/);
 });
 
 function validVerifyArguments(reportPath) {

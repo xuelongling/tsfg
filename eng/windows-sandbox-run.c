@@ -536,12 +536,11 @@ int wmain(int argc, wchar_t **argv) {
       print_win32_error(L"create built-in users SID", GetLastError());
       goto cleanup;
     }
-    if (requested_count > SIZE_MAX / sizeof(*applied)) goto cleanup;
-    applied = requested_count == 0
-                  ? NULL
-                  : (struct applied_grant *)calloc(requested_count,
-                                                    sizeof(*applied));
-    if (requested_count != 0 && applied == NULL) {
+    struct requested_grant command_grant = {command_path, GRANT_READ_EXECUTE};
+    if (requested_count == SIZE_MAX ||
+        requested_count + 1 > SIZE_MAX / sizeof(*applied)) goto cleanup;
+    applied = (struct applied_grant *)calloc(requested_count + 1, sizeof(*applied));
+    if (applied == NULL) {
       print_win32_error(L"allocate ACL rollback state", ERROR_OUTOFMEMORY);
       goto cleanup;
     }
@@ -554,6 +553,13 @@ int wmain(int argc, wchar_t **argv) {
       }
       ++applied_count;
     }
+    DWORD result = apply_grant(&command_grant, restricted_sid,
+                               &applied[applied_count]);
+    if (result != ERROR_SUCCESS) {
+      print_win32_error(L"grant restricted command access", result);
+      goto cleanup;
+    }
+    ++applied_count;
     if (!OpenProcessToken(GetCurrentProcess(),
                           TOKEN_ASSIGN_PRIMARY | TOKEN_DUPLICATE | TOKEN_QUERY,
                           &process_token)) {
@@ -667,7 +673,7 @@ cleanup:
     }
   }
   if (applied != NULL) {
-    for (size_t index = 0; index < requested_count; ++index) {
+    for (size_t index = 0; index < requested_count + 1; ++index) {
       free_applied_grant(&applied[index]);
     }
     free(applied);

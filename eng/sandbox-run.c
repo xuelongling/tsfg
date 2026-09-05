@@ -164,6 +164,10 @@ static void bind_path(const char *new_root, struct allowed_path *allowed,
   }
   if (mount(source, target, NULL, MS_BIND, NULL) < 0)
     fail("cannot bind allowed path", source);
+  if (strcmp(destination, "/dev/null") == 0) {
+    free(target);
+    return;
+  }
   unsigned long flags = MS_BIND | MS_REMOUNT | MS_NOSUID | MS_NODEV;
   if (access != ACCESS_RW) flags |= MS_RDONLY;
   if (access == ACCESS_RO) flags |= MS_NOEXEC;

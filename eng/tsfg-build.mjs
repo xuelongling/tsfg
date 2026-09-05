@@ -18,7 +18,7 @@ import {
   symlink,
   writeFile,
 } from "node:fs/promises";
-import { constants as fsConstants } from "node:fs";
+import { constants as fsConstants, copyFileSync } from "node:fs";
 import { execFileSync, spawnSync } from "node:child_process";
 import { connect as connectNetwork } from "node:net";
 import { arch as hostArchitecture, release as hostRelease, tmpdir, version as hostVersion } from "node:os";
@@ -87,7 +87,7 @@ const WINDOWS_NETWORK_ISOLATION = Object.freeze({
   status: "blocked",
 });
 const WINDOWS_SANDBOX_EXECUTABLE_DIGEST =
-  "sha256:b49f8dccbea303f37a4c46706501ea2d1bd11be03d76bd81c624411da21e88d3";
+  "sha256:3852de1f36b1a8e4611d0619f7b131a8635d4889a3f2936bafabd6e0922d5d61";
 class WorkspaceMismatchError extends Error {
   constructor(code, message) {
     super(message);
@@ -3657,6 +3657,8 @@ function verifyWindowsSandboxBoundary(
     readWrite: [workRoot],
   });
   const environment = buildEnvironment(workRoot, [path.dirname(node)]);
+  const undeclaredInputCanary = path.join(workRoot, "tsfg-undeclared-input-canary.exe");
+  copyFileSync(process.env.ComSpec, undeclaredInputCanary);
   runBuildTool(
     "network-canary",
     sandboxExecutable,
@@ -3671,7 +3673,7 @@ function verifyWindowsSandboxBoundary(
   runBuildTool(
     "undeclared-input-canary",
     sandboxExecutable,
-    windowsSandboxArguments({ ...basePolicy, boundaryStatus: 124 }, process.env.ComSpec, [
+    windowsSandboxArguments({ ...basePolicy, boundaryStatus: 124 }, undeclaredInputCanary, [
       "/d",
       "/s",
       "/c",
