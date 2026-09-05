@@ -176,6 +176,21 @@ static void bind_path(const char *new_root, struct allowed_path *allowed,
   free(target);
 }
 
+static void bind_locked_runtime_alias(
+    const char *new_root, const char *environment_name,
+    const char *destination, struct allowed_path *allowed,
+    size_t *allowed_count, size_t allowed_capacity) {
+  const char *source = getenv(environment_name);
+  if (!source || source[0] != '/')
+    fail("missing locked runtime alias", environment_name);
+  if (*allowed_count == allowed_capacity)
+    fail("too many allowed paths for locked runtime aliases", NULL);
+  struct allowed_path mounted = {source, ACCESS_RX, 0};
+  bind_path(new_root, &mounted, destination);
+  allowed[(*allowed_count)++] =
+      (struct allowed_path){destination, ACCESS_RX, mounted.is_directory};
+}
+
 static void pivot_into(const char *new_root, const char *working_directory) {
   char old_root[PATH_MAX];
   snprintf(old_root, sizeof(old_root), "%s/.old-root", new_root);
@@ -881,6 +896,18 @@ int main(int argc, char **argv) {
     fail("cannot mount sandbox root", strerror(errno));
   for (size_t path_index = 0; path_index < allowed_count; ++path_index)
     bind_path(new_root, &allowed[path_index], allowed[path_index].path);
+  if (getenv("TSFG_LOCKED_LOADER")) {
+    size_t allowed_capacity = sizeof(allowed) / sizeof(allowed[0]);
+    bind_locked_runtime_alias(new_root, "TSFG_LOCKED_LOADER",
+                              "/lib64/ld-linux-x86-64.so.2", allowed,
+                              &allowed_count, allowed_capacity);
+    bind_locked_runtime_alias(new_root, "TSFG_LOCKED_LIB_DIRECTORY",
+                              "/lib/x86_64-linux-gnu", allowed,
+                              &allowed_count, allowed_capacity);
+    bind_locked_runtime_alias(new_root, "TSFG_LOCKED_USR_LIB_DIRECTORY",
+                              "/usr/lib/x86_64-linux-gnu", allowed,
+                              &allowed_count, allowed_capacity);
+  }
   struct allowed_path shell_path = {shell, ACCESS_RX, 0};
   struct allowed_path null_path = {"/dev/null", ACCESS_RW, 0};
   bind_path(new_root, &shell_path, "/bin/sh");

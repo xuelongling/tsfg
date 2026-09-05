@@ -3840,6 +3840,13 @@ async function buildLinux(options, runtime, workspaceState, networkCanary) {
     if (sandboxRequired) {
       await compileSandbox(runtime, sourceRoot, controlRoot);
       environment.TSFG_LOCKED_LOADER = loader;
+      environment.TSFG_LOCKED_LIB_DIRECTORY = path.join(sysroot, "lib", "x86_64-linux-gnu");
+      environment.TSFG_LOCKED_USR_LIB_DIRECTORY = path.join(
+        sysroot,
+        "usr",
+        "lib",
+        "x86_64-linux-gnu",
+      );
       environment.TSFG_LOCKED_LIBRARIES = runtimeLibraries;
       environment.TSFG_LOCKED_CLANGXX = clangxx;
       environment.TSFG_LOCKED_CLANG_RESOURCE = `-resource-dir=${path.join(

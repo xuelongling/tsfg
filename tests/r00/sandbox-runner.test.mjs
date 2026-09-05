@@ -32,6 +32,9 @@ test("Linux sandbox accepts only a precreated root mapping to an unprivileged ho
     /strcmp\(name, "ninja"\)[\s\S]*TSFG_LOCKED_NINJA/,
     "CMake's Ninja probe must enter through the locked loader wrapper",
   );
+  assert.match(source, /TSFG_LOCKED_LOADER[\s\S]*\/lib64\/ld-linux-x86-64\.so\.2/);
+  assert.match(source, /TSFG_LOCKED_LIB_DIRECTORY[\s\S]*\/lib\/x86_64-linux-gnu/);
+  assert.match(source, /TSFG_LOCKED_USR_LIB_DIRECTORY[\s\S]*\/usr\/lib\/x86_64-linux-gnu/);
 });
 
 test("Linux sandbox supervisor owns boundary statuses and audits descendants", async (context) => {
