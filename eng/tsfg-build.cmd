@@ -24,10 +24,46 @@ if "%~1"=="verify-workspace" (
   )
   goto runtime
 )
-if "%~1"=="build" goto runtime
-if "%~1"=="test" goto runtime
-if "%~1"=="package" goto runtime
-if "%~1"=="repro-check" goto runtime
+if "%~1"=="build" (
+  call :validate_smoke build %*
+  if errorlevel 1 (
+    set "TSFG_USAGE_COMMAND=build"
+    set "TSFG_USAGE_CODE=invalid-configuration"
+    set "TSFG_USAGE_MESSAGE=invalid build arguments"
+    goto usage
+  )
+  goto runtime
+)
+if "%~1"=="test" (
+  call :validate_smoke test %*
+  if errorlevel 1 (
+    set "TSFG_USAGE_COMMAND=test"
+    set "TSFG_USAGE_CODE=invalid-configuration"
+    set "TSFG_USAGE_MESSAGE=invalid test arguments"
+    goto usage
+  )
+  goto runtime
+)
+if "%~1"=="package" (
+  call :validate_smoke package %*
+  if errorlevel 1 (
+    set "TSFG_USAGE_COMMAND=package"
+    set "TSFG_USAGE_CODE=invalid-configuration"
+    set "TSFG_USAGE_MESSAGE=invalid package arguments"
+    goto usage
+  )
+  goto runtime
+)
+if "%~1"=="repro-check" (
+  call :validate_repro %*
+  if errorlevel 1 (
+    set "TSFG_USAGE_COMMAND=repro-check"
+    set "TSFG_USAGE_CODE=invalid-configuration"
+    set "TSFG_USAGE_MESSAGE=invalid repro-check arguments"
+    goto usage
+  )
+  goto runtime
+)
 (
   set "TSFG_USAGE_COMMAND=unsupported"
   set "TSFG_USAGE_CODE=unsupported-operation"
@@ -78,6 +114,7 @@ set "TSFG_WINDOWS_BOUNDARY_ERROR="
 set "NODE_REPL_EXTERNAL_MODULE="
 set "NODE_EXTRA_CA_CERTS="
 set "OPENSSL_CONF="
+if "%TSFG_COMMAND%"=="verify-workspace" goto offline_runtime
 if "%TSFG_COMMAND%"=="build" goto offline_runtime
 if "%TSFG_COMMAND%"=="test" goto offline_runtime
 if "%TSFG_COMMAND%"=="package" goto offline_runtime
@@ -212,6 +249,201 @@ if errorlevel 1 exit /b 1
 call :validate_manifest_path "%TSFG_MANIFEST%"
 if errorlevel 1 exit /b 1
 exit /b 0
+
+:validate_smoke
+set "TSFG_EXPECTED_COMMAND=%~1"
+set "TSFG_SEEN_DEV="
+set "TSFG_SEEN_TARGET="
+set "TSFG_SEEN_PROFILE="
+set "TSFG_SEEN_SIMD_DISPATCH="
+set "TSFG_SEEN_CPU_FIXTURE="
+set "TSFG_SEEN_COMPATIBILITY_BASELINE="
+set "TSFG_SEEN_COMPATIBILITY_CANDIDATE="
+set "TSFG_SEEN_WORKSPACE="
+set "TSFG_SEEN_INPUT="
+set "TSFG_SEEN_PACKAGE="
+set "TSFG_SEEN_OUT="
+set "TSFG_SEEN_REPORT="
+set "TSFG_TARGET="
+set "TSFG_PROFILE="
+shift
+if not "%~1"=="%TSFG_EXPECTED_COMMAND%" exit /b 1
+shift
+:validate_smoke_loop
+if "%~1"=="" goto validate_smoke_done
+if "%~1"=="--dev" goto validate_smoke_dev
+if "%~2"=="" exit /b 1
+if "%~1"=="--target" goto validate_smoke_target
+if "%~1"=="--profile" goto validate_smoke_profile
+if "%~1"=="--simd-dispatch" goto validate_smoke_simd_dispatch
+if "%~1"=="--cpu-fixture" goto validate_smoke_cpu_fixture
+if "%~1"=="--compatibility-baseline" goto validate_smoke_compatibility_baseline
+if "%~1"=="--compatibility-candidate" goto validate_smoke_compatibility_candidate
+if "%~1"=="--workspace" goto validate_smoke_workspace
+if "%~1"=="--input" goto validate_smoke_input
+if "%~1"=="--package" goto validate_smoke_package
+if "%~1"=="--out" goto validate_smoke_out
+if "%~1"=="--report" goto validate_smoke_report
+exit /b 1
+:validate_smoke_dev
+if defined TSFG_SEEN_DEV exit /b 1
+set "TSFG_SEEN_DEV=1"
+shift
+goto validate_smoke_loop
+:validate_smoke_target
+if defined TSFG_SEEN_TARGET exit /b 1
+set "TSFG_SEEN_TARGET=1"
+set "TSFG_TARGET=%~2"
+goto validate_smoke_next
+:validate_smoke_profile
+if defined TSFG_SEEN_PROFILE exit /b 1
+set "TSFG_SEEN_PROFILE=1"
+set "TSFG_PROFILE=%~2"
+goto validate_smoke_next
+:validate_smoke_simd_dispatch
+if defined TSFG_SEEN_SIMD_DISPATCH exit /b 1
+if not "%~2"=="runtime-detected" if not "%~2"=="baseline-only" exit /b 1
+set "TSFG_SEEN_SIMD_DISPATCH=1"
+goto validate_smoke_next
+:validate_smoke_cpu_fixture
+if not "%TSFG_EXPECTED_COMMAND%"=="test" exit /b 1
+if defined TSFG_SEEN_CPU_FIXTURE exit /b 1
+if not "%~2"=="x86-64-v2" exit /b 1
+set "TSFG_SEEN_CPU_FIXTURE=1"
+goto validate_smoke_next
+:validate_smoke_compatibility_baseline
+if not "%TSFG_EXPECTED_COMMAND%"=="test" exit /b 1
+if defined TSFG_SEEN_COMPATIBILITY_BASELINE exit /b 1
+set "TSFG_SEEN_COMPATIBILITY_BASELINE=1"
+goto validate_smoke_next
+:validate_smoke_compatibility_candidate
+if not "%TSFG_EXPECTED_COMMAND%"=="test" exit /b 1
+if defined TSFG_SEEN_COMPATIBILITY_CANDIDATE exit /b 1
+set "TSFG_SEEN_COMPATIBILITY_CANDIDATE=1"
+goto validate_smoke_next
+:validate_smoke_workspace
+if defined TSFG_SEEN_WORKSPACE exit /b 1
+set "TSFG_SEEN_WORKSPACE=1"
+goto validate_smoke_next
+:validate_smoke_input
+if not "%TSFG_EXPECTED_COMMAND%"=="package" exit /b 1
+if defined TSFG_SEEN_INPUT exit /b 1
+set "TSFG_SEEN_INPUT=1"
+goto validate_smoke_next
+:validate_smoke_package
+if not "%TSFG_EXPECTED_COMMAND%"=="test" exit /b 1
+if defined TSFG_SEEN_PACKAGE exit /b 1
+set "TSFG_SEEN_PACKAGE=1"
+goto validate_smoke_next
+:validate_smoke_out
+if defined TSFG_SEEN_OUT exit /b 1
+set "TSFG_SEEN_OUT=1"
+goto validate_smoke_next
+:validate_smoke_report
+if defined TSFG_SEEN_REPORT exit /b 1
+set "TSFG_SEEN_REPORT=1"
+:validate_smoke_next
+shift
+shift
+goto validate_smoke_loop
+:validate_smoke_done
+if defined TSFG_SEEN_COMPATIBILITY_BASELINE goto validate_smoke_compatibility_done
+if defined TSFG_SEEN_COMPATIBILITY_CANDIDATE goto validate_smoke_compatibility_done
+if defined TSFG_SEEN_PACKAGE goto validate_smoke_package_done
+if not defined TSFG_SEEN_TARGET exit /b 1
+if not defined TSFG_SEEN_PROFILE exit /b 1
+if not defined TSFG_SEEN_OUT exit /b 1
+if "%TSFG_EXPECTED_COMMAND%"=="package" if not defined TSFG_SEEN_INPUT exit /b 1
+if not "%TSFG_TARGET%"=="windows-x86_64-msvc" exit /b 1
+if "%TSFG_PROFILE%"=="debug" exit /b 0
+if "%TSFG_PROFILE%"=="release" exit /b 0
+exit /b 1
+:validate_smoke_compatibility_done
+if not "%TSFG_EXPECTED_COMMAND%"=="test" exit /b 1
+if not defined TSFG_SEEN_TARGET exit /b 1
+if not defined TSFG_SEEN_COMPATIBILITY_BASELINE exit /b 1
+if not defined TSFG_SEEN_COMPATIBILITY_CANDIDATE exit /b 1
+if defined TSFG_SEEN_PROFILE exit /b 1
+if defined TSFG_SEEN_SIMD_DISPATCH exit /b 1
+if defined TSFG_SEEN_CPU_FIXTURE exit /b 1
+if defined TSFG_SEEN_OUT exit /b 1
+if defined TSFG_SEEN_PACKAGE exit /b 1
+if not "%TSFG_TARGET%"=="windows-x86_64-msvc" exit /b 1
+exit /b 0
+:validate_smoke_package_done
+if not "%TSFG_EXPECTED_COMMAND%"=="test" exit /b 1
+if not defined TSFG_SEEN_TARGET exit /b 1
+if not defined TSFG_SEEN_PROFILE exit /b 1
+if not defined TSFG_SEEN_WORKSPACE exit /b 1
+if defined TSFG_SEEN_DEV exit /b 1
+if defined TSFG_SEEN_OUT exit /b 1
+if defined TSFG_SEEN_SIMD_DISPATCH exit /b 1
+if defined TSFG_SEEN_CPU_FIXTURE exit /b 1
+if defined TSFG_SEEN_COMPATIBILITY_BASELINE exit /b 1
+if defined TSFG_SEEN_COMPATIBILITY_CANDIDATE exit /b 1
+if not "%TSFG_TARGET%"=="windows-x86_64-msvc" exit /b 1
+if "%TSFG_PROFILE%"=="debug" exit /b 0
+if "%TSFG_PROFILE%"=="release" exit /b 0
+exit /b 1
+
+:validate_repro
+set "TSFG_SEEN_TARGET="
+set "TSFG_SEEN_PROFILE="
+set "TSFG_SEEN_PRODUCER_A="
+set "TSFG_SEEN_PRODUCER_B="
+set "TSFG_SEEN_WORKSPACE="
+set "TSFG_SEEN_REPORT="
+set "TSFG_TARGET="
+set "TSFG_PROFILE="
+shift
+:validate_repro_loop
+if "%~1"=="" goto validate_repro_done
+if "%~2"=="" exit /b 1
+if "%~1"=="--target" goto validate_repro_target
+if "%~1"=="--profile" goto validate_repro_profile
+if "%~1"=="--producer-a" goto validate_repro_producer_a
+if "%~1"=="--producer-b" goto validate_repro_producer_b
+if "%~1"=="--workspace" goto validate_repro_workspace
+if "%~1"=="--report" goto validate_repro_report
+exit /b 1
+:validate_repro_target
+if defined TSFG_SEEN_TARGET exit /b 1
+set "TSFG_SEEN_TARGET=1"
+set "TSFG_TARGET=%~2"
+goto validate_repro_next
+:validate_repro_profile
+if defined TSFG_SEEN_PROFILE exit /b 1
+set "TSFG_SEEN_PROFILE=1"
+set "TSFG_PROFILE=%~2"
+goto validate_repro_next
+:validate_repro_producer_a
+if defined TSFG_SEEN_PRODUCER_A exit /b 1
+set "TSFG_SEEN_PRODUCER_A=1"
+goto validate_repro_next
+:validate_repro_producer_b
+if defined TSFG_SEEN_PRODUCER_B exit /b 1
+set "TSFG_SEEN_PRODUCER_B=1"
+goto validate_repro_next
+:validate_repro_workspace
+if defined TSFG_SEEN_WORKSPACE exit /b 1
+set "TSFG_SEEN_WORKSPACE=1"
+goto validate_repro_next
+:validate_repro_report
+if defined TSFG_SEEN_REPORT exit /b 1
+set "TSFG_SEEN_REPORT=1"
+:validate_repro_next
+shift
+shift
+goto validate_repro_loop
+:validate_repro_done
+if not defined TSFG_SEEN_TARGET exit /b 1
+if not defined TSFG_SEEN_PROFILE exit /b 1
+if not defined TSFG_SEEN_PRODUCER_A exit /b 1
+if not defined TSFG_SEEN_PRODUCER_B exit /b 1
+if not "%TSFG_TARGET%"=="windows-x86_64-msvc" exit /b 1
+if "%TSFG_PROFILE%"=="debug" exit /b 0
+if "%TSFG_PROFILE%"=="release" exit /b 0
+exit /b 1
 
 :validate_oid
 set "TSFG_VALUE=%~1"
