@@ -33,6 +33,15 @@ const buildEntry = path.join(repositoryRoot, "eng", "tsfg-build.mjs");
 const networkDenialHook = path.join(repositoryRoot, "tests", "r00", "deny-network.cjs");
 const networkAccessHook = path.join(repositoryRoot, "tests", "r00", "allow-network.cjs");
 
+test("Windows sandbox control pins the R00 CPU baseline", async () => {
+  const source = await readFile(buildEntry, "utf8");
+  const start = source.indexOf("async function compileWindowsSandbox");
+  const end = source.indexOf("function windowsSandboxControlPath", start);
+  assert.notEqual(start, -1);
+  assert.notEqual(end, -1);
+  assert.match(source.slice(start, end), /"-mcpu", "x86_64_v2"/);
+});
+
 function validVerifyArguments(reportPath) {
   return [
     "verify-workspace",
@@ -942,7 +951,7 @@ test("Windows verify-workspace enters the JS offline supervisor before workspace
   const preloadPath = path.join(sandbox, "control-digest.cjs");
   const reportPath = path.join(sandbox, "report.json");
   const platform = "windows-x86_64-msvc";
-  const controlDigest = "d05184737f779408dba588af02dc9448cab5db00dd289fd25c248692f6ee6b13";
+  const controlDigest = "2f2553abb4952fd6f0683b233a31135ad45a603a8829a9ad95903e4617ad64b9";
   const controlBytes = Buffer.from("tsfg test WFP supervisor marker\n");
   const emptyTreeDigest = fixtureDigest('{"entries":[],"schemaVersion":"1"}');
   const toolIds = ["cmake", "llvm", "msvc-tools", "ninja", "node", "windows-sdk", "zig"];

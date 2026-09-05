@@ -362,6 +362,7 @@ test("product PR workflow isolates every Linux offline phase in a loopback-only 
   ];
   for (const job of jobs) {
     assert.match(job, /sudo unshare --net --mount-proc bash -ceu/);
+    assert.match(job, /mount -t sysfs -o ro,nosuid,nodev,noexec sysfs \/sys/);
     assert.match(job, /ip link set lo up/);
     assert.match(job, /find \/sys\/class\/net -mindepth 1 -maxdepth 1 -printf/);
     assert.doesNotMatch(job, /-printf "%f\\\\n"/);

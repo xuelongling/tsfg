@@ -87,7 +87,7 @@ const WINDOWS_NETWORK_ISOLATION = Object.freeze({
   status: "blocked",
 });
 const WINDOWS_SANDBOX_EXECUTABLE_DIGEST =
-  "sha256:d05184737f779408dba588af02dc9448cab5db00dd289fd25c248692f6ee6b13";
+  "sha256:2f2553abb4952fd6f0683b233a31135ad45a603a8829a9ad95903e4617ad64b9";
 class WorkspaceMismatchError extends Error {
   constructor(code, message) {
     super(message);
@@ -3431,6 +3431,7 @@ async function compileWindowsSandbox(runtime, sourceRoot, controlRoot) {
     [
       "cc",
       "-target", "x86_64-windows-msvc",
+      "-mcpu", "x86_64_v2",
       "-O2",
       "-g0",
       "-municode",
