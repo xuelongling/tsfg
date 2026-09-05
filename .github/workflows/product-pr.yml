@@ -80,7 +80,7 @@ jobs:
         run: |
           sudo sysctl -q kernel.apparmor_restrict_unprivileged_userns=0
           run_offline() {
-            unshare --user --map-users "0:$(id -u):1" --map-groups "0:$(id -g):1" --setgroups=deny --setuid 0 --setgid 0 --mount --net bash -ceu '
+            unshare --user --map-root-user --mount --net bash -ceu '
               mount -t sysfs -o ro,nosuid,nodev,noexec sysfs /sys
               ip link set lo up
               interfaces=$(find /sys/class/net -mindepth 1 -maxdepth 1 -printf "%f\n" | sort)
@@ -162,7 +162,7 @@ jobs:
           "$workspace/tsfg/eng/tsfg-build" prefetch --report .ci/evidence/workspace-verification/prefetch-report.json
           sudo sysctl -q kernel.apparmor_restrict_unprivileged_userns=0
           run_offline() {
-            unshare --user --map-users "0:$(id -u):1" --map-groups "0:$(id -g):1" --setgroups=deny --setuid 0 --setgid 0 --mount --net bash -ceu '
+            unshare --user --map-root-user --mount --net bash -ceu '
               mount -t sysfs -o ro,nosuid,nodev,noexec sysfs /sys
               ip link set lo up
               interfaces=$(find /sys/class/net -mindepth 1 -maxdepth 1 -printf "%f\n" | sort)
@@ -294,7 +294,7 @@ jobs:
           manifest_revision=$(node -e "process.stdout.write(JSON.parse(require('node:fs').readFileSync('.ci/materialized-identity.json','utf8')).manifestRevision)")
           sudo sysctl -q kernel.apparmor_restrict_unprivileged_userns=0
           run_offline() {
-            unshare --user --map-users "0:$(id -u):1" --map-groups "0:$(id -g):1" --setgroups=deny --setuid 0 --setgid 0 --mount --net bash -ceu '
+            unshare --user --map-root-user --mount --net bash -ceu '
               mount -t sysfs -o ro,nosuid,nodev,noexec sysfs /sys
               ip link set lo up
               interfaces=$(find /sys/class/net -mindepth 1 -maxdepth 1 -printf "%f\n" | sort)
@@ -412,7 +412,7 @@ jobs:
           export TSFG_BOOTSTRAP_GIT_SHA256="$(sha256sum "$TSFG_BOOTSTRAP_GIT" | cut -d ' ' -f 1)"
           sudo sysctl -q kernel.apparmor_restrict_unprivileged_userns=0
           run_offline() {
-            unshare --user --map-users "0:$(id -u):1" --map-groups "0:$(id -g):1" --setgroups=deny --setuid 0 --setgid 0 --mount --net bash -ceu '
+            unshare --user --map-root-user --mount --net bash -ceu '
               mount -t sysfs -o ro,nosuid,nodev,noexec sysfs /sys
               ip link set lo up
               interfaces=$(find /sys/class/net -mindepth 1 -maxdepth 1 -printf "%f\n" | sort)
@@ -490,7 +490,7 @@ jobs:
           eng/tsfg-build prefetch --report "$root/prefetch-report.json"
           sudo sysctl -q kernel.apparmor_restrict_unprivileged_userns=0
           run_offline() {
-            unshare --user --map-users "0:$(id -u):1" --map-groups "0:$(id -g):1" --setgroups=deny --setuid 0 --setgid 0 --mount --net bash -ceu '
+            unshare --user --map-root-user --mount --net bash -ceu '
               mount -t sysfs -o ro,nosuid,nodev,noexec sysfs /sys
               ip link set lo up
               interfaces=$(find /sys/class/net -mindepth 1 -maxdepth 1 -printf "%f\n" | sort)
