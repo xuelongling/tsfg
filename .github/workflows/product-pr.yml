@@ -16,6 +16,7 @@ env:
   TSFG_SELECTED_MANIFEST: bootstrap/r00.xml
   TSFG_AGENT_TOOLS_REVISION: 24ac2c33750ec0e292e0fba6841897b9c5f86dca
   TSFG_BASELINE_PRODUCT_REVISION: eb2838e4c4910113b23072b40c526a8b2843f744
+  TSFG_BASELINE_COMPATIBILITY_SHA256: 1602d13ccbedf7c0fe449d3213ecf330660f7683ac892f22702942d9680c3459
   TSFG_REPO_LAUNCHER_SHA256: 1211b57b57e4122a9c546295a59b37d24068f1164d0e87bef096d5323c413e4f
 
 jobs:
@@ -55,7 +56,7 @@ jobs:
           retention-days: 90
 
   repository-gates:
-    name: format / policy / license / lock
+    name: format / policy / license / lock / compatibility
     runs-on: ubuntu-24.04
     steps:
       - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
@@ -74,13 +75,15 @@ jobs:
         run: node --test --test-concurrency=1 tests/r00/workspace-policy-cli.test.mjs
       - name: Lock gate
         run: node --test --test-concurrency=1 tests/r00/toolchain-lock.test.mjs
+      - name: Contract compatibility gate
+        run: node --test --test-concurrency=1 tests/r00/contract-compatibility-cli.test.mjs
       - name: Typecheck
         run: node node_modules/typescript/bin/tsc --noEmit
       - name: Record repository gate evidence
         shell: bash
         run: |
           mkdir -p .ci/evidence/repository-gates
-          node -e "require('node:fs').writeFileSync('.ci/evidence/repository-gates/report.json', JSON.stringify({gates:{format:'passed',license:'passed',lock:'passed',policy:'passed'},schemaVersion:'1',status:'success'})+'\n')"
+          node -e "require('node:fs').writeFileSync('.ci/evidence/repository-gates/report.json', JSON.stringify({gates:{compatibility:'passed',format:'passed',license:'passed',lock:'passed',policy:'passed'},schemaVersion:'1',status:'success'})+'\n')"
       - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
         with:
           if-no-files-found: error
@@ -157,7 +160,7 @@ jobs:
             --manifest-revision "$manifest_revision" \
             --manifest "$TSFG_SELECTED_MANIFEST" \
             --report .ci/evidence/workspace-verification/report.json
-          cp "$workspace/.repo/manifests/$TSFG_SELECTED_MANIFEST" .ci/evidence/identity-resolved-manifest.xml
+          cp "$workspace/.repo/manifests/$TSFG_SELECTED_MANIFEST" .ci/evidence/workspace-verification/verified-baseline-manifest.xml
       - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
         with:
           if-no-files-found: error
@@ -339,12 +342,17 @@ jobs:
         with:
           path: ${{ runner.temp }}/tsfg-tool-cache/${{ matrix.target }}
           key: tsfg-tools-${{ matrix.target }}-${{ hashFiles('eng/toolchains.lock.json', 'pnpm-lock.yaml') }}
-      - name: Create candidate-bound synthetic compatibility artifacts
+      - name: Create fixed bootstrap baseline and candidate compatibility artifacts
         shell: bash
         run: |
           compatibility="$RUNNER_TEMP/tsfg-compatibility"
           mkdir -p "$compatibility/input" "$compatibility/evidence/compatibility/${{ matrix.target }}"
-          node --input-type=module -e "import {writeFile} from 'node:fs/promises'; import {join} from 'node:path'; import {baselineSyntheticArtifact,candidateSyntheticArtifact} from './tests/r00/contract-compatibility-fixtures.mjs'; const baseline=baselineSyntheticArtifact(); const candidate=candidateSyntheticArtifact(); baseline.product.commitOid=process.env.TSFG_BASELINE_PRODUCT_REVISION; candidate.product.commitOid='${{ github.event.pull_request.head.sha }}'; const root=join(process.env.RUNNER_TEMP,'tsfg-compatibility','input'); await writeFile(join(root,'baseline.json'),JSON.stringify(baseline)+'\n'); await writeFile(join(root,'candidate.json'),JSON.stringify(candidate)+'\n');"
+          cat > "$compatibility/input/baseline.json" <<'JSON'
+          {"artifactKind":"r00-synthetic-contract-artifact","consumer":{"acceptsUnknownFields":true,"optionalFields":[],"requiredFields":["id"]},"contract":{"change":{"class":"baseline"},"compatibility":"bidirectional","familyId":"r00.synthetic.compatibility","schemaHash":"sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa","semanticRevision":"baseline","semver":"0.1.0"},"producer":{"payload":{"id":"baseline"}},"product":{"commitOid":"eb2838e4c4910113b23072b40c526a8b2843f744","contractSetId":"sha256:44136fa355b3678a1146ad16f7e8649e94fb4fc21fe77e8310c060f61caaff8a","semver":"0.1.0-dev.0"},"schemaVersion":"1"}
+          JSON
+          echo "$TSFG_BASELINE_COMPATIBILITY_SHA256  $compatibility/input/baseline.json" | sha256sum --check --strict
+          node -e "const artifact=JSON.parse(require('node:fs').readFileSync('$compatibility/input/baseline.json','utf8')); if (artifact.product.commitOid !== process.env.TSFG_BASELINE_PRODUCT_REVISION) throw new Error('fixed compatibility baseline Product OID mismatch');"
+          node --input-type=module -e "import {writeFile} from 'node:fs/promises'; import {join} from 'node:path'; import {candidateSyntheticArtifact} from './tests/r00/contract-compatibility-fixtures.mjs'; const candidate=candidateSyntheticArtifact(); candidate.product.commitOid='${{ github.event.pull_request.head.sha }}'; const root=join(process.env.RUNNER_TEMP,'tsfg-compatibility','input'); await writeFile(join(root,'candidate.json'),JSON.stringify(candidate)+'\n');"
       - name: Prefetch the verified Linux compatibility runtime
         if: runner.os == 'Linux'
         shell: bash

@@ -22,6 +22,15 @@ function digest(value) {
   return `sha256:${createHash("sha256").update(value).digest("hex")}`;
 }
 
+function canonicalize(value) {
+  if (value === null || typeof value === "boolean" || typeof value === "string") {
+    return JSON.stringify(value);
+  }
+  if (typeof value === "number" && Number.isFinite(value)) return JSON.stringify(value);
+  if (Array.isArray(value)) return `[${value.map(canonicalize).join(",")}]`;
+  return `{${Object.keys(value).sort().map((key) => `${JSON.stringify(key)}:${canonicalize(value[key])}`).join(",")}}`;
+}
+
 function invoke(arguments_) {
   return spawnSync(process.execPath, [productPrCi, ...arguments_], {
     cwd: repositoryRoot,
@@ -45,9 +54,41 @@ function workspaceReport(productRevision) {
         selected: "bootstrap/r00.xml",
       },
       projects: [
-        { dirty: false, head: productRevision, id: "tsfg.git", path: "tsfg" },
-        { dirty: false, head: agentRevision, id: ".agents.git", path: ".agents" },
+        {
+          dirty: false,
+          head: productRevision,
+          id: "tsfg.git",
+          path: "tsfg",
+          remote: "https://github.com/xuelongling/tsfg.git",
+        },
+        {
+          dirty: false,
+          head: agentRevision,
+          id: ".agents.git",
+          path: ".agents",
+          remote: "https://github.com/xuelongling/.agents.git",
+        },
       ],
+      activation: [{
+        destination: "AGENTS.md",
+        sha256: digest("agent instructions"),
+        source: ".agents/AGENTS.md",
+        type: "symbolic-link",
+      }],
+      dirty: false,
+      policy: {
+        licenseReport: {
+          coverage: { covered: 3, percent: "100", total: 3 },
+          dependencies: [],
+          inputs: [],
+        },
+        repositories: [
+          { files: 1, id: "manifests", license: "MIT", path: ".repo/manifests" },
+          { files: 1, id: ".agents.git", license: "MIT", path: ".agents" },
+          { files: 1, id: "tsfg.git", license: "MIT", path: "tsfg" },
+        ],
+        upstreamForks: [],
+      },
     },
     schemaVersion: "1",
     status: "success",
@@ -68,13 +109,16 @@ test("candidate identity binds a complete product overlay to the fixed Integrati
   const manifestPath = path.join(sandbox, "bootstrap", "r00.xml");
   const outputPath = path.join(sandbox, "identity");
   await mkdir(path.dirname(manifestPath), { recursive: true });
-  await writeFile(manifestPath, `<?xml version="1.0" encoding="UTF-8"?>
+  const manifestBytes = `<?xml version="1.0" encoding="UTF-8"?>
 <manifest>
   <remote name="github-xuelongling" fetch="https://github.com/xuelongling/" />
   <project name="tsfg.git" path="tsfg" remote="github-xuelongling" revision="${baselineProductRevision}" />
-  <project name=".agents.git" path=".agents" remote="github-xuelongling" revision="${agentRevision}" />
+  <project name=".agents.git" path=".agents" remote="github-xuelongling" revision="${agentRevision}">
+    <linkfile src="AGENTS.md" dest="AGENTS.md" />
+  </project>
 </manifest>
-`);
+`;
+  await writeFile(manifestPath, manifestBytes);
 
   try {
     const result = invoke([
@@ -89,7 +133,9 @@ test("candidate identity binds a complete product overlay to the fixed Integrati
 
     const overlayBytes = await readFile(path.join(outputPath, "candidate-overlay.json"));
     const resolvedBytes = await readFile(path.join(outputPath, "resolved-manifest.json"));
+    const archivedBaselineBytes = await readFile(path.join(outputPath, "baseline-manifest.xml"));
     const report = JSON.parse(await readFile(path.join(outputPath, "candidate-identity.json"), "utf8"));
+    assert.equal(archivedBaselineBytes.toString("utf8"), manifestBytes);
     assert.deepEqual(JSON.parse(overlayBytes.toString("utf8")), {
       baseline: {
         manifest: "bootstrap/r00.xml",
@@ -105,15 +151,34 @@ test("candidate identity binds a complete product overlay to the fixed Integrati
         repository: "https://github.com/xuelongling/manifests.git",
         revision: manifestRevision,
       },
+      activation: [
+        {
+          destination: "AGENTS.md",
+          source: ".agents/AGENTS.md",
+          type: "symbolic-link",
+        },
+      ],
       projects: [
-        { name: ".agents.git", path: ".agents", revision: agentRevision },
-        { name: "tsfg.git", path: "tsfg", revision: candidateRevision },
+        {
+          name: ".agents.git",
+          path: ".agents",
+          remote: "https://github.com/xuelongling/.agents.git",
+          revision: agentRevision,
+        },
+        {
+          name: "tsfg.git",
+          path: "tsfg",
+          remote: "https://github.com/xuelongling/tsfg.git",
+          revision: candidateRevision,
+        },
       ],
       schemaVersion: "1",
     });
     const canonicalOverlay = `{"baseline":{"manifest":"bootstrap/r00.xml","repository":"https://github.com/xuelongling/manifests.git","revision":"${manifestRevision}"},"replacements":[{"project":"tsfg.git","revision":"${candidateRevision}"}],"schemaVersion":"1"}`;
-    const canonicalResolved = `{"baseline":{"manifest":"bootstrap/r00.xml","repository":"https://github.com/xuelongling/manifests.git","revision":"${manifestRevision}"},"projects":[{"name":".agents.git","path":".agents","revision":"${agentRevision}"},{"name":"tsfg.git","path":"tsfg","revision":"${candidateRevision}"}],"schemaVersion":"1"}`;
+    const canonicalResolved = `{"activation":[{"destination":"AGENTS.md","source":".agents/AGENTS.md","type":"symbolic-link"}],"baseline":{"manifest":"bootstrap/r00.xml","repository":"https://github.com/xuelongling/manifests.git","revision":"${manifestRevision}"},"projects":[{"name":".agents.git","path":".agents","remote":"https://github.com/xuelongling/.agents.git","revision":"${agentRevision}"},{"name":"tsfg.git","path":"tsfg","remote":"https://github.com/xuelongling/tsfg.git","revision":"${candidateRevision}"}],"schemaVersion":"1"}`;
     assert.deepEqual(report, {
+      baselineManifestDigest: digest(manifestBytes),
+      baselineProductRevision,
       candidateRevision,
       overlayDigest: digest(canonicalOverlay),
       resolvedManifestDigest: digest(canonicalResolved),
@@ -146,6 +211,7 @@ test("candidate identity failure preserves a pre-existing output directory and p
     ]);
     assert.equal(result.status, 1);
     assert.equal(await readFile(path.join(outputPath, "sentinel.txt"), "utf8"), "owned by caller\n");
+    await assert.rejects(readFile(path.join(outputPath, "baseline-manifest.xml")), /ENOENT/);
     await assert.rejects(readFile(path.join(outputPath, "resolved-manifest.json")), /ENOENT/);
     await assert.rejects(readFile(path.join(outputPath, "candidate-identity.json")), /ENOENT/);
   } finally {
@@ -225,10 +291,12 @@ test("product PR workflow composes every gate, producer, compatibility lane, and
   assert.match(repositoryGates, /git diff --check/);
   assert.match(repositoryGates, /workspace-policy-cli\.test\.mjs/);
   assert.match(repositoryGates, /toolchain-lock\.test\.mjs/);
+  assert.match(repositoryGates, /contract-compatibility-cli\.test\.mjs/);
   assert.match(repositoryGates, /tsc --noEmit/);
 
   const workspaceVerification = workflowJob(workflow, "workspace-verification");
   assert.match(workspaceVerification, /verify-workspace/);
+  assert.match(workspaceVerification, /verified-baseline-manifest\.xml/);
   assert.match(workspaceVerification, /git -C "\$workspace\/tsfg" fetch --no-tags "\$GITHUB_WORKSPACE"/);
   assert.doesNotMatch(workspaceVerification, /\.ci\/candidate-product/);
   const productBuild = workflowJob(workflow, "product-build");
@@ -247,6 +315,12 @@ test("product PR workflow composes every gate, producer, compatibility lane, and
   const compatibility = workflowJob(workflow, "compatibility");
   assert.match(compatibility, /--compatibility-baseline/);
   assert.match(compatibility, /--compatibility-candidate/);
+  assert.doesNotMatch(compatibility, /baselineSyntheticArtifact/);
+  assert.match(compatibility, /TSFG_BASELINE_COMPATIBILITY_SHA256/);
+  assert.match(compatibility, /process\.env\.TSFG_BASELINE_PRODUCT_REVISION/);
+  assert.match(compatibility, /sha256sum --check --strict/);
+  assert.match(compatibility, /eb2838e4c4910113b23072b40c526a8b2843f744/);
+  assert.match(compatibility, /candidateSyntheticArtifact/);
   assert.match(compatibility, /RUNNER_TEMP\/tsfg-compatibility/);
   assert.doesNotMatch(compatibility, /\.ci\/(?:compatibility|evidence)/);
   const reproducibility = workflowJob(workflow, "reproducibility");
@@ -331,10 +405,14 @@ test("candidate verdict requires complete successful matrix evidence before decl
   try {
     const manifestPath = path.join(sandbox, "bootstrap", "r00.xml");
     await mkdir(path.dirname(manifestPath), { recursive: true });
-    await writeFile(manifestPath, `<manifest>
-  <project name="tsfg.git" path="tsfg" revision="${baselineProductRevision}" />
-  <project name=".agents.git" path=".agents" revision="${agentRevision}" />
-</manifest>\n`);
+    const baselineManifestBytes = `<manifest>
+  <remote name="github-xuelongling" fetch="https://github.com/xuelongling/" />
+  <project name="tsfg.git" path="tsfg" remote="github-xuelongling" revision="${baselineProductRevision}" />
+  <project name=".agents.git" path=".agents" remote="github-xuelongling" revision="${agentRevision}">
+    <linkfile src="AGENTS.md" dest="AGENTS.md" />
+  </project>
+</manifest>\n`;
+    await writeFile(manifestPath, baselineManifestBytes);
     const identityResult = invoke([
       "identity", "--manifest", manifestPath,
       "--manifest-name", "bootstrap/r00.xml",
@@ -344,25 +422,45 @@ test("candidate verdict requires complete successful matrix evidence before decl
     ]);
     assert.equal(identityResult.status, 0, identityResult.stderr);
     await writeJson(path.join(evidence, "repository-gates", "report.json"), {
-      gates: { format: "passed", license: "passed", lock: "passed", policy: "passed" },
+      gates: {
+        compatibility: "passed",
+        format: "passed",
+        license: "passed",
+        lock: "passed",
+        policy: "passed",
+      },
       ...success,
     });
     await writeJson(
       path.join(evidence, "workspace-verification", "report.json"),
       workspaceReport(candidateRevision),
     );
+    await writeFile(
+      path.join(evidence, "workspace-verification", "verified-baseline-manifest.xml"),
+      baselineManifestBytes,
+    );
     for (const target of targets) {
-      await writeJson(path.join(evidence, "compatibility", target, "report.json"), {
+      const compatibilityRoot = path.join(evidence, "compatibility", target);
+      const baselineArtifact = { product: { commitOid: baselineProductRevision } };
+      const candidateArtifact = { product: { commitOid: candidateRevision } };
+      const baselineArtifactBytes = `${JSON.stringify(baselineArtifact)}\n`;
+      const candidateArtifactBytes = `${JSON.stringify(candidateArtifact)}\n`;
+      await writeJson(path.join(compatibilityRoot, "baseline.json"), baselineArtifact);
+      await writeJson(path.join(compatibilityRoot, "candidate.json"), candidateArtifact);
+      await writeJson(path.join(compatibilityRoot, "report.json"), {
         ...success,
         result: {
           contractSet: { canonical: "{}", id: digest("{}") },
           compatibility: {
-            artifacts: { candidate: { productOid: candidateRevision } },
+            artifacts: {
+              baseline: { productOid: baselineProductRevision, sha256: digest(baselineArtifactBytes) },
+              candidate: { productOid: candidateRevision, sha256: digest(candidateArtifactBytes) },
+            },
             combinations: [
-              { consumer: "baseline", producer: "baseline", status: "passed" },
-              { consumer: "baseline", producer: "candidate", status: "passed" },
-              { consumer: "candidate", producer: "baseline", status: "passed" },
-              { consumer: "candidate", producer: "candidate", status: "passed" },
+              { consumer: "baseline", consumerProductOid: baselineProductRevision, producer: "baseline", producerProductOid: baselineProductRevision, status: "passed" },
+              { consumer: "baseline", consumerProductOid: baselineProductRevision, producer: "candidate", producerProductOid: candidateRevision, status: "passed" },
+              { consumer: "candidate", consumerProductOid: candidateRevision, producer: "baseline", producerProductOid: baselineProductRevision, status: "passed" },
+              { consumer: "candidate", consumerProductOid: candidateRevision, producer: "candidate", producerProductOid: candidateRevision, status: "passed" },
             ],
           },
           target,
@@ -370,41 +468,84 @@ test("candidate verdict requires complete successful matrix evidence before decl
       });
       for (const profile of profiles) {
         const identityDigest = digest(`${target}/${profile}`);
+        const buildIdentity = { digest: identityDigest, profile, target };
+        const buildInputSetPayload = { entries: [], schemaVersion: "1" };
+        const buildInputSet = {
+          digest: digest(canonicalize(buildInputSetPayload)),
+          ...buildInputSetPayload,
+        };
+        const producerWorkspacePaths = {};
+        let compared;
         for (const producer of ["a", "b"]) {
           const root = path.join(evidence, "producers", target, profile, producer);
+          producerWorkspacePaths[producer] = `${root}-workspace`;
           await writeJson(path.join(root, "workspace-report.json"), workspaceReport(candidateRevision));
           for (const [command, name] of [["build", "build-report.json"], ["test", "test-report.json"]]) {
             await writeJson(path.join(root, name), {
               command,
-              result: { buildIdentity: { digest: identityDigest }, profile, target },
+              result: { buildIdentity, profile, target },
               ...success,
             });
           }
           const archive = `tsfg-${target}-${profile}.archive`;
+          const archiveBytes = `${target}/${profile}\n`;
+          const checksums = { schemaVersion: "1" };
+          const checksumsBytes = `${JSON.stringify(checksums)}\n`;
           await writeJson(path.join(root, "package-report.json"), {
             command: "package",
-            result: { archive, buildIdentity: { digest: identityDigest, profile, target } },
+            result: { archive, buildIdentity, buildInputSet },
             ...success,
           });
           await mkdir(path.join(root, "package"), { recursive: true });
-          await writeFile(path.join(root, "package", archive), `${target}/${profile}\n`);
-          await writeJson(path.join(root, "package", `${archive}.checksums.json`), { schemaVersion: "1" });
+          await writeFile(path.join(root, "package", archive), archiveBytes);
+          await writeJson(path.join(root, "package", `${archive}.checksums.json`), checksums);
           await writeJson(path.join(root, "package", "producer-attestation.json"), {
             buildIdentityDigest: identityDigest,
             profile,
-            producer,
             schemaVersion: "1",
             target,
+            workspacePath: producerWorkspacePaths[producer],
           });
           await writeJson(path.join(root, "candidate-binding.json"), {
             buildIdentityDigest: identityDigest,
             candidateRevision,
             schemaVersion: "1",
           });
+          compared ??= [
+            { path: `package/${archive}`, sha256: digest(archiveBytes) },
+            { path: `package/${archive}.checksums.json`, sha256: digest(checksumsBytes) },
+          ];
         }
         await writeJson(path.join(evidence, "reproducibility", target, profile, "report.json"), {
           command: "repro-check",
-          result: { buildExecuted: false, profile, producers: [{}, {}], target },
+          result: {
+            buildExecuted: false,
+            buildIdentity,
+            buildInputSet,
+            comparator: {
+              buildIdentityDigest: identityDigest,
+              buildInputSetDigest: buildInputSet.digest,
+              workspacePath: path.join(evidence, "reproducibility", target, profile, "workspace"),
+            },
+            compared,
+            producers: [
+              {
+                artifactPath: path.join(evidence, "producers", target, profile, "a", "package"),
+                buildIdentityDigest: identityDigest,
+                label: "a",
+                workspacePath: producerWorkspacePaths.a,
+              },
+              {
+                artifactPath: path.join(evidence, "producers", target, profile, "b", "package"),
+                buildIdentityDigest: identityDigest,
+                label: "b",
+                workspacePath: producerWorkspacePaths.b,
+              },
+            ],
+            profile,
+            reproducibilitySetDigest: digest(canonicalize({ entries: compared, schemaVersion: "1" })),
+            target,
+          },
           ...success,
         });
       }
@@ -434,6 +575,178 @@ test("candidate verdict requires complete successful matrix evidence before decl
     assert.equal(verdict.requiredEvidence.reproducibility, "4/4");
     assert.match(verdict.evidenceDigest, /^sha256:[0-9a-f]{64}$/);
 
+    const archivedBaselinePath = path.join(evidence, "identity", "baseline-manifest.xml");
+    await writeFile(
+      archivedBaselinePath,
+      baselineManifestBytes.replace(baselineProductRevision, candidateRevision),
+    );
+    const tamperedBaselineOutput = path.join(sandbox, "tampered-baseline-evidence.json");
+    const tamperedBaseline = invoke([
+      "verdict", "--evidence", evidence,
+      "--job-results", jobResultsPath,
+      "--out", tamperedBaselineOutput,
+    ]);
+    assert.notEqual(tamperedBaseline.status, 0);
+    await assert.rejects(readFile(tamperedBaselineOutput));
+    await writeFile(archivedBaselinePath, baselineManifestBytes);
+
+    const verifiedBaselinePath = path.join(
+      evidence,
+      "workspace-verification",
+      "verified-baseline-manifest.xml",
+    );
+    await writeFile(
+      verifiedBaselinePath,
+      baselineManifestBytes.replace(agentRevision, candidateRevision),
+    );
+    const foreignVerifiedBaselineOutput = path.join(sandbox, "foreign-verified-baseline-evidence.json");
+    const foreignVerifiedBaseline = invoke([
+      "verdict", "--evidence", evidence,
+      "--job-results", jobResultsPath,
+      "--out", foreignVerifiedBaselineOutput,
+    ]);
+    assert.notEqual(foreignVerifiedBaseline.status, 0);
+    await assert.rejects(readFile(foreignVerifiedBaselineOutput));
+    await writeFile(verifiedBaselinePath, baselineManifestBytes);
+
+    const producerWorkspaceReportPath = path.join(
+      evidence,
+      "producers",
+      targets[0],
+      profiles[0],
+      "a",
+      "workspace-report.json",
+    );
+    const divergentProducerWorkspace = JSON.parse(await readFile(producerWorkspaceReportPath, "utf8"));
+    divergentProducerWorkspace.result.activation[0].sha256 = digest("different activation");
+    await writeJson(producerWorkspaceReportPath, divergentProducerWorkspace);
+    const divergentActivationOutput = path.join(sandbox, "divergent-activation-evidence.json");
+    const divergentActivation = invoke([
+      "verdict", "--evidence", evidence,
+      "--job-results", jobResultsPath,
+      "--out", divergentActivationOutput,
+    ]);
+    assert.notEqual(divergentActivation.status, 0);
+    await assert.rejects(readFile(divergentActivationOutput));
+    divergentProducerWorkspace.result.activation[0].sha256 = digest("agent instructions");
+    divergentProducerWorkspace.result.policy.repositories[0].files += 1;
+    await writeJson(producerWorkspaceReportPath, divergentProducerWorkspace);
+    const divergentPolicyOutput = path.join(sandbox, "divergent-policy-evidence.json");
+    const divergentPolicy = invoke([
+      "verdict", "--evidence", evidence,
+      "--job-results", jobResultsPath,
+      "--out", divergentPolicyOutput,
+    ]);
+    assert.notEqual(divergentPolicy.status, 0);
+    await assert.rejects(readFile(divergentPolicyOutput));
+    await writeJson(producerWorkspaceReportPath, workspaceReport(candidateRevision));
+
+    const reproReportPath = path.join(
+      evidence,
+      "reproducibility",
+      targets[0],
+      profiles[0],
+      "report.json",
+    );
+    const foreignRepro = JSON.parse(await readFile(reproReportPath, "utf8"));
+    foreignRepro.result.buildIdentity.digest = digest("foreign build");
+    await writeJson(reproReportPath, foreignRepro);
+    const foreignReproOutput = path.join(sandbox, "foreign-repro-evidence.json");
+    const foreignReproResult = invoke([
+      "verdict", "--evidence", evidence,
+      "--job-results", jobResultsPath,
+      "--out", foreignReproOutput,
+    ]);
+    assert.notEqual(foreignReproResult.status, 0);
+    await assert.rejects(readFile(foreignReproOutput));
+    foreignRepro.result.buildIdentity.digest = digest(`${targets[0]}/${profiles[0]}`);
+    await writeJson(reproReportPath, foreignRepro);
+
+    foreignRepro.result.producers[0].artifactPath = foreignRepro.result.producers[1].artifactPath;
+    await writeJson(reproReportPath, foreignRepro);
+    const foreignProducerOutput = path.join(sandbox, "foreign-repro-producer-evidence.json");
+    const foreignProducer = invoke([
+      "verdict", "--evidence", evidence,
+      "--job-results", jobResultsPath,
+      "--out", foreignProducerOutput,
+    ]);
+    assert.notEqual(foreignProducer.status, 0);
+    await assert.rejects(readFile(foreignProducerOutput));
+    foreignRepro.result.producers[0].artifactPath = path.join(
+      evidence,
+      "producers",
+      targets[0],
+      profiles[0],
+      "a",
+      "package",
+    );
+    foreignRepro.result.reproducibilitySetDigest = digest("foreign set");
+    await writeJson(reproReportPath, foreignRepro);
+    const foreignSetOutput = path.join(sandbox, "foreign-repro-set-evidence.json");
+    const foreignSet = invoke([
+      "verdict", "--evidence", evidence,
+      "--job-results", jobResultsPath,
+      "--out", foreignSetOutput,
+    ]);
+    assert.notEqual(foreignSet.status, 0);
+    await assert.rejects(readFile(foreignSetOutput));
+    foreignRepro.result.reproducibilitySetDigest = digest(canonicalize({
+      entries: foreignRepro.result.compared,
+      schemaVersion: "1",
+    }));
+    await writeJson(reproReportPath, foreignRepro);
+
+    foreignRepro.result.comparator.buildInputSetDigest = digest("foreign inputs");
+    await writeJson(reproReportPath, foreignRepro);
+    const foreignComparatorOutput = path.join(sandbox, "foreign-repro-comparator-evidence.json");
+    const foreignComparator = invoke([
+      "verdict", "--evidence", evidence,
+      "--job-results", jobResultsPath,
+      "--out", foreignComparatorOutput,
+    ]);
+    assert.notEqual(foreignComparator.status, 0);
+    await assert.rejects(readFile(foreignComparatorOutput));
+    foreignRepro.result.comparator.buildInputSetDigest = foreignRepro.result.buildInputSet.digest;
+    await writeJson(reproReportPath, foreignRepro);
+
+    const compatibilityReportPath = path.join(
+      evidence,
+      "compatibility",
+      targets[0],
+      "report.json",
+    );
+    const mixedCompatibility = JSON.parse(await readFile(compatibilityReportPath, "utf8"));
+    mixedCompatibility.result.compatibility.combinations[1].consumerProductOid = candidateRevision;
+    await writeJson(compatibilityReportPath, mixedCompatibility);
+    const mixedCompatibilityOutput = path.join(sandbox, "mixed-compatibility-evidence.json");
+    const mixedCompatibilityResult = invoke([
+      "verdict", "--evidence", evidence,
+      "--job-results", jobResultsPath,
+      "--out", mixedCompatibilityOutput,
+    ]);
+    assert.notEqual(mixedCompatibilityResult.status, 0);
+    await assert.rejects(readFile(mixedCompatibilityOutput));
+    mixedCompatibility.result.compatibility.combinations[1].consumerProductOid = baselineProductRevision;
+    await writeJson(compatibilityReportPath, mixedCompatibility);
+
+    const baselineArtifactPath = path.join(
+      evidence,
+      "compatibility",
+      targets[0],
+      "baseline.json",
+    );
+    const baselineArtifactBytes = await readFile(baselineArtifactPath);
+    await writeFile(baselineArtifactPath, Buffer.concat([baselineArtifactBytes, Buffer.from(" ")]));
+    const tamperedArtifactOutput = path.join(sandbox, "tampered-compatibility-artifact.json");
+    const tamperedArtifact = invoke([
+      "verdict", "--evidence", evidence,
+      "--job-results", jobResultsPath,
+      "--out", tamperedArtifactOutput,
+    ]);
+    assert.notEqual(tamperedArtifact.status, 0);
+    await assert.rejects(readFile(tamperedArtifactOutput));
+    await writeFile(baselineArtifactPath, baselineArtifactBytes);
+
     await writeJson(
       path.join(evidence, "workspace-verification", "report.json"),
       workspaceReport(baselineProductRevision),
@@ -446,6 +759,21 @@ test("candidate verdict requires complete successful matrix evidence before decl
     ]);
     assert.notEqual(foreignWorkspace.status, 0);
     await assert.rejects(readFile(foreignWorkspaceOutput));
+
+    const wrongRemoteReport = workspaceReport(candidateRevision);
+    wrongRemoteReport.result.projects[0].remote = "https://example.invalid/tsfg.git";
+    await writeJson(
+      path.join(evidence, "workspace-verification", "report.json"),
+      wrongRemoteReport,
+    );
+    const wrongRemoteOutput = path.join(sandbox, "wrong-remote-evidence.json");
+    const wrongRemote = invoke([
+      "verdict", "--evidence", evidence,
+      "--job-results", jobResultsPath,
+      "--out", wrongRemoteOutput,
+    ]);
+    assert.notEqual(wrongRemote.status, 0);
+    await assert.rejects(readFile(wrongRemoteOutput));
 
     await writeJson(
       path.join(evidence, "workspace-verification", "report.json"),

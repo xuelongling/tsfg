@@ -75,25 +75,57 @@ function attributes(tag) {
 }
 
 function projectsFromManifest(xml) {
-  const projects = [];
-  const identities = new Set();
-  for (const match of xml.matchAll(/<project\b[^>]*>/g)) {
+  const remotes = new Map();
+  for (const match of xml.matchAll(/<remote\b[^>]*\/>/g)) {
     const values = attributes(match[0]);
     const name = values.get("name");
+    const fetch = values.get("fetch");
+    if (!name || !fetch || remotes.has(name)) {
+      throw new ProductPrError("Integration Snapshot remotes require unique names and fetch URLs");
+    }
+    remotes.set(name, fetch.endsWith("/") ? fetch : `${fetch}/`);
+  }
+  const projects = [];
+  const activation = [];
+  const identities = new Set();
+  for (const match of xml.matchAll(/<project\b([^>]*?)(?:\/>|>([\s\S]*?)<\/project\s*>)/g)) {
+    const values = attributes(match[1]);
+    const name = values.get("name");
     const projectPath = values.get("path");
+    const remoteName = values.get("remote");
     const revision = values.get("revision");
-    if (!name || !projectPath || !revision) {
-      throw new ProductPrError("every Integration Snapshot project requires name, path, and revision");
+    const fetch = remoteName ? remotes.get(remoteName) : undefined;
+    if (!name || !projectPath || !revision || !remoteName || !fetch) {
+      throw new ProductPrError("every Integration Snapshot project requires name, path, remote, and revision");
     }
     requireOid(revision, `${name} baseline revision`);
     if (identities.has(name) || projects.some((project) => project.path === projectPath)) {
       throw new ProductPrError("Integration Snapshot project names and paths must be unique");
     }
     identities.add(name);
-    projects.push({ name, path: projectPath, revision });
+    projects.push({
+      name,
+      path: projectPath,
+      remote: new URL(name, fetch).href,
+      revision,
+    });
+    for (const link of (match[2] ?? "").matchAll(/<linkfile\b[^>]*\/>/g)) {
+      const linkValues = attributes(link[0]);
+      const source = linkValues.get("src");
+      const destination = linkValues.get("dest");
+      if (!source || !destination) {
+        throw new ProductPrError(`project ${name} contains an invalid activation link`);
+      }
+      activation.push({
+        destination,
+        source: `${projectPath}/${source}`,
+        type: "symbolic-link",
+      });
+    }
   }
   if (projects.length === 0) throw new ProductPrError("Integration Snapshot contains no projects");
-  return projects;
+  activation.sort((left, right) => Buffer.from(left.destination).compare(Buffer.from(right.destination)));
+  return { activation, projects };
 }
 
 async function atomicWrite(directory, name, bytes) {
@@ -119,7 +151,8 @@ async function writeCandidateIdentity(options) {
     throw new ProductPrError("product PRs must use the fixed bootstrap/r00.xml Integration Snapshot");
   }
 
-  const projects = projectsFromManifest(await readFile(manifestPath, "utf8"));
+  const manifestBytes = await readFile(manifestPath);
+  const { activation, projects } = projectsFromManifest(manifestBytes.toString("utf8"));
   const product = projects.find((project) => project.name === "tsfg.git" && project.path === "tsfg");
   if (!product) throw new ProductPrError("Integration Snapshot does not contain canonical tsfg.git project");
   const baseline = {
@@ -133,6 +166,7 @@ async function writeCandidateIdentity(options) {
     schemaVersion: "1",
   };
   const resolvedManifest = {
+    activation,
     baseline,
     projects: projects
       .map((project) => project.name === "tsfg.git"
@@ -144,6 +178,8 @@ async function writeCandidateIdentity(options) {
   const overlayBytes = jsonBytes(overlay);
   const resolvedBytes = jsonBytes(resolvedManifest);
   const reportBytes = jsonBytes({
+    baselineManifestDigest: sha256(manifestBytes),
+    baselineProductRevision: product.revision,
     candidateRevision,
     overlayDigest: sha256(canonicalJsonBytes(overlay)),
     resolvedManifestDigest: sha256(canonicalJsonBytes(resolvedManifest)),
@@ -157,6 +193,7 @@ async function writeCandidateIdentity(options) {
   );
   await mkdir(stagingPath);
   try {
+    await writeFile(path.join(stagingPath, "baseline-manifest.xml"), manifestBytes, { flag: "wx" });
     await writeFile(path.join(stagingPath, "candidate-overlay.json"), overlayBytes, { flag: "wx" });
     await writeFile(path.join(stagingPath, "resolved-manifest.json"), resolvedBytes, { flag: "wx" });
     await writeFile(path.join(stagingPath, "candidate-identity.json"), reportBytes, { flag: "wx" });
@@ -216,36 +253,80 @@ function requireSuccessfulReport(report, label, command) {
   return report;
 }
 
-function requireResolvedWorkspace(report, resolvedManifest, label) {
+function requireResolvedWorkspace(report, resolvedManifest, label, expectedBinding) {
   requireSuccessfulReport(report, label, "verify-workspace");
   const byProjectId = (left, right) => Buffer.from(left.id).compare(Buffer.from(right.id));
   const expectedProjects = resolvedManifest.projects
-    .map(({ name, path: projectPath, revision }) => ({
+    .map(({ name, path: projectPath, remote, revision }) => ({
       dirty: false,
       head: revision,
       id: name,
       path: projectPath,
+      remote,
     }))
     .sort(byProjectId);
   const actualProjects = report.result?.projects
-    ?.map(({ dirty, head, id, path: projectPath }) => ({
+    ?.map(({ dirty, head, id, path: projectPath, remote }) => ({
       dirty,
       head,
       id,
       path: projectPath,
+      remote,
     }))
     .sort(byProjectId);
+  const expectedActivation = resolvedManifest.activation ?? [];
+  const actualActivation = report.result?.activation;
   const actualManifest = report.result?.manifest;
   if (
     !Array.isArray(actualProjects) ||
     canonicalize(actualProjects) !== canonicalize(expectedProjects) ||
+    report.result?.dirty !== false ||
     actualManifest?.repositoryUrl !== resolvedManifest.baseline.repository ||
     actualManifest?.selected !== resolvedManifest.baseline.manifest ||
-    !completeOid.test(actualManifest?.revision)
+    !completeOid.test(actualManifest?.revision) ||
+    !Array.isArray(actualActivation) ||
+    canonicalize(actualActivation.map(({ destination, source, type }) => ({ destination, source, type })))
+      !== canonicalize(expectedActivation) ||
+    actualActivation.some((entry) =>
+      !/^sha256:[0-9a-f]{64}$/.test(entry?.sha256) ||
+      Object.keys(entry).sort().join(",") !== "destination,sha256,source,type")
   ) {
     throw new ProductPrError(`${label} is not bound to the resolved Candidate Overlay`);
   }
-  return report;
+  const policy = report.result?.policy;
+  const expectedRepositories = [
+    { id: "manifests", path: ".repo/manifests" },
+    ...resolvedManifest.projects.map(({ name, path: projectPath }) => ({ id: name, path: projectPath })),
+  ].sort((left, right) => Buffer.from(left.path).compare(Buffer.from(right.path)));
+  const actualRepositories = policy?.repositories
+    ?.map(({ files, id, license, path: repositoryPath }) => ({ files, id, license, path: repositoryPath }))
+    .sort((left, right) => Buffer.from(left.path).compare(Buffer.from(right.path)));
+  const repositoryFacts = actualRepositories?.map(({ id, path: repositoryPath }) => ({
+    id,
+    path: repositoryPath,
+  }));
+  const coverage = policy?.licenseReport?.coverage;
+  if (
+    !Array.isArray(actualRepositories) ||
+    canonicalize(repositoryFacts) !== canonicalize(expectedRepositories) ||
+    actualRepositories.some(({ files, license }) => !Number.isSafeInteger(files) || files < 1 || license !== "MIT") ||
+    !Number.isSafeInteger(coverage?.covered) || coverage.covered < 1 ||
+    coverage.total !== coverage.covered || coverage.percent !== "100" ||
+    !Array.isArray(policy?.licenseReport?.dependencies) ||
+    !Array.isArray(policy?.licenseReport?.inputs) ||
+    !Array.isArray(policy?.upstreamForks) || policy.upstreamForks.length !== 0
+  ) {
+    throw new ProductPrError(`${label} does not contain complete workspace policy evidence`);
+  }
+  const binding = {
+    activation: actualActivation,
+    policy,
+    projects: actualProjects,
+  };
+  if (expectedBinding && canonicalize(binding) !== canonicalize(expectedBinding)) {
+    throw new ProductPrError(`${label} disagrees with the canonical Workspace Verification evidence`);
+  }
+  return binding;
 }
 
 async function evidenceFiles(root, current = "") {
@@ -277,29 +358,66 @@ async function writeVerdict(options) {
   const identityRoot = path.join(root, "identity");
   const identity = await readJson(path.join(identityRoot, "candidate-identity.json"), "candidate identity");
   requireOid(identity?.candidateRevision, "candidate revision");
+  requireOid(identity?.baselineProductRevision, "baseline product revision");
   const overlay = await readJson(path.join(identityRoot, "candidate-overlay.json"), "Candidate Overlay");
   const resolvedManifest = await readJson(
     path.join(identityRoot, "resolved-manifest.json"),
     "resolved manifest",
   );
+  const baselineManifestBytes = await readFile(path.join(identityRoot, "baseline-manifest.xml")).catch((error) => {
+    throw new ProductPrError(`baseline manifest is missing: ${error.message}`);
+  });
+  const baselineFacts = projectsFromManifest(baselineManifestBytes.toString("utf8"));
+  const baselineProduct = baselineFacts.projects.find(
+    ({ name, path: projectPath }) => name === "tsfg.git" && projectPath === "tsfg",
+  );
+  const expectedResolvedManifest = {
+    activation: baselineFacts.activation,
+    baseline: overlay?.baseline,
+    projects: baselineFacts.projects
+      .map((project) => project.name === "tsfg.git"
+        ? { ...project, revision: identity.candidateRevision }
+        : project)
+      .sort((left, right) => Buffer.from(left.name).compare(Buffer.from(right.name))),
+    schemaVersion: "1",
+  };
   if (
     identity.schemaVersion !== "1" ||
+    identity.baselineManifestDigest !== sha256(baselineManifestBytes) ||
+    baselineProduct?.revision !== identity.baselineProductRevision ||
     identity.overlayDigest !== sha256(canonicalJsonBytes(overlay)) ||
-    identity.resolvedManifestDigest !== sha256(canonicalJsonBytes(resolvedManifest))
+    identity.resolvedManifestDigest !== sha256(canonicalJsonBytes(resolvedManifest)) ||
+    canonicalize(overlay?.baseline) !== canonicalize(resolvedManifest?.baseline) ||
+    canonicalize(overlay?.replacements) !== canonicalize([
+      { project: "tsfg.git", revision: identity.candidateRevision },
+    ]) ||
+    resolvedManifest?.projects?.find(({ name }) => name === "tsfg.git")?.revision
+      !== identity.candidateRevision ||
+    canonicalize(resolvedManifest) !== canonicalize(expectedResolvedManifest)
   ) {
     throw new ProductPrError("candidate identity digests do not bind the archived overlay and resolved manifest");
+  }
+  const verifiedBaselineManifestBytes = await readFile(path.join(
+    root,
+    "workspace-verification",
+    "verified-baseline-manifest.xml",
+  )).catch((error) => {
+    throw new ProductPrError(`verified baseline manifest is missing: ${error.message}`);
+  });
+  if (!verifiedBaselineManifestBytes.equals(baselineManifestBytes)) {
+    throw new ProductPrError("Workspace Verification and candidate identity used different baseline manifests");
   }
 
   const gateReport = requireSuccessfulReport(
     await readJson(path.join(root, "repository-gates", "report.json"), "repository gates"),
     "repository gates",
   );
-  for (const gate of ["format", "policy", "license", "lock"]) {
+  for (const gate of ["compatibility", "format", "policy", "license", "lock"]) {
     if (gateReport.gates?.[gate] !== "passed") {
       throw new ProductPrError(`repository ${gate} gate is missing or failed`);
     }
   }
-  requireResolvedWorkspace(
+  const workspaceBinding = requireResolvedWorkspace(
     await readJson(
       path.join(root, "workspace-verification", "report.json"),
       "Workspace Verification",
@@ -318,6 +436,26 @@ async function writeVerdict(options) {
       `${target} compatibility`,
     );
     const combinations = compatibility.result?.compatibility?.combinations;
+    const artifactOids = {
+      baseline: identity.baselineProductRevision,
+      candidate: identity.candidateRevision,
+    };
+    const compatibilityRoot = path.join(root, "compatibility", target);
+    for (const artifactName of ["baseline", "candidate"]) {
+      const artifactPath = path.join(compatibilityRoot, `${artifactName}.json`);
+      const artifactBytes = await readFile(artifactPath).catch((error) => {
+        throw new ProductPrError(`${target} ${artifactName} compatibility artifact is missing: ${error.message}`);
+      });
+      const artifact = await readJson(artifactPath, `${target} ${artifactName} compatibility artifact`);
+      if (
+        artifact?.product?.commitOid !== artifactOids[artifactName] ||
+        compatibility.result?.compatibility?.artifacts?.[artifactName]?.productOid
+          !== artifactOids[artifactName] ||
+        compatibility.result?.compatibility?.artifacts?.[artifactName]?.sha256 !== sha256(artifactBytes)
+      ) {
+        throw new ProductPrError(`${target} ${artifactName} compatibility artifact identity is invalid`);
+      }
+    }
     const expectedCombinations = [
       ["baseline", "baseline"],
       ["candidate", "baseline"],
@@ -326,13 +464,14 @@ async function writeVerdict(options) {
     ];
     if (
       compatibility.result?.target !== target ||
-      compatibility.result?.compatibility?.artifacts?.candidate?.productOid !== identity.candidateRevision ||
       compatibility.result?.contractSet?.canonical !== "{}" ||
       compatibility.result?.contractSet?.id !== sha256(canonicalJsonBytes({})) ||
       !Array.isArray(combinations) ||
       expectedCombinations.some(([producer, consumer], index) =>
         combinations[index]?.producer !== producer ||
         combinations[index]?.consumer !== consumer ||
+        combinations[index]?.producerProductOid !== artifactOids[producer] ||
+        combinations[index]?.consumerProductOid !== artifactOids[consumer] ||
         combinations[index]?.status !== "passed")
     ) {
       throw new ProductPrError(`${target} compatibility evidence does not contain the complete candidate-bound matrix`);
@@ -340,6 +479,8 @@ async function writeVerdict(options) {
 
     for (const profile of profiles) {
       let producerIdentity;
+      let producerInputSet;
+      const producerEvidence = new Map();
       for (const producer of ["a", "b"]) {
         const producerRoot = path.join(root, "producers", target, profile, producer);
         requireResolvedWorkspace(
@@ -349,6 +490,7 @@ async function writeVerdict(options) {
           ),
           resolvedManifest,
           `${target}/${profile}/${producer} workspace`,
+          workspaceBinding,
         );
         const build = requireSuccessfulReport(
           await readJson(path.join(producerRoot, "build-report.json"), `${target}/${profile}/${producer} build`),
@@ -369,16 +511,32 @@ async function writeVerdict(options) {
           build.result?.target !== target || build.result?.profile !== profile ||
           packageReport.result?.buildIdentity?.target !== target ||
           packageReport.result?.buildIdentity?.profile !== profile ||
-          build.result?.buildIdentity?.digest !== packageReport.result?.buildIdentity?.digest ||
-          test.result?.buildIdentity?.digest !== packageReport.result?.buildIdentity?.digest
+          canonicalize(build.result?.buildIdentity) !== canonicalize(packageReport.result?.buildIdentity) ||
+          canonicalize(test.result?.buildIdentity) !== canonicalize(packageReport.result?.buildIdentity)
         ) {
           throw new ProductPrError(`${target}/${profile}/${producer} reports disagree on Build Identity`);
         }
         const digestValue = packageReport.result.buildIdentity.digest;
-        if (producerIdentity && producerIdentity !== digestValue) {
+        if (
+          !/^sha256:[0-9a-f]{64}$/.test(digestValue) ||
+          (producerIdentity && producerIdentity !== digestValue)
+        ) {
           throw new ProductPrError(`${target}/${profile} producers have different Build Identities`);
         }
         producerIdentity = digestValue;
+        const packageInputSet = packageReport.result?.buildInputSet;
+        if (
+          packageInputSet?.schemaVersion !== "1" ||
+          !Array.isArray(packageInputSet.entries) ||
+          packageInputSet.digest !== sha256(canonicalJsonBytes({
+            entries: packageInputSet.entries,
+            schemaVersion: "1",
+          })) ||
+          (producerInputSet && canonicalize(producerInputSet) !== canonicalize(packageInputSet))
+        ) {
+          throw new ProductPrError(`${target}/${profile}/${producer} has invalid Build Input Set evidence`);
+        }
+        producerInputSet = packageInputSet;
         const packageRoot = path.join(producerRoot, "package");
         const archiveName = packageReport.result.archive;
         if (typeof archiveName !== "string" || archiveName === "" || archiveName.includes("/") || archiveName.includes("\\")) {
@@ -394,7 +552,9 @@ async function writeVerdict(options) {
         );
         if (
           attestation.schemaVersion !== "1" || attestation.target !== target ||
-          attestation.profile !== profile || attestation.buildIdentityDigest !== digestValue
+          attestation.profile !== profile || attestation.buildIdentityDigest !== digestValue ||
+          typeof attestation.workspacePath !== "string" ||
+          attestation.workspacePath.length === 0
         ) {
           throw new ProductPrError(`${target}/${profile}/${producer} producer attestation is inconsistent`);
         }
@@ -409,6 +569,16 @@ async function writeVerdict(options) {
         ) {
           throw new ProductPrError(`${target}/${profile}/${producer} build evidence is not bound to the candidate`);
         }
+        producerEvidence.set(producer, {
+          archiveName,
+          archiveSha256: sha256(await readFile(path.join(packageRoot, archiveName))),
+          buildIdentity: packageReport.result.buildIdentity,
+          buildIdentityDigest: digestValue,
+          buildInputSet: packageInputSet,
+          checksumsName: `${archiveName}.checksums.json`,
+          checksumsSha256: sha256(await readFile(path.join(packageRoot, `${archiveName}.checksums.json`))),
+          workspacePath: attestation.workspacePath,
+        });
         producerCount += 1;
       }
       const repro = requireSuccessfulReport(
@@ -419,9 +589,44 @@ async function writeVerdict(options) {
         `${target}/${profile} reproducibility`,
         "repro-check",
       );
+      const compared = repro.result?.compared;
+      const reproProducers = repro.result?.producers;
+      const firstProducer = producerEvidence.get("a");
+      const comparedByPath = new Map(Array.isArray(compared)
+        ? compared.map((entry) => [entry?.path, entry])
+        : []);
       if (
         repro.result?.target !== target || repro.result?.profile !== profile ||
-        repro.result?.buildExecuted !== false || repro.result?.producers?.length !== 2
+        repro.result?.buildExecuted !== false ||
+        canonicalize(repro.result?.buildIdentity) !== canonicalize(firstProducer?.buildIdentity) ||
+        canonicalize(repro.result?.buildInputSet) !== canonicalize(firstProducer?.buildInputSet) ||
+        repro.result?.comparator?.buildIdentityDigest !== firstProducer?.buildIdentityDigest ||
+        repro.result?.comparator?.buildInputSetDigest !== firstProducer?.buildInputSet?.digest ||
+        (Object.hasOwn(repro.result?.comparator ?? {}, "workspacePath") &&
+          (typeof repro.result.comparator.workspacePath !== "string" ||
+            repro.result.comparator.workspacePath.length === 0)) ||
+        !Array.isArray(compared) || compared.length < 2 ||
+        compared.some((entry) =>
+          typeof entry?.path !== "string" || entry.path.length === 0 ||
+          !/^sha256:[0-9a-f]{64}$/.test(entry.sha256)) ||
+        comparedByPath.size !== compared.length ||
+        repro.result?.reproducibilitySetDigest
+          !== sha256(canonicalJsonBytes({ entries: compared, schemaVersion: "1" })) ||
+        !Array.isArray(reproProducers) || reproProducers.length !== 2 ||
+        ["a", "b"].some((producer, index) => {
+          const actual = reproProducers[index];
+          const expected = producerEvidence.get(producer);
+          const normalizedArtifactPath = typeof actual?.artifactPath === "string"
+            ? actual.artifactPath.replaceAll("\\", "/").toLowerCase()
+            : "";
+          const expectedSuffix = `/producers/${target}/${profile}/${producer}/package`.toLowerCase();
+          return actual?.label !== producer ||
+            !normalizedArtifactPath.endsWith(expectedSuffix) ||
+            actual?.workspacePath !== expected?.workspacePath ||
+            actual?.buildIdentityDigest !== expected?.buildIdentityDigest ||
+            comparedByPath.get(`package/${expected?.archiveName}`)?.sha256 !== expected?.archiveSha256 ||
+            comparedByPath.get(`package/${expected?.checksumsName}`)?.sha256 !== expected?.checksumsSha256;
+        })
       ) {
         throw new ProductPrError(`${target}/${profile} comparator evidence is incomplete or executed a build`);
       }
