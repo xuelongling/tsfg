@@ -17,6 +17,7 @@ const baselineProductRevision = "2".repeat(40);
 const agentRevision = "3".repeat(40);
 const candidateRevision = "4".repeat(40);
 const resolvedManifestRevision = "5".repeat(40);
+const candidateAgentRevision = "7".repeat(40);
 
 /** @param {string | Buffer} value */
 function digest(value) {
@@ -64,7 +65,7 @@ function workspaceReport(productRevision, manifestHead = resolvedManifestRevisio
         },
         {
           dirty: false,
-          head: agentRevision,
+          head: candidateAgentRevision,
           id: ".agents.git",
           path: ".agents",
           remote: "https://github.com/xuelongling/.agents.git",
@@ -128,6 +129,7 @@ test("candidate identity binds a complete product overlay to the fixed Integrati
       "--manifest-name", "bootstrap/r00.xml",
       "--manifest-revision", manifestRevision,
       "--candidate-revision", candidateRevision,
+      "--agent-revision", candidateAgentRevision,
       "--out", outputPath,
     ]);
     assert.equal(result.status, 0, result.stderr);
@@ -140,7 +142,9 @@ test("candidate identity binds a complete product overlay to the fixed Integrati
     assert.equal(archivedBaselineBytes.toString("utf8"), manifestBytes);
     assert.equal(
       resolvedManifestBytes.toString("utf8"),
-      manifestBytes.replace(baselineProductRevision, candidateRevision),
+      manifestBytes
+        .replace(baselineProductRevision, candidateRevision)
+        .replace(agentRevision, candidateAgentRevision),
     );
     assert.deepEqual(JSON.parse(overlayBytes.toString("utf8")), {
       baseline: {
@@ -169,7 +173,7 @@ test("candidate identity binds a complete product overlay to the fixed Integrati
           name: ".agents.git",
           path: ".agents",
           remote: "https://github.com/xuelongling/.agents.git",
-          revision: agentRevision,
+          revision: candidateAgentRevision,
         },
         {
           name: "tsfg.git",
@@ -181,8 +185,9 @@ test("candidate identity binds a complete product overlay to the fixed Integrati
       schemaVersion: "1",
     });
     const canonicalOverlay = `{"baseline":{"manifest":"bootstrap/r00.xml","repository":"https://github.com/xuelongling/manifests.git","revision":"${manifestRevision}"},"replacements":[{"project":"tsfg.git","revision":"${candidateRevision}"}],"schemaVersion":"1"}`;
-    const canonicalResolved = `{"activation":[{"destination":"AGENTS.md","source":".agents/AGENTS.md","type":"symbolic-link"}],"baseline":{"manifest":"bootstrap/r00.xml","repository":"https://github.com/xuelongling/manifests.git","revision":"${manifestRevision}"},"projects":[{"name":".agents.git","path":".agents","remote":"https://github.com/xuelongling/.agents.git","revision":"${agentRevision}"},{"name":"tsfg.git","path":"tsfg","remote":"https://github.com/xuelongling/tsfg.git","revision":"${candidateRevision}"}],"schemaVersion":"1"}`;
+    const canonicalResolved = `{"activation":[{"destination":"AGENTS.md","source":".agents/AGENTS.md","type":"symbolic-link"}],"baseline":{"manifest":"bootstrap/r00.xml","repository":"https://github.com/xuelongling/manifests.git","revision":"${manifestRevision}"},"projects":[{"name":".agents.git","path":".agents","remote":"https://github.com/xuelongling/.agents.git","revision":"${candidateAgentRevision}"},{"name":"tsfg.git","path":"tsfg","remote":"https://github.com/xuelongling/tsfg.git","revision":"${candidateRevision}"}],"schemaVersion":"1"}`;
     assert.deepEqual(report, {
+      agentRevision: candidateAgentRevision,
       baselineManifestDigest: digest(manifestBytes),
       baselineProductRevision,
       candidateRevision,
@@ -214,6 +219,7 @@ test("candidate identity retries a transient Windows rename denial", {
       "--manifest-name", "bootstrap/r00.xml",
       "--manifest-revision", manifestRevision,
       "--candidate-revision", candidateRevision,
+      "--agent-revision", candidateAgentRevision,
       "--out", outputPath,
     ], { TSFG_TEST_CANDIDATE_IDENTITY_RENAME_EPERM_ONCE: "1" });
     assert.equal(result.status, 0, result.stderr);
@@ -242,6 +248,7 @@ test("candidate identity failure preserves a pre-existing output directory and p
       "--manifest-name", "bootstrap/r00.xml",
       "--manifest-revision", manifestRevision,
       "--candidate-revision", candidateRevision,
+      "--agent-revision", candidateAgentRevision,
       "--out", outputPath,
     ]);
     assert.equal(result.status, 1);
@@ -318,6 +325,7 @@ test("product PR workflow uses the published Bootstrap Integration Snapshot iden
     workflow,
     /^  TSFG_MANIFEST_REVISION: d94f4e6bff9aa980b18b0df94e133559e4b61240$/m,
   );
+  assert.match(workflowJob(workflow, "candidate-identity"), /--agent-revision "\$TSFG_AGENT_TOOLS_REVISION"/);
 });
 
 test("product PR workflow composes every gate, producer, compatibility lane, and build-free comparator", async () => {
@@ -339,7 +347,7 @@ test("product PR workflow composes every gate, producer, compatibility lane, and
   assert.match(workspaceVerification, /verified-resolved-manifest\.xml/);
   assert.match(
     workspaceVerification,
-    /cp \.ci\/workspace-resolved-identity\/resolved-manifest\.xml \.ci\/evidence\/workspace-verification\/verified-resolved-manifest\.xml/,
+    /cp "\$workspace\/\.repo\/manifests\/\$TSFG_SELECTED_MANIFEST" \.ci\/evidence\/workspace-verification\/verified-resolved-manifest\.xml/,
   );
   assert.doesNotMatch(
     workspaceVerification,
@@ -483,6 +491,7 @@ test("candidate verdict requires complete successful matrix evidence before decl
       "--manifest-name", "bootstrap/r00.xml",
       "--manifest-revision", manifestRevision,
       "--candidate-revision", candidateRevision,
+      "--agent-revision", candidateAgentRevision,
       "--out", path.join(evidence, "identity"),
     ]);
     assert.equal(identityResult.status, 0, identityResult.stderr);
@@ -504,10 +513,9 @@ test("candidate verdict requires complete successful matrix evidence before decl
       path.join(evidence, "workspace-verification", "verified-baseline-manifest.xml"),
       baselineManifestBytes,
     );
-    const resolvedManifestBytes = baselineManifestBytes.replace(
-      baselineProductRevision,
-      candidateRevision,
-    );
+    const resolvedManifestBytes = baselineManifestBytes
+      .replace(baselineProductRevision, candidateRevision)
+      .replace(agentRevision, candidateAgentRevision);
     await writeFile(
       path.join(evidence, "workspace-verification", "verified-resolved-manifest.xml"),
       resolvedManifestBytes,
@@ -765,7 +773,7 @@ test("candidate verdict requires complete successful matrix evidence before decl
     );
     await writeFile(
       verifiedResolvedPath,
-      resolvedManifestBytes.replace(agentRevision, "6".repeat(40)),
+      resolvedManifestBytes.replace(candidateAgentRevision, "6".repeat(40)),
     );
     const foreignResolvedManifestOutput = path.join(sandbox, "foreign-resolved-manifest.json");
     const foreignResolvedManifest = invoke([

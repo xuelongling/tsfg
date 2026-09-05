@@ -156,20 +156,24 @@ function projectsFromManifest(xml) {
   return { activation, projects };
 }
 
-function resolveProductManifest(xml, candidateRevision) {
-  let replacements = 0;
+function resolveCandidateManifest(xml, revisions) {
+  const remaining = new Map(revisions);
   const resolved = xml.replace(/<project\b[^>]*>/g, (tag) => {
     const values = attributes(tag);
-    if (values.get("name") !== "tsfg.git" || values.get("path") !== "tsfg") return tag;
+    const name = values.get("name");
+    if (!remaining.has(name)) return tag;
     const revisionAttributes = [...tag.matchAll(/\brevision="[^"]*"/g)];
     if (revisionAttributes.length !== 1) {
-      throw new ProductPrError("canonical tsfg.git project must have one revision attribute");
+      throw new ProductPrError(`canonical ${name} project must have one revision attribute`);
     }
-    replacements += 1;
-    return tag.replace(revisionAttributes[0][0], `revision="${candidateRevision}"`);
+    const revision = remaining.get(name);
+    remaining.delete(name);
+    return tag.replace(revisionAttributes[0][0], `revision="${revision}"`);
   });
-  if (replacements !== 1) {
-    throw new ProductPrError("Integration Snapshot must contain one canonical tsfg.git project");
+  if (remaining.size !== 0) {
+    throw new ProductPrError(
+      `Integration Snapshot must contain one canonical project for: ${[...remaining.keys()].join(", ")}`,
+    );
   }
   return Buffer.from(resolved);
 }
@@ -220,6 +224,10 @@ async function writeCandidateIdentity(options) {
     requireOption(options, "--candidate-revision"),
     "candidate revision",
   );
+  const agentRevision = requireOid(
+    requireOption(options, "--agent-revision"),
+    "agent revision",
+  );
   const outputPath = path.resolve(requireOption(options, "--out"));
   if (manifestName !== "bootstrap/r00.xml") {
     throw new ProductPrError("product PRs must use the fixed bootstrap/r00.xml Integration Snapshot");
@@ -229,6 +237,8 @@ async function writeCandidateIdentity(options) {
   const { activation, projects } = projectsFromManifest(manifestBytes.toString("utf8"));
   const product = projects.find((project) => project.name === "tsfg.git" && project.path === "tsfg");
   if (!product) throw new ProductPrError("Integration Snapshot does not contain canonical tsfg.git project");
+  const agent = projects.find((project) => project.name === ".agents.git" && project.path === ".agents");
+  if (!agent) throw new ProductPrError("Integration Snapshot does not contain canonical .agents.git project");
   const baseline = {
     manifest: manifestName,
     repository: manifestRepository,
@@ -243,16 +253,22 @@ async function writeCandidateIdentity(options) {
     activation,
     baseline,
     projects: projects
-      .map((project) => project.name === "tsfg.git"
-        ? { ...project, revision: candidateRevision }
-        : project)
+      .map((project) => {
+        if (project.name === "tsfg.git") return { ...project, revision: candidateRevision };
+        if (project.name === ".agents.git") return { ...project, revision: agentRevision };
+        return project;
+      })
       .sort((left, right) => Buffer.from(left.name).compare(Buffer.from(right.name))),
     schemaVersion: "1",
   };
   const overlayBytes = jsonBytes(overlay);
   const resolvedBytes = jsonBytes(resolvedManifest);
-  const resolvedManifestBytes = resolveProductManifest(manifestBytes.toString("utf8"), candidateRevision);
+  const resolvedManifestBytes = resolveCandidateManifest(manifestBytes.toString("utf8"), new Map([
+    ["tsfg.git", candidateRevision],
+    [".agents.git", agentRevision],
+  ]));
   const reportBytes = jsonBytes({
+    agentRevision,
     baselineManifestDigest: sha256(manifestBytes),
     baselineProductRevision: product.revision,
     candidateRevision,
@@ -471,6 +487,7 @@ async function writeVerdict(options) {
   const identity = await readJson(path.join(identityRoot, "candidate-identity.json"), "candidate identity");
   requireOid(identity?.candidateRevision, "candidate revision");
   requireOid(identity?.baselineProductRevision, "baseline product revision");
+  requireOid(identity?.agentRevision, "agent revision");
   const overlay = await readCanonicalJson(path.join(identityRoot, "candidate-overlay.json"), "Candidate Overlay");
   const resolvedManifest = await readCanonicalJson(
     path.join(identityRoot, "resolved-manifest.json"),
@@ -487,9 +504,11 @@ async function writeVerdict(options) {
     activation: baselineFacts.activation,
     baseline: overlay?.baseline,
     projects: baselineFacts.projects
-      .map((project) => project.name === "tsfg.git"
-        ? { ...project, revision: identity.candidateRevision }
-        : project)
+      .map((project) => {
+        if (project.name === "tsfg.git") return { ...project, revision: identity.candidateRevision };
+        if (project.name === ".agents.git") return { ...project, revision: identity.agentRevision };
+        return project;
+      })
       .sort((left, right) => Buffer.from(left.name).compare(Buffer.from(right.name))),
     schemaVersion: "1",
   };
@@ -505,6 +524,8 @@ async function writeVerdict(options) {
     ]) ||
     resolvedManifest?.projects?.find(({ name }) => name === "tsfg.git")?.revision
       !== identity.candidateRevision ||
+    resolvedManifest?.projects?.find(({ name }) => name === ".agents.git")?.revision
+      !== identity.agentRevision ||
     canonicalize(resolvedManifest) !== canonicalize(expectedResolvedManifest)
   ) {
     throw new ProductPrError("candidate identity digests do not bind the archived overlay and resolved manifest");
@@ -814,6 +835,7 @@ async function main() {
       "--manifest-name",
       "--manifest-revision",
       "--candidate-revision",
+      "--agent-revision",
       "--out",
     ]));
     await writeCandidateIdentity(options);
