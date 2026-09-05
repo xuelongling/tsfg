@@ -67,6 +67,7 @@ test("Linux sandbox supervisor owns boundary statuses and audits descendants", a
   const controlRoot = path.join(temporaryRoot, "control");
   const sandboxRoot = path.join(temporaryRoot, "sandbox");
   const declaredPath = path.join(sourceRoot, "declared.txt");
+  const writablePath = path.join(workRoot, "writable.txt");
   const outsidePath = path.join(temporaryRoot, "outside.txt");
   const missingOutsidePath = path.join(temporaryRoot, "missing-outside.txt");
   const runner = path.join(controlRoot, "sandbox-run");
@@ -78,6 +79,7 @@ test("Linux sandbox supervisor owns boundary statuses and audits descendants", a
     await mkdir(workRoot, { recursive: true });
     await mkdir(controlRoot, { recursive: true });
     await writeFile(declaredPath, "declared\n");
+    await writeFile(writablePath, "writable\n");
     await writeFile(outsidePath, "outside\n");
     await writeFile(probeSource, `
 #include <fcntl.h>
@@ -157,6 +159,13 @@ int main(int argc, char **argv) {
     int fd = open(page_edge_path, O_RDONLY);
     if (fd >= 0) close(fd);
     return fd >= 0 ? 0 : 11;
+  }
+  if (strcmp(argv[1], "futimens") == 0) {
+    int fd = open(argv[2], O_WRONLY);
+    if (fd < 0) return 12;
+    int result = futimens(fd, NULL);
+    close(fd);
+    return result == 0 ? 0 : 13;
   }
   if (strcmp(argv[1], "descendant") == 0) {
     pid_t child = fork();
@@ -244,6 +253,9 @@ int main(int argc, char **argv) {
 
     const pageEdgeRead = invoke("page-edge-read", declaredPath);
     assert.equal(pageEdgeRead.status, 0, pageEdgeRead.stderr);
+
+    const descriptorTimestamp = invoke("futimens", writablePath);
+    assert.equal(descriptorTimestamp.status, 0, descriptorTimestamp.stderr);
 
     const ignoredRead = invoke("read", outsidePath);
     assert.equal(ignoredRead.status, 124, ignoredRead.stderr);

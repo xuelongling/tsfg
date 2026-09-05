@@ -420,7 +420,9 @@ static int audit_path(pid_t pid, long syscall_number, int descriptor,
                       size_t allowed_count, char *denied, size_t denied_length) {
   char input[PATH_MAX];
   char base[PATH_MAX];
-  if (read_tracee_string(pid, address, input, sizeof(input)) < 0) {
+  if (syscall_number == SYS_utimensat && address == 0) {
+    input[0] = '\0';
+  } else if (read_tracee_string(pid, address, input, sizeof(input)) < 0) {
     int read_errno = errno;
     snprintf(denied, denied_length,
              "unreadable-tracee-path:syscall=%ld:address=0x%lx:errno=%d",
