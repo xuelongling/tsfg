@@ -1,3 +1,5 @@
+<!-- SPDX-License-Identifier: MIT -->
+
 # tsfg（TypeScript for Game）整体架构方案
 
 ## 远景与目标

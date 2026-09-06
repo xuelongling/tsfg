@@ -2,6 +2,8 @@
 status: accepted
 ---
 
+<!-- SPDX-License-Identifier: MIT -->
+
 # 用统一控制面编排原生构建系统
 
 `repo` 只负责物化多仓，`tsfg` 提供唯一公开的跨平台 prefetch、verify-workspace、build、test、package 与 repro-check 控制面，内部调用内容锁定的 Node 包管理器、`zig build`、CMake presets/toolchain files 与 Ninja；Bazel、Nix 和容器不构成规范性构建接口。Zig 编译 Zig 源码，Clang/LLD 编译 C/C++、LLVM/MLIR 并形成 ABI 基线；目标 SDK/sysroot 也属于闭包。具体 patch 版本属于 R00 章程和 `toolchains.lock.json`，不在 ADR 重复。每个分发物的内容摘要与解包 tree hash、每个权威 dependency-lock 的摘要进入 target-specific Toolchain Closure projection，经 JCS 形成完整 digest；URL/mirror 不是身份，系统 PATH 不提供回退。

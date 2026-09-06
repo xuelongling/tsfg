@@ -1,0 +1,404 @@
+#!/bin/sh
+# SPDX-License-Identifier: MIT
+set -eu
+
+script_dir=$(CDPATH= cd -- "$(dirname -- "$0")" && pwd)
+repository=$(CDPATH= cd -- "$script_dir/.." && pwd)
+cache=${TSFG_CACHE_DIR:-"$repository/.tsfg-cache"}
+platform=linux-x86_64-gnu
+lock_id=99df577d8c78ae99ffe8ee04dc2034521b023e9e19b177f696d1f0fa2412e9d5
+node_id=89af8424dd53e560b1933f87ba650d8bf57c83ca5a04600eefb31f416aabbae7
+command=${1:-}
+report=
+expect_report=false
+for argument do
+  if [ "$expect_report" = true ]; then
+    report=$argument
+    break
+  fi
+  if [ "$argument" = --report ]; then
+    expect_report=true
+  fi
+done
+
+unset NODE_OPTIONS NODE_PATH NODE_REPL_EXTERNAL_MODULE NODE_EXTRA_CA_CERTS OPENSSL_CONF
+
+runtime_failure() {
+  message=${1:-'locked Node.js closure is missing or invalid; run tsfg-build prefetch'}
+  if [ -n "$report" ]; then
+    parent=$(dirname -- "$report")
+    temporary="$report.$$.tmp"
+    if ! mkdir -p -- "$parent" ||
+      ! printf '%s\n' "{\"command\":\"$command\",\"error\":{\"category\":\"lock/integrity\",\"code\":\"11\",\"issues\":[{\"code\":\"runtime-closure\",\"message\":\"$message\"}]},\"network\":\"offline\",\"schemaVersion\":\"1\",\"status\":\"failure\",\"telemetry\":false}" > "$temporary" ||
+      ! mv -f -- "$temporary" "$report"; then
+      rm -f -- "$temporary"
+      printf '%s\n' 'cannot write Build Report for runtime closure failure' >&2
+      exit 30
+    fi
+  fi
+  printf '%s\n' "$message" >&2
+  exit 11
+}
+
+usage_failure() {
+  report_command=$1
+  issue_code=$2
+  message=$3
+  if [ -n "$report" ]; then
+    parent=$(dirname -- "$report")
+    temporary="$report.$$.tmp"
+    if ! mkdir -p -- "$parent" ||
+      ! printf '%s\n' "{\"command\":\"$report_command\",\"error\":{\"category\":\"usage/configuration\",\"code\":\"2\",\"issues\":[{\"code\":\"$issue_code\",\"message\":\"$message\"}]},\"network\":\"disabled\",\"schemaVersion\":\"1\",\"status\":\"failure\",\"telemetry\":false}" > "$temporary" ||
+      ! mv -f -- "$temporary" "$report"; then
+      rm -f -- "$temporary"
+      printf '%s\n' 'cannot write Build Report for unsupported operation' >&2
+      exit 30
+    fi
+  fi
+  printf '%s\n' "$message" >&2
+  exit 2
+}
+
+snapshot_verified_node() {
+  source_node=$1
+  expected_digest=$2
+  mkdir -p -- "$cache" || runtime_failure 'cannot create Node snapshot directory'
+  snapshot_dir=$(/bin/mktemp -d "$cache/.node.XXXXXXXX") ||
+    runtime_failure 'cannot create private Node snapshot'
+  snapshot_node=$snapshot_dir/node
+  if ! /bin/cp -- "$source_node" "$snapshot_node" ||
+    ! /bin/chmod 0500 "$snapshot_node" ||
+    ! exec 9< "$snapshot_node"; then
+    /bin/rm -rf -- "$snapshot_dir"
+    runtime_failure 'cannot create private Node snapshot'
+  fi
+  /bin/rm -f -- "$snapshot_node" || runtime_failure 'cannot unlink private Node snapshot'
+  /bin/rmdir -- "$snapshot_dir" || runtime_failure 'cannot remove private Node snapshot directory'
+  actual_digest=$(/usr/bin/sha256sum /proc/self/fd/9) ||
+    runtime_failure 'cannot verify private Node snapshot'
+  actual_digest=${actual_digest%% *}
+  [ "$actual_digest" = "$expected_digest" ] || runtime_failure 'private Node snapshot digest mismatch'
+}
+
+trusted_git() {
+  bootstrap_git=${TSFG_BOOTSTRAP_GIT:-}
+  bootstrap_digest=${TSFG_BOOTSTRAP_GIT_SHA256:-}
+  case "$bootstrap_git" in
+    /*) ;;
+    *) runtime_failure 'offline commands require an absolute TSFG_BOOTSTRAP_GIT' ;;
+  esac
+  [ -x "$bootstrap_git" ] || runtime_failure 'bootstrap Git does not exist or is not executable'
+  [ "${#bootstrap_digest}" -eq 64 ] ||
+    runtime_failure 'offline commands require a full lowercase TSFG_BOOTSTRAP_GIT_SHA256'
+  case "$bootstrap_digest" in
+    *[!0-9a-f]*) runtime_failure 'offline commands require a full lowercase TSFG_BOOTSTRAP_GIT_SHA256' ;;
+    *) ;;
+  esac
+  actual_digest=$(/usr/bin/sha256sum "$bootstrap_git") ||
+    runtime_failure 'cannot verify bootstrap Git digest'
+  actual_digest=${actual_digest%% *}
+  [ "$actual_digest" = "$bootstrap_digest" ] || runtime_failure 'bootstrap Git digest mismatch'
+  TSFG_GIT=$bootstrap_git
+  export TSFG_GIT
+}
+
+valid_verify_arguments() {
+  seen_workspace=false
+  seen_manifest_url=false
+  seen_manifest_revision=false
+  seen_manifest=false
+  seen_report=false
+  manifest_revision=
+  manifest_name=
+  shift
+  while [ "$#" -gt 0 ]; do
+    option=$1
+    shift
+    if [ "$#" -eq 0 ] || [ -z "$1" ]; then
+      return 1
+    fi
+    case "$option" in
+      --workspace)
+        [ "$seen_workspace" = false ] || return 1
+        seen_workspace=true
+        ;;
+      --manifest-url)
+        [ "$seen_manifest_url" = false ] || return 1
+        seen_manifest_url=true
+        ;;
+      --manifest-revision)
+        [ "$seen_manifest_revision" = false ] || return 1
+        seen_manifest_revision=true
+        manifest_revision=$1
+        ;;
+      --manifest)
+        [ "$seen_manifest" = false ] || return 1
+        seen_manifest=true
+        manifest_name=$1
+        ;;
+      --report)
+        [ "$seen_report" = false ] || return 1
+        seen_report=true
+        ;;
+      *) return 1 ;;
+    esac
+    shift
+  done
+  [ "$seen_workspace" = true ] &&
+    [ "$seen_manifest_url" = true ] &&
+    [ "$seen_manifest_revision" = true ] &&
+    [ "$seen_manifest" = true ] || return 1
+  [ "${#manifest_revision}" -eq 40 ] || return 1
+  case "$manifest_revision" in *[!0-9a-f]*) return 1 ;; esac
+  rest=$manifest_name
+  segment=
+  while [ -n "$rest" ]; do
+    character=${rest%"${rest#?}"}
+    rest=${rest#?}
+    case "$character" in
+      /|\\)
+        [ -n "$segment" ] && [ "$segment" != .. ] || return 1
+        segment=
+        ;;
+      *) segment=$segment$character ;;
+    esac
+  done
+  [ -n "$segment" ] && [ "$segment" != .. ]
+}
+
+valid_smoke_arguments() {
+  expected_command=$1
+  shift
+  [ "${1:-}" = "$expected_command" ] || return 1
+  shift
+  seen_target=false
+  seen_profile=false
+  seen_out=false
+  seen_input=false
+  seen_package=false
+  seen_report=false
+  seen_workspace=false
+  seen_dev=false
+  seen_simd_dispatch=false
+  seen_cpu_fixture=false
+  seen_compatibility_baseline=false
+  seen_compatibility_candidate=false
+  target=
+  profile=
+  while [ "$#" -gt 0 ]; do
+    option=$1
+    shift
+    if [ "$option" = --dev ]; then
+      [ "$seen_dev" = false ] || return 1
+      seen_dev=true
+      continue
+    fi
+    if [ "$#" -eq 0 ] || [ -z "$1" ]; then
+      return 1
+    fi
+    case "$option" in
+      --target)
+        [ "$seen_target" = false ] || return 1
+        seen_target=true
+        target=$1
+        ;;
+      --profile)
+        [ "$seen_profile" = false ] || return 1
+        seen_profile=true
+        profile=$1
+        ;;
+      --simd-dispatch)
+        [ "$seen_simd_dispatch" = false ] || return 1
+        seen_simd_dispatch=true
+        [ "$1" = runtime-detected ] || [ "$1" = baseline-only ] || return 1
+        ;;
+      --cpu-fixture)
+        [ "$expected_command" = test ] || return 1
+        [ "$seen_cpu_fixture" = false ] || return 1
+        seen_cpu_fixture=true
+        [ "$1" = x86-64-v2 ] || return 1
+        ;;
+      --compatibility-baseline)
+        [ "$expected_command" = test ] || return 1
+        [ "$seen_compatibility_baseline" = false ] || return 1
+        seen_compatibility_baseline=true
+        ;;
+      --compatibility-candidate)
+        [ "$expected_command" = test ] || return 1
+        [ "$seen_compatibility_candidate" = false ] || return 1
+        seen_compatibility_candidate=true
+        ;;
+      --out)
+        [ "$seen_out" = false ] || return 1
+        seen_out=true
+        ;;
+      --input)
+        [ "$expected_command" = package ] || return 1
+        [ "$seen_input" = false ] || return 1
+        seen_input=true
+        ;;
+      --package)
+        [ "$expected_command" = test ] || return 1
+        [ "$seen_package" = false ] || return 1
+        seen_package=true
+        ;;
+      --report)
+        [ "$seen_report" = false ] || return 1
+        seen_report=true
+        ;;
+      --workspace)
+        [ "$seen_workspace" = false ] || return 1
+        seen_workspace=true
+        ;;
+      *) return 1 ;;
+    esac
+    shift
+  done
+  if [ "$seen_compatibility_baseline" = true ] || [ "$seen_compatibility_candidate" = true ]; then
+    [ "$expected_command" = test ] &&
+      [ "$seen_target" = true ] &&
+      [ "$seen_compatibility_baseline" = true ] &&
+      [ "$seen_compatibility_candidate" = true ] &&
+      [ "$seen_profile" = false ] &&
+      [ "$seen_out" = false ] &&
+      [ "$seen_input" = false ] &&
+      [ "$seen_package" = false ] &&
+      [ "$seen_simd_dispatch" = false ] &&
+      [ "$seen_cpu_fixture" = false ] &&
+      [ "$target" = linux-x86_64-gnu ]
+    return
+  fi
+  if [ "$seen_package" = true ]; then
+    [ "$expected_command" = test ] &&
+      [ "$seen_target" = true ] &&
+      [ "$seen_profile" = true ] &&
+      [ "$seen_workspace" = true ] &&
+      [ "$seen_out" = false ] &&
+      [ "$seen_input" = false ] &&
+      [ "$seen_dev" = false ] &&
+      [ "$seen_simd_dispatch" = false ] &&
+      [ "$seen_cpu_fixture" = false ] &&
+      [ "$seen_compatibility_baseline" = false ] &&
+      [ "$seen_compatibility_candidate" = false ] &&
+      { [ "$profile" = debug ] || [ "$profile" = release ]; } &&
+      [ "$target" = linux-x86_64-gnu ]
+    return
+  fi
+  [ "$seen_target" = true ] &&
+    [ "$seen_profile" = true ] &&
+    [ "$seen_out" = true ] &&
+    { [ "$expected_command" != package ] || [ "$seen_input" = true ]; } &&
+    [ "$target" = linux-x86_64-gnu ] &&
+    { [ "$profile" = debug ] || [ "$profile" = release ]; }
+}
+
+valid_repro_arguments() {
+  shift
+  seen_target=false
+  seen_profile=false
+  seen_producer_a=false
+  seen_producer_b=false
+  seen_workspace=false
+  seen_report=false
+  target=
+  profile=
+  while [ "$#" -gt 0 ]; do
+    option=$1
+    shift
+    if [ "$#" -eq 0 ] || [ -z "$1" ]; then
+      return 1
+    fi
+    case "$option" in
+      --target)
+        [ "$seen_target" = false ] || return 1
+        seen_target=true
+        target=$1
+        ;;
+      --profile)
+        [ "$seen_profile" = false ] || return 1
+        seen_profile=true
+        profile=$1
+        ;;
+      --producer-a)
+        [ "$seen_producer_a" = false ] || return 1
+        seen_producer_a=true
+        ;;
+      --producer-b)
+        [ "$seen_producer_b" = false ] || return 1
+        seen_producer_b=true
+        ;;
+      --workspace)
+        [ "$seen_workspace" = false ] || return 1
+        seen_workspace=true
+        ;;
+      --report)
+        [ "$seen_report" = false ] || return 1
+        seen_report=true
+        ;;
+      *) return 1 ;;
+    esac
+    shift
+  done
+  [ "$seen_target" = true ] &&
+    [ "$seen_profile" = true ] &&
+    [ "$seen_producer_a" = true ] &&
+    [ "$seen_producer_b" = true ] &&
+    [ "$target" = linux-x86_64-gnu ] &&
+    { [ "$profile" = debug ] || [ "$profile" = release ]; }
+}
+
+if [ "${1:-}" = prefetch ]; then
+  bootstrap_node=${TSFG_BOOTSTRAP_NODE:-}
+  bootstrap_digest=${TSFG_BOOTSTRAP_NODE_SHA256:-}
+  case "$bootstrap_node" in
+    /*) ;;
+    *) runtime_failure 'prefetch requires an absolute TSFG_BOOTSTRAP_NODE' ;;
+  esac
+  [ "${#bootstrap_digest}" -eq 64 ] ||
+    runtime_failure 'prefetch requires a full lowercase TSFG_BOOTSTRAP_NODE_SHA256'
+  case "$bootstrap_digest" in
+    *[!0-9a-f]*) runtime_failure 'prefetch requires a full lowercase TSFG_BOOTSTRAP_NODE_SHA256' ;;
+    *) ;;
+  esac
+  [ -x "$bootstrap_node" ] || runtime_failure 'prefetch bootstrap Node is not executable'
+  snapshot_verified_node "$bootstrap_node" "$bootstrap_digest"
+  exec /proc/self/fd/9 "$script_dir/tsfg-build.mjs" "$@" \
+    --lock "$script_dir/toolchains.lock.json" \
+    --cache "$cache" \
+    --platform "$platform"
+fi
+if [ "$command" != verify-workspace ] && [ "$command" != build ] && [ "$command" != test ] && [ "$command" != package ] && [ "$command" != repro-check ]; then
+  usage_failure unsupported unsupported-operation 'unsupported operation'
+fi
+if [ "$command" = verify-workspace ] && ! valid_verify_arguments "$@"; then
+  usage_failure verify-workspace invalid-configuration 'invalid verify-workspace arguments'
+fi
+if { [ "$command" = build ] || [ "$command" = test ] || [ "$command" = package ]; } && ! valid_smoke_arguments "$command" "$@"; then
+  usage_failure "$command" invalid-configuration "invalid $command arguments"
+fi
+if [ "$command" = repro-check ] && ! valid_repro_arguments "$@"; then
+  usage_failure repro-check invalid-configuration 'invalid repro-check arguments'
+fi
+
+active="$cache/active/$platform"
+if [ ! -f "$active" ]; then
+  runtime_failure
+fi
+closure=$(sed -n '1p' "$active")
+if [ "$closure" != "closures/sha256/$lock_id/$platform" ]; then
+  runtime_failure
+fi
+node_path="$cache/$closure/node/bin/node"
+if [ ! -x "$node_path" ]; then
+  runtime_failure
+fi
+if [ ! -x /usr/bin/sha256sum ]; then
+  runtime_failure
+fi
+snapshot_verified_node "$node_path" "$node_id"
+trusted_git
+TSFG_RUNTIME_LOCK="$script_dir/toolchains.lock.json"
+TSFG_RUNTIME_CACHE=$cache
+TSFG_RUNTIME_PLATFORM=$platform
+export TSFG_RUNTIME_LOCK TSFG_RUNTIME_CACHE TSFG_RUNTIME_PLATFORM
+exec /proc/self/fd/9 "$script_dir/tsfg-build.mjs" "$@"

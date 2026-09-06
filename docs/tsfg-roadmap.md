@@ -1,3 +1,5 @@
+<!-- SPDX-License-Identifier: MIT -->
+
 # tsfg 完整方案交付 Roadmap
 
 ## 1. 文档目的

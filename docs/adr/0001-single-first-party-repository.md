@@ -2,6 +2,8 @@
 status: accepted
 ---
 
+<!-- SPDX-License-Identifier: MIT -->
+
 # tsfg 产品单仓、独立控制仓与同级上游 Fork
 
 产品与语言的规范名统一为 `tsfg`，产品规范远端为 `https://github.com/xuelongling/tsfg`。产品自研内容统一放在该产品 Git 仓库，不按 contracts、compiler、runtime 或 tooling 拆成独立仓库；自研控制仓例外为现有 `https://github.com/xuelongling/manifests.git` Manifest Repository 与 `https://github.com/xuelongling/.agents.git` Agent Infrastructure Repository。需要维护的外部上游 fork 作为产品仓的同级仓库，tsfg 专用改动直接提交到 fork 特性分支；Integration Manifest 始终锁定完整 commit OID，不以浮动分支名作为可重放身份。

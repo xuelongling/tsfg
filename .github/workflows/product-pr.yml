@@ -1,0 +1,573 @@
+# SPDX-License-Identifier: MIT
+
+name: Product PR
+
+on:
+  pull_request:
+
+permissions:
+  contents: read
+
+env:
+  NODE_VERSION: 24.20.0
+  PNPM_VERSION: 11.25.0
+  TSFG_MANIFEST_REVISION: d94f4e6bff9aa980b18b0df94e133559e4b61240
+  TSFG_MANIFEST_URL: https://github.com/xuelongling/manifests.git
+  TSFG_SELECTED_MANIFEST: bootstrap/r00.xml
+  TSFG_AGENT_TOOLS_REVISION: 631518972aaade58f354a63b2c220a91323fd057
+  TSFG_BASELINE_PRODUCT_REVISION: eb2838e4c4910113b23072b40c526a8b2843f744
+  TSFG_BASELINE_COMPATIBILITY_SHA256: 1602d13ccbedf7c0fe449d3213ecf330660f7683ac892f22702942d9680c3459
+  TSFG_REPO_LAUNCHER_SHA256: 1211b57b57e4122a9c546295a59b37d24068f1164d0e87bef096d5323c413e4f
+
+jobs:
+  candidate-identity:
+    name: candidate identity
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+          ref: ${{ github.event.pull_request.head.sha }}
+      - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
+        with:
+          path: .ci/manifests
+          persist-credentials: false
+          ref: ${{ env.TSFG_MANIFEST_REVISION }}
+          repository: xuelongling/manifests
+      - uses: actions/setup-node@249970729cb0ef3589644e2896645e5dc5ba9c38 # v6
+        with:
+          node-version: ${{ env.NODE_VERSION }}
+      - name: Bind the candidate to the Integration Snapshot
+        shell: bash
+        run: |
+          node eng/product-pr-ci.mjs identity \
+            --manifest ".ci/manifests/$TSFG_SELECTED_MANIFEST" \
+            --manifest-name "$TSFG_SELECTED_MANIFEST" \
+            --manifest-revision "$TSFG_MANIFEST_REVISION" \
+            --candidate-revision "${{ github.event.pull_request.head.sha }}" \
+            --agent-revision "$TSFG_AGENT_TOOLS_REVISION" \
+            --out .ci/evidence/identity
+          node eng/product-pr-ci.mjs plan --out .ci/evidence/identity/matrix-plan.json
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        with:
+          if-no-files-found: error
+          name: candidate-identity-${{ github.event.pull_request.head.sha }}
+          path: .ci/evidence/
+          retention-days: 90
+
+  repository-gates:
+    name: format / policy / license / lock / compatibility
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+          ref: ${{ github.event.pull_request.head.sha }}
+      - uses: actions/setup-node@249970729cb0ef3589644e2896645e5dc5ba9c38 # v6
+        with:
+          node-version: ${{ env.NODE_VERSION }}
+      - name: Install locked dependencies
+        run: corepack pnpm@${{ env.PNPM_VERSION }} install --frozen-lockfile
+      - name: Format gate
+        run: git diff --check "${{ github.event.pull_request.base.sha }}...${{ github.event.pull_request.head.sha }}"
+      - name: Policy and license gates
+        run: node --test --test-concurrency=1 tests/r00/workspace-policy-cli.test.mjs
+      - name: Lock gate
+        run: node --test --test-concurrency=1 tests/r00/toolchain-lock.test.mjs
+      - name: Contract compatibility gate
+        shell: bash
+        run: |
+          run_offline() {
+            sudo sysctl -q kernel.apparmor_restrict_unprivileged_userns=0
+            sudo unshare --net bash -ceu '
+              ip link set lo up
+              [ "$(ip -o link show | wc -l)" -eq 1 ]
+              ip -o link show dev lo >/dev/null
+              exec setpriv --reuid "$SUDO_UID" --regid "$SUDO_GID" --clear-groups --bounding-set=-all --inh-caps=-all --ambient-caps=-all --no-new-privs -- "$@"
+            ' bash "$@"
+          }
+          run_offline "$(command -v node)" --test --test-concurrency=1 tests/r00/contract-compatibility-cli.test.mjs
+      - name: Typecheck
+        run: node node_modules/typescript/bin/tsc --noEmit
+      - name: Record repository gate evidence
+        shell: bash
+        run: |
+          mkdir -p .ci/evidence/repository-gates
+          node -e "require('node:fs').writeFileSync('.ci/evidence/repository-gates/report.json', JSON.stringify({gates:{compatibility:'passed',format:'passed',license:'passed',lock:'passed',policy:'passed'},schemaVersion:'1',status:'success'})+'\n')"
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        with:
+          if-no-files-found: error
+          name: candidate-repository-gates-${{ github.event.pull_request.head.sha }}
+          path: .ci/evidence/
+          retention-days: 90
+
+  workspace-verification:
+    name: Workspace Verification
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+          ref: ${{ github.event.pull_request.head.sha }}
+      - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
+        with:
+          path: .ci/manifests
+          persist-credentials: false
+          ref: ${{ env.TSFG_MANIFEST_REVISION }}
+          repository: xuelongling/manifests
+      - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
+        with:
+          path: .ci/agent-tools
+          persist-credentials: false
+          ref: ${{ env.TSFG_AGENT_TOOLS_REVISION }}
+          repository: xuelongling/.agents
+      - uses: actions/setup-node@249970729cb0ef3589644e2896645e5dc5ba9c38 # v6
+        with:
+          node-version: ${{ env.NODE_VERSION }}
+      - uses: actions/cache@0057852bfaa89a56745cba8c7296529d2fc39830 # v4.3.0
+        with:
+          path: ${{ runner.temp }}/tsfg-tool-cache/linux-x86_64-gnu
+          key: tsfg-tools-linux-x86_64-gnu-${{ hashFiles('eng/toolchains.lock.json', 'pnpm-lock.yaml') }}
+      - name: Verify the pinned Repo launcher
+        shell: bash
+        run: |
+          mkdir -p .ci/bootstrap "$RUNNER_TEMP/tsfg-workspace-verification/workspace"
+          curl --fail --location --silent --show-error https://storage.googleapis.com/git-repo-downloads/repo-2.65 --output .ci/bootstrap/repo.py
+          echo "$TSFG_REPO_LAUNCHER_SHA256  .ci/bootstrap/repo.py" | sha256sum --check --strict
+      - name: Materialize the Integration Snapshot and Candidate Overlay
+        shell: bash
+        run: |
+          workspace="$RUNNER_TEMP/tsfg-workspace-verification/workspace"
+          (cd "$workspace" && python3 "$GITHUB_WORKSPACE/.ci/bootstrap/repo.py" init -u "$TSFG_MANIFEST_URL" -b "$TSFG_MANIFEST_REVISION" -m "$TSFG_SELECTED_MANIFEST" --repo-rev=v2.65 --worktree)
+          (cd "$workspace" && python3 "$GITHUB_WORKSPACE/.ci/bootstrap/repo.py" sync --verify)
+          git -C "$workspace/tsfg" fetch --no-tags "$GITHUB_WORKSPACE" "${{ github.event.pull_request.head.sha }}"
+          git -C "$workspace/tsfg" checkout --detach FETCH_HEAD
+          git -C "$workspace/.agents" fetch --no-tags "$GITHUB_WORKSPACE/.ci/agent-tools" "$TSFG_AGENT_TOOLS_REVISION"
+          git -C "$workspace/.agents" checkout --detach FETCH_HEAD
+          node .ci/agent-tools/tools/materialize-agent-workspace.ts --workspace "$workspace" > .ci/materialized-identity.json
+      - name: Verify the Repo Workspace
+        shell: bash
+        run: |
+          workspace="$RUNNER_TEMP/tsfg-workspace-verification/workspace"
+          manifest_revision=$(node -e "process.stdout.write(JSON.parse(require('node:fs').readFileSync('.ci/materialized-identity.json','utf8')).manifestRevision)")
+          mkdir -p .ci/evidence/workspace-verification
+          export TSFG_CACHE_DIR="$RUNNER_TEMP/tsfg-tool-cache/linux-x86_64-gnu"
+          export TSFG_BOOTSTRAP_NODE="$(command -v node)"
+          export TSFG_BOOTSTRAP_NODE_SHA256="$(sha256sum "$TSFG_BOOTSTRAP_NODE" | cut -d ' ' -f 1)"
+          export TSFG_BOOTSTRAP_GIT="$(command -v git)"
+          export TSFG_BOOTSTRAP_GIT_SHA256="$(sha256sum "$TSFG_BOOTSTRAP_GIT" | cut -d ' ' -f 1)"
+          "$workspace/tsfg/eng/tsfg-build" prefetch --report .ci/evidence/workspace-verification/prefetch-report.json
+          run_offline() {
+            sudo sysctl -q kernel.apparmor_restrict_unprivileged_userns=0
+            sudo unshare --net bash -ceu '
+              ip link set lo up
+              [ "$(ip -o link show | wc -l)" -eq 1 ]
+              ip -o link show dev lo >/dev/null
+              exec setpriv --reuid "$SUDO_UID" --regid "$SUDO_GID" --clear-groups --bounding-set=-all --inh-caps=-all --ambient-caps=-all --no-new-privs -- "$@"
+            ' bash "$@"
+          }
+          run_offline /usr/bin/env "TSFG_CACHE_DIR=$TSFG_CACHE_DIR" "TSFG_BOOTSTRAP_GIT=$TSFG_BOOTSTRAP_GIT" "TSFG_BOOTSTRAP_GIT_SHA256=$TSFG_BOOTSTRAP_GIT_SHA256" "$workspace/tsfg/eng/tsfg-build" verify-workspace \
+            --workspace "$workspace" \
+            --manifest-url "$TSFG_MANIFEST_URL" \
+            --manifest-revision "$manifest_revision" \
+            --manifest "$TSFG_SELECTED_MANIFEST" \
+            --report .ci/evidence/workspace-verification/report.json
+          cp "$GITHUB_WORKSPACE/.ci/manifests/$TSFG_SELECTED_MANIFEST" .ci/evidence/workspace-verification/verified-baseline-manifest.xml
+          cp .ci/materialized-identity.json .ci/evidence/workspace-verification/verified-manifest-identity.json
+          cp "$workspace/.repo/manifests/$TSFG_SELECTED_MANIFEST" .ci/evidence/workspace-verification/verified-resolved-manifest.xml
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        with:
+          if-no-files-found: error
+          name: candidate-workspace-verification-${{ github.event.pull_request.head.sha }}
+          path: .ci/evidence/
+          retention-days: 90
+
+  product-build:
+    name: ${{ matrix.target }} / ${{ matrix.profile }} / producer-${{ matrix.producer }}
+    needs: [candidate-identity, repository-gates, workspace-verification]
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - { os: ubuntu-24.04, producer: a, profile: debug, target: linux-x86_64-gnu }
+          - { os: ubuntu-24.04, producer: b, profile: debug, target: linux-x86_64-gnu }
+          - { os: ubuntu-24.04, producer: a, profile: release, target: linux-x86_64-gnu }
+          - { os: ubuntu-24.04, producer: b, profile: release, target: linux-x86_64-gnu }
+          - { os: windows-2025, producer: a, profile: debug, target: windows-x86_64-msvc }
+          - { os: windows-2025, producer: b, profile: debug, target: windows-x86_64-msvc }
+          - { os: windows-2025, producer: a, profile: release, target: windows-x86_64-msvc }
+          - { os: windows-2025, producer: b, profile: release, target: windows-x86_64-msvc }
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+          ref: ${{ github.event.pull_request.head.sha }}
+      - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
+        with:
+          path: .ci/manifests
+          persist-credentials: false
+          ref: ${{ env.TSFG_MANIFEST_REVISION }}
+          repository: xuelongling/manifests
+      - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
+        with:
+          path: .ci/agent-tools
+          persist-credentials: false
+          ref: ${{ env.TSFG_AGENT_TOOLS_REVISION }}
+          repository: xuelongling/.agents
+      - uses: actions/setup-node@249970729cb0ef3589644e2896645e5dc5ba9c38 # v6
+        with:
+          node-version: ${{ env.NODE_VERSION }}
+      - uses: actions/cache@0057852bfaa89a56745cba8c7296529d2fc39830 # v4.3.0
+        with:
+          key: tsfg-tools-${{ matrix.target }}-${{ hashFiles('eng/toolchains.lock.json', 'pnpm-lock.yaml') }}
+          path: ${{ runner.temp }}/tsfg-tool-cache/${{ matrix.target }}
+      - name: Verify the pinned Repo launcher on Linux
+        if: runner.os == 'Linux'
+        shell: bash
+        run: |
+          mkdir -p .ci/bootstrap "$RUNNER_TEMP/tsfg-producer-${{ matrix.producer }}/workspace"
+          curl --fail --location --silent --show-error https://storage.googleapis.com/git-repo-downloads/repo-2.65 --output .ci/bootstrap/repo.py
+          echo "$TSFG_REPO_LAUNCHER_SHA256  .ci/bootstrap/repo.py" | sha256sum --check --strict
+      - name: Verify the pinned Repo launcher on Windows
+        if: runner.os == 'Windows'
+        shell: pwsh
+        run: |
+          New-Item -ItemType Directory -Path .ci/bootstrap, "$env:RUNNER_TEMP/tsfg-producer-${{ matrix.producer }}/workspace" -Force | Out-Null
+          Invoke-WebRequest -Uri https://storage.googleapis.com/git-repo-downloads/repo-2.65 -OutFile .ci/bootstrap/repo.py
+          $actual = (Get-FileHash -LiteralPath .ci/bootstrap/repo.py -Algorithm SHA256).Hash.ToLowerInvariant()
+          if ($actual -ne $env:TSFG_REPO_LAUNCHER_SHA256) { throw "repo launcher digest mismatch" }
+          Copy-Item -LiteralPath .ci/manifests/repo.cmd -Destination .ci/bootstrap/repo.cmd
+      - name: Materialize candidate workspace on Linux
+        if: runner.os == 'Linux'
+        shell: bash
+        run: |
+          workspace="$RUNNER_TEMP/tsfg-producer-${{ matrix.producer }}/workspace"
+          (cd "$workspace" && python3 "$GITHUB_WORKSPACE/.ci/bootstrap/repo.py" init -u "$TSFG_MANIFEST_URL" -b "$TSFG_MANIFEST_REVISION" -m "$TSFG_SELECTED_MANIFEST" --repo-rev=v2.65 --worktree)
+          (cd "$workspace" && python3 "$GITHUB_WORKSPACE/.ci/bootstrap/repo.py" sync --verify)
+          git -C "$workspace/tsfg" fetch --no-tags "$GITHUB_WORKSPACE" "${{ github.event.pull_request.head.sha }}"
+          git -C "$workspace/tsfg" checkout --detach FETCH_HEAD
+          git -C "$workspace/.agents" fetch --no-tags "$GITHUB_WORKSPACE/.ci/agent-tools" "$TSFG_AGENT_TOOLS_REVISION"
+          git -C "$workspace/.agents" checkout --detach FETCH_HEAD
+          node .ci/agent-tools/tools/materialize-agent-workspace.ts --workspace "$workspace" > .ci/materialized-identity.json
+      - name: Materialize candidate workspace on Windows
+        if: runner.os == 'Windows'
+        shell: pwsh
+        run: |
+          $workspace = "$env:RUNNER_TEMP/tsfg-producer-${{ matrix.producer }}/workspace"
+          Push-Location $workspace
+          python "$env:GITHUB_WORKSPACE/.ci/bootstrap/repo.py" init -u $env:TSFG_MANIFEST_URL -b $env:TSFG_MANIFEST_REVISION -m $env:TSFG_SELECTED_MANIFEST --repo-rev=v2.65 --worktree
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          python "$env:GITHUB_WORKSPACE/.ci/bootstrap/repo.py" sync --verify
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          Pop-Location
+          git -C "$workspace/tsfg" fetch --no-tags "$env:GITHUB_WORKSPACE" '${{ github.event.pull_request.head.sha }}'
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          git -C "$workspace/tsfg" checkout --detach FETCH_HEAD
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          git -C "$workspace/.agents" fetch --no-tags "$env:GITHUB_WORKSPACE/.ci/agent-tools" $env:TSFG_AGENT_TOOLS_REVISION
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          git -C "$workspace/.agents" checkout --detach FETCH_HEAD
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          node .ci/agent-tools/tools/materialize-agent-workspace.ts --workspace $workspace | Out-File .ci/materialized-identity.json -Encoding utf8NoBOM
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+      - name: Reverify cached tools and build on Linux
+        if: runner.os == 'Linux'
+        shell: bash
+        run: |
+          workspace="$RUNNER_TEMP/tsfg-producer-${{ matrix.producer }}/workspace"
+          root="$GITHUB_WORKSPACE/.ci/evidence/producers/${{ matrix.target }}/${{ matrix.profile }}/${{ matrix.producer }}"
+          build_output="$RUNNER_TEMP/tsfg-producer-${{ matrix.producer }}/build-${{ matrix.profile }}"
+          package_output="$RUNNER_TEMP/tsfg-producer-${{ matrix.producer }}/package-${{ matrix.profile }}"
+          mkdir -p "$root/package"
+          export TSFG_CACHE_DIR="$RUNNER_TEMP/tsfg-tool-cache/${{ matrix.target }}"
+          export TSFG_BOOTSTRAP_NODE="$(command -v node)"
+          export TSFG_BOOTSTRAP_NODE_SHA256="$(sha256sum "$TSFG_BOOTSTRAP_NODE" | cut -d ' ' -f 1)"
+          export TSFG_BOOTSTRAP_GIT="$(command -v git)"
+          export TSFG_BOOTSTRAP_GIT_SHA256="$(sha256sum "$TSFG_BOOTSTRAP_GIT" | cut -d ' ' -f 1)"
+          "$workspace/tsfg/eng/tsfg-build" prefetch --report "$root/prefetch-report.json"
+          manifest_revision=$(node -e "process.stdout.write(JSON.parse(require('node:fs').readFileSync('.ci/materialized-identity.json','utf8')).manifestRevision)")
+          run_offline() {
+            sudo sysctl -q kernel.apparmor_restrict_unprivileged_userns=0
+            sudo unshare --net bash -ceu '
+              ip link set lo up
+              [ "$(ip -o link show | wc -l)" -eq 1 ]
+              ip -o link show dev lo >/dev/null
+              exec setpriv --reuid "$SUDO_UID" --regid "$SUDO_GID" --clear-groups --bounding-set=-all --inh-caps=-all --ambient-caps=-all --no-new-privs -- "$@"
+            ' bash "$@"
+          }
+          run_offline /usr/bin/env "TSFG_CACHE_DIR=$TSFG_CACHE_DIR" "TSFG_BOOTSTRAP_GIT=$TSFG_BOOTSTRAP_GIT" "TSFG_BOOTSTRAP_GIT_SHA256=$TSFG_BOOTSTRAP_GIT_SHA256" "$workspace/tsfg/eng/tsfg-build" verify-workspace --workspace "$workspace" --manifest-url "$TSFG_MANIFEST_URL" --manifest-revision "$manifest_revision" --manifest "$TSFG_SELECTED_MANIFEST" --report "$root/workspace-report.json"
+          run_offline /usr/bin/env "TSFG_CACHE_DIR=$TSFG_CACHE_DIR" "TSFG_BOOTSTRAP_GIT=$TSFG_BOOTSTRAP_GIT" "TSFG_BOOTSTRAP_GIT_SHA256=$TSFG_BOOTSTRAP_GIT_SHA256" "$workspace/tsfg/eng/tsfg-build" build --target "${{ matrix.target }}" --profile "${{ matrix.profile }}" --workspace "$workspace/tsfg" --out "$build_output" --report "$root/build-report.json"
+          run_offline /usr/bin/env "TSFG_CACHE_DIR=$TSFG_CACHE_DIR" "TSFG_BOOTSTRAP_GIT=$TSFG_BOOTSTRAP_GIT" "TSFG_BOOTSTRAP_GIT_SHA256=$TSFG_BOOTSTRAP_GIT_SHA256" "$workspace/tsfg/eng/tsfg-build" test --target "${{ matrix.target }}" --profile "${{ matrix.profile }}" --workspace "$workspace/tsfg" --out "$build_output" --report "$root/test-report.json"
+          run_offline /usr/bin/env "TSFG_CACHE_DIR=$TSFG_CACHE_DIR" "TSFG_BOOTSTRAP_GIT=$TSFG_BOOTSTRAP_GIT" "TSFG_BOOTSTRAP_GIT_SHA256=$TSFG_BOOTSTRAP_GIT_SHA256" "$workspace/tsfg/eng/tsfg-build" package --target "${{ matrix.target }}" --profile "${{ matrix.profile }}" --workspace "$workspace/tsfg" --input "$build_output" --out "$package_output" --report "$root/package-report.json"
+          cp -a "$(realpath "$package_output")/." "$root/package/"
+          TSFG_EVIDENCE_ROOT="$root" TSFG_CANDIDATE_REVISION="${{ github.event.pull_request.head.sha }}" node --input-type=module -e "import {readFile,writeFile} from 'node:fs/promises'; import {join} from 'node:path'; const root=process.env.TSFG_EVIDENCE_ROOT; const report=JSON.parse(await readFile(join(root,'package-report.json'),'utf8')); const materialized=JSON.parse(await readFile('.ci/materialized-identity.json','utf8')); await writeFile(join(root,'candidate-binding.json'),JSON.stringify({buildIdentityDigest:report.result.buildIdentity.digest,candidateRevision:process.env.TSFG_CANDIDATE_REVISION,manifestRevision:materialized.manifestRevision,schemaVersion:'1'})+'\n');"
+      - name: Reverify cached tools and build on Windows
+        if: runner.os == 'Windows'
+        shell: pwsh
+        run: |
+          $workspace = "$env:RUNNER_TEMP/tsfg-producer-${{ matrix.producer }}/workspace"
+          $root = "$env:GITHUB_WORKSPACE/.ci/evidence/producers/${{ matrix.target }}/${{ matrix.profile }}/${{ matrix.producer }}"
+          $buildOutput = "$env:RUNNER_TEMP/tsfg-producer-${{ matrix.producer }}/build-${{ matrix.profile }}"
+          $packageOutput = "$env:RUNNER_TEMP/tsfg-producer-${{ matrix.producer }}/package-${{ matrix.profile }}"
+          New-Item -ItemType Directory -Path "$root/package" -Force | Out-Null
+          $env:TSFG_CACHE_DIR = "$env:RUNNER_TEMP/tsfg-tool-cache/${{ matrix.target }}"
+          $env:TSFG_BOOTSTRAP_NODE = (Get-Command node.exe -ErrorAction Stop).Source
+          $env:TSFG_BOOTSTRAP_NODE_SHA256 = (Get-FileHash -LiteralPath $env:TSFG_BOOTSTRAP_NODE -Algorithm SHA256).Hash.ToLowerInvariant()
+          $env:TSFG_BOOTSTRAP_GIT = (Get-Command git.exe -ErrorAction Stop).Source
+          $env:TSFG_BOOTSTRAP_GIT_SHA256 = (Get-FileHash -LiteralPath $env:TSFG_BOOTSTRAP_GIT -Algorithm SHA256).Hash.ToLowerInvariant()
+          & "$workspace/tsfg/eng/tsfg-build.cmd" prefetch --report "$root/prefetch-report.json"
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          $materialized = Get-Content -Raw .ci/materialized-identity.json | ConvertFrom-Json
+          & "$workspace/tsfg/eng/tsfg-build.cmd" verify-workspace --workspace $workspace --manifest-url $env:TSFG_MANIFEST_URL --manifest-revision $materialized.manifestRevision --manifest $env:TSFG_SELECTED_MANIFEST --report "$root/workspace-report.json"
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          & "$workspace/tsfg/eng/tsfg-build.cmd" build --target '${{ matrix.target }}' --profile '${{ matrix.profile }}' --workspace "$workspace/tsfg" --out $buildOutput --report "$root/build-report.json"
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          & "$workspace/tsfg/eng/tsfg-build.cmd" test --target '${{ matrix.target }}' --profile '${{ matrix.profile }}' --workspace "$workspace/tsfg" --out $buildOutput --report "$root/test-report.json"
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          & "$workspace/tsfg/eng/tsfg-build.cmd" package --target '${{ matrix.target }}' --profile '${{ matrix.profile }}' --workspace "$workspace/tsfg" --input $buildOutput --out $packageOutput --report "$root/package-report.json"
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          Copy-Item -Path "$packageOutput/*" -Destination "$root/package" -Recurse -Force
+          $env:TSFG_EVIDENCE_ROOT = $root
+          $env:TSFG_CANDIDATE_REVISION = '${{ github.event.pull_request.head.sha }}'
+          node --input-type=module -e "import {readFile,writeFile} from 'node:fs/promises'; import {join} from 'node:path'; const root=process.env.TSFG_EVIDENCE_ROOT; const report=JSON.parse(await readFile(join(root,'package-report.json'),'utf8')); const materialized=JSON.parse(await readFile('.ci/materialized-identity.json','utf8')); await writeFile(join(root,'candidate-binding.json'),JSON.stringify({buildIdentityDigest:report.result.buildIdentity.digest,candidateRevision:process.env.TSFG_CANDIDATE_REVISION,manifestRevision:materialized.manifestRevision,schemaVersion:'1'})+'\n');"
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        with:
+          if-no-files-found: error
+          name: candidate-producer-${{ matrix.target }}-${{ matrix.profile }}-${{ matrix.producer }}-${{ github.event.pull_request.head.sha }}
+          path: .ci/evidence/
+          retention-days: 90
+
+  compatibility:
+    name: compatibility / ${{ matrix.target }}
+    needs: [candidate-identity, repository-gates, workspace-verification]
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - { os: ubuntu-24.04, target: linux-x86_64-gnu }
+          - { os: windows-2025, target: windows-x86_64-msvc }
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+          ref: ${{ github.event.pull_request.head.sha }}
+      - uses: actions/setup-node@249970729cb0ef3589644e2896645e5dc5ba9c38 # v6
+        with:
+          node-version: ${{ env.NODE_VERSION }}
+      - uses: actions/cache@0057852bfaa89a56745cba8c7296529d2fc39830 # v4.3.0
+        with:
+          path: ${{ runner.temp }}/tsfg-tool-cache/${{ matrix.target }}
+          key: tsfg-tools-${{ matrix.target }}-${{ hashFiles('eng/toolchains.lock.json', 'pnpm-lock.yaml') }}
+      - name: Create fixed bootstrap baseline and candidate compatibility artifacts
+        shell: bash
+        run: |
+          compatibility="$RUNNER_TEMP/tsfg-compatibility"
+          mkdir -p "$compatibility/input" "$compatibility/evidence/compatibility/${{ matrix.target }}"
+          cat > "$compatibility/input/baseline.json" <<'JSON'
+          {"artifactKind":"r00-synthetic-contract-artifact","consumer":{"acceptsUnknownFields":true,"optionalFields":[],"requiredFields":["id"]},"contract":{"change":{"class":"baseline"},"compatibility":"bidirectional","familyId":"r00.synthetic.compatibility","schemaHash":"sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa","semanticRevision":"baseline","semver":"0.1.0"},"producer":{"payload":{"id":"baseline"}},"product":{"commitOid":"eb2838e4c4910113b23072b40c526a8b2843f744","contractSetId":"sha256:44136fa355b3678a1146ad16f7e8649e94fb4fc21fe77e8310c060f61caaff8a","semver":"0.1.0-dev.0"},"schemaVersion":"1"}
+          JSON
+          echo "$TSFG_BASELINE_COMPATIBILITY_SHA256  $compatibility/input/baseline.json" | sha256sum --check --strict
+          node -e "const {join}=require('node:path'); const artifact=JSON.parse(require('node:fs').readFileSync(join(process.env.RUNNER_TEMP,'tsfg-compatibility','input','baseline.json'),'utf8')); if (artifact.product.commitOid !== process.env.TSFG_BASELINE_PRODUCT_REVISION) throw new Error('fixed compatibility baseline Product OID mismatch');"
+          node --input-type=module -e "import {writeFile} from 'node:fs/promises'; import {join} from 'node:path'; import {candidateSyntheticArtifact} from './tests/r00/contract-compatibility-fixtures.mjs'; const candidate=candidateSyntheticArtifact(); candidate.product.commitOid='${{ github.event.pull_request.head.sha }}'; const root=join(process.env.RUNNER_TEMP,'tsfg-compatibility','input'); await writeFile(join(root,'candidate.json'),JSON.stringify(candidate)+'\n');"
+      - name: Prefetch the verified Linux compatibility runtime
+        if: runner.os == 'Linux'
+        shell: bash
+        run: |
+          compatibility="$RUNNER_TEMP/tsfg-compatibility"
+          export TSFG_CACHE_DIR="$RUNNER_TEMP/tsfg-tool-cache/${{ matrix.target }}"
+          export TSFG_BOOTSTRAP_NODE="$(command -v node)"
+          export TSFG_BOOTSTRAP_NODE_SHA256="$(sha256sum "$TSFG_BOOTSTRAP_NODE" | cut -d ' ' -f 1)"
+          export TSFG_BOOTSTRAP_GIT="$(command -v git)"
+          export TSFG_BOOTSTRAP_GIT_SHA256="$(sha256sum "$TSFG_BOOTSTRAP_GIT" | cut -d ' ' -f 1)"
+          eng/tsfg-build prefetch --report "$compatibility/prefetch-report.json"
+      - name: Prefetch the verified Windows compatibility runtime
+        if: runner.os == 'Windows'
+        shell: pwsh
+        run: |
+          $compatibility = Join-Path $env:RUNNER_TEMP 'tsfg-compatibility'
+          $env:TSFG_CACHE_DIR = Join-Path $env:RUNNER_TEMP 'tsfg-tool-cache/${{ matrix.target }}'
+          $env:TSFG_BOOTSTRAP_NODE = (Get-Command node.exe -ErrorAction Stop).Source
+          $env:TSFG_BOOTSTRAP_NODE_SHA256 = (Get-FileHash -Algorithm SHA256 -LiteralPath $env:TSFG_BOOTSTRAP_NODE).Hash.ToLowerInvariant()
+          $env:TSFG_BOOTSTRAP_GIT = (Get-Command git.exe -ErrorAction Stop).Source
+          $env:TSFG_BOOTSTRAP_GIT_SHA256 = (Get-FileHash -Algorithm SHA256 -LiteralPath $env:TSFG_BOOTSTRAP_GIT).Hash.ToLowerInvariant()
+          & .\eng\tsfg-build.cmd prefetch --report (Join-Path $compatibility 'prefetch-report.json')
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+      - name: Execute all four artifact combinations on Linux
+        if: runner.os == 'Linux'
+        shell: bash
+        run: |
+          compatibility="$RUNNER_TEMP/tsfg-compatibility"
+          export TSFG_CACHE_DIR="$RUNNER_TEMP/tsfg-tool-cache/${{ matrix.target }}"
+          export TSFG_BOOTSTRAP_GIT="$(command -v git)"
+          export TSFG_BOOTSTRAP_GIT_SHA256="$(sha256sum "$TSFG_BOOTSTRAP_GIT" | cut -d ' ' -f 1)"
+          run_offline() {
+            sudo sysctl -q kernel.apparmor_restrict_unprivileged_userns=0
+            sudo unshare --net bash -ceu '
+              ip link set lo up
+              [ "$(ip -o link show | wc -l)" -eq 1 ]
+              ip -o link show dev lo >/dev/null
+              exec setpriv --reuid "$SUDO_UID" --regid "$SUDO_GID" --clear-groups --bounding-set=-all --inh-caps=-all --ambient-caps=-all --no-new-privs -- "$@"
+            ' bash "$@"
+          }
+          run_offline /usr/bin/env "TSFG_CACHE_DIR=$TSFG_CACHE_DIR" "TSFG_BOOTSTRAP_GIT=$TSFG_BOOTSTRAP_GIT" "TSFG_BOOTSTRAP_GIT_SHA256=$TSFG_BOOTSTRAP_GIT_SHA256" "$GITHUB_WORKSPACE/eng/tsfg-build" test --target "${{ matrix.target }}" \
+            --compatibility-baseline "$compatibility/input/baseline.json" \
+            --compatibility-candidate "$compatibility/input/candidate.json" \
+            --report "$compatibility/evidence/compatibility/${{ matrix.target }}/report.json"
+          cp "$compatibility"/input/*.json "$compatibility/evidence/compatibility/${{ matrix.target }}/"
+      - name: Execute all four artifact combinations on Windows
+        if: runner.os == 'Windows'
+        shell: pwsh
+        run: |
+          $compatibility = Join-Path $env:RUNNER_TEMP 'tsfg-compatibility'
+          $env:TSFG_CACHE_DIR = Join-Path $env:RUNNER_TEMP 'tsfg-tool-cache/${{ matrix.target }}'
+          $env:TSFG_BOOTSTRAP_GIT = (Get-Command git.exe -ErrorAction Stop).Source
+          $env:TSFG_BOOTSTRAP_GIT_SHA256 = (Get-FileHash -Algorithm SHA256 -LiteralPath $env:TSFG_BOOTSTRAP_GIT).Hash.ToLowerInvariant()
+          & .\eng\tsfg-build.cmd test --target "${{ matrix.target }}" `
+            --compatibility-baseline (Join-Path $compatibility 'input/baseline.json') `
+            --compatibility-candidate (Join-Path $compatibility 'input/candidate.json') `
+            --report (Join-Path $compatibility 'evidence/compatibility/${{ matrix.target }}/report.json')
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          Copy-Item -LiteralPath (Join-Path $compatibility 'input/baseline.json'), (Join-Path $compatibility 'input/candidate.json') -Destination (Join-Path $compatibility 'evidence/compatibility/${{ matrix.target }}')
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        with:
+          if-no-files-found: error
+          name: candidate-compatibility-${{ matrix.target }}-${{ github.event.pull_request.head.sha }}
+          path: ${{ runner.temp }}/tsfg-compatibility/evidence/
+          retention-days: 90
+
+  reproducibility:
+    name: reproducibility comparator / ${{ matrix.target }} / ${{ matrix.profile }}
+    needs: [product-build]
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - { os: ubuntu-24.04, profile: debug, target: linux-x86_64-gnu }
+          - { os: ubuntu-24.04, profile: release, target: linux-x86_64-gnu }
+          - { os: windows-2025, profile: debug, target: windows-x86_64-msvc }
+          - { os: windows-2025, profile: release, target: windows-x86_64-msvc }
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+          ref: ${{ github.event.pull_request.head.sha }}
+      - uses: actions/setup-node@249970729cb0ef3589644e2896645e5dc5ba9c38 # v6
+        with:
+          node-version: ${{ env.NODE_VERSION }}
+      - uses: actions/cache@0057852bfaa89a56745cba8c7296529d2fc39830 # v4.3.0
+        with:
+          key: tsfg-tools-${{ matrix.target }}-${{ hashFiles('eng/toolchains.lock.json', 'pnpm-lock.yaml') }}
+          path: ${{ runner.temp }}/tsfg-tool-cache/${{ matrix.target }}
+      - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4.3.0
+        with:
+          merge-multiple: true
+          path: ${{ runner.temp }}/tsfg-repro/download
+          pattern: candidate-producer-${{ matrix.target }}-${{ matrix.profile }}-*-${{ github.event.pull_request.head.sha }}
+      - name: Reverify cached tools and compare on Linux
+        if: runner.os == 'Linux'
+        shell: bash
+        run: |
+          root="$RUNNER_TEMP/tsfg-repro/evidence/reproducibility/${{ matrix.target }}/${{ matrix.profile }}"
+          mkdir -p "$root"
+          export TSFG_CACHE_DIR="$RUNNER_TEMP/tsfg-tool-cache/${{ matrix.target }}"
+          export TSFG_BOOTSTRAP_NODE="$(command -v node)"
+          export TSFG_BOOTSTRAP_NODE_SHA256="$(sha256sum "$TSFG_BOOTSTRAP_NODE" | cut -d ' ' -f 1)"
+          export TSFG_BOOTSTRAP_GIT="$(command -v git)"
+          export TSFG_BOOTSTRAP_GIT_SHA256="$(sha256sum "$TSFG_BOOTSTRAP_GIT" | cut -d ' ' -f 1)"
+          eng/tsfg-build prefetch --report "$root/prefetch-report.json"
+          run_offline() {
+            sudo sysctl -q kernel.apparmor_restrict_unprivileged_userns=0
+            sudo unshare --net bash -ceu '
+              ip link set lo up
+              [ "$(ip -o link show | wc -l)" -eq 1 ]
+              ip -o link show dev lo >/dev/null
+              exec setpriv --reuid "$SUDO_UID" --regid "$SUDO_GID" --clear-groups --bounding-set=-all --inh-caps=-all --ambient-caps=-all --no-new-privs -- "$@"
+            ' bash "$@"
+          }
+          run_offline /usr/bin/env "TSFG_CACHE_DIR=$TSFG_CACHE_DIR" "TSFG_BOOTSTRAP_GIT=$TSFG_BOOTSTRAP_GIT" "TSFG_BOOTSTRAP_GIT_SHA256=$TSFG_BOOTSTRAP_GIT_SHA256" "$GITHUB_WORKSPACE/eng/tsfg-build" repro-check --target "${{ matrix.target }}" --profile "${{ matrix.profile }}" \
+            --producer-a "$RUNNER_TEMP/tsfg-repro/download/producers/${{ matrix.target }}/${{ matrix.profile }}/a/package" \
+            --producer-b "$RUNNER_TEMP/tsfg-repro/download/producers/${{ matrix.target }}/${{ matrix.profile }}/b/package" \
+            --workspace "$GITHUB_WORKSPACE" --report "$root/report.json"
+      - name: Reverify cached tools and compare on Windows
+        if: runner.os == 'Windows'
+        shell: pwsh
+        run: |
+          $root = "$env:RUNNER_TEMP/tsfg-repro/evidence/reproducibility/${{ matrix.target }}/${{ matrix.profile }}"
+          New-Item -ItemType Directory -Path $root -Force | Out-Null
+          $env:TSFG_CACHE_DIR = "$env:RUNNER_TEMP/tsfg-tool-cache/${{ matrix.target }}"
+          $env:TSFG_BOOTSTRAP_NODE = (Get-Command node.exe -ErrorAction Stop).Source
+          $env:TSFG_BOOTSTRAP_NODE_SHA256 = (Get-FileHash -LiteralPath $env:TSFG_BOOTSTRAP_NODE -Algorithm SHA256).Hash.ToLowerInvariant()
+          $env:TSFG_BOOTSTRAP_GIT = (Get-Command git.exe -ErrorAction Stop).Source
+          $env:TSFG_BOOTSTRAP_GIT_SHA256 = (Get-FileHash -LiteralPath $env:TSFG_BOOTSTRAP_GIT -Algorithm SHA256).Hash.ToLowerInvariant()
+          & eng\tsfg-build.cmd prefetch --report "$root/prefetch-report.json"
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          & eng\tsfg-build.cmd repro-check --target '${{ matrix.target }}' --profile '${{ matrix.profile }}' --producer-a "$env:RUNNER_TEMP/tsfg-repro/download/producers/${{ matrix.target }}/${{ matrix.profile }}/a/package" --producer-b "$env:RUNNER_TEMP/tsfg-repro/download/producers/${{ matrix.target }}/${{ matrix.profile }}/b/package" --workspace $env:GITHUB_WORKSPACE --report "$root/report.json"
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        with:
+          if-no-files-found: error
+          name: candidate-reproducibility-${{ matrix.target }}-${{ matrix.profile }}-${{ github.event.pull_request.head.sha }}
+          path: ${{ runner.temp }}/tsfg-repro/evidence/
+          retention-days: 90
+
+  candidate-evidence:
+    name: candidate evidence
+    needs: [candidate-identity, repository-gates, workspace-verification, product-build, compatibility, reproducibility]
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4.3.0
+        with:
+          merge-multiple: true
+          path: .ci/evidence
+          pattern: candidate-*-${{ github.event.pull_request.head.sha }}
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        with:
+          if-no-files-found: error
+          name: candidate-evidence-${{ github.event.pull_request.head.sha }}
+          path: .ci/evidence/
+          retention-days: 90
+
+  verified-candidate:
+    name: Verified Candidate
+    if: ${{ always() }}
+    needs: [candidate-identity, repository-gates, workspace-verification, product-build, compatibility, reproducibility, candidate-evidence]
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
+        with:
+          persist-credentials: false
+          ref: ${{ github.event.pull_request.head.sha }}
+      - uses: actions/setup-node@249970729cb0ef3589644e2896645e5dc5ba9c38 # v6
+        with:
+          node-version: ${{ env.NODE_VERSION }}
+      - name: Record every required job conclusion
+        shell: bash
+        run: |
+          mkdir -p .ci
+          cat > .ci/job-results.json <<'JSON'
+          {"candidate-evidence":"${{ needs.candidate-evidence.result }}","candidate-identity":"${{ needs.candidate-identity.result }}","compatibility":"${{ needs.compatibility.result }}","product-build":"${{ needs.product-build.result }}","repository-gates":"${{ needs.repository-gates.result }}","reproducibility":"${{ needs.reproducibility.result }}","workspace-verification":"${{ needs.workspace-verification.result }}"}
+          JSON
+      - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4.3.0
+        continue-on-error: true
+        with:
+          merge-multiple: true
+          path: .ci/evidence
+          pattern: candidate-evidence-${{ github.event.pull_request.head.sha }}
+      - name: Fail closed unless every required result and evidence item succeeded
+        run: node eng/product-pr-ci.mjs verdict --evidence .ci/evidence --job-results .ci/job-results.json --out .ci/candidate-evidence.json
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        with:
+          if-no-files-found: error
+          name: verified-candidate-${{ github.event.pull_request.head.sha }}
+          path: .ci/candidate-evidence.json
+          retention-days: 90

@@ -2,6 +2,8 @@
 status: accepted
 ---
 
+<!-- SPDX-License-Identifier: MIT -->
+
 # 按内容锁定的可复现离线构建边界
 
 在相同 Build Identity 下，R00 骨架构建的 Reproducibility Set 必须逐字节一致；不同 target 之间只要求规范化 schema/hash 一致。Build Identity 由 Build Input Set digest、target、build profile、影响产物的构建选项、`source_date_epoch` 和 Toolchain Closure digest 组成，不因未参与构建的 agent 文档、skill 或 MCP 变化而改变。Reproducibility Set 覆盖全部未签名发布 payload，包括程序、库、调试符号、归档内容和包内 metadata；签名、可信时间戳、运行日志与外部 attestation 作为 sidecar 排除。发布包内必须有规范化 `artifact-manifest.json`，它只记录除自身外各包成员的摘要；manifest 自身及完整归档的摘要由外部 checksums 记录，避免自哈希。归档条目按字节序排序，UID/GID 归零，权限规范化，时区固定 UTC；`source_date_epoch` 取每个 Build Input Set entry 路径的 last-touch commit 之 committer timestamp 最大值，并显式进入 Build Identity，纯文档提交不得改变它。绝对路径、CI run ID、主机名和墙钟时间禁止进入 payload。

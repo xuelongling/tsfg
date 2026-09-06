@@ -2,6 +2,8 @@
 status: accepted
 ---
 
+<!-- SPDX-License-Identifier: MIT -->
+
 # 分离 Agent Infrastructure 源码归属与运行时装配
 
 此 ADR 的规范记录归 Agent Infrastructure Repository 所有：[`xuelongling/.agents/docs/adr/0005-version-agent-infrastructure-separately-from-activation.md`](https://github.com/xuelongling/.agents/blob/main/docs/adr/0005-version-agent-infrastructure-separately-from-activation.md)。
