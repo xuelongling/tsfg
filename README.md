@@ -187,7 +187,9 @@ base-commit proposal with an exact line in the pull request body:
 ECP: docs/proposals/2026-0001-example.md
 ```
 
-The Product PR repository gate classifies governed changes, validates the
-preceding accepted proposal and archives `ecp-report.json` in Candidate
-evidence. Ordinary implementation changes and patch-level tool updates do not
-need a proposal; use `ECP: none` in their pull request body.
+The independent `ECP Governance / trusted base ECP gate` required check
+classifies governed changes with the gate from the pull request base commit,
+validates the preceding accepted proposal in both base and head, and archives
+`ecp-report.json` for 90 days. It never checks out or executes candidate code.
+Ordinary implementation changes and patch-level tool updates do not need a
+proposal; use `ECP: none` in their pull request body.
