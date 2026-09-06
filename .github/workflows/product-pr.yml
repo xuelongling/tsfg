@@ -72,6 +72,14 @@ jobs:
         run: corepack pnpm@${{ env.PNPM_VERSION }} install --frozen-lockfile
       - name: Format gate
         run: git diff --check "${{ github.event.pull_request.base.sha }}...${{ github.event.pull_request.head.sha }}"
+      - name: Engineering Change Proposal gate
+        run: >-
+          node eng/ecp-gate.mjs
+          --repository .
+          --base "${{ github.event.pull_request.base.sha }}"
+          --head "${{ github.event.pull_request.head.sha }}"
+          --event "$GITHUB_EVENT_PATH"
+          --report .ci/evidence/repository-gates/ecp-report.json
       - name: Policy and license gates
         run: node --test --test-concurrency=1 tests/r00/workspace-policy-cli.test.mjs
       - name: Lock gate
@@ -95,7 +103,7 @@ jobs:
         shell: bash
         run: |
           mkdir -p .ci/evidence/repository-gates
-          node -e "require('node:fs').writeFileSync('.ci/evidence/repository-gates/report.json', JSON.stringify({gates:{compatibility:'passed',format:'passed',license:'passed',lock:'passed',policy:'passed'},schemaVersion:'1',status:'success'})+'\n')"
+          node -e "require('node:fs').writeFileSync('.ci/evidence/repository-gates/report.json', JSON.stringify({gates:{compatibility:'passed',engineeringGovernance:'passed',format:'passed',license:'passed',lock:'passed',policy:'passed'},schemaVersion:'1',status:'success'})+'\n')"
       - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
         with:
           if-no-files-found: error

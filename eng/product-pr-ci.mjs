@@ -576,10 +576,35 @@ async function writeVerdict(options) {
     await readJson(path.join(root, "repository-gates", "report.json"), "repository gates"),
     "repository gates",
   );
-  for (const gate of ["compatibility", "format", "policy", "license", "lock"]) {
+  for (const gate of ["compatibility", "engineeringGovernance", "format", "policy", "license", "lock"]) {
     if (gateReport.gates?.[gate] !== "passed") {
       throw new ProductPrError(`repository ${gate} gate is missing or failed`);
     }
+  }
+  const ecpReport = await readJson(
+    path.join(root, "repository-gates", "ecp-report.json"),
+    "ECP governance report",
+  );
+  const ecpBoundaries = ecpReport?.requiredBoundaries;
+  const ecpProposal = ecpReport?.proposal;
+  if (
+    ecpReport?.schemaVersion !== "1" ||
+    ecpReport?.status !== "passed" ||
+    ecpReport?.head !== identity.candidateRevision ||
+    !completeOid.test(ecpReport?.base) ||
+    !Array.isArray(ecpReport?.changedPaths) ||
+    !Array.isArray(ecpReport?.issues) || ecpReport.issues.length !== 0 ||
+    !Array.isArray(ecpReport?.proposalChanges) ||
+    !Array.isArray(ecpBoundaries) ||
+    (ecpBoundaries.length === 0 && ecpProposal !== null) ||
+    (ecpBoundaries.length > 0 && (
+      ecpProposal?.status !== "accepted" ||
+      typeof ecpProposal?.path !== "string" ||
+      !Array.isArray(ecpProposal?.affectedBoundaries) ||
+      ecpBoundaries.some((boundary) => !ecpProposal.affectedBoundaries.includes(boundary))
+    ))
+  ) {
+    throw new ProductPrError("ECP governance report is missing, failed, or not bound to the candidate");
   }
   const workspaceReport = await readJson(
     path.join(workspaceVerificationRoot, "report.json"),
@@ -823,6 +848,7 @@ async function writeVerdict(options) {
     promotionState: "Verified Candidate",
     requiredEvidence: {
       compatibility: "2/2",
+      engineeringGovernance: "1/1",
       producers: `${producerCount}/8`,
       reproducibility: `${reproCount}/4`,
       workspaceVerification: "1/1",

@@ -335,6 +335,11 @@ test("product PR workflow composes every gate, producer, compatibility lane, and
   const workflow = await readFile(workflowPath, "utf8");
   const repositoryGates = workflowJob(workflow, "repository-gates");
   assert.match(repositoryGates, /git diff --check/);
+  assert.match(repositoryGates, /node eng\/ecp-gate\.mjs/);
+  assert.match(repositoryGates, /--base "\$\{\{ github\.event\.pull_request\.base\.sha \}\}"/);
+  assert.match(repositoryGates, /--head "\$\{\{ github\.event\.pull_request\.head\.sha \}\}"/);
+  assert.match(repositoryGates, /--event "\$GITHUB_EVENT_PATH"/);
+  assert.match(repositoryGates, /repository-gates\/ecp-report\.json/);
   assert.match(repositoryGates, /workspace-policy-cli\.test\.mjs/);
   assert.match(repositoryGates, /toolchain-lock\.test\.mjs/);
   assert.match(repositoryGates, /contract-compatibility-cli\.test\.mjs/);
@@ -501,12 +506,24 @@ test("candidate verdict requires complete successful matrix evidence before decl
     await writeJson(path.join(evidence, "repository-gates", "report.json"), {
       gates: {
         compatibility: "passed",
+        engineeringGovernance: "passed",
         format: "passed",
         license: "passed",
         lock: "passed",
         policy: "passed",
       },
       ...success,
+    });
+    await writeJson(path.join(evidence, "repository-gates", "ecp-report.json"), {
+      base: baselineProductRevision,
+      changedPaths: ["eng/example.mjs"],
+      head: candidateRevision,
+      issues: [],
+      proposal: null,
+      proposalChanges: [],
+      requiredBoundaries: [],
+      schemaVersion: "1",
+      status: "passed",
     });
     await writeJson(
       path.join(evidence, "workspace-verification", "report.json"),
@@ -676,9 +693,56 @@ test("candidate verdict requires complete successful matrix evidence before decl
     assert.equal(verdict.candidateRevision, candidateRevision);
     assert.equal(verdict.evidenceRetentionDays, "90");
     assert.equal(verdict.promotionState, "Verified Candidate");
+    assert.equal(verdict.requiredEvidence.engineeringGovernance, "1/1");
     assert.equal(verdict.requiredEvidence.producers, "8/8");
     assert.equal(verdict.requiredEvidence.reproducibility, "4/4");
     assert.match(verdict.evidenceDigest, /^sha256:[0-9a-f]{64}$/);
+
+    const repositoryGatePath = path.join(evidence, "repository-gates", "report.json");
+    await writeJson(repositoryGatePath, {
+      gates: {
+        compatibility: "passed",
+        engineeringGovernance: "failed",
+        format: "passed",
+        license: "passed",
+        lock: "passed",
+        policy: "passed",
+      },
+      ...success,
+    });
+    const failedGovernanceOutput = path.join(sandbox, "failed-governance-evidence.json");
+    const failedGovernance = invoke([
+      "verdict", "--evidence", evidence,
+      "--job-results", jobResultsPath,
+      "--out", failedGovernanceOutput,
+    ]);
+    assert.notEqual(failedGovernance.status, 0);
+    assert.match(failedGovernance.stderr, /engineeringGovernance gate is missing or failed/);
+    await assert.rejects(readFile(failedGovernanceOutput));
+    await writeJson(repositoryGatePath, {
+      gates: {
+        compatibility: "passed",
+        engineeringGovernance: "passed",
+        format: "passed",
+        license: "passed",
+        lock: "passed",
+        policy: "passed",
+      },
+      ...success,
+    });
+    const ecpReportPath = path.join(evidence, "repository-gates", "ecp-report.json");
+    const validEcpReport = JSON.parse(await readFile(ecpReportPath, "utf8"));
+    await writeJson(ecpReportPath, { ...validEcpReport, status: "blocked" });
+    const blockedEcpOutput = path.join(sandbox, "blocked-ecp-evidence.json");
+    const blockedEcp = invoke([
+      "verdict", "--evidence", evidence,
+      "--job-results", jobResultsPath,
+      "--out", blockedEcpOutput,
+    ]);
+    assert.notEqual(blockedEcp.status, 0);
+    assert.match(blockedEcp.stderr, /ECP governance report/);
+    await assert.rejects(readFile(blockedEcpOutput));
+    await writeJson(ecpReportPath, validEcpReport);
 
     const workspaceReportPath = path.join(evidence, "workspace-verification", "report.json");
     const malformedWorkspaceReport = workspaceReport(candidateRevision);
