@@ -19,10 +19,26 @@ sequence and a lowercase ASCII kebab-case slug.
 4. A later proposal may mark an earlier decision `superseded`. Proposal history
    is never deleted.
 
+The required `ECP Governance / trusted base ECP gate` check runs on
+`pull_request_target`, checks out only the pull request base, fetches the head as
+Git objects without checking it out, and executes the gate bytes from the base
+commit. Candidate changes therefore cannot weaken the gate that judges the same
+pull request. The initial bootstrap pull request is merged under the pre-existing
+Product controls and human review because the trusted workflow does not exist in
+the base yet; immediately after that merge, configure this check as required.
+There is deliberately no fallback that executes `eng/ecp-gate.mjs` from the
+candidate head.
+
 Only `draft`, `accepted`, `rejected`, and `superseded` are valid statuses. An
 accepted proposal must have a concrete GitHub login in `Owner`, cover every
 boundary class reported by CI, and replace all placeholders with substantive
-decisions and evidence. A pull request with no governed impact uses `ECP: none`.
+decisions and evidence. TODO, TBD, FIXME, placeholder prompts, and equivalent
+placeholder sentences are invalid even when surrounded by otherwise substantive
+text. Once accepted, a proposal may only retain `accepted` or advance to
+`superseded`; its substantive text cannot be rewritten. An implementation pull
+request's referenced accepted proposal must remain accepted and semantically
+identical in both base and head. A pull request with no governed impact uses
+`ECP: none`.
 
 ## Automatic classification
 
@@ -38,7 +54,7 @@ one or more of these stable boundary classes:
 | `toolchain-major-minor` | Added/removed tools, tool major/minor changes, and the toolchain charter section; patch updates remain exempt |
 | `contract-schema` | Files under `contracts/` and the contract/version charter section |
 | `compatibility-window` | Contract Registry and the contract/version charter section |
-| `release-security` | Workflow event/permission/credential/environment boundaries and the CI security charter section |
+| `release-security` | Workflow event/permission/environment boundaries, action identity, credential-bearing environment values and token/secret inputs, and sensitive authentication/deployment/publication steps, plus the CI security charter section |
 | `durable-decision` | New or changed ADRs |
 
 The classifier intentionally follows authoritative facts. An implementation

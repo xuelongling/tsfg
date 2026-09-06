@@ -1,0 +1,51 @@
+# SPDX-License-Identifier: MIT
+
+name: ECP Governance
+
+on:
+  pull_request_target:
+
+permissions:
+  contents: read
+
+jobs:
+  ecp-governance:
+    name: trusted base ECP gate
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+          ref: ${{ github.event.pull_request.base.sha }}
+      - uses: actions/setup-node@249970729cb0ef3589644e2896645e5dc5ba9c38 # v6
+        with:
+          node-version: 24.20.0
+      - name: Evaluate candidate facts with the trusted base gate
+        env:
+          TSFG_BASE_SHA: ${{ github.event.pull_request.base.sha }}
+          TSFG_HEAD_SHA: ${{ github.event.pull_request.head.sha }}
+          TSFG_PR_NUMBER: ${{ github.event.pull_request.number }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          [[ "$TSFG_BASE_SHA" =~ ^[0-9a-f]{40}$ ]]
+          [[ "$TSFG_HEAD_SHA" =~ ^[0-9a-f]{40}$ ]]
+          [[ "$TSFG_PR_NUMBER" =~ ^[1-9][0-9]*$ ]]
+          test "$(git rev-parse HEAD)" = "$TSFG_BASE_SHA"
+          git fetch --no-tags origin "+refs/pull/$TSFG_PR_NUMBER/head:refs/tsfg/ecp-candidate"
+          test "$(git rev-parse refs/tsfg/ecp-candidate)" = "$TSFG_HEAD_SHA"
+          trusted_gate="$RUNNER_TEMP/tsfg-trusted-ecp-gate.mjs"
+          git show "$TSFG_BASE_SHA:eng/ecp-gate.mjs" > "$trusted_gate"
+          node "$trusted_gate" \
+            --repository "$GITHUB_WORKSPACE" \
+            --base "$TSFG_BASE_SHA" \
+            --head "$TSFG_HEAD_SHA" \
+            --event "$GITHUB_EVENT_PATH" \
+            --report "$RUNNER_TEMP/ecp-report.json"
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        with:
+          if-no-files-found: error
+          name: ecp-governance-${{ github.event.pull_request.head.sha }}
+          path: ${{ runner.temp }}/ecp-report.json
+          retention-days: 90

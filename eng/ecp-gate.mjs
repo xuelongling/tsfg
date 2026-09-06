@@ -70,6 +70,14 @@ function gitFileMaybe(repository, revision, relativePath) {
   return null;
 }
 
+function gitBlobOid(repository, revision, relativePath) {
+  const oid = git(repository, "rev-parse", `${revision}:${relativePath}`).trim();
+  if (!/^[0-9a-f]{40}$/u.test(oid)) {
+    throw new GateError("git-failure", `${relativePath} does not resolve to a complete blob OID at ${revision}`);
+  }
+  return oid;
+}
+
 function changedPaths(repository, base, head) {
   const output = git(repository, "diff", "--name-only", "-z", `${base}...${head}`);
   return output.split("\0").filter(Boolean).sort();
@@ -178,18 +186,37 @@ function yamlTopLevelBlock(source, key) {
 }
 
 function workflowProjection(source, kind) {
-  const patterns = kind === "runner"
-    ? [/^\s*runs-on:\s*.+$/u]
-    : [
-      /^\s*(?:pull_request_target|workflow_run|permissions|contents|actions|checks|deployments|id-token|packages|security-events|statuses):(?:\s*.*)?$/u,
-      /^\s*persist-credentials:\s*.+$/u,
-      /^\s*(?:secrets|environment):(?:\s*.*)?$/u,
-    ];
-  const selected = source.split(/\r?\n/u).filter((line) =>
-    patterns.some((pattern) => pattern.test(line.trimEnd()))
-  );
-  if (kind !== "runner") {
-    selected.unshift(...yamlTopLevelBlock(source, "on"), ...yamlTopLevelBlock(source, "permissions"));
+  if (kind === "runner") {
+    return source.split(/\r?\n/u).filter((line) => /^\s*runs-on:\s*.+$/u.test(line.trimEnd()));
+  }
+
+  const lines = source.split(/\r?\n/u);
+  const selected = [...yamlTopLevelBlock(source, "on"), ...yamlTopLevelBlock(source, "permissions")];
+  const sensitiveLine = /(?:\$\{\{\s*(?:secrets\.|github\.token\b)|\b(?:authorization|bearer|client-secret|credential|github-token|id-token|password|private-key|secret|token)\b|persist-credentials:|^\s*environment:|^\s*secrets:)/iu;
+  const sensitiveCommand = /\b(?:cosign|curl|docker\s+(?:login|push)|gh\s+(?:api|release)|git\s+push|invoke-webrequest|npm\s+publish|pnpm\s+publish|setpriv|signtool|sudo|unshare)\b/iu;
+  const sensitiveName = /^\s*-\s+name:\s*.*\b(?:authenticate|credential|deploy|publish|release|secret|sign|token)\b/iu;
+  const sensitiveEnvironmentName = /^\s+[A-Za-z_][A-Za-z0-9_]*(?:AUTH|CREDENTIAL|PASSWORD|PRIVATE_KEY|SECRET|TOKEN)[A-Za-z0-9_]*:\s*/u;
+
+  for (let index = 0; index < lines.length;) {
+    const step = /^(\s*)-\s+(?:name|uses):/u.exec(lines[index]);
+    if (!step) {
+      const line = lines[index];
+      if (
+        sensitiveLine.test(line) || sensitiveEnvironmentName.test(line) ||
+        /^\s*(?:actions|checks|contents|deployments|packages|security-events|statuses):(?:\s*.*)?$/u.test(line)
+      ) selected.push(line);
+      index += 1;
+      continue;
+    }
+    const indentation = step[1].length;
+    let end = index + 1;
+    while (end < lines.length && !new RegExp(`^\\s{${indentation}}-\\s+(?:name|uses):`, "u").test(lines[end])) end += 1;
+    const block = lines.slice(index, end);
+    if (
+      /^\s*-\s+uses:/u.test(block[0]) || sensitiveName.test(block[0]) ||
+      block.some((line) => sensitiveLine.test(line) || sensitiveEnvironmentName.test(line) || sensitiveCommand.test(line))
+    ) selected.push(...block);
+    index = end;
   }
   return selected;
 }
@@ -298,6 +325,25 @@ function singleField(source, name) {
   return matches[0][1];
 }
 
+function proposalSemantics(source) {
+  return source
+    .replace(/<!--[\s\S]*?-->/gu, "")
+    .replace(/^Status:\s*.+?\s*$/gmu, "Status: <state>")
+    .split(/\r?\n/u)
+    .map((line) => line.trimEnd())
+    .join("\n")
+    .replace(/\n{3,}/gu, "\n\n")
+    .trim();
+}
+
+function containsPlaceholderStatement(source) {
+  return (
+    /\b(?:FIXME|TBC|TBD|TODO)\b/iu.test(source) ||
+    /(?:^|[\r\n.!?]\s*)(?:[-*]\s*)?(?:N\/?A|None|Not applicable|Placeholder|To be (?:confirmed|decided|determined))(?:\s*[.!?])?(?=$|[\r\n])/imu.test(source) ||
+    /(?:<|\[)(?:describe|fill|insert|placeholder|replace)[^>\]\r\n]*(?:>|\])/iu.test(source)
+  );
+}
+
 function parseProposal(relativePath, source, requiredBoundaries, requireAccepted = true) {
   const pathMatch = /^docs\/proposals\/(\d{4}-\d{4})-[a-z0-9]+(?:-[a-z0-9]+)*\.md$/.exec(relativePath);
   if (!pathMatch || relativePath.includes("..") || relativePath.includes("\\")) {
@@ -352,7 +398,7 @@ function parseProposal(relativePath, source, requiredBoundaries, requireAccepted
   for (const section of requiredSections) {
     const contents = sections.get(section);
     const decisionText = contents?.replace(/<!--[\s\S]*?-->/gu, "").trim();
-    if (!decisionText || (status === "accepted" && /^(?:TODO|TBD|N\/A|None)[.!]?$/iu.test(decisionText))) {
+    if (!decisionText || (status === "accepted" && containsPlaceholderStatement(decisionText))) {
       throw new GateError("invalid-ecp", `accepted ECP section ${section} must be substantive`);
     }
   }
@@ -409,11 +455,23 @@ async function main() {
       /^docs\/proposals\/(?!template\.md$|README\.md$).+\.md$/u.test(relativePath)
     );
     for (const relativePath of proposalChanges) {
-      const source = gitFileMaybe(options.repository, options.head, relativePath);
-      if (source === null) {
+      const before = gitFileMaybe(options.repository, options.base, relativePath);
+      const after = gitFileMaybe(options.repository, options.head, relativePath);
+      if (after === null) {
         throw new GateError("proposal-history", `ECP ${relativePath} must not be deleted`);
       }
-      parseProposal(relativePath, source, [], false);
+      const afterProposal = parseProposal(relativePath, after, [], false);
+      if (before !== null) {
+        const beforeProposal = parseProposal(relativePath, before, [], false);
+        if (beforeProposal.status === "accepted") {
+          if (!["accepted", "superseded"].includes(afterProposal.status)) {
+            throw new GateError("accepted-ecp-downgrade", `accepted ECP ${relativePath} must not be downgraded`);
+          }
+          if (proposalSemantics(before) !== proposalSemantics(after)) {
+            throw new GateError("accepted-ecp-rewrite", `accepted ECP ${relativePath} must not be substantively rewritten`);
+          }
+        }
+      }
     }
     const reference = proposalReference(eventSource);
     let proposal = null;
@@ -424,11 +482,26 @@ async function main() {
         message: "this change crosses an engineering boundary and requires a preceding accepted ECP",
       });
     } else if (requiredBoundaries.length > 0) {
-      proposal = parseProposal(
-        reference,
-        gitFile(options.repository, options.base, reference),
-        requiredBoundaries,
-      );
+      const baseProposalSource = gitFile(options.repository, options.base, reference);
+      const headProposalSource = gitFileMaybe(options.repository, options.head, reference);
+      if (headProposalSource === null) {
+        throw new GateError("ecp-reference-mutated", `referenced ECP ${reference} must remain present in the pull request head`);
+      }
+      const baseProposal = parseProposal(reference, baseProposalSource, requiredBoundaries);
+      const headProposal = parseProposal(reference, headProposalSource, requiredBoundaries);
+      if (
+        headProposal.status !== "accepted" ||
+        proposalSemantics(baseProposalSource) !== proposalSemantics(headProposalSource)
+      ) {
+        throw new GateError("ecp-reference-mutated", `referenced accepted ECP ${reference} must not be downgraded or substantively rewritten`);
+      }
+      proposal = {
+        ...baseProposal,
+        baseBlobOid: gitBlobOid(options.repository, options.base, reference),
+        baseStatus: baseProposal.status,
+        headBlobOid: gitBlobOid(options.repository, options.head, reference),
+        headStatus: headProposal.status,
+      };
     }
     const report = {
       base: options.base,

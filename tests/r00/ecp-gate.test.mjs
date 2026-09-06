@@ -93,12 +93,12 @@ async function fixture(files = {}) {
   return { base, repository };
 }
 
-async function invoke(repository, base, head, body = "") {
+async function invoke(repository, base, head, body = "", executable = gatePath) {
   const eventPath = path.join(repository, "event.json");
   const reportPath = path.join(repository, "ecp-report.json");
   await writeFile(eventPath, `${JSON.stringify({ pull_request: { body } })}\n`);
   const result = spawnSync(process.execPath, [
-    gatePath,
+    executable,
     "--repository", repository,
     "--base", base,
     "--head", head,
@@ -107,6 +107,27 @@ async function invoke(repository, base, head, body = "") {
   ], { cwd: repository, encoding: "utf8" });
   return { report: JSON.parse(await readFile(reportPath, "utf8")), result };
 }
+
+test("a candidate cannot replace the trusted base gate with an allow-all implementation", async () => {
+  const trustedGate = await readFile(gatePath, "utf8");
+  const { base, repository } = await fixture({ "eng/ecp-gate.mjs": trustedGate });
+  try {
+    await writeFile(path.join(repository, "eng", "ecp-gate.mjs"), "process.exit(0);\n");
+    await writeFile(path.join(repository, "contracts", "public.schema.json"), "{}\n");
+    const head = await commit(repository, "replace candidate gate");
+    const extractedGate = path.join(repository, "trusted-base-gate.mjs");
+    await writeFile(extractedGate, `${git(repository, "show", `${base}:eng/ecp-gate.mjs`)}\n`);
+
+    const { report, result } = await invoke(repository, base, head, "", extractedGate);
+
+    assert.equal(result.status, 1);
+    assert.equal(report.status, "blocked");
+    assert.deepEqual(report.requiredBoundaries, ["contract-schema"]);
+    assert.equal(report.issues[0].code, "ecp-reference-required");
+  } finally {
+    await rm(repository, { recursive: true, force: true });
+  }
+});
 
 test("contract boundary changes fail closed without a preceding ECP", async () => {
   const { base, repository } = await fixture();
@@ -141,6 +162,10 @@ test("a preceding accepted ECP covering the classified boundary passes", async (
     assert.deepEqual(report.requiredBoundaries, ["contract-schema"]);
     assert.deepEqual(report.proposal, {
       affectedBoundaries: ["contract-schema"],
+      baseBlobOid: git(repository, "rev-parse", `${base}:${proposalPath}`),
+      baseStatus: "accepted",
+      headBlobOid: git(repository, "rev-parse", `${head}:${proposalPath}`),
+      headStatus: "accepted",
       owner: "@human-maintainer",
       path: proposalPath,
       status: "accepted",
@@ -308,6 +333,37 @@ test("contract registry, charter, ADR, and workflow lifecycle changes require th
   }
 });
 
+test("release-security classification covers credential seams and sensitive step control flow", async () => {
+  const scenarios = [
+    {
+      before: `on:\n  workflow_dispatch:\npermissions:\n  contents: read\njobs:\n  publish:\n    runs-on: ubuntu-24.04\n    steps:\n      - name: Publish release\n        if: false\n        run: gh release create v1\n`,
+      after: `on:\n  workflow_dispatch:\npermissions:\n  contents: read\njobs:\n  publish:\n    runs-on: ubuntu-24.04\n    steps:\n      - name: Publish release\n        if: true\n        run: gh release create v1\n`,
+    },
+    {
+      before: `on:\n  workflow_dispatch:\npermissions:\n  contents: read\njobs:\n  gate:\n    runs-on: ubuntu-24.04\n    steps:\n      - name: Authenticate\n        env:\n          RELEASE_TOKEN: \${{ secrets.OLD_TOKEN }}\n        run: test -n "$RELEASE_TOKEN"\n`,
+      after: `on:\n  workflow_dispatch:\npermissions:\n  contents: read\njobs:\n  gate:\n    runs-on: ubuntu-24.04\n    steps:\n      - name: Authenticate\n        env:\n          RELEASE_TOKEN: \${{ secrets.NEW_TOKEN }}\n        run: test -n "$RELEASE_TOKEN"\n`,
+    },
+    {
+      before: `on:\n  workflow_dispatch:\npermissions:\n  contents: read\njobs:\n  gate:\n    runs-on: ubuntu-24.04\n    steps:\n      - uses: actions/checkout@${"1".repeat(40)}\n        with:\n          persist-credentials: false\n`,
+      after: `on:\n  workflow_dispatch:\npermissions:\n  contents: read\njobs:\n  gate:\n    runs-on: ubuntu-24.04\n    steps:\n      - uses: actions/checkout@${"2".repeat(40)}\n        with:\n          token: \${{ github.token }}\n`,
+    },
+  ];
+
+  for (const [index, scenario] of scenarios.entries()) {
+    const workflowPath = `.github/workflows/security-${index}.yml`;
+    const { base, repository } = await fixture({ [workflowPath]: scenario.before });
+    try {
+      await writeFile(path.join(repository, workflowPath), scenario.after);
+      const head = await commit(repository, `change credential seam ${index}`);
+      const { report, result } = await invoke(repository, base, head);
+      assert.equal(result.status, 1);
+      assert.deepEqual(report.requiredBoundaries, ["release-security"]);
+    } finally {
+      await rm(repository, { recursive: true, force: true });
+    }
+  }
+});
+
 test("ECP references fail closed when they are late, unaccepted, ambiguous, incomplete, or misclassified", async () => {
   const proposalPath = "docs/proposals/2026-0001-contract-fixture.md";
   const malformed = [
@@ -388,6 +444,52 @@ test("ECP references fail closed when they are late, unaccepted, ambiguous, inco
     assert.equal(report.issues[0].code, "ecp-not-preceding");
   } finally {
     await rm(late.repository, { recursive: true, force: true });
+  }
+});
+
+test("a referenced accepted ECP cannot be downgraded, deleted, or substantively rewritten in head", async () => {
+  const proposalPath = "docs/proposals/2026-0001-contract-fixture.md";
+  const mutations = [
+    { code: "accepted-ecp-downgrade", value: acceptedProposal().replace("Status: accepted", "Status: draft") },
+    { code: "accepted-ecp-rewrite", value: acceptedProposal().replace("Keep the existing schema unchanged.", "Adopt an unrelated wire format.") },
+    { code: "proposal-history", value: null },
+  ];
+  for (const mutation of mutations) {
+    const { base, repository } = await fixture({ [proposalPath]: acceptedProposal() });
+    try {
+      if (mutation.value === null) await rm(path.join(repository, proposalPath));
+      else await writeFile(path.join(repository, proposalPath), mutation.value);
+      await writeFile(path.join(repository, "contracts", "public.schema.json"), "{}\n");
+      const head = await commit(repository, "mutate referenced accepted proposal");
+      const { report, result } = await invoke(repository, base, head, `ECP: ${proposalPath}`);
+      assert.equal(result.status, 1);
+      assert.equal(report.issues[0].code, mutation.code);
+    } finally {
+      await rm(repository, { recursive: true, force: true });
+    }
+  }
+});
+
+test("accepted ECP sections reject embedded placeholder statements", async () => {
+  const proposalPath = "docs/proposals/2026-0001-contract-fixture.md";
+  for (const placeholder of [
+    "Keep the existing schema unchanged. TODO: evaluate deployment rollback.",
+    "Keep the existing schema unchanged. The migration details are TBD.",
+    "Keep the existing schema unchanged. To be determined.",
+    "Keep the existing schema unchanged. <describe the rejected alternative>",
+  ]) {
+    const proposal = acceptedProposal().replace("Keep the existing schema unchanged.", placeholder);
+    const { base, repository } = await fixture();
+    try {
+      await mkdir(path.dirname(path.join(repository, proposalPath)), { recursive: true });
+      await writeFile(path.join(repository, proposalPath), proposal);
+      const head = await commit(repository, "add placeholder proposal");
+      const { report, result } = await invoke(repository, base, head);
+      assert.equal(result.status, 1);
+      assert.equal(report.issues[0].code, "invalid-ecp");
+    } finally {
+      await rm(repository, { recursive: true, force: true });
+    }
   }
 });
 
