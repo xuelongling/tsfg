@@ -54,6 +54,26 @@ control-plane suite. Read its skipped tests: a zero exit is not proof of
 unavailable symbolic-link, Linux or opt-in native acceptance. Test fixtures
 never substitute for the native Integration mode.
 
+Windows publication uses a separately pinned native control to update an existing
+managed junction without first deleting its public name. Run the current source's
+`prefetch` after updating the control source; a populated tool closure alone does
+not supply a newer publication control. Its source is a declared Build Input,
+and `prefetch` compiles it with the existing locked Windows compiler and verifies
+the resulting executable digest before activation. No new tool version or
+system executable is selected from PATH.
+
+To include the real junction replacement in the control suite, set
+`TSFG_WINDOWS_PUBLICATION_TEST_HELPER` to the E-drive
+`<cache>/controls/<WINDOWS_PUBLICATION_EXECUTABLE_DIGEST without sha256:>/windows-publish.exe`
+before `-Mode Quick -FullControlTests`. The expected digest is pinned in
+`eng/tsfg-build.mjs`; the test copies the executable into its private cache, and
+the production code rechecks that digest before execution. Without this input,
+the corresponding Windows replay tests explicitly skip. The checks cover
+same-destination build/package, concurrent package reads and handled publication
+or report failures restoring the previous output. Compiler/payload fixtures in
+these protocol tests do not establish native smoke acceptance or a new Candidate.
+They also do not certify power-loss durability or arbitrary process termination.
+
 For the working checkout, `-Mode Development` runs debug `build --dev` and
 `test --dev`, including when source changes are uncommitted. Outputs are
 non-publishable; this mode has no package/repro/promotion operation.

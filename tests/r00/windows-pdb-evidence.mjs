@@ -6,13 +6,19 @@ import { createReadStream } from "node:fs";
 import { readdir, readlink } from "node:fs/promises";
 import path from "node:path";
 
-// Match the production normalizer's check on pdb2yaml --all output. PDB
+// Audit decoded pdb2yaml --all output, including UNC paths. PDB
 // checksums and other binary streams must never be interpreted as path strings.
 export function assertDecodedPdbHasNoAbsolutePaths(yaml, label) {
   assert.equal(typeof yaml, "string");
   assert.ok(yaml.startsWith("---") && yaml.trimEnd().endsWith("..."),
     `${label}: incomplete pdb2yaml output`);
   assert.equal(/[A-Za-z]:[\\/]/.test(yaml), false,
+    `${label}: decoded PDB contains an absolute Windows path`);
+  // A path boundary distinguishes UNC roots (also YAML-escaped) from
+  // doubled separators inside relative command-line paths such as .build\\cpp.
+  // Native compiler path options may attach their operand without whitespace;
+  // recognize those prefixes explicitly, never arbitrary relative path text.
+  assert.equal(/(?:^|[\s"'=])(?:\/(?:Fo|Fd|Fe|Fi|Fp|FI|I)|-(?:I|L|isystem|iquote))?(?:\\{2,}|\/\/)[^\\/\s"']+[\\/]+[^\\/\s"']+/m.test(yaml), false,
     `${label}: decoded PDB contains an absolute Windows path`);
 }
 

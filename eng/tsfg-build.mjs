@@ -88,6 +88,8 @@ const WINDOWS_NETWORK_ISOLATION = Object.freeze({
 });
 const WINDOWS_SANDBOX_EXECUTABLE_DIGEST =
   "sha256:f54d779b8c5cb46063911ca7409e16588532374f4bbdaf65a95b665c204df7df";
+const WINDOWS_PUBLICATION_EXECUTABLE_DIGEST =
+  "sha256:61a6d286d66b5233732ef5dd07f59fad643760f37e12f52d76d2d5e561cded3c";
 class WorkspaceMismatchError extends Error {
   constructor(code, message) {
     super(message);
@@ -196,7 +198,7 @@ async function renameWithRetry(source, destination) {
   }
 }
 
-async function publishDirectory(source, destination) {
+async function publishDirectory(source, destination, runtime) {
   const parent = path.dirname(destination);
   const versionsRoot = path.join(parent, `.${path.basename(destination)}.versions`);
   let previousVersion;
@@ -248,7 +250,7 @@ async function publishDirectory(source, destination) {
             rollbackLink,
             process.platform === "win32" ? "junction" : "dir",
           );
-          await renameWithRetry(rollbackLink, destination);
+          await replacePublicationLink(rollbackLink, destination, versionPath, runtime);
         } finally {
           await rm(rollbackLink, { force: true });
         }
@@ -270,15 +272,40 @@ async function publishDirectory(source, destination) {
       process.platform === "win32" ? "junction" : "dir",
     );
     injectPublishFailure("output-link");
-    await renameWithRetry(temporaryLink, destination);
+    await replacePublicationLink(temporaryLink, destination, previousVersion, runtime);
     swapped = true;
+    await rm(temporaryLink, { force: true });
     injectPublishFailure("output-swapped");
   } catch (error) {
-    await rm(temporaryLink, { force: true });
-    await rollback();
+    try {
+      await rm(temporaryLink, { force: true });
+    } finally {
+      await rollback();
+    }
     throw error;
   }
   return { rollback };
+}
+
+async function replacePublicationLink(link, destination, previousVersion, runtime) {
+  if (process.platform !== "win32" || !previousVersion) {
+    await renameWithRetry(link, destination);
+    return;
+  }
+  // Windows cannot rename a junction over another junction. Update its reparse
+  // data in one operation; removing the old name first would expose a gap.
+  const executable = await verifyWindowsPublicationControl(runtime);
+  const result = spawnSync(executable, [destination, previousVersion, await readlink(link)], {
+    cwd: path.dirname(link),
+    env: buildEnvironment(path.dirname(link), []),
+    encoding: "utf8",
+    windowsHide: true,
+  });
+  if (result.error || result.status !== 0) {
+    throw new Error(`Windows publication replacement failed: ${result.error?.message ?? result.stderr}`);
+  }
+  // The caller owns cleanup. A cleanup error after the switch must not disguise
+  // a completed switch as a failure before its rollback has been registered.
 }
 
 function parseReportPath(arguments_) {
@@ -1760,6 +1787,9 @@ async function prefetch(options) {
       platform,
       selections,
     });
+    await provisionWindowsPublicationControl({
+      cachePath: absoluteCache, closurePath: finalPath, lock, lockDigest, platform, selections,
+    });
   }
 
   const activeRelativePath = [
@@ -1816,6 +1846,7 @@ async function verifyRuntimeClosure(lockPath, cachePath, platform) {
   };
   if (platform === "windows-x86_64-msvc") {
     await verifyWindowsSandboxControl(runtime);
+    await verifyWindowsPublicationControl(runtime);
   }
   return runtime;
 }
@@ -3463,9 +3494,10 @@ function windowsSandboxArguments(policy, executable, arguments_) {
   ];
 }
 
-async function compileWindowsSandbox(runtime, sourceRoot, controlRoot) {
+async function compileWindowsSandbox(runtime, sourceRoot, controlRoot,
+  sourceName = "windows-sandbox-run.c", executableName = "windows-sandbox-run.exe") {
   const tools = windowsToolchain(runtime);
-  const executable = path.join(controlRoot, "windows-sandbox-run.exe");
+  const executable = path.join(controlRoot, executableName);
   await mkdir(controlRoot, { recursive: true });
   const environment = buildEnvironment(controlRoot, [
     path.dirname(tools.clangcl),
@@ -3496,7 +3528,7 @@ async function compileWindowsSandbox(runtime, sourceRoot, controlRoot) {
       "/clang:-fdebug-compilation-dir=.",
       "/clang:-fuse-ld=lld",
       ...tools.include.flatMap((includePath) => ["/imsvc", includePath]),
-      path.join(sourceRoot, "eng", "windows-sandbox-run.c"),
+      path.join(sourceRoot, "eng", sourceName),
       "/link",
       "/Brepro",
       "/nodefaultlib",
@@ -3638,6 +3670,44 @@ async function provisionWindowsSandboxControl(runtime) {
   }
 }
 
+function windowsPublicationControlPath(runtime) {
+  return path.join(runtime.cachePath, "controls",
+    WINDOWS_PUBLICATION_EXECUTABLE_DIGEST.slice("sha256:".length), "windows-publish.exe");
+}
+
+async function verifyWindowsPublicationControl(runtime) {
+  const executable = windowsPublicationControlPath(runtime);
+  const bytes = await readRegularFile(executable, "Windows publication control");
+  if (digest(bytes) !== WINDOWS_PUBLICATION_EXECUTABLE_DIGEST) {
+    throw new Error("Windows publication control digest mismatch; run prefetch with the current source");
+  }
+  return executable;
+}
+
+async function provisionWindowsPublicationControl(runtime) {
+  const executable = windowsPublicationControlPath(runtime);
+  if (await pathExists(executable)) return await verifyWindowsPublicationControl(runtime);
+  const repositoryRoot = path.dirname(path.dirname(fileURLToPath(import.meta.url)));
+  const stagingRoot = await mkdtemp(path.join(runtime.cachePath, ".windows-publication-"));
+  try {
+    const compiled = await compileWindowsSandbox(runtime, repositoryRoot, stagingRoot,
+      "windows-publish.c", "windows-publish.exe");
+    const bytes = normalizeWindowsSandboxControl(await readRegularFile(compiled.executable, "publication control"));
+    if (digest(bytes) !== WINDOWS_PUBLICATION_EXECUTABLE_DIGEST) {
+      throw new Error(`Windows publication control build mismatch: ${digest(bytes)}`);
+    }
+    await mkdir(path.dirname(executable), { recursive: true });
+    try {
+      await writeFile(executable, bytes, { flag: "wx" });
+    } catch (error) {
+      if (error.code !== "EEXIST") throw error;
+    }
+    return await verifyWindowsPublicationControl(runtime);
+  } finally {
+    await rm(stagingRoot, { recursive: true, force: true, maxRetries: 5, retryDelay: 100 });
+  }
+}
+
 function windowsNetworkPrograms(runtime, additional = []) {
   const tools = windowsToolchain(runtime);
   return [...new Set([
@@ -3653,6 +3723,7 @@ function windowsNetworkPrograms(runtime, additional = []) {
     tools.cl,
     tools.link,
     tools.pdbutil,
+    windowsPublicationControlPath(runtime),
     process.env.ComSpec,
     process.env.TSFG_GIT,
     ...additional,
@@ -4054,7 +4125,7 @@ async function buildLinux(options, runtime, workspaceState, networkCanary) {
       `${canonicalize(metadata)}\n`,
       { encoding: "utf8", flag: "wx" },
     );
-    const publication = await publishDirectory(publishRoot, output);
+    const publication = await publishDirectory(publishRoot, output, runtime);
     const result = {
       buildPolicy,
       buildIdentity: identity.buildIdentity,
@@ -4635,7 +4706,7 @@ async function buildWindows(options, runtime, workspaceState, networkCanary) {
       encoding: "utf8",
       flag: "wx",
     });
-    const publication = await publishDirectory(publishRoot, output);
+    const publication = await publishDirectory(publishRoot, output, runtime);
     const result = {
       buildPolicy,
       buildIdentity: identity.buildIdentity,
@@ -5751,7 +5822,7 @@ async function packageLinux(options, runtime, workspaceState, networkCanary) {
       identity,
       metadata.producer,
     );
-    const publication = await publishDirectory(publishRoot, output);
+    const publication = await publishDirectory(publishRoot, output, runtime);
     const result = {
       archive: archiveName,
       buildPolicy,
@@ -5924,7 +5995,7 @@ async function packageWindows(options, runtime, workspaceState, networkCanary) {
       identity,
       metadata.producer,
     );
-    const publication = await publishDirectory(publishRoot, output);
+    const publication = await publishDirectory(publishRoot, output, runtime);
     const result = {
       archive: archiveName,
       buildPolicy,
