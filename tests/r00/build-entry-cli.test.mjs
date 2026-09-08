@@ -1052,6 +1052,11 @@ test("Windows verify-workspace enters the JS offline supervisor before workspace
   )?.[1];
   assert.ok(controlDigest);
   const controlBytes = Buffer.from("tsfg test WFP supervisor marker\n");
+  const publicationDigest = buildSource.match(
+    /WINDOWS_PUBLICATION_EXECUTABLE_DIGEST\s*=\s*\n\s*"sha256:([0-9a-f]{64})"/,
+  )?.[1];
+  assert.ok(publicationDigest);
+  const publicationBytes = Buffer.from("tsfg test publication control marker\n");
   const emptyTreeDigest = fixtureDigest('{"entries":[],"schemaVersion":"1"}');
   const toolIds = ["cmake", "llvm", "msvc-tools", "ninja", "node", "windows-sdk", "zig"];
   const artifacts = Object.fromEntries(toolIds.map((id) => {
@@ -1115,11 +1120,15 @@ test("Windows verify-workspace enters the JS offline supervisor before workspace
       `${closureRelative.replaceAll("\\", "/")}\n`,
     );
     await writeFile(controlPath, controlBytes);
+    const publicationPath = path.join(cachePath, "controls", publicationDigest, "windows-publish.exe");
+    await mkdir(path.dirname(publicationPath), { recursive: true });
+    await writeFile(publicationPath, publicationBytes);
     await writeFile(preloadPath, `
 const crypto = require("node:crypto");
 const { syncBuiltinESMExports } = require("node:module");
 const originalCreateHash = crypto.createHash;
 const marker = Buffer.from(${JSON.stringify(controlBytes.toString("base64"))}, "base64");
+const publicationMarker = Buffer.from(${JSON.stringify(publicationBytes.toString("base64"))}, "base64");
 crypto.createHash = function createHash(algorithm, options) {
   const hash = originalCreateHash.call(this, algorithm, options);
   const chunks = [];
@@ -1134,6 +1143,10 @@ crypto.createHash = function createHash(algorithm, options) {
       const observed = Buffer.concat(chunks);
       if (algorithm === "sha256" && observed.equals(marker)) {
         const fixed = Buffer.from(${JSON.stringify(controlDigest)}, "hex");
+        return encoding ? fixed.toString(encoding) : fixed;
+      }
+      if (algorithm === "sha256" && observed.equals(publicationMarker)) {
+        const fixed = Buffer.from(${JSON.stringify(publicationDigest)}, "hex");
         return encoding ? fixed.toString(encoding) : fixed;
       }
       return hash.digest(encoding);
@@ -1486,6 +1499,8 @@ test("build and test run the private C++ and Zig smoke programs through locked t
   const internalFailureReportPath = path.join(sandbox, "internal-failure-report.json");
   const testFailureReportPath = path.join(sandbox, "test-failure-report.json");
   const isWindows = process.platform === "win32";
+  const publicationHelper = isWindows && process.env.TSFG_WINDOWS_PUBLICATION_TEST_HELPER
+    ? await readFile(process.env.TSFG_WINDOWS_PUBLICATION_TEST_HELPER) : undefined;
   const cmake = Buffer.from(isWindows
     ? "@echo off\r\n%SystemRoot%\\System32\\findstr.exe /c:\"TSFG_TEST_REQUIRE_UNDECLARED\" \"%~2\\CMakeLists.txt\" >nul\r\nif not errorlevel 1 if not exist \"%~2\\undeclared.cpp\" (\r\n  >&2 echo Permission denied: tests/r00/smoke/cpp/undeclared.cpp\r\n  exit /b 124\r\n)\r\nset build_dir=%~4\r\nif not \"%build_dir:compile-fail=%\"==\"%build_dir%\" (\r\n  >&2 echo native dependency not found\r\n  exit /b 9\r\n)\r\nexit /b 0\r\n"
     : "#!/bin/sh\nwhile IFS= read -r line; do\n  case \"$line\" in\n    '# TSFG_TEST_REQUIRE_UNDECLARED '*)\n      undeclared=${line#* }\n      undeclared=${undeclared#* }\n      if IFS= read -r value < \"$undeclared\"; then\n        printf '%s\\n' 'sandbox allowed undeclared input' >&2\n        exit 18\n      fi\n      printf '%s\\n' 'ignored failed undeclared read' >&2\n      ;;\n    '# TSFG_TEST_MUTATE_DECLARED')\n      if printf '%s\\n' mutation >> \"$2/CMakeLists.txt\"; then\n        printf '%s\\n' 'sandbox allowed declared input mutation' >&2\n        exit 18\n      fi\n      printf '%s\\n' 'ignored failed source write' >&2\n      ;;\n  esac\ndone < \"$2/CMakeLists.txt\"\ncase \"$4\" in *compile-fail*) printf '%s\\n' 'native dependency not found' >&2; exit 9 ;; esac\nexit 0\n");
@@ -1614,6 +1629,13 @@ exit 1
     await server.close();
     serverOpen = false;
 
+    if (publicationHelper) {
+      // Supply the real native control; production still verifies its fixed
+      // executable digest. The compiler/payloads in this protocol test are fixtures.
+      const controlRoot = path.join(cachePath, "controls", fixtureDigest(publicationHelper).slice(7));
+      await mkdir(controlRoot, { recursive: true });
+      await writeFile(path.join(controlRoot, "windows-publish.exe"), publicationHelper, { flag: "wx" });
+    }
     const workspacePath = path.join(sandbox, "workspace");
     const cloned = spawnSync(
       "git",
@@ -2648,35 +2670,98 @@ net.connect = () => {
 
     const firstArchive = Buffer.from(archiveBytes);
     const firstChecksums = await readFile(path.join(packageOutput, packageReport.result.checksums));
-    const repackagedOutput = isWindows
-      ? path.join(sandbox, "package-repeat")
-      : packageOutput;
-    const repackaged = await invoke([
-      "package",
-      "--target", "linux-x86_64-gnu",
-      "--profile", "debug",
-      "--workspace", workspacePath,
-      "--input", outputPath,
-      "--out", repackagedOutput,
-    ], {
-      env: {
-        ...process.env,
-        CI_RUN_ID: "ticket07-ci-run-id",
-        NODE_OPTIONS: `--require=${networkDenialHook}`,
-        TSFG_RUNTIME_CACHE: cachePath,
-        TSFG_RUNTIME_LOCK: lockPath,
-        TSFG_RUNTIME_PLATFORM: "test-x86_64",
-      },
+    await context.test("package replays into the same published directory", {
+      skip: isWindows && !publicationHelper && "set TSFG_WINDOWS_PUBLICATION_TEST_HELPER to the pinned native control",
+    }, async () => {
+      let reading = true;
+      let reads = 0;
+      let readerError;
+      const reader = (async () => {
+        try {
+          while (reading) {
+            assert.deepEqual(await readFile(path.join(packageOutput, packageReport.result.archive)), firstArchive);
+            reads += 1;
+            await new Promise((resolve) => setTimeout(resolve, 1));
+          }
+        } catch (error) { readerError = error; }
+      })();
+      try {
+        const repackaged = await invoke([
+          "package",
+          "--target", "linux-x86_64-gnu",
+          "--profile", "debug",
+          "--workspace", workspacePath,
+          "--input", outputPath,
+          "--out", packageOutput,
+        ], {
+          env: {
+            ...process.env,
+            CI_RUN_ID: "ticket07-ci-run-id",
+            NODE_OPTIONS: `--require=${networkDenialHook}`,
+            TSFG_RUNTIME_CACHE: cachePath,
+            TSFG_RUNTIME_LOCK: lockPath,
+            TSFG_RUNTIME_PLATFORM: "test-x86_64",
+          },
+        });
+        assert.equal(repackaged.status, 0, repackaged.stderr);
+      } finally {
+        reading = false;
+        await reader;
+      }
+      assert.ifError(readerError);
+      assert.ok(reads > 0, "reader observes complete published bytes during replacement");
+      assert.deepEqual(await readFile(path.join(packageOutput, packageReport.result.archive)), firstArchive);
+      assert.deepEqual(await readFile(path.join(packageOutput, packageReport.result.checksums)), firstChecksums);
     });
-    assert.equal(repackaged.status, 0, repackaged.stderr);
-    assert.deepEqual(
-      await readFile(path.join(repackagedOutput, packageReport.result.archive)),
-      firstArchive,
-    );
-    assert.deepEqual(
-      await readFile(path.join(repackagedOutput, packageReport.result.checksums)),
-      firstChecksums,
-    );
+    await context.test("failed package replacements preserve the previous publication", {
+      skip: isWindows && !publicationHelper && "set TSFG_WINDOWS_PUBLICATION_TEST_HELPER to the pinned native control",
+    }, async () => {
+      for (const [failurePoint, expectedStatus] of [
+        ["output-version", 22], ["output-link", 22], ["output-swapped", 22], ["report-before-rename", 30],
+      ]) {
+        const previousTarget = await readlink(packageOutput);
+        const failureReport = path.join(sandbox, `replacement-${failurePoint}.json`);
+        const failed = await invoke([
+          "package", "--target", "linux-x86_64-gnu", "--profile", "debug",
+          "--workspace", workspacePath, "--input", outputPath, "--out", packageOutput,
+          "--report", failureReport,
+        ], { env: {
+          ...process.env, NODE_OPTIONS: `--require=${networkDenialHook}`,
+          TSFG_RUNTIME_CACHE: cachePath, TSFG_RUNTIME_LOCK: lockPath,
+          TSFG_RUNTIME_PLATFORM: "test-x86_64", TSFG_TEST_FAIL_PUBLISH_AT: failurePoint,
+        } });
+        assert.equal(failed.status, expectedStatus, failed.stderr);
+        assert.equal(await readlink(packageOutput), previousTarget);
+        assert.deepEqual(await readFile(path.join(packageOutput, packageReport.result.archive)), firstArchive);
+        if (failurePoint === "report-before-rename") {
+          await assert.rejects(lstat(failureReport), /ENOENT/);
+        } else {
+          assert.equal(JSON.parse(await readFile(failureReport, "utf8")).status, "failure");
+        }
+      }
+    });
+    await context.test("Windows replacement rejects a corrupt publication control without changing the package", {
+      skip: !isWindows || !publicationHelper,
+    }, async () => {
+      const control = path.join(cachePath, "controls", fixtureDigest(publicationHelper).slice(7), "windows-publish.exe");
+      const previousTarget = await readlink(packageOutput);
+      try {
+        await writeFile(control, "corrupt control\n");
+        const failed = await invoke([
+          "package", "--target", "linux-x86_64-gnu", "--profile", "debug",
+          "--workspace", workspacePath, "--input", outputPath, "--out", packageOutput,
+        ], { env: {
+          ...process.env, NODE_OPTIONS: `--require=${networkDenialHook}`,
+          TSFG_RUNTIME_CACHE: cachePath, TSFG_RUNTIME_LOCK: lockPath, TSFG_RUNTIME_PLATFORM: "test-x86_64",
+        } });
+        assert.equal(failed.status, 22, failed.stderr);
+        assert.match(failed.stderr, /publication control digest mismatch/);
+        assert.equal(await readlink(packageOutput), previousTarget);
+        assert.deepEqual(await readFile(path.join(packageOutput, packageReport.result.archive)), firstArchive);
+      } finally {
+        await writeFile(control, publicationHelper);
+      }
+    });
 
     const failedPackageOutput = path.join(sandbox, "failed-package");
     const failedPackageReport = path.join(sandbox, "failed-package-report.json");
@@ -2704,7 +2789,9 @@ net.connect = () => {
     );
     await assert.rejects(lstat(failedPackageOutput), /ENOENT/);
 
-    if (!isWindows) {
+    await context.test("build replaces the same published directory", {
+      skip: isWindows && !publicationHelper && "set TSFG_WINDOWS_PUBLICATION_TEST_HELPER to the pinned native control",
+    }, async () => {
       const firstPublishedTarget = await readlink(outputPath);
       const rebuilt = await invoke([
         "build",
@@ -2730,7 +2817,7 @@ net.connect = () => {
         )).isDirectory(),
       );
       assert.equal((await readdir(path.join(sandbox, ".out.versions"))).length, 2);
-    }
+    });
 
     const tested = await invoke([
       "test",
