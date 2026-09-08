@@ -33,7 +33,7 @@ tsfg 内部隔离契约生产者与消费者的可版本化边界。它是源码
 _Avoid_: Contracts repository, shared internals
 
 **Engineering Change Proposal**:
-位于 `tsfg/docs/proposals/`、用于在实现前评审工程边界变化的版本化提案。仓库拓扑、Build Identity/Build Input Set、Tier 1、工具链 major/minor、contract schema/兼容窗口及发布安全边界的变化必须经过该流程；普通实现和补丁版工具升级不需要提案。
+用于记录工程边界变化、适用范围、取舍与决策授权的版本化提案；不是普通实现票。已批准的有限委托可覆盖一类开发变化，而不扩大受支持契约或发布权限。
 _Avoid_: Implementation ticket, ADR for every change, post-hoc justification
 
 **Integration Manifest**:
@@ -77,7 +77,7 @@ _Avoid_: SemVer zero means no compatibility, schema hash alone, unversioned sema
 _Avoid_: Entire CI output, signed release bundle
 
 **Bootstrap Trust Root**:
-在可复现构建边界开始前，按 Manifest Repository 的 README 人工安装并用于物化 Repo Workspace 的 Git、Python 与 Google `repo`。它们不参与产物生成；物化完成后必须验证所有项目的完整 commit OID。
+在可复现构建边界开始前，用于物化 Repo Workspace 的 Git、Python 与 Google `repo` 所构成的受信工具基础。它们不参与产物生成，安装方式可以是满足既定信任约束的人工或自动化流程。
 _Avoid_: Toolchain closure, build dependency
 
 **Integration Snapshot**:

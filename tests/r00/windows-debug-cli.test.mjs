@@ -2,16 +2,20 @@
 
 import assert from "node:assert/strict";
 import { createHash } from "node:crypto";
-import { mkdtemp, mkdir, readFile, readdir, rm, stat, writeFile } from "node:fs/promises";
+import { mkdtemp, mkdir, readFile, readdir, realpath, rm, stat, writeFile } from "node:fs/promises";
 import { spawnSync } from "node:child_process";
 import { fileURLToPath } from "node:url";
 import { tmpdir } from "node:os";
 import path from "node:path";
 import test from "node:test";
+import { assertDecodedPdbHasNoAbsolutePaths, verifyLockedLlvmTree } from "./windows-pdb-evidence.mjs";
 
 const acceptanceRoot = process.env.TSFG_WINDOWS_ACCEPTANCE_ROOT;
 const closureCache = process.env.TSFG_WINDOWS_CLOSURE_CACHE;
 const repositoryRoot = path.dirname(path.dirname(path.dirname(fileURLToPath(import.meta.url))));
+// Explicit producer identity for auditing existing evidence from a clean checkout.
+// Never infer this expectation from the attestation being tested.
+const evidenceSourceRoot = process.env.TSFG_WINDOWS_EVIDENCE_SOURCE_ROOT ?? repositoryRoot;
 
 function sha256(bytes) {
   return `sha256:${createHash("sha256").update(bytes).digest("hex")}`;
@@ -104,7 +108,8 @@ test("Windows debug build, smoke test, and package share one normalized Build Id
   ));
   assert.equal(producerAttestation.archive, packageReport.result.archive);
   assert.equal(producerAttestation.buildIdentityDigest, buildReport.result.buildIdentity.digest);
-  assert.equal(producerAttestation.workspacePath, repositoryRoot);
+  assert.ok(path.isAbsolute(evidenceSourceRoot), "evidence source root must be absolute");
+  assert.equal(producerAttestation.workspacePath, await realpath(evidenceSourceRoot));
   assert.deepEqual({
     initialState: producerAttestation.compilationCache.initialState,
     sharing: producerAttestation.compilationCache.sharing,
@@ -134,6 +139,17 @@ test("Windows debug build, smoke test, and package share one normalized Build Id
     path: entry.name,
     sha256: sha256(entry.bytes),
   })));
+  assert.ok(closureCache, "TSFG_WINDOWS_CLOSURE_CACHE is required to verify locked pdbutil");
+  const lock = JSON.parse(await readFile(path.join(repositoryRoot, "eng", "toolchains.lock.json"), "utf8"));
+  const llvm = lock.tools.llvm.artifacts.find(({ platform }) => platform === "windows-x86_64-msvc");
+  const closureDigest = buildReport.result.buildIdentity.toolchainClosureDigest;
+  assert.match(closureDigest, /^sha256:[0-9a-f]{64}$/);
+  const llvmRoot = path.resolve(closureCache, "closures", "sha256", closureDigest.slice(7),
+    "windows-x86_64-msvc", "llvm");
+  await verifyLockedLlvmTree(llvmRoot, llvm.unpackedTreeSha256);
+  const pdbutil = path.resolve(llvmRoot, llvm.executables.pdbutil);
+  const toolRelative = path.relative(llvmRoot, pdbutil);
+  assert.ok(!toolRelative.startsWith("..") && !path.isAbsolute(toolRelative));
   for (const entry of entries) {
     assert.equal(entry.bytes.includes(Buffer.from(acceptanceRoot)), false, entry.name);
     assert.equal(entry.bytes.includes(Buffer.from(buildRoot)), false, entry.name);
@@ -145,8 +161,20 @@ test("Windows debug build, smoke test, and package share one normalized Build Id
       );
     }
     if (entry.name.endsWith(".pdb")) {
-      assert.doesNotMatch(entry.bytes.toString("latin1"), /[A-Za-z]:[\\/]/, entry.name);
-      assert.doesNotMatch(entry.bytes.toString("utf16le"), /[A-Za-z]:[\\/]/, entry.name);
+      const pdbPath = path.join(buildRoot, ...entry.name.split("/"));
+      // Decode the existing file read-only, after binding it to the ZIP member.
+      assert.deepEqual(await readFile(pdbPath), entry.bytes, `${entry.name}: build/package bytes differ`);
+      const decoded = spawnSync(pdbutil, ["pdb2yaml", "--all", pdbPath], {
+        cwd: buildRoot,
+        encoding: "utf8",
+        maxBuffer: 128 * 1024 * 1024,
+        timeout: 60_000,
+        windowsHide: true,
+        env: process.env,
+      });
+      assert.ifError(decoded.error);
+      assert.equal(decoded.status, 0, `${entry.name}: ${decoded.stderr}`);
+      assertDecodedPdbHasNoAbsolutePaths(decoded.stdout, entry.name);
     }
   }
 });

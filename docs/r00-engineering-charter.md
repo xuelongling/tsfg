@@ -9,6 +9,8 @@
 
 本文依据 [ECP-0001](proposals/0001-windows-first-development.md) 区分本机开发、Windows 功能完成与正式发布。本文中的“必须”“禁止”描述相应阶段的目标，不表示已实现或已验收。R00 关闭只采用 §16 本机门；发布段不再反向阻断功能开发。既有工作流/required checks 在单独实施迁移前仍有效，本次仅改规范。
 
+开发执行与有限委托按 [ECP-0002](proposals/0002-bounded-autonomous-development.md)；该提案不授予发布或系统权限，也不表示受限执行会话已实现。
+
 ## 1. 切换前仓库事实
 
 以下事实记录 2026-09-03 命名切换前的迁移 provenance：
@@ -80,7 +82,7 @@ out/         未跟踪本地输出
 
 ### 4.1 Bootstrap Trust Root
 
-Git、Python 和 Google `repo` 只负责物化 workspace，不参与发布 payload 生成。Manifest Repository 的 README 必须记录人工安装与初始化命令，不创建 repo 安装脚本。
+Git、Python 和 Google `repo` 只负责物化 workspace，不参与发布 payload 生成。Manifest Repository 的 README 必须记录可重跑的安装与初始化契约；按 ECP-0002 的来源、完整性、授权与 E 盘约束允许自动准备和初始化脚本，不要求人工逐条输入。实际脚本及 README 对齐另行实施，不因本条修改而视为已存在。
 
 README 必须固定下载的 `repo.py` SHA-256，并用 `repo init --repo-rev=<固定发布版本>` 锁定 repo 自身。初始化命令还必须同时给出规范 Manifest Repository URL、完整 manifest commit OID 与 manifest 文件名；禁止以 manifest branch tip 作为可重放入口。Windows wrapper 保留：`init` 默认添加 `--worktree`，`sync` 默认添加 `--verify`。规范流程禁止 `--no-verify` 与 `--no-repo-verify`。
 
@@ -330,11 +332,11 @@ Candidate 证据保存 90 天。晋升前必须形成内容寻址的 provisional
 
 `docs/proposals/<sequence>-<slug>.md` 用于工程边界变化，状态为 `draft`、`accepted`、`rejected` 或 `superseded`。模板必须覆盖背景、目标/非目标、受影响 contract、备选方案、兼容性、迁移/回滚、安全/许可证、验证证据和 owner。
 
-仓库拓扑、Build Identity/Build Input Set、Tier 1、工具链 major/minor、contract schema/兼容窗口和发布安全边界必须先提案。普通实现与补丁版工具升级不需要 proposal。只有难以撤销且存在真实取舍的 accepted proposal 才建立 ADR。
+仓库拓扑、Build Identity/Build Input Set、Tier 1、工具链 major/minor、contract schema/兼容窗口和发布安全边界必须先提案；仅满足 ECP-0002 全部有限委托条件的同仓开发契约无需逐次提案。普通实现与补丁版工具升级不需要 proposal，仍执行来源、许可证、完整性及适用测试。只有难以撤销且存在真实取舍的 accepted proposal 才建立 ADR。
 
 ### 14.2 Owner
 
-Contracts Owner、Integration Owner、Release Owner 是逻辑角色，可以暂由一名维护者兼任。bot 不得批准 contract 变化或晋升 Stable。第二名人类维护者出现后启用 CODEOWNERS 异人审批。
+Contracts Owner、Integration Owner、Release Owner 是逻辑角色，可以暂由一名维护者兼任。bot 仅能按用户通过 ECP-0002 给予的有限委托处理符合条件的开发契约，其他 contract 变化仍需 Owner 决策；bot 不得晋升 Stable。第二名人类维护者出现后启用 CODEOWNERS 异人审批；本地委托不修改远端保护或代替平台要求的人类 review。
 
 ### 14.3 Promotion State
 
