@@ -4885,7 +4885,8 @@ async function testSmoke(options, runtime, workspaceState, networkCanary) {
       const relativeSource = path.relative(output, smoke.source).replaceAll("\\", "/");
       const declaredPayload = metadata.payloads.find(({ path: payloadPath }) =>
         payloadPath === relativeSource);
-      const executable = path.join(testRoot, ...declaredPayload.path.split("/"));
+      // CPU fixture cases can share a payload; keep each exclusive write separate.
+      const executable = path.join(testRoot, smoke.name, ...declaredPayload.path.split("/"));
       await mkdir(path.dirname(executable), { recursive: true });
       if (digest(bytes) !== declaredPayload.sha256) {
         throw new TestFailureError(`${smoke.name} executable does not match Build Metadata`);
