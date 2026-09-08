@@ -563,7 +563,10 @@ test("repro-check rejects identical stale packages from a different Build Input 
     });
     assert.equal(cloned.status, 0, cloned.stderr);
     await writeFile(path.join(currentWorkspace, "README.md"), "current comparator input\n");
-    const committed = spawnSync("git", ["commit", "--quiet", "-am", "change build input"], {
+    const committed = spawnSync("git", [
+      "-c", "user.name=tsfg test", "-c", "user.email=test@tsfg.invalid",
+      "commit", "--quiet", "-am", "change build input",
+    ], {
       cwd: currentWorkspace,
       encoding: "utf8",
       env: {
@@ -587,7 +590,7 @@ test("repro-check rejects identical stale packages from a different Build Input 
     assert.equal(report.error.issues[0].code, "build-identity-mismatch");
     assert.equal(report.error.issues[0].member, "comparator-workspace#buildIdentity");
   } finally {
-    await rm(sandbox, { recursive: true, force: true });
+    await rm(sandbox, { recursive: true, force: true, maxRetries: 5, retryDelay: 100 });
   }
 });
 

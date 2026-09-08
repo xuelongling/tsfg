@@ -69,7 +69,7 @@ async function materializeFixture(workspace) {
     {
       ".gitattributes": "* text=auto eol=lf\n*.cmd text eol=crlf\n*.bat text eol=crlf\n",
       "LICENSE": license,
-      "README.md": "# fixture product\n",
+      "README.md": "<!-- SPDX-License-Identifier: MIT -->\n\n# fixture product\n",
       "eng/build-inputs.json": '{"entries":[],"schemaVersion":"1"}\n',
       "eng/dependency-sources.json": '{"dependencies":[],"schemaVersion":"1"}\n',
       "eng/toolchains.lock.json":
@@ -81,14 +81,15 @@ async function materializeFixture(workspace) {
     path.join(workspace, ".agents"),
     {
       ".gitattributes": "* text=auto eol=lf\n*.cmd text eol=crlf\n*.bat text eol=crlf\n",
-      "AGENTS.md": "# fixture agents\n",
+      "AGENTS.md": "<!-- SPDX-License-Identifier: MIT -->\n\n# fixture agents\n",
       "LICENSE": license,
-      "codex/config.toml": "model = \"fixture\"\n",
+      "codex/config.toml": "# SPDX-License-Identifier: MIT\nmodel = \"fixture\"\n",
       "codex/hooks.json": "{}\n",
     },
     "https://github.com/xuelongling/.agents.git",
   );
   const manifest = `<?xml version="1.0" encoding="UTF-8"?>
+<!-- SPDX-License-Identifier: MIT -->
 <manifest>
   <remote name="github-xuelongling" fetch="https://github.com/xuelongling/" />
   <project name="tsfg.git" path="tsfg" remote="github-xuelongling" revision="${productHead}" />

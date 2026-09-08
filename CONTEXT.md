@@ -16,6 +16,18 @@ _Avoid_: Approximately equivalent, usually identical
 
 ## Engineering Integration
 
+**Development Ready**:
+Windows 本机工程基础已通过 R00 验收、可以开展语言和运行时功能开发的状态；不表示最低平台认证或发布完成。
+_Avoid_: Stable, all-platform certified
+
+**Windows Functional Complete**:
+tsfg 的完整 Windows 功能范围已通过真实项目验收的状态，包含语言、双后端、运行时、热更、CPU 游戏计算、选定单 GPU 后端和本地工具。
+_Avoid_: Initial language subset, smoke success, Certified Release
+
+**Certified Release**:
+在已完成功能之外，对明确承诺的平台、兼容范围和发布流程形成完整验证证据的产品发布状态。
+_Avoid_: Local build passed, Development Ready
+
 **Contracts Seam**:
 tsfg 内部隔离契约生产者与消费者的可版本化边界。它是源码 interface 与兼容性边界，不以独立 Git 仓库为成立条件。
 _Avoid_: Contracts repository, shared internals
@@ -41,7 +53,7 @@ Repo Workspace 根目录下 Codex 实际发现的 agent 入口：根 `AGENTS.md`
 _Avoid_: Agent source repository, per-repository copy, machine credential store
 
 **Upstream Fork**:
-从外部上游源码派生、独立版本化并由 Google `repo` 在 `tsfg` 同级检出的 Git 仓库。GitHub 仓库保留上游 slug 和 fork network，本地路径规范化为 ASCII 小写 kebab-case；tsfg 专用修改直接提交到该 fork 的特性分支，可重放组合以 Integration Manifest 中的完整 commit OID 为准。未经 R02a 批准的 fork 不进入 R00 `default.xml`。
+从外部上游源码派生、独立版本化并由 Google `repo` 在 `tsfg` 同级检出的 Git 仓库。GitHub 仓库保留上游 slug 和 fork network，本地路径规范化为 ASCII 小写 kebab-case；tsfg 专用修改直接提交到该 fork 的特性分支，可重放组合以 Integration Manifest 中的完整 commit OID 为准。未经 R02a 批准的 fork 不进入集成 manifest；R00 bootstrap 不预建未消费来源的 fork，也不创建 Stable default。
 _Avoid_: tsfg module, vendored directory, floating upstream, tsfg-upstream prefix
 
 **Repo Workspace**:
@@ -57,7 +69,7 @@ _Avoid_: Product version, manually assigned contract-set version
 _Avoid_: Handwritten contract set, version duplicated in consumer, schema-only ownership
 
 **Contract Change Class**:
-对 contract 规范、schema 和 fixtures 变化的兼容分类：编辑或测试增补为 patch，向后兼容扩展为 minor，破坏性变化在 1.0 后为 major；1.0 前的破坏性变化虽增加 minor，仍必须完成扩展—迁移—移除和两个稳定 minor 窗口。exact-match seam 的任何规范变化都产生不兼容新版本。
+对 contract 规范、schema 和 fixtures 变化的兼容分类：编辑或测试增补为 patch，向后兼容扩展为 minor，破坏性变化在 1.0 后为 major；已承诺支持的 1.0 前版本发生破坏性变化仍须增加 minor 并遵守扩展—迁移—移除和两个稳定 minor 窗口；未承诺兼容的同仓开发格式可在版本决定后原子更新并拒绝旧输入。exact-match seam 的任何规范变化都产生不兼容新版本。
 _Avoid_: SemVer zero means no compatibility, schema hash alone, unversioned semantic change
 
 **Reproducibility Set**:
@@ -113,7 +125,7 @@ _Avoid_: Individual build-system command, developer shell environment, network f
 _Avoid_: Mixed stdout protocol, partial success file, artifact metadata
 
 **Offline Proof**:
-prefetch 后在受外部网络隔离且 canary 已证明无法联网的环境中执行 build/test/package 的证据。Linux hosted build 使用 network namespace，最低运行基线另在 Debian 12/kernel 6.1 VM 验证；Windows PR 使用进程级出口阻断，R00 关闭和 Stable 还必须在 Windows 11 24H2、虚拟网络层断网的两个临时 VM 中重演。
+prefetch 后在受外部网络隔离且 canary 已证明无法联网的环境中执行 build/test/package 的证据。Linux hosted build 使用 network namespace，最低运行基线另在 Debian 12/kernel 6.1 VM 验证；Windows PR 使用进程级出口阻断，R13 平台认证和相应 Stable 晋升还必须在 Windows 11 24H2、虚拟网络层断网的两个临时 VM 中重演。
 _Avoid_: Empty proxy variables, warm cache hit, build made no observed requests
 
 **Stable Integration**:

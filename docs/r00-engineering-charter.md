@@ -1,13 +1,13 @@
 <!-- SPDX-License-Identifier: MIT -->
 
-# R00：工程章程、仓库拓扑与可复现构建
+# R00：工程章程与 Windows 本机开发基础
 
-状态：**候选实现完成，待验收与晋升**
-日期：2026-09-03
-范围：仅 R00
+状态：**Windows 优先规则已批准；Development Ready 待本机验收**
+日期：2026-09-07
+范围：R00 本机工程门；保留 R13 发布认证规则并明确其适用范围
 上位事实来源：`tsfg-architecture.md`、`tsfg-roadmap.md`
 
-本文把 R00 的已批准决定改写为可实现、可验收的工程章程。本文中的“必须”“禁止”描述 R00 完成时的目标状态，不表示当前仓库已经具备相应源码、工具、制品或 CI。
+本文依据 [ECP-0001](proposals/0001-windows-first-development.md) 区分本机开发、Windows 功能完成与正式发布。本文中的“必须”“禁止”描述相应阶段的目标，不表示已实现或已验收。R00 关闭只采用 §16 本机门；发布段不再反向阻断功能开发。既有工作流/required checks 在单独实施迁移前仍有效，本次仅改规范。
 
 ## 1. 切换前仓库事实
 
@@ -25,7 +25,7 @@
   - `25874cef7505a0c9dca08dd3a84e879d85eafea6`
 - 上述三个远端只有初始化内容；尚未证明当前身份对它们具有写入、设置保护规则或创建环境的权限。
 
-因此，本文完成只代表设计收敛，不代表 R00 验收通过。
+以上只保留切换前历史，不是 2026-09-07 当前仓库盘点或再次执行切换的指令。已有实现与结果按原票保留；新本机验收完成前 R00 仍未验收通过。
 
 ## 2. 范围与非目标
 
@@ -35,7 +35,9 @@ R00 必须建立后续任务共享的：
 - 多 Git workspace 的精确物化与验证；
 - 平台、版本、契约和发布基线；
 - 锁定工具链、依赖来源和 hermetic build 控制面；
-- 基础 CI、兼容性门禁、可复现性证据和许可证门禁。
+- Windows 本机基础检查、适用契约负例、输入身份/本机复现证据和许可证门禁。
+
+R00 不要求取得 Stable、最低 OS/双 VM 或完整平台矩阵。已实现的 Linux 与发布设施保留为后续资产，未来正式发布按 R13 验收。当前用户指定的所有新增软件、下载、数据、临时文件、缓存、日志与工作目录必须位于 E 盘；发现工具默认写 C 盘时先重定向，不能先执行再清理。
 
 R00 不实现语言语义、TypeScript 前端、Core IR、正式 ABI、VM、GC、热更新、GPU 或产品工具。R00 也不批准或迁入任何上游 fork；这属于 R02a。
 
@@ -131,14 +133,16 @@ Manifest linkfile 必须把：
 
 首次接管现有普通文件时，必须先逐字迁入并校验，再删除原文件并创建 linkfile。Windows 未启用 Developer Mode、缺少符号链接权限或目标冲突时，sync 必须失败；禁止复制回退。当前 `docs/adr/0005-*` 只是三仓切换前的设计暂存，实施切换时必须迁入 `.agents/docs/adr/`，产品仓只保留引用。
 
-## 6. Tier 1 支持矩阵
+## 6. 本机开发平台与后置认证基线
+
+R00 在当前 Windows 宿主直接运行，记录真实 OS/build、CPU 和 SDK。宿主不是最低 Windows 11 时仍可通过 Development Ready，但不产生最低 OS 认证。下面是 R13 待验证的发布基线，不是 R00 的执行环境要求；不能仅凭表格宣称已经支持。
 
 | Target ID | 最低运行基线 | CPU | Profiles |
 |---|---|---|---|
 | `windows-x86_64-msvc` | Windows 11 24H2；Windows SDK 26100 ABI | `x86-64-v2` | `debug`, `release` |
 | `linux-x86_64-gnu` | Debian 12/glibc 2.36；Linux kernel 6.1 ABI | `x86-64-v2` | `debug`, `release` |
 
-Windows 10 仅为 best-effort。macOS ARM64、其他 CPU、控制台和 GPU 均是未承诺候选。
+Windows 10、macOS ARM64、其他 CPU 与控制台不属当前完成承诺。Windows 的一个实际 GPU 后端在 R11 选择并于 W5 完成；多设备支持另作 R13 认证。Linux/WSL 结果只证明实际测到的环境，WSL1 不替代独立 Linux kernel/netns 认证。
 
 AVX、AVX2、AVX-512 等必须使用运行时检测和多版本分派；禁止 `-march=native`。
 
@@ -148,9 +152,9 @@ AVX、AVX2、AVX-512 等必须使用运行时检测和多版本分派；禁止 `
 
 ### 7.1 Product Version
 
-- R00 开发版本为 `0.1.0-dev.0`。
-- R00 首个 Stable Integration 为 `0.1.0`，tag 为 `tsfg-v0.1.0`。
-- 发布后 main 进入 `0.2.0-dev.0`。
+- 原计划的初始开发/首次发布/后续开发版本为 `0.1.0-dev.0`、`0.1.0`、`0.2.0-dev.0`，保留为历史计划，不是 R00 关闭动作。
+- 本次不改既有 version 文件、tag 或 snapshot。首次正式发布的实际版本与 tag 在 R13 按现有历史决定，版本号本身不代表 Stable。
+- R00 达到 Development Ready 不触发产品版本晋升。
 - 产品仓根 `version.json` 是源码内 Product Version 事实源。
 
 ### 7.2 Contract Registry 与 Contract Set
@@ -166,14 +170,18 @@ AVX、AVX2、AVX-512 等必须使用运行时检测和多版本分派；禁止 `
 
 Contract Set 必须从 registry 按 family ID 字节序生成。R00 没有正式 family，规范空映射字节为 `{}`，其 ID 为 `sha256:44136fa355b3678a1146ad16f7e8649e94fb4fc21fe77e8310c060f61caaff8a`。兼容拒绝验收使用测试 fixture，不把假契约加入产品集合。
 
-Contract 变化规则：
+Contract 变化规则适用于承诺受支持的正式版本：
 
 - 纯编辑或测试增补：patch；
 - 向后兼容扩展：minor；
 - 破坏变化：1.0 后 major；1.0 前 bump minor，但仍执行跨两个稳定 product minor 的扩展—迁移—移除；
 - exact-match seam 的任何规范变化都形成不兼容新版本。
 
-Schema Hash 变化但版本不变、兼容变化误标 patch、破坏变化绕过迁移窗口或 exact-match 新旧混用，CI 必须拒绝。规范语义变化即使 schema 不变也必须触发版本与兼容检查。
+Schema Hash 变化但版本不变、兼容变化误标 patch、破坏变化绕过适用迁移窗口或 exact-match 新旧混用，检查必须拒绝。规范语义变化即使 schema 不变也必须触发版本决定。
+
+同仓且未承诺兼容的开发格式允许 producer/consumer 随规范版本递增原子更新，并明确使旧缓存失效、拒绝不匹配格式，不要求两个稳定 product minor 的等待窗口。保留已发布受支持版本的窗口。现有 gate/schema 不在本次修改，相关变更随真实格式实现单独验收。
+
+Reflection 尚未实现时记不适用。引入后执行 Roadmap RF-01：同一源码、target、选项、工具与 schema，在两个独立输出目录重生成的规范 Reflection Digest 必须一致；相关语义输入变化必须可检测。空 Contract Set 不是 Reflection 证据，不要求目标相关 ABI 布局跨 target 相同。
 
 ## 8. 规范数据与 Build Identity
 
@@ -196,7 +204,7 @@ Build Identity 的规范 payload 明确包含 Build Input Set digest、target、
 
 ## 9. 工具链、依赖与缓存
 
-初始 Toolchain Closure：
+初始 Toolchain Closure 的版本记录如下；本次不下载或升级工具。R00 只要求 Windows 当前实际使用的 closure，Linux/MSVC 兼容 lane 等额外认证不作为本机启动前置：
 
 | 工具/输入 | 锁定版本 |
 |---|---|
@@ -273,7 +281,9 @@ Reproducibility Set 包含所有未签名 payload：程序、库、detached debu
 
 同一 Build Identity 必须逐字节一致；不同 target 只要求规范化 Contract Set/schema hash 一致。
 
-每个 target/profile 的 repro-check 使用两个独立 job、不同绝对路径和空编译缓存，第三个 job 只比较产物。允许取得相同内容寻址工具缓存，禁止共享增量构建缓存。
+R00 在同一 Windows 宿主的两个不同绝对路径、空且不共享编译缓存的干净 workspace 比较 debug/release 的完整 unsigned set；可共享复验后的内容寻址工具缓存。当前 `repro-check` 仍以不构建的 comparator workspace 消费两份 producer 输出，可以在同一宿主执行；不要求三个远端 job 或 VM。独立 job 的完整承诺 target/profile 矩阵归 R13。相同 Build Identity 的差异仍须定位和修复，不能以延期认证掩盖。
+
+日常 `--dev` build/test 不重复整套复现，但不产生可发布 package；本机工程门和正式发布均使用各自适用的干净构建证据。
 
 ## 12. 源码可移植性、许可证与 provenance
 
@@ -295,7 +305,7 @@ fork 必须保留 LICENSE/NOTICE，并提供 `UPSTREAM.toml`，记录规范 URL�
 
 GitHub Actions 固定 `windows-2025` 与 `ubuntu-24.04` runner label，禁止 `*-latest`。runner 镜像预装内容不属于 Toolchain Closure。
 
-每个 tsfg PR 必须运行：
+以下完整矩阵保留为 R13 发布认证要求，并描述迁移前已实现的 CI 形态；不再作为每次 Windows 本地开发的门槛：
 
 - format/policy/license/lock 检查；
 - Workspace Verification；
@@ -304,11 +314,13 @@ GitHub Actions 固定 `windows-2025` 与 `ubuntu-24.04` runner label，禁止 `*
 - baseline/baseline、candidate producer/baseline consumer、baseline producer/candidate consumer、candidate/candidate 四种 artifact 组合；组合发生在兼容测试输入层，禁止拼接不同 `tsfg` OID 的源码树。首个 Stable 前以 R00 专用 fixture 的 baseline/candidate artifacts 代替尚不存在的正式 contract family；
 - 每个 target/profile 的双 job repro-check。
 
-Manifest PR 对解析后的完整 snapshot 重跑同一矩阵，并与 main 历史比较：任何已合入 `snapshots/**` 文件的修改、删除、重命名或版本名复用都必须失败。产品与 manifests 的 ruleset 还必须拒绝 release tag 的删除或移动。`.agents` PR 运行格式、测试、secret scan 和装配验证；只有显式改变 Build Input Set 时才触发产品矩阵。
+发布 Manifest PR 对解析后的完整 snapshot 重跑同一矩阵，并与 main 历史比较：任何已合入 `snapshots/**` 文件的修改、删除、重命名或版本名复用都必须失败。产品与 manifests 的 ruleset 还必须拒绝 release tag 的删除或移动。`.agents` PR 运行格式、测试、secret scan 和装配验证；只有显式改变 Build Input Set 时才触发产品矩阵。
 
 Actions cache 永远视为不可信：key 包含平台和完整 lock digest，不使用宽泛 restore key；恢复后逐对象复验 SHA-256/tree hash。PR workflow 默认 `permissions: contents: read`，不读取 secret，不使用 `pull_request_target` 执行候选代码。第三方 action 固定完整 commit SHA。
 
-Linux hosted job 在仅保留 loopback 的 network namespace 中执行 offline 阶段。Windows PR job 对全部锁定构建/测试程序实施进程级出口阻断，并先运行必须失败的 network canary。hosted runner 只负责编排与构建，不证明最低运行平台：R00 关闭与每次 Stable 晋升必须另在 Debian 12.15、glibc 2.36、6.1 系列 kernel 的 VM 对 Linux package 执行 runtime smoke，并在 cache 注入后由两个 Windows 11 24H2 短生命周期 VM 于虚拟网络层完全断网重演 Windows build/test/package/runtime smoke。无法证明 OS 基线、隔离或 canary 联网即失败。
+Linux hosted job 在仅保留 loopback 的 network namespace 中执行 offline 阶段。Windows PR job 对全部锁定构建/测试程序实施进程级出口阻断，并先运行必须失败的 network canary。hosted runner 只负责编排与构建，不证明最低运行平台：R13 平台认证与相应 Stable 晋升必须另在 Debian 12.15、glibc 2.36、6.1 系列 kernel 的 VM 对 Linux package 执行 runtime smoke，并在 cache 注入后由两个 Windows 11 24H2 短生命周期 VM 于虚拟网络层完全断网重演 Windows build/test/package/runtime smoke。无法证明 OS 基线、隔离或 canary 联网即失败。
+
+目标 CI 分层是：普通开发运行 Windows 相关 format/policy/license/lock、workspace、单元和能力测试；Windows 集成点运行 debug/release clean build 与对应集成测试；实际 producer/consumer 的兼容与安全负例随功能持续执行；多平台独立复现和 VM 归发布认证。已有 workflow 和远端 required checks 必须经专门实施票同步迁移，未迁移时继续遵守，不假装已取消。不得因缩小平台范围降低 PR 无 secret、固定 action、缓存复验或历史不可变规则。
 
 Candidate 证据保存 90 天。晋升前必须形成内容寻址的 provisional evidence bundle，包含 resolved manifest、Artifact Manifest、checksums、许可证报告和 repro 结果。产品 tag 与 manifest snapshot OID 确定后，再把最终 `docs/releases/<version>.md` 提交到 tag 之后的产品 main；该记录不得被要求包含在它所描述的 tag 中。二进制与同一 checksums 附加到对应 GitHub Release 长期保存。
 
@@ -316,7 +328,7 @@ Candidate 证据保存 90 天。晋升前必须形成内容寻址的 provisional
 
 ### 14.1 Engineering Change Proposal
 
-`docs/proposals/<year>-<sequence>-<slug>.md` 用于工程边界变化，状态为 `draft`、`accepted`、`rejected` 或 `superseded`。模板必须覆盖背景、目标/非目标、受影响 contract、备选方案、兼容性、迁移/回滚、安全/许可证、验证证据和 owner。
+`docs/proposals/<sequence>-<slug>.md` 用于工程边界变化，状态为 `draft`、`accepted`、`rejected` 或 `superseded`。模板必须覆盖背景、目标/非目标、受影响 contract、备选方案、兼容性、迁移/回滚、安全/许可证、验证证据和 owner。
 
 仓库拓扑、Build Identity/Build Input Set、Tier 1、工具链 major/minor、contract schema/兼容窗口和发布安全边界必须先提案。普通实现与补丁版工具升级不需要 proposal。只有难以撤销且存在真实取舍的 accepted proposal 才建立 ADR。
 
@@ -325,6 +337,8 @@ Candidate 证据保存 90 天。晋升前必须形成内容寻址的 provisional
 Contracts Owner、Integration Owner、Release Owner 是逻辑角色，可以暂由一名维护者兼任。bot 不得批准 contract 变化或晋升 Stable。第二名人类维护者出现后启用 CODEOWNERS 异人审批。
 
 ### 14.3 Promotion State
+
+这是正式发布状态机，不是 Development Ready 或 Windows Functional Complete 的状态机。既有身份保护持续有效；凭据、Owner 和首次 Stable 事务只阻断对应发布工作。
 
 ```text
 Candidate
@@ -347,28 +361,31 @@ R00 后续实现只能建立位于 `tests/r00/` 的工程 smoke targets：
 - CMake/Ninja/Clang/LLD 构建一个非公开 C/C++ target；
 - Zig 构建一个独立非公开 target；
 - Node/pnpm 控制面驱动六个 `tsfg-build` 子命令；
-- 生成空 Contract Set、Artifact Manifest、两平台 package 与 detached symbols；
+- 生成空 Contract Set、Artifact Manifest、Windows package 与 detached symbols；既有 Linux smoke 保留供 R13；
 - 测试 fixture 证明未 bump、错误 bump 与破坏兼容会被拒绝。
 
 实际参与 smoke payload 或控制其构建的 `tests/r00/**` 文件必须列入 R00 临时 Build Input Set；纯测试驱动、兼容 fixture 和测试报告仍排除。两类 smoke target 不互相建立 C/Zig ABI，不构成未来产品 API，可在正式模块接管后连同临时 input 声明删除。R00 不构建 LLVM fork，也不实现语言行为。
 
-## 16. R00 关闭条件
+## 16. R00 本机关闭条件
 
-`docs/releases/0.1.0.md` 必须逐项提供以下证据，缺一不可：
+R00 spec v2 的 W00-01–W00-10 是逐项验收 ID。验收记录是开发证据，不是 `docs/releases/0.1.0.md` 或 Stable Release Evidence；所有项通过才记录 Development Ready：
 
-1. `tsfg`、`manifests`、`.agents` 各自有独立、可审查提交。
-2. 本地目录、架构、roadmap、命令与产品扩展名统一为 `tsfg`；旧名只存在于历史 provenance。
-3. `.agents` 完成根入口接管和 Windows linkfile 验证。
-4. 以完整 manifest commit OID 和 `bootstrap/r00.xml` 从全新目录物化至少两个仓库并通过含 Agent Activation Surface 的 Workspace Verification；首个 `default.xml` 只在最终晋升提交创建。
-5. 两个平台、两种 profile 完成离线构建和独立 job 逐字节比较；Linux package 在 Debian 12.15/glibc 2.36/kernel 6.1 VM 通过 runtime smoke，Windows 在两个 Windows 11 24H2 断网 VM 中重演。
-6. 空 Contract Set 跨平台 hash 一致，破坏性 fixture 被 CI 拒绝。
-7. 工具、依赖、许可证和 Build Input Set 覆盖率均为 100%。
-8. 所有 required CI 通过，报告和 payload 摘要可追溯。
-9. Stable Release Evidence 已版本化并附加到 GitHub Release；`docs/releases/0.1.0.md` 位于 `tsfg-v0.1.0` tag 之后的 main 提交，不要求进入它所描述的 tag。
+1. 从 E 盘全新目录按完整 manifest OID 物化所需项目；remote/OID/path/activation 和 dirty 负例通过。已完成的仓库迁移事实不重复实施。
+2. 当前 Windows 宿主、CPU、工具 closure 和源码输入如实记录；不要求 Windows VM 或 Linux。
+3. Windows debug/release 的 C/C++ 与 Zig smoke 经正式 build/test/package/runtime smoke 通过；没有产品 API 或正式 ABI 的虚假完成声明。
+4. 显式 `--dev` 允许本地 dirty build/test 且标记不可发布；无该选项的 dirty 操作与 dirty package/repro 必须拒绝。
+5. 同宿主两个 E 盘干净 workspace 的独立输出，以现有 comparator 校验完整 unsigned set；输入、JCS、source epoch 与哈希负例通过。
+6. 工具、实际依赖、输入声明、SPDX/NOTICE/provenance 和 portable paths 覆盖完整；未知来源、缓存篡改、PATH fallback、未声明读取、离线 canary 失败均被正确拒绝。
+7. 空 Contract Set 与 test-only 四组合/版本负例通过；无 Reflection 时明确不适用，不能用空摘要替代。
+8. 错误类别、报告与失败输出原子性通过；记录命令、退出码、环境、精确身份、摘要及重放方法，不只填写“通过”。
+9. 新工具、缓存、包、临时文件、日志、下载和 workspace 均在 E 盘，确认实际子进程路径，不仅设置表面输出路径。
+10. 本机相关门均通过；当前 CI/保护的实际状态单列，未变更或待迁移不冒称成功。不生成 Promotable/Stable，不以 R13 延期项阻断 R00。
 
-## 17. 首次三仓切换事务
+本机结果不存在时仍保持待验收；若发现正确性/输入边界失败，先修复，不通过修改验收文字掩盖。Linux/最低 OS、跨平台独立作业、Owner/签名/长期证据和发布收口迁入 R13。
 
-切换必须按以下顺序执行，但不属于本次文档澄清：
+## 17. 历史切换事务与后置发布事务
+
+以下记录原始首次切换次序以保留 provenance。已完成的 1–6 不重复执行；其中固定旧 OID 的导入授权不是当前操作授权。7–9 的实际版本及身份在 R13 核对后执行；本次不操作远端、不晋升、不重命名本地目录：
 
 1. 在产品仓与 `.agents` 分别准备并验证独立提交。
 2. 把旧 `langofgame/tcfg` remote 保留为 `legacy`，新 `origin` 指向 `xuelongling/tsfg`。
@@ -380,7 +397,7 @@ R00 后续实现只能建立位于 `tests/r00/` 的工程 smoke targets：
 8. 在 tag 之后的产品 main 提交 `docs/releases/0.1.0.md`，记录 tag、承载 snapshot 的 manifest commit OID、文件名和既有材料摘要；该提交不属于 tag，也不进入所描述的 Build Identity。
 9. 所有身份与长期材料已存在后，Release Owner 以最后一个 manifest 提交创建 `default.xml` 并指向该 snapshot；这是首次 Stable 的提交点。随后只允许幂等地把既有 GitHub 预发布标记为 Stable，并启用 main/tag 保护。
 
-最终 manifest 提交前任一步失败都不得创建 `default.xml` 或宣称 Stable；已创建的 tag/snapshot 不得移动或复用，只能把该候选标为 Withdrawn。提交点之后不得重写身份，外部发布状态的幂等收尾失败必须重试并阻断 R00 关闭。
+最终 manifest 提交前任一步失败都不得创建 `default.xml` 或宣称 Stable；已创建的 tag/snapshot 不得移动或复用，只能把该候选标为 Withdrawn。提交点之后不得重写身份，外部发布状态的幂等收尾失败必须重试并阻断 Certified Release 关闭，不阻断本机开发状态。
 
 ## 18. 相关 ADR
 

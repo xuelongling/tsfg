@@ -2,7 +2,32 @@
 
 # tsfg
 
-## R00 Hermetic Build Entry and Tier 1 smoke profiles
+## Current priority: Windows-host development
+
+The plan is Windows-first: R00 **Development Ready**, W1–W6 **Windows
+Functional Complete**, then R13/W7 **Certified Release**. See the
+[roadmap](docs/tsfg-roadmap.md),
+[engineering charter](docs/r00-engineering-charter.md), and
+[approved scope change](docs/proposals/0001-windows-first-development.md).
+These are separate acceptance states, not claims that they have passed.
+
+Use the current Windows host for development and report its actual OS/build.
+A Windows VM is not a development prerequisite; minimum Windows/Linux,
+independent VM proofs, release signing and promotion belong to later
+certification. Full language/runtime/CPU/GPU/tool functionality is retained.
+The entry below is the engineering smoke control plane, not an implemented
+`tsfgc`, language VM, ABI or Reflection pipeline.
+
+This documentation change does not alter CLI behavior, workflows, required
+checks, versions or release state. Existing protections still apply until
+their explicit implementation migration.
+
+For the implemented Windows-host check driver, see
+[Windows development checks](docs/windows-development.md). It provides focused
+or full control-plane checks, explicit development build/test, and clean
+debug/release integration without starting a VM or performing a release.
+
+## R00 Hermetic Build Entry and smoke profiles
 
 `prefetch` is the only operation that may use the network. It downloads the
 target's complete content-locked tool closure from
@@ -10,12 +35,22 @@ target's complete content-locked tool closure from
 binds the authoritative `pnpm-lock.yaml` digest into the target projection, and
 atomically activates the completed cache.
 
-On Windows:
+On Windows (commands below use **cmd.exe**, from an E-drive product checkout):
+
+All new software, downloads, data, outputs, caches, logs and temporary files
+must stay on E:. Create the E-drive cache/temp directories first, use reviewed
+bootstrap tools already placed on E:, and set these variables before launching
+any tool. Verify child-tool cache locations too; these variables alone are not
+proof that every tool avoids C:. Stop and configure any remaining C-drive
+write before running it.
 
 ```text
-set TSFG_BOOTSTRAP_NODE=C:\absolute\path\to\reviewed-bootstrap-node.exe
+set TSFG_CACHE_DIR=E:\tsfg-cache
+set TEMP=E:\tsfg-temp
+set TMP=E:\tsfg-temp
+set TSFG_BOOTSTRAP_NODE=E:\absolute\path\to\reviewed-bootstrap-node.exe
 set TSFG_BOOTSTRAP_NODE_SHA256=<full-lowercase-sha256>
-set TSFG_BOOTSTRAP_GIT=C:\absolute\path\to\reviewed-git.exe
+set TSFG_BOOTSTRAP_GIT=E:\absolute\path\to\reviewed-git.exe
 set TSFG_BOOTSTRAP_GIT_SHA256=<full-lowercase-sha256>
 eng\tsfg-build.cmd prefetch --report out\prefetch-report.json
 eng\tsfg-build.cmd verify-workspace ^
@@ -32,7 +67,7 @@ eng\tsfg-build.cmd build ^
   --report out\windows-release-build-report.json
 ```
 
-On Linux:
+Optional Linux / later certification reference (not a Windows development gate):
 
 ```text
 export TSFG_BOOTSTRAP_NODE=/absolute/path/to/reviewed-bootstrap-node
@@ -144,9 +179,14 @@ target host's native runtime. Its report records observed OS, architecture,
 kernel/build and libc facts plus network canaries before and after execution.
 Windows additionally records and applies the locked process-level WFP
 isolation policy. Minimum-OS acceptance and virtual-network isolation remain
-external VM evidence checks; missing or mismatched evidence must fail closed.
+external R13 certification checks; missing or mismatched evidence must fail
+closed for that certification. They do not gate Windows-host Development Ready.
+Running a package on the current host does not certify a different minimum OS.
 
-`repro-check` is the build-free third comparator. It requires two package
+`repro-check` is the build-free third comparator. R00 can run both fresh producer
+workspaces and the comparator workspace on the same Windows host in separate
+E-drive directories; independent VM/job certification is deferred to R13. The
+command's existing producer/cache/identity checks remain mandatory. It requires two package
 directories from different absolute workspaces and build executions, verifies
 that neither producer shared or warmed incremental state, independently
 recomputes Build Input Set, Build Identity, Contract Set, member, Artifact
@@ -156,6 +196,11 @@ Build Reports, logs, and external attestations are classified sidecars and are
 excluded; unclassified bundle files fail closed. A difference returns exit 23
 and reports the first payload member and byte offset that can localize it.
 Neither smoke exposes a product API or establishes a C/Zig ABI.
+
+For dirty local development, use the explicit `--dev` option on `build` and
+`test`; outputs are non-publishable. Normal clean build identity checks remain,
+and `package` / `repro-check` still require clean workspaces. Development mode
+does not permit undeclared tools, inputs or network access.
 
 Linux result-producing commands require a loopback-only network namespace and
 refuse to start while any non-loopback route remains. The build creates a

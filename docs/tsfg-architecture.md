@@ -2,6 +2,14 @@
 
 # tsfg（TypeScript for Game）整体架构方案
 
+## 阶段与状态
+
+本文件描述最终功能边界，不表示能力已存在，也不要求先把全部生态设施建齐。依据 [ECP-0001](proposals/0001-windows-first-development.md) 与 [Roadmap](tsfg-roadmap.md)，当前第一目标是 Windows 本机功能开发：先 R00 Development Ready，再按 W1–W6 完成 Windows 全部功能，最后 W7/R13 认证平台与正式发布。开发验收直接使用当前 Windows 宿主，不要求安装 Windows 虚拟机。
+
+语言、HIR/Core IR、字节码、ABI、运行时与工具按真实能力联合切片。先建立可执行子集，但最终必须补齐下述完整语言、VM/AOT、GC、热更/迁移、CPU 计算、一个真实 Windows GPU 后端、本地编辑/调试/包消费；不能以演示替代完整功能。CLI 和诊断从首条链路提供。最低 OS、Linux、多设备及公共分发生态不阻断 Windows 开发。
+
+未发布且未承诺兼容的同仓开发格式可以版本化原子更新，并显式拒绝旧缓存/格式；已发布受支持版本仍履行兼容承诺。两次 Reflection Digest 一致性从真实 Reflection producer/consumer 实现时按 Roadmap RF-01 验收，不能由 R00 空 Contract Set 代替。GC 根、ABI、verifier、借用/效果、并发和代码回收必须随对应能力验收，不后置到发布阶段。
+
 ## 远景与目标
 
 tsfg 是面向游戏引擎的静态语言、编译器和运行时。源码采用 TypeScript 语法与类型工具，宿主采用 Zig；同一份源码同时生成解释器字节码和原生机器码。tsfg 不是 JavaScript 实现，也不承诺 ECMAScript 运行时兼容。
@@ -56,7 +64,7 @@ flowchart TD
 
 ### TypeScript 前端
 
-前端迁入微软 TypeScript 的 scanner、parser、AST、类型检查、控制流收窄、模块解析、诊断和 Language Service 代码。tsfg 在其后执行更严格的语义检查，并直接生成 tsfg HIR；流程中不存在 JavaScript 输出。
+前端按 R02a 实际 intake 分批接入微软 TypeScript 的 scanner、parser、AST、类型检查、控制流收窄、模块解析、诊断和 Language Service 代码。tsfg 在其后执行更严格的语义检查，并直接生成 tsfg HIR；流程中不存在 JavaScript 输出。
 
 输入规则固定为：
 
@@ -220,7 +228,9 @@ tsfg 不嵌入其他语言运行时，也不把外部编译器当作黑盒子调
 | Hermes / QuickJS | 字节码验证、GC 根图、解释器测试与模糊测试方法 | ECMAScript 语义、对象模型、JSI、JS 标准库 |
 | WAMR / Porffor | 预解码、tier 切换、代码缓存、AOT 差分测试实现 | Wasm 作为 tsfg 语义层、JS 前端与 JS 运行时 |
 
-Mojo、LLVM/MLIR 及 TypeScript 的迁入代码保留各自许可证和 NOTICE；其他来源按文件许可证执行。许可证不清晰的文件不进入 tsfg。
+本表是候选参考范围，不是全部引入清单。只为当前实际编译消费的批准来源建立同级 fork；仅参考算法/测试方法的来源记录 attribution，不建立虚假源码依赖。任何来源是否可迁入仍需在实际 intake 时审查，不能从本表推定许可证允许或源码可用。
+
+所有迁入代码保留各自许可证和 NOTICE；按文件记录和检查来源。许可证不清晰的文件不进入 tsfg。新增实现必须有可维护源码、真实构建输入和消费者，不以生成物、合成 fixture 或不可审计黑盒替代。
 
 ## 工具与模块边界
 
