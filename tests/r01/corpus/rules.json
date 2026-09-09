@@ -1,5 +1,5 @@
 {
-  "schemaVersion": "2",
+  "schemaVersion": "3",
   "specId": "tsfg-r01-v1",
   "languageBaseline": "TypeScript 7.0.2",
   "rules": [{

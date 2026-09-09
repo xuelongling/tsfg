@@ -18,6 +18,140 @@ async function minimalCorpus() {
   };
 }
 
+test("integer records round trip exact declared boundaries beyond host number precision", async () => {
+  const corpus = await minimalCorpus();
+  const values = [
+    { type: "i8", value: "-128" }, { type: "i8", value: "127" },
+    { type: "u8", value: "255" }, { type: "i16", value: "-32768" },
+    { type: "i16", value: "32767" }, { type: "u16", value: "65535" },
+    { type: "i32", value: "-2147483648" }, { type: "i32", value: "2147483647" },
+    { type: "u32", value: "4294967295" }, { type: "i64", value: "-9223372036854775808" },
+    { type: "i64", value: "9223372036854775807" }, { type: "u64", value: "18446744073709551615" },
+    { type: "u64", value: "9007199254740993" }, { type: "u64", value: "9007199254740992" },
+    ...["u8", "u16", "u32", "u64"].map((type) => ({ type, value: "0" })),
+  ];
+  for (const value of values) {
+    corpus.cases[0].invocation.arguments = [value];
+    corpus.cases[0].invocation.returnType = value.type;
+    corpus.cases[0].oracle.value = value;
+    const input = JSON.stringify(corpus);
+    const report = JSON.parse(JSON.stringify(validateCorpus(JSON.parse(input))));
+    assert.equal(report.recordValidation, "valid", JSON.stringify(value));
+    assert.deepEqual(report.cases[0].invocation, corpus.cases[0].invocation);
+    assert.deepEqual(report.cases[0].oracle, corpus.cases[0].oracle);
+    assert.equal(report.languageValidation, "not-executed");
+    assert.equal(report.realProductPasses, 0);
+    assert.equal(JSON.stringify(corpus), input);
+  }
+});
+
+test("float raw bits and scalar aliases survive reports without NaN or signed-zero normalization", async () => {
+  const corpus = await minimalCorpus();
+  const values = [
+    ...["0000", "8000", "7e01", "7e02", "7c01"].map((bits) => ({ type: "f16", bits })),
+    ...["00000000", "80000000", "7fc00001", "7fc00002", "7f800001"].map((bits) => ({ type: "f32", bits })),
+    ...["0000000000000000", "8000000000000000", "7ff8000000000001", "7ff8000000000002", "7ff0000000000001"].map((bits) => ({ type: "f64", bits })),
+    { type: "number", bits: "7FF8000000000001" },
+    { type: "bool", value: true }, { type: "boolean", value: false },
+  ];
+  for (const value of values) {
+    for (const returnType of value.type === "number" || value.type === "f64" ? ["number", "f64"]
+      : value.type === "boolean" || value.type === "bool" ? ["boolean", "bool"] : [value.type]) {
+      corpus.cases[0].invocation = { entry: "tool-only", arguments: [value], returnType };
+      corpus.cases[0].oracle.value = value;
+      const before = JSON.stringify(corpus);
+      const report = JSON.parse(JSON.stringify(validateCorpus(JSON.parse(before))));
+      assert.equal(report.recordValidation, "valid", `${returnType}: ${JSON.stringify(value)}`);
+      assert.deepEqual(report.cases[0].invocation, corpus.cases[0].invocation);
+      assert.deepEqual(report.cases[0].oracle, corpus.cases[0].oracle);
+      assert.equal(report.realProductPasses, 0);
+      assert.equal(report.languageValidation, "not-executed");
+      assert.equal(JSON.stringify(corpus), before);
+    }
+  }
+});
+
+test("both input and oracle reject damaged numeric encodings and declared type mismatches", async () => {
+  const invalid = [
+    { type: "i32", value: "1", bits: "00000001" },
+    ...["", " 1", "1 ", "+1", "01", "-0", "1.0", "1e2", "0xff", "1_000", "NaN", "1\n"].map((value) => ({ type: "i32", value })),
+    ...[1, true, null, {}, [], 9007199254740992].map((value) => ({ type: "i64", value })),
+    ...[["i8", "-129"], ["i8", "128"], ["u8", "256"], ["i16", "-32769"], ["i16", "32768"],
+      ["u16", "65536"], ["i32", "-2147483649"], ["i32", "2147483648"], ["u32", "4294967296"],
+      ["i64", "-9223372036854775809"], ["i64", "9223372036854775808"], ["u64", "18446744073709551616"]]
+      .map(([type, value]) => ({ type, value })),
+    ...["u8", "u16", "u32", "u64"].map((type) => ({ type, value: "-1" })),
+    ...["bool", "boolean"].flatMap((type) => [0, 1, "0", "1", "true", null].map((value) => ({ type, value }))),
+    ...["f16", "f32", "f64", "number"].flatMap((type) => ["", "0x0000", "xyz0", "000", "00000", "0000000g", "00000000000000000", 0, null].map((bits) => ({ type, bits }))),
+    { type: "f32", bits: "00000000", value: 0 }, { type: "bool", value: true, bits: "01" },
+    { type: "f16", value: 0 }, { type: "i128", value: "0" }, null,
+  ];
+  for (const value of invalid) {
+    for (const field of ["invocation.arguments", "oracle.value"]) {
+      const corpus = await minimalCorpus();
+      if (field === "invocation.arguments") corpus.cases[0].invocation.arguments = [value];
+      else {
+        corpus.cases[0].invocation.returnType = value?.type === "i128" || !value ? "i32" : value.type;
+        corpus.cases[0].oracle.value = value;
+      }
+      const before = JSON.stringify(corpus);
+      const report = validateCorpus(JSON.parse(before));
+      assert.deepEqual(report.errors, [{ category: "corpus-record-invalid", object: "r01-add-001", field }], JSON.stringify(value));
+      assert.equal(report.recordValidation, "invalid");
+      assert.equal(report.realProductPasses, 0);
+      assert.equal("cases" in report, false);
+      assert.equal(JSON.stringify(corpus), before);
+    }
+  }
+  for (const [returnType, value] of [["i32", { type: "bool", value: true }], ["bool", { type: "i32", value: "1" }],
+    ["i32", { type: "u32", value: "1" }], ["f64", { type: "f32", bits: "00000000" }]]) {
+    const corpus = await minimalCorpus();
+    corpus.cases[0].invocation.returnType = returnType;
+    corpus.cases[0].oracle.value = value;
+    assert.equal(validateCorpus(corpus).errors[0].field, "oracle.value");
+  }
+});
+
+test("target-sized integers require matching explicit DataLayout and obey its range", async () => {
+  for (const [width, type, value, overflow] of [
+    ["32", "isize", "-2147483648", "-2147483649"],
+    ["32", "isize", "2147483647", "2147483648"],
+    ["32", "usize", "4294967295", "4294967296"],
+    ["64", "isize", "-9223372036854775808", "-9223372036854775809"],
+    ["64", "isize", "9223372036854775807", "9223372036854775808"],
+    ["64", "usize", "18446744073709551615", "18446744073709551616"],
+  ]) {
+    const corpus = await minimalCorpus();
+    const record = corpus.cases[0];
+    record.dataLayout = { target: record.target, pointerSizeBits: width };
+    record.invocation = { entry: "tool-only", arguments: [{ type, value }], returnType: type };
+    record.oracle.value = { type, value };
+    const report = JSON.parse(JSON.stringify(validateCorpus(corpus)));
+    assert.equal(report.recordValidation, "valid");
+    assert.deepEqual(report.cases[0].dataLayout, record.dataLayout);
+    assert.deepEqual(report.cases[0].oracle.value, { type, value });
+    for (const field of ["invocation.arguments", "oracle.value"]) {
+      const broken = structuredClone(corpus);
+      if (field === "invocation.arguments") broken.cases[0].invocation.arguments = [{ type, value: overflow }];
+      else broken.cases[0].oracle.value.value = overflow;
+      assert.equal(validateCorpus(broken).errors[0].field, field);
+    }
+    for (const dataLayout of [undefined, null, {}, { target: "other", pointerSizeBits: width },
+      ...[undefined, 32, "0", "-1", "32.0", "032", "128"].map((pointerSizeBits) => ({ target: record.target, pointerSizeBits }))]) {
+      const broken = structuredClone(corpus);
+      broken.cases[0].dataLayout = dataLayout;
+      const rejected = validateCorpus(broken);
+      assert.deepEqual(rejected.errors, [{ category: "corpus-record-invalid", object: record.caseId, field: "dataLayout" }]);
+    }
+  }
+  const corpus = await minimalCorpus();
+  corpus.cases[0].invocation.arguments = [{ type: "usize", value: "0" }];
+  assert.equal(validateCorpus(corpus).errors[0].field, "dataLayout");
+  corpus.cases[0].invocation.arguments = [];
+  corpus.cases[0].invocation.returnType = "isize";
+  assert.equal(validateCorpus(corpus).errors[0].field, "dataLayout");
+});
+
 test("unknown record versions fail with a stable category and object location", async () => {
   for (const key of ["rules", "support", "catalog", "case"]) {
     const corpus = await minimalCorpus();
@@ -226,14 +360,19 @@ test("removing an active record requires retirement, and inconsistent history is
 });
 
 test("old development formats and damaged inputs still report no real language execution", async () => {
+  for (const oldVersion of ["1", "2"]) {
   for (const section of ["rules", "support", "catalog", "case"]) {
     const corpus = await minimalCorpus();
-    (section === "case" ? corpus.cases[0] : corpus[section]).schemaVersion = "1";
+    (section === "case" ? corpus.cases[0] : corpus[section]).schemaVersion = oldVersion;
     const report = validateCorpus(corpus);
     assert.equal(report.errors[0].category, "corpus-version-unsupported");
     assert.equal(report.languageValidation, "not-executed");
     assert.equal(report.realProductPasses, 0);
     assert.equal("cases" in report, false);
+  }
+  const old = await minimalCorpus();
+  for (const record of [old.rules, old.support, old.catalog, ...old.cases]) record.schemaVersion = oldVersion;
+  assert.equal(validateCorpus(old).errors[0].category, "corpus-version-unsupported");
   }
 });
 
@@ -269,7 +408,7 @@ test("a corpus author validates a source case without claiming language executio
   const report = validateCorpus(await minimalCorpus());
   context.diagnostic(JSON.stringify(report));
   assert.deepEqual(report, {
-    schemaVersion: "2",
+    schemaVersion: "3",
     recordValidation: "valid",
     languageValidation: "not-executed",
     realProductPasses: 0,
@@ -282,6 +421,8 @@ test("a corpus author validates a source case without claiming language executio
       specId: "tsfg-r01-v1", corpusId: "tsfg-r01-minimal-v1", caseId: "r01-add-001",
       sourceId: "add.ts", ruleIds: ["r01-i32-add"], capabilities: ["scalar-i32"],
       target: "windows-x86_64-msvc", mode: "strict", languageValidation: "not-executed",
+      invocation: (await minimalCorpus()).cases[0].invocation,
+      oracle: (await minimalCorpus()).cases[0].oracle,
     }],
   });
 });
@@ -292,7 +433,7 @@ test("a damaged case reports its missing oracle basis through the same boundary"
   const report = validateCorpus(corpus);
   context.diagnostic(JSON.stringify(report));
   assert.deepEqual(report, {
-    schemaVersion: "2",
+    schemaVersion: "3",
     recordValidation: "invalid",
     languageValidation: "not-executed", realProductPasses: 0,
     errors: [{ category: "corpus-record-invalid", object: "r01-add-001", field: "oracle.basis" }],
@@ -374,5 +515,9 @@ test("validation preserves source and oracle data, including opaque non-program 
   assert.equal(report.recordValidation, "valid");
   assert.equal(report.languageValidation, "not-executed");
   assert.equal(report.realProductPasses, 0);
+  assert.deepEqual(corpus, opaqueBefore);
+  report.cases[0].invocation.arguments[0].value = true;
+  report.cases[0].oracle.value.value = false;
+  report.cases[0].oracle.basis.derivation = "Changed report only";
   assert.deepEqual(corpus, opaqueBefore);
 });

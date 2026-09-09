@@ -8,11 +8,11 @@ export function validateCorpus(corpus) {
   const error = validateRecords(corpus) ?? validateIdentities(corpus) ?? validateRevisions(corpus)
     ?? validateLifecycle(corpus) ?? validateReferences(corpus);
   if (error) return {
-    schemaVersion: "2", recordValidation: "invalid", errors: [error],
+    schemaVersion: "3", recordValidation: "invalid", errors: [error],
     languageValidation: "not-executed", realProductPasses: 0,
   };
   return {
-    schemaVersion: "2",
+    schemaVersion: "3",
     recordValidation: "valid",
     languageValidation: "not-executed",
     realProductPasses: 0,
@@ -21,9 +21,11 @@ export function validateCorpus(corpus) {
       specId: corpus.rules.specId, corpusId: corpus.catalog.corpusId,
     },
     catalog: structuredClone(corpus.catalog),
-    cases: corpus.cases.map(({ specId, corpusId, caseId, sourceId, ruleIds, capabilities, target, mode }) => ({
+    cases: corpus.cases.map(({ specId, corpusId, caseId, sourceId, ruleIds, capabilities, target, mode, invocation, oracle, dataLayout }) => ({
       specId, corpusId, caseId, sourceId, ruleIds: [...ruleIds], capabilities: [...capabilities],
       target, mode, languageValidation: "not-executed",
+      invocation: structuredClone(invocation), oracle: structuredClone(oracle),
+      ...(dataLayout === undefined ? {} : { dataLayout: structuredClone(dataLayout) }),
     })),
   };
 }
@@ -123,18 +125,37 @@ const object = (value) => value !== null && typeof value === "object" && !Array.
 const records = (value) => Array.isArray(value) && value.length > 0;
 const nonemptyTextArray = (value) => records(value) && value.every(text);
 const textArray = (value) => Array.isArray(value) && value.every(text);
-const version = (value) => value === "2";
+const version = (value) => value === "3";
 const natural = (value) => typeof value === "string" && /^(0|[1-9][0-9]*)$/.test(value);
 const positive = (value) => natural(value) && value !== "0";
-const scalarType = (value) => value === "i32" || value === "bool";
+const integerWidths = new Map([["i8", 8], ["u8", 8], ["i16", 16], ["u16", 16], ["i32", 32], ["u32", 32], ["i64", 64], ["u64", 64]]);
+const floatDigits = new Map([["f16", 4], ["f32", 8], ["f64", 16]]);
+const canonicalType = (value) => value === "boolean" ? "bool" : value === "number" ? "f64" : value;
+const targetInteger = (value) => value === "isize" || value === "usize";
+const scalarType = (value) => integerWidths.has(value) || targetInteger(value) || floatDigits.has(canonicalType(value)) || canonicalType(value) === "bool";
 
-/** @typedef {{type: "i32", value: string} | {type: "bool", value: boolean}} Scalar */
-function scalar(value) {
+function scalar(value, dataLayout) {
   if (!object(value)) return false;
-  if (value.type === "bool") return typeof value.value === "boolean";
-  if (value.type !== "i32" || typeof value.value !== "string" || !/^(0|-?[1-9][0-9]*)$/.test(value.value)) return false;
+  const type = canonicalType(value.type);
+  const representation = floatDigits.has(type) ? "bits" : "value";
+  if (Object.keys(value).some((key) => key !== "type" && key !== representation)) return false;
+  if (type === "bool") return typeof value.value === "boolean";
+  if (floatDigits.has(type)) return typeof value.bits === "string"
+    && value.bits.length === floatDigits.get(type) && /^[0-9a-fA-F]+$/.test(value.bits);
+  const width = targetInteger(type) ? Number(dataLayout.pointerSizeBits) : integerWidths.get(type);
+  if (!width || typeof value.value !== "string" || !/^(0|-?[1-9][0-9]*)$/.test(value.value)) return false;
   const integer = BigInt(value.value);
-  return integer >= -2147483648n && integer <= 2147483647n;
+  const signed = value.type.startsWith("i");
+  const limit = 1n << BigInt(width - (signed ? 1 : 0));
+  return integer >= (signed ? -limit : 0n) && integer < limit;
+}
+
+function layoutForCase(record) {
+  const needed = targetInteger(record.invocation?.returnType) || targetInteger(record.oracle?.value?.type)
+    || (Array.isArray(record.invocation?.arguments) && record.invocation.arguments.some((value) => targetInteger(value?.type)));
+  if (!needed && record.dataLayout === undefined) return true;
+  return object(record.dataLayout) && record.dataLayout.target === record.target
+    && ["8", "16", "32", "64"].includes(record.dataLayout.pointerSizeBits);
 }
 
 function fields(record, identity, requirements) {
@@ -198,11 +219,12 @@ function validateRecords(corpus) {
       schemaVersion: version, specId: text, corpusId: text, caseId: logicalId, sourceId: logicalSource,
       ruleIds: nonemptyTextArray, capabilities: nonemptyTextArray, target: text, mode: text, applicability: text,
       budgets: object, invocation: object, oracle: object, "oracle.basis": object,
+      dataLayout: () => layoutForCase(record),
       "budgets.semanticFuel": natural, "budgets.activeDepth": positive,
       "budgets.physicalInstructions": positive, "budgets.memoryBytes": positive, "budgets.hostTimeMs": positive,
-      "invocation.entry": text, "invocation.arguments": (value) => Array.isArray(value) && value.every(scalar),
+      "invocation.entry": text, "invocation.arguments": (value) => Array.isArray(value) && value.every((item) => scalar(item, record.dataLayout)),
       "invocation.returnType": scalarType, "oracle.kind": (value) => value === "return",
-      "oracle.value": (value) => scalar(value) && value.type === record.invocation.returnType,
+      "oracle.value": (value) => scalar(value, record.dataLayout) && canonicalType(value.type) === canonicalType(record.invocation.returnType),
       "oracle.basis.kind": (value) => value === "mathematical-derivation" || value === "manual-derivation",
       "oracle.basis.reference": text, "oracle.basis.derivation": text,
     });

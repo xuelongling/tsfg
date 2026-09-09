@@ -26,15 +26,17 @@ oracle is independently derived from the R01 language contract. Rule and case
 identities are stable names; `sourceId` identifies logical source independently of
 the caller's filesystem root. Source content and oracle records are never mutated.
 
-Version `2` is an unpublished development record format for this slice,
+Version `3` is an unpublished development record format for this slice,
 not a product artifact family or a full R01 schema. Rules and support records carry
-`specId`; cases also carry `corpusId`. Version 1 inputs and mixed versions are
+`specId`; cases also carry `corpusId`. Version 1/2 inputs and mixed versions are
 rejected. The same-repository authoring fixtures and consumer have been updated
 atomically under ECP-0002; no published format or product registry is changed.
 The example files document the required
-fields. Inputs and return expectations use `{ type: "i32", value: "5" }` or
-`{ type: "bool", value: true }`. The return type must match the oracle value.
-Integer values are canonical decimal strings in i32 range. All five budget
+fields. Version 3 adds lossless numeric records and detached invocation/oracle
+data in reports; callers must invalidate version 1/2 records and cached reports.
+The fixture schema migration changes no source, language rule or independent
+expectation, so their spec/corpus content revisions remain unchanged.
+All five budget
 fields are decimal strings: Semantic Fuel permits zero, and active depth,
 physical instruction count, memory bytes and host time in milliseconds are
 positive. These are authored execution conditions, not enforced resource limits.
@@ -57,7 +59,7 @@ errors, not product Diagnostic Codes or Trap Codes.
 
 ## Identity and revision authoring
 
-`catalog.json` carries version 2, the current `corpusId`, ordered
+`catalog.json` carries version 3, the current `corpusId`, ordered
 `specRevisions` and `corpusRevisions` arrays, and an `identities` ledger.
 Each revision has a unique `id` within its history and a nonempty `change` note.
 Append specification changes to the first history and case corrections to the
@@ -106,8 +108,7 @@ Node tools and generated output do not establish an official frontend intake.
 
 ## Remaining slices and testing
 
-Complete numeric representations,
-source ranges, coverage requirements, result comparison and evidence-backed
+Source ranges, coverage requirements, result comparison and evidence-backed
 capability status belong to subsequent R01 tickets. No source scanner, parser,
 checker, execution adapter or JavaScript execution is part of this module.
 The source is opaque data even when it is not a valid program.
@@ -121,3 +122,48 @@ and retirement reports. Additional relationships and errors in tests are explici
 tool fixtures, not additional language rules or execution claims.
 Passing tests prove validation-tool behavior only.
 There is no real frontend or language execution evidence in this delivery.
+
+## Lossless scalar records
+
+Inputs and return expectations share exactly the same scalar validation:
+
+| Type | Representation |
+| --- | --- |
+| i8/i16/i32/i64, u8/u16/u32/u64 | `{ type: "i64", value: "9007199254740993" }` |
+| bool, boolean | `{ type: "bool", value: true }` |
+| f16/f32/f64, number | `{ type: "f32", bits: "80000000" }` |
+| isize, usize | Decimal string plus the case's explicit `dataLayout` below |
+
+Scalar objects contain only `type` and their representation field. Integers use
+canonical decimal strings: `0` or optional minus followed by a nonzero digit and
+digits. No plus, negative zero, leading zero, whitespace, separators, exponent,
+fraction or host JSON number is accepted. Range validation uses exact integers
+with the declared width and signedness; no arithmetic or conversion is executed.
+Bool never coerces integer 0/1 or strings. `boolean` matches `bool` and `number`
+matches `f64` when checking the declared return type; all other types must match
+exactly. Reports preserve the author's alias spelling.
+
+Float `bits` contains exactly 4, 8 or 16 hexadecimal digits for f16, f32 or f64
+respectively, with no `0x` prefix. Either letter case is accepted and preserved.
+Every bit pattern is recordable, including signed zero, infinities, subnormals,
+and distinct quiet/signaling NaN payloads. This validates raw-bit transport only,
+not float operations, rounding, conversions or canonical arithmetic NaNs.
+
+Any isize/usize input, return declaration or oracle requires a case-local
+`dataLayout: { target: "windows-x86_64-msvc", pointerSizeBits: "64" }` whose target
+equals the case target. The current record format accepts pointer widths `8`,
+`16`, `32`, `64` as decimal strings. Missing, malformed, unsupported or mismatched
+layout conditions fail at `dataLayout`, even when the value is zero. A supplied
+layout is validated even for fixed-width cases. The author supplies this target
+DataLayout projection; the validator does not discover or authenticate a real
+backend layout, infer it from the target name, or fall back to the host width.
+The report preserves the supplied projection for later consumers.
+
+Valid reports retain detached `invocation`, `oracle` (including its independent
+basis), and optional `dataLayout` per case. JSON serialization preserves every
+integer string, float bit spelling and boolean. Invalid scalars fail with
+`corpus-record-invalid` at `invocation.arguments` or `oracle.value`; invalid
+return declarations fail at `invocation.returnType`. Neither path rewrites source
+or expectations, and neither creates a product Diagnostic Code or Trap Code.
+The additional numeric test vectors are comparator-tool inputs using opaque
+source, not executed language corpus coverage or support claims.
