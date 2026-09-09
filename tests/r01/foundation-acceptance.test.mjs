@@ -6,7 +6,7 @@ import { createHash } from "node:crypto";
 import { validateCorpus } from "../../tooling/conformance/corpus.mjs";
 import { loadFoundation } from "./foundation-fixture.mjs";
 
-const hash = (bytes) => createHash("sha256").update(bytes).digest("hex");
+const hash = (bytes) => `sha256:${createHash("sha256").update(bytes).digest("hex")}`;
 async function inputHashes() {
   const root = new URL("./corpus/", import.meta.url);
   const files = await readdir(root, { recursive: true, withFileTypes: true });

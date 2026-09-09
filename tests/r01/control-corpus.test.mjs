@@ -1,27 +1,8 @@
 // SPDX-License-Identifier: MIT
 import assert from "node:assert/strict";
-import { readFile } from "node:fs/promises";
 import test from "node:test";
 import { validateCorpus } from "../../tooling/conformance/corpus.mjs";
-
-async function controlCorpus() {
-  const read = async (name) => JSON.parse(await readFile(new URL(`./corpus/${name}`, import.meta.url), "utf8"));
-  const directory = await read("r01-directory.json");
-  const catalog = await read("control/catalog.json");
-  const numericCases = await read("i32/cases.json");
-  // Compose the numeric inputs into this catalog's newer corpus snapshot.
-  for (const record of numericCases) record.corpusId = catalog.corpusId;
-  const cases = [...numericCases, ...await read("control/cases.json")];
-  for (const rule of directory.rules) rule.caseIds = cases.filter((record) => record.ruleIds.includes(rule.ruleId)).map((record) => record.caseId);
-  return {
-    rules: { schemaVersion: directory.schemaVersion, specId: directory.specId, languageBaseline: directory.languageBaseline, rules: directory.rules },
-    support: { schemaVersion: directory.schemaVersion, specId: directory.specId, capabilities: directory.capabilities },
-    catalog, cases,
-    sources: await Promise.all([...new Set(cases.map((record) => record.sourceId))].map(async (sourceId) => ({
-      sourceId, content: await readFile(new URL(`./corpus/${sourceId}`, import.meta.url), "utf8"),
-    }))),
-  };
-}
+import { loadFoundation as controlCorpus } from "./foundation-fixture.mjs";
 
 test("authored control flow and calls cover branches, loops and recursion without executing source", async () => {
   const corpus = await controlCorpus();
