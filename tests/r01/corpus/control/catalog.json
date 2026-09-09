@@ -1,0 +1,1118 @@
+{
+  "schemaVersion": "6",
+  "corpusId": "tsfg-r01-control-v1",
+  "specRevisions": [
+    {
+      "id": "tsfg-r01-v1",
+      "change": "Initial fixed-width i32 addition requirement."
+    },
+    {
+      "id": "tsfg-r01-v2",
+      "change": "R01 staged rule and coverage responsibilities."
+    },
+    {
+      "id": "tsfg-r01-v3",
+      "change": "Refine i32/bool boundary obligations and allocate numeric diagnostic/trap identities without changing language semantics."
+    },
+    {
+      "id": "tsfg-r01-v4",
+      "change": "Refine control, evaluation and budget boundary responsibilities; allocate stable failure identities. No language semantic change."
+    }
+  ],
+  "corpusRevisions": [
+    {
+      "id": "tsfg-r01-minimal-v1",
+      "change": "Initial independently derived addition case."
+    },
+    {
+      "id": "tsfg-r01-i32-v1",
+      "change": "Original authored i32/bool numeric corpus; independent mathematical expectations, no execution evidence."
+    },
+    {
+      "id": "tsfg-r01-control-v1",
+      "change": "Add original control flow and logical budget oracles alongside unchanged numeric cases."
+    }
+  ],
+  "identities": [
+    {
+      "kind": "rule",
+      "id": "r01-ts-baseline",
+      "meaning": "Ordinary lexical, grammar, naming, type relations, control flow and class construction MUST inherit fixed TS 7.0.2 unless an explicit necessary difference applies.",
+      "status": "active",
+      "introducedIn": "tsfg-r01-v2"
+    },
+    {
+      "kind": "rule",
+      "id": "r01-input-boundary",
+      "meaning": "Source/declaration input MUST be TS; JS runtime fallback and architectural dynamic features MUST NOT be introduced.",
+      "status": "active",
+      "introducedIn": "tsfg-r01-v2"
+    },
+    {
+      "kind": "rule",
+      "id": "r01-literals",
+      "meaning": "Integer tokens MUST be read as exact mathematical values; untyped literals default to i32 or use an explicit context.",
+      "status": "active",
+      "introducedIn": "tsfg-r01-v2"
+    },
+    {
+      "kind": "rule",
+      "id": "r01-bool",
+      "meaning": "bool and boolean MUST be aliases; first-slice conditions and short circuit MUST operate on bool.",
+      "status": "active",
+      "introducedIn": "tsfg-r01-v2"
+    },
+    {
+      "kind": "rule",
+      "id": "r01-i32-add",
+      "meaning": "Wrapping i32 addition",
+      "status": "active",
+      "introducedIn": "tsfg-r01-v1"
+    },
+    {
+      "kind": "rule",
+      "id": "r01-i32-wrap",
+      "meaning": "i32 subtraction, multiplication and negation MUST wrap at 32 bits.",
+      "status": "active",
+      "introducedIn": "tsfg-r01-v2"
+    },
+    {
+      "kind": "rule",
+      "id": "r01-division",
+      "meaning": "i32 division MUST truncate toward zero and nonzero remainder MUST have the dividend sign.",
+      "status": "active",
+      "introducedIn": "tsfg-r01-v2"
+    },
+    {
+      "kind": "rule",
+      "id": "r01-shifts",
+      "meaning": "i32 shift counts MUST be i32 in 0..31; >> sign extends and >>> zero fills with i32 result.",
+      "status": "active",
+      "introducedIn": "tsfg-r01-v2"
+    },
+    {
+      "kind": "rule",
+      "id": "r01-control",
+      "meaning": "The W1 slice MUST cover top-level i32/bool functions, initialized const/let, simple assignment, arithmetic/comparison, if/else, while, calls and return without reference allocation.",
+      "status": "active",
+      "introducedIn": "tsfg-r01-v2"
+    },
+    {
+      "kind": "rule",
+      "id": "r01-calls",
+      "meaning": "Forward calls and direct/mutual recursion MUST be permitted in the first slice.",
+      "status": "active",
+      "introducedIn": "tsfg-r01-v2"
+    },
+    {
+      "kind": "rule",
+      "id": "r01-evaluation",
+      "meaning": "Operands and arguments MUST evaluate left to right; first actual trap stops later evaluation; folding MUST preserve execution paths.",
+      "status": "active",
+      "introducedIn": "tsfg-r01-v2"
+    },
+    {
+      "kind": "rule",
+      "id": "r01-fuel",
+      "meaning": "Function entry and every while condition check MUST each cost one Semantic Fuel before the event, including initial and final false checks.",
+      "status": "active",
+      "introducedIn": "tsfg-r01-v2"
+    },
+    {
+      "kind": "rule",
+      "id": "r01-depth",
+      "meaning": "Entry active depth MUST be one; excess depth MUST fail before a new frame enters, after explicit argument evaluation.",
+      "status": "active",
+      "introducedIn": "tsfg-r01-v2"
+    },
+    {
+      "kind": "rule",
+      "id": "r01-failure-channels",
+      "meaning": "trap MUST terminate the request with structured failure, not kill the host, be caught by language catch or roll back prior effects; physical failures are Execution Abort.",
+      "status": "active",
+      "introducedIn": "tsfg-r01-v2"
+    },
+    {
+      "kind": "rule",
+      "id": "r01-numeric-family",
+      "meaning": "Integer rules MUST generalize by width; isize/usize MUST use target DataLayout; number MUST alias f64.",
+      "status": "active",
+      "introducedIn": "tsfg-r01-v2"
+    },
+    {
+      "kind": "rule",
+      "id": "r01-conversions",
+      "meaning": "Explicit calls MUST distinguish checked conversion, integer truncation/wrap and equal-width scalar bit reinterpretation; as is not numeric conversion.",
+      "status": "active",
+      "introducedIn": "tsfg-r01-v2"
+    },
+    {
+      "kind": "rule",
+      "id": "r01-strict-float",
+      "meaning": "Strict float MUST retain declared precision at every step, nearest/ties-even, subnormals, signed zero and no implicit FMA; arithmetic NaN is canonical, moves preserve raw bits.",
+      "status": "active",
+      "introducedIn": "tsfg-r01-v2"
+    },
+    {
+      "kind": "rule",
+      "id": "r01-values",
+      "meaning": "Values/components MUST retain explicit identity, fixed layout, value copies and per-field equality, excluding padding; no inheritance.",
+      "status": "active",
+      "introducedIn": "tsfg-r01-v2"
+    },
+    {
+      "kind": "rule",
+      "id": "r01-references",
+      "meaning": "Ordinary GC class copies MUST retain object identity; source compatibility and construction MUST follow TS rather than universal nominal assignment.",
+      "status": "active",
+      "introducedIn": "tsfg-r01-v2"
+    },
+    {
+      "kind": "rule",
+      "id": "r01-null-safety",
+      "meaning": "Strict null checks MUST stay enabled; native storage MUST be initialized before reads; nonnull assertions MUST NOT bypass actual safety checks.",
+      "status": "active",
+      "introducedIn": "tsfg-r01-v2"
+    },
+    {
+      "kind": "rule",
+      "id": "r01-generics",
+      "meaning": "Generics MUST specialize whole-program concrete arguments, reuse identical instances and allow ordinary recursion.",
+      "status": "active",
+      "introducedIn": "tsfg-r01-v2"
+    },
+    {
+      "kind": "rule",
+      "id": "r01-unions",
+      "meaning": "Unions MUST retain TS narrowing with statically typed representation, no implicit dynamic boxing or universal handwritten source tags.",
+      "status": "active",
+      "introducedIn": "tsfg-r01-v2"
+    },
+    {
+      "kind": "rule",
+      "id": "r01-closures",
+      "meaning": "Closures MUST capture logical bindings with shared writes, safe managed environments and persistent FunctionId.",
+      "status": "active",
+      "introducedIn": "tsfg-r01-v2"
+    },
+    {
+      "kind": "rule",
+      "id": "r01-modules",
+      "meaning": "Module source behavior MUST follow TS live bindings and project/source module detection; runtime failed initialization MUST not publish partial state or automatically retry.",
+      "status": "active",
+      "introducedIn": "tsfg-r01-v2"
+    },
+    {
+      "kind": "rule",
+      "id": "r01-exceptions",
+      "meaning": "Managed Exception MUST follow ordinary throw/catch/finally without a universal nominal base restriction, remaining separate from trap/Abort and excluded from Zig ABI/kernel.",
+      "status": "active",
+      "introducedIn": "tsfg-r01-v2"
+    },
+    {
+      "kind": "rule",
+      "id": "r01-vector",
+      "meaning": "T[]/Array<T> MUST be continuous homogeneous vectors, not sparse JS arrays or object dictionaries.",
+      "status": "active",
+      "introducedIn": "tsfg-r01-v2"
+    },
+    {
+      "kind": "rule",
+      "id": "r01-span",
+      "meaning": "ReadSpan/Span MUST be borrowed views whose return/capture obey escape constraints.",
+      "status": "active",
+      "introducedIn": "tsfg-r01-v2"
+    },
+    {
+      "kind": "rule",
+      "id": "r01-string",
+      "meaning": "Immutable UTF-8 storage and StringView MUST have an explicit mapping to TS observable text behavior.",
+      "status": "active",
+      "introducedIn": "tsfg-r01-v2"
+    },
+    {
+      "kind": "rule",
+      "id": "r01-handle-abi",
+      "meaning": "Zig MUST NOT retain raw managed pointers; only explicit ABI-safe types cross the boundary and GC objects use Handle.",
+      "status": "active",
+      "introducedIn": "tsfg-r01-v2"
+    },
+    {
+      "kind": "rule",
+      "id": "r01-markers",
+      "meaning": "Compile-time markers MUST only express necessary intent not derivable from ordinary TS declarations/types/analysis.",
+      "status": "active",
+      "introducedIn": "tsfg-r01-v2"
+    },
+    {
+      "kind": "rule",
+      "id": "r01-kernel",
+      "meaning": "Kernels MUST exclude managed allocation, GC references, exceptions, await, locks and escaping borrows; Query/Job access and effects are analyzed.",
+      "status": "active",
+      "introducedIn": "tsfg-r01-v2"
+    },
+    {
+      "kind": "rule",
+      "id": "r01-cpu",
+      "meaning": "CPU parallel and reduction behavior MUST have an independent numerical/determinism relation, not strict Execution Equivalence.",
+      "status": "active",
+      "introducedIn": "tsfg-r01-v2"
+    },
+    {
+      "kind": "rule",
+      "id": "r01-fast-math",
+      "meaning": "Fast-math MUST have its own numerical relation, separate from strict bitwise Execution Equivalence.",
+      "status": "active",
+      "introducedIn": "tsfg-r01-v2"
+    },
+    {
+      "kind": "rule",
+      "id": "r01-gpu",
+      "meaning": "GPU numerical/device nondeterminism MUST use an independent GPU contract rather than strict CPU/VM Execution Equivalence.",
+      "status": "active",
+      "introducedIn": "tsfg-r01-v2"
+    },
+    {
+      "kind": "rule",
+      "id": "r01-all-rules",
+      "meaning": "Full R01 MUST retain W3 general language, W4 CPU/fast-math, W5 GPU and all applicable MUST/MUST NOT coverage; first-slice completion is insufficient.",
+      "status": "active",
+      "introducedIn": "tsfg-r01-v2"
+    },
+    {
+      "kind": "case",
+      "id": "r01-add-001",
+      "meaning": "Add two and three",
+      "status": "retired",
+      "introducedIn": "tsfg-r01-minimal-v1",
+      "retiredIn": "tsfg-r01-i32-v1",
+      "reason": "Minimal example remains a separate corpus; expanded numeric cases have distinct stable identities."
+    },
+    {
+      "kind": "diagnostic",
+      "id": "r01-d-integer-range",
+      "meaning": "Exact integer literal outside contextual type range",
+      "status": "active",
+      "introducedIn": "tsfg-r01-v3"
+    },
+    {
+      "kind": "diagnostic",
+      "id": "r01-d-scalar-type",
+      "meaning": "Prohibited implicit scalar type conversion",
+      "status": "active",
+      "introducedIn": "tsfg-r01-v3"
+    },
+    {
+      "kind": "trap",
+      "id": "r01-t-divide-zero",
+      "meaning": "Integer division by zero",
+      "status": "active",
+      "introducedIn": "tsfg-r01-v3"
+    },
+    {
+      "kind": "trap",
+      "id": "r01-t-remainder-zero",
+      "meaning": "Integer remainder by zero",
+      "status": "active",
+      "introducedIn": "tsfg-r01-v3"
+    },
+    {
+      "kind": "trap",
+      "id": "r01-t-shift-count",
+      "meaning": "Shift count outside the operand width",
+      "status": "active",
+      "introducedIn": "tsfg-r01-v3"
+    },
+    {
+      "kind": "diagnostic",
+      "id": "r01-d-shift-count-type",
+      "meaning": "Prohibited implicit scalar type conversion",
+      "status": "active",
+      "introducedIn": "tsfg-r01-v3"
+    },
+    {
+      "kind": "case",
+      "id": "r01-literal-default",
+      "meaning": "The initializer has no type context, so the exact integer 17 defaults to i32; returning the typed local preserves 17.",
+      "status": "active",
+      "introducedIn": "tsfg-r01-i32-v1"
+    },
+    {
+      "kind": "case",
+      "id": "r01-literal-default-boundary",
+      "meaning": "The uncontextualized local defaults to i32. MAX + 1 = 2147483648; subtract 4294967296 to obtain -2147483648.",
+      "status": "active",
+      "introducedIn": "tsfg-r01-i32-v1"
+    },
+    {
+      "kind": "case",
+      "id": "r01-literal-context",
+      "meaning": "The explicit i32 initializer and return expression context type the literals as i32; 17 + 2 = 19 in range.",
+      "status": "active",
+      "introducedIn": "tsfg-r01-i32-v1"
+    },
+    {
+      "kind": "case",
+      "id": "r01-literal-min",
+      "meaning": "Direct unary minus checks the whole mathematical value -2147483648 = -2^31, which is the inclusive i32 lower bound; the positive token alone would not fit.",
+      "status": "active",
+      "introducedIn": "tsfg-r01-i32-v1"
+    },
+    {
+      "kind": "case",
+      "id": "r01-literal-max",
+      "meaning": "2147483647 = 2^31 - 1 is the inclusive signed i32 upper bound.",
+      "status": "active",
+      "introducedIn": "tsfg-r01-i32-v1"
+    },
+    {
+      "kind": "case",
+      "id": "r01-literal-overflow",
+      "meaning": "2147483648 = 2^31 exceeds 2^31 - 1 by one; a positive literal is rejected at compile time, never wrapped.",
+      "status": "active",
+      "introducedIn": "tsfg-r01-i32-v1"
+    },
+    {
+      "kind": "case",
+      "id": "r01-literal-positive-reject",
+      "meaning": "An i32 initializer cannot contain the positive mathematical value 2^31; its range is [-2^31, 2^31-1].",
+      "status": "active",
+      "introducedIn": "tsfg-r01-i32-v1"
+    },
+    {
+      "kind": "case",
+      "id": "r01-literal-hex",
+      "meaning": "Eight hexadecimal f digits denote 16^8 - 1 = 4294967295, greater than 2147483647; exact token typing does not reinterpret this spelling as -1.",
+      "status": "active",
+      "introducedIn": "tsfg-r01-i32-v1"
+    },
+    {
+      "kind": "case",
+      "id": "r01-literal-exact",
+      "meaning": "The decimal token denotes exactly 9007199254740993 = 2^53 + 1, beyond i32 and host f64 exact-integer precision; range rejection follows from the original token, not a rounded host number.",
+      "status": "active",
+      "introducedIn": "tsfg-r01-i32-v1"
+    },
+    {
+      "kind": "case",
+      "id": "r01-typed-bool-to-i32",
+      "meaning": "The local is already bool, so ABI encoding 1 cannot authorize assigning it to i32. This covers the i32/bool boundary, not other numeric widths.",
+      "status": "active",
+      "introducedIn": "tsfg-r01-i32-v1"
+    },
+    {
+      "kind": "case",
+      "id": "r01-bool-integer",
+      "meaning": "The local is i32, so even value 1 cannot implicitly become bool. ABI 0/1 representation is not a source conversion.",
+      "status": "active",
+      "introducedIn": "tsfg-r01-i32-v1"
+    },
+    {
+      "kind": "case",
+      "id": "r01-bool-alias",
+      "meaning": "bool and boolean name the same type; binding and returning true preserves true.",
+      "status": "active",
+      "introducedIn": "tsfg-r01-i32-v1"
+    },
+    {
+      "kind": "case",
+      "id": "r01-bool-alias-false",
+      "meaning": "The aliases share the two-element domain {false,true}; copying false preserves false without integer conversion.",
+      "status": "active",
+      "introducedIn": "tsfg-r01-i32-v1"
+    },
+    {
+      "kind": "case",
+      "id": "r01-add-normal",
+      "meaning": "2 + 3 = 5 is in signed i32 range.",
+      "status": "active",
+      "introducedIn": "tsfg-r01-i32-v1"
+    },
+    {
+      "kind": "case",
+      "id": "r01-add-max",
+      "meaning": "2147483647 + 1 = 2147483648; subtract 2^32 = 4294967296 to obtain -2147483648.",
+      "status": "active",
+      "introducedIn": "tsfg-r01-i32-v1"
+    },
+    {
+      "kind": "case",
+      "id": "r01-add-min",
+      "meaning": "-2147483648 - 1 = -2147483649; adding 4294967296 gives 2147483647.",
+      "status": "active",
+      "introducedIn": "tsfg-r01-i32-v1"
+    },
+    {
+      "kind": "case",
+      "id": "r01-sub-normal",
+      "meaning": "2 - 3 = -1 lies in signed i32 range.",
+      "status": "active",
+      "introducedIn": "tsfg-r01-i32-v1"
+    },
+    {
+      "kind": "case",
+      "id": "r01-mul-normal",
+      "meaning": "(-7) times 3 = -21 lies in signed i32 range.",
+      "status": "active",
+      "introducedIn": "tsfg-r01-i32-v1"
+    },
+    {
+      "kind": "case",
+      "id": "r01-neg-normal",
+      "meaning": "The additive inverse of 7 is -7, which is in signed i32 range.",
+      "status": "active",
+      "introducedIn": "tsfg-r01-i32-v1"
+    },
+    {
+      "kind": "case",
+      "id": "r01-sub-min",
+      "meaning": "-2147483648 - 1 = -2147483649; adding 2^32 gives 2147483647.",
+      "status": "active",
+      "introducedIn": "tsfg-r01-i32-v1"
+    },
+    {
+      "kind": "case",
+      "id": "r01-sub-max",
+      "meaning": "2147483647 - (-1) = 2147483648; subtracting 2^32 gives -2147483648.",
+      "status": "active",
+      "introducedIn": "tsfg-r01-i32-v1"
+    },
+    {
+      "kind": "case",
+      "id": "r01-mul-wrap",
+      "meaning": "1073741824 = 2^30; multiplying by 4 gives 2^32, whose residue modulo 2^32 is zero.",
+      "status": "active",
+      "introducedIn": "tsfg-r01-i32-v1"
+    },
+    {
+      "kind": "case",
+      "id": "r01-mul-sign",
+      "meaning": "2^30 times 2 is 2^31; its signed 32-bit representative is -2^31.",
+      "status": "active",
+      "introducedIn": "tsfg-r01-i32-v1"
+    },
+    {
+      "kind": "case",
+      "id": "r01-neg-min",
+      "meaning": "The inverse of -2^31 is 2^31; subtract 2^32 to obtain -2^31. Negating an already typed value wraps, unlike typing a positive literal.",
+      "status": "active",
+      "introducedIn": "tsfg-r01-i32-v1"
+    },
+    {
+      "kind": "case",
+      "id": "r01-div-pp",
+      "meaning": "7 = 2*3 + 1; the quotient truncates toward zero and the remainder is positive.",
+      "status": "active",
+      "introducedIn": "tsfg-r01-i32-v1"
+    },
+    {
+      "kind": "case",
+      "id": "r01-rem-pp",
+      "meaning": "7 = 2*3 + 1; the quotient truncates toward zero and the remainder is positive.",
+      "status": "active",
+      "introducedIn": "tsfg-r01-i32-v1"
+    },
+    {
+      "kind": "case",
+      "id": "r01-div-np",
+      "meaning": "-7 = (-2)*3 + (-1); truncating -7/3 toward zero gives -2, not -3, and remainder -1 has the dividend sign.",
+      "status": "active",
+      "introducedIn": "tsfg-r01-i32-v1"
+    },
+    {
+      "kind": "case",
+      "id": "r01-rem-np",
+      "meaning": "-7 = (-2)*3 + (-1); truncating -7/3 toward zero gives -2, not -3, and remainder -1 has the dividend sign.",
+      "status": "active",
+      "introducedIn": "tsfg-r01-i32-v1"
+    },
+    {
+      "kind": "case",
+      "id": "r01-div-pn",
+      "meaning": "7 = (-2)*(-3) + 1; quotient truncates toward zero and remainder is positive despite the negative divisor.",
+      "status": "active",
+      "introducedIn": "tsfg-r01-i32-v1"
+    },
+    {
+      "kind": "case",
+      "id": "r01-rem-pn",
+      "meaning": "7 = (-2)*(-3) + 1; quotient truncates toward zero and remainder is positive despite the negative divisor.",
+      "status": "active",
+      "introducedIn": "tsfg-r01-i32-v1"
+    },
+    {
+      "kind": "case",
+      "id": "r01-div-nn",
+      "meaning": "-7 = 2*(-3) + (-1); quotient is positive and remainder has the negative dividend sign.",
+      "status": "active",
+      "introducedIn": "tsfg-r01-i32-v1"
+    },
+    {
+      "kind": "case",
+      "id": "r01-rem-nn",
+      "meaning": "-7 = 2*(-3) + (-1); quotient is positive and remainder has the negative dividend sign.",
+      "status": "active",
+      "introducedIn": "tsfg-r01-i32-v1"
+    },
+    {
+      "kind": "case",
+      "id": "r01-div-normal",
+      "meaning": "6 = 2*3 + 0, so the exact quotient is 2.",
+      "status": "active",
+      "introducedIn": "tsfg-r01-i32-v1"
+    },
+    {
+      "kind": "case",
+      "id": "r01-div-min",
+      "meaning": "The mathematical quotient of -2^31 and -1 is 2^31; the specified i32 representative subtracts 2^32 and equals -2^31, without a trap.",
+      "status": "active",
+      "introducedIn": "tsfg-r01-i32-v1"
+    },
+    {
+      "kind": "case",
+      "id": "r01-rem-min",
+      "meaning": "-2^31 is exactly divisible by -1, so remainder is zero; the quotient wrap rule does not change that remainder.",
+      "status": "active",
+      "introducedIn": "tsfg-r01-i32-v1"
+    },
+    {
+      "kind": "case",
+      "id": "r01-div-zero",
+      "meaning": "With dividend 7 and divisor 0, no integer quotient is defined. The contract requires the runtime divide-zero trap at a / b; this is not a literal range or compile-time error.",
+      "status": "active",
+      "introducedIn": "tsfg-r01-i32-v1"
+    },
+    {
+      "kind": "case",
+      "id": "r01-rem-zero",
+      "meaning": "Remainder with divisor 0 is undefined. The first operation is a % b, which must produce the runtime remainder-zero trap at that expression.",
+      "status": "active",
+      "introducedIn": "tsfg-r01-i32-v1"
+    },
+    {
+      "kind": "case",
+      "id": "r01-shl-normal",
+      "meaning": "1 shifted left by 3 multiplies by 2^3 = 8.",
+      "status": "active",
+      "introducedIn": "tsfg-r01-i32-v1"
+    },
+    {
+      "kind": "case",
+      "id": "r01-shl-zero",
+      "meaning": "A zero left shift preserves the i32 value 1.",
+      "status": "active",
+      "introducedIn": "tsfg-r01-i32-v1"
+    },
+    {
+      "kind": "case",
+      "id": "r01-shl-31",
+      "meaning": "1 shifted left by 31 has bit pattern 80000000, whose signed i32 representative is -2147483648.",
+      "status": "active",
+      "introducedIn": "tsfg-r01-i32-v1"
+    },
+    {
+      "kind": "case",
+      "id": "r01-shl-sign",
+      "meaning": "The all-one pattern of -1 shifted left by one has low 32 bits fffffffe, representing -2.",
+      "status": "active",
+      "introducedIn": "tsfg-r01-i32-v1"
+    },
+    {
+      "kind": "case",
+      "id": "r01-shl-minus-one",
+      "meaning": "-1 is below the inclusive lower count bound 0; do not mask it modulo 32. The failure is a runtime shift-count trap at the shift expression.",
+      "status": "active",
+      "introducedIn": "tsfg-r01-i32-v1"
+    },
+    {
+      "kind": "case",
+      "id": "r01-shl-32",
+      "meaning": "32 exceeds the inclusive upper count bound 31; do not mask it to zero. The failure is a runtime shift-count trap at the shift expression.",
+      "status": "active",
+      "introducedIn": "tsfg-r01-i32-v1"
+    },
+    {
+      "kind": "case",
+      "id": "r01-shr-normal",
+      "meaning": "Sign-extending the all-one pattern of -1 right by 3 retains all one bits, hence -1.",
+      "status": "active",
+      "introducedIn": "tsfg-r01-i32-v1"
+    },
+    {
+      "kind": "case",
+      "id": "r01-shr-zero",
+      "meaning": "A zero right shift preserves the all-one bit pattern. Its declared result is i32, so it represents -1 even for >>>, not u32 4294967295.",
+      "status": "active",
+      "introducedIn": "tsfg-r01-i32-v1"
+    },
+    {
+      "kind": "case",
+      "id": "r01-shr-31",
+      "meaning": "31 sign-extending shifts of -1 preserve all one bits and value -1.",
+      "status": "active",
+      "introducedIn": "tsfg-r01-i32-v1"
+    },
+    {
+      "kind": "case",
+      "id": "r01-shr-sign",
+      "meaning": "Arithmetic right shift copies the sign bit; the all-one -1 pattern remains -1.",
+      "status": "active",
+      "introducedIn": "tsfg-r01-i32-v1"
+    },
+    {
+      "kind": "case",
+      "id": "r01-shr-minus-one",
+      "meaning": "-1 is below the inclusive lower count bound 0; do not mask it modulo 32. The failure is a runtime shift-count trap at the shift expression.",
+      "status": "active",
+      "introducedIn": "tsfg-r01-i32-v1"
+    },
+    {
+      "kind": "case",
+      "id": "r01-shr-32",
+      "meaning": "32 exceeds the inclusive upper count bound 31; do not mask it to zero. The failure is a runtime shift-count trap at the shift expression.",
+      "status": "active",
+      "introducedIn": "tsfg-r01-i32-v1"
+    },
+    {
+      "kind": "case",
+      "id": "r01-ushr-normal",
+      "meaning": "The unsigned pattern 2^32-1 shifted right by 3 leaves 2^29-1 = 536870911.",
+      "status": "active",
+      "introducedIn": "tsfg-r01-i32-v1"
+    },
+    {
+      "kind": "case",
+      "id": "r01-ushr-zero",
+      "meaning": "A zero right shift preserves the all-one bit pattern. Its declared result is i32, so it represents -1 even for >>>, not u32 4294967295.",
+      "status": "active",
+      "introducedIn": "tsfg-r01-i32-v1"
+    },
+    {
+      "kind": "case",
+      "id": "r01-ushr-31",
+      "meaning": "31 zero-filling shifts of ffffffff leave only bit 0, value 1 in i32.",
+      "status": "active",
+      "introducedIn": "tsfg-r01-i32-v1"
+    },
+    {
+      "kind": "case",
+      "id": "r01-ushr-sign",
+      "meaning": "Zero-filling the all-one pattern right by one leaves 31 one bits, 2^31-1 = 2147483647, still typed i32.",
+      "status": "active",
+      "introducedIn": "tsfg-r01-i32-v1"
+    },
+    {
+      "kind": "case",
+      "id": "r01-ushr-minus-one",
+      "meaning": "-1 is below the inclusive lower count bound 0; do not mask it modulo 32. The failure is a runtime shift-count trap at the shift expression.",
+      "status": "active",
+      "introducedIn": "tsfg-r01-i32-v1"
+    },
+    {
+      "kind": "case",
+      "id": "r01-ushr-32",
+      "meaning": "32 exceeds the inclusive upper count bound 31; do not mask it to zero. The failure is a runtime shift-count trap at the shift expression.",
+      "status": "active",
+      "introducedIn": "tsfg-r01-i32-v1"
+    },
+    {
+      "kind": "case",
+      "id": "r01-shift-negative",
+      "meaning": "The typed count -1 is outside 0..31; an illegal count traps at runtime, whereas an incorrectly typed count is a compile-time rejection.",
+      "status": "active",
+      "introducedIn": "tsfg-r01-i32-v1"
+    },
+    {
+      "kind": "case",
+      "id": "r01-shift-count-type",
+      "meaning": "The count is already bool. Its ABI representation cannot convert it to the required i32 count; reject at compile time rather than report a runtime range trap.",
+      "status": "active",
+      "introducedIn": "tsfg-r01-i32-v1"
+    },
+    {
+      "kind": "case",
+      "id": "r01-div-constant-zero",
+      "meaning": "Both literals fit i32. The only evaluated division has zero divisor, so the first observable failure is divide-zero at 1 / 0. Constant folding must preserve the runtime trap, not replace it with compile rejection.",
+      "status": "active",
+      "introducedIn": "tsfg-r01-i32-v1"
+    },
+    {
+      "kind": "diagnostic",
+      "id": "r01-d-unresolved-name",
+      "meaning": "A referenced source name has no resolvable declaration.",
+      "status": "active",
+      "introducedIn": "tsfg-r01-v4"
+    },
+    {
+      "kind": "trap",
+      "id": "r01-t-fuel",
+      "meaning": "Insufficient Semantic Fuel before the next logical charge event.",
+      "status": "active",
+      "introducedIn": "tsfg-r01-v4"
+    },
+    {
+      "kind": "trap",
+      "id": "r01-t-depth",
+      "meaning": "A proposed function frame exceeds the configured active-depth limit.",
+      "status": "active",
+      "introducedIn": "tsfg-r01-v4"
+    },
+    {
+      "kind": "case",
+      "id": "r01-control-locals",
+      "meaning": "E1 main entry costs 1, depth 1. seed=3; true branch assigns 3+4=7; return 7.",
+      "status": "active",
+      "introducedIn": "tsfg-r01-control-v1"
+    },
+    {
+      "kind": "case",
+      "id": "r01-control-if",
+      "meaning": "E1 main entry costs 1 at depth 1; true branch returns 7.",
+      "status": "active",
+      "introducedIn": "tsfg-r01-control-v1"
+    },
+    {
+      "kind": "case",
+      "id": "r01-control-else",
+      "meaning": "E1 main entry costs 1 at depth 1; false branch assigns 3-2=1 and returns 1.",
+      "status": "active",
+      "introducedIn": "tsfg-r01-control-v1"
+    },
+    {
+      "kind": "case",
+      "id": "r01-control-loop",
+      "meaning": "E1 enter main (depth 1); E2 while 0<2 true; E3 while 1<2 true; E4 while 2<2 false. Each costs 1; total 4. Two assignments, return 2.",
+      "status": "active",
+      "introducedIn": "tsfg-r01-control-v1"
+    },
+    {
+      "kind": "case",
+      "id": "r01-control-loop-zero",
+      "meaning": "E1 enter main; E2 while 0<0 false. Each costs 1 at depth 1; no body; return 0.",
+      "status": "active",
+      "introducedIn": "tsfg-r01-control-v1"
+    },
+    {
+      "kind": "case",
+      "id": "r01-control-less",
+      "meaning": "E1 main entry costs 1 at depth 1; 2 compared with 3 takes the less path and returns -1.",
+      "status": "active",
+      "introducedIn": "tsfg-r01-control-v1"
+    },
+    {
+      "kind": "case",
+      "id": "r01-control-equal",
+      "meaning": "E1 main entry costs 1 at depth 1; 3 compared with 3 takes the equal path and returns 0.",
+      "status": "active",
+      "introducedIn": "tsfg-r01-control-v1"
+    },
+    {
+      "kind": "case",
+      "id": "r01-control-greater",
+      "meaning": "E1 main entry costs 1 at depth 1; 4 compared with 3 takes the greater path and returns 1.",
+      "status": "active",
+      "introducedIn": "tsfg-r01-control-v1"
+    },
+    {
+      "kind": "case",
+      "id": "r01-control-invalid-local",
+      "meaning": "The bool initializer true cannot implicitly convert to declared i32. Compile diagnostic at true; no execution or fuel event.",
+      "status": "active",
+      "introducedIn": "tsfg-r01-control-v1"
+    },
+    {
+      "kind": "case",
+      "id": "r01-calls-forward",
+      "meaning": "E1 main depth1; E2 left depth2 returns 2 and exits; E3 right depth2 returns 4 and exits; E4 pair depth2 returns 2*10+4=24. One fuel each, total4. Forward declarations resolve.",
+      "status": "active",
+      "introducedIn": "tsfg-r01-control-v1"
+    },
+    {
+      "kind": "case",
+      "id": "r01-calls-arguments",
+      "meaning": "E1 main; evaluate left argument E2 left(1) returns2; then right argument E3 right(2) returns4; only then E4 pair(2,4). Depths1,2,2,2; fuel4; return24. Failure-order cases separately distinguish reordering.",
+      "status": "active",
+      "introducedIn": "tsfg-r01-control-v1"
+    },
+    {
+      "kind": "case",
+      "id": "r01-calls-direct",
+      "meaning": "E1 direct(2) depth1; E2 direct(1) depth2; E3 direct(0) depth3 returns0; unwind 1+0=1 then 1+1=2. Three entry charges, no while.",
+      "status": "active",
+      "introducedIn": "tsfg-r01-control-v1"
+    },
+    {
+      "kind": "case",
+      "id": "r01-calls-mutual",
+      "meaning": "E1 even(2) depth1; E2 odd(1) depth2; E3 even(0) depth3 returns true. Unwind true twice. Three entry charges.",
+      "status": "active",
+      "introducedIn": "tsfg-r01-control-v1"
+    },
+    {
+      "kind": "case",
+      "id": "r01-calls-unresolved",
+      "meaning": "Fixed TS name resolution: missing has no declaration. Diagnostic at missing before any invocation; no fuel consumed.",
+      "status": "active",
+      "introducedIn": "tsfg-r01-control-v1"
+    },
+    {
+      "kind": "case",
+      "id": "r01-bool-result",
+      "meaning": "E1 main entry costs1 depth1. true && false evaluates RHS and returns bool false.",
+      "status": "active",
+      "introducedIn": "tsfg-r01-control-v1"
+    },
+    {
+      "kind": "case",
+      "id": "r01-bool-and-skip",
+      "meaning": "E1 andTrap costs1 depth1; left false determines bool false; RHS is not evaluated, no arithmetic trap.",
+      "status": "active",
+      "introducedIn": "tsfg-r01-control-v1"
+    },
+    {
+      "kind": "case",
+      "id": "r01-bool-or-skip",
+      "meaning": "E1 orTrap costs1 depth1; left true determines bool true; RHS is not evaluated, no arithmetic trap.",
+      "status": "active",
+      "introducedIn": "tsfg-r01-control-v1"
+    },
+    {
+      "kind": "case",
+      "id": "r01-bool-and-true",
+      "meaning": "E1 main costs1 depth1. Left true requires RHS true; result bool true.",
+      "status": "active",
+      "introducedIn": "tsfg-r01-control-v1"
+    },
+    {
+      "kind": "case",
+      "id": "r01-bool-or-false",
+      "meaning": "E1 or costs1 depth1. Left false requires RHS false; result bool false.",
+      "status": "active",
+      "introducedIn": "tsfg-r01-control-v1"
+    },
+    {
+      "kind": "case",
+      "id": "r01-bool-or-rhs",
+      "meaning": "E1 or costs1 depth1. Left false requires RHS true; result bool true.",
+      "status": "active",
+      "introducedIn": "tsfg-r01-control-v1"
+    },
+    {
+      "kind": "case",
+      "id": "r01-eval-and-trap",
+      "meaning": "E1 andTrap costs1 depth1. Left true requires RHS; 1 / 0 traps. No normal return; later comparison does not occur.",
+      "status": "active",
+      "introducedIn": "tsfg-r01-control-v1"
+    },
+    {
+      "kind": "case",
+      "id": "r01-eval-or-trap",
+      "meaning": "E1 orTrap costs1 depth1. Left false requires RHS; 2 % 0 traps. No normal return; later comparison does not occur.",
+      "status": "active",
+      "introducedIn": "tsfg-r01-control-v1"
+    },
+    {
+      "kind": "case",
+      "id": "r01-eval-operands",
+      "meaning": "E1 operands entry costs1 depth1; left operand 1/0 traps; right 2%0 must never execute. Different codes distinguish ordering.",
+      "status": "active",
+      "introducedIn": "tsfg-r01-control-v1"
+    },
+    {
+      "kind": "case",
+      "id": "r01-eval-arguments",
+      "meaning": "E1 arguments costs1 depth1; first argument 2%0 traps. Second argument 1/0 and pair entry are not reached. Fuel remains0 but no callee fuel/depth check happens.",
+      "status": "active",
+      "introducedIn": "tsfg-r01-control-v1"
+    },
+    {
+      "kind": "case",
+      "id": "r01-eval-folded",
+      "meaning": "E1 folded costs1 depth1. Constant expression 1/0 traps at runtime; folding must not replace it with a compile diagnostic.",
+      "status": "active",
+      "introducedIn": "tsfg-r01-control-v1"
+    },
+    {
+      "kind": "case",
+      "id": "r01-eval-return",
+      "meaning": "E1 branch costs1 depth1; true branch returns9 before else; no division.",
+      "status": "active",
+      "introducedIn": "tsfg-r01-control-v1"
+    },
+    {
+      "kind": "case",
+      "id": "r01-eval-no-hoist",
+      "meaning": "E1 branch costs1 depth1; true branch returns9. The constant trap in the unselected else cannot be hoisted.",
+      "status": "active",
+      "introducedIn": "tsfg-r01-control-v1"
+    },
+    {
+      "kind": "case",
+      "id": "r01-eval-unexecuted",
+      "meaning": "E1 andTrap costs1 depth1. false && skips constant division entirely and returns bool false.",
+      "status": "active",
+      "introducedIn": "tsfg-r01-control-v1"
+    },
+    {
+      "kind": "case",
+      "id": "r01-eval-branch",
+      "meaning": "E1 branch costs1 depth1. Selected return9 prevents reaching else division.",
+      "status": "active",
+      "introducedIn": "tsfg-r01-control-v1"
+    },
+    {
+      "kind": "case",
+      "id": "r01-eval-loop",
+      "meaning": "E1 loop entry; E2 while false check. Each costs1 at depth1. Body remainder trap never runs; return8.",
+      "status": "active",
+      "introducedIn": "tsfg-r01-control-v1"
+    },
+    {
+      "kind": "case",
+      "id": "r01-fuel-entry-exact",
+      "meaning": "E1 main entry: fuel1->0, depth0->1; return6. Exactly one charge, no other logical event.",
+      "status": "active",
+      "introducedIn": "tsfg-r01-control-v1"
+    },
+    {
+      "kind": "case",
+      "id": "r01-fuel-entry-zero",
+      "meaning": "Before E1 main entry fuel0 cannot pay1: fuel trap at the main declaration before frame entry or body. Depth limit1 is sufficient.",
+      "status": "active",
+      "introducedIn": "tsfg-r01-control-v1"
+    },
+    {
+      "kind": "case",
+      "id": "r01-fuel-insufficient",
+      "meaning": "Before E1 main entry fuel0 cannot pay1. Return6 is not reached; request reports fuel trap, no host termination.",
+      "status": "active",
+      "introducedIn": "tsfg-r01-control-v1"
+    },
+    {
+      "kind": "case",
+      "id": "r01-fuel-first",
+      "meaning": "E1 main: fuel2->1 depth1; E2 before initial while:1->0, 0<0 is false. Return0; initial check is also final false.",
+      "status": "active",
+      "introducedIn": "tsfg-r01-control-v1"
+    },
+    {
+      "kind": "case",
+      "id": "r01-fuel-first-short",
+      "meaning": "E1 main:1->0 depth1. Before E2 initial while check, fuel0 cannot pay1; condition 0<0 is not evaluated even though it would be false.",
+      "status": "active",
+      "introducedIn": "tsfg-r01-control-v1"
+    },
+    {
+      "kind": "case",
+      "id": "r01-fuel-final",
+      "meaning": "E1 main:4->3 depth1. E2 while0<2:3->2 true, count=1. E3 while1<2:2->1 true, count=2. E4 while2<2:1->0 false. Return2. Every check pays before evaluation.",
+      "status": "active",
+      "introducedIn": "tsfg-r01-control-v1"
+    },
+    {
+      "kind": "case",
+      "id": "r01-fuel-loop-exact",
+      "meaning": "E1 entry4->3; E2 first true3->2; E3 second true2->1; E4 final false1->0. All at depth1; body assignments cost no additional Semantic Fuel. Return2, exact total4.",
+      "status": "active",
+      "introducedIn": "tsfg-r01-control-v1"
+    },
+    {
+      "kind": "case",
+      "id": "r01-fuel-final-short",
+      "meaning": "E1 entry3->2; E2 first true2->1; E3 second true1->0, count becomes2. Before E4 final condition fuel0 fails; 2<2 is not evaluated and return2 is not reached.",
+      "status": "active",
+      "introducedIn": "tsfg-r01-control-v1"
+    },
+    {
+      "kind": "case",
+      "id": "r01-fuel-inlined",
+      "meaning": "E1 main:2->1 depth1. Evaluate explicit literal4 (no charge). E2 callee:1->0 depth2; return4+1=5. Inlining may remove a physical call but must retain both logical entry charges.",
+      "status": "active",
+      "introducedIn": "tsfg-r01-control-v1"
+    },
+    {
+      "kind": "case",
+      "id": "r01-fuel-call-short",
+      "meaning": "E1 main:1->0 depth1; literal argument4 evaluates without charge. Before E2 callee entry fuel0 fails; callee frame/body never enters. Active depth2 is allowed, so no competing depth failure. Inlining must retain this trap.",
+      "status": "active",
+      "introducedIn": "tsfg-r01-control-v1"
+    },
+    {
+      "kind": "case",
+      "id": "r01-depth-entry",
+      "meaning": "E1 main enters active depth1 exactly at limit1; fuel1->0. Return6. Entry depth is one, not zero.",
+      "status": "active",
+      "introducedIn": "tsfg-r01-control-v1"
+    },
+    {
+      "kind": "case",
+      "id": "r01-depth-exact",
+      "meaning": "E1 direct(2) depth1 fuel4->3; E2 direct(1) depth2 fuel3->2; E3 direct(0) depth3 fuel2->1. Limit3 permits all frames. Return0 then1 then2.",
+      "status": "active",
+      "introducedIn": "tsfg-r01-control-v1"
+    },
+    {
+      "kind": "case",
+      "id": "r01-depth-overflow",
+      "meaning": "E1 direct(2) depth1 fuel4->3; E2 direct(1) depth2 fuel3->2. Evaluate argument1-1=0. Before E3 direct(0), proposed depth3 exceeds2, so reject before new frame. Fuel2 is sufficient; no simultaneous fuel failure. No base-case return occurs.",
+      "status": "active",
+      "introducedIn": "tsfg-r01-control-v1"
+    },
+    {
+      "kind": "case",
+      "id": "r01-depth-rejected",
+      "meaning": "E1 direct(2) depth1 and E2 direct(1) depth2 each cost1 from fuel4. Argument0 evaluates. Proposed third frame exceeds depth2 with enough fuel remaining; request reports depth trap before frame entry.",
+      "status": "active",
+      "introducedIn": "tsfg-r01-control-v1"
+    },
+    {
+      "kind": "case",
+      "id": "r01-depth-arguments",
+      "meaning": "E1 main depth1 fuel2->1. Explicit argument 1/0 traps before callee entry check. Callee would exceed limit1, but its frame check is not reached; report division trap, not depth.",
+      "status": "active",
+      "introducedIn": "tsfg-r01-control-v1"
+    },
+    {
+      "kind": "case",
+      "id": "r01-fuel-arguments",
+      "meaning": "E1 main depth1 fuel1->0. Argument1/0 traps before callee entry. Callee would lack fuel, but no such event is reached; division trap wins by event order, not a guessed same-event priority. Depth2 would be permitted.",
+      "status": "active",
+      "introducedIn": "tsfg-r01-control-v1"
+    },
+    {
+      "kind": "case",
+      "id": "r01-depth-sequential",
+      "meaning": "E1 main depth1; E2 left depth2 then exits to1; E3 right depth2 then exits to1; E4 pair depth2 then exits. Four fuel charges, active limit2 sufficient although four function entries occur. Return24.",
+      "status": "active",
+      "introducedIn": "tsfg-r01-control-v1"
+    },
+    {
+      "kind": "case",
+      "id": "r01-failure-trap",
+      "meaning": "E1 main depth1 fuel2->1. Argument1/0 is the first actual trap; record its code and source anchor as request-local failure. No normal return. Host survival is a later real execution observation, not proven by this authored record.",
+      "status": "active",
+      "introducedIn": "tsfg-r01-control-v1"
+    },
+    {
+      "kind": "case",
+      "id": "r01-failure-anchor",
+      "meaning": "E1 main depth1 fuel2->1. Argument1/0 is the first actual trap; record its code and source anchor as request-local failure. No normal return. Host survival is a later real execution observation, not proven by this authored record.",
+      "status": "active",
+      "introducedIn": "tsfg-r01-control-v1"
+    },
+    {
+      "kind": "case",
+      "id": "r01-calls-argument-type",
+      "meaning": "The explicit bool argument true cannot convert to the callee i32 parameter. Fixed baseline type checking plus no implicit scalar conversion; compile diagnostic at true, no execution events.",
+      "status": "active",
+      "introducedIn": "tsfg-r01-control-v1"
+    },
+    {
+      "kind": "case",
+      "id": "r01-calls-return-type",
+      "meaning": "The returned bool true cannot convert to the declared i32 return type. Fixed baseline type checking plus no implicit scalar conversion; compile diagnostic at true, no execution events.",
+      "status": "active",
+      "introducedIn": "tsfg-r01-control-v1"
+    }
+  ]
+}

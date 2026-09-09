@@ -1,7 +1,7 @@
 [
   {
     "schemaVersion": "6",
-    "specId": "tsfg-r01-v3",
+    "specId": "tsfg-r01-v4",
     "corpusId": "tsfg-r01-i32-v1",
     "caseId": "r01-literal-default",
     "sourceId": "i32/literal-default.ts",
@@ -44,7 +44,7 @@
   },
   {
     "schemaVersion": "6",
-    "specId": "tsfg-r01-v3",
+    "specId": "tsfg-r01-v4",
     "corpusId": "tsfg-r01-i32-v1",
     "caseId": "r01-literal-default-boundary",
     "sourceId": "i32/literal-default-boundary.ts",
@@ -87,7 +87,7 @@
   },
   {
     "schemaVersion": "6",
-    "specId": "tsfg-r01-v3",
+    "specId": "tsfg-r01-v4",
     "corpusId": "tsfg-r01-i32-v1",
     "caseId": "r01-literal-context",
     "sourceId": "i32/literal-context.ts",
@@ -130,7 +130,7 @@
   },
   {
     "schemaVersion": "6",
-    "specId": "tsfg-r01-v3",
+    "specId": "tsfg-r01-v4",
     "corpusId": "tsfg-r01-i32-v1",
     "caseId": "r01-literal-min",
     "sourceId": "i32/literal-min.ts",
@@ -173,7 +173,7 @@
   },
   {
     "schemaVersion": "6",
-    "specId": "tsfg-r01-v3",
+    "specId": "tsfg-r01-v4",
     "corpusId": "tsfg-r01-i32-v1",
     "caseId": "r01-literal-max",
     "sourceId": "i32/literal-max.ts",
@@ -216,7 +216,7 @@
   },
   {
     "schemaVersion": "6",
-    "specId": "tsfg-r01-v3",
+    "specId": "tsfg-r01-v4",
     "corpusId": "tsfg-r01-i32-v1",
     "caseId": "r01-literal-overflow",
     "sourceId": "i32/literal-overflow.ts",
@@ -274,7 +274,7 @@
   },
   {
     "schemaVersion": "6",
-    "specId": "tsfg-r01-v3",
+    "specId": "tsfg-r01-v4",
     "corpusId": "tsfg-r01-i32-v1",
     "caseId": "r01-literal-positive-reject",
     "sourceId": "i32/literal-positive-reject.ts",
@@ -332,7 +332,7 @@
   },
   {
     "schemaVersion": "6",
-    "specId": "tsfg-r01-v3",
+    "specId": "tsfg-r01-v4",
     "corpusId": "tsfg-r01-i32-v1",
     "caseId": "r01-literal-hex",
     "sourceId": "i32/literal-hex.ts",
@@ -390,7 +390,7 @@
   },
   {
     "schemaVersion": "6",
-    "specId": "tsfg-r01-v3",
+    "specId": "tsfg-r01-v4",
     "corpusId": "tsfg-r01-i32-v1",
     "caseId": "r01-literal-exact",
     "sourceId": "i32/literal-exact.ts",
@@ -448,7 +448,7 @@
   },
   {
     "schemaVersion": "6",
-    "specId": "tsfg-r01-v3",
+    "specId": "tsfg-r01-v4",
     "corpusId": "tsfg-r01-i32-v1",
     "caseId": "r01-typed-bool-to-i32",
     "sourceId": "i32/typed-bool-to-i32.ts",
@@ -506,7 +506,7 @@
   },
   {
     "schemaVersion": "6",
-    "specId": "tsfg-r01-v3",
+    "specId": "tsfg-r01-v4",
     "corpusId": "tsfg-r01-i32-v1",
     "caseId": "r01-bool-integer",
     "sourceId": "i32/bool-integer.ts",
@@ -564,7 +564,7 @@
   },
   {
     "schemaVersion": "6",
-    "specId": "tsfg-r01-v3",
+    "specId": "tsfg-r01-v4",
     "corpusId": "tsfg-r01-i32-v1",
     "caseId": "r01-bool-alias",
     "sourceId": "i32/bool-alias.ts",
@@ -612,7 +612,7 @@
   },
   {
     "schemaVersion": "6",
-    "specId": "tsfg-r01-v3",
+    "specId": "tsfg-r01-v4",
     "corpusId": "tsfg-r01-i32-v1",
     "caseId": "r01-bool-alias-false",
     "sourceId": "i32/bool-alias.ts",
@@ -660,7 +660,7 @@
   },
   {
     "schemaVersion": "6",
-    "specId": "tsfg-r01-v3",
+    "specId": "tsfg-r01-v4",
     "corpusId": "tsfg-r01-i32-v1",
     "caseId": "r01-add-normal",
     "sourceId": "i32/arithmetic.ts",
@@ -712,7 +712,7 @@
   },
   {
     "schemaVersion": "6",
-    "specId": "tsfg-r01-v3",
+    "specId": "tsfg-r01-v4",
     "corpusId": "tsfg-r01-i32-v1",
     "caseId": "r01-add-max",
     "sourceId": "i32/arithmetic.ts",
@@ -764,7 +764,7 @@
   },
   {
     "schemaVersion": "6",
-    "specId": "tsfg-r01-v3",
+    "specId": "tsfg-r01-v4",
     "corpusId": "tsfg-r01-i32-v1",
     "caseId": "r01-add-min",
     "sourceId": "i32/arithmetic.ts",
@@ -816,7 +816,7 @@
   },
   {
     "schemaVersion": "6",
-    "specId": "tsfg-r01-v3",
+    "specId": "tsfg-r01-v4",
     "corpusId": "tsfg-r01-i32-v1",
     "caseId": "r01-sub-normal",
     "sourceId": "i32/arithmetic.ts",
@@ -868,7 +868,7 @@
   },
   {
     "schemaVersion": "6",
-    "specId": "tsfg-r01-v3",
+    "specId": "tsfg-r01-v4",
     "corpusId": "tsfg-r01-i32-v1",
     "caseId": "r01-mul-normal",
     "sourceId": "i32/arithmetic.ts",
@@ -920,7 +920,7 @@
   },
   {
     "schemaVersion": "6",
-    "specId": "tsfg-r01-v3",
+    "specId": "tsfg-r01-v4",
     "corpusId": "tsfg-r01-i32-v1",
     "caseId": "r01-neg-normal",
     "sourceId": "i32/arithmetic.ts",
@@ -968,7 +968,7 @@
   },
   {
     "schemaVersion": "6",
-    "specId": "tsfg-r01-v3",
+    "specId": "tsfg-r01-v4",
     "corpusId": "tsfg-r01-i32-v1",
     "caseId": "r01-sub-min",
     "sourceId": "i32/arithmetic.ts",
@@ -1020,7 +1020,7 @@
   },
   {
     "schemaVersion": "6",
-    "specId": "tsfg-r01-v3",
+    "specId": "tsfg-r01-v4",
     "corpusId": "tsfg-r01-i32-v1",
     "caseId": "r01-sub-max",
     "sourceId": "i32/arithmetic.ts",
@@ -1072,7 +1072,7 @@
   },
   {
     "schemaVersion": "6",
-    "specId": "tsfg-r01-v3",
+    "specId": "tsfg-r01-v4",
     "corpusId": "tsfg-r01-i32-v1",
     "caseId": "r01-mul-wrap",
     "sourceId": "i32/arithmetic.ts",
@@ -1124,7 +1124,7 @@
   },
   {
     "schemaVersion": "6",
-    "specId": "tsfg-r01-v3",
+    "specId": "tsfg-r01-v4",
     "corpusId": "tsfg-r01-i32-v1",
     "caseId": "r01-mul-sign",
     "sourceId": "i32/arithmetic.ts",
@@ -1176,7 +1176,7 @@
   },
   {
     "schemaVersion": "6",
-    "specId": "tsfg-r01-v3",
+    "specId": "tsfg-r01-v4",
     "corpusId": "tsfg-r01-i32-v1",
     "caseId": "r01-neg-min",
     "sourceId": "i32/arithmetic.ts",
@@ -1224,7 +1224,7 @@
   },
   {
     "schemaVersion": "6",
-    "specId": "tsfg-r01-v3",
+    "specId": "tsfg-r01-v4",
     "corpusId": "tsfg-r01-i32-v1",
     "caseId": "r01-div-pp",
     "sourceId": "i32/arithmetic.ts",
@@ -1277,7 +1277,7 @@
   },
   {
     "schemaVersion": "6",
-    "specId": "tsfg-r01-v3",
+    "specId": "tsfg-r01-v4",
     "corpusId": "tsfg-r01-i32-v1",
     "caseId": "r01-rem-pp",
     "sourceId": "i32/arithmetic.ts",
@@ -1330,7 +1330,7 @@
   },
   {
     "schemaVersion": "6",
-    "specId": "tsfg-r01-v3",
+    "specId": "tsfg-r01-v4",
     "corpusId": "tsfg-r01-i32-v1",
     "caseId": "r01-div-np",
     "sourceId": "i32/arithmetic.ts",
@@ -1383,7 +1383,7 @@
   },
   {
     "schemaVersion": "6",
-    "specId": "tsfg-r01-v3",
+    "specId": "tsfg-r01-v4",
     "corpusId": "tsfg-r01-i32-v1",
     "caseId": "r01-rem-np",
     "sourceId": "i32/arithmetic.ts",
@@ -1436,7 +1436,7 @@
   },
   {
     "schemaVersion": "6",
-    "specId": "tsfg-r01-v3",
+    "specId": "tsfg-r01-v4",
     "corpusId": "tsfg-r01-i32-v1",
     "caseId": "r01-div-pn",
     "sourceId": "i32/arithmetic.ts",
@@ -1489,7 +1489,7 @@
   },
   {
     "schemaVersion": "6",
-    "specId": "tsfg-r01-v3",
+    "specId": "tsfg-r01-v4",
     "corpusId": "tsfg-r01-i32-v1",
     "caseId": "r01-rem-pn",
     "sourceId": "i32/arithmetic.ts",
@@ -1542,7 +1542,7 @@
   },
   {
     "schemaVersion": "6",
-    "specId": "tsfg-r01-v3",
+    "specId": "tsfg-r01-v4",
     "corpusId": "tsfg-r01-i32-v1",
     "caseId": "r01-div-nn",
     "sourceId": "i32/arithmetic.ts",
@@ -1595,7 +1595,7 @@
   },
   {
     "schemaVersion": "6",
-    "specId": "tsfg-r01-v3",
+    "specId": "tsfg-r01-v4",
     "corpusId": "tsfg-r01-i32-v1",
     "caseId": "r01-rem-nn",
     "sourceId": "i32/arithmetic.ts",
@@ -1648,7 +1648,7 @@
   },
   {
     "schemaVersion": "6",
-    "specId": "tsfg-r01-v3",
+    "specId": "tsfg-r01-v4",
     "corpusId": "tsfg-r01-i32-v1",
     "caseId": "r01-div-normal",
     "sourceId": "i32/arithmetic.ts",
@@ -1700,7 +1700,7 @@
   },
   {
     "schemaVersion": "6",
-    "specId": "tsfg-r01-v3",
+    "specId": "tsfg-r01-v4",
     "corpusId": "tsfg-r01-i32-v1",
     "caseId": "r01-div-min",
     "sourceId": "i32/arithmetic.ts",
@@ -1752,7 +1752,7 @@
   },
   {
     "schemaVersion": "6",
-    "specId": "tsfg-r01-v3",
+    "specId": "tsfg-r01-v4",
     "corpusId": "tsfg-r01-i32-v1",
     "caseId": "r01-rem-min",
     "sourceId": "i32/arithmetic.ts",
@@ -1804,7 +1804,7 @@
   },
   {
     "schemaVersion": "6",
-    "specId": "tsfg-r01-v3",
+    "specId": "tsfg-r01-v4",
     "corpusId": "tsfg-r01-i32-v1",
     "caseId": "r01-div-zero",
     "sourceId": "i32/arithmetic.ts",
@@ -1867,7 +1867,7 @@
   },
   {
     "schemaVersion": "6",
-    "specId": "tsfg-r01-v3",
+    "specId": "tsfg-r01-v4",
     "corpusId": "tsfg-r01-i32-v1",
     "caseId": "r01-rem-zero",
     "sourceId": "i32/arithmetic.ts",
@@ -1930,7 +1930,7 @@
   },
   {
     "schemaVersion": "6",
-    "specId": "tsfg-r01-v3",
+    "specId": "tsfg-r01-v4",
     "corpusId": "tsfg-r01-i32-v1",
     "caseId": "r01-shl-normal",
     "sourceId": "i32/shifts.ts",
@@ -1982,7 +1982,7 @@
   },
   {
     "schemaVersion": "6",
-    "specId": "tsfg-r01-v3",
+    "specId": "tsfg-r01-v4",
     "corpusId": "tsfg-r01-i32-v1",
     "caseId": "r01-shl-zero",
     "sourceId": "i32/shifts.ts",
@@ -2035,7 +2035,7 @@
   },
   {
     "schemaVersion": "6",
-    "specId": "tsfg-r01-v3",
+    "specId": "tsfg-r01-v4",
     "corpusId": "tsfg-r01-i32-v1",
     "caseId": "r01-shl-31",
     "sourceId": "i32/shifts.ts",
@@ -2088,7 +2088,7 @@
   },
   {
     "schemaVersion": "6",
-    "specId": "tsfg-r01-v3",
+    "specId": "tsfg-r01-v4",
     "corpusId": "tsfg-r01-i32-v1",
     "caseId": "r01-shl-sign",
     "sourceId": "i32/shifts.ts",
@@ -2141,7 +2141,7 @@
   },
   {
     "schemaVersion": "6",
-    "specId": "tsfg-r01-v3",
+    "specId": "tsfg-r01-v4",
     "corpusId": "tsfg-r01-i32-v1",
     "caseId": "r01-shl-minus-one",
     "sourceId": "i32/shifts.ts",
@@ -2205,7 +2205,7 @@
   },
   {
     "schemaVersion": "6",
-    "specId": "tsfg-r01-v3",
+    "specId": "tsfg-r01-v4",
     "corpusId": "tsfg-r01-i32-v1",
     "caseId": "r01-shl-32",
     "sourceId": "i32/shifts.ts",
@@ -2269,7 +2269,7 @@
   },
   {
     "schemaVersion": "6",
-    "specId": "tsfg-r01-v3",
+    "specId": "tsfg-r01-v4",
     "corpusId": "tsfg-r01-i32-v1",
     "caseId": "r01-shr-normal",
     "sourceId": "i32/shifts.ts",
@@ -2321,7 +2321,7 @@
   },
   {
     "schemaVersion": "6",
-    "specId": "tsfg-r01-v3",
+    "specId": "tsfg-r01-v4",
     "corpusId": "tsfg-r01-i32-v1",
     "caseId": "r01-shr-zero",
     "sourceId": "i32/shifts.ts",
@@ -2374,7 +2374,7 @@
   },
   {
     "schemaVersion": "6",
-    "specId": "tsfg-r01-v3",
+    "specId": "tsfg-r01-v4",
     "corpusId": "tsfg-r01-i32-v1",
     "caseId": "r01-shr-31",
     "sourceId": "i32/shifts.ts",
@@ -2427,7 +2427,7 @@
   },
   {
     "schemaVersion": "6",
-    "specId": "tsfg-r01-v3",
+    "specId": "tsfg-r01-v4",
     "corpusId": "tsfg-r01-i32-v1",
     "caseId": "r01-shr-sign",
     "sourceId": "i32/shifts.ts",
@@ -2480,7 +2480,7 @@
   },
   {
     "schemaVersion": "6",
-    "specId": "tsfg-r01-v3",
+    "specId": "tsfg-r01-v4",
     "corpusId": "tsfg-r01-i32-v1",
     "caseId": "r01-shr-minus-one",
     "sourceId": "i32/shifts.ts",
@@ -2544,7 +2544,7 @@
   },
   {
     "schemaVersion": "6",
-    "specId": "tsfg-r01-v3",
+    "specId": "tsfg-r01-v4",
     "corpusId": "tsfg-r01-i32-v1",
     "caseId": "r01-shr-32",
     "sourceId": "i32/shifts.ts",
@@ -2608,7 +2608,7 @@
   },
   {
     "schemaVersion": "6",
-    "specId": "tsfg-r01-v3",
+    "specId": "tsfg-r01-v4",
     "corpusId": "tsfg-r01-i32-v1",
     "caseId": "r01-ushr-normal",
     "sourceId": "i32/shifts.ts",
@@ -2660,7 +2660,7 @@
   },
   {
     "schemaVersion": "6",
-    "specId": "tsfg-r01-v3",
+    "specId": "tsfg-r01-v4",
     "corpusId": "tsfg-r01-i32-v1",
     "caseId": "r01-ushr-zero",
     "sourceId": "i32/shifts.ts",
@@ -2713,7 +2713,7 @@
   },
   {
     "schemaVersion": "6",
-    "specId": "tsfg-r01-v3",
+    "specId": "tsfg-r01-v4",
     "corpusId": "tsfg-r01-i32-v1",
     "caseId": "r01-ushr-31",
     "sourceId": "i32/shifts.ts",
@@ -2766,7 +2766,7 @@
   },
   {
     "schemaVersion": "6",
-    "specId": "tsfg-r01-v3",
+    "specId": "tsfg-r01-v4",
     "corpusId": "tsfg-r01-i32-v1",
     "caseId": "r01-ushr-sign",
     "sourceId": "i32/shifts.ts",
@@ -2819,7 +2819,7 @@
   },
   {
     "schemaVersion": "6",
-    "specId": "tsfg-r01-v3",
+    "specId": "tsfg-r01-v4",
     "corpusId": "tsfg-r01-i32-v1",
     "caseId": "r01-ushr-minus-one",
     "sourceId": "i32/shifts.ts",
@@ -2883,7 +2883,7 @@
   },
   {
     "schemaVersion": "6",
-    "specId": "tsfg-r01-v3",
+    "specId": "tsfg-r01-v4",
     "corpusId": "tsfg-r01-i32-v1",
     "caseId": "r01-ushr-32",
     "sourceId": "i32/shifts.ts",
@@ -2947,7 +2947,7 @@
   },
   {
     "schemaVersion": "6",
-    "specId": "tsfg-r01-v3",
+    "specId": "tsfg-r01-v4",
     "corpusId": "tsfg-r01-i32-v1",
     "caseId": "r01-shift-negative",
     "sourceId": "i32/shifts.ts",
@@ -3010,7 +3010,7 @@
   },
   {
     "schemaVersion": "6",
-    "specId": "tsfg-r01-v3",
+    "specId": "tsfg-r01-v4",
     "corpusId": "tsfg-r01-i32-v1",
     "caseId": "r01-shift-count-type",
     "sourceId": "i32/shift-count-type.ts",
@@ -3068,7 +3068,7 @@
   },
   {
     "schemaVersion": "6",
-    "specId": "tsfg-r01-v3",
+    "specId": "tsfg-r01-v4",
     "corpusId": "tsfg-r01-i32-v1",
     "caseId": "r01-div-constant-zero",
     "sourceId": "i32/division-constant-zero.ts",

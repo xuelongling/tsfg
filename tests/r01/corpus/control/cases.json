@@ -1,0 +1,2637 @@
+[
+  {
+    "schemaVersion": "6",
+    "specId": "tsfg-r01-v4",
+    "corpusId": "tsfg-r01-control-v1",
+    "caseId": "r01-control-locals",
+    "sourceId": "control/locals.ts",
+    "ruleIds": [
+      "r01-control"
+    ],
+    "capabilities": [
+      "control"
+    ],
+    "target": "windows-x86_64-msvc",
+    "mode": "strict",
+    "applicability": "positive",
+    "coverage": [
+      "positive"
+    ],
+    "budgets": {
+      "semanticFuel": "1",
+      "activeDepth": "1",
+      "physicalInstructions": "10000",
+      "memoryBytes": "1048576",
+      "hostTimeMs": "1000"
+    },
+    "invocation": {
+      "entry": "main",
+      "arguments": [
+        {
+          "type": "bool",
+          "value": true
+        }
+      ],
+      "returnType": "i32"
+    },
+    "oracle": {
+      "kind": "return",
+      "value": {
+        "type": "i32",
+        "value": "7"
+      },
+      "basis": {
+        "kind": "manual-derivation",
+        "reference": "TypeScript 7.0.2 inherited control/call semantics; docs/r01-language-contract.md sections 3, 4.2 and 6; ADR-0010",
+        "derivation": "E1 main entry costs 1, depth 1. seed=3; true branch assigns 3+4=7; return 7."
+      }
+    }
+  },
+  {
+    "schemaVersion": "6",
+    "specId": "tsfg-r01-v4",
+    "corpusId": "tsfg-r01-control-v1",
+    "caseId": "r01-control-if",
+    "sourceId": "control/locals.ts",
+    "ruleIds": [
+      "r01-control"
+    ],
+    "capabilities": [
+      "control"
+    ],
+    "target": "windows-x86_64-msvc",
+    "mode": "strict",
+    "applicability": "boundary",
+    "coverage": [
+      "branches"
+    ],
+    "budgets": {
+      "semanticFuel": "1",
+      "activeDepth": "1",
+      "physicalInstructions": "10000",
+      "memoryBytes": "1048576",
+      "hostTimeMs": "1000"
+    },
+    "invocation": {
+      "entry": "main",
+      "arguments": [
+        {
+          "type": "bool",
+          "value": true
+        }
+      ],
+      "returnType": "i32"
+    },
+    "oracle": {
+      "kind": "return",
+      "value": {
+        "type": "i32",
+        "value": "7"
+      },
+      "basis": {
+        "kind": "manual-derivation",
+        "reference": "TypeScript 7.0.2 inherited control/call semantics; docs/r01-language-contract.md sections 3, 4.2 and 6; ADR-0010",
+        "derivation": "E1 main entry costs 1 at depth 1; true branch returns 7."
+      }
+    }
+  },
+  {
+    "schemaVersion": "6",
+    "specId": "tsfg-r01-v4",
+    "corpusId": "tsfg-r01-control-v1",
+    "caseId": "r01-control-else",
+    "sourceId": "control/locals.ts",
+    "ruleIds": [
+      "r01-control"
+    ],
+    "capabilities": [
+      "control"
+    ],
+    "target": "windows-x86_64-msvc",
+    "mode": "strict",
+    "applicability": "boundary",
+    "coverage": [
+      "else"
+    ],
+    "budgets": {
+      "semanticFuel": "1",
+      "activeDepth": "1",
+      "physicalInstructions": "10000",
+      "memoryBytes": "1048576",
+      "hostTimeMs": "1000"
+    },
+    "invocation": {
+      "entry": "main",
+      "arguments": [
+        {
+          "type": "bool",
+          "value": false
+        }
+      ],
+      "returnType": "i32"
+    },
+    "oracle": {
+      "kind": "return",
+      "value": {
+        "type": "i32",
+        "value": "1"
+      },
+      "basis": {
+        "kind": "manual-derivation",
+        "reference": "TypeScript 7.0.2 inherited control/call semantics; docs/r01-language-contract.md sections 3, 4.2 and 6; ADR-0010",
+        "derivation": "E1 main entry costs 1 at depth 1; false branch assigns 3-2=1 and returns 1."
+      }
+    }
+  },
+  {
+    "schemaVersion": "6",
+    "specId": "tsfg-r01-v4",
+    "corpusId": "tsfg-r01-control-v1",
+    "caseId": "r01-control-loop",
+    "sourceId": "control/loop.ts",
+    "ruleIds": [
+      "r01-control"
+    ],
+    "capabilities": [
+      "control"
+    ],
+    "target": "windows-x86_64-msvc",
+    "mode": "strict",
+    "applicability": "boundary",
+    "coverage": [
+      "loop"
+    ],
+    "budgets": {
+      "semanticFuel": "4",
+      "activeDepth": "1",
+      "physicalInstructions": "10000",
+      "memoryBytes": "1048576",
+      "hostTimeMs": "1000"
+    },
+    "invocation": {
+      "entry": "main",
+      "arguments": [
+        {
+          "type": "i32",
+          "value": "2"
+        }
+      ],
+      "returnType": "i32"
+    },
+    "oracle": {
+      "kind": "return",
+      "value": {
+        "type": "i32",
+        "value": "2"
+      },
+      "basis": {
+        "kind": "manual-derivation",
+        "reference": "TypeScript 7.0.2 inherited control/call semantics; docs/r01-language-contract.md sections 3, 4.2 and 6; ADR-0010",
+        "derivation": "E1 enter main (depth 1); E2 while 0<2 true; E3 while 1<2 true; E4 while 2<2 false. Each costs 1; total 4. Two assignments, return 2."
+      }
+    }
+  },
+  {
+    "schemaVersion": "6",
+    "specId": "tsfg-r01-v4",
+    "corpusId": "tsfg-r01-control-v1",
+    "caseId": "r01-control-loop-zero",
+    "sourceId": "control/loop.ts",
+    "ruleIds": [
+      "r01-control"
+    ],
+    "capabilities": [
+      "control"
+    ],
+    "target": "windows-x86_64-msvc",
+    "mode": "strict",
+    "applicability": "boundary",
+    "coverage": [
+      "loop-zero"
+    ],
+    "budgets": {
+      "semanticFuel": "2",
+      "activeDepth": "1",
+      "physicalInstructions": "10000",
+      "memoryBytes": "1048576",
+      "hostTimeMs": "1000"
+    },
+    "invocation": {
+      "entry": "main",
+      "arguments": [
+        {
+          "type": "i32",
+          "value": "0"
+        }
+      ],
+      "returnType": "i32"
+    },
+    "oracle": {
+      "kind": "return",
+      "value": {
+        "type": "i32",
+        "value": "0"
+      },
+      "basis": {
+        "kind": "manual-derivation",
+        "reference": "TypeScript 7.0.2 inherited control/call semantics; docs/r01-language-contract.md sections 3, 4.2 and 6; ADR-0010",
+        "derivation": "E1 enter main; E2 while 0<0 false. Each costs 1 at depth 1; no body; return 0."
+      }
+    }
+  },
+  {
+    "schemaVersion": "6",
+    "specId": "tsfg-r01-v4",
+    "corpusId": "tsfg-r01-control-v1",
+    "caseId": "r01-control-less",
+    "sourceId": "control/compare.ts",
+    "ruleIds": [
+      "r01-control"
+    ],
+    "capabilities": [
+      "control"
+    ],
+    "target": "windows-x86_64-msvc",
+    "mode": "strict",
+    "applicability": "boundary",
+    "coverage": [
+      "comparisons"
+    ],
+    "budgets": {
+      "semanticFuel": "1",
+      "activeDepth": "1",
+      "physicalInstructions": "10000",
+      "memoryBytes": "1048576",
+      "hostTimeMs": "1000"
+    },
+    "invocation": {
+      "entry": "main",
+      "arguments": [
+        {
+          "type": "i32",
+          "value": "2"
+        },
+        {
+          "type": "i32",
+          "value": "3"
+        }
+      ],
+      "returnType": "i32"
+    },
+    "oracle": {
+      "kind": "return",
+      "value": {
+        "type": "i32",
+        "value": "-1"
+      },
+      "basis": {
+        "kind": "manual-derivation",
+        "reference": "TypeScript 7.0.2 inherited control/call semantics; docs/r01-language-contract.md sections 3, 4.2 and 6; ADR-0010",
+        "derivation": "E1 main entry costs 1 at depth 1; 2 compared with 3 takes the less path and returns -1."
+      }
+    }
+  },
+  {
+    "schemaVersion": "6",
+    "specId": "tsfg-r01-v4",
+    "corpusId": "tsfg-r01-control-v1",
+    "caseId": "r01-control-equal",
+    "sourceId": "control/compare.ts",
+    "ruleIds": [
+      "r01-control"
+    ],
+    "capabilities": [
+      "control"
+    ],
+    "target": "windows-x86_64-msvc",
+    "mode": "strict",
+    "applicability": "boundary",
+    "coverage": [
+      "compare-equal"
+    ],
+    "budgets": {
+      "semanticFuel": "1",
+      "activeDepth": "1",
+      "physicalInstructions": "10000",
+      "memoryBytes": "1048576",
+      "hostTimeMs": "1000"
+    },
+    "invocation": {
+      "entry": "main",
+      "arguments": [
+        {
+          "type": "i32",
+          "value": "3"
+        },
+        {
+          "type": "i32",
+          "value": "3"
+        }
+      ],
+      "returnType": "i32"
+    },
+    "oracle": {
+      "kind": "return",
+      "value": {
+        "type": "i32",
+        "value": "0"
+      },
+      "basis": {
+        "kind": "manual-derivation",
+        "reference": "TypeScript 7.0.2 inherited control/call semantics; docs/r01-language-contract.md sections 3, 4.2 and 6; ADR-0010",
+        "derivation": "E1 main entry costs 1 at depth 1; 3 compared with 3 takes the equal path and returns 0."
+      }
+    }
+  },
+  {
+    "schemaVersion": "6",
+    "specId": "tsfg-r01-v4",
+    "corpusId": "tsfg-r01-control-v1",
+    "caseId": "r01-control-greater",
+    "sourceId": "control/compare.ts",
+    "ruleIds": [
+      "r01-control"
+    ],
+    "capabilities": [
+      "control"
+    ],
+    "target": "windows-x86_64-msvc",
+    "mode": "strict",
+    "applicability": "boundary",
+    "coverage": [
+      "compare-greater"
+    ],
+    "budgets": {
+      "semanticFuel": "1",
+      "activeDepth": "1",
+      "physicalInstructions": "10000",
+      "memoryBytes": "1048576",
+      "hostTimeMs": "1000"
+    },
+    "invocation": {
+      "entry": "main",
+      "arguments": [
+        {
+          "type": "i32",
+          "value": "4"
+        },
+        {
+          "type": "i32",
+          "value": "3"
+        }
+      ],
+      "returnType": "i32"
+    },
+    "oracle": {
+      "kind": "return",
+      "value": {
+        "type": "i32",
+        "value": "1"
+      },
+      "basis": {
+        "kind": "manual-derivation",
+        "reference": "TypeScript 7.0.2 inherited control/call semantics; docs/r01-language-contract.md sections 3, 4.2 and 6; ADR-0010",
+        "derivation": "E1 main entry costs 1 at depth 1; 4 compared with 3 takes the greater path and returns 1."
+      }
+    }
+  },
+  {
+    "schemaVersion": "6",
+    "specId": "tsfg-r01-v4",
+    "corpusId": "tsfg-r01-control-v1",
+    "caseId": "r01-control-invalid-local",
+    "sourceId": "control/invalid-local.ts",
+    "ruleIds": [
+      "r01-control"
+    ],
+    "capabilities": [
+      "control"
+    ],
+    "target": "windows-x86_64-msvc",
+    "mode": "strict",
+    "applicability": "negative",
+    "coverage": [
+      "negative"
+    ],
+    "budgets": {
+      "semanticFuel": "1",
+      "activeDepth": "1",
+      "physicalInstructions": "10000",
+      "memoryBytes": "1048576",
+      "hostTimeMs": "1000"
+    },
+    "invocation": {
+      "entry": "main",
+      "arguments": [],
+      "returnType": "i32"
+    },
+    "oracle": {
+      "kind": "diagnostics",
+      "basis": {
+        "kind": "manual-derivation",
+        "reference": "TypeScript 7.0.2 inherited control/call semantics; docs/r01-language-contract.md sections 3, 4.2 and 6; ADR-0010",
+        "derivation": "The bool initializer true cannot implicitly convert to declared i32. Compile diagnostic at true; no execution or fuel event."
+      },
+      "diagnostics": [
+        {
+          "code": "r01-d-scalar-type",
+          "ruleIds": [
+            "r01-control"
+          ],
+          "primary": {
+            "sourceId": "control/invalid-local.ts",
+            "start": 75,
+            "end": 79,
+            "startLine": 1,
+            "startColumn": 43,
+            "endLine": 1,
+            "endColumn": 47
+          },
+          "phase": "types",
+          "severity": "error"
+        }
+      ]
+    }
+  },
+  {
+    "schemaVersion": "6",
+    "specId": "tsfg-r01-v4",
+    "corpusId": "tsfg-r01-control-v1",
+    "caseId": "r01-calls-forward",
+    "sourceId": "control/calls.ts",
+    "ruleIds": [
+      "r01-calls"
+    ],
+    "capabilities": [
+      "calls"
+    ],
+    "target": "windows-x86_64-msvc",
+    "mode": "strict",
+    "applicability": "positive",
+    "coverage": [
+      "positive"
+    ],
+    "budgets": {
+      "semanticFuel": "4",
+      "activeDepth": "2",
+      "physicalInstructions": "10000",
+      "memoryBytes": "1048576",
+      "hostTimeMs": "1000"
+    },
+    "invocation": {
+      "entry": "main",
+      "arguments": [
+        {
+          "type": "i32",
+          "value": "1"
+        },
+        {
+          "type": "i32",
+          "value": "2"
+        }
+      ],
+      "returnType": "i32"
+    },
+    "oracle": {
+      "kind": "return",
+      "value": {
+        "type": "i32",
+        "value": "24"
+      },
+      "basis": {
+        "kind": "manual-derivation",
+        "reference": "TypeScript 7.0.2 inherited control/call semantics; docs/r01-language-contract.md sections 3, 4.2 and 6; ADR-0010",
+        "derivation": "E1 main depth1; E2 left depth2 returns 2 and exits; E3 right depth2 returns 4 and exits; E4 pair depth2 returns 2*10+4=24. One fuel each, total4. Forward declarations resolve."
+      }
+    }
+  },
+  {
+    "schemaVersion": "6",
+    "specId": "tsfg-r01-v4",
+    "corpusId": "tsfg-r01-control-v1",
+    "caseId": "r01-calls-arguments",
+    "sourceId": "control/calls.ts",
+    "ruleIds": [
+      "r01-calls"
+    ],
+    "capabilities": [
+      "calls"
+    ],
+    "target": "windows-x86_64-msvc",
+    "mode": "strict",
+    "applicability": "boundary",
+    "coverage": [
+      "argument-order"
+    ],
+    "budgets": {
+      "semanticFuel": "4",
+      "activeDepth": "2",
+      "physicalInstructions": "10000",
+      "memoryBytes": "1048576",
+      "hostTimeMs": "1000"
+    },
+    "invocation": {
+      "entry": "main",
+      "arguments": [
+        {
+          "type": "i32",
+          "value": "1"
+        },
+        {
+          "type": "i32",
+          "value": "2"
+        }
+      ],
+      "returnType": "i32"
+    },
+    "oracle": {
+      "kind": "return",
+      "value": {
+        "type": "i32",
+        "value": "24"
+      },
+      "basis": {
+        "kind": "manual-derivation",
+        "reference": "TypeScript 7.0.2 inherited control/call semantics; docs/r01-language-contract.md sections 3, 4.2 and 6; ADR-0010",
+        "derivation": "E1 main; evaluate left argument E2 left(1) returns2; then right argument E3 right(2) returns4; only then E4 pair(2,4). Depths1,2,2,2; fuel4; return24. Failure-order cases separately distinguish reordering."
+      }
+    }
+  },
+  {
+    "schemaVersion": "6",
+    "specId": "tsfg-r01-v4",
+    "corpusId": "tsfg-r01-control-v1",
+    "caseId": "r01-calls-direct",
+    "sourceId": "control/calls.ts",
+    "ruleIds": [
+      "r01-calls"
+    ],
+    "capabilities": [
+      "calls"
+    ],
+    "target": "windows-x86_64-msvc",
+    "mode": "strict",
+    "applicability": "boundary",
+    "coverage": [
+      "direct-recursion"
+    ],
+    "budgets": {
+      "semanticFuel": "3",
+      "activeDepth": "3",
+      "physicalInstructions": "10000",
+      "memoryBytes": "1048576",
+      "hostTimeMs": "1000"
+    },
+    "invocation": {
+      "entry": "direct",
+      "arguments": [
+        {
+          "type": "i32",
+          "value": "2"
+        }
+      ],
+      "returnType": "i32"
+    },
+    "oracle": {
+      "kind": "return",
+      "value": {
+        "type": "i32",
+        "value": "2"
+      },
+      "basis": {
+        "kind": "manual-derivation",
+        "reference": "TypeScript 7.0.2 inherited control/call semantics; docs/r01-language-contract.md sections 3, 4.2 and 6; ADR-0010",
+        "derivation": "E1 direct(2) depth1; E2 direct(1) depth2; E3 direct(0) depth3 returns0; unwind 1+0=1 then 1+1=2. Three entry charges, no while."
+      }
+    }
+  },
+  {
+    "schemaVersion": "6",
+    "specId": "tsfg-r01-v4",
+    "corpusId": "tsfg-r01-control-v1",
+    "caseId": "r01-calls-mutual",
+    "sourceId": "control/calls.ts",
+    "ruleIds": [
+      "r01-calls"
+    ],
+    "capabilities": [
+      "calls"
+    ],
+    "target": "windows-x86_64-msvc",
+    "mode": "strict",
+    "applicability": "boundary",
+    "coverage": [
+      "mutual-recursion"
+    ],
+    "budgets": {
+      "semanticFuel": "3",
+      "activeDepth": "3",
+      "physicalInstructions": "10000",
+      "memoryBytes": "1048576",
+      "hostTimeMs": "1000"
+    },
+    "invocation": {
+      "entry": "even",
+      "arguments": [
+        {
+          "type": "i32",
+          "value": "2"
+        }
+      ],
+      "returnType": "bool"
+    },
+    "oracle": {
+      "kind": "return",
+      "value": {
+        "type": "bool",
+        "value": true
+      },
+      "basis": {
+        "kind": "manual-derivation",
+        "reference": "TypeScript 7.0.2 inherited control/call semantics; docs/r01-language-contract.md sections 3, 4.2 and 6; ADR-0010",
+        "derivation": "E1 even(2) depth1; E2 odd(1) depth2; E3 even(0) depth3 returns true. Unwind true twice. Three entry charges."
+      }
+    }
+  },
+  {
+    "schemaVersion": "6",
+    "specId": "tsfg-r01-v4",
+    "corpusId": "tsfg-r01-control-v1",
+    "caseId": "r01-calls-unresolved",
+    "sourceId": "control/invalid-call.ts",
+    "ruleIds": [
+      "r01-calls"
+    ],
+    "capabilities": [
+      "calls"
+    ],
+    "target": "windows-x86_64-msvc",
+    "mode": "strict",
+    "applicability": "negative",
+    "coverage": [
+      "negative"
+    ],
+    "budgets": {
+      "semanticFuel": "1",
+      "activeDepth": "1",
+      "physicalInstructions": "10000",
+      "memoryBytes": "1048576",
+      "hostTimeMs": "1000"
+    },
+    "invocation": {
+      "entry": "main",
+      "arguments": [],
+      "returnType": "i32"
+    },
+    "oracle": {
+      "kind": "diagnostics",
+      "basis": {
+        "kind": "manual-derivation",
+        "reference": "TypeScript 7.0.2 inherited control/call semantics; docs/r01-language-contract.md sections 3, 4.2 and 6; ADR-0010",
+        "derivation": "Fixed TS name resolution: missing has no declaration. Diagnostic at missing before any invocation; no fuel consumed."
+      },
+      "diagnostics": [
+        {
+          "code": "r01-d-unresolved-name",
+          "ruleIds": [
+            "r01-calls"
+          ],
+          "primary": {
+            "sourceId": "control/invalid-call.ts",
+            "start": 69,
+            "end": 76,
+            "startLine": 1,
+            "startColumn": 37,
+            "endLine": 1,
+            "endColumn": 44
+          },
+          "phase": "types",
+          "severity": "error"
+        }
+      ]
+    }
+  },
+  {
+    "schemaVersion": "6",
+    "specId": "tsfg-r01-v4",
+    "corpusId": "tsfg-r01-control-v1",
+    "caseId": "r01-bool-result",
+    "sourceId": "control/short-circuit.ts",
+    "ruleIds": [
+      "r01-bool"
+    ],
+    "capabilities": [
+      "bool"
+    ],
+    "target": "windows-x86_64-msvc",
+    "mode": "strict",
+    "applicability": "positive",
+    "coverage": [
+      "positive"
+    ],
+    "budgets": {
+      "semanticFuel": "1",
+      "activeDepth": "1",
+      "physicalInstructions": "10000",
+      "memoryBytes": "1048576",
+      "hostTimeMs": "1000"
+    },
+    "invocation": {
+      "entry": "main",
+      "arguments": [
+        {
+          "type": "bool",
+          "value": true
+        },
+        {
+          "type": "bool",
+          "value": false
+        }
+      ],
+      "returnType": "bool"
+    },
+    "oracle": {
+      "kind": "return",
+      "value": {
+        "type": "bool",
+        "value": false
+      },
+      "basis": {
+        "kind": "manual-derivation",
+        "reference": "TypeScript 7.0.2 inherited control/call semantics; docs/r01-language-contract.md sections 3, 4.2 and 6; ADR-0010",
+        "derivation": "E1 main entry costs1 depth1. true && false evaluates RHS and returns bool false."
+      }
+    }
+  },
+  {
+    "schemaVersion": "6",
+    "specId": "tsfg-r01-v4",
+    "corpusId": "tsfg-r01-control-v1",
+    "caseId": "r01-bool-and-skip",
+    "sourceId": "control/short-circuit.ts",
+    "ruleIds": [
+      "r01-bool"
+    ],
+    "capabilities": [
+      "bool"
+    ],
+    "target": "windows-x86_64-msvc",
+    "mode": "strict",
+    "applicability": "boundary",
+    "coverage": [
+      "short-circuit-and"
+    ],
+    "budgets": {
+      "semanticFuel": "1",
+      "activeDepth": "1",
+      "physicalInstructions": "10000",
+      "memoryBytes": "1048576",
+      "hostTimeMs": "1000"
+    },
+    "invocation": {
+      "entry": "andTrap",
+      "arguments": [
+        {
+          "type": "bool",
+          "value": false
+        }
+      ],
+      "returnType": "bool"
+    },
+    "oracle": {
+      "kind": "return",
+      "value": {
+        "type": "bool",
+        "value": false
+      },
+      "basis": {
+        "kind": "manual-derivation",
+        "reference": "TypeScript 7.0.2 inherited control/call semantics; docs/r01-language-contract.md sections 3, 4.2 and 6; ADR-0010",
+        "derivation": "E1 andTrap costs1 depth1; left false determines bool false; RHS is not evaluated, no arithmetic trap."
+      }
+    }
+  },
+  {
+    "schemaVersion": "6",
+    "specId": "tsfg-r01-v4",
+    "corpusId": "tsfg-r01-control-v1",
+    "caseId": "r01-bool-or-skip",
+    "sourceId": "control/short-circuit.ts",
+    "ruleIds": [
+      "r01-bool"
+    ],
+    "capabilities": [
+      "bool"
+    ],
+    "target": "windows-x86_64-msvc",
+    "mode": "strict",
+    "applicability": "boundary",
+    "coverage": [
+      "short-circuit-or"
+    ],
+    "budgets": {
+      "semanticFuel": "1",
+      "activeDepth": "1",
+      "physicalInstructions": "10000",
+      "memoryBytes": "1048576",
+      "hostTimeMs": "1000"
+    },
+    "invocation": {
+      "entry": "orTrap",
+      "arguments": [
+        {
+          "type": "bool",
+          "value": true
+        }
+      ],
+      "returnType": "bool"
+    },
+    "oracle": {
+      "kind": "return",
+      "value": {
+        "type": "bool",
+        "value": true
+      },
+      "basis": {
+        "kind": "manual-derivation",
+        "reference": "TypeScript 7.0.2 inherited control/call semantics; docs/r01-language-contract.md sections 3, 4.2 and 6; ADR-0010",
+        "derivation": "E1 orTrap costs1 depth1; left true determines bool true; RHS is not evaluated, no arithmetic trap."
+      }
+    }
+  },
+  {
+    "schemaVersion": "6",
+    "specId": "tsfg-r01-v4",
+    "corpusId": "tsfg-r01-control-v1",
+    "caseId": "r01-bool-and-true",
+    "sourceId": "control/short-circuit.ts",
+    "ruleIds": [
+      "r01-bool"
+    ],
+    "capabilities": [
+      "bool"
+    ],
+    "target": "windows-x86_64-msvc",
+    "mode": "strict",
+    "applicability": "boundary",
+    "coverage": [
+      "and-true"
+    ],
+    "budgets": {
+      "semanticFuel": "1",
+      "activeDepth": "1",
+      "physicalInstructions": "10000",
+      "memoryBytes": "1048576",
+      "hostTimeMs": "1000"
+    },
+    "invocation": {
+      "entry": "main",
+      "arguments": [
+        {
+          "type": "bool",
+          "value": true
+        },
+        {
+          "type": "bool",
+          "value": true
+        }
+      ],
+      "returnType": "bool"
+    },
+    "oracle": {
+      "kind": "return",
+      "value": {
+        "type": "bool",
+        "value": true
+      },
+      "basis": {
+        "kind": "manual-derivation",
+        "reference": "TypeScript 7.0.2 inherited control/call semantics; docs/r01-language-contract.md sections 3, 4.2 and 6; ADR-0010",
+        "derivation": "E1 main costs1 depth1. Left true requires RHS true; result bool true."
+      }
+    }
+  },
+  {
+    "schemaVersion": "6",
+    "specId": "tsfg-r01-v4",
+    "corpusId": "tsfg-r01-control-v1",
+    "caseId": "r01-bool-or-false",
+    "sourceId": "control/short-circuit.ts",
+    "ruleIds": [
+      "r01-bool"
+    ],
+    "capabilities": [
+      "bool"
+    ],
+    "target": "windows-x86_64-msvc",
+    "mode": "strict",
+    "applicability": "boundary",
+    "coverage": [
+      "or-false"
+    ],
+    "budgets": {
+      "semanticFuel": "1",
+      "activeDepth": "1",
+      "physicalInstructions": "10000",
+      "memoryBytes": "1048576",
+      "hostTimeMs": "1000"
+    },
+    "invocation": {
+      "entry": "or",
+      "arguments": [
+        {
+          "type": "bool",
+          "value": false
+        },
+        {
+          "type": "bool",
+          "value": false
+        }
+      ],
+      "returnType": "bool"
+    },
+    "oracle": {
+      "kind": "return",
+      "value": {
+        "type": "bool",
+        "value": false
+      },
+      "basis": {
+        "kind": "manual-derivation",
+        "reference": "TypeScript 7.0.2 inherited control/call semantics; docs/r01-language-contract.md sections 3, 4.2 and 6; ADR-0010",
+        "derivation": "E1 or costs1 depth1. Left false requires RHS false; result bool false."
+      }
+    }
+  },
+  {
+    "schemaVersion": "6",
+    "specId": "tsfg-r01-v4",
+    "corpusId": "tsfg-r01-control-v1",
+    "caseId": "r01-bool-or-rhs",
+    "sourceId": "control/short-circuit.ts",
+    "ruleIds": [
+      "r01-bool"
+    ],
+    "capabilities": [
+      "bool"
+    ],
+    "target": "windows-x86_64-msvc",
+    "mode": "strict",
+    "applicability": "boundary",
+    "coverage": [
+      "or-rhs"
+    ],
+    "budgets": {
+      "semanticFuel": "1",
+      "activeDepth": "1",
+      "physicalInstructions": "10000",
+      "memoryBytes": "1048576",
+      "hostTimeMs": "1000"
+    },
+    "invocation": {
+      "entry": "or",
+      "arguments": [
+        {
+          "type": "bool",
+          "value": false
+        },
+        {
+          "type": "bool",
+          "value": true
+        }
+      ],
+      "returnType": "bool"
+    },
+    "oracle": {
+      "kind": "return",
+      "value": {
+        "type": "bool",
+        "value": true
+      },
+      "basis": {
+        "kind": "manual-derivation",
+        "reference": "TypeScript 7.0.2 inherited control/call semantics; docs/r01-language-contract.md sections 3, 4.2 and 6; ADR-0010",
+        "derivation": "E1 or costs1 depth1. Left false requires RHS true; result bool true."
+      }
+    }
+  },
+  {
+    "schemaVersion": "6",
+    "specId": "tsfg-r01-v4",
+    "corpusId": "tsfg-r01-control-v1",
+    "caseId": "r01-eval-and-trap",
+    "sourceId": "control/short-circuit.ts",
+    "ruleIds": [
+      "r01-evaluation"
+    ],
+    "capabilities": [
+      "evaluation"
+    ],
+    "target": "windows-x86_64-msvc",
+    "mode": "strict",
+    "applicability": "boundary",
+    "coverage": [
+      "and-trap"
+    ],
+    "budgets": {
+      "semanticFuel": "1",
+      "activeDepth": "1",
+      "physicalInstructions": "10000",
+      "memoryBytes": "1048576",
+      "hostTimeMs": "1000"
+    },
+    "invocation": {
+      "entry": "andTrap",
+      "arguments": [
+        {
+          "type": "bool",
+          "value": true
+        }
+      ],
+      "returnType": "bool"
+    },
+    "oracle": {
+      "kind": "trap",
+      "basis": {
+        "kind": "manual-derivation",
+        "reference": "TypeScript 7.0.2 inherited control/call semantics; docs/r01-language-contract.md sections 3, 4.2 and 6; ADR-0010",
+        "derivation": "E1 andTrap costs1 depth1. Left true requires RHS; 1 / 0 traps. No normal return; later comparison does not occur."
+      },
+      "trap": {
+        "code": "r01-t-divide-zero",
+        "ruleIds": [
+          "r01-evaluation"
+        ],
+        "primary": {
+          "sourceId": "control/short-circuit.ts",
+          "start": 212,
+          "end": 217,
+          "startLine": 3,
+          "startColumn": 54,
+          "endLine": 3,
+          "endColumn": 59
+        }
+      }
+    }
+  },
+  {
+    "schemaVersion": "6",
+    "specId": "tsfg-r01-v4",
+    "corpusId": "tsfg-r01-control-v1",
+    "caseId": "r01-eval-or-trap",
+    "sourceId": "control/short-circuit.ts",
+    "ruleIds": [
+      "r01-evaluation"
+    ],
+    "capabilities": [
+      "evaluation"
+    ],
+    "target": "windows-x86_64-msvc",
+    "mode": "strict",
+    "applicability": "boundary",
+    "coverage": [
+      "or-trap"
+    ],
+    "budgets": {
+      "semanticFuel": "1",
+      "activeDepth": "1",
+      "physicalInstructions": "10000",
+      "memoryBytes": "1048576",
+      "hostTimeMs": "1000"
+    },
+    "invocation": {
+      "entry": "orTrap",
+      "arguments": [
+        {
+          "type": "bool",
+          "value": false
+        }
+      ],
+      "returnType": "bool"
+    },
+    "oracle": {
+      "kind": "trap",
+      "basis": {
+        "kind": "manual-derivation",
+        "reference": "TypeScript 7.0.2 inherited control/call semantics; docs/r01-language-contract.md sections 3, 4.2 and 6; ADR-0010",
+        "derivation": "E1 orTrap costs1 depth1. Left false requires RHS; 2 % 0 traps. No normal return; later comparison does not occur."
+      },
+      "trap": {
+        "code": "r01-t-remainder-zero",
+        "ruleIds": [
+          "r01-evaluation"
+        ],
+        "primary": {
+          "sourceId": "control/short-circuit.ts",
+          "start": 281,
+          "end": 286,
+          "startLine": 4,
+          "startColumn": 53,
+          "endLine": 4,
+          "endColumn": 58
+        }
+      }
+    }
+  },
+  {
+    "schemaVersion": "6",
+    "specId": "tsfg-r01-v4",
+    "corpusId": "tsfg-r01-control-v1",
+    "caseId": "r01-eval-operands",
+    "sourceId": "control/ordered.ts",
+    "ruleIds": [
+      "r01-evaluation"
+    ],
+    "capabilities": [
+      "evaluation"
+    ],
+    "target": "windows-x86_64-msvc",
+    "mode": "strict",
+    "applicability": "boundary",
+    "coverage": [
+      "first-failure"
+    ],
+    "budgets": {
+      "semanticFuel": "1",
+      "activeDepth": "1",
+      "physicalInstructions": "10000",
+      "memoryBytes": "1048576",
+      "hostTimeMs": "1000"
+    },
+    "invocation": {
+      "entry": "operands",
+      "arguments": [],
+      "returnType": "i32"
+    },
+    "oracle": {
+      "kind": "trap",
+      "basis": {
+        "kind": "manual-derivation",
+        "reference": "TypeScript 7.0.2 inherited control/call semantics; docs/r01-language-contract.md sections 3, 4.2 and 6; ADR-0010",
+        "derivation": "E1 operands entry costs1 depth1; left operand 1/0 traps; right 2%0 must never execute. Different codes distinguish ordering."
+      },
+      "trap": {
+        "code": "r01-t-divide-zero",
+        "ruleIds": [
+          "r01-evaluation"
+        ],
+        "primary": {
+          "sourceId": "control/ordered.ts",
+          "start": 74,
+          "end": 79,
+          "startLine": 1,
+          "startColumn": 42,
+          "endLine": 1,
+          "endColumn": 47
+        }
+      }
+    }
+  },
+  {
+    "schemaVersion": "6",
+    "specId": "tsfg-r01-v4",
+    "corpusId": "tsfg-r01-control-v1",
+    "caseId": "r01-eval-arguments",
+    "sourceId": "control/ordered.ts",
+    "ruleIds": [
+      "r01-evaluation"
+    ],
+    "capabilities": [
+      "evaluation"
+    ],
+    "target": "windows-x86_64-msvc",
+    "mode": "strict",
+    "applicability": "boundary",
+    "coverage": [
+      "argument-failure"
+    ],
+    "budgets": {
+      "semanticFuel": "1",
+      "activeDepth": "1",
+      "physicalInstructions": "10000",
+      "memoryBytes": "1048576",
+      "hostTimeMs": "1000"
+    },
+    "invocation": {
+      "entry": "arguments",
+      "arguments": [],
+      "returnType": "i32"
+    },
+    "oracle": {
+      "kind": "trap",
+      "basis": {
+        "kind": "manual-derivation",
+        "reference": "TypeScript 7.0.2 inherited control/call semantics; docs/r01-language-contract.md sections 3, 4.2 and 6; ADR-0010",
+        "derivation": "E1 arguments costs1 depth1; first argument 2%0 traps. Second argument 1/0 and pair entry are not reached. Fuel remains0 but no callee fuel/depth check happens."
+      },
+      "trap": {
+        "code": "r01-t-remainder-zero",
+        "ruleIds": [
+          "r01-evaluation"
+        ],
+        "primary": {
+          "sourceId": "control/ordered.ts",
+          "start": 84,
+          "end": 89,
+          "startLine": 1,
+          "startColumn": 52,
+          "endLine": 1,
+          "endColumn": 57
+        }
+      }
+    }
+  },
+  {
+    "schemaVersion": "6",
+    "specId": "tsfg-r01-v4",
+    "corpusId": "tsfg-r01-control-v1",
+    "caseId": "r01-eval-folded",
+    "sourceId": "control/ordered.ts",
+    "ruleIds": [
+      "r01-evaluation"
+    ],
+    "capabilities": [
+      "evaluation"
+    ],
+    "target": "windows-x86_64-msvc",
+    "mode": "strict",
+    "applicability": "boundary",
+    "coverage": [
+      "folded-trap"
+    ],
+    "budgets": {
+      "semanticFuel": "1",
+      "activeDepth": "1",
+      "physicalInstructions": "10000",
+      "memoryBytes": "1048576",
+      "hostTimeMs": "1000"
+    },
+    "invocation": {
+      "entry": "folded",
+      "arguments": [],
+      "returnType": "i32"
+    },
+    "oracle": {
+      "kind": "trap",
+      "basis": {
+        "kind": "manual-derivation",
+        "reference": "TypeScript 7.0.2 inherited control/call semantics; docs/r01-language-contract.md sections 3, 4.2 and 6; ADR-0010",
+        "derivation": "E1 folded costs1 depth1. Constant expression 1/0 traps at runtime; folding must not replace it with a compile diagnostic."
+      },
+      "trap": {
+        "code": "r01-t-divide-zero",
+        "ruleIds": [
+          "r01-evaluation"
+        ],
+        "primary": {
+          "sourceId": "control/ordered.ts",
+          "start": 250,
+          "end": 255,
+          "startLine": 4,
+          "startColumn": 39,
+          "endLine": 4,
+          "endColumn": 44
+        }
+      }
+    }
+  },
+  {
+    "schemaVersion": "6",
+    "specId": "tsfg-r01-v4",
+    "corpusId": "tsfg-r01-control-v1",
+    "caseId": "r01-eval-return",
+    "sourceId": "control/ordered.ts",
+    "ruleIds": [
+      "r01-evaluation"
+    ],
+    "capabilities": [
+      "evaluation"
+    ],
+    "target": "windows-x86_64-msvc",
+    "mode": "strict",
+    "applicability": "positive",
+    "coverage": [
+      "positive"
+    ],
+    "budgets": {
+      "semanticFuel": "1",
+      "activeDepth": "1",
+      "physicalInstructions": "10000",
+      "memoryBytes": "1048576",
+      "hostTimeMs": "1000"
+    },
+    "invocation": {
+      "entry": "branch",
+      "arguments": [
+        {
+          "type": "bool",
+          "value": true
+        }
+      ],
+      "returnType": "i32"
+    },
+    "oracle": {
+      "kind": "return",
+      "value": {
+        "type": "i32",
+        "value": "9"
+      },
+      "basis": {
+        "kind": "manual-derivation",
+        "reference": "TypeScript 7.0.2 inherited control/call semantics; docs/r01-language-contract.md sections 3, 4.2 and 6; ADR-0010",
+        "derivation": "E1 branch costs1 depth1; true branch returns9 before else; no division."
+      }
+    }
+  },
+  {
+    "schemaVersion": "6",
+    "specId": "tsfg-r01-v4",
+    "corpusId": "tsfg-r01-control-v1",
+    "caseId": "r01-eval-no-hoist",
+    "sourceId": "control/ordered.ts",
+    "ruleIds": [
+      "r01-evaluation"
+    ],
+    "capabilities": [
+      "evaluation"
+    ],
+    "target": "windows-x86_64-msvc",
+    "mode": "strict",
+    "applicability": "negative",
+    "coverage": [
+      "negative"
+    ],
+    "budgets": {
+      "semanticFuel": "1",
+      "activeDepth": "1",
+      "physicalInstructions": "10000",
+      "memoryBytes": "1048576",
+      "hostTimeMs": "1000"
+    },
+    "invocation": {
+      "entry": "branch",
+      "arguments": [
+        {
+          "type": "bool",
+          "value": true
+        }
+      ],
+      "returnType": "i32"
+    },
+    "oracle": {
+      "kind": "return",
+      "value": {
+        "type": "i32",
+        "value": "9"
+      },
+      "basis": {
+        "kind": "manual-derivation",
+        "reference": "TypeScript 7.0.2 inherited control/call semantics; docs/r01-language-contract.md sections 3, 4.2 and 6; ADR-0010",
+        "derivation": "E1 branch costs1 depth1; true branch returns9. The constant trap in the unselected else cannot be hoisted."
+      }
+    }
+  },
+  {
+    "schemaVersion": "6",
+    "specId": "tsfg-r01-v4",
+    "corpusId": "tsfg-r01-control-v1",
+    "caseId": "r01-eval-unexecuted",
+    "sourceId": "control/short-circuit.ts",
+    "ruleIds": [
+      "r01-evaluation"
+    ],
+    "capabilities": [
+      "evaluation"
+    ],
+    "target": "windows-x86_64-msvc",
+    "mode": "strict",
+    "applicability": "boundary",
+    "coverage": [
+      "unexecuted-trap"
+    ],
+    "budgets": {
+      "semanticFuel": "1",
+      "activeDepth": "1",
+      "physicalInstructions": "10000",
+      "memoryBytes": "1048576",
+      "hostTimeMs": "1000"
+    },
+    "invocation": {
+      "entry": "andTrap",
+      "arguments": [
+        {
+          "type": "bool",
+          "value": false
+        }
+      ],
+      "returnType": "bool"
+    },
+    "oracle": {
+      "kind": "return",
+      "value": {
+        "type": "bool",
+        "value": false
+      },
+      "basis": {
+        "kind": "manual-derivation",
+        "reference": "TypeScript 7.0.2 inherited control/call semantics; docs/r01-language-contract.md sections 3, 4.2 and 6; ADR-0010",
+        "derivation": "E1 andTrap costs1 depth1. false && skips constant division entirely and returns bool false."
+      }
+    }
+  },
+  {
+    "schemaVersion": "6",
+    "specId": "tsfg-r01-v4",
+    "corpusId": "tsfg-r01-control-v1",
+    "caseId": "r01-eval-branch",
+    "sourceId": "control/ordered.ts",
+    "ruleIds": [
+      "r01-evaluation"
+    ],
+    "capabilities": [
+      "evaluation"
+    ],
+    "target": "windows-x86_64-msvc",
+    "mode": "strict",
+    "applicability": "boundary",
+    "coverage": [
+      "untaken-branch"
+    ],
+    "budgets": {
+      "semanticFuel": "1",
+      "activeDepth": "1",
+      "physicalInstructions": "10000",
+      "memoryBytes": "1048576",
+      "hostTimeMs": "1000"
+    },
+    "invocation": {
+      "entry": "branch",
+      "arguments": [
+        {
+          "type": "bool",
+          "value": true
+        }
+      ],
+      "returnType": "i32"
+    },
+    "oracle": {
+      "kind": "return",
+      "value": {
+        "type": "i32",
+        "value": "9"
+      },
+      "basis": {
+        "kind": "manual-derivation",
+        "reference": "TypeScript 7.0.2 inherited control/call semantics; docs/r01-language-contract.md sections 3, 4.2 and 6; ADR-0010",
+        "derivation": "E1 branch costs1 depth1. Selected return9 prevents reaching else division."
+      }
+    }
+  },
+  {
+    "schemaVersion": "6",
+    "specId": "tsfg-r01-v4",
+    "corpusId": "tsfg-r01-control-v1",
+    "caseId": "r01-eval-loop",
+    "sourceId": "control/ordered.ts",
+    "ruleIds": [
+      "r01-evaluation"
+    ],
+    "capabilities": [
+      "evaluation"
+    ],
+    "target": "windows-x86_64-msvc",
+    "mode": "strict",
+    "applicability": "boundary",
+    "coverage": [
+      "untaken-loop"
+    ],
+    "budgets": {
+      "semanticFuel": "2",
+      "activeDepth": "1",
+      "physicalInstructions": "10000",
+      "memoryBytes": "1048576",
+      "hostTimeMs": "1000"
+    },
+    "invocation": {
+      "entry": "loop",
+      "arguments": [],
+      "returnType": "i32"
+    },
+    "oracle": {
+      "kind": "return",
+      "value": {
+        "type": "i32",
+        "value": "8"
+      },
+      "basis": {
+        "kind": "manual-derivation",
+        "reference": "TypeScript 7.0.2 inherited control/call semantics; docs/r01-language-contract.md sections 3, 4.2 and 6; ADR-0010",
+        "derivation": "E1 loop entry; E2 while false check. Each costs1 at depth1. Body remainder trap never runs; return8."
+      }
+    }
+  },
+  {
+    "schemaVersion": "6",
+    "specId": "tsfg-r01-v4",
+    "corpusId": "tsfg-r01-control-v1",
+    "caseId": "r01-fuel-entry-exact",
+    "sourceId": "control/entry.ts",
+    "ruleIds": [
+      "r01-fuel"
+    ],
+    "capabilities": [
+      "fuel"
+    ],
+    "target": "windows-x86_64-msvc",
+    "mode": "strict",
+    "applicability": "boundary",
+    "coverage": [
+      "entry-exact"
+    ],
+    "budgets": {
+      "semanticFuel": "1",
+      "activeDepth": "1",
+      "physicalInstructions": "10000",
+      "memoryBytes": "1048576",
+      "hostTimeMs": "1000"
+    },
+    "invocation": {
+      "entry": "main",
+      "arguments": [],
+      "returnType": "i32"
+    },
+    "oracle": {
+      "kind": "return",
+      "value": {
+        "type": "i32",
+        "value": "6"
+      },
+      "basis": {
+        "kind": "manual-derivation",
+        "reference": "TypeScript 7.0.2 inherited control/call semantics; docs/r01-language-contract.md sections 3, 4.2 and 6; ADR-0010",
+        "derivation": "E1 main entry: fuel1->0, depth0->1; return6. Exactly one charge, no other logical event."
+      }
+    }
+  },
+  {
+    "schemaVersion": "6",
+    "specId": "tsfg-r01-v4",
+    "corpusId": "tsfg-r01-control-v1",
+    "caseId": "r01-fuel-entry-zero",
+    "sourceId": "control/entry.ts",
+    "ruleIds": [
+      "r01-fuel"
+    ],
+    "capabilities": [
+      "fuel"
+    ],
+    "target": "windows-x86_64-msvc",
+    "mode": "strict",
+    "applicability": "boundary",
+    "coverage": [
+      "entry-zero"
+    ],
+    "budgets": {
+      "semanticFuel": "0",
+      "activeDepth": "1",
+      "physicalInstructions": "10000",
+      "memoryBytes": "1048576",
+      "hostTimeMs": "1000"
+    },
+    "invocation": {
+      "entry": "main",
+      "arguments": [],
+      "returnType": "i32"
+    },
+    "oracle": {
+      "kind": "trap",
+      "basis": {
+        "kind": "manual-derivation",
+        "reference": "TypeScript 7.0.2 inherited control/call semantics; docs/r01-language-contract.md sections 3, 4.2 and 6; ADR-0010",
+        "derivation": "Before E1 main entry fuel0 cannot pay1: fuel trap at the main declaration before frame entry or body. Depth limit1 is sufficient."
+      },
+      "trap": {
+        "code": "r01-t-fuel",
+        "ruleIds": [
+          "r01-fuel"
+        ],
+        "primary": {
+          "sourceId": "control/entry.ts",
+          "start": 48,
+          "end": 52,
+          "startLine": 1,
+          "startColumn": 16,
+          "endLine": 1,
+          "endColumn": 20
+        }
+      }
+    }
+  },
+  {
+    "schemaVersion": "6",
+    "specId": "tsfg-r01-v4",
+    "corpusId": "tsfg-r01-control-v1",
+    "caseId": "r01-fuel-insufficient",
+    "sourceId": "control/entry.ts",
+    "ruleIds": [
+      "r01-fuel"
+    ],
+    "capabilities": [
+      "fuel"
+    ],
+    "target": "windows-x86_64-msvc",
+    "mode": "strict",
+    "applicability": "negative",
+    "coverage": [
+      "negative"
+    ],
+    "budgets": {
+      "semanticFuel": "0",
+      "activeDepth": "1",
+      "physicalInstructions": "10000",
+      "memoryBytes": "1048576",
+      "hostTimeMs": "1000"
+    },
+    "invocation": {
+      "entry": "main",
+      "arguments": [],
+      "returnType": "i32"
+    },
+    "oracle": {
+      "kind": "trap",
+      "basis": {
+        "kind": "manual-derivation",
+        "reference": "TypeScript 7.0.2 inherited control/call semantics; docs/r01-language-contract.md sections 3, 4.2 and 6; ADR-0010",
+        "derivation": "Before E1 main entry fuel0 cannot pay1. Return6 is not reached; request reports fuel trap, no host termination."
+      },
+      "trap": {
+        "code": "r01-t-fuel",
+        "ruleIds": [
+          "r01-fuel"
+        ],
+        "primary": {
+          "sourceId": "control/entry.ts",
+          "start": 48,
+          "end": 52,
+          "startLine": 1,
+          "startColumn": 16,
+          "endLine": 1,
+          "endColumn": 20
+        }
+      }
+    }
+  },
+  {
+    "schemaVersion": "6",
+    "specId": "tsfg-r01-v4",
+    "corpusId": "tsfg-r01-control-v1",
+    "caseId": "r01-fuel-first",
+    "sourceId": "control/loop.ts",
+    "ruleIds": [
+      "r01-fuel"
+    ],
+    "capabilities": [
+      "fuel"
+    ],
+    "target": "windows-x86_64-msvc",
+    "mode": "strict",
+    "applicability": "boundary",
+    "coverage": [
+      "first-while"
+    ],
+    "budgets": {
+      "semanticFuel": "2",
+      "activeDepth": "1",
+      "physicalInstructions": "10000",
+      "memoryBytes": "1048576",
+      "hostTimeMs": "1000"
+    },
+    "invocation": {
+      "entry": "main",
+      "arguments": [
+        {
+          "type": "i32",
+          "value": "0"
+        }
+      ],
+      "returnType": "i32"
+    },
+    "oracle": {
+      "kind": "return",
+      "value": {
+        "type": "i32",
+        "value": "0"
+      },
+      "basis": {
+        "kind": "manual-derivation",
+        "reference": "TypeScript 7.0.2 inherited control/call semantics; docs/r01-language-contract.md sections 3, 4.2 and 6; ADR-0010",
+        "derivation": "E1 main: fuel2->1 depth1; E2 before initial while:1->0, 0<0 is false. Return0; initial check is also final false."
+      }
+    }
+  },
+  {
+    "schemaVersion": "6",
+    "specId": "tsfg-r01-v4",
+    "corpusId": "tsfg-r01-control-v1",
+    "caseId": "r01-fuel-first-short",
+    "sourceId": "control/loop.ts",
+    "ruleIds": [
+      "r01-fuel"
+    ],
+    "capabilities": [
+      "fuel"
+    ],
+    "target": "windows-x86_64-msvc",
+    "mode": "strict",
+    "applicability": "boundary",
+    "coverage": [
+      "first-while-short"
+    ],
+    "budgets": {
+      "semanticFuel": "1",
+      "activeDepth": "1",
+      "physicalInstructions": "10000",
+      "memoryBytes": "1048576",
+      "hostTimeMs": "1000"
+    },
+    "invocation": {
+      "entry": "main",
+      "arguments": [
+        {
+          "type": "i32",
+          "value": "0"
+        }
+      ],
+      "returnType": "i32"
+    },
+    "oracle": {
+      "kind": "trap",
+      "basis": {
+        "kind": "manual-derivation",
+        "reference": "TypeScript 7.0.2 inherited control/call semantics; docs/r01-language-contract.md sections 3, 4.2 and 6; ADR-0010",
+        "derivation": "E1 main:1->0 depth1. Before E2 initial while check, fuel0 cannot pay1; condition 0<0 is not evaluated even though it would be false."
+      },
+      "trap": {
+        "code": "r01-t-fuel",
+        "ruleIds": [
+          "r01-fuel"
+        ],
+        "primary": {
+          "sourceId": "control/loop.ts",
+          "start": 92,
+          "end": 109,
+          "startLine": 3,
+          "startColumn": 2,
+          "endLine": 3,
+          "endColumn": 19
+        }
+      }
+    }
+  },
+  {
+    "schemaVersion": "6",
+    "specId": "tsfg-r01-v4",
+    "corpusId": "tsfg-r01-control-v1",
+    "caseId": "r01-fuel-final",
+    "sourceId": "control/loop.ts",
+    "ruleIds": [
+      "r01-fuel"
+    ],
+    "capabilities": [
+      "fuel"
+    ],
+    "target": "windows-x86_64-msvc",
+    "mode": "strict",
+    "applicability": "boundary",
+    "coverage": [
+      "final-false"
+    ],
+    "budgets": {
+      "semanticFuel": "4",
+      "activeDepth": "1",
+      "physicalInstructions": "10000",
+      "memoryBytes": "1048576",
+      "hostTimeMs": "1000"
+    },
+    "invocation": {
+      "entry": "main",
+      "arguments": [
+        {
+          "type": "i32",
+          "value": "2"
+        }
+      ],
+      "returnType": "i32"
+    },
+    "oracle": {
+      "kind": "return",
+      "value": {
+        "type": "i32",
+        "value": "2"
+      },
+      "basis": {
+        "kind": "manual-derivation",
+        "reference": "TypeScript 7.0.2 inherited control/call semantics; docs/r01-language-contract.md sections 3, 4.2 and 6; ADR-0010",
+        "derivation": "E1 main:4->3 depth1. E2 while0<2:3->2 true, count=1. E3 while1<2:2->1 true, count=2. E4 while2<2:1->0 false. Return2. Every check pays before evaluation."
+      }
+    }
+  },
+  {
+    "schemaVersion": "6",
+    "specId": "tsfg-r01-v4",
+    "corpusId": "tsfg-r01-control-v1",
+    "caseId": "r01-fuel-loop-exact",
+    "sourceId": "control/loop.ts",
+    "ruleIds": [
+      "r01-fuel"
+    ],
+    "capabilities": [
+      "fuel"
+    ],
+    "target": "windows-x86_64-msvc",
+    "mode": "strict",
+    "applicability": "boundary",
+    "coverage": [
+      "loop-exact-short"
+    ],
+    "budgets": {
+      "semanticFuel": "4",
+      "activeDepth": "1",
+      "physicalInstructions": "10000",
+      "memoryBytes": "1048576",
+      "hostTimeMs": "1000"
+    },
+    "invocation": {
+      "entry": "main",
+      "arguments": [
+        {
+          "type": "i32",
+          "value": "2"
+        }
+      ],
+      "returnType": "i32"
+    },
+    "oracle": {
+      "kind": "return",
+      "value": {
+        "type": "i32",
+        "value": "2"
+      },
+      "basis": {
+        "kind": "manual-derivation",
+        "reference": "TypeScript 7.0.2 inherited control/call semantics; docs/r01-language-contract.md sections 3, 4.2 and 6; ADR-0010",
+        "derivation": "E1 entry4->3; E2 first true3->2; E3 second true2->1; E4 final false1->0. All at depth1; body assignments cost no additional Semantic Fuel. Return2, exact total4."
+      }
+    }
+  },
+  {
+    "schemaVersion": "6",
+    "specId": "tsfg-r01-v4",
+    "corpusId": "tsfg-r01-control-v1",
+    "caseId": "r01-fuel-final-short",
+    "sourceId": "control/loop.ts",
+    "ruleIds": [
+      "r01-fuel"
+    ],
+    "capabilities": [
+      "fuel"
+    ],
+    "target": "windows-x86_64-msvc",
+    "mode": "strict",
+    "applicability": "boundary",
+    "coverage": [
+      "final-false-short",
+      "loop-short"
+    ],
+    "budgets": {
+      "semanticFuel": "3",
+      "activeDepth": "1",
+      "physicalInstructions": "10000",
+      "memoryBytes": "1048576",
+      "hostTimeMs": "1000"
+    },
+    "invocation": {
+      "entry": "main",
+      "arguments": [
+        {
+          "type": "i32",
+          "value": "2"
+        }
+      ],
+      "returnType": "i32"
+    },
+    "oracle": {
+      "kind": "trap",
+      "basis": {
+        "kind": "manual-derivation",
+        "reference": "TypeScript 7.0.2 inherited control/call semantics; docs/r01-language-contract.md sections 3, 4.2 and 6; ADR-0010",
+        "derivation": "E1 entry3->2; E2 first true2->1; E3 second true1->0, count becomes2. Before E4 final condition fuel0 fails; 2<2 is not evaluated and return2 is not reached."
+      },
+      "trap": {
+        "code": "r01-t-fuel",
+        "ruleIds": [
+          "r01-fuel"
+        ],
+        "primary": {
+          "sourceId": "control/loop.ts",
+          "start": 92,
+          "end": 109,
+          "startLine": 3,
+          "startColumn": 2,
+          "endLine": 3,
+          "endColumn": 19
+        }
+      }
+    }
+  },
+  {
+    "schemaVersion": "6",
+    "specId": "tsfg-r01-v4",
+    "corpusId": "tsfg-r01-control-v1",
+    "caseId": "r01-fuel-inlined",
+    "sourceId": "control/fuel-call.ts",
+    "ruleIds": [
+      "r01-fuel"
+    ],
+    "capabilities": [
+      "fuel"
+    ],
+    "target": "windows-x86_64-msvc",
+    "mode": "strict",
+    "applicability": "positive",
+    "coverage": [
+      "positive"
+    ],
+    "budgets": {
+      "semanticFuel": "2",
+      "activeDepth": "2",
+      "physicalInstructions": "10000",
+      "memoryBytes": "1048576",
+      "hostTimeMs": "1000"
+    },
+    "invocation": {
+      "entry": "main",
+      "arguments": [],
+      "returnType": "i32"
+    },
+    "oracle": {
+      "kind": "return",
+      "value": {
+        "type": "i32",
+        "value": "5"
+      },
+      "basis": {
+        "kind": "manual-derivation",
+        "reference": "TypeScript 7.0.2 inherited control/call semantics; docs/r01-language-contract.md sections 3, 4.2 and 6; ADR-0010",
+        "derivation": "E1 main:2->1 depth1. Evaluate explicit literal4 (no charge). E2 callee:1->0 depth2; return4+1=5. Inlining may remove a physical call but must retain both logical entry charges."
+      }
+    }
+  },
+  {
+    "schemaVersion": "6",
+    "specId": "tsfg-r01-v4",
+    "corpusId": "tsfg-r01-control-v1",
+    "caseId": "r01-fuel-call-short",
+    "sourceId": "control/fuel-call.ts",
+    "ruleIds": [
+      "r01-fuel"
+    ],
+    "capabilities": [
+      "fuel"
+    ],
+    "target": "windows-x86_64-msvc",
+    "mode": "strict",
+    "applicability": "boundary",
+    "coverage": [
+      "call-short"
+    ],
+    "budgets": {
+      "semanticFuel": "1",
+      "activeDepth": "2",
+      "physicalInstructions": "10000",
+      "memoryBytes": "1048576",
+      "hostTimeMs": "1000"
+    },
+    "invocation": {
+      "entry": "main",
+      "arguments": [],
+      "returnType": "i32"
+    },
+    "oracle": {
+      "kind": "trap",
+      "basis": {
+        "kind": "manual-derivation",
+        "reference": "TypeScript 7.0.2 inherited control/call semantics; docs/r01-language-contract.md sections 3, 4.2 and 6; ADR-0010",
+        "derivation": "E1 main:1->0 depth1; literal argument4 evaluates without charge. Before E2 callee entry fuel0 fails; callee frame/body never enters. Active depth2 is allowed, so no competing depth failure. Inlining must retain this trap."
+      },
+      "trap": {
+        "code": "r01-t-fuel",
+        "ruleIds": [
+          "r01-fuel"
+        ],
+        "primary": {
+          "sourceId": "control/fuel-call.ts",
+          "start": 91,
+          "end": 105,
+          "startLine": 2,
+          "startColumn": 9,
+          "endLine": 2,
+          "endColumn": 23
+        }
+      }
+    }
+  },
+  {
+    "schemaVersion": "6",
+    "specId": "tsfg-r01-v4",
+    "corpusId": "tsfg-r01-control-v1",
+    "caseId": "r01-depth-entry",
+    "sourceId": "control/entry.ts",
+    "ruleIds": [
+      "r01-depth"
+    ],
+    "capabilities": [
+      "depth"
+    ],
+    "target": "windows-x86_64-msvc",
+    "mode": "strict",
+    "applicability": "positive",
+    "coverage": [
+      "positive"
+    ],
+    "budgets": {
+      "semanticFuel": "1",
+      "activeDepth": "1",
+      "physicalInstructions": "10000",
+      "memoryBytes": "1048576",
+      "hostTimeMs": "1000"
+    },
+    "invocation": {
+      "entry": "main",
+      "arguments": [],
+      "returnType": "i32"
+    },
+    "oracle": {
+      "kind": "return",
+      "value": {
+        "type": "i32",
+        "value": "6"
+      },
+      "basis": {
+        "kind": "manual-derivation",
+        "reference": "TypeScript 7.0.2 inherited control/call semantics; docs/r01-language-contract.md sections 3, 4.2 and 6; ADR-0010",
+        "derivation": "E1 main enters active depth1 exactly at limit1; fuel1->0. Return6. Entry depth is one, not zero."
+      }
+    }
+  },
+  {
+    "schemaVersion": "6",
+    "specId": "tsfg-r01-v4",
+    "corpusId": "tsfg-r01-control-v1",
+    "caseId": "r01-depth-exact",
+    "sourceId": "control/calls.ts",
+    "ruleIds": [
+      "r01-depth"
+    ],
+    "capabilities": [
+      "depth"
+    ],
+    "target": "windows-x86_64-msvc",
+    "mode": "strict",
+    "applicability": "boundary",
+    "coverage": [
+      "depth-boundary"
+    ],
+    "budgets": {
+      "semanticFuel": "4",
+      "activeDepth": "3",
+      "physicalInstructions": "10000",
+      "memoryBytes": "1048576",
+      "hostTimeMs": "1000"
+    },
+    "invocation": {
+      "entry": "direct",
+      "arguments": [
+        {
+          "type": "i32",
+          "value": "2"
+        }
+      ],
+      "returnType": "i32"
+    },
+    "oracle": {
+      "kind": "return",
+      "value": {
+        "type": "i32",
+        "value": "2"
+      },
+      "basis": {
+        "kind": "manual-derivation",
+        "reference": "TypeScript 7.0.2 inherited control/call semantics; docs/r01-language-contract.md sections 3, 4.2 and 6; ADR-0010",
+        "derivation": "E1 direct(2) depth1 fuel4->3; E2 direct(1) depth2 fuel3->2; E3 direct(0) depth3 fuel2->1. Limit3 permits all frames. Return0 then1 then2."
+      }
+    }
+  },
+  {
+    "schemaVersion": "6",
+    "specId": "tsfg-r01-v4",
+    "corpusId": "tsfg-r01-control-v1",
+    "caseId": "r01-depth-overflow",
+    "sourceId": "control/calls.ts",
+    "ruleIds": [
+      "r01-depth"
+    ],
+    "capabilities": [
+      "depth"
+    ],
+    "target": "windows-x86_64-msvc",
+    "mode": "strict",
+    "applicability": "boundary",
+    "coverage": [
+      "depth-overflow"
+    ],
+    "budgets": {
+      "semanticFuel": "4",
+      "activeDepth": "2",
+      "physicalInstructions": "10000",
+      "memoryBytes": "1048576",
+      "hostTimeMs": "1000"
+    },
+    "invocation": {
+      "entry": "direct",
+      "arguments": [
+        {
+          "type": "i32",
+          "value": "2"
+        }
+      ],
+      "returnType": "i32"
+    },
+    "oracle": {
+      "kind": "trap",
+      "basis": {
+        "kind": "manual-derivation",
+        "reference": "TypeScript 7.0.2 inherited control/call semantics; docs/r01-language-contract.md sections 3, 4.2 and 6; ADR-0010",
+        "derivation": "E1 direct(2) depth1 fuel4->3; E2 direct(1) depth2 fuel3->2. Evaluate argument1-1=0. Before E3 direct(0), proposed depth3 exceeds2, so reject before new frame. Fuel2 is sufficient; no simultaneous fuel failure. No base-case return occurs."
+      },
+      "trap": {
+        "code": "r01-t-depth",
+        "ruleIds": [
+          "r01-depth"
+        ],
+        "primary": {
+          "sourceId": "control/calls.ts",
+          "start": 275,
+          "end": 289,
+          "startLine": 5,
+          "startColumn": 16,
+          "endLine": 5,
+          "endColumn": 30
+        }
+      }
+    }
+  },
+  {
+    "schemaVersion": "6",
+    "specId": "tsfg-r01-v4",
+    "corpusId": "tsfg-r01-control-v1",
+    "caseId": "r01-depth-rejected",
+    "sourceId": "control/calls.ts",
+    "ruleIds": [
+      "r01-depth"
+    ],
+    "capabilities": [
+      "depth"
+    ],
+    "target": "windows-x86_64-msvc",
+    "mode": "strict",
+    "applicability": "negative",
+    "coverage": [
+      "negative"
+    ],
+    "budgets": {
+      "semanticFuel": "4",
+      "activeDepth": "2",
+      "physicalInstructions": "10000",
+      "memoryBytes": "1048576",
+      "hostTimeMs": "1000"
+    },
+    "invocation": {
+      "entry": "direct",
+      "arguments": [
+        {
+          "type": "i32",
+          "value": "2"
+        }
+      ],
+      "returnType": "i32"
+    },
+    "oracle": {
+      "kind": "trap",
+      "basis": {
+        "kind": "manual-derivation",
+        "reference": "TypeScript 7.0.2 inherited control/call semantics; docs/r01-language-contract.md sections 3, 4.2 and 6; ADR-0010",
+        "derivation": "E1 direct(2) depth1 and E2 direct(1) depth2 each cost1 from fuel4. Argument0 evaluates. Proposed third frame exceeds depth2 with enough fuel remaining; request reports depth trap before frame entry."
+      },
+      "trap": {
+        "code": "r01-t-depth",
+        "ruleIds": [
+          "r01-depth"
+        ],
+        "primary": {
+          "sourceId": "control/calls.ts",
+          "start": 275,
+          "end": 289,
+          "startLine": 5,
+          "startColumn": 16,
+          "endLine": 5,
+          "endColumn": 30
+        }
+      }
+    }
+  },
+  {
+    "schemaVersion": "6",
+    "specId": "tsfg-r01-v4",
+    "corpusId": "tsfg-r01-control-v1",
+    "caseId": "r01-depth-arguments",
+    "sourceId": "control/argument-before-entry.ts",
+    "ruleIds": [
+      "r01-depth"
+    ],
+    "capabilities": [
+      "depth"
+    ],
+    "target": "windows-x86_64-msvc",
+    "mode": "strict",
+    "applicability": "boundary",
+    "coverage": [
+      "arguments-first"
+    ],
+    "budgets": {
+      "semanticFuel": "2",
+      "activeDepth": "1",
+      "physicalInstructions": "10000",
+      "memoryBytes": "1048576",
+      "hostTimeMs": "1000"
+    },
+    "invocation": {
+      "entry": "main",
+      "arguments": [],
+      "returnType": "i32"
+    },
+    "oracle": {
+      "kind": "trap",
+      "basis": {
+        "kind": "manual-derivation",
+        "reference": "TypeScript 7.0.2 inherited control/call semantics; docs/r01-language-contract.md sections 3, 4.2 and 6; ADR-0010",
+        "derivation": "E1 main depth1 fuel2->1. Explicit argument 1/0 traps before callee entry check. Callee would exceed limit1, but its frame check is not reached; report division trap, not depth."
+      },
+      "trap": {
+        "code": "r01-t-divide-zero",
+        "ruleIds": [
+          "r01-depth"
+        ],
+        "primary": {
+          "sourceId": "control/argument-before-entry.ts",
+          "start": 76,
+          "end": 81,
+          "startLine": 1,
+          "startColumn": 44,
+          "endLine": 1,
+          "endColumn": 49
+        }
+      }
+    }
+  },
+  {
+    "schemaVersion": "6",
+    "specId": "tsfg-r01-v4",
+    "corpusId": "tsfg-r01-control-v1",
+    "caseId": "r01-fuel-arguments",
+    "sourceId": "control/argument-before-entry.ts",
+    "ruleIds": [
+      "r01-fuel"
+    ],
+    "capabilities": [
+      "fuel"
+    ],
+    "target": "windows-x86_64-msvc",
+    "mode": "strict",
+    "applicability": "boundary",
+    "coverage": [
+      "arguments-first"
+    ],
+    "budgets": {
+      "semanticFuel": "1",
+      "activeDepth": "2",
+      "physicalInstructions": "10000",
+      "memoryBytes": "1048576",
+      "hostTimeMs": "1000"
+    },
+    "invocation": {
+      "entry": "main",
+      "arguments": [],
+      "returnType": "i32"
+    },
+    "oracle": {
+      "kind": "trap",
+      "basis": {
+        "kind": "manual-derivation",
+        "reference": "TypeScript 7.0.2 inherited control/call semantics; docs/r01-language-contract.md sections 3, 4.2 and 6; ADR-0010",
+        "derivation": "E1 main depth1 fuel1->0. Argument1/0 traps before callee entry. Callee would lack fuel, but no such event is reached; division trap wins by event order, not a guessed same-event priority. Depth2 would be permitted."
+      },
+      "trap": {
+        "code": "r01-t-divide-zero",
+        "ruleIds": [
+          "r01-fuel"
+        ],
+        "primary": {
+          "sourceId": "control/argument-before-entry.ts",
+          "start": 76,
+          "end": 81,
+          "startLine": 1,
+          "startColumn": 44,
+          "endLine": 1,
+          "endColumn": 49
+        }
+      }
+    }
+  },
+  {
+    "schemaVersion": "6",
+    "specId": "tsfg-r01-v4",
+    "corpusId": "tsfg-r01-control-v1",
+    "caseId": "r01-depth-sequential",
+    "sourceId": "control/calls.ts",
+    "ruleIds": [
+      "r01-depth"
+    ],
+    "capabilities": [
+      "depth"
+    ],
+    "target": "windows-x86_64-msvc",
+    "mode": "strict",
+    "applicability": "boundary",
+    "coverage": [
+      "sequential-frames"
+    ],
+    "budgets": {
+      "semanticFuel": "4",
+      "activeDepth": "2",
+      "physicalInstructions": "10000",
+      "memoryBytes": "1048576",
+      "hostTimeMs": "1000"
+    },
+    "invocation": {
+      "entry": "main",
+      "arguments": [
+        {
+          "type": "i32",
+          "value": "1"
+        },
+        {
+          "type": "i32",
+          "value": "2"
+        }
+      ],
+      "returnType": "i32"
+    },
+    "oracle": {
+      "kind": "return",
+      "value": {
+        "type": "i32",
+        "value": "24"
+      },
+      "basis": {
+        "kind": "manual-derivation",
+        "reference": "TypeScript 7.0.2 inherited control/call semantics; docs/r01-language-contract.md sections 3, 4.2 and 6; ADR-0010",
+        "derivation": "E1 main depth1; E2 left depth2 then exits to1; E3 right depth2 then exits to1; E4 pair depth2 then exits. Four fuel charges, active limit2 sufficient although four function entries occur. Return24."
+      }
+    }
+  },
+  {
+    "schemaVersion": "6",
+    "specId": "tsfg-r01-v4",
+    "corpusId": "tsfg-r01-control-v1",
+    "caseId": "r01-failure-trap",
+    "sourceId": "control/argument-before-entry.ts",
+    "ruleIds": [
+      "r01-failure-channels"
+    ],
+    "capabilities": [
+      "failure-channels"
+    ],
+    "target": "windows-x86_64-msvc",
+    "mode": "strict",
+    "applicability": "positive",
+    "coverage": [
+      "positive"
+    ],
+    "budgets": {
+      "semanticFuel": "2",
+      "activeDepth": "2",
+      "physicalInstructions": "10000",
+      "memoryBytes": "1048576",
+      "hostTimeMs": "1000"
+    },
+    "invocation": {
+      "entry": "main",
+      "arguments": [],
+      "returnType": "i32"
+    },
+    "oracle": {
+      "kind": "trap",
+      "basis": {
+        "kind": "manual-derivation",
+        "reference": "TypeScript 7.0.2 inherited control/call semantics; docs/r01-language-contract.md sections 3, 4.2 and 6; ADR-0010",
+        "derivation": "E1 main depth1 fuel2->1. Argument1/0 is the first actual trap; record its code and source anchor as request-local failure. No normal return. Host survival is a later real execution observation, not proven by this authored record."
+      },
+      "trap": {
+        "code": "r01-t-divide-zero",
+        "ruleIds": [
+          "r01-failure-channels"
+        ],
+        "primary": {
+          "sourceId": "control/argument-before-entry.ts",
+          "start": 76,
+          "end": 81,
+          "startLine": 1,
+          "startColumn": 44,
+          "endLine": 1,
+          "endColumn": 49
+        }
+      }
+    }
+  },
+  {
+    "schemaVersion": "6",
+    "specId": "tsfg-r01-v4",
+    "corpusId": "tsfg-r01-control-v1",
+    "caseId": "r01-failure-anchor",
+    "sourceId": "control/argument-before-entry.ts",
+    "ruleIds": [
+      "r01-failure-channels"
+    ],
+    "capabilities": [
+      "failure-channels"
+    ],
+    "target": "windows-x86_64-msvc",
+    "mode": "strict",
+    "applicability": "boundary",
+    "coverage": [
+      "first-anchor"
+    ],
+    "budgets": {
+      "semanticFuel": "2",
+      "activeDepth": "2",
+      "physicalInstructions": "10000",
+      "memoryBytes": "1048576",
+      "hostTimeMs": "1000"
+    },
+    "invocation": {
+      "entry": "main",
+      "arguments": [],
+      "returnType": "i32"
+    },
+    "oracle": {
+      "kind": "trap",
+      "basis": {
+        "kind": "manual-derivation",
+        "reference": "TypeScript 7.0.2 inherited control/call semantics; docs/r01-language-contract.md sections 3, 4.2 and 6; ADR-0010",
+        "derivation": "E1 main depth1 fuel2->1. Argument1/0 is the first actual trap; record its code and source anchor as request-local failure. No normal return. Host survival is a later real execution observation, not proven by this authored record."
+      },
+      "trap": {
+        "code": "r01-t-divide-zero",
+        "ruleIds": [
+          "r01-failure-channels"
+        ],
+        "primary": {
+          "sourceId": "control/argument-before-entry.ts",
+          "start": 76,
+          "end": 81,
+          "startLine": 1,
+          "startColumn": 44,
+          "endLine": 1,
+          "endColumn": 49
+        }
+      }
+    }
+  },
+  {
+    "schemaVersion": "6",
+    "specId": "tsfg-r01-v4",
+    "corpusId": "tsfg-r01-control-v1",
+    "caseId": "r01-calls-argument-type",
+    "sourceId": "control/argument-type.ts",
+    "ruleIds": [
+      "r01-calls"
+    ],
+    "capabilities": [
+      "calls"
+    ],
+    "target": "windows-x86_64-msvc",
+    "mode": "strict",
+    "applicability": "boundary",
+    "coverage": [
+      "argument-type"
+    ],
+    "budgets": {
+      "semanticFuel": "1",
+      "activeDepth": "1",
+      "physicalInstructions": "10000",
+      "memoryBytes": "1048576",
+      "hostTimeMs": "1000"
+    },
+    "invocation": {
+      "entry": "main",
+      "arguments": [],
+      "returnType": "i32"
+    },
+    "oracle": {
+      "kind": "diagnostics",
+      "basis": {
+        "kind": "manual-derivation",
+        "reference": "TypeScript 7.0.2 inherited control/call semantics; docs/r01-language-contract.md sections 3, 4.2 and 6; ADR-0010",
+        "derivation": "The explicit bool argument true cannot convert to the callee i32 parameter. Fixed baseline type checking plus no implicit scalar conversion; compile diagnostic at true, no execution events."
+      },
+      "diagnostics": [
+        {
+          "code": "r01-d-scalar-type",
+          "ruleIds": [
+            "r01-calls"
+          ],
+          "primary": {
+            "sourceId": "control/argument-type.ts",
+            "start": 76,
+            "end": 80,
+            "startLine": 1,
+            "startColumn": 44,
+            "endLine": 1,
+            "endColumn": 48
+          },
+          "phase": "types",
+          "severity": "error"
+        }
+      ]
+    }
+  },
+  {
+    "schemaVersion": "6",
+    "specId": "tsfg-r01-v4",
+    "corpusId": "tsfg-r01-control-v1",
+    "caseId": "r01-calls-return-type",
+    "sourceId": "control/return-type.ts",
+    "ruleIds": [
+      "r01-calls"
+    ],
+    "capabilities": [
+      "calls"
+    ],
+    "target": "windows-x86_64-msvc",
+    "mode": "strict",
+    "applicability": "boundary",
+    "coverage": [
+      "return-type"
+    ],
+    "budgets": {
+      "semanticFuel": "1",
+      "activeDepth": "1",
+      "physicalInstructions": "10000",
+      "memoryBytes": "1048576",
+      "hostTimeMs": "1000"
+    },
+    "invocation": {
+      "entry": "main",
+      "arguments": [],
+      "returnType": "i32"
+    },
+    "oracle": {
+      "kind": "diagnostics",
+      "basis": {
+        "kind": "manual-derivation",
+        "reference": "TypeScript 7.0.2 inherited control/call semantics; docs/r01-language-contract.md sections 3, 4.2 and 6; ADR-0010",
+        "derivation": "The returned bool true cannot convert to the declared i32 return type. Fixed baseline type checking plus no implicit scalar conversion; compile diagnostic at true, no execution events."
+      },
+      "diagnostics": [
+        {
+          "code": "r01-d-scalar-type",
+          "ruleIds": [
+            "r01-calls"
+          ],
+          "primary": {
+            "sourceId": "control/return-type.ts",
+            "start": 69,
+            "end": 73,
+            "startLine": 1,
+            "startColumn": 37,
+            "endLine": 1,
+            "endColumn": 41
+          },
+          "phase": "types",
+          "severity": "error"
+        }
+      ]
+    }
+  }
+]

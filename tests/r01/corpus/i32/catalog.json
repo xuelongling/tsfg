@@ -13,6 +13,10 @@
     {
       "id": "tsfg-r01-v3",
       "change": "Refine i32/bool boundary obligations and allocate numeric diagnostic/trap identities without changing language semantics."
+    },
+    {
+      "id": "tsfg-r01-v4",
+      "change": "Refine control, evaluation and budget boundary responsibilities; allocate stable failure identities. No language semantic change."
     }
   ],
   "corpusRevisions": [
@@ -727,6 +731,27 @@
       "meaning": "Both literals fit i32. The only evaluated division has zero divisor, so the first observable failure is divide-zero at 1 / 0. Constant folding must preserve the runtime trap, not replace it with compile rejection.",
       "status": "active",
       "introducedIn": "tsfg-r01-i32-v1"
+    },
+    {
+      "kind": "diagnostic",
+      "id": "r01-d-unresolved-name",
+      "meaning": "A referenced source name has no resolvable declaration.",
+      "status": "active",
+      "introducedIn": "tsfg-r01-v4"
+    },
+    {
+      "kind": "trap",
+      "id": "r01-t-fuel",
+      "meaning": "Insufficient Semantic Fuel before the next logical charge event.",
+      "status": "active",
+      "introducedIn": "tsfg-r01-v4"
+    },
+    {
+      "kind": "trap",
+      "id": "r01-t-depth",
+      "meaning": "A proposed function frame exceeds the configured active-depth limit.",
+      "status": "active",
+      "introducedIn": "tsfg-r01-v4"
     }
   ]
 }

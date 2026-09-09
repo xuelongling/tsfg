@@ -128,7 +128,7 @@ There is no real frontend or language execution evidence in this delivery.
 The authored [i32/bool corpus](../../tests/r01/corpus/i32/README.md) contains
 separate TS sources, case records and an identity catalog. It consumes the full
 responsibility directory through this same public entry. Numeric coverage is
-complete within ticket 06; control-flow/budget and W3–W6 gaps remain visible.
+complete within ticket 06. The [control/budget corpus](../../tests/r01/corpus/control/README.md) adds ticket 07 scoped coverage; physical Abort, pending interactions and W3–W6 gaps remain visible.
 Every case is explicitly `not-executed`, with zero real product passes.
 
 Version 6 adds `oracle.kind: "trap"`. Its `trap` object contains exactly `code`,
@@ -247,7 +247,7 @@ the same entry with a complete scoped addition collection, a withdrawn MAX+1
 boundary, a legitimate negative exemption, and the full staged directory. The
 MAX+1 oracle is independently derived by subtracting 2^32 from 2147483648; no JS
 execution of corpus source determines it. The directory integration test prints
-the full missing-responsibility and pending-consumer report. The numeric corpus is described below; control-flow/budget corpus and result comparison remain subsequent work.
+the full missing-responsibility and pending-consumer report. The numeric and control/budget corpora are described above; result comparison remains subsequent work.
 
 ## Lossless scalar records
 

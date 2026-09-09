@@ -127,7 +127,8 @@ test("numeric record validation leaves control-flow responsibilities and all rea
   assert.equal(report.coverage.initial, "incomplete");
   assert.equal(report.coverage.milestone, "incomplete");
   assert.deepEqual(report.coverage.gaps.filter((gap) => ["r01-literals", "r01-bool", "r01-i32-add", "r01-i32-wrap", "r01-division", "r01-shifts"].includes(gap.ruleId))
-    .map((gap) => [gap.ruleId, gap.obligationId]), [["r01-bool", "positive"], ["r01-bool", "short-circuit-and"], ["r01-bool", "short-circuit-or"]]);
+    .map((gap) => [gap.ruleId, gap.obligationId]), ["positive", "short-circuit-and", "short-circuit-or", "and-true", "or-false", "or-rhs"]
+    .map((obligationId) => ["r01-bool", obligationId]));
   assert.ok(report.coverage.gaps.some((gap) => gap.stage === "W3"));
   assert.ok(report.coverage.pending.length > 0);
   assert.ok(report.cases.every((record) => record.languageValidation === "not-executed"));

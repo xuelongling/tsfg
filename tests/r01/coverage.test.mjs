@@ -142,7 +142,7 @@ async function milestoneCorpus() {
   corpus.catalog.identities.push(...numericCatalog.identities.filter((entry) => ["diagnostic", "trap"].includes(entry.kind)));
   corpus.rules.specId = directory.specId;
   corpus.support.specId = directory.specId;
-  corpus.catalog.specRevisions.push({ id: directory.specId, change: "R01 staged rule and coverage responsibilities" });
+  corpus.catalog.specRevisions = structuredClone(numericCatalog.specRevisions);
   for (const record of corpus.cases) record.specId = directory.specId;
   for (const rule of directory.rules) {
     if (rule.ruleId === "r01-i32-add") {

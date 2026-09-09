@@ -1,6 +1,6 @@
 {
   "schemaVersion": "6",
-  "specId": "tsfg-r01-v3",
+  "specId": "tsfg-r01-v4",
   "languageBaseline": "TypeScript 7.0.2",
   "rules": [
     {
@@ -236,6 +236,27 @@
             "id": "alias",
             "kind": "boundary",
             "requirement": "MUST preserve true and false across bool/boolean parameter, local and return aliases.",
+            "applicability": "required",
+            "oracleKind": "return"
+          },
+          {
+            "id": "and-true",
+            "kind": "boundary",
+            "requirement": "MUST preserve bool result on and-true path.",
+            "applicability": "required",
+            "oracleKind": "return"
+          },
+          {
+            "id": "or-false",
+            "kind": "boundary",
+            "requirement": "MUST preserve bool result on or-false path.",
+            "applicability": "required",
+            "oracleKind": "return"
+          },
+          {
+            "id": "or-rhs",
+            "kind": "boundary",
+            "requirement": "MUST preserve bool result on or-rhs path.",
             "applicability": "required",
             "oracleKind": "return"
           }
@@ -698,7 +719,9 @@
       "mode": "strict",
       "positive": "MUST cover initialized locals, exact parameters, explicit return paths and bool conditions.",
       "negativeNotApplicable": "Applicable negative responsibilities are listed in coverage; error identities are allocated with concrete diagnostic/trap corpus.",
-      "diagnosticCodes": [],
+      "diagnosticCodes": [
+        "r01-d-scalar-type"
+      ],
       "trapCodes": [],
       "coverage": {
         "stage": "W1",
@@ -737,6 +760,34 @@
             "requirement": "MUST cover equal, less and greater values with same-type comparisons.",
             "applicability": "required",
             "oracleKind": "return"
+          },
+          {
+            "id": "else",
+            "kind": "boundary",
+            "requirement": "MUST exercise the false branch independently.",
+            "applicability": "required",
+            "oracleKind": "return"
+          },
+          {
+            "id": "loop-zero",
+            "kind": "boundary",
+            "requirement": "MUST cover an initially false loop separately.",
+            "applicability": "required",
+            "oracleKind": "return"
+          },
+          {
+            "id": "compare-equal",
+            "kind": "boundary",
+            "requirement": "MUST cover same-type equal comparison.",
+            "applicability": "required",
+            "oracleKind": "return"
+          },
+          {
+            "id": "compare-greater",
+            "kind": "boundary",
+            "requirement": "MUST cover same-type greater comparison.",
+            "applicability": "required",
+            "oracleKind": "return"
           }
         ]
       }
@@ -753,7 +804,10 @@
       "mode": "strict",
       "positive": "MUST resolve forward function calls and preserve explicit argument/return types.",
       "negativeNotApplicable": "Applicable negative responsibilities are listed in coverage; error identities are allocated with concrete diagnostic/trap corpus.",
-      "diagnosticCodes": [],
+      "diagnosticCodes": [
+        "r01-d-unresolved-name",
+        "r01-d-scalar-type"
+      ],
       "trapCodes": [],
       "coverage": {
         "stage": "W1",
@@ -792,6 +846,20 @@
             "requirement": "MUST evaluate explicit arguments left to right before function entry.",
             "applicability": "required",
             "oracleKind": "return"
+          },
+          {
+            "id": "argument-type",
+            "kind": "boundary",
+            "requirement": "MUST reject incompatible explicit argument-type.",
+            "applicability": "required",
+            "oracleKind": "diagnostics"
+          },
+          {
+            "id": "return-type",
+            "kind": "boundary",
+            "requirement": "MUST reject incompatible explicit return-type.",
+            "applicability": "required",
+            "oracleKind": "diagnostics"
           }
         ]
       }
@@ -809,7 +877,10 @@
       "positive": "MUST preserve results on executed nontrapping paths.",
       "negativeNotApplicable": "Applicable negative responsibilities are listed in coverage; error identities are allocated with concrete diagnostic/trap corpus.",
       "diagnosticCodes": [],
-      "trapCodes": [],
+      "trapCodes": [
+        "r01-t-divide-zero",
+        "r01-t-remainder-zero"
+      ],
       "coverage": {
         "stage": "W1",
         "obligations": [
@@ -847,6 +918,41 @@
             "requirement": "MUST preserve runtime failure kind and anchor under folding, never replacing runtime trap with compile rejection.",
             "applicability": "required",
             "oracleKind": "trap"
+          },
+          {
+            "id": "and-trap",
+            "kind": "boundary",
+            "requirement": "MUST evaluate required short-circuit RHS and observe its trap.",
+            "applicability": "required",
+            "oracleKind": "trap"
+          },
+          {
+            "id": "or-trap",
+            "kind": "boundary",
+            "requirement": "MUST evaluate required short-circuit RHS and observe its trap.",
+            "applicability": "required",
+            "oracleKind": "trap"
+          },
+          {
+            "id": "argument-failure",
+            "kind": "boundary",
+            "requirement": "MUST stop at the first explicit argument trap before later arguments or callee entry.",
+            "applicability": "required",
+            "oracleKind": "trap"
+          },
+          {
+            "id": "untaken-branch",
+            "kind": "boundary",
+            "requirement": "MUST not evaluate a trap in an untaken if branch.",
+            "applicability": "required",
+            "oracleKind": "return"
+          },
+          {
+            "id": "untaken-loop",
+            "kind": "boundary",
+            "requirement": "MUST not evaluate a trap in a zero-iteration loop body.",
+            "applicability": "required",
+            "oracleKind": "return"
           }
         ]
       }
@@ -864,7 +970,10 @@
       "positive": "MUST preserve logical fuel events through optimization and inlining.",
       "negativeNotApplicable": "Applicable negative responsibilities are listed in coverage; error identities are allocated with concrete diagnostic/trap corpus.",
       "diagnosticCodes": [],
-      "trapCodes": [],
+      "trapCodes": [
+        "r01-t-fuel",
+        "r01-t-divide-zero"
+      ],
       "coverage": {
         "stage": "W1",
         "obligations": [
@@ -887,58 +996,130 @@
             "kind": "boundary",
             "requirement": "MUST fail before function entry with zero fuel.",
             "applicability": "required",
-            "oracleKind": "trap"
+            "oracleKind": "trap",
+            "budgets": {
+              "semanticFuel": "0",
+              "activeDepth": "1"
+            }
           },
           {
             "id": "entry-exact",
             "kind": "boundary",
             "requirement": "MUST enter with exactly one fuel.",
             "applicability": "required",
-            "oracleKind": "return"
+            "oracleKind": "return",
+            "budgets": {
+              "semanticFuel": "1",
+              "activeDepth": "1"
+            }
           },
           {
             "id": "first-while",
             "kind": "boundary",
             "requirement": "MUST complete the first while check with enough fuel including its one-unit charge.",
             "applicability": "required",
-            "oracleKind": "return"
+            "oracleKind": "return",
+            "budgets": {
+              "semanticFuel": "2",
+              "activeDepth": "1"
+            }
           },
           {
             "id": "final-false",
             "kind": "boundary",
             "requirement": "MUST complete the final false while check with enough fuel including its one-unit charge.",
             "applicability": "required",
-            "oracleKind": "return"
+            "oracleKind": "return",
+            "budgets": {
+              "semanticFuel": "4",
+              "activeDepth": "1"
+            }
           },
           {
             "id": "loop-exact-short",
             "kind": "boundary",
             "requirement": "MUST return with exactly enough loop fuel, measured by logical events rather than physical instructions.",
             "applicability": "required",
-            "oracleKind": "return"
+            "oracleKind": "return",
+            "budgets": {
+              "semanticFuel": "4",
+              "activeDepth": "1"
+            }
           },
           {
             "id": "first-while-short",
             "kind": "boundary",
             "requirement": "MUST trap before the first while check when its one fuel is unavailable.",
             "applicability": "required",
-            "oracleKind": "trap"
+            "oracleKind": "trap",
+            "budgets": {
+              "semanticFuel": "1",
+              "activeDepth": "1"
+            }
           },
           {
             "id": "final-false-short",
             "kind": "boundary",
             "requirement": "MUST trap before the final false while check when its one fuel is unavailable.",
             "applicability": "required",
-            "oracleKind": "trap"
+            "oracleKind": "trap",
+            "budgets": {
+              "semanticFuel": "3",
+              "activeDepth": "1"
+            }
           },
           {
             "id": "loop-short",
             "kind": "boundary",
             "requirement": "MUST trap with one-short loop fuel.",
             "applicability": "required",
-            "oracleKind": "trap"
+            "oracleKind": "trap",
+            "budgets": {
+              "semanticFuel": "3",
+              "activeDepth": "1"
+            }
+          },
+          {
+            "id": "call-short",
+            "kind": "boundary",
+            "requirement": "MUST preserve callee entry charge under inlining and fail after explicit arguments.",
+            "applicability": "required",
+            "oracleKind": "trap",
+            "budgets": {
+              "semanticFuel": "1",
+              "activeDepth": "2"
+            }
+          },
+          {
+            "id": "arguments-first",
+            "kind": "boundary",
+            "requirement": "MUST evaluate an explicit trapping argument before an unavailable callee entry fuel charge.",
+            "applicability": "required",
+            "oracleKind": "trap",
+            "budgets": {
+              "semanticFuel": "1",
+              "activeDepth": "2"
+            }
           }
         ]
+      },
+      "pending": {
+        "consumers": [
+          "R03 logical-event lowering",
+          "R05 VM budget consumer",
+          "R07 AOT budget consumer"
+        ],
+        "missing": [
+          "Priority when the same function-entry event lacks fuel and exceeds active depth",
+          "Default-parameter evaluation and budget interaction; no deterministic oracle until fixed"
+        ],
+        "affectedCapabilities": [
+          "fuel",
+          "depth",
+          "calls"
+        ],
+        "consumptionStage": "W1 before compound-failure execution; W3 before default-parameter budget conformance",
+        "closure": "Specify event ordering for default initialization and same-event failure priority, then add independently derived cases. Current cases avoid both ambiguities."
       }
     },
     {
@@ -954,7 +1135,10 @@
       "positive": "MUST enter a frame at exactly the configured depth limit.",
       "negativeNotApplicable": "Applicable negative responsibilities are listed in coverage; error identities are allocated with concrete diagnostic/trap corpus.",
       "diagnosticCodes": [],
-      "trapCodes": [],
+      "trapCodes": [
+        "r01-t-depth",
+        "r01-t-divide-zero"
+      ],
       "coverage": {
         "stage": "W1",
         "obligations": [
@@ -963,21 +1147,33 @@
             "kind": "positive",
             "requirement": "MUST enter a frame at exactly the configured depth limit.",
             "applicability": "required",
-            "oracleKind": "return"
+            "oracleKind": "return",
+            "budgets": {
+              "semanticFuel": "1",
+              "activeDepth": "1"
+            }
           },
           {
             "id": "negative",
             "kind": "negative",
             "requirement": "MUST reject a frame that would exceed the explicit active-depth limit.",
             "applicability": "required",
-            "oracleKind": "trap"
+            "oracleKind": "trap",
+            "budgets": {
+              "semanticFuel": "4",
+              "activeDepth": "2"
+            }
           },
           {
             "id": "depth-boundary",
             "kind": "boundary",
             "requirement": "MUST complete a call at exactly the active depth limit.",
             "applicability": "required",
-            "oracleKind": "return"
+            "oracleKind": "return",
+            "budgets": {
+              "semanticFuel": "4",
+              "activeDepth": "3"
+            }
           },
           {
             "id": "arguments-first",
@@ -991,9 +1187,37 @@
             "kind": "boundary",
             "requirement": "MUST trap before a call one frame beyond the active depth limit.",
             "applicability": "required",
-            "oracleKind": "trap"
+            "oracleKind": "trap",
+            "budgets": {
+              "semanticFuel": "4",
+              "activeDepth": "2"
+            }
+          },
+          {
+            "id": "sequential-frames",
+            "kind": "boundary",
+            "requirement": "MUST count active frames rather than accumulating completed calls.",
+            "applicability": "required",
+            "oracleKind": "return"
           }
         ]
+      },
+      "pending": {
+        "consumers": [
+          "R05 VM frame entry",
+          "R07 AOT logical frame accounting"
+        ],
+        "missing": [
+          "Same-event fuel/depth failure priority",
+          "Default initialization relative to new-frame accounting"
+        ],
+        "affectedCapabilities": [
+          "depth",
+          "fuel",
+          "calls"
+        ],
+        "consumptionStage": "W1 before compound-failure execution; W3 before default-parameter budget conformance",
+        "closure": "Agree shared entry ordering and failure priority, then validate boundary cases on real consumers. No guessed tie-break oracle."
       }
     },
     {
@@ -1009,7 +1233,9 @@
       "positive": "MUST preserve structured request-local failure observations.",
       "negativeNotApplicable": "Applicable negative responsibilities are listed in coverage; error identities are allocated with concrete diagnostic/trap corpus.",
       "diagnosticCodes": [],
-      "trapCodes": [],
+      "trapCodes": [
+        "r01-t-divide-zero"
+      ],
       "coverage": {
         "stage": "W1",
         "obligations": [
@@ -1056,6 +1282,22 @@
             "oracleKind": "execution-abort"
           }
         ]
+      },
+      "pending": {
+        "consumers": [
+          "R05 execution request boundary",
+          "R06 host resource limits and managed exceptions",
+          "R07 physical instruction accounting"
+        ],
+        "missing": [
+          "Real physical instruction, memory and host-time exhaustion evidence; no portable source-to-resource threshold or execution adapter exists in R01",
+          "Trap/Abort interaction with catch/finally and prior host effects; first slice has neither effects nor exceptions"
+        ],
+        "affectedCapabilities": [
+          "failure-channels"
+        ],
+        "consumptionStage": "W1 physical-result comparison in R01 ticket08; real R05/R06/R07 consumers; W3 exception/effect integration",
+        "closure": "Keep physical instruction exhaustion, host timeout and memory failure as Execution Abort, never normal return or semantic trap. Ticket08 compares separately supplied results; real producers must show request isolation and later effect/exception boundaries. Do not predict host exhaustion from source or pretend physical gaps are covered."
       }
     },
     {
