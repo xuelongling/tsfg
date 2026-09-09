@@ -1,6 +1,6 @@
 {
   "schemaVersion": "6",
-  "corpusId": "tsfg-r01-control-v1",
+  "corpusId": "tsfg-r01-control-v2",
   "specRevisions": [
     {
       "id": "tsfg-r01-v1",
@@ -31,6 +31,10 @@
     {
       "id": "tsfg-r01-control-v1",
       "change": "Add original control flow and logical budget oracles alongside unchanged numeric cases."
+    },
+    {
+      "id": "tsfg-r01-control-v2",
+      "change": "Case correction: first argument trap anchors its actual function occurrence; rename entry to orderedArguments to avoid a strict-mode-sensitive binding. Rebase later source offsets. No language semantic change."
     }
   ],
   "identities": [

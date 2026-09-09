@@ -7,14 +7,16 @@ import { validateCorpus } from "../../tooling/conformance/corpus.mjs";
 async function controlCorpus() {
   const read = async (name) => JSON.parse(await readFile(new URL(`./corpus/${name}`, import.meta.url), "utf8"));
   const directory = await read("r01-directory.json");
-  const cases = [...await read("i32/cases.json"), ...await read("control/cases.json")];
+  const catalog = await read("control/catalog.json");
+  const numericCases = await read("i32/cases.json");
   // Compose the numeric inputs into this catalog's newer corpus snapshot.
-  for (const record of cases) record.corpusId = "tsfg-r01-control-v1";
+  for (const record of numericCases) record.corpusId = catalog.corpusId;
+  const cases = [...numericCases, ...await read("control/cases.json")];
   for (const rule of directory.rules) rule.caseIds = cases.filter((record) => record.ruleIds.includes(rule.ruleId)).map((record) => record.caseId);
   return {
     rules: { schemaVersion: directory.schemaVersion, specId: directory.specId, languageBaseline: directory.languageBaseline, rules: directory.rules },
     support: { schemaVersion: directory.schemaVersion, specId: directory.specId, capabilities: directory.capabilities },
-    catalog: await read("control/catalog.json"), cases,
+    catalog, cases,
     sources: await Promise.all([...new Set(cases.map((record) => record.sourceId))].map(async (sourceId) => ({
       sourceId, content: await readFile(new URL(`./corpus/${sourceId}`, import.meta.url), "utf8"),
     }))),
@@ -44,6 +46,13 @@ test("bool short circuit and ordered traps cover executed and skipped paths", as
     const { sourceId, start, end } = record.oracle.trap.primary;
     assert.equal(corpus.sources.find((s) => s.sourceId === sourceId).content.slice(start, end), expression);
   }
+  // Identical expression text occurs in multiple functions: pin the actual invocation's span.
+  const argumentCase = report.cases.find((c) => c.caseId === "r01-eval-arguments");
+  assert.equal(argumentCase.invocation.entry, "orderedArguments");
+  assert.deepEqual(argumentCase.oracle.trap.primary, {
+    sourceId: "control/ordered.ts", start: 148, end: 153,
+    startLine: 2, startColumn: 54, endLine: 2, endColumn: 59,
+  });
 });
 
 test("logical fuel boundaries include entry, initial and final false checks and inlined calls", async () => {

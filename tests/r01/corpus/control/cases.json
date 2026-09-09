@@ -2,7 +2,7 @@
   {
     "schemaVersion": "6",
     "specId": "tsfg-r01-v4",
-    "corpusId": "tsfg-r01-control-v1",
+    "corpusId": "tsfg-r01-control-v2",
     "caseId": "r01-control-locals",
     "sourceId": "control/locals.ts",
     "ruleIds": [
@@ -50,7 +50,7 @@
   {
     "schemaVersion": "6",
     "specId": "tsfg-r01-v4",
-    "corpusId": "tsfg-r01-control-v1",
+    "corpusId": "tsfg-r01-control-v2",
     "caseId": "r01-control-if",
     "sourceId": "control/locals.ts",
     "ruleIds": [
@@ -98,7 +98,7 @@
   {
     "schemaVersion": "6",
     "specId": "tsfg-r01-v4",
-    "corpusId": "tsfg-r01-control-v1",
+    "corpusId": "tsfg-r01-control-v2",
     "caseId": "r01-control-else",
     "sourceId": "control/locals.ts",
     "ruleIds": [
@@ -146,7 +146,7 @@
   {
     "schemaVersion": "6",
     "specId": "tsfg-r01-v4",
-    "corpusId": "tsfg-r01-control-v1",
+    "corpusId": "tsfg-r01-control-v2",
     "caseId": "r01-control-loop",
     "sourceId": "control/loop.ts",
     "ruleIds": [
@@ -194,7 +194,7 @@
   {
     "schemaVersion": "6",
     "specId": "tsfg-r01-v4",
-    "corpusId": "tsfg-r01-control-v1",
+    "corpusId": "tsfg-r01-control-v2",
     "caseId": "r01-control-loop-zero",
     "sourceId": "control/loop.ts",
     "ruleIds": [
@@ -242,7 +242,7 @@
   {
     "schemaVersion": "6",
     "specId": "tsfg-r01-v4",
-    "corpusId": "tsfg-r01-control-v1",
+    "corpusId": "tsfg-r01-control-v2",
     "caseId": "r01-control-less",
     "sourceId": "control/compare.ts",
     "ruleIds": [
@@ -294,7 +294,7 @@
   {
     "schemaVersion": "6",
     "specId": "tsfg-r01-v4",
-    "corpusId": "tsfg-r01-control-v1",
+    "corpusId": "tsfg-r01-control-v2",
     "caseId": "r01-control-equal",
     "sourceId": "control/compare.ts",
     "ruleIds": [
@@ -346,7 +346,7 @@
   {
     "schemaVersion": "6",
     "specId": "tsfg-r01-v4",
-    "corpusId": "tsfg-r01-control-v1",
+    "corpusId": "tsfg-r01-control-v2",
     "caseId": "r01-control-greater",
     "sourceId": "control/compare.ts",
     "ruleIds": [
@@ -398,7 +398,7 @@
   {
     "schemaVersion": "6",
     "specId": "tsfg-r01-v4",
-    "corpusId": "tsfg-r01-control-v1",
+    "corpusId": "tsfg-r01-control-v2",
     "caseId": "r01-control-invalid-local",
     "sourceId": "control/invalid-local.ts",
     "ruleIds": [
@@ -456,7 +456,7 @@
   {
     "schemaVersion": "6",
     "specId": "tsfg-r01-v4",
-    "corpusId": "tsfg-r01-control-v1",
+    "corpusId": "tsfg-r01-control-v2",
     "caseId": "r01-calls-forward",
     "sourceId": "control/calls.ts",
     "ruleIds": [
@@ -508,7 +508,7 @@
   {
     "schemaVersion": "6",
     "specId": "tsfg-r01-v4",
-    "corpusId": "tsfg-r01-control-v1",
+    "corpusId": "tsfg-r01-control-v2",
     "caseId": "r01-calls-arguments",
     "sourceId": "control/calls.ts",
     "ruleIds": [
@@ -560,7 +560,7 @@
   {
     "schemaVersion": "6",
     "specId": "tsfg-r01-v4",
-    "corpusId": "tsfg-r01-control-v1",
+    "corpusId": "tsfg-r01-control-v2",
     "caseId": "r01-calls-direct",
     "sourceId": "control/calls.ts",
     "ruleIds": [
@@ -608,7 +608,7 @@
   {
     "schemaVersion": "6",
     "specId": "tsfg-r01-v4",
-    "corpusId": "tsfg-r01-control-v1",
+    "corpusId": "tsfg-r01-control-v2",
     "caseId": "r01-calls-mutual",
     "sourceId": "control/calls.ts",
     "ruleIds": [
@@ -656,7 +656,7 @@
   {
     "schemaVersion": "6",
     "specId": "tsfg-r01-v4",
-    "corpusId": "tsfg-r01-control-v1",
+    "corpusId": "tsfg-r01-control-v2",
     "caseId": "r01-calls-unresolved",
     "sourceId": "control/invalid-call.ts",
     "ruleIds": [
@@ -714,7 +714,7 @@
   {
     "schemaVersion": "6",
     "specId": "tsfg-r01-v4",
-    "corpusId": "tsfg-r01-control-v1",
+    "corpusId": "tsfg-r01-control-v2",
     "caseId": "r01-bool-result",
     "sourceId": "control/short-circuit.ts",
     "ruleIds": [
@@ -766,7 +766,7 @@
   {
     "schemaVersion": "6",
     "specId": "tsfg-r01-v4",
-    "corpusId": "tsfg-r01-control-v1",
+    "corpusId": "tsfg-r01-control-v2",
     "caseId": "r01-bool-and-skip",
     "sourceId": "control/short-circuit.ts",
     "ruleIds": [
@@ -814,7 +814,7 @@
   {
     "schemaVersion": "6",
     "specId": "tsfg-r01-v4",
-    "corpusId": "tsfg-r01-control-v1",
+    "corpusId": "tsfg-r01-control-v2",
     "caseId": "r01-bool-or-skip",
     "sourceId": "control/short-circuit.ts",
     "ruleIds": [
@@ -862,7 +862,7 @@
   {
     "schemaVersion": "6",
     "specId": "tsfg-r01-v4",
-    "corpusId": "tsfg-r01-control-v1",
+    "corpusId": "tsfg-r01-control-v2",
     "caseId": "r01-bool-and-true",
     "sourceId": "control/short-circuit.ts",
     "ruleIds": [
@@ -914,7 +914,7 @@
   {
     "schemaVersion": "6",
     "specId": "tsfg-r01-v4",
-    "corpusId": "tsfg-r01-control-v1",
+    "corpusId": "tsfg-r01-control-v2",
     "caseId": "r01-bool-or-false",
     "sourceId": "control/short-circuit.ts",
     "ruleIds": [
@@ -966,7 +966,7 @@
   {
     "schemaVersion": "6",
     "specId": "tsfg-r01-v4",
-    "corpusId": "tsfg-r01-control-v1",
+    "corpusId": "tsfg-r01-control-v2",
     "caseId": "r01-bool-or-rhs",
     "sourceId": "control/short-circuit.ts",
     "ruleIds": [
@@ -1018,7 +1018,7 @@
   {
     "schemaVersion": "6",
     "specId": "tsfg-r01-v4",
-    "corpusId": "tsfg-r01-control-v1",
+    "corpusId": "tsfg-r01-control-v2",
     "caseId": "r01-eval-and-trap",
     "sourceId": "control/short-circuit.ts",
     "ruleIds": [
@@ -1077,7 +1077,7 @@
   {
     "schemaVersion": "6",
     "specId": "tsfg-r01-v4",
-    "corpusId": "tsfg-r01-control-v1",
+    "corpusId": "tsfg-r01-control-v2",
     "caseId": "r01-eval-or-trap",
     "sourceId": "control/short-circuit.ts",
     "ruleIds": [
@@ -1136,7 +1136,7 @@
   {
     "schemaVersion": "6",
     "specId": "tsfg-r01-v4",
-    "corpusId": "tsfg-r01-control-v1",
+    "corpusId": "tsfg-r01-control-v2",
     "caseId": "r01-eval-operands",
     "sourceId": "control/ordered.ts",
     "ruleIds": [
@@ -1190,7 +1190,7 @@
   {
     "schemaVersion": "6",
     "specId": "tsfg-r01-v4",
-    "corpusId": "tsfg-r01-control-v1",
+    "corpusId": "tsfg-r01-control-v2",
     "caseId": "r01-eval-arguments",
     "sourceId": "control/ordered.ts",
     "ruleIds": [
@@ -1213,7 +1213,7 @@
       "hostTimeMs": "1000"
     },
     "invocation": {
-      "entry": "arguments",
+      "entry": "orderedArguments",
       "arguments": [],
       "returnType": "i32"
     },
@@ -1222,7 +1222,7 @@
       "basis": {
         "kind": "manual-derivation",
         "reference": "TypeScript 7.0.2 inherited control/call semantics; docs/r01-language-contract.md sections 3, 4.2 and 6; ADR-0010",
-        "derivation": "E1 arguments costs1 depth1; first argument 2%0 traps. Second argument 1/0 and pair entry are not reached. Fuel remains0 but no callee fuel/depth check happens."
+        "derivation": "E1 orderedArguments costs1 depth1; first argument 2%0 traps. Second argument 1/0 and pair entry are not reached. Fuel remains0 but no callee fuel/depth check happens."
       },
       "trap": {
         "code": "r01-t-remainder-zero",
@@ -1231,12 +1231,12 @@
         ],
         "primary": {
           "sourceId": "control/ordered.ts",
-          "start": 84,
-          "end": 89,
-          "startLine": 1,
-          "startColumn": 52,
-          "endLine": 1,
-          "endColumn": 57
+          "start": 148,
+          "end": 153,
+          "startLine": 2,
+          "startColumn": 54,
+          "endLine": 2,
+          "endColumn": 59
         }
       }
     }
@@ -1244,7 +1244,7 @@
   {
     "schemaVersion": "6",
     "specId": "tsfg-r01-v4",
-    "corpusId": "tsfg-r01-control-v1",
+    "corpusId": "tsfg-r01-control-v2",
     "caseId": "r01-eval-folded",
     "sourceId": "control/ordered.ts",
     "ruleIds": [
@@ -1285,8 +1285,8 @@
         ],
         "primary": {
           "sourceId": "control/ordered.ts",
-          "start": 250,
-          "end": 255,
+          "start": 257,
+          "end": 262,
           "startLine": 4,
           "startColumn": 39,
           "endLine": 4,
@@ -1298,7 +1298,7 @@
   {
     "schemaVersion": "6",
     "specId": "tsfg-r01-v4",
-    "corpusId": "tsfg-r01-control-v1",
+    "corpusId": "tsfg-r01-control-v2",
     "caseId": "r01-eval-return",
     "sourceId": "control/ordered.ts",
     "ruleIds": [
@@ -1346,7 +1346,7 @@
   {
     "schemaVersion": "6",
     "specId": "tsfg-r01-v4",
-    "corpusId": "tsfg-r01-control-v1",
+    "corpusId": "tsfg-r01-control-v2",
     "caseId": "r01-eval-no-hoist",
     "sourceId": "control/ordered.ts",
     "ruleIds": [
@@ -1394,7 +1394,7 @@
   {
     "schemaVersion": "6",
     "specId": "tsfg-r01-v4",
-    "corpusId": "tsfg-r01-control-v1",
+    "corpusId": "tsfg-r01-control-v2",
     "caseId": "r01-eval-unexecuted",
     "sourceId": "control/short-circuit.ts",
     "ruleIds": [
@@ -1442,7 +1442,7 @@
   {
     "schemaVersion": "6",
     "specId": "tsfg-r01-v4",
-    "corpusId": "tsfg-r01-control-v1",
+    "corpusId": "tsfg-r01-control-v2",
     "caseId": "r01-eval-branch",
     "sourceId": "control/ordered.ts",
     "ruleIds": [
@@ -1490,7 +1490,7 @@
   {
     "schemaVersion": "6",
     "specId": "tsfg-r01-v4",
-    "corpusId": "tsfg-r01-control-v1",
+    "corpusId": "tsfg-r01-control-v2",
     "caseId": "r01-eval-loop",
     "sourceId": "control/ordered.ts",
     "ruleIds": [
@@ -1533,7 +1533,7 @@
   {
     "schemaVersion": "6",
     "specId": "tsfg-r01-v4",
-    "corpusId": "tsfg-r01-control-v1",
+    "corpusId": "tsfg-r01-control-v2",
     "caseId": "r01-fuel-entry-exact",
     "sourceId": "control/entry.ts",
     "ruleIds": [
@@ -1576,7 +1576,7 @@
   {
     "schemaVersion": "6",
     "specId": "tsfg-r01-v4",
-    "corpusId": "tsfg-r01-control-v1",
+    "corpusId": "tsfg-r01-control-v2",
     "caseId": "r01-fuel-entry-zero",
     "sourceId": "control/entry.ts",
     "ruleIds": [
@@ -1630,7 +1630,7 @@
   {
     "schemaVersion": "6",
     "specId": "tsfg-r01-v4",
-    "corpusId": "tsfg-r01-control-v1",
+    "corpusId": "tsfg-r01-control-v2",
     "caseId": "r01-fuel-insufficient",
     "sourceId": "control/entry.ts",
     "ruleIds": [
@@ -1684,7 +1684,7 @@
   {
     "schemaVersion": "6",
     "specId": "tsfg-r01-v4",
-    "corpusId": "tsfg-r01-control-v1",
+    "corpusId": "tsfg-r01-control-v2",
     "caseId": "r01-fuel-first",
     "sourceId": "control/loop.ts",
     "ruleIds": [
@@ -1732,7 +1732,7 @@
   {
     "schemaVersion": "6",
     "specId": "tsfg-r01-v4",
-    "corpusId": "tsfg-r01-control-v1",
+    "corpusId": "tsfg-r01-control-v2",
     "caseId": "r01-fuel-first-short",
     "sourceId": "control/loop.ts",
     "ruleIds": [
@@ -1791,7 +1791,7 @@
   {
     "schemaVersion": "6",
     "specId": "tsfg-r01-v4",
-    "corpusId": "tsfg-r01-control-v1",
+    "corpusId": "tsfg-r01-control-v2",
     "caseId": "r01-fuel-final",
     "sourceId": "control/loop.ts",
     "ruleIds": [
@@ -1839,7 +1839,7 @@
   {
     "schemaVersion": "6",
     "specId": "tsfg-r01-v4",
-    "corpusId": "tsfg-r01-control-v1",
+    "corpusId": "tsfg-r01-control-v2",
     "caseId": "r01-fuel-loop-exact",
     "sourceId": "control/loop.ts",
     "ruleIds": [
@@ -1887,7 +1887,7 @@
   {
     "schemaVersion": "6",
     "specId": "tsfg-r01-v4",
-    "corpusId": "tsfg-r01-control-v1",
+    "corpusId": "tsfg-r01-control-v2",
     "caseId": "r01-fuel-final-short",
     "sourceId": "control/loop.ts",
     "ruleIds": [
@@ -1947,7 +1947,7 @@
   {
     "schemaVersion": "6",
     "specId": "tsfg-r01-v4",
-    "corpusId": "tsfg-r01-control-v1",
+    "corpusId": "tsfg-r01-control-v2",
     "caseId": "r01-fuel-inlined",
     "sourceId": "control/fuel-call.ts",
     "ruleIds": [
@@ -1990,7 +1990,7 @@
   {
     "schemaVersion": "6",
     "specId": "tsfg-r01-v4",
-    "corpusId": "tsfg-r01-control-v1",
+    "corpusId": "tsfg-r01-control-v2",
     "caseId": "r01-fuel-call-short",
     "sourceId": "control/fuel-call.ts",
     "ruleIds": [
@@ -2044,7 +2044,7 @@
   {
     "schemaVersion": "6",
     "specId": "tsfg-r01-v4",
-    "corpusId": "tsfg-r01-control-v1",
+    "corpusId": "tsfg-r01-control-v2",
     "caseId": "r01-depth-entry",
     "sourceId": "control/entry.ts",
     "ruleIds": [
@@ -2087,7 +2087,7 @@
   {
     "schemaVersion": "6",
     "specId": "tsfg-r01-v4",
-    "corpusId": "tsfg-r01-control-v1",
+    "corpusId": "tsfg-r01-control-v2",
     "caseId": "r01-depth-exact",
     "sourceId": "control/calls.ts",
     "ruleIds": [
@@ -2135,7 +2135,7 @@
   {
     "schemaVersion": "6",
     "specId": "tsfg-r01-v4",
-    "corpusId": "tsfg-r01-control-v1",
+    "corpusId": "tsfg-r01-control-v2",
     "caseId": "r01-depth-overflow",
     "sourceId": "control/calls.ts",
     "ruleIds": [
@@ -2194,7 +2194,7 @@
   {
     "schemaVersion": "6",
     "specId": "tsfg-r01-v4",
-    "corpusId": "tsfg-r01-control-v1",
+    "corpusId": "tsfg-r01-control-v2",
     "caseId": "r01-depth-rejected",
     "sourceId": "control/calls.ts",
     "ruleIds": [
@@ -2253,7 +2253,7 @@
   {
     "schemaVersion": "6",
     "specId": "tsfg-r01-v4",
-    "corpusId": "tsfg-r01-control-v1",
+    "corpusId": "tsfg-r01-control-v2",
     "caseId": "r01-depth-arguments",
     "sourceId": "control/argument-before-entry.ts",
     "ruleIds": [
@@ -2307,7 +2307,7 @@
   {
     "schemaVersion": "6",
     "specId": "tsfg-r01-v4",
-    "corpusId": "tsfg-r01-control-v1",
+    "corpusId": "tsfg-r01-control-v2",
     "caseId": "r01-fuel-arguments",
     "sourceId": "control/argument-before-entry.ts",
     "ruleIds": [
@@ -2361,7 +2361,7 @@
   {
     "schemaVersion": "6",
     "specId": "tsfg-r01-v4",
-    "corpusId": "tsfg-r01-control-v1",
+    "corpusId": "tsfg-r01-control-v2",
     "caseId": "r01-depth-sequential",
     "sourceId": "control/calls.ts",
     "ruleIds": [
@@ -2413,7 +2413,7 @@
   {
     "schemaVersion": "6",
     "specId": "tsfg-r01-v4",
-    "corpusId": "tsfg-r01-control-v1",
+    "corpusId": "tsfg-r01-control-v2",
     "caseId": "r01-failure-trap",
     "sourceId": "control/argument-before-entry.ts",
     "ruleIds": [
@@ -2467,7 +2467,7 @@
   {
     "schemaVersion": "6",
     "specId": "tsfg-r01-v4",
-    "corpusId": "tsfg-r01-control-v1",
+    "corpusId": "tsfg-r01-control-v2",
     "caseId": "r01-failure-anchor",
     "sourceId": "control/argument-before-entry.ts",
     "ruleIds": [
@@ -2521,7 +2521,7 @@
   {
     "schemaVersion": "6",
     "specId": "tsfg-r01-v4",
-    "corpusId": "tsfg-r01-control-v1",
+    "corpusId": "tsfg-r01-control-v2",
     "caseId": "r01-calls-argument-type",
     "sourceId": "control/argument-type.ts",
     "ruleIds": [
@@ -2579,7 +2579,7 @@
   {
     "schemaVersion": "6",
     "specId": "tsfg-r01-v4",
-    "corpusId": "tsfg-r01-control-v1",
+    "corpusId": "tsfg-r01-control-v2",
     "caseId": "r01-calls-return-type",
     "sourceId": "control/return-type.ts",
     "ruleIds": [
