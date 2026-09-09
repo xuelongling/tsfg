@@ -173,6 +173,7 @@ test("the full directory retains initial gaps and W3 through W6 consumer respons
     ["r01-evaluation", "folded-trap", "trap"], ["r01-depth", "arguments-first", "trap"],
     ["r01-literals", "maximum-overflow", "diagnostics"], ["r01-fuel", "loop-short", "trap"],
     ["r01-failure-channels", "physical-time", "execution-abort"],
+    ["r01-closures", "environment-lifetime", "return"], ["r01-closures", "persistent-function-id", "pending"],
   ]) assert.equal(report.coverage.gaps.find((entry) => entry.ruleId === ruleId && entry.obligationId === obligationId)?.oracleKind, oracleKind);
   assert.ok(report.coverage.stages.every((stage) => stage.ruleIds.length > 0));
   assert.ok(report.capabilities.every((entry) => entry.currentSupport === "not-verified"));

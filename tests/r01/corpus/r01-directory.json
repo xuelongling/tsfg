@@ -1324,7 +1324,7 @@
           {
             "id": "negative",
             "kind": "negative",
-            "requirement": "MUST NOT retain dead stack addresses, escaping borrows or persistent code addresses.",
+            "requirement": "MUST diagnose escaping borrowed captures.",
             "applicability": "required",
             "oracleKind": "diagnostics"
           },
@@ -1341,8 +1341,38 @@
             "requirement": "MUST diagnose escaping borrowed captures.",
             "applicability": "required",
             "oracleKind": "diagnostics"
+          },
+          {
+            "id": "environment-lifetime",
+            "kind": "boundary",
+            "requirement": "MUST preserve valid closure behavior after the enclosing frame ends by retaining a safe environment, not a dead stack address.",
+            "applicability": "required",
+            "oracleKind": "return"
+          },
+          {
+            "id": "persistent-function-id",
+            "kind": "boundary",
+            "requirement": "MUST persist FunctionId rather than a native code address in a closure.",
+            "applicability": "required",
+            "oracleKind": "pending"
           }
         ]
+      },
+      "pending": {
+        "consumers": [
+          "R03 closure lowering",
+          "R06 FunctionCell and managed environment",
+          "R09 function replacement consumer"
+        ],
+        "missing": [
+          "Observable persistence evidence that binds a closure to FunctionId rather than a native code address",
+          "Independent persistence and code-replacement oracle representation"
+        ],
+        "affectedCapabilities": [
+          "closures"
+        ],
+        "consumptionStage": "W3 before persisted closure and function replacement acceptance",
+        "closure": "Fix concrete persistence evidence and independently verify FunctionId binding across code replacement; compile rejection of valid closures cannot close this responsibility."
       }
     },
     {
