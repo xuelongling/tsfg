@@ -6,13 +6,13 @@
  */
 export function validateCorpus(corpus) {
   const error = validateRecords(corpus) ?? validateIdentities(corpus) ?? validateRevisions(corpus)
-    ?? validateLifecycle(corpus) ?? validateReferences(corpus);
+    ?? validateLifecycle(corpus) ?? validateReferences(corpus) ?? validateDiagnostics(corpus);
   if (error) return {
-    schemaVersion: "3", recordValidation: "invalid", errors: [error],
+    schemaVersion: "4", recordValidation: "invalid", errors: [error],
     languageValidation: "not-executed", realProductPasses: 0,
   };
   return {
-    schemaVersion: "3",
+    schemaVersion: "4",
     recordValidation: "valid",
     languageValidation: "not-executed",
     realProductPasses: 0,
@@ -24,10 +24,75 @@ export function validateCorpus(corpus) {
     cases: corpus.cases.map(({ specId, corpusId, caseId, sourceId, ruleIds, capabilities, target, mode, invocation, oracle, dataLayout }) => ({
       specId, corpusId, caseId, sourceId, ruleIds: [...ruleIds], capabilities: [...capabilities],
       target, mode, languageValidation: "not-executed",
-      invocation: structuredClone(invocation), oracle: structuredClone(oracle),
+      invocation: structuredClone(invocation), oracle: normalizedOracle(oracle),
       ...(dataLayout === undefined ? {} : { dataLayout: structuredClone(dataLayout) }),
     })),
   };
+}
+
+function normalizedOracle(oracle) {
+  const result = structuredClone(oracle);
+  if (result.kind === "diagnostics") {
+    result.diagnostics = result.diagnostics.map(({ message, ...diagnostic }) => ({
+      ...diagnostic, ruleIds: [...new Set(diagnostic.ruleIds)].sort(compare),
+    })).sort((left, right) => {
+      const key = (diagnostic) => [diagnostic.primary.sourceId, diagnostic.primary.start, diagnostic.code,
+        diagnostic.primary.end, diagnostic.phase, diagnostic.severity, ...diagnostic.ruleIds];
+      const a = key(left);
+      const b = key(right);
+      for (let index = 0; index < Math.min(a.length, b.length); index++) {
+        const order = compare(a[index], b[index]);
+        if (order) return order;
+      }
+      return a.length - b.length;
+    });
+  }
+  return result;
+}
+
+const compare = (left, right) => left < right ? -1 : left > right ? 1 : 0;
+
+function validateDiagnostics(corpus) {
+  const sources = new Map(corpus.sources.map((source) => [source.sourceId, source.content]));
+  const rules = new Map(corpus.rules.rules.map((rule) => [rule.ruleId, rule]));
+  const codes = new Map(corpus.catalog.identities.filter((entry) => entry.kind === "diagnostic").map((entry) => [entry.id, entry]));
+  for (const record of corpus.cases) {
+    if (record.oracle.kind !== "diagnostics") continue;
+    for (const [index, diagnostic] of record.oracle.diagnostics.entries()) {
+      const code = codes.get(diagnostic.code);
+      if (!code || code.status === "retired") return {
+        category: code ? "corpus-identity-retired" : "corpus-reference-missing", object: record.caseId,
+        field: `oracle.diagnostics[${index}].code`,
+      };
+      if (diagnostic.ruleIds.some((id) => !record.ruleIds.includes(id) || !rules.get(id)?.diagnosticCodes.includes(diagnostic.code))) {
+        return { category: "corpus-reference-missing", object: record.caseId, field: `oracle.diagnostics[${index}].ruleIds` };
+      }
+      const field = `oracle.diagnostics[${index}].primary`;
+      const source = sources.get(diagnostic.primary.sourceId);
+      if (source === undefined) return { category: "corpus-reference-missing", object: record.caseId, field: `${field}.sourceId` };
+      const span = diagnostic.primary;
+      if (![span.start, span.end, span.startLine, span.startColumn, span.endLine, span.endColumn]
+        .every((value) => Number.isSafeInteger(value) && value >= 0)
+        || span.start > span.end || span.end > source.length
+        || !matchesPosition(source, span.start, span.startLine, span.startColumn)
+        || !matchesPosition(source, span.end, span.endLine, span.endColumn)) {
+        return { category: "corpus-source-range-invalid", object: record.caseId, field };
+      }
+    }
+  }
+}
+
+function matchesPosition(source, offset, line, column) {
+  let currentLine = 0;
+  let lineStart = 0;
+  for (let index = 0; index < offset; index++) {
+    if (source[index] === "\n" || (source[index] === "\r" && source[index + 1] !== "\n")
+      || source[index] === "\u2028" || source[index] === "\u2029") {
+      currentLine++;
+      lineStart = index + 1;
+    }
+  }
+  return line === currentLine && column === offset - lineStart;
 }
 
 function unique(records, field) {
@@ -125,7 +190,7 @@ const object = (value) => value !== null && typeof value === "object" && !Array.
 const records = (value) => Array.isArray(value) && value.length > 0;
 const nonemptyTextArray = (value) => records(value) && value.every(text);
 const textArray = (value) => Array.isArray(value) && value.every(text);
-const version = (value) => value === "3";
+const version = (value) => value === "4";
 const natural = (value) => typeof value === "string" && /^(0|[1-9][0-9]*)$/.test(value);
 const positive = (value) => natural(value) && value !== "0";
 const integerWidths = new Map([["i8", 8], ["u8", 8], ["i16", 16], ["u16", 16], ["i32", 32], ["u32", 32], ["i64", 64], ["u64", 64]]);
@@ -223,11 +288,24 @@ function validateRecords(corpus) {
       "budgets.semanticFuel": natural, "budgets.activeDepth": positive,
       "budgets.physicalInstructions": positive, "budgets.memoryBytes": positive, "budgets.hostTimeMs": positive,
       "invocation.entry": text, "invocation.arguments": (value) => Array.isArray(value) && value.every((item) => scalar(item, record.dataLayout)),
-      "invocation.returnType": scalarType, "oracle.kind": (value) => value === "return",
-      "oracle.value": (value) => scalar(value, record.dataLayout) && canonicalType(value.type) === canonicalType(record.invocation.returnType),
+      "invocation.returnType": scalarType, "oracle.kind": (value) => value === "return" || value === "diagnostics",
+      "oracle.value": (value) => record.oracle.kind === "diagnostics" ? value === undefined : (scalar(value, record.dataLayout) && canonicalType(value.type) === canonicalType(record.invocation.returnType)),
+      "oracle.diagnostics": (value) => record.oracle.kind === "diagnostics" ? records(value) : value === undefined,
       "oracle.basis.kind": (value) => value === "mathematical-derivation" || value === "manual-derivation",
       "oracle.basis.reference": text, "oracle.basis.derivation": text,
     });
     if (error) return error;
+    if (record.oracle.kind === "diagnostics") {
+      for (const [index, diagnostic] of record.oracle.diagnostics.entries()) {
+        error = fields(diagnostic, `${record.caseId}.oracle.diagnostics[${index}]`, {
+          phase: text, severity: (value) => ["error", "warning", "info", "hint"].includes(value),
+          code: text, ruleIds: nonemptyTextArray, primary: object,
+          message: (value) => value === undefined || typeof value === "string",
+          fields: () => Object.keys(diagnostic).every((key) => ["phase", "severity", "code", "ruleIds", "primary", "message"].includes(key)),
+          "primary.fields": () => Object.keys(diagnostic.primary).every((key) => ["sourceId", "start", "end", "startLine", "startColumn", "endLine", "endColumn"].includes(key)),
+        });
+        if (error) return error;
+      }
+    }
   }
 }

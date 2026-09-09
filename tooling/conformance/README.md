@@ -26,14 +26,14 @@ oracle is independently derived from the R01 language contract. Rule and case
 identities are stable names; `sourceId` identifies logical source independently of
 the caller's filesystem root. Source content and oracle records are never mutated.
 
-Version `3` is an unpublished development record format for this slice,
+Version `4` is an unpublished development record format for this slice,
 not a product artifact family or a full R01 schema. Rules and support records carry
-`specId`; cases also carry `corpusId`. Version 1/2 inputs and mixed versions are
+`specId`; cases also carry `corpusId`. Version 1/2/3 inputs and mixed versions are
 rejected. The same-repository authoring fixtures and consumer have been updated
 atomically under ECP-0002; no published format or product registry is changed.
 The example files document the required
-fields. Version 3 adds lossless numeric records and detached invocation/oracle
-data in reports; callers must invalidate version 1/2 records and cached reports.
+fields. Version 3 added lossless numeric records and detached invocation/oracle
+data in reports; callers must invalidate version 1/2/3 records and cached reports.
 The fixture schema migration changes no source, language rule or independent
 expectation, so their spec/corpus content revisions remain unchanged.
 All five budget
@@ -41,7 +41,7 @@ fields are decimal strings: Semantic Fuel permits zero, and active depth,
 physical instruction count, memory bytes and host time in milliseconds are
 positive. These are authored execution conditions, not enforced resource limits.
 
-Only return oracles with a mathematical or manual derivation are implemented in
+Return and diagnostic oracles with a mathematical or manual derivation are implemented in
 this slice. The rule example has a positive obligation and an explicit reason
 why arithmetic rejection is inapplicable; it does not claim complete boundary
 coverage. The support record keeps semantic source, product boundary and
@@ -54,12 +54,12 @@ first error's stable category, referring object and field, and no valid case lis
 Missing object identities use collection positions for traceability. Categories
 are `corpus-record-invalid`, `corpus-version-unsupported`,
 `corpus-identity-duplicate`, `corpus-identity-retired`,
-`corpus-reference-missing` and `corpus-revision-mismatch`. These are authoring
+`corpus-reference-missing`, `corpus-revision-mismatch` and `corpus-source-range-invalid`. These are authoring
 errors, not product Diagnostic Codes or Trap Codes.
 
 ## Identity and revision authoring
 
-`catalog.json` carries version 3, the current `corpusId`, ordered
+`catalog.json` carries version 4, the current `corpusId`, ordered
 `specRevisions` and `corpusRevisions` arrays, and an `identities` ledger.
 Each revision has a unique `id` within its history and a nonempty `change` note.
 Append specification changes to the first history and case corrections to the
@@ -108,7 +108,7 @@ Node tools and generated output do not establish an official frontend intake.
 
 ## Remaining slices and testing
 
-Source ranges, coverage requirements, result comparison and evidence-backed
+Coverage requirements, result comparison and evidence-backed
 capability status belong to subsequent R01 tickets. No source scanner, parser,
 checker, execution adapter or JavaScript execution is part of this module.
 The source is opaque data even when it is not a valid program.
@@ -167,3 +167,75 @@ return declarations fail at `invocation.returnType`. Neither path rewrites sourc
 or expectations, and neither creates a product Diagnostic Code or Trap Code.
 The additional numeric test vectors are comparator-tool inputs using opaque
 source, not executed language corpus coverage or support claims.
+
+## Source-anchored diagnostic expectations (version 4)
+
+Version 4 adds `oracle.kind: "diagnostics"` with a nonempty `diagnostics` array
+instead of `oracle.value`; the independent `basis` remains required. All current
+authoring records and reports use version 4. Reject version 1/2/3 and mixed
+records and invalidate their cached reports. This unpublished same-repository
+change falls within ECP-0002; no product contract registry, compatibility promise,
+language rule or existing source/oracle content revision changes.
+
+Each diagnostic has exactly these stable fields (plus optional string `message`):
+
+```json
+{
+  "phase": "syntax",
+  "severity": "error",
+  "code": "tool-diagnostic",
+  "ruleIds": ["tool-rule"],
+  "primary": {
+    "sourceId": "example.ts",
+    "start": 1, "end": 3,
+    "startLine": 0, "startColumn": 1,
+    "endLine": 0, "endColumn": 3
+  }
+}
+```
+
+This is a coordinate illustration, not an allocated product code. `phase` is a
+nonempty authored stage name; severity is `error`, `warning`, `info` or `hint`.
+The code must be active in the diagnostic namespace (a Trap Code cannot substitute).
+Each associated rule must belong to the case and list this Diagnostic Code.
+The primary logical source must resolve in the corpus; it may name another file
+than the case's entry source. Existing invocation and budget metadata remains
+required as authored case context, without implying that compilation/execution
+has taken place. Unknown diagnostic/primary fields and mixed return/diagnostic
+expectations are invalid authoring records.
+
+Load UTF-8 source as shown above. Preserve the decoded text exactly: no newline,
+escape or Unicode normalization. Coordinates are safe nonnegative JSON integers,
+measured in UTF-16 code units (not UTF-8 bytes, code points or rendered columns).
+`0 <= start <= end <= content.length`; both endpoints must match their zero-based
+line/column. Empty ranges, including empty-file position 0 and EOF, are valid.
+Any code-unit boundary is valid, including inside a surrogate pair or CRLF.
+LF, lone CR, U+2028 and U+2029 start a new line after their code unit; CRLF starts
+one new line only after LF. The boundary between CR and LF is on the preceding
+line. Tabs each occupy one column. This coordinate contract does not validate
+source grammar, string value semantics or whether a compiler emits a diagnostic.
+
+The test writes and reads UTF-8 `中😀\u0061` followed by CRLF, `x`, and LF.
+Hand-counted spans are: 中 `[0,1)`, emoji `[1,3)`, literal escape spelling `[3,9)`,
+CRLF `[9,11)`, x `[11,12)`, LF `[12,13)`. Line starts are 0, 11, 13;
+EOF is `(offset 13, line 2, column 0)`. The escape remains six code units.
+
+Within each case's returned oracle, diagnostics sort ascending by logical source
+ID, start offset, code, end offset, phase, severity, then rule IDs. Text compares
+lexicographically by UTF-16 code units without locale dependence; offsets compare
+numerically. Rule associations are a set: sorted unique IDs, lexicographic sequence
+order with a shorter equal prefix first. Line/column is determined by source and
+offset, so adds no independent tie. Equal stable diagnostics remain identical
+duplicates. Optional `message` is omitted from the report, never a sort key.
+The detached normalized report cannot mutate the authored input; case order itself
+remains the corpus order. No other diagnostic fields can introduce hidden ties.
+
+Bad coordinates report `corpus-source-range-invalid` with the Case ID and
+`oracle.diagnostics[index].primary`; missing references and malformed fields use
+the existing authoring categories with the diagnostic index. The public boundary
+accepts parsed objects, not serialized JSON: the caller must treat `JSON.parse`
+failure as an input error and must not manufacture a product rejection result.
+Passing a JSON string (damaged or valid) to `validateCorpus` is a corpus record
+error. Every invalid report still has zero real product passes; every valid
+diagnostic report still says `not-executed`. Real diagnostic production and
+comparison remain future consumers, outside this ticket.

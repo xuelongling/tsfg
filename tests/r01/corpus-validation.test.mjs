@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: MIT
 
 import assert from "node:assert/strict";
-import { mkdtemp, readFile, rm } from "node:fs/promises";
+import { mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import test from "node:test";
@@ -17,6 +17,150 @@ async function minimalCorpus() {
     sources: [{ sourceId: "add.ts", content: await read("add.ts") }],
   };
 }
+
+async function diagnosticCorpus() {
+  const corpus = await minimalCorpus();
+  const record = corpus.cases[0];
+  corpus.rules.rules[0].diagnosticCodes = ["tool-diagnostic"];
+  corpus.catalog.identities.push({ kind: "diagnostic", id: "tool-diagnostic", meaning: "Tool-only anchor test",
+    status: "active", introducedIn: corpus.rules.specId });
+  record.oracle = { kind: "diagnostics", basis: { kind: "manual-derivation", reference: "Tool-only source coordinates",
+    derivation: "ASCII a occupies one UTF-16 code unit." }, diagnostics: [{
+    phase: "syntax", severity: "error", code: "tool-diagnostic", ruleIds: [...record.ruleIds],
+    primary: { sourceId: "add.ts", start: 0, end: 1, startLine: 0, startColumn: 0, endLine: 0, endColumn: 1 },
+  }] };
+  corpus.sources[0].content = "a";
+  return corpus;
+}
+
+test("structured diagnostic expectations are validated without claiming compilation", async () => {
+  const corpus = await diagnosticCorpus();
+  const report = validateCorpus(corpus);
+  assert.equal(report.recordValidation, "valid");
+  assert.deepEqual(report.cases[0].oracle, corpus.cases[0].oracle);
+  assert.equal(report.languageValidation, "not-executed");
+  assert.equal(report.realProductPasses, 0);
+});
+
+test("diagnostic references must resolve to active related rules, codes and logical sources", async () => {
+  for (const [field, value, category] of [["code", "missing", "corpus-reference-missing"],
+    ["ruleIds", ["missing"], "corpus-reference-missing"], ["code", "retired", "corpus-identity-retired"]]) {
+    const corpus = await diagnosticCorpus();
+    corpus.catalog.identities.push({ kind: "diagnostic", id: "retired", meaning: "Retired tool code", status: "retired",
+      introducedIn: corpus.rules.specId, retiredIn: corpus.rules.specId, reason: "Tool history" });
+    corpus.cases[0].oracle.diagnostics[0][String(field)] = value;
+    assert.deepEqual(validateCorpus(corpus).errors, [{ category, object: "r01-add-001", field: `oracle.diagnostics[0].${field}` }]);
+  }
+  const corpus = await diagnosticCorpus();
+  corpus.rules.rules[0].diagnosticCodes = [];
+  assert.equal(validateCorpus(corpus).errors[0].category, "corpus-reference-missing");
+  corpus.rules.rules[0].diagnosticCodes = ["tool-diagnostic"];
+  corpus.cases[0].oracle.diagnostics[0].primary.sourceId = "missing.ts";
+  assert.deepEqual(validateCorpus(corpus).errors, [{ category: "corpus-reference-missing", object: "r01-add-001",
+    field: "oracle.diagnostics[0].primary.sourceId" }]);
+});
+
+test("diagnostic reports sort stable fields independently of input order and message wording", async (context) => {
+  const corpus = await diagnosticCorpus();
+  const record = corpus.cases[0];
+  const first = record.oracle.diagnostics[0];
+  corpus.sources.push({ sourceId: "z.ts", content: "ab" });
+  corpus.sources[0].content = "ab";
+  corpus.catalog.identities.push({ kind: "diagnostic", id: "tool-z", meaning: "Second tool code", status: "active", introducedIn: corpus.rules.specId });
+  corpus.rules.rules[0].diagnosticCodes.push("tool-z");
+  const variants = [
+    { ...structuredClone(first), primary: { ...first.primary, sourceId: "z.ts" } },
+    { ...structuredClone(first), primary: { ...first.primary, start: 1, end: 2, startColumn: 1, endColumn: 2 } },
+    { ...structuredClone(first), code: "tool-z" },
+    { ...structuredClone(first), primary: { ...first.primary, end: 2, endColumn: 2 } },
+    { ...structuredClone(first), phase: "types" },
+    { ...structuredClone(first), severity: "warning" },
+    structuredClone(first),
+  ];
+  record.oracle.diagnostics = variants;
+  const before = JSON.stringify(corpus);
+  const report = validateCorpus(corpus);
+  const expected = [variants[6], variants[5], variants[4], variants[3], variants[2], variants[1], variants[0]];
+  assert.deepEqual(report.cases[0].oracle.diagnostics, expected);
+  assert.equal(JSON.stringify(corpus), before);
+  for (const reordered of [variants.toReversed(), [...variants.slice(2), ...variants.slice(0, 2)]]) {
+    record.oracle.diagnostics = reordered.map((diagnostic, index) => ({ ...diagnostic, message: `Changed prose ${index}` }));
+    assert.deepEqual(validateCorpus(corpus), report);
+  }
+  context.diagnostic(JSON.stringify({ sorted: report.cases[0].oracle.diagnostics }));
+});
+
+test("malformed diagnostic records and serialized JSON never count as product rejection", async () => {
+  const corpus = await diagnosticCorpus();
+  for (const mutate of [
+    (record) => { record.oracle.diagnostics = []; },
+    (record) => { record.oracle.diagnostics = [null]; },
+    (record) => { record.oracle.diagnostics[0].phase = ""; },
+    (record) => { record.oracle.diagnostics[0].severity = "fatal"; },
+    (record) => { record.oracle.diagnostics[0].ruleIds = []; },
+    (record) => { record.oracle.diagnostics[0].message = 17; },
+    (record) => { record.oracle.diagnostics[0].hiddenSortKey = "x"; },
+    (record) => { record.oracle.diagnostics[0].primary.extra = "x"; },
+    (record) => { record.oracle.value = { type: "i32", value: "5" }; },
+    (record) => { record.oracle.kind = "return"; record.oracle.value = { type: "i32", value: "5" }; },
+  ]) {
+    const damaged = structuredClone(corpus);
+    mutate(damaged.cases[0]);
+    const report = validateCorpus(damaged);
+    assert.equal(report.recordValidation, "invalid");
+    assert.equal(report.realProductPasses, 0);
+    assert.equal(report.languageValidation, "not-executed");
+    assert.equal(report.errors[0].category, "corpus-record-invalid");
+    assert.match(report.errors[0].object, /r01-add-001/);
+  }
+  for (const serialized of ['{"cases":', JSON.stringify(corpus)]) {
+    const report = validateCorpus(serialized);
+    assert.equal(report.recordValidation, "invalid");
+    assert.equal(report.realProductPasses, 0);
+    assert.equal(report.errors[0].category, "corpus-record-invalid");
+  }
+});
+
+test("raw UTF-8 sources use hand-counted UTF-16 anchors and reject damaged coordinates", async (context) => {
+  const directory = await mkdtemp(join(tmpdir(), "r01-diagnostics-"));
+  context.after(() => rm(directory, { recursive: true, force: true }));
+  // 中: [0,1), emoji: [1,3), literal backslash-u spelling: [3,9).
+  // CRLF: [9,11), x: [11,12), LF: [12,13), EOF: 13 on line 2.
+  const raw = "中😀\\u0061\r\nx\n";
+  await writeFile(join(directory, "raw.ts"), raw, "utf8");
+  const corpus = await diagnosticCorpus();
+  corpus.sources[0].content = await readFile(join(directory, "raw.ts"), "utf8");
+  const diagnostic = corpus.cases[0].oracle.diagnostics[0];
+  const anchors = [
+    [0, 1, 0, 0, 0, 1], [1, 3, 0, 1, 0, 3], [3, 9, 0, 3, 0, 9],
+    [9, 11, 0, 9, 1, 0], [10, 10, 0, 10, 0, 10], [11, 12, 1, 0, 1, 1],
+    [12, 13, 1, 1, 2, 0], [13, 13, 2, 0, 2, 0], [2, 2, 0, 2, 0, 2],
+  ];
+  for (const [start, end, startLine, startColumn, endLine, endColumn] of anchors) {
+    diagnostic.primary = { sourceId: "add.ts", start, end, startLine, startColumn, endLine, endColumn };
+    const report = validateCorpus(corpus);
+    assert.equal(report.recordValidation, "valid", JSON.stringify(diagnostic.primary));
+    assert.deepEqual(report.cases[0].oracle.diagnostics[0].primary, diagnostic.primary);
+  }
+  context.diagnostic(JSON.stringify({ valid: validateCorpus(corpus) }));
+  diagnostic.primary = { sourceId: "add.ts", start: 1, end: 3, startLine: 0, startColumn: 1, endLine: 0, endColumn: 3 };
+  for (const change of [{ start: -1 }, { end: 0 }, { end: 14 }, { start: 1.5 }, { start: "1" },
+    { start: null }, { start: Number.MAX_SAFE_INTEGER + 1 }, { startLine: -1 }, { endLine: 1 },
+    { endColumn: 2 }, { startColumn: 99 }, { endColumn: null }]) {
+    const damaged = structuredClone(corpus);
+    Object.assign(damaged.cases[0].oracle.diagnostics[0].primary, change);
+    const report = validateCorpus(damaged);
+    assert.equal(report.recordValidation, "invalid", JSON.stringify(change));
+    assert.deepEqual(report.errors, [{ category: "corpus-source-range-invalid", object: "r01-add-001",
+      field: "oracle.diagnostics[0].primary" }]);
+    assert.equal(report.languageValidation, "not-executed");
+    assert.equal(report.realProductPasses, 0);
+    context.diagnostic(JSON.stringify({ change, rejected: report }));
+  }
+  corpus.sources[0].content = "";
+  diagnostic.primary = { sourceId: "add.ts", start: 0, end: 0, startLine: 0, startColumn: 0, endLine: 0, endColumn: 0 };
+  assert.equal(validateCorpus(corpus).recordValidation, "valid");
+});
 
 test("integer records round trip exact declared boundaries beyond host number precision", async () => {
   const corpus = await minimalCorpus();
@@ -360,7 +504,7 @@ test("removing an active record requires retirement, and inconsistent history is
 });
 
 test("old development formats and damaged inputs still report no real language execution", async () => {
-  for (const oldVersion of ["1", "2"]) {
+  for (const oldVersion of ["1", "2", "3"]) {
     for (const section of ["rules", "support", "catalog", "case"]) {
       const corpus = await minimalCorpus();
       (section === "case" ? corpus.cases[0] : corpus[section]).schemaVersion = oldVersion;
@@ -408,7 +552,7 @@ test("a corpus author validates a source case without claiming language executio
   const report = validateCorpus(await minimalCorpus());
   context.diagnostic(JSON.stringify(report));
   assert.deepEqual(report, {
-    schemaVersion: "3",
+    schemaVersion: "4",
     recordValidation: "valid",
     languageValidation: "not-executed",
     realProductPasses: 0,
@@ -433,7 +577,7 @@ test("a damaged case reports its missing oracle basis through the same boundary"
   const report = validateCorpus(corpus);
   context.diagnostic(JSON.stringify(report));
   assert.deepEqual(report, {
-    schemaVersion: "3",
+    schemaVersion: "4",
     recordValidation: "invalid",
     languageValidation: "not-executed", realProductPasses: 0,
     errors: [{ category: "corpus-record-invalid", object: "r01-add-001", field: "oracle.basis" }],
