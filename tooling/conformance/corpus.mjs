@@ -62,7 +62,7 @@ function coverageReport(corpus) {
         && record.applicability === obligation.kind
         && Object.entries(obligation.budgets ?? {}).every(([key, value]) => record.budgets[key] === value)
         && record.oracle.kind === oracleKind
-        && (obligation.kind !== "negative" || oracleKind !== "diagnostics"
+        && (oracleKind !== "diagnostics"
           || record.oracle.diagnostics.some((diagnostic) => diagnostic.severity === "error" && diagnostic.ruleIds.includes(rule.ruleId)))
         && record.coverage?.includes(obligation.id)).map((record) => record.caseId);
       obligations.push({ ...row, caseIds, status: caseIds.length ? "covered" : "missing" });
@@ -114,7 +114,8 @@ function validateCoverage(corpus) {
       const error = fields(obligation, rule.ruleId, {
         id: logicalId, kind: (value) => ["positive", "negative", "boundary"].includes(value), requirement: text,
         applicability: (value) => ["required", "not-applicable"].includes(value),
-        oracleKind: (value) => value === undefined || ["return", "diagnostics", "trap", "execution-abort"].includes(value),
+        oracleKind: (value) => value === undefined || ["return", "diagnostics", "trap", "execution-abort"].includes(value)
+          || (value === "pending" && rule.pending !== undefined),
         reason: (value) => obligation.applicability === "not-applicable"
           ? obligation.kind === "negative" && text(value) : value === undefined,
         budgets: (value) => value === undefined || (object(value) && Object.keys(value).length > 0

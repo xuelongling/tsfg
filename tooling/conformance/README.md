@@ -148,14 +148,20 @@ obligation on an associated rule. Coverage credit requires both case/rule
 references, the rule's capability, agreement with the rule and support target/mode,
 and a matching case `applicability` kind. Polarity is separate from expected
 outcome: an obligation's `oracleKind` is `return`, `diagnostics`, `trap` or
-`execution-abort`. If omitted, positive/boundary defaults to `return` and negative
-defaults to `diagnostics`. Diagnostic negative coverage requires an error related
-to this rule; warning-only or another rule's error does not suffice. A negative
+`execution-abort`, or `pending` when the rule has a pending consumer mapping.
+Pending outcomes never receive coverage credit. If omitted, positive/boundary
+defaults to `return` and negative defaults to `diagnostics`. All diagnostic
+coverage represents rejection and requires an error related to this rule;
+warning-only or another rule's error does not suffice, including for boundaries. A negative
 non-hoisting responsibility can explicitly require a return, while division by
 zero explicitly requires a trap. Runtime trap and physical Abort cases remain
 uncovered until their oracle representation is delivered by the corresponding
 R01 slice; a diagnostic cannot fill those responsibilities. This ticket does not
 synthesize trap/Abort records or an executor.
+Responsibilities combining successful and failing paths are separate entries:
+for example maximum literal versus overflow rejection, exact versus short fuel,
+and valid versus excessive depth. Unknown later runtime safety failure mappings
+remain pending rather than guessing diagnostic, trap or exception behavior.
 All cases require the five explicit budgets. An obligation may additionally
 specify a nonempty `budgets` object with any of those names and exact required
 values; a differently budgeted case does not fill it. Conditions appear in gaps.

@@ -133,7 +133,7 @@
           {
             "id": "maximum",
             "kind": "boundary",
-            "requirement": "MUST accept 2147483647 and reject 2147483648.",
+            "requirement": "MUST accept i32 2147483647.",
             "applicability": "required",
             "oracleKind": "return"
           },
@@ -147,9 +147,16 @@
           {
             "id": "exact-token",
             "kind": "boundary",
-            "requirement": "MUST retain exact token values beyond host f64 precision when checking bounds.",
+            "requirement": "MUST reject exact integer token values beyond host f64 precision as out of i32 range, without losing their exact value first.",
             "applicability": "required",
-            "oracleKind": "return"
+            "oracleKind": "diagnostics"
+          },
+          {
+            "id": "maximum-overflow",
+            "kind": "boundary",
+            "requirement": "MUST reject positive i32 2147483648.",
+            "applicability": "required",
+            "oracleKind": "diagnostics"
           }
         ]
       }
@@ -332,7 +339,7 @@
           {
             "id": "negative",
             "kind": "negative",
-            "requirement": "MUST trap on division or remainder by zero.",
+            "requirement": "MUST trap on division by zero.",
             "applicability": "required",
             "oracleKind": "trap"
           },
@@ -361,6 +368,13 @@
             "id": "first-zero-trap",
             "kind": "boundary",
             "requirement": "MUST observe the first actual zero-divisor trap with its source anchor.",
+            "applicability": "required",
+            "oracleKind": "trap"
+          },
+          {
+            "id": "remainder-zero",
+            "kind": "boundary",
+            "requirement": "MUST trap on remainder by zero.",
             "applicability": "required",
             "oracleKind": "trap"
           }
@@ -573,7 +587,7 @@
           {
             "id": "negative",
             "kind": "negative",
-            "requirement": "MUST NOT hoist a trap from an unexecuted path or replace runtime trap by compile rejection.",
+            "requirement": "MUST NOT hoist a trap from an unexecuted path.",
             "applicability": "required",
             "oracleKind": "return"
           },
@@ -594,9 +608,9 @@
           {
             "id": "folded-trap",
             "kind": "boundary",
-            "requirement": "MUST preserve runtime failure kind and anchor under folding.",
+            "requirement": "MUST preserve runtime failure kind and anchor under folding, never replacing runtime trap with compile rejection.",
             "applicability": "required",
-            "oracleKind": "return"
+            "oracleKind": "trap"
           }
         ]
       }
@@ -649,23 +663,44 @@
           {
             "id": "first-while",
             "kind": "boundary",
-            "requirement": "MUST charge the first while check.",
+            "requirement": "MUST complete the first while check with enough fuel including its one-unit charge.",
             "applicability": "required",
             "oracleKind": "return"
           },
           {
             "id": "final-false",
             "kind": "boundary",
-            "requirement": "MUST charge the final false check.",
+            "requirement": "MUST complete the final false while check with enough fuel including its one-unit charge.",
             "applicability": "required",
             "oracleKind": "return"
           },
           {
             "id": "loop-exact-short",
             "kind": "boundary",
-            "requirement": "MUST contrast exactly enough and one-short fuel without using physical instruction counts.",
+            "requirement": "MUST return with exactly enough loop fuel, measured by logical events rather than physical instructions.",
             "applicability": "required",
             "oracleKind": "return"
+          },
+          {
+            "id": "first-while-short",
+            "kind": "boundary",
+            "requirement": "MUST trap before the first while check when its one fuel is unavailable.",
+            "applicability": "required",
+            "oracleKind": "trap"
+          },
+          {
+            "id": "final-false-short",
+            "kind": "boundary",
+            "requirement": "MUST trap before the final false while check when its one fuel is unavailable.",
+            "applicability": "required",
+            "oracleKind": "trap"
+          },
+          {
+            "id": "loop-short",
+            "kind": "boundary",
+            "requirement": "MUST trap with one-short loop fuel.",
+            "applicability": "required",
+            "oracleKind": "trap"
           }
         ]
       }
@@ -704,7 +739,7 @@
           {
             "id": "depth-boundary",
             "kind": "boundary",
-            "requirement": "MUST contrast exact-limit and one-too-deep calls.",
+            "requirement": "MUST complete a call at exactly the active depth limit.",
             "applicability": "required",
             "oracleKind": "return"
           },
@@ -713,7 +748,14 @@
             "kind": "boundary",
             "requirement": "MUST observe argument failure before callee entry checks.",
             "applicability": "required",
-            "oracleKind": "return"
+            "oracleKind": "trap"
+          },
+          {
+            "id": "depth-overflow",
+            "kind": "boundary",
+            "requirement": "MUST trap before a call one frame beyond the active depth limit.",
+            "applicability": "required",
+            "oracleKind": "trap"
           }
         ]
       }
@@ -738,16 +780,16 @@
           {
             "id": "positive",
             "kind": "positive",
-            "requirement": "MUST preserve structured request-local failure observations.",
+            "requirement": "MUST preserve structured request-local trap observations without terminating the host.",
             "applicability": "required",
-            "oracleKind": "return"
+            "oracleKind": "trap"
           },
           {
             "id": "negative",
             "kind": "negative",
-            "requirement": "MUST NOT count physical instruction/time/memory abort as a semantic success or expected trap.",
+            "requirement": "MUST distinguish physical Abort from a semantic success or expected trap.",
             "applicability": "required",
-            "oracleKind": "return"
+            "oracleKind": "execution-abort"
           },
           {
             "id": "first-anchor",
@@ -755,6 +797,27 @@
             "requirement": "MUST retain first observed Trap Code and source anchor.",
             "applicability": "required",
             "oracleKind": "trap"
+          },
+          {
+            "id": "physical-instructions",
+            "kind": "boundary",
+            "requirement": "MUST preserve physical instruction exhaustion as Abort, not Semantic Fuel trap.",
+            "applicability": "required",
+            "oracleKind": "execution-abort"
+          },
+          {
+            "id": "physical-time",
+            "kind": "boundary",
+            "requirement": "MUST preserve host-time exhaustion as Abort, not semantic success or trap.",
+            "applicability": "required",
+            "oracleKind": "execution-abort"
+          },
+          {
+            "id": "physical-memory",
+            "kind": "boundary",
+            "requirement": "MUST preserve physical memory exhaustion as Abort, not semantic success or trap.",
+            "applicability": "required",
+            "oracleKind": "execution-abort"
           }
         ]
       }
@@ -807,9 +870,16 @@
           {
             "id": "float-literal-round",
             "kind": "boundary",
-            "requirement": "MUST round exact decimal/exponent text directly to target precision; reject finite overflow and preserve underflow signed zero.",
+            "requirement": "MUST round finite decimal/exponent text directly to target precision and preserve underflow signed zero.",
             "applicability": "required",
             "oracleKind": "return"
+          },
+          {
+            "id": "float-literal-overflow",
+            "kind": "boundary",
+            "requirement": "MUST reject a finite floating literal that rounds to infinity.",
+            "applicability": "required",
+            "oracleKind": "diagnostics"
           }
         ]
       }
@@ -848,7 +918,7 @@
           {
             "id": "conversion-boundaries",
             "kind": "boundary",
-            "requirement": "MUST cover just-inside/outside range and ties-to-even.",
+            "requirement": "MUST cover just-inside conversion range and ties-to-even.",
             "applicability": "required",
             "oracleKind": "return"
           },
@@ -858,6 +928,13 @@
             "requirement": "MUST retain equal-width raw bits.",
             "applicability": "required",
             "oracleKind": "return"
+          },
+          {
+            "id": "conversion-outside",
+            "kind": "boundary",
+            "requirement": "MUST trap on the just-outside checked conversion range.",
+            "applicability": "required",
+            "oracleKind": "trap"
           }
         ]
       },
@@ -1071,7 +1148,7 @@
           {
             "id": "negative",
             "kind": "negative",
-            "requirement": "MUST reject uninitialized native reads and unsafe nonnull bypass.",
+            "requirement": "MUST diagnose statically provable uninitialized native reads.",
             "applicability": "required",
             "oracleKind": "diagnostics"
           },
@@ -1088,8 +1165,31 @@
             "requirement": "MUST default on omission/undefined, not null.",
             "applicability": "required",
             "oracleKind": "return"
+          },
+          {
+            "id": "nonnull-runtime-check",
+            "kind": "boundary",
+            "requirement": "MUST preserve runtime memory safety checks despite source nonnull assertions under the actual failure contract.",
+            "applicability": "required",
+            "oracleKind": "pending"
           }
         ]
+      },
+      "pending": {
+        "consumers": [
+          "R02b definite-assignment checker",
+          "R03 native storage safety",
+          "R06 checked native access"
+        ],
+        "missing": [
+          "Actual runtime safety failure representation when nonnull assertion cannot prove memory safety",
+          "Independent native-storage safety oracle"
+        ],
+        "closure": "Fix the concrete runtime safety check/failure record and independent cases; a nonnull assertion must never suppress the check.",
+        "affectedCapabilities": [
+          "null-safety"
+        ],
+        "consumptionStage": "W3 before runtime safety boundary consumption"
       }
     },
     {
@@ -1238,9 +1338,9 @@
           {
             "id": "escape",
             "kind": "boundary",
-            "requirement": "MUST check escaping borrowed captures.",
+            "requirement": "MUST diagnose escaping borrowed captures.",
             "applicability": "required",
-            "oracleKind": "return"
+            "oracleKind": "diagnostics"
           }
         ]
       }
@@ -1272,9 +1372,9 @@
           {
             "id": "negative",
             "kind": "negative",
-            "requirement": "MUST NOT rebind imports or publish partially initialized runtime module state.",
+            "requirement": "MUST reject rebinding an imported binding.",
             "applicability": "required",
-            "oracleKind": "return"
+            "oracleKind": "diagnostics"
           },
           {
             "id": "external-effects",
@@ -1287,6 +1387,13 @@
             "id": "source-shapes",
             "kind": "boundary",
             "requirement": "MUST track dynamic import and value cycles as implementation coverage rather than new permanent prohibitions.",
+            "applicability": "required",
+            "oracleKind": "return"
+          },
+          {
+            "id": "failed-initialization-state",
+            "kind": "boundary",
+            "requirement": "MUST observe that failed runtime initialization publishes no partial module state and does not automatically retry; a handled failure can return the observed state.",
             "applicability": "required",
             "oracleKind": "return"
           }
@@ -1329,7 +1436,7 @@
             "kind": "boundary",
             "requirement": "MUST resolve actual exception/trap/Abort cleanup and budget intersection before adding oracle.",
             "applicability": "required",
-            "oracleKind": "return"
+            "oracleKind": "pending"
           }
         ]
       },
@@ -1441,18 +1548,47 @@
           {
             "id": "return-capture",
             "kind": "boundary",
-            "requirement": "MUST cover return and closure capture escape boundaries.",
+            "requirement": "MUST cover lifetime-valid returned and captured spans.",
             "applicability": "required",
             "oracleKind": "return"
           },
           {
             "id": "bounds",
             "kind": "boundary",
-            "requirement": "MUST cover applicable zero/end/out-of-range accesses.",
+            "requirement": "MUST cover valid first and last element access and the defined zero-length view behavior.",
             "applicability": "required",
             "oracleKind": "return"
+          },
+          {
+            "id": "escaping-return-capture",
+            "kind": "boundary",
+            "requirement": "MUST diagnose spans escaping their valid lifetime through return or capture.",
+            "applicability": "required",
+            "oracleKind": "diagnostics"
+          },
+          {
+            "id": "out-of-range",
+            "kind": "boundary",
+            "requirement": "MUST cover runtime out-of-range access under the actual consumer failure contract.",
+            "applicability": "required",
+            "oracleKind": "pending"
           }
         ]
+      },
+      "pending": {
+        "consumers": [
+          "R03 borrow/escape checker",
+          "R06 Span access",
+          "R04 ABI span consumer"
+        ],
+        "missing": [
+          "Runtime bounds failure representation and independent boundary oracle for actual Span operations"
+        ],
+        "closure": "Fix the consumed runtime bounds failure record and independent lifetime/bounds cases without inventing a source-level exception or trap mapping.",
+        "affectedCapabilities": [
+          "span"
+        ],
+        "consumptionStage": "W3 before runtime safety boundary consumption"
       }
     },
     {
@@ -1484,7 +1620,7 @@
             "kind": "negative",
             "requirement": "MUST reject unsafe ABI text inputs under that mapping, without inventing unapproved source surrogate bans.",
             "applicability": "required",
-            "oracleKind": "diagnostics"
+            "oracleKind": "pending"
           },
           {
             "id": "text-domain",
@@ -1540,14 +1676,14 @@
           {
             "id": "negative",
             "kind": "negative",
-            "requirement": "MUST reject managed raw pointers and unsafe lifetime/ABI crossings.",
+            "requirement": "MUST statically reject managed raw pointers and types not approved as ABI-safe.",
             "applicability": "required",
             "oracleKind": "diagnostics"
           },
           {
             "id": "handle-generation",
             "kind": "boundary",
-            "requirement": "MUST cover stale generation and valid handles.",
+            "requirement": "MUST cover valid generation-checked handles.",
             "applicability": "required",
             "oracleKind": "return"
           },
@@ -1557,8 +1693,31 @@
             "requirement": "MUST use target DataLayout for size/alignment/offset and calling convention.",
             "applicability": "required",
             "oracleKind": "return"
+          },
+          {
+            "id": "stale-generation",
+            "kind": "boundary",
+            "requirement": "MUST cover stale-generation rejection using the concrete runtime failure contract.",
+            "applicability": "required",
+            "oracleKind": "pending"
           }
         ]
+      },
+      "pending": {
+        "consumers": [
+          "R04 ABI checker",
+          "R06 Handle table",
+          "Zig host ABI consumer"
+        ],
+        "missing": [
+          "Runtime stale-generation and boundary failure representation",
+          "Independent stale-handle and lifetime evidence"
+        ],
+        "closure": "Fix the concrete runtime ABI failure records and independent valid/stale handle corpus; do not guess exception/trap mapping.",
+        "affectedCapabilities": [
+          "handle-abi"
+        ],
+        "consumptionStage": "W3 before runtime safety boundary consumption"
       }
     },
     {
@@ -1652,9 +1811,16 @@
           {
             "id": "access-effects",
             "kind": "boundary",
-            "requirement": "MUST cover conflicting/nonconflicting reads/writes and Query borrow boundaries.",
+            "requirement": "MUST cover safe nonconflicting reads/writes and lifetime-valid Query borrows.",
             "applicability": "required",
             "oracleKind": "return"
+          },
+          {
+            "id": "conflicting-access",
+            "kind": "boundary",
+            "requirement": "MUST diagnose prohibited conflicting access and invalid Query borrowed usage.",
+            "applicability": "required",
+            "oracleKind": "diagnostics"
           }
         ]
       }
@@ -1686,9 +1852,9 @@
           {
             "id": "negative",
             "kind": "negative",
-            "requirement": "MUST reject results outside the independent relation and conflicting access.",
+            "requirement": "MUST identify results outside the independent numerical relation without substituting a source compile diagnostic.",
             "applicability": "required",
-            "oracleKind": "diagnostics"
+            "oracleKind": "pending"
           },
           {
             "id": "reduction-order",
@@ -1696,6 +1862,13 @@
             "requirement": "MUST account for scheduling/reduction nondeterminism explicitly.",
             "applicability": "required",
             "oracleKind": "return"
+          },
+          {
+            "id": "conflicting-access",
+            "kind": "boundary",
+            "requirement": "MUST diagnose prohibited conflicting CPU access.",
+            "applicability": "required",
+            "oracleKind": "diagnostics"
           }
         ]
       },
@@ -1742,9 +1915,9 @@
           {
             "id": "negative",
             "kind": "negative",
-            "requirement": "MUST reject results outside that contract rather than reuse strict equivalence.",
+            "requirement": "MUST identify results outside the independent fast-math relation without substituting strict equivalence or a compile diagnostic.",
             "applicability": "required",
-            "oracleKind": "diagnostics"
+            "oracleKind": "pending"
           },
           {
             "id": "fast-boundaries",
@@ -1798,9 +1971,9 @@
           {
             "id": "negative",
             "kind": "negative",
-            "requirement": "MUST reject outputs outside the relation and prohibited kernel operations.",
+            "requirement": "MUST identify outputs outside the independent GPU relation without substituting a compile diagnostic.",
             "applicability": "required",
-            "oracleKind": "diagnostics"
+            "oracleKind": "pending"
           },
           {
             "id": "device-nondeterminism",
@@ -1808,6 +1981,13 @@
             "requirement": "MUST explicitly cover permitted precision, exceptional values and nondeterminism.",
             "applicability": "required",
             "oracleKind": "return"
+          },
+          {
+            "id": "prohibited-kernel",
+            "kind": "boundary",
+            "requirement": "MUST diagnose prohibited kernel operations.",
+            "applicability": "required",
+            "oracleKind": "diagnostics"
           }
         ]
       },

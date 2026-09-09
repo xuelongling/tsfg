@@ -169,6 +169,11 @@ test("the full directory retains initial gaps and W3 through W6 consumer respons
   assert.ok(report.coverage.pending.some((entry) => entry.ruleId === "r01-string" && entry.missing.length && entry.consumers.length));
   assert.equal(report.coverage.gaps.find((entry) => entry.ruleId === "r01-division" && entry.kind === "negative").oracleKind, "trap");
   assert.equal(report.coverage.gaps.find((entry) => entry.ruleId === "r01-evaluation" && entry.kind === "negative").oracleKind, "return");
+  for (const [ruleId, obligationId, oracleKind] of [
+    ["r01-evaluation", "folded-trap", "trap"], ["r01-depth", "arguments-first", "trap"],
+    ["r01-literals", "maximum-overflow", "diagnostics"], ["r01-fuel", "loop-short", "trap"],
+    ["r01-failure-channels", "physical-time", "execution-abort"],
+  ]) assert.equal(report.coverage.gaps.find((entry) => entry.ruleId === ruleId && entry.obligationId === obligationId)?.oracleKind, oracleKind);
   assert.ok(report.coverage.stages.every((stage) => stage.ruleIds.length > 0));
   assert.ok(report.capabilities.every((entry) => entry.currentSupport === "not-verified"));
   assert.equal(report.languageValidation, "not-executed");
@@ -223,11 +228,18 @@ test("negative coverage requires a related error and cannot substitute diagnosti
   record.oracle.diagnostics[0].severity = "warning";
   assert.equal(validateCorpus(corpus).coverage.initial, "incomplete");
   record.oracle.diagnostics[0].severity = "error";
+  const diagnosticOracle = structuredClone(record.oracle);
   negative.oracleKind = "trap";
   assert.equal(validateCorpus(corpus).coverage.initial, "incomplete");
   assert.equal(validateCorpus(corpus).coverage.gaps[0].oracleKind, "trap");
   negative.oracleKind = "return";
   negative.requirement = "MUST NOT hoist an unexecuted trap (tool-only matching scenario)";
   record.oracle = structuredClone(corpus.cases[0].oracle);
+  assert.equal(validateCorpus(corpus).coverage.initial, "complete");
+  rule.coverage.obligations.find((entry) => entry.id === "overflow").oracleKind = "diagnostics";
+  corpus.cases[1].oracle = diagnosticOracle;
+  corpus.cases[1].oracle.diagnostics[0].severity = "warning";
+  assert.equal(validateCorpus(corpus).coverage.initial, "incomplete");
+  corpus.cases[1].oracle.diagnostics[0].severity = "error";
   assert.equal(validateCorpus(corpus).coverage.initial, "complete");
 });
