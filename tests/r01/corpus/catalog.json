@@ -1,0 +1,10 @@
+{
+  "schemaVersion": "2",
+  "corpusId": "tsfg-r01-minimal-v1",
+  "specRevisions": [{"id": "tsfg-r01-v1", "change": "Initial fixed-width i32 addition requirement."}],
+  "corpusRevisions": [{"id": "tsfg-r01-minimal-v1", "change": "Initial independently derived addition case."}],
+  "identities": [
+    {"kind": "rule", "id": "r01-i32-add", "meaning": "Wrapping i32 addition", "status": "active", "introducedIn": "tsfg-r01-v1"},
+    {"kind": "case", "id": "r01-add-001", "meaning": "Add two and three", "status": "active", "introducedIn": "tsfg-r01-minimal-v1"}
+  ]
+}

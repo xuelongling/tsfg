@@ -1,9 +1,10 @@
 {
-  "schemaVersion": "1",
+  "schemaVersion": "2",
   "specId": "tsfg-r01-v1",
   "languageBaseline": "TypeScript 7.0.2",
   "rules": [{
     "ruleId": "r01-i32-add",
+    "caseIds": ["r01-add-001"],
     "requirement": "i32 addition wraps to signed 32 bits.",
     "semanticSource": "necessary-difference",
     "basis": "docs/r01-language-contract.md#42-整数运算",
