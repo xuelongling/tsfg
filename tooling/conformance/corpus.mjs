@@ -22,8 +22,8 @@ export function validateCorpus(corpus) {
 const text = (value) => typeof value === "string" && value.trim().length > 0;
 const object = (value) => value !== null && typeof value === "object" && !Array.isArray(value);
 const records = (value) => Array.isArray(value) && value.length > 0;
-const texts = (value) => records(value) && value.every(text);
-const strings = (value) => Array.isArray(value) && value.every(text);
+const nonemptyTextArray = (value) => records(value) && value.every(text);
+const textArray = (value) => Array.isArray(value) && value.every(text);
 const version = (value) => value === "1";
 const natural = (value) => typeof value === "string" && /^(0|[1-9][0-9]*)$/.test(value);
 const positive = (value) => natural(value) && value !== "0";
@@ -55,7 +55,7 @@ function validateRecords(corpus) {
     error = fields(rule, rule?.ruleId || `rules[${index}]`, {
       ruleId: text, requirement: text, semanticSource: text, basis: text, rationale: text,
       capability: text, target: text, mode: text, positive: text, negativeNotApplicable: text,
-      diagnosticCodes: strings, trapCodes: strings,
+      diagnosticCodes: textArray, trapCodes: textArray,
     });
     if (error) return error;
   }
@@ -72,7 +72,7 @@ function validateRecords(corpus) {
   for (const [index, record] of corpus.cases.entries()) {
     error = fields(record, record?.caseId || `cases[${index}]`, {
       schemaVersion: version, specId: text, corpusId: text, caseId: text, sourceId: text,
-      ruleIds: texts, capabilities: texts, target: text, mode: text, applicability: text,
+      ruleIds: nonemptyTextArray, capabilities: nonemptyTextArray, target: text, mode: text, applicability: text,
       budgets: object, invocation: object, oracle: object, "oracle.basis": object,
       "budgets.semanticFuel": natural, "budgets.activeDepth": positive,
       "budgets.physicalInstructions": positive, "budgets.memoryBytes": positive, "budgets.hostTimeMs": positive,
