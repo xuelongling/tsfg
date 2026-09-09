@@ -1,0 +1,33 @@
+{
+  "schemaVersion": "1",
+  "specId": "tsfg-r01-v1",
+  "corpusId": "tsfg-r01-minimal-v1",
+  "caseId": "r01-add-001",
+  "sourceId": "add.ts",
+  "ruleIds": ["r01-i32-add"],
+  "capabilities": ["scalar-i32"],
+  "target": "windows-x86_64-msvc",
+  "mode": "strict",
+  "applicability": "positive",
+  "budgets": {
+    "semanticFuel": "1",
+    "activeDepth": "1",
+    "physicalInstructions": "1000",
+    "memoryBytes": "1048576",
+    "hostTimeMs": "1000"
+  },
+  "invocation": {
+    "entry": "add",
+    "arguments": [{"type": "i32", "value": "2"}, {"type": "i32", "value": "3"}],
+    "returnType": "i32"
+  },
+  "oracle": {
+    "kind": "return",
+    "value": {"type": "i32", "value": "5"},
+    "basis": {
+      "kind": "mathematical-derivation",
+      "reference": "docs/r01-language-contract.md#42-整数运算",
+      "derivation": "2 + 3 = 5; 5 lies within signed 32-bit range, so wrapping leaves 5."
+    }
+  }
+}

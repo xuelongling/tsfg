@@ -1,0 +1,19 @@
+{
+  "schemaVersion": "1",
+  "specId": "tsfg-r01-v1",
+  "languageBaseline": "TypeScript 7.0.2",
+  "rules": [{
+    "ruleId": "r01-i32-add",
+    "requirement": "i32 addition wraps to signed 32 bits.",
+    "semanticSource": "necessary-difference",
+    "basis": "docs/r01-language-contract.md#42-整数运算",
+    "rationale": "Fixed-width scalars shared with Zig and both execution backends.",
+    "capability": "scalar-i32",
+    "target": "windows-x86_64-msvc",
+    "mode": "strict",
+    "positive": "A typed i32 addition returns the independently derived value.",
+    "negativeNotApplicable": "Addition is defined for every pair of i32 operands; it has no arithmetic rejection or trap.",
+    "diagnosticCodes": [],
+    "trapCodes": []
+  }]
+}

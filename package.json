@@ -9,9 +9,9 @@
   },
   "packageManager": "pnpm@11.25.0",
   "scripts": {
-    "test": "node --test tests/r00/*.test.mjs",
+    "test": "node --test tests/r00/*.test.mjs tests/r01/*.test.mjs",
     "typecheck": "tsc --noEmit",
-    "verify": "tsc --noEmit && node --test tests/r00/*.test.mjs"
+    "verify": "tsc --noEmit && node --test tests/r00/*.test.mjs tests/r01/*.test.mjs"
   },
   "devDependencies": {
     "@types/node": "24.3.0",

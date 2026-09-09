@@ -1,0 +1,12 @@
+{
+  "schemaVersion": "1",
+  "specId": "tsfg-r01-v1",
+  "capabilities": [{
+    "capability": "scalar-i32",
+    "semanticSource": "necessary-difference",
+    "productBoundary": "allowed",
+    "implementation": "not-connected",
+    "target": "windows-x86_64-msvc",
+    "mode": "strict"
+  }]
+}
