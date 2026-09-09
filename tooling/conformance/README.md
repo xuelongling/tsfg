@@ -26,14 +26,14 @@ oracle is independently derived from the R01 language contract. Rule and case
 identities are stable names; `sourceId` identifies logical source independently of
 the caller's filesystem root. Source content and oracle records are never mutated.
 
-Version `5` is an unpublished development record format for this slice,
+Version `6` is an unpublished development record format for this slice,
 not a product artifact family or a full R01 schema. Rules and support records carry
-`specId`; cases also carry `corpusId`. Version 1/2/3/4 inputs and mixed versions are
+`specId`; cases also carry `corpusId`. Version 1/2/3/4/5 inputs and mixed versions are
 rejected. The same-repository authoring fixtures and consumer have been updated
 atomically under ECP-0002; no published format or product registry is changed.
 The example files document the required
 fields. Version 3 added lossless numeric records and detached invocation/oracle
-data in reports; callers must invalidate version 1/2/3/4 records and cached reports.
+data in reports; callers must invalidate version 1/2/3/4/5 records and cached reports.
 The fixture schema migration changes no source, language rule or independent
 expectation, so their spec/corpus content revisions remain unchanged.
 All five budget
@@ -41,7 +41,7 @@ fields are decimal strings: Semantic Fuel permits zero, and active depth,
 physical instruction count, memory bytes and host time in milliseconds are
 positive. These are authored execution conditions, not enforced resource limits.
 
-Return and diagnostic oracles with a mathematical or manual derivation are implemented in
+Return, diagnostic and trap oracles with a mathematical or manual derivation are implemented in
 this slice. The rule example has a positive obligation and an explicit reason
 why arithmetic rejection is inapplicable; it does not claim complete boundary
 coverage. The support record keeps semantic source, product boundary and
@@ -59,7 +59,7 @@ errors, not product Diagnostic Codes or Trap Codes.
 
 ## Identity and revision authoring
 
-`catalog.json` carries version 5, the current `corpusId`, ordered
+`catalog.json` carries version 6, the current `corpusId`, ordered
 `specRevisions` and `corpusRevisions` arrays, and an `identities` ledger.
 Each revision has a unique `id` within its history and a nonempty `change` note.
 Append specification changes to the first history and case corrections to the
@@ -123,6 +123,35 @@ tool fixtures, not additional language rules or execution claims.
 Passing tests prove validation-tool behavior only.
 There is no real frontend or language execution evidence in this delivery.
 
+## Numeric corpus and trap expectations (version 6)
+
+The authored [i32/bool corpus](../../tests/r01/corpus/i32/README.md) contains
+separate TS sources, case records and an identity catalog. It consumes the full
+responsibility directory through this same public entry. Numeric coverage is
+complete within ticket 06; control-flow/budget and W3–W6 gaps remain visible.
+Every case is explicitly `not-executed`, with zero real product passes.
+
+Version 6 adds `oracle.kind: "trap"`. Its `trap` object contains exactly `code`,
+nonempty `ruleIds`, and `primary` with the same raw UTF-16 range fields as a
+diagnostic. The code must be active in the **trap** namespace and listed by every
+associated rule; those rules must also belong to the case. Sources, offsets and
+line/column pairs must resolve and agree. Trap records have no severity or
+compilation phase. Return `value`, `diagnostics` and `trap` payloads cannot be
+mixed. Invalid ranges use `corpus-source-range-invalid` at `oracle.trap.primary`;
+other structural/reference errors use the existing authoring categories.
+Reports return a detached trap oracle, never an observed execution result.
+Only a related trap oracle can fill a rule's trap obligation; a compilation
+diagnostic or physical Execution Abort cannot substitute.
+
+This unpublished, same-repository development-format change meets ECP-0002's
+bounded delegation: all authoring records and the sole consumer migrate together,
+versions 1–5 and mixed versions are rejected, and their cached reports must be
+discarded. No published family, registry, lock, Build Identity or external
+compatibility contract changes. Minimal example content revisions remain intact;
+the numeric directory records specification refinement as `tsfg-r01-v3`, and
+new authored cases as `tsfg-r01-i32-v1`. Existing identities retain their meanings.
+There is no parser, numeric interpreter, trap producer or result adapter here.
+
 ## Coverage and staged responsibilities (version 5)
 
 Version 5 adds optional rule `coverage` and case `coverage` associations, detached
@@ -154,10 +183,10 @@ defaults to `return` and negative defaults to `diagnostics`. All diagnostic
 coverage represents rejection and requires an error related to this rule;
 warning-only or another rule's error does not suffice, including for boundaries. A negative
 non-hoisting responsibility can explicitly require a return, while division by
-zero explicitly requires a trap. Runtime trap and physical Abort cases remain
-uncovered until their oracle representation is delivered by the corresponding
-R01 slice; a diagnostic cannot fill those responsibilities. This ticket does not
-synthesize trap/Abort records or an executor.
+zero explicitly requires a trap. In version 5, runtime trap and physical Abort cases remained
+uncovered until their oracle representation was delivered by the corresponding
+R01 slice; a diagnostic cannot fill those responsibilities. The coverage slice did not
+synthesize trap/Abort records or an executor. Version 6 now accepts numeric trap oracles; Abort records remain deferred.
 Responsibilities combining successful and failing paths are separate entries:
 for example maximum literal versus overflow rejection, exact versus short fuel,
 and valid versus excessive depth. Unknown later runtime safety failure mappings
@@ -208,7 +237,7 @@ the fixed TS 7.0.2 baseline and current language-contract sections, without choo
 an R02a intake commit or copying upstream code. Ordinary TS semantics remain
 inherited even when absent from the catalog; future coverage never revives the
 withdrawn class, module, optional, construction, exception-base or source-tag bans.
-Its empty case/error assignments are honest outstanding corpus work, not a claim
+Its remaining empty case assignments are honest outstanding corpus work, not a claim
 that a language implementation supports those rules. For ingestion, use its rules
 and capabilities as the existing `rules`/`support` inputs, append its spec revision
 and new rule identities to the supplied catalog, and retain all earlier allocations.
@@ -218,8 +247,7 @@ the same entry with a complete scoped addition collection, a withdrawn MAX+1
 boundary, a legitimate negative exemption, and the full staged directory. The
 MAX+1 oracle is independently derived by subtracting 2^32 from 2147483648; no JS
 execution of corpus source determines it. The directory integration test prints
-the full missing-responsibility and pending-consumer report. Numeric/budget corpus
-production and result comparison belong to the subsequent tickets.
+the full missing-responsibility and pending-consumer report. The numeric corpus is described below; control-flow/budget corpus and result comparison remain subsequent work.
 
 ## Lossless scalar records
 
@@ -270,7 +298,7 @@ source, not executed language corpus coverage or support claims.
 
 Version 4 adds `oracle.kind: "diagnostics"` with a nonempty `diagnostics` array
 instead of `oracle.value`; the independent `basis` remains required. Current
-authoring records and reports use version 5. Reject version 1/2/3/4 and mixed
+authoring records and reports use version 6. Reject version 1/2/3/4/5 and mixed
 records and invalidate their cached reports. This unpublished same-repository
 change falls within ECP-0002; no product contract registry, compatibility promise,
 language rule or existing source/oracle content revision changes.

@@ -1,0 +1,732 @@
+{
+  "schemaVersion": "6",
+  "corpusId": "tsfg-r01-i32-v1",
+  "specRevisions": [
+    {
+      "id": "tsfg-r01-v1",
+      "change": "Initial fixed-width i32 addition requirement."
+    },
+    {
+      "id": "tsfg-r01-v2",
+      "change": "R01 staged rule and coverage responsibilities."
+    },
+    {
+      "id": "tsfg-r01-v3",
+      "change": "Refine i32/bool boundary obligations and allocate numeric diagnostic/trap identities without changing language semantics."
+    }
+  ],
+  "corpusRevisions": [
+    {
+      "id": "tsfg-r01-minimal-v1",
+      "change": "Initial independently derived addition case."
+    },
+    {
+      "id": "tsfg-r01-i32-v1",
+      "change": "Original authored i32/bool numeric corpus; independent mathematical expectations, no execution evidence."
+    }
+  ],
+  "identities": [
+    {
+      "kind": "rule",
+      "id": "r01-ts-baseline",
+      "meaning": "Ordinary lexical, grammar, naming, type relations, control flow and class construction MUST inherit fixed TS 7.0.2 unless an explicit necessary difference applies.",
+      "status": "active",
+      "introducedIn": "tsfg-r01-v2"
+    },
+    {
+      "kind": "rule",
+      "id": "r01-input-boundary",
+      "meaning": "Source/declaration input MUST be TS; JS runtime fallback and architectural dynamic features MUST NOT be introduced.",
+      "status": "active",
+      "introducedIn": "tsfg-r01-v2"
+    },
+    {
+      "kind": "rule",
+      "id": "r01-literals",
+      "meaning": "Integer tokens MUST be read as exact mathematical values; untyped literals default to i32 or use an explicit context.",
+      "status": "active",
+      "introducedIn": "tsfg-r01-v2"
+    },
+    {
+      "kind": "rule",
+      "id": "r01-bool",
+      "meaning": "bool and boolean MUST be aliases; first-slice conditions and short circuit MUST operate on bool.",
+      "status": "active",
+      "introducedIn": "tsfg-r01-v2"
+    },
+    {
+      "kind": "rule",
+      "id": "r01-i32-add",
+      "meaning": "Wrapping i32 addition",
+      "status": "active",
+      "introducedIn": "tsfg-r01-v1"
+    },
+    {
+      "kind": "rule",
+      "id": "r01-i32-wrap",
+      "meaning": "i32 subtraction, multiplication and negation MUST wrap at 32 bits.",
+      "status": "active",
+      "introducedIn": "tsfg-r01-v2"
+    },
+    {
+      "kind": "rule",
+      "id": "r01-division",
+      "meaning": "i32 division MUST truncate toward zero and nonzero remainder MUST have the dividend sign.",
+      "status": "active",
+      "introducedIn": "tsfg-r01-v2"
+    },
+    {
+      "kind": "rule",
+      "id": "r01-shifts",
+      "meaning": "i32 shift counts MUST be i32 in 0..31; >> sign extends and >>> zero fills with i32 result.",
+      "status": "active",
+      "introducedIn": "tsfg-r01-v2"
+    },
+    {
+      "kind": "rule",
+      "id": "r01-control",
+      "meaning": "The W1 slice MUST cover top-level i32/bool functions, initialized const/let, simple assignment, arithmetic/comparison, if/else, while, calls and return without reference allocation.",
+      "status": "active",
+      "introducedIn": "tsfg-r01-v2"
+    },
+    {
+      "kind": "rule",
+      "id": "r01-calls",
+      "meaning": "Forward calls and direct/mutual recursion MUST be permitted in the first slice.",
+      "status": "active",
+      "introducedIn": "tsfg-r01-v2"
+    },
+    {
+      "kind": "rule",
+      "id": "r01-evaluation",
+      "meaning": "Operands and arguments MUST evaluate left to right; first actual trap stops later evaluation; folding MUST preserve execution paths.",
+      "status": "active",
+      "introducedIn": "tsfg-r01-v2"
+    },
+    {
+      "kind": "rule",
+      "id": "r01-fuel",
+      "meaning": "Function entry and every while condition check MUST each cost one Semantic Fuel before the event, including initial and final false checks.",
+      "status": "active",
+      "introducedIn": "tsfg-r01-v2"
+    },
+    {
+      "kind": "rule",
+      "id": "r01-depth",
+      "meaning": "Entry active depth MUST be one; excess depth MUST fail before a new frame enters, after explicit argument evaluation.",
+      "status": "active",
+      "introducedIn": "tsfg-r01-v2"
+    },
+    {
+      "kind": "rule",
+      "id": "r01-failure-channels",
+      "meaning": "trap MUST terminate the request with structured failure, not kill the host, be caught by language catch or roll back prior effects; physical failures are Execution Abort.",
+      "status": "active",
+      "introducedIn": "tsfg-r01-v2"
+    },
+    {
+      "kind": "rule",
+      "id": "r01-numeric-family",
+      "meaning": "Integer rules MUST generalize by width; isize/usize MUST use target DataLayout; number MUST alias f64.",
+      "status": "active",
+      "introducedIn": "tsfg-r01-v2"
+    },
+    {
+      "kind": "rule",
+      "id": "r01-conversions",
+      "meaning": "Explicit calls MUST distinguish checked conversion, integer truncation/wrap and equal-width scalar bit reinterpretation; as is not numeric conversion.",
+      "status": "active",
+      "introducedIn": "tsfg-r01-v2"
+    },
+    {
+      "kind": "rule",
+      "id": "r01-strict-float",
+      "meaning": "Strict float MUST retain declared precision at every step, nearest/ties-even, subnormals, signed zero and no implicit FMA; arithmetic NaN is canonical, moves preserve raw bits.",
+      "status": "active",
+      "introducedIn": "tsfg-r01-v2"
+    },
+    {
+      "kind": "rule",
+      "id": "r01-values",
+      "meaning": "Values/components MUST retain explicit identity, fixed layout, value copies and per-field equality, excluding padding; no inheritance.",
+      "status": "active",
+      "introducedIn": "tsfg-r01-v2"
+    },
+    {
+      "kind": "rule",
+      "id": "r01-references",
+      "meaning": "Ordinary GC class copies MUST retain object identity; source compatibility and construction MUST follow TS rather than universal nominal assignment.",
+      "status": "active",
+      "introducedIn": "tsfg-r01-v2"
+    },
+    {
+      "kind": "rule",
+      "id": "r01-null-safety",
+      "meaning": "Strict null checks MUST stay enabled; native storage MUST be initialized before reads; nonnull assertions MUST NOT bypass actual safety checks.",
+      "status": "active",
+      "introducedIn": "tsfg-r01-v2"
+    },
+    {
+      "kind": "rule",
+      "id": "r01-generics",
+      "meaning": "Generics MUST specialize whole-program concrete arguments, reuse identical instances and allow ordinary recursion.",
+      "status": "active",
+      "introducedIn": "tsfg-r01-v2"
+    },
+    {
+      "kind": "rule",
+      "id": "r01-unions",
+      "meaning": "Unions MUST retain TS narrowing with statically typed representation, no implicit dynamic boxing or universal handwritten source tags.",
+      "status": "active",
+      "introducedIn": "tsfg-r01-v2"
+    },
+    {
+      "kind": "rule",
+      "id": "r01-closures",
+      "meaning": "Closures MUST capture logical bindings with shared writes, safe managed environments and persistent FunctionId.",
+      "status": "active",
+      "introducedIn": "tsfg-r01-v2"
+    },
+    {
+      "kind": "rule",
+      "id": "r01-modules",
+      "meaning": "Module source behavior MUST follow TS live bindings and project/source module detection; runtime failed initialization MUST not publish partial state or automatically retry.",
+      "status": "active",
+      "introducedIn": "tsfg-r01-v2"
+    },
+    {
+      "kind": "rule",
+      "id": "r01-exceptions",
+      "meaning": "Managed Exception MUST follow ordinary throw/catch/finally without a universal nominal base restriction, remaining separate from trap/Abort and excluded from Zig ABI/kernel.",
+      "status": "active",
+      "introducedIn": "tsfg-r01-v2"
+    },
+    {
+      "kind": "rule",
+      "id": "r01-vector",
+      "meaning": "T[]/Array<T> MUST be continuous homogeneous vectors, not sparse JS arrays or object dictionaries.",
+      "status": "active",
+      "introducedIn": "tsfg-r01-v2"
+    },
+    {
+      "kind": "rule",
+      "id": "r01-span",
+      "meaning": "ReadSpan/Span MUST be borrowed views whose return/capture obey escape constraints.",
+      "status": "active",
+      "introducedIn": "tsfg-r01-v2"
+    },
+    {
+      "kind": "rule",
+      "id": "r01-string",
+      "meaning": "Immutable UTF-8 storage and StringView MUST have an explicit mapping to TS observable text behavior.",
+      "status": "active",
+      "introducedIn": "tsfg-r01-v2"
+    },
+    {
+      "kind": "rule",
+      "id": "r01-handle-abi",
+      "meaning": "Zig MUST NOT retain raw managed pointers; only explicit ABI-safe types cross the boundary and GC objects use Handle.",
+      "status": "active",
+      "introducedIn": "tsfg-r01-v2"
+    },
+    {
+      "kind": "rule",
+      "id": "r01-markers",
+      "meaning": "Compile-time markers MUST only express necessary intent not derivable from ordinary TS declarations/types/analysis.",
+      "status": "active",
+      "introducedIn": "tsfg-r01-v2"
+    },
+    {
+      "kind": "rule",
+      "id": "r01-kernel",
+      "meaning": "Kernels MUST exclude managed allocation, GC references, exceptions, await, locks and escaping borrows; Query/Job access and effects are analyzed.",
+      "status": "active",
+      "introducedIn": "tsfg-r01-v2"
+    },
+    {
+      "kind": "rule",
+      "id": "r01-cpu",
+      "meaning": "CPU parallel and reduction behavior MUST have an independent numerical/determinism relation, not strict Execution Equivalence.",
+      "status": "active",
+      "introducedIn": "tsfg-r01-v2"
+    },
+    {
+      "kind": "rule",
+      "id": "r01-fast-math",
+      "meaning": "Fast-math MUST have its own numerical relation, separate from strict bitwise Execution Equivalence.",
+      "status": "active",
+      "introducedIn": "tsfg-r01-v2"
+    },
+    {
+      "kind": "rule",
+      "id": "r01-gpu",
+      "meaning": "GPU numerical/device nondeterminism MUST use an independent GPU contract rather than strict CPU/VM Execution Equivalence.",
+      "status": "active",
+      "introducedIn": "tsfg-r01-v2"
+    },
+    {
+      "kind": "rule",
+      "id": "r01-all-rules",
+      "meaning": "Full R01 MUST retain W3 general language, W4 CPU/fast-math, W5 GPU and all applicable MUST/MUST NOT coverage; first-slice completion is insufficient.",
+      "status": "active",
+      "introducedIn": "tsfg-r01-v2"
+    },
+    {
+      "kind": "case",
+      "id": "r01-add-001",
+      "meaning": "Add two and three",
+      "status": "retired",
+      "introducedIn": "tsfg-r01-minimal-v1",
+      "retiredIn": "tsfg-r01-i32-v1",
+      "reason": "Minimal example remains a separate corpus; expanded numeric cases have distinct stable identities."
+    },
+    {
+      "kind": "diagnostic",
+      "id": "r01-d-integer-range",
+      "meaning": "Exact integer literal outside contextual type range",
+      "status": "active",
+      "introducedIn": "tsfg-r01-v3"
+    },
+    {
+      "kind": "diagnostic",
+      "id": "r01-d-scalar-type",
+      "meaning": "Prohibited implicit scalar type conversion",
+      "status": "active",
+      "introducedIn": "tsfg-r01-v3"
+    },
+    {
+      "kind": "trap",
+      "id": "r01-t-divide-zero",
+      "meaning": "Integer division by zero",
+      "status": "active",
+      "introducedIn": "tsfg-r01-v3"
+    },
+    {
+      "kind": "trap",
+      "id": "r01-t-remainder-zero",
+      "meaning": "Integer remainder by zero",
+      "status": "active",
+      "introducedIn": "tsfg-r01-v3"
+    },
+    {
+      "kind": "trap",
+      "id": "r01-t-shift-count",
+      "meaning": "Shift count outside the operand width",
+      "status": "active",
+      "introducedIn": "tsfg-r01-v3"
+    },
+    {
+      "kind": "diagnostic",
+      "id": "r01-d-shift-count-type",
+      "meaning": "Prohibited implicit scalar type conversion",
+      "status": "active",
+      "introducedIn": "tsfg-r01-v3"
+    },
+    {
+      "kind": "case",
+      "id": "r01-literal-default",
+      "meaning": "The initializer has no type context, so the exact integer 17 defaults to i32; returning the typed local preserves 17.",
+      "status": "active",
+      "introducedIn": "tsfg-r01-i32-v1"
+    },
+    {
+      "kind": "case",
+      "id": "r01-literal-default-boundary",
+      "meaning": "The uncontextualized local defaults to i32. MAX + 1 = 2147483648; subtract 4294967296 to obtain -2147483648.",
+      "status": "active",
+      "introducedIn": "tsfg-r01-i32-v1"
+    },
+    {
+      "kind": "case",
+      "id": "r01-literal-context",
+      "meaning": "The explicit i32 initializer and return expression context type the literals as i32; 17 + 2 = 19 in range.",
+      "status": "active",
+      "introducedIn": "tsfg-r01-i32-v1"
+    },
+    {
+      "kind": "case",
+      "id": "r01-literal-min",
+      "meaning": "Direct unary minus checks the whole mathematical value -2147483648 = -2^31, which is the inclusive i32 lower bound; the positive token alone would not fit.",
+      "status": "active",
+      "introducedIn": "tsfg-r01-i32-v1"
+    },
+    {
+      "kind": "case",
+      "id": "r01-literal-max",
+      "meaning": "2147483647 = 2^31 - 1 is the inclusive signed i32 upper bound.",
+      "status": "active",
+      "introducedIn": "tsfg-r01-i32-v1"
+    },
+    {
+      "kind": "case",
+      "id": "r01-literal-overflow",
+      "meaning": "2147483648 = 2^31 exceeds 2^31 - 1 by one; a positive literal is rejected at compile time, never wrapped.",
+      "status": "active",
+      "introducedIn": "tsfg-r01-i32-v1"
+    },
+    {
+      "kind": "case",
+      "id": "r01-literal-positive-reject",
+      "meaning": "An i32 initializer cannot contain the positive mathematical value 2^31; its range is [-2^31, 2^31-1].",
+      "status": "active",
+      "introducedIn": "tsfg-r01-i32-v1"
+    },
+    {
+      "kind": "case",
+      "id": "r01-literal-hex",
+      "meaning": "Eight hexadecimal f digits denote 16^8 - 1 = 4294967295, greater than 2147483647; exact token typing does not reinterpret this spelling as -1.",
+      "status": "active",
+      "introducedIn": "tsfg-r01-i32-v1"
+    },
+    {
+      "kind": "case",
+      "id": "r01-literal-exact",
+      "meaning": "The decimal token denotes exactly 9007199254740993 = 2^53 + 1, beyond i32 and host f64 exact-integer precision; range rejection follows from the original token, not a rounded host number.",
+      "status": "active",
+      "introducedIn": "tsfg-r01-i32-v1"
+    },
+    {
+      "kind": "case",
+      "id": "r01-typed-bool-to-i32",
+      "meaning": "The local is already bool, so ABI encoding 1 cannot authorize assigning it to i32. This covers the i32/bool boundary, not other numeric widths.",
+      "status": "active",
+      "introducedIn": "tsfg-r01-i32-v1"
+    },
+    {
+      "kind": "case",
+      "id": "r01-bool-integer",
+      "meaning": "The local is i32, so even value 1 cannot implicitly become bool. ABI 0/1 representation is not a source conversion.",
+      "status": "active",
+      "introducedIn": "tsfg-r01-i32-v1"
+    },
+    {
+      "kind": "case",
+      "id": "r01-bool-alias",
+      "meaning": "bool and boolean name the same type; binding and returning true preserves true.",
+      "status": "active",
+      "introducedIn": "tsfg-r01-i32-v1"
+    },
+    {
+      "kind": "case",
+      "id": "r01-bool-alias-false",
+      "meaning": "The aliases share the two-element domain {false,true}; copying false preserves false without integer conversion.",
+      "status": "active",
+      "introducedIn": "tsfg-r01-i32-v1"
+    },
+    {
+      "kind": "case",
+      "id": "r01-add-normal",
+      "meaning": "2 + 3 = 5 is in signed i32 range.",
+      "status": "active",
+      "introducedIn": "tsfg-r01-i32-v1"
+    },
+    {
+      "kind": "case",
+      "id": "r01-add-max",
+      "meaning": "2147483647 + 1 = 2147483648; subtract 2^32 = 4294967296 to obtain -2147483648.",
+      "status": "active",
+      "introducedIn": "tsfg-r01-i32-v1"
+    },
+    {
+      "kind": "case",
+      "id": "r01-add-min",
+      "meaning": "-2147483648 - 1 = -2147483649; adding 4294967296 gives 2147483647.",
+      "status": "active",
+      "introducedIn": "tsfg-r01-i32-v1"
+    },
+    {
+      "kind": "case",
+      "id": "r01-sub-normal",
+      "meaning": "2 - 3 = -1 lies in signed i32 range.",
+      "status": "active",
+      "introducedIn": "tsfg-r01-i32-v1"
+    },
+    {
+      "kind": "case",
+      "id": "r01-mul-normal",
+      "meaning": "(-7) times 3 = -21 lies in signed i32 range.",
+      "status": "active",
+      "introducedIn": "tsfg-r01-i32-v1"
+    },
+    {
+      "kind": "case",
+      "id": "r01-neg-normal",
+      "meaning": "The additive inverse of 7 is -7, which is in signed i32 range.",
+      "status": "active",
+      "introducedIn": "tsfg-r01-i32-v1"
+    },
+    {
+      "kind": "case",
+      "id": "r01-sub-min",
+      "meaning": "-2147483648 - 1 = -2147483649; adding 2^32 gives 2147483647.",
+      "status": "active",
+      "introducedIn": "tsfg-r01-i32-v1"
+    },
+    {
+      "kind": "case",
+      "id": "r01-sub-max",
+      "meaning": "2147483647 - (-1) = 2147483648; subtracting 2^32 gives -2147483648.",
+      "status": "active",
+      "introducedIn": "tsfg-r01-i32-v1"
+    },
+    {
+      "kind": "case",
+      "id": "r01-mul-wrap",
+      "meaning": "1073741824 = 2^30; multiplying by 4 gives 2^32, whose residue modulo 2^32 is zero.",
+      "status": "active",
+      "introducedIn": "tsfg-r01-i32-v1"
+    },
+    {
+      "kind": "case",
+      "id": "r01-mul-sign",
+      "meaning": "2^30 times 2 is 2^31; its signed 32-bit representative is -2^31.",
+      "status": "active",
+      "introducedIn": "tsfg-r01-i32-v1"
+    },
+    {
+      "kind": "case",
+      "id": "r01-neg-min",
+      "meaning": "The inverse of -2^31 is 2^31; subtract 2^32 to obtain -2^31. Negating an already typed value wraps, unlike typing a positive literal.",
+      "status": "active",
+      "introducedIn": "tsfg-r01-i32-v1"
+    },
+    {
+      "kind": "case",
+      "id": "r01-div-pp",
+      "meaning": "7 = 2*3 + 1; the quotient truncates toward zero and the remainder is positive.",
+      "status": "active",
+      "introducedIn": "tsfg-r01-i32-v1"
+    },
+    {
+      "kind": "case",
+      "id": "r01-rem-pp",
+      "meaning": "7 = 2*3 + 1; the quotient truncates toward zero and the remainder is positive.",
+      "status": "active",
+      "introducedIn": "tsfg-r01-i32-v1"
+    },
+    {
+      "kind": "case",
+      "id": "r01-div-np",
+      "meaning": "-7 = (-2)*3 + (-1); truncating -7/3 toward zero gives -2, not -3, and remainder -1 has the dividend sign.",
+      "status": "active",
+      "introducedIn": "tsfg-r01-i32-v1"
+    },
+    {
+      "kind": "case",
+      "id": "r01-rem-np",
+      "meaning": "-7 = (-2)*3 + (-1); truncating -7/3 toward zero gives -2, not -3, and remainder -1 has the dividend sign.",
+      "status": "active",
+      "introducedIn": "tsfg-r01-i32-v1"
+    },
+    {
+      "kind": "case",
+      "id": "r01-div-pn",
+      "meaning": "7 = (-2)*(-3) + 1; quotient truncates toward zero and remainder is positive despite the negative divisor.",
+      "status": "active",
+      "introducedIn": "tsfg-r01-i32-v1"
+    },
+    {
+      "kind": "case",
+      "id": "r01-rem-pn",
+      "meaning": "7 = (-2)*(-3) + 1; quotient truncates toward zero and remainder is positive despite the negative divisor.",
+      "status": "active",
+      "introducedIn": "tsfg-r01-i32-v1"
+    },
+    {
+      "kind": "case",
+      "id": "r01-div-nn",
+      "meaning": "-7 = 2*(-3) + (-1); quotient is positive and remainder has the negative dividend sign.",
+      "status": "active",
+      "introducedIn": "tsfg-r01-i32-v1"
+    },
+    {
+      "kind": "case",
+      "id": "r01-rem-nn",
+      "meaning": "-7 = 2*(-3) + (-1); quotient is positive and remainder has the negative dividend sign.",
+      "status": "active",
+      "introducedIn": "tsfg-r01-i32-v1"
+    },
+    {
+      "kind": "case",
+      "id": "r01-div-normal",
+      "meaning": "6 = 2*3 + 0, so the exact quotient is 2.",
+      "status": "active",
+      "introducedIn": "tsfg-r01-i32-v1"
+    },
+    {
+      "kind": "case",
+      "id": "r01-div-min",
+      "meaning": "The mathematical quotient of -2^31 and -1 is 2^31; the specified i32 representative subtracts 2^32 and equals -2^31, without a trap.",
+      "status": "active",
+      "introducedIn": "tsfg-r01-i32-v1"
+    },
+    {
+      "kind": "case",
+      "id": "r01-rem-min",
+      "meaning": "-2^31 is exactly divisible by -1, so remainder is zero; the quotient wrap rule does not change that remainder.",
+      "status": "active",
+      "introducedIn": "tsfg-r01-i32-v1"
+    },
+    {
+      "kind": "case",
+      "id": "r01-div-zero",
+      "meaning": "With dividend 7 and divisor 0, no integer quotient is defined. The contract requires the runtime divide-zero trap at a / b; this is not a literal range or compile-time error.",
+      "status": "active",
+      "introducedIn": "tsfg-r01-i32-v1"
+    },
+    {
+      "kind": "case",
+      "id": "r01-rem-zero",
+      "meaning": "Remainder with divisor 0 is undefined. The first operation is a % b, which must produce the runtime remainder-zero trap at that expression.",
+      "status": "active",
+      "introducedIn": "tsfg-r01-i32-v1"
+    },
+    {
+      "kind": "case",
+      "id": "r01-shl-normal",
+      "meaning": "1 shifted left by 3 multiplies by 2^3 = 8.",
+      "status": "active",
+      "introducedIn": "tsfg-r01-i32-v1"
+    },
+    {
+      "kind": "case",
+      "id": "r01-shl-zero",
+      "meaning": "A zero left shift preserves the i32 value 1.",
+      "status": "active",
+      "introducedIn": "tsfg-r01-i32-v1"
+    },
+    {
+      "kind": "case",
+      "id": "r01-shl-31",
+      "meaning": "1 shifted left by 31 has bit pattern 80000000, whose signed i32 representative is -2147483648.",
+      "status": "active",
+      "introducedIn": "tsfg-r01-i32-v1"
+    },
+    {
+      "kind": "case",
+      "id": "r01-shl-sign",
+      "meaning": "The all-one pattern of -1 shifted left by one has low 32 bits fffffffe, representing -2.",
+      "status": "active",
+      "introducedIn": "tsfg-r01-i32-v1"
+    },
+    {
+      "kind": "case",
+      "id": "r01-shl-minus-one",
+      "meaning": "-1 is below the inclusive lower count bound 0; do not mask it modulo 32. The failure is a runtime shift-count trap at the shift expression.",
+      "status": "active",
+      "introducedIn": "tsfg-r01-i32-v1"
+    },
+    {
+      "kind": "case",
+      "id": "r01-shl-32",
+      "meaning": "32 exceeds the inclusive upper count bound 31; do not mask it to zero. The failure is a runtime shift-count trap at the shift expression.",
+      "status": "active",
+      "introducedIn": "tsfg-r01-i32-v1"
+    },
+    {
+      "kind": "case",
+      "id": "r01-shr-normal",
+      "meaning": "Sign-extending the all-one pattern of -1 right by 3 retains all one bits, hence -1.",
+      "status": "active",
+      "introducedIn": "tsfg-r01-i32-v1"
+    },
+    {
+      "kind": "case",
+      "id": "r01-shr-zero",
+      "meaning": "A zero right shift preserves the all-one bit pattern. Its declared result is i32, so it represents -1 even for >>>, not u32 4294967295.",
+      "status": "active",
+      "introducedIn": "tsfg-r01-i32-v1"
+    },
+    {
+      "kind": "case",
+      "id": "r01-shr-31",
+      "meaning": "31 sign-extending shifts of -1 preserve all one bits and value -1.",
+      "status": "active",
+      "introducedIn": "tsfg-r01-i32-v1"
+    },
+    {
+      "kind": "case",
+      "id": "r01-shr-sign",
+      "meaning": "Arithmetic right shift copies the sign bit; the all-one -1 pattern remains -1.",
+      "status": "active",
+      "introducedIn": "tsfg-r01-i32-v1"
+    },
+    {
+      "kind": "case",
+      "id": "r01-shr-minus-one",
+      "meaning": "-1 is below the inclusive lower count bound 0; do not mask it modulo 32. The failure is a runtime shift-count trap at the shift expression.",
+      "status": "active",
+      "introducedIn": "tsfg-r01-i32-v1"
+    },
+    {
+      "kind": "case",
+      "id": "r01-shr-32",
+      "meaning": "32 exceeds the inclusive upper count bound 31; do not mask it to zero. The failure is a runtime shift-count trap at the shift expression.",
+      "status": "active",
+      "introducedIn": "tsfg-r01-i32-v1"
+    },
+    {
+      "kind": "case",
+      "id": "r01-ushr-normal",
+      "meaning": "The unsigned pattern 2^32-1 shifted right by 3 leaves 2^29-1 = 536870911.",
+      "status": "active",
+      "introducedIn": "tsfg-r01-i32-v1"
+    },
+    {
+      "kind": "case",
+      "id": "r01-ushr-zero",
+      "meaning": "A zero right shift preserves the all-one bit pattern. Its declared result is i32, so it represents -1 even for >>>, not u32 4294967295.",
+      "status": "active",
+      "introducedIn": "tsfg-r01-i32-v1"
+    },
+    {
+      "kind": "case",
+      "id": "r01-ushr-31",
+      "meaning": "31 zero-filling shifts of ffffffff leave only bit 0, value 1 in i32.",
+      "status": "active",
+      "introducedIn": "tsfg-r01-i32-v1"
+    },
+    {
+      "kind": "case",
+      "id": "r01-ushr-sign",
+      "meaning": "Zero-filling the all-one pattern right by one leaves 31 one bits, 2^31-1 = 2147483647, still typed i32.",
+      "status": "active",
+      "introducedIn": "tsfg-r01-i32-v1"
+    },
+    {
+      "kind": "case",
+      "id": "r01-ushr-minus-one",
+      "meaning": "-1 is below the inclusive lower count bound 0; do not mask it modulo 32. The failure is a runtime shift-count trap at the shift expression.",
+      "status": "active",
+      "introducedIn": "tsfg-r01-i32-v1"
+    },
+    {
+      "kind": "case",
+      "id": "r01-ushr-32",
+      "meaning": "32 exceeds the inclusive upper count bound 31; do not mask it to zero. The failure is a runtime shift-count trap at the shift expression.",
+      "status": "active",
+      "introducedIn": "tsfg-r01-i32-v1"
+    },
+    {
+      "kind": "case",
+      "id": "r01-shift-negative",
+      "meaning": "The typed count -1 is outside 0..31; an illegal count traps at runtime, whereas an incorrectly typed count is a compile-time rejection.",
+      "status": "active",
+      "introducedIn": "tsfg-r01-i32-v1"
+    },
+    {
+      "kind": "case",
+      "id": "r01-shift-count-type",
+      "meaning": "The count is already bool. Its ABI representation cannot convert it to the required i32 count; reject at compile time rather than report a runtime range trap.",
+      "status": "active",
+      "introducedIn": "tsfg-r01-i32-v1"
+    },
+    {
+      "kind": "case",
+      "id": "r01-div-constant-zero",
+      "meaning": "Both literals fit i32. The only evaluated division has zero divisor, so the first observable failure is divide-zero at 1 / 0. Constant folding must preserve the runtime trap, not replace it with compile rejection.",
+      "status": "active",
+      "introducedIn": "tsfg-r01-i32-v1"
+    }
+  ]
+}

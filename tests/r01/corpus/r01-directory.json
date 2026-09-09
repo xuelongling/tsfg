@@ -1,6 +1,6 @@
 {
-  "schemaVersion": "5",
-  "specId": "tsfg-r01-v2",
+  "schemaVersion": "6",
+  "specId": "tsfg-r01-v3",
   "languageBaseline": "TypeScript 7.0.2",
   "rules": [
     {
@@ -104,7 +104,10 @@
       "mode": "strict",
       "positive": "MUST preserve exact token value and valid contextual i32 typing.",
       "negativeNotApplicable": "Applicable negative responsibilities are listed in coverage; error identities are allocated with concrete diagnostic/trap corpus.",
-      "diagnosticCodes": [],
+      "diagnosticCodes": [
+        "r01-d-integer-range",
+        "r01-d-scalar-type"
+      ],
       "trapCodes": [],
       "coverage": {
         "stage": "W1",
@@ -157,6 +160,27 @@
             "requirement": "MUST reject positive i32 2147483648.",
             "applicability": "required",
             "oracleKind": "diagnostics"
+          },
+          {
+            "id": "default-i32",
+            "kind": "boundary",
+            "requirement": "MUST infer an uncontextualized initialized integer local as i32.",
+            "applicability": "required",
+            "oracleKind": "return"
+          },
+          {
+            "id": "context-i32",
+            "kind": "boundary",
+            "requirement": "MUST type an untyped integer literal in explicit i32 local and return contexts.",
+            "applicability": "required",
+            "oracleKind": "return"
+          },
+          {
+            "id": "typed-no-conversion",
+            "kind": "negative",
+            "requirement": "MUST reject assigning a typed bool to i32; other numeric types remain W3 responsibilities.",
+            "applicability": "required",
+            "oracleKind": "diagnostics"
           }
         ]
       }
@@ -173,7 +197,9 @@
       "mode": "strict",
       "positive": "MUST accept true/false and preserve bool short-circuit results.",
       "negativeNotApplicable": "Applicable negative responsibilities are listed in coverage; error identities are allocated with concrete diagnostic/trap corpus.",
-      "diagnosticCodes": [],
+      "diagnosticCodes": [
+        "r01-d-scalar-type"
+      ],
       "trapCodes": [],
       "coverage": {
         "stage": "W1",
@@ -203,6 +229,13 @@
             "id": "short-circuit-or",
             "kind": "boundary",
             "requirement": "MUST skip RHS of true || RHS.",
+            "applicability": "required",
+            "oracleKind": "return"
+          },
+          {
+            "id": "alias",
+            "kind": "boundary",
+            "requirement": "MUST preserve true and false across bool/boolean parameter, local and return aliases.",
             "applicability": "required",
             "oracleKind": "return"
           }
@@ -308,6 +341,34 @@
             "requirement": "MUST negate MIN to MIN.",
             "applicability": "required",
             "oracleKind": "return"
+          },
+          {
+            "id": "multiply-normal",
+            "kind": "positive",
+            "requirement": "MUST preserve the normal or wrapping result: (-7) times 3 = -21 lies in signed i32 range.",
+            "applicability": "required",
+            "oracleKind": "return"
+          },
+          {
+            "id": "negate-normal",
+            "kind": "positive",
+            "requirement": "MUST preserve the normal or wrapping result: The additive inverse of 7 is -7, which is in signed i32 range.",
+            "applicability": "required",
+            "oracleKind": "return"
+          },
+          {
+            "id": "subtract-max",
+            "kind": "boundary",
+            "requirement": "MUST preserve the normal or wrapping result: 2147483647 - (-1) = 2147483648; subtracting 2^32 gives -2147483648.",
+            "applicability": "required",
+            "oracleKind": "return"
+          },
+          {
+            "id": "multiply-sign",
+            "kind": "boundary",
+            "requirement": "MUST preserve the normal or wrapping result: 2^30 times 2 is 2^31; its signed 32-bit representative is -2^31.",
+            "applicability": "required",
+            "oracleKind": "return"
           }
         ]
       }
@@ -325,7 +386,10 @@
       "positive": "MUST preserve quotient and remainder for positive and negative operands.",
       "negativeNotApplicable": "Applicable negative responsibilities are listed in coverage; error identities are allocated with concrete diagnostic/trap corpus.",
       "diagnosticCodes": [],
-      "trapCodes": [],
+      "trapCodes": [
+        "r01-t-divide-zero",
+        "r01-t-remainder-zero"
+      ],
       "coverage": {
         "stage": "W1",
         "obligations": [
@@ -377,6 +441,62 @@
             "requirement": "MUST trap on remainder by zero.",
             "applicability": "required",
             "oracleKind": "trap"
+          },
+          {
+            "id": "div-pp",
+            "kind": "boundary",
+            "requirement": "MUST preserve this quotient/remainder sign case: 7 = 2*3 + 1; the quotient truncates toward zero and the remainder is positive.",
+            "applicability": "required",
+            "oracleKind": "return"
+          },
+          {
+            "id": "rem-pp",
+            "kind": "boundary",
+            "requirement": "MUST preserve this quotient/remainder sign case: 7 = 2*3 + 1; the quotient truncates toward zero and the remainder is positive.",
+            "applicability": "required",
+            "oracleKind": "return"
+          },
+          {
+            "id": "div-np",
+            "kind": "boundary",
+            "requirement": "MUST preserve this quotient/remainder sign case: -7 = (-2)*3 + (-1); truncating -7/3 toward zero gives -2, not -3, and remainder -1 has the dividend sign.",
+            "applicability": "required",
+            "oracleKind": "return"
+          },
+          {
+            "id": "rem-np",
+            "kind": "boundary",
+            "requirement": "MUST preserve this quotient/remainder sign case: -7 = (-2)*3 + (-1); truncating -7/3 toward zero gives -2, not -3, and remainder -1 has the dividend sign.",
+            "applicability": "required",
+            "oracleKind": "return"
+          },
+          {
+            "id": "div-pn",
+            "kind": "boundary",
+            "requirement": "MUST preserve this quotient/remainder sign case: 7 = (-2)*(-3) + 1; quotient truncates toward zero and remainder is positive despite the negative divisor.",
+            "applicability": "required",
+            "oracleKind": "return"
+          },
+          {
+            "id": "rem-pn",
+            "kind": "boundary",
+            "requirement": "MUST preserve this quotient/remainder sign case: 7 = (-2)*(-3) + 1; quotient truncates toward zero and remainder is positive despite the negative divisor.",
+            "applicability": "required",
+            "oracleKind": "return"
+          },
+          {
+            "id": "div-nn",
+            "kind": "boundary",
+            "requirement": "MUST preserve this quotient/remainder sign case: -7 = 2*(-3) + (-1); quotient is positive and remainder has the negative dividend sign.",
+            "applicability": "required",
+            "oracleKind": "return"
+          },
+          {
+            "id": "rem-nn",
+            "kind": "boundary",
+            "requirement": "MUST preserve this quotient/remainder sign case: -7 = 2*(-3) + (-1); quotient is positive and remainder has the negative dividend sign.",
+            "applicability": "required",
+            "oracleKind": "return"
           }
         ]
       }
@@ -393,8 +513,12 @@
       "mode": "strict",
       "positive": "MUST implement left shift, arithmetic right shift and unsigned right shift on typed i32.",
       "negativeNotApplicable": "Applicable negative responsibilities are listed in coverage; error identities are allocated with concrete diagnostic/trap corpus.",
-      "diagnosticCodes": [],
-      "trapCodes": [],
+      "diagnosticCodes": [
+        "r01-d-shift-count-type"
+      ],
+      "trapCodes": [
+        "r01-t-shift-count"
+      ],
       "coverage": {
         "stage": "W1",
         "obligations": [
@@ -446,6 +570,118 @@
             "requirement": "MUST preserve distinct >> and >>> results on negative operands.",
             "applicability": "required",
             "oracleKind": "return"
+          },
+          {
+            "id": "shl-zero",
+            "kind": "boundary",
+            "requirement": "MUST preserve this i32 shift result: A zero left shift preserves the i32 value 1.",
+            "applicability": "required",
+            "oracleKind": "return"
+          },
+          {
+            "id": "shl-31",
+            "kind": "boundary",
+            "requirement": "MUST preserve this i32 shift result: 1 shifted left by 31 has bit pattern 80000000, whose signed i32 representative is -2147483648.",
+            "applicability": "required",
+            "oracleKind": "return"
+          },
+          {
+            "id": "shl-sign",
+            "kind": "boundary",
+            "requirement": "MUST preserve this i32 shift result: The all-one pattern of -1 shifted left by one has low 32 bits fffffffe, representing -2.",
+            "applicability": "required",
+            "oracleKind": "return"
+          },
+          {
+            "id": "shl-minus-one",
+            "kind": "boundary",
+            "requirement": "MUST trap for this << count: -1 is below the inclusive lower count bound 0; do not mask it modulo 32.",
+            "applicability": "required",
+            "oracleKind": "trap"
+          },
+          {
+            "id": "shl-32",
+            "kind": "boundary",
+            "requirement": "MUST trap for this << count: 32 exceeds the inclusive upper count bound 31; do not mask it to zero.",
+            "applicability": "required",
+            "oracleKind": "trap"
+          },
+          {
+            "id": "shr-zero",
+            "kind": "boundary",
+            "requirement": "MUST preserve this i32 shift result: A zero right shift preserves the all-one bit pattern. Its declared result is i32, so it represents -1 even for >>>, not u32 4294967295.",
+            "applicability": "required",
+            "oracleKind": "return"
+          },
+          {
+            "id": "shr-31",
+            "kind": "boundary",
+            "requirement": "MUST preserve this i32 shift result: 31 sign-extending shifts of -1 preserve all one bits and value -1.",
+            "applicability": "required",
+            "oracleKind": "return"
+          },
+          {
+            "id": "shr-sign",
+            "kind": "boundary",
+            "requirement": "MUST preserve this i32 shift result: Arithmetic right shift copies the sign bit; the all-one -1 pattern remains -1.",
+            "applicability": "required",
+            "oracleKind": "return"
+          },
+          {
+            "id": "shr-minus-one",
+            "kind": "boundary",
+            "requirement": "MUST trap for this >> count: -1 is below the inclusive lower count bound 0; do not mask it modulo 32.",
+            "applicability": "required",
+            "oracleKind": "trap"
+          },
+          {
+            "id": "shr-32",
+            "kind": "boundary",
+            "requirement": "MUST trap for this >> count: 32 exceeds the inclusive upper count bound 31; do not mask it to zero.",
+            "applicability": "required",
+            "oracleKind": "trap"
+          },
+          {
+            "id": "ushr-zero",
+            "kind": "boundary",
+            "requirement": "MUST preserve this i32 shift result: A zero right shift preserves the all-one bit pattern. Its declared result is i32, so it represents -1 even for >>>, not u32 4294967295.",
+            "applicability": "required",
+            "oracleKind": "return"
+          },
+          {
+            "id": "ushr-31",
+            "kind": "boundary",
+            "requirement": "MUST preserve this i32 shift result: 31 zero-filling shifts of ffffffff leave only bit 0, value 1 in i32.",
+            "applicability": "required",
+            "oracleKind": "return"
+          },
+          {
+            "id": "ushr-sign",
+            "kind": "boundary",
+            "requirement": "MUST preserve this i32 shift result: Zero-filling the all-one pattern right by one leaves 31 one bits, 2^31-1 = 2147483647, still typed i32.",
+            "applicability": "required",
+            "oracleKind": "return"
+          },
+          {
+            "id": "ushr-minus-one",
+            "kind": "boundary",
+            "requirement": "MUST trap for this >>> count: -1 is below the inclusive lower count bound 0; do not mask it modulo 32.",
+            "applicability": "required",
+            "oracleKind": "trap"
+          },
+          {
+            "id": "ushr-32",
+            "kind": "boundary",
+            "requirement": "MUST trap for this >>> count: 32 exceeds the inclusive upper count bound 31; do not mask it to zero.",
+            "applicability": "required",
+            "oracleKind": "trap"
+          },
+          {
+            "id": "count-type",
+            "kind": "negative",
+            "requirement": "MUST reject bool as a shift count; i32 counts are required.",
+            "applicability": "required",
+            "oracleKind": "diagnostics"
           }
         ]
       }

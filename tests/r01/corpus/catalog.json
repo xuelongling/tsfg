@@ -1,5 +1,5 @@
 {
-  "schemaVersion": "5",
+  "schemaVersion": "6",
   "corpusId": "tsfg-r01-minimal-v1",
   "specRevisions": [{"id": "tsfg-r01-v1", "change": "Initial fixed-width i32 addition requirement."}],
   "corpusRevisions": [{"id": "tsfg-r01-minimal-v1", "change": "Initial independently derived addition case."}],

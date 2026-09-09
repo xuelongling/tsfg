@@ -138,6 +138,8 @@ test("coverage cannot be silently exempted by malformed responsibility or suppor
 async function milestoneCorpus() {
   const corpus = await completeAddition();
   const directory = JSON.parse(await readFile(new URL("./corpus/r01-directory.json", import.meta.url), "utf8"));
+  const numericCatalog = JSON.parse(await readFile(new URL("./corpus/i32/catalog.json", import.meta.url), "utf8"));
+  corpus.catalog.identities.push(...numericCatalog.identities.filter((entry) => ["diagnostic", "trap"].includes(entry.kind)));
   corpus.rules.specId = directory.specId;
   corpus.support.specId = directory.specId;
   corpus.catalog.specRevisions.push({ id: directory.specId, change: "R01 staged rule and coverage responsibilities" });

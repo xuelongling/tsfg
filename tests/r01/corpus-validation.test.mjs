@@ -504,7 +504,7 @@ test("removing an active record requires retirement, and inconsistent history is
 });
 
 test("old development formats and damaged inputs still report no real language execution", async () => {
-  for (const oldVersion of ["1", "2", "3", "4"]) {
+  for (const oldVersion of ["1", "2", "3", "4", "5"]) {
     for (const section of ["rules", "support", "catalog", "case"]) {
       const corpus = await minimalCorpus();
       (section === "case" ? corpus.cases[0] : corpus[section]).schemaVersion = oldVersion;
@@ -552,7 +552,7 @@ test("a corpus author validates a source case without claiming language executio
   const report = validateCorpus(await minimalCorpus());
   context.diagnostic(JSON.stringify(report));
   assert.deepEqual(report, {
-    schemaVersion: "5",
+    schemaVersion: "6",
     recordValidation: "valid",
     languageValidation: "not-executed",
     realProductPasses: 0,
@@ -583,7 +583,7 @@ test("a damaged case reports its missing oracle basis through the same boundary"
   const report = validateCorpus(corpus);
   context.diagnostic(JSON.stringify(report));
   assert.deepEqual(report, {
-    schemaVersion: "5",
+    schemaVersion: "6",
     recordValidation: "invalid",
     languageValidation: "not-executed", realProductPasses: 0,
     errors: [{ category: "corpus-record-invalid", object: "r01-add-001", field: "oracle.basis" }],

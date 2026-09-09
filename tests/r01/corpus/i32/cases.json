@@ -1,0 +1,3123 @@
+[
+  {
+    "schemaVersion": "6",
+    "specId": "tsfg-r01-v3",
+    "corpusId": "tsfg-r01-i32-v1",
+    "caseId": "r01-literal-default",
+    "sourceId": "i32/literal-default.ts",
+    "ruleIds": [
+      "r01-literals"
+    ],
+    "capabilities": [
+      "literals"
+    ],
+    "target": "windows-x86_64-msvc",
+    "mode": "strict",
+    "applicability": "positive",
+    "coverage": [
+      "positive"
+    ],
+    "budgets": {
+      "semanticFuel": "1",
+      "activeDepth": "1",
+      "physicalInstructions": "1000",
+      "memoryBytes": "1048576",
+      "hostTimeMs": "1000"
+    },
+    "invocation": {
+      "entry": "main",
+      "arguments": [],
+      "returnType": "i32"
+    },
+    "oracle": {
+      "kind": "return",
+      "value": {
+        "type": "i32",
+        "value": "17"
+      },
+      "basis": {
+        "kind": "mathematical-derivation",
+        "reference": "docs/r01-language-contract.md#41-类型与定型",
+        "derivation": "The initializer has no type context, so the exact integer 17 defaults to i32; returning the typed local preserves 17."
+      }
+    }
+  },
+  {
+    "schemaVersion": "6",
+    "specId": "tsfg-r01-v3",
+    "corpusId": "tsfg-r01-i32-v1",
+    "caseId": "r01-literal-default-boundary",
+    "sourceId": "i32/literal-default-boundary.ts",
+    "ruleIds": [
+      "r01-literals"
+    ],
+    "capabilities": [
+      "literals"
+    ],
+    "target": "windows-x86_64-msvc",
+    "mode": "strict",
+    "applicability": "boundary",
+    "coverage": [
+      "default-i32"
+    ],
+    "budgets": {
+      "semanticFuel": "1",
+      "activeDepth": "1",
+      "physicalInstructions": "1000",
+      "memoryBytes": "1048576",
+      "hostTimeMs": "1000"
+    },
+    "invocation": {
+      "entry": "main",
+      "arguments": [],
+      "returnType": "i32"
+    },
+    "oracle": {
+      "kind": "return",
+      "value": {
+        "type": "i32",
+        "value": "-2147483648"
+      },
+      "basis": {
+        "kind": "mathematical-derivation",
+        "reference": "docs/r01-language-contract.md#41-类型与定型",
+        "derivation": "The uncontextualized local defaults to i32. MAX + 1 = 2147483648; subtract 4294967296 to obtain -2147483648."
+      }
+    }
+  },
+  {
+    "schemaVersion": "6",
+    "specId": "tsfg-r01-v3",
+    "corpusId": "tsfg-r01-i32-v1",
+    "caseId": "r01-literal-context",
+    "sourceId": "i32/literal-context.ts",
+    "ruleIds": [
+      "r01-literals"
+    ],
+    "capabilities": [
+      "literals"
+    ],
+    "target": "windows-x86_64-msvc",
+    "mode": "strict",
+    "applicability": "boundary",
+    "coverage": [
+      "context-i32"
+    ],
+    "budgets": {
+      "semanticFuel": "1",
+      "activeDepth": "1",
+      "physicalInstructions": "1000",
+      "memoryBytes": "1048576",
+      "hostTimeMs": "1000"
+    },
+    "invocation": {
+      "entry": "main",
+      "arguments": [],
+      "returnType": "i32"
+    },
+    "oracle": {
+      "kind": "return",
+      "value": {
+        "type": "i32",
+        "value": "19"
+      },
+      "basis": {
+        "kind": "mathematical-derivation",
+        "reference": "docs/r01-language-contract.md#41-类型与定型",
+        "derivation": "The explicit i32 initializer and return expression context type the literals as i32; 17 + 2 = 19 in range."
+      }
+    }
+  },
+  {
+    "schemaVersion": "6",
+    "specId": "tsfg-r01-v3",
+    "corpusId": "tsfg-r01-i32-v1",
+    "caseId": "r01-literal-min",
+    "sourceId": "i32/literal-min.ts",
+    "ruleIds": [
+      "r01-literals"
+    ],
+    "capabilities": [
+      "literals"
+    ],
+    "target": "windows-x86_64-msvc",
+    "mode": "strict",
+    "applicability": "boundary",
+    "coverage": [
+      "minimum"
+    ],
+    "budgets": {
+      "semanticFuel": "1",
+      "activeDepth": "1",
+      "physicalInstructions": "1000",
+      "memoryBytes": "1048576",
+      "hostTimeMs": "1000"
+    },
+    "invocation": {
+      "entry": "main",
+      "arguments": [],
+      "returnType": "i32"
+    },
+    "oracle": {
+      "kind": "return",
+      "value": {
+        "type": "i32",
+        "value": "-2147483648"
+      },
+      "basis": {
+        "kind": "mathematical-derivation",
+        "reference": "docs/r01-language-contract.md#41-类型与定型",
+        "derivation": "Direct unary minus checks the whole mathematical value -2147483648 = -2^31, which is the inclusive i32 lower bound; the positive token alone would not fit."
+      }
+    }
+  },
+  {
+    "schemaVersion": "6",
+    "specId": "tsfg-r01-v3",
+    "corpusId": "tsfg-r01-i32-v1",
+    "caseId": "r01-literal-max",
+    "sourceId": "i32/literal-max.ts",
+    "ruleIds": [
+      "r01-literals"
+    ],
+    "capabilities": [
+      "literals"
+    ],
+    "target": "windows-x86_64-msvc",
+    "mode": "strict",
+    "applicability": "boundary",
+    "coverage": [
+      "maximum"
+    ],
+    "budgets": {
+      "semanticFuel": "1",
+      "activeDepth": "1",
+      "physicalInstructions": "1000",
+      "memoryBytes": "1048576",
+      "hostTimeMs": "1000"
+    },
+    "invocation": {
+      "entry": "main",
+      "arguments": [],
+      "returnType": "i32"
+    },
+    "oracle": {
+      "kind": "return",
+      "value": {
+        "type": "i32",
+        "value": "2147483647"
+      },
+      "basis": {
+        "kind": "mathematical-derivation",
+        "reference": "docs/r01-language-contract.md#41-类型与定型",
+        "derivation": "2147483647 = 2^31 - 1 is the inclusive signed i32 upper bound."
+      }
+    }
+  },
+  {
+    "schemaVersion": "6",
+    "specId": "tsfg-r01-v3",
+    "corpusId": "tsfg-r01-i32-v1",
+    "caseId": "r01-literal-overflow",
+    "sourceId": "i32/literal-overflow.ts",
+    "ruleIds": [
+      "r01-literals"
+    ],
+    "capabilities": [
+      "literals"
+    ],
+    "target": "windows-x86_64-msvc",
+    "mode": "strict",
+    "applicability": "boundary",
+    "coverage": [
+      "maximum-overflow"
+    ],
+    "budgets": {
+      "semanticFuel": "1",
+      "activeDepth": "1",
+      "physicalInstructions": "1000",
+      "memoryBytes": "1048576",
+      "hostTimeMs": "1000"
+    },
+    "invocation": {
+      "entry": "main",
+      "arguments": [],
+      "returnType": "i32"
+    },
+    "oracle": {
+      "kind": "diagnostics",
+      "diagnostics": [
+        {
+          "phase": "types",
+          "severity": "error",
+          "code": "r01-d-integer-range",
+          "ruleIds": [
+            "r01-literals"
+          ],
+          "primary": {
+            "sourceId": "i32/literal-overflow.ts",
+            "start": 71,
+            "end": 81,
+            "startLine": 2,
+            "startColumn": 9,
+            "endLine": 2,
+            "endColumn": 19
+          }
+        }
+      ],
+      "basis": {
+        "kind": "mathematical-derivation",
+        "reference": "docs/r01-language-contract.md#41-类型与定型",
+        "derivation": "2147483648 = 2^31 exceeds 2^31 - 1 by one; a positive literal is rejected at compile time, never wrapped."
+      }
+    }
+  },
+  {
+    "schemaVersion": "6",
+    "specId": "tsfg-r01-v3",
+    "corpusId": "tsfg-r01-i32-v1",
+    "caseId": "r01-literal-positive-reject",
+    "sourceId": "i32/literal-positive-reject.ts",
+    "ruleIds": [
+      "r01-literals"
+    ],
+    "capabilities": [
+      "literals"
+    ],
+    "target": "windows-x86_64-msvc",
+    "mode": "strict",
+    "applicability": "negative",
+    "coverage": [
+      "negative"
+    ],
+    "budgets": {
+      "semanticFuel": "1",
+      "activeDepth": "1",
+      "physicalInstructions": "1000",
+      "memoryBytes": "1048576",
+      "hostTimeMs": "1000"
+    },
+    "invocation": {
+      "entry": "main",
+      "arguments": [],
+      "returnType": "i32"
+    },
+    "oracle": {
+      "kind": "diagnostics",
+      "diagnostics": [
+        {
+          "phase": "types",
+          "severity": "error",
+          "code": "r01-d-integer-range",
+          "ruleIds": [
+            "r01-literals"
+          ],
+          "primary": {
+            "sourceId": "i32/literal-positive-reject.ts",
+            "start": 83,
+            "end": 93,
+            "startLine": 2,
+            "startColumn": 21,
+            "endLine": 2,
+            "endColumn": 31
+          }
+        }
+      ],
+      "basis": {
+        "kind": "mathematical-derivation",
+        "reference": "docs/r01-language-contract.md#41-类型与定型",
+        "derivation": "An i32 initializer cannot contain the positive mathematical value 2^31; its range is [-2^31, 2^31-1]."
+      }
+    }
+  },
+  {
+    "schemaVersion": "6",
+    "specId": "tsfg-r01-v3",
+    "corpusId": "tsfg-r01-i32-v1",
+    "caseId": "r01-literal-hex",
+    "sourceId": "i32/literal-hex.ts",
+    "ruleIds": [
+      "r01-literals"
+    ],
+    "capabilities": [
+      "literals"
+    ],
+    "target": "windows-x86_64-msvc",
+    "mode": "strict",
+    "applicability": "boundary",
+    "coverage": [
+      "hex-range"
+    ],
+    "budgets": {
+      "semanticFuel": "1",
+      "activeDepth": "1",
+      "physicalInstructions": "1000",
+      "memoryBytes": "1048576",
+      "hostTimeMs": "1000"
+    },
+    "invocation": {
+      "entry": "main",
+      "arguments": [],
+      "returnType": "i32"
+    },
+    "oracle": {
+      "kind": "diagnostics",
+      "diagnostics": [
+        {
+          "phase": "types",
+          "severity": "error",
+          "code": "r01-d-integer-range",
+          "ruleIds": [
+            "r01-literals"
+          ],
+          "primary": {
+            "sourceId": "i32/literal-hex.ts",
+            "start": 71,
+            "end": 81,
+            "startLine": 2,
+            "startColumn": 9,
+            "endLine": 2,
+            "endColumn": 19
+          }
+        }
+      ],
+      "basis": {
+        "kind": "mathematical-derivation",
+        "reference": "docs/r01-language-contract.md#41-类型与定型",
+        "derivation": "Eight hexadecimal f digits denote 16^8 - 1 = 4294967295, greater than 2147483647; exact token typing does not reinterpret this spelling as -1."
+      }
+    }
+  },
+  {
+    "schemaVersion": "6",
+    "specId": "tsfg-r01-v3",
+    "corpusId": "tsfg-r01-i32-v1",
+    "caseId": "r01-literal-exact",
+    "sourceId": "i32/literal-exact.ts",
+    "ruleIds": [
+      "r01-literals"
+    ],
+    "capabilities": [
+      "literals"
+    ],
+    "target": "windows-x86_64-msvc",
+    "mode": "strict",
+    "applicability": "boundary",
+    "coverage": [
+      "exact-token"
+    ],
+    "budgets": {
+      "semanticFuel": "1",
+      "activeDepth": "1",
+      "physicalInstructions": "1000",
+      "memoryBytes": "1048576",
+      "hostTimeMs": "1000"
+    },
+    "invocation": {
+      "entry": "main",
+      "arguments": [],
+      "returnType": "i32"
+    },
+    "oracle": {
+      "kind": "diagnostics",
+      "diagnostics": [
+        {
+          "phase": "types",
+          "severity": "error",
+          "code": "r01-d-integer-range",
+          "ruleIds": [
+            "r01-literals"
+          ],
+          "primary": {
+            "sourceId": "i32/literal-exact.ts",
+            "start": 71,
+            "end": 87,
+            "startLine": 2,
+            "startColumn": 9,
+            "endLine": 2,
+            "endColumn": 25
+          }
+        }
+      ],
+      "basis": {
+        "kind": "mathematical-derivation",
+        "reference": "docs/r01-language-contract.md#41-类型与定型",
+        "derivation": "The decimal token denotes exactly 9007199254740993 = 2^53 + 1, beyond i32 and host f64 exact-integer precision; range rejection follows from the original token, not a rounded host number."
+      }
+    }
+  },
+  {
+    "schemaVersion": "6",
+    "specId": "tsfg-r01-v3",
+    "corpusId": "tsfg-r01-i32-v1",
+    "caseId": "r01-typed-bool-to-i32",
+    "sourceId": "i32/typed-bool-to-i32.ts",
+    "ruleIds": [
+      "r01-literals"
+    ],
+    "capabilities": [
+      "literals"
+    ],
+    "target": "windows-x86_64-msvc",
+    "mode": "strict",
+    "applicability": "negative",
+    "coverage": [
+      "typed-no-conversion"
+    ],
+    "budgets": {
+      "semanticFuel": "1",
+      "activeDepth": "1",
+      "physicalInstructions": "1000",
+      "memoryBytes": "1048576",
+      "hostTimeMs": "1000"
+    },
+    "invocation": {
+      "entry": "main",
+      "arguments": [],
+      "returnType": "i32"
+    },
+    "oracle": {
+      "kind": "diagnostics",
+      "diagnostics": [
+        {
+          "phase": "types",
+          "severity": "error",
+          "code": "r01-d-scalar-type",
+          "ruleIds": [
+            "r01-literals"
+          ],
+          "primary": {
+            "sourceId": "i32/typed-bool-to-i32.ts",
+            "start": 112,
+            "end": 118,
+            "startLine": 3,
+            "startColumn": 22,
+            "endLine": 3,
+            "endColumn": 28
+          }
+        }
+      ],
+      "basis": {
+        "kind": "mathematical-derivation",
+        "reference": "docs/r01-language-contract.md#41-类型与定型",
+        "derivation": "The local is already bool, so ABI encoding 1 cannot authorize assigning it to i32. This covers the i32/bool boundary, not other numeric widths."
+      }
+    }
+  },
+  {
+    "schemaVersion": "6",
+    "specId": "tsfg-r01-v3",
+    "corpusId": "tsfg-r01-i32-v1",
+    "caseId": "r01-bool-integer",
+    "sourceId": "i32/bool-integer.ts",
+    "ruleIds": [
+      "r01-bool"
+    ],
+    "capabilities": [
+      "bool"
+    ],
+    "target": "windows-x86_64-msvc",
+    "mode": "strict",
+    "applicability": "negative",
+    "coverage": [
+      "negative"
+    ],
+    "budgets": {
+      "semanticFuel": "1",
+      "activeDepth": "1",
+      "physicalInstructions": "1000",
+      "memoryBytes": "1048576",
+      "hostTimeMs": "1000"
+    },
+    "invocation": {
+      "entry": "main",
+      "arguments": [],
+      "returnType": "bool"
+    },
+    "oracle": {
+      "kind": "diagnostics",
+      "diagnostics": [
+        {
+          "phase": "types",
+          "severity": "error",
+          "code": "r01-d-scalar-type",
+          "ruleIds": [
+            "r01-bool"
+          ],
+          "primary": {
+            "sourceId": "i32/bool-integer.ts",
+            "start": 96,
+            "end": 102,
+            "startLine": 3,
+            "startColumn": 9,
+            "endLine": 3,
+            "endColumn": 15
+          }
+        }
+      ],
+      "basis": {
+        "kind": "mathematical-derivation",
+        "reference": "docs/r01-language-contract.md#41-类型与定型",
+        "derivation": "The local is i32, so even value 1 cannot implicitly become bool. ABI 0/1 representation is not a source conversion."
+      }
+    }
+  },
+  {
+    "schemaVersion": "6",
+    "specId": "tsfg-r01-v3",
+    "corpusId": "tsfg-r01-i32-v1",
+    "caseId": "r01-bool-alias",
+    "sourceId": "i32/bool-alias.ts",
+    "ruleIds": [
+      "r01-bool"
+    ],
+    "capabilities": [
+      "bool"
+    ],
+    "target": "windows-x86_64-msvc",
+    "mode": "strict",
+    "applicability": "boundary",
+    "coverage": [
+      "alias"
+    ],
+    "budgets": {
+      "semanticFuel": "1",
+      "activeDepth": "1",
+      "physicalInstructions": "1000",
+      "memoryBytes": "1048576",
+      "hostTimeMs": "1000"
+    },
+    "invocation": {
+      "entry": "main",
+      "arguments": [
+        {
+          "type": "bool",
+          "value": true
+        }
+      ],
+      "returnType": "boolean"
+    },
+    "oracle": {
+      "kind": "return",
+      "value": {
+        "type": "bool",
+        "value": true
+      },
+      "basis": {
+        "kind": "mathematical-derivation",
+        "reference": "docs/r01-language-contract.md#41-类型与定型",
+        "derivation": "bool and boolean name the same type; binding and returning true preserves true."
+      }
+    }
+  },
+  {
+    "schemaVersion": "6",
+    "specId": "tsfg-r01-v3",
+    "corpusId": "tsfg-r01-i32-v1",
+    "caseId": "r01-bool-alias-false",
+    "sourceId": "i32/bool-alias.ts",
+    "ruleIds": [
+      "r01-bool"
+    ],
+    "capabilities": [
+      "bool"
+    ],
+    "target": "windows-x86_64-msvc",
+    "mode": "strict",
+    "applicability": "boundary",
+    "coverage": [
+      "alias"
+    ],
+    "budgets": {
+      "semanticFuel": "1",
+      "activeDepth": "1",
+      "physicalInstructions": "1000",
+      "memoryBytes": "1048576",
+      "hostTimeMs": "1000"
+    },
+    "invocation": {
+      "entry": "main",
+      "arguments": [
+        {
+          "type": "bool",
+          "value": false
+        }
+      ],
+      "returnType": "boolean"
+    },
+    "oracle": {
+      "kind": "return",
+      "value": {
+        "type": "bool",
+        "value": false
+      },
+      "basis": {
+        "kind": "mathematical-derivation",
+        "reference": "docs/r01-language-contract.md#41-类型与定型",
+        "derivation": "The aliases share the two-element domain {false,true}; copying false preserves false without integer conversion."
+      }
+    }
+  },
+  {
+    "schemaVersion": "6",
+    "specId": "tsfg-r01-v3",
+    "corpusId": "tsfg-r01-i32-v1",
+    "caseId": "r01-add-normal",
+    "sourceId": "i32/arithmetic.ts",
+    "ruleIds": [
+      "r01-i32-add"
+    ],
+    "capabilities": [
+      "scalar-i32"
+    ],
+    "target": "windows-x86_64-msvc",
+    "mode": "strict",
+    "applicability": "positive",
+    "coverage": [
+      "sum"
+    ],
+    "budgets": {
+      "semanticFuel": "1",
+      "activeDepth": "1",
+      "physicalInstructions": "1000",
+      "memoryBytes": "1048576",
+      "hostTimeMs": "1000"
+    },
+    "invocation": {
+      "entry": "add",
+      "arguments": [
+        {
+          "type": "i32",
+          "value": "2"
+        },
+        {
+          "type": "i32",
+          "value": "3"
+        }
+      ],
+      "returnType": "i32"
+    },
+    "oracle": {
+      "kind": "return",
+      "value": {
+        "type": "i32",
+        "value": "5"
+      },
+      "basis": {
+        "kind": "mathematical-derivation",
+        "reference": "docs/r01-language-contract.md#42-整数运算",
+        "derivation": "2 + 3 = 5 is in signed i32 range."
+      }
+    }
+  },
+  {
+    "schemaVersion": "6",
+    "specId": "tsfg-r01-v3",
+    "corpusId": "tsfg-r01-i32-v1",
+    "caseId": "r01-add-max",
+    "sourceId": "i32/arithmetic.ts",
+    "ruleIds": [
+      "r01-i32-add"
+    ],
+    "capabilities": [
+      "scalar-i32"
+    ],
+    "target": "windows-x86_64-msvc",
+    "mode": "strict",
+    "applicability": "boundary",
+    "coverage": [
+      "overflow"
+    ],
+    "budgets": {
+      "semanticFuel": "1",
+      "activeDepth": "1",
+      "physicalInstructions": "1000",
+      "memoryBytes": "1048576",
+      "hostTimeMs": "1000"
+    },
+    "invocation": {
+      "entry": "add",
+      "arguments": [
+        {
+          "type": "i32",
+          "value": "2147483647"
+        },
+        {
+          "type": "i32",
+          "value": "1"
+        }
+      ],
+      "returnType": "i32"
+    },
+    "oracle": {
+      "kind": "return",
+      "value": {
+        "type": "i32",
+        "value": "-2147483648"
+      },
+      "basis": {
+        "kind": "mathematical-derivation",
+        "reference": "docs/r01-language-contract.md#42-整数运算",
+        "derivation": "2147483647 + 1 = 2147483648; subtract 2^32 = 4294967296 to obtain -2147483648."
+      }
+    }
+  },
+  {
+    "schemaVersion": "6",
+    "specId": "tsfg-r01-v3",
+    "corpusId": "tsfg-r01-i32-v1",
+    "caseId": "r01-add-min",
+    "sourceId": "i32/arithmetic.ts",
+    "ruleIds": [
+      "r01-i32-add"
+    ],
+    "capabilities": [
+      "scalar-i32"
+    ],
+    "target": "windows-x86_64-msvc",
+    "mode": "strict",
+    "applicability": "boundary",
+    "coverage": [
+      "underflow"
+    ],
+    "budgets": {
+      "semanticFuel": "1",
+      "activeDepth": "1",
+      "physicalInstructions": "1000",
+      "memoryBytes": "1048576",
+      "hostTimeMs": "1000"
+    },
+    "invocation": {
+      "entry": "add",
+      "arguments": [
+        {
+          "type": "i32",
+          "value": "-2147483648"
+        },
+        {
+          "type": "i32",
+          "value": "-1"
+        }
+      ],
+      "returnType": "i32"
+    },
+    "oracle": {
+      "kind": "return",
+      "value": {
+        "type": "i32",
+        "value": "2147483647"
+      },
+      "basis": {
+        "kind": "mathematical-derivation",
+        "reference": "docs/r01-language-contract.md#42-整数运算",
+        "derivation": "-2147483648 - 1 = -2147483649; adding 4294967296 gives 2147483647."
+      }
+    }
+  },
+  {
+    "schemaVersion": "6",
+    "specId": "tsfg-r01-v3",
+    "corpusId": "tsfg-r01-i32-v1",
+    "caseId": "r01-sub-normal",
+    "sourceId": "i32/arithmetic.ts",
+    "ruleIds": [
+      "r01-i32-wrap"
+    ],
+    "capabilities": [
+      "i32-wrap"
+    ],
+    "target": "windows-x86_64-msvc",
+    "mode": "strict",
+    "applicability": "positive",
+    "coverage": [
+      "positive"
+    ],
+    "budgets": {
+      "semanticFuel": "1",
+      "activeDepth": "1",
+      "physicalInstructions": "1000",
+      "memoryBytes": "1048576",
+      "hostTimeMs": "1000"
+    },
+    "invocation": {
+      "entry": "subtract",
+      "arguments": [
+        {
+          "type": "i32",
+          "value": "2"
+        },
+        {
+          "type": "i32",
+          "value": "3"
+        }
+      ],
+      "returnType": "i32"
+    },
+    "oracle": {
+      "kind": "return",
+      "value": {
+        "type": "i32",
+        "value": "-1"
+      },
+      "basis": {
+        "kind": "mathematical-derivation",
+        "reference": "docs/r01-language-contract.md#42-整数运算",
+        "derivation": "2 - 3 = -1 lies in signed i32 range."
+      }
+    }
+  },
+  {
+    "schemaVersion": "6",
+    "specId": "tsfg-r01-v3",
+    "corpusId": "tsfg-r01-i32-v1",
+    "caseId": "r01-mul-normal",
+    "sourceId": "i32/arithmetic.ts",
+    "ruleIds": [
+      "r01-i32-wrap"
+    ],
+    "capabilities": [
+      "i32-wrap"
+    ],
+    "target": "windows-x86_64-msvc",
+    "mode": "strict",
+    "applicability": "positive",
+    "coverage": [
+      "multiply-normal"
+    ],
+    "budgets": {
+      "semanticFuel": "1",
+      "activeDepth": "1",
+      "physicalInstructions": "1000",
+      "memoryBytes": "1048576",
+      "hostTimeMs": "1000"
+    },
+    "invocation": {
+      "entry": "multiply",
+      "arguments": [
+        {
+          "type": "i32",
+          "value": "-7"
+        },
+        {
+          "type": "i32",
+          "value": "3"
+        }
+      ],
+      "returnType": "i32"
+    },
+    "oracle": {
+      "kind": "return",
+      "value": {
+        "type": "i32",
+        "value": "-21"
+      },
+      "basis": {
+        "kind": "mathematical-derivation",
+        "reference": "docs/r01-language-contract.md#42-整数运算",
+        "derivation": "(-7) times 3 = -21 lies in signed i32 range."
+      }
+    }
+  },
+  {
+    "schemaVersion": "6",
+    "specId": "tsfg-r01-v3",
+    "corpusId": "tsfg-r01-i32-v1",
+    "caseId": "r01-neg-normal",
+    "sourceId": "i32/arithmetic.ts",
+    "ruleIds": [
+      "r01-i32-wrap"
+    ],
+    "capabilities": [
+      "i32-wrap"
+    ],
+    "target": "windows-x86_64-msvc",
+    "mode": "strict",
+    "applicability": "positive",
+    "coverage": [
+      "negate-normal"
+    ],
+    "budgets": {
+      "semanticFuel": "1",
+      "activeDepth": "1",
+      "physicalInstructions": "1000",
+      "memoryBytes": "1048576",
+      "hostTimeMs": "1000"
+    },
+    "invocation": {
+      "entry": "negate",
+      "arguments": [
+        {
+          "type": "i32",
+          "value": "7"
+        }
+      ],
+      "returnType": "i32"
+    },
+    "oracle": {
+      "kind": "return",
+      "value": {
+        "type": "i32",
+        "value": "-7"
+      },
+      "basis": {
+        "kind": "mathematical-derivation",
+        "reference": "docs/r01-language-contract.md#42-整数运算",
+        "derivation": "The additive inverse of 7 is -7, which is in signed i32 range."
+      }
+    }
+  },
+  {
+    "schemaVersion": "6",
+    "specId": "tsfg-r01-v3",
+    "corpusId": "tsfg-r01-i32-v1",
+    "caseId": "r01-sub-min",
+    "sourceId": "i32/arithmetic.ts",
+    "ruleIds": [
+      "r01-i32-wrap"
+    ],
+    "capabilities": [
+      "i32-wrap"
+    ],
+    "target": "windows-x86_64-msvc",
+    "mode": "strict",
+    "applicability": "boundary",
+    "coverage": [
+      "subtract-wrap"
+    ],
+    "budgets": {
+      "semanticFuel": "1",
+      "activeDepth": "1",
+      "physicalInstructions": "1000",
+      "memoryBytes": "1048576",
+      "hostTimeMs": "1000"
+    },
+    "invocation": {
+      "entry": "subtract",
+      "arguments": [
+        {
+          "type": "i32",
+          "value": "-2147483648"
+        },
+        {
+          "type": "i32",
+          "value": "1"
+        }
+      ],
+      "returnType": "i32"
+    },
+    "oracle": {
+      "kind": "return",
+      "value": {
+        "type": "i32",
+        "value": "2147483647"
+      },
+      "basis": {
+        "kind": "mathematical-derivation",
+        "reference": "docs/r01-language-contract.md#42-整数运算",
+        "derivation": "-2147483648 - 1 = -2147483649; adding 2^32 gives 2147483647."
+      }
+    }
+  },
+  {
+    "schemaVersion": "6",
+    "specId": "tsfg-r01-v3",
+    "corpusId": "tsfg-r01-i32-v1",
+    "caseId": "r01-sub-max",
+    "sourceId": "i32/arithmetic.ts",
+    "ruleIds": [
+      "r01-i32-wrap"
+    ],
+    "capabilities": [
+      "i32-wrap"
+    ],
+    "target": "windows-x86_64-msvc",
+    "mode": "strict",
+    "applicability": "boundary",
+    "coverage": [
+      "subtract-max"
+    ],
+    "budgets": {
+      "semanticFuel": "1",
+      "activeDepth": "1",
+      "physicalInstructions": "1000",
+      "memoryBytes": "1048576",
+      "hostTimeMs": "1000"
+    },
+    "invocation": {
+      "entry": "subtract",
+      "arguments": [
+        {
+          "type": "i32",
+          "value": "2147483647"
+        },
+        {
+          "type": "i32",
+          "value": "-1"
+        }
+      ],
+      "returnType": "i32"
+    },
+    "oracle": {
+      "kind": "return",
+      "value": {
+        "type": "i32",
+        "value": "-2147483648"
+      },
+      "basis": {
+        "kind": "mathematical-derivation",
+        "reference": "docs/r01-language-contract.md#42-整数运算",
+        "derivation": "2147483647 - (-1) = 2147483648; subtracting 2^32 gives -2147483648."
+      }
+    }
+  },
+  {
+    "schemaVersion": "6",
+    "specId": "tsfg-r01-v3",
+    "corpusId": "tsfg-r01-i32-v1",
+    "caseId": "r01-mul-wrap",
+    "sourceId": "i32/arithmetic.ts",
+    "ruleIds": [
+      "r01-i32-wrap"
+    ],
+    "capabilities": [
+      "i32-wrap"
+    ],
+    "target": "windows-x86_64-msvc",
+    "mode": "strict",
+    "applicability": "boundary",
+    "coverage": [
+      "multiply-wrap"
+    ],
+    "budgets": {
+      "semanticFuel": "1",
+      "activeDepth": "1",
+      "physicalInstructions": "1000",
+      "memoryBytes": "1048576",
+      "hostTimeMs": "1000"
+    },
+    "invocation": {
+      "entry": "multiply",
+      "arguments": [
+        {
+          "type": "i32",
+          "value": "1073741824"
+        },
+        {
+          "type": "i32",
+          "value": "4"
+        }
+      ],
+      "returnType": "i32"
+    },
+    "oracle": {
+      "kind": "return",
+      "value": {
+        "type": "i32",
+        "value": "0"
+      },
+      "basis": {
+        "kind": "mathematical-derivation",
+        "reference": "docs/r01-language-contract.md#42-整数运算",
+        "derivation": "1073741824 = 2^30; multiplying by 4 gives 2^32, whose residue modulo 2^32 is zero."
+      }
+    }
+  },
+  {
+    "schemaVersion": "6",
+    "specId": "tsfg-r01-v3",
+    "corpusId": "tsfg-r01-i32-v1",
+    "caseId": "r01-mul-sign",
+    "sourceId": "i32/arithmetic.ts",
+    "ruleIds": [
+      "r01-i32-wrap"
+    ],
+    "capabilities": [
+      "i32-wrap"
+    ],
+    "target": "windows-x86_64-msvc",
+    "mode": "strict",
+    "applicability": "boundary",
+    "coverage": [
+      "multiply-sign"
+    ],
+    "budgets": {
+      "semanticFuel": "1",
+      "activeDepth": "1",
+      "physicalInstructions": "1000",
+      "memoryBytes": "1048576",
+      "hostTimeMs": "1000"
+    },
+    "invocation": {
+      "entry": "multiply",
+      "arguments": [
+        {
+          "type": "i32",
+          "value": "1073741824"
+        },
+        {
+          "type": "i32",
+          "value": "2"
+        }
+      ],
+      "returnType": "i32"
+    },
+    "oracle": {
+      "kind": "return",
+      "value": {
+        "type": "i32",
+        "value": "-2147483648"
+      },
+      "basis": {
+        "kind": "mathematical-derivation",
+        "reference": "docs/r01-language-contract.md#42-整数运算",
+        "derivation": "2^30 times 2 is 2^31; its signed 32-bit representative is -2^31."
+      }
+    }
+  },
+  {
+    "schemaVersion": "6",
+    "specId": "tsfg-r01-v3",
+    "corpusId": "tsfg-r01-i32-v1",
+    "caseId": "r01-neg-min",
+    "sourceId": "i32/arithmetic.ts",
+    "ruleIds": [
+      "r01-i32-wrap"
+    ],
+    "capabilities": [
+      "i32-wrap"
+    ],
+    "target": "windows-x86_64-msvc",
+    "mode": "strict",
+    "applicability": "boundary",
+    "coverage": [
+      "negate-min"
+    ],
+    "budgets": {
+      "semanticFuel": "1",
+      "activeDepth": "1",
+      "physicalInstructions": "1000",
+      "memoryBytes": "1048576",
+      "hostTimeMs": "1000"
+    },
+    "invocation": {
+      "entry": "negate",
+      "arguments": [
+        {
+          "type": "i32",
+          "value": "-2147483648"
+        }
+      ],
+      "returnType": "i32"
+    },
+    "oracle": {
+      "kind": "return",
+      "value": {
+        "type": "i32",
+        "value": "-2147483648"
+      },
+      "basis": {
+        "kind": "mathematical-derivation",
+        "reference": "docs/r01-language-contract.md#42-整数运算",
+        "derivation": "The inverse of -2^31 is 2^31; subtract 2^32 to obtain -2^31. Negating an already typed value wraps, unlike typing a positive literal."
+      }
+    }
+  },
+  {
+    "schemaVersion": "6",
+    "specId": "tsfg-r01-v3",
+    "corpusId": "tsfg-r01-i32-v1",
+    "caseId": "r01-div-pp",
+    "sourceId": "i32/arithmetic.ts",
+    "ruleIds": [
+      "r01-division"
+    ],
+    "capabilities": [
+      "division"
+    ],
+    "target": "windows-x86_64-msvc",
+    "mode": "strict",
+    "applicability": "boundary",
+    "coverage": [
+      "div-pp",
+      "signs"
+    ],
+    "budgets": {
+      "semanticFuel": "1",
+      "activeDepth": "1",
+      "physicalInstructions": "1000",
+      "memoryBytes": "1048576",
+      "hostTimeMs": "1000"
+    },
+    "invocation": {
+      "entry": "divide",
+      "arguments": [
+        {
+          "type": "i32",
+          "value": "7"
+        },
+        {
+          "type": "i32",
+          "value": "3"
+        }
+      ],
+      "returnType": "i32"
+    },
+    "oracle": {
+      "kind": "return",
+      "value": {
+        "type": "i32",
+        "value": "2"
+      },
+      "basis": {
+        "kind": "mathematical-derivation",
+        "reference": "docs/r01-language-contract.md#42-整数运算",
+        "derivation": "7 = 2*3 + 1; the quotient truncates toward zero and the remainder is positive."
+      }
+    }
+  },
+  {
+    "schemaVersion": "6",
+    "specId": "tsfg-r01-v3",
+    "corpusId": "tsfg-r01-i32-v1",
+    "caseId": "r01-rem-pp",
+    "sourceId": "i32/arithmetic.ts",
+    "ruleIds": [
+      "r01-division"
+    ],
+    "capabilities": [
+      "division"
+    ],
+    "target": "windows-x86_64-msvc",
+    "mode": "strict",
+    "applicability": "boundary",
+    "coverage": [
+      "rem-pp",
+      "signs"
+    ],
+    "budgets": {
+      "semanticFuel": "1",
+      "activeDepth": "1",
+      "physicalInstructions": "1000",
+      "memoryBytes": "1048576",
+      "hostTimeMs": "1000"
+    },
+    "invocation": {
+      "entry": "remainder",
+      "arguments": [
+        {
+          "type": "i32",
+          "value": "7"
+        },
+        {
+          "type": "i32",
+          "value": "3"
+        }
+      ],
+      "returnType": "i32"
+    },
+    "oracle": {
+      "kind": "return",
+      "value": {
+        "type": "i32",
+        "value": "1"
+      },
+      "basis": {
+        "kind": "mathematical-derivation",
+        "reference": "docs/r01-language-contract.md#42-整数运算",
+        "derivation": "7 = 2*3 + 1; the quotient truncates toward zero and the remainder is positive."
+      }
+    }
+  },
+  {
+    "schemaVersion": "6",
+    "specId": "tsfg-r01-v3",
+    "corpusId": "tsfg-r01-i32-v1",
+    "caseId": "r01-div-np",
+    "sourceId": "i32/arithmetic.ts",
+    "ruleIds": [
+      "r01-division"
+    ],
+    "capabilities": [
+      "division"
+    ],
+    "target": "windows-x86_64-msvc",
+    "mode": "strict",
+    "applicability": "boundary",
+    "coverage": [
+      "div-np",
+      "signs"
+    ],
+    "budgets": {
+      "semanticFuel": "1",
+      "activeDepth": "1",
+      "physicalInstructions": "1000",
+      "memoryBytes": "1048576",
+      "hostTimeMs": "1000"
+    },
+    "invocation": {
+      "entry": "divide",
+      "arguments": [
+        {
+          "type": "i32",
+          "value": "-7"
+        },
+        {
+          "type": "i32",
+          "value": "3"
+        }
+      ],
+      "returnType": "i32"
+    },
+    "oracle": {
+      "kind": "return",
+      "value": {
+        "type": "i32",
+        "value": "-2"
+      },
+      "basis": {
+        "kind": "mathematical-derivation",
+        "reference": "docs/r01-language-contract.md#42-整数运算",
+        "derivation": "-7 = (-2)*3 + (-1); truncating -7/3 toward zero gives -2, not -3, and remainder -1 has the dividend sign."
+      }
+    }
+  },
+  {
+    "schemaVersion": "6",
+    "specId": "tsfg-r01-v3",
+    "corpusId": "tsfg-r01-i32-v1",
+    "caseId": "r01-rem-np",
+    "sourceId": "i32/arithmetic.ts",
+    "ruleIds": [
+      "r01-division"
+    ],
+    "capabilities": [
+      "division"
+    ],
+    "target": "windows-x86_64-msvc",
+    "mode": "strict",
+    "applicability": "boundary",
+    "coverage": [
+      "rem-np",
+      "signs"
+    ],
+    "budgets": {
+      "semanticFuel": "1",
+      "activeDepth": "1",
+      "physicalInstructions": "1000",
+      "memoryBytes": "1048576",
+      "hostTimeMs": "1000"
+    },
+    "invocation": {
+      "entry": "remainder",
+      "arguments": [
+        {
+          "type": "i32",
+          "value": "-7"
+        },
+        {
+          "type": "i32",
+          "value": "3"
+        }
+      ],
+      "returnType": "i32"
+    },
+    "oracle": {
+      "kind": "return",
+      "value": {
+        "type": "i32",
+        "value": "-1"
+      },
+      "basis": {
+        "kind": "mathematical-derivation",
+        "reference": "docs/r01-language-contract.md#42-整数运算",
+        "derivation": "-7 = (-2)*3 + (-1); truncating -7/3 toward zero gives -2, not -3, and remainder -1 has the dividend sign."
+      }
+    }
+  },
+  {
+    "schemaVersion": "6",
+    "specId": "tsfg-r01-v3",
+    "corpusId": "tsfg-r01-i32-v1",
+    "caseId": "r01-div-pn",
+    "sourceId": "i32/arithmetic.ts",
+    "ruleIds": [
+      "r01-division"
+    ],
+    "capabilities": [
+      "division"
+    ],
+    "target": "windows-x86_64-msvc",
+    "mode": "strict",
+    "applicability": "boundary",
+    "coverage": [
+      "div-pn",
+      "signs"
+    ],
+    "budgets": {
+      "semanticFuel": "1",
+      "activeDepth": "1",
+      "physicalInstructions": "1000",
+      "memoryBytes": "1048576",
+      "hostTimeMs": "1000"
+    },
+    "invocation": {
+      "entry": "divide",
+      "arguments": [
+        {
+          "type": "i32",
+          "value": "7"
+        },
+        {
+          "type": "i32",
+          "value": "-3"
+        }
+      ],
+      "returnType": "i32"
+    },
+    "oracle": {
+      "kind": "return",
+      "value": {
+        "type": "i32",
+        "value": "-2"
+      },
+      "basis": {
+        "kind": "mathematical-derivation",
+        "reference": "docs/r01-language-contract.md#42-整数运算",
+        "derivation": "7 = (-2)*(-3) + 1; quotient truncates toward zero and remainder is positive despite the negative divisor."
+      }
+    }
+  },
+  {
+    "schemaVersion": "6",
+    "specId": "tsfg-r01-v3",
+    "corpusId": "tsfg-r01-i32-v1",
+    "caseId": "r01-rem-pn",
+    "sourceId": "i32/arithmetic.ts",
+    "ruleIds": [
+      "r01-division"
+    ],
+    "capabilities": [
+      "division"
+    ],
+    "target": "windows-x86_64-msvc",
+    "mode": "strict",
+    "applicability": "boundary",
+    "coverage": [
+      "rem-pn",
+      "signs"
+    ],
+    "budgets": {
+      "semanticFuel": "1",
+      "activeDepth": "1",
+      "physicalInstructions": "1000",
+      "memoryBytes": "1048576",
+      "hostTimeMs": "1000"
+    },
+    "invocation": {
+      "entry": "remainder",
+      "arguments": [
+        {
+          "type": "i32",
+          "value": "7"
+        },
+        {
+          "type": "i32",
+          "value": "-3"
+        }
+      ],
+      "returnType": "i32"
+    },
+    "oracle": {
+      "kind": "return",
+      "value": {
+        "type": "i32",
+        "value": "1"
+      },
+      "basis": {
+        "kind": "mathematical-derivation",
+        "reference": "docs/r01-language-contract.md#42-整数运算",
+        "derivation": "7 = (-2)*(-3) + 1; quotient truncates toward zero and remainder is positive despite the negative divisor."
+      }
+    }
+  },
+  {
+    "schemaVersion": "6",
+    "specId": "tsfg-r01-v3",
+    "corpusId": "tsfg-r01-i32-v1",
+    "caseId": "r01-div-nn",
+    "sourceId": "i32/arithmetic.ts",
+    "ruleIds": [
+      "r01-division"
+    ],
+    "capabilities": [
+      "division"
+    ],
+    "target": "windows-x86_64-msvc",
+    "mode": "strict",
+    "applicability": "boundary",
+    "coverage": [
+      "div-nn",
+      "signs"
+    ],
+    "budgets": {
+      "semanticFuel": "1",
+      "activeDepth": "1",
+      "physicalInstructions": "1000",
+      "memoryBytes": "1048576",
+      "hostTimeMs": "1000"
+    },
+    "invocation": {
+      "entry": "divide",
+      "arguments": [
+        {
+          "type": "i32",
+          "value": "-7"
+        },
+        {
+          "type": "i32",
+          "value": "-3"
+        }
+      ],
+      "returnType": "i32"
+    },
+    "oracle": {
+      "kind": "return",
+      "value": {
+        "type": "i32",
+        "value": "2"
+      },
+      "basis": {
+        "kind": "mathematical-derivation",
+        "reference": "docs/r01-language-contract.md#42-整数运算",
+        "derivation": "-7 = 2*(-3) + (-1); quotient is positive and remainder has the negative dividend sign."
+      }
+    }
+  },
+  {
+    "schemaVersion": "6",
+    "specId": "tsfg-r01-v3",
+    "corpusId": "tsfg-r01-i32-v1",
+    "caseId": "r01-rem-nn",
+    "sourceId": "i32/arithmetic.ts",
+    "ruleIds": [
+      "r01-division"
+    ],
+    "capabilities": [
+      "division"
+    ],
+    "target": "windows-x86_64-msvc",
+    "mode": "strict",
+    "applicability": "boundary",
+    "coverage": [
+      "rem-nn",
+      "signs"
+    ],
+    "budgets": {
+      "semanticFuel": "1",
+      "activeDepth": "1",
+      "physicalInstructions": "1000",
+      "memoryBytes": "1048576",
+      "hostTimeMs": "1000"
+    },
+    "invocation": {
+      "entry": "remainder",
+      "arguments": [
+        {
+          "type": "i32",
+          "value": "-7"
+        },
+        {
+          "type": "i32",
+          "value": "-3"
+        }
+      ],
+      "returnType": "i32"
+    },
+    "oracle": {
+      "kind": "return",
+      "value": {
+        "type": "i32",
+        "value": "-1"
+      },
+      "basis": {
+        "kind": "mathematical-derivation",
+        "reference": "docs/r01-language-contract.md#42-整数运算",
+        "derivation": "-7 = 2*(-3) + (-1); quotient is positive and remainder has the negative dividend sign."
+      }
+    }
+  },
+  {
+    "schemaVersion": "6",
+    "specId": "tsfg-r01-v3",
+    "corpusId": "tsfg-r01-i32-v1",
+    "caseId": "r01-div-normal",
+    "sourceId": "i32/arithmetic.ts",
+    "ruleIds": [
+      "r01-division"
+    ],
+    "capabilities": [
+      "division"
+    ],
+    "target": "windows-x86_64-msvc",
+    "mode": "strict",
+    "applicability": "positive",
+    "coverage": [
+      "positive"
+    ],
+    "budgets": {
+      "semanticFuel": "1",
+      "activeDepth": "1",
+      "physicalInstructions": "1000",
+      "memoryBytes": "1048576",
+      "hostTimeMs": "1000"
+    },
+    "invocation": {
+      "entry": "divide",
+      "arguments": [
+        {
+          "type": "i32",
+          "value": "6"
+        },
+        {
+          "type": "i32",
+          "value": "3"
+        }
+      ],
+      "returnType": "i32"
+    },
+    "oracle": {
+      "kind": "return",
+      "value": {
+        "type": "i32",
+        "value": "2"
+      },
+      "basis": {
+        "kind": "mathematical-derivation",
+        "reference": "docs/r01-language-contract.md#42-整数运算",
+        "derivation": "6 = 2*3 + 0, so the exact quotient is 2."
+      }
+    }
+  },
+  {
+    "schemaVersion": "6",
+    "specId": "tsfg-r01-v3",
+    "corpusId": "tsfg-r01-i32-v1",
+    "caseId": "r01-div-min",
+    "sourceId": "i32/arithmetic.ts",
+    "ruleIds": [
+      "r01-division"
+    ],
+    "capabilities": [
+      "division"
+    ],
+    "target": "windows-x86_64-msvc",
+    "mode": "strict",
+    "applicability": "boundary",
+    "coverage": [
+      "min-div-minus-one"
+    ],
+    "budgets": {
+      "semanticFuel": "1",
+      "activeDepth": "1",
+      "physicalInstructions": "1000",
+      "memoryBytes": "1048576",
+      "hostTimeMs": "1000"
+    },
+    "invocation": {
+      "entry": "divide",
+      "arguments": [
+        {
+          "type": "i32",
+          "value": "-2147483648"
+        },
+        {
+          "type": "i32",
+          "value": "-1"
+        }
+      ],
+      "returnType": "i32"
+    },
+    "oracle": {
+      "kind": "return",
+      "value": {
+        "type": "i32",
+        "value": "-2147483648"
+      },
+      "basis": {
+        "kind": "mathematical-derivation",
+        "reference": "docs/r01-language-contract.md#42-整数运算",
+        "derivation": "The mathematical quotient of -2^31 and -1 is 2^31; the specified i32 representative subtracts 2^32 and equals -2^31, without a trap."
+      }
+    }
+  },
+  {
+    "schemaVersion": "6",
+    "specId": "tsfg-r01-v3",
+    "corpusId": "tsfg-r01-i32-v1",
+    "caseId": "r01-rem-min",
+    "sourceId": "i32/arithmetic.ts",
+    "ruleIds": [
+      "r01-division"
+    ],
+    "capabilities": [
+      "division"
+    ],
+    "target": "windows-x86_64-msvc",
+    "mode": "strict",
+    "applicability": "boundary",
+    "coverage": [
+      "min-rem-minus-one"
+    ],
+    "budgets": {
+      "semanticFuel": "1",
+      "activeDepth": "1",
+      "physicalInstructions": "1000",
+      "memoryBytes": "1048576",
+      "hostTimeMs": "1000"
+    },
+    "invocation": {
+      "entry": "remainder",
+      "arguments": [
+        {
+          "type": "i32",
+          "value": "-2147483648"
+        },
+        {
+          "type": "i32",
+          "value": "-1"
+        }
+      ],
+      "returnType": "i32"
+    },
+    "oracle": {
+      "kind": "return",
+      "value": {
+        "type": "i32",
+        "value": "0"
+      },
+      "basis": {
+        "kind": "mathematical-derivation",
+        "reference": "docs/r01-language-contract.md#42-整数运算",
+        "derivation": "-2^31 is exactly divisible by -1, so remainder is zero; the quotient wrap rule does not change that remainder."
+      }
+    }
+  },
+  {
+    "schemaVersion": "6",
+    "specId": "tsfg-r01-v3",
+    "corpusId": "tsfg-r01-i32-v1",
+    "caseId": "r01-div-zero",
+    "sourceId": "i32/arithmetic.ts",
+    "ruleIds": [
+      "r01-division"
+    ],
+    "capabilities": [
+      "division"
+    ],
+    "target": "windows-x86_64-msvc",
+    "mode": "strict",
+    "applicability": "negative",
+    "coverage": [
+      "negative"
+    ],
+    "budgets": {
+      "semanticFuel": "1",
+      "activeDepth": "1",
+      "physicalInstructions": "1000",
+      "memoryBytes": "1048576",
+      "hostTimeMs": "1000"
+    },
+    "invocation": {
+      "entry": "divide",
+      "arguments": [
+        {
+          "type": "i32",
+          "value": "7"
+        },
+        {
+          "type": "i32",
+          "value": "0"
+        }
+      ],
+      "returnType": "i32"
+    },
+    "oracle": {
+      "kind": "trap",
+      "trap": {
+        "code": "r01-t-divide-zero",
+        "ruleIds": [
+          "r01-division"
+        ],
+        "primary": {
+          "sourceId": "i32/arithmetic.ts",
+          "start": 333,
+          "end": 338,
+          "startLine": 14,
+          "startColumn": 9,
+          "endLine": 14,
+          "endColumn": 14
+        }
+      },
+      "basis": {
+        "kind": "mathematical-derivation",
+        "reference": "docs/r01-language-contract.md#42-整数运算",
+        "derivation": "With dividend 7 and divisor 0, no integer quotient is defined. The contract requires the runtime divide-zero trap at a / b; this is not a literal range or compile-time error."
+      }
+    }
+  },
+  {
+    "schemaVersion": "6",
+    "specId": "tsfg-r01-v3",
+    "corpusId": "tsfg-r01-i32-v1",
+    "caseId": "r01-rem-zero",
+    "sourceId": "i32/arithmetic.ts",
+    "ruleIds": [
+      "r01-division"
+    ],
+    "capabilities": [
+      "division"
+    ],
+    "target": "windows-x86_64-msvc",
+    "mode": "strict",
+    "applicability": "boundary",
+    "coverage": [
+      "remainder-zero"
+    ],
+    "budgets": {
+      "semanticFuel": "1",
+      "activeDepth": "1",
+      "physicalInstructions": "1000",
+      "memoryBytes": "1048576",
+      "hostTimeMs": "1000"
+    },
+    "invocation": {
+      "entry": "remainder",
+      "arguments": [
+        {
+          "type": "i32",
+          "value": "7"
+        },
+        {
+          "type": "i32",
+          "value": "0"
+        }
+      ],
+      "returnType": "i32"
+    },
+    "oracle": {
+      "kind": "trap",
+      "trap": {
+        "code": "r01-t-remainder-zero",
+        "ruleIds": [
+          "r01-division"
+        ],
+        "primary": {
+          "sourceId": "i32/arithmetic.ts",
+          "start": 400,
+          "end": 405,
+          "startLine": 17,
+          "startColumn": 9,
+          "endLine": 17,
+          "endColumn": 14
+        }
+      },
+      "basis": {
+        "kind": "mathematical-derivation",
+        "reference": "docs/r01-language-contract.md#42-整数运算",
+        "derivation": "Remainder with divisor 0 is undefined. The first operation is a % b, which must produce the runtime remainder-zero trap at that expression."
+      }
+    }
+  },
+  {
+    "schemaVersion": "6",
+    "specId": "tsfg-r01-v3",
+    "corpusId": "tsfg-r01-i32-v1",
+    "caseId": "r01-shl-normal",
+    "sourceId": "i32/shifts.ts",
+    "ruleIds": [
+      "r01-shifts"
+    ],
+    "capabilities": [
+      "shifts"
+    ],
+    "target": "windows-x86_64-msvc",
+    "mode": "strict",
+    "applicability": "positive",
+    "coverage": [
+      "positive"
+    ],
+    "budgets": {
+      "semanticFuel": "1",
+      "activeDepth": "1",
+      "physicalInstructions": "1000",
+      "memoryBytes": "1048576",
+      "hostTimeMs": "1000"
+    },
+    "invocation": {
+      "entry": "shl",
+      "arguments": [
+        {
+          "type": "i32",
+          "value": "1"
+        },
+        {
+          "type": "i32",
+          "value": "3"
+        }
+      ],
+      "returnType": "i32"
+    },
+    "oracle": {
+      "kind": "return",
+      "value": {
+        "type": "i32",
+        "value": "8"
+      },
+      "basis": {
+        "kind": "mathematical-derivation",
+        "reference": "docs/r01-language-contract.md#42-整数运算",
+        "derivation": "1 shifted left by 3 multiplies by 2^3 = 8."
+      }
+    }
+  },
+  {
+    "schemaVersion": "6",
+    "specId": "tsfg-r01-v3",
+    "corpusId": "tsfg-r01-i32-v1",
+    "caseId": "r01-shl-zero",
+    "sourceId": "i32/shifts.ts",
+    "ruleIds": [
+      "r01-shifts"
+    ],
+    "capabilities": [
+      "shifts"
+    ],
+    "target": "windows-x86_64-msvc",
+    "mode": "strict",
+    "applicability": "boundary",
+    "coverage": [
+      "shl-zero",
+      "zero"
+    ],
+    "budgets": {
+      "semanticFuel": "1",
+      "activeDepth": "1",
+      "physicalInstructions": "1000",
+      "memoryBytes": "1048576",
+      "hostTimeMs": "1000"
+    },
+    "invocation": {
+      "entry": "shl",
+      "arguments": [
+        {
+          "type": "i32",
+          "value": "1"
+        },
+        {
+          "type": "i32",
+          "value": "0"
+        }
+      ],
+      "returnType": "i32"
+    },
+    "oracle": {
+      "kind": "return",
+      "value": {
+        "type": "i32",
+        "value": "1"
+      },
+      "basis": {
+        "kind": "mathematical-derivation",
+        "reference": "docs/r01-language-contract.md#42-整数运算",
+        "derivation": "A zero left shift preserves the i32 value 1."
+      }
+    }
+  },
+  {
+    "schemaVersion": "6",
+    "specId": "tsfg-r01-v3",
+    "corpusId": "tsfg-r01-i32-v1",
+    "caseId": "r01-shl-31",
+    "sourceId": "i32/shifts.ts",
+    "ruleIds": [
+      "r01-shifts"
+    ],
+    "capabilities": [
+      "shifts"
+    ],
+    "target": "windows-x86_64-msvc",
+    "mode": "strict",
+    "applicability": "boundary",
+    "coverage": [
+      "shl-31",
+      "thirty-one"
+    ],
+    "budgets": {
+      "semanticFuel": "1",
+      "activeDepth": "1",
+      "physicalInstructions": "1000",
+      "memoryBytes": "1048576",
+      "hostTimeMs": "1000"
+    },
+    "invocation": {
+      "entry": "shl",
+      "arguments": [
+        {
+          "type": "i32",
+          "value": "1"
+        },
+        {
+          "type": "i32",
+          "value": "31"
+        }
+      ],
+      "returnType": "i32"
+    },
+    "oracle": {
+      "kind": "return",
+      "value": {
+        "type": "i32",
+        "value": "-2147483648"
+      },
+      "basis": {
+        "kind": "mathematical-derivation",
+        "reference": "docs/r01-language-contract.md#42-整数运算",
+        "derivation": "1 shifted left by 31 has bit pattern 80000000, whose signed i32 representative is -2147483648."
+      }
+    }
+  },
+  {
+    "schemaVersion": "6",
+    "specId": "tsfg-r01-v3",
+    "corpusId": "tsfg-r01-i32-v1",
+    "caseId": "r01-shl-sign",
+    "sourceId": "i32/shifts.ts",
+    "ruleIds": [
+      "r01-shifts"
+    ],
+    "capabilities": [
+      "shifts"
+    ],
+    "target": "windows-x86_64-msvc",
+    "mode": "strict",
+    "applicability": "boundary",
+    "coverage": [
+      "shl-sign",
+      "negative-rhs-result"
+    ],
+    "budgets": {
+      "semanticFuel": "1",
+      "activeDepth": "1",
+      "physicalInstructions": "1000",
+      "memoryBytes": "1048576",
+      "hostTimeMs": "1000"
+    },
+    "invocation": {
+      "entry": "shl",
+      "arguments": [
+        {
+          "type": "i32",
+          "value": "-1"
+        },
+        {
+          "type": "i32",
+          "value": "1"
+        }
+      ],
+      "returnType": "i32"
+    },
+    "oracle": {
+      "kind": "return",
+      "value": {
+        "type": "i32",
+        "value": "-2"
+      },
+      "basis": {
+        "kind": "mathematical-derivation",
+        "reference": "docs/r01-language-contract.md#42-整数运算",
+        "derivation": "The all-one pattern of -1 shifted left by one has low 32 bits fffffffe, representing -2."
+      }
+    }
+  },
+  {
+    "schemaVersion": "6",
+    "specId": "tsfg-r01-v3",
+    "corpusId": "tsfg-r01-i32-v1",
+    "caseId": "r01-shl-minus-one",
+    "sourceId": "i32/shifts.ts",
+    "ruleIds": [
+      "r01-shifts"
+    ],
+    "capabilities": [
+      "shifts"
+    ],
+    "target": "windows-x86_64-msvc",
+    "mode": "strict",
+    "applicability": "boundary",
+    "coverage": [
+      "shl-minus-one",
+      "minus-one"
+    ],
+    "budgets": {
+      "semanticFuel": "1",
+      "activeDepth": "1",
+      "physicalInstructions": "1000",
+      "memoryBytes": "1048576",
+      "hostTimeMs": "1000"
+    },
+    "invocation": {
+      "entry": "shl",
+      "arguments": [
+        {
+          "type": "i32",
+          "value": "1"
+        },
+        {
+          "type": "i32",
+          "value": "-1"
+        }
+      ],
+      "returnType": "i32"
+    },
+    "oracle": {
+      "kind": "trap",
+      "trap": {
+        "code": "r01-t-shift-count",
+        "ruleIds": [
+          "r01-shifts"
+        ],
+        "primary": {
+          "sourceId": "i32/shifts.ts",
+          "start": 88,
+          "end": 98,
+          "startLine": 2,
+          "startColumn": 9,
+          "endLine": 2,
+          "endColumn": 19
+        }
+      },
+      "basis": {
+        "kind": "mathematical-derivation",
+        "reference": "docs/r01-language-contract.md#42-整数运算",
+        "derivation": "-1 is below the inclusive lower count bound 0; do not mask it modulo 32. The failure is a runtime shift-count trap at the shift expression."
+      }
+    }
+  },
+  {
+    "schemaVersion": "6",
+    "specId": "tsfg-r01-v3",
+    "corpusId": "tsfg-r01-i32-v1",
+    "caseId": "r01-shl-32",
+    "sourceId": "i32/shifts.ts",
+    "ruleIds": [
+      "r01-shifts"
+    ],
+    "capabilities": [
+      "shifts"
+    ],
+    "target": "windows-x86_64-msvc",
+    "mode": "strict",
+    "applicability": "boundary",
+    "coverage": [
+      "shl-32",
+      "thirty-two"
+    ],
+    "budgets": {
+      "semanticFuel": "1",
+      "activeDepth": "1",
+      "physicalInstructions": "1000",
+      "memoryBytes": "1048576",
+      "hostTimeMs": "1000"
+    },
+    "invocation": {
+      "entry": "shl",
+      "arguments": [
+        {
+          "type": "i32",
+          "value": "1"
+        },
+        {
+          "type": "i32",
+          "value": "32"
+        }
+      ],
+      "returnType": "i32"
+    },
+    "oracle": {
+      "kind": "trap",
+      "trap": {
+        "code": "r01-t-shift-count",
+        "ruleIds": [
+          "r01-shifts"
+        ],
+        "primary": {
+          "sourceId": "i32/shifts.ts",
+          "start": 88,
+          "end": 98,
+          "startLine": 2,
+          "startColumn": 9,
+          "endLine": 2,
+          "endColumn": 19
+        }
+      },
+      "basis": {
+        "kind": "mathematical-derivation",
+        "reference": "docs/r01-language-contract.md#42-整数运算",
+        "derivation": "32 exceeds the inclusive upper count bound 31; do not mask it to zero. The failure is a runtime shift-count trap at the shift expression."
+      }
+    }
+  },
+  {
+    "schemaVersion": "6",
+    "specId": "tsfg-r01-v3",
+    "corpusId": "tsfg-r01-i32-v1",
+    "caseId": "r01-shr-normal",
+    "sourceId": "i32/shifts.ts",
+    "ruleIds": [
+      "r01-shifts"
+    ],
+    "capabilities": [
+      "shifts"
+    ],
+    "target": "windows-x86_64-msvc",
+    "mode": "strict",
+    "applicability": "positive",
+    "coverage": [
+      "positive"
+    ],
+    "budgets": {
+      "semanticFuel": "1",
+      "activeDepth": "1",
+      "physicalInstructions": "1000",
+      "memoryBytes": "1048576",
+      "hostTimeMs": "1000"
+    },
+    "invocation": {
+      "entry": "shr",
+      "arguments": [
+        {
+          "type": "i32",
+          "value": "-1"
+        },
+        {
+          "type": "i32",
+          "value": "3"
+        }
+      ],
+      "returnType": "i32"
+    },
+    "oracle": {
+      "kind": "return",
+      "value": {
+        "type": "i32",
+        "value": "-1"
+      },
+      "basis": {
+        "kind": "mathematical-derivation",
+        "reference": "docs/r01-language-contract.md#42-整数运算",
+        "derivation": "Sign-extending the all-one pattern of -1 right by 3 retains all one bits, hence -1."
+      }
+    }
+  },
+  {
+    "schemaVersion": "6",
+    "specId": "tsfg-r01-v3",
+    "corpusId": "tsfg-r01-i32-v1",
+    "caseId": "r01-shr-zero",
+    "sourceId": "i32/shifts.ts",
+    "ruleIds": [
+      "r01-shifts"
+    ],
+    "capabilities": [
+      "shifts"
+    ],
+    "target": "windows-x86_64-msvc",
+    "mode": "strict",
+    "applicability": "boundary",
+    "coverage": [
+      "shr-zero",
+      "zero"
+    ],
+    "budgets": {
+      "semanticFuel": "1",
+      "activeDepth": "1",
+      "physicalInstructions": "1000",
+      "memoryBytes": "1048576",
+      "hostTimeMs": "1000"
+    },
+    "invocation": {
+      "entry": "shr",
+      "arguments": [
+        {
+          "type": "i32",
+          "value": "-1"
+        },
+        {
+          "type": "i32",
+          "value": "0"
+        }
+      ],
+      "returnType": "i32"
+    },
+    "oracle": {
+      "kind": "return",
+      "value": {
+        "type": "i32",
+        "value": "-1"
+      },
+      "basis": {
+        "kind": "mathematical-derivation",
+        "reference": "docs/r01-language-contract.md#42-整数运算",
+        "derivation": "A zero right shift preserves the all-one bit pattern. Its declared result is i32, so it represents -1 even for >>>, not u32 4294967295."
+      }
+    }
+  },
+  {
+    "schemaVersion": "6",
+    "specId": "tsfg-r01-v3",
+    "corpusId": "tsfg-r01-i32-v1",
+    "caseId": "r01-shr-31",
+    "sourceId": "i32/shifts.ts",
+    "ruleIds": [
+      "r01-shifts"
+    ],
+    "capabilities": [
+      "shifts"
+    ],
+    "target": "windows-x86_64-msvc",
+    "mode": "strict",
+    "applicability": "boundary",
+    "coverage": [
+      "shr-31",
+      "thirty-one"
+    ],
+    "budgets": {
+      "semanticFuel": "1",
+      "activeDepth": "1",
+      "physicalInstructions": "1000",
+      "memoryBytes": "1048576",
+      "hostTimeMs": "1000"
+    },
+    "invocation": {
+      "entry": "shr",
+      "arguments": [
+        {
+          "type": "i32",
+          "value": "-1"
+        },
+        {
+          "type": "i32",
+          "value": "31"
+        }
+      ],
+      "returnType": "i32"
+    },
+    "oracle": {
+      "kind": "return",
+      "value": {
+        "type": "i32",
+        "value": "-1"
+      },
+      "basis": {
+        "kind": "mathematical-derivation",
+        "reference": "docs/r01-language-contract.md#42-整数运算",
+        "derivation": "31 sign-extending shifts of -1 preserve all one bits and value -1."
+      }
+    }
+  },
+  {
+    "schemaVersion": "6",
+    "specId": "tsfg-r01-v3",
+    "corpusId": "tsfg-r01-i32-v1",
+    "caseId": "r01-shr-sign",
+    "sourceId": "i32/shifts.ts",
+    "ruleIds": [
+      "r01-shifts"
+    ],
+    "capabilities": [
+      "shifts"
+    ],
+    "target": "windows-x86_64-msvc",
+    "mode": "strict",
+    "applicability": "boundary",
+    "coverage": [
+      "shr-sign",
+      "negative-rhs-result"
+    ],
+    "budgets": {
+      "semanticFuel": "1",
+      "activeDepth": "1",
+      "physicalInstructions": "1000",
+      "memoryBytes": "1048576",
+      "hostTimeMs": "1000"
+    },
+    "invocation": {
+      "entry": "shr",
+      "arguments": [
+        {
+          "type": "i32",
+          "value": "-1"
+        },
+        {
+          "type": "i32",
+          "value": "1"
+        }
+      ],
+      "returnType": "i32"
+    },
+    "oracle": {
+      "kind": "return",
+      "value": {
+        "type": "i32",
+        "value": "-1"
+      },
+      "basis": {
+        "kind": "mathematical-derivation",
+        "reference": "docs/r01-language-contract.md#42-整数运算",
+        "derivation": "Arithmetic right shift copies the sign bit; the all-one -1 pattern remains -1."
+      }
+    }
+  },
+  {
+    "schemaVersion": "6",
+    "specId": "tsfg-r01-v3",
+    "corpusId": "tsfg-r01-i32-v1",
+    "caseId": "r01-shr-minus-one",
+    "sourceId": "i32/shifts.ts",
+    "ruleIds": [
+      "r01-shifts"
+    ],
+    "capabilities": [
+      "shifts"
+    ],
+    "target": "windows-x86_64-msvc",
+    "mode": "strict",
+    "applicability": "boundary",
+    "coverage": [
+      "shr-minus-one",
+      "minus-one"
+    ],
+    "budgets": {
+      "semanticFuel": "1",
+      "activeDepth": "1",
+      "physicalInstructions": "1000",
+      "memoryBytes": "1048576",
+      "hostTimeMs": "1000"
+    },
+    "invocation": {
+      "entry": "shr",
+      "arguments": [
+        {
+          "type": "i32",
+          "value": "1"
+        },
+        {
+          "type": "i32",
+          "value": "-1"
+        }
+      ],
+      "returnType": "i32"
+    },
+    "oracle": {
+      "kind": "trap",
+      "trap": {
+        "code": "r01-t-shift-count",
+        "ruleIds": [
+          "r01-shifts"
+        ],
+        "primary": {
+          "sourceId": "i32/shifts.ts",
+          "start": 158,
+          "end": 168,
+          "startLine": 5,
+          "startColumn": 9,
+          "endLine": 5,
+          "endColumn": 19
+        }
+      },
+      "basis": {
+        "kind": "mathematical-derivation",
+        "reference": "docs/r01-language-contract.md#42-整数运算",
+        "derivation": "-1 is below the inclusive lower count bound 0; do not mask it modulo 32. The failure is a runtime shift-count trap at the shift expression."
+      }
+    }
+  },
+  {
+    "schemaVersion": "6",
+    "specId": "tsfg-r01-v3",
+    "corpusId": "tsfg-r01-i32-v1",
+    "caseId": "r01-shr-32",
+    "sourceId": "i32/shifts.ts",
+    "ruleIds": [
+      "r01-shifts"
+    ],
+    "capabilities": [
+      "shifts"
+    ],
+    "target": "windows-x86_64-msvc",
+    "mode": "strict",
+    "applicability": "boundary",
+    "coverage": [
+      "shr-32",
+      "thirty-two"
+    ],
+    "budgets": {
+      "semanticFuel": "1",
+      "activeDepth": "1",
+      "physicalInstructions": "1000",
+      "memoryBytes": "1048576",
+      "hostTimeMs": "1000"
+    },
+    "invocation": {
+      "entry": "shr",
+      "arguments": [
+        {
+          "type": "i32",
+          "value": "1"
+        },
+        {
+          "type": "i32",
+          "value": "32"
+        }
+      ],
+      "returnType": "i32"
+    },
+    "oracle": {
+      "kind": "trap",
+      "trap": {
+        "code": "r01-t-shift-count",
+        "ruleIds": [
+          "r01-shifts"
+        ],
+        "primary": {
+          "sourceId": "i32/shifts.ts",
+          "start": 158,
+          "end": 168,
+          "startLine": 5,
+          "startColumn": 9,
+          "endLine": 5,
+          "endColumn": 19
+        }
+      },
+      "basis": {
+        "kind": "mathematical-derivation",
+        "reference": "docs/r01-language-contract.md#42-整数运算",
+        "derivation": "32 exceeds the inclusive upper count bound 31; do not mask it to zero. The failure is a runtime shift-count trap at the shift expression."
+      }
+    }
+  },
+  {
+    "schemaVersion": "6",
+    "specId": "tsfg-r01-v3",
+    "corpusId": "tsfg-r01-i32-v1",
+    "caseId": "r01-ushr-normal",
+    "sourceId": "i32/shifts.ts",
+    "ruleIds": [
+      "r01-shifts"
+    ],
+    "capabilities": [
+      "shifts"
+    ],
+    "target": "windows-x86_64-msvc",
+    "mode": "strict",
+    "applicability": "positive",
+    "coverage": [
+      "positive"
+    ],
+    "budgets": {
+      "semanticFuel": "1",
+      "activeDepth": "1",
+      "physicalInstructions": "1000",
+      "memoryBytes": "1048576",
+      "hostTimeMs": "1000"
+    },
+    "invocation": {
+      "entry": "ushr",
+      "arguments": [
+        {
+          "type": "i32",
+          "value": "-1"
+        },
+        {
+          "type": "i32",
+          "value": "3"
+        }
+      ],
+      "returnType": "i32"
+    },
+    "oracle": {
+      "kind": "return",
+      "value": {
+        "type": "i32",
+        "value": "536870911"
+      },
+      "basis": {
+        "kind": "mathematical-derivation",
+        "reference": "docs/r01-language-contract.md#42-整数运算",
+        "derivation": "The unsigned pattern 2^32-1 shifted right by 3 leaves 2^29-1 = 536870911."
+      }
+    }
+  },
+  {
+    "schemaVersion": "6",
+    "specId": "tsfg-r01-v3",
+    "corpusId": "tsfg-r01-i32-v1",
+    "caseId": "r01-ushr-zero",
+    "sourceId": "i32/shifts.ts",
+    "ruleIds": [
+      "r01-shifts"
+    ],
+    "capabilities": [
+      "shifts"
+    ],
+    "target": "windows-x86_64-msvc",
+    "mode": "strict",
+    "applicability": "boundary",
+    "coverage": [
+      "ushr-zero",
+      "zero"
+    ],
+    "budgets": {
+      "semanticFuel": "1",
+      "activeDepth": "1",
+      "physicalInstructions": "1000",
+      "memoryBytes": "1048576",
+      "hostTimeMs": "1000"
+    },
+    "invocation": {
+      "entry": "ushr",
+      "arguments": [
+        {
+          "type": "i32",
+          "value": "-1"
+        },
+        {
+          "type": "i32",
+          "value": "0"
+        }
+      ],
+      "returnType": "i32"
+    },
+    "oracle": {
+      "kind": "return",
+      "value": {
+        "type": "i32",
+        "value": "-1"
+      },
+      "basis": {
+        "kind": "mathematical-derivation",
+        "reference": "docs/r01-language-contract.md#42-整数运算",
+        "derivation": "A zero right shift preserves the all-one bit pattern. Its declared result is i32, so it represents -1 even for >>>, not u32 4294967295."
+      }
+    }
+  },
+  {
+    "schemaVersion": "6",
+    "specId": "tsfg-r01-v3",
+    "corpusId": "tsfg-r01-i32-v1",
+    "caseId": "r01-ushr-31",
+    "sourceId": "i32/shifts.ts",
+    "ruleIds": [
+      "r01-shifts"
+    ],
+    "capabilities": [
+      "shifts"
+    ],
+    "target": "windows-x86_64-msvc",
+    "mode": "strict",
+    "applicability": "boundary",
+    "coverage": [
+      "ushr-31",
+      "thirty-one"
+    ],
+    "budgets": {
+      "semanticFuel": "1",
+      "activeDepth": "1",
+      "physicalInstructions": "1000",
+      "memoryBytes": "1048576",
+      "hostTimeMs": "1000"
+    },
+    "invocation": {
+      "entry": "ushr",
+      "arguments": [
+        {
+          "type": "i32",
+          "value": "-1"
+        },
+        {
+          "type": "i32",
+          "value": "31"
+        }
+      ],
+      "returnType": "i32"
+    },
+    "oracle": {
+      "kind": "return",
+      "value": {
+        "type": "i32",
+        "value": "1"
+      },
+      "basis": {
+        "kind": "mathematical-derivation",
+        "reference": "docs/r01-language-contract.md#42-整数运算",
+        "derivation": "31 zero-filling shifts of ffffffff leave only bit 0, value 1 in i32."
+      }
+    }
+  },
+  {
+    "schemaVersion": "6",
+    "specId": "tsfg-r01-v3",
+    "corpusId": "tsfg-r01-i32-v1",
+    "caseId": "r01-ushr-sign",
+    "sourceId": "i32/shifts.ts",
+    "ruleIds": [
+      "r01-shifts"
+    ],
+    "capabilities": [
+      "shifts"
+    ],
+    "target": "windows-x86_64-msvc",
+    "mode": "strict",
+    "applicability": "boundary",
+    "coverage": [
+      "ushr-sign",
+      "negative-rhs-result"
+    ],
+    "budgets": {
+      "semanticFuel": "1",
+      "activeDepth": "1",
+      "physicalInstructions": "1000",
+      "memoryBytes": "1048576",
+      "hostTimeMs": "1000"
+    },
+    "invocation": {
+      "entry": "ushr",
+      "arguments": [
+        {
+          "type": "i32",
+          "value": "-1"
+        },
+        {
+          "type": "i32",
+          "value": "1"
+        }
+      ],
+      "returnType": "i32"
+    },
+    "oracle": {
+      "kind": "return",
+      "value": {
+        "type": "i32",
+        "value": "2147483647"
+      },
+      "basis": {
+        "kind": "mathematical-derivation",
+        "reference": "docs/r01-language-contract.md#42-整数运算",
+        "derivation": "Zero-filling the all-one pattern right by one leaves 31 one bits, 2^31-1 = 2147483647, still typed i32."
+      }
+    }
+  },
+  {
+    "schemaVersion": "6",
+    "specId": "tsfg-r01-v3",
+    "corpusId": "tsfg-r01-i32-v1",
+    "caseId": "r01-ushr-minus-one",
+    "sourceId": "i32/shifts.ts",
+    "ruleIds": [
+      "r01-shifts"
+    ],
+    "capabilities": [
+      "shifts"
+    ],
+    "target": "windows-x86_64-msvc",
+    "mode": "strict",
+    "applicability": "boundary",
+    "coverage": [
+      "ushr-minus-one",
+      "minus-one"
+    ],
+    "budgets": {
+      "semanticFuel": "1",
+      "activeDepth": "1",
+      "physicalInstructions": "1000",
+      "memoryBytes": "1048576",
+      "hostTimeMs": "1000"
+    },
+    "invocation": {
+      "entry": "ushr",
+      "arguments": [
+        {
+          "type": "i32",
+          "value": "1"
+        },
+        {
+          "type": "i32",
+          "value": "-1"
+        }
+      ],
+      "returnType": "i32"
+    },
+    "oracle": {
+      "kind": "trap",
+      "trap": {
+        "code": "r01-t-shift-count",
+        "ruleIds": [
+          "r01-shifts"
+        ],
+        "primary": {
+          "sourceId": "i32/shifts.ts",
+          "start": 229,
+          "end": 240,
+          "startLine": 8,
+          "startColumn": 9,
+          "endLine": 8,
+          "endColumn": 20
+        }
+      },
+      "basis": {
+        "kind": "mathematical-derivation",
+        "reference": "docs/r01-language-contract.md#42-整数运算",
+        "derivation": "-1 is below the inclusive lower count bound 0; do not mask it modulo 32. The failure is a runtime shift-count trap at the shift expression."
+      }
+    }
+  },
+  {
+    "schemaVersion": "6",
+    "specId": "tsfg-r01-v3",
+    "corpusId": "tsfg-r01-i32-v1",
+    "caseId": "r01-ushr-32",
+    "sourceId": "i32/shifts.ts",
+    "ruleIds": [
+      "r01-shifts"
+    ],
+    "capabilities": [
+      "shifts"
+    ],
+    "target": "windows-x86_64-msvc",
+    "mode": "strict",
+    "applicability": "boundary",
+    "coverage": [
+      "ushr-32",
+      "thirty-two"
+    ],
+    "budgets": {
+      "semanticFuel": "1",
+      "activeDepth": "1",
+      "physicalInstructions": "1000",
+      "memoryBytes": "1048576",
+      "hostTimeMs": "1000"
+    },
+    "invocation": {
+      "entry": "ushr",
+      "arguments": [
+        {
+          "type": "i32",
+          "value": "1"
+        },
+        {
+          "type": "i32",
+          "value": "32"
+        }
+      ],
+      "returnType": "i32"
+    },
+    "oracle": {
+      "kind": "trap",
+      "trap": {
+        "code": "r01-t-shift-count",
+        "ruleIds": [
+          "r01-shifts"
+        ],
+        "primary": {
+          "sourceId": "i32/shifts.ts",
+          "start": 229,
+          "end": 240,
+          "startLine": 8,
+          "startColumn": 9,
+          "endLine": 8,
+          "endColumn": 20
+        }
+      },
+      "basis": {
+        "kind": "mathematical-derivation",
+        "reference": "docs/r01-language-contract.md#42-整数运算",
+        "derivation": "32 exceeds the inclusive upper count bound 31; do not mask it to zero. The failure is a runtime shift-count trap at the shift expression."
+      }
+    }
+  },
+  {
+    "schemaVersion": "6",
+    "specId": "tsfg-r01-v3",
+    "corpusId": "tsfg-r01-i32-v1",
+    "caseId": "r01-shift-negative",
+    "sourceId": "i32/shifts.ts",
+    "ruleIds": [
+      "r01-shifts"
+    ],
+    "capabilities": [
+      "shifts"
+    ],
+    "target": "windows-x86_64-msvc",
+    "mode": "strict",
+    "applicability": "negative",
+    "coverage": [
+      "negative"
+    ],
+    "budgets": {
+      "semanticFuel": "1",
+      "activeDepth": "1",
+      "physicalInstructions": "1000",
+      "memoryBytes": "1048576",
+      "hostTimeMs": "1000"
+    },
+    "invocation": {
+      "entry": "shl",
+      "arguments": [
+        {
+          "type": "i32",
+          "value": "1"
+        },
+        {
+          "type": "i32",
+          "value": "-1"
+        }
+      ],
+      "returnType": "i32"
+    },
+    "oracle": {
+      "kind": "trap",
+      "trap": {
+        "code": "r01-t-shift-count",
+        "ruleIds": [
+          "r01-shifts"
+        ],
+        "primary": {
+          "sourceId": "i32/shifts.ts",
+          "start": 88,
+          "end": 98,
+          "startLine": 2,
+          "startColumn": 9,
+          "endLine": 2,
+          "endColumn": 19
+        }
+      },
+      "basis": {
+        "kind": "mathematical-derivation",
+        "reference": "docs/r01-language-contract.md#42-整数运算",
+        "derivation": "The typed count -1 is outside 0..31; an illegal count traps at runtime, whereas an incorrectly typed count is a compile-time rejection."
+      }
+    }
+  },
+  {
+    "schemaVersion": "6",
+    "specId": "tsfg-r01-v3",
+    "corpusId": "tsfg-r01-i32-v1",
+    "caseId": "r01-shift-count-type",
+    "sourceId": "i32/shift-count-type.ts",
+    "ruleIds": [
+      "r01-shifts"
+    ],
+    "capabilities": [
+      "shifts"
+    ],
+    "target": "windows-x86_64-msvc",
+    "mode": "strict",
+    "applicability": "negative",
+    "coverage": [
+      "count-type"
+    ],
+    "budgets": {
+      "semanticFuel": "1",
+      "activeDepth": "1",
+      "physicalInstructions": "1000",
+      "memoryBytes": "1048576",
+      "hostTimeMs": "1000"
+    },
+    "invocation": {
+      "entry": "main",
+      "arguments": [],
+      "returnType": "i32"
+    },
+    "oracle": {
+      "kind": "diagnostics",
+      "diagnostics": [
+        {
+          "phase": "types",
+          "severity": "error",
+          "code": "r01-d-shift-count-type",
+          "ruleIds": [
+            "r01-shifts"
+          ],
+          "primary": {
+            "sourceId": "i32/shift-count-type.ts",
+            "start": 99,
+            "end": 109,
+            "startLine": 3,
+            "startColumn": 9,
+            "endLine": 3,
+            "endColumn": 19
+          }
+        }
+      ],
+      "basis": {
+        "kind": "mathematical-derivation",
+        "reference": "docs/r01-language-contract.md#42-整数运算",
+        "derivation": "The count is already bool. Its ABI representation cannot convert it to the required i32 count; reject at compile time rather than report a runtime range trap."
+      }
+    }
+  },
+  {
+    "schemaVersion": "6",
+    "specId": "tsfg-r01-v3",
+    "corpusId": "tsfg-r01-i32-v1",
+    "caseId": "r01-div-constant-zero",
+    "sourceId": "i32/division-constant-zero.ts",
+    "ruleIds": [
+      "r01-division"
+    ],
+    "capabilities": [
+      "division"
+    ],
+    "target": "windows-x86_64-msvc",
+    "mode": "strict",
+    "applicability": "boundary",
+    "coverage": [
+      "first-zero-trap"
+    ],
+    "budgets": {
+      "semanticFuel": "1",
+      "activeDepth": "1",
+      "physicalInstructions": "1000",
+      "memoryBytes": "1048576",
+      "hostTimeMs": "1000"
+    },
+    "invocation": {
+      "entry": "main",
+      "arguments": [],
+      "returnType": "i32"
+    },
+    "oracle": {
+      "kind": "trap",
+      "trap": {
+        "code": "r01-t-divide-zero",
+        "ruleIds": [
+          "r01-division"
+        ],
+        "primary": {
+          "sourceId": "i32/division-constant-zero.ts",
+          "start": 71,
+          "end": 76,
+          "startLine": 2,
+          "startColumn": 9,
+          "endLine": 2,
+          "endColumn": 14
+        }
+      },
+      "basis": {
+        "kind": "mathematical-derivation",
+        "reference": "docs/r01-language-contract.md#42-整数运算",
+        "derivation": "Both literals fit i32. The only evaluated division has zero divisor, so the first observable failure is divide-zero at 1 / 0. Constant folding must preserve the runtime trap, not replace it with compile rejection."
+      }
+    }
+  }
+]
