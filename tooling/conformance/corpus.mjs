@@ -1,8 +1,11 @@
 // SPDX-License-Identifier: MIT
 
+import { isDeepStrictEqual } from "node:util";
+import { createHash } from "node:crypto";
+
 /**
  * Validate Conformance Corpus records. Source text is opaque data, never executed.
- * This development boundary currently reports no real language execution.
+ * Supplied results are compared separately; this boundary never runs a program.
  */
 export function validateCorpus(corpus) {
   const error = validateRecords(corpus) ?? validateIdentities(corpus) ?? validateRevisions(corpus)
@@ -11,11 +14,15 @@ export function validateCorpus(corpus) {
     schemaVersion: "6", recordValidation: "invalid", errors: [error],
     languageValidation: "not-executed", realProductPasses: 0,
   };
+  const corpusDigest = digest({ rules: corpus.rules, support: corpus.support, catalog: corpus.catalog,
+    cases: corpus.cases.map((record) => ({ ...record, oracle: normalizedOracle(record.oracle) })), sources: corpus.sources });
+  const resultComparison = compareResults(corpus, corpusDigest);
   return {
     schemaVersion: "6",
     recordValidation: "valid",
-    languageValidation: "not-executed",
-    realProductPasses: 0,
+    languageValidation: corpus.results?.length ? "results-supplied" : "not-executed",
+    realProductPasses: new Set(resultComparison.results.filter((row) => row.realValidation === "passed").map((row) => row.caseId)).size,
+    resultComparison,
     coverage: coverageReport(corpus),
     rules: structuredClone(corpus.rules.rules),
     capabilities: corpus.support.capabilities.map((capability) => ({ ...structuredClone(capability),
@@ -28,10 +35,106 @@ export function validateCorpus(corpus) {
     cases: corpus.cases.map(({ specId, corpusId, caseId, sourceId, ruleIds, capabilities, target, mode, invocation, oracle, dataLayout }) => ({
       specId, corpusId, caseId, sourceId, ruleIds: [...ruleIds], capabilities: [...capabilities],
       target, mode, languageValidation: "not-executed",
+      resultIdentity: { specId, corpusId, caseId, corpusDigest },
       invocation: structuredClone(invocation), oracle: normalizedOracle(oracle),
       ...(dataLayout === undefined ? {} : { dataLayout: structuredClone(dataLayout) }),
     })),
   };
+}
+
+// Canonical JSON object keys; array order and original source text remain significant.
+function canonicalJson(value) {
+  if (Array.isArray(value)) return `[${value.map(canonicalJson).join(",")}]`;
+  if (object(value)) return `{${Object.keys(value).sort().filter((key) => value[key] !== undefined)
+    .map((key) => `${JSON.stringify(key)}:${canonicalJson(value[key])}`).join(",")}}`;
+  return JSON.stringify(value);
+}
+
+function digest(value) {
+  return `sha256:${createHash("sha256").update(canonicalJson(value)).digest("hex")}`;
+}
+
+function compareResults(corpus, corpusDigest) {
+  const supplied = corpus.results === undefined ? [] : Array.isArray(corpus.results) ? corpus.results : [null];
+  const results = supplied.map((result, index) => {
+    const row = { resultId: result?.resultId ?? `results[${index}]`, caseId: result?.caseId,
+      comparison: "not-compared", realValidation: "not-verified", ...resultEvidence(result, corpus.evidence),
+      ...(object(result) ? { resultDigest: digest(result), supplied: structuredClone(result) } : {}) };
+    const fail = (category, field) => ({ ...row, error: { category, object: row.resultId, field } });
+    if (!object(result)) return fail("result-record-invalid", "result");
+    if (result.schemaVersion !== "1") return fail("result-version-unsupported", "schemaVersion");
+    if (!logicalId(result.resultId) || !text(result.executor?.id) || !text(result.executor?.revision)) {
+      return fail("result-record-invalid", "resultId/executor");
+    }
+    if (supplied.filter((entry) => entry?.resultId === result.resultId).length !== 1) {
+      return fail("result-identity-duplicate", "resultId");
+    }
+    const record = corpus.cases.find((entry) => entry.caseId === result.caseId);
+    if (!record) return fail("result-reference-missing", "caseId");
+    for (const [field, expected] of Object.entries({ specId: record.specId, corpusId: record.corpusId, corpusDigest })) {
+      if (result[field] !== expected) return fail("result-identity-mismatch", field);
+    }
+    for (const field of ["target", "mode", "budgets", "dataLayout"]) {
+      if (!isDeepStrictEqual(result[field], record[field])) return fail("result-condition-mismatch", field);
+    }
+    if (!validOutcome(result.outcome, record, corpus)) return fail("result-record-invalid", "outcome");
+    const comparison = result.outcome.kind === "execution-abort" ? "execution-abort"
+      : isDeepStrictEqual(observation(result.outcome), observation(record.oracle)) ? "match" : "mismatch";
+    return { ...row, comparison, realValidation: row.evidence === "verified"
+      ? comparison === "match" ? "passed" : "failed" : "not-verified" };
+  });
+  return { schemaVersion: "1", results,
+    missingCaseIds: corpus.cases.filter((record) => !supplied.some((result) => result?.caseId === record.caseId)).map((record) => record.caseId) };
+}
+
+function resultEvidence(result, evidence) {
+  if (result?.provenance?.kind === "self-test") return { evidence: "self-test" };
+  if (!result?.provenance || (result.provenance.kind === "execution" && !result.provenance.evidenceId)) return { evidence: "missing" };
+  const invalid = (category) => ({ evidence: "invalid", evidenceError: { category, object: result?.resultId, field: "provenance" } });
+  if (result.provenance.kind !== "execution" || (evidence !== undefined && !Array.isArray(evidence))) return invalid("result-evidence-invalid");
+  const matches = (evidence ?? []).filter((entry) => entry?.evidenceId === result.provenance.evidenceId);
+  if (!matches.length) return { evidence: "missing" };
+  if (matches.length !== 1) return invalid("result-evidence-invalid");
+  const entry = matches[0];
+  if (entry.resultDigest !== digest(result)) return invalid("result-evidence-mismatch");
+  if (!["execution", "self-test"].includes(entry.kind) || !["verified", "unverified"].includes(entry.verification)
+    || !text(entry.reference) || !text(entry.verifier)) return invalid("result-evidence-invalid");
+  return { evidence: entry.verification === "unverified" ? "unverified" : entry.kind === "self-test" ? "self-test" : "verified",
+    attestation: structuredClone(entry) };
+}
+
+function validOutcome(outcome, record, corpus) {
+  if (!object(outcome)) return false;
+  const payload = { return: "value", trap: "trap", diagnostics: "diagnostics", "execution-abort": "reason" }[outcome.kind];
+  if (!payload || Object.keys(outcome).some((key) => key !== "kind" && key !== payload)) return false;
+  if (outcome.kind === "return") return scalar(outcome.value, record.dataLayout);
+  if (outcome.kind === "execution-abort") return text(outcome.reason);
+  const failures = outcome.kind === "trap" ? [outcome.trap] : outcome.diagnostics;
+  return records(failures) && failures.every((failure) => object(failure) && text(failure.code)
+    && nonemptyTextArray(failure.ruleIds) && object(failure.primary) && sourceRangeFields(failure.primary)
+    && Object.keys(failure).every((key) => (outcome.kind === "trap" ? ["code", "ruleIds", "primary"]
+      : ["code", "ruleIds", "primary", "phase", "severity", "message"]).includes(key))
+    && (outcome.kind === "trap" || (text(failure.phase) && ["error", "warning", "info", "hint"].includes(failure.severity)
+      && (failure.message === undefined || typeof failure.message === "string")))
+    && validSourceSpan(failure.primary, corpus.sources.find((source) => source.sourceId === failure.primary.sourceId)?.content));
+}
+
+function observation(outcome) {
+  if (outcome.kind === "return") {
+    const value = outcome.value;
+    return { kind: "return", value: { type: canonicalType(value.type),
+      ...(value.bits === undefined ? { value: value.value } : { bits: value.bits.toLowerCase() }) } };
+  }
+  if (outcome.kind === "diagnostics") return { kind: "diagnostics", primary: normalizedOracle(outcome).diagnostics[0] };
+  return { kind: "trap", trap: { ...outcome.trap, ruleIds: [...new Set(outcome.trap.ruleIds)].sort(compare) } };
+}
+
+function validSourceSpan(span, source) {
+  return typeof source === "string" && [span.start, span.end, span.startLine, span.startColumn, span.endLine, span.endColumn]
+    .every((value) => Number.isSafeInteger(value) && value >= 0)
+    && span.start <= span.end && span.end <= source.length
+    && matchesPosition(source, span.start, span.startLine, span.startColumn)
+    && matchesPosition(source, span.end, span.endLine, span.endColumn);
 }
 
 function coverageReport(corpus) {
@@ -185,11 +288,7 @@ function validateFailures(corpus) {
       const source = sources.get(failure.primary.sourceId);
       if (source === undefined) return { category: "corpus-reference-missing", object: record.caseId, field: `${field}.sourceId` };
       const span = failure.primary;
-      if (![span.start, span.end, span.startLine, span.startColumn, span.endLine, span.endColumn]
-        .every((value) => Number.isSafeInteger(value) && value >= 0)
-        || span.start > span.end || span.end > source.length
-        || !matchesPosition(source, span.start, span.startLine, span.startColumn)
-        || !matchesPosition(source, span.end, span.endLine, span.endColumn)) {
+      if (!validSourceSpan(span, source)) {
         return { category: "corpus-source-range-invalid", object: record.caseId, field };
       }
     }
@@ -325,7 +424,7 @@ function scalar(value, dataLayout) {
   if (type === "bool") return typeof value.value === "boolean";
   if (floatDigits.has(type)) return typeof value.bits === "string"
     && value.bits.length === floatDigits.get(type) && /^[0-9a-fA-F]+$/.test(value.bits);
-  const width = targetInteger(type) ? Number(dataLayout.pointerSizeBits) : integerWidths.get(type);
+  const width = targetInteger(type) ? Number(dataLayout?.pointerSizeBits) : integerWidths.get(type);
   if (!width || typeof value.value !== "string" || !/^(0|-?[1-9][0-9]*)$/.test(value.value)) return false;
   const integer = BigInt(value.value);
   const signed = value.type.startsWith("i");

@@ -2,6 +2,108 @@
 
 # Conformance Corpus validation
 
+## Supplied result comparison (ticket 08)
+
+`validateCorpus({ ...corpus, results, evidence })` compares given observations; it
+does not invoke or install an executor. Both optional arrays are separate from
+source and oracle authoring inputs. Existing corpus records/report fields remain
+version 6; the additive `resultComparison` section and new result records have
+their own version `1`. This unpublished, same-repository extension uses ECP-0002's
+bounded delegation and changes no product family, registry, tool lock or supported
+external contract. Reject other result versions; older reports lacking this
+section provide no comparison evidence and must be regenerated for this feature.
+
+First validate the corpus without results. Each case report exposes
+`resultIdentity: { specId, corpusId, caseId, corpusDigest }`. A result copies the
+identity of the actual input it observed, never a newly revised corpus identity:
+
+```js
+const result = {
+  schemaVersion: "1", resultId: "manual-check-1",
+  ...validateCorpus(corpus).cases[0].resultIdentity,
+  executor: { id: "comparator-self-test", revision: "manual-v1" },
+  target: "windows-x86_64-msvc", mode: "strict",
+  budgets: { semanticFuel: "1", activeDepth: "1", physicalInstructions: "1000",
+    memoryBytes: "1048576", hostTimeMs: "1000" },
+  provenance: { kind: "self-test" },
+  outcome: { kind: "return", value: { type: "i32", value: "5" } },
+};
+const comparison = validateCorpus({ ...corpus, results: [result] });
+// This manual record is a comparator test, never language execution evidence.
+```
+
+The complete SHA-256 corpus digest covers canonical JSON of `{ rules, support,
+catalog, cases, sources }`. Object keys sort by UTF-16 order; JSON primitive
+encoding and array order are retained. Case oracles use the documented diagnostic
+normalization (no message text, sorted stable diagnostics/rule sets). Original
+source text, invocation, independent basis, budgets, layout and revision histories
+participate. Results and attestations never participate. This conservatively
+invalidates results after any relevant corpus change, even when an author forgot
+to advance a revision. It is content identity, not authentication of authorship.
+
+Results require a unique logical `resultId`, existing `caseId`, matching spec,
+corpus and content identity, and nonempty executor `id` and exact `revision`.
+Different result IDs can represent reruns or different executors; no run is
+silently selected over another. `target`, `mode`, all five `budgets`, and optional
+`dataLayout` must exactly match the case before observation comparison. Executor
+identity is retained, not inferred from a target or the local Node tool.
+
+`outcome` contains only `kind` and its payload: `return`/`value`, `trap`/`trap`,
+`diagnostics`/`diagnostics`, or `execution-abort`/nonempty `reason`. Scalar and
+failure fields follow the oracle contract, without an oracle `basis`. Integers
+compare exact canonical decimal values and types; bool never coerces integers.
+`boolean`/`bool` and `number`/`f64` are aliases. Floating bits compare case-insensitive
+hex spelling while preserving every raw bit, including signed zero and NaN payload.
+Trap compares code, rule set and primary span. Diagnostics compare the first
+diagnostic in the documented stable sort order, not prose or all cascades. Invalid
+observed encoding/ranges fail result validation; well-formed wrong codes, rules,
+phases, severities and positions mismatch the oracle. Every observed diagnostic
+still needs a well-formed range. Abort always reports `execution-abort`, never a
+semantic match. No source parser or effect simulation is involved.
+
+Each `resultComparison.results` row contains the result ID/Case ID, detached
+`supplied` result, its `resultDigest`, `comparison` (`match`, `mismatch`,
+`execution-abort`, `not-compared`), `evidence`, and `realValidation`.
+Malformed or stale rows have an `error` with category/object/field. Categories are
+`result-record-invalid`, `result-version-unsupported`, `result-identity-duplicate`,
+`result-reference-missing`, `result-identity-mismatch`, `result-condition-mismatch`.
+`missingCaseIds` means no result was supplied for those cases; absence is normal
+not-executed state, not corpus corruption. Invalid result arrays fail explicitly.
+Corpus structural validity is independent of result validity.
+
+Execution provenance is `{ kind: "execution", evidenceId }`. The calling verifier
+may supply separate attestations `{ evidenceId, kind: "execution" | "self-test",
+verification: "verified" | "unverified", reference, verifier, resultDigest }`.
+`reference` identifies retained traceable evidence, `verifier` identifies the
+party that actually checked it, and `resultDigest` is canonical JSON SHA-256 of
+the **whole** result, including provenance, executor and observed outcome. A
+reference to missing, duplicate, malformed or differently bound evidence cannot
+grant credit. The report retains accepted attestations for tracing.
+
+This synchronous record boundary does not read evidence paths or authenticate
+an executor. `verified` is a trusted caller attestation after out-of-band evidence
+inspection, not a flag that a producer may self-assert as proof. A digest or a
+file's existence alone cannot prove execution. Callers must keep test fixtures
+marked `self-test`; either self-test provenance or a self-test attestation prevents
+product credit. Missing/unverified provenance may still yield comparison results.
+Evidence states are `missing`, `unverified`, `invalid`, `self-test`, `verified`;
+invalid evidence adds `result-evidence-invalid` or `result-evidence-mismatch`.
+Only verified execution rows can have `realValidation: "passed"` (match) or
+`"failed"` (mismatch/Abort); other rows remain `not-verified`.
+
+The top-level language status is `results-supplied` when results are present;
+`realProductPasses` counts distinct cases with a verified matching execution row.
+All individual reruns, failures and evidence states remain visible, so that count
+alone is not a complete corpus or capability verdict. Existing case/capability
+language fields describe record-only validation and remain `not-executed`; support
+promotion and capability aggregation belong to ticket 09. No oracle or source is
+ever rewritten, and no API updates independent expectations from observed values.
+
+Run `node --test tests/r01/result-comparison.test.mjs` with the locked Node. All
+checked-in result data is explicitly manual comparator self-test input. There is
+currently no real program execution evidence or connector in this delivery; real
+execution acceptance must use this same boundary when verifiable results exist.
+
 `validateCorpus` in `corpus.mjs` is the single public record-validation boundary.
 It accepts parsed JSON records and separately loaded source text:
 
@@ -48,7 +150,7 @@ coverage. The support record keeps semantic source, product boundary and
 implementation state separate. These declarations do not become product evidence.
 
 The report's `recordValidation: "valid"` means that the implemented structural
-checks passed. It always reports `languageValidation: "not-executed"` and
+checks passed. Without results it reports `languageValidation: "not-executed"` and
 `realProductPasses: 0`, including on invalid input. Invalid reports contain the
 first error's stable category, referring object and field, and no valid case list.
 Missing object identities use collection positions for traceability. Categories
@@ -108,8 +210,7 @@ Node tools and generated output do not establish an official frontend intake.
 
 ## Remaining slices and testing
 
-Result comparison and evidence-backed
-capability status belong to subsequent R01 tickets. No source scanner, parser,
+Evidence-backed capability status belongs to ticket 09. Result comparison is described below. No source scanner, parser,
 checker, execution adapter or JavaScript execution is part of this module.
 The source is opaque data even when it is not a valid program.
 
@@ -247,7 +348,7 @@ the same entry with a complete scoped addition collection, a withdrawn MAX+1
 boundary, a legitimate negative exemption, and the full staged directory. The
 MAX+1 oracle is independently derived by subtracting 2^32 from 2147483648; no JS
 execution of corpus source determines it. The directory integration test prints
-the full missing-responsibility and pending-consumer report. The numeric and control/budget corpora are described above; result comparison remains subsequent work.
+the full missing-responsibility and pending-consumer report. The numeric and control/budget corpora are described above; supplied results use the comparison boundary below.
 
 ## Lossless scalar records
 
