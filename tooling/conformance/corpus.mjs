@@ -17,16 +17,28 @@ export function validateCorpus(corpus) {
   const corpusDigest = digest({ rules: corpus.rules, support: corpus.support, catalog: corpus.catalog,
     cases: corpus.cases.map((record) => ({ ...record, oracle: normalizedOracle(record.oracle) })), sources: corpus.sources });
   const resultComparison = compareResults(corpus, corpusDigest);
+  for (const row of resultComparison.results) {
+    const record = corpus.cases.find((entry) => entry.caseId === row.caseId);
+    const declarations = corpus.support.capabilities.filter((entry) => record?.capabilities.includes(entry.capability));
+    row.credit = row.realValidation !== "passed" ? "none"
+      : declarations.some((entry) => entry.productBoundary === "prohibited"
+        || (record.oracle.kind === "diagnostics" && entry.implementation !== "implemented")) ? "rejection" : "language";
+  }
+  const coverage = coverageReport(corpus);
+  const capabilities = corpus.support.capabilities.map((capability) => capabilityReport(corpus, capability, coverage, resultComparison.results));
+  const initialRules = corpus.rules.rules.filter((rule) => rule.coverage?.stage === "W1");
+  const initialCases = corpus.cases.filter((record) => initialRules.some((rule) => record.ruleIds.includes(rule.ruleId)));
   return {
     schemaVersion: "6",
     recordValidation: "valid",
     languageValidation: corpus.results?.length ? "results-supplied" : "not-executed",
-    realProductPasses: new Set(resultComparison.results.filter((row) => row.realValidation === "passed").map((row) => row.caseId)).size,
+    realProductPasses: new Set(resultComparison.results.filter((row) => row.credit === "language").map((row) => row.caseId)).size,
     resultComparison,
-    coverage: coverageReport(corpus),
+    coverage,
+    delivery: { foundationCoverage: coverage.initial,
+      initialLanguage: validationSummary(initialCases, resultComparison.results).status, roadmapR01: "incomplete" },
     rules: structuredClone(corpus.rules.rules),
-    capabilities: corpus.support.capabilities.map((capability) => ({ ...structuredClone(capability),
-      recordValidation: "valid", languageValidation: "not-executed", currentSupport: "not-verified" })),
+    capabilities,
     identity: {
       languageBaseline: corpus.rules.languageBaseline, frontendIntake: "not-connected",
       specId: corpus.rules.specId, corpusId: corpus.catalog.corpusId,
@@ -34,12 +46,43 @@ export function validateCorpus(corpus) {
     catalog: structuredClone(corpus.catalog),
     cases: corpus.cases.map(({ specId, corpusId, caseId, sourceId, ruleIds, capabilities, target, mode, invocation, oracle, dataLayout }) => ({
       specId, corpusId, caseId, sourceId, ruleIds: [...ruleIds], capabilities: [...capabilities],
-      target, mode, languageValidation: "not-executed",
+      target, mode, languageValidation: validationSummary([{ caseId }], resultComparison.results).status,
+      validation: validationSummary([{ caseId }], resultComparison.results),
       resultIdentity: { specId, corpusId, caseId, corpusDigest },
       invocation: structuredClone(invocation), oracle: normalizedOracle(oracle),
       ...(dataLayout === undefined ? {} : { dataLayout: structuredClone(dataLayout) }),
     })),
   };
+}
+
+function validationSummary(cases, results) {
+  const rows = results.filter((row) => cases.some((record) => record.caseId === row.caseId));
+  const ids = (predicate) => cases.filter((record) => predicate(rows.filter((row) => row.caseId === record.caseId))).map((record) => record.caseId);
+  const passedCaseIds = ids((entries) => entries.some((row) => row.credit === "language"));
+  const rejectionPassedCaseIds = ids((entries) => entries.some((row) => row.credit === "rejection"));
+  const failedCaseIds = ids((entries) => entries.some((row) => row.realValidation === "failed"));
+  const notExecutedCaseIds = ids((entries) => !entries.length);
+  const notVerifiedCaseIds = ids((entries) => !entries.some((row) => row.realValidation !== "not-verified"));
+  const evidenceCounts = {};
+  for (const row of rows) evidenceCounts[row.evidence] = (evidenceCounts[row.evidence] ?? 0) + 1;
+  return { status: failedCaseIds.length ? "failed" : !rows.length ? "not-executed"
+    : cases.length && passedCaseIds.length === cases.length && rows.every((row) => row.realValidation === "passed") ? "passed" : "incomplete",
+    passedCaseIds, rejectionPassedCaseIds, failedCaseIds, notExecutedCaseIds, notVerifiedCaseIds, evidenceCounts,
+    resultIds: rows.map((row) => row.resultId) };
+}
+
+function capabilityReport(corpus, capability, coverage, results) {
+  const rules = corpus.rules.rules.filter((rule) => rule.capability === capability.capability);
+  const cases = corpus.cases.filter((record) => record.capabilities.includes(capability.capability)
+    && record.target === capability.target && record.mode === capability.mode);
+  const validation = validationSummary(cases, results);
+  const coverageStatus = !rules.length || rules.some((rule) => !rule.coverage) ? "not-assessed"
+    : rules.some((rule) => rule.pending) || coverage.gaps.some((gap) => rules.some((rule) => rule.ruleId === gap.ruleId)) ? "incomplete" : "complete";
+  return { ...structuredClone(capability), recordValidation: "valid", coverage: coverageStatus,
+    validation, languageValidation: validation.status,
+    currentSupport: capability.productBoundary === "allowed" && capability.implementation === "implemented"
+      && capability.semanticSource !== "pending-special-mapping" && coverageStatus === "complete"
+      && validation.status === "passed" ? "verified" : "not-verified" };
 }
 
 // Canonical JSON object keys; array order and original source text remain significant.

@@ -2,6 +2,39 @@
 
 # Conformance Corpus validation
 
+## Evidence-backed capability reports (ticket 09)
+
+The additive `delivery` section separates `foundationCoverage` (supplied W1
+records only), `initialLanguage` (verified case evidence) and `roadmapR01`
+(incomplete). Foundation coverage is not acceptance of the whole foundation
+delivery. W3/W4/W5/W6 obligations and pending consumers remain in `coverage`.
+Regenerate cached reports for this extension; authoring/result versions and
+identities are unchanged under the same unpublished ECP-0002 delegation.
+
+Case and capability `validation` retain result IDs, distinct passed, failed,
+rejection-passed, not-executed and not-verified case IDs, plus evidence counts
+by source class. Categories overlap: a good rerun cannot erase a failure.
+`notExecutedCaseIds` means no supplied row; `notVerifiedCaseIds` includes absent,
+stale, invalid, self-test and unverified-only cases. Full identity, comparison,
+errors and attestations remain traceable through `resultComparison.results`.
+Language status is failed if any verified mismatch/Abort exists, passed only
+when every case and supplied row passes, incomplete for other supplied evidence,
+or not-executed when no rows exist. Empty capabilities cannot pass vacuously.
+
+Each result has `credit`: none, rejection, or language. Verified matches for
+prohibited capabilities, or diagnostic rejection of a capability without an
+implemented declaration, receive only rejection credit. `realProductPasses`
+counts distinct language-credit cases, never correct pending/prohibited rejection.
+It is not a complete capability verdict. Current support becomes verified only
+for an allowed, implemented, nonpending capability with complete assessed
+coverage and entirely passing case evidence. The implementation declaration and
+its traceable evidence are retained separately from that verification.
+
+Source is opaque; parse-only observations cannot replace an oracle result.
+Backend agreement alone cannot pass an independent oracle comparison. Tests in
+`capability-report.test.mjs`, including simulations of trusted attestations, are
+manual tool self-tests and provide no actual language execution evidence.
+
 ## Supplied result comparison (ticket 08)
 
 `validateCorpus({ ...corpus, results, evidence })` compares given observations; it
@@ -94,9 +127,7 @@ Only verified execution rows can have `realValidation: "passed"` (match) or
 The top-level language status is `results-supplied` when results are present;
 `realProductPasses` counts distinct cases with a verified matching execution row.
 All individual reruns, failures and evidence states remain visible, so that count
-alone is not a complete corpus or capability verdict. Existing case/capability
-language fields describe record-only validation and remain `not-executed`; support
-promotion and capability aggregation belong to ticket 09. No oracle or source is
+alone is not a complete corpus or capability verdict. Case/capability language fields aggregate evidence as described below. No oracle or source is
 ever rewritten, and no API updates independent expectations from observed values.
 
 Run `node --test tests/r01/result-comparison.test.mjs` with the locked Node. All
@@ -210,7 +241,7 @@ Node tools and generated output do not establish an official frontend intake.
 
 ## Remaining slices and testing
 
-Evidence-backed capability status belongs to ticket 09. Result comparison is described below. No source scanner, parser,
+Evidence-backed capability status and result comparison are described below. No source scanner, parser,
 checker, execution adapter or JavaScript execution is part of this module.
 The source is opaque data even when it is not a valid program.
 

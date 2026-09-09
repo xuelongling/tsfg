@@ -549,6 +549,8 @@ test("duplicate rule, case and source assignments are rejected even when identic
 });
 
 test("a corpus author validates a source case without claiming language execution", async (context) => {
+  const validation = { status: "not-executed", passedCaseIds: [], rejectionPassedCaseIds: [], failedCaseIds: [],
+    notExecutedCaseIds: ["r01-add-001"], notVerifiedCaseIds: ["r01-add-001"], evidenceCounts: {}, resultIds: [] };
   const report = validateCorpus(await minimalCorpus());
   context.diagnostic(JSON.stringify(report));
   assert.deepEqual(report, {
@@ -557,11 +559,13 @@ test("a corpus author validates a source case without claiming language executio
     languageValidation: "not-executed",
     realProductPasses: 0,
     resultComparison: { schemaVersion: "1", results: [], missingCaseIds: ["r01-add-001"] },
+    delivery: { foundationCoverage: "not-assessed", initialLanguage: "not-executed", roadmapR01: "incomplete" },
     rules: (await minimalCorpus()).rules.rules,
     coverage: { initial: "not-assessed", milestone: "incomplete", gaps: [], notApplicable: [], obligations: [], pending: [], unassessedRuleIds: ["r01-i32-add"],
       stages: ["W1", "W3", "W4", "W5", "W6"].map((stage) => ({ stage, ruleIds: [], coverage: "not-assessed", languageValidation: "not-executed" })) },
     capabilities: [{ capability: "scalar-i32", semanticSource: "necessary-difference", productBoundary: "allowed",
       implementation: "not-connected", target: "windows-x86_64-msvc", mode: "strict", recordValidation: "valid",
+      coverage: "not-assessed", validation,
       languageValidation: "not-executed", currentSupport: "not-verified" }],
     identity: {
       languageBaseline: "TypeScript 7.0.2", frontendIntake: "not-connected",
@@ -572,6 +576,7 @@ test("a corpus author validates a source case without claiming language executio
       specId: "tsfg-r01-v1", corpusId: "tsfg-r01-minimal-v1", caseId: "r01-add-001",
       sourceId: "add.ts", ruleIds: ["r01-i32-add"], capabilities: ["scalar-i32"],
       target: "windows-x86_64-msvc", mode: "strict", languageValidation: "not-executed",
+      validation,
       resultIdentity: { specId: "tsfg-r01-v1", corpusId: "tsfg-r01-minimal-v1", caseId: "r01-add-001",
         corpusDigest: "sha256:059880db883e60efa933d1c1d6790ea1f7a51543c749f390d3dcdc9a6f117167" },
       invocation: (await minimalCorpus()).cases[0].invocation,
