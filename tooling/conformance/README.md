@@ -29,6 +29,10 @@ It is not a complete capability verdict. Current support becomes verified only
 for an allowed, implemented, nonpending capability with complete assessed
 coverage and entirely passing case evidence. The implementation declaration and
 its traceable evidence are retained separately from that verification.
+Capability `pendingRuleIds` includes both owned pending rules and other rules
+whose `pending.affectedCapabilities` names this capability; these block promotion
+and keep coverage incomplete. Stage language states aggregate their case evidence
+using the same failure-preserving rules.
 
 Source is opaque; parse-only observations cannot replace an oracle result.
 Backend agreement alone cannot pass an independent oracle comparison. Tests in
@@ -351,8 +355,9 @@ for full R01 or Windows Functional Complete.
 `necessary-difference`, `pending-special-mapping`), `productBoundary` (`allowed`,
 `prohibited`), and `implementation` (`not-connected`, `not-implemented`,
 `implemented`). An implemented declaration requires an authored `evidence` reference;
-this validator does not authenticate it. Every capability still reports
-`currentSupport: "not-verified"` and `languageValidation: "not-executed"`.
+this validator does not authenticate it. Without results, capabilities report
+`currentSupport: "not-verified"` and `languageValidation: "not-executed"`;
+supplied evidence is aggregated by the ticket 09 rules above.
 Correct rejection of an unsupported feature cannot promote its implementation.
 
 Any pending special mapping must include `pending.consumers`, `missing`,
@@ -494,6 +499,6 @@ the existing authoring categories with the diagnostic index. The public boundary
 accepts parsed objects, not serialized JSON: the caller must treat `JSON.parse`
 failure as an input error and must not manufacture a product rejection result.
 Passing a JSON string (damaged or valid) to `validateCorpus` is a corpus record
-error. Every invalid report still has zero real product passes; every valid
-diagnostic report still says `not-executed`. Real diagnostic production and
-comparison remain future consumers, outside this ticket.
+error. Every invalid report still has zero real product passes. Valid diagnostic
+records without supplied results still say `not-executed`. Real diagnostic
+production remains a future consumer; supplied results use ticket 08 comparison.

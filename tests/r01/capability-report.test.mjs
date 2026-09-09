@@ -117,7 +117,26 @@ test("mixed evidence is counted per source and case; a verified rerun cannot hid
   assert.equal(report.cases[0].languageValidation, "failed");
   assert.equal(report.cases[1].languageValidation, "not-executed");
   assert.equal(report.delivery.initialLanguage, "failed");
+  assert.equal(report.coverage.stages[0].languageValidation, "failed");
   assert.equal(report.realProductPasses, 1);
   assert.deepEqual(validateCorpus(corpus), report);
   assert.deepEqual(corpus, before);
+});
+
+test("a pending mapping blocks every affected capability even when its own cases pass", async () => {
+  const corpus = await fixture();
+  Object.assign(corpus.support.capabilities[0], { implementation: "implemented", evidence: "manual declaration" });
+  corpus.support.capabilities.push({ ...corpus.support.capabilities[0], capability: "future" });
+  const rule = { ...structuredClone(corpus.rules.rules[0]), ruleId: "future-rule", capability: "future", caseIds: [],
+    semanticSource: "pending-special-mapping", pending: { consumers: ["future consumer"], missing: ["ordering oracle"],
+      affectedCapabilities: ["scalar-i32", "future"], consumptionStage: "W3", closure: "Resolve ordering oracle" } };
+  rule.coverage.stage = "W3";
+  corpus.rules.rules.push(rule);
+  corpus.catalog.identities.push({ kind: "rule", id: rule.ruleId, meaning: "Manual pending mapping", status: "active", introducedIn: corpus.rules.specId });
+  corpus.results = [result(corpus, "matched")];
+  attest(corpus, corpus.results[0]);
+  const capability = validateCorpus(corpus).capabilities[0];
+  assert.equal(capability.currentSupport, "not-verified");
+  assert.deepEqual(capability.pendingRuleIds, ["future-rule"]);
+  assert.equal(capability.coverage, "incomplete");
 });

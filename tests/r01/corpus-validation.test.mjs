@@ -565,7 +565,7 @@ test("a corpus author validates a source case without claiming language executio
       stages: ["W1", "W3", "W4", "W5", "W6"].map((stage) => ({ stage, ruleIds: [], coverage: "not-assessed", languageValidation: "not-executed" })) },
     capabilities: [{ capability: "scalar-i32", semanticSource: "necessary-difference", productBoundary: "allowed",
       implementation: "not-connected", target: "windows-x86_64-msvc", mode: "strict", recordValidation: "valid",
-      coverage: "not-assessed", validation,
+      coverage: "not-assessed", pendingRuleIds: [], validation,
       languageValidation: "not-executed", currentSupport: "not-verified" }],
     identity: {
       languageBaseline: "TypeScript 7.0.2", frontendIntake: "not-connected",

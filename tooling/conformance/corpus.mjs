@@ -25,6 +25,10 @@ export function validateCorpus(corpus) {
         || (record.oracle.kind === "diagnostics" && entry.implementation !== "implemented")) ? "rejection" : "language";
   }
   const coverage = coverageReport(corpus);
+  for (const stage of coverage.stages) {
+    const cases = corpus.cases.filter((record) => record.ruleIds.some((id) => stage.ruleIds.includes(id)));
+    stage.languageValidation = validationSummary(cases, resultComparison.results).status;
+  }
   const capabilities = corpus.support.capabilities.map((capability) => capabilityReport(corpus, capability, coverage, resultComparison.results));
   const initialRules = corpus.rules.rules.filter((rule) => rule.coverage?.stage === "W1");
   const initialCases = corpus.cases.filter((record) => initialRules.some((rule) => record.ruleIds.includes(rule.ruleId)));
@@ -44,14 +48,16 @@ export function validateCorpus(corpus) {
       specId: corpus.rules.specId, corpusId: corpus.catalog.corpusId,
     },
     catalog: structuredClone(corpus.catalog),
-    cases: corpus.cases.map(({ specId, corpusId, caseId, sourceId, ruleIds, capabilities, target, mode, invocation, oracle, dataLayout }) => ({
-      specId, corpusId, caseId, sourceId, ruleIds: [...ruleIds], capabilities: [...capabilities],
-      target, mode, languageValidation: validationSummary([{ caseId }], resultComparison.results).status,
-      validation: validationSummary([{ caseId }], resultComparison.results),
-      resultIdentity: { specId, corpusId, caseId, corpusDigest },
-      invocation: structuredClone(invocation), oracle: normalizedOracle(oracle),
-      ...(dataLayout === undefined ? {} : { dataLayout: structuredClone(dataLayout) }),
-    })),
+    cases: corpus.cases.map(({ specId, corpusId, caseId, sourceId, ruleIds, capabilities, target, mode, invocation, oracle, dataLayout }) => {
+      const validation = validationSummary([{ caseId }], resultComparison.results);
+      return {
+        specId, corpusId, caseId, sourceId, ruleIds: [...ruleIds], capabilities: [...capabilities],
+        target, mode, languageValidation: validation.status, validation,
+        resultIdentity: { specId, corpusId, caseId, corpusDigest },
+        invocation: structuredClone(invocation), oracle: normalizedOracle(oracle),
+        ...(dataLayout === undefined ? {} : { dataLayout: structuredClone(dataLayout) }),
+      };
+    }),
   };
 }
 
@@ -76,10 +82,12 @@ function capabilityReport(corpus, capability, coverage, results) {
   const cases = corpus.cases.filter((record) => record.capabilities.includes(capability.capability)
     && record.target === capability.target && record.mode === capability.mode);
   const validation = validationSummary(cases, results);
+  const pendingRuleIds = corpus.rules.rules.filter((rule) => rule.pending
+    && (rule.capability === capability.capability || rule.pending.affectedCapabilities.includes(capability.capability))).map((rule) => rule.ruleId);
   const coverageStatus = !rules.length || rules.some((rule) => !rule.coverage) ? "not-assessed"
-    : rules.some((rule) => rule.pending) || coverage.gaps.some((gap) => rules.some((rule) => rule.ruleId === gap.ruleId)) ? "incomplete" : "complete";
+    : pendingRuleIds.length || coverage.gaps.some((gap) => rules.some((rule) => rule.ruleId === gap.ruleId)) ? "incomplete" : "complete";
   return { ...structuredClone(capability), recordValidation: "valid", coverage: coverageStatus,
-    validation, languageValidation: validation.status,
+    pendingRuleIds, validation, languageValidation: validation.status,
     currentSupport: capability.productBoundary === "allowed" && capability.implementation === "implemented"
       && capability.semanticSource !== "pending-special-mapping" && coverageStatus === "complete"
       && validation.status === "passed" ? "verified" : "not-verified" };
