@@ -2,6 +2,11 @@
 
 # Conformance Corpus validation
 
+The [R01 foundation acceptance entry](../../tests/r01/README.md) runs the complete
+engineering fixture, maps all twelve spec scenarios and records repeatability
+and source/oracle integrity. Its pass is separate from actual language execution
+and full Roadmap R01 maturity.
+
 ## Evidence-backed capability reports (ticket 09)
 
 The additive `delivery` section separates `foundationCoverage` (supplied W1
