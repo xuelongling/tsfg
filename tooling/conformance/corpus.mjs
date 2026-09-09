@@ -301,6 +301,8 @@ const text = (value) => typeof value === "string" && value.trim().length > 0;
 const logicalId = (value) => typeof value === "string" && /^[a-z0-9][a-z0-9._-]*$/.test(value);
 const logicalSource = (value) => typeof value === "string" && value.split("/").every(logicalId);
 const object = (value) => value !== null && typeof value === "object" && !Array.isArray(value);
+const sourceRangeFields = (value) => Object.keys(value).every((key) =>
+  ["sourceId", "start", "end", "startLine", "startColumn", "endLine", "endColumn"].includes(key));
 const records = (value) => Array.isArray(value) && value.length > 0;
 const nonemptyTextArray = (value) => records(value) && value.every(text);
 const textArray = (value) => Array.isArray(value) && value.every(text);
@@ -416,7 +418,7 @@ function validateRecords(corpus) {
       error = fields(trap, `${record.caseId}.oracle.trap`, {
         code: text, ruleIds: nonemptyTextArray, primary: object,
         fields: () => Object.keys(trap).every((key) => ["code", "ruleIds", "primary"].includes(key)),
-        "primary.fields": () => Object.keys(trap.primary).every((key) => ["sourceId", "start", "end", "startLine", "startColumn", "endLine", "endColumn"].includes(key)),
+        "primary.fields": () => sourceRangeFields(trap.primary),
       });
       if (error) return error;
     }
@@ -427,7 +429,7 @@ function validateRecords(corpus) {
           code: text, ruleIds: nonemptyTextArray, primary: object,
           message: (value) => value === undefined || typeof value === "string",
           fields: () => Object.keys(diagnostic).every((key) => ["phase", "severity", "code", "ruleIds", "primary", "message"].includes(key)),
-          "primary.fields": () => Object.keys(diagnostic.primary).every((key) => ["sourceId", "start", "end", "startLine", "startColumn", "endLine", "endColumn"].includes(key)),
+          "primary.fields": () => sourceRangeFields(diagnostic.primary),
         });
         if (error) return error;
       }
