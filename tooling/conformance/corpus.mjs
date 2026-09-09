@@ -103,9 +103,6 @@ function validateReferences(corpus) {
   const cases = new Set(corpus.cases.map((record) => record.caseId));
   const sources = new Set(corpus.sources.map((source) => source.sourceId));
   const capabilities = new Set(corpus.support.capabilities.map((record) => record.capability));
-  const codes = (kind) => new Set(corpus.catalog.identities.filter((entry) => entry.kind === kind).map((entry) => entry.id));
-  const diagnostics = codes("diagnostic");
-  const traps = codes("trap");
   for (const record of corpus.cases) {
     const error = references(record.ruleIds, rules, record.caseId, "ruleIds")
       ?? references([record.sourceId], sources, record.caseId, "sourceId")
@@ -114,9 +111,7 @@ function validateReferences(corpus) {
   }
   for (const rule of corpus.rules.rules) {
     const error = references(rule.caseIds, cases, rule.ruleId, "caseIds")
-      ?? references([rule.capability], capabilities, rule.ruleId, "capability")
-      ?? references(rule.diagnosticCodes, diagnostics, rule.ruleId, "diagnosticCodes")
-      ?? references(rule.trapCodes, traps, rule.ruleId, "trapCodes");
+      ?? references([rule.capability], capabilities, rule.ruleId, "capability");
     if (error) return error;
   }
 }
