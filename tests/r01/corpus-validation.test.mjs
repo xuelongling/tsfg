@@ -361,18 +361,18 @@ test("removing an active record requires retirement, and inconsistent history is
 
 test("old development formats and damaged inputs still report no real language execution", async () => {
   for (const oldVersion of ["1", "2"]) {
-  for (const section of ["rules", "support", "catalog", "case"]) {
-    const corpus = await minimalCorpus();
-    (section === "case" ? corpus.cases[0] : corpus[section]).schemaVersion = oldVersion;
-    const report = validateCorpus(corpus);
-    assert.equal(report.errors[0].category, "corpus-version-unsupported");
-    assert.equal(report.languageValidation, "not-executed");
-    assert.equal(report.realProductPasses, 0);
-    assert.equal("cases" in report, false);
-  }
-  const old = await minimalCorpus();
-  for (const record of [old.rules, old.support, old.catalog, ...old.cases]) record.schemaVersion = oldVersion;
-  assert.equal(validateCorpus(old).errors[0].category, "corpus-version-unsupported");
+    for (const section of ["rules", "support", "catalog", "case"]) {
+      const corpus = await minimalCorpus();
+      (section === "case" ? corpus.cases[0] : corpus[section]).schemaVersion = oldVersion;
+      const report = validateCorpus(corpus);
+      assert.equal(report.errors[0].category, "corpus-version-unsupported");
+      assert.equal(report.languageValidation, "not-executed");
+      assert.equal(report.realProductPasses, 0);
+      assert.equal("cases" in report, false);
+    }
+    const old = await minimalCorpus();
+    for (const record of [old.rules, old.support, old.catalog, ...old.cases]) record.schemaVersion = oldVersion;
+    assert.equal(validateCorpus(old).errors[0].category, "corpus-version-unsupported");
   }
 });
 
