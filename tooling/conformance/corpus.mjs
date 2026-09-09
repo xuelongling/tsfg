@@ -45,8 +45,10 @@ function coverageReport(corpus) {
   for (const rule of corpus.rules.rules) {
     if (!rule.coverage) continue;
     for (const obligation of rule.coverage.obligations) {
+      const oracleKind = obligation.oracleKind ?? (obligation.kind === "negative" ? "diagnostics" : "return");
       const row = { ruleId: rule.ruleId, obligationId: obligation.id, stage: rule.coverage.stage,
         kind: obligation.kind, requirement: obligation.requirement, target: rule.target, mode: rule.mode,
+        ...(obligation.applicability === "required" ? { oracleKind } : {}),
         ...(obligation.budgets ? { budgets: structuredClone(obligation.budgets) } : {}) };
       if (obligation.applicability === "not-applicable") {
         notApplicable.push({ ...row, reason: obligation.reason });
@@ -59,8 +61,9 @@ function coverageReport(corpus) {
         && record.target === rule.target && record.mode === rule.mode
         && record.applicability === obligation.kind
         && Object.entries(obligation.budgets ?? {}).every(([key, value]) => record.budgets[key] === value)
-        && (obligation.kind !== "positive" || record.oracle.kind === "return")
-        && (obligation.kind !== "negative" || record.oracle.kind === "diagnostics")
+        && record.oracle.kind === oracleKind
+        && (obligation.kind !== "negative" || oracleKind !== "diagnostics"
+          || record.oracle.diagnostics.some((diagnostic) => diagnostic.severity === "error" && diagnostic.ruleIds.includes(rule.ruleId)))
         && record.coverage?.includes(obligation.id)).map((record) => record.caseId);
       obligations.push({ ...row, caseIds, status: caseIds.length ? "covered" : "missing" });
       if (!caseIds.length) gaps.push({ ...row, category: "corpus-coverage-missing" });
@@ -111,11 +114,11 @@ function validateCoverage(corpus) {
       const error = fields(obligation, rule.ruleId, {
         id: logicalId, kind: (value) => ["positive", "negative", "boundary"].includes(value), requirement: text,
         applicability: (value) => ["required", "not-applicable"].includes(value),
+        oracleKind: (value) => value === undefined || ["return", "diagnostics", "trap", "execution-abort"].includes(value),
         reason: (value) => obligation.applicability === "not-applicable"
           ? obligation.kind === "negative" && text(value) : value === undefined,
         budgets: (value) => value === undefined || (object(value) && Object.keys(value).length > 0
-          && Object.entries(value).every(([key, limit]) => key === "semanticFuel" ? natural(limit)
-            : ["activeDepth", "physicalInstructions", "memoryBytes", "hostTimeMs"].includes(key) && positive(limit))),
+          && Object.entries(value).every(([key, limit]) => Object.hasOwn(budgetPredicates, key) && budgetPredicates[key](limit))),
       });
       if (error) return error;
     }
@@ -299,6 +302,8 @@ const textArray = (value) => Array.isArray(value) && value.every(text);
 const version = (value) => value === "5";
 const natural = (value) => typeof value === "string" && /^(0|[1-9][0-9]*)$/.test(value);
 const positive = (value) => natural(value) && value !== "0";
+const budgetPredicates = { semanticFuel: natural, activeDepth: positive, physicalInstructions: positive,
+  memoryBytes: positive, hostTimeMs: positive };
 const integerWidths = new Map([["i8", 8], ["u8", 8], ["i16", 16], ["u16", 16], ["i32", 32], ["u32", 32], ["i64", 64], ["u64", 64]]);
 const floatDigits = new Map([["f16", 4], ["f32", 8], ["f64", 16]]);
 const canonicalType = (value) => value === "boolean" ? "bool" : value === "number" ? "f64" : value;
@@ -391,8 +396,7 @@ function validateRecords(corpus) {
       ruleIds: nonemptyTextArray, capabilities: nonemptyTextArray, target: text, mode: text, applicability: text,
       budgets: object, invocation: object, oracle: object, "oracle.basis": object,
       dataLayout: () => layoutForCase(record),
-      "budgets.semanticFuel": natural, "budgets.activeDepth": positive,
-      "budgets.physicalInstructions": positive, "budgets.memoryBytes": positive, "budgets.hostTimeMs": positive,
+      ...Object.fromEntries(Object.entries(budgetPredicates).map(([key, predicate]) => [`budgets.${key}`, predicate])),
       "invocation.entry": text, "invocation.arguments": (value) => Array.isArray(value) && value.every((item) => scalar(item, record.dataLayout)),
       "invocation.returnType": scalarType, "oracle.kind": (value) => value === "return" || value === "diagnostics",
       "oracle.value": (value) => record.oracle.kind === "diagnostics" ? value === undefined : (scalar(value, record.dataLayout) && canonicalType(value.type) === canonicalType(record.invocation.returnType)),

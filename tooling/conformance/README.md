@@ -146,10 +146,16 @@ targets, modes or budgets is not an exemption. The legacy `positive` and
 Cases list obligation IDs in `coverage`; every ID must resolve to a required
 obligation on an associated rule. Coverage credit requires both case/rule
 references, the rule's capability, agreement with the rule and support target/mode,
-and a matching case `applicability` kind. Positive cases require return oracles;
-negative cases currently require diagnostic oracles. Runtime trap cases remain
+and a matching case `applicability` kind. Polarity is separate from expected
+outcome: an obligation's `oracleKind` is `return`, `diagnostics`, `trap` or
+`execution-abort`. If omitted, positive/boundary defaults to `return` and negative
+defaults to `diagnostics`. Diagnostic negative coverage requires an error related
+to this rule; warning-only or another rule's error does not suffice. A negative
+non-hoisting responsibility can explicitly require a return, while division by
+zero explicitly requires a trap. Runtime trap and physical Abort cases remain
 uncovered until their oracle representation is delivered by the corresponding
-R01 slice; this ticket does not synthesize trap records or an executor.
+R01 slice; a diagnostic cannot fill those responsibilities. This ticket does not
+synthesize trap/Abort records or an executor.
 All cases require the five explicit budgets. An obligation may additionally
 specify a nonempty `budgets` object with any of those names and exact required
 values; a differently budgeted case does not fill it. Conditions appear in gaps.

@@ -24,25 +24,29 @@
             "id": "positive",
             "kind": "positive",
             "requirement": "MUST retain ASI, Unicode/escaped identifiers, precedence, narrowing and ordinary structural class compatibility.",
-            "applicability": "required"
+            "applicability": "required",
+            "oracleKind": "return"
           },
           {
             "id": "negative",
             "kind": "negative",
             "requirement": "MUST reject invalid grammar/types through the applicable official checks; no blanket diagnostic suppression.",
-            "applicability": "required"
+            "applicability": "required",
+            "oracleKind": "diagnostics"
           },
           {
             "id": "ordinary-forms",
             "kind": "boundary",
             "requirement": "MUST track uninitialized let, compound assignment, increments, assignment expressions and optional/default parameters as later coverage, not permanent prohibitions.",
-            "applicability": "required"
+            "applicability": "required",
+            "oracleKind": "return"
           },
           {
             "id": "class-construction",
             "kind": "boundary",
             "requirement": "MUST retain ordinary construction without blanket this-escape or overridable-call bans.",
-            "applicability": "required"
+            "applicability": "required",
+            "oracleKind": "return"
           }
         ]
       }
@@ -68,19 +72,22 @@
             "id": "positive",
             "kind": "positive",
             "requirement": "MUST accept .ts source and .d.ts declaration records without treating declarations as JS implementations.",
-            "applicability": "required"
+            "applicability": "required",
+            "oracleKind": "return"
           },
           {
             "id": "negative",
             "kind": "negative",
             "requirement": "MUST reject JS input/packages/bytecode, any, eval, Function(string), Proxy, prototype mutation, dynamic properties, sparse arrays/dictionaries, implicit boxing and loose equality.",
-            "applicability": "required"
+            "applicability": "required",
+            "oracleKind": "diagnostics"
           },
           {
             "id": "shared-syntax",
             "kind": "boundary",
             "requirement": "MUST NOT reject legal TS merely because its syntax is shared with JS.",
-            "applicability": "required"
+            "applicability": "required",
+            "oracleKind": "return"
           }
         ]
       }
@@ -106,37 +113,43 @@
             "id": "positive",
             "kind": "positive",
             "requirement": "MUST preserve exact token value and valid contextual i32 typing.",
-            "applicability": "required"
+            "applicability": "required",
+            "oracleKind": "return"
           },
           {
             "id": "negative",
             "kind": "negative",
             "requirement": "MUST reject out-of-range positive literals and typed implicit numeric changes.",
-            "applicability": "required"
+            "applicability": "required",
+            "oracleKind": "diagnostics"
           },
           {
             "id": "minimum",
             "kind": "boundary",
             "requirement": "MUST accept direct unary -2147483648 as a whole range check.",
-            "applicability": "required"
+            "applicability": "required",
+            "oracleKind": "return"
           },
           {
             "id": "maximum",
             "kind": "boundary",
             "requirement": "MUST accept 2147483647 and reject 2147483648.",
-            "applicability": "required"
+            "applicability": "required",
+            "oracleKind": "return"
           },
           {
             "id": "hex-range",
             "kind": "boundary",
             "requirement": "MUST reject i32 0xffffffff rather than reinterpret it as -1.",
-            "applicability": "required"
+            "applicability": "required",
+            "oracleKind": "diagnostics"
           },
           {
             "id": "exact-token",
             "kind": "boundary",
             "requirement": "MUST retain exact token values beyond host f64 precision when checking bounds.",
-            "applicability": "required"
+            "applicability": "required",
+            "oracleKind": "return"
           }
         ]
       }
@@ -162,25 +175,29 @@
             "id": "positive",
             "kind": "positive",
             "requirement": "MUST accept true/false and preserve bool short-circuit results.",
-            "applicability": "required"
+            "applicability": "required",
+            "oracleKind": "return"
           },
           {
             "id": "negative",
             "kind": "negative",
             "requirement": "MUST NOT implicitly convert i32 to bool based on ABI u8 0/1.",
-            "applicability": "required"
+            "applicability": "required",
+            "oracleKind": "diagnostics"
           },
           {
             "id": "short-circuit-and",
             "kind": "boundary",
             "requirement": "MUST skip RHS of false && RHS.",
-            "applicability": "required"
+            "applicability": "required",
+            "oracleKind": "return"
           },
           {
             "id": "short-circuit-or",
             "kind": "boundary",
             "requirement": "MUST skip RHS of true || RHS.",
-            "applicability": "required"
+            "applicability": "required",
+            "oracleKind": "return"
           }
         ]
       }
@@ -206,7 +223,8 @@
             "id": "sum",
             "kind": "positive",
             "requirement": "MUST return the wrapping sum.",
-            "applicability": "required"
+            "applicability": "required",
+            "oracleKind": "return"
           },
           {
             "id": "rejection",
@@ -219,13 +237,15 @@
             "id": "overflow",
             "kind": "boundary",
             "requirement": "MUST wrap MAX + 1 to MIN.",
-            "applicability": "required"
+            "applicability": "required",
+            "oracleKind": "return"
           },
           {
             "id": "underflow",
             "kind": "boundary",
             "requirement": "MUST wrap MIN + -1 to MAX.",
-            "applicability": "required"
+            "applicability": "required",
+            "oracleKind": "return"
           }
         ]
       }
@@ -251,7 +271,8 @@
             "id": "positive",
             "kind": "positive",
             "requirement": "MUST produce the independently derived signed result.",
-            "applicability": "required"
+            "applicability": "required",
+            "oracleKind": "return"
           },
           {
             "id": "negative",
@@ -264,19 +285,22 @@
             "id": "subtract-wrap",
             "kind": "boundary",
             "requirement": "MUST wrap MIN - 1 to MAX.",
-            "applicability": "required"
+            "applicability": "required",
+            "oracleKind": "return"
           },
           {
             "id": "multiply-wrap",
             "kind": "boundary",
             "requirement": "MUST wrap 1073741824 * 4 to zero.",
-            "applicability": "required"
+            "applicability": "required",
+            "oracleKind": "return"
           },
           {
             "id": "negate-min",
             "kind": "boundary",
             "requirement": "MUST negate MIN to MIN.",
-            "applicability": "required"
+            "applicability": "required",
+            "oracleKind": "return"
           }
         ]
       }
@@ -302,37 +326,43 @@
             "id": "positive",
             "kind": "positive",
             "requirement": "MUST preserve quotient and remainder for positive and negative operands.",
-            "applicability": "required"
+            "applicability": "required",
+            "oracleKind": "return"
           },
           {
             "id": "negative",
             "kind": "negative",
             "requirement": "MUST trap on division or remainder by zero.",
-            "applicability": "required"
+            "applicability": "required",
+            "oracleKind": "trap"
           },
           {
             "id": "min-div-minus-one",
             "kind": "boundary",
             "requirement": "MUST return MIN for MIN/-1.",
-            "applicability": "required"
+            "applicability": "required",
+            "oracleKind": "return"
           },
           {
             "id": "min-rem-minus-one",
             "kind": "boundary",
             "requirement": "MUST return zero for MIN%-1.",
-            "applicability": "required"
+            "applicability": "required",
+            "oracleKind": "return"
           },
           {
             "id": "signs",
             "kind": "boundary",
             "requirement": "MUST cover all dividend/divisor sign combinations.",
-            "applicability": "required"
+            "applicability": "required",
+            "oracleKind": "return"
           },
           {
             "id": "first-zero-trap",
             "kind": "boundary",
             "requirement": "MUST observe the first actual zero-divisor trap with its source anchor.",
-            "applicability": "required"
+            "applicability": "required",
+            "oracleKind": "trap"
           }
         ]
       }
@@ -358,43 +388,50 @@
             "id": "positive",
             "kind": "positive",
             "requirement": "MUST implement left shift, arithmetic right shift and unsigned right shift on typed i32.",
-            "applicability": "required"
+            "applicability": "required",
+            "oracleKind": "return"
           },
           {
             "id": "negative",
             "kind": "negative",
             "requirement": "MUST trap for counts below zero or above 31.",
-            "applicability": "required"
+            "applicability": "required",
+            "oracleKind": "trap"
           },
           {
             "id": "zero",
             "kind": "boundary",
             "requirement": "MUST accept shift 0.",
-            "applicability": "required"
+            "applicability": "required",
+            "oracleKind": "return"
           },
           {
             "id": "thirty-one",
             "kind": "boundary",
             "requirement": "MUST accept shift 31.",
-            "applicability": "required"
+            "applicability": "required",
+            "oracleKind": "return"
           },
           {
             "id": "minus-one",
             "kind": "boundary",
             "requirement": "MUST trap at count -1.",
-            "applicability": "required"
+            "applicability": "required",
+            "oracleKind": "trap"
           },
           {
             "id": "thirty-two",
             "kind": "boundary",
             "requirement": "MUST trap at count 32.",
-            "applicability": "required"
+            "applicability": "required",
+            "oracleKind": "trap"
           },
           {
             "id": "negative-rhs-result",
             "kind": "boundary",
             "requirement": "MUST preserve distinct >> and >>> results on negative operands.",
-            "applicability": "required"
+            "applicability": "required",
+            "oracleKind": "return"
           }
         ]
       }
@@ -420,31 +457,36 @@
             "id": "positive",
             "kind": "positive",
             "requirement": "MUST cover initialized locals, exact parameters, explicit return paths and bool conditions.",
-            "applicability": "required"
+            "applicability": "required",
+            "oracleKind": "return"
           },
           {
             "id": "negative",
             "kind": "negative",
             "requirement": "MUST reject applicable invalid TS names/types and prohibited implicit numeric changes.",
-            "applicability": "required"
+            "applicability": "required",
+            "oracleKind": "diagnostics"
           },
           {
             "id": "branches",
             "kind": "boundary",
             "requirement": "MUST observe both if/else outcomes.",
-            "applicability": "required"
+            "applicability": "required",
+            "oracleKind": "return"
           },
           {
             "id": "loop",
             "kind": "boundary",
             "requirement": "MUST cover zero iterations and repeated iterations with local mutation.",
-            "applicability": "required"
+            "applicability": "required",
+            "oracleKind": "return"
           },
           {
             "id": "comparisons",
             "kind": "boundary",
             "requirement": "MUST cover equal, less and greater values with same-type comparisons.",
-            "applicability": "required"
+            "applicability": "required",
+            "oracleKind": "return"
           }
         ]
       }
@@ -470,31 +512,36 @@
             "id": "positive",
             "kind": "positive",
             "requirement": "MUST resolve forward function calls and preserve explicit argument/return types.",
-            "applicability": "required"
+            "applicability": "required",
+            "oracleKind": "return"
           },
           {
             "id": "negative",
             "kind": "negative",
             "requirement": "MUST reject unresolved functions and incompatible arguments/returns.",
-            "applicability": "required"
+            "applicability": "required",
+            "oracleKind": "diagnostics"
           },
           {
             "id": "direct-recursion",
             "kind": "boundary",
             "requirement": "MUST preserve direct recursion.",
-            "applicability": "required"
+            "applicability": "required",
+            "oracleKind": "return"
           },
           {
             "id": "mutual-recursion",
             "kind": "boundary",
             "requirement": "MUST preserve mutual recursion.",
-            "applicability": "required"
+            "applicability": "required",
+            "oracleKind": "return"
           },
           {
             "id": "argument-order",
             "kind": "boundary",
             "requirement": "MUST evaluate explicit arguments left to right before function entry.",
-            "applicability": "required"
+            "applicability": "required",
+            "oracleKind": "return"
           }
         ]
       }
@@ -520,31 +567,36 @@
             "id": "positive",
             "kind": "positive",
             "requirement": "MUST preserve results on executed nontrapping paths.",
-            "applicability": "required"
+            "applicability": "required",
+            "oracleKind": "return"
           },
           {
             "id": "negative",
             "kind": "negative",
             "requirement": "MUST NOT hoist a trap from an unexecuted path or replace runtime trap by compile rejection.",
-            "applicability": "required"
+            "applicability": "required",
+            "oracleKind": "return"
           },
           {
             "id": "first-failure",
             "kind": "boundary",
             "requirement": "MUST report the first actual trap and source anchor.",
-            "applicability": "required"
+            "applicability": "required",
+            "oracleKind": "trap"
           },
           {
             "id": "unexecuted-trap",
             "kind": "boundary",
             "requirement": "MUST skip trap in short-circuit and untaken branch paths.",
-            "applicability": "required"
+            "applicability": "required",
+            "oracleKind": "return"
           },
           {
             "id": "folded-trap",
             "kind": "boundary",
             "requirement": "MUST preserve runtime failure kind and anchor under folding.",
-            "applicability": "required"
+            "applicability": "required",
+            "oracleKind": "return"
           }
         ]
       }
@@ -570,43 +622,50 @@
             "id": "positive",
             "kind": "positive",
             "requirement": "MUST preserve logical fuel events through optimization and inlining.",
-            "applicability": "required"
+            "applicability": "required",
+            "oracleKind": "return"
           },
           {
             "id": "negative",
             "kind": "negative",
             "requirement": "MUST trap before the event when fuel is insufficient.",
-            "applicability": "required"
+            "applicability": "required",
+            "oracleKind": "trap"
           },
           {
             "id": "entry-zero",
             "kind": "boundary",
             "requirement": "MUST fail before function entry with zero fuel.",
-            "applicability": "required"
+            "applicability": "required",
+            "oracleKind": "trap"
           },
           {
             "id": "entry-exact",
             "kind": "boundary",
             "requirement": "MUST enter with exactly one fuel.",
-            "applicability": "required"
+            "applicability": "required",
+            "oracleKind": "return"
           },
           {
             "id": "first-while",
             "kind": "boundary",
             "requirement": "MUST charge the first while check.",
-            "applicability": "required"
+            "applicability": "required",
+            "oracleKind": "return"
           },
           {
             "id": "final-false",
             "kind": "boundary",
             "requirement": "MUST charge the final false check.",
-            "applicability": "required"
+            "applicability": "required",
+            "oracleKind": "return"
           },
           {
             "id": "loop-exact-short",
             "kind": "boundary",
             "requirement": "MUST contrast exactly enough and one-short fuel without using physical instruction counts.",
-            "applicability": "required"
+            "applicability": "required",
+            "oracleKind": "return"
           }
         ]
       }
@@ -632,25 +691,29 @@
             "id": "positive",
             "kind": "positive",
             "requirement": "MUST enter a frame at exactly the configured depth limit.",
-            "applicability": "required"
+            "applicability": "required",
+            "oracleKind": "return"
           },
           {
             "id": "negative",
             "kind": "negative",
             "requirement": "MUST reject a frame that would exceed the explicit active-depth limit.",
-            "applicability": "required"
+            "applicability": "required",
+            "oracleKind": "trap"
           },
           {
             "id": "depth-boundary",
             "kind": "boundary",
             "requirement": "MUST contrast exact-limit and one-too-deep calls.",
-            "applicability": "required"
+            "applicability": "required",
+            "oracleKind": "return"
           },
           {
             "id": "arguments-first",
             "kind": "boundary",
             "requirement": "MUST observe argument failure before callee entry checks.",
-            "applicability": "required"
+            "applicability": "required",
+            "oracleKind": "return"
           }
         ]
       }
@@ -676,19 +739,22 @@
             "id": "positive",
             "kind": "positive",
             "requirement": "MUST preserve structured request-local failure observations.",
-            "applicability": "required"
+            "applicability": "required",
+            "oracleKind": "return"
           },
           {
             "id": "negative",
             "kind": "negative",
             "requirement": "MUST NOT count physical instruction/time/memory abort as a semantic success or expected trap.",
-            "applicability": "required"
+            "applicability": "required",
+            "oracleKind": "return"
           },
           {
             "id": "first-anchor",
             "kind": "boundary",
             "requirement": "MUST retain first observed Trap Code and source anchor.",
-            "applicability": "required"
+            "applicability": "required",
+            "oracleKind": "trap"
           }
         ]
       }
@@ -714,31 +780,36 @@
             "id": "positive",
             "kind": "positive",
             "requirement": "MUST cover typed widths, same-type arithmetic/comparison and target-size interpretation.",
-            "applicability": "required"
+            "applicability": "required",
+            "oracleKind": "return"
           },
           {
             "id": "negative",
             "kind": "negative",
             "requirement": "MUST reject implicit typed conversions and out-of-range literals.",
-            "applicability": "required"
+            "applicability": "required",
+            "oracleKind": "diagnostics"
           },
           {
             "id": "signed-unsigned",
             "kind": "boundary",
             "requirement": "MUST independently cover each signed/unsigned range.",
-            "applicability": "required"
+            "applicability": "required",
+            "oracleKind": "return"
           },
           {
             "id": "datalayout",
             "kind": "boundary",
             "requirement": "MUST record target-specific width rather than host assumptions.",
-            "applicability": "required"
+            "applicability": "required",
+            "oracleKind": "return"
           },
           {
             "id": "float-literal-round",
             "kind": "boundary",
             "requirement": "MUST round exact decimal/exponent text directly to target precision; reject finite overflow and preserve underflow signed zero.",
-            "applicability": "required"
+            "applicability": "required",
+            "oracleKind": "return"
           }
         ]
       }
@@ -764,25 +835,29 @@
             "id": "positive",
             "kind": "positive",
             "requirement": "MUST apply target nearest/ties-even rounding for integer-to-float and float narrowing.",
-            "applicability": "required"
+            "applicability": "required",
+            "oracleKind": "return"
           },
           {
             "id": "negative",
             "kind": "negative",
             "requirement": "MUST trap on finite-to-infinite conversion and NaN/infinite/out-of-range float-to-int after truncation toward zero.",
-            "applicability": "required"
+            "applicability": "required",
+            "oracleKind": "trap"
           },
           {
             "id": "conversion-boundaries",
             "kind": "boundary",
             "requirement": "MUST cover just-inside/outside range and ties-to-even.",
-            "applicability": "required"
+            "applicability": "required",
+            "oracleKind": "return"
           },
           {
             "id": "raw-reinterpret",
             "kind": "boundary",
             "requirement": "MUST retain equal-width raw bits.",
-            "applicability": "required"
+            "applicability": "required",
+            "oracleKind": "return"
           }
         ]
       },
@@ -823,31 +898,36 @@
             "id": "positive",
             "kind": "positive",
             "requirement": "MUST preserve IEEE division-by-zero behavior and raw move/reinterpret bits.",
-            "applicability": "required"
+            "applicability": "required",
+            "oracleKind": "return"
           },
           {
             "id": "negative",
             "kind": "negative",
             "requirement": "MUST NOT fuse FMA or silently flush subnormals in strict mode.",
-            "applicability": "required"
+            "applicability": "required",
+            "oracleKind": "return"
           },
           {
             "id": "signed-zero",
             "kind": "boundary",
             "requirement": "MUST observe both zero signs.",
-            "applicability": "required"
+            "applicability": "required",
+            "oracleKind": "return"
           },
           {
             "id": "nan-payload",
             "kind": "boundary",
             "requirement": "MUST distinguish canonical arithmetic NaN from moved payloads.",
-            "applicability": "required"
+            "applicability": "required",
+            "oracleKind": "return"
           },
           {
             "id": "rounding",
             "kind": "boundary",
             "requirement": "MUST cover ties and subnormal boundaries.",
-            "applicability": "required"
+            "applicability": "required",
+            "oracleKind": "return"
           }
         ]
       },
@@ -889,25 +969,29 @@
             "id": "positive",
             "kind": "positive",
             "requirement": "MUST copy values on assignment, arguments and return.",
-            "applicability": "required"
+            "applicability": "required",
+            "oracleKind": "return"
           },
           {
             "id": "negative",
             "kind": "negative",
             "requirement": "MUST reject identity substitution based only on equal layout and value/component inheritance.",
-            "applicability": "required"
+            "applicability": "required",
+            "oracleKind": "diagnostics"
           },
           {
             "id": "padding",
             "kind": "boundary",
             "requirement": "MUST ignore padding in equality.",
-            "applicability": "required"
+            "applicability": "required",
+            "oracleKind": "return"
           },
           {
             "id": "field-equality",
             "kind": "boundary",
             "requirement": "MUST use each field own equality rules.",
-            "applicability": "required"
+            "applicability": "required",
+            "oracleKind": "return"
           }
         ]
       }
@@ -933,25 +1017,29 @@
             "id": "positive",
             "kind": "positive",
             "requirement": "MUST preserve alias identity and ordinary compatible structural assignments.",
-            "applicability": "required"
+            "applicability": "required",
+            "oracleKind": "return"
           },
           {
             "id": "negative",
             "kind": "negative",
             "requirement": "MUST reject architecture-prohibited dynamic field/prototype changes.",
-            "applicability": "required"
+            "applicability": "required",
+            "oracleKind": "diagnostics"
           },
           {
             "id": "alias",
             "kind": "boundary",
             "requirement": "MUST observe shared identity after reference copy.",
-            "applicability": "required"
+            "applicability": "required",
+            "oracleKind": "return"
           },
           {
             "id": "readonly",
             "kind": "boundary",
             "requirement": "MUST retain shallow readonly and legal writable aliases; no inferred deep freeze.",
-            "applicability": "required"
+            "applicability": "required",
+            "oracleKind": "return"
           }
         ]
       }
@@ -977,25 +1065,29 @@
             "id": "positive",
             "kind": "positive",
             "requirement": "MUST preserve TS null/undefined/void/never, optional/default behavior and observable property absence.",
-            "applicability": "required"
+            "applicability": "required",
+            "oracleKind": "return"
           },
           {
             "id": "negative",
             "kind": "negative",
             "requirement": "MUST reject uninitialized native reads and unsafe nonnull bypass.",
-            "applicability": "required"
+            "applicability": "required",
+            "oracleKind": "diagnostics"
           },
           {
             "id": "optional-presence",
             "kind": "boundary",
             "requirement": "MUST not erase source-visible absence vs explicit undefined.",
-            "applicability": "required"
+            "applicability": "required",
+            "oracleKind": "return"
           },
           {
             "id": "default-parameters",
             "kind": "boundary",
             "requirement": "MUST default on omission/undefined, not null.",
-            "applicability": "required"
+            "applicability": "required",
+            "oracleKind": "return"
           }
         ]
       }
@@ -1021,25 +1113,29 @@
             "id": "positive",
             "kind": "positive",
             "requirement": "MUST inherit TS generic constraints/inference and compile-time interface/type tools.",
-            "applicability": "required"
+            "applicability": "required",
+            "oracleKind": "return"
           },
           {
             "id": "negative",
             "kind": "negative",
             "requirement": "MUST diagnose infinitely growing or over-budget specialization without runtime generic fallback.",
-            "applicability": "required"
+            "applicability": "required",
+            "oracleKind": "diagnostics"
           },
           {
             "id": "reuse",
             "kind": "boundary",
             "requirement": "MUST reuse same concrete type arguments.",
-            "applicability": "required"
+            "applicability": "required",
+            "oracleKind": "return"
           },
           {
             "id": "compile-budget",
             "kind": "boundary",
             "requirement": "MUST record explicit compile budget at specialization boundary.",
-            "applicability": "required"
+            "applicability": "required",
+            "oracleKind": "return"
           }
         ]
       }
@@ -1065,19 +1161,22 @@
             "id": "positive",
             "kind": "positive",
             "requirement": "MUST preserve source unions without mandatory handwritten discriminants.",
-            "applicability": "required"
+            "applicability": "required",
+            "oracleKind": "return"
           },
           {
             "id": "negative",
             "kind": "negative",
             "requirement": "MUST reject implicit dynamic boxing and unsupported ABI representations.",
-            "applicability": "required"
+            "applicability": "required",
+            "oracleKind": "diagnostics"
           },
           {
             "id": "value-reference",
             "kind": "boundary",
             "requirement": "MUST resolve mixed value/reference layout and GC responsibilities before claiming completeness.",
-            "applicability": "required"
+            "applicability": "required",
+            "oracleKind": "return"
           }
         ]
       },
@@ -1119,25 +1218,29 @@
             "id": "positive",
             "kind": "positive",
             "requirement": "MUST observe shared mutable bindings across closures.",
-            "applicability": "required"
+            "applicability": "required",
+            "oracleKind": "return"
           },
           {
             "id": "negative",
             "kind": "negative",
             "requirement": "MUST NOT retain dead stack addresses, escaping borrows or persistent code addresses.",
-            "applicability": "required"
+            "applicability": "required",
+            "oracleKind": "diagnostics"
           },
           {
             "id": "shared-binding",
             "kind": "boundary",
             "requirement": "MUST observe later writes from all capturing closures.",
-            "applicability": "required"
+            "applicability": "required",
+            "oracleKind": "return"
           },
           {
             "id": "escape",
             "kind": "boundary",
             "requirement": "MUST check escaping borrowed captures.",
-            "applicability": "required"
+            "applicability": "required",
+            "oracleKind": "return"
           }
         ]
       }
@@ -1163,25 +1266,29 @@
             "id": "positive",
             "kind": "positive",
             "requirement": "MUST retain exporter updates visible through live imports.",
-            "applicability": "required"
+            "applicability": "required",
+            "oracleKind": "return"
           },
           {
             "id": "negative",
             "kind": "negative",
             "requirement": "MUST NOT rebind imports or publish partially initialized runtime module state.",
-            "applicability": "required"
+            "applicability": "required",
+            "oracleKind": "return"
           },
           {
             "id": "external-effects",
             "kind": "boundary",
             "requirement": "MUST not promise rollback of already-observed external effects.",
-            "applicability": "required"
+            "applicability": "required",
+            "oracleKind": "return"
           },
           {
             "id": "source-shapes",
             "kind": "boundary",
             "requirement": "MUST track dynamic import and value cycles as implementation coverage rather than new permanent prohibitions.",
-            "applicability": "required"
+            "applicability": "required",
+            "oracleKind": "return"
           }
         ]
       }
@@ -1207,19 +1314,22 @@
             "id": "positive",
             "kind": "positive",
             "requirement": "MUST preserve ordinary TS exception flow and finally behavior.",
-            "applicability": "required"
+            "applicability": "required",
+            "oracleKind": "return"
           },
           {
             "id": "negative",
             "kind": "negative",
             "requirement": "MUST reject exceptions crossing Zig ABI or entering kernels.",
-            "applicability": "required"
+            "applicability": "required",
+            "oracleKind": "diagnostics"
           },
           {
             "id": "failure-interaction",
             "kind": "boundary",
             "requirement": "MUST resolve actual exception/trap/Abort cleanup and budget intersection before adding oracle.",
-            "applicability": "required"
+            "applicability": "required",
+            "oracleKind": "return"
           }
         ]
       },
@@ -1261,19 +1371,22 @@
             "id": "positive",
             "kind": "positive",
             "requirement": "MUST preserve defined homogeneous vector operations.",
-            "applicability": "required"
+            "applicability": "required",
+            "oracleKind": "return"
           },
           {
             "id": "negative",
             "kind": "negative",
             "requirement": "MUST reject sparse/dynamic dictionary representations.",
-            "applicability": "required"
+            "applicability": "required",
+            "oracleKind": "diagnostics"
           },
           {
             "id": "ownership",
             "kind": "boundary",
             "requirement": "MUST fix element categories, ownership, copy/equality and mutation/borrow interactions before completeness.",
-            "applicability": "required"
+            "applicability": "required",
+            "oracleKind": "return"
           }
         ]
       },
@@ -1315,25 +1428,29 @@
             "id": "positive",
             "kind": "positive",
             "requirement": "MUST allow proved-valid borrowed access within its lifetime.",
-            "applicability": "required"
+            "applicability": "required",
+            "oracleKind": "return"
           },
           {
             "id": "negative",
             "kind": "negative",
             "requirement": "MUST reject escaping lifetime or mutable access violations.",
-            "applicability": "required"
+            "applicability": "required",
+            "oracleKind": "diagnostics"
           },
           {
             "id": "return-capture",
             "kind": "boundary",
             "requirement": "MUST cover return and closure capture escape boundaries.",
-            "applicability": "required"
+            "applicability": "required",
+            "oracleKind": "return"
           },
           {
             "id": "bounds",
             "kind": "boundary",
             "requirement": "MUST cover applicable zero/end/out-of-range accesses.",
-            "applicability": "required"
+            "applicability": "required",
+            "oracleKind": "return"
           }
         ]
       }
@@ -1359,19 +1476,22 @@
             "id": "positive",
             "kind": "positive",
             "requirement": "MUST preserve accepted text under the independently specified mapping.",
-            "applicability": "required"
+            "applicability": "required",
+            "oracleKind": "return"
           },
           {
             "id": "negative",
             "kind": "negative",
             "requirement": "MUST reject unsafe ABI text inputs under that mapping, without inventing unapproved source surrogate bans.",
-            "applicability": "required"
+            "applicability": "required",
+            "oracleKind": "diagnostics"
           },
           {
             "id": "text-domain",
             "kind": "boundary",
             "requirement": "MUST resolve length/index/slice units and unpaired surrogate representation before independent oracle claims.",
-            "applicability": "required"
+            "applicability": "required",
+            "oracleKind": "return"
           }
         ]
       },
@@ -1414,25 +1534,29 @@
             "id": "positive",
             "kind": "positive",
             "requirement": "MUST expose typed scalars/layouts, spans, StringView and handles through their explicit contracts.",
-            "applicability": "required"
+            "applicability": "required",
+            "oracleKind": "return"
           },
           {
             "id": "negative",
             "kind": "negative",
             "requirement": "MUST reject managed raw pointers and unsafe lifetime/ABI crossings.",
-            "applicability": "required"
+            "applicability": "required",
+            "oracleKind": "diagnostics"
           },
           {
             "id": "handle-generation",
             "kind": "boundary",
             "requirement": "MUST cover stale generation and valid handles.",
-            "applicability": "required"
+            "applicability": "required",
+            "oracleKind": "return"
           },
           {
             "id": "layout",
             "kind": "boundary",
             "requirement": "MUST use target DataLayout for size/alignment/offset and calling convention.",
-            "applicability": "required"
+            "applicability": "required",
+            "oracleKind": "return"
           }
         ]
       }
@@ -1458,19 +1582,22 @@
             "id": "positive",
             "kind": "positive",
             "requirement": "MUST prefer TS legal positions and existing types/APIs.",
-            "applicability": "required"
+            "applicability": "required",
+            "oracleKind": "return"
           },
           {
             "id": "negative",
             "kind": "negative",
             "requirement": "MUST NOT introduce a general decorator/macro/plugin runtime or speculative keywords.",
-            "applicability": "required"
+            "applicability": "required",
+            "oracleKind": "diagnostics"
           },
           {
             "id": "consumer-intent",
             "kind": "boundary",
             "requirement": "MUST bind every necessary marker position/parameter to a concrete value/component/ABI/system consumer.",
-            "applicability": "required"
+            "applicability": "required",
+            "oracleKind": "return"
           }
         ]
       },
@@ -1512,19 +1639,22 @@
             "id": "positive",
             "kind": "positive",
             "requirement": "MUST accept proved-safe value-plane computation with complete access sets.",
-            "applicability": "required"
+            "applicability": "required",
+            "oracleKind": "return"
           },
           {
             "id": "negative",
             "kind": "negative",
             "requirement": "MUST reject each prohibited operation and escaping borrowed access.",
-            "applicability": "required"
+            "applicability": "required",
+            "oracleKind": "diagnostics"
           },
           {
             "id": "access-effects",
             "kind": "boundary",
             "requirement": "MUST cover conflicting/nonconflicting reads/writes and Query borrow boundaries.",
-            "applicability": "required"
+            "applicability": "required",
+            "oracleKind": "return"
           }
         ]
       }
@@ -1550,19 +1680,22 @@
             "id": "positive",
             "kind": "positive",
             "requirement": "MUST compare against independent CPU relation after its parameters are fixed.",
-            "applicability": "required"
+            "applicability": "required",
+            "oracleKind": "return"
           },
           {
             "id": "negative",
             "kind": "negative",
             "requirement": "MUST reject results outside the independent relation and conflicting access.",
-            "applicability": "required"
+            "applicability": "required",
+            "oracleKind": "diagnostics"
           },
           {
             "id": "reduction-order",
             "kind": "boundary",
             "requirement": "MUST account for scheduling/reduction nondeterminism explicitly.",
-            "applicability": "required"
+            "applicability": "required",
+            "oracleKind": "return"
           }
         ]
       },
@@ -1603,19 +1736,22 @@
             "id": "positive",
             "kind": "positive",
             "requirement": "MUST verify allowed transformations under an explicit fast-math contract.",
-            "applicability": "required"
+            "applicability": "required",
+            "oracleKind": "return"
           },
           {
             "id": "negative",
             "kind": "negative",
             "requirement": "MUST reject results outside that contract rather than reuse strict equivalence.",
-            "applicability": "required"
+            "applicability": "required",
+            "oracleKind": "diagnostics"
           },
           {
             "id": "fast-boundaries",
             "kind": "boundary",
             "requirement": "MUST define error bounds, exceptional values and transformation permissions.",
-            "applicability": "required"
+            "applicability": "required",
+            "oracleKind": "return"
           }
         ]
       },
@@ -1656,19 +1792,22 @@
             "id": "positive",
             "kind": "positive",
             "requirement": "MUST verify typed kernel outputs under a fixed device/mode relation.",
-            "applicability": "required"
+            "applicability": "required",
+            "oracleKind": "return"
           },
           {
             "id": "negative",
             "kind": "negative",
             "requirement": "MUST reject outputs outside the relation and prohibited kernel operations.",
-            "applicability": "required"
+            "applicability": "required",
+            "oracleKind": "diagnostics"
           },
           {
             "id": "device-nondeterminism",
             "kind": "boundary",
             "requirement": "MUST explicitly cover permitted precision, exceptional values and nondeterminism.",
-            "applicability": "required"
+            "applicability": "required",
+            "oracleKind": "return"
           }
         ]
       },
@@ -1709,25 +1848,29 @@
             "id": "positive",
             "kind": "positive",
             "requirement": "MUST enumerate complete rule/target/mode/budget responsibilities with independent oracles.",
-            "applicability": "required"
+            "applicability": "required",
+            "oracleKind": "return"
           },
           {
             "id": "negative",
             "kind": "negative",
             "requirement": "MUST NOT count parser acceptance, correct unsupported rejection, comparator fixtures or backend agreement as verified language support.",
-            "applicability": "required"
+            "applicability": "required",
+            "oracleKind": "return"
           },
           {
             "id": "all-applicable",
             "kind": "boundary",
             "requirement": "MUST close all applicable positive/negative/boundary responsibilities and unresolved special mappings.",
-            "applicability": "required"
+            "applicability": "required",
+            "oracleKind": "return"
           },
           {
             "id": "real-evidence",
             "kind": "boundary",
             "requirement": "MUST keep record checks, implementation claims and real execution verification separate.",
-            "applicability": "required"
+            "applicability": "required",
+            "oracleKind": "return"
           }
         ]
       }

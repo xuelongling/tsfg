@@ -76,6 +76,7 @@ test("missing responsibilities and malformed exemptions never produce complete c
     (rule) => { rule.coverage.obligations[1].applicability = "not-applicable"; rule.coverage.obligations[1].reason = "No tests yet"; },
     (rule) => { rule.coverage.stage = "later"; },
     (rule) => { rule.coverage.obligations[0].kind = "maybe"; },
+    (rule) => { rule.coverage.obligations[0].oracleKind = "maybe"; },
     (rule) => { rule.coverage.obligations[1].id = "sum"; },
     (rule) => { rule.coverage.obligations = []; },
   ]) {
@@ -166,6 +167,8 @@ test("the full directory retains initial gaps and W3 through W6 consumer respons
     assert.ok(report.coverage.gaps.some((gap) => gap.ruleId === id), id);
   }
   assert.ok(report.coverage.pending.some((entry) => entry.ruleId === "r01-string" && entry.missing.length && entry.consumers.length));
+  assert.equal(report.coverage.gaps.find((entry) => entry.ruleId === "r01-division" && entry.kind === "negative").oracleKind, "trap");
+  assert.equal(report.coverage.gaps.find((entry) => entry.ruleId === "r01-evaluation" && entry.kind === "negative").oracleKind, "return");
   assert.ok(report.coverage.stages.every((stage) => stage.ruleIds.length > 0));
   assert.ok(report.capabilities.every((entry) => entry.currentSupport === "not-verified"));
   assert.equal(report.languageValidation, "not-executed");
@@ -186,4 +189,45 @@ test("unassessed rules and condition mismatches stay visible, and reports are de
   report.capabilities[0].implementation = "altered report";
   assert.notEqual(corpus.rules.rules[0].requirement, "altered report");
   assert.equal(corpus.support.capabilities[0].implementation, "not-connected");
+});
+
+test("negative coverage requires a related error and cannot substitute diagnostics for a required trap", async () => {
+  const corpus = await completeAddition();
+  // These are validator test records, not additional language rules or product evidence.
+  const rule = corpus.rules.rules[0];
+  rule.ruleId = "tool-rejection-rule";
+  rule.requirement = "Tool-only rejection coverage matching";
+  corpus.catalog.identities[0].id = rule.ruleId;
+  corpus.catalog.identities[0].meaning = rule.requirement;
+  for (const record of corpus.cases) record.ruleIds = [rule.ruleId];
+  const negative = rule.coverage.obligations.find((entry) => entry.kind === "negative");
+  negative.applicability = "required";
+  negative.requirement = "MUST reject the tool-only negative input";
+  delete negative.reason;
+  negative.oracleKind = "diagnostics";
+  rule.diagnosticCodes = ["tool-reject"];
+  const record = structuredClone(corpus.cases[0]);
+  record.caseId = "tool-rejection-case";
+  record.applicability = "negative";
+  record.coverage = [negative.id];
+  record.oracle = { kind: "diagnostics", basis: { kind: "manual-derivation", reference: "Coverage validator self-test",
+    derivation: "An authored error is a rejection expectation; a warning alone is not." }, diagnostics: [{
+    phase: "types", severity: "error", code: "tool-reject", ruleIds: [rule.ruleId],
+    primary: { sourceId: "add.ts", start: 0, end: 1, startLine: 0, startColumn: 0, endLine: 0, endColumn: 1 },
+  }] };
+  corpus.cases.push(record);
+  rule.caseIds.push(record.caseId);
+  corpus.catalog.identities.push({ kind: "case", id: record.caseId, meaning: "Tool rejection case", status: "active", introducedIn: corpus.catalog.corpusId },
+    { kind: "diagnostic", id: "tool-reject", meaning: "Tool rejection code", status: "active", introducedIn: corpus.rules.specId });
+  assert.equal(validateCorpus(corpus).coverage.initial, "complete");
+  record.oracle.diagnostics[0].severity = "warning";
+  assert.equal(validateCorpus(corpus).coverage.initial, "incomplete");
+  record.oracle.diagnostics[0].severity = "error";
+  negative.oracleKind = "trap";
+  assert.equal(validateCorpus(corpus).coverage.initial, "incomplete");
+  assert.equal(validateCorpus(corpus).coverage.gaps[0].oracleKind, "trap");
+  negative.oracleKind = "return";
+  negative.requirement = "MUST NOT hoist an unexecuted trap (tool-only matching scenario)";
+  record.oracle = structuredClone(corpus.cases[0].oracle);
+  assert.equal(validateCorpus(corpus).coverage.initial, "complete");
 });
