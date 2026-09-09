@@ -1,0 +1,2018 @@
+{
+  "schemaVersion": "5",
+  "specId": "tsfg-r01-v2",
+  "languageBaseline": "TypeScript 7.0.2",
+  "rules": [
+    {
+      "ruleId": "r01-ts-baseline",
+      "caseIds": [],
+      "requirement": "Ordinary lexical, grammar, naming, type relations, control flow and class construction MUST inherit fixed TS 7.0.2 unless an explicit necessary difference applies.",
+      "semanticSource": "inherited-baseline",
+      "basis": "docs/r01-language-contract.md#21-沿用-typescript; TypeScript 7.0.2 baseline (inherited rules refer to official scanner/parser/checker and conformance tests for this capability, intake commit remains R02a responsibility).",
+      "rationale": "Reuse official TS 7.0.2 language semantics; unlisted ordinary behavior is inherited, never pending reauthorization.",
+      "capability": "ts-baseline",
+      "target": "windows-x86_64-msvc",
+      "mode": "strict",
+      "positive": "MUST retain ASI, Unicode/escaped identifiers, precedence, narrowing and ordinary structural class compatibility.",
+      "negativeNotApplicable": "Applicable negative responsibilities are listed in coverage; error identities are allocated with concrete diagnostic/trap corpus.",
+      "diagnosticCodes": [],
+      "trapCodes": [],
+      "coverage": {
+        "stage": "W3",
+        "obligations": [
+          {
+            "id": "positive",
+            "kind": "positive",
+            "requirement": "MUST retain ASI, Unicode/escaped identifiers, precedence, narrowing and ordinary structural class compatibility.",
+            "applicability": "required"
+          },
+          {
+            "id": "negative",
+            "kind": "negative",
+            "requirement": "MUST reject invalid grammar/types through the applicable official checks; no blanket diagnostic suppression.",
+            "applicability": "required"
+          },
+          {
+            "id": "ordinary-forms",
+            "kind": "boundary",
+            "requirement": "MUST track uninitialized let, compound assignment, increments, assignment expressions and optional/default parameters as later coverage, not permanent prohibitions.",
+            "applicability": "required"
+          },
+          {
+            "id": "class-construction",
+            "kind": "boundary",
+            "requirement": "MUST retain ordinary construction without blanket this-escape or overridable-call bans.",
+            "applicability": "required"
+          }
+        ]
+      }
+    },
+    {
+      "ruleId": "r01-input-boundary",
+      "caseIds": [],
+      "requirement": "Source/declaration input MUST be TS; JS runtime fallback and architectural dynamic features MUST NOT be introduced.",
+      "semanticSource": "necessary-difference",
+      "basis": "docs/r01-language-contract.md#23-输入与明确排除项; TypeScript 7.0.2 baseline (inherited rules refer to official scanner/parser/checker and conformance tests for this capability, intake commit remains R02a responsibility).",
+      "rationale": "Architecture explicitly excludes JS input/runtime and dynamic representations; TS source remains allowed.",
+      "capability": "input-boundary",
+      "target": "windows-x86_64-msvc",
+      "mode": "strict",
+      "positive": "MUST accept .ts source and .d.ts declaration records without treating declarations as JS implementations.",
+      "negativeNotApplicable": "Applicable negative responsibilities are listed in coverage; error identities are allocated with concrete diagnostic/trap corpus.",
+      "diagnosticCodes": [],
+      "trapCodes": [],
+      "coverage": {
+        "stage": "W1",
+        "obligations": [
+          {
+            "id": "positive",
+            "kind": "positive",
+            "requirement": "MUST accept .ts source and .d.ts declaration records without treating declarations as JS implementations.",
+            "applicability": "required"
+          },
+          {
+            "id": "negative",
+            "kind": "negative",
+            "requirement": "MUST reject JS input/packages/bytecode, any, eval, Function(string), Proxy, prototype mutation, dynamic properties, sparse arrays/dictionaries, implicit boxing and loose equality.",
+            "applicability": "required"
+          },
+          {
+            "id": "shared-syntax",
+            "kind": "boundary",
+            "requirement": "MUST NOT reject legal TS merely because its syntax is shared with JS.",
+            "applicability": "required"
+          }
+        ]
+      }
+    },
+    {
+      "ruleId": "r01-literals",
+      "caseIds": [],
+      "requirement": "Integer tokens MUST be read as exact mathematical values; untyped literals default to i32 or use an explicit context.",
+      "semanticSource": "necessary-difference",
+      "basis": "docs/r01-language-contract.md#41-类型与定型; TypeScript 7.0.2 baseline (inherited rules refer to official scanner/parser/checker and conformance tests for this capability, intake commit remains R02a responsibility).",
+      "rationale": "Fixed-width, memory-safe execution shared by HIR/Core IR, VM, AOT and Zig consumers.",
+      "capability": "literals",
+      "target": "windows-x86_64-msvc",
+      "mode": "strict",
+      "positive": "MUST preserve exact token value and valid contextual i32 typing.",
+      "negativeNotApplicable": "Applicable negative responsibilities are listed in coverage; error identities are allocated with concrete diagnostic/trap corpus.",
+      "diagnosticCodes": [],
+      "trapCodes": [],
+      "coverage": {
+        "stage": "W1",
+        "obligations": [
+          {
+            "id": "positive",
+            "kind": "positive",
+            "requirement": "MUST preserve exact token value and valid contextual i32 typing.",
+            "applicability": "required"
+          },
+          {
+            "id": "negative",
+            "kind": "negative",
+            "requirement": "MUST reject out-of-range positive literals and typed implicit numeric changes.",
+            "applicability": "required"
+          },
+          {
+            "id": "minimum",
+            "kind": "boundary",
+            "requirement": "MUST accept direct unary -2147483648 as a whole range check.",
+            "applicability": "required"
+          },
+          {
+            "id": "maximum",
+            "kind": "boundary",
+            "requirement": "MUST accept 2147483647 and reject 2147483648.",
+            "applicability": "required"
+          },
+          {
+            "id": "hex-range",
+            "kind": "boundary",
+            "requirement": "MUST reject i32 0xffffffff rather than reinterpret it as -1.",
+            "applicability": "required"
+          },
+          {
+            "id": "exact-token",
+            "kind": "boundary",
+            "requirement": "MUST retain exact token values beyond host f64 precision when checking bounds.",
+            "applicability": "required"
+          }
+        ]
+      }
+    },
+    {
+      "ruleId": "r01-bool",
+      "caseIds": [],
+      "requirement": "bool and boolean MUST be aliases; first-slice conditions and short circuit MUST operate on bool.",
+      "semanticSource": "necessary-difference",
+      "basis": "docs/r01-language-contract.md#41-类型与定型; TypeScript 7.0.2 baseline (inherited rules refer to official scanner/parser/checker and conformance tests for this capability, intake commit remains R02a responsibility).",
+      "rationale": "Bool scalar representation and W1 coverage; not a permanent restriction on every later TS condition.",
+      "capability": "bool",
+      "target": "windows-x86_64-msvc",
+      "mode": "strict",
+      "positive": "MUST accept true/false and preserve bool short-circuit results.",
+      "negativeNotApplicable": "Applicable negative responsibilities are listed in coverage; error identities are allocated with concrete diagnostic/trap corpus.",
+      "diagnosticCodes": [],
+      "trapCodes": [],
+      "coverage": {
+        "stage": "W1",
+        "obligations": [
+          {
+            "id": "positive",
+            "kind": "positive",
+            "requirement": "MUST accept true/false and preserve bool short-circuit results.",
+            "applicability": "required"
+          },
+          {
+            "id": "negative",
+            "kind": "negative",
+            "requirement": "MUST NOT implicitly convert i32 to bool based on ABI u8 0/1.",
+            "applicability": "required"
+          },
+          {
+            "id": "short-circuit-and",
+            "kind": "boundary",
+            "requirement": "MUST skip RHS of false && RHS.",
+            "applicability": "required"
+          },
+          {
+            "id": "short-circuit-or",
+            "kind": "boundary",
+            "requirement": "MUST skip RHS of true || RHS.",
+            "applicability": "required"
+          }
+        ]
+      }
+    },
+    {
+      "ruleId": "r01-i32-add",
+      "caseIds": [],
+      "requirement": "i32 addition wraps to signed 32 bits.",
+      "semanticSource": "necessary-difference",
+      "basis": "docs/r01-language-contract.md#42-整数运算; TypeScript 7.0.2 baseline (inherited rules refer to official scanner/parser/checker and conformance tests for this capability, intake commit remains R02a responsibility).",
+      "rationale": "Fixed-width, memory-safe execution shared by HIR/Core IR, VM, AOT and Zig consumers.",
+      "capability": "scalar-i32",
+      "target": "windows-x86_64-msvc",
+      "mode": "strict",
+      "positive": "MUST return the wrapping sum.",
+      "negativeNotApplicable": "Addition is defined for every pair of i32 operands; no arithmetic rejection or trap.",
+      "diagnosticCodes": [],
+      "trapCodes": [],
+      "coverage": {
+        "stage": "W1",
+        "obligations": [
+          {
+            "id": "sum",
+            "kind": "positive",
+            "requirement": "MUST return the wrapping sum.",
+            "applicability": "required"
+          },
+          {
+            "id": "rejection",
+            "kind": "negative",
+            "requirement": "There is no invalid form within this rule domain.",
+            "applicability": "not-applicable",
+            "reason": "Addition is defined for every pair of i32 operands; no arithmetic rejection or trap."
+          },
+          {
+            "id": "overflow",
+            "kind": "boundary",
+            "requirement": "MUST wrap MAX + 1 to MIN.",
+            "applicability": "required"
+          },
+          {
+            "id": "underflow",
+            "kind": "boundary",
+            "requirement": "MUST wrap MIN + -1 to MAX.",
+            "applicability": "required"
+          }
+        ]
+      }
+    },
+    {
+      "ruleId": "r01-i32-wrap",
+      "caseIds": [],
+      "requirement": "i32 subtraction, multiplication and negation MUST wrap at 32 bits.",
+      "semanticSource": "necessary-difference",
+      "basis": "docs/r01-language-contract.md#42-整数运算; TypeScript 7.0.2 baseline (inherited rules refer to official scanner/parser/checker and conformance tests for this capability, intake commit remains R02a responsibility).",
+      "rationale": "Fixed-width, memory-safe execution shared by HIR/Core IR, VM, AOT and Zig consumers.",
+      "capability": "i32-wrap",
+      "target": "windows-x86_64-msvc",
+      "mode": "strict",
+      "positive": "MUST produce the independently derived signed result.",
+      "negativeNotApplicable": "Each operation is total on well-typed i32 operands; overflow wraps rather than rejects.",
+      "diagnosticCodes": [],
+      "trapCodes": [],
+      "coverage": {
+        "stage": "W1",
+        "obligations": [
+          {
+            "id": "positive",
+            "kind": "positive",
+            "requirement": "MUST produce the independently derived signed result.",
+            "applicability": "required"
+          },
+          {
+            "id": "negative",
+            "kind": "negative",
+            "requirement": "There is no invalid form within this rule domain.",
+            "applicability": "not-applicable",
+            "reason": "Each operation is total on well-typed i32 operands; overflow wraps rather than rejects."
+          },
+          {
+            "id": "subtract-wrap",
+            "kind": "boundary",
+            "requirement": "MUST wrap MIN - 1 to MAX.",
+            "applicability": "required"
+          },
+          {
+            "id": "multiply-wrap",
+            "kind": "boundary",
+            "requirement": "MUST wrap 1073741824 * 4 to zero.",
+            "applicability": "required"
+          },
+          {
+            "id": "negate-min",
+            "kind": "boundary",
+            "requirement": "MUST negate MIN to MIN.",
+            "applicability": "required"
+          }
+        ]
+      }
+    },
+    {
+      "ruleId": "r01-division",
+      "caseIds": [],
+      "requirement": "i32 division MUST truncate toward zero and nonzero remainder MUST have the dividend sign.",
+      "semanticSource": "necessary-difference",
+      "basis": "docs/r01-language-contract.md#42-整数运算; TypeScript 7.0.2 baseline (inherited rules refer to official scanner/parser/checker and conformance tests for this capability, intake commit remains R02a responsibility).",
+      "rationale": "Fixed-width, memory-safe execution shared by HIR/Core IR, VM, AOT and Zig consumers.",
+      "capability": "division",
+      "target": "windows-x86_64-msvc",
+      "mode": "strict",
+      "positive": "MUST preserve quotient and remainder for positive and negative operands.",
+      "negativeNotApplicable": "Applicable negative responsibilities are listed in coverage; error identities are allocated with concrete diagnostic/trap corpus.",
+      "diagnosticCodes": [],
+      "trapCodes": [],
+      "coverage": {
+        "stage": "W1",
+        "obligations": [
+          {
+            "id": "positive",
+            "kind": "positive",
+            "requirement": "MUST preserve quotient and remainder for positive and negative operands.",
+            "applicability": "required"
+          },
+          {
+            "id": "negative",
+            "kind": "negative",
+            "requirement": "MUST trap on division or remainder by zero.",
+            "applicability": "required"
+          },
+          {
+            "id": "min-div-minus-one",
+            "kind": "boundary",
+            "requirement": "MUST return MIN for MIN/-1.",
+            "applicability": "required"
+          },
+          {
+            "id": "min-rem-minus-one",
+            "kind": "boundary",
+            "requirement": "MUST return zero for MIN%-1.",
+            "applicability": "required"
+          },
+          {
+            "id": "signs",
+            "kind": "boundary",
+            "requirement": "MUST cover all dividend/divisor sign combinations.",
+            "applicability": "required"
+          },
+          {
+            "id": "first-zero-trap",
+            "kind": "boundary",
+            "requirement": "MUST observe the first actual zero-divisor trap with its source anchor.",
+            "applicability": "required"
+          }
+        ]
+      }
+    },
+    {
+      "ruleId": "r01-shifts",
+      "caseIds": [],
+      "requirement": "i32 shift counts MUST be i32 in 0..31; >> sign extends and >>> zero fills with i32 result.",
+      "semanticSource": "necessary-difference",
+      "basis": "docs/r01-language-contract.md#42-整数运算; TypeScript 7.0.2 baseline (inherited rules refer to official scanner/parser/checker and conformance tests for this capability, intake commit remains R02a responsibility).",
+      "rationale": "Fixed-width, memory-safe execution shared by HIR/Core IR, VM, AOT and Zig consumers.",
+      "capability": "shifts",
+      "target": "windows-x86_64-msvc",
+      "mode": "strict",
+      "positive": "MUST implement left shift, arithmetic right shift and unsigned right shift on typed i32.",
+      "negativeNotApplicable": "Applicable negative responsibilities are listed in coverage; error identities are allocated with concrete diagnostic/trap corpus.",
+      "diagnosticCodes": [],
+      "trapCodes": [],
+      "coverage": {
+        "stage": "W1",
+        "obligations": [
+          {
+            "id": "positive",
+            "kind": "positive",
+            "requirement": "MUST implement left shift, arithmetic right shift and unsigned right shift on typed i32.",
+            "applicability": "required"
+          },
+          {
+            "id": "negative",
+            "kind": "negative",
+            "requirement": "MUST trap for counts below zero or above 31.",
+            "applicability": "required"
+          },
+          {
+            "id": "zero",
+            "kind": "boundary",
+            "requirement": "MUST accept shift 0.",
+            "applicability": "required"
+          },
+          {
+            "id": "thirty-one",
+            "kind": "boundary",
+            "requirement": "MUST accept shift 31.",
+            "applicability": "required"
+          },
+          {
+            "id": "minus-one",
+            "kind": "boundary",
+            "requirement": "MUST trap at count -1.",
+            "applicability": "required"
+          },
+          {
+            "id": "thirty-two",
+            "kind": "boundary",
+            "requirement": "MUST trap at count 32.",
+            "applicability": "required"
+          },
+          {
+            "id": "negative-rhs-result",
+            "kind": "boundary",
+            "requirement": "MUST preserve distinct >> and >>> results on negative operands.",
+            "applicability": "required"
+          }
+        ]
+      }
+    },
+    {
+      "ruleId": "r01-control",
+      "caseIds": [],
+      "requirement": "The W1 slice MUST cover top-level i32/bool functions, initialized const/let, simple assignment, arithmetic/comparison, if/else, while, calls and return without reference allocation.",
+      "semanticSource": "necessary-difference",
+      "basis": "docs/r01-language-contract.md#3-首批可验证覆盖; TypeScript 7.0.2 baseline (inherited rules refer to official scanner/parser/checker and conformance tests for this capability, intake commit remains R02a responsibility).",
+      "rationale": "Fixed-width, memory-safe execution shared by HIR/Core IR, VM, AOT and Zig consumers.",
+      "capability": "control",
+      "target": "windows-x86_64-msvc",
+      "mode": "strict",
+      "positive": "MUST cover initialized locals, exact parameters, explicit return paths and bool conditions.",
+      "negativeNotApplicable": "Applicable negative responsibilities are listed in coverage; error identities are allocated with concrete diagnostic/trap corpus.",
+      "diagnosticCodes": [],
+      "trapCodes": [],
+      "coverage": {
+        "stage": "W1",
+        "obligations": [
+          {
+            "id": "positive",
+            "kind": "positive",
+            "requirement": "MUST cover initialized locals, exact parameters, explicit return paths and bool conditions.",
+            "applicability": "required"
+          },
+          {
+            "id": "negative",
+            "kind": "negative",
+            "requirement": "MUST reject applicable invalid TS names/types and prohibited implicit numeric changes.",
+            "applicability": "required"
+          },
+          {
+            "id": "branches",
+            "kind": "boundary",
+            "requirement": "MUST observe both if/else outcomes.",
+            "applicability": "required"
+          },
+          {
+            "id": "loop",
+            "kind": "boundary",
+            "requirement": "MUST cover zero iterations and repeated iterations with local mutation.",
+            "applicability": "required"
+          },
+          {
+            "id": "comparisons",
+            "kind": "boundary",
+            "requirement": "MUST cover equal, less and greater values with same-type comparisons.",
+            "applicability": "required"
+          }
+        ]
+      }
+    },
+    {
+      "ruleId": "r01-calls",
+      "caseIds": [],
+      "requirement": "Forward calls and direct/mutual recursion MUST be permitted in the first slice.",
+      "semanticSource": "inherited-baseline",
+      "basis": "docs/r01-language-contract.md#3-首批可验证覆盖; TypeScript 7.0.2 baseline (inherited rules refer to official scanner/parser/checker and conformance tests for this capability, intake commit remains R02a responsibility).",
+      "rationale": "Fixed-width, memory-safe execution shared by HIR/Core IR, VM, AOT and Zig consumers.",
+      "capability": "calls",
+      "target": "windows-x86_64-msvc",
+      "mode": "strict",
+      "positive": "MUST resolve forward function calls and preserve explicit argument/return types.",
+      "negativeNotApplicable": "Applicable negative responsibilities are listed in coverage; error identities are allocated with concrete diagnostic/trap corpus.",
+      "diagnosticCodes": [],
+      "trapCodes": [],
+      "coverage": {
+        "stage": "W1",
+        "obligations": [
+          {
+            "id": "positive",
+            "kind": "positive",
+            "requirement": "MUST resolve forward function calls and preserve explicit argument/return types.",
+            "applicability": "required"
+          },
+          {
+            "id": "negative",
+            "kind": "negative",
+            "requirement": "MUST reject unresolved functions and incompatible arguments/returns.",
+            "applicability": "required"
+          },
+          {
+            "id": "direct-recursion",
+            "kind": "boundary",
+            "requirement": "MUST preserve direct recursion.",
+            "applicability": "required"
+          },
+          {
+            "id": "mutual-recursion",
+            "kind": "boundary",
+            "requirement": "MUST preserve mutual recursion.",
+            "applicability": "required"
+          },
+          {
+            "id": "argument-order",
+            "kind": "boundary",
+            "requirement": "MUST evaluate explicit arguments left to right before function entry.",
+            "applicability": "required"
+          }
+        ]
+      }
+    },
+    {
+      "ruleId": "r01-evaluation",
+      "caseIds": [],
+      "requirement": "Operands and arguments MUST evaluate left to right; first actual trap stops later evaluation; folding MUST preserve execution paths.",
+      "semanticSource": "necessary-difference",
+      "basis": "docs/r01-language-contract.md#42-整数运算; TypeScript 7.0.2 baseline (inherited rules refer to official scanner/parser/checker and conformance tests for this capability, intake commit remains R02a responsibility).",
+      "rationale": "Fixed-width, memory-safe execution shared by HIR/Core IR, VM, AOT and Zig consumers.",
+      "capability": "evaluation",
+      "target": "windows-x86_64-msvc",
+      "mode": "strict",
+      "positive": "MUST preserve results on executed nontrapping paths.",
+      "negativeNotApplicable": "Applicable negative responsibilities are listed in coverage; error identities are allocated with concrete diagnostic/trap corpus.",
+      "diagnosticCodes": [],
+      "trapCodes": [],
+      "coverage": {
+        "stage": "W1",
+        "obligations": [
+          {
+            "id": "positive",
+            "kind": "positive",
+            "requirement": "MUST preserve results on executed nontrapping paths.",
+            "applicability": "required"
+          },
+          {
+            "id": "negative",
+            "kind": "negative",
+            "requirement": "MUST NOT hoist a trap from an unexecuted path or replace runtime trap by compile rejection.",
+            "applicability": "required"
+          },
+          {
+            "id": "first-failure",
+            "kind": "boundary",
+            "requirement": "MUST report the first actual trap and source anchor.",
+            "applicability": "required"
+          },
+          {
+            "id": "unexecuted-trap",
+            "kind": "boundary",
+            "requirement": "MUST skip trap in short-circuit and untaken branch paths.",
+            "applicability": "required"
+          },
+          {
+            "id": "folded-trap",
+            "kind": "boundary",
+            "requirement": "MUST preserve runtime failure kind and anchor under folding.",
+            "applicability": "required"
+          }
+        ]
+      }
+    },
+    {
+      "ruleId": "r01-fuel",
+      "caseIds": [],
+      "requirement": "Function entry and every while condition check MUST each cost one Semantic Fuel before the event, including initial and final false checks.",
+      "semanticSource": "necessary-difference",
+      "basis": "docs/r01-language-contract.md#6-失败与后端无关预算; TypeScript 7.0.2 baseline (inherited rules refer to official scanner/parser/checker and conformance tests for this capability, intake commit remains R02a responsibility).",
+      "rationale": "Fixed-width, memory-safe execution shared by HIR/Core IR, VM, AOT and Zig consumers.",
+      "capability": "fuel",
+      "target": "windows-x86_64-msvc",
+      "mode": "strict",
+      "positive": "MUST preserve logical fuel events through optimization and inlining.",
+      "negativeNotApplicable": "Applicable negative responsibilities are listed in coverage; error identities are allocated with concrete diagnostic/trap corpus.",
+      "diagnosticCodes": [],
+      "trapCodes": [],
+      "coverage": {
+        "stage": "W1",
+        "obligations": [
+          {
+            "id": "positive",
+            "kind": "positive",
+            "requirement": "MUST preserve logical fuel events through optimization and inlining.",
+            "applicability": "required"
+          },
+          {
+            "id": "negative",
+            "kind": "negative",
+            "requirement": "MUST trap before the event when fuel is insufficient.",
+            "applicability": "required"
+          },
+          {
+            "id": "entry-zero",
+            "kind": "boundary",
+            "requirement": "MUST fail before function entry with zero fuel.",
+            "applicability": "required"
+          },
+          {
+            "id": "entry-exact",
+            "kind": "boundary",
+            "requirement": "MUST enter with exactly one fuel.",
+            "applicability": "required"
+          },
+          {
+            "id": "first-while",
+            "kind": "boundary",
+            "requirement": "MUST charge the first while check.",
+            "applicability": "required"
+          },
+          {
+            "id": "final-false",
+            "kind": "boundary",
+            "requirement": "MUST charge the final false check.",
+            "applicability": "required"
+          },
+          {
+            "id": "loop-exact-short",
+            "kind": "boundary",
+            "requirement": "MUST contrast exactly enough and one-short fuel without using physical instruction counts.",
+            "applicability": "required"
+          }
+        ]
+      }
+    },
+    {
+      "ruleId": "r01-depth",
+      "caseIds": [],
+      "requirement": "Entry active depth MUST be one; excess depth MUST fail before a new frame enters, after explicit argument evaluation.",
+      "semanticSource": "necessary-difference",
+      "basis": "docs/r01-language-contract.md#6-失败与后端无关预算; TypeScript 7.0.2 baseline (inherited rules refer to official scanner/parser/checker and conformance tests for this capability, intake commit remains R02a responsibility).",
+      "rationale": "Fixed-width, memory-safe execution shared by HIR/Core IR, VM, AOT and Zig consumers.",
+      "capability": "depth",
+      "target": "windows-x86_64-msvc",
+      "mode": "strict",
+      "positive": "MUST enter a frame at exactly the configured depth limit.",
+      "negativeNotApplicable": "Applicable negative responsibilities are listed in coverage; error identities are allocated with concrete diagnostic/trap corpus.",
+      "diagnosticCodes": [],
+      "trapCodes": [],
+      "coverage": {
+        "stage": "W1",
+        "obligations": [
+          {
+            "id": "positive",
+            "kind": "positive",
+            "requirement": "MUST enter a frame at exactly the configured depth limit.",
+            "applicability": "required"
+          },
+          {
+            "id": "negative",
+            "kind": "negative",
+            "requirement": "MUST reject a frame that would exceed the explicit active-depth limit.",
+            "applicability": "required"
+          },
+          {
+            "id": "depth-boundary",
+            "kind": "boundary",
+            "requirement": "MUST contrast exact-limit and one-too-deep calls.",
+            "applicability": "required"
+          },
+          {
+            "id": "arguments-first",
+            "kind": "boundary",
+            "requirement": "MUST observe argument failure before callee entry checks.",
+            "applicability": "required"
+          }
+        ]
+      }
+    },
+    {
+      "ruleId": "r01-failure-channels",
+      "caseIds": [],
+      "requirement": "trap MUST terminate the request with structured failure, not kill the host, be caught by language catch or roll back prior effects; physical failures are Execution Abort.",
+      "semanticSource": "necessary-difference",
+      "basis": "docs/r01-language-contract.md#6-失败与后端无关预算; TypeScript 7.0.2 baseline (inherited rules refer to official scanner/parser/checker and conformance tests for this capability, intake commit remains R02a responsibility).",
+      "rationale": "ADR-0010 separates backend-independent semantics from physical resource protection; actual failure records are future corpus slices.",
+      "capability": "failure-channels",
+      "target": "windows-x86_64-msvc",
+      "mode": "strict",
+      "positive": "MUST preserve structured request-local failure observations.",
+      "negativeNotApplicable": "Applicable negative responsibilities are listed in coverage; error identities are allocated with concrete diagnostic/trap corpus.",
+      "diagnosticCodes": [],
+      "trapCodes": [],
+      "coverage": {
+        "stage": "W1",
+        "obligations": [
+          {
+            "id": "positive",
+            "kind": "positive",
+            "requirement": "MUST preserve structured request-local failure observations.",
+            "applicability": "required"
+          },
+          {
+            "id": "negative",
+            "kind": "negative",
+            "requirement": "MUST NOT count physical instruction/time/memory abort as a semantic success or expected trap.",
+            "applicability": "required"
+          },
+          {
+            "id": "first-anchor",
+            "kind": "boundary",
+            "requirement": "MUST retain first observed Trap Code and source anchor.",
+            "applicability": "required"
+          }
+        ]
+      }
+    },
+    {
+      "ruleId": "r01-numeric-family",
+      "caseIds": [],
+      "requirement": "Integer rules MUST generalize by width; isize/usize MUST use target DataLayout; number MUST alias f64.",
+      "semanticSource": "necessary-difference",
+      "basis": "docs/r01-language-contract.md#41-类型与定型; TypeScript 7.0.2 baseline (inherited rules refer to official scanner/parser/checker and conformance tests for this capability, intake commit remains R02a responsibility).",
+      "rationale": "Fixed-width, memory-safe execution shared by HIR/Core IR, VM, AOT and Zig consumers.",
+      "capability": "numeric-family",
+      "target": "windows-x86_64-msvc",
+      "mode": "strict",
+      "positive": "MUST cover typed widths, same-type arithmetic/comparison and target-size interpretation.",
+      "negativeNotApplicable": "Applicable negative responsibilities are listed in coverage; error identities are allocated with concrete diagnostic/trap corpus.",
+      "diagnosticCodes": [],
+      "trapCodes": [],
+      "coverage": {
+        "stage": "W3",
+        "obligations": [
+          {
+            "id": "positive",
+            "kind": "positive",
+            "requirement": "MUST cover typed widths, same-type arithmetic/comparison and target-size interpretation.",
+            "applicability": "required"
+          },
+          {
+            "id": "negative",
+            "kind": "negative",
+            "requirement": "MUST reject implicit typed conversions and out-of-range literals.",
+            "applicability": "required"
+          },
+          {
+            "id": "signed-unsigned",
+            "kind": "boundary",
+            "requirement": "MUST independently cover each signed/unsigned range.",
+            "applicability": "required"
+          },
+          {
+            "id": "datalayout",
+            "kind": "boundary",
+            "requirement": "MUST record target-specific width rather than host assumptions.",
+            "applicability": "required"
+          },
+          {
+            "id": "float-literal-round",
+            "kind": "boundary",
+            "requirement": "MUST round exact decimal/exponent text directly to target precision; reject finite overflow and preserve underflow signed zero.",
+            "applicability": "required"
+          }
+        ]
+      }
+    },
+    {
+      "ruleId": "r01-conversions",
+      "caseIds": [],
+      "requirement": "Explicit calls MUST distinguish checked conversion, integer truncation/wrap and equal-width scalar bit reinterpretation; as is not numeric conversion.",
+      "semanticSource": "necessary-difference",
+      "basis": "docs/r01-language-contract.md#43-显式转换与严格浮点; TypeScript 7.0.2 baseline (inherited rules refer to official scanner/parser/checker and conformance tests for this capability, intake commit remains R02a responsibility).",
+      "rationale": "Fixed-width, memory-safe execution shared by HIR/Core IR, VM, AOT and Zig consumers.",
+      "capability": "conversions",
+      "target": "windows-x86_64-msvc",
+      "mode": "strict",
+      "positive": "MUST apply target nearest/ties-even rounding for integer-to-float and float narrowing.",
+      "negativeNotApplicable": "Applicable negative responsibilities are listed in coverage; error identities are allocated with concrete diagnostic/trap corpus.",
+      "diagnosticCodes": [],
+      "trapCodes": [],
+      "coverage": {
+        "stage": "W3",
+        "obligations": [
+          {
+            "id": "positive",
+            "kind": "positive",
+            "requirement": "MUST apply target nearest/ties-even rounding for integer-to-float and float narrowing.",
+            "applicability": "required"
+          },
+          {
+            "id": "negative",
+            "kind": "negative",
+            "requirement": "MUST trap on finite-to-infinite conversion and NaN/infinite/out-of-range float-to-int after truncation toward zero.",
+            "applicability": "required"
+          },
+          {
+            "id": "conversion-boundaries",
+            "kind": "boundary",
+            "requirement": "MUST cover just-inside/outside range and ties-to-even.",
+            "applicability": "required"
+          },
+          {
+            "id": "raw-reinterpret",
+            "kind": "boundary",
+            "requirement": "MUST retain equal-width raw bits.",
+            "applicability": "required"
+          }
+        ]
+      },
+      "pending": {
+        "consumers": [
+          "R02b conversion checker",
+          "R03 conversion lowering"
+        ],
+        "missing": [
+          "Concrete conversion function entry names/signatures",
+          "Independent per-conversion boundary oracle"
+        ],
+        "consumptionStage": "W3 before conversion lowering",
+        "closure": "Fix typed entry contracts and independently derived success/trap corpus.",
+        "affectedCapabilities": [
+          "conversions"
+        ]
+      }
+    },
+    {
+      "ruleId": "r01-strict-float",
+      "caseIds": [],
+      "requirement": "Strict float MUST retain declared precision at every step, nearest/ties-even, subnormals, signed zero and no implicit FMA; arithmetic NaN is canonical, moves preserve raw bits.",
+      "semanticSource": "necessary-difference",
+      "basis": "docs/r01-language-contract.md#43-显式转换与严格浮点; TypeScript 7.0.2 baseline (inherited rules refer to official scanner/parser/checker and conformance tests for this capability, intake commit remains R02a responsibility).",
+      "rationale": "Fixed-width, memory-safe execution shared by HIR/Core IR, VM, AOT and Zig consumers.",
+      "capability": "strict-float",
+      "target": "windows-x86_64-msvc",
+      "mode": "strict",
+      "positive": "MUST preserve IEEE division-by-zero behavior and raw move/reinterpret bits.",
+      "negativeNotApplicable": "Applicable negative responsibilities are listed in coverage; error identities are allocated with concrete diagnostic/trap corpus.",
+      "diagnosticCodes": [],
+      "trapCodes": [],
+      "coverage": {
+        "stage": "W3",
+        "obligations": [
+          {
+            "id": "positive",
+            "kind": "positive",
+            "requirement": "MUST preserve IEEE division-by-zero behavior and raw move/reinterpret bits.",
+            "applicability": "required"
+          },
+          {
+            "id": "negative",
+            "kind": "negative",
+            "requirement": "MUST NOT fuse FMA or silently flush subnormals in strict mode.",
+            "applicability": "required"
+          },
+          {
+            "id": "signed-zero",
+            "kind": "boundary",
+            "requirement": "MUST observe both zero signs.",
+            "applicability": "required"
+          },
+          {
+            "id": "nan-payload",
+            "kind": "boundary",
+            "requirement": "MUST distinguish canonical arithmetic NaN from moved payloads.",
+            "applicability": "required"
+          },
+          {
+            "id": "rounding",
+            "kind": "boundary",
+            "requirement": "MUST cover ties and subnormal boundaries.",
+            "applicability": "required"
+          }
+        ]
+      },
+      "pending": {
+        "consumers": [
+          "R03 float normalization",
+          "R05 scalar VM",
+          "R07 strict AOT"
+        ],
+        "missing": [
+          "Canonical quiet NaN bits for f16/f32/f64",
+          "Independent operation and transcendental coverage/oracles"
+        ],
+        "consumptionStage": "W3 before float conformance",
+        "closure": "Fix per-type canonical patterns and operation scope with independent raw-bit oracles.",
+        "affectedCapabilities": [
+          "strict-float"
+        ]
+      }
+    },
+    {
+      "ruleId": "r01-values",
+      "caseIds": [],
+      "requirement": "Values/components MUST retain explicit identity, fixed layout, value copies and per-field equality, excluding padding; no inheritance.",
+      "semanticSource": "necessary-difference",
+      "basis": "docs/r01-language-contract.md#51-固定布局与受管引用; TypeScript 7.0.2 baseline (inherited rules refer to official scanner/parser/checker and conformance tests for this capability, intake commit remains R02a responsibility).",
+      "rationale": "Fixed-width, memory-safe execution shared by HIR/Core IR, VM, AOT and Zig consumers.",
+      "capability": "values",
+      "target": "windows-x86_64-msvc",
+      "mode": "strict",
+      "positive": "MUST copy values on assignment, arguments and return.",
+      "negativeNotApplicable": "Applicable negative responsibilities are listed in coverage; error identities are allocated with concrete diagnostic/trap corpus.",
+      "diagnosticCodes": [],
+      "trapCodes": [],
+      "coverage": {
+        "stage": "W3",
+        "obligations": [
+          {
+            "id": "positive",
+            "kind": "positive",
+            "requirement": "MUST copy values on assignment, arguments and return.",
+            "applicability": "required"
+          },
+          {
+            "id": "negative",
+            "kind": "negative",
+            "requirement": "MUST reject identity substitution based only on equal layout and value/component inheritance.",
+            "applicability": "required"
+          },
+          {
+            "id": "padding",
+            "kind": "boundary",
+            "requirement": "MUST ignore padding in equality.",
+            "applicability": "required"
+          },
+          {
+            "id": "field-equality",
+            "kind": "boundary",
+            "requirement": "MUST use each field own equality rules.",
+            "applicability": "required"
+          }
+        ]
+      }
+    },
+    {
+      "ruleId": "r01-references",
+      "caseIds": [],
+      "requirement": "Ordinary GC class copies MUST retain object identity; source compatibility and construction MUST follow TS rather than universal nominal assignment.",
+      "semanticSource": "inherited-baseline",
+      "basis": "docs/r01-language-contract.md#51-固定布局与受管引用; TypeScript 7.0.2 baseline (inherited rules refer to official scanner/parser/checker and conformance tests for this capability, intake commit remains R02a responsibility).",
+      "rationale": "Fixed-width, memory-safe execution shared by HIR/Core IR, VM, AOT and Zig consumers.",
+      "capability": "references",
+      "target": "windows-x86_64-msvc",
+      "mode": "strict",
+      "positive": "MUST preserve alias identity and ordinary compatible structural assignments.",
+      "negativeNotApplicable": "Applicable negative responsibilities are listed in coverage; error identities are allocated with concrete diagnostic/trap corpus.",
+      "diagnosticCodes": [],
+      "trapCodes": [],
+      "coverage": {
+        "stage": "W3",
+        "obligations": [
+          {
+            "id": "positive",
+            "kind": "positive",
+            "requirement": "MUST preserve alias identity and ordinary compatible structural assignments.",
+            "applicability": "required"
+          },
+          {
+            "id": "negative",
+            "kind": "negative",
+            "requirement": "MUST reject architecture-prohibited dynamic field/prototype changes.",
+            "applicability": "required"
+          },
+          {
+            "id": "alias",
+            "kind": "boundary",
+            "requirement": "MUST observe shared identity after reference copy.",
+            "applicability": "required"
+          },
+          {
+            "id": "readonly",
+            "kind": "boundary",
+            "requirement": "MUST retain shallow readonly and legal writable aliases; no inferred deep freeze.",
+            "applicability": "required"
+          }
+        ]
+      }
+    },
+    {
+      "ruleId": "r01-null-safety",
+      "caseIds": [],
+      "requirement": "Strict null checks MUST stay enabled; native storage MUST be initialized before reads; nonnull assertions MUST NOT bypass actual safety checks.",
+      "semanticSource": "necessary-difference",
+      "basis": "docs/r01-language-contract.md#51-固定布局与受管引用; TypeScript 7.0.2 baseline (inherited rules refer to official scanner/parser/checker and conformance tests for this capability, intake commit remains R02a responsibility).",
+      "rationale": "Fixed-width, memory-safe execution shared by HIR/Core IR, VM, AOT and Zig consumers.",
+      "capability": "null-safety",
+      "target": "windows-x86_64-msvc",
+      "mode": "strict",
+      "positive": "MUST preserve TS null/undefined/void/never, optional/default behavior and observable property absence.",
+      "negativeNotApplicable": "Applicable negative responsibilities are listed in coverage; error identities are allocated with concrete diagnostic/trap corpus.",
+      "diagnosticCodes": [],
+      "trapCodes": [],
+      "coverage": {
+        "stage": "W3",
+        "obligations": [
+          {
+            "id": "positive",
+            "kind": "positive",
+            "requirement": "MUST preserve TS null/undefined/void/never, optional/default behavior and observable property absence.",
+            "applicability": "required"
+          },
+          {
+            "id": "negative",
+            "kind": "negative",
+            "requirement": "MUST reject uninitialized native reads and unsafe nonnull bypass.",
+            "applicability": "required"
+          },
+          {
+            "id": "optional-presence",
+            "kind": "boundary",
+            "requirement": "MUST not erase source-visible absence vs explicit undefined.",
+            "applicability": "required"
+          },
+          {
+            "id": "default-parameters",
+            "kind": "boundary",
+            "requirement": "MUST default on omission/undefined, not null.",
+            "applicability": "required"
+          }
+        ]
+      }
+    },
+    {
+      "ruleId": "r01-generics",
+      "caseIds": [],
+      "requirement": "Generics MUST specialize whole-program concrete arguments, reuse identical instances and allow ordinary recursion.",
+      "semanticSource": "necessary-difference",
+      "basis": "docs/r01-language-contract.md#52-类型工具联合与闭包; TypeScript 7.0.2 baseline (inherited rules refer to official scanner/parser/checker and conformance tests for this capability, intake commit remains R02a responsibility).",
+      "rationale": "Fixed-width, memory-safe execution shared by HIR/Core IR, VM, AOT and Zig consumers.",
+      "capability": "generics",
+      "target": "windows-x86_64-msvc",
+      "mode": "strict",
+      "positive": "MUST inherit TS generic constraints/inference and compile-time interface/type tools.",
+      "negativeNotApplicable": "Applicable negative responsibilities are listed in coverage; error identities are allocated with concrete diagnostic/trap corpus.",
+      "diagnosticCodes": [],
+      "trapCodes": [],
+      "coverage": {
+        "stage": "W3",
+        "obligations": [
+          {
+            "id": "positive",
+            "kind": "positive",
+            "requirement": "MUST inherit TS generic constraints/inference and compile-time interface/type tools.",
+            "applicability": "required"
+          },
+          {
+            "id": "negative",
+            "kind": "negative",
+            "requirement": "MUST diagnose infinitely growing or over-budget specialization without runtime generic fallback.",
+            "applicability": "required"
+          },
+          {
+            "id": "reuse",
+            "kind": "boundary",
+            "requirement": "MUST reuse same concrete type arguments.",
+            "applicability": "required"
+          },
+          {
+            "id": "compile-budget",
+            "kind": "boundary",
+            "requirement": "MUST record explicit compile budget at specialization boundary.",
+            "applicability": "required"
+          }
+        ]
+      }
+    },
+    {
+      "ruleId": "r01-unions",
+      "caseIds": [],
+      "requirement": "Unions MUST retain TS narrowing with statically typed representation, no implicit dynamic boxing or universal handwritten source tags.",
+      "semanticSource": "necessary-difference",
+      "basis": "docs/r01-language-contract.md#52-类型工具联合与闭包; TypeScript 7.0.2 baseline (inherited rules refer to official scanner/parser/checker and conformance tests for this capability, intake commit remains R02a responsibility).",
+      "rationale": "Fixed-width, memory-safe execution shared by HIR/Core IR, VM, AOT and Zig consumers.",
+      "capability": "unions",
+      "target": "windows-x86_64-msvc",
+      "mode": "strict",
+      "positive": "MUST preserve source unions without mandatory handwritten discriminants.",
+      "negativeNotApplicable": "Applicable negative responsibilities are listed in coverage; error identities are allocated with concrete diagnostic/trap corpus.",
+      "diagnosticCodes": [],
+      "trapCodes": [],
+      "coverage": {
+        "stage": "W3",
+        "obligations": [
+          {
+            "id": "positive",
+            "kind": "positive",
+            "requirement": "MUST preserve source unions without mandatory handwritten discriminants.",
+            "applicability": "required"
+          },
+          {
+            "id": "negative",
+            "kind": "negative",
+            "requirement": "MUST reject implicit dynamic boxing and unsupported ABI representations.",
+            "applicability": "required"
+          },
+          {
+            "id": "value-reference",
+            "kind": "boundary",
+            "requirement": "MUST resolve mixed value/reference layout and GC responsibilities before claiming completeness.",
+            "applicability": "required"
+          }
+        ]
+      },
+      "pending": {
+        "consumers": [
+          "R03 value/reference classification",
+          "R04 ABI layout",
+          "R06 GC roots"
+        ],
+        "missing": [
+          "Concrete union layouts and mixed value/reference root maps",
+          "Independent ABI/layout oracle"
+        ],
+        "consumptionStage": "W3 before union ABI consumption",
+        "closure": "Fix concrete representation and rooting contract with independent layout/safety cases.",
+        "affectedCapabilities": [
+          "unions"
+        ]
+      }
+    },
+    {
+      "ruleId": "r01-closures",
+      "caseIds": [],
+      "requirement": "Closures MUST capture logical bindings with shared writes, safe managed environments and persistent FunctionId.",
+      "semanticSource": "necessary-difference",
+      "basis": "docs/r01-language-contract.md#52-类型工具联合与闭包; TypeScript 7.0.2 baseline (inherited rules refer to official scanner/parser/checker and conformance tests for this capability, intake commit remains R02a responsibility).",
+      "rationale": "Fixed-width, memory-safe execution shared by HIR/Core IR, VM, AOT and Zig consumers.",
+      "capability": "closures",
+      "target": "windows-x86_64-msvc",
+      "mode": "strict",
+      "positive": "MUST observe shared mutable bindings across closures.",
+      "negativeNotApplicable": "Applicable negative responsibilities are listed in coverage; error identities are allocated with concrete diagnostic/trap corpus.",
+      "diagnosticCodes": [],
+      "trapCodes": [],
+      "coverage": {
+        "stage": "W3",
+        "obligations": [
+          {
+            "id": "positive",
+            "kind": "positive",
+            "requirement": "MUST observe shared mutable bindings across closures.",
+            "applicability": "required"
+          },
+          {
+            "id": "negative",
+            "kind": "negative",
+            "requirement": "MUST NOT retain dead stack addresses, escaping borrows or persistent code addresses.",
+            "applicability": "required"
+          },
+          {
+            "id": "shared-binding",
+            "kind": "boundary",
+            "requirement": "MUST observe later writes from all capturing closures.",
+            "applicability": "required"
+          },
+          {
+            "id": "escape",
+            "kind": "boundary",
+            "requirement": "MUST check escaping borrowed captures.",
+            "applicability": "required"
+          }
+        ]
+      }
+    },
+    {
+      "ruleId": "r01-modules",
+      "caseIds": [],
+      "requirement": "Module source behavior MUST follow TS live bindings and project/source module detection; runtime failed initialization MUST not publish partial state or automatically retry.",
+      "semanticSource": "necessary-difference",
+      "basis": "docs/r01-language-contract.md#53-模块与异常; TypeScript 7.0.2 baseline (inherited rules refer to official scanner/parser/checker and conformance tests for this capability, intake commit remains R02a responsibility).",
+      "rationale": "Fixed-width, memory-safe execution shared by HIR/Core IR, VM, AOT and Zig consumers.",
+      "capability": "modules",
+      "target": "windows-x86_64-msvc",
+      "mode": "strict",
+      "positive": "MUST retain exporter updates visible through live imports.",
+      "negativeNotApplicable": "Applicable negative responsibilities are listed in coverage; error identities are allocated with concrete diagnostic/trap corpus.",
+      "diagnosticCodes": [],
+      "trapCodes": [],
+      "coverage": {
+        "stage": "W3",
+        "obligations": [
+          {
+            "id": "positive",
+            "kind": "positive",
+            "requirement": "MUST retain exporter updates visible through live imports.",
+            "applicability": "required"
+          },
+          {
+            "id": "negative",
+            "kind": "negative",
+            "requirement": "MUST NOT rebind imports or publish partially initialized runtime module state.",
+            "applicability": "required"
+          },
+          {
+            "id": "external-effects",
+            "kind": "boundary",
+            "requirement": "MUST not promise rollback of already-observed external effects.",
+            "applicability": "required"
+          },
+          {
+            "id": "source-shapes",
+            "kind": "boundary",
+            "requirement": "MUST track dynamic import and value cycles as implementation coverage rather than new permanent prohibitions.",
+            "applicability": "required"
+          }
+        ]
+      }
+    },
+    {
+      "ruleId": "r01-exceptions",
+      "caseIds": [],
+      "requirement": "Managed Exception MUST follow ordinary throw/catch/finally without a universal nominal base restriction, remaining separate from trap/Abort and excluded from Zig ABI/kernel.",
+      "semanticSource": "necessary-difference",
+      "basis": "docs/r01-language-contract.md#53-模块与异常; TypeScript 7.0.2 baseline (inherited rules refer to official scanner/parser/checker and conformance tests for this capability, intake commit remains R02a responsibility).",
+      "rationale": "Fixed-width, memory-safe execution shared by HIR/Core IR, VM, AOT and Zig consumers.",
+      "capability": "exceptions",
+      "target": "windows-x86_64-msvc",
+      "mode": "strict",
+      "positive": "MUST preserve ordinary TS exception flow and finally behavior.",
+      "negativeNotApplicable": "Applicable negative responsibilities are listed in coverage; error identities are allocated with concrete diagnostic/trap corpus.",
+      "diagnosticCodes": [],
+      "trapCodes": [],
+      "coverage": {
+        "stage": "W3",
+        "obligations": [
+          {
+            "id": "positive",
+            "kind": "positive",
+            "requirement": "MUST preserve ordinary TS exception flow and finally behavior.",
+            "applicability": "required"
+          },
+          {
+            "id": "negative",
+            "kind": "negative",
+            "requirement": "MUST reject exceptions crossing Zig ABI or entering kernels.",
+            "applicability": "required"
+          },
+          {
+            "id": "failure-interaction",
+            "kind": "boundary",
+            "requirement": "MUST resolve actual exception/trap/Abort cleanup and budget intersection before adding oracle.",
+            "applicability": "required"
+          }
+        ]
+      },
+      "pending": {
+        "consumers": [
+          "R03 exception edges",
+          "R06 exception/request cleanup",
+          "R05/R07 budget checks"
+        ],
+        "missing": [
+          "trap/Abort interaction with user finally",
+          "Simultaneous budget failure priority and default-parameter budget ordering"
+        ],
+        "consumptionStage": "W3 when exception and budget consumers intersect",
+        "closure": "Specify only actual intersection and independently verify first failure/effects; no withdrawn cleanup rule inferred.",
+        "affectedCapabilities": [
+          "exceptions"
+        ]
+      }
+    },
+    {
+      "ruleId": "r01-vector",
+      "caseIds": [],
+      "requirement": "T[]/Array<T> MUST be continuous homogeneous vectors, not sparse JS arrays or object dictionaries.",
+      "semanticSource": "necessary-difference",
+      "basis": "docs/r01-language-contract.md#54-容器文本abi-与内核; TypeScript 7.0.2 baseline (inherited rules refer to official scanner/parser/checker and conformance tests for this capability, intake commit remains R02a responsibility).",
+      "rationale": "Fixed-width, memory-safe execution shared by HIR/Core IR, VM, AOT and Zig consumers.",
+      "capability": "vector",
+      "target": "windows-x86_64-msvc",
+      "mode": "strict",
+      "positive": "MUST preserve defined homogeneous vector operations.",
+      "negativeNotApplicable": "Applicable negative responsibilities are listed in coverage; error identities are allocated with concrete diagnostic/trap corpus.",
+      "diagnosticCodes": [],
+      "trapCodes": [],
+      "coverage": {
+        "stage": "W3",
+        "obligations": [
+          {
+            "id": "positive",
+            "kind": "positive",
+            "requirement": "MUST preserve defined homogeneous vector operations.",
+            "applicability": "required"
+          },
+          {
+            "id": "negative",
+            "kind": "negative",
+            "requirement": "MUST reject sparse/dynamic dictionary representations.",
+            "applicability": "required"
+          },
+          {
+            "id": "ownership",
+            "kind": "boundary",
+            "requirement": "MUST fix element categories, ownership, copy/equality and mutation/borrow interactions before completeness.",
+            "applicability": "required"
+          }
+        ]
+      },
+      "pending": {
+        "consumers": [
+          "R03 container classification",
+          "R06 vector storage",
+          "R10 Query access"
+        ],
+        "missing": [
+          "Element value/reference ownership and copy/equality mapping",
+          "Independent mutation/borrow boundary evidence"
+        ],
+        "consumptionStage": "W3 before container lowering",
+        "closure": "Fix concrete ownership/operation mapping and independent boundary corpus.",
+        "affectedCapabilities": [
+          "vector"
+        ]
+      }
+    },
+    {
+      "ruleId": "r01-span",
+      "caseIds": [],
+      "requirement": "ReadSpan/Span MUST be borrowed views whose return/capture obey escape constraints.",
+      "semanticSource": "necessary-difference",
+      "basis": "docs/r01-language-contract.md#54-容器文本abi-与内核; TypeScript 7.0.2 baseline (inherited rules refer to official scanner/parser/checker and conformance tests for this capability, intake commit remains R02a responsibility).",
+      "rationale": "Fixed-width, memory-safe execution shared by HIR/Core IR, VM, AOT and Zig consumers.",
+      "capability": "span",
+      "target": "windows-x86_64-msvc",
+      "mode": "strict",
+      "positive": "MUST allow proved-valid borrowed access within its lifetime.",
+      "negativeNotApplicable": "Applicable negative responsibilities are listed in coverage; error identities are allocated with concrete diagnostic/trap corpus.",
+      "diagnosticCodes": [],
+      "trapCodes": [],
+      "coverage": {
+        "stage": "W3",
+        "obligations": [
+          {
+            "id": "positive",
+            "kind": "positive",
+            "requirement": "MUST allow proved-valid borrowed access within its lifetime.",
+            "applicability": "required"
+          },
+          {
+            "id": "negative",
+            "kind": "negative",
+            "requirement": "MUST reject escaping lifetime or mutable access violations.",
+            "applicability": "required"
+          },
+          {
+            "id": "return-capture",
+            "kind": "boundary",
+            "requirement": "MUST cover return and closure capture escape boundaries.",
+            "applicability": "required"
+          },
+          {
+            "id": "bounds",
+            "kind": "boundary",
+            "requirement": "MUST cover applicable zero/end/out-of-range accesses.",
+            "applicability": "required"
+          }
+        ]
+      }
+    },
+    {
+      "ruleId": "r01-string",
+      "caseIds": [],
+      "requirement": "Immutable UTF-8 storage and StringView MUST have an explicit mapping to TS observable text behavior.",
+      "semanticSource": "pending-special-mapping",
+      "basis": "docs/r01-language-contract.md#54-容器文本abi-与内核; TypeScript 7.0.2 baseline (inherited rules refer to official scanner/parser/checker and conformance tests for this capability, intake commit remains R02a responsibility).",
+      "rationale": "Fixed-width, memory-safe execution shared by HIR/Core IR, VM, AOT and Zig consumers.",
+      "capability": "string",
+      "target": "windows-x86_64-msvc",
+      "mode": "strict",
+      "positive": "MUST preserve accepted text under the independently specified mapping.",
+      "negativeNotApplicable": "Applicable negative responsibilities are listed in coverage; error identities are allocated with concrete diagnostic/trap corpus.",
+      "diagnosticCodes": [],
+      "trapCodes": [],
+      "coverage": {
+        "stage": "W3",
+        "obligations": [
+          {
+            "id": "positive",
+            "kind": "positive",
+            "requirement": "MUST preserve accepted text under the independently specified mapping.",
+            "applicability": "required"
+          },
+          {
+            "id": "negative",
+            "kind": "negative",
+            "requirement": "MUST reject unsafe ABI text inputs under that mapping, without inventing unapproved source surrogate bans.",
+            "applicability": "required"
+          },
+          {
+            "id": "text-domain",
+            "kind": "boundary",
+            "requirement": "MUST resolve length/index/slice units and unpaired surrogate representation before independent oracle claims.",
+            "applicability": "required"
+          }
+        ]
+      },
+      "pending": {
+        "consumers": [
+          "R02b string literal checker",
+          "R03 string operations",
+          "R06 UTF-8/StringView bridge"
+        ],
+        "missing": [
+          "TS UTF-16 observable domain versus strict UTF-8 representation",
+          "length/index/slice units and lone-surrogate mapping",
+          "Independent text boundary oracle"
+        ],
+        "consumptionStage": "W3 before string lowering or ABI consumption",
+        "closure": "Document actual mapping/conflicts and accepted smallest decision, then independent text/ABI corpus.",
+        "affectedCapabilities": [
+          "string"
+        ]
+      }
+    },
+    {
+      "ruleId": "r01-handle-abi",
+      "caseIds": [],
+      "requirement": "Zig MUST NOT retain raw managed pointers; only explicit ABI-safe types cross the boundary and GC objects use Handle.",
+      "semanticSource": "necessary-difference",
+      "basis": "docs/r01-language-contract.md#54-容器文本abi-与内核; TypeScript 7.0.2 baseline (inherited rules refer to official scanner/parser/checker and conformance tests for this capability, intake commit remains R02a responsibility).",
+      "rationale": "Fixed-width, memory-safe execution shared by HIR/Core IR, VM, AOT and Zig consumers.",
+      "capability": "handle-abi",
+      "target": "windows-x86_64-msvc",
+      "mode": "strict",
+      "positive": "MUST expose typed scalars/layouts, spans, StringView and handles through their explicit contracts.",
+      "negativeNotApplicable": "Applicable negative responsibilities are listed in coverage; error identities are allocated with concrete diagnostic/trap corpus.",
+      "diagnosticCodes": [],
+      "trapCodes": [],
+      "coverage": {
+        "stage": "W3",
+        "obligations": [
+          {
+            "id": "positive",
+            "kind": "positive",
+            "requirement": "MUST expose typed scalars/layouts, spans, StringView and handles through their explicit contracts.",
+            "applicability": "required"
+          },
+          {
+            "id": "negative",
+            "kind": "negative",
+            "requirement": "MUST reject managed raw pointers and unsafe lifetime/ABI crossings.",
+            "applicability": "required"
+          },
+          {
+            "id": "handle-generation",
+            "kind": "boundary",
+            "requirement": "MUST cover stale generation and valid handles.",
+            "applicability": "required"
+          },
+          {
+            "id": "layout",
+            "kind": "boundary",
+            "requirement": "MUST use target DataLayout for size/alignment/offset and calling convention.",
+            "applicability": "required"
+          }
+        ]
+      }
+    },
+    {
+      "ruleId": "r01-markers",
+      "caseIds": [],
+      "requirement": "Compile-time markers MUST only express necessary intent not derivable from ordinary TS declarations/types/analysis.",
+      "semanticSource": "necessary-difference",
+      "basis": "docs/r01-language-contract.md#24-最小编译期标记; TypeScript 7.0.2 baseline (inherited rules refer to official scanner/parser/checker and conformance tests for this capability, intake commit remains R02a responsibility).",
+      "rationale": "Fixed-width, memory-safe execution shared by HIR/Core IR, VM, AOT and Zig consumers.",
+      "capability": "markers",
+      "target": "windows-x86_64-msvc",
+      "mode": "strict",
+      "positive": "MUST prefer TS legal positions and existing types/APIs.",
+      "negativeNotApplicable": "Applicable negative responsibilities are listed in coverage; error identities are allocated with concrete diagnostic/trap corpus.",
+      "diagnosticCodes": [],
+      "trapCodes": [],
+      "coverage": {
+        "stage": "W3",
+        "obligations": [
+          {
+            "id": "positive",
+            "kind": "positive",
+            "requirement": "MUST prefer TS legal positions and existing types/APIs.",
+            "applicability": "required"
+          },
+          {
+            "id": "negative",
+            "kind": "negative",
+            "requirement": "MUST NOT introduce a general decorator/macro/plugin runtime or speculative keywords.",
+            "applicability": "required"
+          },
+          {
+            "id": "consumer-intent",
+            "kind": "boundary",
+            "requirement": "MUST bind every necessary marker position/parameter to a concrete value/component/ABI/system consumer.",
+            "applicability": "required"
+          }
+        ]
+      },
+      "pending": {
+        "consumers": [
+          "R03 value/component analysis",
+          "R04 ABI declarations",
+          "R10 system effect analysis"
+        ],
+        "missing": [
+          "Necessary marker positions and parameters not expressible by existing types",
+          "Consumer evidence for any grammar extension"
+        ],
+        "consumptionStage": "W3/W4 before marker consumers",
+        "closure": "Record minimal concrete consumer contract and applicable acceptance/rejection oracle; W1 needs no markers.",
+        "affectedCapabilities": [
+          "markers"
+        ]
+      }
+    },
+    {
+      "ruleId": "r01-kernel",
+      "caseIds": [],
+      "requirement": "Kernels MUST exclude managed allocation, GC references, exceptions, await, locks and escaping borrows; Query/Job access and effects are analyzed.",
+      "semanticSource": "necessary-difference",
+      "basis": "docs/r01-language-contract.md#54-容器文本abi-与内核; TypeScript 7.0.2 baseline (inherited rules refer to official scanner/parser/checker and conformance tests for this capability, intake commit remains R02a responsibility).",
+      "rationale": "Fixed-width, memory-safe execution shared by HIR/Core IR, VM, AOT and Zig consumers.",
+      "capability": "kernel",
+      "target": "windows-x86_64-msvc",
+      "mode": "strict",
+      "positive": "MUST accept proved-safe value-plane computation with complete access sets.",
+      "negativeNotApplicable": "Applicable negative responsibilities are listed in coverage; error identities are allocated with concrete diagnostic/trap corpus.",
+      "diagnosticCodes": [],
+      "trapCodes": [],
+      "coverage": {
+        "stage": "W4",
+        "obligations": [
+          {
+            "id": "positive",
+            "kind": "positive",
+            "requirement": "MUST accept proved-safe value-plane computation with complete access sets.",
+            "applicability": "required"
+          },
+          {
+            "id": "negative",
+            "kind": "negative",
+            "requirement": "MUST reject each prohibited operation and escaping borrowed access.",
+            "applicability": "required"
+          },
+          {
+            "id": "access-effects",
+            "kind": "boundary",
+            "requirement": "MUST cover conflicting/nonconflicting reads/writes and Query borrow boundaries.",
+            "applicability": "required"
+          }
+        ]
+      }
+    },
+    {
+      "ruleId": "r01-cpu",
+      "caseIds": [],
+      "requirement": "CPU parallel and reduction behavior MUST have an independent numerical/determinism relation, not strict Execution Equivalence.",
+      "semanticSource": "pending-special-mapping",
+      "basis": "docs/r01-language-contract.md#43-显式转换与严格浮点; TypeScript 7.0.2 baseline (inherited rules refer to official scanner/parser/checker and conformance tests for this capability, intake commit remains R02a responsibility).",
+      "rationale": "Fixed-width, memory-safe execution shared by HIR/Core IR, VM, AOT and Zig consumers.",
+      "capability": "cpu",
+      "target": "windows-x86_64-msvc",
+      "mode": "cpu-parallel",
+      "positive": "MUST compare against independent CPU relation after its parameters are fixed.",
+      "negativeNotApplicable": "Applicable negative responsibilities are listed in coverage; error identities are allocated with concrete diagnostic/trap corpus.",
+      "diagnosticCodes": [],
+      "trapCodes": [],
+      "coverage": {
+        "stage": "W4",
+        "obligations": [
+          {
+            "id": "positive",
+            "kind": "positive",
+            "requirement": "MUST compare against independent CPU relation after its parameters are fixed.",
+            "applicability": "required"
+          },
+          {
+            "id": "negative",
+            "kind": "negative",
+            "requirement": "MUST reject results outside the independent relation and conflicting access.",
+            "applicability": "required"
+          },
+          {
+            "id": "reduction-order",
+            "kind": "boundary",
+            "requirement": "MUST account for scheduling/reduction nondeterminism explicitly.",
+            "applicability": "required"
+          }
+        ]
+      },
+      "pending": {
+        "consumers": [
+          "R10 Jobs/reduction",
+          "R07 parallel lowering"
+        ],
+        "missing": [
+          "Allowed reduction/order nondeterminism and numerical tolerance",
+          "Independent CPU oracle"
+        ],
+        "consumptionStage": "W4 before CPU conformance",
+        "closure": "Fix operations, tolerances and determinism relation with independent boundary cases.",
+        "affectedCapabilities": [
+          "cpu"
+        ]
+      }
+    },
+    {
+      "ruleId": "r01-fast-math",
+      "caseIds": [],
+      "requirement": "Fast-math MUST have its own numerical relation, separate from strict bitwise Execution Equivalence.",
+      "semanticSource": "pending-special-mapping",
+      "basis": "docs/r01-language-contract.md#43-显式转换与严格浮点; TypeScript 7.0.2 baseline (inherited rules refer to official scanner/parser/checker and conformance tests for this capability, intake commit remains R02a responsibility).",
+      "rationale": "Fixed-width, memory-safe execution shared by HIR/Core IR, VM, AOT and Zig consumers.",
+      "capability": "fast-math",
+      "target": "windows-x86_64-msvc",
+      "mode": "fast-math",
+      "positive": "MUST verify allowed transformations under an explicit fast-math contract.",
+      "negativeNotApplicable": "Applicable negative responsibilities are listed in coverage; error identities are allocated with concrete diagnostic/trap corpus.",
+      "diagnosticCodes": [],
+      "trapCodes": [],
+      "coverage": {
+        "stage": "W4",
+        "obligations": [
+          {
+            "id": "positive",
+            "kind": "positive",
+            "requirement": "MUST verify allowed transformations under an explicit fast-math contract.",
+            "applicability": "required"
+          },
+          {
+            "id": "negative",
+            "kind": "negative",
+            "requirement": "MUST reject results outside that contract rather than reuse strict equivalence.",
+            "applicability": "required"
+          },
+          {
+            "id": "fast-boundaries",
+            "kind": "boundary",
+            "requirement": "MUST define error bounds, exceptional values and transformation permissions.",
+            "applicability": "required"
+          }
+        ]
+      },
+      "pending": {
+        "consumers": [
+          "R07 fast-math optimization",
+          "R10 numerical kernels"
+        ],
+        "missing": [
+          "Error/tolerance bounds and legal transforms including FMA",
+          "Independent non-strict oracle"
+        ],
+        "consumptionStage": "W4 before fast-math acceptance",
+        "closure": "Specify per-operation relation and independently derived acceptance/rejection boundaries.",
+        "affectedCapabilities": [
+          "fast-math"
+        ]
+      }
+    },
+    {
+      "ruleId": "r01-gpu",
+      "caseIds": [],
+      "requirement": "GPU numerical/device nondeterminism MUST use an independent GPU contract rather than strict CPU/VM Execution Equivalence.",
+      "semanticSource": "pending-special-mapping",
+      "basis": "docs/r01-language-contract.md#54-容器文本abi-与内核; TypeScript 7.0.2 baseline (inherited rules refer to official scanner/parser/checker and conformance tests for this capability, intake commit remains R02a responsibility).",
+      "rationale": "Fixed-width, memory-safe execution shared by HIR/Core IR, VM, AOT and Zig consumers.",
+      "capability": "gpu",
+      "target": "windows-x86_64-msvc",
+      "mode": "gpu",
+      "positive": "MUST verify typed kernel outputs under a fixed device/mode relation.",
+      "negativeNotApplicable": "Applicable negative responsibilities are listed in coverage; error identities are allocated with concrete diagnostic/trap corpus.",
+      "diagnosticCodes": [],
+      "trapCodes": [],
+      "coverage": {
+        "stage": "W5",
+        "obligations": [
+          {
+            "id": "positive",
+            "kind": "positive",
+            "requirement": "MUST verify typed kernel outputs under a fixed device/mode relation.",
+            "applicability": "required"
+          },
+          {
+            "id": "negative",
+            "kind": "negative",
+            "requirement": "MUST reject outputs outside the relation and prohibited kernel operations.",
+            "applicability": "required"
+          },
+          {
+            "id": "device-nondeterminism",
+            "kind": "boundary",
+            "requirement": "MUST explicitly cover permitted precision, exceptional values and nondeterminism.",
+            "applicability": "required"
+          }
+        ]
+      },
+      "pending": {
+        "consumers": [
+          "R11 device kernel consumer",
+          "R07 GPU lowering"
+        ],
+        "missing": [
+          "Selected device precision/operation guarantees",
+          "Tolerance/nondeterminism relation and independent GPU oracle"
+        ],
+        "consumptionStage": "W5 before GPU conformance",
+        "closure": "Fix actual target/device contract and independent oracle; strict VM/AOT agreement cannot close this responsibility.",
+        "affectedCapabilities": [
+          "gpu"
+        ]
+      }
+    },
+    {
+      "ruleId": "r01-all-rules",
+      "caseIds": [],
+      "requirement": "Full R01 MUST retain W3 general language, W4 CPU/fast-math, W5 GPU and all applicable MUST/MUST NOT coverage; first-slice completion is insufficient.",
+      "semanticSource": "necessary-difference",
+      "basis": "docs/r01-language-contract.md#7-conformance-corpus-与诊断; TypeScript 7.0.2 baseline (inherited rules refer to official scanner/parser/checker and conformance tests for this capability, intake commit remains R02a responsibility).",
+      "rationale": "Fixed-width, memory-safe execution shared by HIR/Core IR, VM, AOT and Zig consumers.",
+      "capability": "all-rules",
+      "target": "windows-x86_64-msvc",
+      "mode": "strict",
+      "positive": "MUST enumerate complete rule/target/mode/budget responsibilities with independent oracles.",
+      "negativeNotApplicable": "Applicable negative responsibilities are listed in coverage; error identities are allocated with concrete diagnostic/trap corpus.",
+      "diagnosticCodes": [],
+      "trapCodes": [],
+      "coverage": {
+        "stage": "W6",
+        "obligations": [
+          {
+            "id": "positive",
+            "kind": "positive",
+            "requirement": "MUST enumerate complete rule/target/mode/budget responsibilities with independent oracles.",
+            "applicability": "required"
+          },
+          {
+            "id": "negative",
+            "kind": "negative",
+            "requirement": "MUST NOT count parser acceptance, correct unsupported rejection, comparator fixtures or backend agreement as verified language support.",
+            "applicability": "required"
+          },
+          {
+            "id": "all-applicable",
+            "kind": "boundary",
+            "requirement": "MUST close all applicable positive/negative/boundary responsibilities and unresolved special mappings.",
+            "applicability": "required"
+          },
+          {
+            "id": "real-evidence",
+            "kind": "boundary",
+            "requirement": "MUST keep record checks, implementation claims and real execution verification separate.",
+            "applicability": "required"
+          }
+        ]
+      }
+    }
+  ],
+  "capabilities": [
+    {
+      "capability": "ts-baseline",
+      "semanticSource": "inherited-baseline",
+      "productBoundary": "allowed",
+      "implementation": "not-implemented",
+      "target": "windows-x86_64-msvc",
+      "mode": "strict"
+    },
+    {
+      "capability": "input-boundary",
+      "semanticSource": "necessary-difference",
+      "productBoundary": "prohibited",
+      "implementation": "not-connected",
+      "target": "windows-x86_64-msvc",
+      "mode": "strict"
+    },
+    {
+      "capability": "literals",
+      "semanticSource": "necessary-difference",
+      "productBoundary": "allowed",
+      "implementation": "not-connected",
+      "target": "windows-x86_64-msvc",
+      "mode": "strict"
+    },
+    {
+      "capability": "bool",
+      "semanticSource": "necessary-difference",
+      "productBoundary": "allowed",
+      "implementation": "not-connected",
+      "target": "windows-x86_64-msvc",
+      "mode": "strict"
+    },
+    {
+      "capability": "scalar-i32",
+      "semanticSource": "necessary-difference",
+      "productBoundary": "allowed",
+      "implementation": "not-connected",
+      "target": "windows-x86_64-msvc",
+      "mode": "strict"
+    },
+    {
+      "capability": "i32-wrap",
+      "semanticSource": "necessary-difference",
+      "productBoundary": "allowed",
+      "implementation": "not-connected",
+      "target": "windows-x86_64-msvc",
+      "mode": "strict"
+    },
+    {
+      "capability": "division",
+      "semanticSource": "necessary-difference",
+      "productBoundary": "allowed",
+      "implementation": "not-connected",
+      "target": "windows-x86_64-msvc",
+      "mode": "strict"
+    },
+    {
+      "capability": "shifts",
+      "semanticSource": "necessary-difference",
+      "productBoundary": "allowed",
+      "implementation": "not-connected",
+      "target": "windows-x86_64-msvc",
+      "mode": "strict"
+    },
+    {
+      "capability": "control",
+      "semanticSource": "necessary-difference",
+      "productBoundary": "allowed",
+      "implementation": "not-connected",
+      "target": "windows-x86_64-msvc",
+      "mode": "strict"
+    },
+    {
+      "capability": "calls",
+      "semanticSource": "inherited-baseline",
+      "productBoundary": "allowed",
+      "implementation": "not-connected",
+      "target": "windows-x86_64-msvc",
+      "mode": "strict"
+    },
+    {
+      "capability": "evaluation",
+      "semanticSource": "necessary-difference",
+      "productBoundary": "allowed",
+      "implementation": "not-connected",
+      "target": "windows-x86_64-msvc",
+      "mode": "strict"
+    },
+    {
+      "capability": "fuel",
+      "semanticSource": "necessary-difference",
+      "productBoundary": "allowed",
+      "implementation": "not-connected",
+      "target": "windows-x86_64-msvc",
+      "mode": "strict"
+    },
+    {
+      "capability": "depth",
+      "semanticSource": "necessary-difference",
+      "productBoundary": "allowed",
+      "implementation": "not-connected",
+      "target": "windows-x86_64-msvc",
+      "mode": "strict"
+    },
+    {
+      "capability": "failure-channels",
+      "semanticSource": "necessary-difference",
+      "productBoundary": "allowed",
+      "implementation": "not-connected",
+      "target": "windows-x86_64-msvc",
+      "mode": "strict"
+    },
+    {
+      "capability": "numeric-family",
+      "semanticSource": "necessary-difference",
+      "productBoundary": "allowed",
+      "implementation": "not-implemented",
+      "target": "windows-x86_64-msvc",
+      "mode": "strict"
+    },
+    {
+      "capability": "conversions",
+      "semanticSource": "necessary-difference",
+      "productBoundary": "allowed",
+      "implementation": "not-implemented",
+      "target": "windows-x86_64-msvc",
+      "mode": "strict"
+    },
+    {
+      "capability": "strict-float",
+      "semanticSource": "necessary-difference",
+      "productBoundary": "allowed",
+      "implementation": "not-implemented",
+      "target": "windows-x86_64-msvc",
+      "mode": "strict"
+    },
+    {
+      "capability": "values",
+      "semanticSource": "necessary-difference",
+      "productBoundary": "allowed",
+      "implementation": "not-implemented",
+      "target": "windows-x86_64-msvc",
+      "mode": "strict"
+    },
+    {
+      "capability": "references",
+      "semanticSource": "inherited-baseline",
+      "productBoundary": "allowed",
+      "implementation": "not-implemented",
+      "target": "windows-x86_64-msvc",
+      "mode": "strict"
+    },
+    {
+      "capability": "null-safety",
+      "semanticSource": "necessary-difference",
+      "productBoundary": "allowed",
+      "implementation": "not-implemented",
+      "target": "windows-x86_64-msvc",
+      "mode": "strict"
+    },
+    {
+      "capability": "generics",
+      "semanticSource": "necessary-difference",
+      "productBoundary": "allowed",
+      "implementation": "not-implemented",
+      "target": "windows-x86_64-msvc",
+      "mode": "strict"
+    },
+    {
+      "capability": "unions",
+      "semanticSource": "necessary-difference",
+      "productBoundary": "allowed",
+      "implementation": "not-implemented",
+      "target": "windows-x86_64-msvc",
+      "mode": "strict"
+    },
+    {
+      "capability": "closures",
+      "semanticSource": "necessary-difference",
+      "productBoundary": "allowed",
+      "implementation": "not-implemented",
+      "target": "windows-x86_64-msvc",
+      "mode": "strict"
+    },
+    {
+      "capability": "modules",
+      "semanticSource": "necessary-difference",
+      "productBoundary": "allowed",
+      "implementation": "not-implemented",
+      "target": "windows-x86_64-msvc",
+      "mode": "strict"
+    },
+    {
+      "capability": "exceptions",
+      "semanticSource": "necessary-difference",
+      "productBoundary": "allowed",
+      "implementation": "not-implemented",
+      "target": "windows-x86_64-msvc",
+      "mode": "strict"
+    },
+    {
+      "capability": "vector",
+      "semanticSource": "necessary-difference",
+      "productBoundary": "allowed",
+      "implementation": "not-implemented",
+      "target": "windows-x86_64-msvc",
+      "mode": "strict"
+    },
+    {
+      "capability": "span",
+      "semanticSource": "necessary-difference",
+      "productBoundary": "allowed",
+      "implementation": "not-implemented",
+      "target": "windows-x86_64-msvc",
+      "mode": "strict"
+    },
+    {
+      "capability": "string",
+      "semanticSource": "pending-special-mapping",
+      "productBoundary": "allowed",
+      "implementation": "not-implemented",
+      "target": "windows-x86_64-msvc",
+      "mode": "strict"
+    },
+    {
+      "capability": "handle-abi",
+      "semanticSource": "necessary-difference",
+      "productBoundary": "allowed",
+      "implementation": "not-implemented",
+      "target": "windows-x86_64-msvc",
+      "mode": "strict"
+    },
+    {
+      "capability": "markers",
+      "semanticSource": "necessary-difference",
+      "productBoundary": "allowed",
+      "implementation": "not-implemented",
+      "target": "windows-x86_64-msvc",
+      "mode": "strict"
+    },
+    {
+      "capability": "kernel",
+      "semanticSource": "necessary-difference",
+      "productBoundary": "allowed",
+      "implementation": "not-implemented",
+      "target": "windows-x86_64-msvc",
+      "mode": "strict"
+    },
+    {
+      "capability": "cpu",
+      "semanticSource": "pending-special-mapping",
+      "productBoundary": "allowed",
+      "implementation": "not-implemented",
+      "target": "windows-x86_64-msvc",
+      "mode": "cpu-parallel"
+    },
+    {
+      "capability": "fast-math",
+      "semanticSource": "pending-special-mapping",
+      "productBoundary": "allowed",
+      "implementation": "not-implemented",
+      "target": "windows-x86_64-msvc",
+      "mode": "fast-math"
+    },
+    {
+      "capability": "gpu",
+      "semanticSource": "pending-special-mapping",
+      "productBoundary": "allowed",
+      "implementation": "not-implemented",
+      "target": "windows-x86_64-msvc",
+      "mode": "gpu"
+    },
+    {
+      "capability": "all-rules",
+      "semanticSource": "necessary-difference",
+      "productBoundary": "allowed",
+      "implementation": "not-implemented",
+      "target": "windows-x86_64-msvc",
+      "mode": "strict"
+    }
+  ]
+}

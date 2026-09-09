@@ -504,7 +504,7 @@ test("removing an active record requires retirement, and inconsistent history is
 });
 
 test("old development formats and damaged inputs still report no real language execution", async () => {
-  for (const oldVersion of ["1", "2", "3"]) {
+  for (const oldVersion of ["1", "2", "3", "4"]) {
     for (const section of ["rules", "support", "catalog", "case"]) {
       const corpus = await minimalCorpus();
       (section === "case" ? corpus.cases[0] : corpus[section]).schemaVersion = oldVersion;
@@ -552,10 +552,16 @@ test("a corpus author validates a source case without claiming language executio
   const report = validateCorpus(await minimalCorpus());
   context.diagnostic(JSON.stringify(report));
   assert.deepEqual(report, {
-    schemaVersion: "4",
+    schemaVersion: "5",
     recordValidation: "valid",
     languageValidation: "not-executed",
     realProductPasses: 0,
+    rules: (await minimalCorpus()).rules.rules,
+    coverage: { initial: "not-assessed", milestone: "incomplete", gaps: [], notApplicable: [], obligations: [], pending: [], unassessedRuleIds: ["r01-i32-add"],
+      stages: ["W1", "W3", "W4", "W5", "W6"].map((stage) => ({ stage, ruleIds: [], coverage: "not-assessed", languageValidation: "not-executed" })) },
+    capabilities: [{ capability: "scalar-i32", semanticSource: "necessary-difference", productBoundary: "allowed",
+      implementation: "not-connected", target: "windows-x86_64-msvc", mode: "strict", recordValidation: "valid",
+      languageValidation: "not-executed", currentSupport: "not-verified" }],
     identity: {
       languageBaseline: "TypeScript 7.0.2", frontendIntake: "not-connected",
       specId: "tsfg-r01-v1", corpusId: "tsfg-r01-minimal-v1",
@@ -577,7 +583,7 @@ test("a damaged case reports its missing oracle basis through the same boundary"
   const report = validateCorpus(corpus);
   context.diagnostic(JSON.stringify(report));
   assert.deepEqual(report, {
-    schemaVersion: "4",
+    schemaVersion: "5",
     recordValidation: "invalid",
     languageValidation: "not-executed", realProductPasses: 0,
     errors: [{ category: "corpus-record-invalid", object: "r01-add-001", field: "oracle.basis" }],

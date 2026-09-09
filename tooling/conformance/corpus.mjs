@@ -6,16 +6,20 @@
  */
 export function validateCorpus(corpus) {
   const error = validateRecords(corpus) ?? validateIdentities(corpus) ?? validateRevisions(corpus)
-    ?? validateLifecycle(corpus) ?? validateReferences(corpus) ?? validateDiagnostics(corpus);
+    ?? validateLifecycle(corpus) ?? validateReferences(corpus) ?? validateDiagnostics(corpus) ?? validateCoverage(corpus);
   if (error) return {
-    schemaVersion: "4", recordValidation: "invalid", errors: [error],
+    schemaVersion: "5", recordValidation: "invalid", errors: [error],
     languageValidation: "not-executed", realProductPasses: 0,
   };
   return {
-    schemaVersion: "4",
+    schemaVersion: "5",
     recordValidation: "valid",
     languageValidation: "not-executed",
     realProductPasses: 0,
+    coverage: coverageReport(corpus),
+    rules: structuredClone(corpus.rules.rules),
+    capabilities: corpus.support.capabilities.map((capability) => ({ ...structuredClone(capability),
+      recordValidation: "valid", languageValidation: "not-executed", currentSupport: "not-verified" })),
     identity: {
       languageBaseline: corpus.rules.languageBaseline, frontendIntake: "not-connected",
       specId: corpus.rules.specId, corpusId: corpus.catalog.corpusId,
@@ -28,6 +32,108 @@ export function validateCorpus(corpus) {
       ...(dataLayout === undefined ? {} : { dataLayout: structuredClone(dataLayout) }),
     })),
   };
+}
+
+function coverageReport(corpus) {
+  const gaps = [];
+  const notApplicable = [];
+  const obligations = [];
+  const unassessedRuleIds = corpus.rules.rules.filter((rule) => !rule.coverage).map((rule) => rule.ruleId);
+  const pending = corpus.rules.rules.filter((rule) => rule.pending).map((rule) => ({
+    ruleId: rule.ruleId, ...structuredClone(rule.pending), specification: "incomplete", languageValidation: "not-executed",
+  }));
+  for (const rule of corpus.rules.rules) {
+    if (!rule.coverage) continue;
+    for (const obligation of rule.coverage.obligations) {
+      const row = { ruleId: rule.ruleId, obligationId: obligation.id, stage: rule.coverage.stage,
+        kind: obligation.kind, requirement: obligation.requirement, target: rule.target, mode: rule.mode,
+        ...(obligation.budgets ? { budgets: structuredClone(obligation.budgets) } : {}) };
+      if (obligation.applicability === "not-applicable") {
+        notApplicable.push({ ...row, reason: obligation.reason });
+        continue;
+      }
+      const caseIds = corpus.cases.filter((record) => record.ruleIds.includes(rule.ruleId)
+        && rule.caseIds.includes(record.caseId) && record.capabilities.includes(rule.capability)
+        && corpus.support.capabilities.some((capability) => capability.capability === rule.capability
+          && capability.target === record.target && capability.mode === record.mode)
+        && record.target === rule.target && record.mode === rule.mode
+        && record.applicability === obligation.kind
+        && Object.entries(obligation.budgets ?? {}).every(([key, value]) => record.budgets[key] === value)
+        && (obligation.kind !== "positive" || record.oracle.kind === "return")
+        && (obligation.kind !== "negative" || record.oracle.kind === "diagnostics")
+        && record.coverage?.includes(obligation.id)).map((record) => record.caseId);
+      obligations.push({ ...row, caseIds, status: caseIds.length ? "covered" : "missing" });
+      if (!caseIds.length) gaps.push({ ...row, category: "corpus-coverage-missing" });
+    }
+  }
+  return { initial: unassessedRuleIds.length || !obligations.some((row) => row.stage === "W1") ? "not-assessed"
+    : gaps.some((gap) => gap.stage === "W1") || corpus.rules.rules.some((rule) => rule.coverage.stage === "W1" && rule.pending)
+      ? "incomplete" : "complete",
+    milestone: "incomplete",
+    stages: ["W1", "W3", "W4", "W5", "W6"].map((stage) => ({ stage,
+      ruleIds: corpus.rules.rules.filter((rule) => rule.coverage?.stage === stage).map((rule) => rule.ruleId),
+      coverage: gaps.some((gap) => gap.stage === stage) ? "incomplete"
+        : obligations.some((row) => row.stage === stage) ? "complete" : "not-assessed",
+      languageValidation: "not-executed",
+    })),
+    gaps, notApplicable, obligations, pending, unassessedRuleIds };
+}
+
+function validateCoverage(corpus) {
+  const semanticSource = (value) => ["inherited-baseline", "necessary-difference", "pending-special-mapping"].includes(value);
+  const duplicateCapability = unique(corpus.support.capabilities, "capability");
+  if (duplicateCapability) return duplicateCapability;
+  for (const capability of corpus.support.capabilities) {
+    const error = fields(capability, capability.capability, {
+      semanticSource, productBoundary: (value) => ["allowed", "prohibited"].includes(value),
+      implementation: (value) => ["not-connected", "not-implemented", "implemented"].includes(value),
+      evidence: (value) => capability.implementation !== "implemented" || text(value),
+    });
+    if (error) return error;
+  }
+  for (const rule of corpus.rules.rules) {
+    const sourceError = fields(rule, rule.ruleId, { semanticSource });
+    if (sourceError) return sourceError;
+    if (rule.semanticSource === "pending-special-mapping" || rule.pending !== undefined) {
+      const error = fields(rule.pending, rule.ruleId, { consumers: nonemptyTextArray, missing: nonemptyTextArray,
+        affectedCapabilities: nonemptyTextArray, consumptionStage: text, closure: text });
+      if (error) return error;
+      const reference = references(rule.pending.affectedCapabilities,
+        new Set(corpus.support.capabilities.map((entry) => entry.capability)), rule.ruleId, "pending.affectedCapabilities");
+      if (reference) return reference;
+    }
+    if (rule.coverage === undefined) continue;
+    const error = fields(rule.coverage, rule.ruleId, {
+      stage: (value) => ["W1", "W3", "W4", "W5", "W6"].includes(value), obligations: records,
+    });
+    if (error) return error;
+    for (const obligation of rule.coverage.obligations) {
+      const error = fields(obligation, rule.ruleId, {
+        id: logicalId, kind: (value) => ["positive", "negative", "boundary"].includes(value), requirement: text,
+        applicability: (value) => ["required", "not-applicable"].includes(value),
+        reason: (value) => obligation.applicability === "not-applicable"
+          ? obligation.kind === "negative" && text(value) : value === undefined,
+        budgets: (value) => value === undefined || (object(value) && Object.keys(value).length > 0
+          && Object.entries(value).every(([key, limit]) => key === "semanticFuel" ? natural(limit)
+            : ["activeDepth", "physicalInstructions", "memoryBytes", "hostTimeMs"].includes(key) && positive(limit))),
+      });
+      if (error) return error;
+    }
+    const duplicate = unique(rule.coverage.obligations, "id");
+    if (duplicate) return { ...duplicate, object: rule.ruleId, field: "coverage.obligations.id" };
+    if (!["positive", "negative"].every((kind) => rule.coverage.obligations.some((entry) => entry.kind === kind))) {
+      return { category: "corpus-record-invalid", object: rule.ruleId, field: "coverage.obligations" };
+    }
+  }
+  for (const record of corpus.cases) {
+    if (record.coverage !== undefined && !textArray(record.coverage)) {
+      return { category: "corpus-record-invalid", object: record.caseId, field: "coverage" };
+    }
+    if (record.coverage?.some((id) => !corpus.rules.rules.some((rule) => record.ruleIds.includes(rule.ruleId)
+      && rule.coverage?.obligations.some((entry) => entry.id === id && entry.applicability === "required")))) {
+      return { category: "corpus-reference-missing", object: record.caseId, field: "coverage" };
+    }
+  }
 }
 
 function normalizedOracle(oracle) {
@@ -190,7 +296,7 @@ const object = (value) => value !== null && typeof value === "object" && !Array.
 const records = (value) => Array.isArray(value) && value.length > 0;
 const nonemptyTextArray = (value) => records(value) && value.every(text);
 const textArray = (value) => Array.isArray(value) && value.every(text);
-const version = (value) => value === "4";
+const version = (value) => value === "5";
 const natural = (value) => typeof value === "string" && /^(0|[1-9][0-9]*)$/.test(value);
 const positive = (value) => natural(value) && value !== "0";
 const integerWidths = new Map([["i8", 8], ["u8", 8], ["i16", 16], ["u16", 16], ["i32", 32], ["u32", 32], ["i64", 64], ["u64", 64]]);

@@ -26,14 +26,14 @@ oracle is independently derived from the R01 language contract. Rule and case
 identities are stable names; `sourceId` identifies logical source independently of
 the caller's filesystem root. Source content and oracle records are never mutated.
 
-Version `4` is an unpublished development record format for this slice,
+Version `5` is an unpublished development record format for this slice,
 not a product artifact family or a full R01 schema. Rules and support records carry
-`specId`; cases also carry `corpusId`. Version 1/2/3 inputs and mixed versions are
+`specId`; cases also carry `corpusId`. Version 1/2/3/4 inputs and mixed versions are
 rejected. The same-repository authoring fixtures and consumer have been updated
 atomically under ECP-0002; no published format or product registry is changed.
 The example files document the required
 fields. Version 3 added lossless numeric records and detached invocation/oracle
-data in reports; callers must invalidate version 1/2/3 records and cached reports.
+data in reports; callers must invalidate version 1/2/3/4 records and cached reports.
 The fixture schema migration changes no source, language rule or independent
 expectation, so their spec/corpus content revisions remain unchanged.
 All five budget
@@ -59,7 +59,7 @@ errors, not product Diagnostic Codes or Trap Codes.
 
 ## Identity and revision authoring
 
-`catalog.json` carries version 4, the current `corpusId`, ordered
+`catalog.json` carries version 5, the current `corpusId`, ordered
 `specRevisions` and `corpusRevisions` arrays, and an `identities` ledger.
 Each revision has a unique `id` within its history and a nonempty `change` note.
 Append specification changes to the first history and case corrections to the
@@ -108,7 +108,7 @@ Node tools and generated output do not establish an official frontend intake.
 
 ## Remaining slices and testing
 
-Coverage requirements, result comparison and evidence-backed
+Result comparison and evidence-backed
 capability status belong to subsequent R01 tickets. No source scanner, parser,
 checker, execution adapter or JavaScript execution is part of this module.
 The source is opaque data even when it is not a valid program.
@@ -122,6 +122,92 @@ and retirement reports. Additional relationships and errors in tests are explici
 tool fixtures, not additional language rules or execution claims.
 Passing tests prove validation-tool behavior only.
 There is no real frontend or language execution evidence in this delivery.
+
+## Coverage and staged responsibilities (version 5)
+
+Version 5 adds optional rule `coverage` and case `coverage` associations, detached
+rule/support declarations, and layered coverage reports. All same-repository
+authoring records and their consumer migrated atomically; versions 1–4 and mixed
+records are rejected. Invalidate their cached reports. This remains an unpublished
+development format under ECP-0002, with no change to product contracts or locks.
+Minimal fixtures retain their content revisions; the expanded R01 directory uses
+`tsfg-r01-v2` to record the added specification responsibilities.
+
+A rule's coverage contains a `stage` (`W1`, `W3`, `W4`, `W5`, `W6`) and nonempty
+`obligations`. Each obligation has a rule-local `id`, `kind` (`positive`, `negative`,
+`boundary`), normative `requirement` and `applicability` (`required` or
+`not-applicable`). Positive and negative responsibilities must both be present;
+authors add every necessary named boundary. Only a negative responsibility can
+be inapplicable, and it requires a nonempty `reason` explaining why this rule has
+no invalid form. No error code is invented for a total operation. Lack of cases,
+targets, modes or budgets is not an exemption. The legacy `positive` and
+`negativeNotApplicable` prose alone never proves coverage.
+
+Cases list obligation IDs in `coverage`; every ID must resolve to a required
+obligation on an associated rule. Coverage credit requires both case/rule
+references, the rule's capability, agreement with the rule and support target/mode,
+and a matching case `applicability` kind. Positive cases require return oracles;
+negative cases currently require diagnostic oracles. Runtime trap cases remain
+uncovered until their oracle representation is delivered by the corresponding
+R01 slice; this ticket does not synthesize trap records or an executor.
+All cases require the five explicit budgets. An obligation may additionally
+specify a nonempty `budgets` object with any of those names and exact required
+values; a differently budgeted case does not fill it. Conditions appear in gaps.
+
+Removing a case requires the ordinary catalog retirement and reference updates.
+An accidental dangling reference is invalid; a valid withdrawal leaves the named
+obligation missing. Unknown coverage IDs, duplicate obligation IDs, missing
+positive/negative responsibilities and malformed exemptions are rejected. As with
+source/oracle authorship, the validator checks declarations and associations; it
+does not parse source to establish that a case really exercises its asserted
+boundary. Specification and independent oracle review remain necessary.
+
+`coverage.initial` describes W1 coverage **within the supplied rule collection**,
+not the entire language: `complete`, `incomplete` or `not-assessed`. Rules without
+coverage are explicitly listed in `unassessedRuleIds` and prevent a completion
+claim. `gaps` identify Rule ID, obligation ID, kind, stage, target, mode and any
+budget constraints with `corpus-coverage-missing`. `notApplicable` preserves the
+reason separately; `obligations` lists the actual credited Case IDs. All five
+stage rows remain visible, even for a narrow collection. `recordValidation` can
+be valid while coverage is incomplete. `coverage.milestone` remains incomplete
+because no real language execution has occurred; record coverage is insufficient
+for full R01 or Windows Functional Complete.
+
+`rules` preserves the semantic source, basis, rationale and normative requirements.
+`capabilities` separates `semanticSource` (`inherited-baseline`,
+`necessary-difference`, `pending-special-mapping`), `productBoundary` (`allowed`,
+`prohibited`), and `implementation` (`not-connected`, `not-implemented`,
+`implemented`). An implemented declaration requires an authored `evidence` reference;
+this validator does not authenticate it. Every capability still reports
+`currentSupport: "not-verified"` and `languageValidation: "not-executed"`.
+Correct rejection of an unsupported feature cannot promote its implementation.
+
+Any pending special mapping must include `pending.consumers`, `missing`,
+`affectedCapabilities`, `consumptionStage` and `closure`. Consumers are real
+compiler/runtime responsibility owners, not claims that those modules exist.
+Affected capabilities must resolve. The report retains these rows with
+`specification: "incomplete"`; unrelated W1 coverage can still complete. Known
+rules may also carry a pending consumer mapping without changing their known
+semantic source. No guessed success oracle closes such a mapping.
+
+The original MIT [R01 responsibility directory](../../tests/r01/corpus/r01-directory.json)
+contains the full W1 rule requirements and W3–W6 staged obligations. It references
+the fixed TS 7.0.2 baseline and current language-contract sections, without choosing
+an R02a intake commit or copying upstream code. Ordinary TS semantics remain
+inherited even when absent from the catalog; future coverage never revives the
+withdrawn class, module, optional, construction, exception-base or source-tag bans.
+Its empty case/error assignments are honest outstanding corpus work, not a claim
+that a language implementation supports those rules. For ingestion, use its rules
+and capabilities as the existing `rules`/`support` inputs, append its spec revision
+and new rule identities to the supplied catalog, and retain all earlier allocations.
+
+Run `node --test tests/r01/coverage.test.mjs` with the locked Node. It demonstrates
+the same entry with a complete scoped addition collection, a withdrawn MAX+1
+boundary, a legitimate negative exemption, and the full staged directory. The
+MAX+1 oracle is independently derived by subtracting 2^32 from 2147483648; no JS
+execution of corpus source determines it. The directory integration test prints
+the full missing-responsibility and pending-consumer report. Numeric/budget corpus
+production and result comparison belong to the subsequent tickets.
 
 ## Lossless scalar records
 
@@ -171,8 +257,8 @@ source, not executed language corpus coverage or support claims.
 ## Source-anchored diagnostic expectations (version 4)
 
 Version 4 adds `oracle.kind: "diagnostics"` with a nonempty `diagnostics` array
-instead of `oracle.value`; the independent `basis` remains required. All current
-authoring records and reports use version 4. Reject version 1/2/3 and mixed
+instead of `oracle.value`; the independent `basis` remains required. Current
+authoring records and reports use version 5. Reject version 1/2/3/4 and mixed
 records and invalidate their cached reports. This unpublished same-repository
 change falls within ECP-0002; no product contract registry, compatibility promise,
 language rule or existing source/oracle content revision changes.
