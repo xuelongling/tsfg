@@ -4,7 +4,7 @@ import assert from "node:assert/strict";
 import { createHash } from "node:crypto";
 import { spawn } from "node:child_process";
 import { createServer } from "node:http";
-import { mkdtemp, readFile, readdir, rm, writeFile } from "node:fs/promises";
+import { mkdir, mkdtemp, readFile, readdir, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
@@ -245,7 +245,8 @@ test("source target rejects a staged helper changed after cache verification", {
   skip: !process.env.TSFG_TEST_GO_CACHE || !process.env.TSFG_TEST_GO_LOCK,
 }, async (t) => {
   const f = await fixture(t);
-  const previous = new Set(await readdir(tmpdir()));
+  const stageParent = path.join(f.root, "stages");
+  await mkdir(stageParent);
   const report = path.join(f.root, "tamper-report.json");
   let finished = false, changed = false;
   const invocation = invoke(["build", "--source-target", "typescript-dependencies",
@@ -253,12 +254,14 @@ test("source target rejects a staged helper changed after cache verification", {
     "--out", path.join(f.root, "out"), "--report", report], {
     TSFG_GIT: TEST_GIT_EXECUTABLE, TSFG_RUNTIME_CACHE: process.env.TSFG_TEST_GO_CACHE,
     TSFG_RUNTIME_LOCK: process.env.TSFG_TEST_GO_LOCK, TSFG_RUNTIME_PLATFORM: "windows-x86_64-msvc",
+    TEMP: stageParent, TMP: stageParent, TMPDIR: stageParent,
+    HOME: stageParent, USERPROFILE: stageParent, APPDATA: stageParent, LOCALAPPDATA: stageParent,
   }).finally(() => { finished = true; });
   // An external filesystem adversary changes only this invocation's new stage.
   // The public Build Report must attribute this to integrity, before execution.
   while (!finished && !changed) {
-    for (const name of (await readdir(tmpdir())).filter((name) => name.startsWith("tsfg-go-source-") && !previous.has(name))) {
-      const helper = path.join(tmpdir(), name, "inputs", "control", "windows-sandbox-run.exe");
+    for (const name of (await readdir(stageParent)).filter((name) => name.startsWith("tsfg-go-source-"))) {
+      const helper = path.join(stageParent, name, "inputs", "control", "windows-sandbox-run.exe");
       try {
         await readFile(helper);
         await writeFile(helper, "corrupt staged executable");
