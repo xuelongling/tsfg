@@ -6866,6 +6866,9 @@ async function prepareGoSourceTarget(options, runtime) {
     if (!declaration?.source) throw new Error("fixed Go source declaration is missing");
     proxy = await verifyGoDependencies(runtime.cachePath, declaration, runtime.lock.goDependencies.sha256, parseZip);
   } catch (error) {
+    if (error.code === "ENOENT") {
+      throw new OfflineBoundaryError(`Go offline input missing: ${error.path ?? error.message}`);
+    }
     throw new GoInputIntegrityError(error.message);
   }
   const sourceRoot = path.resolve(workspaceState.root, "..", declaration.source.projectId);

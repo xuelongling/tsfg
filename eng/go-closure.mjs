@@ -72,13 +72,16 @@ function goProxyRoot(cache, identity) {
   return path.join(cache, "go-proxies", "sha256", identity.slice(7));
 }
 
-export async function verifyGoDependencies(cache, declaration, identity, parseZip) {
-  const root = goProxyRoot(cache, identity);
-  const entry = await lstat(root);
+async function verifyGoProxyMarker(root, identity, entry) {
   if (!entry.isDirectory() || entry.isSymbolicLink()
       || await readFile(path.join(root, "ready.json"), "utf8") !== JSON.stringify({ identity })) {
     throw new Error("Go proxy ready marker or directory identity mismatch");
   }
+}
+
+export async function verifyGoDependencies(cache, declaration, identity, parseZip) {
+  const root = goProxyRoot(cache, identity);
+  await verifyGoProxyMarker(root, identity, await lstat(root));
   return { root, identity, modules: await verifyGoProxy(root, declaration, parseZip) };
 }
 
@@ -139,10 +142,7 @@ export async function prefetchGoDependencies(cache, declaration, identity, parse
       if (error.code !== "ENOENT") throw error;
       return undefined;
     });
-    if (existing && (!existing.isDirectory() || existing.isSymbolicLink()
-        || (await readFile(path.join(root, "ready.json"), "utf8")) !== JSON.stringify({ identity }))) {
-      throw new Error("Go proxy ready marker or directory identity mismatch");
-    }
+    if (existing) await verifyGoProxyMarker(root, identity, existing);
     if (!existing) {
       for (const module of declaration.modules) {
         const prefix = path.join(staging, ...module.path.split("/"), "@v", module.version);

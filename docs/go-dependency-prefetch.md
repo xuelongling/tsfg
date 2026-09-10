@@ -50,6 +50,11 @@ using the explicitly selected Go runtime lock/cache. It verifies the module prox
 again without fetching, the sibling fork's root/HEAD/remote/clean state and
 approved ancestry, and fixed `go.mod`/`go.sum` bytes. Unsupported source targets,
 missing Go and ambient Go overrides fail. Safe `local`/`off` settings are accepted.
+For this preparation, invoke the versioned `eng/tsfg-build.mjs` with a verified
+Node executable and explicit `TSFG_RUNTIME_LOCK`, `TSFG_RUNTIME_CACHE`,
+`TSFG_RUNTIME_PLATFORM` and `TSFG_GIT`. The existing native launchers still select
+the R00 default closure; they do not admit this opt-in preparation lock.
+Absent offline proxy objects return exit 12; existing corrupt objects return 11.
 
 The target emits a **failure**, exit 12, with a structured `preparation` record
 when inputs are ready but the restricted executor is unavailable. It never falls
