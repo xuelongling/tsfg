@@ -36,6 +36,7 @@ import { setTimeout as delay } from "node:timers/promises";
 import { fileURLToPath } from "node:url";
 import { TextDecoder } from "node:util";
 import { validateSourceAdmission } from "./source-admission.mjs";
+import { prefetchGoDependencies, readGoDependencyLock } from "./go-closure.mjs";
 
 class ConfigurationError extends Error {
   constructor(message, issueCode = "invalid-configuration") {
@@ -1699,6 +1700,9 @@ async function prefetch(options) {
     );
   }
   const lock = JSON.parse(await readFile(path.resolve(lockPath), "utf8"));
+  const goDeclaration = await readGoDependencyLock(lockPath, lock);
+  const goDependencies = await prefetchGoDependencies(path.resolve(cachePath), goDeclaration,
+    lock.goDependencies?.sha256, parseZip);
   if (lock.schemaVersion !== "1" || typeof lock.tools !== "object") {
     throw new Error("unsupported toolchain lock schema");
   }
@@ -1806,6 +1810,7 @@ async function prefetch(options) {
 
   return {
     cacheKey: `${platform}/sha256/${lockHex}`,
+    ...(goDependencies ? { goDependencies } : {}),
     lockDigest,
     platform,
     tools: selections.map(({ id, tool }) => ({ id, version: tool.version })),
