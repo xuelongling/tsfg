@@ -196,7 +196,24 @@ test("source dependency resolution rejects ambient Go build overrides", async (t
   assert.match(result.output, /GOFLAGS/);
 });
 
-test("real Go source target records verified preparation without claiming restricted execution", {
+test("source dependency resolution refuses a non-E output before loading tools", async () => {
+  const result = await invoke(["build", "--source-target", "typescript-dependencies",
+    "--target", "windows-x86_64-msvc", "--profile", "debug", "--dev",
+    "--out", "C:\\uncreated-tsfg-output"]);
+  assert.equal(result.status, 2, result.output);
+  assert.match(result.output, /E:.*output/);
+});
+
+test("source dependency resolution requires an absolute E report destination", async (t) => {
+  const f = await fixture(t);
+  const result = await invoke(["build", "--source-target", "typescript-dependencies",
+    "--target", "windows-x86_64-msvc", "--profile", "debug", "--dev",
+    "--out", path.join(f.root, "out"), "--report", path.relative(process.cwd(), path.join(f.root, "report.json"))]);
+  assert.equal(result.status, 2, result.output);
+  assert.match(result.output, /absolute E: report/);
+});
+
+test("real Go source target attempts its native supervisor and retains setup failure evidence", {
   skip: !process.env.TSFG_TEST_GO_CACHE || !process.env.TSFG_TEST_GO_LOCK,
 }, async (t) => {
   const f = await fixture(t);
@@ -218,5 +235,8 @@ test("real Go source target records verified preparation without claiming restri
     "-buildvcs=false", "-pgo=off", "-trimpath", "-gcflags=all=-N -l",
     "./internal/parser", "./internal/checker"]);
   assert.equal(preparation.execution.status, "not-run");
+  assert.equal(preparation.execution.blocker, "native-supervisor-failed");
+  assert.ok(preparation.execution.supervisorCommand.includes("--allowlisted-root"));
+  assert.match(preparation.execution.stageRoot, /^E:[\\/]/i);
   assert.equal(preparation.intakeComplete, false);
 });

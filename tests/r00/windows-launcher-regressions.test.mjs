@@ -20,14 +20,14 @@ test("Windows restricted token uses mandatory integrity to seal read-only path A
   );
   assert.match(source, /GetTokenInformation\(process_token, TokenUser/);
   assert.match(source, /CreateWellKnownSid\(WinLowLabelSid/);
-  assert.match(source, /apply_grant\(&requested\[index\], token_user->User\.Sid/);
+  assert.match(source, /apply_grant\(&requested\[index\], unique_sid \? unique_sid : token_user->User\.Sid/);
   assert.match(source, /LABEL_SECURITY_INFORMATION/);
   assert.match(source, /S:\(ML;OICI;NW;;;LW\)/);
   assert.match(source, /SetTokenInformation\([\s\S]*TokenIntegrityLevel/);
   assert.match(source, /mandatory_label\.Label\.Attributes =[\s\S]*SE_GROUP_INTEGRITY/);
   assert.match(
     source,
-    /CreateRestrictedToken\(process_token, DISABLE_MAX_PRIVILEGE,\s*0, NULL, 0, NULL, 0, NULL/,
+    /CreateRestrictedToken\(process_token, DISABLE_MAX_PRIVILEGE,\s*disabled_count, disabled_groups, 0, NULL/,
   );
   assert.match(
     source,
@@ -36,7 +36,7 @@ test("Windows restricted token uses mandatory integrity to seal read-only path A
   assert.match(source, /GRANT_READ_ONLY: return GENERIC_READ \| GENERIC_EXECUTE/);
   assert.match(
     source,
-    /requested\[index\]\.kind == GRANT_READ_ONLY \|\|[\s\S]*GRANT_READ_EXECUTE\)[\s\S]*continue;/,
+    /!allowlisted_root && \(requested\[index\]\.kind == GRANT_READ_ONLY \|\|[\s\S]*GRANT_READ_EXECUTE\)\)[\s\S]*continue;/,
   );
   assert.match(
     source,

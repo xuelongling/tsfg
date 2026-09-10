@@ -64,9 +64,15 @@ class OfflineBoundaryError extends Error {}
 class UndeclaredInputError extends Error {}
 class SandboxBoundaryError extends Error {}
 class GoInputIntegrityError extends Error {}
+class GoExecutionFailureError extends BuildFailureError {
+  constructor(preparation, message) {
+    super(message);
+    this.preparation = preparation;
+  }
+}
 class GoPreparationBoundaryError extends SandboxBoundaryError {
-  constructor(preparation) {
-    super("Go inputs prepared; restricted control-plane execution, declared-input isolation and E:-only writes are unavailable with the current Windows helper");
+  constructor(preparation, message = "Go native supervisor could not establish the required execution boundary") {
+    super(message);
     this.preparation = preparation;
   }
 }
@@ -96,7 +102,7 @@ const WINDOWS_NETWORK_ISOLATION = Object.freeze({
   status: "blocked",
 });
 const WINDOWS_SANDBOX_EXECUTABLE_DIGEST =
-  "sha256:f54d779b8c5cb46063911ca7409e16588532374f4bbdaf65a95b665c204df7df";
+  "sha256:aa5bc3050d22166017119883382a4c791c1b80ea89d6ff9e9e4888d16363439d";
 const WINDOWS_PUBLICATION_EXECUTABLE_DIGEST =
   "sha256:61a6d286d66b5233732ef5dd07f59fad643760f37e12f52d76d2d5e561cded3c";
 class WorkspaceMismatchError extends Error {
@@ -3668,6 +3674,7 @@ async function compileWindowsSandbox(runtime, sourceRoot, controlRoot,
       "/clang:-fuse-ld=lld",
       ...tools.include.flatMap((includePath) => ["/imsvc", includePath]),
       path.join(sourceRoot, "eng", sourceName),
+      `/Fo${path.join(controlRoot, `${sourceName}.obj`)}`,
       "/link",
       "/Brepro",
       "/nodefaultlib",
@@ -6910,6 +6917,142 @@ async function prepareGoSourceTarget(options, runtime) {
   };
 }
 
+async function copyGoExecutionInputs(source, destination, inputs) {
+  const metadata = await lstat(source);
+  if (metadata.isSymbolicLink()) throw new GoInputIntegrityError(`linked Go execution input: ${source}`);
+  if (metadata.isDirectory()) {
+    await mkdir(destination, { recursive: true });
+    const names = (await readdir(source)).sort();
+    for (let index = 0; index < names.length; index += 8) {
+      await Promise.all(names.slice(index, index + 8).map((name) =>
+        copyGoExecutionInputs(path.join(source, name), path.join(destination, name), inputs)));
+    }
+  } else if (metadata.isFile()) {
+    const bytes = await readFile(source);
+    await writeFile(destination, bytes, { flag: "wx" });
+    inputs.push({ path: destination, sha256: digest(bytes) });
+  } else throw new GoInputIntegrityError(`nonregular Go execution input: ${source}`);
+}
+
+async function isGoDestinationOnE(destination) {
+  if (!/^E:[\\/]/i.test(destination) || destination.slice(2).includes(":")) return false;
+  let current = path.resolve(destination);
+  for (;;) {
+    try {
+      const metadata = await lstat(current);
+      if (metadata.isSymbolicLink() || !/^E:[\\/]/i.test(await realpath(current))) return false;
+    } catch (error) {
+      if (error.code !== "ENOENT") return false;
+    }
+    const parent = path.dirname(current);
+    if (parent === current) return true;
+    current = parent;
+  }
+}
+
+async function executeGoSourceTarget(options, runtime) {
+  const preparation = await prepareGoSourceTarget(options, runtime);
+  const output = path.resolve(options.get("--out"));
+  if (await pathExists(output)) throw new ConfigurationError("Go dependency output already exists");
+  const temporaryRoot = await realpath(tmpdir());
+  if (!/^E:\\/i.test(temporaryRoot)) throw new ConfigurationError("Go execution requires an actual E: temporary directory");
+  const { executable: verifiedHelper } = await verifyWindowsSandboxControl(runtime);
+  const stageRoot = await mkdtemp(path.join(temporaryRoot, "tsfg-go-source-"));
+  const inputRoot = path.join(stageRoot, "inputs");
+  const workRoot = path.join(stageRoot, "work");
+  const controlRoot = path.join(inputRoot, "control");
+  const sourceRoot = path.join(inputRoot, "source");
+  const goRoot = path.join(inputRoot, "go");
+  const nodeRoot = path.join(inputRoot, "node");
+  const proxyRoot = path.join(inputRoot, "proxy");
+  await mkdir(controlRoot, { recursive: true });
+  await mkdir(workRoot);
+  const inputs = [];
+  const sourceEntries = gitOutput(preparation.sourceRoot,
+    ["ls-tree", "-r", "-z", preparation.source.commit, "--", preparation.source.modulePath]).split("\0");
+  for (const entry of sourceEntries.filter(Boolean)) {
+    const match = /^(100644|100755) blob ([a-f0-9]{40})\t(.+)$/.exec(entry);
+    if (!match) continue;
+    const relative = match[3].slice(preparation.source.modulePath.length + 1);
+    const included = ["go.mod", "go.sum", "LICENSE", "NOTICE.txt"].includes(relative)
+      || (/^internal\//.test(relative) && !/(_test\.go|\/testdata\/)/.test(relative)
+        && (/\.(go|s|h)$/.test(relative) || /^internal\/(bundled\/libs\/.*\.ts|diagnostics\/loc\/.*\.gz)$/.test(relative)));
+    if (!included) continue;
+    const destination = path.join(sourceRoot, relative);
+    await mkdir(path.dirname(destination), { recursive: true });
+    await copyGoExecutionInputs(path.join(preparation.sourceRoot, match[3]), destination, inputs);
+    const bytes = await readFile(destination);
+    const blob = createHash("sha1").update(`blob ${bytes.length}\0`).update(bytes).digest("hex");
+    if (blob !== match[2]) throw new GoInputIntegrityError(`source changed from fixed Git blob: ${relative}`);
+  }
+  await copyGoExecutionInputs(path.join(runtime.closurePath, "go"), goRoot, inputs);
+  await copyGoExecutionInputs(path.join(runtime.closurePath, "node"), nodeRoot, inputs);
+  await copyGoExecutionInputs(path.join(runtime.cachePath, "go-proxies", "sha256",
+    preparation.dependencies.identity.slice(7)), proxyRoot, inputs);
+  const helper = path.join(controlRoot, "windows-sandbox-run.exe");
+  await copyGoExecutionInputs(verifiedHelper, helper, inputs);
+  const worker = path.join(controlRoot, "go-source-worker.mjs");
+  await copyGoExecutionInputs(fileURLToPath(new URL("./go-source-worker.mjs", import.meta.url)), worker, inputs);
+  // This input has no grant. It proves denial without modifying external ACLs.
+  const undeclaredCanary = path.join(stageRoot, "undeclared.txt");
+  await writeFile(undeclaredCanary, "undeclared input\n", { flag: "wx" });
+  const go = path.join(goRoot, path.relative(path.join(runtime.closurePath, "go"), preparation.executable));
+  const node = path.join(nodeRoot, path.relative(path.join(runtime.closurePath, "node"), closureToolPath(runtime, "node")));
+  const environment = { ...buildEnvironment(workRoot, []), ...preparation.environmentPolicy,
+    GOPROXY: `file:///${proxyRoot.replaceAll("\\", "/")}`,
+    GOROOT: goRoot, GOPATH: path.join(workRoot, "gopath"), GOCACHE: path.join(workRoot, "gocache"),
+    GOMODCACHE: path.join(workRoot, "modules"), GOTELEMETRY: "off", PATH: "" };
+  const plan = { schemaVersion: "1", moduleRoot: sourceRoot, inputRoot, workRoot, helper,
+    undeclaredCanary, go, goVersion: runtime.lock.tools.go.version, arguments: preparation.arguments,
+    modules: preparation.dependencies.modules, environment, inputs: inputs.sort((left, right) => left.path < right.path ? -1 : left.path > right.path ? 1 : 0) };
+  const planPath = path.join(controlRoot, "plan.json");
+  await writeFile(planPath, canonicalize(plan), { flag: "wx" });
+  const executableInputs = inputs.filter((entry) => /\.exe$/i.test(entry.path)).map((entry) => entry.path);
+  const supervisorArguments = ["--allowlisted-root", stageRoot,
+    ...executableInputs.flatMap((executable) => ["--deny-network", executable]),
+    ...[sourceRoot, proxyRoot].flatMap((root) => ["--ro", root]),
+    ...[goRoot, nodeRoot, controlRoot].flatMap((root) => ["--rx", root]),
+    "--rw", workRoot, "--", node, worker, planPath];
+  const launch = { schemaVersion: "1", executable: helper, arguments: supervisorArguments,
+    environment, cwd: stageRoot, helperSha256: WINDOWS_SANDBOX_EXECUTABLE_DIGEST,
+    planSha256: await digestFile(planPath) };
+  await writeFile(path.join(stageRoot, "launch.json"), canonicalize(launch), { flag: "wx" });
+  const child = spawnSync(helper, supervisorArguments, { cwd: stageRoot, env: environment,
+    encoding: "utf8", timeout: 180000, maxBuffer: 64 * 1024 * 1024, windowsHide: true });
+  await writeFile(path.join(stageRoot, "supervisor.log"), `${child.stdout ?? ""}${child.stderr ?? ""}`);
+  preparation.execution = { status: "not-run", blocker: "native-supervisor-failed", stageRoot,
+    helperSha256: WINDOWS_SANDBOX_EXECUTABLE_DIGEST, supervisorCommand: [helper, ...supervisorArguments],
+    exitCode: child.status, error: child.error?.message ?? null };
+  const workerResultPath = path.join(workRoot, "worker-result.json");
+  let workerResult;
+  if (await pathExists(workerResultPath)) {
+    workerResult = JSON.parse((await readRegularFile(workerResultPath, "Go worker result")).toString("utf8"));
+    preparation.execution.worker = workerResult;
+  }
+  if (child.error || child.status !== 0) {
+    if (!child.error && child.status === 20 && ["go-version", "dependency-resolution"].includes(workerResult?.phase)) {
+      preparation.execution.status = "failed";
+      preparation.execution.blocker = "go-execution-failed";
+      throw new GoExecutionFailureError(preparation, workerResult.message);
+    }
+    throw new GoPreparationBoundaryError(preparation, `Go native supervisor failed (${child.status}): ${child.error?.message ?? child.stderr}`);
+  }
+  const result = workerResult;
+  if (!result) throw new GoPreparationBoundaryError(preparation, "Go supervisor returned without a worker result");
+  if (result.status !== "success") throw new BuildFailureError(result.message ?? "Go dependency resolution failed");
+  const outputBytes = await readRegularFile(path.join(workRoot, "go-list.jsonstream"), "Go dependency output");
+  if (digest(outputBytes) !== result.outputSha256) throw new GoInputIntegrityError("Go dependency output changed");
+  await mkdir(path.dirname(output), { recursive: true });
+  // Keep all staging evidence distinct from the atomically published result.
+  const publication = await mkdtemp(path.join(path.dirname(output), ".go-dependencies-"));
+  await writeFile(path.join(publication, "dependencies.json"), canonicalize(result));
+  await writeFile(path.join(publication, "go-list.jsonstream"), outputBytes);
+  await rename(publication, output);
+  return { ...preparation, status: "dependencies-resolved", execution: {
+    status: "success", helperSha256: WINDOWS_SANDBOX_EXECUTABLE_DIGEST, stageRoot,
+    isolation: "unique-restricting-sid-and-wfp", exitCode: child.status, result }, output };
+}
+
 async function enterWindowsOfflineBoundary(arguments_, runtime, reportPath) {
   try {
     const { executable } = await verifyWindowsSandboxControl(runtime);
@@ -6968,7 +7111,10 @@ async function enterWindowsOfflineBoundary(arguments_, runtime, reportPath) {
 
 const arguments_ = process.argv.slice(2);
 const command = arguments_[0] ?? "";
-const reportPath = parseReportPath(arguments_);
+const requestedReportPath = parseReportPath(arguments_);
+const invalidGoReport = arguments_.includes("--source-target") && requestedReportPath
+  && !await isGoDestinationOnE(requestedReportPath);
+const reportPath = invalidGoReport ? undefined : requestedReportPath;
 const windowsBoundaryBootstrapError = process.env.TSFG_WINDOWS_BOUNDARY_ERROR;
 let runtimeIntegrityError;
 let runtimeClosure;
@@ -7022,7 +7168,11 @@ if (windowsBoundaryBootstrapError) {
   );
 }
 
-if (delegatedWindowsStatus !== undefined) {
+if (invalidGoReport) {
+  process.exitCode = await fail(command, 2, "usage/configuration", {
+    code: "invalid-configuration", message: "source target requires an absolute E: report destination",
+  }, undefined, "offline");
+} else if (delegatedWindowsStatus !== undefined) {
   process.exitCode = delegatedWindowsStatus;
 } else if (runtimeIntegrityError) {
   process.exitCode = await fail(
@@ -7112,6 +7262,9 @@ if (delegatedWindowsStatus !== undefined) {
       if (options.get("--source-target") !== "typescript-dependencies") {
         throw new ConfigurationError("unsupported source target");
       }
+      if (!await isGoDestinationOnE(options.get("--out"))) {
+        throw new ConfigurationError("source target requires an absolute E: output");
+      }
       const goOverrides = { GOFLAGS: "", GOEXPERIMENT: "", GOTOOLCHAIN: "local",
         GOWORK: "off", GOENV: "off", GOPROXY: "off", GOAMD64: "v2" };
       for (const [name, allowed] of Object.entries(goOverrides)) {
@@ -7123,8 +7276,8 @@ if (delegatedWindowsStatus !== undefined) {
       if (!runtimeClosure?.selections.some(({ id }) => id === "go")) {
         throw new OfflineBoundaryError("locked Go runtime is unavailable");
       }
-      throw new GoPreparationBoundaryError(await prepareGoSourceTarget(options, runtimeClosure));
-    }
+      process.exitCode = await succeed(command, await executeGoSourceTarget(options, runtimeClosure), reportPath, "offline");
+    } else {
     const workspaceState = inspectProductWorkspace(options, true);
     if (!runtimeClosure) throw new Error("locked runtime closure is unavailable");
     const networkCanary = await verifyOfflineBoundary();
@@ -7142,6 +7295,7 @@ if (delegatedWindowsStatus !== undefined) {
       after: await verifyOfflineBoundary(),
     };
     process.exitCode = await succeed(command, result, reportPath, "offline");
+    }
   } catch (error) {
     if (publication) await publication.rollback();
     const isConfigurationError = error instanceof ConfigurationError;
@@ -7186,7 +7340,7 @@ if (delegatedWindowsStatus !== undefined) {
                     ? "forbidden-build-option"
                   : isBuildFailure ? "native-build" : "internal-control-plane",
         message: error.message,
-        ...(error instanceof GoPreparationBoundaryError ? { preparation: error.preparation } : {}),
+        ...(error instanceof GoPreparationBoundaryError || error instanceof GoExecutionFailureError ? { preparation: error.preparation } : {}),
       },
       reportPath,
       "offline",

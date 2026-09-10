@@ -2,7 +2,8 @@
 
 # Go dependency prefetch preparation
 
-Status: partial ticket 03 implementation. Native offline execution remains blocked.
+Status: partial ticket 03 implementation. The bounded native execution path is
+implemented but its successful Windows isolation acceptance remains outstanding.
 The opt-in `eng/go-toolchains.lock.json` and adjacent `go-dependencies.lock.json`
 prepare Go 1.26.8 Windows amd64 and the fixed parser/checker module candidates.
 The separate lock is a temporary preparation input: it preserves the existing R00
@@ -56,12 +57,22 @@ Node executable and explicit `TSFG_RUNTIME_LOCK`, `TSFG_RUNTIME_CACHE`,
 the R00 default closure; they do not admit this opt-in preparation lock.
 Absent offline proxy objects return exit 12; existing corrupt objects return 11.
 
-The target emits a **failure**, exit 12, with a structured `preparation` record
-when inputs are ready but the restricted executor is unavailable. It never falls
-through to R00 smoke or labels its preparation as a successful build. The record
-contains the proposed real `go list -deps -json` arguments, tool/dependency/source
-identities and explicit `execution.status=not-run`, `intakeComplete=false`.
-It is neither a Build Identity nor a verified Repo Workspace receipt.
+The target materializes a new directory under the caller's E: TEMP. It copies
+fixed-commit Go source and explicit embedded resources (checking Git blob identity),
+the verified tools and module proxy, and a private worker. It records every copied
+file's SHA-256 and invokes the verified native helper once. Node and Go run within
+that supervisor; the worker never recursively establishes another WFP boundary.
+Staging, including the exact `launch.json` arguments/environment and native log,
+is retained for diagnosis. The output and report must use absolute E: paths without
+linked ancestors. Existing output is rejected. Only successful dependency results
+are atomically published; execution does not modify the dependency/tool lock.
+
+Setup failure returns exit 12 with the complete `preparation` record and native
+exit status. A Go failure after the boundary probes returns exit 20 and records
+its phase. Neither case falls through to R00 smoke. `intakeComplete=false` remains
+explicit even after successful dependency resolution: this operation does not
+prove AST/type consumption, generated-source maintenance or completed intake.
+The operation is neither a Build Identity nor a verified Repo Workspace receipt.
 
 The planned dependency operation uses readonly modules, disabled VCS/PGO,
 trimpath, explicit windows/amd64/v2, CGO disabled, isolated GOENV/GOWORK and local
@@ -71,11 +82,23 @@ and this preparation makes no claim that Go implements the full release profile.
 The locked tool's `src/cmd/go/alldocs.go` is the parameter reference; see also
 [Go toolchain selection](https://go.dev/doc/toolchain).
 
-Current Windows helper limitations prevent promoting this plan to execution:
-its outer network-only mode inherits caller identity, nested restricted helpers
-conflict, and read grants are not an input allowlist. A scoped executor revision
-needs explicit review of the existing isolation authority before deployment.
-No flag enables a bypass. Do not run the mutable Node control plane elevated.
+The internal `--allowlisted-root` helper mode requires an owned E: staging root,
+rejects path aliases/hardlinks and overlapping grants, and uses a fresh restricting
+SID, disabled groups/privileges and low integrity. It grants that SID access to
+declared inputs and a separate non-executable writable root, restricts inherited
+handles, and waits for job descendants before normal WFP/ACL cleanup. The private
+`--verify-restriction` operation observes the actual token and job; it explicitly
+does not claim to attest WFP by itself. The worker also checks denied input writes,
+undeclared reads, IPv4/IPv6 canaries, exact Go version and module resolution.
+
+This does not create a service, account or general administrator broker. Do not
+run the mutable Node controller elevated. A standard caller needs existing WFP
+setup capability; without it the native attempt fails closed. A user-run native
+acceptance operation must pin the generated helper/plan/input identities and use
+only the recorded new E: staging root. Unique restricting SIDs can also block
+Windows DLL/registry access: startup, write-DAC denial, subprocess network denial
+and abnormal supervisor cleanup must be demonstrated before claiming acceptance.
+No generic system SID is added to work around a failed startup.
 
 `tests/r00/go-closure.test.mjs` exercises the public entry with a synthetic module.
 Its fixed sums were independently checked using Go 1.26.8. These fixtures prove
