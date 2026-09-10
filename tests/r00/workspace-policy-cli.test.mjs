@@ -501,6 +501,28 @@ test("verify-workspace rejects contents materialized beneath an admission-only g
   }
 });
 
+test("verify-workspace rejects a redirected parent of an unmaterialized gitlink", async () => {
+  const sandbox = await mkdtemp(path.join(tmpdir(), "tsfg-source-gitlink-parent-"));
+  const workspace = path.join(sandbox, "w");
+  try {
+    const fixture = await materializePolicyFixture(workspace, {
+      admitUpstream: true, admissionVersion: "2", unmaterializedGitlink: true,
+      upstreamFiles: validUpstreamFiles(),
+    });
+    const parent = path.join(workspace, "future-upstream/_submodules");
+    await rm(parent, { recursive: true });
+    const outside = path.join(sandbox, "outside");
+    await mkdir(path.join(outside, "TypeScript"), { recursive: true });
+    await symlink(outside, parent, process.platform === "win32" ? "junction" : "dir");
+    const reportPath = path.join(sandbox, "report.json");
+    const result = await invokeVerify(workspace, fixture.manifestHead, reportPath, fixture.manifestName);
+    assert.equal(result.status, 10, result.stderr);
+    assert.equal(JSON.parse(await readFile(reportPath, "utf8")).error.issues[0].code, "source-admission");
+  } finally {
+    await rm(sandbox, { recursive: true, force: true, maxRetries: 10, retryDelay: 100 });
+  }
+});
+
 test("verify-workspace requires an explicit preserved copyright mapping", async () => {
   const sandbox = await mkdtemp(path.join(tmpdir(), "tsfg-admission-copyright-"));
   const workspace = path.join(sandbox, "workspace");

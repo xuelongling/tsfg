@@ -1858,7 +1858,7 @@ async function verifyRuntimeClosure(lockPath, cachePath, platform) {
  * @param {BufferEncoding | "buffer"} encoding
  * @returns {any}
  */
-function gitOutput(cwd, arguments_, encoding = "utf8") {
+function gitOutput(cwd, arguments_, encoding = "utf8", input = undefined) {
   const gitExecutable = process.env.TSFG_GIT;
   if (!gitExecutable || !path.isAbsolute(gitExecutable)) {
     throw new WorkspaceMismatchError(
@@ -1899,8 +1899,9 @@ function gitOutput(cwd, arguments_, encoding = "utf8") {
     const bytes = execFileSync(gitExecutable, arguments_, {
       cwd,
       env: environment,
-      maxBuffer: 16 * 1024 * 1024,
-      stdio: ["ignore", "pipe", "pipe"],
+      input,
+      maxBuffer: 256 * 1024 * 1024,
+      stdio: [input === undefined ? "ignore" : "pipe", "pipe", "pipe"],
     });
     return encoding === "buffer" ? bytes : bytes.toString(encoding);
   } catch (error) {
@@ -2013,6 +2014,8 @@ function verifyPortablePaths(repository, entries, definition) {
   }
 
   const whitelist = new Set(definition.pathCasingWhitelist);
+  const controlPaths = new Set(definition.controlPathCasingWhitelist
+    .filter((entry) => entry.projectId === repository.id).map((entry) => entry.path));
   const maximum = Number.parseInt(definition.maxRelativePathLength, 10);
   for (const [index, relativePath] of paths.entries()) {
     if (Buffer.byteLength(relativePath, "ascii") > maximum) {
@@ -2036,13 +2039,8 @@ function verifyPortablePaths(repository, entries, definition) {
           `${repository.workspacePath}/${relativePath} contains a Windows reserved name`,
         );
       }
-      const controlException = definition.controlPathCasingWhitelist.some(
-        (entry) =>
-          entry.projectId === repository.id &&
-          (relativePath === entry.path ||
-            (entry.path === "skills/**/SKILL.md" &&
-              /^skills\/(?:[a-z0-9._-]+\/)+SKILL\.md$/.test(relativePath))),
-      );
+      const controlException = controlPaths.has(relativePath) ||
+        (controlPaths.has("skills/**/SKILL.md") && /^skills\/(?:[a-z0-9._-]+\/)+SKILL\.md$/.test(relativePath));
       const basenameException =
         segmentIndex === segments.length - 1 && whitelist.has(segment);
       if (!/^[a-z0-9._-]+$/.test(segment) && !basenameException && !controlException) {
@@ -2681,11 +2679,45 @@ function parseUpstreamToml(bytes) {
   return values;
 }
 
+function verifySourceFileBytes(repository, entries, approval, entryMap) {
+  const mappings = new Map(approval.files.map((file) => [file.path, file]));
+  const retained = new Set(["UPSTREAM.toml", ...Object.values(approval.legal)]);
+  const blobs = entries.filter((entry) => entry.mode !== "160000");
+  for (let offset = 0; offset < blobs.length; offset += 128) {
+    const batch = blobs.slice(offset, offset + 128);
+    const output = gitOutput(repository.root, ["cat-file", "--batch"], "buffer", batch.map((entry) => `${entry.oid}\n`).join(""));
+    let cursor = 0;
+    for (const entry of batch) {
+      const end = output.indexOf(10, cursor);
+      const [oid, type, length] = output.subarray(cursor, end).toString("ascii").split(" ");
+      const size = Number(length);
+      if (end < cursor || oid !== entry.oid || type !== "blob" || !Number.isSafeInteger(size) || size < 0 ||
+          end + size + 1 >= output.length || output[end + size + 1] !== 10) {
+        throw new WorkspaceMismatchError("source-admission", "invalid Git source batch response");
+      }
+      const bytes = output.subarray(end + 1, end + size + 1);
+      cursor = end + size + 2;
+      const relativePath = entry.pathBytes.toString("ascii");
+      const mapping = mappings.get(relativePath);
+      if (digest(bytes) !== mapping.sha256) throw new WorkspaceMismatchError("source-admission", `source file mapping is stale: ${relativePath}`);
+      if (mapping.contentKind === "text") {
+        try { new TextDecoder("utf-8", { fatal: true }).decode(bytes); } catch {
+          throw new WorkspaceMismatchError("source-admission", "mapped source text is not UTF-8");
+        }
+      }
+      if (retained.has(relativePath)) entryMap.get(relativePath).bytes = Buffer.from(bytes);
+    }
+    if (cursor !== output.length) throw new WorkspaceMismatchError("source-admission", "unexpected Git source batch output");
+  }
+}
+
 function verifyUpstreamProvenance(repository, entries, definition, approval) {
   if (approval && entries.some((entry) => !["100644", "100755", "160000"].includes(entry.mode))) {
     throw new WorkspaceMismatchError("source-admission", "source mappings require regular files or explicitly unmaterialized gitlinks");
   }
-  const entryMap = committedEntryMap(repository, entries);
+  const entryMap = approval
+    ? new Map(entries.map((entry) => [entry.pathBytes.toString("ascii"), { ...entry, bytes: undefined }]))
+    : committedEntryMap(repository, entries);
   if (approval) {
     try { gitOutput(repository.root, ["check-ref-format", approval.branch]); } catch {
       throw new WorkspaceMismatchError("source-admission", "invalid source branch hint");
@@ -2694,15 +2726,22 @@ function verifyUpstreamProvenance(repository, entries, definition, approval) {
         new Set(approval.files.map((file) => file.path)).size !== entries.length ||
         approval.files.some((file) => !entryMap.has(file.path) || (file.contentKind === "gitlink"
           ? entryMap.get(file.path).mode !== "160000" || entryMap.get(file.path).oid !== file.oid
-          : entryMap.get(file.path).mode === "160000" || digest(entryMap.get(file.path).bytes) !== file.sha256))) {
+          : entryMap.get(file.path).mode === "160000"))) {
       throw new WorkspaceMismatchError("source-admission", "source file mapping is missing or stale");
     }
+    verifySourceFileBytes(repository, entries, approval, entryMap);
     for (const file of approval.files.filter((entry) => entry.contentKind === "gitlink")) {
-      const location = path.join(repository.root, file.path);
-      let entry;
-      try { entry = lstatSync(location); } catch (error) { if (error.code !== "ENOENT") throw error; }
-      if (entry && (!entry.isDirectory() || entry.isSymbolicLink() || readdirSync(location).length !== 0)) {
-        throw new WorkspaceMismatchError("source-admission", "admission-only gitlinks must remain unmaterialized");
+      let location = repository.root;
+      const segments = file.path.split("/");
+      for (const [index, segment] of segments.entries()) {
+        location = path.join(location, segment);
+        let entry;
+        try { entry = lstatSync(location); } catch (error) { if (error.code !== "ENOENT") throw error; }
+        if (!entry) break;
+        if (!entry.isDirectory() || entry.isSymbolicLink() ||
+            (index === segments.length - 1 && readdirSync(location).length !== 0)) {
+          throw new WorkspaceMismatchError("source-admission", "admission-only gitlinks must remain unmaterialized with ordinary directory parents");
+        }
       }
     }
     for (const role of ["license", "notice", "copyright"]) {
@@ -2714,11 +2753,6 @@ function verifyUpstreamProvenance(repository, entries, definition, approval) {
       try { original = gitOutput(repository.root, ["show", `${approval.baseOid}:${approval.legal[role]}`], "buffer"); } catch { /* rejected below */ }
       if (!original || !original.equals(material.bytes)) {
         throw new WorkspaceMismatchError("source-admission", `original source ${role} material was not preserved`);
-      }
-    }
-    for (const file of approval.files.filter((entry) => entry.contentKind === "text")) {
-      try { new TextDecoder("utf-8", { fatal: true }).decode(entryMap.get(file.path).bytes); } catch {
-        throw new WorkspaceMismatchError("source-admission", "mapped source text is not UTF-8");
       }
     }
   }
