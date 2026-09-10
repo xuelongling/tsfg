@@ -18,7 +18,7 @@ import {
   symlink,
   writeFile,
 } from "node:fs/promises";
-import { constants as fsConstants, copyFileSync } from "node:fs";
+import { constants as fsConstants, copyFileSync, lstatSync, readdirSync } from "node:fs";
 import { execFileSync, spawnSync } from "node:child_process";
 import { connect as connectNetwork } from "node:net";
 import { arch as hostArchitecture, release as hostRelease, tmpdir, version as hostVersion } from "node:os";
@@ -1948,7 +1948,7 @@ function splitNullTerminated(bytes) {
   return entries;
 }
 
-function committedTree(repositoryRoot, revision) {
+function committedTree(repositoryRoot, revision, allowGitlinks = false) {
   const output = gitOutput(
     repositoryRoot,
     ["ls-tree", "-rz", "--full-tree", revision],
@@ -1960,7 +1960,7 @@ function committedTree(repositoryRoot, revision) {
       throw new WorkspaceMismatchError("repository-tree", "Git returned an invalid tree entry");
     }
     const header = record.subarray(0, separator).toString("ascii").split(" ");
-    if (header.length !== 3 || header[1] !== "blob") {
+    if (header.length !== 3 || (header[1] !== "blob" && !(allowGitlinks && header[0] === "160000" && header[1] === "commit"))) {
       throw new WorkspaceMismatchError("repository-tree", "Git returned an unsupported tree entry");
     }
     return {
@@ -2199,7 +2199,7 @@ function committedEntryMap(repository, entries) {
   return new Map(
     entries.map((entry) => [
       entry.pathBytes.toString("ascii"),
-      { ...entry, bytes: committedBlob(repository.root, entry.oid) },
+      { ...entry, bytes: entry.mode === "160000" ? undefined : committedBlob(repository.root, entry.oid) },
     ]),
   );
 }
@@ -2682,8 +2682,8 @@ function parseUpstreamToml(bytes) {
 }
 
 function verifyUpstreamProvenance(repository, entries, definition, approval) {
-  if (approval && entries.some((entry) => !["100644", "100755"].includes(entry.mode))) {
-    throw new WorkspaceMismatchError("source-admission", "source mappings require regular committed files");
+  if (approval && entries.some((entry) => !["100644", "100755", "160000"].includes(entry.mode))) {
+    throw new WorkspaceMismatchError("source-admission", "source mappings require regular files or explicitly unmaterialized gitlinks");
   }
   const entryMap = committedEntryMap(repository, entries);
   if (approval) {
@@ -2692,8 +2692,18 @@ function verifyUpstreamProvenance(repository, entries, definition, approval) {
     }
     if (!Array.isArray(approval.files) || approval.files.length !== entries.length ||
         new Set(approval.files.map((file) => file.path)).size !== entries.length ||
-        approval.files.some((file) => !["text", "binary"].includes(file.contentKind) || !entryMap.has(file.path) || digest(entryMap.get(file.path).bytes) !== file.sha256)) {
+        approval.files.some((file) => !entryMap.has(file.path) || (file.contentKind === "gitlink"
+          ? entryMap.get(file.path).mode !== "160000" || entryMap.get(file.path).oid !== file.oid
+          : entryMap.get(file.path).mode === "160000" || digest(entryMap.get(file.path).bytes) !== file.sha256))) {
       throw new WorkspaceMismatchError("source-admission", "source file mapping is missing or stale");
+    }
+    for (const file of approval.files.filter((entry) => entry.contentKind === "gitlink")) {
+      const location = path.join(repository.root, file.path);
+      let entry;
+      try { entry = lstatSync(location); } catch (error) { if (error.code !== "ENOENT") throw error; }
+      if (entry && (!entry.isDirectory() || entry.isSymbolicLink() || readdirSync(location).length !== 0)) {
+        throw new WorkspaceMismatchError("source-admission", "admission-only gitlinks must remain unmaterialized");
+      }
     }
     for (const role of ["license", "notice", "copyright"]) {
       const material = entryMap.get(approval.legal?.[role]);
@@ -2840,7 +2850,7 @@ async function verifyWorkspacePolicy(manifestsRoot, manifestRevision, expectedPr
     throw new WorkspaceMismatchError("source-admission", "sources require an explicitly versioned candidate combination");
   }
   const productAdmission = productProject ? admissionFile(path.join(workspace, productProject.path), productProject.revision, "eng/source-admissions.json") : undefined;
-  if (sourceAdmission.schemaVersion !== "1" || !Array.isArray(sourceAdmission.sources) ||
+  if (!["1", "2"].includes(sourceAdmission.schemaVersion) || !Array.isArray(sourceAdmission.sources) ||
       new Set(sourceAdmission.sources.map((source) => source.projectId)).size !== sourceAdmission.sources.length ||
       canonicalize(sourceAdmission) !== canonicalize(productAdmission)) {
     throw new WorkspaceMismatchError("source-admission", "product and manifest source admission records disagree");
@@ -2858,11 +2868,12 @@ async function verifyWorkspacePolicy(manifestsRoot, manifestRevision, expectedPr
   let productEntries;
   let productCoverage;
   for (const repository of repositories) {
-    const entries = committedTree(repository.root, repository.revision);
     const firstParty = ["manifests", "tsfg.git", ".agents.git"].includes(repository.id);
     const approval = firstParty ? undefined : sourceAdmission.sources.find((source) => source.projectId === repository.id);
+    const entries = committedTree(repository.root, repository.revision, Boolean(approval) && sourceAdmission.schemaVersion === "2");
     const repositoryPolicy = approval ? {
       ...definition,
+      maxRelativePathLength: sourceAdmission.schemaVersion === "2" ? "4096" : definition.maxRelativePathLength,
       controlPathCasingWhitelist: [...definition.controlPathCasingWhitelist,
         ...approval.files.map((file) => ({ projectId: repository.id, path: file.path }))],
     } : definition;

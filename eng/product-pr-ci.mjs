@@ -441,7 +441,7 @@ function requireResolvedWorkspace(report, resolvedManifest, label, expectedBindi
   const sourceAdmission = resolvedManifest.sourceAdmission ?? { schemaVersion: "1", sources: [] };
   validateSourceAdmission(sourceAdmission, sourcePolicy);
   const sources = sourceAdmission.sources;
-  if (sourceAdmission.schemaVersion !== "1" || !Array.isArray(sources) ||
+  if (!["1", "2"].includes(sourceAdmission.schemaVersion) || !Array.isArray(sources) ||
       sources.length !== resolvedManifest.projects.filter((project) => !["tsfg.git", ".agents.git"].includes(project.name)).length ||
       new Set(sources.map((source) => source.projectId)).size !== sources.length ||
       sources.some((source) => !resolvedManifest.projects.some((project) => project.name === source.projectId && project.path === source.path && project.revision === source.forkOid && project.remote === source.remoteUrl))) {

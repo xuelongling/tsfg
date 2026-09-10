@@ -160,17 +160,23 @@ async function materializePolicyFixture(workspace, overrides = {}) {
       const contents =
         typeof upstreamToml === "function" ? upstreamToml(baseOid) : upstreamToml;
       await writeFile(path.join(upstreamRoot, "UPSTREAM.toml"), contents);
+      if (overrides.unmaterializedGitlink) {
+        git(upstreamRoot, "update-index", "--add", "--cacheinfo", `160000,${baseOid},_submodules/TypeScript`);
+        await mkdir(path.join(upstreamRoot, "_submodules/TypeScript"), { recursive: true });
+      }
       git(upstreamRoot, "add", "UPSTREAM.toml");
       git(upstreamRoot, "commit", "--quiet", "-m", "add upstream provenance");
       upstreamHead = git(upstreamRoot, "rev-parse", "HEAD");
     }
     if (overrides.admitUpstream) {
-      const files = git(upstreamRoot, "ls-files").split("\n").map((filePath) => ({
+      const files = git(upstreamRoot, "ls-files").split("\n").map((filePath) => filePath === "_submodules/TypeScript" ? {
+        contentKind: "gitlink", path: filePath, oid: baseOid,
+      } : ({
         contentKind: "text",
         path: filePath,
         sha256: `sha256:${createHash("sha256").update(spawnSync("git", ["show", `${upstreamHead}:${filePath}`], { cwd: upstreamRoot }).stdout).digest("hex")}`,
       }));
-      admission = { schemaVersion: "1", sources: [{
+      admission = { schemaVersion: overrides.admissionVersion ?? "1", sources: [{
         projectId: "future-upstream.git", path: upstreamPath,
         remoteUrl: "https://github.com/xuelongling/future-upstream.git",
         canonicalUrl: "https://github.com/upstream/future-upstream.git",
@@ -430,6 +436,62 @@ test("verify-workspace binds source approval to the canonical fork remote", asyn
       admissionTransform: (record) => { record.sources[0].remoteUrl = "https://github.com/other/future-upstream.git"; },
       upstreamFiles: validUpstreamFiles(),
     });
+    const reportPath = path.join(sandbox, "report.json");
+    const result = await invokeVerify(workspace, fixture.manifestHead, reportPath, fixture.manifestName);
+    assert.equal(result.status, 10, result.stderr);
+    assert.equal(JSON.parse(await readFile(reportPath, "utf8")).error.issues[0].code, "source-admission");
+  } finally {
+    await rm(sandbox, { recursive: true, force: true, maxRetries: 10, retryDelay: 100 });
+  }
+});
+
+test("verify-workspace preserves explicitly mapped upstream paths beyond first-party naming limits", async () => {
+  const sandbox = await mkdtemp(path.join(tmpdir(), "tsfg-source-paths-"));
+  const workspace = path.join(sandbox, "w");
+  try {
+    const fixture = await materializePolicyFixture(workspace, {
+      admitUpstream: true,
+      admissionVersion: "2",
+      upstreamFiles: { ...validUpstreamFiles(), [`tests/${"long-directory/".repeat(10)}original test (case), name with spaces.ts`]: "// Original upstream fixture\n" },
+    });
+    const reportPath = path.join(sandbox, "report.json");
+    const result = await invokeVerify(workspace, fixture.manifestHead, reportPath, fixture.manifestName);
+    assert.equal(result.status, 0, result.stderr);
+    assert.equal(JSON.parse(await readFile(reportPath, "utf8")).result.policy.sourceAdmission.intakeComplete, false);
+  } finally {
+    await rm(sandbox, { recursive: true, force: true, maxRetries: 10, retryDelay: 100 });
+  }
+});
+
+test("verify-workspace records an exact unmaterialized upstream gitlink without admitting its source", async () => {
+  const sandbox = await mkdtemp(path.join(tmpdir(), "tsfg-source-gitlink-"));
+  const workspace = path.join(sandbox, "w");
+  try {
+    const fixture = await materializePolicyFixture(workspace, {
+      admitUpstream: true, admissionVersion: "2", unmaterializedGitlink: true,
+      upstreamFiles: validUpstreamFiles(),
+    });
+    const reportPath = path.join(sandbox, "report.json");
+    const result = await invokeVerify(workspace, fixture.manifestHead, reportPath, fixture.manifestName);
+    assert.equal(result.status, 0, result.stderr);
+    const source = JSON.parse(await readFile(reportPath, "utf8")).result.policy.sourceAdmission.sources[0];
+    assert.deepEqual(source.files.find(file => file.contentKind === "gitlink"), {
+      contentKind: "gitlink", path: "_submodules/TypeScript", oid: source.baseOid,
+    });
+  } finally {
+    await rm(sandbox, { recursive: true, force: true, maxRetries: 10, retryDelay: 100 });
+  }
+});
+
+test("verify-workspace rejects contents materialized beneath an admission-only gitlink", async () => {
+  const sandbox = await mkdtemp(path.join(tmpdir(), "tsfg-source-gitlink-content-"));
+  const workspace = path.join(sandbox, "w");
+  try {
+    const fixture = await materializePolicyFixture(workspace, {
+      admitUpstream: true, admissionVersion: "2", unmaterializedGitlink: true,
+      upstreamFiles: validUpstreamFiles(),
+    });
+    await writeFile(path.join(workspace, "future-upstream/_submodules/TypeScript/unchecked.ts"), "unapproved source\n");
     const reportPath = path.join(sandbox, "report.json");
     const result = await invokeVerify(workspace, fixture.manifestHead, reportPath, fixture.manifestName);
     assert.equal(result.status, 10, result.stderr);
