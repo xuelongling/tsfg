@@ -139,9 +139,10 @@ async function materializePolicyFixture(workspace, overrides = {}) {
   let admission;
   const baselineProductHead = productHead;
   const sourceBranch = overrides.branch ?? "refs/heads/tsfg-r02a-fixture";
+  const upstreamPath = overrides.upstreamPath ?? "future-upstream";
   const manifestName = overrides.manifestName ?? (overrides.admitUpstream ? "candidates/tsfg-v0.2.0.xml" : "bootstrap/r00.xml");
   if (overrides.upstreamFiles) {
-    const upstreamRoot = path.join(workspace, "future-upstream");
+    const upstreamRoot = path.join(workspace, upstreamPath);
     const upstreamFiles = { ...overrides.upstreamFiles };
     const upstreamToml = upstreamFiles["UPSTREAM.toml"];
     delete upstreamFiles["UPSTREAM.toml"];
@@ -170,7 +171,7 @@ async function materializePolicyFixture(workspace, overrides = {}) {
         sha256: `sha256:${createHash("sha256").update(spawnSync("git", ["show", `${upstreamHead}:${filePath}`], { cwd: upstreamRoot }).stdout).digest("hex")}`,
       }));
       admission = { schemaVersion: "1", sources: [{
-        projectId: "future-upstream.git", path: "future-upstream",
+        projectId: "future-upstream.git", path: upstreamPath,
         remoteUrl: "https://github.com/xuelongling/future-upstream.git",
         canonicalUrl: "https://github.com/upstream/future-upstream.git",
         baseOid, forkOid: upstreamHead, branch: sourceBranch,
@@ -185,7 +186,7 @@ async function materializePolicyFixture(workspace, overrides = {}) {
       git(path.join(workspace, "tsfg"), "commit", "--quiet", "-m", "approve isolated source fixture only");
       productHead = git(path.join(workspace, "tsfg"), "rev-parse", "HEAD");
     }
-    upstream = `  <project name="future-upstream.git" path="future-upstream" remote="github-xuelongling" upstream="${sourceBranch}" revision="${upstreamHead}" />\n`;
+    upstream = `  <project name="future-upstream.git" path="${upstreamPath}" remote="github-xuelongling" upstream="${sourceBranch}" revision="${upstreamHead}" />\n`;
   }
   const manifest = `<?xml version="1.0" encoding="UTF-8"?>
 <!-- SPDX-License-Identifier: MIT -->
@@ -227,7 +228,7 @@ ${upstream ?? ""}
   git(manifestGit, "config", "branch.default.merge", manifestHead);
   await writeFile(
     path.join(workspace, ".repo", "project.list"),
-    `.agents\n${overrides.upstreamFiles ? "future-upstream\n" : ""}tsfg\n`,
+    `.agents\n${overrides.upstreamFiles ? `${upstreamPath}\n` : ""}tsfg\n`,
   );
   await writeFile(
     path.join(workspace, ".repo", "manifest.xml"),
@@ -292,6 +293,21 @@ test("verify-workspace admits an exact isolated fork while leaving Source Intake
     const result = await invokeVerify(workspace, fixture.manifestHead, reportPath, fixture.manifestName);
     assert.equal(result.status, 0, result.stderr);
     const report = JSON.parse(await readFile(reportPath, "utf8"));
+    if (process.env.TSFG_SOURCE_ADMISSION_EVIDENCE) {
+      const evidence = path.resolve(process.env.TSFG_SOURCE_ADMISSION_EVIDENCE);
+      await mkdir(evidence, { recursive: true });
+      await writeFile(path.join(evidence, "producer-report.json"), JSON.stringify(report, null, 2));
+      await writeFile(path.join(evidence, "source-admissions.json"), JSON.stringify(fixture.admission, null, 2));
+      await writeFile(path.join(evidence, "candidate-manifest.xml"), await readFile(path.join(workspace, ".repo", "manifests", fixture.manifestName)));
+      for (const [name, repositoryPath] of [["product", "tsfg"], ["agents", ".agents"], ["manifests", ".repo/manifests"], ["source", "future-upstream"]]) {
+        git(path.join(workspace, repositoryPath), "bundle", "create", path.join(evidence, `${name}.bundle`), "--all");
+      }
+      await writeFile(path.join(evidence, "fixture.json"), JSON.stringify({
+        kind: "isolated-governance-fixture", intakeComplete: false,
+        manifestBase: fixture.manifestBase, manifestHead: fixture.manifestHead,
+        manifestName: fixture.manifestName, producerCommit: git(repositoryRoot, "rev-parse", "HEAD"),
+      }, null, 2));
+    }
     assert.deepEqual(report.result.policy.upstreamForks, fixture.admission.sources);
     assert.equal(report.result.policy.sourceAdmission.intakeComplete, false);
     assert.deepEqual(report.result.policy.sourceAdmission.stages, {
@@ -454,6 +470,7 @@ for (const [scenario, mutate] of [
   ["unrelated base", undefined],
   ["unversioned combination", undefined],
   ["two sides disagree", undefined],
+  ["forbidden fork prefix", undefined],
 ]) test(`verify-workspace rejects malformed source mappings: ${scenario}`, async () => {
   const sandbox = await mkdtemp(path.join(tmpdir(), "tsfg-admission-shape-"));
   const workspace = path.join(sandbox, "workspace");
@@ -464,6 +481,7 @@ for (const [scenario, mutate] of [
       unrelatedBase: scenario === "unrelated base",
       manifestName: scenario === "unversioned combination" ? "candidates/floating.xml" : undefined,
       productAdmissionTransform: scenario === "two sides disagree" ? (record) => { record.sources[0].license = "MIT"; } : undefined,
+      upstreamPath: scenario === "forbidden fork prefix" ? "tsfg-upstream-fixture" : undefined,
       upstreamFiles: validUpstreamFiles(),
     });
     const reportPath = path.join(sandbox, "report.json");

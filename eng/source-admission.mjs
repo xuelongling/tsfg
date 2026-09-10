@@ -19,7 +19,7 @@ export function validateSourceAdmission(record, definition) {
         ["projectId", "path", "remoteUrl", "canonicalUrl", "baseOid", "forkOid", "branch", "license"].some((key) =>
           typeof source[key] !== "string" || /[\x00-\x1f\x7f]/.test(source[key])) ||
         !/^[A-Za-z0-9][A-Za-z0-9._-]*\.git$/.test(source.projectId) || ["tsfg.git", ".agents.git", "manifests.git"].includes(source.projectId.toLowerCase()) ||
-        !/^[a-z0-9]+(?:-[a-z0-9]+)*$/.test(source.path) || !safePath(source.path) ||
+        !/^[a-z0-9]+(?:-[a-z0-9]+)*$/.test(source.path) || source.path.startsWith("tsfg-upstream-") || !safePath(source.path) ||
         source.remoteUrl !== `https://github.com/xuelongling/${source.projectId}` ||
         !/^https:\/\/github\.com\/[A-Za-z0-9][A-Za-z0-9-]*\/[A-Za-z0-9_.-]+\.git$/.test(source.canonicalUrl) ||
         source.canonicalUrl.split("/").at(-1) !== source.projectId ||

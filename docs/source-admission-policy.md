@@ -19,6 +19,7 @@ records `projectId`, `path`, `remoteUrl`, `canonicalUrl`, `baseOid`, `forkOid`,
 `manifests`, `tsfg.git` and `.agents.git` retain their first-party policy. The
 canonical fork remote uses the xuelongling owner and preserves the upstream
 slug. Both OIDs are complete commits; the base must be an ancestor of the fork.
+The workspace path must not use the reserved `tsfg-upstream-*` prefix.
 The branch is a valid Git acquisition hint, never an alternative identity.
 
 Each `files` entry maps one exact repository-relative `path`, byte `sha256`, and
@@ -58,3 +59,6 @@ Manifest Repository's `tools/manifest-ci.mjs`, then run the pinned Node executab
 with `--test tests/r00/workspace-policy-cli.test.mjs`. Without that explicit path,
 the cross-repository consumer subtest is reported as skipped. All fixtures use
 the inherited temporary directory and remove only their own temporary trees.
+Set `TSFG_SOURCE_ADMISSION_EVIDENCE` to a durable evidence directory to retain the
+actual positive report, admission mapping, manifest and four Git bundles before
+temporary fixture cleanup. These are explicitly governance-fixture evidence.
