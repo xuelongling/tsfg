@@ -23,6 +23,26 @@ export async function readGoDependencyLock(lockPath, lock) {
   if (declaration.schemaVersion !== "1" || !Array.isArray(declaration.modules) || !declaration.modules.length) {
     throw new Error("invalid Go dependency lock schema");
   }
+  if (declaration.source) {
+    if (!/^1\.26\.\d+$/.test(declaration.goVersion)
+        || lock.tools?.go?.version !== declaration.goVersion
+        || !lock.targets?.[declaration.platform]?.tools?.includes("go")) {
+      throw new Error("source target requires an exact selected Go 1.26 patch lock");
+    }
+    const source = declaration.source;
+    if (declaration.platform !== "windows-x86_64-msvc"
+        || source.projectId !== "typescript" || source.modulePath !== "tsc"
+        || !/^[0-9a-f]{40}$/.test(source.commit)
+        || !/^sha256:[0-9a-f]{64}$/.test(source.goModSha256)
+        || !/^sha256:[0-9a-f]{64}$/.test(source.goSumSha256)
+        || JSON.stringify(declaration.packages) !== JSON.stringify(["./internal/parser", "./internal/checker"])) {
+      throw new Error("invalid fixed TypeScript dependency target");
+    }
+    if (declaration.modules.some((module) => !module.licenseEvidence
+        || !["MIT", "BSD-2-Clause", "BSD-3-Clause"].includes(module.license))) {
+      throw new Error("source target requires verified module license records");
+    }
+  }
   const seen = new Set();
   for (const module of declaration.modules) {
     if (typeof module.path !== "string" || module.path.split("/").some((segment) =>
@@ -50,6 +70,16 @@ function moduleSum(files) {
 
 function goProxyRoot(cache, identity) {
   return path.join(cache, "go-proxies", "sha256", identity.slice(7));
+}
+
+export async function verifyGoDependencies(cache, declaration, identity, parseZip) {
+  const root = goProxyRoot(cache, identity);
+  const entry = await lstat(root);
+  if (!entry.isDirectory() || entry.isSymbolicLink()
+      || await readFile(path.join(root, "ready.json"), "utf8") !== JSON.stringify({ identity })) {
+    throw new Error("Go proxy ready marker or directory identity mismatch");
+  }
+  return { root, identity, modules: await verifyGoProxy(root, declaration, parseZip) };
 }
 
 async function verifyGoProxy(root, declaration, parseZip) {
@@ -82,6 +112,12 @@ async function verifyGoProxy(root, declaration, parseZip) {
     const info = await readFile(`${prefix}.info`);
     const files = parseZip(zip).filter((entry) => entry.type === "0")
       .map(({ name, bytes }) => ({ name, contents: bytes }));
+    if (module.licenseEvidence) {
+      const license = files.find(({ name }) => name === module.licenseEvidence.archivePath);
+      if (!license || sha256(license.contents) !== module.licenseEvidence.sha256) {
+        throw new Error(`Go module license content mismatch: ${module.path}`);
+      }
+    }
     if (files.some(({ name }) => !name.startsWith(`${module.path}@${module.version}/`))
         || moduleSum([{ name: "go.mod", contents: mod }]) !== module.goModSum
         || moduleSum(files) !== module.sum

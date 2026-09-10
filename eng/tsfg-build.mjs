@@ -36,7 +36,7 @@ import { setTimeout as delay } from "node:timers/promises";
 import { fileURLToPath } from "node:url";
 import { TextDecoder } from "node:util";
 import { validateSourceAdmission } from "./source-admission.mjs";
-import { prefetchGoDependencies, readGoDependencyLock } from "./go-closure.mjs";
+import { prefetchGoDependencies, readGoDependencyLock, verifyGoDependencies } from "./go-closure.mjs";
 
 class ConfigurationError extends Error {
   constructor(message, issueCode = "invalid-configuration") {
@@ -63,6 +63,13 @@ class PackageFailureError extends Error {}
 class OfflineBoundaryError extends Error {}
 class UndeclaredInputError extends Error {}
 class SandboxBoundaryError extends Error {}
+class GoInputIntegrityError extends Error {}
+class GoPreparationBoundaryError extends SandboxBoundaryError {
+  constructor(preparation) {
+    super("Go inputs prepared; restricted control-plane execution, declared-input isolation and E:-only writes are unavailable with the current Windows helper");
+    this.preparation = preparation;
+  }
+}
 class ReproducibilityMismatchError extends Error {
   /**
    * @param {string} member
@@ -1849,6 +1856,7 @@ async function verifyRuntimeClosure(lockPath, cachePath, platform) {
     lockDigest,
     platform,
     selections,
+    lockPath: path.resolve(lockPath),
   };
   if (platform === "windows-x86_64-msvc") {
     await verifyWindowsSandboxControl(runtime);
@@ -6787,6 +6795,9 @@ async function reproCheck(options, runtime, workspaceState, networkCanary) {
 }
 
 function shouldEnterWindowsOfflineBoundary(arguments_, runtime) {
+  // Source intake must not elevate the mutable control plane via network-only.
+  // Its native operation establishes its own restricted boundary.
+  if (arguments_.includes("--source-target")) return false;
   if (
     process.platform !== "win32" ||
     process.env.TSFG_WINDOWS_OFFLINE_ACTIVE === "1" ||
@@ -6842,6 +6853,58 @@ function shouldEnterWindowsOfflineBoundary(arguments_, runtime) {
   } catch {
     return false;
   }
+}
+
+async function prepareGoSourceTarget(options, runtime) {
+  if (options.get("--target") !== "windows-x86_64-msvc" || runtime.platform !== "windows-x86_64-msvc") {
+    throw new ConfigurationError("TypeScript dependency preparation requires the locked Windows target");
+  }
+  const workspaceState = inspectProductWorkspace(options, true);
+  let declaration, proxy;
+  try {
+    declaration = await readGoDependencyLock(runtime.lockPath, runtime.lock);
+    if (!declaration?.source) throw new Error("fixed Go source declaration is missing");
+    proxy = await verifyGoDependencies(runtime.cachePath, declaration, runtime.lock.goDependencies.sha256, parseZip);
+  } catch (error) {
+    throw new GoInputIntegrityError(error.message);
+  }
+  const sourceRoot = path.resolve(workspaceState.root, "..", declaration.source.projectId);
+  const actualRoot = gitOutput(sourceRoot, ["rev-parse", "--show-toplevel"]).trim();
+  const actualCommit = gitOutput(sourceRoot, ["rev-parse", "HEAD"]).trim();
+  const remote = gitOutput(sourceRoot, ["remote", "get-url", "origin"]).trim().replace(/\.git$/, "");
+  if (path.resolve(actualRoot) !== sourceRoot || actualCommit !== declaration.source.commit
+      || remote !== "https://github.com/xuelongling/TypeScript"
+      || gitOutput(sourceRoot, ["status", "--porcelain=v1", "--untracked-files=all"]).trim()) {
+    throw new WorkspaceMismatchError("go-source-identity", "fixed TypeScript source root, HEAD, remote or clean state mismatch");
+  }
+  requireVisibleTrackedFiles(sourceRoot);
+  gitOutput(sourceRoot, ["merge-base", "--is-ancestor", "1e4744d68260a7cb91b62b12edc3f6a2187faaf1", actualCommit]);
+  const moduleRoot = path.join(sourceRoot, declaration.source.modulePath);
+  for (const [name, expected] of [["go.mod", declaration.source.goModSha256], ["go.sum", declaration.source.goSumSha256]]) {
+    if (await digestFile(path.join(moduleRoot, name)) !== expected) {
+      throw new WorkspaceMismatchError("go-source-lock", `fixed ${name} identity mismatch`);
+    }
+  }
+  const profile = options.get("--profile");
+  return {
+    status: "prepared-not-executed",
+    source: declaration.source,
+    sourceRoot, moduleRoot,
+    toolchainClosure: runtime.lockDigest,
+    dependencies: { identity: proxy.identity, modules: proxy.modules },
+    executable: closureToolPath(runtime, "go"),
+    arguments: ["list", "-deps", "-json", "-mod=readonly", "-buildvcs=false", "-pgo=off", "-trimpath",
+      ...(profile === "debug" ? ["-gcflags=all=-N -l"] : []), ...declaration.packages],
+    profile: { name: profile, operation: "dependency-resolution", goamd64: "v2", cgo: false,
+      pgo: false, debugOptimization: profile === "debug" ? "disabled" : "not-applicable",
+      linkedSymbols: "not-applicable-no-link", nativeBuildAcceptance: "not-run" },
+    environmentPolicy: { GOENV: "off", GOWORK: "off", GOTOOLCHAIN: "local", GOFLAGS: "",
+      GOEXPERIMENT: "", GOOS: "windows", GOARCH: "amd64", GOAMD64: "v2", CGO_ENABLED: "0",
+      GOSUMDB: "off", GOVCS: "*:off", GOAUTH: "off", GOPROXY: "verified-local-proxy-only" },
+    execution: { status: "not-run", blocker: "restricted-windows-control-plane",
+      helperSha256: WINDOWS_SANDBOX_EXECUTABLE_DIGEST },
+    intakeComplete: false,
+  };
 }
 
 async function enterWindowsOfflineBoundary(arguments_, runtime, reportPath) {
@@ -7037,11 +7100,28 @@ if (delegatedWindowsStatus !== undefined) {
     const options = parseOptions(
       arguments_,
       new Set([
-        "--dev", "--target", "--profile", "--simd-dispatch", "--workspace", "--out", "--report",
+        "--dev", "--target", "--profile", "--simd-dispatch", "--workspace", "--out", "--report", "--source-target",
       ]),
       new Set(["--dev"]),
     );
     validateSmokeOptions(options, "build");
+    if (options.has("--source-target")) {
+      if (options.get("--source-target") !== "typescript-dependencies") {
+        throw new ConfigurationError("unsupported source target");
+      }
+      const goOverrides = { GOFLAGS: "", GOEXPERIMENT: "", GOTOOLCHAIN: "local",
+        GOWORK: "off", GOENV: "off", GOPROXY: "off", GOAMD64: "v2" };
+      for (const [name, allowed] of Object.entries(goOverrides)) {
+        const actual = Object.keys(process.env).find((key) => key.toUpperCase() === name);
+        if (actual && process.env[actual] && process.env[actual] !== allowed) {
+          throw new ConfigurationError(`source target forbids ambient ${name}`);
+        }
+      }
+      if (!runtimeClosure?.selections.some(({ id }) => id === "go")) {
+        throw new OfflineBoundaryError("locked Go runtime is unavailable");
+      }
+      throw new GoPreparationBoundaryError(await prepareGoSourceTarget(options, runtimeClosure));
+    }
     const workspaceState = inspectProductWorkspace(options, true);
     if (!runtimeClosure) throw new Error("locked runtime closure is unavailable");
     const networkCanary = await verifyOfflineBoundary();
@@ -7068,10 +7148,12 @@ if (delegatedWindowsStatus !== undefined) {
     const isOfflineBoundary = error instanceof OfflineBoundaryError;
     const isUndeclaredInput = error instanceof UndeclaredInputError;
     const isSandboxBoundary = error instanceof SandboxBoundaryError;
+    const isGoIntegrity = error instanceof GoInputIntegrityError;
     process.exitCode = await fail(
       command,
       isConfigurationError
         ? 2
+        : isGoIntegrity ? 11
         : isWorkspaceMismatch
           ? 10
           : (isOfflineBoundary || isUndeclaredInput || isSandboxBoundary)
@@ -7079,6 +7161,7 @@ if (delegatedWindowsStatus !== undefined) {
             : isBuildFailure ? 20 : 30,
       isConfigurationError
         ? "usage/configuration"
+        : isGoIntegrity ? "lock/integrity"
         : isWorkspaceMismatch
           ? "workspace mismatch"
           : (isOfflineBoundary || isUndeclaredInput || isSandboxBoundary)
@@ -7087,6 +7170,7 @@ if (delegatedWindowsStatus !== undefined) {
       {
         code: isConfigurationError
           ? (error.issueCode ?? "invalid-configuration")
+          : isGoIntegrity ? "go-input-integrity"
           : isWorkspaceMismatch
             ? error.issueCode
             : isOfflineBoundary
@@ -7097,8 +7181,9 @@ if (delegatedWindowsStatus !== undefined) {
                   ? "sandbox-boundary"
                   : isBuildPolicy
                     ? "forbidden-build-option"
-                    : isBuildFailure ? "native-build" : "internal-control-plane",
+                  : isBuildFailure ? "native-build" : "internal-control-plane",
         message: error.message,
+        ...(error instanceof GoPreparationBoundaryError ? { preparation: error.preparation } : {}),
       },
       reportPath,
       "offline",

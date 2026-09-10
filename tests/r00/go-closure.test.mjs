@@ -9,6 +9,7 @@ import { tmpdir } from "node:os";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 import test from "node:test";
+import { TEST_GIT_EXECUTABLE } from "./test-tools.mjs";
 
 const entry = fileURLToPath(new URL("../../eng/tsfg-build.mjs", import.meta.url));
 const hash = (bytes) => `sha256:${createHash("sha256").update(bytes).digest("hex")}`;
@@ -16,11 +17,12 @@ const moduleBytes = Buffer.from("module example.com/module\n\ngo 1.26\n");
 // A stored ZIP containing go.mod. Sums were independently obtained with Go 1.26.8.
 const moduleZip = Buffer.from("UEsDBBQAAAAAAAAAISgJ6JEuIwAAACMAAAAgAAAAZXhhbXBsZS5jb20vbW9kdWxlQHYxLjAuMC9nby5tb2Rtb2R1bGUgZXhhbXBsZS5jb20vbW9kdWxlCgpnbyAxLjI2ClBLAQIUABQAAAAAAAAAISgJ6JEuIwAAACMAAAAgAAAAAAAAAAAAAAAAAAAAAABleGFtcGxlLmNvbS9tb2R1bGVAdjEuMC4wL2dvLm1vZFBLBQYAAAAAAQABAE4AAABhAAAAAAA=", "base64");
 
-async function invoke(args) {
+async function invoke(args, overrides = {}) {
   const environment = { ...process.env };
   for (const key of Object.keys(environment)) {
     if (key.startsWith("TSFG_RUNTIME_")) delete environment[key];
   }
+  Object.assign(environment, overrides);
   return new Promise((resolve, reject) => {
     const child = spawn(process.execPath, [entry, ...args], { env: environment });
     let output = "";
@@ -124,12 +126,13 @@ test("prefetch rejects extra files in a warmed Go proxy", async (t) => {
   assert.match(result.report.error.issues[0].message, /unexpected Go proxy/);
 });
 
-test("unfinished source resolution cannot fall through to an unrelated smoke build", async (t) => {
+test("source dependency resolution requires locked Go instead of running smoke", async (t) => {
   const f = await fixture(t);
   const result = await invoke(["build", "--source-target", "typescript-dependencies",
     "--target", "windows-x86_64-msvc", "--profile", "debug", "--dev",
     "--out", path.join(f.root, "out")]);
-  assert.equal(result.status, 2, result.output);
+  assert.equal(result.status, 12, result.output);
+  assert.match(result.output, /locked Go/);
 });
 
 test("prefetch requires the Go declaration in the Toolchain Closure projection", async (t) => {
@@ -159,4 +162,61 @@ test("prefetch rejects a corrupt ready marker without repairing the cache", asyn
   await writeFile(marker, "corrupt");
   assert.equal((await f.prefetch()).status, 11);
   assert.equal(await readFile(marker, "utf8"), "corrupt");
+});
+
+test("prefetch verifies declared module license bytes against the downloaded archive", async (t) => {
+  const f = await fixture(t);
+  Object.assign(f.declaration.modules[0], { licenseEvidence: {
+    archivePath: "example.com/module@v1.0.0/LICENSE", sha256: hash("missing license"),
+  } });
+  await f.saveDeclaration();
+  const result = await f.prefetch();
+  assert.equal(result.status, 11, result.output);
+  assert.match(result.report.error.issues[0].message, /license/);
+});
+
+test("prefetch rejects a source target with an insufficient Go toolchain lock", async (t) => {
+  const f = await fixture(t);
+  Object.assign(f.declaration, { goVersion: "1.25.9", source: {
+    projectId: "typescript", commit: "2c3d2d793a208fd15e6e20fd5dfdd687ce2d7223",
+    modulePath: "tsc", goModSha256: hash("mod"), goSumSha256: hash("sum"),
+  }, packages: ["./internal/parser", "./internal/checker"] });
+  await f.saveDeclaration();
+  const result = await f.prefetch();
+  assert.equal(result.status, 11, result.output);
+  assert.match(result.report.error.issues[0].message, /Go 1.26/);
+});
+
+test("source dependency resolution rejects ambient Go build overrides", async (t) => {
+  const f = await fixture(t);
+  const result = await invoke(["build", "--source-target", "typescript-dependencies",
+    "--target", "windows-x86_64-msvc", "--profile", "debug", "--dev",
+    "--out", path.join(f.root, "out")], { GOFLAGS: "-mod=mod -pgo=auto" });
+  assert.equal(result.status, 2, result.output);
+  assert.match(result.output, /GOFLAGS/);
+});
+
+test("real Go source target records verified preparation without claiming restricted execution", {
+  skip: !process.env.TSFG_TEST_GO_CACHE || !process.env.TSFG_TEST_GO_LOCK,
+}, async (t) => {
+  const f = await fixture(t);
+  const report = path.join(f.root, "source-report.json");
+  const result = await invoke(["build", "--source-target", "typescript-dependencies",
+    "--target", "windows-x86_64-msvc", "--profile", "debug", "--dev",
+    "--out", path.join(f.root, "out"), "--report", report], {
+    TSFG_GIT: TEST_GIT_EXECUTABLE,
+    TSFG_RUNTIME_CACHE: process.env.TSFG_TEST_GO_CACHE,
+    TSFG_RUNTIME_LOCK: process.env.TSFG_TEST_GO_LOCK,
+    TSFG_RUNTIME_PLATFORM: "windows-x86_64-msvc",
+  });
+  assert.equal(result.status, 12, result.output);
+  const record = JSON.parse(await readFile(report, "utf8"));
+  assert.equal(record.status, "failure");
+  const preparation = record.error.issues[0].preparation;
+  assert.equal(preparation.source.commit, "2c3d2d793a208fd15e6e20fd5dfdd687ce2d7223");
+  assert.deepEqual(preparation.arguments, ["list", "-deps", "-json", "-mod=readonly",
+    "-buildvcs=false", "-pgo=off", "-trimpath", "-gcflags=all=-N -l",
+    "./internal/parser", "./internal/checker"]);
+  assert.equal(preparation.execution.status, "not-run");
+  assert.equal(preparation.intakeComplete, false);
 });

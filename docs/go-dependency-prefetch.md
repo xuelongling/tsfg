@@ -2,9 +2,12 @@
 
 # Go dependency prefetch preparation
 
-Status: partial ticket 03 implementation. The default product toolchain is unchanged.
-Native offline dependency resolution and its Build Profile acceptance are not implemented
-or certified by this preparation support. `build --source-target` is rejected.
+Status: partial ticket 03 implementation. Native offline execution remains blocked.
+The opt-in `eng/go-toolchains.lock.json` and adjacent `go-dependencies.lock.json`
+prepare Go 1.26.8 Windows amd64 and the fixed parser/checker module candidates.
+The separate lock is a temporary preparation input: it preserves the existing R00
+default while the new target lacks execution acceptance. Its complete tool entries
+are independently content-locked; changes to the default do not update it implicitly.
 
 The existing `tsfg-build prefetch --lock <file> --cache <directory> --platform <target>
 --report <file>` can prepare declared Go module inputs alongside its tools. There is no
@@ -30,12 +33,44 @@ content sums, and supplies minimal `.info` metadata containing the exact `Versio
 It invents no release timestamp or Git provenance. The report also records observed
 archive and go.mod SHA-256 values. Module license/source metadata must be reviewed
 before selecting a real consumer; a successful download is not source admission.
+When a module declares `licenseEvidence`, prefetch checks its archive path and
+SHA-256 against the actual archive bytes. Source-target declarations require
+these records, an exact selected Go 1.26 patch, fixed source/OID/module hashes,
+the Windows target and the parser/checker package pair.
 
 The proxy is content-addressed by the dependency declaration's full SHA-256 under
 `go-proxies/sha256/`. Prefetch stages it, validates it, and atomically renames it into
 place. Reuse verifies all declared contents and the marker, rejects extra files,
 directories and links, and does not repair a corrupt completed cache. Only prefetch
 downloads inputs. No Go executable is invoked by this preparation code.
+
+`build --source-target typescript-dependencies --target windows-x86_64-msvc
+--profile debug --dev --out <E: output> --report <E: report>` performs preparation
+using the explicitly selected Go runtime lock/cache. It verifies the module proxy
+again without fetching, the sibling fork's root/HEAD/remote/clean state and
+approved ancestry, and fixed `go.mod`/`go.sum` bytes. Unsupported source targets,
+missing Go and ambient Go overrides fail. Safe `local`/`off` settings are accepted.
+
+The target emits a **failure**, exit 12, with a structured `preparation` record
+when inputs are ready but the restricted executor is unavailable. It never falls
+through to R00 smoke or labels its preparation as a successful build. The record
+contains the proposed real `go list -deps -json` arguments, tool/dependency/source
+identities and explicit `execution.status=not-run`, `intakeComplete=false`.
+It is neither a Build Identity nor a verified Repo Workspace receipt.
+
+The planned dependency operation uses readonly modules, disabled VCS/PGO,
+trimpath, explicit windows/amd64/v2, CGO disabled, isolated GOENV/GOWORK and local
+GOTOOLCHAIN. Debug supplies `-gcflags=all=-N -l`. Dependency listing does not link;
+release detached symbols and compiler optimization acceptance remain unverified,
+and this preparation makes no claim that Go implements the full release profile.
+The locked tool's `src/cmd/go/alldocs.go` is the parameter reference; see also
+[Go toolchain selection](https://go.dev/doc/toolchain).
+
+Current Windows helper limitations prevent promoting this plan to execution:
+its outer network-only mode inherits caller identity, nested restricted helpers
+conflict, and read grants are not an input allowlist. A scoped executor revision
+needs explicit review of the existing isolation authority before deployment.
+No flag enables a bypass. Do not run the mutable Node control plane elevated.
 
 `tests/r00/go-closure.test.mjs` exercises the public entry with a synthetic module.
 Its fixed sums were independently checked using Go 1.26.8. These fixtures prove
