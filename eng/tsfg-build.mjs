@@ -35,6 +35,7 @@ import {
 import { setTimeout as delay } from "node:timers/promises";
 import { fileURLToPath } from "node:url";
 import { TextDecoder } from "node:util";
+import { validateSourceAdmission } from "./source-admission.mjs";
 
 class ConfigurationError extends Error {
   constructor(message, issueCode = "invalid-configuration") {
@@ -2680,33 +2681,6 @@ function parseUpstreamToml(bytes) {
   return values;
 }
 
-function validateSourceAdmission(record, definition) {
-  const keys = (value, expected) => value && typeof value === "object" && !Array.isArray(value) &&
-    Object.keys(value).sort().join(",") === expected.split(",").sort().join(",");
-  const safePath = (value) => typeof value === "string" && value.length <= 180 &&
-    /^[A-Za-z0-9._/-]+$/.test(value) && value.split("/").every((part) => part !== "" &&
-      ![".", "..", ".git"].includes(part.toLowerCase()) && !/[. ]$/.test(part) &&
-      !/^(?:con|prn|aux|nul|com[1-9]|lpt[1-9])(?:\.|$)/i.test(part));
-  if (!keys(record, "schemaVersion,sources") || record.schemaVersion !== "1" || !Array.isArray(record.sources) ||
-      record.sources.some((source) => !keys(source, "projectId,path,remoteUrl,canonicalUrl,baseOid,forkOid,branch,license,files,legal") ||
-        !/^[A-Za-z0-9][A-Za-z0-9._-]*\.git$/.test(source.projectId) || ["tsfg.git", ".agents.git", "manifests.git"].includes(source.projectId.toLowerCase()) ||
-        !/^[a-z0-9]+(?:-[a-z0-9]+)*$/.test(source.path) || !safePath(source.path) ||
-        source.remoteUrl !== `https://github.com/xuelongling/${source.projectId}` ||
-        !/^https:\/\/github\.com\/[A-Za-z0-9][A-Za-z0-9-]*\/[A-Za-z0-9_.-]+\.git$/.test(source.canonicalUrl) ||
-        source.canonicalUrl.split("/").at(-1) !== source.projectId ||
-        !/^[0-9a-f]{40}$/.test(source.baseOid) || !/^[0-9a-f]{40}$/.test(source.forkOid) ||
-        !/^refs\/heads\/[A-Za-z0-9][A-Za-z0-9._/-]*$/.test(source.branch) ||
-        source.branch.includes("..") || source.branch.includes("//") || source.branch.endsWith("/") || source.branch.endsWith(".lock") ||
-        !knownLicense(source.license, definition) || !Array.isArray(source.files) || source.files.length === 0 ||
-        source.files.some((file) => !keys(file, "path,sha256,contentKind") || !safePath(file.path) ||
-          !/^sha256:[0-9a-f]{64}$/.test(file.sha256) || !["text", "binary"].includes(file.contentKind)) ||
-        new Set(source.files.map((file) => file.path.toLowerCase())).size !== source.files.length ||
-        !keys(source.legal, "license,notice,copyright") || Object.values(source.legal).some((filePath) =>
-          !source.files.some((file) => file.path === filePath && file.contentKind === "text")))) {
-    throw new WorkspaceMismatchError("source-admission", "invalid source admission record or license mapping");
-  }
-}
-
 function verifyUpstreamProvenance(repository, entries, definition, approval) {
   if (approval && entries.some((entry) => !["100644", "100755"].includes(entry.mode))) {
     throw new WorkspaceMismatchError("source-admission", "source mappings require regular committed files");
@@ -2852,10 +2826,15 @@ async function verifyWorkspacePolicy(manifestsRoot, manifestRevision, expectedPr
   const productProject = expectedProjects.find((project) => project.id === "tsfg.git");
   function admissionFile(root, revision, filePath) {
     const files = gitOutput(root, ["ls-tree", "--name-only", revision, "--", filePath]).trim();
-    return files ? JSON.parse(gitOutput(root, ["show", `${revision}:${filePath}`])) : { schemaVersion: "1", sources: [] };
+    if (!files) return { schemaVersion: "1", sources: [] };
+    try { return JSON.parse(gitOutput(root, ["show", `${revision}:${filePath}`])); } catch {
+      throw new WorkspaceMismatchError("source-admission", `${filePath} is not a valid source admission document`);
+    }
   }
   const sourceAdmission = admissionFile(manifestsRoot, manifestRevision, `${manifestName}.sources.json`);
-  validateSourceAdmission(sourceAdmission, definition);
+  try { validateSourceAdmission(sourceAdmission, definition); } catch (error) {
+    throw new WorkspaceMismatchError("source-admission", error.message);
+  }
   if (sourceAdmission.sources.length > 0 &&
       !/^candidates\/tsfg-v(?:0|[1-9][0-9]*)\.(?:0|[1-9][0-9]*)\.(?:0|[1-9][0-9]*)\.xml$/.test(manifestName)) {
     throw new WorkspaceMismatchError("source-admission", "sources require an explicitly versioned candidate combination");
@@ -3201,6 +3180,7 @@ async function verifyWorkspace(options) {
     );
   }
   const expectedProjects = parseManifest(expectedManifestBytes.toString("utf8"));
+  for (const project of expectedProjects) normalizedRelative(workspace, path.resolve(workspace, project.path));
   const policy = await verifyWorkspacePolicy(
     manifestsRoot,
     manifestRevision,

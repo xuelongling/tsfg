@@ -16,6 +16,15 @@ const networkDenialHook = path.join(repositoryRoot, "tests", "r00", "deny-networ
 const manifestUrl = "https://github.com/xuelongling/manifests.git";
 const gitAttributes = "* text=auto eol=lf\n*.cmd text eol=crlf\n*.bat text eol=crlf\n";
 
+function validUpstreamFiles(branch = "refs/heads/tsfg-r02a-fixture") {
+  return {
+    ".gitattributes": gitAttributes,
+    "LICENSE": "Apache License 2.0\nCopyright fixture authors\n",
+    "NOTICE": "Original fixture notice\n",
+    "UPSTREAM.toml": (base) => `canonical_url = "https://github.com/upstream/future-upstream.git"\nbase_oid = "${base}"\nlicense = "Apache-2.0"\nsync_branch = "${branch}"\nlocal_changes = "isolated governance fixture"\n`,
+  };
+}
+
 function git(cwd, ...arguments_) {
   const result = spawnSync("git", arguments_, { cwd, encoding: "utf8" });
   assert.equal(result.status, 0, result.stderr);
@@ -129,6 +138,7 @@ async function materializePolicyFixture(workspace, overrides = {}) {
   let upstream;
   let admission;
   const baselineProductHead = productHead;
+  const sourceBranch = overrides.branch ?? "refs/heads/tsfg-r02a-fixture";
   const manifestName = overrides.manifestName ?? (overrides.admitUpstream ? "candidates/tsfg-v0.2.0.xml" : "bootstrap/r00.xml");
   if (overrides.upstreamFiles) {
     const upstreamRoot = path.join(workspace, "future-upstream");
@@ -144,6 +154,7 @@ async function materializePolicyFixture(workspace, overrides = {}) {
     const baseOid = overrides.unrelatedBase
       ? git(upstreamRoot, "commit-tree", git(upstreamRoot, "rev-parse", "HEAD^{tree}"), "-m", "unrelated upstream history fixture")
       : upstreamHead;
+    if (overrides.admitUpstream) git(upstreamRoot, "checkout", "--quiet", "-b", sourceBranch.slice("refs/heads/".length));
     if (upstreamToml !== undefined) {
       const contents =
         typeof upstreamToml === "function" ? upstreamToml(baseOid) : upstreamToml;
@@ -162,17 +173,19 @@ async function materializePolicyFixture(workspace, overrides = {}) {
         projectId: "future-upstream.git", path: "future-upstream",
         remoteUrl: "https://github.com/xuelongling/future-upstream.git",
         canonicalUrl: "https://github.com/upstream/future-upstream.git",
-        baseOid, forkOid: upstreamHead, branch: "refs/heads/tsfg-r02a-fixture",
+        baseOid, forkOid: upstreamHead, branch: sourceBranch,
         license: "Apache-2.0", files,
         legal: { license: "LICENSE", notice: "NOTICE", copyright: "LICENSE" },
       }] };
       overrides.admissionTransform?.(admission);
-      await writeFile(path.join(workspace, "tsfg", "eng", "source-admissions.json"), JSON.stringify(admission));
+      const productAdmission = structuredClone(admission);
+      overrides.productAdmissionTransform?.(productAdmission);
+      await writeFile(path.join(workspace, "tsfg", "eng", "source-admissions.json"), JSON.stringify(productAdmission));
       git(path.join(workspace, "tsfg"), "add", "eng/source-admissions.json");
       git(path.join(workspace, "tsfg"), "commit", "--quiet", "-m", "approve isolated source fixture only");
       productHead = git(path.join(workspace, "tsfg"), "rev-parse", "HEAD");
     }
-    upstream = `  <project name="future-upstream.git" path="future-upstream" remote="github-xuelongling" upstream="refs/heads/tsfg-r02a-fixture" revision="${upstreamHead}" />\n`;
+    upstream = `  <project name="future-upstream.git" path="future-upstream" remote="github-xuelongling" upstream="${sourceBranch}" revision="${upstreamHead}" />\n`;
   }
   const manifest = `<?xml version="1.0" encoding="UTF-8"?>
 <!-- SPDX-License-Identifier: MIT -->
@@ -272,12 +285,8 @@ test("verify-workspace admits an exact isolated fork while leaving Source Intake
   try {
     const fixture = await materializePolicyFixture(workspace, {
       admitUpstream: true,
-      upstreamFiles: {
-        ".gitattributes": gitAttributes,
-        "LICENSE": "Apache License 2.0\nCopyright fixture authors\n",
-        "NOTICE": "Original fixture notice\n",
-        "UPSTREAM.toml": (base) => `canonical_url = "https://github.com/upstream/future-upstream.git"\nbase_oid = "${base}"\nlicense = "Apache-2.0"\nsync_branch = "refs/heads/tsfg-r02a-fixture"\nlocal_changes = "isolated governance fixture"\n`,
-      },
+      branch: "refs/heads/tsfg@intake",
+      upstreamFiles: validUpstreamFiles("refs/heads/tsfg@intake"),
     });
     const reportPath = path.join(sandbox, "report.json");
     const result = await invokeVerify(workspace, fixture.manifestHead, reportPath, fixture.manifestName);
@@ -326,6 +335,8 @@ test("verify-workspace admits an exact isolated fork while leaving Source Intake
         (value) => { value.result.policy.sourceAdmission.intakeComplete = true; },
         (value) => { delete value.result.policy.licenseReport; },
         (value) => { value.result.policy.repositories.pop(); },
+        (value) => { value.result.dirty = true; },
+        (value) => { delete value.result.dirty; },
       ];
       for (const [index, mutate] of mutations.entries()) {
         const input = structuredClone(report);
@@ -360,12 +371,7 @@ test("verify-workspace rejects stale legal material even when both approval reco
     const fixture = await materializePolicyFixture(workspace, {
       admitUpstream: true,
       admissionTransform: (record) => { record.sources[0].files.find((file) => file.path === "LICENSE").sha256 = `sha256:${"0".repeat(64)}`; },
-      upstreamFiles: {
-        ".gitattributes": gitAttributes,
-        "LICENSE": "Apache License 2.0\nCopyright fixture authors\n",
-        "NOTICE": "Original fixture notice\n",
-        "UPSTREAM.toml": (base) => `canonical_url = "https://github.com/upstream/future-upstream.git"\nbase_oid = "${base}"\nlicense = "Apache-2.0"\nsync_branch = "refs/heads/tsfg-r02a-fixture"\nlocal_changes = "isolated governance fixture"\n`,
-      },
+      upstreamFiles: validUpstreamFiles(),
     });
     const reportPath = path.join(sandbox, "report.json");
     const result = await invokeVerify(workspace, fixture.manifestHead, reportPath, fixture.manifestName);
@@ -406,12 +412,7 @@ test("verify-workspace binds source approval to the canonical fork remote", asyn
     const fixture = await materializePolicyFixture(workspace, {
       admitUpstream: true,
       admissionTransform: (record) => { record.sources[0].remoteUrl = "https://github.com/other/future-upstream.git"; },
-      upstreamFiles: {
-        ".gitattributes": gitAttributes,
-        "LICENSE": "Apache License 2.0\nCopyright fixture authors\n",
-        "NOTICE": "Original fixture notice\n",
-        "UPSTREAM.toml": (base) => `canonical_url = "https://github.com/upstream/future-upstream.git"\nbase_oid = "${base}"\nlicense = "Apache-2.0"\nsync_branch = "refs/heads/tsfg-r02a-fixture"\nlocal_changes = "isolated governance fixture"\n`,
-      },
+      upstreamFiles: validUpstreamFiles(),
     });
     const reportPath = path.join(sandbox, "report.json");
     const result = await invokeVerify(workspace, fixture.manifestHead, reportPath, fixture.manifestName);
@@ -429,12 +430,7 @@ test("verify-workspace requires an explicit preserved copyright mapping", async 
     const fixture = await materializePolicyFixture(workspace, {
       admitUpstream: true,
       admissionTransform: (record) => { delete record.sources[0].legal.copyright; },
-      upstreamFiles: {
-        ".gitattributes": gitAttributes,
-        "LICENSE": "Apache License 2.0\nCopyright fixture authors\n",
-        "NOTICE": "Original fixture notice\n",
-        "UPSTREAM.toml": (base) => `canonical_url = "https://github.com/upstream/future-upstream.git"\nbase_oid = "${base}"\nlicense = "Apache-2.0"\nsync_branch = "refs/heads/tsfg-r02a-fixture"\nlocal_changes = "isolated governance fixture"\n`,
-      },
+      upstreamFiles: validUpstreamFiles(),
     });
     const reportPath = path.join(sandbox, "report.json");
     const result = await invokeVerify(workspace, fixture.manifestHead, reportPath, fixture.manifestName);
@@ -448,6 +444,7 @@ test("verify-workspace requires an explicit preserved copyright mapping", async 
 for (const [scenario, mutate] of [
   ["content kind", (record) => { record.sources[0].files[0].contentKind = "unchecked"; }],
   ["null source", (record) => { record.sources[0] = null; }],
+  ["non-string OID", (record) => { record.sources[0].baseOid = [record.sources[0].baseOid]; }],
   ["unknown field", (record) => { record.sources[0].approved = true; }],
   ["unknown license", (record) => { record.sources[0].license = "NOASSERTION"; }],
   ["missing files", (record) => { delete record.sources[0].files; }],
@@ -456,6 +453,7 @@ for (const [scenario, mutate] of [
   ["missing legal", (record) => { record.sources[0].legal.notice = "missing.txt"; }],
   ["unrelated base", undefined],
   ["unversioned combination", undefined],
+  ["two sides disagree", undefined],
 ]) test(`verify-workspace rejects malformed source mappings: ${scenario}`, async () => {
   const sandbox = await mkdtemp(path.join(tmpdir(), "tsfg-admission-shape-"));
   const workspace = path.join(sandbox, "workspace");
@@ -465,12 +463,8 @@ for (const [scenario, mutate] of [
       admissionTransform: mutate,
       unrelatedBase: scenario === "unrelated base",
       manifestName: scenario === "unversioned combination" ? "candidates/floating.xml" : undefined,
-      upstreamFiles: {
-        ".gitattributes": gitAttributes,
-        "LICENSE": "Apache License 2.0\nCopyright fixture authors\n",
-        "NOTICE": "Original fixture notice\n",
-        "UPSTREAM.toml": (base) => `canonical_url = "https://github.com/upstream/future-upstream.git"\nbase_oid = "${base}"\nlicense = "Apache-2.0"\nsync_branch = "refs/heads/tsfg-r02a-fixture"\nlocal_changes = "isolated governance fixture"\n`,
-      },
+      productAdmissionTransform: scenario === "two sides disagree" ? (record) => { record.sources[0].license = "MIT"; } : undefined,
+      upstreamFiles: validUpstreamFiles(),
     });
     const reportPath = path.join(sandbox, "report.json");
     const result = await invokeVerify(workspace, fixture.manifestHead, reportPath, fixture.manifestName);
@@ -488,12 +482,7 @@ test("verify-workspace rejects ambiguous duplicate source approvals", async () =
     const fixture = await materializePolicyFixture(workspace, {
       admitUpstream: true,
       admissionTransform: (record) => { record.sources.push(structuredClone(record.sources[0])); },
-      upstreamFiles: {
-        ".gitattributes": gitAttributes,
-        "LICENSE": "Apache License 2.0\nCopyright fixture authors\n",
-        "NOTICE": "Original fixture notice\n",
-        "UPSTREAM.toml": (base) => `canonical_url = "https://github.com/upstream/future-upstream.git"\nbase_oid = "${base}"\nlicense = "Apache-2.0"\nsync_branch = "refs/heads/tsfg-r02a-fixture"\nlocal_changes = "isolated governance fixture"\n`,
-      },
+      upstreamFiles: validUpstreamFiles(),
     });
     const reportPath = path.join(sandbox, "report.json");
     const result = await invokeVerify(workspace, fixture.manifestHead, reportPath, fixture.manifestName);

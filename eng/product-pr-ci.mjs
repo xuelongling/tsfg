@@ -5,6 +5,9 @@ import { mkdir, readFile, readdir, rename, rm, stat, writeFile } from "node:fs/p
 import path from "node:path";
 import process from "node:process";
 import { setTimeout as delay } from "node:timers/promises";
+import { validateSourceAdmission } from "./source-admission.mjs";
+
+const sourcePolicy = JSON.parse(await readFile(new URL("./workspace-policy.json", import.meta.url), "utf8"));
 
 const manifestRepository = "https://github.com/xuelongling/manifests.git";
 const completeOid = /^[0-9a-f]{40}$/;
@@ -237,6 +240,7 @@ async function writeCandidateIdentity(options) {
   const manifestBytes = await readFile(manifestPath);
   const { activation, projects } = projectsFromManifest(manifestBytes.toString("utf8"));
   const sourceAdmission = sourceCandidate ? await readJson(`${manifestPath}.sources.json`, "source admission") : undefined;
+  if (sourceAdmission) validateSourceAdmission(sourceAdmission, sourcePolicy);
   const product = projects.find((project) => project.name === "tsfg.git" && project.path === "tsfg");
   if (!product) throw new ProductPrError("Integration Snapshot does not contain canonical tsfg.git project");
   const agent = projects.find((project) => project.name === ".agents.git" && project.path === ".agents");
@@ -435,6 +439,7 @@ function requireResolvedWorkspace(report, resolvedManifest, label, expectedBindi
   }
   const policy = report.result?.policy;
   const sourceAdmission = resolvedManifest.sourceAdmission ?? { schemaVersion: "1", sources: [] };
+  validateSourceAdmission(sourceAdmission, sourcePolicy);
   const sources = sourceAdmission.sources;
   if (sourceAdmission.schemaVersion !== "1" || !Array.isArray(sources) ||
       sources.length !== resolvedManifest.projects.filter((project) => !["tsfg.git", ".agents.git"].includes(project.name)).length ||
