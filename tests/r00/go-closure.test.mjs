@@ -240,3 +240,37 @@ test("real Go source target attempts its native supervisor and retains setup fai
   assert.match(preparation.execution.stageRoot, /^E:[\\/]/i);
   assert.equal(preparation.intakeComplete, false);
 });
+
+test("source target rejects a staged helper changed after cache verification", {
+  skip: !process.env.TSFG_TEST_GO_CACHE || !process.env.TSFG_TEST_GO_LOCK,
+}, async (t) => {
+  const f = await fixture(t);
+  const previous = new Set(await readdir(tmpdir()));
+  const report = path.join(f.root, "tamper-report.json");
+  let finished = false, changed = false;
+  const invocation = invoke(["build", "--source-target", "typescript-dependencies",
+    "--target", "windows-x86_64-msvc", "--profile", "debug", "--dev",
+    "--out", path.join(f.root, "out"), "--report", report], {
+    TSFG_GIT: TEST_GIT_EXECUTABLE, TSFG_RUNTIME_CACHE: process.env.TSFG_TEST_GO_CACHE,
+    TSFG_RUNTIME_LOCK: process.env.TSFG_TEST_GO_LOCK, TSFG_RUNTIME_PLATFORM: "windows-x86_64-msvc",
+  }).finally(() => { finished = true; });
+  // An external filesystem adversary changes only this invocation's new stage.
+  // The public Build Report must attribute this to integrity, before execution.
+  while (!finished && !changed) {
+    for (const name of (await readdir(tmpdir())).filter((name) => name.startsWith("tsfg-go-source-") && !previous.has(name))) {
+      const helper = path.join(tmpdir(), name, "inputs", "control", "windows-sandbox-run.exe");
+      try {
+        await readFile(helper);
+        await writeFile(helper, "corrupt staged executable");
+        changed = true;
+      } catch (error) { if (error.code !== "ENOENT") throw error; }
+    }
+    if (!changed) await new Promise((resolve) => setTimeout(resolve, 50));
+  }
+  const result = await invocation;
+  assert.ok(changed, "the staged adversarial mutation must actually occur");
+  assert.equal(result.status, 11, result.output);
+  const record = JSON.parse(await readFile(report, "utf8"));
+  assert.equal(record.error.category, "lock/integrity");
+  assert.match(record.error.issues[0].message, /staged native helper/);
+});

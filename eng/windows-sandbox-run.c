@@ -7,6 +7,7 @@
 #include <fwpmu.h>
 #include <objbase.h>
 #include <sddl.h>
+#include <userenv.h>
 
 #include <stdint.h>
 #include <stdio.h>
@@ -17,6 +18,7 @@
 #pragma comment(lib, "advapi32.lib")
 #pragma comment(lib, "fwpuclnt.lib")
 #pragma comment(lib, "ole32.lib")
+#pragma comment(lib, "userenv.lib")
 
 enum {
   SANDBOX_NETWORK_BOUNDARY_STATUS = 123,
@@ -62,6 +64,7 @@ struct wide_buffer {
 
 /* This mode is deliberately opt-in: legacy R00 grants retain their semantics. */
 static wchar_t *allowlisted_root = NULL;
+static PSID package_sid = NULL;
 static HANDLE *pinned_paths = NULL;
 static size_t pinned_count = 0;
 
@@ -145,19 +148,29 @@ static void *token_information(HANDLE token, TOKEN_INFORMATION_CLASS kind) {
 }
 
 /* Read-only attestation of this process. This does not attest a WFP boundary. */
-static int verify_restriction(void) {
+static int verify_process_restriction(HANDLE target, PSID expected_restriction,
+                                      PSID expected_package, int emit) {
   HANDLE token = NULL;
   BOOL in_job = FALSE;
-  if (!OpenProcessToken(GetCurrentProcess(), TOKEN_QUERY, &token)) return 125;
+  if (!OpenProcessToken(target, TOKEN_QUERY, &token)) return 125;
   TOKEN_GROUPS *restricting = token_information(token, TokenRestrictedSids);
   TOKEN_GROUPS *groups = token_information(token, TokenGroups);
   TOKEN_MANDATORY_LABEL *label = token_information(token, TokenIntegrityLevel);
   TOKEN_USER *user = token_information(token, TokenUser);
   TOKEN_PRIVILEGES *privileges = token_information(token, TokenPrivileges);
+  DWORD *is_container = token_information(token, TokenIsAppContainer);
+  DWORD *is_lpac = token_information(token, TokenIsLessPrivilegedAppContainer);
+  TOKEN_APPCONTAINER_INFORMATION *container = token_information(token, TokenAppContainerSid);
+  TOKEN_GROUPS *capabilities = token_information(token, TokenCapabilities);
   int valid = restricting && groups && label && user && privileges &&
+      is_container && *is_container && is_lpac && *is_lpac &&
+      container && container->TokenAppContainer &&
+      capabilities && capabilities->GroupCount == 0 &&
+      (!expected_package || EqualSid(expected_package, container->TokenAppContainer)) &&
       restricting->GroupCount == 1 &&
-      IsProcessInJob(GetCurrentProcess(), NULL, &in_job) && in_job;
-  LPWSTR sid = NULL, user_sid = NULL;
+      (!expected_restriction || EqualSid(expected_restriction, restricting->Groups[0].Sid)) &&
+      IsProcessInJob(target, NULL, &in_job) && in_job;
+  LPWSTR sid = NULL, user_sid = NULL, container_sid = NULL;
   if (valid) {
     PSID identity = restricting->Groups[0].Sid;
     valid = ConvertSidToStringSidW(identity, &sid) &&
@@ -179,13 +192,16 @@ static int verify_restriction(void) {
         valid = 0;
     }
   }
-  if (valid && ConvertSidToStringSidW(user->User.Sid, &user_sid)) {
-    wprintf(L"{\"schemaVersion\":1,\"restrictionSid\":\"%ls\",\"userSid\":\"%ls\","
+  if (valid && ConvertSidToStringSidW(user->User.Sid, &user_sid) &&
+      ConvertSidToStringSidW(container->TokenAppContainer, &container_sid)) {
+    if (emit) wprintf(L"{\"schemaVersion\":1,\"restrictionSid\":\"%ls\",\"userSid\":\"%ls\","
             L"\"integrity\":\"low\",\"administratorDenyOnly\":true,"
-            L"\"inJob\":true,\"wfpAttested\":false}\n", sid, user_sid);
+            L"\"inJob\":true,\"appContainer\":true,\"lpac\":true,\"capabilityCount\":0,"
+            L"\"appContainerSid\":\"%ls\",\"wfpAttested\":false}\n", sid, user_sid, container_sid);
   } else valid = 0;
-  LocalFree(sid); LocalFree(user_sid);
+  LocalFree(sid); LocalFree(user_sid); LocalFree(container_sid);
   free(restricting); free(groups); free(label); free(user); free(privileges);
+  free(is_container); free(is_lpac); free(container); free(capabilities);
   CloseHandle(token);
   if (!valid) fwprintf(stderr, L"tsfg windows sandbox: restriction verification failed\n");
   return valid ? 0 : 125;
@@ -395,7 +411,7 @@ static DWORD apply_grant(const struct requested_grant *requested, PSID sid,
                                     &applied->original_control, &revision)) {
     return GetLastError();
   }
-  EXPLICIT_ACCESS_W entries[2];
+  EXPLICIT_ACCESS_W entries[3];
   ZeroMemory(entries, sizeof(entries));
   EXPLICIT_ACCESS_W *access = &entries[0];
   DWORD inheritance = (attributes & FILE_ATTRIBUTE_DIRECTORY)
@@ -418,8 +434,10 @@ static DWORD apply_grant(const struct requested_grant *requested, PSID sid,
     entries[1].grfAccessPermissions = READ_CONTROL;
     entries[1].grfAccessMode = SET_ACCESS;
     entries[1].Trustee.ptstrName = (LPWSTR)owner_rights;
+    entries[2] = entries[0];
+    entries[2].Trustee.ptstrName = (LPWSTR)package_sid;
   }
-  result = SetEntriesInAclW(allowlisted_root ? 2 : 1, entries, original_dacl,
+  result = SetEntriesInAclW(allowlisted_root ? 3 : 1, entries, original_dacl,
                             &applied->replacement_dacl);
   LocalFree(owner_rights);
   if (result != ERROR_SUCCESS) return result;
@@ -539,6 +557,33 @@ static DWORD establish_network_boundary(const struct path_list *programs,
   if (result != ERROR_SUCCESS) return result;
   result = FwpmTransactionBegin0(*engine, 0);
   if (result != ERROR_SUCCESS) return result;
+  if (package_sid) {
+    /* A package identity follows descendants and is independent of image path. */
+    FWPM_FILTER_CONDITION0 condition;
+    ZeroMemory(&condition, sizeof(condition));
+    condition.fieldKey = FWPM_CONDITION_ALE_PACKAGE_ID;
+    condition.matchType = FWP_MATCH_EQUAL;
+    condition.conditionValue.type = FWP_SID;
+    condition.conditionValue.sid = package_sid;
+    const GUID *layers[] = {&FWPM_LAYER_ALE_AUTH_CONNECT_V4,
+                            &FWPM_LAYER_ALE_AUTH_CONNECT_V6,
+                            &FWPM_LAYER_ALE_AUTH_RECV_ACCEPT_V4,
+                            &FWPM_LAYER_ALE_AUTH_RECV_ACCEPT_V6};
+    for (size_t i = 0; i < sizeof(layers) / sizeof(*layers); ++i) {
+      FWPM_FILTER0 filter;
+      ZeroMemory(&filter, sizeof(filter));
+      filter.displayData.name = L"tsfg offline package block";
+      filter.layerKey = *layers[i];
+      filter.subLayerKey = sublayer_key;
+      filter.weight.type = FWP_UINT8;
+      filter.weight.uint8 = 15;
+      filter.numFilterConditions = 1;
+      filter.filterCondition = &condition;
+      filter.action.type = FWP_ACTION_BLOCK;
+      result = FwpmFilterAdd0(*engine, &filter, NULL, NULL);
+      if (result != ERROR_SUCCESS) break;
+    }
+  }
   for (size_t index = 0; index < programs->count && result == ERROR_SUCCESS; ++index) {
     result = add_app_filter(*engine, &sublayer_key,
                             &FWPM_LAYER_ALE_AUTH_CONNECT_V4,
@@ -635,7 +680,7 @@ static void free_requested_grants(struct requested_grant *grants,
 
 int wmain(int argc, wchar_t **argv) {
   if (argc == 2 && wcscmp(argv[1], L"--verify-restriction") == 0)
-    return verify_restriction();
+    return verify_process_restriction(GetCurrentProcess(), NULL, NULL, 1);
   int status = SANDBOX_SETUP_FAILURE_STATUS;
   int command_index = -1;
   int network_only = 0;
@@ -665,6 +710,8 @@ int wmain(int argc, wchar_t **argv) {
   STARTUPINFOEXW extended_startup;
   HANDLE inherited[3] = {NULL, NULL, NULL};
   SIZE_T attribute_size = 0;
+  SECURITY_CAPABILITIES container_capabilities;
+  DWORD package_policy = PROCESS_CREATION_ALL_APPLICATION_PACKAGES_OPT_OUT;
   HANDLE job = NULL;
   int child_started = 0;
   int child_complete = 0;
@@ -672,6 +719,7 @@ int wmain(int argc, wchar_t **argv) {
   ZeroMemory(&process, sizeof(process));
   ZeroMemory(&startup, sizeof(startup));
   ZeroMemory(&extended_startup, sizeof(extended_startup));
+  ZeroMemory(&container_capabilities, sizeof(container_capabilities));
 
   if (!parse_arguments(argc, argv, &requested, &requested_count,
                        &programs, &network_only, &boundary_status,
@@ -775,6 +823,22 @@ int wmain(int argc, wchar_t **argv) {
         goto cleanup;
       }
     }
+  }
+  if (allowlisted_root) {
+    GUID random;
+    wchar_t moniker[64];
+    if (FAILED(CoCreateGuid(&random)) || !StringFromGUID2(&random, moniker, 64)) {
+      print_win32_error(L"generate ephemeral AppContainer identity", ERROR_GEN_FAILURE);
+      goto cleanup;
+    }
+    moniker[37] = L'\0'; /* GUID text without the surrounding braces. */
+    HRESULT derived = DeriveAppContainerSidFromAppContainerName(moniker + 1, &package_sid);
+    if (FAILED(derived)) {
+      print_win32_error(L"derive profileless AppContainer SID", (DWORD)derived);
+      goto cleanup;
+    }
+    container_capabilities.AppContainerSid = package_sid;
+    /* No profile creation and no capabilities, including network capabilities. */
   }
   DWORD boundary_result = establish_network_boundary(&programs, &filter_engine);
   if (boundary_result != ERROR_SUCCESS) {
@@ -907,13 +971,19 @@ int wmain(int argc, wchar_t **argv) {
     extended_startup.StartupInfo.hStdInput = inherited[0];
     extended_startup.StartupInfo.hStdOutput = inherited[1];
     extended_startup.StartupInfo.hStdError = inherited[2];
-    InitializeProcThreadAttributeList(NULL, 1, 0, &attribute_size);
+    InitializeProcThreadAttributeList(NULL, 3, 0, &attribute_size);
     extended_startup.lpAttributeList = calloc(1, attribute_size);
     if (!extended_startup.lpAttributeList ||
-        !InitializeProcThreadAttributeList(extended_startup.lpAttributeList, 1, 0,
+        !InitializeProcThreadAttributeList(extended_startup.lpAttributeList, 3, 0,
                                            &attribute_size) ||
         !UpdateProcThreadAttribute(extended_startup.lpAttributeList, 0,
-            PROC_THREAD_ATTRIBUTE_HANDLE_LIST, inherited, sizeof(inherited), NULL, NULL)) {
+            PROC_THREAD_ATTRIBUTE_HANDLE_LIST, inherited, sizeof(inherited), NULL, NULL) ||
+        !UpdateProcThreadAttribute(extended_startup.lpAttributeList, 0,
+            PROC_THREAD_ATTRIBUTE_SECURITY_CAPABILITIES, &container_capabilities,
+            sizeof(container_capabilities), NULL, NULL) ||
+        !UpdateProcThreadAttribute(extended_startup.lpAttributeList, 0,
+            PROC_THREAD_ATTRIBUTE_ALL_APPLICATION_PACKAGES_POLICY, &package_policy,
+            sizeof(package_policy), NULL, NULL)) {
       print_win32_error(L"restrict inherited handles", GetLastError());
       goto cleanup;
     }
@@ -947,6 +1017,11 @@ int wmain(int argc, wchar_t **argv) {
   child_started = 1;
   if (!AssignProcessToJobObject(job, process.hProcess)) {
     print_win32_error(L"assign restricted process to job", GetLastError());
+    goto cleanup;
+  }
+  if (allowlisted_root && verify_process_restriction(process.hProcess,
+      unique_sid, package_sid, 0) != 0) {
+    print_win32_error(L"verify suspended AppContainer process", ERROR_ACCESS_DENIED);
     goto cleanup;
   }
   if (ResumeThread(process.hThread) == (DWORD)-1) {
@@ -1043,6 +1118,7 @@ cleanup:
     free(applied);
   }
   if (filter_engine != NULL) FwpmEngineClose0(filter_engine);
+  if (package_sid != NULL) FreeSid(package_sid);
   if (acl_mutex != NULL) {
     if (acl_mutex_owned) ReleaseMutex(acl_mutex);
     CloseHandle(acl_mutex);

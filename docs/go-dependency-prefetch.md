@@ -84,7 +84,12 @@ The locked tool's `src/cmd/go/alldocs.go` is the parameter reference; see also
 
 The internal `--allowlisted-root` helper mode requires an owned E: staging root,
 rejects path aliases/hardlinks and overlapping grants, and uses a fresh restricting
-SID, disabled groups/privileges and low integrity. It grants that SID access to
+SID, disabled groups/privileges and low integrity. A profileless LPAC with zero
+capabilities adds a per-run AppContainer SID; WFP matches that identity for both
+IP families, including descendants executing from newly created paths. No
+AppContainer profile or registry registration is created. The supervisor checks
+the suspended child's actual package SID, capabilities and restricting SID before
+resuming it. It grants the two session SIDs access to
 declared inputs and a separate non-executable writable root, restricts inherited
 handles, and waits for job descendants before normal WFP/ACL cleanup. The private
 `--verify-restriction` operation observes the actual token and job; it explicitly
@@ -99,6 +104,13 @@ only the recorded new E: staging root. Unique restricting SIDs can also block
 Windows DLL/registry access: startup, write-DAC denial, subprocess network denial
 and abnormal supervisor cleanup must be demonstrated before claiming acceptance.
 No generic system SID is added to work around a failed startup.
+
+After copying, staged Go/Node trees are checked against the original locked tree
+hashes, the proxy against the declared h1/license/marker identities, and the helper
+against its trusted executable digest. File hashes first observed during copying
+are not treated as authoritative tool identities. The real-source regression can
+mutate only its new staging helper and requires an integrity rejection before
+the native supervisor is invoked.
 
 `tests/r00/go-closure.test.mjs` exercises the public entry with a synthetic module.
 Its fixed sums were independently checked using Go 1.26.8. These fixtures prove

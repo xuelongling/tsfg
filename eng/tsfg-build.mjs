@@ -102,7 +102,7 @@ const WINDOWS_NETWORK_ISOLATION = Object.freeze({
   status: "blocked",
 });
 const WINDOWS_SANDBOX_EXECUTABLE_DIGEST =
-  "sha256:aa5bc3050d22166017119883382a4c791c1b80ea89d6ff9e9e4888d16363439d";
+  "sha256:51d7df808b1fe9a940432dcac4ba0b4efabe76ded503b6beff32a4a81c2153df";
 const WINDOWS_PUBLICATION_EXECUTABLE_DIGEST =
   "sha256:61a6d286d66b5233732ef5dd07f59fad643760f37e12f52d76d2d5e561cded3c";
 class WorkspaceMismatchError extends Error {
@@ -3684,6 +3684,7 @@ async function compileWindowsSandbox(runtime, sourceRoot, controlRoot,
       "advapi32.lib",
       "fwpuclnt.lib",
       "ole32.lib",
+      "userenv.lib",
       "uuid.lib",
       "kernel32.lib",
       "/subsystem:console",
@@ -6964,7 +6965,8 @@ async function executeGoSourceTarget(options, runtime) {
   const sourceRoot = path.join(inputRoot, "source");
   const goRoot = path.join(inputRoot, "go");
   const nodeRoot = path.join(inputRoot, "node");
-  const proxyRoot = path.join(inputRoot, "proxy");
+  const proxyCache = path.join(inputRoot, "proxy-cache");
+  const proxyRoot = path.join(proxyCache, "go-proxies", "sha256", preparation.dependencies.identity.slice(7));
   await mkdir(controlRoot, { recursive: true });
   await mkdir(workRoot);
   const inputs = [];
@@ -6993,6 +6995,21 @@ async function executeGoSourceTarget(options, runtime) {
   await copyGoExecutionInputs(verifiedHelper, helper, inputs);
   const worker = path.join(controlRoot, "go-source-worker.mjs");
   await copyGoExecutionInputs(fileURLToPath(new URL("./go-source-worker.mjs", import.meta.url)), worker, inputs);
+  // Rebind the actual staged bytes to authoritative identities. A hash first
+  // observed while copying cannot establish that a tool or proxy was trusted.
+  for (const [id, root] of [["go", goRoot], ["node", nodeRoot]]) {
+    const expected = runtime.selections.find((selection) => selection.id === id).artifact.unpackedTreeSha256;
+    if (await hashTree(root) !== expected) throw new GoInputIntegrityError(`staged ${id} differs from locked tool tree`);
+  }
+  if (await digestFile(helper) !== WINDOWS_SANDBOX_EXECUTABLE_DIGEST) {
+    throw new GoInputIntegrityError("staged native helper differs from the trusted executable");
+  }
+  try {
+    const declaration = await readGoDependencyLock(runtime.lockPath, runtime.lock);
+    await verifyGoDependencies(proxyCache, declaration, runtime.lock.goDependencies.sha256, parseZip);
+  } catch (error) {
+    throw new GoInputIntegrityError(`staged proxy differs from declared input: ${error.message}`);
+  }
   // This input has no grant. It proves denial without modifying external ACLs.
   const undeclaredCanary = path.join(stageRoot, "undeclared.txt");
   await writeFile(undeclaredCanary, "undeclared input\n", { flag: "wx" });
@@ -7050,7 +7067,7 @@ async function executeGoSourceTarget(options, runtime) {
   await rename(publication, output);
   return { ...preparation, status: "dependencies-resolved", execution: {
     status: "success", helperSha256: WINDOWS_SANDBOX_EXECUTABLE_DIGEST, stageRoot,
-    isolation: "unique-restricting-sid-and-wfp", exitCode: child.status, result }, output };
+    isolation: "unique-restricting-sid-lpac-and-wfp-package", exitCode: child.status, result }, output };
 }
 
 async function enterWindowsOfflineBoundary(arguments_, runtime, reportPath) {
