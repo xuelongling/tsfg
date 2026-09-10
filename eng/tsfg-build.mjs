@@ -2680,11 +2680,67 @@ function parseUpstreamToml(bytes) {
   return values;
 }
 
-function verifyUpstreamProvenance(repository, entries, definition) {
+function validateSourceAdmission(record, definition) {
+  const keys = (value, expected) => value && typeof value === "object" && !Array.isArray(value) &&
+    Object.keys(value).sort().join(",") === expected.split(",").sort().join(",");
+  const safePath = (value) => typeof value === "string" && value.length <= 180 &&
+    /^[A-Za-z0-9._/-]+$/.test(value) && value.split("/").every((part) => part !== "" &&
+      ![".", "..", ".git"].includes(part.toLowerCase()) && !/[. ]$/.test(part) &&
+      !/^(?:con|prn|aux|nul|com[1-9]|lpt[1-9])(?:\.|$)/i.test(part));
+  if (!keys(record, "schemaVersion,sources") || record.schemaVersion !== "1" || !Array.isArray(record.sources) ||
+      record.sources.some((source) => !keys(source, "projectId,path,remoteUrl,canonicalUrl,baseOid,forkOid,branch,license,files,legal") ||
+        !/^[A-Za-z0-9][A-Za-z0-9._-]*\.git$/.test(source.projectId) || ["tsfg.git", ".agents.git", "manifests.git"].includes(source.projectId.toLowerCase()) ||
+        !/^[a-z0-9]+(?:-[a-z0-9]+)*$/.test(source.path) || !safePath(source.path) ||
+        source.remoteUrl !== `https://github.com/xuelongling/${source.projectId}` ||
+        !/^https:\/\/github\.com\/[A-Za-z0-9][A-Za-z0-9-]*\/[A-Za-z0-9_.-]+\.git$/.test(source.canonicalUrl) ||
+        source.canonicalUrl.split("/").at(-1) !== source.projectId ||
+        !/^[0-9a-f]{40}$/.test(source.baseOid) || !/^[0-9a-f]{40}$/.test(source.forkOid) ||
+        !/^refs\/heads\/[A-Za-z0-9][A-Za-z0-9._/-]*$/.test(source.branch) ||
+        source.branch.includes("..") || source.branch.includes("//") || source.branch.endsWith("/") || source.branch.endsWith(".lock") ||
+        !knownLicense(source.license, definition) || !Array.isArray(source.files) || source.files.length === 0 ||
+        source.files.some((file) => !keys(file, "path,sha256,contentKind") || !safePath(file.path) ||
+          !/^sha256:[0-9a-f]{64}$/.test(file.sha256) || !["text", "binary"].includes(file.contentKind)) ||
+        new Set(source.files.map((file) => file.path.toLowerCase())).size !== source.files.length ||
+        !keys(source.legal, "license,notice,copyright") || Object.values(source.legal).some((filePath) =>
+          !source.files.some((file) => file.path === filePath && file.contentKind === "text")))) {
+    throw new WorkspaceMismatchError("source-admission", "invalid source admission record or license mapping");
+  }
+}
+
+function verifyUpstreamProvenance(repository, entries, definition, approval) {
+  if (approval && entries.some((entry) => !["100644", "100755"].includes(entry.mode))) {
+    throw new WorkspaceMismatchError("source-admission", "source mappings require regular committed files");
+  }
   const entryMap = committedEntryMap(repository, entries);
+  if (approval) {
+    try { gitOutput(repository.root, ["check-ref-format", approval.branch]); } catch {
+      throw new WorkspaceMismatchError("source-admission", "invalid source branch hint");
+    }
+    if (!Array.isArray(approval.files) || approval.files.length !== entries.length ||
+        new Set(approval.files.map((file) => file.path)).size !== entries.length ||
+        approval.files.some((file) => !["text", "binary"].includes(file.contentKind) || !entryMap.has(file.path) || digest(entryMap.get(file.path).bytes) !== file.sha256)) {
+      throw new WorkspaceMismatchError("source-admission", "source file mapping is missing or stale");
+    }
+    for (const role of ["license", "notice", "copyright"]) {
+      const material = entryMap.get(approval.legal?.[role]);
+      if (!material || material.bytes.toString("utf8").trim() === "") {
+        throw new WorkspaceMismatchError("source-admission", `source ${role} material is missing`);
+      }
+      let original;
+      try { original = gitOutput(repository.root, ["show", `${approval.baseOid}:${approval.legal[role]}`], "buffer"); } catch { /* rejected below */ }
+      if (!original || !original.equals(material.bytes)) {
+        throw new WorkspaceMismatchError("source-admission", `original source ${role} material was not preserved`);
+      }
+    }
+    for (const file of approval.files.filter((entry) => entry.contentKind === "text")) {
+      try { new TextDecoder("utf-8", { fatal: true }).decode(entryMap.get(file.path).bytes); } catch {
+        throw new WorkspaceMismatchError("source-admission", "mapped source text is not UTF-8");
+      }
+    }
+  }
   const upstream = entryMap.get("UPSTREAM.toml");
-  const license = entryMap.get("LICENSE");
-  const notice = entryMap.get("NOTICE");
+  const license = entryMap.get(approval?.legal?.license ?? "LICENSE");
+  const notice = entryMap.get(approval?.legal?.notice ?? "NOTICE");
   if (!upstream || !license || !notice || license.bytes.length === 0 || notice.bytes.length === 0) {
     throw new WorkspaceMismatchError(
       "upstream-provenance",
@@ -2736,13 +2792,16 @@ function verifyUpstreamProvenance(repository, entries, definition) {
       `${repository.workspacePath}/UPSTREAM.toml contains incomplete origin metadata`,
     );
   }
+  if (approval && approval.baseOid === values.base_oid &&
+      approval.forkOid === repository.revision && approval.canonicalUrl === values.canonical_url &&
+      approval.license === values.license && approval.branch === values.sync_branch) return approval;
   throw new WorkspaceMismatchError(
     "upstream-not-approved",
     `${repository.workspacePath} has valid fork provenance but is not approved in R00`,
   );
 }
 
-async function verifyWorkspacePolicy(manifestsRoot, manifestRevision, expectedProjects, workspace) {
+async function verifyWorkspacePolicy(manifestsRoot, manifestRevision, expectedProjects, workspace, manifestName) {
   const definition = JSON.parse(
     await readFile(path.join(repositoryRoot, "eng", "workspace-policy.json"), "utf8"),
   );
@@ -2790,21 +2849,54 @@ async function verifyWorkspacePolicy(manifestsRoot, manifestRevision, expectedPr
   ];
   const result = [];
   const upstreamForks = [];
+  const productProject = expectedProjects.find((project) => project.id === "tsfg.git");
+  function admissionFile(root, revision, filePath) {
+    const files = gitOutput(root, ["ls-tree", "--name-only", revision, "--", filePath]).trim();
+    return files ? JSON.parse(gitOutput(root, ["show", `${revision}:${filePath}`])) : { schemaVersion: "1", sources: [] };
+  }
+  const sourceAdmission = admissionFile(manifestsRoot, manifestRevision, `${manifestName}.sources.json`);
+  validateSourceAdmission(sourceAdmission, definition);
+  if (sourceAdmission.sources.length > 0 &&
+      !/^candidates\/tsfg-v(?:0|[1-9][0-9]*)\.(?:0|[1-9][0-9]*)\.(?:0|[1-9][0-9]*)\.xml$/.test(manifestName)) {
+    throw new WorkspaceMismatchError("source-admission", "sources require an explicitly versioned candidate combination");
+  }
+  const productAdmission = productProject ? admissionFile(path.join(workspace, productProject.path), productProject.revision, "eng/source-admissions.json") : undefined;
+  if (sourceAdmission.schemaVersion !== "1" || !Array.isArray(sourceAdmission.sources) ||
+      new Set(sourceAdmission.sources.map((source) => source.projectId)).size !== sourceAdmission.sources.length ||
+      canonicalize(sourceAdmission) !== canonicalize(productAdmission)) {
+    throw new WorkspaceMismatchError("source-admission", "product and manifest source admission records disagree");
+  }
+  for (const source of sourceAdmission.sources) {
+    const project = expectedProjects.find((entry) => entry.id === source.projectId);
+    if (!project || source.remoteUrl !== `https://github.com/xuelongling/${source.projectId}` ||
+        project.remoteUrl !== source.remoteUrl || project.path !== source.path ||
+        project.revision !== source.forkOid || project.branch !== source.branch) {
+      throw new WorkspaceMismatchError("source-admission", "source approval does not match the exact manifest project");
+    }
+  }
   let covered = 0;
   let product;
   let productEntries;
   let productCoverage;
   for (const repository of repositories) {
     const entries = committedTree(repository.root, repository.revision);
-    verifyPortablePaths(repository, entries, definition);
-    verifyLineEndingAttributes(repository, entries);
-    for (const entry of entries) {
-      const relativePath = entry.pathBytes.toString("ascii");
-      verifyTrackedText(repository, entry, licenseMapping(relativePath, definition));
-    }
-    verifyAgentPrivateState(repository, entries, definition);
-    verifyGeneratedProvenance(repository, entries, definition);
     const firstParty = ["manifests", "tsfg.git", ".agents.git"].includes(repository.id);
+    const approval = firstParty ? undefined : sourceAdmission.sources.find((source) => source.projectId === repository.id);
+    const repositoryPolicy = approval ? {
+      ...definition,
+      controlPathCasingWhitelist: [...definition.controlPathCasingWhitelist,
+        ...approval.files.map((file) => ({ projectId: repository.id, path: file.path }))],
+    } : definition;
+    verifyPortablePaths(repository, entries, repositoryPolicy);
+    if (!approval) {
+      verifyLineEndingAttributes(repository, entries);
+      for (const entry of entries) {
+        const relativePath = entry.pathBytes.toString("ascii");
+        verifyTrackedText(repository, entry, licenseMapping(relativePath, definition));
+      }
+      verifyAgentPrivateState(repository, entries, definition);
+      verifyGeneratedProvenance(repository, entries, definition);
+    }
     const coverage = firstParty ? verifyFirstPartyLicense(repository, entries, definition) : [];
     let repositoryLicense = "MIT";
     if (firstParty) {
@@ -2815,7 +2907,9 @@ async function verifyWorkspacePolicy(manifestsRoot, manifestRevision, expectedPr
         productCoverage = coverage;
       }
     } else {
-      verifyUpstreamProvenance(repository, entries, definition);
+      upstreamForks.push(verifyUpstreamProvenance(repository, entries, definition, approval));
+      repositoryLicense = approval.license;
+      covered += entries.length;
     }
     result.push({
       files: entries.length,
@@ -2836,6 +2930,11 @@ async function verifyWorkspacePolicy(manifestsRoot, manifestRevision, expectedPr
     },
     repositories: result,
     upstreamForks,
+    sourceAdmission: {
+      schemaVersion: "1", digest: digest(Buffer.from(canonicalize(sourceAdmission))), sources: sourceAdmission.sources,
+      stages: { sourcePolicy: "passed", generation: "not-run", build: "not-run", interface: "not-run", jsIsolation: "not-run", reproducibility: "not-run" },
+      intakeComplete: false,
+    },
   };
 }
 
@@ -2917,6 +3016,7 @@ function parseManifest(xml) {
       id: attributes.name,
       path: attributes.path,
       remoteName: attributes.remote,
+      branch: attributes.upstream,
       remoteUrl: new URL(attributes.name, fetch).href,
       revision: attributes.revision,
       linkfiles,
@@ -3106,6 +3206,7 @@ async function verifyWorkspace(options) {
     manifestRevision,
     expectedProjects,
     workspace,
+    manifestName,
   );
   await requireSelectedManifestControl(workspace, manifestLink, manifestName);
   const manifestStatus = gitOutput(manifestsRoot, [

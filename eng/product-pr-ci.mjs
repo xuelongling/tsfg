@@ -229,12 +229,14 @@ async function writeCandidateIdentity(options) {
     "agent revision",
   );
   const outputPath = path.resolve(requireOption(options, "--out"));
-  if (manifestName !== "bootstrap/r00.xml") {
+  const sourceCandidate = /^candidates\/tsfg-v(?:0|[1-9][0-9]*)\.(?:0|[1-9][0-9]*)\.(?:0|[1-9][0-9]*)\.xml$/.test(manifestName);
+  if (manifestName !== "bootstrap/r00.xml" && !sourceCandidate) {
     throw new ProductPrError("product PRs must use the fixed bootstrap/r00.xml Integration Snapshot");
   }
 
   const manifestBytes = await readFile(manifestPath);
   const { activation, projects } = projectsFromManifest(manifestBytes.toString("utf8"));
+  const sourceAdmission = sourceCandidate ? await readJson(`${manifestPath}.sources.json`, "source admission") : undefined;
   const product = projects.find((project) => project.name === "tsfg.git" && project.path === "tsfg");
   if (!product) throw new ProductPrError("Integration Snapshot does not contain canonical tsfg.git project");
   const agent = projects.find((project) => project.name === ".agents.git" && project.path === ".agents");
@@ -262,8 +264,14 @@ async function writeCandidateIdentity(options) {
         return project;
       })
       .sort((left, right) => Buffer.from(left.name).compare(Buffer.from(right.name))),
-    schemaVersion: "1",
+    schemaVersion: sourceAdmission ? "2" : "1",
+    ...(sourceAdmission ? { sourceAdmission } : {}),
   };
+  if (options.has("--workspace-report")) {
+    const report = await readJson(path.resolve(options.get("--workspace-report")), "Workspace Verification");
+    if (report.result?.manifest?.revision !== manifestRevision) throw new ProductPrError("Workspace Verification has a different manifest commit");
+    requireResolvedWorkspace(report, resolvedManifest, "Workspace Verification", undefined);
+  }
   const overlayBytes = jsonBytes(overlay);
   const resolvedBytes = jsonBytes(resolvedManifest);
   const resolvedManifestBytes = resolveCandidateManifest(manifestBytes.toString("utf8"), new Map([
@@ -288,6 +296,7 @@ async function writeCandidateIdentity(options) {
   await mkdir(stagingPath);
   try {
     await writeFile(path.join(stagingPath, "baseline-manifest.xml"), manifestBytes, { flag: "wx" });
+    if (sourceAdmission) await writeFile(path.join(stagingPath, "source-admissions.json"), jsonBytes(sourceAdmission), { flag: "wx" });
     await writeFile(path.join(stagingPath, "candidate-overlay.json"), overlayBytes, { flag: "wx" });
     await writeFile(path.join(stagingPath, "resolved-manifest.json"), resolvedBytes, { flag: "wx" });
     await writeFile(path.join(stagingPath, "resolved-manifest.xml"), resolvedManifestBytes, { flag: "wx" });
@@ -425,6 +434,23 @@ function requireResolvedWorkspace(report, resolvedManifest, label, expectedBindi
     throw new ProductPrError(`${label} is not bound to the resolved Candidate Overlay`);
   }
   const policy = report.result?.policy;
+  const sourceAdmission = resolvedManifest.sourceAdmission ?? { schemaVersion: "1", sources: [] };
+  const sources = sourceAdmission.sources;
+  if (sourceAdmission.schemaVersion !== "1" || !Array.isArray(sources) ||
+      sources.length !== resolvedManifest.projects.filter((project) => !["tsfg.git", ".agents.git"].includes(project.name)).length ||
+      new Set(sources.map((source) => source.projectId)).size !== sources.length ||
+      sources.some((source) => !resolvedManifest.projects.some((project) => project.name === source.projectId && project.path === source.path && project.revision === source.forkOid && project.remote === source.remoteUrl))) {
+    throw new ProductPrError(`${label} has incomplete source admission identity`);
+  }
+  const expectedSourceEvidence = {
+    schemaVersion: "1", digest: sha256(canonicalJsonBytes(sourceAdmission)), sources,
+    stages: { sourcePolicy: "passed", generation: "not-run", build: "not-run", interface: "not-run", jsIsolation: "not-run", reproducibility: "not-run" },
+    intakeComplete: false,
+  };
+  if ((sources.length > 0 || policy?.sourceAdmission !== undefined) &&
+      canonicalize(policy?.sourceAdmission ?? null) !== canonicalize(expectedSourceEvidence)) {
+    throw new ProductPrError(`${label} has stale or missing source admission evidence`);
+  }
   const expectedRepositories = [
     { id: "manifests", path: ".repo/manifests" },
     ...resolvedManifest.projects.map(({ name, path: projectPath }) => ({ id: name, path: projectPath })),
@@ -441,13 +467,15 @@ function requireResolvedWorkspace(report, resolvedManifest, label, expectedBindi
   if (
     !Array.isArray(actualRepositories) ||
     canonicalize(repositoryFacts) !== canonicalize(expectedRepositories) ||
-    actualRepositories.some(({ files, license }) => !Number.isSafeInteger(files) || files < 1 || license !== "MIT") ||
+    actualRepositories.some(({ files, id, license }) => !Number.isSafeInteger(files) || files < 1 || license !== (sources.find((source) => source.projectId === id)?.license ?? "MIT")) ||
+    sources.some((source) => actualRepositories.find((repository) => repository.id === source.projectId)?.files !== source.files?.length) ||
     !Number.isSafeInteger(coverage?.covered) || coverage.covered < 1 ||
     coverage.total !== coverage.covered || coverage.percent !== "100" ||
+    coverage.total !== actualRepositories.reduce((total, repository) => total + repository.files, 0) ||
     !Array.isArray(dependencies?.buildOnly) ||
     !Array.isArray(dependencies?.payload) ||
     !Array.isArray(policy?.licenseReport?.inputs) ||
-    !Array.isArray(policy?.upstreamForks) || policy.upstreamForks.length !== 0
+    !Array.isArray(policy?.upstreamForks) || canonicalize(policy.upstreamForks) !== canonicalize(sources)
   ) {
     throw new ProductPrError(`${label} does not contain complete workspace policy evidence`);
   }
@@ -515,7 +543,8 @@ async function writeVerdict(options) {
         return project;
       })
       .sort((left, right) => Buffer.from(left.name).compare(Buffer.from(right.name))),
-    schemaVersion: "1",
+    schemaVersion: resolvedManifest.schemaVersion === "2" ? "2" : "1",
+    ...(resolvedManifest.schemaVersion === "2" ? { sourceAdmission: await readJson(path.join(identityRoot, "source-admissions.json"), "source admission") } : {}),
   };
   if (
     identity.schemaVersion !== "1" ||
@@ -842,6 +871,7 @@ async function main() {
       "--manifest-revision",
       "--candidate-revision",
       "--agent-revision",
+      "--workspace-report",
       "--out",
     ]));
     await writeCandidateIdentity(options);
