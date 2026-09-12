@@ -1,11 +1,49 @@
 // SPDX-License-Identifier: MIT
 import assert from "node:assert/strict";
 import { spawnSync } from "node:child_process";
-import { copyFileSync, linkSync, mkdirSync, mkdtempSync, writeFileSync } from "node:fs";
+import { copyFileSync, linkSync, mkdirSync, mkdtempSync, readFileSync, writeFileSync } from "node:fs";
 import path from "node:path";
 import test from "node:test";
 
 const helper = process.env.TSFG_RESTRICTED_HELPER;
+test("native helper ignores planted DLL names in its application directory", {
+  skip: process.platform !== "win32" || !helper,
+}, () => {
+  const root = mkdtempSync("E:/ws/pro_tsfg/.tmp/native-imports-");
+  const executable = path.join(root, "helper.exe");
+  copyFileSync(helper, executable);
+  for (const name of ["fwpuclnt.dll", "USERENV.dll"])
+    writeFileSync(path.join(root, name), "Invalid inert DLL canary; must never be selected by the loader.");
+  const result = spawnSync(executable, ["--verify-restriction"], {
+    encoding: "utf8", timeout: 10000, windowsHide: true, cwd: root,
+    env: { ...process.env, TEMP: root, TMP: root, USERPROFILE: root,
+      HOME: root, APPDATA: root, LOCALAPPDATA: root },
+  });
+  assert.equal(result.status, 125);
+  assert.match(result.stderr, /restriction verification failed/);
+});
+test("native helper static DLL imports are restricted to System32 before entry", {
+  skip: !helper,
+}, () => {
+  const pe = readFileSync(helper);
+  const header = pe.readUInt32LE(0x3c);
+  const optional = header + 24;
+  assert.equal(pe.readUInt16LE(optional), 0x20b, "locked native helper is PE32+");
+  const configRva = pe.readUInt32LE(optional + 112 + 10 * 8);
+  assert.notEqual(configRva, 0, "load configuration is present");
+  const sectionStart = optional + pe.readUInt16LE(header + 20);
+  let config;
+  for (let i = 0; i < pe.readUInt16LE(header + 6); i++) {
+    const section = sectionStart + i * 40;
+    const rva = pe.readUInt32LE(section + 12);
+    const size = pe.readUInt32LE(section + 16);
+    if (configRva >= rva && configRva < rva + size)
+      config = pe.readUInt32LE(section + 20) + configRva - rva;
+  }
+  assert.notEqual(config, undefined, "load configuration resolves inside the image");
+  // IMAGE_LOAD_CONFIG_DIRECTORY64.DependentLoadFlags is a WORD at offset 78.
+  assert.equal(pe.readUInt16LE(config + 78), 0x800, "LOAD_LIBRARY_SEARCH_SYSTEM32");
+});
 test("deep staged directories reach the non-admin WFP boundary without stack overflow", {
   skip: process.platform !== "win32" || !helper ||
     process.env.TSFG_RESTRICTED_NONADMIN_WFP !== "1",
