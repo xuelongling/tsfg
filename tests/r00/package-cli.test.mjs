@@ -28,6 +28,7 @@ test("Build Input declaration includes both debug target control and smoke input
       { path: "eng/go-closure.mjs", projectId: "tsfg" },
       { path: "eng/go-source-result.mjs", projectId: "tsfg" },
       { path: "eng/go-source-worker.mjs", projectId: "tsfg" },
+      { path: "eng/go-work-access.mjs", projectId: "tsfg" },
       { path: "eng/sandbox-run.c", projectId: "tsfg" },
       { path: "eng/source-admission.mjs", projectId: "tsfg" },
       { path: "eng/toolchains.lock.json", projectId: "tsfg" },

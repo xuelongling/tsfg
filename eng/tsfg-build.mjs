@@ -6997,6 +6997,8 @@ async function prepareGoSourceExecution(options, runtime) {
   await copyGoExecutionInputs(verifiedHelper, helper, inputs);
   const worker = path.join(controlRoot, "go-source-worker.mjs");
   await copyGoExecutionInputs(fileURLToPath(new URL("./go-source-worker.mjs", import.meta.url)), worker, inputs);
+  await copyGoExecutionInputs(fileURLToPath(new URL("./go-work-access.mjs", import.meta.url)),
+    path.join(controlRoot, "go-work-access.mjs"), inputs);
   // Rebind the actual staged bytes to authoritative identities. A hash first
   // observed while copying cannot establish that a tool or proxy was trusted.
   for (const [id, root] of [["go", goRoot], ["node", nodeRoot]]) {

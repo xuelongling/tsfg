@@ -7,6 +7,7 @@ import { spawnSync } from "node:child_process";
 import { connect } from "node:net";
 import path from "node:path";
 import { createHash } from "node:crypto";
+import { verifyGoWorkAccess } from "./go-work-access.mjs";
 
 const plan = JSON.parse(await readFile(process.argv[2], "utf8"));
 const hash = (bytes) => `sha256:${createHash("sha256").update(bytes).digest("hex")}`;
@@ -54,7 +55,7 @@ let phase = "boundary-probes";
 try {
   const token = JSON.parse(run(plan.helper, ["--verify-restriction"]));
   // The helper checks actual token state and job membership, not environment.
-  const checks = {};
+  const checks = { workWrite: await verifyGoWorkAccess(plan.workRoot) };
   for (const operation of ["read", "write"]) {
     try {
       if (operation === "read") await readFile(plan.undeclaredCanary);

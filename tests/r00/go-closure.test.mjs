@@ -252,7 +252,7 @@ test("real Go source target resolves dependencies under Low LPAC isolation", {
       assert.equal(worker.token[key], true, key);
     }
     assert.equal(worker.token.capabilityCount, 0);
-    assert.deepEqual(worker.checks, { read: "denied", write: "denied" });
+    assert.deepEqual(worker.checks, { workWrite: "allowed", read: "denied", write: "denied" });
     assert.deepEqual(worker.canaries, { "1.1.1.1": "blocked", "2606:4700:4700::1111": "blocked" });
     for (const name of ["parser", "checker"]) assert.ok(worker.packages.some(
       (item) => item.importPath === `github.com/microsoft/typescript-go/internal/${name}`));
