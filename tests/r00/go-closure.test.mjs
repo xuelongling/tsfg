@@ -189,11 +189,15 @@ test("prefetch rejects a source target with an insufficient Go toolchain lock", 
 
 test("source dependency resolution rejects ambient Go build overrides", async (t) => {
   const f = await fixture(t);
-  const result = await invoke(["build", "--source-target", "typescript-dependencies",
-    "--target", "windows-x86_64-msvc", "--profile", "debug", "--dev",
-    "--out", path.join(f.root, "out")], { GOFLAGS: "-mod=mod -pgo=auto" });
-  assert.equal(result.status, 2, result.output);
-  assert.match(result.output, /GOFLAGS/);
+  for (const [name, value] of Object.entries({ GOFLAGS: "-mod=mod -pgo=auto",
+    GOEXPERIMENT: "arenas", GOTOOLCHAIN: "auto", GOWORK: "E:/host/go.work",
+    GOENV: "E:/host/goenv", GOPROXY: "https://proxy.invalid", GOAMD64: "v4" })) {
+    const result = await invoke(["build", "--source-target", "typescript-dependencies",
+      "--target", "windows-x86_64-msvc", "--profile", "debug", "--dev",
+      "--out", path.join(f.root, "out")], { [name]: value });
+    assert.equal(result.status, 2, result.output);
+    assert.ok(result.output.includes(name), result.output);
+  }
 });
 
 test("source dependency resolution refuses a non-E output before loading tools", async () => {
