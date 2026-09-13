@@ -213,34 +213,52 @@ test("source dependency resolution requires an absolute E report destination", a
   assert.match(result.output, /absolute E: report/);
 });
 
-test("real Go source target attempts its native supervisor and retains setup failure evidence", {
-  skip: !process.env.TSFG_TEST_GO_CACHE || !process.env.TSFG_TEST_GO_LOCK,
+test("real Go source target resolves dependencies under Low LPAC isolation", {
+  skip: process.env.TSFG_TEST_GO_ACCEPTANCE !== "1"
+    ? "real native acceptance not requested; set TSFG_TEST_GO_ACCEPTANCE=1" : false,
 }, async (t) => {
-  const f = await fixture(t);
-  const report = path.join(f.root, "source-report.json");
-  const result = await invoke(["build", "--source-target", "typescript-dependencies",
-    "--target", "windows-x86_64-msvc", "--profile", "debug", "--dev",
-    "--out", path.join(f.root, "out"), "--report", report], {
-    TSFG_GIT: TEST_GIT_EXECUTABLE,
-    TSFG_RUNTIME_CACHE: process.env.TSFG_TEST_GO_CACHE,
-    TSFG_RUNTIME_LOCK: process.env.TSFG_TEST_GO_LOCK,
-    TSFG_RUNTIME_PLATFORM: "windows-x86_64-msvc",
+  assert.ok(process.env.TSFG_TEST_GO_CACHE && process.env.TSFG_TEST_GO_LOCK,
+    "real Go acceptance requires TSFG_TEST_GO_CACHE and TSFG_TEST_GO_LOCK");
+  for (const profile of ["debug", "release"]) await t.test(profile, async (t) => {
+    const f = await fixture(t);
+    const report = path.join(f.root, "source-report.json");
+    const result = await invoke(["build", "--source-target", "typescript-dependencies",
+      "--target", "windows-x86_64-msvc", "--profile", profile, "--dev",
+      "--out", path.join(f.root, "out"), "--report", report], {
+      TSFG_GIT: TEST_GIT_EXECUTABLE,
+      TSFG_RUNTIME_CACHE: process.env.TSFG_TEST_GO_CACHE,
+      TSFG_RUNTIME_LOCK: process.env.TSFG_TEST_GO_LOCK,
+      TSFG_RUNTIME_PLATFORM: "windows-x86_64-msvc",
+    });
+    assert.equal(result.status, 0, result.output);
+    const record = JSON.parse(await readFile(report, "utf8"));
+    assert.equal(record.status, "success");
+    assert.equal(record.result.status, "dependencies-resolved");
+    assert.equal(record.result.source.commit, "2c3d2d793a208fd15e6e20fd5dfdd687ce2d7223");
+    assert.equal(record.result.profile.name, profile);
+    assert.deepEqual(record.result.arguments, ["list", "-deps", "-json", "-mod=readonly",
+      "-buildvcs=false", "-pgo=off", "-trimpath",
+      ...(profile === "debug" ? ["-gcflags=all=-N -l"] : []),
+      "./internal/parser", "./internal/checker"]);
+    assert.equal(record.result.intakeComplete, false);
+    const execution = record.result.execution;
+    assert.equal(execution.status, "success");
+    assert.equal(execution.exitCode, 0);
+    assert.equal(execution.isolation, "unique-restricting-sid-lpac-and-wfp-package");
+    const worker = execution.result;
+    assert.equal(worker.status, "success");
+    assert.equal(worker.token.integrity, "low");
+    for (const key of ["administratorDenyOnly", "inJob", "appContainer", "lpac"]) {
+      assert.equal(worker.token[key], true, key);
+    }
+    assert.equal(worker.token.capabilityCount, 0);
+    assert.deepEqual(worker.checks, { read: "denied", write: "denied" });
+    assert.deepEqual(worker.canaries, { "1.1.1.1": "blocked", "2606:4700:4700::1111": "blocked" });
+    for (const name of ["parser", "checker"]) assert.ok(worker.packages.some(
+      (item) => item.importPath === `github.com/microsoft/typescript-go/internal/${name}`));
+    assert.equal(hash(await readFile(path.join(f.root, "out", "go-list.jsonstream"))), worker.outputSha256);
   });
-  assert.equal(result.status, 12, result.output);
-  const record = JSON.parse(await readFile(report, "utf8"));
-  assert.equal(record.status, "failure");
-  const preparation = record.error.issues[0].preparation;
-  assert.equal(preparation.source.commit, "2c3d2d793a208fd15e6e20fd5dfdd687ce2d7223");
-  assert.deepEqual(preparation.arguments, ["list", "-deps", "-json", "-mod=readonly",
-    "-buildvcs=false", "-pgo=off", "-trimpath", "-gcflags=all=-N -l",
-    "./internal/parser", "./internal/checker"]);
-  assert.equal(preparation.execution.status, "not-run");
-  assert.equal(preparation.execution.blocker, "native-supervisor-failed");
-  assert.ok(preparation.execution.supervisorCommand.includes("--allowlisted-root"));
-  assert.match(preparation.execution.stageRoot, /^E:[\\/]/i);
-  assert.equal(preparation.intakeComplete, false);
 });
-
 test("source target rejects a staged helper changed after cache verification", {
   skip: !process.env.TSFG_TEST_GO_CACHE || !process.env.TSFG_TEST_GO_LOCK,
 }, async (t) => {
