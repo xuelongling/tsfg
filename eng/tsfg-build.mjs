@@ -25,7 +25,7 @@ import { arch as hostArchitecture, release as hostRelease, tmpdir, version as ho
 import path from "node:path";
 import process from "node:process";
 import { createHash, randomUUID } from "node:crypto";
-import { GoSourceResultError, readGoSourceExecutionResult } from "./go-source-result.mjs";
+import { GoSourceResultError, publishGoSourceExecutionResult, bindGoSourceCompletion } from "./go-source-result.mjs";
 import {
   constants as zlibConstants,
   gunzipSync,
@@ -7056,9 +7056,9 @@ async function consumePreparedGoSource(prepared, child) {
   preparation.execution = { status: "not-run", blocker: "native-supervisor-failed", stageRoot,
     helperSha256: WINDOWS_SANDBOX_EXECUTABLE_DIGEST, supervisorCommand: [launch.executable, ...launch.arguments],
     exitCode: child.status, error: child.error?.message ?? null };
-  let result, outputBytes;
+  let result;
   try {
-    ({ worker: result, outputBytes } = await readGoSourceExecutionResult(stageRoot, child));
+    ({ worker: result } = await publishGoSourceExecutionResult(stageRoot, child, output, canonicalize));
     preparation.execution.worker = result;
   } catch (error) {
     if (!(error instanceof GoSourceResultError)) throw error;
@@ -7072,12 +7072,6 @@ async function consumePreparedGoSource(prepared, child) {
     if (error.kind === "integrity") throw new GoInputIntegrityError(error.message);
     throw new BuildFailureError(error.message);
   }
-  await mkdir(path.dirname(output), { recursive: true });
-  // Keep all staging evidence distinct from the atomically published result.
-  const publication = await mkdtemp(path.join(path.dirname(output), ".go-dependencies-"));
-  await writeFile(path.join(publication, "dependencies.json"), canonicalize(result));
-  await writeFile(path.join(publication, "go-list.jsonstream"), outputBytes);
-  await rename(publication, output);
   return { ...preparation, status: "dependencies-resolved", execution: {
     status: "success", helperSha256: WINDOWS_SANDBOX_EXECUTABLE_DIGEST, stageRoot,
     isolation: "unique-restricting-sid-lpac-and-wfp-package", exitCode: child.status, result }, output };
@@ -7119,7 +7113,8 @@ export async function prepareGoSourceAcceptance({ lockPath, cachePath, output, p
   validateSmokeOptions(options, "build");
   const runtime = await verifyRuntimeClosure(lockPath, cachePath, "windows-x86_64-msvc");
   await validateGoSourceOptions(options, runtime);
-  return await prepareGoSourceExecution(options, runtime);
+  const prepared = await prepareGoSourceExecution(options, runtime);
+  return bindGoSourceCompletion(prepared.launch, (child) => consumePreparedGoSource(prepared, child));
 }
 
 async function executeGoSourceTarget(options, runtime) {
