@@ -25,6 +25,7 @@ import { arch as hostArchitecture, release as hostRelease, tmpdir, version as ho
 import path from "node:path";
 import process from "node:process";
 import { createHash, randomUUID } from "node:crypto";
+import { GoSourceResultError, readGoSourceExecutionResult } from "./go-source-result.mjs";
 import {
   constants as zlibConstants,
   gunzipSync,
@@ -6952,7 +6953,7 @@ async function isGoDestinationOnE(destination) {
   }
 }
 
-async function executeGoSourceTarget(options, runtime) {
+async function prepareGoSourceExecution(options, runtime) {
   const preparation = await prepareGoSourceTarget(options, runtime);
   const output = path.resolve(options.get("--out"));
   if (await pathExists(output)) throw new ConfigurationError("Go dependency output already exists");
@@ -7035,31 +7036,40 @@ async function executeGoSourceTarget(options, runtime) {
     environment, cwd: stageRoot, helperSha256: WINDOWS_SANDBOX_EXECUTABLE_DIGEST,
     planSha256: await digestFile(planPath) };
   await writeFile(path.join(stageRoot, "launch.json"), canonicalize(launch), { flag: "wx" });
-  const child = spawnSync(helper, supervisorArguments, { cwd: stageRoot, env: environment,
+  return { preparation, output, stageRoot, launch };
+}
+
+// Private stages of the Hermetic Build Entry; no serialized launch is accepted
+// as a replacement for the authoritative preparation above.
+async function executePreparedGoSource(prepared) {
+  const { stageRoot, launch } = prepared;
+  const child = spawnSync(launch.executable, launch.arguments, { cwd: launch.cwd, env: launch.environment,
     encoding: "utf8", timeout: 180000, maxBuffer: 64 * 1024 * 1024, windowsHide: true });
   await writeFile(path.join(stageRoot, "supervisor.log"), `${child.stdout ?? ""}${child.stderr ?? ""}`);
+  return child;
+}
+
+async function consumePreparedGoSource(prepared, child) {
+  const { preparation, output, stageRoot, launch } = prepared;
   preparation.execution = { status: "not-run", blocker: "native-supervisor-failed", stageRoot,
-    helperSha256: WINDOWS_SANDBOX_EXECUTABLE_DIGEST, supervisorCommand: [helper, ...supervisorArguments],
+    helperSha256: WINDOWS_SANDBOX_EXECUTABLE_DIGEST, supervisorCommand: [launch.executable, ...launch.arguments],
     exitCode: child.status, error: child.error?.message ?? null };
-  const workerResultPath = path.join(workRoot, "worker-result.json");
-  let workerResult;
-  if (await pathExists(workerResultPath)) {
-    workerResult = JSON.parse((await readRegularFile(workerResultPath, "Go worker result")).toString("utf8"));
-    preparation.execution.worker = workerResult;
-  }
-  if (child.error || child.status !== 0) {
-    if (!child.error && child.status === 20 && ["go-version", "dependency-resolution"].includes(workerResult?.phase)) {
+  let result, outputBytes;
+  try {
+    ({ worker: result, outputBytes } = await readGoSourceExecutionResult(stageRoot, child));
+    preparation.execution.worker = result;
+  } catch (error) {
+    if (!(error instanceof GoSourceResultError)) throw error;
+    if (error.worker !== undefined) preparation.execution.worker = error.worker;
+    if (error.kind === "go") {
       preparation.execution.status = "failed";
       preparation.execution.blocker = "go-execution-failed";
-      throw new GoExecutionFailureError(preparation, workerResult.message);
+      throw new GoExecutionFailureError(preparation, error.message);
     }
-    throw new GoPreparationBoundaryError(preparation, `Go native supervisor failed (${child.status}): ${child.error?.message ?? child.stderr}`);
+    if (error.kind === "native") throw new GoPreparationBoundaryError(preparation, error.message);
+    if (error.kind === "integrity") throw new GoInputIntegrityError(error.message);
+    throw new BuildFailureError(error.message);
   }
-  const result = workerResult;
-  if (!result) throw new GoPreparationBoundaryError(preparation, "Go supervisor returned without a worker result");
-  if (result.status !== "success") throw new BuildFailureError(result.message ?? "Go dependency resolution failed");
-  const outputBytes = await readRegularFile(path.join(workRoot, "go-list.jsonstream"), "Go dependency output");
-  if (digest(outputBytes) !== result.outputSha256) throw new GoInputIntegrityError("Go dependency output changed");
   await mkdir(path.dirname(output), { recursive: true });
   // Keep all staging evidence distinct from the atomically published result.
   const publication = await mkdtemp(path.join(path.dirname(output), ".go-dependencies-"));
@@ -7069,6 +7079,12 @@ async function executeGoSourceTarget(options, runtime) {
   return { ...preparation, status: "dependencies-resolved", execution: {
     status: "success", helperSha256: WINDOWS_SANDBOX_EXECUTABLE_DIGEST, stageRoot,
     isolation: "unique-restricting-sid-lpac-and-wfp-package", exitCode: child.status, result }, output };
+}
+
+async function executeGoSourceTarget(options, runtime) {
+  const prepared = await prepareGoSourceExecution(options, runtime);
+  const child = await executePreparedGoSource(prepared);
+  return await consumePreparedGoSource(prepared, child);
 }
 
 async function enterWindowsOfflineBoundary(arguments_, runtime, reportPath) {
