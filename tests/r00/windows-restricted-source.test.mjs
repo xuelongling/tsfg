@@ -6,6 +6,36 @@ import path from "node:path";
 import test from "node:test";
 
 const helper = process.env.TSFG_RESTRICTED_HELPER;
+test("native allowlisted helper verifies actual Low LPAC and restricting identity", {
+  skip: process.env.TSFG_RESTRICTED_ACCEPTANCE !== "1",
+}, () => {
+  assert.equal(process.platform, "win32");
+  assert.ok(helper, "explicit native acceptance requires TSFG_RESTRICTED_HELPER");
+  const root = mkdtempSync("E:/ws/pro_tsfg/.tmp/native-lpac-");
+  const control = path.join(root, "inputs", "control");
+  const work = path.join(root, "work");
+  mkdirSync(control, { recursive: true });
+  mkdirSync(work);
+  const executable = path.join(control, "helper.exe");
+  copyFileSync(helper, executable);
+  const result = spawnSync(helper, ["--allowlisted-root", root, "--rx", control, "--rw", work,
+    "--", executable, "--verify-restriction"], {
+    encoding: "utf8", timeout: 30000, windowsHide: true,
+    env: { ...process.env, TEMP: work, TMP: work, USERPROFILE: work,
+      HOME: work, APPDATA: work, LOCALAPPDATA: work },
+  });
+  assert.equal(result.status, 0, result.stderr);
+  const token = JSON.parse(result.stdout);
+  assert.equal(token.integrity, "low");
+  assert.equal(token.appContainer, true);
+  assert.equal(token.lpac, true);
+  assert.equal(token.inJob, true);
+  assert.equal(token.administratorDenyOnly, true);
+  assert.equal(token.capabilityCount, 0);
+  assert.match(token.restrictionSid, /^S-1-5-21-/);
+  assert.notEqual(token.restrictionSid, token.userSid);
+});
+
 test("native helper ignores planted DLL names in its application directory", {
   skip: process.platform !== "win32" || !helper,
 }, () => {

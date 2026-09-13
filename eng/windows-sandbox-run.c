@@ -8,6 +8,7 @@
 #include <objbase.h>
 #include <sddl.h>
 #include <userenv.h>
+#include <winternl.h>
 
 #include <stdint.h>
 #include <stdio.h>
@@ -147,6 +148,74 @@ static void *token_information(HANDLE token, TOKEN_INFORMATION_CLASS kind) {
   return NULL;
 }
 
+/* Native TokenSecurityAttributes layout (phnt ntseapi.h); WIN://NOALLAPPPKG
+ * is the LPAC property used by NtCoreLib's NtToken.LowPrivilegeAppContainer.
+ * Some supported Windows builds reject TokenIsLessPrivilegedAppContainer. */
+struct lpac_attribute {
+  UNICODE_STRING name;
+  USHORT value_type;
+  USHORT reserved;
+  ULONG flags;
+  ULONG value_count;
+  union { ULONG64 *uint64; void *other; } values;
+};
+struct lpac_attributes {
+  USHORT version;
+  USHORT reserved;
+  ULONG count;
+  struct lpac_attribute *attributes;
+};
+
+static int token_buffer_contains(const BYTE *base, SIZE_T length,
+                                  const void *pointer, SIZE_T size) {
+  uintptr_t start = (uintptr_t)base, address = (uintptr_t)pointer;
+  return address >= start && address - start <= length &&
+      size <= length - (address - start);
+}
+
+static int token_is_lpac(HANDLE token) {
+  DWORD value = 0, returned = 0;
+  if (GetTokenInformation(token, TokenIsLessPrivilegedAppContainer,
+                          &value, sizeof(value), &returned))
+    return returned == sizeof(value) && value == 1;
+  if (GetLastError() != ERROR_INVALID_PARAMETER) return 0;
+
+  DWORD size = 0;
+  if (GetTokenInformation(token, TokenSecurityAttributes, NULL, 0, &size) ||
+      GetLastError() != ERROR_INSUFFICIENT_BUFFER ||
+      size < sizeof(struct lpac_attributes) || size > 1024 * 1024) return 0;
+  BYTE *buffer = calloc(1, size);
+  if (!buffer) return 0;
+  int valid = 0, found = 0;
+  if (!GetTokenInformation(token, TokenSecurityAttributes, buffer, size, &returned) ||
+      returned > size || returned < sizeof(struct lpac_attributes)) goto done;
+  struct lpac_attributes information;
+  memcpy(&information, buffer, sizeof(information));
+  if (information.version != 1 || information.reserved != 0 ||
+      information.count > returned / sizeof(struct lpac_attribute) ||
+      !token_buffer_contains(buffer, returned, information.attributes,
+                             information.count * sizeof(struct lpac_attribute))) goto done;
+  const wchar_t expected[] = L"WIN://NOALLAPPPKG";
+  for (ULONG i = 0; i < information.count; ++i) {
+    struct lpac_attribute attribute;
+    memcpy(&attribute, (BYTE *)information.attributes + i * sizeof(attribute), sizeof(attribute));
+    if ((attribute.name.Length & 1) || attribute.name.Length > attribute.name.MaximumLength ||
+        !token_buffer_contains(buffer, returned, attribute.name.Buffer, attribute.name.Length)) goto done;
+    if (attribute.name.Length != sizeof(expected) - sizeof(wchar_t) ||
+        memcmp(attribute.name.Buffer, expected, attribute.name.Length)) continue;
+    if (found++ || attribute.reserved != 0 || attribute.value_type != 2 ||
+        attribute.flags != 0 || attribute.value_count != 1 ||
+        !token_buffer_contains(buffer, returned, attribute.values.uint64, sizeof(ULONG64))) goto done;
+    ULONG64 claim;
+    memcpy(&claim, attribute.values.uint64, sizeof(claim));
+    if (claim != 1) goto done;
+  }
+  valid = found == 1;
+done:
+  free(buffer);
+  return valid;
+}
+
 /* Read-only attestation of this process. This does not attest a WFP boundary. */
 static int verify_process_restriction(HANDLE target, PSID expected_restriction,
                                       PSID expected_package, int emit) {
@@ -159,11 +228,11 @@ static int verify_process_restriction(HANDLE target, PSID expected_restriction,
   TOKEN_USER *user = token_information(token, TokenUser);
   TOKEN_PRIVILEGES *privileges = token_information(token, TokenPrivileges);
   DWORD *is_container = token_information(token, TokenIsAppContainer);
-  DWORD *is_lpac = token_information(token, TokenIsLessPrivilegedAppContainer);
+  int is_lpac = token_is_lpac(token);
   TOKEN_APPCONTAINER_INFORMATION *container = token_information(token, TokenAppContainerSid);
   TOKEN_GROUPS *capabilities = token_information(token, TokenCapabilities);
   int valid = restricting && groups && label && user && privileges &&
-      is_container && *is_container && is_lpac && *is_lpac &&
+      is_container && *is_container && is_lpac &&
       container && container->TokenAppContainer &&
       capabilities && capabilities->GroupCount == 0 &&
       (!expected_package || EqualSid(expected_package, container->TokenAppContainer)) &&
@@ -201,7 +270,7 @@ static int verify_process_restriction(HANDLE target, PSID expected_restriction,
   } else valid = 0;
   LocalFree(sid); LocalFree(user_sid); LocalFree(container_sid);
   free(restricting); free(groups); free(label); free(user); free(privileges);
-  free(is_container); free(is_lpac); free(container); free(capabilities);
+  free(is_container); free(container); free(capabilities);
   CloseHandle(token);
   if (!valid) fwprintf(stderr, L"tsfg windows sandbox: restriction verification failed\n");
   return valid ? 0 : 125;
@@ -694,6 +763,7 @@ int wmain(int argc, wchar_t **argv) {
   wchar_t *command_line = NULL;
   HANDLE process_token = NULL;
   HANDLE restricted_token = NULL;
+  HANDLE appcontainer_token = NULL;
   TOKEN_USER *token_user = NULL;
   PSID unique_sid = NULL;
   TOKEN_GROUPS *token_groups = NULL;
@@ -971,16 +1041,25 @@ int wmain(int argc, wchar_t **argv) {
     extended_startup.StartupInfo.hStdInput = inherited[0];
     extended_startup.StartupInfo.hStdOutput = inherited[1];
     extended_startup.StartupInfo.hStdError = inherited[2];
-    InitializeProcThreadAttributeList(NULL, 3, 0, &attribute_size);
+    /* Explicit token construction avoids the implicit SECURITY_CAPABILITIES
+     * process-creation path's profile lookup on supported Windows hosts. */
+    typedef BOOL (WINAPI *create_appcontainer_token_fn)(HANDLE, PSECURITY_CAPABILITIES, PHANDLE);
+    create_appcontainer_token_fn create_appcontainer_token =
+        (create_appcontainer_token_fn)GetProcAddress(GetModuleHandleW(L"kernelbase.dll"),
+                                                     "CreateAppContainerToken");
+    if (!create_appcontainer_token ||
+        !create_appcontainer_token(restricted_token, &container_capabilities, &appcontainer_token)) {
+      print_win32_error(L"create explicit AppContainer token",
+                        create_appcontainer_token ? GetLastError() : ERROR_PROC_NOT_FOUND);
+      goto cleanup;
+    }
+    InitializeProcThreadAttributeList(NULL, 2, 0, &attribute_size);
     extended_startup.lpAttributeList = calloc(1, attribute_size);
     if (!extended_startup.lpAttributeList ||
-        !InitializeProcThreadAttributeList(extended_startup.lpAttributeList, 3, 0,
+        !InitializeProcThreadAttributeList(extended_startup.lpAttributeList, 2, 0,
                                            &attribute_size) ||
         !UpdateProcThreadAttribute(extended_startup.lpAttributeList, 0,
             PROC_THREAD_ATTRIBUTE_HANDLE_LIST, inherited, sizeof(inherited), NULL, NULL) ||
-        !UpdateProcThreadAttribute(extended_startup.lpAttributeList, 0,
-            PROC_THREAD_ATTRIBUTE_SECURITY_CAPABILITIES, &container_capabilities,
-            sizeof(container_capabilities), NULL, NULL) ||
         !UpdateProcThreadAttribute(extended_startup.lpAttributeList, 0,
             PROC_THREAD_ATTRIBUTE_ALL_APPLICATION_PACKAGES_POLICY, &package_policy,
             sizeof(package_policy), NULL, NULL)) {
@@ -1006,7 +1085,8 @@ int wmain(int argc, wchar_t **argv) {
   BOOL created = network_only
       ? CreateProcessW(command_path, command_line, NULL, NULL, TRUE,
                        creation_flags, NULL, NULL, &startup, &process)
-      : CreateProcessAsUserW(restricted_token, command_path, command_line,
+      : CreateProcessAsUserW(allowlisted_root ? appcontainer_token : restricted_token,
+                             command_path, command_line,
                              NULL, NULL, TRUE, creation_flags, NULL, allowlisted_root,
                              allowlisted_root ? &extended_startup.StartupInfo : &startup,
                              &process);
@@ -1088,6 +1168,7 @@ cleanup:
   if (process.hProcess != NULL) CloseHandle(process.hProcess);
   if (job != NULL) CloseHandle(job);
   if (restricted_token != NULL) CloseHandle(restricted_token);
+  if (appcontainer_token != NULL) CloseHandle(appcontainer_token);
   if (process_token != NULL) CloseHandle(process_token);
   if (unique_sid != NULL) FreeSid(unique_sid);
   free(token_groups);
