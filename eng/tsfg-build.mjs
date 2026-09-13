@@ -3399,7 +3399,7 @@ const repositoryRoot = path.resolve(
   "..",
 );
 
-function inspectProductWorkspace(options, allowDevelopment) {
+function inspectProductWorkspace(options, allowDevelopment, command = "build") {
   const workspace = path.resolve(options.get("--workspace") ?? repositoryRoot);
   const status = gitOutput(workspace, [
     "status",
@@ -7083,6 +7083,45 @@ async function consumePreparedGoSource(prepared, child) {
     isolation: "unique-restricting-sid-lpac-and-wfp-package", exitCode: child.status, result }, output };
 }
 
+async function validateGoSourceOptions(options, runtime) {
+  if (options.get("--source-target") !== "typescript-dependencies") {
+    throw new ConfigurationError("unsupported source target");
+  }
+  if (!await isGoDestinationOnE(options.get("--out"))) {
+    throw new ConfigurationError("source target requires an absolute E: output");
+  }
+  const goOverrides = { GOFLAGS: "", GOEXPERIMENT: "", GOTOOLCHAIN: "local",
+    GOWORK: "off", GOENV: "off", GOPROXY: "off", GOAMD64: "v2" };
+  for (const [name, allowed] of Object.entries(goOverrides)) {
+    const actual = Object.keys(process.env).find((key) => key.toUpperCase() === name);
+    if (actual && process.env[actual] && process.env[actual] !== allowed) {
+      throw new ConfigurationError(`source target forbids ambient ${name}`);
+    }
+  }
+  if (!runtime?.selections.some(({ id }) => id === "go")) {
+    throw new OfflineBoundaryError("locked Go runtime is unavailable");
+  }
+}
+
+// Internal preparation seam for the fixed ticket-03 native operation. This
+// creates the same verified stage as the CLI; it neither launches the native
+// worker nor accepts an external launch plan as authority.
+export async function prepareGoSourceAcceptance({ lockPath, cachePath, output, profile }) {
+  for (const destination of [lockPath, cachePath, output]) {
+    if (typeof destination !== "string" || !await isGoDestinationOnE(destination)) {
+      throw new ConfigurationError("Go preparation requires absolute E: lock, cache and output paths");
+    }
+  }
+  const options = new Map([
+    ["--source-target", "typescript-dependencies"], ["--target", "windows-x86_64-msvc"],
+    ["--profile", profile], ["--out", output], ["--dev", ""],
+  ]);
+  validateSmokeOptions(options, "build");
+  const runtime = await verifyRuntimeClosure(lockPath, cachePath, "windows-x86_64-msvc");
+  await validateGoSourceOptions(options, runtime);
+  return await prepareGoSourceExecution(options, runtime);
+}
+
 async function executeGoSourceTarget(options, runtime) {
   const prepared = await prepareGoSourceExecution(options, runtime);
   const child = await executePreparedGoSource(prepared);
@@ -7145,435 +7184,428 @@ async function enterWindowsOfflineBoundary(arguments_, runtime, reportPath) {
   }
 }
 
-const arguments_ = process.argv.slice(2);
-const command = arguments_[0] ?? "";
-const requestedReportPath = parseReportPath(arguments_);
-const invalidGoReport = arguments_.includes("--source-target") && requestedReportPath
-  && !await isGoDestinationOnE(requestedReportPath);
-const reportPath = invalidGoReport ? undefined : requestedReportPath;
-const windowsBoundaryBootstrapError = process.env.TSFG_WINDOWS_BOUNDARY_ERROR;
-let runtimeIntegrityError;
-let runtimeClosure;
-if (
-  !windowsBoundaryBootstrapError &&
-  (
-    process.env.TSFG_RUNTIME_LOCK ||
-    process.env.TSFG_RUNTIME_CACHE ||
-    process.env.TSFG_RUNTIME_PLATFORM
-  )
-) {
-  try {
-    if (
-      !process.env.TSFG_RUNTIME_LOCK ||
-      !process.env.TSFG_RUNTIME_CACHE ||
-      !process.env.TSFG_RUNTIME_PLATFORM
-    ) {
-      throw new Error("incomplete runtime closure identity");
+async function runCommandLine() {
+  const arguments_ = process.argv.slice(2);
+  const command = arguments_[0] ?? "";
+  const requestedReportPath = parseReportPath(arguments_);
+  const invalidGoReport = arguments_.includes("--source-target") && requestedReportPath
+    && !await isGoDestinationOnE(requestedReportPath);
+  const reportPath = invalidGoReport ? undefined : requestedReportPath;
+  const windowsBoundaryBootstrapError = process.env.TSFG_WINDOWS_BOUNDARY_ERROR;
+  let runtimeIntegrityError;
+  let runtimeClosure;
+  if (
+    !windowsBoundaryBootstrapError &&
+    (
+      process.env.TSFG_RUNTIME_LOCK ||
+      process.env.TSFG_RUNTIME_CACHE ||
+      process.env.TSFG_RUNTIME_PLATFORM
+    )
+  ) {
+    try {
+      if (
+        !process.env.TSFG_RUNTIME_LOCK ||
+        !process.env.TSFG_RUNTIME_CACHE ||
+        !process.env.TSFG_RUNTIME_PLATFORM
+      ) {
+        throw new Error("incomplete runtime closure identity");
+      }
+      runtimeClosure = await verifyRuntimeClosure(
+        process.env.TSFG_RUNTIME_LOCK,
+        process.env.TSFG_RUNTIME_CACHE,
+        process.env.TSFG_RUNTIME_PLATFORM,
+      );
+    } catch (error) {
+      runtimeIntegrityError = error;
     }
-    runtimeClosure = await verifyRuntimeClosure(
-      process.env.TSFG_RUNTIME_LOCK,
-      process.env.TSFG_RUNTIME_CACHE,
-      process.env.TSFG_RUNTIME_PLATFORM,
-    );
-  } catch (error) {
-    runtimeIntegrityError = error;
   }
-}
 
-let delegatedWindowsStatus;
-if (windowsBoundaryBootstrapError) {
-  delegatedWindowsStatus = await fail(
-    command,
-    12,
-    "offline input missing",
-    {
-      code: "sandbox-boundary",
-      message: windowsBoundaryBootstrapError,
-    },
-    reportPath,
-    "offline",
-  );
-} else if (
-  !runtimeIntegrityError &&
-  shouldEnterWindowsOfflineBoundary(arguments_, runtimeClosure)
-) {
-  delegatedWindowsStatus = await enterWindowsOfflineBoundary(
-    arguments_,
-    runtimeClosure,
-    reportPath,
-  );
-}
-
-if (invalidGoReport) {
-  process.exitCode = await fail(command, 2, "usage/configuration", {
-    code: "invalid-configuration", message: "source target requires an absolute E: report destination",
-  }, undefined, "offline");
-} else if (delegatedWindowsStatus !== undefined) {
-  process.exitCode = delegatedWindowsStatus;
-} else if (runtimeIntegrityError) {
-  process.exitCode = await fail(
-    command,
-    11,
-    "lock/integrity",
-    { code: "runtime-closure", message: runtimeIntegrityError.message },
-    reportPath,
-    "offline",
-  );
-} else if (command === "prefetch") {
-  try {
-    const options = parseOptions(
-      arguments_,
-      new Set(["--lock", "--cache", "--platform", "--report"]),
-    );
-    const result = await prefetch(options);
-    process.exitCode = await succeed(
+  let delegatedWindowsStatus;
+  if (windowsBoundaryBootstrapError) {
+    delegatedWindowsStatus = await fail(
       command,
-      result,
-      reportPath,
-      "online",
-    );
-  } catch (error) {
-    const isConfigurationError = error instanceof ConfigurationError;
-    process.exitCode = await fail(
-      command,
-      isConfigurationError ? 2 : 11,
-      isConfigurationError ? "usage/configuration" : "lock/integrity",
+      12,
+      "offline input missing",
       {
-        code: isConfigurationError
-          ? (error.issueCode ?? "invalid-configuration")
-          : "prefetch-integrity",
-        message: error.message,
-      },
-      reportPath,
-      "online",
-    );
-  }
-} else if (command === "verify-workspace") {
-  try {
-    const options = parseOptions(
-      arguments_,
-      new Set([
-        "--workspace",
-        "--manifest-url",
-        "--manifest-revision",
-        "--manifest",
-        "--report",
-      ]),
-    );
-    const result = await verifyWorkspace(options);
-    process.exitCode = await succeed(
-      command,
-      result,
-      reportPath,
-      "offline",
-    );
-  } catch (error) {
-    const isConfigurationError = error instanceof ConfigurationError;
-    process.exitCode = await fail(
-      command,
-      isConfigurationError ? 2 : 10,
-      isConfigurationError ? "usage/configuration" : "workspace mismatch",
-      {
-        code: isConfigurationError
-          ? (error.issueCode ?? "invalid-configuration")
-          : (error.issueCode ?? "workspace-state"),
-        message: error.message,
+        code: "sandbox-boundary",
+        message: windowsBoundaryBootstrapError,
       },
       reportPath,
       "offline",
     );
-  }
-} else if (command === "build") {
-  let publication;
-  try {
-    const options = parseOptions(
+  } else if (
+    !runtimeIntegrityError &&
+    shouldEnterWindowsOfflineBoundary(arguments_, runtimeClosure)
+  ) {
+    delegatedWindowsStatus = await enterWindowsOfflineBoundary(
       arguments_,
-      new Set([
-        "--dev", "--target", "--profile", "--simd-dispatch", "--workspace", "--out", "--report", "--source-target",
-      ]),
-      new Set(["--dev"]),
-    );
-    validateSmokeOptions(options, "build");
-    if (options.has("--source-target")) {
-      if (options.get("--source-target") !== "typescript-dependencies") {
-        throw new ConfigurationError("unsupported source target");
-      }
-      if (!await isGoDestinationOnE(options.get("--out"))) {
-        throw new ConfigurationError("source target requires an absolute E: output");
-      }
-      const goOverrides = { GOFLAGS: "", GOEXPERIMENT: "", GOTOOLCHAIN: "local",
-        GOWORK: "off", GOENV: "off", GOPROXY: "off", GOAMD64: "v2" };
-      for (const [name, allowed] of Object.entries(goOverrides)) {
-        const actual = Object.keys(process.env).find((key) => key.toUpperCase() === name);
-        if (actual && process.env[actual] && process.env[actual] !== allowed) {
-          throw new ConfigurationError(`source target forbids ambient ${name}`);
-        }
-      }
-      if (!runtimeClosure?.selections.some(({ id }) => id === "go")) {
-        throw new OfflineBoundaryError("locked Go runtime is unavailable");
-      }
-      process.exitCode = await succeed(command, await executeGoSourceTarget(options, runtimeClosure), reportPath, "offline");
-    } else {
-    const workspaceState = inspectProductWorkspace(options, true);
-    if (!runtimeClosure) throw new Error("locked runtime closure is unavailable");
-    const networkCanary = await verifyOfflineBoundary();
-    const result = options.get("--target") === "windows-x86_64-msvc"
-      ? await buildWindows(options, runtimeClosure, workspaceState, networkCanary)
-      : await buildLinux(
-      options,
       runtimeClosure,
-      workspaceState,
-      networkCanary,
-      );
-    publication = result.publication;
-    result.networkCanaries = {
-      before: networkCanary,
-      after: await verifyOfflineBoundary(),
-    };
-    process.exitCode = await succeed(command, result, reportPath, "offline");
-    }
-  } catch (error) {
-    if (publication) await publication.rollback();
-    const isConfigurationError = error instanceof ConfigurationError;
-    const isBuildFailure = error instanceof BuildFailureError;
-    const isBuildPolicy = error instanceof BuildPolicyError;
-    const isWorkspaceMismatch = error instanceof WorkspaceMismatchError;
-    const isOfflineBoundary = error instanceof OfflineBoundaryError;
-    const isUndeclaredInput = error instanceof UndeclaredInputError;
-    const isSandboxBoundary = error instanceof SandboxBoundaryError;
-    const isGoIntegrity = error instanceof GoInputIntegrityError;
+      reportPath,
+    );
+  }
+
+  if (invalidGoReport) {
+    process.exitCode = await fail(command, 2, "usage/configuration", {
+      code: "invalid-configuration", message: "source target requires an absolute E: report destination",
+    }, undefined, "offline");
+  } else if (delegatedWindowsStatus !== undefined) {
+    process.exitCode = delegatedWindowsStatus;
+  } else if (runtimeIntegrityError) {
     process.exitCode = await fail(
       command,
-      isConfigurationError
-        ? 2
-        : isGoIntegrity ? 11
-        : isWorkspaceMismatch
-          ? 10
-          : (isOfflineBoundary || isUndeclaredInput || isSandboxBoundary)
-            ? 12
-            : isBuildFailure ? 20 : 30,
-      isConfigurationError
-        ? "usage/configuration"
-        : isGoIntegrity ? "lock/integrity"
-        : isWorkspaceMismatch
-          ? "workspace mismatch"
-          : (isOfflineBoundary || isUndeclaredInput || isSandboxBoundary)
-            ? "offline input missing"
-          : isBuildFailure ? "build failure" : "internal control-plane failure",
-      {
-        code: isConfigurationError
-          ? (error.issueCode ?? "invalid-configuration")
-          : isGoIntegrity ? "go-input-integrity"
-          : isWorkspaceMismatch
-            ? error.issueCode
-            : isOfflineBoundary
-              ? "network-boundary"
-              : isUndeclaredInput
-                ? "undeclared-build-input"
-                : isSandboxBoundary
-                  ? "sandbox-boundary"
-                  : isBuildPolicy
-                    ? "forbidden-build-option"
-                  : isBuildFailure ? "native-build" : "internal-control-plane",
-        message: error.message,
-        ...(error instanceof GoPreparationBoundaryError || error instanceof GoExecutionFailureError ? { preparation: error.preparation } : {}),
-      },
+      11,
+      "lock/integrity",
+      { code: "runtime-closure", message: runtimeIntegrityError.message },
       reportPath,
       "offline",
     );
-  }
-} else if (command === "test") {
-  try {
-    const options = parseOptions(
-      arguments_,
-      new Set([
-        "--dev", "--target", "--profile", "--simd-dispatch", "--cpu-fixture", "--workspace", "--out", "--package", "--report",
-        "--compatibility-baseline", "--compatibility-candidate",
-      ]),
-      new Set(["--dev"]),
-    );
-    const compatibilityMode = options.has("--compatibility-baseline") ||
-      options.has("--compatibility-candidate");
-    const packageRuntimeMode = options.has("--package");
-    if (compatibilityMode && packageRuntimeMode) {
-      throw new ConfigurationError("package runtime and compatibility test inputs are mutually exclusive");
+  } else if (command === "prefetch") {
+    try {
+      const options = parseOptions(
+        arguments_,
+        new Set(["--lock", "--cache", "--platform", "--report"]),
+      );
+      const result = await prefetch(options);
+      process.exitCode = await succeed(
+        command,
+        result,
+        reportPath,
+        "online",
+      );
+    } catch (error) {
+      const isConfigurationError = error instanceof ConfigurationError;
+      process.exitCode = await fail(
+        command,
+        isConfigurationError ? 2 : 11,
+        isConfigurationError ? "usage/configuration" : "lock/integrity",
+        {
+          code: isConfigurationError
+            ? (error.issueCode ?? "invalid-configuration")
+            : "prefetch-integrity",
+          message: error.message,
+        },
+        reportPath,
+        "online",
+      );
     }
-    if (compatibilityMode) validateCompatibilityOptions(options);
-    else if (packageRuntimeMode) validatePackageRuntimeOptions(options);
-    else validateSmokeOptions(options, "test");
-    const workspaceState = inspectProductWorkspace(options, !packageRuntimeMode);
-    const networkCanary = await verifyOfflineBoundary();
-    let result;
-    if (compatibilityMode) {
-      result = await testCompatibility(options, workspaceState, networkCanary);
-    } else if (packageRuntimeMode) {
-      result = await testPackageRuntime(options, runtimeClosure, workspaceState, networkCanary);
-    } else {
+  } else if (command === "verify-workspace") {
+    try {
+      const options = parseOptions(
+        arguments_,
+        new Set([
+          "--workspace",
+          "--manifest-url",
+          "--manifest-revision",
+          "--manifest",
+          "--report",
+        ]),
+      );
+      const result = await verifyWorkspace(options);
+      process.exitCode = await succeed(
+        command,
+        result,
+        reportPath,
+        "offline",
+      );
+    } catch (error) {
+      const isConfigurationError = error instanceof ConfigurationError;
+      process.exitCode = await fail(
+        command,
+        isConfigurationError ? 2 : 10,
+        isConfigurationError ? "usage/configuration" : "workspace mismatch",
+        {
+          code: isConfigurationError
+            ? (error.issueCode ?? "invalid-configuration")
+            : (error.issueCode ?? "workspace-state"),
+          message: error.message,
+        },
+        reportPath,
+        "offline",
+      );
+    }
+  } else if (command === "build") {
+    let publication;
+    try {
+      const options = parseOptions(
+        arguments_,
+        new Set([
+          "--dev", "--target", "--profile", "--simd-dispatch", "--workspace", "--out", "--report", "--source-target",
+        ]),
+        new Set(["--dev"]),
+      );
+      validateSmokeOptions(options, "build");
+      if (options.has("--source-target")) {
+        await validateGoSourceOptions(options, runtimeClosure);
+        process.exitCode = await succeed(command, await executeGoSourceTarget(options, runtimeClosure), reportPath, "offline");
+      } else {
+      const workspaceState = inspectProductWorkspace(options, true, command);
       if (!runtimeClosure) throw new Error("locked runtime closure is unavailable");
-      result = await testSmoke(options, runtimeClosure, workspaceState, networkCanary);
-    }
-    process.exitCode = await succeed(command, result, reportPath, "offline");
-  } catch (error) {
-    const isConfigurationError = error instanceof ConfigurationError;
-    const isTestFailure = error instanceof TestFailureError;
-    const isCompatibilityFailure = error instanceof CompatibilityFailureError;
-    const isWorkspaceMismatch = error instanceof WorkspaceMismatchError;
-    const isOfflineBoundary = error instanceof OfflineBoundaryError;
-    const isUndeclaredInput = error instanceof UndeclaredInputError;
-    const isSandboxBoundary = error instanceof SandboxBoundaryError;
-    process.exitCode = await fail(
-      command,
-      isConfigurationError
-        ? 2
-        : isWorkspaceMismatch
-          ? 10
-          : (isOfflineBoundary || isUndeclaredInput || isSandboxBoundary)
-            ? 12
-            : isTestFailure ? 21 : 30,
-      isConfigurationError
-        ? "usage/configuration"
-        : isWorkspaceMismatch
-          ? "workspace mismatch"
-          : (isOfflineBoundary || isUndeclaredInput || isSandboxBoundary)
-            ? "offline input missing"
-          : isTestFailure ? "test/compatibility failure" : "internal control-plane failure",
-      {
-        code: isConfigurationError
-          ? (error.issueCode ?? "invalid-configuration")
+      const networkCanary = await verifyOfflineBoundary();
+      const result = options.get("--target") === "windows-x86_64-msvc"
+        ? await buildWindows(options, runtimeClosure, workspaceState, networkCanary)
+        : await buildLinux(
+        options,
+        runtimeClosure,
+        workspaceState,
+        networkCanary,
+        );
+      publication = result.publication;
+      result.networkCanaries = {
+        before: networkCanary,
+        after: await verifyOfflineBoundary(),
+      };
+      process.exitCode = await succeed(command, result, reportPath, "offline");
+      }
+    } catch (error) {
+      if (publication) await publication.rollback();
+      const isConfigurationError = error instanceof ConfigurationError;
+      const isBuildFailure = error instanceof BuildFailureError;
+      const isBuildPolicy = error instanceof BuildPolicyError;
+      const isWorkspaceMismatch = error instanceof WorkspaceMismatchError;
+      const isOfflineBoundary = error instanceof OfflineBoundaryError;
+      const isUndeclaredInput = error instanceof UndeclaredInputError;
+      const isSandboxBoundary = error instanceof SandboxBoundaryError;
+      const isGoIntegrity = error instanceof GoInputIntegrityError;
+      process.exitCode = await fail(
+        command,
+        isConfigurationError
+          ? 2
+          : isGoIntegrity ? 11
           : isWorkspaceMismatch
-            ? error.issueCode
-            : isOfflineBoundary
-              ? "network-boundary"
-              : isUndeclaredInput
-                ? "undeclared-test-input"
-                : isSandboxBoundary
-                  ? "sandbox-boundary"
-                  : isCompatibilityFailure
-                    ? error.issueCode
-                    : isTestFailure ? error.issueCode : "internal-control-plane",
-        ...(isCompatibilityFailure ? { compatibility: error.compatibility } : {}),
-        message: error.message,
-      },
-      reportPath,
-      "offline",
-    );
-  }
-} else if (command === "package") {
-  let publication;
-  try {
-    const options = parseOptions(
-      arguments_,
-      new Set([
-        "--dev", "--target", "--profile", "--simd-dispatch", "--workspace", "--input", "--out", "--report",
-      ]),
-      new Set(["--dev"]),
-    );
-    validateSmokeOptions(options, "package", true);
-    const workspaceState = inspectProductWorkspace(options, false);
-    if (!runtimeClosure) throw new PackageFailureError("locked runtime closure is unavailable");
-    const networkCanary = await verifyOfflineBoundary();
-    const result = options.get("--target") === "windows-x86_64-msvc"
-      ? await packageWindows(options, runtimeClosure, workspaceState, networkCanary)
-      : await packageLinux(options, runtimeClosure, workspaceState, networkCanary);
-    publication = result.publication;
-    process.exitCode = await succeed(command, result, reportPath, "offline");
-  } catch (error) {
-    if (publication) await publication.rollback();
-    const isConfigurationError = error instanceof ConfigurationError;
-    const isWorkspaceMismatch = error instanceof WorkspaceMismatchError;
-    const isOfflineBoundary = error instanceof OfflineBoundaryError;
-    const isUndeclaredInput = error instanceof UndeclaredInputError;
-    const isSandboxBoundary = error instanceof SandboxBoundaryError;
-    process.exitCode = await fail(
-      command,
-      isConfigurationError
-        ? 2
-        : isWorkspaceMismatch
-          ? 10
-          : (isOfflineBoundary || isUndeclaredInput || isSandboxBoundary) ? 12 : 22,
-      isConfigurationError
-        ? "usage/configuration"
-        : isWorkspaceMismatch
-          ? "workspace mismatch"
-          : (isOfflineBoundary || isUndeclaredInput || isSandboxBoundary)
-            ? "offline input missing"
-            : "package failure",
-      {
-        code: isConfigurationError
-          ? (error.issueCode ?? "invalid-configuration")
+            ? 10
+            : (isOfflineBoundary || isUndeclaredInput || isSandboxBoundary)
+              ? 12
+              : isBuildFailure ? 20 : 30,
+        isConfigurationError
+          ? "usage/configuration"
+          : isGoIntegrity ? "lock/integrity"
           : isWorkspaceMismatch
-            ? error.issueCode
-            : isOfflineBoundary
-              ? "network-boundary"
-              : isUndeclaredInput
-                ? "undeclared-package-input"
-                : isSandboxBoundary ? "sandbox-boundary" : "artifact-package",
-        message: error.message,
-      },
-      reportPath,
-      "offline",
-    );
-  }
-} else if (command === "repro-check") {
-  try {
-    const options = parseOptions(
-      arguments_,
-      new Set(["--target", "--profile", "--producer-a", "--producer-b", "--workspace", "--report"]),
-    );
-    validateReproOptions(options);
-    if (!runtimeClosure) {
-      throw new ReproducibilityMismatchError(
-        "runtime-closure",
-        "repro-check requires a verified runtime closure",
-        "build-identity-mismatch",
+            ? "workspace mismatch"
+            : (isOfflineBoundary || isUndeclaredInput || isSandboxBoundary)
+              ? "offline input missing"
+            : isBuildFailure ? "build failure" : "internal control-plane failure",
+        {
+          code: isConfigurationError
+            ? (error.issueCode ?? "invalid-configuration")
+            : isGoIntegrity ? "go-input-integrity"
+            : isWorkspaceMismatch
+              ? error.issueCode
+              : isOfflineBoundary
+                ? "network-boundary"
+                : isUndeclaredInput
+                  ? "undeclared-build-input"
+                  : isSandboxBoundary
+                    ? "sandbox-boundary"
+                    : isBuildPolicy
+                      ? "forbidden-build-option"
+                    : isBuildFailure ? "native-build" : "internal-control-plane",
+          message: error.message,
+          ...(error instanceof GoPreparationBoundaryError || error instanceof GoExecutionFailureError ? { preparation: error.preparation } : {}),
+        },
+        reportPath,
+        "offline",
       );
     }
-    const workspaceState = inspectProductWorkspace(options, false);
-    const networkCanary = await verifyOfflineBoundary();
-    const result = await reproCheck(options, runtimeClosure, workspaceState, networkCanary);
-    process.exitCode = await succeed(command, result, reportPath, "offline");
-  } catch (error) {
-    const isConfigurationError = error instanceof ConfigurationError;
-    const isOfflineBoundary = error instanceof OfflineBoundaryError;
-    const isWorkspaceMismatch = error instanceof WorkspaceMismatchError;
+  } else if (command === "test") {
+    try {
+      const options = parseOptions(
+        arguments_,
+        new Set([
+          "--dev", "--target", "--profile", "--simd-dispatch", "--cpu-fixture", "--workspace", "--out", "--package", "--report",
+          "--compatibility-baseline", "--compatibility-candidate",
+        ]),
+        new Set(["--dev"]),
+      );
+      const compatibilityMode = options.has("--compatibility-baseline") ||
+        options.has("--compatibility-candidate");
+      const packageRuntimeMode = options.has("--package");
+      if (compatibilityMode && packageRuntimeMode) {
+        throw new ConfigurationError("package runtime and compatibility test inputs are mutually exclusive");
+      }
+      if (compatibilityMode) validateCompatibilityOptions(options);
+      else if (packageRuntimeMode) validatePackageRuntimeOptions(options);
+      else validateSmokeOptions(options, "test");
+      const workspaceState = inspectProductWorkspace(options, !packageRuntimeMode, command);
+      const networkCanary = await verifyOfflineBoundary();
+      let result;
+      if (compatibilityMode) {
+        result = await testCompatibility(options, workspaceState, networkCanary);
+      } else if (packageRuntimeMode) {
+        result = await testPackageRuntime(options, runtimeClosure, workspaceState, networkCanary);
+      } else {
+        if (!runtimeClosure) throw new Error("locked runtime closure is unavailable");
+        result = await testSmoke(options, runtimeClosure, workspaceState, networkCanary);
+      }
+      process.exitCode = await succeed(command, result, reportPath, "offline");
+    } catch (error) {
+      const isConfigurationError = error instanceof ConfigurationError;
+      const isTestFailure = error instanceof TestFailureError;
+      const isCompatibilityFailure = error instanceof CompatibilityFailureError;
+      const isWorkspaceMismatch = error instanceof WorkspaceMismatchError;
+      const isOfflineBoundary = error instanceof OfflineBoundaryError;
+      const isUndeclaredInput = error instanceof UndeclaredInputError;
+      const isSandboxBoundary = error instanceof SandboxBoundaryError;
+      process.exitCode = await fail(
+        command,
+        isConfigurationError
+          ? 2
+          : isWorkspaceMismatch
+            ? 10
+            : (isOfflineBoundary || isUndeclaredInput || isSandboxBoundary)
+              ? 12
+              : isTestFailure ? 21 : 30,
+        isConfigurationError
+          ? "usage/configuration"
+          : isWorkspaceMismatch
+            ? "workspace mismatch"
+            : (isOfflineBoundary || isUndeclaredInput || isSandboxBoundary)
+              ? "offline input missing"
+            : isTestFailure ? "test/compatibility failure" : "internal control-plane failure",
+        {
+          code: isConfigurationError
+            ? (error.issueCode ?? "invalid-configuration")
+            : isWorkspaceMismatch
+              ? error.issueCode
+              : isOfflineBoundary
+                ? "network-boundary"
+                : isUndeclaredInput
+                  ? "undeclared-test-input"
+                  : isSandboxBoundary
+                    ? "sandbox-boundary"
+                    : isCompatibilityFailure
+                      ? error.issueCode
+                      : isTestFailure ? error.issueCode : "internal-control-plane",
+          ...(isCompatibilityFailure ? { compatibility: error.compatibility } : {}),
+          message: error.message,
+        },
+        reportPath,
+        "offline",
+      );
+    }
+  } else if (command === "package") {
+    let publication;
+    try {
+      const options = parseOptions(
+        arguments_,
+        new Set([
+          "--dev", "--target", "--profile", "--simd-dispatch", "--workspace", "--input", "--out", "--report",
+        ]),
+        new Set(["--dev"]),
+      );
+      validateSmokeOptions(options, "package", true);
+      const workspaceState = inspectProductWorkspace(options, false, command);
+      if (!runtimeClosure) throw new PackageFailureError("locked runtime closure is unavailable");
+      const networkCanary = await verifyOfflineBoundary();
+      const result = options.get("--target") === "windows-x86_64-msvc"
+        ? await packageWindows(options, runtimeClosure, workspaceState, networkCanary)
+        : await packageLinux(options, runtimeClosure, workspaceState, networkCanary);
+      publication = result.publication;
+      process.exitCode = await succeed(command, result, reportPath, "offline");
+    } catch (error) {
+      if (publication) await publication.rollback();
+      const isConfigurationError = error instanceof ConfigurationError;
+      const isWorkspaceMismatch = error instanceof WorkspaceMismatchError;
+      const isOfflineBoundary = error instanceof OfflineBoundaryError;
+      const isUndeclaredInput = error instanceof UndeclaredInputError;
+      const isSandboxBoundary = error instanceof SandboxBoundaryError;
+      process.exitCode = await fail(
+        command,
+        isConfigurationError
+          ? 2
+          : isWorkspaceMismatch
+            ? 10
+            : (isOfflineBoundary || isUndeclaredInput || isSandboxBoundary) ? 12 : 22,
+        isConfigurationError
+          ? "usage/configuration"
+          : isWorkspaceMismatch
+            ? "workspace mismatch"
+            : (isOfflineBoundary || isUndeclaredInput || isSandboxBoundary)
+              ? "offline input missing"
+              : "package failure",
+        {
+          code: isConfigurationError
+            ? (error.issueCode ?? "invalid-configuration")
+            : isWorkspaceMismatch
+              ? error.issueCode
+              : isOfflineBoundary
+                ? "network-boundary"
+                : isUndeclaredInput
+                  ? "undeclared-package-input"
+                  : isSandboxBoundary ? "sandbox-boundary" : "artifact-package",
+          message: error.message,
+        },
+        reportPath,
+        "offline",
+      );
+    }
+  } else if (command === "repro-check") {
+    try {
+      const options = parseOptions(
+        arguments_,
+        new Set(["--target", "--profile", "--producer-a", "--producer-b", "--workspace", "--report"]),
+      );
+      validateReproOptions(options);
+      if (!runtimeClosure) {
+        throw new ReproducibilityMismatchError(
+          "runtime-closure",
+          "repro-check requires a verified runtime closure",
+          "build-identity-mismatch",
+        );
+      }
+      const workspaceState = inspectProductWorkspace(options, false, command);
+      const networkCanary = await verifyOfflineBoundary();
+      const result = await reproCheck(options, runtimeClosure, workspaceState, networkCanary);
+      process.exitCode = await succeed(command, result, reportPath, "offline");
+    } catch (error) {
+      const isConfigurationError = error instanceof ConfigurationError;
+      const isOfflineBoundary = error instanceof OfflineBoundaryError;
+      const isWorkspaceMismatch = error instanceof WorkspaceMismatchError;
+      process.exitCode = await fail(
+        command,
+        isConfigurationError ? 2 : isWorkspaceMismatch ? 10 : isOfflineBoundary ? 12 : 23,
+        isConfigurationError
+          ? "usage/configuration"
+          : isWorkspaceMismatch
+            ? "workspace mismatch"
+            : isOfflineBoundary ? "offline input missing" : "reproducibility mismatch",
+        {
+          code: isConfigurationError
+            ? (error.issueCode ?? "invalid-configuration")
+            : isWorkspaceMismatch
+              ? error.issueCode
+              : isOfflineBoundary ? "network-boundary" : (error.issueCode ?? "reproducibility-set"),
+          ...(error instanceof ReproducibilityMismatchError
+            ? {
+                member: error.member,
+                ...(error.leftSha256 ? { leftSha256: error.leftSha256 } : {}),
+                ...(error.offset !== undefined ? { offset: error.offset } : {}),
+                ...(error.rightSha256 ? { rightSha256: error.rightSha256 } : {}),
+              }
+            : {}),
+          message: error.message,
+        },
+        reportPath,
+        "offline",
+      );
+    }
+  } else {
     process.exitCode = await fail(
       command,
-      isConfigurationError ? 2 : isWorkspaceMismatch ? 10 : isOfflineBoundary ? 12 : 23,
-      isConfigurationError
-        ? "usage/configuration"
-        : isWorkspaceMismatch
-          ? "workspace mismatch"
-          : isOfflineBoundary ? "offline input missing" : "reproducibility mismatch",
+      2,
+      "usage/configuration",
       {
-        code: isConfigurationError
-          ? (error.issueCode ?? "invalid-configuration")
-          : isWorkspaceMismatch
-            ? error.issueCode
-            : isOfflineBoundary ? "network-boundary" : (error.issueCode ?? "reproducibility-set"),
-        ...(error instanceof ReproducibilityMismatchError
-          ? {
-              member: error.member,
-              ...(error.leftSha256 ? { leftSha256: error.leftSha256 } : {}),
-              ...(error.offset !== undefined ? { offset: error.offset } : {}),
-              ...(error.rightSha256 ? { rightSha256: error.rightSha256 } : {}),
-            }
-          : {}),
-        message: error.message,
+        code: "unsupported-operation",
+        message: `unsupported operation: ${command || "<missing>"}`,
       },
       reportPath,
-      "offline",
+      "disabled",
     );
   }
-} else {
-  process.exitCode = await fail(
-    command,
-    2,
-    "usage/configuration",
-    {
-      code: "unsupported-operation",
-      message: `unsupported operation: ${command || "<missing>"}`,
-    },
-    reportPath,
-    "disabled",
-  );
+
+}
+
+// Resolve both paths so a direct invocation through a symlink still reaches the
+// existing workspace and launcher validation rather than silently doing nothing.
+if (process.argv[1] && await realpath(process.argv[1]) === await realpath(fileURLToPath(import.meta.url))) {
+  await runCommandLine();
 }
