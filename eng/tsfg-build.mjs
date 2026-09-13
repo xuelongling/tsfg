@@ -6999,6 +6999,8 @@ async function prepareGoSourceExecution(options, runtime) {
   await copyGoExecutionInputs(fileURLToPath(new URL("./go-source-worker.mjs", import.meta.url)), worker, inputs);
   await copyGoExecutionInputs(fileURLToPath(new URL("./go-work-access.mjs", import.meta.url)),
     path.join(controlRoot, "go-work-access.mjs"), inputs);
+  await copyGoExecutionInputs(fileURLToPath(new URL("./go-network-probe.mjs", import.meta.url)),
+    path.join(controlRoot, "go-network-probe.mjs"), inputs);
   // Rebind the actual staged bytes to authoritative identities. A hash first
   // observed while copying cannot establish that a tool or proxy was trusted.
   for (const [id, root] of [["go", goRoot], ["node", nodeRoot]]) {
@@ -7026,6 +7028,7 @@ async function prepareGoSourceExecution(options, runtime) {
   const plan = { schemaVersion: "1", moduleRoot: sourceRoot, inputRoot, workRoot, helper,
     undeclaredCanary, go, goVersion: runtime.lock.tools.go.version, arguments: preparation.arguments,
     modules: preparation.dependencies.modules, environment, inputs: inputs.sort((left, right) => left.path < right.path ? -1 : left.path > right.path ? 1 : 0) };
+  if (options.has("--go-network-canary-port")) plan.networkCanaryPort = Number(options.get("--go-network-canary-port"));
   const planPath = path.join(controlRoot, "plan.json");
   await writeFile(planPath, canonicalize(plan), { flag: "wx" });
   const executableInputs = inputs.filter((entry) => /\.exe$/i.test(entry.path)).map((entry) => entry.path);
@@ -7100,7 +7103,11 @@ async function validateGoSourceOptions(options, runtime) {
 // Internal preparation seam for the fixed ticket-03 native operation. This
 // creates the same verified stage as the CLI; it neither launches the native
 // worker nor accepts an external launch plan as authority.
-export async function prepareGoSourceAcceptance({ lockPath, cachePath, output, profile }) {
+export async function prepareGoSourceAcceptance({ lockPath, cachePath, output, profile, networkCanaryPort = undefined }) {
+  if (networkCanaryPort !== undefined
+      && (!Number.isInteger(networkCanaryPort) || networkCanaryPort < 1 || networkCanaryPort > 65535)) {
+    throw new ConfigurationError("Go network canary requires a fixed loopback port");
+  }
   for (const destination of [lockPath, cachePath, output]) {
     if (typeof destination !== "string" || !await isGoDestinationOnE(destination)) {
       throw new ConfigurationError("Go preparation requires absolute E: lock, cache and output paths");
@@ -7111,6 +7118,7 @@ export async function prepareGoSourceAcceptance({ lockPath, cachePath, output, p
     ["--profile", profile], ["--out", output], ["--dev", ""],
   ]);
   validateSmokeOptions(options, "build");
+  if (networkCanaryPort !== undefined) options.set("--go-network-canary-port", String(networkCanaryPort));
   const runtime = await verifyRuntimeClosure(lockPath, cachePath, "windows-x86_64-msvc");
   await validateGoSourceOptions(options, runtime);
   const prepared = await prepareGoSourceExecution(options, runtime);

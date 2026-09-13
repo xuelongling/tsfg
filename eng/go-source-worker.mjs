@@ -2,12 +2,13 @@
 
 // Private worker of the Hermetic Build Entry. Only the native supervisor may
 // turn its result into execution evidence; invoking this file is not a build.
-import { readFile, writeFile } from "node:fs/promises";
+import { mkdir, readFile, writeFile } from "node:fs/promises";
 import { spawnSync } from "node:child_process";
 import { connect } from "node:net";
 import path from "node:path";
 import { createHash } from "node:crypto";
 import { verifyGoWorkAccess } from "./go-work-access.mjs";
+import { requireSocketPermissionDenial, requireGoDownloadPermissionDenial } from "./go-network-probe.mjs";
 
 const plan = JSON.parse(await readFile(process.argv[2], "utf8"));
 const hash = (bytes) => `sha256:${createHash("sha256").update(bytes).digest("hex")}`;
@@ -45,8 +46,11 @@ async function networkDenied(host) {
     const socket = connect({ host, port: 443 });
     const finish = (error) => { socket.destroy(); error ? reject(error) : resolve("blocked"); };
     socket.once("connect", () => finish(new Error(`network canary connected: ${host}`)));
-    socket.once("error", () => finish(undefined));
-    socket.setTimeout(1000, () => finish(undefined));
+    socket.once("error", (error) => {
+      try { requireSocketPermissionDenial(error); finish(undefined); }
+      catch (failure) { finish(failure); }
+    });
+    socket.setTimeout(1000, () => finish(new Error(`network denial inconclusive: timeout ${host}`)));
   });
 }
 
@@ -74,6 +78,27 @@ try {
   phase = "go-version";
   const version = run(plan.go, ["version"]).trim();
   if (version !== `go version go${plan.goVersion} windows/amd64`) throw new Error(`unexpected Go identity: ${version}`);
+  let missingModuleNetwork;
+  if (plan.networkCanaryPort !== undefined) {
+    phase = "missing-module-network";
+    if (!Number.isInteger(plan.networkCanaryPort) || plan.networkCanaryPort < 1 || plan.networkCanaryPort > 65535) {
+      throw new Error("invalid fixed network canary port");
+    }
+    const module = plan.modules[0];
+    if (!module) throw new Error("missing declared module for network negative");
+    const negativeRoot = path.join(plan.workRoot, "network-negative");
+    // Exclusive creation proves this probe does not inherit a populated cache.
+    await mkdir(negativeRoot);
+    const environment = { ...plan.environment, GOPROXY: `http://127.0.0.1:${plan.networkCanaryPort}`,
+      GOMODCACHE: path.join(negativeRoot, "modules"), GOPATH: path.join(negativeRoot, "gopath"),
+      GOSUMDB: "off", GOTOOLCHAIN: "local" };
+    const arguments_ = ["mod", "download", "-json", `${module.path}@${module.version}`];
+    const child = spawnSync(plan.go, arguments_, { cwd: negativeRoot, env: environment,
+      encoding: "utf8", timeout: 30000, maxBuffer: 1024 * 1024, windowsHide: true });
+    missingModuleNetwork = { status: requireGoDownloadPermissionDenial(child, plan.networkCanaryPort),
+      module: `${module.path}@${module.version}`, endpoint: environment.GOPROXY,
+      cache: environment.GOMODCACHE, exitCode: child.status, stdout: child.stdout, stderr: child.stderr };
+  }
   phase = "dependency-resolution";
   const output = run(plan.go, plan.arguments);
   const packages = parsePackages(output);
@@ -97,7 +122,7 @@ try {
   }
   for (const host of Object.keys(canaries)) await networkDenied(host);
   await writeFile(path.join(plan.workRoot, "go-list.jsonstream"), output, { flag: "wx" });
-  result = { status: "success", token, checks, canaries, version,
+  result = { status: "success", token, checks, canaries, version, missingModuleNetwork,
     packages: packages.map((item) => ({ importPath: item.ImportPath, standard: Boolean(item.Standard),
       goFiles: item.GoFiles ?? [], directory: item.Dir, module: item.Module?.Path ?? null })),
     modules: [...modules].map(([module, version]) => ({ path: module, version })), outputSha256: hash(output) };

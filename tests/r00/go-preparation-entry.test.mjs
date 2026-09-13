@@ -30,3 +30,12 @@ test("private Go preparation rejects non-E destinations before opening inputs", 
     cachePath: "E:\\uncreated-cache", output: "E:\\uncreated-output", profile: "debug" }),
   /absolute E: lock, cache and output paths/);
 });
+
+test("private Go preparation rejects non-port canary input before opening inputs", async () => {
+  const { prepareGoSourceAcceptance } = await import("../../eng/tsfg-build.mjs");
+  for (const networkCanaryPort of [0, 65536, -1, 1.5, "http://outside.test"]) {
+    await assert.rejects(prepareGoSourceAcceptance({ lockPath: "E:/missing-lock",
+      cachePath: "E:/missing-cache", output: "E:/missing-output", profile: "debug", networkCanaryPort }),
+    /fixed loopback port/);
+  }
+});
