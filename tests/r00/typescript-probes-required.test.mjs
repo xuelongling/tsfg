@@ -64,7 +64,7 @@ test("required probe inputs cannot be missing or removed from the fixed suite", 
     + await readFile(source, "utf8"));
   git(control, "add", "eng/probes/typescript.json", "eng/probes/syntax-error.ts");
   git(control, "-c", "user.name=Fixture", "-c", "user.email=fixture@example.invalid", "commit", "--quiet", "-m", "Reference an unapproved Program input in isolated control fixture");
-  const expanded = await run(control, root, plan, "expanded-program", 20);
+  const expanded = await run(control, root, plan, "expanded-program", 21);
   assert.match(expanded.probes.cases.find(item => item.id === "syntax-error").message,
     /unapproved Program input: \/internal\/bundled\/libs\/lib.es2015.core.d.ts/);
 });

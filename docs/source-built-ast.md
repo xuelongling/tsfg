@@ -102,6 +102,9 @@ Three exact upstream declaration files (`lib.es5.d.ts`, `lib.decorators.d.ts`,
 `lib.decorators.legacy.d.ts`) are explicit build-only Intake Ledger inputs.
 The Program uses a read-only filesystem rooted at the staged module, explicit
 declarations, `NoLib`, `NoEmit`, strict checking and ESNext syntax. Types are
+queried only after the actual Program SourceFiles exactly match the primary
+input and those three declarations. Each probe records the sorted actual list;
+an additional referenced source fails before any type query. Types are
 converted to strings while the file's Checker is exclusively borrowed, and the
 borrow is released before process termination. No Type object crosses Checkers
 or escapes to a later consumer. Necessary compiler/printer/transformer package
@@ -118,6 +121,7 @@ Missing or invalid required input reports `not-run`; an executed expectation
 mismatch reports `failed` (exit 21); only a complete match reports `passed`.
 Failures publish no successful source-build directory. The opt-in high-level
 tests exercise both build/test, missing probe source, an omitted required case,
-and an undeclared required upstream declaration. Skipping opt-in tests is not
+an undeclared required upstream declaration and an extra referenced declaration.
+Skipping opt-in tests is not
 typed-source acceptance. These probes prove source intake usability, not full
 tsfg Program Conformance Corpus acceptance or completed R02a intake.
