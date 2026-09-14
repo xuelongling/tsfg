@@ -43,6 +43,8 @@ async function readProducer(root, workspaceRoot, workspace, serialize, parseJson
       || build.target !== "windows-x86_64-msvc" || build.profile.name !== "debug"
       || path.resolve(build.execution.workspace).toLowerCase() !== productRoot.toLowerCase()) fail("stale or mismatched source producer identity");
   const identity = build.buildIdentity, { digest, ...identityPayload } = identity;
+  if (!isDeepStrictEqual(identity.options, { sourceTarget: "typescript-ast", goamd64: "v2", cgo: false, pgo: false })
+      || identity.profile !== "debug" || identity.target !== "windows-x86_64-msvc") fail("source producer does not match the current effective Build Identity");
   if (digest !== hash(serialize(identityPayload)) || identity.buildInputSetDigest !== build.buildInputSet.digest
       || build.buildInputSet.digest !== hash(serialize({ schemaVersion: "1", entries: build.buildInputSet.entries }))
       || identity.toolchainClosureDigest !== build.toolchainClosure) fail("source Build Identity digest mismatch");
