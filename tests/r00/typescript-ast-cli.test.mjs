@@ -82,6 +82,7 @@ test("fixed fork source rebuilds a real TypeScript AST after consumption governa
   assert.equal(result.ast.statements[0].kind, "KindVariableStatement");
   assert.deepEqual(result.ast.identifiers, ["answer"]);
   assert.equal(result.ast.parseDiagnosticCount, 0);
+  assert.deepEqual(result.ast.types, [{ name: "answer", type: "number" }]);
   assert.equal(result.intakeComplete, false);
   assert.equal(result.generation.status, "not-run");
   assert.equal(result.buildInputSet.schemaVersion, "1");

@@ -37,7 +37,8 @@ export async function buildAstProbe({ prepared, child, serialize, publish }) {
   const { worker, outputBytes } = await readGoSourceExecutionResult(stageRoot, child, "local-development");
   const plan = JSON.parse(await readFile(path.join(stageRoot, "inputs/control/plan.json"), "utf8"));
   const intake = preparation.astIntake;
-  const auditFiles = ["tsc/go.mod", "tsc/go.sum", "tsc/LICENSE", "tsc/NOTICE.txt", probeInput];
+  const auditFiles = ["tsc/go.mod", "tsc/go.sum", "tsc/LICENSE", "tsc/NOTICE.txt", probeInput,
+    ...["lib.es5.d.ts", "lib.decorators.d.ts", "lib.decorators.legacy.d.ts"].map(name => `tsc/internal/bundled/libs/${name}`)];
   const paths = new Set(auditFiles);
   for (const item of worker.packages) {
     if (item.module !== "github.com/microsoft/typescript-go") continue;
