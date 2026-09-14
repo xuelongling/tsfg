@@ -10,23 +10,31 @@ import { IntakeLedgerError } from "./intake-ledger.mjs";
 const hash = bytes => `sha256:${createHash("sha256").update(bytes).digest("hex")}`;
 const fail = message => { throw new IntakeLedgerError("typescript-probe-input", message); };
 const manifestPath = "eng/probes/typescript.json";
-const required = ["positive", "syntax-error"];
+const required = ["positive", "syntax-error", "type-error"];
 
 export async function readTypeScriptProbes(controlRoot, gitExecutable) {
   const inputs = [];
   const committed = async relative => {
+    const tree = astGit(gitExecutable, controlRoot, ["ls-tree", "HEAD", "--", relative]).toString("utf8");
+    if (!/^100(644|755) blob /.test(tree)) fail(`probe input must be a committed regular file: ${relative}`);
     const bytes = await readFile(path.join(controlRoot, relative)).catch(() => fail(`missing required probe input: ${relative}`));
     if (!bytes.equals(astGit(gitExecutable, controlRoot, ["show", `HEAD:${relative}`]))) fail(`probe input differs from committed identity: ${relative}`);
     inputs.push({ projectId: "tsfg", path: relative, sha256: hash(bytes), role: "build-only", consumer: "tsfg-ast", license: "MIT" });
     return bytes;
   };
   const bytes = await committed(manifestPath);
-  const manifest = JSON.parse(bytes.toString("utf8"));
+  let manifest;
+  try { manifest = JSON.parse(bytes.toString("utf8")); }
+  catch { fail("invalid fixed probe manifest JSON"); }
   if (manifest.schemaVersion !== "1" || manifest.languageBaseline !== "TypeScript 7.0.2"
-      || !Array.isArray(manifest.cases) || !isDeepStrictEqual(manifest.cases.map(item => item.id), required)) fail("all fixed TypeScript probes are required in order");
+      || !Array.isArray(manifest.cases) || !isDeepStrictEqual(manifest.cases.map(item => item?.id), required)) fail("all fixed TypeScript probes are required in order");
   for (const item of manifest.cases) {
-    if (!item.expected || !Array.isArray(item.expected.syntaxDiagnostics)
-        || Object.keys(item.expected).some(key => !["syntaxDiagnostics", "types"].includes(key))) fail(`invalid fixed expectation: ${item.id}`);
+    const diagnostics = ["syntaxDiagnostics", "semanticDiagnostics", "programDiagnostics", "globalDiagnostics"];
+    if (!item.expected || diagnostics.some(key => !Array.isArray(item.expected[key]))
+        || Object.keys(item.expected).some(key => ![...diagnostics, "types"].includes(key))) fail(`invalid fixed expectation: ${item.id}`);
+    if (item.id !== "syntax-error" && (!Array.isArray(item.expected.types) || !item.expected.types.length)) fail(`required type query missing: ${item.id}`);
+    if (item.id === "syntax-error" && !item.expected.syntaxDiagnostics.length
+        || item.id === "type-error" && !item.expected.semanticDiagnostics.length) fail(`required negative diagnostic missing: ${item.id}`);
     if (item.id === "positive") {
       if (item.projectId !== "TypeScript.git" || item.path !== "tsc/cmd/tsfg-ast/testdata/positive.ts") fail("positive must reuse the admitted AST input");
     } else {

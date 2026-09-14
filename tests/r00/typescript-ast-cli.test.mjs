@@ -61,14 +61,14 @@ test("AST does not silently map an unimplemented release profile to debug", () =
   assert.match(child.stderr, /AST.*debug/);
 });
 
-test("fixed fork source rebuilds a real TypeScript AST after consumption governance", {
+for (const command of ["build", "test"]) test(`fixed fork source runs real typed probes through ${command}`, {
   skip: process.env.TSFG_TEST_AST_ACCEPTANCE !== "1" ? "requires the pinned real source and Go cache" : false,
 }, async (t) => {
   const root = await mkdtemp(path.join(tmpdir(), "ast-acceptance-"));
   t.after(() => rm(root, { recursive: true, force: true }));
   const product = fileURLToPath(new URL("../../", import.meta.url));
   const report = path.join(root, "report.json");
-  const child = spawnSync(process.execPath, [entry, "build", "--dev", "--source-target", "typescript-ast",
+  const child = spawnSync(process.execPath, [entry, command, "--dev", "--source-target", "typescript-ast",
     "--workspace", product, "--intake-plan", path.join(product, "eng/intake-declarations/typescript-ast.json"),
     "--target", "windows-x86_64-msvc", "--profile", "debug", "--out", path.join(root, "out"), "--report", report],
   { env: { ...process.env, TSFG_GIT: TEST_GIT_EXECUTABLE,
@@ -87,6 +87,10 @@ test("fixed fork source rebuilds a real TypeScript AST after consumption governa
   const expected = JSON.parse(await readFile(path.join(product, "eng/probes/typescript.json"), "utf8"));
   assert.deepEqual(result.probes.cases.find(item => item.id === "syntax-error").observation.syntaxDiagnostics,
     expected.cases.find(item => item.id === "syntax-error").expected.syntaxDiagnostics);
+  assert.equal(result.probes.cases.find(item => item.id === "type-error")?.status, "passed");
+  assert.deepEqual(result.probes.cases.find(item => item.id === "type-error").observation.semanticDiagnostics,
+    expected.cases.find(item => item.id === "type-error").expected.semanticDiagnostics);
+  assert.equal(result.probes.status, "passed");
   assert.equal(result.intakeComplete, false);
   assert.equal(result.generation.status, "not-run");
   assert.equal(result.buildInputSet.schemaVersion, "1");
@@ -100,6 +104,6 @@ test("fixed fork source rebuilds a real TypeScript AST after consumption governa
     const evidence = path.resolve(process.env.TSFG_TEST_AST_EVIDENCE);
     assert.ok(evidence.startsWith("E:"));
     await mkdir(evidence, { recursive: true });
-    await writeFile(path.join(evidence, "ast-build.json"), await readFile(report));
+    await writeFile(path.join(evidence, `ast-${command}.json`), await readFile(report));
   }
 });

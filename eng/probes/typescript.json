@@ -8,7 +8,10 @@
       "path": "tsc/cmd/tsfg-ast/testdata/positive.ts",
       "expected": {
         "types": [{ "name": "answer", "type": "number" }],
-        "syntaxDiagnostics": []
+        "syntaxDiagnostics": [],
+        "semanticDiagnostics": [],
+        "programDiagnostics": [],
+        "globalDiagnostics": []
       }
     },
     {
@@ -18,7 +21,24 @@
       "expected": {
         "syntaxDiagnostics": [
           { "code": 1109, "category": "error", "message": "Expression expected.", "file": "syntax-error.ts", "start": 62, "end": 63 }
-        ]
+        ],
+        "semanticDiagnostics": [],
+        "programDiagnostics": [],
+        "globalDiagnostics": []
+      }
+    },
+    {
+      "id": "type-error",
+      "projectId": "tsfg",
+      "path": "eng/probes/type-error.ts",
+      "expected": {
+        "types": [{ "name": "n", "type": "number" }],
+        "syntaxDiagnostics": [],
+        "semanticDiagnostics": [
+          { "code": 2322, "category": "error", "message": "Type 'boolean' is not assignable to type 'number'.", "file": "type-error.ts", "start": 69, "end": 70 }
+        ],
+        "programDiagnostics": [],
+        "globalDiagnostics": []
       }
     }
   ]

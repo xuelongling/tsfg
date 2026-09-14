@@ -7299,6 +7299,8 @@ async function enterWindowsOfflineBoundary(arguments_, runtime, reportPath) {
 async function runCommandLine() {
   const arguments_ = process.argv.slice(2);
   const command = arguments_[0] ?? "";
+  const sourceTarget = arguments_.includes("--source-target") ? arguments_[arguments_.indexOf("--source-target") + 1] : undefined;
+  const typedProbeTest = command === "test" && sourceTarget === "typescript-ast";
   const requestedReportPath = parseReportPath(arguments_);
   const invalidGoReport = arguments_.includes("--source-target") && requestedReportPath
     && !await isGoDestinationOnE(requestedReportPath);
@@ -7326,7 +7328,7 @@ async function runCommandLine() {
         process.env.TSFG_RUNTIME_LOCK,
         process.env.TSFG_RUNTIME_CACHE,
         process.env.TSFG_RUNTIME_PLATFORM,
-        { nativeControls: !(command === "build" && arguments_.includes("--dev") &&
+        { nativeControls: !((command === "build" || typedProbeTest) && arguments_.includes("--dev") &&
             ["typescript-dependencies", "typescript-ast", "intake-ledger", "upgrade-review"].includes(arguments_[arguments_.indexOf("--source-target") + 1])) },
       );
     } catch (error) {
@@ -7438,7 +7440,7 @@ async function runCommandLine() {
         "offline",
       );
     }
-  } else if (command === "build") {
+  } else if (command === "build" || typedProbeTest) {
     let publication;
     try {
       const options = parseOptions(
@@ -7484,6 +7486,7 @@ async function runCommandLine() {
       if (publication) await publication.rollback();
       const isConfigurationError = error instanceof ConfigurationError;
       const isBuildFailure = error instanceof BuildFailureError || error instanceof AstExecutionError;
+      const isProbeFailure = error instanceof AstExecutionError && error.probes?.status === "failed";
       const isBuildPolicy = error instanceof BuildPolicyError;
       const isWorkspaceMismatch = error instanceof WorkspaceMismatchError || error instanceof IntakeLedgerError;
       const isOfflineBoundary = error instanceof OfflineBoundaryError;
@@ -7499,7 +7502,7 @@ async function runCommandLine() {
             ? 10
             : (isOfflineBoundary || isUndeclaredInput || isSandboxBoundary)
               ? 12
-              : isBuildFailure ? 20 : 30,
+              : isProbeFailure ? 21 : isBuildFailure ? 20 : 30,
         isConfigurationError
           ? "usage/configuration"
           : isGoIntegrity ? "lock/integrity"
@@ -7507,7 +7510,7 @@ async function runCommandLine() {
             ? "workspace mismatch"
             : (isOfflineBoundary || isUndeclaredInput || isSandboxBoundary)
               ? "offline input missing"
-            : isBuildFailure ? "build failure" : "internal control-plane failure",
+              : isProbeFailure ? "test/compatibility failure" : isBuildFailure ? "build failure" : "internal control-plane failure",
         {
           code: isConfigurationError
             ? (error.issueCode ?? "invalid-configuration")
@@ -7522,9 +7525,10 @@ async function runCommandLine() {
                     ? "sandbox-boundary"
                     : isBuildPolicy
                       ? "forbidden-build-option"
-                    : isBuildFailure ? "native-build" : "internal-control-plane",
+                    : isProbeFailure ? "typescript-probe" : isBuildFailure ? "native-build" : "internal-control-plane",
           message: error.message,
-          ...(error instanceof AstExecutionError && error.probes ? { probes: error.probes } : {}),
+          ...(sourceTarget === "typescript-ast" ? { probes: error instanceof AstExecutionError && error.probes
+            ? error.probes : { status: "not-run", reason: error.message } } : {}),
           ...(error instanceof GoPreparationBoundaryError || error instanceof GoExecutionFailureError ? { preparation: error.preparation } : {}),
         },
         reportPath,
