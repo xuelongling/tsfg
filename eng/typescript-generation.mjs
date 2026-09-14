@@ -1,10 +1,10 @@
 // SPDX-License-Identifier: MIT
 // Private generation stage of the Hermetic Build Entry.
 import { createHash } from "node:crypto";
-import { readFile, mkdir, writeFile, lstat, cp, readdir } from "node:fs/promises";
+import { readFile, mkdir, writeFile, lstat, cp } from "node:fs/promises";
 import path from "node:path";
 import { gunzipSync } from "node:zlib";
-import { astGit } from "./typescript-ast-inputs.mjs";
+import { astGit, astAuxiliaryInputs } from "./typescript-ast-inputs.mjs";
 import { spawnSync } from "node:child_process";
 
 const hash = bytes => `sha256:${createHash("sha256").update(bytes).digest("hex")}`;
@@ -29,6 +29,12 @@ export async function readGenerationLock(lockPath, lock) {
       throw new Error("generation package requires exact identity, registry integrity and approved license");
     }
   }
+  for (const field of ["inputs", "outputs", "testInputs"]) {
+    if (!Array.isArray(declaration[field]) || !declaration[field].length
+        || declaration[field].some(name => !safeRelative(name))
+        || new Set(declaration[field]).size !== declaration[field].length) throw new Error(`invalid generation ${field}`);
+  }
+  if (!declaration.packages?.length || !declaration.sources?.length) throw new Error("generation closure requires locked packages and subsources");
   return declaration;
 }
 
@@ -69,6 +75,14 @@ export async function generationPackages(cache, declaration, parseTar, online = 
     if (pkg?.name !== item.name || pkg.version !== item.version || pkg.license !== item.license || !legal) {
       throw new Error(`generation package legal/identity missing: ${item.name}`);
     }
+    const legalSource = item.name === "@dprint/win32-x64" ? `npm:dprint@${item.version}` : `npm:${item.name}@${item.version}`;
+    const legalFiles = files.filter(file => file.source === legalSource
+      && (/^LICENSE(?:\.txt|\.md)?$/i.test(file.path) || file.path.startsWith("metadata/LICENSES")
+        || (item.name === "@unicode/unicode-15.1.0" && file.path === "README.md")))
+      .map(({ source, path, sha256 }) => ({ source, path, sha256 }));
+    for (const file of files.filter(file => file.source === `npm:${item.name}@${item.version}`)) {
+      Object.assign(file, { legal: { declaredLicense: item.license, files: legalFiles } });
+    }
     if (online) {
       await mkdir(path.dirname(archive), { recursive: true });
       try { await writeFile(archive, bytes, { flag: "wx" }); }
@@ -89,14 +103,19 @@ export async function generationSources(sourceRoot, declaration, gitExecutable) 
   for (const source of declaration?.sources ?? []) {
     if (!/^[a-f0-9]{40}$/.test(source.commit) || !safeRelative(source.mount)
         || source.license !== "Apache-2.0" || source.canonicalUrl !== "https://github.com/microsoft/TypeScript") throw new Error("invalid generation subsource identity");
-    const tree = new Map(astGit(gitExecutable, sourceRoot, ["ls-tree", "-r", "-z", source.commit]).toString("utf8")
-      .split("\0").filter(Boolean).map(line => { const match = /^(100644|100755) blob ([a-f0-9]{40})\t(.+)$/.exec(line); return match ? [match[3], match[2]] : ["", ""]; }));
+    const tree = new Map();
+    for (const line of astGit(gitExecutable, sourceRoot, ["ls-tree", "-r", "-z", source.commit]).toString("utf8").split("\0")) {
+      const match = /^(100644|100755) blob ([a-f0-9]{40})\t(.+)$/.exec(line);
+      if (match) tree.set(match[3], { mode: match[1], oid: match[2] });
+    }
     for (const input of source.files) {
       if (!safeRelative(input.path) || !/^sha256:[a-f0-9]{64}$/.test(input.sha256) || !tree.has(input.path)) throw new Error("unlocked generation source input");
-      const bytes = astGit(gitExecutable, sourceRoot, ["cat-file", "blob", tree.get(input.path)]);
+      const bytes = astGit(gitExecutable, sourceRoot, ["cat-file", "blob", tree.get(input.path).oid]);
       if (hash(bytes) !== input.sha256) throw new Error(`generation source identity mismatch: ${input.path}`);
       files.push({ ...input, source: source.canonicalUrl, sourceIdentity: source.commit,
-        mount: `${source.mount}/${input.path}`, license: source.license, role: "build-only", bytes });
+        mount: `${source.mount}/${input.path}`, normalizedMode: tree.get(input.path).mode,
+        license: source.license, legal: { path: "LICENSE.txt", sha256: source.files.find(file => file.path === "LICENSE.txt")?.sha256 },
+        role: "build-only", bytes });
     }
     if (!["LICENSE.txt", "CopyrightNotice.txt"].every(name => source.files.some(input => input.path === name || input.path.endsWith(`/${name}`)))) throw new Error("generation subsource legal inputs missing");
   }
@@ -114,6 +133,8 @@ export async function replayGeneration(intake, plan, serialize) {
   await mkdir(root);
   await cp(plan.moduleRoot, moduleRoot, { recursive: true, errorOnExist: true, force: false });
   const inputs = [];
+  const intakeFiles = [];
+  const checked = new Map();
   for (const name of declaration.inputs) {
     if (!safeRelative(name)) throw new Error("unsafe generator input");
     const entry = intake.ledger.files.find(file => file.path === `tsc/${name}`);
@@ -123,18 +144,28 @@ export async function replayGeneration(intake, plan, serialize) {
     await mkdir(path.dirname(path.join(moduleRoot, name)), { recursive: true });
     await writeFile(path.join(moduleRoot, name), bytes);
     inputs.push({ path: name, sha256: entry.sha256, role: "build-only" });
+    intakeFiles.push({ source: "TypeScript.git", sourceIdentity: intake.ledger.sources[0].forkOid,
+      path: `tsc/${name}`, sha256: entry.sha256, role: "build-only", license: "Apache-2.0",
+      legal: { path: "tsc/LICENSE", sha256: intake.ledger.files.find(file => file.path === "tsc/LICENSE").sha256 } });
+    checked.set(path.join(moduleRoot, name), entry.sha256);
   }
   for (const input of sources) {
     const location = path.join(moduleRoot, input.mount);
     await mkdir(path.dirname(location), { recursive: true });
     await writeFile(location, input.bytes, { flag: "wx" });
     inputs.push({ path: input.mount, sha256: input.sha256, sourceIdentity: input.sourceIdentity, role: input.role });
+    const { bytes, ...record } = input;
+    intakeFiles.push(record);
+    checked.set(location, input.sha256);
   }
   for (const file of packages) {
     const packageName = file.source.slice(4, file.source.lastIndexOf("@"));
     const destination = path.join(moduleRoot, "node_modules", packageName, file.path);
     await mkdir(path.dirname(destination), { recursive: true });
     await writeFile(destination, file.bytes, { flag: "wx" });
+    const { bytes, ...record } = file;
+    intakeFiles.push(record);
+    checked.set(destination, file.sha256);
   }
   const formatter = path.join(moduleRoot, "node_modules/@dprint/win32-x64/dprint.exe");
   const config = path.join(root, "dprint.json");
@@ -142,6 +173,7 @@ export async function replayGeneration(intake, plan, serialize) {
     gofumpt: { langVersion: "go1.26", modulePath: "github.com/microsoft/typescript-go" },
     plugins: [path.join(moduleRoot, "node_modules/@jakebailey/dprint-plugin-gofumpt/plugin.wasm")] };
   await writeFile(config, serialize(formatting));
+  checked.set(config, hash(serialize(formatting)));
   const environment = { ...plan.environment, TSFG_DPRINT: formatter, TSFG_DPRINT_CONFIG: config,
     DPRINT_CACHE_DIR: path.join(root, "dprint-cache"), PATH: path.dirname(plan.go) };
   const commands = [];
@@ -159,6 +191,20 @@ export async function replayGeneration(intake, plan, serialize) {
     outputs: [], differences: [], declarationSha256: context.sha256,
     sourceOid: intake.ledger.sources[0].forkOid, toolchainClosure: context.toolchainClosure };
   try {
+    const consumedOutputs = [];
+    for (const entry of intake.ledger.files) {
+      const name = entry.path.slice(4);
+      if (/^internal\/(bundled\/libs\/.*\.d\.ts|diagnostics\/loc\/.*\.json\.gz)$/.test(name)
+          || (entry.role === "compiler-payload" && name.endsWith(".go") && /^\/\/ Code generated .*DO NOT EDIT[.;]?$/m.test(await readFile(path.join(moduleRoot, name), "utf8")))) {
+        consumedOutputs.push(name);
+      }
+    }
+    if (serialize(consumedOutputs.sort()) !== serialize([...declaration.outputs].sort())) throw new Error("generation output declaration differs from actual consumed generated files");
+    const audit = await astAuxiliaryInputs(intake, plan, moduleRoot, [
+      { cwd: path.join(moduleRoot, "internal/diagnostics"), targets: ["generate.go"] },
+      { cwd: path.join(moduleRoot, "internal/bundled"), targets: ["generate.go"] },
+      { targets: ["golang.org/x/tools/cmd/stringer", "./internal/ast", "./internal/checker", "./internal/core", "./internal/diagnostics", "./internal/vfs/vfsmatch"] },
+    ]);
     invoke(node, ["--disable-warning=ExperimentalWarning", "_scripts/generate-go-ast.ts"]);
     invoke(node, ["--disable-warning=ExperimentalWarning", "internal/stringutil/_scripts/generate-unicode-data.mts"]);
     invoke(plan.go, ["run", "-mod=readonly", "generate.go", "-diagnostics", "diagnostics_generated.go", "-loc", "loc_generated.go", "-locdir", "loc"], path.join(moduleRoot, "internal/diagnostics"));
@@ -178,6 +224,11 @@ export async function replayGeneration(intake, plan, serialize) {
       if (sha256 !== input.sha256) result.differences.push({ path: input.path, committed: input.sha256, regenerated: sha256 });
     }
     if (result.differences.length) throw new Error("unexplained generated source differences");
+    await audit.verify();
+    for (const [file, expected] of checked) if (hash(await readFile(file)) !== expected) throw new Error(`generation input mutated: ${file}`);
+    Object.assign(result, { intakeLedger: { ...audit.ledger, files: [...audit.ledger.files, ...intakeFiles] },
+      derivedInputs: [{ path: "dprint.json", sha256: checked.get(config), producer: "locked controller recipe" }],
+      excluded: [{ scope: "bundled embedding tables and unconsumed library declarations", reason: "Generator produces these incidentally; the actual typed consumer uses only the three declared libs and no embedding tables." }] });
     result.status = "passed";
     await writeFile(path.join(plan.workRoot, "generation.json"), serialize(result));
     return result;

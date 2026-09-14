@@ -50,6 +50,14 @@ export async function astBuildInputs(intake, ledger, serialize) {
     if (!/^[1-9][0-9]*$/.test(epoch)) fail(`Build Input has no last-touch timestamp: ${input.relative}`);
     epochs.push(BigInt(epoch));
   }
+  const sourceRoot = path.join(intake.request.workspaceRoot, "typescript");
+  for (const input of intake.generation?.sources ?? []) {
+    entries.push({ projectId: "TypeScript.git", repositoryRelativePath: `tsc/${input.mount}`,
+      normalizedMode: input.normalizedMode, sha256: input.sha256 });
+    const epoch = git(sourceRoot, ["log", "-1", "--format=%ct", input.sourceIdentity, "--", input.path]).toString("utf8").trim();
+    if (!/^[1-9][0-9]*$/.test(epoch)) fail(`generation Build Input has no last-touch timestamp: ${input.path}`);
+    epochs.push(BigInt(epoch));
+  }
   entries.sort((a, b) => compare(a.projectId, b.projectId) || compare(a.repositoryRelativePath, b.repositoryRelativePath));
   const payload = { schemaVersion: "1", entries };
   return { buildInputSet: { ...payload, digest: hash(serialize(payload)) },

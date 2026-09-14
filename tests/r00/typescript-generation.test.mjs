@@ -58,6 +58,9 @@ test("typed consumer replays its committed generated sources through the build e
   assert.ok(result.generation.outputs.some(item => item.path === "internal/ast/ast_generated.go"));
   assert.ok(result.generation.outputs.some(item => item.path === "internal/stringutil/js_case_generated.go"));
   assert.equal(result.probes.status, "passed");
+  assert.equal(result.generation.intakeLedger?.status, "matched");
+  assert.ok(result.generation.intakeLedger.files.some(item => item.source === "npm:@unicode/unicode-15.1.0@1.6.17"));
+  assert.ok(result.buildInputSet.entries.some(item => item.repositoryRelativePath === "tsc/_submodules/TypeScript/src/compiler/diagnosticMessages.json"));
 });
 
 test("source test reports actual required upstream suites without skips", {
