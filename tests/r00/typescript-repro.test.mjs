@@ -14,6 +14,31 @@ const fixtureJson = value => value === null || typeof value !== "object" ? JSON.
   : `{${Object.keys(value).sort().map(key => `${JSON.stringify(key)}:${fixtureJson(value[key])}`).join(",")}}`;
 const fixtureHash = bytes => `sha256:${createHash("sha256").update(bytes).digest("hex")}`;
 
+test("source repro-check distinguishes missing producer evidence from an unrun second producer", {
+  skip: process.env.TSFG_TEST_SOURCE_REPRO_MISSING !== "1" ? "requires verified real source workspaces" : false,
+}, async () => {
+  const original = JSON.parse(await readFile(process.env.TSFG_TEST_REPRO_ORIGINAL, "utf8")).result;
+  const root = process.env.TSFG_TEST_SOURCE_REPRO_EVIDENCE;
+  const output = path.join(root, "out"), report = path.join(root, "report.json");
+  const child = spawnSync(process.execPath, [entry, "repro-check", "--dev", "--source-target", "typescript-ast",
+    "--target", "windows-x86_64-msvc", "--profile", "debug",
+    "--workspace-a", original.producers[0].workspaceRoot, "--workspace-b", original.producers[1].workspaceRoot,
+    "--producer-a", path.join(root, "missing"), "--producer-b", original.producers[1].output,
+    "--cache", process.env.TSFG_TEST_GO_CACHE,
+    "--manifest-revision", original.producers[0].workspace.manifest.revision, "--manifest", "candidates/tsfg-v0.2.0.xml",
+    "--out", output, "--report", report], { encoding: "utf8", timeout: 1200000, windowsHide: true });
+  assert.equal(child.status, 23, child.stdout + child.stderr);
+  const evidence = JSON.parse(await readFile(report, "utf8")).error.issues[0].evidence;
+  assert.equal(evidence.producers.length, 2);
+  assert.equal(evidence.producers[0].validation.status, "failed");
+  assert.equal(evidence.producers[1].validation.status, "not-run");
+  assert.equal(evidence.producers[1].build.status, "not-run");
+  assert.equal(evidence.producers[1].stages.generation, "not-run");
+  assert.equal(evidence.reproducibility.bytes.status, "not-run");
+  assert.equal(evidence.reproducibility.semantics.status, "not-run");
+  await assert.rejects(stat(output), { code: "ENOENT" });
+});
+
 test("source repro-check keeps the Build Report outside its comparison output", async t => {
   const root = await mkdtemp(path.join(tmpdir(), "source-repro-report-overlap-"));
   t.after(() => rm(root, { recursive: true, force: true }));

@@ -102,24 +102,40 @@ export async function reproduceTypeScript({ options, workspaces, serialize, pars
     throw new SourceReproError(2, "source repro-check output already exists");
   }
   const stage = await mkdtemp(path.join(path.dirname(output), ".source-repro-"));
-  const producers = [];
+  const producers = workspaces.map((workspace, index) => {
+    const label = index === 0 ? "a" : "b";
+    return { label, workspaceRoot: options.get(`--workspace-${label}`), workspace: workspaceSummary(workspace),
+      output: options.get(`--producer-${label}`) ?? null, report: null, command: null, execution: null,
+      build: { status: "not-run", mode: options.has("--producer-a") ? "recorded" : "rebuild" },
+      validation: { status: "not-run" }, stages: { sourcePolicy: "not-run", generation: "not-run",
+        requiredTests: "not-run", interface: "not-run", jsIsolation: "not-run" } };
+  });
   const evidence = { schemaVersion: "1", executionMode: "local-development", isolation: "not-enforced", producers,
     operation: options.has("--producer-a") ? "compare-existing" : "rebuild",
     reproducibility: { bytes: { status: "not-run", differences: [] }, semantics: { status: "not-run", issues: [] },
       paths: { status: "not-run", leaks: [] } }, intakeComplete: false };
+  const read = async index => {
+    try {
+      const producer = producers[index];
+      const value = await readProducer(await realpath(producer.output), producer.workspaceRoot, workspaces[index], serialize, parseJson);
+      producer.validation.status = "passed";
+      producer.stages.interface = value.semanticIssues.length ? "failed" : value.build.probes.status;
+      return value;
+    } catch (error) { producers[index].validation.status = "failed"; throw error; }
+  };
   try {
     for (const [index, workspace] of workspaces.entries()) {
       const label = index === 0 ? "a" : "b", workspaceRoot = await realpath(options.get(`--workspace-${label}`));
       const product = workspace.projects.find(project => project.id === "tsfg.git");
       const productRoot = path.join(workspaceRoot, product.path);
+      producers[index].workspaceRoot = workspaceRoot;
       if (options.has(`--producer-${label}`)) {
-        const producerRoot = await realpath(options.get(`--producer-${label}`));
-        const previous = await readProducer(producerRoot, workspaceRoot, workspace, serialize, parseJson);
-        producers.push({ label, workspaceRoot, workspace: workspaceSummary(workspace), output: producerRoot,
+        const previous = await read(index);
+        producers[index] = { ...producers[index], output: previous.root,
           report: null, command: null, build: { status: "passed", mode: "recorded" },
           stages: { sourcePolicy: previous.build.ledger.status, generation: previous.build.generation.status,
-            requiredTests: previous.build.requiredTests.status, interface: previous.build.probes.status, jsIsolation: previous.build.jsIsolation.status },
-          execution: previous.build.execution });
+            requiredTests: previous.build.requiredTests.status, interface: previous.semanticIssues.length ? "failed" : previous.build.probes.status,
+            jsIsolation: previous.build.jsIsolation.status }, execution: previous.build.execution };
         continue;
       }
       const runRoot = path.join(stage, label), temp = path.join(runRoot, "temp"), producerRoot = path.join(runRoot, "producer");
@@ -136,17 +152,19 @@ export async function reproduceTypeScript({ options, workspaces, serialize, pars
       await writeFile(path.join(runRoot, "build.log"), `${child.stdout ?? ""}${child.stderr ?? ""}`);
       let record;
       try { record = JSON.parse(await readFile(report, "utf8")); } catch { /* Native failure can precede report creation. */ }
-      const producer = { label, workspaceRoot, workspace: workspaceSummary(workspace), report, output: producerRoot,
+      const issue = record?.error?.issues?.[0];
+      const producer = { ...producers[index], report, output: producerRoot,
         command: { executable: process.execPath, arguments: arguments_, exitCode: child.status },
-        build: { status: child.status === 0 && record?.status === "success" ? "passed" : "failed" },
+        build: { status: child.status === 0 && record?.status === "success" ? "passed" : "failed", mode: "rebuild" },
         stages: record?.result ? { sourcePolicy: record.result.ledger.status, generation: record.result.generation.status,
           requiredTests: record.result.requiredTests.status, interface: record.result.probes.status, jsIsolation: record.result.jsIsolation.status }
-          : (record?.error ?? { status: "not-run" }), execution: record?.result?.execution ?? null };
-      producers.push(producer);
+          : { sourcePolicy: "not-recorded", generation: issue?.generation?.status ?? "not-run",
+            requiredTests: issue?.requiredTests?.status ?? "not-run", interface: issue?.probes?.status ?? "not-run",
+            jsIsolation: issue?.jsIsolation?.status ?? "not-run" }, execution: record?.result?.execution ?? null };
+      producers[index] = producer;
       if (producer.build.status !== "passed") throw new SourceReproError(child.status || 20,
         `source producer ${label} failed: ${child.error?.message ?? child.stderr}`, evidence);
     }
-    const read = async index => await readProducer(producers[index].output, producers[index].workspaceRoot, workspaces[index], serialize, parseJson);
     const first = await read(0), second = await read(1);
     if (!isDeepStrictEqual(first.build.buildIdentity, second.build.buildIdentity)) fail("source producer Build Identities differ");
     if (first.build.execution.compileCache.toLowerCase() === second.build.execution.compileCache.toLowerCase()
