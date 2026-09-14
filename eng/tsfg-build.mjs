@@ -7213,7 +7213,7 @@ async function executeGoSourceTarget(options, runtime) {
   const prepared = await prepareGoSourceExecution(options, runtime);
   const child = await executePreparedGoSource(prepared);
   if (prepared.preparation.astIntake) {
-    return await buildAstProbe({ prepared, child, serialize: canonicalize });
+    return await buildAstProbe({ prepared, child, serialize: canonicalize, publish: renameWithRetry });
   }
   return await consumePreparedGoSource(prepared, child);
 }

@@ -3,7 +3,7 @@ import assert from "node:assert/strict";
 import { spawnSync } from "node:child_process";
 import test from "node:test";
 import { fileURLToPath } from "node:url";
-import { mkdtemp, readFile, rm } from "node:fs/promises";
+import { mkdir, mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import path from "node:path";
 import { TEST_GIT_EXECUTABLE } from "./test-tools.mjs";
@@ -59,4 +59,10 @@ test("fixed fork source rebuilds a real TypeScript AST after consumption governa
   assert.ok(result.toolchainInputs.files.some(file => file.source === "go" && file.path === "src/runtime/proc.go"
     && file.role === "compiler-payload" && file.license === "BSD-3-Clause"));
   assert.equal(result.toolchainInputs.status, "matched");
+  if (process.env.TSFG_TEST_AST_EVIDENCE) {
+    const evidence = path.resolve(process.env.TSFG_TEST_AST_EVIDENCE);
+    assert.ok(evidence.startsWith("E:"));
+    await mkdir(evidence, { recursive: true });
+    await writeFile(path.join(evidence, "ast-build.json"), await readFile(report));
+  }
 });

@@ -37,6 +37,8 @@ test("Build Input declaration includes both debug target control and smoke input
       { path: "eng/tsfg-build", projectId: "tsfg" },
       { path: "eng/tsfg-build.cmd", projectId: "tsfg" },
       { path: "eng/tsfg-build.mjs", projectId: "tsfg" },
+      { path: "eng/typescript-ast-inputs.mjs", projectId: "tsfg" },
+      { path: "eng/typescript-ast.mjs", projectId: "tsfg" },
       { path: "eng/windows-publish.c", projectId: "tsfg" },
       { path: "eng/windows-sandbox-run.c", projectId: "tsfg" },
       { path: "eng/workspace-policy.json", projectId: "tsfg" },

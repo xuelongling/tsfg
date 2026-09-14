@@ -2,7 +2,7 @@
 // Private adapter of the existing Hermetic Build Entry for ticket R02a/04.
 import { createHash } from "node:crypto";
 import { spawnSync } from "node:child_process";
-import { readFile, mkdir, mkdtemp, writeFile, rename } from "node:fs/promises";
+import { readFile, mkdir, mkdtemp, writeFile } from "node:fs/promises";
 import path from "node:path";
 import { createIntakeLedger, IntakeLedgerError } from "./intake-ledger.mjs";
 import { readGoSourceExecutionResult } from "./go-source-result.mjs";
@@ -32,7 +32,7 @@ export async function readAstIntake({ productRoot, controlRoot, planPath, gitExe
   return { request, ledger, controlRoot, inputIdentity: { admission: hash(admissionBytes), declaration: hash(declarationBytes) } };
 }
 
-export async function buildAstProbe({ prepared, child, serialize }) {
+export async function buildAstProbe({ prepared, child, serialize, publish }) {
   const { preparation, stageRoot, output, launch } = prepared;
   const { worker, outputBytes } = await readGoSourceExecutionResult(stageRoot, child, "local-development");
   const plan = JSON.parse(await readFile(path.join(stageRoot, "inputs/control/plan.json"), "utf8"));
@@ -98,6 +98,6 @@ export async function buildAstProbe({ prepared, child, serialize }) {
   await writeFile(path.join(publication, "intake-ledger.json"), serialize(ledger));
   await writeFile(path.join(publication, "go-list.jsonstream"), outputBytes);
   await writeFile(path.join(publication, "source-build.json"), serialize(result));
-  await rename(publication, output);
+  await publish(publication, output);
   return result;
 }
