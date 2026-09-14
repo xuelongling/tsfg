@@ -7704,6 +7704,31 @@ async function runCommandLine() {
         "offline",
       );
     }
+  } else if (command === "repro-check" && sourceTarget === "typescript-ast") {
+    try {
+      const options = parseOptions(arguments_, new Set(["--dev", "--source-target", "--target", "--profile",
+        "--workspace-a", "--workspace-b", "--out", "--report", "--manifest-revision", "--manifest"]), new Set(["--dev"]));
+      const first = options.get("--workspace-a"), second = options.get("--workspace-b");
+      if (!first || !second || path.resolve(first).toLowerCase() === path.resolve(second).toLowerCase()) {
+        throw new ConfigurationError("source repro-check requires two distinct verified workspace paths");
+      }
+      for (const workspace of [first, second]) {
+        try {
+          await verifyWorkspace(new Map([["--workspace", workspace],
+            ["--manifest-url", "https://github.com/xuelongling/manifests.git"],
+            ["--manifest-revision", options.get("--manifest-revision")], ["--manifest", options.get("--manifest")]]));
+        } catch (error) {
+          if (error instanceof ConfigurationError) throw error;
+          throw new WorkspaceMismatchError("source-repro-workspace", `workspace verification failed: ${error.message}`);
+        }
+      }
+      throw new ConfigurationError("source repro-check execution is not available");
+    } catch (error) {
+      const workspaceMismatch = error instanceof WorkspaceMismatchError;
+      process.exitCode = await fail(command, workspaceMismatch ? 10 : 2, workspaceMismatch ? "workspace mismatch" : "usage/configuration", {
+        code: workspaceMismatch ? error.issueCode : "invalid-configuration", message: error.message,
+      }, reportPath, "offline");
+    }
   } else if (command === "repro-check") {
     try {
       const options = parseOptions(
