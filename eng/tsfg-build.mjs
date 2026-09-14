@@ -7338,7 +7338,13 @@ async function runCommandLine() {
   const requestedReportPath = parseReportPath(arguments_);
   const invalidGoReport = arguments_.includes("--source-target") && requestedReportPath
     && !await isGoDestinationOnE(requestedReportPath);
-  const reportPath = invalidGoReport ? undefined : requestedReportPath;
+  const sourceReproOutput = command === "repro-check" && sourceTarget === "typescript-ast" && arguments_.includes("--out")
+    ? arguments_[arguments_.indexOf("--out") + 1] : undefined;
+  const sourceReportRelative = sourceReproOutput && requestedReportPath
+    ? path.relative(path.resolve(sourceReproOutput), path.resolve(requestedReportPath)) : undefined;
+  const overlappingSourceReport = sourceReportRelative !== undefined && sourceReportRelative !== ".."
+    && !sourceReportRelative.startsWith(`..${path.sep}`) && !path.isAbsolute(sourceReportRelative);
+  const reportPath = invalidGoReport || overlappingSourceReport ? undefined : requestedReportPath;
   const windowsBoundaryBootstrapError = process.env.TSFG_WINDOWS_BOUNDARY_ERROR;
   let runtimeIntegrityError;
   let runtimeClosure;
@@ -7397,6 +7403,10 @@ async function runCommandLine() {
   if (invalidGoReport) {
     process.exitCode = await fail(command, 2, "usage/configuration", {
       code: "invalid-configuration", message: "source target requires an absolute E: report destination",
+    }, undefined, "offline");
+  } else if (overlappingSourceReport) {
+    process.exitCode = await fail(command, 2, "usage/configuration", {
+      code: "invalid-configuration", message: "source repro-check report must remain outside its comparison output",
     }, undefined, "offline");
   } else if (delegatedWindowsStatus !== undefined) {
     process.exitCode = delegatedWindowsStatus;

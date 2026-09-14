@@ -14,6 +14,19 @@ const fixtureJson = value => value === null || typeof value !== "object" ? JSON.
   : `{${Object.keys(value).sort().map(key => `${JSON.stringify(key)}:${fixtureJson(value[key])}`).join(",")}}`;
 const fixtureHash = bytes => `sha256:${createHash("sha256").update(bytes).digest("hex")}`;
 
+test("source repro-check keeps the Build Report outside its comparison output", async t => {
+  const root = await mkdtemp(path.join(tmpdir(), "source-repro-report-overlap-"));
+  t.after(() => rm(root, { recursive: true, force: true }));
+  const output = path.join(root, "out"), report = path.join(output, "comparison.json");
+  const child = spawnSync(process.execPath, [entry, "repro-check", "--dev", "--source-target", "typescript-ast",
+    "--workspace-a", path.join(root, "a"), "--workspace-b", path.join(root, "b"),
+    "--target", "windows-x86_64-msvc", "--profile", "debug", "--out", output, "--report", report],
+  { encoding: "utf8", windowsHide: true });
+  assert.equal(child.status, 2, child.stderr);
+  assert.match(child.stderr, /report.*outside.*output/i);
+  await assert.rejects(stat(output), { code: "ENOENT" });
+});
+
 test("source repro-check withdraws success output when its Build Report cannot publish", {
   skip: process.env.TSFG_TEST_SOURCE_REPRO_REPORT_FAILURE !== "1" ? "requires real valid producers and a blocked report destination" : false,
 }, async () => {
