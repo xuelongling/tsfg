@@ -14,6 +14,71 @@ const fixtureJson = value => value === null || typeof value !== "object" ? JSON.
   : `{${Object.keys(value).sort().map(key => `${JSON.stringify(key)}:${fixtureJson(value[key])}`).join(",")}}`;
 const fixtureHash = bytes => `sha256:${createHash("sha256").update(bytes).digest("hex")}`;
 
+// Deliberately corrupted copies can remain internally consistent so the public
+// entry must check the independent oracle/current identity, not only checksums.
+async function refreshFixtureAttestation(producer) {
+  const file = path.join(producer, "producer-attestation.json");
+  const attestation = JSON.parse(await readFile(file, "utf8"));
+  const build = JSON.parse(await readFile(path.join(producer, "source-build.json"), "utf8"));
+  attestation.buildIdentityDigest = build.buildIdentity.digest;
+  for (const member of attestation.members) member.sha256 = fixtureHash(await readFile(path.join(producer, member.path)));
+  await writeFile(file, fixtureJson(attestation));
+}
+
+test("source repro-check rejects missing and damaged attested members", {
+  skip: process.env.TSFG_TEST_SOURCE_REPRO_DAMAGE !== "1" ? "requires real producers for evidence damage checks" : false,
+}, async () => {
+  const original = JSON.parse(await readFile(process.env.TSFG_TEST_REPRO_ORIGINAL, "utf8")).result;
+  for (const damage of ["missing-attestation", "damaged-generation", "damaged-payload"]) {
+    const root = path.join(process.env.TSFG_TEST_SOURCE_REPRO_EVIDENCE, damage), producer = path.join(root, "a");
+    await cp(original.producers[0].output, producer, { recursive: true, errorOnExist: true, force: false });
+    if (damage === "missing-attestation") await rm(path.join(producer, "producer-attestation.json"));
+    else {
+      const file = path.join(producer, damage === "damaged-generation" ? "generation.json" : "tsfg-ast.exe");
+      await writeFile(file, Buffer.concat([await readFile(file), Buffer.from("deliberate-corruption")]));
+    }
+    const output = path.join(root, "out"), report = path.join(root, "report.json");
+    const child = spawnSync(process.execPath, [entry, "repro-check", "--dev", "--source-target", "typescript-ast",
+      "--target", "windows-x86_64-msvc", "--profile", "debug",
+      "--workspace-a", original.producers[0].workspaceRoot, "--workspace-b", original.producers[1].workspaceRoot,
+      "--producer-a", producer, "--producer-b", original.producers[1].output,
+      "--cache", process.env.TSFG_TEST_GO_CACHE,
+      "--manifest-revision", original.producers[0].workspace.manifest.revision, "--manifest", "candidates/tsfg-v0.2.0.xml",
+      "--out", output, "--report", report], { encoding: "utf8", timeout: 1200000, windowsHide: true });
+    assert.equal(child.status, 23, `${damage}: ${child.stdout}${child.stderr}`);
+    const evidence = JSON.parse(await readFile(report, "utf8")).error.issues[0].evidence;
+    assert.equal(evidence.producers[0].validation.status, "failed");
+    assert.equal(evidence.producers[1].validation.status, "not-run");
+    await assert.rejects(stat(output), { code: "ENOENT" });
+  }
+});
+
+test("source build refuses an old generation receipt after actual control input perturbation", {
+  skip: process.env.TSFG_TEST_SOURCE_REPRO_PERTURB !== "1" ? "requires an isolated verified source checkout and current replay receipt" : false,
+}, async () => {
+  const product = path.join(process.env.TSFG_TEST_REPRO_A, "tsfg");
+  const input = path.join(product, "eng/typescript-ast-inputs.mjs"), before = await readFile(input);
+  const root = process.env.TSFG_TEST_SOURCE_REPRO_EVIDENCE, output = path.join(root, "out"), report = path.join(root, "report.json");
+  try {
+    await writeFile(input, Buffer.concat([before, Buffer.from("\n// Deliberate ticket08 applicability perturbation.\n")]));
+    const child = spawnSync(process.execPath, [path.join(product, "eng/tsfg-build.mjs"), "build", "--dev",
+      "--source-target", "typescript-ast", "--generation", "reuse", "--workspace", product,
+      "--intake-plan", path.join(product, "eng/intake-declarations/typescript-ast.json"),
+      "--target", "windows-x86_64-msvc", "--profile", "debug", "--out", output, "--report", report],
+    { env: { ...process.env, TSFG_RUNTIME_LOCK: path.join(product, "eng/go-ast-toolchains.lock.json"),
+      TSFG_RUNTIME_CACHE: process.env.TSFG_TEST_GO_CACHE, TSFG_RUNTIME_PLATFORM: "windows-x86_64-msvc" },
+      encoding: "utf8", timeout: 1200000, windowsHide: true });
+    assert.notEqual(child.status, 0, child.stdout + child.stderr);
+    const result = JSON.parse(await readFile(report, "utf8"));
+    assert.match(result.error.issues[0].message, /generation receipt does not match current inputs/i);
+    assert.equal(result.error.issues[0].generation.mode, "reuse-refused");
+    await assert.rejects(stat(output), { code: "ENOENT" });
+  } finally {
+    await writeFile(input, before);
+    assert.ok((await readFile(input)).equals(before));
+  }
+});
+
 test("source repro-check reconstructs current inputs instead of trusting a self-consistent omission", {
   skip: process.env.TSFG_TEST_SOURCE_REPRO_INPUTS !== "1" ? "requires real producers for deliberate incomplete input identity" : false,
 }, async () => {
@@ -41,6 +106,7 @@ test("source repro-check reconstructs current inputs instead of trusting a self-
     manifest.buildInputSet = build.buildInputSet;
     for (const member of manifest.members) member.sha256 = fixtureHash(await readFile(path.join(producer, member.path)));
     await writeFile(path.join(producer, "artifact-manifest.json"), fixtureJson(manifest));
+    await refreshFixtureAttestation(producer);
   }
   const output = path.join(root, "out"), report = path.join(root, "report.json");
   const child = spawnSync(process.execPath, [entry, "repro-check", "--dev", "--source-target", "typescript-ast",
@@ -70,6 +136,7 @@ test("source repro-check rejects undeclared host and wall-clock metadata even wh
     const manifest = JSON.parse(await readFile(path.join(producer, "artifact-manifest.json"), "utf8"));
     for (const member of manifest.members) member.sha256 = fixtureHash(await readFile(path.join(producer, member.path)));
     await writeFile(path.join(producer, "artifact-manifest.json"), fixtureJson(manifest));
+    await refreshFixtureAttestation(producer);
   }
   const output = path.join(root, "out"), report = path.join(root, "report.json");
   const child = spawnSync(process.execPath, [entry, "repro-check", "--dev", "--source-target", "typescript-ast",
@@ -161,6 +228,7 @@ test("source repro-check detects a shared absolute UTF-16 workspace path in equa
     const manifest = JSON.parse(await readFile(path.join(producer, "artifact-manifest.json"), "utf8"));
     for (const member of manifest.members) member.sha256 = fixtureHash(await readFile(path.join(producer, member.path)));
     await writeFile(path.join(producer, "artifact-manifest.json"), fixtureJson(manifest));
+    await refreshFixtureAttestation(producer);
   }
   const output = path.join(root, "out"), report = path.join(root, "report.json");
   const child = spawnSync(process.execPath, [entry, "repro-check", "--dev", "--source-target", "typescript-ast",
@@ -198,6 +266,7 @@ test("source repro-check rejects self-consistent evidence for different effectiv
     manifest.buildIdentity = build.buildIdentity;
     for (const member of manifest.members) member.sha256 = fixtureHash(await readFile(path.join(producer, member.path)));
     await writeFile(path.join(producer, "artifact-manifest.json"), fixtureJson(manifest));
+    await refreshFixtureAttestation(producer);
   }
   const output = path.join(root, "out"), report = path.join(root, "report.json");
   const child = spawnSync(process.execPath, [entry, "repro-check", "--dev", "--source-target", "typescript-ast",
@@ -222,7 +291,7 @@ test("source repro-check rejects identical wrong semantics independently of equa
     await cp(original.producers[index].output, producer, { recursive: true, errorOnExist: true, force: false });
     const build = JSON.parse(await readFile(path.join(producer, "source-build.json"), "utf8"));
     build.ast.kind = "DeliberatelyWrongSourceFile";
-    build.probes.cases[0].observation.kind = "DeliberatelyWrongSourceFile";
+    if (process.env.TSFG_TEST_SOURCE_REPRO_AST_ONLY !== "1") build.probes.cases[0].observation.kind = "DeliberatelyWrongSourceFile";
     const ast = fixtureJson(build.ast), probes = fixtureJson(build.probes);
     build.observationSha256 = fixtureHash(ast);
     build.probeObservationSha256 = fixtureHash(probes);
@@ -232,6 +301,7 @@ test("source repro-check rejects identical wrong semantics independently of equa
     const manifest = JSON.parse(await readFile(path.join(producer, "artifact-manifest.json"), "utf8"));
     for (const member of manifest.members) member.sha256 = fixtureHash(await readFile(path.join(producer, member.path)));
     await writeFile(path.join(producer, "artifact-manifest.json"), fixtureJson(manifest));
+    await refreshFixtureAttestation(producer);
   }
   const output = path.join(root, "out"), report = path.join(root, "report.json");
   const child = spawnSync(process.execPath, [entry, "repro-check", "--dev", "--source-target", "typescript-ast",
@@ -327,7 +397,7 @@ test("source repro-check rebuilds the same verified candidate in two independent
     "--manifest-revision", process.env.TSFG_TEST_REPRO_MANIFEST, "--manifest", "candidates/tsfg-v0.2.0.xml",
     "--out", path.join(root, "comparison"), "--report", path.join(root, "report.json")],
   { env: { ...process.env, TSFG_RUNTIME_LOCK: undefined, TSFG_RUNTIME_CACHE: undefined, TSFG_RUNTIME_PLATFORM: undefined },
-    encoding: "utf8", timeout: 2400000, maxBuffer: 16 * 1024 * 1024, windowsHide: true });
+    encoding: "utf8", timeout: 3600000, maxBuffer: 16 * 1024 * 1024, windowsHide: true });
   assert.equal(child.status, 0, child.stdout + child.stderr);
   const result = JSON.parse(await readFile(path.join(root, "report.json"), "utf8")).result;
   assert.equal(result.reproducibility.bytes.status, "passed");

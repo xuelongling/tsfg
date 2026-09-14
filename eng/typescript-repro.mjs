@@ -100,6 +100,11 @@ async function readProducer(root, workspaceRoot, workspace, serialize, parseJson
   // The fixed oracle comes from the verified checkout, never the producer's claimed expectation.
   const expected = await readTypeScriptProbes(productRoot, process.env.TSFG_GIT);
   const semanticIssues = [];
+  if (!matchesTypeScriptObservation(expected.manifest.cases[0], build.ast)
+      || !isDeepStrictEqual(build.ast, build.probes.cases[0]?.observation)) semanticIssues.push("standalone AST differs from the fixed positive observation");
+  if (!isDeepStrictEqual(build.jsIsolation.sourceReview, expected.review)
+      || build.jsIsolation.noCreatedFiles !== true || build.jsIsolation.artifact.status !== "matched"
+      || build.jsIsolation.artifact.sha256 !== build.executableSha256) fail("JS isolation evidence does not match the source review and actual artifact");
   if (build.probes.status !== "passed" || build.probes.cases.length !== expected.manifest.cases.length
       || build.probes.expectationSha256 !== expected.sha256 || build.probes.languageBaseline !== expected.manifest.languageBaseline
       || !isDeepStrictEqual(build.probes.inputLedger, expected.inputs)) semanticIssues.push("required semantic probe identity mismatch");
@@ -181,7 +186,7 @@ export async function reproduceTypeScript({ options, workspaces, serialize, pars
             requiredTests: issue?.requiredTests?.status ?? "not-run", interface: issue?.probes?.status ?? "not-run",
             jsIsolation: issue?.jsIsolation?.status ?? "not-run" }, execution: record?.result?.execution ?? null };
       producers[index] = producer;
-      if (producer.build.status !== "passed") throw new SourceReproError(child.status || 20,
+      if (producer.build.status !== "passed") throw new SourceReproError([2, 10, 11, 12, 20, 21, 23, 30].includes(child.status) ? child.status : 20,
         `source producer ${label} failed: ${child.error?.message ?? child.stderr}`, evidence);
     }
     const first = await read(0), second = await read(1);
