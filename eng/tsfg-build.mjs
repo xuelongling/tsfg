@@ -7136,7 +7136,11 @@ async function prepareGoSourceExecution(options, runtime) {
     GOROOT: goRoot, GOPATH: path.join(workRoot, "gopath"), GOCACHE: path.join(workRoot, "gocache"),
     GOMODCACHE: path.join(workRoot, "modules"), GOTELEMETRY: "off", PATH: "" };
   const executionMode = localDevelopment ? "local-development" : "restricted";
+  const cachesInitiallyEmpty = (await Promise.all([environment.GOCACHE, environment.GOMODCACHE].map(async root =>
+    (await readdir(root).catch(error => { if (error.code === "ENOENT") return []; throw error; })).length === 0))).every(Boolean);
+  if (!cachesInitiallyEmpty) throw new GoInputIntegrityError("new source execution cache is not empty");
   const plan = { schemaVersion: "1", executionMode, moduleRoot: sourceRoot, inputRoot, workRoot, helper,
+    cachesInitiallyEmpty,
     undeclaredCanary, go, goVersion: runtime.lock.tools.go.version, arguments: preparation.arguments,
     modules: preparation.dependencies.modules, environment, inputs: inputs.sort((left, right) => left.path < right.path ? -1 : left.path > right.path ? 1 : 0) };
   if (preparation.astIntake) plan.sourceTarget = "typescript-ast";

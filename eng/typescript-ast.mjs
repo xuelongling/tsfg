@@ -137,6 +137,11 @@ export async function buildAstProbe({ prepared, child, serialize, publish }) {
     toolchainClosure: preparation.toolchainClosure, inputIdentity: intake.inputIdentity,
     executionMode: "local-development", isolation: "not-enforced", arguments: arguments_, ast, probes, jsIsolation,
     executionResources: { goMaxProcs: plan.environment.GOMAXPROCS },
+    execution: { workspace: intake.controlRoot, stageRoot, moduleRoot: plan.moduleRoot,
+      compileCache: plan.environment.GOCACHE, moduleCache: plan.environment.GOMODCACHE,
+      cachesInitiallyEmpty: plan.cachesInitiallyEmpty, nativeExitCode: child.status,
+      build: { executable: plan.go, arguments: arguments_, exitCode: "0" },
+      dependencyResolution: { arguments: plan.arguments, exitCode: "0", outputSha256: worker.outputSha256 } },
     probeObservationSha256: hash(probeBytes),
     executableSha256: hash(binary), observationSha256: hash(astBytes),
     ledger, toolchainInputs, executionConsumption: { status: "matched", method: "go-list-deps-and-fixed-probe-input", entries: consumption.entries },
@@ -146,6 +151,16 @@ export async function buildAstProbe({ prepared, child, serialize, publish }) {
     intakeComplete: false };
   await mkdir(path.dirname(output), { recursive: true });
   const publication = await mkdtemp(path.join(path.dirname(output), ".ast-publication-"));
+  const metadata = serialize({ schemaVersion: "1", kind: "typescript-source-probe", buildIdentity: result.buildIdentity,
+    profile: result.profile, source: result.source, toolchainClosureDigest: result.toolchainClosure,
+    compilerMetadata: jsIsolation.artifact.metadata });
+  const members = [{ path: "ast.json", sha256: hash(astBytes) },
+    { path: "build-metadata.json", sha256: hash(metadata) },
+    { path: "probes.json", sha256: hash(probeBytes) }, { path: "tsfg-ast.exe", sha256: hash(binary) }];
+  await writeFile(path.join(publication, "build-metadata.json"), metadata);
+  await writeFile(path.join(publication, "artifact-manifest.json"), serialize({ schemaVersion: "1",
+    kind: "typescript-source-probe", buildIdentity: result.buildIdentity, buildInputSet: result.buildInputSet,
+    contractSetId: hash(serialize({})), toolchainClosureDigest: result.toolchainClosure, members }));
   await writeFile(path.join(publication, "tsfg-ast.exe"), binary);
   await writeFile(path.join(publication, "ast.json"), astBytes);
   await writeFile(path.join(publication, "probes.json"), probeBytes);
