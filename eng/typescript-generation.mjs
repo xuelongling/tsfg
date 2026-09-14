@@ -19,5 +19,12 @@ export async function readGenerationLock(lockPath, lock) {
   }
   const declaration = JSON.parse(bytes.toString("utf8"));
   if (declaration.schemaVersion !== "1") throw new Error("unsupported generation dependency schema");
+  for (const item of declaration.packages ?? []) {
+    if (!/^(@[a-z0-9.-]+\/)?[a-z0-9.-]+$/.test(item.name) || !/^\d+\.\d+\.\d+$/.test(item.version)
+        || !/^sha512-[A-Za-z0-9+/]{86}==$/.test(item.integrity) || item.license !== "MIT"
+        || item.url !== `https://registry.npmjs.org/${item.name}/-/${item.name.split("/").at(-1)}-${item.version}.tgz`) {
+      throw new Error("generation package requires exact identity, registry integrity and approved license");
+    }
+  }
   return declaration;
 }
