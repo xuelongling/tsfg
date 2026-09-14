@@ -17,6 +17,9 @@ const projectId = "TypeScript.git";
 const probeInput = "tsc/cmd/tsfg-ast/testdata/positive.ts";
 const fail = message => { throw new IntakeLedgerError("ast-consumption", message); };
 export class AstExecutionError extends Error { probes; jsIsolation; requiredTests; generation; }
+export const sourceProducerMembers = Object.freeze(["artifact-manifest.json", "ast.json", "build-metadata.json",
+  "generation.json", "go-list.jsonstream", "intake-ledger.json", "js-isolation.json", "probes.json",
+  "required-test-events.jsonstream", "required-tests.json", "source-build.json", "tsfg-ast.exe"]);
 export const sourceProbeProfile = Object.freeze({ name: "debug", goamd64: "v2", pgo: false, cgo: false,
   optimization: "disabled", symbols: "embedded-full" });
 
@@ -81,6 +84,7 @@ export async function buildAstProbe({ prepared, child, serialize, publish }) {
   const ledger = await createIntakeLedger({ ...intake.request, consumption });
   const toolchainInputs = await astToolchainInputs(intake, plan, worker);
   const identity = await astBuildInputs(intake, ledger, serialize);
+  plan.environment.SOURCE_DATE_EPOCH = identity.sourceDateEpoch;
   const generation = await runGeneration(intake, plan, identity, serialize);
   let requiredTests;
   try { requiredTests = await runRequiredTypeScriptTests(intake, plan, serialize); }
@@ -155,7 +159,7 @@ export async function buildAstProbe({ prepared, child, serialize, publish }) {
     execution: { workspace: intake.controlRoot, stageRoot, moduleRoot: plan.moduleRoot,
       compileCache: plan.environment.GOCACHE, moduleCache: plan.environment.GOMODCACHE,
       cachesInitiallyEmpty: plan.cachesInitiallyEmpty, nativeExitCode: child.status,
-      build: { executable: plan.go, arguments: arguments_, exitCode: "0" },
+      build: { executable: plan.go, arguments: arguments_, exitCode: "0", sourceDateEpoch: plan.environment.SOURCE_DATE_EPOCH },
       dependencyResolution: { arguments: plan.arguments, exitCode: "0", outputSha256: worker.outputSha256 } },
     probeObservationSha256: hash(probeBytes),
     executableSha256: hash(binary), observationSha256: hash(astBytes),
@@ -184,6 +188,10 @@ export async function buildAstProbe({ prepared, child, serialize, publish }) {
   await writeFile(path.join(publication, "intake-ledger.json"), serialize(ledger));
   await writeFile(path.join(publication, "go-list.jsonstream"), outputBytes);
   await writeFile(path.join(publication, "source-build.json"), serialize(result));
+  const attested = [];
+  for (const name of sourceProducerMembers) attested.push({ path: name, sha256: hash(await readFile(path.join(publication, name))) });
+  await writeFile(path.join(publication, "producer-attestation.json"), serialize({ schemaVersion: "1",
+    kind: "typescript-source-probe", buildIdentityDigest: result.buildIdentity.digest, members: attested }));
   await publish(publication, output);
   return result;
 }

@@ -6,12 +6,10 @@ import { createHash } from "node:crypto";
 import { isDeepStrictEqual } from "node:util";
 import path from "node:path";
 import { readTypeScriptProbes, matchesTypeScriptObservation } from "./typescript-probes.mjs";
-import { sourceProbeMetadata } from "./typescript-ast.mjs";
+import { sourceProbeMetadata, sourceProducerMembers } from "./typescript-ast.mjs";
 
 const hash = bytes => `sha256:${createHash("sha256").update(bytes).digest("hex")}`;
 const payloadNames = ["artifact-manifest.json", "ast.json", "build-metadata.json", "probes.json", "tsfg-ast.exe"];
-const evidenceNames = ["generation.json", "go-list.jsonstream", "intake-ledger.json", "js-isolation.json",
-  "required-test-events.jsonstream", "required-tests.json", "source-build.json"];
 const fail = message => { throw new SourceReproError(23, message); };
 const workspaceSummary = workspace => ({ manifest: workspace.manifest, projects: workspace.projects,
   activation: workspace.activation, dirty: workspace.dirty, sourcePolicy: {
@@ -39,11 +37,15 @@ function leakedPaths(bytes, roots) {
 
 async function readProducer(root, workspaceRoot, workspace, serialize, parseJson, currentIdentity) {
   const names = (await readdir(root)).sort();
-  if (!isDeepStrictEqual(names, [...payloadNames, ...evidenceNames].sort())) fail("incomplete or unexpected source producer members");
+  if (!isDeepStrictEqual(names, [...sourceProducerMembers, "producer-attestation.json"].sort())) fail("incomplete or unexpected source producer members");
   const bytes = new Map();
   for (const name of names) bytes.set(name, await regularBytes(root, name));
   const json = name => parseJson(bytes.get(name), name, false);
   const manifest = json("artifact-manifest.json"), build = json("source-build.json");
+  const attestation = json("producer-attestation.json");
+  if (!isDeepStrictEqual(attestation, { schemaVersion: "1", kind: "typescript-source-probe",
+    buildIdentityDigest: build.buildIdentity.digest,
+    members: sourceProducerMembers.map(name => ({ path: name, sha256: hash(bytes.get(name)) })) })) fail("source producer attestation digest or declaration mismatch");
   const product = workspace.projects.find(project => project.id === "tsfg.git");
   const fork = workspace.projects.find(project => project.id === "TypeScript.git");
   const productRoot = path.join(workspaceRoot, product.path);
@@ -93,6 +95,7 @@ async function readProducer(root, workspaceRoot, workspace, serialize, parseJson
       || build.jsIsolation.status !== "passed" || build.jsIsolation.cases.length !== 14
       || build.jsIsolation.cases.some(item => item.status !== "passed")
       || build.execution.cachesInitiallyEmpty !== true || build.execution.nativeExitCode !== 0
+      || build.execution.build.sourceDateEpoch !== identity.source_date_epoch
       || build.execution.build.exitCode !== "0" || build.execution.dependencyResolution.exitCode !== "0") fail("source producer lacks successful independent execution evidence");
   // The fixed oracle comes from the verified checkout, never the producer's claimed expectation.
   const expected = await readTypeScriptProbes(productRoot, process.env.TSFG_GIT);

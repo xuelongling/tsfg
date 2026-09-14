@@ -22,7 +22,7 @@ export function astGit(executable, root, args) {
 export async function astBuildInputs(intake, ledger, serialize) {
   const git = (root, args) => astGit(intake.request.gitExecutable, root, args);
   const controlNames = ["eng/tsfg-build.mjs", "eng/typescript-ast.mjs", "eng/typescript-ast-inputs.mjs",
-    "eng/typescript-repro.mjs",
+    "eng/typescript-repro.mjs", "eng/upgrade-review.mjs", "eng/intake-declarations/typescript-ast-toolchain.json",
     "eng/typescript-generation.mjs",
     "eng/typescript-required-tests.mjs",
     "eng/typescript-probes.mjs", "eng/go-source-worker.mjs", "eng/go-source-result.mjs", "eng/go-closure.mjs", "eng/go-network-probe.mjs",

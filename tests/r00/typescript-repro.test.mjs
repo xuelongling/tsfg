@@ -269,7 +269,7 @@ test("source repro-check requires two distinct verified workspace paths", () => 
   assert.match(child.stderr, /two distinct.*workspace/);
 });
 
-test("source build declares its complete reproducibility payload separately from evidence", {
+test("source build declares complete payload and identity-bound execution evidence", {
   skip: process.env.TSFG_TEST_SOURCE_REPRO_BUILD !== "1" ? "requires pinned real source closure" : false,
 }, async () => {
   const product = fileURLToPath(new URL("../../", import.meta.url));
@@ -284,7 +284,8 @@ test("source build declares its complete reproducibility payload separately from
   const manifest = JSON.parse(await readFile(path.join(root, "producer/artifact-manifest.json"), "utf8"));
   assert.deepEqual(manifest.members.map(member => member.path), ["ast.json", "build-metadata.json", "probes.json", "tsfg-ast.exe"]);
   assert.equal(manifest.kind, "typescript-source-probe");
-  for (const name of ["contracts/registry.json", "eng/probes/typescript.json", "eng/probes/syntax-error.ts",
+  for (const name of ["contracts/registry.json", "eng/upgrade-review.mjs", "eng/intake-declarations/typescript-ast-toolchain.json",
+    "eng/probes/typescript.json", "eng/probes/syntax-error.ts",
     "eng/probes/type-error.ts", "eng/probes/js-isolation.json", "LICENSE"]) {
     assert.ok(manifest.buildInputSet.entries.some(input => input.projectId === "tsfg"
       && input.repositoryRelativePath === name), `missing consumed Build Input: ${name}`);
@@ -293,6 +294,14 @@ test("source build declares its complete reproducibility payload separately from
   assert.deepEqual(manifest.buildIdentity, report.buildIdentity);
   assert.equal(report.execution.cachesInitiallyEmpty, true);
   assert.equal(report.execution.nativeExitCode, 0);
+  assert.equal(report.execution.build.sourceDateEpoch, report.buildIdentity.source_date_epoch);
+  const attestation = JSON.parse(await readFile(path.join(root, "producer/producer-attestation.json"), "utf8"));
+  assert.equal(attestation.buildIdentityDigest, report.buildIdentity.digest);
+  assert.deepEqual(attestation.members.map(member => member.path), ["artifact-manifest.json", "ast.json", "build-metadata.json",
+    "generation.json", "go-list.jsonstream", "intake-ledger.json", "js-isolation.json", "probes.json",
+    "required-test-events.jsonstream", "required-tests.json", "source-build.json", "tsfg-ast.exe"]);
+  for (const member of attestation.members) assert.equal(member.sha256,
+    fixtureHash(await readFile(path.join(root, "producer", member.path))), `unbound source producer member: ${member.path}`);
 });
 
 test("source repro-check rejects paths without verified integration metadata", async t => {
