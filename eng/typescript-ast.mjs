@@ -9,13 +9,14 @@ import { readGoSourceExecutionResult } from "./go-source-result.mjs";
 import { astGit, astBuildInputs, astToolchainInputs } from "./typescript-ast-inputs.mjs";
 import { readTypeScriptProbes, runTypeScriptProbes, runJsIsolation } from "./typescript-probes.mjs";
 import { replayGeneration } from "./typescript-generation.mjs";
+import { runRequiredTypeScriptTests } from "./typescript-required-tests.mjs";
 
 const hash = bytes => `sha256:${createHash("sha256").update(bytes).digest("hex")}`;
 const consumer = "tsfg-ast";
 const projectId = "TypeScript.git";
 const probeInput = "tsc/cmd/tsfg-ast/testdata/positive.ts";
 const fail = message => { throw new IntakeLedgerError("ast-consumption", message); };
-export class AstExecutionError extends Error { probes; jsIsolation; }
+export class AstExecutionError extends Error { probes; jsIsolation; requiredTests; }
 
 export async function readAstIntake({ productRoot, controlRoot, planPath, gitExecutable }) {
   const admissionBytes = await readFile(path.join(productRoot, "eng/source-admissions.json"));
@@ -42,6 +43,7 @@ export async function buildAstProbe({ prepared, child, serialize, publish }) {
   const intake = preparation.astIntake;
   const auditFiles = ["tsc/go.mod", "tsc/go.sum", "tsc/LICENSE", "tsc/NOTICE.txt", probeInput,
     ...(intake.generation?.declaration.inputs ?? []).map(name => `tsc/${name}`),
+    ...(intake.generation?.declaration.testInputs ?? []).map(name => `tsc/${name}`),
     ...["lib.es5.d.ts", "lib.decorators.d.ts", "lib.decorators.legacy.d.ts"].map(name => `tsc/internal/bundled/libs/${name}`)];
   const paths = new Set(auditFiles);
   for (const item of worker.packages) {
@@ -61,6 +63,12 @@ export async function buildAstProbe({ prepared, child, serialize, publish }) {
   const identity = await astBuildInputs(intake, ledger, serialize);
   const generation = intake.generation?.mode === "replay" ? await replayGeneration(intake, plan, serialize)
     : { status: "not-run", reason: "No verified generation receipt has been consumed." };
+  const requiredTests = await runRequiredTypeScriptTests(intake, plan, serialize);
+  if (requiredTests.status !== "passed") {
+    const error = new AstExecutionError("required upstream TypeScript tests failed, skipped or did not run");
+    error.requiredTests = requiredTests;
+    throw error;
+  }
   const verifyInputs = async () => {
     for (const input of plan.inputs) if (hash(await readFile(input.path)) !== input.sha256) fail(`staged input changed: ${input.path}`);
   };
@@ -116,7 +124,7 @@ export async function buildAstProbe({ prepared, child, serialize, publish }) {
     ledger, toolchainInputs, executionConsumption: { status: "matched", method: "go-list-deps-and-fixed-probe-input", entries: consumption.entries },
     buildInputSet: identity.buildInputSet, provenance: identity.provenance, dirty: identity.dirty,
     buildIdentity: { ...buildIdentityPayload, digest: hash(serialize(buildIdentityPayload)) },
-    generation,
+    generation, requiredTests,
     intakeComplete: false };
   await mkdir(path.dirname(output), { recursive: true });
   const publication = await mkdtemp(path.join(path.dirname(output), ".ast-publication-"));
@@ -125,6 +133,8 @@ export async function buildAstProbe({ prepared, child, serialize, publish }) {
   await writeFile(path.join(publication, "probes.json"), probeBytes);
   await writeFile(path.join(publication, "js-isolation.json"), serialize(jsIsolation));
   await writeFile(path.join(publication, "generation.json"), serialize(generation));
+  await writeFile(path.join(publication, "required-tests.json"), serialize(requiredTests));
+  await writeFile(path.join(publication, "required-test-events.jsonstream"), await readFile(path.join(plan.workRoot, "required-test-events.jsonstream")));
   await writeFile(path.join(publication, "intake-ledger.json"), serialize(ledger));
   await writeFile(path.join(publication, "go-list.jsonstream"), outputBytes);
   await writeFile(path.join(publication, "source-build.json"), serialize(result));

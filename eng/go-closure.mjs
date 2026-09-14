@@ -39,7 +39,7 @@ export async function readGoDependencyLock(lockPath, lock) {
       throw new Error("invalid fixed TypeScript dependency target");
     }
     if (declaration.modules.some((module) => !module.licenseEvidence
-        || !["MIT", "BSD-2-Clause", "BSD-3-Clause"].includes(module.license))) {
+        || !["MIT", "BSD-2-Clause", "BSD-3-Clause", "Apache-2.0"].includes(module.license))) {
       throw new Error("source target requires verified module license records");
     }
   }

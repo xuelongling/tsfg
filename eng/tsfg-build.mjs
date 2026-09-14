@@ -7503,7 +7503,7 @@ async function runCommandLine() {
       if (publication) await publication.rollback();
       const isConfigurationError = error instanceof ConfigurationError;
       const isBuildFailure = error instanceof BuildFailureError || error instanceof AstExecutionError || error instanceof GenerationError;
-      const isProbeFailure = error instanceof AstExecutionError && (error.probes?.status === "failed" || error.jsIsolation?.status === "failed");
+      const isProbeFailure = error instanceof AstExecutionError && (error.probes?.status === "failed" || error.jsIsolation?.status === "failed" || error.requiredTests?.status === "failed");
       const isBuildPolicy = error instanceof BuildPolicyError;
       const isWorkspaceMismatch = error instanceof WorkspaceMismatchError || error instanceof IntakeLedgerError;
       const isOfflineBoundary = error instanceof OfflineBoundaryError;
@@ -7545,6 +7545,7 @@ async function runCommandLine() {
                     : isProbeFailure ? "typescript-probe" : isBuildFailure ? "native-build" : "internal-control-plane",
           message: error.message,
           ...(error instanceof GenerationError ? { generation: error.generation } : {}),
+          ...(error instanceof AstExecutionError && error.requiredTests ? { requiredTests: error.requiredTests } : {}),
           ...(sourceTarget === "typescript-ast" ? { probes: error instanceof AstExecutionError && error.probes
             ? error.probes : { status: "not-run", reason: error.message },
           jsIsolation: error instanceof AstExecutionError && error.jsIsolation

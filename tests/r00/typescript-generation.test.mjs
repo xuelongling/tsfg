@@ -59,3 +59,24 @@ test("typed consumer replays its committed generated sources through the build e
   assert.ok(result.generation.outputs.some(item => item.path === "internal/stringutil/js_case_generated.go"));
   assert.equal(result.probes.status, "passed");
 });
+
+test("source test reports actual required upstream suites without skips", {
+  skip: process.env.TSFG_TEST_REQUIRED_UPSTREAM !== "1" ? "requires pinned source test closure" : false,
+}, async () => {
+  const product = fileURLToPath(new URL("../../", import.meta.url));
+  const root = process.env.TSFG_TEST_GENERATION_EVIDENCE;
+  const report = path.join(root, "required-tests.json");
+  const child = spawnSync(process.execPath, [entry, "test", "--dev", "--source-target", "typescript-ast",
+    "--workspace", product, "--intake-plan", path.join(product, "eng/intake-declarations/typescript-ast.json"),
+    "--target", "windows-x86_64-msvc", "--profile", "debug", "--out", path.join(root, "test-output"), "--report", report],
+  { env: { ...process.env, TSFG_RUNTIME_LOCK: path.join(product, "eng/go-ast-toolchains.lock.json"),
+    TSFG_RUNTIME_CACHE: process.env.TSFG_TEST_GO_CACHE, TSFG_RUNTIME_PLATFORM: "windows-x86_64-msvc" },
+    encoding: "utf8", timeout: 1200000, windowsHide: true });
+  assert.equal(child.status, 0, child.stdout + child.stderr);
+  const result = JSON.parse(await readFile(report, "utf8")).result;
+  assert.equal(result.requiredTests?.status, "passed");
+  assert.deepEqual(result.requiredTests.skipped, []);
+  assert.ok(result.requiredTests.passed.some(item => item.test === "TestDeepCloneNodeSanityCheck"));
+  assert.ok(result.requiredTests.passed.some(item => item.test === "TestLocalize"));
+  assert.ok(result.requiredTests.passed.some(item => item.test === "TestJSCasing"));
+});
