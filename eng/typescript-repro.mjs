@@ -27,6 +27,15 @@ async function regularBytes(root, name) {
   return await readFile(file);
 }
 
+function leakedPaths(bytes, roots) {
+  const texts = [bytes.toString("latin1"), bytes.toString("utf16le"), bytes.subarray(1).toString("utf16le")]
+    .map(text => text.toLowerCase());
+  return roots.filter(root => {
+    const forward = root.replaceAll("\\", "/").toLowerCase(), backward = forward.replaceAll("/", "\\");
+    return [forward, backward, backward.replaceAll("\\", "\\\\")].some(value => texts.some(text => text.includes(value)));
+  });
+}
+
 async function readProducer(root, workspaceRoot, workspace, serialize, parseJson) {
   const names = (await readdir(root)).sort();
   if (!isDeepStrictEqual(names, [...payloadNames, ...evidenceNames].sort())) fail("incomplete or unexpected source producer members");
@@ -96,7 +105,8 @@ export async function reproduceTypeScript({ options, workspaces, serialize, pars
   const producers = [];
   const evidence = { schemaVersion: "1", executionMode: "local-development", isolation: "not-enforced", producers,
     operation: options.has("--producer-a") ? "compare-existing" : "rebuild",
-    reproducibility: { bytes: { status: "not-run", differences: [] }, semantics: { status: "not-run", issues: [] } }, intakeComplete: false };
+    reproducibility: { bytes: { status: "not-run", differences: [] }, semantics: { status: "not-run", issues: [] },
+      paths: { status: "not-run", leaks: [] } }, intakeComplete: false };
   try {
     for (const [index, workspace] of workspaces.entries()) {
       const label = index === 0 ? "a" : "b", workspaceRoot = await realpath(options.get(`--workspace-${label}`));
@@ -146,7 +156,16 @@ export async function reproduceTypeScript({ options, workspaces, serialize, pars
     const issues = [...first.semanticIssues.map(issue => `a: ${issue}`), ...second.semanticIssues.map(issue => `b: ${issue}`)];
     if (!isDeepStrictEqual(first.build.probes, second.build.probes)) issues.push("source semantic observations differ");
     evidence.reproducibility.semantics = { status: issues.length ? "failed" : "passed", issues };
-    if (differences.length || issues.length) fail([...differences.map(name => `source payload bytes differ: ${name}`), ...issues].join("; "));
+    const roots = [...new Set([options.get("--cache"), process.cwd(), path.dirname(process.execPath),
+      ...["HOME", "USERPROFILE", "APPDATA", "LOCALAPPDATA", "TEMP", "TMP", "SystemRoot"].map(key => process.env[key]),
+      ...[first, second].flatMap(producer => [producer.workspaceRoot, producer.root,
+        ...["workspace", "stageRoot", "moduleRoot", "compileCache", "moduleCache"].map(key => producer.build.execution[key])])])]
+      .filter(value => typeof value === "string" && path.isAbsolute(value) && path.parse(value).root !== value);
+    const leaks = [first, second].flatMap((producer, index) => payloadNames.flatMap(name =>
+      leakedPaths(producer.bytes.get(name), roots).map(root => ({ producer: index === 0 ? "a" : "b", member: name, root }))));
+    evidence.reproducibility.paths = { status: leaks.length ? "failed" : "passed", leaks };
+    if (differences.length || issues.length || leaks.length) fail([...differences.map(name => `source payload bytes differ: ${name}`),
+      ...issues, ...(leaks.length ? ["absolute build path leakage in declared source payload"] : [])].join("; "));
     for (let index = 0; index < 2; index++) {
       if (!isDeepStrictEqual(await verify(index), workspaces[index])) fail("source workspace changed during reproducibility execution");
     }

@@ -14,6 +14,42 @@ const fixtureJson = value => value === null || typeof value !== "object" ? JSON.
   : `{${Object.keys(value).sort().map(key => `${JSON.stringify(key)}:${fixtureJson(value[key])}`).join(",")}}`;
 const fixtureHash = bytes => `sha256:${createHash("sha256").update(bytes).digest("hex")}`;
 
+test("source repro-check detects a shared absolute UTF-16 workspace path in equal payloads", {
+  skip: process.env.TSFG_TEST_SOURCE_REPRO_PATH !== "1" ? "requires real producers for deliberate path leakage" : false,
+}, async () => {
+  const original = JSON.parse(await readFile(process.env.TSFG_TEST_REPRO_ORIGINAL, "utf8")).result;
+  const root = process.env.TSFG_TEST_SOURCE_REPRO_EVIDENCE;
+  for (const [index, label] of ["a", "b"].entries()) {
+    const producer = path.join(root, label);
+    await cp(original.producers[index].output, producer, { recursive: true, errorOnExist: true, force: false });
+    const binary = Buffer.concat([await readFile(path.join(producer, "tsfg-ast.exe")),
+      Buffer.from(original.producers[0].workspaceRoot, "utf16le")]);
+    await writeFile(path.join(producer, "tsfg-ast.exe"), binary);
+    const build = JSON.parse(await readFile(path.join(producer, "source-build.json"), "utf8"));
+    build.executableSha256 = fixtureHash(binary);
+    build.jsIsolation.artifact.sha256 = build.executableSha256;
+    await writeFile(path.join(producer, "js-isolation.json"), fixtureJson(build.jsIsolation));
+    await writeFile(path.join(producer, "source-build.json"), fixtureJson(build));
+    const manifest = JSON.parse(await readFile(path.join(producer, "artifact-manifest.json"), "utf8"));
+    for (const member of manifest.members) member.sha256 = fixtureHash(await readFile(path.join(producer, member.path)));
+    await writeFile(path.join(producer, "artifact-manifest.json"), fixtureJson(manifest));
+  }
+  const output = path.join(root, "out"), report = path.join(root, "report.json");
+  const child = spawnSync(process.execPath, [entry, "repro-check", "--dev", "--source-target", "typescript-ast",
+    "--target", "windows-x86_64-msvc", "--profile", "debug",
+    "--workspace-a", original.producers[0].workspaceRoot, "--workspace-b", original.producers[1].workspaceRoot,
+    "--producer-a", path.join(root, "a"), "--producer-b", path.join(root, "b"),
+    "--cache", process.env.TSFG_TEST_GO_CACHE,
+    "--manifest-revision", original.producers[0].workspace.manifest.revision, "--manifest", "candidates/tsfg-v0.2.0.xml",
+    "--out", output, "--report", report], { encoding: "utf8", timeout: 1200000, windowsHide: true });
+  assert.equal(child.status, 23, child.stdout + child.stderr);
+  const issue = JSON.parse(await readFile(report, "utf8")).error.issues[0];
+  assert.match(issue.message, /absolute.*path.*leak/i);
+  assert.equal(issue.evidence.reproducibility.bytes.status, "passed");
+  assert.equal(issue.evidence.reproducibility.semantics.status, "passed");
+  await assert.rejects(stat(output), { code: "ENOENT" });
+});
+
 test("source repro-check rejects self-consistent evidence for different effective build options", {
   skip: process.env.TSFG_TEST_SOURCE_REPRO_STALE !== "1" ? "requires real producers for deliberate stale identity" : false,
 }, async () => {
