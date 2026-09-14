@@ -45,7 +45,32 @@ generated source may compile, but `generation.status` stays `not-run` and
 `intakeComplete` stays false. Type queries, complete JS isolation, generator
 replay, two-workspace reproducibility and final intake remain later tickets.
 
+The current explicit approval contains 105 TypeScript source/legal/probe inputs.
+Go's actual dependency metadata is reconciled against it before compilation;
+removing a required file from the approval fails even though that file remains
+admitted in the fork's much larger source inventory. A separate 767-file
+declaration records the selected Go SDK, compiler programs, standard library,
+Node controller and external module inputs with their own locked identities and
+licenses. They are not attributed to the TypeScript source repository.
+
+Build Input Set entries use the existing canonical digest algorithm and regular
+Git modes. The 02b ledger supplies payload-affecting source entries; the actual
+controller files are also included. Complete project OIDs are retained as
+provenance outside that digest. Tool bytes are bound by Toolchain Closure.
+Legal material, the fixed probe input and declaration explanations remain audit
+inputs when they do not affect the compiled payload. Their hashes and the AST
+observation remain visible separately. The report also preserves the actual
+dirty state, including documentation overlays; it does not assert release
+cleanliness.
+
 The high-level test is `node --test tests/r00/typescript-ast-cli.test.mjs`.
 Set `TSFG_TEST_AST_ACCEPTANCE=1` and `TSFG_TEST_GO_CACHE` to run the actual
 source build; omitted real-source prerequisites are explicitly skipped, never
 reported as successful source intake.
+
+`tests/r00/typescript-ast-governance.test.mjs` uses an isolated working copy of
+the exact real fork and the same public build entry's intake-ledger target for
+corruption checks. Its positive case validates the governance path only. AST
+execution evidence comes from the AST target test and the workspace-local
+ticket 04 acceptance runner, which additionally compares an audit-only change
+and rejects an actually discovered parser input omitted from approval.
