@@ -36,6 +36,15 @@ test("native allowlisted helper verifies actual Low LPAC and restricting identit
   assert.notEqual(token.restrictionSid, token.userSid);
 });
 
+test("native helper reports inherited noninteractive error mode at its public boundary", {
+  skip: process.platform !== "win32" || !helper,
+}, () => {
+  const result = spawnSync(helper, ["--verify-restriction"], { encoding: "utf8", windowsHide: true });
+  assert.equal(result.status, 125);
+  const match = result.stderr.match(/startup error-mode=0x([0-9a-f]+)/i);
+  assert.ok(match, result.stderr);
+  assert.equal(Number.parseInt(match[1], 16) & 0x8003, 0x8003);
+});
 test("native helper ignores planted DLL names in its application directory", {
   skip: process.platform !== "win32" || !helper,
 }, () => {

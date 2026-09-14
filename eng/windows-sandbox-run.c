@@ -748,6 +748,12 @@ static void free_requested_grants(struct requested_grant *grants,
 }
 
 int wmain(int argc, wchar_t **argv) {
+  /* A redirected build must report loader faults, never wait for a dialog.
+     Children inherit this process-wide mode at creation. */
+  SetErrorMode(GetErrorMode() | SEM_FAILCRITICALERRORS |
+               SEM_NOGPFAULTERRORBOX | SEM_NOOPENFILEERRORBOX);
+  fwprintf(stderr, L"tsfg windows sandbox: startup error-mode=0x%x\n", GetErrorMode());
+  fflush(stderr);
   if (argc == 2 && wcscmp(argv[1], L"--verify-restriction") == 0)
     return verify_process_restriction(GetCurrentProcess(), NULL, NULL, 1);
   int status = SANDBOX_SETUP_FAILURE_STATUS;
@@ -908,6 +914,12 @@ int wmain(int argc, wchar_t **argv) {
       goto cleanup;
     }
     container_capabilities.AppContainerSid = package_sid;
+    LPWSTR package_text = NULL;
+    if (ConvertSidToStringSidW(package_sid, &package_text)) {
+      fwprintf(stderr, L"tsfg windows sandbox: package-sid=%ls\n", package_text);
+      fflush(stderr);
+      LocalFree(package_text);
+    }
     /* No profile creation and no capabilities, including network capabilities. */
   }
   DWORD boundary_result = establish_network_boundary(&programs, &filter_engine);
@@ -1081,7 +1093,9 @@ int wmain(int argc, wchar_t **argv) {
     goto cleanup;
   }
   DWORD creation_flags = CREATE_UNICODE_ENVIRONMENT | CREATE_SUSPENDED;
-  if (allowlisted_root) creation_flags |= EXTENDED_STARTUPINFO_PRESENT;
+  if (allowlisted_root) creation_flags |= EXTENDED_STARTUPINFO_PRESENT | CREATE_NO_WINDOW;
+  fwprintf(stderr, L"tsfg windows sandbox: child-create flags=0x%lx\n", creation_flags);
+  fflush(stderr);
   BOOL created = network_only
       ? CreateProcessW(command_path, command_line, NULL, NULL, TRUE,
                        creation_flags, NULL, NULL, &startup, &process)
@@ -1095,6 +1109,8 @@ int wmain(int argc, wchar_t **argv) {
     goto cleanup;
   }
   child_started = 1;
+  fwprintf(stderr, L"tsfg windows sandbox: child-created pid=%lu\n", process.dwProcessId);
+  fflush(stderr);
   if (!AssignProcessToJobObject(job, process.hProcess)) {
     print_win32_error(L"assign restricted process to job", GetLastError());
     goto cleanup;
@@ -1104,12 +1120,18 @@ int wmain(int argc, wchar_t **argv) {
     print_win32_error(L"verify suspended AppContainer process", ERROR_ACCESS_DENIED);
     goto cleanup;
   }
-  if (ResumeThread(process.hThread) == (DWORD)-1) {
+  fwprintf(stderr, L"tsfg windows sandbox: child-job-and-token-ready\n");
+  fflush(stderr);
+  DWORD previous_suspend_count = ResumeThread(process.hThread);
+  if (previous_suspend_count == (DWORD)-1) {
     print_win32_error(L"resume restricted process", GetLastError());
     goto cleanup;
   }
   CloseHandle(process.hThread);
   process.hThread = NULL;
+  fwprintf(stderr, L"tsfg windows sandbox: child-resumed previous-suspend-count=%lu; waiting\n",
+           previous_suspend_count);
+  fflush(stderr);
   DWORD wait_result = WaitForSingleObject(process.hProcess, INFINITE);
   if (wait_result != WAIT_OBJECT_0) {
     print_win32_error(L"wait for restricted process",
@@ -1123,6 +1145,8 @@ int wmain(int argc, wchar_t **argv) {
     goto cleanup;
   }
   child_complete = 1;
+  fwprintf(stderr, L"tsfg windows sandbox: child-exited status=%lu\n", child_status);
+  fflush(stderr);
   if (
       (child_status == SANDBOX_SETUP_FAILURE_STATUS ||
        child_status == SANDBOX_NETWORK_BOUNDARY_STATUS ||
@@ -1138,6 +1162,8 @@ int wmain(int argc, wchar_t **argv) {
   }
 
 cleanup:
+  fwprintf(stderr, L"tsfg windows sandbox: cleanup-start\n");
+  fflush(stderr);
   /* Do not release WFP or ACLs until every descendant has left the job. */
   if (allowlisted_root && job != NULL && child_started) {
     if (!TerminateJobObject(job, SANDBOX_SETUP_FAILURE_STATUS)) {
@@ -1156,6 +1182,8 @@ cleanup:
       if (accounting.ActiveProcesses == 0) break;
       Sleep(10);
     }
+    fwprintf(stderr, L"tsfg windows sandbox: cleanup-job-drained\n");
+    fflush(stderr);
   }
   if (child_started && !child_complete && process.hProcess != NULL) {
     if (!TerminateProcess(process.hProcess, SANDBOX_SETUP_FAILURE_STATUS) ||
@@ -1199,6 +1227,8 @@ cleanup:
     free(applied);
   }
   if (filter_engine != NULL) FwpmEngineClose0(filter_engine);
+  fwprintf(stderr, L"tsfg windows sandbox: cleanup-finished failed=%d\n", cleanup_failed);
+  fflush(stderr);
   if (package_sid != NULL) FreeSid(package_sid);
   if (acl_mutex != NULL) {
     if (acl_mutex_owned) ReleaseMutex(acl_mutex);
