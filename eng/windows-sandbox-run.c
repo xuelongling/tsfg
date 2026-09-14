@@ -790,6 +790,7 @@ int wmain(int argc, wchar_t **argv) {
   DWORD package_policy = PROCESS_CREATION_ALL_APPLICATION_PACKAGES_OPT_OUT;
   HANDLE job = NULL;
   int child_started = 0;
+  int child_assigned_to_job = 0;
   int child_complete = 0;
   int cleanup_failed = 0;
   ZeroMemory(&process, sizeof(process));
@@ -1115,6 +1116,7 @@ int wmain(int argc, wchar_t **argv) {
     print_win32_error(L"assign restricted process to job", GetLastError());
     goto cleanup;
   }
+  child_assigned_to_job = 1;
   if (allowlisted_root && verify_process_restriction(process.hProcess,
       unique_sid, package_sid, 0) != 0) {
     print_win32_error(L"verify suspended AppContainer process", ERROR_ACCESS_DENIED);
@@ -1186,9 +1188,17 @@ cleanup:
     fflush(stderr);
   }
   if (child_started && !child_complete && process.hProcess != NULL) {
-    if (!TerminateProcess(process.hProcess, SANDBOX_SETUP_FAILURE_STATUS) ||
-        WaitForSingleObject(process.hProcess, INFINITE) != WAIT_OBJECT_0) {
+    /* Draining the job may already have terminated this process. Repeating
+       TerminateProcess on that exited process can return ACCESS_DENIED. */
+    DWORD completion = WaitForSingleObject(process.hProcess,
+        allowlisted_root && child_assigned_to_job ? INFINITE : 0);
+    if (completion == WAIT_TIMEOUT &&
+        (!TerminateProcess(process.hProcess, SANDBOX_SETUP_FAILURE_STATUS) ||
+         WaitForSingleObject(process.hProcess, INFINITE) != WAIT_OBJECT_0)) {
       print_win32_error(L"terminate incomplete restricted process", GetLastError());
+      cleanup_failed = 1;
+    } else if (completion != WAIT_OBJECT_0 && completion != WAIT_TIMEOUT) {
+      print_win32_error(L"query incomplete restricted process", GetLastError());
       cleanup_failed = 1;
     }
   }
