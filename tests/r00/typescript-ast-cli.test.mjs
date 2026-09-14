@@ -1,14 +1,34 @@
 // SPDX-License-Identifier: MIT
 import assert from "node:assert/strict";
 import { spawnSync } from "node:child_process";
+import { createHash } from "node:crypto";
 import test from "node:test";
 import { fileURLToPath } from "node:url";
-import { mkdir, mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
+import { mkdir, mkdtemp, readFile, readdir, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import path from "node:path";
 import { TEST_GIT_EXECUTABLE } from "./test-tools.mjs";
 
 const entry = fileURLToPath(new URL("../../eng/tsfg-build.mjs", import.meta.url));
+test("public source build and test reject JS input, emission and runtime controls", async t => {
+  const root = await mkdtemp(path.join(tmpdir(), "js-options-"));
+  t.after(() => rm(root, { recursive: true, force: true }));
+  const source = path.join(root, "input.js");
+  await writeFile(source, "const value = 1;\n");
+  const env = { ...process.env };
+  for (const key of Object.keys(env)) if (key.startsWith("TSFG_RUNTIME_")) delete env[key];
+  for (const command of ["build", "test"]) {
+    for (const args of [["--input", source], ["--allowJs", "true"], ["--noEmit", "false"], ["--emit"], ["--runtime", "javascript"], ["--fallback", "javascript"]]) {
+      const report = path.join(root, "report.json");
+      const child = spawnSync(process.execPath, [entry, command, "--dev", "--source-target", "typescript-ast", ...args, "--report", report],
+        { env, encoding: "utf8", windowsHide: true });
+      assert.equal(child.status, 2, child.stdout + child.stderr);
+      const result = JSON.parse(await readFile(report, "utf8"));
+      assert.match(result.error.issues[0].message, /unknown option/);
+      assert.equal(result.error.issues[0].jsIsolation.status, "not-run");
+    }
+  }
+});
 for (const mode of ["dependency", "integrity", "git"]) test(`AST build preserves ${mode} failure boundary`, {
   skip: process.env.TSFG_TEST_AST_ACCEPTANCE !== "1" ? "requires pinned preparation inputs; synthetic worker failure" : false,
 }, async (t) => {
@@ -101,7 +121,27 @@ for (const command of ["build", "test"]) test(`fixed fork source runs real typed
   }
   assert.equal(result.intakeComplete, false);
   assert.equal(result.jsIsolation?.status, "passed");
-  assert.equal(result.jsIsolation.cases.find(item => item.id === "input-js").status, "passed");
+  assert.deepEqual(result.jsIsolation.cases.map(item => item.id), ["input-js", "input-mjs", "input-cjs", "input-jsx",
+    "input-JS", "input-mJs", "input-CJS", "allow-js", "emit", "disable-no-emit", "output-file", "runtime", "fallback", "eval"]);
+  for (const item of result.jsIsolation.cases) {
+    assert.equal(item.status, "passed");
+    assert.equal(item.exitCode, 2);
+    assert.equal(item.stdout, "");
+    assert.match(item.stderr, /expected one TypeScript source file/);
+    assert.equal(item.sourceSha256, result.probes.cases[0].source.sha256);
+  }
+  assert.equal(result.jsIsolation.noCreatedFiles, true);
+  assert.equal(result.jsIsolation.artifact.status, "matched");
+  assert.equal(result.jsIsolation.artifact.role, "compiler-probe");
+  assert.equal(result.jsIsolation.gameRuntime.status, "not-applicable");
+  assert.ok(result.jsIsolation.retainedCompilerDependencies.some(file => file.path === "tsc/internal/checker/printer.go"));
+  assert.ok(result.jsIsolation.retainedCompilerDependencies.some(file => file.path === "tsc/internal/compiler/emitter.go"));
+  assert.equal(result.jsIsolation.sourceReview.forkOid, result.source.commit);
+  const binary = await readFile(path.join(root, "out/tsfg-ast.exe"));
+  assert.equal(result.jsIsolation.artifact.sha256, `sha256:${createHash("sha256").update(binary).digest("hex")}`);
+  assert.deepEqual(JSON.parse(await readFile(path.join(root, "out/js-isolation.json"), "utf8")), result.jsIsolation);
+  assert.deepEqual((await readdir(path.join(root, "out"))).sort(), ["ast.json", "go-list.jsonstream", "intake-ledger.json",
+    "js-isolation.json", "probes.json", "source-build.json", "tsfg-ast.exe"]);
   assert.equal(result.generation.status, "not-run");
   assert.equal(result.buildInputSet.schemaVersion, "1");
   assert.ok(result.buildInputSet.entries.some(entry => entry.projectId === "tsfg"

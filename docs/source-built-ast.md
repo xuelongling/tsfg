@@ -46,8 +46,9 @@ existing behavior. Both development reports explicitly say
 The result keeps source, tool, consumption and output identities. The executable
 and observation are separate artifacts; the ledger is audit evidence. Committed
 generated source may compile, but `generation.status` stays `not-run` and
-`intakeComplete` stays false. Complete JS isolation, generator
-replay, two-workspace reproducibility and final intake remain later tickets.
+`intakeComplete` stays false. JS isolation is checked separately for this
+consumer. Generator replay, two-workspace reproducibility and final intake
+remain later tickets.
 
 The current explicit approval contains 260 TypeScript source/legal/probe inputs.
 Go's actual dependency metadata is reconciled against it before compilation;
@@ -108,7 +109,7 @@ an additional referenced source fails before any type query. Types are
 converted to strings while the file's Checker is exclusively borrowed, and the
 borrow is released before process termination. No Type object crosses Checkers
 or escapes to a later consumer. Necessary compiler/printer/transformer package
-files are recorded; full JS capability isolation remains ticket 06.
+files are recorded; their presence does not expose an emit operation.
 
 The product's fixed inputs, expectation file and MIT license are checked against
 committed regular-file bytes and recorded in `probes.inputLedger`, separately
@@ -125,3 +126,45 @@ an undeclared required upstream declaration and an extra referenced declaration.
 Skipping opt-in tests is not
 typed-source acceptance. These probes prove source intake usability, not full
 tsfg Program Conformance Corpus acceptance or completed R02a intake.
+
+## JS isolation at the current consumer
+
+Both public `build` and `test --source-target typescript-ast` run the existing
+positive/type/diagnostic probes and JS rejection cases against the same newly
+compiled `tsfg-ast.exe`. The executable accepts exactly one `.ts` filename;
+the control entry accepts only its declared build options and fixed probe
+manifest. Neither entry forwards compiler options or runtime requests.
+
+`eng/probes/js-isolation.json` records the manual source-reachability review
+and its exact fork/entry identity. A changed fork requires a new review before
+JS isolation can pass. The entry calls only Program analysis, diagnostics,
+borrowed Checker queries and JSON encoding. It never calls `Program.Emit`,
+spawns a runtime process, or loads a JS engine. Its read-only `os.DirFS` host
+does not implement `WritableFS`; `NoEmit` is also fixed by the callee. This
+argument does not depend on the caller supplying `noEmit`.
+
+The runner creates real JS-extension files from the already audited positive
+bytes, including Windows case variants, and checks explicit exit-2 rejection
+with no stdout. It also attempts `allowJs`, emit/noEmit/output-file and
+runtime/fallback/eval options. Runtime option rejection is evidence that this
+interface cannot express such an operation; it is not a game-runtime test.
+The source tree must acquire no extra files, and the existing staged-input
+hash checks still apply after execution.
+
+Artifact inspection uses locked `go version -m` on the actual executable and
+checks its main package, executable build mode, Windows/amd64 and CGO-disabled
+settings. The binary hash is included in `jsIsolation.artifact`. The output
+directory contains this compiler-side executable and JSON/Go-dependency audit
+records, including `js-isolation.json`; it is not a game release package.
+The Go runtime is part of the compiler executable. No Zig game runtime is
+built by this target, so game-runtime integration is explicitly not applicable.
+
+The report separately lists the ledger's actually compiled printer, emitter
+and transformer dependencies. Upstream retains still more unconsumed source.
+This proves the fixed consumer's boundary, not removal of every emitter symbol,
+general upstream CLI isolation, or completion of R02b/R06. Failure or missing
+review/probe/artifact evidence cannot produce a passed JS-isolation result or
+a successful published source-build directory. Source, consumption and tool
+identities remain in the existing ledgers and Build Input Set; the review is
+an audited product probe input. Generation remains `not-run`: ticket 07 must
+establish its own applicable evidence for the final candidate.

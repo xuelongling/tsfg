@@ -42,8 +42,14 @@ test("required probe inputs cannot be missing or removed from the fixed suite", 
   }
   // Only the controller is isolated; it checks the unchanged, exact real fork.
   git(root, "clone", "--quiet", "--shared", product, control);
-  const source = path.join(control, "eng/probes/syntax-error.ts");
+  const review = path.join(control, "eng/probes/js-isolation.json");
   const plan = path.join(product, "eng/intake-declarations/typescript-ast.json");
+  await rm(review);
+  const missingReview = await run(control, root, plan, "missing-js-review");
+  assert.equal(missingReview.jsIsolation.status, "not-run");
+  assert.match(missingReview.message, /missing required probe input: eng\/probes\/js-isolation.json/);
+  git(control, "restore", "--worktree", "--", "eng/probes/js-isolation.json");
+  const source = path.join(control, "eng/probes/syntax-error.ts");
   await rm(source);
   const missing = await run(control, root, plan, "missing-source");
   assert.match(missing.message, /missing required probe input/);
