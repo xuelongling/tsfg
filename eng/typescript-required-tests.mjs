@@ -15,7 +15,6 @@ const suites = [
 
 export async function runRequiredTypeScriptTests(intake, plan, serialize) {
   const root = path.join(plan.workRoot, "required-tests");
-  await mkdir(root);
   await cp(plan.moduleRoot, root, { recursive: true, errorOnExist: true, force: false });
   const inputs = [];
   for (const name of intake.generation?.declaration.testInputs ?? []) {
