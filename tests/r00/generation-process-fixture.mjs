@@ -25,6 +25,12 @@ fs.readFile = async function (file, ...args) {
 const spawn = childProcess.spawnSync;
 /** @returns {any} */
 childProcess.spawnSync = function (executable, args, options) {
+  if (mode === "build-start" && args?.[0] === "build" && args.includes("./cmd/tsfg-ast")) {
+    return spawn(path.join(options.cwd, "missing-build-fixture.exe"), [], options);
+  }
+  if (mode === "build-exit" && args?.[0] === "build" && args.includes("./cmd/tsfg-ast")) {
+    return spawn(process.execPath, ["-e", "process.stderr.write('synthetic final build failure'); process.exit(7)"], options);
+  }
   if (mode === "missing-source" && args?.includes("ls-tree") && args.includes(declaration.sources[0].commit)) {
     return { pid: 0, output: [], status: 128, signal: null, stdout: Buffer.alloc(0),
       stderr: Buffer.from("synthetic missing exact subsource object") };

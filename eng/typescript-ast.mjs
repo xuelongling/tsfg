@@ -79,7 +79,12 @@ export async function buildAstProbe({ prepared, child, serialize, publish }) {
       encoding: "utf8", timeout: 300000, maxBuffer: 64 * 1024 * 1024, windowsHide: true });
   const run = (executable, args) => {
     const result = invoke(executable, args);
-    if (result.error || result.status !== 0) throw new AstExecutionError(`AST execution failed (${result.status}): ${result.error?.message ?? result.stderr}`);
+    if (result.error || result.status !== 0) {
+      const error = new AstExecutionError(`AST execution failed (${result.status}): ${result.error?.message ?? result.stderr}`);
+      error.generation = generation;
+      error.requiredTests = requiredTests;
+      throw error;
+    }
     return result.stdout;
   };
   const executable = path.join(plan.workRoot, "tsfg-ast.exe");

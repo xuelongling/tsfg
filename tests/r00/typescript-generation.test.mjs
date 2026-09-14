@@ -118,6 +118,8 @@ test("source test reports actual required upstream suites without skips", {
 });
 
 for (const scenario of [
+  { name: "build-exit", fixture: "build-exit", generation: "replay", exit: 20 },
+  { name: "build-start", fixture: "build-start", generation: "replay", exit: 20 },
   { name: "missing-source", fixture: "missing-source", generation: "replay", exit: 10 },
   { name: "difference", fixture: "difference", generation: "replay", exit: 20 },
   { name: "skip", fixture: "skip", generation: "reuse", exit: 21 },
@@ -156,7 +158,13 @@ for (const scenario of [
   }
   await assert.rejects(stat(output), { code: "ENOENT" });
   const issue = record.error.issues[0];
-  if (scenario.name === "difference") {
+  if (scenario.name === "build-exit" || scenario.name === "build-start") {
+    assert.equal(record.status, "failure");
+    assert.equal(issue.generation.status, "passed");
+    assert.equal(issue.requiredTests.status, "passed");
+    assert.deepEqual(issue.requiredTests.skipped, []);
+    assert.match(issue.message, scenario.name === "build-exit" ? /synthetic final build failure/ : /ENOENT/);
+  } else if (scenario.name === "difference") {
     assert.equal(issue.generation.status, "failed");
     assert.equal(issue.generation.differences.length, 1);
     assert.equal(issue.generation.differences[0].path, "internal/ast/ast_generated.go");
