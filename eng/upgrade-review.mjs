@@ -74,9 +74,10 @@ export async function reviewUpgrade({ plan, git: inspectGit, parseManifest, cano
     const patch = git(sourceRoot, ["diff", "--no-ext-diff", "--no-textconv", "--binary", from, to, "--"]);
     return { from, to, patch, sha256: digest(Buffer.from(patch)) };
   };
-  const reasons = [];
+  const rejectionReasons = { accepted: [], candidate: [] };
   for (const name of ["accepted", "candidate"]) {
     const snapshot = plan[name];
+    const reasons = rejectionReasons[name];
     if (!note(snapshot.languageBaseline) || !note(snapshot.engineeringContract)) reasons.push(`${name}: missing fixed language or engineering commitment`);
     if (!(snapshot.performanceClaim === null || (note(snapshot.performanceClaim?.description) && note(snapshot.performanceClaim?.criterion)))) reasons.push(`${name}: invalid performance claim`);
     if (!Array.isArray(snapshot.generationDependencies) || snapshot.generationDependencies.some(dependency =>
@@ -84,13 +85,14 @@ export async function reviewUpgrade({ plan, git: inspectGit, parseManifest, cano
       reasons.push(`${name}: generation dependency is not bound to the Intake Ledger`);
     }
   }
-  if (plan.accepted.languageBaseline !== plan.candidate.languageBaseline) reasons.push("language baseline cannot change in an upgrade review");
-  if (plan.accepted.engineeringContract !== plan.candidate.engineeringContract) reasons.push("engineering commitments cannot change in an upgrade review");
+  if (plan.accepted.languageBaseline !== plan.candidate.languageBaseline) rejectionReasons.candidate.push("language baseline cannot change in an upgrade review");
+  if (plan.accepted.engineeringContract !== plan.candidate.engineeringContract) rejectionReasons.candidate.push("engineering commitments cannot change in an upgrade review");
   const reviewInputs = Object.fromEntries(["accepted", "candidate"].map(name => [name, digest(Buffer.from(canonicalize(
     Object.fromEntries(["declaration", "consumption", "languageBaseline", "engineeringContract", "generationDependencies", "performanceClaim"].map(key => [key, plan[name][key]]))
   )))]));
-  const evidence = { accepted: inspectEvidence(plan.accepted, accepted.source.forkOid, reasons, "accepted", reviewInputs.accepted),
-    candidate: inspectEvidence(plan.candidate, candidate.source.forkOid, reasons, "candidate", reviewInputs.candidate) };
+  const evidence = { accepted: inspectEvidence(plan.accepted, accepted.source.forkOid, rejectionReasons.accepted, "accepted", reviewInputs.accepted),
+    candidate: inspectEvidence(plan.candidate, candidate.source.forkOid, rejectionReasons.candidate, "candidate", reviewInputs.candidate) };
+  const reasons = [...rejectionReasons.accepted, ...rejectionReasons.candidate];
   let rollback = null;
   if (plan.action === "rollback") {
     const record = plan.rollback;
@@ -109,7 +111,7 @@ export async function reviewUpgrade({ plan, git: inspectGit, parseManifest, cano
       manifest: record.manifest, manifestSha256: digest(Buffer.from(xml)), reason: record.reason, projects, target: accepted.integration };
   }
   const candidateDecision = reasons.length ? "rejected" : "admitted-fixture";
-  const decision = rollback ? (reasons.some(reason => !reason.startsWith("candidate.")) ? "rejected" : "rollback-fixture") : candidateDecision;
+  const decision = rollback ? (rejectionReasons.accepted.length ? "rejected" : "rollback-fixture") : candidateDecision;
   return { schemaVersion: "1", evidenceKind: "governance-fixture", operation: "upgrade-review", decision, candidateDecision, rollback, reasons, evidence, reviewInputs,
     intakeComplete: false, promotionState: "Candidate", executionMode: "local-development", isolation: "not-enforced",
     integrations: { accepted: accepted.integration, candidate: candidate.integration },

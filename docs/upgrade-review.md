@@ -57,6 +57,9 @@ manifest, reason}`. The review checks ancestry, a fresh combination name, retain
 historical combination bytes and the accepted evidence. It writes a new rollback
 record referencing both identities, without changing refs or selecting a Stable.
 The rejected candidate's reasons and replay inputs remain in that record.
+Candidate evidence, commitment or generation-dependency failures reject the
+upgrade but do not block replaying the verified accepted combination. Accepted
+validation failures still reject rollback, as do identity or history violations.
 
 Successful execution of the review operation can return `decision: "rejected"`.
 Consumers must check that decision; process exit zero alone never admits a

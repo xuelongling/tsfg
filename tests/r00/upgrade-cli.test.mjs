@@ -204,6 +204,28 @@ test("rollback appends a replayable combination pointing to verified accepted id
   }
   const replay = await f.run();
   assert.deepEqual(replay.report.result, result.report.result);
+  const savedCandidate = structuredClone(f.plan.candidate);
+  for (const { label, mutate, reason } of [
+    { label: "language", mutate: s => { s.languageBaseline = "7.0.3"; }, reason: /language baseline/ },
+    { label: "engineering", mutate: s => { s.engineeringContract = "changed-contract"; }, reason: /engineering commitments/ },
+    { label: "generation", mutate: s => { s.generationDependencies = [{ projectId, path: "missing-generator.ts", sha256: sha("missing") }]; }, reason: /generation dependency/ },
+  ]) {
+    f.plan.candidate = structuredClone(savedCandidate);
+    mutate(f.plan.candidate);
+    const recovery = await f.run();
+    assert.equal(recovery.status, 0, recovery.text);
+    assert.equal(recovery.report.result.decision, "rollback-fixture", label);
+    assert.equal(recovery.report.result.candidateDecision, "rejected");
+    assert.match(recovery.report.result.reasons.join(" "), reason);
+    assert.deepEqual(recovery.report.result.rollback, result.report.result.rollback);
+    if (process.env.TSFG_MANIFEST_CI) {
+      const gate = spawnSync(process.execPath, [process.env.TSFG_MANIFEST_CI, "gate", "--repository", f.manifests,
+        "--base", f.plan.candidate.manifestRevision, "--head", revision, "--upgrade-review-report", path.join(recovery.folder, "report.json"),
+        "--out", path.join(f.root, `rollback-${label}-gate`)], { encoding: "utf8", env: process.env, windowsHide: true });
+      assert.equal(gate.status, 0, gate.stderr);
+    }
+  }
+  f.plan.candidate = savedCandidate;
   assert.equal(git(f.source, "rev-parse", "accepted-fixture"), f.acceptedOid);
   assert.equal(git(f.source, "rev-parse", "tsfg-candidate"), f.candidateOid);
   f.plan.accepted.evidence.reproducibility.status = "not-run";
