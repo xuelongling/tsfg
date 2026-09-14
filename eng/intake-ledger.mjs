@@ -14,6 +14,20 @@ export class IntakeLedgerError extends Error {
   }
 }
 
+// Shared source-inspection environment; never inherit arbitrary host variables.
+export function sourceGitEnvironment() {
+  /** @type {NodeJS.ProcessEnv} */
+  const environment = {};
+  for (const requested of ["PATH", "SystemRoot", "ComSpec", "PATHEXT", "HOME", "USERPROFILE",
+    "HOMEDRIVE", "HOMEPATH", "TEMP", "TMP", "TMPDIR", "LANG", "LC_ALL"]) {
+    const actual = Object.keys(process.env).find(name => name.toLowerCase() === requested.toLowerCase());
+    if (actual && process.env[actual] !== undefined) environment[requested] = process.env[actual];
+  }
+  return Object.assign(environment, { GIT_CONFIG_NOSYSTEM: "1",
+    GIT_CONFIG_GLOBAL: process.platform === "win32" ? "NUL" : "/dev/null",
+    GIT_OPTIONAL_LOCKS: "0", GIT_TERMINAL_PROMPT: "0", GIT_NO_REPLACE_OBJECTS: "1" });
+}
+
 const fail = (message, code = "intake-ledger") => { throw new IntakeLedgerError(code, message); };
 const hash = (bytes) => `sha256:${createHash("sha256").update(bytes).digest("hex")}`;
 const shape = (value, keys) => value && typeof value === "object" && !Array.isArray(value) &&
@@ -123,16 +137,7 @@ async function createLedger({ workspaceRoot, admission, declaration, consumption
   }
   if (actualConsumption.size !== expectedConsumption.size) fail("missing consumption entry", "intake-ledger-consumption");
 
-  /** @type {NodeJS.ProcessEnv} */
-  const gitEnvironment = {};
-  for (const requested of ["PATH", "SystemRoot", "ComSpec", "PATHEXT", "HOME", "USERPROFILE",
-    "HOMEDRIVE", "HOMEPATH", "TEMP", "TMP", "TMPDIR", "LANG", "LC_ALL"]) {
-    const actual = Object.keys(process.env).find(name => name.toLowerCase() === requested.toLowerCase());
-    if (actual && process.env[actual] !== undefined) gitEnvironment[requested] = process.env[actual];
-  }
-  Object.assign(gitEnvironment, { GIT_CONFIG_NOSYSTEM: "1",
-    GIT_CONFIG_GLOBAL: process.platform === "win32" ? "NUL" : "/dev/null",
-    GIT_OPTIONAL_LOCKS: "0", GIT_TERMINAL_PROMPT: "0", GIT_NO_REPLACE_OBJECTS: "1" });
+  const gitEnvironment = sourceGitEnvironment();
   const git = (root, args) => {
     const result = spawnSync(gitExecutable, ["--no-replace-objects", "-c", "core.longpaths=true", "-C", root, ...args], {
       env: gitEnvironment,

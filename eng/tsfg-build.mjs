@@ -7128,6 +7128,9 @@ async function consumePreparedGoSource(prepared, child) {
     exitCode: child.status, error: child.error?.message ?? null };
   let result;
   try {
+    if (preparation.astIntake) {
+      return await buildAstProbe({ prepared, child, serialize: canonicalize, publish: renameWithRetry });
+    }
     ({ worker: result } = await publishGoSourceExecutionResult(stageRoot, child, output, canonicalize, launch.executionMode));
     preparation.execution.worker = result;
   } catch (error) {
@@ -7212,9 +7215,6 @@ export async function prepareGoSourceAcceptance({ lockPath, cachePath, output, p
 async function executeGoSourceTarget(options, runtime) {
   const prepared = await prepareGoSourceExecution(options, runtime);
   const child = await executePreparedGoSource(prepared);
-  if (prepared.preparation.astIntake) {
-    return await buildAstProbe({ prepared, child, serialize: canonicalize, publish: renameWithRetry });
-  }
   return await consumePreparedGoSource(prepared, child);
 }
 

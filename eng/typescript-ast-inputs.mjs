@@ -4,17 +4,14 @@ import { createHash } from "node:crypto";
 import { readFile } from "node:fs/promises";
 import { spawnSync } from "node:child_process";
 import path from "node:path";
-import { IntakeLedgerError } from "./intake-ledger.mjs";
+import { IntakeLedgerError, sourceGitEnvironment } from "./intake-ledger.mjs";
 
 const hash = bytes => `sha256:${createHash("sha256").update(bytes).digest("hex")}`;
 const fail = message => { throw new IntakeLedgerError("ast-input-identity", message); };
 const compare = (a, b) => Buffer.from(a).compare(Buffer.from(b));
 
 export function astGit(executable, root, args) {
-  const env = { ...process.env };
-  for (const key of Object.keys(env)) if (key.toUpperCase().startsWith("GIT_")) delete env[key];
-  Object.assign(env, { GIT_CONFIG_NOSYSTEM: "1", GIT_CONFIG_GLOBAL: process.platform === "win32" ? "NUL" : "/dev/null",
-    GIT_NO_REPLACE_OBJECTS: "1", GIT_OPTIONAL_LOCKS: "0", GIT_TERMINAL_PROMPT: "0" });
+  const env = sourceGitEnvironment();
   const result = spawnSync(executable, ["--no-replace-objects", "-c", "core.longpaths=true", "-C", root, ...args], {
     env, maxBuffer: 128 * 1024 * 1024, timeout: 120000, windowsHide: true });
   if (result.error || result.status !== 0) fail(`Git ${args[0]} failed: ${result.error?.message ?? result.stderr}`);

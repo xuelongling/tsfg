@@ -9,6 +9,38 @@ import path from "node:path";
 import { TEST_GIT_EXECUTABLE } from "./test-tools.mjs";
 
 const entry = fileURLToPath(new URL("../../eng/tsfg-build.mjs", import.meta.url));
+for (const mode of ["dependency", "integrity", "git"]) test(`AST build preserves ${mode} failure boundary`, {
+  skip: process.env.TSFG_TEST_AST_ACCEPTANCE !== "1" ? "requires pinned preparation inputs; synthetic worker failure" : false,
+}, async (t) => {
+  const root = await mkdtemp(path.join(tmpdir(), "ast-failure-"));
+  t.after(() => rm(root, { recursive: true, force: true }));
+  const product = fileURLToPath(new URL("../../", import.meta.url));
+  const report = path.join(root, "report.json");
+  const fixture = new URL(`./ast-process-fixture.mjs?mode=${mode}`, import.meta.url).href;
+  const child = spawnSync(process.execPath, ["--import", fixture, entry, "build", "--dev",
+    "--source-target", "typescript-ast", "--workspace", product,
+    "--intake-plan", path.join(product, "eng/intake-declarations/typescript-ast.json"),
+    "--target", "windows-x86_64-msvc", "--profile", "debug", "--out", path.join(root, "out"), "--report", report],
+  { env: { ...process.env, AST_AMBIENT_CANARY: "must-not-reach-git", GIT_CONFIG_COUNT: "0", TSFG_GIT: TEST_GIT_EXECUTABLE,
+    TSFG_RUNTIME_LOCK: path.join(product, "eng/go-ast-toolchains.lock.json"),
+    TSFG_RUNTIME_CACHE: process.env.TSFG_TEST_GO_CACHE,
+    TSFG_RUNTIME_PLATFORM: "windows-x86_64-msvc" }, encoding: "utf8", timeout: 600000, windowsHide: true });
+  assert.equal(child.status, { dependency: 20, integrity: 11, git: 10 }[mode], child.stdout + child.stderr);
+  const result = JSON.parse(await readFile(report, "utf8"));
+  if (mode === "git") {
+    assert.match(result.error.issues[0].message, /fixture Git environment accepted/);
+    return;
+  }
+  if (mode === "integrity") {
+    assert.equal(result.error.issues[0].code, "go-input-integrity");
+    assert.match(result.error.issues[0].message, /Go dependency output changed/);
+    return;
+  }
+  assert.equal(result.error.issues[0].code, "native-build");
+  assert.equal(result.error.issues[0].preparation.execution.worker.phase, "dependency-resolution");
+  assert.equal(result.error.issues[0].preparation.execution.status, "failed");
+  assert.equal(result.error.issues[0].preparation.execution.exitCode, 20);
+});
 test("source-built AST requires an exact approved consumption plan", () => {
   const env = { ...process.env };
   for (const key of Object.keys(env)) if (key.startsWith("TSFG_RUNTIME_")) delete env[key];
