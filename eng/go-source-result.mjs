@@ -29,7 +29,7 @@ async function readResultFile(file, description) {
 }
 
 /** @param {{status: number | null, error?: Error, stderr?: string}} nativeResult */
-export async function readGoSourceExecutionResult(stageRoot, nativeResult) {
+export async function readGoSourceExecutionResult(stageRoot, nativeResult, expectedExecutionMode = undefined) {
   const workRoot = path.join(stageRoot, "work");
   let worker, receiptError;
   try {
@@ -49,6 +49,9 @@ export async function readGoSourceExecutionResult(stageRoot, nativeResult) {
   if (receiptError) throw new GoSourceResultError("native", `Go worker receipt unavailable: ${receiptError.message}`);
   if (!worker) throw new GoSourceResultError("native", "Go supervisor returned without a worker result");
   if (worker.status !== "success") throw new GoSourceResultError("worker", worker.message ?? "Go dependency resolution failed", worker);
+  if (expectedExecutionMode !== undefined && worker.executionMode !== expectedExecutionMode) {
+    throw new GoSourceResultError("integrity", "Go worker execution mode differs from the prepared launch", worker);
+  }
   const outputBytes = await readResultFile(path.join(workRoot, "go-list.jsonstream"), "Go dependency output");
   const actual = `sha256:${createHash("sha256").update(outputBytes).digest("hex")}`;
   if (actual !== worker.outputSha256) throw new GoSourceResultError("integrity", "Go dependency output changed", worker);
@@ -57,8 +60,8 @@ export async function readGoSourceExecutionResult(stageRoot, nativeResult) {
 
 // The caller supplies the control plane's canonical serializer. Nothing is
 // visible at the destination until both verified files have been written.
-export async function publishGoSourceExecutionResult(stageRoot, nativeResult, output, serialize) {
-  const result = await readGoSourceExecutionResult(stageRoot, nativeResult);
+export async function publishGoSourceExecutionResult(stageRoot, nativeResult, output, serialize, expectedExecutionMode = undefined) {
+  const result = await readGoSourceExecutionResult(stageRoot, nativeResult, expectedExecutionMode);
   await mkdir(path.dirname(output), { recursive: true });
   const publication = await mkdtemp(path.join(path.dirname(output), ".go-dependencies-"));
   await writeFile(path.join(publication, "dependencies.json"), serialize(result.worker));

@@ -37,6 +37,7 @@ import { setTimeout as delay } from "node:timers/promises";
 import { fileURLToPath } from "node:url";
 import { TextDecoder } from "node:util";
 import { validateSourceAdmission } from "./source-admission.mjs";
+import { createIntakeLedger, IntakeLedgerError } from "./intake-ledger.mjs";
 import { prefetchGoDependencies, readGoDependencyLock, verifyGoDependencies } from "./go-closure.mjs";
 
 class ConfigurationError extends Error {
@@ -1831,7 +1832,7 @@ async function prefetch(options) {
   };
 }
 
-async function verifyRuntimeClosure(lockPath, cachePath, platform) {
+async function verifyRuntimeClosure(lockPath, cachePath, platform, { nativeControls = true } = {}) {
   const lock = JSON.parse(await readFile(path.resolve(lockPath), "utf8"));
   if (lock.schemaVersion !== "1" || typeof lock.tools !== "object") {
     throw new Error("unsupported toolchain lock schema");
@@ -1865,7 +1866,7 @@ async function verifyRuntimeClosure(lockPath, cachePath, platform) {
     selections,
     lockPath: path.resolve(lockPath),
   };
-  if (platform === "windows-x86_64-msvc") {
+  if (platform === "windows-x86_64-msvc" && nativeControls) {
     await verifyWindowsSandboxControl(runtime);
     await verifyWindowsPublicationControl(runtime);
   }
@@ -6865,6 +6866,52 @@ function shouldEnterWindowsOfflineBoundary(arguments_, runtime) {
   }
 }
 
+async function executeIntakeLedgerTarget(options) {
+  if (!options.has("--dev") || !options.get("--workspace") ||
+      !options.get("--intake-plan") || !options.get("--intake-consumption")) {
+    throw new ConfigurationError("intake-ledger requires --dev, --workspace, --intake-plan and --intake-consumption");
+  }
+  for (const name of ["--out", "--report"]) {
+    if (options.has(name) && !await isGoDestinationOnE(options.get(name))) {
+      throw new ConfigurationError(`intake-ledger requires an absolute E: ${name} destination`);
+    }
+  }
+  const productRoot = path.resolve(options.get("--workspace"));
+  const inputs = {};
+  for (const [name, location] of Object.entries({
+    admission: path.join(productRoot, "eng", "source-admissions.json"),
+    declaration: path.resolve(options.get("--intake-plan")),
+    consumption: path.resolve(options.get("--intake-consumption")),
+  })) {
+    try {
+      const bytes = await readRegularFile(location, `intake ${name}`);
+      inputs[name] = { value: JSON.parse(new TextDecoder("utf-8", { fatal: true }).decode(bytes)), sha256: digest(bytes) };
+    } catch (error) {
+      throw new IntakeLedgerError("intake-ledger-input", `cannot read ${name}: ${error.message}`);
+    }
+  }
+  if (inputs.declaration.value?.evidenceKind === "real-source") {
+    const authority = gitOutput(repositoryRoot, ["--no-replace-objects", "show", "HEAD:eng/source-admissions.json"], "buffer");
+    if (digest(authority) !== inputs.admission.sha256) {
+      throw new IntakeLedgerError("intake-ledger-authority", "real-source admission must match the control repository's committed source approval");
+    }
+  }
+  const definition = JSON.parse(await readFile(path.join(repositoryRoot, "eng", "workspace-policy.json"), "utf8"));
+  const ledger = await createIntakeLedger({
+    workspaceRoot: path.dirname(productRoot), admission: inputs.admission.value,
+    declaration: inputs.declaration.value, consumption: inputs.consumption.value,
+    gitExecutable: process.env.TSFG_GIT, approvedLicenses: definition.approvedLicenseExpressions,
+  });
+  const result = { ...ledger, inputIdentity: Object.fromEntries(
+    Object.entries(inputs).map(([name, input]) => [name, input.sha256])),
+    operation: "declared-consumption-governance", executionMode: "local-development", isolation: "not-enforced" };
+  const output = path.resolve(options.get("--out"));
+  try { await lstat(output); throw new IntakeLedgerError("intake-ledger-output", "ledger output already exists; use a fresh destination"); }
+  catch (error) { if (error.code !== "ENOENT") throw error; }
+  await writeAtomicText(path.join(output, "intake-ledger.json"), `${canonicalize(result)}\n`);
+  return result;
+}
+
 async function prepareGoSourceTarget(options, runtime) {
   if (options.get("--target") !== "windows-x86_64-msvc" || runtime.platform !== "windows-x86_64-msvc") {
     throw new ConfigurationError("TypeScript dependency preparation requires the locked Windows target");
@@ -6954,12 +7001,13 @@ async function isGoDestinationOnE(destination) {
 }
 
 async function prepareGoSourceExecution(options, runtime) {
+  const localDevelopment = options.has("--dev") && !options.has("--go-restricted-acceptance");
   const preparation = await prepareGoSourceTarget(options, runtime);
   const output = path.resolve(options.get("--out"));
   if (await pathExists(output)) throw new ConfigurationError("Go dependency output already exists");
   const temporaryRoot = await realpath(tmpdir());
   if (!/^E:\\/i.test(temporaryRoot)) throw new ConfigurationError("Go execution requires an actual E: temporary directory");
-  const { executable: verifiedHelper } = await verifyWindowsSandboxControl(runtime);
+  const verifiedHelper = localDevelopment ? null : (await verifyWindowsSandboxControl(runtime)).executable;
   const stageRoot = await mkdtemp(path.join(temporaryRoot, "tsfg-go-source-"));
   const inputRoot = path.join(stageRoot, "inputs");
   const workRoot = path.join(stageRoot, "work");
@@ -6993,8 +7041,8 @@ async function prepareGoSourceExecution(options, runtime) {
   await copyGoExecutionInputs(path.join(runtime.closurePath, "node"), nodeRoot, inputs);
   await copyGoExecutionInputs(path.join(runtime.cachePath, "go-proxies", "sha256",
     preparation.dependencies.identity.slice(7)), proxyRoot, inputs);
-  const helper = path.join(controlRoot, "windows-sandbox-run.exe");
-  await copyGoExecutionInputs(verifiedHelper, helper, inputs);
+  const helper = localDevelopment ? null : path.join(controlRoot, "windows-sandbox-run.exe");
+  if (helper) await copyGoExecutionInputs(verifiedHelper, helper, inputs);
   const worker = path.join(controlRoot, "go-source-worker.mjs");
   await copyGoExecutionInputs(fileURLToPath(new URL("./go-source-worker.mjs", import.meta.url)), worker, inputs);
   await copyGoExecutionInputs(fileURLToPath(new URL("./go-work-access.mjs", import.meta.url)),
@@ -7007,7 +7055,7 @@ async function prepareGoSourceExecution(options, runtime) {
     const expected = runtime.selections.find((selection) => selection.id === id).artifact.unpackedTreeSha256;
     if (await hashTree(root) !== expected) throw new GoInputIntegrityError(`staged ${id} differs from locked tool tree`);
   }
-  if (await digestFile(helper) !== WINDOWS_SANDBOX_EXECUTABLE_DIGEST) {
+  if (helper && await digestFile(helper) !== WINDOWS_SANDBOX_EXECUTABLE_DIGEST) {
     throw new GoInputIntegrityError("staged native helper differs from the trusted executable");
   }
   try {
@@ -7025,7 +7073,8 @@ async function prepareGoSourceExecution(options, runtime) {
     GOPROXY: `file:///${proxyRoot.replaceAll("\\", "/")}`,
     GOROOT: goRoot, GOPATH: path.join(workRoot, "gopath"), GOCACHE: path.join(workRoot, "gocache"),
     GOMODCACHE: path.join(workRoot, "modules"), GOTELEMETRY: "off", PATH: "" };
-  const plan = { schemaVersion: "1", moduleRoot: sourceRoot, inputRoot, workRoot, helper,
+  const executionMode = localDevelopment ? "local-development" : "restricted";
+  const plan = { schemaVersion: "1", executionMode, moduleRoot: sourceRoot, inputRoot, workRoot, helper,
     undeclaredCanary, go, goVersion: runtime.lock.tools.go.version, arguments: preparation.arguments,
     modules: preparation.dependencies.modules, environment, inputs: inputs.sort((left, right) => left.path < right.path ? -1 : left.path > right.path ? 1 : 0) };
   if (options.has("--go-network-canary-port")) plan.networkCanaryPort = Number(options.get("--go-network-canary-port"));
@@ -7037,8 +7086,10 @@ async function prepareGoSourceExecution(options, runtime) {
     ...[sourceRoot, proxyRoot].flatMap((root) => ["--ro", root]),
     ...[goRoot, nodeRoot, controlRoot].flatMap((root) => ["--rx", root]),
     "--rw", workRoot, "--", node, worker, planPath];
-  const launch = { schemaVersion: "1", executable: helper, arguments: supervisorArguments,
-    environment, cwd: stageRoot, helperSha256: WINDOWS_SANDBOX_EXECUTABLE_DIGEST,
+  const launch = { schemaVersion: "1", executionMode,
+    executable: localDevelopment ? node : helper,
+    arguments: localDevelopment ? [worker, planPath] : supervisorArguments,
+    environment, cwd: stageRoot, helperSha256: localDevelopment ? null : WINDOWS_SANDBOX_EXECUTABLE_DIGEST,
     planSha256: await digestFile(planPath) };
   await writeFile(path.join(stageRoot, "launch.json"), canonicalize(launch), { flag: "wx" });
   return { preparation, output, stageRoot, launch };
@@ -7056,12 +7107,15 @@ async function executePreparedGoSource(prepared) {
 
 async function consumePreparedGoSource(prepared, child) {
   const { preparation, output, stageRoot, launch } = prepared;
-  preparation.execution = { status: "not-run", blocker: "native-supervisor-failed", stageRoot,
-    helperSha256: WINDOWS_SANDBOX_EXECUTABLE_DIGEST, supervisorCommand: [launch.executable, ...launch.arguments],
+  const localDevelopment = launch.executionMode === "local-development";
+  preparation.execution = { status: "not-run", blocker: "execution-failed", stageRoot,
+    mode: launch.executionMode, helperSha256: launch.helperSha256,
+    isolation: localDevelopment ? "not-enforced" : "unique-restricting-sid-lpac-and-wfp-package",
+    supervisorCommand: [launch.executable, ...launch.arguments],
     exitCode: child.status, error: child.error?.message ?? null };
   let result;
   try {
-    ({ worker: result } = await publishGoSourceExecutionResult(stageRoot, child, output, canonicalize));
+    ({ worker: result } = await publishGoSourceExecutionResult(stageRoot, child, output, canonicalize, launch.executionMode));
     preparation.execution.worker = result;
   } catch (error) {
     if (!(error instanceof GoSourceResultError)) throw error;
@@ -7076,8 +7130,9 @@ async function consumePreparedGoSource(prepared, child) {
     throw new BuildFailureError(error.message);
   }
   return { ...preparation, status: "dependencies-resolved", execution: {
-    status: "success", helperSha256: WINDOWS_SANDBOX_EXECUTABLE_DIGEST, stageRoot,
-    isolation: "unique-restricting-sid-lpac-and-wfp-package", exitCode: child.status, result }, output };
+    status: "success", mode: launch.executionMode, helperSha256: launch.helperSha256, stageRoot,
+    isolation: localDevelopment ? "not-enforced" : "unique-restricting-sid-lpac-and-wfp-package",
+    exitCode: child.status, result }, output };
 }
 
 async function validateGoSourceOptions(options, runtime) {
@@ -7103,10 +7158,17 @@ async function validateGoSourceOptions(options, runtime) {
 // Internal preparation seam for the fixed ticket-03 native operation. This
 // creates the same verified stage as the CLI; it neither launches the native
 // worker nor accepts an external launch plan as authority.
-export async function prepareGoSourceAcceptance({ lockPath, cachePath, output, profile, networkCanaryPort = undefined }) {
+export async function prepareGoSourceAcceptance({ lockPath, cachePath, output, profile,
+  networkCanaryPort = undefined, executionMode = "local-development" }) {
+  if (!["local-development", "restricted"].includes(executionMode)) {
+    throw new ConfigurationError("unsupported Go execution mode");
+  }
   if (networkCanaryPort !== undefined
       && (!Number.isInteger(networkCanaryPort) || networkCanaryPort < 1 || networkCanaryPort > 65535)) {
     throw new ConfigurationError("Go network canary requires a fixed loopback port");
+  }
+  if (executionMode === "local-development" && networkCanaryPort !== undefined) {
+    throw new ConfigurationError("network permission canary requires restricted execution mode");
   }
   for (const destination of [lockPath, cachePath, output]) {
     if (typeof destination !== "string" || !await isGoDestinationOnE(destination)) {
@@ -7118,8 +7180,10 @@ export async function prepareGoSourceAcceptance({ lockPath, cachePath, output, p
     ["--profile", profile], ["--out", output], ["--dev", ""],
   ]);
   validateSmokeOptions(options, "build");
+  if (executionMode === "restricted") options.set("--go-restricted-acceptance", "");
   if (networkCanaryPort !== undefined) options.set("--go-network-canary-port", String(networkCanaryPort));
-  const runtime = await verifyRuntimeClosure(lockPath, cachePath, "windows-x86_64-msvc");
+  const runtime = await verifyRuntimeClosure(lockPath, cachePath, "windows-x86_64-msvc",
+    { nativeControls: executionMode !== "local-development" });
   await validateGoSourceOptions(options, runtime);
   const prepared = await prepareGoSourceExecution(options, runtime);
   return bindGoSourceCompletion(prepared.launch, (child) => consumePreparedGoSource(prepared, child));
@@ -7217,6 +7281,8 @@ async function runCommandLine() {
         process.env.TSFG_RUNTIME_LOCK,
         process.env.TSFG_RUNTIME_CACHE,
         process.env.TSFG_RUNTIME_PLATFORM,
+        { nativeControls: !(command === "build" && arguments_.includes("--dev") &&
+            ["typescript-dependencies", "intake-ledger"].includes(arguments_[arguments_.indexOf("--source-target") + 1])) },
       );
     } catch (error) {
       runtimeIntegrityError = error;
@@ -7332,12 +7398,18 @@ async function runCommandLine() {
       const options = parseOptions(
         arguments_,
         new Set([
-          "--dev", "--target", "--profile", "--simd-dispatch", "--workspace", "--out", "--report", "--source-target",
+          "--dev", "--target", "--profile", "--simd-dispatch", "--workspace", "--out", "--report", "--source-target", "--intake-plan", "--intake-consumption",
         ]),
         new Set(["--dev"]),
       );
       validateSmokeOptions(options, "build");
-      if (options.has("--source-target")) {
+      if (options.get("--source-target") !== "intake-ledger" &&
+          (options.has("--intake-plan") || options.has("--intake-consumption"))) {
+        throw new ConfigurationError("intake options require --source-target intake-ledger");
+      }
+      if (options.get("--source-target") === "intake-ledger") {
+        process.exitCode = await succeed(command, await executeIntakeLedgerTarget(options), reportPath, "offline");
+      } else if (options.has("--source-target")) {
         await validateGoSourceOptions(options, runtimeClosure);
         process.exitCode = await succeed(command, await executeGoSourceTarget(options, runtimeClosure), reportPath, "offline");
       } else {
@@ -7364,7 +7436,7 @@ async function runCommandLine() {
       const isConfigurationError = error instanceof ConfigurationError;
       const isBuildFailure = error instanceof BuildFailureError;
       const isBuildPolicy = error instanceof BuildPolicyError;
-      const isWorkspaceMismatch = error instanceof WorkspaceMismatchError;
+      const isWorkspaceMismatch = error instanceof WorkspaceMismatchError || error instanceof IntakeLedgerError;
       const isOfflineBoundary = error instanceof OfflineBoundaryError;
       const isUndeclaredInput = error instanceof UndeclaredInputError;
       const isSandboxBoundary = error instanceof SandboxBoundaryError;

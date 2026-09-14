@@ -217,7 +217,7 @@ test("source dependency resolution requires an absolute E report destination", a
   assert.match(result.output, /absolute E: report/);
 });
 
-test("real Go source target resolves dependencies under Low LPAC isolation", {
+test("real Go source target resolves dependencies in development without a privileged supervisor", {
   skip: process.env.TSFG_TEST_GO_ACCEPTANCE !== "1"
     ? "real native acceptance not requested; set TSFG_TEST_GO_ACCEPTANCE=1" : false,
 }, async (t) => {
@@ -248,22 +248,21 @@ test("real Go source target resolves dependencies under Low LPAC isolation", {
     const execution = record.result.execution;
     assert.equal(execution.status, "success");
     assert.equal(execution.exitCode, 0);
-    assert.equal(execution.isolation, "unique-restricting-sid-lpac-and-wfp-package");
+    assert.equal(execution.mode, "local-development");
+    assert.equal(execution.isolation, "not-enforced");
+    assert.equal(execution.helperSha256, null);
     const worker = execution.result;
     assert.equal(worker.status, "success");
-    assert.equal(worker.token.integrity, "low");
-    for (const key of ["administratorDenyOnly", "inJob", "appContainer", "lpac"]) {
-      assert.equal(worker.token[key], true, key);
-    }
-    assert.equal(worker.token.capabilityCount, 0);
-    assert.deepEqual(worker.checks, { workWrite: "allowed", read: "denied", write: "denied" });
-    assert.deepEqual(worker.canaries, { "1.1.1.1": "blocked", "2606:4700:4700::1111": "blocked" });
+    assert.equal(worker.executionMode, "local-development");
+    assert.equal(worker.token, null);
+    assert.deepEqual(worker.checks, { workWrite: "allowed", read: "not-enforced", write: "not-enforced" });
+    assert.deepEqual(worker.canaries, {});
     for (const name of ["parser", "checker"]) assert.ok(worker.packages.some(
       (item) => item.importPath === `github.com/microsoft/typescript-go/internal/${name}`));
     assert.equal(hash(await readFile(path.join(f.root, "out", "go-list.jsonstream"))), worker.outputSha256);
   });
 });
-test("source target rejects a staged helper changed after cache verification", {
+test("source target rejects staged Go changed after cache verification", {
   skip: !process.env.TSFG_TEST_GO_CACHE || !process.env.TSFG_TEST_GO_LOCK,
 }, async (t) => {
   const f = await fixture(t);
@@ -283,7 +282,7 @@ test("source target rejects a staged helper changed after cache verification", {
   // The public Build Report must attribute this to integrity, before execution.
   while (!finished && !changed) {
     for (const name of (await readdir(stageParent)).filter((name) => name.startsWith("tsfg-go-source-"))) {
-      const helper = path.join(stageParent, name, "inputs", "control", "windows-sandbox-run.exe");
+      const helper = path.join(stageParent, name, "inputs", "go", "bin", "go.exe");
       try {
         await readFile(helper);
         await writeFile(helper, "corrupt staged executable");
@@ -297,5 +296,5 @@ test("source target rejects a staged helper changed after cache verification", {
   assert.equal(result.status, 11, result.output);
   const record = JSON.parse(await readFile(report, "utf8"));
   assert.equal(record.error.category, "lock/integrity");
-  assert.match(record.error.issues[0].message, /staged native helper/);
+  assert.match(record.error.issues[0].message, /staged go/);
 });

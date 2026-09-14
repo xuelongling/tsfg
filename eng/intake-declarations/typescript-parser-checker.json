@@ -1,0 +1,1479 @@
+{
+  "schemaVersion": "1",
+  "evidenceKind": "real-source",
+  "sources": [
+    {
+      "projectId": "TypeScript.git",
+      "forkOid": "2c3d2d793a208fd15e6e20fd5dfdd687ce2d7223",
+      "baseOid": "1e4744d68260a7cb91b62b12edc3f6a2187faaf1",
+      "entries": [
+        {
+          "path": "tsc/go.mod",
+          "role": "build-only",
+          "consumer": "typescript-parser-checker",
+          "affectsPayload": true,
+          "localModification": null,
+          "licenseException": null
+        },
+        {
+          "path": "tsc/go.sum",
+          "role": "build-only",
+          "consumer": "typescript-parser-checker",
+          "affectsPayload": true,
+          "localModification": null,
+          "licenseException": null
+        },
+        {
+          "path": "tsc/internal/ast/ast_generated.go",
+          "role": "compiler-payload",
+          "consumer": "typescript-parser-checker",
+          "affectsPayload": true,
+          "localModification": null,
+          "licenseException": null
+        },
+        {
+          "path": "tsc/internal/ast/ast.go",
+          "role": "compiler-payload",
+          "consumer": "typescript-parser-checker",
+          "affectsPayload": true,
+          "localModification": null,
+          "licenseException": null
+        },
+        {
+          "path": "tsc/internal/ast/checkflags.go",
+          "role": "compiler-payload",
+          "consumer": "typescript-parser-checker",
+          "affectsPayload": true,
+          "localModification": null,
+          "licenseException": null
+        },
+        {
+          "path": "tsc/internal/ast/deepclone.go",
+          "role": "compiler-payload",
+          "consumer": "typescript-parser-checker",
+          "affectsPayload": true,
+          "localModification": null,
+          "licenseException": null
+        },
+        {
+          "path": "tsc/internal/ast/diagnostic.go",
+          "role": "compiler-payload",
+          "consumer": "typescript-parser-checker",
+          "affectsPayload": true,
+          "localModification": null,
+          "licenseException": null
+        },
+        {
+          "path": "tsc/internal/ast/flow.go",
+          "role": "compiler-payload",
+          "consumer": "typescript-parser-checker",
+          "affectsPayload": true,
+          "localModification": null,
+          "licenseException": null
+        },
+        {
+          "path": "tsc/internal/ast/functionflags.go",
+          "role": "compiler-payload",
+          "consumer": "typescript-parser-checker",
+          "affectsPayload": true,
+          "localModification": null,
+          "licenseException": null
+        },
+        {
+          "path": "tsc/internal/ast/ids.go",
+          "role": "compiler-payload",
+          "consumer": "typescript-parser-checker",
+          "affectsPayload": true,
+          "localModification": null,
+          "licenseException": null
+        },
+        {
+          "path": "tsc/internal/ast/kind_generated.go",
+          "role": "compiler-payload",
+          "consumer": "typescript-parser-checker",
+          "affectsPayload": true,
+          "localModification": null,
+          "licenseException": null
+        },
+        {
+          "path": "tsc/internal/ast/kind_stringer_generated.go",
+          "role": "compiler-payload",
+          "consumer": "typescript-parser-checker",
+          "affectsPayload": true,
+          "localModification": null,
+          "licenseException": null
+        },
+        {
+          "path": "tsc/internal/ast/modifierflags.go",
+          "role": "compiler-payload",
+          "consumer": "typescript-parser-checker",
+          "affectsPayload": true,
+          "localModification": null,
+          "licenseException": null
+        },
+        {
+          "path": "tsc/internal/ast/nodeflags.go",
+          "role": "compiler-payload",
+          "consumer": "typescript-parser-checker",
+          "affectsPayload": true,
+          "localModification": null,
+          "licenseException": null
+        },
+        {
+          "path": "tsc/internal/ast/parseoptions.go",
+          "role": "compiler-payload",
+          "consumer": "typescript-parser-checker",
+          "affectsPayload": true,
+          "localModification": null,
+          "licenseException": null
+        },
+        {
+          "path": "tsc/internal/ast/positionmap.go",
+          "role": "compiler-payload",
+          "consumer": "typescript-parser-checker",
+          "affectsPayload": true,
+          "localModification": null,
+          "licenseException": null
+        },
+        {
+          "path": "tsc/internal/ast/precedence.go",
+          "role": "compiler-payload",
+          "consumer": "typescript-parser-checker",
+          "affectsPayload": true,
+          "localModification": null,
+          "licenseException": null
+        },
+        {
+          "path": "tsc/internal/ast/subtreefacts.go",
+          "role": "compiler-payload",
+          "consumer": "typescript-parser-checker",
+          "affectsPayload": true,
+          "localModification": null,
+          "licenseException": null
+        },
+        {
+          "path": "tsc/internal/ast/symbol.go",
+          "role": "compiler-payload",
+          "consumer": "typescript-parser-checker",
+          "affectsPayload": true,
+          "localModification": null,
+          "licenseException": null
+        },
+        {
+          "path": "tsc/internal/ast/symbolflags.go",
+          "role": "compiler-payload",
+          "consumer": "typescript-parser-checker",
+          "affectsPayload": true,
+          "localModification": null,
+          "licenseException": null
+        },
+        {
+          "path": "tsc/internal/ast/tokenflags.go",
+          "role": "compiler-payload",
+          "consumer": "typescript-parser-checker",
+          "affectsPayload": true,
+          "localModification": null,
+          "licenseException": null
+        },
+        {
+          "path": "tsc/internal/ast/utilities.go",
+          "role": "compiler-payload",
+          "consumer": "typescript-parser-checker",
+          "affectsPayload": true,
+          "localModification": null,
+          "licenseException": null
+        },
+        {
+          "path": "tsc/internal/ast/visitor.go",
+          "role": "compiler-payload",
+          "consumer": "typescript-parser-checker",
+          "affectsPayload": true,
+          "localModification": null,
+          "licenseException": null
+        },
+        {
+          "path": "tsc/internal/astnav/tokens.go",
+          "role": "compiler-payload",
+          "consumer": "typescript-parser-checker",
+          "affectsPayload": true,
+          "localModification": null,
+          "licenseException": null
+        },
+        {
+          "path": "tsc/internal/binder/binder.go",
+          "role": "compiler-payload",
+          "consumer": "typescript-parser-checker",
+          "affectsPayload": true,
+          "localModification": null,
+          "licenseException": null
+        },
+        {
+          "path": "tsc/internal/binder/nameresolver.go",
+          "role": "compiler-payload",
+          "consumer": "typescript-parser-checker",
+          "affectsPayload": true,
+          "localModification": null,
+          "licenseException": null
+        },
+        {
+          "path": "tsc/internal/binder/referenceresolver.go",
+          "role": "compiler-payload",
+          "consumer": "typescript-parser-checker",
+          "affectsPayload": true,
+          "localModification": null,
+          "licenseException": null
+        },
+        {
+          "path": "tsc/internal/checker/checker.go",
+          "role": "compiler-payload",
+          "consumer": "typescript-parser-checker",
+          "affectsPayload": true,
+          "localModification": null,
+          "licenseException": null
+        },
+        {
+          "path": "tsc/internal/checker/emitresolver.go",
+          "role": "compiler-payload",
+          "consumer": "typescript-parser-checker",
+          "affectsPayload": true,
+          "localModification": null,
+          "licenseException": null
+        },
+        {
+          "path": "tsc/internal/checker/exports.go",
+          "role": "compiler-payload",
+          "consumer": "typescript-parser-checker",
+          "affectsPayload": true,
+          "localModification": null,
+          "licenseException": null
+        },
+        {
+          "path": "tsc/internal/checker/flow.go",
+          "role": "compiler-payload",
+          "consumer": "typescript-parser-checker",
+          "affectsPayload": true,
+          "localModification": null,
+          "licenseException": null
+        },
+        {
+          "path": "tsc/internal/checker/grammarchecks.go",
+          "role": "compiler-payload",
+          "consumer": "typescript-parser-checker",
+          "affectsPayload": true,
+          "localModification": null,
+          "licenseException": null
+        },
+        {
+          "path": "tsc/internal/checker/inference.go",
+          "role": "compiler-payload",
+          "consumer": "typescript-parser-checker",
+          "affectsPayload": true,
+          "localModification": null,
+          "licenseException": null
+        },
+        {
+          "path": "tsc/internal/checker/jsdoc.go",
+          "role": "compiler-payload",
+          "consumer": "typescript-parser-checker",
+          "affectsPayload": true,
+          "localModification": null,
+          "licenseException": null
+        },
+        {
+          "path": "tsc/internal/checker/jsx.go",
+          "role": "compiler-payload",
+          "consumer": "typescript-parser-checker",
+          "affectsPayload": true,
+          "localModification": null,
+          "licenseException": null
+        },
+        {
+          "path": "tsc/internal/checker/mapper.go",
+          "role": "compiler-payload",
+          "consumer": "typescript-parser-checker",
+          "affectsPayload": true,
+          "localModification": null,
+          "licenseException": null
+        },
+        {
+          "path": "tsc/internal/checker/nodebuilder_hover.go",
+          "role": "compiler-payload",
+          "consumer": "typescript-parser-checker",
+          "affectsPayload": true,
+          "localModification": null,
+          "licenseException": null
+        },
+        {
+          "path": "tsc/internal/checker/nodebuilder.go",
+          "role": "compiler-payload",
+          "consumer": "typescript-parser-checker",
+          "affectsPayload": true,
+          "localModification": null,
+          "licenseException": null
+        },
+        {
+          "path": "tsc/internal/checker/nodebuilderimpl.go",
+          "role": "compiler-payload",
+          "consumer": "typescript-parser-checker",
+          "affectsPayload": true,
+          "localModification": null,
+          "licenseException": null
+        },
+        {
+          "path": "tsc/internal/checker/nodebuilderscopes.go",
+          "role": "compiler-payload",
+          "consumer": "typescript-parser-checker",
+          "affectsPayload": true,
+          "localModification": null,
+          "licenseException": null
+        },
+        {
+          "path": "tsc/internal/checker/nodecopy.go",
+          "role": "compiler-payload",
+          "consumer": "typescript-parser-checker",
+          "affectsPayload": true,
+          "localModification": null,
+          "licenseException": null
+        },
+        {
+          "path": "tsc/internal/checker/printer.go",
+          "role": "compiler-payload",
+          "consumer": "typescript-parser-checker",
+          "affectsPayload": true,
+          "localModification": null,
+          "licenseException": null
+        },
+        {
+          "path": "tsc/internal/checker/pseudotypenodebuilder.go",
+          "role": "compiler-payload",
+          "consumer": "typescript-parser-checker",
+          "affectsPayload": true,
+          "localModification": null,
+          "licenseException": null
+        },
+        {
+          "path": "tsc/internal/checker/relater.go",
+          "role": "compiler-payload",
+          "consumer": "typescript-parser-checker",
+          "affectsPayload": true,
+          "localModification": null,
+          "licenseException": null
+        },
+        {
+          "path": "tsc/internal/checker/services.go",
+          "role": "compiler-payload",
+          "consumer": "typescript-parser-checker",
+          "affectsPayload": true,
+          "localModification": null,
+          "licenseException": null
+        },
+        {
+          "path": "tsc/internal/checker/stringer_generated.go",
+          "role": "compiler-payload",
+          "consumer": "typescript-parser-checker",
+          "affectsPayload": true,
+          "localModification": null,
+          "licenseException": null
+        },
+        {
+          "path": "tsc/internal/checker/symbolaccessibility.go",
+          "role": "compiler-payload",
+          "consumer": "typescript-parser-checker",
+          "affectsPayload": true,
+          "localModification": null,
+          "licenseException": null
+        },
+        {
+          "path": "tsc/internal/checker/symboltracker.go",
+          "role": "compiler-payload",
+          "consumer": "typescript-parser-checker",
+          "affectsPayload": true,
+          "localModification": null,
+          "licenseException": null
+        },
+        {
+          "path": "tsc/internal/checker/tracer.go",
+          "role": "compiler-payload",
+          "consumer": "typescript-parser-checker",
+          "affectsPayload": true,
+          "localModification": null,
+          "licenseException": null
+        },
+        {
+          "path": "tsc/internal/checker/types.go",
+          "role": "compiler-payload",
+          "consumer": "typescript-parser-checker",
+          "affectsPayload": true,
+          "localModification": null,
+          "licenseException": null
+        },
+        {
+          "path": "tsc/internal/checker/utilities.go",
+          "role": "compiler-payload",
+          "consumer": "typescript-parser-checker",
+          "affectsPayload": true,
+          "localModification": null,
+          "licenseException": null
+        },
+        {
+          "path": "tsc/internal/collections/cow.go",
+          "role": "compiler-payload",
+          "consumer": "typescript-parser-checker",
+          "affectsPayload": true,
+          "localModification": null,
+          "licenseException": null
+        },
+        {
+          "path": "tsc/internal/collections/multimap.go",
+          "role": "compiler-payload",
+          "consumer": "typescript-parser-checker",
+          "affectsPayload": true,
+          "localModification": null,
+          "licenseException": null
+        },
+        {
+          "path": "tsc/internal/collections/ordered_map.go",
+          "role": "compiler-payload",
+          "consumer": "typescript-parser-checker",
+          "affectsPayload": true,
+          "localModification": null,
+          "licenseException": null
+        },
+        {
+          "path": "tsc/internal/collections/ordered_set.go",
+          "role": "compiler-payload",
+          "consumer": "typescript-parser-checker",
+          "affectsPayload": true,
+          "localModification": null,
+          "licenseException": null
+        },
+        {
+          "path": "tsc/internal/collections/set.go",
+          "role": "compiler-payload",
+          "consumer": "typescript-parser-checker",
+          "affectsPayload": true,
+          "localModification": null,
+          "licenseException": null
+        },
+        {
+          "path": "tsc/internal/collections/syncmap.go",
+          "role": "compiler-payload",
+          "consumer": "typescript-parser-checker",
+          "affectsPayload": true,
+          "localModification": null,
+          "licenseException": null
+        },
+        {
+          "path": "tsc/internal/collections/syncset.go",
+          "role": "compiler-payload",
+          "consumer": "typescript-parser-checker",
+          "affectsPayload": true,
+          "localModification": null,
+          "licenseException": null
+        },
+        {
+          "path": "tsc/internal/core/arena.go",
+          "role": "compiler-payload",
+          "consumer": "typescript-parser-checker",
+          "affectsPayload": true,
+          "localModification": null,
+          "licenseException": null
+        },
+        {
+          "path": "tsc/internal/core/bfs.go",
+          "role": "compiler-payload",
+          "consumer": "typescript-parser-checker",
+          "affectsPayload": true,
+          "localModification": null,
+          "licenseException": null
+        },
+        {
+          "path": "tsc/internal/core/binarysearch.go",
+          "role": "compiler-payload",
+          "consumer": "typescript-parser-checker",
+          "affectsPayload": true,
+          "localModification": null,
+          "licenseException": null
+        },
+        {
+          "path": "tsc/internal/core/buildoptions.go",
+          "role": "compiler-payload",
+          "consumer": "typescript-parser-checker",
+          "affectsPayload": true,
+          "localModification": null,
+          "licenseException": null
+        },
+        {
+          "path": "tsc/internal/core/compileroptions.go",
+          "role": "compiler-payload",
+          "consumer": "typescript-parser-checker",
+          "affectsPayload": true,
+          "localModification": null,
+          "licenseException": null
+        },
+        {
+          "path": "tsc/internal/core/context.go",
+          "role": "compiler-payload",
+          "consumer": "typescript-parser-checker",
+          "affectsPayload": true,
+          "localModification": null,
+          "licenseException": null
+        },
+        {
+          "path": "tsc/internal/core/core.go",
+          "role": "compiler-payload",
+          "consumer": "typescript-parser-checker",
+          "affectsPayload": true,
+          "localModification": null,
+          "licenseException": null
+        },
+        {
+          "path": "tsc/internal/core/languagevariant_stringer_generated.go",
+          "role": "compiler-payload",
+          "consumer": "typescript-parser-checker",
+          "affectsPayload": true,
+          "localModification": null,
+          "licenseException": null
+        },
+        {
+          "path": "tsc/internal/core/languagevariant.go",
+          "role": "compiler-payload",
+          "consumer": "typescript-parser-checker",
+          "affectsPayload": true,
+          "localModification": null,
+          "licenseException": null
+        },
+        {
+          "path": "tsc/internal/core/linkstore.go",
+          "role": "compiler-payload",
+          "consumer": "typescript-parser-checker",
+          "affectsPayload": true,
+          "localModification": null,
+          "licenseException": null
+        },
+        {
+          "path": "tsc/internal/core/modulekind_stringer_generated.go",
+          "role": "compiler-payload",
+          "consumer": "typescript-parser-checker",
+          "affectsPayload": true,
+          "localModification": null,
+          "licenseException": null
+        },
+        {
+          "path": "tsc/internal/core/nodemodules.go",
+          "role": "compiler-payload",
+          "consumer": "typescript-parser-checker",
+          "affectsPayload": true,
+          "localModification": null,
+          "licenseException": null
+        },
+        {
+          "path": "tsc/internal/core/parsedoptions.go",
+          "role": "compiler-payload",
+          "consumer": "typescript-parser-checker",
+          "affectsPayload": true,
+          "localModification": null,
+          "licenseException": null
+        },
+        {
+          "path": "tsc/internal/core/pattern.go",
+          "role": "compiler-payload",
+          "consumer": "typescript-parser-checker",
+          "affectsPayload": true,
+          "localModification": null,
+          "licenseException": null
+        },
+        {
+          "path": "tsc/internal/core/projectreference.go",
+          "role": "compiler-payload",
+          "consumer": "typescript-parser-checker",
+          "affectsPayload": true,
+          "localModification": null,
+          "licenseException": null
+        },
+        {
+          "path": "tsc/internal/core/scriptkind_stringer_generated.go",
+          "role": "compiler-payload",
+          "consumer": "typescript-parser-checker",
+          "affectsPayload": true,
+          "localModification": null,
+          "licenseException": null
+        },
+        {
+          "path": "tsc/internal/core/scriptkind.go",
+          "role": "compiler-payload",
+          "consumer": "typescript-parser-checker",
+          "affectsPayload": true,
+          "localModification": null,
+          "licenseException": null
+        },
+        {
+          "path": "tsc/internal/core/scripttarget_stringer_generated.go",
+          "role": "compiler-payload",
+          "consumer": "typescript-parser-checker",
+          "affectsPayload": true,
+          "localModification": null,
+          "licenseException": null
+        },
+        {
+          "path": "tsc/internal/core/semaphore.go",
+          "role": "compiler-payload",
+          "consumer": "typescript-parser-checker",
+          "affectsPayload": true,
+          "localModification": null,
+          "licenseException": null
+        },
+        {
+          "path": "tsc/internal/core/stack.go",
+          "role": "compiler-payload",
+          "consumer": "typescript-parser-checker",
+          "affectsPayload": true,
+          "localModification": null,
+          "licenseException": null
+        },
+        {
+          "path": "tsc/internal/core/text.go",
+          "role": "compiler-payload",
+          "consumer": "typescript-parser-checker",
+          "affectsPayload": true,
+          "localModification": null,
+          "licenseException": null
+        },
+        {
+          "path": "tsc/internal/core/textchange.go",
+          "role": "compiler-payload",
+          "consumer": "typescript-parser-checker",
+          "affectsPayload": true,
+          "localModification": null,
+          "licenseException": null
+        },
+        {
+          "path": "tsc/internal/core/tristate_stringer_generated.go",
+          "role": "compiler-payload",
+          "consumer": "typescript-parser-checker",
+          "affectsPayload": true,
+          "localModification": null,
+          "licenseException": null
+        },
+        {
+          "path": "tsc/internal/core/tristate.go",
+          "role": "compiler-payload",
+          "consumer": "typescript-parser-checker",
+          "affectsPayload": true,
+          "localModification": null,
+          "licenseException": null
+        },
+        {
+          "path": "tsc/internal/core/typeacquisition.go",
+          "role": "compiler-payload",
+          "consumer": "typescript-parser-checker",
+          "affectsPayload": true,
+          "localModification": null,
+          "licenseException": null
+        },
+        {
+          "path": "tsc/internal/core/version.go",
+          "role": "compiler-payload",
+          "consumer": "typescript-parser-checker",
+          "affectsPayload": true,
+          "localModification": null,
+          "licenseException": null
+        },
+        {
+          "path": "tsc/internal/core/watchoptions.go",
+          "role": "compiler-payload",
+          "consumer": "typescript-parser-checker",
+          "affectsPayload": true,
+          "localModification": null,
+          "licenseException": null
+        },
+        {
+          "path": "tsc/internal/core/workgroup.go",
+          "role": "compiler-payload",
+          "consumer": "typescript-parser-checker",
+          "affectsPayload": true,
+          "localModification": null,
+          "licenseException": null
+        },
+        {
+          "path": "tsc/internal/debug/debug.go",
+          "role": "compiler-payload",
+          "consumer": "typescript-parser-checker",
+          "affectsPayload": true,
+          "localModification": null,
+          "licenseException": null
+        },
+        {
+          "path": "tsc/internal/diagnostics/diagnostics_generated.go",
+          "role": "compiler-payload",
+          "consumer": "typescript-parser-checker",
+          "affectsPayload": true,
+          "localModification": null,
+          "licenseException": null
+        },
+        {
+          "path": "tsc/internal/diagnostics/diagnostics.go",
+          "role": "compiler-payload",
+          "consumer": "typescript-parser-checker",
+          "affectsPayload": true,
+          "localModification": null,
+          "licenseException": null
+        },
+        {
+          "path": "tsc/internal/diagnostics/loc_generated.go",
+          "role": "compiler-payload",
+          "consumer": "typescript-parser-checker",
+          "affectsPayload": true,
+          "localModification": null,
+          "licenseException": null
+        },
+        {
+          "path": "tsc/internal/diagnostics/stringer_generated.go",
+          "role": "compiler-payload",
+          "consumer": "typescript-parser-checker",
+          "affectsPayload": true,
+          "localModification": null,
+          "licenseException": null
+        },
+        {
+          "path": "tsc/internal/evaluator/evaluator.go",
+          "role": "compiler-payload",
+          "consumer": "typescript-parser-checker",
+          "affectsPayload": true,
+          "localModification": null,
+          "licenseException": null
+        },
+        {
+          "path": "tsc/internal/glob/glob.go",
+          "role": "compiler-payload",
+          "consumer": "typescript-parser-checker",
+          "affectsPayload": true,
+          "localModification": null,
+          "licenseException": null
+        },
+        {
+          "path": "tsc/internal/jsnum/jsnum.go",
+          "role": "compiler-payload",
+          "consumer": "typescript-parser-checker",
+          "affectsPayload": true,
+          "localModification": null,
+          "licenseException": null
+        },
+        {
+          "path": "tsc/internal/jsnum/pseudobigint.go",
+          "role": "compiler-payload",
+          "consumer": "typescript-parser-checker",
+          "affectsPayload": true,
+          "localModification": null,
+          "licenseException": null
+        },
+        {
+          "path": "tsc/internal/jsnum/string.go",
+          "role": "compiler-payload",
+          "consumer": "typescript-parser-checker",
+          "affectsPayload": true,
+          "localModification": null,
+          "licenseException": null
+        },
+        {
+          "path": "tsc/internal/json/json.go",
+          "role": "compiler-payload",
+          "consumer": "typescript-parser-checker",
+          "affectsPayload": true,
+          "localModification": null,
+          "licenseException": null
+        },
+        {
+          "path": "tsc/internal/locale/locale.go",
+          "role": "compiler-payload",
+          "consumer": "typescript-parser-checker",
+          "affectsPayload": true,
+          "localModification": null,
+          "licenseException": null
+        },
+        {
+          "path": "tsc/internal/module/cache.go",
+          "role": "compiler-payload",
+          "consumer": "typescript-parser-checker",
+          "affectsPayload": true,
+          "localModification": null,
+          "licenseException": null
+        },
+        {
+          "path": "tsc/internal/module/resolver.go",
+          "role": "compiler-payload",
+          "consumer": "typescript-parser-checker",
+          "affectsPayload": true,
+          "localModification": null,
+          "licenseException": null
+        },
+        {
+          "path": "tsc/internal/module/types.go",
+          "role": "compiler-payload",
+          "consumer": "typescript-parser-checker",
+          "affectsPayload": true,
+          "localModification": null,
+          "licenseException": null
+        },
+        {
+          "path": "tsc/internal/module/util.go",
+          "role": "compiler-payload",
+          "consumer": "typescript-parser-checker",
+          "affectsPayload": true,
+          "localModification": null,
+          "licenseException": null
+        },
+        {
+          "path": "tsc/internal/modulespecifiers/compare.go",
+          "role": "compiler-payload",
+          "consumer": "typescript-parser-checker",
+          "affectsPayload": true,
+          "localModification": null,
+          "licenseException": null
+        },
+        {
+          "path": "tsc/internal/modulespecifiers/preferences.go",
+          "role": "compiler-payload",
+          "consumer": "typescript-parser-checker",
+          "affectsPayload": true,
+          "localModification": null,
+          "licenseException": null
+        },
+        {
+          "path": "tsc/internal/modulespecifiers/specifiers.go",
+          "role": "compiler-payload",
+          "consumer": "typescript-parser-checker",
+          "affectsPayload": true,
+          "localModification": null,
+          "licenseException": null
+        },
+        {
+          "path": "tsc/internal/modulespecifiers/types.go",
+          "role": "compiler-payload",
+          "consumer": "typescript-parser-checker",
+          "affectsPayload": true,
+          "localModification": null,
+          "licenseException": null
+        },
+        {
+          "path": "tsc/internal/modulespecifiers/util.go",
+          "role": "compiler-payload",
+          "consumer": "typescript-parser-checker",
+          "affectsPayload": true,
+          "localModification": null,
+          "licenseException": null
+        },
+        {
+          "path": "tsc/internal/nodebuilder/types.go",
+          "role": "compiler-payload",
+          "consumer": "typescript-parser-checker",
+          "affectsPayload": true,
+          "localModification": null,
+          "licenseException": null
+        },
+        {
+          "path": "tsc/internal/outputpaths/commonsourcedirectory.go",
+          "role": "compiler-payload",
+          "consumer": "typescript-parser-checker",
+          "affectsPayload": true,
+          "localModification": null,
+          "licenseException": null
+        },
+        {
+          "path": "tsc/internal/outputpaths/outputpaths.go",
+          "role": "compiler-payload",
+          "consumer": "typescript-parser-checker",
+          "affectsPayload": true,
+          "localModification": null,
+          "licenseException": null
+        },
+        {
+          "path": "tsc/internal/packagejson/cache.go",
+          "role": "compiler-payload",
+          "consumer": "typescript-parser-checker",
+          "affectsPayload": true,
+          "localModification": null,
+          "licenseException": null
+        },
+        {
+          "path": "tsc/internal/packagejson/expected.go",
+          "role": "compiler-payload",
+          "consumer": "typescript-parser-checker",
+          "affectsPayload": true,
+          "localModification": null,
+          "licenseException": null
+        },
+        {
+          "path": "tsc/internal/packagejson/exportsorimports.go",
+          "role": "compiler-payload",
+          "consumer": "typescript-parser-checker",
+          "affectsPayload": true,
+          "localModification": null,
+          "licenseException": null
+        },
+        {
+          "path": "tsc/internal/packagejson/jsonvalue.go",
+          "role": "compiler-payload",
+          "consumer": "typescript-parser-checker",
+          "affectsPayload": true,
+          "localModification": null,
+          "licenseException": null
+        },
+        {
+          "path": "tsc/internal/packagejson/packagejson.go",
+          "role": "compiler-payload",
+          "consumer": "typescript-parser-checker",
+          "affectsPayload": true,
+          "localModification": null,
+          "licenseException": null
+        },
+        {
+          "path": "tsc/internal/packagejson/validated.go",
+          "role": "compiler-payload",
+          "consumer": "typescript-parser-checker",
+          "affectsPayload": true,
+          "localModification": null,
+          "licenseException": null
+        },
+        {
+          "path": "tsc/internal/parser/jsdoc.go",
+          "role": "compiler-payload",
+          "consumer": "typescript-parser-checker",
+          "affectsPayload": true,
+          "localModification": null,
+          "licenseException": null
+        },
+        {
+          "path": "tsc/internal/parser/parser.go",
+          "role": "compiler-payload",
+          "consumer": "typescript-parser-checker",
+          "affectsPayload": true,
+          "localModification": null,
+          "licenseException": null
+        },
+        {
+          "path": "tsc/internal/parser/references.go",
+          "role": "compiler-payload",
+          "consumer": "typescript-parser-checker",
+          "affectsPayload": true,
+          "localModification": null,
+          "licenseException": null
+        },
+        {
+          "path": "tsc/internal/parser/reparser.go",
+          "role": "compiler-payload",
+          "consumer": "typescript-parser-checker",
+          "affectsPayload": true,
+          "localModification": null,
+          "licenseException": null
+        },
+        {
+          "path": "tsc/internal/parser/types.go",
+          "role": "compiler-payload",
+          "consumer": "typescript-parser-checker",
+          "affectsPayload": true,
+          "localModification": null,
+          "licenseException": null
+        },
+        {
+          "path": "tsc/internal/parser/utilities.go",
+          "role": "compiler-payload",
+          "consumer": "typescript-parser-checker",
+          "affectsPayload": true,
+          "localModification": null,
+          "licenseException": null
+        },
+        {
+          "path": "tsc/internal/printer/changetrackerwriter.go",
+          "role": "compiler-payload",
+          "consumer": "typescript-parser-checker",
+          "affectsPayload": true,
+          "localModification": null,
+          "licenseException": null
+        },
+        {
+          "path": "tsc/internal/printer/emitcontext.go",
+          "role": "compiler-payload",
+          "consumer": "typescript-parser-checker",
+          "affectsPayload": true,
+          "localModification": null,
+          "licenseException": null
+        },
+        {
+          "path": "tsc/internal/printer/emitflags.go",
+          "role": "compiler-payload",
+          "consumer": "typescript-parser-checker",
+          "affectsPayload": true,
+          "localModification": null,
+          "licenseException": null
+        },
+        {
+          "path": "tsc/internal/printer/emithost.go",
+          "role": "compiler-payload",
+          "consumer": "typescript-parser-checker",
+          "affectsPayload": true,
+          "localModification": null,
+          "licenseException": null
+        },
+        {
+          "path": "tsc/internal/printer/emitresolver.go",
+          "role": "compiler-payload",
+          "consumer": "typescript-parser-checker",
+          "affectsPayload": true,
+          "localModification": null,
+          "licenseException": null
+        },
+        {
+          "path": "tsc/internal/printer/emittextwriter.go",
+          "role": "compiler-payload",
+          "consumer": "typescript-parser-checker",
+          "affectsPayload": true,
+          "localModification": null,
+          "licenseException": null
+        },
+        {
+          "path": "tsc/internal/printer/factory.go",
+          "role": "compiler-payload",
+          "consumer": "typescript-parser-checker",
+          "affectsPayload": true,
+          "localModification": null,
+          "licenseException": null
+        },
+        {
+          "path": "tsc/internal/printer/generatedidentifierflags.go",
+          "role": "compiler-payload",
+          "consumer": "typescript-parser-checker",
+          "affectsPayload": true,
+          "localModification": null,
+          "licenseException": null
+        },
+        {
+          "path": "tsc/internal/printer/helpers.go",
+          "role": "compiler-payload",
+          "consumer": "typescript-parser-checker",
+          "affectsPayload": true,
+          "localModification": null,
+          "licenseException": null
+        },
+        {
+          "path": "tsc/internal/printer/namegenerator.go",
+          "role": "compiler-payload",
+          "consumer": "typescript-parser-checker",
+          "affectsPayload": true,
+          "localModification": null,
+          "licenseException": null
+        },
+        {
+          "path": "tsc/internal/printer/printer.go",
+          "role": "compiler-payload",
+          "consumer": "typescript-parser-checker",
+          "affectsPayload": true,
+          "localModification": null,
+          "licenseException": null
+        },
+        {
+          "path": "tsc/internal/printer/singlelinestringwriter.go",
+          "role": "compiler-payload",
+          "consumer": "typescript-parser-checker",
+          "affectsPayload": true,
+          "localModification": null,
+          "licenseException": null
+        },
+        {
+          "path": "tsc/internal/printer/sourcefilemetadataprovider.go",
+          "role": "compiler-payload",
+          "consumer": "typescript-parser-checker",
+          "affectsPayload": true,
+          "localModification": null,
+          "licenseException": null
+        },
+        {
+          "path": "tsc/internal/printer/textwriter.go",
+          "role": "compiler-payload",
+          "consumer": "typescript-parser-checker",
+          "affectsPayload": true,
+          "localModification": null,
+          "licenseException": null
+        },
+        {
+          "path": "tsc/internal/printer/utilities.go",
+          "role": "compiler-payload",
+          "consumer": "typescript-parser-checker",
+          "affectsPayload": true,
+          "localModification": null,
+          "licenseException": null
+        },
+        {
+          "path": "tsc/internal/pseudochecker/checker.go",
+          "role": "compiler-payload",
+          "consumer": "typescript-parser-checker",
+          "affectsPayload": true,
+          "localModification": null,
+          "licenseException": null
+        },
+        {
+          "path": "tsc/internal/pseudochecker/lookup.go",
+          "role": "compiler-payload",
+          "consumer": "typescript-parser-checker",
+          "affectsPayload": true,
+          "localModification": null,
+          "licenseException": null
+        },
+        {
+          "path": "tsc/internal/pseudochecker/type.go",
+          "role": "compiler-payload",
+          "consumer": "typescript-parser-checker",
+          "affectsPayload": true,
+          "localModification": null,
+          "licenseException": null
+        },
+        {
+          "path": "tsc/internal/scanner/regexp.go",
+          "role": "compiler-payload",
+          "consumer": "typescript-parser-checker",
+          "affectsPayload": true,
+          "localModification": null,
+          "licenseException": null
+        },
+        {
+          "path": "tsc/internal/scanner/scanner.go",
+          "role": "compiler-payload",
+          "consumer": "typescript-parser-checker",
+          "affectsPayload": true,
+          "localModification": null,
+          "licenseException": null
+        },
+        {
+          "path": "tsc/internal/scanner/unicodeproperties.go",
+          "role": "compiler-payload",
+          "consumer": "typescript-parser-checker",
+          "affectsPayload": true,
+          "localModification": null,
+          "licenseException": null
+        },
+        {
+          "path": "tsc/internal/scanner/utilities.go",
+          "role": "compiler-payload",
+          "consumer": "typescript-parser-checker",
+          "affectsPayload": true,
+          "localModification": null,
+          "licenseException": null
+        },
+        {
+          "path": "tsc/internal/semver/version_range.go",
+          "role": "compiler-payload",
+          "consumer": "typescript-parser-checker",
+          "affectsPayload": true,
+          "localModification": null,
+          "licenseException": null
+        },
+        {
+          "path": "tsc/internal/semver/version.go",
+          "role": "compiler-payload",
+          "consumer": "typescript-parser-checker",
+          "affectsPayload": true,
+          "localModification": null,
+          "licenseException": null
+        },
+        {
+          "path": "tsc/internal/sourcemap/decoder.go",
+          "role": "compiler-payload",
+          "consumer": "typescript-parser-checker",
+          "affectsPayload": true,
+          "localModification": null,
+          "licenseException": null
+        },
+        {
+          "path": "tsc/internal/sourcemap/generator.go",
+          "role": "compiler-payload",
+          "consumer": "typescript-parser-checker",
+          "affectsPayload": true,
+          "localModification": null,
+          "licenseException": null
+        },
+        {
+          "path": "tsc/internal/sourcemap/lineinfo.go",
+          "role": "compiler-payload",
+          "consumer": "typescript-parser-checker",
+          "affectsPayload": true,
+          "localModification": null,
+          "licenseException": null
+        },
+        {
+          "path": "tsc/internal/sourcemap/source_mapper.go",
+          "role": "compiler-payload",
+          "consumer": "typescript-parser-checker",
+          "affectsPayload": true,
+          "localModification": null,
+          "licenseException": null
+        },
+        {
+          "path": "tsc/internal/sourcemap/source.go",
+          "role": "compiler-payload",
+          "consumer": "typescript-parser-checker",
+          "affectsPayload": true,
+          "localModification": null,
+          "licenseException": null
+        },
+        {
+          "path": "tsc/internal/sourcemap/util.go",
+          "role": "compiler-payload",
+          "consumer": "typescript-parser-checker",
+          "affectsPayload": true,
+          "localModification": null,
+          "licenseException": null
+        },
+        {
+          "path": "tsc/internal/stringutil/compare.go",
+          "role": "compiler-payload",
+          "consumer": "typescript-parser-checker",
+          "affectsPayload": true,
+          "localModification": null,
+          "licenseException": null
+        },
+        {
+          "path": "tsc/internal/stringutil/generate.go",
+          "role": "compiler-payload",
+          "consumer": "typescript-parser-checker",
+          "affectsPayload": true,
+          "localModification": null,
+          "licenseException": null
+        },
+        {
+          "path": "tsc/internal/stringutil/identifier_parts_generated.go",
+          "role": "compiler-payload",
+          "consumer": "typescript-parser-checker",
+          "affectsPayload": true,
+          "localModification": null,
+          "licenseException": null
+        },
+        {
+          "path": "tsc/internal/stringutil/identifier.go",
+          "role": "compiler-payload",
+          "consumer": "typescript-parser-checker",
+          "affectsPayload": true,
+          "localModification": null,
+          "licenseException": null
+        },
+        {
+          "path": "tsc/internal/stringutil/js_case_generated.go",
+          "role": "compiler-payload",
+          "consumer": "typescript-parser-checker",
+          "affectsPayload": true,
+          "localModification": null,
+          "licenseException": null
+        },
+        {
+          "path": "tsc/internal/stringutil/js_case.go",
+          "role": "compiler-payload",
+          "consumer": "typescript-parser-checker",
+          "affectsPayload": true,
+          "localModification": null,
+          "licenseException": null
+        },
+        {
+          "path": "tsc/internal/stringutil/util.go",
+          "role": "compiler-payload",
+          "consumer": "typescript-parser-checker",
+          "affectsPayload": true,
+          "localModification": null,
+          "licenseException": null
+        },
+        {
+          "path": "tsc/internal/symlinks/knownsymlinks.go",
+          "role": "compiler-payload",
+          "consumer": "typescript-parser-checker",
+          "affectsPayload": true,
+          "localModification": null,
+          "licenseException": null
+        },
+        {
+          "path": "tsc/internal/tracing/tracing.go",
+          "role": "compiler-payload",
+          "consumer": "typescript-parser-checker",
+          "affectsPayload": true,
+          "localModification": null,
+          "licenseException": null
+        },
+        {
+          "path": "tsc/internal/tsoptions/commandlineoption.go",
+          "role": "compiler-payload",
+          "consumer": "typescript-parser-checker",
+          "affectsPayload": true,
+          "localModification": null,
+          "licenseException": null
+        },
+        {
+          "path": "tsc/internal/tsoptions/commandlineparser.go",
+          "role": "compiler-payload",
+          "consumer": "typescript-parser-checker",
+          "affectsPayload": true,
+          "localModification": null,
+          "licenseException": null
+        },
+        {
+          "path": "tsc/internal/tsoptions/declsbuild.go",
+          "role": "compiler-payload",
+          "consumer": "typescript-parser-checker",
+          "affectsPayload": true,
+          "localModification": null,
+          "licenseException": null
+        },
+        {
+          "path": "tsc/internal/tsoptions/declscompiler.go",
+          "role": "compiler-payload",
+          "consumer": "typescript-parser-checker",
+          "affectsPayload": true,
+          "localModification": null,
+          "licenseException": null
+        },
+        {
+          "path": "tsc/internal/tsoptions/declstypeacquisition.go",
+          "role": "compiler-payload",
+          "consumer": "typescript-parser-checker",
+          "affectsPayload": true,
+          "localModification": null,
+          "licenseException": null
+        },
+        {
+          "path": "tsc/internal/tsoptions/declswatch.go",
+          "role": "compiler-payload",
+          "consumer": "typescript-parser-checker",
+          "affectsPayload": true,
+          "localModification": null,
+          "licenseException": null
+        },
+        {
+          "path": "tsc/internal/tsoptions/diagnostics.go",
+          "role": "compiler-payload",
+          "consumer": "typescript-parser-checker",
+          "affectsPayload": true,
+          "localModification": null,
+          "licenseException": null
+        },
+        {
+          "path": "tsc/internal/tsoptions/enummaps.go",
+          "role": "compiler-payload",
+          "consumer": "typescript-parser-checker",
+          "affectsPayload": true,
+          "localModification": null,
+          "licenseException": null
+        },
+        {
+          "path": "tsc/internal/tsoptions/errors.go",
+          "role": "compiler-payload",
+          "consumer": "typescript-parser-checker",
+          "affectsPayload": true,
+          "localModification": null,
+          "licenseException": null
+        },
+        {
+          "path": "tsc/internal/tsoptions/namemap.go",
+          "role": "compiler-payload",
+          "consumer": "typescript-parser-checker",
+          "affectsPayload": true,
+          "localModification": null,
+          "licenseException": null
+        },
+        {
+          "path": "tsc/internal/tsoptions/parsedbuildcommandline.go",
+          "role": "compiler-payload",
+          "consumer": "typescript-parser-checker",
+          "affectsPayload": true,
+          "localModification": null,
+          "licenseException": null
+        },
+        {
+          "path": "tsc/internal/tsoptions/parsedcommandline.go",
+          "role": "compiler-payload",
+          "consumer": "typescript-parser-checker",
+          "affectsPayload": true,
+          "localModification": null,
+          "licenseException": null
+        },
+        {
+          "path": "tsc/internal/tsoptions/parsinghelpers.go",
+          "role": "compiler-payload",
+          "consumer": "typescript-parser-checker",
+          "affectsPayload": true,
+          "localModification": null,
+          "licenseException": null
+        },
+        {
+          "path": "tsc/internal/tsoptions/showconfig.go",
+          "role": "compiler-payload",
+          "consumer": "typescript-parser-checker",
+          "affectsPayload": true,
+          "localModification": null,
+          "licenseException": null
+        },
+        {
+          "path": "tsc/internal/tsoptions/tsconfigparsing.go",
+          "role": "compiler-payload",
+          "consumer": "typescript-parser-checker",
+          "affectsPayload": true,
+          "localModification": null,
+          "licenseException": null
+        },
+        {
+          "path": "tsc/internal/tsoptions/wildcarddirectories.go",
+          "role": "compiler-payload",
+          "consumer": "typescript-parser-checker",
+          "affectsPayload": true,
+          "localModification": null,
+          "licenseException": null
+        },
+        {
+          "path": "tsc/internal/tspath/extension.go",
+          "role": "compiler-payload",
+          "consumer": "typescript-parser-checker",
+          "affectsPayload": true,
+          "localModification": null,
+          "licenseException": null
+        },
+        {
+          "path": "tsc/internal/tspath/ignoredpaths.go",
+          "role": "compiler-payload",
+          "consumer": "typescript-parser-checker",
+          "affectsPayload": true,
+          "localModification": null,
+          "licenseException": null
+        },
+        {
+          "path": "tsc/internal/tspath/path.go",
+          "role": "compiler-payload",
+          "consumer": "typescript-parser-checker",
+          "affectsPayload": true,
+          "localModification": null,
+          "licenseException": null
+        },
+        {
+          "path": "tsc/internal/vfs/vfs.go",
+          "role": "compiler-payload",
+          "consumer": "typescript-parser-checker",
+          "affectsPayload": true,
+          "localModification": null,
+          "licenseException": null
+        },
+        {
+          "path": "tsc/internal/vfs/vfsmatch/stringer_generated.go",
+          "role": "compiler-payload",
+          "consumer": "typescript-parser-checker",
+          "affectsPayload": true,
+          "localModification": null,
+          "licenseException": null
+        },
+        {
+          "path": "tsc/internal/vfs/vfsmatch/vfsmatch.go",
+          "role": "compiler-payload",
+          "consumer": "typescript-parser-checker",
+          "affectsPayload": true,
+          "localModification": null,
+          "licenseException": null
+        }
+      ],
+      "excludedReason": ""
+    }
+  ],
+  "attributions": []
+}

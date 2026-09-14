@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: MIT
 
-// Private worker of the Hermetic Build Entry. Only the native supervisor may
-// turn its result into execution evidence; invoking this file is not a build.
+// Private worker of the Hermetic Build Entry. The entry validates and consumes
+// its result; invoking this file alone is not a build.
 import { mkdir, readFile, writeFile } from "node:fs/promises";
 import { spawnSync } from "node:child_process";
 import { connect } from "node:net";
@@ -11,6 +11,9 @@ import { verifyGoWorkAccess } from "./go-work-access.mjs";
 import { requireSocketPermissionDenial, requireGoDownloadPermissionDenial } from "./go-network-probe.mjs";
 
 const plan = JSON.parse(await readFile(process.argv[2], "utf8"));
+const executionMode = plan.executionMode ?? "restricted";
+const localDevelopment = executionMode === "local-development";
+const isolation = localDevelopment ? "not-enforced" : "restricted";
 const hash = (bytes) => `sha256:${createHash("sha256").update(bytes).digest("hex")}`;
 const run = (executable, arguments_) => {
   const child = spawnSync(executable, arguments_, {
@@ -57,10 +60,12 @@ async function networkDenied(host) {
 let result;
 let phase = "boundary-probes";
 try {
-  const token = JSON.parse(run(plan.helper, ["--verify-restriction"]));
+  if (!["restricted", "local-development"].includes(executionMode)) throw new Error("unsupported execution mode");
+  const token = localDevelopment ? null : JSON.parse(run(plan.helper, ["--verify-restriction"]));
   // The helper checks actual token state and job membership, not environment.
   const checks = { workWrite: await verifyGoWorkAccess(plan.workRoot) };
-  for (const operation of ["read", "write"]) {
+  if (localDevelopment) Object.assign(checks, { read: "not-enforced", write: "not-enforced" });
+  for (const operation of localDevelopment ? [] : ["read", "write"]) {
     try {
       if (operation === "read") await readFile(plan.undeclaredCanary);
       else await writeFile(path.join(plan.inputRoot, "forbidden-write"), "must be denied", { flag: "wx" });
@@ -71,15 +76,15 @@ try {
     }
   }
   const canaries = {};
-  for (const host of ["1.1.1.1", "2606:4700:4700::1111"]) canaries[host] = await networkDenied(host);
+  for (const host of localDevelopment ? [] : ["1.1.1.1", "2606:4700:4700::1111"]) canaries[host] = await networkDenied(host);
   for (const input of plan.inputs) {
     if (hash(await readFile(input.path)) !== input.sha256) throw new Error(`staged input changed: ${input.path}`);
   }
   phase = "go-version";
   const version = run(plan.go, ["version"]).trim();
   if (version !== `go version go${plan.goVersion} windows/amd64`) throw new Error(`unexpected Go identity: ${version}`);
-  let missingModuleNetwork;
-  if (plan.networkCanaryPort !== undefined) {
+  let missingModuleNetwork = localDevelopment ? { status: "not-run" } : undefined;
+  if (!localDevelopment && plan.networkCanaryPort !== undefined) {
     phase = "missing-module-network";
     if (!Number.isInteger(plan.networkCanaryPort) || plan.networkCanaryPort < 1 || plan.networkCanaryPort > 65535) {
       throw new Error("invalid fixed network canary port");
@@ -122,12 +127,12 @@ try {
   }
   for (const host of Object.keys(canaries)) await networkDenied(host);
   await writeFile(path.join(plan.workRoot, "go-list.jsonstream"), output, { flag: "wx" });
-  result = { status: "success", token, checks, canaries, version, missingModuleNetwork,
+  result = { status: "success", executionMode, isolation, token, checks, canaries, version, missingModuleNetwork,
     packages: packages.map((item) => ({ importPath: item.ImportPath, standard: Boolean(item.Standard),
       goFiles: item.GoFiles ?? [], directory: item.Dir, module: item.Module?.Path ?? null })),
     modules: [...modules].map(([module, version]) => ({ path: module, version })), outputSha256: hash(output) };
 } catch (error) {
-  result = { status: "failure", phase, message: error.message };
+  result = { status: "failure", executionMode, isolation, phase, message: error.message };
   process.exitCode = 20;
 }
 await writeFile(path.join(plan.workRoot, "worker-result.json"), JSON.stringify(result), { flag: "wx" });

@@ -65,6 +65,22 @@ test("a successful worker cannot authorize changed dependency output", async () 
     (error) => error instanceof GoSourceResultError && error.kind === "integrity");
 });
 
+test("execution mode mismatches cannot publish development evidence as restricted", async () => {
+  const { publishGoSourceExecutionResult } = await import("../../eng/go-source-result.mjs");
+  const stage = await mkdtemp(path.join(tmpdir(), "go-mode-result-"));
+  await mkdir(path.join(stage, "work"));
+  const bytes = Buffer.from("dependency stream");
+  await writeFile(path.join(stage, "work", "go-list.jsonstream"), bytes);
+  await writeFile(path.join(stage, "work", "worker-result.json"), JSON.stringify({
+    status: "success", executionMode: "local-development",
+    outputSha256: `sha256:${createHash("sha256").update(bytes).digest("hex")}`,
+  }));
+  await assert.rejects(publishGoSourceExecutionResult(stage, { status: 0 },
+    path.join(stage, "out"), JSON.stringify, "restricted"),
+  (error) => error instanceof GoSourceResultError && error.kind === "integrity" && /execution mode/.test(error.message));
+  await assert.rejects(readFile(path.join(stage, "out", "dependencies.json")), { code: "ENOENT" });
+});
+
 test("native success without a worker result cannot publish a dependency result", async () => {
   const stage = await mkdtemp(path.join(tmpdir(), "go-result-"));
   await mkdir(path.join(stage, "work"));

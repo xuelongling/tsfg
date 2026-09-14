@@ -11,6 +11,8 @@
 
 开发执行与有限委托按 [ECP-0002](proposals/0002-bounded-autonomous-development.md)；该提案不授予发布或系统权限，也不表示受限执行会话已实现。
 
+R02a 本机源码开发的执行方式按 [ECP-0004](proposals/0004-local-development-execution.md)：`--dev` 路径不以 OS 强隔离/UAC 为前置，保留工具锁、输入完整性和 E: 落点，并明确不提供强隔离证明。其他适用阶段规则不变。
+
 ## 1. 切换前仓库事实
 
 以下事实记录 2026-09-03 命名切换前的迁移 provenance：
