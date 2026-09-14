@@ -72,13 +72,15 @@ class GoInputIntegrityError extends Error {}
 class GoExecutionFailureError extends BuildFailureError {
   constructor(preparation, message) {
     super(message);
-    this.preparation = preparation;
+    const { astIntake, ...publicPreparation } = preparation;
+    this.preparation = publicPreparation;
   }
 }
 class GoPreparationBoundaryError extends SandboxBoundaryError {
   constructor(preparation, message = "Go native supervisor could not establish the required execution boundary") {
     super(message);
-    this.preparation = preparation;
+    const { astIntake, ...publicPreparation } = preparation;
+    this.preparation = publicPreparation;
   }
 }
 class ReproducibilityMismatchError extends Error {
@@ -6967,16 +6969,23 @@ async function prepareGoSourceTarget(options, runtime) {
     Object.assign(astIntake, { toolLock: runtime.lock, dependencyLock: declaration });
     Object.defineProperty(astIntake, "parseZip", { value: parseZip });
   }
-  if (astIntake && runtime.lock.generationDependencies) {
-    const generation = await readGenerationLock(runtime.lockPath, runtime.lock);
-    for (const source of generation.sources) {
-      const gitlink = astIntake.request.admission.sources[0].files.find(file => file.path === `tsc/${source.mount}`);
-      if (gitlink?.contentKind !== "gitlink" || gitlink.oid !== source.commit) throw new GoInputIntegrityError("generation subsource differs from approved gitlink");
+  if (astIntake) {
+    try {
+      const generation = await readGenerationLock(runtime.lockPath, runtime.lock);
+      if (!generation) throw new Error("typed consumer requires a locked generation closure");
+      for (const source of generation.sources) {
+        const gitlink = astIntake.request.admission.sources[0].files.find(file => file.path === `tsc/${source.mount}`);
+        if (gitlink?.contentKind !== "gitlink" || gitlink.oid !== source.commit) throw new GoInputIntegrityError("generation subsource differs from approved gitlink");
+      }
+      astIntake.generation = { declaration: generation, sha256: runtime.lock.generationDependencies.sha256,
+        toolchainClosure: runtime.lockDigest, mode: options.get("--generation") ?? "reuse",
+        packages: await generationPackages(runtime.cachePath, generation, parseTar),
+        sources: await generationSources(sourceRoot, generation, process.env.TSFG_GIT) };
+    } catch (error) {
+      if (error instanceof IntakeLedgerError) throw error;
+      if (error.code === "ENOENT") throw new OfflineBoundaryError(`generation offline input missing: ${error.path ?? error.message}`);
+      throw new GoInputIntegrityError(error.message);
     }
-    astIntake.generation = { declaration: generation, sha256: runtime.lock.generationDependencies.sha256,
-      toolchainClosure: runtime.lockDigest, mode: options.get("--generation") ?? "reuse",
-      packages: await generationPackages(runtime.cachePath, generation, parseTar),
-      sources: await generationSources(sourceRoot, generation, process.env.TSFG_GIT) };
   }
   const actualRoot = gitOutput(sourceRoot, ["rev-parse", "--show-toplevel"]).trim();
   const actualCommit = gitOutput(sourceRoot, ["rev-parse", "HEAD"]).trim();

@@ -205,6 +205,11 @@ export async function replayGeneration(intake, plan, serialize) {
       { cwd: path.join(moduleRoot, "internal/bundled"), targets: ["generate.go"] },
       { targets: ["golang.org/x/tools/cmd/stringer", "./internal/ast", "./internal/checker", "./internal/core", "./internal/diagnostics", "./internal/vfs/vfsmatch"] },
     ]);
+    Object.assign(result, { intakeLedger: { ...audit.ledger,
+      files: [...new Map([...audit.ledger.files, ...intakeFiles].map(file => [`${file.source}\0${file.path}`, file])).values()] },
+      inputsRechecked: false,
+      derivedInputs: [{ path: "dprint.json", sha256: checked.get(config), producer: "locked controller recipe" }],
+      excluded: [{ scope: "bundled embedding tables and unconsumed library declarations", reason: "Generator produces these incidentally; the actual typed consumer uses only the three declared libs and no embedding tables." }] });
     invoke(node, ["--disable-warning=ExperimentalWarning", "_scripts/generate-go-ast.ts"]);
     invoke(node, ["--disable-warning=ExperimentalWarning", "internal/stringutil/_scripts/generate-unicode-data.mts"]);
     invoke(plan.go, ["run", "-mod=readonly", "generate.go", "-diagnostics", "diagnostics_generated.go", "-loc", "loc_generated.go", "-locdir", "loc"], path.join(moduleRoot, "internal/diagnostics"));
@@ -226,9 +231,7 @@ export async function replayGeneration(intake, plan, serialize) {
     if (result.differences.length) throw new Error("unexplained generated source differences");
     await audit.verify();
     for (const [file, expected] of checked) if (hash(await readFile(file)) !== expected) throw new Error(`generation input mutated: ${file}`);
-    Object.assign(result, { intakeLedger: { ...audit.ledger, files: [...audit.ledger.files, ...intakeFiles] },
-      derivedInputs: [{ path: "dprint.json", sha256: checked.get(config), producer: "locked controller recipe" }],
-      excluded: [{ scope: "bundled embedding tables and unconsumed library declarations", reason: "Generator produces these incidentally; the actual typed consumer uses only the three declared libs and no embedding tables." }] });
+    Object.assign(result, { inputsRechecked: true });
     result.status = "passed";
     await writeFile(path.join(plan.workRoot, "generation.json"), serialize(result));
     return result;

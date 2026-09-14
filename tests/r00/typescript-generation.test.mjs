@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: MIT
 import assert from "node:assert/strict";
 import { spawnSync } from "node:child_process";
-import { mkdtemp, readFile, writeFile, rm } from "node:fs/promises";
+import { mkdtemp, readFile, writeFile, rm, stat } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import path from "node:path";
 import test from "node:test";
@@ -21,6 +21,26 @@ test("prefetch refuses a missing locked generation dependency before downloading
     "--cache", path.join(root, "cache"), "--platform", "invalid-target"], { encoding: "utf8", windowsHide: true });
   assert.equal(child.status, 11);
   assert.match(child.stderr, /generation dependency lock unavailable/);
+});
+
+test("missing locked generator archive blocks the public offline build", {
+  skip: process.env.TSFG_TEST_GENERATION_NEGATIVES !== "1" ? "requires pinned preparation; synthetic missing archive" : false,
+}, async () => {
+  const product = fileURLToPath(new URL("../../", import.meta.url));
+  const root = path.join(process.env.TSFG_TEST_GENERATION_EVIDENCE, "missing-tool");
+  const report = path.join(root, "report.json"), output = path.join(root, "out");
+  const fixture = new URL("./generation-process-fixture.mjs?mode=missing-tool", import.meta.url).href;
+  const child = spawnSync(process.execPath, ["--import", fixture, entry, "build", "--dev", "--source-target", "typescript-ast",
+    "--generation", "replay", "--workspace", product, "--intake-plan", path.join(product, "eng/intake-declarations/typescript-ast.json"),
+    "--target", "windows-x86_64-msvc", "--profile", "debug", "--out", output, "--report", report],
+  { env: { ...process.env, TSFG_RUNTIME_LOCK: path.join(product, "eng/go-ast-toolchains.lock.json"),
+    TSFG_RUNTIME_CACHE: process.env.TSFG_TEST_GO_CACHE, TSFG_RUNTIME_PLATFORM: "windows-x86_64-msvc" },
+    encoding: "utf8", timeout: 1200000, windowsHide: true });
+  assert.equal(child.status, 12, child.stdout + child.stderr);
+  const result = JSON.parse(await readFile(report, "utf8"));
+  assert.equal(result.error.issues[0].generation.status, "not-run");
+  assert.equal(result.error.issues[0].requiredTests.status, "not-run");
+  await assert.rejects(stat(output), { code: "ENOENT" });
 });
 
 test("prefetch rejects a floating npm generation input", async t => {

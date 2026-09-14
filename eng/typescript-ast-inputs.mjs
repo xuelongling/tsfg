@@ -180,7 +180,7 @@ export async function astAuxiliaryInputs(intake, plan, moduleRoot, requests) {
           const approval = intake.ledger.files.find(entry => entry.path === `tsc/${relative}`);
           if (!approval) fail(`unregistered auxiliary source consumption: ${relative}`);
           await consume(file, { source: "TypeScript.git", sourceIdentity: intake.ledger.sources[0].forkOid,
-            license: "Apache-2.0", legal: { path: "tsc/LICENSE", sha256: intake.ledger.files.find(entry => entry.path === "tsc/LICENSE").sha256 } }, relative, approval.sha256);
+            license: "Apache-2.0", legal: { path: "tsc/LICENSE", sha256: intake.ledger.files.find(entry => entry.path === "tsc/LICENSE").sha256 } }, `tsc/${relative}`, approval.sha256);
         } else if (request.tests && item.ImportPath.endsWith(".test") && item.Name === "main"
             && inside(plan.environment.GOCACHE, file)) {
           generated.push({ package: item.ImportPath, sha256: hash(await readFile(file)), kind: "Go-generated-test-harness", sourceIdentity: `go${plan.goVersion}` });
@@ -205,4 +205,3 @@ export async function astAuxiliaryInputs(intake, plan, moduleRoot, requests) {
       for (const [file, expected] of checked) if (hash(await readFile(file)) !== expected) fail(`auxiliary input mutated during execution: ${file}`);
     } };
 }
-
