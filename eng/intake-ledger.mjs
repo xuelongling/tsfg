@@ -153,9 +153,10 @@ async function createLedger({ workspaceRoot, admission, declaration, consumption
   for (const source of declaration.sources) {
     const approved = approvals.get(source.projectId);
     const root = await regularPath(workspaceRoot, approved.path, true);
+    const remoteName = git(root, ["remote"]).toString("utf8").trim().split(/\r?\n/).includes("origin") ? "origin" : "github-xuelongling";
     if (await realpath(git(root, ["rev-parse", "--show-toplevel"]).toString("utf8").trim()) !== await realpath(root) ||
         git(root, ["rev-parse", "HEAD"]).toString("utf8").trim() !== approved.forkOid ||
-        git(root, ["remote", "get-url", "origin"]).toString("utf8").trim() !== approved.remoteUrl) fail("source checkout identity differs", "intake-ledger-identity");
+        git(root, ["remote", "get-url", remoteName]).toString("utf8").trim() !== approved.remoteUrl) fail("source checkout identity differs", "intake-ledger-identity");
     git(root, ["cat-file", "-e", `${approved.baseOid}^{commit}`]);
     git(root, ["merge-base", "--is-ancestor", approved.baseOid, approved.forkOid]);
     const tree = treeEntries(git(root, ["ls-tree", "-r", "-z", "--full-tree", approved.forkOid]));

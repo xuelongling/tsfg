@@ -6990,7 +6990,8 @@ async function prepareGoSourceTarget(options, runtime) {
   }
   const actualRoot = gitOutput(sourceRoot, ["rev-parse", "--show-toplevel"]).trim();
   const actualCommit = gitOutput(sourceRoot, ["rev-parse", "HEAD"]).trim();
-  const remote = gitOutput(sourceRoot, ["remote", "get-url", "origin"]).trim().replace(/\.git$/, "");
+  const remoteName = gitOutput(sourceRoot, ["remote"]).trim().split(/\r?\n/).includes("origin") ? "origin" : "github-xuelongling";
+  const remote = gitOutput(sourceRoot, ["remote", "get-url", remoteName]).trim().replace(/\.git$/, "");
   if (path.resolve(actualRoot) !== sourceRoot || actualCommit !== declaration.source.commit
       || remote !== "https://github.com/xuelongling/TypeScript"
       || gitOutput(sourceRoot, ["status", "--porcelain=v1", "--untracked-files=all"]).trim()) {

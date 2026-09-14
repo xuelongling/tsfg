@@ -11,6 +11,11 @@ const payloadNames = ["artifact-manifest.json", "ast.json", "build-metadata.json
 const evidenceNames = ["generation.json", "go-list.jsonstream", "intake-ledger.json", "js-isolation.json",
   "required-test-events.jsonstream", "required-tests.json", "source-build.json"];
 const fail = message => { throw new SourceReproError(23, message); };
+const workspaceSummary = workspace => ({ manifest: workspace.manifest, projects: workspace.projects,
+  activation: workspace.activation, dirty: workspace.dirty, sourcePolicy: {
+    digest: workspace.policy.sourceAdmission.digest, stages: workspace.policy.sourceAdmission.stages,
+    sources: workspace.policy.sourceAdmission.sources.map(({ files, ...identity }) => ({ ...identity, fileCount: String(files.length) })) },
+  licenseReport: workspace.policy.licenseReport });
 export class SourceReproError extends Error {
   constructor(exitCode, message, evidence = undefined) { super(message); this.exitCode = exitCode; this.evidence = evidence; }
 }
@@ -101,12 +106,12 @@ export async function reproduceTypeScript({ options, workspaces, serialize, pars
       await writeFile(path.join(runRoot, "build.log"), `${child.stdout ?? ""}${child.stderr ?? ""}`);
       let record;
       try { record = JSON.parse(await readFile(report, "utf8")); } catch { /* Native failure can precede report creation. */ }
-      const producer = { label, workspaceRoot, workspace, report, output: producerRoot,
+      const producer = { label, workspaceRoot, workspace: workspaceSummary(workspace), report, output: producerRoot,
         command: { executable: process.execPath, arguments: arguments_, exitCode: child.status },
         build: { status: child.status === 0 && record?.status === "success" ? "passed" : "failed" },
         stages: record?.result ? { sourcePolicy: record.result.ledger.status, generation: record.result.generation.status,
           requiredTests: record.result.requiredTests.status, interface: record.result.probes.status, jsIsolation: record.result.jsIsolation.status }
-          : record?.error, execution: record?.result?.execution };
+          : (record?.error ?? { status: "not-run" }), execution: record?.result?.execution ?? null };
       producers.push(producer);
       if (producer.build.status !== "passed") throw new SourceReproError(child.status || 20,
         `source producer ${label} failed: ${child.error?.message ?? child.stderr}`, evidence);
