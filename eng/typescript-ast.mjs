@@ -1,0 +1,103 @@
+// SPDX-License-Identifier: MIT
+// Private adapter of the existing Hermetic Build Entry for ticket R02a/04.
+import { createHash } from "node:crypto";
+import { spawnSync } from "node:child_process";
+import { readFile, mkdir, mkdtemp, writeFile, rename } from "node:fs/promises";
+import path from "node:path";
+import { createIntakeLedger, IntakeLedgerError } from "./intake-ledger.mjs";
+import { readGoSourceExecutionResult } from "./go-source-result.mjs";
+import { astGit, astBuildInputs, astToolchainInputs } from "./typescript-ast-inputs.mjs";
+
+const hash = bytes => `sha256:${createHash("sha256").update(bytes).digest("hex")}`;
+const consumer = "tsfg-ast";
+const projectId = "TypeScript.git";
+const probeInput = "tsc/cmd/tsfg-ast/testdata/positive.ts";
+const fail = message => { throw new IntakeLedgerError("ast-consumption", message); };
+export class AstExecutionError extends Error {}
+
+export async function readAstIntake({ productRoot, controlRoot, planPath, gitExecutable }) {
+  const admissionBytes = await readFile(path.join(productRoot, "eng/source-admissions.json"));
+  const authority = astGit(gitExecutable, controlRoot, ["show", "HEAD:eng/source-admissions.json"]);
+  if (!admissionBytes.equals(authority)) fail("AST admission must match committed control authority");
+  const declarationBytes = await readFile(planPath);
+  const declaration = JSON.parse(declarationBytes.toString("utf8"));
+  if (declaration.evidenceKind !== "real-source") fail("AST execution requires a real-source declaration");
+  const consumption = { schemaVersion: "1", evidenceKind: "real-source", entries: declaration.sources.flatMap(source =>
+    source.entries.map(entry => ({ projectId: source.projectId, path: entry.path, role: entry.role, consumer: entry.consumer }))) };
+  const admission = JSON.parse(admissionBytes.toString("utf8"));
+  const policy = JSON.parse(await readFile(path.join(controlRoot, "eng/workspace-policy.json"), "utf8"));
+  const request = { workspaceRoot: path.dirname(productRoot), admission, declaration, consumption,
+    gitExecutable, approvedLicenses: policy.approvedLicenseExpressions };
+  const ledger = await createIntakeLedger(request);
+  return { request, ledger, controlRoot, inputIdentity: { admission: hash(admissionBytes), declaration: hash(declarationBytes) } };
+}
+
+export async function buildAstProbe({ prepared, child, serialize }) {
+  const { preparation, stageRoot, output, launch } = prepared;
+  const { worker, outputBytes } = await readGoSourceExecutionResult(stageRoot, child, "local-development");
+  const plan = JSON.parse(await readFile(path.join(stageRoot, "inputs/control/plan.json"), "utf8"));
+  const intake = preparation.astIntake;
+  const auditFiles = ["tsc/go.mod", "tsc/go.sum", "tsc/LICENSE", "tsc/NOTICE.txt", probeInput];
+  const paths = new Set(auditFiles);
+  for (const item of worker.packages) {
+    if (item.module !== "github.com/microsoft/typescript-go") continue;
+    for (const name of item.inputFiles) {
+      const relative = path.relative(plan.moduleRoot, path.resolve(item.directory, name)).replaceAll("\\", "/");
+      if (relative.startsWith("../") || path.isAbsolute(relative)) fail("Go package input escapes the source module");
+      paths.add(`tsc/${relative}`);
+    }
+  }
+  const consumption = { schemaVersion: "1", evidenceKind: "real-source", entries: [...paths].sort().map(name => ({
+    projectId, path: name, consumer,
+    role: auditFiles.includes(name) ? "build-only" : "compiler-payload",
+  })) };
+  const ledger = await createIntakeLedger({ ...intake.request, consumption });
+  const toolchainInputs = await astToolchainInputs(intake, plan, worker);
+  const identity = await astBuildInputs(intake, ledger, serialize);
+  const verifyInputs = async () => {
+    for (const input of plan.inputs) if (hash(await readFile(input.path)) !== input.sha256) fail(`staged input changed: ${input.path}`);
+  };
+  await verifyInputs();
+  const run = (executable, args) => {
+    const result = spawnSync(executable, args, { cwd: plan.moduleRoot, env: plan.environment,
+      encoding: "utf8", timeout: 300000, maxBuffer: 64 * 1024 * 1024, windowsHide: true });
+    if (result.error || result.status !== 0) throw new AstExecutionError(`AST execution failed (${result.status}): ${result.error?.message ?? result.stderr}`);
+    return result.stdout;
+  };
+  const executable = path.join(plan.workRoot, "tsfg-ast.exe");
+  const arguments_ = ["build", "-mod=readonly", "-buildvcs=false", "-pgo=off", "-trimpath",
+    "-gcflags=all=-N -l", "-o", executable, "./cmd/tsfg-ast"];
+  run(plan.go, arguments_);
+  const astBytes = run(executable, [path.join(plan.moduleRoot, probeInput.slice(4))]);
+  const ast = JSON.parse(astBytes);
+  await verifyInputs();
+  await astToolchainInputs(intake, plan, worker);
+  for (const entry of identity.buildInputSet.entries.filter(entry => entry.projectId === "tsfg")) {
+    if (hash(await readFile(path.join(intake.controlRoot, entry.repositoryRelativePath))) !== entry.sha256) fail("build control changed during AST execution");
+  }
+  const binary = await readFile(executable);
+  const buildIdentityPayload = { buildInputSetDigest: identity.buildInputSet.digest,
+    options: { sourceTarget: "typescript-ast", goamd64: "v2", cgo: false, pgo: false },
+    profile: "debug", source_date_epoch: identity.sourceDateEpoch, target: "windows-x86_64-msvc",
+    toolchainClosureDigest: preparation.toolchainClosure };
+  const result = { schemaVersion: "1", status: "ast-observed", source: preparation.source,
+    target: "windows-x86_64-msvc", profile: { name: "debug", goamd64: "v2", pgo: false, cgo: false,
+      optimization: "disabled", symbols: "embedded-full" },
+    toolchainClosure: preparation.toolchainClosure, inputIdentity: intake.inputIdentity,
+    executionMode: "local-development", isolation: "not-enforced", arguments: arguments_, ast,
+    executableSha256: hash(binary), observationSha256: hash(astBytes),
+    ledger, toolchainInputs, executionConsumption: { status: "matched", method: "go-list-deps-and-fixed-probe-input", entries: consumption.entries },
+    buildInputSet: identity.buildInputSet, provenance: identity.provenance, dirty: identity.dirty,
+    buildIdentity: { ...buildIdentityPayload, digest: hash(serialize(buildIdentityPayload)) },
+    generation: { status: "not-run", reason: "Committed generated source compiled; maintainability belongs to ticket 07." },
+    intakeComplete: false };
+  await mkdir(path.dirname(output), { recursive: true });
+  const publication = await mkdtemp(path.join(path.dirname(output), ".ast-publication-"));
+  await writeFile(path.join(publication, "tsfg-ast.exe"), binary);
+  await writeFile(path.join(publication, "ast.json"), astBytes);
+  await writeFile(path.join(publication, "intake-ledger.json"), serialize(ledger));
+  await writeFile(path.join(publication, "go-list.jsonstream"), outputBytes);
+  await writeFile(path.join(publication, "source-build.json"), serialize(result));
+  await rename(publication, output);
+  return result;
+}

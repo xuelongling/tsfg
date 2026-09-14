@@ -115,10 +115,12 @@ try {
       modules.set(item.Module.Path, item.Module.Version);
     }
   }
-  if (modules.size !== plan.modules.length || plan.modules.some((item) => modules.get(item.path) !== item.version)) {
+  if ((plan.sourceTarget !== "typescript-ast" && modules.size !== plan.modules.length)
+      || [...modules].some(([name, version]) => !plan.modules.some(item => item.path === name && item.version === version))) {
     throw new Error("resolved Go modules differ from the declared closure");
   }
-  const targets = plan.arguments.slice(-2).map((name) => `github.com/microsoft/typescript-go/${name.slice(2)}`);
+  const targets = plan.arguments.slice(plan.sourceTarget === "typescript-ast" ? -1 : -2)
+    .map((name) => `github.com/microsoft/typescript-go/${name.slice(2)}`);
   if (targets.some((name) => !packages.some((item) => item.ImportPath === name))) {
     throw new Error("Go did not resolve both declared targets");
   }
@@ -129,7 +131,10 @@ try {
   await writeFile(path.join(plan.workRoot, "go-list.jsonstream"), output, { flag: "wx" });
   result = { status: "success", executionMode, isolation, token, checks, canaries, version, missingModuleNetwork,
     packages: packages.map((item) => ({ importPath: item.ImportPath, standard: Boolean(item.Standard),
-      goFiles: item.GoFiles ?? [], directory: item.Dir, module: item.Module?.Path ?? null })),
+      goFiles: item.GoFiles ?? [], directory: item.Dir, module: item.Module?.Path ?? null,
+      ...(plan.sourceTarget === "typescript-ast" ? { moduleVersion: item.Module?.Version ?? null,
+        inputFiles: [...(item.GoFiles ?? []), ...(item.SFiles ?? []), ...(item.HFiles ?? []),
+          ...(item.SysoFiles ?? []), ...(item.EmbedFiles ?? [])] } : {}) })),
     modules: [...modules].map(([module, version]) => ({ path: module, version })), outputSha256: hash(output) };
 } catch (error) {
   result = { status: "failure", executionMode, isolation, phase, message: error.message };

@@ -38,6 +38,7 @@ import { fileURLToPath } from "node:url";
 import { TextDecoder } from "node:util";
 import { validateSourceAdmission } from "./source-admission.mjs";
 import { createIntakeLedger, IntakeLedgerError } from "./intake-ledger.mjs";
+import { readAstIntake, buildAstProbe, AstExecutionError } from "./typescript-ast.mjs";
 import { prefetchGoDependencies, readGoDependencyLock, verifyGoDependencies } from "./go-closure.mjs";
 
 class ConfigurationError extends Error {
@@ -1798,7 +1799,7 @@ async function prefetch(options) {
     }
   }
 
-  if (platform === "windows-x86_64-msvc") {
+  if (platform === "windows-x86_64-msvc" && !options.has("--dev")) {
     await provisionWindowsSandboxControl({
       cachePath: absoluteCache,
       closurePath: finalPath,
@@ -1825,6 +1826,7 @@ async function prefetch(options) {
 
   return {
     cacheKey: `${platform}/sha256/${lockHex}`,
+    ...(options.has("--dev") ? { executionMode: "local-development", isolation: "not-enforced" } : {}),
     ...(goDependencies ? { goDependencies } : {}),
     lockDigest,
     platform,
@@ -6929,6 +6931,13 @@ async function prepareGoSourceTarget(options, runtime) {
     throw new GoInputIntegrityError(error.message);
   }
   const sourceRoot = path.resolve(workspaceState.root, "..", declaration.source.projectId);
+  const astIntake = options.get("--source-target") === "typescript-ast"
+    ? await readAstIntake({ productRoot: workspaceState.root, controlRoot: repositoryRoot,
+      planPath: options.get("--intake-plan"), gitExecutable: process.env.TSFG_GIT }) : undefined;
+  if (astIntake && declaration.source.commit !== astIntake.ledger.sources[0].forkOid) {
+    throw new GoInputIntegrityError("AST tool dependency source lock differs from the approved fork");
+  }
+  if (astIntake) Object.assign(astIntake, { toolLock: runtime.lock, dependencyLock: declaration });
   const actualRoot = gitOutput(sourceRoot, ["rev-parse", "--show-toplevel"]).trim();
   const actualCommit = gitOutput(sourceRoot, ["rev-parse", "HEAD"]).trim();
   const remote = gitOutput(sourceRoot, ["remote", "get-url", "origin"]).trim().replace(/\.git$/, "");
@@ -6950,11 +6959,13 @@ async function prepareGoSourceTarget(options, runtime) {
     status: "prepared-not-executed",
     source: declaration.source,
     sourceRoot, moduleRoot,
+    ...(astIntake ? { astIntake } : {}),
     toolchainClosure: runtime.lockDigest,
     dependencies: { identity: proxy.identity, modules: proxy.modules },
     executable: closureToolPath(runtime, "go"),
     arguments: ["list", "-deps", "-json", "-mod=readonly", "-buildvcs=false", "-pgo=off", "-trimpath",
-      ...(profile === "debug" ? ["-gcflags=all=-N -l"] : []), ...declaration.packages],
+      ...(profile === "debug" ? ["-gcflags=all=-N -l"] : []),
+      ...(astIntake ? ["./cmd/tsfg-ast"] : declaration.packages)],
     profile: { name: profile, operation: "dependency-resolution", goamd64: "v2", cgo: false,
       pgo: false, debugOptimization: profile === "debug" ? "disabled" : "not-applicable",
       linkedSymbols: "not-applicable-no-link", nativeBuildAcceptance: "not-run" },
@@ -7027,6 +7038,7 @@ async function prepareGoSourceExecution(options, runtime) {
     if (!match) continue;
     const relative = match[3].slice(preparation.source.modulePath.length + 1);
     const included = ["go.mod", "go.sum", "LICENSE", "NOTICE.txt"].includes(relative)
+      || (preparation.astIntake && relative.startsWith("cmd/tsfg-ast/"))
       || (/^internal\//.test(relative) && !/(_test\.go|\/testdata\/)/.test(relative)
         && (/\.(go|s|h)$/.test(relative) || /^internal\/(bundled\/libs\/.*\.ts|diagnostics\/loc\/.*\.gz)$/.test(relative)));
     if (!included) continue;
@@ -7077,6 +7089,7 @@ async function prepareGoSourceExecution(options, runtime) {
   const plan = { schemaVersion: "1", executionMode, moduleRoot: sourceRoot, inputRoot, workRoot, helper,
     undeclaredCanary, go, goVersion: runtime.lock.tools.go.version, arguments: preparation.arguments,
     modules: preparation.dependencies.modules, environment, inputs: inputs.sort((left, right) => left.path < right.path ? -1 : left.path > right.path ? 1 : 0) };
+  if (preparation.astIntake) plan.sourceTarget = "typescript-ast";
   if (options.has("--go-network-canary-port")) plan.networkCanaryPort = Number(options.get("--go-network-canary-port"));
   const planPath = path.join(controlRoot, "plan.json");
   await writeFile(planPath, canonicalize(plan), { flag: "wx" });
@@ -7136,7 +7149,14 @@ async function consumePreparedGoSource(prepared, child) {
 }
 
 async function validateGoSourceOptions(options, runtime) {
-  if (options.get("--source-target") !== "typescript-dependencies") {
+  if (options.get("--source-target") === "typescript-ast" &&
+      (!options.has("--dev") || !options.get("--intake-plan"))) {
+    throw new ConfigurationError("AST requires --dev and --intake-plan");
+  }
+  if (options.get("--source-target") === "typescript-ast" && options.get("--profile") !== "debug") {
+    throw new ConfigurationError("AST currently supports only the debug profile");
+  }
+  if (!["typescript-dependencies", "typescript-ast"].includes(options.get("--source-target"))) {
     throw new ConfigurationError("unsupported source target");
   }
   if (!await isGoDestinationOnE(options.get("--out"))) {
@@ -7192,6 +7212,9 @@ export async function prepareGoSourceAcceptance({ lockPath, cachePath, output, p
 async function executeGoSourceTarget(options, runtime) {
   const prepared = await prepareGoSourceExecution(options, runtime);
   const child = await executePreparedGoSource(prepared);
+  if (prepared.preparation.astIntake) {
+    return await buildAstProbe({ prepared, child, serialize: canonicalize });
+  }
   return await consumePreparedGoSource(prepared, child);
 }
 
@@ -7282,7 +7305,7 @@ async function runCommandLine() {
         process.env.TSFG_RUNTIME_CACHE,
         process.env.TSFG_RUNTIME_PLATFORM,
         { nativeControls: !(command === "build" && arguments_.includes("--dev") &&
-            ["typescript-dependencies", "intake-ledger"].includes(arguments_[arguments_.indexOf("--source-target") + 1])) },
+            ["typescript-dependencies", "typescript-ast", "intake-ledger"].includes(arguments_[arguments_.indexOf("--source-target") + 1])) },
       );
     } catch (error) {
       runtimeIntegrityError = error;
@@ -7332,7 +7355,8 @@ async function runCommandLine() {
     try {
       const options = parseOptions(
         arguments_,
-        new Set(["--lock", "--cache", "--platform", "--report"]),
+        new Set(["--lock", "--cache", "--platform", "--report", "--dev"]),
+        new Set(["--dev"]),
       );
       const result = await prefetch(options);
       process.exitCode = await succeed(
@@ -7403,7 +7427,7 @@ async function runCommandLine() {
         new Set(["--dev"]),
       );
       validateSmokeOptions(options, "build");
-      if (options.get("--source-target") !== "intake-ledger" &&
+      if (!["intake-ledger", "typescript-ast"].includes(options.get("--source-target")) &&
           (options.has("--intake-plan") || options.has("--intake-consumption"))) {
         throw new ConfigurationError("intake options require --source-target intake-ledger");
       }
@@ -7434,7 +7458,7 @@ async function runCommandLine() {
     } catch (error) {
       if (publication) await publication.rollback();
       const isConfigurationError = error instanceof ConfigurationError;
-      const isBuildFailure = error instanceof BuildFailureError;
+      const isBuildFailure = error instanceof BuildFailureError || error instanceof AstExecutionError;
       const isBuildPolicy = error instanceof BuildPolicyError;
       const isWorkspaceMismatch = error instanceof WorkspaceMismatchError || error instanceof IntakeLedgerError;
       const isOfflineBoundary = error instanceof OfflineBoundaryError;
