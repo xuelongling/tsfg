@@ -91,6 +91,14 @@ for (const command of ["build", "test"]) test(`fixed fork source runs real typed
   assert.deepEqual(result.probes.cases.find(item => item.id === "type-error").observation.semanticDiagnostics,
     expected.cases.find(item => item.id === "type-error").expected.semanticDiagnostics);
   assert.equal(result.probes.status, "passed");
+  for (const probe of result.probes.cases) {
+    assert.deepEqual(probe.observation.sourceFiles, [
+      `/cmd/tsfg-ast/testdata/${probe.id}.ts`,
+      "/internal/bundled/libs/lib.decorators.d.ts",
+      "/internal/bundled/libs/lib.decorators.legacy.d.ts",
+      "/internal/bundled/libs/lib.es5.d.ts",
+    ]);
+  }
   assert.equal(result.intakeComplete, false);
   assert.equal(result.generation.status, "not-run");
   assert.equal(result.buildInputSet.schemaVersion, "1");
