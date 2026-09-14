@@ -14,6 +14,35 @@ const fixtureJson = value => value === null || typeof value !== "object" ? JSON.
   : `{${Object.keys(value).sort().map(key => `${JSON.stringify(key)}:${fixtureJson(value[key])}`).join(",")}}`;
 const fixtureHash = bytes => `sha256:${createHash("sha256").update(bytes).digest("hex")}`;
 
+test("source repro-check rejects undeclared host and wall-clock metadata even when equal", {
+  skip: process.env.TSFG_TEST_SOURCE_REPRO_METADATA !== "1" ? "requires real producers for deliberate metadata corruption" : false,
+}, async () => {
+  const original = JSON.parse(await readFile(process.env.TSFG_TEST_REPRO_ORIGINAL, "utf8")).result;
+  const root = process.env.TSFG_TEST_SOURCE_REPRO_EVIDENCE;
+  const undeclared = { host: process.env.COMPUTERNAME ?? "deliberate-host", ciRun: "deliberate-ci-run", wallClock: new Date().toISOString() };
+  for (const [index, label] of ["a", "b"].entries()) {
+    const producer = path.join(root, label);
+    await cp(original.producers[index].output, producer, { recursive: true, errorOnExist: true, force: false });
+    const metadata = JSON.parse(await readFile(path.join(producer, "build-metadata.json"), "utf8"));
+    metadata.undeclared = undeclared;
+    await writeFile(path.join(producer, "build-metadata.json"), fixtureJson(metadata));
+    const manifest = JSON.parse(await readFile(path.join(producer, "artifact-manifest.json"), "utf8"));
+    for (const member of manifest.members) member.sha256 = fixtureHash(await readFile(path.join(producer, member.path)));
+    await writeFile(path.join(producer, "artifact-manifest.json"), fixtureJson(manifest));
+  }
+  const output = path.join(root, "out"), report = path.join(root, "report.json");
+  const child = spawnSync(process.execPath, [entry, "repro-check", "--dev", "--source-target", "typescript-ast",
+    "--target", "windows-x86_64-msvc", "--profile", "debug",
+    "--workspace-a", original.producers[0].workspaceRoot, "--workspace-b", original.producers[1].workspaceRoot,
+    "--producer-a", path.join(root, "a"), "--producer-b", path.join(root, "b"),
+    "--cache", process.env.TSFG_TEST_GO_CACHE,
+    "--manifest-revision", original.producers[0].workspace.manifest.revision, "--manifest", "candidates/tsfg-v0.2.0.xml",
+    "--out", output, "--report", report], { encoding: "utf8", timeout: 1200000, windowsHide: true });
+  assert.equal(child.status, 23, child.stdout + child.stderr);
+  assert.match(JSON.parse(await readFile(report, "utf8")).error.issues[0].message, /metadata.*recipe|metadata.*declaration/i);
+  await assert.rejects(stat(output), { code: "ENOENT" });
+});
+
 test("source repro-check distinguishes missing producer evidence from an unrun second producer", {
   skip: process.env.TSFG_TEST_SOURCE_REPRO_MISSING !== "1" ? "requires verified real source workspaces" : false,
 }, async () => {

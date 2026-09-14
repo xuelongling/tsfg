@@ -6,6 +6,7 @@ import { createHash } from "node:crypto";
 import { isDeepStrictEqual } from "node:util";
 import path from "node:path";
 import { readTypeScriptProbes, matchesTypeScriptObservation } from "./typescript-probes.mjs";
+import { sourceProbeMetadata } from "./typescript-ast.mjs";
 
 const hash = bytes => `sha256:${createHash("sha256").update(bytes).digest("hex")}`;
 const payloadNames = ["artifact-manifest.json", "ast.json", "build-metadata.json", "probes.json", "tsfg-ast.exe"];
@@ -62,6 +63,7 @@ async function readProducer(root, workspaceRoot, workspace, serialize, parseJson
       || manifest.contractSetId !== hash(serialize({})) || manifest.toolchainClosureDigest !== build.toolchainClosure
       || !isDeepStrictEqual(manifest.members.map(member => member.path), payloadNames.slice(1))) fail("source Artifact Manifest declaration mismatch");
   for (const member of manifest.members) if (hash(bytes.get(member.path)) !== member.sha256) fail(`source payload digest mismatch: ${member.path}`);
+  if (!isDeepStrictEqual(json("build-metadata.json"), sourceProbeMetadata(build))) fail("source metadata differs from its declared producer recipe");
   for (const [name, value] of [["ast.json", build.ast], ["probes.json", build.probes], ["generation.json", build.generation],
     ["required-tests.json", build.requiredTests], ["js-isolation.json", build.jsIsolation], ["intake-ledger.json", build.ledger]]) {
     if (!isDeepStrictEqual(json(name), value)) fail(`source evidence differs from its build: ${name}`);

@@ -18,6 +18,12 @@ const probeInput = "tsc/cmd/tsfg-ast/testdata/positive.ts";
 const fail = message => { throw new IntakeLedgerError("ast-consumption", message); };
 export class AstExecutionError extends Error { probes; jsIsolation; requiredTests; generation; }
 
+export function sourceProbeMetadata(build) {
+  return { schemaVersion: "1", kind: "typescript-source-probe", buildIdentity: build.buildIdentity,
+    profile: build.profile, source: build.source, toolchainClosureDigest: build.toolchainClosure,
+    compilerMetadata: build.jsIsolation.artifact.metadata };
+}
+
 export async function readAstIntake({ productRoot, controlRoot, planPath, gitExecutable }) {
   const admissionBytes = await readFile(path.join(productRoot, "eng/source-admissions.json"));
   const authority = astGit(gitExecutable, controlRoot, ["show", "HEAD:eng/source-admissions.json"]);
@@ -154,9 +160,7 @@ export async function buildAstProbe({ prepared, child, serialize, publish }) {
     intakeComplete: false };
   await mkdir(path.dirname(output), { recursive: true });
   const publication = await mkdtemp(path.join(path.dirname(output), ".ast-publication-"));
-  const metadata = serialize({ schemaVersion: "1", kind: "typescript-source-probe", buildIdentity: result.buildIdentity,
-    profile: result.profile, source: result.source, toolchainClosureDigest: result.toolchainClosure,
-    compilerMetadata: jsIsolation.artifact.metadata });
+  const metadata = serialize(sourceProbeMetadata(result));
   const members = [{ path: "ast.json", sha256: hash(astBytes) },
     { path: "build-metadata.json", sha256: hash(metadata) },
     { path: "probes.json", sha256: hash(probeBytes) }, { path: "tsfg-ast.exe", sha256: hash(binary) }];
