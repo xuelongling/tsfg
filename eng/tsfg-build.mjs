@@ -38,6 +38,7 @@ import { fileURLToPath } from "node:url";
 import { TextDecoder } from "node:util";
 import { validateSourceAdmission } from "./source-admission.mjs";
 import { createIntakeLedger, IntakeLedgerError } from "./intake-ledger.mjs";
+import { reviewUpgrade } from "./upgrade-review.mjs";
 import { prefetchGoDependencies, readGoDependencyLock, verifyGoDependencies } from "./go-closure.mjs";
 
 class ConfigurationError extends Error {
@@ -6912,6 +6913,27 @@ async function executeIntakeLedgerTarget(options) {
   return result;
 }
 
+async function executeUpgradeReviewTarget(options) {
+  if (!options.has("--dev") || !options.get("--workspace") || !options.get("--upgrade-plan")) {
+    throw new ConfigurationError("upgrade-review requires --dev, --workspace and --upgrade-plan");
+  }
+  for (const name of ["--out", "--report"]) {
+    if (options.has(name) && !await isGoDestinationOnE(options.get(name))) throw new ConfigurationError(`upgrade-review requires an absolute E: ${name} destination`);
+  }
+  const bytes = await readRegularFile(path.resolve(options.get("--upgrade-plan")), "upgrade plan");
+  const plan = JSON.parse(new TextDecoder("utf-8", { fatal: true }).decode(bytes));
+  if (path.resolve(plan.candidate?.workspaceRoot ?? "", "tsfg") !== path.resolve(options.get("--workspace"))) throw new ConfigurationError("upgrade candidate must match --workspace");
+  const output = path.resolve(options.get("--out"));
+  try { await lstat(output); throw new IntakeLedgerError("upgrade-output", "review output already exists; use a fresh destination"); }
+  catch (error) { if (error.code !== "ENOENT") throw error; }
+  const definition = JSON.parse(await readFile(path.join(repositoryRoot, "eng", "workspace-policy.json"), "utf8"));
+  const result = await reviewUpgrade({ plan, git: gitOutput, parseManifest, canonicalize, digest,
+    gitExecutable: process.env.TSFG_GIT, approvedLicenses: definition.approvedLicenseExpressions });
+  const receipt = { ...result, inputSha256: digest(bytes) };
+  await writeAtomicText(path.join(output, "upgrade-review.json"), `${canonicalize(receipt)}\n`);
+  return receipt;
+}
+
 async function prepareGoSourceTarget(options, runtime) {
   if (options.get("--target") !== "windows-x86_64-msvc" || runtime.platform !== "windows-x86_64-msvc") {
     throw new ConfigurationError("TypeScript dependency preparation requires the locked Windows target");
@@ -7282,7 +7304,7 @@ async function runCommandLine() {
         process.env.TSFG_RUNTIME_CACHE,
         process.env.TSFG_RUNTIME_PLATFORM,
         { nativeControls: !(command === "build" && arguments_.includes("--dev") &&
-            ["typescript-dependencies", "intake-ledger"].includes(arguments_[arguments_.indexOf("--source-target") + 1])) },
+            ["typescript-dependencies", "intake-ledger", "upgrade-review"].includes(arguments_[arguments_.indexOf("--source-target") + 1])) },
       );
     } catch (error) {
       runtimeIntegrityError = error;
@@ -7398,16 +7420,19 @@ async function runCommandLine() {
       const options = parseOptions(
         arguments_,
         new Set([
-          "--dev", "--target", "--profile", "--simd-dispatch", "--workspace", "--out", "--report", "--source-target", "--intake-plan", "--intake-consumption",
+          "--dev", "--target", "--profile", "--simd-dispatch", "--workspace", "--out", "--report", "--source-target", "--intake-plan", "--intake-consumption", "--upgrade-plan",
         ]),
         new Set(["--dev"]),
       );
       validateSmokeOptions(options, "build");
+      if (options.has("--upgrade-plan") && options.get("--source-target") !== "upgrade-review") throw new ConfigurationError("upgrade plan requires --source-target upgrade-review");
       if (options.get("--source-target") !== "intake-ledger" &&
           (options.has("--intake-plan") || options.has("--intake-consumption"))) {
         throw new ConfigurationError("intake options require --source-target intake-ledger");
       }
-      if (options.get("--source-target") === "intake-ledger") {
+      if (options.get("--source-target") === "upgrade-review") {
+        process.exitCode = await succeed(command, await executeUpgradeReviewTarget(options), reportPath, "offline");
+      } else if (options.get("--source-target") === "intake-ledger") {
         process.exitCode = await succeed(command, await executeIntakeLedgerTarget(options), reportPath, "offline");
       } else if (options.has("--source-target")) {
         await validateGoSourceOptions(options, runtimeClosure);

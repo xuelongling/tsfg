@@ -13,8 +13,7 @@ import { requireRealIntakeEvidence } from "../../eng/intake-ledger.mjs";
 
 const entry = fileURLToPath(new URL("../../eng/tsfg-build.mjs", import.meta.url));
 const hash = (bytes) => `sha256:${createHash("sha256").update(bytes).digest("hex")}`;
-const fixtureParent = process.platform === "win32"
-  ? "E:/ws/pro_tsfg/.scratch/tsfg_r02a/evidence/02b/cli-tests" : tmpdir();
+const fixtureParent = tmpdir();
 const projectId = "TypeScript.git";
 const consumer = "fixture-parser-probe";
 

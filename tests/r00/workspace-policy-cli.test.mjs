@@ -35,6 +35,7 @@ async function initializeRepository(root, files, remoteUrl, remoteName, indexEnt
   await mkdir(root, { recursive: true });
   git(root, "init", "--quiet");
   git(root, "config", "core.autocrlf", "false");
+  git(root, "config", "core.longpaths", "true");
   git(root, "config", "user.name", "tsfg policy fixture");
   git(root, "config", "user.email", "policy-fixture@tsfg.invalid");
   git(root, "config", `remote.${remoteName}.url`, remoteUrl);
