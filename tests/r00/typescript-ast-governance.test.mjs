@@ -21,9 +21,9 @@ test("real fork corruption is rejected by the same build entry's intake gate", {
   const source = path.join(root, "typescript");
   const isolatedProduct = path.join(root, "tcfg");
   await mkdir(path.join(isolatedProduct, "eng"), { recursive: true });
-  const admissionBytes = await readFile(path.join(product, "eng/source-admissions.json"));
+  const admissionBytes = await readFile(path.join(product, "eng/source-admissions.json"), "utf8");
   const admission = JSON.parse(admissionBytes);
-  const declared = JSON.parse(await readFile(path.join(product, "eng/intake-declarations/typescript-ast.json")));
+  const declared = JSON.parse(await readFile(path.join(product, "eng/intake-declarations/typescript-ast.json"), "utf8"));
   const approved = admission.sources.find(s => s.projectId === "TypeScript.git");
   function git(cwd, ...args) {
     const child = spawnSync(TEST_GIT_EXECUTABLE, ["-c", "core.longpaths=true", "-C", cwd, ...args],
@@ -58,13 +58,15 @@ test("real fork corruption is rejected by the same build entry's intake gate", {
   }
   const good = await run();
   assert.equal(good.status, 0, good.text);
-  for (const [name, mutate, pattern] of [
+  /** @type {Array<[string, (declaration: any) => void, RegExp]>} */
+  const corruptions = [
     ["unknown source", d => { d.sources[0].projectId = "unapproved-source"; }, /unknown.*source identity/],
     ["unapproved license exception", d => { d.sources[0].entries[0].licenseException = "Unapproved-License"; }, /unapproved license exception/],
     ["game runtime role", d => { d.sources[0].entries[0].role = "game-runtime"; }, /cannot be game-runtime/],
     ["dangerous path", d => { d.sources[0].entries[0].path = "../outside.go"; }, /invalid consumed-file/],
     ["consumption expansion", d => { d.sources[0].entries.pop(); }, /extra or duplicate consumption/],
-  ]) {
+  ];
+  for (const [name, mutate, pattern] of corruptions) {
     await t.test(name, async () => {
       const copy = structuredClone(declared); mutate(copy);
       const rejected = await run(copy);
