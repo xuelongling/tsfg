@@ -86,6 +86,8 @@ test("typed consumer replays its committed generated sources through the build e
   assert.equal(result.generation.inputsRechecked, true);
   assert.equal(result.generation.binding.buildInputSetDigest, result.buildInputSet.digest);
   assert.equal(result.generation.replayProductOid, result.provenance.find(item => item.projectId === "tsfg").projectOid);
+  assert.equal(result.executionResources.goMaxProcs, "2");
+  assert.equal(result.generation.executionResources.goMaxProcs, "2");
 });
 
 test("source test reports actual required upstream suites without skips", {

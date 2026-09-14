@@ -254,7 +254,7 @@ async function replayGeneration(intake, plan, serialize, binding, producerOid) {
   const result = { schemaVersion: "1", status: "failed", mode: "replayed", inputs, commands,
     outputs: [], differences: [], declarationSha256: context.sha256,
     sourceOid: intake.ledger.sources[0].forkOid, toolchainClosure: context.toolchainClosure,
-    binding, replayProductOid: producerOid };
+    binding, replayProductOid: producerOid, executionResources: { goMaxProcs: plan.environment.GOMAXPROCS } };
   try {
     const consumedOutputs = [];
     for (const entry of intake.ledger.files) {

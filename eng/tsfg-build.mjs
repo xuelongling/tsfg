@@ -7019,6 +7019,7 @@ async function prepareGoSourceTarget(options, runtime) {
       pgo: false, debugOptimization: profile === "debug" ? "disabled" : "not-applicable",
       linkedSymbols: "not-applicable-no-link", nativeBuildAcceptance: "not-run" },
     environmentPolicy: { GOENV: "off", GOWORK: "off", GOTOOLCHAIN: "local", GOFLAGS: "",
+      ...(astIntake ? { GOMAXPROCS: "2" } : {}),
       GOEXPERIMENT: "", GOOS: "windows", GOARCH: "amd64", GOAMD64: "v2", CGO_ENABLED: "0",
       GOSUMDB: "off", GOVCS: "*:off", GOAUTH: "off", GOPROXY: "verified-local-proxy-only" },
     execution: { status: "not-run", blocker: "restricted-windows-control-plane",

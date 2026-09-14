@@ -129,6 +129,7 @@ export async function buildAstProbe({ prepared, child, serialize, publish }) {
       optimization: "disabled", symbols: "embedded-full" },
     toolchainClosure: preparation.toolchainClosure, inputIdentity: intake.inputIdentity,
     executionMode: "local-development", isolation: "not-enforced", arguments: arguments_, ast, probes, jsIsolation,
+    executionResources: { goMaxProcs: plan.environment.GOMAXPROCS },
     probeObservationSha256: hash(probeBytes),
     executableSha256: hash(binary), observationSha256: hash(astBytes),
     ledger, toolchainInputs, executionConsumption: { status: "matched", method: "go-list-deps-and-fixed-probe-input", entries: consumption.entries },
