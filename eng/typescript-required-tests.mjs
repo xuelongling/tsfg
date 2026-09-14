@@ -4,6 +4,7 @@ import { cp, mkdir, readFile, writeFile } from "node:fs/promises";
 import { createHash } from "node:crypto";
 import { spawnSync } from "node:child_process";
 import path from "node:path";
+import { astAuxiliaryInputs } from "./typescript-ast-inputs.mjs";
 
 const hash = bytes => `sha256:${createHash("sha256").update(bytes).digest("hex")}`;
 const suites = [
@@ -27,6 +28,7 @@ export async function runRequiredTypeScriptTests(intake, plan, serialize) {
     await writeFile(destination, bytes);
     inputs.push({ path: name, sha256: entry.sha256, role: "build-only" });
   }
+  const audit = await astAuxiliaryInputs(intake, plan, root, [{ tests: true, targets: suites.map(suite => suite.path) }]);
   const args = ["test", "-json", "-count=1", "-vet=off", "-mod=readonly", "-buildvcs=false", "-pgo=off",
     "-trimpath", "-gcflags=all=-N -l", ...suites.map(suite => suite.path)];
   const child = spawnSync(plan.go, args, { cwd: root, env: { ...plan.environment, PATH: path.dirname(plan.go) },
@@ -49,7 +51,8 @@ export async function runRequiredTypeScriptTests(intake, plan, serialize) {
   }
   const status = !child.error && child.status === 0 && !parseError && !skipped.length && !missing.length
     && !events.some(item => item.Action === "fail") ? "passed" : "failed";
-  const result = { schemaVersion: "1", status, inputs, passed, skipped, missing,
+  await audit.verify();
+  const result = { schemaVersion: "1", status, inputs, passed, skipped, missing, intakeLedger: audit.ledger,
     command: { executable: plan.go, arguments: args, cwd: root, exitCode: child.status, error: child.error?.message ?? parseError ?? null },
     eventLog: { path: "required-test-events.jsonstream", sha256: hash(log) },
     excluded: [{ scope: "benchmarks", reason: "No performance claim; benchmark-only checker.ts data is not consumed." },

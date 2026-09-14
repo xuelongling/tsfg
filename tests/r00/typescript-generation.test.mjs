@@ -79,4 +79,6 @@ test("source test reports actual required upstream suites without skips", {
   assert.ok(result.requiredTests.passed.some(item => item.test === "TestDeepCloneNodeSanityCheck"));
   assert.ok(result.requiredTests.passed.some(item => item.test === "TestLocalize"));
   assert.ok(result.requiredTests.passed.some(item => item.test === "TestJSCasing"));
+  assert.equal(result.requiredTests.intakeLedger?.status, "matched");
+  assert.ok(result.requiredTests.intakeLedger.files.some(item => item.source === "module:gotest.tools/v3@v3.5.2"));
 });

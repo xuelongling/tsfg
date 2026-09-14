@@ -6963,7 +6963,7 @@ async function prepareGoSourceTarget(options, runtime) {
   if (astIntake && declaration.source.commit !== astIntake.ledger.sources[0].forkOid) {
     throw new GoInputIntegrityError("AST tool dependency source lock differs from the approved fork");
   }
-  if (astIntake) Object.assign(astIntake, { toolLock: runtime.lock, dependencyLock: declaration });
+  if (astIntake) Object.assign(astIntake, { toolLock: runtime.lock, dependencyLock: declaration, parseZip });
   if (astIntake && runtime.lock.generationDependencies) {
     const generation = await readGenerationLock(runtime.lockPath, runtime.lock);
     for (const source of generation.sources) {

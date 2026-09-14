@@ -4,6 +4,7 @@ import { createHash } from "node:crypto";
 import { readFile } from "node:fs/promises";
 import { spawnSync } from "node:child_process";
 import path from "node:path";
+import { fileURLToPath } from "node:url";
 import { IntakeLedgerError, sourceGitEnvironment } from "./intake-ledger.mjs";
 
 const hash = bytes => `sha256:${createHash("sha256").update(bytes).digest("hex")}`;
@@ -117,3 +118,83 @@ export async function astToolchainInputs(intake, plan, worker) {
     method: "Go package inputs plus compiler tools, assembly headers and required legal/module control files",
     files: [...files.values()].sort((a, b) => compare(`${a.source}\0${a.path}`, `${b.source}\0${b.path}`)) };
 }
+
+// Audit the packages actually resolved for the selected generators/tests. Module
+// files are matched to verified proxy archives, never trusted on first read.
+export async function astAuxiliaryInputs(intake, plan, moduleRoot, requests) {
+  const files = new Map(), generated = [], commands = [], checked = new Map();
+  const origins = new Map();
+  const inside = (root, file) => {
+    const name = path.relative(root, file).replaceAll("\\", "/");
+    return name && name !== ".." && !name.startsWith("../") && !path.isAbsolute(name) ? name : undefined;
+  };
+  async function consume(file, origin, relative, expected) {
+    if (!expected || hash(await readFile(file)) !== expected) fail(`auxiliary input differs from locked bytes: ${origin.source}/${relative}`);
+    checked.set(file, expected);
+    files.set(`${origin.source}\0${relative}`, { ...origin, path: relative, sha256: expected, role: "build-only", consumer: "tsfg-ast-generation-tests" });
+  }
+  async function moduleOrigin(item) {
+    const identity = plan.modules.find(module => module.path === item.Module?.Path && module.version === item.Module?.Version);
+    const approval = intake.dependencyLock.modules.find(module => module.path === identity?.path);
+    if (!identity || !approval || item.Module.Replace) fail(`unlocked auxiliary Go module: ${item.ImportPath}`);
+    if (!origins.has(identity.path)) {
+      const archive = path.join(fileURLToPath(plan.environment.GOPROXY), identity.path, "@v", `${identity.version}.zip`);
+      const bytes = await readFile(archive);
+      if (hash(bytes) !== identity.archiveSha256) fail("auxiliary module archive changed");
+      const prefix = `${identity.path}@${identity.version}/`;
+      const expected = new Map(intake.parseZip(bytes).filter(entry => entry.type === "0")
+        .map(entry => [entry.name.slice(prefix.length), hash(entry.bytes)]));
+      const origin = { source: `module:${identity.path}@${identity.version}`, sourceIdentity: identity.sum,
+        license: approval.license, legal: { path: "LICENSE", sha256: approval.licenseEvidence.sha256 } };
+      const root = path.join(plan.environment.GOMODCACHE, `${identity.path}@${identity.version}`);
+      for (const name of ["LICENSE", "go.mod"]) await consume(path.join(root, name), origin, name, expected.get(name));
+      origins.set(identity.path, { root, origin, expected });
+    }
+    return origins.get(identity.path);
+  }
+  for (const request of requests) {
+    const args = ["list", "-deps", "-json", "-mod=readonly", ...(request.tests ? ["-test"] : []), ...request.targets];
+    const child = spawnSync(plan.go, args, { cwd: request.cwd ?? moduleRoot,
+      env: { ...plan.environment, PATH: path.dirname(plan.go) }, encoding: "utf8", timeout: 300000,
+      maxBuffer: 64 * 1024 * 1024, windowsHide: true });
+    commands.push({ executable: plan.go, arguments: args, cwd: request.cwd ?? moduleRoot,
+      exitCode: child.status, outputSha256: hash(child.stdout ?? ""), stderr: child.stderr });
+    if (child.error || child.status !== 0) fail(`auxiliary Go resolution failed: ${child.error?.message ?? child.stderr}`);
+    // go list emits pretty-printed objects with only root braces at column zero.
+    const packages = JSON.parse(`[${child.stdout.trim().replace(/^}\r?\n{/gm, "},{")}]`);
+    if (!packages.length) fail("auxiliary Go resolution returned no packages");
+    for (const item of packages) {
+      if (item.Error || item.DepsErrors || item.Incomplete || item.CgoFiles?.length) fail(`incomplete auxiliary package: ${item.ImportPath}`);
+      for (const name of [...(item.GoFiles ?? []), ...(item.SFiles ?? []), ...(item.HFiles ?? []), ...(item.SysoFiles ?? []), ...(item.EmbedFiles ?? [])]) {
+        const file = path.resolve(item.Dir, name);
+        const relative = inside(moduleRoot, file);
+        if (relative) {
+          const approval = intake.ledger.files.find(entry => entry.path === `tsc/${relative}`);
+          if (!approval) fail(`unregistered auxiliary source consumption: ${relative}`);
+          await consume(file, { source: "TypeScript.git", sourceIdentity: intake.ledger.sources[0].forkOid,
+            license: "Apache-2.0", legal: { path: "tsc/LICENSE", sha256: intake.ledger.files.find(entry => entry.path === "tsc/LICENSE").sha256 } }, relative, approval.sha256);
+        } else if (request.tests && item.ImportPath.endsWith(".test") && item.Name === "main"
+            && inside(plan.environment.GOCACHE, file)) {
+          generated.push({ package: item.ImportPath, sha256: hash(await readFile(file)), kind: "Go-generated-test-harness", sourceIdentity: `go${plan.goVersion}` });
+        } else if (item.Standard) {
+          const relative = inside(plan.environment.GOROOT, file);
+          const approval = plan.inputs.find(input => path.resolve(input.path) === file);
+          if (!relative) fail("auxiliary Go standard input escapes GOROOT");
+          await consume(file, { source: "go", sourceIdentity: intake.toolLock.tools.go.artifacts.find(item => item.platform === "windows-x86_64-msvc").unpackedTreeSha256,
+            license: "BSD-3-Clause", legal: { path: "LICENSE", sha256: plan.inputs.find(input => input.path === path.join(plan.environment.GOROOT, "LICENSE")).sha256 } }, relative, approval?.sha256);
+        } else {
+          const { root, origin, expected } = await moduleOrigin(item);
+          const relative = inside(root, file);
+          if (!relative) fail("auxiliary Go module input escapes its verified module");
+          await consume(file, origin, relative, expected.get(relative));
+        }
+      }
+    }
+  }
+  return { ledger: { schemaVersion: "1", status: "matched", commands,
+    files: [...files.values()].sort((a, b) => compare(`${a.source}/${a.path}`, `${b.source}/${b.path}`)), generated },
+    verify: async () => {
+      for (const [file, expected] of checked) if (hash(await readFile(file)) !== expected) fail(`auxiliary input mutated during execution: ${file}`);
+    } };
+}
+
