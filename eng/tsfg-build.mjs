@@ -38,8 +38,9 @@ import { fileURLToPath } from "node:url";
 import { TextDecoder } from "node:util";
 import { validateSourceAdmission } from "./source-admission.mjs";
 import { createIntakeLedger, IntakeLedgerError } from "./intake-ledger.mjs";
-import { readAstIntake, buildAstProbe, AstExecutionError } from "./typescript-ast.mjs";
-import { readGenerationLock, generationPackages, generationSources, GenerationError } from "./typescript-generation.mjs";
+import { readAstIntake, buildAstProbe, AstExecutionError, sourceProbeProfile, sourceProbeIdentity } from "./typescript-ast.mjs";
+import { astBuildInputs } from "./typescript-ast-inputs.mjs";
+import { readGenerationLock, generationPackages, generationSources, GenerationError, generationBinding } from "./typescript-generation.mjs";
 import { reviewUpgrade } from "./upgrade-review.mjs";
 import { reproduceTypeScript, SourceReproError } from "./typescript-repro.mjs";
 import { prefetchGoDependencies, readGoDependencyLock, verifyGoDependencies } from "./go-closure.mjs";
@@ -6943,7 +6944,7 @@ async function executeUpgradeReviewTarget(options) {
   return receipt;
 }
 
-async function prepareGoSourceTarget(options, runtime) {
+async function prepareGoSourceTarget(options, runtime, controlRoot = repositoryRoot) {
   if (options.get("--target") !== "windows-x86_64-msvc" || runtime.platform !== "windows-x86_64-msvc") {
     throw new ConfigurationError("TypeScript dependency preparation requires the locked Windows target");
   }
@@ -6961,7 +6962,7 @@ async function prepareGoSourceTarget(options, runtime) {
   }
   const sourceRoot = path.resolve(workspaceState.root, "..", declaration.source.projectId);
   const astIntake = options.get("--source-target") === "typescript-ast"
-    ? await readAstIntake({ productRoot: workspaceState.root, controlRoot: repositoryRoot,
+    ? await readAstIntake({ productRoot: workspaceState.root, controlRoot,
       planPath: options.get("--intake-plan"), gitExecutable: process.env.TSFG_GIT }) : undefined;
   if (astIntake && declaration.source.commit !== astIntake.ledger.sources[0].forkOid) {
     throw new GoInputIntegrityError("AST tool dependency source lock differs from the approved fork");
@@ -7028,6 +7029,37 @@ async function prepareGoSourceTarget(options, runtime) {
       helperSha256: WINDOWS_SANDBOX_EXECUTABLE_DIGEST },
     intakeComplete: false,
   };
+}
+
+async function currentSourceReproIdentity(productRoot, cachePath) {
+  let runtime;
+  try {
+    runtime = await verifyRuntimeClosure(path.join(productRoot, "eng/go-ast-toolchains.lock.json"), cachePath,
+      "windows-x86_64-msvc", { nativeControls: false });
+  } catch (error) { throw new SourceReproError(error.code === "ENOENT" ? 12 : 11, error.message); }
+  try {
+    const options = new Map([["--workspace", productRoot], ["--target", "windows-x86_64-msvc"], ["--profile", "debug"],
+      ["--source-target", "typescript-ast"], ["--dev", ""],
+      ["--intake-plan", path.join(productRoot, "eng/intake-declarations/typescript-ast.json")]]);
+    const preparation = await prepareGoSourceTarget(options, runtime, productRoot), intake = preparation.astIntake;
+    const inputs = await astBuildInputs(intake, intake.ledger, canonicalize);
+    const receipt = await readFile(path.join(productRoot, "eng/probes/generation.json")).catch(error => {
+      if (error.code === "ENOENT") return null;
+      throw error;
+    });
+    return { ...inputs, buildIdentity: sourceProbeIdentity(inputs, preparation.toolchainClosure, canonicalize),
+      source: preparation.source, profile: sourceProbeProfile, inputIdentity: intake.inputIdentity,
+      generationBinding: generationBinding(intake, inputs, canonicalize),
+      generationOutputs: intake.generation.declaration.outputs.map(name => ({ path: name,
+        sha256: intake.ledger.files.find(file => file.path === `tsc/${name}`).sha256 })),
+      generationCommands: 5 + intake.generation.declaration.outputs.filter(name => name.includes("stringer_generated")).length,
+      receiptSha256: receipt === null ? null : digest(receipt) };
+  } catch (error) {
+    const code = error instanceof OfflineBoundaryError ? 12 : error instanceof GoInputIntegrityError ? 11
+      : error instanceof ConfigurationError ? 2
+      : error instanceof WorkspaceMismatchError || error instanceof IntakeLedgerError || error.code === "ENOENT" ? 10 : 30;
+    throw new SourceReproError(code, error.message);
+  }
 }
 
 async function copyGoExecutionInputs(source, destination, inputs) {
@@ -7335,10 +7367,11 @@ async function runCommandLine() {
   const command = arguments_[0] ?? "";
   const sourceTarget = arguments_.includes("--source-target") ? arguments_[arguments_.indexOf("--source-target") + 1] : undefined;
   const typedProbeTest = command === "test" && sourceTarget === "typescript-ast";
+  const sourceReproCheck = command === "repro-check" && sourceTarget === "typescript-ast";
   const requestedReportPath = parseReportPath(arguments_);
   const invalidGoReport = arguments_.includes("--source-target") && requestedReportPath
     && !await isGoDestinationOnE(requestedReportPath);
-  const sourceReproOutput = command === "repro-check" && sourceTarget === "typescript-ast" && arguments_.includes("--out")
+  const sourceReproOutput = sourceReproCheck && arguments_.includes("--out")
     ? arguments_[arguments_.indexOf("--out") + 1] : undefined;
   const sourceReportRelative = sourceReproOutput && requestedReportPath
     ? path.relative(path.resolve(sourceReproOutput), path.resolve(requestedReportPath)) : undefined;
@@ -7368,7 +7401,7 @@ async function runCommandLine() {
         process.env.TSFG_RUNTIME_LOCK,
         process.env.TSFG_RUNTIME_CACHE,
         process.env.TSFG_RUNTIME_PLATFORM,
-        { nativeControls: !((command === "build" || typedProbeTest) && arguments_.includes("--dev") &&
+        { nativeControls: !((command === "build" || typedProbeTest || sourceReproCheck) && arguments_.includes("--dev") &&
             ["typescript-dependencies", "typescript-ast", "intake-ledger", "upgrade-review"].includes(arguments_[arguments_.indexOf("--source-target") + 1])) },
       );
     } catch (error) {
@@ -7753,8 +7786,14 @@ async function runCommandLine() {
       for (const destination of [first, second, options.get("--out"), options.get("--cache")]) {
         if (!destination || !await isGoDestinationOnE(destination)) throw new ConfigurationError("source repro-check requires actual absolute E: workspace, output and cache paths");
       }
+      const currentIdentities = new Map();
+      const currentIdentity = async productRoot => {
+        if (!currentIdentities.has(productRoot)) currentIdentities.set(productRoot,
+          await currentSourceReproIdentity(productRoot, options.get("--cache")));
+        return currentIdentities.get(productRoot);
+      };
       const result = await reproduceTypeScript({ options, workspaces,
-        serialize: canonicalize, parseJson: parseReproJson, environment: buildEnvironment, verify });
+        serialize: canonicalize, parseJson: parseReproJson, environment: buildEnvironment, verify, currentIdentity });
       publication = result.publication;
       process.exitCode = await succeed(command, result, reportPath, "offline");
     } catch (error) {

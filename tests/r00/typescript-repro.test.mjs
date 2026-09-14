@@ -14,6 +14,47 @@ const fixtureJson = value => value === null || typeof value !== "object" ? JSON.
   : `{${Object.keys(value).sort().map(key => `${JSON.stringify(key)}:${fixtureJson(value[key])}`).join(",")}}`;
 const fixtureHash = bytes => `sha256:${createHash("sha256").update(bytes).digest("hex")}`;
 
+test("source repro-check reconstructs current inputs instead of trusting a self-consistent omission", {
+  skip: process.env.TSFG_TEST_SOURCE_REPRO_INPUTS !== "1" ? "requires real producers for deliberate incomplete input identity" : false,
+}, async () => {
+  const original = JSON.parse(await readFile(process.env.TSFG_TEST_REPRO_ORIGINAL, "utf8")).result;
+  const root = process.env.TSFG_TEST_SOURCE_REPRO_EVIDENCE;
+  for (const [index, label] of ["a", "b"].entries()) {
+    const producer = path.join(root, label);
+    await cp(original.producers[index].output, producer, { recursive: true, errorOnExist: true, force: false });
+    const build = JSON.parse(await readFile(path.join(producer, "source-build.json"), "utf8"));
+    const inputs = { schemaVersion: "1", entries: build.buildInputSet.entries.slice(1) };
+    build.buildInputSet = { ...inputs, digest: fixtureHash(fixtureJson(inputs)) };
+    const { digest, ...identity } = build.buildIdentity;
+    identity.buildInputSetDigest = build.buildInputSet.digest;
+    build.buildIdentity = { ...identity, digest: fixtureHash(fixtureJson(identity)) };
+    const { digest: oldBinding, ...binding } = build.generation.binding;
+    binding.buildInputSetDigest = build.buildInputSet.digest;
+    build.generation.binding = { ...binding, digest: fixtureHash(fixtureJson(binding)) };
+    await writeFile(path.join(producer, "generation.json"), fixtureJson(build.generation));
+    await writeFile(path.join(producer, "source-build.json"), fixtureJson(build));
+    const metadata = JSON.parse(await readFile(path.join(producer, "build-metadata.json"), "utf8"));
+    metadata.buildIdentity = build.buildIdentity;
+    await writeFile(path.join(producer, "build-metadata.json"), fixtureJson(metadata));
+    const manifest = JSON.parse(await readFile(path.join(producer, "artifact-manifest.json"), "utf8"));
+    manifest.buildIdentity = build.buildIdentity;
+    manifest.buildInputSet = build.buildInputSet;
+    for (const member of manifest.members) member.sha256 = fixtureHash(await readFile(path.join(producer, member.path)));
+    await writeFile(path.join(producer, "artifact-manifest.json"), fixtureJson(manifest));
+  }
+  const output = path.join(root, "out"), report = path.join(root, "report.json");
+  const child = spawnSync(process.execPath, [entry, "repro-check", "--dev", "--source-target", "typescript-ast",
+    "--target", "windows-x86_64-msvc", "--profile", "debug",
+    "--workspace-a", original.producers[0].workspaceRoot, "--workspace-b", original.producers[1].workspaceRoot,
+    "--producer-a", path.join(root, "a"), "--producer-b", path.join(root, "b"),
+    "--cache", process.env.TSFG_TEST_GO_CACHE,
+    "--manifest-revision", original.producers[0].workspace.manifest.revision, "--manifest", "candidates/tsfg-v0.2.0.xml",
+    "--out", output, "--report", report], { encoding: "utf8", timeout: 1200000, windowsHide: true });
+  assert.equal(child.status, 23, child.stdout + child.stderr);
+  assert.match(JSON.parse(await readFile(report, "utf8")).error.issues[0].message, /current.*input|current.*identity/i);
+  await assert.rejects(stat(output), { code: "ENOENT" });
+});
+
 test("source repro-check rejects undeclared host and wall-clock metadata even when equal", {
   skip: process.env.TSFG_TEST_SOURCE_REPRO_METADATA !== "1" ? "requires real producers for deliberate metadata corruption" : false,
 }, async () => {

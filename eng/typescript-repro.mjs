@@ -37,7 +37,7 @@ function leakedPaths(bytes, roots) {
   });
 }
 
-async function readProducer(root, workspaceRoot, workspace, serialize, parseJson) {
+async function readProducer(root, workspaceRoot, workspace, serialize, parseJson, currentIdentity) {
   const names = (await readdir(root)).sort();
   if (!isDeepStrictEqual(names, [...payloadNames, ...evidenceNames].sort())) fail("incomplete or unexpected source producer members");
   const bytes = new Map();
@@ -64,6 +64,20 @@ async function readProducer(root, workspaceRoot, workspace, serialize, parseJson
       || !isDeepStrictEqual(manifest.members.map(member => member.path), payloadNames.slice(1))) fail("source Artifact Manifest declaration mismatch");
   for (const member of manifest.members) if (hash(bytes.get(member.path)) !== member.sha256) fail(`source payload digest mismatch: ${member.path}`);
   if (!isDeepStrictEqual(json("build-metadata.json"), sourceProbeMetadata(build))) fail("source metadata differs from its declared producer recipe");
+  const current = await currentIdentity(productRoot);
+  if (current.dirty || !isDeepStrictEqual(build.buildInputSet, current.buildInputSet)
+      || !isDeepStrictEqual(build.buildIdentity, current.buildIdentity) || !isDeepStrictEqual(build.provenance, current.provenance)
+      || !isDeepStrictEqual(build.source, current.source) || !isDeepStrictEqual(build.profile, current.profile)
+      || !isDeepStrictEqual(build.inputIdentity, current.inputIdentity)) fail("source producer differs from the current complete input set or Build Identity");
+  const generation = build.generation;
+  const commands = generation.mode === "replayed" ? generation.commands : generation.verifiedReplay?.commands;
+  if (!isDeepStrictEqual(generation.binding, current.generationBinding)
+      || !isDeepStrictEqual(generation.outputs, current.generationOutputs) || generation.inputsRechecked !== true
+      || generation.intakeLedger?.status !== "matched" || generation.differences?.length !== 0
+      || !["replayed", "reused"].includes(generation.mode) || commands?.length !== current.generationCommands
+      || commands.some(command => command.exitCode !== 0)
+      || generation.mode === "reused" && (generation.commands.length !== 0 || generation.receiptPath !== "eng/probes/generation.json"
+        || generation.receiptSha256 !== current.receiptSha256)) fail("generation evidence does not match the current source inputs and recipe");
   for (const [name, value] of [["ast.json", build.ast], ["probes.json", build.probes], ["generation.json", build.generation],
     ["required-tests.json", build.requiredTests], ["js-isolation.json", build.jsIsolation], ["intake-ledger.json", build.ledger]]) {
     if (!isDeepStrictEqual(json(name), value)) fail(`source evidence differs from its build: ${name}`);
@@ -97,7 +111,7 @@ async function readProducer(root, workspaceRoot, workspace, serialize, parseJson
   return { root, workspaceRoot, workspace, build, bytes, manifest, semanticIssues };
 }
 
-export async function reproduceTypeScript({ options, workspaces, serialize, parseJson, environment, verify }) {
+export async function reproduceTypeScript({ options, workspaces, serialize, parseJson, environment, verify, currentIdentity }) {
   const output = path.resolve(options.get("--out"));
   await mkdir(path.dirname(output), { recursive: true });
   if (await lstat(output).catch(error => { if (error.code === "ENOENT") return undefined; throw error; })) {
@@ -119,7 +133,7 @@ export async function reproduceTypeScript({ options, workspaces, serialize, pars
   const read = async index => {
     try {
       const producer = producers[index];
-      const value = await readProducer(await realpath(producer.output), producer.workspaceRoot, workspaces[index], serialize, parseJson);
+      const value = await readProducer(await realpath(producer.output), producer.workspaceRoot, workspaces[index], serialize, parseJson, currentIdentity);
       producer.validation.status = "passed";
       producer.stages.interface = value.semanticIssues.length ? "failed" : value.build.probes.status;
       return value;

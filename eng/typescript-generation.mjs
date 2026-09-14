@@ -124,12 +124,18 @@ export async function generationSources(sourceRoot, declaration, gitExecutable) 
 
 export class GenerationError extends Error { generation; }
 
-export async function runGeneration(intake, plan, identity, serialize) {
+export function generationBinding(intake, identity, serialize) {
   const context = intake.generation;
   const payload = { schemaVersion: "1", buildInputSetDigest: identity.buildInputSet.digest,
+    sourceDateEpoch: identity.sourceDateEpoch,
     generationLockSha256: context.sha256, toolchainClosure: context.toolchainClosure,
     sourceOid: intake.ledger.sources[0].forkOid, intakeIdentity: intake.inputIdentity };
-  const binding = { ...payload, digest: hash(serialize(payload)) };
+  return { ...payload, digest: hash(serialize(payload)) };
+}
+
+export async function runGeneration(intake, plan, identity, serialize) {
+  const context = intake.generation;
+  const binding = generationBinding(intake, identity, serialize);
   const producer = identity.provenance.find(project => project.projectId === "tsfg").projectOid;
   const replay = () => replayGeneration(intake, plan, serialize, binding, producer);
   if (context.mode === "replay") return replay();

@@ -17,6 +17,16 @@ const projectId = "TypeScript.git";
 const probeInput = "tsc/cmd/tsfg-ast/testdata/positive.ts";
 const fail = message => { throw new IntakeLedgerError("ast-consumption", message); };
 export class AstExecutionError extends Error { probes; jsIsolation; requiredTests; generation; }
+export const sourceProbeProfile = Object.freeze({ name: "debug", goamd64: "v2", pgo: false, cgo: false,
+  optimization: "disabled", symbols: "embedded-full" });
+
+export function sourceProbeIdentity(inputs, toolchainClosure, serialize) {
+  const payload = { buildInputSetDigest: inputs.buildInputSet.digest,
+    options: { sourceTarget: "typescript-ast", goamd64: "v2", cgo: false, pgo: false },
+    profile: "debug", source_date_epoch: inputs.sourceDateEpoch, target: "windows-x86_64-msvc",
+    toolchainClosureDigest: toolchainClosure };
+  return { ...payload, digest: hash(serialize(payload)) };
+}
 
 export function sourceProbeMetadata(build) {
   return { schemaVersion: "1", kind: "typescript-source-probe", buildIdentity: build.buildIdentity,
@@ -40,7 +50,8 @@ export async function readAstIntake({ productRoot, controlRoot, planPath, gitExe
   const ledger = await createIntakeLedger(request);
   const probes = await readTypeScriptProbes(controlRoot, gitExecutable);
   const contractRegistry = JSON.parse(await readFile(path.join(controlRoot, "contracts/registry.json"), "utf8"));
-  if (!contractRegistry || Array.isArray(contractRegistry) || Object.keys(contractRegistry).length) fail("source probe requires the current empty Contract Registry");
+  if (!contractRegistry || typeof contractRegistry !== "object" || Array.isArray(contractRegistry)
+      || Object.keys(contractRegistry).length) fail("source probe requires the current empty Contract Registry");
   return { request, ledger, controlRoot, probes, contractRegistry,
     inputIdentity: { admission: hash(admissionBytes), declaration: hash(declarationBytes), probes: probes.sha256 } };
 }
@@ -136,13 +147,8 @@ export async function buildAstProbe({ prepared, child, serialize, publish }) {
   if (astGit(intake.request.gitExecutable, intake.controlRoot, ["rev-parse", "HEAD"]).toString("utf8").trim()
       !== identity.provenance.find(project => project.projectId === "tsfg").projectOid) fail("product HEAD changed during execution");
   const binary = await readFile(executable);
-  const buildIdentityPayload = { buildInputSetDigest: identity.buildInputSet.digest,
-    options: { sourceTarget: "typescript-ast", goamd64: "v2", cgo: false, pgo: false },
-    profile: "debug", source_date_epoch: identity.sourceDateEpoch, target: "windows-x86_64-msvc",
-    toolchainClosureDigest: preparation.toolchainClosure };
   const result = { schemaVersion: "1", status: "ast-observed", source: preparation.source,
-    target: "windows-x86_64-msvc", profile: { name: "debug", goamd64: "v2", pgo: false, cgo: false,
-      optimization: "disabled", symbols: "embedded-full" },
+    target: "windows-x86_64-msvc", profile: sourceProbeProfile,
     toolchainClosure: preparation.toolchainClosure, inputIdentity: intake.inputIdentity,
     executionMode: "local-development", isolation: "not-enforced", arguments: arguments_, ast, probes, jsIsolation,
     executionResources: { goMaxProcs: plan.environment.GOMAXPROCS },
@@ -155,7 +161,7 @@ export async function buildAstProbe({ prepared, child, serialize, publish }) {
     executableSha256: hash(binary), observationSha256: hash(astBytes),
     ledger, toolchainInputs, executionConsumption: { status: "matched", method: "go-list-deps-and-fixed-probe-input", entries: consumption.entries },
     buildInputSet: identity.buildInputSet, provenance: identity.provenance, dirty: identity.dirty,
-    buildIdentity: { ...buildIdentityPayload, digest: hash(serialize(buildIdentityPayload)) },
+    buildIdentity: sourceProbeIdentity(identity, preparation.toolchainClosure, serialize),
     generation, requiredTests,
     intakeComplete: false };
   await mkdir(path.dirname(output), { recursive: true });
