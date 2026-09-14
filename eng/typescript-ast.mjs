@@ -8,6 +8,7 @@ import { createIntakeLedger, IntakeLedgerError } from "./intake-ledger.mjs";
 import { readGoSourceExecutionResult } from "./go-source-result.mjs";
 import { astGit, astBuildInputs, astToolchainInputs } from "./typescript-ast-inputs.mjs";
 import { readTypeScriptProbes, runTypeScriptProbes, runJsIsolation } from "./typescript-probes.mjs";
+import { replayGeneration } from "./typescript-generation.mjs";
 
 const hash = bytes => `sha256:${createHash("sha256").update(bytes).digest("hex")}`;
 const consumer = "tsfg-ast";
@@ -40,6 +41,7 @@ export async function buildAstProbe({ prepared, child, serialize, publish }) {
   const plan = JSON.parse(await readFile(path.join(stageRoot, "inputs/control/plan.json"), "utf8"));
   const intake = preparation.astIntake;
   const auditFiles = ["tsc/go.mod", "tsc/go.sum", "tsc/LICENSE", "tsc/NOTICE.txt", probeInput,
+    ...(intake.generation?.declaration.inputs ?? []).map(name => `tsc/${name}`),
     ...["lib.es5.d.ts", "lib.decorators.d.ts", "lib.decorators.legacy.d.ts"].map(name => `tsc/internal/bundled/libs/${name}`)];
   const paths = new Set(auditFiles);
   for (const item of worker.packages) {
@@ -57,6 +59,8 @@ export async function buildAstProbe({ prepared, child, serialize, publish }) {
   const ledger = await createIntakeLedger({ ...intake.request, consumption });
   const toolchainInputs = await astToolchainInputs(intake, plan, worker);
   const identity = await astBuildInputs(intake, ledger, serialize);
+  const generation = intake.generation?.mode === "replay" ? await replayGeneration(intake, plan, serialize)
+    : { status: "not-run", reason: "No verified generation receipt has been consumed." };
   const verifyInputs = async () => {
     for (const input of plan.inputs) if (hash(await readFile(input.path)) !== input.sha256) fail(`staged input changed: ${input.path}`);
   };
@@ -112,7 +116,7 @@ export async function buildAstProbe({ prepared, child, serialize, publish }) {
     ledger, toolchainInputs, executionConsumption: { status: "matched", method: "go-list-deps-and-fixed-probe-input", entries: consumption.entries },
     buildInputSet: identity.buildInputSet, provenance: identity.provenance, dirty: identity.dirty,
     buildIdentity: { ...buildIdentityPayload, digest: hash(serialize(buildIdentityPayload)) },
-    generation: { status: "not-run", reason: "Committed generated source compiled; maintainability belongs to ticket 07." },
+    generation,
     intakeComplete: false };
   await mkdir(path.dirname(output), { recursive: true });
   const publication = await mkdtemp(path.join(path.dirname(output), ".ast-publication-"));
@@ -120,6 +124,7 @@ export async function buildAstProbe({ prepared, child, serialize, publish }) {
   await writeFile(path.join(publication, "ast.json"), astBytes);
   await writeFile(path.join(publication, "probes.json"), probeBytes);
   await writeFile(path.join(publication, "js-isolation.json"), serialize(jsIsolation));
+  await writeFile(path.join(publication, "generation.json"), serialize(generation));
   await writeFile(path.join(publication, "intake-ledger.json"), serialize(ledger));
   await writeFile(path.join(publication, "go-list.jsonstream"), outputBytes);
   await writeFile(path.join(publication, "source-build.json"), serialize(result));

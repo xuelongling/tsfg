@@ -39,7 +39,7 @@ import { TextDecoder } from "node:util";
 import { validateSourceAdmission } from "./source-admission.mjs";
 import { createIntakeLedger, IntakeLedgerError } from "./intake-ledger.mjs";
 import { readAstIntake, buildAstProbe, AstExecutionError } from "./typescript-ast.mjs";
-import { readGenerationLock } from "./typescript-generation.mjs";
+import { readGenerationLock, generationPackages, generationSources, GenerationError } from "./typescript-generation.mjs";
 import { reviewUpgrade } from "./upgrade-review.mjs";
 import { prefetchGoDependencies, readGoDependencyLock, verifyGoDependencies } from "./go-closure.mjs";
 
@@ -1718,7 +1718,9 @@ async function prefetch(options) {
     );
   }
   const lock = JSON.parse(await readFile(path.resolve(lockPath), "utf8"));
-  await readGenerationLock(lockPath, lock);
+  const generation = await readGenerationLock(lockPath, lock);
+  await generationPackages(path.resolve(cachePath), generation, parseTar, true);
+  if (generation) await generationSources(path.resolve(path.dirname(lockPath), "../../typescript"), generation, process.env.TSFG_GIT);
   const goDeclaration = await readGoDependencyLock(lockPath, lock);
   const goDependencies = await prefetchGoDependencies(path.resolve(cachePath), goDeclaration,
     lock.goDependencies?.sha256, parseZip);
@@ -6962,6 +6964,17 @@ async function prepareGoSourceTarget(options, runtime) {
     throw new GoInputIntegrityError("AST tool dependency source lock differs from the approved fork");
   }
   if (astIntake) Object.assign(astIntake, { toolLock: runtime.lock, dependencyLock: declaration });
+  if (astIntake && runtime.lock.generationDependencies) {
+    const generation = await readGenerationLock(runtime.lockPath, runtime.lock);
+    for (const source of generation.sources) {
+      const gitlink = astIntake.request.admission.sources[0].files.find(file => file.path === `tsc/${source.mount}`);
+      if (gitlink?.contentKind !== "gitlink" || gitlink.oid !== source.commit) throw new GoInputIntegrityError("generation subsource differs from approved gitlink");
+    }
+    astIntake.generation = { declaration: generation, sha256: runtime.lock.generationDependencies.sha256,
+      toolchainClosure: runtime.lockDigest, mode: options.get("--generation") ?? "reuse",
+      packages: await generationPackages(runtime.cachePath, generation, parseTar),
+      sources: await generationSources(sourceRoot, generation, process.env.TSFG_GIT) };
+  }
   const actualRoot = gitOutput(sourceRoot, ["rev-parse", "--show-toplevel"]).trim();
   const actualCommit = gitOutput(sourceRoot, ["rev-parse", "HEAD"]).trim();
   const remote = gitOutput(sourceRoot, ["remote", "get-url", "origin"]).trim().replace(/\.git$/, "");
@@ -7448,12 +7461,14 @@ async function runCommandLine() {
       const options = parseOptions(
         arguments_,
         new Set([
-          "--dev", "--target", "--profile", "--simd-dispatch", "--workspace", "--out", "--report", "--source-target", "--intake-plan", "--intake-consumption", "--upgrade-plan",
+          "--dev", "--target", "--profile", "--simd-dispatch", "--workspace", "--out", "--report", "--source-target", "--intake-plan", "--intake-consumption", "--upgrade-plan", "--generation",
         ]),
         new Set(["--dev"]),
       );
       validateSmokeOptions(options, "build");
       if (options.has("--upgrade-plan") && options.get("--source-target") !== "upgrade-review") throw new ConfigurationError("upgrade plan requires --source-target upgrade-review");
+      if (options.has("--generation") && (options.get("--source-target") !== "typescript-ast"
+          || !["replay", "reuse"].includes(options.get("--generation")))) throw new ConfigurationError("generation requires typescript-ast and replay or reuse");
       if (!["intake-ledger", "typescript-ast"].includes(options.get("--source-target")) &&
           (options.has("--intake-plan") || options.has("--intake-consumption"))) {
         throw new ConfigurationError("intake options require --source-target intake-ledger");
@@ -7487,7 +7502,7 @@ async function runCommandLine() {
     } catch (error) {
       if (publication) await publication.rollback();
       const isConfigurationError = error instanceof ConfigurationError;
-      const isBuildFailure = error instanceof BuildFailureError || error instanceof AstExecutionError;
+      const isBuildFailure = error instanceof BuildFailureError || error instanceof AstExecutionError || error instanceof GenerationError;
       const isProbeFailure = error instanceof AstExecutionError && (error.probes?.status === "failed" || error.jsIsolation?.status === "failed");
       const isBuildPolicy = error instanceof BuildPolicyError;
       const isWorkspaceMismatch = error instanceof WorkspaceMismatchError || error instanceof IntakeLedgerError;
@@ -7529,6 +7544,7 @@ async function runCommandLine() {
                       ? "forbidden-build-option"
                     : isProbeFailure ? "typescript-probe" : isBuildFailure ? "native-build" : "internal-control-plane",
           message: error.message,
+          ...(error instanceof GenerationError ? { generation: error.generation } : {}),
           ...(sourceTarget === "typescript-ast" ? { probes: error instanceof AstExecutionError && error.probes
             ? error.probes : { status: "not-run", reason: error.message },
           jsIsolation: error instanceof AstExecutionError && error.jsIsolation

@@ -37,3 +37,25 @@ test("prefetch rejects a floating npm generation input", async t => {
   assert.equal(child.status, 11);
   assert.match(child.stderr, /generation package requires exact identity/);
 });
+
+test("typed consumer replays its committed generated sources through the build entry", {
+  skip: process.env.TSFG_TEST_GENERATION !== "1" ? "requires pinned generation closure" : false,
+}, async () => {
+  const product = fileURLToPath(new URL("../../", import.meta.url));
+  const root = process.env.TSFG_TEST_GENERATION_EVIDENCE;
+  const report = path.join(root, "replay.json");
+  const child = spawnSync(process.execPath, [entry, "build", "--dev", "--source-target", "typescript-ast",
+    "--generation", "replay", "--workspace", product, "--intake-plan", path.join(product, "eng/intake-declarations/typescript-ast.json"),
+    "--target", "windows-x86_64-msvc", "--profile", "debug", "--out", path.join(root, "replay-output"), "--report", report],
+  { env: { ...process.env, TSFG_RUNTIME_LOCK: path.join(product, "eng/go-ast-toolchains.lock.json"),
+    TSFG_RUNTIME_CACHE: process.env.TSFG_TEST_GO_CACHE, TSFG_RUNTIME_PLATFORM: "windows-x86_64-msvc" },
+    encoding: "utf8", timeout: 1200000, windowsHide: true });
+  assert.equal(child.status, 0, child.stdout + child.stderr);
+  const result = JSON.parse(await readFile(report, "utf8")).result;
+  assert.equal(result.generation.status, "passed");
+  assert.equal(result.generation.mode, "replayed");
+  assert.equal(result.generation.differences.length, 0);
+  assert.ok(result.generation.outputs.some(item => item.path === "internal/ast/ast_generated.go"));
+  assert.ok(result.generation.outputs.some(item => item.path === "internal/stringutil/js_case_generated.go"));
+  assert.equal(result.probes.status, "passed");
+});

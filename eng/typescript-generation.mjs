@@ -1,8 +1,11 @@
 // SPDX-License-Identifier: MIT
 // Private generation stage of the Hermetic Build Entry.
 import { createHash } from "node:crypto";
-import { readFile } from "node:fs/promises";
+import { readFile, mkdir, writeFile, lstat, cp, readdir } from "node:fs/promises";
 import path from "node:path";
+import { gunzipSync } from "node:zlib";
+import { astGit } from "./typescript-ast-inputs.mjs";
+import { spawnSync } from "node:child_process";
 
 const hash = bytes => `sha256:${createHash("sha256").update(bytes).digest("hex")}`;
 
@@ -27,4 +30,161 @@ export async function readGenerationLock(lockPath, lock) {
     }
   }
   return declaration;
+}
+
+// Packages are unpacked from their verified archives, with no npm scripts,
+// dependency resolution, executable shims, or implicit formatter downloads.
+export async function generationPackages(cache, declaration, parseTar, online = false) {
+  const files = [];
+  for (const item of declaration?.packages ?? []) {
+    const key = createHash("sha256").update(item.integrity).digest("hex");
+    const archive = path.join(cache, "generation-packages", key, "package.tgz");
+    let bytes;
+    try {
+      if (!(await lstat(archive)).isFile() || (await lstat(archive)).isSymbolicLink()) throw new Error("nonregular generation archive");
+      bytes = await readFile(archive);
+    } catch (error) {
+      if (error.code !== "ENOENT" || !online) throw error;
+      const response = await fetch(item.url);
+      if (!response.ok) throw new Error(`generation package HTTP ${response.status}: ${item.name}`);
+      bytes = Buffer.from(await response.arrayBuffer());
+    }
+    if (`sha512-${createHash("sha512").update(bytes).digest("base64")}` !== item.integrity) throw new Error(`generation package integrity mismatch: ${item.name}`);
+    const entries = parseTar(gunzipSync(bytes)).filter(entry => entry.type !== "5");
+    const names = new Set();
+    for (const entry of entries) {
+      if (entry.type !== "0" || !entry.name.startsWith("package/") || !safeRelative(entry.name)
+          || names.has(entry.name.toLowerCase())) throw new Error("unsafe generation package entry");
+      names.add(entry.name.toLowerCase());
+      files.push({ source: `npm:${item.name}@${item.version}`, path: entry.name.slice(8),
+        bytes: entry.bytes, sha256: hash(entry.bytes), license: item.license,
+        sourceIdentity: item.integrity, role: "build-only" });
+    }
+    const metadata = entries.find(entry => entry.name === "package/package.json");
+    const pkg = metadata && JSON.parse(metadata.bytes.toString("utf8"));
+    const legal = entries.some(entry => /^package\/LICENSE(?:\.txt|\.md)?$/i.test(entry.name))
+      || (item.name === "@dprint/win32-x64" && files.some(file => file.source === `npm:dprint@${item.version}` && /^LICENSE(?:\.txt|\.md)?$/i.test(file.path)))
+      || (item.name === "@unicode/unicode-15.1.0" && entries.some(entry => entry.name === "package/README.md"
+        && entry.bytes.toString("utf8").includes("This module is available under the [MIT](https://mths.be/mit) license.")));
+    if (pkg?.name !== item.name || pkg.version !== item.version || pkg.license !== item.license || !legal) {
+      throw new Error(`generation package legal/identity missing: ${item.name}`);
+    }
+    if (online) {
+      await mkdir(path.dirname(archive), { recursive: true });
+      try { await writeFile(archive, bytes, { flag: "wx" }); }
+      catch (error) { if (error.code !== "EEXIST") throw error; }
+    }
+  }
+  return files;
+}
+
+function safeRelative(name) {
+  return typeof name === "string" && !/[<>:"\\|?*]/.test(name)
+    && name.split("/").every(part => part && part !== "." && part !== ".." && !/[. ]$/.test(part)
+      && !/^(con|prn|aux|nul|com[0-9]|lpt[0-9])(?:\.|$)/i.test(part));
+}
+
+export async function generationSources(sourceRoot, declaration, gitExecutable) {
+  const files = [];
+  for (const source of declaration?.sources ?? []) {
+    if (!/^[a-f0-9]{40}$/.test(source.commit) || !safeRelative(source.mount)
+        || source.license !== "Apache-2.0" || source.canonicalUrl !== "https://github.com/microsoft/TypeScript") throw new Error("invalid generation subsource identity");
+    const tree = new Map(astGit(gitExecutable, sourceRoot, ["ls-tree", "-r", "-z", source.commit]).toString("utf8")
+      .split("\0").filter(Boolean).map(line => { const match = /^(100644|100755) blob ([a-f0-9]{40})\t(.+)$/.exec(line); return match ? [match[3], match[2]] : ["", ""]; }));
+    for (const input of source.files) {
+      if (!safeRelative(input.path) || !/^sha256:[a-f0-9]{64}$/.test(input.sha256) || !tree.has(input.path)) throw new Error("unlocked generation source input");
+      const bytes = astGit(gitExecutable, sourceRoot, ["cat-file", "blob", tree.get(input.path)]);
+      if (hash(bytes) !== input.sha256) throw new Error(`generation source identity mismatch: ${input.path}`);
+      files.push({ ...input, source: source.canonicalUrl, sourceIdentity: source.commit,
+        mount: `${source.mount}/${input.path}`, license: source.license, role: "build-only", bytes });
+    }
+    if (!["LICENSE.txt", "CopyrightNotice.txt"].every(name => source.files.some(input => input.path === name || input.path.endsWith(`/${name}`)))) throw new Error("generation subsource legal inputs missing");
+  }
+  return files;
+}
+
+export class GenerationError extends Error { generation; }
+
+export async function replayGeneration(intake, plan, serialize) {
+  const context = intake.generation;
+  if (!context) return { status: "not-run", reason: "No locked generation closure was supplied." };
+  const { declaration, packages, sources } = context;
+  const root = path.join(plan.workRoot, "generation");
+  const moduleRoot = path.join(root, "source");
+  await mkdir(root);
+  await cp(plan.moduleRoot, moduleRoot, { recursive: true, errorOnExist: true, force: false });
+  const inputs = [];
+  for (const name of declaration.inputs) {
+    if (!safeRelative(name)) throw new Error("unsafe generator input");
+    const entry = intake.ledger.files.find(file => file.path === `tsc/${name}`);
+    if (!entry) throw new Error(`generator input missing from intake ledger: ${name}`);
+    const bytes = await readFile(path.join(intake.request.workspaceRoot, "typescript/tsc", name));
+    if (hash(bytes) !== entry.sha256) throw new Error(`generator input changed: ${name}`);
+    await mkdir(path.dirname(path.join(moduleRoot, name)), { recursive: true });
+    await writeFile(path.join(moduleRoot, name), bytes);
+    inputs.push({ path: name, sha256: entry.sha256, role: "build-only" });
+  }
+  for (const input of sources) {
+    const location = path.join(moduleRoot, input.mount);
+    await mkdir(path.dirname(location), { recursive: true });
+    await writeFile(location, input.bytes, { flag: "wx" });
+    inputs.push({ path: input.mount, sha256: input.sha256, sourceIdentity: input.sourceIdentity, role: input.role });
+  }
+  for (const file of packages) {
+    const packageName = file.source.slice(4, file.source.lastIndexOf("@"));
+    const destination = path.join(moduleRoot, "node_modules", packageName, file.path);
+    await mkdir(path.dirname(destination), { recursive: true });
+    await writeFile(destination, file.bytes, { flag: "wx" });
+  }
+  const formatter = path.join(moduleRoot, "node_modules/@dprint/win32-x64/dprint.exe");
+  const config = path.join(root, "dprint.json");
+  const formatting = { indentWidth: 4, lineWidth: 1000, newLineKind: "auto", useTabs: false,
+    gofumpt: { langVersion: "go1.26", modulePath: "github.com/microsoft/typescript-go" },
+    plugins: [path.join(moduleRoot, "node_modules/@jakebailey/dprint-plugin-gofumpt/plugin.wasm")] };
+  await writeFile(config, serialize(formatting));
+  const environment = { ...plan.environment, TSFG_DPRINT: formatter, TSFG_DPRINT_CONFIG: config,
+    DPRINT_CACHE_DIR: path.join(root, "dprint-cache"), PATH: path.dirname(plan.go) };
+  const commands = [];
+  const invoke = (executable, args, cwd = moduleRoot) => {
+    const child = spawnSync(executable, args, { cwd, env: environment, encoding: "utf8", windowsHide: true,
+      timeout: 300000, maxBuffer: 64 * 1024 * 1024 });
+    commands.push({ executable, arguments: args, cwd, exitCode: child.status, stdout: child.stdout, stderr: child.stderr });
+    if (child.error || child.status !== 0) throw new Error(`generator failed: ${child.error?.message ?? child.stderr}`);
+    return child.stdout;
+  };
+  const node = path.join(plan.inputRoot, "node/node.exe");
+  const before = [];
+  for (const name of declaration.outputs) before.push({ path: name, sha256: hash(await readFile(path.join(plan.moduleRoot, name))) });
+  const result = { schemaVersion: "1", status: "failed", mode: "replayed", inputs, commands,
+    outputs: [], differences: [], declarationSha256: context.sha256,
+    sourceOid: intake.ledger.sources[0].forkOid, toolchainClosure: context.toolchainClosure };
+  try {
+    invoke(node, ["--disable-warning=ExperimentalWarning", "_scripts/generate-go-ast.ts"]);
+    invoke(node, ["--disable-warning=ExperimentalWarning", "internal/stringutil/_scripts/generate-unicode-data.mts"]);
+    invoke(plan.go, ["run", "-mod=readonly", "generate.go", "-diagnostics", "diagnostics_generated.go", "-loc", "loc_generated.go", "-locdir", "loc"], path.join(moduleRoot, "internal/diagnostics"));
+    invoke(plan.go, ["run", "-mod=readonly", "generate.go"], path.join(moduleRoot, "internal/bundled"));
+    for (const name of declaration.outputs.filter(name => name.includes("stringer_generated"))) {
+      const original = (await readFile(path.join(plan.moduleRoot, name), "utf8")).split("\n")[0];
+      const match = /^\/\/ Code generated by "stringer ([^"]+)"; DO NOT EDIT\.$/.exec(original);
+      if (!match) throw new Error(`unrecognized locked stringer invocation: ${name}`);
+      const args = match[1].split(" ");
+      if (args.some(arg => !/^-(type|trimprefix|output)=[A-Za-z0-9_.]+$/.test(arg))) throw new Error("unsafe stringer arguments");
+      invoke(plan.go, ["tool", "golang.org/x/tools/cmd/stringer", ...args], path.dirname(path.join(moduleRoot, name)));
+    }
+    invoke(formatter, ["fmt", "--config", config, ...declaration.outputs.filter(name => name.endsWith(".go")).map(name => path.join(moduleRoot, name))]);
+    for (const input of before) {
+      const sha256 = hash(await readFile(path.join(moduleRoot, input.path)));
+      result.outputs.push({ ...input, sha256 });
+      if (sha256 !== input.sha256) result.differences.push({ path: input.path, committed: input.sha256, regenerated: sha256 });
+    }
+    if (result.differences.length) throw new Error("unexplained generated source differences");
+    result.status = "passed";
+    await writeFile(path.join(plan.workRoot, "generation.json"), serialize(result));
+    return result;
+  } catch (cause) {
+    await writeFile(path.join(plan.workRoot, "generation.json"), serialize({ ...result, message: cause.message }));
+    const error = new GenerationError(cause.message);
+    error.generation = { ...result, message: cause.message };
+    throw error;
+  }
 }
