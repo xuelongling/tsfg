@@ -33,7 +33,10 @@ export async function readAstIntake({ productRoot, controlRoot, planPath, gitExe
     gitExecutable, approvedLicenses: policy.approvedLicenseExpressions };
   const ledger = await createIntakeLedger(request);
   const probes = await readTypeScriptProbes(controlRoot, gitExecutable);
-  return { request, ledger, controlRoot, probes, inputIdentity: { admission: hash(admissionBytes), declaration: hash(declarationBytes), probes: probes.sha256 } };
+  const contractRegistry = JSON.parse(await readFile(path.join(controlRoot, "contracts/registry.json"), "utf8"));
+  if (!contractRegistry || Array.isArray(contractRegistry) || Object.keys(contractRegistry).length) fail("source probe requires the current empty Contract Registry");
+  return { request, ledger, controlRoot, probes, contractRegistry,
+    inputIdentity: { admission: hash(admissionBytes), declaration: hash(declarationBytes), probes: probes.sha256 } };
 }
 
 export async function buildAstProbe({ prepared, child, serialize, publish }) {
@@ -160,7 +163,7 @@ export async function buildAstProbe({ prepared, child, serialize, publish }) {
   await writeFile(path.join(publication, "build-metadata.json"), metadata);
   await writeFile(path.join(publication, "artifact-manifest.json"), serialize({ schemaVersion: "1",
     kind: "typescript-source-probe", buildIdentity: result.buildIdentity, buildInputSet: result.buildInputSet,
-    contractSetId: hash(serialize({})), toolchainClosureDigest: result.toolchainClosure, members }));
+    contractSetId: hash(serialize(intake.contractRegistry)), toolchainClosureDigest: result.toolchainClosure, members }));
   await writeFile(path.join(publication, "tsfg-ast.exe"), binary);
   await writeFile(path.join(publication, "ast.json"), astBytes);
   await writeFile(path.join(publication, "probes.json"), probeBytes);

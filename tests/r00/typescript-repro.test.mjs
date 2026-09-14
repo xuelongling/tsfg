@@ -32,6 +32,11 @@ test("source build declares its complete reproducibility payload separately from
   const manifest = JSON.parse(await readFile(path.join(root, "producer/artifact-manifest.json"), "utf8"));
   assert.deepEqual(manifest.members.map(member => member.path), ["ast.json", "build-metadata.json", "probes.json", "tsfg-ast.exe"]);
   assert.equal(manifest.kind, "typescript-source-probe");
+  for (const name of ["contracts/registry.json", "eng/probes/typescript.json", "eng/probes/syntax-error.ts",
+    "eng/probes/type-error.ts", "eng/probes/js-isolation.json", "LICENSE"]) {
+    assert.ok(manifest.buildInputSet.entries.some(input => input.projectId === "tsfg"
+      && input.repositoryRelativePath === name), `missing consumed Build Input: ${name}`);
+  }
   const report = JSON.parse(await readFile(path.join(root, "build.json"), "utf8")).result;
   assert.deepEqual(manifest.buildIdentity, report.buildIdentity);
   assert.equal(report.execution.cachesInitiallyEmpty, true);
