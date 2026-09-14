@@ -16,7 +16,7 @@ const consumer = "tsfg-ast";
 const projectId = "TypeScript.git";
 const probeInput = "tsc/cmd/tsfg-ast/testdata/positive.ts";
 const fail = message => { throw new IntakeLedgerError("ast-consumption", message); };
-export class AstExecutionError extends Error { probes; jsIsolation; requiredTests; }
+export class AstExecutionError extends Error { probes; jsIsolation; requiredTests; generation; }
 
 export async function readAstIntake({ productRoot, controlRoot, planPath, gitExecutable }) {
   const admissionBytes = await readFile(path.join(productRoot, "eng/source-admissions.json"));
@@ -67,6 +67,7 @@ export async function buildAstProbe({ prepared, child, serialize, publish }) {
   if (requiredTests.status !== "passed") {
     const error = new AstExecutionError("required upstream TypeScript tests failed, skipped or did not run");
     error.requiredTests = requiredTests;
+    error.generation = generation;
     throw error;
   }
   const verifyInputs = async () => {
@@ -89,6 +90,8 @@ export async function buildAstProbe({ prepared, child, serialize, publish }) {
   if (probes.status !== "passed") {
     const error = new AstExecutionError("required TypeScript probe failed");
     error.probes = probes;
+    error.requiredTests = requiredTests;
+    error.generation = generation;
     throw error;
   }
   const ast = probes.cases[0].observation;
@@ -98,6 +101,8 @@ export async function buildAstProbe({ prepared, child, serialize, publish }) {
     const error = new AstExecutionError("JS isolation evidence failed");
     error.probes = probes;
     error.jsIsolation = jsIsolation;
+    error.requiredTests = requiredTests;
+    error.generation = generation;
     throw error;
   }
   const astBytes = serialize(ast);

@@ -7544,8 +7544,12 @@ async function runCommandLine() {
                       ? "forbidden-build-option"
                     : isProbeFailure ? "typescript-probe" : isBuildFailure ? "native-build" : "internal-control-plane",
           message: error.message,
-          ...(error instanceof GenerationError ? { generation: error.generation } : {}),
-          ...(error instanceof AstExecutionError && error.requiredTests ? { requiredTests: error.requiredTests } : {}),
+          ...(sourceTarget === "typescript-ast" ? {
+            generation: (error instanceof GenerationError || error instanceof AstExecutionError) && error.generation
+              ? error.generation : { status: "not-run", reason: error.message },
+            requiredTests: error instanceof AstExecutionError && error.requiredTests
+              ? error.requiredTests : { status: "not-run", reason: error.message },
+          } : {}),
           ...(sourceTarget === "typescript-ast" ? { probes: error instanceof AstExecutionError && error.probes
             ? error.probes : { status: "not-run", reason: error.message },
           jsIsolation: error instanceof AstExecutionError && error.jsIsolation
