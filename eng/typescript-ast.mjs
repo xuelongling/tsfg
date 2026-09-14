@@ -7,13 +7,14 @@ import path from "node:path";
 import { createIntakeLedger, IntakeLedgerError } from "./intake-ledger.mjs";
 import { readGoSourceExecutionResult } from "./go-source-result.mjs";
 import { astGit, astBuildInputs, astToolchainInputs } from "./typescript-ast-inputs.mjs";
+import { readTypeScriptProbes, runTypeScriptProbes } from "./typescript-probes.mjs";
 
 const hash = bytes => `sha256:${createHash("sha256").update(bytes).digest("hex")}`;
 const consumer = "tsfg-ast";
 const projectId = "TypeScript.git";
 const probeInput = "tsc/cmd/tsfg-ast/testdata/positive.ts";
 const fail = message => { throw new IntakeLedgerError("ast-consumption", message); };
-export class AstExecutionError extends Error {}
+export class AstExecutionError extends Error { probes; }
 
 export async function readAstIntake({ productRoot, controlRoot, planPath, gitExecutable }) {
   const admissionBytes = await readFile(path.join(productRoot, "eng/source-admissions.json"));
@@ -29,7 +30,8 @@ export async function readAstIntake({ productRoot, controlRoot, planPath, gitExe
   const request = { workspaceRoot: path.dirname(productRoot), admission, declaration, consumption,
     gitExecutable, approvedLicenses: policy.approvedLicenseExpressions };
   const ledger = await createIntakeLedger(request);
-  return { request, ledger, controlRoot, inputIdentity: { admission: hash(admissionBytes), declaration: hash(declarationBytes) } };
+  const probes = await readTypeScriptProbes(controlRoot, gitExecutable);
+  return { request, ledger, controlRoot, probes, inputIdentity: { admission: hash(admissionBytes), declaration: hash(declarationBytes), probes: probes.sha256 } };
 }
 
 export async function buildAstProbe({ prepared, child, serialize, publish }) {
@@ -69,10 +71,20 @@ export async function buildAstProbe({ prepared, child, serialize, publish }) {
   const arguments_ = ["build", "-mod=readonly", "-buildvcs=false", "-pgo=off", "-trimpath",
     "-gcflags=all=-N -l", "-o", executable, "./cmd/tsfg-ast"];
   run(plan.go, arguments_);
-  const astBytes = run(executable, [path.join(plan.moduleRoot, probeInput.slice(4))]);
-  const ast = JSON.parse(astBytes);
+  const probes = await runTypeScriptProbes({ probes: intake.probes, plan, executable, run,
+    positiveInput: path.join(plan.moduleRoot, probeInput.slice(4)) });
+  if (probes.status !== "passed") {
+    const error = new AstExecutionError("required TypeScript probe failed");
+    error.probes = probes;
+    throw error;
+  }
+  const ast = probes.cases[0].observation;
+  const astBytes = serialize(ast);
+  const probeBytes = serialize(probes);
   await verifyInputs();
   await astToolchainInputs(intake, plan, worker);
+  const currentProbes = await readTypeScriptProbes(intake.controlRoot, intake.request.gitExecutable);
+  if (serialize(currentProbes.inputs) !== serialize(intake.probes.inputs)) fail("probe inputs changed during execution");
   for (const entry of identity.buildInputSet.entries.filter(entry => entry.projectId === "tsfg")) {
     if (hash(await readFile(path.join(intake.controlRoot, entry.repositoryRelativePath))) !== entry.sha256) fail("build control changed during AST execution");
   }
@@ -85,7 +97,8 @@ export async function buildAstProbe({ prepared, child, serialize, publish }) {
     target: "windows-x86_64-msvc", profile: { name: "debug", goamd64: "v2", pgo: false, cgo: false,
       optimization: "disabled", symbols: "embedded-full" },
     toolchainClosure: preparation.toolchainClosure, inputIdentity: intake.inputIdentity,
-    executionMode: "local-development", isolation: "not-enforced", arguments: arguments_, ast,
+    executionMode: "local-development", isolation: "not-enforced", arguments: arguments_, ast, probes,
+    probeObservationSha256: hash(probeBytes),
     executableSha256: hash(binary), observationSha256: hash(astBytes),
     ledger, toolchainInputs, executionConsumption: { status: "matched", method: "go-list-deps-and-fixed-probe-input", entries: consumption.entries },
     buildInputSet: identity.buildInputSet, provenance: identity.provenance, dirty: identity.dirty,
@@ -96,6 +109,7 @@ export async function buildAstProbe({ prepared, child, serialize, publish }) {
   const publication = await mkdtemp(path.join(path.dirname(output), ".ast-publication-"));
   await writeFile(path.join(publication, "tsfg-ast.exe"), binary);
   await writeFile(path.join(publication, "ast.json"), astBytes);
+  await writeFile(path.join(publication, "probes.json"), probeBytes);
   await writeFile(path.join(publication, "intake-ledger.json"), serialize(ledger));
   await writeFile(path.join(publication, "go-list.jsonstream"), outputBytes);
   await writeFile(path.join(publication, "source-build.json"), serialize(result));

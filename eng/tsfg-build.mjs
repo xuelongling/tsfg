@@ -7524,6 +7524,7 @@ async function runCommandLine() {
                       ? "forbidden-build-option"
                     : isBuildFailure ? "native-build" : "internal-control-plane",
           message: error.message,
+          ...(error instanceof AstExecutionError && error.probes ? { probes: error.probes } : {}),
           ...(error instanceof GoPreparationBoundaryError || error instanceof GoExecutionFailureError ? { preparation: error.preparation } : {}),
         },
         reportPath,

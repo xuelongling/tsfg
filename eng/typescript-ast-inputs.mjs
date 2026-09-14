@@ -21,7 +21,7 @@ export function astGit(executable, root, args) {
 export async function astBuildInputs(intake, ledger, serialize) {
   const git = (root, args) => astGit(intake.request.gitExecutable, root, args);
   const controlNames = ["eng/tsfg-build.mjs", "eng/typescript-ast.mjs", "eng/typescript-ast-inputs.mjs",
-    "eng/go-source-worker.mjs", "eng/go-source-result.mjs", "eng/go-closure.mjs", "eng/go-network-probe.mjs",
+    "eng/typescript-probes.mjs", "eng/go-source-worker.mjs", "eng/go-source-result.mjs", "eng/go-closure.mjs", "eng/go-network-probe.mjs",
     "eng/go-work-access.mjs", "eng/intake-ledger.mjs", "eng/source-admission.mjs", "eng/workspace-policy.json"];
   const declared = [...ledger.buildInputEntries.map(entry => ({ projectId: entry.projectId,
     root: path.join(intake.request.workspaceRoot, ledger.sources.find(source => source.projectId === entry.projectId).path),

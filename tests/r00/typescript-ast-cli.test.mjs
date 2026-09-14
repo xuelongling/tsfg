@@ -83,6 +83,10 @@ test("fixed fork source rebuilds a real TypeScript AST after consumption governa
   assert.deepEqual(result.ast.identifiers, ["answer"]);
   assert.equal(result.ast.parseDiagnosticCount, 0);
   assert.deepEqual(result.ast.types, [{ name: "answer", type: "number" }]);
+  assert.equal(result.probes?.cases.find(item => item.id === "syntax-error")?.status, "passed");
+  const expected = JSON.parse(await readFile(path.join(product, "eng/probes/typescript.json"), "utf8"));
+  assert.deepEqual(result.probes.cases.find(item => item.id === "syntax-error").observation.syntaxDiagnostics,
+    expected.cases.find(item => item.id === "syntax-error").expected.syntaxDiagnostics);
   assert.equal(result.intakeComplete, false);
   assert.equal(result.generation.status, "not-run");
   assert.equal(result.buildInputSet.schemaVersion, "1");
