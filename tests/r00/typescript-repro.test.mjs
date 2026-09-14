@@ -3,11 +3,23 @@ import assert from "node:assert/strict";
 import { spawnSync } from "node:child_process";
 import test from "node:test";
 import { fileURLToPath } from "node:url";
-import { mkdtemp, rm, readFile } from "node:fs/promises";
+import { mkdtemp, rm, readFile, mkdir } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import path from "node:path";
 
 const entry = fileURLToPath(new URL("../../eng/tsfg-build.mjs", import.meta.url));
+test("source repro-check reports an existing output as a configuration failure before verification", async t => {
+  const root = await mkdtemp(path.join(tmpdir(), "source-repro-existing-"));
+  t.after(() => rm(root, { recursive: true, force: true }));
+  const output = path.join(root, "existing"), report = path.join(root, "report.json");
+  await mkdir(output);
+  const child = spawnSync(process.execPath, [entry, "repro-check", "--dev", "--source-target", "typescript-ast",
+    "--target", "windows-x86_64-msvc", "--profile", "debug", "--workspace-a", path.join(root, "a"),
+    "--workspace-b", path.join(root, "b"), "--out", output, "--report", report], { encoding: "utf8", windowsHide: true });
+  assert.equal(child.status, 2, child.stderr);
+  assert.match(JSON.parse(await readFile(report, "utf8")).error.issues[0].message, /output already exists/);
+});
+
 test("source repro-check requires two distinct verified workspace paths", () => {
   const child = spawnSync(process.execPath, [entry, "repro-check", "--dev", "--source-target", "typescript-ast",
     "--target", "windows-x86_64-msvc", "--profile", "debug",

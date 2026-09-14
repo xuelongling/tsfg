@@ -7719,6 +7719,7 @@ async function runCommandLine() {
       if (!first || !second || path.resolve(first).toLowerCase() === path.resolve(second).toLowerCase()) {
         throw new ConfigurationError("source repro-check requires two distinct verified workspace paths");
       }
+      if (options.has("--out") && await pathExists(options.get("--out"))) throw new ConfigurationError("source repro-check output already exists");
       if (options.has("--producer-a") !== options.has("--producer-b")) throw new ConfigurationError("source repro-check requires both producer paths or neither");
       for (const name of ["--producer-a", "--producer-b"]) {
         if (options.has(name) && !await isGoDestinationOnE(options.get(name))) throw new ConfigurationError("source producer evidence requires an actual absolute E: path");
@@ -7750,7 +7751,7 @@ async function runCommandLine() {
         20: "build failure", 21: "test/compatibility failure", 23: "reproducibility mismatch", 30: "internal control-plane failure" };
       process.exitCode = await fail(command, code, categories[code] ?? categories[30], {
         code: workspaceMismatch ? error.issueCode : "source-reproducibility", message: error.message,
-        ...(error instanceof SourceReproError ? { evidence: error.evidence } : {}),
+        ...(error instanceof SourceReproError && error.evidence !== undefined ? { evidence: error.evidence } : {}),
       }, reportPath, "offline");
     }
   } else if (command === "repro-check") {
