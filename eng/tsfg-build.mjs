@@ -7486,7 +7486,7 @@ async function runCommandLine() {
       if (publication) await publication.rollback();
       const isConfigurationError = error instanceof ConfigurationError;
       const isBuildFailure = error instanceof BuildFailureError || error instanceof AstExecutionError;
-      const isProbeFailure = error instanceof AstExecutionError && error.probes?.status === "failed";
+      const isProbeFailure = error instanceof AstExecutionError && (error.probes?.status === "failed" || error.jsIsolation?.status === "failed");
       const isBuildPolicy = error instanceof BuildPolicyError;
       const isWorkspaceMismatch = error instanceof WorkspaceMismatchError || error instanceof IntakeLedgerError;
       const isOfflineBoundary = error instanceof OfflineBoundaryError;
@@ -7528,7 +7528,9 @@ async function runCommandLine() {
                     : isProbeFailure ? "typescript-probe" : isBuildFailure ? "native-build" : "internal-control-plane",
           message: error.message,
           ...(sourceTarget === "typescript-ast" ? { probes: error instanceof AstExecutionError && error.probes
-            ? error.probes : { status: "not-run", reason: error.message } } : {}),
+            ? error.probes : { status: "not-run", reason: error.message },
+          jsIsolation: error instanceof AstExecutionError && error.jsIsolation
+            ? error.jsIsolation : { status: "not-run", reason: error.message } } : {}),
           ...(error instanceof GoPreparationBoundaryError || error instanceof GoExecutionFailureError ? { preparation: error.preparation } : {}),
         },
         reportPath,

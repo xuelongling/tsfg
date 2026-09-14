@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: MIT
 // Fixed acceptance inputs for the existing source-built AST consumer.
 import { createHash } from "node:crypto";
-import { readFile, writeFile } from "node:fs/promises";
+import { readFile, writeFile, readdir, rm } from "node:fs/promises";
 import { isDeepStrictEqual } from "node:util";
 import path from "node:path";
 import { astGit } from "./typescript-ast-inputs.mjs";
@@ -43,7 +43,61 @@ export async function readTypeScriptProbes(controlRoot, gitExecutable) {
     }
   }
   const legal = { path: "LICENSE", sha256: hash(await committed("LICENSE")) };
-  return { manifest, sha256: hash(bytes), inputs: inputs.map(input => ({ ...input, legal })) };
+  const review = JSON.parse((await committed("eng/probes/js-isolation.json")).toString("utf8"));
+  if (review.schemaVersion !== "1" || review.entry !== "tsc/cmd/tsfg-ast/main.go"
+      || !/^sha256:[a-f0-9]{64}$/.test(review.entrySha256) || !/^[a-f0-9]{40}$/.test(review.forkOid)) fail("invalid JS isolation source review");
+  return { manifest, review, sha256: hash(bytes), inputs: inputs.map(input => ({ ...input, legal })) };
+}
+
+// Reuse the same reconstructed executable and positive source bytes. This is
+// evidence for this fixed analysis-only entry, not arbitrary upstream binaries.
+export async function runJsIsolation({ probes, ledger, plan, executable, invoke, run, positiveInput }) {
+  const review = probes.review;
+  const entry = ledger.files.find(file => file.path === review.entry);
+  if (ledger.sources[0]?.forkOid !== review.forkOid || entry?.sha256 !== review.entrySha256) fail("JS isolation source review is stale");
+  const bytes = await readFile(positiveInput);
+  const cases = [];
+  const snapshot = async () => (await readdir(plan.moduleRoot, { recursive: true })).sort();
+  const before = await snapshot();
+  /** @type {{id: string, category: string, extension?: string, args?: string[]}[]} */
+  const attempts = [
+    ...["js", "mjs", "cjs", "jsx", "JS", "mJs", "CJS"].map(extension => ({ id: `input-${extension}`, category: "js-input", extension })),
+    { id: "allow-js", category: "js-input", args: ["--allowJs", "true"] },
+    { id: "emit", category: "js-emit", args: ["--emit"] },
+    { id: "disable-no-emit", category: "js-emit", args: ["--noEmit", "false"] },
+    { id: "output-file", category: "js-emit", args: ["--outFile", "forbidden.js"] },
+    { id: "runtime", category: "runtime-fallback", args: ["--runtime", "javascript"] },
+    { id: "fallback", category: "runtime-fallback", args: ["--fallback", "javascript"] },
+    { id: "eval", category: "runtime-fallback", args: ["--eval", "1+1"] },
+  ];
+  for (const attempt of attempts) {
+    const source = attempt.extension ? path.join(path.dirname(positiveInput), `rejected.${attempt.extension}`) : positiveInput;
+    if (attempt.extension) await writeFile(source, bytes, { flag: "wx" });
+    try {
+      const args = attempt.extension ? [source] : [source, ...attempt.args];
+      const child = invoke(executable, args);
+      const unchanged = (await readFile(source)).equals(bytes);
+      const passed = !child.error && child.status === 2 && child.stdout === ""
+        && child.stderr.trim() === "expected one TypeScript source file" && unchanged;
+      cases.push({ id: attempt.id, category: attempt.category, status: passed ? "passed" : "failed",
+        arguments: args.map(arg => arg === source ? path.basename(source) : arg), sourceSha256: hash(bytes),
+        exitCode: child.status, stdout: child.stdout, stderr: child.stderr, error: child.error?.message ?? null });
+    } finally {
+      if (attempt.extension) await rm(source);
+    }
+  }
+  const noCreatedFiles = isDeepStrictEqual(before, await snapshot());
+  // Read metadata from the actual executable using the already locked Go tool.
+  const metadata = run(plan.go, ["version", "-m", executable]).split(/\r?\n/).slice(1).filter(Boolean).map(line => line.trim());
+  const artifactMatched = metadata.includes("path\tgithub.com/microsoft/typescript-go/cmd/tsfg-ast")
+    && ["CGO_ENABLED=0", "GOOS=windows", "GOARCH=amd64", "-buildmode=exe"].every(value => metadata.includes(`build\t${value}`));
+  return { schemaVersion: "1", status: cases.every(item => item.status === "passed") && noCreatedFiles && artifactMatched ? "passed" : "failed",
+    sourceReview: review, cases, noCreatedFiles,
+    artifact: { path: "tsfg-ast.exe", sha256: hash(await readFile(executable)), role: "compiler-probe", metadata, status: artifactMatched ? "matched" : "failed" },
+    retainedCompilerDependencies: ledger.files.filter(file => /\/checker\/printer\.go$|\/compiler\/emitter\.go$|\/printer\/|\/transformers\//.test(file.path))
+      .map(file => ({ path: file.path, sha256: file.sha256, role: file.role })),
+    gameRuntime: { status: "not-applicable", reason: "This target publishes only a compiler-side probe and audit observations; no Zig game runtime is built or packaged." },
+    limitations: "Shared emitter/printer source participates in compilation. No claim of complete linker removal or general upstream CLI isolation." };
 }
 
 export async function runTypeScriptProbes({ probes, plan, executable, run, positiveInput }) {

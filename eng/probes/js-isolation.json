@@ -1,0 +1,9 @@
+{
+  "schemaVersion": "1",
+  "forkOid": "76d625e4d405b45e5cb35d25e42394ae0d5c78de",
+  "entry": "tsc/cmd/tsfg-ast/main.go",
+  "entrySha256": "sha256:0cd967bda10cbbbe2add77c3b6c029dd965ed56d04489caa01ad39ccb149d242",
+  "review": "Ticket 06: the sole compiled main accepts exactly one .ts filename. It builds a fixed Program without parsing options/configuration, rejects additional Program SourceFiles before queries, calls diagnostics and a borrowed Checker only, and encodes JSON to stdout. It does not call Program.Emit, invoke a subprocess, or load a JS engine. No runtime fallback is expressible. NoEmit is fixed by the callee, and iovfs.From(os.DirFS(cwd)) has no WritableFS; compiler writes are unsupported. Necessary printer/emitter package files remain compiled dependencies. Re-review this boundary if the exact fork changes.",
+  "supportingSource": "tsc/internal/vfs/iovfs/iofs.go",
+  "supportingSourceSha256": "sha256:cae657cd5589054cdd6b97d331b437b1cf4c4a283b24be78f11c91ca44c51278"
+}

@@ -100,6 +100,8 @@ for (const command of ["build", "test"]) test(`fixed fork source runs real typed
     ]);
   }
   assert.equal(result.intakeComplete, false);
+  assert.equal(result.jsIsolation?.status, "passed");
+  assert.equal(result.jsIsolation.cases.find(item => item.id === "input-js").status, "passed");
   assert.equal(result.generation.status, "not-run");
   assert.equal(result.buildInputSet.schemaVersion, "1");
   assert.ok(result.buildInputSet.entries.some(entry => entry.projectId === "tsfg"

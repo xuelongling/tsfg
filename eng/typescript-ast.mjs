@@ -7,14 +7,14 @@ import path from "node:path";
 import { createIntakeLedger, IntakeLedgerError } from "./intake-ledger.mjs";
 import { readGoSourceExecutionResult } from "./go-source-result.mjs";
 import { astGit, astBuildInputs, astToolchainInputs } from "./typescript-ast-inputs.mjs";
-import { readTypeScriptProbes, runTypeScriptProbes } from "./typescript-probes.mjs";
+import { readTypeScriptProbes, runTypeScriptProbes, runJsIsolation } from "./typescript-probes.mjs";
 
 const hash = bytes => `sha256:${createHash("sha256").update(bytes).digest("hex")}`;
 const consumer = "tsfg-ast";
 const projectId = "TypeScript.git";
 const probeInput = "tsc/cmd/tsfg-ast/testdata/positive.ts";
 const fail = message => { throw new IntakeLedgerError("ast-consumption", message); };
-export class AstExecutionError extends Error { probes; }
+export class AstExecutionError extends Error { probes; jsIsolation; }
 
 export async function readAstIntake({ productRoot, controlRoot, planPath, gitExecutable }) {
   const admissionBytes = await readFile(path.join(productRoot, "eng/source-admissions.json"));
@@ -61,9 +61,10 @@ export async function buildAstProbe({ prepared, child, serialize, publish }) {
     for (const input of plan.inputs) if (hash(await readFile(input.path)) !== input.sha256) fail(`staged input changed: ${input.path}`);
   };
   await verifyInputs();
-  const run = (executable, args) => {
-    const result = spawnSync(executable, args, { cwd: plan.moduleRoot, env: plan.environment,
+  const invoke = (executable, args) => spawnSync(executable, args, { cwd: plan.moduleRoot, env: plan.environment,
       encoding: "utf8", timeout: 300000, maxBuffer: 64 * 1024 * 1024, windowsHide: true });
+  const run = (executable, args) => {
+    const result = invoke(executable, args);
     if (result.error || result.status !== 0) throw new AstExecutionError(`AST execution failed (${result.status}): ${result.error?.message ?? result.stderr}`);
     return result.stdout;
   };
@@ -79,6 +80,14 @@ export async function buildAstProbe({ prepared, child, serialize, publish }) {
     throw error;
   }
   const ast = probes.cases[0].observation;
+  const jsIsolation = await runJsIsolation({ probes: intake.probes, ledger, plan, executable, invoke, run,
+    positiveInput: path.join(plan.moduleRoot, probeInput.slice(4)) });
+  if (jsIsolation.status !== "passed") {
+    const error = new AstExecutionError("JS isolation evidence failed");
+    error.probes = probes;
+    error.jsIsolation = jsIsolation;
+    throw error;
+  }
   const astBytes = serialize(ast);
   const probeBytes = serialize(probes);
   await verifyInputs();
@@ -97,7 +106,7 @@ export async function buildAstProbe({ prepared, child, serialize, publish }) {
     target: "windows-x86_64-msvc", profile: { name: "debug", goamd64: "v2", pgo: false, cgo: false,
       optimization: "disabled", symbols: "embedded-full" },
     toolchainClosure: preparation.toolchainClosure, inputIdentity: intake.inputIdentity,
-    executionMode: "local-development", isolation: "not-enforced", arguments: arguments_, ast, probes,
+    executionMode: "local-development", isolation: "not-enforced", arguments: arguments_, ast, probes, jsIsolation,
     probeObservationSha256: hash(probeBytes),
     executableSha256: hash(binary), observationSha256: hash(astBytes),
     ledger, toolchainInputs, executionConsumption: { status: "matched", method: "go-list-deps-and-fixed-probe-input", entries: consumption.entries },
@@ -110,6 +119,7 @@ export async function buildAstProbe({ prepared, child, serialize, publish }) {
   await writeFile(path.join(publication, "tsfg-ast.exe"), binary);
   await writeFile(path.join(publication, "ast.json"), astBytes);
   await writeFile(path.join(publication, "probes.json"), probeBytes);
+  await writeFile(path.join(publication, "js-isolation.json"), serialize(jsIsolation));
   await writeFile(path.join(publication, "intake-ledger.json"), serialize(ledger));
   await writeFile(path.join(publication, "go-list.jsonstream"), outputBytes);
   await writeFile(path.join(publication, "source-build.json"), serialize(result));
