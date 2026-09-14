@@ -39,6 +39,7 @@ import { TextDecoder } from "node:util";
 import { validateSourceAdmission } from "./source-admission.mjs";
 import { createIntakeLedger, IntakeLedgerError } from "./intake-ledger.mjs";
 import { readAstIntake, buildAstProbe, AstExecutionError } from "./typescript-ast.mjs";
+import { readGenerationLock } from "./typescript-generation.mjs";
 import { reviewUpgrade } from "./upgrade-review.mjs";
 import { prefetchGoDependencies, readGoDependencyLock, verifyGoDependencies } from "./go-closure.mjs";
 
@@ -1717,6 +1718,7 @@ async function prefetch(options) {
     );
   }
   const lock = JSON.parse(await readFile(path.resolve(lockPath), "utf8"));
+  await readGenerationLock(lockPath, lock);
   const goDeclaration = await readGoDependencyLock(lockPath, lock);
   const goDependencies = await prefetchGoDependencies(path.resolve(cachePath), goDeclaration,
     lock.goDependencies?.sha256, parseZip);
