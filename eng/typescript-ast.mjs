@@ -77,12 +77,14 @@ export async function buildAstProbe({ prepared, child, serialize, publish }) {
   await verifyInputs();
   const invoke = (executable, args) => spawnSync(executable, args, { cwd: plan.moduleRoot, env: plan.environment,
       encoding: "utf8", timeout: 300000, maxBuffer: 64 * 1024 * 1024, windowsHide: true });
+  let probes;
   const run = (executable, args) => {
     const result = invoke(executable, args);
     if (result.error || result.status !== 0) {
       const error = new AstExecutionError(`AST execution failed (${result.status}): ${result.error?.message ?? result.stderr}`);
       error.generation = generation;
       error.requiredTests = requiredTests;
+      error.probes = probes;
       throw error;
     }
     return result.stdout;
@@ -91,7 +93,7 @@ export async function buildAstProbe({ prepared, child, serialize, publish }) {
   const arguments_ = ["build", "-mod=readonly", "-buildvcs=false", "-pgo=off", "-trimpath",
     "-gcflags=all=-N -l", "-o", executable, "./cmd/tsfg-ast"];
   run(plan.go, arguments_);
-  const probes = await runTypeScriptProbes({ probes: intake.probes, plan, executable, run,
+  probes = await runTypeScriptProbes({ probes: intake.probes, plan, executable, run,
     positiveInput: path.join(plan.moduleRoot, probeInput.slice(4)) });
   if (probes.status !== "passed") {
     const error = new AstExecutionError("required TypeScript probe failed");

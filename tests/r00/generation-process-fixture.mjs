@@ -25,6 +25,9 @@ fs.readFile = async function (file, ...args) {
 const spawn = childProcess.spawnSync;
 /** @returns {any} */
 childProcess.spawnSync = function (executable, args, options) {
+  if (mode === "metadata-exit" && args?.[0] === "version" && args.includes("-m")) {
+    return spawn(process.execPath, ["-e", "process.stderr.write('synthetic metadata failure'); process.exit(7)"], options);
+  }
   if (mode === "build-start" && args?.[0] === "build" && args.includes("./cmd/tsfg-ast")) {
     return spawn(path.join(options.cwd, "missing-build-fixture.exe"), [], options);
   }
