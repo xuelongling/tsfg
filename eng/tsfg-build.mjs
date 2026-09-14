@@ -7711,6 +7711,7 @@ async function runCommandLine() {
       );
     }
   } else if (command === "repro-check" && sourceTarget === "typescript-ast") {
+    let publication;
     try {
       const options = parseOptions(arguments_, new Set(["--dev", "--source-target", "--target", "--profile",
         "--workspace-a", "--workspace-b", "--out", "--report", "--manifest-revision", "--manifest", "--cache",
@@ -7742,9 +7743,12 @@ async function runCommandLine() {
       for (const destination of [first, second, options.get("--out"), options.get("--cache")]) {
         if (!destination || !await isGoDestinationOnE(destination)) throw new ConfigurationError("source repro-check requires actual absolute E: workspace, output and cache paths");
       }
-      process.exitCode = await succeed(command, await reproduceTypeScript({ options, workspaces,
-        serialize: canonicalize, parseJson: parseReproJson, environment: buildEnvironment, verify }), reportPath, "offline");
+      const result = await reproduceTypeScript({ options, workspaces,
+        serialize: canonicalize, parseJson: parseReproJson, environment: buildEnvironment, verify });
+      publication = result.publication;
+      process.exitCode = await succeed(command, result, reportPath, "offline");
     } catch (error) {
+      if (publication) await publication.rollback();
       const workspaceMismatch = error instanceof WorkspaceMismatchError;
       const code = workspaceMismatch ? 10 : error instanceof SourceReproError ? error.exitCode : error instanceof ConfigurationError ? 2 : 23;
       const categories = { 2: "usage/configuration", 10: "workspace mismatch", 11: "lock/integrity", 12: "offline input missing",

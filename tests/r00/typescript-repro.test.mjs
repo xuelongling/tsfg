@@ -14,6 +14,26 @@ const fixtureJson = value => value === null || typeof value !== "object" ? JSON.
   : `{${Object.keys(value).sort().map(key => `${JSON.stringify(key)}:${fixtureJson(value[key])}`).join(",")}}`;
 const fixtureHash = bytes => `sha256:${createHash("sha256").update(bytes).digest("hex")}`;
 
+test("source repro-check withdraws success output when its Build Report cannot publish", {
+  skip: process.env.TSFG_TEST_SOURCE_REPRO_REPORT_FAILURE !== "1" ? "requires real valid producers and a blocked report destination" : false,
+}, async () => {
+  const original = JSON.parse(await readFile(process.env.TSFG_TEST_REPRO_ORIGINAL, "utf8")).result;
+  const root = process.env.TSFG_TEST_SOURCE_REPRO_EVIDENCE;
+  const output = path.join(root, "out"), report = path.join(root, "blocked-report");
+  await mkdir(report, { recursive: true });
+  const child = spawnSync(process.execPath, [entry, "repro-check", "--dev", "--source-target", "typescript-ast",
+    "--target", "windows-x86_64-msvc", "--profile", "debug",
+    "--workspace-a", original.producers[0].workspaceRoot, "--workspace-b", original.producers[1].workspaceRoot,
+    "--producer-a", original.producers[0].output, "--producer-b", original.producers[1].output,
+    "--cache", process.env.TSFG_TEST_GO_CACHE,
+    "--manifest-revision", original.producers[0].workspace.manifest.revision, "--manifest", "candidates/tsfg-v0.2.0.xml",
+    "--out", output, "--report", report], { encoding: "utf8", timeout: 1200000, windowsHide: true });
+  assert.equal(child.status, 30, child.stdout + child.stderr);
+  assert.match(child.stderr, /report/i);
+  await assert.rejects(stat(output), { code: "ENOENT" });
+  assert.equal((await stat(report)).isDirectory(), true);
+});
+
 test("source repro-check detects a shared absolute UTF-16 workspace path in equal payloads", {
   skip: process.env.TSFG_TEST_SOURCE_REPRO_PATH !== "1" ? "requires real producers for deliberate path leakage" : false,
 }, async () => {

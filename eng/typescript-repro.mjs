@@ -171,7 +171,9 @@ export async function reproduceTypeScript({ options, workspaces, serialize, pars
     }
     const result = { ...evidence, buildIdentity: first.build.buildIdentity,
       reproducibilitySet: payloadNames.map(name => ({ path: name, sha256: hash(first.bytes.get(name)) })),
-      status: "source-reproducible", evidenceRoot: stage };
+      status: "source-reproducible", evidenceRoot: stage,
+      publication: { rollback: async () => { await rename(output, path.join(stage, "result")); } } };
+    Object.defineProperty(result, "publication", { enumerable: false });
     await mkdir(path.join(stage, "result"));
     await writeFile(path.join(stage, "result/comparison.json"), serialize(result));
     await rename(path.join(stage, "result"), output);
