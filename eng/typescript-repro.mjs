@@ -5,6 +5,7 @@ import { spawnSync } from "node:child_process";
 import { createHash } from "node:crypto";
 import { isDeepStrictEqual } from "node:util";
 import path from "node:path";
+import { readTypeScriptProbes, matchesTypeScriptObservation } from "./typescript-probes.mjs";
 
 const hash = bytes => `sha256:${createHash("sha256").update(bytes).digest("hex")}`;
 const payloadNames = ["artifact-manifest.json", "ast.json", "build-metadata.json", "probes.json", "tsfg-ast.exe"];
@@ -67,14 +68,20 @@ async function readProducer(root, workspaceRoot, workspace, serialize, parseJson
       || build.execution.cachesInitiallyEmpty !== true || build.execution.nativeExitCode !== 0
       || build.execution.build.exitCode !== "0" || build.execution.dependencyResolution.exitCode !== "0") fail("source producer lacks successful independent execution evidence");
   // The fixed oracle comes from the verified checkout, never the producer's claimed expectation.
-  const expected = JSON.parse(await readFile(path.join(productRoot, "eng/probes/typescript.json"), "utf8"));
-  if (build.probes.status !== "passed" || build.probes.cases.length !== expected.cases.length) fail("required semantic probes did not pass");
-  for (const [index, item] of expected.cases.entries()) {
+  const expected = await readTypeScriptProbes(productRoot, process.env.TSFG_GIT);
+  const semanticIssues = [];
+  if (build.probes.status !== "passed" || build.probes.cases.length !== expected.manifest.cases.length
+      || build.probes.expectationSha256 !== expected.sha256 || build.probes.languageBaseline !== expected.manifest.languageBaseline
+      || !isDeepStrictEqual(build.probes.inputLedger, expected.inputs)) semanticIssues.push("required semantic probe identity mismatch");
+  for (const [index, item] of expected.manifest.cases.entries()) {
     const observed = build.probes.cases[index];
-    if (observed.id !== item.id || observed.status !== "passed" || observed.observation.kind !== "KindSourceFile"
-        || Object.entries(item.expected).some(([key, value]) => !isDeepStrictEqual(observed.observation[key], value))) fail(`fixed semantic expectation mismatch: ${item.id}`);
+    const sourceRoot = item.projectId === "tsfg" ? productRoot : path.join(workspaceRoot, fork.path);
+    if (observed?.id !== item.id || observed.status !== "passed" || !matchesTypeScriptObservation(item, observed.observation)
+        || !isDeepStrictEqual(observed.expected, item.expected)
+        || !isDeepStrictEqual(observed.source, { projectId: item.projectId, path: item.path,
+          sha256: hash(await readFile(path.join(sourceRoot, item.path))) })) semanticIssues.push(`fixed semantic expectation mismatch: ${item.id}`);
   }
-  return { root, workspaceRoot, workspace, build, bytes, manifest };
+  return { root, workspaceRoot, workspace, build, bytes, manifest, semanticIssues };
 }
 
 export async function reproduceTypeScript({ options, workspaces, serialize, parseJson, environment, verify }) {
@@ -87,7 +94,7 @@ export async function reproduceTypeScript({ options, workspaces, serialize, pars
   const producers = [];
   const evidence = { schemaVersion: "1", executionMode: "local-development", isolation: "not-enforced", producers,
     operation: options.has("--producer-a") ? "compare-existing" : "rebuild",
-    reproducibility: { bytes: { status: "not-run" }, semantics: { status: "not-run" } }, intakeComplete: false };
+    reproducibility: { bytes: { status: "not-run", differences: [] }, semantics: { status: "not-run", issues: [] } }, intakeComplete: false };
   try {
     for (const [index, workspace] of workspaces.entries()) {
       const label = index === 0 ? "a" : "b", workspaceRoot = await realpath(options.get(`--workspace-${label}`));
@@ -132,10 +139,12 @@ export async function reproduceTypeScript({ options, workspaces, serialize, pars
     if (!isDeepStrictEqual(first.build.buildIdentity, second.build.buildIdentity)) fail("source producer Build Identities differ");
     if (first.build.execution.compileCache.toLowerCase() === second.build.execution.compileCache.toLowerCase()
         || first.build.execution.moduleCache.toLowerCase() === second.build.execution.moduleCache.toLowerCase()) fail("source producers share execution caches");
-    for (const name of payloadNames) if (!first.bytes.get(name).equals(second.bytes.get(name))) fail(`source payload bytes differ: ${name}`);
-    evidence.reproducibility.bytes = { status: "passed" };
-    if (!isDeepStrictEqual(first.build.probes, second.build.probes)) fail("source semantic observations differ");
-    evidence.reproducibility.semantics = { status: "passed" };
+    const differences = payloadNames.filter(name => !first.bytes.get(name).equals(second.bytes.get(name)));
+    evidence.reproducibility.bytes = { status: differences.length ? "failed" : "passed", differences };
+    const issues = [...first.semanticIssues.map(issue => `a: ${issue}`), ...second.semanticIssues.map(issue => `b: ${issue}`)];
+    if (!isDeepStrictEqual(first.build.probes, second.build.probes)) issues.push("source semantic observations differ");
+    evidence.reproducibility.semantics = { status: issues.length ? "failed" : "passed", issues };
+    if (differences.length || issues.length) fail([...differences.map(name => `source payload bytes differ: ${name}`), ...issues].join("; "));
     for (let index = 0; index < 2; index++) {
       if (!isDeepStrictEqual(await verify(index), workspaces[index])) fail("source workspace changed during reproducibility execution");
     }
@@ -147,7 +156,6 @@ export async function reproduceTypeScript({ options, workspaces, serialize, pars
     await rename(path.join(stage, "result"), output);
     return result;
   } catch (error) {
-    evidence.reproducibility.bytes = { status: error instanceof SourceReproError && error.exitCode === 23 ? "failed" : "not-run" };
     throw new SourceReproError(error instanceof SourceReproError ? error.exitCode : 23, error.message, { ...evidence, evidenceRoot: stage });
   }
 }

@@ -100,6 +100,15 @@ export async function runJsIsolation({ probes, ledger, plan, executable, invoke,
     limitations: "Shared emitter/printer source participates in compilation. No claim of complete linker removal or general upstream CLI isolation." };
 }
 
+export function matchesTypeScriptObservation(item, observation) {
+  const sourceFiles = [`/cmd/tsfg-ast/testdata/${item.id}.ts`,
+    "/internal/bundled/libs/lib.decorators.d.ts", "/internal/bundled/libs/lib.decorators.legacy.d.ts",
+    "/internal/bundled/libs/lib.es5.d.ts"];
+  return observation?.kind === "KindSourceFile" && Object.entries(item.expected)
+    .every(([key, value]) => isDeepStrictEqual(observation[key], value))
+    && isDeepStrictEqual(observation.sourceFiles, sourceFiles);
+}
+
 export async function runTypeScriptProbes({ probes, plan, executable, run, positiveInput }) {
   const results = [];
   for (const item of probes.manifest.cases) {
@@ -109,12 +118,7 @@ export async function runTypeScriptProbes({ probes, plan, executable, run, posit
     let observation;
     try {
       observation = JSON.parse(run(executable, [source]));
-      const sourceFiles = [`/cmd/tsfg-ast/testdata/${item.id}.ts`,
-        "/internal/bundled/libs/lib.decorators.d.ts", "/internal/bundled/libs/lib.decorators.legacy.d.ts",
-        "/internal/bundled/libs/lib.es5.d.ts"];
-      const matched = observation.kind === "KindSourceFile" && Object.entries(item.expected)
-        .every(([key, value]) => isDeepStrictEqual(observation[key], value))
-        && isDeepStrictEqual(observation.sourceFiles, sourceFiles);
+      const matched = matchesTypeScriptObservation(item, observation);
       results.push({ id: item.id, status: matched ? "passed" : "failed", source: { projectId: item.projectId, path: item.path, sha256: sourceSha256 },
         expected: item.expected, observation });
     } catch (error) {
