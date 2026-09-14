@@ -71,3 +71,24 @@ test("source repro-check rebuilds the same verified candidate in two independent
   assert.notEqual(result.producers[0].execution.compileCache, result.producers[1].execution.compileCache);
   assert.ok(result.producers.every(producer => producer.workspace.dirty === false && producer.build.status === "passed"));
 });
+
+test("source repro-check revalidates existing real producers without claiming a new build", {
+  skip: process.env.TSFG_TEST_SOURCE_REPRO_RECHECK !== "1" ? "requires real source producer evidence" : false,
+}, async () => {
+  const original = JSON.parse(await readFile(process.env.TSFG_TEST_REPRO_ORIGINAL, "utf8")).result;
+  const root = process.env.TSFG_TEST_SOURCE_REPRO_EVIDENCE;
+  const child = spawnSync(process.execPath, [entry, "repro-check", "--dev", "--source-target", "typescript-ast",
+    "--target", "windows-x86_64-msvc", "--profile", "debug",
+    "--workspace-a", original.producers[0].workspaceRoot, "--workspace-b", original.producers[1].workspaceRoot,
+    "--producer-a", original.producers[0].output, "--producer-b", original.producers[1].output,
+    "--cache", process.env.TSFG_TEST_GO_CACHE,
+    "--manifest-revision", original.producers[0].workspace.manifest.revision, "--manifest", "candidates/tsfg-v0.2.0.xml",
+    "--out", path.join(root, "comparison"), "--report", path.join(root, "report.json")],
+  { encoding: "utf8", timeout: 1200000, maxBuffer: 16 * 1024 * 1024, windowsHide: true });
+  assert.equal(child.status, 0, child.stdout + child.stderr);
+  const result = JSON.parse(await readFile(path.join(root, "report.json"), "utf8")).result;
+  assert.equal(result.operation, "compare-existing");
+  assert.ok(result.producers.every(producer => producer.command === null && producer.build.mode === "recorded"));
+  assert.equal(result.reproducibility.bytes.status, "passed");
+  assert.equal(result.reproducibility.semantics.status, "passed");
+});

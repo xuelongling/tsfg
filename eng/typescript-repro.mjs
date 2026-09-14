@@ -86,12 +86,23 @@ export async function reproduceTypeScript({ options, workspaces, serialize, pars
   const stage = await mkdtemp(path.join(path.dirname(output), ".source-repro-"));
   const producers = [];
   const evidence = { schemaVersion: "1", executionMode: "local-development", isolation: "not-enforced", producers,
+    operation: options.has("--producer-a") ? "compare-existing" : "rebuild",
     reproducibility: { bytes: { status: "not-run" }, semantics: { status: "not-run" } }, intakeComplete: false };
   try {
     for (const [index, workspace] of workspaces.entries()) {
       const label = index === 0 ? "a" : "b", workspaceRoot = await realpath(options.get(`--workspace-${label}`));
       const product = workspace.projects.find(project => project.id === "tsfg.git");
       const productRoot = path.join(workspaceRoot, product.path);
+      if (options.has(`--producer-${label}`)) {
+        const producerRoot = await realpath(options.get(`--producer-${label}`));
+        const previous = await readProducer(producerRoot, workspaceRoot, workspace, serialize, parseJson);
+        producers.push({ label, workspaceRoot, workspace: workspaceSummary(workspace), output: producerRoot,
+          report: null, command: null, build: { status: "passed", mode: "recorded" },
+          stages: { sourcePolicy: previous.build.ledger.status, generation: previous.build.generation.status,
+            requiredTests: previous.build.requiredTests.status, interface: previous.build.probes.status, jsIsolation: previous.build.jsIsolation.status },
+          execution: previous.build.execution });
+        continue;
+      }
       const runRoot = path.join(stage, label), temp = path.join(runRoot, "temp"), producerRoot = path.join(runRoot, "producer");
       await mkdir(temp, { recursive: true });
       const report = path.join(runRoot, "build-report.json");

@@ -7713,10 +7713,15 @@ async function runCommandLine() {
   } else if (command === "repro-check" && sourceTarget === "typescript-ast") {
     try {
       const options = parseOptions(arguments_, new Set(["--dev", "--source-target", "--target", "--profile",
-        "--workspace-a", "--workspace-b", "--out", "--report", "--manifest-revision", "--manifest", "--cache"]), new Set(["--dev"]));
+        "--workspace-a", "--workspace-b", "--out", "--report", "--manifest-revision", "--manifest", "--cache",
+        "--producer-a", "--producer-b"]), new Set(["--dev"]));
       const first = options.get("--workspace-a"), second = options.get("--workspace-b");
       if (!first || !second || path.resolve(first).toLowerCase() === path.resolve(second).toLowerCase()) {
         throw new ConfigurationError("source repro-check requires two distinct verified workspace paths");
+      }
+      if (options.has("--producer-a") !== options.has("--producer-b")) throw new ConfigurationError("source repro-check requires both producer paths or neither");
+      for (const name of ["--producer-a", "--producer-b"]) {
+        if (options.has(name) && !await isGoDestinationOnE(options.get(name))) throw new ConfigurationError("source producer evidence requires an actual absolute E: path");
       }
       const verify = async index => {
         try {
