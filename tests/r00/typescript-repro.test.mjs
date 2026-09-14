@@ -49,3 +49,25 @@ test("source repro-check rejects paths without verified integration metadata", a
   assert.equal(child.status, 10, child.stderr);
   assert.match(child.stderr, /workspace|manifest|Git/);
 });
+
+test("source repro-check rebuilds the same verified candidate in two independent paths", {
+  skip: process.env.TSFG_TEST_SOURCE_REPRO !== "1" ? "requires two real materialized candidate workspaces" : false,
+}, async () => {
+  const root = process.env.TSFG_TEST_SOURCE_REPRO_EVIDENCE;
+  const child = spawnSync(process.execPath, [entry, "repro-check", "--dev", "--source-target", "typescript-ast",
+    "--target", "windows-x86_64-msvc", "--profile", "debug",
+    "--workspace-a", process.env.TSFG_TEST_REPRO_A, "--workspace-b", process.env.TSFG_TEST_REPRO_B,
+    "--cache", process.env.TSFG_TEST_GO_CACHE,
+    "--manifest-revision", process.env.TSFG_TEST_REPRO_MANIFEST, "--manifest", "candidates/tsfg-v0.2.0.xml",
+    "--out", path.join(root, "comparison"), "--report", path.join(root, "report.json")],
+  { env: { ...process.env, TSFG_RUNTIME_LOCK: undefined, TSFG_RUNTIME_CACHE: undefined, TSFG_RUNTIME_PLATFORM: undefined },
+    encoding: "utf8", timeout: 2400000, maxBuffer: 16 * 1024 * 1024, windowsHide: true });
+  assert.equal(child.status, 0, child.stdout + child.stderr);
+  const result = JSON.parse(await readFile(path.join(root, "report.json"), "utf8")).result;
+  assert.equal(result.reproducibility.bytes.status, "passed");
+  assert.equal(result.reproducibility.semantics.status, "passed");
+  assert.equal(result.isolation, "not-enforced");
+  assert.equal(result.producers.length, 2);
+  assert.notEqual(result.producers[0].execution.compileCache, result.producers[1].execution.compileCache);
+  assert.ok(result.producers.every(producer => producer.workspace.dirty === false && producer.build.status === "passed"));
+});

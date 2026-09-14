@@ -41,6 +41,7 @@ import { createIntakeLedger, IntakeLedgerError } from "./intake-ledger.mjs";
 import { readAstIntake, buildAstProbe, AstExecutionError } from "./typescript-ast.mjs";
 import { readGenerationLock, generationPackages, generationSources, GenerationError } from "./typescript-generation.mjs";
 import { reviewUpgrade } from "./upgrade-review.mjs";
+import { reproduceTypeScript, SourceReproError } from "./typescript-repro.mjs";
 import { prefetchGoDependencies, readGoDependencyLock, verifyGoDependencies } from "./go-closure.mjs";
 
 class ConfigurationError extends Error {
@@ -7711,26 +7712,39 @@ async function runCommandLine() {
   } else if (command === "repro-check" && sourceTarget === "typescript-ast") {
     try {
       const options = parseOptions(arguments_, new Set(["--dev", "--source-target", "--target", "--profile",
-        "--workspace-a", "--workspace-b", "--out", "--report", "--manifest-revision", "--manifest"]), new Set(["--dev"]));
+        "--workspace-a", "--workspace-b", "--out", "--report", "--manifest-revision", "--manifest", "--cache"]), new Set(["--dev"]));
       const first = options.get("--workspace-a"), second = options.get("--workspace-b");
       if (!first || !second || path.resolve(first).toLowerCase() === path.resolve(second).toLowerCase()) {
         throw new ConfigurationError("source repro-check requires two distinct verified workspace paths");
       }
-      for (const workspace of [first, second]) {
+      const verify = async index => {
         try {
-          await verifyWorkspace(new Map([["--workspace", workspace],
+          return await verifyWorkspace(new Map([["--workspace", [first, second][index]],
             ["--manifest-url", "https://github.com/xuelongling/manifests.git"],
             ["--manifest-revision", options.get("--manifest-revision")], ["--manifest", options.get("--manifest")]]));
         } catch (error) {
           if (error instanceof ConfigurationError) throw error;
           throw new WorkspaceMismatchError("source-repro-workspace", `workspace verification failed: ${error.message}`);
         }
+      };
+      const workspaces = [await verify(0), await verify(1)];
+      if (canonicalize(workspaces[0]) !== canonicalize(workspaces[1])) throw new WorkspaceMismatchError("source-repro-identity", "source workspaces must contain the same exact integration");
+      if (!options.has("--dev") || options.get("--target") !== "windows-x86_64-msvc" || options.get("--profile") !== "debug") {
+        throw new ConfigurationError("source repro-check requires --dev and the Windows debug source target");
       }
-      throw new ConfigurationError("source repro-check execution is not available");
+      for (const destination of [first, second, options.get("--out"), options.get("--cache")]) {
+        if (!destination || !await isGoDestinationOnE(destination)) throw new ConfigurationError("source repro-check requires actual absolute E: workspace, output and cache paths");
+      }
+      process.exitCode = await succeed(command, await reproduceTypeScript({ options, workspaces,
+        serialize: canonicalize, parseJson: parseReproJson, environment: buildEnvironment, verify }), reportPath, "offline");
     } catch (error) {
       const workspaceMismatch = error instanceof WorkspaceMismatchError;
-      process.exitCode = await fail(command, workspaceMismatch ? 10 : 2, workspaceMismatch ? "workspace mismatch" : "usage/configuration", {
-        code: workspaceMismatch ? error.issueCode : "invalid-configuration", message: error.message,
+      const code = workspaceMismatch ? 10 : error instanceof SourceReproError ? error.exitCode : error instanceof ConfigurationError ? 2 : 23;
+      const categories = { 2: "usage/configuration", 10: "workspace mismatch", 11: "lock/integrity", 12: "offline input missing",
+        20: "build failure", 21: "test/compatibility failure", 23: "reproducibility mismatch", 30: "internal control-plane failure" };
+      process.exitCode = await fail(command, code, categories[code] ?? categories[30], {
+        code: workspaceMismatch ? error.issueCode : "source-reproducibility", message: error.message,
+        ...(error instanceof SourceReproError ? { evidence: error.evidence } : {}),
       }, reportPath, "offline");
     }
   } else if (command === "repro-check") {
