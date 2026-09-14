@@ -18,7 +18,7 @@ test("prefetch refuses a missing locked generation dependency before downloading
   const lockPath = path.join(root, "lock.json");
   await writeFile(lockPath, JSON.stringify(lock));
   const child = spawnSync(process.execPath, [entry, "prefetch", "--dev", "--lock", lockPath,
-    "--cache", path.join(root, "cache"), "--platform", "invalid-target"], { encoding: "utf8", windowsHide: true });
+    "--cache", path.join(root, "cache"), "--platform", "windows-x86_64-msvc"], { encoding: "utf8", windowsHide: true });
   assert.equal(child.status, 11);
   assert.match(child.stderr, /generation dependency lock unavailable/);
 });
@@ -49,11 +49,13 @@ test("prefetch rejects a floating npm generation input", async t => {
   const bytes = JSON.stringify({ schemaVersion: "1", packages: [{ name: "dprint", version: "latest" }] });
   const sha256 = `sha256:${createHash("sha256").update(bytes).digest("hex")}`;
   await writeFile(path.join(root, "generation.json"), bytes);
-  const lock = { schemaVersion: "1", tools: {}, generationDependencies: { path: "generation.json", sha256 },
-    dependencyLocks: [{ projectId: "tsfg", path: "eng/generation.json", sha256 }] };
+  const lock = JSON.parse(await readFile(new URL("../../eng/go-ast-toolchains.lock.json", import.meta.url), "utf8"));
+  delete lock.goDependencies;
+  lock.generationDependencies = { path: "generation.json", sha256 };
+  lock.dependencyLocks = [{ projectId: "tsfg", path: "eng/generation.json", sha256 }];
   await writeFile(path.join(root, "lock.json"), JSON.stringify(lock));
   const child = spawnSync(process.execPath, [entry, "prefetch", "--dev", "--lock", path.join(root, "lock.json"),
-    "--cache", path.join(root, "cache"), "--platform", "invalid-target"], { encoding: "utf8", windowsHide: true });
+    "--cache", path.join(root, "cache"), "--platform", "windows-x86_64-msvc"], { encoding: "utf8", windowsHide: true });
   assert.equal(child.status, 11);
   assert.match(child.stderr, /generation package requires exact identity/);
 });
@@ -81,6 +83,9 @@ test("typed consumer replays its committed generated sources through the build e
   assert.equal(result.generation.intakeLedger?.status, "matched");
   assert.ok(result.generation.intakeLedger.files.some(item => item.source === "npm:@unicode/unicode-15.1.0@1.6.17"));
   assert.ok(result.buildInputSet.entries.some(item => item.repositoryRelativePath === "tsc/_submodules/TypeScript/src/compiler/diagnosticMessages.json"));
+  assert.equal(result.generation.inputsRechecked, true);
+  assert.equal(result.generation.binding.buildInputSetDigest, result.buildInputSet.digest);
+  assert.equal(result.generation.replayProductOid, result.provenance.find(item => item.projectId === "tsfg").projectOid);
 });
 
 test("source test reports actual required upstream suites without skips", {
@@ -90,6 +95,7 @@ test("source test reports actual required upstream suites without skips", {
   const root = process.env.TSFG_TEST_GENERATION_EVIDENCE;
   const report = path.join(root, "required-tests.json");
   const child = spawnSync(process.execPath, [entry, "test", "--dev", "--source-target", "typescript-ast",
+    "--generation", "reuse",
     "--workspace", product, "--intake-plan", path.join(product, "eng/intake-declarations/typescript-ast.json"),
     "--target", "windows-x86_64-msvc", "--profile", "debug", "--out", path.join(root, "test-output"), "--report", report],
   { env: { ...process.env, TSFG_RUNTIME_LOCK: path.join(product, "eng/go-ast-toolchains.lock.json"),
@@ -104,4 +110,7 @@ test("source test reports actual required upstream suites without skips", {
   assert.ok(result.requiredTests.passed.some(item => item.test === "TestJSCasing"));
   assert.equal(result.requiredTests.intakeLedger?.status, "matched");
   assert.ok(result.requiredTests.intakeLedger.files.some(item => item.source === "module:gotest.tools/v3@v3.5.2"));
+  assert.equal(result.generation.status, "passed");
+  assert.equal(result.generation.mode, "reused");
+  assert.match(result.generation.receiptSha256, /^sha256:[a-f0-9]{64}$/);
 });

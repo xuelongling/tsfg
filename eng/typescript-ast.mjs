@@ -8,7 +8,7 @@ import { createIntakeLedger, IntakeLedgerError } from "./intake-ledger.mjs";
 import { readGoSourceExecutionResult } from "./go-source-result.mjs";
 import { astGit, astBuildInputs, astToolchainInputs } from "./typescript-ast-inputs.mjs";
 import { readTypeScriptProbes, runTypeScriptProbes, runJsIsolation } from "./typescript-probes.mjs";
-import { replayGeneration } from "./typescript-generation.mjs";
+import { runGeneration } from "./typescript-generation.mjs";
 import { runRequiredTypeScriptTests } from "./typescript-required-tests.mjs";
 
 const hash = bytes => `sha256:${createHash("sha256").update(bytes).digest("hex")}`;
@@ -61,9 +61,10 @@ export async function buildAstProbe({ prepared, child, serialize, publish }) {
   const ledger = await createIntakeLedger({ ...intake.request, consumption });
   const toolchainInputs = await astToolchainInputs(intake, plan, worker);
   const identity = await astBuildInputs(intake, ledger, serialize);
-  const generation = intake.generation?.mode === "replay" ? await replayGeneration(intake, plan, serialize)
-    : { status: "not-run", reason: "No verified generation receipt has been consumed." };
-  const requiredTests = await runRequiredTypeScriptTests(intake, plan, serialize);
+  const generation = await runGeneration(intake, plan, identity, serialize);
+  let requiredTests;
+  try { requiredTests = await runRequiredTypeScriptTests(intake, plan, serialize); }
+  catch (error) { error.generation = generation; throw error; }
   if (requiredTests.status !== "passed") {
     const error = new AstExecutionError("required upstream TypeScript tests failed, skipped or did not run");
     error.requiredTests = requiredTests;
@@ -114,6 +115,10 @@ export async function buildAstProbe({ prepared, child, serialize, publish }) {
   for (const entry of identity.buildInputSet.entries.filter(entry => entry.projectId === "tsfg")) {
     if (hash(await readFile(path.join(intake.controlRoot, entry.repositoryRelativePath))) !== entry.sha256) fail("build control changed during AST execution");
   }
+  if (generation.mode === "reused"
+      && hash(await readFile(path.join(intake.controlRoot, generation.receiptPath))) !== generation.receiptSha256) fail("generation receipt changed during execution");
+  if (astGit(intake.request.gitExecutable, intake.controlRoot, ["rev-parse", "HEAD"]).toString("utf8").trim()
+      !== identity.provenance.find(project => project.projectId === "tsfg").projectOid) fail("product HEAD changed during execution");
   const binary = await readFile(executable);
   const buildIdentityPayload = { buildInputSetDigest: identity.buildInputSet.digest,
     options: { sourceTarget: "typescript-ast", goamd64: "v2", cgo: false, pgo: false },

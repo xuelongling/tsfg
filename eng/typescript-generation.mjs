@@ -124,7 +124,71 @@ export async function generationSources(sourceRoot, declaration, gitExecutable) 
 
 export class GenerationError extends Error { generation; }
 
-export async function replayGeneration(intake, plan, serialize) {
+export async function runGeneration(intake, plan, identity, serialize) {
+  const context = intake.generation;
+  const payload = { schemaVersion: "1", buildInputSetDigest: identity.buildInputSet.digest,
+    generationLockSha256: context.sha256, toolchainClosure: context.toolchainClosure,
+    sourceOid: intake.ledger.sources[0].forkOid, intakeIdentity: intake.inputIdentity };
+  const binding = { ...payload, digest: hash(serialize(payload)) };
+  const producer = identity.provenance.find(project => project.projectId === "tsfg").projectOid;
+  const replay = () => replayGeneration(intake, plan, serialize, binding, producer);
+  if (context.mode === "replay") return replay();
+  const refuse = message => {
+    const error = new GenerationError(message);
+    error.generation = { schemaVersion: "1", status: "not-run", mode: "reuse-refused", binding, reason: message };
+    throw error;
+  };
+  const receiptPath = "eng/probes/generation.json";
+  let bytes;
+  try {
+    const file = path.join(intake.controlRoot, receiptPath);
+    const entry = await lstat(file);
+    if (!entry.isFile() || entry.isSymbolicLink()) return refuse("generation receipt is not a regular committed file");
+    bytes = await readFile(file);
+  } catch (error) {
+    if (error.code !== "ENOENT") throw error;
+    if (context.mode === "reuse") return refuse("no committed generation receipt; run --generation replay");
+    return replay();
+  }
+  let proof;
+  try {
+    if (!bytes.equals(astGit(intake.request.gitExecutable, intake.controlRoot, ["show", `HEAD:${receiptPath}`]))) {
+      return refuse("generation receipt differs from committed authority");
+    }
+    proof = JSON.parse(bytes.toString("utf8"));
+    const { digest, ...recordedBinding } = proof.binding;
+    if (proof.schemaVersion !== "1" || proof.status !== "passed" || proof.mode !== "replayed"
+        || proof.inputsRechecked !== true || proof.intakeLedger?.status !== "matched"
+        || !proof.intakeLedger.files?.length || !/^[a-f0-9]{40}$/.test(proof.replayProductOid)
+        || !Array.isArray(proof.differences) || proof.differences.length
+        || !Array.isArray(proof.commands) || !proof.commands.length || proof.commands.some(command => command.exitCode !== 0)
+        || digest !== hash(serialize(recordedBinding)) || proof.sourceOid !== proof.binding.sourceOid
+        || proof.declarationSha256 !== proof.binding.generationLockSha256 || proof.toolchainClosure !== proof.binding.toolchainClosure) {
+      return refuse("generation receipt is not a successful, input-checked real replay");
+    }
+  } catch (error) {
+    if (error instanceof GenerationError) throw error;
+    return refuse(`invalid committed generation receipt: ${error.message}`);
+  }
+  if (proof.binding.digest !== binding.digest) {
+    if (context.mode === "reuse") return refuse("generation receipt does not match current inputs; run --generation replay");
+    return replay();
+  }
+  const expectedOutputs = context.declaration.outputs.map(name => ({ path: name,
+    sha256: intake.ledger.files.find(file => file.path === `tsc/${name}`)?.sha256 }));
+  if (serialize(proof.outputs) !== serialize(expectedOutputs)
+      || proof.commands.length !== 5 + context.declaration.outputs.filter(name => name.includes("stringer_generated")).length) {
+    return refuse("generation receipt does not cover the current committed outputs and recipe");
+  }
+  const { commands, derivedInputs, intakeLedger, ...verified } = proof;
+  const result = { ...verified, mode: "reused", receiptPath, receiptSha256: hash(bytes), commands: [],
+    intakeLedger: { ...intakeLedger, commands: [], evidence: "committed replay matched to current inputs" },
+    verifiedReplay: { productOid: proof.replayProductOid, commands, auditCommands: intakeLedger.commands, derivedInputs } };
+  await writeFile(path.join(plan.workRoot, "generation.json"), serialize(result));
+  return result;
+}
+
+async function replayGeneration(intake, plan, serialize, binding, producerOid) {
   const context = intake.generation;
   if (!context) return { status: "not-run", reason: "No locked generation closure was supplied." };
   const { declaration, packages, sources } = context;
@@ -189,7 +253,8 @@ export async function replayGeneration(intake, plan, serialize) {
   for (const name of declaration.outputs) before.push({ path: name, sha256: hash(await readFile(path.join(plan.moduleRoot, name))) });
   const result = { schemaVersion: "1", status: "failed", mode: "replayed", inputs, commands,
     outputs: [], differences: [], declarationSha256: context.sha256,
-    sourceOid: intake.ledger.sources[0].forkOid, toolchainClosure: context.toolchainClosure };
+    sourceOid: intake.ledger.sources[0].forkOid, toolchainClosure: context.toolchainClosure,
+    binding, replayProductOid: producerOid };
   try {
     const consumedOutputs = [];
     for (const entry of intake.ledger.files) {

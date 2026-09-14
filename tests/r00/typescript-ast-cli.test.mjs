@@ -140,9 +140,13 @@ for (const command of ["build", "test"]) test(`fixed fork source runs real typed
   const binary = await readFile(path.join(root, "out/tsfg-ast.exe"));
   assert.equal(result.jsIsolation.artifact.sha256, `sha256:${createHash("sha256").update(binary).digest("hex")}`);
   assert.deepEqual(JSON.parse(await readFile(path.join(root, "out/js-isolation.json"), "utf8")), result.jsIsolation);
-  assert.deepEqual((await readdir(path.join(root, "out"))).sort(), ["ast.json", "go-list.jsonstream", "intake-ledger.json",
-    "js-isolation.json", "probes.json", "source-build.json", "tsfg-ast.exe"]);
-  assert.equal(result.generation.status, "not-run");
+  assert.deepEqual((await readdir(path.join(root, "out"))).sort(), ["ast.json", "generation.json", "go-list.jsonstream", "intake-ledger.json",
+    "js-isolation.json", "probes.json", "required-test-events.jsonstream", "required-tests.json", "source-build.json", "tsfg-ast.exe"]);
+  assert.equal(result.generation.status, "passed");
+  assert.equal(result.generation.mode, "reused");
+  assert.deepEqual(result.generation.commands, []);
+  assert.equal(result.requiredTests.status, "passed");
+  assert.deepEqual(result.requiredTests.skipped, []);
   assert.equal(result.buildInputSet.schemaVersion, "1");
   assert.ok(result.buildInputSet.entries.some(entry => entry.projectId === "tsfg"
     && entry.repositoryRelativePath === "eng/typescript-ast.mjs" && entry.normalizedMode === "100644"));

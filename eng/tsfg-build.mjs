@@ -6978,7 +6978,7 @@ async function prepareGoSourceTarget(options, runtime) {
         if (gitlink?.contentKind !== "gitlink" || gitlink.oid !== source.commit) throw new GoInputIntegrityError("generation subsource differs from approved gitlink");
       }
       astIntake.generation = { declaration: generation, sha256: runtime.lock.generationDependencies.sha256,
-        toolchainClosure: runtime.lockDigest, mode: options.get("--generation") ?? "reuse",
+        toolchainClosure: runtime.lockDigest, mode: options.get("--generation") ?? "auto",
         packages: await generationPackages(runtime.cachePath, generation, parseTar),
         sources: await generationSources(sourceRoot, generation, process.env.TSFG_GIT) };
     } catch (error) {
@@ -7557,8 +7557,7 @@ async function runCommandLine() {
                     : isProbeFailure ? "typescript-probe" : isBuildFailure ? "native-build" : "internal-control-plane",
           message: error.message,
           ...(sourceTarget === "typescript-ast" ? {
-            generation: (error instanceof GenerationError || error instanceof AstExecutionError) && error.generation
-              ? error.generation : { status: "not-run", reason: error.message },
+            generation: error.generation ?? { status: "not-run", reason: error.message },
             requiredTests: error instanceof AstExecutionError && error.requiredTests
               ? error.requiredTests : { status: "not-run", reason: error.message },
           } : {}),
