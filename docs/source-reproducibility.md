@@ -48,6 +48,14 @@ A pair of equal but incorrect observations fails semantics even when every
 payload byte matches. A known absolute build/workspace/cache path inside the
 payload is also a failure; payload fields are never normalized for comparison.
 
+The fixed positive AST expectation also checks its contents: exactly one
+`KindVariableStatement` spanning `[0, 95)`, the identifier `answer`, and zero
+parse diagnostics. This is derived from the admitted `positive.ts`: a 61-byte
+copyright comment plus LF, the 33-byte `export const answer: number = 42;`, and
+a final LF. Node ranges include leading trivia and exclude the trailing LF.
+The literal expectation in `eng/typescript-probes.mjs` supplements the existing
+type and diagnostic expectations; it is not generated from producer output.
+
 A separate producer attestation binds all payload and evidence member bytes to
 the Build Identity. It excludes itself and is not a signature. Recorded producers
 must also match the current verified checkout's complete inputs, generation
@@ -77,3 +85,8 @@ successful build evidence. `TSFG_TEST_SOURCE_REPRO_PERTURB=1` changes one actual
 declared control input in workspace A, checks refusal of the old generation
 receipt, and restores the original bytes. Run this before final clean acceptance
 and never concurrently with another operation on that workspace.
+
+With `TSFG_TEST_SOURCE_REPRO_WRONG_SEMANTICS=1`, additionally set
+`TSFG_TEST_SOURCE_REPRO_AST_CONTENT=1` to replace both copies' statements and
+identifiers and inject parse diagnostics while keeping their source kind and
+all checksums consistent. This must fail semantics even when bytes match.

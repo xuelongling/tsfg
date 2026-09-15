@@ -290,8 +290,15 @@ test("source repro-check rejects identical wrong semantics independently of equa
     const producer = path.join(root, label);
     await cp(original.producers[index].output, producer, { recursive: true, errorOnExist: true, force: false });
     const build = JSON.parse(await readFile(path.join(producer, "source-build.json"), "utf8"));
-    build.ast.kind = "DeliberatelyWrongSourceFile";
-    if (process.env.TSFG_TEST_SOURCE_REPRO_AST_ONLY !== "1") build.probes.cases[0].observation.kind = "DeliberatelyWrongSourceFile";
+    const corrupt = observation => {
+      if (process.env.TSFG_TEST_SOURCE_REPRO_AST_CONTENT === "1") {
+        observation.statements = [];
+        observation.identifiers = ["wrong"];
+        observation.parseDiagnosticCount = 99;
+      } else observation.kind = "DeliberatelyWrongSourceFile";
+    };
+    corrupt(build.ast);
+    if (process.env.TSFG_TEST_SOURCE_REPRO_AST_ONLY !== "1") corrupt(build.probes.cases[0].observation);
     const ast = fixtureJson(build.ast), probes = fixtureJson(build.probes);
     build.observationSha256 = fixtureHash(ast);
     build.probeObservationSha256 = fixtureHash(probes);

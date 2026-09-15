@@ -12,6 +12,16 @@ const fail = message => { throw new IntakeLedgerError("typescript-probe-input", 
 const manifestPath = "eng/probes/typescript.json";
 const required = ["positive", "syntax-error", "type-error"];
 
+// Independent worked expectation for the admitted positive.ts: its 61-byte
+// copyright line plus LF precedes `export const answer: number = 42;` (33 bytes).
+// The one statement includes leading trivia and ends after ';', before the final
+// LF. `number` is a keyword, leaving `answer` as the only identifier.
+const positiveAst = {
+  statements: [{ kind: "KindVariableStatement", start: 0, end: 95 }],
+  identifiers: ["answer"],
+  parseDiagnosticCount: 0,
+};
+
 export async function readTypeScriptProbes(controlRoot, gitExecutable) {
   const inputs = [];
   const committed = async relative => {
@@ -106,6 +116,8 @@ export function matchesTypeScriptObservation(item, observation) {
     "/internal/bundled/libs/lib.es5.d.ts"];
   return observation?.kind === "KindSourceFile" && Object.entries(item.expected)
     .every(([key, value]) => isDeepStrictEqual(observation[key], value))
+    && (item.id !== "positive" || Object.entries(positiveAst)
+      .every(([key, value]) => isDeepStrictEqual(observation[key], value)))
     && isDeepStrictEqual(observation.sourceFiles, sourceFiles);
 }
 
