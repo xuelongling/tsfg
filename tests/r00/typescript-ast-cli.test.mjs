@@ -4,12 +4,38 @@ import { spawnSync } from "node:child_process";
 import { createHash } from "node:crypto";
 import test from "node:test";
 import { fileURLToPath } from "node:url";
-import { mkdir, mkdtemp, readFile, readdir, rm, writeFile } from "node:fs/promises";
+import { mkdir, mkdtemp, readFile, readdir, rm, stat, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import path from "node:path";
 import { TEST_GIT_EXECUTABLE } from "./test-tools.mjs";
 
 const entry = fileURLToPath(new URL("../../eng/tsfg-build.mjs", import.meta.url));
+
+for (const command of ["build", "test"]) test(`source ${command} withdraws its producer when the Build Report cannot publish`, {
+  skip: process.env.TSFG_TEST_AST_REPORT_FAILURE !== "1" ? "requires a real source build and blocked report destination" : false,
+}, async () => {
+  const root = path.join(process.env.TSFG_TEST_AST_EVIDENCE, command);
+  const output = path.join(root, "out"), report = path.join(root, "blocked-report");
+  await mkdir(report, { recursive: true });
+  const product = fileURLToPath(new URL("../../", import.meta.url));
+  const child = spawnSync(process.execPath, [entry, command, "--dev", "--source-target", "typescript-ast",
+    "--generation", "replay", "--workspace", product,
+    "--intake-plan", path.join(product, "eng/intake-declarations/typescript-ast.json"),
+    "--target", "windows-x86_64-msvc", "--profile", "debug", "--out", output, "--report", report],
+  { env: { ...process.env, TSFG_GIT: TEST_GIT_EXECUTABLE,
+    TSFG_RUNTIME_LOCK: path.join(product, "eng/go-ast-toolchains.lock.json"),
+    TSFG_RUNTIME_CACHE: process.env.TSFG_TEST_GO_CACHE,
+    TSFG_RUNTIME_PLATFORM: "windows-x86_64-msvc" }, encoding: "utf8", timeout: 1200000, windowsHide: true });
+  await writeFile(path.join(root, "child.log"), `${child.stdout ?? ""}${child.stderr ?? ""}`);
+  await writeFile(path.join(root, "child-result.json"), JSON.stringify({ command, exitCode: child.status,
+    error: child.error?.message ?? null, output, report }));
+  assert.ifError(child.error);
+  assert.equal(child.status, 30, child.stdout + child.stderr);
+  assert.match(child.stderr, /report/i);
+  assert.equal((await stat(report)).isDirectory(), true);
+  await assert.rejects(stat(output), { code: "ENOENT" });
+});
+
 test("public source build and test reject JS input, emission and runtime controls", async t => {
   const root = await mkdtemp(path.join(tmpdir(), "js-options-"));
   t.after(() => rm(root, { recursive: true, force: true }));

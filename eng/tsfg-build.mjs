@@ -7541,7 +7541,9 @@ async function runCommandLine() {
         process.exitCode = await succeed(command, await executeIntakeLedgerTarget(options), reportPath, "offline");
       } else if (options.has("--source-target")) {
         await validateGoSourceOptions(options, runtimeClosure);
-        process.exitCode = await succeed(command, await executeGoSourceTarget(options, runtimeClosure), reportPath, "offline");
+        const result = await executeGoSourceTarget(options, runtimeClosure);
+        publication = result.publication;
+        process.exitCode = await succeed(command, result, reportPath, "offline");
       } else {
       const workspaceState = inspectProductWorkspace(options, true, command);
       if (!runtimeClosure) throw new Error("locked runtime closure is unavailable");

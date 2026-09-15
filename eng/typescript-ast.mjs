@@ -193,5 +193,8 @@ export async function buildAstProbe({ prepared, child, serialize, publish }) {
   await writeFile(path.join(publication, "producer-attestation.json"), serialize({ schemaVersion: "1",
     kind: "typescript-source-probe", buildIdentityDigest: result.buildIdentity.digest, members: attested }));
   await publish(publication, output);
+  Object.defineProperty(result, "publication", {
+    value: { rollback: async () => { await publish(output, publication); } },
+  });
   return result;
 }

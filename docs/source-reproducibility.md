@@ -65,6 +65,11 @@ to generation, required tests and the final compiler invocation. Missing, damage
 or stale evidence fails; an attestation is never a substitute for these
 applicability checks.
 
+Source `build` and `test` share the existing publication rollback with their
+Build Report. If report writing fails after the producer has been prepared,
+the public output is withdrawn into its unpublished staging directory. Completed
+generation, test and probe evidence remains there for diagnosis.
+
 The public CLI regressions live in `tests/r00/typescript-repro.test.mjs`. The
 ordinary suite runs configuration and verification failures without native
 builds. The real scenarios are opt-in: set `TSFG_TEST_GO_CACHE` to the verified
@@ -90,3 +95,9 @@ With `TSFG_TEST_SOURCE_REPRO_WRONG_SEMANTICS=1`, additionally set
 `TSFG_TEST_SOURCE_REPRO_AST_CONTENT=1` to replace both copies' statements and
 identifiers and inject parse diagnostics while keeping their source kind and
 all checksums consistent. This must fail semantics even when bytes match.
+
+The actual source `build`/`test` report-failure regression is in
+`tests/r00/typescript-ast-cli.test.mjs`. Set `TSFG_TEST_AST_REPORT_FAILURE=1`,
+`TSFG_TEST_GO_CACHE` and a fresh `TSFG_TEST_AST_EVIDENCE` directory. Each command
+performs a real generation replay and source build, then attempts to write its
+Build Report over an existing directory; it must exit 30 with no public output.
