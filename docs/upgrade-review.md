@@ -35,7 +35,7 @@ The caller archives the report and Git history together under the existing
 history and existing Owner-controlled promotion/evidence retention.
 
 Evidence categories are `semantics`, `diagnostics`, `license`, `generation`,
-`reproducibility`, and `performance`. Each supplied entry contains `status`,
+`reproducibility`, `jsIsolation`, and `performance`. Each supplied entry contains `status`,
 `reason`, `reference`, and `subject: {forkOid, manifestRevision, reviewInputsSha256}` for its exact
 combination. Required results must be `passed`; `missing`, `failed`, `not-run`,
 and `not-applicable` are distinct and block admission. Absent entries become
@@ -79,3 +79,71 @@ rollback reports, exact plans and source/product/manifest Git bundles. The
 committed fixture test recreates the flow; archived plans retain original paths
 as provenance and must be remapped to restored bundle checkouts for replay in a
 new location.
+
+## Risk admission (report schema 2)
+
+The version 1 fixture plan now accepts `risks`. Its absence leaves the candidate
+`pending-verification`; it cannot preserve an older admission result. The report
+is schema 2 and the matching Manifest consumer rejects schema 1 reports. These
+are development governance formats, not real vulnerability findings, user risk
+approval receipts, SBOMs or production release authorization.
+
+`risks` contains `schemaVersion: "1"`, `evidenceKind: "fixture"`, `coverage`,
+`records`, and `approvals`. Coverage entries contain `manifestRevision`,
+`manifest`, `reviewInputsSha256`, and a nonempty `basis` describing the review of
+the declared consumers. An empty list of findings needs this exact reviewed
+scope too. Missing or stale coverage stays pending. Coverage is a supplied
+fixture assessment, not the result of a scanner and not a claim of no real
+vulnerabilities.
+
+Each record has these fields:
+
+| Field | Meaning |
+| --- | --- |
+| `id`, `evidenceKind` | A `fixture:` risk ID and literal `fixture` marker |
+| `subject` | Exact `{projectId, forkOid, path, sha256, role, consumer}` from the Intake Ledger |
+| `impact` | `exploitable`, `trust-integrity`, `unknown`, `not-applicable`, or `exception-required` |
+| `reachability` | `reachable`, `unreachable`, or `unknown` for that consumer |
+| `basis` | Evidence/reference and reasoning for this simulated assessment |
+| `owner`, `deadline`, `reviewPoint` | Responsibility, ISO calendar date and follow-up checkpoint |
+
+The report joins each affected record to the verified file's license; the
+existing ledgers retain base/fork/content identities, canonical source,
+licenses/NOTICE, roles and consumers. Duplicate risk/subject pairs and malformed
+records fail. All three roles use the same policy: build-only has no exemption.
+The game-runtime test uses an imaginary `GovernanceRuntimeFixture.git` source;
+it does not admit TypeScript or Go into a game runtime.
+
+Confirmed exploitation or trust/integrity damage blocks the affected combination
+even if an approval is supplied. Unknown impact or reachability remains pending.
+Not-applicable requires unreachable consumption with a preserved basis. A different
+source revision or consumer identity is reported as `unaffected-identity`, and the new combination
+still needs its own reviewed scope. A contradictory content hash for a verified
+fork/path is invalid, not evidence of being unaffected. A risk confined to the old combination does
+not block the assessed new one. Rollback checks the old combination's risk
+decision before allowing it to be reused; accepted refs are never modified.
+Any rollback exception must authorize the newly appended rollback manifest
+identity, not merely the old manifest from which its projects are copied.
+
+An `exception-required` record can continue only with a matching entry in
+`approvals`: `evidenceKind: "fixture"`, `riskId`, the exact `subject`,
+`manifestRevision`, `manifest`, `decision: "approved"`, `authority:
+"explicit-user"`, a `fixture:` actor and reference, and an unexpired ISO
+`expiresOn` date (UTC). `riskSha256` is the Canonical JSON Digest of the entire
+record, and `reviewInputsSha256` binds the declared consumer scope. Changes to
+the rationale, owner, deadline, file, role, consumer, or combination invalidate
+the old approval. These test approvals are deliberately simulated; the tool
+never creates authorization or accepts them as actual user approval.
+
+`risks.accepted` and `risks.candidate` preserve coverage and per-record decisions.
+The aggregate is `blocked`, `pending-verification`, or `continue`; only the last
+can support admission. Exceptions do not waive source/unknown-license,
+committed-byte integrity, mandatory evidence, or the JS prohibition gate.
+Manifest independently checks the selected combination's scope, records and
+exception authorization against its admitted file mapping. Exit zero still
+means only that the governance review ran; callers must inspect its decision.
+
+Ticket 11 must audit the actual final source/consumer/risk association and rerun
+the applicable real-source validation for its exact input identity. This target
+does not establish that association, scan third-party dependencies, import
+TypeScriptCompiler, or make old real-build evidence valid for changed inputs.

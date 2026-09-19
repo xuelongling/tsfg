@@ -15,7 +15,7 @@ const entry = fileURLToPath(new URL("../../eng/tsfg-build.mjs", import.meta.url)
 const sha = bytes => `sha256:${createHash("sha256").update(bytes).digest("hex")}`;
 const manifestUrl = "https://github.com/xuelongling/manifests.git";
 const projectId = "TypeScript.git";
-const required = ["semantics", "diagnostics", "license", "generation", "reproducibility"];
+const required = ["semantics", "diagnostics", "license", "generation", "reproducibility", "jsIsolation"];
 const canonical = value => Array.isArray(value) ? `[${value.map(canonical).join(",")}]` : value && typeof value === "object"
   ? `{${Object.keys(value).sort().map(key => `${JSON.stringify(key)}:${canonical(value[key])}`).join(",")}}` : JSON.stringify(value);
 function git(cwd, ...args) {
@@ -38,18 +38,20 @@ function commit(root, message) {
   git(root, "add", "."); git(root, "commit", "-qm", message);
   return git(root, "rev-parse", "HEAD");
 }
-async function fixture(t) {
+async function fixture(t, sourceId = projectId, role = "compiler-payload") {
+  const projectId = sourceId;
+  const canonicalUrl = `https://github.com/${sourceId === "TypeScript.git" ? "microsoft" : "fixture-upstream"}/${sourceId}`;
   const root = await mkdtemp(path.join(tmpdir(), "upgrade-"));
   t.after(async () => { assert.equal(path.dirname(root), path.resolve(tmpdir())); await rm(root, { recursive: true, force: true }); });
   const oldRoot = path.join(root, "accepted"), newRoot = path.join(root, "candidate");
   const source = path.join(newRoot, "typescript");
   await init(source);
-  git(source, "remote", "add", "origin", "https://github.com/xuelongling/TypeScript.git");
+  git(source, "remote", "add", "origin", `https://github.com/xuelongling/${projectId}`);
   for (const [name, bytes] of Object.entries({ ".gitattributes": "* -text\n", LICENSE: "Apache License 2.0\n", NOTICE: "Original notice\n", "src/parser.ts": "export const upstream = 1;\n" })) await put(source, name, bytes);
   const baseOid = commit(source, "upstream baseline fixture");
   git(source, "checkout", "-qb", "tsfg-accepted");
   await put(source, "src/local.ts", "export const localChange = true;\n");
-  const provenance = (oid, branch) => `canonical_url = "https://github.com/microsoft/TypeScript.git"\nbase_oid = "${oid}"\nlicense = "Apache-2.0"\nsync_branch = "refs/heads/${branch}"\nlocal_changes = "preserve local parser policy"\n`;
+  const provenance = (oid, branch) => `canonical_url = "${canonicalUrl}"\nbase_oid = "${oid}"\nlicense = "Apache-2.0"\nsync_branch = "refs/heads/${branch}"\nlocal_changes = "preserve local parser policy"\n`;
   await put(source, "UPSTREAM.toml", provenance(baseOid, "tsfg-accepted"));
   const acceptedOid = commit(source, "accepted local policy");
   git(source, "tag", "accepted-fixture", acceptedOid);
@@ -69,16 +71,16 @@ async function fixture(t) {
   const snapshots = [];
   for (const [workspaceRoot, forkOid, upstream, branch, version] of [[oldRoot, acceptedOid, baseOid, "tsfg-accepted", "0.2.0"], [newRoot, candidateOid, upstreamOid, "tsfg-candidate", "0.2.1"]]) {
     const fork = path.join(workspaceRoot, "typescript");
-    const admission = { schemaVersion: "2", sources: [{ projectId, path: "typescript", remoteUrl: "https://github.com/xuelongling/TypeScript.git", canonicalUrl: "https://github.com/microsoft/TypeScript.git", baseOid: upstream, forkOid, branch: `refs/heads/${branch}`, license: "Apache-2.0", legal: { license: "LICENSE", notice: "NOTICE", copyright: "LICENSE" }, files: git(fork, "ls-files").split("\n").map(name => ({ path: name, contentKind: "text", sha256: sha(spawnSync(TEST_GIT_EXECUTABLE, ["show", `${forkOid}:${name}`], { cwd: fork }).stdout) })) }] };
-    const declaration = { schemaVersion: "1", evidenceKind: "fixture", sources: [{ projectId, baseOid: upstream, forkOid, excludedReason: "unconsumed fixture metadata", entries: ["src/parser.ts", "src/local.ts"].map(name => ({ path: name, role: "compiler-payload", consumer: "fixture-parser", affectsPayload: true, localModification: name.includes("local") ? "local parser policy" : null, licenseException: null })) }], attributions: [] };
+    const admission = { schemaVersion: "2", sources: [{ projectId, path: "typescript", remoteUrl: `https://github.com/xuelongling/${projectId}`, canonicalUrl, baseOid: upstream, forkOid, branch: `refs/heads/${branch}`, license: "Apache-2.0", legal: { license: "LICENSE", notice: "NOTICE", copyright: "LICENSE" }, files: git(fork, "ls-files").split("\n").map(name => ({ path: name, contentKind: "text", sha256: sha(spawnSync(TEST_GIT_EXECUTABLE, ["show", `${forkOid}:${name}`], { cwd: fork }).stdout) })) }] };
+    const declaration = { schemaVersion: "1", evidenceKind: "fixture", sources: [{ projectId, baseOid: upstream, forkOid, excludedReason: "unconsumed fixture metadata", entries: ["src/parser.ts", "src/local.ts"].map(name => ({ path: name, role, consumer: role === "game-runtime" ? "fixture-game-runtime" : "fixture-parser", affectsPayload: true, localModification: name.includes("local") ? "local parser policy" : null, licenseException: null })) }], attributions: [] };
     const consumption = { schemaVersion: "1", evidenceKind: "fixture", entries: declaration.sources[0].entries.map(e => ({ projectId, path: e.path, role: e.role, consumer: e.consumer })) };
     const product = path.join(workspaceRoot, "tsfg");
     await init(product);
     await put(product, "eng/source-admissions.json", JSON.stringify(admission));
     const productOid = commit(product, "fixture approval");
     const manifest = `candidates/tsfg-v${version}.xml`;
-    const xml = `<?xml version="1.0" encoding="UTF-8"?>\n<manifest>\n<remote name="github-xuelongling" fetch="https://github.com/xuelongling/" />\n<project name="tsfg.git" path="tsfg" remote="github-xuelongling" revision="${productOid}" upstream="refs/heads/main" />\n<project name="TypeScript.git" path="typescript" remote="github-xuelongling" revision="${forkOid}" upstream="refs/heads/${branch}" />\n<project name=".agents.git" path=".agents" remote="github-xuelongling" revision="${productOid}" upstream="refs/heads/main"><linkfile src="AGENTS.md" dest="AGENTS.md" /><linkfile src="codex/config.toml" dest=".codex/config.toml" /><linkfile src="codex/hooks.json" dest=".codex/hooks.json" /></project>\n</manifest>\n`;
-    if (!snapshots.length) await put(manifests, "bootstrap/r00.xml", xml.replace(/<project name="TypeScript.git"[^\n]+\n/, ""));
+    const xml = `<?xml version="1.0" encoding="UTF-8"?>\n<manifest>\n<remote name="github-xuelongling" fetch="https://github.com/xuelongling/" />\n<project name="tsfg.git" path="tsfg" remote="github-xuelongling" revision="${productOid}" upstream="refs/heads/main" />\n<project name="${projectId}" path="typescript" remote="github-xuelongling" revision="${forkOid}" upstream="refs/heads/${branch}" />\n<project name=".agents.git" path=".agents" remote="github-xuelongling" revision="${productOid}" upstream="refs/heads/main"><linkfile src="AGENTS.md" dest="AGENTS.md" /><linkfile src="codex/config.toml" dest=".codex/config.toml" /><linkfile src="codex/hooks.json" dest=".codex/hooks.json" /></project>\n</manifest>\n`;
+    if (!snapshots.length) await put(manifests, "bootstrap/r00.xml", xml.replace(/<project name="[^"]+" path="typescript"[^\n]+\n/, ""));
     await put(manifests, manifest, xml);
     await put(manifests, `${manifest}.sources.json`, JSON.stringify(admission));
     const manifestRevision = commit(manifests, `fixture combination ${version}`);
@@ -90,7 +92,8 @@ async function fixture(t) {
     for (const evidence of Object.values(snapshot.evidence)) evidence.subject.reviewInputsSha256 = sha(canonical(inputs));
   }
   /** @type {any} */
-  const plan = { schemaVersion: "1", evidenceKind: "governance-fixture", action: "review", projectId, manifestRepository: manifests, accepted: snapshots[0], candidate: snapshots[1], mergeOid };
+  const plan = { schemaVersion: "1", evidenceKind: "governance-fixture", action: "review", projectId, manifestRepository: manifests, accepted: snapshots[0], candidate: snapshots[1], mergeOid,
+    risks: fixtureRiskReview({ accepted: snapshots[0], candidate: snapshots[1] }) };
   let runs = 0;
   async function run() {
     const folder = path.join(root, `run-${++runs}`); await mkdir(folder);
@@ -245,6 +248,8 @@ test("changing declared consumers cannot reuse evidence for the same Git combina
 
 test("manifest gate consumes the exact review and refuses rejected, stale or promoted fixtures", { skip: !process.env.TSFG_MANIFEST_CI }, async t => {
   const f = await fixture(t);
+  const risk = fixtureRisk(f, "exception-required");
+  f.plan.risks = fixtureRiskReview(f.plan, [risk], [fixtureApproval(f, risk)]);
   const reviewed = await f.run();
   assert.equal(reviewed.status, 0, reviewed.text);
   const reviewPath = path.join(f.root, "review-for-manifest.json");
@@ -263,11 +268,28 @@ test("manifest gate consumes the exact review and refuses rejected, stale or pro
   assert.equal(receipt.evidenceKind, "governance-fixture");
   assert.equal(receipt.intakeComplete, false);
   for (const mutate of [
+    r => { r.result.risks.candidate.records[0].approval = null; },
+    r => {
+      r.result.risks.candidate.records[0].impact = "unknown";
+      r.result.replay.plan.risks.records[0].impact = "unknown";
+    },
+    r => {
+      r.result.risks.candidate.records[0].subject.sha256 = "sha256:" + "0".repeat(64);
+      r.result.replay.plan.risks.records[0].subject.sha256 = "sha256:" + "0".repeat(64);
+      r.result.risks.candidate.records[0].decision = "unaffected-identity";
+      r.result.risks.candidate.records[0].approval = null;
+      r.result.risks.candidate.records[0].license = null;
+    },
+    r => { r.result.risks.candidate.records = []; },
+    r => { r.result.schemaVersion = "1"; },
+    r => { r.result.risks.candidate.coverage.reviewInputsSha256 = "sha256:" + "0".repeat(64); },
     r => { r.result.decision = "rejected"; },
     r => { r.result.integrations.candidate.revision = f.plan.accepted.manifestRevision; },
     r => { r.result.evidenceKind = "real-source"; },
     r => { r.result.promotionState = "Stable"; },
     r => { r.result.evidence.candidate.generation.status = "not-run"; },
+    r => { r.result.evidence.candidate.jsIsolation.status = "failed"; },
+    r => { r.result.risks.candidate.decision = "pending-verification"; },
   ]) {
     const report = structuredClone(reviewed.report); mutate(report);
     const rejected = await gate(report);
@@ -321,4 +343,261 @@ test("review rejects floating identities, fabricated merge claims and real-sourc
     assert.equal(r.report.status, "failure");
     await assert.rejects(readFile(path.join(r.folder, "out/upgrade-review.json")), { code: "ENOENT" });
   }
+});
+
+function fixtureRisk(f, impact = "exploitable", name = "candidate", filePath = "src/parser.ts") {
+  const snapshot = f.plan[name];
+  const entry = snapshot.declaration.sources[0].entries.find(file => file.path === filePath);
+  return { id: "fixture:simulated-risk", evidenceKind: "fixture", impact,
+    subject: { projectId: f.plan.projectId, forkOid: snapshot.declaration.sources[0].forkOid, path: filePath,
+      sha256: sha(git(path.join(snapshot.workspaceRoot, "typescript"), "show", `HEAD:${filePath}`) + "\n"),
+      role: entry.role, consumer: entry.consumer },
+    reachability: "reachable", basis: "fixture: simulated reachable input; not a real vulnerability",
+    owner: "fixture:maintainer", deadline: "2099-01-01", reviewPoint: "fixture:before-next-candidate" };
+}
+
+function fixtureRiskReview(plan, records = [], approvals = []) {
+  return { schemaVersion: "1", evidenceKind: "fixture", records, approvals,
+    coverage: [plan.accepted, plan.candidate].map(snapshot => ({ manifestRevision: snapshot.manifestRevision,
+      manifest: snapshot.manifest, reviewInputsSha256: snapshot.evidence.semantics.subject.reviewInputsSha256,
+      basis: "fixture: all declared consumers reviewed for this simulated scenario; no real-source assessment" })) };
+}
+
+test("candidate review blocks a simulated exploitable compiler dependency", async t => {
+  const f = await fixture(t);
+  f.plan.risks = fixtureRiskReview(f.plan, [fixtureRisk(f)]);
+  const r = await f.run();
+  assert.equal(r.status, 0, r.text);
+  assert.equal(r.report.result.decision, "rejected");
+  assert.equal(r.report.result.risks.candidate.decision, "blocked");
+  assert.equal(r.report.result.risks.candidate.records[0].subject.consumer, "fixture-parser");
+  await archiveFixture(f, r, "risk-exploitable");
+});
+
+test("unknown build-only impact stays pending even when all given tests are green", async t => {
+  const f = await fixture(t, projectId, "build-only");
+  f.plan.risks = fixtureRiskReview(f.plan, [fixtureRisk(f, "unknown")]);
+  f.plan.risks.records[0].reachability = "unknown";
+  const r = await f.run();
+  assert.equal(r.status, 0, r.text);
+  assert.equal(r.report.result.risks.candidate.decision, "pending-verification");
+  assert.equal(r.report.result.decision, "rejected");
+  assert.deepEqual(r.report.result.reasons, ["candidate.risks: pending-verification"]);
+  assert.equal(r.report.result.risks.candidate.records[0].subject.role, "build-only");
+  await archiveFixture(f, r, "risk-unknown");
+});
+
+test("evidenced inapplicability preserves its rationale and permits the candidate", async t => {
+  const f = await fixture(t);
+  const risk = fixtureRisk(f, "not-applicable");
+  risk.reachability = "unreachable";
+  risk.basis = "fixture: consumer excludes the simulated vulnerable entry path";
+  f.plan.risks = fixtureRiskReview(f.plan, [risk]);
+  const r = await f.run();
+  assert.equal(r.status, 0, r.text);
+  assert.equal(r.report.result.decision, "admitted-fixture");
+  assert.equal(r.report.result.risks.candidate.records[0].decision, "not-applicable");
+  assert.equal(r.report.result.risks.candidate.records[0].basis, risk.basis);
+  await archiveFixture(f, r, "risk-not-applicable");
+});
+
+function fixtureApproval(f, risk) {
+  return { evidenceKind: "fixture", riskId: risk.id, subject: structuredClone(risk.subject),
+    riskSha256: sha(canonical(risk)), reviewInputsSha256: f.plan.candidate.evidence.semantics.subject.reviewInputsSha256,
+    manifestRevision: f.plan.candidate.manifestRevision, manifest: f.plan.candidate.manifest,
+    decision: "approved", actor: "fixture:user", authority: "explicit-user",
+    reference: "fixture:simulated-user-approval-not-real-authorization", expiresOn: "2099-01-01" };
+}
+
+test("only a matching explicit fixture user approval permits an exception", async t => {
+  const f = await fixture(t);
+  const risk = fixtureRisk(f, "exception-required");
+  f.plan.risks = fixtureRiskReview(f.plan, [risk], [fixtureApproval(f, risk)]);
+  const r = await f.run();
+  assert.equal(r.status, 0, r.text);
+  assert.equal(r.report.result.decision, "admitted-fixture");
+  assert.equal(r.report.result.risks.candidate.records[0].decision, "exception-approved");
+  assert.equal(r.report.result.risks.candidate.records[0].approval.reference, "fixture:simulated-user-approval-not-real-authorization");
+  await archiveFixture(f, r, "risk-exception-approved");
+});
+
+test("risk review refuses records without traceable fixture evidence and responsibility", async t => {
+  const f = await fixture(t);
+  const risk = fixtureRisk(f, "not-applicable");
+  risk.reachability = "unreachable";
+  risk.owner = "";
+  f.plan.risks = fixtureRiskReview(f.plan, [risk]);
+  const r = await f.run();
+  assert.equal(r.status, 10, r.text);
+  assert.match(r.report.error.issues[0].message, /risk record/);
+});
+
+test("missing risk assessment is pending instead of an admitted candidate", async t => {
+  const f = await fixture(t);
+  delete f.plan.risks;
+  const r = await f.run();
+  assert.equal(r.status, 0, r.text);
+  assert.equal(r.report.result.decision, "rejected");
+  assert.equal(r.report.result.risks.candidate.decision, "pending-verification");
+});
+
+test("empty findings without an exact reviewed scope remain pending", async t => {
+  const f = await fixture(t);
+  f.plan.risks = { schemaVersion: "1", evidenceKind: "fixture", records: [], approvals: [] };
+  const r = await f.run();
+  assert.equal(r.status, 0, r.text);
+  assert.equal(r.report.result.risks.candidate.decision, "pending-verification");
+  assert.equal(r.report.result.decision, "rejected");
+});
+
+test("a matching risk exception cannot bypass the JS capability gate", async t => {
+  const f = await fixture(t);
+  const risk = fixtureRisk(f, "exception-required");
+  f.plan.risks = fixtureRiskReview(f.plan, [risk], [fixtureApproval(f, risk)]);
+  f.plan.candidate.evidence.jsIsolation.status = "failed";
+  const r = await f.run();
+  assert.equal(r.status, 0, r.text);
+  assert.equal(r.report.result.risks.candidate.decision, "continue");
+  assert.equal(r.report.result.decision, "rejected");
+  assert.ok(r.report.result.reasons.some(reason => reason.includes("jsIsolation")));
+});
+
+test("a risk confined to the old identity does not block an assessed unaffected new combination", async t => {
+  const f = await fixture(t);
+  f.plan.risks = fixtureRiskReview(f.plan, [fixtureRisk(f, "trust-integrity", "accepted")]);
+  const r = await f.run();
+  assert.equal(r.status, 0, r.text);
+  assert.equal(r.report.result.risks.accepted.decision, "blocked");
+  assert.equal(r.report.result.risks.candidate.decision, "continue");
+  assert.equal(r.report.result.risks.candidate.records[0].decision, "unaffected-identity");
+  assert.equal(r.report.result.decision, "admitted-fixture");
+});
+
+test("an exception cannot turn unknown reachability into verified impact", async t => {
+  const f = await fixture(t);
+  const risk = fixtureRisk(f, "exception-required");
+  risk.reachability = "unknown";
+  f.plan.risks = fixtureRiskReview(f.plan, [risk], [fixtureApproval(f, risk)]);
+  const r = await f.run();
+  assert.equal(r.status, 0, r.text);
+  assert.equal(r.report.result.risks.candidate.decision, "pending-verification");
+  assert.equal(r.report.result.decision, "rejected");
+});
+
+test("an approval cannot be reused after the reviewed risk rationale changes", async t => {
+  const f = await fixture(t);
+  const risk = fixtureRisk(f, "exception-required");
+  f.plan.risks = fixtureRiskReview(f.plan, [risk], [fixtureApproval(f, risk)]);
+  risk.basis = "fixture: changed risk assessment outside the prior approval";
+  const r = await f.run();
+  assert.equal(r.status, 0, r.text);
+  assert.equal(r.report.result.risks.candidate.decision, "blocked");
+  assert.equal(r.report.result.decision, "rejected");
+});
+
+test("risk exception rejects absent, mismatched, expired and automated authorizations", async t => {
+  const f = await fixture(t);
+  const risk = fixtureRisk(f, "exception-required");
+  let attempt = 0;
+  for (const mutate of [
+    a => { a.length = 0; },
+    a => { a[0].subject.consumer = "fixture:another-consumer"; },
+    a => { a[0].manifestRevision = f.plan.accepted.manifestRevision; },
+    a => { a[0].expiresOn = "2000-01-01"; },
+    a => { a[0].authority = "automated-tests"; },
+    a => { a[0].evidenceKind = "real-user-approval"; },
+    a => { a[0].decision = "denied"; },
+  ]) {
+    const approvals = [fixtureApproval(f, risk)]; mutate(approvals);
+    f.plan.risks = fixtureRiskReview(f.plan, [risk], approvals);
+    const r = await f.run();
+    assert.equal(r.status, 0, r.text);
+    assert.equal(r.report.result.risks.candidate.decision, "blocked");
+    assert.equal(r.report.result.decision, "rejected");
+    assert.equal(r.report.result.risks.candidate.records[0].approval, null);
+    await archiveFixture(f, r, `risk-exception-rejected-${++attempt}`);
+  }
+});
+
+for (const role of ["build-only", "compiler-payload", "game-runtime"]) {
+  test(`trust/integrity risk blocks the ${role} governance fixture despite an exception`, async t => {
+    // The runtime source is imaginary and exists only in these isolated Git fixtures.
+    const f = await fixture(t, role === "game-runtime" ? "GovernanceRuntimeFixture.git" : projectId, role);
+    const risk = fixtureRisk(f, "trust-integrity");
+    f.plan.risks = fixtureRiskReview(f.plan, [risk], [fixtureApproval(f, risk)]);
+    const r = await f.run();
+    assert.equal(r.status, 0, r.text);
+    assert.equal(r.report.result.decision, "rejected");
+    assert.equal(r.report.result.risks.candidate.records[0].decision, "blocked");
+    assert.equal(r.report.result.risks.candidate.records[0].subject.role, role);
+    assert.equal(r.report.result.risks.candidate.records[0].approval, null);
+    await archiveFixture(f, r, `risk-trust-${role}`);
+  });
+}
+
+test("risk approval cannot bypass unknown source, license or source-byte integrity", async t => {
+  const f = await fixture(t);
+  const risk = fixtureRisk(f, "exception-required");
+  f.plan.risks = fixtureRiskReview(f.plan, [risk], [fixtureApproval(f, risk)]);
+  const sourceRecord = f.plan.candidate.declaration.sources[0];
+  sourceRecord.projectId = "UnknownFixture.git";
+  let r = await f.run();
+  assert.equal(r.status, 10, r.text);
+  assert.equal(r.report.error.issues[0].code, "intake-ledger-identity");
+  sourceRecord.projectId = projectId;
+
+  await put(f.source, "src/parser.ts", "tampered fixture bytes\n");
+  r = await f.run();
+  assert.equal(r.status, 10, r.text);
+  assert.equal(r.report.error.issues[0].code, "intake-ledger-identity");
+  await put(f.source, "src/parser.ts", "export const upstream = 2;\n");
+
+  const snapshot = f.plan.candidate;
+  const approval = JSON.parse(git(f.manifests, "show", `${snapshot.manifestRevision}:${snapshot.manifest}.sources.json`));
+  approval.sources[0].license = "Unknown-Fixture-License";
+  const product = path.join(snapshot.workspaceRoot, "tsfg");
+  await put(product, "eng/source-admissions.json", JSON.stringify(approval));
+  const productOid = commit(product, "fixture unapproved license");
+  const xml = git(f.manifests, "show", `${snapshot.manifestRevision}:${snapshot.manifest}`)
+    .replace(/(<project name="tsfg.git"[^>]*revision=")[^"]+/, `$1${productOid}`);
+  await put(f.manifests, snapshot.manifest, xml + "\n");
+  await put(f.manifests, `${snapshot.manifest}.sources.json`, JSON.stringify(approval));
+  snapshot.manifestRevision = commit(f.manifests, "fixture unknown license candidate");
+  r = await f.run();
+  assert.equal(r.status, 10, r.text);
+  assert.equal(r.report.error.issues[0].code, "intake-ledger-license");
+});
+
+test("rollback cannot reuse an exception authorized only for the old manifest record", async t => {
+  const f = await fixture(t);
+  const old = f.plan.accepted, manifest = "candidates/tsfg-v0.2.2.xml";
+  for (const suffix of ["", ".sources.json"]) await put(f.manifests, manifest + suffix,
+    git(f.manifests, "show", `${old.manifestRevision}:${old.manifest}${suffix}`) + "\n");
+  const revision = commit(f.manifests, "fixture new rollback combination");
+  f.plan.action = "rollback";
+  f.plan.rollback = { manifest, manifestRevision: revision, reason: "fixture rollback" };
+  const risk = fixtureRisk(f, "exception-required", "accepted");
+  const approval = { ...fixtureApproval(f, risk), manifestRevision: old.manifestRevision, manifest: old.manifest,
+    reviewInputsSha256: old.evidence.semantics.subject.reviewInputsSha256 };
+  f.plan.risks = fixtureRiskReview(f.plan, [risk], [approval]);
+  const r = await f.run();
+  assert.equal(r.status, 0, r.text);
+  assert.equal(r.report.result.decision, "rejected");
+  assert.equal(r.report.result.risks.accepted.decision, "blocked");
+  approval.manifestRevision = revision;
+  approval.manifest = manifest;
+  const allowed = await f.run();
+  assert.equal(allowed.status, 0, allowed.text);
+  assert.equal(allowed.report.result.decision, "rollback-fixture");
+  await archiveFixture(f, allowed, "risk-rollback-explicit-scope");
+});
+
+test("a risk cannot claim different bytes for an already verified fork and file", async t => {
+  const f = await fixture(t);
+  const risk = fixtureRisk(f);
+  risk.subject.sha256 = "sha256:" + "0".repeat(64);
+  f.plan.risks = fixtureRiskReview(f.plan, [risk]);
+  const r = await f.run();
+  assert.equal(r.status, 10, r.text);
+  assert.equal(r.report.error.issues[0].code, "vulnerability-admission");
 });

@@ -2,10 +2,11 @@
 
 import path from "node:path";
 import { createIntakeLedger, IntakeLedgerError } from "./intake-ledger.mjs";
+import { assessVulnerabilities } from "./vulnerability-admission.mjs";
 
 const reject = message => { throw new IntakeLedgerError("upgrade-review", message); };
 const exactOid = value => typeof value === "string" && /^[0-9a-f]{40}$/.test(value);
-const categories = ["semantics", "diagnostics", "license", "generation", "reproducibility", "performance"];
+const categories = ["semantics", "diagnostics", "license", "generation", "reproducibility", "jsIsolation", "performance"];
 const note = value => typeof value === "string" && value.trim().length > 0 && !/[\x00-\x1f\x7f]/.test(value);
 const shape = (value, keys) => value && typeof value === "object" && !Array.isArray(value) &&
   Object.keys(value).sort().join(",") === keys.split(",").sort().join(",");
@@ -29,7 +30,7 @@ function inspectEvidence(snapshot, forkOid, reasons, label, reviewInputsSha256) 
 export async function reviewUpgrade({ plan, git: inspectGit, parseManifest, canonicalize, digest, gitExecutable, approvedLicenses }) {
   const git = (root, args) => inspectGit(root, ["--no-replace-objects", ...args]);
   if (plan?.schemaVersion !== "1" || plan.evidenceKind !== "governance-fixture" || !["review", "rollback"].includes(plan.action)) reject("expected a version 1 governance-fixture review or rollback");
-  if (!shape(plan, `schemaVersion,evidenceKind,action,projectId,manifestRepository,accepted,candidate,mergeOid${plan.action === "rollback" ? ",rollback" : ""}`) ||
+  if (!shape(plan, `schemaVersion,evidenceKind,action,projectId,manifestRepository,accepted,candidate,mergeOid${plan.action === "rollback" ? ",rollback" : ""}${Object.hasOwn(plan, "risks") ? ",risks" : ""}`) ||
       typeof plan.manifestRepository !== "string" || !path.isAbsolute(plan.manifestRepository)) reject("invalid review plan or manifest repository");
   if (git(plan.manifestRepository, ["remote", "get-url", "origin"]).trim() !== "https://github.com/xuelongling/manifests.git") reject("unexpected manifest remote");
   const combinations = {};
@@ -92,6 +93,15 @@ export async function reviewUpgrade({ plan, git: inspectGit, parseManifest, cano
   )))]));
   const evidence = { accepted: inspectEvidence(plan.accepted, accepted.source.forkOid, rejectionReasons.accepted, "accepted", reviewInputs.accepted),
     candidate: inspectEvidence(plan.candidate, candidate.source.forkOid, rejectionReasons.candidate, "candidate", reviewInputs.candidate) };
+  const risks = Object.fromEntries(["accepted", "candidate"].map(name => [name,
+    plan.risks ? assessVulnerabilities({ review: plan.risks, ledger: combinations[name].ledger,
+      integration: combinations[name].integration, reviewInputsSha256: reviewInputs[name],
+      contentDigest: value => digest(Buffer.from(canonicalize(value))),
+      authorizationIntegration: name === "accepted" && plan.action === "rollback"
+        ? { revision: plan.rollback?.manifestRevision, manifest: plan.rollback?.manifest } : combinations[name].integration })
+      : { decision: "pending-verification", evidenceKind: "fixture", records: [], reason: "risk assessment missing" }]));
+  const riskReasons = Object.fromEntries(["accepted", "candidate"].map(name => [name,
+    risks[name].decision === "continue" ? [] : [`${name}.risks: ${risks[name].decision}`]]));
   const reasons = [...rejectionReasons.accepted, ...rejectionReasons.candidate];
   let rollback = null;
   if (plan.action === "rollback") {
@@ -110,9 +120,10 @@ export async function reviewUpgrade({ plan, git: inspectGit, parseManifest, cano
     rollback = { repository: "https://github.com/xuelongling/manifests.git", revision: record.manifestRevision,
       manifest: record.manifest, manifestSha256: digest(Buffer.from(xml)), reason: record.reason, projects, target: accepted.integration };
   }
-  const candidateDecision = reasons.length ? "rejected" : "admitted-fixture";
-  const decision = rollback ? (rejectionReasons.accepted.length ? "rejected" : "rollback-fixture") : candidateDecision;
-  return { schemaVersion: "1", evidenceKind: "governance-fixture", operation: "upgrade-review", decision, candidateDecision, rollback, reasons, evidence, reviewInputs,
+  const candidateDecision = reasons.length || riskReasons.candidate.length ? "rejected" : "admitted-fixture";
+  reasons.push(...riskReasons.candidate, ...(rollback ? riskReasons.accepted : []));
+  const decision = rollback ? (rejectionReasons.accepted.length || riskReasons.accepted.length ? "rejected" : "rollback-fixture") : candidateDecision;
+  return { schemaVersion: "2", evidenceKind: "governance-fixture", operation: "upgrade-review", decision, candidateDecision, rollback, reasons, evidence, reviewInputs, risks,
     intakeComplete: false, promotionState: "Candidate", executionMode: "local-development", isolation: "not-enforced",
     integrations: { accepted: accepted.integration, candidate: candidate.integration },
     sources: { accepted: accepted.source, candidate: candidate.source },
