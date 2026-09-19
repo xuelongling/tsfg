@@ -7805,7 +7805,7 @@ async function runCommandLine() {
         return currentIdentities.get(productRoot);
       };
       const result = await reproduceTypeScript({ options, workspaces,
-        serialize: canonicalize, parseJson: parseReproJson, environment: buildEnvironment, verify, currentIdentity });
+        serialize: canonicalize, parseJson: parseReproJson, environment: buildEnvironment, verify, currentIdentity, intakeReview });
       publication = result.publication;
       process.exitCode = await succeed(command, result, reportPath, "offline");
     } catch (error) {

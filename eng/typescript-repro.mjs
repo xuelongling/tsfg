@@ -7,17 +7,20 @@ import { isDeepStrictEqual } from "node:util";
 import path from "node:path";
 import { readTypeScriptProbes, matchesTypeScriptObservation } from "./typescript-probes.mjs";
 import { sourceProbeMetadata, sourceProducerMembers } from "./typescript-ast.mjs";
+import { assessSourceIntake } from "./vulnerability-admission.mjs";
 
 const hash = bytes => `sha256:${createHash("sha256").update(bytes).digest("hex")}`;
 const payloadNames = ["artifact-manifest.json", "ast.json", "build-metadata.json", "probes.json", "tsfg-ast.exe"];
-const fail = message => { throw new SourceReproError(23, message); };
+const fail = (message, evidenceState = "failed") => { throw new SourceReproError(23, message, undefined, evidenceState); };
 const workspaceSummary = workspace => ({ manifest: workspace.manifest, projects: workspace.projects,
   activation: workspace.activation, dirty: workspace.dirty, sourcePolicy: {
     digest: workspace.policy.sourceAdmission.digest, stages: workspace.policy.sourceAdmission.stages,
     sources: workspace.policy.sourceAdmission.sources.map(({ files, ...identity }) => ({ ...identity, fileCount: String(files.length) })) },
   licenseReport: workspace.policy.licenseReport });
 export class SourceReproError extends Error {
-  constructor(exitCode, message, evidence = undefined) { super(message); this.exitCode = exitCode; this.evidence = evidence; }
+  constructor(exitCode, message, evidence = undefined, evidenceState = "failed") {
+    super(message); this.exitCode = exitCode; this.evidence = evidence; this.evidenceState = evidenceState;
+  }
 }
 
 async function regularBytes(root, name) {
@@ -37,7 +40,10 @@ function leakedPaths(bytes, roots) {
 
 async function readProducer(root, workspaceRoot, workspace, serialize, parseJson, currentIdentity) {
   const names = (await readdir(root)).sort();
-  if (!isDeepStrictEqual(names, [...sourceProducerMembers, "producer-attestation.json"].sort())) fail("incomplete or unexpected source producer members");
+  const expectedNames = [...sourceProducerMembers, "producer-attestation.json"].sort();
+  const missing = expectedNames.filter(name => !names.includes(name));
+  if (missing.length) fail(`missing source producer members: ${missing.join(", ")}`, "missing");
+  if (!isDeepStrictEqual(names, expectedNames)) fail("unexpected source producer members");
   const bytes = new Map();
   for (const name of names) bytes.set(name, await regularBytes(root, name));
   const json = name => parseJson(bytes.get(name), name, false);
@@ -49,6 +55,12 @@ async function readProducer(root, workspaceRoot, workspace, serialize, parseJson
   const product = workspace.projects.find(project => project.id === "tsfg.git");
   const fork = workspace.projects.find(project => project.id === "TypeScript.git");
   const productRoot = path.join(workspaceRoot, product.path);
+  if (build.ledger?.evidenceKind !== "real-source") fail("source consumption audit is not real-source evidence",
+    build.ledger ? "failed" : "missing");
+  for (const [phase, audit] of [["toolchain", build.toolchainInputs], ["required-tests", build.requiredTests?.intakeLedger]]) {
+    if (audit?.status !== "matched") fail(`${phase} consumption audit is ${audit?.status ?? "missing"}`,
+      !audit ? "missing" : audit.status === "not-run" ? "not-run" : "failed");
+  }
   if (build.status !== "ast-observed" || build.dirty !== false || build.executionMode !== "local-development"
       || build.isolation !== "not-enforced" || build.source.commit !== fork.head
       || build.provenance.find(project => project.projectId === "tsfg")?.projectOid !== product.head
@@ -119,7 +131,7 @@ async function readProducer(root, workspaceRoot, workspace, serialize, parseJson
   return { root, workspaceRoot, workspace, build, bytes, manifest, semanticIssues };
 }
 
-export async function reproduceTypeScript({ options, workspaces, serialize, parseJson, environment, verify, currentIdentity }) {
+export async function reproduceTypeScript({ options, workspaces, serialize, parseJson, environment, verify, currentIdentity, intakeReview }) {
   const output = path.resolve(options.get("--out"));
   await mkdir(path.dirname(output), { recursive: true });
   if (await lstat(output).catch(error => { if (error.code === "ENOENT") return undefined; throw error; })) {
@@ -131,7 +143,7 @@ export async function reproduceTypeScript({ options, workspaces, serialize, pars
     return { label, workspaceRoot: options.get(`--workspace-${label}`), workspace: workspaceSummary(workspace),
       output: options.get(`--producer-${label}`) ?? null, report: null, command: null, execution: null,
       build: { status: "not-run", mode: options.has("--producer-a") ? "recorded" : "rebuild" },
-      validation: { status: "not-run" }, stages: { sourcePolicy: "not-run", generation: "not-run",
+      validation: { status: "not-run", evidenceState: "not-run" }, stages: { sourcePolicy: "not-run", generation: "not-run",
         requiredTests: "not-run", interface: "not-run", jsIsolation: "not-run" } };
   });
   const evidence = { schemaVersion: "1", executionMode: "local-development", isolation: "not-enforced", producers,
@@ -143,9 +155,13 @@ export async function reproduceTypeScript({ options, workspaces, serialize, pars
       const producer = producers[index];
       const value = await readProducer(await realpath(producer.output), producer.workspaceRoot, workspaces[index], serialize, parseJson, currentIdentity);
       producer.validation.status = "passed";
+      producer.validation.evidenceState = "passed";
       producer.stages.interface = value.semanticIssues.length ? "failed" : value.build.probes.status;
       return value;
-    } catch (error) { producers[index].validation.status = "failed"; throw error; }
+    } catch (error) {
+      producers[index].validation = { status: "failed", evidenceState: error.code === "ENOENT" ? "missing" : error.evidenceState ?? "failed" };
+      throw error;
+    }
   };
   try {
     for (const [index, workspace] of workspaces.entries()) {
@@ -191,6 +207,11 @@ export async function reproduceTypeScript({ options, workspaces, serialize, pars
     }
     const first = await read(0), second = await read(1);
     if (!isDeepStrictEqual(first.build.buildIdentity, second.build.buildIdentity)) fail("source producer Build Identities differ");
+    const riskReview = build => assessSourceIntake({ build, integration: workspaces[0].manifest, review: intakeReview,
+      contentDigest: value => hash(serialize(value)) });
+    evidence.risks = riskReview(first.build);
+    if (!isDeepStrictEqual(evidence.risks, riskReview(second.build))) fail("source producers differ in actual consumption or risk association");
+    if (intakeReview && evidence.risks.decision !== "continue") fail(`source intake risk review: ${evidence.risks.decision}; ${evidence.risks.reasons.join("; ")}`);
     if (first.build.execution.compileCache.toLowerCase() === second.build.execution.compileCache.toLowerCase()
         || first.build.execution.moduleCache.toLowerCase() === second.build.execution.moduleCache.toLowerCase()) fail("source producers share execution caches");
     const differences = payloadNames.filter(name => !first.bytes.get(name).equals(second.bytes.get(name)));
@@ -211,7 +232,10 @@ export async function reproduceTypeScript({ options, workspaces, serialize, pars
     for (let index = 0; index < 2; index++) {
       if (!isDeepStrictEqual(await verify(index), workspaces[index])) fail("source workspace changed during reproducibility execution");
     }
-    const result = { ...evidence, buildIdentity: first.build.buildIdentity,
+    const result = { ...evidence, intakeComplete: Boolean(intakeReview) && evidence.risks.decision === "continue",
+      intakeScope: { source: "TypeScript", languageBaseline: first.build.probes.languageBaseline,
+        r02aComplete: false, languageImplementationComplete: false, mlirLlvmIntake: "not-run", sourceToMlir: "not-run" },
+      ...(intakeReview ? { intakeReviewSha256: hash(serialize(intakeReview)) } : {}), buildIdentity: first.build.buildIdentity,
       reproducibilitySet: payloadNames.map(name => ({ path: name, sha256: hash(first.bytes.get(name)) })),
       status: "source-reproducible", evidenceRoot: stage,
       publication: { rollback: async () => { await rename(output, path.join(stage, "result")); } } };

@@ -14,6 +14,85 @@ const fixtureJson = value => value === null || typeof value !== "object" ? JSON.
   : `{${Object.keys(value).sort().map(key => `${JSON.stringify(key)}:${fixtureJson(value[key])}`).join(",")}}`;
 const fixtureHash = bytes => `sha256:${createHash("sha256").update(bytes).digest("hex")}`;
 
+test("source intake completes only the reviewed real TypeScript candidate", {
+  skip: process.env.TSFG_TEST_SOURCE_INTAKE !== "1" ? "requires a real candidate pair and bound consumption review" : false,
+}, async () => {
+  const original = JSON.parse(await readFile(process.env.TSFG_TEST_REPRO_ORIGINAL, "utf8")).result;
+  const root = process.env.TSFG_TEST_SOURCE_REPRO_EVIDENCE;
+  const child = spawnSync(process.execPath, [entry, "repro-check", "--dev", "--source-target", "typescript-ast",
+    "--target", "windows-x86_64-msvc", "--profile", "debug",
+    "--workspace-a", original.producers[0].workspaceRoot, "--workspace-b", original.producers[1].workspaceRoot,
+    "--producer-a", original.producers[0].output, "--producer-b", original.producers[1].output,
+    "--cache", process.env.TSFG_TEST_GO_CACHE,
+    "--manifest-revision", original.producers[0].workspace.manifest.revision, "--manifest", "candidates/tsfg-v0.2.0.xml",
+    "--intake-review", process.env.TSFG_TEST_INTAKE_REVIEW,
+    "--out", path.join(root, "comparison"), "--report", path.join(root, "report.json")],
+  { encoding: "utf8", timeout: 1200000, maxBuffer: 16 * 1024 * 1024, windowsHide: true });
+  assert.equal(child.status, 0, child.stdout + child.stderr);
+  const result = JSON.parse(await readFile(path.join(root, "report.json"), "utf8")).result;
+  assert.equal(result.intakeComplete, true);
+  assert.equal(result.risks.evidenceKind, "real-source");
+  assert.equal(result.risks.decision, "continue");
+  assert.ok(result.risks.dependencies.some(file => file.source === "TypeScript.git"
+    && file.path === "tsc/internal/parser/parser.go" && file.consumer === "tsfg-ast"));
+  assert.ok(result.risks.dependencies.some(file => file.source === "go" && file.role === "compiler-payload"));
+  assert.ok(result.risks.dependencies.some(file => file.phase === "generation"));
+  assert.ok(result.risks.dependencies.some(file => file.phase === "required-tests"));
+  assert.ok(result.risks.dependencies.every(file => file.role !== "game-runtime"));
+  assert.equal(result.intakeScope.source, "TypeScript");
+  assert.equal(result.intakeScope.r02aComplete, false);
+  assert.equal(result.intakeScope.languageImplementationComplete, false);
+});
+
+for (const scenario of ["source", "toolchain", "generation", "required-tests", "stale-binding", "reported-impacts"]) {
+  test(`source intake rejects a replaced review: ${scenario}`, {
+    skip: process.env.TSFG_TEST_SOURCE_INTAKE_REVIEW_NEGATIVES !== "1" ? "requires real producers for review mutation checks" : false,
+  }, async () => {
+    const original = JSON.parse(await readFile(process.env.TSFG_TEST_REPRO_ORIGINAL, "utf8")).result;
+    const review = JSON.parse(await readFile(process.env.TSFG_TEST_INTAKE_REVIEW, "utf8"));
+    const root = path.join(process.env.TSFG_TEST_SOURCE_REPRO_EVIDENCE, scenario);
+    await mkdir(root, { recursive: true });
+    if (scenario === "stale-binding") review.binding.productOid = "0".repeat(40);
+    else if (scenario === "reported-impacts") {
+      const build = JSON.parse(await readFile(path.join(original.producers[0].output, "source-build.json"), "utf8"));
+      const file = build.ledger.files.find(file => file.role === "compiler-payload");
+      const subject = { phase: "source", source: file.projectId, sourceIdentity: file.forkOid,
+        path: file.path, sha256: file.sha256, role: file.role, consumer: file.consumer };
+      review.records = ["unknown", "exploitable", "trust-integrity", "not-applicable", "exception-required"].map(impact => ({
+        id: `acceptance-mutation:${impact}`, subject, impact,
+        reachability: impact === "not-applicable" ? "unreachable" : "reachable",
+        basis: "Deliberate test-only review mutation against a real dependency; not a real vulnerability allegation or user approval.",
+        owner: "acceptance test", deadline: "2099-01-01", reviewPoint: "Never use this mutated review as actual intake evidence.",
+      }));
+    } else review.coverage = review.coverage.filter(item => item.phase !== scenario);
+    const reviewPath = path.join(root, "test-only-review.json"), report = path.join(root, "report.json"), output = path.join(root, "out");
+    await writeFile(reviewPath, fixtureJson(review));
+    const child = spawnSync(process.execPath, [entry, "repro-check", "--dev", "--source-target", "typescript-ast",
+      "--target", "windows-x86_64-msvc", "--profile", "debug",
+      "--workspace-a", original.producers[0].workspaceRoot, "--workspace-b", original.producers[1].workspaceRoot,
+      "--producer-a", original.producers[0].output, "--producer-b", original.producers[1].output,
+      "--cache", process.env.TSFG_TEST_GO_CACHE,
+      "--manifest-revision", original.producers[0].workspace.manifest.revision, "--manifest", "candidates/tsfg-v0.2.0.xml",
+      "--intake-review", reviewPath, "--out", output, "--report", report],
+    { encoding: "utf8", timeout: 1200000, maxBuffer: 16 * 1024 * 1024, windowsHide: true });
+    assert.equal(child.status, 23, `${scenario}: ${child.stdout}${child.stderr}`);
+    const evidence = JSON.parse(await readFile(report, "utf8")).error.issues[0].evidence;
+    assert.equal(evidence.intakeComplete, false);
+    if (scenario === "reported-impacts") {
+      assert.equal(evidence.risks.decision, "blocked");
+      assert.deepEqual(evidence.risks.records.map(record => record.decision),
+        ["pending-verification", "blocked", "blocked", "not-applicable", "blocked"]);
+      assert.ok(evidence.risks.records.every(record => record.approval === null));
+      assert.ok(evidence.risks.dependencies.some(file => file.riskIds.length === 5 && file.impactReview === "reported-impact"));
+    } else {
+      assert.equal(evidence.risks.decision, "pending-verification");
+      if (scenario === "stale-binding") assert.match(evidence.risks.reasons.join("; "), /binding differs/);
+      else assert.equal(evidence.risks.coverage.find(item => item.phase === scenario).status, "missing");
+    }
+    await assert.rejects(stat(output), { code: "ENOENT" });
+  });
+}
+
 test("source intake refuses governance risk fixtures before consuming real evidence", async t => {
   const root = await mkdtemp(path.join(tmpdir(), "source-intake-review-"));
   t.after(() => rm(root, { recursive: true, force: true }));
@@ -48,14 +127,58 @@ async function refreshFixtureAttestation(producer) {
   await writeFile(file, fixtureJson(attestation));
 }
 
+test("source intake refuses failed or unrun consumption audits despite matching file bytes", {
+  skip: process.env.TSFG_TEST_SOURCE_INTAKE_AUDITS !== "1" ? "requires actual source producers and a bound review" : false,
+}, async () => {
+  const original = JSON.parse(await readFile(process.env.TSFG_TEST_REPRO_ORIGINAL, "utf8")).result;
+  for (const scenario of ["failed-tool-audit", "unrun-test-audit", "fixture-source-audit"]) {
+    const root = path.join(process.env.TSFG_TEST_SOURCE_REPRO_EVIDENCE, scenario), producer = path.join(root, "a");
+    await cp(original.producers[0].output, producer, { recursive: true, errorOnExist: true, force: false });
+    const buildPath = path.join(producer, "source-build.json"), build = JSON.parse(await readFile(buildPath, "utf8"));
+    if (scenario === "failed-tool-audit") build.toolchainInputs.status = "failed";
+    if (scenario === "unrun-test-audit") {
+      build.requiredTests.intakeLedger.status = "not-run";
+      await writeFile(path.join(producer, "required-tests.json"), fixtureJson(build.requiredTests));
+    }
+    if (scenario === "fixture-source-audit") {
+      build.ledger.evidenceKind = "fixture";
+      await writeFile(path.join(producer, "intake-ledger.json"), fixtureJson(build.ledger));
+    }
+    await writeFile(buildPath, fixtureJson(build));
+    await refreshFixtureAttestation(producer);
+    const output = path.join(root, "out"), report = path.join(root, "report.json");
+    const child = spawnSync(process.execPath, [entry, "repro-check", "--dev", "--source-target", "typescript-ast",
+      "--target", "windows-x86_64-msvc", "--profile", "debug",
+      "--workspace-a", original.producers[0].workspaceRoot, "--workspace-b", original.producers[1].workspaceRoot,
+      "--producer-a", producer, "--producer-b", original.producers[1].output,
+      "--cache", process.env.TSFG_TEST_GO_CACHE,
+      "--manifest-revision", original.producers[0].workspace.manifest.revision, "--manifest", "candidates/tsfg-v0.2.0.xml",
+      "--intake-review", process.env.TSFG_TEST_INTAKE_REVIEW, "--out", output, "--report", report],
+    { encoding: "utf8", timeout: 1200000, maxBuffer: 16 * 1024 * 1024, windowsHide: true });
+    assert.equal(child.status, 23, `${scenario}: ${child.stdout}${child.stderr}`);
+    const failure = JSON.parse(await readFile(report, "utf8")).error.issues[0];
+    assert.match(failure.message, /consumption audit/i);
+    assert.equal(failure.evidence.intakeComplete, false);
+    assert.equal(failure.evidence.producers[0].validation.evidenceState,
+      scenario === "unrun-test-audit" ? "not-run" : "failed");
+    await assert.rejects(stat(output), { code: "ENOENT" });
+  }
+});
+
 test("source repro-check rejects missing and damaged attested members", {
   skip: process.env.TSFG_TEST_SOURCE_REPRO_DAMAGE !== "1" ? "requires real producers for evidence damage checks" : false,
 }, async () => {
   const original = JSON.parse(await readFile(process.env.TSFG_TEST_REPRO_ORIGINAL, "utf8")).result;
-  for (const damage of ["missing-attestation", "damaged-generation", "damaged-payload"]) {
+  const missingMembers = process.env.TSFG_TEST_SOURCE_REPRO_ALL_MEMBERS === "1"
+    ? ["artifact-manifest.json", "ast.json", "build-metadata.json", "generation.json", "go-list.jsonstream",
+      "intake-ledger.json", "js-isolation.json", "probes.json", "required-test-events.jsonstream",
+      "required-tests.json", "source-build.json", "tsfg-ast.exe", "producer-attestation.json"].map(name => `missing-${name}`)
+    : ["missing-attestation"];
+  for (const damage of [...missingMembers, "damaged-generation", "damaged-payload"]) {
     const root = path.join(process.env.TSFG_TEST_SOURCE_REPRO_EVIDENCE, damage), producer = path.join(root, "a");
     await cp(original.producers[0].output, producer, { recursive: true, errorOnExist: true, force: false });
-    if (damage === "missing-attestation") await rm(path.join(producer, "producer-attestation.json"));
+    if (damage.startsWith("missing-")) await rm(path.join(producer,
+      damage === "missing-attestation" ? "producer-attestation.json" : damage.slice("missing-".length)));
     else {
       const file = path.join(producer, damage === "damaged-generation" ? "generation.json" : "tsfg-ast.exe");
       await writeFile(file, Buffer.concat([await readFile(file), Buffer.from("deliberate-corruption")]));
@@ -72,6 +195,8 @@ test("source repro-check rejects missing and damaged attested members", {
     const evidence = JSON.parse(await readFile(report, "utf8")).error.issues[0].evidence;
     assert.equal(evidence.producers[0].validation.status, "failed");
     assert.equal(evidence.producers[1].validation.status, "not-run");
+    assert.equal(evidence.producers[0].validation.evidenceState, damage.startsWith("missing-") ? "missing" : "failed");
+    assert.equal(evidence.producers[1].validation.evidenceState, "not-run");
     await assert.rejects(stat(output), { code: "ENOENT" });
   }
 });
