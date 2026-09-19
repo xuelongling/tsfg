@@ -14,6 +14,29 @@ const fixtureJson = value => value === null || typeof value !== "object" ? JSON.
   : `{${Object.keys(value).sort().map(key => `${JSON.stringify(key)}:${fixtureJson(value[key])}`).join(",")}}`;
 const fixtureHash = bytes => `sha256:${createHash("sha256").update(bytes).digest("hex")}`;
 
+test("source intake refuses governance risk fixtures before consuming real evidence", async t => {
+  const root = await mkdtemp(path.join(tmpdir(), "source-intake-review-"));
+  t.after(() => rm(root, { recursive: true, force: true }));
+  const review = path.join(root, "review.json"), output = path.join(root, "out");
+  await writeFile(review, fixtureJson({ schemaVersion: "1", evidenceKind: "fixture", records: [] }));
+  const child = spawnSync(process.execPath, [entry, "repro-check", "--dev", "--source-target", "typescript-ast",
+    "--intake-review", review, "--out", output], { encoding: "utf8", windowsHide: true });
+  assert.equal(child.status, 2, child.stderr);
+  assert.match(child.stderr, /intake review requires real-source evidence/i);
+  await assert.rejects(stat(output), { code: "ENOENT" });
+});
+
+test("source intake requires exact binding and reviewed dependency coverage", async t => {
+  const root = await mkdtemp(path.join(tmpdir(), "source-intake-binding-"));
+  t.after(() => rm(root, { recursive: true, force: true }));
+  const review = path.join(root, "review.json");
+  await writeFile(review, fixtureJson({ schemaVersion: "1", evidenceKind: "real-source", records: [] }));
+  const child = spawnSync(process.execPath, [entry, "repro-check", "--dev", "--source-target", "typescript-ast",
+    "--intake-review", review], { encoding: "utf8", windowsHide: true });
+  assert.equal(child.status, 2, child.stderr);
+  assert.match(child.stderr, /intake review requires exact binding and dependency coverage/i);
+});
+
 // Deliberately corrupted copies can remain internally consistent so the public
 // entry must check the independent oracle/current identity, not only checksums.
 async function refreshFixtureAttestation(producer) {

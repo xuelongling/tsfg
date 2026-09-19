@@ -7760,7 +7760,17 @@ async function runCommandLine() {
     try {
       const options = parseOptions(arguments_, new Set(["--dev", "--source-target", "--target", "--profile",
         "--workspace-a", "--workspace-b", "--out", "--report", "--manifest-revision", "--manifest", "--cache",
-        "--producer-a", "--producer-b"]), new Set(["--dev"]));
+        "--producer-a", "--producer-b", "--intake-review"]), new Set(["--dev"]));
+      let intakeReview;
+      if (options.has("--intake-review")) {
+        intakeReview = parseReproJson(await readFile(options.get("--intake-review")), "intake review", false);
+        if (intakeReview?.schemaVersion !== "1" || intakeReview.evidenceKind !== "real-source") {
+          throw new ConfigurationError("intake review requires real-source evidence; governance fixtures cannot certify intake");
+        }
+        if (!intakeReview.binding || !Array.isArray(intakeReview.coverage) || !Array.isArray(intakeReview.records)) {
+          throw new ConfigurationError("intake review requires exact binding and dependency coverage");
+        }
+      }
       const first = options.get("--workspace-a"), second = options.get("--workspace-b");
       if (!first || !second || path.resolve(first).toLowerCase() === path.resolve(second).toLowerCase()) {
         throw new ConfigurationError("source repro-check requires two distinct verified workspace paths");
