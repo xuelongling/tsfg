@@ -16,7 +16,8 @@ fs.readFile = async function (file, ...args) {
     throw Object.assign(new Error("synthetic missing locked generation archive"), { code: "ENOENT", path: String(file) });
   }
   const bytes = await read(file, ...args);
-  if (mode === "changed-input" && String(file).replaceAll("\\", "/").endsWith("/eng/typescript-generation.mjs")) {
+  if ((mode === "changed-input" && String(file).replaceAll("\\", "/").endsWith("/eng/typescript-generation.mjs"))
+      || (mode === "risk-control-bytes" && String(file).replaceAll("\\", "/").endsWith("/eng/vulnerability-admission.mjs"))) {
     return typeof bytes === "string" ? `${bytes}\n// synthetic input change\n`
       : Buffer.concat([bytes, Buffer.from("\n// synthetic input change\n")]);
   }
@@ -25,6 +26,11 @@ fs.readFile = async function (file, ...args) {
 const spawn = childProcess.spawnSync;
 /** @returns {any} */
 childProcess.spawnSync = function (executable, args, options) {
+  // Isolate this path's last-touch time without changing HEAD or any file bytes.
+  if (mode === "risk-control-epoch" && args?.includes("log") && args.includes("--format=%ct")
+      && args.at(-1) === "eng/vulnerability-admission.mjs") {
+    return { pid: 0, output: [], status: 0, signal: null, stdout: Buffer.from("2000000000\n"), stderr: Buffer.alloc(0) };
+  }
   if (mode === "metadata-exit" && args?.[0] === "version" && args.includes("-m")) {
     return spawn(process.execPath, ["-e", "process.stderr.write('synthetic metadata failure'); process.exit(7)"], options);
   }

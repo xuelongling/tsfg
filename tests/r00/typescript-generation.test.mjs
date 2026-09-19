@@ -7,6 +7,7 @@ import path from "node:path";
 import test from "node:test";
 import { fileURLToPath } from "node:url";
 import { createHash } from "node:crypto";
+import { TEST_GIT_EXECUTABLE } from "./test-tools.mjs";
 
 const entry = fileURLToPath(new URL("../../eng/tsfg-build.mjs", import.meta.url));
 test("prefetch refuses a missing locked generation dependency before downloading tools", async t => {
@@ -58,6 +59,48 @@ test("prefetch rejects a floating npm generation input", async t => {
     "--cache", path.join(root, "cache"), "--platform", "windows-x86_64-msvc"], { encoding: "utf8", windowsHide: true });
   assert.equal(child.status, 11);
   assert.match(child.stderr, /generation package requires exact identity/);
+});
+
+test("risk control changes invalidate source input identity and generation reuse through the build entry", {
+  skip: process.env.TSFG_TEST_AST_INPUT_IDENTITY !== "1" ? "requires pinned preparation; synthetic isolated control input changes" : false,
+}, async () => {
+  const product = fileURLToPath(new URL("../../", import.meta.url));
+  const root = process.env.TSFG_TEST_GENERATION_EVIDENCE;
+  const receiptPath = path.join(product, "eng/probes/generation.json");
+  const receiptBytes = await readFile(receiptPath);
+  const receipt = JSON.parse(receiptBytes.toString("utf8"));
+  async function refusedBinding(mode) {
+    const report = path.join(root, `${mode}.json`), output = path.join(root, `${mode}-out`);
+    const fixture = new URL(`./generation-process-fixture.mjs?mode=${mode}`, import.meta.url).href;
+    const child = spawnSync(process.execPath, ["--import", fixture, entry, "build", "--dev", "--source-target", "typescript-ast",
+      "--generation", "reuse", "--workspace", product, "--intake-plan", path.join(product, "eng/intake-declarations/typescript-ast.json"),
+      "--target", "windows-x86_64-msvc", "--profile", "debug", "--out", output, "--report", report],
+    { env: { ...process.env, TSFG_GIT: TEST_GIT_EXECUTABLE, TSFG_RUNTIME_LOCK: path.join(product, "eng/go-ast-toolchains.lock.json"),
+      TSFG_RUNTIME_CACHE: process.env.TSFG_TEST_GO_CACHE, TSFG_RUNTIME_PLATFORM: "windows-x86_64-msvc" },
+      encoding: "utf8", timeout: 1200000, windowsHide: true });
+    assert.ifError(child.error);
+    assert.equal(child.status, 20, child.stdout + child.stderr);
+    const issue = JSON.parse(await readFile(report, "utf8")).error.issues[0];
+    assert.match(issue.message, /generation receipt does not match current inputs/);
+    assert.equal(issue.generation.mode, "reuse-refused");
+    assert.equal(issue.generation.status, "not-run");
+    assert.equal(issue.requiredTests.status, "not-run");
+    assert.notEqual(issue.generation.binding.digest, receipt.binding.digest);
+    assert.ok(receiptBytes.equals(await readFile(receiptPath)), "refusal must preserve the existing real replay receipt");
+    await assert.rejects(stat(output), { code: "ENOENT" });
+    return issue.generation.binding;
+  }
+  // The committed historical receipt is already stale for this candidate. Its
+  // refusal exposes the current binding without inventing successful evidence.
+  const baseline = await refusedBinding("risk-control-baseline");
+  const bytes = await refusedBinding("risk-control-bytes");
+  assert.notEqual(bytes.buildInputSetDigest, baseline.buildInputSetDigest, "risk module bytes must affect source inputs");
+  assert.notEqual(bytes.digest, baseline.digest, "risk module bytes must invalidate generation binding");
+  assert.equal(bytes.sourceDateEpoch, baseline.sourceDateEpoch);
+  const epoch = await refusedBinding("risk-control-epoch");
+  assert.equal(epoch.buildInputSetDigest, baseline.buildInputSetDigest);
+  assert.equal(epoch.sourceDateEpoch, "2000000000", "risk module last-touch must participate in source epoch");
+  assert.notEqual(epoch.digest, baseline.digest, "risk module last-touch must invalidate generation binding");
 });
 
 test("typed consumer replays its committed generated sources through the build entry", {
