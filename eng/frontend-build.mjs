@@ -5,6 +5,7 @@ import { mkdtemp, mkdir, readFile, realpath, rm, stat, writeFile } from "node:fs
 import { tmpdir } from "node:os";
 import path from "node:path";
 import { pathToFileURL } from "node:url";
+import { verifiedContractSet } from "./contract-set.mjs";
 import { sourceGitEnvironment } from "./intake-ledger.mjs";
 
 const sha256 = bytes => `sha256:${createHash("sha256").update(bytes).digest("hex")}`;
@@ -42,6 +43,7 @@ export async function executeFrontendTarget({ command, productRoot, sourceRoot, 
   go, node, git, dependencyProxy, serialize }) {
   const lock = JSON.parse(await readFile(path.join(productRoot, "eng/frontend-source.lock.json"), "utf8"));
   const registry = JSON.parse(await readFile(path.join(productRoot, "contracts/registry.json"), "utf8"));
+  await verifiedContractSet(productRoot, registry, serialize);
   const schema = JSON.parse(await readFile(path.join(productRoot, "contracts/frontend-snapshot.schema.json"), "utf8"));
   const contract = registry["tsfg.frontend-snapshot"];
   if (contract?.semver !== lock.contractVersion || contract?.compatibility !== "exact"
