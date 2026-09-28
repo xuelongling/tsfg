@@ -113,6 +113,22 @@ test("an uncontextualized initialized local defaults to i32", async () => {
   assert.equal(resolveSymbol(result.snapshot, fn.body[1].expression.symbol).name, "value");
 });
 
+test("a default-i32 local cannot be returned as f64", async () => {
+  const result = await analyzeFrontend({
+    sourceRoot: "/src", rootFile: "/src/main.ts",
+    files: [
+      { path: "/src/main.ts", content: "export function wrong(): f64 { const value = 17; return value; }" },
+      { path: "/src/minimal-scalars-v2.d.ts", content: scalarDeclarations },
+    ],
+    declarations: { version: "minimal-scalars-v2", paths: ["/src/minimal-scalars-v2.d.ts"] },
+    config: { strict: true, noEmit: true, allowJs: false },
+  }, { executable: process.env.TSFG_FRONTEND_EXE });
+  assert.equal(result.status, "error");
+  assert.equal(result.snapshot, undefined);
+  assert.equal(result.diagnostics[0].code, "r01-d-scalar-type");
+  assert.equal(result.diagnostics[0].ruleId, "r01-literals");
+});
+
 test("an explicit i32 local gives its integer initializer an i32 context", async () => {
   const source = "export function answer(): i32 { const value: i32 = 17; return value; }";
   const result = await analyzeFrontend({
@@ -143,6 +159,22 @@ test("already typed f64 cannot implicitly become i32", async () => {
   assert.equal(result.status, "error");
   assert.equal(result.snapshot, undefined);
   assert.equal(result.diagnostics[0].code, "r01-d-scalar-type");
+});
+
+test("a bool-to-i32 mismatch preserves the R01 oracle rule ID", async () => {
+  const result = await analyzeFrontend({
+    sourceRoot: "/src", rootFile: "/src/main.ts",
+    files: [
+      { path: "/src/main.ts", content: "export function wrong(value: bool): i32 { return value; }" },
+      { path: "/src/minimal-scalars-v2.d.ts", content: scalarDeclarations },
+    ],
+    declarations: { version: "minimal-scalars-v2", paths: ["/src/minimal-scalars-v2.d.ts"] },
+    config: { strict: true, noEmit: true, allowJs: false },
+  }, { executable: process.env.TSFG_FRONTEND_EXE });
+  assert.equal(result.status, "error");
+  assert.equal(result.snapshot, undefined);
+  assert.equal(result.diagnostics[0].code, "r01-d-scalar-type");
+  assert.equal(result.diagnostics[0].ruleId, "r01-literals");
 });
 
 test("number is f64 and an i32 reference cannot implicitly become f64", async () => {
