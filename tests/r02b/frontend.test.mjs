@@ -161,6 +161,7 @@ test("if/else and while retain ordered branch bodies and owned references", asyn
   assert.equal(result.status, "ok", JSON.stringify(result));
   const { snapshot } = result;
   const [initial, branch, loop, returned] = snapshot.functions[0].body;
+  assert.equal(validateFrontendSnapshot(snapshot).functions, 1);
   assert.deepEqual([branch.kind, loop.kind], ["if", "while"]);
   assert.equal(resolveSymbol(snapshot, branch.condition.symbol).name, "flag");
   const [step, update] = branch.thenBody[0].body;
