@@ -21,3 +21,8 @@ The frontend also reuses `r01-d-scalar-type` for a bool scalar mismatch and
 are retained only as provenance. Diagnostic order is logical source path,
 UTF-16 start offset, machine code, then end offset. Primary source ranges are
 half-open UTF-16 code-unit offsets with zero-based line and column values.
+
+The current prohibition checks cover `any`, loose equality, `eval`,
+`Function(string)`, `Proxy`, `delete`, indexed property writes, and direct
+prototype mutation. An unresolved call uses the existing `r01-calls` rule;
+other unresolved names use `r01-ts-baseline`.

@@ -261,6 +261,7 @@ test("a TypeScript assignment error outside the bool slice keeps a generic code"
   }, { executable: process.env.TSFG_FRONTEND_EXE });
   assert.equal(result.status, "error");
   assert.equal(result.diagnostics[0].code, "r02b-d-type");
+  assert.equal(result.diagnostics[0].phase, "types");
 });
 
 function request(source, rootFile = "/src/main.ts") {
@@ -371,4 +372,34 @@ test("a prohibition does not hide independent TypeScript diagnostics", async () 
   assert.equal(result.snapshot, undefined);
   assert.deepEqual(result.diagnostics.map(item => item.code),
     ["r02b-d-prohibited", "r01-d-unresolved-name"]);
+});
+
+test("dynamic architecture prohibitions remain distinct from missing names", async () => {
+  for (const expression of [
+    'eval("value")',
+    'Function("return true")',
+    'new Proxy({}, {})',
+    'delete value.x',
+    'value["newProperty"] = true',
+    'value.__proto__ = true',
+    'Object.setPrototypeOf(value, {})',
+  ]) {
+    const source = `export function bad(value: bool): bool { ${expression}; return value; }`;
+    const result = await analyzeFrontend(request(source), { executable: process.env.TSFG_FRONTEND_EXE });
+    assert.equal(result.status, "error", expression);
+    assert.equal(result.snapshot, undefined, expression);
+    assert.ok(result.diagnostics.some(item => item.code === "r02b-d-prohibited"
+      && item.category === "prohibited" && item.ruleIds.includes("r01-input-boundary")), expression);
+  }
+});
+
+test("an unresolved call keeps the R01 calls rule association", async () => {
+  const source = "export function bad(value: bool): bool { return missing(value); }";
+  const result = await analyzeFrontend(request(source), { executable: process.env.TSFG_FRONTEND_EXE });
+  assert.equal(result.status, "error");
+  assert.equal(result.snapshot, undefined);
+  const diagnostic = result.diagnostics.find(item => item.code === "r01-d-unresolved-name");
+  assert.ok(diagnostic);
+  assert.deepEqual(diagnostic.ruleIds, ["r01-calls"]);
+  assert.equal(diagnostic.primary.start, source.indexOf("missing"));
 });
