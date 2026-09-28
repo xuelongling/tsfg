@@ -323,6 +323,23 @@ test("cold replay preserves an old call snapshot after a new analysis and caller
   assert.throws(() => validateFrontendSnapshot(corrupted), TypeError);
 });
 
+test("coordinated source and input-hash edits cannot retain an old input identity", async () => {
+  const result = await analyzeCalls("export function entry(x: i32): i32 { return x; } // one");
+  assert.equal(result.status, "ok");
+  const changed = structuredClone(result.snapshot);
+  changed.source.content = changed.source.content.replace("// one", "// two");
+  changed.inputs.find(file => file.kind === "source").sha256 = sha256(changed.source.content);
+  assert.throws(() => validateFrontendSnapshot(changed), TypeError);
+  const changedDeclaration = structuredClone(result.snapshot);
+  const declaration = changedDeclaration.identityInput.files.find(file => file.path.endsWith(".d.ts"));
+  declaration.content += " ";
+  changedDeclaration.inputs.find(file => file.path === declaration.path).sha256 = sha256(declaration.content);
+  assert.throws(() => validateFrontendSnapshot(changedDeclaration), TypeError);
+  const changedConfig = structuredClone(result.snapshot);
+  changedConfig.identityInput.config.strict = false;
+  assert.throws(() => validateFrontendSnapshot(changedConfig), TypeError);
+});
+
 test("direct and mutual recursion form finite snapshot-local symbol graphs", async () => {
   const source = "export function direct(x: bool): bool { return direct(x); } export function left(x: bool): bool { return right(x); } export function right(x: bool): bool { return left(x); }";
   const result = await analyzeCalls(source);
@@ -334,7 +351,7 @@ test("direct and mutual recursion form finite snapshot-local symbol graphs", asy
     assert.equal(call.arguments.length, 1);
     assert.equal(resolveSymbol(result.snapshot, call.arguments[0].symbol).name, "x");
   }
-  assert.equal(JSON.stringify(result.snapshot).length < 10000, true);
+  assert.deepEqual(JSON.parse(JSON.stringify(result.snapshot)), result.snapshot);
   const independent = await analyzeCalls(source.replaceAll("left", "first"));
   assert.equal(independent.status, "ok");
   assert.throws(() => resolveSymbol(independent.snapshot, direct.symbol), TypeError);
@@ -655,7 +672,7 @@ test("real bool function becomes an owned snapshot with declaration references",
   };
   const result = await analyzeFrontend(input, { executable: process.env.TSFG_FRONTEND_EXE });
   assert.equal(result.status, "ok");
-  assert.equal(result.snapshot.contractVersion, "0.4.0");
+  assert.equal(result.snapshot.contractVersion, "0.5.0");
   assert.equal(result.snapshot.frontendSource.forkOid, sourceLock.forkOid);
   assert.equal(result.snapshot.functions.length, 1);
   const fn = result.snapshot.functions[0];

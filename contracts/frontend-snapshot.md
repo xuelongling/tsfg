@@ -1,6 +1,6 @@
 <!-- SPDX-License-Identifier: MIT -->
 
-# FrontendSnapshot 0.4.0
+# FrontendSnapshot 0.5.0
 
 `tsfg.frontend-snapshot` is an exact-match development contract. The producer is
 `analyzeFrontend`; the consumer is `validateFrontendSnapshot` and the typed
@@ -12,7 +12,9 @@ The snapshot is a cold-compile result owned independently of the upstream
 frontend session. `snapshotId` hashes the contract version, schema hash,
 canonical logical input identity, and admitted frontend source identity.
 Logical file content, declarations, and configuration contribute to input
-identity; physical source locations and process state do not. `nodes`,
+identity; physical source locations and process state do not. The owned
+`identityInput` preserves that normalized claim so cold consumers can recompute
+`inputIdentity` and compare each public input hash to its claimed content. `nodes`,
 `symbols`, and structured scalar `types` use snapshot-local IDs. Each public reference carries
 both its local ID and `snapshotId`; no ID is stable across edits. These IDs are
 not R04 `FunctionId` or `TypeId`.

@@ -1,13 +1,25 @@
 {
   "$schema": "https://json-schema.org/draft/2020-12/schema",
-  "title": "tsfg FrontendSnapshot 0.4.0",
+  "title": "tsfg FrontendSnapshot 0.5.0",
   "type": "object",
-  "required": ["contractVersion", "schemaHash", "snapshotId", "inputIdentity", "frontendSource", "capability", "source", "inputs", "functions", "symbols", "nodes", "types", "diagnostics"],
+  "required": ["contractVersion", "schemaHash", "snapshotId", "inputIdentity", "identityInput", "frontendSource", "capability", "source", "inputs", "functions", "symbols", "nodes", "types", "diagnostics"],
   "properties": {
-    "contractVersion": { "const": "0.4.0" },
+    "contractVersion": { "const": "0.5.0" },
     "schemaHash": { "type": "string", "pattern": "^sha256:[0-9a-f]{64}$" },
     "snapshotId": { "$ref": "#/$defs/digest" },
     "inputIdentity": { "$ref": "#/$defs/digest" },
+    "identityInput": {
+      "type": "object", "required": ["sourceRoot", "rootFile", "files", "declarations", "config"],
+      "properties": {
+        "sourceRoot": { "type": "string" }, "rootFile": { "type": "string" },
+        "files": { "type": "array", "items": { "type": "object", "required": ["path", "content"],
+          "properties": { "path": { "type": "string" }, "content": { "type": "string" } } } },
+        "declarations": { "type": "object", "required": ["version", "paths"],
+          "properties": { "version": { "type": "string" }, "paths": { "type": "array", "items": { "type": "string" } } } },
+        "config": { "type": "object", "required": ["strict", "noEmit", "allowJs"],
+          "properties": { "strict": { "const": true }, "noEmit": { "const": true }, "allowJs": { "const": false } } }
+      }
+    },
     "frontendSource": {
       "type": "object",
       "required": ["forkOid", "binarySha256"],

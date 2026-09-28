@@ -78,6 +78,39 @@ test("the public contract seam rejects a registry hash that differs from schema 
   }
 });
 
+test("the public contract seam rejects incomplete registry metadata and duplicate schema keys", async () => {
+  const sandbox = await mkdtemp(path.join(tmpdir(), "tsfg-contract-metadata-"));
+  try {
+    const workspace = path.join(sandbox, "workspace");
+    await mkdir(path.join(workspace, "contracts"), { recursive: true });
+    assert.equal(spawnSync(TEST_GIT_EXECUTABLE, ["init", "--quiet", workspace]).status, 0);
+    const originalRegistry = JSON.parse(await readFile(path.join(repositoryRoot, "contracts/registry.json"), "utf8"));
+    const originalSchema = await readFile(path.join(repositoryRoot, "contracts/frontend-snapshot.schema.json"), "utf8");
+    const baseline = path.join(sandbox, "baseline.json");
+    const candidate = path.join(sandbox, "candidate.json");
+    const reportPath = path.join(sandbox, "report.json");
+    await writeFile(baseline, `${JSON.stringify(baselineSyntheticArtifact())}\n`);
+    await writeFile(candidate, `${JSON.stringify(candidateSyntheticArtifact())}\n`);
+    for (const field of ["compatibility", "spec", "fixtures", "producer", "consumer", "owner", "supportWindow", "deprecated"]) {
+      const registry = structuredClone(originalRegistry);
+      delete registry["tsfg.frontend-snapshot"][field];
+      await writeFile(path.join(workspace, "contracts/registry.json"), `${JSON.stringify(registry)}\n`);
+      await writeFile(path.join(workspace, "contracts/frontend-snapshot.schema.json"), originalSchema);
+      const result = await invokeCompatibility("windows-x86_64-msvc", reportPath, baseline, candidate, workspace);
+      assert.equal(result.status, 21, `${field}: ${result.stderr}`);
+      assert.match(JSON.stringify(JSON.parse(await readFile(reportPath, "utf8"))), /invalid registered contract/);
+    }
+    await writeFile(path.join(workspace, "contracts/registry.json"), `${JSON.stringify(originalRegistry)}\n`);
+    await writeFile(path.join(workspace, "contracts/frontend-snapshot.schema.json"),
+      originalSchema.replace('"title":', '"title":"duplicate","title":'));
+    const duplicate = await invokeCompatibility("windows-x86_64-msvc", reportPath, baseline, candidate, workspace);
+    assert.equal(duplicate.status, 21, duplicate.stderr);
+    assert.match(JSON.stringify(JSON.parse(await readFile(reportPath, "utf8"))), /duplicate JSON key/);
+  } finally {
+    await rm(sandbox, { recursive: true, force: true });
+  }
+});
+
 /**
  * @param {{baseline?: Record<string, any>, candidate?: Record<string, any>, target?: string}} [fixture]
  */

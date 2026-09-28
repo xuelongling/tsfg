@@ -64,7 +64,7 @@ test("Build Input declaration includes both debug target control and smoke input
     schemaVersion: "1",
   });
   const registry = JSON.parse(await readFile(path.join(repositoryRoot, "contracts", "registry.json"), "utf8"));
-  assert.equal(registry["tsfg.frontend-snapshot"].semver, "0.4.0");
+  assert.equal(registry["tsfg.frontend-snapshot"].semver, "0.5.0");
   assert.equal(
     declaration.entries.some(({ path: inputPath }) =>
       inputPath.endsWith(".test.mjs") || inputPath.includes("fixture") || inputPath.includes("report")),

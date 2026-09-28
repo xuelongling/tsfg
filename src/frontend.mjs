@@ -33,7 +33,25 @@ const snapshotIdentity = (inputIdentity, frontendSource) => digest(canonical({
 }));
 
 function matchesSnapshotContract(snapshot) {
-  return snapshot?.contractVersion === frontendContractVersion
+  let matchesInput = false;
+  try {
+    const claim = snapshot?.identityInput;
+    const files = new Map(claim.files.map(file => [file.path, file.content]));
+    matchesInput = digest(canonical(claim)) === snapshot.inputIdentity
+      && files.size === claim.files.length
+      && claim.rootFile === snapshot.source?.path
+      && files.get(claim.rootFile) === snapshot.source.content
+      && claim.declarations.version === snapshot.capability
+      && Array.isArray(snapshot.inputs)
+      && new Set(snapshot.inputs.map(file => file.path)).size === snapshot.inputs.length
+      && snapshot.inputs.some(file => file.path === claim.rootFile)
+      && claim.declarations.paths.every(name => snapshot.inputs.some(file => file.path === name))
+      && snapshot.inputs.every(file => typeof files.get(file.path) === "string"
+        && file.sha256 === digest(files.get(file.path))
+        && file.kind === (file.path === claim.rootFile ? "source"
+          : claim.declarations.paths.includes(file.path) ? "declaration-root" : "declaration-dependency"));
+  } catch { return false; }
+  return matchesInput && snapshot?.contractVersion === frontendContractVersion
     && snapshot.schemaHash === frontendContract.schemaHash
     && /^sha256:[0-9a-f]{64}$/.test(snapshot.inputIdentity)
     && typeof snapshot.frontendSource?.forkOid === "string"
@@ -209,7 +227,7 @@ export async function analyzeFrontend(input, { executable } = {}) {
       : declarationPaths.includes(name) ? "declaration-root" : "declaration-dependency" };
   });
   const snapshot = deepFreeze({ contractVersion: frontendContractVersion,
-    schemaHash: frontendContract.schemaHash, snapshotId, inputIdentity,
+    schemaHash: frontendContract.schemaHash, snapshotId, inputIdentity, identityInput,
     frontendSource, capability: declarationVersion, source, inputs, functions, symbols, nodes, types, diagnostics: [] });
   return { status: "ok", snapshot };
 }

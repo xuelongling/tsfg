@@ -3,6 +3,58 @@ import { createHash } from "node:crypto";
 import { readFile } from "node:fs/promises";
 import path from "node:path";
 
+function parseUniqueJson(text) {
+  const value = JSON.parse(text);
+  let offset = 0;
+  const skipWhitespace = () => {
+    while (/[ \t\r\n]/.test(text[offset] ?? "")) offset++;
+  };
+  const readString = () => {
+    const start = offset++;
+    while (offset < text.length) {
+      if (text[offset] === "\\") offset += 2;
+      else if (text[offset++] === '"') return JSON.parse(text.slice(start, offset));
+    }
+    throw new SyntaxError("unterminated JSON string");
+  };
+  const scanValue = () => {
+    skipWhitespace();
+    if (text[offset] === "{") {
+      offset++;
+      skipWhitespace();
+      const keys = new Set();
+      while (text[offset] !== "}") {
+        const key = readString();
+        if (keys.has(key)) throw new TypeError(`duplicate JSON key: ${key}`);
+        keys.add(key);
+        skipWhitespace();
+        offset++;
+        scanValue();
+        if (text[offset] !== ",") break;
+        offset++;
+        skipWhitespace();
+      }
+      offset++;
+    } else if (text[offset] === "[") {
+      offset++;
+      skipWhitespace();
+      while (text[offset] !== "]") {
+        scanValue();
+        if (text[offset] !== ",") break;
+        offset++;
+      }
+      offset++;
+    } else if (text[offset] === '"') {
+      readString();
+    } else {
+      while (offset < text.length && !/[,\]} \t\r\n]/.test(text[offset])) offset++;
+    }
+    skipWhitespace();
+  };
+  scanValue();
+  return value;
+}
+
 export function contractSetProjection(registry) {
   if (!registry || typeof registry !== "object" || Array.isArray(registry)) {
     throw new TypeError("invalid Contract Registry");
@@ -11,7 +63,14 @@ export function contractSetProjection(registry) {
     .sort(([left], [right]) => Buffer.from(left).compare(Buffer.from(right)))
     .map(([familyId, contract]) => {
       if (contract?.familyId !== familyId || typeof contract.semver !== "string"
-          || !/^sha256:[0-9a-f]{64}$/.test(contract.schemaHash)) {
+          || !/^sha256:[0-9a-f]{64}$/.test(contract.schemaHash)
+          || !["backward", "bidirectional", "exact"].includes(contract.compatibility)
+          || contract.schemaHashAlgorithm !== "sha256-jcs"
+          || !["schema", "spec", "producer", "consumer", "owner", "supportWindow"]
+            .every(field => typeof contract[field] === "string" && contract[field].length > 0)
+          || !Array.isArray(contract.fixtures) || contract.fixtures.length === 0
+          || contract.fixtures.some(fixture => typeof fixture !== "string" || fixture.length === 0)
+          || typeof contract.deprecated !== "boolean") {
         throw new TypeError(`invalid registered contract: ${familyId}`);
       }
       return [familyId, { semver: contract.semver, schemaHash: contract.schemaHash }];
@@ -19,6 +78,13 @@ export function contractSetProjection(registry) {
 }
 
 export async function verifiedContractSet(root, registry, canonicalize) {
+  const registryText = await readFile(path.join(root, "contracts/registry.json"), "utf8");
+  const diskRegistry = parseUniqueJson(registryText);
+  const canonicalRegistry = canonicalize(diskRegistry);
+  if ((registryText !== canonicalRegistry && registryText !== `${canonicalRegistry}\n`)
+      || canonicalize(registry) !== canonicalRegistry) {
+    throw new TypeError("invalid canonical Contract Registry");
+  }
   const projection = contractSetProjection(registry);
   for (const contract of Object.values(registry)) {
     const name = contract.schema;
@@ -27,7 +93,7 @@ export async function verifiedContractSet(root, registry, canonicalize) {
         || name.includes("\\")) {
       throw new TypeError("invalid registered schema path or hash algorithm");
     }
-    const schema = JSON.parse(await readFile(path.join(root, name), "utf8"));
+    const schema = parseUniqueJson(await readFile(path.join(root, name), "utf8"));
     const actual = `sha256:${createHash("sha256").update(canonicalize(schema)).digest("hex")}`;
     if (actual !== contract.schemaHash) {
       throw new TypeError("schema hash differs from registered schema bytes");

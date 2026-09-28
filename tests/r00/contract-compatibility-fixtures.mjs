@@ -1,9 +1,9 @@
 // SPDX-License-Identifier: MIT
 
 export const currentContractSetId =
-  "sha256:95842c46a1f56ee42118fc9e217e52d94c5961515d44925813f05cd5383ea3ab";
+  "sha256:ccc9819a936be2f6a03fe962fd145a53fa3de65f6323a62115cfb2df10b40ee9";
 export const currentContractSetCanonical =
-  '{"tsfg.frontend-snapshot":{"schemaHash":"sha256:5b2cdbe964e1b8499edcb7bd83d60f1835e9dbb3acc380d7098d72a5d7e8a429","semver":"0.4.0"}}';
+  '{"tsfg.frontend-snapshot":{"schemaHash":"sha256:cd57a8d8ad7ccdb839f83c898cb4c5dc948a24349cda6444b32d5733d34e195f","semver":"0.5.0"}}';
 
 /** @returns {Record<string, any>} */
 export function baselineSyntheticArtifact() {

@@ -48,7 +48,7 @@ export async function executeFrontendTarget({ command, productRoot, sourceRoot, 
       || contract?.schemaHash !== sha256(serialize(schema))) {
     throw new FrontendBuildError("frontend snapshot contract differs from its registered schema");
   }
-  if (lock.schemaVersion !== "1" || lock.contractVersion !== "0.4.0"
+  if (lock.schemaVersion !== "1"
       || lock.languageBaseline !== "TypeScript 7.0.2") throw new FrontendBuildError("invalid frontend source lock");
   const gitEnv = sourceGitEnvironment();
   const head = run(git, ["rev-parse", "HEAD"], sourceRoot, gitEnv).trim();
