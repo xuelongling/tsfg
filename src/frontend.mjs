@@ -11,10 +11,28 @@ export const frontendContractVersion = frontendContract.semver;
 
 const digest = bytes => `sha256:${createHash("sha256").update(bytes).digest("hex")}`;
 
+function hasLoneSurrogate(value) {
+  for (let index = 0; index < value.length; index += 1) {
+    const codeUnit = value.charCodeAt(index);
+    if (codeUnit >= 0xd800 && codeUnit <= 0xdbff) {
+      const next = value.charCodeAt(++index);
+      if (!(next >= 0xdc00 && next <= 0xdfff)) return true;
+    } else if (codeUnit >= 0xdc00 && codeUnit <= 0xdfff) return true;
+  }
+  return false;
+}
+
 function canonical(value) {
+  if (typeof value === "string") {
+    if (hasLoneSurrogate(value)) throw new TypeError("canonical input contains a lone surrogate");
+    return JSON.stringify(value);
+  }
   if (Array.isArray(value)) return `[${value.map(canonical).join(",")}]`;
   if (value && typeof value === "object") {
-    return `{${Object.keys(value).sort().map(key => `${JSON.stringify(key)}:${canonical(value[key])}`).join(",")}}`;
+    return `{${Object.keys(value).sort().map(key => {
+      if (hasLoneSurrogate(key)) throw new TypeError("canonical input key contains a lone surrogate");
+      return `${JSON.stringify(key)}:${canonical(value[key])}`;
+    }).join(",")}}`;
   }
   return JSON.stringify(value);
 }

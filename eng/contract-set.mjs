@@ -3,6 +3,11 @@ import { createHash } from "node:crypto";
 import { readFile } from "node:fs/promises";
 import path from "node:path";
 
+function decodeContractJson(bytes) {
+  try { return new TextDecoder("utf-8", { fatal: true }).decode(bytes); }
+  catch { throw new TypeError("invalid UTF-8 contract JSON"); }
+}
+
 function parseUniqueJson(text) {
   const value = JSON.parse(text);
   let offset = 0;
@@ -85,10 +90,12 @@ export function contractSetProjection(registry) {
 }
 
 export async function verifiedContractSet(root, registry, canonicalize) {
-  const registryText = await readFile(path.join(root, "contracts/registry.json"), "utf8");
+  const registryBytes = await readFile(path.join(root, "contracts/registry.json"));
+  const registryText = decodeContractJson(registryBytes);
   const diskRegistry = parseUniqueJson(registryText);
   const canonicalRegistry = canonicalize(diskRegistry);
-  if ((registryText !== canonicalRegistry && registryText !== `${canonicalRegistry}\n`)
+  if ((!registryBytes.equals(Buffer.from(canonicalRegistry))
+      && !registryBytes.equals(Buffer.from(`${canonicalRegistry}\n`)))
       || canonicalize(registry) !== canonicalRegistry) {
     throw new TypeError("invalid canonical Contract Registry");
   }
@@ -100,7 +107,7 @@ export async function verifiedContractSet(root, registry, canonicalize) {
         || name.includes("\\")) {
       throw new TypeError("invalid registered schema path or hash algorithm");
     }
-    const schema = parseUniqueJson(await readFile(path.join(root, name), "utf8"));
+    const schema = parseUniqueJson(decodeContractJson(await readFile(path.join(root, name))));
     const actual = `sha256:${createHash("sha256").update(canonicalize(schema)).digest("hex")}`;
     if (actual !== contract.schemaHash) {
       throw new TypeError("schema hash differs from registered schema bytes");

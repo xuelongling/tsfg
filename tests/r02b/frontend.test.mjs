@@ -22,6 +22,18 @@ type bool = boolean;
 `;
 const sha256 = content => `sha256:${createHash("sha256").update(content).digest("hex")}`;
 
+test("frontend input identity rejects non-I-JSON source text", async () => {
+  const source = `export function yes(value: bool): bool { return value; } //${String.fromCharCode(0xd800)}`;
+  const result = await analyzeFrontend({ sourceRoot: "/src", rootFile: "/src/main.ts",
+    files: [{ path: "/src/main.ts", content: source },
+      { path: "/src/minimal-bool-v1.d.ts", content: declarations }],
+    declarations: { version: "minimal-bool-v1", paths: ["/src/minimal-bool-v1.d.ts"] },
+    config: { strict: true, noEmit: true, allowJs: false },
+  });
+  assert.equal(result.status, "error");
+  assert.equal(result.diagnostics[0].code, "r02b-d-input");
+});
+
 test("official declaration references close and record the explicit input scope", async () => {
   const source = "export function yes(value: bool): bool { return value; }";
   const user = '/// <reference path="./alias.d.ts" />\n';
