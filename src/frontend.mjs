@@ -31,10 +31,18 @@ function ownFunctions(functions, snapshotId, symbols) {
   }
   const ownExpression = expression => {
     if (!expression) return expression;
-    if (expression.symbol === undefined) return expression;
-    const symbol = byId.get(expression.symbol);
-    if (!symbol || symbol.type !== expression.type) throw new TypeError("invalid expression symbol");
-    return { ...expression, symbol: { snapshotId, id: expression.symbol } };
+    let symbolRef;
+    if (expression.symbol !== undefined) {
+      const symbol = byId.get(expression.symbol);
+      if (!symbol || symbol.type !== expression.type) throw new TypeError("invalid expression symbol");
+      symbolRef = { snapshotId, id: expression.symbol };
+    }
+    return { ...expression,
+      ...(symbolRef ? { symbol: symbolRef } : {}),
+      ...(expression.left ? { left: ownExpression(expression.left) } : {}),
+      ...(expression.right ? { right: ownExpression(expression.right) } : {}),
+      ...(expression.operand ? { operand: ownExpression(expression.operand) } : {}),
+    };
   };
   const ownStatement = statement => ({
     ...statement,
@@ -137,7 +145,7 @@ export async function analyzeFrontend(input, { executable } = {}) {
   catch { return { status: "tool-error", inputIdentity, message: "invalid frontend references" }; }
   const source = ownedInput.files.find(file => file.path === ownedInput.rootFile);
   const snapshot = deepFreeze({ contractVersion: frontendContractVersion, snapshotId, inputIdentity,
-    frontendSource, capability: declarationVersion === "minimal-scalars-v2" ? "locals-assignment-v3" : declarationVersion,
+    frontendSource, capability: declarationVersion === "minimal-scalars-v2" ? "locals-operators-v3" : declarationVersion,
     source, functions, symbols, diagnostics: [] });
   return { status: "ok", snapshot };
 }
