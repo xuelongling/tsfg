@@ -143,8 +143,17 @@ test("uninitialized locals are reported as pending capability", async () => {
 });
 
 test("compound assignment and increment remain pending capabilities", async () => {
-  for (const operation of ["value += 1;", "value++;"]) {
-    const result = await analyzeScalars(`export function pending(): i32 { let value: i32 = 1; ${operation} return value; }`);
+  for (const source of [
+    "export function pending(): i32 { let value: i32 = 1; value += 1; return value; }",
+    "export function pending(): i32 { let value: i32 = 1; value++; return value; }",
+    "export function pending(value: i32): i32 { return value += 1; }",
+    "export function pending(value: i32): i32 { return value &= value; }",
+    "export function pending(value: i32): i32 { return value **= 2; }",
+    "export function pending(value: i32): i32 { return ++value; }",
+    "export function pending(value: i32): i32 { return value++; }",
+    "export function pending(value: i32): i32 { const next: i32 = value += 1; return next; }",
+  ]) {
+    const result = await analyzeScalars(source);
     assert.equal(result.status, "error");
     assert.equal(result.snapshot, undefined);
     assert.equal(result.diagnostics[0].code, "r02b-d-unsupported", JSON.stringify(result));
@@ -607,6 +616,7 @@ test("unresolved names are not mislabeled as scalar type failures", async () => 
   }, { executable: process.env.TSFG_FRONTEND_EXE });
   assert.equal(result.status, "error");
   assert.equal(result.diagnostics[0].code, "r01-d-unresolved-name");
+  assert.equal(result.diagnostics[0].phase, "types");
 });
 
 test("an unadmitted executable cannot claim the locked fork identity", async () => {
