@@ -73,6 +73,24 @@ test("nested block shadowing resolves each read to the checker declaration", asy
   assert.equal(resolveSymbol(snapshot, returned.expression.symbol).id, snapshot.functions[0].parameters[0].id);
 });
 
+test("simple assignment inside a nested block retains its outer binding", async () => {
+  const result = await analyzeScalars("export function update(): i32 { let value: i32 = 1; { value = 2; } return value; }");
+  assert.equal(result.status, "ok", JSON.stringify(result));
+  const { snapshot } = result;
+  const [variable, block, returned] = snapshot.functions[0].body;
+  assert.equal(resolveSymbol(snapshot, block.body[0].target.symbol).id, variable.symbol.id);
+  assert.equal(resolveSymbol(snapshot, returned.expression.symbol).id, variable.symbol.id);
+});
+
+test("a nested unannotated integer local keeps its default i32 type", async () => {
+  const result = await analyzeScalars("export function answer(): i32 { { const value = 1; return value; } }");
+  assert.equal(result.status, "ok", JSON.stringify(result));
+  const { snapshot } = result;
+  const [variable, returned] = snapshot.functions[0].body[0].body;
+  assert.equal(variable.symbol.type, "i32");
+  assert.equal(resolveSymbol(snapshot, returned.expression.symbol).id, variable.symbol.id);
+});
+
 test("unannotated integer locals retain default i32 through a read chain", async () => {
   const result = await analyzeScalars("export function answer(): i32 { const seed = 3; const value = seed; return value; }");
   assert.equal(result.status, "ok", JSON.stringify(result));
