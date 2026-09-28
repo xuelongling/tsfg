@@ -254,6 +254,24 @@ test("an uncontextualized wide integer in arithmetic still fails i32 range", asy
   assert.equal(result.diagnostics[0].code, "r01-d-integer-range");
 });
 
+test("legal exponentiation outside the first operator slice remains pending", async () => {
+  for (const expression of ["a ** 2", "(a ** b)"]) {
+    const source = `export function later(a: i32, b: i32): i32 { return ${expression}; }`;
+    const result = await analyzeScalar(source);
+    assert.equal(result.status, "error", expression);
+    assert.equal(result.snapshot, undefined);
+    assert.equal(result.diagnostics[0].code, "r02b-d-unsupported", expression);
+    assert.equal(result.diagnostics[0].category, "unsupported", expression);
+  }
+});
+
+test("invalid exponent operands do not become pending capability", async () => {
+  const result = await analyzeScalar("export function wrong(a: i32): i32 { return a ** true; }");
+  assert.equal(result.status, "error");
+  assert.equal(result.snapshot, undefined);
+  assert.notEqual(result.diagnostics[0].code, "r02b-d-unsupported");
+});
+
 test("fractional f64 operand cannot implicitly join i32 arithmetic", async () => {
   const result = await analyzeScalar("export function wrong(a: i32): i32 { return a + 1.5; }");
   assert.equal(result.status, "error");
