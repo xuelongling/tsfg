@@ -206,29 +206,52 @@ test("valid f64 unary arithmetic remains a pending capability", async () => {
 });
 
 test("integer literal can take a typed f64 operator context", async () => {
-  const result = await analyzeScalar("export function later(a: f64): f64 { return a + 1; }");
-  assert.equal(result.status, "error");
-  assert.equal(result.snapshot, undefined);
-  assert.equal(result.diagnostics[0].code, "r02b-d-unsupported");
-  assert.equal(result.diagnostics[0].category, "unsupported");
+  for (const source of [
+    "export function later(a: f64): f64 { return a + 1; }",
+    "export function later(a: f64): f64 { return a + 2147483648; }",
+    "export function later(a: f64): f64 { return (2147483648) + a; }",
+    "export function later(a: f64): f64 { return a + -2147483649; }",
+    "export function later(a: f64): bool { return a < (2147483648); }",
+    "export function later(a: f64): bool { return a === 2147483648; }",
+  ]) {
+    const result = await analyzeScalar(source);
+    assert.equal(result.status, "error", source);
+    assert.equal(result.snapshot, undefined);
+    assert.equal(result.diagnostics[0].code, "r02b-d-unsupported", source);
+    assert.equal(result.diagnostics[0].category, "unsupported", source);
+  }
 });
 
-test("f64 truthiness is pending rather than an invalid source expression", async () => {
-  const result = await analyzeScalar("export function later(a: f64): bool { return !a; }");
-  assert.equal(result.status, "error");
-  assert.equal(result.snapshot, undefined);
-  assert.equal(result.diagnostics[0].code, "r02b-d-unsupported");
-  assert.equal(result.diagnostics[0].category, "unsupported");
-});
-
-test("same-type numeric short circuit remains pending", async () => {
+test("numeric truthiness is pending rather than an invalid source expression", async () => {
   for (const type of ["f64", "i32"]) {
-    const result = await analyzeScalar(`export function later(a: ${type}, b: ${type}): ${type} { return a && b; }`);
+    const result = await analyzeScalar(`export function later(a: ${type}): bool { return !a; }`);
     assert.equal(result.status, "error", type);
     assert.equal(result.snapshot, undefined);
     assert.equal(result.diagnostics[0].code, "r02b-d-unsupported", type);
     assert.equal(result.diagnostics[0].category, "unsupported", type);
   }
+});
+
+test("numeric short circuit outside the bool slice remains pending", async () => {
+  for (const [left, right, operator] of [
+    ["f64", "f64", "&&"], ["i32", "i32", "&&"],
+    ["i32", "f64", "&&"], ["f64", "i32", "||"],
+  ]) {
+    const resultType = left === "i32" && right === "i32" ? "i32" : "f64";
+    const source = `export function later(a: ${left}, b: ${right}): ${resultType} { return a ${operator} b; }`;
+    const result = await analyzeScalar(source);
+    assert.equal(result.status, "error", source);
+    assert.equal(result.snapshot, undefined);
+    assert.equal(result.diagnostics[0].code, "r02b-d-unsupported", source);
+    assert.equal(result.diagnostics[0].category, "unsupported", source);
+  }
+});
+
+test("an uncontextualized wide integer in arithmetic still fails i32 range", async () => {
+  const result = await analyzeScalar("export function wrong(): i32 { return 1 + 2147483648; }");
+  assert.equal(result.status, "error");
+  assert.equal(result.snapshot, undefined);
+  assert.equal(result.diagnostics[0].code, "r01-d-integer-range");
 });
 
 test("fractional f64 operand cannot implicitly join i32 arithmetic", async () => {
