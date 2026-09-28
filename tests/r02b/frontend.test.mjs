@@ -35,6 +35,100 @@ async function analyzeScalars(source) {
   }, { executable: process.env.TSFG_FRONTEND_EXE });
 }
 
+test("if/else and while retain ordered branch bodies and owned references", async () => {
+  const source = `export function count(flag: bool, limit: i32): i32 {
+  let value: i32 = 0;
+  if (flag) { const step: i32 = 1; value = value + step; }
+  else { value = 2; }
+  while (value < limit) { value = value + 1; }
+  return value;
+}`;
+  const result = await analyzeScalars(source);
+  assert.equal(result.status, "ok", JSON.stringify(result));
+  const { snapshot } = result;
+  const [initial, branch, loop, returned] = snapshot.functions[0].body;
+  assert.deepEqual([branch.kind, loop.kind], ["if", "while"]);
+  assert.equal(resolveSymbol(snapshot, branch.condition.symbol).name, "flag");
+  const [step, update] = branch.thenBody[0].body;
+  assert.equal(resolveSymbol(snapshot, update.value.right.symbol).id, step.symbol.id);
+  assert.equal(resolveSymbol(snapshot, branch.elseBody[0].body[0].target.symbol).id, initial.symbol.id);
+  assert.equal(loop.condition.operator, "<");
+  assert.equal(resolveSymbol(snapshot, loop.condition.right.symbol).name, "limit");
+  assert.equal(resolveSymbol(snapshot, loop.body[0].body[0].target.symbol).id, initial.symbol.id);
+  assert.equal(resolveSymbol(snapshot, returned.expression.symbol).id, initial.symbol.id);
+  assert.ok(branch.range.start < loop.range.start && loop.range.end <= returned.range.start);
+  assert.equal(Object.isFrozen(branch.thenBody[0].body), true);
+});
+
+test("R01 control corpus retains nested returns and branch ordering without execution", async () => {
+  const source = await readFile(new URL("../r01/corpus/control/compare.ts", import.meta.url), "utf8");
+  const result = await analyzeScalars(source);
+  assert.equal(result.status, "ok", JSON.stringify(result));
+  const { snapshot } = result;
+  const outer = snapshot.functions[0].body[0];
+  assert.equal(outer.kind, "if");
+  assert.equal(outer.condition.operator, "<");
+  assert.equal(resolveSymbol(snapshot, outer.condition.left.symbol).name, "a");
+  assert.equal(outer.thenBody[0].body[0].expression.literal.decimal, "-1");
+  const nested = outer.elseBody[0].body[0];
+  assert.equal(nested.kind, "if");
+  assert.equal(nested.condition.operator, "===");
+  assert.equal(nested.thenBody[0].body[0].expression.literal.decimal, "0");
+  assert.equal(nested.elseBody[0].body[0].expression.literal.decimal, "1");
+  assert.ok(outer.thenBody[0].range.end <= outer.elseBody[0].range.start);
+});
+
+test("R01 local and loop corpus expose frontend structure, not execution results", async () => {
+  const locals = await analyzeScalars(await readFile(new URL("../r01/corpus/control/locals.ts", import.meta.url), "utf8"));
+  const loop = await analyzeScalars(await readFile(new URL("../r01/corpus/control/loop.ts", import.meta.url), "utf8"));
+  assert.equal(locals.status, "ok", JSON.stringify(locals));
+  assert.equal(loop.status, "ok", JSON.stringify(loop));
+  const branch = locals.snapshot.functions[0].body[2];
+  assert.equal(branch.kind, "if");
+  assert.equal(branch.thenBody[0].body[0].value.operator, "+");
+  assert.equal(branch.elseBody[0].body[0].value.operator, "-");
+  const whileNode = loop.snapshot.functions[0].body[1];
+  assert.equal(whileNode.kind, "while");
+  assert.equal(whileNode.condition.operator, "<");
+  assert.equal(resolveSymbol(loop.snapshot, whileNode.body[0].body[0].target.symbol).name, "count");
+});
+
+test("invalid control conditions, escaped locals, and branch returns have stable diagnostics", async () => {
+  for (const [source, code] of [
+    ["export function bad(value: i32): i32 { if (value) { return 1; } else { return 2; } }", "r01-d-scalar-type"],
+    ["export function bad(value: i32): i32 { while (value) { value = value; } return value; }", "r01-d-scalar-type"],
+    ["export function bad(flag: bool): i32 { if (flag) { const inside: i32 = 1; } return inside; }", "r01-d-unresolved-name"],
+    ["export function bad(flag: bool): i32 { if (flag) { return true; } return 1; }", "r01-d-scalar-type"],
+  ]) {
+    const result = await analyzeScalars(source);
+    assert.equal(result.status, "error", JSON.stringify(result));
+    assert.equal(result.snapshot, undefined);
+    assert.equal(result.diagnostics[0].code, code, JSON.stringify(result));
+    assert.equal(result.diagnostics[0].primary.sourceId, "/src/main.ts");
+  }
+});
+
+test("control conditions retain UTF-16 positions across CRLF and supplementary text", async () => {
+  const source = "// 😀\r\nexport function choose(flag: bool): bool {\r\n  if (flag) { return flag; } else { return false; }\r\n}";
+  const result = await analyzeScalars(source);
+  assert.equal(result.status, "ok", JSON.stringify(result));
+  const branch = result.snapshot.functions[0].body[0];
+  const start = source.indexOf("flag)");
+  assert.deepEqual(branch.condition.range, { start, end: start + 4 });
+  assert.equal(branch.range.start, source.indexOf("if ("));
+  assert.equal(branch.range.end, source.indexOf("\r\n}", branch.range.start));
+});
+
+test("an inferred i32 local returned inside a branch keeps its declaration identity", async () => {
+  const source = "export function choose(flag: bool): i32 { if (flag) { const value = 1; return value; } return 2; }";
+  const result = await analyzeScalars(source);
+  assert.equal(result.status, "ok", JSON.stringify(result));
+  const branch = result.snapshot.functions[0].body[0];
+  const [variable, returned] = branch.thenBody[0].body;
+  assert.equal(variable.symbol.type, "i32");
+  assert.equal(resolveSymbol(result.snapshot, returned.expression.symbol).id, variable.symbol.id);
+});
+
 test("initialized let, assignment, and reads bind to declarations in source order", async () => {
   const result = await analyzeScalars("export function update(seed: i32): i32 { let value: i32 = seed; value = 7; return value; }");
   assert.equal(result.status, "ok", JSON.stringify(result));
@@ -183,7 +277,7 @@ test("arithmetic snapshot preserves precedence, operand order, types, and source
   }, { executable: process.env.TSFG_FRONTEND_EXE });
   assert.equal(result.status, "ok");
   const expression = result.snapshot.functions[0].body[0].expression;
-  assert.equal(result.snapshot.capability, "locals-operators-v3");
+  assert.equal(result.snapshot.capability, "control-flow-v4");
   assert.equal(expression.kind, "binary");
   assert.equal(expression.operator, "+");
   assert.equal(expression.type, "i32");
@@ -693,7 +787,7 @@ test("real bool function becomes an owned snapshot with declaration references",
   };
   const result = await analyzeFrontend(input, { executable: process.env.TSFG_FRONTEND_EXE });
   assert.equal(result.status, "ok");
-  assert.equal(result.snapshot.contractVersion, "3");
+  assert.equal(result.snapshot.contractVersion, "4");
   assert.equal(result.snapshot.frontendSource.forkOid, sourceLock.forkOid);
   assert.equal(result.snapshot.functions.length, 1);
   const fn = result.snapshot.functions[0];
@@ -762,7 +856,7 @@ test("runtime fallback configuration is an input rejection", async () => {
 test("syntax errors and unsupported structures never produce a snapshot", async () => {
   for (const [source, code] of [
     ["export function bad(value: bool): bool { return value;", "r02b-d-syntax"],
-    ["export function bad(value: bool): bool { if (value) return value; return value; }", "r02b-d-unsupported"],
+    ["export function bad(value: bool): bool { do { return value; } while (value); }", "r02b-d-unsupported"],
   ]) {
     const result = await analyzeFrontend({
       sourceRoot: "/src", rootFile: "/src/main.ts",
@@ -794,7 +888,7 @@ test("a symbol reference cannot be resolved in a different snapshot", async () =
   assert.equal(a.status, "ok");
   assert.equal(b.status, "ok");
   assert.throws(() => resolveSymbol(b.snapshot, a.snapshot.functions[0].body[0].expression.symbol), TypeError);
-  assert.throws(() => resolveSymbol({ ...a.snapshot, contractVersion: "2" },
+  assert.throws(() => resolveSymbol({ ...a.snapshot, contractVersion: "3" },
     a.snapshot.functions[0].body[0].expression.symbol), TypeError);
   assert.throws(() => resolveSymbol(a.snapshot, { snapshotId: a.snapshot.snapshotId, id: "s999" }), RangeError);
 });

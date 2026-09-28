@@ -4,7 +4,7 @@ import { spawnSync } from "node:child_process";
 import { readFile } from "node:fs/promises";
 import sourceLock from "../eng/frontend-source.lock.json" with { type: "json" };
 
-export const frontendContractVersion = "3";
+export const frontendContractVersion = "4";
 
 const digest = bytes => `sha256:${createHash("sha256").update(bytes).digest("hex")}`;
 
@@ -54,10 +54,13 @@ function ownFunctions(functions, snapshotId, symbols) {
       })(),
     } : {}),
     ...(statement.expression ? { expression: ownExpression(statement.expression) } : {}),
+    ...(statement.condition ? { condition: ownExpression(statement.condition) } : {}),
     ...(statement.initializer ? { initializer: ownExpression(statement.initializer) } : {}),
     ...(statement.target ? { target: ownExpression(statement.target) } : {}),
     ...(statement.value ? { value: ownExpression(statement.value) } : {}),
     ...(statement.body ? { body: statement.body.map(ownStatement) } : {}),
+    ...(statement.thenBody ? { thenBody: statement.thenBody.map(ownStatement) } : {}),
+    ...(statement.elseBody ? { elseBody: statement.elseBody.map(ownStatement) } : {}),
   });
   return functions.map(fn => ({
     ...fn,
@@ -145,7 +148,7 @@ export async function analyzeFrontend(input, { executable } = {}) {
   catch { return { status: "tool-error", inputIdentity, message: "invalid frontend references" }; }
   const source = ownedInput.files.find(file => file.path === ownedInput.rootFile);
   const snapshot = deepFreeze({ contractVersion: frontendContractVersion, snapshotId, inputIdentity,
-    frontendSource, capability: declarationVersion === "minimal-scalars-v2" ? "locals-operators-v3" : declarationVersion,
+    frontendSource, capability: declarationVersion === "minimal-scalars-v2" ? "control-flow-v4" : declarationVersion,
     source, functions, symbols, diagnostics: [] });
   return { status: "ok", snapshot };
 }
