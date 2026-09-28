@@ -52,6 +52,7 @@ test("Build Input declaration includes both debug target control and smoke input
       { path: "pnpm-lock.yaml", projectId: "tsfg" },
       { path: "src/frontend.mjs", projectId: "tsfg" },
       { path: "src/minimal-bool-v1.d.ts", projectId: "tsfg" },
+      { path: "src/minimal-scalars-v2.d.ts", projectId: "tsfg" },
       { path: "tests/r00/smoke/cpp/CMakeLists.txt", projectId: "tsfg" },
       { path: "tests/r00/smoke/cpp/main.cpp", projectId: "tsfg" },
       { path: "tests/r00/smoke/zig/build.zig", projectId: "tsfg" },

@@ -41,7 +41,7 @@ function parsePackages(text) {
 export async function executeFrontendTarget({ command, productRoot, sourceRoot, out, runtime,
   go, node, git, dependencyProxy, serialize }) {
   const lock = JSON.parse(await readFile(path.join(productRoot, "eng/frontend-source.lock.json"), "utf8"));
-  if (lock.schemaVersion !== "1" || lock.contractVersion !== "1"
+  if (lock.schemaVersion !== "1" || lock.contractVersion !== "2"
       || lock.languageBaseline !== "TypeScript 7.0.2") throw new FrontendBuildError("invalid frontend source lock");
   const gitEnv = sourceGitEnvironment();
   const head = run(git, ["rev-parse", "HEAD"], sourceRoot, gitEnv).trim();
@@ -61,9 +61,14 @@ export async function executeFrontendTarget({ command, productRoot, sourceRoot, 
     throw new FrontendBuildError("frontend local modification or provenance bytes differ from lock");
   }
   const producer = await readFile(path.join(sourceRoot, lock.producerPath));
-  const declaration = await readFile(path.join(productRoot, lock.declarationPath));
-  if (sha256(producer) !== lock.producerSha256 || sha256(declaration) !== lock.declarationSha256) {
+  if (sha256(producer) !== lock.producerSha256 || !Array.isArray(lock.declarations)
+      || lock.declarations.map(item => item.path).join(",") !== "src/minimal-bool-v1.d.ts,src/minimal-scalars-v2.d.ts") {
     throw new FrontendBuildError("frontend source or declaration differs from its lock");
+  }
+  for (const item of lock.declarations) {
+    if (sha256(await readFile(path.join(productRoot, item.path))) !== item.sha256) {
+      throw new FrontendBuildError("frontend declaration differs from its lock");
+    }
   }
   await stat(out).then(() => { throw new FrontendBuildError("frontend output already exists"); }, error => {
     if (error.code !== "ENOENT") throw error;
@@ -150,7 +155,7 @@ export async function executeFrontendTarget({ command, productRoot, sourceRoot, 
     }
     const productEntries = [];
     for (const name of ["eng/build-inputs.json", "eng/frontend-build.mjs", "eng/frontend-source-admission.json", "eng/frontend-source.lock.json",
-      "eng/frontend-toolchains.lock.json", "eng/tsfg-build.mjs", "src/frontend.mjs", "src/minimal-bool-v1.d.ts",
+      "eng/frontend-toolchains.lock.json", "eng/tsfg-build.mjs", "src/frontend.mjs", "src/minimal-bool-v1.d.ts", "src/minimal-scalars-v2.d.ts",
       ...(command === "test" ? ["tests/r02b/frontend.test.mjs"] : [])]) {
       productEntries.push({ projectId: "tsfg", path: name,
         sha256: sha256(await readFile(path.join(productRoot, name))) });
@@ -193,7 +198,7 @@ export async function executeFrontendTarget({ command, productRoot, sourceRoot, 
       auxiliaryFiles: auxiliaryEntries };
     await writeFile(path.join(out, "intake-ledger.json"), `${serialize(intakeLedger)}\n`);
     return { schemaVersion: "1", status: command === "test" ? "passed" : "built",
-      capability: "minimal-bool-v1", contractVersion: lock.contractVersion,
+      capability: "minimal-scalars-v2", contractVersion: lock.contractVersion,
       source: { forkOid: head, producer: lock.producerPath },
       toolchainClosureDigest: runtime.lockDigest, dependencyProxyIdentity: dependencyProxy.identity,
       buildInputSet, buildInputSetDigest: inputDigest, intakeLedger,

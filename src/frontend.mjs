@@ -4,7 +4,7 @@ import { spawnSync } from "node:child_process";
 import { readFile } from "node:fs/promises";
 import sourceLock from "../eng/frontend-source.lock.json" with { type: "json" };
 
-export const frontendContractVersion = "1";
+export const frontendContractVersion = "2";
 
 const digest = bytes => `sha256:${createHash("sha256").update(bytes).digest("hex")}`;
 
@@ -49,11 +49,15 @@ export async function analyzeFrontend(input, { executable } = {}) {
       || config.allowJs !== false || config.noEmit !== true || config.strict !== true) {
     return rejectInput(inputIdentity, ownedInput?.rootFile ?? "");
   }
-  const declarationBytes = await readFile(new URL("./minimal-bool-v1.d.ts", import.meta.url), "utf8");
+  const declarationVersion = ownedInput?.declarations?.version;
+  const declarationFile = declarationVersion === "minimal-bool-v1" ? "minimal-bool-v1.d.ts"
+    : declarationVersion === "minimal-scalars-v2" ? "minimal-scalars-v2.d.ts" : null;
+  if (!declarationFile) return rejectInput(inputIdentity, ownedInput?.rootFile ?? "");
+  const declarationBytes = await readFile(new URL(`./${declarationFile}`, import.meta.url), "utf8");
   const declarationPaths = ownedInput?.declarations?.paths;
   const declared = Array.isArray(declarationPaths) && declarationPaths.length === 1
     ? ownedInput.files?.find(file => file.path === declarationPaths[0]) : undefined;
-  if (ownedInput?.declarations?.version !== "minimal-bool-v1" || declared?.content !== declarationBytes) {
+  if (declared?.content !== declarationBytes) {
     return rejectInput(inputIdentity, declared?.path ?? ownedInput?.rootFile ?? "");
   }
   if (typeof executable !== "string" || !executable) {
@@ -96,12 +100,14 @@ export async function analyzeFrontend(input, { executable } = {}) {
     parameters: fn.parameters.map(parameter => ({ ...parameter, ref: { snapshotId, id: parameter.id } })),
     body: fn.body.map(statement => ({
       ...statement,
-      expression: { ...statement.expression, symbol: { snapshotId, id: statement.expression.symbol } },
+      ...(statement.symbol ? { symbol: { ...statement.symbol, ref: { snapshotId, id: statement.symbol.id } } } : {}),
+      ...(statement.expression ? { expression: statement.expression.symbol === undefined ? statement.expression
+        : { ...statement.expression, symbol: { snapshotId, id: statement.expression.symbol } } } : {}),
     })),
   }));
   const source = ownedInput.files.find(file => file.path === ownedInput.rootFile);
   const snapshot = deepFreeze({ contractVersion: frontendContractVersion, snapshotId, inputIdentity,
-    frontendSource, capability: "minimal-bool-v1", source, functions, symbols, diagnostics: [] });
+    frontendSource, capability: declarationVersion, source, functions, symbols, diagnostics: [] });
   return { status: "ok", snapshot };
 }
 
