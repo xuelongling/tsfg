@@ -378,6 +378,7 @@ test("dynamic architecture prohibitions remain distinct from missing names", asy
   for (const expression of [
     'eval("value")',
     'Function("return true")',
+    'new Function("return true")',
     'new Proxy({}, {})',
     'delete value.x',
     'value["newProperty"] = true',
