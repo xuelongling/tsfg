@@ -83,8 +83,16 @@ export async function analyzeFrontend(input, { executable } = {}) {
   } catch {
     return { status: "tool-error", inputIdentity, message: "invalid frontend response" };
   }
-  if (output.status !== "ok") {
-    return deepFreeze({ status: "error", inputIdentity, diagnostics: output.diagnostics ?? [] });
+  if (output.status === "error") {
+    if (!Array.isArray(output.diagnostics) || output.diagnostics.length === 0
+        || output.diagnostics.some(diagnostic => typeof diagnostic.code !== "string"
+          || typeof diagnostic.primary?.sourceId !== "string")) {
+      return { status: "tool-error", inputIdentity, message: "incomplete frontend diagnostics" };
+    }
+    return deepFreeze({ status: "error", inputIdentity, diagnostics: output.diagnostics });
+  }
+  if (output.status !== "ok" || (output.diagnostics?.length ?? 0) !== 0) {
+    return { status: "tool-error", inputIdentity, message: "invalid frontend response status" };
   }
   if (!Array.isArray(output.functions) || !Array.isArray(output.symbols) || output.functions.length === 0) {
     return { status: "tool-error", inputIdentity, message: "incomplete frontend response" };
