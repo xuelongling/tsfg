@@ -75,6 +75,25 @@ test("the minimum i32 value is checked after unary minus", async () => {
     { decimal: "-2147483648", token: "-2147483648" });
 });
 
+test("fractional numeric tokens cannot be projected as i32 integers", async () => {
+  for (const source of [
+    "export function wrong(): i32 { return 1.5; }",
+    "export function wrong(): i32 { const value = 1.5; return value; }",
+  ]) {
+    const result = await analyzeFrontend({
+      sourceRoot: "/src", rootFile: "/src/main.ts",
+      files: [
+        { path: "/src/main.ts", content: source },
+        { path: "/src/minimal-scalars-v2.d.ts", content: scalarDeclarations },
+      ],
+      declarations: { version: "minimal-scalars-v2", paths: ["/src/minimal-scalars-v2.d.ts"] },
+      config: { strict: true, noEmit: true, allowJs: false },
+    }, { executable: process.env.TSFG_FRONTEND_EXE });
+    assert.equal(result.status, "error", source);
+    assert.equal(result.snapshot, undefined, source);
+  }
+});
+
 test("an exact out-of-range integer produces the R01 range code", async () => {
   const source = "export function overflow(): i32 { return 9007199254740993; }";
   const result = await analyzeFrontend({
