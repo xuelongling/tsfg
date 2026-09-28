@@ -1522,7 +1522,7 @@ test("name failures retain the R01 code and logical UTF-16 location", async () =
 
 test("unsupported and prohibited syntax have distinct machine categories", async () => {
   const cases = [
-    ["export function bad(value: bool): bool { if (value) return value; return value; }",
+    ["export function bad(value: bool): bool { for (;;) { return value; } return value; }",
       "r02b-d-unsupported", "unsupported", "capability", "r01-ts-baseline"],
     ["export function bad(value: any): bool { return value; }",
       "r02b-d-prohibited", "prohibited", "types", "r01-input-boundary"],
