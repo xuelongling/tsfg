@@ -45,7 +45,7 @@ import { reviewUpgrade } from "./upgrade-review.mjs";
 import { reproduceTypeScript, SourceReproError } from "./typescript-repro.mjs";
 import { prefetchGoDependencies, readGoDependencyLock, verifyGoDependencies } from "./go-closure.mjs";
 import { executeFrontendTarget, FrontendBuildError } from "./frontend-build.mjs";
-import { contractSetProjection } from "./contract-set.mjs";
+import { verifiedContractSet } from "./contract-set.mjs";
 
 class ConfigurationError extends Error {
   constructor(message, issueCode = "invalid-configuration") {
@@ -5377,7 +5377,9 @@ async function testCompatibility(options, workspaceState, networkCanary) {
   } catch (error) {
     throw new TestFailureError(error.message);
   }
-  const canonicalContractSet = canonicalize(contractSetProjection(registry));
+  let canonicalContractSet;
+  try { canonicalContractSet = canonicalize(await verifiedContractSet(workspaceState.root, registry, canonicalize)); }
+  catch (error) { throw new TestFailureError(error.message); }
   const contractSetId = digest(canonicalContractSet);
   validateSyntheticArtifact(baseline, "baseline", contractSetId);
   validateSyntheticArtifact(candidate, "candidate", contractSetId);
@@ -5614,7 +5616,9 @@ async function createBuildIdentity(
     path.join(workspaceRoot, "contracts", "registry.json"),
     "Contract Registry",
   );
-  const contractSet = canonicalize(contractSetProjection(registry));
+  let contractSet;
+  try { contractSet = canonicalize(await verifiedContractSet(workspaceRoot, registry, canonicalize)); }
+  catch (error) { throw new PackageFailureError(error.message); }
   const { buildInputSet: inputSet, sourceDateEpoch } = await buildInputSet(workspaceRoot);
   const buildIdentityPayload = {
     buildInputSetDigest: inputSet.digest,
@@ -6955,7 +6959,8 @@ async function prepareGoSourceTarget(options, runtime, controlRoot = repositoryR
   const sourceRoot = path.resolve(workspaceState.root, "..", declaration.source.projectId);
   const astIntake = options.get("--source-target") === "typescript-ast"
     ? await readAstIntake({ productRoot: workspaceState.root, controlRoot,
-      planPath: options.get("--intake-plan"), gitExecutable: process.env.TSFG_GIT }) : undefined;
+      planPath: options.get("--intake-plan"), gitExecutable: process.env.TSFG_GIT,
+      serialize: canonicalize }) : undefined;
   if (astIntake && declaration.source.commit !== astIntake.ledger.sources[0].forkOid) {
     throw new GoInputIntegrityError("AST tool dependency source lock differs from the approved fork");
   }

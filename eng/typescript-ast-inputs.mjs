@@ -28,7 +28,7 @@ export async function astBuildInputs(intake, ledger, serialize) {
     "eng/typescript-required-tests.mjs",
     "eng/typescript-probes.mjs", "eng/go-source-worker.mjs", "eng/go-source-result.mjs", "eng/go-closure.mjs", "eng/go-network-probe.mjs",
     "eng/go-work-access.mjs", "eng/intake-ledger.mjs", "eng/source-admission.mjs", "eng/workspace-policy.json",
-    "contracts/registry.json", ...intake.probes.inputs.map(input => input.path)];
+    "contracts/registry.json", "contracts/frontend-snapshot.schema.json", ...intake.probes.inputs.map(input => input.path)];
   const declared = [...ledger.buildInputEntries.map(entry => ({ projectId: entry.projectId,
     root: path.join(intake.request.workspaceRoot, ledger.sources.find(source => source.projectId === entry.projectId).path),
     relative: entry.path.slice(ledger.sources.find(source => source.projectId === entry.projectId).path.length + 1),

@@ -174,6 +174,8 @@ AVX、AVX2、AVX-512 等必须使用运行时检测和多版本分派；禁止 `
 
 Contract Set 必须从 registry 按 family ID 字节序生成。R00 没有正式 family，规范空映射字节为 `{}`，其 ID 为 `sha256:44136fa355b3678a1146ad16f7e8649e94fb4fc21fe77e8310c060f61caaff8a`。兼容拒绝验收使用测试 fixture，不把假契约加入产品集合。
 
+上述空映射及其 ID 是 R00 里程碑的历史基线，不约束后续里程碑继续为空。R02b 注册 FrontendSnapshot family 后，当前 Contract Set 从实际 registry 派生；继续运行的 R00 构建、打包及来源探针消费当前集合，R00 合成兼容性 family 仍不注册。
+
 Contract 变化规则适用于承诺受支持的正式版本：
 
 - 纯编辑或测试增补：patch；

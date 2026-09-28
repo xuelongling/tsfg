@@ -2,7 +2,7 @@
 
 import assert from "node:assert/strict";
 import { createHash } from "node:crypto";
-import { mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
+import { mkdtemp, mkdir, readFile, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import path from "node:path";
 import { spawn, spawnSync } from "node:child_process";
@@ -24,14 +24,14 @@ function sha256(bytes) {
   return `sha256:${createHash("sha256").update(bytes).digest("hex")}`;
 }
 
-async function invokeCompatibility(target, reportPath, baseline, candidate) {
+async function invokeCompatibility(target, reportPath, baseline, candidate, workspace = repositoryRoot) {
   return await new Promise((resolve, reject) => {
     const child = spawn(process.execPath, [
       buildEntry,
       "test",
       "--dev",
       "--target", target,
-      "--workspace", repositoryRoot,
+      "--workspace", workspace,
       "--compatibility-baseline", baseline,
       "--compatibility-candidate", candidate,
       "--report", reportPath,
@@ -51,6 +51,32 @@ async function invokeCompatibility(target, reportPath, baseline, candidate) {
     child.on("close", (status) => resolve({ status, stderr, stdout }));
   });
 }
+
+test("the public contract seam rejects a registry hash that differs from schema bytes", async () => {
+  const sandbox = await mkdtemp(path.join(tmpdir(), "tsfg-stale-contract-schema-"));
+  try {
+    const workspace = path.join(sandbox, "workspace");
+    await mkdir(path.join(workspace, "contracts"), { recursive: true });
+    const initialized = spawnSync(TEST_GIT_EXECUTABLE, ["init", "--quiet", workspace]);
+    assert.equal(initialized.status, 0, initialized.stderr?.toString());
+    const registry = JSON.parse(await readFile(path.join(repositoryRoot, "contracts/registry.json"), "utf8"));
+    registry["tsfg.frontend-snapshot"].schemaHash = `sha256:${"0".repeat(64)}`;
+    await writeFile(path.join(workspace, "contracts/registry.json"), `${JSON.stringify(registry)}\n`);
+    await writeFile(path.join(workspace, "contracts/frontend-snapshot.schema.json"),
+      await readFile(path.join(repositoryRoot, "contracts/frontend-snapshot.schema.json")));
+    const baseline = path.join(sandbox, "baseline.json");
+    const candidate = path.join(sandbox, "candidate.json");
+    const reportPath = path.join(sandbox, "report.json");
+    await writeFile(baseline, `${JSON.stringify(baselineSyntheticArtifact())}\n`);
+    await writeFile(candidate, `${JSON.stringify(candidateSyntheticArtifact())}\n`);
+    const result = await invokeCompatibility("windows-x86_64-msvc", reportPath, baseline, candidate, workspace);
+    assert.equal(result.status, 21, result.stderr);
+    const report = JSON.parse(await readFile(reportPath, "utf8"));
+    assert.match(report.error.issues[0].message, /schema hash differs from registered schema bytes/);
+  } finally {
+    await rm(sandbox, { recursive: true, force: true });
+  }
+});
 
 /**
  * @param {{baseline?: Record<string, any>, candidate?: Record<string, any>, target?: string}} [fixture]
