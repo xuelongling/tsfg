@@ -137,7 +137,249 @@ type i32 = number & { readonly [__tsfg_i32]: true };
 type f64 = number;
 `;
 
-const analyzeCalls = source => analyzeFrontend({
+async function analyzeScalars(source) {
+  return analyzeFrontend({
+    sourceRoot: "/src", rootFile: "/src/main.ts",
+    files: [
+      { path: "/src/main.ts", content: source },
+      { path: "/src/minimal-scalars-v2.d.ts", content: scalarDeclarations },
+    ],
+    declarations: { version: "minimal-scalars-v2", paths: ["/src/minimal-scalars-v2.d.ts"] },
+    config: { strict: true, noEmit: true, allowJs: false },
+  }, { executable: process.env.TSFG_FRONTEND_EXE });
+}
+
+test("if/else and while retain ordered branch bodies and owned references", async () => {
+  const source = `export function count(flag: bool, limit: i32): i32 {
+  let value: i32 = 0;
+  if (flag) { const step: i32 = 1; value = value + step; }
+  else { value = 2; }
+  while (value < limit) { value = value + 1; }
+  return value;
+}`;
+  const result = await analyzeScalars(source);
+  assert.equal(result.status, "ok", JSON.stringify(result));
+  const { snapshot } = result;
+  const [initial, branch, loop, returned] = snapshot.functions[0].body;
+  assert.deepEqual([branch.kind, loop.kind], ["if", "while"]);
+  assert.equal(resolveSymbol(snapshot, branch.condition.symbol).name, "flag");
+  const [step, update] = branch.thenBody[0].body;
+  assert.equal(resolveSymbol(snapshot, update.value.right.symbol).id, step.symbol.id);
+  assert.equal(resolveSymbol(snapshot, branch.elseBody[0].body[0].target.symbol).id, initial.symbol.id);
+  assert.equal(loop.condition.operator, "<");
+  assert.equal(resolveSymbol(snapshot, loop.condition.right.symbol).name, "limit");
+  assert.equal(resolveSymbol(snapshot, loop.body[0].body[0].target.symbol).id, initial.symbol.id);
+  assert.equal(resolveSymbol(snapshot, returned.expression.symbol).id, initial.symbol.id);
+  assert.ok(branch.range.start < loop.range.start && loop.range.end <= returned.range.start);
+  assert.equal(Object.isFrozen(branch.thenBody[0].body), true);
+});
+
+test("R01 control corpus retains nested returns and branch ordering without execution", async () => {
+  const source = await readFile(new URL("../r01/corpus/control/compare.ts", import.meta.url), "utf8");
+  const result = await analyzeScalars(source);
+  assert.equal(result.status, "ok", JSON.stringify(result));
+  const { snapshot } = result;
+  const outer = snapshot.functions[0].body[0];
+  assert.equal(outer.kind, "if");
+  assert.equal(outer.condition.operator, "<");
+  assert.equal(resolveSymbol(snapshot, outer.condition.left.symbol).name, "a");
+  assert.equal(outer.thenBody[0].body[0].expression.literal.decimal, "-1");
+  const nested = outer.elseBody[0].body[0];
+  assert.equal(nested.kind, "if");
+  assert.equal(nested.condition.operator, "===");
+  assert.equal(nested.thenBody[0].body[0].expression.literal.decimal, "0");
+  assert.equal(nested.elseBody[0].body[0].expression.literal.decimal, "1");
+  assert.ok(outer.thenBody[0].range.end <= outer.elseBody[0].range.start);
+});
+
+test("R01 local and loop corpus expose frontend structure, not execution results", async () => {
+  const locals = await analyzeScalars(await readFile(new URL("../r01/corpus/control/locals.ts", import.meta.url), "utf8"));
+  const loop = await analyzeScalars(await readFile(new URL("../r01/corpus/control/loop.ts", import.meta.url), "utf8"));
+  assert.equal(locals.status, "ok", JSON.stringify(locals));
+  assert.equal(loop.status, "ok", JSON.stringify(loop));
+  const branch = locals.snapshot.functions[0].body[2];
+  assert.equal(branch.kind, "if");
+  assert.equal(branch.thenBody[0].body[0].value.operator, "+");
+  assert.equal(branch.elseBody[0].body[0].value.operator, "-");
+  const whileNode = loop.snapshot.functions[0].body[1];
+  assert.equal(whileNode.kind, "while");
+  assert.equal(whileNode.condition.operator, "<");
+  assert.equal(resolveSymbol(loop.snapshot, whileNode.body[0].body[0].target.symbol).name, "count");
+});
+
+test("invalid control conditions, escaped locals, and branch returns have stable diagnostics", async () => {
+  for (const [source, code] of [
+    ["export function bad(value: i32): i32 { if (value) { return 1; } else { return 2; } }", "r01-d-scalar-type"],
+    ["export function bad(value: i32): i32 { while (value) { value = value; } return value; }", "r01-d-scalar-type"],
+    ["export function bad(flag: bool): i32 { if (flag) { const inside: i32 = 1; } return inside; }", "r01-d-unresolved-name"],
+    ["export function bad(flag: bool): i32 { if (flag) { return true; } return 1; }", "r01-d-scalar-type"],
+  ]) {
+    const result = await analyzeScalars(source);
+    assert.equal(result.status, "error", JSON.stringify(result));
+    assert.equal(result.snapshot, undefined);
+    assert.equal(result.diagnostics[0].code, code, JSON.stringify(result));
+    assert.equal(result.diagnostics[0].primary.sourceId, "/src/main.ts");
+  }
+});
+
+test("control conditions retain UTF-16 positions across CRLF and supplementary text", async () => {
+  const source = "// 😀\r\nexport function choose(flag: bool): bool {\r\n  if (flag) { return flag; } else { return false; }\r\n}";
+  const result = await analyzeScalars(source);
+  assert.equal(result.status, "ok", JSON.stringify(result));
+  const branch = result.snapshot.functions[0].body[0];
+  const start = source.indexOf("flag)");
+  assert.deepEqual(branch.condition.range, { start, end: start + 4 });
+  assert.equal(branch.range.start, source.indexOf("if ("));
+  assert.equal(branch.range.end, source.indexOf("\r\n}", branch.range.start));
+});
+
+test("an inferred i32 local returned inside a branch keeps its declaration identity", async () => {
+  const source = "export function choose(flag: bool): i32 { if (flag) { const value = 1; return value; } return 2; }";
+  const result = await analyzeScalars(source);
+  assert.equal(result.status, "ok", JSON.stringify(result));
+  const branch = result.snapshot.functions[0].body[0];
+  const [variable, returned] = branch.thenBody[0].body;
+  assert.equal(variable.symbol.type, "i32");
+  assert.equal(resolveSymbol(result.snapshot, returned.expression.symbol).id, variable.symbol.id);
+});
+
+test("i32 operators in nested returns retain their typed structure", async () => {
+  const source = "export function next(flag: bool, value: i32): i32 { if (flag) { const step: i32 = 1; return value + step; } return value; }";
+  const result = await analyzeScalars(source);
+  assert.equal(result.status, "ok", JSON.stringify(result));
+  const [step, branchReturn] = result.snapshot.functions[0].body[0].thenBody[0].body;
+  assert.equal(branchReturn.expression.kind, "binary");
+  assert.equal(branchReturn.expression.type, "i32");
+  assert.equal(resolveSymbol(result.snapshot, branchReturn.expression.left.symbol).name, "value");
+  assert.equal(resolveSymbol(result.snapshot, branchReturn.expression.right.symbol).id, step.symbol.id);
+});
+
+test("initialized let, assignment, and reads bind to declarations in source order", async () => {
+  const result = await analyzeScalars("export function update(seed: i32): i32 { let value: i32 = seed; value = 7; return value; }");
+  assert.equal(result.status, "ok", JSON.stringify(result));
+  const { snapshot } = result;
+  const [variable, assignment, returned] = snapshot.functions[0].body;
+  assert.deepEqual([variable.kind, assignment.kind, returned.kind], ["variable", "assignment", "return"]);
+  assert.equal(resolveSymbol(snapshot, variable.initializer.symbol).id, snapshot.functions[0].parameters[0].id);
+  assert.equal(resolveSymbol(snapshot, assignment.target.symbol).id, variable.symbol.id);
+  assert.equal(resolveSymbol(snapshot, returned.expression.symbol).id, variable.symbol.id);
+  assert.equal(assignment.value.literal.decimal, "7");
+  assert.ok(variable.range.end <= assignment.range.start && assignment.range.end <= returned.range.start);
+});
+
+test("bool locals retain type and declaration identity through assignment", async () => {
+  const result = await analyzeScalars("export function choose(flag: bool): bool { let value: bool = flag; value = true; return value; }");
+  assert.equal(result.status, "ok", JSON.stringify(result));
+  const { snapshot } = result;
+  const [variable, assignment, returned] = snapshot.functions[0].body;
+  assert.equal(variable.symbol.type, "bool");
+  assert.equal(assignment.value.type, "bool");
+  assert.equal(assignment.value.boolean, true);
+  assert.equal(resolveSymbol(snapshot, assignment.target.symbol).id, variable.symbol.id);
+  assert.equal(resolveSymbol(snapshot, returned.expression.symbol).id, variable.symbol.id);
+});
+
+test("nested block shadowing resolves each read to the checker declaration", async () => {
+  const source = "export function choose(value: i32): i32 { { const value: i32 = 4; const inner: i32 = value; } return value; }";
+  const result = await analyzeScalars(source);
+  assert.equal(result.status, "ok", JSON.stringify(result));
+  const { snapshot } = result;
+  const [block, returned] = snapshot.functions[0].body;
+  const [shadow, inner] = block.body;
+  assert.equal(block.kind, "block");
+  assert.notEqual(shadow.symbol.id, snapshot.functions[0].parameters[0].id);
+  assert.equal(resolveSymbol(snapshot, inner.initializer.symbol).id, shadow.symbol.id);
+  assert.equal(resolveSymbol(snapshot, returned.expression.symbol).id, snapshot.functions[0].parameters[0].id);
+});
+
+test("simple assignment inside a nested block retains its outer binding", async () => {
+  const result = await analyzeScalars("export function update(): i32 { let value: i32 = 1; { value = 2; } return value; }");
+  assert.equal(result.status, "ok", JSON.stringify(result));
+  const { snapshot } = result;
+  const [variable, block, returned] = snapshot.functions[0].body;
+  assert.equal(resolveSymbol(snapshot, block.body[0].target.symbol).id, variable.symbol.id);
+  assert.equal(resolveSymbol(snapshot, returned.expression.symbol).id, variable.symbol.id);
+});
+
+test("a nested unannotated integer local keeps its default i32 type", async () => {
+  const result = await analyzeScalars("export function answer(): i32 { { const value = 1; return value; } }");
+  assert.equal(result.status, "ok", JSON.stringify(result));
+  const { snapshot } = result;
+  const [variable, returned] = snapshot.functions[0].body[0].body;
+  assert.equal(variable.symbol.type, "i32");
+  assert.equal(resolveSymbol(snapshot, returned.expression.symbol).id, variable.symbol.id);
+});
+
+test("unannotated integer locals retain default i32 through a read chain", async () => {
+  const result = await analyzeScalars("export function answer(): i32 { const seed = 3; const value = seed; return value; }");
+  assert.equal(result.status, "ok", JSON.stringify(result));
+  const { snapshot } = result;
+  const [seed, value, returned] = snapshot.functions[0].body;
+  assert.equal(seed.symbol.type, "i32");
+  assert.equal(value.symbol.type, "i32");
+  assert.equal(resolveSymbol(snapshot, value.initializer.symbol).id, seed.symbol.id);
+  assert.equal(resolveSymbol(snapshot, returned.expression.symbol).id, value.symbol.id);
+});
+
+test("multiple initialized declarations preserve order and binding", async () => {
+  const result = await analyzeScalars("export function answer(): i32 { const one: i32 = 1, two: i32 = one; return two; }");
+  assert.equal(result.status, "ok", JSON.stringify(result));
+  const { snapshot } = result;
+  const [one, two, returned] = snapshot.functions[0].body;
+  assert.deepEqual([one.kind, two.kind, returned.kind], ["variable", "variable", "return"]);
+  assert.equal(resolveSymbol(snapshot, two.initializer.symbol).id, one.symbol.id);
+  assert.equal(resolveSymbol(snapshot, returned.expression.symbol).id, two.symbol.id);
+  assert.ok(one.range.end <= two.range.start);
+});
+
+test("invalid local writes and out-of-scope reads never produce a snapshot", async () => {
+  for (const [source, code] of [
+    ["export function bad(): i32 { const value: i32 = 1; value = 2; return value; }", "r02b-d-type"],
+    ["export function bad(): i32 { let value: i32 = 1; value = true; return value; }", "r01-d-scalar-type"],
+    ["export function bad(): i32 { { const value: i32 = 1; } return value; }", "r01-d-unresolved-name"],
+  ]) {
+    const result = await analyzeScalars(source);
+    assert.equal(result.status, "error", JSON.stringify(result));
+    assert.equal(result.snapshot, undefined);
+    assert.equal(result.diagnostics[0].code, code, JSON.stringify(result));
+    assert.equal(result.diagnostics[0].primary.sourceId, "/src/main.ts");
+  }
+});
+
+test("the R01 invalid-local corpus keeps its scalar diagnostic", async () => {
+  const source = await readFile(new URL("../r01/corpus/control/invalid-local.ts", import.meta.url), "utf8");
+  const result = await analyzeScalars(source);
+  assert.equal(result.status, "error");
+  assert.equal(result.snapshot, undefined);
+  assert.equal(result.diagnostics[0].code, "r01-d-scalar-type", JSON.stringify(result));
+});
+
+test("uninitialized locals are reported as pending capability", async () => {
+  const result = await analyzeScalars("export function pending(): i32 { let value: i32; return value; }");
+  assert.equal(result.status, "error");
+  assert.equal(result.snapshot, undefined);
+  assert.equal(result.diagnostics[0].code, "r02b-d-unsupported");
+});
+
+test("compound assignment and increment remain pending capabilities", async () => {
+  for (const source of [
+    "export function pending(): i32 { let value: i32 = 1; value += 1; return value; }",
+    "export function pending(): i32 { let value: i32 = 1; value++; return value; }",
+    "export function pending(value: i32): i32 { return value += 1; }",
+    "export function pending(value: i32): i32 { return value &= value; }",
+    "export function pending(value: i32): i32 { return value **= 2; }",
+    "export function pending(value: i32): i32 { return ++value; }",
+    "export function pending(value: i32): i32 { return value++; }",
+    "export function pending(value: i32): i32 { const next: i32 = value += 1; return next; }",
+  ]) {
+    const result = await analyzeScalars(source);
+    assert.equal(result.status, "error");
+    assert.equal(result.snapshot, undefined);
+    assert.equal(result.diagnostics[0].code, "r02b-d-unsupported", JSON.stringify(result));
+  }
+});
+
+const analyzeScalar = source => analyzeFrontend({
   sourceRoot: "/src", rootFile: "/src/main.ts",
   files: [
     { path: "/src/main.ts", content: source },
@@ -147,7 +389,279 @@ const analyzeCalls = source => analyzeFrontend({
   config: { strict: true, noEmit: true, allowJs: false },
 }, { executable: process.env.TSFG_FRONTEND_EXE });
 
-test("i32 parameter and return retain a scalar fact and symbol relation", async () => {
+const analyzeCalls = analyzeScalar;
+
+test("arithmetic snapshot preserves precedence, operand order, types, and source ranges", async () => {
+  const source = "export function calc(a: i32, b: i32): i32 { return a + b * 2; }";
+  const result = await analyzeFrontend({
+    sourceRoot: "/src", rootFile: "/src/main.ts",
+    files: [
+      { path: "/src/main.ts", content: source },
+      { path: "/src/minimal-scalars-v2.d.ts", content: scalarDeclarations },
+    ],
+    declarations: { version: "minimal-scalars-v2", paths: ["/src/minimal-scalars-v2.d.ts"] },
+    config: { strict: true, noEmit: true, allowJs: false },
+  }, { executable: process.env.TSFG_FRONTEND_EXE });
+  assert.equal(result.status, "ok");
+  const expression = result.snapshot.functions[0].body[0].expression;
+  assert.equal(result.snapshot.capability, "minimal-scalars-v2");
+  assert.equal(expression.kind, "binary");
+  assert.equal(expression.operator, "+");
+  assert.equal(expression.type, "i32");
+  assert.deepEqual(expression.range, { start: source.indexOf("a +"), end: source.indexOf("; }") });
+  assert.equal(resolveSymbol(result.snapshot, expression.left.symbol).name, "a");
+  assert.equal(expression.right.operator, "*");
+  assert.equal(expression.right.type, "i32");
+  assert.equal(resolveSymbol(result.snapshot, expression.right.left.symbol).name, "b");
+  assert.deepEqual(expression.right.right.literal, { decimal: "2", token: "2" });
+});
+
+test("bitwise and shift operators retain their operation and i32 operands", async () => {
+  for (const operator of ["&", "|", "^", "<<", ">>", ">>>"]) {
+    const result = await analyzeScalar(`export function op(a: i32, b: i32): i32 { return a ${operator} b; }`);
+    assert.equal(result.status, "ok", operator);
+    const expression = result.snapshot.functions[0].body[0].expression;
+    assert.equal(expression.operator, operator);
+    assert.equal(expression.type, "i32");
+    assert.equal(expression.left.type, "i32");
+    assert.equal(expression.right.type, "i32");
+    assert.equal(resolveSymbol(result.snapshot, expression.left.symbol).name, "a");
+    assert.equal(resolveSymbol(result.snapshot, expression.right.symbol).name, "b");
+  }
+  const invalid = await analyzeScalar("export function op(a: i32, b: bool): i32 { return a << b; }");
+  assert.equal(invalid.status, "error");
+  assert.equal(invalid.snapshot, undefined);
+  assert.equal(invalid.diagnostics[0].code, "r01-d-shift-count-type");
+  assert.equal(invalid.diagnostics[0].ruleId, "r01-shifts");
+});
+
+test("arithmetic operators retain runtime trap candidates without compile rejection", async () => {
+  for (const operator of ["-", "/", "%"]) {
+    const result = await analyzeScalar(`export function op(a: i32): i32 { return a ${operator} 0; }`);
+    assert.equal(result.status, "ok", operator);
+    assert.equal(result.snapshot.functions[0].body[0].expression.operator, operator);
+  }
+  const shift = await analyzeScalar("export function op(a: i32): i32 { return a << 32; }");
+  assert.equal(shift.status, "ok");
+  assert.equal(shift.snapshot.functions[0].body[0].expression.right.literal.decimal, "32");
+  const wrong = await analyzeScalar("export function op(a: i32, b: bool): i32 { return a + b; }");
+  assert.equal(wrong.status, "error");
+  assert.equal(wrong.snapshot, undefined);
+  assert.equal(wrong.diagnostics[0].code, "r01-d-scalar-type");
+});
+
+test("comparison and strict equality produce bool from same-type operands", async () => {
+  for (const operator of ["<", "<=", ">", ">=", "===", "!=="]) {
+    const result = await analyzeScalar(`export function compare(a: i32, b: i32): bool { return a ${operator} b; }`);
+    assert.equal(result.status, "ok", operator);
+    const expression = result.snapshot.functions[0].body[0].expression;
+    assert.equal(expression.operator, operator);
+    assert.equal(expression.type, "bool");
+    assert.equal(expression.left.type, "i32");
+    assert.equal(expression.right.type, "i32");
+  }
+  const boolEquality = await analyzeScalar("export function same(a: bool, b: boolean): bool { return a === b; }");
+  assert.equal(boolEquality.status, "ok");
+  assert.equal(boolEquality.snapshot.functions[0].body[0].expression.left.type, "bool");
+  const mismatch = await analyzeScalar("export function wrong(a: i32, b: bool): bool { return a === b; }");
+  assert.equal(mismatch.status, "error");
+  assert.equal(mismatch.diagnostics[0].code, "r01-d-scalar-type");
+});
+
+test("logical negation and short circuit retain conditional nesting", async () => {
+  const nested = await analyzeScalar("export function choose(a: bool, b: bool, c: bool): bool { return a && (b || !c); }");
+  assert.equal(nested.status, "ok");
+  const outer = nested.snapshot.functions[0].body[0].expression;
+  assert.equal(outer.kind, "shortCircuit");
+  assert.equal(outer.operator, "&&");
+  assert.equal(resolveSymbol(nested.snapshot, outer.left.symbol).name, "a");
+  assert.equal(outer.right.kind, "group");
+  assert.equal(outer.right.operand.kind, "shortCircuit");
+  assert.equal(outer.right.operand.operator, "||");
+  assert.equal(outer.right.operand.right.kind, "unary");
+  assert.equal(outer.right.operand.right.operator, "!");
+  assert.equal(resolveSymbol(nested.snapshot, outer.right.operand.right.operand.symbol).name, "c");
+  const dormantTrap = await analyzeScalar("export function guard(a: bool, x: i32): bool { return a && (x / 0 > 1); }");
+  assert.equal(dormantTrap.status, "ok");
+  assert.equal(dormantTrap.snapshot.functions[0].body[0].expression.right.operand.left.operator, "/");
+  const wrong = await analyzeScalar("export function wrong(a: bool, x: i32): bool { return a && x; }");
+  assert.equal(wrong.status, "error");
+  assert.equal(wrong.diagnostics[0].code, "r01-d-scalar-type");
+});
+
+test("direct unary operators and prohibited loose equality are classified", async () => {
+  for (const [operator, type] of [["!", "bool"], ["~", "i32"], ["-", "i32"], ["+", "i32"]]) {
+    const result = await analyzeScalar(`export function unary(value: ${type}): ${type} { return ${operator}value; }`);
+    assert.equal(result.status, "ok", operator);
+    const expression = result.snapshot.functions[0].body[0].expression;
+    assert.equal(expression.kind, "unary");
+    assert.equal(expression.operator, operator);
+    assert.equal(expression.type, type);
+    assert.equal(resolveSymbol(result.snapshot, expression.operand.symbol).name, "value");
+  }
+  for (const operator of ["==", "!="]) {
+    const result = await analyzeScalar(`export function wrong(a: i32, b: i32): bool { return a ${operator} b; }`);
+    assert.equal(result.status, "error", operator);
+    assert.equal(result.snapshot, undefined);
+    assert.equal(result.diagnostics[0].code, "r02b-d-prohibited");
+    assert.equal(result.diagnostics[0].category, "prohibited");
+  }
+});
+
+test("typed f64 operands do not convert into i32 operator results", async () => {
+  for (const source of [
+    "export function wrong(a: i32, b: f64): i32 { return a + b; }",
+    "export function wrong(a: f64, b: i32): bool { return a < b; }",
+  ]) {
+    const result = await analyzeScalar(source);
+    assert.equal(result.status, "error", source);
+    assert.equal(result.snapshot, undefined);
+    assert.equal(result.diagnostics[0].code, "r01-d-scalar-type");
+  }
+});
+
+test("parentheses do not change an invalid operand diagnostic", async () => {
+  for (const expression of ["a + b", "(a + b)"]) {
+    const result = await analyzeScalar(`export function wrong(a: i32, b: bool): i32 { return ${expression}; }`);
+    assert.equal(result.status, "error", expression);
+    assert.equal(result.snapshot, undefined);
+    assert.equal(result.diagnostics[0].code, "r01-d-scalar-type", expression);
+  }
+});
+
+test("parentheses preserve a valid i32 arithmetic return", async () => {
+  const result = await analyzeScalar("export function sum(a: i32, b: i32): i32 { return (a + b); }");
+  assert.equal(result.status, "ok");
+  const expression = result.snapshot.functions[0].body[0].expression;
+  assert.equal(expression.kind, "group");
+  assert.equal(expression.operand.operator, "+");
+});
+
+test("loose equality stays prohibited even when official typing also rejects it", async () => {
+  for (const operator of ["==", "!="]) {
+    const result = await analyzeScalar(`export function wrong(a: i32, b: bool): bool { return a ${operator} b; }`);
+    assert.equal(result.status, "error", operator);
+    assert.equal(result.snapshot, undefined);
+    assert.equal(result.diagnostics[0].code, "r02b-d-prohibited", operator);
+    assert.equal(result.diagnostics[0].category, "prohibited", operator);
+  }
+});
+
+test("same-type f64 arithmetic is a pending capability, not a language error", async () => {
+  const result = await analyzeScalar("export function later(a: f64, b: f64): f64 { return a + b; }");
+  assert.equal(result.status, "error");
+  assert.equal(result.snapshot, undefined);
+  assert.equal(result.diagnostics[0].code, "r02b-d-unsupported");
+  assert.equal(result.diagnostics[0].category, "unsupported");
+});
+
+test("valid f64 unary arithmetic remains a pending capability", async () => {
+  const result = await analyzeScalar("export function later(a: f64): f64 { return -a; }");
+  assert.equal(result.status, "error");
+  assert.equal(result.snapshot, undefined);
+  assert.equal(result.diagnostics[0].code, "r02b-d-unsupported");
+  assert.equal(result.diagnostics[0].category, "unsupported");
+});
+
+test("integer literal can take a typed f64 operator context", async () => {
+  for (const source of [
+    "export function later(a: f64): f64 { return a + 1; }",
+    "export function later(a: f64): f64 { return a + 2147483648; }",
+    "export function later(a: f64): f64 { return (2147483648) + a; }",
+    "export function later(a: f64): f64 { return a + -2147483649; }",
+    "export function later(a: f64): bool { return a < (2147483648); }",
+    "export function later(a: f64): bool { return a === 2147483648; }",
+  ]) {
+    const result = await analyzeScalar(source);
+    assert.equal(result.status, "error", source);
+    assert.equal(result.snapshot, undefined);
+    assert.equal(result.diagnostics[0].code, "r02b-d-unsupported", source);
+    assert.equal(result.diagnostics[0].category, "unsupported", source);
+  }
+});
+
+test("numeric truthiness is pending rather than an invalid source expression", async () => {
+  for (const type of ["f64", "i32"]) {
+    const result = await analyzeScalar(`export function later(a: ${type}): bool { return !a; }`);
+    assert.equal(result.status, "error", type);
+    assert.equal(result.snapshot, undefined);
+    assert.equal(result.diagnostics[0].code, "r02b-d-unsupported", type);
+    assert.equal(result.diagnostics[0].category, "unsupported", type);
+  }
+});
+
+test("numeric short circuit outside the bool slice remains pending", async () => {
+  for (const [left, right, operator] of [
+    ["f64", "f64", "&&"], ["i32", "i32", "&&"],
+    ["i32", "f64", "&&"], ["f64", "i32", "||"],
+  ]) {
+    const resultType = left === "i32" && right === "i32" ? "i32" : "f64";
+    const source = `export function later(a: ${left}, b: ${right}): ${resultType} { return a ${operator} b; }`;
+    const result = await analyzeScalar(source);
+    assert.equal(result.status, "error", source);
+    assert.equal(result.snapshot, undefined);
+    assert.equal(result.diagnostics[0].code, "r02b-d-unsupported", source);
+    assert.equal(result.diagnostics[0].category, "unsupported", source);
+  }
+});
+
+test("an uncontextualized wide integer in arithmetic still fails i32 range", async () => {
+  const result = await analyzeScalar("export function wrong(): i32 { return 1 + 2147483648; }");
+  assert.equal(result.status, "error");
+  assert.equal(result.snapshot, undefined);
+  assert.equal(result.diagnostics[0].code, "r01-d-integer-range");
+});
+
+test("legal exponentiation outside the first operator slice remains pending", async () => {
+  for (const expression of ["a ** 2", "(a ** b)"]) {
+    const source = `export function later(a: i32, b: i32): i32 { return ${expression}; }`;
+    const result = await analyzeScalar(source);
+    assert.equal(result.status, "error", expression);
+    assert.equal(result.snapshot, undefined);
+    assert.equal(result.diagnostics[0].code, "r02b-d-unsupported", expression);
+    assert.equal(result.diagnostics[0].category, "unsupported", expression);
+  }
+});
+
+test("invalid exponent operands do not become pending capability", async () => {
+  const result = await analyzeScalar("export function wrong(a: i32): i32 { return a ** true; }");
+  assert.equal(result.status, "error");
+  assert.equal(result.snapshot, undefined);
+  assert.notEqual(result.diagnostics[0].code, "r02b-d-unsupported");
+});
+
+test("fractional f64 operand cannot implicitly join i32 arithmetic", async () => {
+  const result = await analyzeScalar("export function wrong(a: i32): i32 { return a + 1.5; }");
+  assert.equal(result.status, "error");
+  assert.equal(result.snapshot, undefined);
+  assert.equal(result.diagnostics[0].code, "r01-d-scalar-type");
+});
+
+test("nested fractional f64 operand reports the inner i32 mixing error", async () => {
+  const result = await analyzeScalar("export function wrong(a: i32): bool { return a + 1.5 > 0; }");
+  assert.equal(result.status, "error");
+  assert.equal(result.snapshot, undefined);
+  assert.equal(result.diagnostics[0].code, "r01-d-scalar-type");
+});
+
+test("operator operand diagnostics begin at the token after multiline trivia", async () => {
+  const source = "export function wrong(a: i32): i32 { return a +\r\n  false; }";
+  const result = await analyzeScalar(source);
+  assert.equal(result.status, "error");
+  assert.equal(result.diagnostics[0].code, "r01-d-scalar-type");
+  assert.equal(result.diagnostics[0].primary.start, source.indexOf("false"));
+  assert.equal(result.diagnostics[0].primary.startLine, 1);
+  assert.equal(result.diagnostics[0].primary.startColumn, 2);
+});
+
+test("operator diagnostics anchor the invalid left operand when the right is valid", async () => {
+  const source = "export function wrong(a: bool, b: i32): i32 { return a << b; }";
+  const result = await analyzeScalar(source);
+  assert.equal(result.status, "error");
+  assert.equal(result.diagnostics[0].code, "r01-d-scalar-type");
+  assert.equal(result.diagnostics[0].primary.start, source.indexOf("a <<"));
+});
+  test("i32 parameter and return retain a scalar fact and symbol relation", async () => {
   const source = "export function identity(value: i32): i32 { return value; }";
   const result = await analyzeFrontend({
     sourceRoot: "/src", rootFile: "/src/main.ts",
@@ -752,7 +1266,7 @@ test("runtime fallback configuration is an input rejection", async () => {
 test("syntax errors and unsupported structures never produce a snapshot", async () => {
   for (const [source, code] of [
     ["export function bad(value: bool): bool { return value;", "r02b-d-syntax"],
-    ["export function bad(value: bool): bool { if (value) return value; return value; }", "r02b-d-unsupported"],
+    ["export function bad(value: bool): bool { do { return value; } while (value); }", "r02b-d-unsupported"],
   ]) {
     const result = await analyzeFrontend({
       sourceRoot: "/src", rootFile: "/src/main.ts",
@@ -784,6 +1298,8 @@ test("a symbol reference cannot be resolved in a different snapshot", async () =
   assert.equal(a.status, "ok");
   assert.equal(b.status, "ok");
   assert.throws(() => resolveSymbol(b.snapshot, a.snapshot.functions[0].body[0].expression.symbol), TypeError);
+  assert.throws(() => resolveSymbol({ ...a.snapshot, contractVersion: "3" },
+    a.snapshot.functions[0].body[0].expression.symbol), TypeError);
   assert.throws(() => resolveSymbol(a.snapshot, { snapshotId: a.snapshot.snapshotId, id: "s999" }), RangeError);
 });
 
@@ -883,7 +1399,8 @@ test("unresolved names are not mislabeled as scalar type failures", async () => 
     config: { strict: true, noEmit: true, allowJs: false },
   }, { executable: process.env.TSFG_FRONTEND_EXE });
   assert.equal(result.status, "error");
-  assert.equal(result.diagnostics[0].code, "r02b-d-type");
+  assert.equal(result.diagnostics[0].code, "r01-d-unresolved-name");
+  assert.equal(result.diagnostics[0].phase, "types");
 });
 
 test("an unadmitted executable cannot claim the locked fork identity", async () => {

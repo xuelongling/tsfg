@@ -186,17 +186,23 @@ export async function analyzeFrontend(input, { executable } = {}) {
     ...(value.symbol ? { symbol: { snapshotId, id: value.symbol } } : {}),
     ...(value.target ? { target: { snapshotId, id: value.target } } : {}),
     ...(value.arguments ? { arguments: value.arguments.map(expression) } : {}),
+    ...(value.left ? { left: expression(value.left) } : {}),
+    ...(value.right ? { right: expression(value.right) } : {}),
+    ...(value.operand ? { operand: expression(value.operand) } : {}),
+  });
+  const statement = value => ({
+    ...value,
+    ...(value.symbol ? { symbol: { ...value.symbol, ref: { snapshotId, id: value.symbol.id } } } : {}),
+    ...Object.fromEntries(["expression", "initializer", "condition", "target", "value"]
+      .filter(key => value[key]).map(key => [key, expression(value[key])])),
+    ...Object.fromEntries(["body", "thenBody", "elseBody"]
+      .filter(key => value[key]).map(key => [key, value[key].map(statement)])),
   });
   const functions = output.functions.map(fn => ({
     ...fn,
     symbol: { snapshotId, id: fn.symbol },
     parameters: fn.parameters.map(parameter => ({ ...parameter, ref: { snapshotId, id: parameter.id } })),
-    body: fn.body.map(statement => ({
-      ...statement,
-      ...(statement.symbol ? { symbol: { ...statement.symbol, ref: { snapshotId, id: statement.symbol.id } } } : {}),
-      ...(statement.expression ? { expression: expression(statement.expression) } : {}),
-      ...(statement.initializer ? { initializer: expression(statement.initializer) } : {}),
-    })),
+    body: fn.body.map(statement),
   }));
   const nodes = [];
   const types = [];
@@ -222,16 +228,20 @@ export async function analyzeFrontend(input, { executable } = {}) {
   const recordExpression = value => {
     recordNode(value, value.kind);
     for (const argument of value.arguments ?? []) recordExpression(argument);
+    for (const key of ["left", "right", "operand"]) if (value[key]) recordExpression(value[key]);
+  };
+  const recordStatement = value => {
+    recordNode(value, value.kind);
+    for (const key of ["expression", "initializer", "condition", "target", "value"])
+      if (value[key]) recordExpression(value[key]);
+    for (const key of ["body", "thenBody", "elseBody"])
+      for (const nested of value[key] ?? []) recordStatement(nested);
   };
   for (const fn of functions) {
     recordNode(fn, "function");
     fn.returnTypeRef = typeRef(fn.returnType);
     for (const parameter of fn.parameters) recordNode(parameter, "parameter");
-    for (const statement of fn.body) {
-      recordNode(statement, statement.kind);
-      if (statement.expression) recordExpression(statement.expression);
-      if (statement.initializer) recordExpression(statement.initializer);
-    }
+    for (const item of fn.body) recordStatement(item);
   }
   for (const symbol of symbols) symbol.typeRef = typeRef(symbol.type);
   if (invalidScalar) {
@@ -357,6 +367,31 @@ export function validateFrontendSnapshot(snapshot) {
       if (!Array.isArray(expression.arguments)) throw new TypeError("invalid call arguments");
       for (const argument of expression.arguments) visitExpression(argument, ownedSymbols);
     }
+    for (const key of ["left", "right", "operand"])
+      if (expression[key]) visitExpression(expression[key], ownedSymbols);
+  };
+  const declaredSymbols = statements => statements.flatMap(statement => [
+    ...(statement.symbol ? [statement.symbol.id] : []),
+    ...["body", "thenBody", "elseBody"].flatMap(key => declaredSymbols(statement[key] ?? [])),
+  ]);
+  const visitStatement = (statement, ownedSymbols) => {
+    checkNode(statement, statement.kind);
+    if (statement.symbol) {
+      const symbol = resolveSymbol(snapshot, statement.symbol.ref);
+      if (symbol.id !== statement.symbol.id || symbol.name !== statement.symbol.name
+          || symbol.kind !== statement.symbol.kind || symbol.type !== statement.symbol.type
+          || !sameRange(symbol.range, statement.symbol.range)
+          || symbol.range?.start < statement.range?.start
+          || symbol.range?.end > statement.range?.end) {
+        throw new TypeError("statement differs from its symbol");
+      }
+    }
+    for (const key of ["expression", "initializer", "condition", "target", "value"])
+      if (statement[key]) visitExpression(statement[key], ownedSymbols);
+    for (const key of ["body", "thenBody", "elseBody"]) {
+      if (statement[key] && !Array.isArray(statement[key])) throw new TypeError("invalid statement body");
+      for (const nested of statement[key] ?? []) visitStatement(nested, ownedSymbols);
+    }
   };
   for (const fn of snapshot.functions) {
     checkNode(fn, "function");
@@ -373,7 +408,7 @@ export function validateFrontendSnapshot(snapshot) {
       throw new TypeError("invalid function structure");
     }
     const ownedSymbols = new Set([...fn.parameters.map(parameter => parameter.id),
-      ...fn.body.map(statement => statement.symbol?.id).filter(Boolean)]);
+      ...declaredSymbols(fn.body)]);
     for (const parameter of fn.parameters) {
       checkNode(parameter, "parameter");
       checkType(parameter.type, parameter.typeRef);
@@ -384,21 +419,7 @@ export function validateFrontendSnapshot(snapshot) {
         throw new TypeError("parameter differs from its symbol");
       }
     }
-    for (const statement of fn.body) {
-      checkNode(statement, statement.kind);
-      if (statement.symbol) {
-        const symbol = resolveSymbol(snapshot, statement.symbol.ref);
-        if (symbol.id !== statement.symbol.id || symbol.name !== statement.symbol.name
-            || symbol.kind !== statement.symbol.kind || symbol.type !== statement.symbol.type
-            || !sameRange(symbol.range, statement.symbol.range)
-            || symbol.range?.start < statement.range?.start
-            || symbol.range?.end > statement.range?.end) {
-          throw new TypeError("statement differs from its symbol");
-        }
-      }
-      if (statement.expression) visitExpression(statement.expression, ownedSymbols);
-      if (statement.initializer) visitExpression(statement.initializer, ownedSymbols);
-    }
+    for (const statement of fn.body) visitStatement(statement, ownedSymbols);
   }
   if (usedNodes.size !== snapshot.nodes.length) throw new TypeError("unused snapshot node");
   return deepFreeze({ snapshotId: snapshot.snapshotId, functions: snapshot.functions.length, calls });
