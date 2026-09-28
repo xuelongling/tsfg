@@ -1,17 +1,17 @@
 {
   "schemaVersion": "1",
-  "contractVersion": "2",
+  "contractVersion": "3",
   "languageBaseline": "TypeScript 7.0.2",
   "upstreamBaseOid": "1e4744d68260a7cb91b62b12edc3f6a2187faaf1",
-  "forkOid": "1be2cef3fd634f9ba7380d34963eec106fadfef0",
+  "forkOid": "c3603524f752da842e12c703e750cf36e410ee06",
   "remoteUrl": "https://github.com/xuelongling/TypeScript.git",
   "canonicalUrl": "https://github.com/microsoft/TypeScript.git",
-  "sourceBranch": "refs/heads/r02b-ticket-03",
+  "sourceBranch": "refs/heads/r02b-ticket-04",
   "license": "Apache-2.0",
   "upstreamTomlSha256": "sha256:0cc83338b60f281bc87bba82e359f5f51ab0c79b0b9469de705bd626c6a3f490",
   "producerPath": "tsc/cmd/tsfg-frontend/main.go",
-  "producerSha256": "sha256:695e743b07e849cc7c2f2fe7a08a482b41da44e286f1e7baed2ff19dd24dc591",
-  "executableSha256": "sha256:1da02abab60f9573122e772c966c5f47093a67cff22a8ed43ca7e417d93e1424",
+  "producerSha256": "sha256:5e9a2ae17f062583391e71f1c5a08ebc7b3e67198ad74996425cbf122601ff54",
+  "executableSha256": "sha256:3fc9e4294b291fa4711b3c9519d93051cd6c37b6c998bb39e564cfa9dbfb65bc",
   "declarations": [
     { "path": "src/minimal-bool-v1.d.ts", "sha256": "sha256:5d196cb6bcd97d984919e5272a771f63f626d420c8b999c5140c988491a14a77" },
     { "path": "src/minimal-scalars-v2.d.ts", "sha256": "sha256:d629059f5175a580a8a7b19531c7d8cff1bfa7b61320f6638cf4ee25fbf5a141" }

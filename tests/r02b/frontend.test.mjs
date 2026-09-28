@@ -23,6 +23,116 @@ type i32 = number & { readonly [__tsfg_i32]: true };
 type f64 = number;
 `;
 
+async function analyzeScalars(source) {
+  return analyzeFrontend({
+    sourceRoot: "/src", rootFile: "/src/main.ts",
+    files: [
+      { path: "/src/main.ts", content: source },
+      { path: "/src/minimal-scalars-v2.d.ts", content: scalarDeclarations },
+    ],
+    declarations: { version: "minimal-scalars-v2", paths: ["/src/minimal-scalars-v2.d.ts"] },
+    config: { strict: true, noEmit: true, allowJs: false },
+  }, { executable: process.env.TSFG_FRONTEND_EXE });
+}
+
+test("initialized let, assignment, and reads bind to declarations in source order", async () => {
+  const result = await analyzeScalars("export function update(seed: i32): i32 { let value: i32 = seed; value = 7; return value; }");
+  assert.equal(result.status, "ok", JSON.stringify(result));
+  const { snapshot } = result;
+  const [variable, assignment, returned] = snapshot.functions[0].body;
+  assert.deepEqual([variable.kind, assignment.kind, returned.kind], ["variable", "assignment", "return"]);
+  assert.equal(resolveSymbol(snapshot, variable.initializer.symbol).id, snapshot.functions[0].parameters[0].id);
+  assert.equal(resolveSymbol(snapshot, assignment.target.symbol).id, variable.symbol.id);
+  assert.equal(resolveSymbol(snapshot, returned.expression.symbol).id, variable.symbol.id);
+  assert.equal(assignment.value.literal.decimal, "7");
+  assert.ok(variable.range.end <= assignment.range.start && assignment.range.end <= returned.range.start);
+});
+
+test("bool locals retain type and declaration identity through assignment", async () => {
+  const result = await analyzeScalars("export function choose(flag: bool): bool { let value: bool = flag; value = true; return value; }");
+  assert.equal(result.status, "ok", JSON.stringify(result));
+  const { snapshot } = result;
+  const [variable, assignment, returned] = snapshot.functions[0].body;
+  assert.equal(variable.symbol.type, "bool");
+  assert.equal(assignment.value.type, "bool");
+  assert.equal(assignment.value.boolean, true);
+  assert.equal(resolveSymbol(snapshot, assignment.target.symbol).id, variable.symbol.id);
+  assert.equal(resolveSymbol(snapshot, returned.expression.symbol).id, variable.symbol.id);
+});
+
+test("nested block shadowing resolves each read to the checker declaration", async () => {
+  const source = "export function choose(value: i32): i32 { { const value: i32 = 4; const inner: i32 = value; } return value; }";
+  const result = await analyzeScalars(source);
+  assert.equal(result.status, "ok", JSON.stringify(result));
+  const { snapshot } = result;
+  const [block, returned] = snapshot.functions[0].body;
+  const [shadow, inner] = block.body;
+  assert.equal(block.kind, "block");
+  assert.notEqual(shadow.symbol.id, snapshot.functions[0].parameters[0].id);
+  assert.equal(resolveSymbol(snapshot, inner.initializer.symbol).id, shadow.symbol.id);
+  assert.equal(resolveSymbol(snapshot, returned.expression.symbol).id, snapshot.functions[0].parameters[0].id);
+});
+
+test("unannotated integer locals retain default i32 through a read chain", async () => {
+  const result = await analyzeScalars("export function answer(): i32 { const seed = 3; const value = seed; return value; }");
+  assert.equal(result.status, "ok", JSON.stringify(result));
+  const { snapshot } = result;
+  const [seed, value, returned] = snapshot.functions[0].body;
+  assert.equal(seed.symbol.type, "i32");
+  assert.equal(value.symbol.type, "i32");
+  assert.equal(resolveSymbol(snapshot, value.initializer.symbol).id, seed.symbol.id);
+  assert.equal(resolveSymbol(snapshot, returned.expression.symbol).id, value.symbol.id);
+});
+
+test("multiple initialized declarations preserve order and binding", async () => {
+  const result = await analyzeScalars("export function answer(): i32 { const one: i32 = 1, two: i32 = one; return two; }");
+  assert.equal(result.status, "ok", JSON.stringify(result));
+  const { snapshot } = result;
+  const [one, two, returned] = snapshot.functions[0].body;
+  assert.deepEqual([one.kind, two.kind, returned.kind], ["variable", "variable", "return"]);
+  assert.equal(resolveSymbol(snapshot, two.initializer.symbol).id, one.symbol.id);
+  assert.equal(resolveSymbol(snapshot, returned.expression.symbol).id, two.symbol.id);
+  assert.ok(one.range.end <= two.range.start);
+});
+
+test("invalid local writes and out-of-scope reads never produce a snapshot", async () => {
+  for (const [source, code] of [
+    ["export function bad(): i32 { const value: i32 = 1; value = 2; return value; }", "r02b-d-type"],
+    ["export function bad(): i32 { let value: i32 = 1; value = true; return value; }", "r01-d-scalar-type"],
+    ["export function bad(): i32 { { const value: i32 = 1; } return value; }", "r01-d-unresolved-name"],
+  ]) {
+    const result = await analyzeScalars(source);
+    assert.equal(result.status, "error", JSON.stringify(result));
+    assert.equal(result.snapshot, undefined);
+    assert.equal(result.diagnostics[0].code, code, JSON.stringify(result));
+    assert.equal(result.diagnostics[0].primary.sourceId, "/src/main.ts");
+  }
+});
+
+test("the R01 invalid-local corpus keeps its scalar diagnostic", async () => {
+  const source = await readFile(new URL("../r01/corpus/control/invalid-local.ts", import.meta.url), "utf8");
+  const result = await analyzeScalars(source);
+  assert.equal(result.status, "error");
+  assert.equal(result.snapshot, undefined);
+  assert.equal(result.diagnostics[0].code, "r01-d-scalar-type", JSON.stringify(result));
+});
+
+test("uninitialized locals are reported as pending capability", async () => {
+  const result = await analyzeScalars("export function pending(): i32 { let value: i32; return value; }");
+  assert.equal(result.status, "error");
+  assert.equal(result.snapshot, undefined);
+  assert.equal(result.diagnostics[0].code, "r02b-d-unsupported");
+});
+
+test("compound assignment and increment remain pending capabilities", async () => {
+  for (const operation of ["value += 1;", "value++;"]) {
+    const result = await analyzeScalars(`export function pending(): i32 { let value: i32 = 1; ${operation} return value; }`);
+    assert.equal(result.status, "error");
+    assert.equal(result.snapshot, undefined);
+    assert.equal(result.diagnostics[0].code, "r02b-d-unsupported", JSON.stringify(result));
+  }
+});
+
 test("i32 parameter and return retain a scalar fact and symbol relation", async () => {
   const source = "export function identity(value: i32): i32 { return value; }";
   const result = await analyzeFrontend({
@@ -276,7 +386,7 @@ test("real bool function becomes an owned snapshot with declaration references",
   };
   const result = await analyzeFrontend(input, { executable: process.env.TSFG_FRONTEND_EXE });
   assert.equal(result.status, "ok");
-  assert.equal(result.snapshot.contractVersion, "2");
+  assert.equal(result.snapshot.contractVersion, "3");
   assert.equal(result.snapshot.frontendSource.forkOid, sourceLock.forkOid);
   assert.equal(result.snapshot.functions.length, 1);
   const fn = result.snapshot.functions[0];
@@ -377,6 +487,8 @@ test("a symbol reference cannot be resolved in a different snapshot", async () =
   assert.equal(a.status, "ok");
   assert.equal(b.status, "ok");
   assert.throws(() => resolveSymbol(b.snapshot, a.snapshot.functions[0].body[0].expression.symbol), TypeError);
+  assert.throws(() => resolveSymbol({ ...a.snapshot, contractVersion: "2" },
+    a.snapshot.functions[0].body[0].expression.symbol), TypeError);
   assert.throws(() => resolveSymbol(a.snapshot, { snapshotId: a.snapshot.snapshotId, id: "s999" }), RangeError);
 });
 
@@ -476,7 +588,7 @@ test("unresolved names are not mislabeled as scalar type failures", async () => 
     config: { strict: true, noEmit: true, allowJs: false },
   }, { executable: process.env.TSFG_FRONTEND_EXE });
   assert.equal(result.status, "error");
-  assert.equal(result.diagnostics[0].code, "r02b-d-type");
+  assert.equal(result.diagnostics[0].code, "r01-d-unresolved-name");
 });
 
 test("an unadmitted executable cannot claim the locked fork identity", async () => {

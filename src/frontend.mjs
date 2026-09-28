@@ -4,7 +4,7 @@ import { spawnSync } from "node:child_process";
 import { readFile } from "node:fs/promises";
 import sourceLock from "../eng/frontend-source.lock.json" with { type: "json" };
 
-export const frontendContractVersion = "2";
+export const frontendContractVersion = "3";
 
 const digest = bytes => `sha256:${createHash("sha256").update(bytes).digest("hex")}`;
 
@@ -22,6 +22,43 @@ function deepFreeze(value) {
     Object.freeze(value);
   }
   return value;
+}
+
+function ownFunctions(functions, snapshotId, symbols) {
+  const byId = new Map(symbols.map(symbol => [symbol.id, symbol]));
+  if (byId.size !== symbols.length || symbols.some(symbol => typeof symbol.id !== "string")) {
+    throw new TypeError("invalid symbol table");
+  }
+  const ownExpression = expression => {
+    if (!expression) return expression;
+    if (expression.symbol === undefined) return expression;
+    const symbol = byId.get(expression.symbol);
+    if (!symbol || symbol.type !== expression.type) throw new TypeError("invalid expression symbol");
+    return { ...expression, symbol: { snapshotId, id: expression.symbol } };
+  };
+  const ownStatement = statement => ({
+    ...statement,
+    ...(statement.symbol ? {
+      symbol: (() => {
+        const symbol = byId.get(statement.symbol.id);
+        if (!symbol || symbol.type !== statement.symbol.type) throw new TypeError("invalid declaration symbol");
+        return { ...statement.symbol, ref: { snapshotId, id: statement.symbol.id } };
+      })(),
+    } : {}),
+    ...(statement.expression ? { expression: ownExpression(statement.expression) } : {}),
+    ...(statement.initializer ? { initializer: ownExpression(statement.initializer) } : {}),
+    ...(statement.target ? { target: ownExpression(statement.target) } : {}),
+    ...(statement.value ? { value: ownExpression(statement.value) } : {}),
+    ...(statement.body ? { body: statement.body.map(ownStatement) } : {}),
+  });
+  return functions.map(fn => ({
+    ...fn,
+    parameters: fn.parameters.map(parameter => {
+      if (!byId.has(parameter.id)) throw new TypeError("invalid parameter symbol");
+      return { ...parameter, ref: { snapshotId, id: parameter.id } };
+    }),
+    body: fn.body.map(ownStatement),
+  }));
 }
 
 function rejectInput(inputIdentity, file) {
@@ -95,19 +132,13 @@ export async function analyzeFrontend(input, { executable } = {}) {
   }
   const snapshotId = digest(canonical({ contractVersion: frontendContractVersion, inputIdentity, frontendSource }));
   const symbols = output.symbols.map(symbol => ({ ...symbol, ref: { snapshotId, id: symbol.id } }));
-  const functions = output.functions.map(fn => ({
-    ...fn,
-    parameters: fn.parameters.map(parameter => ({ ...parameter, ref: { snapshotId, id: parameter.id } })),
-    body: fn.body.map(statement => ({
-      ...statement,
-      ...(statement.symbol ? { symbol: { ...statement.symbol, ref: { snapshotId, id: statement.symbol.id } } } : {}),
-      ...(statement.expression ? { expression: statement.expression.symbol === undefined ? statement.expression
-        : { ...statement.expression, symbol: { snapshotId, id: statement.expression.symbol } } } : {}),
-    })),
-  }));
+  let functions;
+  try { functions = ownFunctions(output.functions, snapshotId, symbols); }
+  catch { return { status: "tool-error", inputIdentity, message: "invalid frontend references" }; }
   const source = ownedInput.files.find(file => file.path === ownedInput.rootFile);
   const snapshot = deepFreeze({ contractVersion: frontendContractVersion, snapshotId, inputIdentity,
-    frontendSource, capability: declarationVersion, source, functions, symbols, diagnostics: [] });
+    frontendSource, capability: declarationVersion === "minimal-scalars-v2" ? "locals-assignment-v3" : declarationVersion,
+    source, functions, symbols, diagnostics: [] });
   return { status: "ok", snapshot };
 }
 
