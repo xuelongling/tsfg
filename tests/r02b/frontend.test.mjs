@@ -162,6 +162,48 @@ test("typed f64 operands do not convert into i32 operator results", async () => 
   }
 });
 
+test("parentheses do not change an invalid operand diagnostic", async () => {
+  for (const expression of ["a + b", "(a + b)"]) {
+    const result = await analyzeScalar(`export function wrong(a: i32, b: bool): i32 { return ${expression}; }`);
+    assert.equal(result.status, "error", expression);
+    assert.equal(result.snapshot, undefined);
+    assert.equal(result.diagnostics[0].code, "r01-d-scalar-type", expression);
+  }
+});
+
+test("parentheses preserve a valid i32 arithmetic return", async () => {
+  const result = await analyzeScalar("export function sum(a: i32, b: i32): i32 { return (a + b); }");
+  assert.equal(result.status, "ok");
+  const expression = result.snapshot.functions[0].body[0].expression;
+  assert.equal(expression.kind, "group");
+  assert.equal(expression.operand.operator, "+");
+});
+
+test("loose equality stays prohibited even when official typing also rejects it", async () => {
+  for (const operator of ["==", "!="]) {
+    const result = await analyzeScalar(`export function wrong(a: i32, b: bool): bool { return a ${operator} b; }`);
+    assert.equal(result.status, "error", operator);
+    assert.equal(result.snapshot, undefined);
+    assert.equal(result.diagnostics[0].code, "r02b-d-prohibited", operator);
+    assert.equal(result.diagnostics[0].category, "prohibited", operator);
+  }
+});
+
+test("same-type f64 arithmetic is a pending capability, not a language error", async () => {
+  const result = await analyzeScalar("export function later(a: f64, b: f64): f64 { return a + b; }");
+  assert.equal(result.status, "error");
+  assert.equal(result.snapshot, undefined);
+  assert.equal(result.diagnostics[0].code, "r02b-d-unsupported");
+  assert.equal(result.diagnostics[0].category, "unsupported");
+});
+
+test("fractional f64 operand cannot implicitly join i32 arithmetic", async () => {
+  const result = await analyzeScalar("export function wrong(a: i32): i32 { return a + 1.5; }");
+  assert.equal(result.status, "error");
+  assert.equal(result.snapshot, undefined);
+  assert.equal(result.diagnostics[0].code, "r01-d-scalar-type");
+});
+
 test("i32 parameter and return retain a scalar fact and symbol relation", async () => {
   const source = "export function identity(value: i32): i32 { return value; }";
   const result = await analyzeFrontend({
