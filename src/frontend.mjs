@@ -243,7 +243,11 @@ export function validateFrontendSnapshot(snapshot) {
   }
   let calls = 0;
   const checkNode = (value, kind) => {
-    if (resolveNode(snapshot, value.node).kind !== kind) throw new TypeError("node kind differs from its reference");
+    const node = resolveNode(snapshot, value.node);
+    if (node.kind !== kind || node.range?.start !== value.range?.start
+        || node.range?.end !== value.range?.end) {
+      throw new TypeError("node differs from its reference");
+    }
   };
   const checkType = (name, ref) => {
     const type = resolveType(snapshot, ref);
@@ -258,6 +262,9 @@ export function validateFrontendSnapshot(snapshot) {
     checkNode(expression, expression.kind);
     checkType(expression.type, expression.typeRef);
     if (expression.symbol) resolveSymbol(snapshot, expression.symbol);
+    if (expression.kind === "call" && !expression.target) {
+      throw new TypeError("call has no target");
+    }
     if (expression.target) {
       const target = resolveSymbol(snapshot, expression.target);
       const fn = snapshot.functions.find(item => item.symbol.id === target.id);
@@ -283,7 +290,13 @@ export function validateFrontendSnapshot(snapshot) {
   for (const fn of snapshot.functions) {
     checkNode(fn, "function");
     checkType(fn.returnType, fn.returnTypeRef);
-    resolveSymbol(snapshot, fn.symbol);
+    const definition = resolveSymbol(snapshot, fn.symbol);
+    if (definition.kind !== "function" || definition.name !== fn.name
+        || definition.type !== fn.returnType
+        || definition.range?.start < fn.range?.start
+        || definition.range?.end > fn.range?.end) {
+      throw new TypeError("function differs from its symbol");
+    }
     if (!Array.isArray(fn.parameters) || !Array.isArray(fn.body)) {
       throw new TypeError("invalid function structure");
     }

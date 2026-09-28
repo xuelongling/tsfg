@@ -202,6 +202,19 @@ test("the consumer checks same-snapshot call targets against signature and argum
   const falseSignature = structuredClone(result.snapshot);
   falseSignature.functions[0].body[0].expression.signature.parameters[0] = "bool";
   assert.throws(() => validateFrontendSnapshot(falseSignature), TypeError);
+  const missingTarget = structuredClone(result.snapshot);
+  delete missingTarget.functions[0].body[0].expression.target;
+  assert.throws(() => validateFrontendSnapshot(missingTarget), TypeError);
+});
+
+test("the consumer binds function node and symbol references to their declarations", async () => {
+  const result = await analyzeCalls("export function first(x: i32): i32 { return x; } export function second(y: i32): i32 { return y; }");
+  assert.equal(result.status, "ok");
+  for (const field of ["node", "symbol"]) {
+    const swapped = structuredClone(result.snapshot);
+    swapped.functions[0][field] = swapped.functions[1][field];
+    assert.throws(() => validateFrontendSnapshot(swapped), TypeError);
+  }
 });
 
 test("node and type references are snapshot-owned and invalid local IDs reject", async () => {
