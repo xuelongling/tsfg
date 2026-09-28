@@ -114,6 +114,21 @@ test("an i32 literal argument retains its exact value in a call", async () => {
   assert.equal(call.arguments[0].type, "i32");
 });
 
+test("nested i32 calls type contextual literals at the inner parameter", async () => {
+  const functions = "export function outer(x: i32): i32 { return x; } export function inner(x: i32): i32 { return x; }";
+  const accepted = await analyzeCalls(`export function entry(): i32 { return outer(inner(17)); } ${functions}`);
+  assert.equal(accepted.status, "ok");
+  const outer = accepted.snapshot.functions[0].body[0].expression;
+  assert.equal(outer.arguments[0].kind, "call");
+  assert.deepEqual(outer.arguments[0].arguments[0].literal, { decimal: "17", token: "17" });
+
+  const rejected = await analyzeCalls(`export function entry(): i32 { return outer(inner(2147483648)); } ${functions}`);
+  assert.equal(rejected.status, "error");
+  assert.equal(rejected.snapshot, undefined);
+  assert.equal(rejected.diagnostics[0].code, "r01-d-integer-range");
+  assert.equal(rejected.diagnostics[0].ruleId, "r01-literals");
+});
+
 test("bool literal arguments remain typed call facts", async () => {
   for (const value of [true, false]) {
     const result = await analyzeCalls(`export function entry(): bool { return identity(${value}); } export function identity(x: bool): bool { return x; }`);
