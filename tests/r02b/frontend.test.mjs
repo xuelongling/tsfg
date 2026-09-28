@@ -114,6 +114,23 @@ test("an i32 literal argument retains its exact value in a call", async () => {
   assert.equal(call.arguments[0].type, "i32");
 });
 
+test("bool literal arguments remain typed call facts", async () => {
+  for (const value of [true, false]) {
+    const result = await analyzeCalls(`export function entry(): bool { return identity(${value}); } export function identity(x: bool): bool { return x; }`);
+    assert.equal(result.status, "ok");
+    const argument = result.snapshot.functions[0].body[0].expression.arguments[0];
+    assert.equal(argument.kind, "boolean");
+    assert.equal(argument.type, "bool");
+    assert.equal(argument.boolean, value);
+  }
+});
+
+test("zero-argument calls expose an empty ordered argument list", async () => {
+  const result = await analyzeCalls("export function entry(): i32 { return zero(); } export function zero(): i32 { return 17; }");
+  assert.equal(result.status, "ok");
+  assert.deepEqual(result.snapshot.functions[0].body[0].expression.arguments, []);
+});
+
 test("ordinary and nested calls preserve their callee links across declaration order", async () => {
   const declarations = "function first(x: bool): bool { return x; } function second(y: bool): bool { return y; }";
   for (const source of [
