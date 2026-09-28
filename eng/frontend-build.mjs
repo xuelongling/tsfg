@@ -41,7 +41,7 @@ function parsePackages(text) {
 export async function executeFrontendTarget({ command, productRoot, sourceRoot, out, runtime,
   go, node, git, dependencyProxy, serialize }) {
   const lock = JSON.parse(await readFile(path.join(productRoot, "eng/frontend-source.lock.json"), "utf8"));
-  if (lock.schemaVersion !== "1" || lock.contractVersion !== "2"
+  if (lock.schemaVersion !== "1" || lock.contractVersion !== "3"
       || lock.languageBaseline !== "TypeScript 7.0.2") throw new FrontendBuildError("invalid frontend source lock");
   const gitEnv = sourceGitEnvironment();
   const head = run(git, ["rev-parse", "HEAD"], sourceRoot, gitEnv).trim();

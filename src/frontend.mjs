@@ -4,7 +4,7 @@ import { spawnSync } from "node:child_process";
 import { readFile } from "node:fs/promises";
 import sourceLock from "../eng/frontend-source.lock.json" with { type: "json" };
 
-export const frontendContractVersion = "2";
+export const frontendContractVersion = "3";
 
 const digest = bytes => `sha256:${createHash("sha256").update(bytes).digest("hex")}`;
 
@@ -95,14 +95,21 @@ export async function analyzeFrontend(input, { executable } = {}) {
   }
   const snapshotId = digest(canonical({ contractVersion: frontendContractVersion, inputIdentity, frontendSource }));
   const symbols = output.symbols.map(symbol => ({ ...symbol, ref: { snapshotId, id: symbol.id } }));
+  const expression = value => ({
+    ...value,
+    ...(value.symbol ? { symbol: { snapshotId, id: value.symbol } } : {}),
+    ...(value.target ? { target: { snapshotId, id: value.target } } : {}),
+    ...(value.arguments ? { arguments: value.arguments.map(expression) } : {}),
+  });
   const functions = output.functions.map(fn => ({
     ...fn,
+    symbol: { snapshotId, id: fn.symbol },
     parameters: fn.parameters.map(parameter => ({ ...parameter, ref: { snapshotId, id: parameter.id } })),
     body: fn.body.map(statement => ({
       ...statement,
       ...(statement.symbol ? { symbol: { ...statement.symbol, ref: { snapshotId, id: statement.symbol.id } } } : {}),
-      ...(statement.expression ? { expression: statement.expression.symbol === undefined ? statement.expression
-        : { ...statement.expression, symbol: { snapshotId, id: statement.expression.symbol } } } : {}),
+      ...(statement.expression ? { expression: expression(statement.expression) } : {}),
+      ...(statement.initializer ? { initializer: expression(statement.initializer) } : {}),
     })),
   }));
   const source = ownedInput.files.find(file => file.path === ownedInput.rootFile);

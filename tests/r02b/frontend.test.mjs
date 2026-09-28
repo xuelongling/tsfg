@@ -23,6 +23,16 @@ type i32 = number & { readonly [__tsfg_i32]: true };
 type f64 = number;
 `;
 
+const analyzeCalls = source => analyzeFrontend({
+  sourceRoot: "/src", rootFile: "/src/main.ts",
+  files: [
+    { path: "/src/main.ts", content: source },
+    { path: "/src/minimal-scalars-v2.d.ts", content: scalarDeclarations },
+  ],
+  declarations: { version: "minimal-scalars-v2", paths: ["/src/minimal-scalars-v2.d.ts"] },
+  config: { strict: true, noEmit: true, allowJs: false },
+}, { executable: process.env.TSFG_FRONTEND_EXE });
+
 test("i32 parameter and return retain a scalar fact and symbol relation", async () => {
   const source = "export function identity(value: i32): i32 { return value; }";
   const result = await analyzeFrontend({
@@ -40,6 +50,93 @@ test("i32 parameter and return retain a scalar fact and symbol relation", async 
   assert.equal(fn.parameters[0].type, "i32");
   assert.equal(fn.body[0].expression.type, "i32");
   assert.equal(resolveSymbol(result.snapshot, fn.body[0].expression.symbol).name, "value");
+});
+
+test("a forward call resolves its function symbol and ordered signature", async () => {
+  const result = await analyzeFrontend({
+    sourceRoot: "/src", rootFile: "/src/main.ts",
+    files: [
+      { path: "/src/main.ts", content: "export function entry(a: i32, b: bool): bool { return target(a, b); } export function target(x: i32, y: bool): bool { return y; }" },
+      { path: "/src/minimal-scalars-v2.d.ts", content: scalarDeclarations },
+    ],
+    declarations: { version: "minimal-scalars-v2", paths: ["/src/minimal-scalars-v2.d.ts"] },
+    config: { strict: true, noEmit: true, allowJs: false },
+  }, { executable: process.env.TSFG_FRONTEND_EXE });
+  assert.equal(result.status, "ok");
+  const [entry, target] = result.snapshot.functions;
+  const call = entry.body[0].expression;
+  assert.equal(call.kind, "call");
+  assert.equal(call.type, "bool");
+  assert.equal(resolveSymbol(result.snapshot, call.target).id, target.symbol.id);
+  assert.deepEqual(call.signature, { parameters: ["i32", "bool"], returnType: "bool" });
+  assert.deepEqual(call.arguments.map(argument => argument.type), ["i32", "bool"]);
+  assert.deepEqual(call.arguments.map(argument => resolveSymbol(result.snapshot, argument.symbol).name), ["a", "b"]);
+});
+
+test("direct and mutual recursion form finite snapshot-local symbol graphs", async () => {
+  const source = "export function direct(x: bool): bool { return direct(x); } export function left(x: bool): bool { return right(x); } export function right(x: bool): bool { return left(x); }";
+  const result = await analyzeCalls(source);
+  assert.equal(result.status, "ok");
+  const [direct, left, right] = result.snapshot.functions;
+  for (const [fn, target] of [[direct, direct], [left, right], [right, left]]) {
+    const call = fn.body[0].expression;
+    assert.equal(resolveSymbol(result.snapshot, call.target).id, target.symbol.id);
+    assert.equal(call.arguments.length, 1);
+    assert.equal(resolveSymbol(result.snapshot, call.arguments[0].symbol).name, "x");
+  }
+  assert.equal(JSON.stringify(result.snapshot).length < 10000, true);
+  const independent = await analyzeCalls(source.replaceAll("left", "first"));
+  assert.equal(independent.status, "ok");
+  assert.throws(() => resolveSymbol(independent.snapshot, direct.symbol), TypeError);
+});
+
+test("call errors reject wrong arity, argument type, unresolved target and return type", async () => {
+  for (const [source, code] of [
+    ["export function entry(x: bool): bool { return target(); } export function target(x: bool): bool { return x; }", "r02b-d-type"],
+    ["export function entry(x: bool): bool { return target(x, x); } export function target(x: i32, y: bool): bool { return y; }", "r01-d-scalar-type"],
+    ["export function entry(x: bool): bool { return missing(x); }", "r01-d-unresolved-name"],
+    ["export function entry(x: bool): i32 { return target(x); } export function target(x: bool): bool { return x; }", "r01-d-scalar-type"],
+  ]) {
+    const result = await analyzeCalls(source);
+    assert.equal(result.status, "error", source);
+    assert.equal(result.snapshot, undefined, source);
+    assert.equal(result.diagnostics[0].code, code, source);
+    assert.equal(result.diagnostics[0].ruleId, "r01-calls", source);
+  }
+});
+
+test("an i32 literal argument retains its exact value in a call", async () => {
+  const result = await analyzeCalls("export function entry(): i32 { return identity(17); } export function identity(x: i32): i32 { return x; }");
+  assert.equal(result.status, "ok");
+  const call = result.snapshot.functions[0].body[0].expression;
+  assert.equal(call.kind, "call");
+  assert.deepEqual(call.arguments[0].literal, { decimal: "17", token: "17" });
+  assert.equal(call.arguments[0].type, "i32");
+});
+
+test("ordinary and nested calls preserve their callee links across declaration order", async () => {
+  const declarations = "function first(x: bool): bool { return x; } function second(y: bool): bool { return y; }";
+  for (const source of [
+    `export function entry(value: bool): bool { return first(second(value)); } ${declarations}`,
+    `${declarations} export function entry(value: bool): bool { return first(second(value)); }`,
+  ]) {
+    const result = await analyzeCalls(source);
+    assert.equal(result.status, "ok");
+    const entry = result.snapshot.functions.find(fn => fn.name === "entry");
+    const outer = entry.body[0].expression;
+    const inner = outer.arguments[0];
+    assert.equal(resolveSymbol(result.snapshot, outer.target).name, "first");
+    assert.equal(resolveSymbol(result.snapshot, inner.target).name, "second");
+    assert.equal(resolveSymbol(result.snapshot, inner.arguments[0].symbol).name, "value");
+  }
+});
+
+test("an out-of-range i32 call argument keeps the R01 range diagnosis", async () => {
+  const result = await analyzeCalls("export function entry(): i32 { return identity(2147483648); } export function identity(x: i32): i32 { return x; }");
+  assert.equal(result.status, "error");
+  assert.equal(result.snapshot, undefined);
+  assert.equal(result.diagnostics[0].code, "r01-d-integer-range");
+  assert.equal(result.diagnostics[0].ruleId, "r01-literals");
 });
 
 test("a contextual integer return carries its exact decimal value", async () => {
@@ -276,7 +373,7 @@ test("real bool function becomes an owned snapshot with declaration references",
   };
   const result = await analyzeFrontend(input, { executable: process.env.TSFG_FRONTEND_EXE });
   assert.equal(result.status, "ok");
-  assert.equal(result.snapshot.contractVersion, "2");
+  assert.equal(result.snapshot.contractVersion, "3");
   assert.equal(result.snapshot.frontendSource.forkOid, sourceLock.forkOid);
   assert.equal(result.snapshot.functions.length, 1);
   const fn = result.snapshot.functions[0];
