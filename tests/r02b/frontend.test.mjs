@@ -205,6 +205,22 @@ test("valid f64 unary arithmetic remains a pending capability", async () => {
   assert.equal(result.diagnostics[0].category, "unsupported");
 });
 
+test("integer literal can take a typed f64 operator context", async () => {
+  const result = await analyzeScalar("export function later(a: f64): f64 { return a + 1; }");
+  assert.equal(result.status, "error");
+  assert.equal(result.snapshot, undefined);
+  assert.equal(result.diagnostics[0].code, "r02b-d-unsupported");
+  assert.equal(result.diagnostics[0].category, "unsupported");
+});
+
+test("f64 truthiness is pending rather than an invalid source expression", async () => {
+  const result = await analyzeScalar("export function later(a: f64): bool { return !a; }");
+  assert.equal(result.status, "error");
+  assert.equal(result.snapshot, undefined);
+  assert.equal(result.diagnostics[0].code, "r02b-d-unsupported");
+  assert.equal(result.diagnostics[0].category, "unsupported");
+});
+
 test("fractional f64 operand cannot implicitly join i32 arithmetic", async () => {
   const result = await analyzeScalar("export function wrong(a: i32): i32 { return a + 1.5; }");
   assert.equal(result.status, "error");
@@ -217,6 +233,16 @@ test("nested fractional f64 operand reports the inner i32 mixing error", async (
   assert.equal(result.status, "error");
   assert.equal(result.snapshot, undefined);
   assert.equal(result.diagnostics[0].code, "r01-d-scalar-type");
+});
+
+test("operator operand diagnostics begin at the token after multiline trivia", async () => {
+  const source = "export function wrong(a: i32): i32 { return a +\r\n  false; }";
+  const result = await analyzeScalar(source);
+  assert.equal(result.status, "error");
+  assert.equal(result.diagnostics[0].code, "r01-d-scalar-type");
+  assert.equal(result.diagnostics[0].primary.start, source.indexOf("false"));
+  assert.equal(result.diagnostics[0].primary.startLine, 1);
+  assert.equal(result.diagnostics[0].primary.startColumn, 2);
 });
 
 test("i32 parameter and return retain a scalar fact and symbol relation", async () => {
