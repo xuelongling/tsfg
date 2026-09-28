@@ -129,6 +129,17 @@ test("an inferred i32 local returned inside a branch keeps its declaration ident
   assert.equal(resolveSymbol(result.snapshot, returned.expression.symbol).id, variable.symbol.id);
 });
 
+test("i32 operators in nested returns retain their typed structure", async () => {
+  const source = "export function next(flag: bool, value: i32): i32 { if (flag) { const step: i32 = 1; return value + step; } return value; }";
+  const result = await analyzeScalars(source);
+  assert.equal(result.status, "ok", JSON.stringify(result));
+  const [step, branchReturn] = result.snapshot.functions[0].body[0].thenBody[0].body;
+  assert.equal(branchReturn.expression.kind, "binary");
+  assert.equal(branchReturn.expression.type, "i32");
+  assert.equal(resolveSymbol(result.snapshot, branchReturn.expression.left.symbol).name, "value");
+  assert.equal(resolveSymbol(result.snapshot, branchReturn.expression.right.symbol).id, step.symbol.id);
+});
+
 test("initialized let, assignment, and reads bind to declarations in source order", async () => {
   const result = await analyzeScalars("export function update(seed: i32): i32 { let value: i32 = seed; value = 7; return value; }");
   assert.equal(result.status, "ok", JSON.stringify(result));
