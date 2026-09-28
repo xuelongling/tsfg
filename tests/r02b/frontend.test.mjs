@@ -1430,4 +1430,146 @@ test("a TypeScript assignment error outside the bool slice keeps a generic code"
   }, { executable: process.env.TSFG_FRONTEND_EXE });
   assert.equal(result.status, "error");
   assert.equal(result.diagnostics[0].code, "r02b-d-type");
+  assert.equal(result.diagnostics[0].phase, "types");
+});
+
+function request(source, rootFile = "/src/main.ts") {
+  return {
+    sourceRoot: "/src", rootFile,
+    files: [
+      { path: rootFile, content: source },
+      { path: "/src/minimal-bool-v1.d.ts", content: declarations },
+    ],
+    declarations: { version: "minimal-bool-v1", paths: ["/src/minimal-bool-v1.d.ts"] },
+    config: { strict: true, noEmit: true, allowJs: false },
+  };
+}
+
+test("name failures retain the R01 code and logical UTF-16 location", async () => {
+  const source = "// 😀\r\nexport function bad(value: bool): bool { return missing; }";
+  const result = await analyzeFrontend(request(source, "/src/nested/main.ts"),
+    { executable: process.env.TSFG_FRONTEND_EXE });
+  assert.equal(result.status, "error");
+  assert.equal(result.snapshot, undefined);
+  const diagnostic = result.diagnostics.find(item => item.code === "r01-d-unresolved-name");
+  assert.ok(diagnostic);
+  assert.equal(diagnostic.phase, "types");
+  assert.equal(diagnostic.severity, "error");
+  assert.deepEqual(diagnostic.ruleIds, ["r01-ts-baseline"]);
+  assert.equal(diagnostic.primary.sourceId, "/src/nested/main.ts");
+  assert.deepEqual([diagnostic.primary.start, diagnostic.primary.end],
+    [source.indexOf("missing"), source.indexOf("missing") + "missing".length]);
+  assert.deepEqual([diagnostic.primary.startLine, diagnostic.primary.startColumn,
+    diagnostic.primary.endLine, diagnostic.primary.endColumn],
+    [1, source.split("\r\n")[1].indexOf("missing"), 1,
+      source.split("\r\n")[1].indexOf("missing") + "missing".length]);
+});
+
+test("unsupported and prohibited syntax have distinct machine categories", async () => {
+  const cases = [
+    ["export function bad(value: bool): bool { if (value) return value; return value; }",
+      "r02b-d-unsupported", "unsupported", "capability", "r01-ts-baseline"],
+    ["export function bad(value: any): bool { return value; }",
+      "r02b-d-prohibited", "prohibited", "types", "r01-input-boundary"],
+    ["export function bad(value: bool): bool { return value == true; }",
+      "r02b-d-prohibited", "prohibited", "types", "r01-input-boundary"],
+  ];
+  for (const [source, code, category, phase, ruleId] of cases) {
+    const result = await analyzeFrontend(request(source), { executable: process.env.TSFG_FRONTEND_EXE });
+    assert.equal(result.status, "error");
+    assert.equal(result.snapshot, undefined);
+    assert.equal(result.diagnostics[0].code, code);
+    assert.equal(result.diagnostics[0].category, category);
+    assert.equal(result.diagnostics[0].phase, phase);
+    assert.deepEqual(result.diagnostics[0].ruleIds, [ruleId]);
+    assert.equal(result.diagnostics[0].severity, "error");
+  }
+});
+
+test("a later failed request cannot return a previous success", async () => {
+  const good = await analyzeFrontend(request("export function yes(value: bool): bool { return value; }"),
+    { executable: process.env.TSFG_FRONTEND_EXE });
+  assert.equal(good.status, "ok");
+  const bad = await analyzeFrontend(request("export function bad(value: bool): bool { return missing; }"),
+    { executable: process.env.TSFG_FRONTEND_EXE });
+  assert.equal(bad.status, "error");
+  assert.equal(bad.snapshot, undefined);
+  const missing = await analyzeFrontend(request("export function yes(value: bool): bool { return value; }"),
+    { executable: "E:\\ws\\pro_tsfg\\.tmp\\no-such-frontend.exe" });
+  assert.equal(missing.status, "tool-error");
+  assert.equal(missing.snapshot, undefined);
+  assert.equal(good.snapshot.functions[0].name, "yes");
+});
+
+test("diagnostics preserve escaped source spans and distinct logical file identities", async () => {
+  const source = "// é😀\r\nexport function bad(value: bool): bool { return \\u006dissing; }";
+  const paths = ["/src/one/main.ts", "/src/two/main.ts"];
+  const results = [];
+  for (const rootFile of paths) {
+    const result = await analyzeFrontend(request(source, rootFile),
+      { executable: process.env.TSFG_FRONTEND_EXE });
+    assert.equal(result.status, "error");
+    assert.equal(result.snapshot, undefined);
+    const diagnostic = result.diagnostics.find(item => item.code === "r01-d-unresolved-name");
+    assert.ok(diagnostic);
+    const start = source.indexOf("\\u006dissing");
+    assert.deepEqual([diagnostic.primary.start, diagnostic.primary.end],
+      [start, start + "\\u006dissing".length]);
+    assert.equal(diagnostic.primary.sourceId, rootFile);
+    assert.equal(diagnostic.primary.startLine, 1);
+    assert.equal(diagnostic.primary.startColumn, source.split("\r\n")[1].indexOf("\\u006dissing"));
+    results.push(result);
+  }
+  assert.notEqual(results[0].inputIdentity, results[1].inputIdentity);
+});
+
+test("multiple language diagnostics have stable source-position order", async () => {
+  const source = "export function bad(value: bool): bool { return absent && missing; }";
+  const result = await analyzeFrontend(request(source), { executable: process.env.TSFG_FRONTEND_EXE });
+  assert.equal(result.status, "error");
+  assert.equal(result.snapshot, undefined);
+  const names = result.diagnostics.filter(item => item.code === "r01-d-unresolved-name");
+  assert.equal(names.length, 2);
+  assert.deepEqual(names.map(item => item.primary.start),
+    [source.indexOf("absent"), source.indexOf("missing")]);
+});
+
+test("a prohibition does not hide independent TypeScript diagnostics", async () => {
+  const source = "export function bad(value: any): bool { return missing; }";
+  const result = await analyzeFrontend(request(source), { executable: process.env.TSFG_FRONTEND_EXE });
+  assert.equal(result.status, "error");
+  assert.equal(result.snapshot, undefined);
+  assert.deepEqual(result.diagnostics.map(item => item.code),
+    ["r02b-d-prohibited", "r01-d-unresolved-name"]);
+});
+
+test("dynamic architecture prohibitions remain distinct from missing names", async () => {
+  for (const expression of [
+    'eval("value")',
+    'Function("return true")',
+    'new Function("return true")',
+    'new Proxy({}, {})',
+    'delete value.x',
+    'value["newProperty"] = true',
+    'value.__proto__ = true',
+    'Object.setPrototypeOf(value, {})',
+  ]) {
+    const source = `export function bad(value: bool): bool { ${expression}; return value; }`;
+    const result = await analyzeFrontend(request(source), { executable: process.env.TSFG_FRONTEND_EXE });
+    assert.equal(result.status, "error", expression);
+    assert.equal(result.snapshot, undefined, expression);
+    assert.ok(result.diagnostics.some(item => item.code === "r02b-d-prohibited"
+      && item.category === "prohibited" && item.ruleIds.includes("r01-input-boundary")), expression);
+  }
+});
+
+test("an unresolved call keeps the R01 calls rule association", async () => {
+  const source = "export function bad(value: bool): bool { return missing(value); }";
+  const result = await analyzeFrontend(request(source), { executable: process.env.TSFG_FRONTEND_EXE });
+  assert.equal(result.status, "error");
+  assert.equal(result.snapshot, undefined);
+  const diagnostic = result.diagnostics.find(item => item.code === "r01-d-unresolved-name");
+  assert.ok(diagnostic);
+  assert.deepEqual(diagnostic.ruleIds, ["r01-calls"]);
+  assert.equal(diagnostic.primary.start, source.indexOf("missing"));
 });
