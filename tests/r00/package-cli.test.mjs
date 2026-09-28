@@ -26,6 +26,7 @@ test("Build Input declaration includes both debug target control and smoke input
       { path: "eng/build-inputs.json", projectId: "tsfg" },
       { path: "eng/dependency-sources.json", projectId: "tsfg" },
       { path: "eng/frontend-build.mjs", projectId: "tsfg" },
+      { path: "eng/frontend-source-admission.json", projectId: "tsfg" },
       { path: "eng/frontend-source.lock.json", projectId: "tsfg" },
       { path: "eng/frontend-toolchains.lock.json", projectId: "tsfg" },
       { path: "eng/go-closure.mjs", projectId: "tsfg" },

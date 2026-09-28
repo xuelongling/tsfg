@@ -2,6 +2,7 @@
 import { createHash } from "node:crypto";
 import { spawnSync } from "node:child_process";
 import { readFile } from "node:fs/promises";
+import sourceLock from "../eng/frontend-source.lock.json" with { type: "json" };
 
 export const frontendContractVersion = "1";
 
@@ -23,27 +24,37 @@ function deepFreeze(value) {
   return value;
 }
 
+function rejectInput(inputIdentity, file) {
+  return deepFreeze({ status: "error", inputIdentity, diagnostics: [{
+    code: "r02b-d-input", ruleId: "r01-input-boundary", ruleIds: ["r01-input-boundary"],
+    category: "input", phase: "syntax", severity: "error", file, range: { start: 0, end: 0 },
+    primary: { sourceId: file, start: 0, end: 0, startLine: 0, startColumn: 0, endLine: 0, endColumn: 0 },
+  }] });
+}
+
 /** @param {any} input @param {{ executable?: string }} [options] */
 export async function analyzeFrontend(input, { executable } = {}) {
-  const ownedInput = structuredClone(input);
-  const inputIdentity = digest(canonical(ownedInput));
+  let ownedInput;
+  try { ownedInput = structuredClone(input); } catch { ownedInput = null; }
+  const identityInput = ownedInput && typeof ownedInput === "object" && !Array.isArray(ownedInput)
+    ? { ...ownedInput, files: Array.isArray(ownedInput.files)
+      ? [...ownedInput.files].sort((a, b) => String(a?.path).localeCompare(String(b?.path)))
+      : ownedInput.files }
+    : ownedInput ?? null;
+  let inputIdentity;
+  try { inputIdentity = digest(canonical(identityInput)); }
+  catch { return rejectInput(digest("null"), ownedInput?.rootFile ?? ""); }
   const config = ownedInput?.config;
   if (!config || Object.keys(config).sort().join(",") !== "allowJs,noEmit,strict"
       || config.allowJs !== false || config.noEmit !== true || config.strict !== true) {
-    return deepFreeze({ status: "error", inputIdentity, diagnostics: [{
-      code: "r02b-d-input", ruleId: "r01-input-boundary", category: "input",
-      file: ownedInput?.rootFile ?? "", range: { start: 0, end: 0 },
-    }] });
+    return rejectInput(inputIdentity, ownedInput?.rootFile ?? "");
   }
   const declarationBytes = await readFile(new URL("./minimal-bool-v1.d.ts", import.meta.url), "utf8");
   const declarationPaths = ownedInput?.declarations?.paths;
   const declared = Array.isArray(declarationPaths) && declarationPaths.length === 1
     ? ownedInput.files?.find(file => file.path === declarationPaths[0]) : undefined;
   if (ownedInput?.declarations?.version !== "minimal-bool-v1" || declared?.content !== declarationBytes) {
-    return deepFreeze({ status: "error", inputIdentity, diagnostics: [{
-      code: "r02b-d-input", ruleId: "r01-input-boundary", category: "input",
-      file: declared?.path ?? ownedInput?.rootFile ?? "", range: { start: 0, end: 0 },
-    }] });
+    return rejectInput(inputIdentity, declared?.path ?? ownedInput?.rootFile ?? "");
   }
   if (typeof executable !== "string" || !executable) {
     return { status: "tool-error", inputIdentity, message: "frontend executable is required" };
@@ -54,7 +65,11 @@ export async function analyzeFrontend(input, { executable } = {}) {
   } catch {
     return { status: "tool-error", inputIdentity, message: "frontend executable is unavailable" };
   }
-  const frontendSource = digest(binary);
+  const binarySha256 = digest(binary);
+  if (binarySha256 !== sourceLock.executableSha256) {
+    return { status: "tool-error", inputIdentity, message: "frontend executable differs from locked source build" };
+  }
+  const frontendSource = { forkOid: sourceLock.forkOid, binarySha256 };
   const child = spawnSync(executable, [], {
     input: JSON.stringify(ownedInput), encoding: "utf8", windowsHide: true,
     timeout: 300000, maxBuffer: 16 * 1024 * 1024,
