@@ -23,6 +23,145 @@ type i32 = number & { readonly [__tsfg_i32]: true };
 type f64 = number;
 `;
 
+const analyzeScalar = source => analyzeFrontend({
+  sourceRoot: "/src", rootFile: "/src/main.ts",
+  files: [
+    { path: "/src/main.ts", content: source },
+    { path: "/src/minimal-scalars-v2.d.ts", content: scalarDeclarations },
+  ],
+  declarations: { version: "minimal-scalars-v2", paths: ["/src/minimal-scalars-v2.d.ts"] },
+  config: { strict: true, noEmit: true, allowJs: false },
+}, { executable: process.env.TSFG_FRONTEND_EXE });
+
+test("arithmetic snapshot preserves precedence, operand order, types, and source ranges", async () => {
+  const source = "export function calc(a: i32, b: i32): i32 { return a + b * 2; }";
+  const result = await analyzeFrontend({
+    sourceRoot: "/src", rootFile: "/src/main.ts",
+    files: [
+      { path: "/src/main.ts", content: source },
+      { path: "/src/minimal-scalars-v2.d.ts", content: scalarDeclarations },
+    ],
+    declarations: { version: "minimal-scalars-v2", paths: ["/src/minimal-scalars-v2.d.ts"] },
+    config: { strict: true, noEmit: true, allowJs: false },
+  }, { executable: process.env.TSFG_FRONTEND_EXE });
+  assert.equal(result.status, "ok");
+  const expression = result.snapshot.functions[0].body[0].expression;
+  assert.equal(result.snapshot.capability, "scalar-operators-v3");
+  assert.equal(expression.kind, "binary");
+  assert.equal(expression.operator, "+");
+  assert.equal(expression.type, "i32");
+  assert.deepEqual(expression.range, { start: source.indexOf("a +"), end: source.indexOf("; }") });
+  assert.equal(resolveSymbol(result.snapshot, expression.left.symbol).name, "a");
+  assert.equal(expression.right.operator, "*");
+  assert.equal(expression.right.type, "i32");
+  assert.equal(resolveSymbol(result.snapshot, expression.right.left.symbol).name, "b");
+  assert.deepEqual(expression.right.right.literal, { decimal: "2", token: "2" });
+});
+
+test("bitwise and shift operators retain their operation and i32 operands", async () => {
+  for (const operator of ["&", "|", "^", "<<", ">>", ">>>"]) {
+    const result = await analyzeScalar(`export function op(a: i32, b: i32): i32 { return a ${operator} b; }`);
+    assert.equal(result.status, "ok", operator);
+    const expression = result.snapshot.functions[0].body[0].expression;
+    assert.equal(expression.operator, operator);
+    assert.equal(expression.type, "i32");
+    assert.equal(expression.left.type, "i32");
+    assert.equal(expression.right.type, "i32");
+    assert.equal(resolveSymbol(result.snapshot, expression.left.symbol).name, "a");
+    assert.equal(resolveSymbol(result.snapshot, expression.right.symbol).name, "b");
+  }
+  const invalid = await analyzeScalar("export function op(a: i32, b: bool): i32 { return a << b; }");
+  assert.equal(invalid.status, "error");
+  assert.equal(invalid.snapshot, undefined);
+  assert.equal(invalid.diagnostics[0].code, "r01-d-shift-count-type");
+  assert.equal(invalid.diagnostics[0].ruleId, "r01-shifts");
+});
+
+test("arithmetic operators retain runtime trap candidates without compile rejection", async () => {
+  for (const operator of ["-", "/", "%"]) {
+    const result = await analyzeScalar(`export function op(a: i32): i32 { return a ${operator} 0; }`);
+    assert.equal(result.status, "ok", operator);
+    assert.equal(result.snapshot.functions[0].body[0].expression.operator, operator);
+  }
+  const shift = await analyzeScalar("export function op(a: i32): i32 { return a << 32; }");
+  assert.equal(shift.status, "ok");
+  assert.equal(shift.snapshot.functions[0].body[0].expression.right.literal.decimal, "32");
+  const wrong = await analyzeScalar("export function op(a: i32, b: bool): i32 { return a + b; }");
+  assert.equal(wrong.status, "error");
+  assert.equal(wrong.snapshot, undefined);
+  assert.equal(wrong.diagnostics[0].code, "r01-d-scalar-type");
+});
+
+test("comparison and strict equality produce bool from same-type operands", async () => {
+  for (const operator of ["<", "<=", ">", ">=", "===", "!=="]) {
+    const result = await analyzeScalar(`export function compare(a: i32, b: i32): bool { return a ${operator} b; }`);
+    assert.equal(result.status, "ok", operator);
+    const expression = result.snapshot.functions[0].body[0].expression;
+    assert.equal(expression.operator, operator);
+    assert.equal(expression.type, "bool");
+    assert.equal(expression.left.type, "i32");
+    assert.equal(expression.right.type, "i32");
+  }
+  const boolEquality = await analyzeScalar("export function same(a: bool, b: boolean): bool { return a === b; }");
+  assert.equal(boolEquality.status, "ok");
+  assert.equal(boolEquality.snapshot.functions[0].body[0].expression.left.type, "bool");
+  const mismatch = await analyzeScalar("export function wrong(a: i32, b: bool): bool { return a === b; }");
+  assert.equal(mismatch.status, "error");
+  assert.equal(mismatch.diagnostics[0].code, "r01-d-scalar-type");
+});
+
+test("logical negation and short circuit retain conditional nesting", async () => {
+  const nested = await analyzeScalar("export function choose(a: bool, b: bool, c: bool): bool { return a && (b || !c); }");
+  assert.equal(nested.status, "ok");
+  const outer = nested.snapshot.functions[0].body[0].expression;
+  assert.equal(outer.kind, "shortCircuit");
+  assert.equal(outer.operator, "&&");
+  assert.equal(resolveSymbol(nested.snapshot, outer.left.symbol).name, "a");
+  assert.equal(outer.right.kind, "group");
+  assert.equal(outer.right.operand.kind, "shortCircuit");
+  assert.equal(outer.right.operand.operator, "||");
+  assert.equal(outer.right.operand.right.kind, "unary");
+  assert.equal(outer.right.operand.right.operator, "!");
+  assert.equal(resolveSymbol(nested.snapshot, outer.right.operand.right.operand.symbol).name, "c");
+  const dormantTrap = await analyzeScalar("export function guard(a: bool, x: i32): bool { return a && (x / 0 > 1); }");
+  assert.equal(dormantTrap.status, "ok");
+  assert.equal(dormantTrap.snapshot.functions[0].body[0].expression.right.operand.left.operator, "/");
+  const wrong = await analyzeScalar("export function wrong(a: bool, x: i32): bool { return a && x; }");
+  assert.equal(wrong.status, "error");
+  assert.equal(wrong.diagnostics[0].code, "r01-d-scalar-type");
+});
+
+test("direct unary operators and prohibited loose equality are classified", async () => {
+  for (const [operator, type] of [["!", "bool"], ["~", "i32"], ["-", "i32"], ["+", "i32"]]) {
+    const result = await analyzeScalar(`export function unary(value: ${type}): ${type} { return ${operator}value; }`);
+    assert.equal(result.status, "ok", operator);
+    const expression = result.snapshot.functions[0].body[0].expression;
+    assert.equal(expression.kind, "unary");
+    assert.equal(expression.operator, operator);
+    assert.equal(expression.type, type);
+    assert.equal(resolveSymbol(result.snapshot, expression.operand.symbol).name, "value");
+  }
+  for (const operator of ["==", "!="]) {
+    const result = await analyzeScalar(`export function wrong(a: i32, b: i32): bool { return a ${operator} b; }`);
+    assert.equal(result.status, "error", operator);
+    assert.equal(result.snapshot, undefined);
+    assert.equal(result.diagnostics[0].code, "r02b-d-prohibited");
+    assert.equal(result.diagnostics[0].category, "prohibited");
+  }
+});
+
+test("typed f64 operands do not convert into i32 operator results", async () => {
+  for (const source of [
+    "export function wrong(a: i32, b: f64): i32 { return a + b; }",
+    "export function wrong(a: f64, b: i32): bool { return a < b; }",
+  ]) {
+    const result = await analyzeScalar(source);
+    assert.equal(result.status, "error", source);
+    assert.equal(result.snapshot, undefined);
+    assert.equal(result.diagnostics[0].code, "r01-d-scalar-type");
+  }
+});
+
 test("i32 parameter and return retain a scalar fact and symbol relation", async () => {
   const source = "export function identity(value: i32): i32 { return value; }";
   const result = await analyzeFrontend({
@@ -276,7 +415,7 @@ test("real bool function becomes an owned snapshot with declaration references",
   };
   const result = await analyzeFrontend(input, { executable: process.env.TSFG_FRONTEND_EXE });
   assert.equal(result.status, "ok");
-  assert.equal(result.snapshot.contractVersion, "2");
+  assert.equal(result.snapshot.contractVersion, "3");
   assert.equal(result.snapshot.frontendSource.forkOid, sourceLock.forkOid);
   assert.equal(result.snapshot.functions.length, 1);
   const fn = result.snapshot.functions[0];

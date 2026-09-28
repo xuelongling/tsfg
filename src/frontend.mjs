@@ -4,7 +4,7 @@ import { spawnSync } from "node:child_process";
 import { readFile } from "node:fs/promises";
 import sourceLock from "../eng/frontend-source.lock.json" with { type: "json" };
 
-export const frontendContractVersion = "2";
+export const frontendContractVersion = "3";
 
 const digest = bytes => `sha256:${createHash("sha256").update(bytes).digest("hex")}`;
 
@@ -22,6 +22,17 @@ function deepFreeze(value) {
     Object.freeze(value);
   }
   return value;
+}
+
+function ownExpression(expression, snapshotId) {
+  if (!expression) return expression;
+  return {
+    ...expression,
+    ...(expression.symbol === undefined ? {} : { symbol: { snapshotId, id: expression.symbol } }),
+    ...(expression.left ? { left: ownExpression(expression.left, snapshotId) } : {}),
+    ...(expression.right ? { right: ownExpression(expression.right, snapshotId) } : {}),
+    ...(expression.operand ? { operand: ownExpression(expression.operand, snapshotId) } : {}),
+  };
 }
 
 function rejectInput(inputIdentity, file) {
@@ -101,13 +112,14 @@ export async function analyzeFrontend(input, { executable } = {}) {
     body: fn.body.map(statement => ({
       ...statement,
       ...(statement.symbol ? { symbol: { ...statement.symbol, ref: { snapshotId, id: statement.symbol.id } } } : {}),
-      ...(statement.expression ? { expression: statement.expression.symbol === undefined ? statement.expression
-        : { ...statement.expression, symbol: { snapshotId, id: statement.expression.symbol } } } : {}),
+      ...(statement.expression ? { expression: ownExpression(statement.expression, snapshotId) } : {}),
+      ...(statement.initializer ? { initializer: ownExpression(statement.initializer, snapshotId) } : {}),
     })),
   }));
   const source = ownedInput.files.find(file => file.path === ownedInput.rootFile);
   const snapshot = deepFreeze({ contractVersion: frontendContractVersion, snapshotId, inputIdentity,
-    frontendSource, capability: declarationVersion, source, functions, symbols, diagnostics: [] });
+    frontendSource, capability: declarationVersion === "minimal-scalars-v2" ? "scalar-operators-v3" : declarationVersion,
+    source, functions, symbols, diagnostics: [] });
   return { status: "ok", snapshot };
 }
 

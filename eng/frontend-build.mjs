@@ -41,7 +41,7 @@ function parsePackages(text) {
 export async function executeFrontendTarget({ command, productRoot, sourceRoot, out, runtime,
   go, node, git, dependencyProxy, serialize }) {
   const lock = JSON.parse(await readFile(path.join(productRoot, "eng/frontend-source.lock.json"), "utf8"));
-  if (lock.schemaVersion !== "1" || lock.contractVersion !== "2"
+  if (lock.schemaVersion !== "1" || lock.contractVersion !== "3"
       || lock.languageBaseline !== "TypeScript 7.0.2") throw new FrontendBuildError("invalid frontend source lock");
   const gitEnv = sourceGitEnvironment();
   const head = run(git, ["rev-parse", "HEAD"], sourceRoot, gitEnv).trim();
@@ -85,7 +85,7 @@ export async function executeFrontendTarget({ command, productRoot, sourceRoot, 
       TEMP: stage, TMP: stage, TMPDIR: stage,
       GOCACHE: path.join(stage, "gocache"), GOMODCACHE: path.join(stage, "modules"),
       GOPATH: path.join(stage, "gopath"), GOPROXY: pathToFileURL(dependencyProxy.root).href,
-      GOSUMDB: "off", GOENV: "off", GOWORK: "off", GOTOOLCHAIN: "local", GOFLAGS: "",
+      GOSUMDB: "off", GOENV: "off", GOWORK: "off", GOTOOLCHAIN: "local", GOFLAGS: "-p=1", GOMAXPROCS: "2",
       GOEXPERIMENT: "", GOOS: "windows", GOARCH: "amd64", GOAMD64: "v2", CGO_ENABLED: "0",
     };
     const goList = run(go, ["list", "-deps", "-json", "-mod=readonly", "-buildvcs=false", "./cmd/tsfg-frontend"],
@@ -198,7 +198,7 @@ export async function executeFrontendTarget({ command, productRoot, sourceRoot, 
       auxiliaryFiles: auxiliaryEntries };
     await writeFile(path.join(out, "intake-ledger.json"), `${serialize(intakeLedger)}\n`);
     return { schemaVersion: "1", status: command === "test" ? "passed" : "built",
-      capability: "minimal-scalars-v2", contractVersion: lock.contractVersion,
+      capability: "scalar-operators-v3", contractVersion: lock.contractVersion,
       source: { forkOid: head, producer: lock.producerPath },
       toolchainClosureDigest: runtime.lockDigest, dependencyProxyIdentity: dependencyProxy.identity,
       buildInputSet, buildInputSetDigest: inputDigest, intakeLedger,
