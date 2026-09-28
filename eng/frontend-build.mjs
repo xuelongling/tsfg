@@ -41,7 +41,14 @@ function parsePackages(text) {
 export async function executeFrontendTarget({ command, productRoot, sourceRoot, out, runtime,
   go, node, git, dependencyProxy, serialize }) {
   const lock = JSON.parse(await readFile(path.join(productRoot, "eng/frontend-source.lock.json"), "utf8"));
-  if (lock.schemaVersion !== "1" || lock.contractVersion !== "3"
+  const registry = JSON.parse(await readFile(path.join(productRoot, "contracts/registry.json"), "utf8"));
+  const schema = JSON.parse(await readFile(path.join(productRoot, "contracts/frontend-snapshot.schema.json"), "utf8"));
+  const contract = registry["tsfg.frontend-snapshot"];
+  if (contract?.semver !== lock.contractVersion || contract?.compatibility !== "exact"
+      || contract?.schemaHash !== sha256(serialize(schema))) {
+    throw new FrontendBuildError("frontend snapshot contract differs from its registered schema");
+  }
+  if (lock.schemaVersion !== "1" || lock.contractVersion !== "0.4.0"
       || lock.languageBaseline !== "TypeScript 7.0.2") throw new FrontendBuildError("invalid frontend source lock");
   const gitEnv = sourceGitEnvironment();
   const head = run(git, ["rev-parse", "HEAD"], sourceRoot, gitEnv).trim();
@@ -154,7 +161,8 @@ export async function executeFrontendTarget({ command, productRoot, sourceRoot, 
       throw new FrontendBuildError("frontend consumed source differs from approved per-file admission");
     }
     const productEntries = [];
-    for (const name of ["eng/build-inputs.json", "eng/frontend-build.mjs", "eng/frontend-source-admission.json", "eng/frontend-source.lock.json",
+    for (const name of ["contracts/registry.json", "contracts/frontend-snapshot.schema.json",
+      "eng/build-inputs.json", "eng/contract-set.mjs", "eng/frontend-build.mjs", "eng/frontend-source-admission.json", "eng/frontend-source.lock.json",
       "eng/frontend-toolchains.lock.json", "eng/tsfg-build.mjs", "src/frontend.mjs", "src/minimal-bool-v1.d.ts", "src/minimal-scalars-v2.d.ts",
       ...(command === "test" ? ["tests/r02b/frontend.test.mjs"] : [])]) {
       productEntries.push({ projectId: "tsfg", path: name,

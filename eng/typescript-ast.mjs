@@ -10,6 +10,7 @@ import { astGit, astBuildInputs, astToolchainInputs } from "./typescript-ast-inp
 import { readTypeScriptProbes, runTypeScriptProbes, runJsIsolation } from "./typescript-probes.mjs";
 import { runGeneration } from "./typescript-generation.mjs";
 import { runRequiredTypeScriptTests } from "./typescript-required-tests.mjs";
+import { contractSetProjection } from "./contract-set.mjs";
 
 const hash = bytes => `sha256:${createHash("sha256").update(bytes).digest("hex")}`;
 const consumer = "tsfg-ast";
@@ -53,8 +54,8 @@ export async function readAstIntake({ productRoot, controlRoot, planPath, gitExe
   const ledger = await createIntakeLedger(request);
   const probes = await readTypeScriptProbes(controlRoot, gitExecutable);
   const contractRegistry = JSON.parse(await readFile(path.join(controlRoot, "contracts/registry.json"), "utf8"));
-  if (!contractRegistry || typeof contractRegistry !== "object" || Array.isArray(contractRegistry)
-      || Object.keys(contractRegistry).length) fail("source probe requires the current empty Contract Registry");
+  try { contractSetProjection(contractRegistry); }
+  catch { fail("source probe requires a valid Contract Registry"); }
   return { request, ledger, controlRoot, probes, contractRegistry,
     inputIdentity: { admission: hash(admissionBytes), declaration: hash(declarationBytes), probes: probes.sha256 } };
 }
@@ -177,7 +178,7 @@ export async function buildAstProbe({ prepared, child, serialize, publish }) {
   await writeFile(path.join(publication, "build-metadata.json"), metadata);
   await writeFile(path.join(publication, "artifact-manifest.json"), serialize({ schemaVersion: "1",
     kind: "typescript-source-probe", buildIdentity: result.buildIdentity, buildInputSet: result.buildInputSet,
-    contractSetId: hash(serialize(intake.contractRegistry)), toolchainClosureDigest: result.toolchainClosure, members }));
+    contractSetId: hash(serialize(contractSetProjection(intake.contractRegistry))), toolchainClosureDigest: result.toolchainClosure, members }));
   await writeFile(path.join(publication, "tsfg-ast.exe"), binary);
   await writeFile(path.join(publication, "ast.json"), astBytes);
   await writeFile(path.join(publication, "probes.json"), probeBytes);

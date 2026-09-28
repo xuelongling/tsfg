@@ -22,8 +22,10 @@ test("Build Input declaration includes both debug target control and smoke input
   assert.equal(declarationBytes, `${JSON.stringify(declaration)}\n`);
   assert.deepEqual(declaration, {
     entries: [
+      { path: "contracts/frontend-snapshot.schema.json", projectId: "tsfg" },
       { path: "contracts/registry.json", projectId: "tsfg" },
       { path: "eng/build-inputs.json", projectId: "tsfg" },
+      { path: "eng/contract-set.mjs", projectId: "tsfg" },
       { path: "eng/dependency-sources.json", projectId: "tsfg" },
       { path: "eng/frontend-build.mjs", projectId: "tsfg" },
       { path: "eng/frontend-source-admission.json", projectId: "tsfg" },
@@ -61,10 +63,8 @@ test("Build Input declaration includes both debug target control and smoke input
     ],
     schemaVersion: "1",
   });
-  assert.equal(
-    await readFile(path.join(repositoryRoot, "contracts", "registry.json"), "utf8"),
-    "{}\n",
-  );
+  const registry = JSON.parse(await readFile(path.join(repositoryRoot, "contracts", "registry.json"), "utf8"));
+  assert.equal(registry["tsfg.frontend-snapshot"].semver, "0.4.0");
   assert.equal(
     declaration.entries.some(({ path: inputPath }) =>
       inputPath.endsWith(".test.mjs") || inputPath.includes("fixture") || inputPath.includes("report")),

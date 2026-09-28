@@ -45,6 +45,7 @@ import { reviewUpgrade } from "./upgrade-review.mjs";
 import { reproduceTypeScript, SourceReproError } from "./typescript-repro.mjs";
 import { prefetchGoDependencies, readGoDependencyLock, verifyGoDependencies } from "./go-closure.mjs";
 import { executeFrontendTarget, FrontendBuildError } from "./frontend-build.mjs";
+import { contractSetProjection } from "./contract-set.mjs";
 
 class ConfigurationError extends Error {
   constructor(message, issueCode = "invalid-configuration") {
@@ -5376,11 +5377,8 @@ async function testCompatibility(options, workspaceState, networkCanary) {
   } catch (error) {
     throw new TestFailureError(error.message);
   }
-  const canonicalContractSet = canonicalize(registry);
+  const canonicalContractSet = canonicalize(contractSetProjection(registry));
   const contractSetId = digest(canonicalContractSet);
-  if (canonicalContractSet !== "{}" || contractSetId !== R00_CONTRACT_SET_ID) {
-    throw new TestFailureError("R00 product Contract Set must be the approved empty mapping");
-  }
   validateSyntheticArtifact(baseline, "baseline", contractSetId);
   validateSyntheticArtifact(candidate, "candidate", contractSetId);
   const semanticChange = baseline.contract.schemaHash !== candidate.contract.schemaHash ||
@@ -5616,9 +5614,7 @@ async function createBuildIdentity(
     path.join(workspaceRoot, "contracts", "registry.json"),
     "Contract Registry",
   );
-  if (canonicalize(registry) !== "{}") {
-    throw new PackageFailureError("R00 Contract Registry must be empty");
-  }
+  const contractSet = canonicalize(contractSetProjection(registry));
   const { buildInputSet: inputSet, sourceDateEpoch } = await buildInputSet(workspaceRoot);
   const buildIdentityPayload = {
     buildInputSetDigest: inputSet.digest,
@@ -5634,8 +5630,8 @@ async function createBuildIdentity(
       digest: digest(canonicalize(buildIdentityPayload)),
     },
     buildInputSet: inputSet,
-    contractSetId: digest(canonicalize(registry)),
-    contractSet: canonicalize(registry),
+    contractSetId: digest(contractSet),
+    contractSet,
     productVersion: version.version,
   };
 }
@@ -6259,10 +6255,6 @@ function reproSidecarKind(name) {
 }
 
 const REPRO_FULL_DIGEST = /^sha256:[0-9a-f]{64}$/;
-const R00_CONTRACT_SET = Buffer.from("{}");
-const R00_CONTRACT_SET_ID =
-  "sha256:44136fa355b3678a1146ad16f7e8649e94fb4fc21fe77e8310c060f61caaff8a";
-
 function hasExactKeys(value, keys) {
   return (
     value !== null &&
@@ -6541,9 +6533,8 @@ async function loadReproProducer(rootOption, target, profile, label) {
   }
   const contractSet = parseReproJson(contractSetEntry.bytes, "contract-set.json", false);
   if (
-    !contractSetEntry.bytes.equals(R00_CONTRACT_SET) ||
-    canonicalize(contractSet) !== "{}" ||
-    manifest.contractSetId !== R00_CONTRACT_SET_ID
+    !contractSetEntry.bytes.equals(Buffer.from(canonicalize(contractSet))) ||
+    manifest.contractSetId !== digest(canonicalize(contractSet))
   ) {
     throw new ReproducibilityMismatchError(
       "contract-set.json",

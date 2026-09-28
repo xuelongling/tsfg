@@ -4,8 +4,9 @@ import { createHash } from "node:crypto";
 import { mkdtemp, mkdir, readFile, rm, writeFile } from "node:fs/promises";
 import path from "node:path";
 import test from "node:test";
-import { analyzeFrontend, resolveSymbol } from "../../src/frontend.mjs";
+import { analyzeFrontend, resolveNode, resolveSymbol, resolveType, validateFrontendSnapshot } from "../../src/frontend.mjs";
 import sourceLock from "../../eng/frontend-source.lock.json" with { type: "json" };
+import contractRegistry from "../../contracts/registry.json" with { type: "json" };
 
 const declarations = `interface Object {}
 interface Function {}
@@ -172,6 +173,86 @@ test("a forward call resolves its function symbol and ordered signature", async 
   assert.deepEqual(call.signature, { parameters: ["i32", "bool"], returnType: "bool" });
   assert.deepEqual(call.arguments.map(argument => argument.type), ["i32", "bool"]);
   assert.deepEqual(call.arguments.map(argument => resolveSymbol(result.snapshot, argument.symbol).name), ["a", "b"]);
+});
+
+test("the public consumer validates a real call graph and rejects foreign symbol links", async () => {
+  const source = "export function entry(x: i32): i32 { return target(x); } export function target(y: i32): i32 { return y; }";
+  const first = await analyzeCalls(source);
+  const second = await analyzeCalls(source.replaceAll("target", "other"));
+  assert.equal(first.status, "ok");
+  assert.equal(second.status, "ok");
+  assert.deepEqual(validateFrontendSnapshot(first.snapshot), {
+    snapshotId: first.snapshot.snapshotId, functions: 2, calls: 1,
+  });
+  const mixed = structuredClone(first.snapshot);
+  mixed.functions[0].body[0].expression.target = second.snapshot.functions[1].symbol;
+  assert.throws(() => validateFrontendSnapshot(mixed), TypeError);
+});
+
+test("node and type references are snapshot-owned and invalid local IDs reject", async () => {
+  const first = await analyzeCalls("export function entry(x: i32): i32 { return target(x); } export function target(y: i32): i32 { return y; }");
+  const second = await analyzeCalls("export function other(x: i32): i32 { return x; }");
+  assert.equal(first.status, "ok");
+  assert.equal(second.status, "ok");
+  const fn = first.snapshot.functions[0];
+  const call = fn.body[0].expression;
+  assert.equal(resolveNode(first.snapshot, fn.node).kind, "function");
+  assert.equal(resolveNode(first.snapshot, call.node).kind, "call");
+  assert.equal(resolveType(first.snapshot, call.typeRef).name, "i32");
+  assert.throws(() => resolveNode(second.snapshot, fn.node), TypeError);
+  assert.throws(() => resolveType(second.snapshot, call.typeRef), TypeError);
+  assert.throws(() => resolveNode(first.snapshot, { snapshotId: first.snapshot.snapshotId, id: "n999" }), RangeError);
+  assert.throws(() => resolveType(first.snapshot, { snapshotId: first.snapshot.snapshotId, id: "t999" }), RangeError);
+  for (const ref of ["node", "typeRef"]) {
+    const mixed = structuredClone(first.snapshot);
+    mixed.functions[0].body[0].expression[ref] = second.snapshot.functions[0].body[0].expression[ref];
+    assert.throws(() => validateFrontendSnapshot(mixed), TypeError);
+  }
+  const old = structuredClone(first.snapshot);
+  old.contractVersion = "2";
+  assert.throws(() => validateFrontendSnapshot(old), TypeError);
+});
+
+test("snapshot and consumer share the registered exact contract", async () => {
+  const result = await analyzeCalls("export function answer(): i32 { return 17; }");
+  assert.equal(result.status, "ok");
+  const contract = contractRegistry["tsfg.frontend-snapshot"];
+  assert.equal(result.snapshot.contractVersion, contract.semver);
+  assert.equal(result.snapshot.schemaHash, contract.schemaHash);
+  const mismatched = structuredClone(result.snapshot);
+  mismatched.schemaHash = `sha256:${"0".repeat(64)}`;
+  assert.throws(() => validateFrontendSnapshot(mismatched), TypeError);
+  const old = structuredClone(result.snapshot);
+  delete old.schemaHash;
+  assert.throws(() => validateFrontendSnapshot(old), TypeError);
+});
+
+test("cold replay preserves an old call snapshot after a new analysis and caller edit", async () => {
+  const source = "export function entry(x: i32): i32 { return target(x); } export function target(y: i32): i32 { return y; }";
+  const input = {
+    sourceRoot: "/src", rootFile: "/src/main.ts",
+    files: [{ path: "/src/main.ts", content: source },
+      { path: "/src/minimal-scalars-v2.d.ts", content: scalarDeclarations }],
+    declarations: { version: "minimal-scalars-v2", paths: ["/src/minimal-scalars-v2.d.ts"] },
+    config: { strict: true, noEmit: true, allowJs: false },
+  };
+  const analyze = () => analyzeFrontend(input, { executable: process.env.TSFG_FRONTEND_EXE });
+  const first = await analyze();
+  const replay = await analyze();
+  assert.equal(first.status, "ok");
+  assert.equal(replay.status, "ok");
+  assert.deepEqual(first.snapshot, replay.snapshot);
+  const saved = JSON.stringify(first.snapshot);
+  input.files[0].content = source.replaceAll("target", "other");
+  const edited = await analyze();
+  assert.equal(edited.status, "ok");
+  assert.notEqual(edited.snapshot.snapshotId, first.snapshot.snapshotId);
+  assert.equal(JSON.stringify(first.snapshot), saved);
+  assert.equal(validateFrontendSnapshot(first.snapshot).calls, 1);
+  assert.throws(() => resolveSymbol(edited.snapshot, first.snapshot.functions[0].body[0].expression.target), TypeError);
+  const corrupted = structuredClone(first.snapshot);
+  corrupted.inputIdentity = edited.snapshot.inputIdentity;
+  assert.throws(() => validateFrontendSnapshot(corrupted), TypeError);
 });
 
 test("direct and mutual recursion form finite snapshot-local symbol graphs", async () => {
@@ -506,7 +587,7 @@ test("real bool function becomes an owned snapshot with declaration references",
   };
   const result = await analyzeFrontend(input, { executable: process.env.TSFG_FRONTEND_EXE });
   assert.equal(result.status, "ok");
-  assert.equal(result.snapshot.contractVersion, "3");
+  assert.equal(result.snapshot.contractVersion, "0.4.0");
   assert.equal(result.snapshot.frontendSource.forkOid, sourceLock.forkOid);
   assert.equal(result.snapshot.functions.length, 1);
   const fn = result.snapshot.functions[0];

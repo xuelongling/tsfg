@@ -712,7 +712,7 @@ test("repro-check independently derives rather than trusts the claimed Build Ide
   }
 });
 
-test("repro-check rejects non-canonical Build Input entries and a non-empty R00 Contract Set", async () => {
+test("repro-check rejects non-canonical Build Input entries and a mismatched Contract Set", async () => {
   const sandbox = await mkdtemp(path.join(tmpdir(), "tsfg-repro-canonical-inputs-"));
   const scenarios = [
     {
@@ -752,8 +752,8 @@ test("repro-check rejects non-canonical Build Input entries and a non-empty R00 
     {
       name: "invented contract family",
       evidence: { contractSet: { invented: { version: "1.0.0" } } },
-      code: "member-mismatch",
-      member: "contract-set.json",
+      code: "build-identity-mismatch",
+      member: "comparator-workspace#buildIdentity",
     },
   ];
   try {

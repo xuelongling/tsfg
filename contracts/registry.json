@@ -1,1 +1,1 @@
-{}
+{"tsfg.frontend-snapshot":{"compatibility":"exact","consumer":"src/frontend.mjs:validateFrontendSnapshot","deprecated":false,"familyId":"tsfg.frontend-snapshot","fixtures":["tests/r02b/frontend.test.mjs"],"owner":"tsfg Contracts Owner","producer":"src/frontend.mjs:analyzeFrontend","schema":"contracts/frontend-snapshot.schema.json","schemaHash":"sha256:49cf924380a11f433eda02023ce48317c5671461a855a975588071a45201c279","schemaHashAlgorithm":"sha256-jcs","semver":"0.4.0","spec":"contracts/frontend-snapshot.md","supportWindow":"current development format only"}}

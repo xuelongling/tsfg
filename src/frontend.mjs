@@ -4,8 +4,10 @@ import { spawnSync } from "node:child_process";
 import { readFile } from "node:fs/promises";
 import path from "node:path";
 import sourceLock from "../eng/frontend-source.lock.json" with { type: "json" };
+import contractRegistry from "../contracts/registry.json" with { type: "json" };
 
-export const frontendContractVersion = "3";
+const frontendContract = contractRegistry["tsfg.frontend-snapshot"];
+export const frontendContractVersion = frontendContract.semver;
 
 const digest = bytes => `sha256:${createHash("sha256").update(bytes).digest("hex")}`;
 
@@ -23,6 +25,20 @@ function deepFreeze(value) {
     Object.freeze(value);
   }
   return value;
+}
+
+const snapshotIdentity = (inputIdentity, frontendSource) => digest(canonical({
+  contractVersion: frontendContractVersion, schemaHash: frontendContract.schemaHash,
+  inputIdentity, frontendSource,
+}));
+
+function matchesSnapshotContract(snapshot) {
+  return snapshot?.contractVersion === frontendContractVersion
+    && snapshot.schemaHash === frontendContract.schemaHash
+    && /^sha256:[0-9a-f]{64}$/.test(snapshot.inputIdentity)
+    && typeof snapshot.frontendSource?.forkOid === "string"
+    && /^sha256:[0-9a-f]{64}$/.test(snapshot.frontendSource?.binarySha256)
+    && snapshot.snapshotId === snapshotIdentity(snapshot.inputIdentity, snapshot.frontendSource);
 }
 
 function rejectInput(inputIdentity, file) {
@@ -97,6 +113,9 @@ export async function analyzeFrontend(input, { executable } = {}) {
   if (binarySha256 !== sourceLock.executableSha256) {
     return { status: "tool-error", inputIdentity, message: "frontend executable differs from locked source build" };
   }
+  if (sourceLock.contractVersion !== frontendContractVersion) {
+    return { status: "tool-error", inputIdentity, message: "frontend source and snapshot contracts differ" };
+  }
   const frontendSource = { forkOid: sourceLock.forkOid, binarySha256 };
   const child = spawnSync(executable, [], {
     input: JSON.stringify(ownedInput), encoding: "utf8", windowsHide: true,
@@ -124,7 +143,7 @@ export async function analyzeFrontend(input, { executable } = {}) {
   if (!Array.isArray(output.functions) || !Array.isArray(output.symbols) || output.functions.length === 0) {
     return { status: "tool-error", inputIdentity, message: "incomplete frontend response" };
   }
-  const snapshotId = digest(canonical({ contractVersion: frontendContractVersion, inputIdentity, frontendSource }));
+  const snapshotId = snapshotIdentity(inputIdentity, frontendSource);
   const symbols = output.symbols.map(symbol => ({ ...symbol, ref: { snapshotId, id: symbol.id } }));
   const expression = value => ({
     ...value,
@@ -143,6 +162,37 @@ export async function analyzeFrontend(input, { executable } = {}) {
       ...(statement.initializer ? { initializer: expression(statement.initializer) } : {}),
     })),
   }));
+  const nodes = [];
+  const types = [];
+  const typeRef = name => {
+    if (typeof name !== "string") return undefined;
+    let type = types.find(item => item.name === name);
+    if (!type) {
+      type = { id: `t${types.length}`, name };
+      types.push(type);
+    }
+    return { snapshotId, id: type.id };
+  };
+  const recordNode = (value, kind) => {
+    const node = { id: `n${nodes.length}`, kind, range: value.range };
+    nodes.push(node);
+    value.node = { snapshotId, id: node.id };
+    if (value.type) value.typeRef = typeRef(value.type);
+  };
+  const recordExpression = value => {
+    recordNode(value, value.kind);
+    for (const argument of value.arguments ?? []) recordExpression(argument);
+  };
+  for (const fn of functions) {
+    recordNode(fn, "function");
+    fn.returnTypeRef = typeRef(fn.returnType);
+    for (const parameter of fn.parameters) recordNode(parameter, "parameter");
+    for (const statement of fn.body) {
+      recordNode(statement, statement.kind);
+      if (statement.expression) recordExpression(statement.expression);
+      if (statement.initializer) recordExpression(statement.initializer);
+    }
+  }
   const sourceFile = files.find(file => file.path === rootFile);
   const source = { path: sourceFile.path, content: sourceFile.content };
   const inputs = consumed.map(name => {
@@ -150,16 +200,84 @@ export async function analyzeFrontend(input, { executable } = {}) {
     return { path: name, sha256: digest(file.content), kind: name === rootFile ? "source"
       : declarationPaths.includes(name) ? "declaration-root" : "declaration-dependency" };
   });
-  const snapshot = deepFreeze({ contractVersion: frontendContractVersion, snapshotId, inputIdentity,
-    frontendSource, capability: declarationVersion, source, inputs, functions, symbols, diagnostics: [] });
+  const snapshot = deepFreeze({ contractVersion: frontendContractVersion,
+    schemaHash: frontendContract.schemaHash, snapshotId, inputIdentity,
+    frontendSource, capability: declarationVersion, source, inputs, functions, symbols, nodes, types, diagnostics: [] });
   return { status: "ok", snapshot };
 }
 
 export function resolveSymbol(snapshot, ref) {
-  if (snapshot?.contractVersion !== frontendContractVersion || ref?.snapshotId !== snapshot.snapshotId) {
+  if (!matchesSnapshotContract(snapshot) || !ref
+      || Object.keys(ref).sort().join(",") !== "id,snapshotId"
+      || typeof ref.id !== "string" || ref.snapshotId !== snapshot.snapshotId) {
     throw new TypeError("symbol reference belongs to a different snapshot or contract");
   }
   const symbol = snapshot.symbols.find(item => item.id === ref.id);
   if (!symbol) throw new RangeError("unknown symbol reference");
   return symbol;
+}
+
+function resolveLocal(snapshot, ref, collection) {
+  if (!matchesSnapshotContract(snapshot) || !ref
+      || Object.keys(ref).sort().join(",") !== "id,snapshotId"
+      || typeof ref.id !== "string" || ref.snapshotId !== snapshot.snapshotId) {
+    throw new TypeError("reference belongs to a different snapshot or contract");
+  }
+  const value = snapshot[collection]?.find(item => item.id === ref.id);
+  if (!value) throw new RangeError("unknown snapshot reference");
+  return value;
+}
+
+export const resolveNode = (snapshot, ref) => resolveLocal(snapshot, ref, "nodes");
+export const resolveType = (snapshot, ref) => resolveLocal(snapshot, ref, "types");
+
+export function validateFrontendSnapshot(snapshot) {
+  if (!matchesSnapshotContract(snapshot)
+      || !Array.isArray(snapshot.functions) || !Array.isArray(snapshot.symbols)) {
+    throw new TypeError("unsupported frontend snapshot contract");
+  }
+  let calls = 0;
+  const checkNode = (value, kind) => {
+    if (resolveNode(snapshot, value.node).kind !== kind) throw new TypeError("node kind differs from its reference");
+  };
+  const checkType = (name, ref) => {
+    if (resolveType(snapshot, ref).name !== name) throw new TypeError("type differs from its reference");
+  };
+  const visitExpression = expression => {
+    if (!expression || typeof expression !== "object") throw new TypeError("invalid expression");
+    checkNode(expression, expression.kind);
+    checkType(expression.type, expression.typeRef);
+    if (expression.symbol) resolveSymbol(snapshot, expression.symbol);
+    if (expression.target) {
+      const target = resolveSymbol(snapshot, expression.target);
+      if (!snapshot.functions.some(fn => fn.symbol.id === target.id)) {
+        throw new TypeError("call target is not a function");
+      }
+      calls++;
+    }
+    if (expression.arguments) {
+      if (!Array.isArray(expression.arguments)) throw new TypeError("invalid call arguments");
+      for (const argument of expression.arguments) visitExpression(argument);
+    }
+  };
+  for (const fn of snapshot.functions) {
+    checkNode(fn, "function");
+    checkType(fn.returnType, fn.returnTypeRef);
+    resolveSymbol(snapshot, fn.symbol);
+    if (!Array.isArray(fn.parameters) || !Array.isArray(fn.body)) {
+      throw new TypeError("invalid function structure");
+    }
+    for (const parameter of fn.parameters) {
+      checkNode(parameter, "parameter");
+      checkType(parameter.type, parameter.typeRef);
+      resolveSymbol(snapshot, parameter.ref);
+    }
+    for (const statement of fn.body) {
+      checkNode(statement, statement.kind);
+      if (statement.symbol) resolveSymbol(snapshot, statement.symbol.ref);
+      if (statement.expression) visitExpression(statement.expression);
+      if (statement.initializer) visitExpression(statement.initializer);
+    }
+  }
+  return deepFreeze({ snapshotId: snapshot.snapshotId, functions: snapshot.functions.length, calls });
 }

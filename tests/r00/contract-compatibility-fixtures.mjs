@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: MIT
 
-export const emptyContractSetId =
-  "sha256:44136fa355b3678a1146ad16f7e8649e94fb4fc21fe77e8310c060f61caaff8a";
+export const currentContractSetId =
+  "sha256:161f11985c1a5a962c127cfbb2d6b35817603d8ece713c70e1786c13fb233fea";
 
 /** @returns {Record<string, any>} */
 export function baselineSyntheticArtifact() {
@@ -23,7 +23,7 @@ export function baselineSyntheticArtifact() {
     producer: { payload: { id: "baseline" } },
     product: {
       commitOid: "1".repeat(40),
-      contractSetId: emptyContractSetId,
+      contractSetId: currentContractSetId,
       semver: "0.1.0-dev.0",
     },
     schemaVersion: "1",
@@ -50,7 +50,7 @@ export function candidateSyntheticArtifact() {
     producer: { payload: { id: "candidate", label: "optional" } },
     product: {
       commitOid: "2".repeat(40),
-      contractSetId: emptyContractSetId,
+      contractSetId: currentContractSetId,
       semver: "0.1.0-dev.0",
     },
     schemaVersion: "1",

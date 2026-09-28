@@ -11,7 +11,7 @@ import { fileURLToPath } from "node:url";
 import {
   baselineSyntheticArtifact,
   candidateSyntheticArtifact,
-  emptyContractSetId,
+  currentContractSetId,
 } from "./contract-compatibility-fixtures.mjs";
 import { TEST_GIT_EXECUTABLE } from "./test-tools.mjs";
 
@@ -121,14 +121,14 @@ test("public launchers accept compatibility artifact test arguments before loadi
   }
 });
 
-test("empty Contract Set and all four serialized artifact combinations pass on both targets", async () => {
+test("registered Contract Set and all four serialized artifact combinations pass on both targets", async () => {
   for (const target of ["linux-x86_64-gnu", "windows-x86_64-msvc"]) {
     const { baselineBytes, candidateBytes, report, result } = await runCompatibilityCase({ target });
     assert.equal(result.status, 0, result.stderr);
     assert.equal(result.stdout, "");
     assert.equal(report.command, "test");
     assert.equal(report.status, "success");
-    assert.deepEqual(report.result.contractSet, { canonical: "{}", id: emptyContractSetId });
+    assert.deepEqual(report.result.contractSet, { canonical: '{"tsfg.frontend-snapshot":{"schemaHash":"sha256:49cf924380a11f433eda02023ce48317c5671461a855a975588071a45201c279","semver":"0.4.0"}}', id: currentContractSetId });
     assert.equal(report.result.target, target);
 
     const compatibility = report.result.compatibility;
