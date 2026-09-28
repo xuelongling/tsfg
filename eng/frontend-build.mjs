@@ -41,7 +41,7 @@ function parsePackages(text) {
 export async function executeFrontendTarget({ command, productRoot, sourceRoot, out, runtime,
   go, node, git, dependencyProxy, serialize }) {
   const lock = JSON.parse(await readFile(path.join(productRoot, "eng/frontend-source.lock.json"), "utf8"));
-  if (lock.schemaVersion !== "1" || lock.contractVersion !== "1"
+  if (lock.schemaVersion !== "1" || lock.contractVersion !== "2"
       || lock.languageBaseline !== "TypeScript 7.0.2") throw new FrontendBuildError("invalid frontend source lock");
   const gitEnv = sourceGitEnvironment();
   const head = run(git, ["rev-parse", "HEAD"], sourceRoot, gitEnv).trim();
@@ -193,7 +193,7 @@ export async function executeFrontendTarget({ command, productRoot, sourceRoot, 
       auxiliaryFiles: auxiliaryEntries };
     await writeFile(path.join(out, "intake-ledger.json"), `${serialize(intakeLedger)}\n`);
     return { schemaVersion: "1", status: command === "test" ? "passed" : "built",
-      capability: "minimal-bool-v1", contractVersion: lock.contractVersion,
+      capability: "bool-input-closure-v1", contractVersion: lock.contractVersion,
       source: { forkOid: head, producer: lock.producerPath },
       toolchainClosureDigest: runtime.lockDigest, dependencyProxyIdentity: dependencyProxy.identity,
       buildInputSet, buildInputSetDigest: inputDigest, intakeLedger,

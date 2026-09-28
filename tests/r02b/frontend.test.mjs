@@ -1,5 +1,8 @@
 // SPDX-License-Identifier: MIT
 import assert from "node:assert/strict";
+import { createHash } from "node:crypto";
+import { mkdtemp, mkdir, readFile, rm, writeFile } from "node:fs/promises";
+import path from "node:path";
 import test from "node:test";
 import { analyzeFrontend, resolveSymbol } from "../../src/frontend.mjs";
 import sourceLock from "../../eng/frontend-source.lock.json" with { type: "json" };
@@ -16,6 +19,105 @@ interface RegExp {}
 interface Array<T> {}
 type bool = boolean;
 `;
+const sha256 = content => `sha256:${createHash("sha256").update(content).digest("hex")}`;
+
+test("official declaration references close and record the explicit input scope", async () => {
+  const source = "export function yes(value: bool): bool { return value; }";
+  const user = '/// <reference path="./alias.d.ts" />\n';
+  const alias = "type Alias = bool;\n";
+  const files = [
+    { path: "/src/main.ts", content: source, sha256: sha256(source) },
+    { path: "/src/minimal-bool-v1.d.ts", content: declarations, sha256: sha256(declarations) },
+    { path: "/src/user.d.ts", content: user, sha256: sha256(user) },
+    { path: "/src/alias.d.ts", content: alias, sha256: sha256(alias) },
+  ];
+  const input = { sourceRoot: "/src", rootFile: "/src/main.ts", files,
+    declarations: { version: "minimal-bool-v1", paths: ["/src/minimal-bool-v1.d.ts", "/src/user.d.ts"] },
+    config: { strict: true, noEmit: true, allowJs: false } };
+  const result = await analyzeFrontend(input, { executable: process.env.TSFG_FRONTEND_EXE });
+  assert.equal(result.status, "ok");
+  assert.deepEqual(result.snapshot.inputs.map(file => file.path), files.map(file => file.path).sort());
+  assert.equal(result.snapshot.inputs.find(file => file.path === "/src/alias.d.ts").sha256, sha256(alias));
+  assert.equal(result.snapshot.functions[0].body[0].expression.type, "bool");
+  const withoutClaimedHashes = await analyzeFrontend({ ...input,
+    files: files.map(({ path, content }) => ({ path, content })) },
+  { executable: process.env.TSFG_FRONTEND_EXE });
+  assert.equal(withoutClaimedHashes.status, "ok");
+  assert.equal(withoutClaimedHashes.snapshot.snapshotId, result.snapshot.snapshotId);
+  assert.deepEqual(withoutClaimedHashes.snapshot.inputs, result.snapshot.inputs);
+  for (const changed of [
+    { ...input, files: files.filter(file => file.path !== "/src/alias.d.ts") },
+    { ...input, files: files.map(file => file.path === "/src/alias.d.ts" ? { ...file, sha256: sha256("wrong") } : file) },
+  ]) {
+    const failure = await analyzeFrontend(changed, { executable: process.env.TSFG_FRONTEND_EXE });
+    assert.equal(failure.status, "error");
+    assert.equal(failure.snapshot, undefined);
+    assert.equal(failure.diagnostics[0].code, "r02b-d-input");
+  }
+  input.files[3].content = "type Alias = number;";
+  assert.equal(result.snapshot.inputs.find(file => file.path === "/src/alias.d.ts").sha256, sha256(alias));
+});
+
+test("input scope rejects logical conflicts, extra source roots, and host configuration", async () => {
+  const source = "export function yes(value: bool): bool { return value; }";
+  const base = {
+    sourceRoot: "/src", rootFile: "/src/main.ts",
+    files: [{ path: "/src/main.ts", content: source },
+      { path: "/src/minimal-bool-v1.d.ts", content: declarations }],
+    declarations: { version: "minimal-bool-v1", paths: ["/src/minimal-bool-v1.d.ts"] },
+    config: { strict: true, noEmit: true, allowJs: false },
+  };
+  for (const change of [
+    { files: [...base.files, { path: "/src/main.ts", content: source }] },
+    { files: [...base.files, { path: "/src/other.ts", content: source }] },
+    { files: [...base.files, { path: "/outside/lib.d.ts", content: "" }] },
+    { config: { ...base.config, types: ["node"] } },
+  ]) {
+    const result = await analyzeFrontend({ ...base, ...change }, { executable: process.env.TSFG_FRONTEND_EXE });
+    assert.equal(result.status, "error");
+    assert.equal(result.snapshot, undefined);
+    assert.equal(result.diagnostics[0].code, "r02b-d-input");
+  }
+  for (const globalName of ["document", "process"]) {
+    const result = await analyzeFrontend({ ...base, files: [
+      { path: "/src/main.ts", content: `export function yes(value: bool): bool { return ${globalName}; }` },
+      base.files[1],
+    ] }, { executable: process.env.TSFG_FRONTEND_EXE });
+    assert.equal(result.status, "error");
+    assert.equal(result.snapshot, undefined);
+    assert.equal(result.diagnostics[0].code, "r02b-d-type");
+  }
+});
+
+test("physical roots and later disk edits cannot change collected logical input", async () => {
+  const tempRoot = process.env.TEMP;
+  if (!tempRoot?.startsWith("E:\\")) throw new Error("test temporary root must be on E:");
+  const root = await mkdtemp(path.join(tempRoot, "r02b-input-roots-"));
+  const source = "export function yes(value: bool): bool { return value; }";
+  try {
+    const inputs = [];
+    for (const location of ["first", "second"]) {
+      const physical = path.join(root, location);
+      await mkdir(physical);
+      await writeFile(path.join(physical, "main.ts"), source);
+      await writeFile(path.join(physical, "minimal-bool-v1.d.ts"), declarations);
+      inputs.push({ sourceRoot: "/src", rootFile: "/src/main.ts", files: [
+        { path: "/src/main.ts", content: await readFile(path.join(physical, "main.ts"), "utf8") },
+        { path: "/src/minimal-bool-v1.d.ts", content: await readFile(path.join(physical, "minimal-bool-v1.d.ts"), "utf8") },
+      ], declarations: { version: "minimal-bool-v1", paths: ["/src/minimal-bool-v1.d.ts"] },
+      config: { strict: true, noEmit: true, allowJs: false } });
+      await writeFile(path.join(physical, "main.ts"), "invalid changed source");
+    }
+    const [first, second] = await Promise.all(inputs.map(input =>
+      analyzeFrontend(input, { executable: process.env.TSFG_FRONTEND_EXE })));
+    assert.equal(first.status, "ok");
+    assert.equal(second.status, "ok");
+    assert.deepEqual(first.snapshot, second.snapshot);
+    assert.equal(first.snapshot.inputs.find(file => file.path === "/src/main.ts").sha256, sha256(source));
+  } finally {
+    await rm(root, { recursive: true, force: true });
+  }
+});
 
 test("real bool function becomes an owned snapshot with declaration references", async () => {
   const source = "export function identity(value: bool): boolean { return value; }\n";
@@ -31,7 +133,7 @@ test("real bool function becomes an owned snapshot with declaration references",
   };
   const result = await analyzeFrontend(input, { executable: process.env.TSFG_FRONTEND_EXE });
   assert.equal(result.status, "ok");
-  assert.equal(result.snapshot.contractVersion, "1");
+  assert.equal(result.snapshot.contractVersion, "2");
   assert.equal(result.snapshot.frontendSource.forkOid, sourceLock.forkOid);
   assert.equal(result.snapshot.functions.length, 1);
   const fn = result.snapshot.functions[0];
@@ -66,7 +168,7 @@ test("minimal declaration version rejects changed declaration bytes", async () =
   assert.equal(result.diagnostics[0].code, "r02b-d-input");
 });
 
-test("analysis rejects an undeclared source or declaration input", async () => {
+test("an explicit declaration scope can contain files outside the discovered closure", async () => {
   const result = await analyzeFrontend({
     sourceRoot: "/src", rootFile: "/src/main.ts",
     files: [
@@ -77,9 +179,8 @@ test("analysis rejects an undeclared source or declaration input", async () => {
     declarations: { version: "minimal-bool-v1", paths: ["/src/minimal-bool-v1.d.ts"] },
     config: { strict: true, noEmit: true, allowJs: false },
   }, { executable: process.env.TSFG_FRONTEND_EXE });
-  assert.equal(result.status, "error");
-  assert.equal(result.snapshot, undefined);
-  assert.equal(result.diagnostics[0].code, "r02b-d-input");
+  assert.equal(result.status, "ok");
+  assert.equal(result.snapshot.inputs.some(file => file.path === "/src/extra.d.ts"), false);
 });
 
 test("runtime fallback configuration is an input rejection", async () => {
