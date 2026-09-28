@@ -55,6 +55,13 @@ function parseUniqueJson(text) {
   return value;
 }
 
+function isContractSemver(value) {
+  if (typeof value !== "string") return false;
+  const match = /^(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)(?:-([0-9A-Za-z-]+(?:\.[0-9A-Za-z-]+)*))?(?:\+[0-9A-Za-z-]+(?:\.[0-9A-Za-z-]+)*)?$/.exec(value);
+  return !!match && (!match[4] || match[4].split(".").every(identifier =>
+    !/^[0-9]+$/.test(identifier) || /^(0|[1-9][0-9]*)$/.test(identifier)));
+}
+
 export function contractSetProjection(registry) {
   if (!registry || typeof registry !== "object" || Array.isArray(registry)) {
     throw new TypeError("invalid Contract Registry");
@@ -62,7 +69,7 @@ export function contractSetProjection(registry) {
   return Object.fromEntries(Object.entries(registry)
     .sort(([left], [right]) => Buffer.from(left).compare(Buffer.from(right)))
     .map(([familyId, contract]) => {
-      if (contract?.familyId !== familyId || typeof contract.semver !== "string"
+      if (contract?.familyId !== familyId || !isContractSemver(contract.semver)
           || !/^sha256:[0-9a-f]{64}$/.test(contract.schemaHash)
           || !["backward", "bidirectional", "exact"].includes(contract.compatibility)
           || contract.schemaHashAlgorithm !== "sha256-jcs"

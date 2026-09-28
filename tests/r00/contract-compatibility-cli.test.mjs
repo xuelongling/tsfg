@@ -111,6 +111,32 @@ test("the public contract seam rejects incomplete registry metadata and duplicat
   }
 });
 
+test("the public contract seam rejects malformed registered Contract SemVer", async () => {
+  const sandbox = await mkdtemp(path.join(tmpdir(), "tsfg-contract-semver-"));
+  try {
+    const workspace = path.join(sandbox, "workspace");
+    await mkdir(path.join(workspace, "contracts"), { recursive: true });
+    assert.equal(spawnSync(TEST_GIT_EXECUTABLE, ["init", "--quiet", workspace]).status, 0);
+    const registry = JSON.parse(await readFile(path.join(repositoryRoot, "contracts/registry.json"), "utf8"));
+    await writeFile(path.join(workspace, "contracts/frontend-snapshot.schema.json"),
+      await readFile(path.join(repositoryRoot, "contracts/frontend-snapshot.schema.json")));
+    const baseline = path.join(sandbox, "baseline.json");
+    const candidate = path.join(sandbox, "candidate.json");
+    const reportPath = path.join(sandbox, "report.json");
+    await writeFile(baseline, `${JSON.stringify(baselineSyntheticArtifact())}\n`);
+    await writeFile(candidate, `${JSON.stringify(candidateSyntheticArtifact())}\n`);
+    for (const version of ["not-a-version", "01.2.3", "1.2.3-01", "1.2.3+"]) {
+      registry["tsfg.frontend-snapshot"].semver = version;
+      await writeFile(path.join(workspace, "contracts/registry.json"), `${JSON.stringify(registry)}\n`);
+      const result = await invokeCompatibility("windows-x86_64-msvc", reportPath, baseline, candidate, workspace);
+      assert.equal(result.status, 21, `${version}: ${result.stderr}`);
+      assert.match(JSON.stringify(JSON.parse(await readFile(reportPath, "utf8"))), /invalid registered contract/);
+    }
+  } finally {
+    await rm(sandbox, { recursive: true, force: true });
+  }
+});
+
 /**
  * @param {{baseline?: Record<string, any>, candidate?: Record<string, any>, target?: string}} [fixture]
  */
