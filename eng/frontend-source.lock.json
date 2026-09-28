@@ -1,0 +1,11 @@
+{
+  "schemaVersion": "1",
+  "contractVersion": "1",
+  "languageBaseline": "TypeScript 7.0.2",
+  "upstreamBaseOid": "1e4744d68260a7cb91b62b12edc3f6a2187faaf1",
+  "forkOid": "72aab6fb5914c113388a52ccb787f4279f59d056",
+  "producerPath": "tsc/cmd/tsfg-frontend/main.go",
+  "producerSha256": "sha256:3caa4506a0ceb60093ad803dca97e7e6cf1404b7b15846a3bfded49e1f1e08a7",
+  "declarationPath": "src/minimal-bool-v1.d.ts",
+  "declarationSha256": "sha256:5d196cb6bcd97d984919e5272a771f63f626d420c8b999c5140c988491a14a77"
+}

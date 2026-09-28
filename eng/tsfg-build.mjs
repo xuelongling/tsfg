@@ -44,6 +44,7 @@ import { readGenerationLock, generationPackages, generationSources, GenerationEr
 import { reviewUpgrade } from "./upgrade-review.mjs";
 import { reproduceTypeScript, SourceReproError } from "./typescript-repro.mjs";
 import { prefetchGoDependencies, readGoDependencyLock, verifyGoDependencies } from "./go-closure.mjs";
+import { executeFrontendTarget, FrontendBuildError } from "./frontend-build.mjs";
 
 class ConfigurationError extends Error {
   constructor(message, issueCode = "invalid-configuration") {
@@ -7306,6 +7307,27 @@ async function executeGoSourceTarget(options, runtime) {
   return await consumePreparedGoSource(prepared, child);
 }
 
+async function runFrontendTarget(options, runtime, command) {
+  if (!options.has("--dev") || options.get("--target") !== "windows-x86_64-msvc"
+      || options.get("--profile") !== "debug") {
+    throw new ConfigurationError("frontend source target requires Windows debug --dev");
+  }
+  if (!await isGoDestinationOnE(options.get("--out"))) {
+    throw new ConfigurationError("frontend source target requires an absolute E: output");
+  }
+  if (!runtime?.selections.some(({ id }) => id === "go")) {
+    throw new OfflineBoundaryError("locked Go runtime is unavailable");
+  }
+  const workspace = inspectProductWorkspace(options, true, command);
+  const declaration = await readGoDependencyLock(runtime.lockPath, runtime.lock);
+  const dependencyProxy = await verifyGoDependencies(runtime.cachePath, declaration,
+    runtime.lock.goDependencies.sha256, parseZip);
+  return executeFrontendTarget({ command, productRoot: workspace.root,
+    sourceRoot: path.resolve(workspace.root, "..", "typescript"), out: options.get("--out"),
+    runtime, go: closureToolPath(runtime, "go"), node: process.execPath,
+    git: process.env.TSFG_GIT, dependencyProxy, serialize: canonicalize });
+}
+
 async function enterWindowsOfflineBoundary(arguments_, runtime, reportPath) {
   try {
     const { executable } = await verifyWindowsSandboxControl(runtime);
@@ -7367,6 +7389,7 @@ async function runCommandLine() {
   const command = arguments_[0] ?? "";
   const sourceTarget = arguments_.includes("--source-target") ? arguments_[arguments_.indexOf("--source-target") + 1] : undefined;
   const typedProbeTest = command === "test" && sourceTarget === "typescript-ast";
+  const frontendTest = command === "test" && sourceTarget === "typescript-frontend";
   const sourceReproCheck = command === "repro-check" && sourceTarget === "typescript-ast";
   const requestedReportPath = parseReportPath(arguments_);
   const invalidGoReport = arguments_.includes("--source-target") && requestedReportPath
@@ -7401,8 +7424,8 @@ async function runCommandLine() {
         process.env.TSFG_RUNTIME_LOCK,
         process.env.TSFG_RUNTIME_CACHE,
         process.env.TSFG_RUNTIME_PLATFORM,
-        { nativeControls: !((command === "build" || typedProbeTest || sourceReproCheck) && arguments_.includes("--dev") &&
-            ["typescript-dependencies", "typescript-ast", "intake-ledger", "upgrade-review"].includes(arguments_[arguments_.indexOf("--source-target") + 1])) },
+        { nativeControls: !((command === "build" || typedProbeTest || frontendTest || sourceReproCheck) && arguments_.includes("--dev") &&
+            ["typescript-dependencies", "typescript-ast", "typescript-frontend", "intake-ledger", "upgrade-review"].includes(arguments_[arguments_.indexOf("--source-target") + 1])) },
       );
     } catch (error) {
       runtimeIntegrityError = error;
@@ -7517,7 +7540,7 @@ async function runCommandLine() {
         "offline",
       );
     }
-  } else if (command === "build" || typedProbeTest) {
+  } else if (command === "build" || typedProbeTest || frontendTest) {
     let publication;
     try {
       const options = parseOptions(
@@ -7539,6 +7562,8 @@ async function runCommandLine() {
         process.exitCode = await succeed(command, await executeUpgradeReviewTarget(options), reportPath, "offline");
       } else if (options.get("--source-target") === "intake-ledger") {
         process.exitCode = await succeed(command, await executeIntakeLedgerTarget(options), reportPath, "offline");
+      } else if (options.get("--source-target") === "typescript-frontend") {
+        process.exitCode = await succeed(command, await runFrontendTarget(options, runtimeClosure, command), reportPath, "offline");
       } else if (options.has("--source-target")) {
         await validateGoSourceOptions(options, runtimeClosure);
         const result = await executeGoSourceTarget(options, runtimeClosure);
@@ -7566,7 +7591,7 @@ async function runCommandLine() {
     } catch (error) {
       if (publication) await publication.rollback();
       const isConfigurationError = error instanceof ConfigurationError;
-      const isBuildFailure = error instanceof BuildFailureError || error instanceof AstExecutionError || error instanceof GenerationError;
+      const isBuildFailure = error instanceof BuildFailureError || error instanceof AstExecutionError || error instanceof GenerationError || error instanceof FrontendBuildError;
       const isProbeFailure = error instanceof AstExecutionError && (error.probes?.status === "failed" || error.jsIsolation?.status === "failed" || error.requiredTests?.status === "failed");
       const isBuildPolicy = error instanceof BuildPolicyError;
       const isWorkspaceMismatch = error instanceof WorkspaceMismatchError || error instanceof IntakeLedgerError;
