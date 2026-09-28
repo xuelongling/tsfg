@@ -217,6 +217,42 @@ test("the consumer binds function node and symbol references to their declaratio
   }
 });
 
+test("the consumer rejects wrong same-snapshot parameter, use, and call links", async () => {
+  const result = await analyzeCalls("export function entry(x: i32, y: i32): i32 { return first(x); } export function first(a: i32): i32 { return a; } export function second(b: i32): i32 { return b; }");
+  assert.equal(result.status, "ok");
+  const wrongParameter = structuredClone(result.snapshot);
+  wrongParameter.functions[0].parameters[0].ref = wrongParameter.functions[0].parameters[1].ref;
+  assert.throws(() => validateFrontendSnapshot(wrongParameter), TypeError);
+  const wrongUse = structuredClone(result.snapshot);
+  wrongUse.functions[0].body[0].expression.arguments[0].symbol = wrongUse.functions[0].parameters[1].ref;
+  assert.throws(() => validateFrontendSnapshot(wrongUse), TypeError);
+  const wrongTarget = structuredClone(result.snapshot);
+  wrongTarget.functions[0].body[0].expression.target = wrongTarget.functions[2].symbol;
+  assert.throws(() => validateFrontendSnapshot(wrongTarget), TypeError);
+  const sameName = await analyzeCalls("export function first(x: i32): i32 { return x; } export function second(x: i32): i32 { return x; }");
+  assert.equal(sameName.status, "ok");
+  const foreignScope = structuredClone(sameName.snapshot);
+  foreignScope.functions[0].body[0].expression.symbol = foreignScope.functions[1].parameters[0].ref;
+  assert.throws(() => validateFrontendSnapshot(foreignScope), TypeError);
+});
+
+test("local declaration links and source-backed names cannot be reassigned", async () => {
+  const result = await analyzeCalls("export function locals(x: i32): i32 { const value = 1; return value; }");
+  assert.equal(result.status, "ok");
+  const wrongLocal = structuredClone(result.snapshot);
+  wrongLocal.functions[0].body[0].symbol.ref = wrongLocal.functions[0].parameters[0].ref;
+  assert.throws(() => validateFrontendSnapshot(wrongLocal), TypeError);
+  const changedSource = structuredClone(result.snapshot);
+  changedSource.source.content = changedSource.source.content.replace("return value", "return other");
+  assert.throws(() => validateFrontendSnapshot(changedSource), TypeError);
+});
+
+test("a call with whitespace before its argument list keeps its target link", async () => {
+  const result = await analyzeCalls("export function entry(x: i32): i32 { return target (x); } export function target(y: i32): i32 { return y; }");
+  assert.equal(result.status, "ok");
+  assert.equal(validateFrontendSnapshot(result.snapshot).calls, 1);
+});
+
 test("node and type references are snapshot-owned and invalid local IDs reject", async () => {
   const first = await analyzeCalls("export function entry(x: i32): i32 { return target(x); } export function target(y: i32): i32 { return y; }");
   const second = await analyzeCalls("export function other(x: i32): i32 { return x; }");

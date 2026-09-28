@@ -238,30 +238,62 @@ export const resolveType = (snapshot, ref) => resolveLocal(snapshot, ref, "types
 
 export function validateFrontendSnapshot(snapshot) {
   if (!matchesSnapshotContract(snapshot)
-      || !Array.isArray(snapshot.functions) || !Array.isArray(snapshot.symbols)) {
+      || !Array.isArray(snapshot.functions) || !Array.isArray(snapshot.symbols)
+      || !Array.isArray(snapshot.nodes) || !Array.isArray(snapshot.types)
+      || typeof snapshot.source?.content !== "string"
+      || snapshot.inputs?.find(file => file.path === snapshot.source.path)?.sha256 !== digest(snapshot.source.content)) {
     throw new TypeError("unsupported frontend snapshot contract");
   }
   let calls = 0;
+  const usedNodes = new Set();
+  const sameRange = (left, right) => left?.start === right?.start && left?.end === right?.end;
+  const sourceSpan = range => {
+    if (!Number.isSafeInteger(range?.start) || !Number.isSafeInteger(range?.end)
+        || range.start < 0 || range.end <= range.start
+        || range.end > snapshot.source.content.length) {
+      throw new TypeError("invalid source range");
+    }
+    return snapshot.source.content.slice(range.start, range.end).trim();
+  };
   const checkNode = (value, kind) => {
     const node = resolveNode(snapshot, value.node);
-    if (node.kind !== kind || node.range?.start !== value.range?.start
-        || node.range?.end !== value.range?.end) {
+    if (node.kind !== kind || !sameRange(node.range, value.range)
+        || usedNodes.has(node.id)) {
       throw new TypeError("node differs from its reference");
     }
+    sourceSpan(value.range);
+    usedNodes.add(node.id);
   };
   const checkType = (name, ref) => {
     const type = resolveType(snapshot, ref);
     if (type.kind !== "scalar" || type.scalar !== name) throw new TypeError("type differs from its reference");
   };
+  if (new Set(snapshot.symbols.map(symbol => symbol.id)).size !== snapshot.symbols.length
+      || new Set(snapshot.nodes.map(node => node.id)).size !== snapshot.nodes.length
+      || new Set(snapshot.types.map(type => type.id)).size !== snapshot.types.length
+      || new Set(snapshot.types.map(type => type.scalar)).size !== snapshot.types.length) {
+    throw new TypeError("duplicate snapshot definition");
+  }
   for (const symbol of snapshot.symbols) {
     resolveSymbol(snapshot, symbol.ref);
     checkType(symbol.type, symbol.typeRef);
+    if (sourceSpan(symbol.range) !== symbol.name) {
+      throw new TypeError("symbol differs from its source declaration");
+    }
   }
-  const visitExpression = expression => {
+  const visitExpression = (expression, ownedSymbols) => {
     if (!expression || typeof expression !== "object") throw new TypeError("invalid expression");
     checkNode(expression, expression.kind);
     checkType(expression.type, expression.typeRef);
-    if (expression.symbol) resolveSymbol(snapshot, expression.symbol);
+    if (expression.kind === "reference") {
+      const symbol = resolveSymbol(snapshot, expression.symbol);
+      if (!ownedSymbols.has(symbol.id) || symbol.name !== sourceSpan(expression.range)
+          || symbol.type !== expression.type) {
+        throw new TypeError("reference differs from its symbol");
+      }
+    } else if (expression.symbol) {
+      throw new TypeError("non-reference expression has a symbol");
+    }
     if (expression.kind === "call" && !expression.target) {
       throw new TypeError("call has no target");
     }
@@ -270,8 +302,11 @@ export function validateFrontendSnapshot(snapshot) {
       const fn = snapshot.functions.find(item => item.symbol.id === target.id);
       const parameters = fn?.parameters?.map(parameter => parameter.type);
       const arguments_ = expression.arguments;
+      const sourceCall = sourceSpan(expression.range);
       if (expression.kind !== "call" || !fn || !Array.isArray(parameters)
           || !Array.isArray(arguments_) || !Array.isArray(expression.signature?.parameters)
+          || !sourceCall.startsWith(target.name)
+          || !/^\s*\(/.test(sourceCall.slice(target.name.length))
           || expression.signature.returnType !== fn.returnType
           || expression.type !== fn.returnType
           || expression.signature.parameters.length !== parameters.length
@@ -284,7 +319,7 @@ export function validateFrontendSnapshot(snapshot) {
     }
     if (expression.arguments) {
       if (!Array.isArray(expression.arguments)) throw new TypeError("invalid call arguments");
-      for (const argument of expression.arguments) visitExpression(argument);
+      for (const argument of expression.arguments) visitExpression(argument, ownedSymbols);
     }
   };
   for (const fn of snapshot.functions) {
@@ -293,6 +328,7 @@ export function validateFrontendSnapshot(snapshot) {
     const definition = resolveSymbol(snapshot, fn.symbol);
     if (definition.kind !== "function" || definition.name !== fn.name
         || definition.type !== fn.returnType
+        || sourceSpan(definition.range) !== fn.name
         || definition.range?.start < fn.range?.start
         || definition.range?.end > fn.range?.end) {
       throw new TypeError("function differs from its symbol");
@@ -300,17 +336,34 @@ export function validateFrontendSnapshot(snapshot) {
     if (!Array.isArray(fn.parameters) || !Array.isArray(fn.body)) {
       throw new TypeError("invalid function structure");
     }
+    const ownedSymbols = new Set([...fn.parameters.map(parameter => parameter.id),
+      ...fn.body.map(statement => statement.symbol?.id).filter(Boolean)]);
     for (const parameter of fn.parameters) {
       checkNode(parameter, "parameter");
       checkType(parameter.type, parameter.typeRef);
-      resolveSymbol(snapshot, parameter.ref);
+      const symbol = resolveSymbol(snapshot, parameter.ref);
+      if (symbol.id !== parameter.id || symbol.kind !== "parameter"
+          || symbol.name !== parameter.name || symbol.type !== parameter.type
+          || !sameRange(symbol.range, parameter.range)) {
+        throw new TypeError("parameter differs from its symbol");
+      }
     }
     for (const statement of fn.body) {
       checkNode(statement, statement.kind);
-      if (statement.symbol) resolveSymbol(snapshot, statement.symbol.ref);
-      if (statement.expression) visitExpression(statement.expression);
-      if (statement.initializer) visitExpression(statement.initializer);
+      if (statement.symbol) {
+        const symbol = resolveSymbol(snapshot, statement.symbol.ref);
+        if (symbol.id !== statement.symbol.id || symbol.name !== statement.symbol.name
+            || symbol.kind !== statement.symbol.kind || symbol.type !== statement.symbol.type
+            || !sameRange(symbol.range, statement.symbol.range)
+            || symbol.range?.start < statement.range?.start
+            || symbol.range?.end > statement.range?.end) {
+          throw new TypeError("statement differs from its symbol");
+        }
+      }
+      if (statement.expression) visitExpression(statement.expression, ownedSymbols);
+      if (statement.initializer) visitExpression(statement.initializer, ownedSymbols);
     }
   }
+  if (usedNodes.size !== snapshot.nodes.length) throw new TypeError("unused snapshot node");
   return deepFreeze({ snapshotId: snapshot.snapshotId, functions: snapshot.functions.length, calls });
 }
