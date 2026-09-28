@@ -1248,6 +1248,60 @@ test("an explicit declaration scope can contain files outside the discovered clo
   assert.equal(result.snapshot.inputs.some(file => file.path === "/src/extra.d.ts"), false);
 });
 
+test("a declaration reference cannot pull a JavaScript implementation into the input closure", async () => {
+  const source = "export function yes(value: bool): bool { return value; }";
+  const result = await analyzeFrontend({
+    sourceRoot: "/src", rootFile: "/src/main.ts",
+    files: [
+      { path: "/src/main.ts", content: source },
+      { path: "/src/minimal-bool-v1.d.ts", content: declarations },
+      { path: "/src/user.d.ts", content: '/// <reference path="./impl.js" />\n' },
+    ],
+    declarations: { version: "minimal-bool-v1", paths: ["/src/minimal-bool-v1.d.ts", "/src/user.d.ts"] },
+    config: { strict: true, noEmit: true, allowJs: false },
+  }, { executable: process.env.TSFG_FRONTEND_EXE });
+  assert.equal(result.status, "error");
+  assert.equal(result.snapshot, undefined);
+  assert.equal(result.diagnostics[0].code, "r02b-d-input");
+  assert.equal(result.diagnostics[0].ruleId, "r01-input-boundary");
+  assert.equal(result.diagnostics[0].primary.sourceId, "/src/user.d.ts");
+});
+
+test("JavaScript roots, scoped files, and emit or runtime configuration cannot bypass the product entry", async () => {
+  const source = "export function yes(value: bool): bool { return value; }";
+  const base = {
+    sourceRoot: "/src", rootFile: "/src/main.ts",
+    files: [
+      { path: "/src/main.ts", content: source },
+      { path: "/src/minimal-bool-v1.d.ts", content: declarations },
+    ],
+    declarations: { version: "minimal-bool-v1", paths: ["/src/minimal-bool-v1.d.ts"] },
+    config: { strict: true, noEmit: true, allowJs: false },
+  };
+  const cases = [
+    ...["js", "mjs", "cjs"].map(extension => ({
+      ...base, rootFile: `/src/main.${extension}`,
+      files: [{ path: `/src/main.${extension}`, content: "module.exports = true;" }, base.files[1]],
+    })),
+    ...["js", "mjs", "cjs"].map(extension => ({
+      ...base, files: [...base.files, { path: `/src/implementation.${extension}`, content: "module.exports = true;" }],
+    })),
+    { ...base, config: { ...base.config, allowJs: true } },
+    { ...base, config: { ...base.config, noEmit: false } },
+    { ...base, config: { ...base.config, emitDeclarationOnly: true } },
+    { ...base, config: { ...base.config, runtime: "javascript" } },
+  ];
+  for (const input of cases) {
+    const result = await analyzeFrontend(input, { executable: process.env.TSFG_FRONTEND_EXE });
+    assert.equal(result.status, "error");
+    assert.equal(result.snapshot, undefined);
+    assert.equal(result.diagnostics[0].code, "r02b-d-input");
+  }
+  const valid = await analyzeFrontend(base, { executable: process.env.TSFG_FRONTEND_EXE });
+  assert.equal(valid.status, "ok");
+  assert.equal(valid.snapshot.functions[0].name, "yes");
+});
+
 test("runtime fallback configuration is an input rejection", async () => {
   const result = await analyzeFrontend({
     sourceRoot: "/src", rootFile: "/src/main.ts",
