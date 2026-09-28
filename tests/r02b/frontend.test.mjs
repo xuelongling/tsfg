@@ -197,8 +197,23 @@ test("same-type f64 arithmetic is a pending capability, not a language error", a
   assert.equal(result.diagnostics[0].category, "unsupported");
 });
 
+test("valid f64 unary arithmetic remains a pending capability", async () => {
+  const result = await analyzeScalar("export function later(a: f64): f64 { return -a; }");
+  assert.equal(result.status, "error");
+  assert.equal(result.snapshot, undefined);
+  assert.equal(result.diagnostics[0].code, "r02b-d-unsupported");
+  assert.equal(result.diagnostics[0].category, "unsupported");
+});
+
 test("fractional f64 operand cannot implicitly join i32 arithmetic", async () => {
   const result = await analyzeScalar("export function wrong(a: i32): i32 { return a + 1.5; }");
+  assert.equal(result.status, "error");
+  assert.equal(result.snapshot, undefined);
+  assert.equal(result.diagnostics[0].code, "r01-d-scalar-type");
+});
+
+test("nested fractional f64 operand reports the inner i32 mixing error", async () => {
+  const result = await analyzeScalar("export function wrong(a: i32): bool { return a + 1.5 > 0; }");
   assert.equal(result.status, "error");
   assert.equal(result.snapshot, undefined);
   assert.equal(result.diagnostics[0].code, "r01-d-scalar-type");
