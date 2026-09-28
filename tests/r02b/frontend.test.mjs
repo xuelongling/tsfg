@@ -221,6 +221,16 @@ test("f64 truthiness is pending rather than an invalid source expression", async
   assert.equal(result.diagnostics[0].category, "unsupported");
 });
 
+test("same-type numeric short circuit remains pending", async () => {
+  for (const type of ["f64", "i32"]) {
+    const result = await analyzeScalar(`export function later(a: ${type}, b: ${type}): ${type} { return a && b; }`);
+    assert.equal(result.status, "error", type);
+    assert.equal(result.snapshot, undefined);
+    assert.equal(result.diagnostics[0].code, "r02b-d-unsupported", type);
+    assert.equal(result.diagnostics[0].category, "unsupported", type);
+  }
+});
+
 test("fractional f64 operand cannot implicitly join i32 arithmetic", async () => {
   const result = await analyzeScalar("export function wrong(a: i32): i32 { return a + 1.5; }");
   assert.equal(result.status, "error");
@@ -243,6 +253,14 @@ test("operator operand diagnostics begin at the token after multiline trivia", a
   assert.equal(result.diagnostics[0].primary.start, source.indexOf("false"));
   assert.equal(result.diagnostics[0].primary.startLine, 1);
   assert.equal(result.diagnostics[0].primary.startColumn, 2);
+});
+
+test("operator diagnostics anchor the invalid left operand when the right is valid", async () => {
+  const source = "export function wrong(a: bool, b: i32): i32 { return a << b; }";
+  const result = await analyzeScalar(source);
+  assert.equal(result.status, "error");
+  assert.equal(result.diagnostics[0].code, "r01-d-scalar-type");
+  assert.equal(result.diagnostics[0].primary.start, source.indexOf("a <<"));
 });
 
 test("i32 parameter and return retain a scalar fact and symbol relation", async () => {
