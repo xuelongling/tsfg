@@ -2,6 +2,8 @@
 
 export const currentContractSetId =
   "sha256:95842c46a1f56ee42118fc9e217e52d94c5961515d44925813f05cd5383ea3ab";
+export const currentContractSetCanonical =
+  '{"tsfg.frontend-snapshot":{"schemaHash":"sha256:5b2cdbe964e1b8499edcb7bd83d60f1835e9dbb3acc380d7098d72a5d7e8a429","semver":"0.4.0"}}';
 
 /** @returns {Record<string, any>} */
 export function baselineSyntheticArtifact() {

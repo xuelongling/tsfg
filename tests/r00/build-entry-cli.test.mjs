@@ -24,6 +24,7 @@ import { spawn, spawnSync } from "node:child_process";
 import test from "node:test";
 import { fileURLToPath } from "node:url";
 import { TEST_GIT_EXECUTABLE } from "./test-tools.mjs";
+import { currentContractSetCanonical, currentContractSetId } from "./contract-compatibility-fixtures.mjs";
 
 const repositoryRoot = path.resolve(
   path.dirname(fileURLToPath(import.meta.url)),
@@ -2123,7 +2124,7 @@ net.connect = () => {
     });
     assert.equal(
       report.result.contractSetId,
-      "sha256:44136fa355b3678a1146ad16f7e8649e94fb4fc21fe77e8310c060f61caaff8a",
+      currentContractSetId,
     );
     assert.deepEqual(report.result.outputs, [
       "bin/tsfg-r00-cpp-smoke",
@@ -2581,7 +2582,7 @@ net.connect = () => {
       assert.equal(entry.mode, entry.name.startsWith("bin/") ? 0o755 : 0o644);
     }
     const entriesByName = new Map(archiveEntries.map((entry) => [entry.name, entry]));
-    assert.equal(entriesByName.get("contract-set.json").bytes.toString("utf8"), "{}");
+    assert.equal(entriesByName.get("contract-set.json").bytes.toString("utf8"), currentContractSetCanonical);
     const manifestBytes = entriesByName.get("artifact-manifest.json").bytes;
     const manifest = JSON.parse(manifestBytes.toString("utf8"));
     assert.equal(manifestBytes.toString("utf8"), JSON.stringify(manifest));
