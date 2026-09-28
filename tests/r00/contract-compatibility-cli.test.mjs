@@ -128,7 +128,7 @@ test("registered Contract Set and all four serialized artifact combinations pass
     assert.equal(result.stdout, "");
     assert.equal(report.command, "test");
     assert.equal(report.status, "success");
-    assert.deepEqual(report.result.contractSet, { canonical: '{"tsfg.frontend-snapshot":{"schemaHash":"sha256:49cf924380a11f433eda02023ce48317c5671461a855a975588071a45201c279","semver":"0.4.0"}}', id: currentContractSetId });
+    assert.deepEqual(report.result.contractSet, { canonical: '{"tsfg.frontend-snapshot":{"schemaHash":"sha256:5b2cdbe964e1b8499edcb7bd83d60f1835e9dbb3acc380d7098d72a5d7e8a429","semver":"0.4.0"}}', id: currentContractSetId });
     assert.equal(report.result.target, target);
 
     const compatibility = report.result.compatibility;

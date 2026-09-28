@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: MIT
 
 export const currentContractSetId =
-  "sha256:161f11985c1a5a962c127cfbb2d6b35817603d8ece713c70e1786c13fb233fea";
+  "sha256:95842c46a1f56ee42118fc9e217e52d94c5961515d44925813f05cd5383ea3ab";
 
 /** @returns {Record<string, any>} */
 export function baselineSyntheticArtifact() {

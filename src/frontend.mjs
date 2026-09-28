@@ -56,7 +56,7 @@ export async function analyzeFrontend(input, { executable } = {}) {
   const identityInput = ownedInput && typeof ownedInput === "object" && !Array.isArray(ownedInput)
     ? { ...ownedInput, files: Array.isArray(ownedInput.files)
       ? ownedInput.files.map(file => ({ path: file?.path, content: file?.content }))
-        .sort((a, b) => String(a.path).localeCompare(String(b.path)))
+        .sort((a, b) => Buffer.from(String(a.path)).compare(Buffer.from(String(b.path))))
       : ownedInput.files }
     : ownedInput ?? null;
   let inputIdentity;
@@ -164,11 +164,15 @@ export async function analyzeFrontend(input, { executable } = {}) {
   }));
   const nodes = [];
   const types = [];
+  let invalidScalar = false;
   const typeRef = name => {
-    if (typeof name !== "string") return undefined;
-    let type = types.find(item => item.name === name);
+    if (!["bool", "i32", "f64"].includes(name)) {
+      invalidScalar = true;
+      return undefined;
+    }
+    let type = types.find(item => item.scalar === name);
     if (!type) {
-      type = { id: `t${types.length}`, name };
+      type = { id: `t${types.length}`, kind: "scalar", scalar: name };
       types.push(type);
     }
     return { snapshotId, id: type.id };
@@ -193,6 +197,10 @@ export async function analyzeFrontend(input, { executable } = {}) {
       if (statement.initializer) recordExpression(statement.initializer);
     }
   }
+  for (const symbol of symbols) symbol.typeRef = typeRef(symbol.type);
+  if (invalidScalar) {
+    return { status: "tool-error", inputIdentity, message: "frontend returned an unsupported scalar type" };
+  }
   const sourceFile = files.find(file => file.path === rootFile);
   const source = { path: sourceFile.path, content: sourceFile.content };
   const inputs = consumed.map(name => {
@@ -206,17 +214,6 @@ export async function analyzeFrontend(input, { executable } = {}) {
   return { status: "ok", snapshot };
 }
 
-export function resolveSymbol(snapshot, ref) {
-  if (!matchesSnapshotContract(snapshot) || !ref
-      || Object.keys(ref).sort().join(",") !== "id,snapshotId"
-      || typeof ref.id !== "string" || ref.snapshotId !== snapshot.snapshotId) {
-    throw new TypeError("symbol reference belongs to a different snapshot or contract");
-  }
-  const symbol = snapshot.symbols.find(item => item.id === ref.id);
-  if (!symbol) throw new RangeError("unknown symbol reference");
-  return symbol;
-}
-
 function resolveLocal(snapshot, ref, collection) {
   if (!matchesSnapshotContract(snapshot) || !ref
       || Object.keys(ref).sort().join(",") !== "id,snapshotId"
@@ -226,6 +223,14 @@ function resolveLocal(snapshot, ref, collection) {
   const value = snapshot[collection]?.find(item => item.id === ref.id);
   if (!value) throw new RangeError("unknown snapshot reference");
   return value;
+}
+
+export function resolveSymbol(snapshot, ref) {
+  const symbol = resolveLocal(snapshot, ref, "symbols");
+  if (symbol.ref?.snapshotId !== snapshot.snapshotId || symbol.ref?.id !== symbol.id) {
+    throw new TypeError("symbol definition has a foreign reference");
+  }
+  return symbol;
 }
 
 export const resolveNode = (snapshot, ref) => resolveLocal(snapshot, ref, "nodes");
@@ -241,8 +246,13 @@ export function validateFrontendSnapshot(snapshot) {
     if (resolveNode(snapshot, value.node).kind !== kind) throw new TypeError("node kind differs from its reference");
   };
   const checkType = (name, ref) => {
-    if (resolveType(snapshot, ref).name !== name) throw new TypeError("type differs from its reference");
+    const type = resolveType(snapshot, ref);
+    if (type.kind !== "scalar" || type.scalar !== name) throw new TypeError("type differs from its reference");
   };
+  for (const symbol of snapshot.symbols) {
+    resolveSymbol(snapshot, symbol.ref);
+    checkType(symbol.type, symbol.typeRef);
+  }
   const visitExpression = expression => {
     if (!expression || typeof expression !== "object") throw new TypeError("invalid expression");
     checkNode(expression, expression.kind);
@@ -250,8 +260,18 @@ export function validateFrontendSnapshot(snapshot) {
     if (expression.symbol) resolveSymbol(snapshot, expression.symbol);
     if (expression.target) {
       const target = resolveSymbol(snapshot, expression.target);
-      if (!snapshot.functions.some(fn => fn.symbol.id === target.id)) {
-        throw new TypeError("call target is not a function");
+      const fn = snapshot.functions.find(item => item.symbol.id === target.id);
+      const parameters = fn?.parameters?.map(parameter => parameter.type);
+      const arguments_ = expression.arguments;
+      if (expression.kind !== "call" || !fn || !Array.isArray(parameters)
+          || !Array.isArray(arguments_) || !Array.isArray(expression.signature?.parameters)
+          || expression.signature.returnType !== fn.returnType
+          || expression.type !== fn.returnType
+          || expression.signature.parameters.length !== parameters.length
+          || arguments_.length !== parameters.length
+          || parameters.some((type, index) => expression.signature.parameters[index] !== type
+            || arguments_[index]?.type !== type)) {
+        throw new TypeError("call signature differs from its target or arguments");
       }
       calls++;
     }

@@ -5,7 +5,7 @@ export function contractSetProjection(registry) {
     throw new TypeError("invalid Contract Registry");
   }
   return Object.fromEntries(Object.entries(registry)
-    .sort(([left], [right]) => left < right ? -1 : left > right ? 1 : 0)
+    .sort(([left], [right]) => Buffer.from(left).compare(Buffer.from(right)))
     .map(([familyId, contract]) => {
       if (contract?.familyId !== familyId || typeof contract.semver !== "string"
           || !/^sha256:[0-9a-f]{64}$/.test(contract.schemaHash)) {

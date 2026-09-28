@@ -13,7 +13,7 @@ frontend session. `snapshotId` hashes the contract version, schema hash,
 canonical logical input identity, and admitted frontend source identity.
 Logical file content, declarations, and configuration contribute to input
 identity; physical source locations and process state do not. `nodes`,
-`symbols`, and `types` use snapshot-local IDs. Each public reference carries
+`symbols`, and structured scalar `types` use snapshot-local IDs. Each public reference carries
 both its local ID and `snapshotId`; no ID is stable across edits. These IDs are
 not R04 `FunctionId` or `TypeId`.
 

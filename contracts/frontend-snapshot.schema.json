@@ -17,9 +17,9 @@
     "source": { "type": "object", "required": ["path", "content"] },
     "inputs": { "type": "array", "items": { "type": "object", "required": ["path", "sha256", "kind"] } },
     "functions": { "type": "array", "items": { "type": "object", "required": ["node", "symbol", "parameters", "returnTypeRef", "body"] } },
-    "symbols": { "type": "array", "items": { "type": "object", "required": ["id", "ref"] } },
+    "symbols": { "type": "array", "items": { "type": "object", "required": ["id", "ref", "typeRef"] } },
     "nodes": { "type": "array", "items": { "type": "object", "required": ["id", "kind", "range"] } },
-    "types": { "type": "array", "items": { "type": "object", "required": ["id", "name"] } },
+    "types": { "type": "array", "items": { "type": "object", "required": ["id", "kind", "scalar"], "properties": { "kind": { "const": "scalar" }, "scalar": { "enum": ["bool", "i32", "f64"] } } } },
     "diagnostics": { "type": "array" }
   },
   "$defs": { "digest": { "type": "string", "pattern": "^sha256:[0-9a-f]{64}$" } }

@@ -187,6 +187,21 @@ test("the public consumer validates a real call graph and rejects foreign symbol
   const mixed = structuredClone(first.snapshot);
   mixed.functions[0].body[0].expression.target = second.snapshot.functions[1].symbol;
   assert.throws(() => validateFrontendSnapshot(mixed), TypeError);
+  const foreignDefinition = structuredClone(first.snapshot);
+  foreignDefinition.symbols[0].ref = second.snapshot.symbols[0].ref;
+  assert.throws(() => validateFrontendSnapshot(foreignDefinition), TypeError);
+});
+
+test("the consumer checks same-snapshot call targets against signature and arguments", async () => {
+  const source = "export function entry(x: i32): i32 { return target(x); } export function target(y: i32): i32 { return y; } export function other(z: bool): i32 { return 1; }";
+  const result = await analyzeCalls(source);
+  assert.equal(result.status, "ok");
+  const mixed = structuredClone(result.snapshot);
+  mixed.functions[0].body[0].expression.target = mixed.functions[2].symbol;
+  assert.throws(() => validateFrontendSnapshot(mixed), TypeError);
+  const falseSignature = structuredClone(result.snapshot);
+  falseSignature.functions[0].body[0].expression.signature.parameters[0] = "bool";
+  assert.throws(() => validateFrontendSnapshot(falseSignature), TypeError);
 });
 
 test("node and type references are snapshot-owned and invalid local IDs reject", async () => {
@@ -198,7 +213,8 @@ test("node and type references are snapshot-owned and invalid local IDs reject",
   const call = fn.body[0].expression;
   assert.equal(resolveNode(first.snapshot, fn.node).kind, "function");
   assert.equal(resolveNode(first.snapshot, call.node).kind, "call");
-  assert.equal(resolveType(first.snapshot, call.typeRef).name, "i32");
+  assert.deepEqual(resolveType(first.snapshot, call.typeRef), { id: call.typeRef.id, kind: "scalar", scalar: "i32" });
+  assert.equal(resolveType(first.snapshot, first.snapshot.symbols[0].typeRef).scalar, first.snapshot.symbols[0].type);
   assert.throws(() => resolveNode(second.snapshot, fn.node), TypeError);
   assert.throws(() => resolveType(second.snapshot, call.typeRef), TypeError);
   assert.throws(() => resolveNode(first.snapshot, { snapshotId: first.snapshot.snapshotId, id: "n999" }), RangeError);
@@ -208,6 +224,9 @@ test("node and type references are snapshot-owned and invalid local IDs reject",
     mixed.functions[0].body[0].expression[ref] = second.snapshot.functions[0].body[0].expression[ref];
     assert.throws(() => validateFrontendSnapshot(mixed), TypeError);
   }
+  const badSymbolType = structuredClone(first.snapshot);
+  badSymbolType.symbols[0].typeRef = second.snapshot.symbols[0].typeRef;
+  assert.throws(() => validateFrontendSnapshot(badSymbolType), TypeError);
   const old = structuredClone(first.snapshot);
   old.contractVersion = "2";
   assert.throws(() => validateFrontendSnapshot(old), TypeError);
