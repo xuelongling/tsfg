@@ -12,6 +12,9 @@ const repository = fileURLToPath(new URL("../../", import.meta.url));
 const workspace = process.env.TSFG_TYPESCRIPT_WORKSPACE;
 const revision = process.env.TSFG_TYPESCRIPT_MANIFEST_REVISION;
 const evidence = process.env.TSFG_TYPESCRIPT_EVIDENCE;
+const manifestName = process.env.TSFG_TEST_MANIFEST_NAME ?? "candidates/tsfg-v0.2.0.xml";
+const expectedForkOid = process.env.TSFG_TYPESCRIPT_EXPECTED_FORK_OID ?? "2c3d2d793a208fd15e6e20fd5dfdd687ce2d7223";
+if (!/^candidates\/tsfg-v\d+\.\d+\.\d+\.xml$/.test(manifestName)) throw new Error("Invalid test manifest name");
 
 test("real TypeScript candidate passes Workspace Verification without claiming Source Intake", {
   skip: !workspace && "set TSFG_TYPESCRIPT_WORKSPACE, TSFG_TYPESCRIPT_MANIFEST_REVISION and TSFG_TYPESCRIPT_EVIDENCE for real-source acceptance",
@@ -31,7 +34,7 @@ test("real TypeScript candidate passes Workspace Verification without claiming S
   function verify(name) {
     return invoke([path.join(repository, "eng/tsfg-build.mjs"), "verify-workspace", "--workspace", workspace,
       "--manifest-url", "https://github.com/xuelongling/manifests.git", "--manifest-revision", revision,
-      "--manifest", "candidates/tsfg-v0.2.0.xml", "--report", path.join(evidence, name)]);
+      "--manifest", manifestName, "--report", path.join(evidence, name)]);
   }
   const reportPath = path.join(evidence, "workspace-report.json");
   const result = await verify("workspace-report.json");
@@ -44,11 +47,11 @@ test("real TypeScript candidate passes Workspace Verification without claiming S
   assert.deepEqual(admission.stages, {sourcePolicy: "passed", generation: "not-run", build: "not-run", interface: "not-run", jsIsolation: "not-run", reproducibility: "not-run"});
   assert.equal(admission.sources[0].canonicalUrl, "https://github.com/microsoft/TypeScript.git");
   assert.equal(admission.sources[0].baseOid, "1e4744d68260a7cb91b62b12edc3f6a2187faaf1");
-  assert.equal(admission.sources[0].forkOid, "2c3d2d793a208fd15e6e20fd5dfdd687ce2d7223");
+  assert.equal(admission.sources[0].forkOid, expectedForkOid);
   await context.test("both candidate consumers accept the real workspace report", async () => {
     const product = await invoke([path.join(repository, "eng/product-pr-ci.mjs"), "identity",
-      "--manifest", path.join(workspace, ".repo/manifests/candidates/tsfg-v0.2.0.xml"),
-      "--manifest-name", "candidates/tsfg-v0.2.0.xml", "--manifest-revision", revision,
+      "--manifest", path.join(workspace, ".repo/manifests", manifestName),
+      "--manifest-name", manifestName, "--manifest-revision", revision,
       "--candidate-revision", report.result.projects.find(project => project.id === "tsfg.git").head,
       "--agent-revision", report.result.projects.find(project => project.id === ".agents.git").head,
       "--workspace-report", reportPath, "--out", path.join(evidence, "product-consumer")]);

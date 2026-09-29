@@ -9,6 +9,8 @@ import { tmpdir } from "node:os";
 import path from "node:path";
 
 const entry = fileURLToPath(new URL("../../eng/tsfg-build.mjs", import.meta.url));
+const manifestName = process.env.TSFG_TEST_MANIFEST_NAME ?? "candidates/tsfg-v0.2.0.xml";
+if (!/^candidates\/tsfg-v\d+\.\d+\.\d+\.xml$/.test(manifestName)) throw new Error("Invalid test manifest name");
 const fixtureJson = value => value === null || typeof value !== "object" ? JSON.stringify(value)
   : Array.isArray(value) ? `[${value.map(fixtureJson).join(",")}]`
   : `{${Object.keys(value).sort().map(key => `${JSON.stringify(key)}:${fixtureJson(value[key])}`).join(",")}}`;
@@ -24,7 +26,7 @@ test("source intake completes only the reviewed real TypeScript candidate", {
     "--workspace-a", original.producers[0].workspaceRoot, "--workspace-b", original.producers[1].workspaceRoot,
     "--producer-a", original.producers[0].output, "--producer-b", original.producers[1].output,
     "--cache", process.env.TSFG_TEST_GO_CACHE,
-    "--manifest-revision", original.producers[0].workspace.manifest.revision, "--manifest", "candidates/tsfg-v0.2.0.xml",
+    "--manifest-revision", original.producers[0].workspace.manifest.revision, "--manifest", manifestName,
     "--intake-review", process.env.TSFG_TEST_INTAKE_REVIEW,
     "--out", path.join(root, "comparison"), "--report", path.join(root, "report.json")],
   { encoding: "utf8", timeout: 1200000, maxBuffer: 16 * 1024 * 1024, windowsHide: true });
@@ -72,7 +74,7 @@ for (const scenario of ["source", "toolchain", "generation", "required-tests", "
       "--workspace-a", original.producers[0].workspaceRoot, "--workspace-b", original.producers[1].workspaceRoot,
       "--producer-a", original.producers[0].output, "--producer-b", original.producers[1].output,
       "--cache", process.env.TSFG_TEST_GO_CACHE,
-      "--manifest-revision", original.producers[0].workspace.manifest.revision, "--manifest", "candidates/tsfg-v0.2.0.xml",
+      "--manifest-revision", original.producers[0].workspace.manifest.revision, "--manifest", manifestName,
       "--intake-review", reviewPath, "--out", output, "--report", report],
     { encoding: "utf8", timeout: 1200000, maxBuffer: 16 * 1024 * 1024, windowsHide: true });
     assert.equal(child.status, 23, `${scenario}: ${child.stdout}${child.stderr}`);
@@ -152,7 +154,7 @@ test("source intake refuses failed or unrun consumption audits despite matching 
       "--workspace-a", original.producers[0].workspaceRoot, "--workspace-b", original.producers[1].workspaceRoot,
       "--producer-a", producer, "--producer-b", original.producers[1].output,
       "--cache", process.env.TSFG_TEST_GO_CACHE,
-      "--manifest-revision", original.producers[0].workspace.manifest.revision, "--manifest", "candidates/tsfg-v0.2.0.xml",
+      "--manifest-revision", original.producers[0].workspace.manifest.revision, "--manifest", manifestName,
       "--intake-review", process.env.TSFG_TEST_INTAKE_REVIEW, "--out", output, "--report", report],
     { encoding: "utf8", timeout: 1200000, maxBuffer: 16 * 1024 * 1024, windowsHide: true });
     assert.equal(child.status, 23, `${scenario}: ${child.stdout}${child.stderr}`);
@@ -189,7 +191,7 @@ test("source repro-check rejects missing and damaged attested members", {
       "--workspace-a", original.producers[0].workspaceRoot, "--workspace-b", original.producers[1].workspaceRoot,
       "--producer-a", producer, "--producer-b", original.producers[1].output,
       "--cache", process.env.TSFG_TEST_GO_CACHE,
-      "--manifest-revision", original.producers[0].workspace.manifest.revision, "--manifest", "candidates/tsfg-v0.2.0.xml",
+      "--manifest-revision", original.producers[0].workspace.manifest.revision, "--manifest", manifestName,
       "--out", output, "--report", report], { encoding: "utf8", timeout: 1200000, windowsHide: true });
     assert.equal(child.status, 23, `${damage}: ${child.stdout}${child.stderr}`);
     const evidence = JSON.parse(await readFile(report, "utf8")).error.issues[0].evidence;
@@ -262,7 +264,7 @@ test("source repro-check reconstructs current inputs instead of trusting a self-
     "--workspace-a", original.producers[0].workspaceRoot, "--workspace-b", original.producers[1].workspaceRoot,
     "--producer-a", path.join(root, "a"), "--producer-b", path.join(root, "b"),
     "--cache", process.env.TSFG_TEST_GO_CACHE,
-    "--manifest-revision", original.producers[0].workspace.manifest.revision, "--manifest", "candidates/tsfg-v0.2.0.xml",
+    "--manifest-revision", original.producers[0].workspace.manifest.revision, "--manifest", manifestName,
     "--out", output, "--report", report], { encoding: "utf8", timeout: 1200000, windowsHide: true });
   assert.equal(child.status, 23, child.stdout + child.stderr);
   assert.match(JSON.parse(await readFile(report, "utf8")).error.issues[0].message, /current.*input|current.*identity/i);
@@ -292,7 +294,7 @@ test("source repro-check rejects undeclared host and wall-clock metadata even wh
     "--workspace-a", original.producers[0].workspaceRoot, "--workspace-b", original.producers[1].workspaceRoot,
     "--producer-a", path.join(root, "a"), "--producer-b", path.join(root, "b"),
     "--cache", process.env.TSFG_TEST_GO_CACHE,
-    "--manifest-revision", original.producers[0].workspace.manifest.revision, "--manifest", "candidates/tsfg-v0.2.0.xml",
+    "--manifest-revision", original.producers[0].workspace.manifest.revision, "--manifest", manifestName,
     "--out", output, "--report", report], { encoding: "utf8", timeout: 1200000, windowsHide: true });
   assert.equal(child.status, 23, child.stdout + child.stderr);
   assert.match(JSON.parse(await readFile(report, "utf8")).error.issues[0].message, /metadata.*recipe|metadata.*declaration/i);
@@ -310,7 +312,7 @@ test("source repro-check distinguishes missing producer evidence from an unrun s
     "--workspace-a", original.producers[0].workspaceRoot, "--workspace-b", original.producers[1].workspaceRoot,
     "--producer-a", path.join(root, "missing"), "--producer-b", original.producers[1].output,
     "--cache", process.env.TSFG_TEST_GO_CACHE,
-    "--manifest-revision", original.producers[0].workspace.manifest.revision, "--manifest", "candidates/tsfg-v0.2.0.xml",
+    "--manifest-revision", original.producers[0].workspace.manifest.revision, "--manifest", manifestName,
     "--out", output, "--report", report], { encoding: "utf8", timeout: 1200000, windowsHide: true });
   assert.equal(child.status, 23, child.stdout + child.stderr);
   const evidence = JSON.parse(await readFile(report, "utf8")).error.issues[0].evidence;
@@ -349,7 +351,7 @@ test("source repro-check withdraws success output when its Build Report cannot p
     "--workspace-a", original.producers[0].workspaceRoot, "--workspace-b", original.producers[1].workspaceRoot,
     "--producer-a", original.producers[0].output, "--producer-b", original.producers[1].output,
     "--cache", process.env.TSFG_TEST_GO_CACHE,
-    "--manifest-revision", original.producers[0].workspace.manifest.revision, "--manifest", "candidates/tsfg-v0.2.0.xml",
+    "--manifest-revision", original.producers[0].workspace.manifest.revision, "--manifest", manifestName,
     "--out", output, "--report", report], { encoding: "utf8", timeout: 1200000, windowsHide: true });
   assert.equal(child.status, 30, child.stdout + child.stderr);
   assert.match(child.stderr, /report/i);
@@ -384,7 +386,7 @@ test("source repro-check detects a shared absolute UTF-16 workspace path in equa
     "--workspace-a", original.producers[0].workspaceRoot, "--workspace-b", original.producers[1].workspaceRoot,
     "--producer-a", path.join(root, "a"), "--producer-b", path.join(root, "b"),
     "--cache", process.env.TSFG_TEST_GO_CACHE,
-    "--manifest-revision", original.producers[0].workspace.manifest.revision, "--manifest", "candidates/tsfg-v0.2.0.xml",
+    "--manifest-revision", original.producers[0].workspace.manifest.revision, "--manifest", manifestName,
     "--out", output, "--report", report], { encoding: "utf8", timeout: 1200000, windowsHide: true });
   assert.equal(child.status, 23, child.stdout + child.stderr);
   const issue = JSON.parse(await readFile(report, "utf8")).error.issues[0];
@@ -422,7 +424,7 @@ test("source repro-check rejects self-consistent evidence for different effectiv
     "--workspace-a", original.producers[0].workspaceRoot, "--workspace-b", original.producers[1].workspaceRoot,
     "--producer-a", path.join(root, "a"), "--producer-b", path.join(root, "b"),
     "--cache", process.env.TSFG_TEST_GO_CACHE,
-    "--manifest-revision", original.producers[0].workspace.manifest.revision, "--manifest", "candidates/tsfg-v0.2.0.xml",
+    "--manifest-revision", original.producers[0].workspace.manifest.revision, "--manifest", manifestName,
     "--out", output, "--report", report], { encoding: "utf8", timeout: 1200000, windowsHide: true });
   assert.equal(child.status, 23, child.stdout + child.stderr);
   assert.match(JSON.parse(await readFile(report, "utf8")).error.issues[0].message, /current.*identity|identity.*current/i);
@@ -464,7 +466,7 @@ test("source repro-check rejects identical wrong semantics independently of equa
     "--workspace-a", original.producers[0].workspaceRoot, "--workspace-b", original.producers[1].workspaceRoot,
     "--producer-a", path.join(root, "a"), "--producer-b", path.join(root, "b"),
     "--cache", process.env.TSFG_TEST_GO_CACHE,
-    "--manifest-revision", original.producers[0].workspace.manifest.revision, "--manifest", "candidates/tsfg-v0.2.0.xml",
+    "--manifest-revision", original.producers[0].workspace.manifest.revision, "--manifest", manifestName,
     "--out", output, "--report", report], { encoding: "utf8", timeout: 1200000, windowsHide: true });
   assert.equal(child.status, 23, child.stdout + child.stderr);
   const evidence = JSON.parse(await readFile(report, "utf8")).error.issues[0].evidence;
@@ -535,7 +537,7 @@ test("source repro-check rejects paths without verified integration metadata", a
   const child = spawnSync(process.execPath, [entry, "repro-check", "--dev", "--source-target", "typescript-ast",
     "--target", "windows-x86_64-msvc", "--profile", "debug", "--workspace-a", path.join(root, "a"),
     "--workspace-b", path.join(root, "b"), "--out", path.join(root, "out"),
-    "--manifest-revision", "a".repeat(40), "--manifest", "candidates/tsfg-v0.2.0.xml"],
+    "--manifest-revision", "a".repeat(40), "--manifest", manifestName],
   { encoding: "utf8", windowsHide: true });
   assert.equal(child.status, 10, child.stderr);
   assert.match(child.stderr, /workspace|manifest|Git/);
@@ -549,7 +551,7 @@ test("source repro-check rebuilds the same verified candidate in two independent
     "--target", "windows-x86_64-msvc", "--profile", "debug",
     "--workspace-a", process.env.TSFG_TEST_REPRO_A, "--workspace-b", process.env.TSFG_TEST_REPRO_B,
     "--cache", process.env.TSFG_TEST_GO_CACHE,
-    "--manifest-revision", process.env.TSFG_TEST_REPRO_MANIFEST, "--manifest", "candidates/tsfg-v0.2.0.xml",
+    "--manifest-revision", process.env.TSFG_TEST_REPRO_MANIFEST, "--manifest", manifestName,
     "--out", path.join(root, "comparison"), "--report", path.join(root, "report.json")],
   { env: { ...process.env, TSFG_RUNTIME_LOCK: undefined, TSFG_RUNTIME_CACHE: undefined, TSFG_RUNTIME_PLATFORM: undefined },
     encoding: "utf8", timeout: 3600000, maxBuffer: 16 * 1024 * 1024, windowsHide: true });
@@ -573,7 +575,7 @@ test("source repro-check revalidates existing real producers without claiming a 
     "--workspace-a", original.producers[0].workspaceRoot, "--workspace-b", original.producers[1].workspaceRoot,
     "--producer-a", original.producers[0].output, "--producer-b", original.producers[1].output,
     "--cache", process.env.TSFG_TEST_GO_CACHE,
-    "--manifest-revision", original.producers[0].workspace.manifest.revision, "--manifest", "candidates/tsfg-v0.2.0.xml",
+    "--manifest-revision", original.producers[0].workspace.manifest.revision, "--manifest", manifestName,
     "--out", path.join(root, "comparison"), "--report", path.join(root, "report.json")],
   { encoding: "utf8", timeout: 1200000, maxBuffer: 16 * 1024 * 1024, windowsHide: true });
   assert.equal(child.status, 0, child.stdout + child.stderr);

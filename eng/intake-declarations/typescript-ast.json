@@ -2216,7 +2216,7 @@
         }
       ],
       "excludedReason": "Only the explicit AST/type/diagnostic consumer and its generation/mandatory-test closure are consumed. JS isolation, generation replay and required tests are reported separately. Shared printer/emitter files remain compiler dependencies. Unconsumed bundled embedding tables, other libs, independent _tools/editor/API/server/package/release/performance targets and game runtime remain outside this intake.",
-      "forkOid": "437df7436dcffa67de21998fc9749969b4438689",
+      "forkOid": "10558ce848f783508546fe648020143016f7bd8c",
       "projectId": "TypeScript.git"
     }
   ]
