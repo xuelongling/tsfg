@@ -335,13 +335,13 @@ export function validateFrontendSnapshot(snapshot) {
       throw new TypeError("symbol differs from its source declaration");
     }
   }
-  const visitExpression = (expression, ownedSymbols) => {
+  const visitExpression = (expression, scope) => {
     if (!expression || typeof expression !== "object") throw new TypeError("invalid expression");
     checkNode(expression, expression.kind);
     checkType(expression.type, expression.typeRef);
     if (expression.kind === "reference") {
       const symbol = resolveSymbol(snapshot, expression.symbol);
-      if (!ownedSymbols.has(symbol.id) || symbol.name !== sourceSpan(expression.range)
+      if (scope.get(symbol.name) !== symbol.id || symbol.name !== sourceSpan(expression.range)
           || symbol.type !== expression.type) {
         throw new TypeError("reference differs from its symbol");
       }
@@ -373,16 +373,19 @@ export function validateFrontendSnapshot(snapshot) {
     }
     if (expression.arguments) {
       if (!Array.isArray(expression.arguments)) throw new TypeError("invalid call arguments");
-      for (const argument of expression.arguments) visitExpression(argument, ownedSymbols);
+      for (const argument of expression.arguments) visitExpression(argument, scope);
     }
     for (const key of ["left", "right", "operand"])
-      if (expression[key]) visitExpression(expression[key], ownedSymbols);
+      if (expression[key]) visitExpression(expression[key], scope);
   };
-  const declaredSymbols = statements => statements.flatMap(statement => [
-    ...(statement.symbol ? [statement.symbol.id] : []),
-    ...["body", "thenBody", "elseBody"].flatMap(key => declaredSymbols(statement[key] ?? [])),
-  ]);
-  const visitStatement = (statement, ownedSymbols) => {
+  const visitStatements = (statements, parent) => {
+    const scope = new Map(parent);
+    for (const statement of statements) {
+      visitStatement(statement, scope);
+      if (statement.symbol) scope.set(statement.symbol.name, statement.symbol.id);
+    }
+  };
+  const visitStatement = (statement, scope) => {
     checkNode(statement, statement.kind);
     if (statement.symbol) {
       const symbol = resolveSymbol(snapshot, statement.symbol.ref);
@@ -395,10 +398,10 @@ export function validateFrontendSnapshot(snapshot) {
       }
     }
     for (const key of ["expression", "initializer", "condition", "target", "value"])
-      if (statement[key]) visitExpression(statement[key], ownedSymbols);
+      if (statement[key]) visitExpression(statement[key], scope);
     for (const key of ["body", "thenBody", "elseBody"]) {
       if (statement[key] && !Array.isArray(statement[key])) throw new TypeError("invalid statement body");
-      for (const nested of statement[key] ?? []) visitStatement(nested, ownedSymbols);
+      if (statement[key]) visitStatements(statement[key], scope);
     }
   };
   for (const fn of snapshot.functions) {
@@ -415,8 +418,7 @@ export function validateFrontendSnapshot(snapshot) {
     if (!Array.isArray(fn.parameters) || !Array.isArray(fn.body)) {
       throw new TypeError("invalid function structure");
     }
-    const ownedSymbols = new Set([...fn.parameters.map(parameter => parameter.id),
-      ...declaredSymbols(fn.body)]);
+    const parameterScope = new Map(fn.parameters.map(parameter => [parameter.name, parameter.id]));
     for (const parameter of fn.parameters) {
       checkNode(parameter, "parameter");
       checkType(parameter.type, parameter.typeRef);
@@ -427,7 +429,7 @@ export function validateFrontendSnapshot(snapshot) {
         throw new TypeError("parameter differs from its symbol");
       }
     }
-    for (const statement of fn.body) visitStatement(statement, ownedSymbols);
+    visitStatements(fn.body, parameterScope);
   }
   if (usedNodes.size !== snapshot.nodes.length) throw new TypeError("unused snapshot node");
   return deepFreeze({ snapshotId: snapshot.snapshotId, functions: snapshot.functions.length, calls });

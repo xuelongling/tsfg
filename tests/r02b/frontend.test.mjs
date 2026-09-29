@@ -4,7 +4,7 @@ import { createHash } from "node:crypto";
 import { mkdtemp, mkdir, readFile, rm, writeFile } from "node:fs/promises";
 import path from "node:path";
 import test from "node:test";
-import { analyzeFrontend, resolveNode, resolveSymbol, resolveType, validateFrontendSnapshot } from "../../src/frontend.mjs";
+import { analyzeFrontend, resolveNode, resolveSymbol, resolveType, validateFrontendSnapshot } from "../../compiler/frontend.mjs";
 import sourceLock from "../../eng/frontend-source.lock.json" with { type: "json" };
 import contractRegistry from "../../contracts/registry.json" with { type: "json" };
 
@@ -292,6 +292,15 @@ test("nested block shadowing resolves each read to the checker declaration", asy
   assert.notEqual(shadow.symbol.id, snapshot.functions[0].parameters[0].id);
   assert.equal(resolveSymbol(snapshot, inner.initializer.symbol).id, shadow.symbol.id);
   assert.equal(resolveSymbol(snapshot, returned.expression.symbol).id, snapshot.functions[0].parameters[0].id);
+});
+
+test("the consumer rejects a shadowed read linked to the outer declaration", async () => {
+  const result = await analyzeScalars("export function choose(value: i32): i32 { { const value: i32 = 4; const inner: i32 = value; } return value; }");
+  assert.equal(result.status, "ok", JSON.stringify(result));
+  assert.equal(validateFrontendSnapshot(result.snapshot).functions, 1);
+  const damaged = structuredClone(result.snapshot);
+  damaged.functions[0].body[0].body[1].initializer.symbol = damaged.functions[0].parameters[0].ref;
+  assert.throws(() => validateFrontendSnapshot(damaged), TypeError);
 });
 
 test("simple assignment inside a nested block retains its outer binding", async () => {

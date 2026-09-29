@@ -14,11 +14,11 @@
   "executableSha256": "sha256:ca71f1b09d23837bb1201dce58efe9f98ded97e9337730432ccb939f0db88328",
   "declarations": [
     {
-      "path": "src/minimal-bool-v1.d.ts",
+      "path": "compiler/minimal-bool-v1.d.ts",
       "sha256": "sha256:42dcdf2fb167745b06fbc4342618855cacb2a0d67eb19651d06ea1960cb149cf"
     },
     {
-      "path": "src/minimal-scalars-v2.d.ts",
+      "path": "compiler/minimal-scalars-v2.d.ts",
       "sha256": "sha256:aec5cf8c55a05d76b35e42df70ac0511063e296bb21ce843a41c49897f77f969"
     }
   ]

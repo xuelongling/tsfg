@@ -22,6 +22,9 @@ test("Build Input declaration includes both debug target control and smoke input
   assert.equal(declarationBytes, `${JSON.stringify(declaration)}\n`);
   assert.deepEqual(declaration, {
     entries: [
+      { path: "compiler/frontend.mjs", projectId: "tsfg" },
+      { path: "compiler/minimal-bool-v1.d.ts", projectId: "tsfg" },
+      { path: "compiler/minimal-scalars-v2.d.ts", projectId: "tsfg" },
       { path: "contracts/frontend-snapshot.schema.json", projectId: "tsfg" },
       { path: "contracts/registry.json", projectId: "tsfg" },
       { path: "eng/build-inputs.json", projectId: "tsfg" },
@@ -52,9 +55,6 @@ test("Build Input declaration includes both debug target control and smoke input
       { path: "eng/windows-sandbox-run.c", projectId: "tsfg" },
       { path: "eng/workspace-policy.json", projectId: "tsfg" },
       { path: "pnpm-lock.yaml", projectId: "tsfg" },
-      { path: "src/frontend.mjs", projectId: "tsfg" },
-      { path: "src/minimal-bool-v1.d.ts", projectId: "tsfg" },
-      { path: "src/minimal-scalars-v2.d.ts", projectId: "tsfg" },
       { path: "tests/r00/smoke/cpp/CMakeLists.txt", projectId: "tsfg" },
       { path: "tests/r00/smoke/cpp/main.cpp", projectId: "tsfg" },
       { path: "tests/r00/smoke/zig/build.zig", projectId: "tsfg" },

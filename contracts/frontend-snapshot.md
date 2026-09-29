@@ -4,7 +4,7 @@
 
 `tsfg.frontend-snapshot` is an exact-match development contract. The producer is
 `analyzeFrontend`; the consumer is `validateFrontendSnapshot` and the typed
-reference resolvers in `src/frontend.mjs`. The machine schema is
+reference resolvers in `compiler/frontend.mjs`. The machine schema is
 `contracts/frontend-snapshot.schema.json` and its JCS SHA-256 is registered in
 `contracts/registry.json`.
 
