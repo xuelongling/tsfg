@@ -8,7 +8,8 @@ import { analyzeFrontend, resolveNode, resolveSymbol, resolveType, validateFront
 import sourceLock from "../../eng/frontend-source.lock.json" with { type: "json" };
 import contractRegistry from "../../contracts/registry.json" with { type: "json" };
 
-const declarations = `interface Object {}
+const declarations = `// SPDX-License-Identifier: MIT
+interface Object {}
 interface Function {}
 interface CallableFunction {}
 interface NewableFunction {}

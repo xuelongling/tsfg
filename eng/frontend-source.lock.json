@@ -15,11 +15,11 @@
   "declarations": [
     {
       "path": "src/minimal-bool-v1.d.ts",
-      "sha256": "sha256:5d196cb6bcd97d984919e5272a771f63f626d420c8b999c5140c988491a14a77"
+      "sha256": "sha256:42dcdf2fb167745b06fbc4342618855cacb2a0d67eb19651d06ea1960cb149cf"
     },
     {
       "path": "src/minimal-scalars-v2.d.ts",
-      "sha256": "sha256:d629059f5175a580a8a7b19531c7d8cff1bfa7b61320f6638cf4ee25fbf5a141"
+      "sha256": "sha256:aec5cf8c55a05d76b35e42df70ac0511063e296bb21ce843a41c49897f77f969"
     }
   ]
 }

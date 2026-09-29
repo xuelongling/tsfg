@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: MIT
 interface Object {}
 interface Function {}
 interface CallableFunction {}
