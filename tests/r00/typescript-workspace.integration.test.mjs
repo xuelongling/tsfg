@@ -15,6 +15,8 @@ const evidence = process.env.TSFG_TYPESCRIPT_EVIDENCE;
 const manifestName = process.env.TSFG_TEST_MANIFEST_NAME ?? "candidates/tsfg-v0.2.0.xml";
 const expectedForkOid = process.env.TSFG_TYPESCRIPT_EXPECTED_FORK_OID ?? "2c3d2d793a208fd15e6e20fd5dfdd687ce2d7223";
 if (!/^candidates\/tsfg-v\d+\.\d+\.\d+\.xml$/.test(manifestName)) throw new Error("Invalid test manifest name");
+const manifestBase = manifestName === "candidates/tsfg-v0.2.1.xml"
+  ? "dae9d84cddf313cc112907e47d27654d79049e70" : "722402dab85be4da034831afee56ebf3020731a7";
 
 test("real TypeScript candidate passes Workspace Verification without claiming Source Intake", {
   skip: !workspace && "set TSFG_TYPESCRIPT_WORKSPACE, TSFG_TYPESCRIPT_MANIFEST_REVISION and TSFG_TYPESCRIPT_EVIDENCE for real-source acceptance",
@@ -58,7 +60,7 @@ test("real TypeScript candidate passes Workspace Verification without claiming S
     assert.equal(product.status, 0, product.stderr);
     const manifest = await invoke([process.env.TSFG_MANIFEST_CI ?? path.join(workspace, ".repo/manifests/tools/manifest-ci.mjs"),
       "gate", "--repository", path.join(workspace, ".repo/manifests"),
-      "--base", "722402dab85be4da034831afee56ebf3020731a7", "--head", revision,
+      "--base", manifestBase, "--head", revision,
       "--workspace-report", reportPath, "--out", path.join(evidence, "manifest-consumer")]);
     assert.equal(manifest.status, 0, manifest.stderr);
   });
