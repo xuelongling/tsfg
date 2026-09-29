@@ -8,6 +8,7 @@ import path from "node:path";
 import { readTypeScriptProbes, matchesTypeScriptObservation } from "./typescript-probes.mjs";
 import { sourceProbeMetadata, sourceProducerMembers } from "./typescript-ast.mjs";
 import { assessSourceIntake } from "./vulnerability-admission.mjs";
+import { verifiedContractSet } from "./contract-set.mjs";
 
 const hash = bytes => `sha256:${createHash("sha256").update(bytes).digest("hex")}`;
 const payloadNames = ["artifact-manifest.json", "ast.json", "build-metadata.json", "probes.json", "tsfg-ast.exe"];
@@ -55,6 +56,8 @@ async function readProducer(root, workspaceRoot, workspace, serialize, parseJson
   const product = workspace.projects.find(project => project.id === "tsfg.git");
   const fork = workspace.projects.find(project => project.id === "TypeScript.git");
   const productRoot = path.join(workspaceRoot, product.path);
+  const registry = JSON.parse(await readFile(path.join(productRoot, "contracts/registry.json"), "utf8"));
+  const contractSetId = hash(serialize(await verifiedContractSet(productRoot, registry, serialize)));
   if (build.ledger?.evidenceKind !== "real-source") fail("source consumption audit is not real-source evidence",
     build.ledger ? "failed" : "missing");
   for (const [phase, audit] of [["toolchain", build.toolchainInputs], ["required-tests", build.requiredTests?.intakeLedger]]) {
@@ -74,7 +77,7 @@ async function readProducer(root, workspaceRoot, workspace, serialize, parseJson
       || identity.toolchainClosureDigest !== build.toolchainClosure) fail("source Build Identity digest mismatch");
   if (manifest.kind !== "typescript-source-probe" || manifest.schemaVersion !== "1"
       || !isDeepStrictEqual(manifest.buildIdentity, identity) || !isDeepStrictEqual(manifest.buildInputSet, build.buildInputSet)
-      || manifest.contractSetId !== hash(serialize({})) || manifest.toolchainClosureDigest !== build.toolchainClosure
+      || manifest.contractSetId !== contractSetId || manifest.toolchainClosureDigest !== build.toolchainClosure
       || !isDeepStrictEqual(manifest.members.map(member => member.path), payloadNames.slice(1))) fail("source Artifact Manifest declaration mismatch");
   for (const member of manifest.members) if (hash(bytes.get(member.path)) !== member.sha256) fail(`source payload digest mismatch: ${member.path}`);
   if (!isDeepStrictEqual(json("build-metadata.json"), sourceProbeMetadata(build))) fail("source metadata differs from its declared producer recipe");

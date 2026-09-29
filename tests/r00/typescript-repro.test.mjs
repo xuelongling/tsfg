@@ -7,6 +7,7 @@ import { mkdtemp, rm, readFile, mkdir, cp, writeFile, stat } from "node:fs/promi
 import { createHash } from "node:crypto";
 import { tmpdir } from "node:os";
 import path from "node:path";
+import { verifiedContractSet } from "../../eng/contract-set.mjs";
 
 const entry = fileURLToPath(new URL("../../eng/tsfg-build.mjs", import.meta.url));
 const manifestName = process.env.TSFG_TEST_MANIFEST_NAME ?? "candidates/tsfg-v0.2.0.xml";
@@ -560,6 +561,13 @@ test("source repro-check rebuilds the same verified candidate in two independent
   assert.equal(result.reproducibility.bytes.status, "passed");
   assert.equal(result.reproducibility.semantics.status, "passed");
   assert.equal(result.isolation, "not-enforced");
+  const productRoot = path.join(process.env.TSFG_TEST_REPRO_A, "tsfg");
+  const registry = JSON.parse(await readFile(path.join(productRoot, "contracts/registry.json"), "utf8"));
+  const contractSetId = fixtureHash(fixtureJson(await verifiedContractSet(productRoot, registry, fixtureJson)));
+  for (const producer of result.producers) {
+    const manifest = JSON.parse(await readFile(path.join(producer.output, "artifact-manifest.json"), "utf8"));
+    assert.equal(manifest.contractSetId, contractSetId);
+  }
   assert.equal(result.producers.length, 2);
   assert.notEqual(result.producers[0].execution.compileCache, result.producers[1].execution.compileCache);
   assert.ok(result.producers.every(producer => producer.workspace.dirty === false && producer.build.status === "passed"));
