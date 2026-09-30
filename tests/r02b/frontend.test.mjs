@@ -790,6 +790,29 @@ test("a call with whitespace before its argument list keeps its target link", as
   assert.equal(validateFrontendSnapshot(result.snapshot).calls, 1);
 });
 
+test("calls with comments before their argument lists keep their target links", async () => {
+  for (const trivia of [" /* comment */ ", " // comment\n ", " // comment\r\n ",
+    " // comment\u2028 ", " // comment\u2029 ", " /* ( ignored */\n/* second */ "]) {
+    const result = await analyzeCalls(`export function entry(x: i32): i32 { return target${trivia}(x); } export function target(y: i32): i32 { return y; }`);
+    assert.equal(result.status, "ok", JSON.stringify(trivia));
+    assert.equal(validateFrontendSnapshot(result.snapshot).calls, 1, JSON.stringify(trivia));
+  }
+});
+
+test("a call range cannot use an argument-list delimiter hidden inside a comment", async () => {
+  for (const trivia of [" /* ( hidden */ ", " // ( hidden\n "]) {
+    const source = `export function entry(x: i32): i32 { return target${trivia}(x); } export function target(y: i32): i32 { return y; }`;
+    const result = await analyzeCalls(source);
+    assert.equal(result.status, "ok");
+    const snapshot = structuredClone(result.snapshot);
+    const call = snapshot.functions[0].body[0].expression;
+    const end = source.indexOf("( hidden") + "( hidden".length;
+    call.range.end = end;
+    snapshot.nodes.find(node => node.id === call.node.id).range.end = end;
+    assert.throws(() => validateFrontendSnapshot(snapshot), /call signature differs/);
+  }
+});
+
 test("node and type references are snapshot-owned and invalid local IDs reject", async () => {
   const first = await analyzeCalls("export function entry(x: i32): i32 { return target(x); } export function target(y: i32): i32 { return y; }");
   const second = await analyzeCalls("export function other(x: i32): i32 { return x; }");

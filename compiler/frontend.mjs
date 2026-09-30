@@ -11,6 +11,25 @@ export const frontendContractVersion = frontendContract.semver;
 
 const digest = bytes => `sha256:${createHash("sha256").update(bytes).digest("hex")}`;
 
+function hasCallArgumentList(source) {
+  let index = 0;
+  while (index < source.length) {
+    if (/\s/.test(source[index])) {
+      index++;
+    } else if (source.startsWith("/*", index)) {
+      const end = source.indexOf("*/", index + 2);
+      if (end === -1) return false;
+      index = end + 2;
+    } else if (source.startsWith("//", index)) {
+      index += 2;
+      while (index < source.length && !/[\r\n\u2028\u2029]/.test(source[index])) index++;
+    } else {
+      return source[index] === "(";
+    }
+  }
+  return false;
+}
+
 function hasLoneSurrogate(value) {
   for (let index = 0; index < value.length; index += 1) {
     const codeUnit = value.charCodeAt(index);
@@ -360,7 +379,7 @@ export function validateFrontendSnapshot(snapshot) {
       if (expression.kind !== "call" || !fn || !Array.isArray(parameters)
           || !Array.isArray(arguments_) || !Array.isArray(expression.signature?.parameters)
           || !sourceCall.startsWith(target.name)
-          || !/^\s*\(/.test(sourceCall.slice(target.name.length))
+          || !hasCallArgumentList(sourceCall.slice(target.name.length))
           || expression.signature.returnType !== fn.returnType
           || expression.type !== fn.returnType
           || expression.signature.parameters.length !== parameters.length
