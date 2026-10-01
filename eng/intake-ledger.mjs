@@ -120,7 +120,8 @@ async function createLedger({ workspaceRoot, admission, declaration, consumption
       if (!shape(entry, "path,role,consumer,affectsPayload,localModification,licenseException") || !safePath(entry.path) ||
           !roles.has(entry.role) || !note(entry.consumer) || typeof entry.affectsPayload !== "boolean" ||
           !(entry.localModification === null || note(entry.localModification)) || entry.licenseException !== null) fail("invalid consumed-file declaration or unapproved license exception");
-      if (/typescript/i.test(approved.projectId) && entry.role === "game-runtime") fail("TypeScript sources cannot be game-runtime", "intake-ledger-role");
+      if ((/typescript/i.test(approved.projectId) || approved.projectId.toLowerCase() === "llvm-project.git") &&
+          entry.role === "game-runtime") fail(`Compiler source ${approved.projectId} cannot be game-runtime`, "intake-ledger-role");
       if (entry.role !== "build-only" && !entry.affectsPayload) fail("payload and runtime roles must affect payload", "intake-ledger-role");
       const fileKey = `${source.projectId}/${entry.path.toLowerCase()}`;
       if (selectedFiles.has(fileKey)) fail("duplicate declared file");

@@ -23,7 +23,8 @@ function git(cwd, ...args) {
   return child.stdout.trim();
 }
 
-async function fixture(t, { modified = false } = {}) {
+async function fixture(t, { modified = false, sourceProjectId = projectId,
+  canonicalOwner = "microsoft" } = {}) {
   await mkdir(fixtureParent, { recursive: true });
   const root = await mkdtemp(path.join(fixtureParent, "intake-ledger-"));
   t.after(async () => {
@@ -37,7 +38,7 @@ async function fixture(t, { modified = false } = {}) {
   git(source, "config", "core.autocrlf", "false");
   git(source, "config", "user.name", "Intake governance fixture");
   git(source, "config", "user.email", "intake-fixture@tsfg.invalid");
-  git(source, "remote", "add", "origin", "https://github.com/xuelongling/TypeScript.git");
+  git(source, "remote", "add", "origin", `https://github.com/xuelongling/${sourceProjectId}`);
   const files = {
     ".gitattributes": "* -text\n",
     LICENSE: "Apache License 2.0\nCopyright fixture authors\n",
@@ -51,26 +52,26 @@ async function fixture(t, { modified = false } = {}) {
   const baseOid = git(source, "rev-parse", "HEAD");
   const branch = "refs/heads/tsfg-ledger-fixture";
   git(source, "checkout", "--quiet", "-b", "tsfg-ledger-fixture");
-  files["UPSTREAM.toml"] = `canonical_url = "https://github.com/microsoft/TypeScript.git"\nbase_oid = "${baseOid}"\nlicense = "Apache-2.0"\nsync_branch = "${branch}"\nlocal_changes = "isolated governance fixture"\n`;
+  files["UPSTREAM.toml"] = `canonical_url = "https://github.com/${canonicalOwner}/${sourceProjectId}"\nbase_oid = "${baseOid}"\nlicense = "Apache-2.0"\nsync_branch = "${branch}"\nlocal_changes = "isolated governance fixture"\n`;
   if (modified) files["src/a.ts"] = "export const a = 3;\n";
   for (const name of ["UPSTREAM.toml", "src/a.ts"]) await writeFile(path.join(source, name), files[name]);
   git(source, "add", ".");
   git(source, "commit", "--quiet", "-m", "fixture fork provenance");
   const forkOid = git(source, "rev-parse", "HEAD");
   const admission = { schemaVersion: "2", sources: [{
-    projectId, path: "typescript", remoteUrl: "https://github.com/xuelongling/TypeScript.git",
-    canonicalUrl: "https://github.com/microsoft/TypeScript.git", baseOid, forkOid, branch,
+    projectId: sourceProjectId, path: "typescript", remoteUrl: `https://github.com/xuelongling/${sourceProjectId}`,
+    canonicalUrl: `https://github.com/${canonicalOwner}/${sourceProjectId}`, baseOid, forkOid, branch,
     license: "Apache-2.0", files: Object.entries(files).map(([name, bytes]) => ({
       path: name, contentKind: "text", sha256: hash(bytes),
     })), legal: { license: "LICENSE", notice: "NOTICE", copyright: "LICENSE" },
   }] };
   const declaration = { schemaVersion: "1", evidenceKind: "fixture", sources: [{
-    projectId, forkOid, baseOid, entries: [{ path: "src/a.ts", role: "compiler-payload", consumer,
+    projectId: sourceProjectId, forkOid, baseOid, entries: [{ path: "src/a.ts", role: "compiler-payload", consumer,
       affectsPayload: true, localModification: modified ? "Fixture changes a for a declared probe; expected value is checked by its consumer." : null,
       licenseException: null }], excludedReason: "Other admitted files are not consumed by this declared fixture target.",
   }], attributions: [] };
   const consumption = { schemaVersion: "1", evidenceKind: "fixture", entries: [{
-    projectId, path: "src/a.ts", role: "compiler-payload", consumer,
+    projectId: sourceProjectId, path: "src/a.ts", role: "compiler-payload", consumer,
   }] };
   async function run() {
     const plan = path.join(root, "plan.json"), consumed = path.join(root, "consumption.json");
@@ -130,6 +131,29 @@ test("ledger CLI refuses caller-supplied source approval promoted to real-source
   assert.equal(result.status, 10, result.text);
   assert.equal(result.report.error.issues[0].code, "intake-ledger-authority");
   await assert.rejects(readFile(path.join(result.output, "intake-ledger.json")), { code: "ENOENT" });
+});
+
+test("ledger CLI rejects LLVM and MLIR sources declared as game runtime", async (t) => {
+  const f = await fixture(t, { sourceProjectId: "llvm-project.git", canonicalOwner: "llvm" });
+  f.declaration.sources[0].entries[0].role = "game-runtime";
+  f.consumption.entries[0].role = "game-runtime";
+  const result = await f.run();
+  assert.equal(result.status, 10, result.text);
+  assert.equal(result.report.error.issues[0].code, "intake-ledger-role");
+  await assert.rejects(readFile(path.join(result.output, "intake-ledger.json")), { code: "ENOENT" });
+});
+
+test("ledger CLI permits LLVM and MLIR compiler and build declarations without claiming intake", async (t) => {
+  const f = await fixture(t, { sourceProjectId: "llvm-project.git", canonicalOwner: "llvm" });
+  f.declaration.sources[0].entries.push({ path: "src/b.ts", role: "build-only", consumer: "fixture-lint",
+    affectsPayload: false, localModification: null, licenseException: null });
+  f.consumption.entries.push({ projectId: "llvm-project.git", path: "src/b.ts", role: "build-only", consumer: "fixture-lint" });
+  const result = await f.run();
+  assert.equal(result.status, 0, result.text);
+  assert.deepEqual(result.report.result.files.map(file => file.role), ["compiler-payload", "build-only"]);
+  assert.equal(result.report.result.evidenceKind, "fixture");
+  assert.equal(result.report.result.intakeComplete, false);
+  assert.equal(result.report.result.executionConsumption.status, "not-run");
 });
 
 test("downstream real-intake consumer refuses governance receipts and flipped completion flags", () => {

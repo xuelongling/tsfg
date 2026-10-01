@@ -27,7 +27,12 @@ Each entry records:
 | `localModification` | Reviewable explanation when content differs from the base; otherwise null |
 | `licenseException` | Null for this accepted declaration; unsupported exceptions fail instead of authorizing themselves |
 
-TypeScript is compiler-side and cannot claim the `game-runtime` role. Attribution entries use `{projectId,path,reason}` and do not become consumed files. References must not also masquerade as payload inputs.
+TypeScript and `llvm-project.git` (including MLIR) are compiler-side and cannot
+claim the `game-runtime` role. Such declarations fail with the stable
+`intake-ledger-role` issue and do not publish a ledger. LLVM/MLIR declarations
+may use `compiler-payload` or `build-only`; this role check does not approve a
+new source or prove compilation. Attribution entries use `{projectId,path,reason}`
+and do not become consumed files. References must not also masquerade as payload inputs.
 
 The independent consumption request uses `{schemaVersion,evidenceKind,entries}`. Each requested entry contains `{projectId,path,role,consumer}`. It must match the declared set exactly. This request is an explicit claimed set, not an execution trace. Unknown files, omissions, duplicates, role changes, unsafe paths, stale source identity, changed bytes, missing legal material, and unexplained modifications are rejected.
 
