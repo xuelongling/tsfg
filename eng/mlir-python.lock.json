@@ -1,0 +1,470 @@
+{
+  "schemaVersion": "1",
+  "toolId": "cpython-mlir-build-only",
+  "version": "3.14.8",
+  "platform": "windows-x86_64-msvc",
+  "role": "build-only",
+  "archive": "python-3.14.8-embed-amd64.zip",
+  "url": "https://www.python.org/ftp/python/3.14.8/python-3.14.8-embed-amd64.zip",
+  "archiveSha256": "sha256:a93abe456ab01bd96d7a085b3cdb6566b3063f4241360d114142fbdb07f0a310",
+  "treeAlgorithm": "tsfg-tree-sha256-v1",
+  "treeSha256": "sha256:1e03237f0fa64b481d77e77013b5466c115c78198be90fde5bde9e554cd9ce3b",
+  "executable": "python.exe",
+  "executableSha256": "sha256:434b361fe0c5960d404974feed493db47f2603a1ace2574312104fbed0182c6f",
+  "files": [
+    {
+      "path": "LICENSE.txt",
+      "type": "file",
+      "sha256": "sha256:935cf13e19f8c31b497d20b05d73623431a226b230c3599bc30fa3348979bc68"
+    },
+    {
+      "path": "_asyncio.pyd",
+      "type": "file",
+      "sha256": "sha256:58b3e50104db6bf9d76e3d8106f9f477d34109a887d547ee086b0289e6a4e224"
+    },
+    {
+      "path": "_bz2.pyd",
+      "type": "file",
+      "sha256": "sha256:b02f580daa0b390b2228d2a8186ef119be658c89cc64d0bd909550786ed993f2"
+    },
+    {
+      "path": "_ctypes.pyd",
+      "type": "file",
+      "sha256": "sha256:b96680c6bcad9e9403711ec0977866325e8e5aab93b56e83c3df6280ae72a82a"
+    },
+    {
+      "path": "_decimal.pyd",
+      "type": "file",
+      "sha256": "sha256:196c42414c16e804874988783b8a356bf1d012d32e99efbc6e360e94920c46ec"
+    },
+    {
+      "path": "_elementtree.pyd",
+      "type": "file",
+      "sha256": "sha256:31aff8dca815a05904b5d3020fbdd5bdb596b6a07a36f31728996f28e06dab24"
+    },
+    {
+      "path": "_hashlib.pyd",
+      "type": "file",
+      "sha256": "sha256:5dee7b9fff3e6d0abe20601b9e62f3a14cd048167ee0b80781131dc81dec9469"
+    },
+    {
+      "path": "_lzma.pyd",
+      "type": "file",
+      "sha256": "sha256:9099ef451fe61d8feef9e02894902b88fdc8ee404e3f8b7412b150878c973803"
+    },
+    {
+      "path": "_multiprocessing.pyd",
+      "type": "file",
+      "sha256": "sha256:18041441b3f558925f903bc7af644a4d84b1cd746a4998748b4fffd82e767a6b"
+    },
+    {
+      "path": "_overlapped.pyd",
+      "type": "file",
+      "sha256": "sha256:eca5d3df23b762c846801194b6c971aae4eb288e1fc2914752b3a6c2df5aebfb"
+    },
+    {
+      "path": "_queue.pyd",
+      "type": "file",
+      "sha256": "sha256:1e2e1ede7eeaf30a80ece546420dec67a02716e25d3a7c638e4deb0c21e973a1"
+    },
+    {
+      "path": "_remote_debugging.pyd",
+      "type": "file",
+      "sha256": "sha256:0497ee6846cd92419ada56c091ab675ab6896ad3bfdcf88eec4dcda2cdfd5a4d"
+    },
+    {
+      "path": "_socket.pyd",
+      "type": "file",
+      "sha256": "sha256:18a77c4e1f4a71ca60b9dbbba809e98cd324f3e1470d091689b87754a8c65588"
+    },
+    {
+      "path": "_sqlite3.pyd",
+      "type": "file",
+      "sha256": "sha256:e69caeadb409777bce26f78622653558bbb86f08479b412399eaa0e6fd1e44f1"
+    },
+    {
+      "path": "_ssl.pyd",
+      "type": "file",
+      "sha256": "sha256:49df86fe76ed8fd97bb11a485286b49f5f5ebe953383648976a39c9de6f0524d"
+    },
+    {
+      "path": "_uuid.pyd",
+      "type": "file",
+      "sha256": "sha256:7e2cdd954b44b1be1fac1c354f774dab5f5becfce59688e62338427b125c62bf"
+    },
+    {
+      "path": "_wmi.pyd",
+      "type": "file",
+      "sha256": "sha256:5366924c1c96d9c9f82f95967fbf73244d4b4930f39103d7e7ba2b01046e0a46"
+    },
+    {
+      "path": "_zoneinfo.pyd",
+      "type": "file",
+      "sha256": "sha256:cdf82faa904e557b847a0ac6e97b4274945615fdbd319a28bcaa1f70f740636f"
+    },
+    {
+      "path": "_zstd.pyd",
+      "type": "file",
+      "sha256": "sha256:526d977236cc63895902977f216bf3ca93a4233489240656b295eafb6f518d07"
+    },
+    {
+      "path": "libcrypto-3.dll",
+      "type": "file",
+      "sha256": "sha256:75495fe0e079ab00d49be740d3c710a0b94e3f74f9648cb7cc9f768fc7f52319"
+    },
+    {
+      "path": "libffi-8.dll",
+      "type": "file",
+      "sha256": "sha256:eff52743773eb550fcc6ce3efc37c85724502233b6b002a35496d828bd7b280a"
+    },
+    {
+      "path": "libssl-3.dll",
+      "type": "file",
+      "sha256": "sha256:8957182a9c385bfd9f3f790921de2ddc614cf91f99edbed4e9e5446a46504e32"
+    },
+    {
+      "path": "libtommath.dll",
+      "type": "file",
+      "sha256": "sha256:aaea8a20db7a7a96d4bef74ad724c4a02595a9c47659f6cbd6f145af0c97aa78"
+    },
+    {
+      "path": "pyexpat.pyd",
+      "type": "file",
+      "sha256": "sha256:36d775e2c2fa5bbda86ddc7c6ea632414df04f7a403b9e17587c99088d29cd7b"
+    },
+    {
+      "path": "python.cat",
+      "type": "file",
+      "sha256": "sha256:8d723cf908852e0ae02d6ad4451a0214ce7c7a09aa6d9a4a7fc48024583f8494"
+    },
+    {
+      "path": "python.exe",
+      "type": "file",
+      "sha256": "sha256:434b361fe0c5960d404974feed493db47f2603a1ace2574312104fbed0182c6f"
+    },
+    {
+      "path": "python3.dll",
+      "type": "file",
+      "sha256": "sha256:f9acdbcf3383a52353f8d7db3cbda3d3701b1cf7ac3053985fdac766c29e7808"
+    },
+    {
+      "path": "python314._pth",
+      "type": "file",
+      "sha256": "sha256:2ed7ccda80e9e28ab5877902a9a325586c8a7b7b3e6731d944565bee082e216c"
+    },
+    {
+      "path": "python314.dll",
+      "type": "file",
+      "sha256": "sha256:854fe7549eb4b2ac478935a38ae2ca1b774c6fdc3d87f0263fbd697ff86d7149"
+    },
+    {
+      "path": "python314.zip",
+      "type": "file",
+      "sha256": "sha256:dfa08b46ce09089b7e6bc139784d5609a07770bab66df8d37938ca9bd508e436"
+    },
+    {
+      "path": "pythonw.exe",
+      "type": "file",
+      "sha256": "sha256:4e24680bce514188c85ae91323691dcb0364990da0d6319558519e50cbb5a43c"
+    },
+    {
+      "path": "select.pyd",
+      "type": "file",
+      "sha256": "sha256:a341519a00befc3b86dfddf5938915fed52ded1ad5aab518c57d0b3c8969e835"
+    },
+    {
+      "path": "sqlite3.dll",
+      "type": "file",
+      "sha256": "sha256:5c47df970d2e8cc41239754ff167056fcecb1089f876736e51dab5d89f980300"
+    },
+    {
+      "path": "unicodedata.pyd",
+      "type": "file",
+      "sha256": "sha256:0527fee5192ab4567451d1296533600661571f6ebf9e8f4e0f60b63a4a4fd2e8"
+    },
+    {
+      "path": "vcruntime140.dll",
+      "type": "file",
+      "sha256": "sha256:d1f4225df2cd877dbf130d5668a021dce3f94118455ff5ec952061c30afc9ce7"
+    },
+    {
+      "path": "vcruntime140_1.dll",
+      "type": "file",
+      "sha256": "sha256:a7146c08f89fe5b04541ab507cdb59ff7b44534d4ba3c668a426c6450a03434e"
+    },
+    {
+      "path": "winsound.pyd",
+      "type": "file",
+      "sha256": "sha256:7681b4d88ac96763bb89f018d1c658feeca782d8bfc6d223b06d2ef125780579"
+    }
+  ],
+  "originalLicenseSha256": "sha256:935cf13e19f8c31b497d20b05d73623431a226b230c3599bc30fa3348979bc68",
+  "legalMaterials": [
+    {
+      "file": "python-original-LICENSE.txt",
+      "sha256": "sha256:935cf13e19f8c31b497d20b05d73623431a226b230c3599bc30fa3348979bc68",
+      "source": "Signed official embedded package LICENSE.txt; unmodified original Windows/PSF/third-party terms"
+    },
+    {
+      "file": "python-license.rst",
+      "sha256": "sha256:cd6f471c0bfdb099efefc25ddff9b3df8bf62e10428987f1f05e6f2f9e35d563",
+      "source": "https://raw.githubusercontent.com/python/cpython/8e6e75d9102e39bed2a2b279203a396741180f12/Doc/license.rst",
+      "blob": "bc55e26f79dc5a1fa1cd34920ea8a2ef3d0534ac"
+    },
+    {
+      "file": "python-legal-PC-crtlicense.txt",
+      "sha256": "sha256:3c71b3ae243121f6f227374cd1ef7c59ed07b1969b330d0e947f91a3a1b3fd73",
+      "source": "https://raw.githubusercontent.com/python/cpython/8e6e75d9102e39bed2a2b279203a396741180f12/PC/crtlicense.txt",
+      "blob": "f86841f263efe824f4336d162a6662881a7aad10"
+    },
+    {
+      "file": "python-legal-Modules-expat-COPYING",
+      "sha256": "sha256:31b15de82aa19a845156169a17a5488bf597e561b2c318d159ed583139b25e87",
+      "source": "https://raw.githubusercontent.com/python/cpython/8e6e75d9102e39bed2a2b279203a396741180f12/Modules/expat/COPYING",
+      "blob": "c6d184a8aae845ce7bf4d195b214d8244d457f8f"
+    },
+    {
+      "file": "python-legal-Modules-_hacl-README.md",
+      "sha256": "sha256:8c0c0d4c6e65b349a8b116862174669fbd4c9ce037c6fee32f19994ddb6fbf6c",
+      "source": "https://raw.githubusercontent.com/python/cpython/8e6e75d9102e39bed2a2b279203a396741180f12/Modules/_hacl/README.md",
+      "blob": "0d6454cdd6efb3637b94ced0df9e994d48986cf2"
+    },
+    {
+      "file": "python-legal-Modules-_hacl-Hacl_Hash_SHA2.c",
+      "sha256": "sha256:f8af382de7e29a73c726f9c70770498ddd99e2c4702489ed6e634f0b68597c95",
+      "source": "https://raw.githubusercontent.com/python/cpython/8e6e75d9102e39bed2a2b279203a396741180f12/Modules/_hacl/Hacl_Hash_SHA2.c",
+      "blob": "d2ee0c9ef5172104df324002881df9da700619bd"
+    },
+    {
+      "file": "python-legal-Modules-_decimal-libmpdec-basearith.c",
+      "sha256": "sha256:ad498362c31a5b99ab19fce320ac540cf14c5c4ec09478f0ad3858da1428113d",
+      "source": "https://raw.githubusercontent.com/python/cpython/8e6e75d9102e39bed2a2b279203a396741180f12/Modules/_decimal/libmpdec/basearith.c",
+      "blob": "85c608fadf51567a42afadda3703925b7bfc6fd4"
+    },
+    {
+      "file": "python-legal-Objects-mimalloc-alloc.c",
+      "sha256": "sha256:9e2d6a74104ee41c7c57a18c62c6994e7b8a3eba2ab7a3d4b131abbbb4427fd5",
+      "source": "https://raw.githubusercontent.com/python/cpython/8e6e75d9102e39bed2a2b279203a396741180f12/Objects/mimalloc/alloc.c",
+      "blob": "44c84cf1931717b8b24d78750baa69d8f53c3a3e"
+    },
+    {
+      "file": "python-legal-Lib-ctypes-macholib-README.ctypes",
+      "sha256": "sha256:dc29d1da83b6a0a09a41647e4111eee878ed079c2d6b54a98fd6d8b88dd581f2",
+      "source": "https://raw.githubusercontent.com/python/cpython/8e6e75d9102e39bed2a2b279203a396741180f12/Lib/ctypes/macholib/README.ctypes",
+      "blob": "2866e9f349288a4059e7bacee8f0ad9ed886d068"
+    },
+    {
+      "file": "python-legal-Lib-ctypes-macholib-__init__.py",
+      "sha256": "sha256:1e77c01eec8f167ed10b754f153c0c743c8e5196ae9c81dffc08f129ab56dbfd",
+      "source": "https://raw.githubusercontent.com/python/cpython/8e6e75d9102e39bed2a2b279203a396741180f12/Lib/ctypes/macholib/__init__.py",
+      "blob": "5621defccd61d1c4b0c64b8e136ef4357052dcb3"
+    },
+    {
+      "file": "python-legal-Lib-ctypes-macholib-dyld.py",
+      "sha256": "sha256:eb8e7b17f1533bc3e86e23e8695f7a5e4b7a99ef1b1575d10af54f389161b655",
+      "source": "https://raw.githubusercontent.com/python/cpython/8e6e75d9102e39bed2a2b279203a396741180f12/Lib/ctypes/macholib/dyld.py",
+      "blob": "583c47daff3ad8d6780279cecb5653daaa18677c"
+    },
+    {
+      "file": "python-legal-Lib-ctypes-macholib-dylib.py",
+      "sha256": "sha256:f19ee056b18165cc6735efab0b4ca3508be9405b9646c38113316c15e8278a6f",
+      "source": "https://raw.githubusercontent.com/python/cpython/8e6e75d9102e39bed2a2b279203a396741180f12/Lib/ctypes/macholib/dylib.py",
+      "blob": "0ad4cba8da3521756942a18942bd11aaaad95a58"
+    },
+    {
+      "file": "python-legal-Lib-ctypes-macholib-framework.py",
+      "sha256": "sha256:302439e40d9cbdd61b8b7cffd0b7e1278a6811b635044ee366a36e0d991f62da",
+      "source": "https://raw.githubusercontent.com/python/cpython/8e6e75d9102e39bed2a2b279203a396741180f12/Lib/ctypes/macholib/framework.py",
+      "blob": "495679fff19d418a8248c492bb5959f52787123c"
+    },
+    {
+      "file": "python-legal-xz-5.2.5-COPYING",
+      "sha256": "sha256:bcb02973ef6e87ea73d331b3a80df7748407f17efdb784b61b47e0e610d3bb5c",
+      "source": "https://raw.githubusercontent.com/python/cpython-source-deps/xz-5.2.5/COPYING",
+      "blob": "20e60d5b2427334e1fec6701e7c5ad0da0bc8a5d"
+    },
+    {
+      "file": "python-legal-zlib-ng-2.2.4-LICENSE.md",
+      "sha256": "sha256:6c9f0d975b41afaa34d22f55bb8986ce69e5cb7ad327cb2b28820cd425edf5ee",
+      "source": "https://raw.githubusercontent.com/python/cpython-source-deps/zlib-ng-2.2.4/LICENSE.md",
+      "blob": "e866d7ac18620a2229727e3a0512ab688176cbd8"
+    },
+    {
+      "file": "python-legal-sqlite3.h",
+      "sha256": "sha256:abd1514e0351f79393d1be882830afdb40a8099e8257f311f0bfdf8486f11bea",
+      "source": "https://raw.githubusercontent.com/python/cpython-source-deps/sqlite-3.50.4.0/sqlite3.h",
+      "blob": "c2ed750305b24468fabd090699ffd700bfdf4f88"
+    },
+    {
+      "file": "python-legal-tcl-9.0.4.0-libtommath-LICENSE",
+      "sha256": "sha256:2fa64b163659f41965c9815882a8296d3d03ff546b76153e11445f9bdecf955a",
+      "source": "https://raw.githubusercontent.com/python/cpython-source-deps/tcl-9.0.4.0/libtommath/LICENSE",
+      "blob": "b23b3c8672b1937923c7f800b5f1d0ddd1c6cc28"
+    },
+    {
+      "file": "python-legal-mpdecimal-4.0.0-COPYRIGHT.txt",
+      "sha256": "sha256:2713324211652ce4a60e6e21e54f9dc3004299e591b0933a352f1a89c5fb53c2",
+      "source": "https://raw.githubusercontent.com/python/cpython-source-deps/mpdecimal-4.0.0/COPYRIGHT.txt",
+      "blob": "a78c3f6abf749f384a54d1fad0a2800457cfead7"
+    },
+    {
+      "file": "python-legal-openssl-3.5.9-LICENSE.txt",
+      "sha256": "sha256:7d5450cb2d142651b8afa315b5f238efc805dad827d91ba367d8516bc9d49e7a",
+      "source": "https://raw.githubusercontent.com/python/cpython-source-deps/openssl-3.5.9/LICENSE.txt",
+      "blob": "49cc83d2ee29d13453188217f0e4edd70c7f842f"
+    },
+    {
+      "file": "python-legal-hacl-LICENSE",
+      "sha256": "sha256:c5accbbd8546e94c34aed24afe689a617627d18eed5a6c48277e48db57c23851",
+      "source": "https://raw.githubusercontent.com/hacl-star/hacl-star/8ba599b2f6c9701b3dc961db895b0856a2210f76/LICENSE",
+      "blob": "9c8f3ea0871e0bfe81da0fa6e7c1d7d156dc380e"
+    }
+  ],
+  "signature": {
+    "kind": "sigstore",
+    "identity": "hugo@python.org",
+    "issuer": "https://github.com/login/oauth",
+    "bundle": "python-3.14.8.sigstore.json",
+    "bundleSha256": "sha256:903afdb58d5e29af9a378ee657a0ad589519aebc28954343b47930c2feaf5dc4",
+    "trustedRoot": "tuf-repo-cdn.sigstore.dev/targets/trusted_root.json",
+    "acquisition": "Fresh TUF verification using the locked Node npm seed, before closure locking; python-sigstore-verification.json",
+    "trustedMetadataTreeSha256": "sha256:3048fe044e468ad6cd8cce2d70c62b5268543a78da998c63c22c6d43dc6b7d6b",
+    "metadataFiles": [
+      {
+        "path": "tuf-repo-cdn.sigstore.dev/root.json",
+        "type": "file",
+        "sha256": "sha256:73747011d0857ada15479a16c4cae0f3ed03aac698b523b97e1de314ac9d9ca8"
+      },
+      {
+        "path": "tuf-repo-cdn.sigstore.dev/snapshot.json",
+        "type": "file",
+        "sha256": "sha256:8f784ab614ec62bfdd5f568eb2a2e3011668449ba235ed4eb7befa99f8469933"
+      },
+      {
+        "path": "tuf-repo-cdn.sigstore.dev/targets/registry.npmjs.org%2Fkeys.json",
+        "type": "file",
+        "sha256": "sha256:160677eb6e1c7083c89b166b20f8fe4e837fb71181506aff1991b80b89184f7d"
+      },
+      {
+        "path": "tuf-repo-cdn.sigstore.dev/targets/trusted_root.json",
+        "type": "file",
+        "sha256": "sha256:6494e21ea73fa7ee769f85f57d5a3e6a08725eae1e38c755fc3517c9e6bc0b66"
+      },
+      {
+        "path": "tuf-repo-cdn.sigstore.dev/targets.json",
+        "type": "file",
+        "sha256": "sha256:6a697f7f8908c8ab26c11786ecb490b54acec97fa8c802e399f065f8a0cc1acd"
+      },
+      {
+        "path": "tuf-repo-cdn.sigstore.dev/timestamp.json",
+        "type": "file",
+        "sha256": "sha256:12ff8634dd593bf446c734e941266a68cc822f6950e7d9f73cb9f6fe7097d2c1"
+      }
+    ],
+    "verifierNodeVersion": "24.20.0",
+    "verifierNodeTreeSha256": "sha256:d3c8d5a3cd0b70b8ca9184537edd6d221b3dea6b006de0e348308f102a7822e9"
+  },
+  "sbom": {
+    "file": "python-3.14.8.spdx.json",
+    "sha256": "sha256:08f4f6443a869b08c6e8dbd9f891bb13e2afe9ea345763c9a5077d0d8c0410ef"
+  },
+  "authorization": "Direct user approval of this exact archive/hash, E-drive build-only use, subject to signature/original-legal/tree verification; no global license-policy or LLVM source-license exception approval",
+  "legalScope": "Retained original package and versioned component references; python-legal-audit.json limits apply; no copyright or legal text edits",
+  "components": [
+    {
+      "name": "CPython",
+      "version": "3.14.8",
+      "terms": "PSF-2.0 and retained historical BeOpen/CNRI/CWI terms; Windows Microsoft Distributable Code conditions",
+      "material": "python-original-LICENSE.txt; python-license.rst; PC/crtlicense.txt"
+    },
+    {
+      "name": "bzip2",
+      "version": "1.0.8",
+      "terms": "Original four-condition Julian Seward bzip2 terms",
+      "material": "python-original-LICENSE.txt"
+    },
+    {
+      "name": "expat",
+      "version": "2.8.5",
+      "terms": "MIT; original Thai Open Source/Clark Cooper/Expat maintainer notices",
+      "material": "Modules/expat/COPYING; python-license.rst"
+    },
+    {
+      "name": "hacl-star",
+      "version": "8ba599b2f6c9701b3dc961db895b0856a2210f76",
+      "terms": "Generated HACL hash source MIT; upstream root Apache-2.0 reference retained separately",
+      "material": "Modules/_hacl/Hacl_Hash_SHA2.c; python-legal-hacl-LICENSE"
+    },
+    {
+      "name": "libffi",
+      "version": "3.4.4",
+      "terms": "MIT; Anthony Green/Red Hat/original contributors retained",
+      "material": "python-original-LICENSE.txt; python-license.rst"
+    },
+    {
+      "name": "macholib",
+      "version": "1.0",
+      "terms": "PSF selected from original MIT-or-PSF choice in README.ctypes",
+      "material": "Lib/ctypes/macholib/README.ctypes and original source references; python-original-LICENSE.txt"
+    },
+    {
+      "name": "mpdecimal",
+      "version": "4.0.0",
+      "terms": "BSD-2-Clause; Stefan Krah original 2008-2024 notice",
+      "material": "mpdecimal-4.0.0/COPYRIGHT.txt"
+    },
+    {
+      "name": "mpdecimal",
+      "version": "2.5.1",
+      "terms": "BSD-2-Clause; Stefan Krah original 2008-2020 notice (separate SBOM source identity)",
+      "material": "Modules/_decimal/libmpdec/basearith.c; python-license.rst"
+    },
+    {
+      "name": "openssl",
+      "version": "3.5.9",
+      "terms": "Apache-2.0; original full terms preserved",
+      "material": "openssl-3.5.9/LICENSE.txt; python-original-LICENSE.txt"
+    },
+    {
+      "name": "sqlite",
+      "version": "3.50.4.0",
+      "terms": "Original explicit copyright disclaimer/public-domain dedication and blessing",
+      "material": "sqlite-3.50.4.0/sqlite3.h"
+    },
+    {
+      "name": "tcl/tk",
+      "version": "9.0.4.0/9.0.4.1",
+      "terms": "Original Tcl/Tk permissive terms retained; no _tkinter/Tcl/Tk binaries in the 37-file embedded package",
+      "material": "python-original-LICENSE.txt",
+      "note": "SBOM inventory is broader than runtime modules; shipped libtommath original Unlicense terms retained independently"
+    },
+    {
+      "name": "xz",
+      "version": "5.2.5",
+      "terms": "Original liblzma public-domain/fallback grant; xz CLI/GNU-getopt/scripts are not shipped by this embedded package",
+      "material": "xz-5.2.5/COPYING"
+    },
+    {
+      "name": "zlib-ng",
+      "version": "2.2.4",
+      "terms": "Zlib; original Jean-loup Gailly/Mark Adler notices",
+      "material": "zlib-ng-2.2.4/LICENSE.md"
+    },
+    {
+      "name": "zstd",
+      "version": "1.5.7",
+      "terms": "BSD-3-Clause; original Meta terms and Ma Lin/pyzstd binding terms retained",
+      "material": "python-original-LICENSE.txt; python-license.rst"
+    },
+    {
+      "name": "libtommath",
+      "terms": "Original Unlicense/public-domain dedication with permissive fallback",
+      "material": "tcl-9.0.4.0/libtommath/LICENSE"
+    },
+    {
+      "name": "stdlib incorporated software",
+      "terms": "Original versioned notices including Mersenne Twister, WIDE sockets, SipHash, Lucent dtoa, mimalloc MIT, asyncio MIT, GUS BSD-2-Clause and Unicode License V3 retained",
+      "material": "python-license.rst; Objects/mimalloc/alloc.c"
+    }
+  ]
+}

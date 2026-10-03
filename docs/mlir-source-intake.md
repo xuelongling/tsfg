@@ -41,3 +41,30 @@ using the MLIR parser/verifier/printer and registered tsfg operations. This
 seam does not execute TypeScript, generate game bytecode, or establish VM/AOT
 language execution. Those capabilities remain assigned to their later
 tickets. No execution substitute is introduced by M01.
+
+## Scoped Python build tool
+
+The human separately approved the exact official CPython 3.14.8 Windows x64
+embeddable archive, SHA-256
+`a93abe456ab01bd96d7a085b3cdb6566b3063f4241360d114142fbdb07f0a310`,
+for this E-drive build-only use. This does not approve LLVM's pending embedded
+source licenses, other Python inputs, installers, pip, optional packages, or
+Candidate/Stable changes.
+
+`readMlirPythonTool` checks the finite acquisition capsule in
+`eng/mlir-python.lock.json`, archive/executable/complete 37-file tree, all 20
+retained original legal materials, SBOM, signature bundle and the pinned trust
+metadata acquired through fresh TUF. It verifies the signature offline with
+the previously approved Node 24.20.0 complete tool tree and the official
+`hugo@python.org`/GitHub OIDC signer policy, including Fulcio/SCT/transparency
+log/timestamp verification. It does not refresh metadata or use a network
+fallback. Changed files, missing materials, expanded lock roles, and implicit,
+relative or system-drive tool inputs are rejected before Python execution.
+
+The original package LICENSE and versioned component references are retained
+without edits. The audit covers those materials and listed components; it
+does not claim an exhaustive audit of every CPython source file. SBOM
+`NOASSERTION` entries are resolved using those original terms, rather than
+treating a SBOM classification as permission. Build preparation only returns
+the verified executable and its identity; it does not execute or install it.
+The later source build must use that exact executable with E-drive storage.
