@@ -53,7 +53,7 @@ async function regularPath(root, relative, directory = false) {
   return current;
 }
 
-function provenance(bytes) {
+export function parseUpstreamProvenance(bytes) {
   const result = {};
   for (const raw of new TextDecoder("utf-8", { fatal: true }).decode(bytes).split("\n")) {
     const line = raw.trim();
@@ -188,7 +188,7 @@ async function createLedger({ workspaceRoot, admission, declaration, consumption
       legal[role] = { path: name, sha256: material.sha256, blobOid: material.blobOid };
     }
     const upstream = await inspect("UPSTREAM.toml");
-    const origin = provenance(upstream.bytes);
+    const origin = parseUpstreamProvenance(upstream.bytes);
     if (!shape(origin, "base_oid,canonical_url,license,local_changes,sync_branch") || origin.base_oid !== approved.baseOid ||
         origin.canonical_url !== approved.canonicalUrl || origin.license !== approved.license || origin.sync_branch !== approved.branch ||
         !note(origin.local_changes)) fail("UPSTREAM.toml does not match admitted provenance", "intake-ledger-identity");

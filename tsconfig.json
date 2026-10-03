@@ -9,5 +9,5 @@
     "target": "ES2024",
     "types": ["node"]
   },
-  "include": ["eng/**/*.mjs", "compiler/**/*.mjs", "tooling/conformance/**/*.mjs", "tests/r00/**/*.mjs", "tests/r01/**/*.mjs", "tests/r02b/**/*.mjs"]
+  "include": ["eng/**/*.mjs", "compiler/**/*.mjs", "tooling/conformance/**/*.mjs", "tests/r00/**/*.mjs", "tests/r01/**/*.mjs", "tests/r02b/**/*.mjs", "tests/r03/**/*.mjs"]
 }

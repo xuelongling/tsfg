@@ -1,0 +1,18 @@
+{
+  "schemaVersion": "1",
+  "projectId": "llvm-project.git",
+  "carrierUrl": "https://github.com/ifeuille/llvm-project.git",
+  "canonicalUrl": "https://github.com/llvm/llvm-project.git",
+  "baseCommit": "fc4aad7b5db3fff421df9a9637605b9ca5667881",
+  "sourceCommit": "4cb57d27ddcad7c3a89d23ef576662a5c891e8c8",
+  "sourceTree": "1ad1b903614825daa3ca3a5258fbb21e08d3c580",
+  "branch": "refs/heads/r03-m01-source",
+  "license": "Apache-2.0 WITH LLVM-exception",
+  "localChanges": "Add UPSTREAM.toml provenance metadata only; LLVM and MLIR source, build, and legal files are unchanged.",
+  "authorization": "Human-selected ifeuille LLVM carrier on 2026-10-03; metadata-only inspection, not compiler consumption authorization.",
+  "files": [
+    { "path": "UPSTREAM.toml", "blob": "dc1f7fedc01fa6595552a37d241138bd80565584", "sha256": "sha256:948becdf9d5b8ae305682315d36fffa0b31f63cf2cf3d3d44d31b4296b1d3d01" },
+    { "path": "llvm/LICENSE.TXT", "blob": "fa6ac540007032cbd0ec772a1c72e6cb5527a4fe", "sha256": "sha256:8d85c1057d742e597985c7d4e6320b015a9139385cff4cbae06ffc0ebe89afee" },
+    { "path": "mlir/LICENSE.TXT", "blob": "53bb2e7fbc76434fe747bceffdfb5c19e1cca362", "sha256": "sha256:94b301bb652ae351f5941655bf533f1a136300ad1396be7452c8a04ff2c91374" }
+  ]
+}

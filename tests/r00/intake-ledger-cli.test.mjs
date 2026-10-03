@@ -24,7 +24,7 @@ function git(cwd, ...args) {
 }
 
 async function fixture(t, { modified = false, sourceProjectId = projectId,
-  canonicalOwner = "microsoft" } = {}) {
+  canonicalOwner = "microsoft", forkOwner = "xuelongling" } = {}) {
   await mkdir(fixtureParent, { recursive: true });
   const root = await mkdtemp(path.join(fixtureParent, "intake-ledger-"));
   t.after(async () => {
@@ -38,7 +38,7 @@ async function fixture(t, { modified = false, sourceProjectId = projectId,
   git(source, "config", "core.autocrlf", "false");
   git(source, "config", "user.name", "Intake governance fixture");
   git(source, "config", "user.email", "intake-fixture@tsfg.invalid");
-  git(source, "remote", "add", "origin", `https://github.com/xuelongling/${sourceProjectId}`);
+  git(source, "remote", "add", "origin", `https://github.com/${forkOwner}/${sourceProjectId}`);
   const files = {
     ".gitattributes": "* -text\n",
     LICENSE: "Apache License 2.0\nCopyright fixture authors\n",
@@ -59,7 +59,7 @@ async function fixture(t, { modified = false, sourceProjectId = projectId,
   git(source, "commit", "--quiet", "-m", "fixture fork provenance");
   const forkOid = git(source, "rev-parse", "HEAD");
   const admission = { schemaVersion: "2", sources: [{
-    projectId: sourceProjectId, path: "typescript", remoteUrl: `https://github.com/xuelongling/${sourceProjectId}`,
+    projectId: sourceProjectId, path: "typescript", remoteUrl: `https://github.com/${forkOwner}/${sourceProjectId}`,
     canonicalUrl: `https://github.com/${canonicalOwner}/${sourceProjectId}`, baseOid, forkOid, branch,
     license: "Apache-2.0", files: Object.entries(files).map(([name, bytes]) => ({
       path: name, contentKind: "text", sha256: hash(bytes),
@@ -131,6 +131,29 @@ test("ledger CLI refuses caller-supplied source approval promoted to real-source
   assert.equal(result.status, 10, result.text);
   assert.equal(result.report.error.issues[0].code, "intake-ledger-authority");
   await assert.rejects(readFile(path.join(result.output, "intake-ledger.json")), { code: "ENOENT" });
+});
+
+test("ledger CLI accepts the explicitly selected ifeuille LLVM carrier", async (t) => {
+  const f = await fixture(t, { sourceProjectId: "llvm-project.git", canonicalOwner: "llvm", forkOwner: "ifeuille" });
+  const result = await f.run();
+  assert.equal(result.status, 0, result.text);
+  assert.equal(result.report.result.sources[0].remoteUrl, "https://github.com/ifeuille/llvm-project.git");
+  assert.equal(result.report.result.intakeComplete, false);
+});
+
+test("selected LLVM carrier cannot authorize other owners or upstream identities", async t => {
+  for (const selection of [
+    { sourceProjectId: "llvm-project.git", canonicalOwner: "llvm", forkOwner: "other" },
+    { sourceProjectId: "llvm-project.git", canonicalOwner: "other", forkOwner: "ifeuille" },
+    { sourceProjectId: "TypeScript.git", canonicalOwner: "microsoft", forkOwner: "ifeuille" },
+  ]) {
+    await t.test(JSON.stringify(selection), async subtest => {
+      const f = await fixture(subtest, selection);
+      const result = await f.run();
+      assert.equal(result.status, 10, result.text);
+      assert.equal(result.report.error.issues[0].code, "intake-ledger-license");
+    });
+  }
 });
 
 test("ledger CLI rejects LLVM and MLIR sources declared as game runtime", async (t) => {

@@ -7,6 +7,13 @@ function validBranch(value) {
       part !== "" && !part.startsWith(".") && !part.endsWith(".lock"));
 }
 
+// The explicit LLVM carrier selection is limited to its canonical upstream.
+export function isPermittedSourceCarrier(projectId, carrierUrl, canonicalUrl) {
+  return carrierUrl === `https://github.com/xuelongling/${projectId}` ||
+    (projectId === "llvm-project.git" && carrierUrl === "https://github.com/ifeuille/llvm-project.git" &&
+      canonicalUrl === "https://github.com/llvm/llvm-project.git");
+}
+
 export function validateSourceAdmission(record, definition) {
   const keys = (value, expected) => value && typeof value === "object" && !Array.isArray(value) &&
     Object.keys(value).sort().join(",") === expected.split(",").sort().join(",");
@@ -21,7 +28,7 @@ export function validateSourceAdmission(record, definition) {
           typeof source[key] !== "string" || /[\x00-\x1f\x7f]/.test(source[key])) ||
         !/^[A-Za-z0-9][A-Za-z0-9._-]*\.git$/.test(source.projectId) || ["tsfg.git", ".agents.git", "manifests.git"].includes(source.projectId.toLowerCase()) ||
         !/^[a-z0-9]+(?:-[a-z0-9]+)*$/.test(source.path) || source.path.startsWith("tsfg-upstream-") || !safePath(source.path) ||
-        source.remoteUrl !== `https://github.com/xuelongling/${source.projectId}` ||
+        !isPermittedSourceCarrier(source.projectId, source.remoteUrl, source.canonicalUrl) ||
         !/^https:\/\/github\.com\/[A-Za-z0-9][A-Za-z0-9-]*\/[A-Za-z0-9_.-]+\.git$/.test(source.canonicalUrl) ||
         source.canonicalUrl.split("/").at(-1) !== source.projectId ||
         source.baseOid.length !== 40 || source.forkOid.length !== 40 ||
