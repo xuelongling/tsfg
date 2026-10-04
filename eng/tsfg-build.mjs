@@ -46,6 +46,7 @@ import { reproduceTypeScript, SourceReproError } from "./typescript-repro.mjs";
 import { prefetchGoDependencies, readGoDependencyLock, verifyGoDependencies } from "./go-closure.mjs";
 import { executeFrontendTarget, FrontendBuildError } from "./frontend-build.mjs";
 import { verifiedContractSet } from "./contract-set.mjs";
+import { executeMlirTarget, MlirBuildError } from "./mlir-build.mjs";
 
 class ConfigurationError extends Error {
   constructor(message, issueCode = "invalid-configuration") {
@@ -7421,7 +7422,7 @@ async function runCommandLine() {
         process.env.TSFG_RUNTIME_CACHE,
         process.env.TSFG_RUNTIME_PLATFORM,
         { nativeControls: !((command === "build" || typedProbeTest || frontendTest || sourceReproCheck) && arguments_.includes("--dev") &&
-            ["typescript-dependencies", "typescript-ast", "typescript-frontend", "intake-ledger", "upgrade-review"].includes(arguments_[arguments_.indexOf("--source-target") + 1])) },
+            ["typescript-dependencies", "typescript-ast", "typescript-frontend", "intake-ledger", "upgrade-review", "mlir-core"].includes(arguments_[arguments_.indexOf("--source-target") + 1])) },
       );
     } catch (error) {
       runtimeIntegrityError = error;
@@ -7560,6 +7561,25 @@ async function runCommandLine() {
         process.exitCode = await succeed(command, await executeIntakeLedgerTarget(options), reportPath, "offline");
       } else if (options.get("--source-target") === "typescript-frontend") {
         process.exitCode = await succeed(command, await runFrontendTarget(options, runtimeClosure, command), reportPath, "offline");
+      } else if (options.get("--source-target") === "mlir-core") {
+        const workspaceState = inspectProductWorkspace(options, true, command);
+        const result = await executeMlirTarget({ options, runtime: runtimeClosure,
+          tools: runtimeClosure ? windowsToolchain(runtimeClosure) : undefined,
+          productRoot: workspaceState.root, workspaceState, serialize: canonicalize,
+          verifyTools: async () => {
+            const current = await verifyRuntimeClosure(process.env.TSFG_RUNTIME_LOCK, runtimeClosure.cachePath,
+              "windows-x86_64-msvc", { nativeControls: false });
+            if (current.lockDigest !== runtimeClosure.lockDigest)
+              throw new MlirBuildError("Native tool closure changed during MLIR source build", "mlir-tool-integrity");
+          },
+          createIdentity: (runtime, root) => createBuildIdentity(runtime, "windows-x86_64-msvc", "debug", root,
+            { sourceTarget: "mlir-core", simdDispatch: "runtime-detected" }),
+          scopedToolchainDigest: (runtime, python) => toolchainClosureDigest({ ...runtime.lock,
+            dependencyLocks: [...runtime.lock.dependencyLocks, { projectId: "tsfg", path: "eng/mlir-python.lock.json", sha256: python.lockSha256 }] },
+            [...runtime.selections, { id: "cpython-mlir-build-only", tool: { version: python.version }, artifact: {
+              platform: "windows-x86_64-msvc", archiveSha256: python.archiveSha256, unpackedTreeSha256: python.treeSha256 } }]
+              .sort((a, b) => Buffer.from(a.id).compare(Buffer.from(b.id))), "windows-x86_64-msvc") });
+        process.exitCode = await succeed(command, result, reportPath, "offline");
       } else if (options.has("--source-target")) {
         await validateGoSourceOptions(options, runtimeClosure);
         const result = await executeGoSourceTarget(options, runtimeClosure);
@@ -7587,7 +7607,7 @@ async function runCommandLine() {
     } catch (error) {
       if (publication) await publication.rollback();
       const isConfigurationError = error instanceof ConfigurationError;
-      const isBuildFailure = error instanceof BuildFailureError || error instanceof AstExecutionError || error instanceof GenerationError || error instanceof FrontendBuildError;
+      const isBuildFailure = error instanceof BuildFailureError || error instanceof AstExecutionError || error instanceof GenerationError || error instanceof FrontendBuildError || error instanceof MlirBuildError;
       const isProbeFailure = error instanceof AstExecutionError && (error.probes?.status === "failed" || error.jsIsolation?.status === "failed" || error.requiredTests?.status === "failed");
       const isBuildPolicy = error instanceof BuildPolicyError;
       const isWorkspaceMismatch = error instanceof WorkspaceMismatchError || error instanceof IntakeLedgerError;
@@ -7627,7 +7647,7 @@ async function runCommandLine() {
                     ? "sandbox-boundary"
                     : isBuildPolicy
                       ? "forbidden-build-option"
-                    : isProbeFailure ? "typescript-probe" : isBuildFailure ? "native-build" : "internal-control-plane",
+                    : isProbeFailure ? "typescript-probe" : isBuildFailure ? (error instanceof MlirBuildError ? error.issueCode : "native-build") : "internal-control-plane",
           message: error.message,
           ...(sourceTarget === "typescript-ast" ? {
             generation: error.generation ?? { status: "not-run", reason: error.message },

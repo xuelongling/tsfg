@@ -1,0 +1,665 @@
+{
+  "schemaVersion": "1",
+  "baseCommit": "fc4aad7b5db3fff421df9a9637605b9ca5667881",
+  "sourceCommit": "4cb57d27ddcad7c3a89d23ef576662a5c891e8c8",
+  "purpose": "Finite original notice retention only; this mapping grants no source consumption approval",
+  "files": [
+    {
+      "path": "llvm/LICENSE.TXT",
+      "blob": "fa6ac540007032cbd0ec772a1c72e6cb5527a4fe",
+      "sha256": "sha256:8d85c1057d742e597985c7d4e6320b015a9139385cff4cbae06ffc0ebe89afee",
+      "noticeStart": 0,
+      "noticeEnd": 15141,
+      "noticeSha256": "sha256:8d85c1057d742e597985c7d4e6320b015a9139385cff4cbae06ffc0ebe89afee",
+      "completeOriginalNotice": "==============================================================================\nThe LLVM Project is under the Apache License v2.0 with LLVM Exceptions:\n==============================================================================\n\n                                 Apache License\n                           Version 2.0, January 2004\n                        http://www.apache.org/licenses/\n\n    TERMS AND CONDITIONS FOR USE, REPRODUCTION, AND DISTRIBUTION\n\n    1. Definitions.\n\n      \"License\" shall mean the terms and conditions for use, reproduction,\n      and distribution as defined by Sections 1 through 9 of this document.\n\n      \"Licensor\" shall mean the copyright owner or entity authorized by\n      the copyright owner that is granting the License.\n\n      \"Legal Entity\" shall mean the union of the acting entity and all\n      other entities that control, are controlled by, or are under common\n      control with that entity. For the purposes of this definition,\n      \"control\" means (i) the power, direct or indirect, to cause the\n      direction or management of such entity, whether by contract or\n      otherwise, or (ii) ownership of fifty percent (50%) or more of the\n      outstanding shares, or (iii) beneficial ownership of such entity.\n\n      \"You\" (or \"Your\") shall mean an individual or Legal Entity\n      exercising permissions granted by this License.\n\n      \"Source\" form shall mean the preferred form for making modifications,\n      including but not limited to software source code, documentation\n      source, and configuration files.\n\n      \"Object\" form shall mean any form resulting from mechanical\n      transformation or translation of a Source form, including but\n      not limited to compiled object code, generated documentation,\n      and conversions to other media types.\n\n      \"Work\" shall mean the work of authorship, whether in Source or\n      Object form, made available under the License, as indicated by a\n      copyright notice that is included in or attached to the work\n      (an example is provided in the Appendix below).\n\n      \"Derivative Works\" shall mean any work, whether in Source or Object\n      form, that is based on (or derived from) the Work and for which the\n      editorial revisions, annotations, elaborations, or other modifications\n      represent, as a whole, an original work of authorship. For the purposes\n      of this License, Derivative Works shall not include works that remain\n      separable from, or merely link (or bind by name) to the interfaces of,\n      the Work and Derivative Works thereof.\n\n      \"Contribution\" shall mean any work of authorship, including\n      the original version of the Work and any modifications or additions\n      to that Work or Derivative Works thereof, that is intentionally\n      submitted to Licensor for inclusion in the Work by the copyright owner\n      or by an individual or Legal Entity authorized to submit on behalf of\n      the copyright owner. For the purposes of this definition, \"submitted\"\n      means any form of electronic, verbal, or written communication sent\n      to the Licensor or its representatives, including but not limited to\n      communication on electronic mailing lists, source code control systems,\n      and issue tracking systems that are managed by, or on behalf of, the\n      Licensor for the purpose of discussing and improving the Work, but\n      excluding communication that is conspicuously marked or otherwise\n      designated in writing by the copyright owner as \"Not a Contribution.\"\n\n      \"Contributor\" shall mean Licensor and any individual or Legal Entity\n      on behalf of whom a Contribution has been received by Licensor and\n      subsequently incorporated within the Work.\n\n    2. Grant of Copyright License. Subject to the terms and conditions of\n      this License, each Contributor hereby grants to You a perpetual,\n      worldwide, non-exclusive, no-charge, royalty-free, irrevocable\n      copyright license to reproduce, prepare Derivative Works of,\n      publicly display, publicly perform, sublicense, and distribute the\n      Work and such Derivative Works in Source or Object form.\n\n    3. Grant of Patent License. Subject to the terms and conditions of\n      this License, each Contributor hereby grants to You a perpetual,\n      worldwide, non-exclusive, no-charge, royalty-free, irrevocable\n      (except as stated in this section) patent license to make, have made,\n      use, offer to sell, sell, import, and otherwise transfer the Work,\n      where such license applies only to those patent claims licensable\n      by such Contributor that are necessarily infringed by their\n      Contribution(s) alone or by combination of their Contribution(s)\n      with the Work to which such Contribution(s) was submitted. If You\n      institute patent litigation against any entity (including a\n      cross-claim or counterclaim in a lawsuit) alleging that the Work\n      or a Contribution incorporated within the Work constitutes direct\n      or contributory patent infringement, then any patent licenses\n      granted to You under this License for that Work shall terminate\n      as of the date such litigation is filed.\n\n    4. Redistribution. You may reproduce and distribute copies of the\n      Work or Derivative Works thereof in any medium, with or without\n      modifications, and in Source or Object form, provided that You\n      meet the following conditions:\n\n      (a) You must give any other recipients of the Work or\n          Derivative Works a copy of this License; and\n\n      (b) You must cause any modified files to carry prominent notices\n          stating that You changed the files; and\n\n      (c) You must retain, in the Source form of any Derivative Works\n          that You distribute, all copyright, patent, trademark, and\n          attribution notices from the Source form of the Work,\n          excluding those notices that do not pertain to any part of\n          the Derivative Works; and\n\n      (d) If the Work includes a \"NOTICE\" text file as part of its\n          distribution, then any Derivative Works that You distribute must\n          include a readable copy of the attribution notices contained\n          within such NOTICE file, excluding those notices that do not\n          pertain to any part of the Derivative Works, in at least one\n          of the following places: within a NOTICE text file distributed\n          as part of the Derivative Works; within the Source form or\n          documentation, if provided along with the Derivative Works; or,\n          within a display generated by the Derivative Works, if and\n          wherever such third-party notices normally appear. The contents\n          of the NOTICE file are for informational purposes only and\n          do not modify the License. You may add Your own attribution\n          notices within Derivative Works that You distribute, alongside\n          or as an addendum to the NOTICE text from the Work, provided\n          that such additional attribution notices cannot be construed\n          as modifying the License.\n\n      You may add Your own copyright statement to Your modifications and\n      may provide additional or different license terms and conditions\n      for use, reproduction, or distribution of Your modifications, or\n      for any such Derivative Works as a whole, provided Your use,\n      reproduction, and distribution of the Work otherwise complies with\n      the conditions stated in this License.\n\n    5. Submission of Contributions. Unless You explicitly state otherwise,\n      any Contribution intentionally submitted for inclusion in the Work\n      by You to the Licensor shall be under the terms and conditions of\n      this License, without any additional terms or conditions.\n      Notwithstanding the above, nothing herein shall supersede or modify\n      the terms of any separate license agreement you may have executed\n      with Licensor regarding such Contributions.\n\n    6. Trademarks. This License does not grant permission to use the trade\n      names, trademarks, service marks, or product names of the Licensor,\n      except as required for reasonable and customary use in describing the\n      origin of the Work and reproducing the content of the NOTICE file.\n\n    7. Disclaimer of Warranty. Unless required by applicable law or\n      agreed to in writing, Licensor provides the Work (and each\n      Contributor provides its Contributions) on an \"AS IS\" BASIS,\n      WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or\n      implied, including, without limitation, any warranties or conditions\n      of TITLE, NON-INFRINGEMENT, MERCHANTABILITY, or FITNESS FOR A\n      PARTICULAR PURPOSE. You are solely responsible for determining the\n      appropriateness of using or redistributing the Work and assume any\n      risks associated with Your exercise of permissions under this License.\n\n    8. Limitation of Liability. In no event and under no legal theory,\n      whether in tort (including negligence), contract, or otherwise,\n      unless required by applicable law (such as deliberate and grossly\n      negligent acts) or agreed to in writing, shall any Contributor be\n      liable to You for damages, including any direct, indirect, special,\n      incidental, or consequential damages of any character arising as a\n      result of this License or out of the use or inability to use the\n      Work (including but not limited to damages for loss of goodwill,\n      work stoppage, computer failure or malfunction, or any and all\n      other commercial damages or losses), even if such Contributor\n      has been advised of the possibility of such damages.\n\n    9. Accepting Warranty or Additional Liability. While redistributing\n      the Work or Derivative Works thereof, You may choose to offer,\n      and charge a fee for, acceptance of support, warranty, indemnity,\n      or other liability obligations and/or rights consistent with this\n      License. However, in accepting such obligations, You may act only\n      on Your own behalf and on Your sole responsibility, not on behalf\n      of any other Contributor, and only if You agree to indemnify,\n      defend, and hold each Contributor harmless for any liability\n      incurred by, or claims asserted against, such Contributor by reason\n      of your accepting any such warranty or additional liability.\n\n    END OF TERMS AND CONDITIONS\n\n    APPENDIX: How to apply the Apache License to your work.\n\n      To apply the Apache License to your work, attach the following\n      boilerplate notice, with the fields enclosed by brackets \"[]\"\n      replaced with your own identifying information. (Don't include\n      the brackets!)  The text should be enclosed in the appropriate\n      comment syntax for the file format. We also recommend that a\n      file or class name and description of purpose be included on the\n      same \"printed page\" as the copyright notice for easier\n      identification within third-party archives.\n\n    Copyright [yyyy] [name of copyright owner]\n\n    Licensed under the Apache License, Version 2.0 (the \"License\");\n    you may not use this file except in compliance with the License.\n    You may obtain a copy of the License at\n\n       http://www.apache.org/licenses/LICENSE-2.0\n\n    Unless required by applicable law or agreed to in writing, software\n    distributed under the License is distributed on an \"AS IS\" BASIS,\n    WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.\n    See the License for the specific language governing permissions and\n    limitations under the License.\n\n\n---- LLVM Exceptions to the Apache 2.0 License ----\n\nAs an exception, if, as a result of your compiling your source code, portions\nof this Software are embedded into an Object form of such source code, you\nmay redistribute such embedded portions in such Object form without complying\nwith the conditions of Sections 4(a), 4(b) and 4(d) of the License.\n\nIn addition, if you combine or link compiled forms of this Software with\nsoftware that is licensed under the GPLv2 (\"Combined Software\") and if a\ncourt of competent jurisdiction determines that the patent provision (Section\n3), the indemnity provision (Section 9) or other Section of the License\nconflicts with the conditions of the GPLv2, you may retroactively and\nprospectively choose to deem waived or otherwise exclude such Section(s) of\nthe License, but only in their entirety and only with respect to the Combined\nSoftware.\n\n==============================================================================\nSoftware from third parties included in the LLVM Project:\n==============================================================================\nThe LLVM Project contains third party software which is under different license\nterms. All such code will be identified clearly using at least one of two\nmechanisms:\n1) It will be in a separate directory tree with its own `LICENSE.txt` or\n   `LICENSE` file at the top containing the specific license and restrictions\n   which apply to that software, or\n2) It will contain specific license and restriction terms at the top of every\n   file.\n\n==============================================================================\nLegacy LLVM License (https://llvm.org/docs/DeveloperPolicy.html#legacy):\n==============================================================================\nUniversity of Illinois/NCSA\nOpen Source License\n\nCopyright (c) 2003-2019 University of Illinois at Urbana-Champaign.\nAll rights reserved.\n\nDeveloped by:\n\n    LLVM Team\n\n    University of Illinois at Urbana-Champaign\n\n    http://llvm.org\n\nPermission is hereby granted, free of charge, to any person obtaining a copy of\nthis software and associated documentation files (the \"Software\"), to deal with\nthe Software without restriction, including without limitation the rights to\nuse, copy, modify, merge, publish, distribute, sublicense, and/or sell copies\nof the Software, and to permit persons to whom the Software is furnished to do\nso, subject to the following conditions:\n\n    * Redistributions of source code must retain the above copyright notice,\n      this list of conditions and the following disclaimers.\n\n    * Redistributions in binary form must reproduce the above copyright notice,\n      this list of conditions and the following disclaimers in the\n      documentation and/or other materials provided with the distribution.\n\n    * Neither the names of the LLVM Team, University of Illinois at\n      Urbana-Champaign, nor the names of its contributors may be used to\n      endorse or promote products derived from this Software without specific\n      prior written permission.\n\nTHE SOFTWARE IS PROVIDED \"AS IS\", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR\nIMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY, FITNESS\nFOR A PARTICULAR PURPOSE AND NONINFRINGEMENT.  IN NO EVENT SHALL THE\nCONTRIBUTORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER\nLIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,\nOUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS WITH THE\nSOFTWARE.\n\n",
+      "originalNoticeSpdxExpressions": [],
+      "inventoryProposedTermsClassification": "Apache-2.0 WITH LLVM-exception",
+      "retentionUse": "original notice/attribution retention; consumption authorization is checked separately"
+    },
+    {
+      "path": "llvm/include/llvm-c/blake3.h",
+      "blob": "ba5df64bbab8cd10f2fb167e89d930c9118af111",
+      "sha256": "sha256:6b88109a29982301663048d3584ef2b913b48a6fd34d8b2c17ea3f161123e81e",
+      "noticeStart": 0,
+      "noticeEnd": 1215,
+      "noticeSha256": "sha256:433edd9e00666c7a9ad590eb126cda2699ef81c0b4c33e344b999839a579f8ff",
+      "completeOriginalNotice": "/*===-- llvm-c/blake3.h - BLAKE3 C Interface ----------------------*- C -*-===*\\\n|*                                                                            *|\n|* Released into the public domain with CC0 1.0                               *|\n|* See 'llvm/lib/Support/BLAKE3/LICENSE' for info.                            *|\n|* SPDX-License-Identifier: CC0-1.0                                           *|\n|*                                                                            *|\n|*===----------------------------------------------------------------------===*|\n|*                                                                            *|\n|* This header declares the C interface to LLVM's BLAKE3 implementation.      *|\n|* Original BLAKE3 C API: https://github.com/BLAKE3-team/BLAKE3/tree/1.3.1/c  *|\n|*                                                                            *|\n|* Symbols are prefixed with 'llvm' to avoid a potential conflict with        *|\n|* another BLAKE3 version within the same program.                            *|\n|*                                                                            *|\n\\*===----------------------------------------------------------------------===*/\n",
+      "originalNoticeSpdxExpressions": [
+        "CC0-1.0"
+      ],
+      "originalTermsClassification": "CC0-1.0",
+      "selectedConsumptionExpression": "Apache-2.0",
+      "dualLicenseBasis": {
+        "path": "llvm/lib/Support/BLAKE3/LICENSE",
+        "blob": "f5892efc3b9bac4beeb60e554e85f32e8692599e",
+        "sha256": "sha256:6a94bedb8b707ed97f6e310d0d015ab14e0683ffa0a612b02958581b9cc9fc0e",
+        "explanation": "Existing permitted Apache alternative in the full original CC0-or-Apache license; original CC0 SPDX remains unchanged; no blanket CC0 approval"
+      },
+      "retentionUse": "original notice/attribution retention; consumption authorization is checked separately"
+    },
+    {
+      "path": "llvm/include/llvm/Support/ConvertUTF.h",
+      "blob": "ddf7057bff59d1302ad26dd6da6c11937dd003e5",
+      "sha256": "sha256:aa7fe3031b4810d0e7b28fc335f6c06fa0031f7d7287d9736e37c964998b38cb",
+      "noticeStart": 0,
+      "noticeEnd": 2376,
+      "noticeSha256": "sha256:f2037cf8f7fec0b8e17b3caaf295b0c108fa90e13ea9eb4f432e003e7c276c8a",
+      "completeOriginalNotice": "/*===--- ConvertUTF.h - Universal Character Names conversions ---------------===\n *\n * Part of the LLVM Project, under the Apache License v2.0 with LLVM Exceptions.\n * See https://llvm.org/LICENSE.txt for license information.\n * SPDX-License-Identifier: Apache-2.0 WITH LLVM-exception\n *\n *==------------------------------------------------------------------------==*/\n/*\n * Copyright © 1991-2015 Unicode, Inc. All rights reserved.\n * Distributed under the Terms of Use in\n * http://www.unicode.org/copyright.html.\n *\n * Permission is hereby granted, free of charge, to any person obtaining\n * a copy of the Unicode data files and any associated documentation\n * (the \"Data Files\") or Unicode software and any associated documentation\n * (the \"Software\") to deal in the Data Files or Software\n * without restriction, including without limitation the rights to use,\n * copy, modify, merge, publish, distribute, and/or sell copies of\n * the Data Files or Software, and to permit persons to whom the Data Files\n * or Software are furnished to do so, provided that\n * (a) this copyright and permission notice appear with all copies\n * of the Data Files or Software,\n * (b) this copyright and permission notice appear in associated\n * documentation, and\n * (c) there is clear notice in each modified Data File or in the Software\n * as well as in the documentation associated with the Data File(s) or\n * Software that the data or software has been modified.\n *\n * THE DATA FILES AND SOFTWARE ARE PROVIDED \"AS IS\", WITHOUT WARRANTY OF\n * ANY KIND, EXPRESS OR IMPLIED, INCLUDING BUT NOT LIMITED TO THE\n * WARRANTIES OF MERCHANTABILITY, FITNESS FOR A PARTICULAR PURPOSE AND\n * NONINFRINGEMENT OF THIRD PARTY RIGHTS.\n * IN NO EVENT SHALL THE COPYRIGHT HOLDER OR HOLDERS INCLUDED IN THIS\n * NOTICE BE LIABLE FOR ANY CLAIM, OR ANY SPECIAL INDIRECT OR CONSEQUENTIAL\n * DAMAGES, OR ANY DAMAGES WHATSOEVER RESULTING FROM LOSS OF USE,\n * DATA OR PROFITS, WHETHER IN AN ACTION OF CONTRACT, NEGLIGENCE OR OTHER\n * TORTIOUS ACTION, ARISING OUT OF OR IN CONNECTION WITH THE USE OR\n * PERFORMANCE OF THE DATA FILES OR SOFTWARE.\n *\n * Except as contained in this notice, the name of a copyright holder\n * shall not be used in advertising or otherwise to promote the sale,\n * use or other dealings in these Data Files or Software without prior\n * written authorization of the copyright holder.\n */\n",
+      "originalNoticeSpdxExpressions": [
+        "Apache-2.0 WITH LLVM-exception"
+      ],
+      "inventoryProposedTermsClassification": "Apache-2.0 WITH LLVM-exception AND Unicode-DFS-2015",
+      "retentionUse": "original notice/attribution retention; consumption authorization is checked separately"
+    },
+    {
+      "path": "llvm/include/llvm/Support/LICENSE.TXT",
+      "blob": "3f4dbf402b74dbd706b0f3773927745ed0c8c014",
+      "sha256": "sha256:54cbc326a78b9400065bfc5830a57fdcdaf808286d4ac35d8a9e324aa77b7241",
+      "noticeStart": 0,
+      "noticeEnd": 303,
+      "noticeSha256": "sha256:54cbc326a78b9400065bfc5830a57fdcdaf808286d4ac35d8a9e324aa77b7241",
+      "completeOriginalNotice": "LLVM System Interface Library\n-------------------------------------------------------------------------------\n\nPart of the LLVM Project, under the Apache License v2.0 with LLVM Exceptions.\nSee https://llvm.org/LICENSE.txt for license information.\nSPDX-License-Identifier: Apache-2.0 WITH LLVM-exception\n",
+      "originalNoticeSpdxExpressions": [
+        "Apache-2.0 WITH LLVM-exception"
+      ],
+      "inventoryProposedTermsClassification": "Apache-2.0 WITH LLVM-exception",
+      "retentionUse": "original notice/attribution retention; consumption authorization is checked separately"
+    },
+    {
+      "path": "llvm/include/llvm/Support/MD5.h",
+      "blob": "dbcb66d7680e4aa39afd868c0fd0d1a043380570",
+      "sha256": "sha256:a27dd8e5f9ceb72062bf0de61e9a81c21ae33e059e11ee8ca4a87ec53d7d4c1a",
+      "noticeStart": 0,
+      "noticeEnd": 995,
+      "noticeSha256": "sha256:b4edd84843bf20e0177594a5c7e184bf2ed21034408413123d9350cccc4977e2",
+      "completeOriginalNotice": "/* -*- C++ -*-\n * This code is derived from (original license follows):\n *\n * This is an OpenSSL-compatible implementation of the RSA Data Security, Inc.\n * MD5 Message-Digest Algorithm (RFC 1321).\n *\n * Homepage:\n * http://openwall.info/wiki/people/solar/software/public-domain-source-code/md5\n *\n * Author:\n * Alexander Peslyak, better known as Solar Designer <solar at openwall.com>\n *\n * This software was written by Alexander Peslyak in 2001.  No copyright is\n * claimed, and the software is hereby placed in the public domain.\n * In case this attempt to disclaim copyright and place the software in the\n * public domain is deemed null and void, then the software is\n * Copyright (c) 2001 Alexander Peslyak and it is hereby released to the\n * general public under the following terms:\n *\n * Redistribution and use in source and binary forms, with or without\n * modification, are permitted.\n *\n * There's ABSOLUTELY NO WARRANTY, express or implied.\n *\n * See md5.c for more information.\n */\n",
+      "originalNoticeSpdxExpressions": [],
+      "inventoryProposedTermsClassification": "LicenseRef-LLVM-MD5-public-domain-fallback",
+      "retentionUse": "original notice/attribution retention; consumption authorization is checked separately"
+    },
+    {
+      "path": "llvm/include/llvm/Support/SHA1.h",
+      "blob": "93d14a3b76636ba5b2f25687b59efea94199bb10",
+      "sha256": "sha256:efb5936cd67ef62be7ccb239efad724ae4aff5b4a7e8b244fa2809eef574bf04",
+      "noticeStart": 0,
+      "noticeEnd": 653,
+      "noticeSha256": "sha256:9aee3e5d1a671a4b2303e5972347db8c08323fa160c40646990cf7094738cdff",
+      "completeOriginalNotice": "//==- SHA1.h - SHA1 implementation for LLVM                     --*- C++ -*-==//\n//\n// Part of the LLVM Project, under the Apache License v2.0 with LLVM Exceptions.\n// See https://llvm.org/LICENSE.txt for license information.\n// SPDX-License-Identifier: Apache-2.0 WITH LLVM-exception\n//\n//===----------------------------------------------------------------------===//\n// This code is taken from public domain\n// (http://oauth.googlecode.com/svn/code/c/liboauth/src/sha1.c)\n// and modified by wrapping it in a C++ interface for LLVM,\n// and removing unnecessary code.\n//\n//===----------------------------------------------------------------------===//\n\n",
+      "originalNoticeSpdxExpressions": [
+        "Apache-2.0 WITH LLVM-exception"
+      ],
+      "inventoryProposedTermsClassification": "Apache-2.0 WITH LLVM-exception",
+      "retentionUse": "original notice/attribution retention; consumption authorization is checked separately"
+    },
+    {
+      "path": "llvm/include/llvm/Support/SHA256.h",
+      "blob": "2704db1b03d78415980e06e40daaa320b76fbcbc",
+      "sha256": "sha256:cb5576bc01142a1d2613bff86149dd696e59c46d53a2846ba967c1cc6c26fa1c",
+      "noticeStart": 0,
+      "noticeEnd": 829,
+      "noticeSha256": "sha256:5baaacc549d8169cc3d74198dd84ec4370086360b4f1909fadbd88c471884fac",
+      "completeOriginalNotice": "//====- SHA256.cpp - SHA256 implementation ---*- C++ -* ======//\n//\n// Part of the LLVM Project, under the Apache License v2.0 with LLVM Exceptions.\n// See https://llvm.org/LICENSE.txt for license information.\n// SPDX-License-Identifier: Apache-2.0 WITH LLVM-exception\n//\n//===----------------------------------------------------------------------===//\n/*\n *  The SHA-256 Secure Hash Standard was published by NIST in 2002.\n *\n *  http://csrc.nist.gov/publications/fips/fips180-2/fips180-2.pdf\n *\n *   The implementation is based on nacl's sha256 implementation [0] and LLVM's\n *  pre-exsiting SHA1 code [1].\n *\n *   [0] https://hyperelliptic.org/nacl/nacl-20110221.tar.bz2 (public domain\n *       code)\n *   [1] llvm/lib/Support/SHA1.{h,cpp}\n */\n//===----------------------------------------------------------------------===//\n\n",
+      "originalNoticeSpdxExpressions": [
+        "Apache-2.0 WITH LLVM-exception"
+      ],
+      "inventoryProposedTermsClassification": "Apache-2.0 WITH LLVM-exception",
+      "retentionUse": "original notice/attribution retention; consumption authorization is checked separately"
+    },
+    {
+      "path": "llvm/include/llvm/Support/xxhash.h",
+      "blob": "b521adbef34560560c190eeff0ca9acb2d3ae372",
+      "sha256": "sha256:9c0d211f1f04b755abfd82046effb17e67cce7cc27b95df015ccd0b624591aeb",
+      "noticeStart": 0,
+      "noticeEnd": 1586,
+      "noticeSha256": "sha256:07ab483e553e0d2e5e03480127bce6d80db2d94a8411171785c875affc5cdfa9",
+      "completeOriginalNotice": "/*\n   xxHash - Extremely Fast Hash algorithm\n   Header File\n   Copyright (C) 2012-2016, Yann Collet.\n\n   BSD 2-Clause License (http://www.opensource.org/licenses/bsd-license.php)\n\n   Redistribution and use in source and binary forms, with or without\n   modification, are permitted provided that the following conditions are\n   met:\n\n       * Redistributions of source code must retain the above copyright\n   notice, this list of conditions and the following disclaimer.\n       * Redistributions in binary form must reproduce the above\n   copyright notice, this list of conditions and the following disclaimer\n   in the documentation and/or other materials provided with the\n   distribution.\n\n   THIS SOFTWARE IS PROVIDED BY THE COPYRIGHT HOLDERS AND CONTRIBUTORS\n   \"AS IS\" AND ANY EXPRESS OR IMPLIED WARRANTIES, INCLUDING, BUT NOT\n   LIMITED TO, THE IMPLIED WARRANTIES OF MERCHANTABILITY AND FITNESS FOR\n   A PARTICULAR PURPOSE ARE DISCLAIMED. IN NO EVENT SHALL THE COPYRIGHT\n   OWNER OR CONTRIBUTORS BE LIABLE FOR ANY DIRECT, INDIRECT, INCIDENTAL,\n   SPECIAL, EXEMPLARY, OR CONSEQUENTIAL DAMAGES (INCLUDING, BUT NOT\n   LIMITED TO, PROCUREMENT OF SUBSTITUTE GOODS OR SERVICES; LOSS OF USE,\n   DATA, OR PROFITS; OR BUSINESS INTERRUPTION) HOWEVER CAUSED AND ON ANY\n   THEORY OF LIABILITY, WHETHER IN CONTRACT, STRICT LIABILITY, OR TORT\n   (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE\n   OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.\n\n   You can contact the author at :\n   - xxHash source repository : https://github.com/Cyan4973/xxHash\n*/\n",
+      "originalNoticeSpdxExpressions": [],
+      "inventoryProposedTermsClassification": "BSD-2-Clause",
+      "retentionUse": "original notice/attribution retention; consumption authorization is checked separately"
+    },
+    {
+      "path": "llvm/lib/Support/BLAKE3/CMakeLists.txt",
+      "blob": "90311ae247219bf20f2c13a817cf5a9d423bc918",
+      "sha256": "sha256:893c4edb261e2974a569af7d0333ab9610a1017782dab4716044e0668a4bee01",
+      "noticeStart": 0,
+      "noticeEnd": 0,
+      "noticeSha256": "sha256:e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "completeOriginalNotice": "",
+      "originalNoticeSpdxExpressions": [],
+      "originalTermsClassification": null,
+      "selectedConsumptionExpression": "Apache-2.0",
+      "dualLicenseBasis": {
+        "path": "llvm/lib/Support/BLAKE3/LICENSE",
+        "blob": "f5892efc3b9bac4beeb60e554e85f32e8692599e",
+        "sha256": "sha256:6a94bedb8b707ed97f6e310d0d015ab14e0683ffa0a612b02958581b9cc9fc0e",
+        "explanation": "Existing permitted Apache alternative in the full original CC0-or-Apache license; original CC0 SPDX remains unchanged; no blanket CC0 approval"
+      },
+      "retentionUse": "original notice/attribution retention; consumption authorization is checked separately"
+    },
+    {
+      "path": "llvm/lib/Support/BLAKE3/LICENSE",
+      "blob": "f5892efc3b9bac4beeb60e554e85f32e8692599e",
+      "sha256": "sha256:6a94bedb8b707ed97f6e310d0d015ab14e0683ffa0a612b02958581b9cc9fc0e",
+      "noticeStart": 0,
+      "noticeEnd": 18691,
+      "noticeSha256": "sha256:6a94bedb8b707ed97f6e310d0d015ab14e0683ffa0a612b02958581b9cc9fc0e",
+      "completeOriginalNotice": "This work is released into the public domain with CC0 1.0. Alternatively, it is\nlicensed under the Apache License 2.0.\n\n-------------------------------------------------------------------------------\n\nCreative Commons Legal Code\n\nCC0 1.0 Universal\n\n    CREATIVE COMMONS CORPORATION IS NOT A LAW FIRM AND DOES NOT PROVIDE\n    LEGAL SERVICES. DISTRIBUTION OF THIS DOCUMENT DOES NOT CREATE AN\n    ATTORNEY-CLIENT RELATIONSHIP. CREATIVE COMMONS PROVIDES THIS\n    INFORMATION ON AN \"AS-IS\" BASIS. CREATIVE COMMONS MAKES NO WARRANTIES\n    REGARDING THE USE OF THIS DOCUMENT OR THE INFORMATION OR WORKS\n    PROVIDED HEREUNDER, AND DISCLAIMS LIABILITY FOR DAMAGES RESULTING FROM\n    THE USE OF THIS DOCUMENT OR THE INFORMATION OR WORKS PROVIDED\n    HEREUNDER.\n\nStatement of Purpose\n\nThe laws of most jurisdictions throughout the world automatically confer\nexclusive Copyright and Related Rights (defined below) upon the creator\nand subsequent owner(s) (each and all, an \"owner\") of an original work of\nauthorship and/or a database (each, a \"Work\").\n\nCertain owners wish to permanently relinquish those rights to a Work for\nthe purpose of contributing to a commons of creative, cultural and\nscientific works (\"Commons\") that the public can reliably and without fear\nof later claims of infringement build upon, modify, incorporate in other\nworks, reuse and redistribute as freely as possible in any form whatsoever\nand for any purposes, including without limitation commercial purposes.\nThese owners may contribute to the Commons to promote the ideal of a free\nculture and the further production of creative, cultural and scientific\nworks, or to gain reputation or greater distribution for their Work in\npart through the use and efforts of others.\n\nFor these and/or other purposes and motivations, and without any\nexpectation of additional consideration or compensation, the person\nassociating CC0 with a Work (the \"Affirmer\"), to the extent that he or she\nis an owner of Copyright and Related Rights in the Work, voluntarily\nelects to apply CC0 to the Work and publicly distribute the Work under its\nterms, with knowledge of his or her Copyright and Related Rights in the\nWork and the meaning and intended legal effect of CC0 on those rights.\n\n1. Copyright and Related Rights. A Work made available under CC0 may be\nprotected by copyright and related or neighboring rights (\"Copyright and\nRelated Rights\"). Copyright and Related Rights include, but are not\nlimited to, the following:\n\n  i. the right to reproduce, adapt, distribute, perform, display,\n     communicate, and translate a Work;\n ii. moral rights retained by the original author(s) and/or performer(s);\niii. publicity and privacy rights pertaining to a person's image or\n     likeness depicted in a Work;\n iv. rights protecting against unfair competition in regards to a Work,\n     subject to the limitations in paragraph 4(a), below;\n  v. rights protecting the extraction, dissemination, use and reuse of data\n     in a Work;\n vi. database rights (such as those arising under Directive 96/9/EC of the\n     European Parliament and of the Council of 11 March 1996 on the legal\n     protection of databases, and under any national implementation\n     thereof, including any amended or successor version of such\n     directive); and\nvii. other similar, equivalent or corresponding rights throughout the\n     world based on applicable law or treaty, and any national\n     implementations thereof.\n\n2. Waiver. To the greatest extent permitted by, but not in contravention\nof, applicable law, Affirmer hereby overtly, fully, permanently,\nirrevocably and unconditionally waives, abandons, and surrenders all of\nAffirmer's Copyright and Related Rights and associated claims and causes\nof action, whether now known or unknown (including existing as well as\nfuture claims and causes of action), in the Work (i) in all territories\nworldwide, (ii) for the maximum duration provided by applicable law or\ntreaty (including future time extensions), (iii) in any current or future\nmedium and for any number of copies, and (iv) for any purpose whatsoever,\nincluding without limitation commercial, advertising or promotional\npurposes (the \"Waiver\"). Affirmer makes the Waiver for the benefit of each\nmember of the public at large and to the detriment of Affirmer's heirs and\nsuccessors, fully intending that such Waiver shall not be subject to\nrevocation, rescission, cancellation, termination, or any other legal or\nequitable action to disrupt the quiet enjoyment of the Work by the public\nas contemplated by Affirmer's express Statement of Purpose.\n\n3. Public License Fallback. Should any part of the Waiver for any reason\nbe judged legally invalid or ineffective under applicable law, then the\nWaiver shall be preserved to the maximum extent permitted taking into\naccount Affirmer's express Statement of Purpose. In addition, to the\nextent the Waiver is so judged Affirmer hereby grants to each affected\nperson a royalty-free, non transferable, non sublicensable, non exclusive,\nirrevocable and unconditional license to exercise Affirmer's Copyright and\nRelated Rights in the Work (i) in all territories worldwide, (ii) for the\nmaximum duration provided by applicable law or treaty (including future\ntime extensions), (iii) in any current or future medium and for any number\nof copies, and (iv) for any purpose whatsoever, including without\nlimitation commercial, advertising or promotional purposes (the\n\"License\"). The License shall be deemed effective as of the date CC0 was\napplied by Affirmer to the Work. Should any part of the License for any\nreason be judged legally invalid or ineffective under applicable law, such\npartial invalidity or ineffectiveness shall not invalidate the remainder\nof the License, and in such case Affirmer hereby affirms that he or she\nwill not (i) exercise any of his or her remaining Copyright and Related\nRights in the Work or (ii) assert any associated claims and causes of\naction with respect to the Work, in either case contrary to Affirmer's\nexpress Statement of Purpose.\n\n4. Limitations and Disclaimers.\n\n a. No trademark or patent rights held by Affirmer are waived, abandoned,\n    surrendered, licensed or otherwise affected by this document.\n b. Affirmer offers the Work as-is and makes no representations or\n    warranties of any kind concerning the Work, express, implied,\n    statutory or otherwise, including without limitation warranties of\n    title, merchantability, fitness for a particular purpose, non\n    infringement, or the absence of latent or other defects, accuracy, or\n    the present or absence of errors, whether or not discoverable, all to\n    the greatest extent permissible under applicable law.\n c. Affirmer disclaims responsibility for clearing rights of other persons\n    that may apply to the Work or any use thereof, including without\n    limitation any person's Copyright and Related Rights in the Work.\n    Further, Affirmer disclaims responsibility for obtaining any necessary\n    consents, permissions or other rights required for any use of the\n    Work.\n d. Affirmer understands and acknowledges that Creative Commons is not a\n    party to this document and has no duty or obligation with respect to\n    this CC0 or use of the Work.\n\n-------------------------------------------------------------------------------\n\n                                 Apache License\n                           Version 2.0, January 2004\n                        http://www.apache.org/licenses/\n\n   TERMS AND CONDITIONS FOR USE, REPRODUCTION, AND DISTRIBUTION\n\n   1. Definitions.\n\n      \"License\" shall mean the terms and conditions for use, reproduction,\n      and distribution as defined by Sections 1 through 9 of this document.\n\n      \"Licensor\" shall mean the copyright owner or entity authorized by\n      the copyright owner that is granting the License.\n\n      \"Legal Entity\" shall mean the union of the acting entity and all\n      other entities that control, are controlled by, or are under common\n      control with that entity. For the purposes of this definition,\n      \"control\" means (i) the power, direct or indirect, to cause the\n      direction or management of such entity, whether by contract or\n      otherwise, or (ii) ownership of fifty percent (50%) or more of the\n      outstanding shares, or (iii) beneficial ownership of such entity.\n\n      \"You\" (or \"Your\") shall mean an individual or Legal Entity\n      exercising permissions granted by this License.\n\n      \"Source\" form shall mean the preferred form for making modifications,\n      including but not limited to software source code, documentation\n      source, and configuration files.\n\n      \"Object\" form shall mean any form resulting from mechanical\n      transformation or translation of a Source form, including but\n      not limited to compiled object code, generated documentation,\n      and conversions to other media types.\n\n      \"Work\" shall mean the work of authorship, whether in Source or\n      Object form, made available under the License, as indicated by a\n      copyright notice that is included in or attached to the work\n      (an example is provided in the Appendix below).\n\n      \"Derivative Works\" shall mean any work, whether in Source or Object\n      form, that is based on (or derived from) the Work and for which the\n      editorial revisions, annotations, elaborations, or other modifications\n      represent, as a whole, an original work of authorship. For the purposes\n      of this License, Derivative Works shall not include works that remain\n      separable from, or merely link (or bind by name) to the interfaces of,\n      the Work and Derivative Works thereof.\n\n      \"Contribution\" shall mean any work of authorship, including\n      the original version of the Work and any modifications or additions\n      to that Work or Derivative Works thereof, that is intentionally\n      submitted to Licensor for inclusion in the Work by the copyright owner\n      or by an individual or Legal Entity authorized to submit on behalf of\n      the copyright owner. For the purposes of this definition, \"submitted\"\n      means any form of electronic, verbal, or written communication sent\n      to the Licensor or its representatives, including but not limited to\n      communication on electronic mailing lists, source code control systems,\n      and issue tracking systems that are managed by, or on behalf of, the\n      Licensor for the purpose of discussing and improving the Work, but\n      excluding communication that is conspicuously marked or otherwise\n      designated in writing by the copyright owner as \"Not a Contribution.\"\n\n      \"Contributor\" shall mean Licensor and any individual or Legal Entity\n      on behalf of whom a Contribution has been received by Licensor and\n      subsequently incorporated within the Work.\n\n   2. Grant of Copyright License. Subject to the terms and conditions of\n      this License, each Contributor hereby grants to You a perpetual,\n      worldwide, non-exclusive, no-charge, royalty-free, irrevocable\n      copyright license to reproduce, prepare Derivative Works of,\n      publicly display, publicly perform, sublicense, and distribute the\n      Work and such Derivative Works in Source or Object form.\n\n   3. Grant of Patent License. Subject to the terms and conditions of\n      this License, each Contributor hereby grants to You a perpetual,\n      worldwide, non-exclusive, no-charge, royalty-free, irrevocable\n      (except as stated in this section) patent license to make, have made,\n      use, offer to sell, sell, import, and otherwise transfer the Work,\n      where such license applies only to those patent claims licensable\n      by such Contributor that are necessarily infringed by their\n      Contribution(s) alone or by combination of their Contribution(s)\n      with the Work to which such Contribution(s) was submitted. If You\n      institute patent litigation against any entity (including a\n      cross-claim or counterclaim in a lawsuit) alleging that the Work\n      or a Contribution incorporated within the Work constitutes direct\n      or contributory patent infringement, then any patent licenses\n      granted to You under this License for that Work shall terminate\n      as of the date such litigation is filed.\n\n   4. Redistribution. You may reproduce and distribute copies of the\n      Work or Derivative Works thereof in any medium, with or without\n      modifications, and in Source or Object form, provided that You\n      meet the following conditions:\n\n      (a) You must give any other recipients of the Work or\n          Derivative Works a copy of this License; and\n\n      (b) You must cause any modified files to carry prominent notices\n          stating that You changed the files; and\n\n      (c) You must retain, in the Source form of any Derivative Works\n          that You distribute, all copyright, patent, trademark, and\n          attribution notices from the Source form of the Work,\n          excluding those notices that do not pertain to any part of\n          the Derivative Works; and\n\n      (d) If the Work includes a \"NOTICE\" text file as part of its\n          distribution, then any Derivative Works that You distribute must\n          include a readable copy of the attribution notices contained\n          within such NOTICE file, excluding those notices that do not\n          pertain to any part of the Derivative Works, in at least one\n          of the following places: within a NOTICE text file distributed\n          as part of the Derivative Works; within the Source form or\n          documentation, if provided along with the Derivative Works; or,\n          within a display generated by the Derivative Works, if and\n          wherever such third-party notices normally appear. The contents\n          of the NOTICE file are for informational purposes only and\n          do not modify the License. You may add Your own attribution\n          notices within Derivative Works that You distribute, alongside\n          or as an addendum to the NOTICE text from the Work, provided\n          that such additional attribution notices cannot be construed\n          as modifying the License.\n\n      You may add Your own copyright statement to Your modifications and\n      may provide additional or different license terms and conditions\n      for use, reproduction, or distribution of Your modifications, or\n      for any such Derivative Works as a whole, provided Your use,\n      reproduction, and distribution of the Work otherwise complies with\n      the conditions stated in this License.\n\n   5. Submission of Contributions. Unless You explicitly state otherwise,\n      any Contribution intentionally submitted for inclusion in the Work\n      by You to the Licensor shall be under the terms and conditions of\n      this License, without any additional terms or conditions.\n      Notwithstanding the above, nothing herein shall supersede or modify\n      the terms of any separate license agreement you may have executed\n      with Licensor regarding such Contributions.\n\n   6. Trademarks. This License does not grant permission to use the trade\n      names, trademarks, service marks, or product names of the Licensor,\n      except as required for reasonable and customary use in describing the\n      origin of the Work and reproducing the content of the NOTICE file.\n\n   7. Disclaimer of Warranty. Unless required by applicable law or\n      agreed to in writing, Licensor provides the Work (and each\n      Contributor provides its Contributions) on an \"AS IS\" BASIS,\n      WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or\n      implied, including, without limitation, any warranties or conditions\n      of TITLE, NON-INFRINGEMENT, MERCHANTABILITY, or FITNESS FOR A\n      PARTICULAR PURPOSE. You are solely responsible for determining the\n      appropriateness of using or redistributing the Work and assume any\n      risks associated with Your exercise of permissions under this License.\n\n   8. Limitation of Liability. In no event and under no legal theory,\n      whether in tort (including negligence), contract, or otherwise,\n      unless required by applicable law (such as deliberate and grossly\n      negligent acts) or agreed to in writing, shall any Contributor be\n      liable to You for damages, including any direct, indirect, special,\n      incidental, or consequential damages of any character arising as a\n      result of this License or out of the use or inability to use the\n      Work (including but not limited to damages for loss of goodwill,\n      work stoppage, computer failure or malfunction, or any and all\n      other commercial damages or losses), even if such Contributor\n      has been advised of the possibility of such damages.\n\n   9. Accepting Warranty or Additional Liability. While redistributing\n      the Work or Derivative Works thereof, You may choose to offer,\n      and charge a fee for, acceptance of support, warranty, indemnity,\n      or other liability obligations and/or rights consistent with this\n      License. However, in accepting such obligations, You may act only\n      on Your own behalf and on Your sole responsibility, not on behalf\n      of any other Contributor, and only if You agree to indemnify,\n      defend, and hold each Contributor harmless for any liability\n      incurred by, or claims asserted against, such Contributor by reason\n      of your accepting any such warranty or additional liability.\n\n   END OF TERMS AND CONDITIONS\n\n   APPENDIX: How to apply the Apache License to your work.\n\n      To apply the Apache License to your work, attach the following\n      boilerplate notice, with the fields enclosed by brackets \"[]\"\n      replaced with your own identifying information. (Don't include\n      the brackets!)  The text should be enclosed in the appropriate\n      comment syntax for the file format. We also recommend that a\n      file or class name and description of purpose be included on the\n      same \"printed page\" as the copyright notice for easier\n      identification within third-party archives.\n\n   Copyright 2019 Jack O'Connor and Samuel Neves\n\n   Licensed under the Apache License, Version 2.0 (the \"License\");\n   you may not use this file except in compliance with the License.\n   You may obtain a copy of the License at\n\n       http://www.apache.org/licenses/LICENSE-2.0\n\n   Unless required by applicable law or agreed to in writing, software\n   distributed under the License is distributed on an \"AS IS\" BASIS,\n   WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.\n   See the License for the specific language governing permissions and\n   limitations under the License.\n",
+      "originalNoticeSpdxExpressions": [],
+      "originalTermsClassification": "CC0-1.0 OR Apache-2.0",
+      "selectedConsumptionExpression": "Apache-2.0",
+      "dualLicenseBasis": {
+        "path": "llvm/lib/Support/BLAKE3/LICENSE",
+        "blob": "f5892efc3b9bac4beeb60e554e85f32e8692599e",
+        "sha256": "sha256:6a94bedb8b707ed97f6e310d0d015ab14e0683ffa0a612b02958581b9cc9fc0e",
+        "explanation": "Existing permitted Apache alternative in the full original CC0-or-Apache license; original CC0 SPDX remains unchanged; no blanket CC0 approval"
+      },
+      "retentionUse": "original notice/attribution retention; consumption authorization is checked separately"
+    },
+    {
+      "path": "llvm/lib/Support/BLAKE3/blake3.c",
+      "blob": "ec76dd7157ac4fe77bcacda2d1a5939051331e85",
+      "sha256": "sha256:bbb0ac6fa0e24525aae0d2bc35b3cc5866e59b6f23f3003fcb7b5771e6acdb88",
+      "noticeStart": 0,
+      "noticeEnd": 567,
+      "noticeSha256": "sha256:bc2a1621e00e939e8059ec45a2e9df99330ce9fb719b49babacbe04d384d6d07",
+      "completeOriginalNotice": "/*===-- blake3.c - BLAKE3 C Implementation ------------------------*- C -*-===*\\\n|*                                                                            *|\n|* Released into the public domain with CC0 1.0                               *|\n|* See 'llvm/lib/Support/BLAKE3/LICENSE' for info.                            *|\n|* SPDX-License-Identifier: CC0-1.0                                           *|\n|*                                                                            *|\n\\*===----------------------------------------------------------------------===*/\n",
+      "originalNoticeSpdxExpressions": [
+        "CC0-1.0"
+      ],
+      "originalTermsClassification": "CC0-1.0",
+      "selectedConsumptionExpression": "Apache-2.0",
+      "dualLicenseBasis": {
+        "path": "llvm/lib/Support/BLAKE3/LICENSE",
+        "blob": "f5892efc3b9bac4beeb60e554e85f32e8692599e",
+        "sha256": "sha256:6a94bedb8b707ed97f6e310d0d015ab14e0683ffa0a612b02958581b9cc9fc0e",
+        "explanation": "Existing permitted Apache alternative in the full original CC0-or-Apache license; original CC0 SPDX remains unchanged; no blanket CC0 approval"
+      },
+      "retentionUse": "original notice/attribution retention; consumption authorization is checked separately"
+    },
+    {
+      "path": "llvm/lib/Support/BLAKE3/blake3_avx2_x86-64_windows_gnu.S",
+      "blob": "84c6c28670908b687b2045d5c63a7f30fc50ec17",
+      "sha256": "sha256:99e750a34d4d3dd3f57ee35ca997ec978a1e41bd0fb9dfc01644a166855790d0",
+      "noticeStart": 0,
+      "noticeEnd": 0,
+      "noticeSha256": "sha256:e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "completeOriginalNotice": "",
+      "originalNoticeSpdxExpressions": [],
+      "originalTermsClassification": null,
+      "selectedConsumptionExpression": "Apache-2.0",
+      "dualLicenseBasis": {
+        "path": "llvm/lib/Support/BLAKE3/LICENSE",
+        "blob": "f5892efc3b9bac4beeb60e554e85f32e8692599e",
+        "sha256": "sha256:6a94bedb8b707ed97f6e310d0d015ab14e0683ffa0a612b02958581b9cc9fc0e",
+        "explanation": "Existing permitted Apache alternative in the full original CC0-or-Apache license; original CC0 SPDX remains unchanged; no blanket CC0 approval"
+      },
+      "retentionUse": "original notice/attribution retention; consumption authorization is checked separately"
+    },
+    {
+      "path": "llvm/lib/Support/BLAKE3/blake3_avx2_x86-64_windows_msvc.asm",
+      "blob": "46bad1d98f38cbed1ae6be66eea499ee7025e9ab",
+      "sha256": "sha256:a1956d2cb0df137f4c55e0710ae019b7dfe21d231938d4414f90f546a9dc12c2",
+      "noticeStart": 0,
+      "noticeEnd": 0,
+      "noticeSha256": "sha256:e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "completeOriginalNotice": "",
+      "originalNoticeSpdxExpressions": [],
+      "originalTermsClassification": null,
+      "selectedConsumptionExpression": "Apache-2.0",
+      "dualLicenseBasis": {
+        "path": "llvm/lib/Support/BLAKE3/LICENSE",
+        "blob": "f5892efc3b9bac4beeb60e554e85f32e8692599e",
+        "sha256": "sha256:6a94bedb8b707ed97f6e310d0d015ab14e0683ffa0a612b02958581b9cc9fc0e",
+        "explanation": "Existing permitted Apache alternative in the full original CC0-or-Apache license; original CC0 SPDX remains unchanged; no blanket CC0 approval"
+      },
+      "retentionUse": "original notice/attribution retention; consumption authorization is checked separately"
+    },
+    {
+      "path": "llvm/lib/Support/BLAKE3/blake3_avx512_x86-64_windows_gnu.S",
+      "blob": "9419f4b5aae563db56c6a9108745df77a46bec64",
+      "sha256": "sha256:83bb38f948303ef3831f3748fc08ce236aa95d060d8bf40e276cfbee619e3ed4",
+      "noticeStart": 0,
+      "noticeEnd": 0,
+      "noticeSha256": "sha256:e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "completeOriginalNotice": "",
+      "originalNoticeSpdxExpressions": [],
+      "originalTermsClassification": null,
+      "selectedConsumptionExpression": "Apache-2.0",
+      "dualLicenseBasis": {
+        "path": "llvm/lib/Support/BLAKE3/LICENSE",
+        "blob": "f5892efc3b9bac4beeb60e554e85f32e8692599e",
+        "sha256": "sha256:6a94bedb8b707ed97f6e310d0d015ab14e0683ffa0a612b02958581b9cc9fc0e",
+        "explanation": "Existing permitted Apache alternative in the full original CC0-or-Apache license; original CC0 SPDX remains unchanged; no blanket CC0 approval"
+      },
+      "retentionUse": "original notice/attribution retention; consumption authorization is checked separately"
+    },
+    {
+      "path": "llvm/lib/Support/BLAKE3/blake3_avx512_x86-64_windows_msvc.asm",
+      "blob": "f13d1b260ab8a839af24ebfd42dadf72f3ece877",
+      "sha256": "sha256:a8ae53a0f1c87986e554cffb5e34a3d654a65d4b0133311b9ccb4c68c5b716eb",
+      "noticeStart": 0,
+      "noticeEnd": 0,
+      "noticeSha256": "sha256:e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "completeOriginalNotice": "",
+      "originalNoticeSpdxExpressions": [],
+      "originalTermsClassification": null,
+      "selectedConsumptionExpression": "Apache-2.0",
+      "dualLicenseBasis": {
+        "path": "llvm/lib/Support/BLAKE3/LICENSE",
+        "blob": "f5892efc3b9bac4beeb60e554e85f32e8692599e",
+        "sha256": "sha256:6a94bedb8b707ed97f6e310d0d015ab14e0683ffa0a612b02958581b9cc9fc0e",
+        "explanation": "Existing permitted Apache alternative in the full original CC0-or-Apache license; original CC0 SPDX remains unchanged; no blanket CC0 approval"
+      },
+      "retentionUse": "original notice/attribution retention; consumption authorization is checked separately"
+    },
+    {
+      "path": "llvm/lib/Support/BLAKE3/blake3_dispatch.c",
+      "blob": "19918aa708b2f717c00ceeea64793602ea922274",
+      "sha256": "sha256:8a40b367e85f1ecf528d4adc0a69db48c0a7973b53e070c5e95bb6eb54f9c69c",
+      "noticeStart": 0,
+      "noticeEnd": 0,
+      "noticeSha256": "sha256:e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "completeOriginalNotice": "",
+      "originalNoticeSpdxExpressions": [],
+      "originalTermsClassification": null,
+      "selectedConsumptionExpression": "Apache-2.0",
+      "dualLicenseBasis": {
+        "path": "llvm/lib/Support/BLAKE3/LICENSE",
+        "blob": "f5892efc3b9bac4beeb60e554e85f32e8692599e",
+        "sha256": "sha256:6a94bedb8b707ed97f6e310d0d015ab14e0683ffa0a612b02958581b9cc9fc0e",
+        "explanation": "Existing permitted Apache alternative in the full original CC0-or-Apache license; original CC0 SPDX remains unchanged; no blanket CC0 approval"
+      },
+      "retentionUse": "original notice/attribution retention; consumption authorization is checked separately"
+    },
+    {
+      "path": "llvm/lib/Support/BLAKE3/blake3_impl.h",
+      "blob": "dd71e729f208f859e5cea62904c8c2cd7e65f93e",
+      "sha256": "sha256:1c0a71d89201522ba845639f24d89a68f513182665c277b82952b18bc9266153",
+      "noticeStart": 0,
+      "noticeEnd": 0,
+      "noticeSha256": "sha256:e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "completeOriginalNotice": "",
+      "originalNoticeSpdxExpressions": [],
+      "originalTermsClassification": null,
+      "selectedConsumptionExpression": "Apache-2.0",
+      "dualLicenseBasis": {
+        "path": "llvm/lib/Support/BLAKE3/LICENSE",
+        "blob": "f5892efc3b9bac4beeb60e554e85f32e8692599e",
+        "sha256": "sha256:6a94bedb8b707ed97f6e310d0d015ab14e0683ffa0a612b02958581b9cc9fc0e",
+        "explanation": "Existing permitted Apache alternative in the full original CC0-or-Apache license; original CC0 SPDX remains unchanged; no blanket CC0 approval"
+      },
+      "retentionUse": "original notice/attribution retention; consumption authorization is checked separately"
+    },
+    {
+      "path": "llvm/lib/Support/BLAKE3/blake3_neon.c",
+      "blob": "e691635cf41cb2fa39d7708dcd08a5451896e007",
+      "sha256": "sha256:79e3ce50dcc096448668b79bed12ab6917f64490b268a206d8671911a8dc95a8",
+      "noticeStart": 0,
+      "noticeEnd": 0,
+      "noticeSha256": "sha256:e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "completeOriginalNotice": "",
+      "originalNoticeSpdxExpressions": [],
+      "originalTermsClassification": null,
+      "selectedConsumptionExpression": "Apache-2.0",
+      "dualLicenseBasis": {
+        "path": "llvm/lib/Support/BLAKE3/LICENSE",
+        "blob": "f5892efc3b9bac4beeb60e554e85f32e8692599e",
+        "sha256": "sha256:6a94bedb8b707ed97f6e310d0d015ab14e0683ffa0a612b02958581b9cc9fc0e",
+        "explanation": "Existing permitted Apache alternative in the full original CC0-or-Apache license; original CC0 SPDX remains unchanged; no blanket CC0 approval"
+      },
+      "retentionUse": "original notice/attribution retention; consumption authorization is checked separately"
+    },
+    {
+      "path": "llvm/lib/Support/BLAKE3/blake3_portable.c",
+      "blob": "062dd1b47fb6424f4d3db4c6edd2f90efcb92973",
+      "sha256": "sha256:2bc25b0dad67b4329d0b49cfa075ab2b0d04e424addbddc4e9c389c52a192524",
+      "noticeStart": 0,
+      "noticeEnd": 0,
+      "noticeSha256": "sha256:e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "completeOriginalNotice": "",
+      "originalNoticeSpdxExpressions": [],
+      "originalTermsClassification": null,
+      "selectedConsumptionExpression": "Apache-2.0",
+      "dualLicenseBasis": {
+        "path": "llvm/lib/Support/BLAKE3/LICENSE",
+        "blob": "f5892efc3b9bac4beeb60e554e85f32e8692599e",
+        "sha256": "sha256:6a94bedb8b707ed97f6e310d0d015ab14e0683ffa0a612b02958581b9cc9fc0e",
+        "explanation": "Existing permitted Apache alternative in the full original CC0-or-Apache license; original CC0 SPDX remains unchanged; no blanket CC0 approval"
+      },
+      "retentionUse": "original notice/attribution retention; consumption authorization is checked separately"
+    },
+    {
+      "path": "llvm/lib/Support/BLAKE3/blake3_sse2_x86-64_windows_gnu.S",
+      "blob": "3a7163637f90cf824493e835bdc7b1e74d0047fe",
+      "sha256": "sha256:86589979eae8e615c3893578ace8c0dda7ee04364b02ad012f78a46fc3d1558d",
+      "noticeStart": 0,
+      "noticeEnd": 0,
+      "noticeSha256": "sha256:e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "completeOriginalNotice": "",
+      "originalNoticeSpdxExpressions": [],
+      "originalTermsClassification": null,
+      "selectedConsumptionExpression": "Apache-2.0",
+      "dualLicenseBasis": {
+        "path": "llvm/lib/Support/BLAKE3/LICENSE",
+        "blob": "f5892efc3b9bac4beeb60e554e85f32e8692599e",
+        "sha256": "sha256:6a94bedb8b707ed97f6e310d0d015ab14e0683ffa0a612b02958581b9cc9fc0e",
+        "explanation": "Existing permitted Apache alternative in the full original CC0-or-Apache license; original CC0 SPDX remains unchanged; no blanket CC0 approval"
+      },
+      "retentionUse": "original notice/attribution retention; consumption authorization is checked separately"
+    },
+    {
+      "path": "llvm/lib/Support/BLAKE3/blake3_sse2_x86-64_windows_msvc.asm",
+      "blob": "1069c8df4ed60adbc8b728707184c903b6a49952",
+      "sha256": "sha256:89cd9549d8b51a54ba16c1960e1503d13ee4ef6160735d5fe12f1833fbb30408",
+      "noticeStart": 0,
+      "noticeEnd": 0,
+      "noticeSha256": "sha256:e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "completeOriginalNotice": "",
+      "originalNoticeSpdxExpressions": [],
+      "originalTermsClassification": null,
+      "selectedConsumptionExpression": "Apache-2.0",
+      "dualLicenseBasis": {
+        "path": "llvm/lib/Support/BLAKE3/LICENSE",
+        "blob": "f5892efc3b9bac4beeb60e554e85f32e8692599e",
+        "sha256": "sha256:6a94bedb8b707ed97f6e310d0d015ab14e0683ffa0a612b02958581b9cc9fc0e",
+        "explanation": "Existing permitted Apache alternative in the full original CC0-or-Apache license; original CC0 SPDX remains unchanged; no blanket CC0 approval"
+      },
+      "retentionUse": "original notice/attribution retention; consumption authorization is checked separately"
+    },
+    {
+      "path": "llvm/lib/Support/BLAKE3/blake3_sse41_x86-64_windows_gnu.S",
+      "blob": "b39180febf888cb8237f48de83cccc48f86ec74e",
+      "sha256": "sha256:32413a7168edb227f748983f11787ad4ea5bf557a87e41b396f0a8e682195402",
+      "noticeStart": 0,
+      "noticeEnd": 0,
+      "noticeSha256": "sha256:e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "completeOriginalNotice": "",
+      "originalNoticeSpdxExpressions": [],
+      "originalTermsClassification": null,
+      "selectedConsumptionExpression": "Apache-2.0",
+      "dualLicenseBasis": {
+        "path": "llvm/lib/Support/BLAKE3/LICENSE",
+        "blob": "f5892efc3b9bac4beeb60e554e85f32e8692599e",
+        "sha256": "sha256:6a94bedb8b707ed97f6e310d0d015ab14e0683ffa0a612b02958581b9cc9fc0e",
+        "explanation": "Existing permitted Apache alternative in the full original CC0-or-Apache license; original CC0 SPDX remains unchanged; no blanket CC0 approval"
+      },
+      "retentionUse": "original notice/attribution retention; consumption authorization is checked separately"
+    },
+    {
+      "path": "llvm/lib/Support/BLAKE3/blake3_sse41_x86-64_windows_msvc.asm",
+      "blob": "770935372cd93f9a861a147346e0d2cbf9ea06f5",
+      "sha256": "sha256:5de45c2c60e6c64bfd27b87e4512fa5413ac85a5f0a38c9be8fd0bbca08f1932",
+      "noticeStart": 0,
+      "noticeEnd": 0,
+      "noticeSha256": "sha256:e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "completeOriginalNotice": "",
+      "originalNoticeSpdxExpressions": [],
+      "originalTermsClassification": null,
+      "selectedConsumptionExpression": "Apache-2.0",
+      "dualLicenseBasis": {
+        "path": "llvm/lib/Support/BLAKE3/LICENSE",
+        "blob": "f5892efc3b9bac4beeb60e554e85f32e8692599e",
+        "sha256": "sha256:6a94bedb8b707ed97f6e310d0d015ab14e0683ffa0a612b02958581b9cc9fc0e",
+        "explanation": "Existing permitted Apache alternative in the full original CC0-or-Apache license; original CC0 SPDX remains unchanged; no blanket CC0 approval"
+      },
+      "retentionUse": "original notice/attribution retention; consumption authorization is checked separately"
+    },
+    {
+      "path": "llvm/lib/Support/BLAKE3/llvm_blake3_prefix.h",
+      "blob": "d24657465dd8f795ab655f599df241fd87fee105",
+      "sha256": "sha256:d75a0809afbbcff5d6f545c79f961b61d22d62dd3b11f8256e04a9eef56b53ab",
+      "noticeStart": 0,
+      "noticeEnd": 0,
+      "noticeSha256": "sha256:e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "completeOriginalNotice": "",
+      "originalNoticeSpdxExpressions": [],
+      "originalTermsClassification": null,
+      "selectedConsumptionExpression": "Apache-2.0",
+      "dualLicenseBasis": {
+        "path": "llvm/lib/Support/BLAKE3/LICENSE",
+        "blob": "f5892efc3b9bac4beeb60e554e85f32e8692599e",
+        "sha256": "sha256:6a94bedb8b707ed97f6e310d0d015ab14e0683ffa0a612b02958581b9cc9fc0e",
+        "explanation": "Existing permitted Apache alternative in the full original CC0-or-Apache license; original CC0 SPDX remains unchanged; no blanket CC0 approval"
+      },
+      "retentionUse": "original notice/attribution retention; consumption authorization is checked separately"
+    },
+    {
+      "path": "llvm/lib/Support/CMakeLists.txt",
+      "blob": "099b0e55579beda86cf9d9630f9447c59873583a",
+      "sha256": "sha256:d98b64a12ff505b4e6e9c688038bfc13726aeea32716aa249decb5b00ee6c961",
+      "noticeStart": 0,
+      "noticeEnd": 0,
+      "noticeSha256": "sha256:e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "completeOriginalNotice": "",
+      "originalNoticeSpdxExpressions": [],
+      "inventoryProposedTermsClassification": "Apache-2.0 WITH LLVM-exception",
+      "retentionUse": "original notice/attribution retention; consumption authorization is checked separately"
+    },
+    {
+      "path": "llvm/lib/Support/COPYRIGHT.regex",
+      "blob": "a6392fd37c3dff2412c308a51d3f171785c12939",
+      "sha256": "sha256:0424e57d4303164dc59a8509c20dae0518b853692e5c2b0e98b11816fdbc97c7",
+      "noticeStart": 0,
+      "noticeEnd": 2718,
+      "noticeSha256": "sha256:0424e57d4303164dc59a8509c20dae0518b853692e5c2b0e98b11816fdbc97c7",
+      "completeOriginalNotice": "$OpenBSD: COPYRIGHT,v 1.3 2003/06/02 20:18:36 millert Exp $\n\nCopyright 1992, 1993, 1994 Henry Spencer.  All rights reserved.\nThis software is not subject to any license of the American Telephone\nand Telegraph Company or of the Regents of the University of California.\n\nPermission is granted to anyone to use this software for any purpose on\nany computer system, and to alter it and redistribute it, subject\nto the following restrictions:\n\n1. The author is not responsible for the consequences of use of this\n   software, no matter how awful, even if they arise from flaws in it.\n\n2. The origin of this software must not be misrepresented, either by\n   explicit claim or by omission.  Since few users ever read sources,\n   credits must appear in the documentation.\n\n3. Altered versions must be plainly marked as such, and must not be\n   misrepresented as being the original software.  Since few users\n   ever read sources, credits must appear in the documentation.\n\n4. This notice may not be removed or altered.\n\n=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=\n/*-\n * Copyright (c) 1994\n *\tThe Regents of the University of California.  All rights reserved.\n *\n * Redistribution and use in source and binary forms, with or without\n * modification, are permitted provided that the following conditions\n * are met:\n * 1. Redistributions of source code must retain the above copyright\n *    notice, this list of conditions and the following disclaimer.\n * 2. Redistributions in binary form must reproduce the above copyright\n *    notice, this list of conditions and the following disclaimer in the\n *    documentation and/or other materials provided with the distribution.\n * 3. Neither the name of the University nor the names of its contributors\n *    may be used to endorse or promote products derived from this software\n *    without specific prior written permission.\n *\n * THIS SOFTWARE IS PROVIDED BY THE REGENTS AND CONTRIBUTORS ``AS IS'' AND\n * ANY EXPRESS OR IMPLIED WARRANTIES, INCLUDING, BUT NOT LIMITED TO, THE\n * IMPLIED WARRANTIES OF MERCHANTABILITY AND FITNESS FOR A PARTICULAR PURPOSE\n * ARE DISCLAIMED.  IN NO EVENT SHALL THE REGENTS OR CONTRIBUTORS BE LIABLE\n * FOR ANY DIRECT, INDIRECT, INCIDENTAL, SPECIAL, EXEMPLARY, OR CONSEQUENTIAL\n * DAMAGES (INCLUDING, BUT NOT LIMITED TO, PROCUREMENT OF SUBSTITUTE GOODS\n * OR SERVICES; LOSS OF USE, DATA, OR PROFITS; OR BUSINESS INTERRUPTION)\n * HOWEVER CAUSED AND ON ANY THEORY OF LIABILITY, WHETHER IN CONTRACT, STRICT\n * LIABILITY, OR TORT (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY\n * OUT OF THE USE OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF\n * SUCH DAMAGE.\n *\n *\t@(#)COPYRIGHT\t8.1 (Berkeley) 3/16/94\n */\n",
+      "originalNoticeSpdxExpressions": [],
+      "inventoryProposedTermsClassification": "LicenseRef-LLVM-regex-original-companion-notice",
+      "retentionUse": "verbatim companion notice; no compiled-code approval"
+    },
+    {
+      "path": "llvm/lib/Support/ConvertUTF.cpp",
+      "blob": "63f92631d5b473cf9a69a06eddf4271304e8c730",
+      "sha256": "sha256:85455b58238689b379a28e7a784b1097e1c63e9b08bcd9617dbd5b1f57f663eb",
+      "noticeStart": 0,
+      "noticeEnd": 2376,
+      "noticeSha256": "sha256:6b209d1f6adc233a0d7bff27c9e7e658e6a017dc3ad2b5c26186d48cf131002a",
+      "completeOriginalNotice": "/*===--- ConvertUTF.c - Universal Character Names conversions ---------------===\n *\n * Part of the LLVM Project, under the Apache License v2.0 with LLVM Exceptions.\n * See https://llvm.org/LICENSE.txt for license information.\n * SPDX-License-Identifier: Apache-2.0 WITH LLVM-exception\n *\n *===------------------------------------------------------------------------=*/\n/*\n * Copyright © 1991-2015 Unicode, Inc. All rights reserved.\n * Distributed under the Terms of Use in\n * http://www.unicode.org/copyright.html.\n *\n * Permission is hereby granted, free of charge, to any person obtaining\n * a copy of the Unicode data files and any associated documentation\n * (the \"Data Files\") or Unicode software and any associated documentation\n * (the \"Software\") to deal in the Data Files or Software\n * without restriction, including without limitation the rights to use,\n * copy, modify, merge, publish, distribute, and/or sell copies of\n * the Data Files or Software, and to permit persons to whom the Data Files\n * or Software are furnished to do so, provided that\n * (a) this copyright and permission notice appear with all copies\n * of the Data Files or Software,\n * (b) this copyright and permission notice appear in associated\n * documentation, and\n * (c) there is clear notice in each modified Data File or in the Software\n * as well as in the documentation associated with the Data File(s) or\n * Software that the data or software has been modified.\n *\n * THE DATA FILES AND SOFTWARE ARE PROVIDED \"AS IS\", WITHOUT WARRANTY OF\n * ANY KIND, EXPRESS OR IMPLIED, INCLUDING BUT NOT LIMITED TO THE\n * WARRANTIES OF MERCHANTABILITY, FITNESS FOR A PARTICULAR PURPOSE AND\n * NONINFRINGEMENT OF THIRD PARTY RIGHTS.\n * IN NO EVENT SHALL THE COPYRIGHT HOLDER OR HOLDERS INCLUDED IN THIS\n * NOTICE BE LIABLE FOR ANY CLAIM, OR ANY SPECIAL INDIRECT OR CONSEQUENTIAL\n * DAMAGES, OR ANY DAMAGES WHATSOEVER RESULTING FROM LOSS OF USE,\n * DATA OR PROFITS, WHETHER IN AN ACTION OF CONTRACT, NEGLIGENCE OR OTHER\n * TORTIOUS ACTION, ARISING OUT OF OR IN CONNECTION WITH THE USE OR\n * PERFORMANCE OF THE DATA FILES OR SOFTWARE.\n *\n * Except as contained in this notice, the name of a copyright holder\n * shall not be used in advertising or otherwise to promote the sale,\n * use or other dealings in these Data Files or Software without prior\n * written authorization of the copyright holder.\n */\n",
+      "originalNoticeSpdxExpressions": [
+        "Apache-2.0 WITH LLVM-exception"
+      ],
+      "inventoryProposedTermsClassification": "Apache-2.0 WITH LLVM-exception AND Unicode-DFS-2015",
+      "retentionUse": "original notice/attribution retention; consumption authorization is checked separately"
+    },
+    {
+      "path": "llvm/lib/Support/MD5.cpp",
+      "blob": "32e2a2ed2f32ff022d85955f50828c4ca17c1f3e",
+      "sha256": "sha256:7b7e82f5508a7d5551b78a1140b1d6aa9cba87282168219743cb6377cd5f9acd",
+      "noticeStart": 0,
+      "noticeEnd": 1686,
+      "noticeSha256": "sha256:59a0d2fd71bea59e37b3284f962d2a5a7a0cb63290df174801a18212695b2130",
+      "completeOriginalNotice": "/*\n * This code is derived from (original license follows):\n *\n * This is an OpenSSL-compatible implementation of the RSA Data Security, Inc.\n * MD5 Message-Digest Algorithm (RFC 1321).\n *\n * Homepage:\n * http://openwall.info/wiki/people/solar/software/public-domain-source-code/md5\n *\n * Author:\n * Alexander Peslyak, better known as Solar Designer <solar at openwall.com>\n *\n * This software was written by Alexander Peslyak in 2001.  No copyright is\n * claimed, and the software is hereby placed in the public domain.\n * In case this attempt to disclaim copyright and place the software in the\n * public domain is deemed null and void, then the software is\n * Copyright (c) 2001 Alexander Peslyak and it is hereby released to the\n * general public under the following terms:\n *\n * Redistribution and use in source and binary forms, with or without\n * modification, are permitted.\n *\n * There's ABSOLUTELY NO WARRANTY, express or implied.\n *\n * (This is a heavily cut-down \"BSD license\".)\n *\n * This differs from Colin Plumb's older public domain implementation in that\n * no exactly 32-bit integer data type is required (any 32-bit or wider\n * unsigned integer data type will do), there's no compile-time endianness\n * configuration, and the function prototypes match OpenSSL's.  No code from\n * Colin Plumb's implementation has been reused; this comment merely compares\n * the properties of the two independent implementations.\n *\n * The primary goals of this implementation are portability and ease of use.\n * It is meant to be fast, but not as fast as possible.  Some known\n * optimizations are not included to reduce source code size and avoid\n * compile-time configuration.\n */\n",
+      "originalNoticeSpdxExpressions": [],
+      "inventoryProposedTermsClassification": "LicenseRef-LLVM-MD5-public-domain-fallback",
+      "retentionUse": "original notice/attribution retention; consumption authorization is checked separately"
+    },
+    {
+      "path": "llvm/lib/Support/SHA1.cpp",
+      "blob": "412f894492bfe0bcae5c6f5d419a44f4d31a487e",
+      "sha256": "sha256:cc6c4b80b5c2a85f915fd336b72a87aeac696a03c30ce87756e71b060c5ca8a9",
+      "noticeStart": 0,
+      "noticeEnd": 744,
+      "noticeSha256": "sha256:af4dbab2a457a90c8e255d680ca435c8191cf6417e83da2de71ed9ec4b140701",
+      "completeOriginalNotice": "//====- SHA1.cpp - Private copy of the SHA1 implementation ---*- C++ -* ======//\n//\n// Part of the LLVM Project, under the Apache License v2.0 with LLVM Exceptions.\n// See https://llvm.org/LICENSE.txt for license information.\n// SPDX-License-Identifier: Apache-2.0 WITH LLVM-exception\n//\n//===----------------------------------------------------------------------===//\n//\n// This code is taken from public domain\n// (http://oauth.googlecode.com/svn/code/c/liboauth/src/sha1.c and\n// http://cvsweb.netbsd.org/bsdweb.cgi/src/common/lib/libc/hash/sha1/sha1.c?rev=1.6)\n// and modified by wrapping it in a C++ interface for LLVM,\n// and removing unnecessary code.\n//\n//===----------------------------------------------------------------------===//\n\n",
+      "originalNoticeSpdxExpressions": [
+        "Apache-2.0 WITH LLVM-exception"
+      ],
+      "inventoryProposedTermsClassification": "Apache-2.0 WITH LLVM-exception",
+      "retentionUse": "original notice/attribution retention; consumption authorization is checked separately"
+    },
+    {
+      "path": "llvm/lib/Support/SHA256.cpp",
+      "blob": "a8019002499cadf0c2e4206785153d642adce65e",
+      "sha256": "sha256:9b1f22d8181e5776527fe8d45948dc31d99d264a68065f6da6d8fab0db7ea232",
+      "noticeStart": 0,
+      "noticeEnd": 829,
+      "noticeSha256": "sha256:5baaacc549d8169cc3d74198dd84ec4370086360b4f1909fadbd88c471884fac",
+      "completeOriginalNotice": "//====- SHA256.cpp - SHA256 implementation ---*- C++ -* ======//\n//\n// Part of the LLVM Project, under the Apache License v2.0 with LLVM Exceptions.\n// See https://llvm.org/LICENSE.txt for license information.\n// SPDX-License-Identifier: Apache-2.0 WITH LLVM-exception\n//\n//===----------------------------------------------------------------------===//\n/*\n *  The SHA-256 Secure Hash Standard was published by NIST in 2002.\n *\n *  http://csrc.nist.gov/publications/fips/fips180-2/fips180-2.pdf\n *\n *   The implementation is based on nacl's sha256 implementation [0] and LLVM's\n *  pre-exsiting SHA1 code [1].\n *\n *   [0] https://hyperelliptic.org/nacl/nacl-20110221.tar.bz2 (public domain\n *       code)\n *   [1] llvm/lib/Support/SHA1.{h,cpp}\n */\n//===----------------------------------------------------------------------===//\n\n",
+      "originalNoticeSpdxExpressions": [
+        "Apache-2.0 WITH LLVM-exception"
+      ],
+      "inventoryProposedTermsClassification": "Apache-2.0 WITH LLVM-exception",
+      "retentionUse": "original notice/attribution retention; consumption authorization is checked separately"
+    },
+    {
+      "path": "llvm/lib/Support/UnicodeNameToCodepointGenerated.cpp",
+      "blob": "90bb29a7f6883d79b21060916420797cbe59eb8a",
+      "sha256": "sha256:fdb2e6c531a8f82d2a6ef70b918abd598724fa109f93d4281f1ea1a1f9767f36",
+      "noticeStart": 0,
+      "noticeEnd": 2951,
+      "noticeSha256": "sha256:184317139c46ff8a081534eed23da89fe14624b320921effdbe61b036d1a87ed",
+      "completeOriginalNotice": "\n//===------------- Support/UnicodeNameToCodepointGenerated.cpp ------------===//\n// Part of the LLVM Project, under the Apache License v2.0 with LLVM Exceptions.\n// See https://llvm.org/LICENSE.txt for license information.\n// SPDX-License-Identifier: Apache-2.0 WITH LLVM-exception\n//\n//===----------------------------------------------------------------------===//\n//\n// This file implements mapping the name of a unicode code point to its value.\n//\n// This file was generated using ./bin/UnicodeNameMappingGenerator.\n// Do not edit manually.\n//\n//===----------------------------------------------------------------------===//\n\n/*\nUNICODE, INC. LICENSE AGREEMENT - DATA FILES AND SOFTWARE\n\nSee Terms of Use <https://www.unicode.org/copyright.html>\nfor definitions of Unicode Inc.’s Data Files and Software.\n\nNOTICE TO USER: Carefully read the following legal agreement.\nBY DOWNLOADING, INSTALLING, COPYING OR OTHERWISE USING UNICODE INC.'S\nDATA FILES (\"DATA FILES\"), AND/OR SOFTWARE (\"SOFTWARE\"),\nYOU UNEQUIVOCALLY ACCEPT, AND AGREE TO BE BOUND BY, ALL OF THE\nTERMS AND CONDITIONS OF THIS AGREEMENT.\nIF YOU DO NOT AGREE, DO NOT DOWNLOAD, INSTALL, COPY, DISTRIBUTE OR USE\nTHE DATA FILES OR SOFTWARE.\n\nCOPYRIGHT AND PERMISSION NOTICE\n\nCopyright © 1991-2022 Unicode, Inc. All rights reserved.\nDistributed under the Terms of Use in https://www.unicode.org/copyright.html.\n\nPermission is hereby granted, free of charge, to any person obtaining\na copy of the Unicode data files and any associated documentation\n(the \"Data Files\") or Unicode software and any associated documentation\n(the \"Software\") to deal in the Data Files or Software\nwithout restriction, including without limitation the rights to use,\ncopy, modify, merge, publish, distribute, and/or sell copies of\nthe Data Files or Software, and to permit persons to whom the Data Files\nor Software are furnished to do so, provided that either\n(a) this copyright and permission notice appear with all copies\nof the Data Files or Software, or\n(b) this copyright and permission notice appear in associated\nDocumentation.\n\nTHE DATA FILES AND SOFTWARE ARE PROVIDED \"AS IS\", WITHOUT WARRANTY OF\nANY KIND, EXPRESS OR IMPLIED, INCLUDING BUT NOT LIMITED TO THE\nWARRANTIES OF MERCHANTABILITY, FITNESS FOR A PARTICULAR PURPOSE AND\nNONINFRINGEMENT OF THIRD PARTY RIGHTS.\nIN NO EVENT SHALL THE COPYRIGHT HOLDER OR HOLDERS INCLUDED IN THIS\nNOTICE BE LIABLE FOR ANY CLAIM, OR ANY SPECIAL INDIRECT OR CONSEQUENTIAL\nDAMAGES, OR ANY DAMAGES WHATSOEVER RESULTING FROM LOSS OF USE,\nDATA OR PROFITS, WHETHER IN AN ACTION OF CONTRACT, NEGLIGENCE OR OTHER\nTORTIOUS ACTION, ARISING OUT OF OR IN CONNECTION WITH THE USE OR\nPERFORMANCE OF THE DATA FILES OR SOFTWARE.\n\nExcept as contained in this notice, the name of a copyright holder\nshall not be used in advertising or otherwise to promote the sale,\nuse or other dealings in these Data Files or Software without prior\nwritten authorization of the copyright holder.\n*/\n",
+      "originalNoticeSpdxExpressions": [
+        "Apache-2.0 WITH LLVM-exception"
+      ],
+      "inventoryProposedTermsClassification": "Apache-2.0 WITH LLVM-exception AND Unicode-DFS-2016",
+      "retentionUse": "original notice/attribution retention; consumption authorization is checked separately"
+    },
+    {
+      "path": "llvm/lib/Support/regcomp.c",
+      "blob": "f5c47781f3d82afe13e5e1b4824f01096ec30729",
+      "sha256": "sha256:d2e4b3d1481555e435de252d0cb61d319473bdc93411be2cc2599ed3b0d944d9",
+      "noticeStart": 0,
+      "noticeEnd": 1860,
+      "noticeSha256": "sha256:1eb453ecedcdcf7e47e643ab04e347bf52da613fa5ab3dc30f780ccca354dbb2",
+      "completeOriginalNotice": "/*-\n * This code is derived from OpenBSD's libc/regex, original license follows:\n *\n * Copyright (c) 1992, 1993, 1994 Henry Spencer.\n * Copyright (c) 1992, 1993, 1994\n *\tThe Regents of the University of California.  All rights reserved.\n *\n * This code is derived from software contributed to Berkeley by\n * Henry Spencer.\n *\n * Redistribution and use in source and binary forms, with or without\n * modification, are permitted provided that the following conditions\n * are met:\n * 1. Redistributions of source code must retain the above copyright\n *    notice, this list of conditions and the following disclaimer.\n * 2. Redistributions in binary form must reproduce the above copyright\n *    notice, this list of conditions and the following disclaimer in the\n *    documentation and/or other materials provided with the distribution.\n * 3. Neither the name of the University nor the names of its contributors\n *    may be used to endorse or promote products derived from this software\n *    without specific prior written permission.\n *\n * THIS SOFTWARE IS PROVIDED BY THE REGENTS AND CONTRIBUTORS ``AS IS'' AND\n * ANY EXPRESS OR IMPLIED WARRANTIES, INCLUDING, BUT NOT LIMITED TO, THE\n * IMPLIED WARRANTIES OF MERCHANTABILITY AND FITNESS FOR A PARTICULAR PURPOSE\n * ARE DISCLAIMED.  IN NO EVENT SHALL THE REGENTS OR CONTRIBUTORS BE LIABLE\n * FOR ANY DIRECT, INDIRECT, INCIDENTAL, SPECIAL, EXEMPLARY, OR CONSEQUENTIAL\n * DAMAGES (INCLUDING, BUT NOT LIMITED TO, PROCUREMENT OF SUBSTITUTE GOODS\n * OR SERVICES; LOSS OF USE, DATA, OR PROFITS; OR BUSINESS INTERRUPTION)\n * HOWEVER CAUSED AND ON ANY THEORY OF LIABILITY, WHETHER IN CONTRACT, STRICT\n * LIABILITY, OR TORT (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY\n * OUT OF THE USE OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF\n * SUCH DAMAGE.\n *\n *\t@(#)regcomp.c\t8.5 (Berkeley) 3/20/94\n */\n\n",
+      "originalNoticeSpdxExpressions": [],
+      "inventoryProposedTermsClassification": "BSD-3-Clause",
+      "retentionUse": "original notice/attribution retention; consumption authorization is checked separately"
+    },
+    {
+      "path": "llvm/lib/Support/regengine.inc",
+      "blob": "f23993abc6e7e7107edbfe02c146fe59252ab747",
+      "sha256": "sha256:cfbc4a3fbf0d7e7dc806d3f68e4b3f3042cdce6306ffc22e6f62b232ca1efe6a",
+      "noticeStart": 0,
+      "noticeEnd": 1858,
+      "noticeSha256": "sha256:b481c90e024b3f9a0945cc1f99201283a1675c329880fd16b4de1b00e2f57458",
+      "completeOriginalNotice": "/*-\n * This code is derived from OpenBSD's libc/regex, original license follows:\n *\n * Copyright (c) 1992, 1993, 1994 Henry Spencer.\n * Copyright (c) 1992, 1993, 1994\n *\tThe Regents of the University of California.  All rights reserved.\n *\n * This code is derived from software contributed to Berkeley by\n * Henry Spencer.\n *\n * Redistribution and use in source and binary forms, with or without\n * modification, are permitted provided that the following conditions\n * are met:\n * 1. Redistributions of source code must retain the above copyright\n *    notice, this list of conditions and the following disclaimer.\n * 2. Redistributions in binary form must reproduce the above copyright\n *    notice, this list of conditions and the following disclaimer in the\n *    documentation and/or other materials provided with the distribution.\n * 3. Neither the name of the University nor the names of its contributors\n *    may be used to endorse or promote products derived from this software\n *    without specific prior written permission.\n *\n * THIS SOFTWARE IS PROVIDED BY THE REGENTS AND CONTRIBUTORS ``AS IS'' AND\n * ANY EXPRESS OR IMPLIED WARRANTIES, INCLUDING, BUT NOT LIMITED TO, THE\n * IMPLIED WARRANTIES OF MERCHANTABILITY AND FITNESS FOR A PARTICULAR PURPOSE\n * ARE DISCLAIMED.  IN NO EVENT SHALL THE REGENTS OR CONTRIBUTORS BE LIABLE\n * FOR ANY DIRECT, INDIRECT, INCIDENTAL, SPECIAL, EXEMPLARY, OR CONSEQUENTIAL\n * DAMAGES (INCLUDING, BUT NOT LIMITED TO, PROCUREMENT OF SUBSTITUTE GOODS\n * OR SERVICES; LOSS OF USE, DATA, OR PROFITS; OR BUSINESS INTERRUPTION)\n * HOWEVER CAUSED AND ON ANY THEORY OF LIABILITY, WHETHER IN CONTRACT, STRICT\n * LIABILITY, OR TORT (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY\n * OUT OF THE USE OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF\n * SUCH DAMAGE.\n *\n *\t@(#)engine.c\t8.5 (Berkeley) 3/20/94\n */\n",
+      "originalNoticeSpdxExpressions": [],
+      "inventoryProposedTermsClassification": "BSD-3-Clause",
+      "retentionUse": "original notice/attribution retention; consumption authorization is checked separately"
+    },
+    {
+      "path": "llvm/lib/Support/regerror.c",
+      "blob": "1d67c9a2b03b172ee2d5d0128bc1f48ac2508638",
+      "sha256": "sha256:438f947e063eb351ed2830c384b8451a66a1caecfb36758f1c4395527c6bbf24",
+      "noticeStart": 0,
+      "noticeEnd": 1861,
+      "noticeSha256": "sha256:d05019f608e32607975295b708023831facd794dfb89c6a6c379e0a37d3a13e5",
+      "completeOriginalNotice": "/*-\n * This code is derived from OpenBSD's libc/regex, original license follows:\n *\n * Copyright (c) 1992, 1993, 1994 Henry Spencer.\n * Copyright (c) 1992, 1993, 1994\n *\tThe Regents of the University of California.  All rights reserved.\n *\n * This code is derived from software contributed to Berkeley by\n * Henry Spencer.\n *\n * Redistribution and use in source and binary forms, with or without\n * modification, are permitted provided that the following conditions\n * are met:\n * 1. Redistributions of source code must retain the above copyright\n *    notice, this list of conditions and the following disclaimer.\n * 2. Redistributions in binary form must reproduce the above copyright\n *    notice, this list of conditions and the following disclaimer in the\n *    documentation and/or other materials provided with the distribution.\n * 3. Neither the name of the University nor the names of its contributors\n *    may be used to endorse or promote products derived from this software\n *    without specific prior written permission.\n *\n * THIS SOFTWARE IS PROVIDED BY THE REGENTS AND CONTRIBUTORS ``AS IS'' AND\n * ANY EXPRESS OR IMPLIED WARRANTIES, INCLUDING, BUT NOT LIMITED TO, THE\n * IMPLIED WARRANTIES OF MERCHANTABILITY AND FITNESS FOR A PARTICULAR PURPOSE\n * ARE DISCLAIMED.  IN NO EVENT SHALL THE REGENTS OR CONTRIBUTORS BE LIABLE\n * FOR ANY DIRECT, INDIRECT, INCIDENTAL, SPECIAL, EXEMPLARY, OR CONSEQUENTIAL\n * DAMAGES (INCLUDING, BUT NOT LIMITED TO, PROCUREMENT OF SUBSTITUTE GOODS\n * OR SERVICES; LOSS OF USE, DATA, OR PROFITS; OR BUSINESS INTERRUPTION)\n * HOWEVER CAUSED AND ON ANY THEORY OF LIABILITY, WHETHER IN CONTRACT, STRICT\n * LIABILITY, OR TORT (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY\n * OUT OF THE USE OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF\n * SUCH DAMAGE.\n *\n *\t@(#)regerror.c\t8.4 (Berkeley) 3/20/94\n */\n\n",
+      "originalNoticeSpdxExpressions": [],
+      "inventoryProposedTermsClassification": "BSD-3-Clause",
+      "retentionUse": "original notice/attribution retention; consumption authorization is checked separately"
+    },
+    {
+      "path": "llvm/lib/Support/regex2.h",
+      "blob": "19d14cd14abbbd507e617d3f7ce9b169316c21ef",
+      "sha256": "sha256:ce6f38306170673c9bda3a5d2d638e7af858662d388e0b3884372677998fb7dd",
+      "noticeStart": 0,
+      "noticeEnd": 1858,
+      "noticeSha256": "sha256:18974cc146c46fe8b687b797f1ab30ea47be823a990ef07993cc9d3e715f52ce",
+      "completeOriginalNotice": "/*-\n * This code is derived from OpenBSD's libc/regex, original license follows:\n *\n * Copyright (c) 1992, 1993, 1994 Henry Spencer.\n * Copyright (c) 1992, 1993, 1994\n *\tThe Regents of the University of California.  All rights reserved.\n *\n * This code is derived from software contributed to Berkeley by\n * Henry Spencer.\n *\n * Redistribution and use in source and binary forms, with or without\n * modification, are permitted provided that the following conditions\n * are met:\n * 1. Redistributions of source code must retain the above copyright\n *    notice, this list of conditions and the following disclaimer.\n * 2. Redistributions in binary form must reproduce the above copyright\n *    notice, this list of conditions and the following disclaimer in the\n *    documentation and/or other materials provided with the distribution.\n * 3. Neither the name of the University nor the names of its contributors\n *    may be used to endorse or promote products derived from this software\n *    without specific prior written permission.\n *\n * THIS SOFTWARE IS PROVIDED BY THE REGENTS AND CONTRIBUTORS ``AS IS'' AND\n * ANY EXPRESS OR IMPLIED WARRANTIES, INCLUDING, BUT NOT LIMITED TO, THE\n * IMPLIED WARRANTIES OF MERCHANTABILITY AND FITNESS FOR A PARTICULAR PURPOSE\n * ARE DISCLAIMED.  IN NO EVENT SHALL THE REGENTS OR CONTRIBUTORS BE LIABLE\n * FOR ANY DIRECT, INDIRECT, INCIDENTAL, SPECIAL, EXEMPLARY, OR CONSEQUENTIAL\n * DAMAGES (INCLUDING, BUT NOT LIMITED TO, PROCUREMENT OF SUBSTITUTE GOODS\n * OR SERVICES; LOSS OF USE, DATA, OR PROFITS; OR BUSINESS INTERRUPTION)\n * HOWEVER CAUSED AND ON ANY THEORY OF LIABILITY, WHETHER IN CONTRACT, STRICT\n * LIABILITY, OR TORT (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY\n * OUT OF THE USE OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF\n * SUCH DAMAGE.\n *\n *\t@(#)regex2.h\t8.4 (Berkeley) 3/20/94\n */\n",
+      "originalNoticeSpdxExpressions": [],
+      "inventoryProposedTermsClassification": "BSD-3-Clause",
+      "retentionUse": "original notice/attribution retention; consumption authorization is checked separately"
+    },
+    {
+      "path": "llvm/lib/Support/regex_impl.h",
+      "blob": "8f0c532205edc3ea547740e4b585d3a6ed7dec52",
+      "sha256": "sha256:90cf33f4d2c50f516b669e8d17310e94f9241eb33b3ca2098478c41dab130f52",
+      "noticeStart": 0,
+      "noticeEnd": 1868,
+      "noticeSha256": "sha256:090513c80e5290d51ac11848157ea355b41c33b60290ad9a86a1e21ec1f53ae7",
+      "completeOriginalNotice": "/*-\n * This code is derived from OpenBSD's libc/regex, original license follows:\n *\n * Copyright (c) 1992 Henry Spencer.\n * Copyright (c) 1992, 1993\n *\tThe Regents of the University of California.  All rights reserved.\n *\n * This code is derived from software contributed to Berkeley by\n * Henry Spencer of the University of Toronto.\n *\n * Redistribution and use in source and binary forms, with or without\n * modification, are permitted provided that the following conditions\n * are met:\n * 1. Redistributions of source code must retain the above copyright\n *    notice, this list of conditions and the following disclaimer.\n * 2. Redistributions in binary form must reproduce the above copyright\n *    notice, this list of conditions and the following disclaimer in the\n *    documentation and/or other materials provided with the distribution.\n * 3. Neither the name of the University nor the names of its contributors\n *    may be used to endorse or promote products derived from this software\n *    without specific prior written permission.\n *\n * THIS SOFTWARE IS PROVIDED BY THE REGENTS AND CONTRIBUTORS ``AS IS'' AND\n * ANY EXPRESS OR IMPLIED WARRANTIES, INCLUDING, BUT NOT LIMITED TO, THE\n * IMPLIED WARRANTIES OF MERCHANTABILITY AND FITNESS FOR A PARTICULAR PURPOSE\n * ARE DISCLAIMED.  IN NO EVENT SHALL THE REGENTS OR CONTRIBUTORS BE LIABLE\n * FOR ANY DIRECT, INDIRECT, INCIDENTAL, SPECIAL, EXEMPLARY, OR CONSEQUENTIAL\n * DAMAGES (INCLUDING, BUT NOT LIMITED TO, PROCUREMENT OF SUBSTITUTE GOODS\n * OR SERVICES; LOSS OF USE, DATA, OR PROFITS; OR BUSINESS INTERRUPTION)\n * HOWEVER CAUSED AND ON ANY THEORY OF LIABILITY, WHETHER IN CONTRACT, STRICT\n * LIABILITY, OR TORT (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY\n * OUT OF THE USE OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF\n * SUCH DAMAGE.\n *\n *\t@(#)regex.h\t8.1 (Berkeley) 6/2/93\n */\n\n",
+      "originalNoticeSpdxExpressions": [],
+      "inventoryProposedTermsClassification": "BSD-3-Clause",
+      "retentionUse": "original notice/attribution retention; consumption authorization is checked separately"
+    },
+    {
+      "path": "llvm/lib/Support/regexec.c",
+      "blob": "bd5e72d4c522074587a39c5093e65007af660e09",
+      "sha256": "sha256:b26ab983413177c81034ad4dfa66280697fc304a8b27d15b5eb7bf1955cb9745",
+      "noticeStart": 0,
+      "noticeEnd": 2091,
+      "noticeSha256": "sha256:f5ae38ac5904bac528eecbe2736c36e82385b4ad8956dfd253d2a6f97727c5a7",
+      "completeOriginalNotice": "/*-\n * This code is derived from OpenBSD's libc/regex, original license follows:\n *\n * Copyright (c) 1992, 1993, 1994 Henry Spencer.\n * Copyright (c) 1992, 1993, 1994\n *\tThe Regents of the University of California.  All rights reserved.\n *\n * This code is derived from software contributed to Berkeley by\n * Henry Spencer.\n *\n * Redistribution and use in source and binary forms, with or without\n * modification, are permitted provided that the following conditions\n * are met:\n * 1. Redistributions of source code must retain the above copyright\n *    notice, this list of conditions and the following disclaimer.\n * 2. Redistributions in binary form must reproduce the above copyright\n *    notice, this list of conditions and the following disclaimer in the\n *    documentation and/or other materials provided with the distribution.\n * 3. Neither the name of the University nor the names of its contributors\n *    may be used to endorse or promote products derived from this software\n *    without specific prior written permission.\n *\n * THIS SOFTWARE IS PROVIDED BY THE REGENTS AND CONTRIBUTORS ``AS IS'' AND\n * ANY EXPRESS OR IMPLIED WARRANTIES, INCLUDING, BUT NOT LIMITED TO, THE\n * IMPLIED WARRANTIES OF MERCHANTABILITY AND FITNESS FOR A PARTICULAR PURPOSE\n * ARE DISCLAIMED.  IN NO EVENT SHALL THE REGENTS OR CONTRIBUTORS BE LIABLE\n * FOR ANY DIRECT, INDIRECT, INCIDENTAL, SPECIAL, EXEMPLARY, OR CONSEQUENTIAL\n * DAMAGES (INCLUDING, BUT NOT LIMITED TO, PROCUREMENT OF SUBSTITUTE GOODS\n * OR SERVICES; LOSS OF USE, DATA, OR PROFITS; OR BUSINESS INTERRUPTION)\n * HOWEVER CAUSED AND ON ANY THEORY OF LIABILITY, WHETHER IN CONTRACT, STRICT\n * LIABILITY, OR TORT (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY\n * OUT OF THE USE OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF\n * SUCH DAMAGE.\n *\n *\t@(#)regexec.c\t8.3 (Berkeley) 3/20/94\n */\n\n/*\n * the outer shell of llvm_regexec()\n *\n * This file includes engine.inc *twice*, after muchos fiddling with the\n * macros that code uses.  This lets the same code operate on two different\n * representations for state sets.\n */\n",
+      "originalNoticeSpdxExpressions": [],
+      "inventoryProposedTermsClassification": "BSD-3-Clause",
+      "retentionUse": "original notice/attribution retention; consumption authorization is checked separately"
+    },
+    {
+      "path": "llvm/lib/Support/regfree.c",
+      "blob": "dc2b4af90fa746b47974ba12ec24f7b173d132ac",
+      "sha256": "sha256:cab827cecccf9f9446f1b1990b7ad5ae3ba930ba004c3ea04daed5753ce4557d",
+      "noticeStart": 0,
+      "noticeEnd": 1860,
+      "noticeSha256": "sha256:45d8db19db751980ee15c9946aca0d3f47e9ab0686a298be65c9b8fd18ecd9df",
+      "completeOriginalNotice": "/*-\n * This code is derived from OpenBSD's libc/regex, original license follows:\n *\n * Copyright (c) 1992, 1993, 1994 Henry Spencer.\n * Copyright (c) 1992, 1993, 1994\n *\tThe Regents of the University of California.  All rights reserved.\n *\n * This code is derived from software contributed to Berkeley by\n * Henry Spencer.\n *\n * Redistribution and use in source and binary forms, with or without\n * modification, are permitted provided that the following conditions\n * are met:\n * 1. Redistributions of source code must retain the above copyright\n *    notice, this list of conditions and the following disclaimer.\n * 2. Redistributions in binary form must reproduce the above copyright\n *    notice, this list of conditions and the following disclaimer in the\n *    documentation and/or other materials provided with the distribution.\n * 3. Neither the name of the University nor the names of its contributors\n *    may be used to endorse or promote products derived from this software\n *    without specific prior written permission.\n *\n * THIS SOFTWARE IS PROVIDED BY THE REGENTS AND CONTRIBUTORS ``AS IS'' AND\n * ANY EXPRESS OR IMPLIED WARRANTIES, INCLUDING, BUT NOT LIMITED TO, THE\n * IMPLIED WARRANTIES OF MERCHANTABILITY AND FITNESS FOR A PARTICULAR PURPOSE\n * ARE DISCLAIMED.  IN NO EVENT SHALL THE REGENTS OR CONTRIBUTORS BE LIABLE\n * FOR ANY DIRECT, INDIRECT, INCIDENTAL, SPECIAL, EXEMPLARY, OR CONSEQUENTIAL\n * DAMAGES (INCLUDING, BUT NOT LIMITED TO, PROCUREMENT OF SUBSTITUTE GOODS\n * OR SERVICES; LOSS OF USE, DATA, OR PROFITS; OR BUSINESS INTERRUPTION)\n * HOWEVER CAUSED AND ON ANY THEORY OF LIABILITY, WHETHER IN CONTRACT, STRICT\n * LIABILITY, OR TORT (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY\n * OUT OF THE USE OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF\n * SUCH DAMAGE.\n *\n *\t@(#)regfree.c\t8.3 (Berkeley) 3/20/94\n */\n\n",
+      "originalNoticeSpdxExpressions": [],
+      "inventoryProposedTermsClassification": "BSD-3-Clause",
+      "retentionUse": "original notice/attribution retention; consumption authorization is checked separately"
+    },
+    {
+      "path": "llvm/lib/Support/regstrlcpy.c",
+      "blob": "8b68afdf75f16af34a067d9eaa53b60abbc2ba4a",
+      "sha256": "sha256:b717e3355fdca040c161a7a179de9db1c9253da6519e60b77a074cbf5f7d423f",
+      "noticeStart": 0,
+      "noticeEnd": 875,
+      "noticeSha256": "sha256:f9c6f4386edbba118287f5c7689aaf63eb4e407c3011314731348052c67d255e",
+      "completeOriginalNotice": "/*\n * This code is derived from OpenBSD's libc, original license follows:\n *\n * Copyright (c) 1998 Todd C. Miller <Todd.Miller@courtesan.com>\n *\n * Permission to use, copy, modify, and distribute this software for any\n * purpose with or without fee is hereby granted, provided that the above\n * copyright notice and this permission notice appear in all copies.\n *\n * THE SOFTWARE IS PROVIDED \"AS IS\" AND THE AUTHOR DISCLAIMS ALL WARRANTIES\n * WITH REGARD TO THIS SOFTWARE INCLUDING ALL IMPLIED WARRANTIES OF\n * MERCHANTABILITY AND FITNESS. IN NO EVENT SHALL THE AUTHOR BE LIABLE FOR\n * ANY SPECIAL, DIRECT, INDIRECT, OR CONSEQUENTIAL DAMAGES OR ANY DAMAGES\n * WHATSOEVER RESULTING FROM LOSS OF USE, DATA OR PROFITS, WHETHER IN AN\n * ACTION OF CONTRACT, NEGLIGENCE OR OTHER TORTIOUS ACTION, ARISING OUT OF\n * OR IN CONNECTION WITH THE USE OR PERFORMANCE OF THIS SOFTWARE.\n */\n",
+      "originalNoticeSpdxExpressions": [],
+      "inventoryProposedTermsClassification": "ISC",
+      "retentionUse": "original notice/attribution retention; consumption authorization is checked separately"
+    },
+    {
+      "path": "llvm/lib/Support/regutils.h",
+      "blob": "49a975cd2703e702904e1bf3ed2f2d96aeafddcf",
+      "sha256": "sha256:80606b2d8f0f063b9ddaa7b909fc1ef9c344807f22fd2f3a8cb4187f88734ac3",
+      "noticeStart": 0,
+      "noticeEnd": 1858,
+      "noticeSha256": "sha256:bed18e1d01fa0b308f4f8463e0a2a89f4ea404c1ff625554428350b91a2f4be7",
+      "completeOriginalNotice": "/*-\n * This code is derived from OpenBSD's libc/regex, original license follows:\n *\n * Copyright (c) 1992, 1993, 1994 Henry Spencer.\n * Copyright (c) 1992, 1993, 1994\n *\tThe Regents of the University of California.  All rights reserved.\n *\n * This code is derived from software contributed to Berkeley by\n * Henry Spencer.\n *\n * Redistribution and use in source and binary forms, with or without\n * modification, are permitted provided that the following conditions\n * are met:\n * 1. Redistributions of source code must retain the above copyright\n *    notice, this list of conditions and the following disclaimer.\n * 2. Redistributions in binary form must reproduce the above copyright\n *    notice, this list of conditions and the following disclaimer in the\n *    documentation and/or other materials provided with the distribution.\n * 3. Neither the name of the University nor the names of its contributors\n *    may be used to endorse or promote products derived from this software\n *    without specific prior written permission.\n *\n * THIS SOFTWARE IS PROVIDED BY THE REGENTS AND CONTRIBUTORS ``AS IS'' AND\n * ANY EXPRESS OR IMPLIED WARRANTIES, INCLUDING, BUT NOT LIMITED TO, THE\n * IMPLIED WARRANTIES OF MERCHANTABILITY AND FITNESS FOR A PARTICULAR PURPOSE\n * ARE DISCLAIMED.  IN NO EVENT SHALL THE REGENTS OR CONTRIBUTORS BE LIABLE\n * FOR ANY DIRECT, INDIRECT, INCIDENTAL, SPECIAL, EXEMPLARY, OR CONSEQUENTIAL\n * DAMAGES (INCLUDING, BUT NOT LIMITED TO, PROCUREMENT OF SUBSTITUTE GOODS\n * OR SERVICES; LOSS OF USE, DATA, OR PROFITS; OR BUSINESS INTERRUPTION)\n * HOWEVER CAUSED AND ON ANY THEORY OF LIABILITY, WHETHER IN CONTRACT, STRICT\n * LIABILITY, OR TORT (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY\n * OUT OF THE USE OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF\n * SUCH DAMAGE.\n *\n *\t@(#)utils.h\t8.3 (Berkeley) 3/20/94\n */\n\n",
+      "originalNoticeSpdxExpressions": [],
+      "inventoryProposedTermsClassification": "BSD-3-Clause",
+      "retentionUse": "original notice/attribution retention; consumption authorization is checked separately"
+    },
+    {
+      "path": "llvm/lib/Support/xxhash.cpp",
+      "blob": "cdb76d57e2c1df67e07c39f5e59284ab0ce07984",
+      "sha256": "sha256:b47e89a65e40f34c7e336a58f1902c958b7bd90b3370bd497c8cb788eb40c2d4",
+      "noticeStart": 0,
+      "noticeEnd": 1643,
+      "noticeSha256": "sha256:4eca3924b5c7daab59e93307726c44b21de2de1b0df21acf0f6a62f48f149891",
+      "completeOriginalNotice": "/*\n *  xxHash - Extremely Fast Hash algorithm\n *  Copyright (C) 2012-2023, Yann Collet\n *\n *  BSD 2-Clause License (http://www.opensource.org/licenses/bsd-license.php)\n *\n *  Redistribution and use in source and binary forms, with or without\n *  modification, are permitted provided that the following conditions are\n *  met:\n *\n *  * Redistributions of source code must retain the above copyright\n *  notice, this list of conditions and the following disclaimer.\n *  * Redistributions in binary form must reproduce the above\n *  copyright notice, this list of conditions and the following disclaimer\n *  in the documentation and/or other materials provided with the\n *  distribution.\n *\n *  THIS SOFTWARE IS PROVIDED BY THE COPYRIGHT HOLDERS AND CONTRIBUTORS\n *  \"AS IS\" AND ANY EXPRESS OR IMPLIED WARRANTIES, INCLUDING, BUT NOT\n *  LIMITED TO, THE IMPLIED WARRANTIES OF MERCHANTABILITY AND FITNESS FOR\n *  A PARTICULAR PURPOSE ARE DISCLAIMED. IN NO EVENT SHALL THE COPYRIGHT\n *  OWNER OR CONTRIBUTORS BE LIABLE FOR ANY DIRECT, INDIRECT, INCIDENTAL,\n *  SPECIAL, EXEMPLARY, OR CONSEQUENTIAL DAMAGES (INCLUDING, BUT NOT\n *  LIMITED TO, PROCUREMENT OF SUBSTITUTE GOODS OR SERVICES; LOSS OF USE,\n *  DATA, OR PROFITS; OR BUSINESS INTERRUPTION) HOWEVER CAUSED AND ON ANY\n *  THEORY OF LIABILITY, WHETHER IN CONTRACT, STRICT LIABILITY, OR TORT\n *  (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE\n *  OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.\n *\n *  You can contact the author at :\n *  - xxHash homepage: http://www.xxhash.com\n *  - xxHash source repository : https://github.com/Cyan4973/xxHash\n */\n",
+      "originalNoticeSpdxExpressions": [],
+      "inventoryProposedTermsClassification": "BSD-2-Clause",
+      "retentionUse": "original notice/attribution retention; consumption authorization is checked separately"
+    },
+    {
+      "path": "mlir/LICENSE.TXT",
+      "blob": "53bb2e7fbc76434fe747bceffdfb5c19e1cca362",
+      "sha256": "sha256:94b301bb652ae351f5941655bf533f1a136300ad1396be7452c8a04ff2c91374",
+      "noticeStart": 0,
+      "noticeEnd": 13151,
+      "noticeSha256": "sha256:94b301bb652ae351f5941655bf533f1a136300ad1396be7452c8a04ff2c91374",
+      "completeOriginalNotice": "==============================================================================\nThe LLVM Project is under the Apache License v2.0 with LLVM Exceptions:\n==============================================================================\n\n                                 Apache License\n                           Version 2.0, January 2004\n                        http://www.apache.org/licenses/\n\n    TERMS AND CONDITIONS FOR USE, REPRODUCTION, AND DISTRIBUTION\n\n    1. Definitions.\n\n      \"License\" shall mean the terms and conditions for use, reproduction,\n      and distribution as defined by Sections 1 through 9 of this document.\n\n      \"Licensor\" shall mean the copyright owner or entity authorized by\n      the copyright owner that is granting the License.\n\n      \"Legal Entity\" shall mean the union of the acting entity and all\n      other entities that control, are controlled by, or are under common\n      control with that entity. For the purposes of this definition,\n      \"control\" means (i) the power, direct or indirect, to cause the\n      direction or management of such entity, whether by contract or\n      otherwise, or (ii) ownership of fifty percent (50%) or more of the\n      outstanding shares, or (iii) beneficial ownership of such entity.\n\n      \"You\" (or \"Your\") shall mean an individual or Legal Entity\n      exercising permissions granted by this License.\n\n      \"Source\" form shall mean the preferred form for making modifications,\n      including but not limited to software source code, documentation\n      source, and configuration files.\n\n      \"Object\" form shall mean any form resulting from mechanical\n      transformation or translation of a Source form, including but\n      not limited to compiled object code, generated documentation,\n      and conversions to other media types.\n\n      \"Work\" shall mean the work of authorship, whether in Source or\n      Object form, made available under the License, as indicated by a\n      copyright notice that is included in or attached to the work\n      (an example is provided in the Appendix below).\n\n      \"Derivative Works\" shall mean any work, whether in Source or Object\n      form, that is based on (or derived from) the Work and for which the\n      editorial revisions, annotations, elaborations, or other modifications\n      represent, as a whole, an original work of authorship. For the purposes\n      of this License, Derivative Works shall not include works that remain\n      separable from, or merely link (or bind by name) to the interfaces of,\n      the Work and Derivative Works thereof.\n\n      \"Contribution\" shall mean any work of authorship, including\n      the original version of the Work and any modifications or additions\n      to that Work or Derivative Works thereof, that is intentionally\n      submitted to Licensor for inclusion in the Work by the copyright owner\n      or by an individual or Legal Entity authorized to submit on behalf of\n      the copyright owner. For the purposes of this definition, \"submitted\"\n      means any form of electronic, verbal, or written communication sent\n      to the Licensor or its representatives, including but not limited to\n      communication on electronic mailing lists, source code control systems,\n      and issue tracking systems that are managed by, or on behalf of, the\n      Licensor for the purpose of discussing and improving the Work, but\n      excluding communication that is conspicuously marked or otherwise\n      designated in writing by the copyright owner as \"Not a Contribution.\"\n\n      \"Contributor\" shall mean Licensor and any individual or Legal Entity\n      on behalf of whom a Contribution has been received by Licensor and\n      subsequently incorporated within the Work.\n\n    2. Grant of Copyright License. Subject to the terms and conditions of\n      this License, each Contributor hereby grants to You a perpetual,\n      worldwide, non-exclusive, no-charge, royalty-free, irrevocable\n      copyright license to reproduce, prepare Derivative Works of,\n      publicly display, publicly perform, sublicense, and distribute the\n      Work and such Derivative Works in Source or Object form.\n\n    3. Grant of Patent License. Subject to the terms and conditions of\n      this License, each Contributor hereby grants to You a perpetual,\n      worldwide, non-exclusive, no-charge, royalty-free, irrevocable\n      (except as stated in this section) patent license to make, have made,\n      use, offer to sell, sell, import, and otherwise transfer the Work,\n      where such license applies only to those patent claims licensable\n      by such Contributor that are necessarily infringed by their\n      Contribution(s) alone or by combination of their Contribution(s)\n      with the Work to which such Contribution(s) was submitted. If You\n      institute patent litigation against any entity (including a\n      cross-claim or counterclaim in a lawsuit) alleging that the Work\n      or a Contribution incorporated within the Work constitutes direct\n      or contributory patent infringement, then any patent licenses\n      granted to You under this License for that Work shall terminate\n      as of the date such litigation is filed.\n\n    4. Redistribution. You may reproduce and distribute copies of the\n      Work or Derivative Works thereof in any medium, with or without\n      modifications, and in Source or Object form, provided that You\n      meet the following conditions:\n\n      (a) You must give any other recipients of the Work or\n          Derivative Works a copy of this License; and\n\n      (b) You must cause any modified files to carry prominent notices\n          stating that You changed the files; and\n\n      (c) You must retain, in the Source form of any Derivative Works\n          that You distribute, all copyright, patent, trademark, and\n          attribution notices from the Source form of the Work,\n          excluding those notices that do not pertain to any part of\n          the Derivative Works; and\n\n      (d) If the Work includes a \"NOTICE\" text file as part of its\n          distribution, then any Derivative Works that You distribute must\n          include a readable copy of the attribution notices contained\n          within such NOTICE file, excluding those notices that do not\n          pertain to any part of the Derivative Works, in at least one\n          of the following places: within a NOTICE text file distributed\n          as part of the Derivative Works; within the Source form or\n          documentation, if provided along with the Derivative Works; or,\n          within a display generated by the Derivative Works, if and\n          wherever such third-party notices normally appear. The contents\n          of the NOTICE file are for informational purposes only and\n          do not modify the License. You may add Your own attribution\n          notices within Derivative Works that You distribute, alongside\n          or as an addendum to the NOTICE text from the Work, provided\n          that such additional attribution notices cannot be construed\n          as modifying the License.\n\n      You may add Your own copyright statement to Your modifications and\n      may provide additional or different license terms and conditions\n      for use, reproduction, or distribution of Your modifications, or\n      for any such Derivative Works as a whole, provided Your use,\n      reproduction, and distribution of the Work otherwise complies with\n      the conditions stated in this License.\n\n    5. Submission of Contributions. Unless You explicitly state otherwise,\n      any Contribution intentionally submitted for inclusion in the Work\n      by You to the Licensor shall be under the terms and conditions of\n      this License, without any additional terms or conditions.\n      Notwithstanding the above, nothing herein shall supersede or modify\n      the terms of any separate license agreement you may have executed\n      with Licensor regarding such Contributions.\n\n    6. Trademarks. This License does not grant permission to use the trade\n      names, trademarks, service marks, or product names of the Licensor,\n      except as required for reasonable and customary use in describing the\n      origin of the Work and reproducing the content of the NOTICE file.\n\n    7. Disclaimer of Warranty. Unless required by applicable law or\n      agreed to in writing, Licensor provides the Work (and each\n      Contributor provides its Contributions) on an \"AS IS\" BASIS,\n      WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or\n      implied, including, without limitation, any warranties or conditions\n      of TITLE, NON-INFRINGEMENT, MERCHANTABILITY, or FITNESS FOR A\n      PARTICULAR PURPOSE. You are solely responsible for determining the\n      appropriateness of using or redistributing the Work and assume any\n      risks associated with Your exercise of permissions under this License.\n\n    8. Limitation of Liability. In no event and under no legal theory,\n      whether in tort (including negligence), contract, or otherwise,\n      unless required by applicable law (such as deliberate and grossly\n      negligent acts) or agreed to in writing, shall any Contributor be\n      liable to You for damages, including any direct, indirect, special,\n      incidental, or consequential damages of any character arising as a\n      result of this License or out of the use or inability to use the\n      Work (including but not limited to damages for loss of goodwill,\n      work stoppage, computer failure or malfunction, or any and all\n      other commercial damages or losses), even if such Contributor\n      has been advised of the possibility of such damages.\n\n    9. Accepting Warranty or Additional Liability. While redistributing\n      the Work or Derivative Works thereof, You may choose to offer,\n      and charge a fee for, acceptance of support, warranty, indemnity,\n      or other liability obligations and/or rights consistent with this\n      License. However, in accepting such obligations, You may act only\n      on Your own behalf and on Your sole responsibility, not on behalf\n      of any other Contributor, and only if You agree to indemnify,\n      defend, and hold each Contributor harmless for any liability\n      incurred by, or claims asserted against, such Contributor by reason\n      of your accepting any such warranty or additional liability.\n\n    END OF TERMS AND CONDITIONS\n\n    APPENDIX: How to apply the Apache License to your work.\n\n      To apply the Apache License to your work, attach the following\n      boilerplate notice, with the fields enclosed by brackets \"[]\"\n      replaced with your own identifying information. (Don't include\n      the brackets!)  The text should be enclosed in the appropriate\n      comment syntax for the file format. We also recommend that a\n      file or class name and description of purpose be included on the\n      same \"printed page\" as the copyright notice for easier\n      identification within third-party archives.\n\n    Copyright [yyyy] [name of copyright owner]\n\n    Licensed under the Apache License, Version 2.0 (the \"License\");\n    you may not use this file except in compliance with the License.\n    You may obtain a copy of the License at\n\n       http://www.apache.org/licenses/LICENSE-2.0\n\n    Unless required by applicable law or agreed to in writing, software\n    distributed under the License is distributed on an \"AS IS\" BASIS,\n    WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.\n    See the License for the specific language governing permissions and\n    limitations under the License.\n\n\n---- LLVM Exceptions to the Apache 2.0 License ----\n\nAs an exception, if, as a result of your compiling your source code, portions\nof this Software are embedded into an Object form of such source code, you\nmay redistribute such embedded portions in such Object form without complying\nwith the conditions of Sections 4(a), 4(b) and 4(d) of the License.\n\nIn addition, if you combine or link compiled forms of this Software with\nsoftware that is licensed under the GPLv2 (\"Combined Software\") and if a\ncourt of competent jurisdiction determines that the patent provision (Section\n3), the indemnity provision (Section 9) or other Section of the License\nconflicts with the conditions of the GPLv2, you may retroactively and\nprospectively choose to deem waived or otherwise exclude such Section(s) of\nthe License, but only in their entirety and only with respect to the Combined\nSoftware.\n\n==============================================================================\nSoftware from third parties included in the LLVM Project:\n==============================================================================\nThe LLVM Project contains third party software which is under different license\nterms. All such code will be identified clearly using at least one of two\nmechanisms:\n1) It will be in a separate directory tree with its own `LICENSE.txt` or\n   `LICENSE` file at the top containing the specific license and restrictions\n   which apply to that software, or\n2) It will contain specific license and restriction terms at the top of every\n   file.\n",
+      "originalNoticeSpdxExpressions": [],
+      "inventoryProposedTermsClassification": "Apache-2.0 WITH LLVM-exception",
+      "retentionUse": "original notice/attribution retention; consumption authorization is checked separately"
+    },
+    {
+      "path": "third-party/siphash/include/siphash/SipHash.h",
+      "blob": "ca4fe45e4fddf1a4ce2df50cda0e6fc80c5d8b44",
+      "sha256": "sha256:0a39a86eef97c27c63d40586c9ae7d19445ffc5e3f05362677a73d1bc3e6fdb5",
+      "noticeStart": 0,
+      "noticeEnd": 786,
+      "noticeSha256": "sha256:b5b8db4086c87225cc1110a8bb01e1775c13ae7f07725b4afe52765cd882baed",
+      "completeOriginalNotice": "//===--- SipHash.h - An implementation of SipHash -------------------------===//\n//\n// Part of the LLVM Project, under the Apache License v2.0 with LLVM Exceptions.\n// See https://llvm.org/LICENSE.txt for license information.\n// SPDX-License-Identifier: Apache-2.0 WITH LLVM-exception\n//\n//===----------------------------------------------------------------------===//\n//\n//  This is a header-only implementation of SipHash. It lacks library\n//  dependencies so it can be used from LLVM and compiler-rt.\n//\n//===----------------------------------------------------------------------===//\n\n#include <stddef.h>\n#include <stdint.h>\n\n// Lightly adapted from the SipHash reference C implementation:\n//   https://github.com/veorq/SipHash\n// by Jean-Philippe Aumasson and Daniel J. Bernstein\n\n",
+      "originalNoticeSpdxExpressions": [
+        "Apache-2.0 WITH LLVM-exception"
+      ],
+      "inventoryProposedTermsClassification": "Apache-2.0 WITH LLVM-exception",
+      "retentionUse": "original notice/attribution retention; consumption authorization is checked separately"
+    }
+  ]
+}

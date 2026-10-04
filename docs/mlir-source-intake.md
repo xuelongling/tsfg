@@ -92,3 +92,49 @@ does not claim an exhaustive audit of every CPython source file. SBOM
 treating a SBOM classification as permission. Build preparation only returns
 the verified executable and its identity; it does not execute or install it.
 The later source build must use that exact executable with E-drive storage.
+
+## Gated M01 source-build preparation
+
+`tsfg-build build --dev --source-target mlir-core --target
+windows-x86_64-msvc --profile debug` is the prepared formal source consumer.
+It requires explicit `TSFG_MLIR_SOURCE`, `TSFG_GIT`,
+`TSFG_MLIR_PYTHON_TOOL_ROOT` and the existing locked native runtime closure.
+The original five-file legal decision remains finite: the three newly required
+files and verbatim `COPYRIGHT.regex` retention still need the disclosed human
+supplement. The legal reader rejects those paths before any source process;
+this preparation does not grant them approval.
+
+The target stages ordinary committed source bytes, explicitly leaves unrelated
+Git symlinks unmaterialized, uses the selected tools and exact original Python
+executable, and disables optional dependency/allocator/sanitizer discovery.
+Python CMake probes receive `-I -B` through the owned policy; profiles and temp
+stay on E. This is local-development execution with strong OS isolation
+not enforced, and its artifacts are not publishable release evidence.
+
+Owned native/build/intake files are explicit Build Inputs. Each requires a
+regular tracked mode, real Git last-touch time and matching raw bytes; a local
+preparation commit is needed before actual source building. No wall-clock
+epoch is substituted. The product last-touch maximum must dominate every
+source ancestor timestamp to prove the combined input epoch. CMake JSON trace,
+Ninja unescaped NUL inputs/configuration inputs and compiler dependency records
+must reconcile the actual source/product/tool inputs after a real build.
+
+`eng/mlir-source-notices.lock.json` prepares a finite original-notice retention
+bundle. It preserves original SPDX/text separately from the already permitted
+BLAKE3 Apache alternative and its complete dual-license basis; it grants no
+consumption permission. Retained notice bytes are checked against exact source
+blob/raw hashes and enter the source Build Input Set. The proposed output set
+contains the executable, detached PDB, original-notice bundle and an artifact
+manifest, with every payload hash and exact member set checked before and after
+atomic publication. Failure diagnostics use the opened E-stage file handle
+instead of writing through a rejected publication path.
+
+The owned native seam registers a minimal signless-i32 constant and Core IR
+version `0.1.0`, then uses real MLIR parse/default and explicit verification and
+generic canonical printing. Prepared tests cover rereading, boundary constants,
+source spelling changes, invalid identity/SSA/types/regions and stable command
+errors. The independent oracle binds `@sample`'s literal and returned SSA in the
+same function. A separate comparator requires two distinct actual build roots
+and compares canonical input/Build Identities, the complete manifest and all
+payload/PDB hashes. These are prepared acceptance checks, not completed native
+or clean-rebuild results; the full ticket remains incomplete until they run.
