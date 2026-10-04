@@ -36,6 +36,30 @@ clean builds must all complete before M01 can be closed. Original LLVM and
 MLIR license files are retained; a repository API's license classification is
 not a substitute for their bytes or embedded third-party notices.
 
+## Five-file legal approval
+
+On 2026-10-04 the human accepted the concrete scoped proposal for five exact
+files at base `fc4aad7b5db3fff421df9a9637605b9ca5667881`: Support's `xxhash.cpp`,
+`regstrlcpy.c`, `MD5.cpp`, `ConvertUTF.cpp`, and `include/llvm/Support/ConvertUTF.h`.
+`eng/mlir-source-legal.lock.json` records their original blob OIDs, raw byte
+hashes, selected expressions, complete unmodified notices and byte ranges,
+consumption basis, exact source commit and compiler-side M01 role.
+
+`readMlirSourceLegalFiles` verifies the independently pinned finite mapping,
+the real metadata identity, each ordinary working file against its committed
+base blob, and each complete original notice byte range. Its selected-file
+result remains `intakeComplete: false` and `sourceBuild: not-run`. Requests for
+another file, base or role and altered mapping/notice/hash bytes fail closed.
+Neither callers nor local evidence can supply a new approval.
+
+The decision does not expand `approvedLicenseExpressions` or transfer an
+exception to another file, even within the same component. The complete build
+closure still needs review: newly discovered mandatory `xxhash.h`, `MD5.h`
+and `UnicodeNameToCodepointGenerated.cpp` are outside the five-path approval.
+Their separate original notices require a concrete scoped supplement before
+the affected consumer can configure or compile. No Candidate or Stable
+identity changes follow from this bounded preparation.
+
 The formal structural seam is the source-built `tsfg-core-ir` executable,
 using the MLIR parser/verifier/printer and registered tsfg operations. This
 seam does not execute TypeScript, generate game bytecode, or establish VM/AOT
@@ -47,8 +71,8 @@ tickets. No execution substitute is introduced by M01.
 The human separately approved the exact official CPython 3.14.8 Windows x64
 embeddable archive, SHA-256
 `a93abe456ab01bd96d7a085b3cdb6566b3063f4241360d114142fbdb07f0a310`,
-for this E-drive build-only use. This does not approve LLVM's pending embedded
-source licenses, other Python inputs, installers, pip, optional packages, or
+for this E-drive build-only use. This does not approve other LLVM source
+licenses, Python inputs, installers, pip, optional packages, or
 Candidate/Stable changes.
 
 `readMlirPythonTool` checks the finite acquisition capsule in

@@ -1,0 +1,64 @@
+{
+  "schemaVersion": "1",
+  "role": "compiler-side-M01",
+  "baseCommit": "fc4aad7b5db3fff421df9a9637605b9ca5667881",
+  "sourceCommit": "4cb57d27ddcad7c3a89d23ef576662a5c891e8c8",
+  "authorization": "Direct human acceptance 2026-10-04: 就按照一次准入、连续调度、阻塞集中处理 推进; exact five paths only, no global license expansion, game-runtime use, other versions or Candidate/Stable change.",
+  "files": [
+    {
+      "path": "llvm/lib/Support/xxhash.cpp",
+      "blob": "cdb76d57e2c1df67e07c39f5e59284ab0ce07984",
+      "sha256": "sha256:b47e89a65e40f34c7e336a58f1902c958b7bd90b3370bd497c8cb788eb40c2d4",
+      "license": "BSD-2-Clause",
+      "noticeStart": "0",
+      "noticeEnd": "1643",
+      "noticeSha256": "sha256:4eca3924b5c7daab59e93307726c44b21de2de1b0df21acf0f6a62f48f149891",
+      "notice": "/*\n *  xxHash - Extremely Fast Hash algorithm\n *  Copyright (C) 2012-2023, Yann Collet\n *\n *  BSD 2-Clause License (http://www.opensource.org/licenses/bsd-license.php)\n *\n *  Redistribution and use in source and binary forms, with or without\n *  modification, are permitted provided that the following conditions are\n *  met:\n *\n *  * Redistributions of source code must retain the above copyright\n *  notice, this list of conditions and the following disclaimer.\n *  * Redistributions in binary form must reproduce the above\n *  copyright notice, this list of conditions and the following disclaimer\n *  in the documentation and/or other materials provided with the\n *  distribution.\n *\n *  THIS SOFTWARE IS PROVIDED BY THE COPYRIGHT HOLDERS AND CONTRIBUTORS\n *  \"AS IS\" AND ANY EXPRESS OR IMPLIED WARRANTIES, INCLUDING, BUT NOT\n *  LIMITED TO, THE IMPLIED WARRANTIES OF MERCHANTABILITY AND FITNESS FOR\n *  A PARTICULAR PURPOSE ARE DISCLAIMED. IN NO EVENT SHALL THE COPYRIGHT\n *  OWNER OR CONTRIBUTORS BE LIABLE FOR ANY DIRECT, INDIRECT, INCIDENTAL,\n *  SPECIAL, EXEMPLARY, OR CONSEQUENTIAL DAMAGES (INCLUDING, BUT NOT\n *  LIMITED TO, PROCUREMENT OF SUBSTITUTE GOODS OR SERVICES; LOSS OF USE,\n *  DATA, OR PROFITS; OR BUSINESS INTERRUPTION) HOWEVER CAUSED AND ON ANY\n *  THEORY OF LIABILITY, WHETHER IN CONTRACT, STRICT LIABILITY, OR TORT\n *  (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE\n *  OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.\n *\n *  You can contact the author at :\n *  - xxHash homepage: http://www.xxhash.com\n *  - xxHash source repository : https://github.com/Cyan4973/xxHash\n */\n",
+      "consumptionBasis": "llvm/lib/Support/CMakeLists.txt unconditional xxhash.cpp"
+    },
+    {
+      "path": "llvm/lib/Support/regstrlcpy.c",
+      "blob": "8b68afdf75f16af34a067d9eaa53b60abbc2ba4a",
+      "sha256": "sha256:b717e3355fdca040c161a7a179de9db1c9253da6519e60b77a074cbf5f7d423f",
+      "license": "ISC",
+      "noticeStart": "0",
+      "noticeEnd": "875",
+      "noticeSha256": "sha256:f9c6f4386edbba118287f5c7689aaf63eb4e407c3011314731348052c67d255e",
+      "notice": "/*\n * This code is derived from OpenBSD's libc, original license follows:\n *\n * Copyright (c) 1998 Todd C. Miller <Todd.Miller@courtesan.com>\n *\n * Permission to use, copy, modify, and distribute this software for any\n * purpose with or without fee is hereby granted, provided that the above\n * copyright notice and this permission notice appear in all copies.\n *\n * THE SOFTWARE IS PROVIDED \"AS IS\" AND THE AUTHOR DISCLAIMS ALL WARRANTIES\n * WITH REGARD TO THIS SOFTWARE INCLUDING ALL IMPLIED WARRANTIES OF\n * MERCHANTABILITY AND FITNESS. IN NO EVENT SHALL THE AUTHOR BE LIABLE FOR\n * ANY SPECIAL, DIRECT, INDIRECT, OR CONSEQUENTIAL DAMAGES OR ANY DAMAGES\n * WHATSOEVER RESULTING FROM LOSS OF USE, DATA OR PROFITS, WHETHER IN AN\n * ACTION OF CONTRACT, NEGLIGENCE OR OTHER TORTIOUS ACTION, ARISING OUT OF\n * OR IN CONNECTION WITH THE USE OR PERFORMANCE OF THIS SOFTWARE.\n */\n",
+      "consumptionBasis": "llvm/lib/Support/CMakeLists.txt unconditional regstrlcpy.c"
+    },
+    {
+      "path": "llvm/lib/Support/MD5.cpp",
+      "blob": "32e2a2ed2f32ff022d85955f50828c4ca17c1f3e",
+      "sha256": "sha256:7b7e82f5508a7d5551b78a1140b1d6aa9cba87282168219743cb6377cd5f9acd",
+      "license": "LicenseRef-LLVM-MD5-public-domain-fallback",
+      "noticeStart": "0",
+      "noticeEnd": "1686",
+      "noticeSha256": "sha256:59a0d2fd71bea59e37b3284f962d2a5a7a0cb63290df174801a18212695b2130",
+      "notice": "/*\n * This code is derived from (original license follows):\n *\n * This is an OpenSSL-compatible implementation of the RSA Data Security, Inc.\n * MD5 Message-Digest Algorithm (RFC 1321).\n *\n * Homepage:\n * http://openwall.info/wiki/people/solar/software/public-domain-source-code/md5\n *\n * Author:\n * Alexander Peslyak, better known as Solar Designer <solar at openwall.com>\n *\n * This software was written by Alexander Peslyak in 2001.  No copyright is\n * claimed, and the software is hereby placed in the public domain.\n * In case this attempt to disclaim copyright and place the software in the\n * public domain is deemed null and void, then the software is\n * Copyright (c) 2001 Alexander Peslyak and it is hereby released to the\n * general public under the following terms:\n *\n * Redistribution and use in source and binary forms, with or without\n * modification, are permitted.\n *\n * There's ABSOLUTELY NO WARRANTY, express or implied.\n *\n * (This is a heavily cut-down \"BSD license\".)\n *\n * This differs from Colin Plumb's older public domain implementation in that\n * no exactly 32-bit integer data type is required (any 32-bit or wider\n * unsigned integer data type will do), there's no compile-time endianness\n * configuration, and the function prototypes match OpenSSL's.  No code from\n * Colin Plumb's implementation has been reused; this comment merely compares\n * the properties of the two independent implementations.\n *\n * The primary goals of this implementation are portability and ease of use.\n * It is meant to be fast, but not as fast as possible.  Some known\n * optimizations are not included to reduce source code size and avoid\n * compile-time configuration.\n */\n",
+      "consumptionBasis": "llvm/lib/Support/CMakeLists.txt unconditional MD5.cpp"
+    },
+    {
+      "path": "llvm/lib/Support/ConvertUTF.cpp",
+      "blob": "63f92631d5b473cf9a69a06eddf4271304e8c730",
+      "sha256": "sha256:85455b58238689b379a28e7a784b1097e1c63e9b08bcd9617dbd5b1f57f663eb",
+      "license": "Apache-2.0 WITH LLVM-exception AND Unicode-DFS-2015",
+      "noticeStart": "0",
+      "noticeEnd": "2376",
+      "noticeSha256": "sha256:6b209d1f6adc233a0d7bff27c9e7e658e6a017dc3ad2b5c26186d48cf131002a",
+      "notice": "/*===--- ConvertUTF.c - Universal Character Names conversions ---------------===\n *\n * Part of the LLVM Project, under the Apache License v2.0 with LLVM Exceptions.\n * See https://llvm.org/LICENSE.txt for license information.\n * SPDX-License-Identifier: Apache-2.0 WITH LLVM-exception\n *\n *===------------------------------------------------------------------------=*/\n/*\n * Copyright © 1991-2015 Unicode, Inc. All rights reserved.\n * Distributed under the Terms of Use in\n * http://www.unicode.org/copyright.html.\n *\n * Permission is hereby granted, free of charge, to any person obtaining\n * a copy of the Unicode data files and any associated documentation\n * (the \"Data Files\") or Unicode software and any associated documentation\n * (the \"Software\") to deal in the Data Files or Software\n * without restriction, including without limitation the rights to use,\n * copy, modify, merge, publish, distribute, and/or sell copies of\n * the Data Files or Software, and to permit persons to whom the Data Files\n * or Software are furnished to do so, provided that\n * (a) this copyright and permission notice appear with all copies\n * of the Data Files or Software,\n * (b) this copyright and permission notice appear in associated\n * documentation, and\n * (c) there is clear notice in each modified Data File or in the Software\n * as well as in the documentation associated with the Data File(s) or\n * Software that the data or software has been modified.\n *\n * THE DATA FILES AND SOFTWARE ARE PROVIDED \"AS IS\", WITHOUT WARRANTY OF\n * ANY KIND, EXPRESS OR IMPLIED, INCLUDING BUT NOT LIMITED TO THE\n * WARRANTIES OF MERCHANTABILITY, FITNESS FOR A PARTICULAR PURPOSE AND\n * NONINFRINGEMENT OF THIRD PARTY RIGHTS.\n * IN NO EVENT SHALL THE COPYRIGHT HOLDER OR HOLDERS INCLUDED IN THIS\n * NOTICE BE LIABLE FOR ANY CLAIM, OR ANY SPECIAL INDIRECT OR CONSEQUENTIAL\n * DAMAGES, OR ANY DAMAGES WHATSOEVER RESULTING FROM LOSS OF USE,\n * DATA OR PROFITS, WHETHER IN AN ACTION OF CONTRACT, NEGLIGENCE OR OTHER\n * TORTIOUS ACTION, ARISING OUT OF OR IN CONNECTION WITH THE USE OR\n * PERFORMANCE OF THE DATA FILES OR SOFTWARE.\n *\n * Except as contained in this notice, the name of a copyright holder\n * shall not be used in advertising or otherwise to promote the sale,\n * use or other dealings in these Data Files or Software without prior\n * written authorization of the copyright holder.\n */\n",
+      "consumptionBasis": "llvm/lib/Support/CMakeLists.txt unconditional ConvertUTF.cpp"
+    },
+    {
+      "path": "llvm/include/llvm/Support/ConvertUTF.h",
+      "blob": "ddf7057bff59d1302ad26dd6da6c11937dd003e5",
+      "sha256": "sha256:aa7fe3031b4810d0e7b28fc335f6c06fa0031f7d7287d9736e37c964998b38cb",
+      "license": "Apache-2.0 WITH LLVM-exception AND Unicode-DFS-2015",
+      "noticeStart": "0",
+      "noticeEnd": "2376",
+      "noticeSha256": "sha256:f2037cf8f7fec0b8e17b3caaf295b0c108fa90e13ea9eb4f432e003e7c276c8a",
+      "notice": "/*===--- ConvertUTF.h - Universal Character Names conversions ---------------===\n *\n * Part of the LLVM Project, under the Apache License v2.0 with LLVM Exceptions.\n * See https://llvm.org/LICENSE.txt for license information.\n * SPDX-License-Identifier: Apache-2.0 WITH LLVM-exception\n *\n *==------------------------------------------------------------------------==*/\n/*\n * Copyright © 1991-2015 Unicode, Inc. All rights reserved.\n * Distributed under the Terms of Use in\n * http://www.unicode.org/copyright.html.\n *\n * Permission is hereby granted, free of charge, to any person obtaining\n * a copy of the Unicode data files and any associated documentation\n * (the \"Data Files\") or Unicode software and any associated documentation\n * (the \"Software\") to deal in the Data Files or Software\n * without restriction, including without limitation the rights to use,\n * copy, modify, merge, publish, distribute, and/or sell copies of\n * the Data Files or Software, and to permit persons to whom the Data Files\n * or Software are furnished to do so, provided that\n * (a) this copyright and permission notice appear with all copies\n * of the Data Files or Software,\n * (b) this copyright and permission notice appear in associated\n * documentation, and\n * (c) there is clear notice in each modified Data File or in the Software\n * as well as in the documentation associated with the Data File(s) or\n * Software that the data or software has been modified.\n *\n * THE DATA FILES AND SOFTWARE ARE PROVIDED \"AS IS\", WITHOUT WARRANTY OF\n * ANY KIND, EXPRESS OR IMPLIED, INCLUDING BUT NOT LIMITED TO THE\n * WARRANTIES OF MERCHANTABILITY, FITNESS FOR A PARTICULAR PURPOSE AND\n * NONINFRINGEMENT OF THIRD PARTY RIGHTS.\n * IN NO EVENT SHALL THE COPYRIGHT HOLDER OR HOLDERS INCLUDED IN THIS\n * NOTICE BE LIABLE FOR ANY CLAIM, OR ANY SPECIAL INDIRECT OR CONSEQUENTIAL\n * DAMAGES, OR ANY DAMAGES WHATSOEVER RESULTING FROM LOSS OF USE,\n * DATA OR PROFITS, WHETHER IN AN ACTION OF CONTRACT, NEGLIGENCE OR OTHER\n * TORTIOUS ACTION, ARISING OUT OF OR IN CONNECTION WITH THE USE OR\n * PERFORMANCE OF THE DATA FILES OR SOFTWARE.\n *\n * Except as contained in this notice, the name of a copyright holder\n * shall not be used in advertising or otherwise to promote the sale,\n * use or other dealings in these Data Files or Software without prior\n * written authorization of the copyright holder.\n */\n",
+      "consumptionBasis": "direct include of mandatory ConvertUTF.cpp:64 and Windows Support implementations"
+    }
+  ]
+}
