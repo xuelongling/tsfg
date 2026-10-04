@@ -203,8 +203,6 @@ export async function executeMlirTarget({ options, runtime, tools, productRoot, 
   // even while an independent source-file approval is still pending.
   const python = await readMlirPythonTool({ toolRoot: process.env.TSFG_MLIR_PYTHON_TOOL_ROOT });
   const legal = await readMlirSourceLegalFiles({ sourceRoot, git, paths: requiredLegalPaths });
-  if (!options.has("--dev") || process.platform !== "win32" || options.get("--target") !== "windows-x86_64-msvc" ||
-      options.get("--profile") !== "debug") throw new MlirBuildError("MLIR intake requires explicit local-development Windows debug configuration");
   if (!runtime || !tools || typeof verifyTools !== "function") throw new MlirBuildError("MLIR source build requires the verified native tool closure", "mlir-tool-integrity");
   if (!/^E:[\\/]/i.test(output) || !/^E:[\\/]/i.test(runtime.closurePath) || within(sourceRoot, output) || within(runtime.closurePath, output))
     throw new MlirBuildError("Build output and tool/storage paths require independent absolute E-drive roots");

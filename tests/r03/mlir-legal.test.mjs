@@ -1,11 +1,11 @@
 // SPDX-License-Identifier: MIT
 import assert from "node:assert/strict";
 import test from "node:test";
-import { copyFile, mkdtemp, readFile, writeFile } from "node:fs/promises";
-import { tmpdir } from "node:os";
+import { copyFile, readFile, writeFile } from "node:fs/promises";
 import path from "node:path";
 import { pathToFileURL } from "node:url";
 import { readMlirSourceLegalFiles } from "../../eng/mlir-source-legal.mjs";
+import { createMlirFixture } from "./mlir-fixtures.mjs";
 
 test("M01 legal reader binds the five approved original files to their exact source base", async () => {
   const { readMlirSourceLegalFiles } = await import("../../eng/mlir-source-legal.mjs");
@@ -27,11 +27,10 @@ test("M01 legal decision refuses another path, version, unknown component or gam
 });
 
 test("M01 legal decision refuses mutable approvals, altered notices and transferred file mappings", async () => {
-  assert.match(tmpdir(), /^E:[\\/]/i, "negative capsules must remain in the ticket E root");
   for (const mutate of [lock => { lock.files[0].path = "llvm/include/llvm/Support/xxhash.h"; },
     lock => { lock.files[0].sha256 = `sha256:${"0".repeat(64)}`; },
     lock => { lock.files[0].notice = ""; }, lock => { lock.baseCommit = "0".repeat(40); }]) {
-    const root = await mkdtemp(path.join(tmpdir(), "mlir-legal-capsule-"));
+    const root = await createMlirFixture("mlir-legal-capsule-");
     for (const name of ["mlir-source-legal.mjs", "mlir-source.mjs", "intake-ledger.mjs", "source-admission.mjs"])
       await copyFile(new URL(`../../eng/${name}`, import.meta.url), path.join(root, name));
     const lock = JSON.parse(await readFile(new URL("../../eng/mlir-source-legal.lock.json", import.meta.url), "utf8"));

@@ -1,11 +1,11 @@
 // SPDX-License-Identifier: MIT
 import assert from "node:assert/strict";
-import { cp, copyFile, mkdtemp, readFile, writeFile } from "node:fs/promises";
-import { tmpdir } from "node:os";
+import { cp, copyFile, readFile, writeFile } from "node:fs/promises";
 import path from "node:path";
 import { pathToFileURL } from "node:url";
 import test from "node:test";
 import { readMlirPythonTool } from "../../eng/mlir-python.mjs";
+import { createMlirFixture } from "./mlir-fixtures.mjs";
 
 test("MLIR build preparation verifies the exact approved Python package before execution", async () => {
   const tool = await readMlirPythonTool({ toolRoot: process.env.TSFG_MLIR_PYTHON_TOOL_ROOT });
@@ -23,9 +23,8 @@ test("MLIR Python input guard refuses ambient, relative and system-drive tools",
 });
 
 async function damagedCopy(filter) {
-  assert.match(tmpdir(), /^E:[\\/]/i, "negative copies must remain on the task E drive");
   assert.ok(process.env.TSFG_MLIR_PYTHON_TOOL_ROOT, "actual prepared Python closure must be explicit");
-  const root = await mkdtemp(path.join(tmpdir(), "mlir-python-damaged-"));
+  const root = await createMlirFixture("mlir-python-damaged-");
   await cp(process.env.TSFG_MLIR_PYTHON_TOOL_ROOT, root, { recursive: true, filter });
   // Retain these task-owned corruption fixtures for the single validated cleanup phase.
   return root;
@@ -53,8 +52,7 @@ test("MLIR Python input guard rejects changed signature trust metadata", async (
 });
 
 test("MLIR Python input guard refuses edits that expand the fixed tool-lock approval", async () => {
-  assert.match(tmpdir(), /^E:[\\/]/i);
-  const root = await mkdtemp(path.join(tmpdir(), "mlir-python-lock-damaged-"));
+  const root = await createMlirFixture("mlir-python-lock-damaged-");
   const modulePath = path.join(root, "mlir-python.mjs");
   await copyFile(new URL("../../eng/mlir-python.mjs", import.meta.url), modulePath);
   const lock = JSON.parse(await readFile(new URL("../../eng/mlir-python.lock.json", import.meta.url), "utf8"));

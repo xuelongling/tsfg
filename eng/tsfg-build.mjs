@@ -390,6 +390,10 @@ function validateSmokeOptions(options, command, requireInput = false) {
       `R00 ${command} supports only declared Linux and Windows debug/release targets`,
     );
   }
+  if (command === "build" && options.get("--source-target") === "mlir-core" &&
+      (!options.has("--dev") || process.platform !== "win32" || target !== "windows-x86_64-msvc" || profile !== "debug")) {
+    throw new ConfigurationError("MLIR intake requires explicit local-development Windows debug configuration", "mlir-configuration");
+  }
   payloadOptions(options);
   const cpuFixture = options.get("--cpu-fixture");
   if (cpuFixture && (command !== "test" || cpuFixture !== "x86-64-v2")) {

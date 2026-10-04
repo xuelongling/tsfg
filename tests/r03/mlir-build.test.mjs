@@ -1,23 +1,38 @@
 // SPDX-License-Identifier: MIT
 import assert from "node:assert/strict";
 import { spawnSync } from "node:child_process";
-import { lstat, mkdtemp, mkdir, readFile, readdir, realpath, symlink, writeFile } from "node:fs/promises";
-import { tmpdir } from "node:os";
+import { mkdir, readFile, readdir, symlink, writeFile } from "node:fs/promises";
 import path from "node:path";
 import test from "node:test";
 import { fileURLToPath } from "node:url";
+import { createMlirFixture } from "./mlir-fixtures.mjs";
 
-async function createMlirFixture(prefix) {
-  const requested = tmpdir();
-  const owned = process.env.TSFG_MLIR_TEST_TEMP_ROOT;
-  assert.ok(typeof owned === "string" && /^E:[\\/]/i.test(owned), "MLIR temporary storage requires an explicit owned E root");
-  assert.match(requested, /^E:[\\/]/i, "MLIR temporary storage must be on E before any fixture creation");
-  assert.equal(path.relative(path.resolve(owned), requested), "", "MLIR temporary storage must match the declared owned root");
-  const state = await lstat(requested);
-  assert.ok(state.isDirectory() && !state.isSymbolicLink(), "MLIR temporary storage must be an ordinary directory");
-  assert.equal(path.relative(requested, await realpath(requested)), "", "MLIR temporary storage must not be redirected");
-  return mkdtemp(path.join(requested, prefix));
-}
+test("Hermetic Build Entry classifies unsupported MLIR configurations before reading missing inputs", async () => {
+  const root = await createMlirFixture("mlir-configuration-");
+  const env = { ...process.env };
+  for (const key of Object.keys(env)) {
+    if (key.startsWith("TSFG_RUNTIME_") || key.startsWith("TSFG_MLIR_") || key.startsWith("TSFG_WINDOWS_")) delete env[key];
+  }
+  const configurations = [[], ["--dev", "--target", "linux-x86_64-gnu"], ["--dev", "--profile", "release"]];
+  const results = [];
+  for (const [index, configuration] of configurations.entries()) {
+    const report = path.join(root, `report-${index}.json`);
+    const child = spawnSync(process.execPath, [fileURLToPath(new URL("../../eng/tsfg-build.mjs", import.meta.url)),
+      "build", ...configuration, "--source-target", "mlir-core",
+      ...(configuration.includes("--target") ? [] : ["--target", "windows-x86_64-msvc"]),
+      ...(configuration.includes("--profile") ? [] : ["--profile", "debug"]),
+      "--out", path.join(root, `out-${index}`), "--report", report], { env, encoding: "utf8", windowsHide: true });
+    assert.ifError(child.error);
+    results.push({ status: child.status, report: JSON.parse(await readFile(report, "utf8")) });
+  }
+  await writeFile(path.join(root, "configuration-results.json"), JSON.stringify(results));
+  for (const result of results) {
+    assert.equal(result.status, 2);
+    assert.equal(result.report.error.category, "usage/configuration");
+    assert.equal(result.report.error.issues[0].code, "mlir-configuration");
+  }
+  assert.deepEqual((await readdir(root)).sort(), ["configuration-results.json", "report-0.json", "report-1.json", "report-2.json"]);
+});
 
 test("Hermetic Build Entry refuses MLIR consumption without an explicit source checkout", async () => {
   const root = await createMlirFixture("mlir-input-");
@@ -38,23 +53,31 @@ test("Hermetic Build Entry refuses MLIR consumption without an explicit source c
 test("MLIR test runner refuses redirected temporary storage before creating fixtures", async () => {
   // This red fixture is deliberately E-to-E: it never points at C or old roots.
   const root = await createMlirFixture("mlir-temp-boundary-");
-  const target = path.join(root, "owned-target");
-  const redirected = path.join(root, "redirected");
-  await mkdir(target);
-  await symlink(target, redirected, "junction");
-  /** @type {NodeJS.ProcessEnv} */
-  const env = { ...process.env, TEMP: redirected, TMP: redirected, TMPDIR: redirected,
-    TSFG_MLIR_TEST_TEMP_ROOT: redirected };
-  delete env.NODE_TEST_CONTEXT;
-  const child = spawnSync(process.execPath, ["--test", "--test-name-pattern", "^Hermetic Build Entry",
-    fileURLToPath(import.meta.url)], { encoding: "utf8", windowsHide: true, env });
-  assert.ifError(child.error);
-  await writeFile(path.join(root, "runner-result.json"), JSON.stringify({ status: child.status,
-    stdout: child.stdout, stderr: child.stderr }));
-  assert.match(child.stdout, /Hermetic Build Entry/);
-  assert.deepEqual(await readdir(target), [], "refusal must leave the destination untouched");
-  assert.notEqual(child.status, 0, "redirected fixture storage must be rejected before mkdtemp");
-  assert.match(child.stdout + child.stderr, /temporary storage.*ordinary|temporary storage.*redirected/);
+  const results = [];
+  for (const [file, pattern] of [["mlir-build.test.mjs", "^Hermetic Build Entry"],
+    ["mlir-legal.test.mjs", "mutable approvals"], ["mlir-python.test.mjs", "changed executable"],
+    ["mlir-python.test.mjs", "expand the fixed tool-lock"]]) {
+    const index = results.length;
+    const target = path.join(root, `owned-target-${index}`);
+    const redirected = path.join(root, `redirected-${index}`);
+    await mkdir(target);
+    await symlink(target, redirected, "junction");
+    /** @type {NodeJS.ProcessEnv} */
+    const env = { ...process.env, TEMP: redirected, TMP: redirected, TMPDIR: redirected,
+      TSFG_MLIR_TEST_TEMP_ROOT: redirected };
+    delete env.NODE_TEST_CONTEXT;
+    const child = spawnSync(process.execPath, ["--test", "--test-name-pattern", pattern,
+      fileURLToPath(new URL(file, import.meta.url))], { encoding: "utf8", windowsHide: true, env });
+    assert.ifError(child.error);
+    results.push({ file, pattern, status: child.status, stdout: child.stdout, stderr: child.stderr,
+      targetMembers: await readdir(target) });
+  }
+  await writeFile(path.join(root, "runner-results.json"), JSON.stringify(results));
+  for (const result of results) {
+    assert.deepEqual(result.targetMembers, [], `${result.file}/${result.pattern} must leave the destination untouched`);
+    assert.notEqual(result.status, 0, "redirected fixture storage must be rejected before mkdtemp");
+    assert.match(result.stdout + result.stderr, /temporary storage.*ordinary|temporary storage.*redirected/);
+  }
 });
 
 test("Hermetic Build Entry reports an invalid Python input with its integrity identity", async () => {

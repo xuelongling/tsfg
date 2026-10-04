@@ -113,11 +113,16 @@ without all source approvals. Builder source/tool/artifact/output integrity
 errors and `MlirPythonError` use exit11 and retain their machine issue code;
 ordinary build failures retain exit20 and CLI configuration failures exit2.
 
-The M01 build tests require explicit `TSFG_MLIR_TEST_TEMP_ROOT` naming their owned
+The M01 build, legal and Python fixture tests require explicit `TSFG_MLIR_TEST_TEMP_ROOT` naming their owned
 ordinary E directory, matching the actual process temporary directory. They
 validate this before creating a fixture. Their redirected-path negatives use
 only newly owned E-to-E junctions and verify that refusal leaves the destination
 untouched; fixtures are retained for the separate validated cleanup phase.
+
+The public CLI validates the MLIR target's explicit `--dev`, Windows host/target
+and debug profile before reading source or tool inputs. Unsupported combinations
+use exit2, category `usage/configuration`, and issueCode `mlir-configuration`;
+missing or invalid inputs do not mask this configuration error.
 
 The target stages ordinary committed source bytes, explicitly leaves unrelated
 Git symlinks unmaterialized, uses the selected tools and exact original Python
