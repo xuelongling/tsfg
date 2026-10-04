@@ -22,6 +22,8 @@ test("Build Input declaration includes both debug target control and smoke input
   assert.equal(declarationBytes, `${JSON.stringify(declaration)}\n`);
   assert.deepEqual(declaration, {
     entries: [
+      { path: "compiler/core-ir/CMakeLists.txt", projectId: "tsfg" },
+      { path: "compiler/core-ir/main.cpp", projectId: "tsfg" },
       { path: "compiler/frontend.mjs", projectId: "tsfg" },
       { path: "compiler/minimal-bool-v1.d.ts", projectId: "tsfg" },
       { path: "compiler/minimal-scalars-v2.d.ts", projectId: "tsfg" },
@@ -40,6 +42,15 @@ test("Build Input declaration includes both debug target control and smoke input
       { path: "eng/go-source-worker.mjs", projectId: "tsfg" },
       { path: "eng/go-work-access.mjs", projectId: "tsfg" },
       { path: "eng/intake-ledger.mjs", projectId: "tsfg" },
+      { path: "eng/mlir-build.mjs", projectId: "tsfg" },
+      { path: "eng/mlir-python-policy.cmake", projectId: "tsfg" },
+      { path: "eng/mlir-python.lock.json", projectId: "tsfg" },
+      { path: "eng/mlir-python.mjs", projectId: "tsfg" },
+      { path: "eng/mlir-source-legal.lock.json", projectId: "tsfg" },
+      { path: "eng/mlir-source-legal.mjs", projectId: "tsfg" },
+      { path: "eng/mlir-source-notices.lock.json", projectId: "tsfg" },
+      { path: "eng/mlir-source.lock.json", projectId: "tsfg" },
+      { path: "eng/mlir-source.mjs", projectId: "tsfg" },
       { path: "eng/sandbox-run.c", projectId: "tsfg" },
       { path: "eng/source-admission.mjs", projectId: "tsfg" },
       { path: "eng/toolchains.lock.json", projectId: "tsfg" },
