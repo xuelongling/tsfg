@@ -14,24 +14,56 @@ test("Hermetic Build Entry classifies unsupported MLIR configurations before rea
     if (key.startsWith("TSFG_RUNTIME_") || key.startsWith("TSFG_MLIR_") || key.startsWith("TSFG_WINDOWS_")) delete env[key];
   }
   const configurations = [[], ["--dev", "--target", "linux-x86_64-gnu"], ["--dev", "--profile", "release"]];
+  const invalidLock = path.join(root, "invalid-runtime-lock.json");
+  const cache = path.join(root, "runtime-cache");
+  await writeFile(invalidLock, "{}\n");
+  await mkdir(cache);
+  const environments = [{ name: "no-runtime", values: {}, validStatus: 10, validCode: "mlir-source-identity" },
+    { name: "partial-runtime", values: { TSFG_RUNTIME_LOCK: invalidLock }, validStatus: 11, validCode: "runtime-closure" },
+    { name: "invalid-runtime", values: { TSFG_RUNTIME_LOCK: invalidLock, TSFG_RUNTIME_CACHE: cache,
+      TSFG_RUNTIME_PLATFORM: "windows-x86_64-msvc", TSFG_WINDOWS_OFFLINE_ACTIVE: "0" }, validStatus: 11, validCode: "runtime-closure" },
+    { name: "boundary-bootstrap", values: { TSFG_WINDOWS_BOUNDARY_ERROR: "test boundary bootstrap unavailable",
+      TSFG_RUNTIME_LOCK: invalidLock, TSFG_RUNTIME_CACHE: cache, TSFG_RUNTIME_PLATFORM: "windows-x86_64-msvc" },
+      validStatus: 12, validCode: "sandbox-boundary" }];
   const results = [];
-  for (const [index, configuration] of configurations.entries()) {
-    const report = path.join(root, `report-${index}.json`);
+  const controls = [];
+  for (const environment of environments) {
+    for (const configuration of configurations) {
+      const index = results.length;
+      const report = path.join(root, `report-${index}.json`);
+      const child = spawnSync(process.execPath, [fileURLToPath(new URL("../../eng/tsfg-build.mjs", import.meta.url)),
+        "build", ...configuration, "--source-target", "mlir-core",
+        ...(configuration.includes("--target") ? [] : ["--target", "windows-x86_64-msvc"]),
+        ...(configuration.includes("--profile") ? [] : ["--profile", "debug"]),
+        "--out", path.join(root, `out-${index}`), "--report", report],
+        { env: { ...env, ...environment.values }, encoding: "utf8", windowsHide: true });
+      assert.ifError(child.error);
+      results.push({ environment: environment.name, configuration, status: child.status,
+        report: JSON.parse(await readFile(report, "utf8")) });
+    }
+    const report = path.join(root, `control-${controls.length}.json`);
     const child = spawnSync(process.execPath, [fileURLToPath(new URL("../../eng/tsfg-build.mjs", import.meta.url)),
-      "build", ...configuration, "--source-target", "mlir-core",
-      ...(configuration.includes("--target") ? [] : ["--target", "windows-x86_64-msvc"]),
-      ...(configuration.includes("--profile") ? [] : ["--profile", "debug"]),
-      "--out", path.join(root, `out-${index}`), "--report", report], { env, encoding: "utf8", windowsHide: true });
+      "build", "--dev", "--source-target", "mlir-core", "--target", "windows-x86_64-msvc", "--profile", "debug",
+      "--out", path.join(root, "control-out"), "--report", report],
+      { env: { ...env, ...environment.values }, encoding: "utf8", windowsHide: true });
     assert.ifError(child.error);
-    results.push({ status: child.status, report: JSON.parse(await readFile(report, "utf8")) });
+    controls.push({ status: child.status, expectedStatus: environment.validStatus, expectedCode: environment.validCode,
+      report: JSON.parse(await readFile(report, "utf8")) });
   }
-  await writeFile(path.join(root, "configuration-results.json"), JSON.stringify(results));
+  await writeFile(path.join(root, "configuration-results.json"), JSON.stringify({ results, controls }));
   for (const result of results) {
     assert.equal(result.status, 2);
     assert.equal(result.report.error.category, "usage/configuration");
     assert.equal(result.report.error.issues[0].code, "mlir-configuration");
   }
-  assert.deepEqual((await readdir(root)).sort(), ["configuration-results.json", "report-0.json", "report-1.json", "report-2.json"]);
+  for (const control of controls) {
+    assert.equal(control.status, control.expectedStatus);
+    assert.equal(control.report.error.issues[0].code, control.expectedCode);
+  }
+  assert.deepEqual(await readdir(cache), [], "configuration rejection must not populate the runtime cache");
+  assert.equal(await readFile(invalidLock, "utf8"), "{}\n");
+  assert.ok((await readdir(root)).every(name => ["configuration-results.json", "invalid-runtime-lock.json", "runtime-cache"].includes(name)
+    || /^(report|control)-\d+\.json$/.test(name)), "refusal must not create build/boundary outputs");
 });
 
 test("Hermetic Build Entry refuses MLIR consumption without an explicit source checkout", async () => {

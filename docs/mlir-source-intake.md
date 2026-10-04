@@ -120,7 +120,8 @@ only newly owned E-to-E junctions and verify that refusal leaves the destination
 untouched; fixtures are retained for the separate validated cleanup phase.
 
 The public CLI validates the MLIR target's explicit `--dev`, Windows host/target
-and debug profile before reading source or tool inputs. Unsupported combinations
+and debug profile before runtime-closure verification, Windows bootstrap/delegation,
+or reading source or tool inputs. Unsupported combinations
 use exit2, category `usage/configuration`, and issueCode `mlir-configuration`;
 missing or invalid inputs do not mask this configuration error.
 

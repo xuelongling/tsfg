@@ -372,6 +372,19 @@ function parseOptions(arguments_, allowed, flags = new Set()) {
   return options;
 }
 
+function parseBuildOptions(arguments_) {
+  return parseOptions(arguments_, new Set([
+    "--dev", "--target", "--profile", "--simd-dispatch", "--workspace", "--out", "--report", "--source-target", "--intake-plan", "--intake-consumption", "--upgrade-plan", "--generation",
+  ]), new Set(["--dev"]));
+}
+
+function validateMlirConfiguration(options) {
+  if (!options.has("--dev") || process.platform !== "win32" || options.get("--target") !== "windows-x86_64-msvc" ||
+      options.get("--profile") !== "debug") {
+    throw new ConfigurationError("MLIR intake requires explicit local-development Windows debug configuration", "mlir-configuration");
+  }
+}
+
 function validateSmokeOptions(options, command, requireInput = false) {
   const target = options.get("--target");
   const profile = options.get("--profile");
@@ -390,10 +403,7 @@ function validateSmokeOptions(options, command, requireInput = false) {
       `R00 ${command} supports only declared Linux and Windows debug/release targets`,
     );
   }
-  if (command === "build" && options.get("--source-target") === "mlir-core" &&
-      (!options.has("--dev") || process.platform !== "win32" || target !== "windows-x86_64-msvc" || profile !== "debug")) {
-    throw new ConfigurationError("MLIR intake requires explicit local-development Windows debug configuration", "mlir-configuration");
-  }
+  if (command === "build" && options.get("--source-target") === "mlir-core") validateMlirConfiguration(options);
   payloadOptions(options);
   const cpuFixture = options.get("--cpu-fixture");
   if (cpuFixture && (command !== "test" || cpuFixture !== "x86-64-v2")) {
@@ -7403,6 +7413,19 @@ async function runCommandLine() {
   const overlappingSourceReport = sourceReportRelative !== undefined && sourceReportRelative !== ".."
     && !sourceReportRelative.startsWith(`..${path.sep}`) && !path.isAbsolute(sourceReportRelative);
   const reportPath = invalidGoReport || overlappingSourceReport ? undefined : requestedReportPath;
+  // Reject unsupported MLIR requests before inspecting runtime/tool inputs or
+  // dispatching any Windows boundary. Report destination safety remains first.
+  if (command === "build" && sourceTarget === "mlir-core") {
+    try {
+      validateMlirConfiguration(parseBuildOptions(arguments_));
+    } catch (error) {
+      if (!(error instanceof ConfigurationError)) throw error;
+      process.exitCode = await fail(command, 2, "usage/configuration", {
+        code: error.issueCode, message: error.message,
+      }, reportPath, "offline");
+      return;
+    }
+  }
   const windowsBoundaryBootstrapError = process.env.TSFG_WINDOWS_BOUNDARY_ERROR;
   let runtimeIntegrityError;
   let runtimeClosure;
@@ -7545,13 +7568,7 @@ async function runCommandLine() {
   } else if (command === "build" || typedProbeTest || frontendTest) {
     let publication;
     try {
-      const options = parseOptions(
-        arguments_,
-        new Set([
-          "--dev", "--target", "--profile", "--simd-dispatch", "--workspace", "--out", "--report", "--source-target", "--intake-plan", "--intake-consumption", "--upgrade-plan", "--generation",
-        ]),
-        new Set(["--dev"]),
-      );
+      const options = parseBuildOptions(arguments_);
       validateSmokeOptions(options, "build");
       if (options.has("--upgrade-plan") && options.get("--source-target") !== "upgrade-review") throw new ConfigurationError("upgrade plan requires --source-target upgrade-review");
       if (options.has("--generation") && (options.get("--source-target") !== "typescript-ast"
