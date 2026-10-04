@@ -47,6 +47,7 @@ import { prefetchGoDependencies, readGoDependencyLock, verifyGoDependencies } fr
 import { executeFrontendTarget, FrontendBuildError } from "./frontend-build.mjs";
 import { verifiedContractSet } from "./contract-set.mjs";
 import { executeMlirTarget, MlirBuildError } from "./mlir-build.mjs";
+import { MlirPythonError } from "./mlir-python.mjs";
 
 class ConfigurationError extends Error {
   constructor(message, issueCode = "invalid-configuration") {
@@ -7615,11 +7616,14 @@ async function runCommandLine() {
       const isUndeclaredInput = error instanceof UndeclaredInputError;
       const isSandboxBoundary = error instanceof SandboxBoundaryError;
       const isGoIntegrity = error instanceof GoInputIntegrityError;
+      const isMlirIntegrity = error instanceof MlirPythonError || (error instanceof MlirBuildError &&
+        ["mlir-source-integrity", "mlir-tool-integrity", "mlir-artifact-integrity", "mlir-output-integrity",
+          "mlir-python-integrity", "mlir-source-license"].includes(error.issueCode));
       process.exitCode = await fail(
         command,
         isConfigurationError
           ? 2
-          : isGoIntegrity ? 11
+          : (isGoIntegrity || isMlirIntegrity) ? 11
           : isWorkspaceMismatch
             ? 10
             : (isOfflineBoundary || isUndeclaredInput || isSandboxBoundary)
@@ -7627,7 +7631,7 @@ async function runCommandLine() {
               : isProbeFailure ? 21 : isBuildFailure ? 20 : 30,
         isConfigurationError
           ? "usage/configuration"
-          : isGoIntegrity ? "lock/integrity"
+          : (isGoIntegrity || isMlirIntegrity) ? "lock/integrity"
           : isWorkspaceMismatch
             ? "workspace mismatch"
             : (isOfflineBoundary || isUndeclaredInput || isSandboxBoundary)
@@ -7637,6 +7641,7 @@ async function runCommandLine() {
           code: isConfigurationError
             ? (error.issueCode ?? "invalid-configuration")
             : isGoIntegrity ? "go-input-integrity"
+            : isMlirIntegrity ? error.issueCode
             : isWorkspaceMismatch
               ? error.issueCode
               : isOfflineBoundary

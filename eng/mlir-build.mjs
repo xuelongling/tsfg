@@ -20,6 +20,26 @@ const within = (root, file) => {
   const relative = path.relative(root, file);
   return relative !== ".." && !relative.startsWith(`..${path.sep}`) && !path.isAbsolute(relative);
 };
+
+async function validateOutputAncestor(parent) {
+  let current = parent;
+  for (;;) {
+    const state = await lstat(current).catch(error => {
+      if (error.code === "ENOENT") return undefined;
+      throw error;
+    });
+    if (state) {
+      const actual = await realpath(current);
+      if (!state.isDirectory() || state.isSymbolicLink() || !/^E:[\\/]/i.test(actual) ||
+          path.relative(current, actual) !== "")
+        throw new MlirBuildError("Build output ancestor must be an ordinary, nonredirected E directory", "mlir-output-integrity");
+      return;
+    }
+    const next = path.dirname(current);
+    if (next === current) throw new MlirBuildError("Build output has no verified E ancestor", "mlir-output-integrity");
+    current = next;
+  }
+}
 function gitBytes(git, root, args) {
   const child = spawnSync(git, ["-C", root, ...args], { env: sourceGitEnvironment(), encoding: "buffer",
     windowsHide: true, maxBuffer: 256 * 1024 * 1024 });
@@ -172,18 +192,27 @@ export async function executeMlirTarget({ options, runtime, tools, productRoot, 
   const sourceRoot = process.env.TSFG_MLIR_SOURCE;
   const git = process.env.TSFG_GIT;
   const identity = await readMlirSourceIdentity({ sourceRoot, git });
+  const output = path.resolve(options.get("--out"));
+  if (!/^E:[\\/]/i.test(output) || within(sourceRoot, output))
+    throw new MlirBuildError("Build output requires an independent absolute E-drive root", "mlir-output-integrity");
+  const outputParent = path.dirname(output);
+  // Inspect the nearest existing ancestor without creating missing parents.
+  // A lexical E path may already traverse a redirected directory.
+  await validateOutputAncestor(outputParent);
+  // Tool verification is read-only and must preserve its own failure identity,
+  // even while an independent source-file approval is still pending.
+  const python = await readMlirPythonTool({ toolRoot: process.env.TSFG_MLIR_PYTHON_TOOL_ROOT });
   const legal = await readMlirSourceLegalFiles({ sourceRoot, git, paths: requiredLegalPaths });
   if (!options.has("--dev") || process.platform !== "win32" || options.get("--target") !== "windows-x86_64-msvc" ||
       options.get("--profile") !== "debug") throw new MlirBuildError("MLIR intake requires explicit local-development Windows debug configuration");
   if (!runtime || !tools || typeof verifyTools !== "function") throw new MlirBuildError("MLIR source build requires the verified native tool closure", "mlir-tool-integrity");
-  const python = await readMlirPythonTool({ toolRoot: process.env.TSFG_MLIR_PYTHON_TOOL_ROOT });
-  const output = path.resolve(options.get("--out"));
   if (!/^E:[\\/]/i.test(output) || !/^E:[\\/]/i.test(runtime.closurePath) || within(sourceRoot, output) || within(runtime.closurePath, output))
     throw new MlirBuildError("Build output and tool/storage paths require independent absolute E-drive roots");
   if (await lstat(output).catch(error => { if (error.code === "ENOENT") return undefined; throw error; }))
     throw new MlirBuildError("Independent source build output already exists");
-  await mkdir(path.dirname(output), { recursive: true });
-  if (path.relative(path.dirname(output), await realpath(path.dirname(output))) !== "") throw new MlirBuildError("Build output ancestor is redirected");
+  await validateOutputAncestor(outputParent);
+  await mkdir(outputParent, { recursive: true });
+  await validateOutputAncestor(outputParent);
   // Require immutable product approval/configuration bytes before source execution.
   for (const name of ["eng/mlir-source-legal.lock.json", "eng/mlir-source-notices.lock.json", "eng/mlir-python.lock.json", "eng/mlir-source.lock.json",
     "eng/mlir-build.mjs", "eng/mlir-python-policy.cmake", "compiler/core-ir/main.cpp", "compiler/core-ir/CMakeLists.txt"]) {

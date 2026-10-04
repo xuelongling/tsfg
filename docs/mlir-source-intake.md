@@ -104,6 +104,21 @@ files and verbatim `COPYRIGHT.regex` retention still need the disclosed human
 supplement. The legal reader rejects those paths before any source process;
 this preparation does not grant them approval.
 
+Before creating any output parent, the target inspects its nearest existing
+ancestor and requires its actual path to be an ordinary, nonredirected E
+directory. It repeats that check immediately before creation and after it.
+Read-only output and Python checks precede the pending source-file gate so their
+own failures remain observable; no source configuration or compilation starts
+without all source approvals. Builder source/tool/artifact/output integrity
+errors and `MlirPythonError` use exit11 and retain their machine issue code;
+ordinary build failures retain exit20 and CLI configuration failures exit2.
+
+The M01 build tests require explicit `TSFG_MLIR_TEST_TEMP_ROOT` naming their owned
+ordinary E directory, matching the actual process temporary directory. They
+validate this before creating a fixture. Their redirected-path negatives use
+only newly owned E-to-E junctions and verify that refusal leaves the destination
+untouched; fixtures are retained for the separate validated cleanup phase.
+
 The target stages ordinary committed source bytes, explicitly leaves unrelated
 Git symlinks unmaterialized, uses the selected tools and exact original Python
 executable, and disables optional dependency/allocator/sanitizer discovery.
