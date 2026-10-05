@@ -4470,6 +4470,10 @@ async function normalizeWindowsPdb(
   );
   let yaml = dumped.stdout;
   for (const [source, replacement] of pathMappings) {
+    if (source instanceof RegExp) {
+      yaml = yaml.replaceAll(source, replacement);
+      continue;
+    }
     yaml = yaml.replaceAll(source, replacement);
     yaml = yaml.replaceAll(source.replaceAll("\\", "/"), replacement);
     yaml = yaml.replaceAll(source.replaceAll("\\", "\\\\"), replacement);
@@ -7601,7 +7605,11 @@ async function runCommandLine() {
           productRoot: workspaceState.root, workspaceState, serialize: canonicalize,
           normalize: async ({ executable, pdb, stage, product, environment, identity, tools, runtime }) => {
             const guid = await normalizeWindowsPdb(pdb, tools.pdbutil,
-              [[product, "."], [runtime.closurePath, ".toolchain"], [stage, ".build"]], stage, environment);
+              [[product, "."], [runtime.closurePath, ".toolchain"], [stage, ".build"],
+                // Zig's temporary object directory is random. Map only this
+                // observed VM Module/ObjFile reference before deriving its GUID.
+                [/^(\s+(?:- Module|ObjFile):\s+')\.build\\zig-local\\tmp\\[0-9a-f]{16}\\tsfg-vm_zcu\.obj'$/gm,
+                  "$1.build/tsfg-vm_zcu.obj'"]], stage, environment);
             await writeFile(executable, await normalizeWindowsExecutable(executable, guid,
               Number.parseInt(identity.buildIdentity.source_date_epoch, 10)));
           },
