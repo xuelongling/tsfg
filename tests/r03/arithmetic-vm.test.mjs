@@ -2,7 +2,8 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 import { readFile } from "node:fs/promises";
-import { compileAndRun, compileProgram, sourceInput } from "../../compiler/pipeline.mjs";
+import { compileAndRun, compileProgram, compileHir, sourceInput } from "../../compiler/pipeline.mjs";
+import { verifyHir, printHir, readHir } from "../../compiler/hir.mjs";
 
 const tools = () => ({ frontend: process.env.TSFG_FRONTEND_EXE,
   core: process.env.TSFG_CORE_IR_EXE, vm: process.env.TSFG_VM_EXE });
@@ -96,4 +97,24 @@ test("unreachable scalar returns stay checked and owned without an early trap", 
   const rejected = await compileProgram(await sourceInput("export function answer(): i32 { return 42; return missing; }"), { ...tools(), core: undefined });
   assert.equal(rejected.status, "error", JSON.stringify(rejected));
   assert.ok(rejected.diagnostics.some(diagnostic => diagnostic.code === "r01-d-unresolved-name"));
+});
+
+test("owned scalar HIR rejects operator and delimiter changes against its checked source", async () => {
+  /** @type {Array<[string, (value: any) => void]>} */
+  const changes = [
+    ["1 + 2", value => { value.operator = "-"; }],
+    ["~(1)", value => { value.operator = "+"; }],
+    ["(1)", value => { value.range.start = value.operand.range.start; }],
+  ];
+  for (const [expression, mutate] of changes) {
+    const checked = await compileHir(await sourceInput(`export function answer(): i32 { return ${expression}; }`), tools());
+    assert.equal(checked.status, "ok", JSON.stringify(checked));
+    const changed = structuredClone(checked.hir);
+    mutate(changed.functions[0].body[0].value);
+    assert.throws(() => verifyHir(changed), /r03-hir-invalid/);
+  }
+  const checked = await compileHir(await sourceInput("export function answer(): bool { return /*😀*/ !(true === true); }"), tools());
+  assert.equal(checked.status, "ok", JSON.stringify(checked));
+  const text = printHir(checked.hir);
+  assert.equal(printHir(readHir(Buffer.from(text))), text);
 });

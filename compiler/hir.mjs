@@ -14,6 +14,8 @@ const operations = { "+": "add", "-": "sub", "*": "mul", "/": "div", "%": "rem",
   "<<": "shl", ">>": "shr", ">>>": "ushr", "&": "and", "|": "or", "^": "xor",
   "===": "eq", "!==": "ne", "<": "lt", "<=": "le", ">": "gt", ">=": "ge" };
 const comparisons = new Set(["===", "!==", "<", "<=", ">", ">="]);
+const sourceTokens = (source, start, end) => source.slice(start, end)
+  .replace(/\/\*[\s\S]*?\*\/|\/\/[^\r\n\u2028\u2029]*/g, "").replace(/\s/g, "");
 function verifyExpression(value, parent, source, fail, budget) {
   if (--budget.remaining < 0 || !value || !Object.values(types).includes(value.type)
       || !range(value.range, parent)) fail();
@@ -24,18 +26,19 @@ function verifyExpression(value, parent, source, fail, budget) {
     let integer;
     try { integer = (value.token.startsWith("-") ? -1n : 1n)
       * BigInt(value.token.replace(/^-/, "").replaceAll("_", "")); } catch { fail(); }
-    const anchored = source.slice(value.range.start, value.range.end)
-      .replace(/\/\*[\s\S]*?\*\/|\/\/[^\r\n\u2028\u2029]*/g, "").replace(/\s/g, "");
+    const anchored = sourceTokens(source, value.range.start, value.range.end);
     if (integer.toString() !== value.decimal || integer < -2147483648n || integer > 2147483647n
         || anchored !== value.token) fail();
   } else if (value.kind === "boolean") {
     if (!exactKeys(value, ["kind", "type", "value", "range"]) || value.type !== boolTypeId
-        || typeof value.value !== "boolean" || source.slice(value.range.start, value.range.end).trim() !== String(value.value)) fail();
+        || typeof value.value !== "boolean" || sourceTokens(source, value.range.start, value.range.end) !== String(value.value)) fail();
   } else if (value.kind === "group" || value.kind === "unary") {
     const group = value.kind === "group";
     if (!exactKeys(value, group ? ["kind", "type", "operand", "range"] : ["kind", "type", "operator", "operand", "range"])) fail();
     verifyExpression(value.operand, value.range, source, fail, budget);
-    if (value.type !== value.operand.type || (!group && (!["+", "-", "~", "!"].includes(value.operator)
+    if (sourceTokens(source, value.range.start, value.operand.range.start) !== (group ? "(" : value.operator)
+        || sourceTokens(source, value.operand.range.end, value.range.end) !== (group ? ")" : "")
+        || value.type !== value.operand.type || (!group && (!["+", "-", "~", "!"].includes(value.operator)
         || value.type !== (value.operator === "!" ? boolTypeId : i32TypeId)))) fail();
   } else if (value.kind === "binary") {
     if (!exactKeys(value, ["kind", "type", "operator", "left", "right", "range"])
@@ -43,6 +46,9 @@ function verifyExpression(value, parent, source, fail, budget) {
     verifyExpression(value.left, value.range, source, fail, budget);
     verifyExpression(value.right, value.range, source, fail, budget);
     if (value.left.type !== value.right.type || value.left.range.end > value.right.range.start
+        || sourceTokens(source, value.range.start, value.left.range.start) !== ""
+        || sourceTokens(source, value.left.range.end, value.right.range.start) !== value.operator
+        || sourceTokens(source, value.right.range.end, value.range.end) !== ""
         || value.type !== (comparisons.has(value.operator) ? boolTypeId : i32TypeId)
         || (!["===", "!=="].includes(value.operator) && value.left.type !== i32TypeId)) fail();
   } else fail();
