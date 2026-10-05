@@ -32,8 +32,9 @@ public:
 class CoreDialect : public mlir::Dialect {
 public:
   MLIR_DEFINE_EXPLICIT_INTERNAL_INLINE_TYPE_ID(CoreDialect)
+  static llvm::StringRef getDialectNamespace() { return "tsfg_core"; }
   explicit CoreDialect(mlir::MLIRContext *context)
-      : Dialect("tsfg_core", context, mlir::TypeID::get<CoreDialect>()) {
+      : Dialect(getDialectNamespace(), context, mlir::TypeID::get<CoreDialect>()) {
     addOperations<ConstantOp>();
   }
 };

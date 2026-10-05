@@ -155,6 +155,14 @@ epoch is substituted. The product last-touch maximum must dominate every
 source ancestor timestamp to prove the combined input epoch. CMake JSON trace,
 Ninja unescaped NUL inputs/configuration inputs and compiler dependency records
 must reconcile the actual source/product/tool inputs after a real build.
+CMake `cmake_language(EVAL CODE)` virtual frames require the exact originating
+file/line invocation in the raw trace and a real `cmake_language` call at that
+physical line inside admitted input roots. Unknown frames fail integrity checks;
+the collector retains their original labels, evaluated-code digests and complete
+raw trace digest while admitting only the verified physical source file.
+The Windows target uses the existing locked static debug CRT libraries and
+disables incremental linking for executable, shared and module debug targets;
+compiler debug information is embedded before producing the detached link PDB.
 
 `eng/mlir-source-notices.lock.json` prepares a finite original-notice retention
 bundle. It preserves original SPDX/text separately from the already permitted

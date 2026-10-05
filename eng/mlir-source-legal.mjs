@@ -25,7 +25,7 @@ export async function readMlirSourceBuildLegalInputs({ sourceRoot, git, paths, r
   try {
     if (role !== "compiler-side-M01") reject("Selected build registration is compiler-side M01 only");
     const bytes = await readFile(new URL("./mlir-source-build-legal.lock.json", import.meta.url));
-    if (digest(bytes) !== "sha256:cbc0cd8a9da4bc942455464f503d9735bc6221cf556f6ef8281f0341a06b6d3b")
+    if (digest(bytes) !== "sha256:8e230dab8fdf0064e0d09d2ab4f11b54688071abdf341a492648745ba5c1e5bb")
       reject("The committed selected-build legal inventory or complete original materials changed");
     const lock = JSON.parse(bytes.toString("utf8"));
     if (!Array.isArray(paths) || paths.length === 0 || new Set(paths).size !== paths.length)

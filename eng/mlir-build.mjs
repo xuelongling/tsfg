@@ -147,7 +147,49 @@ async function collectConsumedInputs({ tools, build, source, sourceEntries, prod
   await writeFile(path.join(stage, "ninja-configuration-inputs.nul"), configurationInputs);
   await writeFile(path.join(stage, "ninja-deps.txt"), deps);
   const cmakeTrace = await readFile(path.join(stage, "cmake-trace.jsonl"), "utf8");
-  const cmakeFiles = cmakeTrace.split(/\r?\n/).filter(Boolean).map(line => JSON.parse(line)).filter(record => record.file).map(record => record.file);
+  const cmakeFiles = new Set();
+  const cmakeEvaluationFrames = new Map();
+  const evaluationCalls = new Map();
+  for (const line of cmakeTrace.split(/\r?\n/).filter(Boolean)) {
+    const record = JSON.parse(line);
+    if (!record.file) continue;
+    cmakeFiles.add(record.file);
+    if (record.cmd === "cmake_language" && record.args?.[0] === "EVAL" && record.args?.[1] === "CODE" &&
+      Number.isSafeInteger(record.line) && record.line > 0) {
+      const key = `${record.file}:${record.line}:EVAL`;
+      const call = evaluationCalls.get(key) ?? { parentFile: record.file, line: record.line, codeHashes: new Set() };
+      call.codeHashes.add(digest(JSON.stringify(record.args.slice(2))));
+      evaluationCalls.set(key, call);
+    }
+  }
+  for (const name of [...cmakeFiles]) {
+    // CMake identifies cmake_language(EVAL CODE) frames as file:line:EVAL,
+    // including nested evaluations. Their code originates in the physical
+    // parent file, which must pass the same source/tool integrity checks below.
+    let physical = name;
+    const evaluationLines = [];
+    const evaluationCodeHashes = [];
+    for (let frame; (frame = /^(.*):([1-9][0-9]*):EVAL$/.exec(physical));) {
+      const call = evaluationCalls.get(physical);
+      if (!call || call.parentFile !== frame[1] || String(call.line) !== frame[2])
+        throw new MlirBuildError(`Unproven CMake evaluation frame: ${physical}`, "mlir-source-integrity");
+      evaluationLines.unshift(frame[2]);
+      evaluationCodeHashes.unshift([...call.codeHashes].sort());
+      physical = frame[1];
+    }
+    if (evaluationLines.length) {
+      const absoluteOrigin = path.resolve(build, physical);
+      if (![source, product, runtime.closurePath].some(root => within(root, absoluteOrigin)))
+        throw new MlirBuildError(`CMake evaluation origin is outside admitted input roots: ${name}`, "mlir-source-integrity");
+      const original = await readFile(absoluteOrigin, "utf8");
+      const callLine = original.split(/\r?\n/)[Number(evaluationLines[0]) - 1];
+      if (!callLine || !/\bcmake_language\s*\(/i.test(callLine))
+        throw new MlirBuildError(`CMake evaluation has no physical origin at the recorded line: ${name}`, "mlir-source-integrity");
+      cmakeEvaluationFrames.set(name, { traceFile: name, physicalFile: physical, evaluationLines, evaluationCodeHashes });
+      cmakeFiles.delete(name);
+    }
+    cmakeFiles.add(physical);
+  }
   const observed = new Set([...inputs.split("\0").filter(Boolean),
     ...configurationInputs.split("\0").filter(Boolean), ...cmakeFiles,
     ...deps.split(/\r?\n/).filter(line => /^    \S/.test(line)).map(line => line.trim())]);
@@ -187,7 +229,7 @@ async function collectConsumedInputs({ tools, build, source, sourceEntries, prod
   }
   return { files: [...consumed.values()].sort((a, b) => Buffer.from(a.repositoryRelativePath).compare(Buffer.from(b.repositoryRelativePath))),
     productFiles: [...consumedProduct.values()], generated, toolInputs, ninjaInputsSha256: digest(inputs), ninjaConfigurationInputsSha256: digest(configurationInputs),
-    cmakeTraceSha256: digest(cmakeTrace), ninjaDepsSha256: digest(deps) };
+    cmakeTraceSha256: digest(cmakeTrace), cmakeEvaluationFrames: [...cmakeEvaluationFrames.values()], ninjaDepsSha256: digest(deps) };
 }
 
 /** The formal source-build target; no source process starts before all intake gates. */
@@ -306,6 +348,7 @@ export async function executeMlirTarget({ options, runtime, tools, productRoot, 
       `-DCMAKE_EXE_LINKER_FLAGS=/Brepro /debug:full /pdbaltpath:%_PDB% /timestamp:${env.SOURCE_DATE_EPOCH} ${lockedCrtFlags}`,
       `-DCMAKE_SHARED_LINKER_FLAGS=${lockedCrtFlags}`, `-DCMAKE_MODULE_LINKER_FLAGS=${lockedCrtFlags}`,
       "-DCMAKE_EXE_LINKER_FLAGS_DEBUG=/debug /INCREMENTAL:NO",
+      "-DCMAKE_SHARED_LINKER_FLAGS_DEBUG=/debug /INCREMENTAL:NO", "-DCMAKE_MODULE_LINKER_FLAGS_DEBUG=/debug /INCREMENTAL:NO",
       `-DPython3_EXECUTABLE=${cmakePath(python.executable)}`, "-DPython3_FIND_REGISTRY=NEVER", "-DPython3_FIND_STRATEGY=LOCATION",
       `-DTSFG_VERIFIED_PYTHON=${cmakePath(python.executable)}`, `-DCMAKE_PROJECT_INCLUDE_BEFORE=${cmakePath(path.join(product, "eng/mlir-python-policy.cmake"))}`,
       ...disabled.map(name => `-D${name}=OFF`)];
