@@ -382,7 +382,11 @@ export async function executeMlirTarget({ options, runtime, tools, productRoot, 
     // Automatic default libraries request oldnames.lib, which is not part of
     // this verified tool closure; required symbols must resolve in these exact
     // libraries rather than finding an ambient Visual Studio installation.
-    const lockedCrtFlags = "/nodefaultlib libcmtd.lib libvcruntimed.lib libucrtd.lib libcpmtd.lib kernel32.lib";
+    // The locked UCRT declares each POSIX compatibility name with the exact
+    // same x64 C ABI as its underscored entry. Resolve only the four names
+    // observed in real LLVMSupport linking; no replacement implementation.
+    const lockedCrtAliases = ["lseek", "write", "read", "close"].map(name => `/alternatename:${name}=_${name}`).join(" ");
+    const lockedCrtFlags = `/nodefaultlib libcmtd.lib libvcruntimed.lib libucrtd.lib libcpmtd.lib kernel32.lib ${lockedCrtAliases}`;
     const args = ["--trace-expand", "--trace-format=json-v1", `--trace-redirect=${cmakePath(path.join(stage, "cmake-trace.jsonl"))}`,
       "-S", cmakePath(path.join(source, "llvm")), "-B", cmakePath(build), "-G", "Ninja",
       "-DLLVM_ENABLE_PROJECTS=mlir", "-DLLVM_TARGETS_TO_BUILD=X86", "-DLLVM_ENABLE_ASSERTIONS=ON", "-DLLVM_ENABLE_LTO=OFF",

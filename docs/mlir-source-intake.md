@@ -165,6 +165,11 @@ raw trace digest while admitting only the verified physical source file.
 The Windows target uses the existing locked static debug CRT libraries and
 disables incremental linking for executable, shared and module debug targets;
 compiler debug information is embedded before producing the detached link PDB.
+Only the four POSIX compatibility names observed in LLVMSupport's actual link
+(`lseek`, `write`, `read`, `close`) have x64 COFF aliases to their underscored
+entries in the locked UCRT. The fixed headers declare identical C ABIs; an
+independent file I/O probe verifies the exact libraries and aliases. No ambient
+oldnames library or replacement source implementation is consumed.
 The owned external project's compiler-side policy replaces the fixed source's
 optional shell32/ole32 delay-load startup optimization with ordinary DLL imports.
 It requires and removes the exact complete delayimp/flag group from both
