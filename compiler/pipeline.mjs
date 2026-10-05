@@ -122,22 +122,29 @@ export async function runBytecode(bytes, { vm, requests = [{}], command = "--req
 }
 
 /** Multiple verified modules share one formal Zig Runtime request host. */
-export async function runRequestSequence(bytecodes, { vm, requests = bytecodes.map(() => ({})) }) {
-  if (!Array.isArray(bytecodes) || bytecodes.length < 1 || bytecodes.length > 128 || requests.length !== bytecodes.length)
+export async function runRequestSequence(bytecodes, { vm, requests = undefined }) {
+  if (!Array.isArray(bytecodes) || bytecodes.length < 1 || bytecodes.length > 128)
     throw new TypeError("r05-request-sequence: expected 1..128 matching modules and requests");
+  const requestFrames = requests === undefined ? bytecodes.map(() => ({})) : requests;
+  if (!Array.isArray(requestFrames) || requestFrames.length !== bytecodes.length)
+    throw new TypeError("r05-request-sequence: expected 1..128 matching modules and requests");
+  let totalBytes = 12;
+  for (const bytes of bytecodes) {
+    if (!Buffer.isBuffer(bytes)) throw new TypeError("r05-request-sequence: expected bytecode buffers");
+    totalBytes += 4 + bytes.length;
+    if (totalBytes > 1048576) throw new TypeError("r05-request-sequence: frame exceeds size limit");
+  }
   const header = Buffer.alloc(12);
   header.write("TSFGREQ1", "ascii");
   header.writeUInt32LE(bytecodes.length, 8);
   const frames = bytecodes.flatMap(bytes => {
-    if (!Buffer.isBuffer(bytes)) throw new TypeError("r05-request-sequence: expected bytecode buffers");
     const length = Buffer.alloc(4);
     length.writeUInt32LE(bytes.length);
     return [length, bytes];
   });
   const input = Buffer.concat([header, ...frames]);
-  if (input.length > 1048576) throw new TypeError("r05-request-sequence: frame exceeds size limit");
   const executable = await verifiedConsumer(vm, "vm");
-  return JSON.parse(consume(executable, ["--request-sequence", JSON.stringify(requests)], input).toString("utf8"));
+  return JSON.parse(consume(executable, ["--request-sequence", JSON.stringify(requestFrames)], input).toString("utf8"));
 }
 
 export async function sourceInput(source, { sourcePath = "/src/main.ts" } = {}) {

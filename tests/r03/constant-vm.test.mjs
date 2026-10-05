@@ -57,7 +57,7 @@ test("owned source golden survives HIR, SSA Core and actual R04 canonical roundt
   const bytes = await runBytecode(actual.bytecode, { ...tools(), command: "--roundtrip" });
   assert.deepEqual(bytes, actual.bytecode);
   const view = await runBytecode(actual.bytecode, { ...tools(), command: "--inspect" });
-  assert.equal(view.schemaHash, "sha256:cd53e23d8b988f8ce86fcf0d72fcf6c59a308f6bf03de8f8bc0f27a458890954");
+  assert.equal(view.schemaHash, "sha256:e034e1ae65ef513b19c440406a332605731e80326a95c8bbfe00bfd0651fcfd4");
   assert.deepEqual(view.instructions, [
     { opcode: "const_i32", type: "i32", register: "0", immediate: "42", start: "38", end: "41" },
     { opcode: "return_i32", type: "i32", register: "0", start: "31", end: "42" },
@@ -111,7 +111,7 @@ test("formal loader rejects actual producer packet corruption, identities, types
   };
   /** @type {Array<[number, number, boolean, string]>} */
   const mutations = [
-    [0, 0, false, "r04-magic"], [8, 2, false, "r04-version"],
+    [0, 0, false, "r04-magic"], [8, 1, false, "r04-version"],
     [12, 0, false, "r04-schema"], [48, packet[48] ^ 1, false, "r04-integrity"],
     [stringOffsets[0], 0xff, true, "r04-string"],
     [stringOffsets[0], 120, true, "r04-target"], [stringOffsets[1], 97, true, "r04-target"],
@@ -120,7 +120,7 @@ test("formal loader rejects actual producer packet corruption, identities, types
     [offset + 8 + 64, packet[offset + 8 + 64] ^ 1, true, "r04-function"],
     [offset + 8 + 96, packet[offset + 8 + 96] ^ 1, true, "r04-signature"],
     [offset + 8 + 128, packet[offset + 8 + 128] ^ 1, true, "r04-type"],
-    [packet.length - 32, 9, true, "r04-instruction"],
+    [packet.length - 32, 255, true, "r04-instruction"],
     [packet.length - 31, 2, true, "r04-type"], [packet.length - 15, 2, true, "r04-type"],
     [packet.length - 30, 1, true, "r04-register"],
     [packet.length - 12, 1, true, "r04-reserved"],
@@ -173,9 +173,9 @@ test("official source checking precedes the bounded execution capability and nat
     assert.equal(result.bytecode, undefined); assert.equal(result.hir, undefined);
   }
   for (const source of [
-    "export function answer(): i32 { return 1 + 2; }",
+    "export function answer(): i32 { const value: i32 = 42; return value; }",
     "export function answer(value: i32): i32 { return 42; }",
-    "export function answer(): bool { return true; }",
+    "export function answer(): bool { return true && false; }",
     "export function answer(): i32 { return 42; } export function second(): i32 { return 0; }",
   ]) {
     const result = await compileProgram(await sourceInput(source), tools());
@@ -196,7 +196,7 @@ test("C++ R04 producer verifies Core source identities, target, types and actual
   assert.ifError(renamed.error); assert.equal(renamed.status, 0, renamed.stderr.toString());
   assert.deepEqual(renamed.stdout, result.bytecode);
   for (const [before, after] of [
-    ["sha256:cd53e23d8b988f8ce86fcf0d72fcf6c59a308f6bf03de8f8bc0f27a458890954", `sha256:${"0".repeat(64)}`],
+    ["sha256:e034e1ae65ef513b19c440406a332605731e80326a95c8bbfe00bfd0651fcfd4", `sha256:${"0".repeat(64)}`],
     ["windows-x86_64-msvc", "wrong-target"],
     [result.hir.functions[0].id, `sha256:${"0".repeat(64)}`],
     ["tsfg_core.function_end = 44 : i64", "tsfg_core.function_end = 45 : i64"],

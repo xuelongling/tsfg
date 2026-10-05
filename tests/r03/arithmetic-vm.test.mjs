@@ -118,3 +118,26 @@ test("owned scalar HIR rejects operator and delimiter changes against its checke
   const text = printHir(checked.hir);
   assert.equal(printHir(readHir(Buffer.from(text))), text);
 });
+
+test("request-sequence input validation has a stable bounded public failure", async () => {
+  const { runRequestSequence } = await import("../../compiler/pipeline.mjs");
+  for (const [modules, requests] of [[null, undefined], [[], []], [[Buffer.alloc(1)], null],
+    [[Buffer.alloc(1048576)], [{}]], [["not-bytecode"], [{}]]]) {
+    await assert.rejects(() => runRequestSequence(modules, { ...tools(), requests }), /r05-request-sequence/);
+  }
+});
+
+test("leftmost remainder trap wins and a bool request recovers on the same Runtime", async () => {
+  const source = "/*😀*/ export function answer(): i32 { return (1 % 0) + (1 / 0); }";
+  const failed = await compileProgram(await sourceInput(source), tools());
+  const good = await compileProgram(await sourceInput("export function answer(): bool { return !(1 >= 2); }"), tools());
+  assert.equal(failed.status, "ok", JSON.stringify(failed));
+  assert.equal(good.status, "ok", JSON.stringify(good));
+  const { runRequestSequence } = await import("../../compiler/pipeline.mjs");
+  const outcomes = await runRequestSequence([failed.bytecode, good.bytecode], tools());
+  assert.equal(outcomes[0].code, "r01-t-remainder-zero");
+  assert.deepEqual(outcomes[0].ruleIds, ["r01-division"]);
+  assert.equal(source.slice(Number(outcomes[0].source.start), Number(outcomes[0].source.end)), "1 % 0");
+  assert.deepEqual(outcomes[1].result, { type: "bool", value: true });
+  for (const outcome of outcomes) assert.equal(outcome.activeRequests, "0");
+});
