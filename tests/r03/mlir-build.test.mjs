@@ -6,6 +6,39 @@ import path from "node:path";
 import test from "node:test";
 import { fileURLToPath } from "node:url";
 import { createMlirFixture } from "./mlir-fixtures.mjs";
+import { MlirBuildError, readMlirBuildTrace } from "../../eng/mlir-build.mjs";
+
+test("MLIR trace reader requires a physical EVAL CODE command, not a CALL, comment or string", async () => {
+  const root = await createMlirFixture("mlir-eval-origin-");
+  const file = path.join(root, "GNUInstallDirs.cmake");
+  // Independent physical goldens reproduce the locked module's three line identities.
+  const lines = Array(488).fill("");
+  lines[289] = "  cmake_language(CALL set result value)";
+  lines[483] = "  # Using cmake_language(EVAL) to call a short wrapper function instead";
+  lines[484] = '  cmake_language(EVAL CODE "set(result value)")';
+  await writeFile(file, lines.join("\n"));
+  const trace = line => [
+    { file, line, cmd: "cmake_language", args: ["EVAL", "CODE", "set(result value)"] },
+    { file: `${file}:${line}:EVAL`, line: 1, cmd: "set", args: ["result", "value"] }
+  ].map(record => JSON.stringify(record)).join("\n");
+  const result = await readMlirBuildTrace({ cmakeTrace: trace(485), build: root, inputRoots: [root] });
+  assert.deepEqual(result.files, [file]);
+  assert.equal(result.evaluationFrames[0].physicalFile, file);
+  assert.deepEqual(result.evaluationFrames[0].evaluationLines, ["485"]);
+  for (const line of [290, 484]) await assert.rejects(
+    readMlirBuildTrace({ cmakeTrace: trace(line), build: root, inputRoots: [root] }),
+    error => error instanceof MlirBuildError && error.issueCode === "mlir-source-integrity");
+  for (const text of ['set(text "\ncmake_language(EVAL CODE fake)\n")',
+    'set(text [=[\ncmake_language(EVAL CODE fake)\n]=])',
+    '#[=[\ncmake_language(EVAL CODE fake)\n]=]',
+    'set(text\ncmake_language(EVAL CODE fake)\n)']) {
+    await writeFile(file, text);
+    await assert.rejects(readMlirBuildTrace({ cmakeTrace: trace(2), build: root, inputRoots: [root] }),
+      error => error instanceof MlirBuildError && error.issueCode === "mlir-source-integrity");
+  }
+  await assert.rejects(readMlirBuildTrace({ cmakeTrace: trace(485), build: root, inputRoots: [] }),
+    error => error instanceof MlirBuildError && error.issueCode === "mlir-source-integrity");
+});
 
 test("Hermetic Build Entry classifies unsupported MLIR configurations before reading missing inputs", async () => {
   const root = await createMlirFixture("mlir-configuration-");

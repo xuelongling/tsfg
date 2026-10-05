@@ -156,13 +156,21 @@ source ancestor timestamp to prove the combined input epoch. CMake JSON trace,
 Ninja unescaped NUL inputs/configuration inputs and compiler dependency records
 must reconcile the actual source/product/tool inputs after a real build.
 CMake `cmake_language(EVAL CODE)` virtual frames require the exact originating
-file/line invocation in the raw trace and a real `cmake_language` call at that
-physical line inside admitted input roots. Unknown frames fail integrity checks;
+file/line invocation in the raw trace and a physical `cmake_language(EVAL CODE)`
+command at that line inside admitted input roots. The read-only
+`readMlirBuildTrace` seam rejects CALL, comments and quoted/bracket arguments
+as evaluation origins. Unknown frames fail integrity checks;
 the collector retains their original labels, evaluated-code digests and complete
 raw trace digest while admitting only the verified physical source file.
 The Windows target uses the existing locked static debug CRT libraries and
 disables incremental linking for executable, shared and module debug targets;
 compiler debug information is embedded before producing the detached link PDB.
+The owned external project's compiler-side policy replaces the fixed source's
+optional shell32/ole32 delay-load startup optimization with ordinary DLL imports.
+It requires and removes the exact complete delayimp/flag group from both
+LLVMSupport static link properties, preserves both normal system import libraries
+and rejects any unexpected property shape. It does not change upstream source,
+pretend to select Swift or require a new vendor-source consumer.
 
 `eng/mlir-source-notices.lock.json` prepares a finite original-notice retention
 bundle. It preserves original SPDX/text separately from the already permitted

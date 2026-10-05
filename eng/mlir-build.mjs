@@ -133,20 +133,55 @@ async function validatePublication(directory, manifest, serialize) {
     throw new MlirBuildError(`Source artifact payload/notice digest changed: ${output.path}`, "mlir-artifact-integrity");
 }
 
-async function collectConsumedInputs({ tools, build, source, sourceEntries, product, productEntries, runtime, env, stage }) {
-  const capture = args => {
-    const child = spawnSync(tools.ninja, args, { cwd: build, env, encoding: "utf8", windowsHide: true,
-      maxBuffer: 128 * 1024 * 1024 });
-    if (child.error || child.status !== 0) throw new MlirBuildError(`Cannot inspect Ninja dependency trace: ${args.join(" ")}`);
-    return child.stdout;
-  };
-  const inputs = capture(["-t", "inputs", "-E", "-0", "tsfg-core-ir"]);
-  const configurationInputs = capture(["-t", "inputs", "-E", "-0", "build.ninja"]);
-  const deps = capture(["-t", "deps"]);
-  await writeFile(path.join(stage, "ninja-inputs.nul"), inputs);
-  await writeFile(path.join(stage, "ninja-configuration-inputs.nul"), configurationInputs);
-  await writeFile(path.join(stage, "ninja-deps.txt"), deps);
-  const cmakeTrace = await readFile(path.join(stage, "cmake-trace.jsonl"), "utf8");
+function physicalEvaluationCall(original, recordedLine) {
+  const lines = original.split("\n");
+  if (recordedLine > lines.length) return false;
+  const lineStart = lines.slice(0, recordedLine - 1).reduce((offset, line) => offset + line.length + 1, 0);
+  const lineEnd = lineStart + lines[recordedLine - 1].length;
+  let depth = 0;
+  for (let index = 0; index < original.length;) {
+    const character = original[index];
+    if (character === "\\") { index += 2; continue; }
+    if (character === '"') {
+      for (index++; index < original.length; index++) {
+        if (original[index] === "\\") index++;
+        else if (original[index] === '"') { index++; break; }
+      }
+      continue;
+    }
+    const bracket = /^(?:#)?\[(=*)\[/.exec(original.slice(index));
+    if (bracket) {
+      const close = original.indexOf(`]${bracket[1]}]`, index + bracket[0].length);
+      if (close === -1) return false;
+      index = close + bracket[1].length + 2;
+      continue;
+    }
+    if (character === "#") {
+      const newline = original.indexOf("\n", index);
+      index = newline === -1 ? original.length : newline + 1;
+      continue;
+    }
+    if (depth === 0) {
+      const command = /^([a-z_][a-z0-9_]*)\s*\(/i.exec(original.slice(index));
+      if (command) {
+        // Trace line identifies the command name, not text inside an argument.
+        if (index >= lineStart && index <= lineEnd && command[1].toLowerCase() === "cmake_language")
+          return /^\s*EVAL\s+CODE\b/.test(original.slice(index + command[0].length));
+        depth = 1;
+        index += command[0].length;
+        continue;
+      }
+    }
+    if (character === "(") depth++;
+    if (character === ")") depth--;
+    if (depth < 0) return false;
+    index++;
+  }
+  return false;
+}
+
+/** Read-only CMake trace origins; callers still qualify every returned physical input. */
+export async function readMlirBuildTrace({ cmakeTrace, build, inputRoots }) {
   const cmakeFiles = new Set();
   const cmakeEvaluationFrames = new Map();
   const evaluationCalls = new Map();
@@ -179,19 +214,36 @@ async function collectConsumedInputs({ tools, build, source, sourceEntries, prod
     }
     if (evaluationLines.length) {
       const absoluteOrigin = path.resolve(build, physical);
-      if (![source, product, runtime.closurePath].some(root => within(root, absoluteOrigin)))
+      if (!inputRoots.some(root => within(root, absoluteOrigin)))
         throw new MlirBuildError(`CMake evaluation origin is outside admitted input roots: ${name}`, "mlir-source-integrity");
       const original = await readFile(absoluteOrigin, "utf8");
-      const callLine = original.split(/\r?\n/)[Number(evaluationLines[0]) - 1];
-      if (!callLine || !/\bcmake_language\s*\(/i.test(callLine))
+      if (!physicalEvaluationCall(original, Number(evaluationLines[0])))
         throw new MlirBuildError(`CMake evaluation has no physical origin at the recorded line: ${name}`, "mlir-source-integrity");
       cmakeEvaluationFrames.set(name, { traceFile: name, physicalFile: physical, evaluationLines, evaluationCodeHashes });
       cmakeFiles.delete(name);
     }
     cmakeFiles.add(physical);
   }
+  return { files: [...cmakeFiles], evaluationFrames: [...cmakeEvaluationFrames.values()], sha256: digest(cmakeTrace) };
+}
+
+async function collectConsumedInputs({ tools, build, source, sourceEntries, product, productEntries, runtime, env, stage }) {
+  const capture = args => {
+    const child = spawnSync(tools.ninja, args, { cwd: build, env, encoding: "utf8", windowsHide: true,
+      maxBuffer: 128 * 1024 * 1024 });
+    if (child.error || child.status !== 0) throw new MlirBuildError(`Cannot inspect Ninja dependency trace: ${args.join(" ")}`);
+    return child.stdout;
+  };
+  const inputs = capture(["-t", "inputs", "-E", "-0", "tsfg-core-ir"]);
+  const configurationInputs = capture(["-t", "inputs", "-E", "-0", "build.ninja"]);
+  const deps = capture(["-t", "deps"]);
+  await writeFile(path.join(stage, "ninja-inputs.nul"), inputs);
+  await writeFile(path.join(stage, "ninja-configuration-inputs.nul"), configurationInputs);
+  await writeFile(path.join(stage, "ninja-deps.txt"), deps);
+  const cmakeTrace = await readFile(path.join(stage, "cmake-trace.jsonl"), "utf8");
+  const cmakeOrigins = await readMlirBuildTrace({ cmakeTrace, build, inputRoots: [source, product, runtime.closurePath] });
   const observed = new Set([...inputs.split("\0").filter(Boolean),
-    ...configurationInputs.split("\0").filter(Boolean), ...cmakeFiles,
+    ...configurationInputs.split("\0").filter(Boolean), ...cmakeOrigins.files,
     ...deps.split(/\r?\n/).filter(line => /^    \S/.test(line)).map(line => line.trim())]);
   const upstream = new Map(sourceEntries.map(entry => [entry.repositoryRelativePath.toLowerCase(), entry]));
   const consumed = new Map();
@@ -229,7 +281,7 @@ async function collectConsumedInputs({ tools, build, source, sourceEntries, prod
   }
   return { files: [...consumed.values()].sort((a, b) => Buffer.from(a.repositoryRelativePath).compare(Buffer.from(b.repositoryRelativePath))),
     productFiles: [...consumedProduct.values()], generated, toolInputs, ninjaInputsSha256: digest(inputs), ninjaConfigurationInputsSha256: digest(configurationInputs),
-    cmakeTraceSha256: digest(cmakeTrace), cmakeEvaluationFrames: [...cmakeEvaluationFrames.values()], ninjaDepsSha256: digest(deps) };
+    cmakeTraceSha256: cmakeOrigins.sha256, cmakeEvaluationFrames: cmakeOrigins.evaluationFrames, ninjaDepsSha256: digest(deps) };
 }
 
 /** The formal source-build target; no source process starts before all intake gates. */
