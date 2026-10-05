@@ -9,6 +9,7 @@
 #include "llvm/Support/raw_ostream.h"
 #include "llvm/Support/Program.h"
 #include "llvm/Support/SHA256.h"
+#include "llvm/Support/ConvertUTF.h"
 #include "llvm/IR/DataLayout.h"
 #include "llvm/IR/LLVMContext.h"
 #include "llvm/IR/Type.h"
@@ -133,9 +134,21 @@ mlir::LogicalResult emitBytecode(mlir::ModuleOp module) {
       text("tsfg_core.target") != target || text("tsfg_core.triple") != triple ||
       text("tsfg_core.data_layout") != layout) return reject();
   llvm::StringRef path = text("tsfg_core.source_path"), name = text("tsfg_core.function_name");
+  auto validUTF8 = [](llvm::StringRef value) {
+    const auto *cursor = reinterpret_cast<const llvm::UTF8 *>(value.data());
+    return llvm::isLegalUTF8String(&cursor, cursor + value.size());
+  };
   if (path.empty() || name.empty() || path.size() > 4096 || name.size() > 4096 ||
       !path.starts_with("/") || !path.ends_with(".ts") || path.ends_with(".d.ts") ||
-      path.contains('\0') || name.contains('\0')) return reject();
+      path.contains('\0') || name.contains('\0') || path.contains('\\') ||
+      path.contains(':') || !validUTF8(path) || !validUTF8(name)) return reject();
+  llvm::StringRef componentPath = path.drop_front();
+  while (true) {
+    auto [component, remaining] = componentPath.split('/');
+    if (component.empty() || component == "." || component == "..") return reject();
+    if (remaining.empty()) break;
+    componentPath = remaining;
+  }
   Hash input, source, function, signature, type;
   if (!decodeHash(text("tsfg_core.input_identity"), input) ||
       !decodeHash(text("tsfg_core.source_hash"), source) ||
