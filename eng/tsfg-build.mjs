@@ -7602,7 +7602,7 @@ async function runCommandLine() {
         const workspaceState = inspectProductWorkspace(options, true, command);
         const result = await executeVmTarget({ options, runtime: runtimeClosure,
           tools: runtimeClosure ? windowsToolchain(runtimeClosure) : undefined,
-          productRoot: workspaceState.root, workspaceState, serialize: canonicalize,
+          productRoot: workspaceState.root, workspaceState, serialize: canonicalize, sha256: digest,
           normalize: async ({ executable, pdb, stage, product, environment, identity, tools, runtime }) => {
             const guid = await normalizeWindowsPdb(pdb, tools.pdbutil,
               [[product, "."], [runtime.closurePath, ".toolchain"], [stage, ".build"],

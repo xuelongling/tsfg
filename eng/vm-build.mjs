@@ -3,7 +3,6 @@ import { randomUUID } from "node:crypto";
 import { spawn } from "node:child_process";
 import { copyFile, lstat, mkdir, open, readFile, realpath, rename, writeFile } from "node:fs/promises";
 import path from "node:path";
-import { sha256 } from "../compiler/identity.mjs";
 
 export class VmBuildError extends Error {
   constructor(message, issueCode = "vm-source-build") { super(message); this.issueCode = issueCode; }
@@ -24,7 +23,7 @@ async function ordinaryAncestor(directory) {
 }
 
 /** Build the formal Zig request consumer through the existing locked control plane. */
-export async function executeVmTarget({ options, runtime, tools, productRoot, workspaceState, serialize, createIdentity, verifyTools, normalize }) {
+export async function executeVmTarget({ options, runtime, tools, productRoot, workspaceState, serialize, sha256, createIdentity, verifyTools, normalize }) {
   if (!runtime || !tools || !verifyTools) throw new VmBuildError("VM build requires the verified tool closure", "vm-tool-integrity");
   const output = path.resolve(options.get("--out"));
   if (!/^E:[\\/]/i.test(output)) throw new VmBuildError("VM output must be absolute E storage", "vm-output-integrity");

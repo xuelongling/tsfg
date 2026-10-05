@@ -2,7 +2,7 @@
 
 import assert from "node:assert/strict";
 import { createHash } from "node:crypto";
-import { mkdtemp, mkdir, readFile, rm, writeFile } from "node:fs/promises";
+import { cp, mkdtemp, mkdir, readFile, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import path from "node:path";
 import { spawn, spawnSync } from "node:child_process";
@@ -57,6 +57,7 @@ test("the public contract seam rejects a registry hash that differs from schema 
   try {
     const workspace = path.join(sandbox, "workspace");
     await mkdir(path.join(workspace, "contracts"), { recursive: true });
+    await cp(path.join(repositoryRoot, "contracts"), path.join(workspace, "contracts"), { recursive: true });
     const initialized = spawnSync(TEST_GIT_EXECUTABLE, ["init", "--quiet", workspace]);
     assert.equal(initialized.status, 0, initialized.stderr?.toString());
     const registry = JSON.parse(await readFile(path.join(repositoryRoot, "contracts/registry.json"), "utf8"));
@@ -83,6 +84,7 @@ test("the public contract seam rejects incomplete registry metadata and duplicat
   try {
     const workspace = path.join(sandbox, "workspace");
     await mkdir(path.join(workspace, "contracts"), { recursive: true });
+    await cp(path.join(repositoryRoot, "contracts"), path.join(workspace, "contracts"), { recursive: true });
     assert.equal(spawnSync(TEST_GIT_EXECUTABLE, ["init", "--quiet", workspace]).status, 0);
     const originalRegistry = JSON.parse(await readFile(path.join(repositoryRoot, "contracts/registry.json"), "utf8"));
     const originalSchema = await readFile(path.join(repositoryRoot, "contracts/frontend-snapshot.schema.json"), "utf8");
@@ -116,6 +118,7 @@ test("the public contract seam rejects malformed registered Contract SemVer", as
   try {
     const workspace = path.join(sandbox, "workspace");
     await mkdir(path.join(workspace, "contracts"), { recursive: true });
+    await cp(path.join(repositoryRoot, "contracts"), path.join(workspace, "contracts"), { recursive: true });
     assert.equal(spawnSync(TEST_GIT_EXECUTABLE, ["init", "--quiet", workspace]).status, 0);
     const registry = JSON.parse(await readFile(path.join(repositoryRoot, "contracts/registry.json"), "utf8"));
     await writeFile(path.join(workspace, "contracts/frontend-snapshot.schema.json"),
