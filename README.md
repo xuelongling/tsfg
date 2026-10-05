@@ -15,8 +15,9 @@ Use the current Windows host for development and report its actual OS/build.
 A Windows VM is not a development prerequisite; minimum Windows/Linux,
 independent VM proofs, release signing and promotion belong to later
 certification. Full language/runtime/CPU/GPU/tool functionality is retained.
-The entry below is the engineering smoke control plane, not an implemented
-`tsfgc`, language VM, ABI or Reflection pipeline.
+The entry below is the engineering smoke control plane. The bounded compiler
+and Zig VM implementation supports [one i32 constant-return function](docs/r03-constant-vm.md).
+Broader language, ABI and Reflection acceptance remains on the roadmap.
 
 This documentation change does not alter CLI behavior, workflows, required
 checks, versions or release state. Existing protections still apply until

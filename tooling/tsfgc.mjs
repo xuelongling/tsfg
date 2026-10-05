@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: MIT
 import { readFile } from "node:fs/promises";
-import { compileProgram, runBytecode } from "../compiler/pipeline.mjs";
+import { compileHir, compileProgram, runBytecode } from "../compiler/pipeline.mjs";
 import { printHir } from "../compiler/hir.mjs";
 
 try {
@@ -15,7 +15,8 @@ try {
   if (!["hir", "core", "bytecode", "run"].includes(emit) || !options.has("--input"))
     throw new TypeError("r03-cli-options: --input <owned-input.json> and --emit hir|core|bytecode|run are required");
   const input = JSON.parse(await readFile(options.get("--input"), "utf8"));
-  const result = await compileProgram(input, { frontend: options.get("--frontend"), core: options.get("--core") });
+  const compile = emit === "hir" ? compileHir : compileProgram;
+  const result = await compile(input, { frontend: options.get("--frontend"), core: options.get("--core") });
   if (result.status !== "ok") {
     process.stdout.write(`${JSON.stringify(result)}\n`);
     process.exitCode = result.status === "tool-error" ? 11 : 3;

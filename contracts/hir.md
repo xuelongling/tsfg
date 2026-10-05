@@ -2,6 +2,15 @@
 
 # tsfg.hir 0.1.0
 
+`createCompilerSession` reuses owned HIR/Core/R04 output only for an unchanged
+checked Snapshot identity, compiler input fingerprint and source-built producer
+binary. It checks the official frontend on every input. A changed single
+function invalidates and lowers that whole function; failure clears the prior
+success. Returned bytecode is copied and HIR is immutable, so callers cannot
+mutate cache state. This is incremental owned lowering, not an incremental Go
+checker or a replacement frontend. Full and incremental output equivalence is
+tested through actual C++ output and formal Runtime execution.
+
 The owned high-level compiler representation is separate from FrontendSnapshot
 and MLIR Core IR. `buildHir` consumes validated current owned frontend facts,
 copies the required source, input identity, target, declaration, signature,

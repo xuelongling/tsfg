@@ -5,7 +5,7 @@ import path from "node:path";
 import { fileURLToPath } from "node:url";
 import { analyzeFrontend } from "./frontend.mjs";
 import { buildHir, lowerHir } from "./hir.mjs";
-import { sha256 } from "./identity.mjs";
+import { canonical, sha256 } from "./identity.mjs";
 import registry from "../contracts/registry.json" with { type: "json" };
 
 const productRoot = fileURLToPath(new URL("../", import.meta.url));
@@ -37,25 +37,81 @@ function consume(executable, args, input) {
   return child.stdout;
 }
 
-/** Compile only through official checking, owned HIR and the real C++ SSA consumer. */
-export async function compileProgram(input, options) {
+/** Officially checked source to owned HIR; no native execution is needed to view it. */
+export async function compileHir(input, options) {
   const analyzed = await analyzeFrontend(input, { executable: options.frontend });
   if (analyzed.status !== "ok") return analyzed;
-  const highLevel = buildHir(analyzed.snapshot);
+  return buildHir(analyzed.snapshot);
+}
+
+/** Compile only through official checking, owned HIR and the real C++ SSA consumer. */
+export async function compileProgram(input, options) {
+  const highLevel = await compileHir(input, options);
+  return highLevel.status === "ok" ? produceBytecode(highLevel.hir, options) : highLevel;
+}
+
+async function compileSnapshot(snapshot, options) {
+  const highLevel = buildHir(snapshot);
   if (highLevel.status !== "ok") return highLevel;
+  return produceBytecode(highLevel.hir, options);
+}
+
+async function produceBytecode(hir, options) {
   try {
     const core = await verifiedConsumer(options.core, "core");
-    const canonicalCore = consume(core, ["--canonicalize"], lowerHir(highLevel.hir)).toString("utf8");
+    const canonicalCore = consume(core, ["--canonicalize"], lowerHir(hir)).toString("utf8");
     const bytecode = consume(core, ["--emit-bytecode"], canonicalCore);
     if (bytecode.length < 80 || bytecode.subarray(0, 8).toString("ascii") !== "TSFGTBC0"
         || bytecode.readUInt32LE(8) !== 1 || bytecode.readUInt32LE(44) !== bytecode.length
         || `sha256:${bytecode.subarray(12, 44).toString("hex")}` !== registry["tsfg.bytecode"].schemaHash
         || `sha256:${bytecode.subarray(48, 80).toString("hex")}` !== sha256(bytecode.subarray(80)))
       throw new TypeError("r04-producer-identity: C++ output differs from registered R04 packet");
-    return { status: "ok", hir: highLevel.hir, core: canonicalCore, bytecode };
+    return { status: "ok", hir, core: canonicalCore, bytecode };
   } catch (error) {
     return { status: "tool-error", code: "r03-d-consumer", message: error.message };
   }
+}
+
+const sessionInputs = ["compiler/frontend.mjs", "compiler/hir.mjs", "compiler/identity.mjs",
+  "compiler/pipeline.mjs", "contracts/registry.json", "contracts/hir.schema.json", "contracts/bytecode.schema.json"];
+async function sessionFingerprint() {
+  const inputs = await Promise.all(sessionInputs.map(async name => [name, sha256(await readFile(path.join(productRoot, name)))]));
+  return sha256(canonical(inputs));
+}
+
+/** Incremental owned lowering; official frontend checking still runs on every input. */
+export function createCompilerSession(options) {
+  const settings = { frontend: options.frontend, core: options.core };
+  let inputs, previous;
+  const counts = { analyses: 0, lowerings: 0, reuses: 0 };
+  return {
+    statistics: () => ({ ...counts }),
+    async compile(input) {
+      counts.analyses++;
+      const analyzed = await analyzeFrontend(input, { executable: settings.frontend });
+      if (analyzed.status !== "ok") { previous = undefined; return analyzed; }
+      try {
+        const fingerprint = await sessionFingerprint();
+        if (inputs !== undefined && inputs !== fingerprint)
+          throw new TypeError("r03-compiler-input: compiler inputs changed during session");
+        inputs = fingerprint;
+        const core = await verifiedConsumer(settings.core, "core");
+        const key = sha256(canonical({ snapshotId: analyzed.snapshot.snapshotId,
+          compiler: fingerprint, producer: sha256(await readFile(core)) }));
+        if (previous?.key === key) {
+          counts.reuses++;
+          return { ...previous.result, bytecode: Buffer.from(previous.result.bytecode) };
+        }
+        counts.lowerings++;
+        const result = await compileSnapshot(analyzed.snapshot, settings);
+        previous = result.status === "ok" ? { key, result: { ...result, bytecode: Buffer.from(result.bytecode) } } : undefined;
+        return result;
+      } catch (error) {
+        previous = undefined;
+        return { status: "tool-error", code: "r03-d-consumer", message: error.message };
+      }
+    },
+  };
 }
 
 export async function runBytecode(bytes, { vm, requests = [{}], command = "--requests" }) {

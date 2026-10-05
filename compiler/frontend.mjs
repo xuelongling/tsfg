@@ -41,6 +41,15 @@ function hasLoneSurrogate(value) {
   return false;
 }
 
+// Compare an already officially checked identifier's source spelling with
+// its decoded owned name. This reads original spans, never upstream AST data.
+function identifierName(spelling) {
+  const name = spelling.replace(/\\u(?:\{([0-9a-fA-F]{1,6})\}|([0-9a-fA-F]{4}))/g,
+    (_, point, unit) => String.fromCodePoint(Number.parseInt(point ?? unit, 16)));
+  if (name.includes("\\") || hasLoneSurrogate(name)) throw new TypeError("invalid source identifier spelling");
+  return name;
+}
+
 function canonical(value) {
   if (typeof value === "string") {
     if (hasLoneSurrogate(value)) throw new TypeError("canonical input contains a lone surrogate");
@@ -350,7 +359,7 @@ export function validateFrontendSnapshot(snapshot) {
   for (const symbol of snapshot.symbols) {
     resolveSymbol(snapshot, symbol.ref);
     checkType(symbol.type, symbol.typeRef);
-    if (sourceSpan(symbol.range) !== symbol.name) {
+    if (identifierName(sourceSpan(symbol.range)) !== symbol.name) {
       throw new TypeError("symbol differs from its source declaration");
     }
   }
@@ -360,7 +369,7 @@ export function validateFrontendSnapshot(snapshot) {
     checkType(expression.type, expression.typeRef);
     if (expression.kind === "reference") {
       const symbol = resolveSymbol(snapshot, expression.symbol);
-      if (scope.get(symbol.name) !== symbol.id || symbol.name !== sourceSpan(expression.range)
+      if (scope.get(symbol.name) !== symbol.id || symbol.name !== identifierName(sourceSpan(expression.range))
           || symbol.type !== expression.type) {
         throw new TypeError("reference differs from its symbol");
       }
@@ -376,10 +385,11 @@ export function validateFrontendSnapshot(snapshot) {
       const parameters = fn?.parameters?.map(parameter => parameter.type);
       const arguments_ = expression.arguments;
       const sourceCall = sourceSpan(expression.range);
+      const spelling = sourceCall.match(/^(?:\\u(?:\{[0-9a-fA-F]{1,6}\}|[0-9a-fA-F]{4})|[^\\\s(/])+/u)?.[0];
       if (expression.kind !== "call" || !fn || !Array.isArray(parameters)
           || !Array.isArray(arguments_) || !Array.isArray(expression.signature?.parameters)
-          || !sourceCall.startsWith(target.name)
-          || !hasCallArgumentList(sourceCall.slice(target.name.length))
+          || !spelling || identifierName(spelling) !== target.name
+          || !hasCallArgumentList(sourceCall.slice(spelling.length))
           || expression.signature.returnType !== fn.returnType
           || expression.type !== fn.returnType
           || expression.signature.parameters.length !== parameters.length
@@ -429,7 +439,7 @@ export function validateFrontendSnapshot(snapshot) {
     const definition = resolveSymbol(snapshot, fn.symbol);
     if (definition.kind !== "function" || definition.name !== fn.name
         || definition.type !== fn.returnType
-        || sourceSpan(definition.range) !== fn.name
+        || identifierName(sourceSpan(definition.range)) !== fn.name
         || definition.range?.start < fn.range?.start
         || definition.range?.end > fn.range?.end) {
       throw new TypeError("function differs from its symbol");
