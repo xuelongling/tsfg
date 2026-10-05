@@ -53,7 +53,7 @@ test("M01 internal compiler launcher preserves CodeView and anonymous namespace 
     const mapped = source.replaceAll("\\", "/");
     const flags = ["/Od", "/Z7", "/Brepro", "/clang:-fdebug-compilation-dir=.", "/clang:-gno-codeview-command-line",
       `/clang:-ffile-prefix-map=${mapped}=.source`, `/clang:-fdebug-prefix-map=${mapped}=.source`,
-      "/Foprobe.obj", "-c", path.join(source, "probe.cpp")];
+      "/Foprobe.obj", "-c", "--", path.join(source, "probe.cpp")];
     const child = spawnSync(process.execPath, [launcher, compiler, source, product, build, compiler, ...flags],
       { cwd: build, env: process.env, encoding: "utf8", windowsHide: true });
     assert.ifError(child.error);
@@ -72,6 +72,10 @@ test("M01 internal compiler launcher preserves CodeView and anonymous namespace 
     { cwd: build, env: process.env, encoding: "utf8", windowsHide: true });
   assert.equal(wrongTool.status, 11);
   assert.match(wrongTool.stderr, /Compiler or working directory differs/);
+  const missingInput = spawnSync(process.execPath, [launcher, compiler, source, product, build, compiler, "-c", "--"],
+    { cwd: build, env: process.env, encoding: "utf8", windowsHide: true });
+  assert.equal(missingInput.status, 11);
+  assert.match(missingInput.stderr, /Expected one CMake compile input/);
   const redirect = path.join(root, "redirected-source");
   await symlink(source, redirect, "junction");
   const redirected = spawnSync(process.execPath, [launcher, compiler, redirect, product, build, compiler, ...flags],

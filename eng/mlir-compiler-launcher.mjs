@@ -25,11 +25,15 @@ try {
   await ordinary(path.resolve(expected), false);
   for (const root of roots) await ordinary(root, true);
   const inputs = args.flatMap((argument, index) => argument === "-c" || argument === "/c" ? [index + 1] : []);
-  if (inputs.length !== 1 || inputs[0] >= args.length) throw new Error("Expected one CMake compile input");
-  const input = path.resolve(process.cwd(), args[inputs[0]]);
+  if (inputs.length !== 1) throw new Error("Expected one CMake compile input");
+  // The locked CMake Ninja rule uses -c -- <input> for upstream targets;
+  // owned targets can use -c <input>. Preserve the separator itself.
+  const inputIndex = inputs[0] + (args[inputs[0]] === "--" ? 1 : 0);
+  if (inputIndex >= args.length) throw new Error("Expected one CMake compile input");
+  const input = path.resolve(process.cwd(), args[inputIndex]);
   if (roots.slice(0, 2).some(root => within(root, input))) {
     await ordinary(input, false);
-    args[inputs[0]] = path.relative(process.cwd(), input).replaceAll("\\", "/");
+    args[inputIndex] = path.relative(process.cwd(), input).replaceAll("\\", "/");
   }
   // CMake's locked-tool ABI/feature probes are passed through unchanged.
   // No flags, include paths, bytes, tool choice or compiler status are rewritten.
