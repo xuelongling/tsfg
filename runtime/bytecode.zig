@@ -127,7 +127,6 @@ fn parse(reader: *Reader) error{Invalid}!ModuleInfo {
     function_hash.update(&std.fmt.bytesToHex(signature_hash, .lower));
     var expected_function_id: [32]u8 = undefined;
     function_hash.final(&expected_function_id);
-    if (!std.mem.eql(u8, &function_id, &expected_function_id)) return reader.reject("r04-function", signature_offset - 32);
     const source_length = try reader.int(u32);
     const function_start = try reader.int(u32);
     const function_end = try reader.int(u32);
@@ -138,6 +137,7 @@ fn parse(reader: *Reader) error{Invalid}!ModuleInfo {
     const scalar_type = if (return_type == 1) "tsfg.type\x00i32" else "tsfg.type\x00bool";
     if (!std.mem.eql(u8, &signature_hash, &hash(signature))) return reader.reject("r04-signature", signature_offset);
     if (!std.mem.eql(u8, &type_id, &hash(scalar_type))) return reader.reject("r04-type", signature_offset + 32);
+    if (!std.mem.eql(u8, &function_id, &expected_function_id)) return reader.reject("r04-function", signature_offset - 32);
     try reader.expected(u8, 0, "r04-signature");
     const register_count = try reader.int(u16);
     if (register_count < 1 or register_count > 4096) return reader.reject("r04-register", reader.offset - 2);
@@ -170,11 +170,19 @@ fn parse(reader: *Reader) error{Invalid}!ModuleInfo {
             if (opcode == 1 or opcode == 3) {
                 if (type_code != (if (opcode == 1) @as(u8, 1) else 2)) return reader.reject("r04-type", offset + 1);
                 if (opcode == 3 and payload > 1) return reader.reject("r04-boolean", offset + 4);
-            } else if (opcode == 4 or opcode == 7 or opcode == 8) {
+            } else if ((opcode >= 4 and opcode <= 14) or (opcode >= 18 and opcode <= 23)) {
                 const left: u16 = @truncate(payload);
                 const right: u16 = @truncate(payload >> 16);
                 if (left >= index or right >= index) return reader.reject("r04-register", offset + 4);
-                if (type_code != 1 or register_types[left] != 1 or register_types[right] != 1) return reader.reject("r04-type", offset + 1);
+                const operand_type = register_types[left];
+                if (operand_type != register_types[right] or type_code != (if (opcode >= 18) @as(u8, 2) else 1)
+                    or (operand_type != 1 and !(opcode == 18 or opcode == 19))) return reader.reject("r04-type", offset + 1);
+            } else if (opcode >= 15 and opcode <= 17) {
+                const operand: u16 = @truncate(payload);
+                if (operand >= index) return reader.reject("r04-register", offset + 4);
+                if (payload >> 16 != 0) return reader.reject("r04-reserved", offset + 6);
+                const expected_type: u8 = if (opcode == 17) 2 else 1;
+                if (type_code != expected_type or register_types[operand] != expected_type) return reader.reject("r04-type", offset + 1);
             } else return reader.reject("r04-instruction", offset);
             register_types[reg] = type_code;
         }
@@ -270,15 +278,16 @@ pub fn inspect(module: *const VerifiedModule, allocator: Allocator) Allocator.Er
     const View = struct { opcode: []const u8, type: []const u8, register: []const u8, immediate: ?[]const u8 = null, left: ?[]const u8 = null, right: ?[]const u8 = null, start: []const u8, end: []const u8 };
     const views = try temporary.alloc(View, info.instruction_count);
     for (instructions(module), views) |op, *view| {
-        view.* = .{ .opcode = switch (op.opcode) { 1 => "const_i32", 2 => if (op.type_code == 1) "return_i32" else "return_bool", 3 => "const_bool", 4 => "add", 7 => "div", 8 => "rem", else => unreachable },
+        const names = [_][]const u8{ "add", "sub", "mul", "div", "rem", "shl", "shr", "ushr", "and", "or", "xor", "neg", "not", "bool_not", "eq", "ne", "lt", "le", "gt", "ge" };
+        view.* = .{ .opcode = switch (op.opcode) { 1 => "const_i32", 2 => if (op.type_code == 1) "return_i32" else "return_bool", 3 => "const_bool", 4...23 => names[op.opcode - 4], else => unreachable },
             .type = if (op.type_code == 1) "i32" else "bool",
             .register = try std.fmt.allocPrint(temporary, "{d}", .{op.register}),
             .start = try std.fmt.allocPrint(temporary, "{d}", .{op.source.start}),
             .end = try std.fmt.allocPrint(temporary, "{d}", .{op.source.end}) };
         if (op.opcode == 1 or op.opcode == 3) view.immediate = try std.fmt.allocPrint(temporary, "{d}", .{op.immediate});
-        if (op.opcode == 4 or op.opcode == 7 or op.opcode == 8) {
+        if (op.opcode >= 4) {
             view.left = try std.fmt.allocPrint(temporary, "{d}", .{op.left});
-            view.right = try std.fmt.allocPrint(temporary, "{d}", .{op.right});
+            if (op.opcode < 15 or op.opcode > 17) view.right = try std.fmt.allocPrint(temporary, "{d}", .{op.right});
         }
     }
     return std.json.Stringify.valueAlloc(allocator, .{

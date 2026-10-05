@@ -14,8 +14,8 @@ fn requestFailure(code: []const u8, function_id: FunctionId, source: Source) Req
     return .{ .failed = .{ .code = code, .category = if (std.mem.eql(u8, code, "r05-execution-abort")) "execution-abort" else "request", .function_id = function_id, .source = source } };
 }
 
-fn arithmeticTrap(comptime code: []const u8, function_id: FunctionId, source: Source) RequestOutcome {
-    return .{ .failed = .{ .code = code, .category = "trap", .rule_ids = &.{"r01-division"}, .function_id = function_id, .source = source } };
+fn arithmeticTrap(comptime code: []const u8, comptime rule_id: []const u8, function_id: FunctionId, source: Source) RequestOutcome {
+    return .{ .failed = .{ .code = code, .category = "trap", .rule_ids = &.{rule_id}, .function_id = function_id, .source = source } };
 }
 
 pub fn evaluate(allocator: std.mem.Allocator, module: *const VerifiedModule, function_id: FunctionId, arguments: []const TypedValue, capabilities: []const Capability, limits: RequestLimits) RequestOutcome {
@@ -37,15 +37,45 @@ pub fn evaluate(allocator: std.mem.Allocator, module: *const VerifiedModule, fun
             1, 3 => frame[op.register] = op.immediate,
             2 => return .{ .returned = .{ .result = if (op.type_code == 1) .{ .i32 = frame[op.register] } else .{ .boolean = frame[op.register] != 0 }, .function_id = function_id, .source = op.source } },
             4 => frame[op.register] = frame[op.left] +% frame[op.right],
+            5 => frame[op.register] = frame[op.left] -% frame[op.right],
+            6 => frame[op.register] = frame[op.left] *% frame[op.right],
             7, 8 => {
                 const left = frame[op.left];
                 const right = frame[op.right];
                 // Guard before native division/remainder, including MIN / -1.
-                if (right == 0) return if (op.opcode == 7) arithmeticTrap("r01-t-divide-zero", function_id, source) else arithmeticTrap("r01-t-remainder-zero", function_id, source);
+                if (right == 0) return if (op.opcode == 7) arithmeticTrap("r01-t-divide-zero", "r01-division", function_id, source) else arithmeticTrap("r01-t-remainder-zero", "r01-division", function_id, source);
                 frame[op.register] = if (left == std.math.minInt(i32) and right == -1)
                     (if (op.opcode == 7) std.math.minInt(i32) else 0)
                 else if (op.opcode == 7) @divTrunc(left, right) else @rem(left, right);
             },
+            9...11 => {
+                const signed_count = frame[op.right];
+                // Range-check signed counts before narrowing or shifting.
+                if (signed_count < 0 or signed_count > 31) return arithmeticTrap("r01-t-shift-count", "r01-shifts", function_id, source);
+                const count: u5 = @intCast(signed_count);
+                const bits: u32 = @bitCast(frame[op.left]);
+                frame[op.register] = switch (op.opcode) {
+                    9 => @bitCast(bits << count),
+                    10 => frame[op.left] >> count,
+                    11 => @bitCast(bits >> count),
+                    else => unreachable,
+                };
+            },
+            12 => frame[op.register] = frame[op.left] & frame[op.right],
+            13 => frame[op.register] = frame[op.left] | frame[op.right],
+            14 => frame[op.register] = frame[op.left] ^ frame[op.right],
+            15 => frame[op.register] = 0 -% frame[op.left],
+            16 => frame[op.register] = ~frame[op.left],
+            17 => frame[op.register] = @intFromBool(frame[op.left] == 0),
+            18...23 => frame[op.register] = @intFromBool(switch (op.opcode) {
+                18 => frame[op.left] == frame[op.right],
+                19 => frame[op.left] != frame[op.right],
+                20 => frame[op.left] < frame[op.right],
+                21 => frame[op.left] <= frame[op.right],
+                22 => frame[op.left] > frame[op.right],
+                23 => frame[op.left] >= frame[op.right],
+                else => unreachable,
+            }),
             else => unreachable,
         }
     }

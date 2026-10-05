@@ -29,9 +29,10 @@ fn writeOutcome(writer: *std.Io.Writer, outcome: runtime.RequestOutcome, host: *
     const source_view = .{ .path = source.path, .hash = @as([]const u8, &source_hex), .start = start, .end = end };
     switch (outcome) {
         .returned => |returned| {
-            const value = switch (returned.result) { .i32 => |v| try std.fmt.bufPrint(&buffers[3], "{d}", .{v}), .boolean => |v| if (v) "true" else "false" };
-            const type_name = switch (returned.result) { .i32 => "i32", .boolean => "bool" };
-            try std.json.Stringify.value(.{ .status = "returned", .result = .{ .type = type_name, .value = value }, .source = source_view, .functionId = @as([]const u8, &function_hex), .activeRequests = active }, .{}, writer);
+            switch (returned.result) {
+                .i32 => |value| try std.json.Stringify.value(.{ .status = "returned", .result = .{ .type = "i32", .value = try std.fmt.bufPrint(&buffers[3], "{d}", .{value}) }, .source = source_view, .functionId = @as([]const u8, &function_hex), .activeRequests = active }, .{}, writer),
+                .boolean => |value| try std.json.Stringify.value(.{ .status = "returned", .result = .{ .type = "bool", .value = value }, .source = source_view, .functionId = @as([]const u8, &function_hex), .activeRequests = active }, .{}, writer),
+            }
         },
         .failed => |failed| try std.json.Stringify.value(.{ .status = "failed", .code = failed.code, .category = failed.category, .ruleIds = failed.rule_ids, .functionId = @as([]const u8, &function_hex), .source = source_view, .activeRequests = active }, .{}, writer),
     }

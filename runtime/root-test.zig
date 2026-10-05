@@ -141,7 +141,7 @@ test "loader rejects every truncated prefix before execution" {
 
 test "loader rejects wrong identities and malformed typed instructions" {
     var bytes = fixture.bytes;
-    bytes[8] = 2;
+    bytes[8] = 1;
     try reject(&bytes, "r04-version");
     bytes = fixture.bytes;
     bytes[12] ^= 1;
@@ -151,7 +151,7 @@ test "loader rejects wrong identities and malformed typed instructions" {
     try reject(&bytes, "r04-integrity");
     const mutations = [_]struct { offset: usize, value: u8, code: []const u8 }{
         .{ .offset = 84, .value = 'x', .code = "r04-target" },
-        .{ .offset = bytes.len - 32, .value = 9, .code = "r04-instruction" },
+        .{ .offset = bytes.len - 32, .value = 255, .code = "r04-instruction" },
         .{ .offset = bytes.len - 31, .value = 2, .code = "r04-type" },
         .{ .offset = bytes.len - 30, .value = 1, .code = "r04-register" },
         .{ .offset = bytes.len - 12, .value = 1, .code = "r04-reserved" },

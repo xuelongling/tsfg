@@ -39,25 +39,24 @@ public:
   }
 };
 
-class AddOp : public mlir::Op<AddOp, mlir::OpTrait::NOperands<2>::Impl,
-                             mlir::OpTrait::OneResult, mlir::OpTrait::ZeroRegions> {
-public:
-  using Op::Op;
-  MLIR_DEFINE_EXPLICIT_INTERNAL_INLINE_TYPE_ID(AddOp)
-  static llvm::StringRef getOperationName() { return "tsfg_core.add"; }
-  static llvm::ArrayRef<llvm::StringRef> getAttributeNames() { return {}; }
-  mlir::LogicalResult verify() {
-    if (!getOperation()->getResult(0).getType().isSignlessInteger(32) ||
-        !getOperation()->getOperand(0).getType().isSignlessInteger(32) ||
-        !getOperation()->getOperand(1).getType().isSignlessInteger(32))
-      return emitOpError("[core-ir-type] requires i32 operands and result");
-    return mlir::success();
-  }
-};
+enum class ScalarKind { Integer, Comparison, Equality, Boolean };
+bool scalarTypes(mlir::Operation *operation, ScalarKind kind) {
+  const auto result = operation->getResult(0).getType();
+  const auto first = operation->getOperand(0).getType();
+  if (!first.isSignlessInteger(32) && !first.isSignlessInteger(1)) return false;
+  for (mlir::Value operand : operation->getOperands())
+    if (operand.getType() != first) return false;
+  if (kind == ScalarKind::Integer) return first.isSignlessInteger(32) && result == first;
+  if (!result.isSignlessInteger(1)) return false;
+  if (kind == ScalarKind::Comparison) return first.isSignlessInteger(32);
+  if (kind == ScalarKind::Boolean) return first.isSignlessInteger(1);
+  return true;
+}
 
-// Each arithmetic operation is registered and type-verified before emission.
-#define TSFG_INTEGER_BINARY(Class, Name) \
-class Class : public mlir::Op<Class, mlir::OpTrait::NOperands<2>::Impl, \
+// Registered operation traits enforce arity/regions; this verifier enforces
+// the scalar family, independently of frontend types or producer emission.
+#define TSFG_SCALAR_OPERATION(Class, Name, Arity, Kind) \
+class Class : public mlir::Op<Class, mlir::OpTrait::NOperands<Arity>::Impl, \
                              mlir::OpTrait::OneResult, mlir::OpTrait::ZeroRegions> { \
 public: \
   using Op::Op; \
@@ -65,16 +64,32 @@ public: \
   static llvm::StringRef getOperationName() { return "tsfg_core." Name; } \
   static llvm::ArrayRef<llvm::StringRef> getAttributeNames() { return {}; } \
   mlir::LogicalResult verify() { \
-    if (!getOperation()->getResult(0).getType().isSignlessInteger(32) || \
-        !getOperation()->getOperand(0).getType().isSignlessInteger(32) || \
-        !getOperation()->getOperand(1).getType().isSignlessInteger(32)) \
-      return emitOpError("[core-ir-type] requires i32 operands and result"); \
+    if (!scalarTypes(getOperation(), ScalarKind::Kind)) \
+      return emitOpError("[core-ir-type] scalar operand/result types differ"); \
     return mlir::success(); \
   } \
 };
-TSFG_INTEGER_BINARY(DivOp, "div")
-TSFG_INTEGER_BINARY(RemOp, "rem")
-#undef TSFG_INTEGER_BINARY
+TSFG_SCALAR_OPERATION(AddOp, "add", 2, Integer)
+TSFG_SCALAR_OPERATION(SubOp, "sub", 2, Integer)
+TSFG_SCALAR_OPERATION(MulOp, "mul", 2, Integer)
+TSFG_SCALAR_OPERATION(DivOp, "div", 2, Integer)
+TSFG_SCALAR_OPERATION(RemOp, "rem", 2, Integer)
+TSFG_SCALAR_OPERATION(ShlOp, "shl", 2, Integer)
+TSFG_SCALAR_OPERATION(ShrOp, "shr", 2, Integer)
+TSFG_SCALAR_OPERATION(UshrOp, "ushr", 2, Integer)
+TSFG_SCALAR_OPERATION(AndOp, "and", 2, Integer)
+TSFG_SCALAR_OPERATION(OrOp, "or", 2, Integer)
+TSFG_SCALAR_OPERATION(XorOp, "xor", 2, Integer)
+TSFG_SCALAR_OPERATION(NegOp, "neg", 1, Integer)
+TSFG_SCALAR_OPERATION(NotOp, "not", 1, Integer)
+TSFG_SCALAR_OPERATION(BoolNotOp, "bool_not", 1, Boolean)
+TSFG_SCALAR_OPERATION(EqOp, "eq", 2, Equality)
+TSFG_SCALAR_OPERATION(NeOp, "ne", 2, Equality)
+TSFG_SCALAR_OPERATION(LtOp, "lt", 2, Comparison)
+TSFG_SCALAR_OPERATION(LeOp, "le", 2, Comparison)
+TSFG_SCALAR_OPERATION(GtOp, "gt", 2, Comparison)
+TSFG_SCALAR_OPERATION(GeOp, "ge", 2, Comparison)
+#undef TSFG_SCALAR_OPERATION
 
 class CoreDialect : public mlir::Dialect {
 public:
@@ -82,7 +97,9 @@ public:
   static llvm::StringRef getDialectNamespace() { return "tsfg_core"; }
   explicit CoreDialect(mlir::MLIRContext *context)
       : Dialect(getDialectNamespace(), context, mlir::TypeID::get<CoreDialect>()) {
-    addOperations<ConstantOp, AddOp, DivOp, RemOp>();
+    addOperations<ConstantOp, AddOp, SubOp, MulOp, DivOp, RemOp, ShlOp,
+                  ShrOp, UshrOp, AndOp, OrOp, XorOp, NegOp, NotOp, BoolNotOp,
+                  EqOp, NeOp, LtOp, LeOp, GtOp, GeOp>();
   }
 };
 } // namespace tsfg
@@ -149,6 +166,16 @@ bool attributes(mlir::Operation *operation,
   for (const auto &attr : operation->getAttrs())
     if (!llvm::is_contained(allowed, attr.getName().strref())) return false;
   return true;
+}
+
+uint8_t scalarOpcode(llvm::StringRef name) {
+  static const llvm::StringRef names[] = {"add", "sub", "mul", "div", "rem",
+      "shl", "shr", "ushr", "and", "or", "xor", "neg", "not", "bool_not",
+      "eq", "ne", "lt", "le", "gt", "ge"};
+  if (!name.consume_front("tsfg_core.")) return 0;
+  for (unsigned i = 0; i < std::size(names); ++i)
+    if (name == names[i]) return static_cast<uint8_t>(i + 4);
+  return 0;
 }
 
 // Formal R04 producer: derive register instructions from verified MLIR SSA.
@@ -251,11 +278,14 @@ mlir::LogicalResult emitBytecode(mlir::ModuleOp module) {
         opcode = typeCode == 1 ? 1 : 3;
         auto bits = constant->getAttrOfType<mlir::IntegerAttr>("value").getValue();
         immediate = typeCode == 1 ? static_cast<uint32_t>(bits.getSExtValue()) : static_cast<uint32_t>(bits.getZExtValue());
-      } else if (llvm::isa<tsfg::AddOp, tsfg::DivOp, tsfg::RemOp>(operation)) {
+      } else if ((opcode = scalarOpcode(operation.getName().getStringRef()))) {
         if (!attributes(&operation, {"tsfg_source.start", "tsfg_source.end"}) ||
-            !registers.count(operation.getOperand(0)) || !registers.count(operation.getOperand(1))) return reject();
-        opcode = llvm::isa<tsfg::AddOp>(operation) ? 4 : llvm::isa<tsfg::DivOp>(operation) ? 7 : 8;
-        immediate = registers.lookup(operation.getOperand(0)) | (static_cast<uint32_t>(registers.lookup(operation.getOperand(1))) << 16);
+            !registers.count(operation.getOperand(0))) return reject();
+        immediate = registers.lookup(operation.getOperand(0));
+        if (operation.getNumOperands() == 2) {
+          if (!registers.count(operation.getOperand(1))) return reject();
+          immediate |= static_cast<uint32_t>(registers.lookup(operation.getOperand(1))) << 16;
+        }
       } else return reject();
       registers[result] = reg;
     }
