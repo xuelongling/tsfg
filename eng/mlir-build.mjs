@@ -439,11 +439,20 @@ export async function executeMlirTarget({ options, runtime, tools, productRoot, 
     const plannedPaths = plannedTrace.files.map(file => file.repositoryRelativePath).filter(name => !["UPSTREAM.toml", "llvm/LICENSE.TXT", "mlir/LICENSE.TXT"].includes(name));
     const plannedLegal = await readMlirSourceBuildLegalInputs({ sourceRoot, git, paths: plannedPaths });
     await writeFile(path.join(stage, "planned-consumption-legal.json"), serialize(plannedLegal));
-    // The conservative header inventory is verified before any compilation.
-    // Actual dependencies must additionally reconcile to it after compilation.
+    // Verify conservative headers and generator includes before compilation.
+    // Previously observed transitive TableGen dependencies are explicit entries;
+    // Ninja's initial input graph alone does not contain those discovered edges.
     const legalInventory = JSON.parse(await readFile(path.join(productRoot, "eng/mlir-source-build-legal.lock.json"), "utf8"));
-    await readMlirSourceBuildLegalInputs({ sourceRoot, git, paths: legalInventory.files
+    const precompileLegal = await readMlirSourceBuildLegalInputs({ sourceRoot, git, paths: legalInventory.files
       .filter(file => /\.(?:h|hpp|inc|def|td)$/.test(file.path)).map(file => file.path) });
+    for (const file of precompileLegal.files) {
+      const staged = path.join(source, file.path);
+      const state = await lstat(staged);
+      if (!state.isFile() || state.isSymbolicLink() || path.relative(staged, await realpath(staged)) !== "" ||
+          digest(await readFile(staged)) !== file.sha256)
+        throw new MlirBuildError(`Precompile staged source differs from its qualified input: ${file.path}`, "mlir-source-integrity");
+    }
+    await writeFile(path.join(stage, "precompile-consumption-legal.json"), serialize(precompileLegal));
     await runLogged(tools.cmake, ["--build", cmakePath(build), "--target", "tsfg-core-ir", "--parallel", "4"], stage, env, path.join(stage, "build.log"));
     const trace = await collectConsumedInputs({ tools, build, source, sourceEntries, product,
       productEntries: productIdentity.buildInputSet.entries, runtime, env, stage });

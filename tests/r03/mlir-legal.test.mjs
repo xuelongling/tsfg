@@ -97,6 +97,39 @@ test("M01 selected build legal reader admits mandatory IR and YAML generators ob
   assert.equal(result.sourceBuild, "not-run");
 });
 
+test("M01 legal reader qualifies mandatory shared TargetParser TableGen includes for the fixed target", async () => {
+  const { readMlirSourceBuildLegalInputs } = await import("../../eng/mlir-source-legal.mjs");
+  const paths = ["llvm/lib/Target/AArch64/AArch64CallingConvention.td",
+    "llvm/lib/Target/ARM/ARMCallingConv.td", "llvm/lib/Target/RISCV/RISCVCallingConv.td"];
+  const result = await readMlirSourceBuildLegalInputs({ sourceRoot: process.env.TSFG_MLIR_SOURCE,
+    git: process.env.TSFG_GIT, paths });
+  assert.deepEqual(result.files.map(file => file.path), paths);
+  for (const file of result.files) {
+    assert.equal(file.license, "Apache-2.0 WITH LLVM-exception");
+    assert.equal(file.role, "compiler-side-M01");
+    assert.match(file.blob, /^[0-9a-f]{40}$/);
+    assert.match(file.sha256, /^sha256:[0-9a-f]{64}$/);
+    assert.match(file.completeOriginalNotice, /SPDX-License-Identifier: Apache-2.0 WITH LLVM-exception/);
+  }
+  assert.equal(result.intakeComplete, false);
+});
+
+test("M01 legal reader preserves legacy local notices while selecting the proven approved Apache branch", async () => {
+  const { readMlirSourceBuildLegalInputs } = await import("../../eng/mlir-source-legal.mjs");
+  const result = await readMlirSourceBuildLegalInputs({ sourceRoot: process.env.TSFG_MLIR_SOURCE,
+    git: process.env.TSFG_GIT, paths: ["llvm/lib/Target/PowerPC/PPCInstrFuture.td", "llvm/lib/Target/PowerPC/PPCInstrFutureMMA.td"] });
+  for (const file of result.files) {
+    assert.match(file.completeOriginalNotice, /University of Illinois Open Source/);
+    assert.doesNotMatch(file.completeOriginalNotice, /SPDX-License-Identifier/);
+    assert.equal(file.originalTermsClassification, "University of Illinois/NCSA Open Source License");
+    assert.equal(file.selectedConsumptionExpression, "Apache-2.0 WITH LLVM-exception");
+    assert.equal(file.historicalDualLicenseBasis.introductionCommit, "9df924a634ac5ea702b0d8d0d8b737c819a98095");
+    assert.equal(file.historicalDualLicenseBasis.policyBlob, "e3b55f832d51ab034e16c3827eb17b789d61f120");
+    assert.match(file.historicalDualLicenseBasis.completeOriginalPolicy,
+      /all contributions to the project will be made under\s+the terms of both the new license and the legacy license scheme/);
+  }
+});
+
 test("M01 legal decision refuses mutable approvals, altered notices and transferred file mappings", async () => {
   for (const mutate of [lock => { lock.files[0].path = "llvm/include/llvm/Support/xxhash.h"; },
     lock => { lock.files[0].sha256 = `sha256:${"0".repeat(64)}`; },

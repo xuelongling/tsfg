@@ -115,6 +115,17 @@ APFloat-exception conversion headers are not registered. Explicit project
 license grants and their stated exception mechanisms are checked per file;
 absence of a file SPDX annotation is recorded, never filled with a guessed one.
 
+Shared TargetParser generation consumes some AArch64, ARM, PowerPC and RISCV
+TableGen inputs even with only the X86 backend enabled. Their exact discovered
+dependencies are registered individually. Four files without local license
+declarations use the explicit project grant; two original UIUC headers retain
+their complete notices and select the approved Apache branch using their 2022
+new-file introduction and the complete contemporaneous dual-contribution
+policy. This does not approve a new NCSA consumption expression. The builder
+saves the conservative header/TableGen qualification and staged byte checks
+in `precompile-consumption-legal.json` before launching compilation, then
+reconciles actual compiler dependencies again before publication.
+
 Before creating any output parent, the target inspects its nearest existing
 ancestor and requires its actual path to be an ordinary, nonredirected E
 directory. It repeats that check immediately before creation and after it.
