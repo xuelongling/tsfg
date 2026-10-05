@@ -284,6 +284,11 @@ export async function executeMlirTarget({ options, runtime, tools, productRoot, 
       "LLVM_ENABLE_LIBCXX", "LLVM_ENABLE_EH", "LLVM_ENABLE_RTTI", "LLVM_APPEND_VC_REV",
       "MLIR_INCLUDE_TESTS", "MLIR_INCLUDE_EXAMPLES", "MLIR_INCLUDE_DOCS", "MLIR_ENABLE_BINDINGS_PYTHON",
       "MLIR_ENABLE_EXECUTION_ENGINE", "MLIR_ENABLE_CUDA_RUNNER", "MLIR_ENABLE_ROCM_RUNNER", "MLIR_ENABLE_VULKAN_RUNNER"];
+    // Match the existing Windows control plane's explicit locked static CRT.
+    // Automatic default libraries request oldnames.lib, which is not part of
+    // this verified tool closure; required symbols must resolve in these exact
+    // libraries rather than finding an ambient Visual Studio installation.
+    const lockedCrtFlags = "/nodefaultlib libcmtd.lib libvcruntimed.lib libucrtd.lib libcpmtd.lib kernel32.lib";
     const args = ["--trace-expand", "--trace-format=json-v1", `--trace-redirect=${cmakePath(path.join(stage, "cmake-trace.jsonl"))}`,
       "-S", cmakePath(path.join(source, "llvm")), "-B", cmakePath(build), "-G", "Ninja",
       "-DLLVM_ENABLE_PROJECTS=mlir", "-DLLVM_TARGETS_TO_BUILD=X86", "-DLLVM_ENABLE_ASSERTIONS=ON", "-DLLVM_ENABLE_LTO=OFF",
@@ -293,11 +298,14 @@ export async function executeMlirTarget({ options, runtime, tools, productRoot, 
       `-DCMAKE_RC_COMPILER=${cmakePath(tools.rc)}`, `-DCMAKE_MT=${cmakePath(tools.mt)}`, "-DLLVM_USE_LINKER=lld",
       `-DCMAKE_ASM_MASM_COMPILER=${cmakePath(path.join(path.dirname(tools.cl), "ml64.exe"))}`,
       "-DCMAKE_MSVC_RUNTIME_LIBRARY=MultiThreadedDebug", "-DLLVM_USE_CRT_DEBUG=MTd",
+      "-DCMAKE_POLICY_DEFAULT_CMP0141=NEW", "-DCMAKE_MSVC_DEBUG_INFORMATION_FORMAT=Embedded",
       "-DLLVM_INTEGRATED_CRT_ALLOC=", "-DLLVM_USE_SANITIZER=", "-DCMAKE_PREFIX_PATH=",
       "-DCMAKE_FIND_USE_PACKAGE_REGISTRY=OFF", "-DCMAKE_FIND_USE_SYSTEM_PACKAGE_REGISTRY=OFF",
       `-DCMAKE_C_FLAGS=${profileFlags}`, `-DCMAKE_CXX_FLAGS=${profileFlags}`,
       "-DCMAKE_C_FLAGS_DEBUG=/Od /Z7 /UNDEBUG", "-DCMAKE_CXX_FLAGS_DEBUG=/Od /Z7 /UNDEBUG",
-      `-DCMAKE_EXE_LINKER_FLAGS=/Brepro /debug:full /pdbaltpath:%_PDB% /timestamp:${env.SOURCE_DATE_EPOCH}`,
+      `-DCMAKE_EXE_LINKER_FLAGS=/Brepro /debug:full /pdbaltpath:%_PDB% /timestamp:${env.SOURCE_DATE_EPOCH} ${lockedCrtFlags}`,
+      `-DCMAKE_SHARED_LINKER_FLAGS=${lockedCrtFlags}`, `-DCMAKE_MODULE_LINKER_FLAGS=${lockedCrtFlags}`,
+      "-DCMAKE_EXE_LINKER_FLAGS_DEBUG=/debug /INCREMENTAL:NO",
       `-DPython3_EXECUTABLE=${cmakePath(python.executable)}`, "-DPython3_FIND_REGISTRY=NEVER", "-DPython3_FIND_STRATEGY=LOCATION",
       `-DTSFG_VERIFIED_PYTHON=${cmakePath(python.executable)}`, `-DCMAKE_PROJECT_INCLUDE_BEFORE=${cmakePath(path.join(product, "eng/mlir-python-policy.cmake"))}`,
       ...disabled.map(name => `-D${name}=OFF`)];
