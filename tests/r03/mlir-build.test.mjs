@@ -149,7 +149,7 @@ test("Hermetic Build Entry rejects a redirected output ancestor before creating 
   assert.deepEqual(await readdir(target), [], "a rejected ancestor must not receive the missing parent");
 });
 
-test("Hermetic Build Entry gates the real MLIR consumer on the newly required exact header approval", async () => {
+test("Hermetic Build Entry requires a verified native closure after the approved source supplement", async () => {
   assert.ok(process.env.TSFG_MLIR_SOURCE, "actual source must be explicit");
   const root = await createMlirFixture("mlir-legal-gate-");
   const report = path.join(root, "report.json");
@@ -161,7 +161,10 @@ test("Hermetic Build Entry gates the real MLIR consumer on the newly required ex
   assert.ifError(child.error);
   assert.notEqual(child.status, 0);
   const result = JSON.parse(await readFile(report, "utf8"));
-  assert.equal(result.error.issues[0].code, "mlir-source-license");
-  assert.match(result.error.issues[0].message, /llvm\/include\/llvm\/Support\/xxhash\.h/);
+  assert.equal(result.error.issues[0].code, "mlir-tool-integrity");
+  assert.equal(child.status, 11);
+  assert.equal(result.error.category, "lock/integrity");
+  assert.match(result.error.issues[0].message, /verified native tool closure/);
+  assert.deepEqual(await readdir(root), ["report.json"], "missing tools must refuse before staging source");
   // Keep this exact non-configured fixture for the validated cleanup phase.
 });

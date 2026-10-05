@@ -99,15 +99,26 @@ The later source build must use that exact executable with E-drive storage.
 windows-x86_64-msvc --profile debug` is the prepared formal source consumer.
 It requires explicit `TSFG_MLIR_SOURCE`, `TSFG_GIT`,
 `TSFG_MLIR_PYTHON_TOOL_ROOT` and the existing locked native runtime closure.
-The original five-file legal decision remains finite: the three newly required
-files and verbatim `COPYRIGHT.regex` retention still need the disclosed human
-supplement. The legal reader rejects those paths before any source process;
-this preparation does not grant them approval.
+The original five-file decision and the directly accepted 2026-10-05 finite
+delegation now cover the exact additional xxhash/MD5 headers and generated
+Unicode source. `COPYRIGHT.regex` remains verbatim retention only. Neither
+decision expands the global license list or authorizes runtime use.
+
+`eng/mlir-source-build-legal.lock.json` records individual fixed-base paths,
+Git blobs, raw committed SHA256, complete original attributions, explicit
+license-material identities and the selected component expression. The
+conservative configuration/generator/header inventory grants only conditional
+mandatory use by this fixed target. Actual CMake/Ninja/compiler dependencies
+must reconcile to those entries. Unknown terms, another component/version,
+missing materials or changed bytes refuse consumption. The unqualified
+APFloat-exception conversion headers are not registered. Explicit project
+license grants and their stated exception mechanisms are checked per file;
+absence of a file SPDX annotation is recorded, never filled with a guessed one.
 
 Before creating any output parent, the target inspects its nearest existing
 ancestor and requires its actual path to be an ordinary, nonredirected E
 directory. It repeats that check immediately before creation and after it.
-Read-only output and Python checks precede the pending source-file gate so their
+Read-only output and Python checks precede the source-file gate so their
 own failures remain observable; no source configuration or compilation starts
 without all source approvals. Builder source/tool/artifact/output integrity
 errors and `MlirPythonError` use exit11 and retain their machine issue code;
@@ -131,6 +142,11 @@ executable, and disables optional dependency/allocator/sanitizer discovery.
 Python CMake probes receive `-I -B` through the owned policy; profiles and temp
 stay on E. This is local-development execution with strong OS isolation
 not enforced, and its artifacts are not publishable release evidence.
+Git text checkouts may contain CRLF while the immutable object contains LF.
+The original checkout raw digest is retained separately. A replacement is
+accepted only when lossless UTF-8 CRLF-to-LF bytes reproduce the exact pinned
+Git blob; other byte changes fail. Source repositories are never rewritten,
+and the checkout is not falsely reported as originally matching the blob.
 
 Owned native/build/intake files are explicit Build Inputs. Each requires a
 regular tracked mode, real Git last-touch time and matching raw bytes; a local

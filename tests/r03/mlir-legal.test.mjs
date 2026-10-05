@@ -19,11 +19,61 @@ test("M01 legal reader binds the five approved original files to their exact sou
 });
 
 test("M01 legal decision refuses another path, version, unknown component or game-runtime role", async () => {
-  for (const input of [{ paths: ["llvm/include/llvm/Support/xxhash.h"] },
+  for (const input of [{ paths: ["llvm/lib/Support/xxhash-foreign.h"] },
     { paths: ["llvm/lib/Support/unknown.cpp"] }, { baseCommit: "0".repeat(40) }, { role: "game-runtime" }]) {
     await assert.rejects(readMlirSourceLegalFiles({ sourceRoot: process.env.TSFG_MLIR_SOURCE,
       git: process.env.TSFG_GIT, ...input }), { issueCode: "mlir-source-license" });
   }
+});
+
+test("M01 finite supplement admits exact mandatory components and retains the original regex companion", async () => {
+  const paths = ["llvm/include/llvm/Support/xxhash.h", "llvm/include/llvm/Support/MD5.h",
+    "llvm/lib/Support/UnicodeNameToCodepointGenerated.cpp", "llvm/lib/Support/COPYRIGHT.regex"];
+  const result = await readMlirSourceLegalFiles({ sourceRoot: process.env.TSFG_MLIR_SOURCE,
+    git: process.env.TSFG_GIT, paths });
+  assert.deepEqual(result.files.map(file => file.path), paths);
+  assert.deepEqual(result.files.slice(0, 3).map(file => file.license), ["BSD-2-Clause",
+    "LicenseRef-LLVM-MD5-public-domain-fallback", "Apache-2.0 WITH LLVM-exception AND Unicode-DFS-2016"]);
+  assert.equal(result.files[3].consumption, "original-notice-retention-only");
+  assert.match(result.files[3].completeOriginalNotice, /Redistribution and use/);
+  assert.equal(result.intakeComplete, false);
+  assert.equal(result.sourceBuild, "not-run");
+});
+
+test("M01 selected build legal inventory binds mandatory configuration and transitive headers without approving optional scope", async () => {
+  const { readMlirSourceBuildLegalInputs } = await import("../../eng/mlir-source-legal.mjs");
+  const paths = ["llvm/CMakeLists.txt", "llvm/cmake/modules/HandleLLVMOptions.cmake",
+    "llvm/include/llvm/ADT/StringRef.h", "mlir/include/mlir/IR/Operation.h",
+    "llvm/include/llvm/Support/xxhash.h", "llvm/include/llvm/Support/MD5.h"];
+  const result = await readMlirSourceBuildLegalInputs({ sourceRoot: process.env.TSFG_MLIR_SOURCE,
+    git: process.env.TSFG_GIT, paths });
+  assert.deepEqual(result.files.map(file => file.path), paths);
+  assert.equal(result.role, "compiler-side-M01");
+  for (const file of result.files) {
+    assert.match(file.blob, /^[0-9a-f]{40}$/);
+    assert.match(file.sha256, /^sha256:[0-9a-f]{64}$/);
+    assert.ok(file.completeOriginalNotice.length > 0);
+    assert.ok(file.licenseBasis.length > 0);
+  }
+  for (const extra of ["third-party/unittest/googletest/src/gtest.cc", "llvm/lib/Support/COPYRIGHT.regex",
+    "llvm/lib/Support/unknown.cpp", "mlir/include/mlir/Conversion/ArithAndMathToAPFloat/ArithToAPFloat.h"]) {
+    await assert.rejects(readMlirSourceBuildLegalInputs({ sourceRoot: process.env.TSFG_MLIR_SOURCE,
+      git: process.env.TSFG_GIT, paths: [extra] }), { issueCode: "mlir-source-license" });
+  }
+  await assert.rejects(readMlirSourceBuildLegalInputs({ sourceRoot: process.env.TSFG_MLIR_SOURCE,
+    git: process.env.TSFG_GIT, paths, role: "game-runtime" }), { issueCode: "mlir-source-license" });
+});
+
+test("M01 selected build registration refuses changed original legal materials before source consumption", async () => {
+  const root = await createMlirFixture("mlir-build-legal-damaged-");
+  for (const name of ["mlir-source-legal.mjs", "mlir-source.mjs", "intake-ledger.mjs", "source-admission.mjs"])
+    await copyFile(new URL(`../../eng/${name}`, import.meta.url), path.join(root, name));
+  const lock = JSON.parse(await readFile(new URL("../../eng/mlir-source-build-legal.lock.json", import.meta.url), "utf8"));
+  lock.licenseMaterials[0].completeOriginalNotice = "incomplete original terms";
+  await writeFile(path.join(root, "mlir-source-build-legal.lock.json"), `${JSON.stringify(lock)}\n`);
+  const isolated = await import(pathToFileURL(path.join(root, "mlir-source-legal.mjs")).href);
+  await assert.rejects(isolated.readMlirSourceBuildLegalInputs({ sourceRoot: process.env.TSFG_MLIR_SOURCE,
+    git: process.env.TSFG_GIT, paths: ["llvm/CMakeLists.txt"] }), { issueCode: "mlir-source-license" });
 });
 
 test("M01 legal decision refuses mutable approvals, altered notices and transferred file mappings", async () => {

@@ -5,7 +5,7 @@ import { copyFile, lstat, mkdir, open, readFile, readdir, realpath, rename, writ
 import path from "node:path";
 import { sourceGitEnvironment } from "./intake-ledger.mjs";
 import { readMlirSourceIdentity } from "./mlir-source.mjs";
-import { readMlirSourceLegalFiles } from "./mlir-source-legal.mjs";
+import { mlirCommittedSourceBytes, readMlirSourceBuildLegalInputs, readMlirSourceLegalFiles } from "./mlir-source-legal.mjs";
 import { readMlirPythonTool } from "./mlir-python.mjs";
 
 const digest = bytes => `sha256:${createHash("sha256").update(bytes).digest("hex")}`;
@@ -67,6 +67,7 @@ async function materializeSource(identity, git, destination) {
     ["ls-tree", "-r", "-z", identity.sourceCommit, "--", "llvm", "mlir", "cmake", "third-party", "UPSTREAM.toml"]);
   const entries = [];
   const unmaterialized = [];
+  const checkoutDifferences = [];
   for (const line of rawTree.toString("utf8").split("\0").filter(Boolean)) {
     const link = /^120000 blob ([0-9a-f]{40})\t(.+)$/.exec(line);
     if (link) {
@@ -80,16 +81,19 @@ async function materializeSource(identity, git, destination) {
     const state = await lstat(original);
     if (!state.isFile() || state.isSymbolicLink() || !within(identity.sourceRoot, await realpath(original)))
       throw new MlirBuildError(`Nonregular source input: ${name}`, "mlir-source-integrity");
-    const bytes = await readFile(original);
-    const blob = createHash("sha1").update(`blob ${bytes.length}\0`).update(bytes).digest("hex");
-    if (blob !== match[2]) throw new MlirBuildError(`Source bytes differ from committed blob: ${name}`, "mlir-source-integrity");
+    const checkout = await readFile(original);
+    let bytes;
+    try { bytes = mlirCommittedSourceBytes(checkout, match[2], name); }
+    catch (error) { throw new MlirBuildError(error.message, "mlir-source-integrity"); }
+    if (!bytes.equals(checkout)) checkoutDifferences.push({ path: name, observedCheckoutSha256: digest(checkout),
+      committedBlob: match[2], consumedRawSha256: digest(bytes), method: "only CRLF-to-LF; exact immutable Git object equality proven" });
     const target = path.join(destination, name);
     await mkdir(path.dirname(target), { recursive: true });
     await writeFile(target, bytes, { flag: "wx" });
     entries.push({ projectId: "llvm-project.git", repositoryRelativePath: name,
-      normalizedMode: match[1], sha256: digest(bytes), blob });
+      normalizedMode: match[1], sha256: digest(bytes), blob: match[2] });
   }
-  return { entries, unmaterialized };
+  return { entries, unmaterialized, checkoutDifferences };
 }
 
 async function retainedNoticeBundle({ source, sourceEntries, productRoot, identity, legal }) {
@@ -212,7 +216,7 @@ export async function executeMlirTarget({ options, runtime, tools, productRoot, 
   await mkdir(outputParent, { recursive: true });
   await validateOutputAncestor(outputParent);
   // Require immutable product approval/configuration bytes before source execution.
-  for (const name of ["eng/mlir-source-legal.lock.json", "eng/mlir-source-notices.lock.json", "eng/mlir-python.lock.json", "eng/mlir-source.lock.json",
+  for (const name of ["eng/mlir-source-legal.lock.json", "eng/mlir-source-build-legal.lock.json", "eng/mlir-source-notices.lock.json", "eng/mlir-python.lock.json", "eng/mlir-source.lock.json",
     "eng/mlir-build.mjs", "eng/mlir-python-policy.cmake", "compiler/core-ir/main.cpp", "compiler/core-ir/CMakeLists.txt"]) {
     const raw = await readFile(path.join(productRoot, name));
     const committed = gitBytes(git, productRoot, ["show", `HEAD:${name}`]);
@@ -226,9 +230,9 @@ export async function executeMlirTarget({ options, runtime, tools, productRoot, 
   // rather than writing through a publication path after an integrity refusal.
   const failureHandle = await open(path.join(stage, "failure.json"), "wx");
   try {
-    const { entries: sourceEntries, unmaterialized } = await materializeSource(identity, git, source);
+    const { entries: sourceEntries, unmaterialized, checkoutDifferences } = await materializeSource(identity, git, source);
     await writeFile(path.join(stage, "source-snapshot.json"), serialize({ sourceCommit: identity.sourceCommit,
-      sourceTree: identity.sourceTree, entries: sourceEntries, unmaterialized }));
+      sourceTree: identity.sourceTree, entries: sourceEntries, unmaterialized, checkoutDifferences }));
     for (const name of ["compiler/core-ir/main.cpp", "compiler/core-ir/CMakeLists.txt", "eng/mlir-python-policy.cmake"]) {
       await mkdir(path.dirname(path.join(product, name)), { recursive: true });
       await copyFile(path.join(productRoot, name), path.join(product, name));
@@ -245,6 +249,7 @@ export async function executeMlirTarget({ options, runtime, tools, productRoot, 
       "eng/mlir-python-policy.cmake", "eng/mlir-source.mjs", "eng/mlir-source.lock.json", "eng/mlir-python.mjs",
       "eng/mlir-python.lock.json", "eng/mlir-source-legal.mjs", "eng/mlir-source-legal.lock.json"];
     requiredProductInputs.push("eng/mlir-source-notices.lock.json");
+    requiredProductInputs.push("eng/mlir-source-build-legal.lock.json");
     for (const name of requiredProductInputs) {
       const entry = productIdentity.buildInputSet.entries.find(entry => entry.projectId === "tsfg" && entry.repositoryRelativePath === name);
       if (!entry || entry.sha256 !== digest(await readFile(path.join(productRoot, name))))
@@ -296,6 +301,11 @@ export async function executeMlirTarget({ options, runtime, tools, productRoot, 
       `-DPython3_EXECUTABLE=${cmakePath(python.executable)}`, "-DPython3_FIND_REGISTRY=NEVER", "-DPython3_FIND_STRATEGY=LOCATION",
       `-DTSFG_VERIFIED_PYTHON=${cmakePath(python.executable)}`, `-DCMAKE_PROJECT_INCLUDE_BEFORE=${cmakePath(path.join(product, "eng/mlir-python-policy.cmake"))}`,
       ...disabled.map(name => `-D${name}=OFF`)];
+    const configurationPaths = sourceEntries.filter(entry => /^(llvm|mlir|cmake)\//.test(entry.repositoryRelativePath) &&
+      /(?:^|\/)CMakeLists\.txt$|\.cmake$|\.cmake\.in$/.test(entry.repositoryRelativePath) &&
+      !/(?:^|\/)(?:test|tests|examples|docs|benchmark|benchmarks)\//.test(entry.repositoryRelativePath)).map(entry => entry.repositoryRelativePath);
+    const configurationLegal = await readMlirSourceBuildLegalInputs({ sourceRoot, git, paths: configurationPaths });
+    await writeFile(path.join(stage, "configuration-legal.json"), serialize(configurationLegal));
     await runLogged(tools.cmake, args, stage, env, path.join(stage, "configure.log"));
     const cache = await readFile(path.join(build, "CMakeCache.txt"), "utf8");
     for (const name of disabled) {
@@ -317,11 +327,27 @@ export async function executeMlirTarget({ options, runtime, tools, productRoot, 
           throw new MlirBuildError("Planned Python generation requires the exact verified isolated/no-bytecode tool", "mlir-python-integrity");
       }
     }
+    const plannedTrace = await collectConsumedInputs({ tools, build, source, sourceEntries, product,
+      productEntries: productIdentity.buildInputSet.entries, runtime, env, stage });
+    const plannedPaths = plannedTrace.files.map(file => file.repositoryRelativePath).filter(name => !["UPSTREAM.toml", "llvm/LICENSE.TXT", "mlir/LICENSE.TXT"].includes(name));
+    const plannedLegal = await readMlirSourceBuildLegalInputs({ sourceRoot, git, paths: plannedPaths });
+    await writeFile(path.join(stage, "planned-consumption-legal.json"), serialize(plannedLegal));
+    // The conservative header inventory is verified before any compilation.
+    // Actual dependencies must additionally reconcile to it after compilation.
+    const legalInventory = JSON.parse(await readFile(path.join(productRoot, "eng/mlir-source-build-legal.lock.json"), "utf8"));
+    await readMlirSourceBuildLegalInputs({ sourceRoot, git, paths: legalInventory.files
+      .filter(file => /\.(?:h|hpp|inc|def|td)$/.test(file.path)).map(file => file.path) });
     await runLogged(tools.cmake, ["--build", cmakePath(build), "--target", "tsfg-core-ir", "--parallel", "4"], stage, env, path.join(stage, "build.log"));
     const trace = await collectConsumedInputs({ tools, build, source, sourceEntries, product,
       productEntries: productIdentity.buildInputSet.entries, runtime, env, stage });
     const notices = await retainedNoticeBundle({ source, sourceEntries, productRoot, identity, legal });
-    const sourceInputs = new Map([...trace.files, ...notices.inputs].map(entry => [entry.repositoryRelativePath, entry]));
+    const consumedPaths = trace.files.map(file => file.repositoryRelativePath).filter(name => !["UPSTREAM.toml", "llvm/LICENSE.TXT", "mlir/LICENSE.TXT"].includes(name));
+    const consumedLegal = await readMlirSourceBuildLegalInputs({ sourceRoot, git, paths: consumedPaths });
+    await writeFile(path.join(stage, "actual-consumption-legal.json"), serialize(consumedLegal));
+    notices.bundle.actualConsumption = consumedLegal;
+    const materialInputs = consumedLegal.licenseMaterials.map(material => sourceEntries.find(entry => entry.repositoryRelativePath === material.path));
+    if (materialInputs.some(entry => !entry)) throw new MlirBuildError("A consumed original license material was not staged", "mlir-source-license");
+    const sourceInputs = new Map([...trace.files, ...notices.inputs, ...materialInputs].map(entry => [entry.repositoryRelativePath, entry]));
     const inputPayload = { schemaVersion: "1", entries: [...productIdentity.buildInputSet.entries,
       ...[...sourceInputs.values()].map(({ blob, ...entry }) => entry)].sort((a, b) => Buffer.from(`${a.projectId}\0${a.repositoryRelativePath}`)
         .compare(Buffer.from(`${b.projectId}\0${b.repositoryRelativePath}`))) };
@@ -348,6 +374,7 @@ export async function executeMlirTarget({ options, runtime, tools, productRoot, 
     await writeFile(path.join(stage, "input-trace.json"), serialize(trace));
     await readMlirSourceIdentity({ sourceRoot, git });
     await readMlirSourceLegalFiles({ sourceRoot, git, paths: requiredLegalPaths });
+    await readMlirSourceBuildLegalInputs({ sourceRoot, git, paths: consumedPaths });
     await readMlirPythonTool({ toolRoot: process.env.TSFG_MLIR_PYTHON_TOOL_ROOT });
     const currentProduct = await createIdentity(scopedRuntime, productRoot);
     if (serialize(currentProduct.buildIdentity) !== serialize(productIdentity.buildIdentity))
