@@ -32,6 +32,12 @@ hash domains and target layout are the R04 bytecode specification. Source
 content/hash and original UTF-16 anchors survive canonical read/write and
 lowering; body changes do not change logical FunctionId.
 
+Records must be objects, and logical source paths follow the same normalized
+path rules as R04. Source content retains original UTF-16 anchors and must
+contain well-formed Unicode. Invalid UTF-8/JSON, a leading wire BOM or malformed
+owned values fail with `r03-hir-invalid`; well-formed noncanonical serialization
+fails with `r03-hir-canonical`.
+
 The only lowering emits typed SSA constant and return into the admitted C++
 MLIR consumer. That consumer verifies Core IR and derives R04 register
 instructions from the actual SSA definition/use. HIR is never executed by a

@@ -211,3 +211,43 @@ test("C++ R04 producer verifies Core source identities, target, types and actual
     assert.match(child.stderr.toString(), /core-ir-invalid|r04-core-invalid/);
   }
 });
+
+test("HIR verifier preserves object records, normalized paths and canonical Unicode bytes", async () => {
+  const { compileHir, sourceInput } = await import("../../compiler/pipeline.mjs");
+  const { printHir, readHir, verifyHir } = await import("../../compiler/hir.mjs");
+  const result = await compileHir(await sourceInput("export function answer(): i32 { return 42; }"), tools());
+  assert.equal(result.status, "ok", JSON.stringify(result));
+  const original = result.hir;
+  for (const location of ["source", "function", "return", "constant", "root"]) {
+    const hir = structuredClone(original);
+    const array = value => Object.assign([], value);
+    let candidate = hir;
+    if (location === "source") hir.source = array(hir.source);
+    if (location === "function") hir.functions[0] = array(hir.functions[0]);
+    if (location === "return") hir.functions[0].body[0] = array(hir.functions[0].body[0]);
+    if (location === "constant") hir.functions[0].body[0].value = array(hir.functions[0].body[0].value);
+    if (location === "root") candidate = array(hir);
+    assert.throws(() => verifyHir(candidate), /r03-hir-invalid/, `array masquerades as ${location}`);
+    assert.throws(() => printHir(candidate), /r03-hir-invalid/);
+  }
+  for (const sourcePath of ["/src/../main.ts", "/src//main.ts", "/src\\main.ts", "/src/c:main.ts"]) {
+    const hir = structuredClone(original);
+    hir.source.path = sourcePath;
+    hir.functions[0].id = `sha256:${createHash("sha256")
+      .update(`tsfg.function\0${sourcePath}\0answer\0${hir.functions[0].signatureHash.slice(7)}`).digest("hex")}`;
+    assert.throws(() => verifyHir(hir), /r03-hir-invalid/, sourcePath);
+  }
+  const canonical = printHir(original);
+  for (const surrogate of ["\ud800", "\udfff"]) {
+    const hir = structuredClone(original);
+    hir.source.content += surrogate;
+    hir.source.hash = `sha256:${createHash("sha256").update(hir.source.content).digest("hex")}`;
+    const malformed = canonical.replace(JSON.stringify(original.source.content), JSON.stringify(hir.source.content))
+      .replace(original.source.hash, hir.source.hash);
+    assert.throws(() => verifyHir(hir), /r03-hir-invalid/);
+    assert.throws(() => readHir(Buffer.from(malformed)), /r03-hir-invalid/);
+  }
+  for (const malformed of [Buffer.from([255]), Buffer.from("{"),
+    Buffer.concat([Buffer.from([0xef, 0xbb, 0xbf]), Buffer.from(canonical)])])
+    assert.throws(() => readHir(malformed), /r03-hir-invalid/);
+});

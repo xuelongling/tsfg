@@ -6,6 +6,7 @@ import bytecodeSchema from "../contracts/bytecode.schema.json" with { type: "jso
 
 const contract = () => registry["tsfg.hir"];
 const exactKeys = (value, keys) => value && typeof value === "object"
+  && !Array.isArray(value)
   && Object.keys(value).sort().join(",") === [...keys].sort().join(",");
 const hash = value => typeof value === "string" && /^sha256:[0-9a-f]{64}$/.test(value);
 const validText = value => typeof value === "string" && value.length > 0 && !value.includes("\0")
@@ -24,7 +25,10 @@ export function verifyHir(hir) {
       || !exactKeys(hir.source, ["path", "content", "hash"])
       || !validText(hir.source.path) || !hir.source.path.startsWith("/")
       || !hir.source.path.endsWith(".ts") || hir.source.path.endsWith(".d.ts")
+      || /[\\:]/.test(hir.source.path)
+      || hir.source.path.slice(1).split("/").some(part => !part || part === "." || part === "..")
       || typeof hir.source.content !== "string" || hir.source.content.length > 0xffffffff
+      || !hir.source.content.isWellFormed()
       || hir.source.hash !== sha256(hir.source.content)
       || !Array.isArray(hir.functions) || hir.functions.length !== 1) fail();
   const fn = hir.functions[0];
@@ -84,8 +88,15 @@ export function buildHir(snapshot) {
 }
 export const printHir = hir => `${canonical(verifyHir(hir))}\n`;
 export function readHir(bytes) {
-  const text = new TextDecoder("utf-8", { fatal: true }).decode(bytes);
-  const hir = verifyHir(JSON.parse(text));
+  let text, value;
+  try {
+    // Preserve a leading BOM so JSON rejects its noncanonical wire bytes.
+    text = new TextDecoder("utf-8", { fatal: true, ignoreBOM: true }).decode(bytes);
+    value = JSON.parse(text);
+  } catch (error) {
+    throw new TypeError("r03-hir-invalid: HIR must contain valid UTF-8 JSON", { cause: error });
+  }
+  const hir = verifyHir(value);
   if (text !== printHir(hir)) throw new TypeError("r03-hir-canonical: HIR must use its canonical serialization");
   return hir;
 }

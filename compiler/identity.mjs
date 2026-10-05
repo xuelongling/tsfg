@@ -3,9 +3,14 @@ import { createHash } from "node:crypto";
 
 export const sha256 = bytes => `sha256:${createHash("sha256").update(bytes).digest("hex")}`;
 export function canonical(value) {
+  if (typeof value === "string" && !value.isWellFormed())
+    throw new TypeError("canonical input contains a lone surrogate");
   if (Array.isArray(value)) return `[${value.map(canonical).join(",")}]`;
   if (value && typeof value === "object") return `{${Object.keys(value).sort()
-    .map(key => `${JSON.stringify(key)}:${canonical(value[key])}`).join(",")}}`;
+    .map(key => {
+      if (!key.isWellFormed()) throw new TypeError("canonical input key contains a lone surrogate");
+      return `${JSON.stringify(key)}:${canonical(value[key])}`;
+    }).join(",")}}`;
   return JSON.stringify(value);
 }
 export function own(value) {
