@@ -3,6 +3,29 @@ const std = @import("std");
 const runtime = @import("root.zig");
 const fixture = @import("fixture.zig");
 
+test "loader preserves an official absolute logical source path" {
+    const old_path = "fixture.ts";
+    const prefix = "/src/";
+    const path_offset = std.mem.indexOf(u8, &fixture.bytes, old_path).?;
+    var bytes: [fixture.bytes.len + prefix.len]u8 = undefined;
+    @memcpy(bytes[0..path_offset], fixture.bytes[0..path_offset]);
+    @memcpy(bytes[path_offset..][0..prefix.len], prefix);
+    @memcpy(bytes[path_offset + prefix.len ..], fixture.bytes[path_offset..]);
+    std.mem.writeInt(u32, bytes[44..48], bytes.len, .little);
+    std.mem.writeInt(u32, bytes[path_offset - 4 ..][0..4], old_path.len + prefix.len, .little);
+    var digest = std.crypto.hash.sha2.Sha256.init(.{});
+    digest.update("tsfg.function\x00/src/fixture.ts\x00constant\x00ac9438b17e41c86e042aaa640f76bd95693245676c19c4cbfd89cf43315df6f9");
+    const function_offset = path_offset - 4 - 96;
+    digest.final(bytes[function_offset..][0..32]);
+    std.crypto.hash.sha2.Sha256.hash(bytes[80..], bytes[48..80], .{});
+    const module = switch (runtime.load(std.testing.allocator, &bytes)) {
+        .loaded => |module| module,
+        .rejected => return error.UnexpectedLogicalPathRejection,
+    };
+    defer runtime.unload(module);
+    try std.testing.expectEqualStrings("/src/fixture.ts", runtime.moduleInfo(module).source.path);
+}
+
 test "verified bytecode returns a typed i32 through a Runtime request" {
     const loaded = runtime.load(std.testing.allocator, &fixture.bytes);
     const module = switch (loaded) {

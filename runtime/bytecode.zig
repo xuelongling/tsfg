@@ -105,8 +105,11 @@ fn parse(reader: *Reader) error{Invalid}!ModuleInfo {
     if (!std.mem.eql(u8, &signature_hash, &hash("tsfg.signature\x00()->i32"))) return reader.reject("r04-signature", signature_offset);
     if (!std.mem.eql(u8, &type_id, &hash("tsfg.type\x00i32"))) return reader.reject("r04-type", signature_offset + 32);
     const source_path = try reader.string(4096);
-    if (source_path[0] == '/' or std.mem.indexOfAny(u8, source_path, "\\:") != null) return reader.reject("r04-source", reader.offset - source_path.len);
-    var components = std.mem.splitScalar(u8, source_path, '/');
+    // A leading slash is the official frontend's logical source root, never
+    // an instruction to open a host filesystem path. Preserve it in IDs/maps.
+    if (std.mem.indexOfAny(u8, source_path, "\\:") != null) return reader.reject("r04-source", reader.offset - source_path.len);
+    const logical_path = if (source_path[0] == '/') source_path[1..] else source_path;
+    var components = std.mem.splitScalar(u8, logical_path, '/');
     while (components.next()) |component| {
         if (component.len == 0 or std.mem.eql(u8, component, ".") or std.mem.eql(u8, component, "..")) return reader.reject("r04-source", reader.offset - source_path.len);
     }

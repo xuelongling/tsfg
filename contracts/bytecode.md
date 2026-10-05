@@ -22,6 +22,9 @@ Definition/use, instruction and register types, terminator, counts and all
 references are verified before execution. Every instruction has an original
 source UTF-16 half-open range, contained in the function range and source
 length. Source path and content digest are separate from logical entity IDs.
+The path is a normalized logical UTF-8 source path; the official frontend's
+leading logical-root slash is preserved. It never causes a host file read.
+Empty/dot/parent components, backslashes and drive colons are rejected.
 
 TypeId is SHA-256 of UTF-8 `tsfg.type\0i32`; signature hash is SHA-256 of
 `tsfg.signature\0()->i32`. FunctionId is SHA-256 of UTF-8
