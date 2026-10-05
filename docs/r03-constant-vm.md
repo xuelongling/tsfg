@@ -39,8 +39,8 @@ available for subsequent requests. The current argument and capability tables
 must be empty. Instruction, memory and depth limits are physical request limits.
 
 Official checker errors and unsupported checked capabilities use compiler exit
-3 with structured diagnostics. Missing or inconsistent native compiler inputs
-use exit 11. Invalid CLI options use exit 2. A VM load rejection uses exit 3
+3 with structured diagnostics. Missing or inconsistent native compiler or VM inputs
+use exit 11. Invalid CLI options use exit 2. A standalone VM load rejection uses exit 3
 and an `r04-*` diagnostic on stderr; request outcomes are returned as JSON.
 HIR and bytecode versions, stable logical identities, source anchors and machine
 codes are specified in [HIR](../contracts/hir.md) and

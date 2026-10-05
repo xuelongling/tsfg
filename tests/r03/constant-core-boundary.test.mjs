@@ -34,3 +34,18 @@ test("public Core producer rejects nonnormalized paths and malformed UTF8 before
     assert.match(outcome.stderr, /core-ir-invalid|r04-core-invalid/, outcome.description);
   }
 });
+
+test("checked Unicode logical paths and function names retain identities through Core and the formal VM", async () => {
+  const { compileProgram, sourceInput, runBytecode } = await import("../../compiler/pipeline.mjs");
+  const source = "export function π(): i32 { return 42; }";
+  const compiled = await compileProgram(await sourceInput(source, { sourcePath: "/src/π.ts" }), {
+    frontend: process.env.TSFG_FRONTEND_EXE, core: process.env.TSFG_CORE_IR_EXE,
+  });
+  assert.equal(compiled.status, "ok", JSON.stringify(compiled));
+  assert.equal(compiled.hir.functions[0].name, "π");
+  const outcomes = await runBytecode(compiled.bytecode, { vm: process.env.TSFG_VM_EXE });
+  assert.equal(outcomes[0].functionId, compiled.hir.functions[0].id);
+  assert.equal(outcomes[0].source.path, "/src/π.ts");
+  assert.deepEqual(outcomes[0].result, { type: "i32", value: "42" });
+  assert.equal(outcomes[0].activeRequests, "0");
+});

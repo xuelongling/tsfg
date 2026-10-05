@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: MIT
 import assert from "node:assert/strict";
 import { spawnSync } from "node:child_process";
-import { mkdtemp, readFile, writeFile } from "node:fs/promises";
+import { copyFile, mkdtemp, readFile, writeFile } from "node:fs/promises";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 import test from "node:test";
@@ -37,4 +37,52 @@ test("CLI checks source, prints owned HIR/Core and sends actual R04 to the forma
   assert.equal(rejected.status, 3);
   assert.ok(JSON.parse(rejected.stdout.toString()).diagnostics.some(item => item.code === "r01-d-unresolved-name"));
   // Owned test directories are left for the final native PowerShell cleanup.
+});
+
+test("CLI distinguishes unavailable or inconsistent VM inputs from malformed options and request failures", async () => {
+  const { sourceInput } = await import("../../compiler/pipeline.mjs");
+  const temp = process.env.TSFG_MLIR_TEST_TEMP_ROOT;
+  assert.match(temp, /^E:[\\/]/i);
+  const root = await mkdtemp(path.join(temp, "r03-cli-runtime-boundary-"));
+  await writeFile(path.join(root, "ownership.json"), JSON.stringify({ owner: "r03-02-cli-runtime-boundary", root }));
+  const input = path.join(root, "input.json");
+  await writeFile(input, JSON.stringify(await sourceInput("export function answer(): i32 { return 42; }")));
+  const badVm = path.join(root, path.basename(process.env.TSFG_VM_EXE));
+  await copyFile(process.env.TSFG_VM_EXE, badVm);
+  const manifest = JSON.parse(await readFile(path.join(path.dirname(process.env.TSFG_VM_EXE), "artifact-manifest.json"), "utf8"));
+  const output = manifest.outputs.find(output => output.path === path.basename(badVm));
+  assert.ok(output);
+  assert.notEqual(output.sha256, `sha256:${"0".repeat(64)}`);
+  output.sha256 = `sha256:${"0".repeat(64)}`;
+  await writeFile(path.join(root, "artifact-manifest.json"), JSON.stringify(manifest));
+  const cli = fileURLToPath(new URL("../../tooling/tsfgc.mjs", import.meta.url));
+  const run = (vm, requests = "[{}]") => spawnSync(process.execPath,
+    [cli, "--input", input, "--frontend", process.env.TSFG_FRONTEND_EXE,
+      "--core", process.env.TSFG_CORE_IR_EXE, "--emit", "run", "--requests", requests,
+      ...(vm ? ["--vm", vm] : [])], { windowsHide: true });
+  const rejected = [run(badVm), run(undefined)];
+  for (const child of rejected) assert.ifError(child.error);
+  const observed = rejected.map(child => ({ status: child.status, stdout: child.stdout.toString(), stderr: child.stderr.toString() }));
+  for (const result of observed) {
+    assert.equal(result.status, 11, JSON.stringify(observed));
+    const diagnostic = JSON.parse(result.stdout);
+    assert.equal(diagnostic.status, "tool-error");
+    assert.equal(diagnostic.code, "r03-d-runtime");
+    assert.match(diagnostic.message, /r03-tool-vm/);
+    assert.equal(result.stderr, "");
+  }
+  for (const requests of ["[{", "[null]"]) {
+    const invalidOptions = run(process.env.TSFG_VM_EXE, requests);
+    assert.ifError(invalidOptions.error);
+    assert.equal(invalidOptions.status, 2, invalidOptions.stderr.toString());
+    assert.equal(invalidOptions.stdout.length, 0);
+  }
+  const recover = run(process.env.TSFG_VM_EXE, '[{"instructionBudget":0},{}]');
+  assert.ifError(recover.error);
+  assert.equal(recover.status, 0, recover.stderr.toString());
+  const outcomes = JSON.parse(recover.stdout.toString());
+  assert.equal(outcomes[0].code, "r05-execution-abort");
+  assert.equal(outcomes[0].activeRequests, "0");
+  assert.deepEqual(outcomes[1].result, { type: "i32", value: "42" });
+  assert.equal(outcomes[1].activeRequests, "0");
 });

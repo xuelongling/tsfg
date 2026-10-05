@@ -23,8 +23,18 @@ try {
   } else if (emit === "hir") process.stdout.write(printHir(result.hir));
   else if (emit === "core") process.stdout.write(result.core);
   else if (emit === "bytecode") process.stdout.write(result.bytecode);
-  else process.stdout.write(`${JSON.stringify(await runBytecode(result.bytecode, {
-    vm: options.get("--vm"), requests: JSON.parse(options.get("--requests") ?? "[{}]") }))}\n`);
+  else {
+    const requests = JSON.parse(options.get("--requests") ?? "[{}]");
+    try {
+      process.stdout.write(`${JSON.stringify(await runBytecode(result.bytecode, {
+        vm: options.get("--vm"), requests }))}\n`);
+    } catch (error) {
+      // Preserve the formal VM's request-format diagnostics as CLI input errors.
+      if (error.message.startsWith("r05-cli-")) throw error;
+      process.stdout.write(`${JSON.stringify({ status: "tool-error", code: "r03-d-runtime", message: error.message })}\n`);
+      process.exitCode = 11;
+    }
+  }
 } catch (error) {
   process.stderr.write(`${error.message}\n`);
   process.exitCode = 2;
