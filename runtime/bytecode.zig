@@ -18,15 +18,21 @@ pub const ModuleInfo = struct {
     source_utf16_length: u32,
     function_start: u32,
     function_end: u32,
-    constant: i32,
-    constant_start: u32,
-    constant_end: u32,
+    return_type: u8,
+    register_count: u16,
+    instruction_count: u16,
+    instruction_offset: usize,
 };
-pub const Instruction = union(enum) {
-    const_i32: struct { register: u16, immediate: i32, source: Source },
-    return_i32: struct { register: u16, source: Source },
+pub const Instruction = struct {
+    opcode: u8,
+    type_code: u8,
+    register: u16,
+    immediate: i32,
+    left: u16,
+    right: u16,
+    source: Source,
 };
-const Module = struct { allocator: Allocator, bytes: []u8, info: ModuleInfo, instructions: [2]Instruction };
+const Module = struct { allocator: Allocator, bytes: []u8, info: ModuleInfo, instructions: []Instruction };
 pub const LoadFailure = struct { code: []const u8, offset: usize };
 pub const LoadOutcome = union(enum) { loaded: *VerifiedModule, rejected: LoadFailure };
 
@@ -95,15 +101,13 @@ fn parse(reader: *Reader) error{Invalid}!ModuleInfo {
     if (builtin.os.tag != .windows or builtin.cpu.arch != .x86_64) return reader.reject("r04-target", 80);
     try reader.expected(u16, @sizeOf(i32), "r04-layout");
     try reader.expected(u16, @alignOf(i32), "r04-layout");
-    try reader.expected(u32, 1, "r04-capability");
+    try reader.expected(u32, 2, "r04-capability");
     const input_identity = try reader.digest();
     const source_hash = try reader.digest();
     const function_id = try reader.digest();
     const signature_offset = reader.offset;
     const signature_hash = try reader.digest();
     const type_id = try reader.digest();
-    if (!std.mem.eql(u8, &signature_hash, &hash("tsfg.signature\x00()->i32"))) return reader.reject("r04-signature", signature_offset);
-    if (!std.mem.eql(u8, &type_id, &hash("tsfg.type\x00i32"))) return reader.reject("r04-type", signature_offset + 32);
     const source_path = try reader.string(4096);
     // A leading slash is the official frontend's logical source root, never
     // an instruction to open a host filesystem path. Preserve it in IDs/maps.
@@ -128,27 +132,63 @@ fn parse(reader: *Reader) error{Invalid}!ModuleInfo {
     const function_start = try reader.int(u32);
     const function_end = try reader.int(u32);
     if (!rangeValid(function_start, function_end, 0, source_length)) return reader.reject("r04-source-range", reader.offset - 8);
-    try reader.expected(u8, 1, "r04-type");
+    const return_type = try reader.int(u8);
+    if (return_type != 1 and return_type != 2) return reader.reject("r04-type", reader.offset - 1);
+    const signature = if (return_type == 1) "tsfg.signature\x00()->i32" else "tsfg.signature\x00()->bool";
+    const scalar_type = if (return_type == 1) "tsfg.type\x00i32" else "tsfg.type\x00bool";
+    if (!std.mem.eql(u8, &signature_hash, &hash(signature))) return reader.reject("r04-signature", signature_offset);
+    if (!std.mem.eql(u8, &type_id, &hash(scalar_type))) return reader.reject("r04-type", signature_offset + 32);
     try reader.expected(u8, 0, "r04-signature");
-    try reader.expected(u16, 1, "r04-register");
+    const register_count = try reader.int(u16);
+    if (register_count < 1 or register_count > 4096) return reader.reject("r04-register", reader.offset - 2);
     try reader.expected(u16, 1, "r04-block");
-    try reader.expected(u16, 2, "r04-instruction-count");
-    try reader.expected(u8, 1, "r04-instruction");
-    try reader.expected(u8, 1, "r04-type");
-    try reader.expected(u16, 0, "r04-register");
-    const constant = try reader.int(i32);
-    const constant_start = try reader.int(u32);
-    const constant_end = try reader.int(u32);
-    if (!rangeValid(constant_start, constant_end, function_start, function_end)) return reader.reject("r04-source-range", reader.offset - 8);
-    try reader.expected(u8, 2, "r04-instruction");
-    try reader.expected(u8, 1, "r04-type");
-    try reader.expected(u16, 0, "r04-register");
-    try reader.expected(u32, 0, "r04-reserved");
-    const return_start = try reader.int(u32);
-    const return_end = try reader.int(u32);
-    if (!rangeValid(return_start, return_end, function_start, function_end)) return reader.reject("r04-source-range", reader.offset - 8);
+    const instruction_count = try reader.int(u16);
+    if (instruction_count != register_count + 1) return reader.reject("r04-instruction-count", reader.offset - 2);
+    const instruction_offset = reader.offset;
+    var register_types: [4096]u8 = undefined;
+    var return_start: u32 = 0;
+    var return_end: u32 = 0;
+    for (0..instruction_count) |index| {
+        const offset = reader.offset;
+        const opcode = try reader.int(u8);
+        const type_code = try reader.int(u8);
+        const reg = try reader.int(u16);
+        const payload = try reader.int(u32);
+        const start = try reader.int(u32);
+        const end = try reader.int(u32);
+        if (!rangeValid(start, end, function_start, function_end)) return reader.reject("r04-source-range", offset + 8);
+        if (type_code != 1 and type_code != 2) return reader.reject("r04-type", offset + 1);
+        if (index == register_count) {
+            if (opcode != 2) return reader.reject("r04-instruction", offset);
+            if (reg >= register_count) return reader.reject("r04-register", offset + 2);
+            if (type_code != return_type or register_types[reg] != return_type) return reader.reject("r04-type", offset + 1);
+            if (payload != 0) return reader.reject("r04-reserved", offset + 4);
+            return_start = start;
+            return_end = end;
+        } else {
+            if (reg != index) return reader.reject("r04-register", offset + 2);
+            if (opcode == 1 or opcode == 3) {
+                if (type_code != (if (opcode == 1) @as(u8, 1) else 2)) return reader.reject("r04-type", offset + 1);
+                if (opcode == 3 and payload > 1) return reader.reject("r04-boolean", offset + 4);
+            } else if (opcode == 4) {
+                const left: u16 = @truncate(payload);
+                const right: u16 = @truncate(payload >> 16);
+                if (left >= index or right >= index) return reader.reject("r04-register", offset + 4);
+                if (type_code != 1 or register_types[left] != 1 or register_types[right] != 1) return reader.reject("r04-type", offset + 1);
+            } else return reader.reject("r04-instruction", offset);
+            register_types[reg] = type_code;
+        }
+    }
+    // The actual return anchor encloses every executed expression anchor.
+    var ranges: Reader = .{ .bytes = reader.bytes, .offset = instruction_offset };
+    for (0..register_count) |_| {
+        _ = try ranges.take(8);
+        const start = try ranges.int(u32);
+        const end = try ranges.int(u32);
+        if (!rangeValid(start, end, return_start, return_end)) return reader.reject("r04-source-range", ranges.offset - 8);
+    }
     if (reader.offset != reader.bytes.len) return reader.reject("r04-trailing", reader.offset);
-    return .{ .function_id = function_id, .function_name = function_name, .source = .{ .path = source_path, .hash = source_hash, .start = return_start, .end = return_end }, .input_identity = input_identity, .signature_hash = signature_hash, .type_id = type_id, .source_utf16_length = source_length, .function_start = function_start, .function_end = function_end, .constant = constant, .constant_start = constant_start, .constant_end = constant_end };
+    return .{ .function_id = function_id, .function_name = function_name, .source = .{ .path = source_path, .hash = source_hash, .start = return_start, .end = return_end }, .input_identity = input_identity, .signature_hash = signature_hash, .type_id = type_id, .source_utf16_length = source_length, .function_start = function_start, .function_end = function_end, .return_type = return_type, .register_count = register_count, .instruction_count = instruction_count, .instruction_offset = instruction_offset };
 }
 
 pub fn load(allocator: Allocator, bytes: []const u8) LoadOutcome {
@@ -163,13 +203,24 @@ pub fn load(allocator: Allocator, bytes: []const u8) LoadOutcome {
     const name_offset = @intFromPtr(info.function_name.ptr) - @intFromPtr(bytes.ptr);
     info.source.path = owned[path_offset..][0..info.source.path.len];
     info.function_name = owned[name_offset..][0..info.function_name.len];
-    var constant_source = info.source;
-    constant_source.start = info.constant_start;
-    constant_source.end = info.constant_end;
-    module.* = .{ .allocator = allocator, .bytes = owned, .info = info, .instructions = .{
-        .{ .const_i32 = .{ .register = 0, .immediate = info.constant, .source = constant_source } },
-        .{ .return_i32 = .{ .register = 0, .source = info.source } },
-    } };
+    const ops = allocator.alloc(Instruction, info.instruction_count) catch {
+        allocator.free(owned);
+        allocator.destroy(module);
+        return .{ .rejected = .{ .code = "r04-allocation", .offset = 0 } };
+    };
+    var instructions_reader: Reader = .{ .bytes = owned, .offset = info.instruction_offset };
+    for (ops) |*op| {
+        const opcode = instructions_reader.int(u8) catch unreachable;
+        const type_code = instructions_reader.int(u8) catch unreachable;
+        const reg = instructions_reader.int(u16) catch unreachable;
+        const immediate = instructions_reader.int(i32) catch unreachable;
+        var source = info.source;
+        source.start = instructions_reader.int(u32) catch unreachable;
+        source.end = instructions_reader.int(u32) catch unreachable;
+        const payload: u32 = @bitCast(immediate);
+        op.* = .{ .opcode = opcode, .type_code = type_code, .register = reg, .immediate = immediate, .left = @truncate(payload), .right = @truncate(payload >> 16), .source = source };
+    }
+    module.* = .{ .allocator = allocator, .bytes = owned, .info = info, .instructions = ops };
     return .{ .loaded = @ptrCast(module) };
 }
 
@@ -181,6 +232,7 @@ pub fn unload(handle: *VerifiedModule) void {
     const module: *Module = @ptrCast(@alignCast(handle));
     const allocator = module.allocator;
     allocator.free(module.bytes);
+    allocator.free(module.instructions);
     allocator.destroy(module);
 }
 
@@ -191,7 +243,7 @@ pub fn moduleInfo(module: *const VerifiedModule) ModuleInfo {
 
 /// Only loader-verified instructions are exposed, owned until unload.
 pub fn instructions(module: *const VerifiedModule) []const Instruction {
-    return &decoded(module).instructions;
+    return decoded(module).instructions;
 }
 
 pub fn serialize(module: *const VerifiedModule, allocator: Allocator) Allocator.Error![]u8 {
@@ -212,44 +264,36 @@ pub fn inspect(module: *const VerifiedModule, allocator: Allocator) Allocator.Er
     const signature_hash = digestText(info.signature_hash);
     const type_id = digestText(info.type_id);
     const source_hash = digestText(info.source.hash);
-    var buffers: [7][32]u8 = undefined;
-    const constant = std.fmt.bufPrint(&buffers[0], "{d}", .{info.constant}) catch unreachable;
-    const length = std.fmt.bufPrint(&buffers[1], "{d}", .{info.source_utf16_length}) catch unreachable;
-    const start = std.fmt.bufPrint(&buffers[2], "{d}", .{info.function_start}) catch unreachable;
-    const end = std.fmt.bufPrint(&buffers[3], "{d}", .{info.function_end}) catch unreachable;
-    const const_start = std.fmt.bufPrint(&buffers[4], "{d}", .{info.constant_start}) catch unreachable;
-    const const_end = std.fmt.bufPrint(&buffers[5], "{d}", .{info.constant_end}) catch unreachable;
-    const total_bytes = std.fmt.bufPrint(&buffers[6], "{d}", .{decoded(module).bytes.len}) catch unreachable;
-    var source_buffers: [2][32]u8 = undefined;
-    const return_start = std.fmt.bufPrint(&source_buffers[0], "{d}", .{info.source.start}) catch unreachable;
-    const return_end = std.fmt.bufPrint(&source_buffers[1], "{d}", .{info.source.end}) catch unreachable;
+    var arena = std.heap.ArenaAllocator.init(allocator);
+    defer arena.deinit();
+    const temporary = arena.allocator();
+    const View = struct { opcode: []const u8, type: []const u8, register: []const u8, immediate: ?[]const u8 = null, left: ?[]const u8 = null, right: ?[]const u8 = null, start: []const u8, end: []const u8 };
+    const views = try temporary.alloc(View, info.instruction_count);
+    for (instructions(module), views) |op, *view| {
+        view.* = .{ .opcode = switch (op.opcode) { 1 => "const_i32", 2 => if (op.type_code == 1) "return_i32" else "return_bool", 3 => "const_bool", 4 => "add", else => unreachable },
+            .type = if (op.type_code == 1) "i32" else "bool",
+            .register = try std.fmt.allocPrint(temporary, "{d}", .{op.register}),
+            .start = try std.fmt.allocPrint(temporary, "{d}", .{op.source.start}),
+            .end = try std.fmt.allocPrint(temporary, "{d}", .{op.source.end}) };
+        if (op.opcode == 1 or op.opcode == 3) view.immediate = try std.fmt.allocPrint(temporary, "{d}", .{op.immediate});
+        if (op.opcode == 4) {
+            view.left = try std.fmt.allocPrint(temporary, "{d}", .{op.left});
+            view.right = try std.fmt.allocPrint(temporary, "{d}", .{op.right});
+        }
+    }
     return std.json.Stringify.valueAlloc(allocator, .{
-        .familyId = "tsfg.bytecode",
-        .semver = "0.1.0",
-        .schemaHash = "sha256:" ++ contract.schema_hash_hex,
-        .target = contract.target,
-        .triple = contract.triple,
-        .llvmDataLayout = contract.data_layout,
-        .i32Bytes = "4",
-        .i32Align = "4",
-        .capabilities = "1",
-        .totalBytes = total_bytes,
-        .inputIdentity = @as([]const u8, &input_identity),
-        .functionId = @as([]const u8, &function_id),
-        .signatureHash = @as([]const u8, &signature_hash),
-        .typeId = @as([]const u8, &type_id),
-        .source = .{ .path = info.source.path, .hash = @as([]const u8, &source_hash), .utf16Length = length },
+        .familyId = "tsfg.bytecode", .semver = "0.2.0", .schemaHash = "sha256:" ++ contract.schema_hash_hex,
+        .target = contract.target, .triple = contract.triple, .llvmDataLayout = contract.data_layout,
+        .i32Bytes = "4", .i32Align = "4", .capabilities = "2",
+        .totalBytes = try std.fmt.allocPrint(temporary, "{d}", .{decoded(module).bytes.len}),
+        .inputIdentity = @as([]const u8, &input_identity), .functionId = @as([]const u8, &function_id),
+        .signatureHash = @as([]const u8, &signature_hash), .typeId = @as([]const u8, &type_id),
+        .source = .{ .path = info.source.path, .hash = @as([]const u8, &source_hash), .utf16Length = try std.fmt.allocPrint(temporary, "{d}", .{info.source_utf16_length}) },
         .functionName = info.function_name,
-        .functionStart = start,
-        .functionEnd = end,
-        .returnType = "i32",
-        .parameterCount = "0",
-        .registerCount = "1",
-        .blockCount = "1",
-        .instructionCount = "2",
-        .instructions = .{
-            .{ .opcode = "const_i32", .type = "i32", .register = "0", .immediate = constant, .start = const_start, .end = const_end },
-            .{ .opcode = "return_i32", .type = "i32", .register = "0", .start = return_start, .end = return_end },
-        },
-    }, .{});
+        .functionStart = try std.fmt.allocPrint(temporary, "{d}", .{info.function_start}),
+        .functionEnd = try std.fmt.allocPrint(temporary, "{d}", .{info.function_end}),
+        .returnType = if (info.return_type == 1) "i32" else "bool", .parameterCount = "0",
+        .registerCount = try std.fmt.allocPrint(temporary, "{d}", .{info.register_count}), .blockCount = "1",
+        .instructionCount = try std.fmt.allocPrint(temporary, "{d}", .{info.instruction_count}), .instructions = views,
+    }, .{ .emit_null_optional_fields = false });
 }

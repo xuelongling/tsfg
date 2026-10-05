@@ -13,6 +13,7 @@
 #include "llvm/IR/DataLayout.h"
 #include "llvm/IR/LLVMContext.h"
 #include "llvm/IR/Type.h"
+#include "llvm/ADT/DenseMap.h"
 #include <array>
 #include <string>
 #include <vector>
@@ -31,9 +32,25 @@ public:
   }
   mlir::LogicalResult verify() {
     auto value = getOperation()->getAttrOfType<mlir::IntegerAttr>("value");
-    if (!value || !value.getType().isSignlessInteger(32) ||
+    if (!value || !(value.getType().isSignlessInteger(32) || value.getType().isSignlessInteger(1)) ||
         value.getType() != getOperation()->getResult(0).getType())
-      return emitOpError("[core-ir-type] requires an i32 value and i32 result");
+      return emitOpError("[core-ir-type] requires a matching i32/bool value and result");
+    return mlir::success();
+  }
+};
+
+class AddOp : public mlir::Op<AddOp, mlir::OpTrait::NOperands<2>::Impl,
+                             mlir::OpTrait::OneResult, mlir::OpTrait::ZeroRegions> {
+public:
+  using Op::Op;
+  MLIR_DEFINE_EXPLICIT_INTERNAL_INLINE_TYPE_ID(AddOp)
+  static llvm::StringRef getOperationName() { return "tsfg_core.add"; }
+  static llvm::ArrayRef<llvm::StringRef> getAttributeNames() { return {}; }
+  mlir::LogicalResult verify() {
+    if (!getOperation()->getResult(0).getType().isSignlessInteger(32) ||
+        !getOperation()->getOperand(0).getType().isSignlessInteger(32) ||
+        !getOperation()->getOperand(1).getType().isSignlessInteger(32))
+      return emitOpError("[core-ir-type] requires i32 operands and result");
     return mlir::success();
   }
 };
@@ -44,14 +61,14 @@ public:
   static llvm::StringRef getDialectNamespace() { return "tsfg_core"; }
   explicit CoreDialect(mlir::MLIRContext *context)
       : Dialect(getDialectNamespace(), context, mlir::TypeID::get<CoreDialect>()) {
-    addOperations<ConstantOp>();
+    addOperations<ConstantOp, AddOp>();
   }
 };
 } // namespace tsfg
 
 namespace {
 constexpr llvm::StringLiteral bytecodeSchema =
-    "cd53e23d8b988f8ce86fcf0d72fcf6c59a308f6bf03de8f8bc0f27a458890954";
+    "e034e1ae65ef513b19c440406a332605731e80326a95c8bbfe00bfd0651fcfd4";
 constexpr llvm::StringLiteral target = "windows-x86_64-msvc";
 constexpr llvm::StringLiteral triple = "x86_64-pc-windows-msvc";
 constexpr llvm::StringLiteral layout =
@@ -155,8 +172,18 @@ mlir::LogicalResult emitBytecode(mlir::ModuleOp module) {
       !decodeHash(text("tsfg_core.function_id"), function) ||
       !decodeHash(text("tsfg_core.signature_hash"), signature) ||
       !decodeHash(text("tsfg_core.type_id"), type)) return reject();
-  const Hash expectedType = hash(llvm::StringRef("tsfg.type\0i32", 13));
-  const Hash expectedSignature = hash(llvm::StringRef("tsfg.signature\0()->i32", 22));
+  if (module.getBody()->getOperations().size() != 1) return reject();
+  auto fn = llvm::dyn_cast<mlir::func::FuncOp>(&module.getBody()->front());
+  if (!fn || fn.getSymName() != name || fn.getFunctionType().getNumInputs() != 0 ||
+      fn.getFunctionType().getNumResults() != 1 || !fn.getBody().hasOneBlock() ||
+      !attributes(fn, {"sym_name", "function_type"})) return reject();
+  auto returnType = fn.getFunctionType().getResult(0);
+  const bool boolean = returnType.isSignlessInteger(1);
+  if (!boolean && !returnType.isSignlessInteger(32)) return reject();
+  std::string typeDomain("tsfg.type\0", 10), signatureDomain("tsfg.signature\0()->", 19);
+  typeDomain += boolean ? "bool" : "i32";
+  signatureDomain += boolean ? "bool" : "i32";
+  const Hash expectedType = hash(typeDomain), expectedSignature = hash(signatureDomain);
   std::string identity("tsfg.function\0", 14);
   identity += path.str(); identity += '\0'; identity += name.str();
   identity += '\0'; identity += hex(expectedSignature);
@@ -173,23 +200,48 @@ mlir::LogicalResult emitBytecode(mlir::ModuleOp module) {
       !number("tsfg_core.function_end", functionEnd) ||
       functionStart >= functionEnd || functionEnd > sourceLength ||
       module.getBody()->getOperations().size() != 1) return reject();
-  auto fn = llvm::dyn_cast<mlir::func::FuncOp>(&module.getBody()->front());
-  if (!fn || fn.getSymName() != name || fn.getFunctionType().getNumInputs() != 0 ||
-      fn.getFunctionType().getNumResults() != 1 || !fn.getFunctionType().getResult(0).isSignlessInteger(32) ||
-      !fn.getBody().hasOneBlock() ||
-      !attributes(fn, {"sym_name", "function_type"})) return reject();
   auto &block = fn.getBody().front();
-  if (block.getNumArguments() != 0 || block.getOperations().size() != 2) return reject();
-  auto constant = llvm::dyn_cast<tsfg::ConstantOp>(&block.front());
+  const size_t instructionCount = block.getOperations().size();
+  if (block.getNumArguments() != 0 || instructionCount < 2 || instructionCount > 4097) return reject();
   auto returned = llvm::dyn_cast<mlir::func::ReturnOp>(&block.back());
-  if (!constant || !returned || returned.getNumOperands() != 1 ||
-      returned.getOperand(0) != constant->getResult(0) ||
-      !attributes(constant, {"value", "tsfg_source.start", "tsfg_source.end"}) ||
+  if (!returned || returned.getNumOperands() != 1 ||
       !attributes(returned, {"tsfg_source.start", "tsfg_source.end"})) return reject();
-  uint32_t literalStart, literalEnd, returnStart, returnEnd;
-  if (!anchor(constant, functionStart, functionEnd, literalStart, literalEnd) ||
-      !anchor(returned, functionStart, functionEnd, returnStart, returnEnd) ||
-      literalStart < returnStart || literalEnd > returnEnd) return reject();
+  uint32_t returnStart, returnEnd;
+  if (!anchor(returned, functionStart, functionEnd, returnStart, returnEnd)) return reject();
+  Bytes instructions;
+  llvm::DenseMap<mlir::Value, uint16_t> registers;
+  for (mlir::Operation &operation : block) {
+    uint32_t start, end;
+    if (!anchor(&operation, returnStart, returnEnd, start, end)) return reject();
+    uint8_t opcode, typeCode;
+    uint16_t reg;
+    uint32_t immediate = 0;
+    if (&operation == returned.getOperation()) {
+      if (!registers.count(returned.getOperand(0))) return reject();
+      opcode = 2; typeCode = boolean ? 2 : 1; reg = registers.lookup(returned.getOperand(0));
+    } else {
+      if (operation.getNumResults() != 1) return reject();
+      auto result = operation.getResult(0);
+      if (!result.getType().isSignlessInteger(32) && !result.getType().isSignlessInteger(1)) return reject();
+      typeCode = result.getType().isSignlessInteger(1) ? 2 : 1;
+      reg = static_cast<uint16_t>(registers.size());
+      if (auto constant = llvm::dyn_cast<tsfg::ConstantOp>(&operation)) {
+        if (!attributes(constant, {"value", "tsfg_source.start", "tsfg_source.end"})) return reject();
+        opcode = typeCode == 1 ? 1 : 3;
+        auto bits = constant->getAttrOfType<mlir::IntegerAttr>("value").getValue();
+        immediate = typeCode == 1 ? static_cast<uint32_t>(bits.getSExtValue()) : static_cast<uint32_t>(bits.getZExtValue());
+      } else if (llvm::isa<tsfg::AddOp>(operation)) {
+        if (!attributes(&operation, {"tsfg_source.start", "tsfg_source.end"}) ||
+            !registers.count(operation.getOperand(0)) || !registers.count(operation.getOperand(1))) return reject();
+        opcode = 4;
+        immediate = registers.lookup(operation.getOperand(0)) | (static_cast<uint32_t>(registers.lookup(operation.getOperand(1))) << 16);
+      } else return reject();
+      registers[result] = reg;
+    }
+    integer(instructions, opcode, 1); integer(instructions, typeCode, 1);
+    integer(instructions, reg, 2); integer(instructions, immediate, 4);
+    integer(instructions, start, 4); integer(instructions, end, 4);
+  }
   llvm::LLVMContext context;
   llvm::DataLayout targetLayout(layout);
   auto i32 = llvm::Type::getInt32Ty(context);
@@ -199,20 +251,16 @@ mlir::LogicalResult emitBytecode(mlir::ModuleOp module) {
   Bytes payload;
   string(payload, target); string(payload, triple); string(payload, layout);
   integer(payload, static_cast<uint32_t>(size), 2);
-  integer(payload, static_cast<uint32_t>(align), 2); integer(payload, 1, 4);
+  integer(payload, static_cast<uint32_t>(align), 2); integer(payload, 2, 4);
   for (const Hash &value : {input, source, function, signature, type}) appendHash(payload, value);
   string(payload, path); string(payload, name);
   for (uint32_t value : {sourceLength, functionStart, functionEnd}) integer(payload, value, 4);
-  integer(payload, 1, 1); integer(payload, 0, 1);
-  integer(payload, 1, 2); integer(payload, 1, 2); integer(payload, 2, 2);
-  auto value = constant->getAttrOfType<mlir::IntegerAttr>("value").getValue().getSExtValue();
-  integer(payload, 1, 1); integer(payload, 1, 1); integer(payload, 0, 2);
-  integer(payload, static_cast<uint32_t>(value), 4);
-  integer(payload, literalStart, 4); integer(payload, literalEnd, 4);
-  integer(payload, 2, 1); integer(payload, 1, 1); integer(payload, 0, 2);
-  integer(payload, 0, 4); integer(payload, returnStart, 4); integer(payload, returnEnd, 4);
+  integer(payload, boolean ? 2 : 1, 1); integer(payload, 0, 1);
+  integer(payload, static_cast<uint32_t>(registers.size()), 2); integer(payload, 1, 2);
+  integer(payload, static_cast<uint32_t>(instructionCount), 2);
+  payload.insert(payload.end(), instructions.begin(), instructions.end());
   Bytes packet{'T','S','F','G','T','B','C','0'};
-  integer(packet, 1, 4);
+  integer(packet, 2, 4);
   Hash schema; if (!decodeHash(("sha256:" + bytecodeSchema).str(), schema)) return reject();
   appendHash(packet, schema); integer(packet, static_cast<uint32_t>(80 + payload.size()), 4);
   appendHash(packet, llvm::SHA256::hash(payload));
@@ -245,8 +293,8 @@ int main(int argc, char **argv) {
     return 3;
   }
   auto version = module->getOperation()->getAttrOfType<mlir::StringAttr>("tsfg_core.version");
-  if (!version || version.getValue() != "0.1.0") {
-    llvm::errs() << "[core-ir-identity] expected Core IR 0.1.0\n";
+  if (!version || version.getValue() != "0.2.0") {
+    llvm::errs() << "[core-ir-identity] expected Core IR 0.2.0\n";
     return 3;
   }
   if (mlir::failed(mlir::verify(*module))) {
