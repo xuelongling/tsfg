@@ -40,6 +40,47 @@ test("MLIR trace reader requires a physical EVAL CODE command, not a CALL, comme
     error => error instanceof MlirBuildError && error.issueCode === "mlir-source-integrity");
 });
 
+test("M01 internal compiler launcher preserves CodeView and anonymous namespace identity across owned roots", async () => {
+  const compiler = process.env.TSFG_MLIR_CLANG_CL;
+  assert.ok(compiler, "the exact verified clang-cl must be explicit");
+  const launcher = fileURLToPath(new URL("../../eng/mlir-compiler-launcher.mjs", import.meta.url));
+  const root = await createMlirFixture("mlir-compiler-repro-");
+  const outputs = [];
+  for (const name of ["first", "second"]) {
+    const source = path.join(root, name, "source"), product = path.join(root, name, "product"), build = path.join(root, name, "build");
+    for (const directory of [source, product, build]) await mkdir(directory, { recursive: true });
+    await writeFile(path.join(source, "probe.cpp"), "namespace { struct Marker { int value; }; Marker value; }\nint probe() { return value.value; }\n");
+    const mapped = source.replaceAll("\\", "/");
+    const flags = ["/Od", "/Z7", "/Brepro", "/clang:-fdebug-compilation-dir=.", "/clang:-gno-codeview-command-line",
+      `/clang:-ffile-prefix-map=${mapped}=.source`, `/clang:-fdebug-prefix-map=${mapped}=.source`,
+      "/Foprobe.obj", "-c", path.join(source, "probe.cpp")];
+    const child = spawnSync(process.execPath, [launcher, compiler, source, product, build, compiler, ...flags],
+      { cwd: build, env: process.env, encoding: "utf8", windowsHide: true });
+    assert.ifError(child.error);
+    assert.equal(child.status, 0, child.stderr);
+    outputs.push(await readFile(path.join(build, "probe.obj")));
+    await writeFile(path.join(source, "broken.cpp"), "this is invalid C++\n");
+    const failed = spawnSync(process.execPath, [launcher, compiler, source, product, build, compiler,
+      "/c", "/Fobroken.obj", path.join(source, "broken.cpp")], { cwd: build, env: process.env, encoding: "utf8", windowsHide: true });
+    assert.equal(failed.status, 1, "the real compiler failure must retain its exit code");
+    assert.match(failed.stderr, /error:/);
+  }
+  assert.deepEqual(outputs[0], outputs[1], "full COFF bytes must reproduce; this is a compiler probe, not Core IR execution");
+  const source = path.join(root, "first", "source"), product = path.join(root, "first", "product"), build = path.join(root, "first", "build");
+  const flags = ["/c", "/Foblocked.obj", path.join(source, "probe.cpp")];
+  const wrongTool = spawnSync(process.execPath, [launcher, compiler, source, product, build, process.execPath, ...flags],
+    { cwd: build, env: process.env, encoding: "utf8", windowsHide: true });
+  assert.equal(wrongTool.status, 11);
+  assert.match(wrongTool.stderr, /Compiler or working directory differs/);
+  const redirect = path.join(root, "redirected-source");
+  await symlink(source, redirect, "junction");
+  const redirected = spawnSync(process.execPath, [launcher, compiler, redirect, product, build, compiler, ...flags],
+    { cwd: build, env: process.env, encoding: "utf8", windowsHide: true });
+  assert.equal(redirected.status, 11);
+  assert.match(redirected.stderr, /Nonordinary compiler input/);
+  assert.ok(!(await readdir(build)).includes("blocked.obj"), "rejected compiler contexts must not compile");
+});
+
 test("Hermetic Build Entry classifies unsupported MLIR configurations before reading missing inputs", async () => {
   const root = await createMlirFixture("mlir-configuration-");
   const env = { ...process.env };

@@ -176,6 +176,15 @@ raw trace digest while admitting only the verified physical source file.
 The Windows target uses the existing locked static debug CRT libraries and
 disables incremental linking for executable, shared and module debug targets;
 compiler debug information is embedded before producing the detached link PDB.
+The internal CMake compiler launcher invokes the exact verified Clang and
+spells main files in the staged source/product roots relative to the build
+directory. It preserves other arguments, input bytes and compiler exits;
+this avoids absolute-stage hashes in Microsoft anonymous-namespace names.
+CodeView command-line recording is disabled so prefix-map arguments cannot
+retain random stage paths, and the linker uses `.build` as its PDB source path.
+The launcher is a committed, staged and byte-verified Build Input, not a new
+user command or language executor. Reproducibility still requires exact
+executable and detached-PDB bytes from two independent clean builds.
 Only the four POSIX compatibility names observed in LLVMSupport's actual link
 (`lseek`, `write`, `read`, `close`) have x64 COFF aliases to their underscored
 entries in the locked UCRT. The fixed headers declare identical C ABIs; an

@@ -43,6 +43,7 @@ test("Build Input declaration includes both debug target control and smoke input
       { path: "eng/go-work-access.mjs", projectId: "tsfg" },
       { path: "eng/intake-ledger.mjs", projectId: "tsfg" },
       { path: "eng/mlir-build.mjs", projectId: "tsfg" },
+      { path: "eng/mlir-compiler-launcher.mjs", projectId: "tsfg" },
       { path: "eng/mlir-python-policy.cmake", projectId: "tsfg" },
       { path: "eng/mlir-python.lock.json", projectId: "tsfg" },
       { path: "eng/mlir-python.mjs", projectId: "tsfg" },

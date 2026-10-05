@@ -4359,6 +4359,7 @@ function windowsToolchain(runtime) {
     mt: closureToolPath(runtime, "windows-sdk", "mt"),
     mspdbsrv: path.join(msvcRoot, "bin", "Hostx64", "x64", "mspdbsrv.exe"),
     ninja: closureToolPath(runtime, "ninja"),
+    node: closureToolPath(runtime, "node"),
     pdbutil: closureToolPath(runtime, "llvm", "pdbutil"),
     rc: closureToolPath(runtime, "windows-sdk", "rc"),
     zig: closureToolPath(runtime, "zig"),

@@ -311,7 +311,7 @@ export async function executeMlirTarget({ options, runtime, tools, productRoot, 
   await validateOutputAncestor(outputParent);
   // Require immutable product approval/configuration bytes before source execution.
   for (const name of ["eng/mlir-source-legal.lock.json", "eng/mlir-source-build-legal.lock.json", "eng/mlir-source-notices.lock.json", "eng/mlir-python.lock.json", "eng/mlir-source.lock.json",
-    "eng/mlir-build.mjs", "eng/mlir-python-policy.cmake", "compiler/core-ir/main.cpp", "compiler/core-ir/CMakeLists.txt"]) {
+    "eng/mlir-build.mjs", "eng/mlir-compiler-launcher.mjs", "eng/mlir-python-policy.cmake", "compiler/core-ir/main.cpp", "compiler/core-ir/CMakeLists.txt"]) {
     const raw = await readFile(path.join(productRoot, name));
     const committed = gitBytes(git, productRoot, ["show", `HEAD:${name}`]);
     if (!raw.equals(committed)) throw new MlirBuildError(`Intake input must match committed product bytes: ${name}`, "mlir-source-integrity");
@@ -327,7 +327,7 @@ export async function executeMlirTarget({ options, runtime, tools, productRoot, 
     const { entries: sourceEntries, unmaterialized, checkoutDifferences } = await materializeSource(identity, git, source);
     await writeFile(path.join(stage, "source-snapshot.json"), serialize({ sourceCommit: identity.sourceCommit,
       sourceTree: identity.sourceTree, entries: sourceEntries, unmaterialized, checkoutDifferences }));
-    for (const name of ["compiler/core-ir/main.cpp", "compiler/core-ir/CMakeLists.txt", "eng/mlir-python-policy.cmake"]) {
+    for (const name of ["compiler/core-ir/main.cpp", "compiler/core-ir/CMakeLists.txt", "eng/mlir-python-policy.cmake", "eng/mlir-compiler-launcher.mjs"]) {
       await mkdir(path.dirname(path.join(product, name)), { recursive: true });
       await copyFile(path.join(productRoot, name), path.join(product, name));
     }
@@ -342,14 +342,14 @@ export async function executeMlirTarget({ options, runtime, tools, productRoot, 
     const requiredProductInputs = ["compiler/core-ir/main.cpp", "compiler/core-ir/CMakeLists.txt", "eng/mlir-build.mjs",
       "eng/mlir-python-policy.cmake", "eng/mlir-source.mjs", "eng/mlir-source.lock.json", "eng/mlir-python.mjs",
       "eng/mlir-python.lock.json", "eng/mlir-source-legal.mjs", "eng/mlir-source-legal.lock.json"];
-    requiredProductInputs.push("eng/mlir-source-notices.lock.json");
+    requiredProductInputs.push("eng/mlir-compiler-launcher.mjs", "eng/mlir-source-notices.lock.json");
     requiredProductInputs.push("eng/mlir-source-build-legal.lock.json");
     for (const name of requiredProductInputs) {
       const entry = productIdentity.buildInputSet.entries.find(entry => entry.projectId === "tsfg" && entry.repositoryRelativePath === name);
       if (!entry || entry.sha256 !== digest(await readFile(path.join(productRoot, name))))
         throw new MlirBuildError(`Actual product input is absent or changed in Build Input Set: ${name}`, "mlir-source-integrity");
     }
-    for (const name of ["compiler/core-ir/main.cpp", "compiler/core-ir/CMakeLists.txt", "eng/mlir-python-policy.cmake"]) {
+    for (const name of ["compiler/core-ir/main.cpp", "compiler/core-ir/CMakeLists.txt", "eng/mlir-python-policy.cmake", "eng/mlir-compiler-launcher.mjs"]) {
       const entry = productIdentity.buildInputSet.entries.find(entry => entry.projectId === "tsfg" && entry.repositoryRelativePath === name);
       if (digest(await readFile(path.join(product, name))) !== entry.sha256)
         throw new MlirBuildError(`Staged product input differs from declared identity: ${name}`, "mlir-source-integrity");
@@ -367,7 +367,7 @@ export async function executeMlirTarget({ options, runtime, tools, productRoot, 
       sourceCommit: identity.sourceCommit, sourceHistoryMaximum, productEpoch }));
     env.SOURCE_DATE_EPOCH = productIdentity.buildIdentity.source_date_epoch;
     const profileFlags = ["/Od", "/Z7", "/UNDEBUG", "/clang:-march=x86-64-v2", "/clang:-mtune=generic", "/clang:-mno-avx",
-      "/clang:-fno-lto", "/clang:-fno-fast-math", "/clang:-fdebug-compilation-dir=.",
+      "/clang:-fno-lto", "/clang:-fno-fast-math", "/clang:-fdebug-compilation-dir=.", "/clang:-gno-codeview-command-line",
       ...[[source, ".source"], [product, ".product"], [build, ".build"], [runtime.closurePath, ".toolchain"]].flatMap(([from, to]) =>
         [`/clang:-ffile-prefix-map=${cmakePath(from)}=${to}`, `/clang:-fdebug-prefix-map=${cmakePath(from)}=${to}`])]
       .map(flag => `"${flag}"`).join(" ");
@@ -387,12 +387,15 @@ export async function executeMlirTarget({ options, runtime, tools, productRoot, 
     // observed in real LLVMSupport linking; no replacement implementation.
     const lockedCrtAliases = ["lseek", "write", "read", "close"].map(name => `/alternatename:${name}=_${name}`).join(" ");
     const lockedCrtFlags = `/nodefaultlib libcmtd.lib libvcruntimed.lib libucrtd.lib libcpmtd.lib kernel32.lib ${lockedCrtAliases}`;
+    const compilerLauncher = [tools.node, path.join(product, "eng/mlir-compiler-launcher.mjs"), tools.clangcl, source, product, build]
+      .map(cmakePath).join(";");
     const args = ["--trace-expand", "--trace-format=json-v1", `--trace-redirect=${cmakePath(path.join(stage, "cmake-trace.jsonl"))}`,
       "-S", cmakePath(path.join(source, "llvm")), "-B", cmakePath(build), "-G", "Ninja",
       "-DLLVM_ENABLE_PROJECTS=mlir", "-DLLVM_TARGETS_TO_BUILD=X86", "-DLLVM_ENABLE_ASSERTIONS=ON", "-DLLVM_ENABLE_LTO=OFF",
       "-DLLVM_EXTERNAL_PROJECTS=tsfg-core-ir", `-DLLVM_EXTERNAL_TSFG_CORE_IR_SOURCE_DIR=${cmakePath(path.join(product, "compiler/core-ir"))}`,
       "-DCMAKE_BUILD_TYPE=Debug", `-DCMAKE_MAKE_PROGRAM=${cmakePath(tools.ninja)}`, `-DCMAKE_C_COMPILER=${cmakePath(tools.clangcl)}`,
       `-DCMAKE_CXX_COMPILER=${cmakePath(tools.clangcl)}`, `-DCMAKE_LINKER=${cmakePath(tools.lld)}`,
+      `-DCMAKE_C_COMPILER_LAUNCHER=${compilerLauncher}`, `-DCMAKE_CXX_COMPILER_LAUNCHER=${compilerLauncher}`,
       `-DCMAKE_RC_COMPILER=${cmakePath(tools.rc)}`, `-DCMAKE_MT=${cmakePath(tools.mt)}`, "-DLLVM_USE_LINKER=lld",
       `-DCMAKE_ASM_MASM_COMPILER=${cmakePath(path.join(path.dirname(tools.cl), "ml64.exe"))}`,
       "-DCMAKE_MSVC_RUNTIME_LIBRARY=MultiThreadedDebug", "-DLLVM_USE_CRT_DEBUG=MTd",
@@ -401,7 +404,7 @@ export async function executeMlirTarget({ options, runtime, tools, productRoot, 
       "-DCMAKE_FIND_USE_PACKAGE_REGISTRY=OFF", "-DCMAKE_FIND_USE_SYSTEM_PACKAGE_REGISTRY=OFF",
       `-DCMAKE_C_FLAGS=${profileFlags}`, `-DCMAKE_CXX_FLAGS=${profileFlags}`,
       "-DCMAKE_C_FLAGS_DEBUG=/Od /Z7 /UNDEBUG", "-DCMAKE_CXX_FLAGS_DEBUG=/Od /Z7 /UNDEBUG",
-      `-DCMAKE_EXE_LINKER_FLAGS=/Brepro /debug:full /pdbaltpath:%_PDB% /timestamp:${env.SOURCE_DATE_EPOCH} ${lockedCrtFlags}`,
+      `-DCMAKE_EXE_LINKER_FLAGS=/Brepro /debug:full /pdbsourcepath:.build /pdbaltpath:%_PDB% /timestamp:${env.SOURCE_DATE_EPOCH} ${lockedCrtFlags}`,
       `-DCMAKE_SHARED_LINKER_FLAGS=${lockedCrtFlags}`, `-DCMAKE_MODULE_LINKER_FLAGS=${lockedCrtFlags}`,
       "-DCMAKE_EXE_LINKER_FLAGS_DEBUG=/debug /INCREMENTAL:NO",
       "-DCMAKE_SHARED_LINKER_FLAGS_DEBUG=/debug /INCREMENTAL:NO", "-DCMAKE_MODULE_LINKER_FLAGS_DEBUG=/debug /INCREMENTAL:NO",
