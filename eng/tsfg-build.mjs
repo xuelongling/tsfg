@@ -48,6 +48,7 @@ import { executeFrontendTarget, FrontendBuildError } from "./frontend-build.mjs"
 import { verifiedContractSet } from "./contract-set.mjs";
 import { executeMlirTarget, MlirBuildError } from "./mlir-build.mjs";
 import { MlirPythonError } from "./mlir-python.mjs";
+import { executeVmTarget, VmBuildError } from "./vm-build.mjs";
 
 class ConfigurationError extends Error {
   constructor(message, issueCode = "invalid-configuration") {
@@ -385,6 +386,12 @@ function validateMlirConfiguration(options) {
   }
 }
 
+function validateVmConfiguration(options) {
+  if (!options.has("--dev") || process.platform !== "win32" || options.get("--target") !== "windows-x86_64-msvc"
+      || options.get("--profile") !== "debug")
+    throw new ConfigurationError("Zig VM requires explicit local-development Windows debug configuration", "vm-configuration");
+}
+
 function validateSmokeOptions(options, command, requireInput = false) {
   const target = options.get("--target");
   const profile = options.get("--profile");
@@ -404,6 +411,7 @@ function validateSmokeOptions(options, command, requireInput = false) {
     );
   }
   if (command === "build" && options.get("--source-target") === "mlir-core") validateMlirConfiguration(options);
+  if (command === "build" && options.get("--source-target") === "tsfg-vm") validateVmConfiguration(options);
   payloadOptions(options);
   const cpuFixture = options.get("--cpu-fixture");
   if (cpuFixture && (command !== "test" || cpuFixture !== "x86-64-v2")) {
@@ -3586,8 +3594,8 @@ function runWindowsSandboxedCapture(
   environment,
 ) {
   const result = spawnSync(
-    sandboxExecutable,
-    windowsSandboxArguments(sandboxPolicy, executable, arguments_),
+    sandboxExecutable ?? executable,
+    sandboxExecutable ? windowsSandboxArguments(sandboxPolicy, executable, arguments_) : arguments_,
     {
       cwd,
       encoding: "utf8",
@@ -3647,6 +3655,7 @@ async function compileSandbox(runtime, sourceRoot, controlRoot) {
 }
 
 function windowsSandboxArguments(policy, executable, arguments_) {
+  if (!policy) return arguments_;
   if (policy.networkOnly) {
     return [
       "--network-only",
@@ -4496,7 +4505,7 @@ async function normalizeWindowsPdb(
     await writeFile(yamlPath, yaml, { encoding: "utf8" });
     runBuildTool(
       "llvm-pdbutil canonicalization",
-      sandboxExecutable,
+      sandboxExecutable ?? pdbutil,
       windowsSandboxArguments(
         sandboxPolicy,
         pdbutil,
@@ -4529,7 +4538,7 @@ async function normalizeWindowsPdb(
     await writeFile(yamlPath, yaml, { encoding: "utf8" });
     runBuildTool(
       "llvm-pdbutil fixed-point canonicalization",
-      sandboxExecutable,
+      sandboxExecutable ?? pdbutil,
       windowsSandboxArguments(
         sandboxPolicy,
         pdbutil,
@@ -7416,9 +7425,10 @@ async function runCommandLine() {
   const reportPath = invalidGoReport || overlappingSourceReport ? undefined : requestedReportPath;
   // Reject unsupported MLIR requests before inspecting runtime/tool inputs or
   // dispatching any Windows boundary. Report destination safety remains first.
-  if (command === "build" && sourceTarget === "mlir-core") {
+  if (command === "build" && ["mlir-core", "tsfg-vm"].includes(sourceTarget)) {
     try {
-      validateMlirConfiguration(parseBuildOptions(arguments_));
+      if (sourceTarget === "mlir-core") validateMlirConfiguration(parseBuildOptions(arguments_));
+      else validateVmConfiguration(parseBuildOptions(arguments_));
     } catch (error) {
       if (!(error instanceof ConfigurationError)) throw error;
       process.exitCode = await fail(command, 2, "usage/configuration", {
@@ -7451,7 +7461,7 @@ async function runCommandLine() {
         process.env.TSFG_RUNTIME_CACHE,
         process.env.TSFG_RUNTIME_PLATFORM,
         { nativeControls: !((command === "build" || typedProbeTest || frontendTest || sourceReproCheck) && arguments_.includes("--dev") &&
-            ["typescript-dependencies", "typescript-ast", "typescript-frontend", "intake-ledger", "upgrade-review", "mlir-core"].includes(arguments_[arguments_.indexOf("--source-target") + 1])) },
+            ["typescript-dependencies", "typescript-ast", "typescript-frontend", "intake-ledger", "upgrade-review", "mlir-core", "tsfg-vm"].includes(arguments_[arguments_.indexOf("--source-target") + 1])) },
       );
     } catch (error) {
       runtimeIntegrityError = error;
@@ -7584,6 +7594,26 @@ async function runCommandLine() {
         process.exitCode = await succeed(command, await executeIntakeLedgerTarget(options), reportPath, "offline");
       } else if (options.get("--source-target") === "typescript-frontend") {
         process.exitCode = await succeed(command, await runFrontendTarget(options, runtimeClosure, command), reportPath, "offline");
+      } else if (options.get("--source-target") === "tsfg-vm") {
+        const workspaceState = inspectProductWorkspace(options, true, command);
+        const result = await executeVmTarget({ options, runtime: runtimeClosure,
+          tools: runtimeClosure ? windowsToolchain(runtimeClosure) : undefined,
+          productRoot: workspaceState.root, workspaceState, serialize: canonicalize,
+          normalize: async ({ executable, pdb, stage, product, environment, identity, tools, runtime }) => {
+            const guid = await normalizeWindowsPdb(pdb, tools.pdbutil,
+              [[product, "."], [runtime.closurePath, ".toolchain"], [stage, ".build"]], stage, environment);
+            await writeFile(executable, await normalizeWindowsExecutable(executable, guid,
+              Number.parseInt(identity.buildIdentity.source_date_epoch, 10)));
+          },
+          createIdentity: (runtime, root) => createBuildIdentity(runtime, "windows-x86_64-msvc", "debug", root,
+            { sourceTarget: "tsfg-vm", simdDispatch: "runtime-detected" }),
+          verifyTools: async () => {
+            const current = await verifyRuntimeClosure(process.env.TSFG_RUNTIME_LOCK, runtimeClosure.cachePath,
+              "windows-x86_64-msvc", { nativeControls: false });
+            if (current.lockDigest !== runtimeClosure.lockDigest)
+              throw new VmBuildError("Tool closure changed during VM build", "vm-tool-integrity");
+          } });
+        process.exitCode = await succeed(command, result, reportPath, "offline");
       } else if (options.get("--source-target") === "mlir-core") {
         const workspaceState = inspectProductWorkspace(options, true, command);
         const result = await executeMlirTarget({ options, runtime: runtimeClosure,
@@ -7630,7 +7660,7 @@ async function runCommandLine() {
     } catch (error) {
       if (publication) await publication.rollback();
       const isConfigurationError = error instanceof ConfigurationError;
-      const isBuildFailure = error instanceof BuildFailureError || error instanceof AstExecutionError || error instanceof GenerationError || error instanceof FrontendBuildError || error instanceof MlirBuildError;
+      const isBuildFailure = error instanceof BuildFailureError || error instanceof AstExecutionError || error instanceof GenerationError || error instanceof FrontendBuildError || error instanceof MlirBuildError || error instanceof VmBuildError;
       const isProbeFailure = error instanceof AstExecutionError && (error.probes?.status === "failed" || error.jsIsolation?.status === "failed" || error.requiredTests?.status === "failed");
       const isBuildPolicy = error instanceof BuildPolicyError;
       const isWorkspaceMismatch = error instanceof WorkspaceMismatchError || error instanceof IntakeLedgerError;
@@ -7638,7 +7668,8 @@ async function runCommandLine() {
       const isUndeclaredInput = error instanceof UndeclaredInputError;
       const isSandboxBoundary = error instanceof SandboxBoundaryError;
       const isGoIntegrity = error instanceof GoInputIntegrityError;
-      const isMlirIntegrity = error instanceof MlirPythonError ||
+      const isMlirIntegrity = (error instanceof VmBuildError &&
+        ["vm-tool-integrity", "vm-source-integrity", "vm-artifact-integrity", "vm-output-integrity"].includes(error.issueCode)) || error instanceof MlirPythonError ||
         (error instanceof IntakeLedgerError && error.issueCode === "mlir-source-license") || (error instanceof MlirBuildError &&
         ["mlir-source-integrity", "mlir-tool-integrity", "mlir-artifact-integrity", "mlir-output-integrity",
           "mlir-python-integrity", "mlir-source-license"].includes(error.issueCode));
@@ -7675,7 +7706,7 @@ async function runCommandLine() {
                     ? "sandbox-boundary"
                     : isBuildPolicy
                       ? "forbidden-build-option"
-                    : isProbeFailure ? "typescript-probe" : isBuildFailure ? (error instanceof MlirBuildError ? error.issueCode : "native-build") : "internal-control-plane",
+                    : isProbeFailure ? "typescript-probe" : isBuildFailure ? ((error instanceof MlirBuildError || error instanceof VmBuildError) ? error.issueCode : "native-build") : "internal-control-plane",
           message: error.message,
           ...(sourceTarget === "typescript-ast" ? {
             generation: error.generation ?? { status: "not-run", reason: error.message },

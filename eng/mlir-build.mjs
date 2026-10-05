@@ -488,7 +488,7 @@ export async function executeMlirTarget({ options, runtime, tools, productRoot, 
     outputs.sort((a, b) => Buffer.from(a.path).compare(Buffer.from(b.path)));
     const manifest = { schemaVersion: "1", buildIdentity, buildInputSet, contractSetId: productIdentity.contractSetId,
       productVersion: productIdentity.productVersion, toolchainClosureDigest: buildIdentity.toolchainClosureDigest,
-      outputs, capability: "Core IR structural intake only" };
+      outputs, capability: "typed SSA verification and R04 i32-constant-return producer" };
     await writeFile(path.join(publish, "artifact-manifest.json"), serialize(manifest));
     await writeFile(path.join(stage, "input-trace.json"), serialize(trace));
     await readMlirSourceIdentity({ sourceRoot, git });
