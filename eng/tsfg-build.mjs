@@ -7637,7 +7637,8 @@ async function runCommandLine() {
       const isUndeclaredInput = error instanceof UndeclaredInputError;
       const isSandboxBoundary = error instanceof SandboxBoundaryError;
       const isGoIntegrity = error instanceof GoInputIntegrityError;
-      const isMlirIntegrity = error instanceof MlirPythonError || (error instanceof MlirBuildError &&
+      const isMlirIntegrity = error instanceof MlirPythonError ||
+        (error instanceof IntakeLedgerError && error.issueCode === "mlir-source-license") || (error instanceof MlirBuildError &&
         ["mlir-source-integrity", "mlir-tool-integrity", "mlir-artifact-integrity", "mlir-output-integrity",
           "mlir-python-integrity", "mlir-source-license"].includes(error.issueCode));
       process.exitCode = await fail(

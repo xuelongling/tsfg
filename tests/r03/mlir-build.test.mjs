@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: MIT
 import assert from "node:assert/strict";
 import { spawnSync } from "node:child_process";
-import { mkdir, readFile, readdir, symlink, writeFile } from "node:fs/promises";
+import { cp, mkdir, readFile, readdir, symlink, writeFile } from "node:fs/promises";
 import path from "node:path";
 import test from "node:test";
 import { fileURLToPath } from "node:url";
@@ -200,4 +200,32 @@ test("Hermetic Build Entry requires a verified native closure after the approved
   assert.match(result.error.issues[0].message, /verified native tool closure/);
   assert.deepEqual(await readdir(root), ["report.json"], "missing tools must refuse before staging source");
   // Keep this exact non-configured fixture for the validated cleanup phase.
+});
+
+test("Hermetic Build Entry classifies missing or corrupted MLIR legal inputs as lock integrity", async () => {
+  const workspace = fileURLToPath(new URL("../../", import.meta.url));
+  for (const damage of ["missing-lock", "truncated-original-notice"]) {
+    const root = await createMlirFixture(`mlir-legal-cli-${damage}-`);
+    const eng = path.join(root, "eng");
+    await cp(new URL("../../eng/", import.meta.url), eng, { recursive: true,
+      filter: source => damage !== "missing-lock" || path.basename(source) !== "mlir-source-legal.lock.json" });
+    if (damage === "truncated-original-notice") {
+      const lock = JSON.parse(await readFile(path.join(eng, "mlir-source-legal.lock.json"), "utf8"));
+      lock.files[0].notice = "incomplete original terms";
+      await writeFile(path.join(eng, "mlir-source-legal.lock.json"), `${JSON.stringify(lock)}\n`);
+    }
+    const report = path.join(root, "report.json");
+    const env = { ...process.env };
+    for (const key of Object.keys(env)) if (key.startsWith("TSFG_RUNTIME_") || key.startsWith("TSFG_WINDOWS_")) delete env[key];
+    const child = spawnSync(process.execPath, [path.join(eng, "tsfg-build.mjs"), "build", "--dev", "--workspace", workspace,
+      "--source-target", "mlir-core", "--target", "windows-x86_64-msvc", "--profile", "debug",
+      "--out", path.join(root, "out"), "--report", report], { env, encoding: "utf8", windowsHide: true });
+    assert.ifError(child.error);
+    const result = JSON.parse(await readFile(report, "utf8"));
+    assert.equal(result.error.issues[0].code, "mlir-source-license");
+    assert.equal(child.status, 11);
+    assert.equal(result.error.category, "lock/integrity");
+    assert.deepEqual((await readdir(root)).sort(), ["eng", "report.json"],
+      "legal integrity must refuse before staging or configuring source");
+  }
 });
