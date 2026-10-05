@@ -55,8 +55,8 @@ bool scalarTypes(mlir::Operation *operation, ScalarKind kind) {
 
 // Registered operation traits enforce arity/regions; this verifier enforces
 // the scalar family, independently of frontend types or producer emission.
-#define TSFG_SCALAR_OPERATION(Class, Name, Arity, Kind) \
-class Class : public mlir::Op<Class, mlir::OpTrait::NOperands<Arity>::Impl, \
+#define TSFG_SCALAR_OPERATION(Class, Name, Operands, Kind) \
+class Class : public mlir::Op<Class, Operands, \
                              mlir::OpTrait::OneResult, mlir::OpTrait::ZeroRegions> { \
 public: \
   using Op::Op; \
@@ -69,26 +69,26 @@ public: \
     return mlir::success(); \
   } \
 };
-TSFG_SCALAR_OPERATION(AddOp, "add", 2, Integer)
-TSFG_SCALAR_OPERATION(SubOp, "sub", 2, Integer)
-TSFG_SCALAR_OPERATION(MulOp, "mul", 2, Integer)
-TSFG_SCALAR_OPERATION(DivOp, "div", 2, Integer)
-TSFG_SCALAR_OPERATION(RemOp, "rem", 2, Integer)
-TSFG_SCALAR_OPERATION(ShlOp, "shl", 2, Integer)
-TSFG_SCALAR_OPERATION(ShrOp, "shr", 2, Integer)
-TSFG_SCALAR_OPERATION(UshrOp, "ushr", 2, Integer)
-TSFG_SCALAR_OPERATION(AndOp, "and", 2, Integer)
-TSFG_SCALAR_OPERATION(OrOp, "or", 2, Integer)
-TSFG_SCALAR_OPERATION(XorOp, "xor", 2, Integer)
-TSFG_SCALAR_OPERATION(NegOp, "neg", 1, Integer)
-TSFG_SCALAR_OPERATION(NotOp, "not", 1, Integer)
-TSFG_SCALAR_OPERATION(BoolNotOp, "bool_not", 1, Boolean)
-TSFG_SCALAR_OPERATION(EqOp, "eq", 2, Equality)
-TSFG_SCALAR_OPERATION(NeOp, "ne", 2, Equality)
-TSFG_SCALAR_OPERATION(LtOp, "lt", 2, Comparison)
-TSFG_SCALAR_OPERATION(LeOp, "le", 2, Comparison)
-TSFG_SCALAR_OPERATION(GtOp, "gt", 2, Comparison)
-TSFG_SCALAR_OPERATION(GeOp, "ge", 2, Comparison)
+TSFG_SCALAR_OPERATION(AddOp, "add", mlir::OpTrait::NOperands<2>::Impl, Integer)
+TSFG_SCALAR_OPERATION(SubOp, "sub", mlir::OpTrait::NOperands<2>::Impl, Integer)
+TSFG_SCALAR_OPERATION(MulOp, "mul", mlir::OpTrait::NOperands<2>::Impl, Integer)
+TSFG_SCALAR_OPERATION(DivOp, "div", mlir::OpTrait::NOperands<2>::Impl, Integer)
+TSFG_SCALAR_OPERATION(RemOp, "rem", mlir::OpTrait::NOperands<2>::Impl, Integer)
+TSFG_SCALAR_OPERATION(ShlOp, "shl", mlir::OpTrait::NOperands<2>::Impl, Integer)
+TSFG_SCALAR_OPERATION(ShrOp, "shr", mlir::OpTrait::NOperands<2>::Impl, Integer)
+TSFG_SCALAR_OPERATION(UshrOp, "ushr", mlir::OpTrait::NOperands<2>::Impl, Integer)
+TSFG_SCALAR_OPERATION(AndOp, "and", mlir::OpTrait::NOperands<2>::Impl, Integer)
+TSFG_SCALAR_OPERATION(OrOp, "or", mlir::OpTrait::NOperands<2>::Impl, Integer)
+TSFG_SCALAR_OPERATION(XorOp, "xor", mlir::OpTrait::NOperands<2>::Impl, Integer)
+TSFG_SCALAR_OPERATION(NegOp, "neg", mlir::OpTrait::OneOperand, Integer)
+TSFG_SCALAR_OPERATION(NotOp, "not", mlir::OpTrait::OneOperand, Integer)
+TSFG_SCALAR_OPERATION(BoolNotOp, "bool_not", mlir::OpTrait::OneOperand, Boolean)
+TSFG_SCALAR_OPERATION(EqOp, "eq", mlir::OpTrait::NOperands<2>::Impl, Equality)
+TSFG_SCALAR_OPERATION(NeOp, "ne", mlir::OpTrait::NOperands<2>::Impl, Equality)
+TSFG_SCALAR_OPERATION(LtOp, "lt", mlir::OpTrait::NOperands<2>::Impl, Comparison)
+TSFG_SCALAR_OPERATION(LeOp, "le", mlir::OpTrait::NOperands<2>::Impl, Comparison)
+TSFG_SCALAR_OPERATION(GtOp, "gt", mlir::OpTrait::NOperands<2>::Impl, Comparison)
+TSFG_SCALAR_OPERATION(GeOp, "ge", mlir::OpTrait::NOperands<2>::Impl, Comparison)
 #undef TSFG_SCALAR_OPERATION
 
 class CoreDialect : public mlir::Dialect {
