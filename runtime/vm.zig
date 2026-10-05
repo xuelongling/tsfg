@@ -8,10 +8,14 @@ pub const TypedValue = union(enum) { i32: i32, boolean: bool };
 pub const Capability = struct { id: u32 };
 pub const RequestLimits = struct { memory_bytes: usize = 16384, instruction_budget: u64 = 4097, depth: u32 = 1 };
 pub const Returned = struct { result: TypedValue, function_id: FunctionId, source: Source };
-pub const RequestFailure = struct { code: []const u8, category: []const u8, function_id: FunctionId, source: Source };
+pub const RequestFailure = struct { code: []const u8, category: []const u8, rule_ids: []const []const u8 = &.{}, function_id: FunctionId, source: Source };
 pub const RequestOutcome = union(enum) { returned: Returned, failed: RequestFailure };
 fn requestFailure(code: []const u8, function_id: FunctionId, source: Source) RequestOutcome {
     return .{ .failed = .{ .code = code, .category = if (std.mem.eql(u8, code, "r05-execution-abort")) "execution-abort" else "request", .function_id = function_id, .source = source } };
+}
+
+fn arithmeticTrap(comptime code: []const u8, function_id: FunctionId, source: Source) RequestOutcome {
+    return .{ .failed = .{ .code = code, .category = "trap", .rule_ids = &.{"r01-division"}, .function_id = function_id, .source = source } };
 }
 
 pub fn evaluate(allocator: std.mem.Allocator, module: *const VerifiedModule, function_id: FunctionId, arguments: []const TypedValue, capabilities: []const Capability, limits: RequestLimits) RequestOutcome {
@@ -33,6 +37,15 @@ pub fn evaluate(allocator: std.mem.Allocator, module: *const VerifiedModule, fun
             1, 3 => frame[op.register] = op.immediate,
             2 => return .{ .returned = .{ .result = if (op.type_code == 1) .{ .i32 = frame[op.register] } else .{ .boolean = frame[op.register] != 0 }, .function_id = function_id, .source = op.source } },
             4 => frame[op.register] = frame[op.left] +% frame[op.right],
+            7, 8 => {
+                const left = frame[op.left];
+                const right = frame[op.right];
+                // Guard before native division/remainder, including MIN / -1.
+                if (right == 0) return if (op.opcode == 7) arithmeticTrap("r01-t-divide-zero", function_id, source) else arithmeticTrap("r01-t-remainder-zero", function_id, source);
+                frame[op.register] = if (left == std.math.minInt(i32) and right == -1)
+                    (if (op.opcode == 7) std.math.minInt(i32) else 0)
+                else if (op.opcode == 7) @divTrunc(left, right) else @rem(left, right);
+            },
             else => unreachable,
         }
     }

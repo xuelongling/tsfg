@@ -33,19 +33,73 @@ fn writeOutcome(writer: *std.Io.Writer, outcome: runtime.RequestOutcome, host: *
             const type_name = switch (returned.result) { .i32 => "i32", .boolean => "bool" };
             try std.json.Stringify.value(.{ .status = "returned", .result = .{ .type = type_name, .value = value }, .source = source_view, .functionId = @as([]const u8, &function_hex), .activeRequests = active }, .{}, writer);
         },
-        .failed => |failed| try std.json.Stringify.value(.{ .status = "failed", .code = failed.code, .category = failed.category, .functionId = @as([]const u8, &function_hex), .source = source_view, .activeRequests = active }, .{}, writer),
+        .failed => |failed| try std.json.Stringify.value(.{ .status = "failed", .code = failed.code, .category = failed.category, .ruleIds = failed.rule_ids, .functionId = @as([]const u8, &function_hex), .source = source_view, .activeRequests = active }, .{}, writer),
     }
+}
+
+fn evaluateRequest(host: *runtime.Runtime, module: *const runtime.VerifiedModule, request: Request) !runtime.RequestOutcome {
+    var function_id = runtime.moduleInfo(module).function_id;
+    if (request.functionId) |text| {
+        const id = if (std.mem.startsWith(u8, text, "sha256:")) text[7..] else text;
+        if (id.len != 64) return error.FunctionId;
+        for (id) |character| if (!std.ascii.isDigit(character) and !(character >= 'a' and character <= 'f')) return error.FunctionId;
+        _ = try std.fmt.hexToBytes(&function_id, id);
+    }
+    return runtime.eval_bytecode(host, module, function_id, if (request.arguments.len == 0) &.{} else &.{.{ .i32 = 0 }}, if (request.capabilities.len == 0) &.{} else &.{.{ .id = 0 }}, .{ .memory_bytes = @intCast(request.memoryBytes), .instruction_budget = request.instructionBudget, .depth = request.depth });
+}
+
+// The transport frames existing R04 packets; it does not add bytecode semantics.
+fn runSequence(init: std.process.Init, bytes: []const u8, requests_json: []const u8) !u8 {
+    const requests = try std.json.parseFromSlice([]const Request, init.gpa, requests_json, .{});
+    defer requests.deinit();
+    if (bytes.len < 12 or !std.mem.eql(u8, bytes[0..8], "TSFGREQ1")) return error.RequestSequence;
+    const count = std.mem.readInt(u32, bytes[8..12], .little);
+    if (count < 1 or count > 128 or count != requests.value.len) return error.RequestSequence;
+    var frames: [128][]const u8 = undefined;
+    var cursor: usize = 12;
+    for (frames[0..count]) |*frame| {
+        if (bytes.len - cursor < 4) return error.RequestSequence;
+        const length = std.mem.readInt(u32, bytes[cursor..][0..4], .little);
+        cursor += 4;
+        if (length > bytes.len - cursor) return error.RequestSequence;
+        frame.* = bytes[cursor..][0..length];
+        cursor += length;
+    }
+    if (cursor != bytes.len) return error.RequestSequence;
+    var host = runtime.Runtime.init(init.gpa);
+    var output: std.Io.Writer.Allocating = .init(init.gpa);
+    defer output.deinit();
+    try output.writer.writeByte('[');
+    for (frames[0..count], requests.value, 0..) |frame, request, index| {
+        const module = switch (runtime.load(init.gpa, frame)) {
+            .loaded => |module| module,
+            .rejected => |failure| {
+                const diagnostic = try std.json.Stringify.valueAlloc(init.gpa, .{ .code = failure.code, .offset = failure.offset }, .{});
+                defer init.gpa.free(diagnostic);
+                try std.Io.File.stderr().writeStreamingAll(init.io, diagnostic);
+                try std.Io.File.stderr().writeStreamingAll(init.io, "\n");
+                return 3;
+            },
+        };
+        defer runtime.unload(module);
+        if (index != 0) try output.writer.writeByte(',');
+        try writeOutcome(&output.writer, try evaluateRequest(&host, module, request), &host);
+    }
+    try output.writer.writeAll("]\n");
+    try std.Io.File.stdout().writeStreamingAll(init.io, output.written());
+    return 0;
 }
 
 fn run(init: std.process.Init) !u8 {
     const args = try init.minimal.args.toSlice(init.arena.allocator());
-    var mode: enum { evaluate, inspect, roundtrip } = .evaluate;
+    var mode: enum { evaluate, inspect, roundtrip, sequence } = .evaluate;
     var requests_json: []const u8 = "[{}]";
     if (args.len == 2 and std.mem.eql(u8, args[1], "--inspect")) {
         mode = .inspect;
     } else if (args.len == 2 and std.mem.eql(u8, args[1], "--roundtrip")) {
         mode = .roundtrip;
-    } else if (args.len == 3 and std.mem.eql(u8, args[1], "--requests")) {
+    } else if (args.len == 3 and (std.mem.eql(u8, args[1], "--requests") or std.mem.eql(u8, args[1], "--request-sequence"))) {
+        if (std.mem.eql(u8, args[1], "--request-sequence")) mode = .sequence;
         requests_json = args[2];
         if (requests_json.len > runtime.contract.max_bytes) return error.RequestTooLong;
     } else if (args.len != 1) return error.Usage;
@@ -60,6 +114,7 @@ fn run(init: std.process.Init) !u8 {
         return err;
     };
     defer init.gpa.free(bytes);
+    if (mode == .sequence) return runSequence(init, bytes, requests_json);
     const module = switch (runtime.load(init.gpa, bytes)) {
         .loaded => |module| module,
         .rejected => |failure| {
@@ -86,14 +141,7 @@ fn run(init: std.process.Init) !u8 {
     try output.writer.writeByte('[');
     for (requests.value, 0..) |request, index| {
         if (index != 0) try output.writer.writeByte(',');
-        var function_id = runtime.moduleInfo(module).function_id;
-        if (request.functionId) |text| {
-            const id = if (std.mem.startsWith(u8, text, "sha256:")) text[7..] else text;
-            if (id.len != 64) return error.FunctionId;
-            for (id) |character| if (!std.ascii.isDigit(character) and !(character >= 'a' and character <= 'f')) return error.FunctionId;
-            _ = try std.fmt.hexToBytes(&function_id, id);
-        }
-        const outcome = runtime.eval_bytecode(&host, module, function_id, if (request.arguments.len == 0) &.{} else &.{.{ .i32 = 0 }}, if (request.capabilities.len == 0) &.{} else &.{.{ .id = 0 }}, .{ .memory_bytes = @intCast(request.memoryBytes), .instruction_budget = request.instructionBudget, .depth = request.depth });
+        const outcome = try evaluateRequest(&host, module, request);
         try writeOutcome(&output.writer, outcome, &host);
     }
     try output.writer.writeAll("]\n");

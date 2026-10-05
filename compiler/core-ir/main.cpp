@@ -55,13 +55,34 @@ public:
   }
 };
 
+// Each arithmetic operation is registered and type-verified before emission.
+#define TSFG_INTEGER_BINARY(Class, Name) \
+class Class : public mlir::Op<Class, mlir::OpTrait::NOperands<2>::Impl, \
+                             mlir::OpTrait::OneResult, mlir::OpTrait::ZeroRegions> { \
+public: \
+  using Op::Op; \
+  MLIR_DEFINE_EXPLICIT_INTERNAL_INLINE_TYPE_ID(Class) \
+  static llvm::StringRef getOperationName() { return "tsfg_core." Name; } \
+  static llvm::ArrayRef<llvm::StringRef> getAttributeNames() { return {}; } \
+  mlir::LogicalResult verify() { \
+    if (!getOperation()->getResult(0).getType().isSignlessInteger(32) || \
+        !getOperation()->getOperand(0).getType().isSignlessInteger(32) || \
+        !getOperation()->getOperand(1).getType().isSignlessInteger(32)) \
+      return emitOpError("[core-ir-type] requires i32 operands and result"); \
+    return mlir::success(); \
+  } \
+};
+TSFG_INTEGER_BINARY(DivOp, "div")
+TSFG_INTEGER_BINARY(RemOp, "rem")
+#undef TSFG_INTEGER_BINARY
+
 class CoreDialect : public mlir::Dialect {
 public:
   MLIR_DEFINE_EXPLICIT_INTERNAL_INLINE_TYPE_ID(CoreDialect)
   static llvm::StringRef getDialectNamespace() { return "tsfg_core"; }
   explicit CoreDialect(mlir::MLIRContext *context)
       : Dialect(getDialectNamespace(), context, mlir::TypeID::get<CoreDialect>()) {
-    addOperations<ConstantOp, AddOp>();
+    addOperations<ConstantOp, AddOp, DivOp, RemOp>();
   }
 };
 } // namespace tsfg
@@ -230,10 +251,10 @@ mlir::LogicalResult emitBytecode(mlir::ModuleOp module) {
         opcode = typeCode == 1 ? 1 : 3;
         auto bits = constant->getAttrOfType<mlir::IntegerAttr>("value").getValue();
         immediate = typeCode == 1 ? static_cast<uint32_t>(bits.getSExtValue()) : static_cast<uint32_t>(bits.getZExtValue());
-      } else if (llvm::isa<tsfg::AddOp>(operation)) {
+      } else if (llvm::isa<tsfg::AddOp, tsfg::DivOp, tsfg::RemOp>(operation)) {
         if (!attributes(&operation, {"tsfg_source.start", "tsfg_source.end"}) ||
             !registers.count(operation.getOperand(0)) || !registers.count(operation.getOperand(1))) return reject();
-        opcode = 4;
+        opcode = llvm::isa<tsfg::AddOp>(operation) ? 4 : llvm::isa<tsfg::DivOp>(operation) ? 7 : 8;
         immediate = registers.lookup(operation.getOperand(0)) | (static_cast<uint32_t>(registers.lookup(operation.getOperand(1))) << 16);
       } else return reject();
       registers[result] = reg;

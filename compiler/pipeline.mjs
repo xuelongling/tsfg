@@ -121,6 +121,25 @@ export async function runBytecode(bytes, { vm, requests = [{}], command = "--req
   return command === "--roundtrip" ? result : JSON.parse(result.toString("utf8"));
 }
 
+/** Multiple verified modules share one formal Zig Runtime request host. */
+export async function runRequestSequence(bytecodes, { vm, requests = bytecodes.map(() => ({})) }) {
+  if (!Array.isArray(bytecodes) || bytecodes.length < 1 || bytecodes.length > 128 || requests.length !== bytecodes.length)
+    throw new TypeError("r05-request-sequence: expected 1..128 matching modules and requests");
+  const header = Buffer.alloc(12);
+  header.write("TSFGREQ1", "ascii");
+  header.writeUInt32LE(bytecodes.length, 8);
+  const frames = bytecodes.flatMap(bytes => {
+    if (!Buffer.isBuffer(bytes)) throw new TypeError("r05-request-sequence: expected bytecode buffers");
+    const length = Buffer.alloc(4);
+    length.writeUInt32LE(bytes.length);
+    return [length, bytes];
+  });
+  const input = Buffer.concat([header, ...frames]);
+  if (input.length > 1048576) throw new TypeError("r05-request-sequence: frame exceeds size limit");
+  const executable = await verifiedConsumer(vm, "vm");
+  return JSON.parse(consume(executable, ["--request-sequence", JSON.stringify(requests)], input).toString("utf8"));
+}
+
 export async function sourceInput(source, { sourcePath = "/src/main.ts" } = {}) {
   const declarations = await readFile(new URL("./minimal-scalars-v2.d.ts", import.meta.url), "utf8");
   return { sourceRoot: "/src", rootFile: sourcePath,

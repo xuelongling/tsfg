@@ -170,7 +170,7 @@ fn parse(reader: *Reader) error{Invalid}!ModuleInfo {
             if (opcode == 1 or opcode == 3) {
                 if (type_code != (if (opcode == 1) @as(u8, 1) else 2)) return reader.reject("r04-type", offset + 1);
                 if (opcode == 3 and payload > 1) return reader.reject("r04-boolean", offset + 4);
-            } else if (opcode == 4) {
+            } else if (opcode == 4 or opcode == 7 or opcode == 8) {
                 const left: u16 = @truncate(payload);
                 const right: u16 = @truncate(payload >> 16);
                 if (left >= index or right >= index) return reader.reject("r04-register", offset + 4);
@@ -270,13 +270,13 @@ pub fn inspect(module: *const VerifiedModule, allocator: Allocator) Allocator.Er
     const View = struct { opcode: []const u8, type: []const u8, register: []const u8, immediate: ?[]const u8 = null, left: ?[]const u8 = null, right: ?[]const u8 = null, start: []const u8, end: []const u8 };
     const views = try temporary.alloc(View, info.instruction_count);
     for (instructions(module), views) |op, *view| {
-        view.* = .{ .opcode = switch (op.opcode) { 1 => "const_i32", 2 => if (op.type_code == 1) "return_i32" else "return_bool", 3 => "const_bool", 4 => "add", else => unreachable },
+        view.* = .{ .opcode = switch (op.opcode) { 1 => "const_i32", 2 => if (op.type_code == 1) "return_i32" else "return_bool", 3 => "const_bool", 4 => "add", 7 => "div", 8 => "rem", else => unreachable },
             .type = if (op.type_code == 1) "i32" else "bool",
             .register = try std.fmt.allocPrint(temporary, "{d}", .{op.register}),
             .start = try std.fmt.allocPrint(temporary, "{d}", .{op.source.start}),
             .end = try std.fmt.allocPrint(temporary, "{d}", .{op.source.end}) };
         if (op.opcode == 1 or op.opcode == 3) view.immediate = try std.fmt.allocPrint(temporary, "{d}", .{op.immediate});
-        if (op.opcode == 4) {
+        if (op.opcode == 4 or op.opcode == 7 or op.opcode == 8) {
             view.left = try std.fmt.allocPrint(temporary, "{d}", .{op.left});
             view.right = try std.fmt.allocPrint(temporary, "{d}", .{op.right});
         }
