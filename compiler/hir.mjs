@@ -77,12 +77,17 @@ export function verifyHir(hir) {
       || canonical(fn.returnType) !== canonical({ kind: "scalar", name: fn.returnType.name, id: types[fn.returnType.name] })
       || !Array.isArray(fn.parameters) || fn.parameters.length !== 0
       || !range(fn.range, { start: 0, end: hir.source.content.length })
-      || !Array.isArray(fn.body) || fn.body.length !== 1) fail();
-  const returned = fn.body[0], value = returned?.value;
-  if (!exactKeys(returned, ["kind", "range", "value"]) || returned.kind !== "return"
-      || !range(returned.range, fn.range)
-      || value?.type !== fn.returnType.id) fail();
-  verifyExpression(value, returned.range, hir.source.content, fail, { remaining: 4096 });
+      || !Array.isArray(fn.body) || fn.body.length < 1 || fn.body.length > 128) fail();
+  const budget = { remaining: 4096 };
+  let previousEnd = fn.range.start;
+  for (const returned of fn.body) {
+    const value = returned?.value;
+    if (!exactKeys(returned, ["kind", "range", "value"]) || returned.kind !== "return"
+        || !range(returned.range, fn.range) || returned.range.start < previousEnd
+        || value?.type !== fn.returnType.id) fail();
+    verifyExpression(value, returned.range, hir.source.content, fail, budget);
+    previousEnd = returned.range.end;
+  }
   return own(hir);
 }
 
@@ -92,10 +97,10 @@ export function buildHir(snapshot) {
   const fn = snapshot.functions[0], returned = fn?.body?.[0], expression = returned?.expression;
   if (snapshot.functions.length !== 1 || fn?.parameters?.length !== 0
       || !Object.hasOwn(types, resolveType(snapshot, fn.returnTypeRef).scalar)
-      || fn.body.length !== 1 || returned?.kind !== "return"
+      || fn.body.length < 1 || fn.body.length > 128 || fn.body.some(item => item.kind !== "return" || !item.expression)
       || !expression) {
     return { status: "error", diagnostics: [{ code: "r03-d-capability", ruleId: "r01-ts-baseline", phase: "hir",
-      message: "current execution capability requires one zero-parameter i32/bool expression-return function",
+      message: "current execution capability requires one zero-parameter i32/bool function containing only scalar returns",
       primary: { sourceId: snapshot.source.path, ...(expression?.range ?? fn?.range ?? { start: 0, end: 0 }) } }] };
   }
   const project = value => {
@@ -112,7 +117,7 @@ export function buildHir(snapshot) {
     throw new TypeError("unsupported checked expression capability");
   };
   let projected;
-  try { projected = project(expression); } catch (error) {
+  try { projected = fn.body.map(item => ({ kind: "return", range: item.range, value: project(item.expression) })); } catch (error) {
     return { status: "error", diagnostics: [{ code: "r03-d-capability", ruleId: "r01-ts-baseline", phase: "hir", message: error.message,
       primary: { sourceId: snapshot.source.path, ...expression.range } }] };
   }
@@ -122,8 +127,7 @@ export function buildHir(snapshot) {
     source: { ...snapshot.source, hash: sha256(snapshot.source.content) }, target: bytecodeSchema.target,
     functions: [{ id: functionIdentity(snapshot.source.path, fn.name, returnType), name: fn.name,
       signatureHash: signatureHash(returnType), returnType: { kind: "scalar", name: returnType, id: types[returnType] },
-      parameters: [], range: fn.range, body: [{ kind: "return", range: returned.range,
-        value: projected }] }],
+      parameters: [], range: fn.range, body: projected }],
   };
   try { return { status: "ok", hir: verifyHir(hir) }; }
   catch (error) { return { status: "error", diagnostics: [{ code: "r03-d-snapshot", ruleId: "r01-input-boundary", phase: "hir", message: error.message,
@@ -145,6 +149,8 @@ export function readHir(bytes) {
 }
 
 export function lowerHir(hir) {
+  // Only the first return is reached. Later checked returns stay owned in HIR;
+  // no CFG, speculation or compile-time evaluation is introduced here.
   const verified = verifyHir(hir), fn = verified.functions[0], returned = fn.body[0], value = returned.value;
   const quote = text => JSON.stringify(text).replace(/\\u([0-9a-f]{4})/g, (_, hex) => {
     const code = Number.parseInt(hex, 16);

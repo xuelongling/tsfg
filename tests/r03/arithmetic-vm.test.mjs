@@ -82,3 +82,18 @@ test("first integer trap keeps its source anchor and the Zig host accepts the ne
   for (const index of [1, 3]) assert.deepEqual(outcomes[index].result, { type: "i32", value: "42" });
   for (const outcome of outcomes) assert.equal(outcome.activeRequests, "0");
 });
+
+test("unreachable scalar returns stay checked and owned without an early trap", async () => {
+  const source = "export function answer(): i32 { return 42; return 1 / 0; }";
+  const result = await compileAndRun(source, tools());
+  assert.equal(result.status, "ok", JSON.stringify(result));
+  assert.equal(result.hir.functions[0].body.length, 2);
+  assert.equal(result.hir.functions[0].body[1].value.kind, "binary");
+  assert.equal(result.hir.functions[0].body[1].value.operator, "/");
+  assert.doesNotMatch(result.core, /tsfg_core.div/);
+  assert.deepEqual(result.requests[0].result, { type: "i32", value: "42" });
+  assert.equal(result.requests[0].activeRequests, "0");
+  const rejected = await compileProgram(await sourceInput("export function answer(): i32 { return 42; return missing; }"), { ...tools(), core: undefined });
+  assert.equal(rejected.status, "error", JSON.stringify(rejected));
+  assert.ok(rejected.diagnostics.some(diagnostic => diagnostic.code === "r01-d-unresolved-name"));
+});
