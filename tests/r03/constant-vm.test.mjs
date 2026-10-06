@@ -57,7 +57,7 @@ test("owned source golden survives HIR, SSA Core and actual R04 canonical roundt
   const bytes = await runBytecode(actual.bytecode, { ...tools(), command: "--roundtrip" });
   assert.deepEqual(bytes, actual.bytecode);
   const view = await runBytecode(actual.bytecode, { ...tools(), command: "--inspect" });
-  assert.equal(view.schemaHash, "sha256:e034e1ae65ef513b19c440406a332605731e80326a95c8bbfe00bfd0651fcfd4");
+  assert.equal(view.schemaHash, "sha256:80745002f3315a96fd01679dd5d4a3052785dfb6acf8f4bdb56f7e040e1dfb72");
   assert.deepEqual(view.instructions, [
     { opcode: "const_i32", type: "i32", register: "0", immediate: "42", start: "38", end: "41" },
     { opcode: "return_i32", type: "i32", register: "0", start: "31", end: "42" },
@@ -196,7 +196,7 @@ test("C++ R04 producer verifies Core source identities, target, types and actual
   assert.ifError(renamed.error); assert.equal(renamed.status, 0, renamed.stderr.toString());
   assert.deepEqual(renamed.stdout, result.bytecode);
   for (const [before, after] of [
-    ["sha256:e034e1ae65ef513b19c440406a332605731e80326a95c8bbfe00bfd0651fcfd4", `sha256:${"0".repeat(64)}`],
+    ["sha256:80745002f3315a96fd01679dd5d4a3052785dfb6acf8f4bdb56f7e040e1dfb72", `sha256:${"0".repeat(64)}`],
     ["windows-x86_64-msvc", "wrong-target"],
     [result.hir.functions[0].id, `sha256:${"0".repeat(64)}`],
     ["tsfg_core.function_end = 44 : i64", "tsfg_core.function_end = 45 : i64"],

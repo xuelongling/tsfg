@@ -1,6 +1,6 @@
 <!-- SPDX-License-Identifier: MIT -->
 
-# tsfg.bytecode 0.2.0
+# tsfg.bytecode 0.3.0
 
 This exact development format is the formal R04 compiler-to-Zig VM seam. No
 published format or supported external consumer predates it. Producer and
@@ -9,14 +9,14 @@ schema hash is incompatible and invalidates cached bytecode. The registry is
 the sole version/hash authority; the JSON schema describes the binary layout.
 
 All integers are explicitly little endian; no host struct is dumped. The header
-is 80 bytes: magic `TSFGTBC0`, u32 version 2 (SemVer 0.2.0), raw 32-byte schema
+is 80 bytes: magic `TSFGTBC0`, u32 version 3 (SemVer 0.3.0), raw 32-byte schema
 SHA-256, u32 total byte length, and raw 32-byte SHA-256 of the remaining payload.
 UTF-8 strings have a u32 byte length and no terminator. Schema field order is
 wire order. No padding, duplicate fields, reserved data, or trailing bytes are
 accepted. Limits are checked before allocation. The checksum proves integrity,
 not publisher authenticity or authorization.
 
-Capability bit 2 admits one zero-parameter i32/bool function, one block and
+Capability bit 4 admits one zero-parameter i32/bool function, one block and
 1..4096 sequentially defined typed registers. Constants and scalar operations
 are followed by a final matching typed return. There is one instruction per
 definition, plus the return. Each instruction is exactly 16 bytes: opcode u8,
@@ -36,6 +36,14 @@ Definition/use, instruction and register types, terminator, counts and all
 references are verified before execution. Every instruction has an original
 source UTF-16 half-open range, contained in the function range and source
 length. Source path and content digest are separate from logical entity IDs.
+Local initializer and assignment RHS anchors may precede the return anchor.
+Every executed expression ends no later than the reached return statement;
+all anchors remain contained within the function. SSA definitions preserve
+statement order and left-to-right operand order. Local reads reuse existing
+register definitions; simple assignments select a new SSA definition. Unused
+or overwritten initializers still execute. This normalization introduces no
+mutable register rewrite or local opcode. Core IR 0.3.0 is required; 0.2.0
+Core/HIR/R04 identities are rejected rather than silently mixed.
 The path is a normalized logical UTF-8 source path; the official frontend's
 leading logical-root slash is preserved. It never causes a host file read.
 Empty/dot/parent components, backslashes and drive colons are rejected.

@@ -25,7 +25,7 @@ test("every scalar Core operation enforces typed operands and canonical rereadin
     const operands = unary ? "%a" : "%a, %a";
     const operandTypes = unary ? inputType : `${inputType}, ${inputType}`;
     const operation = `"tsfg_core.${name}"(${operands}) : (${operandTypes}) -> ${resultType}`;
-    const fixture = `module attributes {tsfg_core.version = "0.2.0"} {
+    const fixture = `module attributes {tsfg_core.version = "0.3.0"} {
       func.func @sample() -> ${resultType} {
         %a = "tsfg_core.constant"() {value = 1 : ${inputType}} : () -> ${inputType}
         %b = ${operation}
@@ -51,7 +51,7 @@ test("every scalar Core operation enforces typed operands and canonical rereadin
       assert.match(rejected.stderr, /core-ir-invalid/);
     }
   });
-  const invalid = `module attributes {tsfg_core.version = "0.2.0"} {
+  const invalid = `module attributes {tsfg_core.version = "0.3.0"} {
     func.func @sample() -> i1 {
       %a = "tsfg_core.constant"() {value = 1 : i1} : () -> i1
       %b = "tsfg_core.lt"(%a, %a) : (i1, i1) -> i1

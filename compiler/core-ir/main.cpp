@@ -106,7 +106,7 @@ public:
 
 namespace {
 constexpr llvm::StringLiteral bytecodeSchema =
-    "e034e1ae65ef513b19c440406a332605731e80326a95c8bbfe00bfd0651fcfd4";
+    "80745002f3315a96fd01679dd5d4a3052785dfb6acf8f4bdb56f7e040e1dfb72";
 constexpr llvm::StringLiteral target = "windows-x86_64-msvc";
 constexpr llvm::StringLiteral triple = "x86_64-pc-windows-msvc";
 constexpr llvm::StringLiteral layout =
@@ -260,7 +260,7 @@ mlir::LogicalResult emitBytecode(mlir::ModuleOp module) {
   llvm::DenseMap<mlir::Value, uint16_t> registers;
   for (mlir::Operation &operation : block) {
     uint32_t start, end;
-    if (!anchor(&operation, returnStart, returnEnd, start, end)) return reject();
+    if (!anchor(&operation, functionStart, returnEnd, start, end)) return reject();
     uint8_t opcode, typeCode;
     uint16_t reg;
     uint32_t immediate = 0;
@@ -302,7 +302,7 @@ mlir::LogicalResult emitBytecode(mlir::ModuleOp module) {
   Bytes payload;
   string(payload, target); string(payload, triple); string(payload, layout);
   integer(payload, static_cast<uint32_t>(size), 2);
-  integer(payload, static_cast<uint32_t>(align), 2); integer(payload, 2, 4);
+  integer(payload, static_cast<uint32_t>(align), 2); integer(payload, 4, 4);
   for (const Hash &value : {input, source, function, signature, type}) appendHash(payload, value);
   string(payload, path); string(payload, name);
   for (uint32_t value : {sourceLength, functionStart, functionEnd}) integer(payload, value, 4);
@@ -311,7 +311,7 @@ mlir::LogicalResult emitBytecode(mlir::ModuleOp module) {
   integer(payload, static_cast<uint32_t>(instructionCount), 2);
   payload.insert(payload.end(), instructions.begin(), instructions.end());
   Bytes packet{'T','S','F','G','T','B','C','0'};
-  integer(packet, 2, 4);
+  integer(packet, 3, 4);
   Hash schema; if (!decodeHash(("sha256:" + bytecodeSchema).str(), schema)) return reject();
   appendHash(packet, schema); integer(packet, static_cast<uint32_t>(80 + payload.size()), 4);
   appendHash(packet, llvm::SHA256::hash(payload));
@@ -344,8 +344,8 @@ int main(int argc, char **argv) {
     return 3;
   }
   auto version = module->getOperation()->getAttrOfType<mlir::StringAttr>("tsfg_core.version");
-  if (!version || version.getValue() != "0.2.0") {
-    llvm::errs() << "[core-ir-identity] expected Core IR 0.2.0\n";
+  if (!version || version.getValue() != "0.3.0") {
+    llvm::errs() << "[core-ir-identity] expected Core IR 0.3.0\n";
     return 3;
   }
   if (mlir::failed(mlir::verify(*module))) {

@@ -101,7 +101,7 @@ fn parse(reader: *Reader) error{Invalid}!ModuleInfo {
     if (builtin.os.tag != .windows or builtin.cpu.arch != .x86_64) return reader.reject("r04-target", 80);
     try reader.expected(u16, @sizeOf(i32), "r04-layout");
     try reader.expected(u16, @alignOf(i32), "r04-layout");
-    try reader.expected(u32, 2, "r04-capability");
+    try reader.expected(u32, 4, "r04-capability");
     const input_identity = try reader.digest();
     const source_hash = try reader.digest();
     const function_id = try reader.digest();
@@ -187,13 +187,14 @@ fn parse(reader: *Reader) error{Invalid}!ModuleInfo {
             register_types[reg] = type_code;
         }
     }
-    // The actual return anchor encloses every executed expression anchor.
+    // Executed local initializers may precede the return. Every anchor stays
+    // inside the function and ends no later than the reached return statement.
     var ranges: Reader = .{ .bytes = reader.bytes, .offset = instruction_offset };
     for (0..register_count) |_| {
         _ = try ranges.take(8);
         const start = try ranges.int(u32);
         const end = try ranges.int(u32);
-        if (!rangeValid(start, end, return_start, return_end)) return reader.reject("r04-source-range", ranges.offset - 8);
+        if (!rangeValid(start, end, function_start, return_end)) return reader.reject("r04-source-range", ranges.offset - 8);
     }
     if (reader.offset != reader.bytes.len) return reader.reject("r04-trailing", reader.offset);
     return .{ .function_id = function_id, .function_name = function_name, .source = .{ .path = source_path, .hash = source_hash, .start = return_start, .end = return_end }, .input_identity = input_identity, .signature_hash = signature_hash, .type_id = type_id, .source_utf16_length = source_length, .function_start = function_start, .function_end = function_end, .return_type = return_type, .register_count = register_count, .instruction_count = instruction_count, .instruction_offset = instruction_offset };
@@ -291,9 +292,9 @@ pub fn inspect(module: *const VerifiedModule, allocator: Allocator) Allocator.Er
         }
     }
     return std.json.Stringify.valueAlloc(allocator, .{
-        .familyId = "tsfg.bytecode", .semver = "0.2.0", .schemaHash = "sha256:" ++ contract.schema_hash_hex,
+        .familyId = "tsfg.bytecode", .semver = "0.3.0", .schemaHash = "sha256:" ++ contract.schema_hash_hex,
         .target = contract.target, .triple = contract.triple, .llvmDataLayout = contract.data_layout,
-        .i32Bytes = "4", .i32Align = "4", .capabilities = "2",
+        .i32Bytes = "4", .i32Align = "4", .capabilities = "4",
         .totalBytes = try std.fmt.allocPrint(temporary, "{d}", .{decoded(module).bytes.len}),
         .inputIdentity = @as([]const u8, &input_identity), .functionId = @as([]const u8, &function_id),
         .signatureHash = @as([]const u8, &signature_hash), .typeId = @as([]const u8, &type_id),
