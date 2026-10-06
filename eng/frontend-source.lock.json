@@ -3,15 +3,15 @@
   "contractVersion": "0.6.0",
   "languageBaseline": "TypeScript 7.0.2",
   "upstreamBaseOid": "1e4744d68260a7cb91b62b12edc3f6a2187faaf1",
-  "forkOid": "e98d194e9b1f771700c509bf561b09f7827d5bc2",
+  "forkOid": "0c63036647a8e88d3aa40743f6776bb049a9f10b",
   "remoteUrl": "https://github.com/xuelongling/TypeScript.git",
   "canonicalUrl": "https://github.com/microsoft/TypeScript.git",
-  "sourceBranch": "refs/heads/r03-m07-range-context",
+  "sourceBranch": "refs/heads/r03-m07-default-integer-context",
   "license": "Apache-2.0",
   "upstreamTomlSha256": "sha256:0cc83338b60f281bc87bba82e359f5f51ab0c79b0b9469de705bd626c6a3f490",
   "producerPath": "tsc/cmd/tsfg-frontend/main.go",
   "producerSha256": "sha256:2bb41198eee72ba3876de2eaed5e7287b90d565674b491721b4f0dcbbcdc6ded",
-  "executableSha256": "sha256:d5ea0c4576b2f7433d4b259f26a53008769e5c5562d0f3d536e835017b895efb",
+  "executableSha256": "sha256:4bfbafd189856a91468e492b2def008a18ad0fdcaf0782612417efcbdfef1fd7",
   "declarations": [
     {
       "path": "compiler/minimal-bool-v1.d.ts",

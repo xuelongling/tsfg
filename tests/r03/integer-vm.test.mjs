@@ -113,6 +113,26 @@ test("integer contextual range and same-type source negatives include unentered 
   });
 });
 
+test("default i32 range failures survive dependent return, alias and call contexts", async () => {
+  for (const [body, literal] of [
+    ["let a = 2147483648; return a;", "2147483648"],
+    ["let a = (2147483648); return a;", "2147483648"],
+    ["let a = -2147483649; return a;", "-2147483649"],
+    ["let a = 2147483648 + 0; return a;", "2147483648"],
+    ["let a = 2147483648; let b = a; return b;", "2147483648"],
+    ["let a = 2147483648; return identity(a);", "2147483648"],
+  ]) {
+    const source = `/*😀*/ export function entry(): i32 { ${body} } function identity(a: i32): i32 { return a; }`;
+    const result = await compileHir(await sourceInput(source), tools());
+    assert.equal(result.status, "error", JSON.stringify(result));
+    const diagnostic = result.diagnostics[0];
+    assert.equal(diagnostic.code, "r01-d-integer-range");
+    assert.deepEqual(diagnostic.ruleIds, ["r01-literals"]);
+    assert.equal(diagnostic.phase, "types");
+    assert.equal(source.slice(diagnostic.primary.start, diagnostic.primary.end), literal);
+  }
+});
+
 test("typed integer requests reject noncanonical, range and nominal inputs before zero budgets, then recover", async t => {
   for (const [type, minimum, maximum] of families) await t.test(type, async () => {
     const program = await compiled(`export function entry(a: ${type}): ${type} { return a; }`);
