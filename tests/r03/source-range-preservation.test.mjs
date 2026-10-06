@@ -44,11 +44,17 @@ test("legacy operator anchors and trivia-only nested calls survive strict HIR an
     const direct = `export function entry(a: ${type}): ${type} { return identity(a); } function identity(a: ${type}): ${type} { return a; }`;
     const call = await compileProgram(await sourceInput(direct), tools());
     assert.equal(call.status, "ok", JSON.stringify(call));
+    const directCall = call.hir.functions[0].body[0].value;
+    assert.equal(direct.slice(directCall.range.start, directCall.range.end), " identity(a)");
     const [depth] = await runBytecode(call.bytecode, { ...tools(), requests: [
       { arguments: [value(type, "8")], depth: 1, semanticFuel: 1 },
     ] });
     assert.equal(depth.code, "r01-t-depth");
-    assert.equal(direct.slice(Number(depth.source.start), Number(depth.source.end)), " identity(a)");
+    const callee = call.hir.functions[1];
+    assert.equal(depth.functionId, callee.id);
+    assert.deepEqual(depth.ruleIds, ["r01-depth"]);
+    assert.equal(Number(depth.source.start), callee.range.start);
+    assert.equal(Number(depth.source.end), callee.range.end);
     assert.equal(depth.fuelConsumed, "1");
   }
 });
