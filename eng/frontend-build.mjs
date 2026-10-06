@@ -208,7 +208,7 @@ export async function executeFrontendTarget({ command, productRoot, sourceRoot, 
       auxiliaryFiles: auxiliaryEntries };
     await writeFile(path.join(out, "intake-ledger.json"), `${serialize(intakeLedger)}\n`);
     return { schemaVersion: "1", status: command === "test" ? "passed" : "built",
-      capability: "control-flow-v4", contractVersion: lock.contractVersion,
+      capability: "integer-family-v5", contractVersion: lock.contractVersion,
       source: { forkOid: head, producer: lock.producerPath },
       toolchainClosureDigest: runtime.lockDigest, dependencyProxyIdentity: dependencyProxy.identity,
       buildInputSet, buildInputSetDigest: inputDigest, intakeLedger,

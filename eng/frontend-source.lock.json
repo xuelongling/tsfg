@@ -11,7 +11,7 @@
   "upstreamTomlSha256": "sha256:0cc83338b60f281bc87bba82e359f5f51ab0c79b0b9469de705bd626c6a3f490",
   "producerPath": "tsc/cmd/tsfg-frontend/main.go",
   "producerSha256": "sha256:5424d9168fbb95d3c781f8db6a7d5e026c239f41e5ec74d216d125237b74ebc9",
-  "executableSha256": "sha256:b84e1c8ab93f722593f031f7d429d96690dd120f1c97ac1c353d2cc557d3a135",
+  "executableSha256": "sha256:7beb47fa194be18bb4af35d8dda647aaa8d1fdb2fe0ca4f790591215879200ca",
   "declarations": [
     {
       "path": "compiler/minimal-bool-v1.d.ts",

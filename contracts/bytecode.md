@@ -9,19 +9,19 @@ invalidate caches and are rejected. The registry owns version and JCS schema
 hash. The JSON schema owns wire field order and bounds.
 
 All integers use little endian. The 80-byte header is magic `TSFGTBC0`, u32 wire
-version 5, raw 32-byte schema SHA256, u32 total length and raw 32-byte SHA256 of
+version 6, raw 32-byte schema SHA256, u32 total length and raw 32-byte SHA256 of
 the payload. UTF8 strings have a u32 length, no terminator or padding. The
 checksum supplies integrity, not publisher authenticity. Target/triple and LLVM
-DataLayout are fixed in the schema. LLVM derives i32 size/alignment; Zig checks
+DataLayout are fixed in the schema. LLVM derives i32 and pointer size/alignment; Zig checks
 its actual target. Logical source paths preserve the leading root slash and
 never cause a host file read. Empty/dot/parent components, backslashes and drive
 colons reject. Entity identity domains remain unchanged: SHA256 of
 `tsfg.type\0<scalar>`, `tsfg.signature\0(<comma-separated scalar parameters>)-><scalar>` and
 `tsfg.function\0<sourcePath>\0<name>\0<signatureHashHex>`.
 
-Capability16 admits 1..128 i32/bool functions, each with 0..64 i32/bool parameters,
+Capability17 admits 1..128 nominal integer/bool functions, each with 0..64 scalar parameters,
 up to256 reachable blocks,4096 SSA registers and8192 instructions. Global
-payload fields are target/triple/layout strings, i32 size/alignment u16,
+payload fields are target/triple/layout strings, i32 size/alignment u16, pointer bits/alignment u16,
 capability u32, input/source hashes, logical source path, source length u32 and
 function count u16. Each function has FunctionId/signature/return-type hashes,
 name string, source start/end u32, return type u8, parameter count u8 and
@@ -43,6 +43,12 @@ Call opcode27 uses the result type/register and low-u16 target function index
 with high-u16 reserved0; it appends argument count u16 and ordered argument
 registers u16. Call source ranges belong to the caller. Every target signature,
 argument arity/type and return type is checked before any request executes.
+Type codes1/2 retain i32/bool. Codes3..11 are i8/i16/i64/u8/u16/u32/u64/isize/usize.
+Constant opcode28 has the standard scalar record with a zero u32 payload,
+followed by u64 canonical zero extended low-width bits. Signed values use
+two's complement low-width bits. High bits outside the concrete width reject
+with `r04-integer-range`. Shifts require a concrete integer left operand and
+an i32 count. Other arithmetic operands share the same nominal integer type.
 
 The loader verifies the complete identity/integrity/bounds, known opcodes,
 reserved fields, typed definitions/uses, dominance, successor references and
@@ -58,7 +64,7 @@ opaque handle. Edge arguments are read into temporary values before destination
 phi registers are written, preserving parallel transfer even for loop swaps.
 `eval_bytecode` takes a verified module, FunctionId, typed scalar argument and
 capability tables and explicit request limits. Its public host accepts
-`{type:"i32",value:"<canonical signed decimal>"}` and
+`{type:"<concrete integer>",value:"<canonical in-range decimal>"}` and
 `{type:"bool",value:true|false}` argument records; optional `signatureHash`
 must match the selected function. Unsupported capabilities reject at preflight.
 Runtime contains no source

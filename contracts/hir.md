@@ -19,7 +19,7 @@ and typed scalar expression tree, and freezes all data. It retains no
 Snapshot-local reference or upstream session. `lowerHir` consumes only HIR.
 
 This exact same-repository development format has no published or supported
-older consumer. Its supported capability is 1..128 named i32/bool functions,
+older consumer. Its supported capability is 1..128 named nominal integer/bool functions,
 each with 0..64 typed scalar parameters, structured blocks, if/else, while,
 local declarations, simple assignments and scalar returns; each body contains
 at most128 statements. Parameters use declaration-order `p0`, `p1`, ...
@@ -32,9 +32,12 @@ Declarations within a comma-separated list retain their declaration kind.
 `bool` and its inherited `boolean` annotation alias share the canonical bool
 type identity.
 Expressions support
-i32 constants, bool constants, grouping, unary `+ - ~ !`, i32 arithmetic,
-bitwise operations and shifts, i32 ordered comparisons, and same-type i32/bool
+exact integer constants, bool constants, grouping, unary `+ - ~ !`, integer arithmetic,
+bitwise operations and shifts with i32 counts, integer ordered comparisons, and same-type integer/bool
 strict equality, local references and direct calls to owned module functions.
+Integer types are i8/i16/i32/i64/u8/u16/u32/u64/isize/usize. Untyped literals
+default to i32 or take their exact owned context. Typed values have no implicit
+numeric conversion, including between u64 and usize on the current64-bit target.
 Bool `&&`/`||` retain their short-circuit tree. Direct, forward and mutually
 recursive calls retain target FunctionId, exact signature hash, ordered typed
 arguments and the original call range. The verifier checks the complete
