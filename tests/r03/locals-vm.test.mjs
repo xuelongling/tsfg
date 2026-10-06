@@ -10,6 +10,78 @@ import { spawnSync } from "node:child_process";
 const tools = () => ({ frontend: process.env.TSFG_FRONTEND_EXE,
   core: process.env.TSFG_CORE_IR_EXE, vm: process.env.TSFG_VM_EXE });
 
+function replaceSourceFragment(hir, start, end, spelling) {
+  const source = hir.source.content, delta = spelling.length - (end - start);
+  function shift(value) {
+    if (!value || typeof value !== "object") return;
+    if (value.range) {
+      if (value.range.start >= end) value.range.start += delta;
+      if (value.range.end >= end) value.range.end += delta;
+    }
+    for (const [key, item] of Object.entries(value)) if (key !== "range") shift(item);
+  }
+  shift(hir);
+  const content = source.slice(0, start) + spelling + source.slice(end);
+  hir.source = { ...hir.source, content, hash: sha256(content) };
+}
+
+test("owned identifier trivia cannot swallow another token after a closed comment", async () => {
+  const checked = await compileHir(await sourceInput("export function answer(): i32 { const value: i32 = 40; return value; }"), tools());
+  assert.equal(checked.status, "ok", JSON.stringify(checked));
+  const hir = structuredClone(checked.hir), reference = hir.functions[0].body[1].value;
+  replaceSourceFragment(hir, reference.range.end, reference.range.end, "/* gap */ hidden/* tail */");
+  for (const invoke of [() => verifyHir(hir), () => lowerHir(hir), () => readHir(Buffer.from(`${canonical(hir)}\n`))])
+    assert.throws(invoke, /r03-hir-invalid/);
+});
+
+test("owned binding tokens cannot be manufactured by internal whitespace or comments", async t => {
+  const source = "export function answer(): i32 { let value: i32 = 40; const copy: i32 = value; value = value + 2; return copy; }";
+  const checked = await compileHir(await sourceInput(source), tools());
+  assert.equal(checked.status, "ok", JSON.stringify(checked));
+  /** @type {Array<[string, (hir: any) => any]>} */
+  const contexts = [
+    ["declaration", hir => hir.functions[0].body[0].binding],
+    ["initializer read", hir => hir.functions[0].body[1].initializer],
+    ["assignment target", hir => hir.functions[0].body[2].target],
+    ["assignment read", hir => hir.functions[0].body[2].value.left],
+    ["returned read", hir => hir.functions[0].body[3].value],
+  ];
+  for (const [name, select] of contexts) for (const trivia of [" ", "/* gap */"]) await t.test(`${name}: ${trivia}`, () => {
+    const hir = structuredClone(checked.hir), token = select(hir);
+    const tokenStart = source.indexOf(name === "returned read" ? "copy" : "value", token.range.start);
+    replaceSourceFragment(hir, tokenStart + 2, tokenStart + 2, trivia);
+    for (const invoke of [() => verifyHir(hir), () => lowerHir(hir), () => readHir(Buffer.from(`${canonical(hir)}\n`))])
+      assert.throws(invoke, /r03-hir-invalid/);
+  });
+});
+
+test("forged uninitialized references receive generic rejection before evaluation attribution", async t => {
+  for (const [name, returned, type] of [
+    ["different name", "other", "i32"], ["literal anchor", "42", "i32"],
+    ["different type", "value", "bool"], ["foreign identity", "value", "i32"],
+  ]) await t.test(name, async () => {
+    const source = `export function answer(): ${type} { let value: i32 = 42; return ${type === "bool" ? "true" : "value"}; }`;
+    const checked = await compileHir(await sourceInput(source), tools());
+    assert.equal(checked.status, "ok", JSON.stringify(checked));
+    const hir = structuredClone(checked.hir), initializerStart = source.indexOf(" = 42");
+    replaceSourceFragment(hir, initializerStart, initializerStart + 5, "");
+    hir.functions[0].body[0].initializer = null;
+    const statement = hir.functions[0].body[1], original = statement.value;
+    const tokenStart = hir.source.content.indexOf(type === "bool" ? "true" : "value", statement.range.start);
+    replaceSourceFragment(hir, tokenStart, tokenStart + (type === "bool" ? 4 : 5), returned);
+    statement.value = { kind: "reference", type: original.type, binding: "l0", range: original.range };
+    if (name === "foreign identity") statement.value.binding = "s99";
+    for (const invoke of [() => verifyHir(hir), () => lowerHir(hir), () => readHir(Buffer.from(`${canonical(hir)}\n`))]) {
+      assert.throws(invoke, error => {
+        const failure = /** @type {any} */ (error);
+        assert.match(failure.message, /r03-hir-invalid/);
+        assert.equal(failure.primary, undefined);
+        return true;
+      });
+    }
+  });
+});
+
 test("owned local bindings retain declarations, assignment and reads after official checking", async () => {
   const source = "export function answer(): i32 { const base: i32 = 40; let value: i32 = base; value = value + 2; return value; }";
   const result = await compileHir(await sourceInput(source), tools());
@@ -150,6 +222,7 @@ test("formal local requests satisfy independent scalar oracles under source spel
     ["const value: i32 = 40; return + +value;", "i32", "40"],
     ["const value: i32 = 40; return -/* gap */-value;", "i32", "40"],
     ["const value: i32 = 40; return value - -value;", "i32", "80"],
+    [String.raw`const \u503c: i32 = 40; let $value: i32 = /* read */ 值; $value = $value + 2; return /* result */ $value;`, "i32", "42"],
     ["const a: i32 = -2147483648; let b: i32 = a; b = b / -1; return b;", "i32", "-2147483648"],
     ["const a: i32 = 6; const b: i32 = 7; let value: i32 = a * b; value = value + 0; return value;", "i32", "42"],
     [String.raw`const \u{73}eed: i32 = 40; let value: i32 = seed; value = value + 2; return value;`, "i32", "42"],
@@ -299,6 +372,7 @@ test("linear local HIR retains comma declarations, bool bindings and inherited A
     "export function answer(): bool { const a: bool = true; let b: bool = false; b = a; return !b; }",
     "export function answer(): i32 { const value: i32 = 40; return +/* gap */+value; }",
     "export function answer(): i32 { const value: i32 = 40; return - -value; }",
+    String.raw`export function answer(): i32 { const /* declaration */ \u503c: i32 = 40; let $value: i32 = /* read */ 值; /* assignment */ $value = $value + 2; return /* result */ $value; }`,
     String.raw`export function answer(): i32 { const \u{73}eed: i32 = 40; let value: i32 = seed; value = value + 2; return value; }`,
     "/*😀*/ export function answer(): i32 {\nconst seed: i32 = 0x28\nlet value: i32 = seed\nvalue = value + 2\nreturn value\n}",
   ]) await t.test(source, async () => {

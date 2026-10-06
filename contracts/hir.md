@@ -42,7 +42,10 @@ unknown fields, types, malformed structures, invalid constants, source hashes,
 entity IDs, targets and UTF-16 ranges. Constant spellings, boolean spellings,
 operators, declaration kind/type annotation, assignment targets and delimiters
 must match their original source, allowing comments
-and whitespace trivia. Adjacent `++`/`--` tokens cannot be split into scalar
+and whitespace trivia around identifiers. Internal trivia cannot join separate
+identifier tokens; inherited Unicode identifier spelling/escapes are preserved.
+Reference identity, type and token are checked before attributing initialization
+or dominance failures. Adjacent `++`/`--` tokens cannot be split into scalar
 unary or binary signs; separated signs retain ordinary TS lexical behavior.
 The shared expression budget is 4096 nodes.
 `printHir` emits UTF-8 JCS plus exactly

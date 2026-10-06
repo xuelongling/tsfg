@@ -53,7 +53,9 @@ Semantic Fuel is a separate later responsibility.
 Owned uninitialized reads reject as `r03-hir-uninitialized` and verified forward
 reads as `r03-hir-dominance`, both phase `hir`, Rule `r01-evaluation`, with the
 read's verified source range. Foreign bindings and forged facts receive generic
-invalid-input rejection. Adjacent `++`/`--` tokens cannot be reinterpreted as
+invalid-input rejection before evaluation attribution. Identifier ranges allow
+surrounding trivia and Unicode escapes, but cannot join tokens across internal
+whitespace/comments. Adjacent `++`/`--` tokens cannot be reinterpreted as
 scalar signs, while whitespace/comments may separate legal signs. Update,
 compound-assignment and assignment-expression semantics belong to M10.
 

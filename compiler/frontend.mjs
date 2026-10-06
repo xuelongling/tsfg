@@ -43,10 +43,14 @@ function hasLoneSurrogate(value) {
 
 // Compare an already officially checked identifier's source spelling with
 // its decoded owned name. This reads original spans, never upstream AST data.
-function identifierName(spelling) {
+export function identifierName(spelling) {
+  const trivia = "(?:\\s|/\\*(?:(?!\\*/)[\\s\\S])*\\*/|//[^\\r\\n\\u2028\\u2029]*)";
+  spelling = spelling.replace(new RegExp(`^${trivia}*`), "")
+    .replace(new RegExp(`${trivia}*$`), "");
   const name = spelling.replace(/\\u(?:\{([0-9a-fA-F]{1,6})\}|([0-9a-fA-F]{4}))/g,
     (_, point, unit) => String.fromCodePoint(Number.parseInt(point ?? unit, 16)));
-  if (name.includes("\\") || hasLoneSurrogate(name)) throw new TypeError("invalid source identifier spelling");
+  if (!/^[$_\p{ID_Start}][$\u200c\u200d\p{ID_Continue}]*$/u.test(name))
+    throw new TypeError("invalid source identifier spelling");
   return name;
 }
 

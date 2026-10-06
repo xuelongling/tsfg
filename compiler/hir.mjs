@@ -1,5 +1,5 @@
 // SPDX-License-Identifier: MIT
-import { validateFrontendSnapshot, resolveType, resolveSymbol } from "./frontend.mjs";
+import { validateFrontendSnapshot, resolveType, resolveSymbol, identifierName } from "./frontend.mjs";
 import { canonical, functionIdentity, signatureHash, i32TypeId, boolTypeId, own, sha256 } from "./identity.mjs";
 import registry from "../contracts/registry.json" with { type: "json" };
 import bytecodeSchema from "../contracts/bytecode.schema.json" with { type: "json" };
@@ -21,8 +21,18 @@ const precedence = { "|": 1, "^": 2, "&": 3, "===": 4, "!==": 4,
   "+": 7, "-": 7, "*": 8, "/": 8, "%": 8 };
 const sourceTokens = (source, start, end) => source.slice(start, end)
   .replace(/\/\*[\s\S]*?\*\/|\/\/[^\r\n\u2028\u2029]*/g, "").replace(/\s/g, "");
-const identifierName = spelling => spelling.replace(/\\u(?:\{([0-9a-fA-F]{1,6})\}|([0-9a-fA-F]{4}))/g,
-  (_, point, unit) => String.fromCodePoint(Number.parseInt(point ?? unit, 16)));
+function identifierToken(source, anchor) {
+  // This owned token guard preserves internal spelling. Only surrounding
+  // trivia is removed; a split token cannot manufacture a checked identifier.
+  try { return identifierName(source.slice(anchor.start, anchor.end)); }
+  catch { return undefined; }
+}
+function bindingFact(binding, parent, source) {
+  return exactKeys(binding, ["id", "name", "type", "writable", "range"])
+    && validText(binding.name) && Object.values(types).includes(binding.type)
+    && typeof binding.writable === "boolean" && range(binding.range, parent)
+    && identifierToken(source, binding.range) === binding.name;
+}
 function scalarOperator(source, start, end, operator) {
   const spelling = source.slice(start, end)
     .replace(/\/\*[\s\S]*?\*\/|\/\/[^\r\n\u2028\u2029]*/g, comment => " ".repeat(comment.length));
@@ -40,8 +50,9 @@ function verifyExpression(value, parent, source, fail, budget, locals) {
     const local = locals.get(value.binding);
     if (!exactKeys(value, ["kind", "type", "binding", "range"])) fail();
     const declaration = budget.declarations.get(value.binding);
-    if (!local && declaration?.type === value.type
-        && identifierName(sourceTokens(source, value.range.start, value.range.end)) === declaration.name) {
+    const claimed = local ?? declaration;
+    if (!claimed || claimed.type !== value.type || identifierToken(source, value.range) !== claimed.name) fail();
+    if (!local) {
       const error = new TypeError("r03-hir-dominance: local read has no preceding declaration");
       Object.assign(error, { code: "r03-hir-dominance", ruleId: "r01-evaluation", phase: "hir",
         primary: { sourceId: budget.sourcePath, ...value.range } });
@@ -53,9 +64,6 @@ function verifyExpression(value, parent, source, fail, budget, locals) {
         primary: { sourceId: budget.sourcePath, ...value.range } });
       throw error;
     }
-    if (!local?.initialized
-        || value.type !== local.type
-        || identifierName(sourceTokens(source, value.range.start, value.range.end)) !== local.name) fail();
   } else if (value.kind === "constant") {
     if (!exactKeys(value, ["kind", "type", "decimal", "token", "range"])
         || value.type !== i32TypeId || typeof value.decimal !== "string"
@@ -133,11 +141,8 @@ export function verifyHir(hir) {
   for (const statement of fn.body) {
     if (statement?.kind !== "local") continue;
     const binding = statement.binding;
-    if (exactKeys(binding, ["id", "name", "type", "writable", "range"])
-        && binding.id === `l${declarationIndex}` && validText(binding.name)
-        && Object.values(types).includes(binding.type) && typeof binding.writable === "boolean"
-        && range(statement.range, fn.range) && range(binding.range, statement.range)
-        && identifierName(sourceTokens(source, binding.range.start, binding.range.end)) === binding.name)
+    if (range(statement.range, fn.range) && bindingFact(binding, statement.range, source)
+        && binding.id === `l${declarationIndex}`)
       declarations.set(binding.id, binding);
     declarationIndex++;
   }
@@ -156,11 +161,8 @@ export function verifyHir(hir) {
     if (statement.kind === "local") {
       const binding = statement.binding, value = statement.initializer;
       if (!exactKeys(statement, ["kind", "range", "binding", "initializer"])
-          || !exactKeys(binding, ["id", "name", "type", "writable", "range"])
-          || binding.id !== `l${locals.size}` || names.has(binding.name) || !validText(binding.name)
-          || !Object.values(types).includes(binding.type) || typeof binding.writable !== "boolean"
-          || !range(binding.range, statement.range)
-          || identifierName(sourceTokens(source, binding.range.start, binding.range.end)) !== binding.name
+          || !bindingFact(binding, statement.range, source)
+          || binding.id !== `l${locals.size}` || names.has(binding.name)
           || sourceTokens(source, statement.range.start, binding.range.start) !== "") fail();
       const keyword = before.match(/^;?(const|let)$/)?.[1];
       if (keyword) declarationKind = keyword;
@@ -189,7 +191,7 @@ export function verifyHir(hir) {
             || !exactKeys(target, ["kind", "type", "binding", "range"]) || target.kind !== "reference"
             || !local?.writable || target.type !== local.type || value?.type !== local.type
             || !range(target.range, statement.range) || target.range.end > value.range.start
-            || identifierName(sourceTokens(source, target.range.start, target.range.end)) !== local.name
+            || identifierToken(source, target.range) !== local.name
             || sourceTokens(source, statement.range.start, target.range.start) !== ""
             || sourceTokens(source, target.range.end, value.range.start) !== "=") fail();
       } else fail();
