@@ -784,6 +784,15 @@ test("local declaration links and source-backed names cannot be reassigned", asy
   assert.throws(() => validateFrontendSnapshot(changedSource), TypeError);
 });
 
+test("nested calls retain leading argument trivia and exact callee signatures", async () => {
+  for (const trivia of ["/*ordered*/ ", "/* ( hidden */ ", "// ordered\n", "// ordered\u2028"]) {
+    const source = `export function entry(): i32 { return outer(${trivia}leaf()); } export function outer(n: i32): i32 { return n; } export function leaf(): i32 { return 42; }`;
+    const result = await analyzeCalls(source);
+    assert.equal(result.status, "ok", JSON.stringify(result));
+    assert.equal(validateFrontendSnapshot(result.snapshot).calls, 2, JSON.stringify(trivia));
+  }
+});
+
 test("a call with whitespace before its argument list keeps its target link", async () => {
   const result = await analyzeCalls("export function entry(x: i32): i32 { return target (x); } export function target(y: i32): i32 { return y; }");
   assert.equal(result.status, "ok");

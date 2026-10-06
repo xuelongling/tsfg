@@ -164,6 +164,7 @@ export function verifyHir(hir) {
     previousFunctionEnd = fn.range.end;
     functions.set(fn.id, fn); functionNames.add(fn.name);
   }
+  const parameterTypesByFunction = new Map();
   for (const fn of hir.functions) {
   if (!Array.isArray(fn.parameters)) fail();
   const parameterNames = fn.parameters.map(parameter => Object.entries(types).find(([,id]) => id === parameter?.type)?.[0]);
@@ -175,11 +176,12 @@ export function verifyHir(hir) {
       || !Array.isArray(fn.parameters) || fn.parameters.length > 64 || parameterNames.some(name => !name)
       || !range(fn.range, { start: 0, end: hir.source.content.length })
       || !Array.isArray(fn.body) || fn.body.length < 1 || fn.body.length > 128) fail();
+  parameterTypesByFunction.set(fn.id, parameterNames);
   }
   // Resolve calls only after the complete table's identities and signatures
   // have been validated, including functions that are never executed.
   for (const fn of hir.functions) {
-  const parameterNames = fn.parameters.map(parameter => Object.entries(types).find(([,id]) => id === parameter.type)[0]);
+  const parameterNames = parameterTypesByFunction.get(fn.id);
   const source = hir.source.content, declarations = new Map(), ids = new Set();
   let declarationIndex = 0, remainingStatements = 4096;
   const collect = (body, depth = 0) => {

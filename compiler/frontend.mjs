@@ -11,23 +11,28 @@ export const frontendContractVersion = frontendContract.semver;
 
 const digest = bytes => `sha256:${createHash("sha256").update(bytes).digest("hex")}`;
 
-function hasCallArgumentList(source) {
+function skipCallTrivia(source) {
   let index = 0;
   while (index < source.length) {
     if (/\s/.test(source[index])) {
       index++;
     } else if (source.startsWith("/*", index)) {
       const end = source.indexOf("*/", index + 2);
-      if (end === -1) return false;
+      if (end === -1) return -1;
       index = end + 2;
     } else if (source.startsWith("//", index)) {
       index += 2;
       while (index < source.length && !/[\r\n\u2028\u2029]/.test(source[index])) index++;
     } else {
-      return source[index] === "(";
+      return index;
     }
   }
-  return false;
+  return index;
+}
+
+function hasCallArgumentList(source) {
+  const index = skipCallTrivia(source);
+  return index >= 0 && source[index] === "(";
 }
 
 function hasLoneSurrogate(value) {
@@ -389,11 +394,12 @@ export function validateFrontendSnapshot(snapshot) {
       const parameters = fn?.parameters?.map(parameter => parameter.type);
       const arguments_ = expression.arguments;
       const sourceCall = sourceSpan(expression.range);
-      const spelling = sourceCall.match(/^(?:\\u(?:\{[0-9a-fA-F]{1,6}\}|[0-9a-fA-F]{4})|[^\\\s(/])+/u)?.[0];
+      const start = skipCallTrivia(sourceCall);
+      const spelling = (start < 0 ? "" : sourceCall.slice(start)).match(/^(?:\\u(?:\{[0-9a-fA-F]{1,6}\}|[0-9a-fA-F]{4})|[^\\\s(/])+/u)?.[0];
       if (expression.kind !== "call" || !fn || !Array.isArray(parameters)
           || !Array.isArray(arguments_) || !Array.isArray(expression.signature?.parameters)
           || !spelling || identifierName(spelling) !== target.name
-          || !hasCallArgumentList(sourceCall.slice(spelling.length))
+          || !hasCallArgumentList(sourceCall.slice(start + spelling.length))
           || expression.signature.returnType !== fn.returnType
           || expression.type !== fn.returnType
           || expression.signature.parameters.length !== parameters.length
