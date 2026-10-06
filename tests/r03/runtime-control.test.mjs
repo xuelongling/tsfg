@@ -85,7 +85,10 @@ test("canonical inspector exposes CFG parameter and edge metadata", () => {
   assert.equal(roundtrip.status, 0, roundtrip.stderr.toString()); assert.deepEqual(roundtrip.stdout, loop(3));
 });
 test("fuel priority, depth and physical resource termination remain distinct", () => {
-  const division = packet([{ params: [], ops: [fuel(1), fuel(2), op(1, 1, 0, 1), op(1, 1, 1, 0), op(7, 1, 2, 0 | 1 << 16, 50, 55), op(2, 1, 2)] }], 3);
+  const division = packet([
+    { params: [], ops: [fuel(1), branch(1)] },
+    { params: [], ops: [fuel(2), op(1, 1, 0, 1), op(1, 1, 1, 0), op(7, 1, 2, 0 | 1 << 16, 50, 55), op(2, 1, 2)] },
+  ], 3);
   const results = evaluate(division, [{ semanticFuel: 1 }, { semanticFuel: 2 }, { semanticFuel: 0, instructionBudget: 0 },
     { depth: 0, semanticFuel: 0 }, { semanticFuel: 1, instructionBudget: 0 }, { memoryBytes: 0 }, {}]);
   assert.equal(results[0].code, "r01-t-fuel"); assert.equal(results[0].source.start, "30");
@@ -117,6 +120,27 @@ test("CFG short circuit skips division and parallel loop phi transfers preserve 
 function rejects(bytes, code) {
   const result = invoke(bytes); assert.equal(result.status, 3, result.stderr.toString());
   if (code) assert.equal(JSON.parse(result.stderr.toString("utf8")).code, code);
+}
+/** @type {[string, Buffer][]} */
+const malformedWhileEvents = [
+  ["scalar before event", packet([
+    { params: [], ops: [fuel(1), branch(1)] },
+    { params: [], ops: [op(1, 1, 0, 1), fuel(2), op(2, 1, 0)] },
+  ], 1)],
+  ["division before event", packet([
+    { params: [], ops: [fuel(1), op(1, 1, 0, 1), op(1, 1, 1, 0), branch(1)] },
+    { params: [], ops: [op(7, 1, 2, 0 | 1 << 16), fuel(2), op(2, 1, 2)] },
+  ], 3)],
+  ["duplicate event in header", packet([
+    { params: [], ops: [fuel(1), op(1, 1, 0, 1), branch(1)] },
+    { params: [], ops: [fuel(2), fuel(2), op(2, 1, 0)] },
+  ], 1)],
+  ["event in entry block", packet([
+    { params: [], ops: [fuel(1), fuel(2), op(1, 1, 0, 1), op(2, 1, 0)] },
+  ], 1)],
+];
+for (const [label, bytes] of malformedWhileEvents) {
+  test(`while fuel structural rejection: ${label}`, () => rejects(bytes, "r04-fuel"));
 }
 test("loader rejects malformed CFG, dominance, phi types, entry reexecution and every unfuelled cycle", () => {
   rejects(packet([{ params: [], ops: [op(1, 1, 0, 1), op(2, 1, 0)] }], 1), "r04-entry-fuel");

@@ -3,6 +3,16 @@ const std = @import("std");
 const runtime = @import("root.zig");
 const fixture = @import("fixture.zig");
 
+test "verified CFG block table exposes immutable nested parameter views" {
+    const bytecode = @import("bytecode.zig");
+    comptime {
+        if (@FieldType(bytecode.Block, "parameters") != []const bytecode.Parameter)
+            @compileError("VerifiedModule parameter views must be immutable");
+        if (@TypeOf(bytecode.blockTable(@as(*const bytecode.VerifiedModule, undefined))) != []const bytecode.Block)
+            @compileError("VerifiedModule block views must be immutable");
+    }
+}
+
 test "loader preserves an official absolute logical source path" {
     const old_path = "fixture.ts";
     const prefix = "/src/";

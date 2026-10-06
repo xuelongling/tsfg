@@ -35,7 +35,7 @@ pub const Instruction = struct {
     edges: [2][]const u16 = .{ &.{}, &.{} },
 };
 pub const Parameter = struct { register: u16, type_code: u8 };
-pub const Block = struct { parameters: []Parameter, start: usize, count: u16 };
+pub const Block = struct { parameters: []const Parameter, start: usize, count: u16 };
 const Module = struct { allocator: Allocator, arena: std.heap.ArenaAllocator, bytes: []u8, info: ModuleInfo, instructions: []Instruction, blocks: []Block };
 pub const LoadFailure = struct { code: []const u8, offset: usize };
 pub const LoadOutcome = union(enum) { loaded: *VerifiedModule, rejected: LoadFailure };
@@ -215,6 +215,7 @@ fn parse(reader: *Reader, allocator: Allocator, module: *Module) (error{Invalid}
                 if (type_code != 0 or reg != 0 or (payload != 1 and payload != 2)) return reader.reject("r04-fuel", offset);
                 if (payload == 1 and (block_index != 0 or position != 0)) return reader.reject("r04-entry-fuel", offset);
                 if (payload == 1 and (start != function_start or end != function_end)) return reader.reject("r04-source-range", offset + 8);
+                if (payload == 2 and (block_index == 0 or position != 0)) return reader.reject("r04-fuel", offset);
                 if (payload == 2) has_fuel[block_index] = true;
             } else {
                 if (type_code != 1 and type_code != 2) return reader.reject("r04-type", offset + 1);
