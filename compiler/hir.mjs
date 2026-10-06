@@ -358,10 +358,15 @@ export function buildHir(snapshot) {
   const descriptor = functions.get(fn.symbol.id);
   const bindings = new Map();
   fn.parameters.forEach((p,index) => bindings.set(p.id, descriptor.parameters[index]));
-  const project = value => {
+  const project = (value, parentRange) => {
     const type = types[resolveType(snapshot, value.typeRef).scalar];
     if (!type) throw new TypeError("unsupported expression type");
-    const common = { type, range: value.range };
+    let projectedRange = value.range;
+    if (value.kind === "call" && parentRange && value.range.start < parentRange.start
+        && sourceTrivia(snapshot.source.content, value.range.start, parentRange.start).trim() === "") {
+      projectedRange = { ...value.range, start: parentRange.start };
+    }
+    const common = { type, range: projectedRange };
     if (value.kind === "reference") {
       const symbol = resolveSymbol(snapshot, value.symbol), binding = bindings.get(symbol.id);
       if (!binding) throw new TypeError("local reference has no preceding owned declaration");
@@ -370,16 +375,16 @@ export function buildHir(snapshot) {
     if (value.kind === "call") {
       const target = functions.get(resolveSymbol(snapshot, value.target).id);
       if (!target) throw new TypeError("call target is outside owned function closure");
-      return {kind:"call",...common,target:target.id,signatureHash:target.signatureHash,arguments:value.arguments.map(project)};
+      return {kind:"call",...common,target:target.id,signatureHash:target.signatureHash,arguments:value.arguments.map(argument => project(argument, common.range))};
     }
     if (value.kind === "integer") return { kind: "constant", ...common, decimal: value.literal.decimal, token: value.literal.token };
     if (value.kind === "boolean") return { kind: "boolean", ...common, value: value.boolean };
-    if (value.kind === "group") return { kind: "group", ...common, operand: project(value.operand) };
+    if (value.kind === "group") return { kind: "group", ...common, operand: project(value.operand, common.range) };
     if (value.kind === "unary" && ["+", "-", "~", "!"].includes(value.operator))
-      return { kind: "unary", ...common, operator: value.operator, operand: project(value.operand) };
+      return { kind: "unary", ...common, operator: value.operator, operand: project(value.operand, common.range) };
     if (value.kind === "binary" && Object.hasOwn(operations, value.operator)
         || value.kind === "shortCircuit" && ["&&", "||"].includes(value.operator))
-      return { kind: value.kind, ...common, operator: value.operator, left: project(value.left), right: project(value.right) };
+      return { kind: value.kind, ...common, operator: value.operator, left: project(value.left, common.range), right: project(value.right, common.range) };
     throw new TypeError("unsupported checked expression capability");
   };
   let projected;
@@ -387,17 +392,17 @@ export function buildHir(snapshot) {
     if (item.kind === "variable") {
       const symbol = resolveSymbol(snapshot, item.symbol.ref), type = types[symbol.type];
       if (symbol.kind !== "local" || !type) throw new TypeError("unsupported local type");
-      const initializer = item.initializer ? project(item.initializer) : null;
+      const initializer = item.initializer ? project(item.initializer, item.range) : null;
       const binding = { id: `l${bindings.size - fn.parameters.length}`, name: symbol.name, type, writable: symbol.writable, range: symbol.range };
       bindings.set(symbol.id, binding);
       return { kind: "local", range: item.range, binding, initializer };
     }
-    if (item.kind === "assignment") return { kind: "assign", range: item.range, target: project(item.target), value: project(item.value) };
+    if (item.kind === "assignment") return { kind: "assign", range: item.range, target: project(item.target, item.range), value: project(item.value, item.range) };
     if (item.kind === "block") return { kind: "block", range: item.range, body: statements(item.body) };
-    if (item.kind === "while") return { kind: "while", range: item.range, condition: project(item.condition), body: statements(item.body) };
-    if (item.kind === "if") return { kind: "if", range: item.range, condition: project(item.condition),
+    if (item.kind === "while") return { kind: "while", range: item.range, condition: project(item.condition, item.range), body: statements(item.body) };
+    if (item.kind === "if") return { kind: "if", range: item.range, condition: project(item.condition, item.range),
       thenBody: statements(item.thenBody), elseBody: statements(item.elseBody) };
-    if (item.kind === "return") return { kind: "return", range: item.range, value: project(item.expression) };
+    if (item.kind === "return") return { kind: "return", range: item.range, value: project(item.expression, item.range) };
     throw new TypeError("unsupported checked statement capability");
   });
   try { projected = statements(fn.body); } catch (error) {
