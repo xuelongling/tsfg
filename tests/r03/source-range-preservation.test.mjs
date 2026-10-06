@@ -8,6 +8,39 @@ const tools = () => ({ frontend: process.env.TSFG_FRONTEND_EXE,
   core: process.env.TSFG_CORE_IR_EXE, vm: process.env.TSFG_VM_EXE });
 const value = (type, number) => ({ type, value: number });
 
+test("legal f64 unary source keeps capability diagnostics before native consumption", async () => {
+  for (const operator of ["+", "-"]) {
+    const source = `export function entry(a: f64): f64 { return ${operator}a; }`;
+    const result = await compileProgram(await sourceInput(source), { frontend: tools().frontend });
+    assert.equal(result.status, "error", JSON.stringify(result));
+    const diagnostic = result.diagnostics[0];
+    assert.equal(diagnostic.code, "r02b-d-unsupported");
+    assert.deepEqual(diagnostic.ruleIds, ["r01-ts-baseline"]);
+    assert.equal(diagnostic.category, "unsupported");
+    assert.equal(diagnostic.phase, "capability");
+    assert.equal(diagnostic.severity, "error");
+    assert.equal(diagnostic.primary.sourceId, "/src/main.ts");
+    assert.equal(diagnostic.primary.start, 44);
+    assert.equal(diagnostic.primary.end, 46);
+    assert.equal(source.slice(diagnostic.primary.start, diagnostic.primary.end), `${operator}a`);
+    assert.equal(result.hir, undefined);
+    assert.equal(result.bytecode, undefined);
+  }
+  for (const [source, code] of [
+    ["export function entry(a: bool): i32 { return +a; }", "r01-d-scalar-type"],
+    ["export function entry(a: bool): i32 { return -a; }", "r01-d-scalar-type"],
+    ["export function entry(a: f64): f64 { return +missing; }", "r01-d-unresolved-name"],
+    ["export function entry(a: u64): usize { return -a; }", "r01-d-scalar-type"],
+  ]) {
+    const result = await compileProgram(await sourceInput(source), { frontend: tools().frontend });
+    assert.equal(result.status, "error", JSON.stringify(result));
+    assert.equal(result.diagnostics[0].code, code);
+    assert.notEqual(result.diagnostics[0].category, "unsupported");
+    assert.equal(result.hir, undefined);
+    assert.equal(result.bytecode, undefined);
+  }
+});
+
 test("legacy operator anchors and trivia-only nested calls survive strict HIR and formal execution", async () => {
   for (const type of ["i32", "u64", "usize"]) {
     const source = `export function entry(a: ${type}, b: ${type}): ${type} { return /*😀*/ identity(a) / b; } function identity(a: ${type}): ${type} { return a; }`;
