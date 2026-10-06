@@ -14,6 +14,11 @@ const operations = { "+": "add", "-": "sub", "*": "mul", "/": "div", "%": "rem",
   "<<": "shl", ">>": "shr", ">>>": "ushr", "&": "and", "|": "or", "^": "xor",
   "===": "eq", "!==": "ne", "<": "lt", "<=": "le", ">": "gt", ">=": "ge" };
 const comparisons = new Set(["===", "!==", "<", "<=", ">", ">="]);
+// The checked scalar subset inherits TS precedence; every binary operator here
+// associates left. Parentheses are explicit group nodes, not inferred anchors.
+const precedence = { "|": 1, "^": 2, "&": 3, "===": 4, "!==": 4,
+  "<": 5, "<=": 5, ">": 5, ">=": 5, "<<": 6, ">>": 6, ">>>": 6,
+  "+": 7, "-": 7, "*": 8, "/": 8, "%": 8 };
 const sourceTokens = (source, start, end) => source.slice(start, end)
   .replace(/\/\*[\s\S]*?\*\/|\/\/[^\r\n\u2028\u2029]*/g, "").replace(/\s/g, "");
 function verifyExpression(value, parent, source, fail, budget) {
@@ -38,7 +43,8 @@ function verifyExpression(value, parent, source, fail, budget) {
     verifyExpression(value.operand, value.range, source, fail, budget);
     if (sourceTokens(source, value.range.start, value.operand.range.start) !== (group ? "(" : value.operator)
         || sourceTokens(source, value.operand.range.end, value.range.end) !== (group ? ")" : "")
-        || value.type !== value.operand.type || (!group && (!["+", "-", "~", "!"].includes(value.operator)
+        || value.type !== value.operand.type || (!group && (value.operand.kind === "binary"
+        || !["+", "-", "~", "!"].includes(value.operator)
         || value.type !== (value.operator === "!" ? boolTypeId : i32TypeId)))) fail();
   } else if (value.kind === "binary") {
     if (!exactKeys(value, ["kind", "type", "operator", "left", "right", "range"])
@@ -46,6 +52,8 @@ function verifyExpression(value, parent, source, fail, budget) {
     verifyExpression(value.left, value.range, source, fail, budget);
     verifyExpression(value.right, value.range, source, fail, budget);
     if (value.left.type !== value.right.type || value.left.range.end > value.right.range.start
+        || (value.left.kind === "binary" && precedence[value.left.operator] < precedence[value.operator])
+        || (value.right.kind === "binary" && precedence[value.right.operator] <= precedence[value.operator])
         || sourceTokens(source, value.range.start, value.left.range.start) !== ""
         || sourceTokens(source, value.left.range.end, value.right.range.start) !== value.operator
         || sourceTokens(source, value.right.range.end, value.range.end) !== ""
@@ -86,14 +94,21 @@ export function verifyHir(hir) {
       || !Array.isArray(fn.body) || fn.body.length < 1 || fn.body.length > 128) fail();
   const budget = { remaining: 4096 };
   let previousEnd = fn.range.start;
-  for (const returned of fn.body) {
+  for (const [index, returned] of fn.body.entries()) {
     const value = returned?.value;
     if (!exactKeys(returned, ["kind", "range", "value"]) || returned.kind !== "return"
         || !range(returned.range, fn.range) || returned.range.start < previousEnd
         || value?.type !== fn.returnType.id) fail();
     verifyExpression(value, returned.range, hir.source.content, fail, budget);
+    // A retained anchor alone cannot prove that no checked return was dropped.
+    // The linear capability permits only trivia between the complete statements.
+    const before = sourceTokens(hir.source.content, previousEnd, returned.range.start);
+    if ((index === 0 ? !/^[^{}]*\{$/.test(before) : before !== "")
+        || sourceTokens(hir.source.content, returned.range.start, value.range.start) !== "return"
+        || !/^;?$/.test(sourceTokens(hir.source.content, value.range.end, returned.range.end))) fail();
     previousEnd = returned.range.end;
   }
+  if (sourceTokens(hir.source.content, previousEnd, fn.range.end) !== "}") fail();
   return own(hir);
 }
 

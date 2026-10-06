@@ -3,7 +3,8 @@ import assert from "node:assert/strict";
 import test from "node:test";
 import { readFile } from "node:fs/promises";
 import { compileAndRun, compileProgram, compileHir, sourceInput } from "../../compiler/pipeline.mjs";
-import { verifyHir, printHir, readHir } from "../../compiler/hir.mjs";
+import { verifyHir, printHir, readHir, lowerHir } from "../../compiler/hir.mjs";
+import { canonical } from "../../compiler/identity.mjs";
 
 const tools = () => ({ frontend: process.env.TSFG_FRONTEND_EXE,
   core: process.env.TSFG_CORE_IR_EXE, vm: process.env.TSFG_VM_EXE });
@@ -117,6 +118,56 @@ test("owned scalar HIR rejects operator and delimiter changes against its checke
   assert.equal(checked.status, "ok", JSON.stringify(checked));
   const text = printHir(checked.hir);
   assert.equal(printHir(readHir(Buffer.from(text))), text);
+});
+
+test("persisted HIR rejects omitted or replaced checked returns before lowering", async () => {
+  const source = "export function answer(): i32 { return 42; return 1 / 0; }";
+  const checked = await compileHir(await sourceInput(source), tools());
+  assert.equal(checked.status, "ok", JSON.stringify(checked));
+  for (const select of [body => body.slice(1), body => body.slice(0, 1),
+    body => [body[1], body[1]], body => [body[0], body[0]]]) {
+    const changed = structuredClone(checked.hir);
+    changed.functions[0].body = select(changed.functions[0].body);
+    assert.throws(() => verifyHir(changed), /r03-hir-invalid/);
+    assert.throws(() => readHir(Buffer.from(`${canonical(changed)}\n`)), /r03-hir-invalid/);
+    assert.throws(() => lowerHir(changed), /r03-hir-invalid/);
+  }
+  assert.equal(printHir(readHir(Buffer.from(printHir(checked.hir)))), printHir(checked.hir));
+  const result = await compileAndRun(source, tools());
+  assert.equal(result.status, "ok", JSON.stringify(result));
+  assert.deepEqual(result.requests[0].result, { type: "i32", value: "42" });
+});
+
+test("persisted HIR preserves checked precedence and left association", async (t) => {
+  for (const [expression, association, expected] of [
+    ["1 + 2 * 3", "left", "7"], ["8 - 3 - 1", "right", "4"],
+    ["8 / 4 / 2", "right", "1"], ["1 + 2 + 3", "right", "6"],
+  ]) await t.test(expression, async () => {
+    const source = `export function answer(): i32 { return ${expression}; }`;
+    const checked = await compileHir(await sourceInput(source), tools());
+    assert.equal(checked.status, "ok", JSON.stringify(checked));
+    const changed = structuredClone(checked.hir);
+    const value = changed.functions[0].body[0].value;
+    if (association === "left") {
+      const right = value.right;
+      value.left = { ...value, right: right.left,
+        range: { start: value.left.range.start, end: right.left.range.end } };
+      value.operator = right.operator;
+      value.right = right.right;
+    } else {
+      const left = value.left;
+      value.right = { ...value, left: left.right,
+        range: { start: left.right.range.start, end: value.right.range.end } };
+      value.left = left.left;
+      value.operator = left.operator;
+    }
+    assert.throws(() => verifyHir(changed), /r03-hir-invalid/);
+    assert.throws(() => readHir(Buffer.from(`${canonical(changed)}\n`)), /r03-hir-invalid/);
+    assert.throws(() => lowerHir(changed), /r03-hir-invalid/);
+    const result = await compileAndRun(source, tools());
+    assert.equal(result.status, "ok", JSON.stringify(result));
+    assert.deepEqual(result.requests[0].result, { type: "i32", value: expected });
+  });
 });
 
 test("request-sequence input validation has a stable bounded public failure", async () => {
