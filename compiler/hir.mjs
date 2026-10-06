@@ -85,7 +85,7 @@ function verifyExpression(value, parent, source, fail, budget, locals, visibleBi
     if (!(group ? sourceTokens(source, value.range.start, value.operand.range.start) === "("
         : scalarOperator(source, value.range.start, value.operand.range.start, value.operator))
         || sourceTokens(source, value.operand.range.end, value.range.end) !== (group ? ")" : "")
-        || value.type !== value.operand.type || (!group && (value.operand.kind === "binary"
+        || value.type !== value.operand.type || (!group && (["binary", "shortCircuit"].includes(value.operand.kind)
         || !["+", "-", "~", "!"].includes(value.operator)
         || value.type !== (value.operator === "!" ? boolTypeId : i32TypeId)))) fail();
   } else if (value.kind === "binary" || value.kind === "shortCircuit") {
@@ -110,6 +110,15 @@ function range(value, parent) {
   return exactKeys(value, ["start", "end"]) && Number.isSafeInteger(value.start)
     && Number.isSafeInteger(value.end) && value.start >= parent.start
     && value.end <= parent.end && value.start < value.end;
+}
+
+function noShortIf(statement) {
+  // A verified braced block closes the dangling-else boundary. An unbraced
+  // while or either tail of a matched if retains any unmatched inner if.
+  if (statement.kind === "while") return noShortIf(statement.body[0]);
+  if (statement.kind === "if") return statement.elseBody.length === 1
+    && noShortIf(statement.thenBody[0]) && noShortIf(statement.elseBody[0]);
+  return ["block", "return", "assign"].includes(statement.kind);
 }
 
 export function verifyHir(hir) {
@@ -219,7 +228,8 @@ export function verifyHir(hir) {
             let rightReturn = false;
             if (statement.elseBody.length) {
               const alternative = statement.elseBody;
-              if (sourceTokens(source, last, alternative[0].range.start) !== "else") fail();
+              if (!noShortIf(selected[0])
+                  || sourceTokens(source, last, alternative[0].range.start) !== "else") fail();
               rightReturn = body(alternative, { start: alternative[0].range.start, end: alternative.at(-1).range.end }, right, "plain", visibleBindings);
               last = alternative.at(-1).range.end;
             }
