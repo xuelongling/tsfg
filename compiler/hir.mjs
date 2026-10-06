@@ -103,7 +103,9 @@ export function verifyHir(hir) {
     // A retained anchor alone cannot prove that no checked return was dropped.
     // The linear capability permits only trivia between the complete statements.
     const before = sourceTokens(hir.source.content, previousEnd, returned.range.start);
-    if ((index === 0 ? !/^[^{}]*\{$/.test(before) : before !== "")
+    // Braces in a checked Unicode identifier escape are part of the header;
+    // only the unescaped opening brace begins the complete return sequence.
+    if ((index === 0 ? !/^(?:[^{}]|\\u\{[0-9a-fA-F]+\})*\{$/.test(before) : before !== "")
         || sourceTokens(hir.source.content, returned.range.start, value.range.start) !== "return"
         || !/^;?$/.test(sourceTokens(hir.source.content, value.range.end, returned.range.end))) fail();
     previousEnd = returned.range.end;

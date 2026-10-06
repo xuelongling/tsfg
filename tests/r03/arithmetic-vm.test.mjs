@@ -138,6 +138,22 @@ test("persisted HIR rejects omitted or replaced checked returns before lowering"
   assert.deepEqual(result.requests[0].result, { type: "i32", value: "42" });
 });
 
+test("escaped function identifiers preserve checked returns through the request seam", async (t) => {
+  for (const name of [String.raw`\u{61}nswer`, String.raw`a\u{6e}swer`, String.raw`\u0061nswer`]) {
+    await t.test(name, async () => {
+      const source = `export /* header */ function ${name}(): i32 {\n/* first */ return 42\n// unreachable\nreturn 1 / 0\n}`;
+      const result = await compileAndRun(source, tools());
+      assert.equal(result.status, "ok", JSON.stringify(result));
+      assert.equal(result.hir.functions[0].name, "answer");
+      assert.equal(result.hir.functions[0].body.length, 2);
+      assert.equal(printHir(readHir(Buffer.from(printHir(result.hir)))), printHir(result.hir));
+      assert.doesNotMatch(result.core, /tsfg_core.div/);
+      assert.deepEqual(result.requests[0].result, { type: "i32", value: "42" });
+      assert.equal(result.requests[0].activeRequests, "0");
+    });
+  }
+});
+
 test("persisted HIR preserves checked precedence and left association", async (t) => {
   for (const [expression, association, expected] of [
     ["1 + 2 * 3", "left", "7"], ["8 - 3 - 1", "right", "4"],
