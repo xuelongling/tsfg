@@ -28,12 +28,14 @@ function verifyExpression(value, parent, source, fail, budget, locals) {
       || !range(value.range, parent)) fail();
   if (value.kind === "reference") {
     const local = locals.get(value.binding);
+    if (!exactKeys(value, ["kind", "type", "binding", "range"])) fail();
     if (local && !local.initialized) {
       const error = new TypeError("r03-hir-uninitialized: local read has no preceding initialization");
-      Object.assign(error, { code: "r03-hir-uninitialized", ruleId: "r01-evaluation", phase: "hir", primary: { ...value.range } });
+      Object.assign(error, { code: "r03-hir-uninitialized", ruleId: "r01-evaluation", phase: "hir",
+        primary: { sourceId: budget.sourcePath, ...value.range } });
       throw error;
     }
-    if (!exactKeys(value, ["kind", "type", "binding", "range"]) || !local?.initialized
+    if (!local?.initialized
         || value.type !== local.type
         || identifierName(sourceTokens(source, value.range.start, value.range.end)) !== local.name) fail();
   } else if (value.kind === "constant") {
@@ -104,7 +106,7 @@ export function verifyHir(hir) {
       || !Array.isArray(fn.parameters) || fn.parameters.length !== 0
       || !range(fn.range, { start: 0, end: hir.source.content.length })
       || !Array.isArray(fn.body) || fn.body.length < 1 || fn.body.length > 128) fail();
-  const budget = { remaining: 4096 };
+  const budget = { remaining: 4096, sourcePath: hir.source.path };
   const locals = new Map(), names = new Set(), source = hir.source.content;
   let previousEnd = fn.range.start, hasReturn = false, declarationKind;
   for (const [index, statement] of fn.body.entries()) {
