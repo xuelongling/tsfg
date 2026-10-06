@@ -28,6 +28,7 @@ test("Build Input declaration includes both debug target control and smoke input
       { path: "compiler/hir.mjs", projectId: "tsfg" },
       { path: "compiler/identity.mjs", projectId: "tsfg" },
       { path: "compiler/minimal-bool-v1.d.ts", projectId: "tsfg" },
+      { path: "compiler/minimal-integers-v3.d.ts", projectId: "tsfg" },
       { path: "compiler/minimal-scalars-v2.d.ts", projectId: "tsfg" },
       { path: "compiler/pipeline.mjs", projectId: "tsfg" },
       { path: "contracts/bytecode.schema.json", projectId: "tsfg" },
@@ -90,7 +91,7 @@ test("Build Input declaration includes both debug target control and smoke input
     schemaVersion: "1",
   });
   const registry = JSON.parse(await readFile(path.join(repositoryRoot, "contracts", "registry.json"), "utf8"));
-  assert.equal(registry["tsfg.frontend-snapshot"].semver, "0.5.0");
+  assert.equal(registry["tsfg.frontend-snapshot"].semver, "0.6.0");
   assert.equal(
     declaration.entries.some(({ path: inputPath }) =>
       inputPath.endsWith(".test.mjs") || inputPath.includes("fixture") || inputPath.includes("report")),
