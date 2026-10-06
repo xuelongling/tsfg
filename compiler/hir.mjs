@@ -343,7 +343,7 @@ export function buildHir(snapshot) {
       || !Object.hasOwn(types, resolveType(snapshot, fn.returnTypeRef).scalar)
       || fn.parameters.some(parameter => !types[parameter.type]) || fn.body.length < 1 || fn.body.length > 128)) {
     return { status: "error", diagnostics: [{ code: "r03-d-capability", ruleId: "r01-ts-baseline", phase: "hir",
-      message: "current execution capability requires scalar i32/bool functions with direct calls, locals, structured control and returns",
+      message: "current execution capability requires nominal integer/bool functions with direct calls, locals, structured control and returns",
       primary: { sourceId: snapshot.source.path, ...(expression?.range ?? first?.range ?? { start: 0, end: 0 }) } }] };
   }
   const functions = new Map(snapshot.functions.map(fn => [fn.symbol.id, {
