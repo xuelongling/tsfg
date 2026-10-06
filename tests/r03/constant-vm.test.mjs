@@ -8,17 +8,16 @@ const tools = () => ({ frontend: process.env.TSFG_FRONTEND_EXE,
   core: process.env.TSFG_CORE_IR_EXE, vm: process.env.TSFG_VM_EXE });
 const sha = text => `sha256:${createHash("sha256").update(text).digest("hex")}`;
 
-test("official source reaches the formal typed Zig request consumer", async () => {
+test("official constant and initialized local source reach the formal typed Zig request consumer", async () => {
   const { compileAndRun } = await import("../../compiler/pipeline.mjs");
-  const result = await compileAndRun("export function answer(): i32 { return 42; }", {
-    frontend: process.env.TSFG_FRONTEND_EXE,
-    core: process.env.TSFG_CORE_IR_EXE,
-    vm: process.env.TSFG_VM_EXE,
-  });
-  assert.equal(result.status, "ok", JSON.stringify(result));
-  assert.deepEqual(result.requests[0].result, { type: "i32", value: "42" });
-  assert.equal(result.requests[0].status, "returned");
-  assert.equal(result.requests[0].activeRequests, "0");
+  for (const source of ["export function answer(): i32 { return 42; }",
+    "export function answer(): i32 { const value: i32 = 42; return value; }"]) {
+    const result = await compileAndRun(source, tools());
+    assert.equal(result.status, "ok", JSON.stringify(result));
+    assert.deepEqual(result.requests[0].result, { type: "i32", value: "42" });
+    assert.equal(result.requests[0].status, "returned");
+    assert.equal(result.requests[0].activeRequests, "0");
+  }
 });
 
 test("owned source golden survives HIR, SSA Core and actual R04 canonical roundtrips", async () => {
@@ -173,7 +172,6 @@ test("official source checking precedes the bounded execution capability and nat
     assert.equal(result.bytecode, undefined); assert.equal(result.hir, undefined);
   }
   for (const source of [
-    "export function answer(): i32 { const value: i32 = 42; return value; }",
     "export function answer(value: i32): i32 { return 42; }",
     "export function answer(): bool { return true && false; }",
     "export function answer(): i32 { return 42; } export function second(): i32 { return 0; }",

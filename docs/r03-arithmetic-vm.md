@@ -2,6 +2,10 @@
 
 # Scalar arithmetic compiler and Runtime
 
+This document records the M03 slice and its former 0.2.0/v2 format. The current
+development chain includes [M04 linear locals](r03-locals-vm.md), with HIR and
+R04 0.3.0/wire v3. The version and return-only limits below describe M03.
+
 M03 extends the [constant-return chain](r03-constant-vm.md) with i32 arithmetic,
 bitwise operations, shifts, comparison and bool. The official frontend checks
 every source file; its owned facts become independent immutable HIR. The real

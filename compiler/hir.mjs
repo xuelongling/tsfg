@@ -23,12 +23,30 @@ const sourceTokens = (source, start, end) => source.slice(start, end)
   .replace(/\/\*[\s\S]*?\*\/|\/\/[^\r\n\u2028\u2029]*/g, "").replace(/\s/g, "");
 const identifierName = spelling => spelling.replace(/\\u(?:\{([0-9a-fA-F]{1,6})\}|([0-9a-fA-F]{4}))/g,
   (_, point, unit) => String.fromCodePoint(Number.parseInt(point ?? unit, 16)));
+function scalarOperator(source, start, end, operator) {
+  const spelling = source.slice(start, end)
+    .replace(/\/\*[\s\S]*?\*\/|\/\/[^\r\n\u2028\u2029]*/g, comment => " ".repeat(comment.length));
+  if (spelling.trim() !== operator) return false;
+  const position = start + spelling.search(/\S/);
+  // TS scans adjacent ++/-- as one token. Trivia may separate scalar signs;
+  // persisted HIR must not reinterpret an unsupported update expression.
+  return !["+", "-"].includes(operator)
+    || (source[position - 1] !== operator && source[position + 1] !== operator);
+}
 function verifyExpression(value, parent, source, fail, budget, locals) {
   if (--budget.remaining < 0 || !value || !Object.values(types).includes(value.type)
       || !range(value.range, parent)) fail();
   if (value.kind === "reference") {
     const local = locals.get(value.binding);
     if (!exactKeys(value, ["kind", "type", "binding", "range"])) fail();
+    const declaration = budget.declarations.get(value.binding);
+    if (!local && declaration?.type === value.type
+        && identifierName(sourceTokens(source, value.range.start, value.range.end)) === declaration.name) {
+      const error = new TypeError("r03-hir-dominance: local read has no preceding declaration");
+      Object.assign(error, { code: "r03-hir-dominance", ruleId: "r01-evaluation", phase: "hir",
+        primary: { sourceId: budget.sourcePath, ...value.range } });
+      throw error;
+    }
     if (local && !local.initialized) {
       const error = new TypeError("r03-hir-uninitialized: local read has no preceding initialization");
       Object.assign(error, { code: "r03-hir-uninitialized", ruleId: "r01-evaluation", phase: "hir",
@@ -55,7 +73,8 @@ function verifyExpression(value, parent, source, fail, budget, locals) {
     const group = value.kind === "group";
     if (!exactKeys(value, group ? ["kind", "type", "operand", "range"] : ["kind", "type", "operator", "operand", "range"])) fail();
     verifyExpression(value.operand, value.range, source, fail, budget, locals);
-    if (sourceTokens(source, value.range.start, value.operand.range.start) !== (group ? "(" : value.operator)
+    if (!(group ? sourceTokens(source, value.range.start, value.operand.range.start) === "("
+        : scalarOperator(source, value.range.start, value.operand.range.start, value.operator))
         || sourceTokens(source, value.operand.range.end, value.range.end) !== (group ? ")" : "")
         || value.type !== value.operand.type || (!group && (value.operand.kind === "binary"
         || !["+", "-", "~", "!"].includes(value.operator)
@@ -69,7 +88,7 @@ function verifyExpression(value, parent, source, fail, budget, locals) {
         || (value.left.kind === "binary" && precedence[value.left.operator] < precedence[value.operator])
         || (value.right.kind === "binary" && precedence[value.right.operator] <= precedence[value.operator])
         || sourceTokens(source, value.range.start, value.left.range.start) !== ""
-        || sourceTokens(source, value.left.range.end, value.right.range.start) !== value.operator
+        || !scalarOperator(source, value.left.range.end, value.right.range.start, value.operator)
         || sourceTokens(source, value.right.range.end, value.range.end) !== ""
         || value.type !== (comparisons.has(value.operator) ? boolTypeId : i32TypeId)
         || (!["===", "!=="].includes(value.operator) && value.left.type !== i32TypeId)) fail();
@@ -106,8 +125,23 @@ export function verifyHir(hir) {
       || !Array.isArray(fn.parameters) || fn.parameters.length !== 0
       || !range(fn.range, { start: 0, end: hir.source.content.length })
       || !Array.isArray(fn.body) || fn.body.length < 1 || fn.body.length > 128) fail();
-  const budget = { remaining: 4096, sourcePath: hir.source.path };
   const locals = new Map(), names = new Set(), source = hir.source.content;
+  // Future declaration facts only identify a source-anchored forward read;
+  // they never authorize a reference or populate the sequential local state.
+  const declarations = new Map();
+  let declarationIndex = 0;
+  for (const statement of fn.body) {
+    if (statement?.kind !== "local") continue;
+    const binding = statement.binding;
+    if (exactKeys(binding, ["id", "name", "type", "writable", "range"])
+        && binding.id === `l${declarationIndex}` && validText(binding.name)
+        && Object.values(types).includes(binding.type) && typeof binding.writable === "boolean"
+        && range(statement.range, fn.range) && range(binding.range, statement.range)
+        && identifierName(sourceTokens(source, binding.range.start, binding.range.end)) === binding.name)
+      declarations.set(binding.id, binding);
+    declarationIndex++;
+  }
+  const budget = { remaining: 4096, sourcePath: hir.source.path, declarations };
   let previousEnd = fn.range.start, hasReturn = false, declarationKind;
   for (const [index, statement] of fn.body.entries()) {
     if (!range(statement?.range, fn.range) || statement.range.start < previousEnd) fail();
@@ -132,13 +166,13 @@ export function verifyHir(hir) {
       if (keyword) declarationKind = keyword;
       else if (before !== "," || !declarationKind) fail();
       if (binding.writable !== (declarationKind === "let")) fail();
-      const typeName = binding.type === i32TypeId ? "i32" : "bool";
+      const annotations = binding.type === boolTypeId ? [":bool", ":boolean"] : [":i32"];
       if (value !== null) {
         verifyExpression(value, statement.range, source, fail, budget, locals);
         const annotation = sourceTokens(source, binding.range.end, value.range.start);
-        if (value.type !== binding.type || !["=", `:${typeName}=`].includes(annotation)
+        if (value.type !== binding.type || !["=", ...annotations.map(item => `${item}=`)].includes(annotation)
             || sourceTokens(source, value.range.end, statement.range.end) !== "") fail();
-      } else if (!binding.writable || sourceTokens(source, binding.range.end, statement.range.end) !== `:${typeName}`) fail();
+      } else if (!binding.writable || !annotations.includes(sourceTokens(source, binding.range.end, statement.range.end))) fail();
       locals.set(binding.id, { ...binding, initialized: value !== null });
       names.add(binding.name);
     } else {

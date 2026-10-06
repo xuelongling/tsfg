@@ -21,6 +21,48 @@ test("owned local bindings retain declarations, assignment and reads after offic
   assert.match(core, /tsfg_core.add/);
 });
 
+test("the inherited boolean spelling is accepted for a checked bool local binding", async () => {
+  const result = await compileHir(await sourceInput("export function answer(): bool { let value: boolean = true; value = !value; return value; }"), tools());
+  assert.equal(result.status, "ok", JSON.stringify(result));
+  assert.equal(printHir(readHir(Buffer.from(printHir(result.hir)))), printHir(result.hir));
+});
+
+test("persisted local HIR cannot split increment or decrement tokens into scalar operators", async t => {
+  for (const returned of ["+ +value", "- -value", "value + +value", "value - -value"]) await t.test(returned, async () => {
+    const source = `export function answer(): i32 { let value: i32 = 40; return ${returned}; }`;
+    const checked = await compileHir(await sourceInput(source), tools());
+    assert.equal(checked.status, "ok", JSON.stringify(checked));
+    const hir = structuredClone(checked.hir);
+    const removed = source.search(/[+-] [+-]/) + 1;
+    assert.ok(removed > 0);
+    const changed = source.slice(0, removed) + source.slice(removed + 1);
+    // Independently forge persisted source/anchors at the public read seam;
+    // this invalid tree is never an official producer success or VM oracle.
+    function shift(value) {
+      if (!value || typeof value !== "object") return;
+      if (value.range) {
+        if (value.range.start > removed) value.range.start--;
+        if (value.range.end > removed) value.range.end--;
+      }
+      for (const [key, item] of Object.entries(value)) if (key !== "range") shift(item);
+    }
+    shift(hir);
+    hir.source = { ...hir.source, content: changed, hash: sha256(changed) };
+    for (const invoke of [() => verifyHir(hir), () => lowerHir(hir), () => readHir(Buffer.from(`${canonical(hir)}\n`))])
+      assert.throws(invoke, /r03-hir-invalid/);
+  });
+});
+
+test("the current official producer keeps update expressions pending without scalar reinterpretation", async () => {
+  for (const expression of ["++value", "--value", "value++", "value--"]) {
+    const source = `export function answer(): i32 { let value: i32 = 40; return ${expression}; }`;
+    const result = await compileHir(await sourceInput(source), tools());
+    assert.equal(result.status, "error", JSON.stringify(result));
+    assert.ok(result.diagnostics.some(item => item.code === "r02b-d-unsupported" && item.phase === "capability"));
+    assert.equal(result.hir, undefined);
+  }
+});
+
 test("the current official producer rejects uninitialized local declarations with an explicit capability identity", async () => {
   const source = "export function answer(): i32 { let value: i32; return value; }";
   const result = await compileHir(await sourceInput(source), tools());
@@ -64,12 +106,50 @@ test("owned HIR admission rejects uninitialized reads with their machine identit
   }
 });
 
+test("owned HIR forward reads reject with an evaluation identity at the verified source reference", async () => {
+  const source = "export function answer(): i32 { let first: i32 = 40; const later: i32 = 42; return first; }";
+  const checked = await compileHir(await sourceInput(source), tools());
+  assert.equal(checked.status, "ok", JSON.stringify(checked));
+  const hir = structuredClone(checked.hir), replaced = source.indexOf("40");
+  const changed = source.slice(0, replaced) + "later" + source.slice(replaced + 2);
+  function shift(value) {
+    if (!value || typeof value !== "object") return;
+    if (value.range) {
+      if (value.range.start >= replaced + 2) value.range.start += 3;
+      if (value.range.end >= replaced + 2) value.range.end += 3;
+    }
+    for (const [key, item] of Object.entries(value)) if (key !== "range") shift(item);
+  }
+  shift(hir);
+  hir.source = { ...hir.source, content: changed, hash: sha256(changed) };
+  const local = hir.functions[0].body[0];
+  local.initializer = { kind: "reference", type: local.binding.type,
+    binding: "l1", range: { ...local.initializer.range } };
+  // An owned invalid input, not an accepted frontend program. The referenced
+  // future declaration and token spelling match this verified source range.
+  for (const invoke of [() => verifyHir(hir), () => lowerHir(hir), () => readHir(Buffer.from(`${canonical(hir)}\n`))]) {
+    assert.throws(invoke, error => {
+      const failure = /** @type {any} */ (error);
+      assert.equal(failure.code, "r03-hir-dominance");
+      assert.equal(failure.ruleId, "r01-evaluation");
+      assert.equal(failure.phase, "hir");
+      assert.deepEqual(failure.primary, { sourceId: "/src/main.ts", ...local.initializer.range });
+      assert.equal(changed.slice(failure.primary.start, failure.primary.end).trim(), "later");
+      return true;
+    });
+  }
+});
+
 test("formal local requests satisfy independent scalar oracles under source spelling and reassignment", async t => {
   /** @type {Array<[string, "i32" | "bool", string | boolean]>} */
   const cases = [
     ["const left: i32 = 40, right: i32 = 2; return left + right;", "i32", "42"],
     ["let value: i32 = 2147483647; value = value + 1; value = value - 1; return value;", "i32", "2147483647"],
     ["const a: bool = true; let b: bool = false; b = a; return !b;", "bool", false],
+    ["let value: boolean = true; value = !value; return value;", "bool", false],
+    ["const value: i32 = 40; return + +value;", "i32", "40"],
+    ["const value: i32 = 40; return -/* gap */-value;", "i32", "40"],
+    ["const value: i32 = 40; return value - -value;", "i32", "80"],
     ["const a: i32 = -2147483648; let b: i32 = a; b = b / -1; return b;", "i32", "-2147483648"],
     ["const a: i32 = 6; const b: i32 = 7; let value: i32 = a * b; value = value + 0; return value;", "i32", "42"],
     [String.raw`const \u{73}eed: i32 = 40; let value: i32 = seed; value = value + 2; return value;`, "i32", "42"],
@@ -185,7 +265,7 @@ test("full and incremental locals remain equivalent across updates, invalid inpu
   }
   const invalid = await session.compile(await sourceInput("export function answer(): i32 { const value: i32 = 42; value = 0; return value; }"));
   assert.equal(invalid.status, "error");
-  assert.ok(invalid.diagnostics.some(item => item.code === "r01-d-const-assignment"));
+  assert.ok(invalid.diagnostics.some(item => item.code === "r02b-d-type" && item.upstreamCode === 2588 && item.phase === "types"));
   const restored = await session.compile(await sourceInput(sources[0]));
   assert.equal(restored.status, "ok", JSON.stringify(restored));
   assert.deepEqual((await runBytecode(restored.bytecode, tools()))[0].result, { type: "i32", value: "42" });
@@ -217,6 +297,8 @@ test("linear local HIR retains comma declarations, bool bindings and inherited A
   for (const source of [
     "export function answer(): i32 { const left: i32 = 40, right: i32 = 2; return left + right; }",
     "export function answer(): bool { const a: bool = true; let b: bool = false; b = a; return !b; }",
+    "export function answer(): i32 { const value: i32 = 40; return +/* gap */+value; }",
+    "export function answer(): i32 { const value: i32 = 40; return - -value; }",
     String.raw`export function answer(): i32 { const \u{73}eed: i32 = 40; let value: i32 = seed; value = value + 2; return value; }`,
     "/*😀*/ export function answer(): i32 {\nconst seed: i32 = 0x28\nlet value: i32 = seed\nvalue = value + 2\nreturn value\n}",
   ]) await t.test(source, async () => {

@@ -26,6 +26,8 @@ type, decoded name, declaration range and writable flag. References carry that
 identity, type and source range; they never retain Snapshot-local symbol IDs.
 `const` bindings are immutable; `let` bindings allow simple `=` assignments.
 Declarations within a comma-separated list retain their declaration kind.
+`bool` and its inherited `boolean` annotation alias share the canonical bool
+type identity.
 Expressions support
 i32 constants, bool constants, grouping, unary `+ - ~ !`, i32 arithmetic,
 bitwise operations and shifts, i32 ordered comparisons, and same-type i32/bool
@@ -40,13 +42,19 @@ unknown fields, types, malformed structures, invalid constants, source hashes,
 entity IDs, targets and UTF-16 ranges. Constant spellings, boolean spellings,
 operators, declaration kind/type annotation, assignment targets and delimiters
 must match their original source, allowing comments
-and whitespace trivia. The shared expression budget is 4096 nodes.
+and whitespace trivia. Adjacent `++`/`--` tokens cannot be split into scalar
+unary or binary signs; separated signs retain ordinary TS lexical behavior.
+The shared expression budget is 4096 nodes.
 `printHir` emits UTF-8 JCS plus exactly
 one LF. `readHir` requires that canonical form, including unique keys. Entity
 hash domains and target layout are the R04 bytecode specification. Source
 content/hash and original UTF-16 anchors survive canonical read/write and
 lowering; body changes do not change logical FunctionId. Missing/forward binding
-references, const writes and type mismatches are `r03-hir-invalid`. Reading a
+references, const writes and type mismatches are `r03-hir-invalid`. A forward
+read whose owned declaration identity, type and source token are verified is
+`r03-hir-dominance`, Rule `r01-evaluation`, phase `hir`, with its UTF-16 read
+range. Unknown/foreign identities retain generic invalid-input rejection;
+they are not attributed to a trusted original binding. Reading a
 declared but uninitialized owned binding is `r03-hir-uninitialized`, Rule
 `r01-evaluation`, phase `hir`, with the original UTF-16 read range. The official
 0.5.0 producer currently rejects uninitialized source declarations using
