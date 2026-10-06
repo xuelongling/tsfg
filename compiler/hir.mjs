@@ -43,10 +43,7 @@ function scalarOperator(source, start, end, operator) {
   return !["+", "-"].includes(operator)
     || (source[position - 1] !== operator && source[position + 1] !== operator);
 }
-// A cloned lexical frame keeps outer declarations in insertion order and adds
-// inner declarations after them. The last declaration of a name is visible.
-const visibleLocal = (locals, name) => [...locals.values()].findLast(local => local.name === name);
-function verifyExpression(value, parent, source, fail, budget, locals) {
+function verifyExpression(value, parent, source, fail, budget, locals, visibleBindings) {
   if (--budget.remaining < 0 || !value || !Object.values(types).includes(value.type)
       || !range(value.range, parent)) fail();
   if (value.kind === "reference") {
@@ -54,14 +51,14 @@ function verifyExpression(value, parent, source, fail, budget, locals) {
     if (!exactKeys(value, ["kind", "type", "binding", "range"])) fail();
     const declaration = budget.declarations.get(value.binding);
     const claimed = local ?? declaration;
-    if (!claimed || claimed.type !== value.type || identifierToken(source, value.range) !== claimed.name) fail();
+    if (!claimed || claimed.type !== value.type || identifierToken(source, value.range) !== claimed.name
+        || visibleBindings.get(claimed.name) !== value.binding) fail();
     if (!local) {
       const error = new TypeError("r03-hir-dominance: local read has no preceding declaration");
       Object.assign(error, { code: "r03-hir-dominance", ruleId: "r01-evaluation", phase: "hir",
         primary: { sourceId: budget.sourcePath, ...value.range } });
       throw error;
     }
-    if (visibleLocal(locals, local.name)?.id !== value.binding) fail();
     if (local && !local.initialized) {
       const error = new TypeError("r03-hir-uninitialized: local read has no preceding initialization");
       Object.assign(error, { code: "r03-hir-uninitialized", ruleId: "r01-evaluation", phase: "hir",
@@ -84,7 +81,7 @@ function verifyExpression(value, parent, source, fail, budget, locals) {
   } else if (value.kind === "group" || value.kind === "unary") {
     const group = value.kind === "group";
     if (!exactKeys(value, group ? ["kind", "type", "operand", "range"] : ["kind", "type", "operator", "operand", "range"])) fail();
-    verifyExpression(value.operand, value.range, source, fail, budget, locals);
+    verifyExpression(value.operand, value.range, source, fail, budget, locals, visibleBindings);
     if (!(group ? sourceTokens(source, value.range.start, value.operand.range.start) === "("
         : scalarOperator(source, value.range.start, value.operand.range.start, value.operator))
         || sourceTokens(source, value.operand.range.end, value.range.end) !== (group ? ")" : "")
@@ -95,8 +92,8 @@ function verifyExpression(value, parent, source, fail, budget, locals) {
     const short = value.kind === "shortCircuit";
     if (!exactKeys(value, ["kind", "type", "operator", "left", "right", "range"])
         || !(short ? ["&&", "||"].includes(value.operator) : Object.hasOwn(operations, value.operator))) fail();
-    verifyExpression(value.left, value.range, source, fail, budget, locals);
-    verifyExpression(value.right, value.range, source, fail, budget, locals);
+    verifyExpression(value.left, value.range, source, fail, budget, locals, visibleBindings);
+    verifyExpression(value.right, value.range, source, fail, budget, locals, visibleBindings);
     if (value.left.type !== value.right.type || value.left.range.end > value.right.range.start
         || (["binary", "shortCircuit"].includes(value.left.kind) && precedence[value.left.operator] < precedence[value.operator])
         || (["binary", "shortCircuit"].includes(value.right.kind) && precedence[value.right.operator] <= precedence[value.operator])
@@ -156,7 +153,16 @@ export function verifyHir(hir) {
   collect(fn.body);
   const budget = { remaining: 4096, sourcePath: hir.source.path, declarations };
   const clone = locals => new Map([...locals].map(([id, local]) => [id, { ...local }]));
-  const body = (statements, parent, locals, frame = "plain") => {
+  const body = (statements, parent, locals, frame = "plain", outerBindings = new Map()) => {
+    // Lexical visibility starts at scope entry, including each declaration's
+    // own initializer and the TDZ before later declarations. Processed locals
+    // separately retain the existing dominance and initialization diagnostics.
+    const visibleBindings = new Map(outerBindings);
+    for (const statement of statements) if (statement?.kind === "local") {
+      const binding = declarations.get(statement.binding?.id);
+      if (!binding) fail();
+      visibleBindings.set(binding.name, binding.id);
+    }
     let previousEnd = parent.start, returns = false, declarationKind;
     const names = new Set();
     for (const [index, statement] of statements.entries()) {
@@ -180,7 +186,7 @@ export function verifyHir(hir) {
         if (binding.writable !== (declarationKind === "let")) fail();
         const annotations = binding.type === boolTypeId ? [":bool", ":boolean"] : [":i32"];
         if (value !== null) {
-          verifyExpression(value, statement.range, source, fail, budget, locals);
+          verifyExpression(value, statement.range, source, fail, budget, locals, visibleBindings);
           const annotation = sourceTokens(source, binding.range.end, value.range.start);
           if (value.type !== binding.type || !["=", ...annotations.map(item => `${item}=`)].includes(annotation)
               || sourceTokens(source, value.range.end, statement.range.end) !== "") fail();
@@ -193,19 +199,19 @@ export function verifyHir(hir) {
         if (statement.kind === "block") {
           if (!exactKeys(statement, ["kind", "range", "body"])) fail();
           const scoped = clone(locals);
-          const terminated = body(statement.body, statement.range, scoped, "block");
+          const terminated = body(statement.body, statement.range, scoped, "block", visibleBindings);
           for (const [id, local] of locals) local.initialized = scoped.get(id).initialized;
           returns ||= terminated;
         } else if (statement.kind === "if" || statement.kind === "while") {
           const branch = statement.kind === "if", condition = statement.condition;
           if (!exactKeys(statement, branch ? ["kind", "range", "condition", "thenBody", "elseBody"]
               : ["kind", "range", "condition", "body"]) || condition?.type !== boolTypeId) fail();
-          verifyExpression(condition, statement.range, source, fail, budget, locals);
+          verifyExpression(condition, statement.range, source, fail, budget, locals, visibleBindings);
           const selected = branch ? statement.thenBody : statement.body;
           if (!Array.isArray(selected) || selected.length !== 1
               || sourceTokens(source, statement.range.start, condition.range.start) !== `${statement.kind}(`
               || sourceTokens(source, condition.range.end, selected[0]?.range.start) !== ")") fail();
-          const left = clone(locals), leftReturn = body(selected, { start: selected[0].range.start, end: selected.at(-1).range.end }, left);
+          const left = clone(locals), leftReturn = body(selected, { start: selected[0].range.start, end: selected.at(-1).range.end }, left, "plain", visibleBindings);
           let last = selected.at(-1).range.end;
           if (branch) {
             if (!Array.isArray(statement.elseBody) || statement.elseBody.length > 1) fail();
@@ -214,7 +220,7 @@ export function verifyHir(hir) {
             if (statement.elseBody.length) {
               const alternative = statement.elseBody;
               if (sourceTokens(source, last, alternative[0].range.start) !== "else") fail();
-              rightReturn = body(alternative, { start: alternative[0].range.start, end: alternative.at(-1).range.end }, right);
+              rightReturn = body(alternative, { start: alternative[0].range.start, end: alternative.at(-1).range.end }, right, "plain", visibleBindings);
               last = alternative.at(-1).range.end;
             }
             for (const [id, local] of locals)
@@ -233,14 +239,14 @@ export function verifyHir(hir) {
             const target = statement.target, local = locals.get(target?.binding);
             if (!exactKeys(statement, ["kind", "range", "target", "value"])
                 || !exactKeys(target, ["kind", "type", "binding", "range"]) || target.kind !== "reference"
-                || !local?.writable || visibleLocal(locals, local.name)?.id !== target.binding
+                || !local?.writable || visibleBindings.get(local.name) !== target.binding
                 || target.type !== local.type || value?.type !== local.type
                 || !range(target.range, statement.range) || target.range.end > value.range.start
                 || identifierToken(source, target.range) !== local.name
                 || sourceTokens(source, statement.range.start, target.range.start) !== ""
                 || sourceTokens(source, target.range.end, value.range.start) !== "=") fail();
           } else fail();
-          verifyExpression(value, statement.range, source, fail, budget, locals);
+          verifyExpression(value, statement.range, source, fail, budget, locals, visibleBindings);
           if (!/^;?$/.test(sourceTokens(source, value.range.end, statement.range.end))) fail();
           if (statement.kind === "assign") locals.get(statement.target.binding).initialized = true;
         }

@@ -85,6 +85,27 @@ test("owned lexical shadowing rejects forged outer read and write bindings befor
   }
 });
 
+test("owned whole-scope TDZ rejects outer aliases in initializers and before inner declarations", async () => {
+  const cases=[
+    {source:"export function answer(): i32 { let n: i32 = 1; { let n: i32 = 2; return n; } }",index:0,field:"initializer",nearest:"l1"},
+    {source:"export function answer(): i32 { let n: i32 = 1; { let m: i32 = 2; let n: i32 = 3; return m; } }",index:0,field:"initializer",nearest:"l2"},
+    {source:"export function answer(): i32 { let n: i32 = 1; { let m: i32 = 1; m = 2; let n: i32 = 3; } return n; }",index:1,field:"target",nearest:"l2"},
+  ];
+  for(const {source,index,field,nearest} of cases){
+    const checked=await compileHir(await sourceInput(source),tools());
+    assert.equal(checked.status,"ok",JSON.stringify(checked));
+    const forged=structuredClone(checked.hir),statement=forged.functions[0].body[1].body[index],original=statement[field];
+    const spelling=source.slice(original.range.start,original.range.end);
+    forged.source.content=source.slice(0,original.range.start)+spelling.replace(field==="target"?"m":"2","n")+source.slice(original.range.end);
+    forged.source.hash=sha256(forged.source.content);
+    statement[field]={kind:"reference",type:original.type,binding:"l0",range:original.range};
+    for(const admit of [verifyHir,printHir,lowerHir])assert.throws(()=>admit(forged),/r03-hir-invalid/);
+    assert.throws(()=>readHir(Buffer.from(canonical(forged)+"\n")),/r03-hir-invalid/);
+    statement[field].binding=nearest;
+    assert.throws(()=>verifyHir(forged),field==="initializer"?{code:"r03-hir-dominance",ruleId:"r01-evaluation"}:/r03-hir-invalid/);
+  }
+});
+
 test("formal three-iteration while charges initial and final false conditions with exact residual fuel", async () => {
   const compiled = await compileProgram(await sourceInput(loop),tools());
   assert.equal(compiled.status,"ok",JSON.stringify(compiled));
