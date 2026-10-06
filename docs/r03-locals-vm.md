@@ -20,6 +20,14 @@ The typed request result is `{ "type": "i32", "value": "81" }`: `copy` retains
 identifier spellings and the `boolean` alias retain official frontend checking.
 `bool` remains the canonical type identity.
 
+Explicit i32 local initializers may use the existing checked scalar operators,
+including arithmetic over earlier local reads. The official source producer
+admits these through the same owned operator facts as returns and assignments;
+it preserves division/remainder trap candidates without evaluating them.
+Snapshot 0.5.0 and its schema remain unchanged. The source admission records
+the actual Go dependency closure and exact fork/producer/executable identities;
+the frontend is built through the formal `typescript-frontend` source target.
+
 The official checked Snapshot provides owned declarations, symbols, scalar
 types and expression facts. Independent immutable HIR copies their required
 source and identities, assigns declaration-order binding IDs and verifies the
