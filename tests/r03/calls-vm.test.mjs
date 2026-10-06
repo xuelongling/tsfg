@@ -9,6 +9,7 @@ const forward='export function entry(a: i32, b: bool): bool { return target(a, b
 const countdown='export function entry(n: i32): i32 { if (n === 0) return n; let next: i32 = n - 1; return entry(next); }';
 const mutual='export function even(n: i32): bool { if (n === 0) return true; let next: i32 = n - 1; return odd(next); } export function odd(n: i32): bool { if (n === 0) return false; let next: i32 = n - 1; return even(next); }';
 const nested='export function entry(): i32 { return outer(leaf()); } export function outer(n: i32): i32 { return n; } export function leaf(): i32 { return 42; }';
+const trailing='export function entry(): i32 { return outer(leaf(), /*tail*/); } export function outer(n: i32, /*tail*/): i32 { return n; } export function leaf(): i32 { return 42; }';
 const i32=value=>({type:'i32',value:String(value)});
 const compile=async source=>{const result=await compileProgram(await sourceInput(source),tools());assert.equal(result.status,'ok',JSON.stringify(result));return result;};
 const range=(source,outcome)=>source.slice(Number(outcome.source.start),Number(outcome.source.end)).trim();
@@ -24,6 +25,21 @@ test('official forward signatures and typed arguments survive owned HIR roundtri
   assert.throws(()=>verifyHir(bad),/r03-hir-invalid/);
 });
 
+test('owned calls and parameter lists retain a single legal trailing comma',async()=>{
+  const source=trailing;
+  const compiled=await compileHir(await sourceInput(source),tools());assert.equal(compiled.status,'ok',JSON.stringify(compiled));
+  const hir=readHir(Buffer.from(printHir(compiled.hir)));assert.match(lowerHir(hir),/func.call/);
+  for(const [needle,replacement]of [['leaf(),','leaf(),,'],['n: i32,','n: i32,,']]){
+    const malformed=structuredClone(hir),position=malformed.source.content.indexOf(needle)+needle.length;
+    malformed.source.content=malformed.source.content.replace(needle,replacement);
+    malformed.source.hash=sha256(malformed.source.content);
+    const shift=value=>{if(value&&typeof value==='object'){if(Object.hasOwn(value,'start')&&Object.hasOwn(value,'end')){if(value.start>=position)value.start++;if(value.end>=position)value.end++;}else for(const child of Object.values(value))shift(child);}};
+    shift(malformed.functions);
+    assert.throws(()=>verifyHir(malformed),/r03-hir-invalid/);assert.throws(()=>lowerHir(malformed),/r03-hir-invalid/);
+    assert.throws(()=>readHir(Buffer.from(JSON.stringify(malformed))),/r03-hir-invalid/);
+  }
+});
+
 test('formal forward and recursive return values use typed arguments and independently enumerated entries',async()=>{
   for(const [source,arguments_,result,cost,depth] of [
     [forward,[i32(42),{type:'bool',value:true}],{type:'bool',value:true},2,2],
@@ -31,6 +47,7 @@ test('formal forward and recursive return values use typed arguments and indepen
     [mutual,[i32(3)],{type:'bool',value:false},4,4],
     [mutual,[i32(2)],{type:'bool',value:true},3,3],
     [nested,[],{type:'i32',value:'42'},3,2],
+    [trailing,[],{type:'i32',value:'42'},3,2],
   ]){
     const compiled=await compile(source);
     const [outcome]=await runBytecode(compiled.bytecode,{...tools(),requests:[{arguments:arguments_,depth,semanticFuel:cost}]});

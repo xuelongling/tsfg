@@ -84,7 +84,7 @@ function verifyExpression(value, parent, source, fail, budget, locals, visibleBi
       previous = argument.range.end;
     }
     const tail = sourceTrivia(source, previous, value.range.end).trim();
-    if (value.arguments.length ? tail !== ")" : !/\(\s*\)$/.test(tail)
+    if (value.arguments.length ? !/^,?\s*\)$/.test(tail) : !/\(\s*\)$/.test(tail)
         || identifierToken(tail,{start:0,end:tail.lastIndexOf("(")}) !== target.name) fail();
   } else if (value.kind === "constant") {
     if (!exactKeys(value, ["kind", "type", "decimal", "token", "range"])
@@ -312,6 +312,7 @@ export function verifyHir(hir) {
   if (!parsedHeader || identifierToken(parsedHeader[1],{start:0,end:parsedHeader[1].length}) !== fn.name
       || (parsedHeader[3] === "boolean" ? "bool" : parsedHeader[3]) !== fn.returnType.name) fail();
   const parameterTokens = parsedHeader[2].trim() === "" ? [] : parsedHeader[2].split(",");
+  if (parameterTokens.length > 1 && parameterTokens.at(-1).trim() === "") parameterTokens.pop();
   if (parameterTokens.length !== fn.parameters.length) fail();
   let parameterEnd = fn.range.start;
   let parameterStart = fn.range.start + parsedHeader.indices[2][0];
