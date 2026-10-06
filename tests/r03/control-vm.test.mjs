@@ -67,6 +67,24 @@ test("owned definite assignment retains declarations initialized in both branche
   }
 });
 
+test("owned lexical shadowing rejects forged outer read and write bindings before lowering", async () => {
+  const cases=[
+    {source:"export function answer(): i32 { let n: i32 = 1; { const n: i32 = 2; return n; } }",field:"value"},
+    {source:"export function answer(): i32 { let n: i32 = 1; { let n: i32 = 2; n = 3; } return n; }",field:"target"},
+  ];
+  for(const {source,field} of cases){
+    const checked=await compileHir(await sourceInput(source),tools());
+    assert.equal(checked.status,"ok",JSON.stringify(checked));
+    assert.doesNotThrow(()=>lowerHir(checked.hir));
+    const forged=structuredClone(checked.hir);
+    forged.functions[0].body[1].body[1][field].binding="l0";
+    assert.throws(()=>verifyHir(forged),/r03-hir-invalid/);
+    assert.throws(()=>printHir(forged),/r03-hir-invalid/);
+    assert.throws(()=>readHir(Buffer.from(canonical(forged)+"\n")),/r03-hir-invalid/);
+    assert.throws(()=>lowerHir(forged),/r03-hir-invalid/);
+  }
+});
+
 test("formal three-iteration while charges initial and final false conditions with exact residual fuel", async () => {
   const compiled = await compileProgram(await sourceInput(loop),tools());
   assert.equal(compiled.status,"ok",JSON.stringify(compiled));
@@ -102,6 +120,8 @@ test("unreached if and boolean paths do not execute traps or add semantic events
     ["export function answer(): bool { return true || ((1 / 0) === 0); }","bool",true],
     ["export function answer(): bool { return true || false && ((1 / 0) === 0); }","bool",true],
     ["export function answer(): bool { return false || true && false; }","bool",false],
+    ["export function answer(): i32 { let n: i32 = 1; { const n: i32 = 2; return n; } }","i32","2"],
+    ["export function answer(): i32 { let n: i32 = 1; { let n: i32 = 2; n = 3; } return n; }","i32","1"],
   ];
   for(const [source,type,value] of cases){
     const compiled=await compileProgram(await sourceInput(source),tools());assert.equal(compiled.status,"ok",JSON.stringify(compiled));

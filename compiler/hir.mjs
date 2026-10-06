@@ -43,6 +43,9 @@ function scalarOperator(source, start, end, operator) {
   return !["+", "-"].includes(operator)
     || (source[position - 1] !== operator && source[position + 1] !== operator);
 }
+// A cloned lexical frame keeps outer declarations in insertion order and adds
+// inner declarations after them. The last declaration of a name is visible.
+const visibleLocal = (locals, name) => [...locals.values()].findLast(local => local.name === name);
 function verifyExpression(value, parent, source, fail, budget, locals) {
   if (--budget.remaining < 0 || !value || !Object.values(types).includes(value.type)
       || !range(value.range, parent)) fail();
@@ -58,6 +61,7 @@ function verifyExpression(value, parent, source, fail, budget, locals) {
         primary: { sourceId: budget.sourcePath, ...value.range } });
       throw error;
     }
+    if (visibleLocal(locals, local.name)?.id !== value.binding) fail();
     if (local && !local.initialized) {
       const error = new TypeError("r03-hir-uninitialized: local read has no preceding initialization");
       Object.assign(error, { code: "r03-hir-uninitialized", ruleId: "r01-evaluation", phase: "hir",
@@ -229,7 +233,8 @@ export function verifyHir(hir) {
             const target = statement.target, local = locals.get(target?.binding);
             if (!exactKeys(statement, ["kind", "range", "target", "value"])
                 || !exactKeys(target, ["kind", "type", "binding", "range"]) || target.kind !== "reference"
-                || !local?.writable || target.type !== local.type || value?.type !== local.type
+                || !local?.writable || visibleLocal(locals, local.name)?.id !== target.binding
+                || target.type !== local.type || value?.type !== local.type
                 || !range(target.range, statement.range) || target.range.end > value.range.start
                 || identifierToken(source, target.range) !== local.name
                 || sourceTokens(source, statement.range.start, target.range.start) !== ""

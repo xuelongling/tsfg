@@ -91,7 +91,7 @@ export async function executeVmTarget({ options, runtime, tools, productRoot, wo
     const bytes = await readFile(path.join(publish, name));
     outputs.push({ path: name, sha256: sha256(bytes) });
   }
-  const manifest = { schemaVersion: "1", ...identity, outputs, capability: "i32/bool arithmetic with request-local R01 traps" };
+  const manifest = { schemaVersion: "1", ...identity, outputs, capability: "i32/bool CFG and parallel phi execution with request-local R01 traps and Semantic Fuel" };
   await writeFile(path.join(publish, "artifact-manifest.json"), serialize(manifest));
   for (const entry of outputs) if (sha256(await readFile(path.join(publish, entry.path))) !== entry.sha256)
     throw new VmBuildError("VM publication input changed", "vm-artifact-integrity");
