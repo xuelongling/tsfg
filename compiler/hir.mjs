@@ -21,6 +21,8 @@ const precedence = { "||": -1, "&&": 0, "|": 1, "^": 2, "&": 3, "===": 4, "!==":
   "+": 7, "-": 7, "*": 8, "/": 8, "%": 8 };
 const sourceTokens = (source, start, end) => source.slice(start, end)
   .replace(/\/\*[\s\S]*?\*\/|\/\/[^\r\n\u2028\u2029]*/g, "").replace(/\s/g, "");
+const sourceTrivia = (source, start, end) => source.slice(start, end)
+  .replace(/\/\*[\s\S]*?\*\/|\/\/[^\r\n\u2028\u2029]*/g, comment => " ".repeat(comment.length));
 function identifierToken(source, anchor) {
   // This owned token guard preserves internal spelling. Only surrounding
   // trivia is removed; a split token cannot manufacture a checked identifier.
@@ -65,6 +67,25 @@ function verifyExpression(value, parent, source, fail, budget, locals, visibleBi
         primary: { sourceId: budget.sourcePath, ...value.range } });
       throw error;
     }
+  } else if (value.kind === "call") {
+    const target = budget.functions.get(value.target);
+    if (!exactKeys(value, ["kind", "type", "range", "target", "signatureHash", "arguments"])
+        || !target || target.signatureHash !== value.signatureHash || target.returnType.id !== value.type
+        || visibleBindings.has(target.name) || !Array.isArray(value.arguments)
+        || value.arguments.length !== target.parameters.length) fail();
+    let previous = value.range.start;
+    for (const [index, argument] of value.arguments.entries()) {
+      verifyExpression(argument, value.range, source, fail, budget, locals, visibleBindings);
+      const prefix = sourceTrivia(source, previous, argument.range.start).trim();
+      if (argument.type !== target.parameters[index].type || argument.range.start < previous) fail();
+      if (index === 0) {
+        if (!prefix.endsWith("(") || identifierToken(prefix, {start:0,end:prefix.length-1}) !== target.name) fail();
+      } else if (prefix !== ",") fail();
+      previous = argument.range.end;
+    }
+    const tail = sourceTrivia(source, previous, value.range.end).trim();
+    if (value.arguments.length ? tail !== ")" : !/\(\s*\)$/.test(tail)
+        || identifierToken(tail,{start:0,end:tail.lastIndexOf("(")}) !== target.name) fail();
   } else if (value.kind === "constant") {
     if (!exactKeys(value, ["kind", "type", "decimal", "token", "range"])
         || value.type !== i32TypeId || typeof value.decimal !== "string"
@@ -134,16 +155,31 @@ export function verifyHir(hir) {
       || typeof hir.source.content !== "string" || hir.source.content.length > 0xffffffff
       || !hir.source.content.isWellFormed()
       || hir.source.hash !== sha256(hir.source.content)
-      || !Array.isArray(hir.functions) || hir.functions.length !== 1) fail();
-  const fn = hir.functions[0];
+      || !Array.isArray(hir.functions) || hir.functions.length < 1 || hir.functions.length > 128) fail();
+  const functions = new Map(), functionNames = new Set();
+  let previousFunctionEnd = 0;
+  for (const fn of hir.functions) {
+    if (!validText(fn?.name) || functions.has(fn?.id) || functionNames.has(fn?.name)
+        || !range(fn.range, { start: previousFunctionEnd, end: hir.source.content.length })) fail();
+    previousFunctionEnd = fn.range.end;
+    functions.set(fn.id, fn); functionNames.add(fn.name);
+  }
+  for (const fn of hir.functions) {
+  if (!Array.isArray(fn.parameters)) fail();
+  const parameterNames = fn.parameters.map(parameter => Object.entries(types).find(([,id]) => id === parameter?.type)?.[0]);
   if (!exactKeys(fn, ["id", "name", "signatureHash", "returnType", "parameters", "range", "body"])
       || !validText(fn.name) || !Object.hasOwn(types, fn.returnType?.name)
-      || fn.id !== functionIdentity(hir.source.path, fn.name, fn.returnType.name)
-      || fn.signatureHash !== signatureHash(fn.returnType.name)
+      || fn.id !== functionIdentity(hir.source.path, fn.name, fn.returnType.name, parameterNames)
+      || fn.signatureHash !== signatureHash(fn.returnType.name, parameterNames)
       || canonical(fn.returnType) !== canonical({ kind: "scalar", name: fn.returnType.name, id: types[fn.returnType.name] })
-      || !Array.isArray(fn.parameters) || fn.parameters.length !== 0
+      || !Array.isArray(fn.parameters) || fn.parameters.length > 64 || parameterNames.some(name => !name)
       || !range(fn.range, { start: 0, end: hir.source.content.length })
       || !Array.isArray(fn.body) || fn.body.length < 1 || fn.body.length > 128) fail();
+  }
+  // Resolve calls only after the complete table's identities and signatures
+  // have been validated, including functions that are never executed.
+  for (const fn of hir.functions) {
+  const parameterNames = fn.parameters.map(parameter => Object.entries(types).find(([,id]) => id === parameter.type)[0]);
   const source = hir.source.content, declarations = new Map(), ids = new Set();
   let declarationIndex = 0, remainingStatements = 4096;
   const collect = (body, depth = 0) => {
@@ -160,7 +196,7 @@ export function verifyHir(hir) {
     }
   };
   collect(fn.body);
-  const budget = { remaining: 4096, sourcePath: hir.source.path, declarations };
+  const budget = { remaining: 4096, sourcePath: hir.source.path, declarations, functions };
   const clone = locals => new Map([...locals].map(([id, local]) => [id, { ...local }]));
   const body = (statements, parent, locals, frame = "plain", outerBindings = new Map()) => {
     // Lexical visibility starts at scope entry, including each declaration's
@@ -268,21 +304,54 @@ export function verifyHir(hir) {
       : !(frame === "plain" ? /^;?$/ : /^;?\}$/).test(tail)) fail();
     return returns;
   };
-  if (!body(fn.body, fn.range, new Map(), "function")) fail();  return own(hir);
+  const initial = new Map(), visible = new Map();
+  const header = sourceTrivia(source,fn.range.start,fn.body[0].range.start);
+  const parsedHeader = header.match(/^\s*(?:export\s+)?function\s+([^()]+)\(([^()]*)\)\s*:\s*(i32|bool|boolean)\s*\{\s*(?:(?:const|let)\s*)?$/d);
+  if (!parsedHeader || identifierToken(parsedHeader[1],{start:0,end:parsedHeader[1].length}) !== fn.name
+      || (parsedHeader[3] === "boolean" ? "bool" : parsedHeader[3]) !== fn.returnType.name) fail();
+  const parameterTokens = parsedHeader[2].trim() === "" ? [] : parsedHeader[2].split(",");
+  if (parameterTokens.length !== fn.parameters.length) fail();
+  let parameterEnd = fn.range.start;
+  let parameterStart = fn.range.start + parsedHeader.indices[2][0];
+  for (const [index, parameter] of fn.parameters.entries()) {
+    if (!bindingFact(parameter, fn.range, source) || parameter.id !== `p${index}` || !parameter.writable
+        || visible.has(parameter.name) || parameter.range.start < parameterEnd) fail();
+    const parts=parameterTokens[index].split(":");
+    if(parts.length !== 2 || identifierToken(parts[0],{start:0,end:parts[0].length}) !== parameter.name
+        || parameter.range.start < parameterStart || parameter.range.end > parameterStart + parts[0].length
+        || (parts[1].trim() === "boolean" ? "bool" : parts[1].trim()) !== parameterNames[index]) fail();
+    initial.set(parameter.id, { ...parameter, initialized: true }); visible.set(parameter.name, parameter.id);
+    parameterEnd = parameter.range.end;
+    parameterStart += parameterTokens[index].length + 1;
+  }
+  if (!body(fn.body, fn.range, initial, "function", visible)) fail();
+  }
+  return own(hir);
 }
 
 export function buildHir(snapshot) {
   try { validateFrontendSnapshot(snapshot); }
   catch (error) { return { status: "error", diagnostics: [{ code: "r03-d-snapshot", ruleId: "r01-input-boundary", phase: "hir", message: error.message }] }; }
-  const fn = snapshot.functions[0], expression = fn?.body?.find(item => item.expression)?.expression;
-  if (snapshot.functions.length !== 1 || fn?.parameters?.length !== 0
+  const first = snapshot.functions[0], expression = first?.body?.find(item => item.expression)?.expression;
+  if (snapshot.functions.length < 1 || snapshot.functions.length > 128 || snapshot.functions.some(fn => fn.parameters.length > 64
       || !Object.hasOwn(types, resolveType(snapshot, fn.returnTypeRef).scalar)
-      || fn.body.length < 1 || fn.body.length > 128) {
+      || fn.parameters.some(parameter => !types[parameter.type]) || fn.body.length < 1 || fn.body.length > 128)) {
     return { status: "error", diagnostics: [{ code: "r03-d-capability", ruleId: "r01-ts-baseline", phase: "hir",
-      message: "current execution capability requires one zero-parameter i32/bool function with scalar locals, structured control and returns",
-      primary: { sourceId: snapshot.source.path, ...(expression?.range ?? fn?.range ?? { start: 0, end: 0 }) } }] };
+      message: "current execution capability requires scalar i32/bool functions with direct calls, locals, structured control and returns",
+      primary: { sourceId: snapshot.source.path, ...(expression?.range ?? first?.range ?? { start: 0, end: 0 }) } }] };
   }
+  const functions = new Map(snapshot.functions.map(fn => [fn.symbol.id, {
+    id: functionIdentity(snapshot.source.path, fn.name, fn.returnType, fn.parameters.map(p => p.type)), name: fn.name,
+    signatureHash: signatureHash(fn.returnType, fn.parameters.map(p => p.type)),
+    returnType: { kind: "scalar", name: fn.returnType, id: types[fn.returnType] },
+    parameters: fn.parameters.map((p,index) => ({id:`p${index}`,name:p.name,type:types[p.type],writable:true,range:p.range})),
+    range: fn.range,
+  }]));
+  const projectedFunctions = [];
+  for (const fn of snapshot.functions) {
+  const descriptor = functions.get(fn.symbol.id);
   const bindings = new Map();
+  fn.parameters.forEach((p,index) => bindings.set(p.id, descriptor.parameters[index]));
   const project = value => {
     const type = types[resolveType(snapshot, value.typeRef).scalar];
     if (!type) throw new TypeError("unsupported expression type");
@@ -291,6 +360,11 @@ export function buildHir(snapshot) {
       const symbol = resolveSymbol(snapshot, value.symbol), binding = bindings.get(symbol.id);
       if (!binding) throw new TypeError("local reference has no preceding owned declaration");
       return { kind: "reference", ...common, binding: binding.id };
+    }
+    if (value.kind === "call") {
+      const target = functions.get(resolveSymbol(snapshot, value.target).id);
+      if (!target) throw new TypeError("call target is outside owned function closure");
+      return {kind:"call",...common,target:target.id,signatureHash:target.signatureHash,arguments:value.arguments.map(project)};
     }
     if (value.kind === "integer") return { kind: "constant", ...common, decimal: value.literal.decimal, token: value.literal.token };
     if (value.kind === "boolean") return { kind: "boolean", ...common, value: value.boolean };
@@ -308,7 +382,7 @@ export function buildHir(snapshot) {
       const symbol = resolveSymbol(snapshot, item.symbol.ref), type = types[symbol.type];
       if (symbol.kind !== "local" || !type) throw new TypeError("unsupported local type");
       const initializer = item.initializer ? project(item.initializer) : null;
-      const binding = { id: `l${bindings.size}`, name: symbol.name, type, writable: symbol.writable, range: symbol.range };
+      const binding = { id: `l${bindings.size - fn.parameters.length}`, name: symbol.name, type, writable: symbol.writable, range: symbol.range };
       bindings.set(symbol.id, binding);
       return { kind: "local", range: item.range, binding, initializer };
     }
@@ -324,17 +398,16 @@ export function buildHir(snapshot) {
     return { status: "error", diagnostics: [{ code: "r03-d-capability", ruleId: "r01-ts-baseline", phase: "hir", message: error.message,
       primary: { sourceId: snapshot.source.path, ...(expression?.range ?? fn.range) } }] };
   }
-  const returnType = resolveType(snapshot, fn.returnTypeRef).scalar;
+  projectedFunctions.push({...descriptor,body:projected});
+  }
   const hir = {
     contractVersion: contract().semver, schemaHash: contract().schemaHash, inputIdentity: snapshot.inputIdentity,
     source: { ...snapshot.source, hash: sha256(snapshot.source.content) }, target: bytecodeSchema.target,
-    functions: [{ id: functionIdentity(snapshot.source.path, fn.name, returnType), name: fn.name,
-      signatureHash: signatureHash(returnType), returnType: { kind: "scalar", name: returnType, id: types[returnType] },
-      parameters: [], range: fn.range, body: projected }],
+    functions: projectedFunctions,
   };
   try { return { status: "ok", hir: verifyHir(hir) }; }
   catch (error) { return { status: "error", diagnostics: [{ code: "r03-d-snapshot", ruleId: "r01-input-boundary", phase: "hir", message: error.message,
-    primary: { sourceId: snapshot.source.path, ...(expression?.range ?? fn.range) } }] }; }
+    primary: { sourceId: snapshot.source.path, ...(expression?.range ?? first.range) } }] }; }
 }
 export const printHir = hir => `${canonical(verifyHir(hir))}\n`;
 export function readHir(bytes) {
@@ -354,20 +427,19 @@ export function readHir(bytes) {
 export function lowerHir(hir) {
   // Binding updates select new SSA definitions; each initializer/RHS is emitted
   // once in statement order. Reads reuse that definition, never reevaluate it.
-  const verified = verifyHir(hir), fn = verified.functions[0];
+  const verified = verifyHir(hir);
   const quote = text => JSON.stringify(text).replace(/\\u([0-9a-f]{4})/g, (_, hex) => {
     const code = Number.parseInt(hex, 16);
     return code < 128 ? `\\${hex.slice(2)}` : String.fromCharCode(code);
   });
   const strings = { input_identity: verified.inputIdentity, source_hash: verified.source.hash,
-    function_id: fn.id, signature_hash: fn.signatureHash, type_id: fn.returnType.id,
-    source_path: verified.source.path, function_name: fn.name,
+    source_path: verified.source.path,
     target: verified.target.target, triple: verified.target.triple, data_layout: verified.target.llvmDataLayout,
     bytecode_schema: registry["tsfg.bytecode"].schemaHash };
-  const attrs = ['tsfg_core.version = "0.4.0"', ...Object.entries(strings)
+  const attrs = ['tsfg_core.version = "0.5.0"', ...Object.entries(strings)
     .map(([key, item]) => `tsfg_core.${key} = ${quote(item)}`),
-    `tsfg_core.source_length = ${verified.source.content.length} : i64`,
-    `tsfg_core.function_start = ${fn.range.start} : i64`, `tsfg_core.function_end = ${fn.range.end} : i64`];
+    `tsfg_core.source_length = ${verified.source.content.length} : i64`];
+  const lowerFunction = fn => {
   const blocks = [], bindingTypes = new Map();
   let valueIndex = 0, current, definitions = new Map(), declared = new Set();
   const coreType = type => type === i32TypeId ? "i32" : "i1";
@@ -386,10 +458,20 @@ export function lowerHir(hir) {
     current.terminated = true;
   };
   const fuel = (event, anchor) => current.lines.push(`    "tsfg_core.fuel"() {event = ${event} : i32, ${attrsFor(anchor)}} : () -> ()`);
-  current = newBlock();
+  current = newBlock(fn.parameters.map(parameter => parameter.type));
+  fn.parameters.forEach((parameter,index) => {
+    definitions.set(parameter.id,current.parameters[index].name); declared.add(parameter.id);
+    bindingTypes.set(parameter.id,parameter.type);
+  });
   fuel(1, fn.range);
   const emit = expression => {
     if (expression.kind === "reference") return definitions.get(expression.binding);
+    if (expression.kind === "call") {
+      const operands = expression.arguments.map(emit), target = verified.functions.find(fn => fn.id === expression.target);
+      const name = `%v${valueIndex++}`;
+      current.lines.push(`    ${name} = "func.call"(${operands.join(", ")}) {callee = @${quote(target.name)}, tsfg_core.function_id = ${quote(target.id)}, tsfg_core.signature_hash = ${quote(target.signatureHash)}, ${attrsFor(expression.range)}} : (${expression.arguments.map(argument => coreType(argument.type)).join(", ")}) -> ${coreType(expression.type)}`);
+      return name;
+    }
     if (expression.kind === "group" || expression.kind === "unary" && expression.operator === "+") return emit(expression.operand);
     if (expression.kind === "shortCircuit") {
       const left = emit(expression.left);
@@ -463,5 +545,8 @@ export function lowerHir(hir) {
   if (current || blocks.some(block => !block.terminated)) throw new TypeError("r03-hir-cfg: reachable function fallthrough");
   const type = coreType(fn.returnType.id);
   const text = blocks.map((block, index) => `${index ? `  ^${block.name}${block.parameters.length ? `(${block.parameters.map(p => `${p.name}: ${coreType(p.type)}`).join(", ")})` : ""}:\n` : ""}${block.lines.join("\n")}`).join("\n");
-  return `module attributes {${attrs.join(", ")}} {\n  func.func @${quote(fn.name)}() -> ${type} {\n${text}\n  }\n}\n`;
+  const functionAttrs = `tsfg_core.function_id = ${quote(fn.id)}, tsfg_core.signature_hash = ${quote(fn.signatureHash)}, tsfg_core.type_id = ${quote(fn.returnType.id)}, tsfg_core.function_start = ${fn.range.start} : i64, tsfg_core.function_end = ${fn.range.end} : i64`;
+  return `  func.func @${quote(fn.name)}(${blocks[0].parameters.map(p => `${p.name}: ${coreType(p.type)}`).join(", ")}) -> ${type} attributes {${functionAttrs}} {\n${text}\n  }`;
+  };
+  return `module attributes {${attrs.join(", ")}} {\n${verified.functions.map(lowerFunction).join("\n")}\n}\n`;
 }

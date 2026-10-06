@@ -27,6 +27,6 @@ export function own(value) {
 export const i32TypeId = sha256("tsfg.type\0i32");
 export const i32SignatureHash = sha256("tsfg.signature\0()->i32");
 export const boolTypeId = sha256("tsfg.type\0bool");
-export const signatureHash = type => sha256(`tsfg.signature\0()->${type}`);
-export const functionIdentity = (sourcePath, name, type = "i32") => sha256(
-  `tsfg.function\0${sourcePath}\0${name}\0${signatureHash(type).slice(7)}`);
+export const signatureHash = (type, parameters = []) => sha256(`tsfg.signature\0(${parameters.join(",")})->${type}`);
+export const functionIdentity = (sourcePath, name, type = "i32", parameters = []) => sha256(
+  `tsfg.function\0${sourcePath}\0${name}\0${signatureHash(type, parameters).slice(7)}`);

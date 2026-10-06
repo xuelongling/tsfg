@@ -4,6 +4,7 @@ const runtime = @import("root.zig");
 
 const Request = struct {
     functionId: ?[]const u8 = null,
+    signatureHash: ?[]const u8 = null,
     arguments: []const std.json.Value = &.{},
     capabilities: []const std.json.Value = &.{},
     memoryBytes: u64 = 16384,
@@ -55,7 +56,55 @@ fn evaluateRequest(host: *runtime.Runtime, module: *const runtime.VerifiedModule
         for (id) |character| if (!std.ascii.isDigit(character) and !(character >= 'a' and character <= 'f')) return error.FunctionId;
         _ = try std.fmt.hexToBytes(&function_id, id);
     }
-    return runtime.eval_bytecode(host, module, function_id, if (request.arguments.len == 0) &.{} else &.{.{ .i32 = 0 }}, if (request.capabilities.len == 0) &.{} else &.{.{ .id = 0 }}, .{ .memory_bytes = @intCast(request.memoryBytes), .instruction_budget = request.instructionBudget, .semantic_fuel = request.semanticFuel, .depth = request.depth });
+    var selected: ?runtime.ModuleInfo = null;
+    for (runtime.functions(module)) |function| if (std.mem.eql(u8, &function_id, &function.info.function_id)) {
+        selected = function.info;
+        break;
+    };
+    const info = selected orelse return .{ .failed = .{ .code = "r05-request-function", .category = "request", .function_id = function_id, .source = runtime.moduleInfo(module).source, .fuel_remaining = request.semanticFuel } };
+    if (request.signatureHash) |text| {
+        const expected = runtime.digestText(info.signature_hash);
+        if (!std.mem.eql(u8, text, &expected)) return .{ .failed = .{ .code = "r05-request-signature", .category = "request", .function_id = function_id, .source = info.source, .fuel_remaining = request.semanticFuel } };
+    }
+    var arguments: [64]runtime.TypedValue = undefined;
+    var valid = request.arguments.len <= 64 and request.arguments.len == info.parameter_types.len;
+    if (valid) for (request.arguments, 0..) |argument, index| {
+        if (argument != .object or argument.object.count() != 2) {
+            valid = false;
+            break;
+        }
+        const type_value = argument.object.get("type") orelse {
+            valid = false;
+            break;
+        };
+        const value = argument.object.get("value") orelse {
+            valid = false;
+            break;
+        };
+        if (type_value != .string) {
+            valid = false;
+            break;
+        }
+        if (std.mem.eql(u8, type_value.string, "bool") and info.parameter_types[index] == 2 and value == .bool) arguments[index] = .{ .boolean = value.bool } else if (std.mem.eql(u8, type_value.string, "i32") and info.parameter_types[index] == 1 and value == .string) {
+            const integer = std.fmt.parseInt(i32, value.string, 10) catch {
+                valid = false;
+                break;
+            };
+            var buffer: [16]u8 = undefined;
+            const canonical = try std.fmt.bufPrint(&buffer, "{d}", .{integer});
+            if (!std.mem.eql(u8, value.string, canonical)) {
+                valid = false;
+                break;
+            }
+            arguments[index] = .{ .i32 = integer };
+        } else {
+            valid = false;
+            break;
+        }
+    };
+    if (!valid) return .{ .failed = .{ .code = "r05-request-arguments", .category = "request", .function_id = function_id, .source = info.source, .fuel_remaining = request.semanticFuel } };
+    if (request.capabilities.len != 0) return .{ .failed = .{ .code = "r05-request-capability", .category = "request", .function_id = function_id, .source = info.source, .fuel_remaining = request.semanticFuel } };
+    return runtime.eval_bytecode(host, module, function_id, arguments[0..request.arguments.len], &.{}, .{ .memory_bytes = @intCast(request.memoryBytes), .instruction_budget = request.instructionBudget, .semantic_fuel = request.semanticFuel, .depth = request.depth });
 }
 
 // The transport frames existing R04 packets; it does not add bytecode semantics.

@@ -12,6 +12,7 @@ pub const LoadOutcome = bytecode.LoadOutcome;
 pub const load = bytecode.load;
 pub const unload = bytecode.unload;
 pub const moduleInfo = bytecode.moduleInfo;
+pub const functions = bytecode.functions;
 pub const serialize = bytecode.serialize;
 pub const inspect = bytecode.inspect;
 pub const digestText = bytecode.digestText;

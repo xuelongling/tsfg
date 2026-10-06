@@ -1,11 +1,11 @@
 <!-- SPDX-License-Identifier: MIT -->
 
-# tsfg.hir 0.4.0
+# tsfg.hir 0.5.0
 
 `createCompilerSession` reuses owned HIR/Core/R04 output only for an unchanged
 checked Snapshot identity, compiler input fingerprint and source-built producer
-binary. It checks the official frontend on every input. A changed single
-function invalidates and lowers that whole function; failure clears the prior
+binary. It checks the official frontend on every input. A changed function
+invalidates and lowers the owned module; failure clears the prior
 success. Returned bytecode is copied and HIR is immutable, so callers cannot
 mutate cache state. This is incremental owned lowering, not an incremental Go
 checker or a replacement frontend. Full and incremental output equivalence is
@@ -19,8 +19,11 @@ and typed scalar expression tree, and freezes all data. It retains no
 Snapshot-local reference or upstream session. `lowerHir` consumes only HIR.
 
 This exact same-repository development format has no published or supported
-older consumer. Its supported capability is one zero-parameter i32/bool
-function containing structured blocks, if/else, while, local declarations, simple assignments and scalar returns; each body contains at most128 statements.
+older consumer. Its supported capability is 1..128 named i32/bool functions,
+each with 0..64 typed scalar parameters, structured blocks, if/else, while,
+local declarations, simple assignments and scalar returns; each body contains
+at most128 statements. Parameters use declaration-order `p0`, `p1`, ...
+identities within their function and begin initialized and writable.
 An owned binding has its own declaration-order `l0`, `l1`, ... identity, scalar
 type, decoded name, declaration range and writable flag. References carry that
 identity, type and source range; they never retain Snapshot-local symbol IDs.
@@ -31,7 +34,12 @@ type identity.
 Expressions support
 i32 constants, bool constants, grouping, unary `+ - ~ !`, i32 arithmetic,
 bitwise operations and shifts, i32 ordered comparisons, and same-type i32/bool
-strict equality and local references. Bool `&&`/`||` retain their short-circuit tree; calls belong to M06. Other normally checked source constructs produce
+strict equality, local references and direct calls to owned module functions.
+Bool `&&`/`||` retain their short-circuit tree. Direct, forward and mutually
+recursive calls retain target FunctionId, exact signature hash, ordered typed
+arguments and the original call range. The verifier checks the complete
+function table before bodies; shadowed names cannot become direct targets.
+Other normally checked source constructs produce
 `r03-d-capability`; official errors are returned before capability selection.
 Invalid owned facts produce `r03-d-snapshot`. Missing implementation is not a
 language prohibition or a successful safety analysis.
@@ -87,8 +95,12 @@ transfer in parallel in R04. The entry and each while header carry explicit
 `tsfg_core.fuel` events before condition operations. Source conditions, braces,
 else clauses and nested statement delimiters are checked against owned anchors.
 
-Core exchange0.4.0 uses registered typed scalar operations and fuel plus official
-`cf.br`/`cf.cond_br`, `func.return` and MLIR block arguments. The C++ consumer
+Core exchange0.5.0 uses registered typed scalar operations and fuel plus official
+`cf.br`/`cf.cond_br`, `func.call`, `func.return` and MLIR block arguments. Each
+function owns its identity, signature, return type and range attributes; module
+source and target attributes remain global. The C++ consumer resolves every
+call against the complete declared signature table and checks its identity,
+ordered operands and result type before deriving R04. The C++ consumer
 validates identities, source ranges, typed CFG/dominance and metered cycles at
 canonicalize and emission seams. Its current `--optimize` pipeline validates and
 canonically prints without rewriting operations; execution equivalence compares

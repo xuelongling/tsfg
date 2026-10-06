@@ -14,8 +14,8 @@ test "verified CFG block table exposes immutable nested parameter views" {
 }
 
 test "loader preserves an official absolute logical source path" {
-    const old_path = "fixture.ts";
-    const prefix = "/src/";
+    const old_path = "/fixture.ts";
+    const prefix = "/src";
     const path_offset = std.mem.indexOf(u8, &fixture.bytes, old_path).?;
     var bytes: [fixture.bytes.len + prefix.len]u8 = undefined;
     @memcpy(bytes[0..path_offset], fixture.bytes[0..path_offset]);
@@ -25,7 +25,7 @@ test "loader preserves an official absolute logical source path" {
     std.mem.writeInt(u32, bytes[path_offset - 4 ..][0..4], old_path.len + prefix.len, .little);
     var digest = std.crypto.hash.sha2.Sha256.init(.{});
     digest.update("tsfg.function\x00/src/fixture.ts\x00constant\x00ac9438b17e41c86e042aaa640f76bd95693245676c19c4cbfd89cf43315df6f9");
-    const function_offset = path_offset - 4 - 96;
+    const function_offset = path_offset + old_path.len + prefix.len + 6;
     digest.final(bytes[function_offset..][0..32]);
     std.crypto.hash.sha2.Sha256.hash(bytes[80..], bytes[48..80], .{});
     const module = switch (runtime.load(std.testing.allocator, &bytes)) {
@@ -67,7 +67,7 @@ test "verified module owns canonical bytes and exposes the original source" {
     defer std.testing.allocator.free(view);
     const json = try std.json.parseFromSlice(std.json.Value, std.testing.allocator, view, .{});
     defer json.deinit();
-    try std.testing.expectEqualStrings("fixture.ts", json.value.object.get("source").?.object.get("path").?.string);
+    try std.testing.expectEqualStrings("/fixture.ts", json.value.object.get("source").?.object.get("path").?.string);
 }
 
 test "Runtime cleans failed requests and accepts another request on the same host" {
@@ -272,4 +272,85 @@ test "phi transfer allocation abort cleans the frame and host accepts a later re
         .failed => return error.UnexpectedRequestFailure,
     }
     try std.testing.expectEqual(@as(usize, 0), host.activeRequests());
+}
+
+// Independent wire extension: the first function calls a renamed copy of the
+// literal-return fixture. This fixture authors bytes and never evaluates source.
+fn callFixture() [fixture.bytes.len + 2 + 176]u8 {
+    const signature = @import("contract.zig").hexDigest("ac9438b17e41c86e042aaa640f76bd95693245676c19c4cbfd89cf43315df6f9");
+    const function_offset = std.mem.indexOf(u8, &fixture.bytes, &signature).? - 32;
+    std.debug.assert(fixture.bytes.len - function_offset == 176);
+    var bytes: [fixture.bytes.len + 2 + 176]u8 = undefined;
+    const operation = fixture.bytes.len - 32;
+    @memcpy(bytes[0..operation], fixture.bytes[0..operation]);
+    @memcpy(bytes[operation..][0..16], fixture.bytes[operation..][0..16]);
+    bytes[operation] = 27;
+    std.mem.writeInt(u32, bytes[operation + 4 ..][0..4], 1, .little);
+    @memset(bytes[operation + 16 ..][0..2], 0);
+    @memcpy(bytes[operation + 18 ..][0..16], fixture.bytes[fixture.bytes.len - 16 ..]);
+    const callee = fixture.bytes.len + 2;
+    @memcpy(bytes[callee..], fixture.bytes[function_offset..]);
+    const name = callee + 96 + 4;
+    @memcpy(bytes[name..][0..8], "callee00");
+    var id = std.crypto.hash.sha2.Sha256.init(.{});
+    id.update("tsfg.function\x00/fixture.ts\x00callee00\x00ac9438b17e41c86e042aaa640f76bd95693245676c19c4cbfd89cf43315df6f9");
+    id.final(bytes[callee..][0..32]);
+    std.mem.writeInt(u16, bytes[function_offset - 2 ..][0..2], 2, .little);
+    std.mem.writeInt(u32, bytes[44..48], bytes.len, .little);
+    std.crypto.hash.sha2.Sha256.hash(bytes[80..], bytes[48..80], .{});
+    return bytes;
+}
+
+fn loadCallsWithAllocationFailure(allocator: std.mem.Allocator) !void {
+    const bytes = callFixture();
+    switch (runtime.load(allocator, &bytes)) {
+        .loaded => |module| runtime.unload(module),
+        .rejected => |failure| {
+            if (std.mem.eql(u8, failure.code, "r04-allocation")) return error.OutOfMemory;
+            return error.UnexpectedRejection;
+        },
+    }
+}
+test "complete multi-function loader cleans every partial allocation" {
+    try std.testing.checkAllAllocationFailures(std.testing.allocator, loadCallsWithAllocationFailure, .{});
+}
+
+fn executeCallsWithAllocationFailure(allocator: std.mem.Allocator, module: *const runtime.VerifiedModule) !void {
+    var host = runtime.Runtime.init(allocator);
+    const outcome = runtime.eval_bytecode(&host, module, runtime.moduleInfo(module).function_id, &.{}, &.{}, .{ .depth = 2, .semantic_fuel = 2 });
+    try std.testing.expectEqual(@as(usize, 0), host.activeRequests());
+    switch (outcome) {
+        .returned => |returned| try std.testing.expectEqual(@as(i32, 42), returned.result.i32),
+        .failed => |failure| {
+            try std.testing.expectEqualStrings("r05-execution-abort", failure.code);
+            return error.OutOfMemory;
+        },
+    }
+}
+test "recursive frame entry and return clean every allocation failure" {
+    const bytes = callFixture();
+    const module = switch (runtime.load(std.testing.allocator, &bytes)) {
+        .loaded => |module| module,
+        .rejected => return error.UnexpectedRejection,
+    };
+    defer runtime.unload(module);
+    try std.testing.checkAllAllocationFailures(std.testing.allocator, executeCallsWithAllocationFailure, .{module});
+    var allocator = std.testing.FailingAllocator.init(std.testing.allocator, .{ .fail_index = 3 });
+    var host = runtime.Runtime.init(allocator.allocator());
+    const outcome = runtime.eval_bytecode(&host, module, runtime.moduleInfo(module).function_id, &.{}, &.{}, .{ .depth = 1, .semantic_fuel = 1 });
+    switch (outcome) {
+        .returned => return error.ExpectedDepth,
+        .failed => |failure| {
+            try std.testing.expectEqualStrings("r01-t-depth", failure.code);
+            try std.testing.expectEqual(@as(u64, 1), failure.fuel_consumed);
+            try std.testing.expectEqualSlices(u8, &runtime.functions(module)[1].info.function_id, &failure.function_id);
+        },
+    }
+    try std.testing.expectEqual(@as(usize, 0), host.activeRequests());
+    allocator.fail_index = std.math.maxInt(usize);
+    const following = runtime.eval_bytecode(&host, module, runtime.moduleInfo(module).function_id, &.{}, &.{}, .{ .depth = 2, .semantic_fuel = 2 });
+    switch (following) {
+        .returned => |returned| try std.testing.expectEqual(@as(i32, 42), returned.result.i32),
+        .failed => return error.UnexpectedRequestFailure,
+    }
 }

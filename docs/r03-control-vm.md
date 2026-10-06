@@ -5,7 +5,7 @@
 M05 extends the formal source→official owned Snapshot→independent HIR→C++/MLIR
 Core→R04→Zig Runtime chain with if/else, while and bool short circuit. Snapshot
 0.5.0 already provides these official facts; HIR/Core/R04 use exact development
-0.4.0 and wire4. Lexical bindings and SSA block arguments preserve branch and
+0.5.0 and wire5 after M06's module-call extension. Lexical bindings and SSA block arguments preserve branch and
 loop values. R04 applies incoming phi arguments simultaneously.
 
 Every request charges one function-entry event and one before each while
@@ -26,8 +26,14 @@ current optimization pipeline performs verified canonical identity printing;
 no rewrite or AOT execution is claimed. The Runtime host accepts another request
 after trap/abort and reports activeRequests0 after frame cleanup.
 
-The current execution capability remains one zero-parameter i32/bool function.
-Calls/parameters and full depth behavior belong to M06. Delayed initialization,
+M06 extends execution to typed scalar parameters and forward/direct/mutually
+recursive calls through the same official chain. The loader validates every
+function and call signature before execution. Calls share instruction and
+active-frame memory budgets, evaluate arguments left to right, and check
+callee depth before allocating its frame or charging entry fuel. Typed public
+host requests validate identity, optional signature and all arguments before
+logical events. Returning or failing releases every frame before another host
+request begins. Delayed initialization,
 updates and general ordinary expressions retain their remaining R03/M10 duties.
 Q3–Q13, user catch/finally, managed roots/borrows and CPU/GPU domains retain their
 authoritative definitions and require their corresponding actual consumers.

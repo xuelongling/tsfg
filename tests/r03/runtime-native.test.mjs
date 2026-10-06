@@ -29,6 +29,6 @@ test("formal Zig Runtime passes public loader, typed request and allocation clea
     error: result.error?.message }));
   assert.ifError(result.error);
   assert.equal(result.status, 0, result.stderr?.toString());
-  assert.match(result.stderr.toString(), /All 13 tests passed/);
+  assert.match(result.stderr.toString(), /All 15 tests passed/);
   // The final native PowerShell cleanup owns this explicitly recorded directory.
 });

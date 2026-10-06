@@ -104,6 +104,7 @@ test("formal loader rejects actual producer packet corruption, identities, types
   for (let index = 0; index < 3; index++) {
     stringOffsets.push(offset + 4); offset += 4 + packet.readUInt32LE(offset);
   }
+  const functionOffset = offset + 8 + 64 + 4 + packet.readUInt32LE(offset + 8 + 64) + 4 + 2;
   const changed = (at, value, repair = false) => {
     assert.notEqual(packet[at], value, "a negative case must actually change the packet");
     const bytes = Buffer.from(packet); bytes[at] = value;
@@ -118,9 +119,9 @@ test("formal loader rejects actual producer packet corruption, identities, types
     [stringOffsets[0], 120, true, "r04-target"], [stringOffsets[1], 97, true, "r04-target"],
     [stringOffsets[2], 120, true, "r04-layout"], [offset, 8, true, "r04-layout"],
     [offset + 4, 3, true, "r04-capability"],
-    [offset + 8 + 64, packet[offset + 8 + 64] ^ 1, true, "r04-function"],
-    [offset + 8 + 96, packet[offset + 8 + 96] ^ 1, true, "r04-signature"],
-    [offset + 8 + 128, packet[offset + 8 + 128] ^ 1, true, "r04-type"],
+    [functionOffset, packet[functionOffset] ^ 1, true, "r04-function"],
+    [functionOffset + 32, packet[functionOffset + 32] ^ 1, true, "r04-signature"],
+    [functionOffset + 64, packet[functionOffset + 64] ^ 1, true, "r04-type"],
     [packet.length - 32, 255, true, "r04-instruction"],
     [packet.length - 31, 2, true, "r04-type"], [packet.length - 15, 2, true, "r04-type"],
     [packet.length - 30, 1, true, "r04-register"],
@@ -174,8 +175,8 @@ test("official source checking precedes the bounded execution capability and nat
     assert.equal(result.bytecode, undefined); assert.equal(result.hir, undefined);
   }
   for (const source of [
-    "export function answer(value: i32): i32 { return 42; }",
-    "export function answer(): i32 { return 42; } export function second(): i32 { return 0; }",
+    "export function answer(value: f64): i32 { return 42; }",
+    "export function answer(): i32 { return 42; } export function second(value: f64): f64 { return value; }",
   ]) {
     const result = await compileProgram(await sourceInput(source), tools());
     assert.equal(result.status, "error", JSON.stringify(result));
@@ -195,7 +196,7 @@ test("C++ R04 producer verifies Core source identities, target, types and actual
   assert.ifError(renamed.error); assert.equal(renamed.status, 0, renamed.stderr.toString());
   assert.deepEqual(renamed.stdout, result.bytecode);
   for (const [before, after] of [
-    ["sha256:cd7152bad3cdcb1f307adb550b8b4dc58334df38b7e690b942fa81e5b99374a7", `sha256:${"0".repeat(64)}`],
+    ["sha256:cd74db13611d560646a088766cad13e41bfabb2976cb6573cbe488cbcce4e975", `sha256:${"0".repeat(64)}`],
     ["windows-x86_64-msvc", "wrong-target"],
     [result.hir.functions[0].id, `sha256:${"0".repeat(64)}`],
     ["tsfg_core.function_end = 44 : i64", "tsfg_core.function_end = 45 : i64"],
