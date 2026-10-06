@@ -258,7 +258,7 @@ export function buildHir(snapshot) {
       || !Object.hasOwn(types, resolveType(snapshot, fn.returnTypeRef).scalar)
       || fn.body.length < 1 || fn.body.length > 128) {
     return { status: "error", diagnostics: [{ code: "r03-d-capability", ruleId: "r01-ts-baseline", phase: "hir",
-      message: "current execution capability requires one zero-parameter i32/bool function with linear scalar locals, assignments and returns",
+      message: "current execution capability requires one zero-parameter i32/bool function with scalar locals, structured control and returns",
       primary: { sourceId: snapshot.source.path, ...(expression?.range ?? fn?.range ?? { start: 0, end: 0 }) } }] };
   }
   const bindings = new Map();
