@@ -1241,7 +1241,7 @@ test("real bool function becomes an owned snapshot with declaration references",
   };
   const result = await analyzeFrontend(input, { executable: process.env.TSFG_FRONTEND_EXE });
   assert.equal(result.status, "ok");
-  assert.equal(result.snapshot.contractVersion, "0.5.0");
+  assert.equal(result.snapshot.contractVersion, "0.6.0");
   assert.equal(result.snapshot.frontendSource.forkOid, sourceLock.forkOid);
   assert.equal(result.snapshot.functions.length, 1);
   const fn = result.snapshot.functions[0];

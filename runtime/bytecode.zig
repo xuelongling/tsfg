@@ -30,6 +30,7 @@ pub const Instruction = struct {
     type_code: u8,
     register: u16,
     immediate: i32,
+    literal_bits: u64 = 0,
     left: u16,
     right: u16,
     source: Source,
@@ -108,7 +109,9 @@ fn parse(reader: *Reader, allocator: Allocator, module: *Module) (error{Invalid}
     if (builtin.os.tag != .windows or builtin.cpu.arch != .x86_64) return reader.reject("r04-target", 80);
     try reader.expected(u16, @sizeOf(i32), "r04-layout");
     try reader.expected(u16, @alignOf(i32), "r04-layout");
-    try reader.expected(u32, 16, "r04-capability");
+    try reader.expected(u16, @bitSizeOf(usize), "r04-layout");
+    try reader.expected(u16, @alignOf(usize), "r04-layout");
+    try reader.expected(u32, 17, "r04-capability");
     const input_identity = try reader.digest();
     const source_hash = try reader.digest();
     const source_path = try reader.string(4096);
@@ -164,23 +167,24 @@ fn parseFunction(reader: *Reader, allocator: Allocator, global: Global) (error{I
     const function_end = try reader.int(u32);
     if (!rangeValid(function_start, function_end, 0, source_length)) return reader.reject("r04-source-range", reader.offset - 8);
     const return_type = try reader.int(u8);
-    if (return_type != 1 and return_type != 2) return reader.reject("r04-type", reader.offset - 1);
+    if (!contract.validType(return_type)) return reader.reject("r04-type", reader.offset - 1);
     const signature_parameter_count = try reader.int(u8);
     if (signature_parameter_count > 64) return reader.reject("r04-signature", reader.offset - 1);
     const parameter_types = try allocator.dupe(u8, try reader.take(signature_parameter_count));
     var signature = Sha256.init(.{});
     signature.update("tsfg.signature\x00(");
     for (parameter_types, 0..) |type_code, index| {
-        if (type_code != 1 and type_code != 2) return reader.reject("r04-type", reader.offset);
+        if (!contract.validType(type_code)) return reader.reject("r04-type", reader.offset);
         if (index != 0) signature.update(",");
-        signature.update(if (type_code == 1) "i32" else "bool");
+        signature.update(contract.typeName(type_code));
     }
-    signature.update(if (return_type == 1) ")->i32" else ")->bool");
+    signature.update(")->"); signature.update(contract.typeName(return_type));
     var expected_signature: [32]u8 = undefined;
     signature.final(&expected_signature);
-    const scalar_type = if (return_type == 1) "tsfg.type\x00i32" else "tsfg.type\x00bool";
+    var type_hash = Sha256.init(.{}); type_hash.update("tsfg.type\x00"); type_hash.update(contract.typeName(return_type));
+    var expected_type_id: [32]u8 = undefined; type_hash.final(&expected_type_id);
     if (!std.mem.eql(u8, &signature_hash, &expected_signature)) return reader.reject("r04-signature", signature_offset);
-    if (!std.mem.eql(u8, &type_id, &hash(scalar_type))) return reader.reject("r04-type", signature_offset + 32);
+    if (!std.mem.eql(u8, &type_id, &expected_type_id)) return reader.reject("r04-type", signature_offset + 32);
     if (!std.mem.eql(u8, &function_id, &expected_function_id)) return reader.reject("r04-function", signature_offset - 32);
     const register_count = try reader.int(u16);
     if (register_count < 1 or register_count > 4096) return reader.reject("r04-register", reader.offset - 2);
@@ -198,7 +202,7 @@ fn parseFunction(reader: *Reader, allocator: Allocator, global: Global) (error{I
             parameter.register = try reader.int(u16);
             parameter.type_code = try reader.int(u8);
             try reader.expected(u8, 0, "r04-reserved");
-            if (parameter.type_code != 1 and parameter.type_code != 2) return reader.reject("r04-type", reader.offset - 2);
+            if (!contract.validType(parameter.type_code)) return reader.reject("r04-type", reader.offset - 2);
         }
         if (index == 0) for (parameters, parameter_types) |parameter, type_code| if (parameter.type_code != type_code) return reader.reject("r04-signature", reader.offset);
         const count = try reader.int(u16);
@@ -256,12 +260,12 @@ fn parseFunction(reader: *Reader, allocator: Allocator, global: Global) (error{I
                 if (payload == 2 and (block_index == 0 or position != 0)) return reader.reject("r04-fuel", offset);
                 if (payload == 2) has_fuel[block_index] = true;
             } else {
-                if (type_code != 1 and type_code != 2) return reader.reject("r04-type", offset + 1);
+                if (!contract.validType(type_code)) return reader.reject("r04-type", offset + 1);
                 if (opcode == 2) {
                     if (payload != 0) return reader.reject("r04-reserved", offset + 4);
                     if (type_code != return_type) return reader.reject("r04-type", offset + 1);
                 } else {
-                    if (opcode < 1 or (opcode > 23 and opcode != 27)) return reader.reject("r04-instruction", offset);
+                    if (opcode < 1 or (opcode > 23 and opcode != 27 and opcode != 28)) return reader.reject("r04-instruction", offset);
                     if (reg != next_register or next_register >= register_count) return reader.reject("r04-register", offset + 2);
                     register_types[next_register] = type_code;
                     definition_blocks[next_register] = @intCast(block_index);
@@ -272,6 +276,11 @@ fn parseFunction(reader: *Reader, allocator: Allocator, global: Global) (error{I
                         if (type_code != (if (opcode == 1) @as(u8, 1) else 2)) return reader.reject("r04-type", offset + 1);
                         if (opcode == 3 and payload > 1) return reader.reject("r04-boolean", offset + 4);
                     } else if (opcode >= 15 and opcode <= 17 and payload >> 16 != 0) return reader.reject("r04-reserved", offset + 6);
+                    if (opcode == 28) {
+                        if (type_code < 3 or payload != 0) return reader.reject("r04-type", offset + 1);
+                        op.literal_bits = try reader.int(u64);
+                        if (op.literal_bits & ~contract.mask(type_code) != 0) return reader.reject("r04-integer-range", reader.offset - 8);
+                    }
                     if (opcode == 27) {
                         if (payload >> 16 != 0) return reader.reject("r04-reserved", offset + 6);
                         const count = try reader.int(u16);
@@ -326,10 +335,13 @@ fn parseFunction(reader: *Reader, allocator: Allocator, global: Global) (error{I
             const global_position = block.start + position;
             if (op.opcode == 2 or op.opcode == 25) try use(reader, op.register, op.type_code, block_index, global_position, register_count, &register_types, &definition_blocks, &definition_positions, &dominators);
             if (op.opcode >= 4 and op.opcode <= 23) {
-                const operand_type: u8 = if (op.opcode == 17) 2 else if (op.opcode == 18 or op.opcode == 19) (if (op.left < register_count) register_types[op.left] else 0) else 1;
-                if (op.type_code != (if (op.opcode >= 17) @as(u8, 2) else 1)) return reader.reject("r04-type", instruction_offset);
+                const operand_type: u8 = if (op.left < register_count) register_types[op.left] else 0;
+                if (op.opcode == 17) {
+                    if (operand_type != 2) return reader.reject("r04-type", instruction_offset);
+                } else if (op.opcode != 18 and op.opcode != 19 and !contract.integerType(operand_type)) return reader.reject("r04-type", instruction_offset);
+                if (op.type_code != (if (op.opcode >= 17) @as(u8, 2) else operand_type)) return reader.reject("r04-type", instruction_offset);
                 try use(reader, op.left, operand_type, block_index, global_position, register_count, &register_types, &definition_blocks, &definition_positions, &dominators);
-                if (op.opcode < 15 or op.opcode > 17) try use(reader, op.right, operand_type, block_index, global_position, register_count, &register_types, &definition_blocks, &definition_positions, &dominators);
+                if (op.opcode < 15 or op.opcode > 17) try use(reader, op.right, if (op.opcode >= 9 and op.opcode <= 11) 1 else operand_type, block_index, global_position, register_count, &register_types, &definition_blocks, &definition_positions, &dominators);
             }
             if (op.opcode == 24 or op.opcode == 25) {
                 for (0..(if (op.opcode == 24) @as(usize, 1) else 2)) |edge| {
@@ -452,16 +464,18 @@ fn inspectFunction(module: *const VerifiedModule, function: Function, allocator:
         const names = [_][]const u8{ "add", "sub", "mul", "div", "rem", "shl", "shr", "ushr", "and", "or", "xor", "neg", "not", "bool_not", "eq", "ne", "lt", "le", "gt", "ge" };
         view.* = .{ .opcode = switch (op.opcode) {
             1 => "const_i32",
-            2 => if (op.type_code == 1) "return_i32" else "return_bool",
+            2 => if (op.type_code == 1) "return_i32" else if (op.type_code == 2) "return_bool" else "return_integer",
             3 => "const_bool",
             4...23 => names[op.opcode - 4],
             24 => "br",
             25 => "cond_br",
             26 => "fuel",
             27 => "call",
+            28 => "const_integer",
             else => unreachable,
-        }, .type = if (op.type_code == 0) "none" else if (op.type_code == 1) "i32" else "bool", .register = try std.fmt.allocPrint(temporary, "{d}", .{op.register}), .start = try std.fmt.allocPrint(temporary, "{d}", .{op.source.start}), .end = try std.fmt.allocPrint(temporary, "{d}", .{op.source.end}) };
+        }, .type = contract.typeName(op.type_code), .register = try std.fmt.allocPrint(temporary, "{d}", .{op.register}), .start = try std.fmt.allocPrint(temporary, "{d}", .{op.source.start}), .end = try std.fmt.allocPrint(temporary, "{d}", .{op.source.end}) };
         if (op.opcode == 1 or op.opcode == 3) view.immediate = try std.fmt.allocPrint(temporary, "{d}", .{op.immediate});
+        if (op.opcode == 28) view.immediate = if (contract.signedType(op.type_code)) try std.fmt.allocPrint(temporary, "{d}", .{contract.signedValue(op.literal_bits, op.type_code)}) else try std.fmt.allocPrint(temporary, "{d}", .{op.literal_bits});
         if (op.opcode >= 4 and op.opcode <= 23) {
             view.left = try std.fmt.allocPrint(temporary, "{d}", .{op.left});
             if (op.opcode < 15 or op.opcode > 17) view.right = try std.fmt.allocPrint(temporary, "{d}", .{op.right});
@@ -495,21 +509,23 @@ fn inspectFunction(module: *const VerifiedModule, function: Function, allocator:
     const block_views = try temporary.alloc(BlockView, info.block_count);
     for (function.blocks, block_views) |block, *view| {
         const parameters = try temporary.alloc(ParameterView, block.parameters.len);
-        for (block.parameters, parameters) |parameter, *parameter_view| parameter_view.* = .{ .register = try std.fmt.allocPrint(temporary, "{d}", .{parameter.register}), .type = if (parameter.type_code == 1) "i32" else "bool" };
+        for (block.parameters, parameters) |parameter, *parameter_view| parameter_view.* = .{ .register = try std.fmt.allocPrint(temporary, "{d}", .{parameter.register}), .type = contract.typeName(parameter.type_code) };
         view.* = .{ .parameters = parameters, .instructionStart = try std.fmt.allocPrint(temporary, "{d}", .{block.start}), .instructionCount = try std.fmt.allocPrint(temporary, "{d}", .{block.count}) };
     }
     const parameter_types = try temporary.alloc([]const u8, info.parameter_types.len);
-    for (info.parameter_types, parameter_types) |type_code, *type_name| type_name.* = if (type_code == 1) "i32" else "bool";
+    for (info.parameter_types, parameter_types) |type_code, *type_name| type_name.* = contract.typeName(type_code);
     return std.json.Stringify.valueAlloc(allocator, .{
         .familyId = "tsfg.bytecode",
-        .semver = "0.5.0",
+        .semver = "0.6.0",
         .schemaHash = "sha256:" ++ contract.schema_hash_hex,
         .target = contract.target,
         .triple = contract.triple,
         .llvmDataLayout = contract.data_layout,
         .i32Bytes = "4",
         .i32Align = "4",
-        .capabilities = "16",
+        .pointerBits = "64",
+        .pointerAlign = "8",
+        .capabilities = "17",
         .totalBytes = try std.fmt.allocPrint(temporary, "{d}", .{decoded(module).bytes.len}),
         .inputIdentity = @as([]const u8, &input_identity),
         .functionId = @as([]const u8, &function_id),
@@ -519,7 +535,7 @@ fn inspectFunction(module: *const VerifiedModule, function: Function, allocator:
         .functionName = info.function_name,
         .functionStart = try std.fmt.allocPrint(temporary, "{d}", .{info.function_start}),
         .functionEnd = try std.fmt.allocPrint(temporary, "{d}", .{info.function_end}),
-        .returnType = if (info.return_type == 1) "i32" else "bool",
+        .returnType = contract.typeName(info.return_type),
         .parameterCount = try std.fmt.allocPrint(temporary, "{d}", .{info.parameter_types.len}),
         .parameterTypes = parameter_types,
         .registerCount = try std.fmt.allocPrint(temporary, "{d}", .{info.register_count}),

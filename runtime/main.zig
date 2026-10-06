@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: MIT
 const std = @import("std");
 const runtime = @import("root.zig");
+const contract = @import("contract.zig");
 
 const Request = struct {
     functionId: ?[]const u8 = null,
@@ -40,8 +41,12 @@ fn writeOutcome(writer: *std.Io.Writer, outcome: runtime.RequestOutcome, host: *
     switch (outcome) {
         .returned => |returned| {
             switch (returned.result) {
-                .i32 => |value| try std.json.Stringify.value(.{ .status = "returned", .result = .{ .type = "i32", .value = try std.fmt.bufPrint(&buffers[3], "{d}", .{value}) }, .source = source_view, .functionId = @as([]const u8, &function_hex), .activeRequests = active, .fuelRemaining = fuel_remaining, .fuelConsumed = fuel_consumed }, .{}, writer),
                 .boolean => |value| try std.json.Stringify.value(.{ .status = "returned", .result = .{ .type = "bool", .value = value }, .source = source_view, .functionId = @as([]const u8, &function_hex), .activeRequests = active, .fuelRemaining = fuel_remaining, .fuelConsumed = fuel_consumed }, .{}, writer),
+                else => {
+                    const code = returned.result.typeCode();
+                    const text = if (contract.signedType(code)) try std.fmt.bufPrint(&buffers[3], "{d}", .{contract.signedValue(returned.result.bits(), code)}) else try std.fmt.bufPrint(&buffers[3], "{d}", .{returned.result.bits()});
+                    try std.json.Stringify.value(.{ .status = "returned", .result = .{ .type = contract.typeName(code), .value = text }, .source = source_view, .functionId = @as([]const u8, &function_hex), .activeRequests = active, .fuelRemaining = fuel_remaining, .fuelConsumed = fuel_consumed }, .{}, writer);
+                },
             }
         },
         .failed => |failed| try std.json.Stringify.value(.{ .status = "failed", .code = failed.code, .category = failed.category, .ruleIds = failed.rule_ids, .functionId = @as([]const u8, &function_hex), .source = source_view, .activeRequests = active, .fuelRemaining = fuel_remaining, .fuelConsumed = fuel_consumed }, .{}, writer),
@@ -85,18 +90,25 @@ fn evaluateRequest(host: *runtime.Runtime, module: *const runtime.VerifiedModule
             valid = false;
             break;
         }
-        if (std.mem.eql(u8, type_value.string, "bool") and info.parameter_types[index] == 2 and value == .bool) arguments[index] = .{ .boolean = value.bool } else if (std.mem.eql(u8, type_value.string, "i32") and info.parameter_types[index] == 1 and value == .string) {
-            const integer = std.fmt.parseInt(i32, value.string, 10) catch {
-                valid = false;
-                break;
+        const code = info.parameter_types[index];
+        if (std.mem.eql(u8, type_value.string, "bool") and code == 2 and value == .bool) arguments[index] = .{ .boolean = value.bool } else if (std.mem.eql(u8, type_value.string, contract.typeName(code)) and contract.integerType(code) and value == .string) {
+            var bits: u64 = undefined;
+            var buffer: [32]u8 = undefined;
+            const canonical = if (contract.signedType(code)) blk: {
+                const integer = std.fmt.parseInt(i64, value.string, 10) catch { valid = false; break; };
+                bits = @as(u64, @bitCast(integer)) & contract.mask(code);
+                if (contract.signedValue(bits, code) != integer) { valid = false; break; }
+                break :blk try std.fmt.bufPrint(&buffer, "{d}", .{integer});
+            } else blk: {
+                bits = std.fmt.parseInt(u64, value.string, 10) catch { valid = false; break; };
+                if (bits & ~contract.mask(code) != 0) { valid = false; break; }
+                break :blk try std.fmt.bufPrint(&buffer, "{d}", .{bits});
             };
-            var buffer: [16]u8 = undefined;
-            const canonical = try std.fmt.bufPrint(&buffer, "{d}", .{integer});
             if (!std.mem.eql(u8, value.string, canonical)) {
                 valid = false;
                 break;
             }
-            arguments[index] = .{ .i32 = integer };
+            arguments[index] = runtime.typedValue(bits, code);
         } else {
             valid = false;
             break;

@@ -6,10 +6,10 @@ import test from "node:test";
 
 const executable = process.env.TSFG_CORE_IR_EXE;
 const sha = value => createHash("sha256").update(value).digest("hex");
-const schema = "cd74db13611d560646a088766cad13e41bfabb2976cb6573cbe488cbcce4e975";
+const schema = "2119acbdab7a604f5947b765f607d596d534f11fb88d81770e7230011f3de13b";
 const signature = sha("tsfg.signature\0()->i32");
 const source = (body, extra = "") => `module attributes {
-  tsfg_core.version = "0.5.0", tsfg_core.bytecode_schema = "sha256:${schema}",
+  tsfg_core.version = "0.6.0", tsfg_core.bytecode_schema = "sha256:${schema}",
   tsfg_core.target = "windows-x86_64-msvc", tsfg_core.triple = "x86_64-pc-windows-msvc",
   tsfg_core.data_layout = "e-m:w-p270:32:32-p271:32:32-p272:64:64-i64:64-i128:128-f80:128-n8:16:32:64-S128",
   tsfg_core.input_identity = "sha256:${sha("owned-input")}", tsfg_core.source_hash = "sha256:${sha("owned-source")}",
@@ -65,15 +65,15 @@ const loopBody = `${entry}
 // Its expected op/block/register numbers are hand-derived from the above CFG.
 function wire(packet) {
   assert.equal(packet.subarray(0, 8).toString(), "TSFGTBC0");
-  assert.equal(packet.readUInt32LE(8), 5);
+  assert.equal(packet.readUInt32LE(8), 6);
   assert.equal(packet.subarray(12, 44).toString("hex"), schema);
   assert.equal(packet.readUInt32LE(44), packet.length);
   assert.equal(packet.subarray(48, 80).toString("hex"), sha(packet.subarray(80)));
   let cursor = 80;
   const string = () => { const length = packet.readUInt32LE(cursor); cursor += 4; cursor += length; };
   for (let i = 0; i < 3; i++) string();
-  cursor += 4;
-  assert.equal(packet.readUInt32LE(cursor), 16); cursor += 4 + 64;
+  cursor += 8;
+  assert.equal(packet.readUInt32LE(cursor), 17); cursor += 4 + 64;
   string(); cursor += 4;
   assert.equal(packet.readUInt16LE(cursor), 1); cursor += 2 + 96;
   string(); cursor += 8;

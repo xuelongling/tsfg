@@ -5,6 +5,7 @@ import { readFile } from "node:fs/promises";
 import path from "node:path";
 import sourceLock from "../eng/frontend-source.lock.json" with { type: "json" };
 import contractRegistry from "../contracts/registry.json" with { type: "json" };
+import bytecodeSchema from "../contracts/bytecode.schema.json" with { type: "json" };
 
 const frontendContract = contractRegistry["tsfg.frontend-snapshot"];
 export const frontendContractVersion = frontendContract.semver;
@@ -97,6 +98,7 @@ function matchesSnapshotContract(snapshot) {
       && claim.rootFile === snapshot.source?.path
       && files.get(claim.rootFile) === snapshot.source.content
       && claim.declarations.version === snapshot.capability
+      && (snapshot.capability !== "minimal-integers-v3" || canonical(claim.target) === canonical({ ...bytecodeSchema.target, pointerBits: "64" }))
       && Array.isArray(snapshot.inputs)
       && new Set(snapshot.inputs.map(file => file.path)).size === snapshot.inputs.length
       && snapshot.inputs.some(file => file.path === claim.rootFile)
@@ -144,7 +146,9 @@ export async function analyzeFrontend(input, { executable } = {}) {
   const rootFile = ownedInput?.rootFile;
   const files = ownedInput?.files;
   const seen = new Set();
-  if (Object.keys(ownedInput ?? {}).sort().join(",") !== "config,declarations,files,rootFile,sourceRoot"
+  const integerInput = ownedInput?.declarations?.version === "minimal-integers-v3";
+  if (Object.keys(ownedInput ?? {}).sort().join(",") !== (integerInput ? "config,declarations,files,rootFile,sourceRoot,target" : "config,declarations,files,rootFile,sourceRoot")
+      || (integerInput && canonical(ownedInput.target) !== canonical({ ...bytecodeSchema.target, pointerBits: "64" }))
       || Object.keys(ownedInput?.declarations ?? {}).sort().join(",") !== "paths,version"
       || typeof root !== "string" || !root.startsWith("/") || path.posix.normalize(root) !== root
       || typeof rootFile !== "string" || !rootFile.endsWith(".ts") || rootFile.endsWith(".d.ts")
@@ -161,7 +165,8 @@ export async function analyzeFrontend(input, { executable } = {}) {
   }
   const declarationVersion = ownedInput?.declarations?.version;
   const declarationFile = declarationVersion === "minimal-bool-v1" ? "minimal-bool-v1.d.ts"
-    : declarationVersion === "minimal-scalars-v2" ? "minimal-scalars-v2.d.ts" : null;
+    : declarationVersion === "minimal-scalars-v2" ? "minimal-scalars-v2.d.ts"
+    : declarationVersion === "minimal-integers-v3" ? "minimal-integers-v3.d.ts" : null;
   if (!declarationFile) return rejectInput(inputIdentity, rootFile);
   const declarationBytes = await readFile(new URL(`./${declarationFile}`, import.meta.url), "utf8");
   const declarationPaths = ownedInput?.declarations?.paths;
@@ -253,7 +258,7 @@ export async function analyzeFrontend(input, { executable } = {}) {
   const types = [];
   let invalidScalar = false;
   const typeRef = name => {
-    if (!["bool", "i32", "f64"].includes(name)) {
+    if (!["bool", "i8", "i16", "i32", "i64", "u8", "u16", "u32", "u64", "isize", "usize", "f64"].includes(name)) {
       invalidScalar = true;
       return undefined;
     }

@@ -7,6 +7,7 @@ import { analyzeFrontend } from "./frontend.mjs";
 import { buildHir, lowerHir } from "./hir.mjs";
 import { canonical, sha256 } from "./identity.mjs";
 import registry from "../contracts/registry.json" with { type: "json" };
+import bytecodeSchema from "../contracts/bytecode.schema.json" with { type: "json" };
 
 const productRoot = fileURLToPath(new URL("../", import.meta.url));
 
@@ -62,7 +63,7 @@ async function produceBytecode(hir, options) {
     const canonicalCore = consume(core, [options.optimize ? "--optimize" : "--canonicalize"], lowerHir(hir)).toString("utf8");
     const bytecode = consume(core, ["--emit-bytecode"], canonicalCore);
     if (bytecode.length < 80 || bytecode.subarray(0, 8).toString("ascii") !== "TSFGTBC0"
-        || bytecode.readUInt32LE(8) !== 5 || bytecode.readUInt32LE(44) !== bytecode.length
+        || bytecode.readUInt32LE(8) !== 6 || bytecode.readUInt32LE(44) !== bytecode.length
         || `sha256:${bytecode.subarray(12, 44).toString("hex")}` !== registry["tsfg.bytecode"].schemaHash
         || `sha256:${bytecode.subarray(48, 80).toString("hex")}` !== sha256(bytecode.subarray(80)))
       throw new TypeError("r04-producer-identity: C++ output differs from registered R04 packet");
@@ -148,10 +149,11 @@ export async function runRequestSequence(bytecodes, { vm, requests = undefined }
 }
 
 export async function sourceInput(source, { sourcePath = "/src/main.ts" } = {}) {
-  const declarations = await readFile(new URL("./minimal-scalars-v2.d.ts", import.meta.url), "utf8");
+  const declarations = await readFile(new URL("./minimal-integers-v3.d.ts", import.meta.url), "utf8");
   return { sourceRoot: "/src", rootFile: sourcePath,
-    files: [{ path: sourcePath, content: source }, { path: "/src/minimal-scalars-v2.d.ts", content: declarations }],
-    declarations: { version: "minimal-scalars-v2", paths: ["/src/minimal-scalars-v2.d.ts"] },
+    files: [{ path: sourcePath, content: source }, { path: "/src/minimal-integers-v3.d.ts", content: declarations }],
+    declarations: { version: "minimal-integers-v3", paths: ["/src/minimal-integers-v3.d.ts"] },
+    target: { ...bytecodeSchema.target, pointerBits: "64" },
     config: { strict: true, noEmit: true, allowJs: false } };
 }
 

@@ -1,6 +1,6 @@
 <!-- SPDX-License-Identifier: MIT -->
 
-# FrontendSnapshot 0.5.0
+# FrontendSnapshot 0.6.0
 
 `tsfg.frontend-snapshot` is an exact-match development contract. The producer is
 `analyzeFrontend`; the consumer is `validateFrontendSnapshot` and the typed
@@ -24,3 +24,5 @@ against the owning snapshot. Invalid or foreign references are errors, not
 requests to remap a local ID. The current high-level validator covers the
 declaration and call forms admitted through `minimal-bool-v1` and
 `minimal-scalars-v2`; later structure slices extend that same validator.
+
+M07 expands this exact-match development contract to the complete nominal integer family. See docs/r03-integer-vm.md and the registered schema for type codes, pointer DataLayout and wire6/capability17. Previous0.5 artifacts and mixed schema identities are rejected; no compatibility window is promised. Existing i32/bool identities, source anchors, complete verifier and logical/physical budget ordering remain in force.

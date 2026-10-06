@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: MIT
 import { validateFrontendSnapshot, resolveType, resolveSymbol, identifierName } from "./frontend.mjs";
-import { canonical, functionIdentity, signatureHash, i32TypeId, boolTypeId, own, sha256 } from "./identity.mjs";
+import { canonical, functionIdentity, signatureHash, i32TypeId, boolTypeId, scalarTypeIds, scalarName, integerNames, integerRange, own, sha256 } from "./identity.mjs";
 import registry from "../contracts/registry.json" with { type: "json" };
 import bytecodeSchema from "../contracts/bytecode.schema.json" with { type: "json" };
 
@@ -9,7 +9,8 @@ const exactKeys = (value, keys) => value && typeof value === "object"
   && !Array.isArray(value)
   && Object.keys(value).sort().join(",") === [...keys].sort().join(",");
 const hash = value => typeof value === "string" && /^sha256:[0-9a-f]{64}$/.test(value);
-const types = { i32: i32TypeId, bool: boolTypeId };
+const types = scalarTypeIds;
+const integerType = id => integerNames.includes(scalarName(id));
 const operations = { "+": "add", "-": "sub", "*": "mul", "/": "div", "%": "rem",
   "<<": "shl", ">>": "shr", ">>>": "ushr", "&": "and", "|": "or", "^": "xor",
   "===": "eq", "!==": "ne", "<": "lt", "<=": "le", ">": "gt", ">=": "ge" };
@@ -88,13 +89,14 @@ function verifyExpression(value, parent, source, fail, budget, locals, visibleBi
         || identifierToken(tail,{start:0,end:tail.lastIndexOf("(")}) !== target.name) fail();
   } else if (value.kind === "constant") {
     if (!exactKeys(value, ["kind", "type", "decimal", "token", "range"])
-        || value.type !== i32TypeId || typeof value.decimal !== "string"
+        || !integerType(value.type) || typeof value.decimal !== "string"
         || !/^(?:0|-?[1-9][0-9]*)$/.test(value.decimal) || typeof value.token !== "string") fail();
     let integer;
     try { integer = (value.token.startsWith("-") ? -1n : 1n)
       * BigInt(value.token.replace(/^-/, "").replaceAll("_", "")); } catch { fail(); }
     const anchored = sourceTokens(source, value.range.start, value.range.end);
-    if (integer.toString() !== value.decimal || integer < -2147483648n || integer > 2147483647n
+    const [minimum, maximum] = integerRange(scalarName(value.type));
+    if (integer.toString() !== value.decimal || integer < minimum || integer > maximum
         || anchored !== value.token) fail();
   } else if (value.kind === "boolean") {
     if (!exactKeys(value, ["kind", "type", "value", "range"]) || value.type !== boolTypeId
@@ -108,21 +110,22 @@ function verifyExpression(value, parent, source, fail, budget, locals, visibleBi
         || sourceTokens(source, value.operand.range.end, value.range.end) !== (group ? ")" : "")
         || value.type !== value.operand.type || (!group && (["binary", "shortCircuit"].includes(value.operand.kind)
         || !["+", "-", "~", "!"].includes(value.operator)
-        || value.type !== (value.operator === "!" ? boolTypeId : i32TypeId)))) fail();
+        || (value.operator === "!" ? value.type !== boolTypeId : !integerType(value.type))))) fail();
   } else if (value.kind === "binary" || value.kind === "shortCircuit") {
     const short = value.kind === "shortCircuit";
     if (!exactKeys(value, ["kind", "type", "operator", "left", "right", "range"])
         || !(short ? ["&&", "||"].includes(value.operator) : Object.hasOwn(operations, value.operator))) fail();
     verifyExpression(value.left, value.range, source, fail, budget, locals, visibleBindings);
     verifyExpression(value.right, value.range, source, fail, budget, locals, visibleBindings);
-    if (value.left.type !== value.right.type || value.left.range.end > value.right.range.start
+    const shift = ["<<", ">>", ">>>"].includes(value.operator);
+    if ((shift ? value.right.type !== i32TypeId : value.left.type !== value.right.type) || value.left.range.end > value.right.range.start
         || (["binary", "shortCircuit"].includes(value.left.kind) && precedence[value.left.operator] < precedence[value.operator])
         || (["binary", "shortCircuit"].includes(value.right.kind) && precedence[value.right.operator] <= precedence[value.operator])
         || sourceTokens(source, value.range.start, value.left.range.start) !== ""
         || !scalarOperator(source, value.left.range.end, value.right.range.start, value.operator)
         || sourceTokens(source, value.right.range.end, value.range.end) !== ""
-        || value.type !== (short || comparisons.has(value.operator) ? boolTypeId : i32TypeId)
-        || (short ? value.left.type !== boolTypeId : !["===", "!=="].includes(value.operator) && value.left.type !== i32TypeId)) fail();
+        || value.type !== (short || comparisons.has(value.operator) ? boolTypeId : value.left.type)
+        || (short ? value.left.type !== boolTypeId : !["===", "!=="].includes(value.operator) && !integerType(value.left.type))) fail();
   } else fail();
 }
 const validText = value => typeof value === "string" && value.length > 0 && !value.includes("\0")
@@ -231,7 +234,7 @@ export function verifyHir(hir) {
         if (keyword) declarationKind = keyword;
         else if (before !== "," || !declarationKind) fail();
         if (binding.writable !== (declarationKind === "let")) fail();
-        const annotations = binding.type === boolTypeId ? [":bool", ":boolean"] : [":i32"];
+        const annotations = binding.type === boolTypeId ? [":bool", ":boolean"] : [`:${scalarName(binding.type)}`];
         if (value !== null) {
           verifyExpression(value, statement.range, source, fail, budget, locals, visibleBindings);
           const annotation = sourceTokens(source, binding.range.end, value.range.start);
@@ -308,7 +311,7 @@ export function verifyHir(hir) {
   };
   const initial = new Map(), visible = new Map();
   const header = sourceTrivia(source,fn.range.start,fn.body[0].range.start);
-  const parsedHeader = header.match(/^\s*(?:export\s+)?function\s+([^()]+)\(([^()]*)\)\s*:\s*(i32|bool|boolean)\s*\{\s*(?:(?:const|let)\s*)?$/d);
+  const parsedHeader = header.match(/^\s*(?:export\s+)?function\s+([^()]+)\(([^()]*)\)\s*:\s*(i8|i16|i32|i64|u8|u16|u32|u64|isize|usize|bool|boolean)\s*\{\s*(?:(?:const|let)\s*)?$/d);
   if (!parsedHeader || identifierToken(parsedHeader[1],{start:0,end:parsedHeader[1].length}) !== fn.name
       || (parsedHeader[3] === "boolean" ? "bool" : parsedHeader[3]) !== fn.returnType.name) fail();
   const parameterTokens = parsedHeader[2].trim() === "" ? [] : parsedHeader[2].split(",");
@@ -439,13 +442,13 @@ export function lowerHir(hir) {
     source_path: verified.source.path,
     target: verified.target.target, triple: verified.target.triple, data_layout: verified.target.llvmDataLayout,
     bytecode_schema: registry["tsfg.bytecode"].schemaHash };
-  const attrs = ['tsfg_core.version = "0.5.0"', ...Object.entries(strings)
+  const attrs = ['tsfg_core.version = "0.6.0"', ...Object.entries(strings)
     .map(([key, item]) => `tsfg_core.${key} = ${quote(item)}`),
     `tsfg_core.source_length = ${verified.source.content.length} : i64`];
   const lowerFunction = fn => {
   const blocks = [], bindingTypes = new Map();
   let valueIndex = 0, current, definitions = new Map(), declared = new Set();
-  const coreType = type => type === i32TypeId ? "i32" : "i1";
+  const coreType = type => type === i32TypeId ? "i32" : type === boolTypeId ? "i1" : `!tsfg_core.integer<${quote(scalarName(type))}>`;
   const newBlock = (parameterTypes = []) => {
     const block = { name: `bb${blocks.length}`, parameters: parameterTypes.map(type => ({ name: `%v${valueIndex++}`, type })), lines: [], terminated: false };
     blocks.push(block); return block;
@@ -490,7 +493,9 @@ export function lowerHir(hir) {
     const constant = ["constant", "boolean"].includes(expression.kind);
     const op = constant ? "constant" : expression.kind === "binary" ? operations[expression.operator]
       : ({ "-": "neg", "~": "not", "!": "bool_not" })[expression.operator];
-    const valueAttr = constant ? `value = ${expression.kind === "constant" ? expression.decimal : Number(expression.value)} : ${type}, ` : "";
+    const valueAttr = constant ? expression.kind === "constant" && expression.type !== i32TypeId
+      ? `value = ${quote(expression.decimal)}, `
+      : `value = ${expression.kind === "constant" ? expression.decimal : Number(expression.value)} : ${type}, ` : "";
     const operandTypes = expression.kind === "binary" ? [expression.left.type, expression.right.type]
       : expression.kind === "unary" ? [expression.operand.type] : [];
     current.lines.push(`    ${name} = "tsfg_core.${op}"(${operands.join(", ")}) {${valueAttr}${attrsFor(expression.range)}} : (${operandTypes.map(coreType).join(", ")}) -> ${type}`);

@@ -287,8 +287,8 @@ test("local source golden canonically rereads Core and R04 while preserving decl
   assert.equal(core.stdout, result.core);
   assert.deepEqual(await runBytecode(result.bytecode, { ...tools(), command: "--roundtrip" }), result.bytecode);
   const view = await runBytecode(result.bytecode, { ...tools(), command: "--inspect" });
-  assert.equal(view.semver, "0.5.0");
-  assert.equal(view.capabilities, "16");
+  assert.equal(view.semver, "0.6.0");
+  assert.equal(view.capabilities, "17");
   assert.deepEqual(view.instructions.map(item => item.opcode), ["fuel", "const_i32", "const_i32", "add", "return_i32"]);
   assert.deepEqual(view.instructions.slice(1).map(item => source.slice(Number(item.start), Number(item.end)).trim()), ["40", "2", "value + 2", "return value;"]);
   assert.deepEqual((await runBytecode(result.bytecode, tools()))[0].result, { type: "i32", value: "42" });

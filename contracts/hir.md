@@ -1,6 +1,6 @@
 <!-- SPDX-License-Identifier: MIT -->
 
-# tsfg.hir 0.5.0
+# tsfg.hir 0.6.0
 
 `createCompilerSession` reuses owned HIR/Core/R04 output only for an unchanged
 checked Snapshot identity, compiler input fingerprint and source-built producer
@@ -67,7 +67,7 @@ range. Unknown/foreign identities retain generic invalid-input rejection;
 they are not attributed to a trusted original binding. Reading a
 declared but uninitialized owned binding is `r03-hir-uninitialized`, Rule
 `r01-evaluation`, phase `hir`, with the original UTF-16 read range. The official
-0.5.0 producer currently rejects uninitialized source declarations using
+0.6.0 producer currently rejects uninitialized source declarations using
 `r02b-d-unsupported`, phase `capability`: delayed initialization is pending
 frontend capability for later ordinary-expression/full-closure coverage, not
 a language prohibition or successful source initialization analysis.
@@ -95,7 +95,7 @@ transfer in parallel in R04. The entry and each while header carry explicit
 `tsfg_core.fuel` events before condition operations. Source conditions, braces,
 else clauses and nested statement delimiters are checked against owned anchors.
 
-Core exchange0.5.0 uses registered typed scalar operations and fuel plus official
+Core exchange0.6.0 uses registered typed scalar operations and fuel plus official
 `cf.br`/`cf.cond_br`, `func.call`, `func.return` and MLIR block arguments. Each
 function owns its identity, signature, return type and range attributes; module
 source and target attributes remain global. The C++ consumer resolves every
@@ -108,3 +108,5 @@ this real pipeline and normal compilation. No unimplemented optimization is
 claimed. Logical events remain explicit and cannot be replaced with physical
 instruction accounting. Full/incremental compiler outputs and formal Runtime
 results are tested across source/control changes.
+
+M07 expands this exact-match development contract to the complete nominal integer family. See docs/r03-integer-vm.md and the registered schema for type codes, pointer DataLayout and wire6/capability17. Previous0.5 artifacts and mixed schema identities are rejected; no compatibility window is promised. Existing i32/bool identities, source anchors, complete verifier and logical/physical budget ordering remain in force.

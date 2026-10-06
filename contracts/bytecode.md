@@ -1,6 +1,6 @@
 <!-- SPDX-License-Identifier: MIT -->
 
-# tsfg.bytecode 0.5.0
+# tsfg.bytecode 0.6.0
 
 This exact, same-repository development format is the formal R04 compiler to
 Zig Runtime seam. It has no published or supported older external consumer.
@@ -98,3 +98,5 @@ Physical failure uses `r05-execution-abort`.
 The `TSFGREQ1` transport remains u32 count plus length-delimited R04 packets,
 1..128 matching requests and total1MiB/no trailing bytes, served by one Runtime.
 It adds no language semantics.
+
+M07 expands this exact-match development contract to the complete nominal integer family. See docs/r03-integer-vm.md and the registered schema for type codes, pointer DataLayout and wire6/capability17. Previous0.5 artifacts and mixed schema identities are rejected; no compatibility window is promised. Existing i32/bool identities, source anchors, complete verifier and logical/physical budget ordering remain in force.
