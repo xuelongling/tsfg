@@ -335,7 +335,8 @@ fn parseFunction(reader: *Reader, allocator: Allocator, global: Global) (error{I
             const global_position = block.start + position;
             if (op.opcode == 2 or op.opcode == 25) try use(reader, op.register, op.type_code, block_index, global_position, register_count, &register_types, &definition_blocks, &definition_positions, &dominators);
             if (op.opcode >= 4 and op.opcode <= 23) {
-                const operand_type: u8 = if (op.left < register_count) register_types[op.left] else 0;
+                if (op.left >= register_count) return reader.reject("r04-register", instruction_offset);
+                const operand_type = register_types[op.left];
                 if (op.opcode == 17) {
                     if (operand_type != 2) return reader.reject("r04-type", instruction_offset);
                 } else if (op.opcode != 18 and op.opcode != 19 and !contract.integerType(operand_type)) return reader.reject("r04-type", instruction_offset);
