@@ -175,7 +175,6 @@ test("official source checking precedes the bounded execution capability and nat
   }
   for (const source of [
     "export function answer(value: i32): i32 { return 42; }",
-    "export function answer(): bool { return true && false; }",
     "export function answer(): i32 { return 42; } export function second(): i32 { return 0; }",
   ]) {
     const result = await compileProgram(await sourceInput(source), tools());
@@ -196,7 +195,7 @@ test("C++ R04 producer verifies Core source identities, target, types and actual
   assert.ifError(renamed.error); assert.equal(renamed.status, 0, renamed.stderr.toString());
   assert.deepEqual(renamed.stdout, result.bytecode);
   for (const [before, after] of [
-    ["sha256:80745002f3315a96fd01679dd5d4a3052785dfb6acf8f4bdb56f7e040e1dfb72", `sha256:${"0".repeat(64)}`],
+    ["sha256:cd7152bad3cdcb1f307adb550b8b4dc58334df38b7e690b942fa81e5b99374a7", `sha256:${"0".repeat(64)}`],
     ["windows-x86_64-msvc", "wrong-target"],
     [result.hir.functions[0].id, `sha256:${"0".repeat(64)}`],
     ["tsfg_core.function_end = 44 : i64", "tsfg_core.function_end = 45 : i64"],

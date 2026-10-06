@@ -308,7 +308,7 @@ test("Core and Runtime loaders reject non-dominating local SSA operands and old 
   /** @type {Array<[string, (bytes: Buffer) => void, string]>} */
   const mutations = [
     ["self-use", bytes => bytes.writeUInt16LE(bytes.readUInt16LE(operation + 2), operation + 4), "r04-dominance"],
-    ["future-use", bytes => bytes.writeUInt16LE(4095, operation + 4), "r04-dominance"],
+    ["out-of-range", bytes => bytes.writeUInt16LE(4095, operation + 4), "r04-register"],
     ["old-version", bytes => bytes.writeUInt32LE(2, 8), "r04-version"],
     ["schema", bytes => { bytes[12] ^= 1; }, "r04-schema"],
   ];
