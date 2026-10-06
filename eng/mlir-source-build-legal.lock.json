@@ -4,7 +4,7 @@
   "sourceCommit": "4cb57d27ddcad7c3a89d23ef576662a5c891e8c8",
   "role": "compiler-side-M01",
   "authorizationReceiptSha256": "sha256:a47597cdcc636c2690fc1a708ff0def7e3c7fb8188c2935c4aa71659cf40c694",
-  "selection": "fixed Windows/debug tsfg-core-ir; exact configuration/generator and conservative transitive header safety inventory, never optional library enablement",
+  "selection": "fixed Windows/debug tsfg-core-ir; exact configuration/generator and conservative transitive header safety inventory, never optional library enablement; M05 mandatory MLIRControlFlowDialect and its fixed-source Arith/UB/interface transitive dependencies",
   "licenseMaterials": [
     {
       "path": "llvm/LICENSE.TXT",
@@ -114574,6 +114574,75 @@
     },
     {
       "mode": "100644",
+      "blob": "e256915933a71bcfa57c24682b551e024504de21",
+      "path": "mlir/lib/Dialect/Arith/IR/ArithCanonicalization.td",
+      "sha256": "sha256:e01ffb9d3f376582b462e3dfccdad7682ca65ad642624d923d61b7e2336d949a",
+      "observedCheckoutSha256": "sha256:e01ffb9d3f376582b462e3dfccdad7682ca65ad642624d923d61b7e2336d949a",
+      "checkoutByteNormalization": "none",
+      "license": "Apache-2.0 WITH LLVM-exception",
+      "noticeStart": "0",
+      "noticeEnd": "360",
+      "completeOriginalAttribution": "//===- ArithPatterns.td - Arith dialect patterns -*- tablegen -*-===//\n//\n// Part of the LLVM Project, under the Apache License v2.0 with LLVM Exceptions.\n// See https://llvm.org/LICENSE.txt for license information.\n// SPDX-License-Identifier: Apache-2.0 WITH LLVM-exception\n//\n//===----------------------------------------------------------------------===//\n\n",
+      "noticeSha256": "sha256:87f9c6fb32b42afb4ffb974ddd3e771bdad9e369b6a140f5219690443a02e29e",
+      "completeOriginalNotice": "//===- ArithPatterns.td - Arith dialect patterns -*- tablegen -*-===//\n//\n// Part of the LLVM Project, under the Apache License v2.0 with LLVM Exceptions.\n// See https://llvm.org/LICENSE.txt for license information.\n// SPDX-License-Identifier: Apache-2.0 WITH LLVM-exception\n//\n//===----------------------------------------------------------------------===//\n\n",
+      "licenseMaterialPaths": [
+        "mlir/LICENSE.TXT"
+      ],
+      "noticeSource": "mlir/lib/Dialect/Arith/IR/ArithCanonicalization.td",
+      "licenseBasis": [
+        "exact file SPDX and full original LLVM project license retained; compiler-side R03 finite authorization a475, mandatory MLIRControlFlowDialect transitive source/generator graph"
+      ],
+      "role": "compiler-side-M01",
+      "use": "conditional mandatory input of fixed Windows/debug tsfg-core-ir control-flow target only; reconcile actual configure/compile trace before execution acceptance; optional code consumption remains disabled"
+    },
+    {
+      "mode": "100644",
+      "blob": "e7cbee6b06c459667f56830467adf8d5883fd542",
+      "path": "mlir/lib/Dialect/Arith/IR/ArithDialect.cpp",
+      "sha256": "sha256:ec215a4bb37519e097d94b042657d729c1349c429ebaef4876f89b5cf5b794bc",
+      "observedCheckoutSha256": "sha256:ec215a4bb37519e097d94b042657d729c1349c429ebaef4876f89b5cf5b794bc",
+      "checkoutByteNormalization": "none",
+      "license": "Apache-2.0 WITH LLVM-exception",
+      "noticeStart": "0",
+      "noticeEnd": "360",
+      "completeOriginalAttribution": "//===- ArithDialect.cpp - MLIR Arith dialect implementation -----===//\n//\n// Part of the LLVM Project, under the Apache License v2.0 with LLVM Exceptions.\n// See https://llvm.org/LICENSE.txt for license information.\n// SPDX-License-Identifier: Apache-2.0 WITH LLVM-exception\n//\n//===----------------------------------------------------------------------===//\n\n",
+      "noticeSha256": "sha256:77a33b1b6cc327ccb12f0d14f466aa5cf93ce5b4010465063172823e9733829b",
+      "completeOriginalNotice": "//===- ArithDialect.cpp - MLIR Arith dialect implementation -----===//\n//\n// Part of the LLVM Project, under the Apache License v2.0 with LLVM Exceptions.\n// See https://llvm.org/LICENSE.txt for license information.\n// SPDX-License-Identifier: Apache-2.0 WITH LLVM-exception\n//\n//===----------------------------------------------------------------------===//\n\n",
+      "licenseMaterialPaths": [
+        "mlir/LICENSE.TXT"
+      ],
+      "noticeSource": "mlir/lib/Dialect/Arith/IR/ArithDialect.cpp",
+      "licenseBasis": [
+        "exact file SPDX and full original LLVM project license retained; compiler-side R03 finite authorization a475, mandatory MLIRControlFlowDialect transitive source/generator graph"
+      ],
+      "role": "compiler-side-M01",
+      "use": "conditional mandatory input of fixed Windows/debug tsfg-core-ir control-flow target only; reconcile actual configure/compile trace before execution acceptance; optional code consumption remains disabled"
+    },
+    {
+      "mode": "100644",
+      "blob": "980442efdf708388a12e29d226da3dca84089cb8",
+      "path": "mlir/lib/Dialect/Arith/IR/ArithOps.cpp",
+      "sha256": "sha256:b7df6b34ad0e2face6d716bf6dabc949d1af93bdd20d6cf955d3f41096e5ac97",
+      "observedCheckoutSha256": "sha256:b7df6b34ad0e2face6d716bf6dabc949d1af93bdd20d6cf955d3f41096e5ac97",
+      "checkoutByteNormalization": "none",
+      "license": "Apache-2.0 WITH LLVM-exception",
+      "noticeStart": "0",
+      "noticeEnd": "360",
+      "completeOriginalAttribution": "//===- ArithOps.cpp - MLIR Arith dialect ops implementation -----===//\n//\n// Part of the LLVM Project, under the Apache License v2.0 with LLVM Exceptions.\n// See https://llvm.org/LICENSE.txt for license information.\n// SPDX-License-Identifier: Apache-2.0 WITH LLVM-exception\n//\n//===----------------------------------------------------------------------===//\n\n",
+      "noticeSha256": "sha256:3595b1550dd7bf47bbe81acccb6a19ff34bc302a696b7305e419b428052646b4",
+      "completeOriginalNotice": "//===- ArithOps.cpp - MLIR Arith dialect ops implementation -----===//\n//\n// Part of the LLVM Project, under the Apache License v2.0 with LLVM Exceptions.\n// See https://llvm.org/LICENSE.txt for license information.\n// SPDX-License-Identifier: Apache-2.0 WITH LLVM-exception\n//\n//===----------------------------------------------------------------------===//\n\n",
+      "licenseMaterialPaths": [
+        "mlir/LICENSE.TXT"
+      ],
+      "noticeSource": "mlir/lib/Dialect/Arith/IR/ArithOps.cpp",
+      "licenseBasis": [
+        "exact file SPDX and full original LLVM project license retained; compiler-side R03 finite authorization a475, mandatory MLIRControlFlowDialect transitive source/generator graph"
+      ],
+      "role": "compiler-side-M01",
+      "use": "conditional mandatory input of fixed Windows/debug tsfg-core-ir control-flow target only; reconcile actual configure/compile trace before execution acceptance; optional code consumption remains disabled"
+    },
+    {
+      "mode": "100644",
       "blob": "4beb99ccfdfbab27421873a60ccfef0732f88a0f",
       "path": "mlir/lib/Dialect/Arith/IR/CMakeLists.txt",
       "sha256": "sha256:a2d08c8056bdeb788f774f4796cf53da140b516b3f6384caa9b81d511417366f",
@@ -114594,6 +114663,29 @@
       ],
       "role": "compiler-side-M01",
       "use": "conditional mandatory input of the fixed tsfg-core-ir target only; registration is reconciled to actual trace; optional code consumption remains disabled"
+    },
+    {
+      "mode": "100644",
+      "blob": "7673185487eefdbb61dcf61be9e2b84c48c404fc",
+      "path": "mlir/lib/Dialect/Arith/IR/InferIntRangeInterfaceImpls.cpp",
+      "sha256": "sha256:95542a76e0eddf325c7272a05ab501e2afddda0006a88d2b357855c4a32e17ac",
+      "observedCheckoutSha256": "sha256:95542a76e0eddf325c7272a05ab501e2afddda0006a88d2b357855c4a32e17ac",
+      "checkoutByteNormalization": "none",
+      "license": "Apache-2.0 WITH LLVM-exception",
+      "noticeStart": "0",
+      "noticeEnd": "367",
+      "completeOriginalAttribution": "//===- InferIntRangeInterfaceImpls.cpp - Integer range impls for arith -===//\n//\n// Part of the LLVM Project, under the Apache License v2.0 with LLVM Exceptions.\n// See https://llvm.org/LICENSE.txt for license information.\n// SPDX-License-Identifier: Apache-2.0 WITH LLVM-exception\n//\n//===----------------------------------------------------------------------===//\n\n",
+      "noticeSha256": "sha256:eb01ad0c9240a7c1b867d21de1ebb41a3830cc8aa955143889965e3331e8fb19",
+      "completeOriginalNotice": "//===- InferIntRangeInterfaceImpls.cpp - Integer range impls for arith -===//\n//\n// Part of the LLVM Project, under the Apache License v2.0 with LLVM Exceptions.\n// See https://llvm.org/LICENSE.txt for license information.\n// SPDX-License-Identifier: Apache-2.0 WITH LLVM-exception\n//\n//===----------------------------------------------------------------------===//\n\n",
+      "licenseMaterialPaths": [
+        "mlir/LICENSE.TXT"
+      ],
+      "noticeSource": "mlir/lib/Dialect/Arith/IR/InferIntRangeInterfaceImpls.cpp",
+      "licenseBasis": [
+        "exact file SPDX and full original LLVM project license retained; compiler-side R03 finite authorization a475, mandatory MLIRControlFlowDialect transitive source/generator graph"
+      ],
+      "role": "compiler-side-M01",
+      "use": "conditional mandatory input of fixed Windows/debug tsfg-core-ir control-flow target only; reconcile actual configure/compile trace before execution acceptance; optional code consumption remains disabled"
     },
     {
       "mode": "100644",
@@ -115192,6 +115284,29 @@
       ],
       "role": "compiler-side-M01",
       "use": "conditional mandatory input of the fixed tsfg-core-ir target only; registration is reconciled to actual trace; optional code consumption remains disabled"
+    },
+    {
+      "mode": "100644",
+      "blob": "d2078d8ab5ca5d909939ac2a5990faada9f5f4ab",
+      "path": "mlir/lib/Dialect/ControlFlow/IR/ControlFlowOps.cpp",
+      "sha256": "sha256:f9d3a7232ff0f7049272a256e2f765e78cda69bf37e6acb70b0b9417da54dc03",
+      "observedCheckoutSha256": "sha256:f9d3a7232ff0f7049272a256e2f765e78cda69bf37e6acb70b0b9417da54dc03",
+      "checkoutByteNormalization": "none",
+      "license": "Apache-2.0 WITH LLVM-exception",
+      "noticeStart": "0",
+      "noticeEnd": "370",
+      "completeOriginalAttribution": "//===- ControlFlowOps.cpp - ControlFlow Operations ------------------------===//\n//\n// Part of the LLVM Project, under the Apache License v2.0 with LLVM Exceptions.\n// See https://llvm.org/LICENSE.txt for license information.\n// SPDX-License-Identifier: Apache-2.0 WITH LLVM-exception\n//\n//===----------------------------------------------------------------------===//\n\n",
+      "noticeSha256": "sha256:9da41eef316a2a3bb2c014de5ee6423f056e3485d8c3e8b34a8ae816b3d311f4",
+      "completeOriginalNotice": "//===- ControlFlowOps.cpp - ControlFlow Operations ------------------------===//\n//\n// Part of the LLVM Project, under the Apache License v2.0 with LLVM Exceptions.\n// See https://llvm.org/LICENSE.txt for license information.\n// SPDX-License-Identifier: Apache-2.0 WITH LLVM-exception\n//\n//===----------------------------------------------------------------------===//\n\n",
+      "licenseMaterialPaths": [
+        "mlir/LICENSE.TXT"
+      ],
+      "noticeSource": "mlir/lib/Dialect/ControlFlow/IR/ControlFlowOps.cpp",
+      "licenseBasis": [
+        "exact file SPDX and full original LLVM project license retained; compiler-side R03 finite authorization a475, mandatory MLIRControlFlowDialect transitive source/generator graph"
+      ],
+      "role": "compiler-side-M01",
+      "use": "conditional mandatory input of fixed Windows/debug tsfg-core-ir control-flow target only; reconcile actual configure/compile trace before execution acceptance; optional code consumption remains disabled"
     },
     {
       "mode": "100644",
@@ -117633,6 +117748,29 @@
     },
     {
       "mode": "100644",
+      "blob": "6e0a4eccb007c3e9ba1eafb9fa9020184156d34c",
+      "path": "mlir/lib/Dialect/Traits.cpp",
+      "sha256": "sha256:9aca25a779eba353f3eec4a5228bbca7da42c9c7d0d23e0d8a8cb84705f30f51",
+      "observedCheckoutSha256": "sha256:9aca25a779eba353f3eec4a5228bbca7da42c9c7d0d23e0d8a8cb84705f30f51",
+      "checkoutByteNormalization": "none",
+      "license": "Apache-2.0 WITH LLVM-exception",
+      "noticeStart": "0",
+      "noticeEnd": "370",
+      "completeOriginalAttribution": "//===- Traits.cpp - Common op traits shared by dialects -------------------===//\n//\n// Part of the LLVM Project, under the Apache License v2.0 with LLVM Exceptions.\n// See https://llvm.org/LICENSE.txt for license information.\n// SPDX-License-Identifier: Apache-2.0 WITH LLVM-exception\n//\n//===----------------------------------------------------------------------===//\n\n",
+      "noticeSha256": "sha256:761d9db8bb7ee10945c849239733abcbc31f01712a7e093b58838ea1aa7963d4",
+      "completeOriginalNotice": "//===- Traits.cpp - Common op traits shared by dialects -------------------===//\n//\n// Part of the LLVM Project, under the Apache License v2.0 with LLVM Exceptions.\n// See https://llvm.org/LICENSE.txt for license information.\n// SPDX-License-Identifier: Apache-2.0 WITH LLVM-exception\n//\n//===----------------------------------------------------------------------===//\n\n",
+      "licenseMaterialPaths": [
+        "mlir/LICENSE.TXT"
+      ],
+      "noticeSource": "mlir/lib/Dialect/Traits.cpp",
+      "licenseBasis": [
+        "exact file SPDX and full original LLVM project license retained; compiler-side R03 finite authorization a475, mandatory MLIRControlFlowDialect transitive source/generator graph"
+      ],
+      "role": "compiler-side-M01",
+      "use": "conditional mandatory input of fixed Windows/debug tsfg-core-ir control-flow target only; reconcile actual configure/compile trace before execution acceptance; optional code consumption remains disabled"
+    },
+    {
+      "mode": "100644",
       "blob": "123c4b92271fee4c8aec564a6d1c77b55c4211ed",
       "path": "mlir/lib/Dialect/Transform/CMakeLists.txt",
       "sha256": "sha256:edb78ca335f39af59547fb80c0c4e0a997c6a37f2574178b930366721053ced0",
@@ -117929,6 +118067,29 @@
       ],
       "role": "compiler-side-M01",
       "use": "conditional mandatory input of the fixed tsfg-core-ir target only; registration is reconciled to actual trace; optional code consumption remains disabled"
+    },
+    {
+      "mode": "100644",
+      "blob": "ee523f9522953db3712e9960eaf8266be612d7ed",
+      "path": "mlir/lib/Dialect/UB/IR/UBOps.cpp",
+      "sha256": "sha256:d3a64b6657edb163515f0e491a4091e091480d2448f6248461977644ad1495d2",
+      "observedCheckoutSha256": "sha256:d3a64b6657edb163515f0e491a4091e091480d2448f6248461977644ad1495d2",
+      "checkoutByteNormalization": "none",
+      "license": "Apache-2.0 WITH LLVM-exception",
+      "noticeStart": "0",
+      "noticeEnd": "370",
+      "completeOriginalAttribution": "//===- UBOps.cpp - UB Dialect Operations ----------------------------------===//\n//\n// Part of the LLVM Project, under the Apache License v2.0 with LLVM Exceptions.\n// See https://llvm.org/LICENSE.txt for license information.\n// SPDX-License-Identifier: Apache-2.0 WITH LLVM-exception\n//\n//===----------------------------------------------------------------------===//\n\n",
+      "noticeSha256": "sha256:ce08eedaf0b273d96eeba9240ac41d90e0f036d44ced5633ee64e725fc9a7f6e",
+      "completeOriginalNotice": "//===- UBOps.cpp - UB Dialect Operations ----------------------------------===//\n//\n// Part of the LLVM Project, under the Apache License v2.0 with LLVM Exceptions.\n// See https://llvm.org/LICENSE.txt for license information.\n// SPDX-License-Identifier: Apache-2.0 WITH LLVM-exception\n//\n//===----------------------------------------------------------------------===//\n\n",
+      "licenseMaterialPaths": [
+        "mlir/LICENSE.TXT"
+      ],
+      "noticeSource": "mlir/lib/Dialect/UB/IR/UBOps.cpp",
+      "licenseBasis": [
+        "exact file SPDX and full original LLVM project license retained; compiler-side R03 finite authorization a475, mandatory MLIRControlFlowDialect transitive source/generator graph"
+      ],
+      "role": "compiler-side-M01",
+      "use": "conditional mandatory input of fixed Windows/debug tsfg-core-ir control-flow target only; reconcile actual configure/compile trace before execution acceptance; optional code consumption remains disabled"
     },
     {
       "mode": "100644",
