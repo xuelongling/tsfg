@@ -46,7 +46,24 @@ test("owned structured source retains lexical scopes, empty bodies, unbraced and
     const checked = await compileHir(await sourceInput(source), tools());
     assert.equal(checked.status,"ok",JSON.stringify(checked));
     assert.equal(printHir(readHir(Buffer.from(printHir(checked.hir)))),printHir(checked.hir));
-    assert.match(lowerHir(checked.hir),/tsfg_core.fuel/);
+    const core=lowerHir(checked.hir);
+    assert.match(core,/tsfg_core.fuel/);
+    assert.doesNotMatch(core,/undefined/);
+  }
+});
+
+test("owned definite assignment retains declarations initialized in both branches or a nested block", async () => {
+  for(const source of ["export function answer(): i32 { let n: i32 = 42; if (true) n = 42; else n = 0; return n; }",
+    "export function answer(): i32 { let n: i32 = 42; { n = 42; } return n; }"]){
+    const checked=await compileHir(await sourceInput(source),tools());
+    assert.equal(checked.status,"ok",JSON.stringify(checked));
+    // Owned seam only: the current official producer intentionally rejects
+    // source declarations without initializers (the existing R01 W1 boundary).
+    const hir=structuredClone(checked.hir);
+    hir.source.content=source.replace("= 42;","    ;");
+    hir.source.hash=sha256(hir.source.content);
+    hir.functions[0].body[0].initializer=null;
+    assert.doesNotMatch(lowerHir(verifyHir(hir)),/undefined/);
   }
 });
 

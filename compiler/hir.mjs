@@ -348,7 +348,7 @@ export function lowerHir(hir) {
     `tsfg_core.source_length = ${verified.source.content.length} : i64`,
     `tsfg_core.function_start = ${fn.range.start} : i64`, `tsfg_core.function_end = ${fn.range.end} : i64`];
   const blocks = [], bindingTypes = new Map();
-  let valueIndex = 0, current, definitions = new Map();
+  let valueIndex = 0, current, definitions = new Map(), declared = new Set();
   const coreType = type => type === i32TypeId ? "i32" : "i1";
   const newBlock = (parameterTypes = []) => {
     const block = { name: `bb${blocks.length}`, parameters: parameterTypes.map(type => ({ name: `%v${valueIndex++}`, type })), lines: [], terminated: false };
@@ -395,6 +395,7 @@ export function lowerHir(hir) {
       if (!current) break;
       if (statement.kind === "local") {
         bindingTypes.set(statement.binding.id, statement.binding.type);
+        declared.add(statement.binding.id);
         if (statement.initializer) definitions.set(statement.binding.id, emit(statement.initializer));
       } else if (statement.kind === "assign") definitions.set(statement.target.binding, emit(statement.value));
       else if (statement.kind === "return") {
@@ -402,26 +403,28 @@ export function lowerHir(hir) {
         current.lines.push(`    "func.return"(${result}) {${attrsFor(statement.range)}} : (${type}) -> ()`);
         current.terminated = true; current = null;
       } else if (statement.kind === "block") {
-        const outer = new Map(definitions);
+        const outer = new Set(declared);
         emitBody(statement.body);
-        definitions = new Map([...outer].map(([id, value]) => [id, definitions.get(id) ?? value]));
+        definitions = new Map([...definitions].filter(([id]) => outer.has(id)));
+        declared = outer;
       } else if (statement.kind === "if") {
-        const condition = emit(statement.condition), outer = new Map(definitions);
+        const condition = emit(statement.condition), outer = new Map(definitions), outerDeclared = new Set(declared);
         const yes = newBlock(), no = newBlock();
         conditional(condition, yes, no, statement.condition.range);
         current = yes; definitions = new Map(outer); emitBody(statement.thenBody);
         const yesExit = current, yesDefinitions = new Map(definitions);
-        current = no; definitions = new Map(outer); emitBody(statement.elseBody);
+        current = no; definitions = new Map(outer); declared = new Set(outerDeclared); emitBody(statement.elseBody);
         const noExit = current, noDefinitions = new Map(definitions);
-        const keys = [...outer.keys()];
+        const keys = [...outerDeclared].filter(id => (!yesExit || yesDefinitions.has(id)) && (!noExit || noDefinitions.has(id)));
         if (yesExit || noExit) {
           const join = newBlock(keys.map(id => bindingTypes.get(id)));
           if (yesExit) { current = yesExit; branch(join, keys.map(id => yesDefinitions.get(id)), statement.range); }
           if (noExit) { current = noExit; branch(join, keys.map(id => noDefinitions.get(id)), statement.range); }
           current = join; definitions = new Map(keys.map((id, index) => [id, join.parameters[index].name]));
         } else { current = null; definitions = outer; }
+        declared = outerDeclared;
       } else if (statement.kind === "while") {
-        const outer = new Map(definitions), keys = [...outer.keys()];
+        const outer = new Map(definitions), outerDeclared = new Set(declared), keys = [...outer.keys()];
         const header = newBlock(keys.map(id => bindingTypes.get(id)));
         branch(header, keys.map(id => outer.get(id)), statement.condition.range);
         current = header; definitions = new Map(keys.map((id, index) => [id, header.parameters[index].name]));
@@ -431,7 +434,7 @@ export function lowerHir(hir) {
         conditional(condition, loop, exit, statement.condition.range);
         current = loop; definitions = new Map(incoming); emitBody(statement.body);
         if (current) branch(header, keys.map(id => definitions.get(id)), statement.condition.range);
-        current = exit; definitions = incoming;
+        current = exit; definitions = incoming; declared = outerDeclared;
       }
     }
   };
