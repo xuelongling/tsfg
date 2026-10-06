@@ -1,5 +1,6 @@
 // SPDX-License-Identifier: MIT
 #include "mlir/Dialect/Func/IR/FuncOps.h"
+#include "mlir/Dialect/ControlFlow/IR/ControlFlowOps.h"
 #include "mlir/IR/BuiltinOps.h"
 #include "mlir/IR/Dialect.h"
 #include "mlir/IR/OpDefinition.h"
@@ -19,6 +20,25 @@
 #include <vector>
 
 namespace tsfg {
+class FuelOp : public mlir::Op<FuelOp, mlir::OpTrait::ZeroOperands,
+                             mlir::OpTrait::ZeroResults,
+                             mlir::OpTrait::ZeroRegions> {
+public:
+  using Op::Op;
+  MLIR_DEFINE_EXPLICIT_INTERNAL_INLINE_TYPE_ID(FuelOp)
+  static llvm::StringRef getOperationName() { return "tsfg_core.fuel"; }
+  static llvm::ArrayRef<llvm::StringRef> getAttributeNames() {
+    static const llvm::StringRef names[] = {"event"};
+    return names;
+  }
+  mlir::LogicalResult verify() {
+    auto event = getOperation()->getAttrOfType<mlir::IntegerAttr>("event");
+    if (!event || !event.getType().isSignlessInteger(32) ||
+        (event.getInt() != 1 && event.getInt() != 2))
+      return emitOpError("[core-ir-fuel] requires event 1 or 2 as i32");
+    return mlir::success();
+  }
+};
 class ConstantOp : public mlir::Op<ConstantOp, mlir::OpTrait::ZeroOperands,
                                     mlir::OpTrait::OneResult,
                                     mlir::OpTrait::ZeroRegions> {
@@ -97,7 +117,7 @@ public:
   static llvm::StringRef getDialectNamespace() { return "tsfg_core"; }
   explicit CoreDialect(mlir::MLIRContext *context)
       : Dialect(getDialectNamespace(), context, mlir::TypeID::get<CoreDialect>()) {
-    addOperations<ConstantOp, AddOp, SubOp, MulOp, DivOp, RemOp, ShlOp,
+    addOperations<FuelOp, ConstantOp, AddOp, SubOp, MulOp, DivOp, RemOp, ShlOp,
                   ShrOp, UshrOp, AndOp, OrOp, XorOp, NegOp, NotOp, BoolNotOp,
                   EqOp, NeOp, LtOp, LeOp, GtOp, GeOp>();
   }
@@ -106,7 +126,7 @@ public:
 
 namespace {
 constexpr llvm::StringLiteral bytecodeSchema =
-    "80745002f3315a96fd01679dd5d4a3052785dfb6acf8f4bdb56f7e040e1dfb72";
+    "cd7152bad3cdcb1f307adb550b8b4dc58334df38b7e690b942fa81e5b99374a7";
 constexpr llvm::StringLiteral target = "windows-x86_64-msvc";
 constexpr llvm::StringLiteral triple = "x86_64-pc-windows-msvc";
 constexpr llvm::StringLiteral layout =
@@ -180,7 +200,7 @@ uint8_t scalarOpcode(llvm::StringRef name) {
 
 // Formal R04 producer: derive register instructions from verified MLIR SSA.
 // No frontend Snapshot or AST is available to this consumer.
-mlir::LogicalResult emitBytecode(mlir::ModuleOp module) {
+mlir::LogicalResult verifiedBytecode(mlir::ModuleOp module, Bytes &packet) {
   auto reject = [&]() {
     llvm::errs() << "[r04-core-invalid] unsupported Core identity, target, SSA or source map\n";
     return mlir::failure();
@@ -223,7 +243,7 @@ mlir::LogicalResult emitBytecode(mlir::ModuleOp module) {
   if (module.getBody()->getOperations().size() != 1) return reject();
   auto fn = llvm::dyn_cast<mlir::func::FuncOp>(&module.getBody()->front());
   if (!fn || fn.getSymName() != name || fn.getFunctionType().getNumInputs() != 0 ||
-      fn.getFunctionType().getNumResults() != 1 || !fn.getBody().hasOneBlock() ||
+      fn.getFunctionType().getNumResults() != 1 || fn.getBody().empty() ||
       !attributes(fn, {"sym_name", "function_type"})) return reject();
   auto returnType = fn.getFunctionType().getResult(0);
   const bool boolean = returnType.isSignlessInteger(1);
@@ -248,31 +268,140 @@ mlir::LogicalResult emitBytecode(mlir::ModuleOp module) {
       !number("tsfg_core.function_end", functionEnd) ||
       functionStart >= functionEnd || functionEnd > sourceLength ||
       module.getBody()->getOperations().size() != 1) return reject();
-  auto &block = fn.getBody().front();
-  const size_t instructionCount = block.getOperations().size();
-  if (block.getNumArguments() != 0 || instructionCount < 2 || instructionCount > 4097) return reject();
-  auto returned = llvm::dyn_cast<mlir::func::ReturnOp>(&block.back());
-  if (!returned || returned.getNumOperands() != 1 ||
-      !attributes(returned, {"tsfg_source.start", "tsfg_source.end"})) return reject();
-  uint32_t returnStart, returnEnd;
-  if (!anchor(returned, functionStart, functionEnd, returnStart, returnEnd)) return reject();
-  Bytes instructions;
+  const size_t blockCount = fn.getBody().getBlocks().size();
+  if (blockCount > 256 || fn.getBody().front().getNumArguments() != 0) return reject();
+  auto typeCodeOf = [](mlir::Type type) -> uint8_t {
+    if (type.isSignlessInteger(32)) return 1;
+    if (type.isSignlessInteger(1)) return 2;
+    return 0;
+  };
+  llvm::DenseMap<mlir::Block *, uint16_t> blocks;
   llvm::DenseMap<mlir::Value, uint16_t> registers;
-  for (mlir::Operation &operation : block) {
+  size_t instructionCount = 0;
+  for (mlir::Block &block : fn.getBody()) {
+    blocks[&block] = static_cast<uint16_t>(blocks.size());
+    if (block.empty()) return reject();
+    instructionCount += block.getOperations().size();
+    for (mlir::BlockArgument argument : block.getArguments()) {
+      if (!typeCodeOf(argument.getType()) || registers.size() >= 4096) return reject();
+      registers[argument] = static_cast<uint16_t>(registers.size());
+    }
+    for (mlir::Operation &operation : block)
+      for (mlir::Value result : operation.getResults()) {
+        if (!typeCodeOf(result.getType()) || registers.size() >= 4096) return reject();
+        registers[result] = static_cast<uint16_t>(registers.size());
+      }
+  }
+  if (registers.empty() || instructionCount > 8192) return reject();
+
+  // Reachability and fuel are graph properties, independent of block order.
+  // Removing all condition-event blocks must leave an acyclic graph: merely
+  // finding one fuel somewhere in an SCC would admit a cycle that bypasses it.
+  std::vector<std::vector<uint16_t>> edges(blockCount);
+  std::vector<bool> conditionEvent(blockCount, false), reachable(blockCount, false);
+  unsigned entryEvents = 0;
+  for (mlir::Block &block : fn.getBody()) {
+    auto index = blocks.lookup(&block);
+    for (mlir::Operation &operation : block) {
+      uint32_t start, end;
+      if (!anchor(&operation, functionStart, functionEnd, start, end)) return reject();
+      if (auto fuel = llvm::dyn_cast<tsfg::FuelOp>(&operation)) {
+        if (&operation != &block.front() ||
+            !attributes(fuel, {"event", "tsfg_source.start", "tsfg_source.end"})) return reject();
+        auto event = fuel->getAttrOfType<mlir::IntegerAttr>("event").getInt();
+        if (event == 1) {
+          if (index != 0 || start != functionStart || end != functionEnd) return reject();
+          ++entryEvents;
+        } else {
+          if (index == 0) return reject();
+          conditionEvent[index] = true;
+        }
+      }
+      if (operation.getNumSuccessors() && &operation != &block.back()) return reject();
+    }
+    auto *terminator = &block.back();
+    if (!llvm::isa<mlir::func::ReturnOp, mlir::cf::BranchOp, mlir::cf::CondBranchOp>(terminator)) return reject();
+    for (mlir::Block *successor : terminator->getSuccessors()) {
+      if (!blocks.count(successor) || blocks.lookup(successor) == 0) return reject();
+      edges[index].push_back(blocks.lookup(successor));
+    }
+  }
+  if (entryEvents != 1 || !llvm::isa<tsfg::FuelOp>(fn.getBody().front().front())) return reject();
+  std::vector<uint16_t> pending{0};
+  reachable[0] = true;
+  for (size_t i = 0; i < pending.size(); ++i)
+    for (auto next : edges[pending[i]])
+      if (!reachable[next]) { reachable[next] = true; pending.push_back(next); }
+  if (pending.size() != blockCount) return reject();
+  std::vector<unsigned> incoming(blockCount, 0);
+  size_t uncharged = 0;
+  for (size_t i = 0; i < blockCount; ++i) {
+    if (conditionEvent[i]) continue;
+    ++uncharged;
+    for (auto next : edges[i]) if (!conditionEvent[next]) ++incoming[next];
+  }
+  pending.clear();
+  for (size_t i = 0; i < blockCount; ++i)
+    if (!conditionEvent[i] && incoming[i] == 0) pending.push_back(static_cast<uint16_t>(i));
+  for (size_t i = 0; i < pending.size(); ++i)
+    for (auto next : edges[pending[i]])
+      if (!conditionEvent[next] && --incoming[next] == 0) pending.push_back(next);
+  if (pending.size() != uncharged) return reject();
+
+  Bytes table;
+  for (mlir::Block &block : fn.getBody()) {
+    integer(table, block.getNumArguments(), 2);
+    for (mlir::BlockArgument argument : block.getArguments()) {
+      integer(table, registers.lookup(argument), 2);
+      integer(table, typeCodeOf(argument.getType()), 1); integer(table, 0, 1);
+    }
+    integer(table, static_cast<uint32_t>(block.getOperations().size()), 2);
+  }
+  Bytes instructions;
+  for (mlir::Block &block : fn.getBody()) for (mlir::Operation &operation : block) {
     uint32_t start, end;
-    if (!anchor(&operation, functionStart, returnEnd, start, end)) return reject();
+    if (!anchor(&operation, functionStart, functionEnd, start, end)) return reject();
     uint8_t opcode, typeCode;
-    uint16_t reg;
+    uint16_t reg = 0;
     uint32_t immediate = 0;
-    if (&operation == returned.getOperation()) {
+    Bytes edgeArguments;
+    auto edge = [&](mlir::Block *destination, mlir::ValueRange arguments) {
+      if (arguments.size() != destination->getNumArguments()) return false;
+      integer(edgeArguments, static_cast<uint32_t>(arguments.size()), 2);
+      for (size_t i = 0; i < arguments.size(); ++i) {
+        if (!registers.count(arguments[i]) || arguments[i].getType() != destination->getArgument(i).getType()) return false;
+        integer(edgeArguments, registers.lookup(arguments[i]), 2);
+      }
+      return true;
+    };
+    if (auto returned = llvm::dyn_cast<mlir::func::ReturnOp>(&operation)) {
+      if (&operation != &block.back() || returned.getNumOperands() != 1 ||
+          returned.getOperand(0).getType() != returnType ||
+          !attributes(returned, {"tsfg_source.start", "tsfg_source.end"})) return reject();
       if (!registers.count(returned.getOperand(0))) return reject();
       opcode = 2; typeCode = boolean ? 2 : 1; reg = registers.lookup(returned.getOperand(0));
+    } else if (auto branch = llvm::dyn_cast<mlir::cf::BranchOp>(&operation)) {
+      if (!attributes(branch, {"tsfg_source.start", "tsfg_source.end"}) ||
+          !edge(branch.getDest(), branch.getDestOperands())) return reject();
+      opcode = 24; typeCode = 0; immediate = blocks.lookup(branch.getDest());
+    } else if (auto branch = llvm::dyn_cast<mlir::cf::CondBranchOp>(&operation)) {
+      if (!attributes(branch, {"operandSegmentSizes", "tsfg_source.start", "tsfg_source.end"}) ||
+          !branch.getCondition().getType().isSignlessInteger(1) ||
+          !registers.count(branch.getCondition()) ||
+          !edge(branch.getTrueDest(), branch.getTrueDestOperands()) ||
+          !edge(branch.getFalseDest(), branch.getFalseDestOperands())) return reject();
+      opcode = 25; typeCode = 2; reg = registers.lookup(branch.getCondition());
+      immediate = blocks.lookup(branch.getTrueDest()) |
+          (static_cast<uint32_t>(blocks.lookup(branch.getFalseDest())) << 16);
+    } else if (auto fuel = llvm::dyn_cast<tsfg::FuelOp>(&operation)) {
+      opcode = 26; typeCode = 0;
+      immediate = static_cast<uint32_t>(fuel->getAttrOfType<mlir::IntegerAttr>("event").getInt());
     } else {
       if (operation.getNumResults() != 1) return reject();
       auto result = operation.getResult(0);
       if (!result.getType().isSignlessInteger(32) && !result.getType().isSignlessInteger(1)) return reject();
       typeCode = result.getType().isSignlessInteger(1) ? 2 : 1;
-      reg = static_cast<uint16_t>(registers.size());
+      reg = registers.lookup(result);
       if (auto constant = llvm::dyn_cast<tsfg::ConstantOp>(&operation)) {
         if (!attributes(constant, {"value", "tsfg_source.start", "tsfg_source.end"})) return reject();
         opcode = typeCode == 1 ? 1 : 3;
@@ -287,11 +416,11 @@ mlir::LogicalResult emitBytecode(mlir::ModuleOp module) {
           immediate |= static_cast<uint32_t>(registers.lookup(operation.getOperand(1))) << 16;
         }
       } else return reject();
-      registers[result] = reg;
     }
     integer(instructions, opcode, 1); integer(instructions, typeCode, 1);
     integer(instructions, reg, 2); integer(instructions, immediate, 4);
     integer(instructions, start, 4); integer(instructions, end, 4);
+    instructions.insert(instructions.end(), edgeArguments.begin(), edgeArguments.end());
   }
   llvm::LLVMContext context;
   llvm::DataLayout targetLayout(layout);
@@ -302,30 +431,30 @@ mlir::LogicalResult emitBytecode(mlir::ModuleOp module) {
   Bytes payload;
   string(payload, target); string(payload, triple); string(payload, layout);
   integer(payload, static_cast<uint32_t>(size), 2);
-  integer(payload, static_cast<uint32_t>(align), 2); integer(payload, 4, 4);
+  integer(payload, static_cast<uint32_t>(align), 2); integer(payload, 8, 4);
   for (const Hash &value : {input, source, function, signature, type}) appendHash(payload, value);
   string(payload, path); string(payload, name);
   for (uint32_t value : {sourceLength, functionStart, functionEnd}) integer(payload, value, 4);
   integer(payload, boolean ? 2 : 1, 1); integer(payload, 0, 1);
-  integer(payload, static_cast<uint32_t>(registers.size()), 2); integer(payload, 1, 2);
+  integer(payload, static_cast<uint32_t>(registers.size()), 2); integer(payload, static_cast<uint32_t>(blockCount), 2);
   integer(payload, static_cast<uint32_t>(instructionCount), 2);
+  payload.insert(payload.end(), table.begin(), table.end());
   payload.insert(payload.end(), instructions.begin(), instructions.end());
-  Bytes packet{'T','S','F','G','T','B','C','0'};
-  integer(packet, 3, 4);
+  packet = Bytes{'T','S','F','G','T','B','C','0'};
+  integer(packet, 4, 4);
   Hash schema; if (!decodeHash(("sha256:" + bytecodeSchema).str(), schema)) return reject();
   appendHash(packet, schema); integer(packet, static_cast<uint32_t>(80 + payload.size()), 4);
   appendHash(packet, llvm::SHA256::hash(payload));
   packet.insert(packet.end(), payload.begin(), payload.end());
   if (packet.size() > 1048576) return reject();
-  llvm::sys::ChangeStdoutToBinary();
-  llvm::outs().write(reinterpret_cast<const char *>(packet.data()), packet.size());
   return mlir::success();
 }
 } // namespace
 
 int main(int argc, char **argv) {
   if (argc != 2 || (llvm::StringRef(argv[1]) != "--canonicalize" &&
-                    llvm::StringRef(argv[1]) != "--emit-bytecode")) {
+                    llvm::StringRef(argv[1]) != "--emit-bytecode" &&
+                    llvm::StringRef(argv[1]) != "--optimize")) {
     llvm::errs() << "[core-ir-command] expected --canonicalize with IR on stdin\n";
     return 2;
   }
@@ -335,7 +464,7 @@ int main(int argc, char **argv) {
     return 2;
   }
   mlir::DialectRegistry registry;
-  registry.insert<tsfg::CoreDialect, mlir::func::FuncDialect>();
+  registry.insert<tsfg::CoreDialect, mlir::func::FuncDialect, mlir::cf::ControlFlowDialect>();
   mlir::MLIRContext context(registry);
   context.disableMultithreading();
   auto module = mlir::parseSourceString<mlir::ModuleOp>((*input)->getBuffer(), &context);
@@ -344,16 +473,23 @@ int main(int argc, char **argv) {
     return 3;
   }
   auto version = module->getOperation()->getAttrOfType<mlir::StringAttr>("tsfg_core.version");
-  if (!version || version.getValue() != "0.3.0") {
-    llvm::errs() << "[core-ir-identity] expected Core IR 0.3.0\n";
+  if (!version || version.getValue() != "0.4.0") {
+    llvm::errs() << "[core-ir-identity] expected Core IR 0.4.0\n";
     return 3;
   }
   if (mlir::failed(mlir::verify(*module))) {
     llvm::errs() << "[core-ir-invalid] verification failed\n";
     return 3;
   }
-  if (llvm::StringRef(argv[1]) == "--emit-bytecode")
-    return mlir::succeeded(emitBytecode(*module)) ? 0 : 3;
+  Bytes packet;
+  if (mlir::failed(verifiedBytecode(*module, packet))) return 3;
+  if (llvm::StringRef(argv[1]) == "--emit-bytecode") {
+    llvm::sys::ChangeStdoutToBinary();
+    llvm::outs().write(reinterpret_cast<const char *>(packet.data()), packet.size());
+    return 0;
+  }
+  // The current optimization pipeline is deliberately the canonical identity
+  // pass: it performs full verification and retains every event/failure anchor.
   module->print(llvm::outs(), mlir::OpPrintingFlags().printGenericOpForm());
   llvm::outs() << '\n';
   return 0;
