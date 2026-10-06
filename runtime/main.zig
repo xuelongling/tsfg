@@ -8,6 +8,7 @@ const Request = struct {
     capabilities: []const std.json.Value = &.{},
     memoryBytes: u64 = 16384,
     instructionBudget: u64 = 4097,
+    semanticFuel: u64 = 4097,
     depth: u32 = 1,
 };
 
@@ -22,19 +23,27 @@ fn writeOutcome(writer: *std.Io.Writer, outcome: runtime.RequestOutcome, host: *
     };
     const function_hex = runtime.digestText(function_id);
     const source_hex = runtime.digestText(source.hash);
-    var buffers: [4][32]u8 = undefined;
+    var buffers: [6][32]u8 = undefined;
     const start = try std.fmt.bufPrint(&buffers[0], "{d}", .{source.start});
     const end = try std.fmt.bufPrint(&buffers[1], "{d}", .{source.end});
     const active = try std.fmt.bufPrint(&buffers[2], "{d}", .{host.activeRequests()});
+    const fuel_remaining = try std.fmt.bufPrint(&buffers[4], "{d}", .{switch (outcome) {
+        .returned => |r| r.fuel_remaining,
+        .failed => |r| r.fuel_remaining,
+    }});
+    const fuel_consumed = try std.fmt.bufPrint(&buffers[5], "{d}", .{switch (outcome) {
+        .returned => |r| r.fuel_consumed,
+        .failed => |r| r.fuel_consumed,
+    }});
     const source_view = .{ .path = source.path, .hash = @as([]const u8, &source_hex), .start = start, .end = end };
     switch (outcome) {
         .returned => |returned| {
             switch (returned.result) {
-                .i32 => |value| try std.json.Stringify.value(.{ .status = "returned", .result = .{ .type = "i32", .value = try std.fmt.bufPrint(&buffers[3], "{d}", .{value}) }, .source = source_view, .functionId = @as([]const u8, &function_hex), .activeRequests = active }, .{}, writer),
-                .boolean => |value| try std.json.Stringify.value(.{ .status = "returned", .result = .{ .type = "bool", .value = value }, .source = source_view, .functionId = @as([]const u8, &function_hex), .activeRequests = active }, .{}, writer),
+                .i32 => |value| try std.json.Stringify.value(.{ .status = "returned", .result = .{ .type = "i32", .value = try std.fmt.bufPrint(&buffers[3], "{d}", .{value}) }, .source = source_view, .functionId = @as([]const u8, &function_hex), .activeRequests = active, .fuelRemaining = fuel_remaining, .fuelConsumed = fuel_consumed }, .{}, writer),
+                .boolean => |value| try std.json.Stringify.value(.{ .status = "returned", .result = .{ .type = "bool", .value = value }, .source = source_view, .functionId = @as([]const u8, &function_hex), .activeRequests = active, .fuelRemaining = fuel_remaining, .fuelConsumed = fuel_consumed }, .{}, writer),
             }
         },
-        .failed => |failed| try std.json.Stringify.value(.{ .status = "failed", .code = failed.code, .category = failed.category, .ruleIds = failed.rule_ids, .functionId = @as([]const u8, &function_hex), .source = source_view, .activeRequests = active }, .{}, writer),
+        .failed => |failed| try std.json.Stringify.value(.{ .status = "failed", .code = failed.code, .category = failed.category, .ruleIds = failed.rule_ids, .functionId = @as([]const u8, &function_hex), .source = source_view, .activeRequests = active, .fuelRemaining = fuel_remaining, .fuelConsumed = fuel_consumed }, .{}, writer),
     }
 }
 
@@ -46,7 +55,7 @@ fn evaluateRequest(host: *runtime.Runtime, module: *const runtime.VerifiedModule
         for (id) |character| if (!std.ascii.isDigit(character) and !(character >= 'a' and character <= 'f')) return error.FunctionId;
         _ = try std.fmt.hexToBytes(&function_id, id);
     }
-    return runtime.eval_bytecode(host, module, function_id, if (request.arguments.len == 0) &.{} else &.{.{ .i32 = 0 }}, if (request.capabilities.len == 0) &.{} else &.{.{ .id = 0 }}, .{ .memory_bytes = @intCast(request.memoryBytes), .instruction_budget = request.instructionBudget, .depth = request.depth });
+    return runtime.eval_bytecode(host, module, function_id, if (request.arguments.len == 0) &.{} else &.{.{ .i32 = 0 }}, if (request.capabilities.len == 0) &.{} else &.{.{ .id = 0 }}, .{ .memory_bytes = @intCast(request.memoryBytes), .instruction_budget = request.instructionBudget, .semantic_fuel = request.semanticFuel, .depth = request.depth });
 }
 
 // The transport frames existing R04 packets; it does not add bytecode semantics.

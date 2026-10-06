@@ -69,7 +69,7 @@ test "Runtime cleans failed requests and accepts another request on the same hos
     var host = runtime.Runtime.init(std.testing.allocator);
     const id = runtime.moduleInfo(module).function_id;
     const limits = [_]runtime.RequestLimits{ .{ .memory_bytes = 3 }, .{ .instruction_budget = 0 }, .{ .instruction_budget = 1 }, .{ .depth = 0 } };
-    const codes = [_][]const u8{ "r05-request-memory", "r05-execution-abort", "r05-execution-abort", "r05-request-depth" };
+    const codes = [_][]const u8{ "r05-execution-abort", "r05-execution-abort", "r05-execution-abort", "r01-t-depth" };
     for (limits, codes) |limit, code| {
         switch (runtime.eval_bytecode(&host, module, id, &.{}, &.{}, limit)) {
             .failed => |failure| try std.testing.expectEqualStrings(code, failure.code),
@@ -93,7 +93,7 @@ test "Runtime recovers from allocator failure without retaining a request" {
     var host = runtime.Runtime.init(allocator.allocator());
     const id = runtime.moduleInfo(module).function_id;
     switch (runtime.eval_bytecode(&host, module, id, &.{}, &.{}, .{})) {
-        .failed => |failure| try std.testing.expectEqualStrings("r05-request-allocation", failure.code),
+        .failed => |failure| try std.testing.expectEqualStrings("r05-execution-abort", failure.code),
         .returned => return error.ExpectedRequestFailure,
     }
     try std.testing.expectEqual(@as(usize, 0), host.activeRequests());
@@ -196,4 +196,70 @@ fn loadWithAllocationFailure(allocator: std.mem.Allocator) !void {
 
 test "loader cleans partial owned state on every allocation failure" {
     try std.testing.checkAllAllocationFailures(std.testing.allocator, loadWithAllocationFailure, .{});
+}
+
+// Independent two-block wire vector: entry constant -> typed edge -> return phi.
+fn phiFixture() [fixture.bytes.len + 28]u8 {
+    var bytes: [fixture.bytes.len + 28]u8 = undefined;
+    const table = fixture.bytes.len - 52;
+    @memcpy(bytes[0..table], fixture.bytes[0..table]);
+    std.mem.writeInt(u16, bytes[table - 6 ..][0..2], 2, .little);
+    std.mem.writeInt(u16, bytes[table - 4 ..][0..2], 2, .little);
+    std.mem.writeInt(u16, bytes[table - 2 ..][0..2], 4, .little);
+    @memcpy(bytes[table..][0..12], &[_]u8{ 0, 0, 3, 0, 1, 0, 1, 0, 1, 0, 1, 0 });
+    @memcpy(bytes[table + 12 ..][0..32], fixture.bytes[table + 4 ..][0..32]);
+    const edge = table + 44;
+    @memset(bytes[edge..][0..20], 0);
+    bytes[edge] = 24;
+    std.mem.writeInt(u16, bytes[edge + 4 ..][0..2], 1, .little);
+    std.mem.writeInt(u32, bytes[edge + 8 ..][0..4], 33, .little);
+    std.mem.writeInt(u32, bytes[edge + 12 ..][0..4], 43, .little);
+    std.mem.writeInt(u16, bytes[edge + 16 ..][0..2], 1, .little);
+    @memcpy(bytes[edge + 20 ..], fixture.bytes[fixture.bytes.len - 16 ..]);
+    std.mem.writeInt(u16, bytes[edge + 22 ..][0..2], 1, .little);
+    std.mem.writeInt(u32, bytes[44..48], bytes.len, .little);
+    std.crypto.hash.sha2.Sha256.hash(bytes[80..], bytes[48..80], .{});
+    return bytes;
+}
+
+fn loadPhiWithAllocationFailure(allocator: std.mem.Allocator) !void {
+    const bytes = phiFixture();
+    switch (runtime.load(allocator, &bytes)) {
+        .loaded => |module| runtime.unload(module),
+        .rejected => |failure| {
+            if (std.mem.eql(u8, failure.code, "r04-allocation")) return error.OutOfMemory;
+            return error.UnexpectedRejection;
+        },
+    }
+}
+
+test "CFG loader cleans parameters and edge storage at every allocation failure" {
+    try std.testing.checkAllAllocationFailures(std.testing.allocator, loadPhiWithAllocationFailure, .{});
+}
+
+test "phi transfer allocation abort cleans the frame and host accepts a later request" {
+    const bytes = phiFixture();
+    const module = switch (runtime.load(std.testing.allocator, &bytes)) {
+        .loaded => |module| module,
+        .rejected => return error.UnexpectedRejection,
+    };
+    defer runtime.unload(module);
+    var allocator = std.testing.FailingAllocator.init(std.testing.allocator, .{ .fail_index = 1 });
+    var host = runtime.Runtime.init(allocator.allocator());
+    const id = runtime.moduleInfo(module).function_id;
+    switch (runtime.eval_bytecode(&host, module, id, &.{}, &.{}, .{})) {
+        .failed => |failure| {
+            try std.testing.expectEqualStrings("r05-execution-abort", failure.code);
+            try std.testing.expectEqualStrings("execution-abort", failure.category);
+            try std.testing.expectEqual(@as(u64, 0), failure.fuel_consumed);
+        },
+        .returned => return error.ExpectedAbort,
+    }
+    try std.testing.expectEqual(@as(usize, 0), host.activeRequests());
+    allocator.fail_index = std.math.maxInt(usize);
+    switch (runtime.eval_bytecode(&host, module, id, &.{}, &.{}, .{})) {
+        .returned => |value| try std.testing.expectEqual(@as(i32, 42), value.result.i32),
+        .failed => return error.UnexpectedRequestFailure,
+    }
+    try std.testing.expectEqual(@as(usize, 0), host.activeRequests());
 }
