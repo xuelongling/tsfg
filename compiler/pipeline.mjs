@@ -59,10 +59,10 @@ async function compileSnapshot(snapshot, options) {
 async function produceBytecode(hir, options) {
   try {
     const core = await verifiedConsumer(options.core, "core");
-    const canonicalCore = consume(core, ["--canonicalize"], lowerHir(hir)).toString("utf8");
+    const canonicalCore = consume(core, [options.optimize ? "--optimize" : "--canonicalize"], lowerHir(hir)).toString("utf8");
     const bytecode = consume(core, ["--emit-bytecode"], canonicalCore);
     if (bytecode.length < 80 || bytecode.subarray(0, 8).toString("ascii") !== "TSFGTBC0"
-        || bytecode.readUInt32LE(8) !== 3 || bytecode.readUInt32LE(44) !== bytecode.length
+        || bytecode.readUInt32LE(8) !== 4 || bytecode.readUInt32LE(44) !== bytecode.length
         || `sha256:${bytecode.subarray(12, 44).toString("hex")}` !== registry["tsfg.bytecode"].schemaHash
         || `sha256:${bytecode.subarray(48, 80).toString("hex")}` !== sha256(bytecode.subarray(80)))
       throw new TypeError("r04-producer-identity: C++ output differs from registered R04 packet");
@@ -81,7 +81,7 @@ async function sessionFingerprint() {
 
 /** Incremental owned lowering; official frontend checking still runs on every input. */
 export function createCompilerSession(options) {
-  const settings = { frontend: options.frontend, core: options.core };
+  const settings = { frontend: options.frontend, core: options.core, optimize: options.optimize === true };
   let inputs, previous;
   const counts = { analyses: 0, lowerings: 0, reuses: 0 };
   return {

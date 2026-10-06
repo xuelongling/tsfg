@@ -16,7 +16,7 @@ const operations = { "+": "add", "-": "sub", "*": "mul", "/": "div", "%": "rem",
 const comparisons = new Set(["===", "!==", "<", "<=", ">", ">="]);
 // The checked scalar subset inherits TS precedence; every binary operator here
 // associates left. Parentheses are explicit group nodes, not inferred anchors.
-const precedence = { "|": 1, "^": 2, "&": 3, "===": 4, "!==": 4,
+const precedence = { "||": -1, "&&": 0, "|": 1, "^": 2, "&": 3, "===": 4, "!==": 4,
   "<": 5, "<=": 5, ">": 5, ">=": 5, "<<": 6, ">>": 6, ">>>": 6,
   "+": 7, "-": 7, "*": 8, "/": 8, "%": 8 };
 const sourceTokens = (source, start, end) => source.slice(start, end)
@@ -87,19 +87,20 @@ function verifyExpression(value, parent, source, fail, budget, locals) {
         || value.type !== value.operand.type || (!group && (value.operand.kind === "binary"
         || !["+", "-", "~", "!"].includes(value.operator)
         || value.type !== (value.operator === "!" ? boolTypeId : i32TypeId)))) fail();
-  } else if (value.kind === "binary") {
+  } else if (value.kind === "binary" || value.kind === "shortCircuit") {
+    const short = value.kind === "shortCircuit";
     if (!exactKeys(value, ["kind", "type", "operator", "left", "right", "range"])
-        || !Object.hasOwn(operations, value.operator)) fail();
+        || !(short ? ["&&", "||"].includes(value.operator) : Object.hasOwn(operations, value.operator))) fail();
     verifyExpression(value.left, value.range, source, fail, budget, locals);
     verifyExpression(value.right, value.range, source, fail, budget, locals);
     if (value.left.type !== value.right.type || value.left.range.end > value.right.range.start
-        || (value.left.kind === "binary" && precedence[value.left.operator] < precedence[value.operator])
-        || (value.right.kind === "binary" && precedence[value.right.operator] <= precedence[value.operator])
+        || (["binary", "shortCircuit"].includes(value.left.kind) && precedence[value.left.operator] < precedence[value.operator])
+        || (["binary", "shortCircuit"].includes(value.right.kind) && precedence[value.right.operator] <= precedence[value.operator])
         || sourceTokens(source, value.range.start, value.left.range.start) !== ""
         || !scalarOperator(source, value.left.range.end, value.right.range.start, value.operator)
         || sourceTokens(source, value.right.range.end, value.range.end) !== ""
-        || value.type !== (comparisons.has(value.operator) ? boolTypeId : i32TypeId)
-        || (!["===", "!=="].includes(value.operator) && value.left.type !== i32TypeId)) fail();
+        || value.type !== (short || comparisons.has(value.operator) ? boolTypeId : i32TypeId)
+        || (short ? value.left.type !== boolTypeId : !["===", "!=="].includes(value.operator) && value.left.type !== i32TypeId)) fail();
   } else fail();
 }
 const validText = value => typeof value === "string" && value.length > 0 && !value.includes("\0")
@@ -133,76 +134,120 @@ export function verifyHir(hir) {
       || !Array.isArray(fn.parameters) || fn.parameters.length !== 0
       || !range(fn.range, { start: 0, end: hir.source.content.length })
       || !Array.isArray(fn.body) || fn.body.length < 1 || fn.body.length > 128) fail();
-  const locals = new Map(), names = new Set(), source = hir.source.content;
-  // Future declaration facts only identify a source-anchored forward read;
-  // they never authorize a reference or populate the sequential local state.
-  const declarations = new Map();
-  let declarationIndex = 0;
-  for (const statement of fn.body) {
-    if (statement?.kind !== "local") continue;
-    const binding = statement.binding;
-    if (range(statement.range, fn.range) && bindingFact(binding, statement.range, source)
-        && binding.id === `l${declarationIndex}`)
-      declarations.set(binding.id, binding);
-    declarationIndex++;
-  }
+  const source = hir.source.content, declarations = new Map(), ids = new Set();
+  let declarationIndex = 0, remainingStatements = 4096;
+  const collect = (body, depth = 0) => {
+    if (!Array.isArray(body) || body.length > 128 || depth > 128) fail();
+    for (const statement of body) {
+      if (--remainingStatements < 0) fail();
+      if (statement?.kind === "local") {
+        const binding = statement.binding;
+        if (bindingFact(binding, statement.range, source) && binding.id === `l${declarationIndex}`)
+          declarations.set(binding.id, binding);
+        declarationIndex++;
+      } else if (statement?.kind === "if") { collect(statement.thenBody, depth + 1); collect(statement.elseBody, depth + 1); }
+      else if (["block", "while"].includes(statement?.kind)) collect(statement.body, depth + 1);
+    }
+  };
+  collect(fn.body);
   const budget = { remaining: 4096, sourcePath: hir.source.path, declarations };
-  let previousEnd = fn.range.start, hasReturn = false, declarationKind;
-  for (const [index, statement] of fn.body.entries()) {
-    if (!range(statement?.range, fn.range) || statement.range.start < previousEnd) fail();
-    let before = sourceTokens(source, previousEnd, statement.range.start);
-    // Braces in a checked Unicode identifier escape are part of the header;
-    // only the unescaped opening brace begins the complete return sequence.
-    if (index === 0) {
-      const header = before.match(/^(?:[^{}]|\\u\{[0-9a-fA-F]+\})*\{(const|let)?$/);
-      if (!header) fail();
-      before = header[1] ?? "";
+  const clone = locals => new Map([...locals].map(([id, local]) => [id, { ...local }]));
+  const body = (statements, parent, locals, frame = "plain") => {
+    let previousEnd = parent.start, returns = false, declarationKind;
+    const names = new Set();
+    for (const [index, statement] of statements.entries()) {
+      if (--budget.remaining < 0 || !range(statement?.range, parent) || statement.range.start < previousEnd) fail();
+      let before = sourceTokens(source, previousEnd, statement.range.start);
+      if (index === 0 && frame !== "plain") {
+        const header = frame === "function" ? before.match(/^(?:[^{}]|\\u\{[0-9a-fA-F]+\})*\{(const|let)?$/)
+          : before.match(/^\{(const|let)?$/);
+        if (!header) fail();
+        before = header[1] ?? "";
+      }
+      if (statement.kind === "local") {
+        const binding = statement.binding, value = statement.initializer;
+        if (!exactKeys(statement, ["kind", "range", "binding", "initializer"])
+            || !bindingFact(binding, statement.range, source) || ids.has(binding.id)
+            || binding.id !== `l${ids.size}` || names.has(binding.name)
+            || sourceTokens(source, statement.range.start, binding.range.start) !== "") fail();
+        const keyword = before.match(/^;?(const|let)$/)?.[1];
+        if (keyword) declarationKind = keyword;
+        else if (before !== "," || !declarationKind) fail();
+        if (binding.writable !== (declarationKind === "let")) fail();
+        const annotations = binding.type === boolTypeId ? [":bool", ":boolean"] : [":i32"];
+        if (value !== null) {
+          verifyExpression(value, statement.range, source, fail, budget, locals);
+          const annotation = sourceTokens(source, binding.range.end, value.range.start);
+          if (value.type !== binding.type || !["=", ...annotations.map(item => `${item}=`)].includes(annotation)
+              || sourceTokens(source, value.range.end, statement.range.end) !== "") fail();
+        } else if (!binding.writable || !annotations.includes(sourceTokens(source, binding.range.end, statement.range.end))) fail();
+        locals.set(binding.id, { ...binding, initialized: value !== null });
+        names.add(binding.name); ids.add(binding.id);
+      } else {
+        declarationKind = undefined;
+        if (!/^;?$/.test(before)) fail();
+        if (statement.kind === "block") {
+          if (!exactKeys(statement, ["kind", "range", "body"])) fail();
+          const scoped = clone(locals);
+          const terminated = body(statement.body, statement.range, scoped, "block");
+          for (const [id, local] of locals) local.initialized = scoped.get(id).initialized;
+          returns ||= terminated;
+        } else if (statement.kind === "if" || statement.kind === "while") {
+          const branch = statement.kind === "if", condition = statement.condition;
+          if (!exactKeys(statement, branch ? ["kind", "range", "condition", "thenBody", "elseBody"]
+              : ["kind", "range", "condition", "body"]) || condition?.type !== boolTypeId) fail();
+          verifyExpression(condition, statement.range, source, fail, budget, locals);
+          const selected = branch ? statement.thenBody : statement.body;
+          if (!Array.isArray(selected) || selected.length !== 1
+              || sourceTokens(source, statement.range.start, condition.range.start) !== `${statement.kind}(`
+              || sourceTokens(source, condition.range.end, selected[0]?.range.start) !== ")") fail();
+          const left = clone(locals), leftReturn = body(selected, { start: selected[0].range.start, end: selected.at(-1).range.end }, left);
+          let last = selected.at(-1).range.end;
+          if (branch) {
+            if (!Array.isArray(statement.elseBody) || statement.elseBody.length > 1) fail();
+            const right = clone(locals);
+            let rightReturn = false;
+            if (statement.elseBody.length) {
+              const alternative = statement.elseBody;
+              if (sourceTokens(source, last, alternative[0].range.start) !== "else") fail();
+              rightReturn = body(alternative, { start: alternative[0].range.start, end: alternative.at(-1).range.end }, right);
+              last = alternative.at(-1).range.end;
+            }
+            for (const [id, local] of locals)
+              local.initialized = leftReturn ? right.get(id).initialized : rightReturn ? left.get(id).initialized
+                : left.get(id).initialized && right.get(id).initialized;
+            returns ||= leftReturn && rightReturn;
+          }
+          if (sourceTokens(source, last, statement.range.end) !== "") fail();
+        } else {
+          const value = statement.value;
+          if (statement.kind === "return") {
+            if (!exactKeys(statement, ["kind", "range", "value"]) || value?.type !== fn.returnType.id
+                || sourceTokens(source, statement.range.start, value.range.start) !== "return") fail();
+            returns = true;
+          } else if (statement.kind === "assign") {
+            const target = statement.target, local = locals.get(target?.binding);
+            if (!exactKeys(statement, ["kind", "range", "target", "value"])
+                || !exactKeys(target, ["kind", "type", "binding", "range"]) || target.kind !== "reference"
+                || !local?.writable || target.type !== local.type || value?.type !== local.type
+                || !range(target.range, statement.range) || target.range.end > value.range.start
+                || identifierToken(source, target.range) !== local.name
+                || sourceTokens(source, statement.range.start, target.range.start) !== ""
+                || sourceTokens(source, target.range.end, value.range.start) !== "=") fail();
+          } else fail();
+          verifyExpression(value, statement.range, source, fail, budget, locals);
+          if (!/^;?$/.test(sourceTokens(source, value.range.end, statement.range.end))) fail();
+          if (statement.kind === "assign") locals.get(statement.target.binding).initialized = true;
+        }
+      }
+      previousEnd = statement.range.end;
     }
-    if (statement.kind === "local") {
-      const binding = statement.binding, value = statement.initializer;
-      if (!exactKeys(statement, ["kind", "range", "binding", "initializer"])
-          || !bindingFact(binding, statement.range, source)
-          || binding.id !== `l${locals.size}` || names.has(binding.name)
-          || sourceTokens(source, statement.range.start, binding.range.start) !== "") fail();
-      const keyword = before.match(/^;?(const|let)$/)?.[1];
-      if (keyword) declarationKind = keyword;
-      else if (before !== "," || !declarationKind) fail();
-      if (binding.writable !== (declarationKind === "let")) fail();
-      const annotations = binding.type === boolTypeId ? [":bool", ":boolean"] : [":i32"];
-      if (value !== null) {
-        verifyExpression(value, statement.range, source, fail, budget, locals);
-        const annotation = sourceTokens(source, binding.range.end, value.range.start);
-        if (value.type !== binding.type || !["=", ...annotations.map(item => `${item}=`)].includes(annotation)
-            || sourceTokens(source, value.range.end, statement.range.end) !== "") fail();
-      } else if (!binding.writable || !annotations.includes(sourceTokens(source, binding.range.end, statement.range.end))) fail();
-      locals.set(binding.id, { ...binding, initialized: value !== null });
-      names.add(binding.name);
-    } else {
-      declarationKind = undefined;
-      if (!/^;?$/.test(before)) fail();
-      const value = statement.value;
-      if (statement.kind === "return") {
-        if (!exactKeys(statement, ["kind", "range", "value"]) || value?.type !== fn.returnType.id
-            || sourceTokens(source, statement.range.start, value.range.start) !== "return") fail();
-        hasReturn = true;
-      } else if (statement.kind === "assign") {
-        const target = statement.target, local = locals.get(target?.binding);
-        if (!exactKeys(statement, ["kind", "range", "target", "value"])
-            || !exactKeys(target, ["kind", "type", "binding", "range"]) || target.kind !== "reference"
-            || !local?.writable || target.type !== local.type || value?.type !== local.type
-            || !range(target.range, statement.range) || target.range.end > value.range.start
-            || identifierToken(source, target.range) !== local.name
-            || sourceTokens(source, statement.range.start, target.range.start) !== ""
-            || sourceTokens(source, target.range.end, value.range.start) !== "=") fail();
-      } else fail();
-      verifyExpression(value, statement.range, source, fail, budget, locals);
-      if (!/^;?$/.test(sourceTokens(source, value.range.end, statement.range.end))) fail();
-      if (statement.kind === "assign") locals.get(statement.target.binding).initialized = true;
-    }
-    previousEnd = statement.range.end;
-  }
-  if (!hasReturn || !/^;?\}$/.test(sourceTokens(source, previousEnd, fn.range.end))) fail();
-  return own(hir);
+    const tail = sourceTokens(source, previousEnd, parent.end);
+    if (statements.length === 0 && frame === "block" ? tail !== "{}"
+      : !(frame === "plain" ? /^;?$/ : /^;?\}$/).test(tail)) fail();
+    return returns;
+  };
+  if (!body(fn.body, fn.range, new Map(), "function")) fail();  return own(hir);
 }
 
 export function buildHir(snapshot) {
@@ -211,8 +256,7 @@ export function buildHir(snapshot) {
   const fn = snapshot.functions[0], expression = fn?.body?.find(item => item.expression)?.expression;
   if (snapshot.functions.length !== 1 || fn?.parameters?.length !== 0
       || !Object.hasOwn(types, resolveType(snapshot, fn.returnTypeRef).scalar)
-      || fn.body.length < 1 || fn.body.length > 128 || fn.body.some(item => !["return", "variable", "assignment"].includes(item.kind))
-      || !expression) {
+      || fn.body.length < 1 || fn.body.length > 128) {
     return { status: "error", diagnostics: [{ code: "r03-d-capability", ruleId: "r01-ts-baseline", phase: "hir",
       message: "current execution capability requires one zero-parameter i32/bool function with linear scalar locals, assignments and returns",
       primary: { sourceId: snapshot.source.path, ...(expression?.range ?? fn?.range ?? { start: 0, end: 0 }) } }] };
@@ -232,12 +276,13 @@ export function buildHir(snapshot) {
     if (value.kind === "group") return { kind: "group", ...common, operand: project(value.operand) };
     if (value.kind === "unary" && ["+", "-", "~", "!"].includes(value.operator))
       return { kind: "unary", ...common, operator: value.operator, operand: project(value.operand) };
-    if (value.kind === "binary" && Object.hasOwn(operations, value.operator))
-      return { kind: "binary", ...common, operator: value.operator, left: project(value.left), right: project(value.right) };
+    if (value.kind === "binary" && Object.hasOwn(operations, value.operator)
+        || value.kind === "shortCircuit" && ["&&", "||"].includes(value.operator))
+      return { kind: value.kind, ...common, operator: value.operator, left: project(value.left), right: project(value.right) };
     throw new TypeError("unsupported checked expression capability");
   };
   let projected;
-  try { projected = fn.body.map(item => {
+  const statements = items => (items ?? []).map(item => {
     if (item.kind === "variable") {
       const symbol = resolveSymbol(snapshot, item.symbol.ref), type = types[symbol.type];
       if (symbol.kind !== "local" || !type) throw new TypeError("unsupported local type");
@@ -247,10 +292,16 @@ export function buildHir(snapshot) {
       return { kind: "local", range: item.range, binding, initializer };
     }
     if (item.kind === "assignment") return { kind: "assign", range: item.range, target: project(item.target), value: project(item.value) };
-    return { kind: "return", range: item.range, value: project(item.expression) };
-  }); } catch (error) {
+    if (item.kind === "block") return { kind: "block", range: item.range, body: statements(item.body) };
+    if (item.kind === "while") return { kind: "while", range: item.range, condition: project(item.condition), body: statements(item.body) };
+    if (item.kind === "if") return { kind: "if", range: item.range, condition: project(item.condition),
+      thenBody: statements(item.thenBody), elseBody: statements(item.elseBody) };
+    if (item.kind === "return") return { kind: "return", range: item.range, value: project(item.expression) };
+    throw new TypeError("unsupported checked statement capability");
+  });
+  try { projected = statements(fn.body); } catch (error) {
     return { status: "error", diagnostics: [{ code: "r03-d-capability", ruleId: "r01-ts-baseline", phase: "hir", message: error.message,
-      primary: { sourceId: snapshot.source.path, ...expression.range } }] };
+      primary: { sourceId: snapshot.source.path, ...(expression?.range ?? fn.range) } }] };
   }
   const returnType = resolveType(snapshot, fn.returnTypeRef).scalar;
   const hir = {
@@ -262,7 +313,7 @@ export function buildHir(snapshot) {
   };
   try { return { status: "ok", hir: verifyHir(hir) }; }
   catch (error) { return { status: "error", diagnostics: [{ code: "r03-d-snapshot", ruleId: "r01-input-boundary", phase: "hir", message: error.message,
-    primary: { sourceId: snapshot.source.path, ...expression.range } }] }; }
+    primary: { sourceId: snapshot.source.path, ...(expression?.range ?? fn.range) } }] }; }
 }
 export const printHir = hir => `${canonical(verifyHir(hir))}\n`;
 export function readHir(bytes) {
@@ -292,35 +343,101 @@ export function lowerHir(hir) {
     source_path: verified.source.path, function_name: fn.name,
     target: verified.target.target, triple: verified.target.triple, data_layout: verified.target.llvmDataLayout,
     bytecode_schema: registry["tsfg.bytecode"].schemaHash };
-  const attrs = ['tsfg_core.version = "0.3.0"', ...Object.entries(strings)
+  const attrs = ['tsfg_core.version = "0.4.0"', ...Object.entries(strings)
     .map(([key, item]) => `tsfg_core.${key} = ${quote(item)}`),
     `tsfg_core.source_length = ${verified.source.content.length} : i64`,
     `tsfg_core.function_start = ${fn.range.start} : i64`, `tsfg_core.function_end = ${fn.range.end} : i64`];
-  const instructions = [], definitions = new Map();
+  const blocks = [], bindingTypes = new Map();
+  let valueIndex = 0, current, definitions = new Map();
   const coreType = type => type === i32TypeId ? "i32" : "i1";
+  const newBlock = (parameterTypes = []) => {
+    const block = { name: `bb${blocks.length}`, parameters: parameterTypes.map(type => ({ name: `%v${valueIndex++}`, type })), lines: [], terminated: false };
+    blocks.push(block); return block;
+  };
+  const attrsFor = anchor => `tsfg_source.start = ${anchor.start} : i64, tsfg_source.end = ${anchor.end} : i64`;
+  const edge = (block, values = []) => `^${block.name}${values.length ? `(${values.join(", ")} : ${block.parameters.map(p => coreType(p.type)).join(", ")})` : ""}`;
+  const branch = (block, values, anchor) => {
+    current.lines.push(`    cf.br ${edge(block, values)} {${attrsFor(anchor)}}`);
+    current.terminated = true;
+  };
+  const conditional = (condition, left, right, anchor) => {
+    current.lines.push(`    cf.cond_br ${condition}, ${edge(left)}, ${edge(right)} {${attrsFor(anchor)}}`);
+    current.terminated = true;
+  };
+  const fuel = (event, anchor) => current.lines.push(`    "tsfg_core.fuel"() {event = ${event} : i32, ${attrsFor(anchor)}} : () -> ()`);
+  current = newBlock();
+  fuel(1, fn.range);
   const emit = expression => {
     if (expression.kind === "reference") return definitions.get(expression.binding);
-    if (expression.kind === "group" || (expression.kind === "unary" && expression.operator === "+")) return emit(expression.operand);
+    if (expression.kind === "group" || expression.kind === "unary" && expression.operator === "+") return emit(expression.operand);
+    if (expression.kind === "shortCircuit") {
+      const left = emit(expression.left);
+      const rhs = newBlock(), shortcut = newBlock(), join = newBlock([boolTypeId]);
+      conditional(left, expression.operator === "&&" ? rhs : shortcut, expression.operator === "&&" ? shortcut : rhs, expression.range);
+      current = shortcut; branch(join, [left], expression.range);
+      current = rhs; const right = emit(expression.right); branch(join, [right], expression.range);
+      current = join; return join.parameters[0].name;
+    }
     const operands = expression.kind === "binary" ? [emit(expression.left), emit(expression.right)]
       : expression.kind === "unary" ? [emit(expression.operand)] : [];
-    const name = `%v${instructions.length}`, type = coreType(expression.type);
+    const name = `%v${valueIndex++}`, type = coreType(expression.type);
     const constant = ["constant", "boolean"].includes(expression.kind);
     const op = constant ? "constant" : expression.kind === "binary" ? operations[expression.operator]
       : ({ "-": "neg", "~": "not", "!": "bool_not" })[expression.operator];
     const valueAttr = constant ? `value = ${expression.kind === "constant" ? expression.decimal : Number(expression.value)} : ${type}, ` : "";
     const operandTypes = expression.kind === "binary" ? [expression.left.type, expression.right.type]
       : expression.kind === "unary" ? [expression.operand.type] : [];
-    instructions.push(`    ${name} = "tsfg_core.${op}"(${operands.join(", ")}) {${valueAttr}tsfg_source.start = ${expression.range.start} : i64, tsfg_source.end = ${expression.range.end} : i64} : (${operandTypes.map(coreType).join(", ")}) -> ${type}`);
+    current.lines.push(`    ${name} = "tsfg_core.${op}"(${operands.join(", ")}) {${valueAttr}${attrsFor(expression.range)}} : (${operandTypes.map(coreType).join(", ")}) -> ${type}`);
     return name;
   };
-  let result, returned;
-  for (const statement of fn.body) {
-    if (statement.kind === "local") {
-      if (statement.initializer) definitions.set(statement.binding.id, emit(statement.initializer));
-    } else if (statement.kind === "assign") definitions.set(statement.target.binding, emit(statement.value));
-    else { result = emit(statement.value); returned = statement; break; }
-  }
+  const emitBody = statements => {
+    for (const statement of statements) {
+      if (!current) break;
+      if (statement.kind === "local") {
+        bindingTypes.set(statement.binding.id, statement.binding.type);
+        if (statement.initializer) definitions.set(statement.binding.id, emit(statement.initializer));
+      } else if (statement.kind === "assign") definitions.set(statement.target.binding, emit(statement.value));
+      else if (statement.kind === "return") {
+        const result = emit(statement.value), type = coreType(fn.returnType.id);
+        current.lines.push(`    "func.return"(${result}) {${attrsFor(statement.range)}} : (${type}) -> ()`);
+        current.terminated = true; current = null;
+      } else if (statement.kind === "block") {
+        const outer = new Map(definitions);
+        emitBody(statement.body);
+        definitions = new Map([...outer].map(([id, value]) => [id, definitions.get(id) ?? value]));
+      } else if (statement.kind === "if") {
+        const condition = emit(statement.condition), outer = new Map(definitions);
+        const yes = newBlock(), no = newBlock();
+        conditional(condition, yes, no, statement.condition.range);
+        current = yes; definitions = new Map(outer); emitBody(statement.thenBody);
+        const yesExit = current, yesDefinitions = new Map(definitions);
+        current = no; definitions = new Map(outer); emitBody(statement.elseBody);
+        const noExit = current, noDefinitions = new Map(definitions);
+        const keys = [...outer.keys()];
+        if (yesExit || noExit) {
+          const join = newBlock(keys.map(id => bindingTypes.get(id)));
+          if (yesExit) { current = yesExit; branch(join, keys.map(id => yesDefinitions.get(id)), statement.range); }
+          if (noExit) { current = noExit; branch(join, keys.map(id => noDefinitions.get(id)), statement.range); }
+          current = join; definitions = new Map(keys.map((id, index) => [id, join.parameters[index].name]));
+        } else { current = null; definitions = outer; }
+      } else if (statement.kind === "while") {
+        const outer = new Map(definitions), keys = [...outer.keys()];
+        const header = newBlock(keys.map(id => bindingTypes.get(id)));
+        branch(header, keys.map(id => outer.get(id)), statement.condition.range);
+        current = header; definitions = new Map(keys.map((id, index) => [id, header.parameters[index].name]));
+        fuel(2, statement.condition.range);
+        const condition = emit(statement.condition), incoming = new Map(definitions);
+        const loop = newBlock(), exit = newBlock();
+        conditional(condition, loop, exit, statement.condition.range);
+        current = loop; definitions = new Map(incoming); emitBody(statement.body);
+        if (current) branch(header, keys.map(id => definitions.get(id)), statement.condition.range);
+        current = exit; definitions = incoming;
+      }
+    }
+  };
+  emitBody(fn.body);
+  if (current || blocks.some(block => !block.terminated)) throw new TypeError("r03-hir-cfg: reachable function fallthrough");
   const type = coreType(fn.returnType.id);
-  return `module attributes {${attrs.join(", ")}} {\n  func.func @${quote(fn.name)}() -> ${type} {\n`
-    + `${instructions.join("\n")}\n    "func.return"(${result}) {tsfg_source.start = ${returned.range.start} : i64, tsfg_source.end = ${returned.range.end} : i64} : (${type}) -> ()\n  }\n}\n`;
+  const text = blocks.map((block, index) => `${index ? `  ^${block.name}${block.parameters.length ? `(${block.parameters.map(p => `${p.name}: ${coreType(p.type)}`).join(", ")})` : ""}:\n` : ""}${block.lines.join("\n")}`).join("\n");
+  return `module attributes {${attrs.join(", ")}} {\n  func.func @${quote(fn.name)}() -> ${type} {\n${text}\n  }\n}\n`;
 }

@@ -3,6 +3,7 @@ import assert from "node:assert/strict";
 import { createHash } from "node:crypto";
 import { spawnSync } from "node:child_process";
 import test from "node:test";
+import registry from "../../contracts/registry.json" with { type: "json" };
 
 const tools = () => ({ frontend: process.env.TSFG_FRONTEND_EXE,
   core: process.env.TSFG_CORE_IR_EXE, vm: process.env.TSFG_VM_EXE });
@@ -56,8 +57,9 @@ test("owned source golden survives HIR, SSA Core and actual R04 canonical roundt
   const bytes = await runBytecode(actual.bytecode, { ...tools(), command: "--roundtrip" });
   assert.deepEqual(bytes, actual.bytecode);
   const view = await runBytecode(actual.bytecode, { ...tools(), command: "--inspect" });
-  assert.equal(view.schemaHash, "sha256:80745002f3315a96fd01679dd5d4a3052785dfb6acf8f4bdb56f7e040e1dfb72");
-  assert.deepEqual(view.instructions, [
+  assert.equal(view.schemaHash, registry["tsfg.bytecode"].schemaHash);
+  assert.equal(view.instructions[0].opcode, "fuel");
+  assert.deepEqual(view.instructions.slice(1), [
     { opcode: "const_i32", type: "i32", register: "0", immediate: "42", start: "38", end: "41" },
     { opcode: "return_i32", type: "i32", register: "0", start: "31", end: "42" },
   ]);
@@ -138,10 +140,10 @@ test("actual bytecode request failures clean up before another request on the sa
   const compiled = await compileProgram(await sourceInput("export function answer(): i32 { return 42; }"), tools());
   assert.equal(compiled.status, "ok", JSON.stringify(compiled));
   const failures = [
-    [{ memoryBytes: 3 }, "r05-request-memory"],
+    [{ memoryBytes: 3 }, "r05-execution-abort"],
     [{ instructionBudget: 0 }, "r05-execution-abort"],
     [{ instructionBudget: 1 }, "r05-execution-abort"],
-    [{ depth: 0 }, "r05-request-depth"],
+    [{ depth: 0 }, "r01-t-depth"],
     [{ functionId: "0".repeat(64) }, "r05-request-function"],
     [{ arguments: [{ type: "i32", value: "42" }] }, "r05-request-arguments"],
     [{ capabilities: [{ id: "1" }] }, "r05-request-capability"],

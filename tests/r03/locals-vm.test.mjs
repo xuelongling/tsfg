@@ -243,11 +243,11 @@ test("formal local requests satisfy independent scalar oracles under source spel
 
 test("initializer evaluation occurs once and local reads do not charge another physical instruction", async () => {
   const source = "export function answer(): i32 { const seed: i32 = 20 + 1; const copy: i32 = seed; return seed + copy; }";
-  // Two literal loads, initializer add, result add, final return: five actual
+  // Entry fuel, two literal loads, initializer add, result add, return: six actual
   // scalar instructions. Re-evaluating either reference exceeds this budget.
   const result = await compileProgram(await sourceInput(source), tools());
   assert.equal(result.status, "ok", JSON.stringify(result));
-  const outcomes = await runBytecode(result.bytecode, { ...tools(), requests: [{ instructionBudget: 5 }, { instructionBudget: 4 }, {}] });
+  const outcomes = await runBytecode(result.bytecode, { ...tools(), requests: [{ instructionBudget: 6 }, { instructionBudget: 5 }, {}] });
   assert.deepEqual(outcomes[0].result, { type: "i32", value: "42" });
   assert.equal(outcomes[1].code, "r05-execution-abort");
   assert.equal(source.slice(Number(outcomes[1].source.start), Number(outcomes[1].source.end)).trim(), "return seed + copy;");
@@ -287,10 +287,10 @@ test("local source golden canonically rereads Core and R04 while preserving decl
   assert.equal(core.stdout, result.core);
   assert.deepEqual(await runBytecode(result.bytecode, { ...tools(), command: "--roundtrip" }), result.bytecode);
   const view = await runBytecode(result.bytecode, { ...tools(), command: "--inspect" });
-  assert.equal(view.semver, "0.3.0");
-  assert.equal(view.capabilities, "4");
-  assert.deepEqual(view.instructions.map(item => item.opcode), ["const_i32", "const_i32", "add", "return_i32"]);
-  assert.deepEqual(view.instructions.map(item => source.slice(Number(item.start), Number(item.end)).trim()), ["40", "2", "value + 2", "return value;"]);
+  assert.equal(view.semver, "0.4.0");
+  assert.equal(view.capabilities, "8");
+  assert.deepEqual(view.instructions.map(item => item.opcode), ["fuel", "const_i32", "const_i32", "add", "return_i32"]);
+  assert.deepEqual(view.instructions.slice(1).map(item => source.slice(Number(item.start), Number(item.end)).trim()), ["40", "2", "value + 2", "return value;"]);
   assert.deepEqual((await runBytecode(result.bytecode, tools()))[0].result, { type: "i32", value: "42" });
 });
 
@@ -307,8 +307,8 @@ test("Core and Runtime loaders reject non-dominating local SSA operands and old 
   const operation = result.bytecode.length - 32;
   /** @type {Array<[string, (bytes: Buffer) => void, string]>} */
   const mutations = [
-    ["self-use", bytes => bytes.writeUInt16LE(bytes.readUInt16LE(operation + 2), operation + 4), "r04-register"],
-    ["future-use", bytes => bytes.writeUInt16LE(4095, operation + 4), "r04-register"],
+    ["self-use", bytes => bytes.writeUInt16LE(bytes.readUInt16LE(operation + 2), operation + 4), "r04-dominance"],
+    ["future-use", bytes => bytes.writeUInt16LE(4095, operation + 4), "r04-dominance"],
     ["old-version", bytes => bytes.writeUInt32LE(2, 8), "r04-version"],
     ["schema", bytes => { bytes[12] ^= 1; }, "r04-schema"],
   ];

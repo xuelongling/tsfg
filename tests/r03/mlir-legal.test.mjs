@@ -7,6 +7,22 @@ import { pathToFileURL } from "node:url";
 import { readMlirSourceLegalFiles } from "../../eng/mlir-source-legal.mjs";
 import { createMlirFixture } from "./mlir-fixtures.mjs";
 
+test("M05 mandatory control flow source registration retains exact fixed-source original terms", async () => {
+  const { readMlirSourceBuildLegalInputs } = await import("../../eng/mlir-source-legal.mjs");
+  const paths = ["mlir/lib/Dialect/ControlFlow/IR/ControlFlowOps.cpp", "mlir/lib/Dialect/Arith/IR/ArithOps.cpp",
+    "mlir/lib/Dialect/Arith/IR/ArithDialect.cpp", "mlir/lib/Dialect/Arith/IR/InferIntRangeInterfaceImpls.cpp",
+    "mlir/lib/Dialect/Traits.cpp", "mlir/lib/Dialect/UB/IR/UBOps.cpp", "mlir/lib/Dialect/Arith/IR/ArithCanonicalization.td"];
+  const result = await readMlirSourceBuildLegalInputs({ sourceRoot: process.env.TSFG_MLIR_SOURCE, git: process.env.TSFG_GIT, paths });
+  assert.deepEqual(result.files.map(file => file.path), paths);
+  for (const file of result.files) {
+    assert.equal(file.license, "Apache-2.0 WITH LLVM-exception");
+    assert.match(file.completeOriginalNotice, /SPDX-License-Identifier: Apache-2.0 WITH LLVM-exception/);
+    assert.equal(file.completeOriginalNotice, file.completeOriginalAttribution);
+  }
+  assert.equal(result.sourceCommit, "4cb57d27ddcad7c3a89d23ef576662a5c891e8c8");
+  assert.equal(result.intakeComplete, false); assert.equal(result.sourceBuild, "not-run");
+});
+
 test("M01 legal reader binds the five approved original files to their exact source base", async () => {
   const { readMlirSourceLegalFiles } = await import("../../eng/mlir-source-legal.mjs");
   const result = await readMlirSourceLegalFiles({ sourceRoot: process.env.TSFG_MLIR_SOURCE, git: process.env.TSFG_GIT });

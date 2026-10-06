@@ -3,6 +3,7 @@ import assert from "node:assert/strict";
 import { createHash } from "node:crypto";
 import { spawnSync } from "node:child_process";
 import test from "node:test";
+import { coreTestModule, sourceAttributes } from "./core-fixtures.mjs";
 import { compileProgram, sourceInput, runBytecode, createCompilerSession } from "../../compiler/pipeline.mjs";
 import { printHir, readHir } from "../../compiler/hir.mjs";
 
@@ -24,14 +25,12 @@ test("every scalar Core operation enforces typed operands and canonical rereadin
     const resultType = integer.includes(name) ? "i32" : "i1";
     const operands = unary ? "%a" : "%a, %a";
     const operandTypes = unary ? inputType : `${inputType}, ${inputType}`;
-    const operation = `"tsfg_core.${name}"(${operands}) : (${operandTypes}) -> ${resultType}`;
-    const fixture = `module attributes {tsfg_core.version = "0.3.0"} {
-      func.func @sample() -> ${resultType} {
-        %a = "tsfg_core.constant"() {value = 1 : ${inputType}} : () -> ${inputType}
+    const operation = `"tsfg_core.${name}"(${operands}) {${sourceAttributes}} : (${operandTypes}) -> ${resultType}`;
+    const fixture = coreTestModule(`
+        %a = "tsfg_core.constant"() {value = 1 : ${inputType}, ${sourceAttributes}} : () -> ${inputType}
         %b = ${operation}
-        return %b : ${resultType}
-      }
-    }`;
+        "func.return"(%b) {${sourceAttributes}} : (${resultType}) -> ()
+    `, resultType);
     const first = core(fixture);
     assert.equal(first.status, 0, first.stderr);
     const second = core(first.stdout);
@@ -42,7 +41,7 @@ test("every scalar Core operation enforces typed operands and canonical rereadin
     // the scalar operation verifier can reject its wrong result family.
     const wrongResult = fixture.replace(operation, operation.replace(`-> ${resultType}`, `-> ${badType}`))
       .replace(`@sample() -> ${resultType}`, `@sample() -> ${badType}`)
-      .replace(`return %b : ${resultType}`, `return %b : ${badType}`);
+      .replace(`(${resultType}) -> ()`, `(${badType}) -> ()`);
     for (const bad of [wrongResult,
       fixture.replace(operation, operation.replace(`(${operands})`, "()"))]) {
       const rejected = core(bad);
@@ -51,13 +50,11 @@ test("every scalar Core operation enforces typed operands and canonical rereadin
       assert.match(rejected.stderr, /core-ir-invalid/);
     }
   });
-  const invalid = `module attributes {tsfg_core.version = "0.3.0"} {
-    func.func @sample() -> i1 {
-      %a = "tsfg_core.constant"() {value = 1 : i1} : () -> i1
-      %b = "tsfg_core.lt"(%a, %a) : (i1, i1) -> i1
-      return %b : i1
-    }
-  }`;
+  const invalid = coreTestModule(`
+      %a = "tsfg_core.constant"() {value = 1 : i1, ${sourceAttributes}} : () -> i1
+      %b = "tsfg_core.lt"(%a, %a) {${sourceAttributes}} : (i1, i1) -> i1
+      "func.return"(%b) {${sourceAttributes}} : (i1) -> ()
+  `, "i1");
   assert.equal(core(invalid).status, 3, "ordered bool comparison is invalid");
 });
 
@@ -77,7 +74,7 @@ test("scalar source golden preserves canonical HIR, SSA, R04 and UTF16 anchors u
     assert.equal(reread.stdout, result.core);
     assert.deepEqual(await runBytecode(result.bytecode, { ...tools(), command: "--roundtrip" }), result.bytecode);
     const view = await runBytecode(result.bytecode, { ...tools(), command: "--inspect" });
-    assert.deepEqual(view.instructions.map(instruction => instruction.opcode), ["const_i32", "const_i32", "add", "const_i32", "le", "bool_not", "return_bool"]);
+    assert.deepEqual(view.instructions.map(instruction => instruction.opcode), ["fuel", "const_i32", "const_i32", "add", "const_i32", "le", "bool_not", "return_bool"]);
     const outcomes = await runBytecode(result.bytecode, tools());
     assert.deepEqual(outcomes[0].result, { type: "bool", value: true });
     assert.equal(outcomes[0].source.hash, `sha256:${createHash("sha256").update(source).digest("hex")}`);

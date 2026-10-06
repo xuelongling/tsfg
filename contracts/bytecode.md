@@ -1,103 +1,81 @@
 <!-- SPDX-License-Identifier: MIT -->
 
-# tsfg.bytecode 0.3.0
+# tsfg.bytecode 0.4.0
 
-This exact development format is the formal R04 compiler-to-Zig VM seam. No
-published format or supported external consumer predates it. Producer and
-consumer change atomically in this product repository. A different version or
-schema hash is incompatible and invalidates cached bytecode. The registry is
-the sole version/hash authority; the JSON schema describes the binary layout.
+This exact, same-repository development format is the formal R04 compiler to
+Zig Runtime seam. It has no published or supported older external consumer.
+Producer, loader and registry change atomically; old wire/schema/Core identities
+invalidate caches and are rejected. The registry owns version and JCS schema
+hash. The JSON schema owns wire field order and bounds.
 
-All integers are explicitly little endian; no host struct is dumped. The header
-is 80 bytes: magic `TSFGTBC0`, u32 version 3 (SemVer 0.3.0), raw 32-byte schema
-SHA-256, u32 total byte length, and raw 32-byte SHA-256 of the remaining payload.
-UTF-8 strings have a u32 byte length and no terminator. Schema field order is
-wire order. No padding, duplicate fields, reserved data, or trailing bytes are
-accepted. Limits are checked before allocation. The checksum proves integrity,
-not publisher authenticity or authorization.
+All integers use little endian. The 80-byte header is magic `TSFGTBC0`, u32 wire
+version 4, raw 32-byte schema SHA256, u32 total length and raw 32-byte SHA256 of
+the payload. UTF8 strings have a u32 length, no terminator or padding. The
+checksum supplies integrity, not publisher authenticity. Target/triple and LLVM
+DataLayout are fixed in the schema. LLVM derives i32 size/alignment; Zig checks
+its actual target. Logical source paths preserve the leading root slash and
+never cause a host file read. Empty/dot/parent components, backslashes and drive
+colons reject. Entity identity domains remain unchanged: SHA256 of
+`tsfg.type\0<scalar>`, `tsfg.signature\0()-><scalar>` and
+`tsfg.function\0<sourcePath>\0<name>\0<signatureHashHex>`.
 
-Capability bit 4 admits one zero-parameter i32/bool function, one block and
-1..4096 sequentially defined typed registers. Constants and scalar operations
-are followed by a final matching typed return. There is one instruction per
-definition, plus the return. Each instruction is exactly 16 bytes: opcode u8,
-type u8 (1 i32, 2 bool), destination/return register u16, payload u32, start u32
-and end u32. Binary payloads contain prior left/right u16 registers; unary
-payloads contain a prior left u16 and a reserved zero u16. Constants contain
-i32 bits or canonical bool 0/1. The return payload is zero.
+Capability 8 admits one zero-parameter i32/bool function, up to 256 reachable
+blocks, 4096 SSA registers and 8192 instructions. Metadata through parameterCount
+is unchanged from wire 3. Next are registerCount, blockCount and totalInstructionCount
+(u16). The complete block table precedes the instruction sequences. Each block
+has parameterCount u16, each parameter's register u16/type u8/reserved zero u8,
+then instructionCount u16. Registers are globally unique in block order: block
+parameters followed by scalar results. Block arguments are phi values.
 
-Opcodes are constant i32 1, return 2, constant bool 3, add 4, subtract 5,
-multiply 6, divide 7, remainder 8, left shift 9, arithmetic right shift 10,
-logical right shift 11, bitwise and/or/xor 12..14, negate 15, complement 16,
-boolean not 17, equality/inequality 18..19, and less/less-equal/greater/greater-equal
-20..23. Arithmetic, shifts and bitwise operations require i32; comparisons
-produce bool. Equality accepts two matching i32 or bool operands. Boolean not
-requires bool. The JSON inspector uses `return_i32` or `return_bool` for opcode 2.
-Definition/use, instruction and register types, terminator, counts and all
-references are verified before execution. Every instruction has an original
-source UTF-16 half-open range, contained in the function range and source
-length. Source path and content digest are separate from logical entity IDs.
-Local initializer and assignment RHS anchors may precede the return anchor.
-Every executed expression ends no later than the reached return statement;
-all anchors remain contained within the function. SSA definitions preserve
-statement order and left-to-right operand order. Local reads reuse existing
-register definitions; simple assignments select a new SSA definition. Unused
-or overwritten initializers still execute. This normalization introduces no
-mutable register rewrite or local opcode. Core IR 0.3.0 is required; 0.2.0
-Core/HIR/R04 identities are rejected rather than silently mixed.
-The path is a normalized logical UTF-8 source path; the official frontend's
-leading logical-root slash is preserved. It never causes a host file read.
-Empty/dot/parent components, backslashes and drive colons are rejected.
+Scalar and return records retain their 16-byte layout: opcode/type u8, register
+u16, payload u32, original UTF16 start/end u32. Existing opcodes 1..23 and their
+typed scalar rules remain unchanged. Branch opcode24 has type/register0 and a
+low-u16 target with high-u16 reserved0. Conditional branch25 has type2, a bool
+condition register, true/false targets in low/high u16. A branch appends argument
+count u16 and argument registers u16; conditional branches append true then
+false argument lists. Arity and types match destination block parameters. Fuel
+opcode26 has type/register0 and event u32:1 entry or2 while-condition.
 
-TypeId is SHA-256 of UTF-8 `tsfg.type\0<scalar>` for i32 or bool; signature hash
-is SHA-256 of `tsfg.signature\0()-><scalar>`. FunctionId is SHA-256 of UTF-8
-`tsfg.function\0<sourcePath>\0<functionName>\0<signatureHashHex>` (lowercase 64
-hex digits, without `sha256:`). This keeps FunctionId stable when the function
-body or source offsets change. Snapshot-local IDs are never emitted as these
-identities. Input identity binds the complete checked frontend input, while
-source hash binds the original source text.
+The loader verifies the complete identity/integrity/bounds, known opcodes,
+reserved fields, typed definitions/uses, dominance, successor references and
+phi types before execution. Every block ends exactly once in return/branch/
+conditional branch; no unreachable blocks or entry predecessors are accepted.
+Entry fuel is first and unique. Removing blocks with while events must leave an
+acyclic CFG, preventing unmetered cycles. All instruction anchors are nonempty,
+contained in the function and original source length; individual return ranges
+do not constrain unrelated branches. Unknown/truncated/trailing inputs reject.
 
-Only the schema target/triple/DataLayout is currently supported. The C++
-producer asks LLVM DataLayout for i32 allocation size and ABI alignment; the
-Zig loader compares that result with its target i32 layout. Core IR remains
-typed SSA owned by MLIR; this format is neither Core IR nor MLIR bytecode.
+A verified module owns immutable bytes and predecoded instructions behind an
+opaque handle. Edge arguments are read into temporary values before destination
+phi registers are written, preserving parallel transfer even for loop swaps.
+`eval_bytecode` takes a verified module, FunctionId, empty typed argument and
+capability tables and explicit request limits. Runtime contains no source
+parser, JavaScript fallback, frontend, MLIR or LLVM. Canonical serialize returns
+identical verified bytes; inspect prints typed CFG and original source anchors.
 
-`runtime/root.zig` exposes load/unload and `eval_bytecode`. A loaded module owns
-predecoded data behind an opaque VerifiedModule handle. Callers cannot mutate
-the original input after verification to change execution. Evaluation accepts
-that module, a logical FunctionId, a typed argument frame and a capability
-table; both tables must currently be empty. No source, frontend, MLIR or LLVM
-is present in the Runtime. The result is typed i32/bool or a structured request
-failure with stable machine code, FunctionId and original source anchor.
+Request `semanticFuel` defaults to4097, independently of `instructionBudget`
+(default4097). Function entry and each while condition attempt consume1,
+including initial and final-false checks. Insufficient fuel traps before that
+event with `r01-t-fuel`, category `trap`, Rule `r01-fuel` and the event's
+source range. Outcome fields `fuelRemaining` and `fuelConsumed` are decimal
+strings. Invalid request identity/arguments/capabilities reject before events.
+Active depth defaults1; depth0 traps before entering a frame/event as
+`r01-t-depth`, Rule `r01-depth`. At a fuel event, semantic failure takes
+priority over coincident physical instruction exhaustion. After successful
+logical debit, the physical bound applies. Frame memory (default16384 bytes),
+physical instruction exhaustion and allocation failure are Execution Abort,
+separate from semantic traps. Calls and additional frames remain M06 work.
 
-Physical instruction, frame-memory and depth limits are request-local resource
-limits, distinct from later Semantic Fuel. Runtime frees its frame on every
-exit, runs no user cleanup callback, retains no request pointers in results,
-and permits another request after failure. Add/subtract/multiply/negate wrap
-at 32 bits. Division truncates toward zero; MIN/-1 returns MIN and its remainder
-is zero. Runtime checks zero divisors before native division/remainder and
-signed shift counts 0..31 before narrowing or shifting. Traps are
-`r01-t-divide-zero`, `r01-t-remainder-zero` (Rule `r01-division`) and
-`r01-t-shift-count` (Rule `r01-shifts`), with the failing operation's original
-UTF-16 anchor. The first trap terminates its request and later instructions do
-not execute. It does not kill the host, roll back effects or enter user cleanup.
-This slice has no user finally, managed roots, borrow or side-effect operation; their later
-contracts remain unchanged and are not claimed as verified here.
+Integer arithmetic wraps, guarded division/remainder and shift traps keep their
+R01 codes, Rules and operation anchors. The first actual trap ends the request;
+unreached branches/short-circuit operands cannot fail early. Runtime frees its
+frame, activeRequests returns0 and the same host accepts later requests. It
+runs no user catch/finally or callbacks and promises no rollback. Managed roots,
+borrows, user exceptions and side effects remain later capability obligations.
 
-Load failures are `r04-*` with byte offset; untrusted metadata is not presented
-as a source anchor. Request errors are `r05-request-function`,
-`r05-request-arguments`, `r05-request-capability`, `r05-request-memory`,
-`r05-request-depth`, `r05-execution-abort` and `r05-request-allocation`.
-Unsupported source forms are `r03-d-capability` / `r01-ts-baseline`, distinct
-from official frontend diagnostics or invalid owned facts (`r03-d-snapshot`).
-
-Canonical serialization is the unique schema wire order. A load/serialize
-round-trip preserves all bytes; a normalized textual view contains the same
-logical identities, typed instructions and source anchors. Corruption,
-truncation, wrong schema/version/target/layout, unknown instructions, wrong
-instruction/register types, invalid identities and ranges fail closed.
-
-The host CLI also accepts `--request-sequence` with `TSFGREQ1` transport frames:
-u32 count followed by u32 byte lengths and complete R04 packets. There must be
-1..128 matching JSON requests, a total input at most 1 MiB, and no trailing
-bytes. One Runtime serves the sequence. This transport does not extend R04
-instructions, add calls, or change request termination semantics.
+Load failures carry `r04-*` and byte offsets, never untrusted source attribution.
+Request preflight errors keep `r05-request-function`, `r05-request-arguments`
+and `r05-request-capability`; physical failure uses `r05-execution-abort`.
+The `TSFGREQ1` transport remains u32 count plus length-delimited R04 packets,
+1..128 matching requests and total1MiB/no trailing bytes, served by one Runtime.
+It adds no language semantics.
