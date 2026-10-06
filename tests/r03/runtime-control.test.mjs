@@ -38,7 +38,7 @@ function invoke(bytes, args = []) {
 function evaluate(bytes, requests) {
   const result = invoke(bytes, ["--requests", JSON.stringify(requests)]);
   assert.equal(result.status, 0, result.stderr.toString());
-  return JSON.parse(result.stdout);
+  return JSON.parse(result.stdout.toString("utf8"));
 }
 const constant = () => packet([{ params: [], ops: [fuel(1), op(1, 1, 0, 42), op(2, 1, 0)] }], 1);
 
@@ -74,7 +74,7 @@ test("while fuel includes first and final false attempts with independent litera
 test("canonical inspector exposes CFG parameter and edge metadata", () => {
   const inspection = invoke(loop(3), ["--inspect"]);
   assert.equal(inspection.status, 0, inspection.stderr.toString());
-  const view = JSON.parse(inspection.stdout);
+  const view = JSON.parse(inspection.stdout.toString("utf8"));
   assert.equal(view.semver, "0.4.0"); assert.equal(view.capabilities, "8");
   assert.equal(view.blockCount, "4");
   assert.deepEqual(view.blocks[1].parameters, [{ register: "3", type: "i32" }]);
@@ -116,7 +116,7 @@ test("CFG short circuit skips division and parallel loop phi transfers preserve 
 });
 function rejects(bytes, code) {
   const result = invoke(bytes); assert.equal(result.status, 3, result.stderr.toString());
-  if (code) assert.equal(JSON.parse(result.stderr).code, code);
+  if (code) assert.equal(JSON.parse(result.stderr.toString("utf8")).code, code);
 }
 test("loader rejects malformed CFG, dominance, phi types, entry reexecution and every unfuelled cycle", () => {
   rejects(packet([{ params: [], ops: [op(1, 1, 0, 1), op(2, 1, 0)] }], 1), "r04-entry-fuel");
@@ -155,6 +155,6 @@ test("request preflight consumes no fuel and the full u64 budget preserves decim
   for (const result of results) { assert.equal(result.fuelConsumed, "0"); assert.equal(result.fuelRemaining, "0"); assert.equal(result.activeRequests, "0"); }
   const maximum = invoke(constant(), ["--requests", "[{\"semanticFuel\":18446744073709551615}]"]);
   assert.equal(maximum.status, 0, maximum.stderr.toString());
-  const [result] = JSON.parse(maximum.stdout);
+  const [result] = JSON.parse(maximum.stdout.toString("utf8"));
   assert.equal(result.fuelRemaining, "18446744073709551614"); assert.equal(result.fuelConsumed, "1");
 });
