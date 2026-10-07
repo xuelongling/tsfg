@@ -20,13 +20,21 @@ async function verifiedConsumer(executable, role) {
   if (manifest.buildIdentity?.target !== "windows-x86_64-msvc"
       || manifest.buildIdentity?.profile !== "debug")
     throw new TypeError(`r03-tool-${role}: unsupported target/profile identity`);
-  const required = role === "core" ? ["compiler/core-ir/main.cpp", "compiler/core-ir/CMakeLists.txt"]
-    : ["runtime/root.zig", "runtime/bytecode.zig", "runtime/vm.zig", "runtime/runtime.zig", "runtime/main.zig", "runtime/contract.zig"];
+  const required = role === "core" ? ["compiler/core-ir/main.cpp", "compiler/core-ir/module.cpp", "compiler/core-ir/module.h", "compiler/core-ir/CMakeLists.txt"]
+    : ["runtime/root.zig", "runtime/bytecode.zig", "runtime/module_format.zig", "runtime/module.zig", "runtime/request.zig", "runtime/clock.zig", "runtime/host_counter.zig", "runtime/host_counter.c", "runtime/vm.zig", "runtime/runtime.zig", "runtime/main.zig", "runtime/contract.zig", "eng/host-counter.mjs", "eng/host-cost-source.lock.json", "eng/vm-build.mjs"];
   required.push("contracts/registry.json", "contracts/bytecode.schema.json");
   for (const name of required) {
     const entry = manifest.buildInputSet?.entries?.find(entry => entry.projectId === "tsfg" && entry.repositoryRelativePath === name);
     if (entry?.sha256 !== sha256(await readFile(path.join(productRoot, name))))
       throw new TypeError(`r03-tool-${role}: compiled input differs from current ${name}`);
+  }
+  if(role==="vm") {
+    const entry=manifest.outputs?.find(output=>output.path==="host-cost-summary.json");
+    const bytes=await readFile(path.join(path.dirname(executable),"host-cost-summary.json"));
+    if(entry?.sha256!==sha256(bytes))throw new TypeError("r03-tool-vm: host summary differs from formal build");
+    const summary=JSON.parse(bytes.toString("utf8"));
+    if(summary.summaryVersion!=="tsfg-host-cost-v1"||summary.linkedRuntimeHash!==output.sha256)
+      throw new TypeError("r03-tool-vm: host summary belongs to a different Runtime");
   }
   return executable;
 }
@@ -63,7 +71,7 @@ async function produceBytecode(hir, options) {
     const canonicalCore = consume(core, [options.optimize ? "--optimize" : "--canonicalize"], lowerHir(hir)).toString("utf8");
     const bytecode = consume(core, ["--emit-bytecode"], canonicalCore);
     if (bytecode.length < 80 || bytecode.subarray(0, 8).toString("ascii") !== "TSFGTBC0"
-        || bytecode.readUInt32LE(8) !== 6 || bytecode.readUInt32LE(44) !== bytecode.length
+        || bytecode.readUInt32LE(8) !== 7 || bytecode.readUInt32LE(44) !== bytecode.length
         || `sha256:${bytecode.subarray(12, 44).toString("hex")}` !== registry["tsfg.bytecode"].schemaHash
         || `sha256:${bytecode.subarray(48, 80).toString("hex")}` !== sha256(bytecode.subarray(80)))
       throw new TypeError("r04-producer-identity: C++ output differs from registered R04 packet");
@@ -74,6 +82,7 @@ async function produceBytecode(hir, options) {
 }
 
 const sessionInputs = ["compiler/frontend.mjs", "compiler/hir.mjs", "compiler/identity.mjs",
+  "compiler/module-facts.mjs", "compiler/module-hir.mjs", "compiler/modules.mjs",
   "compiler/pipeline.mjs", "contracts/registry.json", "contracts/hir.schema.json", "contracts/bytecode.schema.json"];
 async function sessionFingerprint() {
   const inputs = await Promise.all(sessionInputs.map(async name => [name, sha256(await readFile(path.join(productRoot, name)))]));
@@ -117,9 +126,14 @@ export function createCompilerSession(options) {
 
 export async function runBytecode(bytes, { vm, requests = [{}], command = "--requests" }) {
   const executable = await verifiedConsumer(vm, "vm");
-  const args = command === "--requests" ? [command, JSON.stringify(requests)] : [command];
+  const args = command === "--requests" || command === "--module-requests" ? [command, JSON.stringify(requests)] : [command];
   const result = consume(executable, args, bytes);
   return command === "--roundtrip" ? result : JSON.parse(result.toString("utf8"));
+}
+
+/** Evaluate a serial batch against one persistent module instance. */
+export function runModuleRequests(bytes, {vm,requests=[{}]}) {
+  return runBytecode(bytes,{vm,requests,command:"--module-requests"});
 }
 
 /** Multiple verified modules share one formal Zig Runtime request host. */

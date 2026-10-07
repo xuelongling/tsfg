@@ -4,10 +4,11 @@ const builtin = @import("builtin");
 pub const contract = @import("contract.zig");
 const Allocator = std.mem.Allocator;
 const Sha256 = std.crypto.hash.sha2.Sha256;
+pub const module_format = @import("module_format.zig");
 
 pub const FunctionId = [32]u8;
 pub const VerifiedModule = opaque {};
-pub const Source = struct { path: []const u8, hash: [32]u8, start: u32, end: u32 };
+pub const Source = module_format.Source;
 pub const ModuleInfo = struct {
     function_id: FunctionId,
     function_name: []const u8,
@@ -24,6 +25,8 @@ pub const ModuleInfo = struct {
     instruction_offset: usize,
     block_count: u16,
     parameter_types: []const u8 = &.{},
+    source_index: u16 = 0,
+    initializer: bool = false,
 };
 pub const Instruction = struct {
     opcode: u8,
@@ -39,7 +42,7 @@ pub const Instruction = struct {
 pub const Parameter = struct { register: u16, type_code: u8 };
 pub const Block = struct { parameters: []const Parameter, start: usize, count: u16 };
 pub const Function = struct { info: ModuleInfo, instructions: []const Instruction, blocks: []const Block, register_types: []const u8 };
-const Module = struct { allocator: Allocator, arena: std.heap.ArenaAllocator, bytes: []u8, info: ModuleInfo, functions: []Function };
+const Module = struct { allocator: Allocator, arena: std.heap.ArenaAllocator, bytes: []u8, info: ModuleInfo, functions: []Function, tables: module_format.Tables = .{} };
 const Global = struct { input_identity: [32]u8, source_hash: [32]u8, source_path: []const u8, source_length: u32 };
 pub const LoadFailure = struct { code: []const u8, offset: usize };
 pub const LoadOutcome = union(enum) { loaded: *VerifiedModule, rejected: LoadFailure };
@@ -49,7 +52,7 @@ const Reader = struct {
     offset: usize = 0,
     failure: LoadFailure = .{ .code = "r04-truncated", .offset = 0 },
 
-    fn reject(self: *Reader, code: []const u8, offset: usize) error{Invalid} {
+    pub fn reject(self: *Reader, code: []const u8, offset: usize) error{Invalid} {
         self.failure = .{ .code = code, .offset = offset };
         return error.Invalid;
     }
@@ -59,14 +62,14 @@ const Reader = struct {
         self.offset += count;
         return result;
     }
-    fn int(self: *Reader, comptime T: type) error{Invalid}!T {
+    pub fn int(self: *Reader, comptime T: type) error{Invalid}!T {
         const bytes = try self.take(@sizeOf(T));
         return std.mem.readInt(T, bytes[0..@sizeOf(T)], .little);
     }
-    fn digest(self: *Reader) error{Invalid}![32]u8 {
+    pub fn digest(self: *Reader) error{Invalid}![32]u8 {
         return (try self.take(32))[0..32].*;
     }
-    fn string(self: *Reader, maximum: u32) error{Invalid}![]const u8 {
+    pub fn string(self: *Reader, maximum: u32) error{Invalid}![]const u8 {
         const start = self.offset;
         const count = try self.int(u32);
         if (count == 0 or count > maximum) return self.reject("r04-string", start);
@@ -111,7 +114,7 @@ fn parse(reader: *Reader, allocator: Allocator, module: *Module) (error{Invalid}
     try reader.expected(u16, @alignOf(i32), "r04-layout");
     try reader.expected(u16, @bitSizeOf(usize), "r04-layout");
     try reader.expected(u16, @alignOf(usize), "r04-layout");
-    try reader.expected(u32, 17, "r04-capability");
+    try reader.expected(u32, 18, "r04-capability");
     const input_identity = try reader.digest();
     const source_hash = try reader.digest();
     const source_path = try reader.string(4096);
@@ -125,13 +128,22 @@ fn parse(reader: *Reader, allocator: Allocator, module: *Module) (error{Invalid}
     }
     if (source_path[0] != '/' or !std.mem.endsWith(u8, source_path, ".ts") or std.mem.endsWith(u8, source_path, ".d.ts")) return reader.reject("r04-source", reader.offset);
     const source_length = try reader.int(u32);
+    module.tables = try module_format.parse(reader, allocator);
+    if (module.tables.present) {
+        var matched = false;
+        for (module.tables.sources) |source| if (std.mem.eql(u8, source.path, source_path)) {
+            if (!std.mem.eql(u8, &source.hash, &source_hash) or source.length != source_length) return reader.reject("r04-module-source", reader.offset);
+            matched = true;
+        };
+        if (!matched) return reader.reject("r04-module-source", reader.offset);
+    }
     const count = try reader.int(u16);
-    if (count < 1 or count > 128) return reader.reject("r04-function-count", reader.offset - 2);
+    if (count < 1 or count > 256) return reader.reject("r04-function-count", reader.offset - 2);
     module.functions = try allocator.alloc(Function, count);
     const global: Global = .{ .input_identity = input_identity, .source_hash = source_hash, .source_path = source_path, .source_length = source_length };
     for (module.functions, 0..) |*function, index| {
-        function.* = try parseFunction(reader, allocator, global);
-        for (module.functions[0..index]) |previous| if (std.mem.eql(u8, &previous.info.function_id, &function.info.function_id) or std.mem.eql(u8, previous.info.function_name, function.info.function_name)) return reader.reject("r04-function", reader.offset);
+        function.* = try parseFunction(reader, allocator, global, module.tables);
+        for (module.functions[0..index]) |previous| if (std.mem.eql(u8, &previous.info.function_id, &function.info.function_id) or previous.info.source_index == function.info.source_index and std.mem.eql(u8, previous.info.function_name, function.info.function_name)) return reader.reject("r04-function", reader.offset);
     }
     if (reader.offset != reader.bytes.len) return reader.reject("r04-trailing", reader.offset);
     for (module.functions) |function| for (function.instructions) |op| if (op.opcode == 27) {
@@ -141,14 +153,25 @@ fn parse(reader: *Reader, allocator: Allocator, module: *Module) (error{Invalid}
         if (op.edges[0].len != target.info.parameter_types.len) return reader.reject("r04-call-arity", function.info.instruction_offset);
         for (op.edges[0], target.info.parameter_types) |argument, type_code| if (function.register_types[argument] != type_code) return reader.reject("r04-type", function.info.instruction_offset);
     };
+    try module_format.verify(reader, module.tables, module.functions);
     return module.functions[0].info;
 }
 
-fn parseFunction(reader: *Reader, allocator: Allocator, global: Global) (error{Invalid} || Allocator.Error)!Function {
+fn parseFunction(reader: *Reader, allocator: Allocator, global: Global, tables: module_format.Tables) (error{Invalid} || Allocator.Error)!Function {
     const input_identity = global.input_identity;
-    const source_hash = global.source_hash;
-    const source_path = global.source_path;
-    const source_length = global.source_length;
+    var source_hash = global.source_hash;
+    var source_path = global.source_path;
+    var source_length = global.source_length;
+    var source_index: u16 = 0;
+    var initializer = false;
+    if (tables.present) {
+        source_index = try reader.int(u16);
+        const marker = try reader.int(u8);
+        try reader.expected(u8, 0, "r04-reserved");
+        if (source_index >= tables.sources.len or marker > 1) return reader.reject("r04-module-source", reader.offset);
+        initializer = marker == 1;
+        const source = tables.sources[source_index]; source_hash = source.hash; source_path = source.path; source_length = source.length;
+    }
     const function_id = try reader.digest();
     const signature_offset = reader.offset;
     const signature_hash = try reader.digest();
@@ -165,7 +188,7 @@ fn parseFunction(reader: *Reader, allocator: Allocator, global: Global) (error{I
     function_hash.final(&expected_function_id);
     const function_start = try reader.int(u32);
     const function_end = try reader.int(u32);
-    if (!rangeValid(function_start, function_end, 0, source_length)) return reader.reject("r04-source-range", reader.offset - 8);
+    if (!rangeValid(function_start, function_end, 0, source_length) and !(initializer and function_start == 0 and function_end == 0 and source_length == 0)) return reader.reject("r04-source-range", reader.offset - 8);
     const return_type = try reader.int(u8);
     if (!contract.validType(return_type)) return reader.reject("r04-type", reader.offset - 1);
     const signature_parameter_count = try reader.int(u8);
@@ -235,7 +258,7 @@ fn parseFunction(reader: *Reader, allocator: Allocator, global: Global) (error{I
             const payload = try reader.int(u32);
             const start = try reader.int(u32);
             const end = try reader.int(u32);
-            if (!rangeValid(start, end, function_start, function_end)) return reader.reject("r04-source-range", offset + 8);
+            if (!rangeValid(start, end, function_start, function_end) and !(initializer and function_start == 0 and function_end == 0 and start == 0 and end == 0)) return reader.reject("r04-source-range", offset + 8);
             const terminator = opcode == 2 or opcode == 24 or opcode == 25;
             if (terminator != (position + 1 == block.count)) return reader.reject("r04-terminator", offset);
             op.* = .{ .opcode = opcode, .type_code = type_code, .register = reg, .immediate = @bitCast(payload), .left = @truncate(payload), .right = @truncate(payload >> 16), .source = .{ .path = source_path, .hash = source_hash, .start = start, .end = end } };
@@ -255,17 +278,20 @@ fn parseFunction(reader: *Reader, allocator: Allocator, global: Global) (error{I
                 }
             } else if (opcode == 26) {
                 if (type_code != 0 or reg != 0 or (payload != 1 and payload != 2)) return reader.reject("r04-fuel", offset);
-                if (payload == 1 and (block_index != 0 or position != 0)) return reader.reject("r04-entry-fuel", offset);
+                if (payload == 1 and (initializer or block_index != 0 or position != 0)) return reader.reject("r04-entry-fuel", offset);
                 if (payload == 1 and (start != function_start or end != function_end)) return reader.reject("r04-source-range", offset + 8);
                 if (payload == 2 and (block_index == 0 or position != 0)) return reader.reject("r04-fuel", offset);
                 if (payload == 2) has_fuel[block_index] = true;
             } else {
                 if (!contract.validType(type_code)) return reader.reject("r04-type", offset + 1);
-                if (opcode == 2) {
+                if (opcode == 30) {
+                    if (!tables.present or op.left >= tables.globals.len or op.right > 1) return reader.reject("r04-module-global", offset);
+                } else if (opcode == 2) {
                     if (payload != 0) return reader.reject("r04-reserved", offset + 4);
                     if (type_code != return_type) return reader.reject("r04-type", offset + 1);
                 } else {
-                    if (opcode < 1 or (opcode > 23 and opcode != 27 and opcode != 28)) return reader.reject("r04-instruction", offset);
+                    if (opcode < 1 or (opcode > 23 and opcode != 27 and opcode != 28 and opcode != 29 and opcode != 31)) return reader.reject("r04-instruction", offset);
+                    if ((opcode == 29 or opcode == 31) and !tables.present) return reader.reject("r04-module-mode", offset);
                     if (reg != next_register or next_register >= register_count) return reader.reject("r04-register", offset + 2);
                     register_types[next_register] = type_code;
                     definition_blocks[next_register] = @intCast(block_index);
@@ -294,7 +320,7 @@ fn parseFunction(reader: *Reader, allocator: Allocator, global: Global) (error{I
         }
     }
     if (next_register != register_count) return reader.reject("r04-register", reader.offset);
-    if (ops[0].opcode != 26 or ops[0].immediate != 1) return reader.reject("r04-entry-fuel", instruction_offset);
+    if (!initializer and (ops[0].opcode != 26 or ops[0].immediate != 1)) return reader.reject("r04-entry-fuel", instruction_offset);
     // Reachability and dominance are computed independently of producer verification.
     var reachable = [_]bool{false} ** 256;
     reachable[0] = true;
@@ -334,6 +360,8 @@ fn parseFunction(reader: *Reader, allocator: Allocator, global: Global) (error{I
         for (ops[block.start..][0..block.count], 0..) |op, position| {
             const global_position = block.start + position;
             if (op.opcode == 2 or op.opcode == 25) try use(reader, op.register, op.type_code, block_index, global_position, register_count, &register_types, &definition_blocks, &definition_positions, &dominators);
+            if (op.opcode == 30) try use(reader, op.register, op.type_code, block_index, global_position, register_count, &register_types, &definition_blocks, &definition_positions, &dominators);
+            if (op.opcode == 31) try use(reader, op.right, 1, block_index, global_position, register_count, &register_types, &definition_blocks, &definition_positions, &dominators);
             if (op.opcode >= 4 and op.opcode <= 23) {
                 if (op.left >= register_count) return reader.reject("r04-register", instruction_offset);
                 const operand_type = register_types[op.left];
@@ -356,6 +384,22 @@ fn parseFunction(reader: *Reader, allocator: Allocator, global: Global) (error{I
             };
         }
     }
+    if (initializer) for (tables.globals, 0..) |global_declaration, global_index| {
+        if (global_declaration.source_index != source_index) continue;
+        var initialization_block: ?usize = null;
+        var initialization_position: usize = 0;
+        for (blocks, 0..) |block, block_index| for (ops[block.start..][0..block.count], 0..) |op, position| {
+            if (op.opcode == 30 and op.left == global_index and op.right == 1) {
+                if (initialization_block != null or op.source.start > global_declaration.start or op.source.end < global_declaration.end) return reader.reject("r04-module-initialization", instruction_offset);
+                initialization_block = block_index; initialization_position = block.start + position;
+            }
+        };
+        const definition = initialization_block orelse return reader.reject("r04-module-initialization", instruction_offset);
+        for (blocks, 0..) |block, block_index| {
+            const last = block.start + block.count - 1;
+            if (ops[last].opcode == 2 and (dominators[block_index][definition / 64] & (@as(u64, 1) << @as(u6, @intCast(definition % 64))) == 0 or definition == block_index and initialization_position >= last)) return reader.reject("r04-module-initialization", instruction_offset);
+        }
+    };
     // Remove all while-event blocks. A cycle in the remaining graph is a path
     // that can run forever without a logical debit, even inside a fuel-bearing SCC.
     var indegree = [_]u16{0} ** 256;
@@ -381,7 +425,7 @@ fn parseFunction(reader: *Reader, allocator: Allocator, global: Global) (error{I
         };
     }
     if (removed_count != no_fuel_count) return reader.reject("r04-fuel-cycle", instruction_offset);
-    return .{ .info = .{ .function_id = function_id, .function_name = function_name, .source = .{ .path = source_path, .hash = source_hash, .start = function_start, .end = function_end }, .input_identity = input_identity, .signature_hash = signature_hash, .type_id = type_id, .source_utf16_length = source_length, .function_start = function_start, .function_end = function_end, .return_type = return_type, .register_count = register_count, .block_count = block_count, .instruction_count = instruction_count, .instruction_offset = instruction_offset, .parameter_types = parameter_types }, .instructions = ops, .blocks = blocks, .register_types = try allocator.dupe(u8, register_types[0..register_count]) };
+    return .{ .info = .{ .function_id = function_id, .function_name = function_name, .source = .{ .path = source_path, .hash = source_hash, .start = function_start, .end = function_end }, .input_identity = input_identity, .signature_hash = signature_hash, .type_id = type_id, .source_utf16_length = source_length, .function_start = function_start, .function_end = function_end, .return_type = return_type, .register_count = register_count, .block_count = block_count, .instruction_count = instruction_count, .instruction_offset = instruction_offset, .parameter_types = parameter_types, .source_index = source_index, .initializer = initializer }, .instructions = ops, .blocks = blocks, .register_types = try allocator.dupe(u8, register_types[0..register_count]) };
 }
 
 fn use(reader: *Reader, reg: u16, expected_type: u8, block: usize, position: usize, count: u16, types: *const [4096]u8, definitions: *const [4096]u16, positions: *const [4096]usize, dominators: *const [256][4]u64) error{Invalid}!void {
@@ -438,6 +482,10 @@ pub fn functions(module: *const VerifiedModule) []const Function {
     return decoded(module).functions;
 }
 
+pub fn moduleTables(module: *const VerifiedModule) module_format.Tables {
+    return decoded(module).tables;
+}
+
 pub fn serialize(module: *const VerifiedModule, allocator: Allocator) Allocator.Error![]u8 {
     return allocator.dupe(u8, decoded(module).bytes);
 }
@@ -473,6 +521,9 @@ fn inspectFunction(module: *const VerifiedModule, function: Function, allocator:
             26 => "fuel",
             27 => "call",
             28 => "const_integer",
+            29 => "global_load",
+            30 => "global_store",
+            31 => "authorized_host",
             else => unreachable,
         }, .type = contract.typeName(op.type_code), .register = try std.fmt.allocPrint(temporary, "{d}", .{op.register}), .start = try std.fmt.allocPrint(temporary, "{d}", .{op.source.start}), .end = try std.fmt.allocPrint(temporary, "{d}", .{op.source.end}) };
         if (op.opcode == 1 or op.opcode == 3) view.immediate = try std.fmt.allocPrint(temporary, "{d}", .{op.immediate});
@@ -480,6 +531,10 @@ fn inspectFunction(module: *const VerifiedModule, function: Function, allocator:
         if (op.opcode >= 4 and op.opcode <= 23) {
             view.left = try std.fmt.allocPrint(temporary, "{d}", .{op.left});
             if (op.opcode < 15 or op.opcode > 17) view.right = try std.fmt.allocPrint(temporary, "{d}", .{op.right});
+        }
+        if (op.opcode >= 29 and op.opcode <= 31) {
+            view.left = try std.fmt.allocPrint(temporary, "{d}", .{op.left});
+            view.right = try std.fmt.allocPrint(temporary, "{d}", .{op.right});
         }
         if (op.opcode == 26) view.event = try std.fmt.allocPrint(temporary, "{d}", .{op.immediate});
         if (op.opcode == 27) {
@@ -517,7 +572,7 @@ fn inspectFunction(module: *const VerifiedModule, function: Function, allocator:
     for (info.parameter_types, parameter_types) |type_code, *type_name| type_name.* = contract.typeName(type_code);
     return std.json.Stringify.valueAlloc(allocator, .{
         .familyId = "tsfg.bytecode",
-        .semver = "0.6.0",
+        .semver = "0.7.0",
         .schemaHash = "sha256:" ++ contract.schema_hash_hex,
         .target = contract.target,
         .triple = contract.triple,
@@ -526,7 +581,7 @@ fn inspectFunction(module: *const VerifiedModule, function: Function, allocator:
         .i32Align = "4",
         .pointerBits = "64",
         .pointerAlign = "8",
-        .capabilities = "17",
+        .capabilities = "18",
         .totalBytes = try std.fmt.allocPrint(temporary, "{d}", .{decoded(module).bytes.len}),
         .inputIdentity = @as([]const u8, &input_identity),
         .functionId = @as([]const u8, &function_id),

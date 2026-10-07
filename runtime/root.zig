@@ -23,3 +23,6 @@ pub const RequestLimits = vm.RequestLimits;
 pub const RequestOutcome = vm.RequestOutcome;
 pub const Runtime = runtime.Runtime;
 pub const eval_bytecode = runtime.eval_bytecode;
+pub const ModuleInstance = vm.ModuleInstance;
+pub const Counter = @import("host_counter.zig").Counter;
+pub const moduleTables = bytecode.moduleTables;

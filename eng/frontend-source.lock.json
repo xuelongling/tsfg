@@ -1,17 +1,17 @@
 {
   "schemaVersion": "1",
-  "contractVersion": "0.6.0",
+  "contractVersion": "0.7.0",
   "languageBaseline": "TypeScript 7.0.2",
   "upstreamBaseOid": "1e4744d68260a7cb91b62b12edc3f6a2187faaf1",
-  "forkOid": "cb4890e645bf8582b9b98b4d8b3947997d77ea4a",
+  "forkOid": "670c0ed60740894a707097871e8126b17f87f17d",
   "remoteUrl": "https://github.com/xuelongling/TypeScript.git",
   "canonicalUrl": "https://github.com/microsoft/TypeScript.git",
-  "sourceBranch": "refs/heads/r03-m07-unary-capability",
+  "sourceBranch": "refs/heads/r03-m13-module-facts",
   "license": "Apache-2.0",
   "upstreamTomlSha256": "sha256:0cc83338b60f281bc87bba82e359f5f51ab0c79b0b9469de705bd626c6a3f490",
   "producerPath": "tsc/cmd/tsfg-frontend/main.go",
-  "producerSha256": "sha256:2bb41198eee72ba3876de2eaed5e7287b90d565674b491721b4f0dcbbcdc6ded",
-  "executableSha256": "sha256:b3884d8cac3963b0e30769176e9cb61c7b7d37c165e44ac12d14dae713b1816c",
+  "producerSha256": "sha256:b03b313fd8a7a5f5055ff1f1d0f109aa018033d80732ec1f4644155fa13953eb",
+  "executableSha256": "sha256:bebc0a4d3c6c08cba45f2f8d0d63a5b2125df7213dcc9469db6bd86f577785ab",
   "declarations": [
     {
       "path": "compiler/minimal-bool-v1.d.ts",

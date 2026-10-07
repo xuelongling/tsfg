@@ -4,6 +4,7 @@ const runtime = @import("root.zig");
 const contract = @import("contract.zig");
 
 const Request = struct {
+    kind: []const u8 = "function",
     functionId: ?[]const u8 = null,
     signatureHash: ?[]const u8 = null,
     arguments: []const std.json.Value = &.{},
@@ -12,6 +13,7 @@ const Request = struct {
     instructionBudget: u64 = 4097,
     semanticFuel: u64 = 4097,
     depth: u32 = 1,
+    hostTimeNanos: ?u64 = null,
 };
 
 fn writeOutcome(writer: *std.Io.Writer, outcome: runtime.RequestOutcome, host: *const runtime.Runtime) !void {
@@ -49,11 +51,28 @@ fn writeOutcome(writer: *std.Io.Writer, outcome: runtime.RequestOutcome, host: *
                 },
             }
         },
-        .failed => |failed| try std.json.Stringify.value(.{ .status = "failed", .code = failed.code, .category = failed.category, .ruleIds = failed.rule_ids, .functionId = @as([]const u8, &function_hex), .source = source_view, .activeRequests = active, .fuelRemaining = fuel_remaining, .fuelConsumed = fuel_consumed }, .{}, writer),
+        .failed => |failed| if (failed.exception_kind) |exception_kind| try std.json.Stringify.value(.{ .status = "exception", .code = failed.code, .category = failed.category, .exceptionKind = exception_kind, .ruleIds = failed.rule_ids, .functionId = @as([]const u8, &function_hex), .source = source_view, .activeRequests = active, .fuelRemaining = fuel_remaining, .fuelConsumed = fuel_consumed }, .{}, writer) else try std.json.Stringify.value(.{ .status = "failed", .code = failed.code, .category = failed.category, .ruleIds = failed.rule_ids, .functionId = @as([]const u8, &function_hex), .source = source_view, .activeRequests = active, .fuelRemaining = fuel_remaining, .fuelConsumed = fuel_consumed }, .{}, writer),
     }
 }
 
-fn evaluateRequest(host: *runtime.Runtime, module: *const runtime.VerifiedModule, request: Request) !runtime.RequestOutcome {
+fn writeModuleOutcome(writer: *std.Io.Writer, outcome: runtime.RequestOutcome, host: *const runtime.Runtime, instance: *const runtime.ModuleInstance, counter: *const runtime.Counter, events_before: u64) !void {
+    var base: std.Io.Writer.Allocating = .init(host.allocator);
+    defer base.deinit();
+    try writeOutcome(&base.writer, outcome, host);
+    const bytes = base.written();
+    try writer.writeAll(bytes[0..bytes.len - 1]);
+    try writer.writeAll(",\"moduleStatus\":");
+    try std.json.Stringify.value(@tagName(instance.status()), .{}, writer);
+    try writer.writeAll(",\"hostEvents\":");
+    try std.json.Stringify.value(counter.events, .{}, writer);
+    try writer.writeAll(",\"requestHostEvents\":");
+    try std.json.Stringify.value(counter.events -% events_before, .{}, writer);
+    try writer.writeAll(",\"hostCounter\":");
+    try std.json.Stringify.value(counter.storage, .{}, writer);
+    try writer.writeByte('}');
+}
+
+fn evaluateRequest(host: *runtime.Runtime, module: *const runtime.VerifiedModule, request: Request, instance: ?*runtime.ModuleInstance, counter: *runtime.Counter) !runtime.RequestOutcome {
     var function_id = runtime.moduleInfo(module).function_id;
     if (request.functionId) |text| {
         const id = if (std.mem.startsWith(u8, text, "sha256:")) text[7..] else text;
@@ -115,8 +134,39 @@ fn evaluateRequest(host: *runtime.Runtime, module: *const runtime.VerifiedModule
         }
     };
     if (!valid) return .{ .failed = .{ .code = "r05-request-arguments", .category = "request", .function_id = function_id, .source = info.source, .fuel_remaining = request.semanticFuel } };
-    if (request.capabilities.len != 0) return .{ .failed = .{ .code = "r05-request-capability", .category = "request", .function_id = function_id, .source = info.source, .fuel_remaining = request.semanticFuel } };
-    return runtime.eval_bytecode(host, module, function_id, arguments[0..request.arguments.len], &.{}, .{ .memory_bytes = @intCast(request.memoryBytes), .instruction_budget = request.instructionBudget, .semantic_fuel = request.semanticFuel, .depth = request.depth });
+    var capabilities: [128]runtime.Capability = undefined;
+    var capabilities_valid = request.capabilities.len <= capabilities.len;
+    if (capabilities_valid) for (request.capabilities, 0..) |value, index| {
+        if (value != .object or value.object.count() != 3) { capabilities_valid = false; break; }
+        const id = value.object.get("id") orelse { capabilities_valid = false; break; };
+        const signature = value.object.get("signatureHash") orelse { capabilities_valid = false; break; };
+        const adapter = value.object.get("adapter") orelse { capabilities_valid = false; break; };
+        if (id != .integer or id.integer != 31 or signature != .string or signature.string.len != 71 or !std.mem.startsWith(u8, signature.string, "sha256:")
+            or adapter != .string or !std.mem.eql(u8, adapter.string, "counter")) { capabilities_valid = false; break; }
+        var hash: [32]u8 = undefined;
+        _ = std.fmt.hexToBytes(&hash, signature.string[7..]) catch { capabilities_valid = false; break; };
+        const canonical = runtime.digestText(hash);
+        if (!std.mem.eql(u8, &canonical, signature.string)) { capabilities_valid = false; break; }
+        capabilities[index] = .{ .id = 31, .signature = hash, .counter = counter };
+    };
+    if (!capabilities_valid) return .{ .failed = .{ .code = "r05-request-capability", .category = "request", .function_id = function_id, .source = info.source, .fuel_remaining = request.semanticFuel } };
+    const init_only = std.mem.eql(u8, request.kind, "module-initialization");
+    if (!init_only and !std.mem.eql(u8, request.kind, "function")) return .{ .failed = .{ .code = "r05-request-kind", .category = "request", .function_id = function_id, .source = info.source, .fuel_remaining = request.semanticFuel } };
+    const limits: runtime.RequestLimits = .{ .memory_bytes = @intCast(request.memoryBytes), .instruction_budget = request.instructionBudget, .semantic_fuel = request.semanticFuel, .depth = request.depth, .host_time_ns = request.hostTimeNanos };
+    if (instance) |persistent| {
+        host.active_requests += 1;
+        defer host.active_requests -= 1;
+        return if (init_only) persistent.initialize(function_id, capabilities[0..request.capabilities.len], limits)
+            else persistent.evaluate(function_id, arguments[0..request.arguments.len], capabilities[0..request.capabilities.len], limits);
+    }
+    if (init_only) {
+        var fresh = try runtime.ModuleInstance.init(host.allocator, module);
+        defer fresh.deinit();
+        host.active_requests += 1;
+        defer host.active_requests -= 1;
+        return fresh.initialize(function_id, capabilities[0..request.capabilities.len], limits);
+    }
+    return runtime.eval_bytecode(host, module, function_id, arguments[0..request.arguments.len], capabilities[0..request.capabilities.len], limits);
 }
 
 // The transport frames existing R04 packets; it does not add bytecode semantics.
@@ -138,6 +188,7 @@ fn runSequence(init: std.process.Init, bytes: []const u8, requests_json: []const
     }
     if (cursor != bytes.len) return error.RequestSequence;
     var host = runtime.Runtime.init(init.gpa);
+    var counter: runtime.Counter = .{};
     var output: std.Io.Writer.Allocating = .init(init.gpa);
     defer output.deinit();
     try output.writer.writeByte('[');
@@ -154,7 +205,7 @@ fn runSequence(init: std.process.Init, bytes: []const u8, requests_json: []const
         };
         defer runtime.unload(module);
         if (index != 0) try output.writer.writeByte(',');
-        try writeOutcome(&output.writer, try evaluateRequest(&host, module, request), &host);
+        try writeOutcome(&output.writer, try evaluateRequest(&host, module, request, null, &counter), &host);
     }
     try output.writer.writeAll("]\n");
     try std.Io.File.stdout().writeStreamingAll(init.io, output.written());
@@ -163,14 +214,15 @@ fn runSequence(init: std.process.Init, bytes: []const u8, requests_json: []const
 
 fn run(init: std.process.Init) !u8 {
     const args = try init.minimal.args.toSlice(init.arena.allocator());
-    var mode: enum { evaluate, inspect, roundtrip, sequence } = .evaluate;
+    var mode: enum { evaluate, inspect, roundtrip, sequence, module_requests } = .evaluate;
     var requests_json: []const u8 = "[{}]";
     if (args.len == 2 and std.mem.eql(u8, args[1], "--inspect")) {
         mode = .inspect;
     } else if (args.len == 2 and std.mem.eql(u8, args[1], "--roundtrip")) {
         mode = .roundtrip;
-    } else if (args.len == 3 and (std.mem.eql(u8, args[1], "--requests") or std.mem.eql(u8, args[1], "--request-sequence"))) {
+    } else if (args.len == 3 and (std.mem.eql(u8, args[1], "--requests") or std.mem.eql(u8, args[1], "--request-sequence") or std.mem.eql(u8, args[1], "--module-requests"))) {
         if (std.mem.eql(u8, args[1], "--request-sequence")) mode = .sequence;
+        if (std.mem.eql(u8, args[1], "--module-requests")) mode = .module_requests;
         requests_json = args[2];
         if (requests_json.len > runtime.contract.max_bytes) return error.RequestTooLong;
     } else if (args.len != 1) return error.Usage;
@@ -207,13 +259,17 @@ fn run(init: std.process.Init) !u8 {
     const requests = try std.json.parseFromSlice([]const Request, init.gpa, requests_json, .{});
     defer requests.deinit();
     var host = runtime.Runtime.init(init.gpa);
+    var counter: runtime.Counter = .{};
     var output: std.Io.Writer.Allocating = .init(init.gpa);
     defer output.deinit();
     try output.writer.writeByte('[');
+    var instance: ?runtime.ModuleInstance = if (mode == .module_requests) try runtime.ModuleInstance.init(init.gpa, module) else null;
+    defer if (instance) |*value| value.deinit();
     for (requests.value, 0..) |request, index| {
         if (index != 0) try output.writer.writeByte(',');
-        const outcome = try evaluateRequest(&host, module, request);
-        try writeOutcome(&output.writer, outcome, &host);
+        const events_before = counter.events;
+        const outcome = try evaluateRequest(&host, module, request, if (instance) |*value| value else null, &counter);
+        if (mode == .module_requests) try writeModuleOutcome(&output.writer, outcome, &host, &instance.?, &counter, events_before) else try writeOutcome(&output.writer, outcome, &host);
     }
     try output.writer.writeAll("]\n");
     try std.Io.File.stdout().writeStreamingAll(init.io, output.written());

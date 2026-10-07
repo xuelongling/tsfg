@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: MIT
 import { createHash } from "node:crypto";
 import { spawnSync } from "node:child_process";
-import { mkdtemp, mkdir, readFile, realpath, rm, stat, writeFile } from "node:fs/promises";
+import { mkdtemp, mkdir, readFile, realpath, stat, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import path from "node:path";
 import { pathToFileURL } from "node:url";
@@ -85,7 +85,8 @@ export async function executeFrontendTarget({ command, productRoot, sourceRoot, 
   const tempRoot = await realpath(tmpdir());
   if (!/^E:\\/i.test(tempRoot)) throw new FrontendBuildError("frontend temporary root must be on E:");
   const stage = await mkdtemp(path.join(tempRoot, "tsfg-frontend-"));
-  try {
+  // Keep this stage, including failed builds, for exact intake replay.
+  {
     await mkdir(out, { recursive: true });
     const executable = path.join(out, "tsfg-frontend.exe");
     const env = {
@@ -94,7 +95,7 @@ export async function executeFrontendTarget({ command, productRoot, sourceRoot, 
       TEMP: stage, TMP: stage, TMPDIR: stage,
       GOCACHE: path.join(stage, "gocache"), GOMODCACHE: path.join(stage, "modules"),
       GOPATH: path.join(stage, "gopath"), GOPROXY: pathToFileURL(dependencyProxy.root).href,
-      GOSUMDB: "off", GOENV: "off", GOWORK: "off", GOTOOLCHAIN: "local", GOFLAGS: "-p=1", GOMAXPROCS: "2",
+      GOSUMDB: "off", GOENV: "off", GOWORK: "off", GOTOOLCHAIN: "local", GOTELEMETRY: "off", GOFLAGS: "-p=1", GOMAXPROCS: "2",
       GOEXPERIMENT: "", GOOS: "windows", GOARCH: "amd64", GOAMD64: "v2", CGO_ENABLED: "0",
     };
     const goList = run(go, ["list", "-deps", "-json", "-mod=readonly", "-buildvcs=false", "./cmd/tsfg-frontend"],
@@ -165,7 +166,7 @@ export async function executeFrontendTarget({ command, productRoot, sourceRoot, 
     const productEntries = [];
     for (const name of ["contracts/registry.json", "contracts/frontend-snapshot.schema.json",
       "eng/build-inputs.json", "eng/contract-set.mjs", "eng/frontend-build.mjs", "eng/frontend-source-admission.json", "eng/frontend-source.lock.json",
-      "eng/frontend-toolchains.lock.json", "eng/tsfg-build.mjs", "compiler/frontend.mjs", "compiler/minimal-bool-v1.d.ts", "compiler/minimal-scalars-v2.d.ts", "compiler/minimal-integers-v3.d.ts",
+      "eng/frontend-toolchains.lock.json", "eng/tsfg-build.mjs", "compiler/frontend.mjs", "compiler/module-facts.mjs", "compiler/modules.mjs", "compiler/identity.mjs", "compiler/minimal-bool-v1.d.ts", "compiler/minimal-scalars-v2.d.ts", "compiler/minimal-integers-v3.d.ts",
       ...(command === "test" ? ["tests/r02b/frontend.test.mjs"] : [])]) {
       productEntries.push({ projectId: "tsfg", path: name,
         sha256: sha256(await readFile(path.join(productRoot, name))) });
@@ -208,14 +209,12 @@ export async function executeFrontendTarget({ command, productRoot, sourceRoot, 
       auxiliaryFiles: auxiliaryEntries };
     await writeFile(path.join(out, "intake-ledger.json"), `${serialize(intakeLedger)}\n`);
     return { schemaVersion: "1", status: command === "test" ? "passed" : "built",
-      capability: "integer-family-v5", contractVersion: lock.contractVersion,
+      capability: "static-modules-v6", contractVersion: lock.contractVersion,
       source: { forkOid: head, producer: lock.producerPath },
       toolchainClosureDigest: runtime.lockDigest, dependencyProxyIdentity: dependencyProxy.identity,
       buildInputSet, buildInputSetDigest: inputDigest, intakeLedger,
       executable, executableSha256: binarySha256,
       ...(testOutput === undefined ? {} : { tests: { status: "passed", command: "node --test tests/r02b/frontend.test.mjs", output: testOutput } }),
-      executionMode: "local-development", isolation: "not-enforced" };
-  } finally {
-    await rm(stage, { recursive: true, force: true });
+      retainedStage: stage, executionMode: "local-development", isolation: "not-enforced" };
   }
 }

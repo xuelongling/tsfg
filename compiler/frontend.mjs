@@ -3,6 +3,8 @@ import { createHash } from "node:crypto";
 import { spawnSync } from "node:child_process";
 import { readFile } from "node:fs/promises";
 import path from "node:path";
+import { normalizeClosure } from "./modules.mjs";
+import { validateModuleFacts } from "./module-facts.mjs";
 import sourceLock from "../eng/frontend-source.lock.json" with { type: "json" };
 import contractRegistry from "../contracts/registry.json" with { type: "json" };
 import bytecodeSchema from "../contracts/bytecode.schema.json" with { type: "json" };
@@ -60,6 +62,14 @@ export function identifierName(spelling) {
   return name;
 }
 
+// Only the officially resolved namespace member shape is admitted. This guard
+// checks spelling; it neither resolves symbols nor admits arbitrary properties.
+export function staticBindingName(spelling) {
+  const parts=spelling.split(".");
+  if (parts.length < 1 || parts.length > 2) throw new TypeError("invalid static binding spelling");
+  return parts.map(identifierName).join(".");
+}
+
 function canonical(value) {
   if (typeof value === "string") {
     if (hasLoneSurrogate(value)) throw new TypeError("canonical input contains a lone surrogate");
@@ -105,7 +115,7 @@ function matchesSnapshotContract(snapshot) {
       && claim.declarations.paths.every(name => snapshot.inputs.some(file => file.path === name))
       && snapshot.inputs.every(file => typeof files.get(file.path) === "string"
         && file.sha256 === digest(files.get(file.path))
-        && file.kind === (file.path === claim.rootFile ? "source"
+        && file.kind === (file.path === claim.rootFile || claim.compilationClosure && !file.path.endsWith(".d.ts") ? "source"
           : claim.declarations.paths.includes(file.path) ? "declaration-root" : "declaration-dependency"));
   } catch { return false; }
   return matchesInput && snapshot?.contractVersion === frontendContractVersion
@@ -128,6 +138,12 @@ function rejectInput(inputIdentity, file) {
 export async function analyzeFrontend(input, { executable } = {}) {
   let ownedInput;
   try { ownedInput = structuredClone(input); } catch { ownedInput = null; }
+  if (ownedInput?.compilationClosure) {
+    try {
+      ownedInput.compilationClosure = normalizeClosure(ownedInput.compilationClosure);
+      if (ownedInput.hostImports) ownedInput.hostImports.sort((a,b) => Buffer.from(`${a.sourcePath}\0${a.name}`).compare(Buffer.from(`${b.sourcePath}\0${b.name}`)));
+    } catch { return rejectInput(digest("null"), ownedInput?.rootFile ?? ""); }
+  }
   const identityInput = ownedInput && typeof ownedInput === "object" && !Array.isArray(ownedInput)
     ? { ...ownedInput, files: Array.isArray(ownedInput.files)
       ? ownedInput.files.map(file => ({ path: file?.path, content: file?.content }))
@@ -147,7 +163,10 @@ export async function analyzeFrontend(input, { executable } = {}) {
   const files = ownedInput?.files;
   const seen = new Set();
   const integerInput = ownedInput?.declarations?.version === "minimal-integers-v3";
-  if (Object.keys(ownedInput ?? {}).sort().join(",") !== (integerInput ? "config,declarations,files,rootFile,sourceRoot,target" : "config,declarations,files,rootFile,sourceRoot")
+  const moduleInput = ownedInput?.compilationClosure !== undefined;
+  const inputKeys = ["config","declarations","files","rootFile","sourceRoot",...(integerInput ? ["target"] : []),
+    ...(moduleInput ? ["compilationClosure",...(ownedInput.hostImports !== undefined ? ["hostImports"] : [])] : [])].sort().join(",");
+  if (Object.keys(ownedInput ?? {}).sort().join(",") !== inputKeys
       || (integerInput && canonical(ownedInput.target) !== canonical({ ...bytecodeSchema.target, pointerBits: "64" }))
       || Object.keys(ownedInput?.declarations ?? {}).sort().join(",") !== "paths,version"
       || typeof root !== "string" || !root.startsWith("/") || path.posix.normalize(root) !== root
@@ -156,7 +175,7 @@ export async function analyzeFrontend(input, { executable } = {}) {
         if (typeof file?.path !== "string" || typeof file.content !== "string"
             || !["content,path", "content,path,sha256"].includes(Object.keys(file).sort().join(","))
             || !file.path.startsWith(`${root}/`) || path.posix.normalize(file.path) !== file.path
-            || (file.path !== rootFile && !file.path.endsWith(".d.ts")) || seen.has(file.path)
+            || (file.path !== rootFile && !file.path.endsWith(".d.ts") && !(moduleInput && file.path.endsWith(".ts"))) || seen.has(file.path)
             || (file.sha256 !== undefined && file.sha256 !== digest(file.content))) return true;
         seen.add(file.path);
         return false;
@@ -226,7 +245,7 @@ export async function analyzeFrontend(input, { executable } = {}) {
       || consumed.some(name => !seen.has(name))) {
     return { status: "tool-error", inputIdentity, message: "frontend input closure differs from recorded content" };
   }
-  if (!Array.isArray(output.functions) || !Array.isArray(output.symbols) || output.functions.length === 0) {
+  if (!Array.isArray(output.functions) || !Array.isArray(output.symbols) || !moduleInput && output.functions.length === 0) {
     return { status: "tool-error", inputIdentity, message: "incomplete frontend response" };
   }
   const snapshotId = snapshotIdentity(inputIdentity, frontendSource);
@@ -269,8 +288,9 @@ export async function analyzeFrontend(input, { executable } = {}) {
     }
     return { snapshotId, id: type.id };
   };
+  let currentSourcePath;
   const recordNode = (value, kind) => {
-    const node = { id: `n${nodes.length}`, kind, range: value.range };
+    const node = { id: `n${nodes.length}`, kind, range: value.range, ...(moduleInput ? { sourcePath: currentSourcePath } : {}) };
     nodes.push(node);
     value.node = { snapshotId, id: node.id };
     if (value.type) value.typeRef = typeRef(value.type);
@@ -288,10 +308,18 @@ export async function analyzeFrontend(input, { executable } = {}) {
       for (const nested of value[key] ?? []) recordStatement(nested);
   };
   for (const fn of functions) {
+    currentSourcePath = fn.sourcePath;
     recordNode(fn, "function");
     fn.returnTypeRef = typeRef(fn.returnType);
     for (const parameter of fn.parameters) recordNode(parameter, "parameter");
     for (const item of fn.body) recordStatement(item);
+  }
+  const modules = moduleInput && Array.isArray(output.modules) ? output.modules.map(module => ({ ...module,
+    initialization: module.initialization.map(statement) })) : undefined;
+  if (moduleInput && !modules) return {status:"tool-error",inputIdentity,message:"frontend omitted owned modules"};
+  for (const module of modules ?? []) {
+    currentSourcePath = module.sourcePath;
+    for (const initializer of module.initialization) recordStatement(initializer);
   }
   for (const symbol of symbols) symbol.typeRef = typeRef(symbol.type);
   if (invalidScalar) {
@@ -301,12 +329,14 @@ export async function analyzeFrontend(input, { executable } = {}) {
   const source = { path: sourceFile.path, content: sourceFile.content };
   const inputs = consumed.map(name => {
     const file = files.find(item => item.path === name);
-    return { path: name, sha256: digest(file.content), kind: name === rootFile ? "source"
+    return { path: name, sha256: digest(file.content), kind: name === rootFile || moduleInput && !name.endsWith(".d.ts") ? "source"
       : declarationPaths.includes(name) ? "declaration-root" : "declaration-dependency" };
   });
   const snapshot = deepFreeze({ contractVersion: frontendContractVersion,
     schemaHash: frontendContract.schemaHash, snapshotId, inputIdentity, identityInput,
-    frontendSource, capability: declarationVersion, source, inputs, functions, symbols, nodes, types, diagnostics: [] });
+    frontendSource, capability: declarationVersion, source, inputs, functions, symbols, nodes, types, diagnostics: [],
+    ...(moduleInput ? {sources: consumed.map(name=>({path:name,content:files.find(file=>file.path===name).content})),
+      modules, compilationClosure:ownedInput.compilationClosure, hostImports:output.hostImports ?? []} : {}) });
   return { status: "ok", snapshot };
 }
 
@@ -340,20 +370,23 @@ export function validateFrontendSnapshot(snapshot) {
       || snapshot.inputs?.find(file => file.path === snapshot.source.path)?.sha256 !== digest(snapshot.source.content)) {
     throw new TypeError("unsupported frontend snapshot contract");
   }
+  const moduleFacts = snapshot.modules ? validateModuleFacts(snapshot) : undefined;
+  let source = snapshot.source;
   let calls = 0;
   const usedNodes = new Set();
   const sameRange = (left, right) => left?.start === right?.start && left?.end === right?.end;
   const sourceSpan = range => {
     if (!Number.isSafeInteger(range?.start) || !Number.isSafeInteger(range?.end)
         || range.start < 0 || range.end <= range.start
-        || range.end > snapshot.source.content.length) {
+        || range.end > source.content.length) {
       throw new TypeError("invalid source range");
     }
-    return snapshot.source.content.slice(range.start, range.end).trim();
+    return source.content.slice(range.start, range.end).trim();
   };
   const checkNode = (value, kind) => {
     const node = resolveNode(snapshot, value.node);
     if (node.kind !== kind || !sameRange(node.range, value.range)
+        || moduleFacts && node.sourcePath !== source.path
         || usedNodes.has(node.id)) {
       throw new TypeError("node differs from its reference");
     }
@@ -371,9 +404,14 @@ export function validateFrontendSnapshot(snapshot) {
     throw new TypeError("duplicate snapshot definition");
   }
   for (const symbol of snapshot.symbols) {
+    if (moduleFacts) { source=moduleFacts.sources.get(symbol.sourcePath); if(!source) throw new TypeError("symbol has foreign source"); }
     resolveSymbol(snapshot, symbol.ref);
     checkType(symbol.type, symbol.typeRef);
-    if (identifierName(sourceSpan(symbol.range)) !== symbol.name) {
+    const syntheticDefault = moduleFacts && (symbol.name === "$default" && symbol.kind === "global"
+      && moduleFacts.modules.get(symbol.sourcePath)?.exports.some(binding=>binding.name==="default" && binding.target===symbol.id)
+      || symbol.name === "default" && symbol.kind === "function"
+      && /^export\s+default\s+function\s*\(/.test(sourceSpan(symbol.range)));
+    if (!syntheticDefault && identifierName(sourceSpan(symbol.range)) !== symbol.name) {
       throw new TypeError("symbol differs from its source declaration");
     }
   }
@@ -383,7 +421,9 @@ export function validateFrontendSnapshot(snapshot) {
     checkType(expression.type, expression.typeRef);
     if (expression.kind === "reference") {
       const symbol = resolveSymbol(snapshot, expression.symbol);
-      if (scope.get(symbol.name) !== symbol.id || symbol.name !== identifierName(sourceSpan(expression.range))
+      const name=moduleFacts ? expression.name : symbol.name;
+      if (scope.get(name) !== symbol.id || (moduleFacts ? staticBindingName(name) !== staticBindingName(sourceSpan(expression.range))
+          : name !== identifierName(sourceSpan(expression.range)))
           || symbol.type !== expression.type) {
         throw new TypeError("reference differs from its symbol");
       }
@@ -395,15 +435,19 @@ export function validateFrontendSnapshot(snapshot) {
     }
     if (expression.target) {
       const target = resolveSymbol(snapshot, expression.target);
-      const fn = snapshot.functions.find(item => item.symbol.id === target.id);
-      const parameters = fn?.parameters?.map(parameter => parameter.type);
+      const fn = snapshot.functions.find(item => item.symbol.id === target.id)
+        ?? snapshot.hostImports?.find(item=>item.symbol===target.id);
+      const parameters = fn?.parameterTypes ?? fn?.parameters?.map(parameter => parameter.type);
       const arguments_ = expression.arguments;
       const sourceCall = sourceSpan(expression.range);
       const start = skipCallTrivia(sourceCall);
-      const spelling = (start < 0 ? "" : sourceCall.slice(start)).match(/^(?:\\u(?:\{[0-9a-fA-F]{1,6}\}|[0-9a-fA-F]{4})|[^\\\s(/])+/u)?.[0];
+      const spelling = moduleFacts ? sourceCall.slice(start,sourceCall.indexOf("(",start)).trim()
+        : (start < 0 ? "" : sourceCall.slice(start)).match(/^(?:\\u(?:\{[0-9a-fA-F]{1,6}\}|[0-9a-fA-F]{4})|[^\\\s(/])+/u)?.[0];
       if (expression.kind !== "call" || !fn || !Array.isArray(parameters)
           || !Array.isArray(arguments_) || !Array.isArray(expression.signature?.parameters)
-          || !spelling || identifierName(spelling) !== target.name
+          || !spelling || (moduleFacts ? staticBindingName(spelling) !== staticBindingName(expression.name)
+              : identifierName(spelling) !== target.name)
+          || moduleFacts && scope.get(expression.name) !== target.id
           || !hasCallArgumentList(sourceCall.slice(start + spelling.length))
           || expression.signature.returnType !== fn.returnType
           || expression.type !== fn.returnType
@@ -449,12 +493,15 @@ export function validateFrontendSnapshot(snapshot) {
     }
   };
   for (const fn of snapshot.functions) {
+    if (moduleFacts) { source=moduleFacts.sources.get(fn.sourcePath); if(!source || !moduleFacts.modules.has(fn.sourcePath)) throw new TypeError("function has foreign module source"); }
     checkNode(fn, "function");
     checkType(fn.returnType, fn.returnTypeRef);
     const definition = resolveSymbol(snapshot, fn.symbol);
     if (definition.kind !== "function" || definition.name !== fn.name
+        || moduleFacts && definition.sourcePath !== fn.sourcePath
         || definition.type !== fn.returnType
-        || identifierName(sourceSpan(definition.range)) !== fn.name
+        || !(moduleFacts && fn.name === "default" && /^export\s+default\s+function\s*\(/.test(sourceSpan(definition.range)))
+          && identifierName(sourceSpan(definition.range)) !== fn.name
         || definition.range?.start < fn.range?.start
         || definition.range?.end > fn.range?.end) {
       throw new TypeError("function differs from its symbol");
@@ -462,7 +509,8 @@ export function validateFrontendSnapshot(snapshot) {
     if (!Array.isArray(fn.parameters) || !Array.isArray(fn.body)) {
       throw new TypeError("invalid function structure");
     }
-    const parameterScope = new Map(fn.parameters.map(parameter => [parameter.name, parameter.id]));
+    const parameterScope = new Map(moduleFacts?.views.get(fn.sourcePath) ?? []);
+    for (const parameter of fn.parameters) parameterScope.set(parameter.name,parameter.id);
     for (const parameter of fn.parameters) {
       checkNode(parameter, "parameter");
       checkType(parameter.type, parameter.typeRef);
@@ -474,6 +522,10 @@ export function validateFrontendSnapshot(snapshot) {
       }
     }
     visitStatements(fn.body, parameterScope);
+  }
+  for (const module of snapshot.modules ?? []) {
+    source=moduleFacts.sources.get(module.sourcePath);
+    visitStatements(module.initialization,moduleFacts.views.get(module.sourcePath));
   }
   if (usedNodes.size !== snapshot.nodes.length) throw new TypeError("unused snapshot node");
   return deepFreeze({ snapshotId: snapshot.snapshotId, functions: snapshot.functions.length, calls });

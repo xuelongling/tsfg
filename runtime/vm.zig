@@ -5,40 +5,123 @@ const FunctionId = bytecode.FunctionId;
 const VerifiedModule = bytecode.VerifiedModule;
 const Source = bytecode.Source;
 const contract = bytecode.contract;
-pub const TypedValue = union(enum) {
-    i32: i32, boolean: bool, i8: i8, i16: i16, i64: i64,
-    u8: u8, u16: u16, u32: u32, u64: u64, isize: isize, usize: usize,
-    pub fn typeCode(self: TypedValue) u8 {
-        return switch (self) { .i32 => 1, .boolean => 2, .i8 => 3, .i16 => 4, .i64 => 5, .u8 => 6, .u16 => 7, .u32 => 8, .u64 => 9, .isize => 10, .usize => 11 };
+const request = @import("request.zig");
+const module_state = @import("module.zig");
+pub const ModuleInstance = struct {
+    state: module_state.State,
+    pub fn init(allocator: std.mem.Allocator, module: *const VerifiedModule) !ModuleInstance {
+        return .{ .state = try module_state.State.init(allocator, module) };
     }
-    pub fn bits(self: TypedValue) u64 {
-        return switch (self) {
-            .i32 => |v| @as(u32, @bitCast(v)), .boolean => |v| @intFromBool(v),
-            .i8 => |v| @as(u8, @bitCast(v)), .i16 => |v| @as(u16, @bitCast(v)),
-            .i64 => |v| @bitCast(v), .isize => |v| @bitCast(v),
-            .u8 => |v| v, .u16 => |v| v, .u32 => |v| v, .u64 => |v| v, .usize => |v| v,
-        };
+    pub fn deinit(self: *ModuleInstance) void { self.state.deinit(); }
+    pub fn status(self: *const ModuleInstance) module_state.State.Status { return self.state.status; }
+    fn preflight(self: *ModuleInstance, id: FunctionId, arguments: []const TypedValue, capabilities: []const Capability, init_only: bool) ?RequestOutcome {
+        const tables = bytecode.moduleTables(self.state.module);
+        var selected: ?bytecode.Function = null;
+        for (bytecode.functions(self.state.module)) |function| if (std.mem.eql(u8, &id, &function.info.function_id)) { selected = function; break; };
+        const function = selected orelse return requestFailure("r05-request-function", id, bytecode.moduleInfo(self.state.module).source);
+        if (function.info.initializer != init_only) return requestFailure("r05-request-function", id, function.info.source);
+        if (init_only) {
+            var root = false;
+            for (tables.roots) |candidate| if (candidate.kind == 1 and std.mem.eql(u8, &bytecode.functions(self.state.module)[candidate.function_index].info.function_id, &id)) { root = true; break; };
+            if (!root) return requestFailure("r05-request-function", id, function.info.source);
+        }
+        if (arguments.len != function.info.parameter_types.len) return requestFailure("r05-request-arguments", id, function.info.source);
+        for (arguments, function.info.parameter_types) |argument, code| if (argument.typeCode() != code) return requestFailure("r05-request-arguments", id, function.info.source);
+        for (capabilities, 0..) |capability, index| {
+            var required = false;
+            for (tables.hosts) |host| if (host.capability == capability.id) {
+                required = true;
+                const signature = capability.signature orelse return requestFailure("r05-request-capability", id, function.info.source);
+                const counter = capability.counter orelse return requestFailure("r05-request-capability", id, function.info.source);
+                if (!std.mem.eql(u8, &signature, &host.signature) or !counter.admitted()) return requestFailure("r05-request-capability", id, function.info.source);
+            };
+            if (!required) return requestFailure("r05-request-capability", id, function.info.source);
+            for (capabilities[0..index]) |previous| if (previous.id == capability.id) return requestFailure("r05-request-capability", id, function.info.source);
+        }
+        for (tables.hosts) |host| {
+            var authorized = false;
+            for (capabilities) |capability| if (capability.id == host.capability) { authorized = true; break; };
+            if (!authorized) return requestFailure("r05-request-capability", id, function.info.source);
+        }
+        return null;
+    }
+    fn run(self: *ModuleInstance, id: FunctionId, arguments: []const TypedValue, capabilities: []const Capability, limits: RequestLimits, init_only: bool) RequestOutcome {
+        if (self.preflight(id, arguments, capabilities, init_only)) |rejected| {
+            var outcome = rejected; finish(&outcome, limits, limits.semantic_fuel); return outcome;
+        }
+        if (self.state.status == .failed) {
+            var outcome: RequestOutcome = .{ .failed = self.state.failure.? };
+            finish(&outcome, limits, limits.semantic_fuel); return outcome;
+        }
+        if (self.state.status == .initializing) {
+            var outcome = requestFailure("r05-request-instance", id, bytecode.moduleInfo(self.state.module).source);
+            finish(&outcome, limits, limits.semantic_fuel); return outcome;
+        }
+        const time_limit = limits.host_time_ns orelse if (bytecode.moduleTables(self.state.module).hosts.len != 0) @as(?u64, 1000000000) else null;
+        var budget: Budget = .{ .fuel = limits.semantic_fuel, .work = limits.instruction_budget, .deadline = clock.Deadline.init(time_limit) catch {
+            var outcome = requestFailure("r05-execution-abort", id, bytecode.moduleInfo(self.state.module).source);
+            finish(&outcome, limits, limits.semantic_fuel); return outcome;
+        } };
+        if (self.state.status == .uninitialized) {
+            self.state.status = .initializing;
+            for (bytecode.moduleTables(self.state.module).initialization) |initializer| {
+                const function = bytecode.functions(self.state.module)[initializer];
+                var outcome = execute(self.state.allocator, &self.state, function.info.function_id, &.{}, capabilities, limits, &budget);
+                if (outcome == .failed) {
+                    finish(&outcome, limits, budget.fuel);
+                    self.state.fail(outcome.failed);
+                    return outcome;
+                }
+            }
+            self.state.status = .initialized;
+        }
+        var outcome = if (init_only) blk: {
+            for (bytecode.functions(self.state.module)) |function| if (std.mem.eql(u8, &id, &function.info.function_id)) {
+                break :blk @as(RequestOutcome, .{ .returned = .{ .result = .{ .i32 = 0 }, .function_id = id, .source = function.info.source } });
+            };
+            unreachable;
+        } else execute(self.state.allocator, &self.state, id, arguments, capabilities, limits, &budget);
+        finish(&outcome, limits, budget.fuel);
+        return outcome;
+    }
+    pub fn evaluate(self: *ModuleInstance, id: FunctionId, arguments: []const TypedValue, capabilities: []const Capability, limits: RequestLimits) RequestOutcome {
+        return self.run(id, arguments, capabilities, limits, false);
+    }
+    /// Initialization-only requires an explicit module-initialization root.
+    /// Generated initializer IDs remain invalid ordinary function requests.
+    pub fn initialize(self: *ModuleInstance, id: FunctionId, capabilities: []const Capability, limits: RequestLimits) RequestOutcome {
+        return self.run(id, &.{}, capabilities, limits, true);
     }
 };
-pub fn typedValue(bits: u64, code: u8) TypedValue {
-    return switch (code) {
-        1 => .{ .i32 = @bitCast(@as(u32, @truncate(bits))) }, 2 => .{ .boolean = bits != 0 },
-        3 => .{ .i8 = @bitCast(@as(u8, @truncate(bits))) }, 4 => .{ .i16 = @bitCast(@as(u16, @truncate(bits))) },
-        5 => .{ .i64 = @bitCast(bits) }, 6 => .{ .u8 = @truncate(bits) }, 7 => .{ .u16 = @truncate(bits) },
-        8 => .{ .u32 = @truncate(bits) }, 9 => .{ .u64 = bits }, 10 => .{ .isize = @bitCast(bits) }, 11 => .{ .usize = bits }, else => unreachable,
-    };
-}
-pub const Capability = struct { id: u32 };
-pub const RequestLimits = struct { memory_bytes: usize = 16384, instruction_budget: u64 = 4097, semantic_fuel: u64 = 4097, depth: u32 = 1 };
-pub const Returned = struct { result: TypedValue, function_id: FunctionId, source: Source, fuel_remaining: u64 = 0, fuel_consumed: u64 = 0 };
-pub const RequestFailure = struct { code: []const u8, category: []const u8, rule_ids: []const []const u8 = &.{}, function_id: FunctionId, source: Source, fuel_remaining: u64 = 0, fuel_consumed: u64 = 0 };
-pub const RequestOutcome = union(enum) { returned: Returned, failed: RequestFailure };
+pub const TypedValue = request.TypedValue;
+pub const typedValue = request.typedValue;
+pub const Capability = request.Capability;
+pub const RequestLimits = request.RequestLimits;
+pub const Returned = request.Returned;
+pub const RequestFailure = request.RequestFailure;
+pub const RequestOutcome = request.RequestOutcome;
 fn requestFailure(code: []const u8, function_id: FunctionId, source: Source) RequestOutcome {
     return .{ .failed = .{ .code = code, .category = if (std.mem.eql(u8, code, "r05-execution-abort")) "execution-abort" else "request", .function_id = function_id, .source = source } };
 }
 
 fn arithmeticTrap(comptime code: []const u8, comptime rule_id: []const u8, function_id: FunctionId, source: Source) RequestOutcome {
     return .{ .failed = .{ .code = code, .category = "trap", .rule_ids = &.{rule_id}, .function_id = function_id, .source = source } };
+}
+
+fn finish(outcome: *RequestOutcome, limits: RequestLimits, fuel: u64) void {
+    switch (outcome.*) {
+        .returned => |*result| { result.fuel_remaining = fuel; result.fuel_consumed = limits.semantic_fuel - fuel; },
+        .failed => |*failure| { failure.fuel_remaining = fuel; failure.fuel_consumed = limits.semantic_fuel - fuel; },
+    }
+}
+
+pub fn evaluate(allocator: std.mem.Allocator, module: *const VerifiedModule, function_id: FunctionId, arguments: []const TypedValue, capabilities: []const Capability, limits: RequestLimits) RequestOutcome {
+    var instance = ModuleInstance.init(allocator, module) catch {
+        var outcome = requestFailure("r05-execution-abort", function_id, bytecode.moduleInfo(module).source);
+        finish(&outcome, limits, limits.semantic_fuel); return outcome;
+    };
+    defer instance.deinit();
+    return instance.evaluate(function_id, arguments, capabilities, limits);
 }
 
 const Frame = struct { previous: ?*Frame, function: bytecode.Function, registers: []u64, transfer: []u64, cursor: usize = 0, return_register: u16 = 0, bytes: usize };
@@ -64,7 +147,13 @@ fn leave(allocator: std.mem.Allocator, frame: *Frame) void {
     allocator.destroy(frame);
 }
 
-fn execute(allocator: std.mem.Allocator, module: *const VerifiedModule, requested_id: FunctionId, arguments: []const TypedValue, capabilities: []const Capability, limits: RequestLimits, fuel_remaining: *u64) RequestOutcome {
+const clock = @import("clock.zig");
+const Budget = struct { fuel: u64, work: u64, deadline: clock.Deadline };
+fn managedReference(function_id: FunctionId, source: Source) RequestOutcome {
+    return .{ .failed = .{ .code = "r01-e-reference", .category = "managed-exception", .exception_kind = "ReferenceError", .rule_ids = &.{"r01-modules"}, .function_id = function_id, .source = source } };
+}
+fn execute(allocator: std.mem.Allocator, state: *module_state.State, requested_id: FunctionId, arguments: []const TypedValue, capabilities: []const Capability, limits: RequestLimits, budget: *Budget) RequestOutcome {
+    const module = state.module;
     const all_functions = bytecode.functions(module);
     var selected: ?bytecode.Function = null;
     for (all_functions) |function| if (std.mem.eql(u8, &requested_id, &function.info.function_id)) {
@@ -73,21 +162,23 @@ fn execute(allocator: std.mem.Allocator, module: *const VerifiedModule, requeste
     };
     const function = selected orelse return requestFailure("r05-request-function", requested_id, bytecode.moduleInfo(module).source);
     const info = function.info;
-    if (arguments.len != info.parameter_types.len) return requestFailure("r05-request-arguments", requested_id, info.source);
-    for (arguments, info.parameter_types) |argument, type_code| if (argument.typeCode() != type_code) return requestFailure("r05-request-arguments", requested_id, info.source);
     const function_id = info.function_id;
-    if (capabilities.len != 0) return requestFailure("r05-request-capability", function_id, info.source);
-    if (limits.depth < 1) return arithmeticTrap("r01-t-depth", "r01-depth", function_id, info.source);
-    if (limits.memory_bytes < frameSize(function)) return requestFailure("r05-execution-abort", function_id, info.source);
+    if (!info.initializer and limits.depth < 1) return arithmeticTrap("r01-t-depth", "r01-depth", function_id, info.source);
+    var storage = if (bytecode.moduleTables(module).present) state.storageBytes() else 0;
+    // The verified fixed execute-frame allocation already exists at native
+    // entry. It was absent from the legacy heap-frame accounting, so admit it
+    // once as administrative baseline before any guest initialization effect.
+    // The adapter's future incoming return address is charged only at opcode31.
+    for (capabilities) |capability| if (capability.counter) |counter| { storage += counter.administrativeBytes(); };
+    if (storage > limits.memory_bytes or frameSize(function) > limits.memory_bytes - storage) return requestFailure("r05-execution-abort", function_id, info.source);
     var active: ?*Frame = enter(allocator, function, null) catch return requestFailure("r05-execution-abort", function_id, info.source);
     defer while (active) |frame| {
         active = frame.previous;
         leave(allocator, frame);
     };
     for (arguments, function.blocks[0].parameters) |argument, parameter| active.?.registers[parameter.register] = argument.bits();
-    var used_memory = frameSize(function);
-    var depth: u32 = 1;
-    var remaining = limits.instruction_budget;
+    var used_memory = frameSize(function) + storage;
+    var depth: u32 = if (info.initializer) 0 else 1;
     while (true) {
         const current = active.?;
         const frame = current.registers;
@@ -97,11 +188,12 @@ fn execute(allocator: std.mem.Allocator, module: *const VerifiedModule, requeste
         current.cursor += 1;
         const source = instruction.source;
         if (instruction.opcode == 26) {
-            if (fuel_remaining.* == 0) return arithmeticTrap("r01-t-fuel", "r01-fuel", current_id, source);
-            fuel_remaining.* -= 1;
+            if (budget.fuel == 0) return arithmeticTrap("r01-t-fuel", "r01-fuel", current_id, source);
+            budget.fuel -= 1;
         }
-        if (remaining == 0) return requestFailure("r05-execution-abort", current_id, source);
-        remaining -= 1;
+        if (budget.work == 0) return requestFailure("r05-execution-abort", current_id, source);
+        budget.work -= 1;
+        if (budget.deadline.expired() catch true) return requestFailure("r05-execution-abort", current_id, source);
         const op = instruction;
         switch (op.opcode) {
             1 => frame[op.register] = @as(u32, @bitCast(op.immediate)),
@@ -187,23 +279,31 @@ fn execute(allocator: std.mem.Allocator, module: *const VerifiedModule, requeste
                 depth += 1;
                 used_memory += bytes;
             },
+            29 => {
+                if (!state.initialized[op.left]) return managedReference(current_id, source);
+                frame[op.register] = state.globals[op.left];
+            },
+            30 => {
+                if (op.right == 0 and !state.initialized[op.left]) return managedReference(current_id, source);
+                state.globals[op.left] = frame[op.register];
+                state.initialized[op.left] = true;
+            },
+            31 => {
+                const declaration = bytecode.moduleTables(module).hosts[op.left];
+                var adapter: ?*(@import("host_counter.zig").Counter) = null;
+                for (capabilities) |capability| if (capability.id == declaration.capability) { adapter = capability.counter; break; };
+                const counter = adapter.?;
+                if (depth >= limits.depth) return arithmeticTrap("r01-t-depth", "r01-depth", declaration.id, source);
+                if (budget.fuel == 0) return arithmeticTrap("r01-t-fuel", "r01-fuel", declaration.id, source);
+                budget.fuel -= 1;
+                const work = counter.instructionBound();
+                if (counter.boundaryBytes() > limits.memory_bytes - used_memory or work > budget.work) return requestFailure("r05-execution-abort", declaration.id, source);
+                budget.work -= work;
+                if (budget.deadline.expired() catch true) return requestFailure("r05-execution-abort", declaration.id, source);
+                frame[op.register] = counter.call(@truncate(frame[op.right]));
+                if (budget.deadline.expired() catch true) return requestFailure("r05-execution-abort", declaration.id, source);
+            },
             else => unreachable,
         }
     }
-}
-
-pub fn evaluate(allocator: std.mem.Allocator, module: *const VerifiedModule, function_id: FunctionId, arguments: []const TypedValue, capabilities: []const Capability, limits: RequestLimits) RequestOutcome {
-    var fuel_remaining = limits.semantic_fuel;
-    var outcome = execute(allocator, module, function_id, arguments, capabilities, limits, &fuel_remaining);
-    switch (outcome) {
-        .returned => |*result| {
-            result.fuel_remaining = fuel_remaining;
-            result.fuel_consumed = limits.semantic_fuel - fuel_remaining;
-        },
-        .failed => |*failure| {
-            failure.fuel_remaining = fuel_remaining;
-            failure.fuel_consumed = limits.semantic_fuel - fuel_remaining;
-        },
-    }
-    return outcome;
 }
