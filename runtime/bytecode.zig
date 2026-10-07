@@ -111,7 +111,7 @@ fn parse(reader: *Reader, allocator: Allocator, module: *Module) (error{Invalid}
     try reader.expected(u16, @alignOf(i32), "r04-layout");
     try reader.expected(u16, @bitSizeOf(usize), "r04-layout");
     try reader.expected(u16, @alignOf(usize), "r04-layout");
-    try reader.expected(u32, 19, "r04-capability");
+    try reader.expected(u32, 20, "r04-capability");
     const input_identity = try reader.digest();
     const source_hash = try reader.digest();
     const source_path = try reader.string(4096);
@@ -265,7 +265,7 @@ fn parseFunction(reader: *Reader, allocator: Allocator, global: Global) (error{I
                     if (payload != 0) return reader.reject("r04-reserved", offset + 4);
                     if (type_code != return_type) return reader.reject("r04-type", offset + 1);
                 } else {
-                    if (opcode < 1 or (opcode > 23 and opcode != 27 and opcode != 28 and opcode != 32 and opcode != 33)) return reader.reject("r04-instruction", offset);
+                    if (opcode < 1 or (opcode > 23 and opcode != 27 and opcode != 28 and opcode != 32 and opcode != 33 and opcode != 34 and opcode != 35 and opcode != 36)) return reader.reject("r04-instruction", offset);
                     if (reg != next_register or next_register >= register_count) return reader.reject("r04-register", offset + 2);
                     register_types[next_register] = type_code;
                     definition_blocks[next_register] = @intCast(block_index);
@@ -276,6 +276,14 @@ fn parseFunction(reader: *Reader, allocator: Allocator, global: Global) (error{I
                         if (type_code != (if (opcode == 1) @as(u8, 1) else 2)) return reader.reject("r04-type", offset + 1);
                         if (opcode == 3 and payload > 1) return reader.reject("r04-boolean", offset + 4);
                     } else if (((opcode >= 15 and opcode <= 17) or opcode == 33) and payload >> 16 != 0) return reader.reject("r04-reserved", offset + 6);
+                    if (opcode >= 34 and opcode <= 36) {
+                        if (payload >> 24 != 0) return reader.reject("r04-reserved", offset + 7);
+                        const source_type: u8 = @truncate(payload >> 16);
+                        if ((!contract.integerType(source_type) and !contract.floatType(source_type)) or
+                            (!contract.integerType(type_code) and !contract.floatType(type_code))) return reader.reject("r04-conversion-type", offset + 1);
+                        if (opcode == 35 and (!contract.integerType(source_type) or !contract.integerType(type_code))) return reader.reject("r04-conversion-type", offset + 1);
+                        if (opcode == 36 and contract.bitWidth(source_type) != contract.bitWidth(type_code)) return reader.reject("r04-conversion-type", offset + 1);
+                    }
                     if (opcode == 28) {
                         if (type_code < 3 or !contract.integerType(type_code) or payload != 0) return reader.reject("r04-type", offset + 1);
                         op.literal_bits = try reader.int(u64);
@@ -339,6 +347,9 @@ fn parseFunction(reader: *Reader, allocator: Allocator, global: Global) (error{I
         for (ops[block.start..][0..block.count], 0..) |op, position| {
             const global_position = block.start + position;
             if (op.opcode == 2 or op.opcode == 25) try use(reader, op.register, op.type_code, block_index, global_position, register_count, &register_types, &definition_blocks, &definition_positions, &dominators);
+            if (op.opcode >= 34 and op.opcode <= 36) {
+                try use(reader, op.left, @intCast(op.right), block_index, global_position, register_count, &register_types, &definition_blocks, &definition_positions, &dominators);
+            }
             if ((op.opcode >= 4 and op.opcode <= 23) or op.opcode == 33) {
                 if (op.left >= register_count) return reader.reject("r04-register", instruction_offset);
                 const operand_type = register_types[op.left];
@@ -467,7 +478,7 @@ fn inspectFunction(module: *const VerifiedModule, function: Function, allocator:
     var arena = std.heap.ArenaAllocator.init(allocator);
     defer arena.deinit();
     const temporary = arena.allocator();
-    const View = struct { opcode: []const u8, type: []const u8, register: []const u8, immediate: ?[]const u8 = null, left: ?[]const u8 = null, right: ?[]const u8 = null, target: ?[]const u8 = null, trueTarget: ?[]const u8 = null, falseTarget: ?[]const u8 = null, arguments: ?[]const []const u8 = null, trueArguments: ?[]const []const u8 = null, falseArguments: ?[]const []const u8 = null, event: ?[]const u8 = null, start: []const u8, end: []const u8 };
+    const View = struct { opcode: []const u8, type: []const u8, register: []const u8, immediate: ?[]const u8 = null, left: ?[]const u8 = null, right: ?[]const u8 = null, sourceType: ?[]const u8 = null, target: ?[]const u8 = null, trueTarget: ?[]const u8 = null, falseTarget: ?[]const u8 = null, arguments: ?[]const []const u8 = null, trueArguments: ?[]const []const u8 = null, falseArguments: ?[]const []const u8 = null, event: ?[]const u8 = null, start: []const u8, end: []const u8 };
     const views = try temporary.alloc(View, info.instruction_count);
     for (function.instructions, views) |op, *view| {
         const names = [_][]const u8{ "add", "sub", "mul", "div", "rem", "shl", "shr", "ushr", "and", "or", "xor", "neg", "not", "bool_not", "eq", "ne", "lt", "le", "gt", "ge" };
@@ -483,6 +494,9 @@ fn inspectFunction(module: *const VerifiedModule, function: Function, allocator:
             28 => "const_integer",
             32 => "const_float",
             33 => "pos",
+            34 => "convert_checked",
+            35 => "convert_wrap",
+            36 => "reinterpret",
             else => unreachable,
         }, .type = contract.typeName(op.type_code), .register = try std.fmt.allocPrint(temporary, "{d}", .{op.register}), .start = try std.fmt.allocPrint(temporary, "{d}", .{op.source.start}), .end = try std.fmt.allocPrint(temporary, "{d}", .{op.source.end}) };
         if (op.opcode == 1 or op.opcode == 3) view.immediate = try std.fmt.allocPrint(temporary, "{d}", .{op.immediate});
@@ -491,6 +505,10 @@ fn inspectFunction(module: *const VerifiedModule, function: Function, allocator:
         if ((op.opcode >= 4 and op.opcode <= 23) or op.opcode == 33) {
             view.left = try std.fmt.allocPrint(temporary, "{d}", .{op.left});
             if ((op.opcode < 15 or op.opcode > 17) and op.opcode != 33) view.right = try std.fmt.allocPrint(temporary, "{d}", .{op.right});
+        }
+        if (op.opcode >= 34 and op.opcode <= 36) {
+            view.left = try std.fmt.allocPrint(temporary, "{d}", .{op.left});
+            view.sourceType = contract.typeName(@intCast(op.right));
         }
         if (op.opcode == 26) view.event = try std.fmt.allocPrint(temporary, "{d}", .{op.immediate});
         if (op.opcode == 27) {
@@ -528,7 +546,7 @@ fn inspectFunction(module: *const VerifiedModule, function: Function, allocator:
     for (info.parameter_types, parameter_types) |type_code, *type_name| type_name.* = contract.typeName(type_code);
     return std.json.Stringify.valueAlloc(allocator, .{
         .familyId = "tsfg.bytecode",
-        .semver = "0.8.0",
+        .semver = "0.9.0",
         .schemaHash = "sha256:" ++ contract.schema_hash_hex,
         .target = contract.target,
         .triple = contract.triple,

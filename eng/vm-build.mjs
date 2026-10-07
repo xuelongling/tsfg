@@ -7,7 +7,7 @@ import path from "node:path";
 export class VmBuildError extends Error {
   constructor(message, issueCode = "vm-source-build") { super(message); this.issueCode = issueCode; }
 }
-const runtimeSources = ["root", "bytecode", "vm", "runtime", "main", "contract"].map(name => `runtime/${name}.zig`);
+const runtimeSources = ["root", "bytecode", "vm", "runtime", "main", "contract", "conversions"].map(name => `runtime/${name}.zig`);
 
 async function ordinaryAncestor(directory) {
   for (let current = directory;; current = path.dirname(current)) {

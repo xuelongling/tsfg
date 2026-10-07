@@ -5,6 +5,7 @@ import { readFile } from "node:fs/promises";
 import path from "node:path";
 import sourceLock from "../eng/frontend-source.lock.json" with { type: "json" };
 import contractRegistry from "../contracts/registry.json" with { type: "json" };
+import { conversionDeclaration, conversionEntries, verifyConversionOrigin, conversionCallSpelling } from "./conversions.mjs";
 import bytecodeSchema from "../contracts/bytecode.schema.json" with { type: "json" };
 
 const frontendContract = contractRegistry["tsfg.frontend-snapshot"];
@@ -98,7 +99,7 @@ function matchesSnapshotContract(snapshot) {
       && claim.rootFile === snapshot.source?.path
       && files.get(claim.rootFile) === snapshot.source.content
       && claim.declarations.version === snapshot.capability
-      && (!["minimal-integers-v3", "minimal-floats-v4"].includes(snapshot.capability) || canonical(claim.target) === canonical({ ...bytecodeSchema.target, pointerBits: "64" }))
+      && (!["minimal-integers-v3", "minimal-floats-v4", "minimal-conversions-v5"].includes(snapshot.capability) || canonical(claim.target) === canonical({ ...bytecodeSchema.target, pointerBits: "64" }))
       && Array.isArray(snapshot.inputs)
       && new Set(snapshot.inputs.map(file => file.path)).size === snapshot.inputs.length
       && snapshot.inputs.some(file => file.path === claim.rootFile)
@@ -146,7 +147,7 @@ export async function analyzeFrontend(input, { executable } = {}) {
   const rootFile = ownedInput?.rootFile;
   const files = ownedInput?.files;
   const seen = new Set();
-  const integerInput = ["minimal-integers-v3", "minimal-floats-v4"].includes(ownedInput?.declarations?.version);
+  const integerInput = ["minimal-integers-v3", "minimal-floats-v4", "minimal-conversions-v5"].includes(ownedInput?.declarations?.version);
   if (Object.keys(ownedInput ?? {}).sort().join(",") !== (integerInput ? "config,declarations,files,rootFile,sourceRoot,target" : "config,declarations,files,rootFile,sourceRoot")
       || (integerInput && canonical(ownedInput.target) !== canonical({ ...bytecodeSchema.target, pointerBits: "64" }))
       || Object.keys(ownedInput?.declarations ?? {}).sort().join(",") !== "paths,version"
@@ -167,7 +168,8 @@ export async function analyzeFrontend(input, { executable } = {}) {
   const declarationFile = declarationVersion === "minimal-bool-v1" ? "minimal-bool-v1.d.ts"
     : declarationVersion === "minimal-scalars-v2" ? "minimal-scalars-v2.d.ts"
     : declarationVersion === "minimal-integers-v3" ? "minimal-integers-v3.d.ts"
-    : declarationVersion === "minimal-floats-v4" ? "minimal-floats-v4.d.ts" : null;
+    : declarationVersion === "minimal-floats-v4" ? "minimal-floats-v4.d.ts"
+    : declarationVersion === "minimal-conversions-v5" ? "minimal-conversions-v5.d.ts" : null;
   if (!declarationFile) return rejectInput(inputIdentity, rootFile);
   const declarationBytes = await readFile(new URL(`./${declarationFile}`, import.meta.url), "utf8");
   const declarationPaths = ownedInput?.declarations?.paths;
@@ -391,6 +393,19 @@ export function validateFrontendSnapshot(snapshot) {
     } else if (expression.symbol) {
       throw new TypeError("non-reference expression has a symbol");
     }
+    if (expression.kind === "conversion") {
+      const origin = expression.conversion, entry = conversionEntries.get(origin?.entryId);
+      const declaration = snapshot.inputs.find(file => file.path === origin?.declarationPath);
+      if (!verifyConversionOrigin(origin) || snapshot.capability !== conversionDeclaration.version
+          || origin.declarationPath !== snapshot.identityInput.declarations.paths[0]
+          || declaration?.kind !== "declaration-root" || declaration.sha256 !== conversionDeclaration.sha256
+          || expression.type !== entry.to || expression.operand?.type !== entry.from
+          || Object.keys(expression).sort().join(",") !== "conversion,kind,node,operand,range,type,typeRef"
+          || scope.has(entry.name)
+          || !conversionCallSpelling(snapshot.source.content, expression.range, expression.operand.range, entry)) {
+        throw new TypeError("conversion differs from admitted declaration origin or nominal types");
+      }
+    } else if (expression.conversion) {throw new TypeError("non-conversion expression has conversion origin");}
     if (expression.kind === "call" && !expression.target) {
       throw new TypeError("call has no target");
     }

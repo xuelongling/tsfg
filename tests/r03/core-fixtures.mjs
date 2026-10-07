@@ -7,7 +7,7 @@ import schema from "../../contracts/bytecode.schema.json" with { type: "json" };
 export const sourceAttributes = "tsfg_source.start = 0 : i64, tsfg_source.end = 42 : i64";
 export function coreTestModule(body, type = "i32", name = "sample") {
   const scalar = type === "i32" ? "i32" : "bool";
-  const fields = { version: "0.8.0", input_identity: sha256("public Core fixture"), source_hash: sha256("export function sample(): i32 { return 42; }"),
+  const fields = { version: "0.9.0", input_identity: sha256("public Core fixture"), source_hash: sha256("export function sample(): i32 { return 42; }"),
     source_path: "/src/main.ts", target: schema.target.target, triple: schema.target.triple,
     data_layout: schema.target.llvmDataLayout, bytecode_schema: registry["tsfg.bytecode"].schemaHash };
   const attrs = Object.entries(fields).map(([key, value]) => `tsfg_core.${key} = ${JSON.stringify(value)}`);

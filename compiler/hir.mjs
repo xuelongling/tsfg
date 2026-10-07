@@ -3,6 +3,7 @@ import { validateFrontendSnapshot, resolveType, resolveSymbol, identifierName } 
 import { canonical, functionIdentity, signatureHash, i32TypeId, boolTypeId, scalarTypeIds, scalarName, integerNames, integerRange, own, sha256 } from "./identity.mjs";
 import registry from "../contracts/registry.json" with { type: "json" };
 import bytecodeSchema from "../contracts/bytecode.schema.json" with { type: "json" };
+import { conversionDeclaration, conversionEntries, verifyConversionOrigin, conversionCallSpelling, admittedConversionScope } from "./conversions.mjs";
 import { floatNames, floatBits } from "./float.mjs";
 
 const contract = () => registry["tsfg.hir"];
@@ -70,6 +71,13 @@ function verifyExpression(value, parent, source, fail, budget, locals, visibleBi
         primary: { sourceId: budget.sourcePath, ...value.range } });
       throw error;
     }
+  } else if (value.kind === "conversion") {
+    const entry = conversionEntries.get(value.origin?.entryId);
+    if (!exactKeys(value, ["kind", "type", "range", "origin", "operand"]) || !verifyConversionOrigin(value.origin)
+        || !admittedConversionScope(budget.inputScope,budget.inputIdentity) || value.origin.declarationPath !== budget.inputScope.declarations.paths[0]
+        || value.type !== types[entry.to] || value.operand?.type !== types[entry.from]
+        || visibleBindings.has(entry.name) || !conversionCallSpelling(source, value.range, value.operand.range, entry)) fail();
+    verifyExpression(value.operand, value.range, source, fail, budget, locals, visibleBindings);
   } else if (value.kind === "call") {
     const target = budget.functions.get(value.target);
     if (!exactKeys(value, ["kind", "type", "range", "target", "signatureHash", "arguments"])
@@ -155,8 +163,10 @@ function noShortIf(statement) {
 
 export function verifyHir(hir) {
   const fail = () => { throw new TypeError("r03-hir-invalid: owned HIR identity, type, source or structure differs"); };
-  if (!exactKeys(hir, ["contractVersion", "schemaHash", "inputIdentity", "source", "target", "functions"])
+  if (!exactKeys(hir, ["contractVersion", "schemaHash", "inputIdentity", "source", "target", "functions", "inputScope"])
       || hir.contractVersion !== contract()?.semver || hir.schemaHash !== contract()?.schemaHash
+      || sha256(canonical(hir.inputScope)) !== hir.inputIdentity
+      || hir.inputScope?.rootFile !== hir.source?.path || hir.inputScope?.files?.find(file=>file.path===hir.source.path)?.content !== hir.source.content
       || !hash(hir.inputIdentity) || canonical(hir.target) !== canonical(bytecodeSchema.target)
       || !exactKeys(hir.source, ["path", "content", "hash"])
       || !validText(hir.source.path) || !hir.source.path.startsWith("/")
@@ -209,7 +219,7 @@ export function verifyHir(hir) {
     }
   };
   collect(fn.body);
-  const budget = { remaining: 4096, sourcePath: hir.source.path, declarations, functions };
+  const budget = { remaining: 4096, sourcePath: hir.source.path, declarations, functions, inputScope:hir.inputScope, inputIdentity:hir.inputIdentity };
   const clone = locals => new Map([...locals].map(([id, local]) => [id, { ...local }]));
   const body = (statements, parent, locals, frame = "plain", outerBindings = new Map()) => {
     // Lexical visibility starts at scope entry, including each declaration's
@@ -349,7 +359,7 @@ export function buildHir(snapshot) {
   const first = snapshot.functions[0], expression = first?.body?.find(item => item.expression)?.expression;
   if (snapshot.functions.length < 1 || snapshot.functions.length > 128 || snapshot.functions.some(fn => fn.parameters.length > 64
       || !Object.hasOwn(types, resolveType(snapshot, fn.returnTypeRef).scalar)
-      || snapshot.capability !== "minimal-floats-v4" && (floatNames.includes(fn.returnType) || fn.parameters.some(p => floatNames.includes(p.type)))
+      || !["minimal-floats-v4", "minimal-conversions-v5"].includes(snapshot.capability) && (floatNames.includes(fn.returnType) || fn.parameters.some(p => floatNames.includes(p.type)))
       || fn.parameters.some(parameter => !types[parameter.type]) || fn.body.length < 1 || fn.body.length > 128)) {
     return { status: "error", diagnostics: [{ code: "r03-d-capability", ruleId: "r01-ts-baseline", phase: "hir",
       message: "current execution capability requires nominal integer/bool functions with direct calls, locals, structured control and returns",
@@ -371,7 +381,7 @@ export function buildHir(snapshot) {
     const type = types[resolveType(snapshot, value.typeRef).scalar];
     if (!type) throw new TypeError("unsupported expression type");
     let projectedRange = value.range;
-    if (value.kind === "call" && parentRange && value.range.start < parentRange.start
+    if (["call", "conversion"].includes(value.kind) && parentRange && value.range.start < parentRange.start
         && sourceTrivia(snapshot.source.content, value.range.start, parentRange.start).trim() === "") {
       projectedRange = { ...value.range, start: parentRange.start };
     }
@@ -381,6 +391,7 @@ export function buildHir(snapshot) {
       if (!binding) throw new TypeError("local reference has no preceding owned declaration");
       return { kind: "reference", ...common, binding: binding.id };
     }
+    if (value.kind === "conversion") return {kind:"conversion",...common,origin:structuredClone(value.conversion),operand:project(value.operand,common.range)};
     if (value.kind === "call") {
       const target = functions.get(resolveSymbol(snapshot, value.target).id);
       if (!target) throw new TypeError("call target is outside owned function closure");
@@ -424,7 +435,7 @@ export function buildHir(snapshot) {
   const hir = {
     contractVersion: contract().semver, schemaHash: contract().schemaHash, inputIdentity: snapshot.inputIdentity,
     source: { ...snapshot.source, hash: sha256(snapshot.source.content) }, target: bytecodeSchema.target,
-    functions: projectedFunctions,
+    functions: projectedFunctions, inputScope: structuredClone(snapshot.identityInput),
   };
   try { return { status: "ok", hir: verifyHir(hir) }; }
   catch (error) { return { status: "error", diagnostics: [{ code: "r03-d-snapshot", ruleId: "r01-input-boundary", phase: "hir", message: error.message,
@@ -457,7 +468,7 @@ export function lowerHir(hir) {
     source_path: verified.source.path,
     target: verified.target.target, triple: verified.target.triple, data_layout: verified.target.llvmDataLayout,
     bytecode_schema: registry["tsfg.bytecode"].schemaHash };
-  const attrs = ['tsfg_core.version = "0.8.0"', ...Object.entries(strings)
+  const attrs = ['tsfg_core.version = "0.9.0"', ...Object.entries(strings)
     .map(([key, item]) => `tsfg_core.${key} = ${quote(item)}`),
     `tsfg_core.source_length = ${verified.source.content.length} : i64`];
   const lowerFunction = fn => {
@@ -487,6 +498,12 @@ export function lowerHir(hir) {
   fuel(1, fn.range);
   const emit = expression => {
     if (expression.kind === "reference") return definitions.get(expression.binding);
+    if (expression.kind === "conversion") {
+      const operand=emit(expression.operand), entry=conversionEntries.get(expression.origin.entryId), name=`%v${valueIndex++}`;
+      const op={checked:"convert_checked",wrap:"convert_wrap",reinterpret:"reinterpret"}[entry.mode];
+      current.lines.push(`    ${name} = "tsfg_core.${op}"(${operand}) {${attrsFor(expression.range)}} : (${coreType(expression.operand.type)}) -> ${coreType(expression.type)}`);
+      return name;
+    }
     if (expression.kind === "call") {
       const operands = expression.arguments.map(emit), target = verified.functions.find(fn => fn.id === expression.target);
       const name = `%v${valueIndex++}`;

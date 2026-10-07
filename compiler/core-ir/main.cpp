@@ -50,7 +50,7 @@ uint8_t typeCode(mlir::Type type) {
 }
 unsigned width(uint8_t code) {
   switch (code) { case 3: case 6: return 8; case 4: case 7: return 16;
-    case 1: case 8: return 32; default: return 64; }
+    case 1: case 8: case 12: return 32; default: return 64; }
 }
 bool signedInteger(uint8_t code) { return code == 1 || code == 3 || code == 4 || code == 5 || code == 10; }
 bool integer(uint8_t code) { return code >= 1 && code <= 11 && code != 2; }
@@ -180,6 +180,31 @@ TSFG_SCALAR_OPERATION(GtOp, "gt", mlir::OpTrait::NOperands<2>::Impl, Comparison)
 TSFG_SCALAR_OPERATION(GeOp, "ge", mlir::OpTrait::NOperands<2>::Impl, Comparison)
 #undef TSFG_SCALAR_OPERATION
 
+bool conversionTypes(mlir::Operation *operation, unsigned mode) {
+  const auto source = typeCode(operation->getOperand(0).getType());
+  const auto target = typeCode(operation->getResult(0).getType());
+  if (!(integer(source) || floating(source)) || !(integer(target) || floating(target))) return false;
+  if (mode == 35) return integer(source) && integer(target);
+  if (mode == 36) return width(source) == width(target);
+  return true;
+}
+#define TSFG_CONVERSION_OPERATION(Class, Name, Mode) \
+class Class : public mlir::Op<Class, mlir::OpTrait::OneOperand, mlir::OpTrait::OneResult, mlir::OpTrait::ZeroRegions> { \
+public: \
+  using Op::Op; \
+  MLIR_DEFINE_EXPLICIT_INTERNAL_INLINE_TYPE_ID(Class) \
+  static llvm::StringRef getOperationName() { return "tsfg_core." Name; } \
+  static llvm::ArrayRef<llvm::StringRef> getAttributeNames() { return {}; } \
+  mlir::LogicalResult verify() { \
+    if (!conversionTypes(getOperation(), Mode)) return emitOpError("[core-ir-conversion-type] illegal nominal source/result pair"); \
+    return mlir::success(); \
+  } \
+};
+TSFG_CONVERSION_OPERATION(CheckedConversionOp, "convert_checked", 34)
+TSFG_CONVERSION_OPERATION(WrapConversionOp, "convert_wrap", 35)
+TSFG_CONVERSION_OPERATION(ReinterpretOp, "reinterpret", 36)
+#undef TSFG_CONVERSION_OPERATION
+
 class CoreDialect : public mlir::Dialect {
 public:
   MLIR_DEFINE_EXPLICIT_INTERNAL_INLINE_TYPE_ID(CoreDialect)
@@ -188,7 +213,8 @@ public:
       : Dialect(getDialectNamespace(), context, mlir::TypeID::get<CoreDialect>()) {
     addOperations<FuelOp, ConstantOp, AddOp, SubOp, MulOp, DivOp, RemOp, ShlOp,
                   ShrOp, UshrOp, AndOp, OrOp, XorOp, NegOp, NotOp, BoolNotOp,
-                  EqOp, NeOp, LtOp, LeOp, GtOp, GeOp, PosOp>();
+                  EqOp, NeOp, LtOp, LeOp, GtOp, GeOp, PosOp,
+                  CheckedConversionOp, WrapConversionOp, ReinterpretOp>();
     addTypes<IntegerType>();
   }
   mlir::Type parseType(mlir::DialectAsmParser &parser) const override {
@@ -205,7 +231,7 @@ public:
 
 namespace {
 constexpr llvm::StringLiteral bytecodeSchema =
-    "616360bef22c9c129df7b11392dc4e181797cf2f311ad62c56c701ec10ff716c";
+    "648d6b8b51724b8948e057902276141cce31d7e5465cbf67d83e1a98fb2769d4";
 constexpr llvm::StringLiteral target = "windows-x86_64-msvc";
 constexpr llvm::StringLiteral triple = "x86_64-pc-windows-msvc";
 constexpr llvm::StringLiteral layout =
@@ -547,6 +573,12 @@ mlir::LogicalResult verifiedBytecode(mlir::ModuleOp module, Bytes &packet) {
             integer(edgeArguments, registers.lookup(argument), 2);
           }
           opcode = 27; immediate = static_cast<uint32_t>(destination);
+        } else if (llvm::isa<tsfg::CheckedConversionOp, tsfg::WrapConversionOp, tsfg::ReinterpretOp>(operation)) {
+          if (!attributes(&operation, {"tsfg_source.start", "tsfg_source.end"}) ||
+              !registers.count(operation.getOperand(0))) return reject();
+          opcode = llvm::isa<tsfg::CheckedConversionOp>(operation) ? 34 : llvm::isa<tsfg::WrapConversionOp>(operation) ? 35 : 36;
+          immediate = registers.lookup(operation.getOperand(0)) |
+              (static_cast<uint32_t>(tsfg::typeCode(operation.getOperand(0).getType())) << 16);
         } else if ((opcode = scalarOpcode(operation.getName().getStringRef()))) {
           if (!attributes(&operation, {"tsfg_source.start", "tsfg_source.end"}) ||
               !registers.count(operation.getOperand(0))) return reject();
@@ -589,13 +621,13 @@ mlir::LogicalResult verifiedBytecode(mlir::ModuleOp module, Bytes &packet) {
   string(payload, target); string(payload, triple); string(payload, layout);
   integer(payload, static_cast<uint32_t>(size), 2);
   integer(payload, static_cast<uint32_t>(align), 2);
-  integer(payload, pointerBits, 2); integer(payload, pointerAlign, 2); integer(payload, 19, 4);
+  integer(payload, pointerBits, 2); integer(payload, pointerAlign, 2); integer(payload, 20, 4);
   appendHash(payload, input); appendHash(payload, source);
   string(payload, path); integer(payload, sourceLength, 4);
   integer(payload, functions.size(), 2);
   payload.insert(payload.end(), functionPayload.begin(), functionPayload.end());
   packet = Bytes{'T','S','F','G','T','B','C','0'};
-  integer(packet, 8, 4);
+  integer(packet, 9, 4);
   Hash schema; if (!decodeHash(("sha256:" + bytecodeSchema).str(), schema)) return reject();
   appendHash(packet, schema); integer(packet, static_cast<uint32_t>(80 + payload.size()), 4);
   appendHash(packet, llvm::SHA256::hash(payload));
@@ -627,8 +659,8 @@ int main(int argc, char **argv) {
     return 3;
   }
   auto version = module->getOperation()->getAttrOfType<mlir::StringAttr>("tsfg_core.version");
-  if (!version || version.getValue() != "0.8.0") {
-    llvm::errs() << "[core-ir-identity] expected Core IR 0.8.0\n";
+  if (!version || version.getValue() != "0.9.0") {
+    llvm::errs() << "[core-ir-identity] expected Core IR 0.9.0\n";
     return 3;
   }
   if (mlir::failed(mlir::verify(*module))) {

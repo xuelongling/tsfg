@@ -1,0 +1,636 @@
+{
+  "status": "PREPARED independent mathematics only; M09 unclaimed and no product execution",
+  "createdUtc": "2026-10-07T03:21:09.349Z",
+  "policy": {
+    "path": "E:/ws/pro_tsfg/.scratch/tsfg_r03/evidence/coordination-20261006/ticket09-numeric-conversion-reconciliation-20261007.md",
+    "sha256": "1b7ad9ec7a01e06f7ffc6c7382519176db7603ecd4e997f42ae42509dd924428"
+  },
+  "unchangedOriginalCorpusSha256": "9a4642bf36e2f7985170fd1f87873fa2e0c2d6693e8bd5f4426702fa457c049f",
+  "generator": {
+    "path": "E:\\ws\\pro_tsfg\\.scratch\\tsfg_r03\\evidence\\09\\intake-root-prepared-20261007\\freeze-nonfinite-supplement.mjs",
+    "sha256": "00d69861e95e4ac7636815f79ef931049a2089099fac00e468b96554d12b4d8e"
+  },
+  "basis": "Exact BigInt IEEE exponent/fraction/sign classification; policy-selected checked NaN target canonicalization and infinity sign retention; reinterpret preserves every bit. No host floating arithmetic or product/LLVM helper.",
+  "sourceModes": [
+    "canonical",
+    "optimize"
+  ],
+  "count": 36,
+  "checkedCount": 24,
+  "rawRoundtripCount": 12,
+  "rows": [
+    {
+      "id": "nonfinite-001",
+      "mode": "checked",
+      "from": "f32",
+      "to": "f32",
+      "inputBits": "7f800000",
+      "classification": "infinity",
+      "negative": false,
+      "expected": {
+        "kind": "return",
+        "type": "f32",
+        "rawBits": "7f800000"
+      },
+      "productExecuted": false,
+      "productExecutionCredit": 0
+    },
+    {
+      "id": "nonfinite-002",
+      "mode": "checked",
+      "from": "f32",
+      "to": "f32",
+      "inputBits": "ff800000",
+      "classification": "infinity",
+      "negative": true,
+      "expected": {
+        "kind": "return",
+        "type": "f32",
+        "rawBits": "ff800000"
+      },
+      "productExecuted": false,
+      "productExecutionCredit": 0
+    },
+    {
+      "id": "nonfinite-003",
+      "mode": "checked",
+      "from": "f32",
+      "to": "f32",
+      "inputBits": "7fc12345",
+      "classification": "NaN",
+      "negative": false,
+      "expected": {
+        "kind": "return",
+        "type": "f32",
+        "rawBits": "7fc00000"
+      },
+      "productExecuted": false,
+      "productExecutionCredit": 0
+    },
+    {
+      "id": "nonfinite-004",
+      "mode": "checked",
+      "from": "f32",
+      "to": "f32",
+      "inputBits": "ffc12345",
+      "classification": "NaN",
+      "negative": true,
+      "expected": {
+        "kind": "return",
+        "type": "f32",
+        "rawBits": "7fc00000"
+      },
+      "productExecuted": false,
+      "productExecutionCredit": 0
+    },
+    {
+      "id": "nonfinite-005",
+      "mode": "checked",
+      "from": "f32",
+      "to": "f32",
+      "inputBits": "7f812345",
+      "classification": "NaN",
+      "negative": false,
+      "expected": {
+        "kind": "return",
+        "type": "f32",
+        "rawBits": "7fc00000"
+      },
+      "productExecuted": false,
+      "productExecutionCredit": 0
+    },
+    {
+      "id": "nonfinite-006",
+      "mode": "checked",
+      "from": "f32",
+      "to": "f32",
+      "inputBits": "ff812345",
+      "classification": "NaN",
+      "negative": true,
+      "expected": {
+        "kind": "return",
+        "type": "f32",
+        "rawBits": "7fc00000"
+      },
+      "productExecuted": false,
+      "productExecutionCredit": 0
+    },
+    {
+      "id": "nonfinite-007",
+      "mode": "checked",
+      "from": "f32",
+      "to": "f64",
+      "inputBits": "7f800000",
+      "classification": "infinity",
+      "negative": false,
+      "expected": {
+        "kind": "return",
+        "type": "f64",
+        "rawBits": "7ff0000000000000"
+      },
+      "productExecuted": false,
+      "productExecutionCredit": 0
+    },
+    {
+      "id": "nonfinite-008",
+      "mode": "checked",
+      "from": "f32",
+      "to": "f64",
+      "inputBits": "ff800000",
+      "classification": "infinity",
+      "negative": true,
+      "expected": {
+        "kind": "return",
+        "type": "f64",
+        "rawBits": "fff0000000000000"
+      },
+      "productExecuted": false,
+      "productExecutionCredit": 0
+    },
+    {
+      "id": "nonfinite-009",
+      "mode": "checked",
+      "from": "f32",
+      "to": "f64",
+      "inputBits": "7fc12345",
+      "classification": "NaN",
+      "negative": false,
+      "expected": {
+        "kind": "return",
+        "type": "f64",
+        "rawBits": "7ff8000000000000"
+      },
+      "productExecuted": false,
+      "productExecutionCredit": 0
+    },
+    {
+      "id": "nonfinite-010",
+      "mode": "checked",
+      "from": "f32",
+      "to": "f64",
+      "inputBits": "ffc12345",
+      "classification": "NaN",
+      "negative": true,
+      "expected": {
+        "kind": "return",
+        "type": "f64",
+        "rawBits": "7ff8000000000000"
+      },
+      "productExecuted": false,
+      "productExecutionCredit": 0
+    },
+    {
+      "id": "nonfinite-011",
+      "mode": "checked",
+      "from": "f32",
+      "to": "f64",
+      "inputBits": "7f812345",
+      "classification": "NaN",
+      "negative": false,
+      "expected": {
+        "kind": "return",
+        "type": "f64",
+        "rawBits": "7ff8000000000000"
+      },
+      "productExecuted": false,
+      "productExecutionCredit": 0
+    },
+    {
+      "id": "nonfinite-012",
+      "mode": "checked",
+      "from": "f32",
+      "to": "f64",
+      "inputBits": "ff812345",
+      "classification": "NaN",
+      "negative": true,
+      "expected": {
+        "kind": "return",
+        "type": "f64",
+        "rawBits": "7ff8000000000000"
+      },
+      "productExecuted": false,
+      "productExecutionCredit": 0
+    },
+    {
+      "id": "nonfinite-013",
+      "mode": "checked",
+      "from": "f64",
+      "to": "f32",
+      "inputBits": "7ff0000000000000",
+      "classification": "infinity",
+      "negative": false,
+      "expected": {
+        "kind": "return",
+        "type": "f32",
+        "rawBits": "7f800000"
+      },
+      "productExecuted": false,
+      "productExecutionCredit": 0
+    },
+    {
+      "id": "nonfinite-014",
+      "mode": "checked",
+      "from": "f64",
+      "to": "f32",
+      "inputBits": "fff0000000000000",
+      "classification": "infinity",
+      "negative": true,
+      "expected": {
+        "kind": "return",
+        "type": "f32",
+        "rawBits": "ff800000"
+      },
+      "productExecuted": false,
+      "productExecutionCredit": 0
+    },
+    {
+      "id": "nonfinite-015",
+      "mode": "checked",
+      "from": "f64",
+      "to": "f32",
+      "inputBits": "7ff8123456789abc",
+      "classification": "NaN",
+      "negative": false,
+      "expected": {
+        "kind": "return",
+        "type": "f32",
+        "rawBits": "7fc00000"
+      },
+      "productExecuted": false,
+      "productExecutionCredit": 0
+    },
+    {
+      "id": "nonfinite-016",
+      "mode": "checked",
+      "from": "f64",
+      "to": "f32",
+      "inputBits": "fff8123456789abc",
+      "classification": "NaN",
+      "negative": true,
+      "expected": {
+        "kind": "return",
+        "type": "f32",
+        "rawBits": "7fc00000"
+      },
+      "productExecuted": false,
+      "productExecutionCredit": 0
+    },
+    {
+      "id": "nonfinite-017",
+      "mode": "checked",
+      "from": "f64",
+      "to": "f32",
+      "inputBits": "7ff0123456789abc",
+      "classification": "NaN",
+      "negative": false,
+      "expected": {
+        "kind": "return",
+        "type": "f32",
+        "rawBits": "7fc00000"
+      },
+      "productExecuted": false,
+      "productExecutionCredit": 0
+    },
+    {
+      "id": "nonfinite-018",
+      "mode": "checked",
+      "from": "f64",
+      "to": "f32",
+      "inputBits": "fff0123456789abc",
+      "classification": "NaN",
+      "negative": true,
+      "expected": {
+        "kind": "return",
+        "type": "f32",
+        "rawBits": "7fc00000"
+      },
+      "productExecuted": false,
+      "productExecutionCredit": 0
+    },
+    {
+      "id": "nonfinite-019",
+      "mode": "checked",
+      "from": "f64",
+      "to": "f64",
+      "inputBits": "7ff0000000000000",
+      "classification": "infinity",
+      "negative": false,
+      "expected": {
+        "kind": "return",
+        "type": "f64",
+        "rawBits": "7ff0000000000000"
+      },
+      "productExecuted": false,
+      "productExecutionCredit": 0
+    },
+    {
+      "id": "nonfinite-020",
+      "mode": "checked",
+      "from": "f64",
+      "to": "f64",
+      "inputBits": "fff0000000000000",
+      "classification": "infinity",
+      "negative": true,
+      "expected": {
+        "kind": "return",
+        "type": "f64",
+        "rawBits": "fff0000000000000"
+      },
+      "productExecuted": false,
+      "productExecutionCredit": 0
+    },
+    {
+      "id": "nonfinite-021",
+      "mode": "checked",
+      "from": "f64",
+      "to": "f64",
+      "inputBits": "7ff8123456789abc",
+      "classification": "NaN",
+      "negative": false,
+      "expected": {
+        "kind": "return",
+        "type": "f64",
+        "rawBits": "7ff8000000000000"
+      },
+      "productExecuted": false,
+      "productExecutionCredit": 0
+    },
+    {
+      "id": "nonfinite-022",
+      "mode": "checked",
+      "from": "f64",
+      "to": "f64",
+      "inputBits": "fff8123456789abc",
+      "classification": "NaN",
+      "negative": true,
+      "expected": {
+        "kind": "return",
+        "type": "f64",
+        "rawBits": "7ff8000000000000"
+      },
+      "productExecuted": false,
+      "productExecutionCredit": 0
+    },
+    {
+      "id": "nonfinite-023",
+      "mode": "checked",
+      "from": "f64",
+      "to": "f64",
+      "inputBits": "7ff0123456789abc",
+      "classification": "NaN",
+      "negative": false,
+      "expected": {
+        "kind": "return",
+        "type": "f64",
+        "rawBits": "7ff8000000000000"
+      },
+      "productExecuted": false,
+      "productExecutionCredit": 0
+    },
+    {
+      "id": "nonfinite-024",
+      "mode": "checked",
+      "from": "f64",
+      "to": "f64",
+      "inputBits": "fff0123456789abc",
+      "classification": "NaN",
+      "negative": true,
+      "expected": {
+        "kind": "return",
+        "type": "f64",
+        "rawBits": "7ff8000000000000"
+      },
+      "productExecuted": false,
+      "productExecutionCredit": 0
+    },
+    {
+      "id": "nonfinite-025",
+      "mode": "reinterpret-roundtrip",
+      "from": "f32",
+      "via": "u32",
+      "to": "f32",
+      "inputBits": "7f800000",
+      "expectedIntermediate": {
+        "type": "u32",
+        "rawBits": "7f800000"
+      },
+      "expected": {
+        "kind": "return",
+        "type": "f32",
+        "rawBits": "7f800000"
+      },
+      "productExecuted": false,
+      "productExecutionCredit": 0
+    },
+    {
+      "id": "nonfinite-026",
+      "mode": "reinterpret-roundtrip",
+      "from": "f32",
+      "via": "u32",
+      "to": "f32",
+      "inputBits": "ff800000",
+      "expectedIntermediate": {
+        "type": "u32",
+        "rawBits": "ff800000"
+      },
+      "expected": {
+        "kind": "return",
+        "type": "f32",
+        "rawBits": "ff800000"
+      },
+      "productExecuted": false,
+      "productExecutionCredit": 0
+    },
+    {
+      "id": "nonfinite-027",
+      "mode": "reinterpret-roundtrip",
+      "from": "f32",
+      "via": "u32",
+      "to": "f32",
+      "inputBits": "7fc12345",
+      "expectedIntermediate": {
+        "type": "u32",
+        "rawBits": "7fc12345"
+      },
+      "expected": {
+        "kind": "return",
+        "type": "f32",
+        "rawBits": "7fc12345"
+      },
+      "productExecuted": false,
+      "productExecutionCredit": 0
+    },
+    {
+      "id": "nonfinite-028",
+      "mode": "reinterpret-roundtrip",
+      "from": "f32",
+      "via": "u32",
+      "to": "f32",
+      "inputBits": "ffc12345",
+      "expectedIntermediate": {
+        "type": "u32",
+        "rawBits": "ffc12345"
+      },
+      "expected": {
+        "kind": "return",
+        "type": "f32",
+        "rawBits": "ffc12345"
+      },
+      "productExecuted": false,
+      "productExecutionCredit": 0
+    },
+    {
+      "id": "nonfinite-029",
+      "mode": "reinterpret-roundtrip",
+      "from": "f32",
+      "via": "u32",
+      "to": "f32",
+      "inputBits": "7f812345",
+      "expectedIntermediate": {
+        "type": "u32",
+        "rawBits": "7f812345"
+      },
+      "expected": {
+        "kind": "return",
+        "type": "f32",
+        "rawBits": "7f812345"
+      },
+      "productExecuted": false,
+      "productExecutionCredit": 0
+    },
+    {
+      "id": "nonfinite-030",
+      "mode": "reinterpret-roundtrip",
+      "from": "f32",
+      "via": "u32",
+      "to": "f32",
+      "inputBits": "ff812345",
+      "expectedIntermediate": {
+        "type": "u32",
+        "rawBits": "ff812345"
+      },
+      "expected": {
+        "kind": "return",
+        "type": "f32",
+        "rawBits": "ff812345"
+      },
+      "productExecuted": false,
+      "productExecutionCredit": 0
+    },
+    {
+      "id": "nonfinite-031",
+      "mode": "reinterpret-roundtrip",
+      "from": "f64",
+      "via": "u64",
+      "to": "f64",
+      "inputBits": "7ff0000000000000",
+      "expectedIntermediate": {
+        "type": "u64",
+        "rawBits": "7ff0000000000000"
+      },
+      "expected": {
+        "kind": "return",
+        "type": "f64",
+        "rawBits": "7ff0000000000000"
+      },
+      "productExecuted": false,
+      "productExecutionCredit": 0
+    },
+    {
+      "id": "nonfinite-032",
+      "mode": "reinterpret-roundtrip",
+      "from": "f64",
+      "via": "u64",
+      "to": "f64",
+      "inputBits": "fff0000000000000",
+      "expectedIntermediate": {
+        "type": "u64",
+        "rawBits": "fff0000000000000"
+      },
+      "expected": {
+        "kind": "return",
+        "type": "f64",
+        "rawBits": "fff0000000000000"
+      },
+      "productExecuted": false,
+      "productExecutionCredit": 0
+    },
+    {
+      "id": "nonfinite-033",
+      "mode": "reinterpret-roundtrip",
+      "from": "f64",
+      "via": "u64",
+      "to": "f64",
+      "inputBits": "7ff8123456789abc",
+      "expectedIntermediate": {
+        "type": "u64",
+        "rawBits": "7ff8123456789abc"
+      },
+      "expected": {
+        "kind": "return",
+        "type": "f64",
+        "rawBits": "7ff8123456789abc"
+      },
+      "productExecuted": false,
+      "productExecutionCredit": 0
+    },
+    {
+      "id": "nonfinite-034",
+      "mode": "reinterpret-roundtrip",
+      "from": "f64",
+      "via": "u64",
+      "to": "f64",
+      "inputBits": "fff8123456789abc",
+      "expectedIntermediate": {
+        "type": "u64",
+        "rawBits": "fff8123456789abc"
+      },
+      "expected": {
+        "kind": "return",
+        "type": "f64",
+        "rawBits": "fff8123456789abc"
+      },
+      "productExecuted": false,
+      "productExecutionCredit": 0
+    },
+    {
+      "id": "nonfinite-035",
+      "mode": "reinterpret-roundtrip",
+      "from": "f64",
+      "via": "u64",
+      "to": "f64",
+      "inputBits": "7ff0123456789abc",
+      "expectedIntermediate": {
+        "type": "u64",
+        "rawBits": "7ff0123456789abc"
+      },
+      "expected": {
+        "kind": "return",
+        "type": "f64",
+        "rawBits": "7ff0123456789abc"
+      },
+      "productExecuted": false,
+      "productExecutionCredit": 0
+    },
+    {
+      "id": "nonfinite-036",
+      "mode": "reinterpret-roundtrip",
+      "from": "f64",
+      "via": "u64",
+      "to": "f64",
+      "inputBits": "fff0123456789abc",
+      "expectedIntermediate": {
+        "type": "u64",
+        "rawBits": "fff0123456789abc"
+      },
+      "expected": {
+        "kind": "return",
+        "type": "f64",
+        "rawBits": "fff0123456789abc"
+      },
+      "productExecuted": false,
+      "productExecutionCredit": 0
+    }
+  ],
+  "qualification": "Independent supplementary expectations only. Real admitted ordinary source calls, complete source-to-VM packets, optimizer modes, source anchors, FunctionIds, Fuel and Runtime FP restoration still require execution and independent review."
+}

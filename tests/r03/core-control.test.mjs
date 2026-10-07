@@ -6,10 +6,10 @@ import test from "node:test";
 
 const executable = process.env.TSFG_CORE_IR_EXE;
 const sha = value => createHash("sha256").update(value).digest("hex");
-const schema = "616360bef22c9c129df7b11392dc4e181797cf2f311ad62c56c701ec10ff716c";
+const schema = "648d6b8b51724b8948e057902276141cce31d7e5465cbf67d83e1a98fb2769d4";
 const signature = sha("tsfg.signature\0()->i32");
 const source = (body, extra = "") => `module attributes {
-  tsfg_core.version = "0.8.0", tsfg_core.bytecode_schema = "sha256:${schema}",
+  tsfg_core.version = "0.9.0", tsfg_core.bytecode_schema = "sha256:${schema}",
   tsfg_core.target = "windows-x86_64-msvc", tsfg_core.triple = "x86_64-pc-windows-msvc",
   tsfg_core.data_layout = "e-m:w-p270:32:32-p271:32:32-p272:64:64-i64:64-i128:128-f80:128-n8:16:32:64-S128",
   tsfg_core.input_identity = "sha256:${sha("owned-input")}", tsfg_core.source_hash = "sha256:${sha("owned-source")}",

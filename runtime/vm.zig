@@ -5,6 +5,7 @@ const FunctionId = bytecode.FunctionId;
 const VerifiedModule = bytecode.VerifiedModule;
 const Source = bytecode.Source;
 const contract = bytecode.contract;
+const conversions = @import("conversions.zig");
 pub const TypedValue = union(enum) {
     i32: i32, boolean: bool, i8: i8, i16: i16, i64: i64,
     u8: u8, u16: u16, u32: u32, u64: u64, isize: isize, usize: usize,
@@ -200,6 +201,11 @@ fn execute(allocator: std.mem.Allocator, module: *const VerifiedModule, requeste
                     active = caller;
                     leave(allocator, current);
                 } else return .{ .returned = .{ .result = typedValue(result, op.type_code), .function_id = current_id, .source = op.source } };
+            },
+            34, 35, 36 => switch (conversions.convert(op.opcode, frame[op.left], @intCast(op.right), op.type_code)) {
+                .value => |bits| frame[op.register] = bits,
+                .nonfinite => return arithmeticTrap("r01-t-conversion-nonfinite", "r01-conversions", current.function.info.function_id, op.source),
+                .range => return arithmeticTrap("r01-t-conversion-range", "r01-conversions", current.function.info.function_id, op.source),
             },
             4 => frame[op.register] = if (contract.floatType(op.type_code)) floatArithmetic(op.opcode, op.type_code, frame[op.left], frame[op.right]) else (frame[op.left] +% frame[op.right]) & contract.mask(op.type_code),
             5 => frame[op.register] = if (contract.floatType(op.type_code)) floatArithmetic(op.opcode, op.type_code, frame[op.left], frame[op.right]) else (frame[op.left] -% frame[op.right]) & contract.mask(op.type_code),

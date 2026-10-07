@@ -5,7 +5,7 @@ import { createHash } from "node:crypto";
 import test from "node:test";
 
 const digest = value => createHash("sha256").update(value).digest();
-const schema = "616360bef22c9c129df7b11392dc4e181797cf2f311ad62c56c701ec10ff716c";
+const schema = "648d6b8b51724b8948e057902276141cce31d7e5465cbf67d83e1a98fb2769d4";
 const u8 = value => Buffer.from([value]);
 const u16 = value => { const b = Buffer.alloc(2); b.writeUInt16LE(value); return b; };
 const u32 = value => { const b = Buffer.alloc(4); b.writeUInt32LE(value >>> 0); return b; };
@@ -19,7 +19,7 @@ function packet(blocks, registerCount, returnType = 1) {
   const signature = digest(`tsfg.signature\0()->${returnType === 1 ? "i32" : "bool"}`);
   const body = [str("windows-x86_64-msvc"), str("x86_64-pc-windows-msvc"),
     str("e-m:w-p270:32:32-p271:32:32-p272:64:64-i64:64-i128:128-f80:128-n8:16:32:64-S128"),
-    u16(4), u16(4), u16(64), u16(8), u32(19), digest("input"), digest("source"), str("/fixture.ts"), u32(100), u16(1),
+    u16(4), u16(4), u16(64), u16(8), u32(20), digest("input"), digest("source"), str("/fixture.ts"), u32(100), u16(1),
     digest(`tsfg.function\0/fixture.ts\0control\0${signature.toString("hex")}`), signature,
     digest(`tsfg.type\0${returnType === 1 ? "i32" : "bool"}`), str("control"),
     u32(0), u32(100), u8(returnType), u8(0), u16(registerCount), u16(blocks.length),
@@ -27,7 +27,7 @@ function packet(blocks, registerCount, returnType = 1) {
   for (const block of blocks) body.push(u16(block.params.length), ...block.params.map(([reg, type]) => Buffer.concat([u16(reg), u8(type), u8(0)])), u16(block.ops.length));
   for (const block of blocks) for (const i of block.ops) body.push(u8(i.opcode), u8(i.type), u16(i.reg), u32(i.payload), u32(i.start), u32(i.end), ...i.edges.map(args => Buffer.concat([u16(args.length), ...args.map(u16)])));
   const payload = Buffer.concat(body);
-  return Buffer.concat([Buffer.from("TSFGTBC0"), u32(8), Buffer.from(schema, "hex"), u32(80 + payload.length), digest(payload), payload]);
+  return Buffer.concat([Buffer.from("TSFGTBC0"), u32(9), Buffer.from(schema, "hex"), u32(80 + payload.length), digest(payload), payload]);
 }
 function invoke(bytes, args = []) {
   assert.match(process.env.TSFG_VM_EXE, /^E:[\\/]/i);
@@ -75,7 +75,7 @@ test("canonical inspector exposes CFG parameter and edge metadata", () => {
   const inspection = invoke(loop(3), ["--inspect"]);
   assert.equal(inspection.status, 0, inspection.stderr.toString());
   const view = JSON.parse(inspection.stdout.toString("utf8"));
-  assert.equal(view.semver, "0.8.0"); assert.equal(view.capabilities, "19");
+  assert.equal(view.semver, "0.9.0"); assert.equal(view.capabilities, "19");
   assert.equal(view.blockCount, "4");
   assert.deepEqual(view.blocks[1].parameters, [{ register: "3", type: "i32" }]);
   assert.equal(view.instructions[0].event, "1");

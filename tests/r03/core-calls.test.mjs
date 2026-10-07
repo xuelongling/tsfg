@@ -7,7 +7,7 @@ import test from "node:test";
 // Public seams: verified native Core CLI and its versioned R04 output.
 const executable = process.env.TSFG_CORE_IR_EXE;
 const sha = value => createHash("sha256").update(value).digest("hex");
-const schema = "616360bef22c9c129df7b11392dc4e181797cf2f311ad62c56c701ec10ff716c";
+const schema = "648d6b8b51724b8948e057902276141cce31d7e5465cbf67d83e1a98fb2769d4";
 const at = (start = 10, end = 20) => `tsfg_source.start = ${start} : i64, tsfg_source.end = ${end} : i64`;
 const signature = (parameters = [], result = "i32") => sha(`tsfg.signature\0(${parameters.join(",")})->${result}`);
 const id = (name, parameters = [], result = "i32") => sha(`tsfg.function\0/main.ts\0${name}\0${signature(parameters, result)}`);
@@ -15,7 +15,7 @@ const attrs = (name, parameters = [], result = "i32") => `tsfg_core.function_id 
 const entry = `"tsfg_core.fuel"() {event = 1 : i32, ${at(0, 100)}} : () -> ()`;
 const returned = (value = "%value", type = "i32") => `"func.return"(${value}) {${at()}} : (${type}) -> ()`;
 const source = functions => `module attributes {
-  tsfg_core.version = "0.8.0", tsfg_core.bytecode_schema = "sha256:${schema}",
+  tsfg_core.version = "0.9.0", tsfg_core.bytecode_schema = "sha256:${schema}",
   tsfg_core.target = "windows-x86_64-msvc", tsfg_core.triple = "x86_64-pc-windows-msvc",
   tsfg_core.data_layout = "e-m:w-p270:32:32-p271:32:32-p272:64:64-i64:64-i128:128-f80:128-n8:16:32:64-S128",
   tsfg_core.input_identity = "sha256:${sha("owned-input")}", tsfg_core.source_hash = "sha256:${sha("owned-source")}",
@@ -151,7 +151,7 @@ test("Every Core command rejects malformed calls and unused function metadata be
   const input = forward();
   const unused = source(`func.func @unused(%arg: i32) -> i32 attributes {${attrs("unused", ["i32"])}} { ${returned("%arg")} }`);
   const invalids = [
-    input.replace('tsfg_core.version = "0.8.0"', 'tsfg_core.version = "0.4.0"'),
+    input.replace('tsfg_core.version = "0.9.0"', 'tsfg_core.version = "0.4.0"'),
     input.replace(schema, "0".repeat(64)),
     input.replace('tsfg_core.source_path = "/main.ts"', 'tsfg_core.source_path = "/../main.ts"'),
     input.replace('tsfg_core.source_length = 100 : i64', `tsfg_core.source_length = 100 : i64, tsfg_core.function_id = "sha256:${id("first", ["i32"])}"`),
