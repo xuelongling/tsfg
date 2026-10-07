@@ -67,11 +67,11 @@ test('default f64 survives grouped and nested arithmetic source metamorphisms', 
     ];
     const root = await mkdtemp(path.join(process.env.TSFG_MLIR_TEST_TEMP_ROOT, 'r03-float-grouping-'));
     let index = 0;
-    async function execute(source, optimize, expected, args = []) {
+    async function execute(source, optimize, expected, args = [], depth = 1) {
         const input = await sourceInput(source);
         const program = await compileProgram(input, { ...tools(), optimize });
         assert.equal(program.status, 'ok', JSON.stringify(program));
-        const requests = [{ arguments: args }];
+        const requests = [depth === 1 ? { arguments: args } : { arguments: args, depth }];
         const responses = await runBytecode(program.bytecode, { ...tools(), requests });
         const argumentsJson = JSON.stringify(requests);
         const command = ['--requests', argumentsJson];
@@ -93,15 +93,15 @@ test('default f64 survives grouped and nested arithmetic source metamorphisms', 
                 await execute(source, optimize, value(type, bits));
             }
         }
-        /** @type {[string, {type:string, value:string}[], string][]} */
+        /** @type {[string, {type:string, value:string}[], string, number][]} */
         const contexts = [
-            ['function main(a:f32):f32{const b=(1.0)+(a);return b;}', [value('f32', '3f800000')], '40000000'],
-            ['function main(a:f32):f32{const b=-((1.0)+(a));return b;}', [value('f32', '3f800000')], 'c0000000'],
-            ['function main():f32{const a:f32=((1.0)+(2.0));return a;}', [], '40400000'],
-            ['function main():f32{const b=((1.0))+(one());return b;}function one():f32{return 1.0;}', [], '40000000'],
+            ['function main(a:f32):f32{const b=(1.0)+(a);return b;}', [value('f32', '3f800000')], '40000000', 1],
+            ['function main(a:f32):f32{const b=-((1.0)+(a));return b;}', [value('f32', '3f800000')], 'c0000000', 1],
+            ['function main():f32{const a:f32=((1.0)+(2.0));return a;}', [], '40400000', 1],
+            ['function main():f32{const b=((1.0))+(one());return b;}function one():f32{return 1.0;}', [], '40000000', 2],
         ];
-        for (const [source, args, bits] of contexts) {
-            await execute(source, optimize, value('f32', bits), args);
+        for (const [source, args, bits, depth] of contexts) {
+            await execute(source, optimize, value('f32', bits), args, depth);
         }
     }
     console.log(`Grouped float execution evidence ${root}: ${index} programs`);
