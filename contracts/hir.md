@@ -1,6 +1,6 @@
 <!-- SPDX-License-Identifier: MIT -->
 
-# tsfg.hir 0.6.0
+# tsfg.hir 0.9.0
 
 `createCompilerSession` reuses owned HIR/Core/R04 output only for an unchanged
 checked Snapshot identity, compiler input fingerprint and source-built producer
@@ -19,7 +19,7 @@ and typed scalar expression tree, and freezes all data. It retains no
 Snapshot-local reference or upstream session. `lowerHir` consumes only HIR.
 
 This exact same-repository development format has no published or supported
-older consumer. Its supported capability is 1..128 named nominal integer/bool functions,
+older consumer. Its supported capability is 1..128 named nominal integer/bool/f32/f64 functions,
 each with 0..64 typed scalar parameters, structured blocks, if/else, while,
 local declarations, simple assignments and scalar returns; each body contains
 at most128 statements. Parameters use declaration-order `p0`, `p1`, ...
@@ -70,7 +70,7 @@ range. Unknown/foreign identities retain generic invalid-input rejection;
 they are not attributed to a trusted original binding. Reading a
 declared but uninitialized owned binding is `r03-hir-uninitialized`, Rule
 `r01-evaluation`, phase `hir`, with the original UTF-16 read range. The official
-0.6.0 producer currently rejects uninitialized source declarations using
+0.9.0 producer currently rejects uninitialized source declarations using
 `r02b-d-unsupported`, phase `capability`: delayed initialization is pending
 frontend capability for later ordinary-expression/full-closure coverage, not
 a language prohibition or successful source initialization analysis.
@@ -98,7 +98,7 @@ transfer in parallel in R04. The entry and each while header carry explicit
 `tsfg_core.fuel` events before condition operations. Source conditions, braces,
 else clauses and nested statement delimiters are checked against owned anchors.
 
-Core exchange0.6.0 uses registered typed scalar operations and fuel plus official
+Core exchange0.9.0 uses registered typed scalar operations and fuel plus official
 `cf.br`/`cf.cond_br`, `func.call`, `func.return` and MLIR block arguments. Each
 function owns its identity, signature, return type and range attributes; module
 source and target attributes remain global. The C++ consumer resolves every
@@ -112,4 +112,14 @@ claimed. Logical events remain explicit and cannot be replaced with physical
 instruction accounting. Full/incremental compiler outputs and formal Runtime
 results are tested across source/control changes.
 
-M07 expands this exact-match development contract to the complete nominal integer family. See docs/r03-integer-vm.md and the registered schema for type codes, pointer DataLayout and wire6/capability17. Previous0.5 artifacts and mixed schema identities are rejected; no compatibility window is promised. Existing i32/bool identities, source anchors, complete verifier and logical/physical budget ordering remain in force.
+M07 expands this exact-match development contract to the complete nominal integer family. See docs/r03-integer-vm.md and the registered schema for type codes, pointer DataLayout and wire9/capability20. Previous0.5 artifacts and mixed schema identities are rejected; no compatibility window is promised. Existing i32/bool identities, source anchors, complete verifier and logical/physical budget ordering remain in force.
+
+M09 registers `minimal-conversions-v5` with 286 monomorphic ordinary TS function declarations: `checked_<target>_from_<source>`, `wrap_<target>_from_<source>` and `reinterpret_<target>_from_<source>`. The current numeric slice contains 144 checked, 100 integer wrap and 42 equal-width reinterpret entries. Bool remains available elsewhere; this numeric slice does not decide future bool conversion semantics. `as` continues to be excluded from numeric conversion.
+
+Only the officially checked symbol with the exact admitted declaration bytes, range, signature and unique nominal brand symbols produces a conversion fact. Same-spelling valid user or shadow declarations use normal calls and execute their bodies. Owned origin facts carry declaration digest/path/range, entry ID, version and role-specific brand identifier ranges. Snapshot binds the complete VFS/config/library scope; HIR retains that independently owned `inputScope`, whose canonical SHA256 equals `inputIdentity`, and validates each origin against its admitted declaration. Backend operations retain no upstream AST or checker objects.
+
+Core0.9/wire9/capability20 register op34 `convert_checked`, op35 `convert_wrap` and op36 `reinterpret`, preserving op29–31 reservations and op32–33 floats. Each 16-byte record contains opcode:u8, exact result nominal type:u8, result register:u16, operand register:u16, exact source nominal type:u8, reserved-zero:u8, UTF16 source start/end:u32. Producer and independent loader check the legal source/result pair, reserved bits, dominance/register use and original source range. Numeric reinterpret requires equal width; wrap requires two integer types. Old/mixed identities reject immediately.
+
+Checked integer conversion compares exact mathematical range. Integer→float and float narrowing round directly to the target with nearest ties-even; finite input rounding to infinity traps. Float→integer first rejects NaN/infinity, then truncates toward zero before exact range checking, so negative fractions truncating to zero are valid unsigned inputs. Float→float preserves signed infinity and canonicalizes every NaN to target quiet NaN (`7fc00000` or `7ff8000000000000`), including checked same-width conversion. Integer wrap is modulo target width with signed target interpretation. Reinterpret transports every raw bit, including signaling NaN, sign, payload and signed zero.
+
+Each conversion evaluates its one operand exactly once at the caller and is one scalar operation, without a conversion callee/frame/depth check or entry Fuel. Ordinary enclosing calls retain their existing depth/Fuel and left-to-right argument rules. Checked failures are `r01-t-conversion-nonfinite` or `r01-t-conversion-range`, Rule `r01-conversions`, anchored to the original conversion expression and executing FunctionId. Unused checked conversions retain traps; the first reached failure ends the request and the host releases it.

@@ -1,6 +1,6 @@
 <!-- SPDX-License-Identifier: MIT -->
 
-# tsfg.bytecode 0.6.0
+# tsfg.bytecode 0.9.0
 
 This exact, same-repository development format is the formal R04 compiler to
 Zig Runtime seam. It has no published or supported older external consumer.
@@ -9,7 +9,7 @@ invalidate caches and are rejected. The registry owns version and JCS schema
 hash. The JSON schema owns wire field order and bounds.
 
 All integers use little endian. The 80-byte header is magic `TSFGTBC0`, u32 wire
-version 6, raw 32-byte schema SHA256, u32 total length and raw 32-byte SHA256 of
+version 9, raw 32-byte schema SHA256, u32 total length and raw 32-byte SHA256 of
 the payload. UTF8 strings have a u32 length, no terminator or padding. The
 checksum supplies integrity, not publisher authenticity. Target/triple and LLVM
 DataLayout are fixed in the schema. LLVM derives i32 and pointer size/alignment; Zig checks
@@ -19,7 +19,7 @@ colons reject. Entity identity domains remain unchanged: SHA256 of
 `tsfg.type\0<scalar>`, `tsfg.signature\0(<comma-separated scalar parameters>)-><scalar>` and
 `tsfg.function\0<sourcePath>\0<name>\0<signatureHashHex>`.
 
-Capability17 admits 1..128 nominal integer/bool functions, each with 0..64 scalar parameters,
+Capability20 admits 1..128 nominal integer/bool/f32/f64 functions, each with 0..64 scalar parameters,
 up to256 reachable blocks,4096 SSA registers and8192 instructions. Global
 payload fields are target/triple/layout strings, i32 size/alignment u16, pointer bits/alignment u16,
 capability u32, input/source hashes, logical source path, source length u32 and
@@ -105,4 +105,14 @@ The `TSFGREQ1` transport remains u32 count plus length-delimited R04 packets,
 1..128 matching requests and total1MiB/no trailing bytes, served by one Runtime.
 It adds no language semantics.
 
-M07 expands this exact-match development contract to the complete nominal integer family. See docs/r03-integer-vm.md and the registered schema for type codes, pointer DataLayout and wire6/capability17. Previous0.5 artifacts and mixed schema identities are rejected; no compatibility window is promised. Existing i32/bool identities, source anchors, complete verifier and logical/physical budget ordering remain in force.
+M07 expands this exact-match development contract to the complete nominal integer family. See docs/r03-integer-vm.md and the registered schema for type codes, pointer DataLayout and wire9/capability20. Previous0.5 artifacts and mixed schema identities are rejected; no compatibility window is promised. Existing i32/bool identities, source anchors, complete verifier and logical/physical budget ordering remain in force.
+
+M09 registers `minimal-conversions-v5` with 286 monomorphic ordinary TS function declarations: `checked_<target>_from_<source>`, `wrap_<target>_from_<source>` and `reinterpret_<target>_from_<source>`. The current numeric slice contains 144 checked, 100 integer wrap and 42 equal-width reinterpret entries. Bool remains available elsewhere; this numeric slice does not decide future bool conversion semantics. `as` continues to be excluded from numeric conversion.
+
+Only the officially checked symbol with the exact admitted declaration bytes, range, signature and unique nominal brand symbols produces a conversion fact. Same-spelling valid user or shadow declarations use normal calls and execute their bodies. Owned origin facts carry declaration digest/path/range, entry ID, version and role-specific brand identifier ranges. Snapshot binds the complete VFS/config/library scope; HIR retains that independently owned `inputScope`, whose canonical SHA256 equals `inputIdentity`, and validates each origin against its admitted declaration. Backend operations retain no upstream AST or checker objects.
+
+Core0.9/wire9/capability20 register op34 `convert_checked`, op35 `convert_wrap` and op36 `reinterpret`, preserving op29–31 reservations and op32–33 floats. Each 16-byte record contains opcode:u8, exact result nominal type:u8, result register:u16, operand register:u16, exact source nominal type:u8, reserved-zero:u8, UTF16 source start/end:u32. Producer and independent loader check the legal source/result pair, reserved bits, dominance/register use and original source range. Numeric reinterpret requires equal width; wrap requires two integer types. Old/mixed identities reject immediately.
+
+Checked integer conversion compares exact mathematical range. Integer→float and float narrowing round directly to the target with nearest ties-even; finite input rounding to infinity traps. Float→integer first rejects NaN/infinity, then truncates toward zero before exact range checking, so negative fractions truncating to zero are valid unsigned inputs. Float→float preserves signed infinity and canonicalizes every NaN to target quiet NaN (`7fc00000` or `7ff8000000000000`), including checked same-width conversion. Integer wrap is modulo target width with signed target interpretation. Reinterpret transports every raw bit, including signaling NaN, sign, payload and signed zero.
+
+Each conversion evaluates its one operand exactly once at the caller and is one scalar operation, without a conversion callee/frame/depth check or entry Fuel. Ordinary enclosing calls retain their existing depth/Fuel and left-to-right argument rules. Checked failures are `r01-t-conversion-nonfinite` or `r01-t-conversion-range`, Rule `r01-conversions`, anchored to the original conversion expression and executing FunctionId. Unused checked conversions retain traps; the first reached failure ends the request and the host releases it.

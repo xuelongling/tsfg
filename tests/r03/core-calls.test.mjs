@@ -40,7 +40,7 @@ const ok = result => assert.equal(result.status, 0, result.stderr?.toString());
 // Independent reader of the public packet, with literal behavior expectations.
 function wire(packet) {
   assert.equal(packet.subarray(0, 8).toString(), "TSFGTBC0");
-  assert.equal(packet.readUInt32LE(8), 8);
+  assert.equal(packet.readUInt32LE(8), 9);
   assert.equal(packet.subarray(12, 44).toString("hex"), schema);
   assert.equal(packet.readUInt32LE(44), packet.length);
   assert.equal(packet.subarray(48, 80).toString("hex"), sha(packet.subarray(80)));

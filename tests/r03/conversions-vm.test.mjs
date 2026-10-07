@@ -37,7 +37,7 @@ test('36 independently frozen nonfinite policies preserve infinity/canonical che
 test('conversion unused traps, first failure, argument order, recovery and scalar Fuel/depth are observable',async()=>{
  for(const optimize of [false,true]){
   const source='/*😀*/ export function entry(x:f64):i8 { const unused:i8=checked_i8_from_f64(x); return checked_i8_from_f64(x / 0.0); }',p=await compiled(source,optimize),good=await compiled('export function entry(x:f64):i8 { return checked_i8_from_f64(x); }',optimize);
-  const outcomes=await runRequestSequence([p.bytecode,good.bytecode],{...tools(),requests:[{arguments:[value('f64','4072c00000000000')]},{arguments:[value('f64','3ff0000000000000')],limits:{fuel:'1',depth:'1'}}]});assert.equal(outcomes[0].code,'r01-t-conversion-range');assert.equal(source.slice(Number(outcomes[0].source.start),Number(outcomes[0].source.end)),'checked_i8_from_f64(x)');assert.deepEqual(outcomes[1].result,value('i8','1'));for(const out of outcomes)assert.equal(out.activeRequests,'0');
+  const outcomes=await runRequestSequence([p.bytecode,good.bytecode],{...tools(),requests:[{arguments:[value('f64','4072c00000000000')]},{arguments:[value('f64','3ff0000000000000')],semanticFuel:1,depth:1}]});assert.equal(outcomes[0].code,'r01-t-conversion-range');assert.equal(source.slice(Number(outcomes[0].source.start),Number(outcomes[0].source.end)),'checked_i8_from_f64(x)');assert.deepEqual(outcomes[1].result,value('i8','1'));assert.equal(outcomes[1].fuelConsumed,'1');assert.equal(outcomes[1].fuelRemaining,'0');for(const out of outcomes)assert.equal(out.activeRequests,'0');
   const ordered=await compiled('export function entry(x:f64):i8 { return join(checked_i8_from_f64(x),checked_i8_from_f64(x / 0.0)); } function join(a:i8,b:i8):i8 { return a; }',optimize);const [failure]=await runBytecode(ordered.bytecode,{...tools(),requests:[{arguments:[value('f64','4072c00000000000')]}]});assert.equal(failure.code,'r01-t-conversion-range');
   const [nonfinite]=await runBytecode(good.bytecode,{...tools(),requests:[{arguments:[value('f64','7ff0000000000001')]}]});assert.equal(nonfinite.code,'r01-t-conversion-nonfinite');
  }
@@ -47,7 +47,9 @@ test('official conversion provenance cannot be forged, while ordinary same-name 
  for(const mutate of [s=>s.functions[0].body[0].expression.conversion.entryId='sha256:'+'0'.repeat(64),s=>s.functions[0].body[0].expression.conversion.brandRefs[0].range.start++,s=>s.functions[0].body[0].expression.conversion.declarationPath='/foreign/minimal-conversions-v5.d.ts']){const s=structuredClone(result.snapshot);mutate(s);assert.throws(()=>validateFrontendSnapshot(s));}
  const p=await compiled(source),hir=readHir(Buffer.from(printHir(p.hir)));assert.equal(lowerHir(hir),lowerHir(p.hir));const forged=structuredClone(hir);forged.inputScope.files[0].content+=' ';assert.throws(()=>verifyHir(forged));
  for(const invalid of ['export function entry(x:f64):i8 { return checked_i8_from_f64(); }','export function entry(x:f64):i8 { return checked_i8_from_f64<f64>(x); }','export function entry(x:f64):i8 { return reinterpret_i8_from_f64(x); }','export function entry(x:f32):u8 { return wrap_u8_from_f32(x); }','export function entry(x:bool):i8 { return checked_i8_from_bool(x); }','export function entry(x:f64):i8 { return x as i8; }']){const got=await compileProgram(await sourceInput(invalid),tools());assert.equal(got.status,'error',invalid);assert.equal(got.bytecode,undefined);}
- const ordinary=await compiled('function checked_i8_from_f64(x:f64):i8 { return 42; } export function entry(x:f64):i8 { return checked_i8_from_f64(x); }');assert.ok(!ordinary.core.includes('tsfg_core.convert_checked'));const [got]=await runBytecode(ordinary.bytecode,{...tools(),requests:[{functionId:ordinary.hir.functions[1].id,arguments:[value('f64','7ff0000000000001')]}]});assert.deepEqual(got.result,value('i8','42'));
+ for(const source of ['function checked_i8_from_f64(x:f64):i8 { return 42; } export function entry(x:f64):i8 { return checked_i8_from_f64(x); }','function checked_i8_from_f64(x:f64):i8 { return 42; } function entry(x:f64):i8 { return checked_i8_from_f64(x); }']){
+  const ordinary=await compiled(source);assert.ok(!ordinary.core.includes('tsfg_core.convert_checked'));const [got]=await runBytecode(ordinary.bytecode,{...tools(),requests:[{functionId:ordinary.hir.functions[1].id,arguments:[value('f64','7ff0000000000001')],depth:2,semanticFuel:2}]});assert.deepEqual(got.result,value('i8','42'));assert.equal(got.fuelConsumed,'2');assert.equal(got.fuelRemaining,'0');
+ }
 });
 test('conversion canonical exchange and cold/incremental source metamorphisms retain results',async()=>{
  for(const optimize of [false,true])for(const text of ['checked_i8_from_f64(x)','checked_i8_from_f64 /*comment*/ ( (x), )','checked_i8_from_f64((+(x)))']){
@@ -55,4 +57,16 @@ test('conversion canonical exchange and cold/incremental source metamorphisms re
   assert.deepEqual(await runBytecode(first.bytecode,{...tools(),command:'--roundtrip'}),first.bytecode);const [got]=await runBytecode(first.bytecode,{...tools(),requests:[{arguments:[value('f64','3ffc000000000000')]}]});assert.deepEqual(got.result,value('i8','1'));
   const old=Buffer.from(first.bytecode);old.writeUInt32LE(8,8);await assert.rejects(()=>runBytecode(old,tools()));
  }
+});
+
+
+test('independent Core and wire verifiers reject illegal nominal pairs, reserved bits and forged register uses',async()=>{
+ const source='export function entry(x:f64):i8 { return checked_i8_from_f64(x); }',p=await compiled(source);
+ for(const operation of ['convert_wrap','reinterpret']){const core=p.core.replace('tsfg_core.convert_checked','tsfg_core.'+operation),child=spawnSync(tools().core,['--canonicalize'],{input:core,windowsHide:true});assert.equal(child.status,3);assert.match(child.stderr.toString(),/core-ir-conversion-type/);}
+ const offset=p.bytecode.length-32;assert.equal(p.bytecode[offset],34);
+ for(const [field,newValue,code]of [[7,1,'r04-reserved'],[6,2,'r04-conversion-type'],[1,2,'r04-conversion-type'],[4,255,'r04-register']]){
+  const bytes=Buffer.from(p.bytecode);bytes[offset+field]=newValue;createHash('sha256').update(bytes.subarray(80)).digest().copy(bytes,48);await assert.rejects(()=>runBytecode(bytes,tools()),new RegExp(code));
+ }
+ const wrong=Buffer.from(p.bytecode);wrong[12]^=1;await assert.rejects(()=>runBytecode(wrong,tools()),/r04-schema/);
+ const foreign=structuredClone(p.hir);foreign.functions[0].body[0].value.origin.brandRefs[0].range.end++;assert.throws(()=>verifyHir(foreign));
 });
