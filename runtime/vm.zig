@@ -85,11 +85,17 @@ pub const ModuleInstance = struct {
         return outcome;
     }
     pub fn evaluate(self: *ModuleInstance, id: FunctionId, arguments: []const TypedValue, capabilities: []const Capability, limits: RequestLimits) RequestOutcome {
+        const caller_environment = FloatingEnvironment.read();
+        caller_environment.establish();
+        defer caller_environment.restore();
         return self.run(id, arguments, capabilities, limits, false);
     }
     /// Initialization-only requires an explicit module-initialization root.
     /// Generated initializer IDs remain invalid ordinary function requests.
     pub fn initialize(self: *ModuleInstance, id: FunctionId, capabilities: []const Capability, limits: RequestLimits) RequestOutcome {
+        const caller_environment = FloatingEnvironment.read();
+        caller_environment.establish();
+        defer caller_environment.restore();
         return self.run(id, &.{}, capabilities, limits, true);
     }
 };
@@ -147,6 +153,88 @@ fn leave(allocator: std.mem.Allocator, frame: *Frame) void {
     allocator.destroy(frame);
 }
 
+// The supported Runtime target is x86_64. This is thread state, never global
+// process configuration. Bit-only transport does not load NaNs into FP registers.
+pub const FloatingEnvironment = struct {
+    mxcsr: u32,
+    x87_control: u16,
+    pub fn read() FloatingEnvironment {
+        var state: FloatingEnvironment = undefined;
+        asm volatile ("stmxcsr (%[ptr])" : : [ptr] "r" (&state.mxcsr) : .{ .memory = true });
+        asm volatile ("fnstcw (%[ptr])" : : [ptr] "r" (&state.x87_control) : .{ .memory = true });
+        return state;
+    }
+    pub fn restore(self: FloatingEnvironment) void {
+        asm volatile ("ldmxcsr (%[ptr])" : : [ptr] "r" (&self.mxcsr) : .{ .memory = true });
+        asm volatile ("fldcw (%[ptr])" : : [ptr] "r" (&self.x87_control) : .{ .memory = true });
+    }
+    pub fn establish(self: FloatingEnvironment) void {
+        // Clear rounding mode, FTZ/DAZ and pending SSE flags; mask exceptions.
+        const strict: FloatingEnvironment = .{ .mxcsr = (self.mxcsr & ~@as(u32, 0xe07f)) | 0x1f80,
+            .x87_control = (self.x87_control & ~@as(u16, 0x0c00)) | 0x003f };
+        strict.restore();
+    }
+};
+
+fn floatNan(code: u8, bits: u64) bool {
+    return if (code == 12) bits & 0x7f800000 == 0x7f800000 and bits & 0x007fffff != 0
+        else bits & 0x7ff0000000000000 == 0x7ff0000000000000 and bits & 0x000fffffffffffff != 0;
+}
+fn canonicalNan(code: u8) u64 { return if (code == 12) 0x7fc00000 else 0x7ff8000000000000; }
+
+// fmod: exact binary significand long division; no libm or floating division
+// quotient overflow. The remainder is representable in the input precision.
+fn floatRemainder(code: u8, left: u64, right: u64) u64 {
+    const fraction: u6 = if (code == 12) 23 else 52;
+    const sign_mask: u64 = if (code == 12) 0x80000000 else 0x8000000000000000;
+    const infinity: u64 = if (code == 12) 0x7f800000 else 0x7ff0000000000000;
+    const sign = left & sign_mask;
+    const a = left & ~sign_mask; const b = right & ~sign_mask;
+    if (floatNan(code, left) or floatNan(code, right) or a == infinity or b == 0) return canonicalNan(code);
+    if (a < b or b == infinity) return left;
+    if (a == b) return sign;
+    const implicit = @as(u64, 1) << fraction;
+    var x = a & (implicit - 1); var y = b & (implicit - 1);
+    var ex: i32 = @intCast(a >> fraction); var ey: i32 = @intCast(b >> fraction);
+    if (ex != 0) { x |= implicit; } else { ex = 1; while (x < implicit) { x <<= 1; ex -= 1; } }
+    if (ey != 0) { y |= implicit; } else { ey = 1; while (y < implicit) { y <<= 1; ey -= 1; } }
+    while (ex > ey) : (ex -= 1) { if (x >= y) x -= y; if (x == 0) return sign; x <<= 1; }
+    if (x >= y) x -= y;
+    if (x == 0) return sign;
+    while (x < implicit) { x <<= 1; ey -= 1; }
+    return sign | if (ey > 0) ((@as(u64, @intCast(ey)) << fraction) | (x - implicit)) else (x >> @as(u6, @intCast(1 - ey)));
+}
+
+fn floatArithmetic(opcode: u8, code: u8, left: u64, right: u64) u64 {
+    @setFloatMode(.strict);
+    if (floatNan(code, left) or (opcode <= 8 and floatNan(code, right))) return canonicalNan(code);
+    if (opcode == 8) return floatRemainder(code, left, right);
+    if (opcode == 15) return left ^ (if (code == 12) @as(u64, 0x80000000) else 0x8000000000000000);
+    if (opcode == 33) return left;
+    const bits: u64 = if (code == 12) blk: {
+        const a: f32 = @bitCast(@as(u32, @truncate(left))); const b: f32 = @bitCast(@as(u32, @truncate(right)));
+        const value: f32 = switch (opcode) { 4 => a + b, 5 => a - b, 6 => a * b, 7 => a / b, else => unreachable };
+        break :blk @as(u32, @bitCast(value));
+    } else blk: {
+        const a: f64 = @bitCast(left); const b: f64 = @bitCast(right);
+        const value: f64 = switch (opcode) { 4 => a + b, 5 => a - b, 6 => a * b, 7 => a / b, else => unreachable };
+        break :blk @bitCast(value);
+    };
+    return if (floatNan(code, bits)) canonicalNan(code) else bits;
+}
+
+fn floatCompare(opcode: u8, code: u8, left: u64, right: u64) bool {
+    @setFloatMode(.strict);
+    if (floatNan(code, left) or floatNan(code, right)) return opcode == 19;
+    return if (code == 12) blk: {
+        const a: f32 = @bitCast(@as(u32, @truncate(left))); const b: f32 = @bitCast(@as(u32, @truncate(right)));
+        break :blk switch (opcode) { 18 => a == b, 19 => a != b, 20 => a < b, 21 => a <= b, 22 => a > b, 23 => a >= b, else => unreachable };
+    } else blk: {
+        const a: f64 = @bitCast(left); const b: f64 = @bitCast(right);
+        break :blk switch (opcode) { 18 => a == b, 19 => a != b, 20 => a < b, 21 => a <= b, 22 => a > b, 23 => a >= b, else => unreachable };
+    };
+}
+
 const clock = @import("clock.zig");
 const Budget = struct { fuel: u64, work: u64, deadline: clock.Deadline };
 fn managedReference(function_id: FunctionId, source: Source) RequestOutcome {
@@ -198,7 +286,7 @@ fn execute(allocator: std.mem.Allocator, state: *module_state.State, requested_i
         switch (op.opcode) {
             1 => frame[op.register] = @as(u32, @bitCast(op.immediate)),
             3 => frame[op.register] = @intCast(op.immediate),
-            28 => frame[op.register] = op.literal_bits,
+            28, 32 => frame[op.register] = op.literal_bits,
             2 => {
                 const result = frame[op.register];
                 if (current.previous) |caller| {
@@ -209,12 +297,13 @@ fn execute(allocator: std.mem.Allocator, state: *module_state.State, requested_i
                     leave(allocator, current);
                 } else return .{ .returned = .{ .result = typedValue(result, op.type_code), .function_id = current_id, .source = op.source } };
             },
-            4 => frame[op.register] = (frame[op.left] +% frame[op.right]) & contract.mask(op.type_code),
-            5 => frame[op.register] = (frame[op.left] -% frame[op.right]) & contract.mask(op.type_code),
-            6 => frame[op.register] = (frame[op.left] *% frame[op.right]) & contract.mask(op.type_code),
+            4 => frame[op.register] = if (contract.floatType(op.type_code)) floatArithmetic(op.opcode, op.type_code, frame[op.left], frame[op.right]) else (frame[op.left] +% frame[op.right]) & contract.mask(op.type_code),
+            5 => frame[op.register] = if (contract.floatType(op.type_code)) floatArithmetic(op.opcode, op.type_code, frame[op.left], frame[op.right]) else (frame[op.left] -% frame[op.right]) & contract.mask(op.type_code),
+            6 => frame[op.register] = if (contract.floatType(op.type_code)) floatArithmetic(op.opcode, op.type_code, frame[op.left], frame[op.right]) else (frame[op.left] *% frame[op.right]) & contract.mask(op.type_code),
             7, 8 => {
                 const left = frame[op.left];
                 const right = frame[op.right];
+                if (contract.floatType(op.type_code)) { frame[op.register] = floatArithmetic(op.opcode, op.type_code, left, right); continue; }
                 // Guard before native division/remainder, including MIN / -1.
                 if (right == 0) return if (op.opcode == 7) arithmeticTrap("r01-t-divide-zero", "r01-division", current_id, source) else arithmeticTrap("r01-t-remainder-zero", "r01-division", current_id, source);
                 if (contract.signedType(op.type_code)) {
@@ -241,11 +330,12 @@ fn execute(allocator: std.mem.Allocator, state: *module_state.State, requested_i
             12 => frame[op.register] = frame[op.left] & frame[op.right],
             13 => frame[op.register] = frame[op.left] | frame[op.right],
             14 => frame[op.register] = frame[op.left] ^ frame[op.right],
-            15 => frame[op.register] = (0 -% frame[op.left]) & contract.mask(op.type_code),
+            15, 33 => frame[op.register] = if (contract.floatType(op.type_code)) floatArithmetic(op.opcode, op.type_code, frame[op.left], 0) else (0 -% frame[op.left]) & contract.mask(op.type_code),
             16 => frame[op.register] = ~frame[op.left] & contract.mask(op.type_code),
             17 => frame[op.register] = @intFromBool(frame[op.left] == 0),
             18...23 => {
                 const code = current.function.register_types[op.left];
+                if (contract.floatType(code)) { frame[op.register] = @intFromBool(floatCompare(op.opcode, code, frame[op.left], frame[op.right])); continue; }
                 const signed = contract.signedType(code);
                 const a = contract.signedValue(frame[op.left], code); const b = contract.signedValue(frame[op.right], code);
                 frame[op.register] = @intFromBool(switch (op.opcode) {

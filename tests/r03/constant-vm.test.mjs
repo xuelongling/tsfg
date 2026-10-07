@@ -178,7 +178,7 @@ test("official source checking precedes the bounded execution capability and nat
     "export function answer(value: f64): i32 { return 42; }",
     "export function answer(): i32 { return 42; } export function second(value: f64): f64 { return value; }",
   ]) {
-    const result = await compileProgram(await sourceInput(source), tools());
+    const result = await compileProgram(await sourceInput(source, { declarationVersion: "minimal-integers-v3" }), tools());
     assert.equal(result.status, "error", JSON.stringify(result));
     assert.equal(result.diagnostics[0].code, "r03-d-capability");
     assert.equal(result.diagnostics[0].ruleId, "r01-ts-baseline");
@@ -196,7 +196,7 @@ test("C++ R04 producer verifies Core source identities, target, types and actual
   assert.ifError(renamed.error); assert.equal(renamed.status, 0, renamed.stderr.toString());
   assert.deepEqual(renamed.stdout, result.bytecode);
   for (const [before, after] of [
-    ["sha256:2119acbdab7a604f5947b765f607d596d534f11fb88d81770e7230011f3de13b", `sha256:${"0".repeat(64)}`],
+    ["sha256:616360bef22c9c129df7b11392dc4e181797cf2f311ad62c56c701ec10ff716c", `sha256:${"0".repeat(64)}`],
     ["windows-x86_64-msvc", "wrong-target"],
     [result.hir.functions[0].id, `sha256:${"0".repeat(64)}`],
     ["tsfg_core.function_end = 44 : i64", "tsfg_core.function_end = 45 : i64"],

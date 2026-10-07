@@ -24,10 +24,12 @@ test("Build Input declaration includes both debug target control and smoke input
     entries: [
       { path: "compiler/core-ir/CMakeLists.txt", projectId: "tsfg" },
       { path: "compiler/core-ir/main.cpp", projectId: "tsfg" },
+      { path: "compiler/float.mjs", projectId: "tsfg" },
       { path: "compiler/frontend.mjs", projectId: "tsfg" },
       { path: "compiler/hir.mjs", projectId: "tsfg" },
       { path: "compiler/identity.mjs", projectId: "tsfg" },
       { path: "compiler/minimal-bool-v1.d.ts", projectId: "tsfg" },
+      { path: "compiler/minimal-floats-v4.d.ts", projectId: "tsfg" },
       { path: "compiler/minimal-integers-v3.d.ts", projectId: "tsfg" },
       { path: "compiler/minimal-scalars-v2.d.ts", projectId: "tsfg" },
       { path: "compiler/pipeline.mjs", projectId: "tsfg" },
@@ -91,7 +93,7 @@ test("Build Input declaration includes both debug target control and smoke input
     schemaVersion: "1",
   });
   const registry = JSON.parse(await readFile(path.join(repositoryRoot, "contracts", "registry.json"), "utf8"));
-  assert.equal(registry["tsfg.frontend-snapshot"].semver, "0.7.0");
+  assert.equal(registry["tsfg.frontend-snapshot"].semver, "0.8.0");
   assert.equal(
     declaration.entries.some(({ path: inputPath }) =>
       inputPath.endsWith(".test.mjs") || inputPath.includes("fixture") || inputPath.includes("report")),

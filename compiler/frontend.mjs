@@ -108,7 +108,7 @@ function matchesSnapshotContract(snapshot) {
       && claim.rootFile === snapshot.source?.path
       && files.get(claim.rootFile) === snapshot.source.content
       && claim.declarations.version === snapshot.capability
-      && (snapshot.capability !== "minimal-integers-v3" || canonical(claim.target) === canonical({ ...bytecodeSchema.target, pointerBits: "64" }))
+      && (!["minimal-integers-v3", "minimal-floats-v4"].includes(snapshot.capability) || canonical(claim.target) === canonical({ ...bytecodeSchema.target, pointerBits: "64" }))
       && Array.isArray(snapshot.inputs)
       && new Set(snapshot.inputs.map(file => file.path)).size === snapshot.inputs.length
       && snapshot.inputs.some(file => file.path === claim.rootFile)
@@ -162,7 +162,7 @@ export async function analyzeFrontend(input, { executable } = {}) {
   const rootFile = ownedInput?.rootFile;
   const files = ownedInput?.files;
   const seen = new Set();
-  const integerInput = ownedInput?.declarations?.version === "minimal-integers-v3";
+  const integerInput = ["minimal-integers-v3", "minimal-floats-v4"].includes(ownedInput?.declarations?.version);
   const moduleInput = ownedInput?.compilationClosure !== undefined;
   const inputKeys = ["config","declarations","files","rootFile","sourceRoot",...(integerInput ? ["target"] : []),
     ...(moduleInput ? ["compilationClosure",...(ownedInput.hostImports !== undefined ? ["hostImports"] : [])] : [])].sort().join(",");
@@ -185,7 +185,8 @@ export async function analyzeFrontend(input, { executable } = {}) {
   const declarationVersion = ownedInput?.declarations?.version;
   const declarationFile = declarationVersion === "minimal-bool-v1" ? "minimal-bool-v1.d.ts"
     : declarationVersion === "minimal-scalars-v2" ? "minimal-scalars-v2.d.ts"
-    : declarationVersion === "minimal-integers-v3" ? "minimal-integers-v3.d.ts" : null;
+    : declarationVersion === "minimal-integers-v3" ? "minimal-integers-v3.d.ts"
+    : declarationVersion === "minimal-floats-v4" ? "minimal-floats-v4.d.ts" : null;
   if (!declarationFile) return rejectInput(inputIdentity, rootFile);
   const declarationBytes = await readFile(new URL(`./${declarationFile}`, import.meta.url), "utf8");
   const declarationPaths = ownedInput?.declarations?.paths;
@@ -277,7 +278,7 @@ export async function analyzeFrontend(input, { executable } = {}) {
   const types = [];
   let invalidScalar = false;
   const typeRef = name => {
-    if (!["bool", "i8", "i16", "i32", "i64", "u8", "u16", "u32", "u64", "isize", "usize", "f64"].includes(name)) {
+    if (!["bool", "i8", "i16", "i32", "i64", "u8", "u16", "u32", "u64", "isize", "usize", "f32", "f64"].includes(name)) {
       invalidScalar = true;
       return undefined;
     }

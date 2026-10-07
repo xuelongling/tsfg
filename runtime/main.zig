@@ -46,7 +46,7 @@ fn writeOutcome(writer: *std.Io.Writer, outcome: runtime.RequestOutcome, host: *
                 .boolean => |value| try std.json.Stringify.value(.{ .status = "returned", .result = .{ .type = "bool", .value = value }, .source = source_view, .functionId = @as([]const u8, &function_hex), .activeRequests = active, .fuelRemaining = fuel_remaining, .fuelConsumed = fuel_consumed }, .{}, writer),
                 else => {
                     const code = returned.result.typeCode();
-                    const text = if (contract.signedType(code)) try std.fmt.bufPrint(&buffers[3], "{d}", .{contract.signedValue(returned.result.bits(), code)}) else try std.fmt.bufPrint(&buffers[3], "{d}", .{returned.result.bits()});
+                    const text = if (code == 12) try std.fmt.bufPrint(&buffers[3], "{x:0>8}", .{returned.result.bits()}) else if (code == 13) try std.fmt.bufPrint(&buffers[3], "{x:0>16}", .{returned.result.bits()}) else if (contract.signedType(code)) try std.fmt.bufPrint(&buffers[3], "{d}", .{contract.signedValue(returned.result.bits(), code)}) else try std.fmt.bufPrint(&buffers[3], "{d}", .{returned.result.bits()});
                     try std.json.Stringify.value(.{ .status = "returned", .result = .{ .type = contract.typeName(code), .value = text }, .source = source_view, .functionId = @as([]const u8, &function_hex), .activeRequests = active, .fuelRemaining = fuel_remaining, .fuelConsumed = fuel_consumed }, .{}, writer);
                 },
             }
@@ -127,6 +127,12 @@ fn evaluateRequest(host: *runtime.Runtime, module: *const runtime.VerifiedModule
                 valid = false;
                 break;
             }
+            arguments[index] = runtime.typedValue(bits, code);
+        } else if (std.mem.eql(u8, type_value.string, contract.typeName(code)) and contract.floatType(code) and value == .string) {
+            if (value.string.len != (if (code == 12) @as(usize, 8) else 16)) { valid = false; break; }
+            for (value.string) |c| if (!std.ascii.isDigit(c) and !(c >= 'a' and c <= 'f')) { valid = false; break; };
+            if (!valid) break;
+            const bits = std.fmt.parseInt(u64, value.string, 16) catch { valid = false; break; };
             arguments[index] = runtime.typedValue(bits, code);
         } else {
             valid = false;

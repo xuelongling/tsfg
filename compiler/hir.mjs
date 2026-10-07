@@ -6,6 +6,7 @@ import { moduleIdentity,globalIdentity,compilationClosure } from "./modules.mjs"
 import { canonical, functionIdentity, signatureHash, i32TypeId, boolTypeId, scalarTypeIds, scalarName, integerNames, integerRange, own, sha256 } from "./identity.mjs";
 import registry from "../contracts/registry.json" with { type: "json" };
 import bytecodeSchema from "../contracts/bytecode.schema.json" with { type: "json" };
+import { floatNames, floatBits } from "./float.mjs";
 
 const contract = () => registry["tsfg.hir"];
 const exactKeys = (value, keys) => value && typeof value === "object"
@@ -14,6 +15,7 @@ const exactKeys = (value, keys) => value && typeof value === "object"
 const hash = value => typeof value === "string" && /^sha256:[0-9a-f]{64}$/.test(value);
 const types = scalarTypeIds;
 const integerType = id => integerNames.includes(scalarName(id));
+const floatType = id => floatNames.includes(scalarName(id));
 const operations = { "+": "add", "-": "sub", "*": "mul", "/": "div", "%": "rem",
   "<<": "shl", ">>": "shr", ">>>": "ushr", "&": "and", "|": "or", "^": "xor",
   "===": "eq", "!==": "ne", "<": "lt", "<=": "le", ">": "gt", ">=": "ge" };
@@ -114,6 +116,10 @@ function verifyExpression(value, parent, source, fail, budget, locals, visibleBi
     const [minimum, maximum] = integerRange(scalarName(value.type));
     if (integer.toString() !== value.decimal || integer < minimum || integer > maximum
         || anchored !== value.token) fail();
+  } else if (value.kind === "floating") {
+    if (!exactKeys(value, ["kind", "type", "bits", "token", "range"]) || !floatType(value.type)
+        || sourceTokens(source, value.range.start, value.range.end) !== value.token) fail();
+    try { if (floatBits(value.token, scalarName(value.type)) !== value.bits) fail(); } catch { fail(); }
   } else if (value.kind === "boolean") {
     if (!exactKeys(value, ["kind", "type", "value", "range"]) || value.type !== boolTypeId
         || typeof value.value !== "boolean" || sourceTokens(source, value.range.start, value.range.end) !== String(value.value)) fail();
@@ -126,7 +132,8 @@ function verifyExpression(value, parent, source, fail, budget, locals, visibleBi
         || sourceTokens(source, value.operand.range.end, value.range.end) !== (group ? ")" : "")
         || value.type !== value.operand.type || (!group && (["binary", "shortCircuit"].includes(value.operand.kind)
         || !["+", "-", "~", "!"].includes(value.operator)
-        || (value.operator === "!" ? value.type !== boolTypeId : !integerType(value.type))))) fail();
+        || (value.operator === "!" ? value.type !== boolTypeId : !integerType(value.type)
+          && !(floatType(value.type) && ["+", "-"].includes(value.operator)))))) fail();
   } else if (value.kind === "binary" || value.kind === "shortCircuit") {
     const short = value.kind === "shortCircuit";
     if (!exactKeys(value, ["kind", "type", "operator", "left", "right", "range"])
@@ -141,7 +148,8 @@ function verifyExpression(value, parent, source, fail, budget, locals, visibleBi
         || !scalarOperator(source, value.left.range.end, value.right.range.start, value.operator)
         || sourceTokens(source, value.right.range.end, value.range.end) !== ""
         || value.type !== (short || comparisons.has(value.operator) ? boolTypeId : value.left.type)
-        || (short ? value.left.type !== boolTypeId : !["===", "!=="].includes(value.operator) && !integerType(value.left.type))) fail();
+        || (short ? value.left.type !== boolTypeId : !["===", "!=="].includes(value.operator) && !integerType(value.left.type)
+          && !(floatType(value.left.type) && (comparisons.has(value.operator) || ["+", "-", "*", "/", "%"].includes(value.operator))))) fail();
   } else fail();
 }
 const validText = value => typeof value === "string" && value.length > 0 && !value.includes("\0")
@@ -274,7 +282,7 @@ export function verifyHir(hir) {
         if (keyword) declarationKind = keyword;
         else if (before !== "," || !declarationKind) fail();
         if (binding.writable !== (declarationKind === "let")) fail();
-        const annotations = binding.type === boolTypeId ? [":bool", ":boolean"] : [`:${scalarName(binding.type)}`];
+        const annotations = binding.type === boolTypeId ? [":bool", ":boolean"] : binding.type === types.f64 ? [":f64", ":number"] : [`:${scalarName(binding.type)}`];
         if (value !== null) {
           verifyExpression(value, statement.range, source, fail, budget, locals, visibleBindings);
           const annotation = sourceTokens(source, binding.range.end, value.range.start);
@@ -367,11 +375,11 @@ export function verifyHir(hir) {
     continue;
   }
   const header = sourceTrivia(source,fn.range.start,fn.body[0].range.start);
-  const parsedHeader = header.match(/^\s*(?:export\s+(?:default\s+)?)?function\s*([^()]*)\(([^()]*)\)\s*:\s*(i8|i16|i32|i64|u8|u16|u32|u64|isize|usize|bool|boolean)\s*\{\s*(?:(?:const|let)\s*)?$/d);
+  const parsedHeader = header.match(/^\s*(?:export\s+(?:default\s+)?)?function\s*([^()]*)\(([^()]*)\)\s*:\s*(i8|i16|i32|i64|u8|u16|u32|u64|isize|usize|bool|boolean|f32|f64|number)\s*\{\s*(?:(?:const|let)\s*)?$/d);
   if (!parsedHeader || (parsedHeader[1].trim()==='' ? !(moduleMode&&fn.name==='default'&&/export\s+default/.test(header))
       : identifierToken(parsedHeader[1],{start:0,end:parsedHeader[1].length}) !== fn.name)
       || parsedHeader[1].trim()!=='' && !/\bfunction\s+/.test(header)
-      || (parsedHeader[3] === "boolean" ? "bool" : parsedHeader[3]) !== fn.returnType.name) fail();
+      || ({boolean:"bool",number:"f64"}[parsedHeader[3]] ?? parsedHeader[3]) !== fn.returnType.name) fail();
   const parameterTokens = parsedHeader[2].trim() === "" ? [] : parsedHeader[2].split(",");
   if (parameterTokens.length > 1 && parameterTokens.at(-1).trim() === "") parameterTokens.pop();
   if (parameterTokens.length !== fn.parameters.length) fail();
@@ -383,7 +391,7 @@ export function verifyHir(hir) {
     const parts=parameterTokens[index].split(":");
     if(parts.length !== 2 || identifierToken(parts[0],{start:0,end:parts[0].length}) !== parameter.name
         || parameter.range.start < parameterStart || parameter.range.end > parameterStart + parts[0].length
-        || (parts[1].trim() === "boolean" ? "bool" : parts[1].trim()) !== parameterNames[index]) fail();
+        || ({boolean:"bool",number:"f64"}[parts[1].trim()] ?? parts[1].trim()) !== parameterNames[index]) fail();
     initial.set(parameter.id, { ...parameter, initialized: true }); visible.set(parameter.name, parameter.id);
     parameterEnd = parameter.range.end;
     parameterStart += parameterTokens[index].length + 1;
@@ -400,6 +408,7 @@ export function buildHir(snapshot) {
   const moduleFacts=snapshot.modules?validateModuleFacts(snapshot):undefined;
   if (!moduleFacts && snapshot.functions.length < 1 || snapshot.functions.length > 128 || snapshot.functions.some(fn => fn.parameters.length > 64
       || !Object.hasOwn(types, resolveType(snapshot, fn.returnTypeRef).scalar)
+      || snapshot.capability !== "minimal-floats-v4" && (floatNames.includes(fn.returnType) || fn.parameters.some(p => floatNames.includes(p.type)))
       || fn.parameters.some(parameter => !types[parameter.type]) || fn.body.length < 1 || fn.body.length > 128)) {
     return { status: "error", diagnostics: [{ code: "r03-d-capability", ruleId: "r01-ts-baseline", phase: "hir",
       message: "current execution capability requires nominal integer/bool functions with direct calls, locals, structured control and returns",
@@ -451,6 +460,7 @@ export function buildHir(snapshot) {
         ...(moduleFacts?{name:value.name}:{}),arguments:value.arguments.map(argument => project(argument, common.range))};
     }
     if (value.kind === "integer") return { kind: "constant", ...common, decimal: value.literal.decimal, token: value.literal.token };
+    if (value.kind === "floating") return { kind: "floating", ...common, bits: value.float.bits, token: value.float.token };
     if (value.kind === "boolean") return { kind: "boolean", ...common, value: value.boolean };
     if (value.kind === "group") return { kind: "group", ...common, operand: project(value.operand, common.range) };
     if (value.kind === "unary" && ["+", "-", "~", "!"].includes(value.operator))
@@ -567,7 +577,7 @@ export function lowerHir(hir) {
   const lowerFunction = fn => {
   const blocks = [], bindingTypes = new Map();
   let valueIndex = 0, current, definitions = new Map(), declared = new Set();
-  const coreType = type => type === i32TypeId ? "i32" : type === boolTypeId ? "i1" : `!tsfg_core.integer<${quote(scalarName(type))}>`;
+  const coreType = type => type === i32TypeId ? "i32" : type === boolTypeId ? "i1" : floatType(type) ? scalarName(type) : `!tsfg_core.integer<${quote(scalarName(type))}>`;
   const newBlock = (parameterTypes = []) => {
     const block = { name: `bb${blocks.length}`, parameters: parameterTypes.map(type => ({ name: `%v${valueIndex++}`, type })), lines: [], terminated: false };
     blocks.push(block); return block;
@@ -607,7 +617,7 @@ export function lowerHir(hir) {
       current.lines.push(`    ${name} = "func.call"(${operands.join(", ")}) {callee = @${quote(functionSymbol(target))}, tsfg_core.function_id = ${quote(target.id)}, tsfg_core.signature_hash = ${quote(target.signatureHash)}, ${attrsFor(expression.range)}} : (${expression.arguments.map(argument => coreType(argument.type)).join(", ")}) -> ${coreType(expression.type)}`);
       return name;
     }
-    if (expression.kind === "group" || expression.kind === "unary" && expression.operator === "+") return emit(expression.operand);
+    if (expression.kind === "group" || expression.kind === "unary" && expression.operator === "+" && !floatType(expression.type)) return emit(expression.operand);
     if (expression.kind === "shortCircuit") {
       const left = emit(expression.left);
       const rhs = newBlock(), shortcut = newBlock(), join = newBlock([boolTypeId]);
@@ -619,10 +629,10 @@ export function lowerHir(hir) {
     const operands = expression.kind === "binary" ? [emit(expression.left), emit(expression.right)]
       : expression.kind === "unary" ? [emit(expression.operand)] : [];
     const name = `%v${valueIndex++}`, type = coreType(expression.type);
-    const constant = ["constant", "boolean"].includes(expression.kind);
+    const constant = ["constant", "boolean", "floating"].includes(expression.kind);
     const op = constant ? "constant" : expression.kind === "binary" ? operations[expression.operator]
-      : ({ "-": "neg", "~": "not", "!": "bool_not" })[expression.operator];
-    const valueAttr = constant ? expression.kind === "constant" && expression.type !== i32TypeId
+      : ({ "+": "pos", "-": "neg", "~": "not", "!": "bool_not" })[expression.operator];
+    const valueAttr = expression.kind === "floating" ? `value = ${quote(expression.bits)}, ` : constant ? expression.kind === "constant" && expression.type !== i32TypeId
       ? `value = ${quote(expression.decimal)}, `
       : `value = ${expression.kind === "constant" ? expression.decimal : Number(expression.value)} : ${type}, ` : "";
     const operandTypes = expression.kind === "binary" ? [expression.left.type, expression.right.type]

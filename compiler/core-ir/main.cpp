@@ -25,7 +25,7 @@
 #include <vector>
 
 namespace tsfg {
-constexpr llvm::StringLiteral scalarNames[] = {"none", "i32", "bool", "i8", "i16", "i64", "u8", "u16", "u32", "u64", "isize", "usize"};
+constexpr llvm::StringLiteral scalarNames[] = {"none", "i32", "bool", "i8", "i16", "i64", "u8", "u16", "u32", "u64", "isize", "usize", "f32", "f64"};
 struct IntegerStorage : public mlir::TypeStorage {
   using KeyTy = uint8_t;
   explicit IntegerStorage(uint8_t code) : code(code) {}
@@ -46,6 +46,8 @@ public:
 uint8_t typeCode(mlir::Type type) {
   if (type.isSignlessInteger(32)) return 1;
   if (type.isSignlessInteger(1)) return 2;
+  if (type.isF32()) return 12;
+  if (type.isF64()) return 13;
   if (auto integer = llvm::dyn_cast<IntegerType>(type)) return integer.code();
   return 0;
 }
@@ -55,8 +57,15 @@ unsigned width(uint8_t code) {
 }
 bool signedInteger(uint8_t code) { return code == 1 || code == 3 || code == 4 || code == 5 || code == 10; }
 bool integer(uint8_t code) { return code >= 1 && code <= 11 && code != 2; }
+bool floating(uint8_t code) { return code == 12 || code == 13; }
 bool constantBits(mlir::Operation *operation, uint64_t &bits) {
   const uint8_t code = typeCode(operation->getResult(0).getType());
+  if (floating(code)) {
+    auto value = operation->getAttrOfType<mlir::StringAttr>("value");
+    if (!value || value.getValue().size() != (code == 12 ? 8 : 16)) return false;
+    for (char digit : value.getValue()) if (!(digit >= '0' && digit <= '9') && !(digit >= 'a' && digit <= 'f')) return false;
+    return !value.getValue().getAsInteger(16, bits);
+  }
   if (code == 1 || code == 2) {
     auto value = operation->getAttrOfType<mlir::IntegerAttr>("value");
     if (!value || value.getType() != operation->getResult(0).getType()) return false;
@@ -117,7 +126,7 @@ public:
   }
 };
 
-enum class ScalarKind { Integer, Shift, Comparison, Equality, Boolean };
+enum class ScalarKind { Arithmetic, Float, Integer, Shift, Comparison, Equality, Boolean };
 bool scalarTypes(mlir::Operation *operation, ScalarKind kind) {
   const auto result = operation->getResult(0).getType();
   const auto first = operation->getOperand(0).getType();
@@ -127,8 +136,10 @@ bool scalarTypes(mlir::Operation *operation, ScalarKind kind) {
   for (mlir::Value operand : operation->getOperands())
     if (operand.getType() != first) return false;
   if (kind == ScalarKind::Integer) return integer(code) && result == first;
+  if (kind == ScalarKind::Arithmetic) return (integer(code) || floating(code)) && result == first;
+  if (kind == ScalarKind::Float) return floating(code) && result == first;
   if (!result.isSignlessInteger(1)) return false;
-  if (kind == ScalarKind::Comparison) return integer(code);
+  if (kind == ScalarKind::Comparison) return integer(code) || floating(code);
   if (kind == ScalarKind::Boolean) return first.isSignlessInteger(1);
   return true;
 }
@@ -149,18 +160,19 @@ public: \
     return mlir::success(); \
   } \
 };
-TSFG_SCALAR_OPERATION(AddOp, "add", mlir::OpTrait::NOperands<2>::Impl, Integer)
-TSFG_SCALAR_OPERATION(SubOp, "sub", mlir::OpTrait::NOperands<2>::Impl, Integer)
-TSFG_SCALAR_OPERATION(MulOp, "mul", mlir::OpTrait::NOperands<2>::Impl, Integer)
-TSFG_SCALAR_OPERATION(DivOp, "div", mlir::OpTrait::NOperands<2>::Impl, Integer)
-TSFG_SCALAR_OPERATION(RemOp, "rem", mlir::OpTrait::NOperands<2>::Impl, Integer)
+TSFG_SCALAR_OPERATION(AddOp, "add", mlir::OpTrait::NOperands<2>::Impl, Arithmetic)
+TSFG_SCALAR_OPERATION(SubOp, "sub", mlir::OpTrait::NOperands<2>::Impl, Arithmetic)
+TSFG_SCALAR_OPERATION(MulOp, "mul", mlir::OpTrait::NOperands<2>::Impl, Arithmetic)
+TSFG_SCALAR_OPERATION(DivOp, "div", mlir::OpTrait::NOperands<2>::Impl, Arithmetic)
+TSFG_SCALAR_OPERATION(RemOp, "rem", mlir::OpTrait::NOperands<2>::Impl, Arithmetic)
 TSFG_SCALAR_OPERATION(ShlOp, "shl", mlir::OpTrait::NOperands<2>::Impl, Shift)
 TSFG_SCALAR_OPERATION(ShrOp, "shr", mlir::OpTrait::NOperands<2>::Impl, Shift)
 TSFG_SCALAR_OPERATION(UshrOp, "ushr", mlir::OpTrait::NOperands<2>::Impl, Shift)
 TSFG_SCALAR_OPERATION(AndOp, "and", mlir::OpTrait::NOperands<2>::Impl, Integer)
 TSFG_SCALAR_OPERATION(OrOp, "or", mlir::OpTrait::NOperands<2>::Impl, Integer)
 TSFG_SCALAR_OPERATION(XorOp, "xor", mlir::OpTrait::NOperands<2>::Impl, Integer)
-TSFG_SCALAR_OPERATION(NegOp, "neg", mlir::OpTrait::OneOperand, Integer)
+TSFG_SCALAR_OPERATION(NegOp, "neg", mlir::OpTrait::OneOperand, Arithmetic)
+TSFG_SCALAR_OPERATION(PosOp, "pos", mlir::OpTrait::OneOperand, Float)
 TSFG_SCALAR_OPERATION(NotOp, "not", mlir::OpTrait::OneOperand, Integer)
 TSFG_SCALAR_OPERATION(BoolNotOp, "bool_not", mlir::OpTrait::OneOperand, Boolean)
 TSFG_SCALAR_OPERATION(EqOp, "eq", mlir::OpTrait::NOperands<2>::Impl, Equality)
@@ -179,7 +191,7 @@ public:
       : Dialect(getDialectNamespace(), context, mlir::TypeID::get<CoreDialect>()) {
     addOperations<FuelOp, ConstantOp, AddOp, SubOp, MulOp, DivOp, RemOp, ShlOp,
                   ShrOp, UshrOp, AndOp, OrOp, XorOp, NegOp, NotOp, BoolNotOp,
-                  EqOp, NeOp, LtOp, LeOp, GtOp, GeOp, GlobalLoadOp, GlobalStoreOp, AuthorizedHostOp>();
+                  EqOp, NeOp, LtOp, LeOp, GtOp, GeOp, PosOp, GlobalLoadOp, GlobalStoreOp, AuthorizedHostOp>();
     addTypes<IntegerType>();
   }
   mlir::Type parseType(mlir::DialectAsmParser &parser) const override {
@@ -196,7 +208,7 @@ public:
 
 namespace {
 constexpr llvm::StringLiteral bytecodeSchema =
-    "d2cb324a10de4d0f3af422077644559a5cc2048f0d2abe9d5619b653a8e7c54c";
+    "df34b2ea0cef7a74e0b94328671f9d0df3b2d7ac2dd9935a20a722aa04f7da9a";
 constexpr llvm::StringLiteral target = "windows-x86_64-msvc";
 constexpr llvm::StringLiteral triple = "x86_64-pc-windows-msvc";
 constexpr llvm::StringLiteral layout =
@@ -259,6 +271,7 @@ bool attributes(mlir::Operation *operation,
 }
 
 uint8_t scalarOpcode(llvm::StringRef name) {
+  if (name == "tsfg_core.pos") return 33;
   static const llvm::StringRef names[] = {"add", "sub", "mul", "div", "rem",
       "shl", "shr", "ushr", "and", "or", "xor", "neg", "not", "bool_not",
       "eq", "ne", "lt", "le", "gt", "ge"};
@@ -569,7 +582,7 @@ mlir::LogicalResult verifiedBytecode(mlir::ModuleOp module, Bytes &packet) {
         reg = registers.lookup(result);
         if (auto constant = llvm::dyn_cast<tsfg::ConstantOp>(&operation)) {
           if (!attributes(constant, {"value", "tsfg_source.start", "tsfg_source.end"})) return reject();
-          opcode = typeCode == 1 ? 1 : typeCode == 2 ? 3 : 28;
+          opcode = typeCode == 1 ? 1 : typeCode == 2 ? 3 : tsfg::floating(typeCode) ? 32 : 28;
           if (!tsfg::constantBits(constant, literalBits)) return reject();
           if (opcode != 28) immediate = static_cast<uint32_t>(literalBits);
         } else if (auto load = llvm::dyn_cast<tsfg::GlobalLoadOp>(&operation)) {
@@ -619,7 +632,7 @@ mlir::LogicalResult verifiedBytecode(mlir::ModuleOp module, Bytes &packet) {
       integer(instructions, opcode, 1); integer(instructions, typeCode, 1);
       integer(instructions, reg, 2); integer(instructions, immediate, 4);
       integer(instructions, start, 4); integer(instructions, end, 4);
-      if (opcode == 28) integer(instructions, literalBits, 8);
+      if (opcode == 28 || opcode == 32) integer(instructions, literalBits, 8);
       instructions.insert(instructions.end(), edgeArguments.begin(), edgeArguments.end());
     }
     if (moduleMode) { integer(functionPayload, function.source, 2); integer(functionPayload, function.initializer, 1); integer(functionPayload, 0, 1); }
@@ -649,7 +662,7 @@ mlir::LogicalResult verifiedBytecode(mlir::ModuleOp module, Bytes &packet) {
   string(payload, target); string(payload, triple); string(payload, layout);
   integer(payload, static_cast<uint32_t>(size), 2);
   integer(payload, static_cast<uint32_t>(align), 2);
-  integer(payload, pointerBits, 2); integer(payload, pointerAlign, 2); integer(payload, 18, 4);
+  integer(payload, pointerBits, 2); integer(payload, pointerAlign, 2); integer(payload, 19, 4);
   appendHash(payload, input); appendHash(payload, source);
   string(payload, path); integer(payload, sourceLength, 4);
   integer(payload, moduleMode, 1);
@@ -673,7 +686,7 @@ mlir::LogicalResult verifiedBytecode(mlir::ModuleOp module, Bytes &packet) {
   integer(payload, functions.size(), 2);
   payload.insert(payload.end(), functionPayload.begin(), functionPayload.end());
   packet = Bytes{'T','S','F','G','T','B','C','0'};
-  integer(packet, 7, 4);
+  integer(packet, 8, 4);
   Hash schema; if (!decodeHash(("sha256:" + bytecodeSchema).str(), schema)) return reject();
   appendHash(packet, schema); integer(packet, static_cast<uint32_t>(80 + payload.size()), 4);
   appendHash(packet, llvm::SHA256::hash(payload));
@@ -705,8 +718,8 @@ int main(int argc, char **argv) {
     return 3;
   }
   auto version = module->getOperation()->getAttrOfType<mlir::StringAttr>("tsfg_core.version");
-  if (!version || version.getValue() != "0.7.0") {
-    llvm::errs() << "[core-ir-identity] expected Core IR 0.7.0\n";
+  if (!version || version.getValue() != "0.8.0") {
+    llvm::errs() << "[core-ir-identity] expected Core IR 0.8.0\n";
     return 3;
   }
   if (mlir::failed(mlir::verify(*module))) {

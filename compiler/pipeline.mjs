@@ -71,7 +71,7 @@ async function produceBytecode(hir, options) {
     const canonicalCore = consume(core, [options.optimize ? "--optimize" : "--canonicalize"], lowerHir(hir)).toString("utf8");
     const bytecode = consume(core, ["--emit-bytecode"], canonicalCore);
     if (bytecode.length < 80 || bytecode.subarray(0, 8).toString("ascii") !== "TSFGTBC0"
-        || bytecode.readUInt32LE(8) !== 7 || bytecode.readUInt32LE(44) !== bytecode.length
+        || bytecode.readUInt32LE(8) !== 8 || bytecode.readUInt32LE(44) !== bytecode.length
         || `sha256:${bytecode.subarray(12, 44).toString("hex")}` !== registry["tsfg.bytecode"].schemaHash
         || `sha256:${bytecode.subarray(48, 80).toString("hex")}` !== sha256(bytecode.subarray(80)))
       throw new TypeError("r04-producer-identity: C++ output differs from registered R04 packet");
@@ -83,7 +83,7 @@ async function produceBytecode(hir, options) {
 
 const sessionInputs = ["compiler/frontend.mjs", "compiler/hir.mjs", "compiler/identity.mjs",
   "compiler/module-facts.mjs", "compiler/module-hir.mjs", "compiler/modules.mjs",
-  "compiler/pipeline.mjs", "contracts/registry.json", "contracts/hir.schema.json", "contracts/bytecode.schema.json"];
+  "compiler/pipeline.mjs", "compiler/float.mjs", "contracts/registry.json", "contracts/hir.schema.json", "contracts/bytecode.schema.json"];
 async function sessionFingerprint() {
   const inputs = await Promise.all(sessionInputs.map(async name => [name, sha256(await readFile(path.join(productRoot, name)))]));
   return sha256(canonical(inputs));
@@ -162,11 +162,12 @@ export async function runRequestSequence(bytecodes, { vm, requests = undefined }
   return JSON.parse(consume(executable, ["--request-sequence", JSON.stringify(requestFrames)], input).toString("utf8"));
 }
 
-export async function sourceInput(source, { sourcePath = "/src/main.ts" } = {}) {
-  const declarations = await readFile(new URL("./minimal-integers-v3.d.ts", import.meta.url), "utf8");
+export async function sourceInput(source, { sourcePath = "/src/main.ts", declarationVersion = "minimal-floats-v4" } = {}) {
+  if (!["minimal-integers-v3", "minimal-floats-v4"].includes(declarationVersion)) throw new TypeError("unsupported source declaration version");
+  const declarations = await readFile(new URL(`./${declarationVersion}.d.ts`, import.meta.url), "utf8");
   return { sourceRoot: "/src", rootFile: sourcePath,
-    files: [{ path: sourcePath, content: source }, { path: "/src/minimal-integers-v3.d.ts", content: declarations }],
-    declarations: { version: "minimal-integers-v3", paths: ["/src/minimal-integers-v3.d.ts"] },
+    files: [{ path: sourcePath, content: source }, { path: `/src/${declarationVersion}.d.ts`, content: declarations }],
+    declarations: { version: declarationVersion, paths: [`/src/${declarationVersion}.d.ts`] },
     target: { ...bytecodeSchema.target, pointerBits: "64" },
     config: { strict: true, noEmit: true, allowJs: false } };
 }
