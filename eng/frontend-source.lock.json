@@ -3,7 +3,7 @@
   "contractVersion": "0.9.0",
   "languageBaseline": "TypeScript 7.0.2",
   "upstreamBaseOid": "1e4744d68260a7cb91b62b12edc3f6a2187faaf1",
-  "forkOid": "b2e934d44ca494b7e73ecbba936cf63c29384d91",
+  "forkOid": "02ffd71455801e9b848ce88713e24dfe3c92d44e",
   "remoteUrl": "https://github.com/xuelongling/TypeScript.git",
   "canonicalUrl": "https://github.com/microsoft/TypeScript.git",
   "sourceBranch": "refs/heads/r03-m09-conversion-facts",
@@ -11,7 +11,7 @@
   "upstreamTomlSha256": "sha256:0cc83338b60f281bc87bba82e359f5f51ab0c79b0b9469de705bd626c6a3f490",
   "producerPath": "tsc/cmd/tsfg-frontend/main.go",
   "producerSha256": "sha256:cec78a5ef7c48b19ce1589bfeddad30bf45bfa68c5d3b284fba666e3773bbf9b",
-  "executableSha256": "sha256:670f10749845cf292d74251a2700e0beef6ede91b65ca0cf55f253c831de8daf",
+  "executableSha256": "sha256:a5e1f17c1ee64e91938e908f71b429d33ecb9908fa53b8d5ef55130143ad615e",
   "declarations": [
     {
       "path": "compiler/minimal-bool-v1.d.ts",

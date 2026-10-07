@@ -53,7 +53,7 @@ test('official conversion provenance cannot be forged, while ordinary same-name 
 });
 test('conversion canonical exchange and cold/incremental source metamorphisms retain results',async()=>{
  for(const optimize of [false,true])for(const text of ['checked_i8_from_f64(x)','checked_i8_from_f64 /*comment*/ ( (x), )','checked_i8_from_f64((+(x)))']){
-  const input=await sourceInput(`/*😀*/ export function entry(x:f64):i8 { return ${text}; }`),session=createCompilerSession({...tools(),optimize}),first=await session.compile(input),second=await session.compile(input),cold=await compileProgram(input,{...tools(),optimize});for(const p of [first,second,cold])assert.equal(p.status,'ok',JSON.stringify(p));assert.deepEqual(first.bytecode,second.bytecode);assert.deepEqual(first.bytecode,cold.bytecode);
+  const input=await sourceInput(`/*😀*/ export function entry(x:f64):i8 { return ${text}; }`),session=createCompilerSession({...tools(),optimize}),first=await session.compile(input),second=await session.compile(input),cold=await compileProgram(input,{...tools(),optimize});for(const p of [first,second,cold]){assert.equal(p.status,'ok',JSON.stringify(p));const span=p.hir.functions[0].body[0].value.range;assert.equal(input.files[0].content.slice(span.start,span.end),text);}assert.deepEqual(first.bytecode,second.bytecode);assert.deepEqual(first.bytecode,cold.bytecode);
   assert.deepEqual(await runBytecode(first.bytecode,{...tools(),command:'--roundtrip'}),first.bytecode);const [got]=await runBytecode(first.bytecode,{...tools(),requests:[{arguments:[value('f64','3ffc000000000000')]}]});assert.deepEqual(got.result,value('i8','1'));
   const old=Buffer.from(first.bytecode);old.writeUInt32LE(8,8);await assert.rejects(()=>runBytecode(old,tools()));
  }
@@ -69,4 +69,18 @@ test('independent Core and wire verifiers reject illegal nominal pairs, reserved
  }
  const wrong=Buffer.from(p.bytecode);wrong[12]^=1;await assert.rejects(()=>runBytecode(wrong,tools()),/r04-schema/);
  const foreign=structuredClone(p.hir);foreign.functions[0].body[0].value.origin.brandRefs[0].range.end++;assert.throws(()=>verifyHir(foreign));
+});
+
+test('actual source, Core and VM endpoint pairs bind both modes to exact current consumer bytes',async()=>{
+ const cases=[['checked','export function entry(x:f64):i8 { return checked_i8_from_f64(x); }',value('f64','3ffc000000000000'),value('i8','1')],['wrap','export function entry(x:i128):u8 { return wrap_u8_from_i128(x); }',value('i128','-257'),value('u8','255')],['reinterpret','export function entry(x:f32):u32 { return reinterpret_u32_from_f32(x); }',value('f32','ffc12345'),value('u32','4290847557')]];
+ for(const optimize of [false,true])for(const [id,source,inputValue,expected]of cases){
+  const sourceClaim=await sourceInput(source),inputBytes=Buffer.from(JSON.stringify(sourceClaim)),prefix=`endpoints-${id}-${optimize}`;
+  async function endpoint(role,args,input,suffix){const executable=tools()[role],before=createHash('sha256').update(await readFile(executable)).digest('hex'),child=spawnSync(executable,args,{input,windowsHide:true,maxBuffer:16*1024*1024,timeout:300000}),after=createHash('sha256').update(await readFile(executable)).digest('hex');assert.equal(after,before);assert.equal(child.status,0,child.stderr?.toString());const directory=process.env.TSFG_CONVERSION_EVIDENCE_DIR;if(directory){await mkdir(directory,{recursive:true});await Promise.all([writeFile(path.join(directory,prefix+'-'+suffix+'.input'),input),writeFile(path.join(directory,prefix+'-'+suffix+'.stdout'),child.stdout),writeFile(path.join(directory,prefix+'-'+suffix+'.stderr'),child.stderr),writeFile(path.join(directory,prefix+'-'+suffix+'.terminal.json'),JSON.stringify({role,executable,args,status:child.status,signal:child.signal,error:child.error?.message??null,rawExecutableBefore:before,rawExecutableAfter:after})+'\n')]);}return child.stdout;}
+  const actual=JSON.parse((await endpoint('frontend',[],inputBytes,'frontend')).toString('utf8'));assert.equal(actual.status,'ok');
+  const analyzed=await analyzeFrontend(sourceClaim,{executable:tools().frontend});assert.equal(analyzed.status,'ok');validateFrontendSnapshot(analyzed.snapshot);
+  const hirResult=await compileHir(sourceClaim,tools());assert.equal(hirResult.status,'ok');verifyHir(hirResult.hir);const coreInput=Buffer.from(lowerHir(hirResult.hir)),core=await endpoint('core',[optimize?'--optimize':'--canonicalize'],coreInput,'core-validate'),packet=await endpoint('core',['--emit-bytecode'],core,'core-bytecode');
+  const formal=await compiled(source,optimize);assert.deepEqual(packet,formal.bytecode);assert.equal(core.toString('utf8'),formal.core);
+  const requests=[{arguments:[inputValue]}],outcomes=JSON.parse((await endpoint('vm',['--requests',JSON.stringify(requests)],packet,'vm')).toString('utf8'));assert.deepEqual(outcomes[0].result,expected);assert.equal(outcomes[0].activeRequests,'0');
+  if(process.env.TSFG_CONVERSION_EVIDENCE_DIR)await writeFile(path.join(process.env.TSFG_CONVERSION_EVIDENCE_DIR,prefix+'-owned-snapshot-hir.json'),JSON.stringify({snapshot:analyzed.snapshot,hir:hirResult.hir})+'\n');
+ }
 });
