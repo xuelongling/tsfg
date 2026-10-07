@@ -8,10 +8,10 @@ const tools = () => ({ frontend: process.env.TSFG_FRONTEND_EXE,
   core: process.env.TSFG_CORE_IR_EXE, vm: process.env.TSFG_VM_EXE });
 const value = (type, number) => ({ type, value: number });
 
-test("legal f64 unary source keeps capability diagnostics before native consumption", async () => {
+test("legacy v3 legal f64 unary source keeps capability diagnostics before native consumption", async () => {
   for (const operator of ["+", "-"]) {
     const source = `export function entry(a: f64): f64 { return ${operator}a; }`;
-    const result = await compileProgram(await sourceInput(source), { frontend: tools().frontend });
+    const result = await compileProgram(await sourceInput(source, { declarationVersion: "minimal-integers-v3" }), { frontend: tools().frontend });
     assert.equal(result.status, "error", JSON.stringify(result));
     const diagnostic = result.diagnostics[0];
     assert.equal(diagnostic.code, "r02b-d-unsupported");

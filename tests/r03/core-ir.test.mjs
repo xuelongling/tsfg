@@ -54,7 +54,7 @@ test("structural oracle rejects a wrong sample result hidden by another function
     %0 = "tsfg_core.constant"() {value = ${value} : i32} : () -> i32
     "func.return"(%0) : (i32) -> ()
   }) : () -> ()`;
-  const text = `"builtin.module"() ({${functionText("sample", 0)} ${functionText("other", 42)}}) {tsfg_core.version = "0.6.0"} : () -> ()`;
+  const text = `"builtin.module"() ({${functionText("sample", 0)} ${functionText("other", 42)}}) {tsfg_core.version = "0.8.0"} : () -> ()`;
   assert.throws(() => constantReturnOracle(text, 42));
   assert.doesNotThrow(() => constantReturnOracle(text, 0));
   // This only checks the independent oracle; it is not native verifier or
@@ -83,7 +83,7 @@ test("Core IR canonical form preserves boundary constants and ignores source spe
 });
 
 test("Core IR refuses a missing or different exchange identity", () => {
-  for (const fixture of [input.replace("0.6.0", "0.3.0"), input.replace('tsfg_core.version = "0.6.0", ', "")]) {
+  for (const fixture of [input.replace("0.8.0", "0.3.0"), input.replace('tsfg_core.version = "0.8.0", ', "")]) {
     const child = canonicalize(fixture);
     assert.equal(child.status, 3);
     assert.match(child.stderr, /\[core-ir-identity\]/);

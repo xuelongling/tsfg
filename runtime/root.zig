@@ -17,6 +17,8 @@ pub const serialize = bytecode.serialize;
 pub const inspect = bytecode.inspect;
 pub const digestText = bytecode.digestText;
 pub const TypedValue = vm.TypedValue;
+// Runtime-internal host probe/testability seam; no source language operation.
+pub const FloatingEnvironment = vm.FloatingEnvironment;
 pub const typedValue = vm.typedValue;
 pub const Capability = vm.Capability;
 pub const RequestLimits = vm.RequestLimits;

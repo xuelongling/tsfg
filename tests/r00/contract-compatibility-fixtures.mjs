@@ -1,9 +1,9 @@
 // SPDX-License-Identifier: MIT
 
 export const currentContractSetId =
-  "sha256:040267882bc16ab2e1e4849212b042728831cdb8d7b4e45ac9d0d214570173df";
+  "sha256:7fcadbfc5cb823bdc38d2cb4593d972e37b6460254093866b1030511492a8af9";
 export const currentContractSetCanonical =
-  '{"tsfg.bytecode":{"schemaHash":"sha256:2119acbdab7a604f5947b765f607d596d534f11fb88d81770e7230011f3de13b","semver":"0.6.0"},"tsfg.frontend-snapshot":{"schemaHash":"sha256:969c8c5101b6f00f8da8bfff0157a7d27b908603dc6277d988ccbcdbcd07d968","semver":"0.6.0"},"tsfg.hir":{"schemaHash":"sha256:416f59c1c87fc1f0eac6baa1b2ef4ee3da3a13de0e766deba105783137747aa1","semver":"0.6.0"}}';
+  "{\"tsfg.bytecode\":{\"schemaHash\":\"sha256:616360bef22c9c129df7b11392dc4e181797cf2f311ad62c56c701ec10ff716c\",\"semver\":\"0.8.0\"},\"tsfg.frontend-snapshot\":{\"schemaHash\":\"sha256:448e05accf1742ac0a644b85ac71210a77778fcbc7ccab47c3909d008439e7cf\",\"semver\":\"0.8.0\"},\"tsfg.hir\":{\"schemaHash\":\"sha256:137b93b252cd02acb0c6e70901640f0d4288bcc0818192b95f6ddc01e2cb8ac7\",\"semver\":\"0.8.0\"}}";
 
 /** @returns {Record<string, any>} */
 export function baselineSyntheticArtifact() {

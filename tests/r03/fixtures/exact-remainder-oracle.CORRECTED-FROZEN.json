@@ -1,0 +1,2037 @@
+{
+  "status": "independent exact mathematical expectations only; NOT product execution",
+  "oracleBasis": "Decode IEEE raw bits into exact signed BigInt rational; quotient truncates toward zero; subtract exact product and round once RNE, preserve dividend negative zero. NaN patterns from explicit accepted numerical engineering contract.",
+  "originalArithmeticOracleSha256": "3f816e4a0c649a128f23e43a01e70aa1668ff909981a50b782036f0aa345dddb",
+  "canonicalContractSha256": "9119f9f9bcf52ad89902e10ce9acd62cbed2a7db0c5e405c80d9fc9b434a12bd",
+  "formats": [
+    {
+      "type": "f32",
+      "fraction": 23,
+      "exponent": 8,
+      "bias": 127
+    },
+    {
+      "type": "f64",
+      "fraction": 52,
+      "exponent": 11,
+      "bias": 1023
+    }
+  ],
+  "programs": [
+    {
+      "id": "f32-remainder",
+      "source": "export function entry(a: f32, b: f32): f32 { return a % b; }",
+      "ruleIds": [
+        "r01-numeric-family",
+        "r01-strict-float"
+      ],
+      "note": "Independent exact rational remainder with quotient truncated toward zero; public input raw bits."
+    },
+    {
+      "id": "f64-remainder",
+      "source": "export function entry(a: f64, b: f64): f64 { return a % b; }",
+      "ruleIds": [
+        "r01-numeric-family",
+        "r01-strict-float"
+      ],
+      "note": "Independent exact rational remainder with quotient truncated toward zero; public input raw bits."
+    }
+  ],
+  "cases": [
+    {
+      "id": "f32-remainder-00",
+      "programId": "f32-remainder",
+      "inputs": [
+        {
+          "type": "f32",
+          "rawBits": "00000000"
+        },
+        {
+          "type": "f32",
+          "rawBits": "80000000"
+        }
+      ],
+      "expected": {
+        "kind": "arithmeticNaN",
+        "type": "f32",
+        "canonicalRawBits": "7fc00000"
+      },
+      "productExecuted": false
+    },
+    {
+      "id": "f32-remainder-01",
+      "programId": "f32-remainder",
+      "inputs": [
+        {
+          "type": "f32",
+          "rawBits": "80000000"
+        },
+        {
+          "type": "f32",
+          "rawBits": "80000000"
+        }
+      ],
+      "expected": {
+        "kind": "arithmeticNaN",
+        "type": "f32",
+        "canonicalRawBits": "7fc00000"
+      },
+      "productExecuted": false
+    },
+    {
+      "id": "f32-remainder-02",
+      "programId": "f32-remainder",
+      "inputs": [
+        {
+          "type": "f32",
+          "rawBits": "3f800000"
+        },
+        {
+          "type": "f32",
+          "rawBits": "bf800000"
+        }
+      ],
+      "expected": {
+        "kind": "value",
+        "rawBits": "00000000"
+      },
+      "productExecuted": false
+    },
+    {
+      "id": "f32-remainder-03",
+      "programId": "f32-remainder",
+      "inputs": [
+        {
+          "type": "f32",
+          "rawBits": "00000001"
+        },
+        {
+          "type": "f32",
+          "rawBits": "00000001"
+        }
+      ],
+      "expected": {
+        "kind": "value",
+        "rawBits": "00000000"
+      },
+      "productExecuted": false
+    },
+    {
+      "id": "f32-remainder-04",
+      "programId": "f32-remainder",
+      "inputs": [
+        {
+          "type": "f32",
+          "rawBits": "80000001"
+        },
+        {
+          "type": "f32",
+          "rawBits": "80000001"
+        }
+      ],
+      "expected": {
+        "kind": "value",
+        "rawBits": "80000000"
+      },
+      "productExecuted": false
+    },
+    {
+      "id": "f32-remainder-05",
+      "programId": "f32-remainder",
+      "inputs": [
+        {
+          "type": "f32",
+          "rawBits": "00000001"
+        },
+        {
+          "type": "f32",
+          "rawBits": "80000001"
+        }
+      ],
+      "expected": {
+        "kind": "value",
+        "rawBits": "00000000"
+      },
+      "productExecuted": false
+    },
+    {
+      "id": "f32-remainder-06",
+      "programId": "f32-remainder",
+      "inputs": [
+        {
+          "type": "f32",
+          "rawBits": "00800000"
+        },
+        {
+          "type": "f32",
+          "rawBits": "007fffff"
+        }
+      ],
+      "expected": {
+        "kind": "value",
+        "rawBits": "00000001"
+      },
+      "productExecuted": false
+    },
+    {
+      "id": "f32-remainder-07",
+      "programId": "f32-remainder",
+      "inputs": [
+        {
+          "type": "f32",
+          "rawBits": "7f7fffff"
+        },
+        {
+          "type": "f32",
+          "rawBits": "7f7fffff"
+        }
+      ],
+      "expected": {
+        "kind": "value",
+        "rawBits": "00000000"
+      },
+      "productExecuted": false
+    },
+    {
+      "id": "f32-remainder-08",
+      "programId": "f32-remainder",
+      "inputs": [
+        {
+          "type": "f32",
+          "rawBits": "ff7fffff"
+        },
+        {
+          "type": "f32",
+          "rawBits": "ff7fffff"
+        }
+      ],
+      "expected": {
+        "kind": "value",
+        "rawBits": "80000000"
+      },
+      "productExecuted": false
+    },
+    {
+      "id": "f32-remainder-09",
+      "programId": "f32-remainder",
+      "inputs": [
+        {
+          "type": "f32",
+          "rawBits": "7f800000"
+        },
+        {
+          "type": "f32",
+          "rawBits": "ff800000"
+        }
+      ],
+      "expected": {
+        "kind": "arithmeticNaN",
+        "type": "f32",
+        "canonicalRawBits": "7fc00000"
+      },
+      "productExecuted": false
+    },
+    {
+      "id": "f32-remainder-10",
+      "programId": "f32-remainder",
+      "inputs": [
+        {
+          "type": "f32",
+          "rawBits": "7f800000"
+        },
+        {
+          "type": "f32",
+          "rawBits": "7f800000"
+        }
+      ],
+      "expected": {
+        "kind": "arithmeticNaN",
+        "type": "f32",
+        "canonicalRawBits": "7fc00000"
+      },
+      "productExecuted": false
+    },
+    {
+      "id": "f32-remainder-11",
+      "programId": "f32-remainder",
+      "inputs": [
+        {
+          "type": "f32",
+          "rawBits": "ff800000"
+        },
+        {
+          "type": "f32",
+          "rawBits": "ff800000"
+        }
+      ],
+      "expected": {
+        "kind": "arithmeticNaN",
+        "type": "f32",
+        "canonicalRawBits": "7fc00000"
+      },
+      "productExecuted": false
+    },
+    {
+      "id": "f32-remainder-12",
+      "programId": "f32-remainder",
+      "inputs": [
+        {
+          "type": "f32",
+          "rawBits": "00000000"
+        },
+        {
+          "type": "f32",
+          "rawBits": "7f800000"
+        }
+      ],
+      "expected": {
+        "kind": "value",
+        "rawBits": "00000000"
+      },
+      "productExecuted": false
+    },
+    {
+      "id": "f32-remainder-13",
+      "programId": "f32-remainder",
+      "inputs": [
+        {
+          "type": "f32",
+          "rawBits": "80000000"
+        },
+        {
+          "type": "f32",
+          "rawBits": "ff800000"
+        }
+      ],
+      "expected": {
+        "kind": "value",
+        "rawBits": "80000000"
+      },
+      "productExecuted": false
+    },
+    {
+      "id": "f32-remainder-14",
+      "programId": "f32-remainder",
+      "inputs": [
+        {
+          "type": "f32",
+          "rawBits": "3f800000"
+        },
+        {
+          "type": "f32",
+          "rawBits": "00000000"
+        }
+      ],
+      "expected": {
+        "kind": "arithmeticNaN",
+        "type": "f32",
+        "canonicalRawBits": "7fc00000"
+      },
+      "productExecuted": false
+    },
+    {
+      "id": "f32-remainder-15",
+      "programId": "f32-remainder",
+      "inputs": [
+        {
+          "type": "f32",
+          "rawBits": "bf800000"
+        },
+        {
+          "type": "f32",
+          "rawBits": "00000000"
+        }
+      ],
+      "expected": {
+        "kind": "arithmeticNaN",
+        "type": "f32",
+        "canonicalRawBits": "7fc00000"
+      },
+      "productExecuted": false
+    },
+    {
+      "id": "f32-remainder-16",
+      "programId": "f32-remainder",
+      "inputs": [
+        {
+          "type": "f32",
+          "rawBits": "3f800000"
+        },
+        {
+          "type": "f32",
+          "rawBits": "80000000"
+        }
+      ],
+      "expected": {
+        "kind": "arithmeticNaN",
+        "type": "f32",
+        "canonicalRawBits": "7fc00000"
+      },
+      "productExecuted": false
+    },
+    {
+      "id": "f32-remainder-17",
+      "programId": "f32-remainder",
+      "inputs": [
+        {
+          "type": "f32",
+          "rawBits": "bf800000"
+        },
+        {
+          "type": "f32",
+          "rawBits": "80000000"
+        }
+      ],
+      "expected": {
+        "kind": "arithmeticNaN",
+        "type": "f32",
+        "canonicalRawBits": "7fc00000"
+      },
+      "productExecuted": false
+    },
+    {
+      "id": "f32-remainder-18",
+      "programId": "f32-remainder",
+      "inputs": [
+        {
+          "type": "f32",
+          "rawBits": "00000000"
+        },
+        {
+          "type": "f32",
+          "rawBits": "00000000"
+        }
+      ],
+      "expected": {
+        "kind": "arithmeticNaN",
+        "type": "f32",
+        "canonicalRawBits": "7fc00000"
+      },
+      "productExecuted": false
+    },
+    {
+      "id": "f32-remainder-19",
+      "programId": "f32-remainder",
+      "inputs": [
+        {
+          "type": "f32",
+          "rawBits": "80000000"
+        },
+        {
+          "type": "f32",
+          "rawBits": "00000000"
+        }
+      ],
+      "expected": {
+        "kind": "arithmeticNaN",
+        "type": "f32",
+        "canonicalRawBits": "7fc00000"
+      },
+      "productExecuted": false
+    },
+    {
+      "id": "f32-remainder-20",
+      "programId": "f32-remainder",
+      "inputs": [
+        {
+          "type": "f32",
+          "rawBits": "7fc0007b"
+        },
+        {
+          "type": "f32",
+          "rawBits": "3f800000"
+        }
+      ],
+      "expected": {
+        "kind": "arithmeticNaN",
+        "type": "f32",
+        "canonicalRawBits": "7fc00000"
+      },
+      "productExecuted": false
+    },
+    {
+      "id": "f32-remainder-21",
+      "programId": "f32-remainder",
+      "inputs": [
+        {
+          "type": "f32",
+          "rawBits": "ffc00141"
+        },
+        {
+          "type": "f32",
+          "rawBits": "bf800000"
+        }
+      ],
+      "expected": {
+        "kind": "arithmeticNaN",
+        "type": "f32",
+        "canonicalRawBits": "7fc00000"
+      },
+      "productExecuted": false
+    },
+    {
+      "id": "f32-remainder-22",
+      "programId": "f32-remainder",
+      "inputs": [
+        {
+          "type": "f32",
+          "rawBits": "7f80007b"
+        },
+        {
+          "type": "f32",
+          "rawBits": "3f800000"
+        }
+      ],
+      "expected": {
+        "kind": "arithmeticNaN",
+        "type": "f32",
+        "canonicalRawBits": "7fc00000"
+      },
+      "productExecuted": false
+    },
+    {
+      "id": "f32-remainder-23",
+      "programId": "f32-remainder",
+      "inputs": [
+        {
+          "type": "f32",
+          "rawBits": "ff800141"
+        },
+        {
+          "type": "f32",
+          "rawBits": "bf800000"
+        }
+      ],
+      "expected": {
+        "kind": "arithmeticNaN",
+        "type": "f32",
+        "canonicalRawBits": "7fc00000"
+      },
+      "productExecuted": false
+    },
+    {
+      "id": "f32-remainder-24",
+      "programId": "f32-remainder",
+      "inputs": [
+        {
+          "type": "f32",
+          "rawBits": "3f800000"
+        },
+        {
+          "type": "f32",
+          "rawBits": "00000001"
+        }
+      ],
+      "expected": {
+        "kind": "value",
+        "rawBits": "00000000"
+      },
+      "productExecuted": false
+    },
+    {
+      "id": "f32-remainder-25",
+      "programId": "f32-remainder",
+      "inputs": [
+        {
+          "type": "f32",
+          "rawBits": "80800000"
+        },
+        {
+          "type": "f32",
+          "rawBits": "ffc00141"
+        }
+      ],
+      "expected": {
+        "kind": "arithmeticNaN",
+        "type": "f32",
+        "canonicalRawBits": "7fc00000"
+      },
+      "productExecuted": false
+    },
+    {
+      "id": "f32-remainder-26",
+      "programId": "f32-remainder",
+      "inputs": [
+        {
+          "type": "f32",
+          "rawBits": "7fc0007b"
+        },
+        {
+          "type": "f32",
+          "rawBits": "80000001"
+        }
+      ],
+      "expected": {
+        "kind": "arithmeticNaN",
+        "type": "f32",
+        "canonicalRawBits": "7fc00000"
+      },
+      "productExecuted": false
+    },
+    {
+      "id": "f32-remainder-27",
+      "programId": "f32-remainder",
+      "inputs": [
+        {
+          "type": "f32",
+          "rawBits": "3f800000"
+        },
+        {
+          "type": "f32",
+          "rawBits": "7f80007b"
+        }
+      ],
+      "expected": {
+        "kind": "arithmeticNaN",
+        "type": "f32",
+        "canonicalRawBits": "7fc00000"
+      },
+      "productExecuted": false
+    },
+    {
+      "id": "f32-remainder-28",
+      "programId": "f32-remainder",
+      "inputs": [
+        {
+          "type": "f32",
+          "rawBits": "80800000"
+        },
+        {
+          "type": "f32",
+          "rawBits": "00800000"
+        }
+      ],
+      "expected": {
+        "kind": "value",
+        "rawBits": "80000000"
+      },
+      "productExecuted": false
+    },
+    {
+      "id": "f32-remainder-29",
+      "programId": "f32-remainder",
+      "inputs": [
+        {
+          "type": "f32",
+          "rawBits": "7fc0007b"
+        },
+        {
+          "type": "f32",
+          "rawBits": "ff800141"
+        }
+      ],
+      "expected": {
+        "kind": "arithmeticNaN",
+        "type": "f32",
+        "canonicalRawBits": "7fc00000"
+      },
+      "productExecuted": false
+    },
+    {
+      "id": "f32-remainder-30",
+      "programId": "f32-remainder",
+      "inputs": [
+        {
+          "type": "f32",
+          "rawBits": "3f800000"
+        },
+        {
+          "type": "f32",
+          "rawBits": "80800000"
+        }
+      ],
+      "expected": {
+        "kind": "value",
+        "rawBits": "00000000"
+      },
+      "productExecuted": false
+    },
+    {
+      "id": "f32-remainder-31",
+      "programId": "f32-remainder",
+      "inputs": [
+        {
+          "type": "f32",
+          "rawBits": "80800000"
+        },
+        {
+          "type": "f32",
+          "rawBits": "3f800001"
+        }
+      ],
+      "expected": {
+        "kind": "value",
+        "rawBits": "80800000"
+      },
+      "productExecuted": false
+    },
+    {
+      "id": "f32-remainder-32",
+      "programId": "f32-remainder",
+      "inputs": [
+        {
+          "type": "f32",
+          "rawBits": "7fc0007b"
+        },
+        {
+          "type": "f32",
+          "rawBits": "007fffff"
+        }
+      ],
+      "expected": {
+        "kind": "arithmeticNaN",
+        "type": "f32",
+        "canonicalRawBits": "7fc00000"
+      },
+      "productExecuted": false
+    },
+    {
+      "id": "f32-remainder-33",
+      "programId": "f32-remainder",
+      "inputs": [
+        {
+          "type": "f32",
+          "rawBits": "3f800000"
+        },
+        {
+          "type": "f32",
+          "rawBits": "00000000"
+        }
+      ],
+      "expected": {
+        "kind": "arithmeticNaN",
+        "type": "f32",
+        "canonicalRawBits": "7fc00000"
+      },
+      "productExecuted": false
+    },
+    {
+      "id": "f32-remainder-34",
+      "programId": "f32-remainder",
+      "inputs": [
+        {
+          "type": "f32",
+          "rawBits": "80800000"
+        },
+        {
+          "type": "f32",
+          "rawBits": "807fffff"
+        }
+      ],
+      "expected": {
+        "kind": "value",
+        "rawBits": "80000001"
+      },
+      "productExecuted": false
+    },
+    {
+      "id": "f32-remainder-35",
+      "programId": "f32-remainder",
+      "inputs": [
+        {
+          "type": "f32",
+          "rawBits": "7fc0007b"
+        },
+        {
+          "type": "f32",
+          "rawBits": "80000000"
+        }
+      ],
+      "expected": {
+        "kind": "arithmeticNaN",
+        "type": "f32",
+        "canonicalRawBits": "7fc00000"
+      },
+      "productExecuted": false
+    },
+    {
+      "id": "f32-remainder-36",
+      "programId": "f32-remainder",
+      "inputs": [
+        {
+          "type": "f32",
+          "rawBits": "3f800000"
+        },
+        {
+          "type": "f32",
+          "rawBits": "7f7fffff"
+        }
+      ],
+      "expected": {
+        "kind": "value",
+        "rawBits": "3f800000"
+      },
+      "productExecuted": false
+    },
+    {
+      "id": "f32-remainder-37",
+      "programId": "f32-remainder",
+      "inputs": [
+        {
+          "type": "f32",
+          "rawBits": "80800000"
+        },
+        {
+          "type": "f32",
+          "rawBits": "3f800000"
+        }
+      ],
+      "expected": {
+        "kind": "value",
+        "rawBits": "80800000"
+      },
+      "productExecuted": false
+    },
+    {
+      "id": "f32-remainder-38",
+      "programId": "f32-remainder",
+      "inputs": [
+        {
+          "type": "f32",
+          "rawBits": "7fc0007b"
+        },
+        {
+          "type": "f32",
+          "rawBits": "ff7fffff"
+        }
+      ],
+      "expected": {
+        "kind": "arithmeticNaN",
+        "type": "f32",
+        "canonicalRawBits": "7fc00000"
+      },
+      "productExecuted": false
+    },
+    {
+      "id": "f32-remainder-39",
+      "programId": "f32-remainder",
+      "inputs": [
+        {
+          "type": "f32",
+          "rawBits": "3f800000"
+        },
+        {
+          "type": "f32",
+          "rawBits": "bf800000"
+        }
+      ],
+      "expected": {
+        "kind": "value",
+        "rawBits": "00000000"
+      },
+      "productExecuted": false
+    },
+    {
+      "id": "f32-remainder-40",
+      "programId": "f32-remainder",
+      "inputs": [
+        {
+          "type": "f32",
+          "rawBits": "80800000"
+        },
+        {
+          "type": "f32",
+          "rawBits": "7f800000"
+        }
+      ],
+      "expected": {
+        "kind": "value",
+        "rawBits": "80800000"
+      },
+      "productExecuted": false
+    },
+    {
+      "id": "f32-remainder-41",
+      "programId": "f32-remainder",
+      "inputs": [
+        {
+          "type": "f32",
+          "rawBits": "7fc0007b"
+        },
+        {
+          "type": "f32",
+          "rawBits": "40000000"
+        }
+      ],
+      "expected": {
+        "kind": "arithmeticNaN",
+        "type": "f32",
+        "canonicalRawBits": "7fc00000"
+      },
+      "productExecuted": false
+    },
+    {
+      "id": "f32-remainder-42",
+      "programId": "f32-remainder",
+      "inputs": [
+        {
+          "type": "f32",
+          "rawBits": "3f800000"
+        },
+        {
+          "type": "f32",
+          "rawBits": "ff800000"
+        }
+      ],
+      "expected": {
+        "kind": "value",
+        "rawBits": "3f800000"
+      },
+      "productExecuted": false
+    },
+    {
+      "id": "f32-remainder-43",
+      "programId": "f32-remainder",
+      "inputs": [
+        {
+          "type": "f32",
+          "rawBits": "80800000"
+        },
+        {
+          "type": "f32",
+          "rawBits": "c0000000"
+        }
+      ],
+      "expected": {
+        "kind": "value",
+        "rawBits": "80800000"
+      },
+      "productExecuted": false
+    },
+    {
+      "id": "f32-remainder-44",
+      "programId": "f32-remainder",
+      "inputs": [
+        {
+          "type": "f32",
+          "rawBits": "7fc0007b"
+        },
+        {
+          "type": "f32",
+          "rawBits": "7fc0007b"
+        }
+      ],
+      "expected": {
+        "kind": "arithmeticNaN",
+        "type": "f32",
+        "canonicalRawBits": "7fc00000"
+      },
+      "productExecuted": false
+    },
+    {
+      "id": "f32-remainder-45",
+      "programId": "f32-remainder",
+      "inputs": [
+        {
+          "type": "f32",
+          "rawBits": "3f800000"
+        },
+        {
+          "type": "f32",
+          "rawBits": "00000001"
+        }
+      ],
+      "expected": {
+        "kind": "value",
+        "rawBits": "00000000"
+      },
+      "productExecuted": false
+    },
+    {
+      "id": "f32-remainder-46",
+      "programId": "f32-remainder",
+      "inputs": [
+        {
+          "type": "f32",
+          "rawBits": "80800000"
+        },
+        {
+          "type": "f32",
+          "rawBits": "ffc00141"
+        }
+      ],
+      "expected": {
+        "kind": "arithmeticNaN",
+        "type": "f32",
+        "canonicalRawBits": "7fc00000"
+      },
+      "productExecuted": false
+    },
+    {
+      "id": "f32-remainder-47",
+      "programId": "f32-remainder",
+      "inputs": [
+        {
+          "type": "f32",
+          "rawBits": "7fc0007b"
+        },
+        {
+          "type": "f32",
+          "rawBits": "80000001"
+        }
+      ],
+      "expected": {
+        "kind": "arithmeticNaN",
+        "type": "f32",
+        "canonicalRawBits": "7fc00000"
+      },
+      "productExecuted": false
+    },
+    {
+      "id": "f32-remainder-trunc-sign-0",
+      "programId": "f32-remainder",
+      "inputs": [
+        {
+          "type": "f32",
+          "rawBits": "40e00000"
+        },
+        {
+          "type": "f32",
+          "rawBits": "40800000"
+        }
+      ],
+      "expected": {
+        "kind": "value",
+        "rawBits": "40400000"
+      },
+      "productExecuted": false
+    },
+    {
+      "id": "f32-remainder-trunc-sign-1",
+      "programId": "f32-remainder",
+      "inputs": [
+        {
+          "type": "f32",
+          "rawBits": "c0e00000"
+        },
+        {
+          "type": "f32",
+          "rawBits": "40800000"
+        }
+      ],
+      "expected": {
+        "kind": "value",
+        "rawBits": "c0400000"
+      },
+      "productExecuted": false
+    },
+    {
+      "id": "f32-remainder-trunc-sign-2",
+      "programId": "f32-remainder",
+      "inputs": [
+        {
+          "type": "f32",
+          "rawBits": "80000000"
+        },
+        {
+          "type": "f32",
+          "rawBits": "3f800000"
+        }
+      ],
+      "expected": {
+        "kind": "value",
+        "rawBits": "80000000"
+      },
+      "productExecuted": false
+    },
+    {
+      "id": "f64-remainder-00",
+      "programId": "f64-remainder",
+      "inputs": [
+        {
+          "type": "f64",
+          "rawBits": "0000000000000000"
+        },
+        {
+          "type": "f64",
+          "rawBits": "8000000000000000"
+        }
+      ],
+      "expected": {
+        "kind": "arithmeticNaN",
+        "type": "f64",
+        "canonicalRawBits": "7ff8000000000000"
+      },
+      "productExecuted": false
+    },
+    {
+      "id": "f64-remainder-01",
+      "programId": "f64-remainder",
+      "inputs": [
+        {
+          "type": "f64",
+          "rawBits": "8000000000000000"
+        },
+        {
+          "type": "f64",
+          "rawBits": "8000000000000000"
+        }
+      ],
+      "expected": {
+        "kind": "arithmeticNaN",
+        "type": "f64",
+        "canonicalRawBits": "7ff8000000000000"
+      },
+      "productExecuted": false
+    },
+    {
+      "id": "f64-remainder-02",
+      "programId": "f64-remainder",
+      "inputs": [
+        {
+          "type": "f64",
+          "rawBits": "3ff0000000000000"
+        },
+        {
+          "type": "f64",
+          "rawBits": "bff0000000000000"
+        }
+      ],
+      "expected": {
+        "kind": "value",
+        "rawBits": "0000000000000000"
+      },
+      "productExecuted": false
+    },
+    {
+      "id": "f64-remainder-03",
+      "programId": "f64-remainder",
+      "inputs": [
+        {
+          "type": "f64",
+          "rawBits": "0000000000000001"
+        },
+        {
+          "type": "f64",
+          "rawBits": "0000000000000001"
+        }
+      ],
+      "expected": {
+        "kind": "value",
+        "rawBits": "0000000000000000"
+      },
+      "productExecuted": false
+    },
+    {
+      "id": "f64-remainder-04",
+      "programId": "f64-remainder",
+      "inputs": [
+        {
+          "type": "f64",
+          "rawBits": "8000000000000001"
+        },
+        {
+          "type": "f64",
+          "rawBits": "8000000000000001"
+        }
+      ],
+      "expected": {
+        "kind": "value",
+        "rawBits": "8000000000000000"
+      },
+      "productExecuted": false
+    },
+    {
+      "id": "f64-remainder-05",
+      "programId": "f64-remainder",
+      "inputs": [
+        {
+          "type": "f64",
+          "rawBits": "0000000000000001"
+        },
+        {
+          "type": "f64",
+          "rawBits": "8000000000000001"
+        }
+      ],
+      "expected": {
+        "kind": "value",
+        "rawBits": "0000000000000000"
+      },
+      "productExecuted": false
+    },
+    {
+      "id": "f64-remainder-06",
+      "programId": "f64-remainder",
+      "inputs": [
+        {
+          "type": "f64",
+          "rawBits": "0010000000000000"
+        },
+        {
+          "type": "f64",
+          "rawBits": "000fffffffffffff"
+        }
+      ],
+      "expected": {
+        "kind": "value",
+        "rawBits": "0000000000000001"
+      },
+      "productExecuted": false
+    },
+    {
+      "id": "f64-remainder-07",
+      "programId": "f64-remainder",
+      "inputs": [
+        {
+          "type": "f64",
+          "rawBits": "7fefffffffffffff"
+        },
+        {
+          "type": "f64",
+          "rawBits": "7fefffffffffffff"
+        }
+      ],
+      "expected": {
+        "kind": "value",
+        "rawBits": "0000000000000000"
+      },
+      "productExecuted": false
+    },
+    {
+      "id": "f64-remainder-08",
+      "programId": "f64-remainder",
+      "inputs": [
+        {
+          "type": "f64",
+          "rawBits": "ffefffffffffffff"
+        },
+        {
+          "type": "f64",
+          "rawBits": "ffefffffffffffff"
+        }
+      ],
+      "expected": {
+        "kind": "value",
+        "rawBits": "8000000000000000"
+      },
+      "productExecuted": false
+    },
+    {
+      "id": "f64-remainder-09",
+      "programId": "f64-remainder",
+      "inputs": [
+        {
+          "type": "f64",
+          "rawBits": "7ff0000000000000"
+        },
+        {
+          "type": "f64",
+          "rawBits": "fff0000000000000"
+        }
+      ],
+      "expected": {
+        "kind": "arithmeticNaN",
+        "type": "f64",
+        "canonicalRawBits": "7ff8000000000000"
+      },
+      "productExecuted": false
+    },
+    {
+      "id": "f64-remainder-10",
+      "programId": "f64-remainder",
+      "inputs": [
+        {
+          "type": "f64",
+          "rawBits": "7ff0000000000000"
+        },
+        {
+          "type": "f64",
+          "rawBits": "7ff0000000000000"
+        }
+      ],
+      "expected": {
+        "kind": "arithmeticNaN",
+        "type": "f64",
+        "canonicalRawBits": "7ff8000000000000"
+      },
+      "productExecuted": false
+    },
+    {
+      "id": "f64-remainder-11",
+      "programId": "f64-remainder",
+      "inputs": [
+        {
+          "type": "f64",
+          "rawBits": "fff0000000000000"
+        },
+        {
+          "type": "f64",
+          "rawBits": "fff0000000000000"
+        }
+      ],
+      "expected": {
+        "kind": "arithmeticNaN",
+        "type": "f64",
+        "canonicalRawBits": "7ff8000000000000"
+      },
+      "productExecuted": false
+    },
+    {
+      "id": "f64-remainder-12",
+      "programId": "f64-remainder",
+      "inputs": [
+        {
+          "type": "f64",
+          "rawBits": "0000000000000000"
+        },
+        {
+          "type": "f64",
+          "rawBits": "7ff0000000000000"
+        }
+      ],
+      "expected": {
+        "kind": "value",
+        "rawBits": "0000000000000000"
+      },
+      "productExecuted": false
+    },
+    {
+      "id": "f64-remainder-13",
+      "programId": "f64-remainder",
+      "inputs": [
+        {
+          "type": "f64",
+          "rawBits": "8000000000000000"
+        },
+        {
+          "type": "f64",
+          "rawBits": "fff0000000000000"
+        }
+      ],
+      "expected": {
+        "kind": "value",
+        "rawBits": "8000000000000000"
+      },
+      "productExecuted": false
+    },
+    {
+      "id": "f64-remainder-14",
+      "programId": "f64-remainder",
+      "inputs": [
+        {
+          "type": "f64",
+          "rawBits": "3ff0000000000000"
+        },
+        {
+          "type": "f64",
+          "rawBits": "0000000000000000"
+        }
+      ],
+      "expected": {
+        "kind": "arithmeticNaN",
+        "type": "f64",
+        "canonicalRawBits": "7ff8000000000000"
+      },
+      "productExecuted": false
+    },
+    {
+      "id": "f64-remainder-15",
+      "programId": "f64-remainder",
+      "inputs": [
+        {
+          "type": "f64",
+          "rawBits": "bff0000000000000"
+        },
+        {
+          "type": "f64",
+          "rawBits": "0000000000000000"
+        }
+      ],
+      "expected": {
+        "kind": "arithmeticNaN",
+        "type": "f64",
+        "canonicalRawBits": "7ff8000000000000"
+      },
+      "productExecuted": false
+    },
+    {
+      "id": "f64-remainder-16",
+      "programId": "f64-remainder",
+      "inputs": [
+        {
+          "type": "f64",
+          "rawBits": "3ff0000000000000"
+        },
+        {
+          "type": "f64",
+          "rawBits": "8000000000000000"
+        }
+      ],
+      "expected": {
+        "kind": "arithmeticNaN",
+        "type": "f64",
+        "canonicalRawBits": "7ff8000000000000"
+      },
+      "productExecuted": false
+    },
+    {
+      "id": "f64-remainder-17",
+      "programId": "f64-remainder",
+      "inputs": [
+        {
+          "type": "f64",
+          "rawBits": "bff0000000000000"
+        },
+        {
+          "type": "f64",
+          "rawBits": "8000000000000000"
+        }
+      ],
+      "expected": {
+        "kind": "arithmeticNaN",
+        "type": "f64",
+        "canonicalRawBits": "7ff8000000000000"
+      },
+      "productExecuted": false
+    },
+    {
+      "id": "f64-remainder-18",
+      "programId": "f64-remainder",
+      "inputs": [
+        {
+          "type": "f64",
+          "rawBits": "0000000000000000"
+        },
+        {
+          "type": "f64",
+          "rawBits": "0000000000000000"
+        }
+      ],
+      "expected": {
+        "kind": "arithmeticNaN",
+        "type": "f64",
+        "canonicalRawBits": "7ff8000000000000"
+      },
+      "productExecuted": false
+    },
+    {
+      "id": "f64-remainder-19",
+      "programId": "f64-remainder",
+      "inputs": [
+        {
+          "type": "f64",
+          "rawBits": "8000000000000000"
+        },
+        {
+          "type": "f64",
+          "rawBits": "0000000000000000"
+        }
+      ],
+      "expected": {
+        "kind": "arithmeticNaN",
+        "type": "f64",
+        "canonicalRawBits": "7ff8000000000000"
+      },
+      "productExecuted": false
+    },
+    {
+      "id": "f64-remainder-20",
+      "programId": "f64-remainder",
+      "inputs": [
+        {
+          "type": "f64",
+          "rawBits": "7ff800000000007b"
+        },
+        {
+          "type": "f64",
+          "rawBits": "3ff0000000000000"
+        }
+      ],
+      "expected": {
+        "kind": "arithmeticNaN",
+        "type": "f64",
+        "canonicalRawBits": "7ff8000000000000"
+      },
+      "productExecuted": false
+    },
+    {
+      "id": "f64-remainder-21",
+      "programId": "f64-remainder",
+      "inputs": [
+        {
+          "type": "f64",
+          "rawBits": "fff8000000000141"
+        },
+        {
+          "type": "f64",
+          "rawBits": "bff0000000000000"
+        }
+      ],
+      "expected": {
+        "kind": "arithmeticNaN",
+        "type": "f64",
+        "canonicalRawBits": "7ff8000000000000"
+      },
+      "productExecuted": false
+    },
+    {
+      "id": "f64-remainder-22",
+      "programId": "f64-remainder",
+      "inputs": [
+        {
+          "type": "f64",
+          "rawBits": "7ff000000000007b"
+        },
+        {
+          "type": "f64",
+          "rawBits": "3ff0000000000000"
+        }
+      ],
+      "expected": {
+        "kind": "arithmeticNaN",
+        "type": "f64",
+        "canonicalRawBits": "7ff8000000000000"
+      },
+      "productExecuted": false
+    },
+    {
+      "id": "f64-remainder-23",
+      "programId": "f64-remainder",
+      "inputs": [
+        {
+          "type": "f64",
+          "rawBits": "fff0000000000141"
+        },
+        {
+          "type": "f64",
+          "rawBits": "bff0000000000000"
+        }
+      ],
+      "expected": {
+        "kind": "arithmeticNaN",
+        "type": "f64",
+        "canonicalRawBits": "7ff8000000000000"
+      },
+      "productExecuted": false
+    },
+    {
+      "id": "f64-remainder-24",
+      "programId": "f64-remainder",
+      "inputs": [
+        {
+          "type": "f64",
+          "rawBits": "3ff0000000000000"
+        },
+        {
+          "type": "f64",
+          "rawBits": "0000000000000001"
+        }
+      ],
+      "expected": {
+        "kind": "value",
+        "rawBits": "0000000000000000"
+      },
+      "productExecuted": false
+    },
+    {
+      "id": "f64-remainder-25",
+      "programId": "f64-remainder",
+      "inputs": [
+        {
+          "type": "f64",
+          "rawBits": "8010000000000000"
+        },
+        {
+          "type": "f64",
+          "rawBits": "fff8000000000141"
+        }
+      ],
+      "expected": {
+        "kind": "arithmeticNaN",
+        "type": "f64",
+        "canonicalRawBits": "7ff8000000000000"
+      },
+      "productExecuted": false
+    },
+    {
+      "id": "f64-remainder-26",
+      "programId": "f64-remainder",
+      "inputs": [
+        {
+          "type": "f64",
+          "rawBits": "7ff800000000007b"
+        },
+        {
+          "type": "f64",
+          "rawBits": "8000000000000001"
+        }
+      ],
+      "expected": {
+        "kind": "arithmeticNaN",
+        "type": "f64",
+        "canonicalRawBits": "7ff8000000000000"
+      },
+      "productExecuted": false
+    },
+    {
+      "id": "f64-remainder-27",
+      "programId": "f64-remainder",
+      "inputs": [
+        {
+          "type": "f64",
+          "rawBits": "3ff0000000000000"
+        },
+        {
+          "type": "f64",
+          "rawBits": "7ff000000000007b"
+        }
+      ],
+      "expected": {
+        "kind": "arithmeticNaN",
+        "type": "f64",
+        "canonicalRawBits": "7ff8000000000000"
+      },
+      "productExecuted": false
+    },
+    {
+      "id": "f64-remainder-28",
+      "programId": "f64-remainder",
+      "inputs": [
+        {
+          "type": "f64",
+          "rawBits": "8010000000000000"
+        },
+        {
+          "type": "f64",
+          "rawBits": "0010000000000000"
+        }
+      ],
+      "expected": {
+        "kind": "value",
+        "rawBits": "8000000000000000"
+      },
+      "productExecuted": false
+    },
+    {
+      "id": "f64-remainder-29",
+      "programId": "f64-remainder",
+      "inputs": [
+        {
+          "type": "f64",
+          "rawBits": "7ff800000000007b"
+        },
+        {
+          "type": "f64",
+          "rawBits": "fff0000000000141"
+        }
+      ],
+      "expected": {
+        "kind": "arithmeticNaN",
+        "type": "f64",
+        "canonicalRawBits": "7ff8000000000000"
+      },
+      "productExecuted": false
+    },
+    {
+      "id": "f64-remainder-30",
+      "programId": "f64-remainder",
+      "inputs": [
+        {
+          "type": "f64",
+          "rawBits": "3ff0000000000000"
+        },
+        {
+          "type": "f64",
+          "rawBits": "8010000000000000"
+        }
+      ],
+      "expected": {
+        "kind": "value",
+        "rawBits": "0000000000000000"
+      },
+      "productExecuted": false
+    },
+    {
+      "id": "f64-remainder-31",
+      "programId": "f64-remainder",
+      "inputs": [
+        {
+          "type": "f64",
+          "rawBits": "8010000000000000"
+        },
+        {
+          "type": "f64",
+          "rawBits": "3ff0000000000001"
+        }
+      ],
+      "expected": {
+        "kind": "value",
+        "rawBits": "8010000000000000"
+      },
+      "productExecuted": false
+    },
+    {
+      "id": "f64-remainder-32",
+      "programId": "f64-remainder",
+      "inputs": [
+        {
+          "type": "f64",
+          "rawBits": "7ff800000000007b"
+        },
+        {
+          "type": "f64",
+          "rawBits": "000fffffffffffff"
+        }
+      ],
+      "expected": {
+        "kind": "arithmeticNaN",
+        "type": "f64",
+        "canonicalRawBits": "7ff8000000000000"
+      },
+      "productExecuted": false
+    },
+    {
+      "id": "f64-remainder-33",
+      "programId": "f64-remainder",
+      "inputs": [
+        {
+          "type": "f64",
+          "rawBits": "3ff0000000000000"
+        },
+        {
+          "type": "f64",
+          "rawBits": "0000000000000000"
+        }
+      ],
+      "expected": {
+        "kind": "arithmeticNaN",
+        "type": "f64",
+        "canonicalRawBits": "7ff8000000000000"
+      },
+      "productExecuted": false
+    },
+    {
+      "id": "f64-remainder-34",
+      "programId": "f64-remainder",
+      "inputs": [
+        {
+          "type": "f64",
+          "rawBits": "8010000000000000"
+        },
+        {
+          "type": "f64",
+          "rawBits": "800fffffffffffff"
+        }
+      ],
+      "expected": {
+        "kind": "value",
+        "rawBits": "8000000000000001"
+      },
+      "productExecuted": false
+    },
+    {
+      "id": "f64-remainder-35",
+      "programId": "f64-remainder",
+      "inputs": [
+        {
+          "type": "f64",
+          "rawBits": "7ff800000000007b"
+        },
+        {
+          "type": "f64",
+          "rawBits": "8000000000000000"
+        }
+      ],
+      "expected": {
+        "kind": "arithmeticNaN",
+        "type": "f64",
+        "canonicalRawBits": "7ff8000000000000"
+      },
+      "productExecuted": false
+    },
+    {
+      "id": "f64-remainder-36",
+      "programId": "f64-remainder",
+      "inputs": [
+        {
+          "type": "f64",
+          "rawBits": "3ff0000000000000"
+        },
+        {
+          "type": "f64",
+          "rawBits": "7fefffffffffffff"
+        }
+      ],
+      "expected": {
+        "kind": "value",
+        "rawBits": "3ff0000000000000"
+      },
+      "productExecuted": false
+    },
+    {
+      "id": "f64-remainder-37",
+      "programId": "f64-remainder",
+      "inputs": [
+        {
+          "type": "f64",
+          "rawBits": "8010000000000000"
+        },
+        {
+          "type": "f64",
+          "rawBits": "3ff0000000000000"
+        }
+      ],
+      "expected": {
+        "kind": "value",
+        "rawBits": "8010000000000000"
+      },
+      "productExecuted": false
+    },
+    {
+      "id": "f64-remainder-38",
+      "programId": "f64-remainder",
+      "inputs": [
+        {
+          "type": "f64",
+          "rawBits": "7ff800000000007b"
+        },
+        {
+          "type": "f64",
+          "rawBits": "ffefffffffffffff"
+        }
+      ],
+      "expected": {
+        "kind": "arithmeticNaN",
+        "type": "f64",
+        "canonicalRawBits": "7ff8000000000000"
+      },
+      "productExecuted": false
+    },
+    {
+      "id": "f64-remainder-39",
+      "programId": "f64-remainder",
+      "inputs": [
+        {
+          "type": "f64",
+          "rawBits": "3ff0000000000000"
+        },
+        {
+          "type": "f64",
+          "rawBits": "bff0000000000000"
+        }
+      ],
+      "expected": {
+        "kind": "value",
+        "rawBits": "0000000000000000"
+      },
+      "productExecuted": false
+    },
+    {
+      "id": "f64-remainder-40",
+      "programId": "f64-remainder",
+      "inputs": [
+        {
+          "type": "f64",
+          "rawBits": "8010000000000000"
+        },
+        {
+          "type": "f64",
+          "rawBits": "7ff0000000000000"
+        }
+      ],
+      "expected": {
+        "kind": "value",
+        "rawBits": "8010000000000000"
+      },
+      "productExecuted": false
+    },
+    {
+      "id": "f64-remainder-41",
+      "programId": "f64-remainder",
+      "inputs": [
+        {
+          "type": "f64",
+          "rawBits": "7ff800000000007b"
+        },
+        {
+          "type": "f64",
+          "rawBits": "4000000000000000"
+        }
+      ],
+      "expected": {
+        "kind": "arithmeticNaN",
+        "type": "f64",
+        "canonicalRawBits": "7ff8000000000000"
+      },
+      "productExecuted": false
+    },
+    {
+      "id": "f64-remainder-42",
+      "programId": "f64-remainder",
+      "inputs": [
+        {
+          "type": "f64",
+          "rawBits": "3ff0000000000000"
+        },
+        {
+          "type": "f64",
+          "rawBits": "fff0000000000000"
+        }
+      ],
+      "expected": {
+        "kind": "value",
+        "rawBits": "3ff0000000000000"
+      },
+      "productExecuted": false
+    },
+    {
+      "id": "f64-remainder-43",
+      "programId": "f64-remainder",
+      "inputs": [
+        {
+          "type": "f64",
+          "rawBits": "8010000000000000"
+        },
+        {
+          "type": "f64",
+          "rawBits": "c000000000000000"
+        }
+      ],
+      "expected": {
+        "kind": "value",
+        "rawBits": "8010000000000000"
+      },
+      "productExecuted": false
+    },
+    {
+      "id": "f64-remainder-44",
+      "programId": "f64-remainder",
+      "inputs": [
+        {
+          "type": "f64",
+          "rawBits": "7ff800000000007b"
+        },
+        {
+          "type": "f64",
+          "rawBits": "7ff800000000007b"
+        }
+      ],
+      "expected": {
+        "kind": "arithmeticNaN",
+        "type": "f64",
+        "canonicalRawBits": "7ff8000000000000"
+      },
+      "productExecuted": false
+    },
+    {
+      "id": "f64-remainder-45",
+      "programId": "f64-remainder",
+      "inputs": [
+        {
+          "type": "f64",
+          "rawBits": "3ff0000000000000"
+        },
+        {
+          "type": "f64",
+          "rawBits": "0000000000000001"
+        }
+      ],
+      "expected": {
+        "kind": "value",
+        "rawBits": "0000000000000000"
+      },
+      "productExecuted": false
+    },
+    {
+      "id": "f64-remainder-46",
+      "programId": "f64-remainder",
+      "inputs": [
+        {
+          "type": "f64",
+          "rawBits": "8010000000000000"
+        },
+        {
+          "type": "f64",
+          "rawBits": "fff8000000000141"
+        }
+      ],
+      "expected": {
+        "kind": "arithmeticNaN",
+        "type": "f64",
+        "canonicalRawBits": "7ff8000000000000"
+      },
+      "productExecuted": false
+    },
+    {
+      "id": "f64-remainder-47",
+      "programId": "f64-remainder",
+      "inputs": [
+        {
+          "type": "f64",
+          "rawBits": "7ff800000000007b"
+        },
+        {
+          "type": "f64",
+          "rawBits": "8000000000000001"
+        }
+      ],
+      "expected": {
+        "kind": "arithmeticNaN",
+        "type": "f64",
+        "canonicalRawBits": "7ff8000000000000"
+      },
+      "productExecuted": false
+    },
+    {
+      "id": "f64-remainder-trunc-sign-0",
+      "programId": "f64-remainder",
+      "inputs": [
+        {
+          "type": "f64",
+          "rawBits": "401c000000000000"
+        },
+        {
+          "type": "f64",
+          "rawBits": "4010000000000000"
+        }
+      ],
+      "expected": {
+        "kind": "value",
+        "rawBits": "4008000000000000"
+      },
+      "productExecuted": false
+    },
+    {
+      "id": "f64-remainder-trunc-sign-1",
+      "programId": "f64-remainder",
+      "inputs": [
+        {
+          "type": "f64",
+          "rawBits": "c01c000000000000"
+        },
+        {
+          "type": "f64",
+          "rawBits": "4010000000000000"
+        }
+      ],
+      "expected": {
+        "kind": "value",
+        "rawBits": "c008000000000000"
+      },
+      "productExecuted": false
+    },
+    {
+      "id": "f64-remainder-trunc-sign-2",
+      "programId": "f64-remainder",
+      "inputs": [
+        {
+          "type": "f64",
+          "rawBits": "8000000000000000"
+        },
+        {
+          "type": "f64",
+          "rawBits": "3ff0000000000000"
+        }
+      ],
+      "expected": {
+        "kind": "value",
+        "rawBits": "8000000000000000"
+      },
+      "productExecuted": false
+    }
+  ],
+  "productExecutionCredit": false,
+  "priorPreparedMetadataSha256": "f2fc5156a79bfd96a8f438b827f442e97099d794268dfb8e5760a4d79f216293",
+  "metadataCorrection": "First prepared record used nonexistent r01-float shorthand. Corrected to actual unchanged35-rule directory r01-numeric-family/r01-strict-float; all102 mathematical expected outcomes unchanged. Original retained; neither file is product execution."
+}

@@ -71,7 +71,7 @@ export async function executeFrontendTarget({ command, productRoot, sourceRoot, 
   }
   const producer = await readFile(path.join(sourceRoot, lock.producerPath));
   if (sha256(producer) !== lock.producerSha256 || !Array.isArray(lock.declarations)
-      || lock.declarations.map(item => item.path).join(",") !== "compiler/minimal-bool-v1.d.ts,compiler/minimal-scalars-v2.d.ts,compiler/minimal-integers-v3.d.ts") {
+      || lock.declarations.map(item => item.path).join(",") !== "compiler/minimal-bool-v1.d.ts,compiler/minimal-scalars-v2.d.ts,compiler/minimal-integers-v3.d.ts,compiler/minimal-floats-v4.d.ts") {
     throw new FrontendBuildError("frontend source or declaration differs from its lock");
   }
   for (const item of lock.declarations) {
