@@ -3,7 +3,7 @@
   "contractVersion": "0.8.0",
   "languageBaseline": "TypeScript 7.0.2",
   "upstreamBaseOid": "1e4744d68260a7cb91b62b12edc3f6a2187faaf1",
-  "forkOid": "ac55432514eedf85d8a2a5af2b4caba316d802e6",
+  "forkOid": "0a7be01b6023613e5ef2dac022f485e6eeaca638",
   "remoteUrl": "https://github.com/xuelongling/TypeScript.git",
   "canonicalUrl": "https://github.com/microsoft/TypeScript.git",
   "sourceBranch": "refs/heads/r03-m08-float-facts",
@@ -11,7 +11,7 @@
   "upstreamTomlSha256": "sha256:0cc83338b60f281bc87bba82e359f5f51ab0c79b0b9469de705bd626c6a3f490",
   "producerPath": "tsc/cmd/tsfg-frontend/main.go",
   "producerSha256": "sha256:b6ca98890f422e446ea54d00d5b157903b0bf24f9020ac77c148a4067049a9ff",
-  "executableSha256": "sha256:22137b285b92c2b6c62100009d258a42cba31a62787635c085a0d26db31c5c17",
+  "executableSha256": "sha256:acaded688392fc264b751fffffc2a2fe4219083b278348767638d17d054c4433",
   "declarations": [
     {
       "path": "compiler/minimal-bool-v1.d.ts",

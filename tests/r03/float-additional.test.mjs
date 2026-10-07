@@ -2,6 +2,8 @@
 import assert from 'node:assert/strict';
 import { createHash } from 'node:crypto';
 import { spawnSync } from 'node:child_process';
+import { mkdtemp, writeFile } from 'node:fs/promises';
+import path from 'node:path';
 import test from 'node:test';
 import { compileProgram, sourceInput, runBytecode, createCompilerSession } from '../../compiler/pipeline.mjs';
 import { printHir, readHir, lowerHir } from '../../compiler/hir.mjs';
@@ -45,6 +47,102 @@ test('float source contexts reject nominal conversion and preserve overflow lite
         'function main(a:number):number{return a+0.1;}',
         '/*😀*/ function main():f32{return /*round*/ (1.0000000596046447753906251);}',
     ]) await compiled(source);
+});
+test('default f64 survives grouped and nested arithmetic source metamorphisms', async () => {
+    // Exact f64 inputs for 0.1 and 0.2 are respectively
+    // 3602879701896397/2^55 and 3602879701896397/2^54. Their sum
+    // is a tie with an odd lower significand, so RNE selects ...3334;
+    // directly rounded 0.3 is ...3333. Other rows are exact integers/zero.
+    /** @type {[string, string | boolean, string[]][]} */
+    const rows = [
+        ['f64', '3fd3333333333334', ['0.1+0.2', '(0.1)+(0.2)', '((0.1)+((0.2)))']],
+        ['f64', 'bfb999999999999a', ['-0.1', '-(0.1)', '-((0.1))']],
+        ['f64', '3ff0000000000000', ['+1e0', '+((1e0))']],
+        ['f64', '4008000000000000', ['1e0+2e0', '((1e0))+((2e0))', '+(1e0)+(2.0)']],
+        ['f64', 'c008000000000000', ['-(1e0+2.0)', '-((1e0)+(2.0))']],
+        ['f64', '4018000000000000', ['1+2+3e0', '((1)+(2))+((3e0))']],
+        ['f64', '8000000000000000', ['-0.0', '-((0.0))']],
+        ['bool', false, ['(0.1+0.2)===(0.3+0.0)', '((0.1)+(0.2))===((0.3)+(0.0))']],
+        ['bool', true, ['(1e0<2e0)===(2.0>1.0)', '((1e0)<(2e0))===((2.0)>(1.0))']],
+    ];
+    const root = await mkdtemp(path.join(process.env.TSFG_MLIR_TEST_TEMP_ROOT, 'r03-float-grouping-'));
+    let index = 0;
+    async function execute(source, optimize, expected, args = []) {
+        const input = await sourceInput(source);
+        const program = await compileProgram(input, { ...tools(), optimize });
+        assert.equal(program.status, 'ok', JSON.stringify(program));
+        const requests = [{ arguments: args }];
+        const responses = await runBytecode(program.bytecode, { ...tools(), requests });
+        const argumentsJson = JSON.stringify(requests);
+        const command = ['--requests', argumentsJson];
+        const raw = spawnSync(tools().vm, command, { input: program.bytecode, windowsHide: true });
+        assert.ifError(raw.error);
+        await writeFile(path.join(root, `${index++}.json`), JSON.stringify({ source, input, optimize, expected,
+            hir: program.hir, core: program.core, bytecodeBase64: program.bytecode.toString('base64'),
+            requests, responses, raw: { executable: tools().vm, args: command, status: raw.status, signal: raw.signal,
+                stdoutBase64: raw.stdout.toString('base64'), stderrBase64: raw.stderr.toString('base64') } }, null, 2) + '\n');
+        assert.equal(raw.status, 0, raw.stderr.toString());
+        assert.deepEqual(JSON.parse(raw.stdout.toString()), responses);
+        assert.deepEqual(responses[0].result, expected, source);
+        assert.equal(printHir(readHir(Buffer.from(printHir(program.hir)))), printHir(program.hir));
+    }
+    for (const optimize of [false, true]) {
+        for (const [type, bits, expressions] of rows) {
+            for (const expression of expressions) {
+                const source = `function main():${type}{const a=${expression};return a;}`;
+                await execute(source, optimize, value(type, bits));
+            }
+        }
+        /** @type {[string, {type:string, value:string}[], string][]} */
+        const contexts = [
+            ['function main(a:f32):f32{const b=(1.0)+(a);return b;}', [value('f32', '3f800000')], '40000000'],
+            ['function main(a:f32):f32{const b=-((1.0)+(a));return b;}', [value('f32', '3f800000')], 'c0000000'],
+            ['function main():f32{const a:f32=((1.0)+(2.0));return a;}', [], '40400000'],
+            ['function main():f32{const b=((1.0))+(one());return b;}function one():f32{return 1.0;}', [], '40000000'],
+        ];
+        for (const [source, args, bits] of contexts) {
+            await execute(source, optimize, value('f32', bits), args);
+        }
+    }
+    console.log(`Grouped float execution evidence ${root}: ${index} programs`);
+});
+test('grouped float defaults preserve typed precedence and first diagnostic identities and anchors', async () => {
+    /** @type {[string, string, string, number, number][]} */
+    const cases = [
+        ['function main():i32{const a:i32=(0.1)+(0.2);return a;}', 'r01-d-scalar-type', 'const a', 6, 1],
+        ['function main(a:i32):i32{const b=(0.1)+(a);return b;}', 'r02b-d-type', 'return', 0, 6],
+        ['function main(a:f32,b:f64):f32{const c=((a))+((b));return c;}', 'r02b-d-type', 'return', 0, 6],
+        ['function main():f32{const a=(1.0)+(2.0);return(a);}', 'r01-d-scalar-type', 'return', 0, 6],
+        ['function main(a:f32):f64{const b=(1e1000)+(a);return(b);}', 'r01-d-float-range', '1e1000', 0, 6],
+        ['function main(a:f32,b:f64):f32{return((b)+(1e1000));}', 'r01-d-scalar-type', 'return', 0, 6],
+        ['/*😀*/function main():i32{const a:i32=(0.1)+(1e1000);return(a);}', 'r01-d-scalar-type', 'const a', 6, 1],
+    ];
+    const records = [];
+    for (const [source, code, anchor, offset, length] of cases) {
+        const input = await sourceInput(source);
+        const actual = await compileProgram(input, tools());
+        records.push({ source, input, expected: { code, anchor, offset, length }, actual });
+        assert.equal(actual.status, 'error', source);
+        assert.equal(actual.bytecode, undefined);
+        const first = actual.diagnostics[0];
+        const baseline = code === 'r02b-d-type';
+        assert.equal(first.code, code, source);
+        assert.equal(first.phase, baseline ? 'syntax' : 'types');
+        assert.equal(first.ruleId, baseline ? 'r01-ts-baseline' : 'r01-literals');
+        assert.deepEqual(first.ruleIds, [first.ruleId]);
+        assert.equal(first.category, 'error');
+        assert.equal(first.severity, 'error');
+        const start = source.indexOf(anchor) + offset, end = start + length;
+        assert.deepEqual(first.range, { start, end });
+        assert.equal(first.primary.start, start);
+        assert.equal(first.primary.end, end);
+        assert.equal(first.primary.sourceId, '/src/main.ts');
+        assert.equal(first.primary.startColumn, start);
+        assert.equal(first.primary.endColumn, end);
+    }
+    const root = await mkdtemp(path.join(process.env.TSFG_MLIR_TEST_TEMP_ROOT, 'r03-float-grouping-negatives-'));
+    await writeFile(path.join(root, 'diagnostics.json'), JSON.stringify(records, null, 2) + '\n');
+    console.log(`Grouped float diagnostic evidence ${root}: ${records.length} cases`);
 });
 test('float call, branch phi, local and return transport preserves signaling NaNs, payloads and signed zero', async () => {
     for (const type of ['f32', 'f64'])

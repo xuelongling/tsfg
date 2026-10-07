@@ -10,6 +10,10 @@ to the declared IEEE format with round-to-nearest, ties-to-even. Finite overflow
 is diagnosed at the literal. Already typed values receive no implicit numeric
 conversion. Legacy v3 declaration tests retain their narrower applicability.
 
+Literal defaults propagate through grouping, unary plus/minus and arithmetic
+expressions. Explicit contexts and typed reference/call facts take precedence;
+an already inferred local never changes type to satisfy a later return.
+
 Both source and HIR independently derive literal bits from the exact token with
 integer/rational arithmetic. There is no intermediate host double conversion.
 HIR transports the declared type, exact token and canonical bits; Core constants
