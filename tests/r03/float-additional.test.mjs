@@ -1,0 +1,123 @@
+// SPDX-License-Identifier: MIT
+import assert from 'node:assert/strict';
+import { createHash } from 'node:crypto';
+import { spawnSync } from 'node:child_process';
+import test from 'node:test';
+import { compileProgram, sourceInput, runBytecode, createCompilerSession } from '../../compiler/pipeline.mjs';
+import { printHir, readHir, lowerHir } from '../../compiler/hir.mjs';
+const tools = () => ({ frontend: process.env.TSFG_FRONTEND_EXE, core: process.env.TSFG_CORE_IR_EXE, vm: process.env.TSFG_VM_EXE });
+const value = (type, bits) => ({ type, value: bits });
+async function compiled(source, optimize = false) {
+    const program = await compileProgram(await sourceInput(source), { ...tools(), optimize });
+    assert.equal(program.status, 'ok', JSON.stringify(program));
+    return program;
+}
+
+test('float source contexts reject nominal conversion and preserve overflow literal anchors', async () => {
+    for (const source of [
+        'function main(a:f32,b:f64):f32{return a+b;}',
+        'function main(a:f32):f32{return ~a;}',
+        'function main(a:f64):f64{return a<<1;}',
+        'function main(a:i32):f64{return a;}',
+        'function main(a:f32):f64{return a;}',
+    ]) {
+        const actual = await compileProgram(await sourceInput(source), tools());
+        assert.equal(actual.status, 'error');
+        assert.ok(actual.diagnostics.some(diagnostic => diagnostic.code === 'r01-d-scalar-type'));
+        assert.equal(actual.bytecode, undefined);
+    }
+    for (const source of [
+        '/*😀*/ function main():f32{return /*overflow*/ (1e1000);}',
+        'function main():f64{const x:f64=1e1000;return x;}',
+        'function main():f32{let x:f32=0.0;x=1e1000;return x;}',
+        'function main():f64{return pass(1e1000);}function pass(a:f64):f64{return a;}',
+    ]) {
+        const actual = await compileProgram(await sourceInput(source), tools());
+        assert.equal(actual.status, 'error');
+        const diagnostic = actual.diagnostics.find(item => item.code === 'r01-d-float-range');
+        assert.ok(diagnostic, JSON.stringify(actual));
+        assert.equal(source.slice(diagnostic.primary.start, diagnostic.primary.end), '1e1000');
+        assert.equal(actual.bytecode, undefined);
+    }
+    for (const source of [
+        'function main():f64{const a=0.1;return a;}',
+        'function main():f32{const a:f32=16777217;return a;}',
+        'function main(a:number):number{return a+0.1;}',
+        '/*😀*/ function main():f32{return /*round*/ (1.0000000596046447753906251);}',
+    ]) await compiled(source);
+});
+test('float call, branch phi, local and return transport preserves signaling NaNs, payloads and signed zero', async () => {
+    for (const type of ['f32', 'f64'])
+        for (const optimize of [false, true]) {
+            const p = await compiled(`function main(a:${type}, flag:bool):${type} {let v:${type}=a; if(flag){v=pass(a);}else{v=a;}return v;} function pass(a:${type}):${type}{return a;}`, optimize);
+            const bits = type === 'f32' ? ['7f800001', 'ffc12345', '80000000', '7f800000'] : ['7ff0000000000001', 'fff8123456789abc', '8000000000000000', '7ff0000000000000'];
+            const requests = bits.flatMap(raw => [true, false].map(flag => ({ arguments: [value(type, raw), value('bool', flag)], depth: 2 })));
+            const results = await runBytecode(p.bytecode, { ...tools(), requests });
+            for (const [i, result] of results.entries())
+                assert.deepEqual(result.result, value(type, bits[Math.floor(i / 2)]));
+            assert.deepEqual(await runBytecode(p.bytecode, { ...tools(), command: '--roundtrip' }), p.bytecode);
+            assert.equal(printHir(readHir(Buffer.from(printHir(p.hir)))), printHir(p.hir));
+        }
+});
+test('unary float arithmetic canonicalizes NaN and each operation rounds before subsequent arithmetic', async () => {
+    for (const type of ['f32', 'f64'])
+        for (const optimize of [false, true]) {
+            for (const op of ['+', '-']) {
+                const p = await compiled(`function main(a:${type}):${type}{return ${op}a;}`, optimize);
+                const [r] = await runBytecode(p.bytecode, { ...tools(), requests: [{ arguments: [value(type, type === 'f32' ? 'ff800001' : 'fff0000000000001')] }] });
+                assert.deepEqual(r.result, value(type, type === 'f32' ? '7fc00000' : '7ff8000000000000'));
+            }
+            // Exact mathematics: (1+2^-p)*(1-2^-p)=1-2^(-2p), which rounds to 1;
+            // subtracting 1 then yields +0. A fused operation would retain the negative term.
+            const p = await compiled(`function main(a:${type},b:${type},c:${type}):${type}{return a*b+c;}`, optimize);
+            const inputs = type === 'f32' ? ['3f800001', '3f7ffffe', 'bf800000'] : ['3ff0000000000001', '3feffffffffffffe', 'bff0000000000000'];
+            const [r] = await runBytecode(p.bytecode, { ...tools(), requests: [{ arguments: inputs.map(b => value(type, b)) }] });
+            assert.deepEqual(r.result, value(type, type === 'f32' ? '00000000' : '0000000000000000'));
+        }
+});
+test('float request preflight rejects malformed and wrong nominal bit frames before depth/fuel events', async () => {
+    for (const type of ['f32', 'f64']) {
+        const p = await compiled(`function main(a:${type}):${type}{return a;}`);
+        const good = type === 'f32' ? '3f800000' : '3ff0000000000000';
+        const invalid = [value(type, '0x' + good), value(type, good.toUpperCase()), value(type, good.slice(1)), value(type, '+' + good), value(type, 1), { type, value: good, extra: 0 }, value(type === 'f32' ? 'f64' : 'f32', good)];
+        const results = await runBytecode(p.bytecode, { ...tools(), requests: invalid.map(a => ({ arguments: [a], depth: 0, semanticFuel: 0, instructionBudget: 0 })) });
+        for (const r of results) {
+            assert.equal(r.code, 'r05-request-arguments');
+            assert.equal(r.fuelConsumed, '0');
+            assert.equal(r.activeRequests, '0');
+        }
+    }
+});
+test('current float cold/incremental/optimized results, HIR/Core printing and verifier identities agree', async () => {
+    for (const type of ['f32', 'f64']) {
+        const source = `function main(a:${type}):${type}{let sum:${type}=0.0;let n:i32=0;while(n<3){sum=add(sum,a);n=n+1;}return sum;} function add(a:${type},b:${type}):${type}{return a+b;}`;
+        const input = await sourceInput(source), session = createCompilerSession(tools());
+        const first = await session.compile(input), second = await session.compile(input), full = await compileProgram(input, tools()), optimized = await compileProgram(input, { ...tools(), optimize: true });
+        for (const p of [first, second, full, optimized])
+            assert.equal(p.status, 'ok', JSON.stringify(p));
+        assert.deepEqual(first.bytecode, second.bytecode);
+        assert.deepEqual(first.bytecode, full.bytecode);
+        assert.equal(lowerHir(readHir(Buffer.from(printHir(first.hir)))), lowerHir(first.hir));
+        for (const p of [first, optimized]) {
+            const [r] = await runBytecode(p.bytecode, { ...tools(), requests: [{ arguments: [value(type, type === 'f32' ? '3f800000' : '3ff0000000000000')], depth: 2, semanticFuel: 8 }] });
+            assert.deepEqual(r.result, value(type, type === 'f32' ? '40400000' : '4008000000000000'));
+        }
+    }
+    const p = await compiled('function main():f32{return 0.1;}');
+    const bad = structuredClone(p.hir);
+    bad.functions[0].body[0].value.bits = '00000000';
+    assert.throws(() => readHir(Buffer.from(JSON.stringify(bad))), /r03-hir-/);
+    for (const core of [p.core.replace('3dcccccd', '3DCCCCCD'), p.core.replace('3dcccccd', '000000003dcccccd'), p.core.replace('tsfg_core.constant', 'tsfg_core.pos')]) {
+        const r = spawnSync(tools().core, ['--emit-bytecode'], { input: core, windowsHide: true });
+        assert.ifError(r.error);
+        assert.notEqual(r.status, 0);
+    }
+    const bytes = Buffer.from(p.bytecode);
+    const at = bytes.length - 40;
+    assert.equal(bytes[at], 32);
+    bytes[at + 20] = 1;
+    createHash('sha256').update(bytes.subarray(80)).digest().copy(bytes, 48);
+    const rejected = spawnSync(tools().vm, ['--inspect'], { input: bytes, windowsHide: true });
+    assert.equal(rejected.status, 3);
+    assert.match(rejected.stderr.toString(), /r04-float-bits/);
+});

@@ -165,7 +165,7 @@ export async function executeFrontendTarget({ command, productRoot, sourceRoot, 
     const productEntries = [];
     for (const name of ["contracts/registry.json", "contracts/frontend-snapshot.schema.json",
       "eng/build-inputs.json", "eng/contract-set.mjs", "eng/frontend-build.mjs", "eng/frontend-source-admission.json", "eng/frontend-source.lock.json",
-      "eng/frontend-toolchains.lock.json", "eng/tsfg-build.mjs", "compiler/frontend.mjs", "compiler/minimal-bool-v1.d.ts", "compiler/minimal-scalars-v2.d.ts", "compiler/minimal-integers-v3.d.ts",
+      "eng/frontend-toolchains.lock.json", "eng/tsfg-build.mjs", "compiler/frontend.mjs", "compiler/minimal-bool-v1.d.ts", "compiler/minimal-scalars-v2.d.ts", "compiler/minimal-integers-v3.d.ts", "compiler/minimal-floats-v4.d.ts",
       ...(command === "test" ? ["tests/r02b/frontend.test.mjs"] : [])]) {
       productEntries.push({ projectId: "tsfg", path: name,
         sha256: sha256(await readFile(path.join(productRoot, name))) });

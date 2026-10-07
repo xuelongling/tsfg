@@ -473,7 +473,7 @@ fn inspectFunction(module: *const VerifiedModule, function: Function, allocator:
         const names = [_][]const u8{ "add", "sub", "mul", "div", "rem", "shl", "shr", "ushr", "and", "or", "xor", "neg", "not", "bool_not", "eq", "ne", "lt", "le", "gt", "ge" };
         view.* = .{ .opcode = switch (op.opcode) {
             1 => "const_i32",
-            2 => if (op.type_code == 1) "return_i32" else if (op.type_code == 2) "return_bool" else "return_integer",
+            2 => if (op.type_code == 1) "return_i32" else if (op.type_code == 2) "return_bool" else if (contract.floatType(op.type_code)) "return_float" else "return_integer",
             3 => "const_bool",
             4...23 => names[op.opcode - 4],
             24 => "br",

@@ -10,7 +10,7 @@ const tools = () => ({ frontend: process.env.TSFG_FRONTEND_EXE,
 async function oracle(name, hash) {
   const bytes = await readFile(new URL(`./fixtures/${name}`, import.meta.url));
   assert.equal(createHash("sha256").update(bytes).digest("hex"), hash);
-  return JSON.parse(bytes);
+  return JSON.parse(bytes.toString("utf8"));
 }
 const literalOracle = () => oracle("exact-float-oracle.PREPARED.json", "ac59c356703cd3e309b0e9f6ab076c0d06d823bc7830310384a8de819f438e94");
 const arithmeticOracle = () => oracle("exact-arithmetic-oracle.CANONICAL-FROZEN.json", "f9acf7084d93c2b35eff537cb67e9ae01dfe9bffd25fd4c97de643881de4f386");
@@ -33,7 +33,9 @@ test("54 exact rational literal expectations reach declared float bits through t
   }
 });
 
-for (const [name, load, count] of [["arithmetic/comparison", arithmeticOracle, 672], ["truncating-quotient remainder", remainderOracle, 102]]) {
+/** @type {Array<[string, () => Promise<any>, number]>} */
+const numericalOracles = [["arithmetic/comparison", arithmeticOracle, 672], ["truncating-quotient remainder", remainderOracle, 102]];
+for (const [name, load, count] of numericalOracles) {
   test(`${count} independently frozen exact ${name} cases execute in both optimizer modes`, async () => {
     const frozen = await load();
     assert.equal(frozen.cases.length, count);
@@ -49,7 +51,7 @@ for (const [name, load, count] of [["arithmetic/comparison", arithmeticOracle, 6
         assert.equal(actual.status, "returned", item.id);
         const expected = item.expected;
         const value = expected.kind === "arithmeticNaN" ? expected.canonicalRawBits : expected.rawBits ?? expected.value;
-        assert.deepEqual(actual.result, { type: typeof value === "boolean" ? "bool" : source.type, value }, item.id);
+        assert.deepEqual(actual.result, { type: typeof value === "boolean" ? "bool" : item.inputs[0].type, value }, item.id);
         assert.equal(actual.activeRequests, "0", item.id);
       }
     }
