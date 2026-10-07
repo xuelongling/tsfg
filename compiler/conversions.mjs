@@ -27,6 +27,32 @@ export function conversionCallSpelling(source, range, operandRange, entry) {
     && /^,?\s*\)$/.test(trivia(source.slice(operandRange.end, range.end)));
 }
 
+export function completeFunctionSource(source, functions, decodeName) {
+  if (typeof source !== 'string' || !Array.isArray(functions) || functions.length < 1) return false;
+  const trivia = text => text.replace(/\/\*[\s\S]*?\*\/|\/\/[^\r\n\u2028\u2029]*/g, token => ' '.repeat(token.length));
+  let end = 0;
+  for (const fn of functions) {
+    const range = fn?.range;
+    if (!Number.isSafeInteger(range?.start) || !Number.isSafeInteger(range?.end)
+        || range.start < end || range.end <= range.start || range.end > source.length
+        || trivia(source.slice(end, range.start)).trim() !== '') return false;
+    const text = trivia(source.slice(range.start, range.end));
+    const header = text.match(/^\s*(?:export\s+)?function\s+([^()]+)\(/);
+    try { if (!header || decodeName(header[1]) !== fn.name) return false; } catch { return false; }
+    // Comments and braced Unicode identifier escapes must not be braces in
+    // the body. Replacement retains UTF16 offsets; no token or AST rewrite.
+    const braces = text.replace(/\\u\{[0-9a-fA-F]{1,6}\}/g, token => ' '.repeat(token.length));
+    let depth = 0, opened = false, closed = -1;
+    for (let index = 0; index < braces.length; index++) {
+      if (braces[index] === '{') { depth++; opened = true; }
+      if (braces[index] === '}') { if (!opened || --depth < 0) return false; if (depth === 0) { closed = index; break; } }
+    }
+    if (!opened || depth !== 0 || closed !== text.length - 1) return false;
+    end = range.end;
+  }
+  return trivia(source.slice(end)).trim() === '';
+}
+
 const declarationFiles = {
   "minimal-bool-v1": "minimal-bool-v1.d.ts", "minimal-scalars-v2": "minimal-scalars-v2.d.ts",
   "minimal-integers-v3": "minimal-integers-v3.d.ts", "minimal-floats-v4": "minimal-floats-v4.d.ts",

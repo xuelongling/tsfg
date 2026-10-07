@@ -3,7 +3,7 @@ import { validateFrontendSnapshot, resolveType, resolveSymbol, identifierName } 
 import { canonical, functionIdentity, signatureHash, i32TypeId, boolTypeId, scalarTypeIds, scalarName, integerNames, integerRange, own, sha256 } from "./identity.mjs";
 import registry from "../contracts/registry.json" with { type: "json" };
 import bytecodeSchema from "../contracts/bytecode.schema.json" with { type: "json" };
-import { conversionDeclaration, conversionEntries, verifyConversionOrigin, conversionCallSpelling, admittedConversionScope, admittedInputScope } from "./conversions.mjs";
+import { conversionDeclaration, conversionEntries, verifyConversionOrigin, conversionCallSpelling, admittedConversionScope, admittedInputScope, completeFunctionSource } from "./conversions.mjs";
 import { floatNames, floatBits } from "./float.mjs";
 
 const contract = () => registry["tsfg.hir"];
@@ -76,7 +76,7 @@ function verifyExpression(value, parent, source, fail, budget, locals, visibleBi
     if (!exactKeys(value, ["kind", "type", "range", "origin", "operand"]) || !verifyConversionOrigin(value.origin, budget.inputIdentity)
         || !admittedConversionScope(budget.inputScope,budget.inputIdentity) || value.origin.declarationPath !== budget.inputScope.declarations.paths[0]
         || value.type !== types[entry.to] || value.operand?.type !== types[entry.from]
-        || visibleBindings.has(entry.name) || [...budget.functions.values()].some(fn => fn.name === entry.name)
+        || !budget.completeSource || visibleBindings.has(entry.name) || [...budget.functions.values()].some(fn => fn.name === entry.name)
         || !conversionCallSpelling(source, value.range, value.operand.range, entry)) fail();
     verifyExpression(value.operand, value.range, source, fail, budget, locals, visibleBindings);
   } else if (value.kind === "call") {
@@ -186,6 +186,7 @@ export function verifyHir(hir) {
     previousFunctionEnd = fn.range.end;
     functions.set(fn.id, fn); functionNames.add(fn.name);
   }
+  const completeSource = completeFunctionSource(hir.source.content, hir.functions, identifierName);
   const parameterTypesByFunction = new Map();
   for (const fn of hir.functions) {
   if (!Array.isArray(fn.parameters)) fail();
@@ -220,7 +221,7 @@ export function verifyHir(hir) {
     }
   };
   collect(fn.body);
-  const budget = { remaining: 4096, sourcePath: hir.source.path, declarations, functions, inputScope:hir.inputScope, inputIdentity:hir.inputIdentity };
+  const budget = { remaining: 4096, sourcePath: hir.source.path, declarations, functions, completeSource, inputScope:hir.inputScope, inputIdentity:hir.inputIdentity };
   const clone = locals => new Map([...locals].map(([id, local]) => [id, { ...local }]));
   const body = (statements, parent, locals, frame = "plain", outerBindings = new Map()) => {
     // Lexical visibility starts at scope entry, including each declaration's

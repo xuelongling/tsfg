@@ -122,8 +122,8 @@ test("persisted local HIR cannot split increment or decrement tokens into scalar
     }
     shift(hir);
     hir.source = { ...hir.source, content: changed, hash: sha256(changed) };
-  hir.inputScope.files.find(file=>file.path===hir.source.path).content=hir.source.content;
-  hir.inputIdentity=sha256(canonical(hir.inputScope));
+    hir.inputScope.files.find(file=>file.path===hir.source.path).content=hir.source.content;
+    hir.inputIdentity=sha256(canonical(hir.inputScope));
     for (const invoke of [() => verifyHir(hir), () => lowerHir(hir), () => readHir(Buffer.from(`${canonical(hir)}\n`))])
       assert.throws(invoke, /r03-hir-invalid/);
   });

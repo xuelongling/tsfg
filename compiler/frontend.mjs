@@ -5,7 +5,7 @@ import { readFile } from "node:fs/promises";
 import path from "node:path";
 import sourceLock from "../eng/frontend-source.lock.json" with { type: "json" };
 import contractRegistry from "../contracts/registry.json" with { type: "json" };
-import { conversionDeclaration, conversionEntries, verifyConversionOrigin, conversionCallSpelling, admittedInputScope } from "./conversions.mjs";
+import { conversionDeclaration, conversionEntries, verifyConversionOrigin, conversionCallSpelling, admittedInputScope, completeFunctionSource } from "./conversions.mjs";
 import bytecodeSchema from "../contracts/bytecode.schema.json" with { type: "json" };
 
 const frontendContract = contractRegistry["tsfg.frontend-snapshot"];
@@ -345,6 +345,7 @@ export function validateFrontendSnapshot(snapshot) {
     throw new TypeError("unsupported frontend snapshot contract");
   }
   let calls = 0;
+  const completeSource = completeFunctionSource(snapshot.source.content, snapshot.functions, identifierName);
   const usedNodes = new Set();
   const sameRange = (left, right) => left?.start === right?.start && left?.end === right?.end;
   const sourceSpan = range => {
@@ -397,7 +398,7 @@ export function validateFrontendSnapshot(snapshot) {
     if (expression.kind === "conversion") {
       const origin = expression.conversion, entry = conversionEntries.get(origin?.entryId);
       const declaration = snapshot.inputs.find(file => file.path === origin?.declarationPath);
-      if (!verifyConversionOrigin(origin, snapshot.inputIdentity) || snapshot.capability !== conversionDeclaration.version
+      if (!completeSource || !verifyConversionOrigin(origin, snapshot.inputIdentity) || snapshot.capability !== conversionDeclaration.version
           || origin.declarationPath !== snapshot.identityInput.declarations.paths[0]
           || snapshot.functions.some(fn => fn.name === entry.name)
           || declaration?.kind !== "declaration-root" || declaration.sha256 !== conversionDeclaration.sha256
