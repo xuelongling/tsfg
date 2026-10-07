@@ -3,7 +3,7 @@
   "contractVersion": "0.9.0",
   "languageBaseline": "TypeScript 7.0.2",
   "upstreamBaseOid": "1e4744d68260a7cb91b62b12edc3f6a2187faaf1",
-  "forkOid": "02ffd71455801e9b848ce88713e24dfe3c92d44e",
+  "forkOid": "eeebb0e90b0af18fdb94ecc9b529d4247cf9834c",
   "remoteUrl": "https://github.com/xuelongling/TypeScript.git",
   "canonicalUrl": "https://github.com/microsoft/TypeScript.git",
   "sourceBranch": "refs/heads/r03-m09-conversion-facts",
