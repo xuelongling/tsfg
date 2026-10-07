@@ -53,6 +53,6 @@ test('conversion canonical exchange and cold/incremental source metamorphisms re
  for(const optimize of [false,true])for(const text of ['checked_i8_from_f64(x)','checked_i8_from_f64 /*comment*/ ( (x), )','checked_i8_from_f64((+(x)))']){
   const input=await sourceInput(`/*😀*/ export function entry(x:f64):i8 { return ${text}; }`),session=createCompilerSession({...tools(),optimize}),first=await session.compile(input),second=await session.compile(input),cold=await compileProgram(input,{...tools(),optimize});for(const p of [first,second,cold])assert.equal(p.status,'ok',JSON.stringify(p));assert.deepEqual(first.bytecode,second.bytecode);assert.deepEqual(first.bytecode,cold.bytecode);
   assert.deepEqual(await runBytecode(first.bytecode,{...tools(),command:'--roundtrip'}),first.bytecode);const [got]=await runBytecode(first.bytecode,{...tools(),requests:[{arguments:[value('f64','3ffc000000000000')]}]});assert.deepEqual(got.result,value('i8','1'));
-  const old=Buffer.from(first.bytecode);old.writeUInt32LE(8,8);assert.throws(()=>runBytecode(old,tools()));
+  const old=Buffer.from(first.bytecode);old.writeUInt32LE(8,8);await assert.rejects(()=>runBytecode(old,tools()));
  }
 });
