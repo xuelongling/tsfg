@@ -23,6 +23,8 @@ function replaceSourceFragment(hir, start, end, spelling) {
   shift(hir);
   const content = source.slice(0, start) + spelling + source.slice(end);
   hir.source = { ...hir.source, content, hash: sha256(content) };
+  hir.inputScope.files.find(file=>file.path===hir.source.path).content=hir.source.content;
+  hir.inputIdentity=sha256(canonical(hir.inputScope));
 }
 
 test("owned identifier trivia cannot swallow another token after a closed comment", async () => {
@@ -120,6 +122,8 @@ test("persisted local HIR cannot split increment or decrement tokens into scalar
     }
     shift(hir);
     hir.source = { ...hir.source, content: changed, hash: sha256(changed) };
+  hir.inputScope.files.find(file=>file.path===hir.source.path).content=hir.source.content;
+  hir.inputIdentity=sha256(canonical(hir.inputScope));
     for (const invoke of [() => verifyHir(hir), () => lowerHir(hir), () => readHir(Buffer.from(`${canonical(hir)}\n`))])
       assert.throws(invoke, /r03-hir-invalid/);
   });
@@ -158,6 +162,8 @@ test("owned HIR admission rejects uninitialized reads with their machine identit
   // seam. It is never presented as accepted source or VM execution evidence.
   const source = "export function answer(): i32 { let value: i32; return value; }";
   hir.source = { ...hir.source, content: source, hash: sha256(source) };
+  hir.inputScope.files.find(file=>file.path===hir.source.path).content=hir.source.content;
+  hir.inputIdentity=sha256(canonical(hir.inputScope));
   const fn = hir.functions[0];
   fn.range.end = source.length;
   const local = fn.body[0], returned = fn.body[1];
@@ -194,6 +200,8 @@ test("owned HIR forward reads reject with an evaluation identity at the verified
   }
   shift(hir);
   hir.source = { ...hir.source, content: changed, hash: sha256(changed) };
+  hir.inputScope.files.find(file=>file.path===hir.source.path).content=hir.source.content;
+  hir.inputIdentity=sha256(canonical(hir.inputScope));
   const local = hir.functions[0].body[0];
   local.initializer = { kind: "reference", type: local.binding.type,
     binding: "l1", range: { ...local.initializer.range } };

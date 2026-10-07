@@ -62,6 +62,8 @@ test("owned definite assignment retains declarations initialized in both branche
     const hir=structuredClone(checked.hir);
     hir.source.content=source.replace("= 42;","    ;");
     hir.source.hash=sha256(hir.source.content);
+    hir.inputScope.files.find(file=>file.path===hir.source.path).content=hir.source.content;
+    hir.inputIdentity=sha256(canonical(hir.inputScope));
     hir.functions[0].body[0].initializer=null;
     assert.doesNotMatch(lowerHir(verifyHir(hir)),/undefined/);
   }
@@ -98,6 +100,8 @@ test("owned whole-scope TDZ rejects outer aliases in initializers and before inn
     const spelling=source.slice(original.range.start,original.range.end);
     forged.source.content=source.slice(0,original.range.start)+spelling.replace(field==="target"?"m":"2","n")+source.slice(original.range.end);
     forged.source.hash=sha256(forged.source.content);
+    forged.inputScope.files.find(file=>file.path===forged.source.path).content=forged.source.content;
+    forged.inputIdentity=sha256(canonical(forged.inputScope));
     statement[field]={kind:"reference",type:original.type,binding:"l0",range:original.range};
     for(const admit of [verifyHir,printHir,lowerHir])assert.throws(()=>admit(forged),/r03-hir-invalid/);
     assert.throws(()=>readHir(Buffer.from(canonical(forged)+"\n")),/r03-hir-invalid/);

@@ -53,7 +53,7 @@ function wire(packet) {
   assert.equal(string(), "windows-x86_64-msvc");
   assert.equal(string(), "x86_64-pc-windows-msvc");
   assert.equal(string(), "e-m:w-p270:32:32-p271:32:32-p272:64:64-i64:64-i128:128-f80:128-n8:16:32:64-S128");
-  assert.deepEqual([u16(), u16(), u16(), u16(), u32()], [4, 4, 64, 8, 19]);
+  assert.deepEqual([u16(), u16(), u16(), u16(), u32()], [4, 4, 64, 8, 20]);
   assert.equal(hash(), sha("owned-input")); assert.equal(hash(), sha("owned-source"));
   assert.equal(string(), "/main.ts"); assert.equal(u32(), 100);
   const functions = [], count = u16();

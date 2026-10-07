@@ -73,7 +73,7 @@ function wire(packet) {
   const string = () => { const length = packet.readUInt32LE(cursor); cursor += 4; cursor += length; };
   for (let i = 0; i < 3; i++) string();
   cursor += 8;
-  assert.equal(packet.readUInt32LE(cursor), 19); cursor += 4 + 64;
+  assert.equal(packet.readUInt32LE(cursor), 20); cursor += 4 + 64;
   string(); cursor += 4;
   assert.equal(packet.readUInt16LE(cursor), 1); cursor += 2 + 96;
   string(); cursor += 8;

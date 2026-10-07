@@ -46,7 +46,7 @@ function constantReturnOracle(text, expected) {
   const returns = [...body.matchAll(/"func\.return"\((%[\w]+)\)\s*(?:\{[^}]*\})?\s*:\s*\(i32\)\s*->\s*\(\)/g)];
   assert.equal(returns.length, 1, "@sample must return one typed SSA value");
   assert.equal(returns[0][1], constant[1], "@sample must return its expected constant SSA value");
-  assert.match(text, /tsfg_core\.version\s*=\s*"0\.8\.0"/);
+  assert.match(text, /tsfg_core\.version\s*=\s*"0\.9\.0"/);
 }
 
 test("structural oracle rejects a wrong sample result hidden by another function", () => {

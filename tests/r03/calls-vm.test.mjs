@@ -3,7 +3,7 @@ import assert from 'node:assert/strict';
 import test from 'node:test';
 import {compileHir,sourceInput,compileProgram,runBytecode,runRequestSequence,createCompilerSession} from '../../compiler/pipeline.mjs';
 import {lowerHir,printHir,readHir,verifyHir} from '../../compiler/hir.mjs';
-import {sha256} from '../../compiler/identity.mjs';
+import {sha256,canonical} from '../../compiler/identity.mjs';
 const tools=()=>({frontend:process.env.TSFG_FRONTEND_EXE,core:process.env.TSFG_CORE_IR_EXE,vm:process.env.TSFG_VM_EXE});
 const forward='export function entry(a: i32, b: bool): bool { return target(a, b); } export function target(x: i32, y: bool): bool { return y; }';
 const countdown='export function entry(n: i32): i32 { if (n === 0) return n; let next: i32 = n - 1; return entry(next); }';
@@ -33,6 +33,8 @@ test('owned calls and parameter lists retain a single legal trailing comma',asyn
     const malformed=structuredClone(hir),position=malformed.source.content.indexOf(needle)+needle.length;
     malformed.source.content=malformed.source.content.replace(needle,replacement);
     malformed.source.hash=sha256(malformed.source.content);
+    malformed.inputScope.files.find(file=>file.path===malformed.source.path).content=malformed.source.content;
+    malformed.inputIdentity=sha256(canonical(malformed.inputScope));
     const shift=value=>{if(value&&typeof value==='object'){if(Object.hasOwn(value,'start')&&Object.hasOwn(value,'end')){if(value.start>=position)value.start++;if(value.end>=position)value.end++;}else for(const child of Object.values(value))shift(child);}};
     shift(malformed.functions);
     assert.throws(()=>verifyHir(malformed),/r03-hir-invalid/);assert.throws(()=>lowerHir(malformed),/r03-hir-invalid/);
@@ -178,5 +180,5 @@ test('owned call closure rejects forged foreign targets, parameter and source si
     hir=>{hir.functions[0].parameters[0].range=hir.functions[1].parameters[0].range;},
     hir=>{hir.source.content=hir.source.content.replace('return target','return ta get');hir.source.hash=sha256(Buffer.from(hir.source.content));},
     hir=>{hir.source.content=hir.source.content.replace('function target','function ta get');hir.source.hash=sha256(Buffer.from(hir.source.content));},
-  ]){const malformed=structuredClone(checked.hir);change(malformed);assert.throws(()=>verifyHir(malformed),/r03-hir-invalid/);assert.throws(()=>lowerHir(malformed),/r03-hir-invalid/);}
+  ]){const malformed=structuredClone(checked.hir);change(malformed);malformed.inputScope.files.find(file=>file.path===malformed.source.path).content=malformed.source.content;malformed.inputIdentity=sha256(canonical(malformed.inputScope));assert.throws(()=>verifyHir(malformed),/r03-hir-invalid/);assert.throws(()=>lowerHir(malformed),/r03-hir-invalid/);}
 });

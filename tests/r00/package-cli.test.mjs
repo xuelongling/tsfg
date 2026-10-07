@@ -22,6 +22,7 @@ test("Build Input declaration includes both debug target control and smoke input
   assert.equal(declarationBytes, `${JSON.stringify(declaration)}\n`);
   assert.deepEqual(declaration, {
     entries: [
+      { path: "compiler/conversions.mjs", projectId: "tsfg" },
       { path: "compiler/core-ir/CMakeLists.txt", projectId: "tsfg" },
       { path: "compiler/core-ir/main.cpp", projectId: "tsfg" },
       { path: "compiler/float.mjs", projectId: "tsfg" },
@@ -29,11 +30,13 @@ test("Build Input declaration includes both debug target control and smoke input
       { path: "compiler/hir.mjs", projectId: "tsfg" },
       { path: "compiler/identity.mjs", projectId: "tsfg" },
       { path: "compiler/minimal-bool-v1.d.ts", projectId: "tsfg" },
+      { path: "compiler/minimal-conversions-v5.d.ts", projectId: "tsfg" },
       { path: "compiler/minimal-floats-v4.d.ts", projectId: "tsfg" },
       { path: "compiler/minimal-integers-v3.d.ts", projectId: "tsfg" },
       { path: "compiler/minimal-scalars-v2.d.ts", projectId: "tsfg" },
       { path: "compiler/pipeline.mjs", projectId: "tsfg" },
       { path: "contracts/bytecode.schema.json", projectId: "tsfg" },
+      { path: "contracts/conversion-entries.json", projectId: "tsfg" },
       { path: "contracts/frontend-snapshot.schema.json", projectId: "tsfg" },
       { path: "contracts/hir.schema.json", projectId: "tsfg" },
       { path: "contracts/registry.json", projectId: "tsfg" },
@@ -79,6 +82,7 @@ test("Build Input declaration includes both debug target control and smoke input
       { path: "pnpm-lock.yaml", projectId: "tsfg" },
       { path: "runtime/bytecode.zig", projectId: "tsfg" },
       { path: "runtime/contract.zig", projectId: "tsfg" },
+      { path: "runtime/conversions.zig", projectId: "tsfg" },
       { path: "runtime/main.zig", projectId: "tsfg" },
       { path: "runtime/root.zig", projectId: "tsfg" },
       { path: "runtime/runtime.zig", projectId: "tsfg" },
