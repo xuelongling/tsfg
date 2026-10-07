@@ -7,7 +7,7 @@ import test from "node:test";
 // Public seams: verified native Core CLI and its versioned R04 output.
 const executable = process.env.TSFG_CORE_IR_EXE;
 const sha = value => createHash("sha256").update(value).digest("hex");
-const schema = "648d6b8b51724b8948e057902276141cce31d7e5465cbf67d83e1a98fb2769d4";
+const schema = "950f0b3756aed6c0fc48516c4ce09e5943672c48bffb29f2ee01c5259c212d66";
 const at = (start = 10, end = 20) => `tsfg_source.start = ${start} : i64, tsfg_source.end = ${end} : i64`;
 const signature = (parameters = [], result = "i32") => sha(`tsfg.signature\0(${parameters.join(",")})->${result}`);
 const id = (name, parameters = [], result = "i32") => sha(`tsfg.function\0/main.ts\0${name}\0${signature(parameters, result)}`);

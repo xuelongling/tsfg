@@ -3,7 +3,7 @@ import { validateFrontendSnapshot, resolveType, resolveSymbol, identifierName } 
 import { canonical, functionIdentity, signatureHash, i32TypeId, boolTypeId, scalarTypeIds, scalarName, integerNames, integerRange, own, sha256 } from "./identity.mjs";
 import registry from "../contracts/registry.json" with { type: "json" };
 import bytecodeSchema from "../contracts/bytecode.schema.json" with { type: "json" };
-import { conversionDeclaration, conversionEntries, verifyConversionOrigin, conversionCallSpelling, admittedConversionScope } from "./conversions.mjs";
+import { conversionDeclaration, conversionEntries, verifyConversionOrigin, conversionCallSpelling, admittedConversionScope, admittedInputScope } from "./conversions.mjs";
 import { floatNames, floatBits } from "./float.mjs";
 
 const contract = () => registry["tsfg.hir"];
@@ -73,10 +73,11 @@ function verifyExpression(value, parent, source, fail, budget, locals, visibleBi
     }
   } else if (value.kind === "conversion") {
     const entry = conversionEntries.get(value.origin?.entryId);
-    if (!exactKeys(value, ["kind", "type", "range", "origin", "operand"]) || !verifyConversionOrigin(value.origin)
+    if (!exactKeys(value, ["kind", "type", "range", "origin", "operand"]) || !verifyConversionOrigin(value.origin, budget.inputIdentity)
         || !admittedConversionScope(budget.inputScope,budget.inputIdentity) || value.origin.declarationPath !== budget.inputScope.declarations.paths[0]
         || value.type !== types[entry.to] || value.operand?.type !== types[entry.from]
-        || visibleBindings.has(entry.name) || !conversionCallSpelling(source, value.range, value.operand.range, entry)) fail();
+        || visibleBindings.has(entry.name) || [...budget.functions.values()].some(fn => fn.name === entry.name)
+        || !conversionCallSpelling(source, value.range, value.operand.range, entry)) fail();
     verifyExpression(value.operand, value.range, source, fail, budget, locals, visibleBindings);
   } else if (value.kind === "call") {
     const target = budget.functions.get(value.target);
@@ -165,7 +166,7 @@ export function verifyHir(hir) {
   const fail = () => { throw new TypeError("r03-hir-invalid: owned HIR identity, type, source or structure differs"); };
   if (!exactKeys(hir, ["contractVersion", "schemaHash", "inputIdentity", "source", "target", "functions", "inputScope"])
       || hir.contractVersion !== contract()?.semver || hir.schemaHash !== contract()?.schemaHash
-      || sha256(canonical(hir.inputScope)) !== hir.inputIdentity
+      || !admittedInputScope(hir.inputScope, hir.inputIdentity)
       || hir.inputScope?.rootFile !== hir.source?.path || hir.inputScope?.files?.find(file=>file.path===hir.source.path)?.content !== hir.source.content
       || !hash(hir.inputIdentity) || canonical(hir.target) !== canonical(bytecodeSchema.target)
       || !exactKeys(hir.source, ["path", "content", "hash"])

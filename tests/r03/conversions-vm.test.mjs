@@ -8,6 +8,7 @@ import path from 'node:path';
 import {compileProgram,compileHir,sourceInput,runBytecode,runRequestSequence,createCompilerSession} from '../../compiler/pipeline.mjs';
 import {printHir,readHir,lowerHir,verifyHir} from '../../compiler/hir.mjs';
 import {validateFrontendSnapshot,analyzeFrontend} from '../../compiler/frontend.mjs';
+import {canonical,sha256} from '../../compiler/identity.mjs';
 const tools=()=>({frontend:process.env.TSFG_FRONTEND_EXE,core:process.env.TSFG_CORE_IR_EXE,vm:process.env.TSFG_VM_EXE});
 const value=(type,value)=>({type,value});
 function oracleScalar(type,input){
@@ -66,6 +67,26 @@ test('conversion canonical exchange and cold/incremental source metamorphisms re
   assert.deepEqual(await runBytecode(first.bytecode,{...tools(),command:'--roundtrip'}),first.bytecode);const [got]=await runBytecode(first.bytecode,{...tools(),requests:[{arguments:[value('f64','3ffc000000000000')]}]});assert.deepEqual(got.result,value('i8','1'));
   const old=Buffer.from(first.bytecode);old.writeUInt32LE(8,8);await assert.rejects(()=>runBytecode(old,tools()));
  }
+});
+
+test('cold Snapshot and HIR independently reject unsupported scopes, cross-scope origins and ordinary-body conversion routes',async()=>{
+ const source='export function entry(x:f64):i8 { return checked_i8_from_f64(x); }',input=await sourceInput(source),analyzed=await analyzeFrontend(input,{executable:tools().frontend});assert.equal(analyzed.status,'ok');
+ const high=await compileHir(input,tools());assert.equal(high.status,'ok');
+ /** @type {Array<(scope:any)=>void>} */
+ const mutations=[scope=>scope.config.strict=false,scope=>scope.config.allowJs=true,scope=>scope.config.allowJS=true,scope=>scope.target.pointerBits='32',scope=>scope.files.push({path:'/foreign/unadmitted.js',content:'export const x=1;'}),scope=>scope.files.push({...scope.files[0]}),scope=>scope.files[0].unregistered=true,scope=>scope.declarations.paths.push('/src/missing.d.ts')];
+ function rebindSnapshot(snapshot){snapshot.inputIdentity=sha256(canonical(snapshot.identityInput));const id=sha256(canonical({contractVersion:snapshot.contractVersion,schemaHash:snapshot.schemaHash,inputIdentity:snapshot.inputIdentity,frontendSource:snapshot.frontendSource}));const visit=value=>{if(value&&typeof value==='object')for(const key of Object.keys(value)){if(key==='snapshotId')value[key]=id;else visit(value[key]);}};visit(snapshot);}
+ for(const mutate of mutations){
+  const s=structuredClone(analyzed.snapshot);mutate(s.identityInput);rebindSnapshot(s);s.functions[0].body[0].expression.conversion.inputIdentity=s.inputIdentity;assert.throws(()=>validateFrontendSnapshot(s));
+  const h=structuredClone(high.hir);mutate(h.inputScope);h.inputIdentity=sha256(canonical(h.inputScope));h.functions[0].body[0].value.origin.inputIdentity=h.inputIdentity;assert.throws(()=>verifyHir(h));assert.throws(()=>lowerHir(h));
+ }
+ // A valid additional declaration file changes the scope but cannot reuse a
+ // previously projected origin. Its presence alone remains an admitted profile.
+ const extra={path:'/src/extra.d.ts',content:'declare const hidden: boolean;'};
+ for(const layer of ['snapshot','hir']){const s=structuredClone(layer==='snapshot'?analyzed.snapshot:high.hir),scope=layer==='snapshot'?s.identityInput:s.inputScope;scope.files.push(extra);scope.files.sort((a,b)=>Buffer.from(a.path).compare(Buffer.from(b.path)));if(layer==='snapshot')rebindSnapshot(s);else s.inputIdentity=sha256(canonical(scope));assert.throws(()=>layer==='snapshot'?validateFrontendSnapshot(s):verifyHir(s));}
+ const extraInput=structuredClone(input);extraInput.files.push(extra);const extraHigh=await compileHir(extraInput,tools());assert.equal(extraHigh.status,'ok',JSON.stringify(extraHigh));verifyHir(extraHigh.hir);
+ const ordinaryInput=await sourceInput(source+' function checked_i8_from_f64(x:f64):i8 { return 42; }'),ordinary=await compileHir(ordinaryInput,tools());assert.equal(ordinary.status,'ok');verifyHir(ordinary.hir);const h=structuredClone(ordinary.hir),call=h.functions[0].body[0].value;assert.equal(call.kind,'call');h.functions[0].body[0].value={kind:'conversion',type:call.type,range:call.range,origin:{...high.hir.functions[0].body[0].value.origin,inputIdentity:h.inputIdentity},operand:call.arguments[0]};assert.throws(()=>verifyHir(h));assert.throws(()=>lowerHir(h));
+ const ordinarySnapshot=await analyzeFrontend(ordinaryInput,{executable:tools().frontend});assert.equal(ordinarySnapshot.status,'ok');const s=structuredClone(ordinarySnapshot.snapshot),expression=s.functions[0].body[0].expression;assert.equal(expression.kind,'call');s.functions[0].body[0].expression={kind:'conversion',type:expression.type,typeRef:expression.typeRef,node:expression.node,range:expression.range,conversion:{...analyzed.snapshot.functions[0].body[0].expression.conversion,inputIdentity:s.inputIdentity},operand:expression.arguments[0]};s.nodes.find(node=>node.id===expression.node.id).kind='conversion';assert.throws(()=>validateFrontendSnapshot(s));
+ for(const [version,source]of [['minimal-bool-v1','export function entry(x:bool):bool { return x; }'],['minimal-scalars-v2','export function entry(x:i32):i32 { return x; }'],['minimal-integers-v3','export function entry(x:i8):i8 { return x; }'],['minimal-floats-v4','export function entry(x:f32):f32 { return x; }']]){const oldInput=version.endsWith('v1')||version.endsWith('v2')?{sourceRoot:'/src',rootFile:'/src/main.ts',files:[{path:'/src/main.ts',content:source},{path:`/src/${version}.d.ts`,content:await readFile(new URL(`../../compiler/${version}.d.ts`,import.meta.url),'utf8')}],declarations:{version,paths:[`/src/${version}.d.ts`]},config:{strict:true,noEmit:true,allowJs:false}}:await sourceInput(source,{declarationVersion:version});oldInput.files.push(extra);const old=await compileHir(oldInput,tools());assert.equal(old.status,'ok',JSON.stringify(old));verifyHir(old.hir);assert.ok(!lowerHir(old.hir).includes('tsfg_core.convert_'));}
 });
 
 

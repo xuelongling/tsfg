@@ -2,7 +2,8 @@
 const std = @import("std");
 
 pub const version: u32 = 9;
-pub const schema_hash_hex = "648d6b8b51724b8948e057902276141cce31d7e5465cbf67d83e1a98fb2769d4";
+pub const capabilities: u32 = 20;
+pub const schema_hash_hex = "950f0b3756aed6c0fc48516c4ce09e5943672c48bffb29f2ee01c5259c212d66";
 pub const schema_hash = hexDigest(schema_hash_hex);
 pub const max_bytes = 1048576;
 pub const target = "windows-x86_64-msvc";

@@ -3,7 +3,7 @@
 export const currentContractSetId =
   "sha256:5be1129c27b37ef5d0e3e78dc46af595bbb2ac48a64724da3866dcc8f3867882";
 export const currentContractSetCanonical =
-  "{\"tsfg.bytecode\":{\"schemaHash\":\"sha256:648d6b8b51724b8948e057902276141cce31d7e5465cbf67d83e1a98fb2769d4\",\"semver\":\"0.9.0\"},\"tsfg.frontend-snapshot\":{\"schemaHash\":\"sha256:6abeef10230a4815cbdc7f9daa9450367860eb46f5ef6a56eab01e7f54b4dca3\",\"semver\":\"0.9.0\"},\"tsfg.hir\":{\"schemaHash\":\"sha256:9b55251f0cd7d4080c65e79bd601842fcc85c1002aec3b25bbc301edd9d816a6\",\"semver\":\"0.9.0\"}}";
+  "{\"tsfg.bytecode\":{\"schemaHash\":\"sha256:950f0b3756aed6c0fc48516c4ce09e5943672c48bffb29f2ee01c5259c212d66\",\"semver\":\"0.9.0\"},\"tsfg.frontend-snapshot\":{\"schemaHash\":\"sha256:b423bbc6e9b1e3ab4a2c5957e5dcaa0fd1381ce63893fa3da95cfd8390b079c2\",\"semver\":\"0.9.0\"},\"tsfg.hir\":{\"schemaHash\":\"sha256:e1c2cd004f9f6b8ab91bd86d367e4cd9b9bcdb2d9299e4da406bdaed15f93a5a\",\"semver\":\"0.9.0\"}}";
 
 /** @returns {Record<string, any>} */
 export function baselineSyntheticArtifact() {

@@ -3,7 +3,7 @@
 
 M08 extends the official Go source producer, owned Snapshot/HIR, registered MLIR
 Core, bytecode and Zig Runtime to f32 and f64. The current declaration set is
-minimal-floats-v4: f32 is nominal, f64 aliases number, an uncontextualized decimal
+minimal-conversions-v5 (including minimal-floats-v4): f32 is nominal, f64 aliases number, an uncontextualized decimal
 or exponent literal defaults to f64, and an integer literal still defaults to
 i32. Explicit floating contexts convert the exact mathematical literal directly
 to the declared IEEE format with round-to-nearest, ties-to-even. Finite overflow
@@ -18,7 +18,7 @@ Both source and HIR independently derive literal bits from the exact token with
 integer/rational arithmetic. There is no intermediate host double conversion.
 HIR transports the declared type, exact token and canonical bits; Core constants
 use builtin f32/f64 types and fixed-width lowercase hexadecimal StringAttrs.
-The complete current contract is exact-match 0.8.0, wire 8 and capability 19.
+The complete current contract is exact-match 0.9.0, wire 9 and capability 20.
 Float type codes are 12/13, constant opcode 32 and unary plus opcode 33. Existing
 numeric arithmetic, negation and comparisons accept matching float types;
 bitwise operations, shifts and bitwise not remain integer-only. Reserved draft

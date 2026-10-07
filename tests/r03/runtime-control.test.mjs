@@ -2,10 +2,12 @@
 import assert from "node:assert/strict";
 import { spawnSync } from "node:child_process";
 import { createHash } from "node:crypto";
+import { readFile } from "node:fs/promises";
 import test from "node:test";
+import { canonical } from "../../compiler/identity.mjs";
 
 const digest = value => createHash("sha256").update(value).digest();
-const schema = "648d6b8b51724b8948e057902276141cce31d7e5465cbf67d83e1a98fb2769d4";
+const schema = "950f0b3756aed6c0fc48516c4ce09e5943672c48bffb29f2ee01c5259c212d66";
 const u8 = value => Buffer.from([value]);
 const u16 = value => { const b = Buffer.alloc(2); b.writeUInt16LE(value); return b; };
 const u32 = value => { const b = Buffer.alloc(4); b.writeUInt32LE(value >>> 0); return b; };
@@ -42,6 +44,26 @@ function evaluate(bytes, requests) {
 }
 const constant = () => packet([{ params: [], ops: [fuel(1), op(1, 1, 0, 42), op(2, 1, 0)] }], 1);
 
+test("registered schema, wire capability and public inspector agree; old capability is rejected", async () => {
+  const registered = JSON.parse(await readFile(new URL("../../contracts/bytecode.schema.json", import.meta.url), "utf8"));
+  const declared = Object.values(registered.capabilities);
+  assert.deepEqual(declared, ["20"]);
+  assert.deepEqual(registered.payload.find(([name]) => name === "capabilities"), ["capabilities", `u32:${declared[0]}`]);
+  assert.equal(digest(canonical(registered)).toString("hex"), schema);
+  const bytes = constant();
+  let offset = 80;
+  for (let index = 0; index < 3; index++) offset += 4 + bytes.readUInt32LE(offset);
+  offset += 8;
+  assert.equal(bytes.readUInt32LE(offset), Number(declared[0]));
+  const inspected = invoke(bytes, ["--inspect"]);
+  assert.equal(inspected.status, 0, inspected.stderr.toString());
+  assert.equal(JSON.parse(inspected.stdout.toString("utf8")).capabilities, declared[0]);
+  const old = Buffer.from(bytes);
+  old.writeUInt32LE(19, offset);
+  digest(old.subarray(80)).copy(old, 48);
+  rejects(old, "r04-capability");
+});
+
 test("v5 public loader roundtrips canonical bytes and charges the entry event", () => {
   const bytes = constant();
   const result = invoke(bytes, ["--roundtrip"]);
@@ -75,7 +97,7 @@ test("canonical inspector exposes CFG parameter and edge metadata", () => {
   const inspection = invoke(loop(3), ["--inspect"]);
   assert.equal(inspection.status, 0, inspection.stderr.toString());
   const view = JSON.parse(inspection.stdout.toString("utf8"));
-  assert.equal(view.semver, "0.9.0"); assert.equal(view.capabilities, "19");
+  assert.equal(view.semver, "0.9.0"); assert.equal(view.capabilities, "20");
   assert.equal(view.blockCount, "4");
   assert.deepEqual(view.blocks[1].parameters, [{ register: "3", type: "i32" }]);
   assert.equal(view.instructions[0].event, "1");

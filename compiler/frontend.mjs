@@ -5,7 +5,7 @@ import { readFile } from "node:fs/promises";
 import path from "node:path";
 import sourceLock from "../eng/frontend-source.lock.json" with { type: "json" };
 import contractRegistry from "../contracts/registry.json" with { type: "json" };
-import { conversionDeclaration, conversionEntries, verifyConversionOrigin, conversionCallSpelling } from "./conversions.mjs";
+import { conversionDeclaration, conversionEntries, verifyConversionOrigin, conversionCallSpelling, admittedInputScope } from "./conversions.mjs";
 import bytecodeSchema from "../contracts/bytecode.schema.json" with { type: "json" };
 
 const frontendContract = contractRegistry["tsfg.frontend-snapshot"];
@@ -94,7 +94,7 @@ function matchesSnapshotContract(snapshot) {
   try {
     const claim = snapshot?.identityInput;
     const files = new Map(claim.files.map(file => [file.path, file.content]));
-    matchesInput = digest(canonical(claim)) === snapshot.inputIdentity
+    matchesInput = admittedInputScope(claim, snapshot.inputIdentity)
       && files.size === claim.files.length
       && claim.rootFile === snapshot.source?.path
       && files.get(claim.rootFile) === snapshot.source.content
@@ -236,6 +236,7 @@ export async function analyzeFrontend(input, { executable } = {}) {
   const symbols = output.symbols.map(symbol => ({ ...symbol, ref: { snapshotId, id: symbol.id } }));
   const expression = value => ({
     ...value,
+    ...(value.conversion ? { conversion: { ...value.conversion, inputIdentity } } : {}),
     ...(value.symbol ? { symbol: { snapshotId, id: value.symbol } } : {}),
     ...(value.target ? { target: { snapshotId, id: value.target } } : {}),
     ...(value.arguments ? { arguments: value.arguments.map(expression) } : {}),
@@ -396,8 +397,9 @@ export function validateFrontendSnapshot(snapshot) {
     if (expression.kind === "conversion") {
       const origin = expression.conversion, entry = conversionEntries.get(origin?.entryId);
       const declaration = snapshot.inputs.find(file => file.path === origin?.declarationPath);
-      if (!verifyConversionOrigin(origin) || snapshot.capability !== conversionDeclaration.version
+      if (!verifyConversionOrigin(origin, snapshot.inputIdentity) || snapshot.capability !== conversionDeclaration.version
           || origin.declarationPath !== snapshot.identityInput.declarations.paths[0]
+          || snapshot.functions.some(fn => fn.name === entry.name)
           || declaration?.kind !== "declaration-root" || declaration.sha256 !== conversionDeclaration.sha256
           || expression.type !== entry.to || expression.operand?.type !== entry.from
           || Object.keys(expression).sort().join(",") !== "conversion,kind,node,operand,range,type,typeRef"

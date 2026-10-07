@@ -111,7 +111,7 @@ fn parse(reader: *Reader, allocator: Allocator, module: *Module) (error{Invalid}
     try reader.expected(u16, @alignOf(i32), "r04-layout");
     try reader.expected(u16, @bitSizeOf(usize), "r04-layout");
     try reader.expected(u16, @alignOf(usize), "r04-layout");
-    try reader.expected(u32, 20, "r04-capability");
+    try reader.expected(u32, contract.capabilities, "r04-capability");
     const input_identity = try reader.digest();
     const source_hash = try reader.digest();
     const source_path = try reader.string(4096);
@@ -555,7 +555,7 @@ fn inspectFunction(module: *const VerifiedModule, function: Function, allocator:
         .i32Align = "4",
         .pointerBits = "64",
         .pointerAlign = "8",
-        .capabilities = "19",
+        .capabilities = std.fmt.comptimePrint("{d}", .{contract.capabilities}),
         .totalBytes = try std.fmt.allocPrint(temporary, "{d}", .{decoded(module).bytes.len}),
         .inputIdentity = @as([]const u8, &input_identity),
         .functionId = @as([]const u8, &function_id),
