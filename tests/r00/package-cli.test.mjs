@@ -24,10 +24,12 @@ test("Build Input declaration includes both debug target control and smoke input
     entries: [
       { path: "compiler/core-ir/CMakeLists.txt", projectId: "tsfg" },
       { path: "compiler/core-ir/main.cpp", projectId: "tsfg" },
+      { path: "compiler/float.mjs", projectId: "tsfg" },
       { path: "compiler/frontend.mjs", projectId: "tsfg" },
       { path: "compiler/hir.mjs", projectId: "tsfg" },
       { path: "compiler/identity.mjs", projectId: "tsfg" },
       { path: "compiler/minimal-bool-v1.d.ts", projectId: "tsfg" },
+      { path: "compiler/minimal-floats-v4.d.ts", projectId: "tsfg" },
       { path: "compiler/minimal-integers-v3.d.ts", projectId: "tsfg" },
       { path: "compiler/minimal-scalars-v2.d.ts", projectId: "tsfg" },
       { path: "compiler/pipeline.mjs", projectId: "tsfg" },

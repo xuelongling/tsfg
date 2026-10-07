@@ -40,8 +40,10 @@ test("source-produced float packets preserve actual caller FP state on success, 
     path.join(repo, "compiler/minimal-floats-v4.d.ts"), path.join(repo, "eng/frontend-source.lock.json"),
     path.join(repo, "eng/toolchains.lock.json"), import.meta.filename,
     path.join(repo, "tests/r03/fixtures/float-environment.zig"), ...await filesUnder(lib)];
-  const inputs = await Promise.all([...new Set(inputPaths)].sort().map(async file => ({
-    path: file, sha256: digest(await readFile(file)) })));
+  const inputs = [];
+  for (const file of [...new Set(inputPaths)].sort()) {
+    inputs.push({ path: file, sha256: digest(await readFile(file)) });
+  }
   const record = { qualification: "actual native host probe; formal VMCLI is separately tested",
     root, node: process.execPath, zig, inputs, sdkRoot: lib, sources: [], packets: [],
     startedUtc: new Date().toISOString() };

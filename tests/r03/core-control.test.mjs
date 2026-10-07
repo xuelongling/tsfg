@@ -65,7 +65,7 @@ const loopBody = `${entry}
 // Its expected op/block/register numbers are hand-derived from the above CFG.
 function wire(packet) {
   assert.equal(packet.subarray(0, 8).toString(), "TSFGTBC0");
-  assert.equal(packet.readUInt32LE(8), 6);
+  assert.equal(packet.readUInt32LE(8), 8);
   assert.equal(packet.subarray(12, 44).toString("hex"), schema);
   assert.equal(packet.readUInt32LE(44), packet.length);
   assert.equal(packet.subarray(48, 80).toString("hex"), sha(packet.subarray(80)));
@@ -73,7 +73,7 @@ function wire(packet) {
   const string = () => { const length = packet.readUInt32LE(cursor); cursor += 4; cursor += length; };
   for (let i = 0; i < 3; i++) string();
   cursor += 8;
-  assert.equal(packet.readUInt32LE(cursor), 17); cursor += 4 + 64;
+  assert.equal(packet.readUInt32LE(cursor), 19); cursor += 4 + 64;
   string(); cursor += 4;
   assert.equal(packet.readUInt16LE(cursor), 1); cursor += 2 + 96;
   string(); cursor += 8;

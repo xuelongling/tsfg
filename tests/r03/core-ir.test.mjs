@@ -46,7 +46,7 @@ function constantReturnOracle(text, expected) {
   const returns = [...body.matchAll(/"func\.return"\((%[\w]+)\)\s*(?:\{[^}]*\})?\s*:\s*\(i32\)\s*->\s*\(\)/g)];
   assert.equal(returns.length, 1, "@sample must return one typed SSA value");
   assert.equal(returns[0][1], constant[1], "@sample must return its expected constant SSA value");
-  assert.match(text, /tsfg_core\.version\s*=\s*"0\.6\.0"/);
+  assert.match(text, /tsfg_core\.version\s*=\s*"0\.8\.0"/);
 }
 
 test("structural oracle rejects a wrong sample result hidden by another function", () => {
@@ -55,7 +55,7 @@ test("structural oracle rejects a wrong sample result hidden by another function
     "func.return"(%0) : (i32) -> ()
   }) : () -> ()`;
   const text = `"builtin.module"() ({${functionText("sample", 0)} ${functionText("other", 42)}}) {tsfg_core.version = "0.8.0"} : () -> ()`;
-  assert.throws(() => constantReturnOracle(text, 42));
+  assert.throws(() => constantReturnOracle(text, 42), { code: "ERR_ASSERTION", actual: 0, expected: 42 });
   assert.doesNotThrow(() => constantReturnOracle(text, 0));
   // This only checks the independent oracle; it is not native verifier or
   // source-consumption acceptance evidence.

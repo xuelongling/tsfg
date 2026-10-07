@@ -75,7 +75,7 @@ test("canonical inspector exposes CFG parameter and edge metadata", () => {
   const inspection = invoke(loop(3), ["--inspect"]);
   assert.equal(inspection.status, 0, inspection.stderr.toString());
   const view = JSON.parse(inspection.stdout.toString("utf8"));
-  assert.equal(view.semver, "0.8.0"); assert.equal(view.capabilities, "17");
+  assert.equal(view.semver, "0.8.0"); assert.equal(view.capabilities, "19");
   assert.equal(view.blockCount, "4");
   assert.deepEqual(view.blocks[1].parameters, [{ register: "3", type: "i32" }]);
   assert.equal(view.instructions[0].event, "1");
