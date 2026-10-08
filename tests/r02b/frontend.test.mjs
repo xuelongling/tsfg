@@ -365,28 +365,30 @@ test("the R01 invalid-local corpus keeps its scalar diagnostic", async () => {
   assert.equal(result.diagnostics[0].code, "r01-d-scalar-type", JSON.stringify(result));
 });
 
-test("uninitialized locals are reported as pending capability", async () => {
+test("uninitialized ordinary reads preserve the official definite assignment diagnostic", async () => {
   const result = await analyzeScalars("export function pending(): i32 { let value: i32; return value; }");
   assert.equal(result.status, "error");
   assert.equal(result.snapshot, undefined);
-  assert.equal(result.diagnostics[0].code, "r02b-d-unsupported");
+  assert.equal(result.diagnostics[0].code, "r02b-d-type");
+  assert.equal(result.diagnostics[0].upstreamCode, 2454);
+  assert.deepEqual(result.diagnostics[0].range, {start:56,end:61});
 });
 
-test("compound assignment and increment remain pending capabilities", async () => {
-  for (const source of [
-    "export function pending(): i32 { let value: i32 = 1; value += 1; return value; }",
-    "export function pending(): i32 { let value: i32 = 1; value++; return value; }",
-    "export function pending(value: i32): i32 { return value += 1; }",
-    "export function pending(value: i32): i32 { return value &= value; }",
-    "export function pending(value: i32): i32 { return value **= 2; }",
-    "export function pending(value: i32): i32 { return ++value; }",
-    "export function pending(value: i32): i32 { return value++; }",
-    "export function pending(value: i32): i32 { const next: i32 = value += 1; return next; }",
+test("legacy scalar declarations preserve exact ordinary diagnostic and capability boundaries", async () => {
+  for (const [source, expected] of [
+    ["export function pending(): i32 { let value: i32 = 1; value += 1; return value; }",[["r02b-d-type",2322,53,58]]],
+    ["export function pending(): i32 { let value: i32 = 1; value++; return value; }",[["r02b-d-unsupported",undefined,53,60]]],
+    ["export function pending(value: i32): i32 { return value += 1; }",[["r01-d-scalar-type",2322,43,49],["r01-d-scalar-type",2322,50,55]]],
+    ["export function pending(value: i32): i32 { return value &= value; }",[["r01-d-scalar-type",2322,43,49],["r01-d-scalar-type",2322,50,55]]],
+    ["export function pending(value: i32): i32 { return value **= 2; }",[["r02b-d-unsupported",undefined,50,61]]],
+    ["export function pending(value: i32): i32 { return ++value; }",[["r01-d-scalar-type",2322,43,49]]],
+    ["export function pending(value: i32): i32 { return value++; }",[["r01-d-scalar-type",2322,43,49]]],
+    ["export function pending(value: i32): i32 { const next: i32 = value += 1; return next; }",[["r01-d-scalar-type",2322,49,53],["r01-d-scalar-type",2322,61,66]]],
   ]) {
     const result = await analyzeScalars(source);
     assert.equal(result.status, "error");
     assert.equal(result.snapshot, undefined);
-    assert.equal(result.diagnostics[0].code, "r02b-d-unsupported", JSON.stringify(result));
+    assert.deepEqual(result.diagnostics.map(d=>[d.code,d.upstreamCode,d.primary.start,d.primary.end]),expected,JSON.stringify(result));
   }
 });
 
@@ -707,7 +709,10 @@ test("a forward call resolves its function symbol and ordered signature", async 
   assert.equal(call.kind, "call");
   assert.equal(call.type, "bool");
   assert.equal(resolveSymbol(result.snapshot, call.target).id, target.symbol.id);
-  assert.deepEqual(call.signature, { parameters: ["i32", "bool"], returnType: "bool" });
+  assert.deepEqual(call.signature, { parameters: ["i32", "bool"], returnType: "bool", presence: [
+    {undefined:false,null:false,optional:false,default:false,range:{start:93,end:99},annotation:{start:96,end:99}},
+    {undefined:false,null:false,optional:false,default:false,range:{start:100,end:108},annotation:{start:104,end:108}},
+  ] });
   assert.deepEqual(call.arguments.map(argument => argument.type), ["i32", "bool"]);
   assert.deepEqual(call.arguments.map(argument => resolveSymbol(result.snapshot, argument.symbol).name), ["a", "b"]);
 });

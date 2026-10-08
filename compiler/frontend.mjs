@@ -14,6 +14,12 @@ export const frontendContractVersion = frontendContract.semver;
 
 const digest = bytes => `sha256:${createHash("sha256").update(bytes).digest("hex")}`;
 
+/** Only explicit owned parentheses may surround a local reference target. */
+export function localReferenceTarget(value) {
+  for (let depth = 0; value?.kind === "group" && depth < 256; depth++) value = value.operand;
+  return value?.kind === "reference" ? value : null;
+}
+
 function skipCallTrivia(source) {
   let index = 0;
   while (index < source.length) {
@@ -422,22 +428,26 @@ export function validateFrontendSnapshot(snapshot) {
         throw new TypeError("presence test differs from its checked finite binding");
     }
     if (expression.kind === "update") {
-      const symbol = resolveSymbol(snapshot, expression.operand?.symbol);
+      const target = localReferenceTarget(expression.operand);
+      const symbol = resolveSymbol(snapshot, target?.symbol);
       if (Object.keys(expression).sort().join(",") !== "kind,node,operand,operator,prefix,range,type,typeRef"
-          || expression.operand?.kind !== "reference" || !symbol.writable
+          || !target || !symbol.writable
           || !["local", "parameter"].includes(symbol.kind)
           || !["++", "--"].includes(expression.operator) || typeof expression.prefix !== "boolean"
           || expression.type !== symbol.type)
         throw new TypeError("update differs from its checked local binding or types");
     }
     if (expression.kind === "write") {
-      const left = expression.left;
+      const left = localReferenceTarget(expression.left);
       const symbol = resolveSymbol(snapshot, left?.symbol);
-      if (Object.keys(expression).sort().join(",") !== "kind,left,node,operator,range,right,type,typeRef"
+      const logical = ["&&=","||="].includes(expression.operator), flow=expression.presenceFlow;
+      if (Object.keys(expression).sort().join(",") !== (logical ? "kind,left,node,operator,presenceFlow,range,right,type,typeRef" : "kind,left,node,operator,range,right,type,typeRef")
           || left?.kind !== "reference" || !symbol.writable
           || !["local", "parameter"].includes(symbol.kind)
           || !["=", "+=", "-=", "*=", "/=", "%=", "<<=", ">>=", ">>>=", "&=", "|=", "^=", "&&=", "||=", "??="].includes(expression.operator)
-          || expression.type !== symbol.type || expression.right?.type !== (["<<=", ">>=", ">>>="].includes(expression.operator) ? "i32" : symbol.type))
+          || expression.type !== symbol.type || expression.right?.type !== (["<<=", ">>=", ">>>="].includes(expression.operator) ? "i32" : symbol.type)
+          || logical && (!flow || Object.keys(flow).sort().join(",") !== "null,undefined" || typeof flow.undefined !== "boolean" || typeof flow.null !== "boolean"
+            || flow.undefined && !symbol.presence?.undefined || flow.null && !symbol.presence?.null))
         throw new TypeError("write differs from its checked local binding or types");
     }
     if (expression.kind === "conversion") {

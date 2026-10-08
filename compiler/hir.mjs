@@ -1,5 +1,5 @@
 // SPDX-License-Identifier: MIT
-import { validateFrontendSnapshot, resolveType, resolveSymbol, identifierName } from "./frontend.mjs";
+import { validateFrontendSnapshot, resolveType, resolveSymbol, identifierName, localReferenceTarget } from "./frontend.mjs";
 import { canonical, functionIdentity, signatureHash, i32TypeId, boolTypeId, scalarTypeIds, scalarName, integerNames, integerRange, own, sha256 } from "./identity.mjs";
 import registry from "../contracts/registry.json" with { type: "json" };
 import bytecodeSchema from "../contracts/bytecode.schema.json" with { type: "json" };
@@ -15,6 +15,14 @@ const hash = value => typeof value === "string" && /^sha256:[0-9a-f]{64}$/.test(
 const types = scalarTypeIds;
 const integerType = id => integerNames.includes(scalarName(id));
 const floatType = id => floatNames.includes(scalarName(id));
+function checkedExpressionPresence(value) {
+  if (value.kind === "group") return checkedExpressionPresence(value.operand);
+  if (value.kind === "absence") return value.absence === "undefined" ? 2 : 4;
+  if (value.kind === "reference" || value.kind === "write" && ["&&=","||="].includes(value.operator))
+    return (value.presenceFlow?.undefined ? 2 : 0) | (value.presenceFlow?.null ? 4 : 0);
+  if (value.kind === "write" && ["=","??="].includes(value.operator)) return checkedExpressionPresence(value.right);
+  return 0;
+}
 const operations = { "+": "add", "-": "sub", "*": "mul", "/": "div", "%": "rem",
   "<<": "shl", ">>": "shr", ">>>": "ushr", "&": "and", "|": "or", "^": "xor",
   "===": "eq", "!==": "ne", "<": "lt", "<=": "le", ">": "gt", ">=": "ge" };
@@ -57,7 +65,7 @@ function expressionStates(value, locals) {
   if (value.kind === "absence") return value.absence === "undefined" ? 2 : 4;
   if (value.kind === "group") return expressionStates(value.operand, locals);
   if (value.kind === "write" && value.operator === "=") return expressionStates(value.right, locals);
-  if (value.kind === "write" && value.operator === "??=") return locals.get(value.left.binding)?.states ?? 1;
+  if (value.kind === "write" && ["??=","&&=","||="].includes(value.operator)) return locals.get(localReferenceTarget(value.left)?.binding)?.states ?? 1;
   return 1;
 }
 function narrowLocals(locals, value, truth) {
@@ -77,7 +85,7 @@ function loopCarriedStates(statement, locals, fail) {
   const visit=value => {
     if (--remaining < 0) fail();
     if (!value || typeof value !== "object") return;
-    const binding=value.kind === "assign" ? value.target?.binding : value.kind === "write" ? value.left?.binding : value.kind === "update" ? value.operand?.binding : undefined;
+    const binding=value.kind === "assign" ? value.target?.binding : value.kind === "write" ? localReferenceTarget(value.left)?.binding : value.kind === "update" ? localReferenceTarget(value.operand)?.binding : undefined;
     if (binding && hasState(locals.get(binding)?.presence)) locals.get(binding).states=declaredStates(locals.get(binding).presence);
     for (const child of Object.values(value)) if (child && typeof child === "object") {
       if (Array.isArray(child)) child.forEach(visit); else visit(child);
@@ -136,28 +144,38 @@ function verifyExpression(value, parent, source, fail, budget, locals, visibleBi
     verifyExpression(reference,value.range,source,fail,budget,locals,visibleBindings,declaredStates(local.presence));
     verifyExpression(absence,value.range,source,fail,budget,locals,visibleBindings,7);
   } else if (value.kind === "update") {
+    const target = localReferenceTarget(value.operand);
     if (!exactKeys(value, ["kind", "type", "range", "operator", "prefix", "operand"])
         || !["++", "--"].includes(value.operator) || typeof value.prefix !== "boolean"
-        || value.operand?.kind !== "reference" || value.type !== value.operand.type
-        || !locals.get(value.operand.binding)?.writable || !integerType(value.type) && !floatType(value.type)
+        || !target || value.type !== value.operand.type
+        || !locals.get(target.binding)?.writable || !integerType(value.type) && !floatType(value.type)
         || sourceTokens(source, value.range.start, value.operand.range.start) !== (value.prefix ? value.operator : "")
         || sourceTokens(source, value.operand.range.end, value.range.end) !== (value.prefix ? "" : value.operator)) fail();
     verifyExpression(value.operand, value.range, source, fail, budget, locals, visibleBindings);
   } else if (value.kind === "write") {
-    const target = value.left, local = locals.get(target?.binding);
-    if (!exactKeys(value, ["kind", "type", "range", "operator", "left", "right"])
+    const target = localReferenceTarget(value.left), local = locals.get(target?.binding);
+    const logical = ["&&=","||="].includes(value.operator);
+    if (!exactKeys(value, ["kind", "type", "range", "operator", "left", "right", ...(logical ? ["presenceFlow"] : [])])
         || !["=", "+=", "-=", "*=", "/=", "%=", "<<=", ">>=", ">>>=", "&=", "|=", "^=", "&&=", "||=", "??="].includes(value.operator)
         || !exactKeys(target, ["kind", "type", "binding", "range", ...(hasState(local?.presence) ? ["presenceFlow"] : [])]) || target.kind !== "reference"
         || !local?.writable || visibleBindings.get(local.name) !== target.binding
         || target.type !== local.type || value.type !== local.type
         || value.right?.type !== (["<<=", ">>=", ">>>="].includes(value.operator) ? i32TypeId : local.type)
-        || !range(target.range, value.range) || target.range.end > value.right.range.start
+        || !range(value.left.range, value.range) || value.left.range.end > value.right.range.start
         || identifierToken(source, target.range) !== local.name
-        || sourceTokens(source, value.range.start, target.range.start) !== ""
-        || !scalarOperator(source, target.range.end, value.right.range.start, value.operator)
+        || sourceTokens(source, value.range.start, value.left.range.start) !== ""
+        || !scalarOperator(source, value.left.range.end, value.right.range.start, value.operator)
         || sourceTokens(source, value.right.range.end, value.range.end) !== "") fail();
+    // Validate every explicit group without reading the assignment target:
+    // bare locals remain safe targets of = and ??= before initialization.
+    for (let group = value.left; group !== target; group = group.operand) {
+      if (--budget.remaining < 0 || !exactKeys(group,["kind","type","operand","range"])
+          || group.kind !== "group" || group.type !== target.type || !range(group.operand?.range,group.range)
+          || sourceTokens(source,group.range.start,group.operand.range.start) !== "("
+          || sourceTokens(source,group.operand.range.end,group.range.end) !== ")") fail();
+    }
     if (hasState(local.presence) && !validPresenceFlow(target.presenceFlow,local.presence)) fail();
-    if (value.operator === "??=") {
+    if (value.operator === "??=" || logical) {
       // The official checker classifies coalescing assignment as a definite
       // target and returns its declared members, independently of read flow.
       const targetStates=hasState(local.presence) ? annotationStates(local.presence,source) | (local.presence.optional && !local.presence.default ? 2 : 0) : 1;
@@ -168,18 +186,30 @@ function verifyExpression(value, parent, source, fail, budget, locals, visibleBi
           : !integerType(local.type) && !(floatType(local.type) && ["+=", "-=", "*=", "/=", "%="].includes(value.operator))) fail();
       verifyExpression(target, value.range, source, fail, budget, locals, visibleBindings);
     }
+    if (logical && (local.type !== boolTypeId || !validPresenceFlow(value.presenceFlow,local.presence??{undefined:false,null:false}))) fail();
     const nullish = value.operator === "??=", previousStates=local.states;
     const conditionalWrite = ["&&=", "||=", "??="].includes(value.operator);
     const rightLocals = conditionalWrite ? new Map([...locals].map(([id, item]) => [id, { ...item }])) : locals;
     if (nullish) rightLocals.get(target.binding).states &= 6;
-    verifyExpression(value.right, value.range, source, fail, budget, rightLocals, visibleBindings,value.operator === "=" || nullish ? declaredStates(local.presence) : 1);
+    if (value.operator === "&&=") rightLocals.get(target.binding).states &= 1;
+    verifyExpression(value.right, value.range, source, fail, budget, rightLocals, visibleBindings,value.operator === "=" || nullish || logical ? declaredStates(local.presence) : 1);
     if (conditionalWrite) for (const [id,binding] of locals) {
       binding.initialized &&= rightLocals.get(id).initialized;
       binding.states |= rightLocals.get(id).states;
     }
-    local.initialized = true;
+    local.initialized = value.operator === "&&=" ? local.initialized : true;
     local.states = nullish ? (previousStates & 1) | (previousStates & 6 ? expressionStates(value.right,rightLocals) : 0)
-      : conditionalWrite ? 1 : expressionStates(value.right,rightLocals);
+      : value.operator === "&&=" ? previousStates | (previousStates & 1 ? expressionStates(value.right,rightLocals) : 0)
+      : value.operator === "||=" ? (previousStates & 1) | expressionStates(value.right,rightLocals)
+      : expressionStates(value.right,rightLocals);
+    if (logical) {
+      // The official definite-target expression type can retain declared
+      // members even when a preceding guard proves the runtime slot present.
+      // Authenticate that whole-result role separately from runtime SSA state.
+      const officialMissing=checkedExpressionPresence(value.right) | (value.operator === "&&=" ? checkedExpressionPresence(target) : 0);
+      if (value.presenceFlow.undefined !== Boolean(officialMissing & 2) || value.presenceFlow.null !== Boolean(officialMissing & 4)
+          || officialMissing & ~allowedStates) fail();
+    }
     if (local.states & ~allowedStates) fail();
   } else if (value.kind === "conversion") {
     const entry = conversionEntries.get(value.origin?.entryId);
@@ -388,7 +418,7 @@ export function verifyHir(hir) {
         if (!/^;?$/.test(before)) fail();
         if (statement.kind === "evaluate") {
           if (!exactKeys(statement, ["kind", "range", "value"])) fail();
-          verifyExpression(statement.value, statement.range, source, fail, budget, locals, visibleBindings);
+          verifyExpression(statement.value, statement.range, source, fail, budget, locals, visibleBindings,7);
           if (sourceTokens(source, statement.range.start, statement.value.range.start) !== ""
               || !/^;?$/.test(sourceTokens(source, statement.value.range.end, statement.range.end))) fail();
         } else if (statement.kind === "block") {
@@ -569,7 +599,8 @@ export function buildHir(snapshot) {
     if (value.kind === "absence") return { kind:"absence", ...common, absence:value.absence };
     if (value.kind === "group") return { kind: "group", ...common, operand: project(value.operand, common.range) };
     if (value.kind === "write") return { kind: "write", ...common, operator: value.operator,
-      left: project(value.left, common.range), right: project(value.right, common.range) };
+      left: project(value.left, common.range), right: project(value.right, common.range),
+      ...(["&&=","||="].includes(value.operator) ? {presenceFlow:structuredClone(value.presenceFlow)} : {}) };
     if (value.kind === "presenceTest") return {kind:"presenceTest",...common,operator:value.operator,left:project(value.left,common.range),right:project(value.right,common.range)};
     if (value.kind === "update") return { kind: "update", ...common, operator: value.operator,
       prefix: value.prefix, operand: project(value.operand, common.range) };
@@ -693,7 +724,7 @@ export function lowerHir(hir) {
     return name;
   };
   const represent = expression => expression.kind === "group" ? represent(expression.operand)
-    : expression.kind === "write" && ["=","??="].includes(expression.operator) ? (emit(expression),definitions.get(expression.left.binding))
+    : expression.kind === "write" ? (emit(expression),definitions.get(localReferenceTarget(expression.left).binding))
     : expression.kind === "reference" ? definitions.get(expression.binding)
     : expression.kind === "absence" ? {payload:scalarConstant(expression.type,"0",expression.range),state:scalarConstant(i32TypeId,expression.absence === "undefined" ? "1" : "2",expression.range)}
       : {payload:emit(expression),state:null};
@@ -714,13 +745,14 @@ export function lowerHir(hir) {
         : expression.type === i32TypeId ? `1 : ${type}` : quote("1");
       current.lines.push(`    ${one} = "tsfg_core.constant"() {value = ${value}, ${attrsFor(expression.range)}} : () -> ${type}`);
       current.lines.push(`    ${next} = "tsfg_core.${expression.operator === "++" ? "add" : "sub"}"(${old}, ${one}) {${attrsFor(expression.range)}} : (${type}, ${type}) -> ${type}`);
-      store(expression.operand.binding,{payload:next,state:null},expression.range);
+      store(localReferenceTarget(expression.operand).binding,{payload:next,state:null},expression.range);
       return expression.prefix ? next : old;
     }
     if (expression.kind === "write") {
+      const target = localReferenceTarget(expression.left);
       if (expression.operator === "??=") {
-        const old=definitions.get(expression.left.binding);
-        if (!bindingStates.get(expression.left.binding)) return old.payload;
+        const old=definitions.get(target.binding);
+        if (!bindingStates.get(target.binding)) return old.payload;
         const incoming=new Map(definitions), keys=[...incoming.keys()];
         const zero=scalarConstant(i32TypeId,"0",expression.left.range), condition=`%v${valueIndex++}`;
         current.lines.push(`    ${condition} = "tsfg_core.ne"(${old.state}, ${zero}) {${attrsFor(expression.range)}} : (i32, i32) -> i1`);
@@ -728,15 +760,14 @@ export function lowerHir(hir) {
         conditional(condition,rhs,shortcut,expression.range);
         current=shortcut;branch(join,flatValues(keys,incoming),expression.range);
         current=rhs;definitions=new Map(incoming);
-        store(expression.left.binding,represent(expression.right),expression.range);
+        store(target.binding,represent(expression.right),expression.range);
         branch(join,flatValues(keys,definitions),expression.range);
         current=join;definitions=fromParameters(keys,join.parameters);
-        return definitions.get(expression.left.binding).payload;
+        return definitions.get(target.binding).payload;
       }
       if (["&&=", "||="].includes(expression.operator)) {
         const value = emit({ kind:"shortCircuit", type:boolTypeId, operator:expression.operator.slice(0,-1), left:expression.left,
           right:{...expression, operator:"="}, range:expression.range });
-        store(expression.left.binding,{payload:value,state:null},expression.range);
         return value;
       }
       // Compound assignment captures the old definition before evaluating a
@@ -749,7 +780,7 @@ export function lowerHir(hir) {
         current.lines.push(`    ${name} = "tsfg_core.${operations[expression.operator.slice(0,-1)]}"(${old}, ${value}) {${attrsFor(expression.range)}} : (${type}, ${coreType(expression.right.type)}) -> ${type}`);
         value = name;
       }
-      store(expression.left.binding,{payload:value,state:expression.operator === "=" ? representation.state : null},expression.range);
+      store(target.binding,{payload:value,state:expression.operator === "=" ? representation.state : null},expression.range);
       return value;
     }
     if (expression.kind === "conversion") {

@@ -14,6 +14,10 @@ Compound assignment captures its old left definition before evaluating its RHS
 once. An assignment yields the stored value; postfix yields the old definition
 and prefix the new one. Short circuit operations merge all affected SSA
 definitions, including presence and private local initialization state.
+Parenthesized local targets retain their actual group nodes and both whole and
+leaf source anchors. Every cold consumer checks the group structure before
+using the same local binding; grouping does not admit properties, indices or
+type assertions as lvalues.
 
 The official checker classifies `??=` targets as definite assignment and returns
 declared members. Ordinary reads retain its actual narrowed `GetTypeAtLocation`
@@ -21,6 +25,11 @@ members. Default parameters distinguish incoming omission from the annotation's
 declared members. Owned verification validates these roles separately against
 declarations and the dominating CFG proof; a schema or role string alone does
 not authenticate facts.
+Logical assignments also retain the official type of the whole expression.
+That type may include declared missing members even after a runtime guard;
+owned state narrowing does not erase its official return or argument diagnostic.
+`||=` assigns on false, undefined or null, while `&&=` preserves skipped
+undefined/null and initialization state. Their SSA joins retain every effect.
 
 Bare scalar locals have a canonical zero payload and private undefined state
 before assignment. `??=` branches on that state without reading uninitialized
