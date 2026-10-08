@@ -108,6 +108,74 @@ test('independent Core and wire verifiers reject illegal nominal pairs, reserved
  const foreign=structuredClone(p.hir);foreign.functions[0].body[0].value.origin.brandRefs[0].range.end++;assert.throws(()=>verifyHir(foreign));
 });
 
+test('cold conversion origins reject foreign merged declarations after coherent scope rebinding',async()=>{
+ const input=await sourceInput('export function entry(x:f64):i8 { return checked_i8_from_f64(x); }');
+ const analyzed=await analyzeFrontend(input,{executable:tools().frontend}),high=await compileHir(input,tools());
+ assert.equal(analyzed.status,'ok');assert.equal(high.status,'ok');
+ /** @type {Array<[string,boolean,boolean?]>} */
+ const declarations=[
+  ['declare const hidden:boolean;',true],
+  ['declare function checked_i8_from_f64(value:f64):i8;',false],
+  ['declare function /*entry*/ checked_i8_from_f\\u00364(value:f64):i8;',false],
+  ['declare const __tsfg_i8:unique symbol;',false],
+  ['declare const hidden:boolean, __tsfg_i8:unique symbol;',false],
+  ['declare const {checked_i8_from_f64}: {checked_i8_from_f64:(value:f64)=>i8};',false],
+  ['type i8 = number;',false],
+  ['export {}; declare global { function checked_i8_from_f64(value:f64):i8; }',false],
+  ['export {}; declare global { const __tsfg_i8:unique symbol; }',false],
+  ['export {}; global { function checked_i8_from_f64(value:f64):i8; }',false],
+  ['declare module "other" { global { function checked_i8_from_f64(value:f64):i8; } }',false],
+  ['export declare function checked_i8_from_f64(value:f64):i8; export declare const __tsfg_i8:unique symbol;',true],
+  ['declare namespace Extra { function checked_i8_from_f64(value:f64):i8; const __tsfg_i8:unique symbol; }',true],
+  ['interface Extra { checked_i8_from_f64(value:f64):i8; __tsfg_i8:boolean; } declare const hidden:i8;',true],
+  ['interface global { checked_i8_from_f64(value:f64):i8; }',true],
+  ['/* declare function checked_i8_from_f64(value:f64):i8; */ declare const text:"declare const __tsfg_i8:unique symbol;";',true],
+  ['declare function checked_i8_from_f64(value:f64):i8;',true,false],
+ ];
+ for(const [content,accepted,rooted=true]of declarations){
+  const extra={path:'/src/extra.d.ts',content},request=structuredClone(input);request.files.push(extra);if(rooted)request.declarations.paths.push(extra.path);
+  const official=await analyzeFrontend(request,{executable:tools().frontend});assert.equal(official.status,accepted?'ok':'error',content);
+  const h=structuredClone(high.hir);h.inputScope.files.push(extra);h.inputScope.files.sort((a,b)=>Buffer.from(a.path).compare(Buffer.from(b.path)));if(rooted)h.inputScope.declarations.paths.push(extra.path);
+  h.inputIdentity=sha256(canonical(h.inputScope));h.functions[0].body[0].value.origin.inputIdentity=h.inputIdentity;
+  const s=structuredClone(analyzed.snapshot);s.identityInput=structuredClone(h.inputScope);s.inputIdentity=h.inputIdentity;if(rooted)s.inputs.push({path:extra.path,sha256:sha256(content),kind:'declaration-root'});s.inputs.sort((a,b)=>Buffer.from(a.path).compare(Buffer.from(b.path)));
+  const id=sha256(canonical({contractVersion:s.contractVersion,schemaHash:s.schemaHash,inputIdentity:s.inputIdentity,frontendSource:s.frontendSource}));
+  const visit=value=>{if(value&&typeof value==='object'){if(value.snapshotId)value.snapshotId=id;for(const child of Object.values(value))visit(child);}};visit(s);s.functions[0].body[0].expression.conversion.inputIdentity=s.inputIdentity;
+  if(accepted){validateFrontendSnapshot(s);verifyHir(h);readHir(Buffer.from(printHir(h)));assert.match(lowerHir(h),/tsfg_core.convert_checked/);}
+  else{assert.throws(()=>validateFrontendSnapshot(s),undefined,content);assert.throws(()=>verifyHir(h),undefined,content);assert.throws(()=>readHir(Buffer.from(canonical(h)+'\n')),undefined,content);assert.throws(()=>lowerHir(h),undefined,content);}
+ }
+});
+
+test('cold conversion declaration loading follows referenced files while unused VFS declarations stay inert',async()=>{
+ const input=await sourceInput('export function entry(x:f64):i8 { return checked_i8_from_f64(x); }');
+ const analyzed=await analyzeFrontend(input,{executable:tools().frontend}),high=await compileHir(input,tools());assert.equal(analyzed.status,'ok');assert.equal(high.status,'ok');
+ const foreign='declare function checked_i8_from_f64(value:f64):i8;';
+ /** @type {Array<[string,string,string,string,boolean,boolean]>} */
+ const cases=[
+  ['path-reference','/src/dep.d.ts','/// <reference path="./dep.d.ts" />',foreign,true,false],
+  ['side-import','/src/dep.d.ts','import "./dep";',foreign,true,false],
+  ['from-import','/src/dep.d.ts','import {other} from "./dep";','export const other:boolean; declare global { function checked_i8_from_f64(value:f64):i8; }',true,false],
+  ['type-import','/src/dep.d.ts','type Other = import("./dep").Other;','export type Other=boolean; declare global { function checked_i8_from_f64(value:f64):i8; }',true,false],
+  ['types-reference','/src/node_modules/@types/foo/index.d.ts','/// <reference types="foo" />',foreign,true,false],
+  ['bare-types-import','/src/node_modules/@types/foo/index.d.ts','import "foo";',foreign,true,false],
+  ['bare-package-import','/src/node_modules/foo/index.d.ts','import "foo";',foreign,true,false],
+  ['unused-types','/src/node_modules/@types/foo/index.d.ts','',foreign,false,true],
+  ['unused-file','/src/dep.d.ts','// inert',foreign,false,true],
+  ['legal-reference','/src/dep.d.ts','/// <reference path="./dep.d.ts" />','declare const hidden:i8;',true,true],
+ ];
+ for(const [name,dependencyPath,content,dependency,rooted,accepted]of cases){
+  const h=structuredClone(high.hir);h.inputScope.files.push({path:'/src/extra.d.ts',content},{path:dependencyPath,content:dependency});if(rooted)h.inputScope.declarations.paths.push('/src/extra.d.ts');h.inputScope.files.sort((a,b)=>Buffer.from(a.path).compare(Buffer.from(b.path)));h.inputIdentity=sha256(canonical(h.inputScope));h.functions[0].body[0].value.origin.inputIdentity=h.inputIdentity;
+  const request=h.inputScope,official=await analyzeFrontend(request,{executable:tools().frontend});assert.equal(official.status,accepted?'ok':'error',name);
+  const s=structuredClone(analyzed.snapshot);s.identityInput=structuredClone(request);s.inputIdentity=h.inputIdentity;if(rooted)s.inputs.push({path:'/src/extra.d.ts',sha256:sha256(content),kind:'declaration-root'});
+  const id=sha256(canonical({contractVersion:s.contractVersion,schemaHash:s.schemaHash,inputIdentity:s.inputIdentity,frontendSource:s.frontendSource}));const visit=value=>{if(value&&typeof value==='object'){if(value.snapshotId)value.snapshotId=id;for(const child of Object.values(value))visit(child);}};visit(s);s.functions[0].body[0].expression.conversion.inputIdentity=s.inputIdentity;
+  if(accepted){validateFrontendSnapshot(s);verifyHir(h);readHir(Buffer.from(printHir(h)));assert.match(lowerHir(h),/tsfg_core.convert_checked/);}
+  else{assert.throws(()=>validateFrontendSnapshot(s),undefined,name);assert.throws(()=>verifyHir(h),undefined,name);assert.throws(()=>readHir(Buffer.from(canonical(h)+'\n')),undefined,name);assert.throws(()=>lowerHir(h),undefined,name);}
+  if(process.env.TSFG_CONVERSION_EVIDENCE_DIR){
+   const directory=process.env.TSFG_CONVERSION_EVIDENCE_DIR;await mkdir(directory,{recursive:true});const rawInput=Buffer.from(JSON.stringify(request)),executable=tools().frontend,before=createHash('sha256').update(await readFile(executable)).digest('hex'),child=spawnSync(executable,[],{input:rawInput,windowsHide:true,timeout:30000,maxBuffer:1024*1024});assert.equal(child.status,0,name);assert.equal(createHash('sha256').update(await readFile(executable)).digest('hex'),before);assert.equal(JSON.parse(child.stdout.toString()).status,accepted?'ok':'error',name);
+   await Promise.all([writeFile(path.join(directory,name+'.input'),rawInput),writeFile(path.join(directory,name+'.stdout'),child.stdout),writeFile(path.join(directory,name+'.stderr'),child.stderr),writeFile(path.join(directory,name+'.terminal.json'),JSON.stringify({executable,args:[],status:child.status,signal:child.signal,error:child.error?.message??null,executableSHA256:before})+'\n'),writeFile(path.join(directory,name+'.owned.json'),JSON.stringify({snapshot:s,hir:h})+'\n')]);
+  }
+ }
+});
+
 test('actual source, Core and VM endpoint pairs bind both modes to exact current consumer bytes',async()=>{
  const cases=[['checked','export function entry(x:f64):i8 { return checked_i8_from_f64(x); }',value('f64','3ffc000000000000'),value('i8','1')],['wrap','export function entry(x:i64):u8 { return wrap_u8_from_i64(x); }',value('i64','-257'),value('u8','255')],['reinterpret','export function entry(x:f32):u32 { return reinterpret_u32_from_f32(x); }',value('f32','ffc12345'),value('u32','4290847557')]];
  for(const optimize of [false,true])for(const [id,source,inputValue,expected]of cases){

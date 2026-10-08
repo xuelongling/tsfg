@@ -5,7 +5,7 @@ import { readFile } from "node:fs/promises";
 import path from "node:path";
 import sourceLock from "../eng/frontend-source.lock.json" with { type: "json" };
 import contractRegistry from "../contracts/registry.json" with { type: "json" };
-import { conversionDeclaration, conversionEntries, verifyConversionOrigin, conversionCallSpelling, admittedInputScope, completeFunctionSource } from "./conversions.mjs";
+import { conversionDeclaration, conversionEntries, verifyConversionOrigin, conversionCallSpelling, admittedConversionScope, admittedInputScope, completeFunctionSource } from "./conversions.mjs";
 import bytecodeSchema from "../contracts/bytecode.schema.json" with { type: "json" };
 
 const frontendContract = contractRegistry["tsfg.frontend-snapshot"];
@@ -399,6 +399,7 @@ export function validateFrontendSnapshot(snapshot) {
       const origin = expression.conversion, entry = conversionEntries.get(origin?.entryId);
       const declaration = snapshot.inputs.find(file => file.path === origin?.declarationPath);
       if (!completeSource || !verifyConversionOrigin(origin, snapshot.inputIdentity) || snapshot.capability !== conversionDeclaration.version
+          || !admittedConversionScope(snapshot.identityInput, snapshot.inputIdentity)
           || origin.declarationPath !== snapshot.identityInput.declarations.paths[0]
           || snapshot.functions.some(fn => fn.name === entry.name)
           || declaration?.kind !== "declaration-root" || declaration.sha256 !== conversionDeclaration.sha256
