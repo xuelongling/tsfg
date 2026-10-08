@@ -7,6 +7,24 @@ const tools={frontend:process.env.TSFG_FRONTEND_EXE,core:process.env.TSFG_CORE_I
 const i32=value=>({type:'i32',value:String(value)});
 async function compiled(source,optimize=false){const result=await compileProgram(await sourceInput(source),{...tools,optimize});assert.equal(result.status,'ok',JSON.stringify(result));return result;}
 const request=(program,extra={})=>({functionId:program.hir.functions.find(f=>f.name==='entry').id,depth:16,...extra});
+test('64 logical default parameters merge only changed definitions within existing resource limits',async()=>{
+  const parameters=Array.from({length:64},(_,i)=>`value${i}: i32 = 1`).join(', ');
+  const source=`export function entry(${parameters}): i32 { return value0 + value63; }`;
+  for(const optimize of [false,true]){
+    const program=await compiled(source,optimize);
+    const [omitted,undefineds,present]=await runBytecode(program.bytecode,{...tools,requests:[request(program),request(program,{arguments:Array.from({length:64},()=>({type:'undefined',value:null}))}),request(program,{arguments:Array.from({length:64},()=>i32(2))})]});
+    for(const actual of [omitted,undefineds]){assert.equal(actual.status,'returned');assert.deepEqual(actual.result,i32(2));}
+    assert.equal(present.status,'returned');assert.deepEqual(present.result,i32(4));
+  }
+});
+test('default initialization joins include earlier parameter effects and skip every supplied value',async()=>{
+  const source='export function entry(a: i32, b: i32 = a++): i32 { return a * 100 + b; }';
+  for(const optimize of [false,true]){
+    const program=await compiled(source,optimize);
+    const actual=await runBytecode(program.bytecode,{...tools,requests:[request(program,{arguments:[i32(4)]}),request(program,{arguments:[i32(4),{type:'undefined',value:null}]}),request(program,{arguments:[i32(4),i32(9)]}),request(program,{arguments:[i32(4),i32(0)]})]});
+    for(const [index,value]of [504,504,409,400].entries()){assert.equal(actual[index].status,'returned');assert.deepEqual(actual[index].result,i32(value));}
+  }
+});
 test('64 logical optional parameters accept all 128 counted physical input slots',async()=>{
   const parameters=Array.from({length:64},(_,i)=>`value${i}?: i32`).join(', '),source=`export function entry(${parameters}): i32 { if (value63 === undefined) { return 7; } return value63; }`;
   const program=await compiled(source);

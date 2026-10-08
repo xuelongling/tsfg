@@ -307,7 +307,7 @@ function noShortIf(statement) {
   if (statement.kind === "while") return noShortIf(statement.body[0]);
   if (statement.kind === "if") return statement.elseBody.length === 1
     && noShortIf(statement.thenBody[0]) && noShortIf(statement.elseBody[0]);
-  return ["block", "return", "assign"].includes(statement.kind);
+  return ["block", "return", "assign", "evaluate"].includes(statement.kind);
 }
 
 export function verifyHir(hir) {
@@ -881,14 +881,23 @@ export function lowerHir(hir) {
   for (const [index,parameter] of fn.parameters.entries()) {
     const initializer=fn.parameterInitializers[index];
     if (!initializer) continue;
-    const incoming=new Map(definitions), keys=[...incoming.keys()], one=scalarConstant(i32TypeId,"1",parameter.presence.range), condition=`%v${valueIndex++}`;
+    const incoming=new Map(definitions), one=scalarConstant(i32TypeId,"1",parameter.presence.range), condition=`%v${valueIndex++}`;
     current.lines.push(`    ${condition} = "tsfg_core.eq"(${incoming.get(parameter.id).state}, ${one}) {${attrsFor(parameter.presence.range)}} : (i32, i32) -> i1`);
-    const initialize=newBlock(), supplied=newBlock(), join=newBlock(flatTypes(keys));
+    const initialize=newBlock(), supplied=newBlock();
     conditional(condition,initialize,supplied,parameter.presence.range);
-    current=supplied; branch(join,flatValues(keys,incoming),parameter.presence.range);
     current=initialize; definitions=new Map(incoming);
-    store(parameter.id,represent(initializer),initializer.range); branch(join,flatValues(keys,definitions),parameter.presence.range);
-    current=join; definitions=fromParameters(keys,join.parameters);
+    store(parameter.id,represent(initializer),initializer.range);
+    const initializedExit=current, initialized=new Map(definitions);
+    // Unchanged definitions already dominate both branches. Merge every actual
+    // initializer effect, including writes to earlier parameters, once.
+    const keys=[...incoming.keys()].filter(id => {
+      const before=incoming.get(id), after=initialized.get(id);
+      return before.payload !== after.payload || before.state !== after.state;
+    });
+    const join=newBlock(flatTypes(keys));
+    current=supplied; branch(join,flatValues(keys,incoming),parameter.presence.range);
+    current=initializedExit; branch(join,flatValues(keys,initialized),parameter.presence.range);
+    current=join; definitions=new Map([...incoming,...fromParameters(keys,join.parameters)]);
   }
   emitBody(fn.body);
   if (current || blocks.some(block => !block.terminated)) throw new TypeError("r03-hir-cfg: reachable function fallthrough");

@@ -4,6 +4,21 @@ import test from "node:test";
 import {compileProgram,compileHir,sourceInput,runBytecode} from "../../compiler/pipeline.mjs";
 import {printHir,readHir} from "../../compiler/hir.mjs";
 const tools=()=>({frontend:process.env.TSFG_FRONTEND_EXE,core:process.env.TSFG_CORE_IR_EXE,vm:process.env.TSFG_VM_EXE});
+test("bare bool logical writes preserve private initialization and never expose an ordinary uninitialized read",async()=>{
+  for(const [source,expected]of [
+    ["export function entry(): bool { let value: bool; value &&= (1 / 0 === 0); return false; }",false],
+    ["export function entry(): bool { let value: bool | null; value &&= (1 / 0 === 0); return false; }",false],
+    ["export function entry(): bool { let value: bool | undefined; value &&= (1 / 0 === 0); if (value === undefined) { return false; } return value; }",false],
+    ["export function entry(): bool { let value: bool; value ||= true; return value; }",true],
+    ["export function entry(): bool { let value: bool | null; value ||= true; return value; }",true],
+  ])for(const optimize of [false,true]){
+    const program=await compileProgram(await sourceInput(source),{...tools(),optimize});assert.equal(program.status,"ok",JSON.stringify(program));
+    const [actual]=await runBytecode(program.bytecode,{...tools(),requests:[{functionId:program.hir.functions[0].id,depth:16}]});
+    assert.equal(actual.status,"returned");assert.deepEqual(actual.result,{type:"bool",value:expected});assert.equal(actual.activeRequests,"0");
+  }
+  const source="export function entry(): bool { let value: bool; value &&= true; return value; }";
+  const rejected=await compileHir(await sourceInput(source),tools());assert.equal(rejected.status,"error");assert.ok(rejected.diagnostics.some(d=>d.upstreamCode===2454));
+});
 const cases=[
   ["export function entry(value?: bool): bool { value ||= true; return value; }",[],true],
   ["export function entry(value?: bool): bool { value &&= false; if (value === undefined) { return true; } return value; }",[],true],

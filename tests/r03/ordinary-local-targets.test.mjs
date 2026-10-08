@@ -4,6 +4,16 @@ import test from "node:test";
 import {compileProgram,compileHir,sourceInput,runBytecode} from "../../compiler/pipeline.mjs";
 import {printHir,readHir} from "../../compiler/hir.mjs";
 const tools=()=>({frontend:process.env.TSFG_FRONTEND_EXE,core:process.env.TSFG_CORE_IR_EXE,vm:process.env.TSFG_VM_EXE});
+test("unbraced update and compound arms preserve the matched else boundary",async()=>{
+  for(const [yes,no,whenTrue,whenFalse]of [["value++","value--","8","6"],["value += 2","value -= 2","9","5"]])for(const optimize of [false,true]){
+    const source=`export function entry(flag: bool): i32 { let value: i32 = 7; if (flag) ${yes}; else ${no}; return value; }`;
+    const program=await compileProgram(await sourceInput(source),{...tools(),optimize});assert.equal(program.status,"ok",JSON.stringify(program));
+    assert.deepEqual(readHir(Buffer.from(printHir(program.hir))),program.hir);
+    const [taken,skipped]=await runBytecode(program.bytecode,{...tools(),requests:[{functionId:program.hir.functions[0].id,arguments:[{type:"bool",value:true}],depth:16},{functionId:program.hir.functions[0].id,arguments:[{type:"bool",value:false}],depth:16}]});
+    assert.equal(taken.status,"returned");assert.deepEqual(taken.result,{type:"i32",value:whenTrue});
+    assert.equal(skipped.status,"returned");assert.deepEqual(skipped.result,{type:"i32",value:whenFalse});
+  }
+});
 const cases=[
   ["export function entry(): i32 { let value: i32 = 1; value += 1; return value; }","2"],
   ["export function entry(): i32 { let value: i32 = 1; value++; return value; }","2"],
