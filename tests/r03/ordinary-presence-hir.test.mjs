@@ -197,3 +197,76 @@ test("checked builtin undefined accepts identifier escapes and grouped trivia at
   const diagnostic=rejected.diagnostics.find(d=>d.phase==="syntax"&&d.upstreamCode===1260);assert.ok(diagnostic,JSON.stringify(rejected));
   assert.equal(source.slice(diagnostic.primary.start,diagnostic.primary.end),argument);
 });
+
+const coldSeams = hir => [()=>verifyHir(hir),()=>printHir(hir),()=>lowerHir(hir),()=>readHir(Buffer.from(canonical(hir)+"\n"))];
+function replaceOwnedSource(hir, source) {
+  hir.source.content=source;hir.source.hash=sha256(source);
+  hir.inputScope.files.find(file=>file.path===hir.source.path).content=source;
+  hir.inputIdentity=sha256(canonical(hir.inputScope));
+}
+
+test("finite annotations preserve legal grouping, repeated members and nominal identifier spelling",async()=>{
+  for(const parameter of ["value: (i32 | undefined) = 7","value?: ((i32))",
+    "value: ((i32) | (undefined | null)) = 7","value: i32 | undefined | undefined",
+    "value: (/* outside ) */ i32 | /* ( */ undefined)",String.raw`value: (\u006932 | undefined)`]) {
+    const source=`export function entry(${parameter}): i32 { if (value === undefined) { return 8; } if (value === null) { return 9; } return value; }`;
+    const hir=await checked(source),text=printHir(hir);
+    assert.equal(printHir(readHir(Buffer.from(text))),text);lowerHir(hir);
+  }
+  const hir=await checked("export function entry(): i32 { let value: ((i32) | (null | undefined)) = null; value ??= 7; return value; }");
+  const text=printHir(hir);assert.equal(printHir(readHir(Buffer.from(text))),text);lowerHir(hir);
+});
+
+test("cold finite annotation guards retain token boundaries, payloads and union grammar",async()=>{
+  const source="export function entry(value: i32    | undefined     | null    ): i32 { if (value === undefined) { return 8; } if (value === null) { return 9; } return value; }";
+  const hir=await checked(source);
+  /** @type {Array<[string, string, number]>} */
+  const mutations=[["i32    ","i/**/32",0],["undefined     ","unde/**/fined ",0],
+    ["null    ","nu/**/ll",4],["| undefined","||undefined",0],["i32","u32",0],
+    ["undefined     ",String.raw`\u0075ndefined`,0]];
+  for(const [from,to,extend] of mutations) {
+    assert.equal(from.length,to.length);const copy=structuredClone(hir);
+    replaceOwnedSource(copy,source.replace(from,to));
+    if(extend){copy.functions[0].parameters[0].presence.annotation.end+=extend;copy.functions[0].parameters[0].presence.range.end+=extend;}
+    for(const invoke of coldSeams(copy))assert.throws(invoke);
+  }
+  for(const keyword of [String.raw`\u0075ndefined`,String.raw`\u006eull`,String.raw`\u0062oolean`,String.raw`\u006eumber`]) {
+    const result=await compileHir(await sourceInput(`export function entry(value: (${keyword})): i32 { return 7; }`),frontend());
+    assert.equal(result.status,"error");assert.ok(result.diagnostics.some(d=>d.phase==="syntax"&&d.upstreamCode===1260));
+  }
+});
+
+test("null source guards accept surrounding trivia and reject split keywords at every cold seam",async()=>{
+  for(const argument of ["null","/* outside ( ) */ null","null /* outside ( ) */","// outside ) (\nnull","( /* outside */ null )","\u2028/* outside */ null\u00a0"]) {
+    const hir=await checked(`function choose(value: i32 | null): i32 { if (value === null) { return 8; } return value; } export function entry(): i32 { return choose(${argument}); }`);
+    const text=printHir(hir);assert.equal(printHir(readHir(Buffer.from(text))),text);lowerHir(hir);
+  }
+  const source="export function entry(value: i32 | null = null    ): i32 { if (value === null) { return 8; } return value; }";
+  const hir=await checked(source),initializer=hir.functions[0].parameterInitializers[0];
+  const copy=structuredClone(hir),start=initializer.range.end-4;
+  replaceOwnedSource(copy,source.slice(0,start)+"nu/**/ll"+source.slice(start+8));
+  copy.functions[0].parameterInitializers[0].range.end+=4;copy.functions[0].parameters[0].presence.range.end+=4;
+  for(const invoke of coldSeams(copy))assert.throws(invoke);
+});
+
+test("cold updates require continuous operators and the official postfix line boundary",async()=>{
+  for(const operator of ["++","--"])for(const prefix of [true,false]) {
+    const expression=prefix?`${operator}    value`:`value${operator}    `;
+    const source=`export function entry(): i32 { let value: i32 = 1; ${expression}; return value; }`;
+    const hir=await checked(source),copy=structuredClone(hir);
+    replaceOwnedSource(copy,source.replace(`${operator}    `,`${operator[0]}/**/${operator[1]}`));
+    if(!prefix)copy.functions[0].body[1].value.range.end+=4;
+    for(const invoke of coldSeams(copy))assert.throws(invoke);
+    const control=source.replace(expression,prefix?`${operator} /* outside */ value`:`value /* outside */ ${operator}`);
+    const legal=await checked(control),text=printHir(legal);assert.equal(printHir(readHir(Buffer.from(text))),text);lowerHir(legal);
+  }
+  const source="export function entry(): i32 { let value: i32 = 1; value    ++; return value; }",hir=await checked(source);
+  for(const newline of ["\n","\r","\u2028","\u2029"]) {
+    const copy=structuredClone(hir);replaceOwnedSource(copy,source.replace("value    ++",`value${newline}   ++`));
+    for(const invoke of coldSeams(copy))assert.throws(invoke);
+  }
+  const invalid=await compileHir(await sourceInput(source.replace("value    ++","value\n   ++")),frontend());
+  assert.equal(invalid.status,"error");assert.ok(invalid.diagnostics.some(d=>d.phase==="syntax"&&d.upstreamCode===1109));
+  const prefix=await checked(source.replace("value    ++","++\nvalue"));
+  const text=printHir(prefix);assert.equal(printHir(readHir(Buffer.from(text))),text);lowerHir(prefix);
+});

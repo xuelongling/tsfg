@@ -49,10 +49,10 @@ function hasCallArgumentList(source) {
   return index >= 0 && source[index] === "(";
 }
 
-function hasOnlyToken(source, token) {
+export function hasOnlyToken(source, token) {
   const index = skipCallTrivia(source);
-  return index >= 0 && source[index] === token
-    && skipCallTrivia(source.slice(index + 1)) === source.length - index - 1;
+  return index >= 0 && source.startsWith(token, index)
+    && skipCallTrivia(source.slice(index + token.length)) === source.length - index - token.length;
 }
 
 function hasLoneSurrogate(value) {
@@ -437,7 +437,7 @@ export function validateFrontendSnapshot(snapshot) {
           || !["undefined","null"].includes(expression.absence)
           || (expression.absence === "undefined"
             ? identifierName(sourceSpan(expression.range)) !== "undefined"
-            : sourceSpan(expression.range).trim() !== "null")
+            : !hasOnlyToken(sourceSpan(expression.range), "null"))
           || expression.absence === "undefined" && scope.has("undefined"))
         throw new TypeError("absence differs from its checked builtin source");
     }

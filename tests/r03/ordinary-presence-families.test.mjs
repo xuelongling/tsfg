@@ -71,7 +71,7 @@ const families=[
 ];
 test("grouped call absences retain default selection and nullable payloads across scalar families",async()=>{
   for(const family of families)for(const optimize of [false,true]) {
-    const source=`function choose(value: ${family.type} | null = ${family.literal}): ${family.type} { if (value === null) { return ${family.zeroLiteral}; } return value; } export function missing(): ${family.type} { return choose(((undefined))); } export function nullable(): ${family.type} { return choose(((null))); } export function present(): ${family.type} { return choose(((${family.zeroLiteral}))); }`;
+    const source=`function choose(value: ((${family.type}) | null) = ${family.literal}): ${family.type} { if (value === null) { return ${family.zeroLiteral}; } return value; } export function missing(): ${family.type} { return choose(((undefined))); } export function nullable(): ${family.type} { return choose(((null))); } export function present(): ${family.type} { return choose(((${family.zeroLiteral}))); }`;
     const input=await sourceInput(source),session=createCompilerSession({...tools(),optimize});
     for(const program of [await compileProgram(input,{...tools(),optimize}),await session.compile(input)]) {
       assert.equal(program.status,"ok",JSON.stringify({source,program}));
@@ -79,6 +79,32 @@ test("grouped call absences retain default selection and nullable payloads acros
       const actual=await runBytecode(program.bytecode,{...tools(),requests:names.map(name=>({functionId:program.hir.functions.find(fn=>fn.name===name).id,arguments:[],depth:16}))});
       assert.deepEqual(actual.map(row=>row.status),names.map(()=>"returned"));
       assert.deepEqual(actual.map(row=>row.result),[family.seven,family.zero,family.zero].map(value=>({type:family.type,value})));
+    }
+  }
+});
+
+test("grouped optional and local finite annotations preserve raw payloads in both modes",async()=>{
+  for(const family of families)for(const optimize of [false,true]) {
+    const source=`function optional(value?: ((${family.type}))): ${family.type} { if (value === undefined) { return ${family.literal}; } return value; } function local(): ${family.type} { let value: ((${family.type}) | (null | undefined)) = null; value ??= ${family.literal}; return value; } export function missing(): ${family.type} { return optional(); } export function present(): ${family.type} { return optional(${family.zeroLiteral}); } export function localized(): ${family.type} { return local(); }`;
+    const input=await sourceInput(source),session=createCompilerSession({...tools(),optimize});
+    for(const program of [await compileProgram(input,{...tools(),optimize}),await session.compile(input)]) {
+      assert.equal(program.status,"ok",JSON.stringify({source,program}));
+      const names=["missing","present","localized"];
+      const actual=await runBytecode(program.bytecode,{...tools(),requests:names.map(name=>({functionId:program.hir.functions.find(fn=>fn.name===name).id,arguments:[],depth:16}))});
+      assert.deepEqual(actual.map(row=>row.status),names.map(()=>"returned"));
+      assert.deepEqual(actual.map(row=>row.result),[family.seven,family.zero,family.seven].map(value=>({type:family.type,value})));
+    }
+  }
+});
+
+test("null surrounding trivia suppresses trapping defaults and preserves nullable values",async()=>{
+  for(const argument of ["/* outside ( ) */ null","// outside ) (\nnull","\u2028/* outside */ null\u00a0"])for(const optimize of [false,true]) {
+    const source=`function fail(): i32 { return 1 / 0; } function choose(value: ((i32) | (null | undefined)) = fail()): i32 { if (value === null) { return 8; } if (value === undefined) { return 9; } return value; } export function entry(): i32 { return choose(${argument}); }`;
+    const input=await sourceInput(source),session=createCompilerSession({...tools(),optimize});
+    for(const program of [await compileProgram(input,{...tools(),optimize}),await session.compile(input)]) {
+      assert.equal(program.status,"ok",JSON.stringify({source,program}));
+      const actual=await runBytecode(program.bytecode,{...tools(),requests:[{functionId:program.hir.functions.find(fn=>fn.name==="entry").id,arguments:[],depth:16}]});
+      assert.equal(actual[0].status,"returned");assert.deepEqual(actual[0].result,{type:"i32",value:"8"});
     }
   }
 });

@@ -1,5 +1,5 @@
 // SPDX-License-Identifier: MIT
-import { validateFrontendSnapshot, resolveType, resolveSymbol, identifierName, localReferenceTarget, expressionLeaf } from "./frontend.mjs";
+import { validateFrontendSnapshot, resolveType, resolveSymbol, identifierName, localReferenceTarget, expressionLeaf, hasOnlyToken } from "./frontend.mjs";
 import { canonical, functionIdentity, signatureHash, i32TypeId, boolTypeId, scalarTypeIds, scalarName, integerNames, integerRange, own, sha256 } from "./identity.mjs";
 import registry from "../contracts/registry.json" with { type: "json" };
 import bytecodeSchema from "../contracts/bytecode.schema.json" with { type: "json" };
@@ -225,7 +225,7 @@ function verifyExpression(value, parent, source, fail, budget, locals, visibleBi
   } else if (value.kind === "absence") {
     if (!exactKeys(value,["kind","type","range","absence"]) || !["undefined","null"].includes(value.absence)
         || (value.absence === "undefined" ? identifierToken(source,value.range) !== "undefined"
-          : sourceTokens(source,value.range.start,value.range.end) !== "null")
+          : !hasOnlyToken(source.slice(value.range.start,value.range.end), "null"))
         || value.absence === "undefined" && visibleBindings.has("undefined")
         || !(allowedStates & (value.absence === "undefined" ? 2 : 4))) fail();
   } else if (value.kind === "presenceTest") {
@@ -248,8 +248,11 @@ function verifyExpression(value, parent, source, fail, budget, locals, visibleBi
         || !["++", "--"].includes(value.operator) || typeof value.prefix !== "boolean"
         || !target || value.type !== value.operand.type
         || !locals.get(target.binding)?.writable || !integerType(value.type) && !floatType(value.type)
-        || sourceTokens(source, value.range.start, value.operand.range.start) !== (value.prefix ? value.operator : "")
-        || sourceTokens(source, value.operand.range.end, value.range.end) !== (value.prefix ? "" : value.operator)) fail();
+        || (value.prefix ? !scalarOperator(source, value.range.start, value.operand.range.start, value.operator)
+          : sourceTokens(source, value.range.start, value.operand.range.start) !== "")
+        || (value.prefix ? sourceTokens(source, value.operand.range.end, value.range.end) !== ""
+          : !scalarOperator(source, value.operand.range.end, value.range.end, value.operator)
+            || /[\r\n\u2028\u2029]/.test(source.slice(value.operand.range.end, value.range.end)))) fail();
     verifyExpression(value.operand, value.range, source, fail, budget, locals, visibleBindings);
   } else if (value.kind === "write") {
     const target = localReferenceTarget(value.left), local = locals.get(target?.binding);
