@@ -2,6 +2,14 @@
 
 # tsfg.hir 0.10.0
 
+M10 includes ordinary scalar assignment, compound/update results and bool/nullish
+short circuit assignment; see docs/r03-ordinary-expressions.md. Bare locals own
+a canonical zero payload and private undefined state before assignment. Owned
+definite initialization gates ordinary reads; `??=` safely initializes the
+absent path. Default/coalescing targets use official declared annotation
+members, separately from incoming parameter omission masks and narrowed reads.
+Every local state and phi/transfer slot contributes to Runtime memory accounting.
+
 `createCompilerSession` reuses owned HIR/Core/R04 output only for an unchanged
 checked Snapshot identity, compiler input fingerprint and source-built producer
 binary. It checks the official frontend on every input. A changed function

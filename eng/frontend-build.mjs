@@ -12,13 +12,33 @@ const sha256 = bytes => `sha256:${createHash("sha256").update(bytes).digest("hex
 
 export class FrontendBuildError extends Error {}
 
-function run(executable, args, cwd, env, input = undefined) {
-  const child = spawnSync(executable, args, { cwd, env, input, encoding: "utf8", windowsHide: true,
+async function run(executable, args, cwd, env, evidence, executions, input = undefined) {
+  const before = sha256(await readFile(executable)), startedUtc = new Date().toISOString();
+  const child = spawnSync(executable, args, { cwd, env, input, windowsHide: true,
     timeout: 300000, maxBuffer: 64 * 1024 * 1024 });
-  if (child.error || child.status !== 0) {
-    throw new FrontendBuildError(`${path.basename(executable)} ${args[0]} failed: ${child.error?.message ?? child.stderr}`);
+  const prefix = String(executions.length).padStart(3, "0");
+  const streams = { stdin: input === undefined ? Buffer.alloc(0) : Buffer.from(input),
+    stdout: child.stdout ?? Buffer.alloc(0), stderr: child.stderr ?? Buffer.alloc(0) };
+  const raw = {};
+  for (const [name, bytes] of Object.entries(streams)) {
+    const file = path.join(evidence, `${prefix}-${name}.bin`);
+    await writeFile(file, bytes); raw[name] = { path: file, sha256: sha256(bytes), byteLength: bytes.length };
   }
-  return child.stdout;
+  const after = sha256(await readFile(executable));
+  const environmentKeys = ["HOME", "USERPROFILE", "APPDATA", "LOCALAPPDATA", "TEMP", "TMP", "TMPDIR",
+    "GOCACHE", "GOMODCACHE", "GOPATH", "GOPROXY", "GOSUMDB", "GOENV", "GOWORK", "GOTOOLCHAIN",
+    "GOFLAGS", "GOMAXPROCS", "GOEXPERIMENT", "GOOS", "GOARCH", "GOAMD64", "CGO_ENABLED",
+    "GIT_CONFIG_NOSYSTEM", "GIT_CONFIG_GLOBAL", "SOURCE_DATE_EPOCH"];
+  executions.push({ executable, arguments: args, cwd, pid: child.pid, status: child.status, signal: child.signal,
+    startedUtc, finishedUtc: new Date().toISOString(), executableBefore: before, executableAfter: after,
+    environment: Object.fromEntries(environmentKeys.filter(key => env[key] !== undefined).map(key => [key, env[key]])),
+    raw, ...(child.error ? { error: { code: "code" in child.error ? child.error.code : null, message: child.error.message } } : {}) });
+  await writeFile(path.join(evidence, "executions.json"), `${JSON.stringify(executions)}\n`);
+  if (before !== after) throw new FrontendBuildError("frontend child executable changed during execution");
+  if (child.error || child.status !== 0) {
+    throw new FrontendBuildError(`${path.basename(executable)} ${args[0]} failed: ${child.error?.message ?? child.stderr?.toString("utf8")}`);
+  }
+  return child.stdout.toString("utf8");
 }
 
 function parsePackages(text) {
@@ -52,19 +72,24 @@ export async function executeFrontendTarget({ command, productRoot, sourceRoot, 
   }
   if (lock.schemaVersion !== "1"
       || lock.languageBaseline !== "TypeScript 7.0.2") throw new FrontendBuildError("invalid frontend source lock");
+  const tempRoot = await realpath(tmpdir());
+  if (!/^E:\\/i.test(tempRoot)) throw new FrontendBuildError("frontend temporary root must be on E:");
+  const executionEvidence = await mkdtemp(path.join(tempRoot, "tsfg-frontend-evidence-"));
+  const executions = [], launch = (executable, args, cwd, env, input = undefined) =>
+    run(executable, args, cwd, env, executionEvidence, executions, input);
   const gitEnv = sourceGitEnvironment();
-  const head = run(git, ["rev-parse", "HEAD"], sourceRoot, gitEnv).trim();
-  const status = run(git, ["status", "--porcelain=v1", "--untracked-files=all"], sourceRoot, gitEnv).trim();
+  const head = (await launch(git, ["rev-parse", "HEAD"], sourceRoot, gitEnv)).trim();
+  const status = (await launch(git, ["status", "--porcelain=v1", "--untracked-files=all"], sourceRoot, gitEnv)).trim();
   if (head !== lock.forkOid || status) throw new FrontendBuildError("frontend fork identity is not clean and locked");
-  if (run(git, ["remote", "get-url", "origin"], sourceRoot, gitEnv).trim() !== lock.remoteUrl
-      || run(git, ["symbolic-ref", "HEAD"], sourceRoot, gitEnv).trim() !== lock.sourceBranch
+  if ((await launch(git, ["remote", "get-url", "origin"], sourceRoot, gitEnv)).trim() !== lock.remoteUrl
+      || (await launch(git, ["symbolic-ref", "HEAD"], sourceRoot, gitEnv)).trim() !== lock.sourceBranch
       || lock.canonicalUrl !== "https://github.com/microsoft/TypeScript.git"
       || lock.license !== "Apache-2.0") {
     throw new FrontendBuildError("frontend fork provenance differs from its lock");
   }
-  run(git, ["merge-base", "--is-ancestor", lock.upstreamBaseOid, "HEAD"], sourceRoot, gitEnv);
-  const localModifications = new Set(run(git, ["diff", "--name-only", `${lock.upstreamBaseOid}...HEAD`],
-    sourceRoot, gitEnv).trim().split(/\r?\n/).filter(Boolean));
+  await launch(git, ["merge-base", "--is-ancestor", lock.upstreamBaseOid, "HEAD"], sourceRoot, gitEnv);
+  const localModifications = new Set((await launch(git, ["diff", "--name-only", `${lock.upstreamBaseOid}...HEAD`],
+    sourceRoot, gitEnv)).trim().split(/\r?\n/).filter(Boolean));
   if (!localModifications.has(lock.producerPath)
       || sha256(await readFile(path.join(sourceRoot, "UPSTREAM.toml"))) !== lock.upstreamTomlSha256) {
     throw new FrontendBuildError("frontend local modification or provenance bytes differ from lock");
@@ -82,8 +107,6 @@ export async function executeFrontendTarget({ command, productRoot, sourceRoot, 
   await stat(out).then(() => { throw new FrontendBuildError("frontend output already exists"); }, error => {
     if (error.code !== "ENOENT") throw error;
   });
-  const tempRoot = await realpath(tmpdir());
-  if (!/^E:\\/i.test(tempRoot)) throw new FrontendBuildError("frontend temporary root must be on E:");
   const stage = await mkdtemp(path.join(tempRoot, "tsfg-frontend-"));
   try {
     await mkdir(out, { recursive: true });
@@ -97,9 +120,17 @@ export async function executeFrontendTarget({ command, productRoot, sourceRoot, 
       GOSUMDB: "off", GOENV: "off", GOWORK: "off", GOTOOLCHAIN: "local", GOFLAGS: "-p=1", GOMAXPROCS: "2",
       GOEXPERIMENT: "", GOOS: "windows", GOARCH: "amd64", GOAMD64: "v2", CGO_ENABLED: "0",
     };
-    const goList = run(go, ["list", "-deps", "-json", "-mod=readonly", "-buildvcs=false", "./cmd/tsfg-frontend"],
+    await launch(go, ["telemetry", "off"], path.join(sourceRoot, "tsc"), env);
+    const goEnvironment = JSON.parse(await launch(go, ["env", "-json", "GOENV", "GOTOOLCHAIN", "GOCACHE", "GOMODCACHE", "GOPATH", "GOPROXY", "GOSUMDB", "GOTELEMETRY", "GOTELEMETRYDIR"], path.join(sourceRoot, "tsc"), env));
+    const withinStage = value => { const relative = path.relative(stage, value); return relative && relative !== ".." && !relative.startsWith(`..${path.sep}`) && !path.isAbsolute(relative); };
+    if (goEnvironment.GOENV !== "" || goEnvironment.GOTOOLCHAIN !== "local" || goEnvironment.GOSUMDB !== "off"
+        || goEnvironment.GOPROXY !== env.GOPROXY || goEnvironment.GOTELEMETRY !== "off"
+        || ["GOCACHE", "GOMODCACHE", "GOPATH", "GOTELEMETRYDIR"].some(key => !withinStage(goEnvironment[key]))) {
+      throw new FrontendBuildError("frontend Go stage environment differs from the closed task profile");
+    }
+    const goList = await launch(go, ["list", "-deps", "-json", "-mod=readonly", "-buildvcs=false", "./cmd/tsfg-frontend"],
       path.join(sourceRoot, "tsc"), env);
-    const goRoot = run(go, ["env", "GOROOT"], path.join(sourceRoot, "tsc"), env).trim();
+    const goRoot = (await launch(go, ["env", "GOROOT"], path.join(sourceRoot, "tsc"), env)).trim();
     if (path.resolve(goRoot) !== path.resolve(go, "../..")) {
       throw new FrontendBuildError("Go standard library is not from the locked toolchain");
     }
@@ -173,17 +204,18 @@ export async function executeFrontendTarget({ command, productRoot, sourceRoot, 
     const buildInputSet = { schemaVersion: "1", entries: [...upstreamEntries, ...productEntries, ...auxiliaryEntries]
       .sort((a, b) => `${a.projectId}/${a.path}`.localeCompare(`${b.projectId}/${b.path}`)) };
     const inputDigest = sha256(serialize(buildInputSet));
+    await writeFile(path.join(executionEvidence, "build-inputs.json"), `${serialize(buildInputSet)}\n`);
     await writeFile(path.join(out, "go-list.jsonstream"), goList);
     const args = ["build", "-mod=readonly", "-buildvcs=false", "-pgo=off", "-trimpath",
       "-gcflags=all=-N -l", "-o", executable, "./cmd/tsfg-frontend"];
-    run(go, args, path.join(sourceRoot, "tsc"), env);
+    await launch(go, args, path.join(sourceRoot, "tsc"), env);
     const binarySha256 = sha256(await readFile(executable));
     if (binarySha256 !== lock.executableSha256) {
       throw new FrontendBuildError("frontend executable differs from locked build bytes");
     }
     let testOutput;
     if (command === "test") {
-      testOutput = run(node, ["--test", "tests/r02b/frontend.test.mjs"], productRoot,
+      testOutput = await launch(node, ["--test", "tests/r02b/frontend.test.mjs"], productRoot,
         { ...env, TSFG_FRONTEND_EXE: executable });
     }
     for (const entry of upstreamEntries) {
@@ -197,6 +229,10 @@ export async function executeFrontendTarget({ command, productRoot, sourceRoot, 
       if (sha256(await readFile(item.file)) !== entry.sha256) {
         throw new FrontendBuildError(`Go tool or module input changed during build: ${item.projectId}/${item.path}`);
       }
+    }
+    if ((await launch(git, ["rev-parse", "HEAD"], sourceRoot, gitEnv)).trim() !== head
+        || (await launch(git, ["status", "--porcelain=v1", "--untracked-files=all"], sourceRoot, gitEnv)).trim()) {
+      throw new FrontendBuildError("frontend source identity changed during build");
     }
     const intakeLedger = { schemaVersion: "1", status: "verified", evidenceKind: "real-source",
       projectId: "TypeScript.git", forkOid: head, upstreamBaseOid: lock.upstreamBaseOid,
@@ -213,6 +249,9 @@ export async function executeFrontendTarget({ command, productRoot, sourceRoot, 
       toolchainClosureDigest: runtime.lockDigest, dependencyProxyIdentity: dependencyProxy.identity,
       buildInputSet, buildInputSetDigest: inputDigest, intakeLedger,
       executable, executableSha256: binarySha256,
+      // Dynamic process evidence is report-only and excluded from the canonical
+      // input-set digest, intake ledger and executable identity.
+      executionEvidence, executions, goEnvironment,
       ...(testOutput === undefined ? {} : { tests: { status: "passed", command: "node --test tests/r02b/frontend.test.mjs", output: testOutput } }),
       executionMode: "local-development", isolation: "not-enforced" };
   } finally {

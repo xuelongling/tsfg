@@ -2,6 +2,14 @@
 
 # FrontendSnapshot 0.10.0
 
+M10's official producer emits ordinary scalar write/update facts including
+`??=`. The official checker returns declared members for definite assignment
+targets and narrowed members for ordinary reads. Default parameters distinguish
+their annotation's members from incoming omission. Bare local `??=` is accepted
+by official definite-assignment checking; ordinary uninitialized reads retain
+their official diagnostic. See docs/r03-ordinary-expressions.md for ownership,
+canonical initialization and execution boundaries.
+
 `tsfg.frontend-snapshot` is an exact-match development contract. The producer is
 `analyzeFrontend`; the consumer is `validateFrontendSnapshot` and the typed
 reference resolvers in `compiler/frontend.mjs`. The machine schema is

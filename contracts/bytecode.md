@@ -2,6 +2,12 @@
 
 # tsfg.bytecode 0.10.0
 
+Bare local initialization uses a zero payload and private counted i32 state
+without changing public parameter masks. Nullish assignment tests the state
+before RHS effects and merges both slots. Verified ordinary payload use requires
+definite initialization and presence; every caller/callee/state/phi/transfer
+slot is charged to the unchanged 16384-byte default request budget.
+
 This exact, same-repository development format is the formal R04 compiler to
 Zig Runtime seam. It has no published or supported older external consumer.
 Producer, loader and registry change atomically; old wire/schema/Core identities

@@ -6,7 +6,7 @@ import test from "node:test";
 
 const executable = process.env.TSFG_CORE_IR_EXE;
 const sha = value => createHash("sha256").update(value).digest("hex");
-const schema = "e847905d8da4932523997659c12526b5512fe0525b541b85ec8a60518d7c5942";
+const schema = "6e1a281d385887750208b8ff69339e91407811128ce7ef3e68b43d3b0663c0b8";
 const signature = sha("tsfg.signature\0()->i32");
 const source = (body, extra = "") => `module attributes {
   tsfg_core.version = "0.10.0", tsfg_core.bytecode_schema = "sha256:${schema}",

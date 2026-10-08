@@ -40,7 +40,7 @@ function packet(options={}) {
       instruction(options.calleeFuel??26,0,0,1,200,300),instruction(2,2,1,0,250,260),
     ]),
   ]);
-  return Buffer.concat([Buffer.from("TSFGTBC0"),u32(10),Buffer.from("e847905d8da4932523997659c12526b5512fe0525b541b85ec8a60518d7c5942","hex"),u32(80+payload.length),hash(payload),payload]);
+  return Buffer.concat([Buffer.from("TSFGTBC0"),u32(10),Buffer.from("6e1a281d385887750208b8ff69339e91407811128ce7ef3e68b43d3b0663c0b8","hex"),u32(80+payload.length),hash(payload),payload]);
 }
 function invoke(bytes,args=[]) {
   assert.match(process.env.TSFG_VM_EXE,/^E:[\\/]/i);

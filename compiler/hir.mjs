@@ -57,6 +57,7 @@ function expressionStates(value, locals) {
   if (value.kind === "absence") return value.absence === "undefined" ? 2 : 4;
   if (value.kind === "group") return expressionStates(value.operand, locals);
   if (value.kind === "write" && value.operator === "=") return expressionStates(value.right, locals);
+  if (value.kind === "write" && value.operator === "??=") return locals.get(value.left.binding)?.states ?? 1;
   return 1;
 }
 function narrowLocals(locals, value, truth) {
@@ -145,7 +146,7 @@ function verifyExpression(value, parent, source, fail, budget, locals, visibleBi
   } else if (value.kind === "write") {
     const target = value.left, local = locals.get(target?.binding);
     if (!exactKeys(value, ["kind", "type", "range", "operator", "left", "right"])
-        || !["=", "+=", "-=", "*=", "/=", "%=", "<<=", ">>=", ">>>=", "&=", "|=", "^=", "&&=", "||="].includes(value.operator)
+        || !["=", "+=", "-=", "*=", "/=", "%=", "<<=", ">>=", ">>>=", "&=", "|=", "^=", "&&=", "||=", "??="].includes(value.operator)
         || !exactKeys(target, ["kind", "type", "binding", "range", ...(hasState(local?.presence) ? ["presenceFlow"] : [])]) || target.kind !== "reference"
         || !local?.writable || visibleBindings.get(local.name) !== target.binding
         || target.type !== local.type || value.type !== local.type
@@ -156,20 +157,30 @@ function verifyExpression(value, parent, source, fail, budget, locals, visibleBi
         || !scalarOperator(source, target.range.end, value.right.range.start, value.operator)
         || sourceTokens(source, value.right.range.end, value.range.end) !== "") fail();
     if (hasState(local.presence) && !validPresenceFlow(target.presenceFlow,local.presence)) fail();
-    if (value.operator !== "=") {
+    if (value.operator === "??=") {
+      // The official checker classifies coalescing assignment as a definite
+      // target and returns its declared members, independently of read flow.
+      const targetStates=hasState(local.presence) ? annotationStates(local.presence,source) | (local.presence.optional && !local.presence.default ? 2 : 0) : 1;
+      if (hasState(local.presence) && (target.presenceFlow.undefined !== Boolean(targetStates & 2) || target.presenceFlow.null !== Boolean(targetStates & 4))) fail();
+    }
+    else if (value.operator !== "=") {
       if (["&&=", "||="].includes(value.operator) ? local.type !== boolTypeId
           : !integerType(local.type) && !(floatType(local.type) && ["+=", "-=", "*=", "/=", "%="].includes(value.operator))) fail();
       verifyExpression(target, value.range, source, fail, budget, locals, visibleBindings);
     }
-    const conditionalWrite = ["&&=", "||="].includes(value.operator);
+    const nullish = value.operator === "??=", previousStates=local.states;
+    const conditionalWrite = ["&&=", "||=", "??="].includes(value.operator);
     const rightLocals = conditionalWrite ? new Map([...locals].map(([id, item]) => [id, { ...item }])) : locals;
-    verifyExpression(value.right, value.range, source, fail, budget, rightLocals, visibleBindings,value.operator === "=" ? declaredStates(local.presence) : 1);
+    if (nullish) rightLocals.get(target.binding).states &= 6;
+    verifyExpression(value.right, value.range, source, fail, budget, rightLocals, visibleBindings,value.operator === "=" || nullish ? declaredStates(local.presence) : 1);
     if (conditionalWrite) for (const [id,binding] of locals) {
       binding.initialized &&= rightLocals.get(id).initialized;
       binding.states |= rightLocals.get(id).states;
     }
     local.initialized = true;
-    local.states = conditionalWrite ? 1 : expressionStates(value.right,rightLocals);
+    local.states = nullish ? (previousStates & 1) | (previousStates & 6 ? expressionStates(value.right,rightLocals) : 0)
+      : conditionalWrite ? 1 : expressionStates(value.right,rightLocals);
+    if (local.states & ~allowedStates) fail();
   } else if (value.kind === "conversion") {
     const entry = conversionEntries.get(value.origin?.entryId);
     if (!exactKeys(value, ["kind", "type", "range", "origin", "operand"]) || !verifyConversionOrigin(value.origin, budget.inputIdentity)
@@ -369,7 +380,8 @@ export function verifyHir(hir) {
           if (value.type !== binding.type || !binding.presence && !["=", ...annotations.map(item => `${item}=`)].includes(annotation)
               || sourceTokens(source, value.range.end, statement.range.end) !== "") fail();
         } else if (!binding.writable || !binding.presence && !annotations.includes(sourceTokens(source, binding.range.end, statement.range.end))) fail();
-        locals.set(binding.id, { ...binding, initialized: value !== null, states: value ? expressionStates(value,locals) : 1 });
+        locals.set(binding.id, { ...binding, initialized: value !== null || binding.presence?.undefined === true,
+          states: value ? expressionStates(value,locals) : 2 });
         names.add(binding.name); ids.add(binding.id);
       } else {
         declarationKind = undefined;
@@ -634,6 +646,16 @@ export function lowerHir(hir) {
     `tsfg_core.source_length = ${verified.source.content.length} : i64`];
   const lowerFunction = fn => {
   const blocks = [], bindingTypes = new Map(), bindingStates = new Map();
+  // Bare locals have a private, canonical undefined initial state even when
+  // their annotation excludes undefined. This flag never changes parameter
+  // membership or the public ABI; verified reads require initialization.
+  const bareLocals=new Set();
+  const collectBare=statements=>{for(const statement of statements){
+    if(statement.kind === "local" && !statement.initializer) bareLocals.add(statement.binding.id);
+    else if(statement.kind === "if") {collectBare(statement.thenBody);collectBare(statement.elseBody);}
+    else if(["block","while"].includes(statement.kind))collectBare(statement.body);
+  }};
+  collectBare(fn.body);
   let valueIndex = 0, current, definitions = new Map(), declared = new Set();
   const coreType = type => type === i32TypeId ? "i32" : type === boolTypeId ? "i1" : floatType(type) ? scalarName(type) : `!tsfg_core.integer<${quote(scalarName(type))}>`;
   const newBlock = (parameterTypes = []) => {
@@ -671,7 +693,7 @@ export function lowerHir(hir) {
     return name;
   };
   const represent = expression => expression.kind === "group" ? represent(expression.operand)
-    : expression.kind === "write" && expression.operator === "=" ? (emit(expression),definitions.get(expression.left.binding))
+    : expression.kind === "write" && ["=","??="].includes(expression.operator) ? (emit(expression),definitions.get(expression.left.binding))
     : expression.kind === "reference" ? definitions.get(expression.binding)
     : expression.kind === "absence" ? {payload:scalarConstant(expression.type,"0",expression.range),state:scalarConstant(i32TypeId,expression.absence === "undefined" ? "1" : "2",expression.range)}
       : {payload:emit(expression),state:null};
@@ -696,6 +718,21 @@ export function lowerHir(hir) {
       return expression.prefix ? next : old;
     }
     if (expression.kind === "write") {
+      if (expression.operator === "??=") {
+        const old=definitions.get(expression.left.binding);
+        if (!bindingStates.get(expression.left.binding)) return old.payload;
+        const incoming=new Map(definitions), keys=[...incoming.keys()];
+        const zero=scalarConstant(i32TypeId,"0",expression.left.range), condition=`%v${valueIndex++}`;
+        current.lines.push(`    ${condition} = "tsfg_core.ne"(${old.state}, ${zero}) {${attrsFor(expression.range)}} : (i32, i32) -> i1`);
+        const rhs=newBlock(),shortcut=newBlock(),join=newBlock(flatTypes(keys));
+        conditional(condition,rhs,shortcut,expression.range);
+        current=shortcut;branch(join,flatValues(keys,incoming),expression.range);
+        current=rhs;definitions=new Map(incoming);
+        store(expression.left.binding,represent(expression.right),expression.range);
+        branch(join,flatValues(keys,definitions),expression.range);
+        current=join;definitions=fromParameters(keys,join.parameters);
+        return definitions.get(expression.left.binding).payload;
+      }
       if (["&&=", "||="].includes(expression.operator)) {
         const value = emit({ kind:"shortCircuit", type:boolTypeId, operator:expression.operator.slice(0,-1), left:expression.left,
           right:{...expression, operator:"="}, range:expression.range });
@@ -764,8 +801,10 @@ export function lowerHir(hir) {
       if (statement.kind === "local") {
         bindingTypes.set(statement.binding.id, statement.binding.type);
         declared.add(statement.binding.id);
-        bindingStates.set(statement.binding.id,hasState(statement.binding.presence));
+        bindingStates.set(statement.binding.id,hasState(statement.binding.presence) || bareLocals.has(statement.binding.id));
         if (statement.initializer) store(statement.binding.id,represent(statement.initializer),statement.range);
+        else store(statement.binding.id,
+          {payload:scalarConstant(statement.binding.type,"0",statement.range),state:scalarConstant(i32TypeId,"1",statement.range)},statement.range);
       } else if (statement.kind === "assign") store(statement.target.binding,represent(statement.value),statement.range);
       else if (statement.kind === "evaluate") emit(statement.value);
       else if (statement.kind === "return") {

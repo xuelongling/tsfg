@@ -436,7 +436,7 @@ export function validateFrontendSnapshot(snapshot) {
       if (Object.keys(expression).sort().join(",") !== "kind,left,node,operator,range,right,type,typeRef"
           || left?.kind !== "reference" || !symbol.writable
           || !["local", "parameter"].includes(symbol.kind)
-          || !["=", "+=", "-=", "*=", "/=", "%=", "<<=", ">>=", ">>>=", "&=", "|=", "^=", "&&=", "||="].includes(expression.operator)
+          || !["=", "+=", "-=", "*=", "/=", "%=", "<<=", ">>=", ">>>=", "&=", "|=", "^=", "&&=", "||=", "??="].includes(expression.operator)
           || expression.type !== symbol.type || expression.right?.type !== (["<<=", ">>=", ">>>="].includes(expression.operator) ? "i32" : symbol.type))
         throw new TypeError("write differs from its checked local binding or types");
     }

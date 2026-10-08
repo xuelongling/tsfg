@@ -1,0 +1,257 @@
+{
+  "qualification": "Independent literal expectations authored before nullish HIR lowering and VM execution; no execution credit.",
+  "cases": [
+    {
+      "name": "undefined-selects-write",
+      "source": "export function entry(): i32 { let value: i32 | undefined = undefined; return value ??= 4; }",
+      "expected": {
+        "kind": "returned",
+        "type": "i32",
+        "value": "4"
+      }
+    },
+    {
+      "name": "null-selects-write",
+      "source": "export function entry(): i32 { let value: i32 | null = null; return value ??= 5; }",
+      "expected": {
+        "kind": "returned",
+        "type": "i32",
+        "value": "5"
+      }
+    },
+    {
+      "name": "zero-skips-trapping-rhs",
+      "source": "export function entry(): i32 { let value: i32 | undefined = 0; return value ??= 1 / 0; }",
+      "expected": {
+        "kind": "returned",
+        "type": "i32",
+        "value": "0"
+      }
+    },
+    {
+      "name": "false-skips-write",
+      "source": "export function entry(): bool { let value: bool | null = false; return value ??= true; }",
+      "expected": {
+        "kind": "returned",
+        "type": "bool",
+        "value": false
+      }
+    },
+    {
+      "name": "rhs-once-and-result",
+      "source": "export function entry(): i32 { let value: i32 | undefined = undefined; let count: i32 = 3; let result: i32 = value ??= count++; return value * 100 + result * 10 + count; }",
+      "expected": {
+        "kind": "returned",
+        "type": "i32",
+        "value": "334"
+      }
+    },
+    {
+      "name": "nested-rhs-write",
+      "source": "export function entry(): i32 { let value: i32 | null = null; return value ??= (value = 8); }",
+      "expected": {
+        "kind": "returned",
+        "type": "i32",
+        "value": "8"
+      }
+    },
+    {
+      "name": "present-skips-counter",
+      "source": "export function entry(): i32 { let value: i32 | undefined = 9; let count: i32 = 3; value ??= count++; return value * 10 + count; }",
+      "expected": {
+        "kind": "returned",
+        "type": "i32",
+        "value": "93"
+      }
+    },
+    {
+      "name": "absent-rhs-traps",
+      "source": "export function entry(): i32 { let value: i32 | undefined = undefined; return value ??= 1 / 0; }",
+      "expected": {
+        "kind": "trap",
+        "code": "r01-t-divide-zero",
+        "ruleId": "r01-division",
+        "sourceExpression": "1 / 0"
+      }
+    },
+    {
+      "name": "undefined-rhs-retains-state",
+      "source": "function choose(value?: i32): i32 { if (value === undefined) { return 17; } return value; } export function entry(): i32 { let value: i32 | undefined = undefined; return choose(value ??= undefined); }",
+      "expected": {
+        "kind": "returned",
+        "type": "i32",
+        "value": "17"
+      }
+    },
+    {
+      "name": "null-rhs-retains-state",
+      "source": "function choose(value: i32 | null): i32 { if (value === null) { return 22; } return value; } export function entry(): i32 { let value: i32 | null | undefined = undefined; return choose(value ??= null); }",
+      "expected": {
+        "kind": "returned",
+        "type": "i32",
+        "value": "22"
+      }
+    },
+    {
+      "name": "loop-flow",
+      "source": "function choose(value?: i32): i32 { while (value === undefined) { value ??= 4; } return value; } export function entry(): i32 { return choose(); }",
+      "expected": {
+        "kind": "returned",
+        "type": "i32",
+        "value": "4"
+      }
+    },
+    {
+      "name": "shadow-scope",
+      "source": "export function entry(): i32 { let value: i32 | undefined = undefined; if (true) { let value: i32 | null = null; value ??= 8; } return value ??= 5; }",
+      "expected": {
+        "kind": "returned",
+        "type": "i32",
+        "value": "5"
+      }
+    },
+    {
+      "name": "recursive-call-rhs",
+      "source": "function walk(n: i32 = 3): i32 { if (n === 0) { return 2; } let value: i32 | undefined = undefined; value ??= walk(n - 1); return value + 1; } export function entry(): i32 { return walk(); }",
+      "expected": {
+        "kind": "returned",
+        "type": "i32",
+        "value": "5"
+      }
+    },
+    {
+      "name": "undefined-noinitializer-canonical",
+      "source": "export function entry(): i32 { let value: i32 | undefined; return value ??= 7; }",
+      "expected": {
+        "kind": "returned",
+        "type": "i32",
+        "value": "7"
+      }
+    },
+    {
+      "name": "const-left-reject",
+      "source": "export function entry(): i32 { const value: i32 | undefined = undefined; return value ??= 7; }",
+      "expected": {
+        "kind": "diagnostic",
+        "upstreamCode": 2588
+      }
+    },
+    {
+      "name": "wrong-payload-reject",
+      "source": "export function entry(): i32 { let value: i32 | undefined = undefined; let other: f64 = 2.0; return value ??= other; }",
+      "expected": {
+        "kind": "diagnostic",
+        "upstreamCode": 2322
+      }
+    },
+    {
+      "name": "plain-uninitialized-left-initializes",
+      "source": "export function entry(): i32 { let value: i32; return value ??= 7; }",
+      "expected": {
+        "kind": "returned",
+        "type": "i32",
+        "value": "7"
+      }
+    },
+    {
+      "name": "null-only-uninitialized-left-initializes",
+      "source": "export function entry(): i32 { let value: i32 | null; return value ??= 7; }",
+      "expected": {
+        "kind": "returned",
+        "type": "i32",
+        "value": "7"
+      }
+    },
+    {
+      "name": "plain-condition-unassigned",
+      "source": "export function entry(flag: bool): i32 { let value: i32; if (flag) { value = 8; } value ??= 7; return value; }",
+      "arguments": [
+        false
+      ],
+      "expected": {
+        "kind": "returned",
+        "type": "i32",
+        "value": "7"
+      }
+    },
+    {
+      "name": "plain-condition-assigned",
+      "source": "export function entry(flag: bool): i32 { let value: i32; if (flag) { value = 8; } value ??= 7; return value; }",
+      "arguments": [
+        true
+      ],
+      "expected": {
+        "kind": "returned",
+        "type": "i32",
+        "value": "8"
+      }
+    },
+    {
+      "name": "null-only-condition-unassigned",
+      "source": "export function entry(flag: bool): i32 { let value: i32 | null; if (flag) { value = 8; } value ??= 7; return value; }",
+      "arguments": [
+        false
+      ],
+      "expected": {
+        "kind": "returned",
+        "type": "i32",
+        "value": "7"
+      }
+    },
+    {
+      "name": "plain-already-assigned-skips-rhs",
+      "source": "export function entry(): i32 { let value: i32; value = 0; return value ??= 1 / 0; }",
+      "expected": {
+        "kind": "returned",
+        "type": "i32",
+        "value": "0"
+      }
+    },
+    {
+      "name": "plain-uninitialized-read-reject",
+      "source": "export function entry(): i32 { let value: i32; return value; }",
+      "expected": {
+        "kind": "diagnostic",
+        "upstreamCode": 2454
+      }
+    },
+    {
+      "name": "plain-uninitialized-compound-reject",
+      "source": "export function entry(): i32 { let value: i32; return value += 7; }",
+      "expected": {
+        "kind": "diagnostic",
+        "upstreamCode": 2454
+      }
+    },
+    {
+      "name": "null-only-uninitialized-read-reject",
+      "source": "export function entry(): i32 { let value: i32 | null; if (value === null) { return 2; } return value; }",
+      "expected": {
+        "kind": "diagnostic",
+        "upstreamCode": 2454
+      }
+    },
+    {
+      "name": "plain-default-target",
+      "source": "function choose(value: i32 = 7): i32 { return value ??= 9; } export function entry(): i32 { return choose(); }",
+      "expected": {
+        "type": "i32",
+        "value": "7",
+        "kind": "returned"
+      }
+    },
+    {
+      "name": "union-default-target",
+      "source": "function choose(value: i32 | undefined = 7): i32 { return value ??= 9; } export function entry(): i32 { return choose(); }",
+      "expected": {
+        "type": "i32",
+        "value": "7",
+        "kind": "returned"
+      }
+    }
+  ],
+  "correction": {
+    "originalSha256": "9f5954fb46188b1a8ec3ae142c5724227aacb8b4b9121d602764e4bfdc400d73",
+    "authority": "Add actual default parameter declared target versus incoming optional-mask boundary."
+  }
+}

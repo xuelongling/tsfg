@@ -7,7 +7,7 @@ import test from "node:test";
 import { canonical } from "../../compiler/identity.mjs";
 
 const digest = value => createHash("sha256").update(value).digest();
-const schema = "e847905d8da4932523997659c12526b5512fe0525b541b85ec8a60518d7c5942";
+const schema = "6e1a281d385887750208b8ff69339e91407811128ce7ef3e68b43d3b0663c0b8";
 const u8 = value => Buffer.from([value]);
 const u16 = value => { const b = Buffer.alloc(2); b.writeUInt16LE(value); return b; };
 const u32 = value => { const b = Buffer.alloc(4); b.writeUInt32LE(value >>> 0); return b; };
