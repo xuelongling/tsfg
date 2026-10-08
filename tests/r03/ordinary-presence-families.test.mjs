@@ -69,6 +69,34 @@ const families=[
   {type:"f64",seven:"401c000000000000",zero:"0000000000000000",literal:"7",zeroLiteral:"0"},
   {type:"bool",seven:true,zero:false,literal:"true",zeroLiteral:"false"},
 ];
+test("grouped call absences retain default selection and nullable payloads across scalar families",async()=>{
+  for(const family of families)for(const optimize of [false,true]) {
+    const source=`function choose(value: ${family.type} | null = ${family.literal}): ${family.type} { if (value === null) { return ${family.zeroLiteral}; } return value; } export function missing(): ${family.type} { return choose(((undefined))); } export function nullable(): ${family.type} { return choose(((null))); } export function present(): ${family.type} { return choose(((${family.zeroLiteral}))); }`;
+    const input=await sourceInput(source),session=createCompilerSession({...tools(),optimize});
+    for(const program of [await compileProgram(input,{...tools(),optimize}),await session.compile(input)]) {
+      assert.equal(program.status,"ok",JSON.stringify({source,program}));
+      const names=["missing","nullable","present"];
+      const actual=await runBytecode(program.bytecode,{...tools(),requests:names.map(name=>({functionId:program.hir.functions.find(fn=>fn.name===name).id,arguments:[],depth:16}))});
+      assert.deepEqual(actual.map(row=>row.status),names.map(()=>"returned"));
+      assert.deepEqual(actual.map(row=>row.result),[family.seven,family.zero,family.zero].map(value=>({type:family.type,value})));
+    }
+  }
+});
+test("grouped optional call arguments distinguish builtin undefined from a shadowing scalar",async()=>{
+  for(const optimize of [false,true])for(const [argument,shadow,expected] of [
+    ["((undefined))","","7"], ["((undefined))","const undefined: i32 = 3;","3"], ["((0))","","0"],
+    [String.raw`\u0075ndefined`,"","7"], [String.raw`(\u0075ndefined)`,"","7"],
+    [String.raw`( /* ) ( */ (\u{75}ndefined /* ) */ ) )`,"","7"],
+    [String.raw`(\u0075ndefined)`,"const undefined: i32 = 3;","3"],
+    ["(\u2028/* ) ( */ undefined\u00a0/* ( ) */)","","7"],
+  ]) {
+    const source=`function choose(value?: i32): i32 { if (value === undefined) { return 7; } return value; } export function entry(): i32 { ${shadow} return choose(${argument}); }`;
+    const program=await compileProgram(await sourceInput(source),{...tools(),optimize});
+    assert.equal(program.status,"ok",JSON.stringify({source,program}));
+    const [actual]=await runBytecode(program.bytecode,{...tools(),requests:[{functionId:program.hir.functions.find(fn=>fn.name==="entry").id,arguments:[],depth:16}]});
+    assert.equal(actual.status,"returned");assert.deepEqual(actual.result,{type:"i32",value:expected});
+  }
+});
 test("optional and nullable default presence executes for every admitted scalar payload family",async()=>{
   for(const family of families)for(const optimize of [false,true])for(const optional of [false,true]){
     const source=optional

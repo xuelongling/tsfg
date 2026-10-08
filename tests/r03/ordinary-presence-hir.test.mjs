@@ -158,3 +158,42 @@ test("assignment targets validate their finite official flow without reading a p
     assert.throws(()=>verifyHir(copy));assert.throws(()=>printHir(copy));assert.throws(()=>lowerHir(copy));
   }
 });
+
+test('grouped call builtin facts retain whole and leaf anchors at every cold seam',async()=>{
+ const source='function choose(value: i32 | null = 7): i32 { if (value === null) { return 8; } return value; } export function entry(): i32 { return choose(((undefined))) + choose(((null))); }';
+ const input=await sourceInput(source),result=await analyzeFrontend(input,{executable:frontend().frontend});
+ assert.equal(result.status,'ok',JSON.stringify(result));validateFrontendSnapshot(result.snapshot);
+ const argument=s=>s.functions[1].body[0].expression.left.arguments[0];
+ const arg=argument(result.snapshot);assert.equal(source.slice(arg.range.start,arg.range.end),'((undefined))');
+ assert.equal(source.slice(arg.operand.operand.range.start,arg.operand.operand.range.end),'undefined');
+ for(const [index,mutate] of [
+  a=>{a.range.start++;}, a=>{a.operand.operand.range={...a.range};}, a=>{a.operand.operand.absence='null';}, a=>{a.operand.type='bool';},
+ ].entries()) {const copy=structuredClone(result.snapshot);mutate(argument(copy));assert.throws(()=>validateFrontendSnapshot(copy),`snapshot mutation ${index}`);}
+ const projected=await compileHir(input,{frontend:frontend().frontend});assert.equal(projected.status,'ok',JSON.stringify(projected));
+ const hir=projected.hir,text=printHir(hir);assert.equal(printHir(readHir(Buffer.from(text))),text);lowerHir(hir);
+ const hirArgument=h=>h.functions[1].body[0].value.left.arguments[0];
+ for(const [index,mutate] of [
+  a=>{a.range.start++;}, a=>{a.operand.operand.range={...a.range};}, a=>{a.operand.operand.absence='null';}, a=>{a.operand.type='forged';},
+ ].entries()) {const copy=structuredClone(hir);mutate(hirArgument(copy));for(const invoke of [()=>verifyHir(copy),()=>printHir(copy),()=>lowerHir(copy),()=>readHir(Buffer.from(canonical(copy)+'\n'))])assert.throws(invoke);}
+});
+test('grouped call arguments keep official incompatible member diagnostics',async()=>{
+ for(const [parameter,argument,phase,code] of [['value: i32','(undefined)','syntax','r02b-d-type'],['value: i32 = 7','(null)','types','r01-d-scalar-type']]) {
+  const source=`function choose(${parameter}): i32 { return value; } export function entry(): i32 { return choose(${argument}); }`;
+  const result=await compileHir(await sourceInput(source),{frontend:frontend().frontend});assert.equal(result.status,'error');
+  const diagnostic=result.diagnostics.find(d=>d.phase===phase&&d.code===code&&d.upstreamCode===2345);assert.ok(diagnostic,JSON.stringify(result));
+  assert.equal(source.slice(diagnostic.primary.start,diagnostic.primary.end),argument.slice(1,-1));
+ }
+});
+
+test("checked builtin undefined accepts identifier escapes and grouped trivia at every HIR seam",async()=>{
+  for(const argument of [String.raw`\u0075ndefined`,String.raw`(\u0075ndefined)`,
+    String.raw`( /* ) ( */ (\u{75}ndefined /* ) */ ) )`,"(\u2028/* ) ( */ undefined\u00a0/* ( ) */)"]) {
+    const source=`function choose(value: i32 = 7): i32 { return value; } export function entry(): i32 { return choose(${argument}); }`;
+    const hir=await checked(source),text=printHir(hir);assert.equal(printHir(readHir(Buffer.from(text))),text);lowerHir(hir);
+  }
+  const argument=String.raw`\u006eull`;
+  const source=`function choose(value: i32 = 7): i32 { return value; } export function entry(): i32 { return choose(${argument}); }`;
+  const rejected=await compileHir(await sourceInput(source),frontend());assert.equal(rejected.status,"error",JSON.stringify(rejected));
+  const diagnostic=rejected.diagnostics.find(d=>d.phase==="syntax"&&d.upstreamCode===1260);assert.ok(diagnostic,JSON.stringify(rejected));
+  assert.equal(source.slice(diagnostic.primary.start,diagnostic.primary.end),argument);
+});

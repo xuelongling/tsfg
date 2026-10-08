@@ -49,6 +49,12 @@ function hasCallArgumentList(source) {
   return index >= 0 && source[index] === "(";
 }
 
+function hasOnlyToken(source, token) {
+  const index = skipCallTrivia(source);
+  return index >= 0 && source[index] === token
+    && skipCallTrivia(source.slice(index + 1)) === source.length - index - 1;
+}
+
 function hasLoneSurrogate(value) {
   for (let index = 0; index < value.length; index += 1) {
     const codeUnit = value.charCodeAt(index);
@@ -400,6 +406,17 @@ export function validateFrontendSnapshot(snapshot) {
     if (!expression || typeof expression !== "object") throw new TypeError("invalid expression");
     checkNode(expression, expression.kind);
     checkType(expression.type, expression.typeRef);
+    if (expression.kind === "group") {
+      const operand = expression.operand;
+      if (Object.keys(expression).sort().join(",") !== "kind,node,operand,range,type,typeRef"
+          || !Number.isSafeInteger(operand?.range?.start) || !Number.isSafeInteger(operand?.range?.end)
+          || operand.range.start <= expression.range.start || operand.range.end >= expression.range.end
+          || operand.range.end <= operand.range.start || operand.type !== expression.type
+          || !hasOnlyToken(snapshot.source.content.slice(expression.range.start, operand.range.start), "(")
+          || !hasOnlyToken(snapshot.source.content.slice(operand.range.end, expression.range.end), ")")) {
+        throw new TypeError("group differs from its checked operand and source parentheses");
+      }
+    }
     if (expression.kind === "reference") {
       const symbol = resolveSymbol(snapshot, expression.symbol);
       if (scope.get(symbol.name) !== symbol.id || symbol.name !== identifierName(sourceSpan(expression.range))
@@ -418,7 +435,9 @@ export function validateFrontendSnapshot(snapshot) {
     if (expression.kind === "absence") {
       if (Object.keys(expression).sort().join(",") !== "absence,kind,node,range,type,typeRef"
           || !["undefined","null"].includes(expression.absence)
-          || sourceSpan(expression.range).trim() !== expression.absence
+          || (expression.absence === "undefined"
+            ? identifierName(sourceSpan(expression.range)) !== "undefined"
+            : sourceSpan(expression.range).trim() !== "null")
           || expression.absence === "undefined" && scope.has("undefined"))
         throw new TypeError("absence differs from its checked builtin source");
     }

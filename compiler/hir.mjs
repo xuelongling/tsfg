@@ -224,7 +224,8 @@ function verifyExpression(value, parent, source, fail, budget, locals, visibleBi
     }
   } else if (value.kind === "absence") {
     if (!exactKeys(value,["kind","type","range","absence"]) || !["undefined","null"].includes(value.absence)
-        || sourceTokens(source,value.range.start,value.range.end) !== value.absence
+        || (value.absence === "undefined" ? identifierToken(source,value.range) !== "undefined"
+          : sourceTokens(source,value.range.start,value.range.end) !== "null")
         || value.absence === "undefined" && visibleBindings.has("undefined")
         || !(allowedStates & (value.absence === "undefined" ? 2 : 4))) fail();
   } else if (value.kind === "presenceTest") {
