@@ -29,6 +29,16 @@ Cold consumers verify the complete table, symbol ownership, spans, default
 scope and signature mapping. Digests and version strings alone do not prove
 official checking. Caller operands finish before callee ordered initialization.
 
+Explicit finite local annotations retain the same payload/member facts. Every
+stateful reference carries the actual official `GetTypeAtLocation` undefined
+and null flags. The producer registers complete nominal scalar assignment
+contexts with the existing official checker before semantic diagnostics; its
+flow analysis uses the actual assignment node and official nominal Type.
+No separate checker infers narrowing from text. Invalid optional reads and
+later-parameter defaults retain official diagnostics. An initializer's allowed
+states come from its annotation; the incoming omission bit does not admit an
+undefined initializer for an annotation that excludes undefined.
+
 Consumers must check contract version and schema hash, then validate references
 against the owning snapshot. Invalid or foreign references are errors, not
 requests to remap a local ID. The current high-level validator covers the

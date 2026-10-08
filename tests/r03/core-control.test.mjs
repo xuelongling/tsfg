@@ -6,10 +6,10 @@ import test from "node:test";
 
 const executable = process.env.TSFG_CORE_IR_EXE;
 const sha = value => createHash("sha256").update(value).digest("hex");
-const schema = "950f0b3756aed6c0fc48516c4ce09e5943672c48bffb29f2ee01c5259c212d66";
+const schema = "e847905d8da4932523997659c12526b5512fe0525b541b85ec8a60518d7c5942";
 const signature = sha("tsfg.signature\0()->i32");
 const source = (body, extra = "") => `module attributes {
-  tsfg_core.version = "0.9.0", tsfg_core.bytecode_schema = "sha256:${schema}",
+  tsfg_core.version = "0.10.0", tsfg_core.bytecode_schema = "sha256:${schema}",
   tsfg_core.target = "windows-x86_64-msvc", tsfg_core.triple = "x86_64-pc-windows-msvc",
   tsfg_core.data_layout = "e-m:w-p270:32:32-p271:32:32-p272:64:64-i64:64-i128:128-f80:128-n8:16:32:64-S128",
   tsfg_core.input_identity = "sha256:${sha("owned-input")}", tsfg_core.source_hash = "sha256:${sha("owned-source")}",
@@ -17,7 +17,7 @@ const source = (body, extra = "") => `module attributes {
 } { func.func @sample() -> i32 attributes {
   tsfg_core.function_id = "sha256:${sha(`tsfg.function\0/main.ts\0sample\0${signature}`)}",
   tsfg_core.signature_hash = "sha256:${signature}", tsfg_core.type_id = "sha256:${sha("tsfg.type\0i32")}",
-  tsfg_core.function_start = 0 : i64, tsfg_core.function_end = 100 : i64
+  tsfg_core.parameter_presence = "", tsfg_core.function_start = 0 : i64, tsfg_core.function_end = 100 : i64
 } { ${body} } }`;
 const at = (start = 10, end = 20) => `tsfg_source.start = ${start} : i64, tsfg_source.end = ${end} : i64`;
 const entry = `"tsfg_core.fuel"() {event = 1 : i32, ${at(0, 100)}} : () -> ()`;
@@ -65,7 +65,7 @@ const loopBody = `${entry}
 // Its expected op/block/register numbers are hand-derived from the above CFG.
 function wire(packet) {
   assert.equal(packet.subarray(0, 8).toString(), "TSFGTBC0");
-  assert.equal(packet.readUInt32LE(8), 9);
+  assert.equal(packet.readUInt32LE(8), 10);
   assert.equal(packet.subarray(12, 44).toString("hex"), schema);
   assert.equal(packet.readUInt32LE(44), packet.length);
   assert.equal(packet.subarray(48, 80).toString("hex"), sha(packet.subarray(80)));
@@ -73,11 +73,12 @@ function wire(packet) {
   const string = () => { const length = packet.readUInt32LE(cursor); cursor += 4; cursor += length; };
   for (let i = 0; i < 3; i++) string();
   cursor += 8;
-  assert.equal(packet.readUInt32LE(cursor), 20); cursor += 4 + 64;
+  assert.equal(packet.readUInt32LE(cursor), 52); cursor += 4 + 64;
   string(); cursor += 4;
   assert.equal(packet.readUInt16LE(cursor), 1); cursor += 2 + 96;
   string(); cursor += 8;
   assert.equal(packet[cursor++], 1); assert.equal(packet[cursor++], 0);
+  assert.equal(packet[cursor++], 0); // zero logical parameters
   const registers = packet.readUInt16LE(cursor); cursor += 2;
   const count = packet.readUInt16LE(cursor); cursor += 2;
   const total = packet.readUInt16LE(cursor); cursor += 2;

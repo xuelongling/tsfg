@@ -86,6 +86,14 @@ run for omitted/undefined arguments after every caller argument has completed.
 CoreIR0.10 carries the explicit logical parameter mask table and independently
 recomputes logical identity while checking its payload/state physical signature.
 
+Finite local annotations retain payload and state through assignments, groups,
+branches and loops. HIR independently propagates initialized definitions and
+presence states; a reference's official flow flags must exactly match its
+proven possible absent members. Assignment targets validate their finite flow
+shape without reading an uninitialized payload. Default initializer members
+are checked against the declared annotation, separately from incoming omission.
+Rehashing source or exchanging same-shaped fields cannot waive these guards.
+
 Records must be objects, and logical source paths follow the same normalized
 path rules as R04. Source content retains original UTF-16 anchors and must
 contain well-formed Unicode. Invalid UTF-8/JSON, a leading wire BOM or malformed

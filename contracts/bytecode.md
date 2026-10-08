@@ -44,6 +44,13 @@ Call opcode27 uses the result type/register and low-u16 target function index
 with high-u16 reserved0; it appends argument count u16 and ordered argument
 registers u16. Call source ranges belong to the caller. Every target signature,
 argument arity/type and return type is checked before any request executes.
+Core and the independent loader reject directly constant illegal state values,
+disallowed absent members and directly nonzero absent payloads. This bounded
+constant check does not claim abstract evaluation of arbitrary scalar SSA.
+Computed states and payloads are validated at every real callee entrance,
+before its defaults, effects or entry fuel; violations use `r05-presence-state`
+at the caller's call anchor. Loader constant violations use `r04-presence-state`
+with a byte offset. Legal absent payloads are always initialized to zero.
 Type codes1/2 retain i32/bool. Codes3..11 are i8/i16/i64/u8/u16/u32/u64/isize/usize.
 Constant opcode28 has the standard scalar record with a zero u32 payload,
 followed by u64 canonical zero extended low-width bits. Signed values use

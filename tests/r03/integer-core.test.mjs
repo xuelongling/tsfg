@@ -12,10 +12,10 @@ const coreType = name => name === "i32" ? "i32" : name === "bool" ? "i1" : `!tsf
 function fn(name, type, body) {
   const signature = hash(`tsfg.signature\0()->${type}`);
   const id = hash(`tsfg.function\0/src/main.ts\0${name}\0${signature.slice(7)}`);
-  return `func.func @${name}() -> ${coreType(type)} attributes {tsfg_core.function_id = "${id}", tsfg_core.signature_hash = "${signature}", tsfg_core.type_id = "${hash(`tsfg.type\0${type}`)}", tsfg_core.function_start = 0 : i64, tsfg_core.function_end = 200 : i64} { "tsfg_core.fuel"() {event = 1 : i32, ${at}} : () -> () ${body} }`;
+  return `func.func @${name}() -> ${coreType(type)} attributes {tsfg_core.function_id = "${id}", tsfg_core.signature_hash = "${signature}", tsfg_core.type_id = "${hash(`tsfg.type\0${type}`)}", tsfg_core.parameter_presence = "", tsfg_core.function_start = 0 : i64, tsfg_core.function_end = 200 : i64} { "tsfg_core.fuel"() {event = 1 : i32, ${at}} : () -> () ${body} }`;
 }
 function module(...functions) {
-  return `module attributes {tsfg_core.version = "0.9.0", tsfg_core.input_identity = "${hash("integer Core input")}", tsfg_core.source_hash = "${hash("integer Core source")}", tsfg_core.source_path = "/src/main.ts", tsfg_core.source_length = 200 : i64, tsfg_core.target = "${schema.target.target}", tsfg_core.triple = "${schema.target.triple}", tsfg_core.data_layout = "${schema.target.llvmDataLayout}", tsfg_core.bytecode_schema = "${registry["tsfg.bytecode"].schemaHash}"} {${functions.join("\n")}}`;
+  return `module attributes {tsfg_core.version = "0.10.0", tsfg_core.input_identity = "${hash("integer Core input")}", tsfg_core.source_hash = "${hash("integer Core source")}", tsfg_core.source_path = "/src/main.ts", tsfg_core.source_length = 200 : i64, tsfg_core.target = "${schema.target.target}", tsfg_core.triple = "${schema.target.triple}", tsfg_core.data_layout = "${schema.target.llvmDataLayout}", tsfg_core.bytecode_schema = "${registry["tsfg.bytecode"].schemaHash}"} {${functions.join("\n")}}`;
 }
 function returnConstant(type, decimal) {
   const spelling = type === "i32" ? `${decimal} : i32` : JSON.stringify(decimal);

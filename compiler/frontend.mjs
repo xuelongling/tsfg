@@ -7,7 +7,7 @@ import sourceLock from "../eng/frontend-source.lock.json" with { type: "json" };
 import contractRegistry from "../contracts/registry.json" with { type: "json" };
 import { conversionDeclaration, conversionEntries, verifyConversionOrigin, conversionCallSpelling, admittedConversionScope, admittedInputScope, completeFunctionSource } from "./conversions.mjs";
 import bytecodeSchema from "../contracts/bytecode.schema.json" with { type: "json" };
-import { validParameterPresence } from "./presence.mjs";
+import { validParameterPresence, validLocalPresence } from "./presence.mjs";
 
 const frontendContract = contractRegistry["tsfg.frontend-snapshot"];
 export const frontendContractVersion = frontendContract.semver;
@@ -395,6 +395,12 @@ export function validateFrontendSnapshot(snapshot) {
           || symbol.type !== expression.type) {
         throw new TypeError("reference differs from its symbol");
       }
+      const stateful=Boolean(symbol.presence?.undefined || symbol.presence?.null), flow=expression.presenceFlow;
+      if (Object.keys(expression).sort().join(",") !== (stateful ? "kind,node,presenceFlow,range,symbol,type,typeRef" : "kind,node,range,symbol,type,typeRef")
+          || stateful && (!flow || Object.keys(flow).sort().join(",") !== "null,undefined"
+            || typeof flow.undefined !== "boolean" || typeof flow.null !== "boolean"
+            || flow.undefined && !symbol.presence.undefined || flow.null && !symbol.presence.null))
+        throw new TypeError("reference differs from its official presence flow");
     } else if (expression.symbol) {
       throw new TypeError("non-reference expression has a symbol");
     }
@@ -404,6 +410,16 @@ export function validateFrontendSnapshot(snapshot) {
           || sourceSpan(expression.range).trim() !== expression.absence
           || expression.absence === "undefined" && scope.has("undefined"))
         throw new TypeError("absence differs from its checked builtin source");
+    }
+    if (expression.kind === "presenceTest") {
+      const reference=expression.left?.kind === "reference" ? expression.left : expression.right;
+      const absence=expression.left?.kind === "absence" ? expression.left : expression.right;
+      const symbol=resolveSymbol(snapshot,reference?.symbol);
+      if (Object.keys(expression).sort().join(",") !== "kind,left,node,operator,range,right,type,typeRef"
+          || !["===","!=="].includes(expression.operator) || expression.type !== "bool"
+          || reference?.kind !== "reference" || absence?.kind !== "absence" || reference.type !== absence.type
+          || !symbol.presence || !symbol.presence.undefined && !symbol.presence.null)
+        throw new TypeError("presence test differs from its checked finite binding");
     }
     if (expression.kind === "update") {
       const symbol = resolveSymbol(snapshot, expression.operand?.symbol);
@@ -487,6 +503,8 @@ export function validateFrontendSnapshot(snapshot) {
       const symbol = resolveSymbol(snapshot, statement.symbol.ref);
       if (symbol.id !== statement.symbol.id || symbol.name !== statement.symbol.name
           || symbol.kind !== statement.symbol.kind || symbol.type !== statement.symbol.type
+          || canonical(symbol.presence) !== canonical(statement.symbol.presence)
+          || symbol.presence && !validLocalPresence(symbol.presence,symbol,statement.initializer,snapshot.source.content,statement.range)
           || !sameRange(symbol.range, statement.symbol.range)
           || symbol.range?.start < statement.range?.start
           || symbol.range?.end > statement.range?.end) {

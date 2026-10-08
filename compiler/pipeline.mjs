@@ -74,7 +74,7 @@ async function produceBytecode(hir, options) {
 }
 
 const sessionInputs = ["compiler/frontend.mjs", "compiler/hir.mjs", "compiler/identity.mjs",
-  "compiler/pipeline.mjs", "compiler/float.mjs", "compiler/conversions.mjs", "contracts/conversion-entries.json", "contracts/registry.json", "contracts/hir.schema.json", "contracts/bytecode.schema.json"];
+  "compiler/pipeline.mjs", "compiler/float.mjs", "compiler/conversions.mjs", "compiler/presence.mjs", "contracts/conversion-entries.json", "contracts/registry.json", "contracts/hir.schema.json", "contracts/bytecode.schema.json"];
 async function sessionFingerprint() {
   const inputs = await Promise.all(sessionInputs.map(async name => [name, sha256(await readFile(path.join(productRoot, name)))]));
   return sha256(canonical(inputs));

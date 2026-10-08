@@ -196,7 +196,7 @@ test("C++ R04 producer verifies Core source identities, target, types and actual
   assert.ifError(renamed.error); assert.equal(renamed.status, 0, renamed.stderr.toString());
   assert.deepEqual(renamed.stdout, result.bytecode);
   for (const [before, after] of [
-    ["sha256:950f0b3756aed6c0fc48516c4ce09e5943672c48bffb29f2ee01c5259c212d66", `sha256:${"0".repeat(64)}`],
+    ["sha256:e847905d8da4932523997659c12526b5512fe0525b541b85ec8a60518d7c5942", `sha256:${"0".repeat(64)}`],
     ["windows-x86_64-msvc", "wrong-target"],
     [result.hir.functions[0].id, `sha256:${"0".repeat(64)}`],
     ["tsfg_core.function_end = 44 : i64", "tsfg_core.function_end = 45 : i64"],

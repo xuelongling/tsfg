@@ -55,7 +55,7 @@ test("callee defaults initialize omitted arguments in parameter order", async ()
   const source = "function combine(left: i32 = 2, right: i32 = left + 3): i32 { return left * 10 + right; } export function entry(): i32 { return combine(4); }";
   const program = await compileProgram(await sourceInput(source), tools());
   assert.equal(program.status, "ok", JSON.stringify(program));
-  const [result] = await runBytecode(program.bytecode, tools());
+  const [result] = await runBytecode(program.bytecode, { ...tools(), requests: [{ functionId: program.hir.functions.find(fn => fn.name === "entry").id, depth: 8 }] });
   assert.equal(result.status, "returned", JSON.stringify(result));
   assert.deepEqual(result.result, { type: "i32", value: "47" });
 });

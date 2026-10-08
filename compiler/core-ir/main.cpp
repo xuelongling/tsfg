@@ -588,6 +588,22 @@ mlir::LogicalResult verifiedBytecode(mlir::ModuleOp module, Bytes &packet) {
                 argument.getType() != callee.operation.getFunctionType().getInput(i)) return reject();
             integer(edgeArguments, registers.lookup(argument), 2);
           }
+          // Reject directly known malformed carriers. Computed state values
+          // remain dynamically checked at each Runtime callee entrance.
+          size_t physical = 0;
+          for (uint8_t mask : callee.presence) {
+            auto payload = operation.getOperand(physical++);
+            if (!(mask & 3)) continue;
+            auto state = operation.getOperand(physical++);
+            auto constant = state.getDefiningOp<tsfg::ConstantOp>();
+            uint64_t bits;
+            if (!constant || !tsfg::constantBits(constant, bits)) continue;
+            if (bits > 2 || (bits == 1 && !(mask & 1)) ||
+                (bits == 2 && !(mask & 2))) return reject();
+            auto payloadConstant = payload.getDefiningOp<tsfg::ConstantOp>();
+            if (bits != 0 && payloadConstant &&
+                tsfg::constantBits(payloadConstant, bits) && bits != 0) return reject();
+          }
           opcode = 27; immediate = static_cast<uint32_t>(destination);
         } else if (llvm::isa<tsfg::CheckedConversionOp, tsfg::WrapConversionOp, tsfg::ReinterpretOp>(operation)) {
           if (!attributes(&operation, {"tsfg_source.start", "tsfg_source.end"}) ||

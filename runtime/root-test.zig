@@ -276,11 +276,11 @@ test "phi transfer allocation abort cleans the frame and host accepts a later re
 
 // Independent wire extension: the first function calls a renamed copy of the
 // literal-return fixture. This fixture authors bytes and never evaluates source.
-fn callFixture() [fixture.bytes.len + 2 + 176]u8 {
+fn callFixture() [fixture.bytes.len + 2 + 177]u8 {
     const signature = @import("contract.zig").hexDigest("ac9438b17e41c86e042aaa640f76bd95693245676c19c4cbfd89cf43315df6f9");
     const function_offset = std.mem.indexOf(u8, &fixture.bytes, &signature).? - 32;
-    std.debug.assert(fixture.bytes.len - function_offset == 176);
-    var bytes: [fixture.bytes.len + 2 + 176]u8 = undefined;
+    std.debug.assert(fixture.bytes.len - function_offset == 177);
+    var bytes: [fixture.bytes.len + 2 + 177]u8 = undefined;
     const operation = fixture.bytes.len - 32;
     @memcpy(bytes[0..operation], fixture.bytes[0..operation]);
     @memcpy(bytes[operation..][0..16], fixture.bytes[operation..][0..16]);

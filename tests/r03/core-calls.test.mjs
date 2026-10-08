@@ -7,15 +7,15 @@ import test from "node:test";
 // Public seams: verified native Core CLI and its versioned R04 output.
 const executable = process.env.TSFG_CORE_IR_EXE;
 const sha = value => createHash("sha256").update(value).digest("hex");
-const schema = "950f0b3756aed6c0fc48516c4ce09e5943672c48bffb29f2ee01c5259c212d66";
+const schema = "e847905d8da4932523997659c12526b5512fe0525b541b85ec8a60518d7c5942";
 const at = (start = 10, end = 20) => `tsfg_source.start = ${start} : i64, tsfg_source.end = ${end} : i64`;
 const signature = (parameters = [], result = "i32") => sha(`tsfg.signature\0(${parameters.join(",")})->${result}`);
 const id = (name, parameters = [], result = "i32") => sha(`tsfg.function\0/main.ts\0${name}\0${signature(parameters, result)}`);
-const attrs = (name, parameters = [], result = "i32") => `tsfg_core.function_id = "sha256:${id(name, parameters, result)}", tsfg_core.signature_hash = "sha256:${signature(parameters, result)}", tsfg_core.type_id = "sha256:${sha(`tsfg.type\0${result}`)}", tsfg_core.function_start = 0 : i64, tsfg_core.function_end = 100 : i64`;
+const attrs = (name, parameters = [], result = "i32") => `tsfg_core.function_id = "sha256:${id(name, parameters, result)}", tsfg_core.signature_hash = "sha256:${signature(parameters, result)}", tsfg_core.type_id = "sha256:${sha(`tsfg.type\0${result}`)}", tsfg_core.parameter_presence = "${"00".repeat(parameters.length)}", tsfg_core.function_start = 0 : i64, tsfg_core.function_end = 100 : i64`;
 const entry = `"tsfg_core.fuel"() {event = 1 : i32, ${at(0, 100)}} : () -> ()`;
 const returned = (value = "%value", type = "i32") => `"func.return"(${value}) {${at()}} : (${type}) -> ()`;
 const source = functions => `module attributes {
-  tsfg_core.version = "0.9.0", tsfg_core.bytecode_schema = "sha256:${schema}",
+  tsfg_core.version = "0.10.0", tsfg_core.bytecode_schema = "sha256:${schema}",
   tsfg_core.target = "windows-x86_64-msvc", tsfg_core.triple = "x86_64-pc-windows-msvc",
   tsfg_core.data_layout = "e-m:w-p270:32:32-p271:32:32-p272:64:64-i64:64-i128:128-f80:128-n8:16:32:64-S128",
   tsfg_core.input_identity = "sha256:${sha("owned-input")}", tsfg_core.source_hash = "sha256:${sha("owned-source")}",
@@ -40,7 +40,7 @@ const ok = result => assert.equal(result.status, 0, result.stderr?.toString());
 // Independent reader of the public packet, with literal behavior expectations.
 function wire(packet) {
   assert.equal(packet.subarray(0, 8).toString(), "TSFGTBC0");
-  assert.equal(packet.readUInt32LE(8), 9);
+  assert.equal(packet.readUInt32LE(8), 10);
   assert.equal(packet.subarray(12, 44).toString("hex"), schema);
   assert.equal(packet.readUInt32LE(44), packet.length);
   assert.equal(packet.subarray(48, 80).toString("hex"), sha(packet.subarray(80)));
@@ -53,7 +53,7 @@ function wire(packet) {
   assert.equal(string(), "windows-x86_64-msvc");
   assert.equal(string(), "x86_64-pc-windows-msvc");
   assert.equal(string(), "e-m:w-p270:32:32-p271:32:32-p272:64:64-i64:64-i128:128-f80:128-n8:16:32:64-S128");
-  assert.deepEqual([u16(), u16(), u16(), u16(), u32()], [4, 4, 64, 8, 20]);
+  assert.deepEqual([u16(), u16(), u16(), u16(), u32()], [4, 4, 64, 8, 52]);
   assert.equal(hash(), sha("owned-input")); assert.equal(hash(), sha("owned-source"));
   assert.equal(string(), "/main.ts"); assert.equal(u32(), 100);
   const functions = [], count = u16();
@@ -61,6 +61,8 @@ function wire(packet) {
     const identity = hash(), signatureHash = hash(), typeId = hash(), name = string();
     const start = u32(), end = u32(), resultType = u8();
     const parameters = Array.from({length: u8()}, u8);
+    const masks = Array.from({length: u8()}, u8);
+    assert.deepEqual(masks, parameters.map(() => 0));
     const registers = u16(), blockCount = u16(), instructionCount = u16(), blocks = [];
     for (let block = 0; block < blockCount; block++) {
       const args = Array.from({length: u16()}, () => { const reg = u16(), type = u8(); assert.equal(u8(), 0); return [reg, type]; });
@@ -151,7 +153,7 @@ test("Every Core command rejects malformed calls and unused function metadata be
   const input = forward();
   const unused = source(`func.func @unused(%arg: i32) -> i32 attributes {${attrs("unused", ["i32"])}} { ${returned("%arg")} }`);
   const invalids = [
-    input.replace('tsfg_core.version = "0.9.0"', 'tsfg_core.version = "0.4.0"'),
+    input.replace('tsfg_core.version = "0.10.0"', 'tsfg_core.version = "0.4.0"'),
     input.replace(schema, "0".repeat(64)),
     input.replace('tsfg_core.source_path = "/main.ts"', 'tsfg_core.source_path = "/../main.ts"'),
     input.replace('tsfg_core.source_length = 100 : i64', `tsfg_core.source_length = 100 : i64, tsfg_core.function_id = "sha256:${id("first", ["i32"])}"`),

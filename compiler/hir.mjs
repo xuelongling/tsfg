@@ -5,7 +5,7 @@ import registry from "../contracts/registry.json" with { type: "json" };
 import bytecodeSchema from "../contracts/bytecode.schema.json" with { type: "json" };
 import { conversionDeclaration, conversionEntries, verifyConversionOrigin, conversionCallSpelling, admittedConversionScope, admittedInputScope, completeFunctionSource } from "./conversions.mjs";
 import { floatNames, floatBits } from "./float.mjs";
-import { hasState, presenceIdentity, presenceSignature, presenceEncoding, validParameterPresence } from "./presence.mjs";
+import { hasState, presenceIdentity, presenceSignature, presenceEncoding, validParameterPresence, validLocalPresence, annotationStates, validPresenceFlow } from "./presence.mjs";
 
 const contract = () => registry["tsfg.hir"];
 const exactKeys = (value, keys) => value && typeof value === "object"
@@ -50,12 +50,46 @@ function scalarOperator(source, start, end, operator) {
   return !["+", "-"].includes(operator)
     || (source[position - 1] !== operator && source[position + 1] !== operator);
 }
-function verifyExpression(value, parent, source, fail, budget, locals, visibleBindings) {
+const declaredStates = shape => 1 | (shape?.undefined ? 2 : 0) | (shape?.null ? 4 : 0);
+const cloneLocals = locals => new Map([...locals].map(([id, local]) => [id, { ...local }]));
+function expressionStates(value, locals) {
+  if (value.kind === "reference") return locals.get(value.binding)?.states ?? 1;
+  if (value.kind === "absence") return value.absence === "undefined" ? 2 : 4;
+  if (value.kind === "group") return expressionStates(value.operand, locals);
+  if (value.kind === "write" && value.operator === "=") return expressionStates(value.right, locals);
+  return 1;
+}
+function narrowLocals(locals, value, truth) {
+  if (value.kind === "group") return narrowLocals(locals, value.operand, truth);
+  if (value.kind === "unary" && value.operator === "!") return narrowLocals(locals, value.operand, !truth);
+  if (value.kind === "shortCircuit" && (value.operator === "&&" && truth || value.operator === "||" && !truth)) {
+    narrowLocals(locals, value.left, truth); narrowLocals(locals, value.right, truth); return;
+  }
+  if (value.kind !== "presenceTest") return;
+  const reference = value.left.kind === "reference" ? value.left : value.right;
+  const absence = value.left.kind === "absence" ? value.left : value.right;
+  const local = locals.get(reference.binding), bit = absence.absence === "undefined" ? 2 : 4;
+  local.states &= truth === (value.operator === "===") ? bit : ~bit;
+}
+function loopCarriedStates(statement, locals, fail) {
+  let remaining=4096;
+  const visit=value => {
+    if (--remaining < 0) fail();
+    if (!value || typeof value !== "object") return;
+    const binding=value.kind === "assign" ? value.target?.binding : value.kind === "write" ? value.left?.binding : value.kind === "update" ? value.operand?.binding : undefined;
+    if (binding && hasState(locals.get(binding)?.presence)) locals.get(binding).states=declaredStates(locals.get(binding).presence);
+    for (const child of Object.values(value)) if (child && typeof child === "object") {
+      if (Array.isArray(child)) child.forEach(visit); else visit(child);
+    }
+  };
+  visit(statement);
+}
+function verifyExpression(value, parent, source, fail, budget, locals, visibleBindings, allowedStates = 1) {
   if (--budget.remaining < 0 || !value || !Object.values(types).includes(value.type)
       || !range(value.range, parent)) fail();
   if (value.kind === "reference") {
     const local = locals.get(value.binding);
-    if (!exactKeys(value, ["kind", "type", "binding", "range"])) fail();
+    if (!exactKeys(value, ["kind", "type", "binding", "range", ...(hasState(local?.presence) ? ["presenceFlow"] : [])])) fail();
     const declaration = budget.declarations.get(value.binding);
     const claimed = local ?? declaration;
     if (!claimed || claimed.type !== value.type || identifierToken(source, value.range) !== claimed.name
@@ -72,10 +106,34 @@ function verifyExpression(value, parent, source, fail, budget, locals, visibleBi
         primary: { sourceId: budget.sourcePath, ...value.range } });
       throw error;
     }
+    if (hasState(local.presence)) {
+      const flow = value.presenceFlow;
+      if (!validPresenceFlow(flow,local.presence)
+          || flow.undefined !== Boolean(local.states & 2) || flow.null !== Boolean(local.states & 4)) fail();
+    }
+    if (local.states & ~allowedStates) {
+      const error = new TypeError("r03-hir-presence: payload read requires a dominating presence proof");
+      Object.assign(error,{code:"r03-hir-presence",ruleId:"r01-evaluation",phase:"hir",primary:{sourceId:budget.sourcePath,...value.range}});
+      throw error;
+    }
   } else if (value.kind === "absence") {
     if (!exactKeys(value,["kind","type","range","absence"]) || !["undefined","null"].includes(value.absence)
         || sourceTokens(source,value.range.start,value.range.end) !== value.absence
-        || value.absence === "undefined" && visibleBindings.has("undefined")) fail();
+        || value.absence === "undefined" && visibleBindings.has("undefined")
+        || !(allowedStates & (value.absence === "undefined" ? 2 : 4))) fail();
+  } else if (value.kind === "presenceTest") {
+    const reference=value.left?.kind === "reference" ? value.left : value.right;
+    const absence=value.left?.kind === "absence" ? value.left : value.right;
+    const local=locals.get(reference?.binding);
+    if (!exactKeys(value,["kind","type","range","operator","left","right"]) || value.type !== boolTypeId
+        || !["===","!=="].includes(value.operator) || !local || !hasState(local.presence)
+        || reference?.kind !== "reference" || absence?.kind !== "absence" || reference.type !== absence.type
+        || value.left.range.end > value.right.range.start
+        || sourceTokens(source,value.range.start,value.left.range.start) !== ""
+        || !scalarOperator(source,value.left.range.end,value.right.range.start,value.operator)
+        || sourceTokens(source,value.right.range.end,value.range.end) !== "") fail();
+    verifyExpression(reference,value.range,source,fail,budget,locals,visibleBindings,declaredStates(local.presence));
+    verifyExpression(absence,value.range,source,fail,budget,locals,visibleBindings,7);
   } else if (value.kind === "update") {
     if (!exactKeys(value, ["kind", "type", "range", "operator", "prefix", "operand"])
         || !["++", "--"].includes(value.operator) || typeof value.prefix !== "boolean"
@@ -88,7 +146,7 @@ function verifyExpression(value, parent, source, fail, budget, locals, visibleBi
     const target = value.left, local = locals.get(target?.binding);
     if (!exactKeys(value, ["kind", "type", "range", "operator", "left", "right"])
         || !["=", "+=", "-=", "*=", "/=", "%=", "<<=", ">>=", ">>>=", "&=", "|=", "^=", "&&=", "||="].includes(value.operator)
-        || !exactKeys(target, ["kind", "type", "binding", "range"]) || target.kind !== "reference"
+        || !exactKeys(target, ["kind", "type", "binding", "range", ...(hasState(local?.presence) ? ["presenceFlow"] : [])]) || target.kind !== "reference"
         || !local?.writable || visibleBindings.get(local.name) !== target.binding
         || target.type !== local.type || value.type !== local.type
         || value.right?.type !== (["<<=", ">>=", ">>>="].includes(value.operator) ? i32TypeId : local.type)
@@ -97,6 +155,7 @@ function verifyExpression(value, parent, source, fail, budget, locals, visibleBi
         || sourceTokens(source, value.range.start, target.range.start) !== ""
         || !scalarOperator(source, target.range.end, value.right.range.start, value.operator)
         || sourceTokens(source, value.right.range.end, value.range.end) !== "") fail();
+    if (hasState(local.presence) && !validPresenceFlow(target.presenceFlow,local.presence)) fail();
     if (value.operator !== "=") {
       if (["&&=", "||="].includes(value.operator) ? local.type !== boolTypeId
           : !integerType(local.type) && !(floatType(local.type) && ["+=", "-=", "*=", "/=", "%="].includes(value.operator))) fail();
@@ -104,8 +163,13 @@ function verifyExpression(value, parent, source, fail, budget, locals, visibleBi
     }
     const conditionalWrite = ["&&=", "||="].includes(value.operator);
     const rightLocals = conditionalWrite ? new Map([...locals].map(([id, item]) => [id, { ...item }])) : locals;
-    verifyExpression(value.right, value.range, source, fail, budget, rightLocals, visibleBindings);
+    verifyExpression(value.right, value.range, source, fail, budget, rightLocals, visibleBindings,value.operator === "=" ? declaredStates(local.presence) : 1);
+    if (conditionalWrite) for (const [id,binding] of locals) {
+      binding.initialized &&= rightLocals.get(id).initialized;
+      binding.states |= rightLocals.get(id).states;
+    }
     local.initialized = true;
+    local.states = conditionalWrite ? 1 : expressionStates(value.right,rightLocals);
   } else if (value.kind === "conversion") {
     const entry = conversionEntries.get(value.origin?.entryId);
     if (!exactKeys(value, ["kind", "type", "range", "origin", "operand"]) || !verifyConversionOrigin(value.origin, budget.inputIdentity)
@@ -123,7 +187,7 @@ function verifyExpression(value, parent, source, fail, budget, locals, visibleBi
         || target.parameters.slice(value.arguments.length).some(p => !p.presence?.optional)) fail();
     let previous = value.range.start;
     for (const [index, argument] of value.arguments.entries()) {
-      verifyExpression(argument, value.range, source, fail, budget, locals, visibleBindings);
+      verifyExpression(argument, value.range, source, fail, budget, locals, visibleBindings,declaredStates(target.parameters[index].presence));
       const prefix = sourceTrivia(source, previous, argument.range.start).trim();
       if (argument.type !== target.parameters[index].type || argument.range.start < previous) fail();
       if (argument.kind === "absence" && !target.parameters[index].presence?.[argument.absence]) fail();
@@ -156,7 +220,7 @@ function verifyExpression(value, parent, source, fail, budget, locals, visibleBi
   } else if (value.kind === "group" || value.kind === "unary") {
     const group = value.kind === "group";
     if (!exactKeys(value, group ? ["kind", "type", "operand", "range"] : ["kind", "type", "operator", "operand", "range"])) fail();
-    verifyExpression(value.operand, value.range, source, fail, budget, locals, visibleBindings);
+    verifyExpression(value.operand, value.range, source, fail, budget, locals, visibleBindings,group ? allowedStates : 1);
     if (!(group ? sourceTokens(source, value.range.start, value.operand.range.start) === "("
         : scalarOperator(source, value.range.start, value.operand.range.start, value.operator))
         || sourceTokens(source, value.operand.range.end, value.range.end) !== (group ? ")" : "")
@@ -169,9 +233,13 @@ function verifyExpression(value, parent, source, fail, budget, locals, visibleBi
     if (!exactKeys(value, ["kind", "type", "operator", "left", "right", "range"])
         || !(short ? ["&&", "||"].includes(value.operator) : Object.hasOwn(operations, value.operator))) fail();
     verifyExpression(value.left, value.range, source, fail, budget, locals, visibleBindings);
-    const rightLocals = short ? new Map([...locals].map(([id, local]) => [id, { ...local }])) : locals;
+    const rightLocals = short ? cloneLocals(locals) : locals;
+    if (short) narrowLocals(rightLocals,value.left,value.operator === "&&");
     verifyExpression(value.right, value.range, source, fail, budget, rightLocals, visibleBindings);
-    if (short) for (const [id, local] of locals) local.initialized &&= rightLocals.get(id).initialized;
+    if (short) {
+      const shortcut=cloneLocals(locals); narrowLocals(shortcut,value.left,value.operator !== "&&");
+      for (const [id, local] of locals) { local.initialized &&= rightLocals.get(id).initialized; local.states=shortcut.get(id).states | rightLocals.get(id).states; }
+    }
     const shift = ["<<", ">>", ">>>"].includes(value.operator);
     if ((shift ? value.right.type !== i32TypeId : value.left.type !== value.right.type) || value.left.range.end > value.right.range.start
         || (["binary", "shortCircuit"].includes(value.left.kind) && precedence[value.left.operator] < precedence[value.operator])
@@ -262,7 +330,7 @@ export function verifyHir(hir) {
   };
   collect(fn.body);
   const budget = { remaining: 4096, sourcePath: hir.source.path, declarations, functions, completeSource, inputScope:hir.inputScope, inputIdentity:hir.inputIdentity };
-  const clone = locals => new Map([...locals].map(([id, local]) => [id, { ...local }]));
+  const clone = cloneLocals;
   const body = (statements, parent, locals, frame = "plain", outerBindings = new Map()) => {
     // Lexical visibility starts at scope entry, including each declaration's
     // own initializer and the TDZ before later declarations. Processed locals
@@ -287,7 +355,7 @@ export function verifyHir(hir) {
       if (statement.kind === "local") {
         const binding = statement.binding, value = statement.initializer;
         if (!exactKeys(statement, ["kind", "range", "binding", "initializer"])
-            || !bindingFact(binding, statement.range, source) || binding.presence || ids.has(binding.id)
+            || !bindingFact(binding, statement.range, source) || binding.presence && !validLocalPresence(binding.presence,binding,value,source,statement.range) || ids.has(binding.id)
             || binding.id !== `l${ids.size}` || names.has(binding.name)
             || sourceTokens(source, statement.range.start, binding.range.start) !== "") fail();
         const keyword = before.match(/^;?(const|let)$/)?.[1];
@@ -296,12 +364,12 @@ export function verifyHir(hir) {
         if (binding.writable !== (declarationKind === "let")) fail();
         const annotations = binding.type === boolTypeId ? [":bool", ":boolean"] : binding.type === types.f64 ? [":f64", ":number"] : [`:${scalarName(binding.type)}`];
         if (value !== null) {
-          verifyExpression(value, statement.range, source, fail, budget, locals, visibleBindings);
+          verifyExpression(value, statement.range, source, fail, budget, locals, visibleBindings,declaredStates(binding.presence));
           const annotation = sourceTokens(source, binding.range.end, value.range.start);
-          if (value.type !== binding.type || !["=", ...annotations.map(item => `${item}=`)].includes(annotation)
+          if (value.type !== binding.type || !binding.presence && !["=", ...annotations.map(item => `${item}=`)].includes(annotation)
               || sourceTokens(source, value.range.end, statement.range.end) !== "") fail();
-        } else if (!binding.writable || !annotations.includes(sourceTokens(source, binding.range.end, statement.range.end))) fail();
-        locals.set(binding.id, { ...binding, initialized: value !== null });
+        } else if (!binding.writable || !binding.presence && !annotations.includes(sourceTokens(source, binding.range.end, statement.range.end))) fail();
+        locals.set(binding.id, { ...binding, initialized: value !== null, states: value ? expressionStates(value,locals) : 1 });
         names.add(binding.name); ids.add(binding.id);
       } else {
         declarationKind = undefined;
@@ -315,22 +383,25 @@ export function verifyHir(hir) {
           if (!exactKeys(statement, ["kind", "range", "body"])) fail();
           const scoped = clone(locals);
           const terminated = body(statement.body, statement.range, scoped, "block", visibleBindings);
-          for (const [id, local] of locals) local.initialized = scoped.get(id).initialized;
+          for (const [id, local] of locals) { local.initialized = scoped.get(id).initialized; local.states = scoped.get(id).states; }
           returns ||= terminated;
         } else if (statement.kind === "if" || statement.kind === "while") {
           const branch = statement.kind === "if", condition = statement.condition;
           if (!exactKeys(statement, branch ? ["kind", "range", "condition", "thenBody", "elseBody"]
               : ["kind", "range", "condition", "body"]) || condition?.type !== boolTypeId) fail();
+          if (!branch) loopCarriedStates(statement,locals,fail);
           verifyExpression(condition, statement.range, source, fail, budget, locals, visibleBindings);
           const selected = branch ? statement.thenBody : statement.body;
           if (!Array.isArray(selected) || selected.length !== 1
               || sourceTokens(source, statement.range.start, condition.range.start) !== `${statement.kind}(`
               || sourceTokens(source, condition.range.end, selected[0]?.range.start) !== ")") fail();
-          const left = clone(locals), leftReturn = body(selected, { start: selected[0].range.start, end: selected.at(-1).range.end }, left, "plain", visibleBindings);
+          const left = clone(locals); narrowLocals(left,condition,true);
+          const leftReturn = body(selected, { start: selected[0].range.start, end: selected.at(-1).range.end }, left, "plain", visibleBindings);
           let last = selected.at(-1).range.end;
           if (branch) {
             if (!Array.isArray(statement.elseBody) || statement.elseBody.length > 1) fail();
             const right = clone(locals);
+            narrowLocals(right,condition,false);
             let rightReturn = false;
             if (statement.elseBody.length) {
               const alternative = statement.elseBody;
@@ -339,10 +410,16 @@ export function verifyHir(hir) {
               rightReturn = body(alternative, { start: alternative[0].range.start, end: alternative.at(-1).range.end }, right, "plain", visibleBindings);
               last = alternative.at(-1).range.end;
             }
-            for (const [id, local] of locals)
+            for (const [id, local] of locals) {
               local.initialized = leftReturn ? right.get(id).initialized : rightReturn ? left.get(id).initialized
                 : left.get(id).initialized && right.get(id).initialized;
+              local.states = leftReturn ? right.get(id).states : rightReturn ? left.get(id).states : left.get(id).states | right.get(id).states;
+            }
             returns ||= leftReturn && rightReturn;
+          } else {
+            // Include every possible carried state on the loop's back edge.
+            for (const [id,local] of locals) local.states |= left.get(id).states;
+            narrowLocals(locals,condition,false);
           }
           if (sourceTokens(source, last, statement.range.end) !== "") fail();
         } else {
@@ -354,17 +431,18 @@ export function verifyHir(hir) {
           } else if (statement.kind === "assign") {
             const target = statement.target, local = locals.get(target?.binding);
             if (!exactKeys(statement, ["kind", "range", "target", "value"])
-                || !exactKeys(target, ["kind", "type", "binding", "range"]) || target.kind !== "reference"
+                || !exactKeys(target, ["kind", "type", "binding", "range", ...(hasState(local?.presence) ? ["presenceFlow"] : [])]) || target.kind !== "reference"
                 || !local?.writable || visibleBindings.get(local.name) !== target.binding
                 || target.type !== local.type || value?.type !== local.type
                 || !range(target.range, statement.range) || target.range.end > value.range.start
                 || identifierToken(source, target.range) !== local.name
                 || sourceTokens(source, statement.range.start, target.range.start) !== ""
-                || sourceTokens(source, target.range.end, value.range.start) !== "=") fail();
+                || sourceTokens(source, target.range.end, value.range.start) !== "="
+                || hasState(local.presence) && !validPresenceFlow(target.presenceFlow,local.presence)) fail();
           } else fail();
-          verifyExpression(value, statement.range, source, fail, budget, locals, visibleBindings);
+          verifyExpression(value, statement.range, source, fail, budget, locals, visibleBindings,statement.kind === "assign" ? declaredStates(locals.get(statement.target.binding).presence) : 1);
           if (!/^;?$/.test(sourceTokens(source, value.range.end, statement.range.end))) fail();
-          if (statement.kind === "assign") locals.get(statement.target.binding).initialized = true;
+          if (statement.kind === "assign") { const local=locals.get(statement.target.binding); local.initialized = true; local.states=expressionStates(value,locals); }
         }
       }
       previousEnd = statement.range.end;
@@ -386,11 +464,15 @@ export function verifyHir(hir) {
         const opening=gap.match(/^(?:export\s+)?function\s+([^()]+)\(\s*$/);
         if (!opening || identifierToken(opening[1],{start:0,end:opening[1].length}) !== fn.name) fail();
       } else if (gap !== ",") fail();
+      let initializerStates=0;
       if (initializer) {
-        verifyExpression(initializer,parameter.presence.range,source,fail,budget,initial,visible);
-        if (initializer.type !== parameter.type || initializer.kind === "absence" && !parameter.presence[initializer.absence]) fail();
+        const before=clone(initial);
+        verifyExpression(initializer,parameter.presence.range,source,fail,budget,initial,visible,annotationStates(parameter.presence,source));
+        if (initializer.type !== parameter.type) fail();
+        initializerStates=expressionStates(initializer,initial);
+        for (const [id,local] of initial) {local.initialized &&=before.get(id).initialized;local.states |=before.get(id).states;}
       }
-      initial.set(parameter.id,{...parameter,initialized:true}); visible.set(parameter.name,parameter.id);
+      initial.set(parameter.id,{...parameter,initialized:true,states:(declaredStates(parameter.presence) & (initializer ? ~2 : 7)) | initializerStates}); visible.set(parameter.name,parameter.id);
       previous=parameter.presence.range.end;
     }
     const ending=sourceTokens(source,previous,fn.body[0].range.start);
@@ -413,7 +495,7 @@ export function verifyHir(hir) {
     if(parts.length !== 2 || identifierToken(parts[0],{start:0,end:parts[0].length}) !== parameter.name
         || parameter.range.start < parameterStart || parameter.range.end > parameterStart + parts[0].length
         || ({boolean:"bool",number:"f64"}[parts[1].trim()] ?? parts[1].trim()) !== parameterNames[index]) fail();
-    initial.set(parameter.id, { ...parameter, initialized: true }); visible.set(parameter.name, parameter.id);
+    initial.set(parameter.id, { ...parameter, initialized: true, states: 1 }); visible.set(parameter.name, parameter.id);
     parameterEnd = parameter.range.end;
     parameterStart += parameterTokens[index].length + 1;
   }
@@ -461,7 +543,7 @@ export function buildHir(snapshot) {
     if (value.kind === "reference") {
       const symbol = resolveSymbol(snapshot, value.symbol), binding = bindings.get(symbol.id);
       if (!binding) throw new TypeError("local reference has no preceding owned declaration");
-      return { kind: "reference", ...common, binding: binding.id };
+      return { kind: "reference", ...common, binding: binding.id, ...(value.presenceFlow ? {presenceFlow:structuredClone(value.presenceFlow)} : {}) };
     }
     if (value.kind === "conversion") return {kind:"conversion",...common,origin:structuredClone(value.conversion),operand:project(value.operand,common.range)};
     if (value.kind === "call") {
@@ -476,6 +558,7 @@ export function buildHir(snapshot) {
     if (value.kind === "group") return { kind: "group", ...common, operand: project(value.operand, common.range) };
     if (value.kind === "write") return { kind: "write", ...common, operator: value.operator,
       left: project(value.left, common.range), right: project(value.right, common.range) };
+    if (value.kind === "presenceTest") return {kind:"presenceTest",...common,operator:value.operator,left:project(value.left,common.range),right:project(value.right,common.range)};
     if (value.kind === "update") return { kind: "update", ...common, operator: value.operator,
       prefix: value.prefix, operand: project(value.operand, common.range) };
     if (value.kind === "unary" && ["+", "-", "~", "!"].includes(value.operator))
@@ -491,7 +574,7 @@ export function buildHir(snapshot) {
       const symbol = resolveSymbol(snapshot, item.symbol.ref), type = types[symbol.type];
       if (symbol.kind !== "local" || !type) throw new TypeError("unsupported local type");
       const initializer = item.initializer ? project(item.initializer, item.range) : null;
-      const binding = { id: `l${bindings.size - fn.parameters.length}`, name: symbol.name, type, writable: symbol.writable, range: symbol.range };
+      const binding = { id: `l${bindings.size - fn.parameters.length}`, name: symbol.name, type, writable: symbol.writable, range: symbol.range, ...(symbol.presence ? {presence:structuredClone(symbol.presence)} : {}) };
       bindings.set(symbol.id, binding);
       return { kind: "local", range: item.range, binding, initializer };
     }
@@ -587,13 +670,22 @@ export function lowerHir(hir) {
     current.lines.push(`    ${name} = "tsfg_core.constant"() {value = ${value}, ${attrsFor(anchor)}} : () -> ${core}`);
     return name;
   };
-  const represent = expression => expression.kind === "reference" ? definitions.get(expression.binding)
+  const represent = expression => expression.kind === "group" ? represent(expression.operand)
+    : expression.kind === "write" && expression.operator === "=" ? (emit(expression),definitions.get(expression.left.binding))
+    : expression.kind === "reference" ? definitions.get(expression.binding)
     : expression.kind === "absence" ? {payload:scalarConstant(expression.type,"0",expression.range),state:scalarConstant(i32TypeId,expression.absence === "undefined" ? "1" : "2",expression.range)}
       : {payload:emit(expression),state:null};
   const store = (id, value, anchor) => definitions.set(id,{payload:value.payload,
     state:bindingStates.get(id) ? value.state ?? scalarConstant(i32TypeId,"0",anchor) : null});
   const emit = expression => {
     if (expression.kind === "reference") return definitions.get(expression.binding).payload;
+    if (expression.kind === "presenceTest") {
+      const reference=expression.left.kind === "reference" ? expression.left : expression.right;
+      const absent=expression.left.kind === "absence" ? expression.left : expression.right;
+      const state=definitions.get(reference.binding).state, tag=scalarConstant(i32TypeId,absent.absence === "undefined" ? "1" : "2",absent.range), name=`%v${valueIndex++}`;
+      current.lines.push(`    ${name} = "tsfg_core.${operations[expression.operator]}"(${state}, ${tag}) {${attrsFor(expression.range)}} : (i32, i32) -> i1`);
+      return name;
+    }
     if (expression.kind === "update") {
       const old = emit(expression.operand), one = `%v${valueIndex++}`, next = `%v${valueIndex++}`, type = coreType(expression.type);
       const value = floatType(expression.type) ? quote(floatBits("1", scalarName(expression.type)))
@@ -672,7 +764,7 @@ export function lowerHir(hir) {
       if (statement.kind === "local") {
         bindingTypes.set(statement.binding.id, statement.binding.type);
         declared.add(statement.binding.id);
-        bindingStates.set(statement.binding.id,false);
+        bindingStates.set(statement.binding.id,hasState(statement.binding.presence));
         if (statement.initializer) store(statement.binding.id,represent(statement.initializer),statement.range);
       } else if (statement.kind === "assign") store(statement.target.binding,represent(statement.value),statement.range);
       else if (statement.kind === "evaluate") emit(statement.value);

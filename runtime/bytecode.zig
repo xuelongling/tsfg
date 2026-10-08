@@ -135,13 +135,33 @@ fn parse(reader: *Reader, allocator: Allocator, module: *Module) (error{Invalid}
         for (module.functions[0..index]) |previous| if (std.mem.eql(u8, &previous.info.function_id, &function.info.function_id) or std.mem.eql(u8, previous.info.function_name, function.info.function_name)) return reader.reject("r04-function", reader.offset);
     }
     if (reader.offset != reader.bytes.len) return reader.reject("r04-trailing", reader.offset);
-    for (module.functions) |function| for (function.instructions) |op| if (op.opcode == 27) {
-        if (op.left >= count) return reader.reject("r04-call-target", function.info.instruction_offset);
-        const target = module.functions[op.left];
-        if (op.type_code != target.info.return_type) return reader.reject("r04-type", function.info.instruction_offset);
-        if (op.edges[0].len != target.info.parameter_types.len) return reader.reject("r04-call-arity", function.info.instruction_offset);
-        for (op.edges[0], target.info.parameter_types) |argument, type_code| if (function.register_types[argument] != type_code) return reader.reject("r04-type", function.info.instruction_offset);
-    };
+    for (module.functions) |function| {
+        var known = [_]?u64{null} ** 4096;
+        for (function.instructions) |op| switch (op.opcode) {
+            1, 3 => known[op.register] = @as(u32, @bitCast(op.immediate)),
+            28, 32 => known[op.register] = op.literal_bits,
+            else => {},
+        };
+        for (function.instructions) |op| if (op.opcode == 27) {
+            if (op.left >= count) return reader.reject("r04-call-target", function.info.instruction_offset);
+            const target = module.functions[op.left];
+            if (op.type_code != target.info.return_type) return reader.reject("r04-type", function.info.instruction_offset);
+            if (op.edges[0].len != target.info.parameter_types.len) return reader.reject("r04-call-arity", function.info.instruction_offset);
+            for (op.edges[0], target.info.parameter_types) |argument, type_code| if (function.register_types[argument] != type_code) return reader.reject("r04-type", function.info.instruction_offset);
+            var physical: usize = 0;
+            for (target.info.presence_masks) |mask| {
+                const payload = known[op.edges[0][physical]];
+                physical += 1;
+                if (mask & 3 == 0) continue;
+                const state = known[op.edges[0][physical]];
+                physical += 1;
+                if (state) |bits| {
+                    if (bits > 2 or bits == 1 and mask & 1 == 0 or bits == 2 and mask & 2 == 0 or bits != 0 and payload != null and payload.? != 0)
+                        return reader.reject("r04-presence-state", function.info.instruction_offset);
+                }
+            }
+        };
+    }
     return module.functions[0].info;
 }
 
