@@ -199,11 +199,54 @@ test("checked builtin undefined accepts identifier escapes and grouped trivia at
 });
 
 const coldSeams = hir => [()=>verifyHir(hir),()=>printHir(hir),()=>lowerHir(hir),()=>readHir(Buffer.from(canonical(hir)+"\n"))];
+function newOperatorGroup(value) {
+  if(!value || typeof value!=="object")return null;
+  for(const [key,child] of Object.entries(value)) {
+    if(child?.kind==="group" && ["write","presenceTest"].includes(child.operand.kind))return {parent:value,key,group:child};
+    const found=newOperatorGroup(child);if(found)return found;
+  }
+  return null;
+}
 function replaceOwnedSource(hir, source) {
   hir.source.content=source;hir.source.hash=sha256(source);
   hir.inputScope.files.find(file=>file.path===hir.source.path).content=source;
   hir.inputIdentity=sha256(canonical(hir.inputScope));
 }
+
+test("new expression precedence rejects normally rehashed group removal at every cold seam",async()=>{
+  for(const source of [
+    "export function entry(): i32 { let x: i32 = 2; let y: i32 = 3; return x + (y = 5); }",
+    "export function entry(): i32 { let x: i32 = 2; return -(x = 5); }",
+    "export function entry(): bool { let x: bool = true; let y: bool = true; return x && (y = false); }",
+    "export function entry(value?: bool): bool { return !(value === undefined); }",
+    "export function entry(value?: bool): bool { let flag: bool = true; return flag === (value === undefined); }",
+  ]) {
+    const hir=await checked(source);for(const invoke of coldSeams(hir))invoke();
+    const copy=structuredClone(hir),location=newOperatorGroup(copy);assert.ok(location);
+    const {parent,key,group}=location,spelling=source.slice(group.range.start,group.range.end);
+    const open=spelling.indexOf("("),close=spelling.lastIndexOf(")");assert.ok(open>=0 && close>open);
+    const chars=source.split("");chars[group.range.start+open]=" ";chars[group.range.start+close]=" ";
+    const forged=chars.join("");assert.equal(forged.length,source.length);parent[key]=group.operand;
+    replaceOwnedSource(copy,forged);
+    const official=await compileHir(await sourceInput(forged),frontend());assert.equal(official.status,"error");
+    assert.ok(official.diagnostics.some(d=>d.phase===(group.operand.kind==="write"?"syntax":"types")));
+    for(const invoke of coldSeams(copy))assert.throws(invoke);
+  }
+});
+
+test("assignment associativity and equality presence precedence retain legal source trees",async()=>{
+  for(const source of [
+    "export function entry(): i32 { let x: i32 = 0; let y: i32 = 0; return x = y = 5; }",
+    "export function entry(): i32 { let x: i32 = 1; let y: i32 = 2; return x += y += 5; }",
+    "export function entry(): i32 { let x: i32 = 2; let y: i32 = 3; return x + -y * 2; }",
+    "export function entry(): i32 { let x: i32 = 2; let y: i32 = 3; return x - y - 5; }",
+    "export function entry(): bool { let x: bool = true; let y: bool = false; return x || y && x; }",
+    "export function entry(value?: bool): bool { let flag: bool = true; return value === undefined === flag; }",
+  ]) {
+    const hir=await checked(source),text=printHir(hir);
+    assert.equal(printHir(readHir(Buffer.from(text))),text);lowerHir(hir);
+  }
+});
 
 test("finite annotations preserve legal grouping, repeated members and nominal identifier spelling",async()=>{
   for(const parameter of ["value: (i32 | undefined) = 7","value?: ((i32))",

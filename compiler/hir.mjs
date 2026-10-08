@@ -32,6 +32,13 @@ const comparisons = new Set(["===", "!==", "<", "<=", ">", ">="]);
 const precedence = { "||": -1, "&&": 0, "|": 1, "^": 2, "&": 3, "===": 4, "!==": 4,
   "<": 5, "<=": 5, ">": 5, ">=": 5, "<<": 6, ">>": 6, ">>>": 6,
   "+": 7, "-": 7, "*": 8, "/": 8, "%": 8 };
+function expressionPrecedence(value) {
+  if (value.kind === "write") return -2;
+  if (["binary", "shortCircuit", "presenceTest"].includes(value.kind)) return precedence[value.operator];
+  if (value.kind === "unary") return 9;
+  // Explicit groups and the remaining checked atomic/update forms bind tighter.
+  return Infinity;
+}
 const sourceTokens = (source, start, end) => source.slice(start, end)
   .replace(/\/\*[\s\S]*?\*\/|\/\/[^\r\n\u2028\u2029]*/g, "").replace(/\s/g, "");
 const sourceTrivia = (source, start, end) => source.slice(start, end)
@@ -367,7 +374,7 @@ function verifyExpression(value, parent, source, fail, budget, locals, visibleBi
     if (!(group ? sourceTokens(source, value.range.start, value.operand.range.start) === "("
         : scalarOperator(source, value.range.start, value.operand.range.start, value.operator))
         || sourceTokens(source, value.operand.range.end, value.range.end) !== (group ? ")" : "")
-        || value.type !== value.operand.type || (!group && (["binary", "shortCircuit"].includes(value.operand.kind)
+        || value.type !== value.operand.type || (!group && (expressionPrecedence(value.operand) < 9
         || !["+", "-", "~", "!"].includes(value.operator)
         || (value.operator === "!" ? value.type !== boolTypeId : !integerType(value.type)
           && !(floatType(value.type) && ["+", "-"].includes(value.operator)))))) fail();
@@ -385,8 +392,8 @@ function verifyExpression(value, parent, source, fail, budget, locals, visibleBi
     }
     const shift = ["<<", ">>", ">>>"].includes(value.operator);
     if ((shift ? value.right.type !== i32TypeId : value.left.type !== value.right.type) || value.left.range.end > value.right.range.start
-        || (["binary", "shortCircuit"].includes(value.left.kind) && precedence[value.left.operator] < precedence[value.operator])
-        || (["binary", "shortCircuit"].includes(value.right.kind) && precedence[value.right.operator] <= precedence[value.operator])
+        || expressionPrecedence(value.left) < precedence[value.operator]
+        || expressionPrecedence(value.right) <= precedence[value.operator]
         || sourceTokens(source, value.range.start, value.left.range.start) !== ""
         || !scalarOperator(source, value.left.range.end, value.right.range.start, value.operator)
         || sourceTokens(source, value.right.range.end, value.range.end) !== ""
