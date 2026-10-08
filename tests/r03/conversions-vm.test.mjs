@@ -131,6 +131,11 @@ test('cold conversion origins reject foreign merged declarations after coherent 
   ['interface global { checked_i8_from_f64(value:f64):i8; }',true],
   ['/* declare function checked_i8_from_f64(value:f64):i8; */ declare const text:"declare const __tsfg_i8:unique symbol;";',true],
   ['declare function checked_i8_from_f64(value:f64):i8;',true,false],
+  ['declare const open:"{"; declare function checked_i8_from_f64(value:f64):i8; declare const close:"}";',false],
+  ['declare const open:"{"; declare const __tsfg_i8:unique symbol; declare const close:"}";',false],
+  ['declare const text:"{";',true],
+  ['declare const text:"}";',true],
+  ['declare const punctuation:","|":"|";"|"["|"]"|"("|")";',true],
  ];
  for(const [content,accepted,rooted=true]of declarations){
   const extra={path:'/src/extra.d.ts',content},request=structuredClone(input);request.files.push(extra);if(rooted)request.declarations.paths.push(extra.path);
@@ -161,6 +166,18 @@ test('cold conversion declaration loading follows referenced files while unused 
   ['unused-types','/src/node_modules/@types/foo/index.d.ts','',foreign,false,true],
   ['unused-file','/src/dep.d.ts','// inert',foreign,false,true],
   ['legal-reference','/src/dep.d.ts','/// <reference path="./dep.d.ts" />','declare const hidden:i8;',true,true],
+  ['missing-path','/src/unrelated.d.ts','/// <reference path="./absent.d.ts" />','declare const hidden:i8;',true,false],
+  ['missing-types','/src/unrelated.d.ts','/// <reference types="absent" />','declare const hidden:i8;',true,false],
+  ['missing-import','/src/unrelated.d.ts','import "./absent";','declare const hidden:i8;',true,false],
+  ['legal-relative-types','/src/dep.d.ts','/// <reference types="./dep" />','declare const hidden:i8;',true,true],
+  ['legal-package-types','/src/node_modules/foo/index.d.ts','/// <reference types="foo" />','declare const hidden:i8;',true,true],
+  ['legal-ambient-import','/src/dep.d.ts','/// <reference path="./dep.d.ts" />\ndeclare module "virtual" { export const hidden:i8; }','import "virtual";',true,true],
+  ['legal-ambient-wildcard','/src/dep.d.ts','/// <reference path="./dep.d.ts" />\ndeclare module "*.json";','import "data.json";',true,true],
+  ['unused-missing-path','/src/unrelated.d.ts','/// <reference path="./absent.d.ts" />','declare const hidden:i8;',false,true],
+  ['unused-missing-types','/src/unrelated.d.ts','/// <reference types="absent" />','declare const hidden:i8;',false,true],
+  ['unused-missing-import','/src/unrelated.d.ts','import "./absent";','declare const hidden:i8;',false,true],
+  ['empty-unresolved-augmentation','/src/unrelated.d.ts','export {}; declare module "./absent" {}','declare const hidden:i8;',true,true],
+  ['inert-augmentation-target','/src/dep.d.ts','export {}; declare module "./dep" { interface Extra {} }','export interface Existing {}',true,true],
  ];
  for(const [name,dependencyPath,content,dependency,rooted,accepted]of cases){
   const h=structuredClone(high.hir);h.inputScope.files.push({path:'/src/extra.d.ts',content},{path:dependencyPath,content:dependency});if(rooted)h.inputScope.declarations.paths.push('/src/extra.d.ts');h.inputScope.files.sort((a,b)=>Buffer.from(a.path).compare(Buffer.from(b.path)));h.inputIdentity=sha256(canonical(h.inputScope));h.functions[0].body[0].value.origin.inputIdentity=h.inputIdentity;

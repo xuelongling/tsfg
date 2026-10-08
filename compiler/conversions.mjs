@@ -102,6 +102,8 @@ const conversionNames = new Set([
   ...entries.entries.map(entry=>entry.name),
   ...Object.keys(entries.brands).flatMap(name=>[name,`__tsfg_${name}`]), 'f64',
 ]);
+const punctuation = (token,value) => token?.kind==='punctuation'&&token.value===value;
+const namedToken = (token,value) => token?.kind==='name'&&token.value===value;
 
 // This is a bounded declaration-name guard, not a TypeScript type checker.
 // Cold consumers must not trust rehashed origins when another declaration
@@ -132,65 +134,98 @@ function declarationTokens(source) {
 }
 
 function exclusiveConversionScope(scope,officialPath) {
-  const files=new Map(scope.files.map(file=>[file.path,file])),loaded=new Set(),pending=[scope.rootFile,...scope.declarations.paths];
-  while(pending.length){
+  const files=new Map(scope.files.map(file=>[file.path,file])),loaded=new Set(),pending=[scope.rootFile,...scope.declarations.paths],ambient=new Set();
+  let required=[];
+  while(pending.length||required.length){
+   while(pending.length){
     const name=pending.pop();if(loaded.has(name))continue;loaded.add(name);
     const lexical=declarationTokens(files.get(name)?.content??'');if(!lexical)return false;
     if(name!==scope.rootFile&&name!==officialPath&&!exclusiveConversionDeclarations(lexical.tokens))return false;
-    for(const reference of lexical.references){const target=path.posix.resolve(path.posix.dirname(name),reference);if(files.has(target))pending.push(target);}
+    if(!externalDeclarationFile(lexical.tokens)){
+      let depth=0;
+      for(let index=0;index<lexical.tokens.length;index++){
+        const token=lexical.tokens[index];
+        if(depth===0&&namedToken(token,'module')&&lexical.tokens[index+1]?.kind==='text')ambient.add(lexical.tokens[index+1].value);
+        if(punctuation(token,'{'))depth++;if(punctuation(token,'}'))depth--;
+      }
+    }
+    for(const reference of lexical.references){const target=path.posix.resolve(path.posix.dirname(name),reference);if(!files.has(target))return false;pending.push(target);}
     for(const type of lexical.types){
       const packageName=type.startsWith('@')?type.slice(1).replace('/','__'):type;
+      let resolved=false;
       for(let directory=path.posix.dirname(name);;directory=path.posix.dirname(directory)){
         const base=path.posix.join(directory,'node_modules/@types',packageName),target=[base+'.d.ts',base+'/index.d.ts'].find(candidate=>files.has(candidate));
-        if(target){pending.push(target);break;}if(directory==='/')break;
+        if(target){pending.push(target);resolved=true;break;}if(directory==='/')break;
       }
+      if(!resolved){const target=declarationModuleFile(files,name,type);if(!target)return false;pending.push(target);}
     }
     for(let index=0;index<lexical.tokens.length;index++){
       const token=lexical.tokens[index],next=lexical.tokens[index+1];let specifier;
       if(token.kind==='name'&&token.value==='from'&&next?.kind==='text')specifier=next.value;
       if(token.kind==='name'&&token.value==='import'){
         if(next?.kind==='text')specifier=next.value;
-        else if(next?.value==='('&&lexical.tokens[index+2]?.kind==='text')specifier=lexical.tokens[index+2].value;
+        else if(punctuation(next,'(')&&lexical.tokens[index+2]?.kind==='text')specifier=lexical.tokens[index+2].value;
       }
-      if(token.kind==='name'&&token.value==='require'&&next?.value==='('&&lexical.tokens[index+2]?.kind==='text')specifier=lexical.tokens[index+2].value;
+      if(token.kind==='name'&&token.value==='require'&&punctuation(next,'(')&&lexical.tokens[index+2]?.kind==='text')specifier=lexical.tokens[index+2].value;
       if(specifier===undefined)continue;
-      const relative=specifier.startsWith('.')||specifier.startsWith('/');
-      for(let directory=path.posix.dirname(name);;directory=path.posix.dirname(directory)){
-        const packageName=specifier.startsWith('@')?specifier.slice(1).replace('/','__'):specifier;
-        const bases=relative?[path.posix.resolve(directory,specifier)]:[path.posix.join(directory,'node_modules',specifier),path.posix.join(directory,'node_modules/@types',packageName)];
-        const target=bases.flatMap(base=>[base,base.replace(/\.(?:mjs|cjs|js|jsx|ts|tsx)$/,'')+'.d.ts',base+'/index.d.ts']).find(candidate=>files.has(candidate));
-        if(target){pending.push(target);break;}if(relative||directory==='/')break;
-      }
+      required.push({name,specifier});
     }
+   }
+   // Ambient modules in the loaded script declarations satisfy imports without
+   // a physical file. Defer unresolved imports until all newly loaded roots
+   // have contributed their module declarations; file traversal order is inert.
+   const unresolved=[];
+   for(const dependency of required){
+     if([...ambient].some(name=>{const parts=name.split('*');return parts.length===1?name===dependency.specifier:parts.length===2&&dependency.specifier.startsWith(parts[0])&&dependency.specifier.endsWith(parts[1]);}))continue;
+     const target=declarationModuleFile(files,dependency.name,dependency.specifier);
+     if(target)pending.push(target);else unresolved.push(dependency);
+   }
+   if(pending.length===0&&unresolved.length>0)return false;required=unresolved;
   }
   return true;
 }
 
-function exclusiveConversionDeclarations(tokens) {
+function declarationModuleFile(files,name,specifier) {
+  const relative=specifier.startsWith('.')||specifier.startsWith('/');
+  for(let directory=path.posix.dirname(name);;directory=path.posix.dirname(directory)){
+    const packageName=specifier.startsWith('@')?specifier.slice(1).replace('/','__'):specifier;
+    const bases=relative?[path.posix.resolve(directory,specifier)]:[path.posix.join(directory,'node_modules',specifier),path.posix.join(directory,'node_modules/@types',packageName)];
+    const target=bases.flatMap(base=>[base,base.replace(/\.(?:mjs|cjs|js|jsx|ts|tsx)$/,'')+'.d.ts',base+'/index.d.ts']).find(candidate=>files.has(candidate));
+    if(target)return target;if(relative||directory==='/')return undefined;
+  }
+}
+
+function externalDeclarationFile(tokens) {
   let depth=0,external=false;
   for(let index=0;index<tokens.length;index++){
     const token=tokens[index];
-    if(depth===0&&token.kind==='name'&&(token.value==='export'||token.value==='import'&&tokens[index+1]?.value!=='('))external=true;
-    if(token.value==='{')depth++;if(token.value==='}')depth--;
+    if(depth===0&&token.kind==='name'&&(token.value==='export'||token.value==='import'&&!punctuation(tokens[index+1],'(')))external=true;
+    if(punctuation(token,'{'))depth++;if(punctuation(token,'}'))depth--;
   }
-  const scopes=[!external],declarationKinds=new Set(['function','class','interface','type','enum','namespace','module']);
+  return external;
+}
+
+function exclusiveConversionDeclarations(tokens) {
+  const scopes=[!externalDeclarationFile(tokens)],declarationKinds=new Set(['function','class','interface','type','enum','namespace','module']);
   const bindingCollision = start => {
     const token=tokens[start];
     if(token?.kind==='name')return {end:start+1,collision:conversionNames.has(token.value)};
-    if(!['{','['].includes(token?.value))return {end:start+1,collision:false};
+    if(token?.kind!=='punctuation'||!['{','['].includes(token.value))return {end:start+1,collision:false};
     const object=token.value==='{',close=object?'}':']';let cursor=start+1;
-    while(cursor<tokens.length&&tokens[cursor].value!==close){
-      if([',','.'].includes(tokens[cursor].value)){cursor++;continue;}
-      if(object&&tokens[cursor+1]?.value===':')cursor+=2;
+    while(cursor<tokens.length&&!punctuation(tokens[cursor],close)){
+      if(punctuation(tokens[cursor],',')||punctuation(tokens[cursor],'.')){cursor++;continue;}
+      if(object&&punctuation(tokens[cursor+1],':'))cursor+=2;
       const binding=bindingCollision(cursor);if(binding.collision)return binding;cursor=binding.end;
       // Defaults do not introduce bindings. Skip their expression through the
       // next pattern separator, retaining balanced nested punctuation.
-      if(tokens[cursor]?.value==='='){
+      if(punctuation(tokens[cursor],'=')){
         let nesting=0;cursor++;
-        while(cursor<tokens.length){const value=tokens[cursor].value;
-          if(nesting===0&&(value===','||value===close))break;
-          if(['(','[','{'].includes(value))nesting++;
-          if([')',']','}'].includes(value))nesting--;cursor++;
+        while(cursor<tokens.length){const item=tokens[cursor];
+          if(nesting===0&&(punctuation(item,',')||punctuation(item,close)))break;
+          if(item.kind==='punctuation'){
+            if(['(','[','{'].includes(item.value))nesting++;
+            if([')',']','}'].includes(item.value))nesting--;
+          }cursor++;
         }
       }
     }
@@ -198,9 +233,9 @@ function exclusiveConversionDeclarations(tokens) {
   };
   for(let index=0;index<tokens.length;index++){
     const token=tokens[index],next=tokens[index+1];
-    if(token.value==='{'){scopes.push(tokens[index-1]?.value==='global'&&!declarationKinds.has(tokens[index-2]?.value));continue;}
-    if(token.value==='}'){if(scopes.length===1)return false;scopes.pop();continue;}
-    if(token.value==='export'&&next?.value==='as'&&tokens[index+2]?.value==='namespace'&&conversionNames.has(tokens[index+3]?.value))return false;
+    if(punctuation(token,'{')){scopes.push(namedToken(tokens[index-1],'global')&&!declarationKinds.has(tokens[index-2]?.value));continue;}
+    if(punctuation(token,'}')){if(scopes.length===1)return false;scopes.pop();continue;}
+    if(namedToken(token,'export')&&namedToken(next,'as')&&namedToken(tokens[index+2],'namespace')&&tokens[index+3]?.kind==='name'&&conversionNames.has(tokens[index+3].value))return false;
     if(!scopes.at(-1)||token.kind!=='name')continue;
     if(declarationKinds.has(token.value)&&next?.kind==='name'&&conversionNames.has(next.value))return false;
     if(['const','let','var'].includes(token.value)){
@@ -209,11 +244,13 @@ function exclusiveConversionDeclarations(tokens) {
       let nesting=0,binding=true;
       for(let cursor=index+1;cursor<tokens.length;cursor++){
         const item=tokens[cursor];
-        if(nesting===0&&(item.value===';'||item.value==='}'))break;
+        if(nesting===0&&(punctuation(item,';')||punctuation(item,'}')))break;
         if(binding){if(bindingCollision(cursor).collision)return false;binding=false;}
-        if(['(','[','{','<'].includes(item.value))nesting++;
-        if([')',']','}','>'].includes(item.value)&&nesting>0)nesting--;
-        if(nesting===0&&item.value===',')binding=true;
+        if(item.kind==='punctuation'){
+          if(['(','[','{','<'].includes(item.value))nesting++;
+          if([')',']','}','>'].includes(item.value)&&nesting>0)nesting--;
+          if(nesting===0&&item.value===',')binding=true;
+        }
       }
     }
   }
