@@ -129,21 +129,27 @@ test("persisted local HIR cannot split increment or decrement tokens into scalar
   });
 });
 
-test("the current official producer keeps update expressions pending without scalar reinterpretation", async () => {
-  for (const expression of ["++value", "--value", "value++", "value--"]) {
+test("the official producer and formal VM preserve prefix and postfix scalar results", async () => {
+  for (const [expression, expected] of [["++value", "41"], ["--value", "39"], ["value++", "40"], ["value--", "40"]]) {
     const source = `export function answer(): i32 { let value: i32 = 40; return ${expression}; }`;
-    const result = await compileHir(await sourceInput(source), tools());
-    assert.equal(result.status, "error", JSON.stringify(result));
-    assert.ok(result.diagnostics.some(item => item.code === "r02b-d-unsupported" && item.phase === "capability"));
-    assert.equal(result.hir, undefined);
+    const input = await sourceInput(source), session = createCompilerSession(tools());
+    for (const compiled of [await compileProgram(input, tools()), await session.compile(input)]) {
+      assert.equal(compiled.status, "ok", JSON.stringify(compiled));
+      const result = await runBytecode(compiled.bytecode, tools());
+      assert.equal(result[0].status, "returned", JSON.stringify(result));
+      assert.deepEqual(result[0].result, { type: "i32", value: expected });
+    }
   }
 });
 
-test("the current official producer rejects uninitialized local declarations with an explicit capability identity", async () => {
+test("the official checker rejects bare uninitialized reads with diagnostic 2454 at the reference", async () => {
   const source = "export function answer(): i32 { let value: i32; return value; }";
   const result = await compileHir(await sourceInput(source), tools());
   assert.equal(result.status, "error", JSON.stringify(result));
-  assert.ok(result.diagnostics.some(item => item.code === "r02b-d-unsupported" && item.phase === "capability"));
+  assert.ok(result.diagnostics.some(item => item.code === "r02b-d-type" && item.phase === "types"
+    && item.upstreamCode === 2454 && item.primary.sourceId === "/src/main.ts"
+    && item.primary.start === 55 && item.primary.end === 60));
+  assert.equal(result.hir, undefined);
 });
 
 test("the formal VM observes assigned values and copies a scalar binding before its later update", async () => {

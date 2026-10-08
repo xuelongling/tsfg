@@ -14,9 +14,14 @@ export const frontendContractVersion = frontendContract.semver;
 
 const digest = bytes => `sha256:${createHash("sha256").update(bytes).digest("hex")}`;
 
-/** Only explicit owned parentheses may surround a local reference target. */
-export function localReferenceTarget(value) {
+/** Peel explicit owned parentheses; assertions and other expressions stay intact. */
+export function expressionLeaf(value) {
   for (let depth = 0; value?.kind === "group" && depth < 256; depth++) value = value.operand;
+  return value;
+}
+
+export function localReferenceTarget(value) {
+  value = expressionLeaf(value);
   return value?.kind === "reference" ? value : null;
 }
 
@@ -418,8 +423,9 @@ export function validateFrontendSnapshot(snapshot) {
         throw new TypeError("absence differs from its checked builtin source");
     }
     if (expression.kind === "presenceTest") {
-      const reference=expression.left?.kind === "reference" ? expression.left : expression.right;
-      const absence=expression.left?.kind === "absence" ? expression.left : expression.right;
+      const left=expressionLeaf(expression.left),right=expressionLeaf(expression.right);
+      const reference=left?.kind === "reference" ? left : right;
+      const absence=left?.kind === "absence" ? left : right;
       const symbol=resolveSymbol(snapshot,reference?.symbol);
       if (Object.keys(expression).sort().join(",") !== "kind,left,node,operator,range,right,type,typeRef"
           || !["===","!=="].includes(expression.operator) || expression.type !== "bool"

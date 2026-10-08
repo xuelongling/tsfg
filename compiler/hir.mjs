@@ -1,5 +1,5 @@
 // SPDX-License-Identifier: MIT
-import { validateFrontendSnapshot, resolveType, resolveSymbol, identifierName, localReferenceTarget } from "./frontend.mjs";
+import { validateFrontendSnapshot, resolveType, resolveSymbol, identifierName, localReferenceTarget, expressionLeaf } from "./frontend.mjs";
 import { canonical, functionIdentity, signatureHash, i32TypeId, boolTypeId, scalarTypeIds, scalarName, integerNames, integerRange, own, sha256 } from "./identity.mjs";
 import registry from "../contracts/registry.json" with { type: "json" };
 import bytecodeSchema from "../contracts/bytecode.schema.json" with { type: "json" };
@@ -75,23 +75,120 @@ function narrowLocals(locals, value, truth) {
     narrowLocals(locals, value.left, truth); narrowLocals(locals, value.right, truth); return;
   }
   if (value.kind !== "presenceTest") return;
-  const reference = value.left.kind === "reference" ? value.left : value.right;
-  const absence = value.left.kind === "absence" ? value.left : value.right;
+  const left=expressionLeaf(value.left),right=expressionLeaf(value.right);
+  const reference = left.kind === "reference" ? left : right;
+  const absence = left.kind === "absence" ? left : right;
   const local = locals.get(reference.binding), bit = absence.absence === "undefined" ? 2 : 4;
   local.states &= truth === (value.operator === "===") ? bit : ~bit;
 }
 function loopCarriedStates(statement, locals, fail) {
-  let remaining=4096;
-  const visit=value => {
-    if (--remaining < 0) fail();
-    if (!value || typeof value !== "object") return;
-    const binding=value.kind === "assign" ? value.target?.binding : value.kind === "write" ? localReferenceTarget(value.left)?.binding : value.kind === "update" ? localReferenceTarget(value.operand)?.binding : undefined;
-    if (binding && hasState(locals.get(binding)?.presence)) locals.get(binding).states=declaredStates(locals.get(binding).presence);
-    for (const child of Object.values(value)) if (child && typeof child === "object") {
-      if (Array.isArray(child)) child.forEach(visit); else visit(child);
-    }
+  // Compute may-states from owned expression effects, independently of the
+  // producer's flow claims. The ordinary verifier still authenticates every
+  // claim, source anchor and payload read after this finite back-edge pass.
+  let remaining = 4096, work = 4096 * (1 + locals.size * 3);
+  // Share a finite work bound across nested solvers; resetting one pass's
+  // node counter must not permit exponential nested-loop traversal.
+  const tick = () => { if (--remaining < 0 || --work < 0) fail(); };
+  const merge = (target, alternatives) => {
+    for (const [id, local] of target) local.states = alternatives.reduce((states, branch) => states | branch.get(id).states, 0);
   };
-  visit(statement);
+  const expression = (value, state) => {
+    tick();
+    if (!value) fail();
+    if (value.kind === "reference") {
+      if (!state.has(value.binding)) fail();
+      return state.get(value.binding).states;
+    }
+    if (value.kind === "absence") return value.absence === "undefined" ? 2 : 4;
+    if (value.kind === "group") return expression(value.operand, state);
+    if (value.kind === "update") {
+      const local = state.get(localReferenceTarget(value.operand)?.binding);
+      if (!local) fail();
+      local.states = 1; return 1;
+    }
+    if (value.kind === "write") {
+      const id = localReferenceTarget(value.left)?.binding, local = state.get(id);
+      if (!local) fail();
+      const previous = local.states;
+      const conditional = ["??=", "&&=", "||="].includes(value.operator);
+      const right = conditional ? cloneLocals(state) : state;
+      if (value.operator === "??=") right.get(id).states &= 6;
+      if (value.operator === "&&=") right.get(id).states &= 1;
+      const result = expression(value.right, right);
+      if (conditional) merge(state, [state, right]);
+      local.states = value.operator === "??=" ? (previous & 1) | (previous & 6 ? result : 0)
+        : value.operator === "&&=" ? previous | (previous & 1 ? result : 0)
+        : value.operator === "||=" ? (previous & 1) | result
+        : value.operator === "=" ? result : 1;
+      return local.states;
+    }
+    if (value.kind === "shortCircuit") {
+      expression(value.left, state);
+      const selected = cloneLocals(state), skipped = cloneLocals(state);
+      narrowLocals(selected, value.left, value.operator === "&&");
+      narrowLocals(skipped, value.left, value.operator !== "&&");
+      expression(value.right, selected); merge(state, [selected, skipped]); return 1;
+    }
+    if (["binary", "presenceTest"].includes(value.kind)) { expression(value.left, state); expression(value.right, state); }
+    else if (["unary", "conversion"].includes(value.kind)) expression(value.operand, state);
+    else if (value.kind === "call") { for (const argument of value.arguments) expression(argument, state); }
+    else if (!["constant", "floating", "boolean"].includes(value.kind)) fail();
+    return 1;
+  };
+  const body = (statements, state, depth) => {
+    if (depth > 128 || !Array.isArray(statements)) fail();
+    for (const item of statements) {
+      tick();
+      if (item.kind === "local") {
+        const states = item.initializer ? expression(item.initializer, state) : 2;
+        state.set(item.binding.id, { ...item.binding, states });
+      } else if (item.kind === "assign") {
+        const states = expression(item.value, state), local = state.get(item.target.binding);
+        if (!local) fail();
+        local.states = states;
+      } else if (item.kind === "evaluate") expression(item.value, state);
+      else if (item.kind === "return") { expression(item.value, state); return true; }
+      else if (item.kind === "block") {
+        const scoped = cloneLocals(state), returned = body(item.body, scoped, depth + 1);
+        merge(state, [scoped]); if (returned) return true;
+      } else if (item.kind === "if") {
+        expression(item.condition, state);
+        const left = cloneLocals(state), right = cloneLocals(state);
+        narrowLocals(left, item.condition, true); narrowLocals(right, item.condition, false);
+        const leftReturn = body(item.thenBody, left, depth + 1), rightReturn = body(item.elseBody, right, depth + 1);
+        merge(state, leftReturn ? [right] : rightReturn ? [left] : [left, right]);
+        if (leftReturn && rightReturn) return true;
+      } else if (item.kind === "while") loop(item, state, depth + 1);
+      else fail();
+    }
+    return false;
+  };
+  const loop = (item, state, depth) => {
+    const initial = cloneLocals(state), head = cloneLocals(state);
+    // Each successful iteration adds at least one of three state bits to a
+    // finite binding set. No runtime block/register/argument limit changes.
+    for (let iteration = 0; iteration <= state.size * 3; iteration++) {
+      const savedBudget = remaining; remaining = 4096;
+      const back = cloneLocals(head);
+      expression(item.condition, back); narrowLocals(back, item.condition, true);
+      const returned = body(item.body, back, depth);
+      remaining = savedBudget;
+      let changed = false;
+      for (const [id, local] of head) {
+        const states = local.states | initial.get(id).states | (returned ? 0 : back.get(id).states);
+        changed ||= states !== local.states; local.states = states;
+      }
+      if (!changed) {
+        merge(state, [head]); expression(item.condition, state); narrowLocals(state, item.condition, false);
+        return head;
+      }
+    }
+    fail();
+  };
+  // The normal verifier consumes the loop condition itself; install the
+  // fixed head rather than the abstract exit's narrowed state here.
+  const head = loop(statement, cloneLocals(locals), 0);
+  merge(locals, [head]);
 }
 function verifyExpression(value, parent, source, fail, budget, locals, visibleBindings, allowedStates = 1) {
   if (--budget.remaining < 0 || !value || !Object.values(types).includes(value.type)
@@ -131,8 +228,9 @@ function verifyExpression(value, parent, source, fail, budget, locals, visibleBi
         || value.absence === "undefined" && visibleBindings.has("undefined")
         || !(allowedStates & (value.absence === "undefined" ? 2 : 4))) fail();
   } else if (value.kind === "presenceTest") {
-    const reference=value.left?.kind === "reference" ? value.left : value.right;
-    const absence=value.left?.kind === "absence" ? value.left : value.right;
+    const left=expressionLeaf(value.left),right=expressionLeaf(value.right);
+    const reference=left?.kind === "reference" ? left : right;
+    const absence=left?.kind === "absence" ? left : right;
     const local=locals.get(reference?.binding);
     if (!exactKeys(value,["kind","type","range","operator","left","right"]) || value.type !== boolTypeId
         || !["===","!=="].includes(value.operator) || !local || !hasState(local.presence)
@@ -141,8 +239,8 @@ function verifyExpression(value, parent, source, fail, budget, locals, visibleBi
         || sourceTokens(source,value.range.start,value.left.range.start) !== ""
         || !scalarOperator(source,value.left.range.end,value.right.range.start,value.operator)
         || sourceTokens(source,value.right.range.end,value.range.end) !== "") fail();
-    verifyExpression(reference,value.range,source,fail,budget,locals,visibleBindings,declaredStates(local.presence));
-    verifyExpression(absence,value.range,source,fail,budget,locals,visibleBindings,7);
+    verifyExpression(value.left,value.range,source,fail,budget,locals,visibleBindings,left === reference ? declaredStates(local.presence) : 7);
+    verifyExpression(value.right,value.range,source,fail,budget,locals,visibleBindings,right === reference ? declaredStates(local.presence) : 7);
   } else if (value.kind === "update") {
     const target = localReferenceTarget(value.operand);
     if (!exactKeys(value, ["kind", "type", "range", "operator", "prefix", "operand"])
@@ -519,7 +617,7 @@ export function verifyHir(hir) {
     }
     const ending=sourceTokens(source,previous,fn.body[0].range.start);
     const names=fn.returnType.name === "bool" ? ["bool","boolean"] : fn.returnType.name === "f64" ? ["f64","number"] : [fn.returnType.name];
-    if (!names.some(name => [`):${name}{`, `):${name}{let`, `):${name}{const`].includes(ending))) fail();
+    if (!names.some(name => ["",","].some(comma => [`${comma}):${name}{`, `${comma}):${name}{let`, `${comma}):${name}{const`].includes(ending)))) fail();
   } else {
   const header = sourceTrivia(source,fn.range.start,fn.body[0].range.start);
   const parsedHeader = header.match(/^\s*(?:export\s+)?function\s+([^()]+)\(([^()]*)\)\s*:\s*(i8|i16|i32|i64|u8|u16|u32|u64|isize|usize|bool|boolean|f32|f64|number)\s*\{\s*(?:(?:const|let)\s*)?$/d);
@@ -733,8 +831,9 @@ export function lowerHir(hir) {
   const emit = expression => {
     if (expression.kind === "reference") return definitions.get(expression.binding).payload;
     if (expression.kind === "presenceTest") {
-      const reference=expression.left.kind === "reference" ? expression.left : expression.right;
-      const absent=expression.left.kind === "absence" ? expression.left : expression.right;
+      const left=expressionLeaf(expression.left),right=expressionLeaf(expression.right);
+      const reference=left.kind === "reference" ? left : right;
+      const absent=left.kind === "absence" ? left : right;
       const state=definitions.get(reference.binding).state, tag=scalarConstant(i32TypeId,absent.absence === "undefined" ? "1" : "2",absent.range), name=`%v${valueIndex++}`;
       current.lines.push(`    ${name} = "tsfg_core.${operations[expression.operator]}"(${state}, ${tag}) {${attrsFor(expression.range)}} : (i32, i32) -> i1`);
       return name;

@@ -35,6 +35,7 @@ test("Build Input declaration includes both debug target control and smoke input
       { path: "compiler/minimal-integers-v3.d.ts", projectId: "tsfg" },
       { path: "compiler/minimal-scalars-v2.d.ts", projectId: "tsfg" },
       { path: "compiler/pipeline.mjs", projectId: "tsfg" },
+      { path: "compiler/presence.mjs", projectId: "tsfg" },
       { path: "contracts/bytecode.schema.json", projectId: "tsfg" },
       { path: "contracts/conversion-entries.json", projectId: "tsfg" },
       { path: "contracts/frontend-snapshot.schema.json", projectId: "tsfg" },

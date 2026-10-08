@@ -47,6 +47,61 @@ test("finite local assignment and branch proofs preserve official presence facts
   }
 });
 
+test("loop back-edge states follow actual scalar writes, aliases and lexical scopes",async()=>{
+  for(const body of [
+    "value = 2; run = false;",
+    "value += 2; run = false;",
+    "let alias: i32 | undefined = 2; value = alias; run = false;",
+    "if (run) { value = 2; } else { value = 3; } run = false;",
+    "{ let value: i32 | undefined = undefined; value = 9; } run = false;",
+    "let inner: bool = true; while (inner) { value = 2; inner = false; } run = false;",
+    "return value;",
+  ]) {
+    // Every reachable back edge preserves present; a return has no back edge.
+    const source=`export function entry(run: bool): i32 { let value: i32 | undefined = 1; while (run) { ${body} } return value; }`;
+    const hir=await checked(source),text=printHir(hir);
+    assert.equal(printHir(readHir(Buffer.from(text))),text);
+    assert.doesNotThrow(()=>lowerHir(hir));
+  }
+});
+
+test("possible missing loop writes retain official rejection and cannot forge a present read",async()=>{
+  const unsafe="export function entry(run: bool): i32 { let value: i32 | undefined = 1; while (run) { value = undefined; run = false; } return value; }";
+  const rejected=await compileHir(await sourceInput(unsafe),frontend());
+  assert.equal(rejected.status,"error",JSON.stringify(rejected));
+  assert.ok(rejected.diagnostics.some(item=>item.phase==="types"&&item.upstreamCode===2322));
+  const guarded=unsafe.replace("return value;","if (value === undefined) { return 8; } return value;");
+  const hir=await checked(guarded),copy=structuredClone(hir);
+  copy.functions[0].body[2].condition.left.presenceFlow.undefined=false;
+  for(const invoke of [()=>verifyHir(copy),()=>printHir(copy),()=>lowerHir(copy),()=>readHir(Buffer.from(canonical(copy)+"\n"))]) assert.throws(invoke);
+});
+
+test("grouped presence guards retain whole and leaf source proofs at every cold HIR seam",async()=>{
+  const source="export function entry(value?: i32): i32 { if (((undefined)) === ((value))) { return 8; } return value; }";
+  const hir=await checked(source),condition=hir.functions[0].body[0].condition;
+  assert.equal(source.slice(condition.left.range.start,condition.left.range.end),"((undefined))");
+  assert.equal(source.slice(condition.right.range.start,condition.right.range.end),"((value))");
+  const text=printHir(hir);assert.equal(printHir(readHir(Buffer.from(text))),text);
+  for(const mutate of [
+    h=>{h.functions[0].body[0].condition.right.range.start++;},
+    h=>{h.functions[0].body[0].condition.right.operand.operand.presenceFlow.undefined=false;},
+    h=>{h.functions[0].body[0].condition.left.operand.operand.absence="null";},
+    h=>{h.functions[0].body[0].condition.right.operand.operand.binding="l999";},
+    h=>{h.functions[0].body[0].condition.right.operand.type=hir.functions[0].returnType.id+"-forged";},
+  ]) {
+    const copy=structuredClone(hir);mutate(copy);
+    for(const invoke of [()=>verifyHir(copy),()=>printHir(copy),()=>lowerHir(copy),()=>readHir(Buffer.from(canonical(copy)+"\n"))]) assert.throws(invoke);
+  }
+  for(const unsafe of [
+    "export function entry(value?: i32): i32 { if ((value) === (undefined)) { return value; } return 8; }",
+    "export function entry(value?: i32): i32 { const undefined: i32 = 7; if ((value) === (undefined)) { return 8; } return value; }",
+  ]) {
+    const result=await compileHir(await sourceInput(unsafe),frontend());
+    assert.equal(result.status,"error",JSON.stringify(result));
+    assert.ok(result.diagnostics.some(item=>item.phase==="types"&&item.upstreamCode===2322));
+  }
+});
+
 test("cold HIR rejects forged presence flow, masks, type spans and old identities",async()=>{
   const source="export function entry(value?: i32): i32 { if (value === undefined) { return 8; } return value; }";
   const hir=await checked(source);
