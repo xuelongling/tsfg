@@ -56,6 +56,7 @@ test("loop back-edge states follow actual scalar writes, aliases and lexical sco
     "{ let value: i32 | undefined = undefined; value = 9; } run = false;",
     "let inner: bool = true; while (inner) { value = 2; inner = false; } run = false;",
     "return value;",
+    "value = undefined; return 0;",
   ]) {
     // Every reachable back edge preserves present; a return has no back edge.
     const source=`export function entry(run: bool): i32 { let value: i32 | undefined = 1; while (run) { ${body} } return value; }`;
@@ -63,6 +64,13 @@ test("loop back-edge states follow actual scalar writes, aliases and lexical sco
     assert.equal(printHir(readHir(Buffer.from(text))),text);
     assert.doesNotThrow(()=>lowerHir(hir));
   }
+});
+
+test("terminal null writes do not reach the ordinary loop exit",async()=>{
+  const source="export function entry(run: bool): i32 { let value: i32 | null = 1; while (run) { value = null; return 0; } return value; }";
+  const hir=await checked(source),text=printHir(hir);
+  assert.equal(printHir(readHir(Buffer.from(text))),text);
+  assert.doesNotThrow(()=>lowerHir(hir));
 });
 
 test("possible missing loop writes retain official rejection and cannot forge a present read",async()=>{

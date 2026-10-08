@@ -557,8 +557,9 @@ export function verifyHir(hir) {
             }
             returns ||= leftReturn && rightReturn;
           } else {
-            // Include every possible carried state on the loop's back edge.
-            for (const [id,local] of locals) local.states |= left.get(id).states;
+            // A terminating body has no back edge or ordinary loop exit.
+            // Retain the zero-iteration head, and merge only continuing paths.
+            if (!leftReturn) for (const [id,local] of locals) local.states |= left.get(id).states;
             narrowLocals(locals,condition,false);
           }
           if (sourceTokens(source, last, statement.range.end) !== "") fail();

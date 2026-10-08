@@ -42,6 +42,25 @@ test("formal loop execution retains present back edges, aliases, shadows and RHS
     assert.deepEqual(actual.map(row=>row.result),[{type:"i32",value:"1"},{type:"i32",value:"2"}]);
   }
 });
+
+test("terminal loop writes affect their return path while ordinary exits retain live state",async()=>{
+  for(const absence of ["undefined","null"])for(const optimize of [false,true]) {
+    const source=`export function entry(run: bool): i32 { let value: i32 | ${absence} = 1; while (run) { value = ${absence}; return 0; } return value; }`;
+    const input=await sourceInput(source),session=createCompilerSession({...tools(),optimize});
+    for(const program of [await compileProgram(input,{...tools(),optimize}),await session.compile(input)]) {
+      assert.equal(program.status,"ok",JSON.stringify({source,program}));
+      const actual=await runBytecode(program.bytecode,{...tools(),requests:[false,true].map(value=>({functionId:program.hir.functions[0].id,arguments:[{type:"bool",value}],depth:16}))});
+      assert.deepEqual(actual.map(row=>row.status),["returned","returned"]);
+      assert.deepEqual(actual.map(row=>row.result),[{type:"i32",value:"1"},{type:"i32",value:"0"}]);
+    }
+  }
+  for(const terminal of ["if (early) { value = undefined; return 0; }", "while (early) { value = undefined; return 0; }"])for(const optimize of [false,true]) {
+    const source=`export function entry(run: bool, early: bool): i32 { let value: i32 | undefined = 1; while (run) { ${terminal} value = 2; run = false; } return value; }`;
+    const program=await compileProgram(await sourceInput(source),{...tools(),optimize});assert.equal(program.status,"ok",JSON.stringify({source,program}));
+    const actual=await runBytecode(program.bytecode,{...tools(),requests:[[false,false],[false,true],[true,false],[true,true]].map(args=>({functionId:program.hir.functions[0].id,arguments:args.map(value=>({type:"bool",value})),depth:16}))});
+    assert.deepEqual(actual.map(row=>row.result),["1","1","2","0"].map(value=>({type:"i32",value})));
+  }
+});
 // Explicit, independent raw payload expectations. Undefined and null use the
 // same canonical zero payload in every physical scalar family.
 const families=[
