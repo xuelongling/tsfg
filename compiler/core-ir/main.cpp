@@ -231,7 +231,7 @@ public:
 
 namespace {
 constexpr llvm::StringLiteral bytecodeSchema =
-    "950f0b3756aed6c0fc48516c4ce09e5943672c48bffb29f2ee01c5259c212d66";
+    "e847905d8da4932523997659c12526b5512fe0525b541b85ec8a60518d7c5942";
 constexpr llvm::StringLiteral target = "windows-x86_64-msvc";
 constexpr llvm::StringLiteral triple = "x86_64-pc-windows-msvc";
 constexpr llvm::StringLiteral layout =
@@ -355,6 +355,7 @@ mlir::LogicalResult verifiedBytecode(mlir::ModuleOp module, Bytes &packet) {
     Hash id, signature, type;
     uint32_t start, end;
     std::vector<uint8_t> parameters;
+    std::vector<uint8_t> presence;
   };
   std::vector<Function> functions;
   const size_t functionCount = module.getBody()->getOperations().size();
@@ -363,10 +364,10 @@ mlir::LogicalResult verifiedBytecode(mlir::ModuleOp module, Bytes &packet) {
   // This admits forward and mutual calls without trusting frontend metadata.
   for (mlir::Operation &operation : *module.getBody()) {
     auto fn = llvm::dyn_cast<mlir::func::FuncOp>(&operation);
-    if (!fn || fn.getFunctionType().getNumInputs() > 64 ||
+    if (!fn || fn.getFunctionType().getNumInputs() > 128 ||
         fn.getFunctionType().getNumResults() != 1 || fn.getBody().empty() ||
         !attributes(fn, {"sym_name", "function_type", "tsfg_core.function_id",
-          "tsfg_core.signature_hash", "tsfg_core.type_id",
+          "tsfg_core.signature_hash", "tsfg_core.type_id", "tsfg_core.parameter_presence",
           "tsfg_core.function_start", "tsfg_core.function_end"})) return reject();
     llvm::StringRef name = fn.getSymName();
     if (name.empty() || name.size() > 4096 || name.contains('\0') || !validUTF8(name)) return reject();
@@ -374,7 +375,7 @@ mlir::LogicalResult verifiedBytecode(mlir::ModuleOp module, Bytes &packet) {
       auto value = fn->getAttrOfType<mlir::StringAttr>(key);
       return value ? value.getValue() : llvm::StringRef();
     };
-    Function function{fn, {}, {}, {}, 0, 0, {}};
+    Function function{fn, {}, {}, {}, 0, 0, {}, {}};
     if (!decodeHash(fnText("tsfg_core.function_id"), function.id) ||
         !decodeHash(fnText("tsfg_core.signature_hash"), function.signature) ||
         !decodeHash(fnText("tsfg_core.type_id"), function.type) ||
@@ -387,10 +388,25 @@ mlir::LogicalResult verifiedBytecode(mlir::ModuleOp module, Bytes &packet) {
     for (mlir::Type parameter : fn.getFunctionType().getInputs()) {
       auto code = typeCodeOf(parameter);
       if (!code) return reject();
-      if (!function.parameters.empty()) signatureDomain += ',';
-      signatureDomain += tsfg::scalarNames[code];
       function.parameters.push_back(code);
     }
+    const auto presenceText = fnText("tsfg_core.parameter_presence");
+    if (presenceText.size() % 2 || presenceText.size() > 128) return reject();
+    size_t physical = 0;
+    for (size_t index = 0; index < presenceText.size(); index += 2) {
+      const char low = presenceText[index + 1];
+      if (presenceText[index] != '0' || (!(low >= '0' && low <= '9') && !(low >= 'a' && low <= 'f'))) return reject();
+      const uint8_t mask = low <= '9' ? low - '0' : low - 'a' + 10;
+      if (((mask & 4) && !(mask & 1)) || ((mask & 8) && (mask & 5) != 5) || physical >= function.parameters.size()) return reject();
+      if (index) signatureDomain += ',';
+      signatureDomain += tsfg::scalarNames[function.parameters[physical++]];
+      if (mask) { signatureDomain += '@'; signatureDomain += presenceText.substr(index, 2).str(); }
+      if (mask & 3) {
+        if (physical >= function.parameters.size() || function.parameters[physical++] != 1) return reject();
+      }
+      function.presence.push_back(mask);
+    }
+    if (physical != function.parameters.size()) return reject();
     typeDomain += tsfg::scalarNames[returnCode];
     signatureDomain += ")->";
     signatureDomain += tsfg::scalarNames[returnCode];
@@ -601,6 +617,8 @@ mlir::LogicalResult verifiedBytecode(mlir::ModuleOp module, Bytes &packet) {
     integer(functionPayload, returnCode, 1);
     integer(functionPayload, function.parameters.size(), 1);
     for (auto parameter : function.parameters) integer(functionPayload, parameter, 1);
+    integer(functionPayload, function.presence.size(), 1);
+    for (auto mask : function.presence) integer(functionPayload, mask, 1);
     integer(functionPayload, static_cast<uint32_t>(registers.size()), 2);
     integer(functionPayload, static_cast<uint32_t>(blockCount), 2);
     integer(functionPayload, static_cast<uint32_t>(instructionCount), 2);
@@ -621,13 +639,13 @@ mlir::LogicalResult verifiedBytecode(mlir::ModuleOp module, Bytes &packet) {
   string(payload, target); string(payload, triple); string(payload, layout);
   integer(payload, static_cast<uint32_t>(size), 2);
   integer(payload, static_cast<uint32_t>(align), 2);
-  integer(payload, pointerBits, 2); integer(payload, pointerAlign, 2); integer(payload, 20, 4);
+  integer(payload, pointerBits, 2); integer(payload, pointerAlign, 2); integer(payload, 52, 4);
   appendHash(payload, input); appendHash(payload, source);
   string(payload, path); integer(payload, sourceLength, 4);
   integer(payload, functions.size(), 2);
   payload.insert(payload.end(), functionPayload.begin(), functionPayload.end());
   packet = Bytes{'T','S','F','G','T','B','C','0'};
-  integer(packet, 9, 4);
+  integer(packet, 10, 4);
   Hash schema; if (!decodeHash(("sha256:" + bytecodeSchema).str(), schema)) return reject();
   appendHash(packet, schema); integer(packet, static_cast<uint32_t>(80 + payload.size()), 4);
   appendHash(packet, llvm::SHA256::hash(payload));
@@ -659,8 +677,8 @@ int main(int argc, char **argv) {
     return 3;
   }
   auto version = module->getOperation()->getAttrOfType<mlir::StringAttr>("tsfg_core.version");
-  if (!version || version.getValue() != "0.9.0") {
-    llvm::errs() << "[core-ir-identity] expected Core IR 0.9.0\n";
+  if (!version || version.getValue() != "0.10.0") {
+    llvm::errs() << "[core-ir-identity] expected Core IR 0.10.0\n";
     return 3;
   }
   if (mlir::failed(mlir::verify(*module))) {

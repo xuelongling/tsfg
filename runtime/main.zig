@@ -72,7 +72,7 @@ fn evaluateRequest(host: *runtime.Runtime, module: *const runtime.VerifiedModule
         if (!std.mem.eql(u8, text, &expected)) return .{ .failed = .{ .code = "r05-request-signature", .category = "request", .function_id = function_id, .source = info.source, .fuel_remaining = request.semanticFuel } };
     }
     var arguments: [64]runtime.TypedValue = undefined;
-    var valid = request.arguments.len <= 64 and request.arguments.len == info.parameter_types.len;
+    var valid = request.arguments.len <= 64 and request.arguments.len <= info.presence_masks.len;
     if (valid) for (request.arguments, 0..) |argument, index| {
         if (argument != .object or argument.object.count() != 2) {
             valid = false;
@@ -90,18 +90,30 @@ fn evaluateRequest(host: *runtime.Runtime, module: *const runtime.VerifiedModule
             valid = false;
             break;
         }
-        const code = info.parameter_types[index];
-        if (std.mem.eql(u8, type_value.string, "bool") and code == 2 and value == .bool) arguments[index] = .{ .boolean = value.bool } else if (std.mem.eql(u8, type_value.string, contract.typeName(code)) and contract.integerType(code) and value == .string) {
+        const code = info.parameter_types[contract.logicalParameterOffset(info.presence_masks, index)];
+        if (std.mem.eql(u8, type_value.string, "undefined") and value == .null) arguments[index] = .{ .undefined_value = {} } else if (std.mem.eql(u8, type_value.string, "null") and value == .null) arguments[index] = .{ .null_value = {} } else if (std.mem.eql(u8, type_value.string, "bool") and code == 2 and value == .bool) arguments[index] = .{ .boolean = value.bool } else if (std.mem.eql(u8, type_value.string, contract.typeName(code)) and contract.integerType(code) and value == .string) {
             var bits: u64 = undefined;
             var buffer: [32]u8 = undefined;
             const canonical = if (contract.signedType(code)) blk: {
-                const integer = std.fmt.parseInt(i64, value.string, 10) catch { valid = false; break; };
+                const integer = std.fmt.parseInt(i64, value.string, 10) catch {
+                    valid = false;
+                    break;
+                };
                 bits = @as(u64, @bitCast(integer)) & contract.mask(code);
-                if (contract.signedValue(bits, code) != integer) { valid = false; break; }
+                if (contract.signedValue(bits, code) != integer) {
+                    valid = false;
+                    break;
+                }
                 break :blk try std.fmt.bufPrint(&buffer, "{d}", .{integer});
             } else blk: {
-                bits = std.fmt.parseInt(u64, value.string, 10) catch { valid = false; break; };
-                if (bits & ~contract.mask(code) != 0) { valid = false; break; }
+                bits = std.fmt.parseInt(u64, value.string, 10) catch {
+                    valid = false;
+                    break;
+                };
+                if (bits & ~contract.mask(code) != 0) {
+                    valid = false;
+                    break;
+                }
                 break :blk try std.fmt.bufPrint(&buffer, "{d}", .{bits});
             };
             if (!std.mem.eql(u8, value.string, canonical)) {
@@ -110,10 +122,19 @@ fn evaluateRequest(host: *runtime.Runtime, module: *const runtime.VerifiedModule
             }
             arguments[index] = runtime.typedValue(bits, code);
         } else if (std.mem.eql(u8, type_value.string, contract.typeName(code)) and contract.floatType(code) and value == .string) {
-            if (value.string.len != (if (code == 12) @as(usize, 8) else 16)) { valid = false; break; }
-            for (value.string) |c| if (!std.ascii.isDigit(c) and !(c >= 'a' and c <= 'f')) { valid = false; break; };
+            if (value.string.len != (if (code == 12) @as(usize, 8) else 16)) {
+                valid = false;
+                break;
+            }
+            for (value.string) |c| if (!std.ascii.isDigit(c) and !(c >= 'a' and c <= 'f')) {
+                valid = false;
+                break;
+            };
             if (!valid) break;
-            const bits = std.fmt.parseInt(u64, value.string, 16) catch { valid = false; break; };
+            const bits = std.fmt.parseInt(u64, value.string, 16) catch {
+                valid = false;
+                break;
+            };
             arguments[index] = runtime.typedValue(bits, code);
         } else {
             valid = false;

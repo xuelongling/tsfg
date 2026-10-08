@@ -1,6 +1,6 @@
 <!-- SPDX-License-Identifier: MIT -->
 
-# tsfg.hir 0.9.0
+# tsfg.hir 0.10.0
 
 `createCompilerSession` reuses owned HIR/Core/R04 output only for an unchanged
 checked Snapshot identity, compiler input fingerprint and source-built producer
@@ -70,10 +70,21 @@ range. Unknown/foreign identities retain generic invalid-input rejection;
 they are not attributed to a trusted original binding. Reading a
 declared but uninitialized owned binding is `r03-hir-uninitialized`, Rule
 `r01-evaluation`, phase `hir`, with the original UTF-16 read range. The official
-0.9.0 producer currently rejects uninitialized source declarations using
-`r02b-d-unsupported`, phase `capability`: delayed initialization is pending
-frontend capability for later ordinary-expression/full-closure coverage, not
-a language prohibition or successful source initialization analysis.
+0.10.0 producer admits explicitly typed delayed initialization and retains
+official definite-assignment errors. Owned HIR additionally verifies preceding
+declaration and initialization across branch and loop merges.
+
+M10 `write` captures a compound assignment's old left value before emitting its
+RHS once, stores the result and yields it. `update` stores increment/decrement
+once and yields the old postfix or new prefix value. `evaluate` discards a
+value after preserving its effects. Short-circuit and control-flow joins carry
+all live definitions, including typed presence states, through block parameters.
+Every parameter owns presence spans and its ordered initializer. Payload reads
+require dominating proof of presence; null/undefined states cannot expose their
+canonical zero payload. Callee entry fuel precedes ordered defaults, which only
+run for omitted/undefined arguments after every caller argument has completed.
+CoreIR0.10 carries the explicit logical parameter mask table and independently
+recomputes logical identity while checking its payload/state physical signature.
 
 Records must be objects, and logical source paths follow the same normalized
 path rules as R04. Source content retains original UTF-16 anchors and must

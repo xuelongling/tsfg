@@ -5,6 +5,7 @@ import registry from "../contracts/registry.json" with { type: "json" };
 import bytecodeSchema from "../contracts/bytecode.schema.json" with { type: "json" };
 import { conversionDeclaration, conversionEntries, verifyConversionOrigin, conversionCallSpelling, admittedConversionScope, admittedInputScope, completeFunctionSource } from "./conversions.mjs";
 import { floatNames, floatBits } from "./float.mjs";
+import { hasState, presenceIdentity, presenceSignature, presenceEncoding, validParameterPresence } from "./presence.mjs";
 
 const contract = () => registry["tsfg.hir"];
 const exactKeys = (value, keys) => value && typeof value === "object"
@@ -34,7 +35,7 @@ function identifierToken(source, anchor) {
   catch { return undefined; }
 }
 function bindingFact(binding, parent, source) {
-  return exactKeys(binding, ["id", "name", "type", "writable", "range"])
+  return exactKeys(binding, ["id", "name", "type", "writable", "range", ...(binding?.presence ? ["presence"] : [])])
     && validText(binding.name) && Object.values(types).includes(binding.type)
     && typeof binding.writable === "boolean" && range(binding.range, parent)
     && identifierToken(source, binding.range) === binding.name;
@@ -71,6 +72,40 @@ function verifyExpression(value, parent, source, fail, budget, locals, visibleBi
         primary: { sourceId: budget.sourcePath, ...value.range } });
       throw error;
     }
+  } else if (value.kind === "absence") {
+    if (!exactKeys(value,["kind","type","range","absence"]) || !["undefined","null"].includes(value.absence)
+        || sourceTokens(source,value.range.start,value.range.end) !== value.absence
+        || value.absence === "undefined" && visibleBindings.has("undefined")) fail();
+  } else if (value.kind === "update") {
+    if (!exactKeys(value, ["kind", "type", "range", "operator", "prefix", "operand"])
+        || !["++", "--"].includes(value.operator) || typeof value.prefix !== "boolean"
+        || value.operand?.kind !== "reference" || value.type !== value.operand.type
+        || !locals.get(value.operand.binding)?.writable || !integerType(value.type) && !floatType(value.type)
+        || sourceTokens(source, value.range.start, value.operand.range.start) !== (value.prefix ? value.operator : "")
+        || sourceTokens(source, value.operand.range.end, value.range.end) !== (value.prefix ? "" : value.operator)) fail();
+    verifyExpression(value.operand, value.range, source, fail, budget, locals, visibleBindings);
+  } else if (value.kind === "write") {
+    const target = value.left, local = locals.get(target?.binding);
+    if (!exactKeys(value, ["kind", "type", "range", "operator", "left", "right"])
+        || !["=", "+=", "-=", "*=", "/=", "%=", "<<=", ">>=", ">>>=", "&=", "|=", "^=", "&&=", "||="].includes(value.operator)
+        || !exactKeys(target, ["kind", "type", "binding", "range"]) || target.kind !== "reference"
+        || !local?.writable || visibleBindings.get(local.name) !== target.binding
+        || target.type !== local.type || value.type !== local.type
+        || value.right?.type !== (["<<=", ">>=", ">>>="].includes(value.operator) ? i32TypeId : local.type)
+        || !range(target.range, value.range) || target.range.end > value.right.range.start
+        || identifierToken(source, target.range) !== local.name
+        || sourceTokens(source, value.range.start, target.range.start) !== ""
+        || !scalarOperator(source, target.range.end, value.right.range.start, value.operator)
+        || sourceTokens(source, value.right.range.end, value.range.end) !== "") fail();
+    if (value.operator !== "=") {
+      if (["&&=", "||="].includes(value.operator) ? local.type !== boolTypeId
+          : !integerType(local.type) && !(floatType(local.type) && ["+=", "-=", "*=", "/=", "%="].includes(value.operator))) fail();
+      verifyExpression(target, value.range, source, fail, budget, locals, visibleBindings);
+    }
+    const conditionalWrite = ["&&=", "||="].includes(value.operator);
+    const rightLocals = conditionalWrite ? new Map([...locals].map(([id, item]) => [id, { ...item }])) : locals;
+    verifyExpression(value.right, value.range, source, fail, budget, rightLocals, visibleBindings);
+    local.initialized = true;
   } else if (value.kind === "conversion") {
     const entry = conversionEntries.get(value.origin?.entryId);
     if (!exactKeys(value, ["kind", "type", "range", "origin", "operand"]) || !verifyConversionOrigin(value.origin, budget.inputIdentity)
@@ -84,12 +119,14 @@ function verifyExpression(value, parent, source, fail, budget, locals, visibleBi
     if (!exactKeys(value, ["kind", "type", "range", "target", "signatureHash", "arguments"])
         || !target || target.signatureHash !== value.signatureHash || target.returnType.id !== value.type
         || visibleBindings.has(target.name) || !Array.isArray(value.arguments)
-        || value.arguments.length !== target.parameters.length) fail();
+        || value.arguments.length > target.parameters.length
+        || target.parameters.slice(value.arguments.length).some(p => !p.presence?.optional)) fail();
     let previous = value.range.start;
     for (const [index, argument] of value.arguments.entries()) {
       verifyExpression(argument, value.range, source, fail, budget, locals, visibleBindings);
       const prefix = sourceTrivia(source, previous, argument.range.start).trim();
       if (argument.type !== target.parameters[index].type || argument.range.start < previous) fail();
+      if (argument.kind === "absence" && !target.parameters[index].presence?.[argument.absence]) fail();
       if (index === 0) {
         if (!prefix.endsWith("(") || identifierToken(prefix, {start:0,end:prefix.length-1}) !== target.name) fail();
       } else if (prefix !== ",") fail();
@@ -132,7 +169,9 @@ function verifyExpression(value, parent, source, fail, budget, locals, visibleBi
     if (!exactKeys(value, ["kind", "type", "operator", "left", "right", "range"])
         || !(short ? ["&&", "||"].includes(value.operator) : Object.hasOwn(operations, value.operator))) fail();
     verifyExpression(value.left, value.range, source, fail, budget, locals, visibleBindings);
-    verifyExpression(value.right, value.range, source, fail, budget, locals, visibleBindings);
+    const rightLocals = short ? new Map([...locals].map(([id, local]) => [id, { ...local }])) : locals;
+    verifyExpression(value.right, value.range, source, fail, budget, rightLocals, visibleBindings);
+    if (short) for (const [id, local] of locals) local.initialized &&= rightLocals.get(id).initialized;
     const shift = ["<<", ">>", ">>>"].includes(value.operator);
     if ((shift ? value.right.type !== i32TypeId : value.left.type !== value.right.type) || value.left.range.end > value.right.range.start
         || (["binary", "shortCircuit"].includes(value.left.kind) && precedence[value.left.operator] < precedence[value.operator])
@@ -191,13 +230,14 @@ export function verifyHir(hir) {
   for (const fn of hir.functions) {
   if (!Array.isArray(fn.parameters)) fail();
   const parameterNames = fn.parameters.map(parameter => Object.entries(types).find(([,id]) => id === parameter?.type)?.[0]);
-  if (!exactKeys(fn, ["id", "name", "signatureHash", "returnType", "parameters", "range", "body"])
+  if (!exactKeys(fn, ["id", "name", "signatureHash", "returnType", "parameters", "parameterInitializers", "range", "body"])
       || !validText(fn.name) || !Object.hasOwn(types, fn.returnType?.name)
-      || fn.id !== functionIdentity(hir.source.path, fn.name, fn.returnType.name, parameterNames)
-      || fn.signatureHash !== signatureHash(fn.returnType.name, parameterNames)
+      || fn.id !== presenceIdentity(hir.source.path, fn.name, fn.returnType.name, fn.parameters)
+      || fn.signatureHash !== presenceSignature(fn.returnType.name, fn.parameters)
       || canonical(fn.returnType) !== canonical({ kind: "scalar", name: fn.returnType.name, id: types[fn.returnType.name] })
       || !Array.isArray(fn.parameters) || fn.parameters.length > 64 || parameterNames.some(name => !name)
       || !range(fn.range, { start: 0, end: hir.source.content.length })
+      || !Array.isArray(fn.parameterInitializers) || fn.parameterInitializers.length !== fn.parameters.length
       || !Array.isArray(fn.body) || fn.body.length < 1 || fn.body.length > 128) fail();
   parameterTypesByFunction.set(fn.id, parameterNames);
   }
@@ -247,7 +287,7 @@ export function verifyHir(hir) {
       if (statement.kind === "local") {
         const binding = statement.binding, value = statement.initializer;
         if (!exactKeys(statement, ["kind", "range", "binding", "initializer"])
-            || !bindingFact(binding, statement.range, source) || ids.has(binding.id)
+            || !bindingFact(binding, statement.range, source) || binding.presence || ids.has(binding.id)
             || binding.id !== `l${ids.size}` || names.has(binding.name)
             || sourceTokens(source, statement.range.start, binding.range.start) !== "") fail();
         const keyword = before.match(/^;?(const|let)$/)?.[1];
@@ -266,7 +306,12 @@ export function verifyHir(hir) {
       } else {
         declarationKind = undefined;
         if (!/^;?$/.test(before)) fail();
-        if (statement.kind === "block") {
+        if (statement.kind === "evaluate") {
+          if (!exactKeys(statement, ["kind", "range", "value"])) fail();
+          verifyExpression(statement.value, statement.range, source, fail, budget, locals, visibleBindings);
+          if (sourceTokens(source, statement.range.start, statement.value.range.start) !== ""
+              || !/^;?$/.test(sourceTokens(source, statement.value.range.end, statement.range.end))) fail();
+        } else if (statement.kind === "block") {
           if (!exactKeys(statement, ["kind", "range", "body"])) fail();
           const scoped = clone(locals);
           const terminated = body(statement.body, statement.range, scoped, "block", visibleBindings);
@@ -330,6 +375,28 @@ export function verifyHir(hir) {
     return returns;
   };
   const initial = new Map(), visible = new Map();
+  if (fn.parameters.length) {
+    let previous=fn.range.start;
+    for (const [index,parameter] of fn.parameters.entries()) {
+      const initializer=fn.parameterInitializers[index];
+      if (!bindingFact(parameter,fn.range,source) || parameter.id !== `p${index}` || !parameter.writable
+          || visible.has(parameter.name) || !validParameterPresence(parameter.presence,parameter,initializer,source,fn.range)) fail();
+      const gap=sourceTrivia(source,previous,parameter.presence.range.start).trim();
+      if (index === 0) {
+        const opening=gap.match(/^(?:export\s+)?function\s+([^()]+)\(\s*$/);
+        if (!opening || identifierToken(opening[1],{start:0,end:opening[1].length}) !== fn.name) fail();
+      } else if (gap !== ",") fail();
+      if (initializer) {
+        verifyExpression(initializer,parameter.presence.range,source,fail,budget,initial,visible);
+        if (initializer.type !== parameter.type || initializer.kind === "absence" && !parameter.presence[initializer.absence]) fail();
+      }
+      initial.set(parameter.id,{...parameter,initialized:true}); visible.set(parameter.name,parameter.id);
+      previous=parameter.presence.range.end;
+    }
+    const ending=sourceTokens(source,previous,fn.body[0].range.start);
+    const names=fn.returnType.name === "bool" ? ["bool","boolean"] : fn.returnType.name === "f64" ? ["f64","number"] : [fn.returnType.name];
+    if (!names.some(name => [`):${name}{`, `):${name}{let`, `):${name}{const`].includes(ending))) fail();
+  } else {
   const header = sourceTrivia(source,fn.range.start,fn.body[0].range.start);
   const parsedHeader = header.match(/^\s*(?:export\s+)?function\s+([^()]+)\(([^()]*)\)\s*:\s*(i8|i16|i32|i64|u8|u16|u32|u64|isize|usize|bool|boolean|f32|f64|number)\s*\{\s*(?:(?:const|let)\s*)?$/d);
   if (!parsedHeader || identifierToken(parsedHeader[1],{start:0,end:parsedHeader[1].length}) !== fn.name
@@ -350,6 +417,7 @@ export function verifyHir(hir) {
     parameterEnd = parameter.range.end;
     parameterStart += parameterTokens[index].length + 1;
   }
+  }
   if (!body(fn.body, fn.range, initial, "function", visible)) fail();
   }
   return own(hir);
@@ -367,13 +435,15 @@ export function buildHir(snapshot) {
       message: "current execution capability requires nominal integer/bool functions with direct calls, locals, structured control and returns",
       primary: { sourceId: snapshot.source.path, ...(expression?.range ?? first?.range ?? { start: 0, end: 0 }) } }] };
   }
-  const functions = new Map(snapshot.functions.map(fn => [fn.symbol.id, {
-    id: functionIdentity(snapshot.source.path, fn.name, fn.returnType, fn.parameters.map(p => p.type)), name: fn.name,
-    signatureHash: signatureHash(fn.returnType, fn.parameters.map(p => p.type)),
+  const functions = new Map(snapshot.functions.map(fn => {
+    const parameters=fn.parameters.map((p,index) => ({id:`p${index}`,name:p.name,type:types[p.type],writable:true,range:p.range,presence:structuredClone(p.presence)}));
+    return [fn.symbol.id, {
+    id: presenceIdentity(snapshot.source.path, fn.name, fn.returnType, parameters), name: fn.name,
+    signatureHash: presenceSignature(fn.returnType, parameters),
     returnType: { kind: "scalar", name: fn.returnType, id: types[fn.returnType] },
-    parameters: fn.parameters.map((p,index) => ({id:`p${index}`,name:p.name,type:types[p.type],writable:true,range:p.range})),
+    parameters,
     range: fn.range,
-  }]));
+  }]; }));
   const projectedFunctions = [];
   for (const fn of snapshot.functions) {
   const descriptor = functions.get(fn.symbol.id);
@@ -402,7 +472,12 @@ export function buildHir(snapshot) {
     if (value.kind === "integer") return { kind: "constant", ...common, decimal: value.literal.decimal, token: value.literal.token };
     if (value.kind === "floating") return { kind: "floating", ...common, bits: value.float.bits, token: value.float.token };
     if (value.kind === "boolean") return { kind: "boolean", ...common, value: value.boolean };
+    if (value.kind === "absence") return { kind:"absence", ...common, absence:value.absence };
     if (value.kind === "group") return { kind: "group", ...common, operand: project(value.operand, common.range) };
+    if (value.kind === "write") return { kind: "write", ...common, operator: value.operator,
+      left: project(value.left, common.range), right: project(value.right, common.range) };
+    if (value.kind === "update") return { kind: "update", ...common, operator: value.operator,
+      prefix: value.prefix, operand: project(value.operand, common.range) };
     if (value.kind === "unary" && ["+", "-", "~", "!"].includes(value.operator))
       return { kind: "unary", ...common, operator: value.operator, operand: project(value.operand, common.range) };
     if (value.kind === "binary" && Object.hasOwn(operations, value.operator)
@@ -421,6 +496,7 @@ export function buildHir(snapshot) {
       return { kind: "local", range: item.range, binding, initializer };
     }
     if (item.kind === "assignment") return { kind: "assign", range: item.range, target: project(item.target, item.range), value: project(item.value, item.range) };
+    if (item.kind === "expression") return { kind: "evaluate", range: item.range, value: project(item.expression, item.range) };
     if (item.kind === "block") return { kind: "block", range: item.range, body: statements(item.body) };
     if (item.kind === "while") return { kind: "while", range: item.range, condition: project(item.condition, item.range), body: statements(item.body) };
     if (item.kind === "if") return { kind: "if", range: item.range, condition: project(item.condition, item.range),
@@ -432,7 +508,7 @@ export function buildHir(snapshot) {
     return { status: "error", diagnostics: [{ code: "r03-d-capability", ruleId: "r01-ts-baseline", phase: "hir", message: error.message,
       primary: { sourceId: snapshot.source.path, ...(expression?.range ?? fn.range) } }] };
   }
-  projectedFunctions.push({...descriptor,body:projected});
+  projectedFunctions.push({...descriptor,parameterInitializers:fn.parameterInitializers.map(value => value ? project(value,fn.range) : null),body:projected});
   }
   const hir = {
     contractVersion: contract().semver, schemaHash: contract().schemaHash, inputIdentity: snapshot.inputIdentity,
@@ -470,11 +546,11 @@ export function lowerHir(hir) {
     source_path: verified.source.path,
     target: verified.target.target, triple: verified.target.triple, data_layout: verified.target.llvmDataLayout,
     bytecode_schema: registry["tsfg.bytecode"].schemaHash };
-  const attrs = ['tsfg_core.version = "0.9.0"', ...Object.entries(strings)
+  const attrs = ['tsfg_core.version = "0.10.0"', ...Object.entries(strings)
     .map(([key, item]) => `tsfg_core.${key} = ${quote(item)}`),
     `tsfg_core.source_length = ${verified.source.content.length} : i64`];
   const lowerFunction = fn => {
-  const blocks = [], bindingTypes = new Map();
+  const blocks = [], bindingTypes = new Map(), bindingStates = new Map();
   let valueIndex = 0, current, definitions = new Map(), declared = new Set();
   const coreType = type => type === i32TypeId ? "i32" : type === boolTypeId ? "i1" : floatType(type) ? scalarName(type) : `!tsfg_core.integer<${quote(scalarName(type))}>`;
   const newBlock = (parameterTypes = []) => {
@@ -492,14 +568,61 @@ export function lowerHir(hir) {
     current.terminated = true;
   };
   const fuel = (event, anchor) => current.lines.push(`    "tsfg_core.fuel"() {event = ${event} : i32, ${attrsFor(anchor)}} : () -> ()`);
-  current = newBlock(fn.parameters.map(parameter => parameter.type));
-  fn.parameters.forEach((parameter,index) => {
-    definitions.set(parameter.id,current.parameters[index].name); declared.add(parameter.id);
-    bindingTypes.set(parameter.id,parameter.type);
+  const flatTypes = keys => keys.flatMap(id => [bindingTypes.get(id), ...(bindingStates.get(id) ? [i32TypeId] : [])]);
+  const flatValues = (keys, values) => keys.flatMap(id => [values.get(id).payload, ...(bindingStates.get(id) ? [values.get(id).state] : [])]);
+  const fromParameters = (keys, parameters, start=0) => {
+    let index=start;
+    return new Map(keys.map(id => [id,{payload:parameters[index++].name, state:bindingStates.get(id) ? parameters[index++].name : null}]));
+  };
+  fn.parameters.forEach(parameter => {
+    declared.add(parameter.id); bindingTypes.set(parameter.id,parameter.type); bindingStates.set(parameter.id,hasState(parameter.presence));
   });
+  const parameterKeys=fn.parameters.map(parameter => parameter.id);
+  current = newBlock(flatTypes(parameterKeys));
+  definitions=fromParameters(parameterKeys,current.parameters);
   fuel(1, fn.range);
+  const scalarConstant = (type, token, anchor) => {
+    const name=`%v${valueIndex++}`, core=coreType(type);
+    const value=floatType(type) ? quote(floatBits(token,scalarName(type))) : type === i32TypeId ? `${token} : ${core}` : type === boolTypeId ? `${token} : i1` : quote(token);
+    current.lines.push(`    ${name} = "tsfg_core.constant"() {value = ${value}, ${attrsFor(anchor)}} : () -> ${core}`);
+    return name;
+  };
+  const represent = expression => expression.kind === "reference" ? definitions.get(expression.binding)
+    : expression.kind === "absence" ? {payload:scalarConstant(expression.type,"0",expression.range),state:scalarConstant(i32TypeId,expression.absence === "undefined" ? "1" : "2",expression.range)}
+      : {payload:emit(expression),state:null};
+  const store = (id, value, anchor) => definitions.set(id,{payload:value.payload,
+    state:bindingStates.get(id) ? value.state ?? scalarConstant(i32TypeId,"0",anchor) : null});
   const emit = expression => {
-    if (expression.kind === "reference") return definitions.get(expression.binding);
+    if (expression.kind === "reference") return definitions.get(expression.binding).payload;
+    if (expression.kind === "update") {
+      const old = emit(expression.operand), one = `%v${valueIndex++}`, next = `%v${valueIndex++}`, type = coreType(expression.type);
+      const value = floatType(expression.type) ? quote(floatBits("1", scalarName(expression.type)))
+        : expression.type === i32TypeId ? `1 : ${type}` : quote("1");
+      current.lines.push(`    ${one} = "tsfg_core.constant"() {value = ${value}, ${attrsFor(expression.range)}} : () -> ${type}`);
+      current.lines.push(`    ${next} = "tsfg_core.${expression.operator === "++" ? "add" : "sub"}"(${old}, ${one}) {${attrsFor(expression.range)}} : (${type}, ${type}) -> ${type}`);
+      store(expression.operand.binding,{payload:next,state:null},expression.range);
+      return expression.prefix ? next : old;
+    }
+    if (expression.kind === "write") {
+      if (["&&=", "||="].includes(expression.operator)) {
+        const value = emit({ kind:"shortCircuit", type:boolTypeId, operator:expression.operator.slice(0,-1), left:expression.left,
+          right:{...expression, operator:"="}, range:expression.range });
+        store(expression.left.binding,{payload:value,state:null},expression.range);
+        return value;
+      }
+      // Compound assignment captures the old definition before evaluating a
+      // RHS that can replace that very binding. Each RHS is emitted once.
+      const old = expression.operator === "=" ? null : emit(expression.left);
+      const representation=represent(expression.right);
+      let value = representation.payload;
+      if (expression.operator !== "=") {
+        const name = `%v${valueIndex++}`, type = coreType(expression.type);
+        current.lines.push(`    ${name} = "tsfg_core.${operations[expression.operator.slice(0,-1)]}"(${old}, ${value}) {${attrsFor(expression.range)}} : (${type}, ${coreType(expression.right.type)}) -> ${type}`);
+        value = name;
+      }
+      store(expression.left.binding,{payload:value,state:expression.operator === "=" ? representation.state : null},expression.range);
+      return value;
+    }
     if (expression.kind === "conversion") {
       const operand=emit(expression.operand), entry=conversionEntries.get(expression.origin.entryId), name=`%v${valueIndex++}`;
       const op={checked:"convert_checked",wrap:"convert_wrap",reinterpret:"reinterpret"}[entry.mode];
@@ -507,19 +630,27 @@ export function lowerHir(hir) {
       return name;
     }
     if (expression.kind === "call") {
-      const operands = expression.arguments.map(emit), target = verified.functions.find(fn => fn.id === expression.target);
+      const values=expression.arguments.map(represent), target = verified.functions.find(fn => fn.id === expression.target);
+      const operands=target.parameters.flatMap((parameter,index) => {
+        const value=values[index] ?? {payload:scalarConstant(parameter.type,"0",expression.range),state:scalarConstant(i32TypeId,"1",expression.range)};
+        return [value.payload,...(hasState(parameter.presence) ? [value.state ?? scalarConstant(i32TypeId,"0",expression.range)] : [])];
+      });
+      const argumentTypes=target.parameters.flatMap(parameter => [parameter.type,...(hasState(parameter.presence) ? [i32TypeId] : [])]);
       const name = `%v${valueIndex++}`;
-      current.lines.push(`    ${name} = "func.call"(${operands.join(", ")}) {callee = @${quote(target.name)}, tsfg_core.function_id = ${quote(target.id)}, tsfg_core.signature_hash = ${quote(target.signatureHash)}, ${attrsFor(expression.range)}} : (${expression.arguments.map(argument => coreType(argument.type)).join(", ")}) -> ${coreType(expression.type)}`);
+      current.lines.push(`    ${name} = "func.call"(${operands.join(", ")}) {callee = @${quote(target.name)}, tsfg_core.function_id = ${quote(target.id)}, tsfg_core.signature_hash = ${quote(target.signatureHash)}, ${attrsFor(expression.range)}} : (${argumentTypes.map(coreType).join(", ")}) -> ${coreType(expression.type)}`);
       return name;
     }
     if (expression.kind === "group" || expression.kind === "unary" && expression.operator === "+" && !floatType(expression.type)) return emit(expression.operand);
     if (expression.kind === "shortCircuit") {
       const left = emit(expression.left);
-      const rhs = newBlock(), shortcut = newBlock(), join = newBlock([boolTypeId]);
+      const incoming = new Map(definitions), keys = [...incoming.keys()];
+      const rhs = newBlock(), shortcut = newBlock(), join = newBlock([boolTypeId, ...flatTypes(keys)]);
       conditional(left, expression.operator === "&&" ? rhs : shortcut, expression.operator === "&&" ? shortcut : rhs, expression.range);
-      current = shortcut; branch(join, [left], expression.range);
-      current = rhs; const right = emit(expression.right); branch(join, [right], expression.range);
-      current = join; return join.parameters[0].name;
+      current = shortcut; branch(join, [left, ...flatValues(keys,incoming)], expression.range);
+      current = rhs; definitions = new Map(incoming);
+      const right = emit(expression.right); branch(join, [right, ...flatValues(keys,definitions)], expression.range);
+      current = join; definitions = fromParameters(keys,join.parameters,1);
+      return join.parameters[0].name;
     }
     const operands = expression.kind === "binary" ? [emit(expression.left), emit(expression.right)]
       : expression.kind === "unary" ? [emit(expression.operand)] : [];
@@ -541,8 +672,10 @@ export function lowerHir(hir) {
       if (statement.kind === "local") {
         bindingTypes.set(statement.binding.id, statement.binding.type);
         declared.add(statement.binding.id);
-        if (statement.initializer) definitions.set(statement.binding.id, emit(statement.initializer));
-      } else if (statement.kind === "assign") definitions.set(statement.target.binding, emit(statement.value));
+        bindingStates.set(statement.binding.id,false);
+        if (statement.initializer) store(statement.binding.id,represent(statement.initializer),statement.range);
+      } else if (statement.kind === "assign") store(statement.target.binding,represent(statement.value),statement.range);
+      else if (statement.kind === "evaluate") emit(statement.value);
       else if (statement.kind === "return") {
         const result = emit(statement.value), type = coreType(fn.returnType.id);
         current.lines.push(`    "func.return"(${result}) {${attrsFor(statement.range)}} : (${type}) -> ()`);
@@ -562,32 +695,44 @@ export function lowerHir(hir) {
         const noExit = current, noDefinitions = new Map(definitions);
         const keys = [...outerDeclared].filter(id => (!yesExit || yesDefinitions.has(id)) && (!noExit || noDefinitions.has(id)));
         if (yesExit || noExit) {
-          const join = newBlock(keys.map(id => bindingTypes.get(id)));
-          if (yesExit) { current = yesExit; branch(join, keys.map(id => yesDefinitions.get(id)), statement.range); }
-          if (noExit) { current = noExit; branch(join, keys.map(id => noDefinitions.get(id)), statement.range); }
-          current = join; definitions = new Map(keys.map((id, index) => [id, join.parameters[index].name]));
+          const join = newBlock(flatTypes(keys));
+          if (yesExit) { current = yesExit; branch(join, flatValues(keys,yesDefinitions), statement.range); }
+          if (noExit) { current = noExit; branch(join, flatValues(keys,noDefinitions), statement.range); }
+          current = join; definitions = fromParameters(keys,join.parameters);
         } else { current = null; definitions = outer; }
         declared = outerDeclared;
       } else if (statement.kind === "while") {
         const outer = new Map(definitions), outerDeclared = new Set(declared), keys = [...outer.keys()];
-        const header = newBlock(keys.map(id => bindingTypes.get(id)));
-        branch(header, keys.map(id => outer.get(id)), statement.condition.range);
-        current = header; definitions = new Map(keys.map((id, index) => [id, header.parameters[index].name]));
+        const header = newBlock(flatTypes(keys));
+        branch(header, flatValues(keys,outer), statement.condition.range);
+        current = header; definitions = fromParameters(keys,header.parameters);
         fuel(2, statement.condition.range);
         const condition = emit(statement.condition), incoming = new Map(definitions);
         const loop = newBlock(), exit = newBlock();
         conditional(condition, loop, exit, statement.condition.range);
         current = loop; definitions = new Map(incoming); emitBody(statement.body);
-        if (current) branch(header, keys.map(id => definitions.get(id)), statement.condition.range);
+        if (current) branch(header, flatValues(keys,definitions), statement.condition.range);
         current = exit; definitions = incoming; declared = outerDeclared;
       }
     }
   };
+  for (const [index,parameter] of fn.parameters.entries()) {
+    const initializer=fn.parameterInitializers[index];
+    if (!initializer) continue;
+    const incoming=new Map(definitions), keys=[...incoming.keys()], one=scalarConstant(i32TypeId,"1",parameter.presence.range), condition=`%v${valueIndex++}`;
+    current.lines.push(`    ${condition} = "tsfg_core.eq"(${incoming.get(parameter.id).state}, ${one}) {${attrsFor(parameter.presence.range)}} : (i32, i32) -> i1`);
+    const initialize=newBlock(), supplied=newBlock(), join=newBlock(flatTypes(keys));
+    conditional(condition,initialize,supplied,parameter.presence.range);
+    current=supplied; branch(join,flatValues(keys,incoming),parameter.presence.range);
+    current=initialize; definitions=new Map(incoming);
+    store(parameter.id,represent(initializer),initializer.range); branch(join,flatValues(keys,definitions),parameter.presence.range);
+    current=join; definitions=fromParameters(keys,join.parameters);
+  }
   emitBody(fn.body);
   if (current || blocks.some(block => !block.terminated)) throw new TypeError("r03-hir-cfg: reachable function fallthrough");
   const type = coreType(fn.returnType.id);
   const text = blocks.map((block, index) => `${index ? `  ^${block.name}${block.parameters.length ? `(${block.parameters.map(p => `${p.name}: ${coreType(p.type)}`).join(", ")})` : ""}:\n` : ""}${block.lines.join("\n")}`).join("\n");
-  const functionAttrs = `tsfg_core.function_id = ${quote(fn.id)}, tsfg_core.signature_hash = ${quote(fn.signatureHash)}, tsfg_core.type_id = ${quote(fn.returnType.id)}, tsfg_core.function_start = ${fn.range.start} : i64, tsfg_core.function_end = ${fn.range.end} : i64`;
+  const functionAttrs = `tsfg_core.function_id = ${quote(fn.id)}, tsfg_core.signature_hash = ${quote(fn.signatureHash)}, tsfg_core.type_id = ${quote(fn.returnType.id)}, tsfg_core.parameter_presence = ${quote(presenceEncoding(fn.parameters))}, tsfg_core.function_start = ${fn.range.start} : i64, tsfg_core.function_end = ${fn.range.end} : i64`;
   return `  func.func @${quote(fn.name)}(${blocks[0].parameters.map(p => `${p.name}: ${coreType(p.type)}`).join(", ")}) -> ${type} attributes {${functionAttrs}} {\n${text}\n  }`;
   };
   return `module attributes {${attrs.join(", ")}} {\n${verified.functions.map(lowerFunction).join("\n")}\n}\n`;

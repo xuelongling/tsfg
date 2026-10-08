@@ -1,6 +1,6 @@
 <!-- SPDX-License-Identifier: MIT -->
 
-# FrontendSnapshot 0.9.0
+# FrontendSnapshot 0.10.0
 
 `tsfg.frontend-snapshot` is an exact-match development contract. The producer is
 `analyzeFrontend`; the consumer is `validateFrontendSnapshot` and the typed
@@ -18,6 +18,16 @@ identity; physical source locations and process state do not. The owned
 `symbols`, and structured scalar `types` use snapshot-local IDs. Each public reference carries
 both its local ID and `snapshotId`; no ID is stable across edits. These IDs are
 not R04 `FunctionId` or `TypeId`.
+
+M10 adds scalar local/parameter write and update facts, discarded expression
+statements, and finite typed parameter presence. Each parameter records the
+official checker payload and undefined/null membership, optional/default bits,
+declaration span and type annotation span. Its ordered default initializer is
+owned separately. The producer resolves the actual official call declaration;
+omitted arguments and builtin undefined are distinct from null and present zero.
+Cold consumers verify the complete table, symbol ownership, spans, default
+scope and signature mapping. Digests and version strings alone do not prove
+official checking. Caller operands finish before callee ordered initialization.
 
 Consumers must check contract version and schema hash, then validate references
 against the owning snapshot. Invalid or foreign references are errors, not

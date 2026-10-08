@@ -7,6 +7,7 @@ import sourceLock from "../eng/frontend-source.lock.json" with { type: "json" };
 import contractRegistry from "../contracts/registry.json" with { type: "json" };
 import { conversionDeclaration, conversionEntries, verifyConversionOrigin, conversionCallSpelling, admittedConversionScope, admittedInputScope, completeFunctionSource } from "./conversions.mjs";
 import bytecodeSchema from "../contracts/bytecode.schema.json" with { type: "json" };
+import { validParameterPresence } from "./presence.mjs";
 
 const frontendContract = contractRegistry["tsfg.frontend-snapshot"];
 export const frontendContractVersion = frontendContract.semver;
@@ -256,6 +257,7 @@ export async function analyzeFrontend(input, { executable } = {}) {
     ...fn,
     symbol: { snapshotId, id: fn.symbol },
     parameters: fn.parameters.map(parameter => ({ ...parameter, ref: { snapshotId, id: parameter.id } })),
+    parameterInitializers: (fn.parameterInitializers ?? fn.parameters.map(() => null)).map(value => value ? expression(value) : null),
     body: fn.body.map(statement),
   }));
   const nodes = [];
@@ -295,6 +297,7 @@ export async function analyzeFrontend(input, { executable } = {}) {
     recordNode(fn, "function");
     fn.returnTypeRef = typeRef(fn.returnType);
     for (const parameter of fn.parameters) recordNode(parameter, "parameter");
+    for (const initializer of fn.parameterInitializers) if (initializer) recordExpression(initializer);
     for (const item of fn.body) recordStatement(item);
   }
   for (const symbol of symbols) symbol.typeRef = typeRef(symbol.type);
@@ -395,6 +398,32 @@ export function validateFrontendSnapshot(snapshot) {
     } else if (expression.symbol) {
       throw new TypeError("non-reference expression has a symbol");
     }
+    if (expression.kind === "absence") {
+      if (Object.keys(expression).sort().join(",") !== "absence,kind,node,range,type,typeRef"
+          || !["undefined","null"].includes(expression.absence)
+          || sourceSpan(expression.range).trim() !== expression.absence
+          || expression.absence === "undefined" && scope.has("undefined"))
+        throw new TypeError("absence differs from its checked builtin source");
+    }
+    if (expression.kind === "update") {
+      const symbol = resolveSymbol(snapshot, expression.operand?.symbol);
+      if (Object.keys(expression).sort().join(",") !== "kind,node,operand,operator,prefix,range,type,typeRef"
+          || expression.operand?.kind !== "reference" || !symbol.writable
+          || !["local", "parameter"].includes(symbol.kind)
+          || !["++", "--"].includes(expression.operator) || typeof expression.prefix !== "boolean"
+          || expression.type !== symbol.type)
+        throw new TypeError("update differs from its checked local binding or types");
+    }
+    if (expression.kind === "write") {
+      const left = expression.left;
+      const symbol = resolveSymbol(snapshot, left?.symbol);
+      if (Object.keys(expression).sort().join(",") !== "kind,left,node,operator,range,right,type,typeRef"
+          || left?.kind !== "reference" || !symbol.writable
+          || !["local", "parameter"].includes(symbol.kind)
+          || !["=", "+=", "-=", "*=", "/=", "%=", "<<=", ">>=", ">>>=", "&=", "|=", "^=", "&&=", "||="].includes(expression.operator)
+          || expression.type !== symbol.type || expression.right?.type !== (["<<=", ">>=", ">>>="].includes(expression.operator) ? "i32" : symbol.type))
+        throw new TypeError("write differs from its checked local binding or types");
+    }
     if (expression.kind === "conversion") {
       const origin = expression.conversion, entry = conversionEntries.get(origin?.entryId);
       const declaration = snapshot.inputs.find(file => file.path === origin?.declarationPath);
@@ -428,9 +457,12 @@ export function validateFrontendSnapshot(snapshot) {
           || expression.signature.returnType !== fn.returnType
           || expression.type !== fn.returnType
           || expression.signature.parameters.length !== parameters.length
-          || arguments_.length !== parameters.length
+          || arguments_.length > parameters.length
+          || canonical(expression.signature.presence ?? []) !== canonical(fn.parameters.map(parameter => parameter.presence))
+          || parameters.slice(arguments_.length).some((_,index) => !fn.parameters[arguments_.length+index].presence?.optional)
           || parameters.some((type, index) => expression.signature.parameters[index] !== type
-            || arguments_[index]?.type !== type)) {
+            || index < arguments_.length && (arguments_[index]?.type !== type
+              || arguments_[index]?.kind === "absence" && !fn.parameters[index].presence?.[arguments_[index].absence]))) {
         throw new TypeError("call signature differs from its target or arguments");
       }
       calls++;
@@ -479,19 +511,23 @@ export function validateFrontendSnapshot(snapshot) {
         || definition.range?.end > fn.range?.end) {
       throw new TypeError("function differs from its symbol");
     }
-    if (!Array.isArray(fn.parameters) || !Array.isArray(fn.body)) {
+    if (!Array.isArray(fn.parameters) || !Array.isArray(fn.body) || !Array.isArray(fn.parameterInitializers)
+        || fn.parameterInitializers.length !== fn.parameters.length) {
       throw new TypeError("invalid function structure");
     }
     const parameterScope = new Map(fn.parameters.map(parameter => [parameter.name, parameter.id]));
-    for (const parameter of fn.parameters) {
+    for (const [index, parameter] of fn.parameters.entries()) {
       checkNode(parameter, "parameter");
       checkType(parameter.type, parameter.typeRef);
       const symbol = resolveSymbol(snapshot, parameter.ref);
       if (symbol.id !== parameter.id || symbol.kind !== "parameter"
           || symbol.name !== parameter.name || symbol.type !== parameter.type
+          || canonical(symbol.presence) !== canonical(parameter.presence)
+          || !validParameterPresence(parameter.presence,parameter,fn.parameterInitializers[index],snapshot.source.content,fn.range)
           || !sameRange(symbol.range, parameter.range)) {
         throw new TypeError("parameter differs from its symbol");
       }
+      if (fn.parameterInitializers[index]) visitExpression(fn.parameterInitializers[index],parameterScope);
     }
     visitStatements(fn.body, parameterScope);
   }

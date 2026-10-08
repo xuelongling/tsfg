@@ -1,6 +1,6 @@
 <!-- SPDX-License-Identifier: MIT -->
 
-# tsfg.bytecode 0.9.0
+# tsfg.bytecode 0.10.0
 
 This exact, same-repository development format is the formal R04 compiler to
 Zig Runtime seam. It has no published or supported older external consumer.
@@ -9,7 +9,7 @@ invalidate caches and are rejected. The registry owns version and JCS schema
 hash. The JSON schema owns wire field order and bounds.
 
 All integers use little endian. The 80-byte header is magic `TSFGTBC0`, u32 wire
-version 9, raw 32-byte schema SHA256, u32 total length and raw 32-byte SHA256 of
+version 10, raw 32-byte schema SHA256, u32 total length and raw 32-byte SHA256 of
 the payload. UTF8 strings have a u32 length, no terminator or padding. The
 checksum supplies integrity, not publisher authenticity. Target/triple and LLVM
 DataLayout are fixed in the schema. LLVM derives i32 and pointer size/alignment; Zig checks
@@ -19,13 +19,14 @@ colons reject. Entity identity domains remain unchanged: SHA256 of
 `tsfg.type\0<scalar>`, `tsfg.signature\0(<comma-separated scalar parameters>)-><scalar>` and
 `tsfg.function\0<sourcePath>\0<name>\0<signatureHashHex>`.
 
-Capability20 admits 1..128 nominal integer/bool/f32/f64 functions, each with 0..64 scalar parameters,
+Capability52 admits 1..128 nominal integer/bool/f32/f64 functions, each with 0..64 logical parameters and at most128 physical payload/state parameters,
 up to256 reachable blocks,4096 SSA registers and8192 instructions. Global
 payload fields are target/triple/layout strings, i32 size/alignment u16, pointer bits/alignment u16,
 capability u32, input/source hashes, logical source path, source length u32 and
 function count u16. Each function has FunctionId/signature/return-type hashes,
 name string, source start/end u32, return type u8, parameter count u8 and
-parameter types u8, followed by register/block/instruction counts u16 and its
+physical parameter types u8, logical parameter count u8 and one presence mask
+u8 per logical parameter, followed by register/block/instruction counts u16 and its
 block table and instruction sequences. Each block
 has parameterCount u16, each parameter's register u16/type u8/reserved zero u8,
 then instructionCount u16. Registers are globally unique in block order: block
@@ -67,6 +68,21 @@ capability tables and explicit request limits. Its public host accepts
 `{type:"<concrete integer>",value:"<canonical in-range decimal>"}` and
 `{type:"bool",value:true|false}` argument records; optional `signatureHash`
 must match the selected function. Unsupported capabilities reject at preflight.
+M10 also accepts logical `{type:"undefined",value:null}` and
+`{type:"null",value:null}` records when the parameter permits that state.
+Omission requires an optional/default parameter. Masks use bit0 undefined,
+bit1 null, bit2 optional and bit3 default; optional requires undefined, and
+default requires both optional and undefined. Nonzero masks append `@` plus
+two lowercase hexadecimal digits to the logical signature's scalar name.
+Every logical slot consumes its scalar payload and, when mask&3 is nonzero,
+an i32 state. All consumers reconstruct and verify each physical position.
+State0 is present, state1 undefined and state2 null; absent payload bits are
+canonical zero and invalid states or payloads reject at the actual VM call
+boundary. Defaults run only for state1, in callee parameter order after all
+caller operands. The64 logical capacity and16384-byte default memory budget
+remain; physical registers, states, phi transfers and every caller/callee
+frame contribute to actual allocation accounting. Previous and mixed exchange
+identities reject before execution.
 Runtime contains no source
 parser, JavaScript fallback, frontend, MLIR or LLVM. Canonical serialize returns
 identical verified bytes; inspect prints typed CFG and original source anchors.
