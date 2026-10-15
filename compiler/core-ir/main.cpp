@@ -209,7 +209,7 @@ public:
 
 namespace {
 constexpr llvm::StringLiteral bytecodeSchema =
-    "82c22599dd5680e8e9a9135df400b992f841e0aaa2459abd7c9d2687442c2119";
+    "5e080a9472ede4ee7c15de242c00999ac63a65534dfb489afabdf020a442fdc6";
 constexpr llvm::StringLiteral target = "windows-x86_64-msvc";
 constexpr llvm::StringLiteral triple = "x86_64-pc-windows-msvc";
 constexpr llvm::StringLiteral layout =

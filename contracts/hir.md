@@ -1,6 +1,6 @@
 <!-- SPDX-License-Identifier: MIT -->
 
-# tsfg.hir 0.6.0
+# tsfg.hir 0.8.0
 
 `createCompilerSession` reuses owned HIR/Core/R04 output only for an unchanged
 checked Snapshot identity, compiler input fingerprint and source-built producer
@@ -19,7 +19,7 @@ and typed scalar expression tree, and freezes all data. It retains no
 Snapshot-local reference or upstream session. `lowerHir` consumes only HIR.
 
 This exact same-repository development format has no published or supported
-older consumer. Its supported capability is 1..128 named nominal integer/bool functions,
+older consumer. Its supported capability is 1..256 named nominal integer/bool/f32/f64 functions,
 each with 0..64 typed scalar parameters, structured blocks, if/else, while,
 local declarations, simple assignments and scalar returns; each body contains
 at most128 statements. Parameters use declaration-order `p0`, `p1`, ...
@@ -70,7 +70,7 @@ range. Unknown/foreign identities retain generic invalid-input rejection;
 they are not attributed to a trusted original binding. Reading a
 declared but uninitialized owned binding is `r03-hir-uninitialized`, Rule
 `r01-evaluation`, phase `hir`, with the original UTF-16 read range. The official
-0.6.0 producer currently rejects uninitialized source declarations using
+0.8.0 producer currently rejects uninitialized source declarations using
 `r02b-d-unsupported`, phase `capability`: delayed initialization is pending
 frontend capability for later ordinary-expression/full-closure coverage, not
 a language prohibition or successful source initialization analysis.
@@ -98,7 +98,7 @@ transfer in parallel in R04. The entry and each while header carry explicit
 `tsfg_core.fuel` events before condition operations. Source conditions, braces,
 else clauses and nested statement delimiters are checked against owned anchors.
 
-Core exchange0.6.0 uses registered typed scalar operations and fuel plus official
+Core exchange0.8.0 uses registered typed scalar operations and fuel plus official
 `cf.br`/`cf.cond_br`, `func.call`, `func.return` and MLIR block arguments. Each
 function owns its identity, signature, return type and range attributes; module
 source and target attributes remain global. The C++ consumer resolves every
@@ -112,4 +112,13 @@ claimed. Logical events remain explicit and cannot be replaced with physical
 instruction accounting. Full/incremental compiler outputs and formal Runtime
 results are tested across source/control changes.
 
-M07 expands this exact-match development contract to the complete nominal integer family. See docs/r03-integer-vm.md and the registered schema for type codes, pointer DataLayout and wire6/capability17. Previous0.5 artifacts and mixed schema identities are rejected; no compatibility window is promised. Existing i32/bool identities, source anchors, complete verifier and logical/physical budget ordering remain in force.
+The current registered development contracts are 0.8.0, with bytecode wire8 and capability19. They include nominal integers, bool, f32/f64 and owned module/authorized-host records. docs/r03-integer-vm.md records the earlier M07 wire6/capability17 slice; it does not describe the current wire. Old and mixed schema identities are rejected, and no older-format compatibility window is promised. Scalar identities, original source anchors, complete verification and logical/physical budget ordering remain in force.
+
+Module-mode HIR owns complete source, module, global, host-import and closure
+records. Functions retain their sourcePath and source/module-initialization
+kind. Global references and assignments preserve binding identity, exact scalar
+type (including f32/f64), binding origin and original source anchors. Ordered
+roots and dependency initialization are distinct from ordinary source calls;
+generated initializers are lifecycle-only. The verifier checks all supplied
+owned facts before closure pruning. These records lower to the current wire8
+module tables described by contracts/bytecode.md, rather than a second format.

@@ -6,7 +6,7 @@ import test from "node:test";
 
 const executable = process.env.TSFG_CORE_IR_EXE;
 const sha = value => createHash("sha256").update(value).digest("hex");
-const schema = "616360bef22c9c129df7b11392dc4e181797cf2f311ad62c56c701ec10ff716c";
+const schema = "5e080a9472ede4ee7c15de242c00999ac63a65534dfb489afabdf020a442fdc6";
 const signature = sha("tsfg.signature\0()->i32");
 const source = (body, extra = "") => `module attributes {
   tsfg_core.version = "0.8.0", tsfg_core.bytecode_schema = "sha256:${schema}",
@@ -75,6 +75,7 @@ function wire(packet) {
   cursor += 8;
   assert.equal(packet.readUInt32LE(cursor), 19); cursor += 4 + 64;
   string(); cursor += 4;
+  assert.equal(packet[cursor++], 0); // explicit single-source moduleMode
   assert.equal(packet.readUInt16LE(cursor), 1); cursor += 2 + 96;
   string(); cursor += 8;
   assert.equal(packet[cursor++], 1); assert.equal(packet[cursor++], 0);

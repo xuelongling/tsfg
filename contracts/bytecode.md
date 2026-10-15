@@ -1,8 +1,8 @@
 <!-- SPDX-License-Identifier: MIT -->
 
-# tsfg.bytecode 0.6.0
+# tsfg.bytecode 0.8.0
 
-Private M13 binding-origin draft, with final registration pending the accepted M09 base: module globals carry explicit `bindingKind`. Ordinary bindings retain `tsfg.global` identity, including legal `$default` and escaped identifiers. A scalar default export expression is readonly and uses `sha256(utf8("tsfg.default-export-binding.v1" NUL sourcePath NUL sourceHash NUL moduleIdentity NUL scalarName NUL decimalUTF16Start NUL decimalUTF16End))`; digest components include the `sha256:` prefix and ranges retain official UTF-16 expression anchors. The Snapshot/HIR importer verifies its default export and initializer association. Display names grant no generated privileges. The global flags byte is 0 ordinary readonly, 1 ordinary writable, or 2 generated readonly; 3 and unknown values are rejected. Core `binding_kind` and Runtime inspection `bindingKind` expose the same origin. Exact changed draft schema digests reject old or mixed packets. This private draft establishes no compatibility window or final minor version; source admission and formal Core/Runtime acceptance remain pending.
+The registered 0.8.0 binding-origin records use the implemented M13 owned shape: module globals carry explicit `bindingKind`. Ordinary bindings retain `tsfg.global` identity, including legal `$default` and escaped identifiers. A scalar default export expression is readonly and uses `sha256(utf8("tsfg.default-export-binding.v1" NUL sourcePath NUL sourceHash NUL moduleIdentity NUL scalarName NUL decimalUTF16Start NUL decimalUTF16End))`; digest components include the `sha256:` prefix and ranges retain official UTF-16 expression anchors. The Snapshot/HIR importer verifies its default export and initializer association. Display names grant no generated privileges. The global flags byte is 0 ordinary readonly, 1 ordinary writable, or 2 generated readonly; 3 and unknown values are rejected. Core `binding_kind` and Runtime inspection `bindingKind` expose the same origin. Exact changed draft schema digests reject old or mixed packets. This exact development format establishes no older-format compatibility window; source admission and formal Core/Runtime acceptance remain separate obligations.
 
 This exact, same-repository development format is the formal R04 compiler to
 Zig Runtime seam. It has no published or supported older external consumer.
@@ -11,7 +11,7 @@ invalidate caches and are rejected. The registry owns version and JCS schema
 hash. The JSON schema owns wire field order and bounds.
 
 All integers use little endian. The 80-byte header is magic `TSFGTBC0`, u32 wire
-version 6, raw 32-byte schema SHA256, u32 total length and raw 32-byte SHA256 of
+version 8, raw 32-byte schema SHA256, u32 total length and raw 32-byte SHA256 of
 the payload. UTF8 strings have a u32 length, no terminator or padding. The
 checksum supplies integrity, not publisher authenticity. Target/triple and LLVM
 DataLayout are fixed in the schema. LLVM derives i32 and pointer size/alignment; Zig checks
@@ -21,17 +21,29 @@ colons reject. Entity identity domains remain unchanged: SHA256 of
 `tsfg.type\0<scalar>`, `tsfg.signature\0(<comma-separated scalar parameters>)-><scalar>` and
 `tsfg.function\0<sourcePath>\0<name>\0<signatureHashHex>`.
 
-Capability17 admits 1..128 nominal integer/bool functions, each with 0..64 scalar parameters,
+Capability19 admits 1..256 nominal integer/bool/f32/f64 functions, each with 0..64 scalar parameters,
 up to256 reachable blocks,4096 SSA registers and8192 instructions. Global
 payload fields are target/triple/layout strings, i32 size/alignment u16, pointer bits/alignment u16,
-capability u32, input/source hashes, logical source path, source length u32 and
-function count u16. Each function has FunctionId/signature/return-type hashes,
+capability u32, input/source hashes, logical source path, source length u32,
+moduleMode u8 and function count u16. moduleMode0 always has its explicit zero
+byte before the function count; it has no module tables. moduleMode1 inserts
+sources, modules, globals, hosts, roots and initialization tables, in that order,
+between mode and function count. Table counts/records and bounds are in the
+registered machine schema. Module-mode functions add sourceIndex u16,
+initializer u8 and reserved-zero u8 before the ordinary function descriptor.
+Each function has FunctionId/signature/return-type hashes,
 name string, source start/end u32, return type u8, parameter count u8 and
 parameter types u8, followed by register/block/instruction counts u16 and its
 block table and instruction sequences. Each block
 has parameterCount u16, each parameter's register u16/type u8/reserved zero u8,
 then instructionCount u16. Registers are globally unique in block order: block
 parameters followed by scalar results. Block arguments are phi values.
+
+Global load/store opcodes29/30 carry a type code1..13, register, global index
+and source range. The store initialization flag distinguishes its unique
+initializer from later assignment; table binding origin controls write permission.
+Opcode31 is the explicitly authorized i32 host call. Module, global, root and
+initializer associations are verified before requests execute.
 
 Scalar and return records retain their 16-byte layout: opcode/type u8, register
 u16, payload u32, original UTF16 start/end u32. Existing opcodes 1..23 and their
@@ -46,6 +58,9 @@ with high-u16 reserved0; it appends argument count u16 and ordered argument
 registers u16. Call source ranges belong to the caller. Every target signature,
 argument arity/type and return type is checked before any request executes.
 Type codes1/2 retain i32/bool. Codes3..11 are i8/i16/i64/u8/u16/u32/u64/isize/usize.
+Codes12/13 are f32/f64. Float constants use opcode32 followed by canonical raw
+u64 bits (zero extended for f32); unary plus uses opcode33. Strict arithmetic,
+NaN transport and raw-hex requests follow docs/r03-float-vm.md.
 Constant opcode28 has the standard scalar record with a zero u32 payload,
 followed by u64 canonical zero extended low-width bits. Signed values use
 two's complement low-width bits. High bits outside the concrete width reject
@@ -107,4 +122,11 @@ The `TSFGREQ1` transport remains u32 count plus length-delimited R04 packets,
 1..128 matching requests and total1MiB/no trailing bytes, served by one Runtime.
 It adds no language semantics.
 
-M07 expands this exact-match development contract to the complete nominal integer family. See docs/r03-integer-vm.md and the registered schema for type codes, pointer DataLayout and wire6/capability17. Previous0.5 artifacts and mixed schema identities are rejected; no compatibility window is promised. Existing i32/bool identities, source anchors, complete verifier and logical/physical budget ordering remain in force.
+The current registered development contracts are 0.8.0, with bytecode wire8 and capability19. They include nominal integers, bool, f32/f64 and owned module/authorized-host records. docs/r03-integer-vm.md records the earlier M07 wire6/capability17 slice; it does not describe the current wire. Old and mixed schema identities are rejected, and no older-format compatibility window is promised. Scalar identities, original source anchors, complete verification and logical/physical budget ordering remain in force.
+
+The global operation type-range registration corrects an omitted description of
+already implemented f32/f64 support. Contract SemVer0.8.0 and wire8 remain
+unchanged because this restores the existing development semantics; the JCS
+schema hash and derived Contract Set ID change atomically across the producer,
+loader and fixtures under accepted ECP-0002. Prior schema/cache identities stay
+incompatible. This correction makes no formal Runtime acceptance claim.

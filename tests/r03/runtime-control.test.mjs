@@ -5,7 +5,7 @@ import { createHash } from "node:crypto";
 import test from "node:test";
 
 const digest = value => createHash("sha256").update(value).digest();
-const schema = "616360bef22c9c129df7b11392dc4e181797cf2f311ad62c56c701ec10ff716c";
+const schema = "5e080a9472ede4ee7c15de242c00999ac63a65534dfb489afabdf020a442fdc6";
 const u8 = value => Buffer.from([value]);
 const u16 = value => { const b = Buffer.alloc(2); b.writeUInt16LE(value); return b; };
 const u32 = value => { const b = Buffer.alloc(4); b.writeUInt32LE(value >>> 0); return b; };
@@ -19,7 +19,7 @@ function packet(blocks, registerCount, returnType = 1) {
   const signature = digest(`tsfg.signature\0()->${returnType === 1 ? "i32" : "bool"}`);
   const body = [str("windows-x86_64-msvc"), str("x86_64-pc-windows-msvc"),
     str("e-m:w-p270:32:32-p271:32:32-p272:64:64-i64:64-i128:128-f80:128-n8:16:32:64-S128"),
-    u16(4), u16(4), u16(64), u16(8), u32(19), digest("input"), digest("source"), str("/fixture.ts"), u32(100), u16(1),
+    u16(4), u16(4), u16(64), u16(8), u32(19), digest("input"), digest("source"), str("/fixture.ts"), u32(100), u8(0), u16(1),
     digest(`tsfg.function\0/fixture.ts\0control\0${signature.toString("hex")}`), signature,
     digest(`tsfg.type\0${returnType === 1 ? "i32" : "bool"}`), str("control"),
     u32(0), u32(100), u8(returnType), u8(0), u16(registerCount), u16(blocks.length),
@@ -42,7 +42,7 @@ function evaluate(bytes, requests) {
 }
 const constant = () => packet([{ params: [], ops: [fuel(1), op(1, 1, 0, 42), op(2, 1, 0)] }], 1);
 
-test("v5 public loader roundtrips canonical bytes and charges the entry event", () => {
+test("v8 public loader roundtrips canonical bytes and charges the entry event", () => {
   const bytes = constant();
   const result = invoke(bytes, ["--roundtrip"]);
   assert.equal(result.status, 0, result.stderr.toString());

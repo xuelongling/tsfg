@@ -104,7 +104,10 @@ test("formal loader rejects actual producer packet corruption, identities, types
   for (let index = 0; index < 3; index++) {
     stringOffsets.push(offset + 4); offset += 4 + packet.readUInt32LE(offset);
   }
-  const functionOffset = offset + 12 + 64 + 4 + packet.readUInt32LE(offset + 12 + 64) + 4 + 2;
+  const moduleModeOffset = offset + 12 + 64 + 4 + packet.readUInt32LE(offset + 12 + 64) + 4;
+  assert.equal(packet[moduleModeOffset], 0);
+  assert.equal(packet.readUInt16LE(moduleModeOffset + 1), 1);
+  const functionOffset = moduleModeOffset + 1 + 2;
   const changed = (at, value, repair = false) => {
     assert.notEqual(packet[at], value, "a negative case must actually change the packet");
     const bytes = Buffer.from(packet); bytes[at] = value;
@@ -196,7 +199,7 @@ test("C++ R04 producer verifies Core source identities, target, types and actual
   assert.ifError(renamed.error); assert.equal(renamed.status, 0, renamed.stderr.toString());
   assert.deepEqual(renamed.stdout, result.bytecode);
   for (const [before, after] of [
-    ["sha256:616360bef22c9c129df7b11392dc4e181797cf2f311ad62c56c701ec10ff716c", `sha256:${"0".repeat(64)}`],
+    ["sha256:5e080a9472ede4ee7c15de242c00999ac63a65534dfb489afabdf020a442fdc6", `sha256:${"0".repeat(64)}`],
     ["windows-x86_64-msvc", "wrong-target"],
     [result.hir.functions[0].id, `sha256:${"0".repeat(64)}`],
     ["tsfg_core.function_end = 44 : i64", "tsfg_core.function_end = 45 : i64"],

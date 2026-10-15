@@ -7,7 +7,7 @@ import test from "node:test";
 // Public seams: verified native Core CLI and its versioned R04 output.
 const executable = process.env.TSFG_CORE_IR_EXE;
 const sha = value => createHash("sha256").update(value).digest("hex");
-const schema = "616360bef22c9c129df7b11392dc4e181797cf2f311ad62c56c701ec10ff716c";
+const schema = "5e080a9472ede4ee7c15de242c00999ac63a65534dfb489afabdf020a442fdc6";
 const at = (start = 10, end = 20) => `tsfg_source.start = ${start} : i64, tsfg_source.end = ${end} : i64`;
 const signature = (parameters = [], result = "i32") => sha(`tsfg.signature\0(${parameters.join(",")})->${result}`);
 const id = (name, parameters = [], result = "i32") => sha(`tsfg.function\0/main.ts\0${name}\0${signature(parameters, result)}`);
@@ -56,6 +56,7 @@ function wire(packet) {
   assert.deepEqual([u16(), u16(), u16(), u16(), u32()], [4, 4, 64, 8, 19]);
   assert.equal(hash(), sha("owned-input")); assert.equal(hash(), sha("owned-source"));
   assert.equal(string(), "/main.ts"); assert.equal(u32(), 100);
+  assert.equal(u8(), 0); // explicit single-source moduleMode
   const functions = [], count = u16();
   for (let i = 0; i < count; i++) {
     const identity = hash(), signatureHash = hash(), typeId = hash(), name = string();
@@ -193,10 +194,10 @@ test("Core enforces bounded function tables and parameter lists at their exact l
   const [fn] = wire(maximalParameters.stdout);
   assert.equal(fn.parameters.length, 64);
   assert.equal(fn.registers, 64);
-  const maximalFunctions = invoke(source(functions(128)), "--emit-bytecode");
+  const maximalFunctions = invoke(source(functions(256)), "--emit-bytecode");
   ok(maximalFunctions);
-  assert.equal(wire(maximalFunctions.stdout).length, 128);
-  for (const invalid of [source(parameterFunction(65)), source(functions(129)), source("")]) {
+  assert.equal(wire(maximalFunctions.stdout).length, 256);
+  for (const invalid of [source(parameterFunction(65)), source(functions(257)), source("")]) {
     const failed = invoke(invalid, "--emit-bytecode");
     assert.equal(failed.status, 3, failed.stderr.toString());
     assert.equal(failed.stdout.length, 0);
