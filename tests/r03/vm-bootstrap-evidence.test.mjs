@@ -132,3 +132,55 @@ test('notification bursts share bounded work and finish drains late bytes withou
  const failed=await y.observer.finish();assert.match(failed.first,/response file/);
  assert.equal(failed.readBytes,0);assert.equal(failed.objects.length,0);
 });
+
+test('bounded wakes observe a persistent live linker record without a file notification',async()=>{
+ const x=await liveFixture(),producer=await open(x.logPath,'a');let finished=false;
+ try{
+  await producer.writeFile(`lld-link -OUT:${x.output} ${x.source}\n`);
+  // No changed() notification is sent. This persistent fixture tests the wake,
+  // not ordering against a native producer's temporary-file cleanup.
+  await new Promise(resolve=>setTimeout(resolve,250));
+  x.observer.producerClosed();
+  const result=await x.observer.finish();finished=true;
+  assert.equal(result.first,null,'the active-period wake must consume the line before close');
+  assert.equal(result.objects.length,1);assert.equal(result.objects[0].sourceClosed,true);
+  assert.equal(result.wake.intervalMs,50);assert.equal(result.wake.maximumTicks,144000);
+  assert.ok(result.wake.ticks>0&&result.wake.ticks<=144000);
+  assert.equal(result.wake.stopReason,'producer-closed');
+  const stopped=result.wake.ticks;
+  await new Promise(resolve=>setTimeout(resolve,100));
+  assert.equal(result.wake.ticks,stopped,'producer close must cancel future wakes');
+ }finally{try{await producer.close();}finally{if(!finished)await x.observer.finish();}}
+});
+
+test('closing a producer cancels wakes and cannot reactivate queued work',async()=>{
+ const x=await liveFixture();
+ await writeFile(x.logPath,`lld-link -OUT:${x.output} ${x.source}\n`);
+ const pending=x.observer.changed();x.observer.producerClosed();await pending;
+ const result=await x.observer.finish();
+ assert.match(result.first,/outside live producer/);assert.equal(result.readBytes,0);
+ assert.equal(result.objects.length,0);assert.equal(result.wake.stopReason,'producer-closed');
+ assert.throws(()=>x.observer.bind(44),/link producer binding/);
+ const stopped=result.wake.ticks;await new Promise(resolve=>setTimeout(resolve,100));
+ assert.equal(result.wake.ticks,stopped);
+});
+
+test('FIRST cancels wakes without retrying a rejected object or reviving the producer',async()=>{
+ const x=await liveFixture();await rename(x.source,x.source+'.gone-before-event');
+ await writeFile(x.logPath,`lld-link -OUT:${x.output} ${x.source}\n`);await x.observer.changed();
+ const result=await x.observer.finish();
+ assert.match(result.first,/ENOENT/);assert.equal(result.objects.length,1);
+ assert.equal(result.wake.stopReason,'FIRST');assert.equal(result.readBytes,0);
+ assert.throws(()=>x.observer.bind(44),/link producer binding/);
+ const stopped=result.wake.ticks;await new Promise(resolve=>setTimeout(resolve,100));
+ assert.equal(result.wake.ticks,stopped);assert.equal(result.objects.length,1);
+});
+
+test('finish cancels wakes before final diagnostic drain and remains single use',async()=>{
+ const x=await liveFixture(),result=await x.observer.finish();
+ assert.match(result.first,/complete linker record missing/);assert.equal(result.wake.stopReason,'finish');
+ assert.throws(()=>x.observer.bind(44),/link producer binding/);
+ await assert.rejects(()=>x.observer.finish(),/already closed/);
+ const stopped=result.wake.ticks;await new Promise(resolve=>setTimeout(resolve,100));
+ assert.equal(result.wake.ticks,stopped);
+});

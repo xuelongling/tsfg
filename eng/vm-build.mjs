@@ -37,10 +37,14 @@ export async function createVmLinkObjectRetention({stage,logPath,output,counterO
   await mkdir(storage);
   const result={kind:'unqualified-live-link-input-retention',storage,producerPid:null,lines:[],objects:[],writes:[],
     first:null,secondary:[],readBytes:0,EOFCalls:0,logReadBytes:0,executionAuthority:false,
-    linkMembership:'unverified',phaseEntries:null,loadedGraph:null};
-  let active=false,finished=false,pending=null,dirty=false,fragment=Buffer.alloc(0),offset=0,total=0;
+    linkMembership:'unverified',phaseEntries:null,loadedGraph:null,
+    wake:{intervalMs:50,maximumTicks:144000,ticks:0,startedAt:null,stoppedAt:null,stopReason:null}};
+  let active=false,finished=false,producerEnded=false,pending=null,dirty=false,wakeTimer=null,
+    fragment=Buffer.alloc(0),offset=0,total=0;
   const settled=Promise.resolve();
-  const fail=error=>{if(result.first===null)result.first=String(error);else result.secondary.push(String(error));};
+  const stopWake=reason=>{if(wakeTimer===null)return;clearInterval(wakeTimer);wakeTimer=null;
+    result.wake.stoppedAt=new Date().toISOString();result.wake.stopReason=reason;};
+  const fail=error=>{if(result.first===null)result.first=String(error);else result.secondary.push(String(error));stopWake('FIRST');};
   const write=async(file,bytes)=>{const state={path:file,bytes:bytes.length,
     sha256:'sha256:'+createHash('sha256').update(bytes).digest('hex'),writeBytes:0,fsync:false,writeClosed:false,error:null};
     result.writes.push(state);let sink,first;try{sink=await open(file,'wx');let at=0;
@@ -110,7 +114,18 @@ export async function createVmLinkObjectRetention({stage,logPath,output,counterO
       let end;while((end=fragment.indexOf(10))!==-1){const raw=fragment.subarray(0,end+1);fragment=fragment.subarray(end+1);try{await line(raw);}catch(error){fail(error);}}
       if(fragment.length>65536)throw new VmBuildError('incomplete link line cap','vm-object-retention');}
   }catch(error){first=error;}finally{if(reader)try{await reader.close();}catch(error){first??=error;}}if(first)fail(first);};
-  return{bind(pid){if(result.producerPid!==null||!Number.isSafeInteger(pid)||pid<1)throw new VmBuildError('link producer binding','vm-object-retention');result.producerPid=pid;active=true;},
+  const observer={bind(pid){if(result.producerPid!==null||producerEnded||finished||result.first!==null||!Number.isSafeInteger(pid)||pid<1)
+      throw new VmBuildError('link producer binding','vm-object-retention');
+      result.producerPid=pid;active=true;result.wake.startedAt=new Date().toISOString();
+      // File notifications may arrive after close. This bounded fallback
+      // wakes the same worker; it cannot guarantee a race against native cleanup.
+      wakeTimer=setInterval(()=>{
+        if(!active||finished||result.first!==null){stopWake('inactive');return;}
+        result.wake.ticks++;
+        if(result.wake.ticks>=result.wake.maximumTicks){
+          fail(new VmBuildError('link wake budget exhausted','vm-object-retention'));return;}
+        void observer.changed();
+      },result.wake.intervalMs);wakeTimer.unref();},
     changed(){
       if(finished||result.first!==null)return pending?.promise??settled;
       dirty=true;
@@ -128,14 +143,15 @@ export async function createVmLinkObjectRetention({stage,logPath,output,counterO
       }
       return pending.promise;
     },
-    producerClosed(){active=false;},failed(error){fail(error);},
-    async finish(){if(finished)throw new VmBuildError('link observer already closed','vm-object-retention');finished=true;await(pending?.promise??settled);active=false;await drain();
+    producerClosed(){producerEnded=true;active=false;stopWake('producer-closed');},failed(error){fail(error);},
+    async finish(){if(finished)throw new VmBuildError('link observer already closed','vm-object-retention');finished=true;stopWake('finish');await(pending?.promise??settled);active=false;await drain();
       if(/^lld-link(?:[ \t]|$)/i.test(fragment.toString('utf8')))fail(new VmBuildError('incomplete linker line','vm-object-retention'));
       if(result.lines.length!==1)fail(new VmBuildError('complete linker record missing or ambiguous','vm-object-retention'));
       const counters=new Set(counterObjects.map(x=>path.resolve(x)));
       if(!result.objects.some(x=>!counters.has(path.resolve(x.source))&&x.error===null))fail(new VmBuildError('compiler object acquisition pending','vm-object-retention'));
       try{await write(path.join(storage,'receipt.json'),Buffer.from(JSON.stringify(result,null,2)+'\n'));}
       catch(error){fail(error);}return result;}};
+  return observer;
 }
 const runtimeSources = [...["root", "bytecode", "vm", "runtime", "main", "contract", "module_format", "module", "request", "host_counter", "clock"].map(name => `runtime/${name}.zig`), "runtime/host_counter.c", "runtime/host_counter_bridge.c"];
 
