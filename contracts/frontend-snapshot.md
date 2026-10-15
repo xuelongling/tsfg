@@ -2,6 +2,8 @@
 
 # FrontendSnapshot 0.6.0
 
+Private M13 origin draft: every module global records `bindingKind` as `source` or `default-export-expression`, derived from the official VariableDeclaration or ExportAssignment symbol. A source binding named `$default`, including its escaped spelling, remains ordinary. An ordinary binding exported under the alias `default` also remains ordinary. Generated default expressions retain their own official symbol, readonly permission, expression range, default export target and initializer association; their display name is never origin authority. Changed schema identity is exact and no old draft compatibility is admitted. New source full/provenance and final version registration remain pending.
+
 `tsfg.frontend-snapshot` is an exact-match development contract. The producer is
 `analyzeFrontend`; the consumer is `validateFrontendSnapshot` and the typed
 reference resolvers in `compiler/frontend.mjs`. The machine schema is

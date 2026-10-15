@@ -1,17 +1,17 @@
 {
   "schemaVersion": "1",
-  "contractVersion": "0.7.0",
+  "contractVersion": "0.8.0",
   "languageBaseline": "TypeScript 7.0.2",
   "upstreamBaseOid": "1e4744d68260a7cb91b62b12edc3f6a2187faaf1",
-  "forkOid": "670c0ed60740894a707097871e8126b17f87f17d",
+  "forkOid": "7df0247cde8b53bf8e36c9083beeca3337de741e",
   "remoteUrl": "https://github.com/xuelongling/TypeScript.git",
   "canonicalUrl": "https://github.com/microsoft/TypeScript.git",
   "sourceBranch": "refs/heads/r03-m13-module-facts",
   "license": "Apache-2.0",
   "upstreamTomlSha256": "sha256:0cc83338b60f281bc87bba82e359f5f51ab0c79b0b9469de705bd626c6a3f490",
   "producerPath": "tsc/cmd/tsfg-frontend/main.go",
-  "producerSha256": "sha256:b03b313fd8a7a5f5055ff1f1d0f109aa018033d80732ec1f4644155fa13953eb",
-  "executableSha256": "sha256:bebc0a4d3c6c08cba45f2f8d0d63a5b2125df7213dcc9469db6bd86f577785ab",
+  "producerSha256": "sha256:a42db6a1c6ffe426f83a1f01ee8ec39bb0126d0f961ebb26fc11981164b5f2b7",
+  "executableSha256": "sha256:a2a4385ab23bdca2e9e6f2248fd8e310d5bc368043fb9aac507c4d77b395cbc4",
   "declarations": [
     {
       "path": "compiler/minimal-bool-v1.d.ts",
@@ -24,6 +24,10 @@
     {
       "path": "compiler/minimal-integers-v3.d.ts",
       "sha256": "sha256:1106efa6dd658c6b1dc74c6edb218e2017c6a803f4ea8b84dfc6388f4051335a"
+    },
+    {
+      "path": "compiler/minimal-floats-v4.d.ts",
+      "sha256": "sha256:c148c5256d1a6c2ed5f4150df4d1527041cc040a03b2b3f12fc7eb2ec212ff33"
     }
   ]
 }

@@ -15,7 +15,7 @@ pub const Runtime = struct {
     }
 };
 
-pub fn eval_bytecode(host: *Runtime, module: *const bytecode.VerifiedModule, function_id: bytecode.FunctionId, arguments: []const vm.TypedValue, capabilities: []const vm.Capability, limits: vm.RequestLimits) vm.RequestOutcome {
+pub inline fn eval_bytecode(host: *Runtime, module: *const bytecode.VerifiedModule, function_id: bytecode.FunctionId, arguments: []const vm.TypedValue, capabilities: []const vm.Capability, limits: vm.RequestLimits) vm.RequestOutcome {
     host.active_requests += 1;
     defer host.active_requests -= 1;
     return vm.evaluate(host.allocator, module, function_id, arguments, capabilities, limits);

@@ -65,7 +65,7 @@ export function identifierName(spelling) {
 // Only the officially resolved namespace member shape is admitted. This guard
 // checks spelling; it neither resolves symbols nor admits arbitrary properties.
 export function staticBindingName(spelling) {
-  const parts=spelling.split(".");
+  const parts=spelling.replace(/\/\*[\s\S]*?\*\/|\/\/[^\r\n\u2028\u2029]*/g, " ").split(".");
   if (parts.length < 1 || parts.length > 2) throw new TypeError("invalid static binding spelling");
   return parts.map(identifierName).join(".");
 }
@@ -408,7 +408,7 @@ export function validateFrontendSnapshot(snapshot) {
     if (moduleFacts) { source=moduleFacts.sources.get(symbol.sourcePath); if(!source) throw new TypeError("symbol has foreign source"); }
     resolveSymbol(snapshot, symbol.ref);
     checkType(symbol.type, symbol.typeRef);
-    const syntheticDefault = moduleFacts && (symbol.name === "$default" && symbol.kind === "global"
+    const syntheticDefault = moduleFacts && (symbol.bindingKind === "default-export-expression" && symbol.kind === "global"
       && moduleFacts.modules.get(symbol.sourcePath)?.exports.some(binding=>binding.name==="default" && binding.target===symbol.id)
       || symbol.name === "default" && symbol.kind === "function"
       && /^export\s+default\s+function\s*\(/.test(sourceSpan(symbol.range)));

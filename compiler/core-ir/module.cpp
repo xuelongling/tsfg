@@ -24,6 +24,11 @@ bool decode(mlir::Attribute attribute, ModuleHash &digest) {
   }
   return true;
 }
+std::string digestText(const ModuleHash &digest) {
+  std::string result = "sha256:"; constexpr char digits[] = "0123456789abcdef";
+  for (auto byte : digest) { result += digits[byte >> 4]; result += digits[byte & 15]; }
+  return result;
+}
 bool number(mlir::Attribute attribute, uint32_t &value) {
   auto integer = llvm::dyn_cast_or_null<mlir::IntegerAttr>(attribute);
   if (!integer || !integer.getType().isSignlessInteger(64) || integer.getInt() < 0 || integer.getInt() > UINT32_MAX) return false;
@@ -131,15 +136,25 @@ mlir::LogicalResult readModuleTables(mlir::ModuleOp module, ModuleTables &tables
   }
   for (auto attribute : globals) {
     auto dictionary = llvm::dyn_cast<mlir::DictionaryAttr>(attribute); GlobalDeclaration global; uint32_t source;
-    if (!exact(dictionary, {"id", "source", "name", "type", "writable", "start", "end"}) || !decode(dictionary.get("id"), global.id)
+    std::string bindingKind;
+    if (!exact(dictionary, {"id", "source", "name", "binding_kind", "type", "writable", "start", "end"}) || !decode(dictionary.get("id"), global.id)
+        || !text(dictionary.get("binding_kind"), bindingKind) || (bindingKind != "source" && bindingKind != "default-export-expression")
         || !number(dictionary.get("source"), source) || !owners.count(static_cast<uint16_t>(source)) || source >= tables.sources.size()
         || !text(dictionary.get("name"), global.name) || !(global.type = scalar(dictionary.get("type")))
         || !number(dictionary.get("start"), global.start) || !number(dictionary.get("end"), global.end)
         || global.start >= global.end || global.end > tables.sources[source].length || !ids.insert(global.id).second) return reject();
     auto writable = llvm::dyn_cast_or_null<mlir::BoolAttr>(dictionary.get("writable")); if (!writable) return reject();
     global.source = static_cast<uint16_t>(source); global.writable = writable.getValue();
+    global.generated = bindingKind == "default-export-expression";
     std::string identity("tsfg.global\0", 12); identity += tables.sources[source].path; identity += '\0'; identity += global.name; identity += '\0'; identity += names[global.type];
-    if (global.id != hash(identity) || global.name == "$default" && global.writable) return reject();
+    if (global.generated) {
+      if (global.writable || std::any_of(tables.globals.begin(), tables.globals.end(), [&](const auto &previous) { return previous.generated && previous.source == source; })) return reject();
+      std::string moduleDomain("tsfg.module\0", 12); moduleDomain += tables.sources[source].path;
+      identity = "tsfg.default-export-binding.v1"; identity += '\0'; identity += tables.sources[source].path;
+      identity += '\0'; identity += digestText(tables.sources[source].hash); identity += '\0'; identity += digestText(hash(moduleDomain));
+      identity += '\0'; identity += names[global.type]; identity += '\0'; identity += std::to_string(global.start); identity += '\0'; identity += std::to_string(global.end);
+    }
+    if (global.id != hash(identity)) return reject();
     tables.globals.push_back(std::move(global));
   }
   std::string hostSignature("tsfg.signature\0", 15); hostSignature += "(i32)->i32";
@@ -199,7 +214,7 @@ mlir::LogicalResult readModuleTables(mlir::ModuleOp module, ModuleTables &tables
       if (owner->source != source || name != "$moduleInit" || fn.getNumArguments() || fn.getFunctionType().getNumResults() != 1
           || !fn.getFunctionType().getResult(0).isSignlessInteger(32) || !number(fn->getAttr("tsfg_core.function_start"), start)
           || !number(fn->getAttr("tsfg_core.function_end"), end) || start != 0 || end != tables.sources[source].length) return reject();
-    } else if (name == "$moduleInit") return reject();
+    }
   }
   return mlir::success();
 }

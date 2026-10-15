@@ -143,7 +143,7 @@ fn parse(reader: *Reader, allocator: Allocator, module: *Module) (error{Invalid}
     const global: Global = .{ .input_identity = input_identity, .source_hash = source_hash, .source_path = source_path, .source_length = source_length };
     for (module.functions, 0..) |*function, index| {
         function.* = try parseFunction(reader, allocator, global, module.tables);
-        for (module.functions[0..index]) |previous| if (std.mem.eql(u8, &previous.info.function_id, &function.info.function_id) or previous.info.source_index == function.info.source_index and std.mem.eql(u8, previous.info.function_name, function.info.function_name)) return reader.reject("r04-function", reader.offset);
+        for (module.functions[0..index]) |previous| if (std.mem.eql(u8, &previous.info.function_id, &function.info.function_id) or previous.info.source_index == function.info.source_index and previous.info.initializer == function.info.initializer and std.mem.eql(u8, previous.info.function_name, function.info.function_name)) return reader.reject("r04-function", reader.offset);
     }
     if (reader.offset != reader.bytes.len) return reader.reject("r04-trailing", reader.offset);
     for (module.functions) |function| for (function.instructions) |op| if (op.opcode == 27) {
@@ -178,11 +178,18 @@ fn parseFunction(reader: *Reader, allocator: Allocator, global: Global, tables: 
     const type_id = try reader.digest();
     const function_name = try reader.string(4096);
     var function_hash = Sha256.init(.{});
-    function_hash.update("tsfg.function\x00");
+    function_hash.update(if (initializer) "tsfg.module-initializer.v1\x00" else "tsfg.function\x00");
     function_hash.update(source_path);
     function_hash.update("\x00");
-    function_hash.update(function_name);
+    if (initializer) {
+        function_hash.update("sha256:");
+        function_hash.update(&std.fmt.bytesToHex(source_hash, .lower));
+        function_hash.update("\x00sha256:");
+        const module_id = module_format.identity(&.{"tsfg.module\x00", source_path});
+        function_hash.update(&std.fmt.bytesToHex(module_id, .lower));
+    } else function_hash.update(function_name);
     function_hash.update("\x00");
+    if (initializer) function_hash.update("sha256:");
     function_hash.update(&std.fmt.bytesToHex(signature_hash, .lower));
     var expected_function_id: [32]u8 = undefined;
     function_hash.final(&expected_function_id);
@@ -494,6 +501,16 @@ pub fn moduleTables(module: *const VerifiedModule) module_format.Tables {
     return decoded(module).tables;
 }
 
+/// Runtime-private borrowed views avoid copying complete verified tables or
+/// descriptors into every Debug admission temporary. The verified module must
+/// outlive the serial instance; these views never authorize mutation.
+pub fn moduleTablesView(module: *const VerifiedModule) *const module_format.Tables {
+    return &decoded(module).tables;
+}
+pub fn moduleInfoView(module: *const VerifiedModule) *const ModuleInfo {
+    return &decoded(module).info;
+}
+
 pub fn serialize(module: *const VerifiedModule, allocator: Allocator) Allocator.Error![]u8 {
     return allocator.dupe(u8, decoded(module).bytes);
 }
@@ -600,6 +617,8 @@ fn inspectFunction(module: *const VerifiedModule, function: Function, allocator:
         .typeId = @as([]const u8, &type_id),
         .source = .{ .path = info.source.path, .hash = @as([]const u8, &source_hash), .utf16Length = try std.fmt.allocPrint(temporary, "{d}", .{info.source_utf16_length}) },
         .functionName = info.function_name,
+        .sourceIndex = try std.fmt.allocPrint(temporary, "{d}", .{info.source_index}),
+        .initializer = info.initializer,
         .functionStart = try std.fmt.allocPrint(temporary, "{d}", .{info.function_start}),
         .functionEnd = try std.fmt.allocPrint(temporary, "{d}", .{info.function_end}),
         .returnType = contract.typeName(info.return_type),
@@ -611,6 +630,32 @@ fn inspectFunction(module: *const VerifiedModule, function: Function, allocator:
         .blocks = block_views,
         .instructions = views,
     }, .{ .emit_null_optional_fields = false });
+}
+
+fn inspectTables(tables: module_format.Tables, allocator: Allocator) Allocator.Error![]u8 {
+    const SourceView = struct { path: []const u8, hash: []const u8, utf16Length: []const u8 };
+    const ModuleView = struct { id: []const u8, sourceIndex: []const u8, initializer: []const u8, dependencies: []const []const u8 };
+    const GlobalView = struct { id: []const u8, sourceIndex: []const u8, name: []const u8, bindingKind: []const u8, type: []const u8, writable: bool, start: []const u8, end: []const u8 };
+    const HostView = struct { id: []const u8, sourceIndex: []const u8, name: []const u8, capabilityId: []const u8, signatureHash: []const u8, start: []const u8, end: []const u8 };
+    const RootView = struct { kind: []const u8, sourceIndex: []const u8, name: []const u8, functionIndex: []const u8 };
+    const sources = try allocator.alloc(SourceView, tables.sources.len);
+    for (tables.sources, sources) |entry, *view| view.* = .{ .path = entry.path, .hash = try allocator.dupe(u8, &digestText(entry.hash)), .utf16Length = try std.fmt.allocPrint(allocator, "{d}", .{entry.length}) };
+    const modules = try allocator.alloc(ModuleView, tables.modules.len);
+    for (tables.modules, modules) |entry, *view| {
+        const dependencies = try allocator.alloc([]const u8, entry.dependencies.len);
+        for (entry.dependencies, dependencies) |value, *text| text.* = try std.fmt.allocPrint(allocator, "{d}", .{value});
+        view.* = .{ .id = try allocator.dupe(u8, &digestText(entry.id)), .sourceIndex = try std.fmt.allocPrint(allocator, "{d}", .{entry.source_index}), .initializer = try std.fmt.allocPrint(allocator, "{d}", .{entry.initializer}), .dependencies = dependencies };
+    }
+    const globals = try allocator.alloc(GlobalView, tables.globals.len);
+    for (tables.globals, globals) |entry, *view| view.* = .{ .id = try allocator.dupe(u8, &digestText(entry.id)), .sourceIndex = try std.fmt.allocPrint(allocator, "{d}", .{entry.source_index}), .name = entry.name, .bindingKind = if(entry.generated) "default-export-expression" else "source", .type = contract.typeName(entry.type_code), .writable = entry.writable, .start = try std.fmt.allocPrint(allocator, "{d}", .{entry.start}), .end = try std.fmt.allocPrint(allocator, "{d}", .{entry.end}) };
+    const hosts = try allocator.alloc(HostView, tables.hosts.len);
+    for (tables.hosts, hosts) |entry, *view| view.* = .{ .id = try allocator.dupe(u8, &digestText(entry.id)), .sourceIndex = try std.fmt.allocPrint(allocator, "{d}", .{entry.source_index}), .name = entry.name, .capabilityId = try std.fmt.allocPrint(allocator, "{d}", .{entry.capability}), .signatureHash = try allocator.dupe(u8, &digestText(entry.signature)), .start = try std.fmt.allocPrint(allocator, "{d}", .{entry.start}), .end = try std.fmt.allocPrint(allocator, "{d}", .{entry.end}) };
+    const root_kinds = [_][]const u8{ "application", "module-initialization", "host-export", "host-callback", "hot-function", "kernel" };
+    const roots = try allocator.alloc(RootView, tables.roots.len);
+    for (tables.roots, roots) |entry, *view| view.* = .{ .kind = root_kinds[entry.kind], .sourceIndex = try std.fmt.allocPrint(allocator, "{d}", .{entry.source_index}), .name = entry.name, .functionIndex = try std.fmt.allocPrint(allocator, "{d}", .{entry.function_index}) };
+    const initialization = try allocator.alloc([]const u8, tables.initialization.len);
+    for (tables.initialization, initialization) |value, *text| text.* = try std.fmt.allocPrint(allocator, "{d}", .{value});
+    return std.json.Stringify.valueAlloc(allocator, .{ .sources = sources, .modules = modules, .globals = globals, .hosts = hosts, .roots = roots, .initialization = initialization }, .{});
 }
 
 pub fn inspect(module: *const VerifiedModule, allocator: Allocator) Allocator.Error![]u8 {
@@ -626,5 +671,12 @@ pub fn inspect(module: *const VerifiedModule, allocator: Allocator) Allocator.Er
     var top = views.items[0];
     top.object = try top.object.clone(temp);
     try top.object.put(temp, "functions", .{ .array = views });
+    const tables = moduleTables(module);
+    try top.object.put(temp, "moduleMode", .{ .string = if (tables.present) "modules" else "single-source" });
+    if (tables.present) {
+        const bytes = try inspectTables(tables, temp);
+        const parsed = std.json.parseFromSlice(std.json.Value, temp, bytes, .{ .allocate = .alloc_always }) catch return error.OutOfMemory;
+        try top.object.put(temp, "moduleTables", parsed.value);
+    }
     return std.json.Stringify.valueAlloc(allocator, top, .{});
 }

@@ -1,5 +1,6 @@
 // SPDX-License-Identifier: MIT
 #include "module.h"
+#include "native_cost.h"
 #include "mlir/Dialect/Func/IR/FuncOps.h"
 #include "mlir/Dialect/ControlFlow/IR/ControlFlowOps.h"
 #include "mlir/IR/BuiltinOps.h"
@@ -208,7 +209,7 @@ public:
 
 namespace {
 constexpr llvm::StringLiteral bytecodeSchema =
-    "df34b2ea0cef7a74e0b94328671f9d0df3b2d7ac2dd9935a20a722aa04f7da9a";
+    "82c22599dd5680e8e9a9135df400b992f841e0aaa2459abd7c9d2687442c2119";
 constexpr llvm::StringLiteral target = "windows-x86_64-msvc";
 constexpr llvm::StringLiteral triple = "x86_64-pc-windows-msvc";
 constexpr llvm::StringLiteral layout =
@@ -405,6 +406,12 @@ mlir::LogicalResult verifiedBytecode(mlir::ModuleOp module, Bytes &packet) {
     std::string identity("tsfg.function\0", 14);
     identity += functionPath.str(); identity += '\0'; identity += function.name;
     identity += '\0'; identity += hex(expectedSignature);
+    if (function.initializer) {
+      identity = std::string("tsfg.module-initializer.v1") + '\0' + functionPath.str();
+      identity += std::string("\0sha256:", 8) + hex(moduleTables.sources[function.source].hash);
+      identity += std::string("\0sha256:", 8) + hex(hash(std::string("tsfg.module\0", 12) + functionPath.str()));
+      identity += std::string("\0sha256:", 8) + hex(expectedSignature);
+    }
     if (function.type != hash(typeDomain) || function.signature != expectedSignature ||
         function.id != hash(identity) || moduleMode && name != "f" + hex(function.id)) return reject();
     for (Function &previous : functions)
@@ -675,7 +682,7 @@ mlir::LogicalResult verifiedBytecode(mlir::ModuleOp module, Bytes &packet) {
       for (auto dependency : entry.dependencies) integer(payload, dependency, 2);
     }
     integer(payload, moduleTables.globals.size(), 2);
-    for (const auto &entry : moduleTables.globals) { appendHash(payload, entry.id); integer(payload, entry.source, 2); string(payload, entry.name); integer(payload, entry.type, 1); integer(payload, entry.writable, 1); integer(payload, entry.start, 4); integer(payload, entry.end, 4); }
+    for (const auto &entry : moduleTables.globals) { appendHash(payload, entry.id); integer(payload, entry.source, 2); string(payload, entry.name); integer(payload, entry.type, 1); integer(payload, uint8_t(entry.writable) | (uint8_t(entry.generated) << 1), 1); integer(payload, entry.start, 4); integer(payload, entry.end, 4); }
     integer(payload, moduleTables.hosts.size(), 2);
     for (const auto &entry : moduleTables.hosts) { appendHash(payload, entry.id); integer(payload, entry.source, 2); string(payload, entry.name); integer(payload, entry.capability, 4); appendHash(payload, entry.signature); integer(payload, entry.start, 4); integer(payload, entry.end, 4); }
     integer(payload, moduleTables.roots.size(), 2);
@@ -697,6 +704,11 @@ mlir::LogicalResult verifiedBytecode(mlir::ModuleOp module, Bytes &packet) {
 } // namespace
 
 int main(int argc, char **argv) {
+  if (argc == 2 && llvm::StringRef(argv[1]) == "--inspect-native-instructions") {
+    auto input = llvm::MemoryBuffer::getSTDIN();
+    if (!input) return 2;
+    return tsfg::inspectNativeInstructions((*input)->getMemBufferRef(), llvm::outs()) ? 0 : 3;
+  }
   if (argc != 2 || (llvm::StringRef(argv[1]) != "--canonicalize" &&
                     llvm::StringRef(argv[1]) != "--emit-bytecode" &&
                     llvm::StringRef(argv[1]) != "--optimize")) {

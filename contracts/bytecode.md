@@ -2,6 +2,8 @@
 
 # tsfg.bytecode 0.6.0
 
+Private M13 binding-origin draft, with final registration pending the accepted M09 base: module globals carry explicit `bindingKind`. Ordinary bindings retain `tsfg.global` identity, including legal `$default` and escaped identifiers. A scalar default export expression is readonly and uses `sha256(utf8("tsfg.default-export-binding.v1" NUL sourcePath NUL sourceHash NUL moduleIdentity NUL scalarName NUL decimalUTF16Start NUL decimalUTF16End))`; digest components include the `sha256:` prefix and ranges retain official UTF-16 expression anchors. The Snapshot/HIR importer verifies its default export and initializer association. Display names grant no generated privileges. The global flags byte is 0 ordinary readonly, 1 ordinary writable, or 2 generated readonly; 3 and unknown values are rejected. Core `binding_kind` and Runtime inspection `bindingKind` expose the same origin. Exact changed draft schema digests reject old or mixed packets. This private draft establishes no compatibility window or final minor version; source admission and formal Core/Runtime acceptance remain pending.
+
 This exact, same-repository development format is the formal R04 compiler to
 Zig Runtime seam. It has no published or supported older external consumer.
 Producer, loader and registry change atomically; old wire/schema/Core identities

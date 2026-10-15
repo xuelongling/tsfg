@@ -4,6 +4,8 @@ import { canonical, sha256, own } from "./identity.mjs";
 export const rootKinds = Object.freeze(["application", "module-initialization", "host-export", "host-callback", "hot-function", "kernel"]);
 export const moduleIdentity = sourcePath => sha256(`tsfg.module\0${sourcePath}`);
 export const globalIdentity = (sourcePath, name, type) => sha256(`tsfg.global\0${sourcePath}\0${name}\0${type}`);
+export const defaultBindingIdentity = (sourcePath, sourceHash, type, range) => sha256(
+  `tsfg.default-export-binding.v1\0${sourcePath}\0${sourceHash}\0${moduleIdentity(sourcePath)}\0${type}\0${range.start}\0${range.end}`);
 const keys = (value, names) => value && typeof value === "object" && !Array.isArray(value)
   && Object.keys(value).sort().join(",") === [...names].sort().join(",");
 const order = (a, b) => Buffer.from(a).compare(Buffer.from(b));
@@ -56,9 +58,9 @@ export function compilationClosure({ modules, functions, globals = [], configura
   }
   for (const fn of functions) {
     const name = `${fn.sourcePath}\0${fn.name}`;
-    if (!byPath.has(fn.sourcePath) || byFunction.has(fn.id) || byName.has(name) || !Array.isArray(fn.body))
+    if (!byPath.has(fn.sourcePath) || byFunction.has(fn.id) || fn.kind !== 'module-initialization' && byName.has(name) || !Array.isArray(fn.body))
       failure("r03-d-closure-dependency", null, fn);
-    byFunction.set(fn.id, fn); byName.set(name, fn);
+    byFunction.set(fn.id, fn); if(fn.kind !== 'module-initialization') byName.set(name, fn);
   }
   for (const global of globals) {
     if (!byPath.has(global.sourcePath) || byGlobal.has(global.id)) failure("r03-d-closure-dependency", null, global);

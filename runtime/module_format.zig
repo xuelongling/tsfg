@@ -6,7 +6,7 @@ const Sha256 = std.crypto.hash.sha2.Sha256;
 pub const Source = struct { path: []const u8, hash: Hash, start: u32, end: u32 };
 pub const SourceFile = struct { path: []const u8, hash: Hash, length: u32 };
 pub const ModuleDeclaration = struct { id: Hash, source_index: u16, initializer: u16, dependencies: []const u16 };
-pub const GlobalDeclaration = struct { id: Hash, source_index: u16, name: []const u8, type_code: u8, writable: bool, start: u32, end: u32 };
+pub const GlobalDeclaration = struct { id: Hash, source_index: u16, name: []const u8, type_code: u8, writable: bool, generated: bool, start: u32, end: u32 };
 pub const HostDeclaration = struct { id: Hash, source_index: u16, name: []const u8, capability: u32, signature: Hash, start: u32, end: u32 };
 pub const Root = struct { kind: u8, source_index: u16, name: []const u8, function_index: u16 };
 pub const Tables = struct {
@@ -18,7 +18,7 @@ pub const Tables = struct {
     roots: []const Root = &.{},
     initialization: []const u16 = &.{},
 };
-fn identity(parts: []const []const u8) Hash {
+pub fn identity(parts: []const []const u8) Hash {
     var hash = Sha256.init(.{});
     for (parts) |part| hash.update(part);
     var result: Hash = undefined; hash.final(&result); return result;
@@ -75,12 +75,23 @@ pub fn parse(reader: anytype, allocator: std.mem.Allocator) !Tables {
     const globals = try allocator.alloc(GlobalDeclaration, try count(reader, 4096, 0));
     for (globals, 0..) |*global, index| {
         const id = try reader.digest(); const source = try sourceIndex(reader, tables); const name = try reader.string(4096);
-        const type_code = try reader.int(u8); const writable = try reader.int(u8); const start = try reader.int(u32); const end = try reader.int(u32);
-        if (!owns(tables, source) or !contract.validType(type_code) or writable > 1) return reader.reject("r04-module-global", reader.offset);
+        const type_code = try reader.int(u8); const flags = try reader.int(u8); const start = try reader.int(u32); const end = try reader.int(u32);
+        if (!owns(tables, source) or !contract.validType(type_code) or flags > 2) return reader.reject("r04-module-global", reader.offset);
         try range(reader, tables, source, start, end);
-        if (!std.mem.eql(u8, &id, &identity(&.{ "tsfg.global\x00", sources[source].path, "\x00", name, "\x00", contract.typeName(type_code) })) or std.mem.eql(u8, name, "$default") and writable != 0) return reader.reject("r04-module-global", reader.offset);
+        var expected = identity(&.{ "tsfg.global\x00", sources[source].path, "\x00", name, "\x00", contract.typeName(type_code) });
+        if (flags == 2) {
+            const source_hex = std.fmt.bytesToHex(sources[source].hash, .lower);
+            const module_hex = std.fmt.bytesToHex(identity(&.{ "tsfg.module\x00", sources[source].path }), .lower);
+            var start_buffer: [10]u8 = undefined; var end_buffer: [10]u8 = undefined;
+            const start_text = std.fmt.bufPrint(&start_buffer, "{d}", .{start}) catch return reader.reject("r04-module-global", reader.offset);
+            const end_text = std.fmt.bufPrint(&end_buffer, "{d}", .{end}) catch return reader.reject("r04-module-global", reader.offset);
+            expected = identity(&.{ "tsfg.default-export-binding.v1\x00", sources[source].path, "\x00sha256:", &source_hex,
+                "\x00sha256:", &module_hex, "\x00", contract.typeName(type_code), "\x00", start_text, "\x00", end_text });
+            for (globals[0..index]) |previous| if (previous.generated and previous.source_index == source) return reader.reject("r04-module-global", reader.offset);
+        }
+        if (!std.mem.eql(u8, &id, &expected)) return reader.reject("r04-module-global", reader.offset);
         for (globals[0..index]) |previous| if (std.mem.eql(u8, &id, &previous.id)) return reader.reject("r04-module-global", reader.offset);
-        global.* = .{ .id = id, .source_index = source, .name = name, .type_code = type_code, .writable = writable == 1, .start = start, .end = end };
+        global.* = .{ .id = id, .source_index = source, .name = name, .type_code = type_code, .writable = flags == 1, .generated = flags == 2, .start = start, .end = end };
     }
     tables.globals = globals;
     const hosts = try allocator.alloc(HostDeclaration, try count(reader, 128, 0));
@@ -130,7 +141,7 @@ pub fn verify(reader: anytype, tables: Tables, functions: anytype) !void {
         if (!owns(tables, function.info.source_index)) return reader.reject("r04-module-source", reader.offset);
         var association: usize = 0;
         for (tables.modules) |module| if (module.initializer == index) { association += 1; };
-        if (function.info.initializer != (association == 1) or !function.info.initializer and std.mem.eql(u8, function.info.function_name, "$moduleInit")) return reader.reject("r04-module-initialization", reader.offset);
+        if (function.info.initializer != (association == 1)) return reader.reject("r04-module-initialization", reader.offset);
         for (function.instructions) |op| {
             if (op.opcode == 27 and functions[op.left].info.initializer) return reader.reject("r04-module-initialization", reader.offset);
             if (op.opcode == 29 or op.opcode == 30) {

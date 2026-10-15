@@ -44,5 +44,6 @@ set(CMAKE_CXX_STANDARD 17)
 include_directories(${LLVM_INCLUDE_DIRS}
   ${LLVM_MAIN_SRC_DIR}/../mlir/include
   ${LLVM_BINARY_DIR}/tools/mlir/include)
-add_llvm_executable(tsfg-core-ir main.cpp module.cpp)
-target_link_libraries(tsfg-core-ir PRIVATE MLIRIR MLIRParser MLIRFuncDialect MLIRControlFlowDialect LLVMCore)
+add_llvm_executable(tsfg-core-ir main.cpp module.cpp native_cost.cpp)
+target_link_libraries(tsfg-core-ir PRIVATE MLIRIR MLIRParser MLIRFuncDialect MLIRControlFlowDialect
+  LLVMCore LLVMObject LLVMX86CodeGen LLVMX86Desc LLVMX86Info LLVMX86Disassembler)

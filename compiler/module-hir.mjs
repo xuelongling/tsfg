@@ -1,12 +1,13 @@
 // SPDX-License-Identifier: MIT
-import {canonical,functionIdentity,signatureHash,scalarTypeIds,scalarName,sha256} from './identity.mjs';
-import {moduleIdentity,globalIdentity,compilationClosure} from './modules.mjs';
+import {canonical,signatureHash,scalarTypeIds,scalarName,sha256} from './identity.mjs';
+import {moduleIdentity,globalIdentity,defaultBindingIdentity,compilationClosure} from './modules.mjs';
 
 const exact=(value,names)=>value&&typeof value==='object'&&!Array.isArray(value)
   && Object.keys(value).sort().join(',')===[...names].sort().join(',');
 const anchor=(range,source)=>exact(range,['start','end'])&&Number.isSafeInteger(range.start)
   && Number.isSafeInteger(range.end)&&range.start>=0&&range.start<range.end&&range.end<=source.content.length;
-export const initializerIdentity=sourcePath=>functionIdentity(sourcePath,'$moduleInit','i32',[]);
+export const initializerIdentity=(sourcePath,sourceHash)=>sha256(
+  `tsfg.module-initializer.v1\0${sourcePath}\0${sourceHash}\0${moduleIdentity(sourcePath)}\0${signatureHash('i32',[])}`);
 export const hostIdentity=(sourcePath,name)=>sha256(`tsfg.host\0${sourcePath}\0${name}\0${signatureHash('i32',['i32'])}`);
 
 /** Independently verify module ownership before body verification or pruning. */
@@ -22,18 +23,27 @@ export function verifyModuleHir(hir,fail) {
   for(const module of hir.modules??[]) {
     if(!exact(module,['id','sourcePath','dependencies','initializer','exports','bindings'])
       ||module.id!==moduleIdentity(module.sourcePath)||!sources.has(module.sourcePath)||module.sourcePath.endsWith('.d.ts')
-      ||modules.has(module.sourcePath)||module.initializer!==initializerIdentity(module.sourcePath)
+      ||modules.has(module.sourcePath)||module.initializer!==initializerIdentity(module.sourcePath,sources.get(module.sourcePath)?.hash)
       ||!Array.isArray(module.dependencies)||new Set(module.dependencies).size!==module.dependencies.length
       ||!Array.isArray(module.exports)||!Array.isArray(module.bindings))fail();
     modules.set(module.sourcePath,module);
   }
   if(modules.size!==[...sources.keys()].filter(p=>!p.endsWith('.d.ts')).length)fail();
   for(const global of hir.globals??[]) {
-    if(!exact(global,['id','sourcePath','name','type','writable','range'])||!modules.has(global.sourcePath)
-      ||typeof global.name!=='string'||!global.name||global.id!==globalIdentity(global.sourcePath,global.name,scalarName(global.type))
+    if(!exact(global,['id','sourcePath','name','bindingKind','type','writable','range'])||!modules.has(global.sourcePath)
+      ||typeof global.name!=='string'||!global.name||!['source','default-export-expression'].includes(global.bindingKind)
+      ||!anchor(global.range,sources.get(global.sourcePath))
+      ||global.id!==(global.bindingKind==='default-export-expression'
+        ? defaultBindingIdentity(global.sourcePath,sources.get(global.sourcePath).hash,scalarName(global.type),global.range)
+        : globalIdentity(global.sourcePath,global.name,scalarName(global.type)))
       ||!Object.values(scalarTypeIds).includes(global.type)||typeof global.writable!=='boolean'
       ||!anchor(global.range,sources.get(global.sourcePath))||globals.has(global.id))fail();
     globals.set(global.id,global);definitions.set(global.id,global);
+  }
+  for(const module of modules.values()) {
+    const generated=[...globals.values()].filter(global=>global.sourcePath===module.sourcePath && global.bindingKind==='default-export-expression');
+    if(generated.length>1 || generated.some(global=>global.writable
+      ||!module.exports.some(binding=>binding.name==='default' && binding.target===global.id)))fail();
   }
   for(const host of hir.hostImports??[]) {
     if(!exact(host,['id','sourcePath','name','capabilityId','signatureHash','parameterTypes','returnType','range'])
@@ -52,7 +62,7 @@ export function verifyModuleHir(hir,fail) {
         ||fn.parameters.length||association.has(fn.sourcePath)||fn.range.start!==0
         ||fn.range.end!==sources.get(fn.sourcePath).content.length)fail();
       association.set(fn.sourcePath,fn.id);
-    }else if(fn.name==='$moduleInit')fail();
+    }
     definitions.set(fn.id,fn);
   }
   if(association.size!==modules.size)fail();

@@ -69,9 +69,27 @@ export function validateModuleFacts(snapshot) {
   const views = new Map();
   for (const module of snapshot.modules) {
     const visible = new Map(hostNames), source = sources.get(module.sourcePath).content;
+    const generated = snapshot.symbols.filter(symbol=>symbol.kind==='global' && symbol.sourcePath===module.sourcePath
+      && symbol.bindingKind==='default-export-expression');
+    if (generated.length > 1) fail();
+    for (const symbol of snapshot.symbols.filter(symbol=>symbol.kind==='global' && symbol.sourcePath===module.sourcePath)) {
+      if (!['source','default-export-expression'].includes(symbol.bindingKind)) fail();
+      if (symbol.bindingKind==='default-export-expression') {
+        const statement=module.initialization.find(item=>item.kind==='initialize' && item.symbol?.id===symbol.id);
+        const initializer=statement?.initializer;
+        if (symbol.writable || exports.get(module.sourcePath).get('default')!==symbol.id || !statement
+            || statement.symbol.bindingKind!==symbol.bindingKind || statement.symbol.type!==symbol.type
+            || statement.symbol.name!==symbol.name || statement.symbol.writable!==symbol.writable
+            || canonical(statement.symbol.range)!==canonical(symbol.range) || !validRange(symbol.range,source)
+            || !validRange(statement.range,source) || !validRange(initializer?.range,source)
+            || trivia(source.slice(statement.range.start,initializer.range.start)).replace(/\s/g,'')!=='exportdefault'
+            || symbol.range.start<initializer.range.start || symbol.range.end!==initializer.range.end) fail();
+      }
+    }
     for (const symbol of snapshot.symbols) {
       const owner = modules.get(symbol.sourcePath);
       if (["function","global"].includes(symbol.kind)
+          && symbol.bindingKind!=='default-export-expression'
           && (symbol.sourcePath===module.sourcePath || !module.external && owner && !owner.external)) {
         if (visible.has(symbol.name)) fail();
         visible.set(symbol.name,symbol.id);
@@ -101,10 +119,10 @@ export function validateModuleFacts(snapshot) {
             || ![...exports.get(imp.sourcePath).values()].includes(binding.target)
             || !validRange(binding.range,source)
             || !binding.name.includes(".") && (binding.range.start<imp.range.start || binding.range.end>imp.range.end)
-            || binding.name.includes(".") && !/^[$_\p{ID_Start}][$\u200c\u200d\p{ID_Continue}]*\s*\.\s*[$_\p{ID_Start}][$\u200c\u200d\p{ID_Continue}]*$/u.test(binding.name)
+            || binding.name.includes(".") && !/^[$_\p{ID_Start}][$\u200c\u200d\p{ID_Continue}]*\s*\.\s*[$_\p{ID_Start}][$\u200c\u200d\p{ID_Continue}]*$/u.test(trivia(binding.name))
             || source.slice(binding.range.start,binding.range.end).trim()!==binding.name) fail();
         if (binding.name.includes(".")) {
-          const [namespace,member]=binding.name.split(".").map(part=>part.trim());
+          const [namespace,member]=trivia(binding.name).split(".").map(part=>part.trim());
           const prefix=anchor.slice(0,anchor.indexOf("from"));
           if (prefix.match(/\*\s+as\s+([^\s,{}]+)\s*$/)?.[1]!==namespace
               || exports.get(imp.sourcePath).get(member)!==binding.target) fail();

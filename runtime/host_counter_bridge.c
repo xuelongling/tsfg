@@ -1,0 +1,56 @@
+// SPDX-License-Identifier: MIT
+// Runtime-owned Win64 call bridge. This is never a guest compilation backend.
+#include <stdint.h>
+struct TsfgCounter;
+extern uint32_t tsfg_host_counter(struct TsfgCounter *, uint32_t);
+
+// A real call keeps the leaf's incoming return and this bridge's shadow storage
+// visible to the independent object/linked-code proof. A tail jump is rejected.
+__attribute__((disable_tail_calls))
+uint32_t tsfg_host_counter_bridge(struct TsfgCounter *counter, uint32_t delta) {
+  return tsfg_host_counter(counter, delta);
+}
+
+// Private synchronous Runtime call seam. The NT_TIB check protects this
+// seam's own frame; its 8192-byte OS headroom is not a request resource proof.
+// Keep this code in a separate section from the existing counter bridge.
+__asm__(
+  ".att_syntax\n"
+  ".section .text$tsfg_runtime_admitted_entry,\"xr\"\n"
+  ".globl tsfg_runtime_admitted_entry\n"
+  ".def tsfg_runtime_admitted_entry; .scl 2; .type 32; .endef\n"
+  ".p2align 4\n"
+  ".seh_proc tsfg_runtime_admitted_entry\n"
+  "tsfg_runtime_admitted_entry:\n"
+  "movq %gs:8, %r10\n"
+  "movq %gs:16, %r11\n"
+  "testq %r11, %r11\n"
+  "jz 1f\n"
+  "cmpq %r11, %r10\n"
+  "jbe 1f\n"
+  "cmpq %rsp, %r10\n"
+  "jb 1f\n"
+  "cmpq %r11, %rsp\n"
+  "jb 1f\n"
+  "movq %rsp, %rax\n"
+  "subq %r11, %rax\n"
+  "movabsq $8192, %r11\n"
+  "cmpq %r11, %rax\n"
+  "jb 1f\n"
+  "jmp 2f\n"
+  "1: movl $65536, %eax\n"
+  "retq\n"
+  "2: subq $56, %rsp\n"
+  ".seh_stackalloc 56\n"
+  ".seh_endprologue\n"
+  "movq 96(%rsp), %rax\n"
+  "movq %rax, 32(%rsp)\n"
+  "movq 104(%rsp), %rax\n"
+  "movq %rax, 40(%rsp)\n"
+  "call tsfg_runtime_admitted_body\n"
+  "addq $56, %rsp\n"
+  "retq\n"
+  ".seh_endproc\n"
+  ".text\n"
+  ".intel_syntax noprefix\n"
+);

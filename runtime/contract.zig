@@ -2,7 +2,7 @@
 const std = @import("std");
 
 pub const version: u32 = 8;
-pub const schema_hash_hex = "df34b2ea0cef7a74e0b94328671f9d0df3b2d7ac2dd9935a20a722aa04f7da9a";
+pub const schema_hash_hex = "82c22599dd5680e8e9a9135df400b992f841e0aaa2459abd7c9d2687442c2119";
 pub const schema_hash = hexDigest(schema_hash_hex);
 pub const max_bytes = 1048576;
 pub const target = "windows-x86_64-msvc";
@@ -10,13 +10,30 @@ pub const triple = "x86_64-pc-windows-msvc";
 pub const data_layout = "e-m:w-p270:32:32-p271:32:32-p272:64:64-i64:64-i128:128-f80:128-n8:16:32:64-S128";
 
 pub fn typeName(code: u8) []const u8 {
-    return switch (code) { 1 => "i32", 2 => "bool", 3 => "i8", 4 => "i16", 5 => "i64", 6 => "u8", 7 => "u16", 8 => "u32", 9 => "u64", 10 => "isize", 11 => "usize", 12 => "f32", 13 => "f64", else => "none" };
+    if (code == 1) return "i32";
+    if (code == 2) return "bool";
+    if (code == 3) return "i8";
+    if (code == 4) return "i16";
+    if (code == 5) return "i64";
+    if (code == 6) return "u8";
+    if (code == 7) return "u16";
+    if (code == 8) return "u32";
+    if (code == 9) return "u64";
+    if (code == 10) return "isize";
+    if (code == 11) return "usize";
+    if (code == 12) return "f32";
+    if (code == 13) return "f64";
+    return "none";
 }
 pub fn validType(code: u8) bool { return code >= 1 and code <= 13; }
 pub fn integerType(code: u8) bool { return code >= 1 and code <= 11 and code != 2; }
 pub fn floatType(code: u8) bool { return code == 12 or code == 13; }
 pub fn bitWidth(code: u8) u8 {
-    return switch (code) { 3, 6 => 8, 4, 7 => 16, 1, 8, 12 => 32, 10, 11 => @bitSizeOf(usize), else => 64 };
+    if (code == 3 or code == 6) return 8;
+    if (code == 4 or code == 7) return 16;
+    if (code == 1 or code == 8 or code == 12) return 32;
+    if (code == 10 or code == 11) return @bitSizeOf(usize);
+    return 64;
 }
 pub fn signedType(code: u8) bool { return code == 1 or code == 3 or code == 4 or code == 5 or code == 10; }
 pub fn mask(code: u8) u64 { const width = bitWidth(code); return if (width == 64) std.math.maxInt(u64) else (@as(u64, 1) << @as(u6, @intCast(width))) - 1; }

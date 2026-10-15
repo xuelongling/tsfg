@@ -2,7 +2,7 @@
 import { validateFrontendSnapshot, resolveType, resolveSymbol, identifierName, staticBindingName } from "./frontend.mjs";
 import { validateModuleFacts } from "./module-facts.mjs";
 import { verifyModuleHir, initializerIdentity, hostIdentity } from "./module-hir.mjs";
-import { moduleIdentity,globalIdentity,compilationClosure } from "./modules.mjs";
+import { moduleIdentity,globalIdentity,defaultBindingIdentity,compilationClosure } from "./modules.mjs";
 import { canonical, functionIdentity, signatureHash, i32TypeId, boolTypeId, scalarTypeIds, scalarName, integerNames, integerRange, own, sha256 } from "./identity.mjs";
 import registry from "../contracts/registry.json" with { type: "json" };
 import bytecodeSchema from "../contracts/bytecode.schema.json" with { type: "json" };
@@ -59,7 +59,7 @@ function verifyExpression(value, parent, source, fail, budget, locals, visibleBi
     if(!exactKeys(value,['kind','type','global','name','range'])||!global||global.type!==value.type
       ||budget.modules.views.get(budget.sourcePath)?.get(value.name)!==value.global
       ||staticBindingName(source.slice(value.range.start,value.range.end))!==staticBindingName(value.name)
-      ||visibleBindings.has(value.name)||value.name.includes('.')&&visibleBindings.has(value.name.split('.')[0].trim()))fail();
+      ||visibleBindings.has(value.name)||staticBindingName(value.name).includes('.')&&visibleBindings.has(staticBindingName(value.name).split('.')[0]))fail();
   } else if (value.kind === "reference") {
     const local = locals.get(value.binding);
     if (!exactKeys(value, ["kind", "type", "binding", "range"])) fail();
@@ -88,7 +88,7 @@ function verifyExpression(value, parent, source, fail, budget, locals, visibleBi
     if (!exactKeys(value, ["kind", "type", "range", "target", "signatureHash", "arguments",...(budget.modules?['name']:[])])
         || !target || target.kind==='module-initialization' || target.signatureHash !== value.signatureHash || resultType !== value.type
         || visibleBindings.has(callee) || budget.modules && (budget.modules.views.get(budget.sourcePath)?.get(callee)!==value.target
-          ||callee.includes('.')&&visibleBindings.has(callee.split('.')[0].trim()))
+          ||staticBindingName(callee).includes('.')&&visibleBindings.has(staticBindingName(callee).split('.')[0]))
         || !Array.isArray(value.arguments) || value.arguments.length !== parameters.length) fail();
     const calleeToken=(text,anchor)=>budget.modules?staticBindingName(text.slice(anchor.start,anchor.end)):identifierToken(text,anchor);
     const calleeName=budget.modules?staticBindingName(callee):callee;
@@ -189,7 +189,7 @@ export function verifyHir(hir) {
   const previousFunctionEnd = new Map();
   for (const fn of hir.functions) {
     const sourcePath=moduleMode?fn.sourcePath:hir.source.path,source=moduleFacts?.sources.get(sourcePath)??hir.source;
-    const name=`${sourcePath}\0${fn?.name}`;
+    const name=`${sourcePath}\0${fn?.kind??'source'}\0${fn?.name}`;
     if (!validText(fn?.name) || functions.has(fn?.id) || functionNames.has(name)
         || fn.kind!=='module-initialization' && !range(fn.range, { start: previousFunctionEnd.get(sourcePath)??0, end: source.content.length })) fail();
     if(fn.kind!=='module-initialization')previousFunctionEnd.set(sourcePath,fn.range.end);
@@ -202,7 +202,7 @@ export function verifyHir(hir) {
   const sourcePath=moduleMode?fn.sourcePath:hir.source.path,source=moduleFacts?.sources.get(sourcePath)??hir.source;
   if (!exactKeys(fn, ["id", "name", "signatureHash", "returnType", "parameters", "range", "body",...(moduleMode?['sourcePath','kind']:[])])
       || !validText(fn.name) || !Object.hasOwn(types, fn.returnType?.name)
-      || fn.id !== functionIdentity(sourcePath, fn.name, fn.returnType.name, parameterNames)
+      || fn.id !== (fn.kind==='module-initialization'?initializerIdentity(sourcePath,source.hash):functionIdentity(sourcePath, fn.name, fn.returnType.name, parameterNames))
       || fn.signatureHash !== signatureHash(fn.returnType.name, parameterNames)
       || canonical(fn.returnType) !== canonical({ kind: "scalar", name: fn.returnType.name, id: types[fn.returnType.name] })
       || !Array.isArray(fn.parameters) || fn.parameters.length > 64 || parameterNames.some(name => !name)
@@ -258,19 +258,24 @@ export function verifyHir(hir) {
         const global=moduleFacts?.globals.get(statement.global),value=statement.value;
         if(frame!=='module'||!exactKeys(statement,['kind','global','range','value'])||!global
           ||global.sourcePath!==sourcePath||value?.type!==global.type||initializedGlobals.has(global.id))fail();
-        if(global.name==='$default') {
+        if(global.bindingKind==='default-export-expression') {
+          declarationKind = undefined;
           if(global.writable||sourceTokens(source,statement.range.start,value.range.start)!=='exportdefault'
             ||global.range.start<value.range.start||global.range.end!==value.range.end)fail();
         }else {
           const keyword=before.match(/(?:^|[^\p{ID_Continue}])(?:export)?(const|let)$/u)?.[1];
+          if (keyword) declarationKind = keyword;
+          else if (before !== "," || !declarationKind) fail();
           const annotation=sourceTokens(source,global.range.end,value.range.start);
-          const annotations=global.type===boolTypeId?[':bool',':boolean']:[`:${scalarName(global.type)}`];
-          if(!keyword||global.writable!==(keyword==='let')||!range(global.range,statement.range)
+          const annotations=global.type===boolTypeId?[':bool',':boolean']:global.type===types.f64?[':f64',':number']:[`:${scalarName(global.type)}`];
+          if(global.writable!==(declarationKind==='let')||!range(global.range,statement.range)
             ||identifierToken(source,global.range)!==global.name||sourceTokens(source,statement.range.start,global.range.start)!==''
             ||!['=',...annotations.map(a=>a+'=')].includes(annotation))fail();
         }
         verifyExpression(value,statement.range,source,fail,budget,locals,visibleBindings);
-        if(!/^;?$/.test(sourceTokens(source,value.range.end,statement.range.end)))fail();
+        const declarationTail=sourceTokens(source,value.range.end,statement.range.end);
+        if(!/^;?$/.test(declarationTail))fail();
+        if (declarationTail === ";") declarationKind = undefined;
         initializedGlobals.add(global.id);
       } else if (statement.kind === "local") {
         const binding = statement.binding, value = statement.initializer;
@@ -414,8 +419,10 @@ export function buildHir(snapshot) {
       message: "current execution capability requires nominal integer/bool functions with direct calls, locals, structured control and returns",
       primary: { sourceId: snapshot.source.path, ...(expression?.range ?? first?.range ?? { start: 0, end: 0 }) } }] };
   }
-  const globals=(snapshot.symbols.filter(symbol=>symbol.kind==='global')).map(symbol=>({id:globalIdentity(symbol.sourcePath,symbol.name,symbol.type),
-    sourcePath:symbol.sourcePath,name:symbol.name,type:types[symbol.type],writable:symbol.writable,range:symbol.range}));
+  const globals=(snapshot.symbols.filter(symbol=>symbol.kind==='global')).map(symbol=>({id:symbol.bindingKind==='default-export-expression'
+    ? defaultBindingIdentity(symbol.sourcePath,sha256(snapshot.sources.find(source=>source.path===symbol.sourcePath).content),symbol.type,symbol.range)
+    : globalIdentity(symbol.sourcePath,symbol.name,symbol.type),
+    sourcePath:symbol.sourcePath,name:symbol.name,bindingKind:symbol.bindingKind,type:types[symbol.type],writable:symbol.writable,range:symbol.range}));
   const globalBySymbol=new Map(snapshot.symbols.filter(symbol=>symbol.kind==='global').map((symbol,index)=>[symbol.id,globals[index]]));
   const hosts=(snapshot.hostImports??[]).map(host=>({id:hostIdentity(host.sourcePath,host.name),sourcePath:host.sourcePath,name:host.name,
     capabilityId:host.capabilityId,signatureHash:signatureHash(host.returnType,host.parameterTypes),parameterTypes:host.parameterTypes.map(type=>types[type]),returnType:types[host.returnType],range:host.range}));
@@ -432,7 +439,7 @@ export function buildHir(snapshot) {
   const initializers=(snapshot.modules??[]).map(module=>({sourcePath:module.sourcePath,name:'$moduleInit',kind:'module-initialization',parameters:[],body:module.initialization,
     range:{start:0,end:moduleFacts.sources.get(module.sourcePath).content.length}}));
   for (const fn of [...snapshot.functions,...initializers]) {
-  const descriptor = fn.kind==='module-initialization'?{id:initializerIdentity(fn.sourcePath),name:'$moduleInit',kind:fn.kind,sourcePath:fn.sourcePath,
+  const descriptor = fn.kind==='module-initialization'?{id:initializerIdentity(fn.sourcePath,sha256(moduleFacts.sources.get(fn.sourcePath).content)),name:'$moduleInit',kind:fn.kind,sourcePath:fn.sourcePath,
     signatureHash:signatureHash('i32',[]),returnType:{kind:'scalar',name:'i32',id:i32TypeId},parameters:[],range:fn.range}:functions.get(fn.symbol.id);
   const source=moduleFacts?.sources.get(fn.sourcePath)??snapshot.source;
   const bindings = new Map();
@@ -510,7 +517,7 @@ export function buildHir(snapshot) {
     hir.sources=[...moduleFacts.sources.values()].map(source=>({...source,hash:sha256(source.content)}));
     hir.globals=globals;hir.hostImports=hosts;
     hir.modules=snapshot.modules.map(module=>({id:moduleIdentity(module.sourcePath),sourcePath:module.sourcePath,
-      dependencies:[...new Set(module.imports.map(imp=>imp.sourcePath))],initializer:initializerIdentity(module.sourcePath),
+      dependencies:[...new Set(module.imports.map(imp=>imp.sourcePath))],initializer:initializerIdentity(module.sourcePath,sha256(moduleFacts.sources.get(module.sourcePath).content)),
       exports:module.exports.map(binding=>({name:binding.name,target:ownedId(binding.target)})),
       bindings:[...moduleFacts.views.get(module.sourcePath)].map(([name,id])=>({name,target:ownedId(id)}))}));
     try{hir.closure=compilationClosure({modules:hir.modules,functions:projectedFunctions,globals,configuration:snapshot.compilationClosure});}
@@ -567,7 +574,7 @@ export function lowerHir(hir) {
     attrs.push(`tsfg_core.modules = ${array(emittedModules.map(module=>dictionary({id:quote(module.id),source:integer(sourceIndex(module.sourcePath)),
       initializer:integer(emittedFunctions.findIndex(fn=>fn.id===module.initializer)),dependencies:array(module.dependencies.map(path=>integer(emittedModules.findIndex(owner=>owner.sourcePath===path))))})))}`);
     attrs.push(`tsfg_core.globals = ${array(emittedGlobals.map(global=>dictionary({id:quote(global.id),source:integer(sourceIndex(global.sourcePath)),name:quote(global.name),
-      type:quote(global.type),writable:global.writable?'true':'false',start:integer(global.range.start),end:integer(global.range.end)})))}`);
+      binding_kind:quote(global.bindingKind),type:quote(global.type),writable:global.writable?'true':'false',start:integer(global.range.start),end:integer(global.range.end)})))}`);
     attrs.push(`tsfg_core.hosts = ${array(emittedHosts.map(host=>dictionary({id:quote(host.id),source:integer(sourceIndex(host.sourcePath)),name:quote(host.name),
       capability:integer(host.capabilityId),signature:quote(host.signatureHash),start:integer(host.range.start),end:integer(host.range.end)})))}`);
     attrs.push(`tsfg_core.roots = ${array(verified.closure.roots.map(root=>dictionary({kind:quote(root.kind),source:integer(sourceIndex(root.sourcePath)),name:quote(root.name),

@@ -12,7 +12,7 @@ uint8_t typeCode(mlir::Type type);
 using ModuleHash = std::array<uint8_t, 32>;
 struct ModuleSource { ModuleHash hash; std::string path; uint32_t length; };
 struct ModuleDeclaration { ModuleHash id; uint16_t source, initializer; std::vector<uint16_t> dependencies; };
-struct GlobalDeclaration { ModuleHash id; uint16_t source; std::string name; uint8_t type; bool writable; uint32_t start, end; };
+struct GlobalDeclaration { ModuleHash id; uint16_t source; std::string name; uint8_t type; bool writable, generated; uint32_t start, end; };
 struct HostDeclaration { ModuleHash id, signature; uint16_t source; std::string name; uint32_t capability, start, end; };
 struct ModuleRoot { uint8_t kind; uint16_t source, function; std::string name; };
 struct ModuleTables {
