@@ -8,6 +8,37 @@ const exact = (value,names) => value && typeof value === "object" && !Array.isAr
 const fail = () => { throw new TypeError("r03-module-facts: owned module/source/binding facts differ"); };
 const trivia = text => text.replace(/\/\*[\s\S]*?\*\/|\/\/[^\r\n\u2028\u2029]*/g," ");
 
+// frontend calls this module, so its spelling helper cannot be imported here.
+// Decode only a bounded original identifier span; never resolve/check source.
+function identifier(spelling) {
+  const text=trivia(spelling).trim(),characters=[];
+  for(let index=0;index<text.length;) {
+    if(text[index]!=="\\") {
+      const point=text.codePointAt(index);characters.push(String.fromCodePoint(point));
+      index+=point>0xffff?2:1;continue;
+    }
+    if(text[index+1]!=="u") fail();
+    index+=2;
+    if(text[index]==="{") {
+      let point=0,digits=0;index++;
+      while(index<text.length && text[index]!=="}") {
+        if(!/[0-9a-fA-F]/.test(text[index])) fail();
+        point=point*16+Number.parseInt(text[index++],16);digits++;
+        if(point>0x10ffff) fail();
+      }
+      if(!digits || text[index++]!=="}") fail();
+      characters.push(String.fromCodePoint(point));
+    } else {
+      const digits=text.slice(index,index+4);
+      if(!/^[0-9a-fA-F]{4}$/.test(digits)) fail();
+      characters.push(String.fromCharCode(Number.parseInt(digits,16)));index+=4;
+    }
+  }
+  const name=characters.join("");
+  if(!/^[$_\p{ID_Start}][$\u200c\u200d\p{ID_Continue}]*$/u.test(name)) fail();
+  return name;
+}
+
 /** Validate persisted module provenance before any closure pruning. */
 export function validateModuleFacts(snapshot) {
   const claim = snapshot.identityInput;
@@ -113,23 +144,27 @@ export function validateModuleFacts(snapshot) {
       if (!candidates.includes(imp.sourcePath)) fail();
       for (const binding of imp.bindings) {
         const symbol=symbols.get(binding.target);
-        if (!exact(binding,["name","target","range"]) || !symbol
+        if (!exact(binding,["name","target","range"]) || typeof binding.name!=="string" || !binding.name || !symbol
             || visible.has(binding.name) && visible.get(binding.name)!==binding.target
             || !["function","global"].includes(symbol.kind)
             || ![...exports.get(imp.sourcePath).values()].includes(binding.target)
             || !validRange(binding.range,source)
-            || !binding.name.includes(".") && (binding.range.start<imp.range.start || binding.range.end>imp.range.end)
-            || binding.name.includes(".") && !/^[$_\p{ID_Start}][$\u200c\u200d\p{ID_Continue}]*\s*\.\s*[$_\p{ID_Start}][$\u200c\u200d\p{ID_Continue}]*$/u.test(trivia(binding.name))
             || source.slice(binding.range.start,binding.range.end).trim()!==binding.name) fail();
-        if (binding.name.includes(".")) {
-          const [namespace,member]=trivia(binding.name).split(".").map(part=>part.trim());
-          const prefix=anchor.slice(0,anchor.indexOf("from"));
-          if (prefix.match(/\*\s+as\s+([^\s,{}]+)\s*$/)?.[1]!==namespace
+        const parts=trivia(binding.name).split(".");
+        if(parts.length>2) fail();
+        const names=parts.map(identifier);
+        if (names.length===1 && (binding.range.start<imp.range.start || binding.range.end>imp.range.end)) fail();
+        if (names.length===2) {
+          const [namespace,member]=names;
+          const prefix=anchor.slice(0,quoted.index);
+          const declared=prefix.match(/^import\s*\*\s*as\s+([\s\S]+?)\s*$/)?.[1];
+          if (declared===undefined || identifier(declared)!==namespace
               || exports.get(imp.sourcePath).get(member)!==binding.target) fail();
         } else {
           const prefix=trivia(source.slice(imp.range.start,binding.range.start));
-          const imported=prefix.match(/(?:\{|,)\s*([^\s{},]+)\s+as\s*$/)?.[1]
-            ?? (prefix.includes("{") ? binding.name : "default");
+          const alias=prefix.match(/(?:\{|,)\s*((?:\\u\{[^}]*\}|[^\s{},])+)\s+as\s*$/)?.[1];
+          if(/\bas\s*$/.test(prefix) && alias===undefined) fail();
+          const imported=alias===undefined ? (prefix.includes("{") ? names[0] : "default") : identifier(alias);
           if (exports.get(imp.sourcePath).get(imported)!==binding.target) fail();
         }
         visible.set(binding.name,binding.target);
