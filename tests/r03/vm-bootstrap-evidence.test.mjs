@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: MIT
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import {mkdtemp,mkdir,readFile,writeFile} from 'node:fs/promises';
+import {mkdtemp,mkdir,readFile,writeFile,rename,appendFile,open} from 'node:fs/promises';
 import path from 'node:path';
 import {createHash} from 'node:crypto';
 import * as vmBuild from '../../eng/vm-build.mjs';
@@ -41,4 +41,94 @@ test('missing generated Runtime object stays explicitly pending rather than beco
 test('retention rejects an over-cap artifact before reading its body',async()=>{
  const input=await fixture();
  await assert.rejects(()=>vmBuild.retainVmBootstrapArtifacts({...input,maximumFileBytes:8}),/bootstrap artifact size/);
+});
+test('a complete live linker event retains an owned input before later cache removal',async()=>{
+ const input=await fixture(),source=path.join(input.stage,'zig-local','o','owned','main.obj');
+ const original=await readFile(source),log=path.join(input.stage,'build-0.log');
+ await writeFile(log,'');
+ const observer=await vmBuild.createVmLinkObjectRetention({stage:input.stage,logPath:log,
+  output:path.join(input.publish,'tsfg-vm.exe')});
+ observer.bind(42);
+ const raw=Buffer.from(`lld-link -OUT:${path.join(input.publish,'tsfg-vm.exe')} ${source}\r\n`);
+ await writeFile(log,raw);await observer.changed();
+ // This checks the completed acquisition, not OS notification/cleanup ordering.
+ await rename(source,source+'.after-event');
+ const captured=await observer.finish();
+ assert.equal(captured.first,null);assert.equal(captured.objects.length,1);
+ assert.deepEqual(await readFile(captured.objects[0].retained.path),original);
+ assert.deepEqual(await readFile(captured.lines[0].retained.path),raw);
+ const result=await vmBuild.retainVmBootstrapArtifacts({...input,
+  objectRoots:[captured.storage],objectRetention:captured});
+ assert.equal(result.compilerObjects.length,1);
+ assert.equal(result.compilerObjectLinkMembership,'unverified');
+ assert.equal(result.phaseEntries,null);assert.equal(result.loadedGraph,null);
+ assert.equal(result.executionAuthority,false);
+});
+async function liveFixture(options={}){
+ const input=await fixture(),logPath=path.join(input.stage,'build-0.log');await writeFile(logPath,'');
+ const output=path.join(input.publish,'tsfg-vm.exe'),source=path.join(input.stage,'zig-local','o','owned','main.obj');
+ const observer=await vmBuild.createVmLinkObjectRetention({...input,logPath,output,...options});
+ observer.bind(43);return{input,logPath,output,source,observer};
+}
+test('partial linker lines are not consumed until the exact newline arrives',async()=>{
+ const x=await liveFixture(),raw=Buffer.from(`lld-link -OUT:${x.output} ${x.source}\r\n`);
+ await writeFile(x.logPath,raw.subarray(0,raw.length-2));await x.observer.changed();
+ await appendFile(x.logPath,raw.subarray(raw.length-2));await x.observer.changed();
+ const r=await x.observer.finish();assert.equal(r.first,null);
+ assert.deepEqual(await readFile(r.lines[0].retained.path),raw);assert.equal(r.objects.length,1);
+});
+test('a cache input already removed when the live event arrives remains failed',async()=>{
+ const x=await liveFixture();await rename(x.source,x.source+'.already-gone');
+ await writeFile(x.logPath,`lld-link -OUT:${x.output} ${x.source}\n`);await x.observer.changed();
+ const r=await x.observer.finish();assert.match(r.first,/ENOENT/);
+ assert.match(r.objects[0].error,/ENOENT/);assert.equal(r.executionAuthority,false);
+});
+test('an event first observed after producer close cannot qualify an extant input',async()=>{
+ const x=await liveFixture();x.observer.producerClosed();
+ await writeFile(x.logPath,`lld-link -OUT:${x.output} ${x.source}\n`);await x.observer.changed();
+ const r=await x.observer.finish();assert.match(r.first,/outside live producer/);assert.equal(r.readBytes,0);
+});
+test('response files and out-of-stage inputs fail before an object body read',async()=>{
+ for(const argument of ['@inputs.rsp','E:/outside-stage/main.obj']){
+  const x=await liveFixture();await writeFile(x.logPath,`lld-link -OUT:${x.output} ${argument}\n`);
+  await x.observer.changed();const r=await x.observer.finish();
+  assert.match(r.first,/response file|outside owned stage/);assert.equal(r.readBytes,0);
+ }
+});
+test('an incomplete or wrong-output linker record is never a compiler object proof',async()=>{
+ for(const complete of [false,true]){
+  const x=await liveFixture();await writeFile(x.logPath,`lld-link -OUT:${complete?x.output+'.wrong':x.output} ${x.source}${complete?'\n':''}`);
+  await x.observer.changed();const r=await x.observer.finish();
+  assert.match(r.first,/incomplete linker line|output mismatch/);assert.equal(r.objects.length,0);
+ }
+});
+test('quoted owned paths are parsed without changing their actual path bytes',async()=>{
+ const x=await liveFixture(),source=path.join(path.dirname(x.source),'with space.obj');
+ await writeFile(source,'owned bytes with a spaced filename');
+ await writeFile(x.logPath,`lld-link "-OUT:${x.output}" "${source}"\r\n`);await x.observer.changed();
+ const r=await x.observer.finish();assert.equal(r.first,null);assert.equal(r.objects[0].source,source);
+ assert.equal(r.lines[0].argv[2],source);assert.equal(r.linkMembership,'unverified');
+});
+test('live object size overflow is retained as failure without reading its body',async()=>{
+ const x=await liveFixture({maximumFileBytes:8});await writeFile(x.logPath,`lld-link -OUT:${x.output} ${x.source}\n`);
+ await x.observer.changed();const r=await x.observer.finish();assert.match(r.first,/producer\/size/);
+ assert.equal(r.readBytes,0);assert.equal(r.objects[0].retained.writeBytes,0);
+});
+test('notification bursts share bounded work and finish drains late bytes without reviving FIRST',async()=>{
+ const x=await liveFixture(),producer=await open(x.logPath,'a');let finished=false;
+ try{
+  const first=x.observer.changed(),burst=Array.from({length:512},()=>x.observer.changed());
+  assert.ok(burst.every(p=>p===first),'notification burst must reuse one in-flight drain promise');
+  // The normal producer holds its merged-log FD; do not truncate/reopen it.
+  await producer.writeFile(`lld-link -OUT:${x.output} ${x.source}\n`);
+  x.observer.changed();const r=await x.observer.finish();finished=true;
+  assert.equal(r.first,null);assert.equal(r.objects.length,1);
+  assert.equal(r.objects[0].source,x.source);assert.equal(r.objects[0].sourceClosed,true);
+ }finally{try{await producer.close();}finally{if(!finished)await x.observer.finish();}}
+ const y=await liveFixture();await writeFile(y.logPath,`lld-link -OUT:${y.output} @unproven.rsp\n`);
+ await y.observer.changed();const stopped=y.observer.changed();
+ assert.ok(Array.from({length:512},()=>y.observer.changed()).every(p=>p===stopped),
+  'FIRST must stop allocating pending drain chains');
+ const failed=await y.observer.finish();assert.match(failed.first,/response file/);
+ assert.equal(failed.readBytes,0);assert.equal(failed.objects.length,0);
 });
