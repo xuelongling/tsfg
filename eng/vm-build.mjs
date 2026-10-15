@@ -153,7 +153,7 @@ export async function createVmLinkObjectRetention({stage,logPath,output,counterO
       catch(error){fail(error);}return result;}};
   return observer;
 }
-const runtimeSources = [...["root", "bytecode", "vm", "runtime", "main", "contract", "module_format", "module", "request", "host_counter", "clock"].map(name => `runtime/${name}.zig`), "runtime/host_counter.c", "runtime/host_counter_bridge.c"];
+const runtimeSources = [...["root", "bytecode", "vm", "runtime", "main", "contract", "module_format", "module", "request", "host_counter", "clock", "execution_frame", "scalar"].map(name => `runtime/${name}.zig`), "runtime/host_counter.c", "runtime/host_counter_bridge.c"];
 
 async function ordinaryAncestor(directory) {
   for (let current = directory;; current = path.dirname(current)) {

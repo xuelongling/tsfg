@@ -3,10 +3,20 @@ const std = @import("std");
 const bytecode = @import("bytecode.zig");
 const FunctionId = bytecode.FunctionId;
 const VerifiedModule = bytecode.VerifiedModule;
-const Source = bytecode.Source;
-const contract = bytecode.contract;
 const request = @import("request.zig");
 const module_state = @import("module.zig");
+const execution_frame = @import("execution_frame.zig");
+const Frame = execution_frame.Frame;
+const frameSize = execution_frame.frameSize;
+const enter = execution_frame.enter;
+const hostStorage = execution_frame.hostStorage;
+const Admission = execution_frame.Admission;
+const preRunAdmission = execution_frame.preRunAdmission;
+const preExecuteAdmission = execution_frame.preExecuteAdmission;
+const leave = execution_frame.leave;
+const executeArithmeticInstruction = execution_frame.executeArithmeticInstruction;
+const executeBitInstruction = execution_frame.executeBitInstruction;
+const executeComparisonInstruction = execution_frame.executeComparisonInstruction;
 pub const ModuleInstance = struct {
     state: module_state.State,
     pub fn init(allocator: std.mem.Allocator, module: *const VerifiedModule) !ModuleInstance {
@@ -242,21 +252,12 @@ pub const RequestLimits = request.RequestLimits;
 pub const Returned = request.Returned;
 pub const RequestFailure = request.RequestFailure;
 pub const RequestOutcome = request.RequestOutcome;
-fn requestFailure(code: []const u8, function_id: FunctionId, source: Source) RequestOutcome {
-    return .{ .failed = .{ .code = code, .category = if (std.mem.eql(u8, code, "r05-execution-abort")) "execution-abort" else "request", .function_id = function_id, .source = source } };
-}
-
-fn arithmeticTrap(comptime code: []const u8, comptime rule_id: []const u8, function_id: FunctionId, source: Source) RequestOutcome {
-    return .{ .failed = .{ .code = code, .category = "trap", .rule_ids = &.{rule_id}, .function_id = function_id, .source = source } };
-}
-
-fn finish(outcome: *RequestOutcome, limits: RequestLimits, fuel: u64) void {
-    switch (outcome.*) {
-        .returned => |*result| { result.fuel_remaining = fuel; result.fuel_consumed = limits.semantic_fuel - fuel; },
-        .failed => |*failure| { failure.fuel_remaining = fuel; failure.fuel_consumed = limits.semantic_fuel - fuel; },
-    }
-}
-
+const requestFailure = request.requestFailure;
+const finish = request.finish;
+const storeRequestFailure = request.storeRequestFailure;
+const storeArithmeticTrap = request.storeArithmeticTrap;
+const storeManagedReference = request.storeManagedReference;
+const storeReturned = request.storeReturned;
 pub inline fn evaluate(allocator: std.mem.Allocator, module: *const VerifiedModule, function_id: FunctionId, arguments: []const TypedValue, capabilities: []const Capability, limits: RequestLimits) RequestOutcome {
     var instance = ModuleInstance.init(allocator, module) catch {
         var outcome = requestFailure("r05-execution-abort", function_id, bytecode.moduleInfoView(module).source);
@@ -266,104 +267,7 @@ pub inline fn evaluate(allocator: std.mem.Allocator, module: *const VerifiedModu
     return instance.evaluate(function_id, arguments, capabilities, limits);
 }
 
-// The VerifiedModule owns immutable descriptors and outlives every State and
-// execution frame. Borrow that descriptor instead of duplicating it per call.
-const Frame = struct { previous: ?*Frame, function: *const bytecode.Function, registers: []u64, transfer: []u64, cursor: usize = 0, return_register: u16 = 0, bytes: usize };
-fn frameSize(function: *const bytecode.Function) usize {
-    var max_parameters: usize = 0;
-    for (function.blocks) |block| max_parameters = @max(max_parameters, block.parameters.len);
-    return @sizeOf(Frame) + (@as(usize, function.info.register_count) + max_parameters) * @sizeOf(u64);
-}
-fn enter(allocator: std.mem.Allocator, function: *const bytecode.Function, previous: ?*Frame) AllocatorError!*Frame {
-    comptime {
-        if (@alignOf(Frame) > @alignOf(u64) or @sizeOf(Frame) % @sizeOf(u64) != 0)
-            @compileError("Frame must fit aligned u64 backing");
-    }
-    const bytes = frameSize(function);
-    const backing = try allocator.alloc(u64, bytes / @sizeOf(u64));
-    const frame: *Frame = @ptrCast(backing.ptr);
-    const registers_start = @sizeOf(Frame) / @sizeOf(u64);
-    const transfer_start = registers_start + @as(usize, function.info.register_count);
-    frame.* = .{ .previous = previous, .function = function,
-        .registers = backing[registers_start..transfer_start],
-        .transfer = backing[transfer_start..], .bytes = bytes };
-    return frame;
-}
-const AllocatorError = std.mem.Allocator.Error;
 const StackSnapshot = @import("host_counter.zig").StackSnapshot;
-// Persistent bodies that are already wholly in the active stack envelope are
-// charged by that envelope. Off-stack bodies and owned child storage are added
-// once. A partial overlap or address/size overflow is never treated as outside.
-fn hostStorage(state: *const module_state.State, capabilities: []const Capability, snapshot: StackSnapshot) ?usize {
-    var storage = snapshot.outsideBytes(@intFromPtr(state), @sizeOf(module_state.State)) orelse return null;
-    const global_size = @mulWithOverflow(state.globals.len, @sizeOf(u64));
-    const initialized_size = @mulWithOverflow(state.initialized.len, @sizeOf(bool));
-    if (global_size[1] != 0 or initialized_size[1] != 0) return null;
-    const globals = snapshot.outsideBytes(@intFromPtr(state.globals.ptr), global_size[0]) orelse return null;
-    const initialized = snapshot.outsideBytes(@intFromPtr(state.initialized.ptr), initialized_size[0]) orelse return null;
-    for ([_]usize{ globals, initialized }) |bytes| {
-        const sum = @addWithOverflow(storage, bytes);
-        if (sum[1] != 0) return null;
-        storage = sum[0];
-    }
-    for (capabilities, 0..) |*capability, index| if (capability.counter) |counter| {
-        var seen = false;
-        for (capabilities[0..index]) |*previous| if (previous.counter == counter) { seen = true; break; };
-        if (!seen) {
-            const bytes = snapshot.outsideBytes(@intFromPtr(counter), @sizeOf(@import("host_counter.zig").Counter)) orelse return null;
-            const sum = @addWithOverflow(storage, bytes);
-            if (sum[1] != 0) return null;
-            storage = sum[0];
-        }
-    };
-    return storage;
-}
-// Inlined in evaluate/initialize: no run prologue may precede this check.
-const Admission = enum { allowed, depth, abort };
-fn preRunAdmission(state: *const module_state.State, selected: *const bytecode.Function, capabilities: []const Capability, limits: RequestLimits, snapshot: StackSnapshot, guard_stack: usize) Admission {
-    if (bytecode.moduleTablesView(state.module).hosts.len == 0) return .allowed;
-    if (!selected.info.initializer and limits.depth < 1) return .depth;
-    const storage = hostStorage(state, capabilities, snapshot) orelse return .abort;
-    const heap = @addWithOverflow(storage, frameSize(selected));
-    if (heap[1] != 0) return .abort;
-    var future: usize = guard_stack;
-    for (capabilities) |capability| if (capability.counter) |counter| {
-        const run_stack = counter.runStackBytes() orelse return .abort;
-        const execute_stack = counter.executionStackBytes() orelse return .abort;
-        const frames = @addWithOverflow(run_stack, execute_stack);
-        if (frames[1] != 0) return .abort;
-        const peak = @addWithOverflow(frames[0], counter.boundaryBytes());
-        if (peak[1] != 0) return .abort;
-        future = @max(future, peak[0]);
-    };
-    return if (snapshot.admits(future, heap[0], limits.memory_bytes)) .allowed else .abort;
-}
-// This compact private decision avoids duplicating failure payloads in run.
-// The caller forbids inlining; its actual frame/callees require separate proof.
-fn preExecuteAdmission(state: *const module_state.State, function: *const bytecode.Function, capabilities: []const Capability, limits: RequestLimits) Admission {
-    if (!function.info.initializer and limits.depth < 1) return .depth;
-    if (bytecode.moduleTablesView(state.module).hosts.len == 0) {
-        const storage = if (bytecode.moduleTablesView(state.module).present) state.storageBytes() else 0;
-        return if (storage > limits.memory_bytes or frameSize(function) > limits.memory_bytes - storage)
-            .abort else .allowed;
-    }
-    const snapshot = StackSnapshot.read();
-    const storage = hostStorage(state, capabilities, snapshot) orelse return .abort;
-    const heap = @addWithOverflow(storage, frameSize(function));
-    if (heap[1] != 0) return .abort;
-    var future_stack: usize = 0;
-    for (capabilities) |capability| if (capability.counter) |counter| {
-        const execute_stack = counter.executionStackBytes() orelse return .abort;
-        const peak = @addWithOverflow(execute_stack, counter.boundaryBytes());
-        if (peak[1] != 0) return .abort;
-        future_stack = @max(future_stack, peak[0]);
-    };
-    return if (snapshot.admits(future_stack, heap[0], limits.memory_bytes)) .allowed else .abort;
-}
-fn leave(allocator: std.mem.Allocator, frame: *Frame) void {
-    const backing: [*]u64 = @ptrCast(frame);
-    allocator.free(backing[0 .. frame.bytes / @sizeOf(u64)]);
-}
 
 // The supported Runtime target is x86_64. This is thread state, never global
 // process configuration. Bit-only transport does not load NaNs into FP registers.
@@ -388,84 +292,8 @@ pub const FloatingEnvironment = struct {
     }
 };
 
-fn floatNan(code: u8, bits: u64) bool {
-    return if (code == 12) bits & 0x7f800000 == 0x7f800000 and bits & 0x007fffff != 0
-        else bits & 0x7ff0000000000000 == 0x7ff0000000000000 and bits & 0x000fffffffffffff != 0;
-}
-fn canonicalNan(code: u8) u64 { return if (code == 12) 0x7fc00000 else 0x7ff8000000000000; }
-
-// fmod: exact binary significand long division; no libm or floating division
-// quotient overflow. The remainder is representable in the input precision.
-fn floatRemainder(code: u8, left: u64, right: u64) u64 {
-    const fraction: u6 = if (code == 12) 23 else 52;
-    const sign_mask: u64 = if (code == 12) 0x80000000 else 0x8000000000000000;
-    const infinity: u64 = if (code == 12) 0x7f800000 else 0x7ff0000000000000;
-    const sign = left & sign_mask;
-    const a = left & ~sign_mask; const b = right & ~sign_mask;
-    if (floatNan(code, left) or floatNan(code, right) or a == infinity or b == 0) return canonicalNan(code);
-    if (a < b or b == infinity) return left;
-    if (a == b) return sign;
-    const implicit = @as(u64, 1) << fraction;
-    var x = a & (implicit - 1); var y = b & (implicit - 1);
-    var ex: i32 = @intCast(a >> fraction); var ey: i32 = @intCast(b >> fraction);
-    if (ex != 0) { x |= implicit; } else { ex = 1; while (x < implicit) { x <<= 1; ex -= 1; } }
-    if (ey != 0) { y |= implicit; } else { ey = 1; while (y < implicit) { y <<= 1; ey -= 1; } }
-    while (ex > ey) : (ex -= 1) { if (x >= y) x -= y; if (x == 0) return sign; x <<= 1; }
-    if (x >= y) x -= y;
-    if (x == 0) return sign;
-    while (x < implicit) { x <<= 1; ey -= 1; }
-    return sign | if (ey > 0) ((@as(u64, @intCast(ey)) << fraction) | (x - implicit)) else (x >> @as(u6, @intCast(1 - ey)));
-}
-
-fn floatArithmetic(opcode: u8, code: u8, left: u64, right: u64) u64 {
-    @setFloatMode(.strict);
-    if (floatNan(code, left) or (opcode <= 8 and floatNan(code, right))) return canonicalNan(code);
-    if (opcode == 8) return floatRemainder(code, left, right);
-    if (opcode == 15) return left ^ (if (code == 12) @as(u64, 0x80000000) else 0x8000000000000000);
-    if (opcode == 33) return left;
-    const bits: u64 = if (code == 12) blk: {
-        const a: f32 = @bitCast(@as(u32, @truncate(left))); const b: f32 = @bitCast(@as(u32, @truncate(right)));
-        const value: f32 = if (opcode == 4) a + b else if (opcode == 5) a - b else if (opcode == 6) a * b else if (opcode == 7) a / b else unreachable;
-        break :blk @as(u32, @bitCast(value));
-    } else blk: {
-        const a: f64 = @bitCast(left); const b: f64 = @bitCast(right);
-        const value: f64 = if (opcode == 4) a + b else if (opcode == 5) a - b else if (opcode == 6) a * b else if (opcode == 7) a / b else unreachable;
-        break :blk @bitCast(value);
-    };
-    return if (floatNan(code, bits)) canonicalNan(code) else bits;
-}
-
-fn floatCompare(opcode: u8, code: u8, left: u64, right: u64) bool {
-    @setFloatMode(.strict);
-    if (floatNan(code, left) or floatNan(code, right)) return opcode == 19;
-    return if (code == 12) blk: {
-        const a: f32 = @bitCast(@as(u32, @truncate(left))); const b: f32 = @bitCast(@as(u32, @truncate(right)));
-        break :blk if (opcode == 18) a == b else if (opcode == 19) a != b else if (opcode == 20) a < b else if (opcode == 21) a <= b else if (opcode == 22) a > b else if (opcode == 23) a >= b else unreachable;
-    } else blk: {
-        const a: f64 = @bitCast(left); const b: f64 = @bitCast(right);
-        break :blk if (opcode == 18) a == b else if (opcode == 19) a != b else if (opcode == 20) a < b else if (opcode == 21) a <= b else if (opcode == 22) a > b else if (opcode == 23) a >= b else unreachable;
-    };
-}
-
 const clock = @import("clock.zig");
 const Budget = struct { fuel: u64, work: u64, deadline: clock.Deadline };
-fn managedReference(function_id: FunctionId, source: Source) RequestOutcome {
-    return .{ .failed = .{ .code = "r01-e-reference", .category = "managed-exception", .exception_kind = "ReferenceError", .rule_ids = &.{"r01-modules"}, .function_id = function_id, .source = source } };
-}
-// These private writers share the caller-owned outcome slot. Guest Frames
-// and verified descriptor storage never alias it; no writer retains its address.
-fn storeRequestFailure(out: *RequestOutcome, code: []const u8, id: *const FunctionId, source: *const Source) void {
-    out.* = .{ .failed = .{ .code = code, .category = if (std.mem.eql(u8, code, "r05-execution-abort")) "execution-abort" else "request", .function_id = id.*, .source = source.* } };
-}
-fn storeArithmeticTrap(out: *RequestOutcome, comptime code: []const u8, comptime rule_id: []const u8, id: *const FunctionId, source: *const Source) void {
-    out.* = .{ .failed = .{ .code = code, .category = "trap", .rule_ids = &.{rule_id}, .function_id = id.*, .source = source.* } };
-}
-fn storeManagedReference(out: *RequestOutcome, id: *const FunctionId, source: *const Source) void {
-    out.* = .{ .failed = .{ .code = "r01-e-reference", .category = "managed-exception", .exception_kind = "ReferenceError", .rule_ids = &.{"r01-modules"}, .function_id = id.*, .source = source.* } };
-}
-fn storeReturned(out: *RequestOutcome, value: TypedValue, id: *const FunctionId, source: *const Source) void {
-    out.* = .{ .returned = .{ .result = value, .function_id = id.*, .source = source.* } };
-}
 
 // The loop owns Frames/cursor and all cleanup. This synchronous private helper
 // borrows only live immutable descriptors and the current mutable register slice.
@@ -650,91 +478,4 @@ fn executeStep(execution: *ExecutionState, state: *module_state.State, limits: *
             unreachable;
         }
     }
-}
-
-// Borrowed Frame/Instruction remain owned by the synchronous run; no address escapes.
-fn executeArithmeticInstruction(current: *Frame, op: *const bytecode.Instruction, result_out: *RequestOutcome) bool {
-    const frame = current.registers;
-    const current_id = &current.function.info.function_id;
-    const source = &op.source;
-    if (op.opcode == 4) {
-            frame[op.register] = if (contract.floatType(op.type_code)) floatArithmetic(op.opcode, op.type_code, frame[op.left], frame[op.right]) else (frame[op.left] +% frame[op.right]) & contract.mask(op.type_code);
-        } else if (op.opcode == 5) {
-            frame[op.register] = if (contract.floatType(op.type_code)) floatArithmetic(op.opcode, op.type_code, frame[op.left], frame[op.right]) else (frame[op.left] -% frame[op.right]) & contract.mask(op.type_code);
-        } else if (op.opcode == 6) {
-            frame[op.register] = if (contract.floatType(op.type_code)) floatArithmetic(op.opcode, op.type_code, frame[op.left], frame[op.right]) else (frame[op.left] *% frame[op.right]) & contract.mask(op.type_code);
-        } else if (op.opcode == 7 or op.opcode == 8) {
-            const left = frame[op.left];
-            const right = frame[op.right];
-            if (contract.floatType(op.type_code)) { frame[op.register] = floatArithmetic(op.opcode, op.type_code, left, right); return true; }
-            // Guard before native division/remainder, including MIN / -1.
-            if (right == 0) { if (op.opcode == 7) storeArithmeticTrap(result_out, "r01-t-divide-zero", "r01-division", current_id, source) else storeArithmeticTrap(result_out, "r01-t-remainder-zero", "r01-division", current_id, source); return false; }
-            if (contract.signedType(op.type_code)) {
-                const a = contract.signedValue(left, op.type_code); const b = contract.signedValue(right, op.type_code);
-                const result = if (a == std.math.minInt(i64) and b == -1)
-                    (if (op.opcode == 7) std.math.minInt(i64) else @as(i64, 0))
-                else if (op.opcode == 7) @divTrunc(a, b) else @rem(a, b);
-                frame[op.register] = @as(u64, @bitCast(result)) & contract.mask(op.type_code);
-            } else frame[op.register] = if (op.opcode == 7) left / right else left % right;
-
-    } else unreachable;
-    return true;
-}
-
-// Borrowed Frame/Instruction remain owned by the synchronous run; no address escapes.
-fn executeBitInstruction(current: *Frame, op: *const bytecode.Instruction, result_out: *RequestOutcome) bool {
-    const frame = current.registers;
-    const current_id = &current.function.info.function_id;
-    const source = &op.source;
-    if (op.opcode >= 9 and op.opcode <= 11) {
-            const signed_count: i32 = @bitCast(@as(u32, @truncate(frame[op.right])));
-            // Range-check signed counts before narrowing or shifting.
-            if (signed_count < 0 or signed_count >= contract.bitWidth(op.type_code)) { storeArithmeticTrap(result_out, "r01-t-shift-count", "r01-shifts", current_id, source); return false; }
-            const count: u6 = @intCast(signed_count);
-            const bits = frame[op.left];
-            frame[op.register] = if (op.opcode == 9) (bits << count) & contract.mask(op.type_code)
-                else if (op.opcode == 10 and contract.signedType(op.type_code)) @as(u64, @bitCast(contract.signedValue(bits, op.type_code) >> count)) & contract.mask(op.type_code)
-                else bits >> count;
-        } else if (op.opcode == 12) {
-            frame[op.register] = frame[op.left] & frame[op.right];
-        } else if (op.opcode == 13) {
-            frame[op.register] = frame[op.left] | frame[op.right];
-        } else if (op.opcode == 14) {
-            frame[op.register] = frame[op.left] ^ frame[op.right];
-        } else if (op.opcode == 15 or op.opcode == 33) {
-            frame[op.register] = if (contract.floatType(op.type_code)) floatArithmetic(op.opcode, op.type_code, frame[op.left], 0) else (0 -% frame[op.left]) & contract.mask(op.type_code);
-        } else if (op.opcode == 16) {
-            frame[op.register] = ~frame[op.left] & contract.mask(op.type_code);
-        } else if (op.opcode == 17) {
-            frame[op.register] = @intFromBool(frame[op.left] == 0);
-
-    } else unreachable;
-    return true;
-}
-
-// Borrowed Frame/Instruction remain owned by the synchronous run; no address escapes.
-fn executeComparisonInstruction(current: *Frame, op: *const bytecode.Instruction) bool {
-    const frame = current.registers;
-    const transfer = current.transfer;
-    if (op.opcode >= 18 and op.opcode <= 23) {
-            const code = current.function.register_types[op.left];
-            if (contract.floatType(code)) { frame[op.register] = @intFromBool(floatCompare(op.opcode, code, frame[op.left], frame[op.right])); return true; }
-            const signed = contract.signedType(code);
-            const a = contract.signedValue(frame[op.left], code); const b = contract.signedValue(frame[op.right], code);
-            frame[op.register] = @intFromBool(if (op.opcode == 18) frame[op.left] == frame[op.right]
-                else if (op.opcode == 19) frame[op.left] != frame[op.right]
-                else if (op.opcode == 20) (if (signed) a < b else frame[op.left] < frame[op.right])
-                else if (op.opcode == 21) (if (signed) a <= b else frame[op.left] <= frame[op.right])
-                else if (op.opcode == 22) (if (signed) a > b else frame[op.left] > frame[op.right])
-                else (if (signed) a >= b else frame[op.left] >= frame[op.right]));
-        } else if (op.opcode == 24 or op.opcode == 25) {
-            const edge: usize = if (op.opcode == 24 or frame[op.register] != 0) 0 else 1;
-            const target = if (edge == 0) op.left else op.right;
-            const block = &current.function.blocks[target];
-            for (op.edges[edge], 0..) |reg, i| transfer[i] = frame[reg];
-            for (block.parameters, 0..) |parameter, i| frame[parameter.register] = transfer[i];
-            current.cursor = block.start;
-
-    } else unreachable;
-    return true;
 }

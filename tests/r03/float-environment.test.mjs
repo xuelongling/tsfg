@@ -25,7 +25,7 @@ async function filesUnder(directory) {
 // Match the normal vm-build source contract without importing its execution entry.
 // This test stages its own input copies and never writes into repository runtime/.
 const runtimeSources = [...["root", "bytecode", "vm", "runtime", "main", "contract",
-  "module_format", "module", "request", "host_counter", "clock"].map(name => `runtime/${name}.zig`),
+  "module_format", "module", "request", "host_counter", "clock", "execution_frame", "scalar"].map(name => `runtime/${name}.zig`),
   "runtime/host_counter.c", "runtime/host_counter_bridge.c"];
 const metadata = value => Object.fromEntries(["dev", "ino", "mode", "nlink", "size",
   "mtimeNs", "ctimeNs", "birthtimeNs"].map(key => [key, String(value[key])]));
