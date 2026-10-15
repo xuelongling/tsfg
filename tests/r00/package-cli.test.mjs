@@ -57,6 +57,7 @@ test("Build Input declaration includes both debug target control and smoke input
       { path: "eng/go-source-worker.mjs", projectId: "tsfg" },
       { path: "eng/go-work-access.mjs", projectId: "tsfg" },
       { path: "eng/host-cost-source.lock.json", projectId: "tsfg" },
+      { path: "eng/host-counter-binary.mjs", projectId: "tsfg" },
       { path: "eng/host-counter.mjs", projectId: "tsfg" },
       { path: "eng/intake-ledger.mjs", projectId: "tsfg" },
       { path: "eng/mlir-build.mjs", projectId: "tsfg" },

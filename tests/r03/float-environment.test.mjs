@@ -86,7 +86,7 @@ test("source-produced float packets preserve actual caller FP state on success, 
     ...runtimeSources.map(name => path.join(repo, name)),
     ...["pipeline", "frontend", "hir", "identity", "float", "module-facts", "module-hir", "modules"]
       .map(name => path.join(repo, "compiler", `${name}.mjs`)),
-    ...["host-counter.mjs", "host-cost-source.lock.json", "build-inputs.json", "vm-build.mjs"]
+    ...["host-counter.mjs", "host-counter-binary.mjs", "host-cost-source.lock.json", "build-inputs.json", "vm-build.mjs"]
       .map(name => path.join(repo, "eng", name)),
     bundlePath, bundle.value.parameters.path,
     ...["registry.json", "bytecode.schema.json", "hir.schema.json", "frontend-snapshot.schema.json"].map(name => path.join(repo, "contracts", name)),

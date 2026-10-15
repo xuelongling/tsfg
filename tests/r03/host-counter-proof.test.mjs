@@ -5,7 +5,8 @@ import test from 'node:test';
 import {mkdtemp,readFile} from 'node:fs/promises';
 import {tmpdir} from 'node:os';
 import path from 'node:path';
-import {decodeCounterLeaf,inspectCounterObject,inspectCounterBridgeObject,validateCounterMcFacts,validateCounterBridgeMcFacts,writeHostCertificate} from '../../eng/host-counter.mjs';
+import {decodeCounterLeaf,inspectCounterObject,inspectCounterBridgeObject,validateCounterMcFacts,validateCounterBridgeMcFacts} from '../../eng/host-counter-binary.mjs';
+import {writeHostCertificate} from '../../eng/host-counter.mjs';
 
 // Independent x64 instruction bytes, fixed unsigned storage/event offsets and
 // COFF scalar fields. These are not captured implementation outputs.

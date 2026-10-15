@@ -282,7 +282,7 @@ export async function executeVmTarget({ options, runtime, tools, productRoot, wo
   if (await lstat(output).catch(error => { if (error.code === "ENOENT") return undefined; throw error; }))
     throw new VmBuildError("Independent VM build output already exists", "vm-output-integrity");
   const identity = await createIdentity(runtime, productRoot);
-  const required = [...runtimeSources, "contracts/registry.json", "contracts/bytecode.schema.json", "eng/vm-build.mjs", "eng/host-counter.mjs", "eng/host-cost-source.lock.json"];
+  const required = [...runtimeSources, "contracts/registry.json", "contracts/bytecode.schema.json", "eng/vm-build.mjs", "eng/host-counter.mjs", "eng/host-counter-binary.mjs", "eng/host-cost-source.lock.json"];
   for (const name of required) {
     const state = await lstat(path.join(productRoot, name));
     const entry = identity.buildInputSet.entries.find(entry => entry.projectId === "tsfg" && entry.repositoryRelativePath === name);
