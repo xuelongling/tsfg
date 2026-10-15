@@ -4,7 +4,7 @@ import { spawnSync } from "node:child_process";
 import { readFile } from "node:fs/promises";
 import path from "node:path";
 import { normalizeClosure } from "./modules.mjs";
-import { validateModuleFacts } from "./module-facts.mjs";
+import { validateModuleFacts, skipCallTrivia, hasCallArgumentList, identifierName, staticBindingName } from "./module-facts.mjs";
 import sourceLock from "../eng/frontend-source.lock.json" with { type: "json" };
 import contractRegistry from "../contracts/registry.json" with { type: "json" };
 import bytecodeSchema from "../contracts/bytecode.schema.json" with { type: "json" };
@@ -13,30 +13,6 @@ const frontendContract = contractRegistry["tsfg.frontend-snapshot"];
 export const frontendContractVersion = frontendContract.semver;
 
 const digest = bytes => `sha256:${createHash("sha256").update(bytes).digest("hex")}`;
-
-function skipCallTrivia(source) {
-  let index = 0;
-  while (index < source.length) {
-    if (/\s/.test(source[index])) {
-      index++;
-    } else if (source.startsWith("/*", index)) {
-      const end = source.indexOf("*/", index + 2);
-      if (end === -1) return -1;
-      index = end + 2;
-    } else if (source.startsWith("//", index)) {
-      index += 2;
-      while (index < source.length && !/[\r\n\u2028\u2029]/.test(source[index])) index++;
-    } else {
-      return index;
-    }
-  }
-  return index;
-}
-
-function hasCallArgumentList(source) {
-  const index = skipCallTrivia(source);
-  return index >= 0 && source[index] === "(";
-}
 
 function hasLoneSurrogate(value) {
   for (let index = 0; index < value.length; index += 1) {
@@ -47,27 +23,6 @@ function hasLoneSurrogate(value) {
     } else if (codeUnit >= 0xdc00 && codeUnit <= 0xdfff) return true;
   }
   return false;
-}
-
-// Compare an already officially checked identifier's source spelling with
-// its decoded owned name. This reads original spans, never upstream AST data.
-export function identifierName(spelling) {
-  const trivia = "(?:\\s|/\\*(?:(?!\\*/)[\\s\\S])*\\*/|//[^\\r\\n\\u2028\\u2029]*)";
-  spelling = spelling.replace(new RegExp(`^${trivia}*`), "")
-    .replace(new RegExp(`${trivia}*$`), "");
-  const name = spelling.replace(/\\u(?:\{([0-9a-fA-F]{1,6})\}|([0-9a-fA-F]{4}))/g,
-    (_, point, unit) => String.fromCodePoint(Number.parseInt(point ?? unit, 16)));
-  if (!/^[$_\p{ID_Start}][$\u200c\u200d\p{ID_Continue}]*$/u.test(name))
-    throw new TypeError("invalid source identifier spelling");
-  return name;
-}
-
-// Only the officially resolved namespace member shape is admitted. This guard
-// checks spelling; it neither resolves symbols nor admits arbitrary properties.
-export function staticBindingName(spelling) {
-  const parts=spelling.replace(/\/\*[\s\S]*?\*\/|\/\/[^\r\n\u2028\u2029]*/g, " ").split(".");
-  if (parts.length < 1 || parts.length > 2) throw new TypeError("invalid static binding spelling");
-  return parts.map(identifierName).join(".");
 }
 
 function canonical(value) {

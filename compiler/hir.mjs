@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: MIT
-import { validateFrontendSnapshot, resolveType, resolveSymbol, identifierName, staticBindingName } from "./frontend.mjs";
-import { validateModuleFacts } from "./module-facts.mjs";
+import { validateFrontendSnapshot, resolveType, resolveSymbol } from "./frontend.mjs";
+import { validateModuleFacts, identifierName, staticBindingName } from "./module-facts.mjs";
 import { verifyModuleHir, initializerIdentity, hostIdentity } from "./module-hir.mjs";
 import { moduleIdentity,globalIdentity,defaultBindingIdentity,compilationClosure } from "./modules.mjs";
 import { canonical, functionIdentity, signatureHash, i32TypeId, boolTypeId, scalarTypeIds, scalarName, integerNames, integerRange, own, sha256 } from "./identity.mjs";

@@ -3,12 +3,59 @@ import path from "node:path";
 import { canonical } from "./identity.mjs";
 import { normalizeClosure } from "./modules.mjs";
 
+export function skipCallTrivia(source) {
+  let index = 0;
+  while (index < source.length) {
+    if (/\s/.test(source[index])) {
+      index++;
+    } else if (source.startsWith("/*", index)) {
+      const end = source.indexOf("*/", index + 2);
+      if (end === -1) return -1;
+      index = end + 2;
+    } else if (source.startsWith("//", index)) {
+      index += 2;
+      while (index < source.length && !/[\r\n\u2028\u2029]/.test(source[index])) index++;
+    } else {
+      return index;
+    }
+  }
+  return index;
+}
+
+export function hasCallArgumentList(source) {
+  const index = skipCallTrivia(source);
+  return index >= 0 && source[index] === "(";
+}
+
+// Compare an already officially checked identifier's source spelling with
+// its decoded owned name. This reads original spans, never upstream AST data.
+export function identifierName(spelling) {
+  const trivia = "(?:\\s|/\\*(?:(?!\\*/)[\\s\\S])*\\*/|//[^\\r\\n\\u2028\\u2029]*)";
+  spelling = spelling.replace(new RegExp(`^${trivia}*`), "")
+    .replace(new RegExp(`${trivia}*$`), "");
+  const name = spelling.replace(/\\u(?:\{([0-9a-fA-F]{1,6})\}|([0-9a-fA-F]{4}))/g,
+    (_, point, unit) => String.fromCodePoint(Number.parseInt(point ?? unit, 16)));
+  if (!/^[$_\p{ID_Start}][$\u200c\u200d\p{ID_Continue}]*$/u.test(name))
+    throw new TypeError("invalid source identifier spelling");
+  return name;
+}
+
+// Only the officially resolved namespace member shape is admitted. This guard
+// checks spelling; it neither resolves symbols nor admits arbitrary properties.
+export function staticBindingName(spelling) {
+  const parts=spelling.replace(/\/\*[\s\S]*?\*\/|\/\/[^\r\n\u2028\u2029]*/g, " ").split(".");
+  if (parts.length < 1 || parts.length > 2) throw new TypeError("invalid static binding spelling");
+  return parts.map(identifierName).join(".");
+}
+
 const exact = (value,names) => value && typeof value === "object" && !Array.isArray(value)
   && Object.keys(value).sort().join(",") === [...names].sort().join(",");
 const fail = () => { throw new TypeError("r03-module-facts: owned module/source/binding facts differ"); };
 const trivia = text => text.replace(/\/\*[\s\S]*?\*\/|\/\/[^\r\n\u2028\u2029]*/g," ");
 
-// frontend calls this module, so its spelling helper cannot be imported here.
+// This decoder validates untrusted module facts and preserves their error domain.
+// The official-source spelling helpers above accept different escape spellings
+// and errors; keep both until their callers share those contracts.
 // Decode only a bounded original identifier span; never resolve/check source.
 function identifier(spelling) {
   const text=trivia(spelling).trim(),characters=[];
