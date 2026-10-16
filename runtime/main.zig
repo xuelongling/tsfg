@@ -280,6 +280,7 @@ fn runSequence(init: *const std.process.Init, bytes: []const u8, requests_json: 
     }
     if (cursor != bytes.len) return error.RequestSequence;
     var host = runtime.Runtime.init(guest_allocator);
+    defer host.deinit() catch unreachable;
     var counter: runtime.Counter = .{};
     var output: std.Io.Writer.Allocating = .init(init.gpa);
     defer output.deinit();
@@ -384,6 +385,7 @@ fn runMode(init: *const std.process.Init, mode: Mode, bytes: []const u8, request
     try @call(.never_inline, parseRequestsInto, .{ init.gpa, requests_json, &requests });
     defer @call(.never_inline, deinitRequests, .{ &requests });
     var host = runtime.Runtime.init(guest_allocator);
+    defer host.deinit() catch unreachable;
     var counter: runtime.Counter = .{};
     var output: std.Io.Writer.Allocating = .init(init.gpa);
     defer output.deinit();
