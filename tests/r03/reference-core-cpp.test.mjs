@@ -194,8 +194,8 @@ test('actual cold reference fixtures use real C++ canonical roots and reject wir
   for (const name of ['multiple-sources', 'local-assignment-result']) {
     const actual = await source(name), canonical = await compiled(actual.core);
     assert.ok(actual.core.includes('profile = "tsfg-owned-class-facts-candidate-v4"'));
-    assert.ok(actual.core.includes('version = 2 : i64'));
-    assert.ok(actual.core.includes('schema = "sha256:d36b3094aa1504a71beb8b7fcb7370364b0e3b8c2d49c4d0e16a63641f07d692"'));
+    assert.ok(actual.core.includes('version = 3 : i64'));
+    assert.ok(actual.core.includes('schema = "sha256:0120455de4db6b3c3c348f5e2504a2a4ab18026a83978874e1489cd5370ca313"'));
     assert.equal([...actual.core.matchAll(/constructor = \{access = "public", /g)].length, actual.hir.classes.length);
     for (const item of actual.hir.sources) {
       assert.ok(canonical.includes(JSON.stringify(item.path))); assert.ok(canonical.includes(JSON.stringify(item.sha256)));
@@ -207,7 +207,7 @@ test('actual cold reference fixtures use real C++ canonical roots and reject wir
   }
 });
 
-test('private Core v2 requires explicit public constructor access and exact version profile and schema', async () => {
+test('private Core v3 requires explicit public constructor access and exact version profile and schema', async () => {
   const { core } = await source('multiple-sources');
   const constructor = 'constructor = {access = "public", ';
   /** @type {[string,RegExp][]} */
@@ -218,11 +218,11 @@ test('private Core v2 requires explicit public constructor access and exact vers
       changeMetadata(core, constructor, 'constructor = {access = ' + JSON.stringify(access) + ', '),
       /\[core-ir-reference-metadata\] constructor access must be public/,
     ])),
-    [changeMetadata(core, 'version = 2 : i64', 'version = 1 : i64'),
+    [changeMetadata(core, 'version = 3 : i64', 'version = 2 : i64'),
       /\[core-ir-reference-metadata\] candidate version differs/],
     [changeMetadata(core, 'profile = "tsfg-owned-class-facts-candidate-v4"', 'profile = "tsfg-owned-class-facts-candidate-v3"'),
       /\[core-ir-reference-metadata\] candidate profile differs/],
-    [changeMetadata(core, 'schema = "sha256:d36b3094aa1504a71beb8b7fcb7370364b0e3b8c2d49c4d0e16a63641f07d692"',
+    [changeMetadata(core, 'schema = "sha256:0120455de4db6b3c3c348f5e2504a2a4ab18026a83978874e1489cd5370ca313"',
       'schema = "sha256:' + '0'.repeat(64) + '"'),
       /\[core-ir-reference-metadata\] candidate schema differs/],
   ];

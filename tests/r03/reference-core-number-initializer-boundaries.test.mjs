@@ -1,0 +1,154 @@
+// SPDX-License-Identifier: MIT
+import test from 'node:test';
+import assert from 'node:assert/strict';
+import { readFile } from 'node:fs/promises';
+import { createHash } from 'node:crypto';
+import { decodeReferenceFacts } from '../../compiler/reference-facts.mjs';
+import { buildReferenceHir, printReferenceHir, readReferenceHir } from '../../compiler/reference-hir.mjs';
+import { lowerHir } from '../../compiler/hir.mjs';
+import { canonical } from '../../compiler/identity.mjs';
+import schema from '../../contracts/core-reference-candidate.schema.json' with { type: 'json' };
+import { invokeCore, accepted } from './generic-core-package-capture.mjs';
+
+const fixture = name => new URL('./fixtures/reference-source/' + name, import.meta.url);
+const sha256 = bytes => 'sha256:' + createHash('sha256').update(bytes).digest('hex');
+// Handwritten expectations, independent of floatBits and host numeric parsing.
+/** @type {[string,string][]} */
+const expected = [['integer','3ff0000000000000'], ['decimal','3ff0000000000000'],
+  ['exponent','3ff0000000000000'], ['hexadecimal','3ff0000000000000'],
+  ['hexadecimalE','40ebd5a000000000'], ['exactLarge','4340000000000000'], ['roundedLarge','4340000000000000']];
+let loaded;
+async function actual() {
+  if (!loaded) loaded = load();
+  return loaded;
+}
+async function load() {
+  const [bytes, bindingBytes, sourceBytes, declarationBytes] = await Promise.all([
+    readFile(fixture('literal-facts.facts.json')), readFile(fixture('literal-facts.binding.json')),
+    readFile(fixture('literal-facts.source.ts')), readFile(fixture('ancestor-super-method.declaration.d.ts')),
+  ]);
+  assert.equal(bytes.length, 9697); assert.equal(bindingBytes.length, 955);
+  assert.equal(sourceBytes.length, 245); assert.equal(declarationBytes.length, 362);
+  assert.equal(sha256(bytes), 'sha256:26bc6e6d9a987ee5f146830dfcdae1132297c62b35a8d18dcdf4e500d72fa910');
+  assert.equal(sha256(bindingBytes), 'sha256:6ab211f68d949bf75a135c045ce484cd3cbf5ce2153c7ed2a05f72ac4e1abb73');
+  assert.equal(sha256(sourceBytes), 'sha256:7a9081fd9db518f06b99150d1334f082c643bbc8f807d7cac3173f7a10675839');
+  assert.equal(sha256(declarationBytes), 'sha256:d629059f5175a580a8a7b19531c7d8cff1bfa7b61320f6638cf4ee25fbf5a141');
+  const binding = JSON.parse(bindingBytes.toString('utf8'));
+  /** @type {[string,Buffer,boolean][]} */
+  const originals = [['/original/main.ts',sourceBytes,false], ['/original/minimal-scalars-v2.d.ts',declarationBytes,true]];
+  assert.equal(binding.sources.length, 2);
+  for (const [path, bytes, declaration] of originals) {
+    const origin = binding.sources.find(value => value.path === path); assert.ok(origin);
+    assert.equal(origin.sha256, sha256(bytes)); assert.equal(origin.utf16Length, bytes.toString('utf8').length);
+    assert.equal(origin.declaration, declaration); assert.deepEqual(origin.surrogateStarts, []);
+  }
+  const owned = buildReferenceHir(decodeReferenceFacts(bytes, binding));
+  const unresolved = printReferenceHir(owned), persisted = Buffer.from(unresolved), hir = readReferenceHir(persisted); persisted.fill(0);
+  assert.deepEqual(hir, owned); assert.equal(hir.format.version, 4);
+  assert.equal(hir.format.semanticProfile, 'tsfg-owned-class-facts-candidate-v4');
+  assert.equal(hir.classes.length, 1);
+  const owner = hir.classes[0]; assert.equal(owner.name, 'Literals'); assert.equal(owner.fields.length, 7);
+  for (const field of owner.fields) {
+    assert.equal(field.initializer.kind, 'scalar.literal.unresolved');
+    assert.equal(field.initializer.numericLiteral.state, 'unresolved');
+  }
+  return { hir, owner, unresolved };
+}
+function hirRejected(callback, category, label) {
+  assert.throws(callback, error => error instanceof Error && Reflect.get(error, 'code') === 'reference-facts-' + category, label);
+}
+function operations(core, name) {
+  return core.split('\n').flatMap((line,index) => {
+    const match = line.match(/^\s*(?:(%[A-Za-z0-9_]+) = )?"([^"]+)"\(([^)]*)\) \{(.*)\} : \(([^)]*)\) -> (.*)$/);
+    return !match || match[2] !== name ? [] : [{line:index,value:match[1],operands:match[3] ? match[3].split(/,\s*/) : [],
+      attributes:match[4],inputs:match[5] ? match[5].split(/,\s*/) : [],result:match[6]}];
+  });
+}
+function anchor(attributes, origin) {
+  assert.ok(attributes.includes('tsfg_source.start = ' + origin.start + ' : i64'));
+  assert.ok(attributes.includes('tsfg_source.end = ' + origin.end + ' : i64'));
+}
+function exactInitializers(core, owner) {
+  const constants = operations(core, 'tsfg_core.constant'), stores = operations(core, 'tsfg_core.ref.field.write');
+  assert.equal(constants.length, 7); assert.equal(stores.length, 7);
+  const receiver = stores[0].operands[0];
+  const reference = '!tsfg_core.ref<' + JSON.stringify(sha256('tsfg.core-reference.access.v1\0' + owner.runtimeKey)) + '>';
+  for (const [index, [name,bits]] of expected.entries()) {
+    const field = owner.fields[index], store = stores[index]; assert.equal(field.name, name);
+    const constant = constants.find(value => value.value === store.operands[1]); assert.ok(constant);
+    assert.equal(constants.indexOf(constant), index); assert.ok(constant.line < store.line);
+    if (index) assert.ok(stores[index - 1].line < constant.line, 'field initializers keep original source order');
+    assert.equal(constant.result, 'f64'); assert.deepEqual(constant.operands, []);
+    assert.ok(constant.attributes.includes('value = ' + JSON.stringify(bits)), name + ' retains the independent exact bits');
+    anchor(constant.attributes, field.initializer.origin); anchor(store.attributes, field.origin);
+    assert.equal(store.operands[0], receiver); assert.deepEqual(store.inputs, [reference,'f64']); assert.equal(store.result, '()');
+    const fieldKey = sha256(['tsfg.core-reference.member.v1',owner.runtimeKey,'field',field.origin.source,
+      String(field.origin.start),String(field.origin.end),field.name].join('\0'));
+    assert.ok(store.attributes.includes('field = ' + JSON.stringify(fieldKey)));
+    assert.ok(store.attributes.includes('initialize = true'));
+  }
+}
+function changeMetadata(core, before, after) {
+  const end = core.indexOf('\n'), header = core.slice(0, end); assert.ok(end > 0 && header.startsWith('module '));
+  assert.equal(header.split(before).length, 2); return header.replace(before, after) + core.slice(end);
+}
+function changeConstant(core, bits) {
+  const lines = core.split('\n'), at = lines.findIndex(line => line.includes('"tsfg_core.constant"(')); assert.ok(at >= 0);
+  const changed = lines[at].replace(/value = "[0-9a-f]{16}"/, 'value = ' + JSON.stringify(bits));
+  assert.notEqual(changed, lines[at]); lines[at] = changed; return lines.join('\n');
+}
+async function cppRejected(core, cause, command = '--canonicalize') {
+  const result = await invokeCore(core, command);
+  assert.equal(result.close.code, 3, result.stderr.toString('utf8')); assert.equal(result.stdout.length, 0);
+  assert.match(result.stderr.toString('utf8'), cause);
+}
+
+test('every actual numeric occurrence rejects missing or mismatched context and field witnesses before its digest', async () => {
+  const data = await actual();
+  const cases = [
+    {label:'missing context',category:'schema',mutate:field => { delete field.initializer.numericLiteral.contextType; }},
+    {label:'empty context',category:'literal',mutate:field => { field.initializer.numericLiteral.contextType = ''; }},
+    {label:'wrong context',category:'literal',mutate:field => { field.initializer.numericLiteral.contextType = field.initializer.type; }},
+    {label:'missing witness',category:'schema',mutate:field => { field.initializerCompatibility = null; }},
+    {label:'false assignability',category:'witness',mutate:field => { field.initializerCompatibility.assignable = false; }},
+    {label:'wrong witness source',category:'witness',mutate:field => { field.initializerCompatibility.sourceType = field.type; }},
+    {label:'wrong witness target',category:'witness',mutate:field => { field.initializerCompatibility.targetType = field.initializer.type; }},
+    {label:'wrong witness anchor',category:'witness',mutate:field => { field.initializerCompatibility.origin.start++; }},
+    {label:'wrong witness file',category:'witness',mutate:field => { field.initializerCompatibility.origin.source = '/original/minimal-scalars-v2.d.ts'; }},
+  ];
+  for (let index = 0; index < 7; index++) for (const item of cases) {
+    const hir = structuredClone(data.hir), field = hir.classes[0].fields[index]; item.mutate(field);
+    assert.equal(hir.context.factsDigest, data.hir.context.factsDigest);
+    const label = field.name + ' ' + item.label;
+    // Only the named HIR structural category counts. Digest/identity failure is
+    // not emitter or RNE rejection evidence; no valid Source fact is invented.
+    hirRejected(() => readReferenceHir(Buffer.from(canonical(hir))), item.category, label + ' cold');
+    hirRejected(() => lowerHir(hir), item.category, label + ' public lower entry');
+  }
+});
+test('actual seven number fields retain exact constants stores and anchors through real C++ roundtrip and optimization', async () => {
+  const data = await actual(), core = lowerHir(data.hir);
+  assert.equal(schema.version, 3);
+  const first = await invokeCore(core); accepted(first);
+  const roundtrip = await invokeCore(first.stdout); accepted(roundtrip);
+  const optimized = await invokeCore(first.stdout, '--optimize'); accepted(optimized);
+  assert.deepEqual(roundtrip.stdout, first.stdout); assert.deepEqual(optimized.stdout, first.stdout);
+  exactInitializers(core, data.owner); exactInitializers(first.stdout.toString('utf8'), data.owner);
+  assert.equal(printReferenceHir(data.hir), data.unresolved);
+  await cppRejected(first.stdout, /\[r04-core-reference-unsupported\]/, '--emit-bytecode');
+});
+test('private number initializer Core rejects v2 and a mixed v3 identity with the old schema', async () => {
+  const { hir } = await actual(), core = lowerHir(hir);
+  await cppRejected(changeMetadata(core, 'version = 3 : i64', 'version = 2 : i64'),
+    /\[core-ir-reference-metadata\] candidate version differs/);
+  await cppRejected(changeMetadata(core, 'schema = ' + JSON.stringify(sha256(canonical(schema))),
+    'schema = "sha256:d36b3094aa1504a71beb8b7fcb7370364b0e3b8c2d49c4d0e16a63641f07d692"'),
+    /\[core-ir-reference-metadata\] candidate schema differs/);
+});
+test('Core-only malformed floating constants fail the existing C++ constant verification boundary', async () => {
+  const { hir } = await actual(), core = lowerHir(hir);
+  // Current main exposes this generic parser/verification cause, not a detailed
+  // floating diagnostic. These malformed Core values are not Source programs.
+  for (const bits of ['3ff00000','gff0000000000000']) await cppRejected(changeConstant(core, bits),
+    /\[core-ir-invalid\] parse or verification failed/);
+});

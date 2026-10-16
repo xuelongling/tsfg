@@ -1,5 +1,6 @@
 // SPDX-License-Identifier: MIT
 import { verifyReferenceHir } from './reference-hir.mjs';
+import { floatBits } from './float.mjs';
 import { referenceCoreModel, referenceCoreFailure as reject } from './reference-core-model.mjs';
 import bytecodeSchema from '../contracts/bytecode.schema.json' with { type: 'json' };
 import registry from '../contracts/registry.json' with { type: 'json' };
@@ -92,7 +93,26 @@ export function emitReferenceCore(input) {
       if (initialized) reject('duplicate constructor field initialization phase', item.origin);
       initialized = true;
       for (const field of owner.fields) if (field.initializer !== null) {
-        const value = expression(field.initializer);
+        let value;
+        if (field.initializer.kind === 'scalar.literal.unresolved') {
+          const literal = field.initializer, context = hir.types.find(type => type.id === field.type);
+          const witness = field.initializerCompatibility, metadata = literal.numericLiteral;
+          // Resolution is confined to this owned field occurrence. Never settle
+          // its shared narrow type or let a default scalar override the slot.
+          if (context?.kind !== 'number' || model.type(field.type) !== 'f64'
+              || metadata.state !== 'unresolved' || metadata.officialType !== literal.type || metadata.contextType !== field.type
+              || !witness || witness.assignable !== true || witness.sourceType !== literal.type || witness.targetType !== field.type
+              || !Array.isArray(witness.members) || witness.members.length !== 0
+              || witness.origin.source !== literal.origin.source || witness.origin.start !== literal.origin.start || witness.origin.end !== literal.origin.end)
+            reject('number field initializer lacks its exact owned context and compatibility witness', literal.origin);
+          let bits;
+          try { bits = floatBits(literal.token, 'f64'); }
+          catch (error) {
+            if (error instanceof RangeError) reject('number field initializer rounds outside the finite f64 range', literal.origin);
+            throw error;
+          }
+          value = operation('tsfg_core.constant', [], 'f64', { value: bits }, literal.origin);
+        } else value = expression(field.initializer);
         operation('tsfg_core.ref.field.write', [receiver, value], 'none',
           { field: model.member.get(field.symbol), initialize: true }, field.origin);
       }
