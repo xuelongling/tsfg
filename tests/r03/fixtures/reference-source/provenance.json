@@ -393,5 +393,33 @@
       ],
       "E": "sha256:c3141c82c80df203307400e4e5835eca25907cf58fb87432d92887688301ff99"
     }
+  ],
+  "additionalCaptures": [
+    {
+      "producerHead": "9e993d130a9ee1beae570bbce1e26d14c241be30",
+      "dirty": true,
+      "pid": 38892,
+      "top": 33,
+      "sub": 39,
+      "inputs": 47,
+      "qualified": "E:/ws/pro_tsfg/.scratch/tsfg_r03/M12-class-facts-checks-20261016/multiple-source-class-closure-full-green-first/qualified-inputs.json",
+      "readme": "E:/ws/pro_tsfg/.scratch/tsfg_r03/M12-class-facts-checks-20261016/candidate-graphs-v3-multiple-source-green/README.json",
+      "newGraph": {
+        "name": "multiple-sources",
+        "factsPath": "E:/ws/pro_tsfg/.scratch/tsfg_r03/M12-class-facts-checks-20261016/candidate-graphs-v3-multiple-source-green/multiple-sources.facts.json",
+        "bindingPath": "E:/ws/pro_tsfg/.scratch/tsfg_r03/M12-class-facts-checks-20261016/candidate-graphs-v3-multiple-source-green/multiple-sources.binding.json",
+        "mainPath": "E:/ws/pro_tsfg/.scratch/tsfg_r03/M12-class-facts-checks-20261016/candidate-graphs-v3-multiple-source-green/multiple-sources.a-main.source.ts",
+        "basePath": "E:/ws/pro_tsfg/.scratch/tsfg_r03/M12-class-facts-checks-20261016/candidate-graphs-v3-multiple-source-green/multiple-sources.z-base.source.ts",
+        "bytes": 21069,
+        "sha256": "3d2095819dd607a20278cca17d9a492fbb228e4ca0ee8fa683bc1944dcc5b103",
+        "bindingBytes": 1153,
+        "bindingSHA256": "53a196513efc43dfdddb94ef04d98be2136107dec987285ba04eaa5a54d7310c",
+        "mainBytes": 402,
+        "mainSHA256": "0af112dfb07b37452115bf28c9a7812764edb3d36ea85ebbe87622d92d76f8d4",
+        "baseBytes": 174,
+        "baseSHA256": "cd4d26435bbfd6236880eefb55b902bf74bfa5237868c4d5dde0d82f159e1126",
+        "E": "sha256:54faa02c33a6ec6bc6ebed3f544539882c4a6600db48991c33b5459095106dc4"
+      }
+    }
   ]
 }

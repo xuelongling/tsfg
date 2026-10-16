@@ -43,7 +43,7 @@ export function verifyReferenceGraph(graph, binding) {
     }
     sources.set(source.path, source);
   }
-  check([...sources.values()].filter(source => !source.declaration).length === 1, 'origin');
+  check([...sources.values()].filter(source => !source.declaration).length >= 1, 'origin');
   check(graph.sources.every((source, i) => !i || graph.sources[i-1].path < source.path), 'origin');
   const origin = (anchor, parent) => {
     record(anchor, ['source','start','end']); integer(anchor.start); integer(anchor.end);
