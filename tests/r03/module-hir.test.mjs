@@ -3,6 +3,10 @@ import assert from 'node:assert/strict';
 import {readFile} from 'node:fs/promises';
 import {createHash} from 'node:crypto';
 import test from 'node:test';
+import {canonical,functionIdentity,signatureHash,scalarTypeIds,sha256} from '../../compiler/identity.mjs';
+import {moduleIdentity,compilationClosure} from '../../compiler/modules.mjs';
+import registry from '../../contracts/registry.json' with {type:'json'};
+import sourceLock from '../../eng/frontend-source.lock.json' with {type:'json'};
 import {analyzeFrontend,validateFrontendSnapshot} from '../../compiler/frontend.mjs';
 import {buildHir,printHir,readHir,lowerHir,verifyHir} from '../../compiler/hir.mjs';
 import bytecodeSchema from '../../contracts/bytecode.schema.json' with {type:'json'};
@@ -252,4 +256,201 @@ test('module float overflow keeps the original literal diagnostic anchor',async(
  assert.equal(diagnostic.primary.start,21);assert.equal(diagnostic.primary.end,27);
  assert.equal(diagnostic.upstreamCode,2322);assert.equal(diagnostic.ruleId,'r01-literals');
  assert.equal(diagnostic.phase,'types');
+});
+
+
+// Independently construct the cold fixture's stable protocol IDs on BASE and GREEN.
+const initializerIdentity=(path,hash)=>sha256('tsfg.module-initializer.v1\0'+path+'\0'+hash+'\0'+moduleIdentity(path)+'\0'+signatureHash('i32',[]));
+const hostIdentity=(path,name)=>sha256('tsfg.host\0'+path+'\0'+name+'\0'+signatureHash('i32',['i32']));
+
+// Cold, fully owned DTOs exercise the actual public importer/validator. They do
+// not claim official Source checking, runtime behavior or kernel certification.
+function kernelGuardFixture(definitions, {rootKind='kernel',initialHost=false,extraRoots=[]}={}) {
+ const hostPath='/src/host.d.ts',declarationPath='/src/minimal-integers-v3.d.ts';
+ const hostText='declare function host(value: i32): i32;';
+ const paths=[...new Set(definitions.map(fn=>fn.path))];
+ const sources=paths.map(path=>({path,content:(initialHost&&path===paths[0]?'host(0);\n':'')
+  +definitions.filter(fn=>fn.path===path).map(fn=>'function '+fn.name+'(): i32 { '
+   +fn.body.map(part=>(part.kind==='expression'?'':'return ')+part.text+';').join(' ')+' }').join('\n')}));
+ const files=[...sources,{path:hostPath,content:hostText},{path:declarationPath,content:declaration}];
+ const compilation={roots:[{kind:rootKind,sourcePath:definitions[0].path,name:definitions[0].name},...extraRoots],requiredRoots:[]};
+ const identityInput={sourceRoot:'/src',rootFile:paths[0],config:{strict:true,noEmit:true,allowJs:false},
+  declarations:{version:'minimal-integers-v3',paths:[declarationPath]},target:{...bytecodeSchema.target,pointerBits:'64'},
+  compilationClosure:compilation,hostImports:[{sourcePath:hostPath,name:'host',capabilityId:31,parameterTypes:['i32'],returnType:'i32'}],files};
+ const inputIdentity=sha256(canonical(identityInput));
+ const frontendSource={forkOid:sourceLock.forkOid,binarySha256:sourceLock.executableSha256};
+ const contract=registry['tsfg.frontend-snapshot'];
+ const snapshotId=sha256(canonical({contractVersion:contract.semver,schemaHash:contract.schemaHash,inputIdentity,frontendSource}));
+ const ref=id=>({snapshotId,id}),typeRef=ref('t0'),nodes=[],symbols=[];
+ const node=(kind,range,sourcePath)=>{const id='n'+nodes.length;nodes.push({id,kind,range,sourcePath});return ref(id);};
+ const hostRange={start:hostText.indexOf('host'),end:hostText.indexOf('host')+4};
+ const symbol=(id,name,kind,sourcePath,range)=>{const value={id,name,kind,sourcePath,range,type:'i32',typeRef,ref:ref(id)};symbols.push(value);return value;};
+ const hostSymbol=symbol('h0','host','host-function',hostPath,hostRange);
+ const table=new Map(definitions.map((fn,index)=>{
+  const content=sources.find(source=>source.path===fn.path).content,start=content.indexOf('function '+fn.name+'(');
+  const range={start,end:content.indexOf('}',start)+1},nameStart=start+'function '.length;
+  const owned=symbol('f'+index,fn.name,'function',fn.path,{start:nameStart,end:nameStart+fn.name.length});
+  return [fn.name,{...fn,range,symbol:owned,id:functionIdentity(fn.path,fn.name)}];
+ }));
+ const expression=(part,sourcePath,start)=>{
+  const range={start,end:start+part.text.length},common={range,type:'i32',typeRef};
+  if(part.text==='0')return {kind:'integer',...common,literal:{decimal:'0',token:'0'},node:node('integer',range,sourcePath)};
+  const target=part.host?hostSymbol:table.get(part.target).symbol;
+  const arguments_=part.host?[expression({text:'0'},sourcePath,start+part.text.indexOf('0'))]:[];
+  return {kind:'call',...common,name:part.host?'host':part.target,target:target.ref,
+   signature:{returnType:'i32',parameters:part.host?['i32']:[]},arguments:arguments_,node:node('call',range,sourcePath)};
+ };
+ const project=value=>value.kind==='integer'
+  ? {kind:'constant',type:scalarTypeIds.i32,range:value.range,...value.literal}
+  : {kind:value.target.id==='h0'?'host':'call',type:scalarTypeIds.i32,range:value.range,name:value.name,
+   target:value.target.id==='h0'?hostIdentity(hostPath,'host'):table.get(value.name).id,
+   signatureHash:signatureHash('i32',value.target.id==='h0'?['i32']:[]),arguments:value.arguments.map(project)};
+ const functions=[...table.values()].map(fn=>{
+  const content=sources.find(source=>source.path===fn.path).content;let position=content.indexOf('{',fn.range.start)+1;
+  const body=fn.body.map(part=>{
+   const kind=part.kind??'return',start=content.indexOf((kind==='expression'?'':'return ')+part.text,position);
+   const range={start,end:content.indexOf(';',start)+1};position=range.end;
+   return {kind,range,node:node(kind,range,fn.path),expression:expression(part,fn.path,start+(kind==='expression'?0:7))};
+  });
+  return {sourcePath:fn.path,name:fn.name,returnType:'i32',returnTypeRef:typeRef,parameters:[],range:fn.range,
+   symbol:fn.symbol.ref,node:node('function',fn.range,fn.path),body};
+ });
+ const modules=sources.map(source=>({sourcePath:source.path,external:false,imports:[],exports:[],globals:[],initialization:[]}));
+ if(initialHost){const range={start:0,end:8};modules[0].initialization.push({kind:'expression',range,
+  node:node('expression',range,paths[0]),expression:expression({text:'host(0)',host:true},paths[0],0)});}
+ const snapshot={contractVersion:contract.semver,schemaHash:contract.schemaHash,snapshotId,inputIdentity,identityInput,frontendSource,
+  capability:'minimal-integers-v3',source:sources[0],inputs:files.map(file=>({path:file.path,sha256:sha256(file.content),
+   kind:!file.path.endsWith('.d.ts')?'source':file.path===declarationPath?'declaration-root':'declaration-dependency'})),
+  functions,symbols,nodes,types:[{id:'t0',kind:'scalar',scalar:'i32'}],diagnostics:[],sources:files,modules,
+  compilationClosure:compilation,hostImports:[{...identityInput.hostImports[0],symbol:'h0',range:hostRange}]};
+ const ownedSources=files.map(source=>({...source,hash:sha256(source.content)}));
+ const hirFunctions=functions.map(fn=>({id:table.get(fn.name).id,name:fn.name,sourcePath:fn.sourcePath,kind:'source',
+  signatureHash:signatureHash('i32',[]),returnType:{kind:'scalar',name:'i32',id:scalarTypeIds.i32},parameters:[],range:fn.range,
+  body:fn.body.map(part=>({kind:part.kind,range:part.range,value:project(part.expression)}))}));
+ const hirModules=modules.map(module=>({id:moduleIdentity(module.sourcePath),sourcePath:module.sourcePath,dependencies:[],
+  initializer:initializerIdentity(module.sourcePath,ownedSources.find(source=>source.path===module.sourcePath).hash),exports:[],
+  bindings:symbols.filter(item=>['function','host-function'].includes(item.kind)).map(item=>({name:item.name,
+   target:item.kind==='host-function'?hostIdentity(hostPath,'host'):table.get(item.name).id}))}));
+ for(const module of hirModules){const source=ownedSources.find(item=>item.path===module.sourcePath);
+  hirFunctions.push({id:module.initializer,name:'$moduleInit',sourcePath:module.sourcePath,kind:'module-initialization',
+   signatureHash:signatureHash('i32',[]),returnType:{kind:'scalar',name:'i32',id:scalarTypeIds.i32},parameters:[],range:{start:0,end:source.content.length},
+   body:modules.find(item=>item.sourcePath===module.sourcePath).initialization.map(part=>({kind:part.kind,range:part.range,value:project(part.expression)}))});}
+ const hir={contractVersion:registry['tsfg.hir'].semver,schemaHash:registry['tsfg.hir'].schemaHash,inputIdentity,
+  source:ownedSources[0],sources:ownedSources,target:bytecodeSchema.target,functions:hirFunctions,modules:hirModules,globals:[],
+  hostImports:[{id:hostIdentity(hostPath,'host'),sourcePath:hostPath,name:'host',capabilityId:31,signatureHash:signatureHash('i32',['i32']),
+   parameterTypes:[scalarTypeIds.i32],returnType:scalarTypeIds.i32,range:hostRange}]};
+ return {snapshot,hir:{...hir,closure:compilationClosure({modules:hirModules,functions:hirFunctions,configuration:compilation})}};
+}
+const kernelGuardDiagnostic=error=>error!==null&&typeof error==='object'
+ &&Reflect.get(error,'code')==='r03-d-kernel-host-semantics'&&Reflect.get(error,'ruleId')==='r01-kernel';
+function assertKernelWitness(error,primary,pattern) {
+ assert.ok(error instanceof Error);assert.ok(kernelGuardDiagnostic(error));
+ assert.deepEqual(Reflect.get(error,'primary'),primary);assert.match(error.message,pattern);return true;
+}
+const kernelEntry={path:'/src/app.ts',name:'entry',body:[{text:'host(0)',host:true}]};
+
+test('kernel host guard: direct host rejects at the real call in verify, read and build',()=>{
+ const {snapshot,hir}=kernelGuardFixture([kernelEntry]);
+ const primary={sourceId:'/src/app.ts',...hir.functions[0].body[0].value.range};
+ for(const consume of [()=>verifyHir(hir),()=>readHir(Buffer.from(canonical(hir)+'\n'))])
+  assert.throws(consume,error=>assertKernelWitness(error,primary,/entry.*host/s));
+ const result=buildHir(snapshot);assert.equal(result.status,'error');
+ assert.equal(result.diagnostics.length,1);assert.ok(kernelGuardDiagnostic(result.diagnostics[0]));
+ assert.deepEqual(result.diagnostics[0].primary,primary);assert.match(result.diagnostics[0].message,/entry.*host/s);
+});
+
+test('kernel host guard: cross-source calls and recursion preserve the complete host witness',()=>{
+ const entry={path:'/src/app.ts',name:'entry',body:[{text:'recur()',target:'recur'}]};
+ const recur={path:'/src/helper.ts',name:'recur',body:[{kind:'expression',text:'recur()',target:'recur'},
+  {text:'host(0)',host:true}]};
+ const {hir,snapshot}=kernelGuardFixture([entry,recur]);
+ const primary={sourceId:recur.path,...hir.functions[1].body[1].value.range};
+ assert.throws(()=>verifyHir(hir),error=>assertKernelWitness(error,primary,/app\.ts.*entry.*helper\.ts.*recur.*host/s));
+ const result=buildHir(snapshot);assert.equal(result.status,'error');assert.ok(kernelGuardDiagnostic(result.diagnostics[0]));
+ assert.deepEqual(result.diagnostics[0].primary,primary);assert.match(result.diagnostics[0].message,/app\.ts.*helper\.ts.*host/s);
+});
+
+test('kernel host guard: host-free scalar and recursive roots only avoid the new rejection',()=>{
+ for(const body of [[{text:'0'}],[{text:'entry()',target:'entry'}]]) {
+  const {hir,snapshot}=kernelGuardFixture([{path:'/src/app.ts',name:'entry',body}]);
+  assert.deepEqual(verifyHir(hir),hir);assert.equal(printHir(readHir(Buffer.from(printHir(hir)))),printHir(hir));
+  assert.equal(buildHir(snapshot).status,'ok');
+ }
+});
+
+test('kernel host guard: ordinary application and unreachable host functions keep their behavior',()=>{
+ const ordinary=kernelGuardFixture([kernelEntry],{rootKind:'application'});
+ assert.deepEqual(verifyHir(ordinary.hir),ordinary.hir);assert.equal(buildHir(ordinary.snapshot).status,'ok');
+ const unused=kernelGuardFixture([{path:'/src/app.ts',name:'entry',body:[{text:'0'}]},
+  {path:'/src/unused.ts',name:'unused',body:[{text:'host(0)',host:true}]}]);
+ assert.deepEqual(verifyHir(unused.hir),unused.hir);assert.equal(buildHir(unused.snapshot).status,'ok');
+});
+
+test('kernel host guard: owner initialization stays outside the kernel body call graph',()=>{
+ const {hir,snapshot}=kernelGuardFixture([{path:'/src/app.ts',name:'entry',body:[{text:'0'}]}],{initialHost:true});
+ const initializer=hir.functions.find(fn=>fn.kind==='module-initialization');
+ assert.ok(hir.closure.functions.includes(initializer.id));assert.equal(initializer.body[0].value.kind,'host');
+ assert.deepEqual(verifyHir(hir),hir);assert.equal(buildHir(snapshot).status,'ok');
+});
+
+test('kernel host guard: unknown direct targets and indirect node shapes still fail owned validation first',()=>{
+ for(const mutate of [hir=>{hir.functions[0].body[0].value.target='sha256:'+'0'.repeat(64);},
+  hir=>{hir.functions[0].body[0].value.kind='indirect';}]) {
+  const {hir}=kernelGuardFixture([kernelEntry]);mutate(hir);
+  assert.throws(()=>verifyHir(hir),error=>{assert.ok(error instanceof Error);assert.equal(kernelGuardDiagnostic(error),false);assert.match(error.message,/r03-/);return true;});
+ }
+});
+
+// This nonmodule cold HIR also exercises the legacy scalar validator after its move.
+function kernelGuardScalarHir() {
+ const content='function entry(input: i32): i32 { let local: i32 = input; local = local + 1; return local; }';
+ const at=(text,from=0)=>{const start=content.indexOf(text,from);assert.ok(start>=0);return {start,end:start+text.length};};
+ const input=at('input'),binding=at('local'),initializer=at('input',binding.end),target=at('local',initializer.end);
+ const left=at('local',target.end),one=at('1',left.end),returned=at('local',one.end),type=scalarTypeIds.i32;
+ const reference=(id,range)=>({kind:'reference',type,binding:id,range});
+ return {contractVersion:registry['tsfg.hir'].semver,schemaHash:registry['tsfg.hir'].schemaHash,
+  inputIdentity:sha256('cold scalar verifier regression'),source:{path:'/src/scalar.ts',content,hash:sha256(content)},
+  target:bytecodeSchema.target,functions:[{id:functionIdentity('/src/scalar.ts','entry','i32',['i32']),name:'entry',
+   signatureHash:signatureHash('i32',['i32']),returnType:{kind:'scalar',name:'i32',id:type},range:{start:0,end:content.length},
+   parameters:[{id:'p0',name:'input',type,writable:true,range:input}],body:[
+    {kind:'local',range:{start:binding.start,end:initializer.end},binding:{id:'l0',name:'local',type,writable:true,range:binding},
+     initializer:reference('p0',initializer)},
+    {kind:'assign',range:{start:target.start,end:one.end},target:reference('l0',target),
+     value:{kind:'binary',type,operator:'+',range:{start:left.start,end:one.end},left:reference('l0',left),
+      right:{kind:'constant',type,decimal:'1',token:'1',range:one}}},
+    {kind:'return',range:{start:content.indexOf('return '),end:returned.end},value:reference('l0',returned)},
+   ]}]};
+}
+
+test('kernel host guard: moved scalar validation keeps parameters, locals, assignment and canonical lowering',()=>{
+ const hir=kernelGuardScalarHir(),verified=verifyHir(hir);
+ assert.deepEqual(verified,hir);const wire=printHir(hir);
+ assert.equal(printHir(readHir(Buffer.from(wire))),wire);
+ assert.match(lowerHir(hir),/tsfg_core\.add/);
+ assert.throws(()=>readHir(Buffer.from(' '+wire)),/r03-hir-canonical/);
+ for(const mutate of [copy=>{copy.source.hash='sha256:'+'0'.repeat(64);},
+  copy=>{copy.functions[0].signatureHash='sha256:'+'0'.repeat(64);},
+  copy=>{copy.functions[0].parameters[0].id='foreign';},
+  copy=>{copy.functions[0].body[0].binding.id='l9';},
+  copy=>{copy.functions[0].body[2].value.binding='foreign';}]) {
+  const copy=structuredClone(hir);mutate(copy);assert.throws(()=>verifyHir(copy),/r03-/);
+ }
+});
+
+test('kernel host guard: moved owned validator still clones and deeply freezes accepted cold HIR',()=>{
+ const hir=kernelGuardScalarHir(),verified=verifyHir(hir);
+ assert.notStrictEqual(verified,hir);assert.notStrictEqual(verified.functions,hir.functions);
+ const originalConstant=Reflect.get(hir.functions[0].body[1].value,'right');
+ const ownedConstant=Reflect.get(verified.functions[0].body[1].value,'right');
+ assert.equal(Object.isFrozen(hir),false);assert.equal(Object.isFrozen(originalConstant),false);
+ assert.ok(Object.isFrozen(verified));assert.ok(Object.isFrozen(verified.functions[0].body));
+ assert.ok(Object.isFrozen(ownedConstant));assert.notStrictEqual(ownedConstant,originalConstant);
+ const originalSource=hir.source.content,changedSource=originalSource.replace('local + 1','local + 2');
+ assert.notEqual(changedSource,originalSource);
+ assert.equal(Reflect.set(originalConstant,'decimal','2'),true);assert.equal(Reflect.set(originalConstant,'token','2'),true);
+ hir.source.content=changedSource;hir.source.hash=sha256(changedSource);
+ assert.equal(Reflect.get(originalConstant,'decimal'),'2');assert.equal(Reflect.get(originalConstant,'token'),'2');
+ assert.equal(Reflect.get(verifyHir(hir).functions[0].body[1].value,'right').decimal,'2');
+ assert.equal(Reflect.get(ownedConstant,'decimal'),'1');assert.equal(Reflect.get(ownedConstant,'token'),'1');
+ assert.equal(verified.source.content,originalSource);assert.equal(verified.source.hash,sha256(originalSource));
 });
