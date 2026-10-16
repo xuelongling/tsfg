@@ -363,7 +363,8 @@ mlir::LogicalResult verifiedBytecode(mlir::ModuleOp module, Bytes &packet) {
           if (!attributes(constant, {"value", "tsfg_source.start", "tsfg_source.end"})) return reject();
           opcode = typeCode == 1 ? 1 : typeCode == 2 ? 3 : tsfg::floating(typeCode) ? 32 : 28;
           if (!tsfg::constantBits(constant, literalBits)) return reject();
-          if (opcode != 28) immediate = static_cast<uint32_t>(literalBits);
+          // Wide integer/float literals use the u64 extension; their immediate is reserved zero.
+          if (opcode == 1 || opcode == 3) immediate = static_cast<uint32_t>(literalBits);
         } else if (auto load = llvm::dyn_cast<tsfg::GlobalLoadOp>(&operation)) {
           uint32_t index;
           if (!moduleMode || !number(load, "global", index) || index >= moduleTables.globals.size()
