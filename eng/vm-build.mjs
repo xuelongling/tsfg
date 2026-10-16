@@ -268,6 +268,23 @@ export async function retainVmBootstrapArtifacts({stage,product,publish,identity
   return result;
 }
 
+/** Start the production child with its existing merged log and completion semantics.
+ * Observations are diagnostic only; close remains the legacy code/signal result. */
+export function startVmBuildChild({command,logFd,logPath,observer=null}) {
+  const observation={pid:null,exit:null,close:null,error:null};
+  const completion=new Promise((resolve,reject)=>{
+    const child=spawn(command.executable,command.args,{cwd:command.cwd,env:command.environment,windowsHide:true,stdio:["ignore",logFd,logFd]});
+    observation.pid=Number.isSafeInteger(child.pid)?child.pid:null;
+    process.stderr.write("VM "+command.label+" child pid="+child.pid+" log="+logPath+"\n");
+    child.once("error",error=>{observation.error=String(error);observer?.producerClosed();reject(error);});
+    child.once("exit",(code,signal)=>{observation.exit={code,signal};});
+    child.once("close",(code,signal)=>{observation.close={code,signal};observer?.producerClosed();resolve({code,signal});});
+    if(observer){if(Number.isSafeInteger(child.pid))observer.bind(child.pid);
+      else observer.failed(new VmBuildError('link producer PID unavailable','vm-object-retention'));}
+  });
+  return{completion,observation};
+}
+
 /** Build the formal Zig request consumer through the existing locked control plane. */
 export async function executeVmTarget({ options, runtime, tools, productRoot, workspaceState, serialize, sha256, createIdentity, verifyTools, normalize, unqualifiedHostCounterReceipt=undefined }) {
   if (!runtime || !tools || !verifyTools) throw new VmBuildError("VM build requires the verified tool closure", "vm-tool-integrity");
@@ -312,7 +329,7 @@ export async function executeVmTarget({ options, runtime, tools, productRoot, wo
     const label=command.label;
     await writeFile(path.join(stage, `${label}.command.json`), serialize(command));
     const log=await open(path.join(stage, `${label}.log`), "wx");
-    let exit,first,objectRetention,watcher,observer;
+    let exit,first,objectRetention,watcher,observer,processObservation=null;
     try {
       observer=label==='build-0'?await createVmLinkObjectRetention({stage,
         logPath:path.join(stage,`${label}.log`),output:path.join(publish,'tsfg-vm.exe'),
@@ -321,25 +338,20 @@ export async function executeVmTarget({ options, runtime, tools, productRoot, wo
       // with Zig cleanup; that is a failed acquisition, not a linked proof.
       if(observer){watcher=watch(path.join(stage,`${label}.log`),{persistent:false},()=>{void observer.changed();});
         watcher.on('error',error=>observer.failed(error));}
-      exit=await new Promise((resolve,reject)=>{
-        const child=spawn(command.executable,command.args,{cwd:command.cwd,env:command.environment,windowsHide:true,stdio:["ignore",log.fd,log.fd]});
-        process.stderr.write(`VM ${label} child pid=${child.pid} log=${path.join(stage, `${label}.log`)}\n`);
-        child.once("error",error=>{observer?.producerClosed();reject(error);});
-        child.once("close",(code,signal)=>{observer?.producerClosed();resolve({code,signal});});
-        if(observer){if(Number.isSafeInteger(child.pid))observer.bind(child.pid);
-          else observer.failed(new VmBuildError('link producer PID unavailable','vm-object-retention'));}
-      });
+      const childRun=startVmBuildChild({command,logFd:log.fd,logPath:path.join(stage,`${label}.log`),observer});
+      processObservation=childRun.observation;
+      exit=await childRun.completion;
     }catch(error){first=error;}finally{
       if(watcher)try{watcher.close();}catch(error){first??=error;}
       try{await log.close();}catch(error){first??=error;}
       if(observer)try{objectRetention=await observer.finish();}catch(error){first??=error;}
     }
-    try{await writeFile(path.join(stage,`${label}.exit.json`),serialize(observer?
-      {...(exit??{code:null,signal:null}),objectRetention:objectRetention??null,first:first?String(first):null}:exit));}
+    try{await writeFile(path.join(stage,`${label}.exit.json`),serialize({...(exit??{code:null,signal:null}),processObservation,
+      ...(observer?{objectRetention:objectRetention??null}:{}),first:first?String(first):null}));}
     catch(error){first??=error;}
     if(first)throw first;
     if(exit.code===0&&objectRetention?.first)throw new VmBuildError(objectRetention.first,'vm-object-retention');
-    return{...exit,objectRetention};
+    return{...exit,objectRetention,processObservation};
   }
   // Internal source-built bootstrap evidence only; no public CLI or supported
   // execution contract selects this independently anchored cold prefix.
