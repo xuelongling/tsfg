@@ -4,6 +4,7 @@
 #include "dialect.h"
 #include "native_cost.h"
 #include "nullable.h"
+#include "nullable-wire.h"
 #include "mlir/Dialect/Func/IR/FuncOps.h"
 #include "mlir/Dialect/ControlFlow/IR/ControlFlowOps.h"
 #include "mlir/IR/DialectRegistry.h"
@@ -40,6 +41,7 @@ int main(int argc, char **argv) {
   }
   if (argc != 2 || (llvm::StringRef(argv[1]) != "--canonicalize" &&
                     llvm::StringRef(argv[1]) != "--emit-bytecode" &&
+                    llvm::StringRef(argv[1]) != "--emit-nullable-candidate" &&
                     llvm::StringRef(argv[1]) != "--optimize")) {
     llvm::errs() << "[core-ir-command] expected --canonicalize with IR on stdin\n";
     return 2;
@@ -62,10 +64,11 @@ int main(int argc, char **argv) {
   }
   const bool reference = module->getOperation()->hasAttr("tsfg_core.reference");
   const bool nullable = tsfg::nullable::usesCandidate(*module);
+  const bool nullableWire = llvm::StringRef(argv[1]) == "--emit-nullable-candidate";
   // The shared legacy stdin/MLIR parser remains unchanged. Apply the private
   // format budget before candidate metadata, typed verification and CFG work.
-  if ((reference || nullable) && (*input)->getBufferSize() > referenceByteBudget) {
-    llvm::errs() << (nullable ? "[core-ir-nullable-budget]" : "[core-ir-reference-budget]")
+  if ((reference || nullable || nullableWire) && (*input)->getBufferSize() > referenceByteBudget) {
+    llvm::errs() << (nullable || nullableWire ? "[core-ir-nullable-budget]" : "[core-ir-reference-budget]")
                  << " input exceeds candidate byte budget\n";
     return 3;
   }
@@ -79,6 +82,17 @@ int main(int argc, char **argv) {
     return 3;
   }
   if (mlir::failed(tsfg::verifyCoreModule(*module))) return 3;
+  if (nullableWire) {
+    if (!nullable) {
+      llvm::errs() << "[r04-core-nullable-required] --emit-nullable-candidate requires a marked nullable candidate module\n";
+      return 3;
+    }
+    std::vector<uint8_t> packet;
+    if (mlir::failed(tsfg::nullableCandidateBytecode(*module, packet))) return 3;
+    llvm::sys::ChangeStdoutToBinary();
+    llvm::outs().write(reinterpret_cast<const char *>(packet.data()), packet.size());
+    return 0;
+  }
   if (llvm::StringRef(argv[1]) == "--emit-bytecode") {
     if (nullable) {
       llvm::errs() << "[r04-core-nullable-unsupported] wire9 cannot encode a nullable candidate module\n";
