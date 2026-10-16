@@ -155,6 +155,74 @@ export async function createVmLinkObjectRetention({stage,logPath,output,counterO
 }
 const runtimeSources = [...["root", "bytecode", "vm", "runtime", "main", "contract", "module_format", "module", "request", "host_counter", "clock", "execution_frame", "scalar"].map(name => `runtime/${name}.zig`), "runtime/host_counter.c", "runtime/host_counter_bridge.c"];
 
+const artifactMetadata = value => Object.fromEntries(
+  ['dev','ino','mode','nlink','size','mtimeNs','ctimeNs','birthtimeNs'].map(key => [key,String(value[key])]));
+const sameArtifact = (left,right) => JSON.stringify(left) === JSON.stringify(right);
+
+// Copy only the preflight length. EOF and metadata checks detect growth without
+// ever writing the extra byte; keep partial files and the original failure.
+async function copyVmArtifact(state,observed) {
+  let source,sink,first;
+  const hash=createHash('sha256');
+  try {
+    source=await open(state.source,'r');
+    state.fdBefore=artifactMetadata(await source.stat({bigint:true}));
+    if(!sameArtifact(state.before,state.fdBefore))throw new VmBuildError('VM artifact changed','vm-output-integrity');
+    sink=await open(state.retained.path,'wx');
+    const buffer=Buffer.alloc(1048576),length=Number(observed.size);
+    while(state.bytes<length) {
+      const n=(await source.read(buffer,0,Math.min(buffer.length,length-state.bytes),state.bytes)).bytesRead;
+      if(n===0)throw new VmBuildError('VM artifact early EOF','vm-output-integrity');
+      hash.update(buffer.subarray(0,n));state.bytes+=n;
+      let offset=0;
+      while(offset<n) {
+        const wrote=(await sink.write(buffer,offset,n-offset,null)).bytesWritten;
+        if(wrote===0)throw new VmBuildError('VM artifact short write','vm-output-integrity');
+        offset+=wrote;state.retained.writeBytes+=wrote;
+      }
+    }
+    state.EOF=(await source.read(buffer,0,1,state.bytes)).bytesRead;
+    state.fdAfter=artifactMetadata(await source.stat({bigint:true}));
+    if(state.EOF!==0||!sameArtifact(state.fdBefore,state.fdAfter))
+      throw new VmBuildError('VM artifact changed','vm-output-integrity');
+    await sink.sync();state.retained.fsync=true;state.sha256='sha256:'+hash.digest('hex');
+  } catch(error) { first=error; }
+  finally {
+    if(source)try{await source.close();state.sourceClosed=true;}catch(error){first??=error;}
+    if(sink)try{await sink.close();state.retained.writeClosed=true;}catch(error){first??=error;}
+  }
+  if(!first)try {
+    state.after=artifactMetadata(await lstat(state.source,{bigint:true}));
+    if(!sameArtifact(state.before,state.after))throw new VmBuildError('VM artifact changed','vm-output-integrity');
+  }catch(error){first=error;}
+  if(first){state.error=String(first);throw first;}
+}
+
+/** Both pass artifacts must fit before any destination is created. Limits may
+ * tighten the production policy, but cannot enlarge it. */
+export async function copyVmBuildSnapshots({stage,publish,label,maximumFileBytes=67108864,maximumTotalBytes=134217728}) {
+  if(!/^build-[0-3]$/.test(label)||!Number.isSafeInteger(maximumFileBytes)||maximumFileBytes<1||maximumFileBytes>67108864||
+      !Number.isSafeInteger(maximumTotalBytes)||maximumTotalBytes<1||maximumTotalBytes>134217728)
+    throw new VmBuildError('VM snapshot byte policy or label','vm-output-integrity');
+  const result={artifacts:[],first:null};
+  const observations=[];
+  let total=0;
+  try {
+    for(const extension of ['exe','pdb']) {
+      const source=path.join(publish,'tsfg-vm.'+extension),observed=await lstat(source,{bigint:true});
+      const state={source,bytes:0,sha256:null,EOF:null,sourceClosed:false,before:artifactMetadata(observed),
+        fdBefore:null,fdAfter:null,after:null,retained:{path:path.join(stage,label+'.'+extension),
+          writeBytes:0,fsync:false,writeClosed:false},error:null};
+      result.artifacts.push(state);observations.push(observed);
+      if(!observed.isFile()||observed.size>BigInt(maximumFileBytes)||observed.size>BigInt(maximumTotalBytes-total))
+        throw new VmBuildError('VM snapshot artifact size','vm-output-integrity');
+      total+=Number(observed.size);
+    }
+    for(const [index,state] of result.artifacts.entries())await copyVmArtifact(state,observations[index]);
+  }catch(error){result.first=String(error);error.snapshot=result;throw error;}
+  return result;
+}
+
 async function ordinaryAncestor(directory) {
   for (let current = directory;; current = path.dirname(current)) {
     const state = await lstat(current).catch(error => { if (error.code === "ENOENT") return undefined; throw error; });
@@ -174,9 +242,6 @@ async function ordinaryAncestor(directory) {
 export async function retainVmBootstrapArtifacts({stage,product,publish,identity,sha256,command=null,objectRetention=null,
     counterSource=null,objectRoots=[path.join(stage,'zig-local')],maximumFileBytes=67108864,maximumTotalBytes=134217728}) {
   const storage=path.join(stage,'bootstrap-evidence');
-  const keys=['dev','ino','mode','nlink','size','mtimeNs','ctimeNs','birthtimeNs'];
-  const metadata=value=>Object.fromEntries(keys.map(key=>[key,String(value[key])]));
-  const same=(left,right)=>JSON.stringify(left)===JSON.stringify(right);
   const contained=file=>{const relative=path.relative(stage,file);
     if(!relative||relative==='..'||relative.startsWith('..'+path.sep)||path.isAbsolute(relative))
       throw new VmBuildError('bootstrap artifact outside owned stage','vm-output-integrity');};
@@ -229,33 +294,11 @@ export async function retainVmBootstrapArtifacts({stage,product,publish,identity
       before:null,fdBefore:null,fdAfter:null,after:null,retained:{path:path.join(storage,String(index).padStart(4,'0')+'.bin'),
         writeBytes:0,fsync:false,writeClosed:false},error:null};
     result.artifacts.push(state);if(objects.includes(file))result.compilerObjects.push(state);
-    let source,sink;const hash=createHash('sha256');
     try{
-      contained(file);await ordinary(file);const observed=await lstat(file,{bigint:true});state.before=metadata(observed);
+      contained(file);await ordinary(file);const observed=await lstat(file,{bigint:true});state.before=artifactMetadata(observed);
       if(!observed.isFile()||observed.size>BigInt(maximumFileBytes)||observed.size>BigInt(maximumTotalBytes-total))
         throw new VmBuildError('bootstrap artifact size','vm-output-integrity');
-      source=await open(file,'r');state.fdBefore=metadata(await source.stat({bigint:true}));
-      if(!same(state.before,state.fdBefore))throw new VmBuildError('bootstrap artifact changed','vm-output-integrity');
-      sink=await open(state.retained.path,'wx');const buffer=Buffer.alloc(1048576);
-      while(state.bytes<Number(observed.size)){
-        const read=await source.read(buffer,0,Math.min(buffer.length,Number(observed.size)-state.bytes),state.bytes);
-        if(read.bytesRead===0)throw new VmBuildError('bootstrap artifact early EOF','vm-output-integrity');
-        hash.update(buffer.subarray(0,read.bytesRead));state.bytes+=read.bytesRead;total+=read.bytesRead;
-        let offset=0;while(offset<read.bytesRead){const write=await sink.write(buffer,offset,read.bytesRead-offset,null);
-          if(write.bytesWritten===0)throw new VmBuildError('bootstrap artifact short write','vm-output-integrity');
-          offset+=write.bytesWritten;state.retained.writeBytes+=write.bytesWritten;}
-      }
-      state.EOF=(await source.read(buffer,0,1,state.bytes)).bytesRead;
-      state.fdAfter=metadata(await source.stat({bigint:true}));
-      if(state.EOF!==0||!same(state.fdBefore,state.fdAfter))throw new VmBuildError('bootstrap artifact changed','vm-output-integrity');
-      await sink.sync();state.retained.fsync=true;state.sha256='sha256:'+hash.digest('hex');
-    }catch(error){primary=error;state.error=String(error);}
-    finally{
-      if(source)try{await source.close();state.sourceClosed=true;}catch(error){primary??=error;state.error??=String(error);}
-      if(sink)try{await sink.close();state.retained.writeClosed=true;}catch(error){primary??=error;state.error??=String(error);}
-    }
-    if(!primary)try{state.after=metadata(await lstat(file,{bigint:true}));
-      if(!same(state.before,state.after))throw new VmBuildError('bootstrap artifact changed','vm-output-integrity');
+      await copyVmArtifact(state,observed);total+=state.bytes;
     }catch(error){primary=error;state.error=String(error);}
     if(primary)break;
   }
@@ -369,8 +412,7 @@ export async function executeVmTarget({ options, runtime, tools, productRoot, wo
     await copyFile(path.join(product,"runtime/host_certificate.zig"),path.join(stage,`${label}.certificate.zig`));
     const exit=await run({executable:tools.zig,args,cwd:product,environment:env,label});
     if(exit.code!==0)throw new VmBuildError(`VM source build failed (${exit.code}/${exit.signal}); see ${stage}`);
-    await copyFile(executable,path.join(stage,`${label}.exe`));
-    await copyFile(path.join(publish,"tsfg-vm.pdb"),path.join(stage,`${label}.pdb`));
+    await copyVmBuildSnapshots({stage,publish,label});
     if(pass===0){
       const bootstrap=await retainVmBootstrapArtifacts({stage,product,publish,identity,sha256,
         objectRoots:[exit.objectRetention.storage],objectRetention:exit.objectRetention,
