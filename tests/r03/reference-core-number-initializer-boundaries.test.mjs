@@ -128,7 +128,7 @@ test('every actual numeric occurrence rejects missing or mismatched context and 
 });
 test('actual seven number fields retain exact constants stores and anchors through real C++ roundtrip and optimization', async () => {
   const data = await actual(), core = lowerHir(data.hir);
-  assert.equal(schema.version, 3);
+  assert.equal(schema.version, 4);
   const first = await invokeCore(core); accepted(first);
   const roundtrip = await invokeCore(first.stdout); accepted(roundtrip);
   const optimized = await invokeCore(first.stdout, '--optimize'); accepted(optimized);
@@ -137,13 +137,14 @@ test('actual seven number fields retain exact constants stores and anchors throu
   assert.equal(printReferenceHir(data.hir), data.unresolved);
   await cppRejected(first.stdout, /\[r04-core-reference-unsupported\]/, '--emit-bytecode');
 });
-test('private number initializer Core rejects v2 and a mixed v3 identity with the old schema', async () => {
+test('private number initializer Core rejects old versions and mixed v4 identities with old schemas', async () => {
   const { hir } = await actual(), core = lowerHir(hir);
-  await cppRejected(changeMetadata(core, 'version = 3 : i64', 'version = 2 : i64'),
+  for (const version of [2,3]) await cppRejected(changeMetadata(core, 'version = 4 : i64', 'version = ' + version + ' : i64'),
     /\[core-ir-reference-metadata\] candidate version differs/);
-  await cppRejected(changeMetadata(core, 'schema = ' + JSON.stringify(sha256(canonical(schema))),
-    'schema = "sha256:d36b3094aa1504a71beb8b7fcb7370364b0e3b8c2d49c4d0e16a63641f07d692"'),
-    /\[core-ir-reference-metadata\] candidate schema differs/);
+  for (const oldSchema of ['sha256:d36b3094aa1504a71beb8b7fcb7370364b0e3b8c2d49c4d0e16a63641f07d692',
+    'sha256:0120455de4db6b3c3c348f5e2504a2a4ab18026a83978874e1489cd5370ca313'])
+    await cppRejected(changeMetadata(core, 'schema = ' + JSON.stringify(sha256(canonical(schema))), 'schema = ' + JSON.stringify(oldSchema)),
+      /\[core-ir-reference-metadata\] candidate schema differs/);
 });
 test('Core-only malformed floating constants fail the existing C++ constant verification boundary', async () => {
   const { hir } = await actual(), core = lowerHir(hir);
@@ -151,4 +152,36 @@ test('Core-only malformed floating constants fail the existing C++ constant veri
   // floating diagnostic. These malformed Core values are not Source programs.
   for (const bits of ['3ff00000','gff0000000000000']) await cppRejected(changeConstant(core, bits),
     /\[core-ir-invalid\] parse or verification failed/);
+});
+
+// Malformed owned HIR only. These failures belong to context/witness validation
+// before the unchanged facts digest; they are not new official Source facts or
+// proof that an RNE conversion was attempted.
+test('actual number field assignment rejects missing or inconsistent occurrence context and official witness', async () => {
+  const [bytes,bindingBytes] = await Promise.all([
+    readFile(fixture('readonly.facts.json')),readFile(fixture('readonly.binding.json')),
+  ]);
+  assert.equal(sha256(bytes),'sha256:d6e963a23c6b628951fd722ed8179ea900e21a823c91bcc0b35b831f04b67782');
+  assert.equal(sha256(bindingBytes),'sha256:d371df01bac9ed2ae818a531a86197cb6daa7bb0cb2438de84e5a673d0f8470f');
+  const owned = buildReferenceHir(decodeReferenceFacts(bytes,JSON.parse(bindingBytes.toString('utf8'))));
+  const hir = readReferenceHir(Buffer.from(printReferenceHir(owned))); assert.deepEqual(hir,owned);
+  const cases = [
+    {label:'missing context',category:'schema',mutate:write => { delete write.right.numericLiteral.contextType; }},
+    {label:'empty context',category:'literal',mutate:write => { write.right.numericLiteral.contextType = ''; }},
+    {label:'wrong context',category:'literal',mutate:write => { write.right.numericLiteral.contextType = write.right.type; }},
+    {label:'missing witness',category:'schema',mutate:write => { write.compatibility = null; }},
+    {label:'false assignability',category:'witness',mutate:write => { write.compatibility.assignable = false; }},
+    {label:'wrong witness source',category:'witness',mutate:write => { write.compatibility.sourceType = write.left.type; }},
+    {label:'wrong witness target',category:'witness',mutate:write => { write.compatibility.targetType = write.right.type; }},
+    {label:'wrong witness anchor',category:'witness',mutate:write => { write.compatibility.origin.start++; }},
+    {label:'wrong witness file',category:'witness',mutate:write => { write.compatibility.origin.source = '/original/minimal-scalars-v2.d.ts'; }},
+  ];
+  for (const item of cases) {
+    const changed = structuredClone(hir), holder = changed.classes.find(value => value.name === 'Holder'); assert.ok(holder);
+    const write = holder.constructor.body[1].expression; assert.equal(write.kind,'ref.field.write');
+    assert.equal(write.right.kind,'scalar.literal.unresolved'); assert.equal(write.right.token,'2');
+    item.mutate(write); assert.equal(changed.context.factsDigest,hir.context.factsDigest);
+    hirRejected(() => readReferenceHir(Buffer.from(canonical(changed))),item.category,item.label + ' cold');
+    hirRejected(() => lowerHir(changed),item.category,item.label + ' public lower');
+  }
 });
