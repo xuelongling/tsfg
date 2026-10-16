@@ -3,6 +3,7 @@ import { canonical, own, sha256, scalarTypeIds, functionIdentity, signatureHash 
 import { decodeGenericPackage, genericDefinitionKey, genericPackageFormat, genericPackageLimits } from './generic-package.mjs';
 import { checkGenericJsonBudget } from './generic-package-shape.mjs';
 import { readGenericJson } from './generic-json.mjs';
+import { emitScalarCore } from './scalar-core-emitter.mjs';
 import { genericInstanceKey, genericPackageContext, validateGenericInstanceResult } from './generic-instance.mjs';
 import bytecodeSchema from '../contracts/bytecode.schema.json' with { type: 'json' };
 
@@ -193,4 +194,14 @@ export function readGenericHir(bytes) {
   const hir = verifyGenericHir(input.value);
   check(input.text === printGenericHir(hir), 'canonical');
   return hir;
+}
+
+// A separate candidate exchange identity, never the registered Core or R04 family.
+export const genericCoreFormat = own({ version: 'tsfg.generic-concrete-core-candidate.v1',
+  bytecodeSchema: 'unadopted:tsfg.generic-concrete-core-candidate.v1' });
+export function lowerGenericHir(hir) {
+  const verified = verifyGenericHir(hir);
+  return emitScalarCore({ exchange: genericCoreFormat, inputIdentity: verified.inputIdentity,
+    source: { path: verified.source.path, hash: 'sha256:' + verified.source.digest, length: verified.source.length },
+    target: verified.target, functions: verified.functions.map(fn => ({ ...fn, symbol: fn.linkageName })) });
 }

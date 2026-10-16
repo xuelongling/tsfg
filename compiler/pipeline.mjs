@@ -81,7 +81,7 @@ async function produceBytecode(hir, options) {
   }
 }
 
-const sessionInputs = ["compiler/frontend.mjs", "compiler/hir.mjs", "compiler/identity.mjs",
+const sessionInputs = ["compiler/frontend.mjs", "compiler/hir.mjs", "compiler/identity.mjs", "compiler/scalar-core-emitter.mjs",
   "compiler/module-facts.mjs", "compiler/module-hir.mjs", "compiler/modules.mjs",
   "compiler/pipeline.mjs", "compiler/float.mjs", "contracts/registry.json", "contracts/hir.schema.json", "contracts/bytecode.schema.json"];
 async function sessionFingerprint() {
