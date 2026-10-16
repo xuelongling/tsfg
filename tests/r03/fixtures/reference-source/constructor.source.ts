@@ -1,0 +1,1 @@
+export class Counter { value: number = 1; constructor(seed: number) { this.value = seed; } add(delta: number): number { this.value = this.value + delta; return this.value; } }

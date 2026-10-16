@@ -1,0 +1,178 @@
+{
+  "role": "actual official Program owned graph candidate; source/config correspondence only, no admission/authentication/SourceEXE proof",
+  "producerBASE": "7cc0e89afc5f0b95fe565dbd3010e4c35c42beda",
+  "producerHEAD": "aa68f63b66f844328f521709385522bd1e8aafc6",
+  "runRoot": "E:/ws/pro_tsfg/.scratch/tsfg_r03/M12-class-facts-checks-20261016/owned-output-budget-red-first",
+  "processPid": 39140,
+  "aggregateExit": 1,
+  "canonicalCandidateGraphsTest": "PASS",
+  "otherResult": "dense 4096 complete 1500 edges PASS; 1024 controlled output-budget limit missing RED",
+  "producerFiles": [
+    {
+      "relative": "tsc/cmd/tsfg-frontend/class_graph.go",
+      "bytes": 8129,
+      "sha256": "346a29e481843e7aad2c8ec7972822a5e9cff8f0b034e25371b8c718d13c2a16"
+    },
+    {
+      "relative": "tsc/cmd/tsfg-frontend/class_source.go",
+      "bytes": 7868,
+      "sha256": "645da1e2fd658dfe9a4bd854e3bcf1a2118e12a450048cc4d4a0917f41266dbe"
+    },
+    {
+      "relative": "tsc/cmd/tsfg-frontend/class_declarations.go",
+      "bytes": 8068,
+      "sha256": "9f0a73bbc5abdc7f56c48e1cc0560bbc6dc9fa74a7a52faff004472d4db7caaa"
+    },
+    {
+      "relative": "tsc/cmd/tsfg-frontend/class_body.go",
+      "bytes": 6902,
+      "sha256": "c5723f8698b298425afe73f966e49381107a9070cb43c2a647de59abe8697b69"
+    },
+    {
+      "relative": "tsc/cmd/tsfg-frontend/class_methods.go",
+      "bytes": 5136,
+      "sha256": "c89804bab7826459b8beaad56c10442d31345b990a1af160e3b53bdd8688e19d"
+    },
+    {
+      "relative": "tsc/cmd/tsfg-frontend/class_calls.go",
+      "bytes": 5393,
+      "sha256": "a914d876b0c8f9c5b66377829a30075ba7093bd45541f819be67522f1fc63b2b"
+    },
+    {
+      "relative": "tsc/cmd/tsfg-frontend/class_constructors.go",
+      "bytes": 4784,
+      "sha256": "c64499c2a4ea72b705392fba52dd25394dd621707da7da400c319d9ae1a55b73"
+    },
+    {
+      "relative": "tsc/cmd/tsfg-frontend/class_inheritance.go",
+      "bytes": 2568,
+      "sha256": "2b2347fc208d5c84635ef9d674721bf892fdca67e951540f11d6196eae61e066"
+    },
+    {
+      "relative": "tsc/cmd/tsfg-frontend/class_relations.go",
+      "bytes": 2334,
+      "sha256": "5c2eefc0212db3ffc0c243881db4ff8264f6daccca9f6a4776955cf7c0c038e7"
+    },
+    {
+      "relative": "tsc/cmd/tsfg-frontend/class_source_test.go",
+      "bytes": 5538,
+      "sha256": "540f548d16986827a5a9e2cac942fcafb08dfaac5ba3fe8af86e3b1dab8a70d2"
+    },
+    {
+      "relative": "tsc/cmd/tsfg-frontend/class_inheritance_test.go",
+      "bytes": 9578,
+      "sha256": "bc9e3de2693a32699c089c9b5564a4f7934c5d861f37dbcdc5a689dd5af38100"
+    },
+    {
+      "relative": "tsc/internal/checker/tsfg_class_facts.go",
+      "bytes": 2164,
+      "sha256": "3918bdc586133c8a1cdb401346aedb0cbdbb6fb94bf9a47a5481d181cd393326"
+    },
+    {
+      "relative": "tsc/cmd/tsfg-frontend/class_identity_test.go",
+      "bytes": 6987,
+      "sha256": "d3cd7def52600c158b30356522b537f3c91b2081d2d39e72672de8740fd19193"
+    },
+    {
+      "relative": "tsc/cmd/tsfg-frontend/class_options.go",
+      "bytes": 4311,
+      "sha256": "ff8f9bac4157d5092979eef72c280b8586acc2305ded67bffb5b7f9b0365f1a1"
+    },
+    {
+      "relative": "tsc/cmd/tsfg-frontend/class_readonly_test.go",
+      "bytes": 8812,
+      "sha256": "1b973be8ea1c5f3ec25b17cf1a05ddae01b96cc718317ef519bd001a4c6a49e0"
+    },
+    {
+      "relative": "tsc/cmd/tsfg-frontend/class_implicit_constructor_test.go",
+      "bytes": 5781,
+      "sha256": "e190a27bdd04288dfc76bcc82d0f83a3d8b6d249d16500406974f83142c7217f"
+    },
+    {
+      "relative": "tsc/cmd/tsfg-frontend/class_candidate_graphs_test.go",
+      "bytes": 1755,
+      "sha256": "2e387977d41c183bbdcfa04b19728f6f73643439e71121025a5e1f4cb0c2d176"
+    },
+    {
+      "relative": "tsc/cmd/tsfg-frontend/class_implicit_constructor.go",
+      "bytes": 4003,
+      "sha256": "0962b420c060f642860989a5a37876820f8da069fac604b9383310bdecf2dab5"
+    },
+    {
+      "relative": "tsc/cmd/tsfg-frontend/class_construct_test.go",
+      "bytes": 6062,
+      "sha256": "4feb5c5c15965c2ef42d45642c3a8141b0de9a7133092ed260a6ac1df7162416"
+    },
+    {
+      "relative": "tsc/cmd/tsfg-frontend/class_construct.go",
+      "bytes": 3291,
+      "sha256": "840ea77f186b526b334574d0906b74bf40395929b035677a898e029b022564e7"
+    },
+    {
+      "relative": "tsc/cmd/tsfg-frontend/class_options_utf8_test.go",
+      "bytes": 2376,
+      "sha256": "ce79441774b50a447253a5337d484dc6a642baa50a73e97a8bb35915d6b90d61"
+    },
+    {
+      "relative": "tsc/internal/json/json.go",
+      "bytes": 2797,
+      "sha256": "b9108c4cc0ba09f9bdb58baa7b8799d3746c3228f8e01de99c32507e2b50fdfc"
+    },
+    {
+      "relative": "tsc/internal/collections/ordered_map.go",
+      "bytes": 7903,
+      "sha256": "5a35d748871286eb1aabccbca35fd9026da18a50c6fc9d26dd5f8368ac74964c"
+    },
+    {
+      "relative": "tsc/internal/collections/ordered_map_test.go",
+      "bytes": 5546,
+      "sha256": "5859fe31f61f221a5ef714714ac08666c71d5c599591235612a19a849023a38c"
+    },
+    {
+      "relative": "tsc/cmd/tsfg-frontend/class_reference_identity_test.go",
+      "bytes": 4600,
+      "sha256": "7b2539743bf65ae280c7cdb6de496c4e0512c26d17edd7a7f3c0c0d8c74621cb"
+    },
+    {
+      "relative": "tsc/cmd/tsfg-frontend/class_output_budget_test.go",
+      "bytes": 4707,
+      "sha256": "74ccd922f4ab6d516e132953401a178d83bfca1aa14a1b0488f655624c323f0e"
+    }
+  ],
+  "unchangedFive": [
+    {
+      "name": "constructor",
+      "sha256": "fb61582d651684bc7330f4f5674d6276c20013fd44af06d809220d8fab30785a"
+    },
+    {
+      "name": "inheritance",
+      "sha256": "ebbe24c92fc6110f06ffd1e68e7e4472c3d4f9f6a7c8ff9bacbc5ea2037a9d3b"
+    },
+    {
+      "name": "readonly",
+      "sha256": "5558c3121ce960cdd2bbf82d04cf00a0f1bc60f6143e7be7604abb466d060538"
+    },
+    {
+      "name": "implicit-derived",
+      "sha256": "a210c6e4880348589f8ef0bdaaa70882f569fd63714ddf1d58eb2cdfa2965bb4"
+    },
+    {
+      "name": "construct",
+      "sha256": "4b456bf2c10a9a43287dbf4dd34154a0a39e3d7c49daf14237d86bcc3fa4eeec"
+    }
+  ],
+  "graph": {
+    "name": "reference-identity",
+    "factsPath": "E:/ws/pro_tsfg/.scratch/tsfg_r03/M12-class-facts-checks-20261016/candidate-graph-reference-identity/reference-identity.facts.json",
+    "bindingPath": "E:/ws/pro_tsfg/.scratch/tsfg_r03/M12-class-facts-checks-20261016/candidate-graph-reference-identity/reference-identity.binding.json",
+    "sourcePath": "E:/ws/pro_tsfg/.scratch/tsfg_r03/M12-class-facts-checks-20261016/candidate-graph-reference-identity/reference-identity.source.ts",
+    "declarationPath": "E:/ws/pro_tsfg/.scratch/tsfg_r03/M12-class-facts-checks-20261016/candidate-graph-reference-identity/minimal-scalars-v2.d.ts",
+    "bytes": 12709,
+    "sha256": "e77f6989002d5398c2b9603ead12c60edee8b60db08c23a0b8d59ec88a33d82f",
+    "bindingSHA256": "39caa800b6284ce9d913c8c0ed574b5bd9cc349224325dcf3cc385ecdcc63fee",
+    "sourceBytes": 319,
+    "sourceSHA256": "62f36fbe8a4e05ebad433b4bba17d9f70398a6b04597b5ac29dbd2c5483702f9",
+    "declarationBytes": 362,
+    "declarationSHA256": "d629059f5175a580a8a7b19531c7d8cff1bfa7b61320f6638cf4ee25fbf5a141"
+  }
+}
