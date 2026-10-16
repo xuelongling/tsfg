@@ -1,8 +1,10 @@
 <!-- SPDX-License-Identifier: MIT -->
 
-# tsfg.bytecode 0.8.0
+# tsfg.bytecode 0.9.0
 
-The registered 0.8.0 binding-origin records use the implemented M13 owned shape: module globals carry explicit `bindingKind`. Ordinary bindings retain `tsfg.global` identity, including legal `$default` and escaped identifiers. A scalar default export expression is readonly and uses `sha256(utf8("tsfg.default-export-binding.v1" NUL sourcePath NUL sourceHash NUL moduleIdentity NUL scalarName NUL decimalUTF16Start NUL decimalUTF16End))`; digest components include the `sha256:` prefix and ranges retain official UTF-16 expression anchors. The Snapshot/HIR importer verifies its default export and initializer association. Display names grant no generated privileges. The global flags byte is 0 ordinary readonly, 1 ordinary writable, or 2 generated readonly; 3 and unknown values are rejected. Core `binding_kind` and Runtime inspection `bindingKind` expose the same origin. Exact changed draft schema digests reject old or mixed packets. This exact development format establishes no older-format compatibility window; source admission and formal Core/Runtime acceptance remain separate obligations.
+Prospective isolated M14 candidate: this document/registry/schema combination has not been adopted by the Owner or integrated into Product/M13. Direct C++ protocol checks do not establish formal artifact admission or Runtime execution.
+
+The registered 0.9.0 binding-origin records use the implemented M13 owned shape: module globals carry explicit `bindingKind`. Ordinary bindings retain `tsfg.global` identity, including legal `$default` and escaped identifiers. A scalar default export expression is readonly and uses `sha256(utf8("tsfg.default-export-binding.v1" NUL sourcePath NUL sourceHash NUL moduleIdentity NUL scalarName NUL decimalUTF16Start NUL decimalUTF16End))`; digest components include the `sha256:` prefix and ranges retain official UTF-16 expression anchors. The Snapshot/HIR importer verifies its default export and initializer association. Display names grant no generated privileges. The global flags byte is 0 ordinary readonly, 1 ordinary writable, or 2 generated readonly; 3 and unknown values are rejected. Core `binding_kind` and Runtime inspection `bindingKind` expose the same origin. Exact changed draft schema digests reject old or mixed packets. This exact development format establishes no older-format compatibility window; source admission and formal Core/Runtime acceptance remain separate obligations.
 
 This exact, same-repository development format is the formal R04 compiler to
 Zig Runtime seam. It has no published or supported older external consumer.
@@ -11,18 +13,25 @@ invalidate caches and are rejected. The registry owns version and JCS schema
 hash. The JSON schema owns wire field order and bounds.
 
 All integers use little endian. The 80-byte header is magic `TSFGTBC0`, u32 wire
-version 8, raw 32-byte schema SHA256, u32 total length and raw 32-byte SHA256 of
+version 9, raw 32-byte schema SHA256, u32 total length and raw 32-byte SHA256 of
 the payload. UTF8 strings have a u32 length, no terminator or padding. The
 checksum supplies integrity, not publisher authenticity. Target/triple and LLVM
 DataLayout are fixed in the schema. LLVM derives i32 and pointer size/alignment; Zig checks
 its actual target. Logical source paths preserve the leading root slash and
-never cause a host file read. Empty/dot/parent components, backslashes and drive
-colons reject. Entity identity domains remain unchanged: SHA256 of
+never cause a host file read. Colons are ordinary logical characters, including
+within a path component; they never designate a host drive. Invalid UTF8, NUL,
+empty/dot/parent components and backslashes reject. The primary source must end
+in .ts and cannot be a declaration .d.ts; module source tables retain declaration
+paths for host declarations. Exact path bytes remain in IDs and source maps.
+Entity identity domains remain unchanged: SHA256 of
 `tsfg.type\0<scalar>`, `tsfg.signature\0(<comma-separated scalar parameters>)-><scalar>` and
 `tsfg.function\0<sourcePath>\0<name>\0<signatureHashHex>`.
 
-Capability19 admits 1..256 nominal integer/bool/f32/f64 functions, each with 0..64 scalar parameters,
-up to256 reachable blocks,4096 SSA registers and8192 instructions. Global
+Capability19 admits 1..512 nominal integer/bool/f32/f64 functions, each with 0..64 scalar parameters,
+up to256 reachable blocks,4096 SSA registers and8192 instructions. Only the complete
+function table capacity changes in0.9; per-function and execution budgets remain
+unchanged. Existing u16 function counts and low-u16 call targets represent512
+without a record-layout change. Global
 payload fields are target/triple/layout strings, i32 size/alignment u16, pointer bits/alignment u16,
 capability u32, input/source hashes, logical source path, source length u32,
 moduleMode u8 and function count u16. moduleMode0 always has its explicit zero
@@ -122,11 +131,13 @@ The `TSFGREQ1` transport remains u32 count plus length-delimited R04 packets,
 1..128 matching requests and total1MiB/no trailing bytes, served by one Runtime.
 It adds no language semantics.
 
-The current registered development contracts are 0.8.0, with bytecode wire8 and capability19. They include nominal integers, bool, f32/f64 and owned module/authorized-host records. docs/r03-integer-vm.md records the earlier M07 wire6/capability17 slice; it does not describe the current wire. Old and mixed schema identities are rejected, and no older-format compatibility window is promised. Scalar identities, original source anchors, complete verification and logical/physical budget ordering remain in force.
+This prospective HIR/Core and bytecode candidate uses0.9.0, bytecode wire9 and capability19; FrontendSnapshot remains0.8.0. They include nominal integers, bool, f32/f64 and owned module/authorized-host records. docs/r03-integer-vm.md records the earlier M07 wire6/capability17 slice; it does not describe the current wire. Old and mixed schema identities are rejected, and no older-format compatibility window is promised. Scalar identities, original source anchors, complete verification and logical/physical budget ordering remain in force.
 
-The global operation type-range registration corrects an omitted description of
-already implemented f32/f64 support. Contract SemVer0.8.0 and wire8 remain
-unchanged because this restores the existing development semantics; the JCS
-schema hash and derived Contract Set ID change atomically across the producer,
-loader and fixtures under accepted ECP-0002. Prior schema/cache identities stay
-incompatible. This correction makes no formal Runtime acceptance claim.
+Historically, the0.8 global operation type-range registration corrected an omitted
+description of already implemented f32/f64 support. At that earlier correction,
+Contract SemVer0.8.0 and wire8 remained unchanged; its JCS schema hash and derived
+Contract Set ID changed atomically across producer, loader and fixtures under
+accepted ECP-0002. That historical correction did not establish formal Runtime
+acceptance. The present0.9 candidate uses wire9 and its new exact schema.
+
+The0.9 producer/reader reject old wire8, Core0.8, wrong schema hashes and mixed identities. The generic owned-HIR candidate still proves its own package/instance linkage before emitting the same concrete Core0.9 scalar operations; Runtime receives no generic definitions or Source session. Source package/IO/HIR family adoption and Source executable admission remain separate.

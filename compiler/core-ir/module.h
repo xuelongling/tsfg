@@ -3,11 +3,14 @@
 #include "mlir/Dialect/Func/IR/FuncOps.h"
 #include "mlir/IR/BuiltinOps.h"
 #include "mlir/IR/OpDefinition.h"
+#include "llvm/ADT/StringRef.h"
 #include <array>
 #include <string>
 #include <vector>
 
 namespace tsfg {
+// Logical metadata paths never request a host file read.
+bool validSourcePath(llvm::StringRef path, bool allowDeclarations);
 using ModuleHash = std::array<uint8_t, 32>;
 struct ModuleSource { ModuleHash hash; std::string path; uint32_t length; };
 struct ModuleDeclaration { ModuleHash id; uint16_t source, initializer; std::vector<uint16_t> dependencies; };

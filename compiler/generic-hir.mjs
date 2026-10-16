@@ -6,8 +6,9 @@ import { readGenericJson } from './generic-json.mjs';
 import { emitScalarCore } from './scalar-core-emitter.mjs';
 import { genericInstanceKey, genericPackageContext, validateGenericInstanceResult } from './generic-instance.mjs';
 import bytecodeSchema from '../contracts/bytecode.schema.json' with { type: 'json' };
+import registry from '../contracts/registry.json' with { type: 'json' };
 
-// Explicit candidate family: this is not tsfg.hir 0.8 or an accepted Core input.
+// Explicit candidate owned HIR family; scalar SSA uses the same Core exchange.
 // Source result validation is structural correspondence, never Source admission.
 export const genericHirFormat = own({ family: 'tsfg.generic-concrete-hir-candidate', version: 1,
   linkageAlgorithm: 'tsfg.generic-linkage.v1', semanticProfile: 'tsfg-owned-scalar-generics-host-v1' });
@@ -196,9 +197,10 @@ export function readGenericHir(bytes) {
   return hir;
 }
 
-// A separate candidate exchange identity, never the registered Core or R04 family.
-export const genericCoreFormat = own({ version: 'tsfg.generic-concrete-core-candidate.v1',
-  bytecodeSchema: 'unadopted:tsfg.generic-concrete-core-candidate.v1' });
+// The owned generic HIR keeps its own cold verifier and candidate provenance.
+// Its concrete scalars cross exactly the ordinary HIR's Core/R04 exchange.
+export const genericCoreFormat = own({ version: registry['tsfg.hir'].semver,
+  bytecodeSchema: registry['tsfg.bytecode'].schemaHash });
 export function lowerGenericHir(hir) {
   const verified = verifyGenericHir(hir);
   return emitScalarCore({ exchange: genericCoreFormat, inputIdentity: verified.inputIdentity,

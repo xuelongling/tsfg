@@ -23,8 +23,10 @@ pub fn identity(parts: []const []const u8) Hash {
     for (parts) |part| hash.update(part);
     var result: Hash = undefined; hash.final(&result); return result;
 }
-fn pathValid(path: []const u8) bool {
-    if (path.len == 0 or path[0] != '/' or !std.mem.endsWith(u8, path, ".ts") or std.mem.indexOfAny(u8, path, "\\:") != null) return false;
+// Paths are logical source metadata; colon never selects a host drive.
+pub fn validSourcePath(path: []const u8, allow_declarations: bool) bool {
+    if (path.len == 0 or path.len > 4096 or !std.unicode.utf8ValidateSlice(path) or std.mem.indexOfScalar(u8, path, 0) != null
+        or !allow_declarations and std.mem.endsWith(u8, path, ".d.ts") or path[0] != '/' or !std.mem.endsWith(u8, path, ".ts") or std.mem.indexOfScalar(u8, path, '\\') != null) return false;
     var parts = std.mem.splitScalar(u8, path[1..], '/');
     while (parts.next()) |part| if (part.len == 0 or std.mem.eql(u8, part, ".") or std.mem.eql(u8, part, "..")) return false;
     return true;
@@ -55,7 +57,7 @@ pub fn parse(reader: anytype, allocator: std.mem.Allocator) !Tables {
     const sources = try allocator.alloc(SourceFile, try count(reader, 128, 1));
     for (sources, 0..) |*source, index| {
         source.* = .{ .hash = try reader.digest(), .path = try reader.string(4096), .length = try reader.int(u32) };
-        if (!pathValid(source.path)) return reader.reject("r04-module-source", reader.offset);
+        if (!validSourcePath(source.path, true)) return reader.reject("r04-module-source", reader.offset);
         for (sources[0..index]) |previous| if (std.mem.eql(u8, source.path, previous.path)) return reader.reject("r04-module-source", reader.offset);
     }
     tables.sources = sources;

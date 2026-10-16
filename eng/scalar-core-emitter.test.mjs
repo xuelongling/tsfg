@@ -16,7 +16,7 @@ for (const fixture of fixtures) {
     const hir = verifyHir(fixture.hir), before = structuredClone(fixture.hir);
     const text = lowerHir(hir);
     assert.equal(text, lowerHir(readHir(new TextEncoder().encode(printHir(hir)))));
-    assert.match(text, /tsfg_core\.version = "0\.8\.0"/);
+    assert.ok(text.includes('tsfg_core.version = "' + registry['tsfg.hir'].semver + '"'));
     assert.ok(text.includes('tsfg_core.bytecode_schema = "' + registry['tsfg.bytecode'].schemaHash + '"'));
     assert.ok(text.includes('tsfg_core.source_length = ' + hir.source.content.length + ' : i64'));
     assert.ok(text.includes('tsfg_core.source_hash = "' + hir.source.hash + '"'));
@@ -49,14 +49,15 @@ test('ordinary module view retains lifecycle tables and stable emitted symbols',
   assert.match(text, /tsfg_core\.initializer = true/);
   assert.equal((text.match(/event = 1 : i32/g) ?? []).length, 2);
 });
-test('real generic Source facts emit candidate SSA with explicit unadopted exchange identity', () => {
+test('real generic Source facts emit the same concrete Core exchange after independent cold validation', () => {
   const hir = candidate(), before = printGenericHir(hir), text = lowerGenericHir(hir);
-  assert.equal(genericCoreFormat.version, 'tsfg.generic-concrete-core-candidate.v1');
-  assert.equal(genericCoreFormat.bytecodeSchema, 'unadopted:tsfg.generic-concrete-core-candidate.v1');
+  assert.equal(genericCoreFormat.version, registry['tsfg.hir'].semver);
+  assert.equal(genericCoreFormat.bytecodeSchema, registry['tsfg.bytecode'].schemaHash);
   assert.ok(text.includes('tsfg_core.version = "' + genericCoreFormat.version + '"'));
   assert.ok(text.includes('tsfg_core.bytecode_schema = "' + genericCoreFormat.bytecodeSchema + '"'));
   assert.doesNotMatch(text, /tsfg_core\.version = "0\.8\.0"/);
-  assert.ok(!text.includes(registry['tsfg.bytecode'].schemaHash));
+  assert.ok(text.includes(registry['tsfg.bytecode'].schemaHash));
+  assert.doesNotMatch(text, /unadopted:|generic-concrete-core-candidate/);
   assert.ok(text.includes('tsfg_core.source_path = "' + hir.source.path + '"'));
   assert.ok(text.includes('tsfg_core.source_hash = "sha256:' + hir.source.digest + '"'));
   assert.ok(text.includes('tsfg_core.source_length = ' + hir.source.length + ' : i64'));

@@ -8,6 +8,19 @@
 #include <set>
 
 namespace tsfg {
+bool validSourcePath(llvm::StringRef path, bool allowDeclarations) {
+  if (path.empty() || path.size() > 4096 || !path.starts_with("/") || !path.ends_with(".ts")
+      || (!allowDeclarations && path.ends_with(".d.ts")) || path.contains('\\') || path.contains('\0')) return false;
+  const auto *cursor = reinterpret_cast<const llvm::UTF8 *>(path.data());
+  if (!llvm::isLegalUTF8String(&cursor, cursor + path.size())) return false;
+  path = path.drop_front();
+  while (true) {
+    auto [part, rest] = path.split('/');
+    if (part.empty() || part == "." || part == "..") return false;
+    if (rest.empty()) return true;
+    path = rest;
+  }
+}
 namespace {
 ModuleHash hash(llvm::StringRef bytes) {
   return llvm::SHA256::hash(llvm::ArrayRef<uint8_t>(reinterpret_cast<const uint8_t *>(bytes.data()), bytes.size()));
@@ -45,16 +58,6 @@ bool text(mlir::Attribute attribute, std::string &value) {
 bool exact(mlir::DictionaryAttr attributes, llvm::ArrayRef<llvm::StringRef> names) {
   if (!attributes || attributes.size() != names.size()) return false;
   return std::all_of(names.begin(), names.end(), [&](auto name) { return bool(attributes.get(name)); });
-}
-bool sourcePath(llvm::StringRef path) {
-  if (!path.starts_with("/") || !path.ends_with(".ts") || path.contains('\\') || path.contains(':')) return false;
-  path = path.drop_front();
-  while (true) {
-    auto [part, rest] = path.split('/');
-    if (part.empty() || part == "." || part == "..") return false;
-    if (rest.empty()) return true;
-    path = rest;
-  }
 }
 constexpr llvm::StringLiteral names[] = {"none", "i32", "bool", "i8", "i16", "i64", "u8", "u16", "u32", "u64", "isize", "usize", "f32", "f64"};
 uint8_t scalar(mlir::Attribute attribute) {
@@ -110,7 +113,7 @@ mlir::LogicalResult readModuleTables(mlir::ModuleOp module, ModuleTables &tables
   for (auto attribute : sourceAttributes) {
     auto dictionary = llvm::dyn_cast<mlir::DictionaryAttr>(attribute); ModuleSource source;
     if (!exact(dictionary, {"path", "hash", "length"}) || !text(dictionary.get("path"), source.path)
-        || !sourcePath(source.path) || !decode(dictionary.get("hash"), source.hash) || !number(dictionary.get("length"), source.length)
+        || !validSourcePath(source.path, true) || !decode(dictionary.get("hash"), source.hash) || !number(dictionary.get("length"), source.length)
         || !paths.insert(source.path).second) return reject();
     tables.sources.push_back(std::move(source));
   }

@@ -52,7 +52,7 @@ export async function analyzeGenericPackage(requestBytes, { executable } = {}) {
 
 /**
  * Package compilation's frontend half. Only original package bytes and roots
- * enter Source; the candidate HIR is never passed to the registered Core 0.8.
+ * enter Source; package/Core orchestration follows only after this cold boundary.
  * @param {unknown} packageBytes @param {unknown} roots
  * @param {{frontend?: string}} [options]
  */
