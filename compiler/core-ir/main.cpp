@@ -1,5 +1,6 @@
 // SPDX-License-Identifier: MIT
 #include "bytecode.h"
+#include "core-verify.h"
 #include "dialect.h"
 #include "native_cost.h"
 #include "mlir/Dialect/Func/IR/FuncOps.h"
@@ -10,6 +11,25 @@
 #include "llvm/Support/MemoryBuffer.h"
 #include "llvm/Support/raw_ostream.h"
 #include "llvm/Support/Program.h"
+
+namespace {
+constexpr size_t referenceByteBudget = 8388608;
+// Private reference output is validated in full before publishing any bytes.
+class ReferenceOutput final : public llvm::raw_ostream {
+  std::string bytes;
+  bool overflow = false;
+  void write_impl(const char *data, size_t size) override {
+    if (overflow) return;
+    if (size > referenceByteBudget - bytes.size()) { overflow = true; return; }
+    bytes.append(data, size);
+  }
+  uint64_t current_pos() const override { return bytes.size(); }
+public:
+  ReferenceOutput() : llvm::raw_ostream(true) {}
+  bool exceeded() const { return overflow; }
+  llvm::StringRef value() const { return bytes; }
+};
+} // namespace
 
 int main(int argc, char **argv) {
   if (argc == 2 && llvm::StringRef(argv[1]) == "--inspect-native-instructions") {
@@ -38,6 +58,13 @@ int main(int argc, char **argv) {
     llvm::errs() << "[core-ir-invalid] parse or verification failed\n";
     return 3;
   }
+  const bool reference = module->getOperation()->hasAttr("tsfg_core.reference");
+  // The shared legacy stdin/MLIR parser remains unchanged. Apply the private
+  // format budget before candidate metadata, typed verification and CFG work.
+  if (reference && (*input)->getBufferSize() > referenceByteBudget) {
+    llvm::errs() << "[core-ir-reference-budget] input exceeds candidate byte budget\n";
+    return 3;
+  }
   auto version = module->getOperation()->getAttrOfType<mlir::StringAttr>("tsfg_core.version");
   if (!version || version.getValue() != "0.9.0") {
     llvm::errs() << "[core-ir-identity] expected Core IR 0.9.0\n";
@@ -47,16 +74,32 @@ int main(int argc, char **argv) {
     llvm::errs() << "[core-ir-invalid] verification failed\n";
     return 3;
   }
-  std::vector<uint8_t> packet;
-  if (mlir::failed(tsfg::verifiedBytecode(*module, packet))) return 3;
+  if (mlir::failed(tsfg::verifyCoreModule(*module))) return 3;
   if (llvm::StringRef(argv[1]) == "--emit-bytecode") {
+    if (module->getOperation()->hasAttr("tsfg_core.reference")) {
+      llvm::errs() << "[r04-core-reference-unsupported] wire9 cannot encode a reference candidate module\n";
+      return 3;
+    }
+    std::vector<uint8_t> packet;
+    if (mlir::failed(tsfg::verifiedBytecode(*module, packet))) return 3;
     llvm::sys::ChangeStdoutToBinary();
     llvm::outs().write(reinterpret_cast<const char *>(packet.data()), packet.size());
     return 0;
   }
   // The current optimization pipeline is deliberately the canonical identity
   // pass: it performs full verification and retains every event/failure anchor.
-  module->print(llvm::outs(), mlir::OpPrintingFlags().printGenericOpForm());
-  llvm::outs() << '\n';
+  if (reference) {
+    ReferenceOutput output;
+    module->print(output, mlir::OpPrintingFlags().printGenericOpForm());
+    output << '\n';
+    if (output.exceeded()) {
+      llvm::errs() << "[core-ir-reference-budget] output exceeds candidate byte budget\n";
+      return 3;
+    }
+    llvm::outs() << output.value();
+  } else {
+    module->print(llvm::outs(), mlir::OpPrintingFlags().printGenericOpForm());
+    llvm::outs() << '\n';
+  }
   return 0;
 }

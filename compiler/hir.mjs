@@ -8,6 +8,7 @@ import registry from '../contracts/registry.json' with {type:'json'};
 import bytecodeSchema from '../contracts/bytecode.schema.json' with {type:'json'};
 import { floatNames } from './float.mjs';
 import { emitScalarCore } from './scalar-core-emitter.mjs';
+import { emitReferenceCore } from './reference-core-emitter.mjs';
 
 export { verifyHir };
 const contract = () => registry['tsfg.hir'];
@@ -155,6 +156,7 @@ export function readHir(bytes) {
 }
 
 export function lowerHir(hir) {
+  if (hir?.format?.family === 'tsfg.reference-hir-candidate') return emitReferenceCore(hir);
   const verified = verifyHir(hir), moduleMode = !!verified.modules;
   const sourceView = source => ({ path: source.path, hash: source.hash, length: source.content.length });
   return emitScalarCore({ exchange: { version: contract().semver, bytecodeSchema: registry['tsfg.bytecode'].schemaHash },
