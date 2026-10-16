@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: MIT
 #include "dialect.h"
 #include "module.h"
+#include "reference.h"
 #include "scalar_ops.h"
 #include "mlir/IR/Dialect.h"
 #include "mlir/IR/DialectImplementation.h"
@@ -151,16 +152,21 @@ public:
       : Dialect(getDialectNamespace(), context, mlir::TypeID::get<CoreDialect>()) {
     addOperations<FuelOp, ConstantOp, AddOp, SubOp, MulOp, DivOp, RemOp, ShlOp,
                   ShrOp, UshrOp, AndOp, OrOp, XorOp, NegOp, NotOp, BoolNotOp,
-                  EqOp, NeOp, LtOp, LeOp, GtOp, GeOp, PosOp, GlobalLoadOp, GlobalStoreOp, AuthorizedHostOp>();
-    addTypes<IntegerType>();
+                  EqOp, NeOp, LtOp, LeOp, GtOp, GeOp, PosOp, GlobalLoadOp, GlobalStoreOp, AuthorizedHostOp,
+                  ReferenceAllocOp, ReferenceBaseOp, ReferenceViewOp, ReferenceFieldReadOp,
+                  ReferenceFieldWriteOp, ReferenceCallOp, ReferenceIdentityOp>();
+    addTypes<IntegerType, ReferenceType>();
   }
   mlir::Type parseType(mlir::DialectAsmParser &parser) const override {
     llvm::StringRef keyword; std::string name;
-    if (parser.parseKeyword(&keyword) || keyword != "integer" || parser.parseLess() || parser.parseString(&name) || parser.parseGreater()) return {};
+    if (parser.parseKeyword(&keyword) || parser.parseLess() || parser.parseString(&name) || parser.parseGreater()) return {};
+    if (keyword == "ref") return ReferenceType::get(getContext(), name);
+    if (keyword != "integer") return {};
     for (uint8_t code = 3; code <= 11; ++code) if (name == scalarNames[code]) return IntegerType::get(getContext(), code);
     parser.emitError(parser.getNameLoc(), "[core-ir-type] unknown nominal integer"); return {};
   }
   void printType(mlir::Type type, mlir::DialectAsmPrinter &printer) const override {
+    if (auto reference = llvm::dyn_cast<ReferenceType>(type)) { printer << "ref<\"" << reference.key() << "\">"; return; }
     printer << "integer<\"" << scalarNames[llvm::cast<IntegerType>(type).code()] << "\">";
   }
 };
