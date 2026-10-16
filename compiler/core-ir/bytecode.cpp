@@ -29,7 +29,7 @@ using bytecode::integer;
 using bytecode::string;
 using bytecode::appendHash;
 constexpr llvm::StringLiteral bytecodeSchema =
-    "5e080a9472ede4ee7c15de242c00999ac63a65534dfb489afabdf020a442fdc6";
+    "3dea6ce5de996dfa3e7141cced985243ea74ac9bb80f03636c6694343118f2a6";
 constexpr llvm::StringLiteral target = "windows-x86_64-msvc";
 constexpr llvm::StringLiteral triple = "x86_64-pc-windows-msvc";
 constexpr llvm::StringLiteral layout =
@@ -90,17 +90,7 @@ mlir::LogicalResult verifiedBytecode(mlir::ModuleOp module, Bytes &packet) {
     const auto *cursor = reinterpret_cast<const llvm::UTF8 *>(value.data());
     return llvm::isLegalUTF8String(&cursor, cursor + value.size());
   };
-  if (path.empty() || path.size() > 4096 ||
-      !path.starts_with("/") || !path.ends_with(".ts") || path.ends_with(".d.ts") ||
-      path.contains('\0') || path.contains('\\') ||
-      path.contains(':') || !validUTF8(path)) return reject();
-  llvm::StringRef componentPath = path.drop_front();
-  while (true) {
-    auto [component, remaining] = componentPath.split('/');
-    if (component.empty() || component == "." || component == "..") return reject();
-    if (remaining.empty()) break;
-    componentPath = remaining;
-  }
+  if (!tsfg::validSourcePath(path, false)) return reject();
   Hash input, source;
   if (!decodeHash(text("tsfg_core.input_identity"), input) ||
       !decodeHash(text("tsfg_core.source_hash"), source)) return reject();
@@ -135,7 +125,7 @@ mlir::LogicalResult verifiedBytecode(mlir::ModuleOp module, Bytes &packet) {
     if (rootSource == moduleTables.sources.end() || rootSource->hash != source || rootSource->length != sourceLength) return reject();
   }
   const size_t functionCount = module.getBody()->getOperations().size();
-  if (functionCount == 0 || functionCount > 256) return reject();
+  if (functionCount == 0 || functionCount > 512) return reject();
   // Resolve every signature and logical identity before visiting any call.
   // This admits forward and mutual calls without trusting frontend metadata.
   for (mlir::Operation &operation : *module.getBody()) {
@@ -475,7 +465,7 @@ mlir::LogicalResult verifiedBytecode(mlir::ModuleOp module, Bytes &packet) {
   integer(payload, functions.size(), 2);
   payload.insert(payload.end(), functionPayload.begin(), functionPayload.end());
   packet = Bytes{'T','S','F','G','T','B','C','0'};
-  integer(packet, 8, 4);
+  integer(packet, 9, 4);
   Hash schema; if (!decodeHash(("sha256:" + bytecodeSchema).str(), schema)) return reject();
   appendHash(packet, schema); integer(packet, static_cast<uint32_t>(80 + payload.size()), 4);
   appendHash(packet, llvm::SHA256::hash(payload));

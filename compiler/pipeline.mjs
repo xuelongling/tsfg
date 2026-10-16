@@ -4,6 +4,9 @@ import { readFile } from "node:fs/promises";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 import { analyzeFrontend } from "./frontend.mjs";
+import { compilePackageHir } from "./generic-package-frontend.mjs";
+import { lowerGenericHir } from "./generic-hir.mjs";
+export { compilePackageHir };
 import { buildHir, lowerHir } from "./hir.mjs";
 import { canonical, sha256 } from "./identity.mjs";
 import registry from "../contracts/registry.json" with { type: "json" };
@@ -23,7 +26,7 @@ async function verifiedConsumer(executable, role) {
   const required = role === "core" ? ["compiler/core-ir/main.cpp", "compiler/core-ir/module.cpp", "compiler/core-ir/module.h", "compiler/core-ir/native_cost.cpp", "compiler/core-ir/native_cost.h", "compiler/core-ir/CMakeLists.txt",
     "compiler/core-ir/dialect.h", "compiler/core-ir/dialect.cpp", "compiler/core-ir/scalar_ops.h",
     "compiler/core-ir/bytecode.h", "compiler/core-ir/bytecode.cpp", "compiler/core-ir/bytecode_encoding.h", "compiler/core-ir/bytecode_encoding.cpp"]
-    : ["runtime/root.zig", "runtime/bytecode.zig", "runtime/module_format.zig", "runtime/module.zig", "runtime/request.zig", "runtime/clock.zig", "runtime/host_counter.zig", "runtime/host_counter.c", "runtime/host_counter_bridge.c", "runtime/vm.zig", "runtime/runtime.zig", "runtime/managed-heap.zig", "runtime/main.zig", "runtime/contract.zig", "eng/host-counter.mjs", "eng/host-counter-binary.mjs", "eng/host-cost-source.lock.json", "eng/vm-build.mjs", "runtime/execution_frame.zig", "runtime/scalar.zig"];
+    : ["runtime/root.zig", "runtime/bytecode.zig", "runtime/bytecode_model.zig", "runtime/bytecode_decode.zig", "runtime/bytecode_view.zig", "runtime/module_format.zig", "runtime/module.zig", "runtime/request.zig", "runtime/clock.zig", "runtime/host_counter.zig", "runtime/host_counter.c", "runtime/host_counter_bridge.c", "runtime/vm.zig", "runtime/runtime.zig", "runtime/managed-heap.zig", "runtime/main.zig", "runtime/contract.zig", "eng/host-counter.mjs", "eng/host-counter-binary.mjs", "eng/host-cost-source.lock.json", "eng/vm-build.mjs", "runtime/execution_frame.zig", "runtime/scalar.zig"];
   required.push("contracts/registry.json", "contracts/bytecode.schema.json");
   for (const name of required) {
     const entry = manifest.buildInputSet?.entries?.find(entry => entry.projectId === "tsfg" && entry.repositoryRelativePath === name);
@@ -61,19 +64,29 @@ export async function compileProgram(input, options) {
   return highLevel.status === "ok" ? produceBytecode(highLevel.hir, options) : highLevel;
 }
 
+/** Candidate package route; Source and formal Core manifest admission remain independent. */
+export async function compilePackage(packageBytes, roots, options) {
+  const highLevel = await compilePackageHir(packageBytes, roots, options);
+  if (highLevel.status !== "ok") return highLevel;
+  // Only an instantiated owned-HIR result can enter concrete Core lowering.
+  if (!("hir" in highLevel)) return { status: "tool-error", requestId: highLevel.requestId,
+    code: "r03-d-consumer", message: "r03-package-result: instantiation returned no owned HIR" };
+  return { ...highLevel, ...await produceBytecode(highLevel.hir, options, lowerGenericHir) };
+}
+
 async function compileSnapshot(snapshot, options) {
   const highLevel = buildHir(snapshot);
   if (highLevel.status !== "ok") return highLevel;
   return produceBytecode(highLevel.hir, options);
 }
 
-async function produceBytecode(hir, options) {
+async function produceBytecode(hir, options, lower = lowerHir) {
   try {
     const core = await verifiedConsumer(options.core, "core");
-    const canonicalCore = consume(core, [options.optimize ? "--optimize" : "--canonicalize"], lowerHir(hir)).toString("utf8");
+    const canonicalCore = consume(core, [options.optimize ? "--optimize" : "--canonicalize"], lower(hir)).toString("utf8");
     const bytecode = consume(core, ["--emit-bytecode"], canonicalCore);
     if (bytecode.length < 80 || bytecode.subarray(0, 8).toString("ascii") !== "TSFGTBC0"
-        || bytecode.readUInt32LE(8) !== 8 || bytecode.readUInt32LE(44) !== bytecode.length
+        || bytecode.readUInt32LE(8) !== 9 || bytecode.readUInt32LE(44) !== bytecode.length
         || `sha256:${bytecode.subarray(12, 44).toString("hex")}` !== registry["tsfg.bytecode"].schemaHash
         || `sha256:${bytecode.subarray(48, 80).toString("hex")}` !== sha256(bytecode.subarray(80)))
       throw new TypeError("r04-producer-identity: C++ output differs from registered R04 packet");
@@ -83,7 +96,9 @@ async function produceBytecode(hir, options) {
   }
 }
 
-const sessionInputs = ["compiler/frontend.mjs", "compiler/hir.mjs", "compiler/identity.mjs",
+const sessionInputs = ["compiler/generic-package-frontend.mjs", "compiler/generic-package.mjs", "compiler/generic-package-shape.mjs",
+  "compiler/generic-package-io.mjs", "compiler/generic-package-io-shape.mjs", "compiler/generic-instance.mjs",
+  "compiler/generic-hir.mjs", "compiler/generic-json.mjs", "compiler/generic-json-budget.mjs", "compiler/frontend.mjs", "compiler/frontend-execution.mjs", "compiler/hir.mjs", "compiler/identity.mjs", "compiler/scalar-core-emitter.mjs",
   "compiler/module-facts.mjs", "compiler/module-hir.mjs", "compiler/modules.mjs",
   "compiler/pipeline.mjs", "compiler/float.mjs", "contracts/registry.json", "contracts/hir.schema.json", "contracts/bytecode.schema.json"];
 async function sessionFingerprint() {

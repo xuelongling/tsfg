@@ -39,8 +39,8 @@ int main(int argc, char **argv) {
     return 3;
   }
   auto version = module->getOperation()->getAttrOfType<mlir::StringAttr>("tsfg_core.version");
-  if (!version || version.getValue() != "0.8.0") {
-    llvm::errs() << "[core-ir-identity] expected Core IR 0.8.0\n";
+  if (!version || version.getValue() != "0.9.0") {
+    llvm::errs() << "[core-ir-identity] expected Core IR 0.9.0\n";
     return 3;
   }
   if (mlir::failed(mlir::verify(*module))) {

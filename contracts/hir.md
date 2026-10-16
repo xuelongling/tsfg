@@ -1,6 +1,8 @@
 <!-- SPDX-License-Identifier: MIT -->
 
-# tsfg.hir 0.8.0
+# tsfg.hir 0.9.0
+
+Prospective isolated M14 candidate, awaiting explicit Owner adoption. The ordinary owned-HIR JSON shape and256-function limit are unchanged except for its exact contract version; the included Core exchange now admits the concrete512-function generic closure through the same scalar emitter.
 
 `createCompilerSession` reuses owned HIR/Core/R04 output only for an unchanged
 checked Snapshot identity, compiler input fingerprint and source-built producer
@@ -76,7 +78,9 @@ frontend capability for later ordinary-expression/full-closure coverage, not
 a language prohibition or successful source initialization analysis.
 
 Records must be objects, and logical source paths follow the same normalized
-path rules as R04. Source content retains original UTF-16 anchors and must
+rooted path rules, retaining the ordinary Source path prohibition on colons.
+Core logical metadata also accepts owned package paths containing colons; it
+preserves their bytes without host filesystem access. Source content retains original UTF-16 anchors and must
 contain well-formed Unicode. Invalid UTF-8/JSON, a leading wire BOM or malformed
 owned values fail with `r03-hir-invalid`; well-formed noncanonical serialization
 fails with `r03-hir-canonical`.
@@ -98,7 +102,7 @@ transfer in parallel in R04. The entry and each while header carry explicit
 `tsfg_core.fuel` events before condition operations. Source conditions, braces,
 else clauses and nested statement delimiters are checked against owned anchors.
 
-Core exchange0.8.0 uses registered typed scalar operations and fuel plus official
+Core exchange0.9.0 uses registered typed scalar operations and fuel plus official
 `cf.br`/`cf.cond_br`, `func.call`, `func.return` and MLIR block arguments. Each
 function owns its identity, signature, return type and range attributes; module
 source and target attributes remain global. The C++ consumer resolves every
@@ -112,7 +116,7 @@ claimed. Logical events remain explicit and cannot be replaced with physical
 instruction accounting. Full/incremental compiler outputs and formal Runtime
 results are tested across source/control changes.
 
-The current registered development contracts are 0.8.0, with bytecode wire8 and capability19. They include nominal integers, bool, f32/f64 and owned module/authorized-host records. docs/r03-integer-vm.md records the earlier M07 wire6/capability17 slice; it does not describe the current wire. Old and mixed schema identities are rejected, and no older-format compatibility window is promised. Scalar identities, original source anchors, complete verification and logical/physical budget ordering remain in force.
+This prospective registry sets HIR/Core and bytecode to0.9.0, wire9 and capability19; FrontendSnapshot remains0.8.0. They include nominal integers, bool, f32/f64 and owned module/authorized-host records. docs/r03-integer-vm.md records the earlier M07 wire6/capability17 slice; it does not describe the current wire. Old and mixed schema identities are rejected, and no older-format compatibility window is promised. Scalar identities, original source anchors, complete verification and logical/physical budget ordering remain in force.
 
 Module-mode HIR owns complete source, module, global, host-import and closure
 records. Functions retain their sourcePath and source/module-initialization
@@ -120,5 +124,7 @@ kind. Global references and assignments preserve binding identity, exact scalar
 type (including f32/f64), binding origin and original source anchors. Ordered
 roots and dependency initialization are distinct from ordinary source calls;
 generated initializers are lifecycle-only. The verifier checks all supplied
-owned facts before closure pruning. These records lower to the current wire8
+owned facts before closure pruning. These records lower to the prospective wire9
 module tables described by contracts/bytecode.md, rather than a second format.
+
+Generic concrete owned HIR remains its distinct candidate-v1 cold format. `lowerGenericHir` independently validates package context, instance linkage, signatures, original metadata/anchors and complete closure before using the ordinary scalar emitter. It emits the exact same Core0.9 version and bytecode schema hash as `lowerHir`; neither fabricated source content nor a second lowering is introduced. `compilePackage` routes its owned frontend result through the shared producer and unchanged formal-artifact input checks. This source route alone is not evidence that candidate Source/Runtime executables were admitted or run. The complete previous registry/source/artifact combination is the rollback unit; old Core0.8/wire8 and mixed schema identities reject.

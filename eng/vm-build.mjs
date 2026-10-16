@@ -153,7 +153,7 @@ export async function createVmLinkObjectRetention({stage,logPath,output,counterO
       catch(error){fail(error);}return result;}};
   return observer;
 }
-const runtimeSources = [...["root", "bytecode", "vm", "runtime", "managed-heap", "main", "contract", "module_format", "module", "request", "host_counter", "clock", "execution_frame", "scalar"].map(name => `runtime/${name}.zig`), "runtime/host_counter.c", "runtime/host_counter_bridge.c"];
+const runtimeSources = [...["root", "bytecode", "bytecode_model", "bytecode_decode", "bytecode_view", "vm", "runtime", "managed-heap", "main", "contract", "module_format", "module", "request", "host_counter", "clock", "execution_frame", "scalar"].map(name => `runtime/${name}.zig`), "runtime/host_counter.c", "runtime/host_counter_bridge.c"];
 
 const artifactMetadata = value => Object.fromEntries(
   ['dev','ino','mode','nlink','size','mtimeNs','ctimeNs','birthtimeNs'].map(key => [key,String(value[key])]));

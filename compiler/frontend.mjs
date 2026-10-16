@@ -1,11 +1,10 @@
 // SPDX-License-Identifier: MIT
 import { createHash } from "node:crypto";
-import { spawnSync } from "node:child_process";
 import { readFile } from "node:fs/promises";
 import path from "node:path";
+import { runLockedFrontend } from "./frontend-execution.mjs";
 import { normalizeClosure } from "./modules.mjs";
 import { validateModuleFacts, skipCallTrivia, hasCallArgumentList, identifierName, staticBindingName } from "./module-facts.mjs";
-import sourceLock from "../eng/frontend-source.lock.json" with { type: "json" };
 import contractRegistry from "../contracts/registry.json" with { type: "json" };
 import bytecodeSchema from "../contracts/bytecode.schema.json" with { type: "json" };
 
@@ -153,33 +152,12 @@ export async function analyzeFrontend(input, { executable } = {}) {
       || declared?.content !== declarationBytes) {
     return rejectInput(inputIdentity, declared?.path ?? rootFile);
   }
-  if (typeof executable !== "string" || !executable) {
-    return { status: "tool-error", inputIdentity, message: "frontend executable is required" };
-  }
-  let binary;
-  try {
-    binary = await readFile(executable);
-  } catch {
-    return { status: "tool-error", inputIdentity, message: "frontend executable is unavailable" };
-  }
-  const binarySha256 = digest(binary);
-  if (binarySha256 !== sourceLock.executableSha256) {
-    return { status: "tool-error", inputIdentity, message: "frontend executable differs from locked source build" };
-  }
-  if (sourceLock.contractVersion !== frontendContractVersion) {
-    return { status: "tool-error", inputIdentity, message: "frontend source and snapshot contracts differ" };
-  }
-  const frontendSource = { forkOid: sourceLock.forkOid, binarySha256 };
-  const child = spawnSync(executable, [], {
-    input: JSON.stringify(ownedInput), encoding: "utf8", windowsHide: true,
-    timeout: 300000, maxBuffer: 16 * 1024 * 1024,
-  });
-  if (child.error || child.status !== 0) {
-    return { status: "tool-error", inputIdentity, message: child.error?.message ?? child.stderr };
-  }
+  const execution = await runLockedFrontend(JSON.stringify(ownedInput), { executable });
+  if (execution.status !== "ok") return { status: "tool-error", inputIdentity, message: execution.message };
+  const frontendSource = execution.frontendSource;
   let output;
   try {
-    output = JSON.parse(child.stdout);
+    output = JSON.parse(execution.stdout);
   } catch {
     return { status: "tool-error", inputIdentity, message: "invalid frontend response" };
   }
