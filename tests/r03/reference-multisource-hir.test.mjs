@@ -7,12 +7,12 @@ import { buildReferenceHir, verifyReferenceHir, printReferenceHir, readReference
 import { canonical, sha256 } from '../../compiler/identity.mjs';
 const fixture = suffix => new URL('./fixtures/reference-source/multiple-sources.' + suffix, import.meta.url);
 async function actual() {
-  // Real public Program/checker capture PID38892; not Source admission or execution.
+  // Real public Program/checker capture PID21124; not Source admission or execution.
   const [bytes, text, main, base] = await Promise.all([
     readFile(fixture('facts.json')), readFile(fixture('binding.json'), 'utf8'),
     readFile(fixture('a-main.source.ts'), 'utf8'), readFile(fixture('z-base.source.ts'), 'utf8'),
   ]);
-  assert.equal(sha256(bytes), 'sha256:3d2095819dd607a20278cca17d9a492fbb228e4ca0ee8fa683bc1944dcc5b103');
+  assert.equal(sha256(bytes), 'sha256:b49b569266659fb9aed15dfacf677687dd4e3b57bc1b0405b2e8dcc10604ae32');
   const binding = JSON.parse(text), sources = new Map([['/original/a-main.ts', main], ['/original/z-base.ts', base]]);
   for (const origin of binding.sources.filter(source => !source.declaration)) {
     const source = sources.get(origin.path); assert.ok(source);
@@ -25,7 +25,7 @@ async function actual() {
 }
 test('official multiple-source classes retain forward inheritance canonical aliases and independent assignment result types', async () => {
   const { hir, sources } = await actual();
-  assert.equal(hir.format.version, 3); assert.equal(hir.sources.length, 3);
+  assert.equal(hir.format.version, 4); assert.equal(hir.sources.length, 3);
   const [derived, base] = hir.classes;
   assert.equal(derived.name, 'Derived'); assert.equal(base.name, 'Base'); assert.equal(derived.base, base.id);
   assert.equal(derived.origin.source, '/original/a-main.ts'); assert.equal(base.origin.source, '/original/z-base.ts');

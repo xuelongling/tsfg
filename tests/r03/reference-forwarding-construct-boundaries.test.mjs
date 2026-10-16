@@ -12,8 +12,8 @@ async function actual(name, digest) {
   return { graph: JSON.parse(bytes.toString('utf8')),
     binding: JSON.parse(await readFile(fixture('.binding.json'), 'utf8')), bytes };
 }
-const implicit = () => actual('implicit-derived', 'a248aa75dcbe62cb056dbed051c29cd3e1cf7880d108ea12f4fd707ff15601cb');
-const construct = () => actual('construct', '0730b2873b09937dc20fafab733a1ac65157b1e2e738e8823a5b1cbc6d356545');
+const implicit = () => actual('implicit-derived', '162e8e77789a86d5e9c295d93066fb34e366189d0cf1bc43d9280141f13a5bca');
+const construct = () => actual('construct', 'e0dcbfba0174a9e5f02f36018bde40ddcb9e7afe7ae51450c7d0e3a81a5d82f3');
 function rejection(callback, category, label) {
   assert.throws(callback, error => error instanceof Error && Object.hasOwn(error, 'code')
     && Reflect.get(error, 'code') === 'reference-facts-' + category, label);

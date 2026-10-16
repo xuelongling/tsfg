@@ -4,7 +4,7 @@ import { canonical, own, budget, readJson, record, array, check, same, bindingFo
 import { verifyReferenceFacts } from './reference-facts.mjs';
 import { verifyReferenceGraph } from './reference-facts-shape.mjs';
 import { scalarValueType } from './reference-types.mjs';
-export const referenceHirFormat = own({ family: 'tsfg.reference-hir-candidate', version: 3, semanticProfile: referenceProfile });
+export const referenceHirFormat = own({ family: 'tsfg.reference-hir-candidate', version: 4, semanticProfile: referenceProfile });
 const operations = Object.freeze({ number: 'scalar.literal.unresolved', boolean: 'scalar.boolean', this: 'ref.this',
   reference: 'ref.parameter', assignment: 'ref.field.write', binary: 'scalar.add', 'method-call': 'ref.method.call',
   super: 'ref.super', 'super-construct': 'ref.super.construct', construct: 'ref.construct',

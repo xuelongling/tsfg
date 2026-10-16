@@ -7,9 +7,9 @@ import { buildReferenceHir, verifyReferenceHir, printReferenceHir, readReference
 import { canonical, sha256 } from '../../compiler/identity.mjs';
 
 const pins = {
-  scalars: 'a328257c0a22f812a39f02084a510c48b6885954f920cc46b4ab971125990067',
-  constructor: 'd845685780c38f113a9a6d18e1624723ba3f2fe5155dc83a9b58e40a2f144f6e',
-  'literal-facts': '1c7cffbf3fd0eff6b286b06d9a7030c3084050cc3918b3af69af079c05bde0b9',
+  scalars: 'e9a9c6cfedc125189f9efb6c8862798f082d5707837182c0ab348d5616cff56a',
+  constructor: '42ac0214d881e9bf708fb9846bc9e578e2262b3d406c6a76be1d16444105c414',
+  'literal-facts': '26bc6e6d9a987ee5f146830dfcdae1132297c62b35a8d18dcdf4e500d72fa910',
 };
 async function actual(name) {
   const fixture = suffix => new URL('./fixtures/reference-source/' + name + suffix, import.meta.url);
@@ -110,7 +110,7 @@ test('actual literal metadata and cold operations reject silent widening resolut
 test('private facts and HIR readers reject old versions and Source profiles without a legacy branch', async () => {
   const data = await actual('constructor');
   const facts = decodeReferenceFacts(data.bytes, data.binding), hir = buildReferenceHir(facts);
-  for (const version of [1,2]) {
+  for (const version of [1,2,3]) {
     const oldFacts = structuredClone(facts); oldFacts.format.version = version;
     rejected(() => verifyReferenceFacts(oldFacts), 'profile', 'old facts wrapper ' + version);
     const oldHir = structuredClone(hir); oldHir.format.version = version;

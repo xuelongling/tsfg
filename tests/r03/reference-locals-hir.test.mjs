@@ -6,8 +6,8 @@ import { decodeReferenceFacts } from '../../compiler/reference-facts.mjs';
 import { buildReferenceHir, verifyReferenceHir, printReferenceHir, readReferenceHir } from '../../compiler/reference-hir.mjs';
 import { sha256 } from '../../compiler/identity.mjs';
 
-// Actual public Program/checker capture: PID24384, 45 producer inputs,
-// candidate-graphs-v3-locals-green/README.json. Correspondence, not Source admission.
+// Actual public Program/checker capture: PID21124, 50 producer inputs,
+// candidate-graphs-v4-constructor-public-green/README.json. Correspondence, not Source admission.
 const fixture = name => new URL('./fixtures/reference-source/' + name, import.meta.url);
 async function official(name, digest, utf16Length) {
   const bytes = await readFile(fixture(name + '.facts.json'));
@@ -21,9 +21,9 @@ async function official(name, digest, utf16Length) {
   assert.deepEqual(origin.surrogateStarts, [3]);
   assert.equal(source.slice(3,5), '😀');
   const facts = decodeReferenceFacts(bytes, binding);
-  assert.equal(facts.format.version, 3);
+  assert.equal(facts.format.version, 4);
   const hir = buildReferenceHir(facts);
-  assert.equal(hir.format.version, 3);
+  assert.equal(hir.format.version, 4);
   return { facts, hir, source };
 }
 function projection(owner) {
@@ -111,7 +111,7 @@ function roundTrip(hir) {
 }
 
 test('official const method-local aliases preserve writable receivers independent scopes and cold HIR', async () => {
-  const { facts, hir, source } = await official('locals-const', '2f6a2acab5295fd1e3820499456b90132525020003a8225b90602ebb9d7d6b70', 352);
+  const { facts, hir, source } = await official('locals-const', '762c1c1ee23174b046b00903af2e90ca7c7e08b54c4c970a1ba0d810b8be6fe6', 352);
   const owner = hir.classes[0], [share, keep, scalar] = owner.methods;
   assert.equal(owner.name, 'Box'); assert.equal(owner.fields[0].initializer, null);
   assert.deepEqual(owner.methods.map(method => method.name), ['share','keep','passScalar']);
@@ -129,7 +129,7 @@ test('official const method-local aliases preserve writable receivers independen
 });
 
 test('official let method-local rebinding preserves locations receivers scalar copies and cold HIR', async () => {
-  const { hir, source } = await official('locals-let', '29754d930121cd9cd992a5146e1e0d7f4c1ac03b665061d9236142c5d531d197', 393);
+  const { hir, source } = await official('locals-let', '4003f2e1ed2d4ef84ef54f7d480792d2a6c78a8e59d9e89593b6936a1aed5a22', 393);
   const owner = hir.classes[0], [share, keep, scalar] = owner.methods;
   assert.equal(owner.name, 'Box'); assert.equal(owner.fields[0].initializer, null);
   assert.deepEqual(owner.methods.map(method => method.name), ['share','keep','passScalar']);
@@ -149,5 +149,44 @@ test('official let method-local rebinding preserves locations receivers scalar c
   assert.equal(returnsLocal(share, owner, alias).symbol, rebind.left.symbol);
   const kept = declaration(keep, owner, source, 'const'); returnsLocal(keep, owner, kept);
   localSymbols(hir, [alias, kept, scalarCopy(scalar, owner, source, hir)], source);
+  roundTrip(hir);
+});
+
+test('official consumed local assignment returns the RHS view while storing through its declared Base view', async () => {
+  const { facts, hir, source } = await official('local-assignment-result', 'f577d1cf1f157f6bf9b8ccd8ebe5d11d30ec40d4f8967ccc96adb11672919c09', 254);
+  const [base, derived] = hir.classes, method = derived.methods[0];
+  assert.equal(base.name, 'Base'); assert.equal(derived.name, 'Derived');
+  assert.equal(method.name, 'replace'); assert.equal(method.signature.return, derived.instanceType);
+  assert.deepEqual(method.body.map(statement => statement.kind), ['local','return']);
+  const local = method.body[0].local.bindings[0], returned = method.body[1];
+  assert.equal(method.body[0].local.kind, 'let'); assert.equal(local.type, base.instanceType);
+  assert.equal(local.initializer.kind, 'ref.view');
+  assert.equal(local.initializer.value.symbol, method.signature.parameters[0].symbol);
+  assert.equal(returned.kind, 'return'); assert.equal(returned.expression.kind, 'ref.view');
+  const assignment = returned.expression.value;
+  assert.equal(assignment.kind, 'local.write'); assert.equal(assignment.operator, '=');
+  assert.equal(assignment.left.kind, 'local.location'); assert.equal(assignment.left.symbol, local.symbol);
+  assert.equal(assignment.left.type, base.instanceType);
+  assert.equal(assignment.right.kind, 'ref.view');
+  assert.equal(assignment.right.sourceType, derived.instanceType); assert.equal(assignment.right.targetType, base.instanceType);
+  const replacement = assignment.right.value;
+  assert.equal(replacement.kind, 'ref.parameter'); assert.equal(replacement.symbol, method.signature.parameters[1].symbol);
+  assert.equal(assignment.type, replacement.type); assert.equal(assignment.type, derived.instanceType);
+  assert.notEqual(assignment.type, assignment.left.type);
+  assert.deepEqual(assignment.compatibility, { assignable: true,
+    sourceType: derived.instanceType, targetType: base.instanceType, origin: replacement.origin,
+    members: [{ source: base.fields[0].symbol, target: base.fields[0].symbol }] });
+  assert.deepEqual(assignment.right.members, assignment.compatibility.members);
+  assert.deepEqual(returned.compatibility, { assignable: true,
+    sourceType: derived.instanceType, targetType: derived.instanceType, origin: assignment.origin,
+    members: [{ source: base.fields[0].symbol, target: base.fields[0].symbol },
+      { source: method.symbol, target: method.symbol }] });
+  assert.equal(returned.expression.sourceType, derived.instanceType);
+  assert.equal(returned.expression.targetType, derived.instanceType);
+  assert.deepEqual(returned.expression.members, returned.compatibility.members);
+  assert.equal(source.slice(assignment.origin.start, assignment.origin.end), 'alias = replacement');
+  assert.equal(source.slice(returned.origin.start, returned.origin.end), 'return alias = replacement;');
+  const actual = facts.graph.classes[1].methods[0].body[1].expression;
+  assert.equal(actual.type, actual.right.type); assert.notEqual(actual.type, actual.left.type);
   roundTrip(hir);
 });

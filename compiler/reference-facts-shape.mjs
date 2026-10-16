@@ -110,9 +110,14 @@ export function verifyReferenceGraph(graph, binding) {
       fields.set(field.symbol, { ...field, owner: item.id });
     }
     const constructor = item.constructor;
-    record(constructor, ['body','id','implicitForward','initializationFields','initializationPhase','kind','origin','signature','superCall']);
-    record(constructor.signature, ['parameters','return']); array(constructor.body);
+    check(constructor && Object.hasOwn(constructor, 'access'), 'schema', 'constructor.access is required', constructor?.origin);
+    record(constructor, ['access','body','id','implicitForward','initializationFields','initializationPhase','kind','origin','signature','superCall']);
     origin(constructor.origin, item.origin);
+    check(['public','private','protected'].includes(constructor.access), 'schema',
+      'constructor.access must be public, private, or protected', constructor.origin);
+    check(constructor.access === 'public', 'unsupported',
+      'non-public constructor.access is unsupported', constructor.origin);
+    record(constructor.signature, ['parameters','return']); array(constructor.body);
     const derived = item.base !== '';
     check(constructor.id === item.id + '.ctor' && ['explicit','implicit-base','implicit-derived'].includes(constructor.kind)
       && constructor.initializationPhase === (derived ? 'after-successful-super' : 'before-body')
