@@ -18,7 +18,7 @@ async function actual(name, digest) {
   return { bytes, binding };
 }
 test('official implicit-derived bytes preserve logical forwarding and successful-base initialization', async () => {
-  const { bytes, binding } = await actual('implicit-derived', 'a210c6e4880348589f8ef0bdaaa70882f569fd63714ddf1d58eb2cdfa2965bb4');
+  const { bytes, binding } = await actual('implicit-derived', 'b2a9a672a346ac9088335d51b67cb6ccc4a7a2b84da666bf3f8d763b56de63f3');
   const facts = decodeReferenceFacts(bytes, binding), hir = buildReferenceHir(facts);
   const [base, derived] = hir.classes, baseConstructor = base.constructor, constructor = derived.constructor;
   assert.equal(derived.base, base.id); assert.equal(constructor.kind, 'implicit-derived');
@@ -49,7 +49,7 @@ test('official implicit-derived bytes preserve logical forwarding and successful
   assert.deepEqual(readReferenceHir(Buffer.from(printReferenceHir(hir))), hir);
 });
 test('official construct bytes preserve allocation class signature arguments and reference views', async () => {
-  const { bytes, binding } = await actual('construct', '4b456bf2c10a9a43287dbf4dd34154a0a39e3d7c49daf14237d86bcc3fa4eeec');
+  const { bytes, binding } = await actual('construct', 'a2710241de91c46de915d9e8215bfb16650a6598d1814fd652c4fa32565b5643');
   const facts = decodeReferenceFacts(bytes, binding), hir = buildReferenceHir(facts);
   const [counter, factory] = hir.classes;
   assert.equal(counter.name, 'Counter'); assert.equal(factory.name, 'Factory');
@@ -62,7 +62,7 @@ test('official construct bytes preserve allocation class signature arguments and
   assert.equal(fresh.receiver.kind, 'ref.class'); assert.equal(fresh.receiver.symbol, counter.symbol);
   assert.equal(fresh.receiver.type, counter.constructorType);
   assert.deepEqual(fresh.resolvedSignature, counter.constructor.signature);
-  assert.equal(fresh.arguments[0].kind, 'scalar.number'); assert.equal(fresh.arguments[0].token, '5');
+  assert.equal(fresh.arguments[0].kind, 'scalar.literal.unresolved'); assert.equal(fresh.arguments[0].token, '5');
   assert.equal(fresh.argumentCompatibility[0].assignable, true);
   const make = factory.methods[0], returned = make.body[0].expression;
   assert.equal(make.name, 'make'); assert.equal(returned.kind, 'ref.view');
@@ -73,5 +73,69 @@ test('official construct bytes preserve allocation class signature arguments and
   assert.notEqual(fresh.id, returned.value.id);
   assert.deepEqual(fresh.origin, { source: '/original/main.ts', start: 135, end: 149 });
   assert.deepEqual(returned.value.origin, { source: '/original/main.ts', start: 190, end: 207 });
+  assert.deepEqual(readReferenceHir(Buffer.from(printReferenceHir(hir))), hir);
+});
+
+test('official implicit-middle bytes keep direct constructor targets and inherited logical signatures', async () => {
+  const { bytes, binding } = await actual('implicit-middle', '50d806135291c2ff2a1e95e37515b20d88197cc2bdef840d7117c50e7ed2e35e');
+  const hir = buildReferenceHir(decodeReferenceFacts(bytes, binding));
+  const [base, middle, leaf] = hir.classes;
+  assert.deepEqual(hir.classes.map(value => value.name), ['Base','Middle','Leaf']);
+  assert.equal(middle.base, base.id); assert.equal(leaf.base, middle.id);
+  const inherited = base.constructor.signature.parameters[0];
+  const logical = middle.constructor.signature.parameters[0];
+  assert.equal(middle.constructor.kind, 'implicit-derived');
+  assert.deepEqual(middle.constructor.body, []); assert.equal(middle.constructor.superCall, '');
+  assert.equal(logical.inheritedFrom, inherited.symbol);
+  assert.notEqual(logical.symbol, inherited.symbol); assert.deepEqual(logical.origin, inherited.origin);
+  assert.ok(logical.origin.end < middle.origin.start);
+  const symbol = hir.symbols.find(value => value.id === logical.symbol);
+  assert.ok(symbol); assert.equal(symbol.kind, 'implicit-parameter');
+  // A symbol names the identifier; a class parameter owns its complete typed
+  // declaration. Logical forwarding preserves each real Base anchor separately.
+  const source = await readFile(fixture('implicit-middle.source.ts'), 'utf8');
+  const baseSymbol = hir.symbols.find(value => value.id === inherited.symbol);
+  assert.ok(baseSymbol); assert.equal(baseSymbol.kind, 'parameter');
+  for (const parameter of [inherited, logical]) {
+    assert.deepEqual(parameter.origin, { source: '/original/main.ts', start: 51, end: 63 });
+    assert.equal(source.slice(parameter.origin.start, parameter.origin.end), 'seed: number');
+  }
+  for (const parameterSymbol of [baseSymbol, symbol]) {
+    assert.equal(parameterSymbol.name, 'seed');
+    assert.deepEqual(parameterSymbol.declaration, { source: '/original/main.ts', start: 51, end: 55 });
+    assert.equal(source.slice(parameterSymbol.declaration.start, parameterSymbol.declaration.end), 'seed');
+  }
+  assert.notDeepEqual(symbol.declaration, logical.origin);
+  const forward = middle.constructor.implicitForward;
+  assert.equal(forward.kind, 'ref.super.forward'); assert.equal(forward.target, base.constructor.id);
+  assert.deepEqual(forward.baseSignature, base.constructor.signature);
+  assert.deepEqual(forward.parameters, [{ source: logical.symbol, target: inherited.symbol,
+    compatibility: { assignable: true, members: [], origin: middle.origin,
+      sourceType: logical.type, targetType: inherited.type } }]);
+  assert.deepEqual(middle.constructor.initializationBoundary, { kind: 'successful-forward', target: base.constructor.id });
+  assert.deepEqual(middle.constructor.initializationFields, [middle.fields[0].id]);
+  assert.equal(middle.fields[0].initializer.kind, 'scalar.literal.unresolved');
+  assert.equal(middle.fields[0].initializer.token, '2');
+  const call = leaf.constructor.body[0].expression;
+  assert.equal(call.kind, 'ref.super.construct'); assert.equal(call.staticTarget, middle.constructor.id);
+  assert.notEqual(call.staticTarget, base.constructor.id);
+  assert.equal(call.receiver.kind, 'ref.super'); assert.equal(call.receiver.symbol, middle.symbol);
+  assert.equal(call.receiver.type, middle.constructorType);
+  assert.deepEqual(call.resolvedSignature, middle.constructor.signature);
+  assert.equal(call.resolvedSignature.parameters[0].symbol, logical.symbol);
+  assert.equal(call.arguments[0].kind, 'ref.parameter');
+  assert.equal(call.arguments[0].symbol, leaf.constructor.signature.parameters[0].symbol);
+  assert.deepEqual(leaf.constructor.initializationBoundary, { kind: 'successful-return', expressionId: call.id });
+  assert.deepEqual(leaf.constructor.initializationFields, []);
+  const returned = leaf.methods[0].body[0].expression;
+  assert.equal(returned.kind, 'ref.view'); assert.equal(returned.targetType, middle.instanceType);
+  const construct = returned.value;
+  assert.equal(construct.kind, 'ref.construct'); assert.equal(construct.staticTarget, middle.constructor.id);
+  assert.notEqual(construct.staticTarget, base.constructor.id);
+  assert.equal(construct.type, middle.instanceType);
+  assert.equal(construct.receiver.kind, 'ref.class'); assert.equal(construct.receiver.symbol, middle.symbol);
+  assert.equal(construct.receiver.type, middle.constructorType);
+  assert.deepEqual(construct.resolvedSignature, middle.constructor.signature);
+  assert.equal(construct.arguments[0].symbol, leaf.methods[0].signature.parameters[0].symbol);
   assert.deepEqual(readReferenceHir(Buffer.from(printReferenceHir(hir))), hir);
 });

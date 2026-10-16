@@ -1,9 +1,11 @@
 // SPDX-License-Identifier: MIT
-import { array, record, integer, text, hash, check, same, canonical, sha256, referenceProfile,
+import { array, record, integer, text, hash, check, same, sha256, referenceProfile,
   bindingFor, budget, readJson, referenceLimits } from './reference-common.mjs';
 import { verifyReferenceForwarding } from './reference-forwarding.mjs';
 import { verifyReferenceHierarchy } from './reference-hierarchy.mjs';
 import { verifyReferenceBodies } from './reference-facts-body.mjs';
+import { verifyReferenceTypes, scalarValueType, referenceValueType } from './reference-types.mjs';
+import { referenceEnvironmentDigest, referenceAllocationKey } from './reference-provenance.mjs';
 const strictKeys = ['noImplicitAny','noImplicitThis','strictBindCallApply','strictBuiltinIteratorReturn',
   'strictFunctionTypes','strictNullChecks','strictPropertyInitialization','useUnknownInCatchVariables'];
 function configuration(options) {
@@ -52,33 +54,40 @@ export function verifyReferenceGraph(graph, binding) {
   };
   const types = new Map(), symbols = new Map(), classes = new Map(), fields = new Map(), methods = new Map();
   for (const type of array(graph.types)) {
-    record(type, ['declaration','id','kind','target','thisArgument']); text(type.id);
+    record(type, ['declaration','id','kind','literal','nominal','scalar','target','thisArgument']); text(type.id);
     check(!types.has(type.id), 'closure'); types.set(type.id, type);
   }
+  const { primitives, leaves } = verifyReferenceTypes(types, sources);
+  const environmentDigest = referenceEnvironmentDigest(graph);
   for (const symbol of array(graph.symbols)) {
     record(symbol, ['declaration','id','kind','name','type']); text(symbol.id); text(symbol.name);
     check(!symbols.has(symbol.id) && types.has(symbol.type), 'closure'); origin(symbol.declaration); symbols.set(symbol.id, symbol);
   }
   const consumedTypes = new Set(), consumedSymbols = new Set(), typeUses = new Set();
+  const valueType = (id, allowVoid = false) => {
+    const type = types.get(id); check(type, 'closure');
+    check(scalarValueType(type) || referenceValueType(type) || allowVoid && type.kind === 'void',
+      'unsupported', 'owned value slot has an unsupported type role'); typeUses.add(id);
+  };
   const useType = (id, kind, declaration = '') => {
     const type = types.get(id); check(type && type.kind === kind && type.declaration === declaration
       && type.target === '' && type.thisArgument === '', 'closure'); consumedTypes.add(id);
   };
-  for (const scalar of ['number','boolean','void']) useType('t:' + scalar, scalar);
+  for (const [kind, id] of primitives) useType(id, kind);
   const useSymbol = (id, kind, name, type, parent) => {
     const symbol = symbols.get(id);
     check(symbol && !consumedSymbols.has(id) && symbol.kind === kind && symbol.name === name && symbol.type === type, 'closure');
     origin(symbol.declaration, parent); consumedSymbols.add(id);
   };
   const signature = (value, owner, parent, inherited = false) => {
-    record(value, ['parameters','return']); check(types.has(value.return), 'closure'); typeUses.add(value.return);
+    record(value, ['parameters','return']); valueType(value.return, true);
     const parameters = new Map();
     for (const [index, parameter] of array(value.parameters, 4096).entries()) {
       record(parameter, ['inheritedFrom','origin','symbol','type']);
       origin(parameter.origin, inherited ? undefined : parent);
       check(inherited ? typeof parameter.inheritedFrom === 'string' && parameter.inheritedFrom.length > 0
         : parameter.inheritedFrom === '', 'forwarding');
-      check(parameter.symbol === owner + '.p' + index && types.has(parameter.type), 'closure'); typeUses.add(parameter.type);
+      check(parameter.symbol === owner + '.p' + index && types.has(parameter.type), 'closure'); valueType(parameter.type);
       const symbol = symbols.get(parameter.symbol);
       useSymbol(parameter.symbol, inherited ? 'implicit-parameter' : 'parameter', symbol?.name, parameter.type, parameter.origin);
       parameters.set(parameter.symbol, parameter);
@@ -93,15 +102,14 @@ export function verifyReferenceGraph(graph, binding) {
     useType(item.instanceType, 'class-instance', item.id); useType(item.constructorType, 'class-constructor', item.id);
     useType(item.thisType, 'class-this', item.id); useSymbol(item.symbol, 'class', item.name, item.constructorType, item.origin);
     hash(item.runtimeKey);
-    check(item.runtimeKey === sha256(canonical({ domain: 'tsfg.candidate.class-allocation-provenance', profile: graph.semanticProfile,
-      scope: graph.scope, sources: graph.sources, declaration: item.origin, options: graph.options })), 'identity');
+    check(item.runtimeKey === referenceAllocationKey(environmentDigest, item.origin), 'identity');
     classes.set(item.id, item);
     for (const [ordinal, field] of array(item.fields, 4096).entries()) {
       record(field, ['access','definiteAssertion','id','initializer','initializerCompatibility','name','ordinal','origin','readonly','symbol','type']);
       check(field.id === item.id + '.f' + ordinal && field.ordinal === ordinal && !fields.has(field.symbol)
         && types.has(field.type) && ['public','private','protected'].includes(field.access)
         && typeof field.readonly === 'boolean' && typeof field.definiteAssertion === 'boolean', 'closure');
-      typeUses.add(field.type); origin(field.origin, item.origin); useSymbol(field.symbol, 'field', field.name, field.type, field.origin);
+      valueType(field.type); origin(field.origin, item.origin); useSymbol(field.symbol, 'field', field.name, field.type, field.origin);
       fields.set(field.symbol, { ...field, owner: item.id });
     }
     const constructor = item.constructor;
@@ -133,8 +141,10 @@ export function verifyReferenceGraph(graph, binding) {
   const views = verifyReferenceHierarchy(state);
   verifyReferenceForwarding(state);
   views.forEach(id => consumedTypes.add(id));
-  check(consumedTypes.size === types.size && consumedSymbols.size === symbols.size, 'closure');
+  check(consumedSymbols.size === symbols.size, 'closure');
   verifyReferenceBodies(state);
+  for (const id of leaves) if (typeUses.has(id)) consumedTypes.add(id);
+  check(consumedTypes.size === types.size, 'closure');
   check(views.every(id => typeUses.has(id)), 'closure');
   return graph;
 }

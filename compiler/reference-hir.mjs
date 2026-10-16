@@ -3,9 +3,9 @@ import { canonical, own, budget, readJson, record, check, same, bindingFor, fact
   referenceProfile, failure } from './reference-common.mjs';
 import { verifyReferenceFacts } from './reference-facts.mjs';
 import { verifyReferenceGraph } from './reference-facts-shape.mjs';
-import { sourceScalar } from './reference-relations.mjs';
-export const referenceHirFormat = own({ family: 'tsfg.reference-hir-candidate', version: 1, semanticProfile: referenceProfile });
-const operations = Object.freeze({ number: 'scalar.number', boolean: 'scalar.boolean', this: 'ref.this',
+import { scalarValueType } from './reference-types.mjs';
+export const referenceHirFormat = own({ family: 'tsfg.reference-hir-candidate', version: 2, semanticProfile: referenceProfile });
+const operations = Object.freeze({ number: 'scalar.literal.unresolved', boolean: 'scalar.boolean', this: 'ref.this',
   reference: 'ref.parameter', assignment: 'ref.field.write', binary: 'scalar.add', 'method-call': 'ref.method.call',
   super: 'ref.super', 'super-construct': 'ref.super.construct', construct: 'ref.construct',
   'reference-identity': 'ref.identity' });
@@ -13,8 +13,9 @@ const sourceKinds = { ...Object.fromEntries(Object.entries(operations).map(([sou
 function convertGraph(input, direction) {
   const graph = structuredClone(input), toHir = direction === 'hir';
   const symbols = new Map(graph.symbols.map(symbol => [symbol.id, symbol]));
+  const types = new Map(graph.types.map(type => [type.id, type]));
   function view(value, witness) {
-    if (!witness || sourceScalar(witness.sourceType)) return value;
+    if (!witness || scalarValueType(types.get(witness.sourceType))) return value;
     if (toHir) return { kind: 'ref.view', sourceType: witness.sourceType, targetType: witness.targetType,
       members: witness.members, origin: witness.origin, value };
     record(value, ['kind','sourceType','targetType','members','origin','value']);

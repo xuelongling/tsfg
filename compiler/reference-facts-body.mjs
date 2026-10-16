@@ -1,11 +1,11 @@
 // SPDX-License-Identifier: MIT
-import { array, record, check, same, text, failure } from './reference-common.mjs';
-import { numericTokenSyntax } from './float.mjs';
+import { array, record, check, same, text } from './reference-common.mjs';
+import { verifyReferenceNumericLiteral, referenceValueType } from './reference-types.mjs';
 import { referenceMembers, verifyReferenceWitness } from './reference-relations.mjs';
 const expressionKeys = ['argumentCompatibility','arguments','compatibility','dispatch','id','kind','left','operator',
-  'origin','permission','receiver','resolvedSignature','right','staticTarget','symbol','token','type'];
+  'numericLiteral','origin','permission','receiver','resolvedSignature','right','staticTarget','symbol','token','type'];
 const empty = { argumentCompatibility: [], arguments: [], compatibility: null, dispatch: '', left: null,
-  operator: '', permission: null, receiver: null, resolvedSignature: null, right: null, staticTarget: '', symbol: '', token: '' };
+  numericLiteral: null, operator: '', permission: null, receiver: null, resolvedSignature: null, right: null, staticTarget: '', symbol: '', token: '' };
 export function verifyReferenceBodies(state) {
   const { graph, types, symbols, classes, fields, origin } = state;
   const expressions = new Set();
@@ -18,7 +18,7 @@ export function verifyReferenceBodies(state) {
         'owned evaluation anchors overlap or reverse source order', current);
     }
   }
-  function expression(value, parent, owner, parameters, write = false) {
+  function expression(value, parent, owner, parameters, write = false, contextType = '') {
     record(value, expressionKeys); origin(value.origin, parent); text(value.id);
     check(/^e[1-9][0-9]*$/.test(value.id) && !expressions.has(value.id) && types.has(value.type), 'closure');
     expressions.add(value.id); state.typeUses.add(value.type);
@@ -26,14 +26,9 @@ export function verifyReferenceBodies(state) {
     const permit = (...keys) => keys.forEach(key => allowed.add(key));
     switch (value.kind) {
     case 'number':
-      permit('token'); check(value.type === 't:number', 'expression');
-      try {
-        check(typeof value.token === 'string' && !/^[+-]/.test(value.token), 'representation');
-        numericTokenSyntax(value.token);
-      } catch (error) { failure('representation', 'invalid numeric literal token', value.origin); }
-      break;
+      permit('token','numericLiteral'); verifyReferenceNumericLiteral(state, value, contextType); break;
     case 'boolean':
-      permit('token'); check(value.type === 't:boolean' && ['true','false'].includes(value.token), 'expression'); break;
+      permit('token'); check(types.get(value.type).kind === 'boolean' && ['true','false'].includes(value.token), 'expression'); break;
     case 'this':
       permit('symbol'); check(value.symbol === owner.symbol && [owner.thisType, owner.instanceType].includes(value.type), 'closure'); break;
     case 'reference': {
@@ -91,7 +86,7 @@ export function verifyReferenceBodies(state) {
     case 'super-construct': {
       permit('receiver','dispatch','staticTarget','arguments','argumentCompatibility','resolvedSignature');
       const base = classes.get(owner.base);
-      check(activeConstructor === owner && base && value.type === 't:void' && value.dispatch === 'direct-base-constructor'
+      check(activeConstructor === owner && base && types.get(value.type).kind === 'void' && value.dispatch === 'direct-base-constructor'
         && value.staticTarget === base.constructor.id && value.receiver?.kind === 'super', 'initialization');
       expression(value.receiver, value.origin, owner, parameters);
       check(value.receiver.type === base.constructorType, 'call');
@@ -101,26 +96,26 @@ export function verifyReferenceBodies(state) {
     case 'assignment':
       permit('operator','left','right','compatibility');
       check(value.operator === '=' && value.left?.kind === 'field' && value.right, 'expression');
-      expression(value.left, value.origin, owner, parameters, true); expression(value.right, value.origin, owner, parameters);
+      expression(value.left, value.origin, owner, parameters, true);
+      expression(value.right, value.origin, owner, parameters, false, value.left.type);
       ordered([value.left, value.right]);
       check(value.type === value.right.type, 'expression');
       witness(value.compatibility, value.right.type, value.left.type, value.right.origin); break;
     case 'reference-identity':
       permit('operator','left','right');
-      check(value.type === 't:boolean' && ['===','!=='].includes(value.operator) && value.left && value.right, 'expression');
+      check(types.get(value.type).kind === 'boolean' && ['===','!=='].includes(value.operator) && value.left && value.right, 'expression');
       expression(value.left, value.origin, owner, parameters); expression(value.right, value.origin, owner, parameters);
       ordered([value.left, value.right]);
       // Official checking already accepted comparability. These category checks
       // preserve reference operands without recomputing TS relations or folding
       // object equality from class provenance, names, layouts or static type IDs.
-      check([value.left, value.right].every(operand =>
-        ['class-instance','class-this','class-this-view'].includes(types.get(operand.type).kind)), 'expression');
+      check([value.left, value.right].every(operand => referenceValueType(types.get(operand.type))), 'expression');
       break;
     case 'binary':
       permit('operator','left','right'); check(value.operator === '+' && value.left && value.right, 'expression');
       expression(value.left, value.origin, owner, parameters); expression(value.right, value.origin, owner, parameters);
       ordered([value.left, value.right]);
-      check([value.type,value.left.type,value.right.type].every(type => type === 't:number'), 'expression'); break;
+      check([value.type,value.left.type,value.right.type].every(id => types.get(id).kind === 'number'), 'expression'); break;
     default: check(false, 'unsupported', 'unsupported owned expression: ' + value.kind, value.origin);
     }
     check(!write || value.kind === 'field', 'permission');
@@ -134,7 +129,7 @@ export function verifyReferenceBodies(state) {
     array(value.arguments); array(value.argumentCompatibility);
     check(value.arguments.length === signature.parameters.length && value.argumentCompatibility.length === value.arguments.length, 'call');
     for (const [index, argument] of value.arguments.entries()) {
-      expression(argument, value.origin, owner, parameters);
+      expression(argument, value.origin, owner, parameters, false, signature.parameters[index].type);
       witness(value.argumentCompatibility[index], argument.type, signature.parameters[index].type, argument.origin);
     }
     ordered([value.receiver, ...value.arguments]);
@@ -144,16 +139,17 @@ export function verifyReferenceBodies(state) {
     for (const statement of array(statements)) {
       record(statement, ['compatibility','expression','kind','origin']); origin(statement.origin, parent);
       check(!returned && ['expression','return'].includes(statement.kind), 'body');
-      if (statement.expression !== null) expression(statement.expression, statement.origin, owner, parameters);
+      if (statement.expression !== null) expression(statement.expression, statement.origin, owner, parameters, false,
+        statement.kind === 'return' ? result : '');
       if (statement.kind === 'return') {
         check(!constructor, 'unsupported', 'constructor return forms are not consumed yet', statement.origin);
-        if (statement.expression === null) check(result === 't:void' && statement.compatibility === null, 'witness');
+        if (statement.expression === null) check(types.get(result).kind === 'void' && statement.compatibility === null, 'witness');
         else witness(statement.compatibility, statement.expression.type, result, statement.expression.origin);
         returned = true;
       } else check(statement.expression !== null && statement.compatibility === null, 'body');
     }
     ordered(statements);
-    check(constructor || result === 't:void' || returned, 'body');
+    check(constructor || types.get(result).kind === 'void' || returned, 'body');
     if (constructor) check(owner.constructor.kind === 'implicit-derived' ? superCalls.length === 0
       : owner.base ? superCalls.length === 1 && superCalls[0] === owner.constructor.superCall
       : superCalls.length === 0, 'initialization');
@@ -163,7 +159,7 @@ export function verifyReferenceBodies(state) {
     for (const field of owner.fields) {
       if (field.initializer === null) check(field.initializerCompatibility === null, 'witness');
       else {
-        expression(field.initializer, field.origin, owner, new Map());
+        expression(field.initializer, field.origin, owner, new Map(), false, field.type);
         witness(field.initializerCompatibility, field.initializer.type, field.type, field.initializer.origin);
       }
     }

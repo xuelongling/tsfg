@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: MIT
 import { record, check, same, array } from './reference-common.mjs';
 import { typeClass } from './reference-hierarchy.mjs';
-export const sourceScalar = type => ['t:number','t:boolean','t:void'].includes(type);
+import { scalarValueType } from './reference-types.mjs';
 export function referenceMembers(state, typeId) {
   const declaration = typeClass(state, typeId), lineage = [];
   for (let item = declaration; item; item = item.base ? state.classes.get(item.base) : null) lineage.push(item);
@@ -23,8 +23,13 @@ export function verifyReferenceWitness(state, value, sourceType, targetType, anc
   check(value.assignable === true && value.sourceType === sourceType && value.targetType === targetType
     && same(value.origin, anchor), 'witness', 'missing or inconsistent official conversion witness', anchor);
   array(value.members);
-  if (sourceScalar(sourceType) || sourceScalar(targetType)) {
-    check(sourceType === targetType && value.members.length === 0, 'witness'); return;
+  const from = state.types.get(sourceType), to = state.types.get(targetType);
+  check(from && to, 'closure');
+  if (scalarValueType(from) || scalarValueType(to)) {
+    check(scalarValueType(from) && scalarValueType(to) && value.members.length === 0, 'witness');
+    // The R01 rule is explicit for already typed scalars. A narrow literal has
+    // no scalar yet: preserve its official witness without settling or rounding.
+    check(!from.scalar || !to.scalar || from.scalar === to.scalar, 'witness'); return;
   }
   const source = referenceMembers(state, sourceType), target = referenceMembers(state, targetType), seen = new Set();
   let previous = '';

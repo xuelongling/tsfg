@@ -8,7 +8,7 @@ import { sha256 } from '../../compiler/identity.mjs';
 const fixture = name => new URL('./fixtures/reference-source/' + name, import.meta.url);
 test('official inheritance bytes retain successful-super initialization and dispatch targets', async () => {
   const bytes = await readFile(fixture('inheritance.facts.json'));
-  assert.equal(sha256(bytes), 'sha256:ebbe24c92fc6110f06ffd1e68e7e4472c3d4f9f6a7c8ff9bacbc5ea2037a9d3b');
+  assert.equal(sha256(bytes), 'sha256:295cc685221122ebbfd8ebc9dc4f16ac2879d19013aba0f029672f747f561493');
   const binding = JSON.parse(await readFile(fixture('inheritance.binding.json'), 'utf8'));
   const facts = decodeReferenceFacts(bytes, binding), hir = buildReferenceHir(facts);
   const [base, derived] = hir.classes;
@@ -44,7 +44,7 @@ test('official inheritance bytes retain successful-super initialization and disp
   assert.equal(constructor.initializationPhase, 'after-successful-super');
   assert.deepEqual(constructor.initializationBoundary, { kind: 'successful-return', expressionId: superCall.id });
   assert.deepEqual(constructor.initializationFields, [derived.fields[0].id]);
-  assert.equal(derived.fields[0].initializer.kind, 'scalar.number');
+  assert.equal(derived.fields[0].initializer.kind, 'scalar.literal.unresolved');
   const ownStore = constructor.body[1].expression;
   assert.equal(ownStore.kind, 'ref.field.write'); assert.equal(ownStore.left.symbol, derived.fields[0].symbol);
   assert.equal(ownStore.right.kind, 'ref.method.call'); assert.equal(ownStore.right.staticTarget, derivedTouch.id);

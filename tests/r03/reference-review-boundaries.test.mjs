@@ -17,7 +17,7 @@ function rejects(graph, binding, categories) {
       && categories.includes(Reflect.get(error, 'code')));
 }
 test('actual inherited methods reject a missing official override edge', async () => {
-  const { graph, binding } = await actual('inheritance', 'ebbe24c92fc6110f06ffd1e68e7e4472c3d4f9f6a7c8ff9bacbc5ea2037a9d3b');
+  const { graph, binding } = await actual('inheritance', '295cc685221122ebbfd8ebc9dc4f16ac2879d19013aba0f029672f747f561493');
   const method = graph.classes[1].methods[0];
   assert.equal(method.name, 'touch'); assert.equal(method.overrideTarget, 'c1.m1');
   method.overrideTarget = '';
@@ -26,7 +26,7 @@ test('actual inherited methods reject a missing official override edge', async (
   rejects(graph, binding, ['reference-facts-override', 'reference-facts-unsupported']);
 });
 test('embedded official options reject excessive JSON depth before canonicalization or provenance hashing', async () => {
-  const { graph, binding } = await actual('constructor', 'fb61582d651684bc7330f4f5674d6276c20013fd44af06d809220d8fab30785a');
+  const { graph, binding } = await actual('constructor', '55aed6fff72963bd12591ca45eca19d53dfebdb07f48eb6b05fa2d6c0dd4ec5d');
   const options = JSON.parse(graph.options.officialOptions);
   /** @type {unknown} */
   let nested = 0;
@@ -40,9 +40,10 @@ test('embedded official options reject excessive JSON depth before canonicalizat
   binding.options = structuredClone(graph.options);
   // Synchronize the existing provenance hash only to expose the embedded reader
   // defect. This is a negative graph, never an official Source success fixture.
-  for (const item of graph.classes) item.runtimeKey = sha256(canonical({
-    domain: 'tsfg.candidate.class-allocation-provenance', profile: graph.semanticProfile,
-    scope: graph.scope, sources: graph.sources, declaration: item.origin, options: graph.options
+  const environmentDigest = sha256('tsfg.candidate.class-environment.v2\0' + canonical({
+    profile: graph.semanticProfile, scope: graph.scope, sources: graph.sources, options: graph.options
   }));
+  for (const item of graph.classes) item.runtimeKey = sha256('tsfg.candidate.class-allocation-provenance.v2\0'
+    + canonical({ environmentDigest, declaration: item.origin }));
   rejects(graph, binding, ['reference-facts-limit']);
 });

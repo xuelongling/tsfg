@@ -8,7 +8,7 @@ import { canonical, sha256 } from '../../compiler/identity.mjs';
 async function actual() {
   const fixture = suffix => new URL('./fixtures/reference-source/reference-identity' + suffix, import.meta.url);
   const bytes = await readFile(fixture('.facts.json'));
-  assert.equal(sha256(bytes), 'sha256:e77f6989002d5398c2b9603ead12c60edee8b60db08c23a0b8d59ec88a33d82f');
+  assert.equal(sha256(bytes), 'sha256:208759e65db725db58affb620e87469f5a9ca1ead5786870f90d090e5771fb04');
   return { bytes, graph: JSON.parse(bytes.toString('utf8')),
     binding: JSON.parse(await readFile(fixture('.binding.json'), 'utf8')) };
 }
@@ -31,6 +31,8 @@ function corruptions(input, hir, check) {
     // hide a missing reference-category check. This is an invalid graph mutation.
     node.left = { ...structuredClone(value.classes[0].fields[0].initializer),
       id: node.left.id, origin: { ...node.left.origin } };
+    node.left.numericLiteral.contextType = '';
+    node.left.origin.end = node.left.origin.start + node.left.token.length;
   }, 'expression', 'primitive masquerading as a reference operand');
   changed((value, node) => {
     node.left = { ...node.left, ...(hir ? { kind: 'ref.class' } : {}),

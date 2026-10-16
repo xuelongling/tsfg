@@ -8,7 +8,7 @@ import { canonical, sha256 } from '../../compiler/identity.mjs';
 const fixture = name => new URL('./fixtures/reference-source/' + name, import.meta.url);
 async function officialCounter() {
   const bytes = await readFile(fixture('constructor.facts.json'));
-  assert.equal(sha256(bytes), 'sha256:fb61582d651684bc7330f4f5674d6276c20013fd44af06d809220d8fab30785a');
+  assert.equal(sha256(bytes), 'sha256:55aed6fff72963bd12591ca45eca19d53dfebdb07f48eb6b05fa2d6c0dd4ec5d');
   const binding = JSON.parse(await readFile(fixture('constructor.binding.json'), 'utf8'));
   return { bytes, binding };
 }
@@ -28,8 +28,11 @@ test('official Counter bytes build cold owned constructor and scalar-method HIR'
   assert.deepEqual(counter.constructor.initializationBoundary, { kind: 'entry' });
   assert.equal(counter.constructor.initializationPhase, 'before-body');
   assert.deepEqual(counter.constructor.initializationFields, ['c1.f0']);
-  assert.equal(counter.fields[0].initializer.kind, 'scalar.number');
+  assert.equal(counter.fields[0].initializer.kind, 'scalar.literal.unresolved');
   assert.equal(counter.fields[0].initializer.token, '1');
+  assert.equal(counter.fields[0].initializer.numericLiteral.state, 'unresolved');
+  assert.equal(counter.fields[0].initializer.numericLiteral.contextType, counter.fields[0].type);
+  assert.notEqual(counter.fields[0].initializer.type, counter.fields[0].type);
   assert.equal(counter.fields[0].type, 't:number');
   const initialize = counter.constructor.body[0].expression;
   assert.equal(initialize.kind, 'ref.field.write');
@@ -77,7 +80,7 @@ test('cold reference HIR rejects unknown operation data and fabricated initializ
 
 test('official readonly conversions retain alias identity across distinct field ordinals', async () => {
   const bytes = await readFile(fixture('readonly.facts.json'));
-  assert.equal(sha256(bytes), 'sha256:5558c3121ce960cdd2bbf82d04cf00a0f1bc60f6143e7be7604abb466d060538');
+  assert.equal(sha256(bytes), 'sha256:e23ce59ef86efb20301e81f68f51424be0ba697e18ddeb697791ca96d6d7db0f');
   const binding = JSON.parse(await readFile(fixture('readonly.binding.json'), 'utf8'));
   const facts = decodeReferenceFacts(bytes, binding);
   const hir = buildReferenceHir(facts);
