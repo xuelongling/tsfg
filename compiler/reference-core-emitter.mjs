@@ -89,30 +89,31 @@ export function emitReferenceCore(input) {
     };
     const baseReceiver = (base, origin) => operation('tsfg_core.ref.base', [receiver], 'ref:' + model.access.get(base.id),
       { class: base.runtimeKey }, origin);
+    const numberLiteral = (literal, targetType, witness, contextName) => {
+      const context = hir.types.find(type => type.id === targetType), metadata = literal.numericLiteral;
+      // The two field contexts consume occurrence-owned evidence only. Never
+      // settle a shared narrow type or let a source default override the slot.
+      if (context?.kind !== 'number' || model.type(targetType) !== 'f64'
+          || metadata.state !== 'unresolved' || metadata.officialType !== literal.type || metadata.contextType !== targetType
+          || !witness || witness.assignable !== true || witness.sourceType !== literal.type || witness.targetType !== targetType
+          || !Array.isArray(witness.members) || witness.members.length !== 0
+          || witness.origin.source !== literal.origin.source || witness.origin.start !== literal.origin.start || witness.origin.end !== literal.origin.end)
+        reject(contextName + ' lacks its exact owned context and compatibility witness', literal.origin);
+      let bits;
+      try { bits = floatBits(literal.token, 'f64'); }
+      catch (error) {
+        if (error instanceof RangeError) reject(contextName + ' rounds outside the finite f64 range', literal.origin);
+        throw error;
+      }
+      return operation('tsfg_core.constant', [], 'f64', { value: bits }, literal.origin);
+    };
     const initializeFields = () => {
       if (initialized) reject('duplicate constructor field initialization phase', item.origin);
       initialized = true;
       for (const field of owner.fields) if (field.initializer !== null) {
-        let value;
-        if (field.initializer.kind === 'scalar.literal.unresolved') {
-          const literal = field.initializer, context = hir.types.find(type => type.id === field.type);
-          const witness = field.initializerCompatibility, metadata = literal.numericLiteral;
-          // Resolution is confined to this owned field occurrence. Never settle
-          // its shared narrow type or let a default scalar override the slot.
-          if (context?.kind !== 'number' || model.type(field.type) !== 'f64'
-              || metadata.state !== 'unresolved' || metadata.officialType !== literal.type || metadata.contextType !== field.type
-              || !witness || witness.assignable !== true || witness.sourceType !== literal.type || witness.targetType !== field.type
-              || !Array.isArray(witness.members) || witness.members.length !== 0
-              || witness.origin.source !== literal.origin.source || witness.origin.start !== literal.origin.start || witness.origin.end !== literal.origin.end)
-            reject('number field initializer lacks its exact owned context and compatibility witness', literal.origin);
-          let bits;
-          try { bits = floatBits(literal.token, 'f64'); }
-          catch (error) {
-            if (error instanceof RangeError) reject('number field initializer rounds outside the finite f64 range', literal.origin);
-            throw error;
-          }
-          value = operation('tsfg_core.constant', [], 'f64', { value: bits }, literal.origin);
-        } else value = expression(field.initializer);
+        const value = field.initializer.kind === 'scalar.literal.unresolved'
+          ? numberLiteral(field.initializer, field.type, field.initializerCompatibility, 'number field initializer')
+          : expression(field.initializer);
         operation('tsfg_core.ref.field.write', [receiver, value], 'none',
           { field: model.member.get(field.symbol), initialize: true }, field.origin);
       }
@@ -134,7 +135,12 @@ export function emitReferenceCore(input) {
       if (value.kind === 'ref.field.read') return operation('tsfg_core.ref.field.read', [expression(value.receiver)], model.type(value.type),
         { field: model.member.get(value.symbol) }, value.origin);
       if (value.kind === 'ref.field.write') {
-        const location = value.left, object = expression(location.receiver), right = expression(value.right);
+        const location = value.left, object = expression(location.receiver);
+        // Evaluate the receiver before resolving this direct RHS and storing.
+        // Other expression contexts still reject unresolved numeric literals.
+        const right = value.right.kind === 'scalar.literal.unresolved'
+          ? numberLiteral(value.right, location.type, value.compatibility, 'number field assignment')
+          : expression(value.right);
         operation('tsfg_core.ref.field.write', [object, right], 'none',
           { field: model.member.get(location.symbol), initialize: false }, value.origin);
         // Assignment returns the evaluated RHS before the store's access view.

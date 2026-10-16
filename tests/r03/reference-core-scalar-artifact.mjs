@@ -11,7 +11,7 @@ import schema from '../../contracts/core-reference-candidate.schema.json' with {
 const hir = scalarCoreFixtures()[0].hir, scalar = lowerHir(hir);
 const binding = JSON.parse(await readFile(new URL('./fixtures/reference-source/locals-const.binding.json', import.meta.url), 'utf8'));
 const profile = schema.semanticProfile, scope = 'core-scalar-positive';
-assert.equal(schema.version, 3); assert.equal(profile, 'tsfg-owned-class-facts-candidate-v4');
+assert.equal(schema.version, 4); assert.equal(profile, 'tsfg-owned-class-facts-candidate-v4');
 const sources = [{ path: hir.source.path, sha256: hir.source.hash, utf16Length: hir.source.content.length,
   declaration: false, surrogateStarts: [] }];
 const preimage = canonical({ profile, scope, sources, options: binding.options });
