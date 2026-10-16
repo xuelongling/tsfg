@@ -20,7 +20,9 @@ async function verifiedConsumer(executable, role) {
   if (manifest.buildIdentity?.target !== "windows-x86_64-msvc"
       || manifest.buildIdentity?.profile !== "debug")
     throw new TypeError(`r03-tool-${role}: unsupported target/profile identity`);
-  const required = role === "core" ? ["compiler/core-ir/main.cpp", "compiler/core-ir/module.cpp", "compiler/core-ir/module.h", "compiler/core-ir/native_cost.cpp", "compiler/core-ir/native_cost.h", "compiler/core-ir/CMakeLists.txt"]
+  const required = role === "core" ? ["compiler/core-ir/main.cpp", "compiler/core-ir/module.cpp", "compiler/core-ir/module.h", "compiler/core-ir/native_cost.cpp", "compiler/core-ir/native_cost.h", "compiler/core-ir/CMakeLists.txt",
+    "compiler/core-ir/dialect.h", "compiler/core-ir/dialect.cpp", "compiler/core-ir/scalar_ops.h",
+    "compiler/core-ir/bytecode.h", "compiler/core-ir/bytecode.cpp", "compiler/core-ir/bytecode_encoding.h", "compiler/core-ir/bytecode_encoding.cpp"]
     : ["runtime/root.zig", "runtime/bytecode.zig", "runtime/module_format.zig", "runtime/module.zig", "runtime/request.zig", "runtime/clock.zig", "runtime/host_counter.zig", "runtime/host_counter.c", "runtime/host_counter_bridge.c", "runtime/vm.zig", "runtime/runtime.zig", "runtime/main.zig", "runtime/contract.zig", "eng/host-counter.mjs", "eng/host-counter-binary.mjs", "eng/host-cost-source.lock.json", "eng/vm-build.mjs", "runtime/execution_frame.zig", "runtime/scalar.zig"];
   required.push("contracts/registry.json", "contracts/bytecode.schema.json");
   for (const name of required) {

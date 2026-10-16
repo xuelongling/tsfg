@@ -1,5 +1,6 @@
 // SPDX-License-Identifier: MIT
 #include "module.h"
+#include "dialect.h"
 #include "llvm/Support/SHA256.h"
 #include "llvm/Support/ConvertUTF.h"
 #include <algorithm>
