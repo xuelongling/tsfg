@@ -3,6 +3,7 @@
 #include "core-verify.h"
 #include "dialect.h"
 #include "native_cost.h"
+#include "nullable.h"
 #include "mlir/Dialect/Func/IR/FuncOps.h"
 #include "mlir/Dialect/ControlFlow/IR/ControlFlowOps.h"
 #include "mlir/IR/DialectRegistry.h"
@@ -14,7 +15,7 @@
 
 namespace {
 constexpr size_t referenceByteBudget = 8388608;
-// Private reference output is validated in full before publishing any bytes.
+// Private candidate output is validated in full before publishing any bytes.
 class ReferenceOutput final : public llvm::raw_ostream {
   std::string bytes;
   bool overflow = false;
@@ -50,6 +51,7 @@ int main(int argc, char **argv) {
   }
   mlir::DialectRegistry registry;
   tsfg::registerCoreDialect(registry);
+  tsfg::nullable::registerDialect(registry);
   registry.insert<mlir::func::FuncDialect, mlir::cf::ControlFlowDialect>();
   mlir::MLIRContext context(registry);
   context.disableMultithreading();
@@ -59,10 +61,12 @@ int main(int argc, char **argv) {
     return 3;
   }
   const bool reference = module->getOperation()->hasAttr("tsfg_core.reference");
+  const bool nullable = tsfg::nullable::usesCandidate(*module);
   // The shared legacy stdin/MLIR parser remains unchanged. Apply the private
   // format budget before candidate metadata, typed verification and CFG work.
-  if (reference && (*input)->getBufferSize() > referenceByteBudget) {
-    llvm::errs() << "[core-ir-reference-budget] input exceeds candidate byte budget\n";
+  if ((reference || nullable) && (*input)->getBufferSize() > referenceByteBudget) {
+    llvm::errs() << (nullable ? "[core-ir-nullable-budget]" : "[core-ir-reference-budget]")
+                 << " input exceeds candidate byte budget\n";
     return 3;
   }
   auto version = module->getOperation()->getAttrOfType<mlir::StringAttr>("tsfg_core.version");
@@ -76,6 +80,10 @@ int main(int argc, char **argv) {
   }
   if (mlir::failed(tsfg::verifyCoreModule(*module))) return 3;
   if (llvm::StringRef(argv[1]) == "--emit-bytecode") {
+    if (nullable) {
+      llvm::errs() << "[r04-core-nullable-unsupported] wire9 cannot encode a nullable candidate module\n";
+      return 3;
+    }
     if (module->getOperation()->hasAttr("tsfg_core.reference")) {
       llvm::errs() << "[r04-core-reference-unsupported] wire9 cannot encode a reference candidate module\n";
       return 3;
@@ -88,12 +96,13 @@ int main(int argc, char **argv) {
   }
   // The current optimization pipeline is deliberately the canonical identity
   // pass: it performs full verification and retains every event/failure anchor.
-  if (reference) {
+  if (reference || nullable) {
     ReferenceOutput output;
     module->print(output, mlir::OpPrintingFlags().printGenericOpForm());
     output << '\n';
     if (output.exceeded()) {
-      llvm::errs() << "[core-ir-reference-budget] output exceeds candidate byte budget\n";
+      llvm::errs() << (nullable ? "[core-ir-nullable-budget]" : "[core-ir-reference-budget]")
+                   << " output exceeds candidate byte budget\n";
       return 3;
     }
     llvm::outs() << output.value();
