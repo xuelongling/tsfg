@@ -128,7 +128,7 @@ test('every actual numeric occurrence rejects missing or mismatched context and 
 });
 test('actual seven number fields retain exact constants stores and anchors through real C++ roundtrip and optimization', async () => {
   const data = await actual(), core = lowerHir(data.hir);
-  assert.equal(schema.version, 4);
+  assert.equal(schema.version, 5);
   const first = await invokeCore(core); accepted(first);
   const roundtrip = await invokeCore(first.stdout); accepted(roundtrip);
   const optimized = await invokeCore(first.stdout, '--optimize'); accepted(optimized);
@@ -137,12 +137,13 @@ test('actual seven number fields retain exact constants stores and anchors throu
   assert.equal(printReferenceHir(data.hir), data.unresolved);
   await cppRejected(first.stdout, /\[r04-core-reference-unsupported\]/, '--emit-bytecode');
 });
-test('private number initializer Core rejects old versions and mixed v4 identities with old schemas', async () => {
+test('private number initializer Core rejects old versions and mixed v5 identities with old schemas', async () => {
   const { hir } = await actual(), core = lowerHir(hir);
-  for (const version of [2,3]) await cppRejected(changeMetadata(core, 'version = 4 : i64', 'version = ' + version + ' : i64'),
+  for (const version of [2,3,4]) await cppRejected(changeMetadata(core, 'version = 5 : i64', 'version = ' + version + ' : i64'),
     /\[core-ir-reference-metadata\] candidate version differs/);
   for (const oldSchema of ['sha256:d36b3094aa1504a71beb8b7fcb7370364b0e3b8c2d49c4d0e16a63641f07d692',
-    'sha256:0120455de4db6b3c3c348f5e2504a2a4ab18026a83978874e1489cd5370ca313'])
+    'sha256:0120455de4db6b3c3c348f5e2504a2a4ab18026a83978874e1489cd5370ca313',
+    'sha256:efd525313efdb99543e402a05f6d6fce4d5867cacde0ae2584260d4cd1dcac29'])
     await cppRejected(changeMetadata(core, 'schema = ' + JSON.stringify(sha256(canonical(schema))), 'schema = ' + JSON.stringify(oldSchema)),
       /\[core-ir-reference-metadata\] candidate schema differs/);
 });
@@ -181,6 +182,45 @@ test('actual number field assignment rejects missing or inconsistent occurrence 
     const write = holder.constructor.body[1].expression; assert.equal(write.kind,'ref.field.write');
     assert.equal(write.right.kind,'scalar.literal.unresolved'); assert.equal(write.right.token,'2');
     item.mutate(write); assert.equal(changed.context.factsDigest,hir.context.factsDigest);
+    hirRejected(() => readReferenceHir(Buffer.from(canonical(changed))),item.category,item.label + ' cold');
+    hirRejected(() => lowerHir(changed),item.category,item.label + ' public lower');
+  }
+});
+
+// These are malformed owned HIR, not successful Source graphs. Exact shape,
+// selected-signature or witness causes must precede the unchanged facts digest.
+test('actual number constructor argument rejects bad context witness and selected target parameter facts', async () => {
+  const [bytes,bindingBytes] = await Promise.all([
+    readFile(fixture('construct.facts.json')),readFile(fixture('construct.binding.json')),
+  ]);
+  assert.equal(sha256(bytes),'sha256:e0dcbfba0174a9e5f02f36018bde40ddcb9e7afe7ae51450c7d0e3a81a5d82f3');
+  assert.equal(sha256(bindingBytes),'sha256:6b0fe5978070e44c3c1fc052d337fca3bb865610c6ea4b5a0afa7fdce0223c37');
+  const owned = buildReferenceHir(decodeReferenceFacts(bytes,JSON.parse(bindingBytes.toString('utf8'))));
+  const hir = readReferenceHir(Buffer.from(printReferenceHir(owned))); assert.deepEqual(hir,owned);
+  const cases = [
+    {label:'missing context',category:'schema',mutate:call => { delete call.arguments[0].numericLiteral.contextType; }},
+    {label:'empty context',category:'literal',mutate:call => { call.arguments[0].numericLiteral.contextType = ''; }},
+    {label:'wrong context',category:'literal',mutate:call => { call.arguments[0].numericLiteral.contextType = call.arguments[0].type; }},
+    {label:'missing witness',category:'schema',mutate:call => { call.argumentCompatibility[0] = null; }},
+    {label:'false assignability',category:'witness',mutate:call => { call.argumentCompatibility[0].assignable = false; }},
+    {label:'wrong witness source',category:'witness',mutate:call => { call.argumentCompatibility[0].sourceType = call.resolvedSignature.parameters[0].type; }},
+    {label:'wrong witness target',category:'witness',mutate:call => { call.argumentCompatibility[0].targetType = call.arguments[0].type; }},
+    {label:'wrong witness anchor',category:'witness',mutate:call => { call.argumentCompatibility[0].origin.start++; }},
+    {label:'wrong witness file',category:'witness',mutate:call => { call.argumentCompatibility[0].origin.source = '/original/minimal-scalars-v2.d.ts'; }},
+    {label:'missing selected parameters',category:'schema',mutate:call => { delete call.resolvedSignature.parameters; }},
+    {label:'wrong selected type',category:'unsupported',mutate:call => { call.resolvedSignature.parameters[0].type = call.arguments[0].type; }},
+    {label:'wrong selected symbol',category:'unsupported',mutate:call => { call.resolvedSignature.parameters[0].symbol = call.receiver.symbol; }},
+    {label:'wrong selected arity',category:'unsupported',mutate:call => { call.resolvedSignature.parameters = []; }},
+    {label:'wrong static target',category:'call',mutate:(call,factory) => { call.staticTarget = factory.constructor.id; }},
+  ];
+  for (const item of cases) {
+    const changed = structuredClone(hir), factory = changed.classes.find(value => value.name === 'Factory'); assert.ok(factory);
+    const field = factory.fields.find(value => value.name === 'fresh'); assert.ok(field);
+    let call = field.initializer; while (call.kind === 'ref.view') call = call.value;
+    assert.equal(call.kind,'ref.construct'); assert.equal(call.arguments[0].kind,'scalar.literal.unresolved');
+    assert.equal(call.arguments[0].token,'5');
+    item.mutate(call,factory); assert.equal(changed.context.factsDigest,hir.context.factsDigest);
+    // This asserts the real pre-emitter rejection layer, not RNE or C++ credit.
     hirRejected(() => readReferenceHir(Buffer.from(canonical(changed))),item.category,item.label + ' cold');
     hirRejected(() => lowerHir(changed),item.category,item.label + ' public lower');
   }

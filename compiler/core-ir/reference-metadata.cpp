@@ -101,8 +101,8 @@ mlir::LogicalResult verifyReferenceMetadata(mlir::ModuleOp module, ReferenceMeta
   if (!exact(extension, {"family","version","schema","profile","scope","input","environment","environment_preimage","sources","types","classes","views"})) return reject("unknown or missing extension fields");
   std::string family, schema, profile, scope, preimage; uint32_t version;
   if (!text(extension, "family", family) || family != "tsfg.core-reference-candidate") return reject("candidate family differs");
-  if (!number(extension, "version", version, 4) || version != 4) return reject("candidate version differs");
-  if (!text(extension, "schema", schema) || schema != "sha256:efd525313efdb99543e402a05f6d6fce4d5867cacde0ae2584260d4cd1dcac29") return reject("candidate schema differs");
+  if (!number(extension, "version", version, 5) || version != 5) return reject("candidate version differs");
+  if (!text(extension, "schema", schema) || schema != "sha256:e95843b70656ade068062050100df75e2c9b8c61e0e8886774ed11d6773bc56c") return reject("candidate schema differs");
   if (!text(extension, "profile", profile) || profile != "tsfg-owned-class-facts-candidate-v4") return reject("candidate profile differs");
   if (!text(extension, "scope", scope, 256) || !text(extension, "input", metadata.input) || !hash(metadata.input)
       || !text(extension, "environment", metadata.environment) || !hash(metadata.environment)
