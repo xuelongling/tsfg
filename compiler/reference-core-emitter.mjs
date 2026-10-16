@@ -91,7 +91,7 @@ export function emitReferenceCore(input) {
       { class: base.runtimeKey }, origin);
     const numberLiteral = (literal, targetType, witness, contextName) => {
       const context = hir.types.find(type => type.id === targetType), metadata = literal.numericLiteral;
-      // The two field contexts consume occurrence-owned evidence only. Never
+      // The supported slot contexts consume occurrence-owned evidence only. Never
       // settle a shared narrow type or let a source default override the slot.
       if (context?.kind !== 'number' || model.type(targetType) !== 'f64'
           || metadata.state !== 'unresolved' || metadata.officialType !== literal.type || metadata.contextType !== targetType
@@ -137,7 +137,7 @@ export function emitReferenceCore(input) {
       if (value.kind === 'ref.field.write') {
         const location = value.left, object = expression(location.receiver);
         // Evaluate the receiver before resolving this direct RHS and storing.
-        // Other expression contexts still reject unresolved numeric literals.
+        // Unlisted expression contexts still reject unresolved numeric literals.
         const right = value.right.kind === 'scalar.literal.unresolved'
           ? numberLiteral(value.right, location.type, value.compatibility, 'number field assignment')
           : expression(value.right);
@@ -154,7 +154,13 @@ export function emitReferenceCore(input) {
       if (value.kind === 'ref.construct') {
         const target = model.callables.get(value.staticTarget);
         if (!target || target.descriptor.kind !== 'constructor') reject('constructor target is outside the owned closure', value.origin);
-        const arguments_ = value.arguments.map(expression);
+        const arguments_ = value.arguments.map((argument, index) => {
+          if (argument.kind !== 'scalar.literal.unresolved') return expression(argument);
+          const parameter = value.resolvedSignature.parameters[index], declared = target.item.signature.parameters[index];
+          if (!parameter || !declared || parameter.symbol !== declared.symbol || parameter.type !== declared.type)
+            reject('number constructor argument lacks its selected target parameter', argument.origin);
+          return numberLiteral(argument, parameter.type, value.argumentCompatibility[index], 'number constructor argument');
+        });
         const object = operation('tsfg_core.ref.alloc', [], 'ref:' + model.access.get(target.owner.id),
           { class: target.owner.runtimeKey }, value.origin);
         directCall(target, [object, ...arguments_], value.origin);
