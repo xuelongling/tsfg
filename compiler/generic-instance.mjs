@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: MIT
 import { canonical, own, sha256 } from './identity.mjs';
 import { decodeGenericPackage, genericPackageFormat, genericPackageLimits } from './generic-package.mjs';
-import { checkGenericJsonBudget } from './generic-package-shape.mjs';
+import { checkGenericJsonValueBudget } from './generic-json.mjs';
 
 // Candidate in-memory Source result boundary. Scalar substitution below validates
 // only finite owned-shape correspondence,
@@ -18,7 +18,7 @@ const array = (value, maximum, minimum = 0) => {
   return value;
 };
 function budget(value) {
-  try { checkGenericJsonBudget(value); }
+  try { checkGenericJsonValueBudget(value); }
   catch (error) { fail(error.code === 'generic-package-limit' ? 'limit' : 'schema'); }
 }
 function argumentsOf(values) {

@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: MIT
 import { canonical, own, sha256, scalarTypeIds, functionIdentity, signatureHash } from './identity.mjs';
 import { decodeGenericPackage, genericDefinitionKey, genericPackageFormat, genericPackageLimits } from './generic-package.mjs';
-import { checkGenericJsonBudget } from './generic-package-shape.mjs';
+import { checkGenericJsonValueBudget } from './generic-json.mjs';
 import { readGenericJson } from './generic-json.mjs';
 import { emitScalarCore } from './scalar-core-emitter.mjs';
 import { genericInstanceKey, genericPackageContext, validateGenericInstanceResult } from './generic-instance.mjs';
@@ -25,7 +25,7 @@ const array = (value, maximum, minimum = 0) => {
   return value;
 };
 function budget(value) {
-  try { checkGenericJsonBudget(value); }
+  try { checkGenericJsonValueBudget(value); }
   catch (error) { fail(error.code === 'generic-package-limit' ? 'limit' : 'schema'); }
 }
 /** Generated linkage lives in this candidate namespace; source names have no reserved prefix. */

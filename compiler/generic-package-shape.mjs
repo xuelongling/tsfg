@@ -1,5 +1,6 @@
 // SPDX-License-Identifier: MIT
 import { canonical, sha256, own } from "./identity.mjs";
+import { checkGenericJsonValueBudget, genericPackageJsonPolicy } from "./generic-json-budget.mjs";
 
 export const genericPackageFormat = own({
   family: "tsfg-owned-generic-package", version: 1,
@@ -7,11 +8,11 @@ export const genericPackageFormat = own({
   semanticProfile: "tsfg-owned-scalar-generics-host-v1", declarationProfile: "minimal-scalars-v2",
   capabilities: ["explicit-type-arguments", "scalar-generics", "single-module"],
 });
-export const genericPackageLimits = Object.freeze({ bytes: 8388608, declarationBytes: 1048576,
-  declarations: 8, definitions: 256, depth: 160, expressionDepth: 64,
-  expressionsPerDefinition: 1024, expressionsTotal: 32768, jsonTokens: 1000000,
+export const genericPackageLimits = Object.freeze({ bytes: genericPackageJsonPolicy.bytes, declarationBytes: 1048576,
+  declarations: 8, definitions: 256, depth: genericPackageJsonPolicy.depth, expressionDepth: 64,
+  expressionsPerDefinition: 1024, expressionsTotal: 32768, jsonTokens: genericPackageJsonPolicy.jsonTokens,
   parameters: 64, pathBytes: 4096, scopeBytes: 256, sourceUTF16: 1048576,
-  stringBytes: 1048576, typeParameters: 16 });
+  stringBytes: genericPackageJsonPolicy.stringBytes, typeParameters: 16 });
 
 export function packageFailure(category) {
   throw Object.assign(new TypeError(`generic-package-${category}: invalid owned generic package`),
@@ -59,63 +60,15 @@ function path(value, declaration) {
     && (declaration ? value.endsWith(".d.ts") : value.endsWith(".ts") && !value.endsWith(".d.ts")));
   return value;
 }
+// A VFS file cannot also be an ancestor directory of another owned file.
+export function genericInputPathsDisjoint(paths) {
+  return paths.every((name, index) => paths.slice(index + 1).every(other => name !== other
+    && !name.startsWith(other + '/') && !other.startsWith(name + '/')));
+}
 function strictOrder(values, key) {
   for (let i = 1; i < values.length; i++) check(order(key(values[i - 1]), key(values[i])) < 0);
 }
 
-// Bound the complete canonical representation before allocating DTO copies,
-// canonical text or hash preimages. Inspect descriptors without invoking getters.
-// Count repeated references each time they would be serialized; reject cycles.
-export function checkGenericJsonBudget(input) {
-  const limit = genericPackageLimits, active = new Set();
-  let size = 0, tokens = 0;
-  const add = count => { size += count; check(size <= limit.bytes, "limit"); };
-  const event = (count = 1) => { tokens += count; check(tokens <= limit.jsonTokens, "limit"); };
-  function string(value) {
-    let decoded = 0;
-    add(2);
-    for (let index = 0; index < value.length; index++) {
-      const unit = value.charCodeAt(index);
-      check(unit !== 0);
-      let width = unit < 0x80 ? 1 : unit < 0x800 ? 2 : 3;
-      if (unit >= 0xd800 && unit <= 0xdbff) {
-        const low = value.charCodeAt(++index);
-        check(low >= 0xdc00 && low <= 0xdfff); width = 4;
-      } else check(unit < 0xdc00 || unit > 0xdfff);
-      decoded += width; check(decoded <= limit.stringBytes, "limit");
-      const escaped = unit === 0x22 || unit === 0x5c || unit >= 8 && unit <= 10 || unit === 12 || unit === 13;
-      add(escaped ? 2 : unit < 0x20 ? 6 : width);
-    }
-  }
-  function visit(value, depth) {
-    if (typeof value === "string") { event(); string(value); return; }
-    if (typeof value === "number") { event(); integer(value); add(String(value).length); return; }
-    if (typeof value === "boolean" || value === null) { event(); add(value === null ? 4 : value ? 4 : 5); return; }
-    check(value && typeof value === "object");
-    check(depth <= limit.depth, "limit"); check(!active.has(value));
-    const isArray = Array.isArray(value);
-    check(isArray ? Object.getPrototypeOf(value) === Array.prototype
-      : [Object.prototype, null].includes(Object.getPrototypeOf(value)));
-    if (isArray) check(value.length <= limit.jsonTokens, "limit");
-    const keys = Reflect.ownKeys(value);
-    check(keys.length <= limit.jsonTokens + (isArray ? 1 : 0), "limit");
-    active.add(value); event(2); add(2);
-    let count = 0;
-    for (const key of keys) {
-      if (isArray && key === "length") continue;
-      check(typeof key === "string");
-      const descriptor = Object.getOwnPropertyDescriptor(value, key);
-      check(descriptor && Object.hasOwn(descriptor, "value") && descriptor.enumerable);
-      if (count++) add(1);
-      if (isArray) check(key === String(count - 1));
-      else { event(); string(key); add(1); }
-      visit(descriptor.value, depth + 1);
-    }
-    if (isArray) check(count === value.length);
-    active.delete(value);
-  }
-  visit(input, 1);
-}
 function dataProperty(value, key) {
   check(value && typeof value === "object" && !Array.isArray(value)
     && [Object.prototype, null].includes(Object.getPrototypeOf(value)));
@@ -126,18 +79,18 @@ function dataProperty(value, key) {
 export function genericDefinitionKey(definition, payload) {
   const preimage = { name: dataProperty(definition, "name"), origin: dataProperty(definition, "origin"),
     scope: dataProperty(payload, "scope"), source: dataProperty(payload, "source") };
-  checkGenericJsonBudget(preimage);
+  checkGenericJsonValueBudget(preimage);
   return hex("tsfg:generic-definition:v1\n" + canonical(preimage));
 }
 /** Hash the protocol Payload: definitions/files must already have canonical order. */
 export function genericPackageId(payload) {
-  checkGenericJsonBudget(payload);
+  checkGenericJsonValueBudget(payload);
   return sha256("tsfg-owned-generic-package/v1\n" + canonical(payload));
 }
 
 /** Structural admission only. Official Source checking remains the semantic authority. */
 export function normalizeGenericPackage(input, ordered = false) {
-  checkGenericJsonBudget(input);
+  checkGenericJsonValueBudget(input);
   record(input, ["family", "packageId", "payload", "schemaHash", "version"]);
   const format = genericPackageFormat, limit = genericPackageLimits;
   check(input.family === format.family && input.version === format.version && input.schemaHash === format.schemaHash);
@@ -172,6 +125,7 @@ export function normalizeGenericPackage(input, ordered = false) {
   });
   if (ordered) strictOrder(files, file => file.path);
   files.sort((a, b) => order(a.path, b.path)); strictOrder(files, file => file.path);
+  check(genericInputPathsDisjoint([sourcePath, ...files.map(file => file.path)]), "input");
   let totalExpressions = 0;
   const definitions = array(value.definitions, limit.definitions, 1).map(definition => {
     record(definition, ["body", "exported", "key", "name", "origin", "parameters", "returnType", "typeParameters"]);

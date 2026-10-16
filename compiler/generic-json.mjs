@@ -1,13 +1,21 @@
 // SPDX-License-Identifier: MIT
-import { genericPackageLimits, packageFailure, packageString } from "./generic-package-shape.mjs";
+import { genericPackageJsonPolicy, genericPackageIoJsonPolicy, genericJsonFailure as failure } from "./generic-json-budget.mjs";
+export { checkGenericJsonValueBudget, genericPackageJsonPolicy, genericPackageIoJsonPolicy } from "./generic-json-budget.mjs";
+
+/** @param {Readonly<import("./generic-json-budget.mjs").GenericJsonPolicy>} policy */
+function stringValue(value, policy) {
+  if (typeof value !== "string" || !value.isWellFormed() || !policy.allowNul && value.includes("\0")) failure(policy, "schema");
+  if (Buffer.byteLength(value, "utf8") > policy.stringBytes) failure(policy, "limit");
+}
 
 // Validate syntax and allocation budgets before JSON.parse builds the DTO graph.
 // This scanner retains only object-key sets; it does not interpret generic types.
-export function preflightGenericJson(text) {
-  const limits = genericPackageLimits;
+/** @param {Readonly<import("./generic-json-budget.mjs").GenericJsonPolicy>} [policy] */
+export function preflightGenericJson(text, policy = genericPackageJsonPolicy) {
+  const limits = policy;
   let index = 0, tokens = 0;
-  const fail = () => packageFailure("json");
-  const event = () => { if (++tokens > limits.jsonTokens) packageFailure("limit"); };
+  const fail = () => failure(policy, "json");
+  const event = () => { if (++tokens > limits.jsonTokens) failure(policy, "limit"); };
   const whitespace = () => { while (/[\x20\t\r\n]/.test(text[index] ?? "!")) index++; };
   function string() {
     const start = index++;
@@ -16,7 +24,7 @@ export function preflightGenericJson(text) {
       if (char === '"') {
         let value;
         try { value = JSON.parse(text.slice(start, index)); } catch { fail(); }
-        packageString(value);
+        stringValue(value, policy);
         return value;
       }
       if (char === "\\") {
@@ -30,7 +38,7 @@ export function preflightGenericJson(text) {
     whitespace();
     const char = text[index];
     if (char === "{" || char === "[") {
-      if (depth > limits.depth) packageFailure("limit");
+      if (depth > limits.depth) failure(policy, "limit");
       event(); index++; whitespace();
       const object = char === "{", end = object ? "}" : "]", names = new Set();
       if (text[index] === end) { index++; event(); return; }
@@ -39,7 +47,7 @@ export function preflightGenericJson(text) {
           if (text[index] !== '"') fail();
           const name = string(); event();
           if (names.has(name)) fail();
-          if (["__proto__", "constructor", "prototype"].includes(name)) packageFailure("schema");
+          if (policy.rejectPrototypeKeys && ["__proto__", "constructor", "prototype"].includes(name)) failure(policy, "schema");
           names.add(name); whitespace();
           if (text[index++] !== ":") fail();
         }
@@ -62,24 +70,26 @@ export function preflightGenericJson(text) {
   if (index !== text.length) fail();
 }
 
-function textBytes(bytes) {
-  if (!(bytes instanceof Uint8Array)) packageFailure("input");
-  if (bytes.byteLength > genericPackageLimits.bytes) packageFailure("limit");
+/** @param {Readonly<import("./generic-json-budget.mjs").GenericJsonPolicy>} policy */
+function textBytes(bytes, policy) {
+  if (!(bytes instanceof Uint8Array)) failure(policy, "input");
+  if (bytes.byteLength > policy.bytes) failure(policy, "limit");
   // Take ownership before decoding. Shared memory could otherwise change between
   // syntax validation, identity verification and the canonical-byte comparison.
   const copy = Uint8Array.from(bytes);
   let text;
   try { text = new TextDecoder("utf-8", { fatal: true, ignoreBOM: true }).decode(copy); }
-  catch { packageFailure("utf8"); }
-  if (text.charCodeAt(0) === 0xfeff) packageFailure("canonical");
+  catch { failure(policy, "utf8"); }
+  if (text.charCodeAt(0) === 0xfeff) failure(policy, "canonical");
   return { bytes: copy, text };
 }
 
 /** Own bytes and finish lexical/budget validation before allocating a JSON graph. */
-export function readGenericJson(bytes) {
-  const input = textBytes(bytes);
-  preflightGenericJson(input.text);
+/** @param {Readonly<import("./generic-json-budget.mjs").GenericJsonPolicy>} [policy] */
+export function readGenericJson(bytes, policy = genericPackageJsonPolicy) {
+  const input = textBytes(bytes, policy);
+  preflightGenericJson(input.text, policy);
   let value;
-  try { value = JSON.parse(input.text); } catch { packageFailure("json"); }
+  try { value = JSON.parse(input.text); } catch { failure(policy, "json"); }
   return { ...input, value };
 }
