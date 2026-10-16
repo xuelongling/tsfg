@@ -447,7 +447,7 @@ fn executeStep(execution: *ExecutionState, state: *module_state.State, limits: *
             } else { storeReturned(result_out, typedValue(result, op.type_code), current_id, &op.source); return .terminal; }
         } else if (op.opcode >= 4 and op.opcode <= 8) {
             if (!@call(.never_inline, executeArithmeticInstruction, .{ current, op, result_out })) return .terminal;
-        } else if (op.opcode >= 9 and op.opcode <= 17) {
+        } else if ((op.opcode >= 9 and op.opcode <= 17) or op.opcode == 33) {
             if (!@call(.never_inline, executeBitInstruction, .{ current, op, result_out })) return .terminal;
         } else if (op.opcode >= 18 and op.opcode <= 25) {
             if (!@call(.never_inline, executeComparisonInstruction, .{ current, op })) return .terminal;
