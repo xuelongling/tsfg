@@ -31,7 +31,7 @@ function coldRoundTrip(hir) {
 }
 
 test('official four-scalar metadata preserves storage, returns and nominal origins in cold HIR', async () => {
-  const facts = await official('scalars', 'sha256:79b3dfcba9ba961ffe55b884a5dcb38d7c4200888cfc4f9a9274acc858491ab9');
+  const facts = await official('scalars', 'sha256:a328257c0a22f812a39f02084a510c48b6885954f920cc46b4ab971125990067');
   const policyBytes = await readFile(fixture('scalar-declaration-policy.json'));
   assert.equal(sha256(policyBytes), 'sha256:8cac85f33b9242571990a6fc4838827824a2444f6f29452a2f92c10970798db1');
   // This fixture is Root's fixed private descriptor, never graph-supplied policy.
@@ -104,7 +104,7 @@ test('official four-scalar metadata preserves storage, returns and nominal origi
 });
 
 test('official numeric-literal metadata remains unresolved through cold HIR round trip', async () => {
-  const facts = await official('constructor', 'sha256:55aed6fff72963bd12591ca45eca19d53dfebdb07f48eb6b05fa2d6c0dd4ec5d');
+  const facts = await official('constructor', 'sha256:d845685780c38f113a9a6d18e1624723ba3f2fe5155dc83a9b58e40a2f144f6e');
   const hir = buildReferenceHir(facts), field = hir.classes[0].fields[0];
   const literal = field.initializer;
   assert.equal(literal.kind, 'scalar.literal.unresolved');
@@ -133,7 +133,7 @@ test('official numeric-literal metadata remains unresolved through cold HIR roun
   });
   assert.notEqual(literal, facts.graph.classes[0].fields[0].initializer);
   assert.deepEqual(coldRoundTrip(hir).classes[0].fields[0].initializer, literal);
-  const literalFacts = await official('literal-facts', 'sha256:c414558cf0f8af41632dfcfc9d4c3ea4073f83f09a8d4b365c25aed417867423');
+  const literalFacts = await official('literal-facts', 'sha256:1c7cffbf3fd0eff6b286b06d9a7030c3084050cc3918b3af69af079c05bde0b9');
   const literals = buildReferenceHir(literalFacts), owner = literals.classes[0];
   const source = await readFile(fixture('literal-facts.source.ts'), 'utf8');
   assert.equal(owner.name, 'Literals');

@@ -1,21 +1,21 @@
 {
-  "producerPID": 18816,
+  "producerPID": 24384,
   "qualified": true,
-  "top": 28,
-  "sub": 32,
-  "failed": 0,
+  "top": 31,
+  "sub": 36,
+  "fail": 0,
   "skip": 0,
-  "producerRun": "E:/ws/pro_tsfg/.scratch/tsfg_r03/M12-class-facts-checks-20261016/review-resource-defaults-green-first",
+  "producerRun": "E:/ws/pro_tsfg/.scratch/tsfg_r03/M12-class-facts-checks-20261016/initialized-locals-alias-green-first",
   "inputs": [
     {
       "relative": "tsc/cmd/tsfg-frontend/class_graph.go",
-      "bytes": 8414,
-      "sha256": "36b9a279fa9c6f53e793336048fa31701404d485043cd4f0f3d9838650829bd5"
+      "bytes": 8469,
+      "sha256": "255355f4ad079cee953cb1cf65703364e2a5026ebc27d41d513073a18ff005bd"
     },
     {
       "relative": "tsc/cmd/tsfg-frontend/class_source.go",
-      "bytes": 8226,
-      "sha256": "bf3fa9991572bc3ca92e3e7e7113a8f35860afca3d58ee233bf1ed8a352fe72c"
+      "bytes": 8397,
+      "sha256": "58642e035a977aefa9e380492f7b5961a72404cc7ccf53d7862d99cbb2cdc2d2"
     },
     {
       "relative": "tsc/cmd/tsfg-frontend/class_declarations.go",
@@ -24,13 +24,13 @@
     },
     {
       "relative": "tsc/cmd/tsfg-frontend/class_body.go",
-      "bytes": 7246,
-      "sha256": "72d9c97d6c0a19f5a90a668ebd0697ab6bae4c607373d883d8a7b20ee8e988e7"
+      "bytes": 7815,
+      "sha256": "736a46440c363248613a9dd8a62567bed3cda416d38876583a5f0f89e26d413c"
     },
     {
       "relative": "tsc/cmd/tsfg-frontend/class_methods.go",
-      "bytes": 5136,
-      "sha256": "c89804bab7826459b8beaad56c10442d31345b990a1af160e3b53bdd8688e19d"
+      "bytes": 5633,
+      "sha256": "915f1d5592b52766ae2a087df09c0c70dc7b3c3d791d113e498a395a297e5fbc"
     },
     {
       "relative": "tsc/cmd/tsfg-frontend/class_calls.go",
@@ -75,7 +75,7 @@
     {
       "relative": "tsc/cmd/tsfg-frontend/class_options.go",
       "bytes": 2472,
-      "sha256": "e2188293138e107e2359bfc54ec71b865de9c2ff9a757ad48feb2760af3513ec"
+      "sha256": "130dc28f6e621b5183d30a20624d5d765373718ac53e5c9a220258e18d6a9f6f"
     },
     {
       "relative": "tsc/cmd/tsfg-frontend/class_readonly_test.go",
@@ -89,8 +89,8 @@
     },
     {
       "relative": "tsc/cmd/tsfg-frontend/class_candidate_graphs_test.go",
-      "bytes": 2012,
-      "sha256": "13e10422148f7f5df34aa5b8c639500d85988233269d88666fb2c34f8d2ae86d"
+      "bytes": 2094,
+      "sha256": "ce3444550ab941312c00b084e2f6696c3aa8fb7f6b4d4a9b920011459b2423fe"
     },
     {
       "relative": "tsc/cmd/tsfg-frontend/class_implicit_constructor.go",
@@ -216,126 +216,182 @@
       "relative": "tsc/cmd/tsfg-frontend/class_budget_limits_test.go",
       "bytes": 7825,
       "sha256": "2969cd7248aad8c727093c8bff9f7b6599def53dc4f31960a06663080cff5269"
+    },
+    {
+      "relative": "tsc/cmd/tsfg-frontend/class_explicit_this_test.go",
+      "bytes": 1836,
+      "sha256": "e26e3674ac928a99419e03218d34ecd9c7184171c38f384b77d3b0aa54de52f3"
+    },
+    {
+      "relative": "tsc/cmd/tsfg-frontend/class_locals_test.go",
+      "bytes": 10552,
+      "sha256": "5113b8c5c1414e3cc3cbc88a701e1bebadbd664872bd6b5a0af522ce0298e821"
+    },
+    {
+      "relative": "tsc/cmd/tsfg-frontend/class_locals.go",
+      "bytes": 6930,
+      "sha256": "e00cad2f5ac49967f1a19bffe8cd368fa94a8b2b9a74609d5927ca166b4954dc"
     }
   ],
-  "notes": "Actual public Program/checker-to-owned output; independently verified canonical bytes, SHA, source/DTS UTF16 and v2 E/K. Binding correspondence only; no Source admission or executable authority.",
+  "notes": "Actual fresh official Program/checker graphs; UTF16 including emoji and E/K v2 cold verified. Profile3; no executable admission or formal contract adoption.",
   "graphs": [
     {
       "name": "constructor",
-      "factsPath": "E:/ws/pro_tsfg/.scratch/tsfg_r03/M12-class-facts-checks-20261016/candidate-graphs-v2-final-green/constructor.facts.json",
-      "bindingPath": "E:/ws/pro_tsfg/.scratch/tsfg_r03/M12-class-facts-checks-20261016/candidate-graphs-v2-final-green/constructor.binding.json",
-      "sourcePath": "E:/ws/pro_tsfg/.scratch/tsfg_r03/M12-class-facts-checks-20261016/candidate-graphs-v2-final-green/constructor.source.ts",
-      "bytes": 10118,
-      "sha256": "55aed6fff72963bd12591ca45eca19d53dfebdb07f48eb6b05fa2d6c0dd4ec5d",
-      "bindingSHA256": "ecbd25376c791dab3e2ee830428d9138676b15d03b2a1cf4ef71a234facb746f",
+      "factsPath": "E:/ws/pro_tsfg/.scratch/tsfg_r03/M12-class-facts-checks-20261016/candidate-graphs-v3-locals-green/constructor.facts.json",
+      "bindingPath": "E:/ws/pro_tsfg/.scratch/tsfg_r03/M12-class-facts-checks-20261016/candidate-graphs-v3-locals-green/constructor.binding.json",
+      "sourcePath": "E:/ws/pro_tsfg/.scratch/tsfg_r03/M12-class-facts-checks-20261016/candidate-graphs-v3-locals-green/constructor.source.ts",
+      "bytes": 10157,
+      "sha256": "d845685780c38f113a9a6d18e1624723ba3f2fe5155dc83a9b58e40a2f144f6e",
+      "bindingSHA256": "c4cf3b36d91d82007659c97157bdc04af8947745aa4e3fb49ad3ba28207ed605",
       "sourceBytes": 175,
       "sourceSHA256": "e7fcf4788b0fcf6f98d06cc51a308b990fe04ac228ba89615ac262e981b4d47c",
-      "E": "sha256:6beff8473f2ca618f9cee86a7f2255d42aea266ffd21a25e00face3b69c6b5fa",
-      "classes": 1
+      "utf16Length": 175,
+      "surrogateStarts": [],
+      "E": "sha256:a5160e03c8b74d5acc13e9677049a718eb1604326c16555552166facd6be61e6"
     },
     {
       "name": "inheritance",
-      "factsPath": "E:/ws/pro_tsfg/.scratch/tsfg_r03/M12-class-facts-checks-20261016/candidate-graphs-v2-final-green/inheritance.facts.json",
-      "bindingPath": "E:/ws/pro_tsfg/.scratch/tsfg_r03/M12-class-facts-checks-20261016/candidate-graphs-v2-final-green/inheritance.binding.json",
-      "sourcePath": "E:/ws/pro_tsfg/.scratch/tsfg_r03/M12-class-facts-checks-20261016/candidate-graphs-v2-final-green/inheritance.source.ts",
-      "bytes": 20951,
-      "sha256": "295cc685221122ebbfd8ebc9dc4f16ac2879d19013aba0f029672f747f561493",
-      "bindingSHA256": "8af09fe0326afc20aed825dbf21bbd3e759e4c41be4b65d991c11e8b212e7cd5",
+      "factsPath": "E:/ws/pro_tsfg/.scratch/tsfg_r03/M12-class-facts-checks-20261016/candidate-graphs-v3-locals-green/inheritance.facts.json",
+      "bindingPath": "E:/ws/pro_tsfg/.scratch/tsfg_r03/M12-class-facts-checks-20261016/candidate-graphs-v3-locals-green/inheritance.binding.json",
+      "sourcePath": "E:/ws/pro_tsfg/.scratch/tsfg_r03/M12-class-facts-checks-20261016/candidate-graphs-v3-locals-green/inheritance.source.ts",
+      "bytes": 21068,
+      "sha256": "703a5991e645b34255601e501d9251edb91fe6f4fd269c3b6ceeeee5338afa0c",
+      "bindingSHA256": "82a163a43453379a6a5f26d579cd53580df4ee35bfa61b591feb896cd96c5e63",
       "sourceBytes": 476,
       "sourceSHA256": "d20efb12f06e2e7219c16956fc875457ffaf8a181d6efc7ed186441dea6da24c",
-      "E": "sha256:a248605d9adba6e5eef01ea262f7989b56a38d7c7463eb45a72a83fa8d7d0a0b",
-      "classes": 2
+      "utf16Length": 476,
+      "surrogateStarts": [],
+      "E": "sha256:d2cf95889e56cca772c83f8c9985e10d84c710d95758e143711ac45095aa515a"
     },
     {
       "name": "readonly",
-      "factsPath": "E:/ws/pro_tsfg/.scratch/tsfg_r03/M12-class-facts-checks-20261016/candidate-graphs-v2-final-green/readonly.facts.json",
-      "bindingPath": "E:/ws/pro_tsfg/.scratch/tsfg_r03/M12-class-facts-checks-20261016/candidate-graphs-v2-final-green/readonly.binding.json",
-      "sourcePath": "E:/ws/pro_tsfg/.scratch/tsfg_r03/M12-class-facts-checks-20261016/candidate-graphs-v2-final-green/readonly.source.ts",
-      "bytes": 20237,
-      "sha256": "e23ce59ef86efb20301e81f68f51424be0ba697e18ddeb697791ca96d6d7db0f",
-      "bindingSHA256": "954c51327772f024370c9641a3b03adb9a181a5619ae924c7e1b76ba5170e2d6",
+      "factsPath": "E:/ws/pro_tsfg/.scratch/tsfg_r03/M12-class-facts-checks-20261016/candidate-graphs-v3-locals-green/readonly.facts.json",
+      "bindingPath": "E:/ws/pro_tsfg/.scratch/tsfg_r03/M12-class-facts-checks-20261016/candidate-graphs-v3-locals-green/readonly.binding.json",
+      "sourcePath": "E:/ws/pro_tsfg/.scratch/tsfg_r03/M12-class-facts-checks-20261016/candidate-graphs-v3-locals-green/readonly.source.ts",
+      "bytes": 20315,
+      "sha256": "56e29891de1b2f5114cf469455bbccbc83e238aa8ee28f936e0fc9e9af638851",
+      "bindingSHA256": "5d08a906a169e2531b1508274003f2f4264fea919f31aa8553645cdf2d800205",
       "sourceBytes": 473,
       "sourceSHA256": "b98cb3ba62f29e3cd16ccd71574a3e34a1a9a62f625ff79c4c1adb23916575b0",
-      "E": "sha256:60121fe2ea7a28be81711bac300bee73a7e0c35d30c22e1691a3c1732315d9bb",
-      "classes": 3
+      "utf16Length": 473,
+      "surrogateStarts": [],
+      "E": "sha256:1704cbf08ccee9f332c033ab5a39902ac9bfd539dbe1ad7fed58dfc769fc8a58"
     },
     {
       "name": "implicit-derived",
-      "factsPath": "E:/ws/pro_tsfg/.scratch/tsfg_r03/M12-class-facts-checks-20261016/candidate-graphs-v2-final-green/implicit-derived.facts.json",
-      "bindingPath": "E:/ws/pro_tsfg/.scratch/tsfg_r03/M12-class-facts-checks-20261016/candidate-graphs-v2-final-green/implicit-derived.binding.json",
-      "sourcePath": "E:/ws/pro_tsfg/.scratch/tsfg_r03/M12-class-facts-checks-20261016/candidate-graphs-v2-final-green/implicit-derived.source.ts",
-      "bytes": 8502,
-      "sha256": "b2a9a672a346ac9088335d51b67cb6ccc4a7a2b84da666bf3f8d763b56de63f3",
-      "bindingSHA256": "c531625095ad118e106b75b0e076ae771205f0c898e6776c5d0ec9fac9aeba15",
+      "factsPath": "E:/ws/pro_tsfg/.scratch/tsfg_r03/M12-class-facts-checks-20261016/candidate-graphs-v3-locals-green/implicit-derived.facts.json",
+      "bindingPath": "E:/ws/pro_tsfg/.scratch/tsfg_r03/M12-class-facts-checks-20261016/candidate-graphs-v3-locals-green/implicit-derived.binding.json",
+      "sourcePath": "E:/ws/pro_tsfg/.scratch/tsfg_r03/M12-class-facts-checks-20261016/candidate-graphs-v3-locals-green/implicit-derived.source.ts",
+      "bytes": 8515,
+      "sha256": "a248aa75dcbe62cb056dbed051c29cd3e1cf7880d108ea12f4fd707ff15601cb",
+      "bindingSHA256": "b48bd500275e864053b1ba2581842f7f3e7a2d3570514e65fa6428ef3bd7d5b0",
       "sourceBytes": 152,
       "sourceSHA256": "0643527276bb51cecd0b55ee8ec08968771d6db7cb6e636c080eaec820e87294",
-      "E": "sha256:d796b68657c985085792b0a1c2b03d290fc0892931ded75d53c5cdf3b1967b33",
-      "classes": 2
+      "utf16Length": 152,
+      "surrogateStarts": [],
+      "E": "sha256:bdab7ec447b27a930b0de137119833fcdad8fde18824e27cad4d810d44af316b"
     },
     {
       "name": "construct",
-      "factsPath": "E:/ws/pro_tsfg/.scratch/tsfg_r03/M12-class-facts-checks-20261016/candidate-graphs-v2-final-green/construct.facts.json",
-      "bindingPath": "E:/ws/pro_tsfg/.scratch/tsfg_r03/M12-class-facts-checks-20261016/candidate-graphs-v2-final-green/construct.binding.json",
-      "sourcePath": "E:/ws/pro_tsfg/.scratch/tsfg_r03/M12-class-facts-checks-20261016/candidate-graphs-v2-final-green/construct.source.ts",
-      "bytes": 11291,
-      "sha256": "a2710241de91c46de915d9e8215bfb16650a6598d1814fd652c4fa32565b5643",
-      "bindingSHA256": "975fc251a220f9f709fb95ac89e707110821dec435e7911bea63ecd937cd375f",
+      "factsPath": "E:/ws/pro_tsfg/.scratch/tsfg_r03/M12-class-facts-checks-20261016/candidate-graphs-v3-locals-green/construct.facts.json",
+      "bindingPath": "E:/ws/pro_tsfg/.scratch/tsfg_r03/M12-class-facts-checks-20261016/candidate-graphs-v3-locals-green/construct.binding.json",
+      "sourcePath": "E:/ws/pro_tsfg/.scratch/tsfg_r03/M12-class-facts-checks-20261016/candidate-graphs-v3-locals-green/construct.source.ts",
+      "bytes": 11317,
+      "sha256": "0730b2873b09937dc20fafab733a1ac65157b1e2e738e8823a5b1cbc6d356545",
+      "bindingSHA256": "30469766889ac7bf2d5bc4ebd0cf6124c3a7c434d3a326d33e826b6588c97c4b",
       "sourceBytes": 212,
       "sourceSHA256": "da9e9ffdb7c7df29d02698db9fc62f6826c4166f7ba079e8d9b7b53c1f04ffce",
-      "E": "sha256:bfa9cc15a6aa0228d43b01e3195821604436d30066d963165eb4227ff7901cd4",
-      "classes": 2
+      "utf16Length": 212,
+      "surrogateStarts": [],
+      "E": "sha256:0b5af1203a41eb4664bbd190476c82f44250901628cd4990343d71b4cbce7b2f"
     },
     {
       "name": "reference-identity",
-      "factsPath": "E:/ws/pro_tsfg/.scratch/tsfg_r03/M12-class-facts-checks-20261016/candidate-graphs-v2-final-green/reference-identity.facts.json",
-      "bindingPath": "E:/ws/pro_tsfg/.scratch/tsfg_r03/M12-class-facts-checks-20261016/candidate-graphs-v2-final-green/reference-identity.binding.json",
-      "sourcePath": "E:/ws/pro_tsfg/.scratch/tsfg_r03/M12-class-facts-checks-20261016/candidate-graphs-v2-final-green/reference-identity.source.ts",
-      "bytes": 13960,
-      "sha256": "208759e65db725db58affb620e87469f5a9ca1ead5786870f90d090e5771fb04",
-      "bindingSHA256": "edb81a2d4fd0c2c6eaaeafa018d214fc213e62ce0b1974a1e181a035db4104fc",
+      "factsPath": "E:/ws/pro_tsfg/.scratch/tsfg_r03/M12-class-facts-checks-20261016/candidate-graphs-v3-locals-green/reference-identity.facts.json",
+      "bindingPath": "E:/ws/pro_tsfg/.scratch/tsfg_r03/M12-class-facts-checks-20261016/candidate-graphs-v3-locals-green/reference-identity.binding.json",
+      "sourcePath": "E:/ws/pro_tsfg/.scratch/tsfg_r03/M12-class-facts-checks-20261016/candidate-graphs-v3-locals-green/reference-identity.source.ts",
+      "bytes": 13999,
+      "sha256": "c0c8f85d9dbdad2b8973f159ce909c03bb4597afcfdf9f44d4b40dfc174c4f59",
+      "bindingSHA256": "a14d9135e5b98b73113444c854e251ba4ba42285e34d409b55c1856f8f529a1f",
       "sourceBytes": 319,
       "sourceSHA256": "62f36fbe8a4e05ebad433b4bba17d9f70398a6b04597b5ac29dbd2c5483702f9",
-      "E": "sha256:ed77fafba8395b8d1600ca842c41d33f7164710d149681aed96c78e63732ed1b",
-      "classes": 3
+      "utf16Length": 319,
+      "surrogateStarts": [],
+      "E": "sha256:df10d955e54fecc1d46bdfe68257115c9cb81f88a3e2633c53ffaa486d7ea11c"
     },
     {
       "name": "scalars",
-      "factsPath": "E:/ws/pro_tsfg/.scratch/tsfg_r03/M12-class-facts-checks-20261016/candidate-graphs-v2-final-green/scalars.facts.json",
-      "bindingPath": "E:/ws/pro_tsfg/.scratch/tsfg_r03/M12-class-facts-checks-20261016/candidate-graphs-v2-final-green/scalars.binding.json",
-      "sourcePath": "E:/ws/pro_tsfg/.scratch/tsfg_r03/M12-class-facts-checks-20261016/candidate-graphs-v2-final-green/scalars.source.ts",
-      "bytes": 18913,
-      "sha256": "79b3dfcba9ba961ffe55b884a5dcb38d7c4200888cfc4f9a9274acc858491ab9",
-      "bindingSHA256": "c96418c20a24181c6544a3517f6c86e38aaf538ea245af781be614bde74a0c6b",
+      "factsPath": "E:/ws/pro_tsfg/.scratch/tsfg_r03/M12-class-facts-checks-20261016/candidate-graphs-v3-locals-green/scalars.facts.json",
+      "bindingPath": "E:/ws/pro_tsfg/.scratch/tsfg_r03/M12-class-facts-checks-20261016/candidate-graphs-v3-locals-green/scalars.binding.json",
+      "sourcePath": "E:/ws/pro_tsfg/.scratch/tsfg_r03/M12-class-facts-checks-20261016/candidate-graphs-v3-locals-green/scalars.source.ts",
+      "bytes": 19017,
+      "sha256": "a328257c0a22f812a39f02084a510c48b6885954f920cc46b4ab971125990067",
+      "bindingSHA256": "18c9bbe7e13c6cecc9823d9dcfcd2fa80fb1e2cd2944d2935e68fa5b5bbebc32",
       "sourceBytes": 340,
       "sourceSHA256": "dc0f924a811a2642b94b158742a4f05e58de27fac657d10eb892027da50a5f01",
-      "E": "sha256:e6a993e2021b438086dc07163d7ca51d9a7ec7ec76685810e3290fbcca38302b",
-      "classes": 1
+      "utf16Length": 340,
+      "surrogateStarts": [],
+      "E": "sha256:944acee2ed9991105a4c63fbb3103ac2c01f68be206d55d4390f8d28dde03c01"
     },
     {
       "name": "literal-facts",
-      "factsPath": "E:/ws/pro_tsfg/.scratch/tsfg_r03/M12-class-facts-checks-20261016/candidate-graphs-v2-final-green/literal-facts.facts.json",
-      "bindingPath": "E:/ws/pro_tsfg/.scratch/tsfg_r03/M12-class-facts-checks-20261016/candidate-graphs-v2-final-green/literal-facts.binding.json",
-      "sourcePath": "E:/ws/pro_tsfg/.scratch/tsfg_r03/M12-class-facts-checks-20261016/candidate-graphs-v2-final-green/literal-facts.source.ts",
+      "factsPath": "E:/ws/pro_tsfg/.scratch/tsfg_r03/M12-class-facts-checks-20261016/candidate-graphs-v3-locals-green/literal-facts.facts.json",
+      "bindingPath": "E:/ws/pro_tsfg/.scratch/tsfg_r03/M12-class-facts-checks-20261016/candidate-graphs-v3-locals-green/literal-facts.binding.json",
+      "sourcePath": "E:/ws/pro_tsfg/.scratch/tsfg_r03/M12-class-facts-checks-20261016/candidate-graphs-v3-locals-green/literal-facts.source.ts",
       "bytes": 9679,
-      "sha256": "c414558cf0f8af41632dfcfc9d4c3ea4073f83f09a8d4b365c25aed417867423",
-      "bindingSHA256": "e60ee88dd46e8f6234adea7b3e0d4c537bfa59d90dee2417fee0e13d609a53a5",
+      "sha256": "1c7cffbf3fd0eff6b286b06d9a7030c3084050cc3918b3af69af079c05bde0b9",
+      "bindingSHA256": "f9ff053f4ab97c42af856638cb54d8bcd83d60bd56fea803da6a80698577a282",
       "sourceBytes": 245,
       "sourceSHA256": "7a9081fd9db518f06b99150d1334f082c643bbc8f807d7cac3173f7a10675839",
-      "E": "sha256:910c6cbf98f36fffc43bed2f8ae26af07cbb35aec1d3fc30b41767442682ccf5",
-      "classes": 1
+      "utf16Length": 245,
+      "surrogateStarts": [],
+      "E": "sha256:46db78df1771c9fc0a7f0acd4c6f0944d2cef95d1711bce855c489afb30a2150"
     },
     {
       "name": "implicit-middle",
-      "factsPath": "E:/ws/pro_tsfg/.scratch/tsfg_r03/M12-class-facts-checks-20261016/candidate-graphs-v2-final-green/implicit-middle.facts.json",
-      "bindingPath": "E:/ws/pro_tsfg/.scratch/tsfg_r03/M12-class-facts-checks-20261016/candidate-graphs-v2-final-green/implicit-middle.binding.json",
-      "sourcePath": "E:/ws/pro_tsfg/.scratch/tsfg_r03/M12-class-facts-checks-20261016/candidate-graphs-v2-final-green/implicit-middle.source.ts",
-      "bytes": 13939,
-      "sha256": "50d806135291c2ff2a1e95e37515b20d88197cc2bdef840d7117c50e7ed2e35e",
-      "bindingSHA256": "d44bf14f98acd65589f91f14887813aabfc132baeb9e81ea91b77ef1a5238b40",
+      "factsPath": "E:/ws/pro_tsfg/.scratch/tsfg_r03/M12-class-facts-checks-20261016/candidate-graphs-v3-locals-green/implicit-middle.facts.json",
+      "bindingPath": "E:/ws/pro_tsfg/.scratch/tsfg_r03/M12-class-facts-checks-20261016/candidate-graphs-v3-locals-green/implicit-middle.binding.json",
+      "sourcePath": "E:/ws/pro_tsfg/.scratch/tsfg_r03/M12-class-facts-checks-20261016/candidate-graphs-v3-locals-green/implicit-middle.source.ts",
+      "bytes": 13978,
+      "sha256": "c12ef6530b5e1e103f4e1bd2286b50badb78e6597354f0782ff9048b975b352d",
+      "bindingSHA256": "ba622202bc149eddae7d05ebf546c77a227ba4e4454d5b95268308ac819927ca",
       "sourceBytes": 281,
       "sourceSHA256": "f1b8fbe56fedf742eeb4ffc0afc90c3752ef8f198b058823cd1a18da7da55191",
-      "E": "sha256:1545823b3b575f8bc7f47de7e4e65ba73c7061ae5bf54012ec02b432a1f10d98",
-      "classes": 3
+      "utf16Length": 281,
+      "surrogateStarts": [],
+      "E": "sha256:ae9e38631f3cdca88a4ad538b07b1de3acfce02c6366fd97774a7d245b7de267"
+    },
+    {
+      "name": "locals-const",
+      "factsPath": "E:/ws/pro_tsfg/.scratch/tsfg_r03/M12-class-facts-checks-20261016/candidate-graphs-v3-locals-green/locals-const.facts.json",
+      "bindingPath": "E:/ws/pro_tsfg/.scratch/tsfg_r03/M12-class-facts-checks-20261016/candidate-graphs-v3-locals-green/locals-const.binding.json",
+      "sourcePath": "E:/ws/pro_tsfg/.scratch/tsfg_r03/M12-class-facts-checks-20261016/candidate-graphs-v3-locals-green/locals-const.source.ts",
+      "bytes": 14771,
+      "sha256": "2f6a2acab5295fd1e3820499456b90132525020003a8225b90602ebb9d7d6b70",
+      "bindingSHA256": "5995575a3268fcac0fbc00d232d9a7692dc355ec8957fa3f9d3a8e2639959204",
+      "sourceBytes": 354,
+      "sourceSHA256": "b57b0714edb7464b2005afe174212648a74c8b0d118916f19bd7e471b206c604",
+      "utf16Length": 352,
+      "surrogateStarts": [
+        3
+      ],
+      "E": "sha256:0bd7ddba15c9b44c964565c3674f35e977e13d0a81eb38cd2786ed1cf3c7f37e"
+    },
+    {
+      "name": "locals-let",
+      "factsPath": "E:/ws/pro_tsfg/.scratch/tsfg_r03/M12-class-facts-checks-20261016/candidate-graphs-v3-locals-green/locals-let.facts.json",
+      "bindingPath": "E:/ws/pro_tsfg/.scratch/tsfg_r03/M12-class-facts-checks-20261016/candidate-graphs-v3-locals-green/locals-let.binding.json",
+      "sourcePath": "E:/ws/pro_tsfg/.scratch/tsfg_r03/M12-class-facts-checks-20261016/candidate-graphs-v3-locals-green/locals-let.source.ts",
+      "bytes": 16586,
+      "sha256": "29754d930121cd9cd992a5146e1e0d7f4c1ac03b665061d9236142c5d531d197",
+      "bindingSHA256": "c6139f9650a598ba6b0b956c7d211b627c911ab5749b3de52df8de69cc18ecfd",
+      "sourceBytes": 395,
+      "sourceSHA256": "2d9b29b635badbb35912f5e237351804f998e2663a32ff0c1120305432f4925d",
+      "utf16Length": 393,
+      "surrogateStarts": [
+        3
+      ],
+      "E": "sha256:c3141c82c80df203307400e4e5835eca25907cf58fb87432d92887688301ff99"
     }
   ]
 }

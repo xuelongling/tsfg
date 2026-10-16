@@ -7,9 +7,9 @@ import { buildReferenceHir, verifyReferenceHir, printReferenceHir, readReference
 import { canonical, sha256 } from '../../compiler/identity.mjs';
 
 const pins = {
-  scalars: '79b3dfcba9ba961ffe55b884a5dcb38d7c4200888cfc4f9a9274acc858491ab9',
-  constructor: '55aed6fff72963bd12591ca45eca19d53dfebdb07f48eb6b05fa2d6c0dd4ec5d',
-  'literal-facts': 'c414558cf0f8af41632dfcfc9d4c3ea4073f83f09a8d4b365c25aed417867423',
+  scalars: 'a328257c0a22f812a39f02084a510c48b6885954f920cc46b4ab971125990067',
+  constructor: 'd845685780c38f113a9a6d18e1624723ba3f2fe5155dc83a9b58e40a2f144f6e',
+  'literal-facts': '1c7cffbf3fd0eff6b286b06d9a7030c3084050cc3918b3af69af079c05bde0b9',
 };
 async function actual(name) {
   const fixture = suffix => new URL('./fixtures/reference-source/' + name + suffix, import.meta.url);
@@ -110,14 +110,16 @@ test('actual literal metadata and cold operations reject silent widening resolut
 test('private facts and HIR readers reject old versions and Source profiles without a legacy branch', async () => {
   const data = await actual('constructor');
   const facts = decodeReferenceFacts(data.bytes, data.binding), hir = buildReferenceHir(facts);
-  const oldFacts = structuredClone(facts); oldFacts.format.version = 1;
-  rejected(() => verifyReferenceFacts(oldFacts), 'profile', 'facts wrapper version one');
-  const oldHir = structuredClone(hir); oldHir.format.version = 1;
-  rejected(() => verifyReferenceHir(oldHir), 'profile', 'HIR version one');
-  rejected(() => readReferenceHir(encode(oldHir)), 'profile', 'persisted HIR version one');
-  const oldGraph = structuredClone(data.graph), binding = structuredClone(data.binding);
-  oldGraph.semanticProfile = 'tsfg-owned-class-facts-candidate-v1'; binding.semanticProfile = oldGraph.semanticProfile;
-  rejected(() => decodeReferenceFacts(encode(oldGraph), binding), 'profile', 'Source profile one');
-  const oldHirProfile = structuredClone(hir); oldHirProfile.format.semanticProfile = oldGraph.semanticProfile;
-  rejected(() => verifyReferenceHir(oldHirProfile), 'profile', 'cold Source profile one');
+  for (const version of [1,2]) {
+    const oldFacts = structuredClone(facts); oldFacts.format.version = version;
+    rejected(() => verifyReferenceFacts(oldFacts), 'profile', 'old facts wrapper ' + version);
+    const oldHir = structuredClone(hir); oldHir.format.version = version;
+    rejected(() => verifyReferenceHir(oldHir), 'profile', 'old HIR wrapper ' + version);
+    rejected(() => readReferenceHir(encode(oldHir)), 'profile', 'old persisted HIR ' + version);
+    const oldGraph = structuredClone(data.graph), binding = structuredClone(data.binding);
+    oldGraph.semanticProfile = 'tsfg-owned-class-facts-candidate-v' + version; binding.semanticProfile = oldGraph.semanticProfile;
+    rejected(() => decodeReferenceFacts(encode(oldGraph), binding), 'profile', 'old Source profile ' + version);
+    const oldHirProfile = structuredClone(hir); oldHirProfile.format.semanticProfile = oldGraph.semanticProfile;
+    rejected(() => verifyReferenceHir(oldHirProfile), 'profile', 'old cold Source profile ' + version);
+  }
 });

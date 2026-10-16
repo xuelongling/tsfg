@@ -8,7 +8,7 @@ import { sha256 } from '../../compiler/identity.mjs';
 const fixture = name => new URL('./fixtures/reference-source/' + name, import.meta.url);
 test('official inheritance bytes retain successful-super initialization and dispatch targets', async () => {
   const bytes = await readFile(fixture('inheritance.facts.json'));
-  assert.equal(sha256(bytes), 'sha256:295cc685221122ebbfd8ebc9dc4f16ac2879d19013aba0f029672f747f561493');
+  assert.equal(sha256(bytes), 'sha256:703a5991e645b34255601e501d9251edb91fe6f4fd269c3b6ceeeee5338afa0c');
   const binding = JSON.parse(await readFile(fixture('inheritance.binding.json'), 'utf8'));
   const facts = decodeReferenceFacts(bytes, binding), hir = buildReferenceHir(facts);
   const [base, derived] = hir.classes;

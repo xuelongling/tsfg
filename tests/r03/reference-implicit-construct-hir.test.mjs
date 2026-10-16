@@ -18,7 +18,7 @@ async function actual(name, digest) {
   return { bytes, binding };
 }
 test('official implicit-derived bytes preserve logical forwarding and successful-base initialization', async () => {
-  const { bytes, binding } = await actual('implicit-derived', 'b2a9a672a346ac9088335d51b67cb6ccc4a7a2b84da666bf3f8d763b56de63f3');
+  const { bytes, binding } = await actual('implicit-derived', 'a248aa75dcbe62cb056dbed051c29cd3e1cf7880d108ea12f4fd707ff15601cb');
   const facts = decodeReferenceFacts(bytes, binding), hir = buildReferenceHir(facts);
   const [base, derived] = hir.classes, baseConstructor = base.constructor, constructor = derived.constructor;
   assert.equal(derived.base, base.id); assert.equal(constructor.kind, 'implicit-derived');
@@ -49,7 +49,7 @@ test('official implicit-derived bytes preserve logical forwarding and successful
   assert.deepEqual(readReferenceHir(Buffer.from(printReferenceHir(hir))), hir);
 });
 test('official construct bytes preserve allocation class signature arguments and reference views', async () => {
-  const { bytes, binding } = await actual('construct', 'a2710241de91c46de915d9e8215bfb16650a6598d1814fd652c4fa32565b5643');
+  const { bytes, binding } = await actual('construct', '0730b2873b09937dc20fafab733a1ac65157b1e2e738e8823a5b1cbc6d356545');
   const facts = decodeReferenceFacts(bytes, binding), hir = buildReferenceHir(facts);
   const [counter, factory] = hir.classes;
   assert.equal(counter.name, 'Counter'); assert.equal(factory.name, 'Factory');
@@ -77,7 +77,7 @@ test('official construct bytes preserve allocation class signature arguments and
 });
 
 test('official implicit-middle bytes keep direct constructor targets and inherited logical signatures', async () => {
-  const { bytes, binding } = await actual('implicit-middle', '50d806135291c2ff2a1e95e37515b20d88197cc2bdef840d7117c50e7ed2e35e');
+  const { bytes, binding } = await actual('implicit-middle', 'c12ef6530b5e1e103f4e1bd2286b50badb78e6597354f0782ff9048b975b352d');
   const hir = buildReferenceHir(decodeReferenceFacts(bytes, binding));
   const [base, middle, leaf] = hir.classes;
   assert.deepEqual(hir.classes.map(value => value.name), ['Base','Middle','Leaf']);

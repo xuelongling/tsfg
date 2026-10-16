@@ -81,7 +81,6 @@ export function verifyReferenceGraph(graph, binding) {
   };
   const signature = (value, owner, parent, inherited = false) => {
     record(value, ['parameters','return']); valueType(value.return, true);
-    const parameters = new Map();
     for (const [index, parameter] of array(value.parameters, 4096).entries()) {
       record(parameter, ['inheritedFrom','origin','symbol','type']);
       origin(parameter.origin, inherited ? undefined : parent);
@@ -90,9 +89,7 @@ export function verifyReferenceGraph(graph, binding) {
       check(parameter.symbol === owner + '.p' + index && types.has(parameter.type), 'closure'); valueType(parameter.type);
       const symbol = symbols.get(parameter.symbol);
       useSymbol(parameter.symbol, inherited ? 'implicit-parameter' : 'parameter', symbol?.name, parameter.type, parameter.origin);
-      parameters.set(parameter.symbol, parameter);
     }
-    return parameters;
   };
   check(array(graph.classes, 4096).length > 0, 'closure');
   for (const [classIndex, item] of graph.classes.entries()) {
@@ -124,25 +121,25 @@ export function verifyReferenceGraph(graph, binding) {
         : constructor.kind !== 'implicit-derived' && constructor.superCall === '')
       && same(constructor.initializationFields, item.fields.map(field => field.id))
       && constructor.signature.return === item.instanceType, 'initialization');
-    // Parameter maps belong to verifier state, never to the owned DTO.
-    const constructorParameters = signature(constructor.signature, constructor.id, constructor.origin, constructor.kind === 'implicit-derived');
-    check(constructor.kind !== 'implicit-base' || !constructorParameters.size && !constructor.body.length, 'initialization');
+    signature(constructor.signature, constructor.id, constructor.origin, constructor.kind === 'implicit-derived');
+    check(constructor.kind !== 'implicit-base' || !constructor.signature.parameters.length && !constructor.body.length, 'initialization');
     for (const [index, method] of array(item.methods, 4096).entries()) {
       record(method, ['access','body','id','name','origin','overrideTarget','signature','symbol']);
       check(method.id === item.id + '.m' + index && !methods.has(method.id)
         && ['public','private','protected'].includes(method.access) && typeof method.overrideTarget === 'string', 'closure');
       origin(method.origin, item.origin); const symbol = symbols.get(method.symbol);
       useType(symbol?.type, 'method-function', method.id); useSymbol(method.symbol, 'method', method.name, symbol.type, method.origin);
-      methods.set(method.id, { ...method, owner: item.id, parameters: signature(method.signature, method.id, method.origin) });
+      signature(method.signature, method.id, method.origin);
+      methods.set(method.id, { ...method, owner: item.id });
     }
-    classes.set(item.id, { ...item, constructorParameters });
+    classes.set(item.id, item);
   }
-  const state = { graph, sources, types, symbols, classes, fields, methods, origin, typeUses };
+  const state = { graph, sources, types, symbols, classes, fields, methods, origin, typeUses, useSymbol, valueType };
   const views = verifyReferenceHierarchy(state);
   verifyReferenceForwarding(state);
   views.forEach(id => consumedTypes.add(id));
-  check(consumedSymbols.size === symbols.size, 'closure');
   verifyReferenceBodies(state);
+  check(consumedSymbols.size === symbols.size, 'closure');
   for (const id of leaves) if (typeUses.has(id)) consumedTypes.add(id);
   check(consumedTypes.size === types.size, 'closure');
   check(views.every(id => typeUses.has(id)), 'closure');
