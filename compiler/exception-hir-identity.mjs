@@ -22,9 +22,18 @@ export function createExceptionHirTypes() {
     return id;
   }
   return {
-    /** @param {string} name @param {any} [signature] */
-    value(name, signature = undefined) {
+    /** @param {string} name @param {any} [signature] @param {any} [presence] */
+    value(name, signature = undefined, presence = undefined) {
+      const mask = (presence?.undefined ? 1 : 0) | (presence?.null ? 2 : 0);
+      if (presence?.optional || presence?.default)
+        failure('capability', 'HIR optional/default values require their own tracer');
+      if (mask) {
+        if (name !== 'i32' || signature !== undefined || mask === 3)
+          failure('capability', 'HIR nullable values currently require i32 with exactly one absence member');
+        return intern({ kind: 'nullable', base: intern({ kind: 'scalar', name: 'i32' }), mask });
+      }
       if (name === 'function') {
+        if (presence !== undefined) failure('capability', 'HIR callable values require absent presence metadata');
         // A callable value describes a type, never an inferred runtime target.
         // The cold consumer currently owns only the exact nonnullable () => bool shape.
         if (!signature || Object.keys(signature).sort().join(',') !== 'parameters,returnType'

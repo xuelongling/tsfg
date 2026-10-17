@@ -35,9 +35,8 @@ export function projectExceptionHirModel(snapshot) {
   const headers = new Map(), claimed = new Set();
   for (const fn of functions) {
     check(headers.size < limits.derived.functions, 'limit', 'HIR function table budget exceeded');
-    if (fn.lexicalParent !== undefined || fn.captures !== undefined
-        || fn.returnPresence !== undefined || fn.returnType === 'unknown')
-      failure('capability', 'nested, nullable or unknown-result HIR functions require their own tracer');
+    if (fn.lexicalParent !== undefined || fn.captures !== undefined || fn.returnType === 'unknown')
+      failure('capability', 'nested or unknown-result HIR functions require their own tracer');
     check(Array.isArray(fn.parameters), 'schema', 'HIR parameter list is missing');
     check(fn.parameters.length <= limits.derived.parametersPerFunction, 'limit', 'HIR parameter budget exceeded');
     if (fn.parameterInitializers !== undefined) {
@@ -48,15 +47,13 @@ export function projectExceptionHirModel(snapshot) {
     }
     const parameterTypes = [];
     for (const parameter of fn.parameters) {
-      if (parameter.type === 'unknown'
-          || parameter.presence && (parameter.presence.undefined || parameter.presence.null
-            || parameter.presence.optional || parameter.presence.default))
-        failure('capability', 'nullable, unknown or optional HIR parameters require their own tracer');
+      if (parameter.type === 'unknown' || parameter.presence && (parameter.presence.optional || parameter.presence.default))
+        failure('capability', 'unknown or optional HIR parameters require their own tracer');
       if ((parameter.type === 'function') !== (fn.returnType === 'function'))
         failure('capability', 'mixed callable and scalar HIR declarations require their own tracer');
-      parameterTypes.push(types.value(parameter.type, parameter.signature));
+      parameterTypes.push(types.value(parameter.type, parameter.signature, parameter.presence));
     }
-    const returnType = types.value(fn.returnType, fn.returnSignature);
+    const returnType = types.value(fn.returnType, fn.returnSignature, fn.returnPresence);
     const signatureHash = exceptionHirIdentity('signature', { parameters: parameterTypes, returnType });
     const type = types.callable(parameterTypes, returnType);
     const definition = definitions.get(fn.symbol);
@@ -66,7 +63,7 @@ export function projectExceptionHirModel(snapshot) {
     const id = exceptionHirIdentity('function', { module: moduleId, parent: null, declaringScopePath: [],
       name: fn.name, signatureHash, range: fn.range });
     headers.set(fn.symbol, { id, module: moduleId, sourcePath: source.path, nameRange: definition.range,
-      type, signatureHash, declaringScope: moduleScope });
+      type, returnType, signatureHash, declaringScope: moduleScope });
   }
   const regions = createExceptionHirRegions(definitions, types, budget, claimed), projected = [];
   for (const fn of functions) {

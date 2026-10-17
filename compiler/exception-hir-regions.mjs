@@ -30,7 +30,7 @@ export function createExceptionHirRegions(definitions, types, budget, claimed) {
         scopePath: scope.node.path, role, index });
       if (raw.type === 'function' && role !== 'parameter')
         failure('capability', 'HIR callable bindings require an owned parameter declaration');
-      const binding = { id, name: raw.name, role, type: types.value(raw.type, raw.signature), writable: raw.writable,
+      const binding = { id, name: raw.name, role, type: types.value(raw.type, raw.signature, raw.presence), writable: raw.writable,
         range: raw.range, presence: raw.presence ?? null };
       claimed.add(raw.id); scope.ordinals.set(role, index + 1); scope.bySymbol.set(raw.id, binding);
       scope.node.bindings.push(binding); return binding;
@@ -54,26 +54,28 @@ export function createExceptionHirRegions(definitions, types, budget, claimed) {
       }
       if (raw.kind !== 'reference') failure('capability', 'HIR write target kind is not implemented: ' + raw.kind);
       const binding = resolve(scope, raw.symbol);
+      if (binding.presence?.undefined || binding.presence?.null)
+        failure('capability', 'HIR nullable writes require their own tracer');
       check(binding.writable, 'scope', 'HIR write target must be writable');
       return { kind: 'bindingTarget', type: binding.type, range: raw.range, binding: binding.id };
     }
     /** @param {any} raw @param {any} scope */
     function expression(raw, scope) {
       check(raw && typeof raw === 'object', 'schema', 'HIR expression is missing');
-      if (raw.presenceFlow !== undefined)
-        failure('capability', 'nullable HIR expressions require their own tracer');
+      if (raw.presenceFlow !== undefined && (raw.kind !== 'reference' || raw.type === 'function'))
+        failure('capability', 'HIR presence flow requires a direct noncallable binding read');
       const callable = raw.type === 'function';
       if (callable) {
         if (raw.kind !== 'reference' || definitions.get(raw.symbol)?.kind !== 'parameter')
           failure('capability', 'HIR callable expressions require a direct parameter reference');
       } else if (raw.signature !== undefined)
         failure('capability', 'HIR noncallable expressions cannot carry a callable signature');
-      const type = types.value(raw.type, raw.signature), range = raw.range;
+      const type = types.value(raw.type, raw.signature, raw.presenceFlow), range = raw.range;
       if (raw.kind === 'reference') {
         const binding = resolve(scope, raw.symbol);
         if (callable) check(binding.role === 'parameter' && binding.type === type,
           'type', 'HIR callable occurrence differs from its declared parameter type');
-        return { kind: 'bindingRead', type, range, binding: binding.id, presenceFlow: null };
+        return { kind: 'bindingRead', type, range, binding: binding.id, presenceFlow: raw.presenceFlow ?? null };
       }
       if (raw.kind === 'group') return { kind: 'group', type, range, operand: expression(raw.operand, scope) };
       if (raw.kind === 'write') {
@@ -115,7 +117,12 @@ export function createExceptionHirRegions(definitions, types, budget, claimed) {
         const item = items[index];
         check(scope.node.body.length < limits.derived.arrayItems, 'limit', 'HIR body array budget exceeded');
         if (item.kind === 'throw' || item.kind === 'return') {
-          scope.node.body.push({ kind: item.kind, range: item.range, value: expression(item.expression, scope) });
+          const value = expression(item.expression, scope);
+          // Equal nullable masks preserve the current value directly. Strict
+          // widening needs its independent Source tracer before presenceWiden.
+          if (item.kind === 'return' && value.type !== header.returnType)
+            failure('capability', 'HIR nullable return widening requires its own tracer');
+          scope.node.body.push({ kind: item.kind, range: item.range, value });
         } else if (item.kind === 'variable') {
           const binding = scope.bySymbol.get(item.symbol.id);
           scope.node.body.push({ kind: 'local', range: item.range, binding: binding.id,
@@ -165,7 +172,7 @@ export function createExceptionHirRegions(definitions, types, budget, claimed) {
       nameRange: header.nameRange, range: fn.range, type: header.type, signatureHash: header.signatureHash,
       lexicalParent: null, declaringScope: header.declaringScope, parameters,
       parameterInitializers: fn.parameterInitializers === undefined ? null : [...fn.parameterInitializers],
-      captures: null, returnPresence: null, body: root.node };
+      captures: null, returnPresence: fn.returnPresence ?? null, body: root.node };
   }
   return { project };
 }
