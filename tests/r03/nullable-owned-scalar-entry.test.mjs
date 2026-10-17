@@ -10,8 +10,8 @@ import { buildHir, verifyHir, printHir, readHir, lowerHir } from '../../compiler
 // oracle before this test runs. Missing records fail; no synthetic facts/skip.
 // A predecessor origin/family rejection is an API boundary RED, not a new
 // official nullable semantic failure. No SourceEXE/Core CLI/VM is invoked.
-const fixture = new URL('./fixtures/nullable-owned-scalar-entry/v2/', import.meta.url);
-const schema = 'sha256:badc9425050a8f538fcb7b9397e5ef31fbde96391989dfeebb8cab6a122783bd';
+const fixture = new URL('./fixtures/nullable-owned/v3/', import.meta.url);
+const schema = 'sha256:24a04b0b595cae59ccf52a939f4671cea0369c46bd705f56726d028ab1df5a71';
 const coreSchema = 'sha256:8f99963869ac2fed97db0ce90171d89593e4a3de667288eace4fc141c7cbc4bd';
 const source = '// 😀\nfunction echo(value: i32 | null): i32 | null { return value; }\n'
   + 'export function entry(value: i32): i32 { const result: i32 | null = echo(value); return value; }';
@@ -86,11 +86,11 @@ test('actual private nullable scalar entry preserves official exports, unread ca
   assert.deepEqual(Buffer.from(canonical(request)), requestBytes);
   assert.deepEqual(Buffer.from(canonical(response)), responseBytes);
   assert.deepEqual([request.family, request.version, request.schemaHash],
-    ['tsfg.nullable-facts-request-candidate', 2, schema]);
+    ['tsfg.nullable-facts-request-candidate', 3, schema]);
   assert.deepEqual([response.family, response.version, response.schemaHash],
-    ['tsfg.nullable-facts-package-candidate', 2, schema]);
-  assert.equal(response.requestId, hash('tsfg.nullable-facts.request.v2\0' + requestBytes.toString('utf8')));
-  assert.equal(response.packageId, hash('tsfg.nullable-facts.package.v2\0' + schema + '\0' + canonical(response.payload)));
+    ['tsfg.nullable-facts-package-candidate', 3, schema]);
+  assert.equal(response.requestId, hash('tsfg.nullable-facts.request.v3\0' + requestBytes.toString('utf8')));
+  assert.equal(response.packageId, hash('tsfg.nullable-facts.package.v3\0' + schema + '\0' + canonical(response.payload)));
   const input = request.input, facts = response.payload.facts;
   assert.equal(input.rootFile, path); assert.equal(source.length, 165);
   assert.equal(input.files.find(file => file.path === path)?.content, source);
@@ -114,17 +114,17 @@ test('actual private nullable scalar entry preserves official exports, unread ca
   assert.equal(entry.body[1].expression.symbol, entry.parameters[0].id);
   assert.notEqual(entry.body[1].expression.symbol, local.symbol.id);
   assert.equal(origin.kind, 'owned-go-nullable-response'); assert.equal(origin.producerDirty, true);
-  assert.equal(origin.producerBaseOid, '01b363caba082a78208a6ac8c4250a04d6b0c2d4');
+  assert.equal(origin.producerBaseOid, 'b6e156608803b08c4f62f258487484b1656e8213');
   assert.equal(origin.requestSha256, hash(requestBytes)); assert.equal(origin.responseSha256, hash(responseBytes));
   assert.match(origin.testedInputSetHash, /^sha256:[0-9a-f]{64}$/);
 
   const imported = await importCapturedFrontendResponse(requestBytes, responseBytes, origin);
   assert.equal(imported.status, 'ok', JSON.stringify(imported));
   const snapshot = imported.snapshot; validateFrontendSnapshot(snapshot);
-  assert.equal(snapshot.format.family, 'tsfg.frontend-nullable-candidate'); assert.equal(snapshot.format.version, 2);
+  assert.equal(snapshot.format.family, 'tsfg.frontend-nullable-candidate'); assert.equal(snapshot.format.version, 3);
   const built = buildHir(snapshot); assert.equal(built.status, 'ok', JSON.stringify(built));
   const hir = verifyHir(built.hir);
-  assert.equal(hir.format.family, 'tsfg.nullable-hir-candidate'); assert.equal(hir.format.version, 2);
+  assert.equal(hir.format.family, 'tsfg.nullable-hir-candidate'); assert.equal(hir.format.version, 3);
   const printed = printHir(hir), cold = readHir(Buffer.from(printed));
   assert.deepEqual(verifyHir(cold), hir); assert.equal(printHir(cold), printed);
   const core = lowerHir(cold); checkCore(core);

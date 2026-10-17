@@ -10,9 +10,9 @@ import { buildHir, verifyHir, printHir, readHir, lowerHir } from '../../compiler
 // production private helpers. General budgets/old packet controls remain in
 // nullable-owned-boundaries.test.mjs. Mutations below are counterfactual NEGATIVES,
 // never new Source captures; lhs-call/nested originals were absent at first freeze.
-// The later Go22200 top below adds those actual captured positives.
-const schema = 'sha256:badc9425050a8f538fcb7b9397e5ef31fbde96391989dfeebb8cab6a122783bd';
-const v1Schema = 'sha256:3da58c2cabf44bd6c337120300ac688bafa3d8e487c36f1ab0a48a4498699218';
+// The later Go30428 top below adds those actual captured positives.
+const schema = 'sha256:24a04b0b595cae59ccf52a939f4671cea0369c46bd705f56726d028ab1df5a71';
+const v2Schema = 'sha256:badc9425050a8f538fcb7b9397e5ef31fbde96391989dfeebb8cab6a122783bd';
 const hash = value => 'sha256:' + createHash('sha256').update(value).digest('hex');
 const copy = value => JSON.parse(JSON.stringify(value));
 /** @param {any} value @returns {string} */
@@ -25,8 +25,8 @@ function jcs(value) {
 const wire = value => Buffer.from(jcs(value));
 function seal(q, p, o) {
   const request = wire(q);
-  p.requestId = hash('tsfg.nullable-facts.request.v2\0' + request.toString('utf8'));
-  p.packageId = hash('tsfg.nullable-facts.package.v2\0' + p.schemaHash + '\0' + jcs(p.payload));
+  p.requestId = hash('tsfg.nullable-facts.request.v3\0' + request.toString('utf8'));
+  p.packageId = hash('tsfg.nullable-facts.package.v3\0' + p.schemaHash + '\0' + jcs(p.payload));
   const response = wire(p); o.requestSha256 = hash(request); o.responseSha256 = hash(response);
   return { request, response, origin: o };
 }
@@ -66,12 +66,12 @@ async function reject(t, action) {
   t.diagnostic(code);
 }
 async function fixture(name) {
-  const root = new URL('./fixtures/' + name + '/v2/', import.meta.url);
+  const root = new URL('./fixtures/' + name + '/v3/', import.meta.url);
   const bytes = await Promise.all(['request.json', 'response.json', 'origin.json', 'expected.core.mlir']
     .map(file => readFile(new URL(file, root))));
   const [request, response, origin, golden] = bytes;
   const q = JSON.parse(request.toString()), p = JSON.parse(response.toString()), o = JSON.parse(origin.toString());
-  assert.equal(q.version, 2); assert.equal(p.version, 2); assert.equal(q.schemaHash, schema); assert.equal(p.schemaHash, schema);
+  assert.equal(q.version, 3); assert.equal(p.version, 3); assert.equal(q.schemaHash, schema); assert.equal(p.schemaHash, schema);
   const rebuilt = seal(copy(q), copy(p), copy(o));
   assert.deepEqual(rebuilt.request, request); assert.deepEqual(rebuilt.response, response); assert.deepEqual(rebuilt.origin, o);
   const checked = copy(p); inputIdentity(q, checked);
@@ -83,7 +83,7 @@ async function fixture(name) {
 function repairSnapshot(snapshot, q, p, c) {
   snapshot.capture = { request: c.request.toString(), response: c.response.toString() };
   snapshot.sourceOrigin = copy(c.origin); snapshot.inputIdentity = p.payload.inputIdentity;
-  snapshot.snapshotId = hash('tsfg.frontend-nullable-candidate.snapshot.v2\0' + schema + '\0'
+  snapshot.snapshotId = hash('tsfg.frontend-nullable-candidate.snapshot.v3\0' + schema + '\0'
     + jcs({ inputIdentity: snapshot.inputIdentity, sourceOrigin: snapshot.sourceOrigin }));
   snapshot.identityInput = copy(q.input);
   snapshot.identityInput.files = q.input.files.map(f => ({ path: f.path, content: f.content }))
@@ -94,13 +94,13 @@ function repairSnapshot(snapshot, q, p, c) {
   snapshot.source = { path: source.path, content: source.content, hash: hash(source.content) };
 }
 
-test('actual v2 coalesce rejects rehashed packet and cold node forgeries', { concurrency: true }, async t => {
-  const baseline = await fixture('nullable-owned-scalar-entry'), actual = await fixture('nullable-owned-coalesce');
+test('actual v3 coalesce rejects rehashed packet and cold node forgeries', { concurrency: true }, async t => {
+  const baseline = await fixture('nullable-owned'), actual = await fixture('nullable-owned-coalesce');
   const base = await complete(baseline.capture); assert.deepEqual(Buffer.from(base.core), baseline.golden);
   const control = await complete(actual.capture); assert.deepEqual(Buffer.from(control.core), actual.golden);
   assert.equal(actual.golden.length, 4257);
   assert.equal(hash(actual.golden), 'sha256:0aa16711f6e4c4f8bf1cfe3a8046cd35b612dc16ae246e3f49d7ee2fb5d0608a');
-  assert.equal(hash(actual.capture.response), 'sha256:39731f0843e60ee2283be99c1d8d250de5c4863dd4d437606dba53ff861b519f');
+  assert.equal(hash(actual.capture.response), 'sha256:7a23b4f53cf8625e802ef5d7cd7c8e0a3b3b78af9f1a46c58dda3a3a2d75951f');
   t.diagnostic('both actual baseline/coalesce public cold/Core controls passed before negatives');
   /** @type {[string, ((q:any,p:any,o:any)=>void)][]} */
   const cases = [
@@ -133,9 +133,9 @@ test('actual v2 coalesce rejects rehashed packet and cold node forgeries', { con
       p.payload.facts.symbols.find(s => s.id === parameter.id).presence.null = true;
     }],
     ['mixed package family', (q, p) => { p.family = 'tsfg.generic-package'; }],
-    ['old request version', q => { q.version = 1; }],
-    ['old package version', (q, p) => { p.version = 1; }],
-    ['old private schema', (q, p) => { q.schemaHash = v1Schema; p.schemaHash = v1Schema; }],
+    ['old request version', q => { q.version = 2; }],
+    ['old package version', (q, p) => { p.version = 2; }],
+    ['old private schema', (q, p) => { q.schemaHash = v2Schema; p.schemaHash = v2Schema; }],
     ['source split question marks with repaired spans', (q, p) => {
       const source = q.input.files.find(f => f.path === q.input.rootFile), at = source.content.indexOf('??') + 1;
       assert.ok(at > 0); source.content = source.content.slice(0, at) + ' ' + source.content.slice(at);
@@ -172,7 +172,7 @@ test('actual v2 coalesce rejects rehashed packet and cold node forgeries', { con
     ['foreign typed binding', hir => { node(hir).left.binding = hir.functions[0].parameters[0].id; }],
     ['forged typed signature hash', hir => { node(hir).right.signatureHash = hash('forged signature'); }],
     ['changed typed range', hir => { node(hir).range.start++; }],
-    ['old HIR version', hir => { hir.format.version = 1; }],
+    ['old HIR version', hir => { hir.format.version = 2; }],
     ['mixed HIR family', hir => { hir.format.family = 'tsfg.closure-hir-candidate'; }],
   ];
   await Promise.all(coldCases.map(([name, mutate]) => t.test(name, async sub => {
@@ -194,7 +194,7 @@ test('actual v2 coalesce rejects rehashed packet and cold node forgeries', { con
   assert.deepEqual(actual.bytes.map(hash), actual.pins); assert.deepEqual(baseline.bytes.map(hash), baseline.pins);
 });
 
-// This later top adds the three raw Go22200 captures that were absent when the
+// This later top adds the three raw Go30428 captures that were absent when the
 // negative-only top above was frozen. No re-enveloped or synthetic positives.
 // Core observations are finite CFG/dataflow checks, not a general MLIR parser.
 function observedFunction(core) {
@@ -254,28 +254,28 @@ function coalesceCfg(graph, raw) {
   return { tag, tested, get, present, absent, absentEntry: conditional[3], join: present.target, phi: phi[1] };
 }
 
-test('actual Go22200 reference lhs-call and nested coalesce retain one evaluation and real CFG exits', { concurrency: true }, async t => {
+test('actual Go30428 reference lhs-call and nested coalesce retain one evaluation and real CFG exits', { concurrency: true }, async t => {
   /** @type {[string, string, string][]} */
   const cases = [
-    ['referenceRhs', 'function coalesce(value: i32 | null, replacement: i32): i32 { return value ?? replacement; }\nexport function entry(value: i32): i32 { return coalesce(value, value); }', '777bf9494e8427d42d2f0ffc03e80576817af2ce025e265bff71b23926d3f6d7'],
-    ['nullableCallLhs', 'function echo(value: i32 | null): i32 | null { return value; }\nfunction coalesce(value: i32 | null, replacement: i32): i32 { return echo(value) ?? replacement; }\nexport function entry(value: i32): i32 { return coalesce(value, value); }', '909f4dac0efda39e0e9b2498f0d311de6ed216a07d383d1d6587013054308ed6'],
-    ['nestedCallArgument', 'function fallback(value: i32): i32 { return value; }\nfunction coalesce(value: i32 | null, other: i32 | null, replacement: i32): i32 { return value ?? fallback(other ?? replacement); }\nexport function entry(value: i32): i32 { return coalesce(value, value, value); }', '48fd4fa07d956af97a5771568b8bd49acd03e8627938cd7cf54063c88fbf0f71'],
+    ['referenceRhs', 'function coalesce(value: i32 | null, replacement: i32): i32 { return value ?? replacement; }\nexport function entry(value: i32): i32 { return coalesce(value, value); }', '1d3e71fff207c61f30b476e987c096face7e62b8201d1120295b6509a5441303'],
+    ['nullableCallLhs', 'function echo(value: i32 | null): i32 | null { return value; }\nfunction coalesce(value: i32 | null, replacement: i32): i32 { return echo(value) ?? replacement; }\nexport function entry(value: i32): i32 { return coalesce(value, value); }', '0c6b355b299703c4b80022e2d91f397bf81bf32c4b4c044fd7096b1df18319a0'],
+    ['nestedCallArgument', 'function fallback(value: i32): i32 { return value; }\nfunction coalesce(value: i32 | null, other: i32 | null, replacement: i32): i32 { return value ?? fallback(other ?? replacement); }\nexport function entry(value: i32): i32 { return coalesce(value, value, value); }', '9af127c10d3e80b932e417582c75ad05531191f89bc28694b5e5dd940ffdc4fd'],
   ];
   const records = new Map();
   await Promise.all(cases.map(([name, source, pin]) => t.test(name, async sub => {
-    const directory = new URL('./fixtures/nullable-owned-coalesce/' + name.replace(/[A-Z]/g, char => '-' + char.toLowerCase()) + '/v2/', import.meta.url);
+    const directory = new URL('./fixtures/nullable-owned-coalesce/' + name.replace(/[A-Z]/g, char => '-' + char.toLowerCase()) + '/v3/', import.meta.url);
     const bytes = await Promise.all(['request.json', 'response.json', 'origin.json'].map(file => readFile(new URL(file, directory))));
     const pins = bytes.map(hash), [request, response, origin] = bytes;
     const q = JSON.parse(request.toString()), p = JSON.parse(response.toString()), o = JSON.parse(origin.toString());
     assert.equal(hash(response), 'sha256:' + pin);
     assert.equal(q.input.files.find(file => file.path === q.input.rootFile).content, source);
-    assert.equal(q.version, 2); assert.equal(p.version, 2); assert.equal(q.schemaHash, schema); assert.equal(p.schemaHash, schema);
+    assert.equal(q.version, 3); assert.equal(p.version, 3); assert.equal(q.schemaHash, schema); assert.equal(p.schemaHash, schema);
     const resealed = seal(copy(q), copy(p), copy(o));
     assert.deepEqual(resealed.request, request); assert.deepEqual(resealed.response, response); assert.deepEqual(resealed.origin, o);
     const refreshed = copy(p); inputIdentity(q, refreshed);
     assert.equal(refreshed.payload.inputIdentity, p.payload.inputIdentity); assert.deepEqual(refreshed.payload.files, p.payload.files);
-    assert.equal(o.kind, 'owned-go-nullable-response'); assert.equal(o.producerBaseOid, 'e0bb12b15d073c2bdc42a834a5cb1fef6514c94e');
-    assert.equal(o.producerDirty, true); assert.equal(o.testedInputSetHash, 'sha256:8689c2060135a54922a8edf7d974e2360607732ebb95335a22fc177f19bd5ef0');
+    assert.equal(o.kind, 'owned-go-nullable-response'); assert.equal(o.producerBaseOid, 'b6e156608803b08c4f62f258487484b1656e8213');
+    assert.equal(o.producerDirty, true); assert.equal(o.testedInputSetHash, 'sha256:6535cdfbee610b7e32fce13ef139b813fe45cec161b17ed7563386828b224b4d');
     const result = await complete({ request, response, origin: o });
     const facts = p.payload.facts, fn = facts.functions.find(item => item.name === 'coalesce'), entry = facts.functions.find(item => item.name === 'entry');
     const entrySymbol = facts.symbols.find(item => item.id === entry.symbol);
