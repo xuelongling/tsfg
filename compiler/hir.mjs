@@ -10,6 +10,8 @@ import { floatNames } from './float.mjs';
 import { emitScalarCore } from './scalar-core-emitter.mjs';
 import { emitReferenceCore } from './reference-core-emitter.mjs';
 
+import { buildClosureHir } from "./closure-hir.mjs";
+import { readJson as readClosureJson } from "./closure-common.mjs";
 export { verifyHir };
 const contract = () => registry['tsfg.hir'];
 const types = scalarTypeIds;
@@ -17,6 +19,10 @@ const types = scalarTypeIds;
 export function buildHir(snapshot) {
   try { validateFrontendSnapshot(snapshot); }
   catch (error) { return { status: "error", diagnostics: [{ code: "r03-d-snapshot", ruleId: "r01-input-boundary", phase: "hir", message: error.message }] }; }
+  if (snapshot?.format?.family === "tsfg.frontend-closure-candidate") {
+    try { return { status: "ok", hir: buildClosureHir(snapshot) }; }
+    catch (error) { return { status: "error", diagnostics: [{ code: error.code ?? "r03-closure-hir", ruleId: error.ruleId ?? "r01-input-boundary", phase: "hir", message: error.message }] }; }
+  }
   const first = snapshot.functions[0], expression = first?.body?.find(item => item.expression)?.expression;
   const moduleFacts=snapshot.modules?validateModuleFacts(snapshot):undefined;
   if (!moduleFacts && snapshot.functions.length < 1 || snapshot.functions.length > 128 || snapshot.functions.some(fn => fn.parameters.length > 64
@@ -146,7 +152,9 @@ export function readHir(bytes) {
   try {
     // Preserve a leading BOM so JSON rejects its noncanonical wire bytes.
     text = new TextDecoder("utf-8", { fatal: true, ignoreBOM: true }).decode(bytes);
+    if (bytes.byteLength > 16 * 1024 * 1024) throw new TypeError("HIR byte budget exceeded");
     value = JSON.parse(text);
+    if (value?.format?.family === "tsfg.closure-hir-candidate") value = readClosureJson(bytes).value;
   } catch (error) {
     throw new TypeError("r03-hir-invalid: HIR must contain valid UTF-8 JSON", { cause: error });
   }
@@ -156,6 +164,11 @@ export function readHir(bytes) {
 }
 
 export function lowerHir(hir) {
+  if (hir?.format?.family === "tsfg.closure-hir-candidate") {
+    verifyHir(hir);
+    throw Object.assign(new TypeError("r03-d-capability: closure Core lowering is not implemented"),
+      { code: "r03-d-capability", ruleId: "r01-ts-baseline", phase: "lowering" });
+  }
   if (hir?.format?.family === 'tsfg.reference-hir-candidate') return emitReferenceCore(hir);
   const verified = verifyHir(hir), moduleMode = !!verified.modules;
   const sourceView = source => ({ path: source.path, hash: source.hash, length: source.content.length });

@@ -1,4 +1,7 @@
 // SPDX-License-Identifier: MIT
+import { verifyClosureHir } from './closure-hir.mjs';
+import { scalarOperations, validScalarUnary, validScalarBinary } from './scalar-operators.mjs';
+export { scalarOperations } from './scalar-operators.mjs';
 import { identifierName, staticBindingName, sourceTrivia, verifyModuleHir } from './module-facts.mjs';
 import { initializerIdentity } from './modules.mjs';
 import { canonical, functionIdentity, signatureHash, i32TypeId, boolTypeId, scalarTypeIds, scalarName, integerNames, integerRange, own, sha256 } from './identity.mjs';
@@ -15,15 +18,6 @@ const hash = value => typeof value === "string" && /^sha256:[0-9a-f]{64}$/.test(
 const types = scalarTypeIds;
 const integerType = id => integerNames.includes(scalarName(id));
 const floatType = id => floatNames.includes(scalarName(id));
-export const scalarOperations = Object.freeze({ "+": "add", "-": "sub", "*": "mul", "/": "div", "%": "rem",
-  "<<": "shl", ">>": "shr", ">>>": "ushr", "&": "and", "|": "or", "^": "xor",
-  "===": "eq", "!==": "ne", "<": "lt", "<=": "le", ">": "gt", ">=": "ge" });
-const comparisons = new Set(["===", "!==", "<", "<=", ">", ">="]);
-// The checked scalar subset inherits TS precedence; every binary operator here
-// associates left. Parentheses are explicit group nodes, not inferred anchors.
-const precedence = { "||": -1, "&&": 0, "|": 1, "^": 2, "&": 3, "===": 4, "!==": 4,
-  "<": 5, "<=": 5, ">": 5, ">=": 5, "<<": 6, ">>": 6, ">>>": 6,
-  "+": 7, "-": 7, "*": 8, "/": 8, "%": 8 };
 const sourceTokens = (source, start, end) => source.slice(start, end)
   .replace(/\/\*[\s\S]*?\*\/|\/\/[^\r\n\u2028\u2029]*/g, "").replace(/\s/g, "");
 function identifierToken(source, anchor) {
@@ -127,26 +121,19 @@ function verifyExpression(value, parent, source, fail, budget, locals, visibleBi
     if (!(group ? sourceTokens(source, value.range.start, value.operand.range.start) === "("
         : scalarOperator(source, value.range.start, value.operand.range.start, value.operator))
         || sourceTokens(source, value.operand.range.end, value.range.end) !== (group ? ")" : "")
-        || value.type !== value.operand.type || (!group && (["binary", "shortCircuit"].includes(value.operand.kind)
-        || !["+", "-", "~", "!"].includes(value.operator)
-        || (value.operator === "!" ? value.type !== boolTypeId : !integerType(value.type)
-          && !(floatType(value.type) && ["+", "-"].includes(value.operator)))))) fail();
+        || value.type !== value.operand.type || (!group && !validScalarUnary(value.operator,
+          scalarName(value.type), scalarName(value.operand.type), value.operand.kind))) fail();
   } else if (value.kind === "binary" || value.kind === "shortCircuit") {
     const short = value.kind === "shortCircuit";
     if (!exactKeys(value, ["kind", "type", "operator", "left", "right", "range"])
         || !(short ? ["&&", "||"].includes(value.operator) : Object.hasOwn(scalarOperations, value.operator))) fail();
     verifyExpression(value.left, value.range, source, fail, budget, locals, visibleBindings);
     verifyExpression(value.right, value.range, source, fail, budget, locals, visibleBindings);
-    const shift = ["<<", ">>", ">>>"].includes(value.operator);
-    if ((shift ? value.right.type !== i32TypeId : value.left.type !== value.right.type) || value.left.range.end > value.right.range.start
-        || (["binary", "shortCircuit"].includes(value.left.kind) && precedence[value.left.operator] < precedence[value.operator])
-        || (["binary", "shortCircuit"].includes(value.right.kind) && precedence[value.right.operator] <= precedence[value.operator])
+    if (!validScalarBinary(value.kind, value.operator, scalarName(value.type), scalarName(value.left.type),
+          scalarName(value.right.type), value.left, value.right) || value.left.range.end > value.right.range.start
         || sourceTokens(source, value.range.start, value.left.range.start) !== ""
         || !scalarOperator(source, value.left.range.end, value.right.range.start, value.operator)
-        || sourceTokens(source, value.right.range.end, value.range.end) !== ""
-        || value.type !== (short || comparisons.has(value.operator) ? boolTypeId : value.left.type)
-        || (short ? value.left.type !== boolTypeId : !["===", "!=="].includes(value.operator) && !integerType(value.left.type)
-          && !(floatType(value.left.type) && (comparisons.has(value.operator) || ["+", "-", "*", "/", "%"].includes(value.operator))))) fail();
+        || sourceTokens(source, value.right.range.end, value.range.end) !== "") fail();
   } else fail();
 }
 const validText = value => typeof value === "string" && value.length > 0 && !value.includes("\0")
@@ -167,6 +154,7 @@ function noShortIf(statement) {
 }
 
 export function verifyHir(hir) {
+  if (hir?.format?.family === 'tsfg.closure-hir-candidate') return verifyClosureHir(hir);
   const fail = () => { throw new TypeError("r03-hir-invalid: owned HIR identity, type, source or structure differs"); };
   const moduleMode=hir?.modules!==undefined;
   if (!exactKeys(hir, ["contractVersion", "schemaHash", "inputIdentity", "source", "target", "functions",...(moduleMode?['sources','modules','globals','hostImports','closure']:[])])
