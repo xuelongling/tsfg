@@ -3,10 +3,10 @@ import { canonical, sha256, own } from "./identity.mjs";
 import { checkGenericJsonValueBudget, genericPackageJsonPolicy } from "./generic-json-budget.mjs";
 
 export const genericPackageFormat = own({
-  family: "tsfg-owned-generic-package", version: 4,
-  schemaHash: "ec05631c15f280f54279ba9353fd8fc3ff779349a1f56f7cdb00eba22c767e20",
-  semanticProfile: "tsfg-owned-scalar-generics-host-v4", declarationProfile: "minimal-scalars-v2",
-  capabilities: ["conditional-signature", "explicit-type-arguments", "mapped-indexed-signature", "number-add", "scalar-generics", "single-module"],
+  family: "tsfg-owned-generic-package", version: 5,
+  schemaHash: "da7eb72ae306eb88863a44c945df77d572a96443a005fefbd787267fe90658bf",
+  semanticProfile: "tsfg-owned-scalar-generics-host-v5", declarationProfile: "minimal-scalars-v2",
+  capabilities: ["conditional-generic-call", "conditional-signature", "explicit-type-arguments", "mapped-indexed-signature", "number-add", "scalar-generics", "single-module"],
 });
 export const genericPackageLimits = Object.freeze({ bytes: genericPackageJsonPolicy.bytes, declarationBytes: 1048576,
   declarations: 8, definitions: 256, depth: genericPackageJsonPolicy.depth, expressionDepth: 64,
@@ -85,7 +85,7 @@ export function genericDefinitionKey(definition, payload) {
 /** Hash the protocol Payload: definitions/files must already have canonical order. */
 export function genericPackageId(payload) {
   checkGenericJsonValueBudget(payload);
-  return sha256("tsfg-owned-generic-package/v4\n" + canonical(payload));
+  return sha256("tsfg-owned-generic-package/v5\n" + canonical(payload));
 }
 
 /** Structural admission only. Official Source checking remains the semantic authority. */
@@ -218,7 +218,8 @@ export function normalizeGenericPackage(input, ordered = false) {
     if (ownedSignature(returnType) || parameters.some(parameter => ownedSignature(parameter.type))) {
       check(typeParameters.length === 1 && parameters.length === 1 && ownedSignature(returnType)
         && canonical(parameters[0].type) === canonical(returnType)
-        && body.kind === "parameter" && body.parameter === 0, "reference");
+        && (body.kind === "parameter" && body.parameter === 0
+          || returnType.kind === "conditional" && body.kind === "call"), "reference");
     }
     return { body, exported: definition.exported, key: definition.key,
       name, origin: anchor, parameters, returnType, typeParameters };
@@ -238,6 +239,15 @@ export function normalizeGenericPackage(input, ordered = false) {
         const callee = byKey.get(expression.definition);
         check(callee && expression.arguments.length === callee.parameters.length
           && expression.typeArguments.length === callee.typeParameters.length && !names.has(callee.name), "reference");
+        if (definition.returnType.kind === "conditional") {
+          check(expression === definition.body && expression.typeArguments.length === 1
+            && canonical(expression.typeArguments[0]) === canonical({ kind: "parameter", parameter: 0 })
+            && expression.arguments.length === 1 && expression.arguments[0].kind === "parameter"
+            && expression.arguments[0].parameter === 0 && callee.typeParameters.length === 1
+            && callee.parameters.length === 1 && canonical(callee.parameters[0].type) === canonical(definition.returnType)
+            && canonical(callee.returnType) === canonical(definition.returnType)
+            && callee.body.kind === "parameter" && callee.body.parameter === 0, "reference");
+        }
       }
       pending.push(...expression.arguments);
     }

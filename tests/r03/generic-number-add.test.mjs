@@ -19,11 +19,11 @@ const range = (start, end) => ({ start, end });
 const code = expected => error => error instanceof TypeError && 'code' in error && error.code === expected;
 const fixture = name => new URL('./fixtures/' + name, import.meta.url);
 async function actual() {
-  const names = ['generic-number-add-package-v4.json', 'generic-number-add-instance-v4.json',
+  const names = ['generic-number-add-package-v5.json', 'generic-number-add-instance-v5.json',
     'generic-number-add.source.ts', 'generic-number-add.declaration.d.ts'];
   const bytes = await Promise.all(names.map(name => readFile(fixture(name))));
-  const pins = [[1953, 'f1b61efdad584c7c96992f3cc197ea06b43e43f9ad3419588dc9366e5d1d1d3f'],
-    [2020, '93dd1dc88fd6e996f38c87ee06584ed4d7808f5b7dc664ab1cf7b00342e11b49'],
+  const pins = [[1980, '1fbd8ffb22f5aa9c392a8242618c5118cde1664080a49c91f217c542e954f82e'],
+    [2020, '400bf0dd1bd02d4966304f87c106bfe1fe554b7b26ca079fbc6b1cb005c5d646'],
     [92, 'ca4815b1b71ef1e4921b01566d60eeb1b70751bb9a126b7b37d7f45454d16e44'],
     [362, 'd629059f5175a580a8a7b19531c7d8cff1bfa7b61320f6638cf4ee25fbf5a141']];
   bytes.forEach((value, index) => assert.deepEqual([value.length, sha(value)], pins[index]));
@@ -45,8 +45,8 @@ async function cold() {
   return { ...input, hir: read };
 }
 function assertHir(hir) {
-  assert.deepEqual(hir.format, { family: 'tsfg.generic-concrete-hir-candidate', version: 4,
-    linkageAlgorithm: 'tsfg.generic-linkage.v1', semanticProfile: 'tsfg-owned-scalar-generics-host-v4' });
+  assert.deepEqual(hir.format, { family: 'tsfg.generic-concrete-hir-candidate', version: 5,
+    linkageAlgorithm: 'tsfg.generic-linkage.v1', semanticProfile: 'tsfg-owned-scalar-generics-host-v5' });
   assert.equal(hir.functions.length, 2);
   assert.equal(new Set(hir.functions.map(fn => fn.id)).size, 2);
   assert.equal(new Set(hir.functions.map(fn => fn.linkageName)).size, 2);
@@ -85,9 +85,9 @@ function assertCore(core, hir) {
 
 test('actual owned number-add keeps two phantom instances through public cold HIR and scalar Core', async () => {
   const { bytes, pkg, record, hir } = await cold();
-  assert.equal(pkg.version, 4);
-  assert.equal(pkg.schemaHash, 'ec05631c15f280f54279ba9353fd8fc3ff779349a1f56f7cdb00eba22c767e20');
-  assert.equal(pkg.payload.semanticProfile, 'tsfg-owned-scalar-generics-host-v4');
+  assert.equal(pkg.version, 5);
+  assert.equal(pkg.schemaHash, 'da7eb72ae306eb88863a44c945df77d572a96443a005fefbd787267fe90658bf');
+  assert.equal(pkg.payload.semanticProfile, 'tsfg-owned-scalar-generics-host-v5');
   assert.deepEqual(Buffer.from(encodeGenericPackage(pkg)), bytes);
   const definition = pkg.payload.definitions[0];
   assert.equal(definition.body.kind, 'number-add');
@@ -136,12 +136,16 @@ test('number-add package rejects old mixed format claims and malformed ordered d
   const old = await readFile(fixture('generic-package-source-v1.json'));
   assert.throws(() => decodeGenericPackage(old), code('generic-package-schema'));
   const oldSchema = JSON.parse(old.toString('utf8')).schemaHash;
+  const predecessor4 = await readFile(fixture('generic-number-add-package-v4.json'));
+  assert.throws(() => decodeGenericPackage(predecessor4), code('generic-package-schema'));
   /** @type {Array<[(value: any) => void, string]>} */
   const changes = [
-    [v => { v.version = 1; }, 'schema'], [v => { v.version = 999; }, 'schema'],
+    [v => { v.version = 1; }, 'schema'], [v => { v.version = 4; }, 'schema'], [v => { v.version = 999; }, 'schema'],
     [v => { v.schemaHash = '0'.repeat(64); }, 'schema'],
     [v => { v.schemaHash = oldSchema; }, 'schema'],
     [v => { v.payload.semanticProfile = 'tsfg-owned-scalar-generics-host-v1'; }, 'schema'],
+    [v => { v.payload.semanticProfile = 'tsfg-owned-scalar-generics-host-v4'; }, 'schema'],
+    [v => { v.schemaHash = 'ec05631c15f280f54279ba9353fd8fc3ff779349a1f56f7cdb00eba22c767e20'; }, 'schema'],
     [v => { v.payload.capabilities.splice(1, 1); }, 'limit'],
     [v => { v.payload.definitions[0].body.kind = 'literal'; }, 'schema'],
     [v => { v.payload.definitions[0].body.arguments.pop(); }, 'reference'],
@@ -165,7 +169,24 @@ test('number-add package rejects old mixed format claims and malformed ordered d
 });
 
 test('number-add Source result correspondence rejects altered bindings types origins and phantom identity', async () => {
-  const { bytes, record } = await actual();
+  const { bytes, pkg, record } = await actual();
+  const definition = pkg.payload.definitions.find(value => value.name === 'sum'); assert.ok(definition);
+  /** @param {any} value @param {string} argument */
+  function instance(value, argument = 'number') {
+    const instances = /** @type {Array<any>} */ (value.instances);
+    const matches = instances.filter(item => item.definition === definition.key && item.typeArguments.length === 1
+      && item.typeArguments[0].kind === argument && item.typeArguments[0].parameter === 0);
+    assert.equal(matches.length, 1, 'one exact definition/typeArguments instance');
+    assert.deepEqual(matches[0].typeArguments, [{ kind: argument, parameter: 0 }]); return matches[0];
+  }
+  /** @param {any} value */
+  function leftOperand(value) {
+    const arguments_ = /** @type {Array<any>} */ (instance(value).body.arguments);
+    const matches = arguments_.filter(item => item.kind === 'parameter' && item.parameter === 0
+      && item.origin.start === 75 && item.origin.end === 79);
+    assert.equal(matches.length, 1, 'original left parameter0 at UTF16 75..79'); return matches[0];
+  }
+
   const old = JSON.parse(await readFile(fixture('generic-instance-source-v1.json'), 'utf8'));
   assert.throws(() => validateGenericInstanceResult(bytes, old.result, old.requests), code('generic-instance-identity'));
   /** @type {Array<[(value: any) => void, string]>} */
@@ -173,18 +194,19 @@ test('number-add Source result correspondence rejects altered bindings types ori
     [v => { v.packageId = 'sha256:' + '0'.repeat(64); }, 'identity'],
     [v => { v.semanticProfile = 'tsfg-owned-scalar-generics-host-v1'; }, 'identity'],
     [v => { v.roots.reverse(); }, 'root'],
-    [v => { v.instances[0].typeArguments[0].kind = 'boolean'; }, 'identity'],
-    [v => { v.instances[0].body.kind = 'call'; }, 'origin'],
-    [v => { v.instances[0].body.type = 'bool'; }, 'type'],
-    [v => { v.instances[0].body.callee = v.instances[1].key; }, 'reference'],
-    [v => { v.instances[0].body.arguments.pop(); }, 'reference'],
-    [v => { v.instances[0].body.arguments[0].parameter = 1; }, 'reference'],
-    [v => { v.instances[0].body.arguments.reverse(); }, 'origin'],
-    [v => { v.instances[0].body.origin.start = 74; }, 'origin'],
-    [v => { v.instances[0].body.operator = '+'; }, 'schema'],
+    [v => { instance(v).typeArguments[0].kind = 'boolean'; }, 'identity'],
+    [v => { instance(v).body.kind = 'call'; }, 'origin'],
+    [v => { instance(v).body.type = 'bool'; }, 'type'],
+    [v => { instance(v).body.callee = instance(v, 'boolean').key; }, 'reference'],
+    [v => { instance(v).body.arguments.pop(); }, 'reference'],
+    [v => { leftOperand(v).parameter = 1; }, 'reference'],
+    [v => { instance(v).body.arguments.reverse(); }, 'origin'],
+    [v => { instance(v).body.origin.start = 74; }, 'origin'],
+    [v => { instance(v).body.operator = '+'; }, 'schema'],
   ];
   for (const [change, category] of changes) {
-    const value = clone(record.result); change(value);
+    const value = clone(record.result), before = JSON.stringify(value); change(value);
+    assert.notEqual(JSON.stringify(value), before, category + ' mutation must change the exact Source result');
     assert.throws(() => validateGenericInstanceResult(bytes, value, record.requests), code('generic-instance-' + category));
   }
 });

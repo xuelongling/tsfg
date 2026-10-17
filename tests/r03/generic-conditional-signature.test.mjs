@@ -15,30 +15,30 @@ import { readPacket } from './generic-core-package-wire.mjs';
 const sha = bytes => createHash('sha256').update(bytes).digest('hex');
 const range = (start, end) => ({ start, end });
 const definitionKey = '70672415263a4e21029a43530815fda78ba93d267fb24f84bbef08985a4fd984';
-const packageId = 'sha256:13cce60a5162d89efd5dddb36e3ff004bb76d9e49d57c8101dc1fc87df18ddb6';
-const profile = 'tsfg-owned-scalar-generics-host-v4';
+const packageId = 'sha256:e0fbd3009f1b67b4d6b7df2023d3d1ca231d208f463fa2b3aaec44fdb9c9631f';
+const profile = 'tsfg-owned-scalar-generics-host-v5';
 // Source instance key order differs from the ordered root requests.
 const witnesses = [
-  { key: '06438b22b6c73a983b1da5ee95c3abf344aebe2cdf6fa0d98d966571f485b400',
+  { key: '3ca8ba7ab2815cdfa4b8d9aae6f0457bcb1c5f490314f7629029bbeb7077b989',
     argument: 'number', scalar: 'f64', mlir: 'f64', wire: 13,
     typeId: 'dfbc72c48bec549ea679cd6aff531f9ebef95e001f6ae0bf419d2f33bf988a6c',
     signature: 'f195c19035b7f0da83780c5c50afe3060a0d4ea3a577e4b70726f5905aab8059',
-    id: 'b54cad4b3b69e37c7952b908ffd65934aada1d443d5dd29addb611514a6f1437' },
-  { key: 'b910cbab6d7dd12e14b149efc8b978802cf73ccdbe1e69754f1ed98058a53872',
+    id: 'a28c6f4900041be74b8ce77ef3b65b64580bc16027a1d44f838c3d6ace630626' },
+  { key: 'c1df8fdb1b153bd642ec1e2999f41a866889b707569814f38d4f5c9fe6089e2c',
     argument: 'boolean', scalar: 'bool', mlir: 'i1', wire: 2,
     typeId: '811afa3745352bcd218d039b4539ec7e7ca8d103420dbc4c8ab8d6119e850721',
     signature: '176f0c2d74ef9b180f6aa17b92935546bf3661b0a8944833e96892a14d968395',
-    id: '92812943eb6b13ae4216245b61534de78df9840df4b7c75ee233f2c0cd187576' },
+    id: '722450252a53c6344115d24d2d6c1f0420572cd6863352f206a1e9b8e772dea0' },
 ];
 const rootWitnesses = [witnesses[1], witnesses[0]];
 const linkage = witness => '__tsfg_generic_v1_' + witness.key;
 
 async function actual() {
-  const names = ['generic-conditional-signature-package-v4.json', 'generic-conditional-signature-instance-v4.json',
+  const names = ['generic-conditional-signature-package-v5.json', 'generic-conditional-signature-instance-v5.json',
     'generic-conditional-signature.source.ts', 'generic-conditional-signature.declaration.d.ts'];
   const bytes = await Promise.all(names.map(name => readFile(new URL('./fixtures/' + name, import.meta.url))));
-  const pins = [[2027, 'd8ef3cd511bb22ce2a77305eeb94ab197fb2f626e4206e306339236f77439db5'],
-    [1485, '828d23f2c18ce1d2f279e94e352b235e3dbf56f9ada026204e3825654046d8d6'],
+  const pins = [[2054, '58f348d4f70c3984203675e3ff094816d7893b4ddc7a71a18f6db7847f688e22'],
+    [1485, '9f130144b540b6cffbcdb38bfad1e355c8e7b195848902c4df7ed76358f2be04'],
     [134, 'b389353082b8f428ef3362e3a410b02e84b616da6947a5274945bb65be0a6a5b'],
     [362, 'd629059f5175a580a8a7b19531c7d8cff1bfa7b61320f6638cf4ee25fbf5a141']];
   bytes.forEach((value, index) => assert.deepEqual([value.length, sha(value)], pins[index]));
@@ -49,12 +49,12 @@ async function actual() {
   assert.equal(source.slice(32, 75), 'value: T extends boolean ? boolean : number');
   assert.equal(source.slice(124, 129), 'value');
   const pkg = decodeGenericPackage(bytes[0]), record = JSON.parse(bytes[1].toString('utf8'));
-  assert.equal(pkg.version, 4);
-  assert.equal(pkg.schemaHash, 'ec05631c15f280f54279ba9353fd8fc3ff779349a1f56f7cdb00eba22c767e20');
+  assert.equal(pkg.version, 5);
+  assert.equal(pkg.schemaHash, 'da7eb72ae306eb88863a44c945df77d572a96443a005fefbd787267fe90658bf');
   assert.equal(pkg.packageId, packageId);
   assert.equal(pkg.payload.semanticProfile, profile);
   assert.deepEqual(pkg.payload.capabilities,
-    ['conditional-signature', 'explicit-type-arguments', 'mapped-indexed-signature', 'number-add', 'scalar-generics', 'single-module']);
+    ['conditional-generic-call', 'conditional-signature', 'explicit-type-arguments', 'mapped-indexed-signature', 'number-add', 'scalar-generics', 'single-module']);
   assert.deepEqual(pkg.payload.source, { path: '/original/main.ts', digest: pins[2][1],
     length: 132, positionUnit: 'utf16', surrogateStarts: [3] });
   assert.deepEqual(pkg.payload.environment, { profile: 'minimal-scalars-v2', files: [
@@ -83,7 +83,7 @@ async function actual() {
 }
 
 function assertHir(hir, pkg) {
-  assert.deepEqual(hir.format, { family: 'tsfg.generic-concrete-hir-candidate', version: 4,
+  assert.deepEqual(hir.format, { family: 'tsfg.generic-concrete-hir-candidate', version: 5,
     linkageAlgorithm: 'tsfg.generic-linkage.v1', semanticProfile: profile });
   assert.deepEqual(hir.context, { packageId, scope: 'package:conditional-signature', semanticProfile: profile });
   assert.deepEqual(hir.source, pkg.payload.source);
@@ -178,19 +178,22 @@ const rejection = expected => error => error instanceof TypeError && 'code' in e
 const fixtureBytes = name => readFile(new URL('./fixtures/' + name, import.meta.url));
 const reseal = pkg => { pkg.packageId = genericPackageId(pkg.payload); return pkg; };
 
-test('conditional package4 rejects predecessor2 and mixed format schema profile and capabilities', async () => {
+test('conditional package5 rejects predecessor versions 2 and 4 and mixed format schema profile and capabilities', async () => {
   const { pkg } = await actual();
-  for (const name of ['generic-package-source-v2.json', 'generic-number-add-package-v2.json']) {
+  for (const name of ['generic-package-source-v2.json', 'generic-number-add-package-v2.json',
+    'generic-package-source-v4.json', 'generic-number-add-package-v4.json', 'generic-conditional-signature-package-v4.json']) {
     const oldBytes = await fixtureBytes(name);
     assert.throws(() => decodeGenericPackage(oldBytes), rejection('generic-package-schema'));
   }
   /** @type {Array<[(value: any) => void, string]>} */
   const changes = [
-    [v => { v.version = 2; }, 'schema'], [v => { v.version = 999; }, 'schema'],
+    [v => { v.version = 2; }, 'schema'], [v => { v.version = 4; }, 'schema'], [v => { v.version = 999; }, 'schema'],
     [v => { v.family += '-foreign'; }, 'schema'],
     [v => { v.schemaHash = '7afee9732817ce2eca33d8aeb6f710cb2bc302eca5a183b64e7774e0e1e81f3a'; }, 'schema'],
     [v => { v.schemaHash = '0'.repeat(64); }, 'schema'],
     [v => { v.payload.semanticProfile = 'tsfg-owned-scalar-generics-host-v2'; }, 'schema'],
+    [v => { v.payload.semanticProfile = 'tsfg-owned-scalar-generics-host-v4'; }, 'schema'],
+    [v => { v.schemaHash = 'ec05631c15f280f54279ba9353fd8fc3ff779349a1f56f7cdb00eba22c767e20'; }, 'schema'],
     [v => { v.payload.capabilities.shift(); }, 'limit'],
     [v => { v.payload.capabilities[0] = 'foreign'; }, 'schema'],
     [v => { v.payload.capabilities.reverse(); }, 'schema'],
@@ -227,7 +230,7 @@ test('conditional signature rejects missing null nested hidden and incorrect chi
   }
 });
 
-test('conditional signature is confined to one binder one value and direct parameter0 return', async () => {
+test('conditional signature rejects wrong binders values recursive calls and malformed returns', async () => {
   const { pkg, bytes, record } = await actual();
   /** @type {Array<(definition: any) => void>} */
   const changes = [d => { d.typeParameters.push('U'); }, d => { d.parameters = []; },
@@ -242,7 +245,7 @@ test('conditional signature is confined to one binder one value and direct param
     const value = detached(pkg); change(value.payload.definitions[0]);
     assert.throws(() => encodeGenericPackage(reseal(value)), rejection('generic-package-reference'));
   }
-  const legacy = JSON.parse((await fixtureBytes('generic-package-source-v4.json')).toString('utf8'));
+  const legacy = JSON.parse((await fixtureBytes('generic-package-source-v5.json')).toString('utf8'));
   const caller = legacy.payload.definitions.find(d => d.name === 'route');
   caller.body.typeArguments[0] = detached(pkg.payload.definitions[0].returnType);
   assert.throws(() => encodeGenericPackage(reseal(legacy)), rejection('generic-package-reference'));

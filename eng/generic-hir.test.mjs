@@ -9,10 +9,10 @@ import { buildGenericHir, verifyGenericHir, printGenericHir, readGenericHir,
 import { lowerHir } from '../compiler/hir.mjs';
 import { canonical } from '../compiler/identity.mjs';
 
-const packageBytes = new Uint8Array(await readFile(new URL('../tests/r03/fixtures/generic-package-source-v4.json', import.meta.url)));
+const packageBytes = new Uint8Array(await readFile(new URL('../tests/r03/fixtures/generic-package-source-v5.json', import.meta.url)));
 // Root extracts this exact fixture from the complete successful official Source test log.
 // Absence is a failure, never a synthetic semantic substitute or a skipped positive.
-const fixture = JSON.parse(await readFile(new URL('../tests/r03/fixtures/generic-instance-source-v4.json', import.meta.url), 'utf8'));
+const fixture = JSON.parse(await readFile(new URL('../tests/r03/fixtures/generic-instance-source-v5.json', import.meta.url), 'utf8'));
 const pkg = decodeGenericPackage(packageBytes);
 const clone = value => structuredClone(value);
 const checked = () => validateGenericInstanceResult(packageBytes, fixture.result, fixture.requests);
@@ -83,6 +83,7 @@ test('candidate HIR cannot masquerade as the formally registered 0.8 HIR', () =>
 test('result rejects foreign package or semantic profile and unknown session facts', () => {
   badResult(result => { result.packageId = 'sha256:' + 'f'.repeat(64); }, 'identity');
   badResult(result => { result.semanticProfile += '-foreign'; }, 'identity');
+  badResult(result => { result.semanticProfile = 'tsfg-owned-scalar-generics-host-v4'; }, 'identity');
   badResult(result => { result.sessionId = 'not-owned'; }, 'schema');
   badResult(result => { result.instances[0].body.symbol = 1; }, 'schema');
 });
@@ -138,6 +139,7 @@ test('result preflight rejects getters, cycles, sparse arrays and canonical byte
 });
 test('cold HIR rejects mixed format, forged linkage, ids and source-content substitution', () => {
   badHir(hir => { hir.format.version++; }, 'identity');
+  badHir(hir => { hir.format.version = 4; }, 'identity');
   badHir(hir => { hir.functions[0].linkageName += 'x'; }, 'identity');
   badHir(hir => { hir.functions[0].id = 'sha256:' + '0'.repeat(64); }, 'identity');
   badHir(hir => { hir.source.content = ''; }, 'schema');
