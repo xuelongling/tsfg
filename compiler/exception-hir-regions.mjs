@@ -117,11 +117,14 @@ export function createExceptionHirRegions(definitions, types, budget, claimed) {
         const item = items[index];
         check(scope.node.body.length < limits.derived.arrayItems, 'limit', 'HIR body array budget exceeded');
         if (item.kind === 'throw' || item.kind === 'return') {
-          const value = expression(item.expression, scope);
-          // Equal nullable masks preserve the current value directly. Strict
-          // widening needs its independent Source tracer before presenceWiden.
-          if (item.kind === 'return' && value.type !== header.returnType)
-            failure('capability', 'HIR nullable return widening requires its own tracer');
+          let value = expression(item.expression, scope);
+          // Preserve the current operand and its original anchor. Only a strict
+          // i32 absence-set inclusion adds a return conversion; throw never does.
+          if (item.kind === 'return' && value.type !== header.returnType) {
+            if (!types.isStrictNullableWidening(value.type, header.returnType))
+              failure('capability', 'HIR return requires equal types or strict i32 presence widening');
+            value = { kind: 'presenceWiden', type: header.returnType, range: value.range, operand: value };
+          }
           scope.node.body.push({ kind: item.kind, range: item.range, value });
         } else if (item.kind === 'variable') {
           const binding = scope.bySymbol.get(item.symbol.id);

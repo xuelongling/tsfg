@@ -28,8 +28,8 @@ export function createExceptionHirTypes() {
       if (presence?.optional || presence?.default)
         failure('capability', 'HIR optional/default values require their own tracer');
       if (mask) {
-        if (name !== 'i32' || signature !== undefined || mask === 3)
-          failure('capability', 'HIR nullable values currently require i32 with exactly one absence member');
+        if (name !== 'i32' || signature !== undefined)
+          failure('capability', 'HIR nullable values require an i32 payload without a callable signature');
         return intern({ kind: 'nullable', base: intern({ kind: 'scalar', name: 'i32' }), mask });
       }
       if (name === 'function') {
@@ -52,6 +52,14 @@ export function createExceptionHirTypes() {
       check(parameters.length <= limits.derived.parametersPerFunction, 'limit', 'HIR signature parameter budget exceeded');
       check(parameters.every(id => entries.has(id)) && entries.has(returnType), 'type', 'HIR callable refers to an unowned type');
       return intern({ kind: 'callable', parameters, returnType });
+    },
+    /** @param {string} from @param {string} to */
+    isStrictNullableWidening(from, to) {
+      const source = entries.get(from), target = entries.get(to);
+      if (target?.kind !== 'nullable' || target.base !== scalarTypeIds.i32) return false;
+      const sourceMask = source?.kind === 'scalar' && source.name === 'i32' ? 0
+        : source?.kind === 'nullable' && source.base === target.base ? source.mask : null;
+      return sourceMask !== null && sourceMask !== target.mask && (sourceMask & ~target.mask) === 0;
     },
     records() {
       return [...entries.values()].sort((left, right) => left.id < right.id ? -1 : left.id > right.id ? 1 : 0);
