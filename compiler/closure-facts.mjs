@@ -56,7 +56,11 @@ export function verifyClosureFacts(source, functions, symbols) {
         check(!nestedDeclarations.has(nested.symbol), 'owner'); nestedDeclarations.set(nested.symbol, { owner: fn.symbol, scopePath }); install(scope, symbol);
         addLocation(symbol, fn.symbol, scopePath, 'function', 0);
       }
-      for (const key of ['body','thenBody','elseBody']) if (item[key]) collect(fn, array(item[key], 128), scopePath + '/' + childScope++);
+      for (const key of ['body','thenBody','elseBody']) if (item[key]) {
+        const children = array(item[key], 128);
+        // An omitted alternate and an explicit empty alternate introduce no scope.
+        if (key !== 'elseBody' || children.length) collect(fn, children, scopePath + '/' + childScope++);
+      }
     }
   }
   for (const fn of functions) {
@@ -104,7 +108,12 @@ export function verifyClosureFacts(source, functions, symbols) {
     };
     function expression(value, parent, visible, initialized, write = false) {
       check(--remaining >= 0, 'limit'); record(value, ['kind','type','range'], ['symbol','target','callee','signature','arguments','operand','operator','left','right','boolean','literal','float']);
-      range(value.range, parent);
+      if (value.kind === 'call' && value.range?.start < parent.start) {
+        // Direct Source calls can retain trivia excluded by their enclosing
+        // expression. Validate that exact prefix without changing source anchors.
+        range(value.range, fn.range); grammar.expect(value.range.start, parent.start, []);
+        range(value.range, { start: value.range.start, end: parent.end });
+      } else range(value.range, parent);
       if (write) check(['reference','group'].includes(value.kind), 'permission', 'assignment requires an owned writable binding');
       const type = expressionType(value);
       const common = ['kind','type','range', ...(value.signature ? ['signature'] : [])];
@@ -167,7 +176,8 @@ export function verifyClosureFacts(source, functions, symbols) {
         exact(['operator','left','right']); expression(value.left, value.range, visible, initialized); expression(value.right, value.range, visible, initialized);
         check(validScalarBinary(value.kind, value.operator, type, expressionType(value.left), expressionType(value.right),
           value.left, value.right), 'type');
-        grammar.expect(value.range.start, value.left.range.start, []); grammar.expect(value.left.range.end, value.right.range.start, [value.operator]); grammar.expect(value.right.range.end, value.range.end, []);
+        grammar.expect(Math.min(value.range.start, value.left.range.start), Math.max(value.range.start, value.left.range.start), []);
+        grammar.expect(value.left.range.end, value.right.range.start, [value.operator]); grammar.expect(value.right.range.end, value.range.end, []);
       } else failure('capability', 'unsupported owned closure expression');
     }
     function statements(body, parent, inherited, initialized, scopePath) {
@@ -201,14 +211,15 @@ export function verifyClosureFacts(source, functions, symbols) {
             record(item, ['kind','range','body']); const tokens = grammar.between(item.range.start, item.range.end); check(tokens[0]?.text === '{' && tokens.at(-1)?.text === '}', 'source');
             const blockReturned = statements(item.body, { start: tokens[0].end, end: tokens.at(-1).start }, visible, new Set(initialized), scopePath + '/' + childScope++); returned ||= blockReturned;
           } else if (item.kind === 'if' || item.kind === 'while') {
-            const branch = item.kind === 'if'; record(item, ['kind','range','condition', ...(branch ? ['thenBody','elseBody'] : ['body'])]);
+            const branch = item.kind === 'if'; record(item, ['kind','range','condition', ...(branch ? ['thenBody'] : ['body'])], branch ? ['elseBody'] : []);
+            const alternate = branch && item.elseBody !== undefined ? array(item.elseBody, 128) : [];
             expression(item.condition, item.range, visible, initialized); compatible(expressionType(item.condition), 'bool');
             grammar.expect(item.range.start, item.condition.range.start, [item.kind,'(']);
-            const body = branch ? item.thenBody : item.body; check(body.length === 1, 'capability'); grammar.expect(item.condition.range.end, body[0].range.start, [')']);
+            const body = array(branch ? item.thenBody : item.body, 128); check(body.length === 1, 'capability'); grammar.expect(item.condition.range.end, body[0].range.start, [')']);
             const left = statements(body, { start: body[0].range.start, end: body.at(-1).range.end }, visible, new Set(initialized), scopePath + '/' + childScope++);
             let last = body.at(-1).range.end;
-            if (branch && item.elseBody.length) { check(item.elseBody.length === 1, 'capability'); grammar.expect(last, item.elseBody[0].range.start, ['else']);
-              const right = statements(item.elseBody, { start: item.elseBody[0].range.start, end: item.elseBody.at(-1).range.end }, visible, new Set(initialized), scopePath + '/' + childScope++); returned ||= left && right; last = item.elseBody.at(-1).range.end; }
+            if (alternate.length) { check(alternate.length === 1, 'capability'); grammar.expect(last, alternate[0].range.start, ['else']);
+              const right = statements(alternate, { start: alternate[0].range.start, end: alternate.at(-1).range.end }, visible, new Set(initialized), scopePath + '/' + childScope++); returned ||= left && right; last = alternate.at(-1).range.end; }
             grammar.expect(last, item.range.end, []);
           } else failure('capability', 'unsupported owned closure statement');
         }
