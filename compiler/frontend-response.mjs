@@ -1,5 +1,6 @@
 // SPDX-License-Identifier: MIT
 import { createHash } from "node:crypto";
+import { importNullableCapturedResponse, matchesNullableSnapshot } from "./nullable-frontend.mjs";
 import { ownClosureSnapshot, matchesClosureSnapshot } from "./closure-frontend.mjs";
 import { readJson as readClosureJson, origin as checkClosureOrigin, capturedDeclarationProfiles } from "./closure-common.mjs";
 import { readFile } from "node:fs/promises";
@@ -53,6 +54,7 @@ const snapshotIdentity = (inputIdentity, frontendSource) => digest(canonical({
 }));
 
 export function matchesSnapshotContract(snapshot) {
+  if (snapshot?.format?.family === "tsfg.frontend-nullable-candidate") return matchesNullableSnapshot(snapshot);
   if (snapshot?.format?.family === "tsfg.frontend-closure-candidate") return matchesClosureSnapshot(snapshot);
   let matchesInput = false;
   try {
@@ -293,6 +295,8 @@ export function materializeFrontendResponse(prepared, response, frontendSource) 
 /** @param {Uint8Array} requestBytes @param {Uint8Array} responseBytes @param {any} origin */
 export async function importCapturedFrontendResponse(requestBytes, responseBytes, origin) {
   try {
+    if (origin && Object.getOwnPropertyDescriptor(origin, "kind")?.value === "owned-go-nullable-response")
+      return importNullableCapturedResponse(requestBytes, responseBytes, origin);
     const sourceOrigin = structuredClone(checkClosureOrigin(origin));
     const request = readClosureJson(requestBytes), response = readClosureJson(responseBytes);
     if (sourceOrigin.requestSha256 !== digest(request.bytes) || sourceOrigin.responseSha256 !== digest(response.bytes))
