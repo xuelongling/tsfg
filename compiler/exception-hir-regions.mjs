@@ -5,10 +5,11 @@ import { exceptionHirIdentity } from './exception-hir-identity.mjs';
 
 // The boundary supplies a cold-rebuilt snapshot. This module projects lexical
 // ownership and current expressions; it does not reparse Source or infer flow.
-/** @param {any} definitions @param {any} types @param {any} budget @param {Set<string>} claimed @param {any} aggregates */
-export function createExceptionHirRegions(definitions, types, budget, claimed, aggregates) {
-  /** @param {any} fn @param {any} header */
-  function project(fn, header) {
+/** @param {any} context @param {any} functions */
+export function createExceptionHirRegions(context, functions) {
+  const { definitions, types, budget, claimed, aggregates } = context;
+  /** @param {any} fn @param {any} header @param {any} lexicalLookup */
+  function project(fn, header, lexicalLookup) {
     /** @param {any} parent @param {any[]} path @param {string} role @param {any} range */
     function region(parent, path, role, range) {
       check(path.length <= limits.derived.regionNesting, 'limit', 'HIR region nesting budget exceeded');
@@ -18,11 +19,13 @@ export function createExceptionHirRegions(definitions, types, budget, claimed, a
         parentScope: parent ? parent.node.scope : null, path, range, bindings: [], body: [],
       } };
     }
-    /** @param {any} scope @param {any} raw @param {string} role */
-    function bind(scope, raw, role) {
+    /** @param {any} scope @param {any} raw @param {string} role @param {any} [functionType] */
+    function bind(scope, raw, role, functionType) {
       const registered = definitions.get(raw.id);
       check(registered && canonical(registered) === canonical(raw), 'scope', 'HIR declaration has no identical owned symbol');
       check(!claimed.has(raw.id), 'scope', 'HIR binding is declared more than once');
+      if (raw.lexicalOwner !== undefined) check(raw.lexicalOwner === fn.symbol,
+        'scope', 'HIR declaration belongs to another function');
       check(scope.node.bindings.length < limits.derived.arrayItems, 'limit', 'HIR region binding array budget exceeded');
       budget.binding();
       const index = scope.ordinals.get(role) ?? 0;
@@ -30,16 +33,22 @@ export function createExceptionHirRegions(definitions, types, budget, claimed, a
         scopePath: scope.node.path, role, index });
       if (raw.type === 'function' && role !== 'parameter')
         failure('capability', 'HIR callable bindings require an owned parameter declaration');
-      const binding = { id, name: raw.name, role, type: types.value(raw.type, raw.signature, raw.presence), writable: raw.writable,
+      const type = role === 'function' ? functionType : types.value(raw.type, raw.signature, raw.presence);
+      check(typeof type === 'string', 'type', 'HIR declaration has no owned semantic type');
+      const binding = { id, name: raw.name, role, type, writable: raw.writable,
         range: raw.range, presence: raw.presence ?? null };
       claimed.add(raw.id); scope.ordinals.set(role, index + 1); scope.bySymbol.set(raw.id, binding);
       scope.node.bindings.push(binding); return binding;
     }
-    /** @param {any} scope @param {string} symbol */
-    function resolve(scope, symbol) {
+    /** @param {any} scope @param {string} symbol @param {boolean} write */
+    function resolve(scope, symbol, write) {
       for (let current = scope; current; current = current.parent) {
         const binding = current.bySymbol.get(symbol);
         if (binding) return binding;
+      }
+      if (lexicalLookup) {
+        if (write) failure('capability', 'HIR captured writes require their own tracer');
+        return lexicalLookup(symbol);
       }
       failure('scope', 'HIR reference has no visible original binding');
     }
@@ -53,7 +62,7 @@ export function createExceptionHirRegions(definitions, types, budget, claimed, a
         return { kind: 'targetGroup', type: operand.type, range: raw.range, operand };
       }
       if (raw.kind !== 'reference') failure('capability', 'HIR write target kind is not implemented: ' + raw.kind);
-      const binding = resolve(scope, raw.symbol);
+      const binding = resolve(scope, raw.symbol, true);
       if (binding.presence?.undefined || binding.presence?.null)
         failure('capability', 'HIR nullable writes require their own tracer');
       check(binding.writable, 'scope', 'HIR write target must be writable');
@@ -62,6 +71,7 @@ export function createExceptionHirRegions(definitions, types, budget, claimed, a
     /** @param {any} raw @param {any} scope */
     function expression(raw, scope) {
       check(raw && typeof raw === 'object', 'schema', 'HIR expression is missing');
+      if (raw.kind === 'call') return functions.call(raw, /** @param {string} symbol */ symbol => resolve(scope, symbol, false));
       if (raw.kind === 'construct') {
         if (!aggregates) failure('capability', 'HIR construction requires an owned aggregate registry');
         return aggregates.projectConstruct(raw);
@@ -84,7 +94,7 @@ export function createExceptionHirRegions(definitions, types, budget, claimed, a
         failure('capability', 'HIR noncallable expressions cannot carry a callable signature');
       const type = types.value(raw.type, raw.signature, raw.presenceFlow), range = raw.range;
       if (raw.kind === 'reference') {
-        const binding = resolve(scope, raw.symbol);
+        const binding = resolve(scope, raw.symbol, false);
         if (callable) check(binding.role === 'parameter' && binding.type === type,
           'type', 'HIR callable occurrence differs from its declared parameter type');
         return { kind: 'bindingRead', type, range, binding: binding.id, presenceFlow: raw.presenceFlow ?? null };
@@ -124,7 +134,13 @@ export function createExceptionHirRegions(definitions, types, budget, claimed, a
       check(items.length <= limits.derived.arrayItems, 'limit', 'HIR body array budget exceeded');
       // Region declarations exist at scope entry, retaining source declaration
       // order; the strict snapshot already checked TDZ and initialization rules.
-      for (const item of items) if (item.kind === 'variable') bind(scope, item.symbol, 'local');
+      for (const item of items) {
+        if (item.kind === 'variable') bind(scope, item.symbol, 'local');
+        else if (item.kind === 'functionDeclaration') {
+          const childHeader = functions.declare(item, header, scope.node);
+          bind(scope, item.symbol, 'function', childHeader.type);
+        }
+      }
       for (let index = 0; index < items.length; index++) {
         const item = items[index];
         check(scope.node.body.length < limits.derived.arrayItems, 'limit', 'HIR body array budget exceeded');
@@ -142,6 +158,11 @@ export function createExceptionHirRegions(definitions, types, budget, claimed, a
           const binding = scope.bySymbol.get(item.symbol.id);
           scope.node.body.push({ kind: 'local', range: item.range, binding: binding.id,
             initializer: expression(item.initializer, scope) });
+        } else if (item.kind === 'functionDeclaration') {
+          const target = functions.projectDeclaration(item, header, scope.node,
+            /** @param {string} symbol */ symbol => resolve(scope, symbol, false));
+          scope.node.body.push({ kind: 'functionDeclaration', range: item.range,
+            binding: scope.bySymbol.get(item.symbol.id).id, target: target.id });
         } else if (item.kind === 'assignment') {
           scope.node.body.push({ kind: 'assign', range: item.range, target: target(item.target, scope),
             value: expression(item.value, scope) });
@@ -183,11 +204,24 @@ export function createExceptionHirRegions(definitions, types, budget, claimed, a
     const root = region(null, [], 'function', fn.range), parameters = [];
     for (const raw of fn.parameters) parameters.push(bind(root, raw, 'parameter').id);
     body(fn.body, root);
+    let captures = null;
+    if (fn.captures !== undefined) {
+      if (!lexicalLookup) failure('capability', 'HIR captures require an enclosing lexical function');
+      captures = [];
+      for (const capture of fn.captures) {
+        if (capture.read !== true || capture.write !== false)
+          failure('capability', 'HIR captures require original enclosing catch reads');
+        const binding = lexicalLookup(capture.symbol);
+        if (binding.role !== 'catch' || binding.type !== types.value('unknown'))
+          failure('capability', 'HIR captures require an original unknown catch binding');
+        captures.push({ binding: binding.id, read: capture.read, write: capture.write });
+      }
+    }
     return { id: header.id, module: header.module, sourcePath: header.sourcePath, name: fn.name,
       nameRange: header.nameRange, range: fn.range, type: header.type, signatureHash: header.signatureHash,
-      lexicalParent: null, declaringScope: header.declaringScope, parameters,
+      lexicalParent: header.lexicalParent, declaringScope: header.declaringScope, parameters,
       parameterInitializers: fn.parameterInitializers === undefined ? null : [...fn.parameterInitializers],
-      captures: null, returnPresence: fn.returnPresence ?? null, body: root.node };
+      captures, returnPresence: fn.returnPresence ?? null, body: root.node };
   }
   return { project };
 }

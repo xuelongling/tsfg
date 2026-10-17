@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: MIT
 import { limits, check, failure } from './exception-hir-common.mjs';
 import { createExceptionHirTypes, createExceptionHirProjectionBudget, exceptionHirIdentity } from './exception-hir-identity.mjs';
-import { createExceptionHirRegions } from './exception-hir-regions.mjs';
+import { projectExceptionHirFunctions } from './exception-hir-functions.mjs';
 import { createExceptionHirAggregates } from './exception-hir-aggregates.mjs';
 
 // Called only with Root's cold-rebuilt, independently owned snapshot. The seven
@@ -33,44 +33,10 @@ export function projectExceptionHirModel(snapshot) {
   budget.scope();
   const moduleScope = exceptionHirIdentity('scope', { ownerKind: 'module', owner: moduleId, path: [] });
   const aggregates = createExceptionHirAggregates(facts.aggregateFacts, definitions, source, types);
-  const headers = new Map(), claimed = new Set();
-  for (const fn of functions) {
-    check(headers.size < limits.derived.functions, 'limit', 'HIR function table budget exceeded');
-    if (fn.lexicalParent !== undefined || fn.captures !== undefined || fn.returnType === 'unknown')
-      failure('capability', 'nested or unknown-result HIR functions require their own tracer');
-    check(Array.isArray(fn.parameters), 'schema', 'HIR parameter list is missing');
-    check(fn.parameters.length <= limits.derived.parametersPerFunction, 'limit', 'HIR parameter budget exceeded');
-    if (fn.parameterInitializers !== undefined) {
-      check(Array.isArray(fn.parameterInitializers) && fn.parameterInitializers.length === fn.parameters.length,
-        'schema', 'HIR parameter initializers must remain aligned');
-      if (fn.parameterInitializers.some(/** @param {any} value */ value => value !== null))
-        failure('capability', 'HIR parameter defaults require their own tracer');
-    }
-    const parameterTypes = [];
-    for (const parameter of fn.parameters) {
-      if (parameter.type === 'unknown' || parameter.presence && (parameter.presence.optional || parameter.presence.default))
-        failure('capability', 'unknown or optional HIR parameters require their own tracer');
-      if ((parameter.type === 'function') !== (fn.returnType === 'function'))
-        failure('capability', 'mixed callable and scalar HIR declarations require their own tracer');
-      parameterTypes.push(types.value(parameter.type, parameter.signature, parameter.presence));
-    }
-    const returnType = types.value(fn.returnType, fn.returnSignature, fn.returnPresence);
-    const signatureHash = exceptionHirIdentity('signature', { parameters: parameterTypes, returnType });
-    const type = types.callable(parameterTypes, returnType);
-    const definition = definitions.get(fn.symbol);
-    check(definition?.kind === 'function' && definition.name === fn.name && definition.type === fn.returnType,
-      'scope', 'HIR function does not own its declaration symbol');
-    check(!headers.has(fn.symbol), 'identity', 'HIR function identity is repeated');
-    const id = exceptionHirIdentity('function', { module: moduleId, parent: null, declaringScopePath: [],
-      name: fn.name, signatureHash, range: fn.range });
-    headers.set(fn.symbol, { id, module: moduleId, sourcePath: source.path, nameRange: definition.range,
-      type, returnType, signatureHash, declaringScope: moduleScope });
-  }
-  const regions = createExceptionHirRegions(definitions, types, budget, claimed, aggregates), projected = [];
-  for (const fn of functions) {
-    check(projected.length < limits.derived.functions, 'limit', 'HIR function array budget exceeded');
-    projected.push(regions.project(fn, headers.get(fn.symbol)));
-  }
+  const claimed = new Set();
+  const { headers, functions: projected } = projectExceptionHirFunctions({
+    functions, definitions, types, budget, moduleId, moduleScope, sourcePath: source.path, claimed, aggregates,
+  });
   for (const symbol of symbols) check(symbol.kind === 'function' ? headers.has(symbol.id)
     : ['class', 'field'].includes(symbol.kind) ? aggregates?.ownsSymbol(symbol.id) : claimed.has(symbol.id),
   'scope', 'HIR leaves an owned declaration unprojected');
