@@ -42,18 +42,55 @@ export function createExceptionHirRegions(definitions, types, budget, claimed) {
       failure('scope', 'HIR reference has no visible original binding');
     }
     /** @param {any} raw @param {any} scope */
+    function target(raw, scope) {
+      check(raw && typeof raw === 'object', 'schema', 'HIR write target is missing');
+      if (raw.kind === 'group') {
+        const operand = target(raw.operand, scope);
+        return { kind: 'targetGroup', type: operand.type, range: raw.range, operand };
+      }
+      if (raw.kind !== 'reference') failure('capability', 'HIR write target kind is not implemented: ' + raw.kind);
+      const binding = resolve(scope, raw.symbol);
+      check(binding.writable, 'scope', 'HIR write target must be writable');
+      return { kind: 'bindingTarget', type: binding.type, range: raw.range, binding: binding.id };
+    }
+    /** @param {any} raw @param {any} scope */
     function expression(raw, scope) {
       check(raw && typeof raw === 'object', 'schema', 'HIR expression is missing');
-      if (raw.kind !== 'reference') failure('capability', 'HIR expression kind is not implemented: ' + raw.kind);
       if (raw.presenceFlow !== undefined || raw.signature !== undefined)
-        failure('capability', 'nullable or callable HIR references require their own tracer');
-      const binding = resolve(scope, raw.symbol);
-      return { kind: 'bindingRead', type: types.value(raw.type), range: raw.range, binding: binding.id, presenceFlow: null };
+        failure('capability', 'nullable or callable HIR expressions require their own tracer');
+      const type = types.value(raw.type), range = raw.range;
+      if (raw.kind === 'reference') {
+        const binding = resolve(scope, raw.symbol);
+        return { kind: 'bindingRead', type, range, binding: binding.id, presenceFlow: null };
+      }
+      if (raw.kind === 'group') return { kind: 'group', type, range, operand: expression(raw.operand, scope) };
+      if (raw.kind === 'write') {
+        if (raw.operator !== '=') failure('capability', 'HIR compound writes require their own tracer');
+        return { kind: 'bindingWrite', type, range, operator: '=', target: target(raw.left, scope),
+          value: expression(raw.right, scope) };
+      }
+      if (raw.kind === 'type-test') {
+        if (raw.operand.kind !== 'reference')
+          failure('capability', 'HIR type tests require a direct binding read');
+        const test = raw.typeTest;
+        return { kind: 'typeTest', type, range, operator: raw.operator, operand: expression(raw.operand, scope),
+          tag: test.tag, typeofRange: test.typeofRange, tagRange: test.tagRange,
+          order: test.typeofRange.start < test.tagRange.start ? 'typeof-first' : 'tag-first' };
+      }
+      failure('capability', 'HIR expression kind is not implemented: ' + raw.kind);
     }
     /** @param {any} parent @param {number} statement @param {string} slot @param {any} range */
     function child(parent, statement, slot, range) {
       check(parent.node.path.length < limits.derived.regionNesting, 'limit', 'HIR region nesting budget exceeded');
       return region(parent, [...parent.node.path, { statement, slot }], slot, range);
+    }
+    /** @param {any} items @param {any} scope @param {number} index @param {string} slot */
+    function branch(items, scope, index, slot) {
+      check(Array.isArray(items) && items.length === 1 && items[0].kind === 'block',
+        'schema', 'HIR branch must retain its single owned block');
+      const block = items[0], nested = child(scope, index, slot, block.range);
+      body(block.body === undefined ? [] : block.body, nested);
+      return nested.node;
     }
     /** @param {any} items @param {any} scope */
     function body(items, scope) {
@@ -65,12 +102,25 @@ export function createExceptionHirRegions(definitions, types, budget, claimed) {
       for (let index = 0; index < items.length; index++) {
         const item = items[index];
         check(scope.node.body.length < limits.derived.arrayItems, 'limit', 'HIR body array budget exceeded');
-        if (item.kind === 'throw') {
-          scope.node.body.push({ kind: 'throw', range: item.range, value: expression(item.expression, scope) });
+        if (item.kind === 'throw' || item.kind === 'return') {
+          scope.node.body.push({ kind: item.kind, range: item.range, value: expression(item.expression, scope) });
         } else if (item.kind === 'variable') {
           const binding = scope.bySymbol.get(item.symbol.id);
           scope.node.body.push({ kind: 'local', range: item.range, binding: binding.id,
             initializer: expression(item.initializer, scope) });
+        } else if (item.kind === 'assignment') {
+          scope.node.body.push({ kind: 'assign', range: item.range, target: target(item.target, scope),
+            value: expression(item.value, scope) });
+        } else if (item.kind === 'block') {
+          const nested = child(scope, index, 'block', item.range);
+          // Omitted ordinary block bodies mean empty only after cold validation;
+          // exception blocks still retain their required explicit body arrays.
+          body(item.body === undefined ? [] : item.body, nested);
+          scope.node.body.push({ kind: 'block', range: item.range, region: nested.node });
+        } else if (item.kind === 'if') {
+          scope.node.body.push({ kind: 'if', range: item.range, condition: expression(item.condition, scope),
+            thenRegion: branch(item.thenBody, scope, index, 'then'),
+            elseRegion: item.elseBody === undefined ? null : branch(item.elseBody, scope, index, 'else') });
         } else if (item.kind === 'try') {
           const fact = item.exception;
           check(fact && fact.tryBlock, 'schema', 'HIR try region is missing');
