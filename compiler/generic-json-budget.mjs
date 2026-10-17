@@ -8,6 +8,8 @@
  * @property {number} jsonTokens
  * @property {number} stringBytes
  * @property {boolean} allowNul
+ * @property {boolean} [safeNonnegativeIntegers]
+ * @property {number} [arrayItems]
  * @property {boolean} rejectPrototypeKeys
  */
 /** @type {Readonly<GenericJsonPolicy>} */
@@ -59,7 +61,7 @@ export function checkGenericJsonValueBudget(input, policy = genericPackageJsonPo
     const isArray = Array.isArray(value);
     check(isArray ? Object.getPrototypeOf(value) === Array.prototype
       : [Object.prototype, null].includes(Object.getPrototypeOf(value)));
-    if (isArray) check(value.length <= limit.jsonTokens, "limit");
+    if (isArray) check(value.length <= Math.min(limit.jsonTokens, limit.arrayItems ?? limit.jsonTokens), "limit");
     const keys = Reflect.ownKeys(value);
     check(keys.length <= limit.jsonTokens + (isArray ? 1 : 0), "limit");
     active.add(value); event(2); add(2);

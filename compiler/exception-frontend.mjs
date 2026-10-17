@@ -49,9 +49,16 @@ export function importExceptionCapturedResponse(requestBytes, responseBytes, ori
 
 // A cold JSON object has no trusted cache or inherited identity. Reconstruct all
 // ten fields from exact retained frames each time, including optional presence.
-export function verifyExceptionSnapshot(snapshot) {
+function coldSnapshot(snapshot) {
   snapshotBudget(snapshot); check(same(snapshot.format, snapshotFormat), 'schema');
   const { snapshot: rebuilt, verification } = reconstruct(Buffer.from(snapshot.capture.request, 'utf8'), Buffer.from(snapshot.capture.response, 'utf8'), snapshot.sourceOrigin);
   check(same(snapshot, rebuilt), 'snapshot', 'complete cold snapshot differs from retained capture');
+  return { snapshot: rebuilt, verification };
+}
+export function ownedExceptionSnapshot(snapshot) {
+  return own(coldSnapshot(snapshot).snapshot);
+}
+export function verifyExceptionSnapshot(snapshot) {
+  const { snapshot: rebuilt, verification } = coldSnapshot(snapshot);
   return own({ snapshotId: rebuilt.snapshotId, functions: verification.functions, calls: verification.calls });
 }

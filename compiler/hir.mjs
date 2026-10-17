@@ -1,7 +1,9 @@
 // SPDX-License-Identifier: MIT
+import { buildExceptionHir } from "./exception-hir.mjs";
+import { readHirWire } from "./hir-wire.mjs";
+import { failure as exceptionHirFailure } from "./exception-hir-common.mjs";
 import { buildNullableHir } from "./nullable-hir.mjs";
 import { emitNullableCore } from "./nullable-core-emitter.mjs";
-import { readJson as readNullableJson } from "./nullable-common.mjs";
 import { validateFrontendSnapshot, resolveType, resolveSymbol } from './frontend.mjs';
 import { validateModuleFacts, sourceTrivia } from './module-facts.mjs';
 import { verifyHir, KernelHostSemanticError, scalarOperations as operations } from './module-hir.mjs';
@@ -14,7 +16,6 @@ import { emitScalarCore } from './scalar-core-emitter.mjs';
 import { emitReferenceCore } from './reference-core-emitter.mjs';
 
 import { buildClosureHir } from "./closure-hir.mjs";
-import { readJson as readClosureJson } from "./closure-common.mjs";
 export { verifyHir };
 const contract = () => registry['tsfg.hir'];
 const types = scalarTypeIds;
@@ -29,6 +30,12 @@ export function buildHir(snapshot) {
   if (snapshot?.format?.family === "tsfg.frontend-closure-candidate") {
     try { return { status: "ok", hir: buildClosureHir(snapshot) }; }
     catch (error) { return { status: "error", diagnostics: [{ code: error.code ?? "r03-closure-hir", ruleId: error.ruleId ?? "r01-input-boundary", phase: "hir", message: error.message }] }; }
+  }
+  if (snapshot?.format?.family === "tsfg.frontend-exception-candidate") {
+    try { return { status: "ok", hir: buildExceptionHir(snapshot) }; }
+    catch (error) { return { status: "error", diagnostics: [{ code: error.code ?? "r03-exception-hir-schema",
+      ruleId: error.ruleId ?? "r01-input-boundary", phase: "hir", message: error.message,
+      ...(error.primary ? { primary: error.primary } : {}) }] }; }
   }
   const first = snapshot.functions[0], expression = first?.body?.find(item => item.expression)?.expression;
   const moduleFacts=snapshot.modules?validateModuleFacts(snapshot):undefined;
@@ -155,23 +162,22 @@ export function buildHir(snapshot) {
 }
 export const printHir = hir => `${canonical(verifyHir(hir))}\n`;
 export function readHir(bytes) {
-  let text, value;
-  try {
-    // Preserve a leading BOM so JSON rejects its noncanonical wire bytes.
-    text = new TextDecoder("utf-8", { fatal: true, ignoreBOM: true }).decode(bytes);
-    if (bytes.byteLength > 16 * 1024 * 1024) throw new TypeError("HIR byte budget exceeded");
-    value = JSON.parse(text);
-    if (value?.format?.family === "tsfg.closure-hir-candidate") value = readClosureJson(bytes).value;
-    if (value?.format?.family === "tsfg.nullable-hir-candidate") value = readNullableJson(bytes, false).value;
-  } catch (error) {
-    throw new TypeError("r03-hir-invalid: HIR must contain valid UTF-8 JSON", { cause: error });
-  }
+  const { text, value } = readHirWire(bytes);
   const hir = verifyHir(value);
-  if (text !== printHir(hir)) throw new TypeError("r03-hir-canonical: HIR must use its canonical serialization");
+  if (text !== printHir(hir)) {
+    if (hir?.format?.family === "tsfg.exception-hir-candidate")
+      exceptionHirFailure("canonical", "HIR must use its canonical serialization");
+    throw new TypeError("r03-hir-canonical: HIR must use its canonical serialization");
+  }
   return hir;
 }
 
 export function lowerHir(hir) {
+  if (hir?.format?.family === "tsfg.exception-hir-candidate") {
+    verifyHir(hir);
+    throw Object.assign(new TypeError("r03-d-capability: exception Core lowering is not implemented"),
+      { code: "r03-d-capability", ruleId: "r01-ts-baseline", phase: "lowering" });
+  }
   if (hir?.format?.family === "tsfg.nullable-hir-candidate") return emitNullableCore(hir);
   if (hir?.format?.family === "tsfg.closure-hir-candidate") {
     verifyHir(hir);
