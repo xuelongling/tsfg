@@ -81,7 +81,7 @@ function verify(source, facts, exports) {
     const visible = new Map(top), localNames = new Set(), initialized = new Set();
     for (const p of fn.parameters) { check(!localNames.has(p.name), 'scope'); localNames.add(p.name); visible.set(p.name, p.id); initialized.add(p.id); }
     function expression(value, parent, returning = false, depth = 0) {
-      check(++steps <= 200000 && depth <= 128, 'limit'); record(value, ['kind','type','range'], ['symbol','target','arguments','signature','presenceFlow']);
+      check(++steps <= 200000 && depth <= 128, 'limit'); record(value, ['kind','type','range'], ['symbol','target','arguments','signature','presenceFlow','operator','left','right']);
       check(value.type === 'i32', 'type'); within(value.range, parent);
       let type;
       if (value.kind === 'reference') {
@@ -105,9 +105,30 @@ function verify(source, facts, exports) {
         const tail = grammar.spelling(end, value.range.end);
         check(same(tail, args.length ? [')'] : ['(',')']) || args.length > 0 && same(tail, [',',')']), 'source');
         type = valueType(target.returnPresence);
-      } else failure('capability', 'only required references and direct calls are represented');
+      } else if (value.kind === 'shortCircuit') {
+        record(value, ['kind','type','range','operator','left','right','presenceFlow']); check(value.operator === '??', 'capability');
+        // Direct-call ranges retain leading trivia; its first token still starts
+        // the whole coalesce. Operands must retain their actual Source anchors.
+        const left = expression(value.left, parent, false, depth + 1);
+        const right = expression(value.right, value.range, false, depth + 1);
+        check(left === nullableType.id && right === scalarType.id, 'type');
+        const leftTokens = grammar.between(value.left.range.start, value.left.range.end);
+        const rightTokens = grammar.between(value.right.range.start, value.right.range.end);
+        check(leftTokens[0]?.start === value.range.start && leftTokens.at(-1)?.end === value.left.range.end
+          && rightTokens.at(-1)?.end === value.right.range.end && value.range.end === value.right.range.end, 'range');
+        const operator = grammar.between(value.left.range.end, value.right.range.start);
+        check(operator.length === 2 && operator[0].text === '?' && operator[1].text === '?'
+          && operator[0].end === operator[1].start, 'source');
+        // Calls retain raw Node.Pos at the preceding syntax token's end;
+        // references and nested coalesces start at their first actual token.
+        const preceding = grammar.between(0, value.range.start).at(-1);
+        check(value.left.range.start === (value.left.kind === 'call' ? preceding?.end : leftTokens[0]?.start), 'range');
+        check(value.right.range.start === (value.right.kind === 'call' ? operator[1].end : rightTokens[0]?.start), 'range');
+        grammar.expect(value.right.range.end, value.range.end, []); type = scalarType.id;
+      } else failure('capability', 'only required references, direct calls and nullish coalesce are represented');
       if (type === nullableType.id) check(same(value.presenceFlow, { undefined: false, null: true }), 'capability', 'nullable narrowing/get/retype is not represented');
-      else check(returning && fn.returnPresence ? same(value.presenceFlow, { undefined: false, null: false }) : value.presenceFlow === undefined, 'flow');
+      else check(value.kind === 'shortCircuit' || returning && fn.returnPresence
+        ? same(value.presenceFlow, { undefined: false, null: false }) : value.presenceFlow === undefined, 'flow');
       return type;
     }
     const body = array(fn.body, 4096), header = headers.get(fn.symbol); let end = header.start, returned = false;

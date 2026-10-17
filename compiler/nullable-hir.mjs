@@ -19,6 +19,8 @@ function project(snapshot) {
     };
     function expression(raw) {
       if (raw.kind === 'reference') return { kind: 'reference', type: valueType(bindings.get(raw.symbol).presence), binding: raw.symbol, range: raw.range };
+      if (raw.kind === 'shortCircuit') return { kind: 'nullableCoalesce', type: scalarType.id,
+        left: expression(raw.left), right: expression(raw.right), range: raw.range };
       const target = headers.find(item => item.source.symbol === raw.target);
       return { kind: 'call', type: target.returnId, target: target.id, signatureHash: target.signatureHash,
         arguments: raw.arguments.map((arg, index) => lift(expression(arg), target.parameterTypes[index])), range: raw.range };

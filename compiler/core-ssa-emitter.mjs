@@ -162,8 +162,44 @@ export function emitCoreSsaFunction(fn, context) {
       }
     }
   };
+  /** Merge a value without exposing blocks or definition state to leaf policies.
+   * @param {string | null} condition
+   * @param {string} resultType
+   * @param {{start: number, end: number}} anchor
+   * @param {() => string | null | undefined} onTrue
+   * @param {() => string | null | undefined} onFalse
+   */
+  const branchValue = (condition, resultType, anchor, onTrue, onFalse) => {
+    context.budget?.step();
+    if (!current || current.terminated || typeof condition !== "string" || !condition)
+      throw new TypeError("r03-hir-cfg: branch value requires a live condition");
+    const outer = new Map(definitions), outerDeclared = new Set(declared);
+    const yes = newBlock(), no = newBlock(), join = newBlock([resultType]);
+    conditional(condition, yes, no, anchor);
+    const arm = (block, callback) => {
+      current = block; definitions = new Map(outer); declared = new Set(outerDeclared);
+      const value = callback();
+      if (!current || current.terminated || typeof value !== "string" || !value)
+        throw new TypeError("r03-hir-cfg: branch value requires both exits and values");
+      return { exit: current, value, definitions: new Map(definitions), declared: new Set(declared) };
+    };
+    const left = arm(yes, onTrue), right = arm(no, onFalse);
+    const changed = [...outerDeclared].filter(id => left.definitions.get(id) !== outer.get(id)
+      || right.definitions.get(id) !== outer.get(id));
+    for (const id of changed) {
+      if (!left.declared.has(id) || !right.declared.has(id) || !bindingTypes.has(id)
+          || typeof left.definitions.get(id) !== "string" || typeof right.definitions.get(id) !== "string")
+        throw new TypeError("r03-hir-cfg: branch value lost an outer binding");
+      join.parameters.push({ name: variable(), type: bindingTypes.get(id) });
+    }
+    current = left.exit; branch(join, [left.value, ...changed.map(id => left.definitions.get(id))], anchor);
+    current = right.exit; branch(join, [right.value, ...changed.map(id => right.definitions.get(id))], anchor);
+    current = join; definitions = new Map(outer); declared = outerDeclared;
+    changed.forEach((id, index) => definitions.set(id, join.parameters[index + 1].name));
+    return join.parameters[0].name;
+  };
   const api = {
-    emit, coreType, attrsFor, quote, lookup: id => definitions.get(id),
+    emit, coreType, attrsFor, quote, branchValue, lookup: id => definitions.get(id),
     operation: (name, operands, operandTypes, resultType, attributes, anchor) => {
       const result = resultType === null ? null : variable();
       line(`    ${result === null ? "" : result + " = "}"${name}"(${operands.join(", ")}) {${attributes ? attributes + ", " : ""}${attrsFor(anchor)}} : (${operandTypes.map(coreType).join(", ")}) -> ${resultType === null ? "()" : coreType(resultType)}`);
