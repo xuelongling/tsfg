@@ -5,8 +5,8 @@ import { exceptionHirIdentity } from './exception-hir-identity.mjs';
 
 // The boundary supplies a cold-rebuilt snapshot. This module projects lexical
 // ownership and current expressions; it does not reparse Source or infer flow.
-/** @param {any} definitions @param {any} types @param {any} budget @param {Set<string>} claimed */
-export function createExceptionHirRegions(definitions, types, budget, claimed) {
+/** @param {any} definitions @param {any} types @param {any} budget @param {Set<string>} claimed @param {any} aggregates */
+export function createExceptionHirRegions(definitions, types, budget, claimed, aggregates) {
   /** @param {any} fn @param {any} header */
   function project(fn, header) {
     /** @param {any} parent @param {any[]} path @param {string} role @param {any} range */
@@ -62,6 +62,10 @@ export function createExceptionHirRegions(definitions, types, budget, claimed) {
     /** @param {any} raw @param {any} scope */
     function expression(raw, scope) {
       check(raw && typeof raw === 'object', 'schema', 'HIR expression is missing');
+      if (raw.kind === 'construct') {
+        if (!aggregates) failure('capability', 'HIR construction requires an owned aggregate registry');
+        return aggregates.projectConstruct(raw);
+      }
       if (raw.presenceFlow !== undefined && (raw.kind !== 'reference' || raw.type === 'function'))
         failure('capability', 'HIR presence flow requires a direct noncallable binding read');
       const callable = raw.type === 'function';

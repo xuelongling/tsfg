@@ -2,6 +2,7 @@
 import { limits, check, failure } from './exception-hir-common.mjs';
 import { createExceptionHirTypes, createExceptionHirProjectionBudget, exceptionHirIdentity } from './exception-hir-identity.mjs';
 import { createExceptionHirRegions } from './exception-hir-regions.mjs';
+import { createExceptionHirAggregates } from './exception-hir-aggregates.mjs';
 
 // Called only with Root's cold-rebuilt, independently owned snapshot. The seven
 // fields stay internal until the boundary budgets and independently clones the
@@ -11,9 +12,8 @@ export function projectExceptionHirModel(snapshot) {
   const facts = snapshot.facts, sources = snapshot.sources, groups = snapshot.exports;
   check(Array.isArray(sources) && Array.isArray(groups), 'schema', 'HIR sources and exports must be arrays');
   check(sources.length <= limits.derived.files && groups.length <= limits.derived.files, 'limit', 'HIR source budget exceeded');
-  if (sources.length !== 1 || facts.modules !== undefined || facts.aggregateFacts !== undefined
-      || snapshot.identityInput.compilationClosure !== undefined)
-    failure('capability', 'module, aggregate or multi-source HIR requires its own tracer');
+  if (sources.length !== 1 || facts.modules !== undefined || snapshot.identityInput.compilationClosure !== undefined)
+    failure('capability', 'module or multi-source HIR requires its own tracer');
   check(groups.length === 1 && groups[0].sourcePath === sources[0].path, 'source', 'HIR export group has foreign source ownership');
   const functions = facts.functions ?? [], symbols = facts.symbols, source = sources[0], group = groups[0];
   check(Array.isArray(functions) && Array.isArray(symbols), 'schema', 'HIR functions and symbols must be arrays');
@@ -24,7 +24,7 @@ export function projectExceptionHirModel(snapshot) {
   for (const symbol of symbols) {
     check(definitions.size < limits.derived.bindings, 'limit', 'HIR symbol table budget exceeded');
     check(!definitions.has(symbol.id), 'identity', 'HIR symbol registry repeats an identity');
-    if (!['function', 'parameter', 'local'].includes(symbol.kind))
+    if (!['function', 'parameter', 'local', 'class'].includes(symbol.kind))
       failure('capability', 'HIR symbol kind is not implemented: ' + symbol.kind);
     definitions.set(symbol.id, symbol);
   }
@@ -32,6 +32,7 @@ export function projectExceptionHirModel(snapshot) {
   const moduleId = exceptionHirIdentity('module', { source: { path: source.path, digest: source.hash }, external: group.external });
   budget.scope();
   const moduleScope = exceptionHirIdentity('scope', { ownerKind: 'module', owner: moduleId, path: [] });
+  const aggregates = createExceptionHirAggregates(facts.aggregateFacts, definitions, source, types);
   const headers = new Map(), claimed = new Set();
   for (const fn of functions) {
     check(headers.size < limits.derived.functions, 'limit', 'HIR function table budget exceeded');
@@ -65,13 +66,14 @@ export function projectExceptionHirModel(snapshot) {
     headers.set(fn.symbol, { id, module: moduleId, sourcePath: source.path, nameRange: definition.range,
       type, returnType, signatureHash, declaringScope: moduleScope });
   }
-  const regions = createExceptionHirRegions(definitions, types, budget, claimed), projected = [];
+  const regions = createExceptionHirRegions(definitions, types, budget, claimed, aggregates), projected = [];
   for (const fn of functions) {
     check(projected.length < limits.derived.functions, 'limit', 'HIR function array budget exceeded');
     projected.push(regions.project(fn, headers.get(fn.symbol)));
   }
-  for (const symbol of symbols) check(symbol.kind === 'function' ? headers.has(symbol.id) : claimed.has(symbol.id),
-    'scope', 'HIR leaves an owned declaration unprojected');
+  for (const symbol of symbols) check(symbol.kind === 'function' ? headers.has(symbol.id)
+    : symbol.kind === 'class' ? aggregates?.ownsSymbol(symbol.id) : claimed.has(symbol.id),
+  'scope', 'HIR leaves an owned declaration unprojected');
   const exports = [], bindings = [];
   check(Array.isArray(group.bindings) && group.bindings.length <= limits.derived.arrayItems, 'limit', 'HIR export array budget exceeded');
   for (const binding of group.bindings) {
@@ -83,6 +85,6 @@ export function projectExceptionHirModel(snapshot) {
   exports.push({ module: moduleId, sourcePath: source.path, external: group.external, bindings });
   return { inputIdentity: snapshot.inputIdentity, sources, target: snapshot.target, types: types.records(), functions: projected,
     modules: [{ id: moduleId, sourcePath: source.path, external: group.external,
-      functions: projected.map(fn => fn.id), aggregateTypes: [], imports: [], globals: [],
-      initialization: null, closure: null, coverage: null }], exports };
+      functions: projected.map(fn => fn.id), aggregateTypes: aggregates?.typeIds() ?? [], imports: [], globals: [],
+      initialization: null, closure: null, coverage: aggregates?.coverage(headers) ?? null }], exports };
 }

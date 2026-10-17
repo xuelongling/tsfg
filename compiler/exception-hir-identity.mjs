@@ -11,7 +11,7 @@ export function exceptionHirIdentity(entity, record) {
 
 // Tables remain private to one projection. Capacity is checked before insertion.
 export function createExceptionHirTypes() {
-  const entries = new Map();
+  const entries = new Map(), aggregates = new Map();
   /** @param {any} record */
   function intern(record) {
     const id = record.kind === 'scalar' ? scalarTypeIds[record.name] : exceptionHirIdentity('type', record);
@@ -43,9 +43,20 @@ export function createExceptionHirTypes() {
         return intern({ kind: 'callable', parameters: [], returnType: intern({ kind: 'scalar', name: 'bool' }) });
       }
       if (signature !== undefined) failure('capability', 'HIR noncallable values cannot carry a callable signature');
+      if (aggregates.has(name)) return aggregates.get(name);
       if (name === 'unknown') return intern({ kind: 'unknown' });
       if (!Object.hasOwn(scalarTypeIds, name)) failure('capability', 'HIR value type is not implemented: ' + name);
       return intern({ kind: 'scalar', name });
+    },
+    /** @param {string} rawType @param {any} identity @param {any} details */
+    aggregate(rawType, identity, details) {
+      const id = exceptionHirIdentity('type', identity);
+      check(!aggregates.has(rawType) && !entries.has(id), 'identity', 'HIR nominal type identity is repeated');
+      check(entries.size < limits.derived.types, 'limit', 'HIR type table budget exceeded');
+      // Only the nominal preimage determines its ID; complete declaration and
+      // constructor metadata stays in the separately assembled semantic record.
+      entries.set(id, { ...details, kind: 'aggregate', id }); aggregates.set(rawType, id);
+      return id;
     },
     /** @param {string[]} parameters @param {string} returnType */
     callable(parameters, returnType) {
