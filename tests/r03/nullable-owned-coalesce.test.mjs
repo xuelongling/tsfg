@@ -6,10 +6,10 @@ import test from 'node:test';
 import { importCapturedFrontendResponse, validateFrontendSnapshot } from '../../compiler/frontend.mjs';
 import { buildHir, verifyHir, printHir, readHir, lowerHir } from '../../compiler/hir.mjs';
 
-// Actual Go22840 v2 captures and independently fixed Core text. A missing v2
+// Actual Go30428 v3 captures and independently fixed Core text. A missing v3
 // boundary is mechanical API/version RED; only the later ?? refusal is semantic.
 // This tracer imports no executable and grants no native/VM/side-effect credit.
-const schema = 'sha256:badc9425050a8f538fcb7b9397e5ef31fbde96391989dfeebb8cab6a122783bd';
+const schema = 'sha256:24a04b0b595cae59ccf52a939f4671cea0369c46bd705f56726d028ab1df5a71';
 const coreSchema = 'sha256:8f99963869ac2fed97db0ce90171d89593e4a3de667288eace4fc141c7cbc4bd';
 const sourcePath = '/src/main.ts';
 const source = 'function fallback(value: i32): i32 { return value; }\n'
@@ -36,7 +36,7 @@ function identity(name, parameterTypes, returnType, text) {
     { name, signatureHash: signature, source: { path: sourcePath, digest: hash(text) } }) };
 }
 async function captured(name, text, responseHash, goldenHash, goldenBytes) {
-  const directory = new URL('./fixtures/' + name + '/v2/', import.meta.url);
+  const directory = new URL('./fixtures/' + name + '/v3/', import.meta.url);
   const bytes = await Promise.all(['request.json', 'response.json', 'origin.json', 'expected.core.mlir']
     .map(file => readFile(new URL(file, directory))));
   const before = bytes.map(hash), [requestBytes, responseBytes, originBytes, golden] = bytes;
@@ -47,10 +47,10 @@ async function captured(name, text, responseHash, goldenHash, goldenBytes) {
   keys(request, ['family', 'version', 'schemaHash', 'input']);
   keys(packet, ['family', 'version', 'schemaHash', 'requestId', 'packageId', 'payload']);
   keys(packet.payload, ['inputIdentity', 'files', 'facts', 'exports']);
-  assert.deepEqual([request.family, request.version, request.schemaHash], ['tsfg.nullable-facts-request-candidate', 2, schema]);
-  assert.deepEqual([packet.family, packet.version, packet.schemaHash], ['tsfg.nullable-facts-package-candidate', 2, schema]);
-  assert.equal(packet.requestId, hash('tsfg.nullable-facts.request.v2\0' + requestBytes.toString('utf8')));
-  assert.equal(packet.packageId, hash('tsfg.nullable-facts.package.v2\0' + schema + '\0' + jcs(packet.payload)));
+  assert.deepEqual([request.family, request.version, request.schemaHash], ['tsfg.nullable-facts-request-candidate', 3, schema]);
+  assert.deepEqual([packet.family, packet.version, packet.schemaHash], ['tsfg.nullable-facts-package-candidate', 3, schema]);
+  assert.equal(packet.requestId, hash('tsfg.nullable-facts.request.v3\0' + requestBytes.toString('utf8')));
+  assert.equal(packet.packageId, hash('tsfg.nullable-facts.package.v3\0' + schema + '\0' + jcs(packet.payload)));
   assert.equal(hash(responseBytes), responseHash); assert.equal(hash(golden), goldenHash); assert.equal(golden.length, goldenBytes);
   const input = request.input;
   assert.equal(input.rootFile, sourcePath); assert.equal(input.sourceRoot, '/src');
@@ -67,8 +67,8 @@ async function captured(name, text, responseHash, goldenHash, goldenBytes) {
   assert.equal(packet.payload.facts.status, 'ok');
   keys(origin, ['kind', 'producerBaseOid', 'producerDirty', 'requestSha256', 'responseSha256', 'testedInputSetHash']);
   assert.equal(origin.kind, 'owned-go-nullable-response'); assert.equal(origin.producerDirty, true);
-  assert.equal(origin.producerBaseOid, '01b363caba082a78208a6ac8c4250a04d6b0c2d4');
-  assert.equal(origin.testedInputSetHash, 'sha256:8eb5295efd9d51c04c4447036c39288cc8ba471c3f347ed001b8b1d4d7184664');
+  assert.equal(origin.producerBaseOid, 'b6e156608803b08c4f62f258487484b1656e8213');
+  assert.equal(origin.testedInputSetHash, 'sha256:6535cdfbee610b7e32fce13ef139b813fe45cec161b17ed7563386828b224b4d');
   assert.equal(origin.requestSha256, hash(requestBytes)); assert.equal(origin.responseSha256, hash(responseBytes));
   return { requestBytes, responseBytes, origin, originBefore, bytes, before, golden, packet, text };
 }
@@ -76,11 +76,11 @@ async function coldCore(record) {
   const imported = await importCapturedFrontendResponse(record.requestBytes, record.responseBytes, record.origin);
   assert.equal(imported.status, 'ok', JSON.stringify(imported));
   const snapshot = JSON.parse(jcs(imported.snapshot)); validateFrontendSnapshot(snapshot);
-  assert.deepEqual(snapshot.format, { family: 'tsfg.frontend-nullable-candidate', version: 2, schemaHash: schema });
+  assert.deepEqual(snapshot.format, { family: 'tsfg.frontend-nullable-candidate', version: 3, schemaHash: schema });
   assert.equal(snapshot.inputIdentity, record.packet.payload.inputIdentity);
   const built = buildHir(snapshot); assert.equal(built.status, 'ok', JSON.stringify(built));
   const hir = verifyHir(built.hir);
-  assert.deepEqual(hir.format, { family: 'tsfg.nullable-hir-candidate', version: 2, schemaHash: schema });
+  assert.deepEqual(hir.format, { family: 'tsfg.nullable-hir-candidate', version: 3, schemaHash: schema });
   const printed = printHir(hir), cold = readHir(Buffer.from(printed));
   assert.deepEqual(verifyHir(cold), hir); assert.equal(printHir(cold), printed);
   const core = lowerHir(cold);
@@ -171,9 +171,9 @@ function lazyCore(core) {
   assert.deepEqual(ops, ['tsfg_core.fuel', 'tsfg_nullable.tag_test', 'tsfg_nullable.get', 'func.call', 'func.return']);
 }
 
-test('actual v2 nullable baseline then coalesce preserve cold HIR and lazy typed Core', async t => {
-  const baseline = await captured('nullable-owned-scalar-entry', baselineSource,
-    'sha256:17cbd0637240be252e7dcdef2bf20576c825570738552c80a51ca67b106b6813',
+test('actual v3 nullable baseline then coalesce preserve cold HIR and lazy typed Core', async t => {
+  const baseline = await captured('nullable-owned', baselineSource,
+    'sha256:ff2c46d2a7e82d005bf7bdef86a4916b0f914b73e6393eaf92b11a41e4129af2',
     'sha256:86bd8b568f2d703058093de2f0db3a71a982feede0978db6e006d4a96336e48b', 2708);
   const oldFacts = baseline.packet.payload.facts, [echo, entry] = oldFacts.functions;
   assert.deepEqual(oldFacts.functions.map(fn => fn.name), ['echo', 'entry']);
@@ -183,10 +183,10 @@ test('actual v2 nullable baseline then coalesce preserve cold HIR and lazy typed
   assert.equal(entry.body[0].initializer.target, echo.symbol);
   assert.equal(entry.body[1].expression.symbol, entry.parameters[0].id);
   assert.notEqual(entry.body[1].expression.symbol, entry.body[0].symbol.id);
-  await coldCore(baseline); t.diagnostic('actual v2 baseline cold/Core full2708 passed before coalesce');
+  await coldCore(baseline); t.diagnostic('actual v3 baseline cold/Core full2708 passed before coalesce');
 
   const actual = await captured('nullable-owned-coalesce', source,
-    'sha256:39731f0843e60ee2283be99c1d8d250de5c4863dd4d437606dba53ff861b519f',
+    'sha256:7a23b4f53cf8625e802ef5d7cd7c8e0a3b3b78af9f1a46c58dda3a3a2d75951f',
     'sha256:0aa16711f6e4c4f8bf1cfe3a8046cd35b612dc16ae246e3f49d7ee2fb5d0608a', 4257);
   assert.equal(hash(source), 'sha256:7a250e785ef05abe46da6f8fe4953c9f50305c6d8090086f3af02f8a71552d94');
   assert.equal(source.length, 229); assert.equal(actual.responseBytes.length, 5259);

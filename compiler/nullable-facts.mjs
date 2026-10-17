@@ -1,5 +1,5 @@
 // SPDX-License-Identifier: MIT
-import { check, failure, record, array, text, range, same, budget, scalarType, nullableType, valueType, coreTextLimits } from './nullable-common.mjs';
+import { check, failure, record, array, text, range, same, budget, scalarType, typeFor, presenceMask, valueType, coreTextLimits } from './nullable-common.mjs';
 import { sourceGrammar } from './closure-source-grammar.mjs';
 
 // Reuse only the bounded token guards. Nullable declarations, flow and export
@@ -27,17 +27,21 @@ function verify(source, facts, exports) {
     within(symbol.range); grammar.name(symbol.range, symbol.name); defs.set(symbol.id, symbol);
   }
   const annotation = (items, start) => {
-    const first = items[start]; let next = start + 1, nullable = false;
-    check(first, 'source');
-    if (items[next]?.text === '|') {
-      check((first.text === 'i32' && items[next + 1]?.text === 'null') || (first.text === 'null' && items[next + 1]?.text === 'i32'), 'capability');
-      next += 2; nullable = true;
-    } else check(first.text === 'i32', 'capability');
-    return { next, nullable, range: { start: first.start, end: items[next - 1].end } };
+    const members = new Set(); let next = start;
+    for (;;) {
+      const item = items[next++];
+      check(item && ['i32', 'null', 'undefined'].includes(item.text) && !members.has(item.text), 'capability');
+      members.add(item.text);
+      if (items[next]?.text !== '|') break;
+      next++;
+    }
+    check(members.has('i32'), 'capability');
+    const mask = (members.has('undefined') ? 1 : 0) | (members.has('null') ? 2 : 0);
+    return { next, mask, range: { start: items[start].start, end: items[next - 1].end } };
   };
-  const presence = (shape, declaration, ann, nullable) => {
+  const presence = (shape, declaration, ann, mask) => {
     record(shape, ['undefined','null','optional','default','range','annotation']);
-    check(shape.undefined === false && shape.null === nullable && shape.optional === false && shape.default === false, 'capability');
+    check(presenceMask(shape) === mask && shape.optional === false && shape.default === false, 'capability');
     check(same(shape.range, declaration) && same(shape.annotation, ann), 'range'); within(shape.range); within(shape.annotation, shape.range);
   };
   let previous = 0;
@@ -46,7 +50,7 @@ function verify(source, facts, exports) {
     text(fn.name, coreTextLimits.name);
     check(fn.returnType === 'i32' && !fns.has(fn.symbol) && !top.has(fn.name), 'identity'); within(fn.range);
     check(fn.range.start >= previous, 'range'); grammar.expect(previous, fn.range.start, []); previous = fn.range.end;
-    const def = defs.get(fn.symbol); check(def?.kind === 'function' && def.name === fn.name && !def.presence && same(def.returnPresence, fn.returnPresence), 'symbol');
+    const def = defs.get(fn.symbol); check(def?.kind === 'function' && def.name === fn.name && def.presence === undefined && same(def.returnPresence, fn.returnPresence), 'symbol');
     used.add(def.id); top.set(fn.name, def.id); fns.set(fn.symbol, fn);
     const items = grammar.between(fn.range.start, fn.range.end); let index = 0;
     const exported = items[index]?.text === 'export'; if (exported) index++;
@@ -56,17 +60,17 @@ function verify(source, facts, exports) {
     const params = array(fn.parameters, 64);
     for (const [position, p] of params.entries()) {
       if (position) check(items[index++]?.text === ',', 'source');
-      check(same(p, defs.get(p.id)) && p.kind === 'parameter' && !used.has(p.id) && !p.returnPresence, 'symbol'); used.add(p.id);
+      check(same(p, defs.get(p.id)) && p.kind === 'parameter' && !used.has(p.id) && p.returnPresence === undefined, 'symbol'); used.add(p.id);
       within(p.range, fn.range); const name = items[index++]; check(name?.end === p.range.end, 'source'); grammar.expect(p.range.start, name.start, []);
       check(items[index++]?.text === ':', 'source'); const ann = annotation(items, index); index = ann.next;
-      presence(p.presence, { start: p.range.start, end: ann.range.end }, ann.range, ann.nullable);
+      presence(p.presence, { start: p.range.start, end: ann.range.end }, ann.range, ann.mask);
     }
     if (params.length && items[index]?.text === ',') index++;
     check(items[index++]?.text === ')' && items[index++]?.text === ':', 'source');
     const ann = annotation(items, index); index = ann.next;
-    if (ann.nullable) {
+    if (ann.mask) {
       record(fn.returnPresence, ['undefined','null','range','annotation']);
-      check(fn.returnPresence.undefined === false && fn.returnPresence.null === true && same(fn.returnPresence.range, fn.range)
+      check(presenceMask(fn.returnPresence) === ann.mask && same(fn.returnPresence.range, fn.range)
         && same(fn.returnPresence.annotation, ann.range), 'signature');
     } else check(fn.returnPresence === undefined, 'signature');
     check(items[index]?.text === '{' && items.at(-1)?.text === '}', 'source');
@@ -75,7 +79,7 @@ function verify(source, facts, exports) {
     headers.set(fn.symbol, { start: items[index].end, end: items.at(-1).start, exported });
   }
   grammar.expect(previous, content.length, []);
-  const fit = (actual, expected) => check(actual === expected || actual === scalarType.id && expected === nullableType.id, 'signature');
+  const fit = (actual, expected) => check(actual === expected || actual === scalarType.id && typeFor(expected).kind === 'nullable-i32', 'signature');
   let steps = 0;
   for (const fn of functions) {
     const visible = new Map(top), localNames = new Set(), initialized = new Set();
@@ -111,7 +115,7 @@ function verify(source, facts, exports) {
         // the whole coalesce. Operands must retain their actual Source anchors.
         const left = expression(value.left, parent, false, depth + 1);
         const right = expression(value.right, value.range, false, depth + 1);
-        check(left === nullableType.id && right === scalarType.id, 'type');
+        check(typeFor(left).kind === 'nullable-i32' && right === scalarType.id, 'type');
         const leftTokens = grammar.between(value.left.range.start, value.left.range.end);
         const rightTokens = grammar.between(value.right.range.start, value.right.range.end);
         check(leftTokens[0]?.start === value.range.start && leftTokens.at(-1)?.end === value.left.range.end
@@ -126,7 +130,8 @@ function verify(source, facts, exports) {
         check(value.right.range.start === (value.right.kind === 'call' ? operator[1].end : rightTokens[0]?.start), 'range');
         grammar.expect(value.right.range.end, value.range.end, []); type = scalarType.id;
       } else failure('capability', 'only required references, direct calls and nullish coalesce are represented');
-      if (type === nullableType.id) check(same(value.presenceFlow, { undefined: false, null: true }), 'capability', 'nullable narrowing/get/retype is not represented');
+      const shape = typeFor(type);
+      if (shape.kind === 'nullable-i32') check(same(value.presenceFlow, { undefined: shape.undefined, null: shape.null }), 'capability', 'nullable narrowing/get/retype is not represented');
       else check(value.kind === 'shortCircuit' || returning && fn.returnPresence
         ? same(value.presenceFlow, { undefined: false, null: false }) : value.presenceFlow === undefined, 'flow');
       return type;
@@ -138,11 +143,11 @@ function verify(source, facts, exports) {
       const gap = grammar.spelling(end, item.range.start).filter(token => token !== ';');
       if (item.kind === 'variable') {
         record(item, ['kind','symbol','initializer','range']); const def = defs.get(item.symbol?.id);
-        check(def?.kind === 'local' && !def.writable && !def.returnPresence && same(item.symbol, def) && !used.has(def.id), 'symbol');
+        check(def?.kind === 'local' && !def.writable && def.returnPresence === undefined && same(item.symbol, def) && !used.has(def.id), 'symbol');
         check(!localNames.has(def.name) && same(gap, ['const']) && item.range.start === def.range.start, 'scope');
         const tokens = grammar.between(def.range.end, item.initializer?.range?.start); check(tokens[0]?.text === ':', 'source');
         const ann = annotation(tokens, 1); check(ann.next === tokens.length - 1 && tokens.at(-1)?.text === '=', 'source');
-        if (ann.nullable) presence(def.presence, item.range, ann.range, true); else check(def.presence === undefined, 'signature');
+        if (ann.mask) presence(def.presence, item.range, ann.range, ann.mask); else check(def.presence === undefined, 'signature');
         fit(expression(item.initializer, item.range), valueType(def.presence)); grammar.expect(item.initializer.range.end, item.range.end, []);
         used.add(def.id); localNames.add(def.name); visible.set(def.name, def.id); initialized.add(def.id);
       } else if (item.kind === 'return') {
@@ -158,7 +163,7 @@ function verify(source, facts, exports) {
   check(used.size === defs.size, 'symbol');
   const expectedExports = [];
   for (const fn of functions) if (headers.get(fn.symbol).exported) {
-    check(!fn.returnPresence && fn.parameters.every(p => !p.presence.null), 'capability', 'public entry must use required scalar i32 ABI');
+    check(fn.returnPresence === undefined && fn.parameters.every(p => valueType(p.presence) === scalarType.id), 'capability', 'public entry must use required scalar i32 ABI');
     expectedExports.push({ name: fn.name, target: fn.symbol, sourcePath: source.path, range: fn.range, definition: defs.get(fn.symbol).range });
   }
   for (const entry of array(exports, 512)) record(entry, ['name','target','sourcePath','range','definition']);

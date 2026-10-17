@@ -1,9 +1,11 @@
 // SPDX-License-Identifier: MIT
 import { nullableSnapshotFacts } from './nullable-frontend.mjs';
-import { check, record, budget, same, own, candidate, valueType, scalarType, nullableType, hirFormat } from './nullable-common.mjs';
+import { check, record, budget, same, own, candidate, valueType, typeFor, scalarType, nullableTypes, hirFormat } from './nullable-common.mjs';
 
 function project(snapshot) {
   const source = snapshot.source;
+  // Signatures and owned bindings select only this program's nullable records.
+  const usedTypes = new Set(snapshot.symbols.flatMap(symbol => [valueType(symbol.presence), valueType(symbol.returnPresence)]));
   const headers = snapshot.functions.map(fn => {
     const parameterTypes = fn.parameters.map(p => valueType(p.presence)), returnId = valueType(fn.returnPresence);
     const signatureHash = candidate('tsfg.core-nullable-candidate.signature.v1', { parameters: parameterTypes, returnType: returnId });
@@ -14,7 +16,7 @@ function project(snapshot) {
     const fn = header.source, bindings = new Map(snapshot.symbols.map(symbol => [symbol.id, symbol]));
     const lift = (value, expected) => {
       if (value.type === expected) return value;
-      check(value.type === scalarType.id && expected === nullableType.id, 'signature');
+      check(value.type === scalarType.id && typeFor(expected).kind === 'nullable-i32', 'signature');
       return { kind: 'nullableWrap', type: expected, operand: value, range: value.range };
     };
     function expression(raw) {
@@ -27,7 +29,7 @@ function project(snapshot) {
     }
     return { id: header.id, name: fn.name, ownedSymbol: fn.symbol, signatureHash: header.signatureHash,
       role: snapshot.exports[0].target === fn.symbol ? 'entry' : 'internal', range: fn.range,
-      returnType: header.returnId === scalarType.id ? scalarType : nullableType,
+      returnType: typeFor(header.returnId),
       parameters: fn.parameters.map((p,index) => ({ id: p.id, name: p.name, type: header.parameterTypes[index], range: p.range })),
       body: fn.body.map(item => item.kind === 'variable' ? {
         kind: 'local', binding: { id: item.symbol.id, name: item.symbol.name, type: valueType(item.symbol.presence), mutable: false, range: item.symbol.range },
@@ -35,7 +37,7 @@ function project(snapshot) {
       } : { kind: 'return', value: lift(expression(item.expression), header.returnId), range: item.range }) };
   });
   return { format: hirFormat, snapshot, inputIdentity: snapshot.inputIdentity, source, target: snapshot.target,
-    types: [scalarType, nullableType], functions };
+    types: [scalarType, ...nullableTypes.filter(type => usedTypes.has(type.id))], functions };
 }
 export function buildNullableHir(snapshot) {
   const result = project(nullableSnapshotFacts(snapshot)); budget(result); return own(result);

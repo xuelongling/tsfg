@@ -7,15 +7,15 @@ export { canonical, own, sha256 };
 export const schemaHash = sha256(canonical(descriptor));
 export const coreSchema = 'sha256:8f99963869ac2fed97db0ce90171d89593e4a3de667288eace4fc141c7cbc4bd';
 export const coreTextLimits = Object.freeze({ name: coreDescriptor.limits.nameUTF8Bytes, path: coreDescriptor.limits.pathUTF8Bytes });
-export const snapshotFormat = Object.freeze({ family: 'tsfg.frontend-nullable-candidate', version: 2, schemaHash });
-export const hirFormat = Object.freeze({ family: 'tsfg.nullable-hir-candidate', version: 2, schemaHash });
+export const snapshotFormat = Object.freeze({ family: 'tsfg.frontend-nullable-candidate', version: 3, schemaHash });
+export const hirFormat = Object.freeze({ family: 'tsfg.nullable-hir-candidate', version: 3, schemaHash });
 const limits = Object.freeze({ ...descriptor.limits, allowNul: true, rejectPrototypeKeys: true });
 export function failure(category, message = 'owned nullable candidate differs') {
   const code = 'r03-nullable-' + category;
   throw Object.assign(new TypeError(code + ': ' + message), { code, ruleId: 'r01-input-boundary', phase: 'hir' });
 }
 export const check = (condition, category = 'schema', message = undefined) => { if (!condition) failure(category, message); };
-check(schemaHash === 'sha256:badc9425050a8f538fcb7b9397e5ef31fbde96391989dfeebb8cab6a122783bd', 'schema');
+check(schemaHash === 'sha256:24a04b0b595cae59ccf52a939f4671cea0369c46bd705f56726d028ab1df5a71', 'schema');
 check(sha256(canonical(coreDescriptor)) === coreSchema, 'schema');
 export const same = (a, b) => canonical(a) === canonical(b);
 export function budget(value) {
@@ -58,6 +58,15 @@ export function origin(value) {
 }
 export const candidate = (domain, value) => sha256(domain + '\0' + coreSchema + '\0' + canonical(value));
 export const scalarType = Object.freeze({ kind: 'scalar', name: 'i32', id: candidate('tsfg.core-nullable-candidate.type.v1', { kind: 'scalar', name: 'i32' }) });
-export const nullableType = Object.freeze({ kind: 'nullable-i32', undefined: false, null: true,
-  id: candidate('tsfg.core-nullable-candidate.type.v1', { kind: 'nullable-i32', undefined: false, null: true }) });
-export const valueType = shape => shape?.null === true ? nullableType.id : scalarType.id;
+export const nullableTypes = Object.freeze([1, 2, 3].map(mask => {
+  const shape = { kind: 'nullable-i32', undefined: (mask & 1) !== 0, null: (mask & 2) !== 0 };
+  return Object.freeze({ ...shape, id: candidate('tsfg.core-nullable-candidate.type.v1', shape) });
+}));
+const allTypes = Object.freeze([scalarType, ...nullableTypes]);
+export function typeFor(id) { const type = allTypes.find(type => type.id === id); check(type, 'type'); return type; }
+export function presenceMask(shape) {
+  if (shape === undefined) return 0;
+  check(shape && typeof shape === 'object' && typeof shape.undefined === 'boolean' && typeof shape.null === 'boolean', 'capability');
+  return (shape.undefined ? 1 : 0) | (shape.null ? 2 : 0);
+}
+export const valueType = shape => { const mask = presenceMask(shape); return mask ? nullableTypes[mask - 1].id : scalarType.id; };

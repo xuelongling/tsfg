@@ -2,7 +2,7 @@
 import registry from '../contracts/registry.json' with { type: 'json' };
 import { boolTypeId } from './identity.mjs';
 import { verifyNullableHir } from './nullable-hir.mjs';
-import { check, coreSchema, scalarType, nullableType } from './nullable-common.mjs';
+import { check, coreSchema, scalarType, typeFor, presenceMask } from './nullable-common.mjs';
 import { emitCoreSsaFunction, coreQuote as quote } from './core-ssa-emitter.mjs';
 
 // Compile verified private HIR to the existing 20b typed Core contract. This
@@ -12,7 +12,7 @@ export function emitNullableCore(hir) {
   const coreType = type => {
     if (type === scalarType.id) return 'i32';
     if (type === boolTypeId) return 'i1';
-    check(type === nullableType.id, 'type'); return '!tsfg_nullable.i32<2>';
+    const mask = presenceMask(typeFor(type)); check(mask !== 0, 'type'); return '!tsfg_nullable.i32<' + mask + '>';
   };
   const moduleAttributes = [
     'tsfg_core.version = "0.9.0"', 'tsfg_core.input_identity = ' + quote(verified.inputIdentity),
