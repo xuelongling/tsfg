@@ -1,0 +1,39 @@
+{
+  "origin": {
+    "kind": "owned-go-response",
+    "producerBaseOid": "8d106b6768521c21b9ef4e7a69df023977d71b09",
+    "producerDirty": true,
+    "testedInputSetHash": "sha256:12f5d80b083b2b1d7bed7163d7b2dafd757cd7c908fb123611d1df3f4d500f1b",
+    "requestSha256": "sha256:f4bfa8f354caf312c86b88092dd8c2bbfd7923dd7ad757e82423ac51c81a63ac",
+    "responseSha256": "sha256:f1772e4e0bd90317535e08bead1b2d5b8071d8b81ec621975a7b722e8f6c4181"
+  },
+  "deliveryOid": "d954555abfc9f0a9886fb28e81fdb18828a4a314",
+  "execution": {
+    "pid": 956,
+    "baseTree": "c3a129a366e5dbb5ecb0ca25e9f4aaf3a8edd707",
+    "rawLogSha256": "sha256:83978c2e439eb19832368d4894a004c6de599b2319f43d6f4d95e36eac910fd8",
+    "summarySha256": "sha256:bd6c9602fe6f205afd6d51eda8605e046447608d8a1f9950c40e879ab2510772"
+  },
+  "sourceTest": "TestFrontendCommandSharedMutableCaptureOwnedFacts/ownedProjection",
+  "frames": {
+    "request": {
+      "tag": "TSFG_SHARED_CAPTURE_REQUEST_V1",
+      "bytes": 1997,
+      "sha256": "sha256:f4bfa8f354caf312c86b88092dd8c2bbfd7923dd7ad757e82423ac51c81a63ac"
+    },
+    "response": {
+      "tag": "TSFG_SHARED_CAPTURE_RESPONSE_V1",
+      "bytes": 4015,
+      "sha256": "sha256:f1772e4e0bd90317535e08bead1b2d5b8071d8b81ec621975a7b722e8f6c4181"
+    },
+    "original": {
+      "tag": "TSFG_SHARED_CAPTURE_ORIGINAL_V1",
+      "bytes": 1637,
+      "sha256": "sha256:e752c628052fdb6e98f8ea812482afc13cf8f774b24d27fef6d63a2107a2a960"
+    }
+  },
+  "testedInputSetReference": {
+    "path": "../../m19-function-values/provenance.json",
+    "sha256": "sha256:53875a3dd1b5171e7b50ac5650cc496d43332389f1cb9e7fef162a408b7facc9"
+  }
+}

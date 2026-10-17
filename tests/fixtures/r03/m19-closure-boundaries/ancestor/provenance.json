@@ -1,0 +1,39 @@
+{
+  "origin": {
+    "kind": "owned-go-response",
+    "producerBaseOid": "8d106b6768521c21b9ef4e7a69df023977d71b09",
+    "producerDirty": true,
+    "testedInputSetHash": "sha256:12f5d80b083b2b1d7bed7163d7b2dafd757cd7c908fb123611d1df3f4d500f1b",
+    "requestSha256": "sha256:5fdedb8c443be9ffe047fca5ce18a750d0b82d0f8d9bc90af4a914c35614860e",
+    "responseSha256": "sha256:4c3dfa83995bc302f9e891ff9ea3b3a9352762ac95a58de825395a9d038c5091"
+  },
+  "deliveryOid": "d954555abfc9f0a9886fb28e81fdb18828a4a314",
+  "execution": {
+    "pid": 956,
+    "baseTree": "c3a129a366e5dbb5ecb0ca25e9f4aaf3a8edd707",
+    "rawLogSha256": "sha256:83978c2e439eb19832368d4894a004c6de599b2319f43d6f4d95e36eac910fd8",
+    "summarySha256": "sha256:bd6c9602fe6f205afd6d51eda8605e046447608d8a1f9950c40e879ab2510772"
+  },
+  "sourceTest": "TestFrontendCommandClosureCaptureBoundaries/ancestorBindingWithoutMiddleDirectAccess",
+  "frames": {
+    "request": {
+      "tag": "TSFG_CAPTURE_BOUNDARY_REQUEST_V1",
+      "bytes": 1963,
+      "sha256": "sha256:5fdedb8c443be9ffe047fca5ce18a750d0b82d0f8d9bc90af4a914c35614860e"
+    },
+    "response": {
+      "tag": "TSFG_CAPTURE_BOUNDARY_RESPONSE_V1",
+      "bytes": 2787,
+      "sha256": "sha256:4c3dfa83995bc302f9e891ff9ea3b3a9352762ac95a58de825395a9d038c5091"
+    },
+    "original": {
+      "tag": "TSFG_CAPTURE_BOUNDARY_ORIGINAL_V1",
+      "bytes": 1603,
+      "sha256": "sha256:a156843d49c079b3ddeec6200a9caeee9fd952643645b812c5a72c0f9ebc5075"
+    }
+  },
+  "testedInputSetReference": {
+    "path": "../../m19-function-values/provenance.json",
+    "sha256": "sha256:53875a3dd1b5171e7b50ac5650cc496d43332389f1cb9e7fef162a408b7facc9"
+  }
+}
