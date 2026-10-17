@@ -25,8 +25,8 @@ const rejected = error => error instanceof Error && /^(generic-package|generic-i
 // the missing production capability, with no test executor or fabricated Source.
 test('package frontend imports real Source export bytes and six-instance cold HIR', async () => {
   const { readGenericPackageFrontendResponse } = await frontend();
-  assert.equal(fixtureBytes.length, 16491);
-  assert.equal(sha256(fixtureBytes), 'sha256:75a78b01dec795e3b24d3df61026a0b2d5328ca9e1a0e039b149432a887ac9d4');
+  assert.equal(fixtureBytes.length, 16619);
+  assert.equal(sha256(fixtureBytes), 'sha256:6593c2849f2b24c0c422b42d7ca259207c7bcc47b7663c43b9521b292ec98b46');
   const pkg = readGenericPackageFrontendResponse(bytes(exported.request), bytes(exported.response));
   assert.equal(pkg.status, 'ok');
   assert.equal(pkg.requestId, exported.response.requestId);
@@ -81,7 +81,7 @@ test('package frontend rejects a foreign response before importing any facts', a
 
 test('package frontend rejects changed concrete facts and foreign diagnostic provenance', async () => {
   const { readGenericPackageFrontendResponse } = await frontend();
-  const forged = structuredClone(instantiate.response); forged.value.instances[0].returnType = 'f64';
+  const forged = structuredClone(instantiate.response); forged.value.instances[0].returnType = 'bool';
   assert.throws(() => readGenericPackageFrontendResponse(requestBytes(), bytes(forged)), rejected);
   for (const mutate of [value => { value.diagnostic.primary.source.path = '/foreign/main.ts'; },
     value => { value.diagnostic.primary.origin.end++; }]) {

@@ -10,8 +10,8 @@ import registry from '../contracts/registry.json' with { type: 'json' };
 
 // Explicit candidate owned HIR family; scalar SSA uses the same Core exchange.
 // Source result validation is structural correspondence, never Source admission.
-export const genericHirFormat = own({ family: 'tsfg.generic-concrete-hir-candidate', version: 1,
-  linkageAlgorithm: 'tsfg.generic-linkage.v1', semanticProfile: 'tsfg-owned-scalar-generics-host-v1' });
+export const genericHirFormat = own({ family: 'tsfg.generic-concrete-hir-candidate', version: 4,
+  linkageAlgorithm: 'tsfg.generic-linkage.v1', semanticProfile: 'tsfg-owned-scalar-generics-host-v4' });
 const fail = category => { throw Object.assign(new TypeError(
   'generic-hir-' + category + ': invalid concrete candidate HIR'), { code: 'generic-hir-' + category }); };
 const check = (value, category = 'schema') => { if (!value) fail(category); };
@@ -50,10 +50,14 @@ export function buildGenericHir(packageBytes, result, requests) {
       instance.parameters.map(parameter => parameter.type)) }];
   }));
   const functions = checked.instances.map(instance => {
-    const project = expression => expression.kind === 'parameter'
-      ? { kind: 'reference', type: scalarTypeIds[expression.type], binding: 'p' + expression.parameter, range: expression.origin }
-      : { kind: 'call', type: scalarTypeIds[expression.type], target: descriptors.get(expression.callee).id,
+    const project = expression => {
+      if (expression.kind === 'parameter') return { kind: 'reference', type: scalarTypeIds[expression.type],
+        binding: 'p' + expression.parameter, range: expression.origin };
+      if (expression.kind === 'number-add') return { kind: 'binary', operator: '+', type: scalarTypeIds.f64,
+        left: project(expression.arguments[0]), right: project(expression.arguments[1]), range: expression.origin };
+      return { kind: 'call', type: scalarTypeIds[expression.type], target: descriptors.get(expression.callee).id,
         signatureHash: descriptors.get(expression.callee).signatureHash, arguments: expression.arguments.map(project), range: expression.origin };
+    };
     const value = project(instance.body);
     return { ...descriptors.get(instance.key), instanceKey: instance.key, definition: instance.definition,
       typeArguments: instance.typeArguments, name: definitions.get(instance.definition).name,
@@ -144,6 +148,14 @@ export function verifyGenericHir(hir) {
         record(value, ['kind', 'type', 'binding', 'range']);
         const parameter = fn.parameters.find(item => item.id === value.binding);
         check(parameter && value.type === parameter.type, 'reference');
+      } else if (value.kind === 'binary') {
+        record(value, ['kind', 'type', 'operator', 'left', 'right', 'range']);
+        check(depth === 0 && value.operator === '+' && value.type === scalarTypeIds.f64, 'type');
+        for (const operand of [value.left, value.right]) {
+          check(operand?.kind === 'reference', 'reference'); expression(operand, depth + 1);
+          check(operand.type === scalarTypeIds.f64, 'type'); range(operand.range, value.range);
+        }
+        check(value.left.range.end <= value.right.range.start, 'origin');
       } else {
         record(value, ['kind', 'type', 'target', 'signatureHash', 'arguments', 'range']);
         const callee = functions.get(value.target);

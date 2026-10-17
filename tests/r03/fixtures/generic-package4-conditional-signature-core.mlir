@@ -1,0 +1,10 @@
+module attributes {tsfg_core.version = "0.9.0", tsfg_core.input_identity = "sha256:80c24f2152eab37aca381205b0d42631a3ccf18a823a6f2087814af4993d6899", tsfg_core.source_hash = "sha256:b389353082b8f428ef3362e3a410b02e84b616da6947a5274945bb65be0a6a5b", tsfg_core.source_path = "/original/main.ts", tsfg_core.target = "windows-x86_64-msvc", tsfg_core.triple = "x86_64-pc-windows-msvc", tsfg_core.data_layout = "e-m:w-p270:32:32-p271:32:32-p272:64:64-i64:64-i128:128-f80:128-n8:16:32:64-S128", tsfg_core.bytecode_schema = "sha256:3dea6ce5de996dfa3e7141cced985243ea74ac9bb80f03636c6694343118f2a6", tsfg_core.source_length = 132 : i64} {
+  func.func @"__tsfg_generic_v1_06438b22b6c73a983b1da5ee95c3abf344aebe2cdf6fa0d98d966571f485b400"(%v0: f64) -> f64 attributes {tsfg_core.function_id = "sha256:b54cad4b3b69e37c7952b908ffd65934aada1d443d5dd29addb611514a6f1437", tsfg_core.signature_hash = "sha256:f195c19035b7f0da83780c5c50afe3060a0d4ea3a577e4b70726f5905aab8059", tsfg_core.type_id = "sha256:dfbc72c48bec549ea679cd6aff531f9ebef95e001f6ae0bf419d2f33bf988a6c", tsfg_core.function_start = 6 : i64, tsfg_core.function_end = 132 : i64} {
+    "tsfg_core.fuel"() {event = 1 : i32, tsfg_source.start = 6 : i64, tsfg_source.end = 132 : i64} : () -> ()
+    "func.return"(%v0) {tsfg_source.start = 124 : i64, tsfg_source.end = 129 : i64} : (f64) -> ()
+  }
+  func.func @"__tsfg_generic_v1_b910cbab6d7dd12e14b149efc8b978802cf73ccdbe1e69754f1ed98058a53872"(%v0: i1) -> i1 attributes {tsfg_core.function_id = "sha256:92812943eb6b13ae4216245b61534de78df9840df4b7c75ee233f2c0cd187576", tsfg_core.signature_hash = "sha256:176f0c2d74ef9b180f6aa17b92935546bf3661b0a8944833e96892a14d968395", tsfg_core.type_id = "sha256:811afa3745352bcd218d039b4539ec7e7ca8d103420dbc4c8ab8d6119e850721", tsfg_core.function_start = 6 : i64, tsfg_core.function_end = 132 : i64} {
+    "tsfg_core.fuel"() {event = 1 : i32, tsfg_source.start = 6 : i64, tsfg_source.end = 132 : i64} : () -> ()
+    "func.return"(%v0) {tsfg_source.start = 124 : i64, tsfg_source.end = 129 : i64} : (i1) -> ()
+  }
+}

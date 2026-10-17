@@ -8,8 +8,8 @@ import { scalarCoreFixtures } from './scalar-core-emitter-fixtures.mjs';
 import registry from '../contracts/registry.json' with { type: 'json' };
 
 const fixtures = scalarCoreFixtures();
-const packageBytes = new Uint8Array(await readFile(new URL('../tests/r03/fixtures/generic-package-source-v1.json', import.meta.url)));
-const instanceFixture = JSON.parse(await readFile(new URL('../tests/r03/fixtures/generic-instance-source-v1.json', import.meta.url), 'utf8'));
+const packageBytes = new Uint8Array(await readFile(new URL('../tests/r03/fixtures/generic-package-source-v4.json', import.meta.url)));
+const instanceFixture = JSON.parse(await readFile(new URL('../tests/r03/fixtures/generic-instance-source-v4.json', import.meta.url), 'utf8'));
 const candidate = () => buildGenericHir(packageBytes, instanceFixture.result, instanceFixture.requests);
 for (const fixture of fixtures) {
   test('shared scalar emitter retains ordinary cold representation: ' + fixture.name, () => {

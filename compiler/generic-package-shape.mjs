@@ -3,16 +3,16 @@ import { canonical, sha256, own } from "./identity.mjs";
 import { checkGenericJsonValueBudget, genericPackageJsonPolicy } from "./generic-json-budget.mjs";
 
 export const genericPackageFormat = own({
-  family: "tsfg-owned-generic-package", version: 1,
-  schemaHash: "5f3e8a6e8e3b49dcbdf507db643c538a5810cc3a09f75ea7dc4db560086e9e4b",
-  semanticProfile: "tsfg-owned-scalar-generics-host-v1", declarationProfile: "minimal-scalars-v2",
-  capabilities: ["explicit-type-arguments", "scalar-generics", "single-module"],
+  family: "tsfg-owned-generic-package", version: 4,
+  schemaHash: "ec05631c15f280f54279ba9353fd8fc3ff779349a1f56f7cdb00eba22c767e20",
+  semanticProfile: "tsfg-owned-scalar-generics-host-v4", declarationProfile: "minimal-scalars-v2",
+  capabilities: ["conditional-signature", "explicit-type-arguments", "mapped-indexed-signature", "number-add", "scalar-generics", "single-module"],
 });
 export const genericPackageLimits = Object.freeze({ bytes: genericPackageJsonPolicy.bytes, declarationBytes: 1048576,
   declarations: 8, definitions: 256, depth: genericPackageJsonPolicy.depth, expressionDepth: 64,
   expressionsPerDefinition: 1024, expressionsTotal: 32768, jsonTokens: genericPackageJsonPolicy.jsonTokens,
   parameters: 64, pathBytes: 4096, scopeBytes: 256, sourceUTF16: 1048576,
-  stringBytes: genericPackageJsonPolicy.stringBytes, typeParameters: 16 });
+  stringBytes: genericPackageJsonPolicy.stringBytes, typeParameters: 16, keyBytes: 256, keyUnionMembers: 16 });
 
 export function packageFailure(category) {
   throw Object.assign(new TypeError(`generic-package-${category}: invalid owned generic package`),
@@ -85,7 +85,7 @@ export function genericDefinitionKey(definition, payload) {
 /** Hash the protocol Payload: definitions/files must already have canonical order. */
 export function genericPackageId(payload) {
   checkGenericJsonValueBudget(payload);
-  return sha256("tsfg-owned-generic-package/v1\n" + canonical(payload));
+  return sha256("tsfg-owned-generic-package/v4\n" + canonical(payload));
 }
 
 /** Structural admission only. Official Source checking remains the semantic authority. */
@@ -134,35 +134,94 @@ export function normalizeGenericPackage(input, ordered = false) {
     const typeParameters = array(definition.typeParameters, limit.typeParameters, 1)
       .map(item => packageString(item, limit.stringBytes, true));
     check(new Set(typeParameters).size === typeParameters.length);
-    function type(raw) {
+    function keyType(raw) {
+      record(raw, ["kind", "literals"]);
+      check(raw.kind === "string-literal" || raw.kind === "union");
+      const union = raw.kind === "union";
+      // Every source occurrence consumes the union budget, including duplicates.
+      const literals = array(raw.literals, union ? limit.keyUnionMembers : 1, union ? 2 : 1)
+        .map(item => packageString(item, limit.keyBytes));
+      return { kind: raw.kind, literals };
+    }
+    function type(raw, signature = false) {
+      const kind = dataProperty(raw, "kind");
+      if (kind === "indexed") {
+        record(raw, ["kind", "parameter", "indexed"]);
+        check(signature && typeParameters.length === 1 && integer(raw.parameter) === 0, "reference");
+        record(raw.indexed, ["object", "index"]);
+        const object = raw.indexed.object;
+        record(object, ["kind", "parameter", "mapped"]);
+        check(object.kind === "mapped" && integer(object.parameter) === 0, "reference");
+        record(object.mapped, ["binder", "keys", "value"]);
+        const binder = packageString(object.mapped.binder, limit.stringBytes, true);
+        check(binder !== typeParameters[0], "reference");
+        // The mapped binder is independent; value references can name only the
+        // sole outer parameter through the existing leaf role, never this binder.
+        const keys = keyType(object.mapped.keys), value = type(object.mapped.value);
+        const index = keyType(raw.indexed.index);
+        // Domain membership is structural admission, not key selection or typing.
+        check(index.literals.every(literal => keys.literals.includes(literal)), "reference");
+        return { kind, parameter: 0, indexed: { object: { kind: "mapped", parameter: 0,
+          mapped: { binder, keys, value } }, index } };
+      }
+      if (kind === "conditional") {
+        record(raw, ["kind", "parameter", "checkType", "extendsType", "trueType", "falseType"]);
+        check(signature && typeParameters.length === 1 && integer(raw.parameter) === 0, "reference");
+        // Child roles are finite leaves. No recursive conditional evaluation or
+        // branch selection belongs at this structural package boundary.
+        const checkType = type(raw.checkType), extendsType = type(raw.extendsType);
+        const trueType = type(raw.trueType), falseType = type(raw.falseType);
+        check(checkType.kind === "parameter" && checkType.parameter === 0
+          && extendsType.kind === "boolean" && trueType.kind === "boolean"
+          && falseType.kind === "number", "reference");
+        return { kind, parameter: 0, checkType, extendsType, trueType, falseType };
+      }
       record(raw, ["kind", "parameter"]);
-      check(["boolean", "number", "parameter"].includes(raw.kind));
+      check(["boolean", "number", "parameter"].includes(kind));
       const parameter = integer(raw.parameter);
-      check(raw.kind === "parameter" ? parameter < typeParameters.length : parameter === 0, "reference");
-      return { kind: raw.kind, parameter };
+      check(kind === "parameter" ? parameter < typeParameters.length : parameter === 0, "reference");
+      return { kind, parameter };
     }
     const parameters = array(definition.parameters, limit.parameters).map(parameter => {
       record(parameter, ["name", "origin", "type"]);
-      return { name: packageString(parameter.name, limit.stringBytes, true), origin: origin(parameter.origin, anchor), type: type(parameter.type) };
+      return { name: packageString(parameter.name, limit.stringBytes, true), origin: origin(parameter.origin, anchor), type: type(parameter.type, true) };
     });
     check(new Set(parameters.map(parameter => parameter.name)).size === parameters.length);
+    const returnType = type(definition.returnType, true);
     let expressions = 0;
     function expression(raw, depth) {
       check(depth <= limit.expressionDepth && ++expressions <= limit.expressionsPerDefinition
         && ++totalExpressions <= limit.expressionsTotal, "limit");
       record(raw, ["arguments", "definition", "kind", "origin", "parameter", "typeArguments"]);
-      check(["parameter", "call"].includes(raw.kind));
+      check(["parameter", "call", "number-add"].includes(raw.kind));
       const expressionOrigin = origin(raw.origin, anchor), parameter = integer(raw.parameter);
       const target = packageString(raw.definition);
       const args = array(raw.arguments, limit.parameters), typeArgs = array(raw.typeArguments, limit.typeParameters);
       if (raw.kind === "parameter") check(parameter < parameters.length && target === ""
         && args.length === 0 && typeArgs.length === 0, "reference");
+      else if (raw.kind === "number-add") check(depth === 0 && parameter === 0 && target === ""
+        && args.length === 2 && typeArgs.length === 0 && returnType.kind === "number", "reference");
       else check(parameter === 0 && digest(target), "reference");
-      return { arguments: args.map(arg => expression(arg, depth + 1)), definition: target,
-        kind: raw.kind, origin: expressionOrigin, parameter, typeArguments: typeArgs.map(type) };
+      const arguments_ = args.map(arg => expression(arg, depth + 1));
+      if (raw.kind === "number-add") {
+        for (const operand of arguments_) {
+          check(operand.kind === "parameter" && parameters[operand.parameter]?.type.kind === "number", "reference");
+          origin(operand.origin, expressionOrigin);
+        }
+        check(arguments_[0].origin.end <= arguments_[1].origin.start);
+      }
+      return { arguments: arguments_, definition: target,
+        kind: raw.kind, origin: expressionOrigin, parameter, typeArguments: typeArgs.map(rawType => type(rawType)) };
     }
-    return { body: expression(definition.body, 0), exported: definition.exported, key: definition.key,
-      name, origin: anchor, parameters, returnType: type(definition.returnType), typeParameters };
+    const body = expression(definition.body, 0);
+    const ownedSignature = type => type.kind === "conditional" || type.kind === "indexed";
+    if (ownedSignature(returnType) || parameters.some(parameter => ownedSignature(parameter.type))) {
+      check(typeParameters.length === 1 && parameters.length === 1 && ownedSignature(returnType)
+        && canonical(parameters[0].type) === canonical(returnType)
+        && body.kind === "parameter" && body.parameter === 0, "reference");
+    }
+    return { body, exported: definition.exported, key: definition.key,
+      name, origin: anchor, parameters, returnType, typeParameters };
   });
   if (ordered) strictOrder(definitions, definition => definition.key);
   definitions.sort((a, b) => order(a.key, b.key)); strictOrder(definitions, definition => definition.key);

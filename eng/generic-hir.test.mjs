@@ -9,10 +9,10 @@ import { buildGenericHir, verifyGenericHir, printGenericHir, readGenericHir,
 import { lowerHir } from '../compiler/hir.mjs';
 import { canonical } from '../compiler/identity.mjs';
 
-const packageBytes = new Uint8Array(await readFile(new URL('../tests/r03/fixtures/generic-package-source-v1.json', import.meta.url)));
+const packageBytes = new Uint8Array(await readFile(new URL('../tests/r03/fixtures/generic-package-source-v4.json', import.meta.url)));
 // Root extracts this exact fixture from the complete successful official Source test log.
 // Absence is a failure, never a synthetic semantic substitute or a skipped positive.
-const fixture = JSON.parse(await readFile(new URL('../tests/r03/fixtures/generic-instance-source-v1.json', import.meta.url), 'utf8'));
+const fixture = JSON.parse(await readFile(new URL('../tests/r03/fixtures/generic-instance-source-v4.json', import.meta.url), 'utf8'));
 const pkg = decodeGenericPackage(packageBytes);
 const clone = value => structuredClone(value);
 const checked = () => validateGenericInstanceResult(packageBytes, fixture.result, fixture.requests);
