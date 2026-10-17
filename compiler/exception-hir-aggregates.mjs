@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: MIT
 import { canonical, limits, check, failure } from './exception-hir-common.mjs';
 import { exceptionHirIdentity } from './exception-hir-identity.mjs';
+import { projectExceptionHirBoolean } from './exception-hir-regions.mjs';
 
 // The cold snapshot owns declaration and marker proof. This registry translates
 // nominal ownership, constructors and coverage without inspecting Source text.
@@ -14,14 +15,6 @@ export function createExceptionHirAggregates(raw, definitions, source, types) {
   const bySymbol = new Map(), byConstructor = new Map(), byField = new Map();
   /** @type {string[]} */
   const ids = [];
-  // Boolean literals occur both in declaration initializers and function bodies;
-  // keep their one projection independent of lexical binding resolution.
-  /** @param {any} value */
-  function projectBoolean(value) {
-    if (value?.kind !== 'boolean' || value.type !== 'bool' || typeof value.boolean !== 'boolean')
-      failure('capability', 'HIR aggregate boolean leaves require an exact boolean value');
-    return { kind: 'boolean', type: types.value('bool'), range: value.range, value: value.boolean };
-  }
   for (const declaration of raw.declarations) {
     check(Array.isArray(declaration.fields) && Array.isArray(declaration.memberCoverage),
       'schema', 'HIR aggregate member tables are missing');
@@ -66,7 +59,7 @@ export function createExceptionHirAggregates(raw, definitions, source, types) {
       const projected = { id: fieldId, owner: id, ordinal: field.ordinal, name: field.name,
         nameRange: definition.range, type: types.value(field.type), readonly: field.readonly, access: field.access,
         optionalSyntax: field.optionalSyntax, definiteAssertionSyntax: field.definiteAssertionSyntax,
-        initializer: projectBoolean(field.initializer), range: field.range };
+        initializer: projectExceptionHirBoolean(field.initializer, types), range: field.range };
       fields.push(projected); byField.set(field.id, { field: projected, rawOwner: declaration.id, rawSymbol: field.symbol });
       bySymbol.set(field.symbol, { id: fieldId, owner: id, name: field.name, kind: 'field' });
     }
@@ -93,7 +86,6 @@ export function createExceptionHirAggregates(raw, definitions, source, types) {
   }
   return {
     typeIds() { return [...ids]; },
-    projectBoolean,
     /** @param {any} value @param {any} receiver */
     projectField(value, receiver) {
       check(Array.isArray(value.fieldPath) && value.fieldPath.length > 0

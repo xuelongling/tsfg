@@ -3,33 +3,47 @@ import { canonical } from './identity.mjs';
 import { limits, check, failure } from './exception-hir-common.mjs';
 import { exceptionHirIdentity } from './exception-hir-identity.mjs';
 
+// One scope-independent leaf mapping serves aggregate field initializers and
+// ordinary expressions, including module initialization without aggregates.
+/** @param {any} value @param {any} types */
+export function projectExceptionHirBoolean(value, types) {
+  if (value?.kind !== 'boolean' || value.type !== 'bool' || typeof value.boolean !== 'boolean')
+    failure('capability', 'HIR boolean leaves require an exact boolean value');
+  return { kind: 'boolean', type: types.value('bool'), range: value.range, value: value.boolean };
+}
+
 // The boundary supplies a cold-rebuilt snapshot. This module projects lexical
 // ownership and current expressions; it does not reparse Source or infer flow.
 /** @param {any} context @param {any} functions */
 export function createExceptionHirRegions(context, functions) {
   const { definitions, types, budget, claimed, aggregates } = context;
-  /** @param {any} fn @param {any} header @param {any} lexicalLookup */
-  function project(fn, header, lexicalLookup) {
+  /** @param {any} owner @param {any} range @param {any} items @param {any} rawParameters @param {any} header @param {any} lexicalLookup */
+  function projectBody(owner, range, items, rawParameters, header, lexicalLookup) {
     /** @param {any} parent @param {any[]} path @param {string} role @param {any} range */
     function region(parent, path, role, range) {
       check(path.length <= limits.derived.regionNesting, 'limit', 'HIR region nesting budget exceeded');
-      budget.scope();
+      // The module root is the already-budgeted implicit scope, even for [].
+      const implicit = parent === null && owner.kind === 'module';
+      if (!implicit) budget.scope();
       return { parent, bySymbol: new Map(), ordinals: new Map(), node: {
-        kind: 'region', role, scope: exceptionHirIdentity('scope', { ownerKind: 'function', owner: header.id, path }),
+        kind: 'region', role, scope: implicit ? owner.scope
+          : exceptionHirIdentity('scope', { ownerKind: owner.kind, owner: owner.id, path }),
         parentScope: parent ? parent.node.scope : null, path, range, bindings: [], body: [],
       } };
     }
     /** @param {any} scope @param {any} raw @param {string} role @param {any} [functionType] */
     function bind(scope, raw, role, functionType) {
       const registered = definitions.get(raw.id);
-      check(registered && canonical(registered) === canonical(raw), 'scope', 'HIR declaration has no identical owned symbol');
+      check(registered && canonical(registered) === canonical(raw)
+        && (raw.sourcePath === undefined || raw.sourcePath === owner.sourcePath),
+      'scope', 'HIR declaration has no identical same-source owned symbol');
       check(!claimed.has(raw.id), 'scope', 'HIR binding is declared more than once');
-      if (raw.lexicalOwner !== undefined) check(raw.lexicalOwner === fn.symbol,
+      if (raw.lexicalOwner !== undefined) check(raw.lexicalOwner === owner.rawSymbol,
         'scope', 'HIR declaration belongs to another function');
       check(scope.node.bindings.length < limits.derived.arrayItems, 'limit', 'HIR region binding array budget exceeded');
       budget.binding();
       const index = scope.ordinals.get(role) ?? 0;
-      const id = exceptionHirIdentity('binding', { ownerKind: 'function', owner: header.id,
+      const id = exceptionHirIdentity('binding', { ownerKind: owner.kind, owner: owner.id,
         scopePath: scope.node.path, role, index });
       if (raw.type === 'function' && role !== 'parameter')
         failure('capability', 'HIR callable bindings require an owned parameter declaration');
@@ -71,14 +85,16 @@ export function createExceptionHirRegions(context, functions) {
     /** @param {any} raw @param {any} scope */
     function expression(raw, scope) {
       check(raw && typeof raw === 'object', 'schema', 'HIR expression is missing');
-      if (raw.kind === 'call') return functions.call(raw, /** @param {string} symbol */ symbol => resolve(scope, symbol, false));
+      if (raw.kind === 'call') return functions.call(raw, owner.sourcePath,
+        /** @param {string} symbol */ symbol => resolve(scope, symbol, false),
+        /** @param {any} argument */ argument => expression(argument, scope));
       if (raw.kind === 'construct') {
         if (!aggregates) failure('capability', 'HIR construction requires an owned aggregate registry');
         return aggregates.projectConstruct(raw);
       }
-      if (['boolean', 'field', 'binary'].includes(raw.kind)) {
+      if (raw.kind === 'boolean') return projectExceptionHirBoolean(raw, types);
+      if (['field', 'binary'].includes(raw.kind)) {
         if (!aggregates) failure('capability', 'HIR aggregate values require an owned aggregate registry');
-        if (raw.kind === 'boolean') return aggregates.projectBoolean(raw);
         if (raw.kind === 'field') return aggregates.projectField(raw, expression(raw.receiver, scope));
         // Preserve evaluation order and project each current operand only once.
         const left = expression(raw.left, scope), right = expression(raw.right, scope);
@@ -137,6 +153,7 @@ export function createExceptionHirRegions(context, functions) {
       for (const item of items) {
         if (item.kind === 'variable') bind(scope, item.symbol, 'local');
         else if (item.kind === 'functionDeclaration') {
+          if (owner.kind !== 'function') failure('capability', 'HIR module initialization declarations require their own tracer');
           const childHeader = functions.declare(item, header, scope.node);
           bind(scope, item.symbol, 'function', childHeader.type);
         }
@@ -145,6 +162,8 @@ export function createExceptionHirRegions(context, functions) {
         const item = items[index];
         check(scope.node.body.length < limits.derived.arrayItems, 'limit', 'HIR body array budget exceeded');
         if (item.kind === 'throw' || item.kind === 'return') {
+          if (item.kind === 'return' && owner.kind !== 'function')
+            failure('capability', 'HIR module initialization cannot return a function result');
           let value = expression(item.expression, scope);
           // Preserve the current operand and its original anchor. Only a strict
           // i32 absence-set inclusion adds a return conversion; throw never does.
@@ -201,9 +220,15 @@ export function createExceptionHirRegions(context, functions) {
         } else failure('capability', 'HIR statement kind is not implemented: ' + item.kind);
       }
     }
-    const root = region(null, [], 'function', fn.range), parameters = [];
-    for (const raw of fn.parameters) parameters.push(bind(root, raw, 'parameter').id);
-    body(fn.body, root);
+    const root = region(null, [], owner.kind, range), parameters = [];
+    for (const raw of rawParameters) parameters.push(bind(root, raw, 'parameter').id);
+    body(items, root);
+    return { region: root.node, parameters };
+  }
+  /** @param {any} fn @param {any} header @param {any} lexicalLookup */
+  function project(fn, header, lexicalLookup) {
+    const projected = projectBody({ kind: 'function', id: header.id, sourcePath: header.sourcePath,
+      rawSymbol: fn.symbol }, fn.range, fn.body, fn.parameters, header, lexicalLookup);
     let captures = null;
     if (fn.captures !== undefined) {
       if (!lexicalLookup) failure('capability', 'HIR captures require an enclosing lexical function');
@@ -219,9 +244,14 @@ export function createExceptionHirRegions(context, functions) {
     }
     return { id: header.id, module: header.module, sourcePath: header.sourcePath, name: fn.name,
       nameRange: header.nameRange, range: fn.range, type: header.type, signatureHash: header.signatureHash,
-      lexicalParent: header.lexicalParent, declaringScope: header.declaringScope, parameters,
+      lexicalParent: header.lexicalParent, declaringScope: header.declaringScope, parameters: projected.parameters,
       parameterInitializers: fn.parameterInitializers === undefined ? null : [...fn.parameterInitializers],
-      captures, returnPresence: fn.returnPresence ?? null, body: root.node };
+      captures, returnPresence: fn.returnPresence ?? null, body: projected.region };
   }
-  return { project };
+  /** @param {any} items @param {any} module */
+  function projectInitialization(items, module) {
+    return projectBody({ kind: 'module', id: module.id, scope: module.scope, sourcePath: module.sourcePath },
+      module.range, items, [], null, undefined).region;
+  }
+  return { project, projectInitialization };
 }

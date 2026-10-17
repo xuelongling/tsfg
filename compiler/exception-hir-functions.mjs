@@ -7,10 +7,11 @@ import { createExceptionHirRegions } from './exception-hir-regions.mjs';
 // lexical Region; bodies are projected once and emitted in Source table order.
 /** @param {any} context */
 export function projectExceptionHirFunctions(context) {
-  const { functions, definitions, types, budget, moduleId, moduleScope, sourcePath, claimed, aggregates } = context;
+  const { functions, definitions, types, budget, ownership, claimed, aggregates } = context;
   const raw = new Map(), headers = new Map(), projected = new Map(), active = new Set();
   const lexical = functions.some(/** @param {any} fn */ fn => fn.lexicalParent !== undefined);
   if (lexical && aggregates) failure('capability', 'aggregate and lexical HIR combinations require their own tracer');
+  if (lexical && ownership.explicit) failure('capability', 'lexical and module HIR combinations require their own tracer');
   for (const fn of functions) {
     check(raw.size < limits.derived.functions, 'limit', 'HIR function table budget exceeded');
     check(!raw.has(fn.symbol), 'identity', 'HIR function identity is repeated');
@@ -47,19 +48,23 @@ export function projectExceptionHirFunctions(context) {
     const returnType = types.value(fn.returnType, fn.returnSignature, fn.returnPresence);
     const signatureHash = exceptionHirIdentity('signature', { parameters: parameterTypes, returnType });
     const type = types.callable(parameterTypes, returnType), definition = definitions.get(fn.symbol);
+    const module = ownership.forFunction(fn);
     check(definition?.kind === 'function' && definition.name === fn.name && definition.type === fn.returnType
-      && definition.lexicalOwner === fn.lexicalParent, 'scope', 'HIR function does not own its declaration symbol');
-    raw.set(fn.symbol, { fn, definition, type, returnType, signatureHash });
+      && definition.lexicalOwner === fn.lexicalParent
+      && (definition.sourcePath === undefined || definition.sourcePath === module.sourcePath),
+    'scope', 'HIR function does not own its declaration symbol');
+    raw.set(fn.symbol, { fn, definition, type, returnType, signatureHash, parameterTypes, module });
   }
   /** @param {any} fn @param {any} parent @param {any} scope */
   function declareHeader(fn, parent, scope) {
     check(headers.size < limits.derived.functions, 'limit', 'HIR function header budget exceeded');
     check(!headers.has(fn.symbol), 'identity', 'HIR function is declared more than once');
-    const info = raw.get(fn.symbol), path = parent ? scope.path : [];
-    const lexicalParent = parent ? parent.id : null, declaringScope = parent ? scope.scope : moduleScope;
-    const id = exceptionHirIdentity('function', { module: moduleId, parent: lexicalParent,
+    const info = raw.get(fn.symbol), module = info.module, path = parent ? scope.path : [];
+    check(!parent || parent.module === module.id, 'scope', 'HIR lexical declaration crosses defining modules');
+    const lexicalParent = parent ? parent.id : null, declaringScope = parent ? scope.scope : module.scope;
+    const id = exceptionHirIdentity('function', { module: module.id, parent: lexicalParent,
       declaringScopePath: path, name: fn.name, signatureHash: info.signatureHash, range: fn.range });
-    const header = { id, module: moduleId, sourcePath, nameRange: info.definition.range,
+    const header = { id, module: module.id, sourcePath: module.sourcePath, nameRange: info.definition.range,
       type: info.type, returnType: info.returnType, signatureHash: info.signatureHash,
       lexicalParent, declaringScope, rawSymbol: fn.symbol };
     headers.set(fn.symbol, header); return header;
@@ -90,29 +95,52 @@ export function projectExceptionHirFunctions(context) {
         'scope', 'HIR nested function belongs to a different declaring Region');
       projectFunction(info.fn, header, lookup); return header;
     },
-    /** @param {any} value @param {any} lookup */
-    call(value, lookup) {
+    /** @param {any} value @param {string} sourcePath @param {any} lookup @param {any} projectArgument */
+    call(value, sourcePath, lookup, projectArgument) {
       const info = raw.get(value.target), target = headers.get(value.target);
-      if (!info || !target || target.lexicalParent === null || info.fn.parameters.length || info.fn.returnType !== 'bool')
-        failure('capability', 'HIR direct calls require an owned zero-parameter lexical bool function');
-      if (!Array.isArray(value.arguments) || value.arguments.length)
-        failure('capability', 'HIR lexical call arguments require their own tracer');
-      check(value.type === 'bool' && canonical(value.signature) === canonical({ parameters: [], returnType: 'bool' }),
-        'type', 'HIR direct call signature differs from its actual function');
-      const binding = lookup(value.target);
-      check(binding.role === 'function' && binding.type === target.type,
-        'scope', 'HIR direct call does not resolve its visible function binding');
+      if (!info || !target) failure('capability', 'HIR direct call requires an owned declared function');
+      check(Array.isArray(value.arguments) && value.arguments.length <= limits.derived.parametersPerFunction,
+        'limit', 'HIR call argument budget exceeded');
+      let signature;
+      if (target.lexicalParent !== null && !ownership.explicit) {
+        if (info.fn.parameters.length || info.fn.returnType !== 'bool' || value.arguments.length)
+          failure('capability', 'HIR lexical calls require an owned zero-parameter bool function');
+        const binding = lookup(value.target);
+        check(binding.role === 'function' && binding.type === target.type,
+          'scope', 'HIR direct call does not resolve its visible function binding');
+        signature = { parameters: [], returnType: 'bool' };
+      } else if (ownership.explicit && target.lexicalParent === null) {
+        ownership.authorizeCall(sourcePath, value, target);
+        signature = { parameters: info.fn.parameters.map(/** @param {any} parameter */ parameter => parameter.type),
+          returnType: info.fn.returnType,
+          ...(info.fn.parameters.length ? { presence: info.fn.parameters.map(/** @param {any} parameter */ parameter => parameter.presence) } : {}) };
+      } else failure('capability', 'HIR top-level direct calls require actual module ownership');
+      check(value.type === info.fn.returnType && canonical(value.signature) === canonical(signature),
+        'type', 'HIR direct call signature differs from its actual defining function');
+      check(value.arguments.length === info.parameterTypes.length, 'type', 'HIR call argument count differs');
+      const argumentsList = [];
+      // The caller owns argument ranges and evaluation order. Signature metadata
+      // belongs to the actual callee, including every false flag and source range.
+      for (const [ordinal, argument] of value.arguments.entries()) {
+        const projected = projectArgument(argument);
+        check(projected.type === info.parameterTypes[ordinal], 'type', 'HIR call argument differs from the declared parameter');
+        argumentsList.push(projected);
+      }
       return { kind: 'directCall', type: target.returnType, range: value.range, target: target.id,
         name: value.name ?? null, signature: { ownerKind: 'function', owner: target.id, type: target.type,
-          presence: null, returnPresence: null }, arguments: [] };
+          presence: value.signature.presence ?? null, returnPresence: value.signature.returnPresence ?? null }, arguments: argumentsList };
     },
   };
   const regions = createExceptionHirRegions({ definitions, types, budget, claimed, aggregates }, adapter);
+  // A caller may precede its defining imported callee in the complete Source
+  // table. Declare every top-level header before projecting any body. Lexical
+  // children still receive their header only at their actual declaring Region.
+  for (const fn of functions) if (fn.lexicalParent === undefined) declareHeader(fn, null, null);
   for (const fn of functions) if (fn.lexicalParent === undefined)
-    projectFunction(fn, declareHeader(fn, null, null), undefined);
+    projectFunction(fn, headers.get(fn.symbol), undefined);
   check(headers.size === functions.length && projected.size === functions.length,
     'scope', 'HIR leaves a function declaration or body unprojected');
   const result = [];
   for (const fn of functions) result.push(projected.get(fn.symbol));
-  return { headers, functions: result };
+  return { headers, functions: result, projectInitialization: regions.projectInitialization };
 }
