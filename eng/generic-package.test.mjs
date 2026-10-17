@@ -75,7 +75,7 @@ test("identity helpers match independently spelled canonical preimages", () => {
   const preimage = 'tsfg:generic-definition:v1\n{"name":"id","origin":{"end":2,"start":0},"scope":"s","source":{"digest":"'
     + "a".repeat(64) + '","length":2,"path":"/x.ts","positionUnit":"utf16","surrogateStarts":[]}}';
   assert.equal(genericDefinitionKey(definition, { scope: "s", source }), hash(preimage));
-  assert.equal(genericPackageId({ z: 2, a: "😀" }), "sha256:" + hash('tsfg-owned-generic-package/v4\n{"a":"😀","z":2}'));
+  assert.equal(genericPackageId({ z: 2, a: "😀" }), "sha256:" + hash('tsfg-owned-generic-package/v5\n{"a":"😀","z":2}'));
 });
 
 test("encode sorts owned DTO arrays without mutating input or retaining bytes", () => {
@@ -95,7 +95,7 @@ test("encode sorts owned DTO arrays without mutating input or retaining bytes", 
 });
 
 test("known family/version/schema/profile/capabilities reject mixed claims", () => {
-  for (const change of [value => { value.family += "-foreign"; }, value => { value.version = 1; },
+  for (const change of [value => { value.family += "-foreign"; }, value => { value.version = 1; }, value => { value.version = 4; },
     value => { value.schemaHash = "0".repeat(64); }, value => { value.payload.semanticProfile += "-foreign"; },
     value => { value.payload.environment.profile = "foreign"; }, value => { value.payload.capabilities.reverse(); }]) {
     const value = fixture(); change(value); reject(value, "schema");
@@ -228,14 +228,16 @@ test("strict UTF8, duplicate keys and noncanonical byte spellings reject", () =>
   assert.throws(() => decodeGenericPackage("text"), code("input"));
   for (const bytes of [new Uint8Array([0xc0, 0xaf]), new Uint8Array([0xed, 0xa0, 0x80])])
     assert.throws(() => decodeGenericPackage(bytes), code("utf8"));
-  for (const altered of [" " + text, text + "\n", text.replace('"version":4', '"version":4.0'),
-    text.replace('"version":4', '"version":4e0'), text.replace('"family"', '"\\u0066amily"'),
+  for (const altered of [" " + text, text + "\n", text.replace('"version":5', '"version":5.0'),
+    text.replace('"version":5', '"version":5e0'), text.replace('"family"', '"\\u0066amily"'),
     text.replace('"family":', '"family":"duplicate","family":'),
     text.replace('"family":', '"\\u0066amily":"duplicate","family":'),
-    text.replace('"version":4', '"version":4,"sessionId":"foreign"'),
-    text.replace('"version":4', '"version":4,"__proto__":{}'), text + "{}",
-    text.replace('"scope":"test-module"', '"scope":"\\ud800"')])
+    text.replace('"version":5', '"version":5,"sessionId":"foreign"'),
+    text.replace('"version":5', '"version":5,"__proto__":{}'), text + "{}",
+    text.replace('"scope":"test-module"', '"scope":"\\ud800"')]) {
+    assert.notEqual(altered, text, "noncanonical mutation must change current package bytes");
     assert.throws(() => decodeGenericPackage(utf8(altered)), TypeError);
+  }
   assert.throws(() => decodeGenericPackage(Uint8Array.from([0xef, 0xbb, 0xbf, ...baseline])), code("canonical"));
 });
 
@@ -316,18 +318,21 @@ test("public identity helpers bound their preimages and reject accessors without
   assert.throws(() => genericPackageId(nested), code("limit"));
 });
 
-test("real Source official export candidate-4 fixture interoperates with Product codec", async () => {
+test("real Source official export candidate-5 fixture interoperates with Product codec", async () => {
   const { readFileSync } = await import("node:fs");
   // Exact Go TestOwnedGenericPackageRoundTripFreshInstances output, extracted
-  // from the mapped-signature producer's complete Go JSON stream. This proves codec interop;
+  // from the conditional-call producer's complete Go JSON stream. This proves codec interop;
   // formal RPC, Product compilePackage, Core and VM admission remain separate.
-  const fixtureBytes = readFileSync(new URL("../tests/r03/fixtures/generic-package-source-v4.json", import.meta.url));
-  assert.equal(fixtureBytes.length, 2741);
-  assert.equal(hash(fixtureBytes), "435032b9aa3305df439dd11e9e639122f9a97c7f303aa75dd454992d1ae2a249");
+  const fixtureBytes = readFileSync(new URL("../tests/r03/fixtures/generic-package-source-v5.json", import.meta.url));
+  assert.equal(fixtureBytes.length, 2768);
+  assert.equal(hash(fixtureBytes), "30b0c9f5063de2fd2e12662e6ad0d9d96718edab5185f563a4fcd34695a7190d");
+  const predecessor4 = readFileSync(new URL("../tests/r03/fixtures/generic-package-source-v4.json", import.meta.url));
+  assert.equal(hash(predecessor4), "435032b9aa3305df439dd11e9e639122f9a97c7f303aa75dd454992d1ae2a249");
+  assert.throws(() => decodeGenericPackage(predecessor4), code("schema"));
   const input = Uint8Array.from(fixtureBytes), decoded = decodeGenericPackage(input);
-  assert.equal(decoded.packageId, "sha256:24a4a38191f0a7239a7af7105ae7a2e27991157cda279a8b865ce7f10015e8ad");
-  assert.equal(decoded.version, 4);
-  assert.equal(decoded.schemaHash, "ec05631c15f280f54279ba9353fd8fc3ff779349a1f56f7cdb00eba22c767e20");
+  assert.equal(decoded.packageId, "sha256:da704d1fac0dea84fb77f192d331e17f7eb41ad27992479f007df1d76a9c22f7");
+  assert.equal(decoded.version, 5);
+  assert.equal(decoded.schemaHash, "da7eb72ae306eb88863a44c945df77d572a96443a005fefbd787267fe90658bf");
   assert.equal(decoded.payload.scope, "package:wire-candidate");
   assert.equal(decoded.payload.source.path, "/original/main.ts");
   assert.equal(decoded.payload.source.length, 216);

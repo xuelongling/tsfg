@@ -9,8 +9,8 @@ import { genericPackageIoFormat as format, encodeGenericPackageRequest as encode
   encodeGenericPackageResponse as encodeResponse, decodeGenericPackageResponse as decodeResponse } from '../compiler/generic-package-io.mjs';
 import { encodeGenericPackage } from '../compiler/generic-package.mjs';
 
-const pkg = JSON.parse(await readFile(new URL('../tests/r03/fixtures/generic-package-source-v4.json', import.meta.url), 'utf8'));
-const facts = JSON.parse(await readFile(new URL('../tests/r03/fixtures/generic-instance-source-v4.json', import.meta.url), 'utf8'));
+const pkg = JSON.parse(await readFile(new URL('../tests/r03/fixtures/generic-package-source-v5.json', import.meta.url), 'utf8'));
+const facts = JSON.parse(await readFile(new URL('../tests/r03/fixtures/generic-instance-source-v5.json', import.meta.url), 'utf8'));
 const clone = value => structuredClone(value), utf8 = value => new TextEncoder().encode(value);
 const hash = value => createHash('sha256').update(value).digest('hex');
 const id = request => 'sha256:' + hash(Buffer.concat([Buffer.from('tsfg:generic-package-io-request:v1\n'), Buffer.from(canonical(request))]));

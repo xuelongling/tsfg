@@ -17,11 +17,11 @@ const signature = pkg => definition(pkg).returnType;
 const reseal = pkg => { pkg.packageId = genericPackageId(pkg.payload); return pkg; };
 const fixture = name => readFile(new URL('./fixtures/' + name, import.meta.url));
 async function actual() {
-  const names = ['generic-mapped-signature-package-v4.json', 'generic-mapped-signature-instance-v4.json',
+  const names = ['generic-mapped-signature-package-v5.json', 'generic-mapped-signature-instance-v5.json',
     'generic-mapped-signature.source.ts', 'generic-mapped-signature.declaration.d.ts'];
   const bytes = await Promise.all(names.map(fixture));
-  const pins = [[2108, '916ab2c407e848980f10f003da1b8f50a3be6e0f3b4c104c887f03f7db074e62'],
-    [1485, 'bb75431497371e1631fc8c36d742b507448747097e445e568699d4e941f71ec8'],
+  const pins = [[2135, '010b20dc9dbdbca958e9dc57be302edb5e7dac8b190921f7a92eecbd472b19d4'],
+    [1485, '92e908e14aa37a55db70e750f34d0c31bfb646ab56f5c6ff3d3e7f7a44c51f1f'],
     [122, 'eae49419fbca1d64bc6c55bb871da4b0d6eb942bdcd8cf14dbb09da903d6c356'],
     [362, 'd629059f5175a580a8a7b19531c7d8cff1bfa7b61320f6638cf4ee25fbf5a141']];
   bytes.forEach((value, index) => assert.deepEqual([value.length, sha(value)], pins[index]));
@@ -38,21 +38,24 @@ const conditional = () => ({ kind: 'conditional', parameter: 0, checkType: { kin
   extendsType: { kind: 'boolean', parameter: 0 }, trueType: { kind: 'boolean', parameter: 0 },
   falseType: { kind: 'number', parameter: 0 } });
 
-test('mapped package4 rejects predecessor3 and every mixed format identity', async () => {
+test('mapped package5 rejects predecessor versions 3 and 4 and every mixed format identity', async () => {
   const { pkg } = await actual();
   for (const name of ['generic-package-source-v3.json', 'generic-number-add-package-v3.json',
-    'generic-conditional-signature-package-v3.json']) {
+    'generic-conditional-signature-package-v3.json', 'generic-package-source-v4.json',
+    'generic-number-add-package-v4.json', 'generic-conditional-signature-package-v4.json', 'generic-mapped-signature-package-v4.json']) {
     const old = await fixture(name);
     assert.throws(() => decodeGenericPackage(old), code('generic-package-schema'));
   }
   const foreign = clone(pkg); foreign.packageId = 'sha256:' + '0'.repeat(64);
   assert.throws(() => encodeGenericPackage(foreign), code('generic-package-identity'));
   /** @type {Array<[(value: any) => void, string]>} */
-  const changes = [[v => { v.version = 3; }, 'schema'], [v => { v.version = 999; }, 'schema'],
+  const changes = [[v => { v.version = 3; }, 'schema'], [v => { v.version = 4; }, 'schema'], [v => { v.version = 999; }, 'schema'],
     [v => { v.family += '-foreign'; }, 'schema'],
     [v => { v.schemaHash = '38fe7f94987ee409c7f86c6a38a148901cf79933aed1112286cc36d990da24ea'; }, 'schema'],
     [v => { v.schemaHash = '0'.repeat(64); }, 'schema'],
     [v => { v.payload.semanticProfile = 'tsfg-owned-scalar-generics-host-v3'; }, 'schema'],
+    [v => { v.payload.semanticProfile = 'tsfg-owned-scalar-generics-host-v4'; }, 'schema'],
+    [v => { v.schemaHash = 'ec05631c15f280f54279ba9353fd8fc3ff779349a1f56f7cdb00eba22c767e20'; }, 'schema'],
     [v => { v.payload.capabilities.splice(2, 1); }, 'limit'],
     [v => { v.payload.capabilities[2] = 'foreign'; }, 'schema'],
     [v => { v.payload.capabilities.reverse(); }, 'schema'],
@@ -212,7 +215,7 @@ test('root and direct-call type arguments retain leaf roles and never erase hidd
 test('mapped Source scalar facts reject each single occurrence disagreement and every unknown scalar', async () => {
   const { bytes, record } = await actual();
   for (const index of [0, 1]) for (const field of ['return', 'parameter', 'body']) {
-    for (const scalar of [index === 0 ? 'bool' : 'f64', 'unknown', 'i32', null]) {
+    for (const scalar of [record.result.instances[index].returnType === 'bool' ? 'f64' : 'bool', 'unknown', 'i32', null]) {
       const result = clone(record.result), instance = result.instances[index];
       if (field === 'return') instance.returnType = scalar;
       if (field === 'parameter') instance.parameters[0].type = scalar;
