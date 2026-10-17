@@ -1,4 +1,7 @@
 // SPDX-License-Identifier: MIT
+import { buildNullableHir } from "./nullable-hir.mjs";
+import { emitNullableCore } from "./nullable-core-emitter.mjs";
+import { readJson as readNullableJson } from "./nullable-common.mjs";
 import { validateFrontendSnapshot, resolveType, resolveSymbol } from './frontend.mjs';
 import { validateModuleFacts, sourceTrivia } from './module-facts.mjs';
 import { verifyHir, KernelHostSemanticError, scalarOperations as operations } from './module-hir.mjs';
@@ -19,6 +22,10 @@ const types = scalarTypeIds;
 export function buildHir(snapshot) {
   try { validateFrontendSnapshot(snapshot); }
   catch (error) { return { status: "error", diagnostics: [{ code: "r03-d-snapshot", ruleId: "r01-input-boundary", phase: "hir", message: error.message }] }; }
+  if (snapshot?.format?.family === "tsfg.frontend-nullable-candidate") {
+    try { return { status: "ok", hir: buildNullableHir(snapshot) }; }
+    catch (error) { return { status: "error", diagnostics: [{ code: error.code ?? "r03-nullable-hir", ruleId: error.ruleId ?? "r01-input-boundary", phase: "hir", message: error.message }] }; }
+  }
   if (snapshot?.format?.family === "tsfg.frontend-closure-candidate") {
     try { return { status: "ok", hir: buildClosureHir(snapshot) }; }
     catch (error) { return { status: "error", diagnostics: [{ code: error.code ?? "r03-closure-hir", ruleId: error.ruleId ?? "r01-input-boundary", phase: "hir", message: error.message }] }; }
@@ -155,6 +162,7 @@ export function readHir(bytes) {
     if (bytes.byteLength > 16 * 1024 * 1024) throw new TypeError("HIR byte budget exceeded");
     value = JSON.parse(text);
     if (value?.format?.family === "tsfg.closure-hir-candidate") value = readClosureJson(bytes).value;
+    if (value?.format?.family === "tsfg.nullable-hir-candidate") value = readNullableJson(bytes, false).value;
   } catch (error) {
     throw new TypeError("r03-hir-invalid: HIR must contain valid UTF-8 JSON", { cause: error });
   }
@@ -164,6 +172,7 @@ export function readHir(bytes) {
 }
 
 export function lowerHir(hir) {
+  if (hir?.format?.family === "tsfg.nullable-hir-candidate") return emitNullableCore(hir);
   if (hir?.format?.family === "tsfg.closure-hir-candidate") {
     verifyHir(hir);
     throw Object.assign(new TypeError("r03-d-capability: closure Core lowering is not implemented"),

@@ -1,4 +1,5 @@
 // SPDX-License-Identifier: MIT
+import { verifyNullableHir } from './nullable-hir.mjs';
 import { verifyClosureHir } from './closure-hir.mjs';
 import { scalarOperations, validScalarUnary, validScalarBinary } from './scalar-operators.mjs';
 export { scalarOperations } from './scalar-operators.mjs';
@@ -154,6 +155,7 @@ function noShortIf(statement) {
 }
 
 export function verifyHir(hir) {
+  if (hir?.format?.family === 'tsfg.nullable-hir-candidate') return verifyNullableHir(hir);
   if (hir?.format?.family === 'tsfg.closure-hir-candidate') return verifyClosureHir(hir);
   const fail = () => { throw new TypeError("r03-hir-invalid: owned HIR identity, type, source or structure differs"); };
   const moduleMode=hir?.modules!==undefined;
