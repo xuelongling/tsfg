@@ -47,6 +47,8 @@ function projectGraph(source, functions, symbols, inputIdentity, sourceOrigin) {
     if (item.kind === 'variable') return { ...common, kind: 'local', binding: binding(item.symbol), initializer: expression(item.initializer) };
     if (item.kind === 'return' || item.kind === 'expression') return { ...common, value: expression(item.expression) };
     if (item.kind === 'assignment') return { ...common, kind: 'assign', target: expression(item.target), value: expression(item.value) };
+    if (item.kind === 'if') return { ...common, condition: expression(item.condition), thenBody: item.thenBody.map(statement),
+      elseBody: (item.elseBody ?? []).map(statement) };
     return { ...common, ...(item.condition ? { condition: expression(item.condition) } : {}),
       ...Object.fromEntries(['body','thenBody','elseBody'].filter(key => item[key]).map(key => [key, item[key].map(statement)])) };
   }
