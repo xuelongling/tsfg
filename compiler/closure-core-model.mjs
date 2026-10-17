@@ -3,14 +3,15 @@ import { canonical, sha256, scalarName } from './identity.mjs';
 import { coreQuote as quote } from './core-ssa-emitter.mjs';
 import schema from '../contracts/core-closure-candidate.schema.json' with { type: 'json' };
 import registry from '../contracts/registry.json' with { type: 'json' };
+import { closureCoreInitialization } from './closure-core-initialization.mjs';
 export { schema };
 
 /** @returns {never} */
-export function closureCoreFailure(category, message, primary = undefined) {
+export function closureCoreFailure(category, message, primary = undefined, context = undefined) {
   const capability = category === 'capability', code = capability ? 'r03-d-capability' : 'r03-closure-core-' + category;
   throw Object.assign(new TypeError(code + ': ' + message), { code,
     ruleId: capability ? 'r01-ts-baseline' : 'r01-input-boundary', phase: 'lowering',
-    ...(primary ? { primary } : {}) });
+    ...(primary ? { primary } : {}), ...(context ?? {}) });
 }
 
 /** Metadata and actual closure leaves for the shared SSA traversal. The caller
@@ -28,12 +29,7 @@ export function closureCoreModel(program, programHash) {
   const reserveText = text => reserve(Buffer.byteLength(text, 'utf8'));
   limit(program.functions.length <= schema.limits.functions, 'Core function budget exceeded');
   for (const fn of program.functions) limit(fn.parameters.length <= schema.limits.sourceParameters, 'Source parameter budget exceeded');
-  for (const environment of program.environments) for (const slot of environment.slots) {
-    step(); const binding = bindings.get(slot.binding);
-    if (binding.role !== 'parameter')
-      closureCoreFailure('capability', 'closure Core emission for captured local bindings is not implemented', {
-        source: program.source.path, start: binding.range.start, end: binding.range.end, owner: binding.owner, binding: binding.id });
-  }
+  const declarationIndices = closureCoreInitialization(program, step, closureCoreFailure);
   const symbol = fn => 'f' + fn.id.slice(7);
   function environmentType(layout) {
     if (!environmentTypes.has(layout)) environmentTypes.set(layout, { environmentLayout: layout });
@@ -75,7 +71,8 @@ export function closureCoreModel(program, programHash) {
     types: program.types.map(type => type.kind === 'scalar' ? { id: type.id, kind: type.kind, name: type.name }
       : { id: type.id, kind: type.kind, parameters: type.parameters, returnType: type.returnType }),
     environments: program.environments.map(layout => ({ id: layout.id, owner: layout.owner, parent: layout.parent ?? '',
-      slots: layout.slots.map(slot => ({ binding: slot.binding, type: slot.type, writable: slot.writable, role: bindings.get(slot.binding).role })) })),
+      slots: layout.slots.map(slot => ({ binding: slot.binding, type: slot.type, writable: slot.writable, role: bindings.get(slot.binding).role,
+        declaration_index: declarationIndices.get(slot.binding) })) })),
     functions: program.functions.map(fn => ({ id: fn.id, name: fn.name, symbol: symbol(fn), lexical_parent: fn.lexicalParent ?? '',
       lexical_scope: fn.lexicalScope, signature: fn.signature, signature_hash: fn.signatureHash,
       lexical_environment: fn.lexicalEnvironment ?? '', activation_environment: fn.activationEnvironment ?? '',

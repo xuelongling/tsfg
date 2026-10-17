@@ -54,7 +54,8 @@ function moduleAttributes(program, schemaHash, programHash, bytecodeSchema) {
   const environments = program.environments.map(layout => dictionary({
     id: quote(layout.id), owner: quote(layout.owner), parent: quote(layout.parent ?? ''),
     slots: array(layout.slots.map(slot => dictionary({ binding: quote(slot.binding), type: quote(slot.type),
-      writable: slot.writable ? 'true' : 'false', role: quote(bindings.get(slot.binding).role) }))),
+      writable: slot.writable ? 'true' : 'false', role: quote(bindings.get(slot.binding).role),
+      declaration_index: integer(program.functions.find(fn => fn.id === layout.owner).parameters.indexOf(slot.binding)) }))),
   }));
   const functions = program.functions.map(fn => dictionary({
     id: quote(fn.id), name: quote(fn.name), symbol: quote(symbol(fn)), lexical_parent: quote(fn.lexicalParent ?? ''),
@@ -63,7 +64,7 @@ function moduleAttributes(program, schemaHash, programHash, bytecodeSchema) {
     parameters: array(fn.parameters.map(id => dictionary({ binding: quote(id), type: quote(bindings.get(id).type) }))),
     return_type: quote(fn.returnType), start: integer(fn.range.start), end: integer(fn.range.end),
   }));
-  const closure = dictionary({ family: quote('tsfg.core-closure-candidate'), version: integer(1), schema: quote(schemaHash),
+  const closure = dictionary({ family: quote('tsfg.core-closure-candidate'), version: integer(2), schema: quote(schemaHash),
     program_hash: quote(programHash), hir_hash: quote(program.hirHash), root_policy: quote('consumer-recompute-required'),
     types: array(types), environments: array(environments), functions: array(functions) });
   return [
@@ -80,7 +81,7 @@ function moduleAttributes(program, schemaHash, programHash, bytecodeSchema) {
   ].join(', ');
 }
 
-// Frozen 19g contract: complete output for the genuine four-function source.
+// Preserve the complete 19g function bodies under the private v2 metadata.
 // Every placeholder is replaced with cold-verified input identities below.
 const completeGolden = `module attributes {<<A>>} {
   func.func @"<<SYM_E>>"(%v0: i1) -> i1 attributes {<<FA_E>>} {
@@ -162,7 +163,7 @@ test('real returned closure emits all four typed SSA functions with activation a
 
   const schema = JSON.parse(await readFile(new URL('../../contracts/core-closure-candidate.schema.json', import.meta.url), 'utf8'));
   assert.equal(schema.family, 'tsfg.core-closure-candidate');
-  assert.equal(schema.version, 1);
+  assert.equal(schema.version, 2);
   assert.equal(schema.status, 'private Node producer candidate');
   const registry = JSON.parse(await readFile(new URL('../../contracts/registry.json', import.meta.url), 'utf8'));
   assert.equal(registry['tsfg.bytecode'].semver, '0.9.0');

@@ -225,17 +225,14 @@ test('mutual higher-order direct calls preserve hidden env and callable argument
 });
 
 for (const [name, localName] of [['sharedCallableWrites', 'selected'], ['transitiveExternalRootEnvironment', 'selected'], ['shared-mutable', 'state']])
-test(name + ' cold-valid captured local gets an explicit whole-program capability refusal', async () => {
+test(name + ' cold-valid captured local emits the complete program before cold-input mutation is rejected', async () => {
   const c = await realCase(name), local = one(capturedLocals(c)); assert.equal(local.name, localName);
   assert.equal(local.role, 'local'); assert.deepEqual(verifyClosureEnvironments(c.program, c.hir), c.program);
-  assert.throws(() => emitClosureCore(c.program, c.hir), /** @param {any} error */ error => {
-    assert.equal(error.code, 'r03-d-capability'); assert.equal(error.ruleId, 'r01-ts-baseline'); assert.equal(error.phase, 'lowering');
-    assert.ok(error.message.includes('closure Core emission for captured local bindings is not implemented'));
-    assert.deepEqual(error.primary, { source: c.program.source.path, start: local.range.start, end: local.range.end, owner: local.owner, binding: local.id });
-    return true;
-  });
-  // A valid hirHash alone never bypasses 19f's cold verification, even for an
-  // otherwise unsupported local-capture program. No partial IR can be returned.
+  const core = emitClosureCore(c.program, c.hir);
+  assert.equal([...core.matchAll(/^  func[.]func /gm)].length, c.program.functions.length);
+  assert.ok(core.includes('binding = "' + local.id + '"'));
+  assert.ok(core.includes('anchor_kind = "source"'));
+  // A valid hirHash alone never bypasses 19f cold verification.
   const changed = JSON.parse(c.programBefore); changed.functions[0].body.shift();
   assert.equal(changed.hirHash, c.program.hirHash);
   assert.throws(() => emitClosureCore(changed, c.hir), /** @param {any} error */ error =>
