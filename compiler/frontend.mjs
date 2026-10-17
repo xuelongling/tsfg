@@ -1,5 +1,6 @@
 // SPDX-License-Identifier: MIT
 import { verifyNullableSnapshot } from "./nullable-frontend.mjs";
+import { verifyExceptionSnapshot } from "./exception-frontend.mjs";
 import { verifyClosureSnapshot } from "./closure-frontend.mjs";
 import { runLockedFrontend } from "./frontend-execution.mjs";
 import { validateModuleFacts, skipCallTrivia, hasCallArgumentList, identifierName, staticBindingName } from "./module-facts.mjs";
@@ -38,6 +39,7 @@ export const resolveNode = (snapshot, ref) => resolveLocal(snapshot, ref, "nodes
 export const resolveType = (snapshot, ref) => resolveLocal(snapshot, ref, "types");
 
 export function validateFrontendSnapshot(snapshot) {
+  if (snapshot?.format?.family === "tsfg.frontend-exception-candidate") return verifyExceptionSnapshot(snapshot);
   if (snapshot?.format?.family === "tsfg.frontend-nullable-candidate") return verifyNullableSnapshot(snapshot);
   if (snapshot?.format?.family === "tsfg.frontend-closure-candidate") return verifyClosureSnapshot(snapshot);
   if (!matchesSnapshotContract(snapshot)

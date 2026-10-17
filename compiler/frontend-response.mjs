@@ -1,5 +1,6 @@
 // SPDX-License-Identifier: MIT
 import { createHash } from "node:crypto";
+import { importExceptionCapturedResponse } from "./exception-frontend.mjs";
 import { importNullableCapturedResponse, matchesNullableSnapshot } from "./nullable-frontend.mjs";
 import { ownClosureSnapshot, matchesClosureSnapshot } from "./closure-frontend.mjs";
 import { readJson as readClosureJson, origin as checkClosureOrigin, capturedDeclarationProfiles } from "./closure-common.mjs";
@@ -295,6 +296,8 @@ export function materializeFrontendResponse(prepared, response, frontendSource) 
 /** @param {Uint8Array} requestBytes @param {Uint8Array} responseBytes @param {any} origin */
 export async function importCapturedFrontendResponse(requestBytes, responseBytes, origin) {
   try {
+    if (origin && Object.getOwnPropertyDescriptor(origin, "kind")?.value === "owned-go-exception-response")
+      return importExceptionCapturedResponse(requestBytes, responseBytes, origin);
     if (origin && Object.getOwnPropertyDescriptor(origin, "kind")?.value === "owned-go-nullable-response")
       return importNullableCapturedResponse(requestBytes, responseBytes, origin);
     const sourceOrigin = structuredClone(checkClosureOrigin(origin));
