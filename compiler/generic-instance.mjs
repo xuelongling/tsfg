@@ -75,17 +75,35 @@ export function validateGenericInstanceResult(packageBytes, input, requests) {
     instances.set(instance.key, instance);
   }
   const substitute = (type, args) => type.kind === 'parameter' ? args[type.parameter] : type;
-  const scalar = type => type.kind === 'boolean' ? 'bool' : 'f64';
+  const scalar = type => {
+    if (type.kind === 'boolean') return 'bool';
+    if (type.kind === 'number') return 'f64';
+    fail('type');
+  };
+  // These are Source scalar facts, not a host type evaluator. A complete owned
+  // conditional or indexed type must agree at every occurrence in one instance.
+  // Consistent forged facts are not authenticated as official checker output;
+  // Source admission and actual semantic evidence remain separate obligations.
+  const ownedSignatureFacts = new Map();
   let total = 0;
   for (const instance of input.instances) {
     const definition = definitions.get(instance.definition), args = instance.typeArguments;
-    const concrete = type => scalar(substitute(type, args));
-    check(instance.returnType === concrete(definition.returnType), 'type');
+    const occurrence = (type, fact) => {
+      check(fact === 'bool' || fact === 'f64', 'type');
+      if (type.kind !== 'conditional' && type.kind !== 'indexed') {
+        check(fact === scalar(substitute(type, args)), 'type');
+        return;
+      }
+      const key = instance.key + '\0' + canonical(type);
+      if (ownedSignatureFacts.has(key)) check(fact === ownedSignatureFacts.get(key), 'type');
+      else ownedSignatureFacts.set(key, fact);
+    };
+    occurrence(definition.returnType, instance.returnType);
     instance.parameters.forEach((parameter, index) => {
       record(parameter, ['name', 'type', 'origin']);
       const original = definition.parameters[index];
       check(parameter.name === original.name && same(parameter.origin, original.origin), 'origin');
-      check(parameter.type === concrete(original.type), 'type');
+      occurrence(original.type, parameter.type);
     });
     let count = 0;
     const expression = (value, original, depth = 0) => {
@@ -98,6 +116,13 @@ export function validateGenericInstanceResult(packageBytes, input, requests) {
       if (original.kind === 'parameter') {
         check(value.parameter === original.parameter && value.callee === '' && value.arguments.length === 0, 'reference');
         check(value.type === instance.parameters[value.parameter]?.type, 'type');
+      } else if (original.kind === 'number-add') {
+        check(depth === 0 && value.parameter === 0 && value.callee === '' && value.arguments.length === 2, 'reference');
+        check(value.type === 'f64', 'type');
+        value.arguments.forEach((argument, index) => {
+          expression(argument, original.arguments[index], depth + 1);
+          check(argument.kind === 'parameter' && argument.type === 'f64', 'type');
+        });
       } else {
         check(value.parameter === 0 && value.arguments.length === original.arguments.length, 'reference');
         const typeArguments = original.typeArguments.map(type => substitute(type, args));

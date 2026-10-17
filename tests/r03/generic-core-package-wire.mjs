@@ -54,6 +54,12 @@ export function readPacket(packet) {
     for (const block of blocks) for (let i = 0; i < block.instructions; i++) {
       const opcode = u8(), type = u8(), register = u16(), immediate = u32(), from = u32(), to = u32();
       assert.ok(opcode >= 1 && opcode <= 33);
+      assert.ok(type <= 13);
+      const binary = opcode >= 4 && opcode <= 14 || opcode >= 18 && opcode <= 23;
+      const unary = opcode >= 15 && opcode <= 17 || opcode === 33;
+      const operands = binary ? [immediate & 0xffff, immediate >>> 16] : unary ? [immediate & 0xffff] : [];
+      assert.ok(operands.every(value => value < registers));
+      if (unary) assert.equal(immediate >>> 16, 0);
       assert.ok(from < to && from >= start && to <= end || initializer === 1 && from === 0 && to === 0 && end === 0);
       const edges = [], groups = opcode === 24 || opcode === 27 ? 1 : opcode === 25 ? 2 : 0;
       const bits = opcode === 28 || opcode === 32 ? take(8).toString('hex') : undefined;
@@ -61,7 +67,7 @@ export function readPacket(packet) {
         const args = indices(4096); assert.ok(args.every(argument => argument < registers)); edges.push(args);
       }
       if (opcode === 27) { assert.equal(immediate >>> 16, 0); assert.ok(immediate < functionCount); }
-      instructions.push({ opcode, type, register, immediate, start: from, end: to, bits, edges });
+      instructions.push({ opcode, type, register, immediate, start: from, end: to, bits, edges, operands });
     }
     assert.equal(instructions.length, instructionCount);
     const fnSource = mode ? tables.sources[source] : { path: sourcePath, hash: sourceHash, length: sourceLength };
