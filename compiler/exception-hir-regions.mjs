@@ -28,7 +28,9 @@ export function createExceptionHirRegions(definitions, types, budget, claimed) {
       const index = scope.ordinals.get(role) ?? 0;
       const id = exceptionHirIdentity('binding', { ownerKind: 'function', owner: header.id,
         scopePath: scope.node.path, role, index });
-      const binding = { id, name: raw.name, role, type: types.value(raw.type), writable: raw.writable,
+      if (raw.type === 'function' && role !== 'parameter')
+        failure('capability', 'HIR callable bindings require an owned parameter declaration');
+      const binding = { id, name: raw.name, role, type: types.value(raw.type, raw.signature), writable: raw.writable,
         range: raw.range, presence: raw.presence ?? null };
       claimed.add(raw.id); scope.ordinals.set(role, index + 1); scope.bySymbol.set(raw.id, binding);
       scope.node.bindings.push(binding); return binding;
@@ -44,6 +46,8 @@ export function createExceptionHirRegions(definitions, types, budget, claimed) {
     /** @param {any} raw @param {any} scope */
     function target(raw, scope) {
       check(raw && typeof raw === 'object', 'schema', 'HIR write target is missing');
+      if (raw.type === 'function' || raw.signature !== undefined)
+        failure('capability', 'HIR callable write targets require their own tracer');
       if (raw.kind === 'group') {
         const operand = target(raw.operand, scope);
         return { kind: 'targetGroup', type: operand.type, range: raw.range, operand };
@@ -56,11 +60,19 @@ export function createExceptionHirRegions(definitions, types, budget, claimed) {
     /** @param {any} raw @param {any} scope */
     function expression(raw, scope) {
       check(raw && typeof raw === 'object', 'schema', 'HIR expression is missing');
-      if (raw.presenceFlow !== undefined || raw.signature !== undefined)
-        failure('capability', 'nullable or callable HIR expressions require their own tracer');
-      const type = types.value(raw.type), range = raw.range;
+      if (raw.presenceFlow !== undefined)
+        failure('capability', 'nullable HIR expressions require their own tracer');
+      const callable = raw.type === 'function';
+      if (callable) {
+        if (raw.kind !== 'reference' || definitions.get(raw.symbol)?.kind !== 'parameter')
+          failure('capability', 'HIR callable expressions require a direct parameter reference');
+      } else if (raw.signature !== undefined)
+        failure('capability', 'HIR noncallable expressions cannot carry a callable signature');
+      const type = types.value(raw.type, raw.signature), range = raw.range;
       if (raw.kind === 'reference') {
         const binding = resolve(scope, raw.symbol);
+        if (callable) check(binding.role === 'parameter' && binding.type === type,
+          'type', 'HIR callable occurrence differs from its declared parameter type');
         return { kind: 'bindingRead', type, range, binding: binding.id, presenceFlow: null };
       }
       if (raw.kind === 'group') return { kind: 'group', type, range, operand: expression(raw.operand, scope) };

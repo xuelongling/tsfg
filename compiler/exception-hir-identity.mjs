@@ -22,8 +22,18 @@ export function createExceptionHirTypes() {
     return id;
   }
   return {
-    /** @param {string} name */
-    value(name) {
+    /** @param {string} name @param {any} [signature] */
+    value(name, signature = undefined) {
+      if (name === 'function') {
+        // A callable value describes a type, never an inferred runtime target.
+        // The cold consumer currently owns only the exact nonnullable () => bool shape.
+        if (!signature || Object.keys(signature).sort().join(',') !== 'parameters,returnType'
+            || !Array.isArray(signature.parameters) || signature.parameters.length !== 0
+            || signature.returnType !== 'bool')
+          failure('capability', 'HIR callable values require a nonnullable zero-parameter bool signature');
+        return intern({ kind: 'callable', parameters: [], returnType: intern({ kind: 'scalar', name: 'bool' }) });
+      }
+      if (signature !== undefined) failure('capability', 'HIR noncallable values cannot carry a callable signature');
       if (name === 'unknown') return intern({ kind: 'unknown' });
       if (!Object.hasOwn(scalarTypeIds, name)) failure('capability', 'HIR value type is not implemented: ' + name);
       return intern({ kind: 'scalar', name });
