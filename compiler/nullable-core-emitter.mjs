@@ -1,5 +1,6 @@
 // SPDX-License-Identifier: MIT
 import registry from '../contracts/registry.json' with { type: 'json' };
+import { boolTypeId } from './identity.mjs';
 import { verifyNullableHir } from './nullable-hir.mjs';
 import { check, coreSchema, scalarType, nullableType } from './nullable-common.mjs';
 import { emitCoreSsaFunction, coreQuote as quote } from './core-ssa-emitter.mjs';
@@ -10,6 +11,7 @@ export function emitNullableCore(hir) {
   const verified = verifyNullableHir(hir), source = verified.source;
   const coreType = type => {
     if (type === scalarType.id) return 'i32';
+    if (type === boolTypeId) return 'i1';
     check(type === nullableType.id, 'type'); return '!tsfg_nullable.i32<2>';
   };
   const moduleAttributes = [
@@ -28,6 +30,13 @@ export function emitNullableCore(hir) {
       budget: { line: text => reserve(text + '\n'), register: count => check(count <= 1000000, 'limit'),
         block: count => check(count <= 4096, 'limit'), parameters: count => check(count <= 64, 'limit'), step: () => check(++work <= 1000000, 'limit') },
       emitValueLeaf: (expression, api) => {
+        if (expression.kind === 'nullableCoalesce') {
+          const left = api.emit(expression.left), anchor = expression.left.range;
+          const present = api.operation('tsfg_nullable.tag_test', [left], [expression.left.type], boolTypeId, 'tag = 0 : i32', anchor);
+          return api.branchValue(present, expression.type, expression.range,
+            () => api.operation('tsfg_nullable.get', [left], [expression.left.type], expression.type, '', anchor),
+            () => api.emit(expression.right));
+        }
         if (expression.kind !== 'nullableWrap') return undefined;
         return api.operation('tsfg_nullable.wrap_i32', [api.emit(expression.operand)], [expression.operand.type], expression.type, '', expression.range);
       },

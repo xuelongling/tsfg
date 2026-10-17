@@ -34,20 +34,20 @@ function reconstruct(requestBytes, responseBytes, sourceOrigin) {
   const request = readJson(requestBytes), response = readJson(responseBytes);
   check(sha256(request.bytes) === sourceOrigin.requestSha256 && sha256(response.bytes) === sourceOrigin.responseSha256, 'identity');
   record(request.value, ['family','version','schemaHash','input']);
-  check(request.value.family === 'tsfg.nullable-facts-request-candidate' && request.value.version === 1 && request.value.schemaHash === schemaHash, 'schema');
+  check(request.value.family === 'tsfg.nullable-facts-request-candidate' && request.value.version === 2 && request.value.schemaHash === schemaHash, 'schema');
   const input = request.value.input, identityInput = capturedInput(input), inputIdentity = sha256(canonical(identityInput));
   const value = response.value; record(value, ['family','version','schemaHash','requestId','packageId','payload']);
-  check(value.family === 'tsfg.nullable-facts-package-candidate' && value.version === 1 && value.schemaHash === schemaHash, 'schema');
-  check(value.requestId === sha256('tsfg.nullable-facts.request.v1\0' + request.text), 'identity');
+  check(value.family === 'tsfg.nullable-facts-package-candidate' && value.version === 2 && value.schemaHash === schemaHash, 'schema');
+  check(value.requestId === sha256('tsfg.nullable-facts.request.v2\0' + request.text), 'identity');
   record(value.payload, ['inputIdentity','files','facts','exports']);
-  check(value.packageId === sha256('tsfg.nullable-facts.package.v1\0' + schemaHash + '\0' + canonical(value.payload)), 'identity');
+  check(value.packageId === sha256('tsfg.nullable-facts.package.v2\0' + schemaHash + '\0' + canonical(value.payload)), 'identity');
   const { facts, exports } = value.payload;
   const files = identityInput.files.map(file => ({ path: file.path, digest: sha256(file.content), byteLength: Buffer.byteLength(file.content), length: file.content.length, positionUnit: 'utf16' }));
   check(value.payload.inputIdentity === inputIdentity && same(value.payload.files, files), 'identity');
   check(same(facts.inputs, files.map(file => file.path)), 'input');
   const source = { path: input.rootFile, content: input.files.find(file => file.path === input.rootFile).content };
   verifyNullableFacts(source, facts, exports);
-  const snapshotId = sha256('tsfg.frontend-nullable-candidate.snapshot.v1\0' + schemaHash + '\0' + canonical({ inputIdentity, sourceOrigin }));
+  const snapshotId = sha256('tsfg.frontend-nullable-candidate.snapshot.v2\0' + schemaHash + '\0' + canonical({ inputIdentity, sourceOrigin }));
   return { format: snapshotFormat, snapshotId, sourceOrigin, inputIdentity, identityInput,
     source: { ...source, hash: sha256(source.content) }, target: input.target, inputs: files, functions: facts.functions, symbols: facts.symbols, exports,
     capture: { request: request.text, response: response.text } };

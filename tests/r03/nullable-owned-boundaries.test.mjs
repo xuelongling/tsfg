@@ -8,8 +8,8 @@ import { buildHir, verifyHir, printHir, readHir, lowerHir } from '../../compiler
 
 // Actual named-Go records only. A missing private API fails the positive control
 // before any negative case runs. This suite grants no SourceEXE/native credit.
-const fixture = new URL('./fixtures/nullable-owned-scalar-entry/v1/', import.meta.url);
-const schema = 'sha256:3da58c2cabf44bd6c337120300ac688bafa3d8e487c36f1ab0a48a4498699218';
+const fixture = new URL('./fixtures/nullable-owned-scalar-entry/v2/', import.meta.url);
+const schema = 'sha256:badc9425050a8f538fcb7b9397e5ef31fbde96391989dfeebb8cab6a122783bd';
 const coreSchema = 'sha256:8f99963869ac2fed97db0ce90171d89593e4a3de667288eace4fc141c7cbc4bd';
 const hash = value => 'sha256:' + createHash('sha256').update(value).digest('hex');
 const clone = value => JSON.parse(JSON.stringify(value));
@@ -31,8 +31,8 @@ function refreshInput(q, p) {
 }
 function seal(q, p, o) {
   const request = wire(q);
-  p.requestId = hash('tsfg.nullable-facts.request.v1\0' + request.toString('utf8'));
-  p.packageId = hash('tsfg.nullable-facts.package.v1\0' + p.schemaHash + '\0' + jcs(p.payload));
+  p.requestId = hash('tsfg.nullable-facts.request.v2\0' + request.toString('utf8'));
+  p.packageId = hash('tsfg.nullable-facts.package.v2\0' + p.schemaHash + '\0' + jcs(p.payload));
   const response = wire(p);
   o.requestSha256 = hash(request); o.responseSha256 = hash(response);
   return { request, response, origin: o };
@@ -124,10 +124,10 @@ test('actual owned nullable strict packet and cold boundaries', { concurrency: t
   /** @type {[string, ((q:any,p:any,o:any)=>void)][]} */
   const protocol = [
     ['request family', q => { q.family = 'tsfg.frontend-package'; }],
-    ['request version', q => { q.version = 2; }],
+    ['request version', q => { q.version = 1; }],
     ['request schema', q => { q.schemaHash = coreSchema; }],
     ['package family', (q, p) => { p.family = 'tsfg.generic-package'; }],
-    ['package version', (q, p) => { p.version = 2; }],
+    ['package version', (q, p) => { p.version = 1; }],
     ['package schema', (q, p) => { p.schemaHash = coreSchema; }],
     ['origin family', (q, p, o) => { o.kind = 'owned-go-closure-response'; }],
     ['origin producer mode', (q, p, o) => { o.producerDirty = false; }],
@@ -228,7 +228,7 @@ test('actual owned nullable strict packet and cold boundaries', { concurrency: t
 
   await t.test('raw bytes and stale capture digests', { concurrency: true }, async raw => {
     const qtext = request.toString('utf8'), ptext = response.toString('utf8');
-    const badRequest = Buffer.from(qtext.replace('"version":1', '"version":2'));
+    const badRequest = Buffer.from(qtext.replace('"version":2', '"version":1'));
     const badResponse = Buffer.from(ptext.replace('"status":"ok"', '"status":"error"'));
     const duplicateQ = Buffer.from(qtext.replace('{', '{"family":"' + q0.family + '",'));
     const duplicateP = Buffer.from(ptext.replace('{', '{"family":"' + p0.family + '",'));
@@ -247,7 +247,7 @@ test('actual owned nullable strict packet and cold boundaries', { concurrency: t
       if (reseal) {
         if (!qb.equals(request)) {
           const packet = clone(p0);
-          packet.requestId = hash(Buffer.concat([Buffer.from('tsfg.nullable-facts.request.v1\0'), qb]));
+          packet.requestId = hash(Buffer.concat([Buffer.from('tsfg.nullable-facts.request.v2\0'), qb]));
           packetBytes = wire(packet);
         }
         o.requestSha256 = hash(qb); o.responseSha256 = hash(packetBytes);
@@ -261,7 +261,7 @@ test('actual owned nullable strict packet and cold boundaries', { concurrency: t
     const changes = [
       ['unknown field', value => { value.extra = true; }],
       ['mixed family', value => { value.format.family = 'tsfg.frontend-closure-candidate'; }],
-      ['mixed version', value => { value.format.version = 2; }],
+      ['mixed version', value => { value.format.version = 1; }],
       ['mixed schema', value => { assert.equal(value.format.schemaHash, schema); value.format.schemaHash = coreSchema; }],
       ['input identity', value => { value.inputIdentity = hash('forged cold identity'); }],
       ['rehashed captured facts', value => {
