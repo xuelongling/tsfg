@@ -11,14 +11,23 @@ export function createExceptionHirAggregates(raw, definitions, source, types) {
     'limit', 'HIR aggregate declaration budget exceeded');
   check(Array.isArray(raw.sourceCoverage) && raw.sourceCoverage.length <= limits.derived.arrayItems,
     'limit', 'HIR source coverage budget exceeded');
-  const bySymbol = new Map(), byConstructor = new Map();
+  const bySymbol = new Map(), byConstructor = new Map(), byField = new Map();
   /** @type {string[]} */
   const ids = [];
+  // Boolean literals occur both in declaration initializers and function bodies;
+  // keep their one projection independent of lexical binding resolution.
+  /** @param {any} value */
+  function projectBoolean(value) {
+    if (value?.kind !== 'boolean' || value.type !== 'bool' || typeof value.boolean !== 'boolean')
+      failure('capability', 'HIR aggregate boolean leaves require an exact boolean value');
+    return { kind: 'boolean', type: types.value('bool'), range: value.range, value: value.boolean };
+  }
   for (const declaration of raw.declarations) {
     check(Array.isArray(declaration.fields) && Array.isArray(declaration.memberCoverage),
       'schema', 'HIR aggregate member tables are missing');
-    if (declaration.fields.length || declaration.memberCoverage.length)
-      failure('capability', 'HIR aggregate fields require their own tracer');
+    check(declaration.fields.length <= limits.derived.arrayItems
+      && declaration.memberCoverage.length <= limits.derived.arrayItems,
+    'limit', 'HIR aggregate member budget exceeded');
     if (!['value', 'component'].includes(declaration.category) || declaration.noInheritance !== true)
       failure('capability', 'HIR aggregate category or inheritance requires its own tracer');
     if (!Array.isArray(declaration.constructors) || declaration.constructors.length !== 1
@@ -42,12 +51,40 @@ export function createExceptionHirAggregates(raw, definitions, source, types) {
     const constructor = { kind: 'implicitDefault', id: constructorId, owner: id, ordinal: 0,
       type: callableType, signatureHash, signatureDeclaration: null, implementation: null,
       parameters: [], parameterInitializers: [], body: [], range: original.range, bodyRange: null };
+    const fields = [], memberCoverage = [];
+    for (const field of declaration.fields) {
+      if (field.type !== 'bool' || field.initializer === null)
+        failure('capability', 'HIR aggregate fields currently require a boolean initializer');
+      check(fields.length === field.ordinal, 'identity', 'HIR field ordinal differs from declaration order');
+      check(byField.size < limits.derived.bindings, 'limit', 'HIR field table budget exceeded');
+      const definition = definitions.get(field.symbol);
+      check(definition?.kind === 'field' && definition.type === field.type && definition.name === field.name,
+        'scope', 'HIR field has no identical owned symbol');
+      check(!byField.has(field.id) && !bySymbol.has(field.symbol),
+        'identity', 'HIR field registry repeats an identity');
+      const fieldId = exceptionHirIdentity('field', { owner: id, ordinal: field.ordinal });
+      const projected = { id: fieldId, owner: id, ordinal: field.ordinal, name: field.name,
+        nameRange: definition.range, type: types.value(field.type), readonly: field.readonly, access: field.access,
+        optionalSyntax: field.optionalSyntax, definiteAssertionSyntax: field.definiteAssertionSyntax,
+        initializer: projectBoolean(field.initializer), range: field.range };
+      fields.push(projected); byField.set(field.id, { field: projected, rawOwner: declaration.id, rawSymbol: field.symbol });
+      bySymbol.set(field.symbol, { id: fieldId, owner: id, name: field.name, kind: 'field' });
+    }
+    for (const item of declaration.memberCoverage) {
+      if (item.kind !== 'KindPropertyDeclaration')
+        failure('capability', 'HIR aggregate member coverage kind requires its own tracer');
+      const target = bySymbol.get(item.symbol);
+      check(target?.kind === 'field' && target.owner === id && target.name === item.name,
+        'scope', 'HIR member coverage has no identical owned field');
+      memberCoverage.push({ kind: 'field', name: item.name, target: target.id,
+        range: item.range, bodyRange: item.bodyRange });
+    }
     // Nominal identity excludes mutable/derived metadata. All IDs are computed
     // first; full records contain IDs, so the resulting object graph has no cycle.
     check(types.aggregate(declaration.id, identity, { category: declaration.category, name: declaration.name,
       sourcePath: source.path, nameRange: symbol.range, range: declaration.range, bodyRange: declaration.bodyRange,
       nominalKey: declaration.nominalKey, markerOrigin: declaration.markerOrigin, noInheritance: true,
-      fields: [], constructors: [constructor], memberCoverage: [] }) === id,
+      fields, constructors: [constructor], memberCoverage }) === id,
     'identity', 'HIR nominal type registration differs');
     check(types.callable([], id) === callableType, 'identity', 'HIR constructor callable identity differs');
     ids.push(id); bySymbol.set(declaration.symbol, { id, name: declaration.name });
@@ -56,6 +93,37 @@ export function createExceptionHirAggregates(raw, definitions, source, types) {
   }
   return {
     typeIds() { return [...ids]; },
+    projectBoolean,
+    /** @param {any} value @param {any} receiver */
+    projectField(value, receiver) {
+      check(Array.isArray(value.fieldPath) && value.fieldPath.length > 0
+        && value.fieldPath.length <= limits.derived.arrayItems, 'limit', 'HIR field path budget differs');
+      let owner = receiver.type, last;
+      const fieldPath = [];
+      for (const rawId of value.fieldPath) {
+        const entry = byField.get(rawId);
+        check(entry && entry.field.owner === owner, 'identity', 'HIR field path crosses nominal ownership');
+        if (entry.field.access !== 'public')
+          failure('capability', 'HIR private field reads require their own tracer');
+        fieldPath.push(entry.field.id); owner = entry.field.type; last = entry;
+      }
+      check(last && value.symbol === last.rawSymbol && types.value(value.type) === last.field.type,
+        'type', 'HIR field read differs from its final owned member');
+      const permission = value.permission;
+      check(permission.readable === true && permission.constructorSelf === false
+        && permission.writable === !last.field.readonly && permission.classRef === last.rawOwner,
+      'type', 'HIR field permission differs from its final nominal owner');
+      return { kind: 'fieldRead', type: last.field.type, range: value.range, receiver, fieldPath,
+        permission: { readable: true, writable: !last.field.readonly, constructorSelf: false, owner: last.field.owner } };
+    },
+    /** @param {any} value @param {any} left @param {any} right */
+    projectBinary(value, left, right) {
+      if (value.type !== 'bool' || !['===', '!=='].includes(value.operator))
+        failure('capability', 'HIR aggregate binary values require strict boolean equality');
+      const type = types.value('bool');
+      check(left.type === type && right.type === type, 'type', 'HIR binary operands must retain current boolean types');
+      return { kind: 'binary', type, range: value.range, operator: value.operator, left, right };
+    },
     /** @param {string} symbol */
     ownsSymbol(symbol) { return bySymbol.has(symbol); },
     /** @param {any} value */

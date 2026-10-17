@@ -24,7 +24,7 @@ export function projectExceptionHirModel(snapshot) {
   for (const symbol of symbols) {
     check(definitions.size < limits.derived.bindings, 'limit', 'HIR symbol table budget exceeded');
     check(!definitions.has(symbol.id), 'identity', 'HIR symbol registry repeats an identity');
-    if (!['function', 'parameter', 'local', 'class'].includes(symbol.kind))
+    if (!['function', 'parameter', 'local', 'class', 'field'].includes(symbol.kind))
       failure('capability', 'HIR symbol kind is not implemented: ' + symbol.kind);
     definitions.set(symbol.id, symbol);
   }
@@ -72,7 +72,7 @@ export function projectExceptionHirModel(snapshot) {
     projected.push(regions.project(fn, headers.get(fn.symbol)));
   }
   for (const symbol of symbols) check(symbol.kind === 'function' ? headers.has(symbol.id)
-    : symbol.kind === 'class' ? aggregates?.ownsSymbol(symbol.id) : claimed.has(symbol.id),
+    : ['class', 'field'].includes(symbol.kind) ? aggregates?.ownsSymbol(symbol.id) : claimed.has(symbol.id),
   'scope', 'HIR leaves an owned declaration unprojected');
   const exports = [], bindings = [];
   check(Array.isArray(group.bindings) && group.bindings.length <= limits.derived.arrayItems, 'limit', 'HIR export array budget exceeded');

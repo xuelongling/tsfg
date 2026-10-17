@@ -66,6 +66,14 @@ export function createExceptionHirRegions(definitions, types, budget, claimed, a
         if (!aggregates) failure('capability', 'HIR construction requires an owned aggregate registry');
         return aggregates.projectConstruct(raw);
       }
+      if (['boolean', 'field', 'binary'].includes(raw.kind)) {
+        if (!aggregates) failure('capability', 'HIR aggregate values require an owned aggregate registry');
+        if (raw.kind === 'boolean') return aggregates.projectBoolean(raw);
+        if (raw.kind === 'field') return aggregates.projectField(raw, expression(raw.receiver, scope));
+        // Preserve evaluation order and project each current operand only once.
+        const left = expression(raw.left, scope), right = expression(raw.right, scope);
+        return aggregates.projectBinary(raw, left, right);
+      }
       if (raw.presenceFlow !== undefined && (raw.kind !== 'reference' || raw.type === 'function'))
         failure('capability', 'HIR presence flow requires a direct noncallable binding read');
       const callable = raw.type === 'function';
