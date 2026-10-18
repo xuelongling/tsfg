@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: MIT
 // JSON ownership and allocation rules shared by inner packages and outer IO.
 // Profiles remain explicit: an outer envelope never weakens the inner contract.
+import { isProxy } from 'node:util/types';
 /**
  * @typedef {object} GenericJsonPolicy
  * @property {number} bytes
@@ -57,6 +58,8 @@ export function checkGenericJsonValueBudget(input, policy = genericPackageJsonPo
     if (typeof value === "number") { event(); integer(value); add(String(value).length); return; }
     if (typeof value === "boolean" || value === null) { event(); add(value === null ? 4 : value ? 4 : 5); return; }
     check(value && typeof value === "object");
+    // Reject behavioral objects before any prototype, descriptor or value access.
+    check(!isProxy(value));
     check(depth <= limit.depth, "limit"); check(!active.has(value));
     const isArray = Array.isArray(value);
     check(isArray ? Object.getPrototypeOf(value) === Array.prototype
