@@ -1,5 +1,8 @@
 // SPDX-License-Identifier: MIT
 import { buildExceptionHir } from "./exception-hir.mjs";
+import { buildStringHir } from './string-hir.mjs';
+import { readStringHir } from './string-hir-model.mjs';
+import { coreExchangeFormat } from './core-ssa-emitter.mjs';
 import { emitExceptionCore } from "./exception-core-emitter.mjs";
 import { readHirWire } from "./hir-wire.mjs";
 import { failure as exceptionHirFailure } from "./exception-hir-common.mjs";
@@ -21,7 +24,9 @@ export { verifyHir };
 const contract = () => registry['tsfg.hir'];
 const types = scalarTypeIds;
 
-export function buildHir(snapshot) {
+/** @param {any} snapshot @param {any} [stringFactsContext] */
+export function buildHir(snapshot, stringFactsContext = undefined) {
+  if (stringFactsContext !== undefined) return buildStringHir(snapshot, stringFactsContext);
   try { validateFrontendSnapshot(snapshot); }
   catch (error) { return { status: "error", diagnostics: [{ code: "r03-d-snapshot", ruleId: "r01-input-boundary", phase: "hir", message: error.message }] }; }
   if (snapshot?.format?.family === "tsfg.frontend-nullable-candidate") {
@@ -161,8 +166,11 @@ export function buildHir(snapshot) {
       primary: { sourceId: snapshot.source.path, ...(expression?.range ?? first?.range ?? {start:0,end:0}) } }] };
   }
 }
-export const printHir = hir => `${canonical(verifyHir(hir))}\n`;
-export function readHir(bytes) {
+/** @param {any} hir @param {any} [stringFactsContext] */
+export const printHir = (hir, stringFactsContext = undefined) => `${canonical(verifyHir(hir, stringFactsContext))}\n`;
+/** @param {Uint8Array} bytes @param {any} [stringFactsContext] */
+export function readHir(bytes, stringFactsContext = undefined) {
+  if (stringFactsContext !== undefined) return readStringHir(bytes, stringFactsContext);
   const { text, value } = readHirWire(bytes);
   const hir = verifyHir(value);
   if (text !== printHir(hir)) {
@@ -173,7 +181,14 @@ export function readHir(bytes) {
   return hir;
 }
 
-export function lowerHir(hir) {
+/** @param {any} hir @param {any} [stringFactsContext] */
+export function lowerHir(hir, stringFactsContext = undefined) {
+  if (stringFactsContext !== undefined) {
+    const checked = verifyHir(hir, stringFactsContext);
+    throw Object.assign(new TypeError("r03-d-capability: String Core lowering is not implemented"),
+      { code: "r03-d-capability", ruleId: "r01-ts-baseline", phase: "lowering",
+        primary: { sourceId: checked.source.path, ...checked.functions[0].body[0].value.range } });
+  }
   if (hir?.format?.family === "tsfg.exception-hir-candidate") return emitExceptionCore(hir);
   if (hir?.format?.family === "tsfg.nullable-hir-candidate") return emitNullableCore(hir);
   if (hir?.format?.family === "tsfg.closure-hir-candidate") {
@@ -184,7 +199,7 @@ export function lowerHir(hir) {
   if (hir?.format?.family === 'tsfg.reference-hir-candidate') return emitReferenceCore(hir);
   const verified = verifyHir(hir), moduleMode = !!verified.modules;
   const sourceView = source => ({ path: source.path, hash: source.hash, length: source.content.length });
-  return emitScalarCore({ exchange: { version: contract().semver, bytecodeSchema: registry['tsfg.bytecode'].schemaHash },
+  return emitScalarCore({ exchange: coreExchangeFormat,
     inputIdentity: verified.inputIdentity, source: sourceView(verified.source), target: verified.target,
     functions: verified.functions.map(fn => ({ ...fn, symbol: moduleMode ? 'f' + fn.id.slice(7) : fn.name })),
     ...(moduleMode ? { moduleState: { sources: verified.sources.map(sourceView), modules: verified.modules,

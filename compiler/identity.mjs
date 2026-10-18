@@ -27,6 +27,8 @@ export function own(value) {
 export const i32TypeId = sha256("tsfg.type\0i32");
 export const i32SignatureHash = sha256("tsfg.signature\0()->i32");
 export const boolTypeId = sha256("tsfg.type\0bool");
+// Nominal managed String values remain distinct from every scalar and runtime handle.
+export const stringTypeId = sha256("tsfg.type\0string");
 export const integerNames = ["i8", "i16", "i32", "i64", "u8", "u16", "u32", "u64", "isize", "usize"];
 export const scalarTypeIds = Object.fromEntries([...integerNames, "bool", "f32", "f64"].map(name => [name, sha256(`tsfg.type\0${name}`)]));
 export const scalarName = id => Object.keys(scalarTypeIds).find(name => scalarTypeIds[name] === id);

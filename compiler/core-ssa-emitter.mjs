@@ -2,6 +2,12 @@
 import { i32TypeId, boolTypeId, scalarName, own } from './identity.mjs';
 import { scalarOperations as operations } from './scalar-operators.mjs';
 import { floatNames } from './float.mjs';
+import hirDescriptor from '../contracts/hir.schema.json' with { type: 'json' };
+import registry from '../contracts/registry.json' with { type: 'json' };
+
+// HIR representation versions evolve independently from the admitted Core exchange.
+export const coreExchangeFormat = own({ version: hirDescriptor['x-coreExchangeVersion'],
+  bytecodeSchema: registry['tsfg.bytecode'].schemaHash });
 
 const floatType = id => floatNames.includes(scalarName(id));
 

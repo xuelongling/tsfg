@@ -1,8 +1,8 @@
 <!-- SPDX-License-Identifier: MIT -->
 
-# tsfg.hir 0.9.0
+# tsfg.hir 0.10.0
 
-Prospective isolated M14 candidate, awaiting explicit Owner adoption. The ordinary owned-HIR JSON shape and256-function limit are unchanged except for its exact contract version; the included Core exchange now admits the concrete512-function generic closure through the same scalar emitter.
+Root-adopted exact development format. The ordinary scalar/module shape and256-function limit remain. The explicit selected string-facts context additionally admits1..64 zero-parameter functions with nominal managed String constants and returns. HIR0.10 and the existing Core0.9 exchange have independent version metadata; the scalar emitter still admits the concrete512-function generic closure.
 
 `createCompilerSession` reuses owned HIR/Core/R04 output only for an unchanged
 checked Snapshot identity, compiler input fingerprint and source-built producer
@@ -116,7 +116,7 @@ claimed. Logical events remain explicit and cannot be replaced with physical
 instruction accounting. Full/incremental compiler outputs and formal Runtime
 results are tested across source/control changes.
 
-This prospective registry sets HIR/Core and bytecode to0.9.0, wire9 and capability19; FrontendSnapshot remains0.8.0. They include nominal integers, bool, f32/f64 and owned module/authorized-host records. docs/r03-integer-vm.md records the earlier M07 wire6/capability17 slice; it does not describe the current wire. Old and mixed schema identities are rejected, and no older-format compatibility window is promised. Scalar identities, original source anchors, complete verification and logical/physical budget ordering remain in force.
+This registry sets HIR to0.10.0 and Core/bytecode to0.9.0, wire9 and capability19; FrontendSnapshot remains0.8.0. They include nominal integers, bool, f32/f64 and owned module/authorized-host records. docs/r03-integer-vm.md records the earlier M07 wire6/capability17 slice; it does not describe the current wire. Old and mixed schema identities are rejected, and no older-format compatibility window is promised. Scalar identities, original source anchors, complete verification and logical/physical budget ordering remain in force.
 
 Module-mode HIR owns complete source, module, global, host-import and closure
 records. Functions retain their sourcePath and source/module-initialization
@@ -128,3 +128,28 @@ owned facts before closure pruning. These records lower to the prospective wire9
 module tables described by contracts/bytecode.md, rather than a second format.
 
 Generic concrete owned HIR remains its distinct candidate-v1 cold format. `lowerGenericHir` independently validates package context, instance linkage, signatures, original metadata/anchors and complete closure before using the ordinary scalar emitter. It emits the exact same Core0.9 version and bytecode schema hash as `lowerHir`; neither fabricated source content nor a second lowering is introduced. `compilePackage` routes its owned frontend result through the shared producer and unchanged formal-artifact input checks. This source route alone is not evidence that candidate Source/Runtime executables were admitted or run. The complete previous registry/source/artifact combination is the rollback unit; old Core0.8/wire8 and mixed schema identities reject.
+
+## Selected string-facts projection
+
+The existing buildHir/verifyHir/readHir/printHir/lowerHir interfaces accept an optional
+stringFactsContext with exact own data fields factsBytes and expectedPackageId.
+Only that explicit context selects the string profile. Old scalar/module and
+other candidate callers retain their single-argument interface. The job selects
+expectedPackageId from its actual producer result; it must not infer that expected
+identity from untrusted persisted HIR or arbitrary candidate bytes.
+
+The context uses the unchanged complete string-facts v1 package. Its packageId,
+the complete build input and HIR inputIdentity must match. Every source, owner,
+function, nominal type/signature, UTF16 range and ordered code unit is checked
+against that selected package. String return types use managedReference/string
+and the nominal tsfg.type-NUL-string identity; stringConstant owns required
+codeUnits, including empty values, NUL and isolated/reversed surrogate units.
+No heap handle, ABI tag, source parser or decoded replacement string is stored.
+
+The same HIR wire family uses exact0.10 identity and JCS+oneLF; no0.9 compatibility
+reader is installed. String-profile JSON has2MiB byte,64 depth,200000 token and
+1MiB string limits; values retain the selected facts'16384/65536 code-unit caps.
+Proxy/accessor/cycle and allocation checks precede canonicalization or copying.
+Core exchange version stays0.9 via x-coreExchangeVersion in the existing schema.
+A validated String lowerHir returns explicit unsupported capability; this slice
+provides no Core String, bytecode/VM execution, Frontend012 admission or StringView.

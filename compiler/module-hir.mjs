@@ -1,4 +1,5 @@
 // SPDX-License-Identifier: MIT
+import { verifyStringHir } from './string-hir-model.mjs';
 import { verifyExceptionHir } from './exception-hir.mjs';
 import { verifyNullableHir } from './nullable-hir.mjs';
 import { verifyClosureHir } from './closure-hir.mjs';
@@ -155,7 +156,9 @@ function noShortIf(statement) {
   return ["block", "return", "assign"].includes(statement.kind);
 }
 
-export function verifyHir(hir) {
+/** @param {any} hir @param {any} [stringFactsContext] */
+export function verifyHir(hir, stringFactsContext = undefined) {
+  if (stringFactsContext !== undefined) return verifyStringHir(hir, stringFactsContext);
   if (hir?.format?.family === "tsfg.exception-hir-candidate") return verifyExceptionHir(hir);
   if (hir?.format?.family === 'tsfg.nullable-hir-candidate') return verifyNullableHir(hir);
   if (hir?.format?.family === 'tsfg.closure-hir-candidate') return verifyClosureHir(hir);

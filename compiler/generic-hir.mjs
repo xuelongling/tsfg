@@ -4,6 +4,7 @@ import { decodeGenericPackage, genericDefinitionKey, genericPackageFormat, gener
 import { checkGenericJsonValueBudget } from './generic-json.mjs';
 import { readGenericJson } from './generic-json.mjs';
 import { emitScalarCore } from './scalar-core-emitter.mjs';
+import { coreExchangeFormat } from './core-ssa-emitter.mjs';
 import { genericInstanceKey, genericPackageContext, validateGenericInstanceResult } from './generic-instance.mjs';
 import bytecodeSchema from '../contracts/bytecode.schema.json' with { type: 'json' };
 import registry from '../contracts/registry.json' with { type: 'json' };
@@ -211,7 +212,7 @@ export function readGenericHir(bytes) {
 
 // The owned generic HIR keeps its own cold verifier and candidate provenance.
 // Its concrete scalars cross exactly the ordinary HIR's Core/R04 exchange.
-export const genericCoreFormat = own({ version: registry['tsfg.hir'].semver,
+export const genericCoreFormat = own({ version: coreExchangeFormat.version,
   bytecodeSchema: registry['tsfg.bytecode'].schemaHash });
 export function lowerGenericHir(hir) {
   const verified = verifyGenericHir(hir);
