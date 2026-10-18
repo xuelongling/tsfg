@@ -5,8 +5,9 @@ import { targetDomain, targetFailure as failure, compareBytes, targetBudget } fr
 /** Context-insensitive may analysis of the already verified owned expression
  * graph. It never reparses source, invents targets from signatures, specializes
  * environment instances or evaluates scalar values in the host language.
+ * @param {import('./closure-call-effects.mjs').ClosureFixedFlow} [fixed]
  */
-export function solveClosureTargets(hir, roots, hirHash) {
+export function solveClosureTargets(hir, roots, hirHash, fixed = undefined) {
   if (hir?.format?.family !== 'tsfg.closure-hir-candidate')
     throw Object.assign(new TypeError('r03-d-capability: target propagation requires owned closure HIR'),
       { code: 'r03-d-capability', ruleId: 'r01-ts-baseline', phase: 'analysis' });
@@ -15,6 +16,9 @@ export function solveClosureTargets(hir, roots, hirHash) {
   const summaries = new Map(), ancestors = new Map(), shared = new Map(), usedShared = new Set(), sites = new Map(), forcedUnknown = new Set();
   const queue = [], queued = new Set();
   const callable = type => types.get(type)?.kind === 'function';
+  /** @param {import('./closure-targets.mjs').ClosureTargetSet} value
+   * @returns {import('./closure-target-domain.mjs').TargetValue} */
+  const publishedValue = value => ({ top:value.top, ids:new Set(value.functions) });
   function collectBindings(body) {
     for (const item of body) {
       if (item.kind === 'local') bindings.set(item.binding.id, { ...item.binding, kind: 'local' });
@@ -26,7 +30,8 @@ export function solveClosureTargets(hir, roots, hirHash) {
     for (const p of fn.parameters) bindings.set(p.id, { ...p, kind: 'parameter' });
     collectBindings(fn.body);
     summaries.set(fn.id, { fn, reached: false, externalOwners: new Set(),
-      parameters: new Map(fn.parameters.filter(p => callable(p.type)).map(p => [p.id, domain.bottom()])),
+      parameters: new Map(fn.parameters.filter(p => callable(p.type)).map(p => [p.id, fixed
+        ? publishedValue(fixed.records.get(fn.id).parameters.find(entry => entry.binding === p.id).allowed) : domain.bottom()])),
       returns: callable(fn.returnType) ? domain.bottom() : null, writes: new Map(), unknownEffects: false });
   }
   for (const fn of functions.values()) {
@@ -41,6 +46,8 @@ export function solveClosureTargets(hir, roots, hirHash) {
   for (const fn of functions.values()) for (const capture of fn.captures) {
     if (callable(bindings.get(capture.binding)?.type)) captured.add(capture.binding);
   }
+  // Fixed slot domains survive a narrower body that no longer captures/writes them.
+  if (fixed) for (const row of fixed.records.values()) for (const slot of row.slotWrites) captured.add(slot.binding);
   for (const id of captured) shared.set(id, bindings.get(id).kind === 'function' ? domain.single(id) : domain.bottom());
   function schedule(id) { if (!queued.has(id)) { queued.add(id); queue.push(id); } }
   function scheduleReached() {
@@ -102,14 +109,17 @@ export function solveClosureTargets(hir, roots, hirHash) {
     const site = sites.get(key); site.targets = domain.join(site.targets, targets);
     return key;
   }
-  function unknownCall(summary, state, arguments_) {
+  function unknownCall(summary, state, arguments_, value, path) {
     markUnknown(summary);
     // Unknown code may invoke the actual callable arguments, with unknown
     // callable parameters. Only discovered owned code values create edges.
-    for (const argument of arguments_) if (argument) for (const id of argument.ids) {
+    for (const [argumentIndex,argument] of arguments_.entries()) if (argument) for (const id of argument.ids) {
       mergeEnvironment(id, summary.externalOwners);
       const callback = markReached(id);
-      for (const p of callback.fn.parameters) if (callable(p.type)) mergeMap(callback.parameters, p.id, domain.top());
+      for (const [index,p] of callback.fn.parameters.entries()) if (callable(p.type)) {
+        if (fixed) fixed.observe(id,index,domain.wire(domain.top()),summary.fn.id,path,value.arguments[argumentIndex].range);
+        else mergeMap(callback.parameters, p.id, domain.top());
+      }
     }
     // No HostSemanticContract is available on this private HIR route. Preserve
     // possible callback/shared writes rather than declaring unknown calls pure.
@@ -135,17 +145,24 @@ export function solveClosureTargets(hir, roots, hirHash) {
       if (callee.fn.signature !== value.signature) failure('signature', 'discovered call edge has a different owned signature');
       for (const [index, parameter] of callee.fn.parameters.entries()) if (callable(parameter.type)) {
         if (!arguments_[index]) failure('signature', 'callable parameter has no callable argument value');
-        mergeMap(callee.parameters, parameter.id, arguments_[index]);
+        if (fixed) fixed.observe(id,index,domain.wire(arguments_[index]),summary.fn.id,path,value.arguments[index].range);
+        else mergeMap(callee.parameters, parameter.id, arguments_[index]);
       }
       if (result !== null) {
         if (callee.returns === null) failure('signature', 'discovered callable result is scalar');
-        result = domain.join(result, callee.returns);
+        result = domain.join(result, fixed ? publishedValue(fixed.records.get(id).returns) : callee.returns);
       }
-      for (const [binding, targets] of callee.writes) store(summary, state, binding, targets, true);
-      if (callee.unknownEffects) markUnknown(summary);
+      if (fixed) {
+        const published = fixed.records.get(id);
+        for (const slot of published.slotWrites) store(summary,state,slot.binding,publishedValue(slot.targets),true);
+        if (published.effects.unknown) unknownCall(summary,state,arguments_,value,path);
+      } else {
+        for (const [binding, targets] of callee.writes) store(summary, state, binding, targets, true);
+        if (callee.unknownEffects) markUnknown(summary);
+      }
     }
     if (saved.top) {
-      unknownCall(summary, state, arguments_);
+      unknownCall(summary, state, arguments_, value, path);
       if (result !== null) result = domain.join(result, domain.top());
     }
     return result;

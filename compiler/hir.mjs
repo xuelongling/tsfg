@@ -23,6 +23,7 @@ import { buildClosureHir } from "./closure-hir.mjs";
 export { verifyHir };
 export { analyzeModuleCalls } from './module-hir.mjs';
 export { verifyKernelParallelGroup } from './kernel-access.mjs';
+export { analyzeClosureCalls, verifyClosureCalls, printClosureCalls, readClosureCalls } from './closure-call-effects.mjs';
 const contract = () => registry['tsfg.hir'];
 const types = scalarTypeIds;
 
