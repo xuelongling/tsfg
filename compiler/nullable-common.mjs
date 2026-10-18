@@ -1,8 +1,9 @@
 // SPDX-License-Identifier: MIT
 import descriptor from '../contracts/nullable-owned-bridge-candidate.schema.json' with { type: 'json' };
+import presenceDescriptor from '../contracts/nullable-presence-capture-candidate.schema.json' with { type: 'json' };
 import coreDescriptor from '../contracts/core-nullable-candidate.schema.json' with { type: 'json' };
 import { canonical, own, sha256 } from './identity.mjs';
-import { readGenericJson, checkGenericJsonValueBudget } from './generic-json.mjs';
+import { readGenericJson, checkGenericJsonValueBudget, copyGenericJsonBytes } from './generic-json.mjs';
 export { canonical, own, sha256 };
 export const schemaHash = sha256(canonical(descriptor));
 export const coreSchema = 'sha256:8f99963869ac2fed97db0ce90171d89593e4a3de667288eace4fc141c7cbc4bd';
@@ -70,3 +71,75 @@ export function presenceMask(shape) {
   return (shape.undefined ? 1 : 0) | (shape.null ? 2 : 0);
 }
 export const valueType = shape => { const mask = presenceMask(shape); return mask ? nullableTypes[mask - 1].id : scalarType.id; };
+
+// Source4 capture is a separate finite consumer; default3 diagnostics and IDs stay intact.
+export const presenceSchemaHash = sha256(canonical(presenceDescriptor));
+export const presenceSourceSchema = presenceDescriptor.sourceSchemaHash;
+export const presenceSnapshotFormat = Object.freeze({ family: snapshotFormat.family, version: 4, schemaHash: presenceSchemaHash });
+const presenceLimits = Object.freeze({ bytes: presenceDescriptor.limits.wireBytes, depth: presenceDescriptor.limits.depth,
+  jsonTokens: presenceDescriptor.limits.jsonTokens, stringBytes: presenceDescriptor.limits.stringUTF8Bytes, allowNul: true, rejectPrototypeKeys: true });
+const presenceErrors = new WeakSet();
+check(presenceSchemaHash === 'sha256:1c1e5c0e7b43a0a70fce4f73173033ad8a60554d8557533f6343b29c8c4cf5ce'
+  && sha256(canonical(presenceDescriptor.sourceDescriptor)) === presenceSourceSchema, 'schema');
+/** @returns {never} */
+export function presenceFailure(category, primary = undefined, cause = undefined) {
+  if (!presenceDescriptor.errors.categories.includes(category)) category = 'source';
+  const code = 'r03-nullable-' + category;
+  const error = Object.assign(new TypeError(code + ': invalid private nullable presence capture'),
+    { code, ruleId: 'r01-input-boundary', phase: 'frontend' });
+  if (primary !== undefined) Object.defineProperty(error, 'primary', { value: Object.freeze({ ...primary }), enumerable: true });
+  if (cause !== undefined) Object.defineProperty(error, 'cause', { value: cause });
+  presenceErrors.add(error); throw error;
+}
+/** @returns {never} */
+export function presenceRethrow(error, primary = undefined) {
+  if (presenceErrors.has(error)) throw error;
+  const code = typeof error?.code === 'string' ? error.code : '';
+  const generic = code.startsWith('generic-package-'), suffix = code.split('-').at(-1);
+  const category = generic ? ({ utf8: 'json', json: 'json', canonical: 'canonical', input: 'input', limit: 'limit' })[suffix] ?? 'schema'
+    : /^(r03-nullable-|r03-closure-)/.test(code) && presenceDescriptor.errors.categories.includes(suffix) ? suffix : 'source';
+  presenceFailure(category, ['limit','identity','context'].includes(category) ? undefined : primary, generic ? error : undefined);
+}
+export function presenceBudget(value) {
+  try { checkGenericJsonValueBudget(value, presenceLimits); } catch (error) { presenceRethrow(error); }
+}
+const field = (value, key) => value && typeof value === 'object' && !Array.isArray(value) && Object.hasOwn(value, key) ? value[key] : undefined;
+// Only safe own fields after generic preflight; these are domain counts, not another JSON walker.
+export function presenceDomainBudget(facts) {
+  const functions = field(facts, 'functions'), symbols = field(facts, 'symbols');
+  if (Array.isArray(symbols)) check(symbols.length <= 4096, 'limit');
+  if (!Array.isArray(functions)) return;
+  check(functions.length <= 512, 'limit'); let guards = 0;
+  for (const fn of functions) {
+    const params = field(fn, 'parameters'); if (Array.isArray(params)) check(params.length <= 64, 'limit');
+    const pending = [field(fn, 'body')]; let localGuards = 0, statements = 0;
+    while (pending.length) {
+      const body = pending.pop(); if (!Array.isArray(body)) continue;
+      statements += body.length; check(statements <= 4096, 'limit');
+      for (const item of body) {
+        const kind = field(item, 'kind');
+        if (kind === 'if') { check(++localGuards <= 2 && ++guards <= 1024, 'limit'); pending.push(field(item, 'thenBody'), field(item, 'elseBody')); }
+        if (kind === 'block') pending.push(field(item, 'body'));
+      }
+    }
+  }
+}
+export function readPresenceJson(bytes) {
+  try {
+    const input = readGenericJson(copyGenericJsonBytes(bytes, presenceLimits), presenceLimits); presenceBudget(input.value);
+    presenceDomainBudget(field(field(input.value, 'payload'), 'facts'));
+    check(input.text === canonical(input.value), 'canonical'); return input;
+  } catch (error) { presenceRethrow(error); }
+}
+export function presenceOrigin(value) {
+  presenceBudget(value); record(value, ['kind','producerBaseOid','producerDirty','requestSha256','responseSha256','testedInputSetHash']);
+  check(value.kind === 'owned-go-nullable-response' && typeof value.producerBaseOid === 'string'
+    && /^[0-9a-f]{40}$/.test(value.producerBaseOid) && typeof value.producerDirty === 'boolean', 'identity');
+  for (const key of ['requestSha256','responseSha256','testedInputSetHash']) check(typeof value[key] === 'string' && /^sha256:[0-9a-f]{64}$/.test(value[key]), 'identity');
+  return value;
+}
+export function presenceOwn(value) {
+  presenceBudget(value);
+  // JSON expands already-safe aliases at each serialized position; structuredClone alone preserves them.
+  return own(JSON.parse(canonical(value)));
+}
