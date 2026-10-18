@@ -6,6 +6,7 @@
 #include "nullable.h"
 #include "nullable-wire.h"
 #include "string-core.h"
+#include "array-core.h"
 #include "mlir/Dialect/Func/IR/FuncOps.h"
 #include "mlir/Dialect/ControlFlow/IR/ControlFlowOps.h"
 #include "mlir/IR/DialectRegistry.h"
@@ -14,6 +15,11 @@
 #include "llvm/Support/MemoryBuffer.h"
 #include "llvm/Support/raw_ostream.h"
 #include "llvm/Support/Program.h"
+#if defined(_WIN32)
+#include <cstdio>
+#include <fcntl.h>
+#include <io.h>
+#endif
 
 namespace {
 constexpr size_t referenceByteBudget = 8388608;
@@ -56,6 +62,7 @@ int main(int argc, char **argv) {
   tsfg::registerCoreDialect(registry);
   tsfg::nullable::registerDialect(registry);
   tsfg::strings::registerDialect(registry);
+  tsfg::arrays::registerDialect(registry);
   registry.insert<mlir::func::FuncDialect, mlir::cf::ControlFlowDialect>();
   mlir::MLIRContext context(registry);
   context.disableMultithreading();
@@ -67,18 +74,19 @@ int main(int argc, char **argv) {
   const bool reference = module->getOperation()->hasAttr("tsfg_core.reference");
   const bool nullable = tsfg::nullable::usesCandidate(*module);
   const bool stringCandidate = tsfg::strings::usesCandidate(*module);
+  const bool arrayCandidate = tsfg::arrays::usesCandidate(*module);
   const bool nullableWire = llvm::StringRef(argv[1]) == "--emit-nullable-candidate";
   // The shared legacy stdin/MLIR parser remains unchanged. Apply the private
   // format budget before candidate metadata, typed verification and CFG work.
-  if ((reference || nullable || nullableWire || stringCandidate) && (*input)->getBufferSize() > referenceByteBudget) {
-    llvm::errs() << (stringCandidate ? "[core-ir-string-budget]" :
+  if ((reference || nullable || nullableWire || stringCandidate || arrayCandidate) && (*input)->getBufferSize() > referenceByteBudget) {
+    llvm::errs() << (arrayCandidate ? "[core-ir-array-budget]" : stringCandidate ? "[core-ir-string-budget]" :
                      nullable || nullableWire ? "[core-ir-nullable-budget]" : "[core-ir-reference-budget]")
                  << " input exceeds candidate byte budget\n";
     return 3;
   }
   auto version = module->getOperation()->getAttrOfType<mlir::StringAttr>("tsfg_core.version");
   if (!version || version.getValue() != "0.9.0") {
-    llvm::errs() << (stringCandidate ? "[core-ir-string-identity]" : "[core-ir-identity]")
+    llvm::errs() << (arrayCandidate ? "[core-ir-array-identity]" : stringCandidate ? "[core-ir-string-identity]" : "[core-ir-identity]")
                  << " expected Core IR 0.9.0\n";
     return 3;
   }
@@ -87,6 +95,15 @@ int main(int argc, char **argv) {
     return 3;
   }
   if (mlir::failed(tsfg::verifyCoreModule(*module))) return 3;
+  if (arrayCandidate && (nullableWire || llvm::StringRef(argv[1]) == "--emit-bytecode")) {
+#if defined(_WIN32)
+    // This private wire diagnostic has an exact LF byte contract. LLVM exposes
+    // binary mode helpers for stdin/stdout only; use their CRT mechanism here.
+    if (_setmode(_fileno(stderr), _O_BINARY) == -1) return 3;
+#endif
+    llvm::errs() << "[r04-core-array-unsupported] Array candidate has no wire encoding\n";
+    return 3;
+  }
   if (stringCandidate && (nullableWire || llvm::StringRef(argv[1]) == "--emit-bytecode")) {
     llvm::errs() << "[r04-core-string-unsupported] String candidate has no wire encoding\n";
     return 3;
@@ -119,12 +136,12 @@ int main(int argc, char **argv) {
   }
   // The current optimization pipeline is deliberately the canonical identity
   // pass: it performs full verification and retains every event/failure anchor.
-  if (reference || nullable || stringCandidate) {
+  if (reference || nullable || stringCandidate || arrayCandidate) {
     ReferenceOutput output;
     module->print(output, mlir::OpPrintingFlags().printGenericOpForm());
     output << '\n';
     if (output.exceeded()) {
-      llvm::errs() << (stringCandidate ? "[core-ir-string-budget]" :
+      llvm::errs() << (arrayCandidate ? "[core-ir-array-budget]" : stringCandidate ? "[core-ir-string-budget]" :
                        nullable ? "[core-ir-nullable-budget]" : "[core-ir-reference-budget]")
                    << " output exceeds candidate byte budget\n";
       return 3;

@@ -3,7 +3,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { buildHir, verifyHir, printHir, readHir, lowerHir } from '../../compiler/hir.mjs';
-import { fixtures, fresh, context, deeplyFrozen, failure, hirError, trustedHirError } from './array-test-fixtures.mjs';
+import { fixtures, fresh, context, deeplyFrozen, failure, hirError, trustedHirError, pinned } from './array-test-fixtures.mjs';
 
 /** @param {any} value @returns {any} */
 function nullRecords(value) {
@@ -126,14 +126,14 @@ test('25b canonical wire and declared finite function bound reject without parti
   assert.deepEqual(bytes,Buffer.from(row.hir.hirText));
 });
 
-test('25b shared equal type objects are harmless acyclic input and no Array Core is fabricated', async () => {
+test('25b shared equal type objects remain harmless acyclic input for complete Array Core', async () => {
   const row=(await fixtures())[0], h=fresh(row.hir.expectedHir);
   h.functions[1].returnType=h.functions[0].returnType;
+  const before=fresh(h);
   assert.deepEqual(verifyHir(h,context(row)),row.hir.expectedHir);
-  let returned;
-  const e=failure(()=>{returned=lowerHir(fresh(row.hir.expectedHir),context(row));});
-  assert.deepEqual(e,{name:'TypeError',message:'r03-d-capability: Array Core lowering is not implemented',
-    code:'r03-d-capability',ruleId:'r01-ts-baseline',phase:'lowering',
-    primary:{sourceId:row.facts.package.payload.rootFile,...row.facts.package.payload.functions[0].body.at(-1).value.range}});
-  assert.equal(returned,undefined);
+  const oracle=await pinned('./array-core-oracle-v1.json',90582,'fc20c7f86b0253e89d10f0a7d3bf353b17d637574ad3f131df60f48394ccb7de');
+  const expected=oracle.cases.find(c=>c.name===row.facts.name);assert.ok(expected);
+  assert.equal(lowerHir(h,context(row)),expected.core);
+  assert.deepEqual(h,before);
+  assert.strictEqual(h.functions[1].returnType,h.functions[0].returnType);
 });

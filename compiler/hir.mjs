@@ -19,7 +19,8 @@ import { floatNames } from './float.mjs';
 import { emitScalarCore } from './scalar-core-emitter.mjs';
 import { emitReferenceCore } from './reference-core-emitter.mjs';
 import { emitStringCore } from './string-core-emitter.mjs';
-import { buildArrayHir, rejectArrayCore } from './array-hir.mjs';
+import { buildArrayHir } from './array-hir.mjs';
+import { emitArrayCore } from './array-core-emitter.mjs';
 import { isArrayFactsContext, readArrayHir } from './array-hir-model.mjs';
 
 import { buildClosureHir } from "./closure-hir.mjs";
@@ -191,7 +192,7 @@ export function readHir(bytes, factsContext = undefined) {
 
 /** @param {any} hir @param {any} [factsContext] */
 export function lowerHir(hir, factsContext = undefined) {
-  if (isArrayFactsContext(factsContext)) return rejectArrayCore(hir, factsContext);
+  if (isArrayFactsContext(factsContext)) return emitArrayCore(hir, factsContext);
   if (factsContext !== undefined) return emitStringCore(hir, factsContext);
   if (hir?.format?.family === "tsfg.exception-hir-candidate") return emitExceptionCore(hir);
   if (hir?.format?.family === "tsfg.nullable-hir-candidate") return emitNullableCore(hir);

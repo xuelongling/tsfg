@@ -20,11 +20,3 @@ export function buildArrayHir(input, context) {
   }
 }
 
-/** The complete Array consumer ends at HIR; no Core fallback is allowed. */
-export function rejectArrayCore(hir, context) {
-  const checked = verifyArrayHir(hir, context), fn = checked.functions[0];
-  const range = fn.body.at(-1).value.range;
-  throw Object.assign(new TypeError('r03-d-capability: Array Core lowering is not implemented'),
-    { code: 'r03-d-capability', ruleId: 'r01-ts-baseline', phase: 'lowering',
-      primary: { sourceId: fn.sourcePath, ...range } });
-}
