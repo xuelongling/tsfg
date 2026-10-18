@@ -167,7 +167,7 @@ test('independent region presence and legal definite-field HIR boundary',async t
       assert.equal(jcs(caller),callerBefore);noAliases(result,caller);const original=jcs(result);
       caller.sources[0].content='caller mutation';assert.equal(jcs(result),original);assert.deepEqual(buffers.map(hash),before);
     });
-    else await t.test('completeManualHirRoundtripOwnershipDeterminismRelationsAndLowerRefusal',()=>{
+    else await t.test('completeManualHirRoundtripOwnershipDeterminismRelationsAndLoweringBoundary',()=>{
       const expected=completeManualHir(c,expectedCold),text=jcs(expected)+'\n';assert.equal(Object.keys(expected).length,9);
       assert.equal(Buffer.byteLength(text),binding.fullHirJcsLf.bytes);assert.equal(hash(text),binding.fullHirJcsLf.sha256);
       const caller=copy(snapshot),callerBefore=jcs(caller),result=buildHir(caller);assert.equal(result.status,'ok',JSON.stringify(result));
@@ -179,7 +179,12 @@ test('independent region presence and legal definite-field HIR boundary',async t
       cold.functions[0].body.bindings[0].writable=false;caller.sources[0].content='caller mutation';
       assert.deepEqual(result.hir,expected);assert.deepEqual(verified,expected);assert.deepEqual(read,expected);
       assert.deepEqual(buildHir(copy(snapshot)).hir,expected);assert.equal(printHir(readHir(Buffer.from(text))),text);
-      assert.throws(()=>lowerHir(result.hir),{name:'TypeError',code:'r03-d-capability',ruleId:'r01-ts-baseline',phase:'lowering'});
+      /** @type {Record<string,string>} */
+      const coreHashes={standaloneBlock:'sha256:783fc60c47113a1e0532d3a40795e67dafec1896db87c791f65b5a6d78fff517',
+        tryFinallyWithoutCatch:'sha256:53de31a5cd8b2ad24afc695ae1e7401578120f2924094c4802cc03b2a02fdf9a',
+        catchWithoutBinding:'sha256:ea50541ec3ccfafd959b9e10668285996145307842b18187fc858a8800593f2d'};
+      if(Object.hasOwn(coreHashes,c.name))assert.equal(hash(lowerHir(result.hir)),coreHashes[c.name]);
+      else assert.throws(()=>lowerHir(result.hir),{name:'TypeError',code:'r03-d-capability',ruleId:'r01-ts-baseline',phase:'lowering'});
       for(const mutation of [...commonRelations,...c.hirOnlyRelations]){
         const bad=copy(expected);changeRelation(bad,mutation,c);const badText=jcs(bad);
         assert.notEqual(badText,jcs(expected),mutation.name);assert.deepEqual(bad.snapshot,expected.snapshot,'valid complete Source boundary unchanged');

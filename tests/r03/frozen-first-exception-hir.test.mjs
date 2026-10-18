@@ -265,12 +265,12 @@ test('first172B actual exception packet builds complete independently specified 
     const repeated = buildHir(snapshot); assert.equal(repeated.status,'ok'); assert.deepEqual(repeated.hir,expected);
     assert.equal(printHir(repeated.hir),printed); assert.deepEqual(verifyHir(copy(hir)),expected);
   });
-  await t.test('loweringRefusesAfterCompleteVerification', () => {
-    assert.throws(() => lowerHir(hir),{name:'TypeError',code:'r03-d-capability',ruleId:'r01-ts-baseline',phase:'lowering'});
+  await t.test('loweringAcceptsFrozenCoreAfterCompleteVerification', () => {
+    assert.equal(hash(lowerHir(hir)),'sha256:f5ab6e689e281bda32db5232b2e7671d2a5c9c0bd7c819d83dffc7662d04185a');
     const invalid = copy(hir); invalid.functions[0].body.body[0].catchClause.region.bindings[0].type = ids.i32;
     assert.throws(() => lowerHir(invalid),{name:'TypeError',code:/^r03-exception-hir-/,ruleId:'r01-input-boundary',phase:'hir'},
-      'verification must precede capability refusal');
+      'verification must precede Core lowering');
     assert.deepEqual(hir,expected); assert.deepEqual(originalBytes.map(hash),pins);
   });
-  t.diagnostic('first172B HIR only: full manual structure/cold/ownership; corpus30, Core/CFG/Runtime remain OPEN');
+  t.diagnostic('full manual HIR/cold/ownership retained; complete Core oracle is owned by frozen-first-exception-core; native/Runtime remain OPEN');
 });

@@ -1,5 +1,5 @@
 // SPDX-License-Identifier: MIT
-import { i32TypeId, boolTypeId, scalarName } from './identity.mjs';
+import { i32TypeId, boolTypeId, scalarName, own } from './identity.mjs';
 import { scalarOperations as operations } from './scalar-operators.mjs';
 import { floatNames } from './float.mjs';
 
@@ -39,12 +39,17 @@ export function emitCoreSsaFunction(fn, context) {
     current.terminated = true;
   };
   const fuel = (event, anchor) => line(`    "tsfg_core.fuel"() {event = ${event} : i32, ${attrsFor(anchor)}} : () -> ()`);
+  const operationLine = (result, name, operands, operandTypes, resultType, attributes, anchor) => {
+    line('    ' + (result === null ? '' : result + ' = ') + '"' + name + '"(' + operands.join(', ')
+      + ') {' + (attributes ? attributes + ', ' : '') + attrsFor(anchor) + '} : ('
+      + operandTypes.map(coreType).join(', ') + ') -> ' + (resultType === null ? '()' : coreType(resultType)));
+  };
   current = newBlock(fn.parameters.map(parameter => parameter.type));
   fn.parameters.forEach((parameter,index) => {
     definitions.set(parameter.id,current.parameters[index].name); declared.add(parameter.id);
     bindingTypes.set(parameter.id,parameter.type);
   });
-  if(fn.kind!=='module-initialization')fuel(1, fn.range);
+  if(fn.kind!=='module-initialization'&&!context.exception)fuel(1, fn.range);
   const emit = expression => {
     context.budget?.step();
     const special = context.emitValueLeaf?.(expression, api);
@@ -162,6 +167,127 @@ export function emitCoreSsaFunction(fn, context) {
       }
     }
   };
+  // Exception control is planned here, beside the existing SSA definitions and
+  // allocators. The adapter receives only a frozen trace after the graph closes.
+  const emitExceptionalBody = () => {
+    const policy = context.exception;
+    /** @type {any[]} */ const queue = [];
+    /** @type {any} */ const trace = { frames: [], blocks: [], values: [], bindings: [], edges: [] };
+    const ordinal = value => Number(value.slice(2));
+    const record = (items, value) => { context.budget?.step(); items.push(value); };
+    const value = (name, type, block, definition, index, anchor) => record(trace.values,
+      { ordinal: ordinal(name), type, block: blocks.indexOf(block), definition, index, range: anchor });
+    const binding = (item, region, block, position, name, initializer = null) => record(trace.bindings,
+      { binding: item.id, scope: region.scope, kind: item.role, block: blocks.indexOf(block), position,
+        value: ordinal(name), from_binding: initializer?.binding ?? '', type: item.type, writable: item.writable,
+        range: item.range, initializer_range: initializer ? [initializer.range] : [] });
+    const task = (region, position, role, frame, pending, incoming, carry = false, resumes = [], caught = null, existing = null) => {
+      context.budget?.step();
+      const block = existing ?? newBlock(carry ? [policy.carrierType] : []);
+      const item = { block, region, position, role, frame, pending, definitions: new Map(incoming), resumes, caught, operations: [] };
+      record(trace.blocks, { ordinal: blocks.indexOf(block), scope: region.scope, position, role,
+        frames: frame ? [{ frame: frame.index, arm: frame.arm }] : [],
+        pending: pending ? [{ scope: pending.scope, statement: pending.statement }] : [],
+        parameters: block.parameters.map(parameter => ordinal(parameter.name)), range: region.range });
+      if (carry) value(block.parameters[0].name, policy.carrierType, block, 'blockArgument', 0, region.range);
+      queue.push(item); return item;
+    };
+    const transfer = (from, target, arguments_, kind, origin) => {
+      context.budget?.edge?.(trace.edges.length + 1);
+      record(trace.edges, { ordinal: trace.edges.length, from: blocks.indexOf(from.block), to: blocks.indexOf(target.block),
+        kind, arguments: arguments_.map(ordinal), scope: origin.scope, statement: origin.statement, range: origin.range });
+      record(from.operations, { kind: 'branch', target: target.block, arguments: arguments_, range: origin.range });
+      from.block.terminated = true;
+    };
+    const root = task(fn.region, 0, 'entry', null, null, definitions, false, [], null, current);
+    record(root.operations, { kind: 'fuel', range: fn.range });
+    fn.parameters.forEach((parameter, index) => {
+      const name = current.parameters[index].name;
+      value(name, parameter.type, current, 'parameter', index, parameter.range);
+      binding(parameter, fn.region, current, 0, name);
+    });
+    const escape = pending => task(fn.region, 0, 'escape', null, pending, new Map(), true);
+    for (let next = 0; next < queue.length; next++) {
+      context.budget?.step(); const item = queue[next]; current = item.block;
+      definitions = new Map(item.definitions); declared = new Set(definitions.keys());
+      let carrier = item.block.parameters[0]?.name;
+      if (item.caught) {
+        definitions.set(item.caught.id, carrier); declared.add(item.caught.id);
+        bindingTypes.set(item.caught.id, item.caught.type);
+        binding(item.caught, item.region, current, 0, carrier);
+      }
+      if (item.role === 'escape') {
+        record(item.operations, { kind: 'escape', operand: carrier, range: item.pending.range });
+        current.terminated = true; continue;
+      }
+      for (let index = item.position; index < item.region.body.length; index++) {
+        context.budget?.step(); const statement = item.region.body[index];
+        const origin = { scope: item.region.scope, statement: index, range: statement.range };
+        if (statement.kind === 'local') {
+          const name = definitions.get(statement.initializer.binding);
+          if (typeof name !== 'string') throw new TypeError('r03-hir-cfg: missing reached alias definition');
+          definitions.set(statement.binding.id, name); declared.add(statement.binding.id);
+          bindingTypes.set(statement.binding.id, statement.binding.type);
+          binding(statement.binding, item.region, current, index, name, statement.initializer);
+        } else if (statement.kind === 'block') {
+          const normal = item.frame?.arm === 'finally';
+          const resumes = normal ? [...item.resumes, { region: item.region, position: index + 1,
+            definitions: new Map(definitions), origin }] : [];
+          const target = task(statement.region, 0, 'region', item.frame, item.pending, definitions, normal, resumes);
+          transfer(item, target, normal ? [carrier] : [], 'enter', origin); break;
+        } else if (statement.kind === 'try') {
+          const frame = { index: trace.frames.length, arm: 'try', statement,
+            definitions: new Map(definitions), scope: item.region.scope, position: index };
+          record(trace.frames, { scope: item.region.scope, statement: index, try_scope: statement.tryRegion.scope,
+            catch_scope: statement.catchClause?.region.scope ?? '', catch_binding: statement.catchClause?.binding ?? '',
+            finally_scope: statement.finallyRegion?.scope ?? '', range: statement.range });
+          const target = task(statement.tryRegion, 0, 'region', frame, null, frame.definitions);
+          transfer(item, target, [], 'enter', origin); break;
+        } else if (statement.kind === 'throw') {
+          carrier = definitions.get(statement.value.binding);
+          if (typeof carrier !== 'string') throw new TypeError('r03-hir-cfg: missing reached throw definition');
+          if (statement.value.type === i32TypeId) {
+            const packed = variable();
+            value(packed, policy.carrierType, current, 'pack', item.operations.length, statement.value.range);
+            record(item.operations, { kind: 'pack', result: packed, operand: carrier, range: statement.value.range }); carrier = packed;
+          }
+          const frame = item.frame; let target, kind;
+          if (frame?.arm === 'try' && frame.statement.catchClause) {
+            const clause = frame.statement.catchClause;
+            target = task(clause.region, 0, 'region', { ...frame, arm: 'catch' }, null, frame.definitions, true, [],
+              clause.binding === null ? null : clause.region.bindings.find(binding => binding.id === clause.binding));
+            kind = 'catch';
+          } else if (frame && frame.statement.finallyRegion) {
+            target = task(frame.statement.finallyRegion, 0, 'region', { ...frame, arm: 'finally' }, origin, frame.definitions, true);
+            kind = 'finally';
+          } else { target = escape(origin); kind = 'escape'; }
+          transfer(item, target, [carrier], kind, origin); break;
+        }
+      }
+      if (current.terminated) continue;
+      if (item.frame?.arm !== 'finally' || !item.pending)
+        throw new TypeError('r03-hir-cfg: reachable exception function fallthrough');
+      if (item.resumes.length) {
+        const resume = item.resumes.at(-1);
+        const target = task(resume.region, resume.position, 'continuation', item.frame, item.pending,
+          resume.definitions, true, item.resumes.slice(0, -1));
+        transfer(item, target, [carrier], 'resume', resume.origin);
+      } else transfer(item, escape(item.pending), [carrier], 'escape', item.pending);
+    }
+    // No serialization takes place until every route, scope and SSA definition
+    // has been selected. The same formatters and private allocators serve both paths.
+    for (const item of queue) {
+      current = item.block;
+      for (const operation of item.operations) {
+        if (operation.kind === 'fuel') fuel(1, operation.range);
+        else if (operation.kind === 'branch') branch(operation.target, operation.arguments, operation.range);
+        else if (operation.kind === 'pack') operationLine(operation.result, policy.packOperation, [operation.operand],
+          [i32TypeId], policy.carrierType, policy.packAttributes, operation.range);
+        else operationLine(null, policy.escapeOperation, [operation.operand], [policy.carrierType], null, '', operation.range);
+      }
+    }
+    current = null; return own(trace);
+  };
   /** Merge a value without exposing blocks or definition state to leaf policies.
    * @param {string | null} condition
    * @param {string} resultType
@@ -202,11 +328,12 @@ export function emitCoreSsaFunction(fn, context) {
     emit, coreType, attrsFor, quote, branchValue, lookup: id => definitions.get(id),
     operation: (name, operands, operandTypes, resultType, attributes, anchor) => {
       const result = resultType === null ? null : variable();
-      line(`    ${result === null ? "" : result + " = "}"${name}"(${operands.join(", ")}) {${attributes ? attributes + ", " : ""}${attrsFor(anchor)}} : (${operandTypes.map(coreType).join(", ")}) -> ${resultType === null ? "()" : coreType(resultType)}`);
+      operationLine(result, name, operands, operandTypes, resultType, attributes, anchor);
       return result;
     },
   };
-  emitBody(fn.body);
+  const trace = context.exception ? emitExceptionalBody() : undefined;
+  if (!context.exception) emitBody(fn.body);
   if(fn.kind==='module-initialization'&&current) {
     const name=variable();
     line(`    ${name} = "tsfg_core.constant"() {value = 0 : i32, ${attrsFor(fn.range)}} : () -> i32`);
@@ -215,6 +342,11 @@ export function emitCoreSsaFunction(fn, context) {
   }
   if (current || blocks.some(block => !block.terminated)) throw new TypeError("r03-hir-cfg: reachable function fallthrough");
   const type = coreType(fn.returnType.id);
-  const text = blocks.map((block, index) => `${index ? `  ^${block.name}${block.parameters.length ? `(${block.parameters.map(p => `${p.name}: ${coreType(p.type)}`).join(", ")})` : ""}:\n` : ""}${block.lines.join("\n")}`).join("\n");
-  return { entryParameters: blocks[0].parameters, blocksText: text, resultType: type, coreType, reservedBodyBytes };
+  const text = blocks.map((block, index) => {
+    const label = index ? '  ^' + block.name + (block.parameters.length
+      ? '(' + block.parameters.map(p => p.name + ': ' + coreType(p.type)).join(', ') + ')' : '') + ':\n' : '';
+    if (context.exception && index) context.budget?.label?.(label);
+    return label + block.lines.join('\n');
+  }).join('\n');
+  return { entryParameters: blocks[0].parameters, blocksText: text, resultType: type, coreType, reservedBodyBytes, ...(trace ? { trace } : {}) };
 }

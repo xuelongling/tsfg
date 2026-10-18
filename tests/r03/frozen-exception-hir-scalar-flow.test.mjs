@@ -231,7 +231,8 @@ test('seven actual scalar-flow packets map to complete independent exception HIR
       assert.deepEqual(decoded,expected); assert.deepEqual(result.hir,expected);
       assert.deepEqual(buildHir(copy(snapshot)).hir,expected);
       assert.equal(printHir(readHir(Buffer.from(text))),text);
-      assert.throws(()=>lowerHir(result.hir),{name:'TypeError',code:'r03-d-capability',ruleId:'r01-ts-baseline',phase:'lowering'});
+      if(spec.id==='30')assert.equal(hash(lowerHir(result.hir)),'sha256:83fe8bd813c237feeed81fcd839ca287cd935ccd96a110eedefff9329bd2da74');
+      else assert.throws(()=>lowerHir(result.hir),{name:'TypeError',code:'r03-d-capability',ruleId:'r01-ts-baseline',phase:'lowering'});
       assert.deepEqual(buffers.map(hash),before); built.set(spec.id,copy(result.hir));
     });
   });

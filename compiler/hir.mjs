@@ -1,5 +1,6 @@
 // SPDX-License-Identifier: MIT
 import { buildExceptionHir } from "./exception-hir.mjs";
+import { emitExceptionCore } from "./exception-core-emitter.mjs";
 import { readHirWire } from "./hir-wire.mjs";
 import { failure as exceptionHirFailure } from "./exception-hir-common.mjs";
 import { buildNullableHir } from "./nullable-hir.mjs";
@@ -173,11 +174,7 @@ export function readHir(bytes) {
 }
 
 export function lowerHir(hir) {
-  if (hir?.format?.family === "tsfg.exception-hir-candidate") {
-    verifyHir(hir);
-    throw Object.assign(new TypeError("r03-d-capability: exception Core lowering is not implemented"),
-      { code: "r03-d-capability", ruleId: "r01-ts-baseline", phase: "lowering" });
-  }
+  if (hir?.format?.family === "tsfg.exception-hir-candidate") return emitExceptionCore(hir);
   if (hir?.format?.family === "tsfg.nullable-hir-candidate") return emitNullableCore(hir);
   if (hir?.format?.family === "tsfg.closure-hir-candidate") {
     verifyHir(hir);

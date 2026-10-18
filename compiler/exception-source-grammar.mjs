@@ -6,7 +6,7 @@ import { check, range, wireLimits } from './exception-common.mjs';
 // String tokens are admitted only as validated boolean typeof tags; unsupported
 // expression variants still fail capability. All offsets remain original UTF16.
 const reserved = new Set(('break case catch class const continue debugger default delete do else enum export extends false finally for function if import in instanceof new null return super switch this throw true try typeof var void while with implements interface let package private protected public static yield await eval arguments').split(' '));
-export function exceptionSourceGrammar(source) {
+export function exceptionSourceGrammar(source, tokenLimit = wireLimits.sourceTokensPerFile) {
   const content = source.content, root = { start: 0, end: content.length }, tokens = [];
   const scanner = /\/\*[\s\S]*?\*\/|\/\/[^\r\n\u2028\u2029]*|\s+|"(?:\\[^\r\n\u2028\u2029]|[^"\\\r\n\u2028\u2029])*"|'(?:\\[^\r\n\u2028\u2029]|[^'\\\r\n\u2028\u2029])*'|(?:\\u(?:\{[0-9a-fA-F]+\}|[0-9a-fA-F]{4})|[$_\p{ID_Start}])(?:\\u(?:\{[0-9a-fA-F]+\}|[0-9a-fA-F]{4})|[$\u200c\u200d\p{ID_Continue}])*|===|!==|=>|[{}():;,=|@.!]/uy;
   let position = 0;
@@ -16,8 +16,8 @@ export function exceptionSourceGrammar(source) {
     check(match && match.index === position, 'capability', 'exception source token is not implemented');
     position = scanner.lastIndex;
     if (/^\s|^\/\*|^\/\//u.test(match[0])) continue;
+    check(tokens.length < tokenLimit, 'limit');
     tokens.push({ text: match[0], start: match.index, end: position });
-    check(tokens.length <= wireLimits.sourceTokensPerFile, 'limit');
   }
   const at = index => { check(index >= 0 && index < tokens.length, 'source', 'missing source token'); return tokens[index]; };
   const spelling = index => tokens[index]?.text;

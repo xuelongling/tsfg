@@ -306,7 +306,8 @@ test('actual catch write and corpus-origin rethrow retain complete typed regions
       cold.functions[0].body.body[0].catchClause.region.bindings[0].writable=false;caller.sources[0].content='caller mutation';
       assert.deepEqual(result.hir,expected);assert.deepEqual(read,expected);assert.deepEqual(verified,expected);
       assert.deepEqual(buildHir(cwCopy(snapshot)).hir,expected);assert.equal(printHir(readHir(Buffer.from(text))),text);
-      assert.throws(()=>lowerHir(result.hir),{name:'TypeError',code:'r03-d-capability',ruleId:'r01-ts-baseline',phase:'lowering'});
+      if(spec.id==='30')assert.equal(cwHash(lowerHir(result.hir)),'sha256:83fe8bd813c237feeed81fcd839ca287cd935ccd96a110eedefff9329bd2da74');
+      else assert.throws(()=>lowerHir(result.hir),{name:'TypeError',code:'r03-d-capability',ruleId:'r01-ts-baseline',phase:'lowering'});
       assert.deepEqual(buffers.map(cwHash),before);
       // These change only HIR relations, while the complete embedded Source packet,
       // its origin and every request/file/package/input identity remain valid.
