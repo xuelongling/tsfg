@@ -1,4 +1,6 @@
 // SPDX-License-Identifier: MIT
+import { analyzeVerifiedModuleCalls, checkCallEffectsInputs, callEffectsFailure, verifyKernelHostSemantics } from './call-effects.mjs';
+export { KernelHostSemanticError } from './call-effects.mjs';
 import { verifyStringHir } from './string-hir-model.mjs';
 import { verifyExceptionHir } from './exception-hir.mjs';
 import { verifyNullableHir } from './nullable-hir.mjs';
@@ -156,8 +158,32 @@ function noShortIf(statement) {
   return ["block", "return", "assign"].includes(statement.kind);
 }
 
-/** @param {any} hir @param {any} [stringFactsContext] */
-export function verifyHir(hir, stringFactsContext = undefined) {
+/** @param {any} hir @param {any} [stringFactsContext] @param {any} [callPublicationContext] */
+export function verifyHir(hir, stringFactsContext = undefined, callPublicationContext = undefined) {
+  if (callPublicationContext === undefined) return verifyWholeHir(hir, stringFactsContext);
+  return selectedModuleCalls(hir, stringFactsContext, callPublicationContext).hir;
+}
+
+/** Analyze only a complete verified ordinary module HIR and an explicit publication.
+ * @param {any} hir @param {any} context */
+export function analyzeModuleCalls(hir, context) {
+  return selectedModuleCalls(hir, undefined, context).analysis;
+}
+
+/** @param {any} hir @param {any} stringFactsContext @param {any} context */
+function selectedModuleCalls(hir, stringFactsContext, context) {
+  checkCallEffectsInputs(hir, context);
+  if (stringFactsContext !== undefined || hir?.modules === undefined || hir?.format !== undefined)
+    callEffectsFailure();
+  // The existing complete validator remains the only HIR validator. Selected
+  // analysis supplies its own final kernel policy after checking the fixed table.
+  const checked = verifyWholeHir(hir, undefined, true);
+  const analysis = analyzeVerifiedModuleCalls(checked, context);
+  return { hir: checked, analysis };
+}
+
+/** @param {any} hir @param {any} [stringFactsContext] @param {boolean} [selectedCalls] */
+function verifyWholeHir(hir, stringFactsContext = undefined, selectedCalls = false) {
   if (stringFactsContext !== undefined) return verifyStringHir(hir, stringFactsContext);
   if (hir?.format?.family === "tsfg.exception-hir-candidate") return verifyExceptionHir(hir);
   if (hir?.format?.family === 'tsfg.nullable-hir-candidate') return verifyNullableHir(hir);
@@ -395,72 +421,6 @@ export function verifyHir(hir, stringFactsContext = undefined) {
   }
   if (!body(fn.body, fn.range, initial, "function", visible)) fail();
   }
-  if (moduleMode) verifyKernelHostSemantics(hir);
-  return own(hir);
-}
-
-/** A negative missing-proof witness, never a kernel certificate or Published summary. */
-export class KernelHostSemanticError extends TypeError {
-  constructor(primary, chain, host) {
-    const code = 'r03-d-kernel-host-semantics';
-    const message = code + ': kernel call requires a trusted HostSemanticContract; '
-      + chain.join(' -> ') + ' (declaration ' + host.sourcePath + ':' + host.name + ')';
-    super(message);
-    this.code = code;
-    this.ruleId = 'r01-kernel';
-    this.phase = 'hir';
-    this.primary = primary;
-  }
-}
-
-/**
- * Q8: after complete owned-HIR verification, reject a kernel-reachable host
- * lacking semantic trust. The current host representation has no such proof.
- * This uses body facts only to find a forbidden operation, never to authorize a
- * replaceable function using its narrower current body (R03 Q9/ADR0018).
- */
-function verifyKernelHostSemantics(hir) {
-  if (!hir.modules) return;
-  const functions = new Map(hir.functions.map(fn => [fn.id, fn]));
-  const hosts = new Map(hir.hostImports.map(host => [host.id, host]));
-  const edges = new Map();
-  const collect = (value, found) => {
-    if (!value || typeof value !== 'object') return;
-    if (value.kind === 'call' || value.kind === 'host') found.push(value);
-    for (const nested of Object.values(value)) {
-      if (Array.isArray(nested)) for (const item of nested) collect(item, found);
-      else if (nested && typeof nested === 'object') collect(nested, found);
-    }
-  };
-  for (const fn of hir.functions) {
-    const found = [];
-    collect(fn.body, found);
-    edges.set(fn.id, found);
-  }
-  for (const root of hir.closure.roots) {
-    if (root.kind !== 'kernel') continue;
-    const entry = functions.get(root.target);
-    const pending = [{target: root.target, chain: [entry.sourcePath + ':' + entry.name]}];
-    const scheduled = new Set([root.target]);
-    for (let index = 0; index < pending.length; index++) {
-      const {target, chain} = pending[index];
-      const fn = functions.get(target);
-      for (const edge of edges.get(target)) {
-        const site = fn.sourcePath + ':' + edge.range.start + '-' + edge.range.end;
-        if (edge.kind === 'host') {
-          const host = hosts.get(edge.target);
-          throw new KernelHostSemanticError({sourceId: fn.sourcePath, ...edge.range},
-            [...chain, site + ' host ' + host.name], host);
-        }
-        const callee = functions.get(edge.target);
-        if (!scheduled.has(callee.id)) {
-          scheduled.add(callee.id);
-          pending.push({target: callee.id,
-            chain: [...chain, site + ' call ' + callee.sourcePath + ':' + callee.name]});
-        }
-      }
-    }
-  }
-  // Retained owner initializers are intentionally absent from this worklist.
-  // Ordinary top-level Host/application behavior is outside the kernel body.
+  if (moduleMode && !selectedCalls) verifyKernelHostSemantics(hir);
+  return own(selectedCalls ? JSON.parse(canonical(hir)) : hir);
 }
