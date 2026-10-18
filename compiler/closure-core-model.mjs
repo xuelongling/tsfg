@@ -16,8 +16,9 @@ export function closureCoreFailure(category, message, primary = undefined, conte
 
 /** Metadata and actual closure leaves for the shared SSA traversal. The caller
  * already cold-verified the complete program. No Source/type analysis occurs.
+ * @param {any} [selection]
  */
-export function closureCoreModel(program, programHash) {
+export function closureCoreModel(program, programHash, selection = undefined) {
   const bindings = new Map(program.bindings.map(binding => [binding.id, binding]));
   const functions = new Map(program.functions.map(fn => [fn.id, fn]));
   const types = new Map(program.types.map(type => [type.id, type]));
@@ -29,7 +30,9 @@ export function closureCoreModel(program, programHash) {
   const reserveText = text => reserve(Buffer.byteLength(text, 'utf8'));
   limit(program.functions.length <= schema.limits.functions, 'Core function budget exceeded');
   for (const fn of program.functions) limit(fn.parameters.length <= schema.limits.sourceParameters, 'Source parameter budget exceeded');
-  const declarationIndices = closureCoreInitialization(program, step, closureCoreFailure);
+  const initialization = closureCoreInitialization(program, step, closureCoreFailure,
+    selection === undefined ? undefined : {...selection,programHash});
+  const declarationIndices = initialization.declarationIndices;
   const symbol = fn => 'f' + fn.id.slice(7);
   function environmentType(layout) {
     if (!environmentTypes.has(layout)) environmentTypes.set(layout, { environmentLayout: layout });
@@ -90,6 +93,7 @@ export function closureCoreModel(program, programHash) {
     'tsfg_core.bytecode_schema = ' + quote(registry['tsfg.bytecode'].schemaHash),
     'tsfg_core.source_length = ' + program.source.content.length + ' : i64',
     'tsfg_core.closure = ' + attribute(metadata),
+    ...(initialization.publication === null ? [] : ['tsfg_core.closure_publication = ' + quote(canonical(initialization.publication))]),
   ].join(', ');
   function functionAttributes(fn) {
     return 'tsfg_core.function_id = ' + quote(fn.id) + ', tsfg_core.signature_hash = ' + quote(fn.signatureHash)

@@ -3,15 +3,23 @@ import { verifyClosureEnvironments, printClosureEnvironments } from './closure-e
 import { sha256 } from './identity.mjs';
 import { emitCoreSsaFunction, coreQuote as quote } from './core-ssa-emitter.mjs';
 import { closureCoreModel } from './closure-core-model.mjs';
+import { analyzeClosureCalls } from './closure-call-effects.mjs';
+import { environmentBudget } from './closure-environment-lowering.mjs';
 
 /** Complete Node-only producer for the private typed closure Core candidate.
  * This compiles verified operations to SSA text. It neither parses Core nor
  * executes Source/closures, computes a GC root map or grants wire/ABI authority.
+ * @param {any} [context]
  * @returns {string}
  */
-export function emitClosureCore(program, hir) {
+export function emitClosureCore(program, hir, context = undefined) {
+  let selection;
+  if (context !== undefined) {
+    environmentBudget(program);
+    selection = {hir,analysis:analyzeClosureCalls(hir,context)};
+  }
   const verified = verifyClosureEnvironments(program, hir);
-  const model = closureCoreModel(verified, sha256(printClosureEnvironments(verified, hir)));
+  const model = closureCoreModel(verified, sha256(printClosureEnvironments(verified, hir)), selection);
   const header = 'module attributes {' + model.moduleAttributes + '} {\n';
   model.reserveText(header);
   const functions = [];
