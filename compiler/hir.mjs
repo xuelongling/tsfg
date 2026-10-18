@@ -22,6 +22,7 @@ import { emitReferenceCore } from './reference-core-emitter.mjs';
 import { buildClosureHir } from "./closure-hir.mjs";
 export { verifyHir };
 export { analyzeModuleCalls } from './module-hir.mjs';
+export { verifyKernelParallelGroup } from './kernel-access.mjs';
 const contract = () => registry['tsfg.hir'];
 const types = scalarTypeIds;
 
