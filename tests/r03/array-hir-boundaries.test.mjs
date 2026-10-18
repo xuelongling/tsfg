@@ -131,7 +131,7 @@ test('25b shared equal type objects remain harmless acyclic input for complete A
   h.functions[1].returnType=h.functions[0].returnType;
   const before=fresh(h);
   assert.deepEqual(verifyHir(h,context(row)),row.hir.expectedHir);
-  const oracle=await pinned('./array-core-oracle-v1.json',90582,'fc20c7f86b0253e89d10f0a7d3bf353b17d637574ad3f131df60f48394ccb7de');
+  const oracle=await pinned('./array-core-oracle-v2.json',122149,'b2ae7137d402ea5b515ab72cd2d7ee62b5219f552743b13ef5797d337bb86f1a');
   const expected=oracle.cases.find(c=>c.name===row.facts.name);assert.ok(expected);
   assert.equal(lowerHir(h,context(row)),expected.core);
   assert.deepEqual(h,before);

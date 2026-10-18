@@ -17,15 +17,15 @@ function refused(actual,diagnostic) {
     'exact gate '+diagnostic+'; earlier parser/trait failures receive no private credit:\n'+actual.stderr.toString('utf8'));
 }
 
-test('25c same real C++ CLI preserves every complete Array package and closes independent candidate boundaries',async t=>{
-  const manifest=await pinned('./array-core-cpp-cases.json',1846677,'7b42a5bef17cb777abc2c6e5d1c7f5de566683def8db6abd6a79801ef5711a17');
-  const oracle=await pinned('./array-core-oracle-v1.json',90582,'fc20c7f86b0253e89d10f0a7d3bf353b17d637574ad3f131df60f48394ccb7de');
+test('25d same real C++ CLI preserves every complete Array package and closes independent candidate boundaries',async t=>{
+  const manifest=await pinned('./array-core-cpp-cases.json',2198218,'76f6276054f64fcff20b1a194b5a5b9ca2ba22fe11d97b357ca1ad0755321a3a');
+  const oracle=await pinned('./array-core-oracle-v2.json',122149,'b2ae7137d402ea5b515ab72cd2d7ee62b5219f552743b13ef5797d337bb86f1a');
   assert.deepEqual(manifest.provenance,{newCppOutputSampled:false,productEmitterImported:false,coldCasesReproveSource:false});
-  assert.equal(manifest.cases.length,52);assert.equal(new Set(manifest.cases.map(c=>c.id)).size,52);
-  assert.equal(manifest.cases.filter(c=>c.expected.exitCode===0).length,10);
-  assert.equal(manifest.cases.filter(c=>c.expected.exitCode===3).length,42);
-  assert.equal(manifest.wire.length,8);
-  let whole={functions:0,sites:0,aliases:0,elements:0,checkedReads:0};
+  assert.equal(manifest.cases.length,79);assert.equal(new Set(manifest.cases.map(c=>c.id)).size,79);
+  assert.equal(manifest.cases.filter(c=>c.expected.exitCode===0).length,15);
+  assert.equal(manifest.cases.filter(c=>c.expected.exitCode===3).length,64);
+  assert.equal(manifest.wire.length,16);
+  let whole={functions:0,parameters:0,sites:0,aliases:0,elements:0,checkedReads:0,stores:0,resizes:0,constants:0,operations:0,registers:0};
   // Check every frozen input and independently chosen preimage before the first CLI call.
   for(const c of manifest.cases) {
     assert.equal(Buffer.byteLength(c.input),c.bytes,c.id+' complete input bytes');
@@ -42,13 +42,13 @@ test('25c same real C++ CLI preserves every complete Array package and closes in
       if(p.valueJcsNoLf)assert.equal(Buffer.from(p.domain+'\0'+p.valueJcsNoLf).toString('hex'),p.preimageHex);
     }
   }
-  assert.deepEqual(whole,{functions:5,sites:6,aliases:5,elements:20,checkedReads:5});
+  assert.deepEqual(whole,{functions:10,parameters:8,sites:11,aliases:9,elements:27,checkedReads:12,stores:7,resizes:4,constants:45,operations:108,registers:85});
   const full=oracle.cases[0];
   for(const c of manifest.cases.filter(c=>['alias-chain-flattened','checked-read-other-owner',
     'return-bypasses-checked-read','second-function-omitted'].includes(c.id))) {
     assert.throws(()=>assertArrayCoreSemantics(c.input,full),{code:'ERR_ASSERTION'});
   }
-  t.diagnostic('25c C++ frozen controls complete:4 upstream whole packages/5 functions/6 distinct sites/20 elements/5 aliases; other positives are cold static metadata/count controls');
+  t.diagnostic('25d C++ frozen controls complete:8 whole packages/10 functions/8 parameters/11 sites/7 stores/4 resizes/12 reads; other positives are cold static metadata/count controls');
   for(const c of manifest.cases.filter(c=>c.expected.exitCode===0))await t.test(c.id,async()=>{
     const expected={core:c.input};
     const first=await invokeCore(c.input,'--canonicalize');accepted(first);

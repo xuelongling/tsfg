@@ -8,8 +8,8 @@ import { copyGenericJsonBytes, readGenericJson, checkGenericJsonValueBudget } fr
 import { readArrayFactsCandidate } from './array-facts.mjs';
 import { arrayFactsLimits } from './array-facts-model.mjs';
 
-const schemaHash = 'sha256:dc3cb6662f04ddd783d3a7a92cdc9fda19b19f12594ed8793037f7de194e7d5e';
-export const arrayHirFormat = own({ family: 'tsfg.array-hir-candidate', version: 1, schemaHash });
+const schemaHash = 'sha256:11424430d7571374010e8e925d23cdae5bf18f9540934fcc2da272d7d65f6859';
+export const arrayHirFormat = own({ family: 'tsfg.array-hir-candidate', version: 2, schemaHash });
 export const arrayHirType = own({ kind: 'managedReference', name: 'Array',
   elementType: scalarTypeIds.f64, id: sha256('tsfg.type\0Array<f64>') });
 const target = own(bytecode.target), policy = arrayFactsLimits;
@@ -55,55 +55,62 @@ export function readArrayFactsContext(context) {
   return { bytes, facts };
 }
 function reference(value) {
-  return { kind: 'reference', type: arrayHirType.id, binding: value.binding, range: { ...value.range } };
+  return { kind: 'reference', type: value.flowType === 'array.f64' ? arrayHirType.id : scalarTypeIds[value.flowType],
+    binding: value.binding, range: { ...value.range } };
 }
-function initializer(value) {
+function expression(value) {
   if (value.kind === 'reference') return reference(value);
-  return { kind: 'arrayCreate', type: arrayHirType.id, range: { ...value.range },
-    allocationSite: value.allocationSite, elements: value.elements.map(item => ({
-      kind: 'floating', type: scalarTypeIds.f64, range: { ...item.range }, token: item.token, bits: item.bits,
-    })) };
+  const span = { ...value.range };
+  if (value.kind === 'numericLiteral') return {kind:'floating',type:scalarTypeIds.f64,range:span,token:value.token,bits:value.bits};
+  if (value.kind === 'indexLiteral' || value.kind === 'lengthLiteral')
+    return {kind:'constant',type:scalarTypeIds.u32,range:span,token:value.token,decimal:value.decimal};
+  if (value.kind === 'arrayLiteral') return {kind:'arrayCreate',type:arrayHirType.id,range:span,
+    allocationSite:value.allocationSite,elements:value.elements.map(expression)};
+  if (value.kind === 'lengthTarget') return {kind:'arrayLengthTarget',type:scalarTypeIds.u32,range:span,
+    receiver:reference(value.array),property:value.property,nameRange:{...value.nameRange}};
+  return {kind:value.kind === 'elementTarget' ? 'arrayElementTarget' : 'arrayReadChecked',
+    type:scalarTypeIds.f64,range:span,receiver:reference(value.array),index:expression(value.index)};
 }
 /** The sole facts-to-HIR transform; only an already verified selected facts package enters. */
 export function projectArrayFacts(facts) {
   const payload = facts.payload, functions = payload.functions.map(fn => {
     /** @type {Map<string, any>} */
     const bindings = new Map(fn.bindings.map(binding => [binding.id, binding]));
-    return { id: functionIdentity(fn.sourcePath, fn.name, 'f64', []), sourceBinding: fn.id,
-      name: fn.name, sourcePath: fn.sourcePath, signatureHash: signatureHash('f64', []),
-      returnType: { kind: 'scalar', name: 'f64', id: scalarTypeIds.f64 }, parameters: [],
-      range: { ...fn.declarationRange }, nameRange: { ...fn.nameRange },
-      returnAnnotationRange: { ...fn.returnAnnotationRange }, body: fn.body.map(statement => {
+    const parameterTypes = fn.parameters.map(parameter => parameter.declaredType);
+    return {id:functionIdentity(fn.sourcePath,fn.name,'f64',parameterTypes),sourceBinding:fn.id,
+      name:fn.name,sourcePath:fn.sourcePath,signatureHash:signatureHash('f64',parameterTypes),
+      returnType:{kind:'scalar',name:'f64',id:scalarTypeIds.f64},
+      parameters:fn.parameters.map(parameter => ({id:parameter.id,name:parameter.name,
+        type:scalarTypeIds[parameter.declaredType],writable:true,range:{...parameter.declarationRange},
+        nameRange:{...parameter.nameRange},annotationRange:{...parameter.annotationRange}})),
+      range:{...fn.declarationRange},nameRange:{...fn.nameRange},returnAnnotationRange:{...fn.returnAnnotationRange},
+      body:fn.body.map(statement => {
         if (statement.kind === 'variable') {
           const binding = bindings.get(statement.binding);
-          return { kind: 'local', range: { ...statement.range }, binding: {
-            id: binding.id, name: binding.name, type: arrayHirType.id, writable: false,
-            range: { ...binding.declarationRange }, nameRange: { ...binding.nameRange },
-            annotationRange: binding.annotationRange === null ? null : { ...binding.annotationRange },
-            elementAnnotationRange: binding.elementAnnotationRange === null ? null : { ...binding.elementAnnotationRange },
-          }, initializer: initializer(statement.initializer) };
+          return {kind:'local',range:{...statement.range},binding:{id:binding.id,name:binding.name,
+            type:arrayHirType.id,writable:false,range:{...binding.declarationRange},nameRange:{...binding.nameRange},
+            annotationRange:binding.annotationRange === null ? null : {...binding.annotationRange},
+            elementAnnotationRange:binding.elementAnnotationRange === null ? null : {...binding.elementAnnotationRange}},
+            initializer:expression(statement.initializer)};
         }
-        const value = statement.value;
-        return { kind: 'return', range: { ...statement.range }, value: {
-          kind: 'arrayReadChecked', type: scalarTypeIds.f64, range: { ...value.range },
-          receiver: reference(value.array), index: { kind: 'constant', type: scalarTypeIds.u32,
-            range: { ...value.index.range }, token: value.index.token, decimal: value.index.decimal },
-        } };
-      }) };
+        if (statement.kind === 'return') return {kind:'return',range:{...statement.range},value:expression(statement.value)};
+        return {kind:statement.kind === 'elementAssignment' ? 'arrayStoreDenseChecked' : 'arrayResizeChecked',
+          range:{...statement.range},expressionRange:{...statement.expressionRange},operatorRange:{...statement.operatorRange},
+          target:expression(statement.target),value:expression(statement.value)};
+      })};
   });
-  const functionIds = new Map(functions.map(fn => [fn.sourceBinding, fn.id]));
+  const functionIds = new Map(functions.map(fn => [fn.sourceBinding,fn.id]));
   const types = payload.types.map(type => {
-    const origin = { sourcePath: type.sourcePath, declarationRange: { ...type.declarationRange },
-      nameRange: { ...type.nameRange } };
-    return type.id === 'f64' ? { id: scalarTypeIds.f64, kind: 'scalar', name: 'f64', ...origin }
-      : { ...arrayHirType, ...origin, indexSignatureRange: { ...type.indexSignatureRange } };
+    const origin = {sourcePath:type.sourcePath,declarationRange:{...type.declarationRange},nameRange:{...type.nameRange}};
+    return type.id === 'array.f64' ? {...arrayHirType,...origin,indexSignatureRange:{...type.indexSignatureRange}}
+      : {id:scalarTypeIds[type.id],kind:'scalar',name:type.id,...origin};
   });
-  return { format: { ...arrayHirFormat }, inputIdentity: facts.packageId,
-    facts: { version: 1, schemaHash: facts.schemaHash, requestId: facts.requestId },
-    rootFile: payload.rootFile,
-    sources: payload.files.map(file => ({ path: file.path, content: file.content, hash: 'sha256:' + file.sha256 })),
-    target: { ...target }, types, functions,
-    exports: payload.exports.map(item => ({ name: item.name, functionId: functionIds.get(item.functionId) })) };
+  return {format:{...arrayHirFormat},inputIdentity:facts.packageId,
+    facts:{version:2,schemaHash:facts.schemaHash,requestId:facts.requestId},rootFile:payload.rootFile,
+    sources:payload.files.map(file => ({path:file.path,content:file.content,hash:'sha256:'+file.sha256})),
+    target:{...target},types,arrayLength:{...payload.arrayLength,ownerType:arrayHirType.id,writeType:scalarTypeIds.u32,
+      declarationRange:{...payload.arrayLength.declarationRange},nameRange:{...payload.arrayLength.nameRange},typeRange:{...payload.arrayLength.typeRange}},
+    functions,exports:payload.exports.map(item => ({name:item.name,functionId:functionIds.get(item.functionId)}))};
 }
 function projectionBudget(hir) {
   const functions = hir && typeof hir === 'object' ? hir.functions : undefined;
@@ -114,9 +121,11 @@ function projectionBudget(hir) {
   let units = 0;
   for (const fn of functions) {
     if (!Array.isArray(fn?.body)) continue;
-    check(fn.body.length <= 18, 'limit');
-    let locals = 0;
+    check(fn.body.length <= 50, 'limit');
+    if (Array.isArray(fn.parameters)) check(fn.parameters.length <= 8, 'limit');
+    let locals = 0, mutations = 0;
     for (const statement of fn.body) {
+      if (['arrayStoreDenseChecked','arrayResizeChecked'].includes(statement?.kind)) check(++mutations <= 32, 'limit');
       if (statement?.kind === 'local') check(++locals <= 17, 'limit');
       const elements = statement?.initializer?.elements;
       if (Array.isArray(elements)) {

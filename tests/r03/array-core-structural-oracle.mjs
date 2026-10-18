@@ -129,29 +129,44 @@ export function parseArrayCore(text) {
     return {name:name.value,results:result === undefined ? [] : [result],operands,
       inputTypes,outputTypes,properties,attributes};
   }
-  function body() {
-    const registers = new Map(), operations = [];
-    if (peek()?.startsWith('^')) {
-      take();take(':'); // The only optional entry label has no arguments.
+  /** @param {Array<{raw:string,type:string}>} parameters */
+  function body(parameters=[]) {
+    const registers=new Map(), normalized=[],operations=[];
+    /** @param {{raw:string,type:string}} parameter */
+    function declare(parameter){
+      assert.ok(!registers.has(parameter.raw),'unique entry parameter');
+      const name='%v'+registers.size;registers.set(parameter.raw,name);
+      normalized.push({name,type:parameter.type});
     }
-    while (peek() !== '}') operations.push(operation(registers));
-    take('}');return operations;
+    parameters.forEach(declare);
+    if(peek()?.startsWith('^')){
+      take();
+      if(peek()==='('){
+        const block=list('(',')',()=>{const raw=take().value;take(':');return {raw,type:type()};});
+        assert.equal(parameters.length,0,'entry arguments represented once');block.forEach(declare);
+      }
+      take(':');
+    }
+    while(peek()!=='}')operations.push(operation(registers));
+    take('}');return {parameters:normalized,operations};
   }
   function func() {
-    let properties, attributes, operations;
-    if (input[position]?.kind === 'string') {
+    let properties,attributes,bodyResult;
+    if(input[position]?.kind==='string'){
       take('func.func');take('(');take(')');take('<');properties=dictionary();take('>');
-      take('(');take('{');operations=body();take(')');
+      take('(');take('{');bodyResult=body();take(')');
       attributes=peek()==='{'?dictionary():{};
       take(':');take('(');take(')');take('->');take('(');take(')');
-    } else {
-      take('func.func');take('@');const symbol = take();
+    }else{
+      take('func.func');take('@');const symbol=take();
       assert.ok(symbol.kind==='string'||symbol.kind==='word');
-      const inputs=list('(',')',type);take('->');const results=resultTypes();
-      properties={function_type:{kind:'function-type',inputs,results},sym_name:symbol.value};
-      take('attributes');attributes=dictionary();take('{');operations=body();
+      const parameters=list('(',')',()=>{const raw=take().value;assert.ok(raw.startsWith('%'));take(':');return {raw,type:type()};});
+      take('->');const results=resultTypes();
+      properties={function_type:{kind:'function-type',inputs:parameters.map(p=>p.type),results},sym_name:symbol.value};
+      take('attributes');attributes=dictionary();take('{');bodyResult=body(parameters);
     }
-    return {properties,attributes,operations};
+    assert.deepEqual(bodyResult.parameters.map(p=>p.type),properties.function_type.inputs,'complete typed entry block');
+    return {properties,attributes,...bodyResult};
   }
   let attributes;const functions = [];
   if (input[position]?.kind === 'string') {
@@ -171,12 +186,17 @@ export function parseArrayCore(text) {
 /** Compare the entire closed structure against the independent pre-product text.
  * @param {string} actual @param {{core:string}} expected */
 export function assertArrayCoreSemantics(actual, expected) {
-  const parsed=parseArrayCore(actual), frozen=parseArrayCore(expected.core);
-  assert.deepEqual(parsed,frozen,'every module/function/local/type/range and ordered SSA operation');
+  const parsed=parseArrayCore(actual),frozen=parseArrayCore(expected.core);
+  assert.deepEqual(parsed,frozen,'every module/function/parameter/type/property/range and ordered SSA edge');
+  const operations=parsed.functions.flatMap(fn=>fn.operations);
+  /** @param {string} name */
+  const count=name=>operations.filter(op=>op.name===name).length;
   return {functions:parsed.functions.length,
-    sites:parsed.functions.reduce((n,fn)=>n+fn.operations.filter(op=>op.name==='tsfg_array.create').length,0),
-    aliases:parsed.functions.reduce((n,fn)=>n+fn.operations.filter(op=>op.name==='tsfg_array.alias').length,0),
-    elements:parsed.functions.reduce((n,fn)=>n+fn.operations.filter(op=>op.name==='tsfg_core.constant'
-      &&op.outputTypes[0]==='f64').length,0),
-    checkedReads:parsed.functions.reduce((n,fn)=>n+fn.operations.filter(op=>op.name==='tsfg_array.read_checked').length,0)};
+    parameters:parsed.functions.reduce((n,fn)=>n+fn.parameters.length,0),
+    sites:count('tsfg_array.create'),aliases:count('tsfg_array.alias'),
+    elements:operations.filter(op=>op.name==='tsfg_array.create').reduce((n,op)=>n+op.operands.length,0),
+    checkedReads:count('tsfg_array.read_checked'),stores:count('tsfg_array.store_dense_checked'),
+    resizes:count('tsfg_array.resize_checked'),constants:count('tsfg_core.constant'),
+    operations:operations.length,
+    registers:parsed.functions.reduce((n,fn)=>n+fn.parameters.length+fn.operations.reduce((m,op)=>m+op.results.length,0),0)};
 }

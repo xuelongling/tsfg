@@ -27,10 +27,30 @@ export async function pinned(file, length, digest) {
 }
 /** @returns {Promise<any[]>} */
 export async function fixtures() {
-  const f = await pinned('./array-facts-oracle-v1.json', 82788, '877483469d61070970cd48a9053fb2efd2028f45d934fda326c43e4b272c1b9d');
-  const h = await pinned('./array-hir-oracle-v1.json', 79667, 'ca01aa9744a43aabe16e0b73bfaf3e9ec29affddd666fa62ba4017b34a597c68');
-  assert.equal(f.cases.length, 4); assert.equal(h.cases.length, 4);
-  return f.cases.map((c, i) => {assert.equal(c.name, h.cases[i].name); return {facts:c, hir:h.cases[i]};});
+  const f = await pinned('./array-facts-oracle-v2.json', 71746, '046084092c8c963870fa4ebb4984abcec0b793b5bbe309cfd1d2d4bd1129c0e0');
+  const h = await pinned('./array-hir-oracle-v2.json', 201957, 'd23e037ac6a70f7d64f598aac80733b330e5d924134f3b90ac48b669de8930c9');
+  assert.equal(f.cases.length, 8); assert.equal(h.cases.length, 8);
+  return f.cases.map((c, i) => {
+    assert.equal(c.name, h.cases[i].name);
+    const packet = JSON.parse(c.packageText), request = JSON.parse(c.requestText);
+    return {facts:{...c, package:packet, request, rangeAudit:rangeAudit(packet.payload)}, hir:h.cases[i]};
+  });
+}
+/** Ranges come only from pre-production expected facts, never a producer result.
+ * @param {any} payload @returns {any[]} */
+function rangeAudit(payload) {
+  const sources = new Map(payload.files.map(f => [f.path, f.content])), result = [];
+  /** @param {any} value @param {string} sourcePath */
+  function walk(value, sourcePath) {
+    if (!value || typeof value !== 'object') return;
+    if (value.sourcePath) sourcePath = value.sourcePath;
+    if (Object.keys(value).length === 2 && Number.isInteger(value.start) && Number.isInteger(value.end)) {
+      result.push({range:value, sourcePath, text:sources.get(sourcePath).slice(value.start,value.end)}); return;
+    }
+    for (const child of Object.values(value)) walk(child, sourcePath);
+  }
+  walk(payload.types,payload.rootFile); walk(payload.arrayLength,payload.rootFile); walk(payload.functions,payload.rootFile);
+  return result;
 }
 /** @param {any} row @param {Uint8Array} [bytes] @returns {any} */
 export const context = (row, bytes = Buffer.from(row.facts.packageText)) => ({...row.hir.context, factsBytes:bytes});
@@ -67,10 +87,10 @@ export function trustedHirError(row, error, kind) {
 /** @param {any} packet @returns {any} */
 export function reframeFacts(packet) {
   const p = packet.payload;
-  const request = {family:"tsfg.array-facts-request-candidate",version:1,input:{sourceRoot:p.sourceRoot,rootFile:p.rootFile,
+  const request = {family:"tsfg.array-facts-request-candidate",version:2,input:{sourceRoot:p.sourceRoot,rootFile:p.rootFile,
     files:p.files.map(f => ({path:f.path,content:f.content,sha256:f.sha256})),declarations:p.declarations,config:p.config}};
-  packet.requestId = "sha256:" + sha("tsfg.array-facts.request.v1\0" + jcs(request) + "\n");
-  packet.packageId = "sha256:" + sha("tsfg.array-facts.package.v1\0" + packet.schemaHash + "\0" + jcs(p));
+  packet.requestId = "sha256:" + sha("tsfg.array-facts.request.v2\0" + jcs(request) + "\n");
+  packet.packageId = "sha256:" + sha("tsfg.array-facts.package.v2\0" + packet.schemaHash + "\0" + jcs(p));
   return packet;
 }
 
@@ -115,14 +135,18 @@ export function replaceSource(packet, start, end, replacement) {
   const ids=new Map();
   for(const fn of p.functions){
     const old=fn.id;fn.id='sha256:'+sha('tsfg.array-facts.binding.v1\0'+jcs({sourcePath:fn.sourcePath,nameRange:fn.nameRange}));ids.set(old,fn.id);
-    for(const b of fn.bindings){const old=b.id;b.id='sha256:'+sha('tsfg.array-facts.binding.v1\0'+jcs({sourcePath:fn.sourcePath,nameRange:b.nameRange}));ids.set(old,b.id);}
+    for(const b of [...fn.parameters,...fn.bindings]){const old=b.id;b.id='sha256:'+sha('tsfg.array-facts.binding.v1\0'+jcs({sourcePath:fn.sourcePath,nameRange:b.nameRange}));ids.set(old,b.id);}
   }
-  for(const fn of p.functions)for(const stmt of fn.body){
-    if(stmt.kind==='variable'){
-      stmt.binding=ids.get(stmt.binding);
-      if(stmt.initializer.kind==='reference')stmt.initializer.binding=ids.get(stmt.initializer.binding);
-      else stmt.initializer.allocationSite='sha256:'+sha('tsfg.array-facts.allocation-site.v1\0'+jcs({sourcePath:fn.sourcePath,range:stmt.initializer.range}));
-    }else stmt.value.array.binding=ids.get(stmt.value.array.binding);
+  /** @param {any} value */
+  function rebind(value) {
+    if (!value || typeof value !== 'object') return;
+    if (typeof value.binding === 'string' && ids.has(value.binding)) value.binding=ids.get(value.binding);
+    for (const child of Object.values(value)) rebind(child);
+  }
+  for(const fn of p.functions){
+    rebind(fn.body);
+    for(const stmt of fn.body)if(stmt.kind==='variable'&&stmt.initializer.kind==='arrayLiteral')
+      stmt.initializer.allocationSite='sha256:'+sha('tsfg.array-facts.allocation-site.v1\0'+jcs({sourcePath:fn.sourcePath,range:stmt.initializer.range}));
   }
   for(const e of p.exports)e.functionId=ids.get(e.functionId);
   return reframeFacts(packet);

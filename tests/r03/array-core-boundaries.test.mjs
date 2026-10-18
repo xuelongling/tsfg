@@ -17,7 +17,7 @@ function nullRecords(value) {
 }
 /** @returns {Promise<any>} */
 async function oracle() {
-  return pinned('./array-core-oracle-v1.json',90582,'fc20c7f86b0253e89d10f0a7d3bf353b17d637574ad3f131df60f48394ccb7de');
+  return pinned('./array-core-oracle-v2.json',122149,'b2ae7137d402ea5b515ab72cd2d7ee62b5219f552743b13ef5797d337bb86f1a');
 }
 
 test('25c repeated owned output and offset context views preserve complete inputs and every Core byte',async t=>{
@@ -134,10 +134,9 @@ test('25c existing upstream limits remain exact before Core emission',async t=>{
   });
 });
 
-// Producer output8MiB is STATIC-ONLY: verified HIR JCS<=2097151B. Core retains a
-// subset of its path/name strings (MLIR quote<=1.5*JSON) and <2MiB fixed overhead:
-// 4096 constants*256 +272 locals*1024 +4096 operands*32 +16fn*4ops*1024 +256KiB.
-// Thus output<5242879B. Never stub verification or weaken input caps to fake overflow.
+// The v2 8MiB producer output guard is STATIC-ONLY here: no valid-input overflow
+// witness is established. Parameter and mutation accounting need their own proof;
+// never weaken input verification to manufacture an output overflow witness.
 
 test('25c absent Array selection keeps the complete old scalar public path',async()=>{
   // This unchanged pre-existing fixture is raw-pinned; its property order is not JCS.

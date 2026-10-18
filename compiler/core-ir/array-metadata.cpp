@@ -1,5 +1,6 @@
 // SPDX-License-Identifier: MIT
 #include "array-core.h"
+#include "dialect.h"
 #include "bytecode_encoding.h"
 #include "nullable.h"
 #include "string-core.h"
@@ -80,10 +81,10 @@ mlir::LogicalResult marker(mlir::ModuleOp module) {
     return reject("core-ir-array-marker", "candidate marker fields differ");
   auto version = llvm::dyn_cast_or_null<mlir::IntegerAttr>(value.get("version"));
   auto facts = llvm::dyn_cast_or_null<mlir::IntegerAttr>(value.get("facts_version"));
-  if (!version || !version.getType().isSignlessInteger(32) || version.getInt() != 1 ||
-      !facts || !facts.getType().isSignlessInteger(32) || facts.getInt() != 1 ||
+  if (!version || !version.getType().isSignlessInteger(32) || version.getInt() != 2 ||
+      !facts || !facts.getType().isSignlessInteger(32) || facts.getInt() != 2 ||
       text(value, "family") != "tsfg.core-array-candidate" || text(value, "schema") != schema ||
-      text(value, "profile") != "dense-f64-literal-local-alias-checked-read-v1")
+      text(value, "profile") != "dense-f64-params-local-alias-mutation-checked-v2")
     return reject("core-ir-array-marker", "candidate marker identity differs");
   return mlir::success();
 }
@@ -110,8 +111,8 @@ mlir::LogicalResult sources(mlir::ModuleOp module, Metadata &metadata, std::stri
         return reject("core-ir-array-identity", "selected root differs");
       rootFound = true;
     } else {
-      if (!name.ends_with("/minimal-arrays-v1.d.ts") || length != 312 ||
-          identity != "sha256:04a97584458d9212250e94d4fc517264c277a9ce635fbb14de11452194fd76b2")
+      if (!name.ends_with("/minimal-arrays-v2.d.ts") || length != 331 ||
+          identity != "sha256:6420493372913f019f64b094e181d1346afcca79e720ea85dc5e5026e03ba01e")
         return reject("core-ir-array-identity", "pinned declaration source differs");
       dtsPath = name.str();
     }
@@ -123,21 +124,67 @@ mlir::LogicalResult sources(mlir::ModuleOp module, Metadata &metadata, std::stri
 }
 mlir::LogicalResult types(mlir::ModuleOp module, llvm::StringRef dtsPath) {
   auto rows = module->getAttrOfType<mlir::ArrayAttr>("tsfg_array.types");
-  if (!rows || rows.size() != 2) return reject("core-ir-array-metadata", "type origins require two rows");
-  for (unsigned index = 0; index < 2; ++index) {
+  if (!rows || rows.size() != 3) return reject("core-ir-array-metadata", "type origins require three rows");
+  for (unsigned index = 0; index < 3; ++index) {
     auto row = llvm::dyn_cast<mlir::DictionaryAttr>(rows[index]);
-    if (!fields(row, index == 0 ? llvm::ArrayRef<llvm::StringRef>{"id", "kind", "name", "source_path", "declaration_range", "name_range"}
+    if (!fields(row, index != 1 ? llvm::ArrayRef<llvm::StringRef>{"id", "kind", "name", "source_path", "declaration_range", "name_range"}
         : llvm::ArrayRef<llvm::StringRef>{"id", "kind", "name", "source_path", "declaration_range", "name_range", "element_type", "index_signature_range"}))
       return reject("core-ir-array-metadata", "type origin fields differ");
-    if (text(row, "id") != (index ? arrayId : f64Id) || text(row, "source_path") != dtsPath ||
-        text(row, "kind") != (index ? "managedReference" : "scalar") || text(row, "name") != (index ? "Array" : "f64") ||
-        (index && text(row, "element_type") != f64Id)) return reject("core-ir-array-identity", "type identity differs");
+    if (text(row, "id") != (index == 1 ? arrayId : index == 2 ? u32Id : f64Id) || text(row, "source_path") != dtsPath ||
+        text(row, "kind") != (index == 1 ? "managedReference" : "scalar") || text(row, "name") != (index == 1 ? "Array" : index == 2 ? "u32" : "f64") ||
+        (index == 1 && text(row, "element_type") != f64Id)) return reject("core-ir-array-identity", "type identity differs");
     Range declaration, name, signatureRange;
     if (!span(row.get("declaration_range"), declaration) || !span(row.get("name_range"), name) ||
-        !same(declaration, index ? Range{238, 292} : Range{293, 311}) ||
-        !same(name, index ? Range{248, 253} : Range{298, 301}) ||
-        (index && (!span(row.get("index_signature_range"), signatureRange) || !same(signatureRange, {259, 274}))))
+        !same(declaration, index == 1 ? Range{238, 292} : index == 2 ? Range{312, 330} : Range{293, 311}) ||
+        !same(name, index == 1 ? Range{248, 253} : index == 2 ? Range{317, 320} : Range{298, 301}) ||
+        (index == 1 && (!span(row.get("index_signature_range"), signatureRange) || !same(signatureRange, {259, 274}))))
       return reject("core-ir-array-source", "pinned type origin ranges differ");
+  }
+  return mlir::success();
+}
+mlir::LogicalResult lengthProperty(mlir::ModuleOp module, llvm::StringRef path, Metadata &metadata) {
+  auto row=module->getAttrOfType<mlir::DictionaryAttr>("tsfg_array.length_property");
+  if (!fields(row,{"id","kind","name","owner_type","official_type","write_type","source_path","declaration_range","name_range","type_range"}))
+    return reject("core-ir-array-metadata","length property fields differ");
+  if (text(row,"kind") != "property" || text(row,"name") != "length" || text(row,"owner_type") != arrayId ||
+      text(row,"official_type") != "number" || text(row,"write_type") != u32Id || text(row,"source_path") != path)
+    return reject("core-ir-array-identity","pinned length property identity differs");
+  Range declaration,name,type;
+  if (!span(row.get("declaration_range"),declaration) || !span(row.get("name_range"),name) || !span(row.get("type_range"),type) ||
+      !same(declaration,{275,290}) || !same(name,{275,281}) || !same(type,{283,289}))
+    return reject("core-ir-array-source","pinned length property ranges differ");
+  metadata.lengthProperty=sourceIdentity(path,name);
+  if (text(row,"id") != metadata.lengthProperty || !metadata.bindings.insert(metadata.lengthProperty).second)
+    return reject("core-ir-array-identity","length property binding differs");
+  return mlir::success();
+}
+mlir::LogicalResult parameters(mlir::func::FuncOp fn, Function &function, Metadata &metadata) {
+  auto rows=fn->getAttrOfType<mlir::ArrayAttr>("tsfg_array.parameters");
+  if (!rows) return reject("core-ir-array-metadata","parameter table absent");
+  if (rows.size()>8 || fn.getFunctionType().getNumInputs()>8) return reject("core-ir-array-budget","parameter count exceeds limit");
+  if (rows.size()!=fn.getFunctionType().getNumInputs()) return reject("core-ir-array-shape","parameter/input count differs");
+  uint32_t previous=function.name.end; std::set<std::string> names;
+  for (size_t i=0;i<rows.size();++i) {
+    auto row=llvm::dyn_cast<mlir::DictionaryAttr>(rows[i]);
+    if (!fields(row,{"id","name","type","writable","declaration_range","name_range","annotation_range"}))
+      return reject("core-ir-array-metadata","parameter fields differ");
+    auto name=text(row,"name"); auto writable=llvm::dyn_cast_or_null<mlir::BoolAttr>(row.get("writable"));
+    if (name.size()>1048576) return reject("core-ir-array-budget","parameter name exceeds limit");
+    if (!validText(name) || !names.insert(name.str()).second) return reject("core-ir-array-identity","duplicate/invalid parameter name");
+    if (!writable || !writable.getValue()) return reject("core-ir-array-metadata","parameter writable differs");
+    unsigned code=tsfg::typeCode(fn.getFunctionType().getInput(i));
+    if ((code!=8 && code!=13) || text(row,"type") != (code==8 ? u32Id : f64Id))
+      return reject("core-ir-array-type","parameter scalar type differs");
+    Parameter item{text(row,"id").str(),name.str(),code,{},{},{}};
+    if (!span(row.get("declaration_range"),item.declaration) || !span(row.get("name_range"),item.nameRange) ||
+        !span(row.get("annotation_range"),item.annotation) || !encloses(function.declaration,item.declaration) ||
+        item.declaration.start<=previous || item.declaration.end>=function.annotation.start ||
+        item.declaration.start!=item.nameRange.start || item.declaration.end!=item.annotation.end ||
+        item.nameRange.end>=item.annotation.start || !encloses(item.declaration,item.nameRange) || !encloses(item.declaration,item.annotation))
+      return reject("core-ir-array-source","parameter source ranges differ");
+    if (item.id!=sourceIdentity(metadata.path,item.nameRange) || !metadata.bindings.insert(item.id).second)
+      return reject("core-ir-array-identity","parameter binding differs");
+    function.parameters.push_back(item); previous=item.declaration.end;
   }
   return mlir::success();
 }
@@ -154,7 +201,7 @@ mlir::LogicalResult verifyMetadata(mlir::ModuleOp module, Metadata &metadata) {
   if (mlir::failed(marker(module))) return mlir::failure();
   if (!attributes(module, {"tsfg_core.version", "tsfg_core.input_identity", "tsfg_core.source_hash", "tsfg_core.source_path",
       "tsfg_core.target", "tsfg_core.triple", "tsfg_core.data_layout", "tsfg_core.bytecode_schema", "tsfg_core.source_length",
-      "tsfg_core.array", "tsfg_array.function_ids", "tsfg_array.exports", "tsfg_array.sources", "tsfg_array.types", "tsfg_array.request_id"}))
+      "tsfg_core.array", "tsfg_array.function_ids", "tsfg_array.exports", "tsfg_array.sources", "tsfg_array.types", "tsfg_array.request_id", "tsfg_array.length_property"}))
     return reject("core-ir-array-metadata", "module fields differ");
   if (text(module, "tsfg_core.version") != "0.9.0" || text(module, "tsfg_core.target") != "windows-x86_64-msvc" ||
       text(module, "tsfg_core.triple") != "x86_64-pc-windows-msvc" ||
@@ -163,7 +210,8 @@ mlir::LogicalResult verifyMetadata(mlir::ModuleOp module, Metadata &metadata) {
       !digest(text(module, "tsfg_core.input_identity")) || !digest(text(module, "tsfg_core.source_hash")) ||
       !digest(text(module, "tsfg_array.request_id"))) return reject("core-ir-array-identity", "base identity differs");
   std::string dtsPath;
-  if (mlir::failed(sources(module, metadata, dtsPath)) || mlir::failed(types(module, dtsPath))) return mlir::failure();
+  if (mlir::failed(sources(module, metadata, dtsPath)) || mlir::failed(types(module, dtsPath)) ||
+      mlir::failed(lengthProperty(module,dtsPath,metadata))) return mlir::failure();
   auto ids = module->getAttrOfType<mlir::ArrayAttr>("tsfg_array.function_ids");
   auto exports = module->getAttrOfType<mlir::ArrayAttr>("tsfg_array.exports");
   if (!ids || ids.empty() || !exports) return reject("core-ir-array-metadata", "function/export tables differ");
@@ -176,22 +224,14 @@ mlir::LogicalResult verifyMetadata(mlir::ModuleOp module, Metadata &metadata) {
     if (!function) return reject("core-ir-array-shape", "module permits functions only");
     if (metadata.functions.size() == 16) return reject("core-ir-array-budget", "function count exceeds limit");
     if (!attributes(function, {"sym_name", "function_type", "tsfg_core.function_id", "tsfg_core.signature_hash", "tsfg_core.type_id",
-        "tsfg_core.function_start", "tsfg_core.function_end", "tsfg_array.source_binding", "tsfg_array.name_range", "tsfg_array.return_annotation_range"}))
+        "tsfg_core.function_start", "tsfg_core.function_end", "tsfg_array.source_binding", "tsfg_array.name_range", "tsfg_array.return_annotation_range", "tsfg_array.parameters"}))
       return reject("core-ir-array-metadata", "function fields differ");
     auto name = function.getSymName();
     if (name.size() > 1048576) return reject("core-ir-array-budget", "function name exceeds limit");
     if (!validText(name) || !names.insert(name.str()).second) return reject("core-ir-array-identity", "invalid/duplicate function name");
     auto type = function.getFunctionType();
-    if (type.getNumInputs() || type.getNumResults() != 1 || !type.getResult(0).isF64())
-      return reject("core-ir-array-type", "function must return f64 without parameters");
-    std::string preimage("tsfg.function\0", 14);
-    preimage += metadata.path; preimage += '\0'; preimage += name.str(); preimage += '\0';
-    preimage += signature.drop_front(7).str();
-    auto identity = hash(preimage);
-    auto id = metadata.functions.size() < ids.size() ? llvm::dyn_cast<mlir::StringAttr>(ids[metadata.functions.size()]) : mlir::StringAttr();
-    if (!id || id.getValue() != identity || text(function, "tsfg_core.function_id") != identity ||
-        text(function, "tsfg_core.signature_hash") != signature || text(function, "tsfg_core.type_id") != f64Id || !identities.insert(identity).second)
-      return reject("core-ir-array-identity", "function identity/ordered table differs");
+    if (type.getNumResults() != 1 || !type.getResult(0).isF64())
+      return reject("core-ir-array-type", "function must return f64");
     Function item{function.getOperation(), {}, {}, {}};
     if (!number(function->getAttr("tsfg_core.function_start"), item.declaration.start) ||
         !number(function->getAttr("tsfg_core.function_end"), item.declaration.end) ||
@@ -203,6 +243,23 @@ mlir::LogicalResult verifyMetadata(mlir::ModuleOp module, Metadata &metadata) {
     auto binding = sourceIdentity(metadata.path, item.name);
     if (text(function, "tsfg_array.source_binding") != binding || !metadata.bindings.insert(binding).second)
       return reject("core-ir-array-identity", "function source binding differs");
+    if (mlir::failed(parameters(function,item,metadata))) return mlir::failure();
+    std::string shape = "(";
+    for (size_t i = 0; i < item.parameters.size(); ++i) {
+      if (i) shape += ',';
+      shape += item.parameters[i].type == 8 ? "u32" : "f64";
+    }
+    shape += ")->f64";
+    std::string signaturePreimage("tsfg.signature\0",15); signaturePreimage += shape;
+    auto signature = hash(signaturePreimage);
+    std::string preimage("tsfg.function\0",14);
+    preimage += metadata.path; preimage += '\0'; preimage += name.str(); preimage += '\0';
+    preimage += llvm::StringRef(signature).drop_front(7).str();
+    auto identity = hash(preimage);
+    auto id = metadata.functions.size() < ids.size() ? llvm::dyn_cast<mlir::StringAttr>(ids[metadata.functions.size()]) : mlir::StringAttr();
+    if (!id || id.getValue() != identity || text(function,"tsfg_core.function_id") != identity ||
+        text(function,"tsfg_core.signature_hash") != signature || text(function,"tsfg_core.type_id") != f64Id || !identities.insert(identity).second)
+      return reject("core-ir-array-identity","function identity/ordered table differs");
     previous = item.declaration.end; metadata.functions.push_back(item); expectedExports.emplace_back(name.str(), identity);
   }
   if (metadata.functions.size() != ids.size() || exports.size() != ids.size())

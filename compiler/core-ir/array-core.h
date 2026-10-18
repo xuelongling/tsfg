@@ -13,13 +13,13 @@
 namespace mlir { class DialectRegistry; }
 namespace tsfg::arrays {
 inline constexpr llvm::StringLiteral schema =
-    "sha256:e781d2a4e76bcdb2f244f94a75221bdb8d3394632f840fc29e50e98a076dc3c2";
+    "sha256:36d2a96118d7d33a4dd2d41157c636386b998c44b3756b26a1c3f42227879024";
 inline constexpr llvm::StringLiteral f64Id =
     "sha256:dfbc72c48bec549ea679cd6aff531f9ebef95e001f6ae0bf419d2f33bf988a6c";
 inline constexpr llvm::StringLiteral arrayId =
     "sha256:74dab77c8fbdacf6cf058e37cac033757417c808d57ee23a9c8866565202cb68";
-inline constexpr llvm::StringLiteral signature =
-    "sha256:1a3c0248ecb7e498007af6b22ac9e18eb5df6b9390677401805ce98ab2934d96";
+inline constexpr llvm::StringLiteral u32Id =
+    "sha256:b72109639ea1cc95816abe01a09e7e4c78c11902a1251c00090a5715cf9b979c";
 inline constexpr size_t byteLimit = 8388608;
 class ArrayType : public mlir::Type::TypeBase<ArrayType, mlir::Type, mlir::TypeStorage> {
 public:
@@ -29,9 +29,13 @@ public:
   static ArrayType get(mlir::MLIRContext *context) { return Base::get(context); }
 };
 struct Range { uint32_t start = 0, end = 0; };
-struct Function { mlir::Operation *operation; Range declaration, name, annotation; };
+struct Parameter { std::string id, name; unsigned type; Range declaration, nameRange, annotation; };
+struct Function {
+  mlir::Operation *operation; Range declaration, name, annotation;
+  std::vector<Parameter> parameters;
+};
 struct Metadata {
-  std::string path;
+  std::string path, lengthProperty;
   uint32_t length = 0;
   std::vector<Function> functions;
   std::set<std::string> bindings, sites;

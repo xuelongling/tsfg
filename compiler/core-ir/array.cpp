@@ -24,30 +24,31 @@ mlir::LogicalResult reject(llvm::StringRef code, llvm::StringRef detail) {
 namespace {
 mlir::LogicalResult verifyOperation(mlir::Operation *operation) {
   const auto name = operation->getName().getStringRef();
-  const bool create = name == "tsfg_array.create", alias = name == "tsfg_array.alias";
-  if (operation->getNumResults() != 1 || operation->getNumRegions() || operation->getNumSuccessors()
-      || (!create && operation->getNumOperands() != (alias ? 1 : 2)))
-    return reject("core-ir-array-shape", "operation shape differs");
-  if (create && operation->getNumOperands() > 256)
-    return reject("core-ir-array-budget", "literal exceeds element budget");
-  if (!attributes(operation, create ? llvm::ArrayRef<llvm::StringRef>{"allocation_site", "local", "tsfg_source.start", "tsfg_source.end"}
-      : alias ? llvm::ArrayRef<llvm::StringRef>{"target_binding", "local", "tsfg_source.start", "tsfg_source.end"}
-      : llvm::ArrayRef<llvm::StringRef>{"receiver_binding", "receiver_range", "tsfg_source.start", "tsfg_source.end"}))
-    return reject("core-ir-array-metadata", "operation fields differ");
-  if (create || alias) {
-    if (!llvm::isa<ArrayType>(operation->getResult(0).getType()))
-      return reject("core-ir-array-type", "create and alias require nominal Array result");
-  } else if (!operation->getResult(0).getType().isF64())
-    return reject("core-ir-array-type", "checked read requires f64 result");
-  for (unsigned index = 0; index < operation->getNumOperands(); ++index) {
-    auto type = operation->getOperand(index).getType();
-    const bool valid = create ? type.isF64() : index == 0 ? llvm::isa<ArrayType>(type) : tsfg::typeCode(type) == 8;
-    if (!valid) return reject("core-ir-array-type", "operation operand type differs");
+  const bool create=name=="tsfg_array.create",alias=name=="tsfg_array.alias",read=name=="tsfg_array.read_checked";
+  const bool store=name=="tsfg_array.store_dense_checked",resize=name=="tsfg_array.resize_checked";
+  if ((!create && !alias && !read && !store && !resize) || operation->getNumRegions() || operation->getNumSuccessors() ||
+      operation->getNumResults() != (store || resize ? 0u : 1u) ||
+      (!create && operation->getNumOperands() != (alias ? 1u : store ? 3u : 2u)))
+    return reject("core-ir-array-shape","operation shape differs");
+  if (create && operation->getNumOperands()>256) return reject("core-ir-array-budget","literal exceeds element budget");
+  const std::vector<llvm::StringRef> keys=create ? std::vector<llvm::StringRef>{"allocation_site","local","tsfg_source.start","tsfg_source.end"}
+    : alias ? std::vector<llvm::StringRef>{"target_binding","local","tsfg_source.start","tsfg_source.end"}
+    : read ? std::vector<llvm::StringRef>{"receiver_binding","receiver_range","index","tsfg_source.start","tsfg_source.end"}
+    : store ? std::vector<llvm::StringRef>{"target","value","expression_range","operator_range","tsfg_source.start","tsfg_source.end"}
+    : std::vector<llvm::StringRef>{"receiver_binding","receiver_range","property","property_name_range","target_range","new_length","expression_range","operator_range","tsfg_source.start","tsfg_source.end"};
+  if (!attributes(operation,keys)) return reject("core-ir-array-metadata","operation fields differ");
+  if ((create || alias) && !llvm::isa<ArrayType>(operation->getResult(0).getType()))
+    return reject("core-ir-array-type","create/alias require nominal Array result");
+  if (read && !operation->getResult(0).getType().isF64()) return reject("core-ir-array-type","read requires f64 result");
+  for (unsigned i=0;i<operation->getNumOperands();++i) {
+    auto type=operation->getOperand(i).getType();
+    bool valid=create ? type.isF64() : i==0 ? llvm::isa<ArrayType>(type) : i==1 ? tsfg::typeCode(type)==8 : type.isF64();
+    if (!valid) return reject("core-ir-array-type","operation operand type differs");
   }
   return mlir::success();
 }
-#define ARRAY_OP(Class, Name, Operands) \
-class Class : public mlir::Op<Class, Operands, mlir::OpTrait::OneResult, mlir::OpTrait::ZeroRegions> { \
+#define ARRAY_OP(Class, Name, Operands, Results) \
+class Class : public mlir::Op<Class, Operands, Results, mlir::OpTrait::ZeroRegions> { \
 public: \
   using Op::Op; \
   MLIR_DEFINE_EXPLICIT_INTERNAL_INLINE_TYPE_ID(Class) \
@@ -55,9 +56,11 @@ public: \
   static llvm::ArrayRef<llvm::StringRef> getAttributeNames() { return {}; } \
   mlir::LogicalResult verify() { return verifyOperation(getOperation()); } \
 };
-ARRAY_OP(CreateOp, "create", mlir::OpTrait::VariadicOperands)
-ARRAY_OP(AliasOp, "alias", mlir::OpTrait::OneOperand)
-ARRAY_OP(ReadOp, "read_checked", mlir::OpTrait::NOperands<2>::Impl)
+ARRAY_OP(CreateOp, "create", mlir::OpTrait::VariadicOperands, mlir::OpTrait::OneResult)
+ARRAY_OP(AliasOp, "alias", mlir::OpTrait::OneOperand, mlir::OpTrait::OneResult)
+ARRAY_OP(ReadOp, "read_checked", mlir::OpTrait::NOperands<2>::Impl, mlir::OpTrait::OneResult)
+ARRAY_OP(StoreOp, "store_dense_checked", mlir::OpTrait::NOperands<3>::Impl, mlir::OpTrait::ZeroResults)
+ARRAY_OP(ResizeOp, "resize_checked", mlir::OpTrait::NOperands<2>::Impl, mlir::OpTrait::ZeroResults)
 #undef ARRAY_OP
 class ArrayDialect : public mlir::Dialect {
 public:
@@ -65,7 +68,7 @@ public:
   static llvm::StringRef getDialectNamespace() { return "tsfg_array"; }
   explicit ArrayDialect(mlir::MLIRContext *context)
       : Dialect(getDialectNamespace(), context, mlir::TypeID::get<ArrayDialect>()) {
-    addTypes<ArrayType>(); addOperations<CreateOp, AliasOp, ReadOp>();
+    addTypes<ArrayType>(); addOperations<CreateOp, AliasOp, ReadOp, StoreOp, ResizeOp>();
   }
   mlir::Type parseType(mlir::DialectAsmParser &parser) const override {
     llvm::StringRef mnemonic;

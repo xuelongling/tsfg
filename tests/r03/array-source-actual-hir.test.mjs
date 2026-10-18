@@ -1,52 +1,49 @@
 // SPDX-License-Identifier: MIT
-// Root supplies one manifest extracted from an actually qualified Source Go run.
-// Its bytes are independently pinned; expected packages/HIR stay the frozen oracles.
+// Explicit integration entry: Root supplies its qualified actual Source capture.
+// Raw publications are inputs; only pre-production frozen fixtures are expected.
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { readFile } from 'node:fs/promises';
-import { readArrayFactsCandidate, writeArrayFactsCandidate } from '../../compiler/array-facts.mjs';
-import { buildHir, verifyHir, printHir, readHir } from '../../compiler/hir.mjs';
-import { fixtures, fresh, context, deeplyFrozen, jcs, sha } from './array-test-fixtures.mjs';
+import { readArrayFactsCandidate,writeArrayFactsCandidate } from '../../compiler/array-facts.mjs';
+import { buildHir,verifyHir,printHir,readHir,lowerHir } from '../../compiler/hir.mjs';
+import { fixtures,fresh,context,deeplyFrozen,jcs,sha,pinned } from './array-test-fixtures.mjs';
 
-test('25b four actual official Source packages reach complete owned HIR through public APIs',async t=>{
-  const file=process.env.TSFG_ARRAY_SOURCE_CAPTURE,expectedSHA=process.env.TSFG_ARRAY_SOURCE_CAPTURE_SHA256;
-  assert.ok(file,'Root must supply an actual Source capture manifest');
-  assert.match(expectedSHA??'',/^[0-9a-f]{64}$/);
-  const bytes=await readFile(file);assert.equal(sha(bytes),expectedSHA);
+test('25d eight actual official Source publications reach whole HIR and static Core',async t=>{
+  const file=process.env.TSFG_ARRAY_SOURCE_CAPTURE;
+  assert.ok(file,'explicit Source integration entry requires Root capture manifest');
+  assert.equal(process.env.TSFG_ARRAY_SOURCE_CAPTURE_SHA256,'381afc7e3c1bb9692369be3549d46f2c0bd896dfa2ef73ce6910f2f9212d9128');
+  const bytes=await readFile(file);assert.equal(bytes.length,607252);
+  assert.equal(sha(bytes),'381afc7e3c1bb9692369be3549d46f2c0bd896dfa2ef73ce6910f2f9212d9128');
   const capture=JSON.parse(bytes.toString('utf8'));
-  assert.equal(capture.family,'tsfg.r03.array-source-captures');assert.equal(capture.version,1);
-  assert.match(capture.producer.baseOid,/^[0-9a-f]{40}$/);
-  assert.equal(typeof capture.producer.dirty,'boolean');
-  assert.match(capture.producer.inputSetHash,/^sha256:[0-9a-f]{64}$/);
-  assert.ok(Number.isSafeInteger(capture.producer.pid)&&capture.producer.pid>0);
-  assert.equal(capture.producer.qualified,true);
-  assert.equal(capture.producer.exitCode,0);assert.equal(capture.producer.closeCode,0);
-  const rows=await fixtures();
+  assert.equal(capture.schema,'r03.array-dense.actual-source-captures.v1');
+  const state=capture.actual.state;
+  assert.equal(state.qualified,true);assert.equal(state.observerOK,true);
+  assert.equal(state.exit.code,0);assert.equal(state.close.code,0);
+  assert.equal(capture.all8ByteExactToPreproductionIndependentOracle,true);
+  const rows=await fixtures(),actuals=[];
+  const core=await pinned('./array-core-oracle-v2.json',122149,'b2ae7137d402ea5b515ab72cd2d7ee62b5219f552743b13ef5797d337bb86f1a');
   assert.deepEqual(capture.cases.map(c=>c.name),rows.map(r=>r.facts.name));
-  // Finish every actual whole-Source equality before the first HIR call.
   for(let i=0;i<rows.length;i++){
-    const actual=capture.cases[i],row=rows[i];
-    assert.equal(actual.requestText,row.facts.requestText);
-    assert.equal(actual.packageText,row.facts.packageText);
-    assert.equal(sha(actual.requestText),row.facts.requestSHA256);
-    assert.equal(sha(actual.packageText),row.facts.packageSHA256);
-    const facts=readArrayFactsCandidate(Buffer.from(actual.packageText));
-    assert.deepEqual(facts,row.facts.package);
-    assert.deepEqual(writeArrayFactsCandidate(facts),Buffer.from(actual.packageText));
+    const row=rows[i],record=capture.cases[i],raw=await readFile(record.raw.path);
+    assert.equal(record.sourcePID,capture.actual.pid);
+    assert.equal(record.requestBytes,row.facts.requestBytes);assert.equal(record.requestSHA256,row.facts.requestSHA256);
+    assert.equal(raw.length,row.facts.packageBytes);assert.equal(sha(raw),row.facts.packageSHA256);
+    assert.deepEqual(raw,Buffer.from(row.facts.packageText),'actual Source bytes equal independent whole expected');
+    actuals.push(raw);
   }
-  t.diagnostic('25b ACTUAL_SOURCE_ALL_FOUR_WHOLE_PACKETS_MATCH_FROZEN_ORACLE; first public HIR follows');
+  t.diagnostic('25d ACTUAL_SOURCE_ALL_EIGHT_WHOLE_PACKETS_MATCH_INDEPENDENT_ORACLE');
   for(let i=0;i<rows.length;i++)await t.test(rows[i].facts.name,()=>{
-    const actual=capture.cases[i],row=rows[i],actualBytes=Buffer.from(actual.packageText);
-    const input=readArrayFactsCandidate(actualBytes),ctx=context(row,Buffer.from(actualBytes));
-    const before=jcs(input),built=buildHir(input,ctx);
-    assert.equal(built.status,'ok');
+    const row=rows[i],raw=actuals[i],before=Buffer.from(raw),input=readArrayFactsCandidate(raw),ctx=context(row,Buffer.from(raw));
+    const inputBefore=jcs(input);assert.deepEqual(input,row.facts.package);
+    assert.deepEqual(writeArrayFactsCandidate(input),before);
+    const built=buildHir(input,ctx);assert.equal(built.status,'ok');
     assert.deepEqual(built.hir,row.hir.expectedHir);deeplyFrozen(built.hir);
     assert.equal(printHir(built.hir,ctx),row.hir.hirText);
-    const cold=verifyHir(fresh(row.hir.expectedHir),ctx);deeplyFrozen(cold);
-    assert.deepEqual(cold,row.hir.expectedHir);
+    assert.deepEqual(verifyHir(fresh(row.hir.expectedHir),ctx),row.hir.expectedHir);
     assert.deepEqual(readHir(Buffer.from(row.hir.hirText),ctx),row.hir.expectedHir);
-    assert.equal(jcs(input),before);
-    actualBytes.fill(0);assert.deepEqual(built.hir,row.hir.expectedHir);
+    assert.equal(lowerHir(built.hir,ctx),core.cases[i].core);
+    assert.equal(jcs(input),inputBefore);assert.deepEqual(raw,before);
+    raw.fill(0);assert.deepEqual(built.hir,row.hir.expectedHir);
   });
 });
-// This validates actual private facts -> HIR only. Core/Runtime/trap/VM remain OPEN.
+// This static compiler path supplies no guest/VM/trap/heap/Host execution credit.
