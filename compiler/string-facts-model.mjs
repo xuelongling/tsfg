@@ -34,7 +34,7 @@ function logicalPath(value) {
     && value.slice(1).split('/').every(part => part && part !== '.' && part !== '..'), 'input');
   return value;
 }
-function sourceInput(payload, limits) {
+export function stringFactsSourceInput(payload, limits) {
   const sourceRoot = logicalPath(payload.sourceRoot), rootFile = logicalPath(payload.rootFile);
   check(rootFile.startsWith(sourceRoot + '/') && rootFile.endsWith('.ts') && !rootFile.endsWith('.d.ts'), 'input');
   stringFactsRecord(payload.config, ['strict', 'noEmit', 'allowJs']);
@@ -69,7 +69,7 @@ function sourceInput(payload, limits) {
     input: { sourceRoot, rootFile, config: payload.config, declarations,
       files: supplied.map(({ path, content, sha256 }) => ({ path, content, sha256 })) } };
 }
-function range(value, parent, content, nested = false) {
+export function stringFactsRange(value, parent, content, nested = false) {
   stringFactsRecord(value, ['start', 'end']);
   const { start, end } = value;
   const boundary = index => !(content.charCodeAt(index) >= 0xdc00 && content.charCodeAt(index) <= 0xdfff
@@ -90,7 +90,7 @@ function range(value, parent, content, nested = false) {
 export function validateStringFactsPayload(payload, limits) {
   stringFactsRecord(payload, ['sourceRoot', 'rootFile', 'config', 'declarations', 'files', 'positionUnit', 'functions']);
   check(payload.positionUnit === 'utf16');
-  const { source, input } = sourceInput(payload, limits);
+  const { source, input } = stringFactsSourceInput(payload, limits);
   const functions = array(payload.functions, limits.functions, 1), names = new Set();
   const sourceRange = { start: 0, end: source.utf16Length };
   let previousEnd = 0, totalUnits = 0;
@@ -100,15 +100,15 @@ export function validateStringFactsPayload(payload, limits) {
     check(fn.sourcePath === source.path && !names.has(fn.name), 'owner');
     names.add(fn.name);
     check(fn.returnType === 'string'); array(fn.parameters, 0, 0, 'schema');
-    const declaration = range(fn.declarationRange, sourceRange, source.content);
+    const declaration = stringFactsRange(fn.declarationRange, sourceRange, source.content);
     check(declaration.start >= previousEnd, 'range'); previousEnd = declaration.end;
     const body = array(fn.body, 1, 1, 'schema'), statement = body[0];
     stringFactsRecord(statement, ['kind', 'range', 'value']); check(statement.kind === 'return');
-    const statementRange = range(statement.range, declaration, source.content, true), value = statement.value;
+    const statementRange = stringFactsRange(statement.range, declaration, source.content, true), value = statement.value;
     stringFactsRecord(value, ['kind', 'type', 'range', 'codeUnits']);
     check(value.kind === 'stringLiteral' && value.type === 'string');
     // ASI can end a return at its literal; the literal still starts after return.
-    const literalRange = range(value.range, statementRange, source.content);
+    const literalRange = stringFactsRange(value.range, statementRange, source.content);
     check(literalRange.start > statementRange.start && literalRange.end - literalRange.start >= 2, 'range');
     const units = array(value.codeUnits, limits.valueCodeUnits);
     totalUnits += units.length; check(totalUnits <= limits.packageCodeUnits, 'limit');

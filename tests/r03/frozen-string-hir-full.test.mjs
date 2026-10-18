@@ -11,7 +11,7 @@ import {
 
 test('24d full oracle independently fixes all fields, identities, owners, 42 ranges and 29 units', () => {
   const data = example(), expected = data.hir;
-  assert.equal(expected.contractVersion, '0.10.0');
+  assert.equal(expected.contractVersion, '0.11.0');
   assert.equal(expected.schemaHash, h10);
   assert.equal(expected.inputIdentity, selectedId);
   assert.equal(stringTypeId, hash('tsfg.type\0string'));

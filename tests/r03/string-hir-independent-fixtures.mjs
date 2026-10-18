@@ -11,7 +11,7 @@ import { createHash } from 'node:crypto';
 export const selectedId = 'sha256:968f1dc089d12b8826af05e413f8789db95c1495b941d9aab754daa869986009';
 export const stringTypeId = 'sha256:7d62b2f4422bdcf8ffbd8d54487d799753faecc3655296bfd81d3e94b606a46e';
 export const stringSignature = 'sha256:854eb80faa738dba624abb80156ef142ab727222ac63c01620c51768ad44e5c4';
-export const h10 = 'sha256:7d242a9f29da88f1b0cd08bab906912b6bb45e51c4b859755676bac2c2e1fcac';
+export const h10 = 'sha256:fe225e07d8445184ec49e3cce978c9df7b9be6db0ca64d6e45c63d5a5aaaf1bd';
 export const manualUnits = [
   [], [0], [55357,56832], [55357,56832], [55357,56832], [55296], [56320],
   [56832,55357], [65,55296,0,56320,90], [92,34,10,13,9,65,66],
@@ -52,11 +52,11 @@ export const functionId = (path, name) => hash('tsfg.function\0' + path + '\0' +
 /** @type {Record<string, [number, string]>} */
 const fixturePins = {
   'string-facts-lossless.frozen-v1.jcs.json': [6147,'64e164fc00016eda6052453993c0eab1de9cac0f4879de3b79fe42df4b38a468'],
-  'string-hir-lossless.frozen-v1.jcs.json': [9752,'a4f817536d9ad0f712e6e34cf82a7eb634db696867f9fcc429731fb533351290'],
+  'string-hir-lossless.frozen-v1.jcs.json': [9752,'00cc2671bdc22fd9f08310cd6517c2ea71656fd157c1179475efc7a70e0039d5'],
   'string-facts-asi.frozen-v1.jcs.json': [1614,'c1f618d4d4ad077d198fb7108097d6e775a9671cc00120a99c63f1957e794fdb'],
-  'string-hir-asi.frozen-v1.jcs.json': [1191,'7a2456d183060b509012aad42f22ef468167c5ec07815fe5c1317feeeceedc0a'],
+  'string-hir-asi.frozen-v1.jcs.json': [1191,'4d29d7a21eafa63ea597903ddf990f50504c434824dd93625028cb05f2aedfcd'],
   'string-facts-hir-boundaries.frozen-v1.jcs.json': [1765,'889d7099586def2d6b19311bd464adb898e9a1edb2cf76f966b1e408697315a0'],
-  'string-hir-boundaries.frozen-v1.jcs.json': [1340,'20908de084cff8b9e9205d95f8e05ff6888c9d7406da7e922cc014e0b5b3f86e'],
+  'string-hir-boundaries.frozen-v1.jcs.json': [1340,'e81e975d161b67ed4aaa7f0dd09050cdc2bce64f02af5e141112f38fc7926240'],
 };
 /** @param {'lossless' | 'asi' | 'boundaries'} [name] */
 export function example(name = 'lossless') {

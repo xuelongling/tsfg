@@ -1,4 +1,5 @@
 // SPDX-License-Identifier: MIT
+import { isProxy } from "node:util/types";
 import { genericPackageJsonPolicy, genericPackageIoJsonPolicy, genericJsonFailure as failure } from "./generic-json-budget.mjs";
 export { checkGenericJsonValueBudget, genericPackageJsonPolicy, genericPackageIoJsonPolicy } from "./generic-json-budget.mjs";
 
@@ -107,6 +108,33 @@ export function preflightGenericJson(text, policy = genericPackageJsonPolicy, se
   } catch (error) {
     if (selectedPath) Object.defineProperty(error, 'jsonSelection', { value: selection });
     throw error;
+  }
+}
+
+const nativeTypedArray = Object.getPrototypeOf(Uint8Array.prototype);
+const nativeByteField = name => Object.getOwnPropertyDescriptor(nativeTypedArray, name).get;
+const nativeByteLength = nativeByteField("byteLength"), nativeByteOffset = nativeByteField("byteOffset");
+const nativeByteBuffer = nativeByteField("buffer");
+const nativeByteBrand = Object.getOwnPropertyDescriptor(nativeTypedArray, Symbol.toStringTag).get;
+
+/** Snapshot selected byte boundaries without caller property reads or prototype traversal.
+ * @param {Readonly<import("./generic-json-budget.mjs").GenericJsonPolicy>} policy
+ * @returns {Buffer}
+ */
+export function copyGenericJsonBytes(bytes, policy) {
+  const check = (condition, category = "input") => { if (!condition) failure(policy, category); };
+  check(bytes && typeof bytes === "object" && !isProxy(bytes));
+  const prototype = Object.getPrototypeOf(bytes);
+  check(prototype === Uint8Array.prototype || prototype === Buffer.prototype);
+  try {
+    check(nativeByteBrand.call(bytes) === "Uint8Array");
+    const length = nativeByteLength.call(bytes);
+    check(length <= policy.bytes, "limit");
+    return Buffer.from(new Uint8Array(nativeByteBuffer.call(bytes), nativeByteOffset.call(bytes), length));
+  } catch (cause) {
+    if (typeof cause?.code === "string" && cause.code.startsWith("generic-package-")) throw cause;
+    try { failure(policy, "input"); }
+    catch (error) { Object.defineProperty(error, "cause", { value: cause }); throw error; }
   }
 }
 

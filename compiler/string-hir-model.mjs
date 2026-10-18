@@ -2,8 +2,9 @@
 // String HIR verifies a whole projection of selected facts; it grants no Source admission.
 import { isProxy } from 'node:util/types';
 import { canonical, own, functionIdentity, signatureHash, stringTypeId } from './identity.mjs';
-import { readGenericJson, checkGenericJsonValueBudget } from './generic-json.mjs';
+import { copyGenericJsonBytes, readGenericJson, checkGenericJsonValueBudget } from './generic-json.mjs';
 import { readStringFactsCandidate } from './string-facts.mjs';
+import { readStringFactsV2Candidate } from './string-facts-v2.mjs';
 import registry from '../contracts/registry.json' with { type: 'json' };
 import descriptor from '../contracts/hir.schema.json' with { type: 'json' };
 import bytecode from '../contracts/bytecode.schema.json' with { type: 'json' };
@@ -17,11 +18,6 @@ const policy = Object.freeze({ bytes: limits.jsonBytes, depth: limits.jsonDepth,
   jsonTokens: limits.jsonTokens, stringBytes: limits.jsonStringBytes,
   safeNonnegativeIntegers: true, allowNul: true, rejectPrototypeKeys: true });
 const valuePolicy = Object.freeze({ ...policy, bytes: limits.jsonBytes - 1 });
-const typedArrayPrototype = Object.getPrototypeOf(Uint8Array.prototype);
-const byteField = name => Object.getOwnPropertyDescriptor(typedArrayPrototype, name).get;
-const byteLength = byteField('byteLength'), byteOffset = byteField('byteOffset'), byteBuffer = byteField('buffer');
-const byteBrand = Object.getOwnPropertyDescriptor(typedArrayPrototype, Symbol.toStringTag).get;
-
 /** @param {string} category @param {any} [cause]
  * @param {{sourceId: string, start: number, end: number}} [primary] @returns {never} */
 export function stringHirFailure(category, cause = undefined, primary = undefined) {
@@ -42,21 +38,10 @@ function budget(value) {
   try { checkGenericJsonValueBudget(value, valuePolicy); }
   catch (cause) { stringHirFailure(cause?.code?.endsWith('-limit') ? 'limit' : 'invalid', cause); }
 }
-// Snapshot the native byte view without consulting caller length/iterator/accessors.
+// Family error mapping remains here; the native snapshot algorithm has one shared owner.
 function bytesCopy(bytes, category) {
-  check(bytes && typeof bytes === 'object' && !isProxy(bytes), category);
-  // Read only the direct prototype; never walk a caller-owned chain, even on a genuine view.
-  const prototype = Object.getPrototypeOf(bytes);
-  check(prototype === Uint8Array.prototype || prototype === Buffer.prototype, category);
-  try {
-    check(byteBrand.call(bytes) === 'Uint8Array', category);
-    const length = byteLength.call(bytes);
-    check(length <= limits.jsonBytes, 'limit');
-    return Buffer.from(new Uint8Array(byteBuffer.call(bytes), byteOffset.call(bytes), length));
-  } catch (cause) {
-    if (cause?.code === 'r03-hir-limit') throw cause;
-    stringHirFailure(category, cause);
-  }
+  try { return copyGenericJsonBytes(bytes, policy); }
+  catch (cause) { stringHirFailure(cause?.code?.endsWith('-limit') ? 'limit' : category, cause); }
 }
 
 /** Context is explicit job configuration, not an identity inferred from cold data. */
@@ -64,24 +49,27 @@ export function readStringFactsContext(context) {
   check(context && typeof context === 'object' && !isProxy(context), 'context');
   check([Object.prototype, null].includes(Object.getPrototypeOf(context)), 'context');
   const keys = Reflect.ownKeys(context);
-  check(keys.length === 2 && keys.includes('factsBytes') && keys.includes('expectedPackageId'), 'context');
+  const versioned = keys.includes('factsVersion');
+  check(keys.length === (versioned ? 3 : 2) && keys.includes('factsBytes') && keys.includes('expectedPackageId'), 'context');
   const fields = Object.fromEntries(keys.map(key => {
     const field = Object.getOwnPropertyDescriptor(context, key);
     check(field && field.enumerable && Object.hasOwn(field, 'value'), 'context');
     return [key, field.value];
   }));
+  const factsVersion = versioned ? fields.factsVersion : 1;
+  check(!versioned || factsVersion === 2, 'context');
   check(typeof fields.expectedPackageId === 'string' && /^sha256:[0-9a-f]{64}$/.test(fields.expectedPackageId), 'context');
   const bytes = bytesCopy(fields.factsBytes, 'context');
   let facts;
-  try { facts = readStringFactsCandidate(bytes); }
+  try { facts = factsVersion === 2 ? readStringFactsV2Candidate(bytes) : readStringFactsCandidate(bytes); }
   catch (cause) { stringHirFailure(cause?.code === 'r03-string-facts-limit' ? 'limit' : 'context', cause); }
   check(facts.packageId === fields.expectedPackageId, 'context');
-  return { bytes, facts };
+  return { bytes, facts, factsVersion };
 }
 
 // The shared preflight has already rejected behavioral objects throughout the graph.
 // These fixed-profile bounds precede identity/projection comparisons and any owned copy.
-function projectionBudget(hir) {
+function projectionBudget(hir, factsVersion) {
   const field = (value, key) => value && typeof value === 'object' && Object.hasOwn(value, key)
     ? value[key] : undefined;
   const content = field(field(hir, 'source'), 'content');
@@ -93,17 +81,32 @@ function projectionBudget(hir) {
   for (const fn of functions) {
     const body = field(fn, 'body');
     if (!Array.isArray(body) || body.length !== 1) continue;
-    const units = field(field(body[0], 'value'), 'codeUnits');
-    if (!Array.isArray(units)) continue;
-    check(units.length <= limits.valueCodeUnits, 'limit');
-    totalUnits += units.length;
-    check(totalUnits <= limits.packageCodeUnits, 'limit');
+    const value = field(body[0], 'value');
+    const leaves = factsVersion === 1 ? [value] : [field(value, 'left'), field(value, 'right')];
+    let concat = 0;
+    for (const leaf of leaves) {
+      const units = field(leaf, 'codeUnits');
+      if (!Array.isArray(units)) continue;
+      check(units.length <= limits.valueCodeUnits, 'limit');
+      totalUnits += units.length; concat += units.length;
+      check(totalUnits <= limits.packageCodeUnits, 'limit');
+    }
+    if (factsVersion === 2) check(concat <= limits.concatCodeUnits, 'limit');
   }
+}
+
+function verifyStringLeaf(value, expected, primary) {
+  record(value, ['kind', 'type', 'codeUnits', 'range'], primary);
+  check(value.kind === 'stringConstant' && value.type === stringTypeId && equal(value.range, expected.range),
+    'invalid', primary);
+  check(Array.isArray(value.codeUnits) && value.codeUnits.length === expected.codeUnits.length
+    && value.codeUnits.every((unit, ordinal) => Number.isInteger(unit) && unit >= 0 && unit <= 65535
+      && unit === expected.codeUnits[ordinal]), 'invalid', primary);
 }
 
 function verifyProjection(hir, facts) {
   budget(hir);
-  projectionBudget(hir);
+  projectionBudget(hir, facts.version);
   record(hir, ['contractVersion', 'schemaHash', 'inputIdentity', 'source', 'target', 'functions']);
   check(hir.inputIdentity === facts.packageId, 'context');
   check(hir.contractVersion === stringHirFormat.contractVersion && hir.schemaHash === stringHirFormat.schemaHash);
@@ -116,7 +119,6 @@ function verifyProjection(hir, facts) {
     // All three locations come from the verified selected package, never the rejected HIR.
     const anchor = range => Object.freeze({ sourceId: origin.sourcePath, start: range.start, end: range.end });
     const functionPrimary = anchor(origin.declarationRange), returnPrimary = anchor(statement.range);
-    const literalPrimary = anchor(statement.value.range);
     record(fn, ['id', 'name', 'signatureHash', 'returnType', 'parameters', 'range', 'body'], functionPrimary);
     check(fn.id === functionIdentity(source.path, origin.name, 'string', [])
       && fn.name === origin.name && fn.signatureHash === signatureHash('string', []), 'invalid', functionPrimary);
@@ -126,15 +128,21 @@ function verifyProjection(hir, facts) {
     const returned = fn.body[0];
     record(returned, ['kind', 'range', 'value'], returnPrimary);
     check(returned.kind === 'return' && equal(returned.range, statement.range), 'invalid', returnPrimary);
-    const value = returned.value;
-    record(value, ['kind', 'type', 'codeUnits', 'range'], literalPrimary);
-    check(value.kind === 'stringConstant' && value.type === stringTypeId && equal(value.range, statement.value.range),
-      'invalid', literalPrimary);
-    check(Array.isArray(value.codeUnits) && value.codeUnits.length === statement.value.codeUnits.length
-      && value.codeUnits.every((unit, ordinal) => Number.isInteger(unit) && unit >= 0 && unit <= 65535
-        && unit === statement.value.codeUnits[ordinal]), 'invalid', literalPrimary);
+    const value = returned.value, expected = statement.value;
+    if (facts.version === 1) {
+      verifyStringLeaf(value, expected, anchor(expected.range));
+    } else {
+      const concatPrimary = anchor(expected.range);
+      record(value, ['kind', 'type', 'range', 'operatorRange', 'left', 'right'], concatPrimary);
+      check(value.kind === 'stringConcat' && value.type === stringTypeId && equal(value.range, expected.range),
+        'invalid', concatPrimary);
+      check(equal(value.operatorRange, expected.operatorRange), 'invalid', anchor(expected.operatorRange));
+      verifyStringLeaf(value.left, expected.left, anchor(expected.left.range));
+      verifyStringLeaf(value.right, expected.right, anchor(expected.right.range));
+    }
   }
-  return own(hir);
+  // JSON positions own separate values even when the accepted caller graph aliases leaves.
+  return own(JSON.parse(canonical(hir)));
 }
 
 /** @param {any} hir @param {any} context */
