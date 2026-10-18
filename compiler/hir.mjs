@@ -19,6 +19,8 @@ import { floatNames } from './float.mjs';
 import { emitScalarCore } from './scalar-core-emitter.mjs';
 import { emitReferenceCore } from './reference-core-emitter.mjs';
 import { emitStringCore } from './string-core-emitter.mjs';
+import { buildArrayHir, rejectArrayCore } from './array-hir.mjs';
+import { isArrayFactsContext, readArrayHir } from './array-hir-model.mjs';
 
 import { buildClosureHir } from "./closure-hir.mjs";
 export { verifyHir };
@@ -28,9 +30,10 @@ export { analyzeClosureCalls, verifyClosureCalls, printClosureCalls, readClosure
 const contract = () => registry['tsfg.hir'];
 const types = scalarTypeIds;
 
-/** @param {any} snapshot @param {any} [stringFactsContext] */
-export function buildHir(snapshot, stringFactsContext = undefined) {
-  if (stringFactsContext !== undefined) return buildStringHir(snapshot, stringFactsContext);
+/** @param {any} snapshot @param {any} [factsContext] */
+export function buildHir(snapshot, factsContext = undefined) {
+  if (isArrayFactsContext(factsContext)) return buildArrayHir(snapshot, factsContext);
+  if (factsContext !== undefined) return buildStringHir(snapshot, factsContext);
   try { validateFrontendSnapshot(snapshot); }
   catch (error) { return { status: "error", diagnostics: [{ code: "r03-d-snapshot", ruleId: "r01-input-boundary", phase: "hir", message: error.message }] }; }
   if (snapshot?.format?.family === "tsfg.frontend-nullable-candidate") {
@@ -170,11 +173,12 @@ export function buildHir(snapshot, stringFactsContext = undefined) {
       primary: { sourceId: snapshot.source.path, ...(expression?.range ?? first?.range ?? {start:0,end:0}) } }] };
   }
 }
-/** @param {any} hir @param {any} [stringFactsContext] */
-export const printHir = (hir, stringFactsContext = undefined) => `${canonical(verifyHir(hir, stringFactsContext))}\n`;
-/** @param {Uint8Array} bytes @param {any} [stringFactsContext] */
-export function readHir(bytes, stringFactsContext = undefined) {
-  if (stringFactsContext !== undefined) return readStringHir(bytes, stringFactsContext);
+/** @param {any} hir @param {any} [factsContext] */
+export const printHir = (hir, factsContext = undefined) => `${canonical(verifyHir(hir, factsContext))}\n`;
+/** @param {Uint8Array} bytes @param {any} [factsContext] */
+export function readHir(bytes, factsContext = undefined) {
+  if (isArrayFactsContext(factsContext)) return readArrayHir(bytes, factsContext);
+  if (factsContext !== undefined) return readStringHir(bytes, factsContext);
   const { text, value } = readHirWire(bytes);
   const hir = verifyHir(value);
   if (text !== printHir(hir)) {
@@ -185,9 +189,10 @@ export function readHir(bytes, stringFactsContext = undefined) {
   return hir;
 }
 
-/** @param {any} hir @param {any} [stringFactsContext] */
-export function lowerHir(hir, stringFactsContext = undefined) {
-  if (stringFactsContext !== undefined) return emitStringCore(hir, stringFactsContext);
+/** @param {any} hir @param {any} [factsContext] */
+export function lowerHir(hir, factsContext = undefined) {
+  if (isArrayFactsContext(factsContext)) return rejectArrayCore(hir, factsContext);
+  if (factsContext !== undefined) return emitStringCore(hir, factsContext);
   if (hir?.format?.family === "tsfg.exception-hir-candidate") return emitExceptionCore(hir);
   if (hir?.format?.family === "tsfg.nullable-hir-candidate") return emitNullableCore(hir);
   if (hir?.format?.family === "tsfg.closure-hir-candidate") {

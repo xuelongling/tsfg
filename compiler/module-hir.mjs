@@ -2,6 +2,7 @@
 import { analyzeVerifiedModuleCalls, checkCallEffectsInputs, callEffectsFailure, verifyKernelHostSemantics } from './call-effects.mjs';
 export { KernelHostSemanticError } from './call-effects.mjs';
 import { verifyStringHir } from './string-hir-model.mjs';
+import { isArrayFactsContext, verifyArrayHir } from './array-hir-model.mjs';
 import { verifyExceptionHir } from './exception-hir.mjs';
 import { verifyNullableHir } from './nullable-hir.mjs';
 import { verifyClosureHir } from './closure-hir.mjs';
@@ -158,10 +159,10 @@ function noShortIf(statement) {
   return ["block", "return", "assign"].includes(statement.kind);
 }
 
-/** @param {any} hir @param {any} [stringFactsContext] @param {any} [callPublicationContext] */
-export function verifyHir(hir, stringFactsContext = undefined, callPublicationContext = undefined) {
-  if (callPublicationContext === undefined) return verifyWholeHir(hir, stringFactsContext);
-  return selectedModuleCalls(hir, stringFactsContext, callPublicationContext).hir;
+/** @param {any} hir @param {any} [factsContext] @param {any} [callPublicationContext] */
+export function verifyHir(hir, factsContext = undefined, callPublicationContext = undefined) {
+  if (callPublicationContext === undefined) return verifyWholeHir(hir, factsContext);
+  return selectedModuleCalls(hir, factsContext, callPublicationContext).hir;
 }
 
 /** Analyze only a complete verified ordinary module HIR and an explicit publication.
@@ -170,10 +171,10 @@ export function analyzeModuleCalls(hir, context) {
   return selectedModuleCalls(hir, undefined, context).analysis;
 }
 
-/** @param {any} hir @param {any} stringFactsContext @param {any} context */
-function selectedModuleCalls(hir, stringFactsContext, context) {
+/** @param {any} hir @param {any} factsContext @param {any} context */
+function selectedModuleCalls(hir, factsContext, context) {
   checkCallEffectsInputs(hir, context);
-  if (stringFactsContext !== undefined || hir?.modules === undefined || hir?.format !== undefined)
+  if (factsContext !== undefined || hir?.modules === undefined || hir?.format !== undefined)
     callEffectsFailure();
   // The existing complete validator remains the only HIR validator. Selected
   // analysis supplies its own final kernel policy after checking the fixed table.
@@ -182,9 +183,10 @@ function selectedModuleCalls(hir, stringFactsContext, context) {
   return { hir: checked, analysis };
 }
 
-/** @param {any} hir @param {any} [stringFactsContext] @param {boolean} [selectedCalls] */
-function verifyWholeHir(hir, stringFactsContext = undefined, selectedCalls = false) {
-  if (stringFactsContext !== undefined) return verifyStringHir(hir, stringFactsContext);
+/** @param {any} hir @param {any} [factsContext] @param {boolean} [selectedCalls] */
+function verifyWholeHir(hir, factsContext = undefined, selectedCalls = false) {
+  if (isArrayFactsContext(factsContext)) return verifyArrayHir(hir, factsContext);
+  if (factsContext !== undefined) return verifyStringHir(hir, factsContext);
   if (hir?.format?.family === "tsfg.exception-hir-candidate") return verifyExceptionHir(hir);
   if (hir?.format?.family === 'tsfg.nullable-hir-candidate') return verifyNullableHir(hir);
   if (hir?.format?.family === 'tsfg.closure-hir-candidate') return verifyClosureHir(hir);
