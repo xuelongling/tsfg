@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: MIT
 // Full independent literal oracle: no product output was used to create expected HIR.
 import test from 'node:test';
+import coreOracle from './string-core-oracle.json' with { type: 'json' };
 import assert from 'node:assert/strict';
 import { readStringFactsCandidate } from '../../compiler/string-facts.mjs';
 import { buildHir, verifyHir, printHir, readHir, lowerHir } from '../../compiler/hir.mjs';
@@ -124,18 +125,12 @@ test('24d valid cold boundaries admit 64 functions, 16384 units and exactly65536
   }
 });
 
-test('24d legal String lowerHir is explicitly unsupported with no returned Core or value mutation', () => {
+test('24d legal String lowerHir matches the whole independent Core without value mutation', () => {
   const data = example(), ctx = context(data.factsBytes);
   const owned = verifyHir(data.hir, ctx);
-  let returned;
-  assert.throws(() => { returned = lowerHir(owned, ctx); }, error => {
-    const failure = /** @type {any} */ (error);
-    assert.equal(failure.code, 'r03-d-capability');
-    assert.equal(failure.ruleId, 'r01-ts-baseline');
-    assert.equal(failure.phase, 'lowering');
-    return true;
-  });
-  assert.equal(returned, undefined);
+  const expected = coreOracle.cases.find(c => c.name === 'lossless');
+  assert.ok(expected);
+  assert.equal(lowerHir(owned, ctx), expected.core);
   assert.deepEqual(owned, data.hir);
   assert.deepEqual(owned.functions.map(fn => fn.body[0].value.codeUnits), manualUnits);
 });

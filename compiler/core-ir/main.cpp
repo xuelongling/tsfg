@@ -5,6 +5,7 @@
 #include "native_cost.h"
 #include "nullable.h"
 #include "nullable-wire.h"
+#include "string-core.h"
 #include "mlir/Dialect/Func/IR/FuncOps.h"
 #include "mlir/Dialect/ControlFlow/IR/ControlFlowOps.h"
 #include "mlir/IR/DialectRegistry.h"
@@ -54,6 +55,7 @@ int main(int argc, char **argv) {
   mlir::DialectRegistry registry;
   tsfg::registerCoreDialect(registry);
   tsfg::nullable::registerDialect(registry);
+  tsfg::strings::registerDialect(registry);
   registry.insert<mlir::func::FuncDialect, mlir::cf::ControlFlowDialect>();
   mlir::MLIRContext context(registry);
   context.disableMultithreading();
@@ -64,17 +66,20 @@ int main(int argc, char **argv) {
   }
   const bool reference = module->getOperation()->hasAttr("tsfg_core.reference");
   const bool nullable = tsfg::nullable::usesCandidate(*module);
+  const bool stringCandidate = tsfg::strings::usesCandidate(*module);
   const bool nullableWire = llvm::StringRef(argv[1]) == "--emit-nullable-candidate";
   // The shared legacy stdin/MLIR parser remains unchanged. Apply the private
   // format budget before candidate metadata, typed verification and CFG work.
-  if ((reference || nullable || nullableWire) && (*input)->getBufferSize() > referenceByteBudget) {
-    llvm::errs() << (nullable || nullableWire ? "[core-ir-nullable-budget]" : "[core-ir-reference-budget]")
+  if ((reference || nullable || nullableWire || stringCandidate) && (*input)->getBufferSize() > referenceByteBudget) {
+    llvm::errs() << (stringCandidate ? "[core-ir-string-budget]" :
+                     nullable || nullableWire ? "[core-ir-nullable-budget]" : "[core-ir-reference-budget]")
                  << " input exceeds candidate byte budget\n";
     return 3;
   }
   auto version = module->getOperation()->getAttrOfType<mlir::StringAttr>("tsfg_core.version");
   if (!version || version.getValue() != "0.9.0") {
-    llvm::errs() << "[core-ir-identity] expected Core IR 0.9.0\n";
+    llvm::errs() << (stringCandidate ? "[core-ir-string-identity]" : "[core-ir-identity]")
+                 << " expected Core IR 0.9.0\n";
     return 3;
   }
   if (mlir::failed(mlir::verify(*module))) {
@@ -82,6 +87,10 @@ int main(int argc, char **argv) {
     return 3;
   }
   if (mlir::failed(tsfg::verifyCoreModule(*module))) return 3;
+  if (stringCandidate && (nullableWire || llvm::StringRef(argv[1]) == "--emit-bytecode")) {
+    llvm::errs() << "[r04-core-string-unsupported] String candidate has no wire encoding\n";
+    return 3;
+  }
   if (nullableWire) {
     if (!nullable) {
       llvm::errs() << "[r04-core-nullable-required] --emit-nullable-candidate requires a marked nullable candidate module\n";
@@ -110,12 +119,13 @@ int main(int argc, char **argv) {
   }
   // The current optimization pipeline is deliberately the canonical identity
   // pass: it performs full verification and retains every event/failure anchor.
-  if (reference || nullable) {
+  if (reference || nullable || stringCandidate) {
     ReferenceOutput output;
     module->print(output, mlir::OpPrintingFlags().printGenericOpForm());
     output << '\n';
     if (output.exceeded()) {
-      llvm::errs() << (nullable ? "[core-ir-nullable-budget]" : "[core-ir-reference-budget]")
+      llvm::errs() << (stringCandidate ? "[core-ir-string-budget]" :
+                       nullable ? "[core-ir-nullable-budget]" : "[core-ir-reference-budget]")
                    << " output exceeds candidate byte budget\n";
       return 3;
     }

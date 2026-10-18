@@ -2,6 +2,7 @@
 #include "core-verify.h"
 #include "bytecode.h"
 #include "nullable.h"
+#include "string-core.h"
 #include "reference-metadata.h"
 #include "reference-verify.h"
 #include "mlir/IR/OwningOpRef.h"
@@ -9,6 +10,7 @@
 
 namespace tsfg {
 mlir::LogicalResult verifyCoreModule(mlir::ModuleOp module) {
+  if (strings::usesCandidate(module)) return strings::verifyCandidate(module);
   if (module->hasAttr("tsfg_core.nullable")) return nullable::verifyCandidate(module);
   if (nullable::usesCandidate(module))
     return nullable::reject("core-ir-nullable-marker", "candidate types or operations require their exact marker");

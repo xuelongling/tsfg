@@ -18,6 +18,7 @@ import bytecodeSchema from '../contracts/bytecode.schema.json' with {type:'json'
 import { floatNames } from './float.mjs';
 import { emitScalarCore } from './scalar-core-emitter.mjs';
 import { emitReferenceCore } from './reference-core-emitter.mjs';
+import { emitStringCore } from './string-core-emitter.mjs';
 
 import { buildClosureHir } from "./closure-hir.mjs";
 export { verifyHir };
@@ -186,12 +187,7 @@ export function readHir(bytes, stringFactsContext = undefined) {
 
 /** @param {any} hir @param {any} [stringFactsContext] */
 export function lowerHir(hir, stringFactsContext = undefined) {
-  if (stringFactsContext !== undefined) {
-    const checked = verifyHir(hir, stringFactsContext);
-    throw Object.assign(new TypeError("r03-d-capability: String Core lowering is not implemented"),
-      { code: "r03-d-capability", ruleId: "r01-ts-baseline", phase: "lowering",
-        primary: { sourceId: checked.source.path, ...checked.functions[0].body[0].value.range } });
-  }
+  if (stringFactsContext !== undefined) return emitStringCore(hir, stringFactsContext);
   if (hir?.format?.family === "tsfg.exception-hir-candidate") return emitExceptionCore(hir);
   if (hir?.format?.family === "tsfg.nullable-hir-candidate") return emitNullableCore(hir);
   if (hir?.format?.family === "tsfg.closure-hir-candidate") {

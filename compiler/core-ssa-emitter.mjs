@@ -11,9 +11,13 @@ export const coreExchangeFormat = own({ version: hirDescriptor['x-coreExchangeVe
 
 const floatType = id => floatNames.includes(scalarName(id));
 
-export const coreQuote = text => JSON.stringify(text).replace(/\\u([0-9a-f]{4})/g, (_, hex) => {
-    const code = Number.parseInt(hex, 16);
-    return code < 128 ? `\\${hex.slice(2)}` : String.fromCharCode(code);
+export const coreQuote = text => JSON.stringify(text).replace(/\\(?:u[0-9a-f]{4}|["\\bfnrt])/g, escape => {
+    if (escape[1] === "r") return "\\0D";
+    if (escape[1] === "b") return "\\08";
+    if (escape[1] === "f") return "\\0C";
+    if (escape[1] !== "u") return escape;
+    const hex = escape.slice(2), code = Number.parseInt(hex, 16);
+    return code < 128 ? "\\" + hex.slice(2) : String.fromCharCode(code);
   });
 
 /** Shared scalar/closure SSA control and definition selection. Callers validate

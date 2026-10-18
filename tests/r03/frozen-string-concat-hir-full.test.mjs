@@ -2,6 +2,7 @@
 // Complete independent selected-job projection; no Source execution or String runtime credit.
 import assert from 'node:assert/strict';
 import test from 'node:test';
+import coreOracle from './string-core-oracle.json' with { type: 'json' };
 import { buildHir, verifyHir, printHir, readHir, lowerHir } from '../../compiler/hir.mjs';
 import { readStringFactsV2Candidate, writeStringFactsV2Candidate } from '../../compiler/string-facts-v2.mjs';
 import { readStringFactsCandidate } from '../../compiler/string-facts.mjs';
@@ -33,11 +34,9 @@ test('24f complete selected v2 cold and HIR public pipeline', async () => {
   assert.equal(printed, f.hirBytes.toString()); assert.deepEqual(Buffer.from(printed), f.hirBytes);
   for (const hir of [built.hir, verified, parsed]) { deeplyFrozen(hir); assert.notEqual(hir, f.hir); }
   assert.notEqual(verified, parsed); assert.notEqual(verified.source, parsed.source);
-  assert.throws(() => lowerHir(f.hir, context(f.factsBytes)), error => {
-    const e = /** @type {any} */ (error);
-    assert.equal(e.code, 'r03-d-capability'); assert.equal(e.ruleId, 'r01-ts-baseline');
-    assert.equal(e.phase, 'lowering'); return true;
-  });
+  const expectedCore = coreOracle.cases.find(c => c.name === 'concat');
+  assert.ok(expectedCore);
+  assert.equal(lowerHir(f.hir, context(f.factsBytes)), expectedCore.core);
   f.facts.payload.functions[4].body[0].value.left.codeUnits[0] = 65;
   f.hir.functions[4].body[0].value.right.codeUnits[0] = 65;
   f.hirBytes.fill(0); f.factsBytes.fill(0);
