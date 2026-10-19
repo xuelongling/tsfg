@@ -35,6 +35,10 @@ const loaded = async () => {
 };
 const failure = (run, code) => assert.throws(run, error => error instanceof TypeError && 'code' in error && error.code === code);
 
+// Load whole historical1–5 bytes; never relabel an old actual packet.
+const predecessors = await Promise.all([1, 2, 3, 4, 5].map(version =>
+  fixture('generic-package-source-v' + version + '.json')));
+
 test('conditional-call private6 rejects exact predecessors and mixed contract claims', async t => {
   const { pkg } = await loaded();
   for (const version of [1, 2, 3, 4, 5]) {
@@ -67,9 +71,6 @@ test('conditional-call private6 rejects exact predecessors and mixed contract cl
     failure(() => decodeGenericPackage(Buffer.from(canonical(bad))), 'generic-package-identity');
   });
 });
-// Load whole historical1–5 bytes; never relabel an old actual packet.
-const predecessors = await Promise.all([1, 2, 3, 4, 5].map(version =>
-  fixture('generic-package-source-v' + version + '.json')));
 
 test('conditional-call private6 rejects unsupported cold call shapes before facts', async t => {
   const { pkg, record } = await loaded();
