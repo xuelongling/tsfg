@@ -15,10 +15,10 @@ function jcs(value) {
 /** @param {string | Uint8Array} value */
 const sha = value => createHash('sha256').update(value).digest('hex');
 
-test('25d public facts reader preserves every frozen v2 package', async t => {
-  const raw = await readFile(new URL('./array-facts-oracle-v2.json', import.meta.url));
+test('25d public facts reader preserves every frozen v3 package', async t => {
+  const raw = await readFile(new URL('./array-facts-oracle-v3.json', import.meta.url));
   assert.equal(raw.length, 71746);
-  assert.equal(sha(raw), '046084092c8c963870fa4ebb4984abcec0b793b5bbe309cfd1d2d4bd1129c0e0');
+  assert.equal(sha(raw), '9c9196bc99064a3af85cda33f921705b14ea412ff8641eb3944d6bc0744b4b9e');
   const oracle = JSON.parse(raw.toString('utf8'));
   assert.equal(jcs(oracle) + '\n', raw.toString('utf8'));
   assert.equal(oracle.cases.length, 8);

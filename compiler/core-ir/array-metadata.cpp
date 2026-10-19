@@ -81,10 +81,10 @@ mlir::LogicalResult marker(mlir::ModuleOp module) {
     return reject("core-ir-array-marker", "candidate marker fields differ");
   auto version = llvm::dyn_cast_or_null<mlir::IntegerAttr>(value.get("version"));
   auto facts = llvm::dyn_cast_or_null<mlir::IntegerAttr>(value.get("facts_version"));
-  if (!version || !version.getType().isSignlessInteger(32) || version.getInt() != 2 ||
-      !facts || !facts.getType().isSignlessInteger(32) || facts.getInt() != 2 ||
+  if (!version || !version.getType().isSignlessInteger(32) || version.getInt() != 3 ||
+      !facts || !facts.getType().isSignlessInteger(32) || facts.getInt() != 3 ||
       text(value, "family") != "tsfg.core-array-candidate" || text(value, "schema") != schema ||
-      text(value, "profile") != "dense-f64-params-local-alias-mutation-checked-v2")
+      text(value, "profile") != "dense-f64-params-local-alias-mutation-checked-v3")
     return reject("core-ir-array-marker", "candidate marker identity differs");
   return mlir::success();
 }

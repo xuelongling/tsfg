@@ -1,5 +1,5 @@
 // SPDX-License-Identifier: MIT
-// Every expected value was frozen before v2 Product production was released.
+// Every expected value was frozen before v3 Product production was released.
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { buildHir, verifyHir, printHir, readHir } from '../../compiler/hir.mjs';
@@ -12,7 +12,7 @@ function at(object,path) {
 }
 test('25d all eight frozen whole facts packages reach complete owned HIR',async t=>{
   const rows=await fixtures();
-  const oracle=await pinned('./array-hir-oracle-v2.json',201957,'d23e037ac6a70f7d64f598aac80733b330e5d924134f3b90ac48b669de8930c9');
+  const oracle=await pinned('./array-hir-oracle-v3.json',202173,'fb963bb30f4e4f818afa43cecf649e25c42159434d501145c79d8f3266ff62ff');
   for(const pre of oracle.typePreimages)
     assert.equal('sha256:'+sha(Buffer.from(pre.preimageUtf8Hex,'hex')),pre.id);
   let ranges=0,functions=0,parameters=0;
@@ -21,8 +21,8 @@ test('25d all eight frozen whole facts packages reach complete owned HIR',async 
     assert.equal(jcs(f.request)+'\n',f.requestText);assert.equal(jcs(p)+'\n',f.packageText);
     assert.equal(Buffer.byteLength(f.requestText),f.requestBytes);assert.equal(sha(f.requestText),f.requestSHA256);
     assert.equal(Buffer.byteLength(f.packageText),f.packageBytes);assert.equal(sha(f.packageText),f.packageSHA256);
-    assert.equal(p.requestId,'sha256:'+sha('tsfg.array-facts.request.v2\0'+f.requestText));
-    assert.equal(p.packageId,'sha256:'+sha('tsfg.array-facts.package.v2\0'+p.schemaHash+'\0'+jcs(p.payload)));
+    assert.equal(p.requestId,'sha256:'+sha('tsfg.array-facts.request.v3\0'+f.requestText));
+    assert.equal(p.packageId,'sha256:'+sha('tsfg.array-facts.package.v3\0'+p.schemaHash+'\0'+jcs(p.payload)));
     assert.equal(jcs(h.expectedHir)+'\n',h.hirText);
     assert.equal(Buffer.byteLength(h.hirText),h.hirBytes);assert.equal(sha(h.hirText),h.hirSHA256);
     for(const pre of h.functionPreimages){

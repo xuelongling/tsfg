@@ -33,6 +33,23 @@ function elementTarget(target) {
 export function emitArrayCore(hir, context) {
   // Context and the complete graph are validated before accessing any HIR field.
   const verified = verifyArrayHir(hir, context);
+  const unsupported = (fn, range) => {
+    const code = 'r03-d-core-array-capability';
+    throw Object.assign(new TypeError('Array Core lowering supports only the complete local-owner no-call subset'),
+      {code,ruleId:'r01-ts-baseline',phase:'lowering',primary:{sourceId:fn.sourcePath,...range}});
+  };
+  // Inspect complete verified Source order before reserving even the module header.
+  for (const fn of verified.functions) {
+    const parameter = fn.parameters.find(p => p.type === arrayHirType.id);
+    if (parameter) unsupported(fn,parameter.range);
+    for (const statement of fn.body) {
+      const value = statement.kind === 'expression' ? statement.expression : statement.kind === 'return' ? statement.value : undefined;
+      if (value?.kind === 'arrayDirectCall') unsupported(fn,value.range);
+      if (statement.kind === 'return' && value.kind !== 'arrayReadChecked') unsupported(fn,statement.range);
+    }
+    if (!fn.body.some(s => s.kind === 'local') || !verified.exports.some(e => e.functionId === fn.id && e.name === fn.name))
+      unsupported(fn,fn.range);
+  }
   const source = verified.sources.find(item => item.path === verified.rootFile);
   const attributes = [field('tsfg_core.version', coreExchangeFormat.version),
     field('tsfg_core.input_identity', verified.inputIdentity), field('tsfg_core.source_hash', source.hash),
@@ -40,8 +57,8 @@ export function emitArrayCore(hir, context) {
     field('tsfg_core.triple', verified.target.triple), field('tsfg_core.data_layout', verified.target.llvmDataLayout),
     field('tsfg_core.bytecode_schema', coreExchangeFormat.bytecodeSchema),
     'tsfg_core.source_length = ' + source.content.length + ' : i64',
-    'tsfg_core.array = ' + dictionary([field('family', descriptor.family), 'version = 2 : i32',
-      field('schema', schemaHash), field('profile', descriptor.profile), 'facts_version = 2 : i32']),
+    'tsfg_core.array = ' + dictionary([field('family', descriptor.family), 'version = 3 : i32',
+      field('schema', schemaHash), field('profile', descriptor.profile), 'facts_version = 3 : i32']),
     'tsfg_array.function_ids = ' + table(verified.functions.map(fn => quote(fn.id))),
     'tsfg_array.exports = ' + table(verified.exports.map(item => dictionary([
       field('name', item.name), field('function_id', item.functionId)]))),

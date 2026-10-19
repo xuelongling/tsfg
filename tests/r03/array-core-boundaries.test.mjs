@@ -17,7 +17,7 @@ function nullRecords(value) {
 }
 /** @returns {Promise<any>} */
 async function oracle() {
-  return pinned('./array-core-oracle-v2.json',122149,'b2ae7137d402ea5b515ab72cd2d7ee62b5219f552743b13ef5797d337bb86f1a');
+  return pinned('./array-core-oracle-v3.json',122335,'44c460f568aebd9dba7b25dab00857a47fe431a3f7cc4679a6d1d09a427552d5');
 }
 
 test('25c repeated owned output and offset context views preserve complete inputs and every Core byte',async t=>{
@@ -134,7 +134,7 @@ test('25c existing upstream limits remain exact before Core emission',async t=>{
   });
 });
 
-// The v2 8MiB producer output guard is STATIC-ONLY here: no valid-input overflow
+// The v3 8MiB producer output guard is STATIC-ONLY here: no valid-input overflow
 // witness is established. Parameter and mutation accounting need their own proof;
 // never weaken input verification to manufacture an output overflow witness.
 

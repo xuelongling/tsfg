@@ -27,8 +27,8 @@ export async function pinned(file, length, digest) {
 }
 /** @returns {Promise<any[]>} */
 export async function fixtures() {
-  const f = await pinned('./array-facts-oracle-v2.json', 71746, '046084092c8c963870fa4ebb4984abcec0b793b5bbe309cfd1d2d4bd1129c0e0');
-  const h = await pinned('./array-hir-oracle-v2.json', 201957, 'd23e037ac6a70f7d64f598aac80733b330e5d924134f3b90ac48b669de8930c9');
+  const f = await pinned('./array-facts-oracle-v3.json', 71746, '9c9196bc99064a3af85cda33f921705b14ea412ff8641eb3944d6bc0744b4b9e');
+  const h = await pinned('./array-hir-oracle-v3.json', 202173, 'fb963bb30f4e4f818afa43cecf649e25c42159434d501145c79d8f3266ff62ff');
   assert.equal(f.cases.length, 8); assert.equal(h.cases.length, 8);
   return f.cases.map((c, i) => {
     assert.equal(c.name, h.cases[i].name);
@@ -87,10 +87,10 @@ export function trustedHirError(row, error, kind) {
 /** @param {any} packet @returns {any} */
 export function reframeFacts(packet) {
   const p = packet.payload;
-  const request = {family:"tsfg.array-facts-request-candidate",version:2,input:{sourceRoot:p.sourceRoot,rootFile:p.rootFile,
+  const request = {family:"tsfg.array-facts-request-candidate",version:3,input:{sourceRoot:p.sourceRoot,rootFile:p.rootFile,
     files:p.files.map(f => ({path:f.path,content:f.content,sha256:f.sha256})),declarations:p.declarations,config:p.config}};
-  packet.requestId = "sha256:" + sha("tsfg.array-facts.request.v2\0" + jcs(request) + "\n");
-  packet.packageId = "sha256:" + sha("tsfg.array-facts.package.v2\0" + packet.schemaHash + "\0" + jcs(p));
+  packet.requestId = "sha256:" + sha("tsfg.array-facts.request.v3\0" + jcs(request) + "\n");
+  packet.packageId = "sha256:" + sha("tsfg.array-facts.package.v3\0" + packet.schemaHash + "\0" + jcs(p));
   return packet;
 }
 

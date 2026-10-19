@@ -193,9 +193,10 @@ function selectedModuleCalls(hir, factsContext, context) {
 
 /** @param {any} hir @param {any} [factsContext] @param {boolean} [selectedCalls] */
 function verifyWholeHir(hir, factsContext = undefined, selectedCalls = false) {
-  if (familyOf(hir) === 'tsfg.module-callable-hir-candidate') return verifyModuleCallableHir(hir);
+  // An explicit facts context owns selection and must reject before any HIR inspection.
   if (isArrayFactsContext(factsContext)) return verifyArrayHir(hir, factsContext);
   if (factsContext !== undefined) return verifyStringHir(hir, factsContext);
+  if (familyOf(hir) === 'tsfg.module-callable-hir-candidate') return verifyModuleCallableHir(hir);
   if (hir?.format?.family === "tsfg.exception-hir-candidate") return verifyExceptionHir(hir);
   if (hir?.format?.family === 'tsfg.nullable-hir-candidate') return verifyNullableHir(hir);
   if (hir?.format?.family === 'tsfg.closure-hir-candidate') return verifyClosureHir(hir);

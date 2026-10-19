@@ -1,5 +1,5 @@
 // SPDX-License-Identifier: MIT
-// Complete Core text and ordered SSA traces were frozen before the v2 emitter.
+// Complete Core text and ordered SSA traces were frozen before the v3 emitter.
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { readArrayFactsCandidate,writeArrayFactsCandidate } from '../../compiler/array-facts.mjs';
@@ -9,8 +9,10 @@ import { parseArrayCore,assertArrayCoreSemantics } from './array-core-structural
 
 test('25d eight whole facts and HIR controls precede complete public Core equality',async t=>{
   const rows=await fixtures();
-  const oracle=await pinned('./array-core-oracle-v2.json',122149,'b2ae7137d402ea5b515ab72cd2d7ee62b5219f552743b13ef5797d337bb86f1a');
-  assert.equal(oracle.provenance.newOutputSampled,false);assert.equal(oracle.provenance.productImported,false);
+  const oracle=await pinned('./array-core-oracle-v3.json',122335,'44c460f568aebd9dba7b25dab00857a47fe431a3f7cc4679a6d1d09a427552d5');
+  assert.equal(oracle.provenance.productionOutputSampled,false);assert.equal(oracle.provenance.productionImported,false);
+  assert.equal(oracle.provenance.historicalCpp2CreditForV3,false);
+  assert.equal(oracle.provenance.noNewArrayCallLoweringOrPhysicalRuntimeCredit,true);
   assert.equal(oracle.cases.length,8);
   const prepared=[];
   const totals={functions:0,parameters:0,sites:0,aliases:0,elements:0,checkedReads:0,stores:0,resizes:0,constants:0,operations:0,registers:0};

@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: MIT
 // Complete cold package ownership. Official type and symbol proof stays with Source.
 import { sha256 } from './identity.mjs';
-import { arrayCheck, arrayRecord, list, logicalPath, equal, originIdentity } from './array-facts-common.mjs';
+import { arrayCheck, arrayRecord, list, logicalPath, equal, originIdentity, window } from './array-facts-common.mjs';
 import { validateArrayFunctions } from './array-facts-functions.mjs';
 export { arrayFactsLimits, arrayFactsFailure, arrayCheck, arrayRecord, arrayIndexDecimal } from './array-facts-common.mjs';
 
@@ -61,8 +61,8 @@ export function validateArrayFactsPayload(payload) {
   const { source, declaration } = sources(payload); types(payload.types, declaration);
   lengthProperty(payload.arrayLength, declaration); list(payload.diagnostics, 0, 0);
   const functions = validateArrayFunctions(payload, source), exports = list(payload.exports, 1, 16);
-  arrayCheck(exports.length === functions.length, 'input');
-  const expected = functions.map(fn => ({name:fn.name,functionId:fn.id}))
+  const expected = functions.filter(fn => /^export\s+function\s+$/.test(window(source.content, fn.declarationRange.start, fn.nameRange.start)))
+    .map(fn => ({name:fn.name,functionId:fn.id}))
     .sort((a,b) => Buffer.compare(Buffer.from(a.name),Buffer.from(b.name)));
   arrayCheck(equal(exports, expected), 'identity');
 }

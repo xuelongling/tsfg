@@ -8,8 +8,8 @@ import { copyGenericJsonBytes, readGenericJson, checkGenericJsonValueBudget } fr
 import { readArrayFactsCandidate } from './array-facts.mjs';
 import { arrayFactsLimits } from './array-facts-model.mjs';
 
-const schemaHash = 'sha256:11424430d7571374010e8e925d23cdae5bf18f9540934fcc2da272d7d65f6859';
-export const arrayHirFormat = own({ family: 'tsfg.array-hir-candidate', version: 2, schemaHash });
+const schemaHash = 'sha256:450e3589f766096acd9f74c679566b7b7d5a986a2dfe2fd0ef9162eb47aeb49d';
+export const arrayHirFormat = own({ family: 'tsfg.array-hir-candidate', version: 3, schemaHash });
 export const arrayHirType = own({ kind: 'managedReference', name: 'Array',
   elementType: scalarTypeIds.f64, id: sha256('tsfg.type\0Array<f64>') });
 const target = own(bytecode.target), policy = arrayFactsLimits;
@@ -58,22 +58,33 @@ function reference(value) {
   return { kind: 'reference', type: value.flowType === 'array.f64' ? arrayHirType.id : scalarTypeIds[value.flowType],
     binding: value.binding, range: { ...value.range } };
 }
-function expression(value) {
+function expression(value, headers) {
   if (value.kind === 'reference') return reference(value);
   const span = { ...value.range };
+  if (value.kind === 'directCall') {
+    const fn = headers.get(value.callee);
+    return {kind:'arrayDirectCall',type:scalarTypeIds.f64,range:span,calleeRange:{...value.calleeRange},
+      target:fn.id,sourceCallee:value.callee,signatureHash:fn.signatureHash,
+      arguments:value.arguments.map(arg => expression(arg, headers))};
+  }
   if (value.kind === 'numericLiteral') return {kind:'floating',type:scalarTypeIds.f64,range:span,token:value.token,bits:value.bits};
-  if (value.kind === 'indexLiteral' || value.kind === 'lengthLiteral')
+  if (value.kind === 'indexLiteral' || value.kind === 'lengthLiteral' || value.kind === 'u32Literal')
     return {kind:'constant',type:scalarTypeIds.u32,range:span,token:value.token,decimal:value.decimal};
   if (value.kind === 'arrayLiteral') return {kind:'arrayCreate',type:arrayHirType.id,range:span,
-    allocationSite:value.allocationSite,elements:value.elements.map(expression)};
+    allocationSite:value.allocationSite,elements:value.elements.map(item => expression(item, headers))};
   if (value.kind === 'lengthTarget') return {kind:'arrayLengthTarget',type:scalarTypeIds.u32,range:span,
     receiver:reference(value.array),property:value.property,nameRange:{...value.nameRange}};
   return {kind:value.kind === 'elementTarget' ? 'arrayElementTarget' : 'arrayReadChecked',
-    type:scalarTypeIds.f64,range:span,receiver:reference(value.array),index:expression(value.index)};
+    type:scalarTypeIds.f64,range:span,receiver:reference(value.array),index:expression(value.index, headers)};
 }
 /** The sole facts-to-HIR transform; only an already verified selected facts package enters. */
 export function projectArrayFacts(facts) {
-  const payload = facts.payload, functions = payload.functions.map(fn => {
+  const payload = facts.payload;
+  const headers = new Map(payload.functions.map(fn => [fn.id, {
+    id:functionIdentity(fn.sourcePath,fn.name,'f64',fn.parameters.map(p => p.declaredType)),
+    signatureHash:signatureHash('f64',fn.parameters.map(p => p.declaredType)),
+  }]));
+  const functions = payload.functions.map(fn => {
     /** @type {Map<string, any>} */
     const bindings = new Map(fn.bindings.map(binding => [binding.id, binding]));
     const parameterTypes = fn.parameters.map(parameter => parameter.declaredType);
@@ -81,8 +92,9 @@ export function projectArrayFacts(facts) {
       name:fn.name,sourcePath:fn.sourcePath,signatureHash:signatureHash('f64',parameterTypes),
       returnType:{kind:'scalar',name:'f64',id:scalarTypeIds.f64},
       parameters:fn.parameters.map(parameter => ({id:parameter.id,name:parameter.name,
-        type:scalarTypeIds[parameter.declaredType],writable:true,range:{...parameter.declarationRange},
-        nameRange:{...parameter.nameRange},annotationRange:{...parameter.annotationRange}})),
+        type:parameter.declaredType === 'array.f64' ? arrayHirType.id : scalarTypeIds[parameter.declaredType],
+        writable:true,range:{...parameter.declarationRange},nameRange:{...parameter.nameRange},annotationRange:{...parameter.annotationRange},
+        ...(parameter.declaredType === 'array.f64' ? {elementAnnotationRange:{...parameter.elementAnnotationRange}} : {})})),
       range:{...fn.declarationRange},nameRange:{...fn.nameRange},returnAnnotationRange:{...fn.returnAnnotationRange},
       body:fn.body.map(statement => {
         if (statement.kind === 'variable') {
@@ -91,12 +103,13 @@ export function projectArrayFacts(facts) {
             type:arrayHirType.id,writable:false,range:{...binding.declarationRange},nameRange:{...binding.nameRange},
             annotationRange:binding.annotationRange === null ? null : {...binding.annotationRange},
             elementAnnotationRange:binding.elementAnnotationRange === null ? null : {...binding.elementAnnotationRange}},
-            initializer:expression(statement.initializer)};
+            initializer:expression(statement.initializer, headers)};
         }
-        if (statement.kind === 'return') return {kind:'return',range:{...statement.range},value:expression(statement.value)};
+        if (statement.kind === 'call') return {kind:'expression',range:{...statement.range},expression:expression(statement.value, headers)};
+        if (statement.kind === 'return') return {kind:'return',range:{...statement.range},value:expression(statement.value, headers)};
         return {kind:statement.kind === 'elementAssignment' ? 'arrayStoreDenseChecked' : 'arrayResizeChecked',
           range:{...statement.range},expressionRange:{...statement.expressionRange},operatorRange:{...statement.operatorRange},
-          target:expression(statement.target),value:expression(statement.value)};
+          target:expression(statement.target, headers),value:expression(statement.value, headers)};
       })};
   });
   const functionIds = new Map(functions.map(fn => [fn.sourceBinding,fn.id]));
@@ -106,7 +119,7 @@ export function projectArrayFacts(facts) {
       : {id:scalarTypeIds[type.id],kind:'scalar',name:type.id,...origin};
   });
   return {format:{...arrayHirFormat},inputIdentity:facts.packageId,
-    facts:{version:2,schemaHash:facts.schemaHash,requestId:facts.requestId},rootFile:payload.rootFile,
+    facts:{version:3,schemaHash:facts.schemaHash,requestId:facts.requestId},rootFile:payload.rootFile,
     sources:payload.files.map(file => ({path:file.path,content:file.content,hash:'sha256:'+file.sha256})),
     target:{...target},types,arrayLength:{...payload.arrayLength,ownerType:arrayHirType.id,writeType:scalarTypeIds.u32,
       declarationRange:{...payload.arrayLength.declarationRange},nameRange:{...payload.arrayLength.nameRange},typeRange:{...payload.arrayLength.typeRange}},
@@ -123,8 +136,16 @@ function projectionBudget(hir) {
     if (!Array.isArray(fn?.body)) continue;
     check(fn.body.length <= 50, 'limit');
     if (Array.isArray(fn.parameters)) check(fn.parameters.length <= 8, 'limit');
-    let locals = 0, mutations = 0;
+    let locals = 0, mutations = 0, calls = 0, expressions = 0;
+    const scanCalls = value => {
+      if (!value || typeof value !== 'object') return;
+      if (value.kind === 'arrayDirectCall') check(++calls <= 32, 'limit');
+      Object.values(value).forEach(scanCalls);
+    };
+    scanCalls(fn.body);
     for (const statement of fn.body) {
+      if (['arrayStoreDenseChecked','arrayResizeChecked','expression'].includes(statement?.kind))
+        check(++expressions <= 32, 'limit');
       if (['arrayStoreDenseChecked','arrayResizeChecked'].includes(statement?.kind)) check(++mutations <= 32, 'limit');
       if (statement?.kind === 'local') check(++locals <= 17, 'limit');
       const elements = statement?.initializer?.elements;
@@ -145,6 +166,10 @@ function matchProjection(value, expected, sourcePath, primary = undefined) {
   const fail = () => arrayHirFailure('invalid', undefined, primary);
   if (expected === null || typeof expected !== 'object') { if (value !== expected) fail(); return; }
   if (!value || typeof value !== 'object' || Array.isArray(value) !== Array.isArray(expected)) fail();
+  if (Array.isArray(expected) && value.length !== expected.length && expected.length) {
+    const item = expected[Math.min(value.length,expected.length - 1)], span = item?.range ?? item?.declarationRange;
+    if (span) primary = {sourceId:item.sourcePath ?? sourcePath,...span};
+  }
   const keys = Object.keys(expected);
   if (Object.keys(value).length !== keys.length || keys.some(key => !Object.hasOwn(value, key))) fail();
   for (const key of keys) matchProjection(value[key], expected[key], sourcePath, primary);

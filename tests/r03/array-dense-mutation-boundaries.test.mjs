@@ -118,7 +118,7 @@ test('25d mutation and parameter HIR budgets are checked before projection equal
   });
 });
 
-test('25d active v2 paths reject old v1 facts and HIR with no compatibility route',async()=>{
+test('25d active v3 paths reject old v1 facts and HIR with no compatibility route',async()=>{
   const rows=await fixtures(),row=rows[0];
   const oldFacts=JSON.parse(await readFile(new URL('./array-facts-oracle-v1.json',import.meta.url),'utf8')).cases[0];
   factsFailure(failure(()=>readArrayFactsCandidate(Buffer.from(oldFacts.packageText))),'schema');

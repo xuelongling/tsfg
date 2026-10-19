@@ -24,6 +24,7 @@ import { emitReferenceCore } from './reference-core-emitter.mjs';
 import { emitStringCore } from './string-core-emitter.mjs';
 import { buildArrayHir } from './array-hir.mjs';
 import { emitArrayCore } from './array-core-emitter.mjs';
+export { analyzeArrayCalls, verifyArrayCalls, printArrayCalls, readArrayCalls } from './array-call-publication.mjs';
 import { isArrayFactsContext, readArrayHir } from './array-hir-model.mjs';
 
 import { buildClosureHir } from "./closure-hir.mjs";
@@ -36,11 +37,11 @@ const types = scalarTypeIds;
 
 /** @param {any} snapshot @param {any} [factsContext] */
 export function buildHir(snapshot, factsContext = undefined) {
+  if (isArrayFactsContext(factsContext)) return buildArrayHir(snapshot, factsContext);
+  if (factsContext !== undefined) return buildStringHir(snapshot, factsContext);
   try {
     if (familyOf(snapshot) === 'tsfg.frontend-module-callable-candidate') return {status:'ok',hir:buildModuleCallableHir(snapshot)};
   } catch (error) { return {status:'error',diagnostics:[{code:error.code,ruleId:error.ruleId,phase:error.phase,message:error.message,...(error.primary?{primary:error.primary}:{})}]}; }
-  if (isArrayFactsContext(factsContext)) return buildArrayHir(snapshot, factsContext);
-  if (factsContext !== undefined) return buildStringHir(snapshot, factsContext);
   try { validateFrontendSnapshot(snapshot); }
   catch (error) { return { status: "error", diagnostics: [{ code: "r03-d-snapshot", ruleId: "r01-input-boundary", phase: "hir", message: error.message }] }; }
   if (snapshot?.format?.family === "tsfg.frontend-nullable-candidate") {
@@ -198,12 +199,12 @@ export function readHir(bytes, factsContext = undefined) {
 
 /** @param {any} hir @param {any} [factsContext] */
 export function lowerHir(hir, factsContext = undefined) {
+  if (isArrayFactsContext(factsContext)) return emitArrayCore(hir, factsContext);
+  if (factsContext !== undefined) return emitStringCore(hir, factsContext);
   if (familyOf(hir) === 'tsfg.module-callable-hir-candidate') {
     verifyHir(hir);
     throw Object.assign(new TypeError('r03-d-capability: module callable Core lowering is not implemented'), {code:'r03-d-capability',ruleId:'r01-ts-baseline',phase:'lowering'});
   }
-  if (isArrayFactsContext(factsContext)) return emitArrayCore(hir, factsContext);
-  if (factsContext !== undefined) return emitStringCore(hir, factsContext);
   if (hir?.format?.family === "tsfg.exception-hir-candidate") return emitExceptionCore(hir);
   if (hir?.format?.family === "tsfg.nullable-hir-candidate") return emitNullableCore(hir);
   if (hir?.format?.family === "tsfg.closure-hir-candidate") {
