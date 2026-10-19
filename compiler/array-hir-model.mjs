@@ -8,8 +8,8 @@ import { copyGenericJsonBytes, checkGenericJsonValueBudget } from './generic-jso
 import { readArrayFactsCandidate } from './array-facts.mjs';
 import { arrayFactsLimits } from './array-facts-model.mjs';
 
-const schemaHash = 'sha256:e9d687ce59c5920d33a7cf03e09902d6d0f065d4efe5033ca183f2a175d9d458';
-export const arrayHirFormat = own({ family: 'tsfg.array-hir-candidate', version: 5, schemaHash });
+const schemaHash = 'sha256:df9ee509ce6b6490d3eaa7b40a6dfad83389f624e22d39e1ec92b96bdfd2a045';
+export const arrayHirFormat = own({ family: 'tsfg.array-hir-candidate', version: 6, schemaHash });
 export const arrayHirType = own({ kind: 'managedReference', name: 'Array',
   elementType: scalarTypeIds.f64, id: arrayTypeId });
 const target = own(bytecode.target), policy = arrayFactsLimits;
@@ -70,7 +70,7 @@ function expression(value, headers) {
     receiver:reference(value.view),property:value.property,nameRange:{...value.nameRange}};
   if (value.kind === 'directCall') {
     const fn = headers.get(value.callee);
-    return {kind:'arrayDirectCall',type:scalarTypeIds.f64,range:span,calleeRange:{...value.calleeRange},
+    return {kind:'arrayDirectCall',type:fn.returnType,range:span,calleeRange:{...value.calleeRange},
       target:fn.id,sourceCallee:value.callee,signatureHash:fn.signatureHash,
       arguments:value.arguments.map(arg => expression(arg, headers))};
   }
@@ -88,22 +88,25 @@ function expression(value, headers) {
 export function projectArrayFacts(facts) {
   const payload = facts.payload;
   const headers = new Map(payload.functions.map(fn => [fn.id, {
-    id:functionIdentity(fn.sourcePath,fn.name,'f64',fn.parameters.map(p => p.declaredType)),
-    signatureHash:signatureHash('f64',fn.parameters.map(p => p.declaredType)),
+    id:functionIdentity(fn.sourcePath,fn.name,fn.returnType,fn.parameters.map(p => p.declaredType)),
+    signatureHash:signatureHash(fn.returnType,fn.parameters.map(p => p.declaredType)),
+    returnType:fn.returnType === 'readspan.f64' ? readSpanTypeId : scalarTypeIds.f64,
   }]));
   const functions = payload.functions.map(fn => {
     /** @type {Map<string, any>} */
     const bindings = new Map(fn.bindings.map(binding => [binding.id, binding]));
     const parameterTypes = fn.parameters.map(parameter => parameter.declaredType);
-    return {id:functionIdentity(fn.sourcePath,fn.name,'f64',parameterTypes),sourceBinding:fn.id,
-      name:fn.name,sourcePath:fn.sourcePath,signatureHash:signatureHash('f64',parameterTypes),
-      returnType:{kind:'scalar',name:'f64',id:scalarTypeIds.f64},
+    return {id:functionIdentity(fn.sourcePath,fn.name,fn.returnType,parameterTypes),sourceBinding:fn.id,
+      name:fn.name,sourcePath:fn.sourcePath,signatureHash:signatureHash(fn.returnType,parameterTypes),
+      returnType:fn.returnType === 'readspan.f64' ? {kind:'view',name:'ReadSpan',id:readSpanTypeId}
+        : {kind:'scalar',name:'f64',id:scalarTypeIds.f64},
       parameters:fn.parameters.map(parameter => ({id:parameter.id,name:parameter.name,
         type:parameter.declaredType === 'array.f64' ? arrayHirType.id
           : parameter.declaredType === 'readspan.f64' ? readSpanTypeId : scalarTypeIds[parameter.declaredType],
         writable:parameter.writable,range:{...parameter.declarationRange},nameRange:{...parameter.nameRange},annotationRange:{...parameter.annotationRange},
         ...(['array.f64','readspan.f64'].includes(parameter.declaredType) ? {elementAnnotationRange:{...parameter.elementAnnotationRange}} : {})})),
       range:{...fn.declarationRange},nameRange:{...fn.nameRange},returnAnnotationRange:{...fn.returnAnnotationRange},
+      ...(fn.returnType === 'readspan.f64' ? {returnElementAnnotationRange:{...fn.returnElementAnnotationRange}} : {}),
       body:fn.body.map(statement => {
         if (statement.kind === 'variable') {
           const binding = bindings.get(statement.binding);
@@ -129,7 +132,7 @@ export function projectArrayFacts(facts) {
       : {id:scalarTypeIds[type.id],kind:'scalar',name:type.id,...origin};
   });
   return {format:{...arrayHirFormat},inputIdentity:facts.packageId,
-    facts:{version:5,schemaHash:facts.schemaHash,requestId:facts.requestId},rootFile:payload.rootFile,
+    facts:{version:6,schemaHash:facts.schemaHash,requestId:facts.requestId},rootFile:payload.rootFile,
     sources:payload.files.map(file => ({path:file.path,content:file.content,hash:'sha256:'+file.sha256})),
     target:{...target},types,arrayLength:{...payload.arrayLength,ownerType:arrayHirType.id,writeType:scalarTypeIds.u32,
       declarationRange:{...payload.arrayLength.declarationRange},nameRange:{...payload.arrayLength.nameRange},typeRange:{...payload.arrayLength.typeRange}},

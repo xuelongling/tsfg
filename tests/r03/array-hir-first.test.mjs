@@ -21,8 +21,8 @@ test('25d all eight frozen whole facts packages reach complete owned HIR',async 
     assert.equal(jcs(f.request)+'\n',f.requestText);assert.equal(jcs(p)+'\n',f.packageText);
     assert.equal(Buffer.byteLength(f.requestText),f.requestBytes);assert.equal(sha(f.requestText),f.requestSHA256);
     assert.equal(Buffer.byteLength(f.packageText),f.packageBytes);assert.equal(sha(f.packageText),f.packageSHA256);
-    assert.equal(p.requestId,'sha256:'+sha('tsfg.array-facts.request.v5\0'+f.requestText));
-    assert.equal(p.packageId,'sha256:'+sha('tsfg.array-facts.package.v5\0'+p.schemaHash+'\0'+jcs(p.payload)));
+    assert.equal(p.requestId,'sha256:'+sha('tsfg.array-facts.request.v6\0'+f.requestText));
+    assert.equal(p.packageId,'sha256:'+sha('tsfg.array-facts.package.v6\0'+p.schemaHash+'\0'+jcs(p.payload)));
     assert.equal(jcs(h.expectedHir)+'\n',h.hirText);
     assert.equal(Buffer.byteLength(h.hirText),h.hirBytes);assert.equal(sha(h.hirText),h.hirSHA256);
     for(const pre of h.functionPreimages){

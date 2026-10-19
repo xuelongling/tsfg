@@ -35,12 +35,16 @@ export function deriveReadSpanPlan(hir, prepared) {
       views.push(view); families.set(parameter.id,view);
     });
     const event = (statementIndex,expressionPath,kind,range,fields) => {
+      if (events.length >= 100) limit();
       const sequence = events.length;
       events.push({sequence,statementIndex,expressionPath,kind,range:{...range},...fields});
       return sequence;
     };
     const completeUse = (view, sequence) => {
-      if (view.useEvents.at(-1) !== sequence) view.useEvents.push(sequence);
+      if (view.useEvents.at(-1) !== sequence) {
+        if (view.useEvents.length >= 50) limit();
+        view.useEvents.push(sequence);
+      }
       view.lastUseEvent = sequence;
     };
     const use = (binding,kind,index,path,range,fields = {}) => {
@@ -56,6 +60,22 @@ export function deriveReadSpanPlan(hir, prepared) {
       else if (value?.kind === 'readSpanLength')
         use(value.receiver.binding,'view-length-complete',index,path,value.range);
     };
+    const ordinaryCall = (value,index,path) => {
+      const callIndex = callIndices.get(canonical([fn.id,path]));
+      event(index,path,'array-call-effect',value.range,{callIndex});
+      const uses = value.arguments.flatMap((argument,slot) => {
+        if (argument.type !== readSpanTypeId) return [];
+        // Each original reference pays, including repeated references to one family.
+        charge();
+        const view = families.get(argument.binding);
+        return [{index:slot,binding:argument.binding,viewId:view.viewId,range:{...argument.range}}];
+      });
+      if (uses.length) {
+        const sequence = event(index,path,'view-call-complete',value.range,{callIndex,uses});
+        for (const occurrence of uses) completeUse(families.get(occurrence.binding),sequence);
+      }
+      return {callIndex,returnedView:calls[callIndex].returnedView};
+    };
     for (const [index,stmt] of fn.body.entries()) {
       if (stmt.kind === 'local' && stmt.binding.type === readSpanTypeId) {
         charge();
@@ -69,6 +89,13 @@ export function deriveReadSpanPlan(hir, prepared) {
           const view = {viewId,binding:stmt.binding.id,owner:model.bindings.get(stmt.binding.id),
             origin:{kind:'local',createEvent},aliases:[],useEvents:[],lastUseEvent:createEvent};
           views.push(view); families.set(stmt.binding.id,view);
+        } else if (init.kind === 'arrayDirectCall') {
+          const {callIndex,returnedView} = ordinaryCall(init,index,path);
+          const view = families.get(returnedView.binding);
+          families.set(stmt.binding.id,view);
+          const sequence = use(stmt.binding.id,'view-call-result-alias-complete',index,path,init.range,
+            {initializerBinding:returnedView.binding,callIndex,parameterIndex:returnedView.index});
+          view.aliases.push({binding:stmt.binding.id,initializerBinding:returnedView.binding,event:sequence});
         } else {
           const view = families.get(init.binding);
           families.set(stmt.binding.id,view);
@@ -85,25 +112,18 @@ export function deriveReadSpanPlan(hir, prepared) {
         const field = stmt.kind === 'expression' ? 'expression' : 'value', value = stmt[field];
         const path = ['body',index,field];
         if (value.kind === 'arrayDirectCall') {
-          const callIndex = callIndices.get(canonical([fn.id,path]));
-          event(index,path,'array-call-effect',value.range,{callIndex});
-          const uses = value.arguments.flatMap((argument,slot) => {
-            if (argument.type !== readSpanTypeId) return [];
-            // Each original reference pays, including repeated references to one family.
-            charge();
-            const view = families.get(argument.binding);
-            return [{index:slot,binding:argument.binding,viewId:view.viewId,range:{...argument.range}}];
-          });
-          if (uses.length) {
-            const sequence = event(index,path,'view-call-complete',value.range,{callIndex,uses});
-            for (const occurrence of uses) completeUse(families.get(occurrence.binding),sequence);
-          }
-        } else read(value,index,path);
+          const {callIndex,returnedView} = ordinaryCall(value,index,path);
+          if (stmt.kind === 'return' && value.type === readSpanTypeId)
+            use(returnedView.binding,'view-return-complete',index,path,value.range,
+              {callIndex,parameterIndex:returnedView.index});
+        } else if (stmt.kind === 'return' && value.type === readSpanTypeId)
+          use(value.binding,'view-return-complete',index,path,value.range,{callIndex:null,parameterIndex:null});
+        else read(value,index,path);
       }
     }
     return {functionId:fn.id,views,events};
   });
-  return {plan:{version:2,publication:{scopeDigest:prepared.scopeDigest,
+  return {plan:{version:3,publication:{scopeDigest:prepared.scopeDigest,
     publishedDigest:prepared.publishedDigest},calls,functions},work};
 }
 

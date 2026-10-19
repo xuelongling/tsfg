@@ -5,7 +5,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { invokeCore, accepted } from './generic-core-package-capture.mjs';
-import { pinned, sha } from './array-test-fixtures.mjs';
+import { pinnedContainer, sha } from './array-test-fixtures.mjs';
 import { assertArrayCoreSemantics } from './array-core-structural-oracle.mjs';
 
 /** A parser/trait refusal cannot stand in for the explicitly expected private gate.
@@ -17,22 +17,22 @@ function refused(actual,diagnostic) {
     'exact gate '+diagnostic+'; earlier parser/trait failures receive no private credit:\n'+actual.stderr.toString('utf8'));
 }
 
-test('26a same real C++ CLI preserves Array5 no-view/no-call packages and independent candidate boundaries',async t=>{
-  const manifest=await pinned('./array-core-cpp-cases-v5.json',2563931,'cd793b575f4f2b40c233fa73f9ef9aab97dd44b47581cba64bcd5c3d750e2dc5');
-  const oracle=await pinned('./legacy-v5-old8-core-oracle.json',627351,'464443dc2ed8bdf6fcdf27227d26ba7344237aef21d822a55ded867fc3cb579b');
+test('26c same real C++ CLI preserves Array6 no-view/no-call packages and independent candidate boundaries',async t=>{
+  const manifest=await pinnedContainer('./array-core-cpp-cases-v6.json',2637111,'15dff58483500cd866ad2bb887e8ab25b749618b49208e42c90ea5b8c4826e7f');
+  const oracle=await pinnedContainer('./legacy-v6-old8-core-oracle.json',845554,'ab5d6eeae66e6334eb80dcf0d9450ba565da5fb470504060ac28e33fa537f45e');
   assert.deepEqual(manifest.provenance,{CLIExecuted:false,coldCasesReproveSource:false,compiled:false,linked:false,
     newCppOutputSampled:false,productEmitterImported:false,sourceModuleImported:false,
     wholeSourceCredit:'only separate pinned independent whole oracle; no cold Source admission'});
   assert.equal(manifest.version,5);assert.equal(oracle.version,5);
-  assert.deepEqual(oracle.format,{family:'tsfg.core-array-candidate',version:5,facts_version:5,
-    profile:'dense-f64-array-readspan-params-checked-v5',
-    schemaHash:'sha256:0411c646cc819836c03327ee44327c62e5c6aae668e8492e2b917acfa8dabb08'});
+  assert.deepEqual(oracle.format,{family:'tsfg.core-array-candidate',version:6,facts_version:6,
+    profile:'dense-f64-array-readspan-return-checked-v6',
+    schemaHash:'sha256:462672c595894981aa5dc89c1b9cc3400dd8d0e85b5ba346956b5b8057b71d12'});
   assert.equal(manifest.cases.length,105);assert.equal(new Set(manifest.cases.map(c=>c.id)).size,105);
   assert.equal(manifest.cases.filter(c=>c.expected.exitCode===0).length,15);
   assert.equal(manifest.cases.filter(c=>c.expected.exitCode===3).length,90);
   assert.equal(manifest.wire.length,16);
   // Synthetic cold controls retain opaque envelope IDs; they do not reprove Source.
-  // Complete old2/old3/old4 originals are explicit refusals, never legal5 inputs.
+  // Complete old2/old3/old4 originals are explicit refusals, never legal6 inputs.
   for(const version of [2,3,4]){
     const legacy=manifest.cases.find(c=>c.id==='old-v'+version+'-marker-rejected');assert.ok(legacy);
     assert.equal(legacy.sourceOracle,undefined);assert.equal(legacy.expected.exitCode,3);
@@ -40,8 +40,8 @@ test('26a same real C++ CLI preserves Array5 no-view/no-call packages and indepe
     assert.ok(legacy.input.includes('version = '+version+' : i32'));
     assert.ok(legacy.input.includes('facts_version = '+version+' : i32'));
   }
-  const marker5='tsfg_core.array = {family = "tsfg.core-array-candidate", version = 5 : i32, schema = "sha256:0411c646cc819836c03327ee44327c62e5c6aae668e8492e2b917acfa8dabb08", profile = "dense-f64-array-readspan-params-checked-v5", facts_version = 5 : i32}';
-  for(const c of manifest.cases.filter(c=>c.expected.exitCode===0))assert.ok(c.input.includes(marker5),c.id+' legal5 marker');
+  const marker6='tsfg_core.array = {family = "tsfg.core-array-candidate", version = 6 : i32, schema = "sha256:462672c595894981aa5dc89c1b9cc3400dd8d0e85b5ba346956b5b8057b71d12", profile = "dense-f64-array-readspan-return-checked-v6", facts_version = 6 : i32}';
+  for(const c of manifest.cases.filter(c=>c.expected.exitCode===0))assert.ok(c.input.includes(marker6),c.id+' legal6 marker');
   assert.equal(15*4+90+manifest.wire.length+2,168,'preserved authorized CLI geometry');
   assert.equal(1+manifest.cases.length+manifest.wire.length+2,124,'complete parent and TAP subtests');
   let whole={functions:0,parameters:0,sites:0,aliases:0,elements:0,checkedReads:0,stores:0,resizes:0,constants:0,operations:0,registers:0};
@@ -67,7 +67,7 @@ test('26a same real C++ CLI preserves Array5 no-view/no-call packages and indepe
     'return-bypasses-checked-read','second-function-omitted'].includes(c.id))) {
     assert.throws(()=>assertArrayCoreSemantics(c.input,full),{code:'ERR_ASSERTION'});
   }
-  t.diagnostic('26a Array5 C++ frozen controls complete:8 whole packages/10 functions/8 parameters/11 sites/7 stores/4 resizes/12 reads; other positives are cold static metadata/count controls');
+  t.diagnostic('26c Array6 C++ frozen controls complete:8 whole packages/10 functions/8 parameters/11 sites/7 stores/4 resizes/12 reads; other positives are cold static metadata/count controls');
   for(const c of manifest.cases.filter(c=>c.expected.exitCode===0))await t.test(c.id,async()=>{
     const expected={core:c.input};
     const first=await invokeCore(c.input,'--canonicalize');accepted(first);

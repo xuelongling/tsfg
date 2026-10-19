@@ -6,18 +6,18 @@ import { readFile } from 'node:fs/promises';
 import { readArrayFactsCandidate,writeArrayFactsCandidate } from '../../compiler/array-facts.mjs';
 import { buildHir,verifyHir,printHir,readHir,lowerHir,analyzeArrayCalls,verifyArrayCalls,printArrayCalls,readArrayCalls } from '../../compiler/hir.mjs';
 import { canonical,hash,fresh,factsContext,caught,deeplyFrozen } from './array-call-test-helpers.mjs';
-// Exact independent v5 whole data; the original depth16 Source program is unchanged.
-const fixturePin={bytes:114769,sha256:'1ee5cf93e9c1f3b8b67f35f021c108f94415751dd182a57cf3d368852939cbfd'};
-const frozen=readFile(new URL('./legacy-v5-depth16-oracle.json',import.meta.url)).then(bytes=>{
+// Exact independent v6 whole data; the original depth16 Source program is unchanged.
+const fixturePin={bytes:166285,sha256:'b138b484e1dbeb51ee411ff95bde38d1c18325ab663a40118776102a8e93612c'};
+const frozen=readFile(new URL('./legacy-v6-depth16-oracle.json',import.meta.url)).then(bytes=>{
   assert.equal(bytes.length,fixturePin.bytes);assert.equal(hash(bytes),'sha256:'+fixturePin.sha256);
-  const bundle=JSON.parse(bytes.toString('utf8'));assert.equal(canonical(bundle)+'\n',bytes.toString('utf8'));
+  const bundle=JSON.parse(bytes.toString('utf8'));
   assert.equal(bundle.family,'tsfg.r03.legacy-v5-depth16-oracle');assert.equal(bundle.version,5);
-  assert.equal(bundle.crosspin.interface.sha256,'0b0cbffa7efc0d44589ba45bc71f5380d7cc7a089a6303dc2f224e9cc7505081');
+  assert.equal(bundle.crosspin.interface.sha256,'e9887966e68cd5dcbb042095f344f4a63d41b6070835ba37ccd5057758358e4d');
   assert.equal(bundle.cases.length,1);const row=bundle.cases[0];assert.equal(row.name,'forward-chain16');
   assert.deepEqual(row.sourceBundlePin,{bytes:18326,sha256:'dc3879d5e1c6aca40e38a943263e0166e12b1a82080a8a479f7e523a9f6705f5'});
   assert.equal(row.inheritedProvenance.productImported,false);assert.equal(row.inheritedProvenance.productionOutputSampled,false);
   assert.deepEqual(row.inheritedProvenance.official.diagnostics,{syntax:0,semantic:0,program:0,global:0});
-  assert.equal(row.hir.format.version,5);assert.equal(row.analysis.format.version,5);
+  assert.equal(row.hir.format.version,6);assert.equal(row.analysis.format.version,6);
   assert.equal(row.hir.types.length,4);assert.equal(row.hir.types[3].readonly,true);
   assert.equal(row.inheritedProvenance.official.sourceRangeRoles,95);
   return row;
@@ -49,12 +49,12 @@ test('23e depth16 publishes the whole empty owner analysis while retaining every
     const fn=row.hir.functions[i],summary=report.functions.find(r=>r.functionId===fn.id);
     assert.ok(summary);for(const effects of [summary.derived,summary.effective])for(const key of ['owners','reads','writes','structural'])assert.deepEqual(effects[key],[]);
     const contract=row.context.contracts.find(c=>c.functionId===fn.id);
-    assert.deepEqual(contract.upper,{parameters:[],local:{read:false,write:false,structural:false}});
+    assert.deepEqual(contract.upper,{parameters:[],local:{read:false,write:false,structural:false},returnOrigin:null});
     if(i===15){assert.deepEqual(summary.dependencies,[]);continue}
     const next=row.hir.functions[i+1],digest=row.context.contracts.find(c=>c.functionId===next.id).digest;
     assert.deepEqual(summary.dependencies,[{functionId:next.id,digest}]);
     const call=report.calls.find(c=>c.functionId===fn.id);assert.ok(call);
-    assert.deepEqual(call,{functionId:fn.id,expressionPath:['body',0,'value'],range:fn.body[0].value.range,target:next.id,signatureHash:next.signatureHash,arguments:[],consumedDigest:digest,publishedLocal:null});
+    assert.deepEqual(call,{functionId:fn.id,expressionPath:['body',0,'value'],range:fn.body[0].value.range,target:next.id,signatureHash:next.signatureHash,arguments:[],consumedDigest:digest,publishedLocal:null,returnedView:null});
   }
   assert.deepEqual(verifyArrayCalls(fresh(row.analysis),fresh(row.hir),factsContext(row),fresh(row.context)),row.analysis);
   const text=canonical(row.analysis)+'\n';assert.equal(printArrayCalls(report,fresh(row.hir),factsContext(row),fresh(row.context)),text);

@@ -45,7 +45,11 @@ function variable(statement, row, fn, source, known, sites, count, viewContext) 
   if (row.declaredType === 'readspan.f64') {
     if (init?.kind === 'readSpanCreate') readSpanCreate(init,row.declarationRange,source,known,
       viewContext.params,viewContext.intrinsic,viewContext.lexicalNames,viewContext.headers);
-    else reference(init,row.declarationRange,source,known,'readspan.f64');
+    else if (init?.kind === 'directCall') {
+      check(init.type === 'readspan.f64', 'input');
+      call(init,row.declarationRange,source,viewContext.headers,known,viewContext.lexicalNames,
+        viewContext.params,viewContext.owners,viewContext.lengths,viewContext.targets);
+    } else reference(init,row.declarationRange,source,known,'readspan.f64');
   } else if (init?.kind === 'arrayLiteral') {
     check(row.annotationRange !== null, 'input'); literal(init, row.declarationRange, source, sites, count);
   } else reference(init, row.declarationRange, source, known);
@@ -86,9 +90,10 @@ function mutation(statement, source, known, params, property, owners, lengths, p
 }
 function call(value, parent, source, headers, scope, lexicalNames, params, owners, lengths, targets) {
   record(value, ['kind','type','range','callee','calleeRange','arguments']);
-  check(value.kind === 'directCall' && value.type === 'f64', 'input');
+  check(value.kind === 'directCall' && ['f64','readspan.f64'].includes(value.type), 'input');
   range(value.range, parent, source.content); range(value.calleeRange, value.range, source.content);
-  const target = headers.get(value.callee); check(target && !lexicalNames.has(target.name), 'input');
+  const target = headers.get(value.callee);
+  check(target && value.type === target.returnType && !lexicalNames.has(target.name), 'input');
   nameAt(target.name, value.calleeRange, source.content);
   check(value.range.start === value.calleeRange.start, 'input');
   list(value.arguments, 0, 8); check(value.arguments.length === target.parameters.length, 'input');
@@ -122,14 +127,20 @@ export function validateArrayFunctions(payload, source) {
   const headers = new Map(), parameterMaps = new Map(), scopes = new Map(), edges = new Map();
   let previousEnd = 0; const count = {units:0};
   for (const fn of functions) {
-    record(fn, ['id','name','sourcePath','declarationRange','nameRange','returnType','returnAnnotationRange','parameters','bindings','body']);
-    check(fn.sourcePath === source.path && fn.returnType === 'f64', 'input'); digest(fn.id);
+    const viewReturn = fn.returnType === 'readspan.f64';
+    record(fn, ['id','name','sourcePath','declarationRange','nameRange','returnType','returnAnnotationRange',
+      ...(viewReturn ? ['returnElementAnnotationRange'] : []),'parameters','bindings','body']);
+    check(fn.sourcePath === source.path && ['f64','readspan.f64'].includes(fn.returnType), 'input'); digest(fn.id);
     range(fn.declarationRange, {start:0,end:source.content.length}, source.content);
     check(fn.declarationRange.start >= previousEnd && window(source.content, previousEnd, fn.declarationRange.start).trim() === '', 'input');
     previousEnd = fn.declarationRange.end;
     range(fn.nameRange, fn.declarationRange, source.content); nameAt(fn.name, fn.nameRange, source.content);
-    range(fn.returnAnnotationRange, fn.declarationRange, source.content); nameAt('f64', fn.returnAnnotationRange, source.content);
-    check(/^(?:export\s+)?function\s+$/.test(window(source.content, fn.declarationRange.start, fn.nameRange.start)), 'input');
+    range(fn.returnAnnotationRange, fn.declarationRange, source.content);
+    if (viewReturn) elementAnnotation({declaredType:fn.returnType,annotationRange:fn.returnAnnotationRange,
+      elementAnnotationRange:fn.returnElementAnnotationRange,declarationRange:fn.declarationRange,nameRange:fn.nameRange},source);
+    else nameAt('f64',fn.returnAnnotationRange,source.content);
+    const prefix = window(source.content,fn.declarationRange.start,fn.nameRange.start);
+    check((viewReturn ? /^function\s+$/ : /^(?:export\s+)?function\s+$/).test(prefix), 'input');
     check(fn.id === originIdentity('tsfg.array-facts.binding.v1', source.path, fn.nameRange, 'nameRange')
       && !ids.has(fn.id) && !names.has(fn.name), 'identity');
     ids.add(fn.id); names.add(fn.name); headers.set(fn.id, fn);
@@ -158,10 +169,10 @@ export function validateArrayFunctions(payload, source) {
       if (statement.kind === 'variable') {
         check(index < body.length - 1 && localIndex < bindings.length, 'input');
         const row = bindings[localIndex++]; expression = variable(statement, row, fn, source, known, sites, count,
-          {params,intrinsic:payload.readSpanIntrinsic,lexicalNames,headers});
+          {params,intrinsic:payload.readSpanIntrinsic,lexicalNames,headers,owners,lengths,targets});
         check(!ids.has(row.id) && !localNames.has(row.name), 'identity'); ids.add(row.id); localNames.add(row.name);
         const init = statement.initializer;
-        if (init.kind === 'readSpanCreate') check(++calls <= 32, 'limit');
+        if (init.kind === 'readSpanCreate' || init.kind === 'directCall') check(++calls <= 32, 'limit');
         if (row.declaredType === 'array.f64') {
           const owner = init.kind === 'arrayLiteral' ? init.allocationSite : owners.get(init.binding);
           owners.set(row.id, owner); if (init.kind === 'arrayLiteral') lengths.set(owner, init.elements.length);
@@ -172,7 +183,12 @@ export function validateArrayFunctions(payload, source) {
         if (statement.value.kind === 'directCall') {
           check(++calls <= 32, 'limit');
           expression = call(statement.value, statement.range, source, headers, known, lexicalNames, params, owners, lengths, targets);
-        } else { scalar(statement.value, statement.range, source, known, params); expression = statement.value.range; }
+          check(statement.value.type === fn.returnType, 'input');
+        } else {
+          if (fn.returnType === 'readspan.f64') reference(statement.value,statement.range,source,known,'readspan.f64');
+          else scalar(statement.value,statement.range,source,known,params);
+          expression = statement.value.range;
+        }
         check(/^return\s+$/.test(window(source.content, statement.range.start, expression.start))
           && !lineBreak(source.content.slice(statement.range.start, expression.start)), 'input');
       } else if (statement.kind === 'call') {

@@ -6,8 +6,8 @@ import { copyGenericJsonBytes, readGenericJson, checkGenericJsonValueBudget } fr
 import { arrayFactsLimits as policy, arrayFactsFailure as failure, arrayCheck as check,
   arrayRecord as record, validateArrayFactsPayload } from './array-facts-model.mjs';
 
-const schemaHash = 'sha256:28909daecb794e9d1969a8e97758a2cf6de5c2d6f309266339777a87f9f69a5a';
-export const arrayFactsFormat = own({ family: 'tsfg.array-facts-package-candidate', version: 5, schemaHash });
+const schemaHash = 'sha256:fc9b976b96070df07f5b9cdae27c58f327f9b67b74945f25ee874087ce55a279';
+export const arrayFactsFormat = own({ family: 'tsfg.array-facts-package-candidate', version: 6, schemaHash });
 check(sha256(canonical(descriptor) + '\n') === schemaHash, 'identity');
 const valuePolicy = Object.freeze({ ...policy, bytes: policy.bytes - 1 });
 
@@ -22,17 +22,17 @@ function budget(value) {
 function verify(value) {
   budget(value);
   record(value, ['family','version','schemaHash','requestId','packageId','payload']);
-  check(value.family === arrayFactsFormat.family && value.version === 5, 'schema');
+  check(value.family === arrayFactsFormat.family && value.version === 6, 'schema');
   check(value.schemaHash === schemaHash, 'identity');
   validateArrayFactsPayload(value.payload);
   const payload = value.payload;
-  const request = { family: 'tsfg.array-facts-request-candidate', version: 5, input: {
+  const request = { family: 'tsfg.array-facts-request-candidate', version: 6, input: {
     sourceRoot: payload.sourceRoot, rootFile: payload.rootFile,
     files: payload.files.map(({path, content, sha256: hash}) => ({path, content, sha256: hash})),
     declarations: payload.declarations, config: payload.config,
   } };
-  check(value.requestId === sha256('tsfg.array-facts.request.v5\0' + canonical(request) + '\n'), 'identity');
-  check(value.packageId === sha256('tsfg.array-facts.package.v5\0' + schemaHash + '\0' + canonical(payload)), 'identity');
+  check(value.requestId === sha256('tsfg.array-facts.request.v6\0' + canonical(request) + '\n'), 'identity');
+  check(value.packageId === sha256('tsfg.array-facts.package.v6\0' + schemaHash + '\0' + canonical(payload)), 'identity');
   return value;
 }
 /** Snapshot bytes before inspecting untrusted properties or decoding any JSON graph. */

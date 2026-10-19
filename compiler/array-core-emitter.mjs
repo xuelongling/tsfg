@@ -61,8 +61,8 @@ export function emitArrayCore(hir, context, fixedContext = undefined) {
     field('tsfg_core.triple', verified.target.triple), field('tsfg_core.data_layout', verified.target.llvmDataLayout),
     field('tsfg_core.bytecode_schema', coreExchangeFormat.bytecodeSchema),
     'tsfg_core.source_length = ' + source.content.length + ' : i64',
-    'tsfg_core.array = ' + dictionary([field('family', descriptor.family), 'version = 5 : i32',
-      field('schema', schemaHash), field('profile', descriptor.profile), 'facts_version = 5 : i32']),
+    'tsfg_core.array = ' + dictionary([field('family', descriptor.family), 'version = 6 : i32',
+      field('schema', schemaHash), field('profile', descriptor.profile), 'facts_version = 6 : i32']),
     'tsfg_array.function_ids = ' + table(verified.functions.map(fn => quote(fn.id))),
     'tsfg_array.exports = ' + table(verified.exports.map(item => dictionary([
       field('name', item.name), field('function_id', item.functionId)]))),

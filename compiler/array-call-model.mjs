@@ -8,6 +8,42 @@ const empty = () => Object.fromEntries(facets.map(key => [key,new Map()]));
 const entries = set => [...set.entries()].sort(([a],[b]) => compareArrayKeys(a,b));
 const parameter = (fn, index) => ({kind:'parameter',functionId:fn.id,index});
 
+// Resolve syntax provenance before fixed coverage. This private trace cannot authorize a result:
+// invalid/empty uppers must reach the Source-ordered lifetime/coverage diagnostics below.
+function returnOrigins(hir, functions, fail) {
+  const origins = new Map(), active = new Set();
+  const trace = fn => {
+    if (origins.has(fn.id)) return origins.get(fn.id);
+    if (active.has(fn.id)) fail('identity'); active.add(fn.id);
+    const bindings = new Map();
+    fn.parameters.forEach((p,index) => {
+      if (p.type === arrayTypeId || p.type === readSpanTypeId) bindings.set(p.id,parameter(fn,index));
+    });
+    const ownerOf = id => { const owner = bindings.get(id); if (!owner) fail('identity'); return owner; };
+    const resolve = (value,expressionPath) => {
+      if (value.kind === 'reference') return ownerOf(value.binding);
+      if (value.kind === 'readSpanCreateChecked') return ownerOf(value.receiver.binding);
+      if (value.kind === 'arrayCreate') return {kind:'allocation',functionId:fn.id,
+        allocationSite:value.allocationSite,callPath:[]};
+      if (value.kind !== 'arrayDirectCall') fail('identity');
+      const callee = functions.get(value.target); if (!callee) fail('identity');
+      const origin = trace(callee); if (!origin) fail('identity');
+      if (origin.kind === 'parameter') return ownerOf(value.arguments[origin.index].binding);
+      return {kind:'allocation',functionId:origin.functionId,allocationSite:origin.allocationSite,
+        callPath:[{functionId:fn.id,expressionPath:[...expressionPath]},...origin.callPath]};
+    };
+    let origin = null;
+    for (const [index,stmt] of fn.body.entries()) {
+      if (stmt.kind === 'local') bindings.set(stmt.binding.id,resolve(stmt.initializer,['body',index,'initializer']));
+      else if (stmt.kind === 'return' && fn.returnType.id === readSpanTypeId)
+        origin = resolve(stmt.value,['body',index,'value']);
+    }
+    active.delete(fn.id); origins.set(fn.id,origin); return origin;
+  };
+  for (const fn of hir.functions) trace(fn);
+  return origins;
+}
+
 /** Complete verified HIR and publication records are the only inputs.
  * @param {any} hir @param {Map<string, any>} contracts @param {(kind:string)=>never} fail */
 export function analyzeArrayOwnerAccesses(hir, contracts, fail) {
@@ -21,6 +57,7 @@ export function analyzeArrayOwnerAccesses(hir, contracts, fail) {
   };
   /** @type {Map<string,any>} */
   const functions = new Map(hir.functions.map(fn => [fn.id,fn]));
+  const origins = returnOrigins(hir,functions,fail);
   const bases = new Map(), callSites = new Map(), models = new Map();
   // One collection pass. Alias binding introduces no additional owner or meter insertion.
   for (const fn of hir.functions) {
@@ -45,6 +82,37 @@ export function analyzeArrayOwnerAccesses(hir, contracts, fail) {
       proofs.set(index,{owner,exactLength:previous,[store ? 'index' : 'newLength']:n,nonStructural});
       lengths.set(owner,!fresh || n === null ? null : store ? previous === null ? null : Math.max(previous,n + 1) : n);
     };
+    const ordinaryCall = (value,expressionPath) => {
+      const callee = functions.get(value.target), contract = contracts.get(value.target), args = [];
+      if (!callee || !contract) fail('identity');
+      callee.parameters.forEach((p,slot) => {
+        if (p.type !== arrayTypeId && p.type !== readSpanTypeId) return;
+        charge();
+        args.push({index:slot,binding:value.arguments[slot].binding,owner:ownerOf(value.arguments[slot].binding)});
+      });
+      const publishedLocal = Object.values(contract.upper.local).some(Boolean)
+        ? {kind:'callLocal',functionId:fn.id,expressionPath:[...expressionPath]} : null;
+      let returnedView = null, returnedOwner = null;
+      if (callee.returnType.id === readSpanTypeId) {
+        charge();
+        const origin = origins.get(callee.id), fixed = contract.upper.returnOrigin;
+        if (!origin) fail('identity');
+        if (origin.kind === 'parameter') {
+          // Success consumes the exact Published slot. Only a failing contract uses the
+          // preliminary actual trace, so coverage wins over a spurious missing-binding error.
+          const slot = fixed?.index === origin.index ? fixed.index : origin.index;
+          returnedView = args.find(arg => arg.index === slot);
+          if (!returnedView) fail('identity'); returnedOwner = returnedView.owner;
+        } else returnedOwner = {kind:'allocation',functionId:origin.functionId,allocationSite:origin.allocationSite,
+          callPath:[{functionId:fn.id,expressionPath:[...expressionPath]},...origin.callPath]};
+      }
+      calls.push({functionId:fn.id,expressionPath,range:{...value.range},target:value.target,
+        signatureHash:value.signatureHash,arguments:args,consumedDigest:contract.digest,publishedLocal,returnedView});
+      // Product borrow proofs intentionally forget passed view owners too; Source density
+      // only tracks Array actuals and its complete facts remain authoritative.
+      for (const arg of args) lengths.set(arg.owner,null);
+      return returnedOwner;
+    };
     for (const [index, stmt] of fn.body.entries()) {
       charge();
       if (stmt.kind === 'local') {
@@ -54,7 +122,10 @@ export function analyzeArrayOwnerAccesses(hir, contracts, fail) {
           insert(base.owners,owner); lengths.set(owner,stmt.initializer.elements.length);
         } else if (stmt.initializer.kind === 'readSpanCreateChecked') {
           owner = ownerOf(stmt.initializer.receiver.binding); insert(base.reads,owner);
-        } else owner = ownerOf(stmt.initializer.binding);
+        } else if (stmt.initializer.kind === 'arrayDirectCall')
+          owner = ordinaryCall(stmt.initializer,['body',index,'initializer']);
+        else owner = ownerOf(stmt.initializer.binding);
+        if (!owner) fail('identity');
         bindings.set(stmt.binding.id,owner);
       } else if (stmt.kind === 'arrayStoreDenseChecked') {
         read(stmt.value); mutationProof(stmt,index,true);
@@ -67,24 +138,12 @@ export function analyzeArrayOwnerAccesses(hir, contracts, fail) {
       else {
         const value = stmt.kind === 'expression' ? stmt.expression : stmt.value;
         if (value.kind !== 'arrayDirectCall') { read(value); continue; }
-        const callee = functions.get(value.target), contract = contracts.get(value.target), args = [];
-        if (!callee || !contract) fail('identity');
-        callee.parameters.forEach((p,slot) => {
-          if (p.type !== arrayTypeId && p.type !== readSpanTypeId) return;
-          charge();
-          args.push({index:slot,binding:value.arguments[slot].binding,owner:ownerOf(value.arguments[slot].binding)});
-        });
-        const expressionPath = ['body',index,stmt.kind === 'expression' ? 'expression' : 'value'];
-        const publishedLocal = Object.values(contract.upper.local).some(Boolean)
-          ? {kind:'callLocal',functionId:fn.id,expressionPath:[...expressionPath]} : null;
-        calls.push({functionId:fn.id,expressionPath,range:{...value.range},target:value.target,
-          signatureHash:value.signatureHash,arguments:args,consumedDigest:contract.digest,publishedLocal});
-        // Product borrow proofs intentionally forget passed view owners too; Source density
-        // only tracks Array actuals and its complete facts remain authoritative.
-        for (const arg of args) lengths.set(arg.owner,null);
+        ordinaryCall(value,['body',index,stmt.kind === 'expression' ? 'expression' : 'value']);
       }
     }
   }
+  // Each view-return function resolves exactly one source in addition to existing owner work.
+  for (const fn of hir.functions) if (fn.returnType.id === readSpanTypeId) charge();
   const derived = new Map(), effective = new Map(), active = new Set();
   const solve = id => {
     if (derived.has(id)) return;
@@ -124,6 +183,8 @@ export function analyzeArrayOwnerAccesses(hir, contracts, fail) {
   const serialize = value => Object.fromEntries(facets.map(key => [key,entries(value[key]).map(([,owner]) => owner)]));
   const rows = [...hir.functions].sort((a,b) => compareArrayKeys(a.id,b.id)).map(fn => ({
     functionId:fn.id,derived:serialize(derived.get(fn.id)),effective:serialize(effective.get(fn.id)),
+    derivedReturnOrigin:origins.get(fn.id),effectiveReturnOrigin:contracts.get(fn.id).upper.returnOrigin === null
+      ? null : parameter(fn,contracts.get(fn.id).upper.returnOrigin.index),
     dependencies:[...new Set(callSites.get(fn.id).map(call => call.target))].sort(compareArrayKeys)
       .map(functionId => ({functionId,digest:contracts.get(functionId).digest})),
   }));

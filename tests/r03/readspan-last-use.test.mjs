@@ -1,18 +1,19 @@
 // SPDX-License-Identifier: MIT
 // Inputs and whole expectations are independent static data, never captured Product output.
-// Root separately proves actual official Source4 publications equal these exact packets.
+// Prior official Source4 evidence keeps its original identity; Root owns fresh Source6 qualification.
 import assert from 'node:assert/strict';
 import test from 'node:test';
 import { readArrayFactsCandidate } from '../../compiler/array-facts.mjs';
 import { buildHir,verifyHir,printHir,readHir,lowerHir,analyzeArrayCalls,
   verifyArrayCalls,printArrayCalls,readArrayCalls } from '../../compiler/hir.mjs';
-import { pinned,jcs,sha,fresh,wire,deeplyFrozen } from './array-test-fixtures.mjs';
+import { pinnedContainer,jcs,sha,fresh,wire,deeplyFrozen } from './array-test-fixtures.mjs';
 
-const oracle=await pinned('./readspan-first-oracle-v5.json',97689,
-  'c540182174e1d1c91c86e9fce010ca67a4f91bc8e6e4f090a8da2498ede52214');
+const oracle=await pinnedContainer('./readspan-first-oracle-v6.json',140199,
+  '0605059d2d1b6703fcbcaa3f8a855dbd7fa4986298cbbfe13e1261cf831a1cc9');
 assert.equal(oracle.family,'tsfg.r03.legacy-v5-readspan-first-oracle');assert.equal(oracle.version,5);
 assert.deepEqual(oracle.contractPin,{bytes:432866,
   sha256:'0b0cbffa7efc0d44589ba45bc71f5380d7cc7a089a6303dc2f224e9cc7505081'});
+assert.equal(oracle.frozenContract.sha256,'e9887966e68cd5dcbb042095f344f4a63d41b6070835ba37ccd5057758358e4d');
 assert.deepEqual(oracle.cases.map(row=>row.name),['before','after']);
 const before=oracle.cases[0],after=oracle.cases[1],bogus='sha256:'+'0'.repeat(64);
 for(const row of oracle.cases){
@@ -21,6 +22,8 @@ for(const row of oracle.cases){
   assert.deepEqual(row.official.diagnostics,{syntax:0,semantic:0,program:0,global:0});
   assert.equal(jcs(JSON.parse(row.packageText))+'\n',row.packageText);
   assert.equal(row.work.owner,30);
+  assert.equal(JSON.parse(row.packageText).version,6);assert.equal(row.hir.format.version,6);
+  assert.equal(row.context.version,3);assert.equal(row.hir.readSpanPlan.version,3);
 }
 assert.deepEqual([before.work.borrowTotal,after.work.borrowTotal],[5,4]);
 
@@ -58,9 +61,9 @@ function seams(row,hir,context,report=row.analysis??row.preConsumerAnalysis){
  * @param {any} context */
 function resign(context){
   for(const row of context.contracts){
-    const {digest,...body}=row;row.digest='sha256:'+sha('tsfg.array-published-contract.v2\0'+jcs(body));
+    const {digest,...body}=row;row.digest='sha256:'+sha('tsfg.array-published-contract.v3\0'+jcs(body));
   }
-  context.expectedDigest='sha256:'+sha('tsfg.array-publication.v2\0'+jcs({
+  context.expectedDigest='sha256:'+sha('tsfg.array-publication.v3\0'+jcs({
     scopeDigest:context.scopeDigest,contracts:context.contracts}));
   return context;
 }

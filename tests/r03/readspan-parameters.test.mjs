@@ -1,5 +1,5 @@
 // SPDX-License-Identifier: MIT
-// Whole expectations and hostile controls were frozen independently before Product5 output.
+// Whole private6 expectations and hostile controls are independent data, never Product output.
 // Root owns official Source proof and execution; this suite never produces expected packets.
 import assert from 'node:assert/strict';
 import test from 'node:test';
@@ -7,17 +7,18 @@ import { readFile } from 'node:fs/promises';
 import { readArrayFactsCandidate } from '../../compiler/array-facts.mjs';
 import { buildHir,verifyHir,printHir,readHir,lowerHir,analyzeArrayCalls,
   verifyArrayCalls,printArrayCalls,readArrayCalls } from '../../compiler/hir.mjs';
-import { pinned,jcs,sha,fresh,wire,deeplyFrozen } from './array-test-fixtures.mjs';
+import { pinned,pinnedContainer,jcs,sha,fresh,wire,deeplyFrozen } from './array-test-fixtures.mjs';
 
 // The preserved corrected FIRST container is pretty JSON; its embedded wire texts are canonical.
-const firstBytes=await readFile(new URL('./readspan-parameters-first-oracle.json',import.meta.url));
-assert.equal(firstBytes.length,160231);
-assert.equal(sha(firstBytes),'d284772f1f5e5893fa93419c3cbb0dae1c9b4940acb975341fb22c0e7db449d4');
+const firstBytes=await readFile(new URL('./legacy-v6-first-parameter-oracle.json',import.meta.url));
+assert.equal(firstBytes.length,163738);
+assert.equal(sha(firstBytes),'ff5c3fc1362e93faefa7727d829683032411931db396a8895a28d3e87dd07b0e');
 const first=JSON.parse(firstBytes.toString());
-const adjacent=await pinned('./readspan-parameters-adjacent-oracle.json',714878,
-  'b5c94447410b6f3dbaef0a9d09fda73b5439739f514dade4c1b8226eff3ba4c7');
-const controls=await pinned('./readspan-parameters-cold-oracle.json',252806,
-  'cce245399cb570c5736086f3534dd55e8f8cb00b568707713c03fc63f678db50');
+const adjacent=await pinnedContainer('./legacy-v6-parameter-adjacent-oracle.json',1013515,
+  'cb4ffaf34e5744e4bd89558203faf346267b025c228036935f57292387135192');
+const controls=await pinnedContainer('./legacy-v6-parameter-cold-oracle.json',357163,
+  '2fa22d72db15830d27371cec24e0e1a6b2b7735653ba4c4a9a56e21cad065d34');
+// This pinned v5 custody is historical; Root separately qualifies current v6 actual frames.
 const official=await pinned('./readspan-parameters-official-crosscheck.json',15590,
   '5478d8d5740c9541ee52ef1c861f52cdfe781d7515f1391f2f03fc419409bb30');
 assert.equal(first.cases.length,2);assert.equal(adjacent.cases.length,16);
@@ -127,7 +128,14 @@ for(const row of cases)test('26b complete cold public seams: '+row.id,async t=>{
 });
 
 for(const mutant of controls.coldMutants)test('26b whole-plan rejection: '+mutant.id,async t=>{
-  const row=byId(mutant.baseCase),hir=mutant.hir,report=mutant.reportWithSelfConsistentHirDigest;
+  const row=byId(mutant.baseCase),hir=fresh(mutant.hir);
+  // The retained cold container predates the final facts metadata. Rebind only
+  // its envelope identity; keep every hostile plan and trusted-source diagnostic.
+  hir.inputIdentity=row.hir.inputIdentity;
+  assert.deepEqual({...hir,readSpanPlan:row.hir.readSpanPlan},row.hir);
+  const report={...fresh(mutant.reportWithSelfConsistentHirDigest),
+    inputIdentity:hir.inputIdentity,hirDigest:'sha256:'+sha(jcs(hir))};
+  assert.deepEqual({...report,hirDigest:row.analysis.hirDigest},row.analysis);
   for(const entry of Object.keys(entries))await t.test(entry,()=>{
     const state=cold(row);state.hir=fresh(hir);state.hirBytes=wire(hir);
     state.report=fresh(report);state.reportBytes=wire(report);
@@ -149,7 +157,7 @@ for(const mutant of controls.contextMutants)test('26b fixed capability and compl
   });
 });
 
-test('26b independent official custody, full slots, shared completion and fixed R=false remain explicit',()=>{
+test('26b retained official custody and private6 full slots/shared completion/fixed R=false',()=>{
   assert.equal(official.comparison.differenceCount,0);
   assert.equal(official.comparison.official4x0For16,true);
   assert.equal(official.comparison.actualIndependentFacts12WholeExact,true);
@@ -168,9 +176,9 @@ test('26b independent official custody, full slots, shared completion and fixed 
   const mixed=byId('mixed-full-slots');
   assert.ok(mixed.hir.readSpanPlan.calls.some(call=>call.arguments.some(arg=>arg.index>0)));
   for(const row of cases){
-    assert.equal(row.hir.format.version,5);assert.equal(row.hir.facts.version,5);
-    assert.equal(row.hir.readSpanPlan.version,2);assert.equal(row.context.version,2);
-    assert.equal(JSON.parse(row.packageText).version,5);
+    assert.equal(row.hir.format.version,6);assert.equal(row.hir.facts.version,6);
+    assert.equal(row.hir.readSpanPlan.version,3);assert.equal(row.context.version,3);
+    assert.equal(JSON.parse(row.packageText).version,6);
   }
 });
 

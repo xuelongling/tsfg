@@ -61,10 +61,10 @@ function expectedPacket(base,lengths){
   }
   const file=p.files.find(f=>f.path===path);file.content=source;file.sha256=sha(source);file.byteLength=Buffer.byteLength(source);file.utf16Length=source.length;
   p.functions=functions;p.exports=functions.map(f=>({name:f.name,functionId:f.id}));
-  const request={family:'tsfg.array-facts-request-candidate',version:5,input:{sourceRoot:p.sourceRoot,rootFile:path,
+  const request={family:'tsfg.array-facts-request-candidate',version:6,input:{sourceRoot:p.sourceRoot,rootFile:path,
     files:p.files.map(f=>({path:f.path,content:f.content,sha256:f.sha256})),declarations:p.declarations,config:p.config}};
-  packet.requestId='sha256:'+sha('tsfg.array-facts.request.v5\0'+jcs(request)+'\n');
-  packet.packageId='sha256:'+sha('tsfg.array-facts.package.v5\0'+packet.schemaHash+'\0'+jcs(p));
+  packet.requestId='sha256:'+sha('tsfg.array-facts.request.v6\0'+jcs(request)+'\n');
+  packet.packageId='sha256:'+sha('tsfg.array-facts.package.v6\0'+packet.schemaHash+'\0'+jcs(p));
   return packet;
 }
 

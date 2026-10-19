@@ -8,13 +8,13 @@ import { prepareArrayAnalysis } from './array-hir.mjs';
 import { arrayCallFailure, arrayCallBudget } from './array-call-context.mjs';
 export { arrayCallFailure };
 
-const schemaHash = 'sha256:bc9590cf0fd60491b394af68cf5c0a627847f6dff63496dfd48c81e81b56ebc6';
+const schemaHash = 'sha256:cc3deb78c66bb533d12a857ef576aa047017e8ed7ff73dd2f89331d6cb1f5e60';
 const policy = arrayFactsLimits;
 const check = (value, kind = '') => { if (!value) arrayCallFailure(kind); };
 check(sha256(canonical(descriptor) + '\n') === schemaHash, 'identity');
 function reportFor(selected) {
   const {hir,prepared} = selected;
-  const report = {format:{family:'tsfg.array-calls-candidate',version:5,schemaHash},
+  const report = {format:{family:'tsfg.array-calls-candidate',version:6,schemaHash},
     inputIdentity:hir.inputIdentity,hirDigest:sha256(canonical(hir)),scopeDigest:prepared.scopeDigest,
     publishedDigest:prepared.publishedDigest,contracts:[...prepared.records.values()],...prepared.flow};
   arrayCallBudget(report); return own(JSON.parse(canonical(report)));

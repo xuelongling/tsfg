@@ -6,27 +6,27 @@ import assert from 'node:assert/strict';
 import { readFile } from 'node:fs/promises';
 import { readArrayFactsCandidate,writeArrayFactsCandidate } from '../../compiler/array-facts.mjs';
 import { buildHir,verifyHir,printHir,readHir,lowerHir } from '../../compiler/hir.mjs';
-import { fixtures,fresh,context,deeplyFrozen,jcs,sha,pinned } from './array-test-fixtures.mjs';
+import { fixtures,fresh,context,deeplyFrozen,jcs,sha,pinnedContainer } from './array-test-fixtures.mjs';
 
 test('25d eight actual official Source publications reach whole HIR and static Core',async t=>{
   const file=process.env.TSFG_ARRAY_SOURCE_CAPTURE;
   assert.ok(file,'explicit Source integration entry requires Root capture manifest');
   const expectedHash=process.env.TSFG_ARRAY_SOURCE_CAPTURE_SHA256;
   const expectedBytes=Number(process.env.TSFG_ARRAY_SOURCE_CAPTURE_BYTES);
-  assert.match(expectedHash??'',/^[0-9a-f]{64}$/,'Root must bind the exact fresh v5 manifest hash');
+  assert.match(expectedHash??'',/^[0-9a-f]{64}$/,'Root must bind the exact fresh final v6 manifest hash');
   assert.ok(Number.isInteger(expectedBytes)&&expectedBytes>0&&expectedBytes<=2097152,
-    'Root must bind the exact fresh v5 manifest byte count');
+    'Root must bind the exact fresh final v6 manifest byte count');
   const bytes=await readFile(file);assert.equal(bytes.length,expectedBytes);
   assert.equal(sha(bytes),expectedHash);
   const capture=JSON.parse(bytes.toString('utf8'));
   assert.equal(capture.schema,'r03.array-dense.actual-source-captures.v1');
-  assert.equal(capture.atomicWireVersion,5);
+  assert.equal(capture.atomicWireVersion,6);
   const state=capture.actual.state;
   assert.equal(state.qualified,true);assert.equal(state.observerOK,true);
   assert.equal(state.exit.code,0);assert.equal(state.close.code,0);
   assert.equal(capture.all8ByteExactToPreproductionIndependentOracle,true);
   const rows=await fixtures(),actuals=[];
-  const core=await pinned('./legacy-v5-old8-core-oracle.json',627351,'464443dc2ed8bdf6fcdf27227d26ba7344237aef21d822a55ded867fc3cb579b');
+  const core=await pinnedContainer('./legacy-v6-old8-core-oracle.json',845554,'ab5d6eeae66e6334eb80dcf0d9450ba565da5fb470504060ac28e33fa537f45e');
   assert.deepEqual(capture.cases.map(c=>c.name),rows.map(r=>r.facts.name));
   for(let i=0;i<rows.length;i++){
     const row=rows[i],record=capture.cases[i],raw=await readFile(record.raw.path);

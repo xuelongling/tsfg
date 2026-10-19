@@ -1,5 +1,5 @@
 // SPDX-License-Identifier: MIT
-// Independent whole expectations precede Source5/Product5 output. Root retains
+// Independent whole expectations precede Source6/Product6 output. Root retains
 // the fresh official full-bundle proof; this suite never manufactures expected facts.
 import assert from 'node:assert/strict';
 import test from 'node:test';
@@ -10,9 +10,9 @@ import { buildHir, verifyHir, printHir, readHir, lowerHir, analyzeArrayCalls,
 import { jcs, sha, fresh, wire, deeplyFrozen } from './array-test-fixtures.mjs';
 
 // The exact independently frozen container is pretty JSON, not a wire frame.
-const oracleBytes = await readFile(new URL('./readspan-parameters-budget-oracle.json', import.meta.url));
-assert.equal(oracleBytes.length, 6337187);
-assert.equal(sha(oracleBytes), '4f4ec248bbb2ea177565a80f4e92c0d9322000592fb1524df8a6d2eb2cf422cc');
+const oracleBytes = await readFile(new URL('./legacy-v6-parameter-budget-oracle.json', import.meta.url));
+assert.equal(oracleBytes.length, 6369515);
+assert.equal(sha(oracleBytes), '6b7e1fcbe1ec511b24b230b4c0f45835afabf2b37a39eb25b1436d39ff7b1b3b');
 const oracle = JSON.parse(oracleBytes.toString());
 assert.equal(oracle.staticValidation.allPassed, true);
 assert.equal(oracle.cases.length, 2);
@@ -170,8 +170,8 @@ test('26b budget geometry retains unused formals and every original duplicate ar
     }
     assert.ok(row.context.contracts.every(contract => contract.upper.parameters
       .every(slot => !slot.read && !slot.write && !slot.structural)));
-    assert.equal(row.context.version, 2);
-    assert.equal(row.hir.format.version, 5);
-    assert.equal(plan.version, 2);
+    assert.equal(row.context.version, 3);
+    assert.equal(row.hir.format.version, 6);
+    assert.equal(plan.version, 3);
   }
 });

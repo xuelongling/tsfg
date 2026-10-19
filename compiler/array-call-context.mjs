@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: MIT
 // Private fixed-table validation and owner preparation; callers supply complete verified HIR.
-import { canonical, sha256, scalarName, arrayTypeId, readSpanTypeId } from './identity.mjs';
+import { canonical, own, sha256, scalarName, arrayTypeId, readSpanTypeId } from './identity.mjs';
 import { checkGenericJsonValueBudget } from './generic-json.mjs';
 import { arrayFactsLimits } from './array-facts-common.mjs';
 import { analyzeArrayOwnerAccesses, compareArrayKeys as compare } from './array-call-model.mjs';
@@ -25,13 +25,19 @@ function record(value, keys) {
 const hash = value => typeof value === 'string' && /^sha256:[0-9a-f]{64}$/.test(value);
 function shape(context) {
   record(context,['family','version','mode','scopeDigest','expectedDigest','contracts']);
-  check(context.family === 'tsfg.array-publication-context-candidate' && context.version === 2 && context.mode === 'fixed');
+  check(context.family === 'tsfg.array-publication-context-candidate' && context.version === 3 && context.mode === 'fixed');
   check(hash(context.scopeDigest) && hash(context.expectedDigest) && Array.isArray(context.contracts)
     && context.contracts.length >= 1 && context.contracts.length <= 16);
   for (const row of context.contracts) {
     record(row,['functionId','signatureHash','upper','digest']);
     check(hash(row.functionId) && hash(row.signatureHash) && hash(row.digest));
-    record(row.upper,['parameters','local']); record(row.upper.local,flags);
+    record(row.upper,['parameters','local','returnOrigin']); record(row.upper.local,flags);
+    const origin = row.upper.returnOrigin;
+    if (origin !== null) {
+      record(origin,['kind','index']);
+      check(origin.kind === 'parameter' && Number.isInteger(origin.index) && !Object.is(origin.index,-0)
+        && origin.index >= 0 && origin.index <= 7);
+    }
     check(flags.every(flag => typeof row.upper.local[flag] === 'boolean'));
     check(Array.isArray(row.upper.parameters) && row.upper.parameters.length <= 8);
     for (const p of row.upper.parameters) {
@@ -54,19 +60,29 @@ function publication(hir, context) {
     // Readonly view W/S is capability grammar, independently of body coverage.
     for (const p of row.upper.parameters) if (fn.parameters[p.index].type === readSpanTypeId)
       check(!p.write && !p.structural,'identity');
+    const origin = row.upper.returnOrigin;
+    check(fn.returnType.id === readSpanTypeId ? origin === null
+      || fn.parameters[origin.index]?.type === readSpanTypeId : origin === null,'identity');
     const {digest,...body} = row;
-    check(digest === sha256('tsfg.array-published-contract.v2\0' + canonical(body)),'identity');
+    check(digest === sha256('tsfg.array-published-contract.v3\0' + canonical(body)),'identity');
     records.set(fn.id,row);
   }
-  const scope = {profile:'array-readspan-owner-relative-fixed-v2',rootFile:hir.rootFile,
+  const scope = {profile:'array-readspan-return-owner-relative-fixed-v3',rootFile:hir.rootFile,
     functions:functions.map(fn => ({functionId:fn.id,name:fn.name,sourcePath:fn.sourcePath,
       signatureHash:fn.signatureHash,parameterTypes:fn.parameters.map(p => p.type === arrayTypeId ? 'array.f64'
         : p.type === readSpanTypeId ? 'readspan.f64' : scalarName(p.type)),
-      returnType:'f64'})),exports:hir.exports.map(row => ({name:row.name,functionId:row.functionId}))};
-  const scopeDigest = sha256('tsfg.array-call-scope.v2\0' + canonical(scope));
-  check(context.scopeDigest === scopeDigest && context.expectedDigest === sha256('tsfg.array-publication.v2\0'
+      returnType:fn.returnType.id === readSpanTypeId ? 'readspan.f64' : 'f64'})),exports:hir.exports.map(row => ({name:row.name,functionId:row.functionId}))};
+  const scopeDigest = sha256('tsfg.array-call-scope.v3\0' + canonical(scope));
+  check(context.scopeDigest === scopeDigest && context.expectedDigest === sha256('tsfg.array-publication.v3\0'
     + canonical({scopeDigest,contracts:context.contracts})),'identity');
   return {records,scopeDigest};
+}
+function returnFailure(fn, kind) {
+  const diagnostic = own({code:'r03-d-readspan-return-' + kind,ruleId:'r01-span',phase:'hir',
+    message:kind === 'escape' ? 'ReadSpan return may escape a local Array owner'
+      : 'ReadSpan return source is outside the required view-parameter profile',
+    primary:{sourceId:fn.sourcePath,...fn.body.at(-1).value.range}});
+  throw Object.freeze(Object.assign(new TypeError(diagnostic.message),diagnostic));
 }
 export function prepareArrayCalls(hir, context) {
   const {records,scopeDigest} = publication(hir,context);
@@ -75,8 +91,15 @@ export function prepareArrayCalls(hir, context) {
   const byId = new Map(flow.functions.map(row => [row.functionId,row]));
   // All Effective coverage runs in original Source order, not FunctionId order.
   for (const fn of hir.functions) {
-    const effective = byId.get(fn.id).effective, upper = records.get(fn.id).upper;
+    const row = byId.get(fn.id), effective = row.effective, upper = records.get(fn.id).upper;
     const violate = facet => arrayCallFailure('contract',{functionId:fn.id,facet,primary:{sourceId:fn.sourcePath,...fn.range}});
+    if (fn.returnType.id === readSpanTypeId) {
+      const origin = row.derivedReturnOrigin;
+      if (origin?.kind === 'allocation') returnFailure(fn,'escape');
+      if (origin?.kind === 'parameter' && fn.parameters[origin.index]?.type === arrayTypeId)
+        returnFailure(fn,'capability');
+      if (canonical(origin) !== canonical(row.effectiveReturnOrigin)) violate('returnOrigin');
+    }
     for (const p of upper.parameters) for (const flag of flags) {
       const key = flag === 'read' ? 'reads' : flag === 'write' ? 'writes' : 'structural';
       if (!p[flag] && effective[key].some(owner => owner.kind === 'parameter' && owner.index === p.index
