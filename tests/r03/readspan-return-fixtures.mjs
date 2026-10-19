@@ -3,49 +3,49 @@
 import { oracle } from './readspan-return-test-helpers.mjs';
 const pins=[
   {
-    "file": "./readspan-return-first-oracle.json",
-    "bytes": 667530,
-    "sha256": "e9887966e68cd5dcbb042095f344f4a63d41b6070835ba37ccd5057758358e4d"
+    "file": "./readspan-return-first-oracle-v7.json",
+    "bytes": 299582,
+    "sha256": "0906ea73e5650f5b146861e46ffa0dd3ffc11e5f3150ae6583527951d489d748"
   },
   {
-    "file": "./readspan-return-adjacent-part1-oracle.json",
-    "bytes": 568808,
-    "sha256": "ec4fdc9fcdd28f4e06e539c5101ab3ea1ae28497db926c85a197e2149909680e"
+    "file": "./readspan-return-adjacent-part1-oracle-v7.json",
+    "bytes": 568554,
+    "sha256": "1c1c1824c32f102c15b0b5a276a825f76d058d353f3e83ad6cebf5a6986ebb21"
   },
   {
-    "file": "./readspan-return-adjacent-part2-oracle.json",
-    "bytes": 494026,
-    "sha256": "16f5f98030d6859955e0884b2fb9046aa26fcb4ec1694ba731b52ac439f96c9e"
+    "file": "./readspan-return-adjacent-part2-oracle-v7.json",
+    "bytes": 494315,
+    "sha256": "2c48bfadf15abc91a4cd158ca0c5c3e6246954f955109f51cd10650feda4e25d"
   },
   {
-    "file": "./readspan-return-events-oracle.json",
-    "bytes": 1241548,
-    "sha256": "85d2555bd7b2bdff161d5eeb4e6d899cc4fd94ed538c8c1441576bb344cbf781"
+    "file": "./readspan-return-events-oracle-v7.json",
+    "bytes": 1242071,
+    "sha256": "aef65f0ddcb89a9e4c6ca35cbf64c3d742557346510592c20c562a4f7b71aa28"
   },
   {
-    "file": "./readspan-return-family-uses-oracle.json",
-    "bytes": 1179231,
-    "sha256": "ca3ff4bea5a9eb22d57ab89126147187ef213868074a427a99723439d1fce289"
+    "file": "./readspan-return-family-uses-oracle-v7.json",
+    "bytes": 1178700,
+    "sha256": "e514d000e71016144fa1a2e2896ac30a676439dd9ab3f9089a0424380ce8ee58"
   },
   {
-    "file": "./readspan-return-global-1024-oracle.json",
-    "bytes": 8983583,
-    "sha256": "f9d1956513228763f19df4b188745ebf2c60e7add365751408c106ea8b96401d"
+    "file": "./readspan-return-global-1024-oracle-v7.json",
+    "bytes": 8983300,
+    "sha256": "c7c846b4e5e296134115528eaa93c2b9de0b4f8d8d830c43dd53b1f8e2b15624"
   },
   {
-    "file": "./readspan-return-global-1025-oracle.json",
-    "bytes": 5590720,
-    "sha256": "0e45adb427a4f0c710aae447eb59f43c7d3920d54582beb2aa4e04ebc6768888"
+    "file": "./readspan-return-global-1025-oracle-v7.json",
+    "bytes": 5590437,
+    "sha256": "66e13e9c6947165dcb8ad23910a94419e7acdbd9d61297fad6a234b05f7dda79"
   },
   {
-    "file": "./readspan-return-cold-oracle.json",
-    "bytes": 1234505,
-    "sha256": "bd5a26fe5862dcc41fc0f4eaae698a1577d95f4a90d50bc9e26a12259e08f5f8"
+    "file": "./readspan-return-cold-oracle-v7.json",
+    "bytes": 1205264,
+    "sha256": "70298c9d5aac8b983d80be0a02e89f03f08a1e4c8b86fbfa4158da390eb1f349"
   },
   {
-    "file": "./readspan-return-lowercore-oracle.json",
-    "bytes": 19180,
-    "sha256": "cf1e1b2c26864e2c6fcb7f011ec8b07ef38a888038c8334e241957281e009ae6"
+    "file": "./readspan-return-lowercore-oracle-v7.json",
+    "bytes": 19584,
+    "sha256": "e94ce6a83661e649211d92e3433942a6a41272e2ce640f9408898bad16fbdec2"
   }
 ];
 const data=Promise.all(pins.map(oracle));
@@ -65,19 +65,19 @@ export async function returnCoreDiagnostics() {
 
 const syntheticPins=[
   {
-    "file": "./readspan-return-synthetic-events101.json",
-    "bytes": 363561,
-    "sha256": "accf43dae290496056f49091720ce03487b1faca637bebe7f4e043d3ef5e2145"
+    "file": "./readspan-return-synthetic-events101-v7.json",
+    "bytes": 364592,
+    "sha256": "53f08aab9afa98dd27e70224b4f81dd0c126f9387c619f597b120c301914e71b"
   },
   {
-    "file": "./readspan-return-synthetic-family-uses51.json",
-    "bytes": 350017,
-    "sha256": "0f336c62779775b1c68d845209eef67b2e209fd494b729eec227f92aaf2366c5"
+    "file": "./readspan-return-synthetic-family-uses51-v7.json",
+    "bytes": 351052,
+    "sha256": "11a4829a4a08d754c607430d09f15c8bfc355f4457721e9ad5789458276ed4ad"
   },
   {
-    "file": "./readspan-return-synthetic-return-global-1025.json",
-    "bytes": 4446606,
-    "sha256": "98dcc14ae5cb9758df662ea4a525a5aeda3bed9379f538480e9072d3baff690f"
+    "file": "./readspan-return-synthetic-return-global-1025-v7.json",
+    "bytes": 4447647,
+    "sha256": "698badf58e6aba26b8aae3e95358875f62a767ee45e4de3b2c4ad38f45189895"
   }
 ];
 /** Synthetic inputs trigger reconstruction; they never claim an upper published HIR.

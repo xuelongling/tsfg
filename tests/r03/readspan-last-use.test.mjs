@@ -8,12 +8,12 @@ import { buildHir,verifyHir,printHir,readHir,lowerHir,analyzeArrayCalls,
   verifyArrayCalls,printArrayCalls,readArrayCalls } from '../../compiler/hir.mjs';
 import { pinnedContainer,jcs,sha,fresh,wire,deeplyFrozen } from './array-test-fixtures.mjs';
 
-const oracle=await pinnedContainer('./readspan-first-oracle-v6.json',140199,
-  '0605059d2d1b6703fcbcaa3f8a855dbd7fa4986298cbbfe13e1261cf831a1cc9');
+const oracle=await pinnedContainer('./readspan-first-oracle-v7.json',140038,
+  'b7a2a9a21bce59ea6e8b9b0feba1f32bfff3283d14c9b067ff35d5bbab52c314');
 assert.equal(oracle.family,'tsfg.r03.legacy-v5-readspan-first-oracle');assert.equal(oracle.version,5);
 assert.deepEqual(oracle.contractPin,{bytes:432866,
   sha256:'0b0cbffa7efc0d44589ba45bc71f5380d7cc7a089a6303dc2f224e9cc7505081'});
-assert.equal(oracle.frozenContract.sha256,'e9887966e68cd5dcbb042095f344f4a63d41b6070835ba37ccd5057758358e4d');
+assert.equal(oracle.frozenContract.sha256,'000e7af23a8ad45c5bb0407eeb0697e3ef5eb6c9b250bc2fdba77a15f3a158fa');
 assert.deepEqual(oracle.cases.map(row=>row.name),['before','after']);
 const before=oracle.cases[0],after=oracle.cases[1],bogus='sha256:'+'0'.repeat(64);
 for(const row of oracle.cases){
@@ -22,7 +22,7 @@ for(const row of oracle.cases){
   assert.deepEqual(row.official.diagnostics,{syntax:0,semantic:0,program:0,global:0});
   assert.equal(jcs(JSON.parse(row.packageText))+'\n',row.packageText);
   assert.equal(row.work.owner,30);
-  assert.equal(JSON.parse(row.packageText).version,6);assert.equal(row.hir.format.version,6);
+  assert.equal(JSON.parse(row.packageText).version,7);assert.equal(row.hir.format.version,7);
   assert.equal(row.context.version,3);assert.equal(row.hir.readSpanPlan.version,3);
 }
 assert.deepEqual([before.work.borrowTotal,after.work.borrowTotal],[5,4]);

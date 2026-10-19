@@ -1,5 +1,5 @@
 // SPDX-License-Identifier: MIT
-// Complete cold flat functions and direct DAG calls; parameter roots never imply disjoint storage.
+// Complete cold flat functions and all direct call occurrences; parameter roots never imply disjoint storage.
 import { arrayCheck as check, arrayRecord as record, list, digest, range, nameAt,
   originIdentity, window, compact, lineBreak, arrayIndexDecimal } from './array-facts-common.mjs';
 import { binding, reference, literal, element, scalar, integer, lengthTarget, floating, readSpanCreate, readSpanElement, readSpanLength, elementAnnotation } from './array-facts-expressions.mjs';
@@ -48,7 +48,7 @@ function variable(statement, row, fn, source, known, sites, count, viewContext) 
     else if (init?.kind === 'directCall') {
       check(init.type === 'readspan.f64', 'input');
       call(init,row.declarationRange,source,viewContext.headers,known,viewContext.lexicalNames,
-        viewContext.params,viewContext.owners,viewContext.lengths,viewContext.targets);
+        viewContext.params,viewContext.owners,viewContext.lengths,viewContext.occurrences);
     } else reference(init,row.declarationRange,source,known,'readspan.f64');
   } else if (init?.kind === 'arrayLiteral') {
     check(row.annotationRange !== null, 'input'); literal(init, row.declarationRange, source, sites, count);
@@ -88,7 +88,7 @@ function mutation(statement, source, known, params, property, owners, lengths, p
   }
   return statement.expressionRange;
 }
-function call(value, parent, source, headers, scope, lexicalNames, params, owners, lengths, targets) {
+function call(value, parent, source, headers, scope, lexicalNames, params, owners, lengths, occurrences) {
   record(value, ['kind','type','range','callee','calleeRange','arguments']);
   check(value.kind === 'directCall' && ['f64','readspan.f64'].includes(value.type), 'input');
   range(value.range, parent, source.content); range(value.calleeRange, value.range, source.content);
@@ -117,14 +117,14 @@ function call(value, parent, source, headers, scope, lexicalNames, params, owner
   }
   const tail = compact(source.content, {start:end,end:value.range.end});
   check(value.arguments.length ? tail === ')' || tail === ',)' : tail === '()', 'input');
-  targets.add(target.id);
+  occurrences.push(target.id);
   for (const [index, arg] of value.arguments.entries())
     if (target.parameters[index].declaredType === 'array.f64') lengths.set(owners.get(arg.binding), null);
   return value.range;
 }
 export function validateArrayFunctions(payload, source) {
   const functions = list(payload.functions, 1, 16), ids = new Set(), names = new Set(), sites = new Set();
-  const headers = new Map(), parameterMaps = new Map(), scopes = new Map(), edges = new Map();
+  const headers = new Map(), parameterMaps = new Map(), scopes = new Map(), callsByFunction = new Map();
   let previousEnd = 0; const count = {units:0};
   for (const fn of functions) {
     const viewReturn = fn.returnType === 'readspan.f64';
@@ -156,7 +156,7 @@ export function validateArrayFunctions(payload, source) {
     // A const shadows the whole flat function block, including calls before its declaration.
     // Keep value resolution in earlier-known; only global callee resolution uses the full lexical scope.
     const lexicalNames = new Set([...fn.parameters,...bindings].map(row => row?.name));
-    const owners = new Map(), lengths = new Map(), parameterRoots = new Set(), targets = new Set(); edges.set(fn.id, targets);
+    const owners = new Map(), lengths = new Map(), parameterRoots = new Set(), occurrences = []; callsByFunction.set(fn.id, occurrences);
     for (const p of fn.parameters) if (p.declaredType === 'array.f64') {
       owners.set(p.id, p.id); lengths.set(p.id, null); parameterRoots.add(p.id);
     }
@@ -169,7 +169,7 @@ export function validateArrayFunctions(payload, source) {
       if (statement.kind === 'variable') {
         check(index < body.length - 1 && localIndex < bindings.length, 'input');
         const row = bindings[localIndex++]; expression = variable(statement, row, fn, source, known, sites, count,
-          {params,intrinsic:payload.readSpanIntrinsic,lexicalNames,headers,owners,lengths,targets});
+          {params,intrinsic:payload.readSpanIntrinsic,lexicalNames,headers,owners,lengths,occurrences});
         check(!ids.has(row.id) && !localNames.has(row.name), 'identity'); ids.add(row.id); localNames.add(row.name);
         const init = statement.initializer;
         if (init.kind === 'readSpanCreate' || init.kind === 'directCall') check(++calls <= 32, 'limit');
@@ -182,7 +182,7 @@ export function validateArrayFunctions(payload, source) {
         record(statement, ['kind','range','value']); check(index === body.length - 1, 'input');
         if (statement.value.kind === 'directCall') {
           check(++calls <= 32, 'limit');
-          expression = call(statement.value, statement.range, source, headers, known, lexicalNames, params, owners, lengths, targets);
+          expression = call(statement.value, statement.range, source, headers, known, lexicalNames, params, owners, lengths, occurrences);
           check(statement.value.type === fn.returnType, 'input');
         } else {
           if (fn.returnType === 'readspan.f64') reference(statement.value,statement.range,source,known,'readspan.f64');
@@ -194,7 +194,7 @@ export function validateArrayFunctions(payload, source) {
       } else if (statement.kind === 'call') {
         record(statement, ['kind','range','value']); check(index < body.length - 1, 'input');
         check(++calls <= 32 && ++expressions <= 32, 'limit');
-        expression = call(statement.value, statement.range, source, headers, known, lexicalNames, params, owners, lengths, targets);
+        expression = call(statement.value, statement.range, source, headers, known, lexicalNames, params, owners, lengths, occurrences);
         check(statement.range.start === expression.start, 'input');
       } else if (statement.kind === 'readSpanUse') {
         record(statement,['kind','range','value']); check(index < body.length - 1, 'input');
@@ -211,11 +211,8 @@ export function validateArrayFunctions(payload, source) {
     check(localIndex === bindings.length && body.at(-1).kind === 'return'
       && compact(source.content, {start:end,end:fn.declarationRange.end}) === '}', 'input');
   }
-  const active = new Set(), complete = new Set();
-  const visit = id => {
-    check(!active.has(id), 'input'); if (complete.has(id)) return;
-    active.add(id); for (const target of edges.get(id)) visit(target);
-    active.delete(id); complete.add(id);
-  };
-  functions.forEach(fn => visit(fn.id)); return functions;
+  // Ordinary occurrences retain repeated/self edges. The old DAG sink bound is now explicit.
+  const ordinaryCalls = [...callsByFunction.values()].reduce((total,calls) => total + calls.length,0);
+  check(ordinaryCalls <= 480, 'limit');
+  return functions;
 }

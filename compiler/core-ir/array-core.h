@@ -13,7 +13,7 @@
 namespace mlir { class DialectRegistry; }
 namespace tsfg::arrays {
 inline constexpr llvm::StringLiteral schema =
-    "sha256:462672c595894981aa5dc89c1b9cc3400dd8d0e85b5ba346956b5b8057b71d12";
+    "sha256:013901ef2c1facede763e14438f2c747181f2713fdfc385bdd54ee98bb6e1e9b";
 inline constexpr llvm::StringLiteral f64Id =
     "sha256:dfbc72c48bec549ea679cd6aff531f9ebef95e001f6ae0bf419d2f33bf988a6c";
 inline constexpr llvm::StringLiteral arrayId =

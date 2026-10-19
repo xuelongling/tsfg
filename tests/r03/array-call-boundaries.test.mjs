@@ -51,7 +51,7 @@ test('23e cold call facts reject repaired provenance, signature-order and omitte
   });
 });
 
-test('23e a fully re-signed raw direct-call cycle is rejected after exact header and source reconstruction', async () => {
+test('23f complete cyclic facts retain exact header and source reconstruction before owner-domain checks', async () => {
   const row = await fixture('two-level-private-local-and-stable-publication'), hostile = packet(row);
   const bridge = named(hostile.payload, 'bridge'), call = sourceCall(bridge);
   call.callee = bridge.id;
@@ -59,7 +59,9 @@ test('23e a fully re-signed raw direct-call cycle is rejected after exact header
   assert.equal(named(hostile.payload, 'bridge').body.at(-1).value.callee, named(hostile.payload, 'bridge').id);
   assert.equal(hostile.payload.files.find(f => f.path === hostile.payload.rootFile).content
     .slice(call.calleeRange.start, call.calleeRange.end), 'bridge');
-  factsError(caught(() => readArrayFactsCandidate(wire(hostile))), 'input');
+  const before = fresh(hostile), bytes = wire(hostile);
+  const actual = readArrayFactsCandidate(bytes);assert.deepEqual(actual, before);
+  assert.deepEqual(writeArrayFactsCandidate(actual), bytes);assert.deepEqual(hostile, before);
 });
 
 test('23e cold HIR checks every call edge, alias use and checked node before analysis or Core publication', async t => {

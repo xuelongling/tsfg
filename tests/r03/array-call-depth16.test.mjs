@@ -6,18 +6,18 @@ import { readFile } from 'node:fs/promises';
 import { readArrayFactsCandidate,writeArrayFactsCandidate } from '../../compiler/array-facts.mjs';
 import { buildHir,verifyHir,printHir,readHir,lowerHir,analyzeArrayCalls,verifyArrayCalls,printArrayCalls,readArrayCalls } from '../../compiler/hir.mjs';
 import { canonical,hash,fresh,factsContext,caught,deeplyFrozen } from './array-call-test-helpers.mjs';
-// Exact independent v6 whole data; the original depth16 Source program is unchanged.
-const fixturePin={bytes:166285,sha256:'b138b484e1dbeb51ee411ff95bde38d1c18325ab663a40118776102a8e93612c'};
-const frozen=readFile(new URL('./legacy-v6-depth16-oracle.json',import.meta.url)).then(bytes=>{
+// Exact independent v7 whole data; the original depth16 Source program is unchanged.
+const fixturePin={bytes:136986,sha256:'ceb07230d52cec6b1297c559f97ba23417812be518c81d4466d861d1be3ca2ac'};
+const frozen=readFile(new URL('./legacy-v7-depth16-oracle.json',import.meta.url)).then(bytes=>{
   assert.equal(bytes.length,fixturePin.bytes);assert.equal(hash(bytes),'sha256:'+fixturePin.sha256);
   const bundle=JSON.parse(bytes.toString('utf8'));
   assert.equal(bundle.family,'tsfg.r03.legacy-v5-depth16-oracle');assert.equal(bundle.version,5);
-  assert.equal(bundle.crosspin.interface.sha256,'e9887966e68cd5dcbb042095f344f4a63d41b6070835ba37ccd5057758358e4d');
+  assert.equal(bundle.crosspin.interface.sha256,'000e7af23a8ad45c5bb0407eeb0697e3ef5eb6c9b250bc2fdba77a15f3a158fa');
   assert.equal(bundle.cases.length,1);const row=bundle.cases[0];assert.equal(row.name,'forward-chain16');
   assert.deepEqual(row.sourceBundlePin,{bytes:18326,sha256:'dc3879d5e1c6aca40e38a943263e0166e12b1a82080a8a479f7e523a9f6705f5'});
   assert.equal(row.inheritedProvenance.productImported,false);assert.equal(row.inheritedProvenance.productionOutputSampled,false);
   assert.deepEqual(row.inheritedProvenance.official.diagnostics,{syntax:0,semantic:0,program:0,global:0});
-  assert.equal(row.hir.format.version,6);assert.equal(row.analysis.format.version,6);
+  assert.equal(row.hir.format.version,7);assert.equal(row.analysis.format.version,7);
   assert.equal(row.hir.types.length,4);assert.equal(row.hir.types[3].readonly,true);
   assert.equal(row.inheritedProvenance.official.sourceRangeRoles,95);
   return row;

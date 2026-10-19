@@ -67,7 +67,7 @@ function publication(hir, context) {
     check(digest === sha256('tsfg.array-published-contract.v3\0' + canonical(body)),'identity');
     records.set(fn.id,row);
   }
-  const scope = {profile:'array-readspan-return-owner-relative-fixed-v3',rootFile:hir.rootFile,
+  const scope = {profile:'array-readspan-return-scc-owner-relative-fixed-v3',rootFile:hir.rootFile,
     functions:functions.map(fn => ({functionId:fn.id,name:fn.name,sourcePath:fn.sourcePath,
       signatureHash:fn.signatureHash,parameterTypes:fn.parameters.map(p => p.type === arrayTypeId ? 'array.f64'
         : p.type === readSpanTypeId ? 'readspan.f64' : scalarName(p.type)),

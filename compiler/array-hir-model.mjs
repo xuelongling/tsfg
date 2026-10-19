@@ -8,8 +8,8 @@ import { copyGenericJsonBytes, checkGenericJsonValueBudget } from './generic-jso
 import { readArrayFactsCandidate } from './array-facts.mjs';
 import { arrayFactsLimits } from './array-facts-model.mjs';
 
-const schemaHash = 'sha256:df9ee509ce6b6490d3eaa7b40a6dfad83389f624e22d39e1ec92b96bdfd2a045';
-export const arrayHirFormat = own({ family: 'tsfg.array-hir-candidate', version: 6, schemaHash });
+const schemaHash = 'sha256:a9f717b963ec6e777013c0ccd76ac23e7230a8bafe9367e8c0bb54eaaf011a1f';
+export const arrayHirFormat = own({ family: 'tsfg.array-hir-candidate', version: 7, schemaHash });
 export const arrayHirType = own({ kind: 'managedReference', name: 'Array',
   elementType: scalarTypeIds.f64, id: arrayTypeId });
 const target = own(bytecode.target), policy = arrayFactsLimits;
@@ -132,7 +132,7 @@ export function projectArrayFacts(facts) {
       : {id:scalarTypeIds[type.id],kind:'scalar',name:type.id,...origin};
   });
   return {format:{...arrayHirFormat},inputIdentity:facts.packageId,
-    facts:{version:6,schemaHash:facts.schemaHash,requestId:facts.requestId},rootFile:payload.rootFile,
+    facts:{version:7,schemaHash:facts.schemaHash,requestId:facts.requestId},rootFile:payload.rootFile,
     sources:payload.files.map(file => ({path:file.path,content:file.content,hash:'sha256:'+file.sha256})),
     target:{...target},types,arrayLength:{...payload.arrayLength,ownerType:arrayHirType.id,writeType:scalarTypeIds.u32,
       declarationRange:{...payload.arrayLength.declarationRange},nameRange:{...payload.arrayLength.nameRange},typeRange:{...payload.arrayLength.typeRange}},

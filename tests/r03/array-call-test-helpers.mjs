@@ -108,13 +108,13 @@ export function deeplyFrozen(value) {
 /** @param {any} value @returns {any} */
 export function reframe(value) {
   const p = value.payload;
-  const request = { family: 'tsfg.array-facts-request-candidate', version: 6, input: {
+  const request = { family: 'tsfg.array-facts-request-candidate', version: 7, input: {
     sourceRoot: p.sourceRoot, rootFile: p.rootFile,
     files: p.files.map(({ path, content, sha256 }) => ({ path, content, sha256 })),
     declarations: p.declarations, config: p.config,
   } };
-  value.requestId = hash('tsfg.array-facts.request.v6\0' + canonical(request) + '\n');
-  value.packageId = hash('tsfg.array-facts.package.v6\0' + value.schemaHash + '\0' + canonical(p));
+  value.requestId = hash('tsfg.array-facts.request.v7\0' + canonical(request) + '\n');
+  value.packageId = hash('tsfg.array-facts.package.v7\0' + value.schemaHash + '\0' + canonical(p));
   return value;
 }
 /** @param {any} context @returns {any} */

@@ -13,20 +13,20 @@ test('25d eight actual official Source publications reach whole HIR and static C
   assert.ok(file,'explicit Source integration entry requires Root capture manifest');
   const expectedHash=process.env.TSFG_ARRAY_SOURCE_CAPTURE_SHA256;
   const expectedBytes=Number(process.env.TSFG_ARRAY_SOURCE_CAPTURE_BYTES);
-  assert.match(expectedHash??'',/^[0-9a-f]{64}$/,'Root must bind the exact fresh final v6 manifest hash');
+  assert.match(expectedHash??'',/^[0-9a-f]{64}$/,'Root must bind the exact fresh final v7 manifest hash');
   assert.ok(Number.isInteger(expectedBytes)&&expectedBytes>0&&expectedBytes<=2097152,
-    'Root must bind the exact fresh final v6 manifest byte count');
+    'Root must bind the exact fresh final v7 manifest byte count');
   const bytes=await readFile(file);assert.equal(bytes.length,expectedBytes);
   assert.equal(sha(bytes),expectedHash);
   const capture=JSON.parse(bytes.toString('utf8'));
   assert.equal(capture.schema,'r03.array-dense.actual-source-captures.v1');
-  assert.equal(capture.atomicWireVersion,6);
+  assert.equal(capture.atomicWireVersion,7);
   const state=capture.actual.state;
   assert.equal(state.qualified,true);assert.equal(state.observerOK,true);
   assert.equal(state.exit.code,0);assert.equal(state.close.code,0);
   assert.equal(capture.all8ByteExactToPreproductionIndependentOracle,true);
   const rows=await fixtures(),actuals=[];
-  const core=await pinnedContainer('./legacy-v6-old8-core-oracle.json',845554,'ab5d6eeae66e6334eb80dcf0d9450ba565da5fb470504060ac28e33fa537f45e');
+  const core=await pinnedContainer('./legacy-v7-old8-core-oracle.json',806405,'0e976fb9f7e36ef4035b6b2019da6e35897bd81690245bedaa1ec455e2b77724');
   assert.deepEqual(capture.cases.map(c=>c.name),rows.map(r=>r.facts.name));
   for(let i=0;i<rows.length;i++){
     const row=rows[i],record=capture.cases[i],raw=await readFile(record.raw.path);

@@ -10,9 +10,9 @@ import { buildHir, verifyHir, printHir, readHir, lowerHir, analyzeArrayCalls,
 import { jcs, sha, fresh, wire, deeplyFrozen } from './array-test-fixtures.mjs';
 
 // The exact independently frozen container is pretty JSON, not a wire frame.
-const oracleBytes = await readFile(new URL('./legacy-v6-parameter-budget-oracle.json', import.meta.url));
-assert.equal(oracleBytes.length, 6369515);
-assert.equal(sha(oracleBytes), '6b7e1fcbe1ec511b24b230b4c0f45835afabf2b37a39eb25b1436d39ff7b1b3b');
+const oracleBytes = await readFile(new URL('./legacy-v7-parameter-budget-oracle.json', import.meta.url));
+assert.equal(oracleBytes.length, 6363151);
+assert.equal(sha(oracleBytes), '6432250259d2efbc1f4b278f006cedcd580ebb81b3b0ed34643b819b534d0056');
 const oracle = JSON.parse(oracleBytes.toString());
 assert.equal(oracle.staticValidation.allPassed, true);
 assert.equal(oracle.cases.length, 2);
@@ -171,7 +171,7 @@ test('26b budget geometry retains unused formals and every original duplicate ar
     assert.ok(row.context.contracts.every(contract => contract.upper.parameters
       .every(slot => !slot.read && !slot.write && !slot.structural)));
     assert.equal(row.context.version, 3);
-    assert.equal(row.hir.format.version, 6);
+    assert.equal(row.hir.format.version, 7);
     assert.equal(plan.version, 3);
   }
 });

@@ -37,10 +37,10 @@ export async function pinnedContainer(file,length,digest) {
 let old18Promise;
 /** @returns {Promise<any>} */
 export function old18Oracle() {
-  return old18Promise ??= pinnedContainer('./legacy-v6-old18-oracle.json',6118602,
-    '118987ef5376693fa36d3139a5f7de42ee7ce00a774159687dadc067e0a1c02e').then(value=>{
+  return old18Promise ??= pinnedContainer('./legacy-v7-old18-oracle.json',6089299,
+    'bc28aa392702dd1618cd4526e592c3e7f832938eac1aa26a9564e5831577840c').then(value=>{
     assert.equal(value.family,'tsfg.r03.legacy-v5-old18-oracle');assert.equal(value.version,5);
-    assert.equal(value.crosspin.interface.sha256,'e9887966e68cd5dcbb042095f344f4a63d41b6070835ba37ccd5057758358e4d');
+    assert.equal(value.crosspin.interface.sha256,'000e7af23a8ad45c5bb0407eeb0697e3ef5eb6c9b250bc2fdba77a15f3a158fa');
     assert.equal(value.cases.length,18);
     assert.equal(new Set(value.cases.map(c=>c.name)).size,18);
     for(const row of value.cases){
@@ -49,13 +49,13 @@ export function old18Oracle() {
       assert.equal(row.migration.invariants.payloadExact,true);
       assert.deepEqual(row.official.diagnostics,{syntax:0,semantic:0,program:0,global:0});
       for(const key of ['requestText','packageText'])assert.equal(jcs(JSON.parse(row[key]))+'\n',row[key]);
-      assert.equal(JSON.parse(row.requestText).version,6);
-      const packet=JSON.parse(row.packageText);assert.equal(packet.version,6);
+      assert.equal(JSON.parse(row.requestText).version,7);
+      const packet=JSON.parse(row.packageText);assert.equal(packet.version,7);
       assert.equal(packet.payload.declarations.version,'minimal-arrays-v3');
       const dts=packet.payload.files.find(f=>f.path.endsWith('/minimal-arrays-v3.d.ts'));assert.ok(dts);
       assert.equal(dts.byteLength,484);assert.equal(dts.utf16Length,484);
       assert.equal(dts.sha256,'282b335a6e0e0493fa74a3c1dd56f234f8c679079acdaf0600cefb8306c26415');
-      assert.equal(row.hir.format.version,6);assert.equal(row.hir.types.length,4);
+      assert.equal(row.hir.format.version,7);assert.equal(row.hir.types.length,4);
       assert.equal(row.hir.types[3].name,'ReadSpan');assert.equal(row.hir.types[3].readonly,true);
       assert.ok(!Object.hasOwn(row.hir,'readSpanPlan'),'passive metadata is not an actual view');
     }
@@ -98,10 +98,10 @@ export async function fixtures() {
 }
 /** @returns {Promise<any>} */
 export async function coreOracle() {
-  const value=await pinnedContainer('./legacy-v6-old8-core-oracle.json',845554,
-    'ab5d6eeae66e6334eb80dcf0d9450ba565da5fb470504060ac28e33fa537f45e');
+  const value=await pinnedContainer('./legacy-v7-old8-core-oracle.json',806405,
+    '0e976fb9f7e36ef4035b6b2019da6e35897bd81690245bedaa1ec455e2b77724');
   const legacy=await pinned('./array-core-oracle-v3.json',122335,'44c460f568aebd9dba7b25dab00857a47fe431a3f7cc4679a6d1d09a427552d5');
-  const h=await hirOracle();assert.equal(value.cases.length,8);assert.equal(value.format.version,6);
+  const h=await hirOracle();assert.equal(value.cases.length,8);assert.equal(value.format.version,7);
   return {...value,quoteVectors:legacy.quoteVectors,jcsPreimageVectors:legacy.jcsPreimageVectors,
     additionalIndependentPreimages:legacy.additionalIndependentPreimages,cases:value.cases.map((c,i)=>{
       assert.equal(c.name,h.cases[i].name);
@@ -159,10 +159,10 @@ export function trustedHirError(row, error, kind) {
 /** @param {any} packet @returns {any} */
 export function reframeFacts(packet) {
   const p = packet.payload;
-  const request = {family:"tsfg.array-facts-request-candidate",version:6,input:{sourceRoot:p.sourceRoot,rootFile:p.rootFile,
+  const request = {family:"tsfg.array-facts-request-candidate",version:7,input:{sourceRoot:p.sourceRoot,rootFile:p.rootFile,
     files:p.files.map(f => ({path:f.path,content:f.content,sha256:f.sha256})),declarations:p.declarations,config:p.config}};
-  packet.requestId = "sha256:" + sha("tsfg.array-facts.request.v6\0" + jcs(request) + "\n");
-  packet.packageId = "sha256:" + sha("tsfg.array-facts.package.v6\0" + packet.schemaHash + "\0" + jcs(p));
+  packet.requestId = "sha256:" + sha("tsfg.array-facts.request.v7\0" + jcs(request) + "\n");
+  packet.packageId = "sha256:" + sha("tsfg.array-facts.package.v7\0" + packet.schemaHash + "\0" + jcs(p));
   return packet;
 }
 

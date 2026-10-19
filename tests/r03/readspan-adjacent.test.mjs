@@ -8,12 +8,12 @@ import { buildHir,verifyHir,printHir,readHir,lowerHir,analyzeArrayCalls,
   verifyArrayCalls,printArrayCalls,readArrayCalls } from '../../compiler/hir.mjs';
 import { pinnedContainer,jcs,fresh,wire,deeplyFrozen } from './array-test-fixtures.mjs';
 
-const oracle=await pinnedContainer('./legacy-v6-adjacent-oracle.json',5394730,
-  'd988225bf0daec6a0153dc83e384aa101bcedf39a2ba46af723ff34406000115');
+const oracle=await pinnedContainer('./legacy-v7-adjacent-oracle.json',5365418,
+  'e5b617739a9daa3b792cce0fccc67cc99cc5ed767167e142be97fbff4f9b491c');
 assert.equal(oracle.family,'tsfg.r03.legacy-v5-adjacent-oracle');
 assert.equal(oracle.version,5);assert.equal(new Set(oracle.cases.map(row=>row.requestText)).size,18);
 assert.equal(oracle.crosspin.interface.sha256,
-  'e9887966e68cd5dcbb042095f344f4a63d41b6070835ba37ccd5057758358e4d');
+  '000e7af23a8ad45c5bb0407eeb0697e3ef5eb6c9b250bc2fdba77a15f3a158fa');
 assert.deepEqual(oracle.cases.map(row=>row.name),[
   'fixed-wide-body-narrow','fixed-wide-body-narrow-readonly-context',
   'same-owner-full-slots','parameter-may-alias','independent-fresh-call-local',
@@ -112,7 +112,7 @@ test('26a adjacent corpus retains independent official closures and complete str
     assert.deepEqual(row.official.diagnostics,{global:0,program:0,semantic:0,syntax:0});
     assert.equal(row.official.readonlyIndexer,true);assert.equal(row.official.readonlyLength,true);
     assert.equal(jcs(JSON.parse(row.requestText))+'\n',row.requestText);
-    assert.equal(JSON.parse(row.requestText).version,6);
+    assert.equal(JSON.parse(row.requestText).version,7);
     for(const metric of Object.values(row.metrics)){
       assert.ok(metric.bytes<=2*1024*1024);assert.ok(metric.tokens<=200000);
       assert.ok(metric.depth<=64);assert.ok(metric.stringBytes<=1024*1024);
@@ -122,7 +122,7 @@ test('26a adjacent corpus retains independent official closures and complete str
     assert.equal(row.inheritedProvenance.facetsCrosscheckedWithExplicitHandRecipe,true);
     assert.equal(row.inheritedProvenance.noRuntimeGCOrPhysicalSingletonClaim,true);
     assert.equal(jcs(JSON.parse(row.packageText))+'\n',row.packageText);
-    assert.equal(row.hir.format.version,6);assert.equal(row.hir.types.length,4);
+    assert.equal(row.hir.format.version,7);assert.equal(row.hir.types.length,4);
     assert.ok(row.hir.readSpanPlan);
     if(row.analysis)assert.deepEqual(row.analysis,row.preConsumerAnalysis);
   }

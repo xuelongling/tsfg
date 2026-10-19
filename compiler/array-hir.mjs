@@ -8,13 +8,21 @@ import { readArrayFactsContext, projectArrayFacts, checkArrayHirInput,
   matchArrayHir, arrayHirFailure } from './array-hir-model.mjs';
 import { prepareArrayCalls } from './array-call-context.mjs';
 import { deriveReadSpanPlan, consumeReadSpanPlan } from './array-readspan-model.mjs';
+import { classifyArrayCallGraph } from './array-call-graph.mjs';
 
 function completeProgram(hir, fixedContext, analysis) {
   checkArrayHirInput(hir);
   const views = hir.functions.some(fn => fn.parameters.some(p => p.type === readSpanTypeId)
     || fn.body.some(stmt => stmt.kind === 'local' && stmt.binding.type === readSpanTypeId));
+  const occurrences = hir.functions.flatMap(fn => fn.body.flatMap(statement => {
+    const value = statement.kind === 'local' ? statement.initializer
+      : statement.kind === 'expression' ? statement.expression : statement.kind === 'return' ? statement.value : undefined;
+    return value?.kind === 'arrayDirectCall' ? [{caller:fn.id,target:value.target}] : [];
+  }));
+  const graph = classifyArrayCallGraph(hir.functions.map(fn => fn.id),occurrences);
+  const cyclic = graph.components.some(component => component.cyclic);
   let prepared, readSpan;
-  if (views || fixedContext !== undefined || analysis) {
+  if (views || cyclic || fixedContext !== undefined || analysis) {
     try { prepared = prepareArrayCalls(hir,fixedContext); }
     catch (error) {
       if (!analysis && ['r03-d-array-call-effects','r03-d-array-call-effects-identity'].includes(error.code))

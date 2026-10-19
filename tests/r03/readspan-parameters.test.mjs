@@ -10,15 +10,15 @@ import { buildHir,verifyHir,printHir,readHir,lowerHir,analyzeArrayCalls,
 import { pinned,pinnedContainer,jcs,sha,fresh,wire,deeplyFrozen } from './array-test-fixtures.mjs';
 
 // The preserved corrected FIRST container is pretty JSON; its embedded wire texts are canonical.
-const firstBytes=await readFile(new URL('./legacy-v6-first-parameter-oracle.json',import.meta.url));
-assert.equal(firstBytes.length,163738);
-assert.equal(sha(firstBytes),'ff5c3fc1362e93faefa7727d829683032411931db396a8895a28d3e87dd07b0e');
+const firstBytes=await readFile(new URL('./legacy-v7-first-parameter-oracle.json',import.meta.url));
+assert.equal(firstBytes.length,159540);
+assert.equal(sha(firstBytes),'49640a0c66422f1719f6c8aecfe2883fec7132577f10d7ecd35af2034cbe8963');
 const first=JSON.parse(firstBytes.toString());
-const adjacent=await pinnedContainer('./legacy-v6-parameter-adjacent-oracle.json',1013515,
-  'cb4ffaf34e5744e4bd89558203faf346267b025c228036935f57292387135192');
-const controls=await pinnedContainer('./legacy-v6-parameter-cold-oracle.json',357163,
-  '2fa22d72db15830d27371cec24e0e1a6b2b7735653ba4c4a9a56e21cad065d34');
-// This pinned v5 custody is historical; Root separately qualifies current v6 actual frames.
+const adjacent=await pinnedContainer('./legacy-v7-parameter-adjacent-oracle.json',1004017,
+  'c2160373837edae079b341edeb16d7ecd23afd25a950639303d1f99aeb878163');
+const controls=await pinnedContainer('./legacy-v7-parameter-cold-oracle.json',352496,
+  '825d34b198da3ab1269c34bebfd671efec41fe1090ebfb0aa29df0da2df3320c');
+// This pinned v5 custody is historical; Root separately qualifies current v7 actual frames.
 const official=await pinned('./readspan-parameters-official-crosscheck.json',15590,
   '5478d8d5740c9541ee52ef1c861f52cdfe781d7515f1391f2f03fc419409bb30');
 assert.equal(first.cases.length,2);assert.equal(adjacent.cases.length,16);
@@ -176,9 +176,9 @@ test('26b retained official custody and private6 full slots/shared completion/fi
   const mixed=byId('mixed-full-slots');
   assert.ok(mixed.hir.readSpanPlan.calls.some(call=>call.arguments.some(arg=>arg.index>0)));
   for(const row of cases){
-    assert.equal(row.hir.format.version,6);assert.equal(row.hir.facts.version,6);
+    assert.equal(row.hir.format.version,7);assert.equal(row.hir.facts.version,7);
     assert.equal(row.hir.readSpanPlan.version,3);assert.equal(row.context.version,3);
-    assert.equal(JSON.parse(row.packageText).version,6);
+    assert.equal(JSON.parse(row.packageText).version,7);
   }
 });
 

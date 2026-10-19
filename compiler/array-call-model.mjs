@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: MIT
 // Array owner access algebra is relative to parameter slots, never GlobalId or runtime handles.
-import { canonical, arrayTypeId, readSpanTypeId } from './identity.mjs';
+import { canonical, own, arrayTypeId, readSpanTypeId } from './identity.mjs';
+import { classifyArrayCallGraph } from './array-call-graph.mjs';
 export const compareArrayKeys = (a, b) => Buffer.compare(Buffer.from(a), Buffer.from(b));
 const facets = ['owners','reads','writes','structural'];
 const flags = [['reads','read'],['writes','write'],['structural','structural']];
@@ -44,6 +45,46 @@ function returnOrigins(hir, functions, fail) {
   return origins;
 }
 
+
+// The outgoing closure prevents allocation call paths from growing around a cycle.
+function checkCyclicDomain(hir,graph,occurrences) {
+  const reachable = new Set(graph.components.filter(component => component.cyclic).flatMap(component => component.members));
+  const pending = [...reachable];
+  while (pending.length) {
+    const caller = pending.shift();
+    for (const edge of occurrences) if (edge.caller === caller && !reachable.has(edge.target)) {
+      reachable.add(edge.target); pending.push(edge.target);
+    }
+  }
+  for (const fn of hir.functions) {
+    if (!reachable.has(fn.id)) continue;
+    const candidates = [], add = (range,kind) => candidates.push({range,kind});
+    for (const p of fn.parameters) if (p.type === readSpanTypeId) add(p.range,0);
+    if (fn.returnType.id === readSpanTypeId) add(fn.returnAnnotationRange,1);
+    const expression = value => {
+      if (!value) return;
+      if (value.type === readSpanTypeId || ['readSpanReadChecked','readSpanLength'].includes(value.kind)) add(value.range,4);
+      if (value.kind === 'arrayDirectCall') for (const argument of value.arguments)
+        if (argument.type === readSpanTypeId) add(argument.range,4);
+    };
+    for (const stmt of fn.body) {
+      if (stmt.kind === 'local') {
+        if (stmt.initializer.kind === 'arrayCreate') add(stmt.initializer.range,2);
+        if (stmt.binding.type === readSpanTypeId) add(stmt.initializer.range,3);
+        expression(stmt.initializer);
+      } else expression(stmt.kind === 'expression' ? stmt.expression : stmt.value);
+    }
+    candidates.sort((left,right) => left.range.start - right.range.start
+      || left.range.end - right.range.end || left.kind - right.kind);
+    if (candidates.length) {
+      const message = 'r03-d-array-call-scc-capability: recursive Array calls require a parameter-only f64 reachable domain';
+      const diagnostic = own({code:'r03-d-array-call-scc-capability',ruleId:'r01-call-contract',phase:'analysis',message,
+        primary:{sourceId:fn.sourcePath,...candidates[0].range}});
+      throw Object.freeze(Object.assign(new TypeError(message),diagnostic));
+    }
+  }
+}
+
 /** Complete verified HIR and publication records are the only inputs.
  * @param {any} hir @param {Map<string, any>} contracts @param {(kind:string)=>never} fail */
 export function analyzeArrayOwnerAccesses(hir, contracts, fail) {
@@ -57,6 +98,14 @@ export function analyzeArrayOwnerAccesses(hir, contracts, fail) {
   };
   /** @type {Map<string,any>} */
   const functions = new Map(hir.functions.map(fn => [fn.id,fn]));
+  const occurrences = hir.functions.flatMap(fn => fn.body.flatMap(stmt => {
+    const value = stmt.kind === 'local' ? stmt.initializer
+      : stmt.kind === 'expression' ? stmt.expression : stmt.kind === 'return' ? stmt.value : undefined;
+    return value?.kind === 'arrayDirectCall' ? [{caller:fn.id,target:value.target}] : [];
+  }));
+  const graph = classifyArrayCallGraph(hir.functions.map(fn => fn.id),occurrences);
+  const cyclic = graph.components.some(component => component.cyclic);
+  if (cyclic) checkCyclicDomain(hir,graph,occurrences);
   const origins = returnOrigins(hir,functions,fail);
   const bases = new Map(), callSites = new Map(), models = new Map();
   // One collection pass. Alias binding introduces no additional owner or meter insertion.
@@ -179,7 +228,70 @@ export function analyzeArrayOwnerAccesses(hir, contracts, fail) {
     }
     active.delete(id); derived.set(id,d); effective.set(id,e);
   };
-  for (const fn of hir.functions) solve(fn.id);
+  if (!cyclic) {
+    // Preserve the complete old DAG traversal and its observable fee order.
+    for (const fn of hir.functions) solve(fn.id);
+  } else {
+    // Base clones are complete in Source order before any FIFO scan or coverage.
+    for (const fn of hir.functions) {
+      derived.set(fn.id,clone(bases.get(fn.id))); effective.set(fn.id,clone(bases.get(fn.id)));
+    }
+    const scanDerived = id => {
+      const target = derived.get(id); let grew = false;
+      for (const call of callSites.get(id)) {
+        const actual = new Map(call.arguments.map(arg => [arg.index,arg.owner]));
+        // This repeats the established DAG mapping rule to keep that branch and fee order intact.
+        const mapOwner = owner => {
+          if (owner.kind === 'parameter') {
+            const mapped = owner.functionId === call.target && actual.get(owner.index);
+            if (!mapped) fail('identity'); return mapped;
+          }
+          if (owner.kind !== 'allocation') fail('identity');
+          return {kind:'allocation',functionId:owner.functionId,allocationSite:owner.allocationSite,
+            callPath:[{functionId:id,expressionPath:[...call.expressionPath]},...owner.callPath]};
+        };
+        for (const key of facets) {
+          // entries captures the canonical snapshot before this facet may append keys to itself.
+          const snapshot = entries(derived.get(call.target)[key]);
+          for (const [,owner] of snapshot) {
+            charge(); const mapped = mapOwner(owner);
+            if (!target[key].has(canonical(mapped))) grew = true;
+            insert(target[key],mapped);
+          }
+        }
+      }
+      return grew;
+    };
+    for (const componentIndex of graph.calleeFirst) {
+      const component = graph.components[componentIndex];
+      if (!component.cyclic) { scanDerived(component.members[0]); continue; }
+      const callers = new Map(component.members.map(id => [id,new Set()]));
+      for (const id of component.members) for (const call of callSites.get(id))
+        if (callers.has(call.target)) callers.get(call.target).add(id);
+      const queue = [...component.members], scheduled = new Set(queue);
+      while (queue.length) {
+        const id = queue.shift(); scheduled.delete(id); charge();
+        if (!scanDerived(id)) continue;
+        for (const caller of [...callers.get(id)].sort(compareArrayKeys)) if (!scheduled.has(caller)) {
+          scheduled.add(caller); queue.push(caller);
+        }
+      }
+    }
+    // Effective consumes Published once; neither Derived nor callee Effective substitutes for it.
+    for (const fn of hir.functions) for (const call of callSites.get(fn.id)) {
+      const target = effective.get(fn.id), actual = new Map(call.arguments.map(arg => [arg.index,arg.owner]));
+      const published = contracts.get(call.target).upper;
+      for (const upper of published.parameters) {
+        const owner = actual.get(upper.index); if (!owner) fail('identity');
+        charge(); insert(target.owners,owner);
+        for (const [key,flag] of flags) if (upper[flag]) { charge(); insert(target[key],owner); }
+      }
+      if (call.publishedLocal) {
+        charge(); insert(target.owners,call.publishedLocal);
+        for (const [key,flag] of flags) if (published.local[flag]) { charge(); insert(target[key],call.publishedLocal); }
+      }
+    }
+  }
   const serialize = value => Object.fromEntries(facets.map(key => [key,entries(value[key]).map(([,owner]) => owner)]));
   const rows = [...hir.functions].sort((a,b) => compareArrayKeys(a.id,b.id)).map(fn => ({
     functionId:fn.id,derived:serialize(derived.get(fn.id)),effective:serialize(effective.get(fn.id)),
