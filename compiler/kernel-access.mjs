@@ -1,3 +1,5 @@
+import { familyOf } from './module-callable-common.mjs';
+import { rejectUnknownModuleKernel } from './module-callable-publication.mjs';
 // SPDX-License-Identifier: MIT
 // A declared parallel group consumes fixed Published bounds, never narrower bodies.
 import { analyzeModuleCalls } from './module-hir.mjs';
@@ -62,6 +64,7 @@ export function verifyKernelParallelGroup(hir, fixedPublicationContext, request)
   /** @type {Map<string, any>} */
   const functions = new Map(hir.functions.map(fn => [fn.id, fn]));
   const targets = [...request.targets];
+  if (familyOf(hir) === 'tsfg.module-callable-hir-candidate') rejectUnknownModuleKernel(hir, analysis, targets);
   const accesses = targets.map(functionId => {
     const record = contracts.get(functionId);
     return { functionId, publishedContractDigest: record.digest,

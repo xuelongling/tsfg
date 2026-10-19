@@ -1,3 +1,6 @@
+import { familyOf } from './module-callable-common.mjs';
+import { buildModuleCallableHir } from './module-callable-hir.mjs';
+export { verifyModuleCalls, printModuleCalls, readModuleCalls } from './module-callable-publication.mjs';
 // SPDX-License-Identifier: MIT
 import { buildExceptionHir } from "./exception-hir.mjs";
 import { buildStringHir } from './string-hir.mjs';
@@ -33,6 +36,9 @@ const types = scalarTypeIds;
 
 /** @param {any} snapshot @param {any} [factsContext] */
 export function buildHir(snapshot, factsContext = undefined) {
+  try {
+    if (familyOf(snapshot) === 'tsfg.frontend-module-callable-candidate') return {status:'ok',hir:buildModuleCallableHir(snapshot)};
+  } catch (error) { return {status:'error',diagnostics:[{code:error.code,ruleId:error.ruleId,phase:error.phase,message:error.message,...(error.primary?{primary:error.primary}:{})}]}; }
   if (isArrayFactsContext(factsContext)) return buildArrayHir(snapshot, factsContext);
   if (factsContext !== undefined) return buildStringHir(snapshot, factsContext);
   try { validateFrontendSnapshot(snapshot); }
@@ -192,6 +198,10 @@ export function readHir(bytes, factsContext = undefined) {
 
 /** @param {any} hir @param {any} [factsContext] */
 export function lowerHir(hir, factsContext = undefined) {
+  if (familyOf(hir) === 'tsfg.module-callable-hir-candidate') {
+    verifyHir(hir);
+    throw Object.assign(new TypeError('r03-d-capability: module callable Core lowering is not implemented'), {code:'r03-d-capability',ruleId:'r01-ts-baseline',phase:'lowering'});
+  }
   if (isArrayFactsContext(factsContext)) return emitArrayCore(hir, factsContext);
   if (factsContext !== undefined) return emitStringCore(hir, factsContext);
   if (hir?.format?.family === "tsfg.exception-hir-candidate") return emitExceptionCore(hir);

@@ -1,3 +1,4 @@
+import { readJson as readModuleCallableJson } from './module-callable-common.mjs';
 // SPDX-License-Identifier: MIT
 import { inspectGenericJson } from './generic-json.mjs';
 import { readJson as readNullableJson } from './nullable-common.mjs';
@@ -25,6 +26,7 @@ export function readHirWire(bytes) {
   if (input.selection && input.selection.kind !== 'string')
     throw new TypeError('r03-hir-invalid: HIR requires a string root format family');
   const family = input.selection?.value;
+  if (family === 'tsfg.module-callable-hir-candidate') return readModuleCallableJson(input.bytes);
   if (family === 'tsfg.exception-hir-candidate') return readExceptionHirJson(input.bytes);
   try {
     if (family === 'tsfg.closure-hir-candidate') return readClosureJson(input.bytes);

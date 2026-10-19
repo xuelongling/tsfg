@@ -1,3 +1,6 @@
+import { familyOf } from './module-callable-common.mjs';
+import { verifyModuleCallableHir } from './module-callable-hir.mjs';
+import { analyzeModuleCallableCalls } from './module-callable-publication.mjs';
 // SPDX-License-Identifier: MIT
 import { analyzeVerifiedModuleCalls, checkCallEffectsInputs, callEffectsFailure, verifyKernelHostSemantics } from './call-effects.mjs';
 export { KernelHostSemanticError } from './call-effects.mjs';
@@ -173,6 +176,11 @@ export function analyzeModuleCalls(hir, context) {
 
 /** @param {any} hir @param {any} factsContext @param {any} context */
 function selectedModuleCalls(hir, factsContext, context) {
+  if (familyOf(hir) === 'tsfg.module-callable-hir-candidate') {
+    if (factsContext !== undefined) callEffectsFailure();
+    const analysis = analyzeModuleCallableCalls(hir, context);
+    return { hir: verifyModuleCallableHir(hir), analysis };
+  }
   checkCallEffectsInputs(hir, context);
   if (factsContext !== undefined || hir?.modules === undefined || hir?.format !== undefined)
     callEffectsFailure();
@@ -185,6 +193,7 @@ function selectedModuleCalls(hir, factsContext, context) {
 
 /** @param {any} hir @param {any} [factsContext] @param {boolean} [selectedCalls] */
 function verifyWholeHir(hir, factsContext = undefined, selectedCalls = false) {
+  if (familyOf(hir) === 'tsfg.module-callable-hir-candidate') return verifyModuleCallableHir(hir);
   if (isArrayFactsContext(factsContext)) return verifyArrayHir(hir, factsContext);
   if (factsContext !== undefined) return verifyStringHir(hir, factsContext);
   if (hir?.format?.family === "tsfg.exception-hir-candidate") return verifyExceptionHir(hir);

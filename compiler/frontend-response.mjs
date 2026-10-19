@@ -1,4 +1,7 @@
 // SPDX-License-Identifier: MIT
+import { importModuleCallableFacts, verifyModuleCallableSnapshot } from './module-callable-facts.mjs';
+import { familyOf, requestFamily } from './module-callable-common.mjs';
+export { importModuleCallableFacts } from './module-callable-facts.mjs';
 import { createHash } from "node:crypto";
 import { importExceptionCapturedResponse } from "./exception-frontend.mjs";
 import { importNullableCapturedResponse, matchesNullableSnapshot } from "./nullable-frontend.mjs";
@@ -55,6 +58,9 @@ const snapshotIdentity = (inputIdentity, frontendSource) => digest(canonical({
 }));
 
 export function matchesSnapshotContract(snapshot) {
+  if (familyOf(snapshot) === 'tsfg.frontend-module-callable-candidate') {
+    try { verifyModuleCallableSnapshot(snapshot); return true; } catch { return false; }
+  }
   if (snapshot?.format?.family === "tsfg.frontend-nullable-candidate") return matchesNullableSnapshot(snapshot);
   if (snapshot?.format?.family === "tsfg.frontend-closure-candidate") return matchesClosureSnapshot(snapshot);
   let matchesInput = false;
@@ -295,6 +301,8 @@ export function materializeFrontendResponse(prepared, response, frontendSource) 
 // those bytes; they grant no Source executable admission or checker authority.
 /** @param {Uint8Array} requestBytes @param {Uint8Array} responseBytes @param {any} origin */
 export async function importCapturedFrontendResponse(requestBytes, responseBytes, origin) {
+  if (requestFamily(requestBytes) === 'tsfg.module-callable-facts-request-candidate')
+    return importModuleCallableFacts(requestBytes, responseBytes, origin);
   try {
     if (origin && Object.getOwnPropertyDescriptor(origin, "kind")?.value === "owned-go-exception-response")
       return importExceptionCapturedResponse(requestBytes, responseBytes, origin);
