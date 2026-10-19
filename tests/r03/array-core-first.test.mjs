@@ -1,18 +1,19 @@
 // SPDX-License-Identifier: MIT
-// Complete Core text and ordered SSA traces were frozen before the v3 emitter.
+// Independent Core4 metadata migration retains the original ordered SSA traces.
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { readArrayFactsCandidate,writeArrayFactsCandidate } from '../../compiler/array-facts.mjs';
 import { buildHir,verifyHir,printHir,readHir,lowerHir } from '../../compiler/hir.mjs';
-import { fixtures,fresh,context,pinned,sha } from './array-test-fixtures.mjs';
+import { fixtures,fresh,context,coreOracle,sha } from './array-test-fixtures.mjs';
 import { parseArrayCore,assertArrayCoreSemantics } from './array-core-structural-oracle.mjs';
 
 test('25d eight whole facts and HIR controls precede complete public Core equality',async t=>{
   const rows=await fixtures();
-  const oracle=await pinned('./array-core-oracle-v3.json',122335,'44c460f568aebd9dba7b25dab00857a47fe431a3f7cc4679a6d1d09a427552d5');
+  const oracle=await coreOracle();
   assert.equal(oracle.provenance.productionOutputSampled,false);assert.equal(oracle.provenance.productionImported,false);
-  assert.equal(oracle.provenance.historicalCpp2CreditForV3,false);
-  assert.equal(oracle.provenance.noNewArrayCallLoweringOrPhysicalRuntimeCredit,true);
+  assert.equal(oracle.provenance.nativeCompileLinkCliExecuted,false);
+  assert.equal(oracle.provenance.viewOperationLoweringCredit,false);
+  assert.equal(oracle.provenance.formalCoreVersion,'0.9.0');assert.equal(oracle.provenance.formalWireVersion,9);
   assert.equal(oracle.cases.length,8);
   const prepared=[];
   const totals={functions:0,parameters:0,sites:0,aliases:0,elements:0,checkedReads:0,stores:0,resizes:0,constants:0,operations:0,registers:0};

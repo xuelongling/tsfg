@@ -22,10 +22,10 @@ import { floatNames } from './float.mjs';
 import { emitScalarCore } from './scalar-core-emitter.mjs';
 import { emitReferenceCore } from './reference-core-emitter.mjs';
 import { emitStringCore } from './string-core-emitter.mjs';
-import { buildArrayHir } from './array-hir.mjs';
+import { buildArrayHir, readArrayHir } from './array-hir.mjs';
 import { emitArrayCore } from './array-core-emitter.mjs';
 export { analyzeArrayCalls, verifyArrayCalls, printArrayCalls, readArrayCalls } from './array-call-publication.mjs';
-import { isArrayFactsContext, readArrayHir } from './array-hir-model.mjs';
+import { isArrayFactsContext } from './array-hir-model.mjs';
 
 import { buildClosureHir } from "./closure-hir.mjs";
 export { verifyHir };
@@ -35,28 +35,34 @@ export { analyzeClosureCalls, verifyClosureCalls, printClosureCalls, readClosure
 const contract = () => registry['tsfg.hir'];
 const types = scalarTypeIds;
 
-/** @param {any} snapshot @param {any} [factsContext] */
-export function buildHir(snapshot, factsContext = undefined) {
-  if (isArrayFactsContext(factsContext)) return buildArrayHir(snapshot, factsContext);
+/** @param {any} snapshot @param {any} [factsContext] @param {any} [callPublicationContext] */
+// Error casts describe omitted hir fields without adding runtime keys or erasing family diagnostics.
+export function buildHir(snapshot, factsContext = undefined, callPublicationContext = undefined) {
+  if (isArrayFactsContext(factsContext)) return buildArrayHir(snapshot, factsContext, callPublicationContext);
   if (factsContext !== undefined) return buildStringHir(snapshot, factsContext);
   try {
     if (familyOf(snapshot) === 'tsfg.frontend-module-callable-candidate') return {status:'ok',hir:buildModuleCallableHir(snapshot)};
-  } catch (error) { return {status:'error',diagnostics:[{code:error.code,ruleId:error.ruleId,phase:error.phase,message:error.message,...(error.primary?{primary:error.primary}:{})}]}; }
+  } catch (error) { const result = {status:'error',diagnostics:[{code:error.code,ruleId:error.ruleId,phase:error.phase,message:error.message,...(error.primary?{primary:error.primary}:{})}]};
+    return /** @type {typeof result & {status:"error",hir?:undefined}} */ (result); }
   try { validateFrontendSnapshot(snapshot); }
-  catch (error) { return { status: "error", diagnostics: [{ code: "r03-d-snapshot", ruleId: "r01-input-boundary", phase: "hir", message: error.message }] }; }
+  catch (error) { const result = { status: "error", diagnostics: [{ code: "r03-d-snapshot", ruleId: "r01-input-boundary", phase: "hir", message: error.message }] };
+    return /** @type {typeof result & {status:"error",hir?:undefined}} */ (result); }
   if (snapshot?.format?.family === "tsfg.frontend-nullable-candidate") {
     try { return { status: "ok", hir: buildNullableHir(snapshot) }; }
-    catch (error) { return { status: "error", diagnostics: [{ code: error.code ?? "r03-nullable-hir", ruleId: error.ruleId ?? "r01-input-boundary", phase: "hir", message: error.message }] }; }
+    catch (error) { const result = { status: "error", diagnostics: [{ code: error.code ?? "r03-nullable-hir", ruleId: error.ruleId ?? "r01-input-boundary", phase: "hir", message: error.message }] };
+      return /** @type {typeof result & {status:"error",hir?:undefined}} */ (result); }
   }
   if (snapshot?.format?.family === "tsfg.frontend-closure-candidate") {
     try { return { status: "ok", hir: buildClosureHir(snapshot) }; }
-    catch (error) { return { status: "error", diagnostics: [{ code: error.code ?? "r03-closure-hir", ruleId: error.ruleId ?? "r01-input-boundary", phase: "hir", message: error.message }] }; }
+    catch (error) { const result = { status: "error", diagnostics: [{ code: error.code ?? "r03-closure-hir", ruleId: error.ruleId ?? "r01-input-boundary", phase: "hir", message: error.message }] };
+      return /** @type {typeof result & {status:"error",hir?:undefined}} */ (result); }
   }
   if (snapshot?.format?.family === "tsfg.frontend-exception-candidate") {
     try { return { status: "ok", hir: buildExceptionHir(snapshot) }; }
-    catch (error) { return { status: "error", diagnostics: [{ code: error.code ?? "r03-exception-hir-schema",
+    catch (error) { const result = { status: "error", diagnostics: [{ code: error.code ?? "r03-exception-hir-schema",
       ruleId: error.ruleId ?? "r01-input-boundary", phase: "hir", message: error.message,
-      ...(error.primary ? { primary: error.primary } : {}) }] }; }
+      ...(error.primary ? { primary: error.primary } : {}) }] };
+      return /** @type {typeof result & {status:"error",hir?:undefined}} */ (result); }
   }
   const first = snapshot.functions[0], expression = first?.body?.find(item => item.expression)?.expression;
   const moduleFacts=snapshot.modules?validateModuleFacts(snapshot):undefined;
@@ -64,9 +70,10 @@ export function buildHir(snapshot, factsContext = undefined) {
       || !Object.hasOwn(types, resolveType(snapshot, fn.returnTypeRef).scalar)
       || snapshot.capability !== "minimal-floats-v4" && (floatNames.includes(fn.returnType) || fn.parameters.some(p => floatNames.includes(p.type)))
       || fn.parameters.some(parameter => !types[parameter.type]) || fn.body.length < 1 || fn.body.length > 128)) {
-    return { status: "error", diagnostics: [{ code: "r03-d-capability", ruleId: "r01-ts-baseline", phase: "hir",
+    const result = { status: "error", diagnostics: [{ code: "r03-d-capability", ruleId: "r01-ts-baseline", phase: "hir",
       message: "current execution capability requires nominal integer/bool functions with direct calls, locals, structured control and returns",
       primary: { sourceId: snapshot.source.path, ...(expression?.range ?? first?.range ?? { start: 0, end: 0 }) } }] };
+      return /** @type {typeof result & {status:"error",hir?:undefined}} */ (result);
   }
   const globals=(snapshot.symbols.filter(symbol=>symbol.kind==='global')).map(symbol=>({id:symbol.bindingKind==='default-export-expression'
     ? defaultBindingIdentity(symbol.sourcePath,sha256(snapshot.sources.find(source=>source.path===symbol.sourcePath).content),symbol.type,symbol.range)
@@ -151,8 +158,9 @@ export function buildHir(snapshot, factsContext = undefined) {
     throw new TypeError("unsupported checked statement capability");
   });
   try { projected = statements(fn.body); } catch (error) {
-    return { status: "error", diagnostics: [{ code: "r03-d-capability", ruleId: "r01-ts-baseline", phase: "hir", message: error.message,
+    const result = { status: "error", diagnostics: [{ code: "r03-d-capability", ruleId: "r01-ts-baseline", phase: "hir", message: error.message,
       primary: { sourceId: snapshot.source.path, ...(expression?.range ?? fn.range) } }] };
+      return /** @type {typeof result & {status:"error",hir?:undefined}} */ (result);
   }
   projectedFunctions.push({...descriptor,body:projected});
   }
@@ -170,26 +178,31 @@ export function buildHir(snapshot, factsContext = undefined) {
       exports:module.exports.map(binding=>({name:binding.name,target:ownedId(binding.target)})),
       bindings:[...moduleFacts.views.get(module.sourcePath)].map(([name,id])=>({name,target:ownedId(id)}))}));
     try{hir.closure=compilationClosure({modules:hir.modules,functions:projectedFunctions,globals,configuration:snapshot.compilationClosure});}
-    catch(error){return {status:'error',diagnostics:[{code:error.code??'r03-d-closure-dependency',ruleId:error.ruleId??'r01-compilation-closure',phase:'hir',message:error.message,primary:error.primary}]};}
+    catch(error){const result = {status:'error',diagnostics:[{code:error.code??'r03-d-closure-dependency',ruleId:error.ruleId??'r01-compilation-closure',phase:'hir',message:error.message,primary:error.primary}]};
+      return /** @type {typeof result & {status:"error",hir?:undefined}} */ (result);}
   }
   try { return { status: "ok", hir: verifyHir(hir) }; }
   catch (error) {
-    if (error instanceof KernelHostSemanticError) return { status: "error", diagnostics: [{
+    if (error instanceof KernelHostSemanticError) {
+      const result = { status: "error", diagnostics: [{
       code: error.code, ruleId: error.ruleId, phase: error.phase, message: error.message, primary: error.primary,
     }] };
-    return { status: "error", diagnostics: [{ code: "r03-d-snapshot", ruleId: "r01-input-boundary", phase: "hir", message: error.message,
+        return /** @type {typeof result & {status:"error",hir?:undefined}} */ (result);
+    }
+    const result = { status: "error", diagnostics: [{ code: "r03-d-snapshot", ruleId: "r01-input-boundary", phase: "hir", message: error.message,
       primary: { sourceId: snapshot.source.path, ...(expression?.range ?? first?.range ?? {start:0,end:0}) } }] };
+      return /** @type {typeof result & {status:"error",hir?:undefined}} */ (result);
   }
 }
-/** @param {any} hir @param {any} [factsContext] */
-export const printHir = (hir, factsContext = undefined) => `${canonical(verifyHir(hir, factsContext))}\n`;
-/** @param {Uint8Array} bytes @param {any} [factsContext] */
-export function readHir(bytes, factsContext = undefined) {
-  if (isArrayFactsContext(factsContext)) return readArrayHir(bytes, factsContext);
+/** @param {any} hir @param {any} [factsContext] @param {any} [callPublicationContext] */
+export const printHir = (hir, factsContext = undefined, callPublicationContext = undefined) => `${canonical(verifyHir(hir, factsContext, callPublicationContext))}\n`;
+/** @param {Uint8Array} bytes @param {any} [factsContext] @param {any} [callPublicationContext] */
+export function readHir(bytes, factsContext = undefined, callPublicationContext = undefined) {
+  if (isArrayFactsContext(factsContext)) return readArrayHir(bytes, factsContext, callPublicationContext);
   if (factsContext !== undefined) return readStringHir(bytes, factsContext);
   const { text, value } = readHirWire(bytes);
-  const hir = verifyHir(value);
-  if (text !== printHir(hir)) {
+  const hir = verifyHir(value, undefined, callPublicationContext);
+  if (text !== printHir(hir, undefined, callPublicationContext)) {
     if (hir?.format?.family === "tsfg.exception-hir-candidate")
       exceptionHirFailure("canonical", "HIR must use its canonical serialization");
     throw new TypeError("r03-hir-canonical: HIR must use its canonical serialization");
@@ -197,9 +210,9 @@ export function readHir(bytes, factsContext = undefined) {
   return hir;
 }
 
-/** @param {any} hir @param {any} [factsContext] */
-export function lowerHir(hir, factsContext = undefined) {
-  if (isArrayFactsContext(factsContext)) return emitArrayCore(hir, factsContext);
+/** @param {any} hir @param {any} [factsContext] @param {any} [callPublicationContext] */
+export function lowerHir(hir, factsContext = undefined, callPublicationContext = undefined) {
+  if (isArrayFactsContext(factsContext)) return emitArrayCore(hir, factsContext, callPublicationContext);
   if (factsContext !== undefined) return emitStringCore(hir, factsContext);
   if (familyOf(hir) === 'tsfg.module-callable-hir-candidate') {
     verifyHir(hir);

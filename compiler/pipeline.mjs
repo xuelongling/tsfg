@@ -76,7 +76,7 @@ export async function compilePackage(packageBytes, roots, options) {
 
 async function compileSnapshot(snapshot, options) {
   const highLevel = buildHir(snapshot);
-  if (highLevel.status !== "ok") return highLevel;
+  if (highLevel.status !== "ok") return /** @type {typeof highLevel & {bytecode?:undefined}} */ (highLevel);
   return produceBytecode(highLevel.hir, options);
 }
 

@@ -1,7 +1,6 @@
 // SPDX-License-Identifier: MIT
 // Array owner access algebra is relative to parameter slots, never GlobalId or runtime handles.
-import { canonical } from './identity.mjs';
-import { arrayHirType } from './array-hir-model.mjs';
+import { canonical, arrayTypeId } from './identity.mjs';
 export const compareArrayKeys = (a, b) => Buffer.compare(Buffer.from(a), Buffer.from(b));
 const facets = ['owners','reads','writes','structural'];
 const flags = [['reads','read'],['writes','write'],['structural','structural']];
@@ -22,19 +21,29 @@ export function analyzeArrayOwnerAccesses(hir, contracts, fail) {
   };
   /** @type {Map<string,any>} */
   const functions = new Map(hir.functions.map(fn => [fn.id,fn]));
-  const bases = new Map(), callSites = new Map();
+  const bases = new Map(), callSites = new Map(), models = new Map();
   // One collection pass. Alias binding introduces no additional owner or meter insertion.
   for (const fn of hir.functions) {
-    const base = empty(), bindings = new Map(), calls = []; bases.set(fn.id,base); callSites.set(fn.id,calls);
+    const base = empty(), bindings = new Map(), calls = [], lengths = new Map(), proofs = new Map();
+    bases.set(fn.id,base); callSites.set(fn.id,calls); models.set(fn.id,{bindings,proofs});
     fn.parameters.forEach((p,index) => {
-      if (p.type !== arrayHirType.id) return;
-      const owner = parameter(fn,index); insert(base.owners,owner); bindings.set(p.id,owner);
+      if (p.type !== arrayTypeId) return;
+      const owner = parameter(fn,index); insert(base.owners,owner); bindings.set(p.id,owner); lengths.set(owner,null);
     });
     const ownerOf = binding => {
       const owner = bindings.get(binding); if (!owner) fail('identity'); return owner;
     };
     const read = value => {
-      if (value.kind === 'arrayReadChecked') insert(base.reads,ownerOf(value.receiver.binding));
+      if (value.kind === 'arrayReadChecked' || value.kind === 'readSpanReadChecked') insert(base.reads,ownerOf(value.receiver.binding));
+    };
+    const mutationProof = (stmt,index,store) => {
+      const owner = ownerOf(stmt.target.receiver.binding), previous = lengths.get(owner) ?? null;
+      const operand = store ? stmt.target.index : stmt.value;
+      const n = operand.kind === 'constant' ? Number(operand.decimal) : null;
+      const fresh = owner.kind === 'allocation' && owner.functionId === fn.id && owner.callPath.length === 0;
+      const nonStructural = fresh && previous !== null && n !== null && (store ? n < previous : n === previous);
+      proofs.set(index,{owner,exactLength:previous,[store ? 'index' : 'newLength']:n,nonStructural});
+      lengths.set(owner,!fresh || n === null ? null : store ? previous === null ? null : Math.max(previous,n + 1) : n);
     };
     for (const [index, stmt] of fn.body.entries()) {
       charge();
@@ -42,22 +51,26 @@ export function analyzeArrayOwnerAccesses(hir, contracts, fail) {
         let owner;
         if (stmt.initializer.kind === 'arrayCreate') {
           owner = {kind:'allocation',functionId:fn.id,allocationSite:stmt.initializer.allocationSite,callPath:[]};
-          insert(base.owners,owner);
+          insert(base.owners,owner); lengths.set(owner,stmt.initializer.elements.length);
+        } else if (stmt.initializer.kind === 'readSpanCreateChecked') {
+          owner = ownerOf(stmt.initializer.receiver.binding); insert(base.reads,owner);
         } else owner = ownerOf(stmt.initializer.binding);
         bindings.set(stmt.binding.id,owner);
       } else if (stmt.kind === 'arrayStoreDenseChecked') {
-        read(stmt.value);
+        read(stmt.value); mutationProof(stmt,index,true);
         insert(base.writes,ownerOf(stmt.target.receiver.binding));
         // Checked dense store may append. Caller constants never narrow this flag.
         insert(base.structural,ownerOf(stmt.target.receiver.binding));
-      } else if (stmt.kind === 'arrayResizeChecked') insert(base.structural,ownerOf(stmt.target.receiver.binding));
+      } else if (stmt.kind === 'arrayResizeChecked') {
+        mutationProof(stmt,index,false); insert(base.structural,ownerOf(stmt.target.receiver.binding));
+      }
       else {
         const value = stmt.kind === 'expression' ? stmt.expression : stmt.value;
         if (value.kind !== 'arrayDirectCall') { read(value); continue; }
         const callee = functions.get(value.target), contract = contracts.get(value.target), args = [];
         if (!callee || !contract) fail('identity');
         callee.parameters.forEach((p,slot) => {
-          if (p.type !== arrayHirType.id) return;
+          if (p.type !== arrayTypeId) return;
           charge();
           args.push({index:slot,binding:value.arguments[slot].binding,owner:ownerOf(value.arguments[slot].binding)});
         });
@@ -66,6 +79,7 @@ export function analyzeArrayOwnerAccesses(hir, contracts, fail) {
           ? {kind:'callLocal',functionId:fn.id,expressionPath:[...expressionPath]} : null;
         calls.push({functionId:fn.id,expressionPath,range:{...value.range},target:value.target,
           signatureHash:value.signatureHash,arguments:args,consumedDigest:contract.digest,publishedLocal});
+        for (const arg of args) lengths.set(arg.owner,null);
       }
     }
   }
@@ -113,5 +127,5 @@ export function analyzeArrayOwnerAccesses(hir, contracts, fail) {
   }));
   const calls = [...callSites.values()].flat().sort((a,b) => compareArrayKeys(a.functionId,b.functionId)
     || compareArrayKeys(canonical(a.expressionPath),canonical(b.expressionPath)));
-  return {functions:rows,calls};
+  return {functions:rows,calls,ownerModel:{functions:models}};
 }

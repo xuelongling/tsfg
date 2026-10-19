@@ -11,18 +11,18 @@ import { fixtures,fresh,context,deeplyFrozen,jcs,sha,pinned } from './array-test
 test('25d eight actual official Source publications reach whole HIR and static Core',async t=>{
   const file=process.env.TSFG_ARRAY_SOURCE_CAPTURE;
   assert.ok(file,'explicit Source integration entry requires Root capture manifest');
-  assert.equal(process.env.TSFG_ARRAY_SOURCE_CAPTURE_SHA256,'85d8da3bc98ac3259d7882ab968f71209d4108b39ce781b16ac9355292884f94');
-  const bytes=await readFile(file);assert.equal(bytes.length,702488);
-  assert.equal(sha(bytes),'85d8da3bc98ac3259d7882ab968f71209d4108b39ce781b16ac9355292884f94');
+  assert.equal(process.env.TSFG_ARRAY_SOURCE_CAPTURE_SHA256,'72c13c688b34d965cf692909ede7cc42ebb70a596d09cd2818adf0f1cc204145');
+  const bytes=await readFile(file);assert.equal(bytes.length,16923);
+  assert.equal(sha(bytes),'72c13c688b34d965cf692909ede7cc42ebb70a596d09cd2818adf0f1cc204145');
   const capture=JSON.parse(bytes.toString('utf8'));
   assert.equal(capture.schema,'r03.array-dense.actual-source-captures.v1');
-  assert.equal(capture.atomicWireVersion,3);
+  assert.equal(capture.atomicWireVersion,4);
   const state=capture.actual.state;
   assert.equal(state.qualified,true);assert.equal(state.observerOK,true);
   assert.equal(state.exit.code,0);assert.equal(state.close.code,0);
   assert.equal(capture.all8ByteExactToPreproductionIndependentOracle,true);
   const rows=await fixtures(),actuals=[];
-  const core=await pinned('./array-core-oracle-v3.json',122335,'44c460f568aebd9dba7b25dab00857a47fe431a3f7cc4679a6d1d09a427552d5');
+  const core=await pinned('./array-readspan-core-v4-oracle.json',333685,'52b347c10121ecca06ee26f1dec48577f35d044c31a505a426ab9f37b54ba231');
   assert.deepEqual(capture.cases.map(c=>c.name),rows.map(r=>r.facts.name));
   for(let i=0;i<rows.length;i++){
     const row=rows[i],record=capture.cases[i],raw=await readFile(record.raw.path);

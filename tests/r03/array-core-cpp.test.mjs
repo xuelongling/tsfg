@@ -17,23 +17,33 @@ function refused(actual,diagnostic) {
     'exact gate '+diagnostic+'; earlier parser/trait failures receive no private credit:\n'+actual.stderr.toString('utf8'));
 }
 
-test('23e same real C++ CLI preserves Array3 no-call packages and independent candidate boundaries',async t=>{
-  const manifest=await pinned('./array-core-cpp-cases.json',2204322,'90bd7d2c6e59164f3c8786610d25a8d1b8b2ed3cf5dcb9369309c7885cb698be');
-  const oracle=await pinned('./array-core-oracle-v3.json',122335,'44c460f568aebd9dba7b25dab00857a47fe431a3f7cc4679a6d1d09a427552d5');
-  assert.deepEqual(manifest.provenance,{newCppOutputSampled:false,productEmitterImported:false,coldCasesReproveSource:false});
-  assert.equal(manifest.version,3);assert.equal(oracle.version,3);
-  assert.equal(manifest.cases.length,80);assert.equal(new Set(manifest.cases.map(c=>c.id)).size,80);
+test('26a same real C++ CLI preserves Array4 no-view/no-call packages and independent candidate boundaries',async t=>{
+  const manifest=await pinned('./array-core-cpp-cases-v4.json',2528908,'d6f02631f35e8a366251df51e5159663d8a92874391350b790cf844d0fca66fb');
+  const oracle=await pinned('./array-readspan-core-v4-oracle.json',333685,'52b347c10121ecca06ee26f1dec48577f35d044c31a505a426ab9f37b54ba231');
+  assert.deepEqual(manifest.provenance,{CLIExecuted:false,coldCasesReproveSource:false,compiled:false,linked:false,
+    newCppOutputSampled:false,productEmitterImported:false,sourceModuleImported:false,
+    wholeSourceCredit:'only separate pinned independent whole oracle; no cold Source admission'});
+  assert.equal(manifest.version,4);assert.equal(oracle.version,1);
+  assert.deepEqual(oracle.format,{family:'tsfg.core-array-candidate',version:4,facts_version:4,
+    profile:'dense-f64-array-params-local-readspan-checked-v4',
+    schemaHash:'sha256:1d60f5722e6dda5588cc8891ad4497dc39588601ba10f50ec535e70a20df0305'});
+  assert.equal(manifest.cases.length,104);assert.equal(new Set(manifest.cases.map(c=>c.id)).size,104);
   assert.equal(manifest.cases.filter(c=>c.expected.exitCode===0).length,15);
-  assert.equal(manifest.cases.filter(c=>c.expected.exitCode===3).length,65);
+  assert.equal(manifest.cases.filter(c=>c.expected.exitCode===3).length,89);
   assert.equal(manifest.wire.length,16);
   // Synthetic cold controls retain opaque envelope IDs; they do not reprove Source.
-  // The unchanged complete old2 whole is an explicit refusal, never a legal3 case.
-  const legacy=manifest.cases.find(c=>c.id==='old-v2-marker-rejected');assert.ok(legacy);
-  assert.equal(legacy.sourceOracle,undefined);assert.equal(legacy.expected.exitCode,3);
-  assert.equal(legacy.expected.diagnostic,'[core-ir-array-marker]');
-  assert.ok(legacy.input.includes('version = 2 : i32'));assert.ok(legacy.input.includes('facts_version = 2 : i32'));
-  const marker3='tsfg_core.array = {family = "tsfg.core-array-candidate", version = 3 : i32, schema = "sha256:0686904cb83a314e2a6fe77e2a9e4b069e2d5648c69ce1d06b2bfcef043d910c", profile = "dense-f64-params-local-alias-mutation-checked-v3", facts_version = 3 : i32}';
-  for(const c of manifest.cases.filter(c=>c.expected.exitCode===0))assert.ok(c.input.includes(marker3),c.id+' legal3 marker');
+  // Complete old2 and old3 originals are explicit refusals, never legal4 inputs.
+  for(const version of [2,3]){
+    const legacy=manifest.cases.find(c=>c.id==='old-v'+version+'-marker-rejected');assert.ok(legacy);
+    assert.equal(legacy.sourceOracle,undefined);assert.equal(legacy.expected.exitCode,3);
+    assert.equal(legacy.expected.diagnostic,'[core-ir-array-marker]');
+    assert.ok(legacy.input.includes('version = '+version+' : i32'));
+    assert.ok(legacy.input.includes('facts_version = '+version+' : i32'));
+  }
+  const marker4='tsfg_core.array = {family = "tsfg.core-array-candidate", version = 4 : i32, schema = "sha256:1d60f5722e6dda5588cc8891ad4497dc39588601ba10f50ec535e70a20df0305", profile = "dense-f64-array-params-local-readspan-checked-v4", facts_version = 4 : i32}';
+  for(const c of manifest.cases.filter(c=>c.expected.exitCode===0))assert.ok(c.input.includes(marker4),c.id+' legal4 marker');
+  assert.equal(15*4+89+manifest.wire.length+2,167,'preserved authorized CLI geometry');
+  assert.equal(1+manifest.cases.length+manifest.wire.length+2,123,'complete parent and TAP subtests');
   let whole={functions:0,parameters:0,sites:0,aliases:0,elements:0,checkedReads:0,stores:0,resizes:0,constants:0,operations:0,registers:0};
   // Check every frozen input and independently chosen preimage before the first CLI call.
   for(const c of manifest.cases) {
@@ -57,7 +67,7 @@ test('23e same real C++ CLI preserves Array3 no-call packages and independent ca
     'return-bypasses-checked-read','second-function-omitted'].includes(c.id))) {
     assert.throws(()=>assertArrayCoreSemantics(c.input,full),{code:'ERR_ASSERTION'});
   }
-  t.diagnostic('23e Array3 C++ frozen controls complete:8 whole packages/10 functions/8 parameters/11 sites/7 stores/4 resizes/12 reads; other positives are cold static metadata/count controls');
+  t.diagnostic('26a Array4 C++ frozen controls complete:8 whole packages/10 functions/8 parameters/11 sites/7 stores/4 resizes/12 reads; other positives are cold static metadata/count controls');
   for(const c of manifest.cases.filter(c=>c.expected.exitCode===0))await t.test(c.id,async()=>{
     const expected={core:c.input};
     const first=await invokeCore(c.input,'--canonicalize');accepted(first);

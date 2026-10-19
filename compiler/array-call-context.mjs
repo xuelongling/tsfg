@@ -1,0 +1,87 @@
+// SPDX-License-Identifier: MIT
+// Private fixed-table validation and owner preparation; callers supply complete verified HIR.
+import { canonical, sha256, scalarName, arrayTypeId } from './identity.mjs';
+import { checkGenericJsonValueBudget } from './generic-json.mjs';
+import { arrayFactsLimits } from './array-facts-common.mjs';
+import { analyzeArrayOwnerAccesses, compareArrayKeys as compare } from './array-call-model.mjs';
+
+const policy = arrayFactsLimits, valuePolicy = Object.freeze({...policy,bytes:policy.bytes - 1});
+const flags = ['read','write','structural'];
+/** @param {string} [kind] @param {any} [details] @returns {never} */
+export function arrayCallFailure(kind = '', details = undefined) {
+  const code = 'r03-d-array-call-effects' + (kind ? '-' + kind : '');
+  throw Object.assign(new TypeError(code + ': invalid fixed Array owner publication'),
+    {code,ruleId:'r01-call-contract',phase:'analysis',...(details ?? {})});
+}
+const check = (value, kind = '') => { if (!value) arrayCallFailure(kind); };
+export function arrayCallBudget(value) {
+  try { checkGenericJsonValueBudget(value,valuePolicy); }
+  catch (error) { arrayCallFailure(error?.code?.endsWith('-limit') ? 'limit' : ''); }
+}
+function record(value, keys) {
+  check(value && typeof value === 'object' && !Array.isArray(value)
+    && Object.keys(value).length === keys.length && keys.every(key => Object.hasOwn(value,key)));
+}
+const hash = value => typeof value === 'string' && /^sha256:[0-9a-f]{64}$/.test(value);
+function shape(context) {
+  record(context,['family','version','mode','scopeDigest','expectedDigest','contracts']);
+  check(context.family === 'tsfg.array-publication-context-candidate' && context.version === 1 && context.mode === 'fixed');
+  check(hash(context.scopeDigest) && hash(context.expectedDigest) && Array.isArray(context.contracts)
+    && context.contracts.length >= 1 && context.contracts.length <= 16);
+  for (const row of context.contracts) {
+    record(row,['functionId','signatureHash','upper','digest']);
+    check(hash(row.functionId) && hash(row.signatureHash) && hash(row.digest));
+    record(row.upper,['parameters','local']); record(row.upper.local,flags);
+    check(flags.every(flag => typeof row.upper.local[flag] === 'boolean'));
+    check(Array.isArray(row.upper.parameters) && row.upper.parameters.length <= 8);
+    for (const p of row.upper.parameters) {
+      record(p,['index',...flags]);
+      check(Number.isInteger(p.index) && !Object.is(p.index,-0) && p.index >= 0 && p.index <= 7
+        && flags.every(flag => typeof p[flag] === 'boolean'));
+    }
+  }
+}
+function publication(hir, context) {
+  arrayCallBudget(context); shape(context);
+  const functions = [...hir.functions].sort((a,b) => compare(a.id,b.id)), records = new Map();
+  check(context.contracts.length === functions.length,'identity');
+  for (const [index,row] of context.contracts.entries()) {
+    const fn = functions[index];
+    check(row.functionId === fn.id && row.signatureHash === fn.signatureHash,'identity');
+    const slots = fn.parameters.flatMap((p,i) => p.type === arrayTypeId ? [i] : []);
+    check(row.upper.parameters.length === slots.length
+      && slots.every((slot,i) => row.upper.parameters[i].index === slot),'identity');
+    const {digest,...body} = row;
+    check(digest === sha256('tsfg.array-published-contract.v1\0' + canonical(body)),'identity');
+    records.set(fn.id,row);
+  }
+  const scope = {profile:'array-owner-relative-fixed-v1',rootFile:hir.rootFile,
+    functions:functions.map(fn => ({functionId:fn.id,name:fn.name,sourcePath:fn.sourcePath,
+      signatureHash:fn.signatureHash,parameterTypes:fn.parameters.map(p => p.type === arrayTypeId ? 'array.f64' : scalarName(p.type)),
+      returnType:'f64'})),exports:hir.exports.map(row => ({name:row.name,functionId:row.functionId}))};
+  const scopeDigest = sha256('tsfg.array-call-scope.v1\0' + canonical(scope));
+  check(context.scopeDigest === scopeDigest && context.expectedDigest === sha256('tsfg.array-publication.v1\0'
+    + canonical({scopeDigest,contracts:context.contracts})),'identity');
+  return {records,scopeDigest};
+}
+export function prepareArrayCalls(hir, context) {
+  const {records,scopeDigest} = publication(hir,context);
+  const {ownerModel,...flow} = analyzeArrayOwnerAccesses(hir,records,arrayCallFailure);
+  /** @type {Map<string,any>} */
+  const byId = new Map(flow.functions.map(row => [row.functionId,row]));
+  // All Effective coverage runs in original Source order, not FunctionId order.
+  for (const fn of hir.functions) {
+    const effective = byId.get(fn.id).effective, upper = records.get(fn.id).upper;
+    const violate = facet => arrayCallFailure('contract',{functionId:fn.id,facet,primary:{sourceId:fn.sourcePath,...fn.range}});
+    for (const p of upper.parameters) for (const flag of flags) {
+      const key = flag === 'read' ? 'reads' : flag === 'write' ? 'writes' : 'structural';
+      if (!p[flag] && effective[key].some(owner => owner.kind === 'parameter' && owner.index === p.index
+        && owner.functionId === fn.id)) violate('parameter:' + p.index + ':' + flag);
+    }
+    for (const flag of flags) {
+      const key = flag === 'read' ? 'reads' : flag === 'write' ? 'writes' : 'structural';
+      if (!upper.local[flag] && effective[key].some(owner => owner.kind !== 'parameter')) violate('local:' + flag);
+    }
+  }
+  return {records,scopeDigest,publishedDigest:context.expectedDigest,flow,ownerModel};
+}

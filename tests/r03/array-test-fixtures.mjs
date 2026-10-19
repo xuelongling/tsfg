@@ -25,16 +25,80 @@ export async function pinned(file, length, digest) {
   assert.equal(jcs(JSON.parse(bytes.toString())) + "\n", bytes.toString());
   return JSON.parse(bytes.toString());
 }
+/** Frozen values remain data: adapters project their prior test interface only. */
+/** @type {Promise<any> | undefined} */
+let old18Promise;
+/** @returns {Promise<any>} */
+export function old18Oracle() {
+  return old18Promise ??= pinned('./array-readspan-old18-v4-oracle.json',4176673,
+    'd486953d5fe2179188778d04e72261b405722619ce477ba1802bcf4930961228').then(value=>{
+    assert.equal(value.family,'tsfg.readspan-old18-independent-oracle');assert.equal(value.version,4);
+    assert.equal(value.contractSHA256,'f7dd26e2d3929d718dcf6fd930436b0b0d2c602a67c1e165badd9173ceabcc73');
+    assert.equal(value.cases.length,18);
+    assert.equal(new Set(value.cases.map(c=>c.name)).size,18);
+    for(const row of value.cases){
+      assert.equal(row.provenance.productionConverterImported,false);
+      assert.equal(row.provenance.productionV4Observed,false);
+      assert.deepEqual(row.official.diagnostics,{syntax:0,semantic:0,program:0,global:0});
+      for(const key of ['requestText','packageText'])assert.equal(jcs(JSON.parse(row[key]))+'\n',row[key]);
+      assert.equal(JSON.parse(row.requestText).version,4);
+      const packet=JSON.parse(row.packageText);assert.equal(packet.version,4);
+      assert.equal(packet.payload.declarations.version,'minimal-arrays-v3');
+      const dts=packet.payload.files.find(f=>f.path.endsWith('/minimal-arrays-v3.d.ts'));assert.ok(dts);
+      assert.equal(dts.byteLength,484);assert.equal(dts.utf16Length,484);
+      assert.equal(dts.sha256,'282b335a6e0e0493fa74a3c1dd56f234f8c679079acdaf0600cefb8306c26415');
+      assert.equal(row.hir.format.version,4);assert.equal(row.hir.types.length,4);
+      assert.equal(row.hir.types[3].name,'ReadSpan');assert.equal(row.hir.types[3].readonly,true);
+      assert.ok(!Object.hasOwn(row.hir,'readSpanPlan'),'passive metadata is not an actual view');
+    }
+    return value;
+  });
+}
+/** @returns {Promise<any>} */
+export async function callOracle() {
+  const value=await old18Oracle(),cases=value.cases.filter(c=>c.group==='owner10');
+  assert.equal(cases.length,10);return {...value,cases};
+}
+/** @returns {Promise<any>} */
+export async function hirOracle() {
+  const legacy=await pinned('./array-hir-oracle-v3.json',202173,'fb963bb30f4e4f818afa43cecf649e25c42159434d501145c79d8f3266ff62ff');
+  const rows=(await old18Oracle()).cases.filter(c=>c.group==='old8');assert.equal(rows.length,8);
+  return {typePreimages:[...legacy.typePreimages,{name:'readspan',
+    id:'sha256:6130247c334f8a7ba10e89f40381e26b0877d57f96860df21befbe668bb6545e',
+    preimageUtf8Hex:Buffer.from('tsfg.type\0ReadSpan<f64>').toString('hex')}],
+    cases:rows.map((row,i)=>{
+      assert.equal(row.name,legacy.cases[i].name);
+      const hirText=jcs(row.hir)+'\n';
+      return {name:row.name,expectedHir:row.hir,context:row.factsContext,hirText,
+        hirBytes:Buffer.byteLength(hirText),hirSHA256:sha(hirText),
+        functionPreimages:legacy.cases[i].functionPreimages,
+        rangeWitnesses:legacy.cases[i].rangeWitnesses.map(w=>({...w,sourcePath:w.sourcePath.replace('/minimal-arrays-v2.d.ts','/minimal-arrays-v3.d.ts')}))};
+    })};
+}
 /** @returns {Promise<any[]>} */
 export async function fixtures() {
-  const f = await pinned('./array-facts-oracle-v3.json', 71746, '9c9196bc99064a3af85cda33f921705b14ea412ff8641eb3944d6bc0744b4b9e');
-  const h = await pinned('./array-hir-oracle-v3.json', 202173, 'fb963bb30f4e4f818afa43cecf649e25c42159434d501145c79d8f3266ff62ff');
-  assert.equal(f.cases.length, 8); assert.equal(h.cases.length, 8);
-  return f.cases.map((c, i) => {
-    assert.equal(c.name, h.cases[i].name);
-    const packet = JSON.parse(c.packageText), request = JSON.parse(c.requestText);
-    return {facts:{...c, package:packet, request, rangeAudit:rangeAudit(packet.payload)}, hir:h.cases[i]};
+  const all=(await old18Oracle()).cases.filter(c=>c.group==='old8'),h=await hirOracle();
+  assert.equal(all.length,8);
+  return all.map((c,i)=>{
+    assert.equal(c.name,h.cases[i].name);
+    const packet=JSON.parse(c.packageText),request=JSON.parse(c.requestText);
+    const facts={...c,package:packet,request,rangeAudit:rangeAudit(packet.payload),
+      packageBytes:Buffer.byteLength(c.packageText),packageSHA256:sha(c.packageText),
+      requestBytes:Buffer.byteLength(c.requestText),requestSHA256:sha(c.requestText)};
+    return {facts,hir:h.cases[i]};
   });
+}
+/** @returns {Promise<any>} */
+export async function coreOracle() {
+  const value=await pinned('./array-readspan-core-v4-oracle.json',333685,
+    '52b347c10121ecca06ee26f1dec48577f35d044c31a505a426ab9f37b54ba231');
+  const legacy=await pinned('./array-core-oracle-v3.json',122335,'44c460f568aebd9dba7b25dab00857a47fe431a3f7cc4679a6d1d09a427552d5');
+  const h=await hirOracle();assert.equal(value.cases.length,8);assert.equal(value.format.version,4);
+  return {...value,quoteVectors:legacy.quoteVectors,jcsPreimageVectors:legacy.jcsPreimageVectors,
+    additionalIndependentPreimages:legacy.additionalIndependentPreimages,cases:value.cases.map((c,i)=>{
+      assert.equal(c.name,h.cases[i].name);
+      return {...c,hirBytes:h.cases[i].hirBytes,hirSHA256:h.cases[i].hirSHA256};
+    })};
 }
 /** Ranges come only from pre-production expected facts, never a producer result.
  * @param {any} payload @returns {any[]} */
@@ -49,7 +113,7 @@ function rangeAudit(payload) {
     }
     for (const child of Object.values(value)) walk(child, sourcePath);
   }
-  walk(payload.types,payload.rootFile); walk(payload.arrayLength,payload.rootFile); walk(payload.functions,payload.rootFile);
+  walk(payload.types,payload.rootFile); walk(payload.arrayLength,payload.rootFile); walk(payload.readSpanLength,payload.rootFile); walk(payload.readSpanIntrinsic,payload.rootFile); walk(payload.functions,payload.rootFile);
   return result;
 }
 /** @param {any} row @param {Uint8Array} [bytes] @returns {any} */
@@ -87,10 +151,10 @@ export function trustedHirError(row, error, kind) {
 /** @param {any} packet @returns {any} */
 export function reframeFacts(packet) {
   const p = packet.payload;
-  const request = {family:"tsfg.array-facts-request-candidate",version:3,input:{sourceRoot:p.sourceRoot,rootFile:p.rootFile,
+  const request = {family:"tsfg.array-facts-request-candidate",version:4,input:{sourceRoot:p.sourceRoot,rootFile:p.rootFile,
     files:p.files.map(f => ({path:f.path,content:f.content,sha256:f.sha256})),declarations:p.declarations,config:p.config}};
-  packet.requestId = "sha256:" + sha("tsfg.array-facts.request.v3\0" + jcs(request) + "\n");
-  packet.packageId = "sha256:" + sha("tsfg.array-facts.package.v3\0" + packet.schemaHash + "\0" + jcs(p));
+  packet.requestId = "sha256:" + sha("tsfg.array-facts.request.v4\0" + jcs(request) + "\n");
+  packet.packageId = "sha256:" + sha("tsfg.array-facts.package.v4\0" + packet.schemaHash + "\0" + jcs(p));
   return packet;
 }
 

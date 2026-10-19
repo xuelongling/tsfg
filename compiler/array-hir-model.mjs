@@ -3,15 +3,15 @@
 import { isProxy } from 'node:util/types';
 import descriptor from '../contracts/array-hir-candidate.schema.json' with { type: 'json' };
 import bytecode from '../contracts/bytecode.schema.json' with { type: 'json' };
-import { canonical, own, sha256, scalarTypeIds, functionIdentity, signatureHash } from './identity.mjs';
-import { copyGenericJsonBytes, readGenericJson, checkGenericJsonValueBudget } from './generic-json.mjs';
+import { canonical, own, sha256, scalarTypeIds, functionIdentity, signatureHash, arrayTypeId, readSpanTypeId } from './identity.mjs';
+import { copyGenericJsonBytes, checkGenericJsonValueBudget } from './generic-json.mjs';
 import { readArrayFactsCandidate } from './array-facts.mjs';
 import { arrayFactsLimits } from './array-facts-model.mjs';
 
-const schemaHash = 'sha256:450e3589f766096acd9f74c679566b7b7d5a986a2dfe2fd0ef9162eb47aeb49d';
-export const arrayHirFormat = own({ family: 'tsfg.array-hir-candidate', version: 3, schemaHash });
+const schemaHash = 'sha256:26d40f9811b96997dc0a531e4956b1f4b64aaa3cbae65a25e8aee9a65f24fdbd';
+export const arrayHirFormat = own({ family: 'tsfg.array-hir-candidate', version: 4, schemaHash });
 export const arrayHirType = own({ kind: 'managedReference', name: 'Array',
-  elementType: scalarTypeIds.f64, id: sha256('tsfg.type\0Array<f64>') });
+  elementType: scalarTypeIds.f64, id: arrayTypeId });
 const target = own(bytecode.target), policy = arrayFactsLimits;
 const valuePolicy = Object.freeze({ ...policy, bytes: policy.bytes - 1 });
 
@@ -55,12 +55,19 @@ export function readArrayFactsContext(context) {
   return { bytes, facts };
 }
 function reference(value) {
-  return { kind: 'reference', type: value.flowType === 'array.f64' ? arrayHirType.id : scalarTypeIds[value.flowType],
+  return { kind: 'reference', type: value.flowType === 'array.f64' ? arrayHirType.id : value.flowType === 'readspan.f64' ? readSpanTypeId : scalarTypeIds[value.flowType],
     binding: value.binding, range: { ...value.range } };
 }
 function expression(value, headers) {
   if (value.kind === 'reference') return reference(value);
   const span = { ...value.range };
+  if (value.kind === 'readSpanCreate') return {kind:'readSpanCreateChecked',type:readSpanTypeId,range:span,
+    intrinsic:value.intrinsic,calleeRange:{...value.calleeRange},receiver:reference(value.array),
+    start:expression(value.start,headers),length:expression(value.length,headers)};
+  if (value.kind === 'checkedReadSpanAccess') return {kind:'readSpanReadChecked',type:scalarTypeIds.f64,
+    range:span,receiver:reference(value.view),index:expression(value.index,headers)};
+  if (value.kind === 'readSpanLength') return {kind:'readSpanLength',type:scalarTypeIds.u32,range:span,
+    receiver:reference(value.view),property:value.property,nameRange:{...value.nameRange}};
   if (value.kind === 'directCall') {
     const fn = headers.get(value.callee);
     return {kind:'arrayDirectCall',type:scalarTypeIds.f64,range:span,calleeRange:{...value.calleeRange},
@@ -100,12 +107,12 @@ export function projectArrayFacts(facts) {
         if (statement.kind === 'variable') {
           const binding = bindings.get(statement.binding);
           return {kind:'local',range:{...statement.range},binding:{id:binding.id,name:binding.name,
-            type:arrayHirType.id,writable:false,range:{...binding.declarationRange},nameRange:{...binding.nameRange},
+            type:binding.declaredType === 'readspan.f64' ? readSpanTypeId : arrayHirType.id,writable:false,range:{...binding.declarationRange},nameRange:{...binding.nameRange},
             annotationRange:binding.annotationRange === null ? null : {...binding.annotationRange},
             elementAnnotationRange:binding.elementAnnotationRange === null ? null : {...binding.elementAnnotationRange}},
             initializer:expression(statement.initializer, headers)};
         }
-        if (statement.kind === 'call') return {kind:'expression',range:{...statement.range},expression:expression(statement.value, headers)};
+        if (statement.kind === 'call' || statement.kind === 'readSpanUse') return {kind:'expression',range:{...statement.range},expression:expression(statement.value, headers)};
         if (statement.kind === 'return') return {kind:'return',range:{...statement.range},value:expression(statement.value, headers)};
         return {kind:statement.kind === 'elementAssignment' ? 'arrayStoreDenseChecked' : 'arrayResizeChecked',
           range:{...statement.range},expressionRange:{...statement.expressionRange},operatorRange:{...statement.operatorRange},
@@ -116,13 +123,17 @@ export function projectArrayFacts(facts) {
   const types = payload.types.map(type => {
     const origin = {sourcePath:type.sourcePath,declarationRange:{...type.declarationRange},nameRange:{...type.nameRange}};
     return type.id === 'array.f64' ? {...arrayHirType,...origin,indexSignatureRange:{...type.indexSignatureRange}}
+      : type.id === 'readspan.f64' ? {id:readSpanTypeId,kind:'view',name:'ReadSpan',elementType:scalarTypeIds.f64,
+        readonly:true,...origin,indexSignatureRange:{...type.indexSignatureRange}}
       : {id:scalarTypeIds[type.id],kind:'scalar',name:type.id,...origin};
   });
   return {format:{...arrayHirFormat},inputIdentity:facts.packageId,
-    facts:{version:3,schemaHash:facts.schemaHash,requestId:facts.requestId},rootFile:payload.rootFile,
+    facts:{version:4,schemaHash:facts.schemaHash,requestId:facts.requestId},rootFile:payload.rootFile,
     sources:payload.files.map(file => ({path:file.path,content:file.content,hash:'sha256:'+file.sha256})),
     target:{...target},types,arrayLength:{...payload.arrayLength,ownerType:arrayHirType.id,writeType:scalarTypeIds.u32,
       declarationRange:{...payload.arrayLength.declarationRange},nameRange:{...payload.arrayLength.nameRange},typeRange:{...payload.arrayLength.typeRange}},
+    readSpanLength:{...payload.readSpanLength,ownerType:readSpanTypeId,readType:scalarTypeIds.u32},
+    readSpanIntrinsic:{...payload.readSpanIntrinsic},
     functions,exports:payload.exports.map(item => ({name:item.name,functionId:functionIds.get(item.functionId)}))};
 }
 function projectionBudget(hir) {
@@ -139,7 +150,7 @@ function projectionBudget(hir) {
     let locals = 0, mutations = 0, calls = 0, expressions = 0;
     const scanCalls = value => {
       if (!value || typeof value !== 'object') return;
-      if (value.kind === 'arrayDirectCall') check(++calls <= 32, 'limit');
+      if (value.kind === 'arrayDirectCall' || value.kind === 'readSpanCreateChecked') check(++calls <= 32, 'limit');
       Object.values(value).forEach(scanCalls);
     };
     scanCalls(fn.body);
@@ -174,23 +185,11 @@ function matchProjection(value, expected, sourcePath, primary = undefined) {
   if (Object.keys(value).length !== keys.length || keys.some(key => !Object.hasOwn(value, key))) fail();
   for (const key of keys) matchProjection(value[key], expected[key], sourcePath, primary);
 }
-export function verifyArrayHir(hir, context) {
-  const { facts } = readArrayFactsContext(context);
+export function checkArrayHirInput(hir) {
   try { checkGenericJsonValueBudget(hir, valuePolicy); }
   catch (cause) { arrayHirFailure(cause?.code?.endsWith('-limit') ? 'limit' : 'invalid', cause); }
   projectionBudget(hir);
-  const expected = projectArrayFacts(facts);
-  matchProjection(hir, expected, facts.payload.rootFile);
-  return own(hir);
 }
-export function readArrayHir(bytes, context) {
-  readArrayFactsContext(context);
-  let input;
-  try { input = readGenericJson(copyGenericJsonBytes(bytes, policy), policy); }
-  catch (cause) {
-    arrayHirFailure(cause?.code?.endsWith('-limit') ? 'limit'
-      : cause?.code?.endsWith('-canonical') ? 'canonical' : 'invalid', cause);
-  }
-  const hir = verifyArrayHir(input.value, context);
-  check(input.text === canonical(hir) + '\n', 'canonical'); return hir;
+export function matchArrayHir(hir, expected) {
+  matchProjection(hir,expected,expected.rootFile);
 }

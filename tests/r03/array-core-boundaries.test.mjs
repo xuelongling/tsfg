@@ -4,7 +4,7 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import { readFile } from 'node:fs/promises';
 import { lowerHir, verifyHir, printHir, readHir } from '../../compiler/hir.mjs';
-import { fixtures, fresh, context, failure, hirError, trustedHirError, pinned, sha } from './array-test-fixtures.mjs';
+import { fixtures, fresh, context, failure, hirError, trustedHirError, coreOracle, sha } from './array-test-fixtures.mjs';
 
 // Keep this standard prototype-conversion recipe local so Core adversarial input
 // shapes can evolve without changing the qualified HIR boundary suite. Successful
@@ -17,7 +17,7 @@ function nullRecords(value) {
 }
 /** @returns {Promise<any>} */
 async function oracle() {
-  return pinned('./array-core-oracle-v3.json',122335,'44c460f568aebd9dba7b25dab00857a47fe431a3f7cc4679a6d1d09a427552d5');
+  return coreOracle();
 }
 
 test('25c repeated owned output and offset context views preserve complete inputs and every Core byte',async t=>{
@@ -134,7 +134,7 @@ test('25c existing upstream limits remain exact before Core emission',async t=>{
   });
 });
 
-// The v3 8MiB producer output guard is STATIC-ONLY here: no valid-input overflow
+// The private4 8MiB producer output guard is STATIC-ONLY here: no valid-input overflow
 // witness is established. Parameter and mutation accounting need their own proof;
 // never weaken input verification to manufacture an output overflow witness.
 

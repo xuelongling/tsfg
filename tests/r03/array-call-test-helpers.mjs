@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: MIT
 // Test-owned recipes only: hostile inputs are re-signed, never promoted to successful oracles.
 import assert from 'node:assert/strict';
-import { readFile } from 'node:fs/promises';
+import { callOracle } from './array-test-fixtures.mjs';
 import { createHash } from 'node:crypto';
 
 /** @param {any} value @returns {string} */
@@ -19,17 +19,7 @@ export const wire = value => Buffer.from(canonical(value) + '\n');
 export const arrayType = 'sha256:74dab77c8fbdacf6cf058e37cac033757417c808d57ee23a9c8866565202cb68';
 export const bogusHash = 'sha256:' + '0'.repeat(64);
 
-const allRows = readFile(new URL('./array-call-oracle.json', import.meta.url), 'utf8').then(text => {
-  const value = JSON.parse(text);
-  assert.equal(value.family, 'tsfg.array-call-independent-oracle');
-  assert.equal(value.version, 1);
-  assert.deepEqual(value.contractPin, {
-    bytes: 160079, sha256: 'f58dcc0f7e75c5ae739f7d2455815799f18e2c7a582d8aa7138276d862a246de',
-  });
-  assert.ok(Array.isArray(value.cases) && value.cases.length > 0, 'independent cases are required');
-  assert.equal(new Set(value.cases.map(row => row.name)).size, value.cases.length);
-  return value.cases;
-});
+const allRows = callOracle().then(value => value.cases);
 /** @param {string} name @returns {Promise<any>} */
 export async function fixture(name) {
   const row = (await allRows).find(item => item.name === name);
@@ -118,13 +108,13 @@ export function deeplyFrozen(value) {
 /** @param {any} value @returns {any} */
 export function reframe(value) {
   const p = value.payload;
-  const request = { family: 'tsfg.array-facts-request-candidate', version: 3, input: {
+  const request = { family: 'tsfg.array-facts-request-candidate', version: 4, input: {
     sourceRoot: p.sourceRoot, rootFile: p.rootFile,
     files: p.files.map(({ path, content, sha256 }) => ({ path, content, sha256 })),
     declarations: p.declarations, config: p.config,
   } };
-  value.requestId = hash('tsfg.array-facts.request.v3\0' + canonical(request) + '\n');
-  value.packageId = hash('tsfg.array-facts.package.v3\0' + value.schemaHash + '\0' + canonical(p));
+  value.requestId = hash('tsfg.array-facts.request.v4\0' + canonical(request) + '\n');
+  value.packageId = hash('tsfg.array-facts.package.v4\0' + value.schemaHash + '\0' + canonical(p));
   return value;
 }
 /** @param {any} context @returns {any} */

@@ -118,7 +118,7 @@ test('25d mutation and parameter HIR budgets are checked before projection equal
   });
 });
 
-test('25d active v3 paths reject old v1 facts and HIR with no compatibility route',async()=>{
+test('25d active private4 paths still reject old v1 facts and HIR with no compatibility route',async()=>{
   const rows=await fixtures(),row=rows[0];
   const oldFacts=JSON.parse(await readFile(new URL('./array-facts-oracle-v1.json',import.meta.url),'utf8')).cases[0];
   factsFailure(failure(()=>readArrayFactsCandidate(Buffer.from(oldFacts.packageText))),'schema');
@@ -126,4 +126,17 @@ test('25d active v3 paths reject old v1 facts and HIR with no compatibility rout
   trustedHirError(row,failure(()=>verifyHir(oldHir.expectedHir,context(row))),'invalid');
   trustedHirError(row,failure(()=>readHir(Buffer.from(oldHir.hirText),context(row))),'invalid');
   const result=buildHir(oldFacts.package,context(row));assert.equal(result.status,'error');
+});
+
+test('26a active private4 routes explicitly retire original private3 facts and HIR',async()=>{
+  const row=(await fixtures())[0];
+  const oldFacts=JSON.parse(await readFile(new URL('./array-facts-oracle-v3.json',import.meta.url),'utf8')).cases[0];
+  assert.equal(JSON.parse(oldFacts.packageText).version,3);
+  factsFailure(failure(()=>readArrayFactsCandidate(Buffer.from(oldFacts.packageText))),'schema');
+  factsFailure(failure(()=>writeArrayFactsCandidate(JSON.parse(oldFacts.packageText))),'schema');
+  const oldHir=JSON.parse(await readFile(new URL('./array-hir-oracle-v3.json',import.meta.url),'utf8')).cases[0];
+  assert.equal(oldHir.expectedHir.format.version,3);
+  trustedHirError(row,failure(()=>verifyHir(oldHir.expectedHir,context(row))),'invalid');
+  trustedHirError(row,failure(()=>readHir(Buffer.from(oldHir.hirText),context(row))),'invalid');
+  assert.equal(buildHir(JSON.parse(oldFacts.packageText),context(row)).status,'error');
 });

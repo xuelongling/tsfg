@@ -1,18 +1,18 @@
 // SPDX-License-Identifier: MIT
-// Every complete expected value was constructed before any 23e production observation.
+// Private4 migration expectations were independently frozen before Product4 observation.
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { readFile } from 'node:fs/promises';
 import { readArrayFactsCandidate,writeArrayFactsCandidate } from '../../compiler/array-facts.mjs';
 import { buildHir,verifyHir,printHir,readHir,lowerHir,analyzeArrayCalls,verifyArrayCalls,printArrayCalls,readArrayCalls } from '../../compiler/hir.mjs';
-import { canonical,fresh,factsContext,caught,deeplyFrozen } from './array-call-test-helpers.mjs';
-const oraclePromise=readFile(new URL('./array-call-oracle.json',import.meta.url),'utf8').then(JSON.parse);
+import { canonical,fresh,factsContext,caught,deeplyFrozen,analysisError } from './array-call-test-helpers.mjs';
+import { callOracle,pinned } from './array-test-fixtures.mjs';
+const oraclePromise=callOracle();
 test('23e ten independent complete Source packets and typed HIR preserve every source field',async t=>{
   const oracle=await oraclePromise;
-  assert.equal(oracle.family,'tsfg.array-call-independent-oracle');assert.equal(oracle.version,1);assert.equal(oracle.cases.length,10);
+  assert.equal(oracle.family,'tsfg.readspan-old18-independent-oracle');assert.equal(oracle.version,4);assert.equal(oracle.cases.length,10);
   for(const row of oracle.cases)await t.test(row.name,()=>{
-    assert.equal(row.provenance.productImported,false);assert.equal(row.provenance.productionOutputSampled,false);
-    assert.deepEqual(row.provenance.official.diagnostics,{syntax:0,semantic:0,program:0,global:0});
+    assert.equal(row.provenance.productionConverterImported,false);assert.equal(row.provenance.productionV4Observed,false);
+    assert.deepEqual(row.official.diagnostics,{syntax:0,semantic:0,program:0,global:0});
     const bytes=Buffer.from(row.packageText),before=Buffer.from(bytes),packet=JSON.parse(row.packageText),ctx=factsContext(row);
     const facts=readArrayFactsCandidate(bytes);assert.deepEqual(facts,packet);deeplyFrozen(facts);
     assert.deepEqual(writeArrayFactsCandidate(facts),bytes);
@@ -49,4 +49,15 @@ test('23e new parameter, call and final-return shapes refuse narrow Core lowerin
     for(const[key,value]of Object.entries(row.coreError))assert.deepEqual(error[key],value,key);
     assert.deepEqual(input,before);
   });
+});
+
+test('26a private4 rejects the original analysis1 report without a compatibility route',async()=>{
+  const legacy=await pinned('./array-call-oracle.json',2832880,
+    '0d9c564d955f8435802254c84b52681a10472c7d920fad149798f09ba3fbea49');
+  const old=legacy.cases.find(c=>c.name==='first-touch-alias');assert.ok(old);
+  assert.equal(old.analysis.format.version,1);
+  const row=(await callOracle()).cases.find(c=>c.name===old.name);assert.ok(row);
+  for(const action of [()=>verifyArrayCalls(fresh(old.analysis),fresh(row.hir),factsContext(row),fresh(row.context)),
+    ()=>readArrayCalls(Buffer.from(canonical(old.analysis)+'\n'),fresh(row.hir),factsContext(row),fresh(row.context))])
+    analysisError(caught(action),'report');
 });

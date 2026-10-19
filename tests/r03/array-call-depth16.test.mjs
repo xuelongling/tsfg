@@ -7,16 +7,19 @@ import { readArrayFactsCandidate,writeArrayFactsCandidate } from '../../compiler
 import { buildHir,verifyHir,printHir,readHir,lowerHir,analyzeArrayCalls,verifyArrayCalls,printArrayCalls,readArrayCalls } from '../../compiler/hir.mjs';
 import { canonical,hash,fresh,factsContext,caught,deeplyFrozen } from './array-call-test-helpers.mjs';
 // Root fills only this independently generated fixture pin after qualified builder execution.
-const fixturePin={bytes:62607,sha256:'e24750337f8658a08b87c79adc76c43559a347beae9709d5e9260db7bc3929c5'};
-const frozen=readFile(new URL('./depth16-call-oracle.json',import.meta.url)).then(bytes=>{
+const fixturePin={bytes:67017,sha256:'17ab672247b589232d1daaedc5bdf9c87dff3abe74262404cd472f9c1701a0c9'};
+const frozen=readFile(new URL('./depth16-call-oracle-v4.json',import.meta.url)).then(bytes=>{
   assert.equal(bytes.length,fixturePin.bytes);assert.equal(hash(bytes),'sha256:'+fixturePin.sha256);
   const row=JSON.parse(bytes.toString('utf8'));
   assert.equal(canonical(row)+'\n',bytes.toString('utf8'));
-  assert.equal(row.family,'tsfg.array-call-depth16-independent-oracle');assert.equal(row.version,1);assert.equal(row.name,'forward-chain16');
-  assert.deepEqual(row.contractPin,{bytes:160079,sha256:'f58dcc0f7e75c5ae739f7d2455815799f18e2c7a582d8aa7138276d862a246de'});
-  assert.deepEqual(row.sourceBundlePin,{bytes:15967,sha256:'44c76c191a4f1e819595160b8e63bf10fb94fa9847966fca95338b59fe20bf34'});
+  assert.equal(row.family,'tsfg.array-call-depth16-independent-oracle');assert.equal(row.version,4);assert.equal(row.name,'forward-chain16');
+  assert.deepEqual(row.contractPin,{bytes:257929,sha256:'f7dd26e2d3929d718dcf6fd930436b0b0d2c602a67c1e165badd9173ceabcc73'});
+  assert.deepEqual(row.sourceBundlePin,{bytes:18326,sha256:'dc3879d5e1c6aca40e38a943263e0166e12b1a82080a8a479f7e523a9f6705f5'});
   assert.equal(row.provenance.productImported,false);assert.equal(row.provenance.productionOutputSampled,false);
   assert.deepEqual(row.provenance.official.diagnostics,{syntax:0,semantic:0,program:0,global:0});
+  assert.equal(row.hir.format.version,4);assert.equal(row.analysis.format.version,4);
+  assert.equal(row.hir.types.length,4);assert.equal(row.hir.types[3].readonly,true);
+  assert.equal(row.provenance.official.sourceRangeRoles,95);
   return row;
 });
 

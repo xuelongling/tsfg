@@ -5,7 +5,8 @@ import { analyzeModuleCallableCalls } from './module-callable-publication.mjs';
 import { analyzeVerifiedModuleCalls, checkCallEffectsInputs, callEffectsFailure, verifyKernelHostSemantics } from './call-effects.mjs';
 export { KernelHostSemanticError } from './call-effects.mjs';
 import { verifyStringHir } from './string-hir-model.mjs';
-import { isArrayFactsContext, verifyArrayHir } from './array-hir-model.mjs';
+import { isArrayFactsContext } from './array-hir-model.mjs';
+import { verifySelectedArrayHir as verifyArrayHir } from './array-hir.mjs';
 import { verifyExceptionHir } from './exception-hir.mjs';
 import { verifyNullableHir } from './nullable-hir.mjs';
 import { verifyClosureHir } from './closure-hir.mjs';
@@ -164,6 +165,7 @@ function noShortIf(statement) {
 
 /** @param {any} hir @param {any} [factsContext] @param {any} [callPublicationContext] */
 export function verifyHir(hir, factsContext = undefined, callPublicationContext = undefined) {
+  if (isArrayFactsContext(factsContext)) return verifyArrayHir(hir,factsContext,callPublicationContext);
   if (callPublicationContext === undefined) return verifyWholeHir(hir, factsContext);
   return selectedModuleCalls(hir, factsContext, callPublicationContext).hir;
 }

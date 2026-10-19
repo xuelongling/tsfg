@@ -2,7 +2,7 @@
 // Complete cold flat functions and direct DAG calls; parameter roots never imply disjoint storage.
 import { arrayCheck as check, arrayRecord as record, list, digest, range, nameAt,
   originIdentity, window, compact, lineBreak, arrayIndexDecimal } from './array-facts-common.mjs';
-import { binding, reference, literal, element, scalar, integer, lengthTarget, floating } from './array-facts-expressions.mjs';
+import { binding, reference, literal, element, scalar, integer, lengthTarget, floating, readSpanCreate, readSpanElement, readSpanLength } from './array-facts-expressions.mjs';
 
 function parameters(fn, source, ids, names) {
   const known = new Map(); let end = fn.nameRange.end;
@@ -37,14 +37,18 @@ function terminate(statement, expression, next, source) {
   check(tail === '' || tail === ';', 'input');
   if (!tail && next) check(lineBreak(source.content.slice(expression.end, next.range.start)), 'input');
 }
-function variable(statement, row, fn, source, known, sites, count) {
+function variable(statement, row, fn, source, known, sites, count, viewContext) {
   record(statement, ['kind','binding','range','initializer']);
   check(statement.binding === row.id, 'input'); binding(row, fn, source, known);
   check(statement.range.start < row.declarationRange.start && row.declarationRange.end <= statement.range.end
     && row.declarationRange.start === row.nameRange.start
     && /^const\s+$/.test(window(source.content, statement.range.start, row.nameRange.start)), 'input');
   const init = statement.initializer;
-  if (init?.kind === 'arrayLiteral') {
+  if (row.declaredType === 'readspan.f64') {
+    if (init?.kind === 'readSpanCreate') readSpanCreate(init,row.declarationRange,source,known,
+      viewContext.params,viewContext.intrinsic,viewContext.lexicalNames,viewContext.headers);
+    else reference(init,row.declarationRange,source,known,'readspan.f64');
+  } else if (init?.kind === 'arrayLiteral') {
     check(row.annotationRange !== null, 'input'); literal(init, row.declarationRange, source, sites, count);
   } else reference(init, row.declarationRange, source, known);
   check(row.nameRange.end <= init.range.start && row.declarationRange.end === init.range.end, 'input');
@@ -155,10 +159,15 @@ export function validateArrayFunctions(payload, source) {
       let expression;
       if (statement.kind === 'variable') {
         check(index < body.length - 1 && localIndex < bindings.length, 'input');
-        const row = bindings[localIndex++]; expression = variable(statement, row, fn, source, known, sites, count);
+        const row = bindings[localIndex++]; expression = variable(statement, row, fn, source, known, sites, count,
+          {params,intrinsic:payload.readSpanIntrinsic,lexicalNames,headers});
         check(!ids.has(row.id) && !localNames.has(row.name), 'identity'); ids.add(row.id); localNames.add(row.name);
-        const init = statement.initializer, owner = init.kind === 'arrayLiteral' ? init.allocationSite : owners.get(init.binding);
-        owners.set(row.id, owner); if (init.kind === 'arrayLiteral') lengths.set(owner, init.elements.length);
+        const init = statement.initializer;
+        if (init.kind === 'readSpanCreate') check(++calls <= 32, 'limit');
+        if (row.declaredType === 'array.f64') {
+          const owner = init.kind === 'arrayLiteral' ? init.allocationSite : owners.get(init.binding);
+          owners.set(row.id, owner); if (init.kind === 'arrayLiteral') lengths.set(owner, init.elements.length);
+        }
         known.set(row.id, row);
       } else if (statement.kind === 'return') {
         record(statement, ['kind','range','value']); check(index === body.length - 1, 'input');
@@ -173,6 +182,12 @@ export function validateArrayFunctions(payload, source) {
         check(++calls <= 32 && ++expressions <= 32, 'limit');
         expression = call(statement.value, statement.range, source, headers, known, lexicalNames, params, owners, lengths, targets);
         check(statement.range.start === expression.start, 'input');
+      } else if (statement.kind === 'readSpanUse') {
+        record(statement,['kind','range','value']); check(index < body.length - 1, 'input');
+        check(++expressions <= 32, 'limit');
+        if (statement.value?.kind === 'checkedReadSpanAccess') readSpanElement(statement.value,statement.range,source,known,params);
+        else readSpanLength(statement.value,statement.range,source,known,payload.readSpanLength);
+        expression = statement.value.range; check(statement.range.start === expression.start, 'input');
       } else {
         check(index < body.length - 1, 'input'); check(++mutations <= 32 && ++expressions <= 32, 'limit');
         expression = mutation(statement, source, known, params, payload.arrayLength, owners, lengths, parameterRoots);

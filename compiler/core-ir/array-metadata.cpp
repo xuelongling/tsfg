@@ -81,10 +81,10 @@ mlir::LogicalResult marker(mlir::ModuleOp module) {
     return reject("core-ir-array-marker", "candidate marker fields differ");
   auto version = llvm::dyn_cast_or_null<mlir::IntegerAttr>(value.get("version"));
   auto facts = llvm::dyn_cast_or_null<mlir::IntegerAttr>(value.get("facts_version"));
-  if (!version || !version.getType().isSignlessInteger(32) || version.getInt() != 3 ||
-      !facts || !facts.getType().isSignlessInteger(32) || facts.getInt() != 3 ||
+  if (!version || !version.getType().isSignlessInteger(32) || version.getInt() != 4 ||
+      !facts || !facts.getType().isSignlessInteger(32) || facts.getInt() != 4 ||
       text(value, "family") != "tsfg.core-array-candidate" || text(value, "schema") != schema ||
-      text(value, "profile") != "dense-f64-params-local-alias-mutation-checked-v3")
+      text(value, "profile") != "dense-f64-array-params-local-readspan-checked-v4")
     return reject("core-ir-array-marker", "candidate marker identity differs");
   return mlir::success();
 }
@@ -111,8 +111,8 @@ mlir::LogicalResult sources(mlir::ModuleOp module, Metadata &metadata, std::stri
         return reject("core-ir-array-identity", "selected root differs");
       rootFound = true;
     } else {
-      if (!name.ends_with("/minimal-arrays-v2.d.ts") || length != 331 ||
-          identity != "sha256:6420493372913f019f64b094e181d1346afcca79e720ea85dc5e5026e03ba01e")
+      if (!name.ends_with("/minimal-arrays-v3.d.ts") || length != 484 ||
+          identity != "sha256:282b335a6e0e0493fa74a3c1dd56f234f8c679079acdaf0600cefb8306c26415")
         return reject("core-ir-array-identity", "pinned declaration source differs");
       dtsPath = name.str();
     }
@@ -124,20 +124,33 @@ mlir::LogicalResult sources(mlir::ModuleOp module, Metadata &metadata, std::stri
 }
 mlir::LogicalResult types(mlir::ModuleOp module, llvm::StringRef dtsPath) {
   auto rows = module->getAttrOfType<mlir::ArrayAttr>("tsfg_array.types");
-  if (!rows || rows.size() != 3) return reject("core-ir-array-metadata", "type origins require three rows");
-  for (unsigned index = 0; index < 3; ++index) {
+  if (!rows || rows.size() != 4) return reject("core-ir-array-metadata", "type origins require four rows");
+  const llvm::StringRef identities[] = {f64Id,arrayId,u32Id,readSpanId};
+  const llvm::StringRef kinds[] = {"scalar","managedReference","scalar","view"};
+  const llvm::StringRef names[] = {"f64","Array","u32","ReadSpan"};
+  constexpr Range declarations[] = {{293,311},{238,292},{312,330},{331,403}};
+  constexpr Range nameRanges[] = {{298,301},{248,253},{317,320},{341,349}};
+  for (unsigned index = 0; index < 4; ++index) {
     auto row = llvm::dyn_cast<mlir::DictionaryAttr>(rows[index]);
-    if (!fields(row, index != 1 ? llvm::ArrayRef<llvm::StringRef>{"id", "kind", "name", "source_path", "declaration_range", "name_range"}
-        : llvm::ArrayRef<llvm::StringRef>{"id", "kind", "name", "source_path", "declaration_range", "name_range", "element_type", "index_signature_range"}))
-      return reject("core-ir-array-metadata", "type origin fields differ");
-    if (text(row, "id") != (index == 1 ? arrayId : index == 2 ? u32Id : f64Id) || text(row, "source_path") != dtsPath ||
-        text(row, "kind") != (index == 1 ? "managedReference" : "scalar") || text(row, "name") != (index == 1 ? "Array" : index == 2 ? "u32" : "f64") ||
-        (index == 1 && text(row, "element_type") != f64Id)) return reject("core-ir-array-identity", "type identity differs");
-    Range declaration, name, signatureRange;
-    if (!span(row.get("declaration_range"), declaration) || !span(row.get("name_range"), name) ||
-        !same(declaration, index == 1 ? Range{238, 292} : index == 2 ? Range{312, 330} : Range{293, 311}) ||
-        !same(name, index == 1 ? Range{248, 253} : index == 2 ? Range{317, 320} : Range{298, 301}) ||
-        (index == 1 && (!span(row.get("index_signature_range"), signatureRange) || !same(signatureRange, {259, 274}))))
+    bool exact = index == 3
+        ? fields(row, {"id","kind","name","source_path","declaration_range","name_range","element_type","index_signature_range","readonly"})
+        : index == 1
+        ? fields(row, {"id","kind","name","source_path","declaration_range","name_range","element_type","index_signature_range"})
+        : fields(row, {"id","kind","name","source_path","declaration_range","name_range"});
+    if (!exact) return reject("core-ir-array-metadata", "type origin fields differ");
+    if (index == 3) {
+      auto readonly = llvm::dyn_cast_or_null<mlir::BoolAttr>(row.get("readonly"));
+      if (!readonly || !readonly.getValue()) return reject("core-ir-array-metadata", "ReadSpan type readonly differs");
+    }
+    if (text(row,"id") != identities[index] || text(row,"source_path") != dtsPath ||
+        text(row,"kind") != kinds[index] || text(row,"name") != names[index] ||
+        ((index == 1 || index == 3) && text(row,"element_type") != f64Id))
+      return reject("core-ir-array-identity", "type identity differs");
+    Range declaration,name,signatureRange;
+    if (!span(row.get("declaration_range"),declaration) || !span(row.get("name_range"),name) ||
+        !same(declaration,declarations[index]) || !same(name,nameRanges[index]) ||
+        ((index == 1 || index == 3) && (!span(row.get("index_signature_range"),signatureRange) ||
+          !same(signatureRange,index == 1 ? Range{259,274} : Range{355,379}))))
       return reject("core-ir-array-source", "pinned type origin ranges differ");
   }
   return mlir::success();
@@ -156,6 +169,58 @@ mlir::LogicalResult lengthProperty(mlir::ModuleOp module, llvm::StringRef path, 
   metadata.lengthProperty=sourceIdentity(path,name);
   if (text(row,"id") != metadata.lengthProperty || !metadata.bindings.insert(metadata.lengthProperty).second)
     return reject("core-ir-array-identity","length property binding differs");
+  return mlir::success();
+}
+mlir::LogicalResult readSpanLengthProperty(mlir::ModuleOp module, llvm::StringRef path, Metadata &metadata) {
+  auto row=module->getAttrOfType<mlir::DictionaryAttr>("tsfg_array.readspan_length_property");
+  if (!fields(row,{"id","kind","name","owner_type","official_type","read_type","readonly","source_path","declaration_range","name_range","type_range"}))
+    return reject("core-ir-array-metadata","ReadSpan length property fields differ");
+  auto readonly=llvm::dyn_cast_or_null<mlir::BoolAttr>(row.get("readonly"));
+  if (!readonly || !readonly.getValue()) return reject("core-ir-array-metadata","ReadSpan length readonly differs");
+  if (text(row,"kind") != "property" || text(row,"name") != "length" || text(row,"owner_type") != readSpanId ||
+      text(row,"official_type") != "number" || text(row,"read_type") != u32Id || text(row,"source_path") != path)
+    return reject("core-ir-array-identity","pinned ReadSpan length identity differs");
+  Range declaration,name,type;
+  if (!span(row.get("declaration_range"),declaration) || !span(row.get("name_range"),name) || !span(row.get("type_range"),type) ||
+      !same(declaration,{380,401}) || !same(name,{389,395}) || !same(type,{397,400}))
+    return reject("core-ir-array-source","pinned ReadSpan length ranges differ");
+  auto binding=sourceIdentity(path,name);
+  if (text(row,"id") != binding || !metadata.bindings.insert(binding).second)
+    return reject("core-ir-array-identity","ReadSpan length binding differs");
+  return mlir::success();
+}
+mlir::LogicalResult readSpanIntrinsic(mlir::ModuleOp module, llvm::StringRef path, Metadata &metadata) {
+  auto row=module->getAttrOfType<mlir::DictionaryAttr>("tsfg_array.readspan_intrinsic");
+  if (!fields(row,{"id","kind","name","source_path","declaration_range","name_range","type_parameter_range","parameters","return_type_range"}))
+    return reject("core-ir-array-metadata","ReadSpan intrinsic fields differ");
+  if (text(row,"kind") != "intrinsic" || text(row,"name") != "readSpan" || text(row,"source_path") != path)
+    return reject("core-ir-array-identity","pinned ReadSpan intrinsic identity differs");
+  Range declaration,name,typeParameter,returnType;
+  if (!span(row.get("declaration_range"),declaration) || !span(row.get("name_range"),name) ||
+      !span(row.get("type_parameter_range"),typeParameter) || !span(row.get("return_type_range"),returnType) ||
+      !same(declaration,{404,483}) || !same(name,{421,429}) || !same(typeParameter,{430,431}) || !same(returnType,{471,482}))
+    return reject("core-ir-array-source","pinned ReadSpan intrinsic ranges differ");
+  auto binding=sourceIdentity(path,name);
+  if (text(row,"id") != binding || !metadata.bindings.insert(binding).second)
+    return reject("core-ir-array-identity","ReadSpan intrinsic binding differs");
+  auto parameters=llvm::dyn_cast_or_null<mlir::ArrayAttr>(row.get("parameters"));
+  if (!parameters || parameters.size()!=3) return reject("core-ir-array-metadata","ReadSpan intrinsic requires three parameters");
+  const llvm::StringRef names[]={"owner","start","length"};
+  constexpr Range declarations[]={{433,443},{445,455},{457,468}};
+  constexpr Range nameRanges[]={{433,438},{445,450},{457,463}};
+  constexpr Range typeRanges[]={{440,443},{452,455},{465,468}};
+  for (size_t index=0;index<parameters.size();++index) {
+    auto parameter=llvm::dyn_cast<mlir::DictionaryAttr>(parameters[index]);
+    if (!fields(parameter,{"name","declaration_range","name_range","type_range"}))
+      return reject("core-ir-array-metadata","ReadSpan intrinsic parameter fields differ");
+    if (text(parameter,"name") != names[index])
+      return reject("core-ir-array-identity","ReadSpan intrinsic parameter order/name differs");
+    Range parameterDeclaration,parameterName,parameterType;
+    if (!span(parameter.get("declaration_range"),parameterDeclaration) || !span(parameter.get("name_range"),parameterName) ||
+        !span(parameter.get("type_range"),parameterType) || !same(parameterDeclaration,declarations[index]) ||
+        !same(parameterName,nameRanges[index]) || !same(parameterType,typeRanges[index]))
+      return reject("core-ir-array-source","pinned ReadSpan intrinsic parameter ranges differ");
+  }
   return mlir::success();
 }
 mlir::LogicalResult parameters(mlir::func::FuncOp fn, Function &function, Metadata &metadata) {
@@ -201,7 +266,8 @@ mlir::LogicalResult verifyMetadata(mlir::ModuleOp module, Metadata &metadata) {
   if (mlir::failed(marker(module))) return mlir::failure();
   if (!attributes(module, {"tsfg_core.version", "tsfg_core.input_identity", "tsfg_core.source_hash", "tsfg_core.source_path",
       "tsfg_core.target", "tsfg_core.triple", "tsfg_core.data_layout", "tsfg_core.bytecode_schema", "tsfg_core.source_length",
-      "tsfg_core.array", "tsfg_array.function_ids", "tsfg_array.exports", "tsfg_array.sources", "tsfg_array.types", "tsfg_array.request_id", "tsfg_array.length_property"}))
+      "tsfg_core.array", "tsfg_array.function_ids", "tsfg_array.exports", "tsfg_array.sources", "tsfg_array.types", "tsfg_array.request_id", "tsfg_array.length_property",
+      "tsfg_array.readspan_length_property", "tsfg_array.readspan_intrinsic"}))
     return reject("core-ir-array-metadata", "module fields differ");
   if (text(module, "tsfg_core.version") != "0.9.0" || text(module, "tsfg_core.target") != "windows-x86_64-msvc" ||
       text(module, "tsfg_core.triple") != "x86_64-pc-windows-msvc" ||
@@ -211,7 +277,8 @@ mlir::LogicalResult verifyMetadata(mlir::ModuleOp module, Metadata &metadata) {
       !digest(text(module, "tsfg_array.request_id"))) return reject("core-ir-array-identity", "base identity differs");
   std::string dtsPath;
   if (mlir::failed(sources(module, metadata, dtsPath)) || mlir::failed(types(module, dtsPath)) ||
-      mlir::failed(lengthProperty(module,dtsPath,metadata))) return mlir::failure();
+      mlir::failed(lengthProperty(module,dtsPath,metadata)) || mlir::failed(readSpanLengthProperty(module,dtsPath,metadata)) ||
+      mlir::failed(readSpanIntrinsic(module,dtsPath,metadata))) return mlir::failure();
   auto ids = module->getAttrOfType<mlir::ArrayAttr>("tsfg_array.function_ids");
   auto exports = module->getAttrOfType<mlir::ArrayAttr>("tsfg_array.exports");
   if (!ids || ids.empty() || !exports) return reject("core-ir-array-metadata", "function/export tables differ");

@@ -1,9 +1,10 @@
 // SPDX-License-Identifier: MIT
 // Whole owned Array HIR uses the shared SSA definition and emission machinery.
 import descriptor from '../contracts/core-array-candidate.schema.json' with { type: 'json' };
-import { canonical, sha256, scalarTypeIds } from './identity.mjs';
+import { canonical, sha256, scalarTypeIds, readSpanTypeId } from './identity.mjs';
 import { emitCoreSsaFunction, coreQuote as quote, coreExchangeFormat } from './core-ssa-emitter.mjs';
-import { arrayHirType, verifyArrayHir, arrayHirFailure } from './array-hir-model.mjs';
+import { arrayHirType, arrayHirFailure } from './array-hir-model.mjs';
+import { verifySelectedArrayHir as verifyArrayHir } from './array-hir.mjs';
 
 const schemaHash = sha256(canonical(descriptor));
 const span = range => 'array<i64' + (range ? ': ' + range.start + ', ' + range.end : '') + '>';
@@ -30,9 +31,9 @@ function elementTarget(target) {
   return dictionary([field('receiver_binding',target.receiver.binding),'receiver_range = '+span(target.receiver.range),
     'index = '+scalarUse(target.index),'range = '+span(target.range)]);
 }
-export function emitArrayCore(hir, context) {
+export function emitArrayCore(hir, context, fixedContext = undefined) {
   // Context and the complete graph are validated before accessing any HIR field.
-  const verified = verifyArrayHir(hir, context);
+  const verified = verifyArrayHir(hir, context, fixedContext);
   const unsupported = (fn, range) => {
     const code = 'r03-d-core-array-capability';
     throw Object.assign(new TypeError('Array Core lowering supports only the complete local-owner no-call subset'),
@@ -43,7 +44,10 @@ export function emitArrayCore(hir, context) {
     const parameter = fn.parameters.find(p => p.type === arrayHirType.id);
     if (parameter) unsupported(fn,parameter.range);
     for (const statement of fn.body) {
+      if (statement.kind === 'local' && statement.binding.type === readSpanTypeId) unsupported(fn,statement.initializer.range);
       const value = statement.kind === 'expression' ? statement.expression : statement.kind === 'return' ? statement.value : undefined;
+      if (value?.kind === 'readSpanReadChecked' || value?.kind === 'readSpanLength') unsupported(fn,value.range);
+      if (statement.kind === 'arrayStoreDenseChecked' && statement.value.kind === 'readSpanReadChecked') unsupported(fn,statement.value.range);
       if (value?.kind === 'arrayDirectCall') unsupported(fn,value.range);
       if (statement.kind === 'return' && value.kind !== 'arrayReadChecked') unsupported(fn,statement.range);
     }
@@ -57,8 +61,8 @@ export function emitArrayCore(hir, context) {
     field('tsfg_core.triple', verified.target.triple), field('tsfg_core.data_layout', verified.target.llvmDataLayout),
     field('tsfg_core.bytecode_schema', coreExchangeFormat.bytecodeSchema),
     'tsfg_core.source_length = ' + source.content.length + ' : i64',
-    'tsfg_core.array = ' + dictionary([field('family', descriptor.family), 'version = 3 : i32',
-      field('schema', schemaHash), field('profile', descriptor.profile), 'facts_version = 3 : i32']),
+    'tsfg_core.array = ' + dictionary([field('family', descriptor.family), 'version = 4 : i32',
+      field('schema', schemaHash), field('profile', descriptor.profile), 'facts_version = 4 : i32']),
     'tsfg_array.function_ids = ' + table(verified.functions.map(fn => quote(fn.id))),
     'tsfg_array.exports = ' + table(verified.exports.map(item => dictionary([
       field('name', item.name), field('function_id', item.functionId)]))),
@@ -67,15 +71,29 @@ export function emitArrayCore(hir, context) {
     'tsfg_array.types = ' + table(verified.types.map(item => dictionary([
       field('id', item.id), field('kind', item.kind), field('name', item.name), field('source_path', item.sourcePath),
       'declaration_range = ' + span(item.declarationRange), 'name_range = ' + span(item.nameRange),
-      ...(item.id === arrayHirType.id ? [field('element_type', item.elementType),
-        'index_signature_range = ' + span(item.indexSignatureRange)] : [])]))),
+      ...([arrayHirType.id,readSpanTypeId].includes(item.id) ? [field('element_type', item.elementType),
+        'index_signature_range = ' + span(item.indexSignatureRange)] : []),
+      ...(item.id === readSpanTypeId ? ['readonly = true'] : [])]))),
     field('tsfg_array.request_id', verified.facts.requestId),
     'tsfg_array.length_property = ' + dictionary([
       field('id',verified.arrayLength.id),field('kind',verified.arrayLength.kind),field('name',verified.arrayLength.name),
       field('owner_type',verified.arrayLength.ownerType),field('official_type',verified.arrayLength.officialType),
       field('write_type',verified.arrayLength.writeType),field('source_path',verified.arrayLength.sourcePath),
       'declaration_range = '+span(verified.arrayLength.declarationRange),'name_range = '+span(verified.arrayLength.nameRange),
-      'type_range = '+span(verified.arrayLength.typeRange)])];
+      'type_range = '+span(verified.arrayLength.typeRange)]),
+    'tsfg_array.readspan_length_property = ' + dictionary([
+      field('id',verified.readSpanLength.id),field('kind',verified.readSpanLength.kind),field('name',verified.readSpanLength.name),
+      field('owner_type',verified.readSpanLength.ownerType),field('official_type',verified.readSpanLength.officialType),
+      field('read_type',verified.readSpanLength.readType),'readonly = true',field('source_path',verified.readSpanLength.sourcePath),
+      'declaration_range = '+span(verified.readSpanLength.declarationRange),'name_range = '+span(verified.readSpanLength.nameRange),
+      'type_range = '+span(verified.readSpanLength.typeRange)]),
+    'tsfg_array.readspan_intrinsic = ' + dictionary([
+      field('id',verified.readSpanIntrinsic.id),field('kind',verified.readSpanIntrinsic.kind),field('name',verified.readSpanIntrinsic.name),
+      field('source_path',verified.readSpanIntrinsic.sourcePath),'declaration_range = '+span(verified.readSpanIntrinsic.declarationRange),
+      'name_range = '+span(verified.readSpanIntrinsic.nameRange),'type_parameter_range = '+span(verified.readSpanIntrinsic.typeParameterRange),
+      'parameters = '+table(verified.readSpanIntrinsic.parameters.map(p => dictionary([field('name',p.name),
+        'declaration_range = '+span(p.declarationRange),'name_range = '+span(p.nameRange),'type_range = '+span(p.typeRange)]))),
+      'return_type_range = '+span(verified.readSpanIntrinsic.returnTypeRange)])];
   let bytes = 0;
   const reserve = text => {
     bytes += Buffer.byteLength(text, 'utf8');

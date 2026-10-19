@@ -13,13 +13,15 @@
 namespace mlir { class DialectRegistry; }
 namespace tsfg::arrays {
 inline constexpr llvm::StringLiteral schema =
-    "sha256:0686904cb83a314e2a6fe77e2a9e4b069e2d5648c69ce1d06b2bfcef043d910c";
+    "sha256:1d60f5722e6dda5588cc8891ad4497dc39588601ba10f50ec535e70a20df0305";
 inline constexpr llvm::StringLiteral f64Id =
     "sha256:dfbc72c48bec549ea679cd6aff531f9ebef95e001f6ae0bf419d2f33bf988a6c";
 inline constexpr llvm::StringLiteral arrayId =
     "sha256:74dab77c8fbdacf6cf058e37cac033757417c808d57ee23a9c8866565202cb68";
 inline constexpr llvm::StringLiteral u32Id =
     "sha256:b72109639ea1cc95816abe01a09e7e4c78c11902a1251c00090a5715cf9b979c";
+inline constexpr llvm::StringLiteral readSpanId =
+    "sha256:6130247c334f8a7ba10e89f40381e26b0877d57f96860df21befbe668bb6545e";
 inline constexpr size_t byteLimit = 8388608;
 class ArrayType : public mlir::Type::TypeBase<ArrayType, mlir::Type, mlir::TypeStorage> {
 public:
