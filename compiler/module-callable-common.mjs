@@ -5,11 +5,11 @@ import descriptor from '../contracts/module-callable-candidate.schema.json' with
 import { canonical, own, sha256, scalarTypeIds } from './identity.mjs';
 import { checkGenericJsonValueBudget, copyGenericJsonBytes, readGenericJson, inspectGenericJson } from './generic-json.mjs';
 export { canonical, own, sha256, scalarTypeIds };
-export const schemaHash = 'sha256:881f96d715d41882739253749f25949d5d9aef5b4c4cd5329e352b3d6ffc1990';
+export const schemaHash = 'sha256:8d66ba7464ea05c317fc413cf61dbc906c34c1ef38f4c7fcc916038e7dbe388e';
 export const limits = Object.freeze({bytes:8388608,depth:128,jsonTokens:200000,stringBytes:1048576,allowNul:true,rejectPrototypeKeys:true});
 export const compare = (a,b) => Buffer.from(a).compare(Buffer.from(b));
 export const same = (a,b) => canonical(a) === canonical(b);
-export const format = family => ({family,version:1,schemaHash});
+export const format = family => ({family,version:2,schemaHash});
 const messages = {input:'invalid module callable candidate',identity:'module callable candidate identity differs',source:'module callable source facts differ',canonical:'module callable candidate must use canonical JSON plus LF',reconstruct:'module callable HIR differs from complete reconstruction',limit:'module callable candidate budget exceeded'};
 export function failure(kind='input') {
   const code='r03-module-callable-'+kind;

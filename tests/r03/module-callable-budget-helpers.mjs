@@ -26,8 +26,8 @@ export async function capture(name){
  assert.equal(bundle.name,name);assert.ok(bundle.sourceOrigin,'Root-qualified Source custody is required; never synthesize it');
  const {request,packet,sourceOrigin}=bundle;
  assert.equal(sourceOrigin.requestSha256,hash(bytes(request)));assert.equal(sourceOrigin.responseSha256,hash(bytes(packet)));
- assert.equal(packet.requestId,domain('tsfg.module-callable-facts.request.v1',request));
- const {packageId,...body}=packet;assert.equal(packageId,domain('tsfg.module-callable-facts.package.v1',body));
+ assert.equal(packet.requestId,domain('tsfg.module-callable-facts.request.v2',request));
+ const {packageId,...body}=packet;assert.equal(packageId,domain('tsfg.module-callable-facts.package.v2',body));
  const front=within({request,packet,origin:sourceOrigin},name+' complete import graph');
  const imported=await importCapturedFrontendResponse(bytes(request),bytes(packet),sourceOrigin);
  assert.equal(imported.status,'ok',name+' must cross the real public import before a model/analysis budget assertion: '+canonical(imported));

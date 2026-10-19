@@ -1,12 +1,19 @@
 // SPDX-License-Identifier: MIT
 import {check,capability,canonical,same,sha256,format,valueType,functionType,expressionType,typeId,signatureId,functionId,compare,budget} from './module-callable-common.mjs';
 import {validateModuleFacts} from './module-facts.mjs';
+import {verifySource} from './module-callable-source.mjs';
 import {moduleIdentity,globalIdentity,initializerIdentity} from './modules.mjs';
 export function projectModuleCallable(snapshot){
   const input=snapshot.request.input,raw=snapshot.package.payload.facts;
   const sources=input.files.map(f=>({path:f.path,content:f.content,hash:sha256(f.content)}));
   const byPath=new Map(sources.map(s=>[s.path,s]));
-  const ownership=validateModuleFacts({identityInput:input,inputs:input.files,sources:input.files.map(({path,content})=>({path,content})),symbols:raw.symbols,modules:raw.modules,hostImports:[],compilationClosure:input.compilationClosure});
+  // Reconstruct the short-lived proof before erasing any original alias facts.
+  const proof = raw.symbols.some(s => s.kind === 'global' && s.type === 'function')
+    ? verifySource(input,raw,snapshot.package.payload.annotations,snapshot.package.payload.exports) : null;
+  const aliases = proof?.aliases ?? new Map();
+  const ownership = proof?.ownership ?? validateModuleFacts({identityInput:input,inputs:input.files,
+    sources:input.files.map(({path,content})=>({path,content})),symbols:raw.symbols,
+    modules:raw.modules,hostImports:[],compilationClosure:input.compilationClosure});
   const ids=new Map(),pool=new Map(),descriptors=new Map();
   function intern(t){
     const id=typeId(t);if(!pool.has(id)){
@@ -16,11 +23,13 @@ export function projectModuleCallable(snapshot){
     }return id;
   }
   for(const fn of raw.functions)ids.set(fn.symbol,functionId(fn.sourcePath,fn.name,functionType(fn)));
-  const globals=raw.symbols.filter(s=>s.kind==='global').map(s=>{
+  for (const [alias, target] of aliases) ids.set(alias, ids.get(target));
+  const scalarGlobals = raw.symbols.filter(s => s.kind === 'global' && !aliases.has(s.id));
+  const globals=scalarGlobals.map(s=>{
     const id=globalIdentity(s.sourcePath,s.name,s.type);ids.set(s.id,id);
     return {id,sourcePath:s.sourcePath,name:s.name,bindingKind:'source',type:intern(s.type),writable:s.writable,range:s.range};
   }).sort((a,b)=>compare(a.id,b.id));
-  const globalSymbols=new Set(raw.symbols.filter(s=>s.kind==='global').map(s=>s.id));
+  const globalSymbols=new Set(scalarGlobals.map(s=>s.id));
   function compatible(left,right){if(left===right)return;if(pool.get(left)?.kind==='function'&&pool.get(right)?.kind==='function')capability();check(false,'source');}
   function projectFunction(fn,initialization=false){
     const localIds=new Map(fn.parameters.map((p,i)=>[p.id,'p'+i]));let nextLocal=0;
@@ -34,6 +43,11 @@ export function projectModuleCallable(snapshot){
       if(v.kind==='call'||v.kind==='indirectCall'){
         const sig=valueType('function',v.signature),args=v.arguments.map(expression);
         args.forEach((a,i)=>compatible(a.type,intern(sig.parameters[i])));
+        const aliasTarget = v.kind === 'indirectCall' && v.callee.kind === 'reference'
+          ? aliases.get(v.callee.symbol) : undefined;
+        // Never project the proved alias callee as storage or a runtime function value.
+        if (aliasTarget) return {...common,kind:'call',target:ids.get(aliasTarget),name:v.name,
+          signature:intern(sig),signatureHash:signatureId(sig),arguments:args};
         const callee=v.kind==='indirectCall'?expression(v.callee):null;
         if(callee)compatible(callee.type,intern(sig));
         return {...common,...(callee?{callee}:{target:ids.get(v.target),name:v.name}),signature:intern(sig),signatureHash:signatureId(sig),arguments:args};
@@ -54,7 +68,13 @@ export function projectModuleCallable(snapshot){
     return {id:initialization?initializerIdentity(fn.sourcePath,source.hash):ids.get(fn.symbol),sourcePath:fn.sourcePath,kind:initialization?'module-initialization':'source',name:fn.name,signature:intern(type),signatureHash:signatureId(type),returnType:intern(type.returns),parameters:fn.parameters.map(binding),range:fn.range,definitionRange:initialization?fn.range:raw.symbols.find(s=>s.id===fn.symbol).range,body:fn.body.map(statement)};
   }
   const functions=raw.functions.map(f=>projectFunction(f));
-  for(const m of raw.modules)functions.push(projectFunction({sourcePath:m.sourcePath,name:'$moduleInit',parameters:[],returnType:'i32',body:m.initialization,range:{start:0,end:byPath.get(m.sourcePath).content.length}},true));
+  for (const m of raw.modules) {
+    const initialization = m.initialization.filter(statement => statement.kind !== 'initialize'
+      || !aliases.has(statement.symbol.id));
+    functions.push(projectFunction({sourcePath:m.sourcePath,name:'$moduleInit',parameters:[],
+      returnType:'i32',body:initialization,
+      range:{start:0,end:byPath.get(m.sourcePath).content.length}},true));
+  }
   functions.sort((a,b)=>compare(a.id,b.id));
   const visible=entries=>entries.map(({name,target})=>({name,target:ids.get(target)})).sort((a,b)=>compare(a.name,b.name));
   const modules=raw.modules.map(m=>({id:moduleIdentity(m.sourcePath),sourcePath:m.sourcePath,dependencies:[...new Set(m.imports.map(i=>i.sourcePath))],initializer:initializerIdentity(m.sourcePath,byPath.get(m.sourcePath).hash),exports:visible(m.exports),bindings:visible([...ownership.views.get(m.sourcePath)].map(([name,target])=>({name,target})))})).sort((a,b)=>compare(a.sourcePath,b.sourcePath));

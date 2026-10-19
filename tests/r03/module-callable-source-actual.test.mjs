@@ -7,7 +7,7 @@ import {validateFrontendSnapshot} from '../../compiler/frontend.mjs';
 import {buildHir,verifyHir,printHir,readHir,analyzeModuleCalls,verifyModuleCalls,printModuleCalls,readModuleCalls,verifyKernelParallelGroup} from '../../compiler/hir.mjs';
 import {cases,bytes,canonical,clone,hash,assertError,assertFrozen} from './module-callable-fixtures.mjs';
 const actual=JSON.parse(await readFile(new URL('./module-callable-source-actual.json',import.meta.url),'utf8'));
-assert.equal(actual.manifestSha256,'sha256:7e3d309d72de57098d14c4068b340f90c47a822d6f406e52ceadf2a78751e326');
+assert.equal(actual.manifestSha256,'sha256:277c4e8863fe7ec98927e15030424c0e0b3b5bdb2ebb0f091c2db84516a4a6fb');
 assert.deepEqual(actual.captures.map(x=>x.name).sort(),cases.map(x=>x.name).sort());
 // Expected semantics remain the preimplementation whole oracle. Only actual
 // Source custody changes, requiring a new full-HIR digest and its references.

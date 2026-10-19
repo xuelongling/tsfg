@@ -9,7 +9,7 @@ const fixture=sample('first-rr');
 const check=(run,expected)=>assert.throws(run,e=>assertError(e,expected));
 async function importRaw(requestBytes,responseBytes,origin=fixture.sourceOrigin){const fixed={...clone(origin),requestSha256:hash(requestBytes),responseSha256:hash(responseBytes)};return importCapturedFrontendResponse(requestBytes,responseBytes,fixed);}
 function diagnostic(actual,expected){assert.equal(actual.status,'error');assert.equal(actual.diagnostics.length,1);for(const[k,v]of Object.entries(expected))assert.deepEqual(actual.diagnostics[0][k],v,k);}
-function repairedPacket(mutator){const packet=clone(fixture.packet);mutator(packet);const{packageId,...body}=packet;packet.packageId=hash('tsfg.module-callable-facts.package.v1\0'+canonical(body));return packet;}
+function repairedPacket(mutator){const packet=clone(fixture.packet);mutator(packet);const{packageId,...body}=packet;packet.packageId=hash('tsfg.module-callable-facts.package.v2\0'+canonical(body));return packet;}
 test('strict entire request/package canonical transport rejects BOM, spaces, missing LF, trailing bytes and duplicate keys',async()=>{
  for(const bad of [Buffer.from('\ufeff'+bytes(fixture.packet)),Buffer.from(' '+bytes(fixture.packet)),Buffer.from(canonical(fixture.packet)),Buffer.from(bytes(fixture.packet)+' '),Buffer.from(bytes(fixture.packet).toString().replace('{','{"family":"duplicate",'))]){
   const actual=await importRaw(bytes(fixture.request),bad);diagnostic(actual,base('canonical','module callable candidate must use canonical JSON plus LF'));

@@ -13,11 +13,11 @@ function reconstruct(request,packet,origin){
   validateShape(request,'request');validateShape(packet,'package');validateShape(origin,'origin');
   check(request.schemaHash===schemaHash&&packet.schemaHash===schemaHash,'identity');
   check(origin.requestSha256===sha256(canonical(request)+'\n')&&origin.responseSha256===sha256(canonical(packet)+'\n'),'identity');
-  check(packet.requestId===sha256('tsfg.module-callable-facts.request.v1\0'+canonical(request)),'identity');
+  check(packet.requestId===sha256('tsfg.module-callable-facts.request.v2\0'+canonical(request)),'identity');
   const {packageId,...packageBody}=packet;
-  check(packageId===sha256('tsfg.module-callable-facts.package.v1\0'+canonical(packageBody)),'identity');
+  check(packageId===sha256('tsfg.module-callable-facts.package.v2\0'+canonical(packageBody)),'identity');
   const input=request.input,payload=packet.payload;
-  const inputIdentity=sha256('tsfg.module-callable-facts.input.v1\0'+canonical(input));
+  const inputIdentity=sha256('tsfg.module-callable-facts.input.v2\0'+canonical(input));
   check(payload.inputIdentity===inputIdentity,'identity');logicalPath(input.sourceRoot);
   let previous='';const files=[];
   for(const f of input.files){

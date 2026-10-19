@@ -33,12 +33,67 @@ export function verifySource(input,facts,annotations,exports) {
       if (nested) signaturePresence(nested);
     if (signature.returnSignature) signaturePresence(signature.returnSignature);
   }
+  const aliases = new Map(), directCalls = new Map(), aliasCallers = new Set();
+  const callableGlobals = facts.symbols.filter(s => s.kind === 'global' && s.type === 'function');
+  const callableInitializers = facts.modules.flatMap(m => m.initialization.filter(
+    s => s.kind === 'initialize' && s.symbol.type === 'function'));
+  const aliasProfile = callableGlobals.length > 0 || callableInitializers.length > 0;
+  let alias, aliasInitializer, calls = 0;
+  if (aliasProfile) {
+    check(callableGlobals.length === 1 && callableInitializers.length === 1, 'source');
+    alias = callableGlobals[0];
+    aliasInitializer = callableInitializers[0];
+    const module = facts.modules[0];
+    const applications = input.files.filter(f => !f.path.endsWith('.d.ts'));
+    check(facts.modules.length === 1 && applications.length === 1 && module.external
+      && applications[0].path === module.sourcePath && module.imports.length === 0, 'source');
+    check(alias.sourcePath === module.sourcePath && alias.bindingKind === 'source'
+      && !alias.writable && same(aliasInitializer.symbol, alias), 'source');
+    check(!module.exports.some(binding => binding.target === alias.id), 'source');
+    check([...input.compilationClosure.roots, ...input.compilationClosure.requiredRoots]
+      .every(root => root.sourcePath !== alias.sourcePath || root.name !== alias.name), 'source');
+    const initializer = aliasInitializer.initializer;
+    check(initializer.kind === 'functionReference', 'source');
+    const target = fns.get(initializer.target), targetSymbol = defs.get(initializer.target);
+    check(target && targetSymbol?.kind === 'function' && target.sourcePath === alias.sourcePath
+      && targetSymbol.sourcePath === alias.sourcePath && target.parameters.length === 1, 'source');
+    const parameter = target.parameters[0], signature = alias.signature;
+    check(['bool', 'i32'].includes(parameter.type) && target.returnType === parameter.type
+      && parameter.signature === undefined && target.returnSignature === undefined, 'source');
+    check(signature && same(signature, initializer.signature)
+      && same(signature.parameters, [parameter.type]) && signature.returnType === parameter.type
+      && same(valueType('function', signature), functionType(target)), 'source');
+    for (const fn of facts.functions) {
+      check(fn.sourcePath === module.sourcePath && ['bool', 'i32'].includes(fn.returnType)
+        && fn.returnSignature === undefined && fn.parameters.every(p => ['bool', 'i32'].includes(p.type)
+          && p.signature === undefined), 'source');
+    }
+    for (const symbol of facts.symbols) {
+      if (symbol.kind !== 'function' && symbol.id !== alias.id)
+        check(['bool', 'i32'].includes(symbol.type) && symbol.signature === undefined, 'source');
+    }
+    const initializedGlobals = new Set();
+    for (const item of module.initialization) {
+      check(item.kind === 'initialize' && !initializedGlobals.has(item.symbol.id), 'source');
+      initializedGlobals.add(item.symbol.id);
+      const global = defs.get(item.symbol.id);
+      check(global?.kind === 'global' && same(global, item.symbol), 'source');
+      if (global.id !== alias.id) {
+        const kind = global.type === 'bool' ? 'boolean' : 'integer';
+        check(item.initializer.kind === kind && item.initializer.type === global.type, 'source');
+      }
+    }
+    check(facts.symbols.filter(s => s.kind === 'global')
+      .every(global => initializedGlobals.has(global.id)), 'source');
+    // The map is internal proof data only. The original snapshot keeps both Symbols.
+    aliases.set(alias.id, initializer.target);
+  }
   const embedded=s=>{check(same(defs.get(s.id),s),'identity');claimed.add(s.id);};
   const equivalent=(a,b)=>{if(typeof a==='object'&&typeof b==='object')return;check(same(a,b),'source');};
   for(const s of facts.symbols){
     span(s.range,s.sourcePath);gFor(s.sourcePath).name(s.range,s.name);
     if (s.signature) signaturePresence(s.signature);
-    if(s.kind==='global'){check(s.type!=='function','source');claimed.add(s.id);}
+    if(s.kind==='global'){check(s.type!=='function'||aliases.has(s.id),'source');claimed.add(s.id);}
   }
   function body(fn,items,parent,inherited,initialized,module=false){
     const path=fn.sourcePath,g=gFor(path),visible=new Map(inherited),here=new Set();
@@ -46,7 +101,7 @@ export function verifySource(input,facts,annotations,exports) {
       embedded(item.symbol);check(!here.has(item.symbol.name),'source');here.add(item.symbol.name);visible.set(item.symbol.name,item.symbol.id);
     }
     let previous=parent.start,returned=false;
-    function ex(v,outer,write=false){
+    function ex(v,outer,write=false,role=undefined){
       count();span(v.range,path,{start:Math.min(v.range.start,outer.start),end:outer.end});
       if(v.range.start<outer.start)g.expect(v.range.start,outer.start,[]);
       const type=expressionType(v);
@@ -60,11 +115,26 @@ export function verifySource(input,facts,annotations,exports) {
         check(staticBindingName(sources.get(path).content.slice(v.range.start,v.range.end))===name,'source');
         if(v.kind==='functionReference')check(d.kind==='function'&&same(type,functionType(fns.get(id))),'source');
         else {check(d.kind!=='function'&&same(type,valueType(d.type,d.signature)),'source');if(d.kind==='local')check(initialized.has(id),'source');}
+        if (aliasProfile) {
+          if (v.kind === 'functionReference') {
+            check(role === 'alias-initializer' && v.target === aliases.get(alias.id), 'source');
+          } else if (v.symbol === alias.id) {
+            check(role === 'alias-callee' && !write && same(v.signature, alias.signature), 'source');
+          } else check(v.type !== 'function', 'source');
+        }
         if(write)check(d.writable&&v.kind==='reference','source');
       }else if(v.kind==='call'||v.kind==='indirectCall'){
+        if (aliasProfile) {
+          check(!module && fn.symbol, 'source');
+          check(++calls <= 16384, 'limit');
+        }
         const sig=valueType('function',v.signature);let end;
         if(v.kind==='call'){
           const target=fns.get(v.target);check(target&&same(sig,functionType(target)),'source');
+          if (aliasProfile) {
+            if (!directCalls.has(fn.symbol)) directCalls.set(fn.symbol, []);
+            directCalls.get(fn.symbol).push(v.target);
+          }
           const scalarPath = target.returnType !== 'function'
             && target.parameters.every(parameter => parameter.type !== 'function');
           signaturePresence(v.signature, scalarPath && target.parameters.length
@@ -73,7 +143,13 @@ export function verifySource(input,facts,annotations,exports) {
           const ts=g.between(v.range.start,v.range.end),open=ts.findIndex(t=>t.text==='(');check(open>0,'source');
           check(staticBindingName(sources.get(path).content.slice(ts[0].start,ts[open].start))===staticBindingName(v.name),'source');end=ts[open].start;
         }else {
-          signaturePresence(v.signature);ex(v.callee,v.range);
+          if (aliasProfile) {
+            check(v.callee.kind === 'reference' && v.callee.symbol === alias.id
+              && same(v.signature, alias.signature), 'source');
+            aliasCallers.add(fn.symbol);
+          }
+          signaturePresence(v.signature);
+          ex(v.callee,v.range,false,aliasProfile ? 'alias-callee' : undefined);
           check(same(expressionType(v.callee),sig),'source');
           // The producer names the original callee AST, not its projected name:
           // identity(fn)() has callee spelling identity(fn), not identity.
@@ -96,7 +172,10 @@ export function verifySource(input,facts,annotations,exports) {
       }else if(v.kind==='binary'||v.kind==='shortCircuit'){
         ex(v.left,v.range);ex(v.right,v.range);check(validScalarBinary(v.kind,v.operator,type,expressionType(v.left),expressionType(v.right),v.left,v.right),'source');
         g.expect(v.range.start,v.left.range.start,[]);g.expect(v.left.range.end,v.right.range.start,[v.operator]);g.expect(v.right.range.end,v.range.end,[]);
-      }else capability();
+      }else {
+        if (aliasProfile) check(false, 'source');
+        capability();
+      }
       return type;
     }
     for(const item of items){
@@ -106,7 +185,13 @@ export function verifySource(input,facts,annotations,exports) {
         embedded(item.symbol);const d=item.symbol;
         check(gap.length===1&&['let','const'].includes(gap[0])||module&&same(gap,['export','let'])||module&&same(gap,['export','const']),'source');
         check(d.writable===gap.includes('let')&&same(d.range,{start:item.range.start,end:d.range.end}),'source');
-        equivalent(ex(item.initializer,item.range),valueType(d.type,d.signature));
+        const aliasInitialization = aliasProfile && d.id === alias.id;
+        if (aliasInitialization) {
+          check(module && item === aliasInitializer && same(gap, ['const']), 'source');
+          g.expect(d.range.end,item.initializer.range.start,['=']);
+        }
+        equivalent(ex(item.initializer,item.range,false,
+          aliasInitialization ? 'alias-initializer' : undefined),valueType(d.type,d.signature));
         const middle=g.between(d.range.end,item.initializer.range.start);
         if(middle[0]?.text===':'){check(middle.at(-1).text==='=','source');g.annotation(middle[0].end,middle.at(-1).start,valueType(d.type,d.signature));}
         else g.expect(d.range.end,item.initializer.range.start,['=']);
@@ -128,7 +213,10 @@ export function verifySource(input,facts,annotations,exports) {
           const l=body(fn,left,{start:left[0].range.start,end:left.at(-1).range.end},visible,new Set(initialized),module);let end=left.at(-1).range.end;
           if(right.length){check(right.length===1,'source');g.expect(end,right[0].range.start,['else']);const r=body(fn,right,{start:right[0].range.start,end:right.at(-1).range.end},visible,new Set(initialized),module);returned=returned||l&&r;end=right.at(-1).range.end;}
           g.expect(end,item.range.end,[]);
-        }else capability();
+        }else {
+          if (aliasProfile) check(false, 'source');
+          capability();
+        }
       }
       previous=item.range.end;
     }
@@ -242,5 +330,17 @@ export function verifySource(input,facts,annotations,exports) {
     }
   }
   check(facts.symbols.every(s=>claimed.has(s.id)),'identity');
-  return {ownership,defs,fns,sources};
+  if (aliasProfile) {
+    // Ordinary direct SCCs remain valid; reaching an alias call closes an alias cycle.
+    const pending = [aliases.get(alias.id)], visited = new Set();
+    while (pending.length) {
+      const target = pending.pop();
+      if (visited.has(target)) continue;
+      visited.add(target);
+      check(visited.size <= 128, 'limit');
+      check(!aliasCallers.has(target), 'source');
+      pending.push(...(directCalls.get(target) ?? []));
+    }
+  }
+  return {ownership,defs,fns,sources,aliases};
 }

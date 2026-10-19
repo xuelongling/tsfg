@@ -15,7 +15,7 @@ async function reject(fixture,change){
  const packet=clone(fixture.packet),before=clone(packet);change(packet);
  assert.deepEqual(packet.payload.exports,before.payload.exports,'enriched export custody remains truthful');assert.deepEqual(packet.payload.annotations,before.payload.annotations);
  assert.deepEqual(packet.payload.facts.symbols,before.payload.facts.symbols,'complete symbol registry remains unchanged');
- const{packageId,...body}=packet;packet.packageId=hash('tsfg.module-callable-facts.package.v1\0'+canonical(body));assert.notEqual(packet.packageId,packageId);
+ const{packageId,...body}=packet;packet.packageId=hash('tsfg.module-callable-facts.package.v2\0'+canonical(body));assert.notEqual(packet.packageId,packageId);
  const origin={...clone(fixture.sourceOrigin),responseSha256:hash(bytes(packet))};
  const imported=await importCapturedFrontendResponse(bytes(fixture.request),bytes(packet),origin),accepted=imported.status==='ok'?buildHir(imported.snapshot):imported;
  assert.equal(accepted.status,'error','repaired false original raw provenance passed public import/build');assert.equal(accepted.diagnostics.length,1);

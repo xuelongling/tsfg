@@ -15,7 +15,7 @@ const secondStart=barrel.indexOf('export',firstEnd),secondEnd=barrel.indexOf(';'
 assert.equal(barrel,"export * from './path1';\nexport * from './path2';\n");
 const group=packet=>packet.payload.exports.find(m=>m.sourcePath==='/src/barrel.ts');
 const chosen=packet=>group(packet).bindings.find(b=>b.name==='chosen');
-const snapshot=()=>({format:{family:'tsfg.frontend-module-callable-candidate',version:1,schemaHash:fixture.request.schemaHash},inputIdentity:fixture.packet.payload.inputIdentity,sourceOrigin:fixture.sourceOrigin,request:fixture.request,package:fixture.packet});
+const snapshot=()=>({format:{family:'tsfg.frontend-module-callable-candidate',version:2,schemaHash:fixture.request.schemaHash},inputIdentity:fixture.packet.payload.inputIdentity,sourceOrigin:fixture.sourceOrigin,request:fixture.request,package:fixture.packet});
 test('independent actual star graph imports and builds using the first resolving source site',async()=>{
  assert.deepEqual(chosen(fixture.packet).range,{start:firstStart,end:firstEnd});
  assert.equal(hash(bytes(fixture.request)),fixture.sourceOrigin.requestSha256);assert.equal(hash(bytes(fixture.packet)),fixture.sourceOrigin.responseSha256);
@@ -30,7 +30,7 @@ test('second resolving star provenance is rejected even for the same target and 
  assert.equal(binding.target,target);assert.deepEqual(packet.payload.facts.modules,before);
  // No request/source/semantic or raw legacy export row changes. Only the
  // enriched exporting site and unavoidable enclosing transport digests differ.
- const{packageId,...body}=packet;packet.packageId=hash('tsfg.module-callable-facts.package.v1\0'+canonical(body));
+ const{packageId,...body}=packet;packet.packageId=hash('tsfg.module-callable-facts.package.v2\0'+canonical(body));
  const origin={...clone(fixture.sourceOrigin),responseSha256:hash(bytes(packet))};
  const result=await importCapturedFrontendResponse(bytes(fixture.request),bytes(packet),origin);
  assert.equal(result.status,'error','second same-target star must not pass provenance');assert.equal(result.diagnostics.length,1);
