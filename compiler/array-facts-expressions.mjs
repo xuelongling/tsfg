@@ -3,6 +3,21 @@
 import { floatBits } from './float.mjs';
 import { arrayCheck as check, arrayRecord as record, arrayFactsFailure as failure, list, text, digest, range, originIdentity, nameAt, tokenAt, window, compact, arrayIndexDecimal } from './array-facts-common.mjs';
 
+export function elementAnnotation(row, source) {
+  range(row.annotationRange, row.declarationRange, source.content);
+  range(row.elementAnnotationRange, row.annotationRange, source.content);
+  nameAt('f64', row.elementAnnotationRange, source.content);
+  const view = row.declaredType === 'readspan.f64';
+  const before = window(source.content,row.annotationRange.start,row.elementAnnotationRange.start);
+  if (view) {
+    const less = before.lastIndexOf('<'), identifier = before.slice(0,less).trimEnd();
+    check(less >= 0 && before.slice(less + 1).trim() === '', 'input');
+    nameAt('ReadSpan',{start:row.annotationRange.start,end:row.annotationRange.start + identifier.length},source.content);
+  } else check(before.trim() === '', 'input');
+  check(compact(source.content, {start:row.elementAnnotationRange.end,end:row.annotationRange.end}) === (view ? '>' : '[]')
+    && row.nameRange.end <= row.annotationRange.start, 'input');
+}
+
 export function binding(row, fn, source, known) {
   record(row, ['id','name','kind','declaredType','writable','declarationRange','nameRange',
     'annotationRange','elementAnnotationRange']);
@@ -13,20 +28,7 @@ export function binding(row, fn, source, known) {
   check(row.id === originIdentity('tsfg.array-facts.binding.v1', source.path, row.nameRange, 'nameRange')
     && !known.has(row.id), 'identity');
   check((row.annotationRange === null) === (row.elementAnnotationRange === null), 'input');
-  if (row.annotationRange !== null) {
-    range(row.annotationRange, row.declarationRange, source.content);
-    range(row.elementAnnotationRange, row.annotationRange, source.content);
-    nameAt('f64', row.elementAnnotationRange, source.content);
-    const view = row.declaredType === 'readspan.f64';
-    const before = window(source.content,row.annotationRange.start,row.elementAnnotationRange.start);
-    if (view) {
-      const less = before.lastIndexOf('<'), identifier = before.slice(0,less).trimEnd();
-      check(less >= 0 && before.slice(less + 1).trim() === '', 'input');
-      nameAt('ReadSpan',{start:row.annotationRange.start,end:row.annotationRange.start + identifier.length},source.content);
-    } else check(before.trim() === '', 'input');
-    check(compact(source.content, {start:row.elementAnnotationRange.end,end:row.annotationRange.end}) === (view ? '>' : '[]')
-      && row.nameRange.end <= row.annotationRange.start, 'input');
-  }
+  if (row.annotationRange !== null) elementAnnotation(row, source);
 }
 export function reference(value, parent, source, known, type = 'array.f64') {
   record(value, ['kind','binding','flowType','range']);

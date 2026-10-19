@@ -1,5 +1,5 @@
 // SPDX-License-Identifier: MIT
-// Private4 migration expectations were independently frozen before Product4 observation.
+// Private5 migration expectations are independent data; old wire originals remain refusal controls.
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { readArrayFactsCandidate,writeArrayFactsCandidate } from '../../compiler/array-facts.mjs';
@@ -9,9 +9,9 @@ import { callOracle,pinned } from './array-test-fixtures.mjs';
 const oraclePromise=callOracle();
 test('23e ten independent complete Source packets and typed HIR preserve every source field',async t=>{
   const oracle=await oraclePromise;
-  assert.equal(oracle.family,'tsfg.readspan-old18-independent-oracle');assert.equal(oracle.version,4);assert.equal(oracle.cases.length,10);
+  assert.equal(oracle.family,'tsfg.r03.legacy-v5-old18-oracle');assert.equal(oracle.version,5);assert.equal(oracle.cases.length,10);
   for(const row of oracle.cases)await t.test(row.name,()=>{
-    assert.equal(row.provenance.productionConverterImported,false);assert.equal(row.provenance.productionV4Observed,false);
+    assert.equal(row.inheritedProvenance.productionConverterImported,false);assert.equal(row.inheritedProvenance.productionV4Observed,false);
     assert.deepEqual(row.official.diagnostics,{syntax:0,semantic:0,program:0,global:0});
     const bytes=Buffer.from(row.packageText),before=Buffer.from(bytes),packet=JSON.parse(row.packageText),ctx=factsContext(row);
     const facts=readArrayFactsCandidate(bytes);assert.deepEqual(facts,packet);deeplyFrozen(facts);
@@ -51,7 +51,7 @@ test('23e new parameter, call and final-return shapes refuse narrow Core lowerin
   });
 });
 
-test('26a private4 rejects the original analysis1 report without a compatibility route',async()=>{
+test('26b private5 rejects the original analysis1 report without a compatibility route',async()=>{
   const legacy=await pinned('./array-call-oracle.json',2832880,
     '0d9c564d955f8435802254c84b52681a10472c7d920fad149798f09ba3fbea49');
   const old=legacy.cases.find(c=>c.name==='first-touch-alias');assert.ok(old);

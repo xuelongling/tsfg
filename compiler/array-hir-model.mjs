@@ -8,8 +8,8 @@ import { copyGenericJsonBytes, checkGenericJsonValueBudget } from './generic-jso
 import { readArrayFactsCandidate } from './array-facts.mjs';
 import { arrayFactsLimits } from './array-facts-model.mjs';
 
-const schemaHash = 'sha256:26d40f9811b96997dc0a531e4956b1f4b64aaa3cbae65a25e8aee9a65f24fdbd';
-export const arrayHirFormat = own({ family: 'tsfg.array-hir-candidate', version: 4, schemaHash });
+const schemaHash = 'sha256:e9d687ce59c5920d33a7cf03e09902d6d0f065d4efe5033ca183f2a175d9d458';
+export const arrayHirFormat = own({ family: 'tsfg.array-hir-candidate', version: 5, schemaHash });
 export const arrayHirType = own({ kind: 'managedReference', name: 'Array',
   elementType: scalarTypeIds.f64, id: arrayTypeId });
 const target = own(bytecode.target), policy = arrayFactsLimits;
@@ -99,9 +99,10 @@ export function projectArrayFacts(facts) {
       name:fn.name,sourcePath:fn.sourcePath,signatureHash:signatureHash('f64',parameterTypes),
       returnType:{kind:'scalar',name:'f64',id:scalarTypeIds.f64},
       parameters:fn.parameters.map(parameter => ({id:parameter.id,name:parameter.name,
-        type:parameter.declaredType === 'array.f64' ? arrayHirType.id : scalarTypeIds[parameter.declaredType],
-        writable:true,range:{...parameter.declarationRange},nameRange:{...parameter.nameRange},annotationRange:{...parameter.annotationRange},
-        ...(parameter.declaredType === 'array.f64' ? {elementAnnotationRange:{...parameter.elementAnnotationRange}} : {})})),
+        type:parameter.declaredType === 'array.f64' ? arrayHirType.id
+          : parameter.declaredType === 'readspan.f64' ? readSpanTypeId : scalarTypeIds[parameter.declaredType],
+        writable:parameter.writable,range:{...parameter.declarationRange},nameRange:{...parameter.nameRange},annotationRange:{...parameter.annotationRange},
+        ...(['array.f64','readspan.f64'].includes(parameter.declaredType) ? {elementAnnotationRange:{...parameter.elementAnnotationRange}} : {})})),
       range:{...fn.declarationRange},nameRange:{...fn.nameRange},returnAnnotationRange:{...fn.returnAnnotationRange},
       body:fn.body.map(statement => {
         if (statement.kind === 'variable') {
@@ -128,7 +129,7 @@ export function projectArrayFacts(facts) {
       : {id:scalarTypeIds[type.id],kind:'scalar',name:type.id,...origin};
   });
   return {format:{...arrayHirFormat},inputIdentity:facts.packageId,
-    facts:{version:4,schemaHash:facts.schemaHash,requestId:facts.requestId},rootFile:payload.rootFile,
+    facts:{version:5,schemaHash:facts.schemaHash,requestId:facts.requestId},rootFile:payload.rootFile,
     sources:payload.files.map(file => ({path:file.path,content:file.content,hash:'sha256:'+file.sha256})),
     target:{...target},types,arrayLength:{...payload.arrayLength,ownerType:arrayHirType.id,writeType:scalarTypeIds.u32,
       declarationRange:{...payload.arrayLength.declarationRange},nameRange:{...payload.arrayLength.nameRange},typeRange:{...payload.arrayLength.typeRange}},

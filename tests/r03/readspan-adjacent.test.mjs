@@ -8,12 +8,12 @@ import { buildHir,verifyHir,printHir,readHir,lowerHir,analyzeArrayCalls,
   verifyArrayCalls,printArrayCalls,readArrayCalls } from '../../compiler/hir.mjs';
 import { pinned,jcs,fresh,wire,deeplyFrozen } from './array-test-fixtures.mjs';
 
-const oracle=await pinned('./readspan-adjacent-v4-oracle.json',3512171,
-  'badfb7e187033dfc11d6e8fb4cdef474e0bc60e750e12387577c25e89b03d3a6');
-assert.equal(oracle.family,'tsfg.readspan-adjacent-independent-oracle');
-assert.equal(oracle.version,4);assert.equal(oracle.sourcePrograms,18);
-assert.equal(oracle.contractSHA256,
-  'f7dd26e2d3929d718dcf6fd930436b0b0d2c602a67c1e165badd9173ceabcc73');
+const oracle=await pinned('./legacy-v5-adjacent-oracle.json',3673652,
+  'ed2ad3825be1f0c780fd6181b8a02caf6c0ee469e42483e78364408db74f67dc');
+assert.equal(oracle.family,'tsfg.r03.legacy-v5-adjacent-oracle');
+assert.equal(oracle.version,5);assert.equal(new Set(oracle.cases.map(row=>row.requestText)).size,18);
+assert.equal(oracle.crosspin.interface.sha256,
+  '0b0cbffa7efc0d44589ba45bc71f5380d7cc7a089a6303dc2f224e9cc7505081');
 assert.deepEqual(oracle.cases.map(row=>row.name),[
   'fixed-wide-body-narrow','fixed-wide-body-narrow-readonly-context',
   'same-owner-full-slots','parameter-may-alias','independent-fresh-call-local',
@@ -108,21 +108,21 @@ for(const row of packets)test('26a adjacent whole public boundaries: '+row.name,
 
 test('26a adjacent corpus retains independent official closures and complete strict-budget artifacts',()=>{
   for(const row of oracle.cases){
-    assert.equal(row.provenance.productionObserved,false);
+    assert.equal(row.inheritedProvenance.productionObserved,false);
     assert.deepEqual(row.official.diagnostics,{global:0,program:0,semantic:0,syntax:0});
     assert.equal(row.official.readonlyIndexer,true);assert.equal(row.official.readonlyLength,true);
     assert.equal(jcs(JSON.parse(row.requestText))+'\n',row.requestText);
-    assert.equal(JSON.parse(row.requestText).version,4);
+    assert.equal(JSON.parse(row.requestText).version,5);
     for(const metric of Object.values(row.metrics)){
       assert.ok(metric.bytes<=2*1024*1024);assert.ok(metric.tokens<=200000);
       assert.ok(metric.depth<=64);assert.ok(metric.stringBytes<=1024*1024);
     }
     if(!row.packageText)continue;
-    assert.equal(row.provenance.productionImported,false);
-    assert.equal(row.provenance.facetsCrosscheckedWithExplicitHandRecipe,true);
-    assert.equal(row.provenance.noRuntimeGCOrPhysicalSingletonClaim,true);
+    assert.equal(row.inheritedProvenance.productionImported,false);
+    assert.equal(row.inheritedProvenance.facetsCrosscheckedWithExplicitHandRecipe,true);
+    assert.equal(row.inheritedProvenance.noRuntimeGCOrPhysicalSingletonClaim,true);
     assert.equal(jcs(JSON.parse(row.packageText))+'\n',row.packageText);
-    assert.equal(row.hir.format.version,4);assert.equal(row.hir.types.length,4);
+    assert.equal(row.hir.format.version,5);assert.equal(row.hir.types.length,4);
     assert.ok(row.hir.readSpanPlan);
     if(row.analysis)assert.deepEqual(row.analysis,row.preConsumerAnalysis);
   }
@@ -209,7 +209,7 @@ test('26a inclusive work 1024 succeeds and global registration/use fees precede 
   const first=global.hir.readSpanPlan.functions[0],view=first.views[0];
   const mutation=first.events.find(event=>event.kind==='array-resize-effect');
   assert.equal(mutation.nonStructural,false);assert.deepEqual(mutation.owner,view.owner);
-  assert.ok(view.createEvent<mutation.sequence);assert.ok(mutation.sequence<view.lastUseEvent);
+  assert.ok(view.origin.createEvent<mutation.sequence);assert.ok(mutation.sequence<view.lastUseEvent);
 });
 
 test('26a isolated view Core refusal is anchored at view creation rather than parameters or ordinary calls',()=>{
@@ -229,7 +229,7 @@ test('26a raw calls 32 has a complete package while 33 remains an official-valid
     {function:'entry',intrinsicCalls:17,locals:17,ordinaryCalls:15,rawCalls:32,statements:33});
   assert.deepEqual(over.official.functions.find(fn=>fn.function==='entry'),
     {function:'entry',intrinsicCalls:17,locals:17,ordinaryCalls:16,rawCalls:33,statements:34});
-  assert.equal(over.provenance.officialValidPrivateSourceInvalid,true);
+  assert.equal(over.inheritedProvenance.officialValidPrivateSourceInvalid,true);
   assert.deepEqual(over.expectedSourceError,{code:'r03-array-facts-limit',phase:'input',ruleId:'r01-input-boundary'});
   for(const key of ['packageText','hir','context','analysis','preConsumerAnalysis'])assert.ok(!Object.hasOwn(over,key));
   // Root runs the real Source raw33 check; no Product packet is invented here.

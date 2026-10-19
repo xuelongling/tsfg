@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: MIT
 // Private fixed-table validation and owner preparation; callers supply complete verified HIR.
-import { canonical, sha256, scalarName, arrayTypeId } from './identity.mjs';
+import { canonical, sha256, scalarName, arrayTypeId, readSpanTypeId } from './identity.mjs';
 import { checkGenericJsonValueBudget } from './generic-json.mjs';
 import { arrayFactsLimits } from './array-facts-common.mjs';
 import { analyzeArrayOwnerAccesses, compareArrayKeys as compare } from './array-call-model.mjs';
@@ -25,7 +25,7 @@ function record(value, keys) {
 const hash = value => typeof value === 'string' && /^sha256:[0-9a-f]{64}$/.test(value);
 function shape(context) {
   record(context,['family','version','mode','scopeDigest','expectedDigest','contracts']);
-  check(context.family === 'tsfg.array-publication-context-candidate' && context.version === 1 && context.mode === 'fixed');
+  check(context.family === 'tsfg.array-publication-context-candidate' && context.version === 2 && context.mode === 'fixed');
   check(hash(context.scopeDigest) && hash(context.expectedDigest) && Array.isArray(context.contracts)
     && context.contracts.length >= 1 && context.contracts.length <= 16);
   for (const row of context.contracts) {
@@ -48,19 +48,23 @@ function publication(hir, context) {
   for (const [index,row] of context.contracts.entries()) {
     const fn = functions[index];
     check(row.functionId === fn.id && row.signatureHash === fn.signatureHash,'identity');
-    const slots = fn.parameters.flatMap((p,i) => p.type === arrayTypeId ? [i] : []);
+    const slots = fn.parameters.flatMap((p,i) => [arrayTypeId,readSpanTypeId].includes(p.type) ? [i] : []);
     check(row.upper.parameters.length === slots.length
       && slots.every((slot,i) => row.upper.parameters[i].index === slot),'identity');
+    // Readonly view W/S is capability grammar, independently of body coverage.
+    for (const p of row.upper.parameters) if (fn.parameters[p.index].type === readSpanTypeId)
+      check(!p.write && !p.structural,'identity');
     const {digest,...body} = row;
-    check(digest === sha256('tsfg.array-published-contract.v1\0' + canonical(body)),'identity');
+    check(digest === sha256('tsfg.array-published-contract.v2\0' + canonical(body)),'identity');
     records.set(fn.id,row);
   }
-  const scope = {profile:'array-owner-relative-fixed-v1',rootFile:hir.rootFile,
+  const scope = {profile:'array-readspan-owner-relative-fixed-v2',rootFile:hir.rootFile,
     functions:functions.map(fn => ({functionId:fn.id,name:fn.name,sourcePath:fn.sourcePath,
-      signatureHash:fn.signatureHash,parameterTypes:fn.parameters.map(p => p.type === arrayTypeId ? 'array.f64' : scalarName(p.type)),
+      signatureHash:fn.signatureHash,parameterTypes:fn.parameters.map(p => p.type === arrayTypeId ? 'array.f64'
+        : p.type === readSpanTypeId ? 'readspan.f64' : scalarName(p.type)),
       returnType:'f64'})),exports:hir.exports.map(row => ({name:row.name,functionId:row.functionId}))};
-  const scopeDigest = sha256('tsfg.array-call-scope.v1\0' + canonical(scope));
-  check(context.scopeDigest === scopeDigest && context.expectedDigest === sha256('tsfg.array-publication.v1\0'
+  const scopeDigest = sha256('tsfg.array-call-scope.v2\0' + canonical(scope));
+  check(context.scopeDigest === scopeDigest && context.expectedDigest === sha256('tsfg.array-publication.v2\0'
     + canonical({scopeDigest,contracts:context.contracts})),'identity');
   return {records,scopeDigest};
 }

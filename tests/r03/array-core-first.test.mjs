@@ -1,5 +1,5 @@
 // SPDX-License-Identifier: MIT
-// Independent Core4 metadata migration retains the original ordered SSA traces.
+// Independent Core5 metadata migration retains the original ordered SSA traces.
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { readArrayFactsCandidate,writeArrayFactsCandidate } from '../../compiler/array-facts.mjs';
@@ -10,10 +10,10 @@ import { parseArrayCore,assertArrayCoreSemantics } from './array-core-structural
 test('25d eight whole facts and HIR controls precede complete public Core equality',async t=>{
   const rows=await fixtures();
   const oracle=await coreOracle();
-  assert.equal(oracle.provenance.productionOutputSampled,false);assert.equal(oracle.provenance.productionImported,false);
-  assert.equal(oracle.provenance.nativeCompileLinkCliExecuted,false);
-  assert.equal(oracle.provenance.viewOperationLoweringCredit,false);
-  assert.equal(oracle.provenance.formalCoreVersion,'0.9.0');assert.equal(oracle.provenance.formalWireVersion,9);
+  assert.equal(oracle.inheritedCoreProvenance.productionOutputSampled,false);assert.equal(oracle.inheritedCoreProvenance.productionImported,false);
+  assert.equal(oracle.inheritedCoreProvenance.nativeCompileLinkCliExecuted,false);
+  assert.equal(oracle.inheritedCoreProvenance.viewOperationLoweringCredit,false);
+  assert.equal(oracle.inheritedCoreProvenance.formalCoreVersion,'0.9.0');assert.equal(oracle.inheritedCoreProvenance.formalWireVersion,9);
   assert.equal(oracle.cases.length,8);
   const prepared=[];
   const totals={functions:0,parameters:0,sites:0,aliases:0,elements:0,checkedReads:0,stores:0,resizes:0,constants:0,operations:0,registers:0};

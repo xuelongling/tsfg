@@ -11,18 +11,22 @@ import { fixtures,fresh,context,deeplyFrozen,jcs,sha,pinned } from './array-test
 test('25d eight actual official Source publications reach whole HIR and static Core',async t=>{
   const file=process.env.TSFG_ARRAY_SOURCE_CAPTURE;
   assert.ok(file,'explicit Source integration entry requires Root capture manifest');
-  assert.equal(process.env.TSFG_ARRAY_SOURCE_CAPTURE_SHA256,'72c13c688b34d965cf692909ede7cc42ebb70a596d09cd2818adf0f1cc204145');
-  const bytes=await readFile(file);assert.equal(bytes.length,16923);
-  assert.equal(sha(bytes),'72c13c688b34d965cf692909ede7cc42ebb70a596d09cd2818adf0f1cc204145');
+  const expectedHash=process.env.TSFG_ARRAY_SOURCE_CAPTURE_SHA256;
+  const expectedBytes=Number(process.env.TSFG_ARRAY_SOURCE_CAPTURE_BYTES);
+  assert.match(expectedHash??'',/^[0-9a-f]{64}$/,'Root must bind the exact fresh v5 manifest hash');
+  assert.ok(Number.isInteger(expectedBytes)&&expectedBytes>0&&expectedBytes<=2097152,
+    'Root must bind the exact fresh v5 manifest byte count');
+  const bytes=await readFile(file);assert.equal(bytes.length,expectedBytes);
+  assert.equal(sha(bytes),expectedHash);
   const capture=JSON.parse(bytes.toString('utf8'));
   assert.equal(capture.schema,'r03.array-dense.actual-source-captures.v1');
-  assert.equal(capture.atomicWireVersion,4);
+  assert.equal(capture.atomicWireVersion,5);
   const state=capture.actual.state;
   assert.equal(state.qualified,true);assert.equal(state.observerOK,true);
   assert.equal(state.exit.code,0);assert.equal(state.close.code,0);
   assert.equal(capture.all8ByteExactToPreproductionIndependentOracle,true);
   const rows=await fixtures(),actuals=[];
-  const core=await pinned('./array-readspan-core-v4-oracle.json',333685,'52b347c10121ecca06ee26f1dec48577f35d044c31a505a426ab9f37b54ba231');
+  const core=await pinned('./legacy-v5-old8-core-oracle.json',627351,'464443dc2ed8bdf6fcdf27227d26ba7344237aef21d822a55ded867fc3cb579b');
   assert.deepEqual(capture.cases.map(c=>c.name),rows.map(r=>r.facts.name));
   for(let i=0;i<rows.length;i++){
     const row=rows[i],record=capture.cases[i],raw=await readFile(record.raw.path);

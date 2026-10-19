@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: MIT
 // Array owner access algebra is relative to parameter slots, never GlobalId or runtime handles.
-import { canonical, arrayTypeId } from './identity.mjs';
+import { canonical, arrayTypeId, readSpanTypeId } from './identity.mjs';
 export const compareArrayKeys = (a, b) => Buffer.compare(Buffer.from(a), Buffer.from(b));
 const facets = ['owners','reads','writes','structural'];
 const flags = [['reads','read'],['writes','write'],['structural','structural']];
@@ -27,7 +27,7 @@ export function analyzeArrayOwnerAccesses(hir, contracts, fail) {
     const base = empty(), bindings = new Map(), calls = [], lengths = new Map(), proofs = new Map();
     bases.set(fn.id,base); callSites.set(fn.id,calls); models.set(fn.id,{bindings,proofs});
     fn.parameters.forEach((p,index) => {
-      if (p.type !== arrayTypeId) return;
+      if (p.type !== arrayTypeId && p.type !== readSpanTypeId) return;
       const owner = parameter(fn,index); insert(base.owners,owner); bindings.set(p.id,owner); lengths.set(owner,null);
     });
     const ownerOf = binding => {
@@ -70,7 +70,7 @@ export function analyzeArrayOwnerAccesses(hir, contracts, fail) {
         const callee = functions.get(value.target), contract = contracts.get(value.target), args = [];
         if (!callee || !contract) fail('identity');
         callee.parameters.forEach((p,slot) => {
-          if (p.type !== arrayTypeId) return;
+          if (p.type !== arrayTypeId && p.type !== readSpanTypeId) return;
           charge();
           args.push({index:slot,binding:value.arguments[slot].binding,owner:ownerOf(value.arguments[slot].binding)});
         });
@@ -79,6 +79,8 @@ export function analyzeArrayOwnerAccesses(hir, contracts, fail) {
           ? {kind:'callLocal',functionId:fn.id,expressionPath:[...expressionPath]} : null;
         calls.push({functionId:fn.id,expressionPath,range:{...value.range},target:value.target,
           signatureHash:value.signatureHash,arguments:args,consumedDigest:contract.digest,publishedLocal});
+        // Product borrow proofs intentionally forget passed view owners too; Source density
+        // only tracks Array actuals and its complete facts remain authoritative.
         for (const arg of args) lengths.set(arg.owner,null);
       }
     }

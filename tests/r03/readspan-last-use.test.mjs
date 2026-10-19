@@ -8,11 +8,11 @@ import { buildHir,verifyHir,printHir,readHir,lowerHir,analyzeArrayCalls,
   verifyArrayCalls,printArrayCalls,readArrayCalls } from '../../compiler/hir.mjs';
 import { pinned,jcs,sha,fresh,wire,deeplyFrozen } from './array-test-fixtures.mjs';
 
-const oracle=await pinned('./readspan-first-oracle.json',96542,
-  '77525f6e2d76b4de4bb2e1300fab50096e910b90357aea536ea862cb06b84c55');
-assert.equal(oracle.family,'tsfg.readspan-first-independent-oracle');assert.equal(oracle.version,1);
-assert.deepEqual(oracle.contractPin,{bytes:257929,
-  sha256:'f7dd26e2d3929d718dcf6fd930436b0b0d2c602a67c1e165badd9173ceabcc73'});
+const oracle=await pinned('./readspan-first-oracle-v5.json',97689,
+  'c540182174e1d1c91c86e9fce010ca67a4f91bc8e6e4f090a8da2498ede52214');
+assert.equal(oracle.family,'tsfg.r03.legacy-v5-readspan-first-oracle');assert.equal(oracle.version,5);
+assert.deepEqual(oracle.contractPin,{bytes:432866,
+  sha256:'0b0cbffa7efc0d44589ba45bc71f5380d7cc7a089a6303dc2f224e9cc7505081'});
 assert.deepEqual(oracle.cases.map(row=>row.name),['before','after']);
 const before=oracle.cases[0],after=oracle.cases[1],bogus='sha256:'+'0'.repeat(64);
 for(const row of oracle.cases){
@@ -58,9 +58,9 @@ function seams(row,hir,context,report=row.analysis??row.preConsumerAnalysis){
  * @param {any} context */
 function resign(context){
   for(const row of context.contracts){
-    const {digest,...body}=row;row.digest='sha256:'+sha('tsfg.array-published-contract.v1\0'+jcs(body));
+    const {digest,...body}=row;row.digest='sha256:'+sha('tsfg.array-published-contract.v2\0'+jcs(body));
   }
-  context.expectedDigest='sha256:'+sha('tsfg.array-publication.v1\0'+jcs({
+  context.expectedDigest='sha256:'+sha('tsfg.array-publication.v2\0'+jcs({
     scopeDigest:context.scopeDigest,contracts:context.contracts}));
   return context;
 }

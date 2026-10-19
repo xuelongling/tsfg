@@ -2,24 +2,22 @@
 // Complete cold flat functions and direct DAG calls; parameter roots never imply disjoint storage.
 import { arrayCheck as check, arrayRecord as record, list, digest, range, nameAt,
   originIdentity, window, compact, lineBreak, arrayIndexDecimal } from './array-facts-common.mjs';
-import { binding, reference, literal, element, scalar, integer, lengthTarget, floating, readSpanCreate, readSpanElement, readSpanLength } from './array-facts-expressions.mjs';
+import { binding, reference, literal, element, scalar, integer, lengthTarget, floating, readSpanCreate, readSpanElement, readSpanLength, elementAnnotation } from './array-facts-expressions.mjs';
 
 function parameters(fn, source, ids, names) {
   const known = new Map(); let end = fn.nameRange.end;
   for (const [index, row] of list(fn.parameters, 0, 8).entries()) {
-    const array = row.declaredType === 'array.f64';
+    const view = row.declaredType === 'readspan.f64';
+    const composite = view || row.declaredType === 'array.f64';
     record(row, ['id','name','kind','declaredType','writable','declarationRange','nameRange','annotationRange',
-      ...(array ? ['elementAnnotationRange'] : [])]);
-    check(row.kind === 'parameter' && ['f64','u32','array.f64'].includes(row.declaredType) && row.writable === true, 'input');
+      ...(composite ? ['elementAnnotationRange'] : [])]);
+    check(row.kind === 'parameter' && ['f64','u32','array.f64','readspan.f64'].includes(row.declaredType)
+      && row.writable === !view, 'input');
     digest(row.id); range(row.declarationRange, fn.declarationRange, source.content);
     range(row.nameRange, row.declarationRange, source.content); nameAt(row.name, row.nameRange, source.content);
     range(row.annotationRange, row.declarationRange, source.content);
-    if (array) {
-      range(row.elementAnnotationRange, row.annotationRange, source.content);
-      nameAt('f64', row.elementAnnotationRange, source.content);
-      check(window(source.content, row.annotationRange.start, row.elementAnnotationRange.start).trim() === ''
-        && compact(source.content, {start:row.elementAnnotationRange.end,end:row.annotationRange.end}) === '[]', 'input');
-    } else nameAt(row.declaredType, row.annotationRange, source.content);
+    if (composite) elementAnnotation(row, source);
+    else nameAt(row.declaredType, row.annotationRange, source.content);
     check(row.declarationRange.start === row.nameRange.start && row.declarationRange.end === row.annotationRange.end
       && row.nameRange.end < row.annotationRange.start
       && compact(source.content, {start:row.nameRange.end,end:row.annotationRange.start}) === ':'
@@ -97,7 +95,7 @@ function call(value, parent, source, headers, scope, lexicalNames, params, owner
   let end = value.calleeRange.end;
   for (const [index, arg] of value.arguments.entries()) {
     const type = target.parameters[index].declaredType;
-    if (type === 'array.f64') reference(arg, value.range, source, scope);
+    if (type === 'array.f64' || type === 'readspan.f64') reference(arg, value.range, source, scope, type);
     else if (type === 'f64') {
       if (arg.kind === 'numericLiteral') floating(arg, value.range, source);
       else reference(arg, value.range, source, params, 'f64');

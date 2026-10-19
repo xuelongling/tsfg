@@ -11,8 +11,8 @@ import { deriveReadSpanPlan, consumeReadSpanPlan } from './array-readspan-model.
 
 function completeProgram(hir, fixedContext, analysis) {
   checkArrayHirInput(hir);
-  const views = hir.functions.some(fn => fn.body.some(stmt =>
-    stmt.kind === 'local' && stmt.binding.type === readSpanTypeId));
+  const views = hir.functions.some(fn => fn.parameters.some(p => p.type === readSpanTypeId)
+    || fn.body.some(stmt => stmt.kind === 'local' && stmt.binding.type === readSpanTypeId));
   let prepared, readSpan;
   if (views || fixedContext !== undefined || analysis) {
     try { prepared = prepareArrayCalls(hir,fixedContext); }

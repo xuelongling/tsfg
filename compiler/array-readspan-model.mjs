@@ -1,5 +1,5 @@
 // SPDX-License-Identifier: MIT
-// Complete local view provenance and last-use plan, derived only from verified owned HIR.
+// Complete formal/local view provenance and call completion, derived from verified owned HIR.
 import { canonical, own, sha256, readSpanTypeId } from './identity.mjs';
 
 /** @param {any} diagnostic @returns {never} */
@@ -21,16 +21,33 @@ export function deriveReadSpanPlan(hir, prepared) {
   const functions = hir.functions.map(fn => {
     const model = prepared.ownerModel.functions.get(fn.id);
     const families = new Map(), views = [], events = [];
+    // Input views already exist at entry. They are registered even when unused,
+    // but entry itself is neither a body event nor an owner read/allocation.
+    fn.parameters.forEach((parameter,index) => {
+      if (parameter.type !== readSpanTypeId) return;
+      charge();
+      const viewId = sha256('tsfg.readspan.parameter-view.v1\0' + canonical({
+        functionId:fn.id,bindingId:parameter.id,index,parameterRange:parameter.range,
+      }));
+      const view = {viewId,binding:parameter.id,owner:model.bindings.get(parameter.id),
+        origin:{kind:'parameter',index,range:{...parameter.range}},
+        aliases:[],useEvents:[],lastUseEvent:null};
+      views.push(view); families.set(parameter.id,view);
+    });
     const event = (statementIndex,expressionPath,kind,range,fields) => {
       const sequence = events.length;
       events.push({sequence,statementIndex,expressionPath,kind,range:{...range},...fields});
       return sequence;
     };
+    const completeUse = (view, sequence) => {
+      if (view.useEvents.at(-1) !== sequence) view.useEvents.push(sequence);
+      view.lastUseEvent = sequence;
+    };
     const use = (binding,kind,index,path,range,fields = {}) => {
       charge();
       const view = families.get(binding);
       const sequence = event(index,path,kind,range,{viewId:view.viewId,binding,...fields});
-      view.useEvents.push(sequence); view.lastUseEvent = sequence;
+      completeUse(view,sequence);
       return sequence;
     };
     const read = (value,index,path) => {
@@ -50,7 +67,7 @@ export function deriveReadSpanPlan(hir, prepared) {
           const createEvent = event(index,path,'view-create-complete',init.range,
             {viewId,binding:stmt.binding.id});
           const view = {viewId,binding:stmt.binding.id,owner:model.bindings.get(stmt.binding.id),
-            createEvent,aliases:[],useEvents:[],lastUseEvent:createEvent};
+            origin:{kind:'local',createEvent},aliases:[],useEvents:[],lastUseEvent:createEvent};
           views.push(view); families.set(stmt.binding.id,view);
         } else {
           const view = families.get(init.binding);
@@ -67,14 +84,26 @@ export function deriveReadSpanPlan(hir, prepared) {
       } else if (stmt.kind === 'expression' || stmt.kind === 'return') {
         const field = stmt.kind === 'expression' ? 'expression' : 'value', value = stmt[field];
         const path = ['body',index,field];
-        if (value.kind === 'arrayDirectCall') event(index,path,'array-call-effect',value.range,
-          {callIndex:callIndices.get(canonical([fn.id,path]))});
-        else read(value,index,path);
+        if (value.kind === 'arrayDirectCall') {
+          const callIndex = callIndices.get(canonical([fn.id,path]));
+          event(index,path,'array-call-effect',value.range,{callIndex});
+          const uses = value.arguments.flatMap((argument,slot) => {
+            if (argument.type !== readSpanTypeId) return [];
+            // Each original reference pays, including repeated references to one family.
+            charge();
+            const view = families.get(argument.binding);
+            return [{index:slot,binding:argument.binding,viewId:view.viewId,range:{...argument.range}}];
+          });
+          if (uses.length) {
+            const sequence = event(index,path,'view-call-complete',value.range,{callIndex,uses});
+            for (const occurrence of uses) completeUse(families.get(occurrence.binding),sequence);
+          }
+        } else read(value,index,path);
       }
     }
     return {functionId:fn.id,views,events};
   });
-  return {plan:{version:1,publication:{scopeDigest:prepared.scopeDigest,
+  return {plan:{version:2,publication:{scopeDigest:prepared.scopeDigest,
     publishedDigest:prepared.publishedDigest},calls,functions},work};
 }
 
@@ -88,12 +117,16 @@ function conflict(fn, state, event, view, owner, sourceKind, fixed = {}) {
   const last = state.events[view.lastUseEvent];
   const aliases = new Map(view.aliases.map(alias => [alias.binding,alias]));
   const chain = [];
-  let binding = last.binding;
+  // Trusted group rows retain original slot order; the first family match is the lowest slot.
+  let binding = last.kind === 'view-call-complete'
+    ? last.uses.find(use => use.viewId === view.viewId).binding : last.binding;
   while (binding !== view.binding) {
     const alias = aliases.get(binding);
     chain.push(alias); binding = alias.initializerBinding;
   }
-  const related = [at('borrow-origin',state.events[view.createEvent].range)];
+  const originRange = view.origin.kind === 'parameter'
+    ? view.origin.range : state.events[view.origin.createEvent].range;
+  const related = [at('borrow-origin',originRange)];
   for (const alias of chain.reverse()) {
     const sourceEvent = state.events[alias.event];
     related.push(at('borrow-alias',fn.body[sourceEvent.statementIndex].range));
@@ -114,7 +147,10 @@ export function consumeReadSpanPlan(hir, prepared, registrationAndUseWork) {
     const fn = hir.functions[index];
     const compare = (event,owner,sourceKind,fixed = {}) => {
       for (const view of state.views) {
-        if (!(view.createEvent < event.sequence && event.sequence < view.lastUseEvent)) continue;
+        // Unused formals have no live interval; never coerce their null last use to event zero.
+        if (view.lastUseEvent === null) continue;
+        if (view.origin.kind === 'local' && !(view.origin.createEvent < event.sequence)) continue;
+        if (!(event.sequence < view.lastUseEvent)) continue;
         // Global registration/use fees are already complete. Duplicated slots still charge.
         if (++work > 1024) limit();
         if (mayAlias(view.owner,owner)) conflict(fn,state,event,view,owner,sourceKind,fixed);

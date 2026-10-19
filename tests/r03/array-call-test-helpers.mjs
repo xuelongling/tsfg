@@ -108,22 +108,22 @@ export function deeplyFrozen(value) {
 /** @param {any} value @returns {any} */
 export function reframe(value) {
   const p = value.payload;
-  const request = { family: 'tsfg.array-facts-request-candidate', version: 4, input: {
+  const request = { family: 'tsfg.array-facts-request-candidate', version: 5, input: {
     sourceRoot: p.sourceRoot, rootFile: p.rootFile,
     files: p.files.map(({ path, content, sha256 }) => ({ path, content, sha256 })),
     declarations: p.declarations, config: p.config,
   } };
-  value.requestId = hash('tsfg.array-facts.request.v4\0' + canonical(request) + '\n');
-  value.packageId = hash('tsfg.array-facts.package.v4\0' + value.schemaHash + '\0' + canonical(p));
+  value.requestId = hash('tsfg.array-facts.request.v5\0' + canonical(request) + '\n');
+  value.packageId = hash('tsfg.array-facts.package.v5\0' + value.schemaHash + '\0' + canonical(p));
   return value;
 }
 /** @param {any} context @returns {any} */
 export function resign(context) {
   for (const row of context.contracts) {
     const { digest, ...body } = row;
-    row.digest = hash('tsfg.array-published-contract.v1\0' + canonical(body));
+    row.digest = hash('tsfg.array-published-contract.v2\0' + canonical(body));
   }
-  context.expectedDigest = hash('tsfg.array-publication.v1\0' + canonical({
+  context.expectedDigest = hash('tsfg.array-publication.v2\0' + canonical({
     scopeDigest: context.scopeDigest, contracts: context.contracts,
   }));
   return context;
