@@ -17,7 +17,7 @@ const canonical = value => Array.isArray(value) ? '[' + value.map(canonical).joi
     : JSON.stringify(value);
 const clone = value => structuredClone(value);
 const signed = pkg => {
-  pkg.packageId = 'sha256:' + hash('tsfg-owned-generic-package/v5\n' + canonical(pkg.payload));
+  pkg.packageId = 'sha256:' + hash('tsfg-owned-generic-package/v6\n' + canonical(pkg.payload));
   return Buffer.from(canonical(pkg));
 };
 const definitions = pkg => {
@@ -26,15 +26,18 @@ const definitions = pkg => {
   assert.ok(leaf && route); return { leaf, route };
 };
 const loaded = async () => {
-  const bytes = await fixture('generic-conditional-call-package-v5.json');
-  const record = JSON.parse((await fixture('generic-conditional-call-instance-v5.json')).toString('utf8'));
+  const bytes = await fixture('generic-conditional-call-package-v6.json');
+  const instance = await fixture('generic-conditional-call-instance-v6.json');
+  assert.deepEqual([bytes.length, hash(bytes)], [3097, '6600f1e9f20865e4e2abc92a3f281fa8dd18b1766d9ac848b21193ebedbbc35f']);
+  assert.deepEqual([instance.length, hash(instance)], [2722, '644cec181a838ab74daa98ca6945afa4403ea53dc94cca2dea6609dd61a8d303']);
+  const record = JSON.parse(instance.toString('utf8'));
   return { bytes, pkg: decodeGenericPackage(bytes), record };
 };
 const failure = (run, code) => assert.throws(run, error => error instanceof TypeError && 'code' in error && error.code === code);
 
-test('conditional-call private5 rejects exact predecessors and mixed contract claims', async t => {
+test('conditional-call private6 rejects exact predecessors and mixed contract claims', async t => {
   const { pkg } = await loaded();
-  for (const version of [1, 2, 3, 4]) {
+  for (const version of [1, 2, 3, 4, 5]) {
     await t.test('complete predecessor' + version, async () =>
       failure(() => decodeGenericPackage(predecessors[version - 1]), 'generic-package-schema'));
   }
@@ -43,7 +46,13 @@ test('conditional-call private5 rejects exact predecessors and mixed contract cl
     ['version4', p => { p.version = 4; }],
     ['schema4', p => { p.schemaHash = 'ec05631c15f280f54279ba9353fd8fc3ff779349a1f56f7cdb00eba22c767e20'; }],
     ['profile4', p => { p.payload.semanticProfile = 'tsfg-owned-scalar-generics-host-v4'; }],
-    ['caps4', p => { p.payload.capabilities.shift(); }, 'limit'],
+    ['caps4', p => { p.payload.capabilities = ['conditional-signature', 'explicit-type-arguments',
+      'mapped-indexed-signature', 'number-add', 'scalar-generics', 'single-module']; }, 'limit'],
+    ['version5', p => { p.version = 5; }],
+    ['schema5', p => { p.schemaHash = 'da7eb72ae306eb88863a44c945df77d572a96443a005fefbd787267fe90658bf'; }],
+    ['profile5', p => { p.payload.semanticProfile = 'tsfg-owned-scalar-generics-host-v5'; }],
+    ['caps5', p => { p.payload.capabilities = ['conditional-generic-call', 'conditional-signature',
+      'explicit-type-arguments', 'mapped-indexed-signature', 'number-add', 'scalar-generics', 'single-module']; }, 'limit'],
     ['duplicate-capability', p => { p.payload.capabilities[1] = p.payload.capabilities[0]; }],
     ['extra-capability', p => { p.payload.capabilities.push('conditional-recursion'); }, 'limit'],
     ['reordered-capability', p => { p.payload.capabilities.reverse(); }],
@@ -52,17 +61,17 @@ test('conditional-call private5 rejects exact predecessors and mixed contract cl
     const bad = clone(pkg); mutate(bad);
     failure(() => decodeGenericPackage(signed(bad)), 'generic-package-' + code);
   });
-  await t.test('domain4', () => {
+  for (const version of [4, 5]) await t.test('domain' + version, () => {
     const bad = clone(pkg);
-    bad.packageId = 'sha256:' + hash('tsfg-owned-generic-package/v4\n' + canonical(bad.payload));
+    bad.packageId = 'sha256:' + hash('tsfg-owned-generic-package/v' + version + '\n' + canonical(bad.payload));
     failure(() => decodeGenericPackage(Buffer.from(canonical(bad))), 'generic-package-identity');
   });
 });
-// Load whole historical bytes, rather than synthesizing a version4 envelope.
-const predecessors = await Promise.all([1, 2, 3, 4].map(version =>
+// Load whole historical1–5 bytes; never relabel an old actual packet.
+const predecessors = await Promise.all([1, 2, 3, 4, 5].map(version =>
   fixture('generic-package-source-v' + version + '.json')));
 
-test('conditional-call private5 rejects unsupported cold call shapes before facts', async t => {
+test('conditional-call private6 rejects unsupported cold call shapes before facts', async t => {
   const { pkg, record } = await loaded();
   /** @type {Array<[string, (leaf: any, route: any) => void]>} */
   const cases = [
@@ -95,12 +104,24 @@ test('conditional-call private5 rejects unsupported cold call shapes before fact
     failure(() => validateGenericInstanceResult(bytes, record.result, record.requests), 'generic-package-reference');
     assert.deepEqual(bytes, before);
   });
-  await t.test('mapped-call-remains-unsupported', async () => {
-    const mapped = decodeGenericPackage(await fixture('generic-mapped-signature-package-v5.json'));
+  await t.test('mapped-call-full-packet-control-and-call-bodied-callee-chain', async () => {
+    const mapped = decodeGenericPackage(await fixture('generic-mapped-signature-package-v6.json'));
     const indexed = mapped.payload.definitions[0].returnType;
-    const bad = clone(pkg), { leaf, route } = definitions(bad);
+    const positive = clone(pkg), { leaf, route } = definitions(positive);
     for (const def of [leaf, route]) { def.parameters[0].type = clone(indexed); def.returnType = clone(indexed); }
-    failure(() => decodeGenericPackage(signed(bad)), 'generic-package-reference');
+    // Retain the whole former mutation as a structural positive, not a new
+    // official Source claim. These source/definition anchors stay unchanged.
+    const raw = signed(positive), before = Buffer.from(raw), cold = decodeGenericPackage(raw);
+    assert.deepEqual(cold, positive); assert.deepEqual(Buffer.from(encodeGenericPackage(cold)), raw);
+    assert.deepEqual(raw, before);
+    const bad = clone(positive), changed = definitions(bad);
+    changed.leaf.body = clone(changed.route.body);
+    changed.leaf.body.definition = changed.route.key;
+    changed.leaf.body.origin = { start: 122, end: 127 };
+    changed.leaf.body.arguments[0].origin = { start: 122, end: 127 };
+    const rejected = signed(bad);
+    failure(() => decodeGenericPackage(rejected), 'generic-package-reference');
+    failure(() => validateGenericInstanceResult(rejected, record.result, record.requests), 'generic-package-reference');
   });
 });
 
@@ -118,7 +139,7 @@ test('conditional-call facts reject changed callee scalar roots and owned origin
     ['argument-origin', 'origin', (result, route) => { route.body.arguments[0].origin.start--; }],
     ['call-origin', 'origin', (result, route) => { route.body.origin.end--; }],
     ['missing-leaf', 'reference', result => { result.instances = result.instances.filter(i => i.body.kind === 'call'); }],
-    ['foreign-root', 'root', result => { result.roots[0] = result.instances[0].key; }],
+    ['foreign-root', 'root', result => { result.roots[0] = result.instances.find(i => i.body.kind === 'parameter').key; }],
   ];
   for (const [name, code, mutate] of cases) await t.test(name, () => {
     const bad = clone(record), route = bad.result.instances.find(i => i.body.kind === 'call' && i.returnType === 'bool');

@@ -17,11 +17,11 @@ const signature = pkg => definition(pkg).returnType;
 const reseal = pkg => { pkg.packageId = genericPackageId(pkg.payload); return pkg; };
 const fixture = name => readFile(new URL('./fixtures/' + name, import.meta.url));
 async function actual() {
-  const names = ['generic-mapped-signature-package-v5.json', 'generic-mapped-signature-instance-v5.json',
+  const names = ['generic-mapped-signature-package-v6.json', 'generic-mapped-signature-instance-v6.json',
     'generic-mapped-signature.source.ts', 'generic-mapped-signature.declaration.d.ts'];
   const bytes = await Promise.all(names.map(fixture));
-  const pins = [[2135, '010b20dc9dbdbca958e9dc57be302edb5e7dac8b190921f7a92eecbd472b19d4'],
-    [1485, '92e908e14aa37a55db70e750f34d0c31bfb646ab56f5c6ff3d3e7f7a44c51f1f'],
+  const pins = [[2165, 'ef3d3858feb524909a5fcebd3024c7b4c4ace19701386cec0bc3cf94351364fd'],
+    [1485, '7a04de74add85eddac1ce3dce00307b98d10b66b61afa765ad068af7b9ad91bd'],
     [122, 'eae49419fbca1d64bc6c55bb871da4b0d6eb942bdcd8cf14dbb09da903d6c356'],
     [362, 'd629059f5175a580a8a7b19531c7d8cff1bfa7b61320f6638cf4ee25fbf5a141']];
   bytes.forEach((value, index) => assert.deepEqual([value.length, sha(value)], pins[index]));
@@ -38,23 +38,27 @@ const conditional = () => ({ kind: 'conditional', parameter: 0, checkType: { kin
   extendsType: { kind: 'boolean', parameter: 0 }, trueType: { kind: 'boolean', parameter: 0 },
   falseType: { kind: 'number', parameter: 0 } });
 
-test('mapped package5 rejects predecessor versions 3 and 4 and every mixed format identity', async () => {
+test('mapped package6 rejects predecessor versions 3,4,5 and every mixed format identity', async () => {
   const { pkg } = await actual();
   for (const name of ['generic-package-source-v3.json', 'generic-number-add-package-v3.json',
     'generic-conditional-signature-package-v3.json', 'generic-package-source-v4.json',
-    'generic-number-add-package-v4.json', 'generic-conditional-signature-package-v4.json', 'generic-mapped-signature-package-v4.json']) {
+    'generic-number-add-package-v4.json', 'generic-conditional-signature-package-v4.json', 'generic-mapped-signature-package-v4.json',
+    'generic-package-source-v5.json', 'generic-number-add-package-v5.json', 'generic-conditional-signature-package-v5.json',
+    'generic-mapped-signature-package-v5.json', 'generic-conditional-call-package-v5.json']) {
     const old = await fixture(name);
     assert.throws(() => decodeGenericPackage(old), code('generic-package-schema'));
   }
   const foreign = clone(pkg); foreign.packageId = 'sha256:' + '0'.repeat(64);
   assert.throws(() => encodeGenericPackage(foreign), code('generic-package-identity'));
   /** @type {Array<[(value: any) => void, string]>} */
-  const changes = [[v => { v.version = 3; }, 'schema'], [v => { v.version = 4; }, 'schema'], [v => { v.version = 999; }, 'schema'],
+  const changes = [[v => { v.version = 3; }, 'schema'], [v => { v.version = 4; }, 'schema'], [v => { v.version = 5; }, 'schema'], [v => { v.version = 999; }, 'schema'],
     [v => { v.family += '-foreign'; }, 'schema'],
     [v => { v.schemaHash = '38fe7f94987ee409c7f86c6a38a148901cf79933aed1112286cc36d990da24ea'; }, 'schema'],
     [v => { v.schemaHash = '0'.repeat(64); }, 'schema'],
     [v => { v.payload.semanticProfile = 'tsfg-owned-scalar-generics-host-v3'; }, 'schema'],
     [v => { v.payload.semanticProfile = 'tsfg-owned-scalar-generics-host-v4'; }, 'schema'],
+    [v => { v.payload.semanticProfile = 'tsfg-owned-scalar-generics-host-v5'; }, 'schema'],
+    [v => { v.schemaHash = 'da7eb72ae306eb88863a44c945df77d572a96443a005fefbd787267fe90658bf'; }, 'schema'],
     [v => { v.schemaHash = 'ec05631c15f280f54279ba9353fd8fc3ff779349a1f56f7cdb00eba22c767e20'; }, 'schema'],
     [v => { v.payload.capabilities.splice(2, 1); }, 'limit'],
     [v => { v.payload.capabilities[2] = 'foreign'; }, 'schema'],
@@ -176,7 +180,7 @@ test('mapped binder and value roles exclude collisions inner references nested t
     rejectPackage(pkg, v => { signature(v).indexed.object.mapped.value[field] = {}; });
 });
 
-test('mapped signatures require one outer binder one value identical syntax and direct parameter0 return', async () => {
+test('mapped signatures retain original slots and reject malformed or recursive bodies', async () => {
   const { pkg } = await actual();
   const changes = [d => { d.typeParameters.push('U'); }, d => { d.parameters = []; },
     d => { d.parameters.push({ ...clone(d.parameters[0]), name: 'other' }); },

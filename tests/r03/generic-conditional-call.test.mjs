@@ -7,24 +7,25 @@ import { decodeGenericPackage, encodeGenericPackage } from '../../compiler/gener
 import { validateGenericInstanceResult } from '../../compiler/generic-instance.mjs';
 import { buildGenericHir, verifyGenericHir, printGenericHir, readGenericHir, lowerGenericHir } from '../../compiler/generic-hir.mjs';
 
-// These are actual Go17592 records, captured after official diagnostics and a
-// source-free cold import. Identity literals were independently calculated from
+// These are fresh private6 records from the passing Source35864 named case,
+// captured after official diagnostics and source-free cold import. Identity literals were independently calculated from
 // protocol preimages, without a production identity helper. The complete Core
-// oracle is a hand-worked four-function example, never current emitter output;
+// oracle is independently hand-worked for the current v1 identities and sorted
+// four-function SSA, never current emitter output;
 // this test grants no C++/SourceEXE/VM execution credit.
-const rows = [{"key":"0e0b84491d9de0d8c017aba338d05b49d657d98c3bacf8fc58c02bbef1ab0fd4","definition":"849780ec99159f78393505e159003d11b694f6387149cadc1398deab4c2a8db1","name":"leaf","scalar":"bool","argument":"boolean","signature":"sha256:176f0c2d74ef9b180f6aa17b92935546bf3661b0a8944833e96892a14d968395","functionId":"sha256:9b914d14844fcdf4d40bf4117632f86275ff2513bb12069600d3bf3d92f7dc51"},{"key":"ad7f5e4418f30029289067374f3d7709fc6d56e3d169c025068001a141937c6c","definition":"687fa67b1f43e2e94aa1f8c5aeb8184422c54c2d40494746c7dd72c39b61831b","name":"route","scalar":"bool","argument":"boolean","signature":"sha256:176f0c2d74ef9b180f6aa17b92935546bf3661b0a8944833e96892a14d968395","functionId":"sha256:c77b08a0f09a4ee989dca63f8dd91edf8892a97f8b6d39e34af9704c4bc40fa5"},{"key":"c3a2cef4d5b14878f709c8369f268ff1470e1edc03d4509bbbcb23a0d91b6769","definition":"687fa67b1f43e2e94aa1f8c5aeb8184422c54c2d40494746c7dd72c39b61831b","name":"route","scalar":"f64","argument":"number","signature":"sha256:f195c19035b7f0da83780c5c50afe3060a0d4ea3a577e4b70726f5905aab8059","functionId":"sha256:17cb491dddaddc3939f3182a03fd4f72cf78b7a5f2fcecd9ec2fcbce7a3fce33"},{"key":"de1458536e9d3ce6c061b8dffcb71fdf7d03f92535de2a48331387052a514e8d","definition":"849780ec99159f78393505e159003d11b694f6387149cadc1398deab4c2a8db1","name":"leaf","scalar":"f64","argument":"number","signature":"sha256:f195c19035b7f0da83780c5c50afe3060a0d4ea3a577e4b70726f5905aab8059","functionId":"sha256:afa9b718a33fc11ef557baab2229a99e98c5dc32845269e5e85613915805844a"}];
-const expectedPackageId = "sha256:7c711893529c1728c506e0196035d0516f32293d94cdb27d37ea0c0a16010c5d";
-const expectedInputId = "sha256:b61b5ceb2534da802cb67ed9e6461c6c09e15749d4b1e2d31d7a6af3cc11447a";
+const rows = [{"key":"01fa351467cb0fb5b922a792ec099e003c24e875c3245821f55f8cb106c4db0a","definition":"687fa67b1f43e2e94aa1f8c5aeb8184422c54c2d40494746c7dd72c39b61831b","name":"route","scalar":"bool","argument":"boolean","signature":"sha256:176f0c2d74ef9b180f6aa17b92935546bf3661b0a8944833e96892a14d968395","functionId":"sha256:e2819d092fa44772c9b7224b1e03fc172a7720b282ebe3cf84a9527b57cf9153"},{"key":"1f6fa4533dba0058c46b98124e95ebc13b727bc9dd34f13e0bc1716ac106e092","definition":"849780ec99159f78393505e159003d11b694f6387149cadc1398deab4c2a8db1","name":"leaf","scalar":"bool","argument":"boolean","signature":"sha256:176f0c2d74ef9b180f6aa17b92935546bf3661b0a8944833e96892a14d968395","functionId":"sha256:d8582cf60ce1603b959dfd4f27811afc7192e17a1a8f7ac5ccfd3eb8251e8c18"},{"key":"921ab4589cb37e8e438939c6a01f0868e6653080306599398efc82391a681575","definition":"849780ec99159f78393505e159003d11b694f6387149cadc1398deab4c2a8db1","name":"leaf","scalar":"f64","argument":"number","signature":"sha256:f195c19035b7f0da83780c5c50afe3060a0d4ea3a577e4b70726f5905aab8059","functionId":"sha256:bba01dbd434bdbefb3819ba78de8fe16c77cb052ac7f6d985672064c10778d0a"},{"key":"980850427745740acd76bef8a2c710435975d9865ea066428ed4a0b72d62dcb2","definition":"687fa67b1f43e2e94aa1f8c5aeb8184422c54c2d40494746c7dd72c39b61831b","name":"route","scalar":"f64","argument":"number","signature":"sha256:f195c19035b7f0da83780c5c50afe3060a0d4ea3a577e4b70726f5905aab8059","functionId":"sha256:845f0988a21203796fdeaf9f4853c431658587288a16f5075a767dc1c9020104"}];
+const expectedPackageId = "sha256:4189655c791bbe9d93ef5bfd3bb6bb988350d06d697a4795b5e00ae79a441f7b";
+const expectedInputId = "sha256:5deb63d61e7328ca2c64df7f3f8c1ce64cb0c0f39cbcfc2b95914c1ebc9c6fd0";
 const expectedTarget = {"llvmDataLayout":"e-m:w-p270:32:32-p271:32:32-p272:64:64-i64:64-i128:128-f80:128-n8:16:32:64-S128","target":"windows-x86_64-msvc","triple":"x86_64-pc-windows-msvc"};
 const expectedSource = "// 😀\nexport function leaf<U>(value: U extends boolean ? boolean : number): U extends boolean ? boolean : number { return value; }\nexport function route<T>(value: T extends boolean ? boolean : number): T extends boolean ? boolean : number { return leaf<T>(value); }";
-const schema = 'da7eb72ae306eb88863a44c945df77d572a96443a005fefbd787267fe90658bf';
-const profile = 'tsfg-owned-scalar-generics-host-v5';
+const schema = 'c6b6baa76be25f6ac4f619867273208c9adb595030f12e7c54a200ed8c677789';
+const profile = 'tsfg-owned-scalar-generics-host-v6';
 const pins = [
-  ['generic-conditional-call-package-v5.json', 3067, 'b948297f66861e7d92012f68fee72e068c748b9dc9cf21ac1b9639bea18dd42e'],
-  ['generic-conditional-call-instance-v5.json', 2722, '10e94bba1c0ec9ce8f90122b9d6e753bff43071c4e5ea552723fdc0712a83fd6'],
+  ['generic-conditional-call-package-v6.json', 3097, '6600f1e9f20865e4e2abc92a3f281fa8dd18b1766d9ac848b21193ebedbbc35f'],
+  ['generic-conditional-call-instance-v6.json', 2722, '644cec181a838ab74daa98ca6945afa4403ea53dc94cca2dea6609dd61a8d303'],
   ['generic-conditional-call.source.ts', 267, '0f7d41e4184bea4af390fd1e4671be1eee5847fc4fa092e95a39dbce55297fda'],
   ['generic-conditional-call.declaration.d.ts', 362, 'd629059f5175a580a8a7b19531c7d8cff1bfa7b61320f6638cf4ee25fbf5a141'],
-  ['generic-conditional-call-core-v5.mlir', 4268, 'a2a823802d1d3c1ee29222a5b83596b573e53cb38e7859e1c3c7f9d3aba74085'],
+  ['generic-conditional-call-core-v6.mlir', 4268, '3675f0f5e91d6403a088ce5bb5228781994acf067e54aaee09d08d467d249d6d'],
 ];
 /** @type {Record<string,string>} */
 const scalarIds = {
@@ -34,17 +35,17 @@ const scalarIds = {
 const hash = value => createHash('sha256').update(value).digest('hex');
 const fixture = name => readFile(new URL('./fixtures/' + name, import.meta.url));
 
-test('actual private5 conditional calls preserve four cold functions and original SSA forwarding', async () => {
+test('actual private6 conditional calls preserve four cold functions and original SSA forwarding', async () => {
   const inputs = await Promise.all(pins.map(async ([name, length, sha]) => {
     const bytes = await fixture(name); assert.equal(bytes.length, length); assert.equal(hash(bytes), sha); return bytes;
   }));
   const [packageBytes, instanceBytes, sourceBytes, declarationBytes, coreOracle] = inputs;
   const pkg = decodeGenericPackage(packageBytes), record = JSON.parse(instanceBytes.toString('utf8'));
   const before = JSON.stringify({ pkg, record });
-  assert.equal(pkg.version, 5); assert.equal(pkg.schemaHash, schema); assert.equal(pkg.packageId, expectedPackageId);
+  assert.equal(pkg.version, 6); assert.equal(pkg.schemaHash, schema); assert.equal(pkg.packageId, expectedPackageId);
   assert.equal(pkg.payload.semanticProfile, profile); assert.equal(pkg.payload.scope, 'package:conditional-call');
   assert.deepEqual(pkg.payload.capabilities, ['conditional-generic-call', 'conditional-signature', 'explicit-type-arguments',
-    'mapped-indexed-signature', 'number-add', 'scalar-generics', 'single-module']);
+    'mapped-indexed-generic-call', 'mapped-indexed-signature', 'number-add', 'scalar-generics', 'single-module']);
   assert.deepEqual(Buffer.from(encodeGenericPackage(pkg)), packageBytes);
   assert.equal(sourceBytes.toString('utf8'), expectedSource); assert.equal(expectedSource.length, 265);
   assert.deepEqual(pkg.payload.source, { path: '/original/main.ts', digest: pins[2][2], length: 265,
@@ -77,7 +78,7 @@ test('actual private5 conditional calls preserve four cold functions and origina
   const hir = buildGenericHir(packageBytes, record.result, record.requests), text = printGenericHir(hir);
   const cold = readGenericHir(Buffer.from(text)); assert.deepEqual(verifyGenericHir(cold), hir);
   assert.equal(printGenericHir(cold), text);
-  assert.deepEqual(cold.format, { family: 'tsfg.generic-concrete-hir-candidate', version: 5,
+  assert.deepEqual(cold.format, { family: 'tsfg.generic-concrete-hir-candidate', version: 6,
     linkageAlgorithm: 'tsfg.generic-linkage.v1', semanticProfile: profile });
   assert.deepEqual(cold.context, { packageId: expectedPackageId, scope: 'package:conditional-call', semanticProfile: profile });
   assert.deepEqual(cold.source, pkg.payload.source); assert.equal(Object.hasOwn(cold.source, 'content'), false);

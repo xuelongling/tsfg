@@ -11,8 +11,8 @@ import registry from '../contracts/registry.json' with { type: 'json' };
 
 // Explicit candidate owned HIR family; scalar SSA uses the same Core exchange.
 // Source result validation is structural correspondence, never Source admission.
-export const genericHirFormat = own({ family: 'tsfg.generic-concrete-hir-candidate', version: 5,
-  linkageAlgorithm: 'tsfg.generic-linkage.v1', semanticProfile: 'tsfg-owned-scalar-generics-host-v5' });
+export const genericHirFormat = own({ family: 'tsfg.generic-concrete-hir-candidate', version: 6,
+  linkageAlgorithm: 'tsfg.generic-linkage.v1', semanticProfile: 'tsfg-owned-scalar-generics-host-v6' });
 const fail = category => { throw Object.assign(new TypeError(
   'generic-hir-' + category + ': invalid concrete candidate HIR'), { code: 'generic-hir-' + category }); };
 const check = (value, category = 'schema') => { if (!value) fail(category); };

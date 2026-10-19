@@ -3,10 +3,10 @@ import { canonical, sha256, own } from "./identity.mjs";
 import { checkGenericJsonValueBudget, genericPackageJsonPolicy } from "./generic-json-budget.mjs";
 
 export const genericPackageFormat = own({
-  family: "tsfg-owned-generic-package", version: 5,
-  schemaHash: "da7eb72ae306eb88863a44c945df77d572a96443a005fefbd787267fe90658bf",
-  semanticProfile: "tsfg-owned-scalar-generics-host-v5", declarationProfile: "minimal-scalars-v2",
-  capabilities: ["conditional-generic-call", "conditional-signature", "explicit-type-arguments", "mapped-indexed-signature", "number-add", "scalar-generics", "single-module"],
+  family: "tsfg-owned-generic-package", version: 6,
+  schemaHash: "c6b6baa76be25f6ac4f619867273208c9adb595030f12e7c54a200ed8c677789",
+  semanticProfile: "tsfg-owned-scalar-generics-host-v6", declarationProfile: "minimal-scalars-v2",
+  capabilities: ["conditional-generic-call", "conditional-signature", "explicit-type-arguments", "mapped-indexed-generic-call", "mapped-indexed-signature", "number-add", "scalar-generics", "single-module"],
 });
 export const genericPackageLimits = Object.freeze({ bytes: genericPackageJsonPolicy.bytes, declarationBytes: 1048576,
   declarations: 8, definitions: 256, depth: genericPackageJsonPolicy.depth, expressionDepth: 64,
@@ -23,6 +23,7 @@ const bytes = text => Buffer.byteLength(text, "utf8");
 const digest = value => typeof value === "string" && /^[0-9a-f]{64}$/.test(value);
 const hex = text => sha256(text).slice(7);
 const order = (a, b) => a < b ? -1 : a > b ? 1 : 0;
+const ownedSignature = type => type.kind === "conditional" || type.kind === "indexed";
 
 /** @param {number} [maximum] */
 export function packageString(value, maximum = genericPackageLimits.stringBytes, nonempty = false) {
@@ -85,7 +86,7 @@ export function genericDefinitionKey(definition, payload) {
 /** Hash the protocol Payload: definitions/files must already have canonical order. */
 export function genericPackageId(payload) {
   checkGenericJsonValueBudget(payload);
-  return sha256("tsfg-owned-generic-package/v5\n" + canonical(payload));
+  return sha256("tsfg-owned-generic-package/v6\n" + canonical(payload));
 }
 
 /** Structural admission only. Official Source checking remains the semantic authority. */
@@ -214,12 +215,11 @@ export function normalizeGenericPackage(input, ordered = false) {
         kind: raw.kind, origin: expressionOrigin, parameter, typeArguments: typeArgs.map(rawType => type(rawType)) };
     }
     const body = expression(definition.body, 0);
-    const ownedSignature = type => type.kind === "conditional" || type.kind === "indexed";
     if (ownedSignature(returnType) || parameters.some(parameter => ownedSignature(parameter.type))) {
       check(typeParameters.length === 1 && parameters.length === 1 && ownedSignature(returnType)
         && canonical(parameters[0].type) === canonical(returnType)
         && (body.kind === "parameter" && body.parameter === 0
-          || returnType.kind === "conditional" && body.kind === "call"), "reference");
+          || body.kind === "call"), "reference");
     }
     return { body, exported: definition.exported, key: definition.key,
       name, origin: anchor, parameters, returnType, typeParameters };
@@ -239,7 +239,7 @@ export function normalizeGenericPackage(input, ordered = false) {
         const callee = byKey.get(expression.definition);
         check(callee && expression.arguments.length === callee.parameters.length
           && expression.typeArguments.length === callee.typeParameters.length && !names.has(callee.name), "reference");
-        if (definition.returnType.kind === "conditional") {
+        if (ownedSignature(definition.returnType)) {
           check(expression === definition.body && expression.typeArguments.length === 1
             && canonical(expression.typeArguments[0]) === canonical({ kind: "parameter", parameter: 0 })
             && expression.arguments.length === 1 && expression.arguments[0].kind === "parameter"
