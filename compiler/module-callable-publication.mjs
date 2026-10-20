@@ -12,6 +12,10 @@ const sorted=values=>values.every((id,i)=>i===0||compare(values[i-1],id)<0);
 const top=()=>({reads:[],writes:[],unknown:true});
 const coversTargets=(a,b)=>a.top||!b.top&&b.functions.every(id=>a.functions.includes(id));
 const coversEffects=(a,b)=>a.unknown||!b.unknown&&b.reads.every(id=>a.reads.includes(id))&&b.writes.every(id=>a.writes.includes(id));
+// Both fixed publication and Core consume the same already-verified scope.
+export function verifiedModulePublicationScope(checked){
+  return {roots:{roots:checked.closure.roots.map(({kind,sourcePath,name})=>({kind,sourcePath,name})),requiredRoots:checked.closure.requiredRoots},modules:checked.modules.map(({id,sourcePath,dependencies,exports,bindings})=>({moduleId:id,sourcePath,dependencies,exports,bindings})),functions:checked.functions.filter(f=>f.kind==='source').map(f=>({functionId:f.id,sourcePath:f.sourcePath,name:f.name,signatureHash:f.signatureHash,parameters:f.parameters.map(p=>p.type),returnType:f.returnType})),globals:checked.globals.map(({id,sourcePath,name,type,writable})=>({globalId:id,sourcePath,name,type,writable}))};
+}
 function prepare(hir,context){
   budget(context,moduleCallFailure);const checked=verifyModuleCallableHir(hir);validateShape(context,'context',moduleCallFailure);
   const count=meter(moduleCallFailure),functions=new Map(checked.functions.map(f=>[f.id,f]));
@@ -37,7 +41,7 @@ function prepare(hir,context){
     for(const id of row.upper.writes){count.member();assert(globals.has(id),'identity');assert(globals.get(id).writable);}
     const {digest,...body}=row;assert(digest===sha256('tsfg.module-published-call-contract.v1\0'+canonical(body)),'identity');records.set(fn.id,row);
   }
-  const scope={roots:{roots:checked.closure.roots.map(({kind,sourcePath,name})=>({kind,sourcePath,name})),requiredRoots:checked.closure.requiredRoots},modules:checked.modules.map(({id,sourcePath,dependencies,exports,bindings})=>({moduleId:id,sourcePath,dependencies,exports,bindings})),functions:sourceFunctions.map(f=>({functionId:f.id,sourcePath:f.sourcePath,name:f.name,signatureHash:f.signatureHash,parameters:f.parameters.map(p=>p.type),returnType:f.returnType})),globals:checked.globals.map(({id,sourcePath,name,type,writable})=>({globalId:id,sourcePath,name,type,writable}))};
+  const scope=verifiedModulePublicationScope(checked);
   budget(scope,moduleCallFailure);
   const scopeDigest=sha256('tsfg.module-call-scope.v1\0'+canonical(scope));
   assert(context.scopeDigest===scopeDigest&&context.expectedDigest===sha256('tsfg.module-call-publication.v1\0'+canonical({scopeDigest,contracts:context.contracts})),'identity');

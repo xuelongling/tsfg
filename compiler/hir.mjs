@@ -31,6 +31,7 @@ import { buildClosureHir } from "./closure-hir.mjs";
 export { verifyHir };
 export { analyzeModuleCalls } from './module-hir.mjs';
 export { verifyKernelParallelGroup, verifyKernelParallelProof, printKernelParallelProof, readKernelParallelProof } from './kernel-access.mjs';
+export { lowerKernelGlobalCore } from './kernel-core-emitter.mjs';
 export { verifyArrayCallParallelGroup, verifyArrayParallelProof, printArrayParallelProof, readArrayParallelProof } from './array-parallel.mjs';
 export { analyzeClosureCalls, verifyClosureCalls, printClosureCalls, readClosureCalls } from './closure-call-effects.mjs';
 const contract = () => registry['tsfg.hir'];

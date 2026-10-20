@@ -6,6 +6,7 @@
 #include "nullable.h"
 #include "string-core.h"
 #include "array-core.h"
+#include "kernel-access.h"
 #include "reference-metadata.h"
 #include "reference-verify.h"
 #include "mlir/IR/OwningOpRef.h"
@@ -13,6 +14,7 @@
 
 namespace tsfg {
 mlir::LogicalResult verifyCoreModule(mlir::ModuleOp module) {
+  if (kernelGlobal::usesCandidate(module)) return kernelGlobal::verifyCandidate(module);
   if (exception::usesCandidate(module)) {
     llvm::errs() << "[core-ir-exception-private-mode] private candidate requires its explicit verifier\n";
     return mlir::failure();

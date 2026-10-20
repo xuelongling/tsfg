@@ -9,6 +9,7 @@
 #include "nullable-wire.h"
 #include "string-core.h"
 #include "array-core.h"
+#include "kernel-access.h"
 #include "mlir/Dialect/Func/IR/FuncOps.h"
 #include "mlir/Dialect/ControlFlow/IR/ControlFlowOps.h"
 #include "mlir/IR/DialectRegistry.h"
@@ -87,11 +88,12 @@ int main(int argc, char **argv) {
   const bool nullable = tsfg::nullable::usesCandidate(*module);
   const bool stringCandidate = tsfg::strings::usesCandidate(*module);
   const bool arrayCandidate = tsfg::arrays::usesCandidate(*module);
+  const bool kernelCandidate = tsfg::kernelGlobal::usesCandidate(*module);
   const bool nullableWire = llvm::StringRef(argv[1]) == "--emit-nullable-candidate";
   // The shared legacy stdin/MLIR parser remains unchanged. Apply the private
   // format budget before candidate metadata, typed verification and CFG work.
-  if ((reference || nullable || nullableWire || stringCandidate || arrayCandidate || closureCandidate) && (*input)->getBufferSize() > referenceByteBudget) {
-    llvm::errs() << (arrayCandidate ? "[core-ir-array-budget]" : stringCandidate ? "[core-ir-string-budget]" :
+  if ((reference || nullable || nullableWire || stringCandidate || arrayCandidate || closureCandidate || kernelCandidate) && (*input)->getBufferSize() > referenceByteBudget) {
+    llvm::errs() << (kernelCandidate ? "[core-ir-kernel-budget]" : arrayCandidate ? "[core-ir-array-budget]" : stringCandidate ? "[core-ir-string-budget]" :
                      closureCandidate ? "[core-ir-closure-budget]" : nullable || nullableWire ? "[core-ir-nullable-budget]" : "[core-ir-reference-budget]")
                  << " input exceeds candidate byte budget\n";
     return 3;
@@ -118,6 +120,13 @@ int main(int argc, char **argv) {
     if (_setmode(_fileno(stderr), _O_BINARY) == -1) return 3;
 #endif
     llvm::errs() << "[r04-core-array-unsupported] Array candidate has no wire encoding\n";
+    return 3;
+  }
+  if (kernelCandidate && (nullableWire || llvm::StringRef(argv[1]) == "--emit-bytecode")) {
+#if defined(_WIN32)
+    if (_setmode(_fileno(stderr), _O_BINARY) == -1) return 3;
+#endif
+    llvm::errs() << "[r04-core-kernel-unsupported] GlobalId proof candidate has no wire encoding\n";
     return 3;
   }
   if (stringCandidate && (nullableWire || llvm::StringRef(argv[1]) == "--emit-bytecode")) {
@@ -152,12 +161,12 @@ int main(int argc, char **argv) {
   }
   // The current optimization pipeline is deliberately the canonical identity
   // pass: it performs full verification and retains every event/failure anchor.
-  if (reference || nullable || stringCandidate || arrayCandidate || closureCandidate) {
+  if (reference || nullable || stringCandidate || arrayCandidate || closureCandidate || kernelCandidate) {
     ReferenceOutput output;
     module->print(output, mlir::OpPrintingFlags().printGenericOpForm());
     output << '\n';
     if (output.exceeded()) {
-      llvm::errs() << (arrayCandidate ? "[core-ir-array-budget]" : stringCandidate ? "[core-ir-string-budget]" :
+      llvm::errs() << (kernelCandidate ? "[core-ir-kernel-budget]" : arrayCandidate ? "[core-ir-array-budget]" : stringCandidate ? "[core-ir-string-budget]" :
                        closureCandidate ? "[core-ir-closure-budget]" : nullable ? "[core-ir-nullable-budget]" : "[core-ir-reference-budget]")
                    << " output exceeds candidate byte budget\n";
       return 3;

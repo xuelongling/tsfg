@@ -45,7 +45,7 @@ include_directories(${LLVM_INCLUDE_DIRS}
   ${LLVM_MAIN_SRC_DIR}/../mlir/include
   ${LLVM_BINARY_DIR}/tools/mlir/include)
 add_llvm_executable(tsfg-core-ir main.cpp dialect.cpp bytecode.cpp bytecode_encoding.cpp
-  module.cpp native_cost.cpp core-verify.cpp nullable.cpp nullable-cfg.cpp nullable-metadata.cpp nullable-wire.cpp
+  module.cpp native_cost.cpp core-verify.cpp kernel-access.cpp kernel-access-metadata.cpp nullable.cpp nullable-cfg.cpp nullable-metadata.cpp nullable-wire.cpp
   string.cpp string-verify.cpp array.cpp array-metadata.cpp array-verify.cpp
   reference-metadata.cpp reference-provenance.cpp
   reference.cpp reference-index.cpp reference-cfg.cpp reference-verify.cpp

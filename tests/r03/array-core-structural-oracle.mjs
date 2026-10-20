@@ -5,7 +5,7 @@ import assert from 'node:assert/strict';
 import { decodeMlirString } from './string-core-structural-oracle.mjs';
 
 /** @param {string} text @returns {Array<{kind:string,value:string}>} */
-function tokens(text) {
+export function coreOracleTokens(text) {
   assert.ok(text.isWellFormed(), 'whole Core is well-formed Unicode');
   const out = [];
   for (let i = 0; i < text.length;) {
@@ -37,7 +37,7 @@ function tokens(text) {
  * Supports the emitter's original assembly and the same CLI's generic printer.
  * @param {string} text */
 export function parseArrayCore(text) {
-  const input = tokens(text);
+  const input = coreOracleTokens(text);
   let position = 0;
   const peek = () => input[position]?.value;
   /** @param {string} [value] */
