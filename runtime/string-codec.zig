@@ -183,3 +183,75 @@ pub fn codeUnitAt(bytes: []const u8, index: usize) ReadError!u16 {
     }
     return error.IndexOutOfBounds;
 }
+
+// A slice is a contiguous logical code-unit range, even across a four-byte pair.
+fn slicePass(bytes: []const u8, start: usize, end: usize, out: ?[]u8) LengthError!usize {
+    var source: usize = 0;
+    var unit: usize = 0;
+    var target: usize = 0;
+    while (source < bytes.len) {
+        const sequence = try sequenceAt(bytes, source);
+        const first = unit >= start and unit < end;
+        const second = sequence.units == 2 and unit + 1 >= start and unit + 1 < end;
+        if (first or second) {
+            const cut_pair = sequence.units == 2 and first != second;
+            const width: usize = if (cut_pair) 3 else sequence.bytes;
+            if (target > std.math.maxInt(usize) - width) return error.LengthOverflow;
+            if (out) |buffer| {
+                if (cut_pair) {
+                    const isolated = [_]u16{if (first) sequence.first else sequence.second};
+                    _ = encodeInto(&isolated, buffer[target .. target + width]) catch unreachable;
+                } else @memcpy(buffer[target .. target + width], bytes[source .. source + width]);
+            }
+            target += width;
+        }
+        source += sequence.bytes;
+        unit += sequence.units;
+    }
+    return target;
+}
+
+/// Exact UTF16 [start,end); language argument adaptation is a separate boundary.
+pub fn sliceAlloc(allocator: Allocator, bytes: []const u8, start: usize, end: usize) (Allocator.Error || LengthError || error{IndexOutOfBounds})![]u8 {
+    const length = try canonicalLength(bytes);
+    if (start > end or end > length) return error.IndexOutOfBounds;
+    const needed = try slicePass(bytes, start, end, null);
+    const out = try allocator.alloc(u8, needed);
+    errdefer allocator.free(out);
+    _ = try slicePass(bytes, start, end, out);
+    return out;
+}
+
+const CodeUnits = struct {
+    bytes: []const u8,
+    index: usize = 0,
+    pending: ?u16 = null,
+
+    fn next(self: *CodeUnits) FormatError!?u16 {
+        if (self.pending) |unit| {
+            self.pending = null;
+            return unit;
+        }
+        if (self.index == self.bytes.len) return null;
+        const sequence = try sequenceAt(self.bytes, self.index);
+        self.index += sequence.bytes;
+        if (sequence.units == 2) self.pending = sequence.second;
+        return sequence.first;
+    }
+};
+
+/// Validate both complete encodings before any early lexicographic decision.
+pub fn compare(left: []const u8, right: []const u8) LengthError!std.math.Order {
+    _ = try canonicalLength(left);
+    _ = try canonicalLength(right);
+    var lhs: CodeUnits = .{ .bytes = left };
+    var rhs: CodeUnits = .{ .bytes = right };
+    while (true) {
+        const a = try lhs.next();
+        const b = try rhs.next();
+        if (a == null) return if (b == null) .eq else .lt;
+        if (b == null) return .gt;
+        if (a.? < b.?) return .lt;
+        if (a.? > b.?) return .gt;
+    }
+}

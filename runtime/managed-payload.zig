@@ -49,6 +49,26 @@ pub const Payload = union(enum) {
         return .{ .string = .{ .bytes = bytes, .utf16_length = length } };
     }
 
+    pub fn fromStringSlice(allocator: Allocator, source: Payload, start: usize, end: usize) Error!Payload {
+        const value = try source.asString();
+        const bytes = codec.sliceAlloc(allocator, value.bytes, start, end) catch |err| switch (err) {
+            error.OutOfMemory => return error.OutOfMemory,
+            error.LengthOverflow => return error.StringTooLarge,
+            error.InvalidCanonicalWtf8 => return error.InvalidString,
+            error.IndexOutOfBounds => return error.IndexOutOfBounds,
+        };
+        return .{ .string = .{ .bytes = bytes, .utf16_length = end - start } };
+    }
+
+    pub fn compareStrings(self: Payload, other: Payload) Error!std.math.Order {
+        const left = try self.asString();
+        const right = try other.asString();
+        return codec.compare(left.bytes, right.bytes) catch |err| switch (err) {
+            error.LengthOverflow => return error.StringTooLarge,
+            error.InvalidCanonicalWtf8 => return error.InvalidString,
+        };
+    }
+
     pub fn fromArrayF64(allocator: Allocator, values: []const f64) Error!Payload {
         if (values.len > std.math.maxInt(u32)) return error.ArrayTooLarge;
         return .{ .array_f64 = .{ .items = try allocator.dupe(f64, values), .length = values.len } };
