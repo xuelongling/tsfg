@@ -68,6 +68,7 @@ export function parseArrayCore(text) {
   function resultTypes() {return peek() === '(' ? list('(',')',type) : [type()];}
   /** @returns {any} */
   function value() {
+    if (peek() === '@') { take('@');return {kind:'symbol',value:take().value}; }
     if (peek() === '{') return dictionary();
     if (peek() === '[') return list('[',']',value);
     if (peek() === '(') {
@@ -88,7 +89,9 @@ export function parseArrayCore(text) {
       take('>');return {kind:'dense-array',elementType,values};
     }
     if (/^-?\d+$/.test(atom.value)) {
-      take(':');return {kind:'integer',value:atom.value,width:take().value};
+      // MLIR's generic printer omits the default i64 type inside ArrayAttr.
+      const width=peek()===':'?(take(':'),take().value):'i64';
+      return {kind:'integer',value:atom.value,width};
     }
     if (atom.value === 'true' || atom.value === 'false') return {kind:'boolean',value:atom.value};
     assert.fail('unexpected attribute value ' + atom.value);
@@ -123,6 +126,12 @@ export function parseArrayCore(text) {
     let properties = {};
     if (peek() === '<') {take('<');properties=dictionary();take('>');}
     const attributes = peek() === '{' ? dictionary() : {};
+    // MLIR stores func.call's callee as an inherent property in generic output;
+    // its ordinary generic input spells the same symbol in the attr dictionary.
+    if (name.value === 'func.call' && Object.hasOwn(properties,'callee')) {
+      assert.ok(!Object.hasOwn(attributes,'callee'),'callee represented once');
+      attributes.callee=properties.callee;delete properties.callee;
+    }
     take(':');const inputTypes=list('(',')',type);take('->');const outputTypes=resultTypes();
     assert.equal(inputTypes.length,operands.length,'complete operand type list');
     assert.equal(outputTypes.length,result === undefined ? 0 : 1,'complete result type list');

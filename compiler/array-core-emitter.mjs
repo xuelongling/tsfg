@@ -36,7 +36,7 @@ export function emitArrayCore(hir, context, fixedContext = undefined) {
   const verified = verifyArrayHir(hir, context, fixedContext);
   const unsupported = (fn, range) => {
     const code = 'r03-d-core-array-capability';
-    throw Object.assign(new TypeError('Array Core lowering supports only the complete local-owner no-call subset'),
+    throw Object.assign(new TypeError('Array Core lowering requires local owners, scalar call signatures and a final checked read'),
       {code,ruleId:'r01-ts-baseline',phase:'lowering',primary:{sourceId:fn.sourcePath,...range}});
   };
   // Inspect complete verified Source order before reserving even the module header.
@@ -48,7 +48,10 @@ export function emitArrayCore(hir, context, fixedContext = undefined) {
       const value = statement.kind === 'expression' ? statement.expression : statement.kind === 'return' ? statement.value : undefined;
       if (value?.kind === 'readSpanReadChecked' || value?.kind === 'readSpanLength') unsupported(fn,value.range);
       if (statement.kind === 'arrayStoreDenseChecked' && statement.value.kind === 'readSpanReadChecked') unsupported(fn,statement.value.range);
-      if (value?.kind === 'arrayDirectCall') unsupported(fn,value.range);
+      if (statement.kind === 'expression' && value?.kind !== 'arrayDirectCall') unsupported(fn,value.range);
+      if (value?.kind === 'arrayDirectCall' && (statement.kind !== 'expression'
+          || value.arguments.some(argument => !['reference','constant','floating'].includes(argument.kind)
+            || ![scalarTypeIds.f64,scalarTypeIds.u32].includes(argument.type)))) unsupported(fn,value.range);
       if (statement.kind === 'return' && value.kind !== 'arrayReadChecked') unsupported(fn,statement.range);
     }
     if (!fn.body.some(s => s.kind === 'local') || !verified.exports.some(e => e.functionId === fn.id && e.name === fn.name))
@@ -61,7 +64,7 @@ export function emitArrayCore(hir, context, fixedContext = undefined) {
     field('tsfg_core.triple', verified.target.triple), field('tsfg_core.data_layout', verified.target.llvmDataLayout),
     field('tsfg_core.bytecode_schema', coreExchangeFormat.bytecodeSchema),
     'tsfg_core.source_length = ' + source.content.length + ' : i64',
-    'tsfg_core.array = ' + dictionary([field('family', descriptor.family), 'version = 8 : i32',
+    'tsfg_core.array = ' + dictionary([field('family', descriptor.family), 'version = 9 : i32',
       field('schema', schemaHash), field('profile', descriptor.profile), 'facts_version = 7 : i32']),
     'tsfg_array.function_ids = ' + table(verified.functions.map(fn => quote(fn.id))),
     'tsfg_array.exports = ' + table(verified.exports.map(item => dictionary([
@@ -115,11 +118,13 @@ export function emitArrayCore(hir, context, fixedContext = undefined) {
     const stores = fn.body.filter(statement => statement.kind === 'arrayStoreDenseChecked');
     const resizes = fn.body.filter(statement => statement.kind === 'arrayResizeChecked');
     const reads = [fn.body.at(-1).value,...stores.filter(statement => statement.value.kind === 'arrayReadChecked').map(statement => statement.value)];
-    const scalars = [...reads.map(read => read.index),...stores.flatMap(statement => [statement.target.index,statement.value]),...resizes.map(statement => statement.value)];
+    const calls = fn.body.filter(statement => statement.kind === 'expression').map(statement => statement.expression);
+    const argumentsCount = calls.reduce((sum, call) => sum + call.arguments.length, 0);
+    const scalars = [...reads.map(read => read.index),...stores.flatMap(statement => [statement.target.index,statement.value]),...resizes.map(statement => statement.value),...calls.flatMap(call => call.arguments)];
     const constants = elements + scalars.filter(value => value.kind === 'constant' || value.kind === 'floating').length;
-    const count = locals.length, expected = {registers:fn.parameters.length + constants + count + reads.length,
-      lines:constants + count + reads.length + stores.length + resizes.length + 2,
-      steps:elements + 2*count + 4*stores.length + 3*resizes.length + 2*reads.length + 2};
+    const count = locals.length, expected = {registers:fn.parameters.length + constants + count + reads.length + calls.length,
+      lines:constants + count + reads.length + stores.length + resizes.length + calls.length + 2,
+      steps:elements + 2*count + 4*stores.length + 3*resizes.length + 2*reads.length + calls.length + argumentsCount + 2};
     let blocks = 0, parameters = 0, registers = 0, lines = 0, steps = 0;
     const shape = condition => { if (!condition) arrayHirFailure('invalid'); };
     const core = emitCoreSsaFunction(fn, { verified, coreType, functionSymbol: target => target.name,
@@ -156,6 +161,16 @@ export function emitArrayCore(hir, context, fixedContext = undefined) {
         }
       },
       emitStatementLeaf: (statement,api) => {
+        if (statement.kind === 'expression') {
+          const call = statement.expression, target = verified.functions.find(fn => fn.id === call.target);
+          const operands = call.arguments.map(api.emit);
+          api.operation('func.call', operands, call.arguments.map(argument => argument.type), call.type,
+            'callee = @' + quote(target.name) + ', ' + field('tsfg_core.function_id',target.id)
+              + ', ' + field('tsfg_core.signature_hash',target.signatureHash) + ', ' + field('source_callee',call.sourceCallee)
+              + ', callee_range = ' + span(call.calleeRange) + ', arguments = ' + table(call.arguments.map(scalarUse))
+              + ', statement_range = ' + span(statement.range), call.range);
+          return true;
+        }
         if (statement.kind === 'arrayStoreDenseChecked') {
           const target=statement.target,receiver=api.emit(target.receiver),index=api.emit(target.index),value=api.emit(statement.value);
           api.operation('tsfg_array.store_dense_checked',[receiver,index,value],

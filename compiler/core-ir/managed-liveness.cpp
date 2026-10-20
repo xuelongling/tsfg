@@ -2,6 +2,7 @@
 #include "managed-liveness.h"
 #include "reference.h"
 #include "closure.h"
+#include "array-core.h"
 #include "module.h"
 #include "mlir/Dialect/ControlFlow/IR/ControlFlowOps.h"
 #include "llvm/ADT/BitVector.h"
@@ -14,8 +15,9 @@ namespace tsfg {
 mlir::LogicalResult recomputeManagedLiveness(mlir::func::FuncOp function, ManagedDomain domain, ManagedLiveness &output) {
   output = ManagedLiveness{}; ManagedLiveness result;
   const bool closureDomain = domain == ManagedDomain::Closure;
+  const bool arrayDomain = domain == ManagedDomain::Array;
   auto reject = [&](llvm::StringRef reason) {
-    llvm::errs() << (closureDomain ? "[core-ir-closure-roots] " : "[core-ir-reference-roots] ") << reason << '\n'; return mlir::failure();
+    llvm::errs() << (arrayDomain ? "[core-ir-array-roots] " : closureDomain ? "[core-ir-closure-roots] " : "[core-ir-reference-roots] ") << reason << '\n'; return mlir::failure();
   };
   llvm::DenseMap<mlir::Block *, unsigned> blocks;
   llvm::DenseMap<mlir::Value, unsigned> registers;
@@ -29,7 +31,7 @@ mlir::LogicalResult recomputeManagedLiveness(mlir::func::FuncOp function, Manage
       registers[value] = static_cast<unsigned>(values.size()); values.push_back(value);
     }
   }
-  if (values.size() > 4096) return reject("register limit exceeded");
+  if (values.size() > (arrayDomain ? 4219u : 4096u)) return reject("register limit exceeded");
   std::vector<llvm::BitVector> incoming(blocks.size(),llvm::BitVector(values.size()));
   std::vector<std::vector<unsigned>> predecessors(blocks.size());
   std::vector<mlir::Block *> ordered(blocks.size());
@@ -41,9 +43,10 @@ mlir::LogicalResult recomputeManagedLiveness(mlir::func::FuncOp function, Manage
     }
   }
   bool valid = true; size_t workCount = 0;
-  auto step = [&]() { if (closureDomain && ++workCount > 1000000) valid = false; };
+  auto step = [&]() { if ((closureDomain || arrayDomain) && ++workCount > 1000000) valid = false; };
   auto managed = [&](mlir::Type type) {
-    return closureDomain ? llvm::isa<closure::EnvironmentType,closure::ClosureType>(type) : llvm::isa<ReferenceType>(type);
+    return arrayDomain ? llvm::isa<arrays::ArrayType>(type)
+      : closureDomain ? llvm::isa<closure::EnvironmentType,closure::ClosureType>(type) : llvm::isa<ReferenceType>(type);
   };
   auto add = [&](llvm::BitVector &live, mlir::Value value) {
     step(); auto found = registers.find(value);
@@ -93,7 +96,8 @@ mlir::LogicalResult recomputeManagedLiveness(mlir::func::FuncOp function, Manage
     auto instruction = block.getOperations().size();
     for (auto &operation : llvm::reverse(block)) {
       --instruction; before(operation,live);
-      const bool point = closureDomain
+      // The Array slice exposes call suspension roots only, not allocation/GC ABI.
+      const bool point = arrayDomain ? llvm::isa<mlir::func::CallOp>(operation) : closureDomain
         ? llvm::isa<closure::EnvironmentAllocOp,closure::CallOp,mlir::func::CallOp>(operation)
         : llvm::isa<ReferenceAllocOp,ReferenceCallOp,mlir::func::CallOp,AuthorizedHostOp>(operation);
       if (!point) continue;

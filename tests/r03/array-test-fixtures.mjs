@@ -14,6 +14,12 @@ export function jcs(value) {
 }
 /** @param {string | Uint8Array} value */
 export const sha = value => createHash('sha256').update(value).digest('hex');
+/** Exact test-only private marker migration; original pinned fixtures stay byte intact.
+ * No semantic field, operation, operand, range or negative malformed marker changes.
+ * @param {string} text */
+export const migrateArrayCore9 = text => text.replaceAll(
+  'version = 8 : i32, schema = "sha256:8993ff55453d52e916743184c57d292182fdf15d948e4509cdbe3a4d4729a654", profile = "dense-f64-array-readspan-array-origin-return-scc-checked-v8", facts_version = 7 : i32',
+  'version = 9 : i32, schema = "sha256:cf82210252abc6ff9778f85d8116d419b4bea62affdc4ac844a6401127d207ca", profile = "dense-f64-array-scalar-call-roots-checked-v9", facts_version = 7 : i32');
 /** @param {any} value @returns {any} */
 export const fresh = value => JSON.parse(jcs(value));
 /** @param {any} value */
@@ -102,10 +108,12 @@ export async function coreOracle() {
     'ae78ba65233ba7b2f4166914622271408f3cf5f62d19c3ca356b779beb5ea075');
   const legacy=await pinned('./array-core-oracle-v3.json',122335,'44c460f568aebd9dba7b25dab00857a47fe431a3f7cc4679a6d1d09a427552d5');
   const h=await hirOracle();assert.equal(value.cases.length,8);assert.equal(value.format.version,8);
-  return {...value,quoteVectors:legacy.quoteVectors,jcsPreimageVectors:legacy.jcsPreimageVectors,
+  return {...value,format:{...value.format,version:9,profile:'dense-f64-array-scalar-call-roots-checked-v9',
+    schemaHash:'sha256:cf82210252abc6ff9778f85d8116d419b4bea62affdc4ac844a6401127d207ca'},quoteVectors:legacy.quoteVectors,jcsPreimageVectors:legacy.jcsPreimageVectors,
     additionalIndependentPreimages:legacy.additionalIndependentPreimages,cases:value.cases.map((c,i)=>{
       assert.equal(c.name,h.cases[i].name);
-      return {...c,hirBytes:h.cases[i].hirBytes,hirSHA256:h.cases[i].hirSHA256};
+      const core=migrateArrayCore9(c.core);
+      return {...c,core,coreBytes:Buffer.byteLength(core),coreSHA256:sha(core),hirBytes:h.cases[i].hirBytes,hirSHA256:h.cases[i].hirSHA256};
     })};
 }
 /** Ranges come only from pre-production expected facts, never a producer result.

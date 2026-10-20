@@ -45,7 +45,7 @@ assert.equal(actual.size,2);
 
 // The existing Core subset checks the first borrowed parameter before reserving output.
 const lowerDiagnostic={code:'r03-d-core-array-capability',ruleId:'r01-ts-baseline',phase:'lowering',
-  message:'Array Core lowering supports only the complete local-owner no-call subset',
+  message:'Array Core lowering requires local owners, scalar call signatures and a final checked read',
   primary:{sourceId:'/readspan26d/app.ts',start:16,end:24}};
 
 for(const row of rows)test('26d actual complete facts and owned HIR8 projection: '+row.name,()=>{

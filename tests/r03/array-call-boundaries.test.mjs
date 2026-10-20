@@ -2,6 +2,7 @@
 // Re-signed hostile packets exercise cold custody, not an alternate Source implementation.
 import assert from 'node:assert/strict';
 import test from 'node:test';
+import coreCallOracle from './array-core-call-oracle.json' with {type:'json'};
 import { readArrayFactsCandidate, writeArrayFactsCandidate } from '../../compiler/array-facts.mjs';
 import { buildHir, verifyHir, readHir, lowerHir, analyzeArrayCalls, verifyArrayCalls, readArrayCalls } from '../../compiler/hir.mjs';
 import { fixture, packet, fresh, wire, factsContext, named, sourceCall, directCall, caught,
@@ -171,7 +172,7 @@ test('23e canonical analysis framing rejects missing/extra LF and leading whites
     analysisError(caught(() => readArrayCalls(hostile, fresh(row.hir), factsContext(row), fresh(row.context))), 'canonical');
 });
 
-test('23e new calls and new return shapes refuse Core exactly without dropping represented source', async t => {
+test('37d complete ordinary call survives while unsupported return shape refuses exactly', async t => {
   for (const name of ['core-call-only-refusal', 'core-new-return-only-refusal']) await t.test(name, async () => {
     const row = await fixture(name), hir = fresh(row.hir), ctx = factsContext(row), before = fresh(hir);
     assert.deepEqual(verifyHir(hir, ctx), row.hir);
@@ -180,11 +181,15 @@ test('23e new calls and new return shapes refuse Core exactly without dropping r
     const fn = named(hir, 'entry');
     const range = name === 'core-call-only-refusal' ? directCall(fn).range : fn.body.at(-1).range;
     if (name === 'core-call-only-refusal') assert.deepEqual(directCall(fn).arguments, []);
+    if (name === 'core-call-only-refusal') {
+      assert.deepEqual(hir,coreCallOracle.hir);assert.equal(lowerHir(hir,ctx),coreCallOracle.core);
+      assert.deepEqual(hir,before);return;
+    }
     let core; const error = caught(() => { core = lowerHir(hir, ctx); });
     assert.equal(error.name, 'TypeError'); assert.equal(error.code, 'r03-d-core-array-capability');
     assert.equal(error.ruleId, 'r01-ts-baseline'); assert.equal(error.phase, 'lowering');
     assert.equal(error.upstreamCode, undefined);
-    assert.equal(error.message, 'Array Core lowering supports only the complete local-owner no-call subset');
+    assert.equal(error.message, 'Array Core lowering requires local owners, scalar call signatures and a final checked read');
     assert.deepEqual(error.primary, { sourceId: fn.sourcePath, ...range });
     assert.equal(core, undefined); assert.deepEqual(hir, before);
   });

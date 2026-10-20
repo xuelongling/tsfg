@@ -81,10 +81,10 @@ mlir::LogicalResult marker(mlir::ModuleOp module) {
     return reject("core-ir-array-marker", "candidate marker fields differ");
   auto version = llvm::dyn_cast_or_null<mlir::IntegerAttr>(value.get("version"));
   auto facts = llvm::dyn_cast_or_null<mlir::IntegerAttr>(value.get("facts_version"));
-  if (!version || !version.getType().isSignlessInteger(32) || version.getInt() != 8 ||
+  if (!version || !version.getType().isSignlessInteger(32) || version.getInt() != 9 ||
       !facts || !facts.getType().isSignlessInteger(32) || facts.getInt() != 7 ||
       text(value, "family") != "tsfg.core-array-candidate" || text(value, "schema") != schema ||
-      text(value, "profile") != "dense-f64-array-readspan-array-origin-return-scc-checked-v8")
+      text(value, "profile") != "dense-f64-array-scalar-call-roots-checked-v9")
     return reject("core-ir-array-marker", "candidate marker identity differs");
   return mlir::success();
 }
@@ -290,8 +290,10 @@ mlir::LogicalResult verifyMetadata(mlir::ModuleOp module, Metadata &metadata) {
     auto function = llvm::dyn_cast<mlir::func::FuncOp>(&operation);
     if (!function) return reject("core-ir-array-shape", "module permits functions only");
     if (metadata.functions.size() == 16) return reject("core-ir-array-budget", "function count exceeds limit");
-    if (!attributes(function, {"sym_name", "function_type", "tsfg_core.function_id", "tsfg_core.signature_hash", "tsfg_core.type_id",
-        "tsfg_core.function_start", "tsfg_core.function_end", "tsfg_array.source_binding", "tsfg_array.name_range", "tsfg_array.return_annotation_range", "tsfg_array.parameters"}))
+    std::vector<llvm::StringRef> keys={"sym_name", "function_type", "tsfg_core.function_id", "tsfg_core.signature_hash", "tsfg_core.type_id",
+        "tsfg_core.function_start", "tsfg_core.function_end", "tsfg_array.source_binding", "tsfg_array.name_range", "tsfg_array.return_annotation_range", "tsfg_array.parameters"};
+    if (function->hasAttr("tsfg_array.call_roots")) keys.push_back("tsfg_array.call_roots");
+    if (!attributes(function,keys))
       return reject("core-ir-array-metadata", "function fields differ");
     auto name = function.getSymName();
     if (name.size() > 1048576) return reject("core-ir-array-budget", "function name exceeds limit");

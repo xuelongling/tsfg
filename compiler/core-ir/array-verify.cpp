@@ -1,6 +1,8 @@
 // SPDX-License-Identifier: MIT
 #include "array-core.h"
 #include "dialect.h"
+#include "managed-liveness.h"
+#include "mlir/IR/Builders.h"
 #include "mlir/Dialect/Func/IR/FuncOps.h"
 #include <map>
 #include <algorithm>
@@ -56,7 +58,7 @@ class Body {
   std::map<std::string,std::string> owners;
   std::map<std::string,int64_t> lengths;
   std::set<std::string> names;
-  size_t position=1,locals=0,mutations=0,statements=0,registers=0;
+  size_t position=1,locals=0,mutations=0,statements=0,registers=0,calls=0;
   uint32_t previous=0;
   mlir::LogicalResult receiver(mlir::DictionaryAttr data, Range parent, mlir::Value &result, Range &anchor, std::string &binding) {
     binding=text(data,"receiver_binding").str(); auto found=definitions.find(binding);
@@ -209,6 +211,45 @@ class Body {
     }
     previous=statement.end; ++position; return mlir::success();
   }
+  mlir::LogicalResult callStatement(size_t endpoint) {
+    auto *value=ops[endpoint]; auto call=llvm::dyn_cast<mlir::func::CallOp>(value);
+    if (!call || ++calls>32 || value->getNumResults()!=1 || !value->getResult(0).getType().isF64() ||
+        value->getNumRegions() || value->getNumSuccessors()) return reject("core-ir-array-call","call shape differs");
+    if (!attributes(value,{"callee","tsfg_core.function_id","tsfg_core.signature_hash","source_callee",
+        "callee_range","arguments","statement_range","tsfg_source.start","tsfg_source.end"}))
+      return reject("core-ir-array-metadata","call fields differ");
+    const Function *target=nullptr;
+    for (const auto &candidate : metadata.functions)
+      if (llvm::cast<mlir::func::FuncOp>(candidate.operation).getSymName()==call.getCallee()) target=&candidate;
+    if (!target || text(value,"tsfg_core.function_id")!=text(target->operation,"tsfg_core.function_id") ||
+        text(value,"tsfg_core.signature_hash")!=text(target->operation,"tsfg_core.signature_hash") ||
+        text(value,"source_callee")!=text(target->operation,"tsfg_array.source_binding"))
+      return reject("core-ir-array-call","callee identity differs");
+    auto arguments=value->getAttrOfType<mlir::ArrayAttr>("arguments");
+    if (!arguments || arguments.size()!=target->parameters.size() || value->getNumOperands()!=arguments.size())
+      return reject("core-ir-array-call","call arity differs");
+    Range expression,callee,statement;
+    if (!range(value,expression) || !span(value->getAttr("callee_range"),callee) ||
+        !span(value->getAttr("statement_range"),statement) || !encloses(function.declaration,statement) ||
+        !encloses(statement,expression) || statement.start<previous || statement.end>=function.declaration.end ||
+        statement.start!=expression.start || expression.start!=callee.start || !encloses(expression,callee) ||
+        expression.end-callee.end<2) return reject("core-ir-array-source","call source anchors differ");
+    uint32_t end=callee.end;
+    for (size_t i=0;i<arguments.size();++i) {
+      auto data=llvm::dyn_cast<mlir::DictionaryAttr>(arguments[i]);
+      auto kind=text(data,"kind");
+      if (kind!="reference" && kind!="constant" && kind!="floating")
+        return reject("core-ir-array-call","call actual requires an original scalar reference/literal");
+      Scalar argument;
+      if (mlir::failed(scalar(arguments[i],target->parameters[i].type,true,argument))) return mlir::failure();
+      if (argument.anchor.start<=end || argument.anchor.end>=expression.end || value->getOperand(i)!=argument.value ||
+          value->getOperand(i).getType()!=llvm::cast<mlir::func::FuncOp>(target->operation).getFunctionType().getInput(i))
+        return reject("core-ir-array-call","call exact ordered actual differs");
+      end=argument.anchor.end;
+    }
+    if (position!=endpoint) return reject("core-ir-array-call","detached or reordered call actual");
+    previous=statement.end; ++position; return mlir::success();
+  }
 public:
   Body(const Function &function, Metadata &metadata, size_t &elements)
       : function(function),metadata(metadata),totalElements(elements),fn(llvm::cast<mlir::func::FuncOp>(function.operation)),previous(function.annotation.end) {}
@@ -247,6 +288,8 @@ public:
         if (mlir::failed(localStatement(endpoint))) return mlir::failure();
       } else if (name=="tsfg_array.store_dense_checked" || name=="tsfg_array.resize_checked") {
         if (mlir::failed(mutation(endpoint))) return mlir::failure();
+      } else if (name=="func.call") {
+        if (mlir::failed(callStatement(endpoint))) return mlir::failure();
       } else if (name=="func.return") {
         Scalar result;
         if (mlir::failed(read(result))) return mlir::failure();
@@ -271,6 +314,38 @@ mlir::LogicalResult verifyCandidate(mlir::ModuleOp module) {
   size_t elements=0;
   for (const auto &function : metadata.functions)
     if (mlir::failed(Body(function,metadata,elements).verify())) return mlir::failure();
+  // Complete local-owner bodies necessarily allocate; upstream SCC admission
+  // excludes such a reachable cyclic domain. Cold IR must enforce the same bound.
+  bool reachable[16][16]{}; const auto count=metadata.functions.size();
+  for (size_t i=0;i<count;++i)
+    for (auto call : llvm::cast<mlir::func::FuncOp>(metadata.functions[i].operation).getOps<mlir::func::CallOp>())
+      for (size_t j=0;j<count;++j)
+        if (call.getCallee()==llvm::cast<mlir::func::FuncOp>(metadata.functions[j].operation).getSymName()) reachable[i][j]=true;
+  for (size_t k=0;k<count;++k) for (size_t i=0;i<count;++i) for (size_t j=0;j<count;++j)
+    reachable[i][j]=reachable[i][j] || (reachable[i][k] && reachable[k][j]);
+  for (size_t i=0;i<count;++i)
+    if (reachable[i][i]) return reject("core-ir-array-call","local-owner ordinary-call graph must be acyclic");
+  uint64_t work=0;
+  for (const auto &function : metadata.functions) {
+    auto fn=llvm::cast<mlir::func::FuncOp>(function.operation);
+    ManagedLiveness live;
+    if (mlir::failed(recomputeManagedLiveness(fn,ManagedDomain::Array,live))) return mlir::failure();
+    work+=live.work;
+    if (work>1000000) return reject("core-ir-array-roots","whole-module liveness work budget exceeded");
+    mlir::Builder builder(module.getContext()); std::vector<mlir::Attribute> records;
+    for (const auto &point : live.points) {
+      std::vector<mlir::Attribute> roots;
+      for (auto reg : point.registers) roots.push_back(builder.getI64IntegerAttr(reg));
+      records.push_back(builder.getDictionaryAttr({
+        builder.getNamedAttr("block",builder.getI64IntegerAttr(point.block)),
+        builder.getNamedAttr("instruction",builder.getI64IntegerAttr(point.instruction)),
+        builder.getNamedAttr("registers",builder.getArrayAttr(roots))}));
+    }
+    auto expected=builder.getArrayAttr(records);
+    auto supplied=fn->getAttr("tsfg_array.call_roots");
+    if (supplied && supplied!=expected) return reject("core-ir-array-roots","supplied call roots differ from complete SSA recomputation");
+    if (supplied || !records.empty()) fn->setAttr("tsfg_array.call_roots",expected);
+  }
   return mlir::success();
 }
 } // namespace tsfg::arrays

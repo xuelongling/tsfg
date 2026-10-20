@@ -5,7 +5,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { invokeCore, accepted } from './generic-core-package-capture.mjs';
-import { pinnedContainer, sha } from './array-test-fixtures.mjs';
+import { pinnedContainer, sha, migrateArrayCore9 } from './array-test-fixtures.mjs';
 import { assertArrayCoreSemantics } from './array-core-structural-oracle.mjs';
 
 /** A parser/trait refusal cannot stand in for the explicitly expected private gate.
@@ -17,7 +17,7 @@ function refused(actual,diagnostic) {
     'exact gate '+diagnostic+'; earlier parser/trait failures receive no private credit:\n'+actual.stderr.toString('utf8'));
 }
 
-test('26c same real C++ CLI preserves Array7 no-view/no-call packages and independent candidate boundaries',async t=>{
+test('37d same real C++ CLI preserves original local-owner Core semantics under atomic9 metadata',async t=>{
   const manifest=await pinnedContainer('./array-core-cpp-cases-v7.json',2546031,'ca5e6763d905c0ce20aeaa4a9c39bbcb02c6c0d4f6ba74f141c5a904f973f7e5');
   const oracle=await pinnedContainer('./legacy-v7-old8-core-oracle.json',806522,'ae78ba65233ba7b2f4166914622271408f3cf5f62d19c3ca356b779beb5ea075');
   assert.deepEqual(manifest.provenance,{CLIExecuted:false,coldCasesReproveSource:false,compiled:false,linked:false,
@@ -69,34 +69,34 @@ test('26c same real C++ CLI preserves Array7 no-view/no-call packages and indepe
   }
   t.diagnostic('26c Array7 C++ frozen controls complete:8 whole packages/10 functions/8 parameters/11 sites/7 stores/4 resizes/12 reads; other positives are cold static metadata/count controls');
   for(const c of manifest.cases.filter(c=>c.expected.exitCode===0))await t.test(c.id,async()=>{
-    const expected={core:c.input};
-    const first=await invokeCore(c.input,'--canonicalize');accepted(first);
+    const input=migrateArrayCore9(c.input),expected={core:input};
+    const first=await invokeCore(input,'--canonicalize');accepted(first);
     assertArrayCoreSemantics(first.stdout.toString('utf8'),expected);
     const reread=await invokeCore(first.stdout,'--canonicalize');accepted(reread);
     assert.deepEqual(reread.stdout,first.stdout,'whole canonical reread');
     const optimized=await invokeCore(first.stdout,'--optimize');accepted(optimized);
     assertArrayCoreSemantics(optimized.stdout.toString('utf8'),expected);
     assert.deepEqual(optimized.stdout,first.stdout,'identity optimize retains all roots, aliases and checked reads');
-    const direct=await invokeCore(c.input,'--optimize');accepted(direct);
+    const direct=await invokeCore(input,'--optimize');accepted(direct);
     assert.deepEqual(direct.stdout,first.stdout,'direct optimize reaches the same canonical complete output');
   });
   for(const c of manifest.cases.filter(c=>c.expected.exitCode===3))await t.test(c.id,async()=>{
-    refused(await invokeCore(c.input,'--canonicalize'),c.expected.diagnostic);
+    refused(await invokeCore(migrateArrayCore9(c.input),'--canonicalize'),c.expected.diagnostic);
   });
   for(const c of manifest.wire)await t.test('wire/'+c.sourceOracle+'/'+c.command,async()=>{
     const expected=oracle.cases.find(row=>row.name===c.sourceOracle);assert.ok(expected);
-    const result=await invokeCore(expected.core,c.command);refused(result,c.diagnostic);
+    const result=await invokeCore(migrateArrayCore9(expected.core),c.command);refused(result,c.diagnostic);
     assert.equal(result.stderr.toString('utf8'),c.diagnostic,'whole fixed unsupported-wire diagnostic line');
   });
   const boundary=manifest.inputByteBoundary,empty=manifest.cases.find(c=>c.id===boundary.base);assert.ok(empty);
   await t.test('candidate input exact8388608 after the legacy parser',async()=>{
-    const bytes=Buffer.alloc(boundary.exactBytes,32);Buffer.from(empty.input).copy(bytes);
+    const bytes=Buffer.alloc(boundary.exactBytes,32);Buffer.from(migrateArrayCore9(empty.input)).copy(bytes);
     assert.equal(bytes.length,8388608);
     const result=await invokeCore(bytes,'--canonicalize');accepted(result);
-    assertArrayCoreSemantics(result.stdout.toString('utf8'),{core:empty.input});
+    assertArrayCoreSemantics(result.stdout.toString('utf8'),{core:migrateArrayCore9(empty.input)});
   });
   await t.test('candidate input8388609 rejects with zero output after the legacy parser',async()=>{
-    const bytes=Buffer.alloc(boundary.overflowBytes,32);Buffer.from(empty.input).copy(bytes);
+    const bytes=Buffer.alloc(boundary.overflowBytes,32);Buffer.from(migrateArrayCore9(empty.input)).copy(bytes);
     assert.equal(bytes.length,8388609);
     refused(await invokeCore(bytes,'--canonicalize'),boundary.overflowDiagnostic);
   });

@@ -6,6 +6,7 @@ import { readArrayFactsCandidate,writeArrayFactsCandidate } from '../../compiler
 import { buildHir,verifyHir,printHir,readHir,lowerHir,analyzeArrayCalls,verifyArrayCalls,printArrayCalls,readArrayCalls } from '../../compiler/hir.mjs';
 import { canonical,fresh,factsContext,caught,deeplyFrozen,analysisError } from './array-call-test-helpers.mjs';
 import { callOracle,pinned } from './array-test-fixtures.mjs';
+import coreCallOracle from './array-core-call-oracle.json' with {type:'json'};
 const oraclePromise=callOracle();
 test('23e ten independent complete Source packets and typed HIR preserve every source field',async t=>{
   const oracle=await oraclePromise;
@@ -42,11 +43,17 @@ test('23e whole owner-relative Derived and fixed caller-effective reports use pr
     assert.deepEqual(h,beforeH);assert.deepEqual(context,beforeC);
   });
 });
-test('23e new parameter, call and final-return shapes refuse narrow Core lowering at independently selected original anchors',async t=>{
+test('37d complete call-only Core succeeds; remaining parameter and final-return gaps retain exact anchors',async t=>{
   const oracle=await oraclePromise;
   for(const row of oracle.cases)await t.test(row.name,()=>{
-    const input=fresh(row.hir),before=fresh(input),error=caught(()=>lowerHir(input,factsContext(row)));
-    for(const[key,value]of Object.entries(row.coreError))assert.deepEqual(error[key],value,key);
+    const input=fresh(row.hir),before=fresh(input);
+    if(row.name==='core-call-only-refusal') {
+      assert.deepEqual(input,coreCallOracle.hir);
+      assert.equal(lowerHir(input,factsContext(row)),coreCallOracle.core);
+    } else {
+      const error=caught(()=>lowerHir(input,factsContext(row)));
+      for(const[key,value]of Object.entries(row.coreError))assert.deepEqual(error[key],key==='message'?"Array Core lowering requires local owners, scalar call signatures and a final checked read":value,key);
+    }
     assert.deepEqual(input,before);
   });
 });

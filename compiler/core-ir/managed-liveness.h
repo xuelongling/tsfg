@@ -4,7 +4,7 @@
 #include <cstdint>
 #include <vector>
 namespace tsfg {
-enum class ManagedDomain { Reference, Closure };
+enum class ManagedDomain { Reference, Closure, Array };
 struct ManagedLivePoint {
   uint32_t block, instruction;
   mlir::Operation *operation;
