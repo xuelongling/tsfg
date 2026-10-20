@@ -10,6 +10,7 @@ export { compilePackageHir };
 import { buildHir, lowerHir } from "./hir.mjs";
 import { canonical, sha256 } from "./identity.mjs";
 import registry from "../contracts/registry.json" with { type: "json" };
+import { verifyCounterHostContract } from "../eng/host-semantic-contract.mjs";
 import bytecodeSchema from "../contracts/bytecode.schema.json" with { type: "json" };
 
 const productRoot = fileURLToPath(new URL("../", import.meta.url));
@@ -26,7 +27,8 @@ async function verifiedConsumer(executable, role) {
   const required = role === "core" ? ["compiler/core-ir/main.cpp", "compiler/core-ir/module.cpp", "compiler/core-ir/module.h", "compiler/core-ir/native_cost.cpp", "compiler/core-ir/native_cost.h", "compiler/core-ir/CMakeLists.txt",
     "compiler/core-ir/dialect.h", "compiler/core-ir/dialect.cpp", "compiler/core-ir/scalar_ops.h",
     "compiler/core-ir/bytecode.h", "compiler/core-ir/bytecode.cpp", "compiler/core-ir/bytecode_encoding.h", "compiler/core-ir/bytecode_encoding.cpp"]
-    : ["runtime/root.zig", "runtime/bytecode.zig", "runtime/bytecode_model.zig", "runtime/bytecode_decode.zig", "runtime/bytecode_view.zig", "runtime/module_format.zig", "runtime/module.zig", "runtime/request.zig", "runtime/clock.zig", "runtime/host_counter.zig", "runtime/host_counter.c", "runtime/host_counter_bridge.c", "runtime/vm.zig", "runtime/runtime.zig", "runtime/managed-heap.zig", "runtime/main.zig", "runtime/contract.zig", "eng/host-counter.mjs", "eng/host-counter-binary.mjs", "eng/host-cost-source.lock.json", "eng/vm-build.mjs", "runtime/execution_frame.zig", "runtime/scalar.zig"];
+    : ["runtime/root.zig", "runtime/bytecode.zig", "runtime/bytecode_model.zig", "runtime/bytecode_decode.zig", "runtime/bytecode_view.zig", "runtime/module_format.zig", "runtime/module.zig", "runtime/request.zig", "runtime/clock.zig", "runtime/host_counter.zig", "runtime/host_counter.c", "runtime/host_counter_bridge.c", "runtime/vm.zig", "runtime/runtime.zig", "runtime/managed-heap.zig", "runtime/string-codec.zig", "runtime/main.zig", "runtime/contract.zig", "eng/host-counter.mjs", "eng/host-counter-binary.mjs", "eng/host-cost-source.lock.json", "eng/vm-build.mjs", "runtime/execution_frame.zig", "runtime/scalar.zig", "runtime/host-bindings.zig", "runtime/host-semantic-contract.zig",
+      "eng/host-semantic-contract.mjs", "contracts/host-counter-semantic-v1.json"];
   required.push("contracts/registry.json", "contracts/bytecode.schema.json");
   for (const name of required) {
     const entry = manifest.buildInputSet?.entries?.find(entry => entry.projectId === "tsfg" && entry.repositoryRelativePath === name);
@@ -34,6 +36,10 @@ async function verifiedConsumer(executable, role) {
       throw new TypeError(`r03-tool-${role}: compiled input differs from current ${name}`);
   }
   if(role==="vm") {
+    const contractOutput=manifest.outputs?.find(output=>output.path==="host-semantic-contract.json");
+    const contractBytes=await readFile(path.join(path.dirname(executable),"host-semantic-contract.json"));
+    if(contractOutput?.sha256!==sha256(contractBytes))throw new TypeError("r03-tool-vm: semantic contract differs from formal build");
+    verifyCounterHostContract(contractBytes,manifest);
     const entry=manifest.outputs?.find(output=>output.path==="host-cost-summary.json");
     const bytes=await readFile(path.join(path.dirname(executable),"host-cost-summary.json"));
     if(entry?.sha256!==sha256(bytes))throw new TypeError("r03-tool-vm: host summary differs from formal build");

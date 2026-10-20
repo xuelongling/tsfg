@@ -2,6 +2,7 @@
 const std = @import("std");
 const runtime = @import("root.zig");
 const contract = @import("contract.zig");
+const host_bindings = @import("host-bindings.zig");
 
 const Request = struct {
     kind: []const u8 = "function",
@@ -176,18 +177,9 @@ fn parseRequest(module: *const runtime.VerifiedModule, request: *const Request, 
     if (!valid) { result_out.* = .{ .failed = .{ .code = "r05-request-arguments", .category = "request", .function_id = function_id, .source = info.source, .fuel_remaining = request.semanticFuel } }; return false; }
     const capabilities = &parsed.capabilities;
     var capabilities_valid = request.capabilities.len <= 128;
-    if (capabilities_valid) for (request.capabilities, 0..) |*value, index| {
-        if (value.* != .object or value.object.count() != 3) { capabilities_valid = false; break; }
-        const id: *const std.json.Value = value.object.getPtr("id") orelse { capabilities_valid = false; break; };
-        const signature: *const std.json.Value = value.object.getPtr("signatureHash") orelse { capabilities_valid = false; break; };
-        const adapter: *const std.json.Value = value.object.getPtr("adapter") orelse { capabilities_valid = false; break; };
-        if (id.* != .integer or id.integer != 31 or signature.* != .string or signature.string.len != 71 or !std.mem.startsWith(u8, signature.string, "sha256:")
-            or adapter.* != .string or !std.mem.eql(u8, adapter.string, "counter")) { capabilities_valid = false; break; }
-        var hash: [32]u8 = undefined;
-        _ = std.fmt.hexToBytes(&hash, signature.string[7..]) catch { capabilities_valid = false; break; };
-        const canonical = runtime.digestText(hash);
-        if (!std.mem.eql(u8, &canonical, signature.string)) { capabilities_valid = false; break; }
-        if (index < capabilities.len) capabilities[index] = .{ .id = 31, .signature = hash, .counter = counter };
+    if (capabilities_valid) for (request.capabilities, 0..) |value, index| {
+        const capability = host_bindings.readCounterGrant(value) catch { capabilities_valid = false; break; };
+        if (index < capabilities.len) capabilities[index] = .{ .id = capability.id, .signature = capability.signature, .semantic_contract = capability.semantic_contract, .counter = counter };
     };
     if (!capabilities_valid) { result_out.* = .{ .failed = .{ .code = "r05-request-capability", .category = "request", .function_id = function_id, .source = info.source, .fuel_remaining = request.semanticFuel } }; return false; }
     const init_only = std.mem.eql(u8, request.kind, "module-initialization");

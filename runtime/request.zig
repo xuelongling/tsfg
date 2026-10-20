@@ -61,7 +61,7 @@ pub fn typedValue(bits: u64, code: u8) TypedValue {
     if (code == 13) return .{ .f64_bits = bits };
     unreachable;
 }
-pub const Capability = struct { id: u32, signature: ?[32]u8 = null, counter: ?*host_counter.Counter = null };
+pub const Capability = struct { id: u32, signature: ?[32]u8 = null, semantic_contract: ?[32]u8 = null, counter: ?*host_counter.Counter = null };
 pub const RequestLimits = struct { memory_bytes: usize = 16384, instruction_budget: u64 = 4097, semantic_fuel: u64 = 4097, depth: u32 = 1, host_time_ns: ?u64 = null };
 pub const Returned = struct { result: TypedValue, function_id: FunctionId, source: Source, fuel_remaining: u64 = 0, fuel_consumed: u64 = 0 };
 pub const RequestFailure = struct { exception_kind: ?[]const u8 = null, code: []const u8, category: []const u8, rule_ids: []const []const u8 = &.{}, function_id: FunctionId, source: Source, fuel_remaining: u64 = 0, fuel_consumed: u64 = 0 };

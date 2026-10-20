@@ -1,4 +1,5 @@
 // SPDX-License-Identifier: MIT
+const semantics = @import("host-semantic-contract.zig");
 const certificate = @import("host_certificate.zig");
 const std = @import("std");
 extern fn tsfg_host_counter(storage: *Counter, delta: u32) callconv(.c) u32;
@@ -94,7 +95,8 @@ pub const Counter = extern struct {
 };
 
 comptime {
-    if (@sizeOf(Counter) != 16 or @alignOf(Counter) != 8 or @offsetOf(Counter, "storage") != 0 or @offsetOf(Counter, "events") != 8)
+    if (@sizeOf(Counter) != semantics.context_bytes or @alignOf(Counter) != semantics.context_alignment or
+        @offsetOf(Counter, "storage") != 0 or @offsetOf(Counter, "reserved") != 4 or @offsetOf(Counter, "events") != 8)
         @compileError("counter ABI differs from certified uint32/reserved/uint64 layout");
 }
 

@@ -6,6 +6,8 @@ import { copyFile, lstat, mkdir, open, readFile, readdir, realpath, rename, writ
 import path from "node:path";
 import {prepareHostCounter,inspectCounterLink,writeHostCertificate,intakeUnqualifiedHostCounter,verifyUnqualifiedHostCounterInputs} from "./host-counter.mjs";
 
+import {createCounterHostContract} from "./host-semantic-contract.mjs";
+
 export class VmBuildError extends Error {
   constructor(message, issueCode = "vm-source-build") { super(message); this.issueCode = issueCode; }
 }
@@ -153,7 +155,17 @@ export async function createVmLinkObjectRetention({stage,logPath,output,counterO
       catch(error){fail(error);}return result;}};
   return observer;
 }
-const runtimeSources = [...["root", "bytecode", "bytecode_model", "bytecode_decode", "bytecode_view", "vm", "runtime", "managed-heap", "main", "contract", "module_format", "module", "request", "host_counter", "clock", "execution_frame", "scalar"].map(name => `runtime/${name}.zig`), "runtime/host_counter.c", "runtime/host_counter_bridge.c"];
+const runtimeSources = [...["root", "bytecode", "bytecode_model", "bytecode_decode", "bytecode_view", "vm", "runtime", "main", "contract", "module_format", "module", "request", "host_counter", "clock", "execution_frame", "scalar", "managed-heap", "string-codec", "host-bindings", "host-semantic-contract"].map(name => `runtime/${name}.zig`), "runtime/host_counter.c", "runtime/host_counter_bridge.c"];
+
+/** Actual production copy boundary, also exercised without starting the VM. */
+export async function stageVmRuntimeSources({productRoot,product,identity,sha256}) {
+  for (const name of runtimeSources) {
+    await copyFile(path.join(productRoot, name), path.join(product, name));
+    const entry = identity.buildInputSet.entries.find(entry => entry.repositoryRelativePath === name && entry.projectId === "tsfg");
+    if (sha256(await readFile(path.join(product, name))) !== entry?.sha256)
+      throw new VmBuildError(`VM staged input changed: ${name}`, "vm-source-integrity");
+  }
+}
 
 const artifactMetadata = value => Object.fromEntries(
   ['dev','ino','mode','nlink','size','mtimeNs','ctimeNs','birthtimeNs'].map(key => [key,String(value[key])]));
@@ -240,7 +252,7 @@ async function ordinaryAncestor(directory) {
 /** Retain the normal false Runtime build as raw evidence. Cache object discovery
  * is not proof that an object was linked, and PDB names confer no phase authority. */
 export async function retainVmBootstrapArtifacts({stage,product,publish,identity,sha256,command=null,objectRetention=null,
-    counterSource=null,objectRoots=[path.join(stage,'zig-local')],maximumFileBytes=67108864,maximumTotalBytes=134217728}) {
+    counterSource=null,hostSemanticContract=null,objectRoots=[path.join(stage,'zig-local')],maximumFileBytes=67108864,maximumTotalBytes=134217728}) {
   const storage=path.join(stage,'bootstrap-evidence');
   const contained=file=>{const relative=path.relative(stage,file);
     if(!relative||relative==='..'||relative.startsWith('..'+path.sep)||path.isAbsolute(relative))
@@ -262,6 +274,7 @@ export async function retainVmBootstrapArtifacts({stage,product,publish,identity
     throw new VmBuildError('bootstrap artifact size policy','vm-output-integrity');
   const inputs=[path.join(publish,'tsfg-vm.exe'),path.join(publish,'tsfg-vm.pdb'),
     path.join(product,'runtime','host_certificate.zig'),path.join(stage,'build-0.log')];
+  if(hostSemanticContract!==null)inputs.push(path.join(product,"runtime","host_semantic_identity.zig"),path.join(stage,"host-semantic-contract.json"));
   const objects=[];let directoryCount=0,entryCount=0;
   const visit=async directory=>{
     contained(directory);await ordinary(directory);
@@ -285,7 +298,7 @@ export async function retainVmBootstrapArtifacts({stage,product,publish,identity
   if(new Set(inputs.map(file=>path.resolve(file))).size!==inputs.length)
     throw new VmBuildError('bootstrap duplicate object','vm-output-integrity');
   const result={kind:'normal-unqualified-runtime-bootstrap-evidence',buildIdentity:identity.buildIdentity,
-    buildInputSet:identity.buildInputSet,command,counterSource,artifacts:[],compilerObjects:[],
+    buildInputSet:identity.buildInputSet,command,counterSource,hostSemanticContract,artifacts:[],compilerObjects:[],
     compilerObjectLinkMembership:'unverified',phaseEntries:null,loadedGraph:null,
     executionAuthority:false,resourceProof:null,first:null,objectRetention};
   await mkdir(storage);let total=0,primary=null;
@@ -342,7 +355,7 @@ export async function executeVmTarget({ options, runtime, tools, productRoot, wo
   if (await lstat(output).catch(error => { if (error.code === "ENOENT") return undefined; throw error; }))
     throw new VmBuildError("Independent VM build output already exists", "vm-output-integrity");
   const identity = await createIdentity(runtime, productRoot);
-  const required = [...runtimeSources, "contracts/registry.json", "contracts/bytecode.schema.json", "eng/vm-build.mjs", "eng/host-counter.mjs", "eng/host-counter-binary.mjs", "eng/host-cost-source.lock.json"];
+  const required = [...runtimeSources, "contracts/registry.json", "contracts/bytecode.schema.json", "eng/vm-build.mjs", "eng/host-counter.mjs", "eng/host-counter-binary.mjs", "eng/host-cost-source.lock.json", "eng/host-semantic-contract.mjs", "contracts/host-counter-semantic-v1.json"];
   for (const name of required) {
     const state = await lstat(path.join(productRoot, name));
     const entry = identity.buildInputSet.entries.find(entry => entry.projectId === "tsfg" && entry.repositoryRelativePath === name);
@@ -356,12 +369,10 @@ export async function executeVmTarget({ options, runtime, tools, productRoot, wo
   await writeFile(path.join(stage, "ownership.json"), serialize({ owner: "tsfg-vm-build", output, stage }));
   const product = path.join(stage, "product"), publish = path.join(stage, "publish"), temp = path.join(stage, "temp");
   for (const directory of [path.join(product, "runtime"), publish, temp]) await mkdir(directory, { recursive: true });
-  for (const name of runtimeSources) {
-    await copyFile(path.join(productRoot, name), path.join(product, name));
-    const entry = identity.buildInputSet.entries.find(entry => entry.repositoryRelativePath === name && entry.projectId === "tsfg");
-    if (sha256(await readFile(path.join(product, name))) !== entry.sha256)
-      throw new VmBuildError(`VM staged input changed: ${name}`, "vm-source-integrity");
-  }
+  await stageVmRuntimeSources({productRoot,product,identity,sha256});
+  const hostSemantic = createCounterHostContract(identity);
+  await writeFile(path.join(product,"runtime/host_semantic_identity.zig"),hostSemantic.identitySource,{flag:"wx"});
+  await writeFile(path.join(stage,"host-semantic-contract.json"),hostSemantic.contractText,{flag:"wx"});
   const env = { SystemRoot: process.env.SystemRoot, ComSpec: process.env.ComSpec, TZ: "UTC", LANG: "C.UTF-8",
     PATH: path.dirname(tools.zig), TEMP: temp, TMP: temp, TMPDIR: temp,
     HOME: temp, USERPROFILE: temp, APPDATA: temp, LOCALAPPDATA: temp,
@@ -414,7 +425,7 @@ export async function executeVmTarget({ options, runtime, tools, productRoot, wo
     if(exit.code!==0)throw new VmBuildError(`VM source build failed (${exit.code}/${exit.signal}); see ${stage}`);
     await copyVmBuildSnapshots({stage,publish,label});
     if(pass===0){
-      const bootstrap=await retainVmBootstrapArtifacts({stage,product,publish,identity,sha256,
+      const bootstrap=await retainVmBootstrapArtifacts({stage,product,publish,identity,sha256,hostSemanticContract:hostSemantic.contract,
         objectRoots:[exit.objectRetention.storage],objectRetention:exit.objectRetention,
         counterSource:{objectHash:counter.leaf.objectHash,bridgeObjectHash:counter.bridge.objectHash,
           mcProducerLockHash:counter.lockHash,coldBundleHash:unqualified?.bundleHash??null},
@@ -452,12 +463,13 @@ export async function executeVmTarget({ options, runtime, tools, productRoot, wo
     future:{incomingReturnBytes:8,calleeStackBytes:0},actualLinkedBoundary:finalLinked,
     sourceAndTool:counter.before,mcProducer:counter.mc,mcProducerLockHash:counter.lockHash};
   await writeFile(path.join(publish,"host-cost-summary.json"),serialize(hostSummary));
+  await writeFile(path.join(publish,"host-semantic-contract.json"),hostSemantic.contractText,{flag:"wx"});
   await verifyTools();
   const current = await createIdentity(runtime, productRoot);
   if (serialize(current.buildIdentity) !== serialize(identity.buildIdentity))
     throw new VmBuildError("VM product inputs changed during build", "vm-source-integrity");
   const outputs = [];
-  for (const name of ["tsfg-vm.exe", "tsfg-vm.pdb", "host-cost-summary.json"]) {
+  for (const name of ["tsfg-vm.exe", "tsfg-vm.pdb", "host-cost-summary.json", "host-semantic-contract.json"]) {
     const bytes = await readFile(path.join(publish, name));
     outputs.push({ path: name, sha256: sha256(bytes) });
   }

@@ -4,6 +4,7 @@ const bytecode = @import("bytecode.zig");
 const FunctionId = bytecode.FunctionId;
 const VerifiedModule = bytecode.VerifiedModule;
 const request = @import("request.zig");
+const host_semantics = @import("host-semantic-contract.zig");
 const module_state = @import("module.zig");
 const execution_frame = @import("execution_frame.zig");
 const Frame = execution_frame.Frame;
@@ -43,6 +44,8 @@ pub const ModuleInstance = struct {
             for (tables.hosts) |host| if (host.capability == capability.id) {
                 required = true;
                 const signature = capability.signature orelse return .{ .code = "r05-request-capability", .selected = function };
+                const claim = capability.semantic_contract orelse return .{ .code = "r05-request-host-contract", .selected = function };
+                if (!host_semantics.accepts(capability.id, &signature, &claim)) return .{ .code = "r05-request-host-contract", .selected = function };
                 const counter = capability.counter orelse return .{ .code = "r05-request-capability", .selected = function };
                 if (!std.mem.eql(u8, &signature, &host.signature) or !counter.admitted()) return .{ .code = "r05-request-capability", .selected = function };
             };
