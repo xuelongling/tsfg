@@ -57,7 +57,7 @@ class Body {
   std::map<std::string,mlir::Value> definitions,parameters;
   std::map<std::string,std::string> owners;
   std::map<std::string,int64_t> lengths;
-  std::set<std::string> names;
+  std::set<std::string> names,parameterOwners;
   size_t position=1,locals=0,mutations=0,statements=0,registers=0,calls=0;
   uint32_t previous=0;
   mlir::LogicalResult receiver(mlir::DictionaryAttr data, Range parent, mlir::Value &result, Range &anchor, std::string &binding) {
@@ -204,14 +204,14 @@ class Body {
       return reject("core-ir-array-source","mutation target/operator/value order differs");
     // This finite proof follows successful continuation only; all checked ops remain.
     auto &length=lengths.at(owners.at(binding)); int64_t n=store ? index.literal : rhs.literal;
-    if (n<0) length=-1;
+    if (n<0 || parameterOwners.count(owners.at(binding))) length=-1;
     else {
       if (length>=0 && n>length) return reject("core-ir-array-density","proven literal gap or length growth");
       length=store ? length<0 ? -1 : std::max(length,n+1) : n;
     }
     previous=statement.end; ++position; return mlir::success();
   }
-  mlir::LogicalResult callStatement(size_t endpoint) {
+  mlir::LogicalResult callStatement(size_t endpoint, bool returning, Scalar &result, Range &callStatementRange) {
     auto *value=ops[endpoint]; auto call=llvm::dyn_cast<mlir::func::CallOp>(value);
     if (!call || ++calls>32 || value->getNumResults()!=1 || !value->getResult(0).getType().isF64() ||
         value->getNumRegions() || value->getNumSuccessors()) return reject("core-ir-array-call","call shape differs");
@@ -232,7 +232,7 @@ class Body {
     if (!range(value,expression) || !span(value->getAttr("callee_range"),callee) ||
         !span(value->getAttr("statement_range"),statement) || !encloses(function.declaration,statement) ||
         !encloses(statement,expression) || statement.start<previous || statement.end>=function.declaration.end ||
-        statement.start!=expression.start || expression.start!=callee.start || !encloses(expression,callee) ||
+        (returning ? statement.start>=expression.start : statement.start!=expression.start) || expression.start!=callee.start || !encloses(expression,callee) ||
         expression.end-callee.end<2) return reject("core-ir-array-source","call source anchors differ");
     uint32_t end=callee.end;
     for (size_t i=0;i<arguments.size();++i) {
@@ -241,14 +241,28 @@ class Body {
       if (kind!="reference" && kind!="constant" && kind!="floating")
         return reject("core-ir-array-call","call actual requires an original scalar reference/literal");
       Scalar argument;
-      if (mlir::failed(scalar(arguments[i],target->parameters[i].type,true,argument))) return mlir::failure();
+      const auto expected=target->parameters[i].type;
+      if (llvm::isa<ArrayType>(expected)) {
+        if (!fields(data,{"kind","binding","type_id","range"}) || kind!="reference" || text(data,"type_id")!=arrayId)
+          return reject("core-ir-array-call","Array actual requires a nominal reference");
+        auto found=definitions.find(text(data,"binding").str());
+        if (found==definitions.end() || !llvm::isa<ArrayType>(found->second.getType()))
+          return reject("core-ir-array-call","Array actual binding absent");
+        if (!span(data.get("range"),argument.anchor) || !encloses(function.declaration,argument.anchor))
+          return reject("core-ir-array-source","Array actual range differs");
+        argument.value=found->second;
+        // No call carries a length hint. Aliases share the affected caller root.
+        lengths.at(owners.at(text(data,"binding").str()))=-1;
+      } else if (mlir::failed(scalar(arguments[i],tsfg::typeCode(expected),true,argument))) return mlir::failure();
       if (argument.anchor.start<=end || argument.anchor.end>=expression.end || value->getOperand(i)!=argument.value ||
           value->getOperand(i).getType()!=llvm::cast<mlir::func::FuncOp>(target->operation).getFunctionType().getInput(i))
         return reject("core-ir-array-call","call exact ordered actual differs");
       end=argument.anchor.end;
     }
     if (position!=endpoint) return reject("core-ir-array-call","detached or reordered call actual");
-    previous=statement.end; ++position; return mlir::success();
+    result.value=value->getResult(0); result.anchor=expression; callStatementRange=statement;
+    if (!returning) previous=statement.end;
+    ++position; return mlir::success();
   }
 public:
   Body(const Function &function, Metadata &metadata, size_t &elements)
@@ -258,8 +272,12 @@ public:
       return reject("core-ir-array-shape","one block and exact entry parameters required");
     for (const auto &[i,parameter] : llvm::enumerate(function.parameters)) {
       auto argument=fn.getBody().front().getArgument(i);
-      if (tsfg::typeCode(argument.getType())!=parameter.type) return reject("core-ir-array-type","entry parameter type differs");
+      if (argument.getType()!=parameter.type) return reject("core-ir-array-type","entry parameter type differs");
       parameters.emplace(parameter.id,argument); names.insert(parameter.name);
+      if (llvm::isa<ArrayType>(parameter.type)) {
+        definitions.emplace(parameter.id,argument); owners.emplace(parameter.id,parameter.id);
+        lengths.emplace(parameter.id,-1); parameterOwners.insert(parameter.id);
+      }
     }
     registers=function.parameters.size();
     for (auto &value : fn.getBody().front()) {
@@ -267,7 +285,7 @@ public:
       ops.push_back(&value); registers+=value.getNumResults();
       if (registers>4219) return reject("core-ir-array-budget","register count exceeds limit");
     }
-    if (ops.size()<4) return reject("core-ir-array-shape","function body incomplete");
+    if (ops.size()<3) return reject("core-ir-array-shape","function body incomplete");
     auto *fuel=ops.front();
     if (!operation(fuel,"tsfg_core.fuel",0,0) || !attributes(fuel,{"event","tsfg_source.start","tsfg_source.end"}))
       return reject("core-ir-array-shape","requires one entry fuel");
@@ -289,7 +307,16 @@ public:
       } else if (name=="tsfg_array.store_dense_checked" || name=="tsfg_array.resize_checked") {
         if (mlir::failed(mutation(endpoint))) return mlir::failure();
       } else if (name=="func.call") {
-        if (mlir::failed(callStatement(endpoint))) return mlir::failure();
+        const bool returning=endpoint+2==ops.size() && ops[endpoint+1]->getName().getStringRef()=="func.return"
+            && ops[endpoint+1]->getNumOperands()==1 && ops[endpoint+1]->getOperand(0)==value->getResult(0);
+        Scalar result; Range statement;
+        if (mlir::failed(callStatement(endpoint,returning,result,statement))) return mlir::failure();
+        if (returning) {
+          auto *ret=ops[position]; Range anchor;
+          if (!operation(ret,"func.return",1,0) || !attributes(ret,{"tsfg_source.start","tsfg_source.end"}) ||
+              !range(ret,anchor) || !same(anchor,statement)) return reject("core-ir-array-call","final call return range differs");
+          ++position;
+        }
       } else if (name=="func.return") {
         Scalar result;
         if (mlir::failed(read(result))) return mlir::failure();
@@ -303,7 +330,7 @@ public:
         ++position;
       } else return reject("core-ir-array-shape","unsupported body operation");
     }
-    if (!locals || ops.back()->getName().getStringRef()!="func.return") return reject("core-ir-array-shape","complete local/final-return grammar required");
+    if ((!locals && parameterOwners.empty()) || ops.back()->getName().getStringRef()!="func.return") return reject("core-ir-array-shape","complete local/final-return grammar required");
     return mlir::success();
   }
 };
@@ -314,8 +341,8 @@ mlir::LogicalResult verifyCandidate(mlir::ModuleOp module) {
   size_t elements=0;
   for (const auto &function : metadata.functions)
     if (mlir::failed(Body(function,metadata,elements).verify())) return mlir::failure();
-  // Complete local-owner bodies necessarily allocate; upstream SCC admission
-  // excludes such a reachable cyclic domain. Cold IR must enforce the same bound.
+  // Match upstream SCC admission over the full outgoing domain, including private
+  // and unreachable functions. Incoming acyclic callers may allocate their actuals.
   bool reachable[16][16]{}; const auto count=metadata.functions.size();
   for (size_t i=0;i<count;++i)
     for (auto call : llvm::cast<mlir::func::FuncOp>(metadata.functions[i].operation).getOps<mlir::func::CallOp>())
@@ -323,8 +350,11 @@ mlir::LogicalResult verifyCandidate(mlir::ModuleOp module) {
         if (call.getCallee()==llvm::cast<mlir::func::FuncOp>(metadata.functions[j].operation).getSymName()) reachable[i][j]=true;
   for (size_t k=0;k<count;++k) for (size_t i=0;i<count;++i) for (size_t j=0;j<count;++j)
     reachable[i][j]=reachable[i][j] || (reachable[i][k] && reachable[k][j]);
-  for (size_t i=0;i<count;++i)
-    if (reachable[i][i]) return reject("core-ir-array-call","local-owner ordinary-call graph must be acyclic");
+  for (size_t i=0;i<count;++i) if (reachable[i][i])
+    for (size_t j=0;j<count;++j) if (i==j || reachable[i][j])
+      for (auto &op : llvm::cast<mlir::func::FuncOp>(metadata.functions[j].operation).getBody().front())
+        if (op.getName().getStringRef()=="tsfg_array.create")
+          return reject("core-ir-array-call","cyclic outgoing domain contains an allocation");
   uint64_t work=0;
   for (const auto &function : metadata.functions) {
     auto fn=llvm::cast<mlir::func::FuncOp>(function.operation);

@@ -1,4 +1,5 @@
 // SPDX-License-Identifier: MIT
+import {migrateArrayCore10} from './array-test-fixtures.mjs';
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import {readFile} from 'node:fs/promises';
@@ -6,6 +7,7 @@ import {lowerHir,verifyHir} from '../../compiler/hir.mjs';
 import {parseArrayCore} from './array-core-structural-oracle.mjs';
 import {old18Oracle,fresh} from './array-test-fixtures.mjs';
 const o=JSON.parse(await readFile(new URL('./array-core-call-oracle.json',import.meta.url),'utf8'));
+o.core=migrateArrayCore10(o.core);
 const context=()=>({...o.factsContext,factsBytes:Buffer.from(o.sourcePacket)});
 test('whole ordinary-call Core retains both complete functions and every typed edge',()=>{
   const input=fresh(o.hir),before=fresh(input),ctx=context(),bytes=Buffer.from(ctx.factsBytes);
@@ -49,6 +51,10 @@ test('actual Array parameter and ReadSpan packages retain precise capability bou
     const row=all.cases.find(row=>row.name===name);assert.ok(row);
     const ctx={...row.factsContext,factsBytes:Buffer.from(row.packageText)};
     assert.deepEqual(verifyHir(fresh(row.hir),ctx),row.hir);
+    if(name==='first-touch-alias'){
+      const core=parseArrayCore(lowerHir(fresh(row.hir),ctx));
+      assert.deepEqual(core.functions.map(fn=>fn.properties.sym_name),['touch','entry']);continue;
+    }
     assert.throws(()=>lowerHir(fresh(row.hir),ctx),error=>{
       const e=/** @type {any} */(error);assert.equal(e.code,'r03-d-core-array-capability');
       assert.deepEqual(e.primary,row.coreError.primary);return true;

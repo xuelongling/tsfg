@@ -1,4 +1,5 @@
 // SPDX-License-Identifier: MIT
+import {migrateArrayCore10} from './array-test-fixtures.mjs';
 // Private5 migration expectations are independent data; old wire originals remain refusal controls.
 import test from 'node:test';
 import assert from 'node:assert/strict';
@@ -6,6 +7,7 @@ import { readArrayFactsCandidate,writeArrayFactsCandidate } from '../../compiler
 import { buildHir,verifyHir,printHir,readHir,lowerHir,analyzeArrayCalls,verifyArrayCalls,printArrayCalls,readArrayCalls } from '../../compiler/hir.mjs';
 import { canonical,fresh,factsContext,caught,deeplyFrozen,analysisError } from './array-call-test-helpers.mjs';
 import { callOracle,pinned } from './array-test-fixtures.mjs';
+import {parseArrayCore} from './array-core-structural-oracle.mjs';
 import coreCallOracle from './array-core-call-oracle.json' with {type:'json'};
 const oraclePromise=callOracle();
 test('23e ten independent complete Source packets and typed HIR preserve every source field',async t=>{
@@ -49,10 +51,15 @@ test('37d complete call-only Core succeeds; remaining parameter and final-return
     const input=fresh(row.hir),before=fresh(input);
     if(row.name==='core-call-only-refusal') {
       assert.deepEqual(input,coreCallOracle.hir);
-      assert.equal(lowerHir(input,factsContext(row)),coreCallOracle.core);
+      assert.equal(lowerHir(input,factsContext(row)),migrateArrayCore10(coreCallOracle.core));
+    } else if (['first-touch-alias','two-slots-alias-and-independent-fresh','parameter-alias-permanent-unknown','leaf-read-exceeds-fixed'].includes(row.name)) {
+      const core=parseArrayCore(lowerHir(input,factsContext(row)));
+      assert.deepEqual(core.functions.map(fn=>fn.properties.sym_name),row.hir.functions.map(fn=>fn.name));
+      assert.equal(core.functions.length,row.hir.functions.length);
     } else {
       const error=caught(()=>lowerHir(input,factsContext(row)));
-      for(const[key,value]of Object.entries(row.coreError))assert.deepEqual(error[key],key==='message'?"Array Core lowering requires local owners, scalar call signatures and a final checked read":value,key);
+      for(const[key,value]of Object.entries(row.coreError))assert.deepEqual(error[key],key==='message'?"Array Core lowering requires nominal Array/scalar calls and a final checked read or f64 direct call"
+        :key==='primary'?{sourceId:input.functions[0].sourcePath,...input.functions[0].body.at(-1).range}:value,key);
     }
     assert.deepEqual(input,before);
   });

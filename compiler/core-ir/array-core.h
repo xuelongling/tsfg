@@ -13,7 +13,7 @@
 namespace mlir { class DialectRegistry; }
 namespace tsfg::arrays {
 inline constexpr llvm::StringLiteral schema =
-    "sha256:cf82210252abc6ff9778f85d8116d419b4bea62affdc4ac844a6401127d207ca";
+    "sha256:7a1b9747e100cdc60119a37dbc31e477a5630f05b715a6f6a795a7573dd43f05";
 inline constexpr llvm::StringLiteral f64Id =
     "sha256:dfbc72c48bec549ea679cd6aff531f9ebef95e001f6ae0bf419d2f33bf988a6c";
 inline constexpr llvm::StringLiteral arrayId =
@@ -31,7 +31,7 @@ public:
   static ArrayType get(mlir::MLIRContext *context) { return Base::get(context); }
 };
 struct Range { uint32_t start = 0, end = 0; };
-struct Parameter { std::string id, name; unsigned type; Range declaration, nameRange, annotation; };
+struct Parameter { std::string id, name; mlir::Type type; Range declaration, nameRange, annotation, elementAnnotation; };
 struct Function {
   mlir::Operation *operation; Range declaration, name, annotation;
   std::vector<Parameter> parameters;

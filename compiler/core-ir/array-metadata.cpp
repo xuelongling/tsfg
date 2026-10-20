@@ -81,10 +81,10 @@ mlir::LogicalResult marker(mlir::ModuleOp module) {
     return reject("core-ir-array-marker", "candidate marker fields differ");
   auto version = llvm::dyn_cast_or_null<mlir::IntegerAttr>(value.get("version"));
   auto facts = llvm::dyn_cast_or_null<mlir::IntegerAttr>(value.get("facts_version"));
-  if (!version || !version.getType().isSignlessInteger(32) || version.getInt() != 9 ||
+  if (!version || !version.getType().isSignlessInteger(32) || version.getInt() != 10 ||
       !facts || !facts.getType().isSignlessInteger(32) || facts.getInt() != 7 ||
       text(value, "family") != "tsfg.core-array-candidate" || text(value, "schema") != schema ||
-      text(value, "profile") != "dense-f64-array-scalar-call-roots-checked-v9")
+      text(value, "profile") != "dense-f64-array-parameter-call-roots-checked-v10")
     return reject("core-ir-array-marker", "candidate marker identity differs");
   return mlir::success();
 }
@@ -231,22 +231,27 @@ mlir::LogicalResult parameters(mlir::func::FuncOp fn, Function &function, Metada
   uint32_t previous=function.name.end; std::set<std::string> names;
   for (size_t i=0;i<rows.size();++i) {
     auto row=llvm::dyn_cast<mlir::DictionaryAttr>(rows[i]);
-    if (!fields(row,{"id","name","type","writable","declaration_range","name_range","annotation_range"}))
+    const auto type=fn.getFunctionType().getInput(i); const bool array=llvm::isa<ArrayType>(type);
+    if (!(array ? fields(row,{"id","name","type","writable","declaration_range","name_range","annotation_range","element_annotation_range"})
+        : fields(row,{"id","name","type","writable","declaration_range","name_range","annotation_range"})))
       return reject("core-ir-array-metadata","parameter fields differ");
     auto name=text(row,"name"); auto writable=llvm::dyn_cast_or_null<mlir::BoolAttr>(row.get("writable"));
     if (name.size()>1048576) return reject("core-ir-array-budget","parameter name exceeds limit");
     if (!validText(name) || !names.insert(name.str()).second) return reject("core-ir-array-identity","duplicate/invalid parameter name");
     if (!writable || !writable.getValue()) return reject("core-ir-array-metadata","parameter writable differs");
-    unsigned code=tsfg::typeCode(fn.getFunctionType().getInput(i));
-    if ((code!=8 && code!=13) || text(row,"type") != (code==8 ? u32Id : f64Id))
-      return reject("core-ir-array-type","parameter scalar type differs");
-    Parameter item{text(row,"id").str(),name.str(),code,{},{},{}};
+    unsigned code=tsfg::typeCode(type);
+    if ((!array && code!=8 && code!=13) || text(row,"type") != (array ? arrayId : code==8 ? u32Id : f64Id))
+      return reject("core-ir-array-type","parameter nominal type differs");
+    Parameter item{text(row,"id").str(),name.str(),type,{},{},{},{}};
     if (!span(row.get("declaration_range"),item.declaration) || !span(row.get("name_range"),item.nameRange) ||
         !span(row.get("annotation_range"),item.annotation) || !encloses(function.declaration,item.declaration) ||
         item.declaration.start<=previous || item.declaration.end>=function.annotation.start ||
         item.declaration.start!=item.nameRange.start || item.declaration.end!=item.annotation.end ||
         item.nameRange.end>=item.annotation.start || !encloses(item.declaration,item.nameRange) || !encloses(item.declaration,item.annotation))
       return reject("core-ir-array-source","parameter source ranges differ");
+    if (array && (!span(row.get("element_annotation_range"),item.elementAnnotation) ||
+        !encloses(item.annotation,item.elementAnnotation) || item.elementAnnotation.end>=item.annotation.end))
+      return reject("core-ir-array-source","Array element annotation range differs");
     if (item.id!=sourceIdentity(metadata.path,item.nameRange) || !metadata.bindings.insert(item.id).second)
       return reject("core-ir-array-identity","parameter binding differs");
     function.parameters.push_back(item); previous=item.declaration.end;
@@ -316,7 +321,7 @@ mlir::LogicalResult verifyMetadata(mlir::ModuleOp module, Metadata &metadata) {
     std::string shape = "(";
     for (size_t i = 0; i < item.parameters.size(); ++i) {
       if (i) shape += ',';
-      shape += item.parameters[i].type == 8 ? "u32" : "f64";
+      shape += llvm::isa<ArrayType>(item.parameters[i].type) ? "array.f64" : tsfg::typeCode(item.parameters[i].type)==8 ? "u32" : "f64";
     }
     shape += ")->f64";
     std::string signaturePreimage("tsfg.signature\0",15); signaturePreimage += shape;
@@ -331,16 +336,20 @@ mlir::LogicalResult verifyMetadata(mlir::ModuleOp module, Metadata &metadata) {
       return reject("core-ir-array-identity","function identity/ordered table differs");
     previous = item.declaration.end; metadata.functions.push_back(item); expectedExports.emplace_back(name.str(), identity);
   }
-  if (metadata.functions.size() != ids.size() || exports.size() != ids.size())
+  if (metadata.functions.size() != ids.size())
     return reject("core-ir-array-identity", "complete function/export count differs");
   std::sort(expectedExports.begin(), expectedExports.end(), [](const auto &left, const auto &right) {
     return llvm::StringRef(left.first).compare(right.first) < 0;
   });
-  for (size_t index = 0; index < exports.size(); ++index) {
-    auto row = llvm::dyn_cast<mlir::DictionaryAttr>(exports[index]);
+  std::string previousExport;
+  for (auto attribute : exports) {
+    auto row = llvm::dyn_cast<mlir::DictionaryAttr>(attribute);
     if (!fields(row, {"name", "function_id"})) return reject("core-ir-array-metadata", "export fields differ");
-    if (text(row, "name") != expectedExports[index].first || text(row, "function_id") != expectedExports[index].second)
-      return reject("core-ir-array-identity", "sorted exports differ");
+    auto name=text(row,"name"),identity=text(row,"function_id");
+    if (name.empty() || (!previousExport.empty() && llvm::StringRef(previousExport).compare(name)>=0) ||
+        std::none_of(expectedExports.begin(),expectedExports.end(),[&](const auto &item){return name==item.first && identity==item.second;}))
+      return reject("core-ir-array-identity", "sorted export subset differs");
+    previousExport=name.str();
   }
   return mlir::success();
 }

@@ -36,12 +36,12 @@ export function emitArrayCore(hir, context, fixedContext = undefined) {
   const verified = verifyArrayHir(hir, context, fixedContext);
   const unsupported = (fn, range) => {
     const code = 'r03-d-core-array-capability';
-    throw Object.assign(new TypeError('Array Core lowering requires local owners, scalar call signatures and a final checked read'),
+    throw Object.assign(new TypeError('Array Core lowering requires nominal Array/scalar calls and a final checked read or f64 direct call'),
       {code,ruleId:'r01-ts-baseline',phase:'lowering',primary:{sourceId:fn.sourcePath,...range}});
   };
   // Inspect complete verified Source order before reserving even the module header.
   for (const fn of verified.functions) {
-    const parameter = fn.parameters.find(p => p.type === arrayHirType.id || p.type === readSpanTypeId);
+    const parameter = fn.parameters.find(p => p.type === readSpanTypeId);
     if (parameter) unsupported(fn,parameter.range);
     for (const statement of fn.body) {
       if (statement.kind === 'local' && statement.binding.type === readSpanTypeId) unsupported(fn,statement.initializer.range);
@@ -49,12 +49,11 @@ export function emitArrayCore(hir, context, fixedContext = undefined) {
       if (value?.kind === 'readSpanReadChecked' || value?.kind === 'readSpanLength') unsupported(fn,value.range);
       if (statement.kind === 'arrayStoreDenseChecked' && statement.value.kind === 'readSpanReadChecked') unsupported(fn,statement.value.range);
       if (statement.kind === 'expression' && value?.kind !== 'arrayDirectCall') unsupported(fn,value.range);
-      if (value?.kind === 'arrayDirectCall' && (statement.kind !== 'expression'
-          || value.arguments.some(argument => !['reference','constant','floating'].includes(argument.kind)
-            || ![scalarTypeIds.f64,scalarTypeIds.u32].includes(argument.type)))) unsupported(fn,value.range);
-      if (statement.kind === 'return' && value.kind !== 'arrayReadChecked') unsupported(fn,statement.range);
+      if (value?.kind === 'arrayDirectCall' && (value.arguments.some(argument => !['reference','constant','floating'].includes(argument.kind)
+            || ![arrayHirType.id,scalarTypeIds.f64,scalarTypeIds.u32].includes(argument.type)))) unsupported(fn,value.range);
+      if (statement.kind === 'return' && !['arrayReadChecked','arrayDirectCall'].includes(value.kind)) unsupported(fn,statement.range);
     }
-    if (!fn.body.some(s => s.kind === 'local') || !verified.exports.some(e => e.functionId === fn.id && e.name === fn.name))
+    if (!fn.body.some(s => s.kind === 'local') && !fn.parameters.some(p => p.type === arrayHirType.id))
       unsupported(fn,fn.range);
   }
   const source = verified.sources.find(item => item.path === verified.rootFile);
@@ -64,7 +63,7 @@ export function emitArrayCore(hir, context, fixedContext = undefined) {
     field('tsfg_core.triple', verified.target.triple), field('tsfg_core.data_layout', verified.target.llvmDataLayout),
     field('tsfg_core.bytecode_schema', coreExchangeFormat.bytecodeSchema),
     'tsfg_core.source_length = ' + source.content.length + ' : i64',
-    'tsfg_core.array = ' + dictionary([field('family', descriptor.family), 'version = 9 : i32',
+    'tsfg_core.array = ' + dictionary([field('family', descriptor.family), 'version = 10 : i32',
       field('schema', schemaHash), field('profile', descriptor.profile), 'facts_version = 7 : i32']),
     'tsfg_array.function_ids = ' + table(verified.functions.map(fn => quote(fn.id))),
     'tsfg_array.exports = ' + table(verified.exports.map(item => dictionary([
@@ -117,16 +116,26 @@ export function emitArrayCore(hir, context, fixedContext = undefined) {
     const elements = locals.reduce((sum, statement) => sum + (statement.initializer.elements?.length ?? 0), 0);
     const stores = fn.body.filter(statement => statement.kind === 'arrayStoreDenseChecked');
     const resizes = fn.body.filter(statement => statement.kind === 'arrayResizeChecked');
-    const reads = [fn.body.at(-1).value,...stores.filter(statement => statement.value.kind === 'arrayReadChecked').map(statement => statement.value)];
-    const calls = fn.body.filter(statement => statement.kind === 'expression').map(statement => statement.expression);
+    const reads = [fn.body.at(-1).value,...stores.map(statement => statement.value)].filter(value => value.kind === 'arrayReadChecked');
+    const callStatements = new Map(fn.body.filter(statement => (statement.expression ?? statement.value)?.kind === 'arrayDirectCall')
+      .map(statement => [statement.expression ?? statement.value,statement]));
+    const calls = [...callStatements.keys()], returnCall = fn.body.at(-1).value.kind === 'arrayDirectCall' ? 1 : 0;
     const argumentsCount = calls.reduce((sum, call) => sum + call.arguments.length, 0);
     const scalars = [...reads.map(read => read.index),...stores.flatMap(statement => [statement.target.index,statement.value]),...resizes.map(statement => statement.value),...calls.flatMap(call => call.arguments)];
     const constants = elements + scalars.filter(value => value.kind === 'constant' || value.kind === 'floating').length;
     const count = locals.length, expected = {registers:fn.parameters.length + constants + count + reads.length + calls.length,
       lines:constants + count + reads.length + stores.length + resizes.length + calls.length + 2,
-      steps:elements + 2*count + 4*stores.length + 3*resizes.length + 2*reads.length + calls.length + argumentsCount + 2};
+      steps:elements + 2*count + 4*stores.length + 3*resizes.length + 2*reads.length + calls.length + argumentsCount + 2 - returnCall};
     let blocks = 0, parameters = 0, registers = 0, lines = 0, steps = 0;
     const shape = condition => { if (!condition) arrayHirFailure('invalid'); };
+    const emitCall = (call, statement, api) => {
+      const target = verified.functions.find(fn => fn.id === call.target), operands = call.arguments.map(api.emit);
+      return api.operation('func.call', operands, call.arguments.map(argument => argument.type), call.type,
+        'callee = @' + quote(target.name) + ', ' + field('tsfg_core.function_id',target.id)
+          + ', ' + field('tsfg_core.signature_hash',target.signatureHash) + ', ' + field('source_callee',call.sourceCallee)
+          + ', callee_range = ' + span(call.calleeRange) + ', arguments = ' + table(call.arguments.map(scalarUse))
+          + ', statement_range = ' + span(statement.range), call.range);
+    };
     const core = emitCoreSsaFunction(fn, { verified, coreType, functionSymbol: target => target.name,
       budget: {
         block: value => shape(value === ++blocks && value === 1),
@@ -140,6 +149,7 @@ export function emitArrayCore(hir, context, fixedContext = undefined) {
         },
       },
       emitValueLeaf: (expression, api) => {
+        if (expression.kind === 'arrayDirectCall') return emitCall(expression,callStatements.get(expression),api);
         const statement = owners.get(expression);
         if (statement) {
           if (expression.kind === 'arrayCreate') {
@@ -162,13 +172,7 @@ export function emitArrayCore(hir, context, fixedContext = undefined) {
       },
       emitStatementLeaf: (statement,api) => {
         if (statement.kind === 'expression') {
-          const call = statement.expression, target = verified.functions.find(fn => fn.id === call.target);
-          const operands = call.arguments.map(api.emit);
-          api.operation('func.call', operands, call.arguments.map(argument => argument.type), call.type,
-            'callee = @' + quote(target.name) + ', ' + field('tsfg_core.function_id',target.id)
-              + ', ' + field('tsfg_core.signature_hash',target.signatureHash) + ', ' + field('source_callee',call.sourceCallee)
-              + ', callee_range = ' + span(call.calleeRange) + ', arguments = ' + table(call.arguments.map(scalarUse))
-              + ', statement_range = ' + span(statement.range), call.range);
+          emitCall(statement.expression,statement,api);
           return true;
         }
         if (statement.kind === 'arrayStoreDenseChecked') {
@@ -201,7 +205,8 @@ export function emitArrayCore(hir, context, fixedContext = undefined) {
       'tsfg_array.parameters = '+table(fn.parameters.map(parameter => dictionary([
         field('id',parameter.id),field('name',parameter.name),field('type',parameter.type),'writable = true',
         'declaration_range = '+span(parameter.range),'name_range = '+span(parameter.nameRange),
-        'annotation_range = '+span(parameter.annotationRange)])))];
+        'annotation_range = '+span(parameter.annotationRange),
+        ...(parameter.type === arrayHirType.id ? ['element_annotation_range = '+span(parameter.elementAnnotationRange)] : [])])))];
     return reserve('  func.func @' + quote(fn.name) + '(' + core.entryParameters.map(parameter => parameter.name+': '+coreType(parameter.type)).join(', ') + ') -> ' + core.resultType
       + ' attributes {' + metadata.join(', ') + '} {\n') + core.blocksText + reserve('\n  }');
   });
