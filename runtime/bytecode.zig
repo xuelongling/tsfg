@@ -30,3 +30,6 @@ pub const moduleInfoView = view.moduleInfoView;
 pub const serialize = view.serialize;
 pub const digestText = view.digestText;
 pub const inspect = view.inspect;
+
+// Explicit private-format namespace; its opaque handle is not a VM VerifiedModule.
+pub const nullable = @import("nullable-bytecode.zig");
