@@ -8,6 +8,7 @@
 #include "nullable.h"
 #include "nullable-wire.h"
 #include "string-core.h"
+#include "string-wire.h"
 #include "array-core.h"
 #include "kernel-access.h"
 #include "mlir/Dialect/Func/IR/FuncOps.h"
@@ -16,8 +17,13 @@
 #include "mlir/IR/Verifier.h"
 #include "mlir/Parser/Parser.h"
 #include "llvm/Support/MemoryBuffer.h"
+#include "llvm/Support/ErrorOr.h"
 #include "llvm/Support/raw_ostream.h"
 #include "llvm/Support/Program.h"
+#include <algorithm>
+#include <iostream>
+#include <memory>
+#include <string>
 #if defined(_WIN32)
 #include <cstdio>
 #include <fcntl.h>
@@ -41,6 +47,26 @@ public:
   bool exceeded() const { return overflow; }
   llvm::StringRef value() const { return bytes; }
 };
+// Only the explicit String packet command uses this reader. Retain the legacy
+// getSTDIN path for every old flag. Never parse or retain an overflow byte.
+int readStringInput(std::string &bytes) {
+  if (llvm::sys::ChangeStdinToBinary()) return 2;
+  char chunk[4096];
+  while (true) {
+    const size_t remaining = referenceByteBudget - bytes.size();
+    const auto requested = std::min(sizeof(chunk), remaining + 1);
+    std::cin.read(chunk, static_cast<std::streamsize>(requested));
+    const auto count = std::cin.gcount();
+    if (count < 0) return 2;
+    if (static_cast<size_t>(count) > remaining) {
+      llvm::errs() << "[core-ir-string-budget] input exceeds candidate byte budget\n";
+      return 3;
+    }
+    bytes.append(chunk, static_cast<size_t>(count));
+    if (std::cin.eof()) return 0;
+    if (!std::cin) return 2;
+  }
+}
 } // namespace
 
 int main(int argc, char **argv) {
@@ -54,11 +80,24 @@ int main(int argc, char **argv) {
   if (argc != 2 || (llvm::StringRef(argv[1]) != "--canonicalize" &&
                     llvm::StringRef(argv[1]) != "--emit-bytecode" &&
                     llvm::StringRef(argv[1]) != "--emit-nullable-candidate" &&
+                    llvm::StringRef(argv[1]) != "--emit-string-candidate" &&
                     llvm::StringRef(argv[1]) != "--optimize")) {
     llvm::errs() << "[core-ir-command] expected --canonicalize with IR on stdin\n";
     return 2;
   }
-  auto input = llvm::MemoryBuffer::getSTDIN();
+  const bool stringWire = llvm::StringRef(argv[1]) == "--emit-string-candidate";
+  std::string stringInput;
+  if (stringWire) {
+    const int result = readStringInput(stringInput);
+    if (result) {
+      if (result == 2) llvm::errs() << "[core-ir-input] cannot read stdin\n";
+      return result;
+    }
+  }
+  auto input = [&]() -> llvm::ErrorOr<std::unique_ptr<llvm::MemoryBuffer>> {
+    if (stringWire) return llvm::MemoryBuffer::getMemBuffer(stringInput, "<stdin>", false);
+    return llvm::MemoryBuffer::getSTDIN();
+  }();
   if (!input) {
     llvm::errs() << "[core-ir-input] cannot read stdin\n";
     return 2;
@@ -92,8 +131,8 @@ int main(int argc, char **argv) {
   const bool nullableWire = llvm::StringRef(argv[1]) == "--emit-nullable-candidate";
   // The shared legacy stdin/MLIR parser remains unchanged. Apply the private
   // format budget before candidate metadata, typed verification and CFG work.
-  if ((reference || nullable || nullableWire || stringCandidate || arrayCandidate || closureCandidate || kernelCandidate) && (*input)->getBufferSize() > referenceByteBudget) {
-    llvm::errs() << (kernelCandidate ? "[core-ir-kernel-budget]" : arrayCandidate ? "[core-ir-array-budget]" : stringCandidate ? "[core-ir-string-budget]" :
+  if ((reference || nullable || nullableWire || stringCandidate || stringWire || arrayCandidate || closureCandidate || kernelCandidate) && (*input)->getBufferSize() > referenceByteBudget) {
+    llvm::errs() << (kernelCandidate ? "[core-ir-kernel-budget]" : arrayCandidate ? "[core-ir-array-budget]" : stringCandidate || stringWire ? "[core-ir-string-budget]" :
                      closureCandidate ? "[core-ir-closure-budget]" : nullable || nullableWire ? "[core-ir-nullable-budget]" : "[core-ir-reference-budget]")
                  << " input exceeds candidate byte budget\n";
     return 3;
@@ -132,6 +171,17 @@ int main(int argc, char **argv) {
   if (stringCandidate && (nullableWire || llvm::StringRef(argv[1]) == "--emit-bytecode")) {
     llvm::errs() << "[r04-core-string-unsupported] String candidate has no wire encoding\n";
     return 3;
+  }
+  if (stringWire) {
+    if (!stringCandidate) {
+      llvm::errs() << "[r04-core-string-required] --emit-string-candidate requires a marked String candidate module\n";
+      return 3;
+    }
+    std::vector<uint8_t> packet;
+    if (mlir::failed(tsfg::stringCandidateBytecode(*module, packet))) return 3;
+    llvm::sys::ChangeStdoutToBinary();
+    llvm::outs().write(reinterpret_cast<const char *>(packet.data()), packet.size());
+    return 0;
   }
   if (nullableWire) {
     if (!nullable) {
