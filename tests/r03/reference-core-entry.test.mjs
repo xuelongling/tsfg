@@ -21,11 +21,11 @@ function objectSource(value, views) {
 }
 
 test('public lowerHir preserves cold Box aliases field mutation and reference return in typed Core', async () => {
-  // Actual profile4 Source capture; no Source admission or execution is implied.
+  // Actual profile5 Source capture; no Source admission or execution is implied.
   const [bytes, bindingText, source] = await Promise.all([
     readFile(fixture('facts.json')), readFile(fixture('binding.json'), 'utf8'), readFile(fixture('source.ts'), 'utf8'),
   ]);
-  assert.equal(sha256(bytes), 'sha256:762c1c1ee23174b046b00903af2e90ca7c7e08b54c4c970a1ba0d810b8be6fe6');
+  assert.equal(sha256(bytes), 'sha256:32b102d37534052fc90d305ee8d4a1092696f32c6b072520f7a0de43683cfaf5');
   const binding = JSON.parse(bindingText), origin = binding.sources.find(item => !item.declaration);
   assert.ok(origin); assert.equal(origin.path, '/original/main.ts');
   assert.equal(sha256(source), origin.sha256); assert.equal(source.length, 352);
@@ -33,8 +33,8 @@ test('public lowerHir preserves cold Box aliases field mutation and reference re
   const facts = decodeReferenceFacts(bytes, binding), owned = buildReferenceHir(facts);
   const persisted = Buffer.from(printReferenceHir(owned));
   const cold = readReferenceHir(persisted); persisted.fill(0);
-  assert.deepEqual(cold, owned); assert.equal(cold.format.version, 4);
-  assert.equal(cold.format.semanticProfile, 'tsfg-owned-class-facts-candidate-v4');
+  assert.deepEqual(cold, owned); assert.equal(cold.format.version, 5);
+  assert.equal(cold.format.semanticProfile, 'tsfg-owned-class-facts-candidate-v5');
   assert.equal(cold.classes[0].constructor.access, 'public');
   assert.equal(cold.classes[0].fields[0].initializer, null, 'this fixture requires no unresolved literal');
 
@@ -42,7 +42,7 @@ test('public lowerHir preserves cold Box aliases field mutation and reference re
   const core = lowerHir(cold);
   assert.equal(typeof core, 'string');
   assert.match(core, /!tsfg_core\.ref<[^>]+>/);
-  assert.ok(core.includes('sha256:2a8829666e53ce83f8adb24e0174c7a699953eb3d7d75b584d3311c76eafefa0'),
+  assert.ok(core.includes('sha256:7fd6fbdd9c80a7d4431b28ec21f67f468728f508466b8141b009ec9805861f44'),
     'Core retains the actual Box allocation class identity');
   assert.doesNotMatch(core, /"tsfg_core\.ref\.alloc"/, 'aliasing an existing parameter must not allocate');
   const functions = [...core.matchAll(/^  func\.func ([^\n]+)\n([\s\S]*?)^  \}/gm)];

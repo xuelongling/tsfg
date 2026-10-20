@@ -8,7 +8,7 @@ import { sha256 } from '../../compiler/identity.mjs';
 const fixture = name => new URL('./fixtures/reference-source/' + name, import.meta.url);
 test('official reference identity bytes preserve same-class equality inequality and structurally comparable distinct classes', async () => {
   const bytes = await readFile(fixture('reference-identity.facts.json'));
-  assert.equal(sha256(bytes), 'sha256:43725ab7a1bec4096e84bbde4431584a9fc96236cfbd42578d99879ca9a52861');
+  assert.equal(sha256(bytes), 'sha256:12155186f4c0d39c006599a27b1d7fb987ce2cd6368f034adef824f01a22dedb');
   const binding = JSON.parse(await readFile(fixture('reference-identity.binding.json'), 'utf8'));
   const source = await readFile(fixture('reference-identity.source.ts'));
   const declarations = await readFile(fixture('minimal-scalars-v2.d.ts'));

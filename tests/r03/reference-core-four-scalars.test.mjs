@@ -27,8 +27,8 @@ async function load() {
   ]);
   assert.equal(bytes.length, 19035); assert.equal(bindingBytes.length, 973);
   assert.equal(sourceBytes.length, 340); assert.equal(declarationBytes.length, 17464);
-  assert.equal(sha256(bytes), 'sha256:e9a9c6cfedc125189f9efb6c8862798f082d5707837182c0ab348d5616cff56a');
-  assert.equal(sha256(bindingBytes), 'sha256:923edf87baeafa9ce629ac94fedfd10c84bfe1f2945e7651e0319544e030db29');
+  assert.equal(sha256(bytes), 'sha256:bcd796436dc6ee44b4b24e1722372c9db935c6452735845bc4d755061e472562');
+  assert.equal(sha256(bindingBytes), 'sha256:07ba4f6f975077b289b69bb897410a37d147c6644c4d92271c3ed8207e8f1113');
   assert.equal(sha256(sourceBytes), 'sha256:dc0f924a811a2642b94b158742a4f05e58de27fac657d10eb892027da50a5f01');
   assert.equal(sha256(declarationBytes), declarationHash);
   const binding = JSON.parse(bindingBytes.toString('utf8'));
@@ -44,8 +44,8 @@ async function load() {
   // These are retained official Source facts, not newly checked Source inputs.
   const owned = buildReferenceHir(decodeReferenceFacts(bytes, binding));
   const persisted = Buffer.from(printReferenceHir(owned)), hir = readReferenceHir(persisted); persisted.fill(0);
-  assert.deepEqual(hir, owned); assert.equal(hir.format.version, 4);
-  assert.equal(hir.format.semanticProfile, 'tsfg-owned-class-facts-candidate-v4');
+  assert.deepEqual(hir, owned); assert.equal(hir.format.version, 5);
+  assert.equal(hir.format.semanticProfile, 'tsfg-owned-class-facts-candidate-v5');
   assert.equal(hir.classes.length, 1);
   const owner = hir.classes[0], types = new Map(hir.types.map(type => [type.id,type]));
   assert.equal(owner.name, 'Scalars'); assert.equal(owner.fields.length, 4); assert.equal(owner.methods.length, 4);

@@ -38,12 +38,12 @@ async function load() {
   ]);
   assert.equal(bytes.length, 9697); assert.equal(bindingBytes.length, 955);
   assert.equal(sourceBytes.length, 245); assert.equal(declarationBytes.length, 362);
-  assert.equal(sha256(bytes), 'sha256:26bc6e6d9a987ee5f146830dfcdae1132297c62b35a8d18dcdf4e500d72fa910');
-  assert.equal(sha256(bindingBytes), 'sha256:6ab211f68d949bf75a135c045ce484cd3cbf5ce2153c7ed2a05f72ac4e1abb73');
+  assert.equal(sha256(bytes), 'sha256:060ef5ebb3e0dbbad2203089262a1e54b055caed1c74f8861c17a263d580e7bb');
+  assert.equal(sha256(bindingBytes), 'sha256:776a618825d7bcaf706ac9c52d4972b73953defcf8219563f7b043229d235aa3');
   assert.equal(sha256(sourceBytes), 'sha256:7a9081fd9db518f06b99150d1334f082c643bbc8f807d7cac3173f7a10675839');
   assert.equal(sha256(declarationBytes), 'sha256:d629059f5175a580a8a7b19531c7d8cff1bfa7b61320f6638cf4ee25fbf5a141');
   const binding = JSON.parse(bindingBytes.toString('utf8')), source = sourceBytes.toString('utf8');
-  assert.equal(binding.semanticProfile, 'tsfg-owned-class-facts-candidate-v4'); assert.equal(binding.sources.length, 2);
+  assert.equal(binding.semanticProfile, 'tsfg-owned-class-facts-candidate-v5'); assert.equal(binding.sources.length, 2);
   /** @type {[string,Buffer,boolean][]} */
   const originals = [['/original/main.ts',sourceBytes,false], ['/original/minimal-scalars-v2.d.ts',declarationBytes,true]];
   for (const [path, content, declaration] of originals) {
@@ -54,7 +54,7 @@ async function load() {
   const facts = decodeReferenceFacts(bytes, binding), owned = buildReferenceHir(facts);
   const unresolved = printReferenceHir(owned), persisted = Buffer.from(unresolved), hir = readReferenceHir(persisted); persisted.fill(0);
   assert.deepEqual(hir, owned); assert.equal(printReferenceHir(hir), unresolved);
-  assert.equal(hir.format.version, 4); assert.equal(hir.format.semanticProfile, binding.semanticProfile);
+  assert.equal(hir.format.version, 5); assert.equal(hir.format.semanticProfile, binding.semanticProfile);
   assert.equal(hir.classes.length, 1);
   const owner = hir.classes[0]; assert.equal(owner.name, 'Literals'); assert.equal(owner.fields.length, 7);
   assert.equal(owner.methods.length, 0); assert.equal(owner.constructor.kind, 'implicit-base');

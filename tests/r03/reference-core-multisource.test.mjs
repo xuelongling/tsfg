@@ -72,7 +72,7 @@ test('public lowerHir preserves real multiple-source construction dispatch proje
     readFile(fixture('a-main.source.ts'), 'utf8'), readFile(fixture('z-base.source.ts'), 'utf8'),
   ]);
   // Actual profile4 official Program/checker capture; no Source admission/execution.
-  assert.equal(sha256(bytes), 'sha256:b49b569266659fb9aed15dfacf677687dd4e3b57bc1b0405b2e8dcc10604ae32');
+  assert.equal(sha256(bytes), 'sha256:593093a1772fff01f8c6c82802e50edf44b24f29042c2e3ace494957e6a93db7');
   const binding = JSON.parse(bindingText), originals = new Map([['/original/a-main.ts', main], ['/original/z-base.ts', baseText]]);
   assert.equal(binding.sources.length, 3); assert.equal(main.length, 400); assert.equal(baseText.length, 172);
   for (const source of binding.sources.filter(item => !item.declaration)) {
@@ -81,8 +81,8 @@ test('public lowerHir preserves real multiple-source construction dispatch proje
   }
   const owned = buildReferenceHir(decodeReferenceFacts(bytes, binding)), persisted = Buffer.from(printReferenceHir(owned));
   const cold = readReferenceHir(persisted); persisted.fill(0);
-  assert.deepEqual(cold, owned); assert.equal(cold.format.version, 4);
-  assert.equal(cold.format.semanticProfile, 'tsfg-owned-class-facts-candidate-v4');
+  assert.deepEqual(cold, owned); assert.equal(cold.format.version, 5);
+  assert.equal(cold.format.semanticProfile, 'tsfg-owned-class-facts-candidate-v5');
   for (const owner of cold.classes) assert.equal(owner.constructor.access, 'public');
   const core = lowerHir(cold), again = lowerHir(readReferenceHir(Buffer.from(printReferenceHir(cold))));
   assert.equal(core, again, 'fresh cold lowering must be byte deterministic');
@@ -181,8 +181,8 @@ test('public lowerHir returns a consumed Derived local assignment independently 
   // Real profile4 official Source capture. The cold reader supplies every fact;
   // the source below only checks input identity and is never parsed for lowering.
   assert.equal(bytes.length, 10465);
-  assert.equal(sha256(bytes), 'sha256:f577d1cf1f157f6bf9b8ccd8ebe5d11d30ec40d4f8967ccc96adb11672919c09');
-  assert.equal(sha256(bindingBytes), 'sha256:b3d8e6eaf1badd23beb584feac55f0f01f071622cc3c3f3f27ab3d41f4bf4384');
+  assert.equal(sha256(bytes), 'sha256:2510da5b02fb93613ebcf4fbd3e43fb64436f144b3be7df1ce2602795dfb4552');
+  assert.equal(sha256(bindingBytes), 'sha256:ff8fb1658531ce3e21e34351e0726705e2baaed1c4e456f86caa19007292b1f4');
   assert.equal(sourceBytes.length, 256);
   const source = sourceBytes.toString('utf8'), binding = JSON.parse(bindingBytes.toString('utf8'));
   assert.equal(source.length, 254);
@@ -192,8 +192,8 @@ test('public lowerHir returns a consumed Derived local assignment independently 
   assert.equal(origin.utf16Length, source.length); assert.deepEqual(origin.surrogateStarts, [3]);
   const owned = buildReferenceHir(decodeReferenceFacts(bytes, binding));
   const persisted = Buffer.from(printReferenceHir(owned)), cold = readReferenceHir(persisted); persisted.fill(0);
-  assert.deepEqual(cold, owned); assert.equal(cold.format.version, 4);
-  assert.equal(cold.format.semanticProfile, 'tsfg-owned-class-facts-candidate-v4');
+  assert.deepEqual(cold, owned); assert.equal(cold.format.version, 5);
+  assert.equal(cold.format.semanticProfile, 'tsfg-owned-class-facts-candidate-v5');
   for (const owner of cold.classes) assert.equal(owner.constructor.access, 'public');
   const base = cold.classes.find(value => value.name === 'Base'), derived = cold.classes.find(value => value.name === 'Derived');
   assert.ok(base); assert.ok(derived); assert.equal(derived.base, base.id);

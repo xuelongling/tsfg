@@ -2,10 +2,10 @@
 import { canonical, own, sha256 } from './identity.mjs';
 import { readGenericJson, checkGenericJsonValueBudget } from './generic-json.mjs';
 export { canonical, own, sha256 };
-export const referenceProfile = 'tsfg-owned-class-facts-candidate-v4';
+export const referenceProfile = 'tsfg-owned-class-facts-candidate-v5';
 export const referenceLimits = own({ bytes: 8388608, depth: 128, jsonTokens: 200000,
   stringBytes: 1048576, allowNul: false, rejectPrototypeKeys: false });
-export const factsFormat = own({ family: 'tsfg.reference-facts-candidate', version: 4, semanticProfile: referenceProfile });
+export const factsFormat = own({ family: 'tsfg.reference-facts-candidate', version: 5, semanticProfile: referenceProfile });
 export function failure(category, detail = 'invalid owned reference candidate', origin) {
   throw Object.assign(new TypeError('reference-facts-' + category + ': ' + detail),
     { code: 'reference-facts-' + category, ...(origin ? { origin } : {}) });
@@ -49,4 +49,4 @@ export function readJson(bytes, requested = referenceLimits) {
 }
 export const bindingFor = graph => ({ scope: graph.scope, semanticProfile: graph.semanticProfile,
   sources: graph.sources, options: graph.options });
-export const factsIdentity = graph => sha256('tsfg:reference-facts-candidate:v4\n' + canonical(graph));
+export const factsIdentity = graph => sha256('tsfg:reference-facts-candidate:v5\n' + canonical(graph));

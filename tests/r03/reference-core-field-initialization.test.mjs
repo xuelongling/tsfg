@@ -24,8 +24,8 @@ async function load() {
     readFile(fixture('field-initialization-order.source.ts')), readFile(fixture('ancestor-super-method.declaration.d.ts')),
   ]);
   assert.equal(bytes.length,6769); assert.equal(bindingBytes.length,978); assert.equal(main.length,149); assert.equal(declaration.length,362);
-  assert.equal(sha256(bytes),'sha256:d29ae0428a3d63d9ee4150d677f3a64e9383f44e4601127fa39175e4d04c1861');
-  assert.equal(sha256(bindingBytes),'sha256:6ea670b6e22ebddda9b4d3a32e0f80b722af25668c31ce74eb73cbf5ab63b2b7');
+  assert.equal(sha256(bytes),'sha256:fa0b10d0f1dc9cb5522355ff89e11939ef35178f89bdd3e280f17efadfcc652d');
+  assert.equal(sha256(bindingBytes),'sha256:81d95c7b4b8e3823babfba934bbac227ac6af893c2ae44dbdf1c8d39fcc98eee');
   assert.equal(sha256(main),'sha256:61e6ada9b719f354a1bb74de37c0c8792ec5701d81dd43cbe2dfa6d0459c706a');
   assert.equal(sha256(declaration),'sha256:d629059f5175a580a8a7b19531c7d8cff1bfa7b61320f6638cf4ee25fbf5a141');
   const binding = JSON.parse(bindingBytes.toString('utf8'));
@@ -40,8 +40,8 @@ async function load() {
   // Retained official Source4 output; no fresh Source execution is implied.
   const facts = decodeReferenceFacts(bytes,binding), owned = buildReferenceHir(facts);
   const persisted = Buffer.from(printReferenceHir(owned)), hir = readReferenceHir(persisted); persisted.fill(0);
-  assert.deepEqual(hir,owned); assert.equal(hir.format.version,4);
-  assert.equal(hir.format.semanticProfile,'tsfg-owned-class-facts-candidate-v4');
+  assert.deepEqual(hir,owned); assert.equal(hir.format.version,5);
+  assert.equal(hir.format.semanticProfile,'tsfg-owned-class-facts-candidate-v5');
   assert.equal(hir.context.scope,'class:field-initialization-order'); assert.equal(hir.classes.length,2);
   const base = hir.classes.find(value => value.name === 'Base'), derived = hir.classes.find(value => value.name === 'Derived');
   assert.ok(base); assert.ok(derived); assert.equal(base.base,''); assert.equal(derived.base,base.id);

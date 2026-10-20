@@ -12,8 +12,8 @@ import { invokeCore, accepted } from './generic-core-package-capture.mjs';
 const sources = new Map(), algorithms = new Map();
 const fixture = name => new URL('./fixtures/reference-source/' + name, import.meta.url);
 const identities = {
-  'multiple-sources': 'sha256:b49b569266659fb9aed15dfacf677687dd4e3b57bc1b0405b2e8dcc10604ae32',
-  'local-assignment-result': 'sha256:f577d1cf1f157f6bf9b8ccd8ebe5d11d30ec40d4f8967ccc96adb11672919c09',
+  'multiple-sources': 'sha256:593093a1772fff01f8c6c82802e50edf44b24f29042c2e3ace494957e6a93db7',
+  'local-assignment-result': 'sha256:2510da5b02fb93613ebcf4fbd3e43fb64436f144b3be7df1ce2602795dfb4552',
 };
 async function loadSource(name) {
   const [bytes, bindingText] = await Promise.all([
@@ -34,8 +34,8 @@ async function loadSource(name) {
   }
   const owned = buildReferenceHir(decodeReferenceFacts(bytes, binding));
   const persisted = Buffer.from(printReferenceHir(owned)), hir = readReferenceHir(persisted); persisted.fill(0);
-  assert.deepEqual(hir, owned); assert.equal(hir.format.version, 4);
-  assert.equal(hir.format.semanticProfile, 'tsfg-owned-class-facts-candidate-v4');
+  assert.deepEqual(hir, owned); assert.equal(hir.format.version, 5);
+  assert.equal(hir.format.semanticProfile, 'tsfg-owned-class-facts-candidate-v5');
   for (const owner of hir.classes) assert.equal(owner.constructor.access, 'public');
   const core = lowerHir(hir);
   assert.equal(core, lowerHir(readReferenceHir(Buffer.from(printReferenceHir(hir)))));
@@ -193,9 +193,9 @@ function algorithm(kind) {
 test('actual cold reference fixtures use real C++ canonical roots and reject wire9 encoding', async () => {
   for (const name of ['multiple-sources', 'local-assignment-result']) {
     const actual = await source(name), canonical = await compiled(actual.core);
-    assert.ok(actual.core.includes('profile = "tsfg-owned-class-facts-candidate-v4"'));
-    assert.ok(actual.core.includes('version = 5 : i64'));
-    assert.ok(actual.core.includes('schema = "sha256:e95843b70656ade068062050100df75e2c9b8c61e0e8886774ed11d6773bc56c"'));
+    assert.ok(actual.core.includes('profile = "tsfg-owned-class-facts-candidate-v5"'));
+    assert.ok(actual.core.includes('version = 6 : i64'));
+    assert.ok(actual.core.includes('schema = "sha256:d2e274a7d419fb414cf41092fc0c744942ab9e890c27b46317b99759eb47344c"'));
     assert.equal([...actual.core.matchAll(/constructor = \{access = "public", /g)].length, actual.hir.classes.length);
     for (const item of actual.hir.sources) {
       assert.ok(canonical.includes(JSON.stringify(item.path))); assert.ok(canonical.includes(JSON.stringify(item.sha256)));
@@ -207,7 +207,7 @@ test('actual cold reference fixtures use real C++ canonical roots and reject wir
   }
 });
 
-test('private Core v5 requires explicit public constructor access and exact version profile and schema', async () => {
+test('private Core v6 requires explicit public constructor access and exact version profile and schema', async () => {
   const { core } = await source('multiple-sources');
   const constructor = 'constructor = {access = "public", ';
   /** @type {[string,RegExp][]} */
@@ -218,11 +218,11 @@ test('private Core v5 requires explicit public constructor access and exact vers
       changeMetadata(core, constructor, 'constructor = {access = ' + JSON.stringify(access) + ', '),
       /\[core-ir-reference-metadata\] constructor access must be public/,
     ])),
-    [changeMetadata(core, 'version = 5 : i64', 'version = 2 : i64'),
+    [changeMetadata(core, 'version = 6 : i64', 'version = 2 : i64'),
       /\[core-ir-reference-metadata\] candidate version differs/],
-    [changeMetadata(core, 'profile = "tsfg-owned-class-facts-candidate-v4"', 'profile = "tsfg-owned-class-facts-candidate-v3"'),
+    [changeMetadata(core, 'profile = "tsfg-owned-class-facts-candidate-v5"', 'profile = "tsfg-owned-class-facts-candidate-v3"'),
       /\[core-ir-reference-metadata\] candidate profile differs/],
-    [changeMetadata(core, 'schema = "sha256:e95843b70656ade068062050100df75e2c9b8c61e0e8886774ed11d6773bc56c"',
+    [changeMetadata(core, 'schema = "sha256:d2e274a7d419fb414cf41092fc0c744942ab9e890c27b46317b99759eb47344c"',
       'schema = "sha256:' + '0'.repeat(64) + '"'),
       /\[core-ir-reference-metadata\] candidate schema differs/],
   ];

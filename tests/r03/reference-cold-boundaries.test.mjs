@@ -5,9 +5,9 @@ import { readFile } from 'node:fs/promises';
 import { decodeReferenceFacts } from '../../compiler/reference-facts.mjs';
 import { canonical, sha256 } from '../../compiler/identity.mjs';
 const pins = {
-  constructor: '42ac0214d881e9bf708fb9846bc9e578e2262b3d406c6a76be1d16444105c414',
-  readonly: 'd6e963a23c6b628951fd722ed8179ea900e21a823c91bcc0b35b831f04b67782',
-  inheritance: '35c6b595bf1cac693089749fde20f48aeaaed83b2235e0e58428d9200b8b678d'
+  constructor: '024212e6f2c2b1e69cde17989f6edd7b1a7f71b16daa2dab9dc4c7c1e4bef16b',
+  readonly: 'f666c821e48ad8dbe0d094b55ccc9871924a37a0754a3a3b55e6606ab5d48028',
+  inheritance: 'e29f6d0c595e936e73066c00d7ae053e1f41fde18bb159ca414e7f3603681779'
 };
 async function actualGraph(name) {
   const base = new URL('./fixtures/reference-source/' + name, import.meta.url);

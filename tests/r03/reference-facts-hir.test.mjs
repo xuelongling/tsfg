@@ -8,7 +8,7 @@ import { canonical, sha256 } from '../../compiler/identity.mjs';
 const fixture = name => new URL('./fixtures/reference-source/' + name, import.meta.url);
 async function officialCounter() {
   const bytes = await readFile(fixture('constructor.facts.json'));
-  assert.equal(sha256(bytes), 'sha256:42ac0214d881e9bf708fb9846bc9e578e2262b3d406c6a76be1d16444105c414');
+  assert.equal(sha256(bytes), 'sha256:024212e6f2c2b1e69cde17989f6edd7b1a7f71b16daa2dab9dc4c7c1e4bef16b');
   const binding = JSON.parse(await readFile(fixture('constructor.binding.json'), 'utf8'));
   return { bytes, binding };
 }
@@ -80,7 +80,7 @@ test('cold reference HIR rejects unknown operation data and fabricated initializ
 
 test('official readonly conversions retain alias identity across distinct field ordinals', async () => {
   const bytes = await readFile(fixture('readonly.facts.json'));
-  assert.equal(sha256(bytes), 'sha256:d6e963a23c6b628951fd722ed8179ea900e21a823c91bcc0b35b831f04b67782');
+  assert.equal(sha256(bytes), 'sha256:f666c821e48ad8dbe0d094b55ccc9871924a37a0754a3a3b55e6606ab5d48028');
   const binding = JSON.parse(await readFile(fixture('readonly.binding.json'), 'utf8'));
   const facts = decodeReferenceFacts(bytes, binding);
   const hir = buildReferenceHir(facts);

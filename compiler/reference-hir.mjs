@@ -4,7 +4,7 @@ import { canonical, own, budget, readJson, record, array, check, same, bindingFo
 import { verifyReferenceFacts } from './reference-facts.mjs';
 import { verifyReferenceGraph } from './reference-facts-shape.mjs';
 import { scalarValueType } from './reference-types.mjs';
-export const referenceHirFormat = own({ family: 'tsfg.reference-hir-candidate', version: 4, semanticProfile: referenceProfile });
+export const referenceHirFormat = own({ family: 'tsfg.reference-hir-candidate', version: 5, semanticProfile: referenceProfile });
 const operations = Object.freeze({ number: 'scalar.literal.unresolved', boolean: 'scalar.boolean', this: 'ref.this',
   reference: 'ref.parameter', assignment: 'ref.field.write', binary: 'scalar.add', 'method-call': 'ref.method.call',
   super: 'ref.super', 'super-construct': 'ref.super.construct', construct: 'ref.construct',
@@ -57,6 +57,31 @@ function convertGraph(input, direction) {
     }
     check(value.kind, 'unsupported');
   }
+  function statements(body) {
+    for (const statement of array(body)) {
+      record(statement, ['kind','local','expression','compatibility','origin', ...(statement.kind === 'if' ? ['branch'] : [])]);
+      if (statement.kind === 'if') {
+        record(statement.branch, ['condition','conditionCompatibility','then','else']);
+        expression(statement.branch.condition);
+        for (const block of [statement.branch.then, statement.branch.else]) {
+          record(block, ['body','origin']); statements(block.body);
+        }
+        continue;
+      }
+      if (statement.kind === 'local') {
+        record(statement.local, ['kind','bindings']);
+        for (const binding of array(statement.local.bindings, 4096)) {
+          record(binding, ['symbol','type','initializer','compatibility','origin']);
+          if (!toHir) binding.initializer = view(binding.initializer, binding.compatibility);
+          expression(binding.initializer);
+          if (toHir) binding.initializer = view(binding.initializer, binding.compatibility);
+        }
+      }
+      if (!toHir && statement.kind === 'return') statement.expression = view(statement.expression, statement.compatibility);
+      expression(statement.expression);
+      if (toHir && statement.kind === 'return') statement.expression = view(statement.expression, statement.compatibility);
+    }
+  }
   for (const item of graph.classes) {
     const constructor = item.constructor;
     const implicit = constructor.kind === 'implicit-derived';
@@ -82,21 +107,7 @@ function convertGraph(input, direction) {
       expression(field.initializer);
       if (toHir) field.initializer = view(field.initializer, field.initializerCompatibility);
     }
-    for (const callable of [constructor, ...item.methods]) for (const statement of callable.body) {
-      record(statement, ['kind','local','expression','compatibility','origin']);
-      if (statement.kind === 'local') {
-        record(statement.local, ['kind','bindings']);
-        for (const binding of array(statement.local.bindings, 4096)) {
-          record(binding, ['symbol','type','initializer','compatibility','origin']);
-          if (!toHir) binding.initializer = view(binding.initializer, binding.compatibility);
-          expression(binding.initializer);
-          if (toHir) binding.initializer = view(binding.initializer, binding.compatibility);
-        }
-      }
-      if (!toHir && statement.kind === 'return') statement.expression = view(statement.expression, statement.compatibility);
-      expression(statement.expression);
-      if (toHir && statement.kind === 'return') statement.expression = view(statement.expression, statement.compatibility);
-    }
+    for (const callable of [constructor, ...item.methods]) statements(callable.body);
   }
   return graph;
 }

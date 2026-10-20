@@ -208,6 +208,11 @@ export function emitReferenceCore(input) {
       if (value.kind === 'scalar.literal.unresolved') reject('unresolved numeric literal has no execution scalar', value.origin);
       reject('unsupported execution operation ' + value.kind, value.origin);
     };
+    const emitReturn = statement => {
+      const value = statement.expression === null ? null : expression(statement.expression);
+      if ((value?.type ?? 'none') !== descriptor.result) reject('return lacks its checked result conversion', statement.origin);
+      operation('func.return', value ? [value] : [], 'none', {}, statement.origin); terminated = true;
+    };
     operation('tsfg_core.fuel', [], 'none', { event: 1 }, item.origin);
     // The existing fuel operation's event is i32, while metadata indices are i64.
     lines[0] = lines[0].replace('event = 1 : i64', 'event = 1 : i32');
@@ -236,10 +241,18 @@ export function emitReferenceCore(input) {
         bindings.set(binding.symbol, { name: value.name, type: value.type });
       }
       else if (statement.kind === 'expression') expression(statement.expression);
-      else if (statement.kind === 'return') {
-        const value = statement.expression === null ? null : expression(statement.expression);
-        if ((value?.type ?? 'none') !== descriptor.result) reject('return lacks its checked result conversion', statement.origin);
-        operation('func.return', value ? [value] : [], 'none', {}, statement.origin); terminated = true;
+      else if (statement.kind === 'return') emitReturn(statement);
+      else if (statement.kind === 'if') {
+        const branch = statement.branch, condition = expression(branch.condition);
+        if (condition.type !== 'bool') reject('terminal if condition lacks its checked boolean type', branch.condition.origin);
+        line('    cf.cond_br ' + condition.name + ', ^bb1, ^bb2 {' + anchor(statement.origin) + '}');
+        terminated = true;
+        // The reader admits exactly one reference return in each explicit
+        // block. Both terminate independently; no mutable binding joins exist.
+        for (const [label, block] of [['bb1', branch.then], ['bb2', branch.else]]) {
+          line('  ^' + label + ':'); terminated = false;
+          emitReturn(block.body[0]);
+        }
       } else reject('unsupported statement ' + statement.kind, statement.origin);
     }
     if (!terminated) {

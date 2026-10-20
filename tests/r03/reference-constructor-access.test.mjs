@@ -8,10 +8,10 @@ import { buildReferenceHir, verifyReferenceHir, printReferenceHir, readReference
 
 /** @type {ReadonlyArray<readonly [label: string, fixture: string, digest: string, constructorIndex: number]>} */
 const cases = [
-  ['explicit', 'constructor', '42ac0214d881e9bf708fb9846bc9e578e2262b3d406c6a76be1d16444105c414', 0],
-  ['implicit root', 'reference-identity', '43725ab7a1bec4096e84bbde4431584a9fc96236cfbd42578d99879ca9a52861', 0],
-  ['derived base', 'implicit-derived', '162e8e77789a86d5e9c295d93066fb34e366189d0cf1bc43d9280141f13a5bca', 0],
-  ['implicit derived', 'implicit-derived', '162e8e77789a86d5e9c295d93066fb34e366189d0cf1bc43d9280141f13a5bca', 1],
+  ['explicit', 'constructor', '024212e6f2c2b1e69cde17989f6edd7b1a7f71b16daa2dab9dc4c7c1e4bef16b', 0],
+  ['implicit root', 'reference-identity', '12155186f4c0d39c006599a27b1d7fb987ce2cd6368f034adef824f01a22dedb', 0],
+  ['derived base', 'implicit-derived', '2b5187362be1515f0f6cc28ab232f14d09f6304931a78597ac04f91d856b6f29', 0],
+  ['implicit derived', 'implicit-derived', '2b5187362be1515f0f6cc28ab232f14d09f6304931a78597ac04f91d856b6f29', 1],
 ];
 
 for (const [label, name, digest, constructorIndex] of cases) {
@@ -24,7 +24,7 @@ for (const [label, name, digest, constructorIndex] of cases) {
     /** @type {{ classes: Array<{ constructor: Record<string, unknown> }> }} */
     const graph = structuredClone(JSON.parse(bytes.toString('utf8')));
     // This missing-field regression first failed against actual V3 graphs; the
-    // actual V4 graph must reject the same omission at the public facts boundary.
+    // actual V5 graph must reject the same omission at the public facts boundary.
     delete graph.classes[constructorIndex].constructor.access;
     assert.throws(() => decodeReferenceFacts(Buffer.from(canonical(graph)), binding),
       error => error instanceof Error && Object.hasOwn(error, 'code')
@@ -35,19 +35,22 @@ for (const [label, name, digest, constructorIndex] of cases) {
 
 /** @type {ReadonlyArray<readonly [name: string, digest: string]>} */
 const actualPins = [
-  ['constructor', '42ac0214d881e9bf708fb9846bc9e578e2262b3d406c6a76be1d16444105c414'],
-  ['inheritance', '35c6b595bf1cac693089749fde20f48aeaaed83b2235e0e58428d9200b8b678d'],
-  ['readonly', 'd6e963a23c6b628951fd722ed8179ea900e21a823c91bcc0b35b831f04b67782'],
-  ['implicit-derived', '162e8e77789a86d5e9c295d93066fb34e366189d0cf1bc43d9280141f13a5bca'],
-  ['construct', 'e0dcbfba0174a9e5f02f36018bde40ddcb9e7afe7ae51450c7d0e3a81a5d82f3'],
-  ['reference-identity', '43725ab7a1bec4096e84bbde4431584a9fc96236cfbd42578d99879ca9a52861'],
-  ['scalars', 'e9a9c6cfedc125189f9efb6c8862798f082d5707837182c0ab348d5616cff56a'],
-  ['literal-facts', '26bc6e6d9a987ee5f146830dfcdae1132297c62b35a8d18dcdf4e500d72fa910'],
-  ['implicit-middle', 'fbb28a45bce47cb4a636cad783581b5bca535c5883a6dd679eea7b922fbaebd4'],
-  ['locals-const', '762c1c1ee23174b046b00903af2e90ca7c7e08b54c4c970a1ba0d810b8be6fe6'],
-  ['locals-let', '4003f2e1ed2d4ef84ef54f7d480792d2a6c78a8e59d9e89593b6936a1aed5a22'],
-  ['multiple-sources', 'b49b569266659fb9aed15dfacf677687dd4e3b57bc1b0405b2e8dcc10604ae32'],
-  ['local-assignment-result', 'f577d1cf1f157f6bf9b8ccd8ebe5d11d30ec40d4f8967ccc96adb11672919c09'],
+  ['constructor', '024212e6f2c2b1e69cde17989f6edd7b1a7f71b16daa2dab9dc4c7c1e4bef16b'],
+  ['inheritance', 'e29f6d0c595e936e73066c00d7ae053e1f41fde18bb159ca414e7f3603681779'],
+  ['readonly', 'f666c821e48ad8dbe0d094b55ccc9871924a37a0754a3a3b55e6606ab5d48028'],
+  ['implicit-derived', '2b5187362be1515f0f6cc28ab232f14d09f6304931a78597ac04f91d856b6f29'],
+  ['construct', 'c34e080d2dedff74ad8676ef1bdd59e3d58536bdbbdc9e463ac589c2b3402483'],
+  ['reference-identity', '12155186f4c0d39c006599a27b1d7fb987ce2cd6368f034adef824f01a22dedb'],
+  ['scalars', 'bcd796436dc6ee44b4b24e1722372c9db935c6452735845bc4d755061e472562'],
+  ['literal-facts', '060ef5ebb3e0dbbad2203089262a1e54b055caed1c74f8861c17a263d580e7bb'],
+  ['implicit-middle', '940e69d1f309eef8d5e7a9cb2f673058476be9bca6e688b267484c75225487df'],
+  ['locals-const', '32b102d37534052fc90d305ee8d4a1092696f32c6b072520f7a0de43683cfaf5'],
+  ['locals-let', '4dc738d2bc0d7b9a8cd6c63d57de76d914af97ae8257b3bf5cf7d31ba465ee51'],
+  ['multiple-sources', '593093a1772fff01f8c6c82802e50edf44b24f29042c2e3ace494957e6a93db7'],
+  ['local-assignment-result', '2510da5b02fb93613ebcf4fbd3e43fb64436f144b3be7df1ce2602795dfb4552'],
+  ['ancestor-super-method', 'd17ba75dc99b358a0e370aa3cc7e66cc1128230483b975c5b38c5dd99a4f64cd'],
+  ['field-initialization-order', 'fa0b10d0f1dc9cb5522355ff89e11939ef35178f89bdd3e280f17efadfcc652d'],
+  ['terminal-reference-if', '64029f8d2ee659c3260c3793b2e4f401ffc1a94a09f73d434981a67ac3180a19'],
 ];
 /** @typedef {{ classes: Array<{ constructor: { access?: unknown, origin: unknown } }>, semanticProfile: string }} AccessGraph */
 /** @param {string} name @param {string} digest */
@@ -67,14 +70,14 @@ function rejected(run, category, detail, origin) {
     && (origin === undefined || canonical(Reflect.get(error, 'origin')) === canonical(origin)));
 }
 
-test('actual thirteen profile4 graphs retain public constructor access through owned and cold HIR', async () => {
+test('actual sixteen profile5 graphs retain public constructor access through owned and cold HIR', async () => {
   for (const [name, digest] of actualPins) {
     const data = await actual(name, digest);
     const facts = decodeReferenceFacts(data.bytes, data.binding); data.bytes.fill(0);
-    assert.equal(facts.format.version, 4, name);
-    assert.equal(facts.format.semanticProfile, 'tsfg-owned-class-facts-candidate-v4', name);
+    assert.equal(facts.format.version, 5, name);
+    assert.equal(facts.format.semanticProfile, 'tsfg-owned-class-facts-candidate-v5', name);
     const hir = buildReferenceHir(facts);
-    assert.equal(hir.format.version, 4, name);
+    assert.equal(hir.format.version, 5, name);
     for (const item of facts.graph.classes) {
       assert.equal(Object.hasOwn(item.constructor, 'access'), true, name);
       assert.equal(item.constructor.access, 'public', name);
@@ -120,10 +123,10 @@ for (const [label, name, digest, constructorIndex] of cases) {
   });
 }
 
-test('private access4 readers reject facts HIR and Source profiles one through three', async () => {
+test('private profile5 readers reject facts HIR and Source profiles one through four', async () => {
   const [name, digest] = actualPins[0], data = await actual(name, digest);
   const facts = decodeReferenceFacts(data.bytes, data.binding), hir = buildReferenceHir(facts);
-  for (const version of [1,2,3]) {
+  for (const version of [1,2,3,4]) {
     const oldFacts = structuredClone(facts); oldFacts.format.version = version;
     rejected(() => verifyReferenceFacts(oldFacts), 'profile', /reference-facts-profile/);
     const oldHir = structuredClone(hir); oldHir.format.version = version;

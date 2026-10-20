@@ -20,8 +20,8 @@ async function load() {
     readFile(fixture('source.ts')), readFile(fixture('declaration.d.ts')),
   ]);
   assert.equal(bytes.length, 9154);
-  assert.equal(sha256(bytes), 'sha256:49e38f027ef9eacc9165d63619c40ab2d4696ceb2b136e5ed0d0770d5a6d5603');
-  assert.equal(sha256(bindingBytes), 'sha256:d87750d8d4e57ae255e403a64b4f782c747e880e9cd363c130ce8ab41776c2b1');
+  assert.equal(sha256(bytes), 'sha256:d17ba75dc99b358a0e370aa3cc7e66cc1128230483b975c5b38c5dd99a4f64cd');
+  assert.equal(sha256(bindingBytes), 'sha256:2b1fd054d8e70f090f01c4ba2a93c5bdfaac1c05b6fccee2be648582791cc89b');
   assert.equal(sourceBytes.length, 208); assert.equal(declarationBytes.length, 362);
   assert.equal(sha256(sourceBytes), 'sha256:71676826939f0d8f7d6481ec5c1e7650048ea8ae31c18180ff54309d72a32fc2');
   assert.equal(sha256(declarationBytes), 'sha256:d629059f5175a580a8a7b19531c7d8cff1bfa7b61320f6638cf4ee25fbf5a141');
@@ -37,8 +37,8 @@ async function load() {
   }
   const owned = buildReferenceHir(decodeReferenceFacts(bytes, binding));
   const persisted = Buffer.from(printReferenceHir(owned)), hir = readReferenceHir(persisted); persisted.fill(0);
-  assert.deepEqual(hir, owned); assert.equal(hir.format.version, 4);
-  assert.equal(hir.format.semanticProfile, 'tsfg-owned-class-facts-candidate-v4');
+  assert.deepEqual(hir, owned); assert.equal(hir.format.version, 5);
+  assert.equal(hir.format.semanticProfile, 'tsfg-owned-class-facts-candidate-v5');
   const root = hir.classes.find(value => value.name === 'Root'), middle = hir.classes.find(value => value.name === 'Middle');
   const leaf = hir.classes.find(value => value.name === 'Leaf'); assert.ok(root); assert.ok(middle); assert.ok(leaf);
   assert.equal(middle.base, root.id); assert.equal(leaf.base, middle.id);

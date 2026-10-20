@@ -18,8 +18,8 @@ async function actual() {
 }
 async function load() {
   const [bytes, bindingBytes] = await Promise.all([readFile(fixture('facts.json')), readFile(fixture('binding.json'))]);
-  assert.equal(sha256(bytes), 'sha256:b49b569266659fb9aed15dfacf677687dd4e3b57bc1b0405b2e8dcc10604ae32');
-  assert.equal(sha256(bindingBytes), 'sha256:5e868a6d33ab0cf29c9e0043c0e18754908568035de04fff4e61334332f65d7e');
+  assert.equal(sha256(bytes), 'sha256:593093a1772fff01f8c6c82802e50edf44b24f29042c2e3ace494957e6a93db7');
+  assert.equal(sha256(bindingBytes), 'sha256:d0086585d8f3695ab1583767ef5b292c6f8dd4ea8a4e76bdc1c91920f7162fcb');
   const binding = JSON.parse(bindingBytes.toString('utf8'));
   /** @type {[string,string][]} */
   const originals = [['/original/a-main.ts','a-main.source.ts'], ['/original/z-base.ts','z-base.source.ts']];
@@ -30,8 +30,8 @@ async function load() {
   }
   const owned = buildReferenceHir(decodeReferenceFacts(bytes, binding));
   const persisted = Buffer.from(printReferenceHir(owned)), hir = readReferenceHir(persisted); persisted.fill(0);
-  assert.deepEqual(hir, owned); assert.equal(hir.format.version, 4);
-  assert.equal(hir.format.semanticProfile, 'tsfg-owned-class-facts-candidate-v4');
+  assert.deepEqual(hir, owned); assert.equal(hir.format.version, 5);
+  assert.equal(hir.format.semanticProfile, 'tsfg-owned-class-facts-candidate-v5');
   const core = lowerHir(hir), base = hir.classes.find(value => value.name === 'Base');
   const derived = hir.classes.find(value => value.name === 'Derived');
   assert.ok(base); assert.ok(derived); assert.equal(derived.base, base.id);

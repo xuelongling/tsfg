@@ -27,8 +27,8 @@ async function load() {
     readFile(fixture('construct.source.ts')),readFile(fixture('ancestor-super-method.declaration.d.ts')),
   ]);
   assert.equal(bytes.length,11353); assert.equal(bindingBytes.length,955); assert.equal(main.length,212); assert.equal(declaration.length,362);
-  assert.equal(sha256(bytes),'sha256:e0dcbfba0174a9e5f02f36018bde40ddcb9e7afe7ae51450c7d0e3a81a5d82f3');
-  assert.equal(sha256(bindingBytes),'sha256:6b0fe5978070e44c3c1fc052d337fca3bb865610c6ea4b5a0afa7fdce0223c37');
+  assert.equal(sha256(bytes),'sha256:c34e080d2dedff74ad8676ef1bdd59e3d58536bdbbdc9e463ac589c2b3402483');
+  assert.equal(sha256(bindingBytes),'sha256:6e38139bbf29e46b0aabed47747b2bc6b8dff71ea446f0335f023cfb50a29d4b');
   assert.equal(sha256(main),'sha256:da9e9ffdb7c7df29d02698db9fc62f6826c4166f7ba079e8d9b7b53c1f04ffce');
   assert.equal(sha256(declaration),'sha256:d629059f5175a580a8a7b19531c7d8cff1bfa7b61320f6638cf4ee25fbf5a141');
   const binding = JSON.parse(bindingBytes.toString('utf8'));
@@ -43,8 +43,8 @@ async function load() {
   // These retained official Source4 bytes grant no fresh Source or VM execution credit.
   const facts = decodeReferenceFacts(bytes,binding), owned = buildReferenceHir(facts);
   const persisted = Buffer.from(printReferenceHir(owned)), hir = readReferenceHir(persisted); persisted.fill(0);
-  assert.deepEqual(hir,owned); assert.equal(hir.format.version,4);
-  assert.equal(hir.format.semanticProfile,'tsfg-owned-class-facts-candidate-v4'); assert.equal(hir.classes.length,2);
+  assert.deepEqual(hir,owned); assert.equal(hir.format.version,5);
+  assert.equal(hir.format.semanticProfile,'tsfg-owned-class-facts-candidate-v5'); assert.equal(hir.classes.length,2);
   const counter = hir.classes.find(value => value.name === 'Counter'), factory = hir.classes.find(value => value.name === 'Factory');
   assert.ok(counter); assert.ok(factory); assert.notEqual(counter.runtimeKey,factory.runtimeKey);
   assert.equal(counter.constructor.access,'public'); assert.equal(factory.constructor.access,'public');

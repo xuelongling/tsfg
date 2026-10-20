@@ -8,7 +8,7 @@ import { canonical, sha256 } from '../../compiler/identity.mjs';
 async function actual() {
   const fixture = suffix => new URL('./fixtures/reference-source/reference-identity' + suffix, import.meta.url);
   const bytes = await readFile(fixture('.facts.json'));
-  assert.equal(sha256(bytes), 'sha256:43725ab7a1bec4096e84bbde4431584a9fc96236cfbd42578d99879ca9a52861');
+  assert.equal(sha256(bytes), 'sha256:12155186f4c0d39c006599a27b1d7fb987ce2cd6368f034adef824f01a22dedb');
   return { bytes, graph: JSON.parse(bytes.toString('utf8')),
     binding: JSON.parse(await readFile(fixture('.binding.json'), 'utf8')) };
 }

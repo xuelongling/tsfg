@@ -23,8 +23,8 @@ async function load() {
     readFile(fixture('readonly.source.ts')),readFile(fixture('ancestor-super-method.declaration.d.ts')),
   ]);
   assert.equal(bytes.length,20369); assert.equal(bindingBytes.length,955); assert.equal(main.length,473); assert.equal(declaration.length,362);
-  assert.equal(sha256(bytes),'sha256:d6e963a23c6b628951fd722ed8179ea900e21a823c91bcc0b35b831f04b67782');
-  assert.equal(sha256(bindingBytes),'sha256:d371df01bac9ed2ae818a531a86197cb6daa7bb0cb2438de84e5a673d0f8470f');
+  assert.equal(sha256(bytes),'sha256:f666c821e48ad8dbe0d094b55ccc9871924a37a0754a3a3b55e6606ab5d48028');
+  assert.equal(sha256(bindingBytes),'sha256:5e68eb9f5bcd41da79fff05f13e0c820b8db8f705549c5ed3c1505de5d81032e');
   assert.equal(sha256(main),'sha256:b98cb3ba62f29e3cd16ccd71574a3e34a1a9a62f625ff79c4c1adb23916575b0');
   assert.equal(sha256(declaration),'sha256:d629059f5175a580a8a7b19531c7d8cff1bfa7b61320f6638cf4ee25fbf5a141');
   const binding = JSON.parse(bindingBytes.toString('utf8'));
@@ -39,8 +39,8 @@ async function load() {
   // This is retained official Source4 output, not a new Source execution.
   const facts = decodeReferenceFacts(bytes,binding), owned = buildReferenceHir(facts);
   const persisted = Buffer.from(printReferenceHir(owned)), hir = readReferenceHir(persisted); persisted.fill(0);
-  assert.deepEqual(hir,owned); assert.equal(hir.format.version,4);
-  assert.equal(hir.format.semanticProfile,'tsfg-owned-class-facts-candidate-v4'); assert.equal(hir.classes.length,3);
+  assert.deepEqual(hir,owned); assert.equal(hir.format.version,5);
+  assert.equal(hir.format.semanticProfile,'tsfg-owned-class-facts-candidate-v5'); assert.equal(hir.classes.length,3);
   const readView = hir.classes.find(value => value.name === 'ReadView'), mutable = hir.classes.find(value => value.name === 'Mutable');
   const holder = hir.classes.find(value => value.name === 'Holder'); assert.ok(readView); assert.ok(mutable); assert.ok(holder);
   const targetField = readView.fields.find(value => value.name === 'value'), sourceField = mutable.fields.find(value => value.name === 'value');

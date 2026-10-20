@@ -29,8 +29,8 @@ async function load() {
   ]);
   assert.equal(bytes.length, 9697); assert.equal(bindingBytes.length, 955);
   assert.equal(sourceBytes.length, 245); assert.equal(declarationBytes.length, 362);
-  assert.equal(sha256(bytes), 'sha256:26bc6e6d9a987ee5f146830dfcdae1132297c62b35a8d18dcdf4e500d72fa910');
-  assert.equal(sha256(bindingBytes), 'sha256:6ab211f68d949bf75a135c045ce484cd3cbf5ce2153c7ed2a05f72ac4e1abb73');
+  assert.equal(sha256(bytes), 'sha256:060ef5ebb3e0dbbad2203089262a1e54b055caed1c74f8861c17a263d580e7bb');
+  assert.equal(sha256(bindingBytes), 'sha256:776a618825d7bcaf706ac9c52d4972b73953defcf8219563f7b043229d235aa3');
   assert.equal(sha256(sourceBytes), 'sha256:7a9081fd9db518f06b99150d1334f082c643bbc8f807d7cac3173f7a10675839');
   assert.equal(sha256(declarationBytes), 'sha256:d629059f5175a580a8a7b19531c7d8cff1bfa7b61320f6638cf4ee25fbf5a141');
   const binding = JSON.parse(bindingBytes.toString('utf8'));
@@ -44,8 +44,8 @@ async function load() {
   }
   const owned = buildReferenceHir(decodeReferenceFacts(bytes, binding));
   const unresolved = printReferenceHir(owned), persisted = Buffer.from(unresolved), hir = readReferenceHir(persisted); persisted.fill(0);
-  assert.deepEqual(hir, owned); assert.equal(hir.format.version, 4);
-  assert.equal(hir.format.semanticProfile, 'tsfg-owned-class-facts-candidate-v4');
+  assert.deepEqual(hir, owned); assert.equal(hir.format.version, 5);
+  assert.equal(hir.format.semanticProfile, 'tsfg-owned-class-facts-candidate-v5');
   assert.equal(hir.classes.length, 1);
   const owner = hir.classes[0]; assert.equal(owner.name, 'Literals'); assert.equal(owner.fields.length, 7);
   for (const field of owner.fields) {
@@ -128,7 +128,7 @@ test('every actual numeric occurrence rejects missing or mismatched context and 
 });
 test('actual seven number fields retain exact constants stores and anchors through real C++ roundtrip and optimization', async () => {
   const data = await actual(), core = lowerHir(data.hir);
-  assert.equal(schema.version, 5);
+  assert.equal(schema.version, 6);
   const first = await invokeCore(core); accepted(first);
   const roundtrip = await invokeCore(first.stdout); accepted(roundtrip);
   const optimized = await invokeCore(first.stdout, '--optimize'); accepted(optimized);
@@ -137,13 +137,14 @@ test('actual seven number fields retain exact constants stores and anchors throu
   assert.equal(printReferenceHir(data.hir), data.unresolved);
   await cppRejected(first.stdout, /\[r04-core-reference-unsupported\]/, '--emit-bytecode');
 });
-test('private number initializer Core rejects old versions and mixed v5 identities with old schemas', async () => {
+test('private number initializer Core rejects old versions and mixed v6 identities with old schemas', async () => {
   const { hir } = await actual(), core = lowerHir(hir);
-  for (const version of [2,3,4]) await cppRejected(changeMetadata(core, 'version = 5 : i64', 'version = ' + version + ' : i64'),
+  for (const version of [2,3,4,5]) await cppRejected(changeMetadata(core, 'version = 6 : i64', 'version = ' + version + ' : i64'),
     /\[core-ir-reference-metadata\] candidate version differs/);
   for (const oldSchema of ['sha256:d36b3094aa1504a71beb8b7fcb7370364b0e3b8c2d49c4d0e16a63641f07d692',
     'sha256:0120455de4db6b3c3c348f5e2504a2a4ab18026a83978874e1489cd5370ca313',
-    'sha256:efd525313efdb99543e402a05f6d6fce4d5867cacde0ae2584260d4cd1dcac29'])
+    'sha256:efd525313efdb99543e402a05f6d6fce4d5867cacde0ae2584260d4cd1dcac29',
+    'sha256:e95843b70656ade068062050100df75e2c9b8c61e0e8886774ed11d6773bc56c'])
     await cppRejected(changeMetadata(core, 'schema = ' + JSON.stringify(sha256(canonical(schema))), 'schema = ' + JSON.stringify(oldSchema)),
       /\[core-ir-reference-metadata\] candidate schema differs/);
 });
@@ -162,8 +163,8 @@ test('actual number field assignment rejects missing or inconsistent occurrence 
   const [bytes,bindingBytes] = await Promise.all([
     readFile(fixture('readonly.facts.json')),readFile(fixture('readonly.binding.json')),
   ]);
-  assert.equal(sha256(bytes),'sha256:d6e963a23c6b628951fd722ed8179ea900e21a823c91bcc0b35b831f04b67782');
-  assert.equal(sha256(bindingBytes),'sha256:d371df01bac9ed2ae818a531a86197cb6daa7bb0cb2438de84e5a673d0f8470f');
+  assert.equal(sha256(bytes),'sha256:f666c821e48ad8dbe0d094b55ccc9871924a37a0754a3a3b55e6606ab5d48028');
+  assert.equal(sha256(bindingBytes),'sha256:5e68eb9f5bcd41da79fff05f13e0c820b8db8f705549c5ed3c1505de5d81032e');
   const owned = buildReferenceHir(decodeReferenceFacts(bytes,JSON.parse(bindingBytes.toString('utf8'))));
   const hir = readReferenceHir(Buffer.from(printReferenceHir(owned))); assert.deepEqual(hir,owned);
   const cases = [
@@ -193,8 +194,8 @@ test('actual number constructor argument rejects bad context witness and selecte
   const [bytes,bindingBytes] = await Promise.all([
     readFile(fixture('construct.facts.json')),readFile(fixture('construct.binding.json')),
   ]);
-  assert.equal(sha256(bytes),'sha256:e0dcbfba0174a9e5f02f36018bde40ddcb9e7afe7ae51450c7d0e3a81a5d82f3');
-  assert.equal(sha256(bindingBytes),'sha256:6b0fe5978070e44c3c1fc052d337fca3bb865610c6ea4b5a0afa7fdce0223c37');
+  assert.equal(sha256(bytes),'sha256:c34e080d2dedff74ad8676ef1bdd59e3d58536bdbbdc9e463ac589c2b3402483');
+  assert.equal(sha256(bindingBytes),'sha256:6e38139bbf29e46b0aabed47747b2bc6b8dff71ea446f0335f023cfb50a29d4b');
   const owned = buildReferenceHir(decodeReferenceFacts(bytes,JSON.parse(bindingBytes.toString('utf8'))));
   const hir = readReferenceHir(Buffer.from(printReferenceHir(owned))); assert.deepEqual(hir,owned);
   const cases = [

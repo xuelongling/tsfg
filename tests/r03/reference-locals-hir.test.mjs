@@ -7,7 +7,7 @@ import { buildReferenceHir, verifyReferenceHir, printReferenceHir, readReference
 import { sha256 } from '../../compiler/identity.mjs';
 
 // Actual public Program/checker capture: PID21124, 50 producer inputs,
-// candidate-graphs-v4-constructor-public-green/README.json. Correspondence, not Source admission.
+// terminal-if-source-full-green-first/qualified-inputs.json. Correspondence, not Source admission.
 const fixture = name => new URL('./fixtures/reference-source/' + name, import.meta.url);
 async function official(name, digest, utf16Length) {
   const bytes = await readFile(fixture(name + '.facts.json'));
@@ -21,9 +21,9 @@ async function official(name, digest, utf16Length) {
   assert.deepEqual(origin.surrogateStarts, [3]);
   assert.equal(source.slice(3,5), '😀');
   const facts = decodeReferenceFacts(bytes, binding);
-  assert.equal(facts.format.version, 4);
+  assert.equal(facts.format.version, 5);
   const hir = buildReferenceHir(facts);
-  assert.equal(hir.format.version, 4);
+  assert.equal(hir.format.version, 5);
   return { facts, hir, source };
 }
 function projection(owner) {
@@ -111,7 +111,7 @@ function roundTrip(hir) {
 }
 
 test('official const method-local aliases preserve writable receivers independent scopes and cold HIR', async () => {
-  const { facts, hir, source } = await official('locals-const', '762c1c1ee23174b046b00903af2e90ca7c7e08b54c4c970a1ba0d810b8be6fe6', 352);
+  const { facts, hir, source } = await official('locals-const', '32b102d37534052fc90d305ee8d4a1092696f32c6b072520f7a0de43683cfaf5', 352);
   const owner = hir.classes[0], [share, keep, scalar] = owner.methods;
   assert.equal(owner.name, 'Box'); assert.equal(owner.fields[0].initializer, null);
   assert.deepEqual(owner.methods.map(method => method.name), ['share','keep','passScalar']);
@@ -129,7 +129,7 @@ test('official const method-local aliases preserve writable receivers independen
 });
 
 test('official let method-local rebinding preserves locations receivers scalar copies and cold HIR', async () => {
-  const { hir, source } = await official('locals-let', '4003f2e1ed2d4ef84ef54f7d480792d2a6c78a8e59d9e89593b6936a1aed5a22', 393);
+  const { hir, source } = await official('locals-let', '4dc738d2bc0d7b9a8cd6c63d57de76d914af97ae8257b3bf5cf7d31ba465ee51', 393);
   const owner = hir.classes[0], [share, keep, scalar] = owner.methods;
   assert.equal(owner.name, 'Box'); assert.equal(owner.fields[0].initializer, null);
   assert.deepEqual(owner.methods.map(method => method.name), ['share','keep','passScalar']);
@@ -153,7 +153,7 @@ test('official let method-local rebinding preserves locations receivers scalar c
 });
 
 test('official consumed local assignment returns the RHS view while storing through its declared Base view', async () => {
-  const { facts, hir, source } = await official('local-assignment-result', 'f577d1cf1f157f6bf9b8ccd8ebe5d11d30ec40d4f8967ccc96adb11672919c09', 254);
+  const { facts, hir, source } = await official('local-assignment-result', '2510da5b02fb93613ebcf4fbd3e43fb64436f144b3be7df1ce2602795dfb4552', 254);
   const [base, derived] = hir.classes, method = derived.methods[0];
   assert.equal(base.name, 'Base'); assert.equal(derived.name, 'Derived');
   assert.equal(method.name, 'replace'); assert.equal(method.signature.return, derived.instanceType);

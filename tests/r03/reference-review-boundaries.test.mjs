@@ -17,7 +17,7 @@ function rejects(graph, binding, categories) {
       && categories.includes(Reflect.get(error, 'code')));
 }
 test('actual inherited methods reject a missing official override edge', async () => {
-  const { graph, binding } = await actual('inheritance', '35c6b595bf1cac693089749fde20f48aeaaed83b2235e0e58428d9200b8b678d');
+  const { graph, binding } = await actual('inheritance', 'e29f6d0c595e936e73066c00d7ae053e1f41fde18bb159ca414e7f3603681779');
   const method = graph.classes[1].methods[0];
   assert.equal(method.name, 'touch'); assert.equal(method.overrideTarget, 'c1.m1');
   method.overrideTarget = '';
@@ -26,7 +26,7 @@ test('actual inherited methods reject a missing official override edge', async (
   rejects(graph, binding, ['reference-facts-override', 'reference-facts-unsupported']);
 });
 test('embedded official options reject excessive JSON depth before canonicalization or provenance hashing', async () => {
-  const { graph, binding } = await actual('constructor', '42ac0214d881e9bf708fb9846bc9e578e2262b3d406c6a76be1d16444105c414');
+  const { graph, binding } = await actual('constructor', '024212e6f2c2b1e69cde17989f6edd7b1a7f71b16daa2dab9dc4c7c1e4bef16b');
   const options = JSON.parse(graph.options.officialOptions);
   /** @type {unknown} */
   let nested = 0;

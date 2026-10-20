@@ -6,8 +6,8 @@ import { decodeReferenceFacts } from '../../compiler/reference-facts.mjs';
 import { buildReferenceHir, verifyReferenceHir, printReferenceHir, readReferenceHir } from '../../compiler/reference-hir.mjs';
 import { canonical, sha256 } from '../../compiler/identity.mjs';
 const pins = {
-  'locals-const': '762c1c1ee23174b046b00903af2e90ca7c7e08b54c4c970a1ba0d810b8be6fe6',
-  'locals-let': '4003f2e1ed2d4ef84ef54f7d480792d2a6c78a8e59d9e89593b6936a1aed5a22',
+  'locals-const': '32b102d37534052fc90d305ee8d4a1092696f32c6b072520f7a0de43683cfaf5',
+  'locals-let': '4dc738d2bc0d7b9a8cd6c63d57de76d914af97ae8257b3bf5cf7d31ba465ee51',
 };
 async function actual(name) {
   const url = suffix => new URL('./fixtures/reference-source/' + name + suffix, import.meta.url);

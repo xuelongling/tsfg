@@ -10,9 +10,9 @@ import { canonical, sha256 } from '../../compiler/identity.mjs';
 // Root captures the sentinel record; this script never writes repository files.
 /** @type {Record<string, {hash:string, originals:[string,string][]}>} */
 const captures = {
-  'locals-const': {hash:'sha256:762c1c1ee23174b046b00903af2e90ca7c7e08b54c4c970a1ba0d810b8be6fe6', originals:[['/original/main.ts','source.ts']]},
-  'multiple-sources': {hash:'sha256:b49b569266659fb9aed15dfacf677687dd4e3b57bc1b0405b2e8dcc10604ae32', originals:[['/original/a-main.ts','a-main.source.ts'],['/original/z-base.ts','z-base.source.ts']]},
-  'local-assignment-result': {hash:'sha256:f577d1cf1f157f6bf9b8ccd8ebe5d11d30ec40d4f8967ccc96adb11672919c09', originals:[['/original/main.ts','source.ts']]},
+  'locals-const': {hash:'sha256:32b102d37534052fc90d305ee8d4a1092696f32c6b072520f7a0de43683cfaf5', originals:[['/original/main.ts','source.ts']]},
+  'multiple-sources': {hash:'sha256:593093a1772fff01f8c6c82802e50edf44b24f29042c2e3ace494957e6a93db7', originals:[['/original/a-main.ts','a-main.source.ts'],['/original/z-base.ts','z-base.source.ts']]},
+  'local-assignment-result': {hash:'sha256:2510da5b02fb93613ebcf4fbd3e43fb64436f144b3be7df1ce2602795dfb4552', originals:[['/original/main.ts','source.ts']]},
 };
 const name = process.argv[2] ?? 'locals-const', capture = captures[name];
 assert.ok(capture, 'only explicit actual Source captures are admitted');
@@ -27,8 +27,8 @@ for (const [path, suffix] of capture.originals) {
 }
 const hir = buildReferenceHir(decodeReferenceFacts(bytes, binding));
 const cold = readReferenceHir(Buffer.from(printReferenceHir(hir)));
-assert.deepEqual(cold, hir); assert.equal(cold.format.version, 4);
-assert.equal(cold.format.semanticProfile, 'tsfg-owned-class-facts-candidate-v4');
+assert.deepEqual(cold, hir); assert.equal(cold.format.version, 5);
+assert.equal(cold.format.semanticProfile, 'tsfg-owned-class-facts-candidate-v5');
 for (const owner of cold.classes) assert.equal(owner.constructor.access, 'public');
 const first = lowerHir(cold), second = lowerHir(readReferenceHir(Buffer.from(printReferenceHir(cold))));
 assert.equal(first, second, 'independent cold lowering is byte deterministic');

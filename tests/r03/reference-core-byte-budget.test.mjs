@@ -14,7 +14,7 @@ async function source() {
   if (!actual) actual = (async () => {
     const fixture = suffix => new URL('./fixtures/reference-source/local-assignment-result.' + suffix, import.meta.url);
     const [bytes, bindingText] = await Promise.all([readFile(fixture('facts.json')), readFile(fixture('binding.json'), 'utf8')]);
-    assert.equal(sha256(bytes), 'sha256:f577d1cf1f157f6bf9b8ccd8ebe5d11d30ec40d4f8967ccc96adb11672919c09');
+    assert.equal(sha256(bytes), 'sha256:2510da5b02fb93613ebcf4fbd3e43fb64436f144b3be7df1ce2602795dfb4552');
     const owned = buildReferenceHir(decodeReferenceFacts(bytes, JSON.parse(bindingText)));
     const hir = readReferenceHir(Buffer.from(printReferenceHir(owned)));
     assert.deepEqual(hir, owned);

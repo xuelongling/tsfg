@@ -12,7 +12,7 @@ async function actual() {
     readFile(fixture('facts.json')), readFile(fixture('binding.json'), 'utf8'),
     readFile(fixture('a-main.source.ts'), 'utf8'), readFile(fixture('z-base.source.ts'), 'utf8'),
   ]);
-  assert.equal(sha256(bytes), 'sha256:b49b569266659fb9aed15dfacf677687dd4e3b57bc1b0405b2e8dcc10604ae32');
+  assert.equal(sha256(bytes), 'sha256:593093a1772fff01f8c6c82802e50edf44b24f29042c2e3ace494957e6a93db7');
   const binding = JSON.parse(text), sources = new Map([['/original/a-main.ts', main], ['/original/z-base.ts', base]]);
   for (const origin of binding.sources.filter(source => !source.declaration)) {
     const source = sources.get(origin.path); assert.ok(source);
@@ -25,7 +25,7 @@ async function actual() {
 }
 test('official multiple-source classes retain forward inheritance canonical aliases and independent assignment result types', async () => {
   const { hir, sources } = await actual();
-  assert.equal(hir.format.version, 4); assert.equal(hir.sources.length, 3);
+  assert.equal(hir.format.version, 5); assert.equal(hir.sources.length, 3);
   const [derived, base] = hir.classes;
   assert.equal(derived.name, 'Derived'); assert.equal(base.name, 'Base'); assert.equal(derived.base, base.id);
   assert.equal(derived.origin.source, '/original/a-main.ts'); assert.equal(base.origin.source, '/original/z-base.ts');
