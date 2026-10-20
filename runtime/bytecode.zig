@@ -33,3 +33,6 @@ pub const inspect = view.inspect;
 
 // Explicit private-format namespace; its opaque handle is not a VM VerifiedModule.
 pub const nullable = @import("nullable-bytecode.zig");
+
+// Private immutable String data; no formal loader or execution qualification.
+pub const stringCandidate = @import("string-candidate.zig");
