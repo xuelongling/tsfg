@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: MIT
 const std = @import("std");
 const Allocator = std.mem.Allocator;
+const string_codec = @import("string-codec.zig");
 
 // IDs never derive from wrapper addresses. Exhaustion permanently refuses new owners.
 var next_owner = std.atomic.Value(u64).init(1);
@@ -15,17 +16,29 @@ fn reserveOwner() error{IdentityExhausted}!u64 {
 }
 
 pub const Error = Allocator.Error || error{
-    InvalidOwner, HeapDestroyed, InvalidHandle, TypeMismatch,
-    InvalidField, ScopeRequired, InvalidScope, IdentityExhausted,
+    InvalidOwner,
+    HeapDestroyed,
+    InvalidHandle,
+    TypeMismatch,
+    InvalidField,
+    ScopeRequired,
+    InvalidScope,
+    IdentityExhausted,
+    StringTooLarge,
+    IndexOutOfBounds,
+    BufferTooSmall,
+    InvalidString,
 };
 pub const Handle = struct { owner: u64, slot: usize, generation: u64 };
 pub const Lifetime = enum { persistent, temporary };
 pub const Scope = struct { owner: u64, serial: u64, parent: u64 };
 pub const Value = struct { identity: u64, type_id: u64, scalar: u64, edge_count: usize };
+const StringPayload = struct { bytes: []u8, utf16_length: usize };
+const Payload = union(enum) { scalar: u64, string: StringPayload };
 const Object = struct {
     identity: u64,
     type_id: u64,
-    scalar: u64,
+    payload: Payload,
     edges: []?*Object,
     index: usize,
 };
@@ -91,8 +104,7 @@ pub const ManagedHeap = struct {
         try self.check();
         if (self.next_scope == std.math.maxInt(u64)) return error.IdentityExhausted;
         if (self.active_scope != 0) {
-            try self.parents.append(self.allocator, .{ .owner = self.owner,
-                .serial = self.active_scope, .parent = self.active_parent });
+            try self.parents.append(self.allocator, .{ .owner = self.owner, .serial = self.active_scope, .parent = self.active_parent });
         }
         const scope: Scope = .{ .owner = self.owner, .serial = self.next_scope, .parent = self.active_scope };
         self.next_scope += 1;
@@ -180,8 +192,34 @@ pub const ManagedHeap = struct {
         errdefer self.allocator.destroy(object);
         const edges = try self.allocator.alloc(?*Object, edge_count);
         @memset(edges, null);
-        object.* = .{ .identity = self.next_identity, .type_id = type_id, .scalar = scalar,
-            .edges = edges, .index = self.owned().objects.items.len };
+        object.* = .{ .identity = self.next_identity, .type_id = type_id, .payload = .{ .scalar = scalar }, .edges = edges, .index = self.owned().objects.items.len };
+        self.owned().objects.appendAssumeCapacity(object);
+        self.next_identity += 1;
+        return self.installRoot(slot, object, scope);
+    }
+
+    pub fn createString(self: *ManagedHeap, units: []const u16, lifetime: Lifetime) Error!Handle {
+        try self.check();
+        const scope = try self.scopeFor(lifetime);
+        if (self.next_identity == std.math.maxInt(u64)) return error.IdentityExhausted;
+        const slot = try self.availableRoot();
+        try self.owned().objects.ensureUnusedCapacity(self.allocator, 1);
+        const bytes = string_codec.encodeAlloc(self.allocator, units) catch |err| switch (err) {
+            error.OutOfMemory => return error.OutOfMemory,
+            error.LengthOverflow => return error.StringTooLarge,
+            error.BufferTooSmall => unreachable,
+        };
+        errdefer self.allocator.free(bytes);
+        const canonical_length = string_codec.canonicalLength(bytes) catch |err| switch (err) {
+            error.InvalidCanonicalWtf8 => return error.InvalidString,
+            error.LengthOverflow => return error.InvalidString,
+        };
+        if (canonical_length != units.len) return error.InvalidString;
+        const object = try self.allocator.create(Object);
+        errdefer self.allocator.destroy(object);
+        const edges = try self.allocator.alloc(?*Object, 0);
+        @memset(edges, null);
+        object.* = .{ .identity = self.next_identity, .type_id = 0, .payload = .{ .string = .{ .bytes = bytes, .utf16_length = units.len } }, .edges = edges, .index = self.owned().objects.items.len };
         self.owned().objects.appendAssumeCapacity(object);
         self.next_identity += 1;
         return self.installRoot(slot, object, scope);
@@ -202,14 +240,62 @@ pub const ManagedHeap = struct {
     pub fn read(self: *ManagedHeap, handle: Handle, expected_type: u64) Error!Value {
         const object = try self.resolve(handle);
         if (object.type_id != expected_type) return error.TypeMismatch;
-        return .{ .identity = object.identity, .type_id = object.type_id,
-            .scalar = object.scalar, .edge_count = object.edges.len };
+        const scalar = switch (object.payload) {
+            .scalar => |value| value,
+            .string => return error.TypeMismatch,
+        };
+        return .{ .identity = object.identity, .type_id = object.type_id, .scalar = scalar, .edge_count = object.edges.len };
     }
 
     pub fn write(self: *ManagedHeap, handle: Handle, expected_type: u64, scalar: u64) Error!void {
         const object = try self.resolve(handle);
         if (object.type_id != expected_type) return error.TypeMismatch;
-        object.scalar = scalar;
+        switch (object.payload) {
+            .scalar => |*value| value.* = scalar,
+            .string => return error.TypeMismatch,
+        }
+    }
+
+    fn resolveString(self: *ManagedHeap, handle: Handle) Error!StringPayload {
+        const object = try self.resolve(handle);
+        return switch (object.payload) {
+            .string => |payload| payload,
+            .scalar => error.TypeMismatch,
+        };
+    }
+
+    pub fn stringLength(self: *ManagedHeap, handle: Handle) Error!usize {
+        return (try self.resolveString(handle)).utf16_length;
+    }
+
+    pub fn stringByteLength(self: *ManagedHeap, handle: Handle) Error!usize {
+        return (try self.resolveString(handle)).bytes.len;
+    }
+
+    pub fn readStringCodeUnit(self: *ManagedHeap, handle: Handle, index: usize) Error!u16 {
+        const payload = try self.resolveString(handle);
+        if (index >= payload.utf16_length) return error.IndexOutOfBounds;
+        const canonical_length = string_codec.canonicalLength(payload.bytes) catch |err| switch (err) {
+            error.InvalidCanonicalWtf8 => return error.InvalidString,
+            error.LengthOverflow => return error.InvalidString,
+        };
+        if (canonical_length != payload.utf16_length) return error.InvalidString;
+        return string_codec.codeUnitAt(payload.bytes, index) catch |err| switch (err) {
+            error.InvalidCanonicalWtf8 => return error.InvalidString,
+            error.IndexOutOfBounds => return error.IndexOutOfBounds,
+        };
+    }
+
+    pub fn copyStringBytes(self: *ManagedHeap, handle: Handle, out: []u8) Error!usize {
+        const payload = try self.resolveString(handle);
+        if (out.len < payload.bytes.len) return error.BufferTooSmall;
+        const canonical_length = string_codec.canonicalLength(payload.bytes) catch |err| switch (err) {
+            error.InvalidCanonicalWtf8 => return error.InvalidString,
+            error.LengthOverflow => return error.InvalidString,
+        };
+        if (canonical_length != payload.utf16_length) return error.InvalidString;
+        @memcpy(out[0..payload.bytes.len], payload.bytes);
+        return payload.bytes.len;
     }
 
     pub fn sameObject(self: *ManagedHeap, left: Handle, right: Handle) Error!bool {
@@ -239,8 +325,22 @@ pub const ManagedHeap = struct {
     }
 
     fn destroyObject(self: *ManagedHeap, object: *Object) void {
+        switch (object.payload) {
+            .scalar => {},
+            .string => |payload| self.allocator.free(payload.bytes),
+        }
         self.allocator.free(object.edges);
         self.allocator.destroy(object);
+    }
+
+    fn copyPayload(self: *ManagedHeap, payload: Payload) Error!Payload {
+        return switch (payload) {
+            .scalar => |value| .{ .scalar = value },
+            .string => |string| .{ .string = .{
+                .bytes = try self.allocator.dupe(u8, string.bytes),
+                .utf16_length = string.utf16_length,
+            } },
+        };
     }
 
     fn copyObject(self: *ManagedHeap, old: *Object, forwarded: []?*Object, copies: *std.ArrayList(*Object)) Error!*Object {
@@ -248,9 +348,14 @@ pub const ManagedHeap = struct {
         const copy = try self.allocator.create(Object);
         errdefer self.allocator.destroy(copy);
         const edges = try self.allocator.dupe(?*Object, old.edges);
-        copy.* = old.*;
-        copy.edges = edges;
-        copy.index = copies.items.len;
+        errdefer self.allocator.free(edges);
+        copy.* = .{
+            .identity = old.identity,
+            .type_id = old.type_id,
+            .payload = try self.copyPayload(old.payload),
+            .edges = edges,
+            .index = copies.items.len,
+        };
         copies.appendAssumeCapacity(copy);
         forwarded[old.index] = copy;
         return copy;
