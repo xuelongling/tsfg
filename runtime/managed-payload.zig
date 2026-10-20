@@ -33,6 +33,22 @@ pub const Payload = union(enum) {
         return .{ .string = .{ .bytes = bytes, .utf16_length = units.len } };
     }
 
+    pub fn fromConcat(allocator: Allocator, left: Payload, right: Payload) Error!Payload {
+        const lhs = try left.asString();
+        const rhs = try right.asString();
+        if (lhs.utf16_length > std.math.maxInt(usize) - rhs.utf16_length) return error.StringTooLarge;
+        const length = lhs.utf16_length + rhs.utf16_length;
+        const bytes = codec.concatAlloc(allocator, lhs.bytes, rhs.bytes) catch |err| switch (err) {
+            error.OutOfMemory => return error.OutOfMemory,
+            error.LengthOverflow => return error.StringTooLarge,
+            error.InvalidCanonicalWtf8 => return error.InvalidString,
+        };
+        errdefer allocator.free(bytes);
+        const actual_length = codec.canonicalLength(bytes) catch return error.InvalidString;
+        if (actual_length != length) return error.InvalidString;
+        return .{ .string = .{ .bytes = bytes, .utf16_length = length } };
+    }
+
     pub fn fromArrayF64(allocator: Allocator, values: []const f64) Error!Payload {
         if (values.len > std.math.maxInt(u32)) return error.ArrayTooLarge;
         return .{ .array_f64 = .{ .items = try allocator.dupe(f64, values), .length = values.len } };

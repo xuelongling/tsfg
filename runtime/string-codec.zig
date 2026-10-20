@@ -142,6 +142,35 @@ pub fn encodeAlloc(allocator: Allocator, units: []const u16) (Allocator.Error ||
     return out;
 }
 
+/// Concatenate logical code units while retaining canonical WTF-8 at the join.
+/// Only an isolated high/low boundary changes bytes; no Unicode normalization.
+pub fn concatAlloc(allocator: Allocator, left: []const u8, right: []const u8) (Allocator.Error || LengthError)![]u8 {
+    _ = try canonicalLength(left);
+    _ = try canonicalLength(right);
+    if (left.len > std.math.maxInt(usize) - right.len) return error.LengthOverflow;
+    const total = left.len + right.len;
+    const high_tail = left.len >= 3 and left[left.len - 3] == 0xED and
+        left[left.len - 2] >= 0xA0 and left[left.len - 2] <= 0xAF;
+    const low_head = right.len >= 3 and right[0] == 0xED and
+        right[1] >= 0xB0 and right[1] <= 0xBF;
+    const merge = high_tail and low_head;
+    const needed = if (merge) total - 2 else total;
+    const out = try allocator.alloc(u8, needed);
+    errdefer allocator.free(out);
+    if (merge) {
+        const prefix = left.len - 3;
+        @memcpy(out[0..prefix], left[0..prefix]);
+        const pair = [_]u16{ (try sequenceAt(left, prefix)).first, (try sequenceAt(right, 0)).first };
+        // Validated high/low units encode to exactly four bytes in this exact slice.
+        _ = encodeInto(&pair, out[prefix .. prefix + 4]) catch unreachable;
+        @memcpy(out[prefix + 4 ..], right[3..]);
+    } else {
+        @memcpy(out[0..left.len], left);
+        @memcpy(out[left.len..], right);
+    }
+    return out;
+}
+
 pub fn codeUnitAt(bytes: []const u8, index: usize) ReadError!u16 {
     var byte_index: usize = 0;
     var unit_index: usize = 0;

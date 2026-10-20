@@ -201,6 +201,25 @@ pub const ManagedHeap = struct {
         try self.owned().objects.ensureUnusedCapacity(self.allocator, 1);
         const payload = try Payload.fromString(self.allocator, units);
         errdefer payload.deinit(self.allocator);
+        return self.publishString(payload, slot, scope);
+    }
+
+    /// New String ownership; both source handles and their payloads remain unchanged.
+    pub fn concatStrings(self: *ManagedHeap, left: Handle, right: Handle, lifetime: Lifetime) Error!Handle {
+        const lhs = (try self.resolve(left)).payload;
+        const rhs = (try self.resolve(right)).payload;
+        const scope = try self.scopeFor(lifetime);
+        if (self.next_identity == std.math.maxInt(u64)) return error.IdentityExhausted;
+        const payload = try Payload.fromConcat(self.allocator, lhs, rhs);
+        errdefer payload.deinit(self.allocator);
+        const slot = try self.availableRoot();
+        try self.owned().objects.ensureUnusedCapacity(self.allocator, 1);
+        return self.publishString(payload, slot, scope);
+    }
+
+    // Both String constructors share allocation and publication; the caller owns
+    // the payload until publication succeeds.
+    fn publishString(self: *ManagedHeap, payload: Payload, slot: usize, scope: u64) Error!Handle {
         const object = try self.allocator.create(Object);
         errdefer self.allocator.destroy(object);
         const edges = try self.allocator.alloc(?*Object, 0);
