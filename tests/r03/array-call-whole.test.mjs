@@ -1,5 +1,5 @@
 // SPDX-License-Identifier: MIT
-import {migrateArrayCore10} from './array-test-fixtures.mjs';
+import {migrateArrayCore11} from './array-test-fixtures.mjs';
 // Private5 migration expectations are independent data; old wire originals remain refusal controls.
 import test from 'node:test';
 import assert from 'node:assert/strict';
@@ -51,7 +51,7 @@ test('37d complete call-only Core succeeds; remaining parameter and final-return
     const input=fresh(row.hir),before=fresh(input);
     if(row.name==='core-call-only-refusal') {
       assert.deepEqual(input,coreCallOracle.hir);
-      assert.equal(lowerHir(input,factsContext(row)),migrateArrayCore10(coreCallOracle.core));
+      assert.equal(lowerHir(input,factsContext(row)),migrateArrayCore11(coreCallOracle.core));
     } else if (['first-touch-alias','two-slots-alias-and-independent-fresh','parameter-alias-permanent-unknown','leaf-read-exceeds-fixed'].includes(row.name)) {
       const core=parseArrayCore(lowerHir(input,factsContext(row)));
       assert.deepEqual(core.functions.map(fn=>fn.properties.sym_name),row.hir.functions.map(fn=>fn.name));

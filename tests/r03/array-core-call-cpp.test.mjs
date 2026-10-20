@@ -1,5 +1,5 @@
 // SPDX-License-Identifier: MIT
-import {migrateArrayCore10} from './array-test-fixtures.mjs';
+import {migrateArrayCore11} from './array-test-fixtures.mjs';
 // Actual existing IR-only CLI; Root supplies the newly linked binary in its heavy window.
 import test from 'node:test';
 import assert from 'node:assert/strict';
@@ -7,7 +7,7 @@ import {readFile} from 'node:fs/promises';
 import {invokeCore,accepted} from './generic-core-package-capture.mjs';
 import {parseArrayCore} from './array-core-structural-oracle.mjs';
 const o=JSON.parse(await readFile(new URL('./array-core-call-oracle.json',import.meta.url),'utf8'));
-o.core=migrateArrayCore10(o.core);
+o.core=migrateArrayCore11(o.core);
 const roots='[{block = 0 : i64, instruction = 3 : i64, registers = [1 : i64]}]';
 /** @param {string} value @param {string} [core] */
 function withRoots(value,core=o.core){const start=core.indexOf('  func.func @"entry"');
@@ -56,7 +56,7 @@ test('Array ordinary call does not authorize formal wire execution',async()=>{
 
 // Explicit cold owned-facts metamorphic coverage; the original actual Source case stays separate.
 const p=JSON.parse(await readFile(new URL('./array-core-call-scalar-alias-oracle.json',import.meta.url),'utf8'));
-p.core=migrateArrayCore10(p.core);
+p.core=migrateArrayCore11(p.core);
 const pairRoots='[{block = 0 : i64, instruction = 6 : i64, registers = [3 : i64, 4 : i64]}]';
 const pairExpected=parseArrayCore(p.core);
 pairExpected.functions[1].attributes['tsfg_array.call_roots']=[{block:{kind:'integer',value:'0',width:'i64'},

@@ -1,4 +1,5 @@
 // SPDX-License-Identifier: MIT
+import {migrateArrayCore11} from './array-test-fixtures.mjs';
 // Existing actual IR-only CLI; independent whole Core, typed SSA and roots.
 import test from 'node:test';
 import assert from 'node:assert/strict';
@@ -6,6 +7,7 @@ import {readFile} from 'node:fs/promises';
 import {invokeCore,accepted} from './generic-core-package-capture.mjs';
 import {parseArrayCore} from './array-core-structural-oracle.mjs';
 const o=JSON.parse(await readFile(new URL('./array-core-parameter-oracle.json',import.meta.url),'utf8'));
+for(const row of o.cases) row.core=migrateArrayCore11(row.core);
 const integer=v=>({kind:'integer',value:String(v),width:'i64'});
 /** @param {any[]} records */
 const attr=records=>'['+records.map(r=>'{block = '+r.block+' : i64, instruction = '+r.instruction

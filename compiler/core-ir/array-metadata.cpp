@@ -81,10 +81,10 @@ mlir::LogicalResult marker(mlir::ModuleOp module) {
     return reject("core-ir-array-marker", "candidate marker fields differ");
   auto version = llvm::dyn_cast_or_null<mlir::IntegerAttr>(value.get("version"));
   auto facts = llvm::dyn_cast_or_null<mlir::IntegerAttr>(value.get("facts_version"));
-  if (!version || !version.getType().isSignlessInteger(32) || version.getInt() != 10 ||
+  if (!version || !version.getType().isSignlessInteger(32) || version.getInt() != 11 ||
       !facts || !facts.getType().isSignlessInteger(32) || facts.getInt() != 7 ||
       text(value, "family") != "tsfg.core-array-candidate" || text(value, "schema") != schema ||
-      text(value, "profile") != "dense-f64-array-parameter-call-roots-checked-v10")
+      text(value, "profile") != "dense-f64-array-local-readspan-checked-v11")
     return reject("core-ir-array-marker", "candidate marker identity differs");
   return mlir::success();
 }
@@ -184,7 +184,7 @@ mlir::LogicalResult readSpanLengthProperty(mlir::ModuleOp module, llvm::StringRe
   if (!span(row.get("declaration_range"),declaration) || !span(row.get("name_range"),name) || !span(row.get("type_range"),type) ||
       !same(declaration,{380,401}) || !same(name,{389,395}) || !same(type,{397,400}))
     return reject("core-ir-array-source","pinned ReadSpan length ranges differ");
-  auto binding=sourceIdentity(path,name);
+  auto binding=sourceIdentity(path,name); metadata.viewLengthProperty=binding;
   if (text(row,"id") != binding || !metadata.bindings.insert(binding).second)
     return reject("core-ir-array-identity","ReadSpan length binding differs");
   return mlir::success();
@@ -200,7 +200,7 @@ mlir::LogicalResult readSpanIntrinsic(mlir::ModuleOp module, llvm::StringRef pat
       !span(row.get("type_parameter_range"),typeParameter) || !span(row.get("return_type_range"),returnType) ||
       !same(declaration,{404,483}) || !same(name,{421,429}) || !same(typeParameter,{430,431}) || !same(returnType,{471,482}))
     return reject("core-ir-array-source","pinned ReadSpan intrinsic ranges differ");
-  auto binding=sourceIdentity(path,name);
+  auto binding=sourceIdentity(path,name); metadata.viewIntrinsic=binding;
   if (text(row,"id") != binding || !metadata.bindings.insert(binding).second)
     return reject("core-ir-array-identity","ReadSpan intrinsic binding differs");
   auto parameters=llvm::dyn_cast_or_null<mlir::ArrayAttr>(row.get("parameters"));
@@ -297,6 +297,7 @@ mlir::LogicalResult verifyMetadata(mlir::ModuleOp module, Metadata &metadata) {
     if (metadata.functions.size() == 16) return reject("core-ir-array-budget", "function count exceeds limit");
     std::vector<llvm::StringRef> keys={"sym_name", "function_type", "tsfg_core.function_id", "tsfg_core.signature_hash", "tsfg_core.type_id",
         "tsfg_core.function_start", "tsfg_core.function_end", "tsfg_array.source_binding", "tsfg_array.name_range", "tsfg_array.return_annotation_range", "tsfg_array.parameters"};
+    if (function->hasAttr("tsfg_array.view_lifetimes")) keys.push_back("tsfg_array.view_lifetimes");
     if (function->hasAttr("tsfg_array.call_roots")) keys.push_back("tsfg_array.call_roots");
     if (!attributes(function,keys))
       return reject("core-ir-array-metadata", "function fields differ");

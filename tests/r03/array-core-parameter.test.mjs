@@ -1,4 +1,5 @@
 // SPDX-License-Identifier: MIT
+import {migrateArrayCore11} from './array-test-fixtures.mjs';
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import {readFile} from 'node:fs/promises';
@@ -6,6 +7,7 @@ import {readArrayFactsCandidate} from '../../compiler/array-facts.mjs';
 import {buildHir,verifyHir,lowerHir} from '../../compiler/hir.mjs';
 import {parseArrayCore} from './array-core-structural-oracle.mjs';
 const o=JSON.parse(await readFile(new URL('./array-core-parameter-oracle.json',import.meta.url),'utf8'));
+for(const row of o.cases) row.core=migrateArrayCore11(row.core);
 for(const row of o.cases)test('complete actual Array parameter package: '+row.name,()=>{
   const ctx={...row.factsContext,factsBytes:Buffer.from(row.sourcePacket)};
   const input=JSON.stringify(row.hir),packet=Buffer.from(ctx.factsBytes);

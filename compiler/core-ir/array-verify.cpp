@@ -91,23 +91,25 @@ class Body {
       result.value=value->getResult(0); if (type==8) result.literal=static_cast<int64_t>(bits);
       return mlir::success();
     }
-    if (type==13 && kind=="arrayReadChecked") {
+    if (type==13 && (kind=="arrayReadChecked" || kind=="readSpanReadChecked")) {
       Scalar readResult;
-      if (mlir::failed(read(readResult))) return mlir::failure();
+      if (mlir::failed(read(readResult,kind))) return mlir::failure();
       if (!same(readResult.anchor,result.anchor)) return reject("core-ir-array-source","read definition/use ranges differ");
       result.value=readResult.value; return mlir::success();
     }
     return reject("core-ir-array-shape","unsupported scalar-use kind");
   }
-  mlir::LogicalResult read(Scalar &result) {
+  mlir::LogicalResult read(Scalar &result, llvm::StringRef kind="") {
     size_t next=position;
     if (next<ops.size() && ops[next]->getName().getStringRef()=="tsfg_core.constant") ++next;
-    if (next>=ops.size() || !operation(ops[next],"tsfg_array.read_checked",2,1))
+    const bool view=next<ops.size() && ops[next]->getName().getStringRef()=="tsfg_array.view_read_checked";
+    if ((!kind.empty() && view!=(kind=="readSpanReadChecked")) || next>=ops.size() ||
+        !operation(ops[next],view ? "tsfg_array.view_read_checked" : "tsfg_array.read_checked",2,1))
       return reject("core-ir-array-shape","expected exact checked-read sequence");
     auto *value=ops[next];
     if (!attributes(value,{"receiver_binding","receiver_range","index","tsfg_source.start","tsfg_source.end"}))
       return reject("core-ir-array-metadata","read fields differ");
-    if (!value->getResult(0).getType().isF64() || !llvm::isa<ArrayType>(value->getOperand(0).getType()) || tsfg::typeCode(value->getOperand(1).getType())!=8)
+    if (!value->getResult(0).getType().isF64() || !(view ? llvm::isa<ReadSpanType>(value->getOperand(0).getType()) : llvm::isa<ArrayType>(value->getOperand(0).getType())) || tsfg::typeCode(value->getOperand(1).getType())!=8)
       return reject("core-ir-array-type","read types differ");
     if (!range(value,result.anchor)) return reject("core-ir-array-source","read range differs");
     mlir::Value array; Range receiverRange; std::string binding; Scalar index;
@@ -118,6 +120,50 @@ class Body {
     if (result.anchor.start!=receiverRange.start || receiverRange.end>=index.anchor.start || index.anchor.end>=result.anchor.end)
       return reject("core-ir-array-source","checked-read source order differs");
     ++position; result.value=value->getResult(0); return mlir::success();
+  }
+  mlir::LogicalResult viewLocal(size_t endpoint) {
+    auto *value=ops[endpoint]; Range initializer,statement,ownerRange,callee; std::string identity,binding; mlir::Value owner; Scalar start,length;
+    if (++locals>17) return reject("core-ir-array-budget","local count exceeds limit");
+    if (!operation(value,"tsfg_array.view_create_checked",3,1) ||
+        !attributes(value,{"intrinsic","receiver_binding","receiver_range","callee_range","start","length","local","tsfg_source.start","tsfg_source.end"}))
+      return reject("core-ir-array-shape","checked view create shape/fields differ");
+    if (!range(value,initializer) || !span(value->getAttr("callee_range"),callee) ||
+        !encloses(initializer,callee) || initializer.start!=callee.start)
+      return reject("core-ir-array-source","checked view intrinsic range differs");
+    if (text(value,"intrinsic")!=metadata.viewIntrinsic) return reject("core-ir-array-identity","view intrinsic differs");
+    if (mlir::failed(receiver(value->getAttrDictionary(),initializer,owner,ownerRange,binding)) ||
+        mlir::failed(scalar(value->getAttr("start"),8,true,start)) || mlir::failed(scalar(value->getAttr("length"),8,true,length))) return mlir::failure();
+    if (position!=endpoint || value->getOperand(0)!=owner || value->getOperand(1)!=start.value || value->getOperand(2)!=length.value)
+      return reject("core-ir-array-shape","view requires exact owner/start/length SSA order");
+    if (!llvm::isa<ArrayType>(owner.getType()) || !llvm::isa<ReadSpanType>(value->getResult(0).getType()))
+      return reject("core-ir-array-type","view requires distinct nominal owner/view types");
+    if (callee.end>=ownerRange.start || ownerRange.end>=start.anchor.start || start.anchor.end>=length.anchor.start || length.anchor.end>=initializer.end)
+      return reject("core-ir-array-source","view owner/start/length source order differs");
+    if (mlir::failed(local(value,function,metadata,previous,initializer,statement,identity,names))) return mlir::failure();
+    auto data=value->getAttrOfType<mlir::DictionaryAttr>("local"); Range annotation,element;
+    if (!span(data.get("annotation_range"),annotation) || !span(data.get("element_annotation_range"),element) ||
+        element.start<=annotation.start || element.end>=annotation.end)
+      return reject("core-ir-array-source","view requires original nominal element annotation");
+    definitions.emplace(identity,value->getResult(0)); previous=statement.end; ++position; return mlir::success();
+  }
+  mlir::LogicalResult viewLength(size_t endpoint) {
+    auto *value=ops[endpoint]; Range expression,statement,property,receiverRange; mlir::Value view; std::string binding;
+    if (position!=endpoint || !operation(value,"tsfg_array.view_length",1,1) ||
+        !attributes(value,{"receiver_binding","receiver_range","property","property_name_range","statement_range","tsfg_source.start","tsfg_source.end"}))
+      return reject("core-ir-array-shape","view length shape/fields differ");
+    if (!range(value,expression) || !span(value->getAttr("statement_range"),statement) ||
+        !span(value->getAttr("property_name_range"),property) || !encloses(function.declaration,statement) ||
+        statement.start<previous || statement.end>=function.declaration.end || statement.start!=expression.start ||
+        expression.end>=statement.end || !encloses(statement,expression) || !encloses(expression,property))
+      return reject("core-ir-array-source","view length source/statement differs");
+    if (mlir::failed(receiver(value->getAttrDictionary(),expression,view,receiverRange,binding))) return mlir::failure();
+    if (text(value,"property")!=metadata.viewLengthProperty) return reject("core-ir-array-identity","view length property differs");
+    if (value->getOperand(0)!=view) return reject("core-ir-array-shape","view length receiver SSA differs");
+    if (!llvm::isa<ReadSpanType>(view.getType()) || tsfg::typeCode(value->getResult(0).getType())!=8)
+      return reject("core-ir-array-type","view length nominal type differs");
+    if (expression.start!=receiverRange.start || receiverRange.end>=property.start || property.end!=expression.end)
+      return reject("core-ir-array-source","view length receiver/property order differs");
+    previous=statement.end; ++position; return mlir::success();
   }
   mlir::LogicalResult localStatement(size_t endpoint) {
     auto *value=ops[endpoint]; bool create=value->getName().getStringRef()=="tsfg_array.create";
@@ -157,6 +203,7 @@ class Body {
       auto target=text(value,"target_binding").str(); auto found=definitions.find(target);
       if (found==definitions.end()) return reject("core-ir-array-identity","alias target must be an earlier binding");
       if (found->second!=value->getOperand(0)) return reject("core-ir-array-shape","alias exact target SSA differs");
+      if (!llvm::isa<ArrayType>(found->second.getType())) return reject("core-ir-array-type","Array alias target type differs");
       owner=owners.at(target);
     }
     definitions.emplace(identity,value->getResult(0)); owners.emplace(identity,owner);
@@ -298,11 +345,15 @@ public:
       size_t endpoint=position;
       for (;endpoint<ops.size();++endpoint) {
         auto name=ops[endpoint]->getName().getStringRef();
-        if (name!="tsfg_core.constant" && name!="tsfg_array.read_checked") break;
+        if (name!="tsfg_core.constant" && name!="tsfg_array.read_checked" && name!="tsfg_array.view_read_checked") break;
       }
       if (endpoint>=ops.size()) return reject("core-ir-array-shape","detached scalar/read operations");
       auto *value=ops[endpoint]; auto name=value->getName().getStringRef();
-      if (name=="tsfg_array.create" || name=="tsfg_array.alias") {
+      if (name=="tsfg_array.view_create_checked") {
+        if (mlir::failed(viewLocal(endpoint))) return mlir::failure();
+      } else if (name=="tsfg_array.view_length") {
+        if (mlir::failed(viewLength(endpoint))) return mlir::failure();
+      } else if (name=="tsfg_array.create" || name=="tsfg_array.alias") {
         if (mlir::failed(localStatement(endpoint))) return mlir::failure();
       } else if (name=="tsfg_array.store_dense_checked" || name=="tsfg_array.resize_checked") {
         if (mlir::failed(mutation(endpoint))) return mlir::failure();
@@ -353,11 +404,12 @@ mlir::LogicalResult verifyCandidate(mlir::ModuleOp module) {
   for (size_t i=0;i<count;++i) if (reachable[i][i])
     for (size_t j=0;j<count;++j) if (i==j || reachable[i][j])
       for (auto &op : llvm::cast<mlir::func::FuncOp>(metadata.functions[j].operation).getBody().front())
-        if (op.getName().getStringRef()=="tsfg_array.create")
+        if (op.getName().getStringRef()=="tsfg_array.create" || op.getName().getStringRef()=="tsfg_array.view_create_checked")
           return reject("core-ir-array-call","cyclic outgoing domain contains an allocation");
   uint64_t work=0;
   for (const auto &function : metadata.functions) {
     auto fn=llvm::cast<mlir::func::FuncOp>(function.operation);
+    if (mlir::failed(verifyViewLifetimes(function))) return mlir::failure();
     ManagedLiveness live;
     if (mlir::failed(recomputeManagedLiveness(fn,ManagedDomain::Array,live))) return mlir::failure();
     work+=live.work;

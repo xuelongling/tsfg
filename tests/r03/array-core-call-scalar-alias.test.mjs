@@ -1,5 +1,5 @@
 // SPDX-License-Identifier: MIT
-import {migrateArrayCore10} from './array-test-fixtures.mjs';
+import {migrateArrayCore11} from './array-test-fixtures.mjs';
 // Owned-facts metamorphic positive; never a claimed actual Source execution.
 import test from 'node:test';
 import assert from 'node:assert/strict';
@@ -9,7 +9,7 @@ import {buildHir,verifyHir,lowerHir} from '../../compiler/hir.mjs';
 import {fresh} from './array-test-fixtures.mjs';
 import {parseArrayCore} from './array-core-structural-oracle.mjs';
 const o=JSON.parse(await readFile(new URL('./array-core-call-scalar-alias-oracle.json',import.meta.url),'utf8'));
-o.core=migrateArrayCore10(o.core);
+o.core=migrateArrayCore11(o.core);
 const ctx=()=>({...o.factsContext,factsBytes:Buffer.from(o.sourcePacket)});
 test('independent owned-facts multi-scalar call and live alias whole Core are exact',()=>{
   assert.equal(o.provenance.sourceExecution,false);assert.equal(o.provenance.productionImportedForExpected,false);
@@ -41,7 +41,7 @@ test('existing complete SCC controls reject allocation cycles before Core emissi
     if(name==='spin-wide-local-upper')assert.deepEqual(verifyHir(fresh(row.completeHir),context,row.publicationContext),row.completeHir);
     if(name==='spin-wide-local-upper'){
       const current=JSON.parse(await readFile(new URL('./array-core-parameter-oracle.json',import.meta.url),'utf8'));
-      assert.equal(lowerHir(fresh(row.completeHir),context,row.publicationContext),current.cases.find(c=>c.name===name).core);
+      assert.equal(lowerHir(fresh(row.completeHir),context,row.publicationContext),migrateArrayCore11(current.cases.find(c=>c.name===name).core));
       assert.throws(()=>lowerHir(fresh(row.completeHir),context),{code:'r03-array-hir-context'});continue;
     }
     assert.throws(()=>lowerHir(fresh(row.completeHir),context,row.publicationContext),error=>{

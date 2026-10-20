@@ -13,7 +13,7 @@
 namespace mlir { class DialectRegistry; }
 namespace tsfg::arrays {
 inline constexpr llvm::StringLiteral schema =
-    "sha256:7a1b9747e100cdc60119a37dbc31e477a5630f05b715a6f6a795a7573dd43f05";
+    "sha256:4099a1f8633db0326e39bf81f514e63e6287a2589f2128ac7a23e65404e82b06";
 inline constexpr llvm::StringLiteral f64Id =
     "sha256:dfbc72c48bec549ea679cd6aff531f9ebef95e001f6ae0bf419d2f33bf988a6c";
 inline constexpr llvm::StringLiteral arrayId =
@@ -30,6 +30,13 @@ public:
   static constexpr llvm::StringLiteral name = "tsfg_array.array_f64";
   static ArrayType get(mlir::MLIRContext *context) { return Base::get(context); }
 };
+class ReadSpanType : public mlir::Type::TypeBase<ReadSpanType, mlir::Type, mlir::TypeStorage> {
+public:
+  using Base::Base;
+  MLIR_DEFINE_EXPLICIT_INTERNAL_INLINE_TYPE_ID(ReadSpanType)
+  static constexpr llvm::StringLiteral name = "tsfg_array.readspan_f64";
+  static ReadSpanType get(mlir::MLIRContext *context) { return Base::get(context); }
+};
 struct Range { uint32_t start = 0, end = 0; };
 struct Parameter { std::string id, name; mlir::Type type; Range declaration, nameRange, annotation, elementAnnotation; };
 struct Function {
@@ -37,7 +44,7 @@ struct Function {
   std::vector<Parameter> parameters;
 };
 struct Metadata {
-  std::string path, lengthProperty;
+  std::string path, lengthProperty, viewLengthProperty, viewIntrinsic;
   uint32_t length = 0;
   std::vector<Function> functions;
   std::set<std::string> bindings, sites;
@@ -57,5 +64,6 @@ bool validText(llvm::StringRef value);
 std::string sourceIdentity(llvm::StringRef path, Range anchor, bool site = false);
 mlir::LogicalResult reject(llvm::StringRef code, llvm::StringRef detail);
 mlir::LogicalResult verifyMetadata(mlir::ModuleOp module, Metadata &metadata);
+mlir::LogicalResult verifyViewLifetimes(const Function &function);
 mlir::LogicalResult verifyCandidate(mlir::ModuleOp module);
 } // namespace tsfg::arrays

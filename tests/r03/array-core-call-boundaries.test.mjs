@@ -1,5 +1,5 @@
 // SPDX-License-Identifier: MIT
-import {migrateArrayCore10} from './array-test-fixtures.mjs';
+import {migrateArrayCore11} from './array-test-fixtures.mjs';
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import {readFile} from 'node:fs/promises';
@@ -7,7 +7,7 @@ import {lowerHir,verifyHir} from '../../compiler/hir.mjs';
 import {parseArrayCore} from './array-core-structural-oracle.mjs';
 import {old18Oracle,fresh} from './array-test-fixtures.mjs';
 const o=JSON.parse(await readFile(new URL('./array-core-call-oracle.json',import.meta.url),'utf8'));
-o.core=migrateArrayCore10(o.core);
+o.core=migrateArrayCore11(o.core);
 const context=()=>({...o.factsContext,factsBytes:Buffer.from(o.sourcePacket)});
 test('whole ordinary-call Core retains both complete functions and every typed edge',()=>{
   const input=fresh(o.hir),before=fresh(input),ctx=context(),bytes=Buffer.from(ctx.factsBytes);

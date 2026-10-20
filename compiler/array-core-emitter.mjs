@@ -41,17 +41,25 @@ export function emitArrayCore(hir, context, fixedContext = undefined) {
   };
   // Inspect complete verified Source order before reserving even the module header.
   for (const fn of verified.functions) {
+    if (fn.returnType.id !== scalarTypeIds.f64) unsupported(fn,fn.returnAnnotationRange);
     const parameter = fn.parameters.find(p => p.type === readSpanTypeId);
     if (parameter) unsupported(fn,parameter.range);
     for (const statement of fn.body) {
-      if (statement.kind === 'local' && statement.binding.type === readSpanTypeId) unsupported(fn,statement.initializer.range);
+      if (statement.kind === 'local' && statement.binding.type === readSpanTypeId
+          && statement.initializer.kind !== 'readSpanCreateChecked') unsupported(fn,statement.initializer.range);
       const value = statement.kind === 'expression' ? statement.expression : statement.kind === 'return' ? statement.value : undefined;
-      if (value?.kind === 'readSpanReadChecked' || value?.kind === 'readSpanLength') unsupported(fn,value.range);
-      if (statement.kind === 'arrayStoreDenseChecked' && statement.value.kind === 'readSpanReadChecked') unsupported(fn,statement.value.range);
-      if (statement.kind === 'expression' && value?.kind !== 'arrayDirectCall') unsupported(fn,value.range);
+      if (statement.kind === 'expression' && !['arrayDirectCall','readSpanLength'].includes(value?.kind)) unsupported(fn,value.range);
       if (value?.kind === 'arrayDirectCall' && (value.arguments.some(argument => !['reference','constant','floating'].includes(argument.kind)
             || ![arrayHirType.id,scalarTypeIds.f64,scalarTypeIds.u32].includes(argument.type)))) unsupported(fn,value.range);
-      if (statement.kind === 'return' && !['arrayReadChecked','arrayDirectCall'].includes(value.kind)) unsupported(fn,statement.range);
+      if (statement.kind === 'return' && !['arrayReadChecked','readSpanReadChecked','arrayDirectCall'].includes(value.kind)) unsupported(fn,statement.range);
+    }
+    const plan = verified.readSpanPlan?.functions.find(item => item.functionId === fn.id);
+    for (const statement of fn.body) {
+      const call = statement.expression ?? statement.value;
+      if (call?.kind !== 'arrayDirectCall') continue;
+      if (plan?.views.some(view => view.origin.kind === 'local'
+          && plan.events[view.origin.createEvent].range.end < call.range.start
+          && plan.events[view.lastUseEvent].range.start > call.range.end)) unsupported(fn,call.range);
     }
     if (!fn.body.some(s => s.kind === 'local') && !fn.parameters.some(p => p.type === arrayHirType.id))
       unsupported(fn,fn.range);
@@ -63,7 +71,7 @@ export function emitArrayCore(hir, context, fixedContext = undefined) {
     field('tsfg_core.triple', verified.target.triple), field('tsfg_core.data_layout', verified.target.llvmDataLayout),
     field('tsfg_core.bytecode_schema', coreExchangeFormat.bytecodeSchema),
     'tsfg_core.source_length = ' + source.content.length + ' : i64',
-    'tsfg_core.array = ' + dictionary([field('family', descriptor.family), 'version = 10 : i32',
+    'tsfg_core.array = ' + dictionary([field('family', descriptor.family), 'version = 11 : i32',
       field('schema', schemaHash), field('profile', descriptor.profile), 'facts_version = 7 : i32']),
     'tsfg_array.function_ids = ' + table(verified.functions.map(fn => quote(fn.id))),
     'tsfg_array.exports = ' + table(verified.exports.map(item => dictionary([
@@ -105,6 +113,7 @@ export function emitArrayCore(hir, context, fixedContext = undefined) {
   const header = reserve('module attributes {' + attributes.join(', ') + '} {\n');
   const coreType = type => {
     if (type === arrayHirType.id) return '!tsfg_array.array_f64';
+    if (type === readSpanTypeId) return '!tsfg_array.readspan_f64';
     if (type === scalarTypeIds.f64) return 'f64';
     if (type === scalarTypeIds.u32) return '!tsfg_core.integer<"u32">';
     arrayHirFailure('invalid');
@@ -116,16 +125,20 @@ export function emitArrayCore(hir, context, fixedContext = undefined) {
     const elements = locals.reduce((sum, statement) => sum + (statement.initializer.elements?.length ?? 0), 0);
     const stores = fn.body.filter(statement => statement.kind === 'arrayStoreDenseChecked');
     const resizes = fn.body.filter(statement => statement.kind === 'arrayResizeChecked');
-    const reads = [fn.body.at(-1).value,...stores.map(statement => statement.value)].filter(value => value.kind === 'arrayReadChecked');
+    const reads = [fn.body.at(-1).value,...stores.map(statement => statement.value)]
+      .filter(value => ['arrayReadChecked','readSpanReadChecked'].includes(value.kind));
+    const views = locals.filter(statement => statement.initializer.kind === 'readSpanCreateChecked');
+    const lengths = fn.body.filter(statement => statement.expression?.kind === 'readSpanLength');
     const callStatements = new Map(fn.body.filter(statement => (statement.expression ?? statement.value)?.kind === 'arrayDirectCall')
       .map(statement => [statement.expression ?? statement.value,statement]));
     const calls = [...callStatements.keys()], returnCall = fn.body.at(-1).value.kind === 'arrayDirectCall' ? 1 : 0;
     const argumentsCount = calls.reduce((sum, call) => sum + call.arguments.length, 0);
-    const scalars = [...reads.map(read => read.index),...stores.flatMap(statement => [statement.target.index,statement.value]),...resizes.map(statement => statement.value),...calls.flatMap(call => call.arguments)];
+    const scalars = [...reads.map(read => read.index),...stores.flatMap(statement => [statement.target.index,statement.value]),...resizes.map(statement => statement.value),...calls.flatMap(call => call.arguments),
+      ...views.flatMap(statement => [statement.initializer.start,statement.initializer.length])];
     const constants = elements + scalars.filter(value => value.kind === 'constant' || value.kind === 'floating').length;
-    const count = locals.length, expected = {registers:fn.parameters.length + constants + count + reads.length + calls.length,
-      lines:constants + count + reads.length + stores.length + resizes.length + calls.length + 2,
-      steps:elements + 2*count + 4*stores.length + 3*resizes.length + 2*reads.length + calls.length + argumentsCount + 2 - returnCall};
+    const count = locals.length, expected = {registers:fn.parameters.length + constants + count + reads.length + calls.length + lengths.length,
+      lines:constants + count + reads.length + stores.length + resizes.length + calls.length + lengths.length + 2,
+      steps:elements + 2*count + 4*stores.length + 3*resizes.length + 2*reads.length + calls.length + argumentsCount + 2 - returnCall + 3*views.length + 3*lengths.length};
     let blocks = 0, parameters = 0, registers = 0, lines = 0, steps = 0;
     const shape = condition => { if (!condition) arrayHirFailure('invalid'); };
     const emitCall = (call, statement, api) => {
@@ -150,6 +163,13 @@ export function emitArrayCore(hir, context, fixedContext = undefined) {
       },
       emitValueLeaf: (expression, api) => {
         if (expression.kind === 'arrayDirectCall') return emitCall(expression,callStatements.get(expression),api);
+        if (expression.kind === 'readSpanLength') {
+          const statement=lengths.find(item => item.expression === expression), receiver=api.emit(expression.receiver);
+          return api.operation('tsfg_array.view_length',[receiver],[expression.receiver.type],expression.type,
+            field('receiver_binding',expression.receiver.binding)+', receiver_range = '+span(expression.receiver.range)
+              +', '+field('property',expression.property)+', property_name_range = '+span(expression.nameRange)
+              +', statement_range = '+span(statement.range),expression.range);
+        }
         const statement = owners.get(expression);
         if (statement) {
           if (expression.kind === 'arrayCreate') {
@@ -158,13 +178,22 @@ export function emitArrayCore(hir, context, fixedContext = undefined) {
               expression.type, field('allocation_site', expression.allocationSite)
                 + ', local = ' + localMetadata(statement), expression.range);
           }
+          if (expression.kind === 'readSpanCreateChecked') {
+            const operands = [api.emit(expression.receiver),api.emit(expression.start),api.emit(expression.length)];
+            return api.operation('tsfg_array.view_create_checked',operands,
+              [expression.receiver.type,expression.start.type,expression.length.type],expression.type,
+              field('intrinsic',expression.intrinsic)+', '+field('receiver_binding',expression.receiver.binding)
+                +', receiver_range = '+span(expression.receiver.range)+', callee_range = '+span(expression.calleeRange)
+                +', start = '+scalarUse(expression.start)+', length = '+scalarUse(expression.length)
+                +', local = '+localMetadata(statement),expression.range);
+          }
           return api.operation('tsfg_array.alias', [api.lookup(expression.binding)], [expression.type],
             expression.type, field('target_binding', expression.binding)
               + ', local = ' + localMetadata(statement), expression.range);
         }
-        if (expression.kind === 'arrayReadChecked') {
+        if (['arrayReadChecked','readSpanReadChecked'].includes(expression.kind)) {
           const receiver = api.emit(expression.receiver), index = api.emit(expression.index);
-          return api.operation('tsfg_array.read_checked', [receiver, index],
+          return api.operation(expression.kind === 'arrayReadChecked' ? 'tsfg_array.read_checked' : 'tsfg_array.view_read_checked', [receiver, index],
             [expression.receiver.type, expression.index.type], expression.type,
             field('receiver_binding', expression.receiver.binding) + ', receiver_range = '
               + span(expression.receiver.range) + ', index = ' + scalarUse(expression.index), expression.range);
@@ -172,7 +201,11 @@ export function emitArrayCore(hir, context, fixedContext = undefined) {
       },
       emitStatementLeaf: (statement,api) => {
         if (statement.kind === 'expression') {
-          emitCall(statement.expression,statement,api);
+          const value=statement.expression;
+          if (value.kind === 'readSpanLength') {
+            // Match shared emit accounting: expression and receiver are real uses.
+            api.emit(value);
+          } else emitCall(value,statement,api);
           return true;
         }
         if (statement.kind === 'arrayStoreDenseChecked') {

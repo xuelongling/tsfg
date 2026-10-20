@@ -1,5 +1,5 @@
 // SPDX-License-Identifier: MIT
-import {migrateArrayCore10} from './array-test-fixtures.mjs';
+import {migrateArrayCore11} from './array-test-fixtures.mjs';
 // Re-signed hostile packets exercise cold custody, not an alternate Source implementation.
 import assert from 'node:assert/strict';
 import test from 'node:test';
@@ -183,7 +183,7 @@ test('37d complete ordinary call survives while unsupported return shape refuses
     const range = name === 'core-call-only-refusal' ? directCall(fn).range : fn.body.at(-1).range;
     if (name === 'core-call-only-refusal') assert.deepEqual(directCall(fn).arguments, []);
     if (name === 'core-call-only-refusal') {
-      assert.deepEqual(hir,coreCallOracle.hir);assert.equal(lowerHir(hir,ctx),migrateArrayCore10(coreCallOracle.core));
+      assert.deepEqual(hir,coreCallOracle.hir);assert.equal(lowerHir(hir,ctx),migrateArrayCore11(coreCallOracle.core));
       assert.deepEqual(hir,before);return;
     }
     let core; const error = caught(() => { core = lowerHir(hir, ctx); });

@@ -26,6 +26,26 @@ mlir::LogicalResult verifyOperation(mlir::Operation *operation) {
   const auto name = operation->getName().getStringRef();
   const bool create=name=="tsfg_array.create",alias=name=="tsfg_array.alias",read=name=="tsfg_array.read_checked";
   const bool store=name=="tsfg_array.store_dense_checked",resize=name=="tsfg_array.resize_checked";
+  const bool viewCreate=name=="tsfg_array.view_create_checked",viewRead=name=="tsfg_array.view_read_checked",viewLength=name=="tsfg_array.view_length";
+  if (viewCreate || viewRead || viewLength) {
+    const auto count=viewCreate ? 3u : viewRead ? 2u : 1u;
+    if (operation->getNumRegions() || operation->getNumSuccessors() || operation->getNumResults()!=1 || operation->getNumOperands()!=count)
+      return reject("core-ir-array-shape","view operation shape differs");
+    const std::vector<llvm::StringRef> keys=viewCreate
+      ? std::vector<llvm::StringRef>{"intrinsic","receiver_binding","receiver_range","callee_range","start","length","local","tsfg_source.start","tsfg_source.end"}
+      : viewRead ? std::vector<llvm::StringRef>{"receiver_binding","receiver_range","index","tsfg_source.start","tsfg_source.end"}
+      : std::vector<llvm::StringRef>{"receiver_binding","receiver_range","property","property_name_range","statement_range","tsfg_source.start","tsfg_source.end"};
+    if (!attributes(operation,keys)) return reject("core-ir-array-metadata","view operation fields differ");
+    const auto result=operation->getResult(0).getType();
+    if (!(viewCreate ? llvm::isa<ReadSpanType>(result) : viewRead ? result.isF64() : tsfg::typeCode(result)==8))
+      return reject("core-ir-array-type","view result type differs");
+    for (unsigned i=0;i<count;++i) {
+      auto type=operation->getOperand(i).getType();
+      if (!(i ? tsfg::typeCode(type)==8 : viewCreate ? llvm::isa<ArrayType>(type) : llvm::isa<ReadSpanType>(type)))
+        return reject("core-ir-array-type","view operand type differs");
+    }
+    return mlir::success();
+  }
   if ((!create && !alias && !read && !store && !resize) || operation->getNumRegions() || operation->getNumSuccessors() ||
       operation->getNumResults() != (store || resize ? 0u : 1u) ||
       (!create && operation->getNumOperands() != (alias ? 1u : store ? 3u : 2u)))
@@ -61,6 +81,9 @@ ARRAY_OP(AliasOp, "alias", mlir::OpTrait::OneOperand, mlir::OpTrait::OneResult)
 ARRAY_OP(ReadOp, "read_checked", mlir::OpTrait::NOperands<2>::Impl, mlir::OpTrait::OneResult)
 ARRAY_OP(StoreOp, "store_dense_checked", mlir::OpTrait::NOperands<3>::Impl, mlir::OpTrait::ZeroResults)
 ARRAY_OP(ResizeOp, "resize_checked", mlir::OpTrait::NOperands<2>::Impl, mlir::OpTrait::ZeroResults)
+ARRAY_OP(ViewCreateOp, "view_create_checked", mlir::OpTrait::NOperands<3>::Impl, mlir::OpTrait::OneResult)
+ARRAY_OP(ViewReadOp, "view_read_checked", mlir::OpTrait::NOperands<2>::Impl, mlir::OpTrait::OneResult)
+ARRAY_OP(ViewLengthOp, "view_length", mlir::OpTrait::OneOperand, mlir::OpTrait::OneResult)
 #undef ARRAY_OP
 class ArrayDialect : public mlir::Dialect {
 public:
@@ -68,16 +91,16 @@ public:
   static llvm::StringRef getDialectNamespace() { return "tsfg_array"; }
   explicit ArrayDialect(mlir::MLIRContext *context)
       : Dialect(getDialectNamespace(), context, mlir::TypeID::get<ArrayDialect>()) {
-    addTypes<ArrayType>(); addOperations<CreateOp, AliasOp, ReadOp, StoreOp, ResizeOp>();
+    addTypes<ArrayType,ReadSpanType>(); addOperations<CreateOp, AliasOp, ReadOp, StoreOp, ResizeOp,ViewCreateOp,ViewReadOp,ViewLengthOp>();
   }
   mlir::Type parseType(mlir::DialectAsmParser &parser) const override {
     llvm::StringRef mnemonic;
-    if (parser.parseKeyword(&mnemonic) || mnemonic != "array_f64") {
-      parser.emitError(parser.getNameLoc(), "[core-ir-array-type] expected array_f64"); return {};
+    if (parser.parseKeyword(&mnemonic) || (mnemonic != "array_f64" && mnemonic != "readspan_f64")) {
+      parser.emitError(parser.getNameLoc(), "[core-ir-array-type] expected nominal Array or ReadSpan"); return {};
     }
-    return ArrayType::get(getContext());
+    return mnemonic=="array_f64" ? mlir::Type(ArrayType::get(getContext())) : mlir::Type(ReadSpanType::get(getContext()));
   }
-  void printType(mlir::Type, mlir::DialectAsmPrinter &printer) const override { printer << "array_f64"; }
+  void printType(mlir::Type type, mlir::DialectAsmPrinter &printer) const override { printer << (llvm::isa<ArrayType>(type) ? "array_f64" : "readspan_f64"); }
 };
 } // namespace
 void registerDialect(mlir::DialectRegistry &registry) { registry.insert<ArrayDialect>(); }
@@ -108,7 +131,7 @@ bool usesCandidate(mlir::ModuleOp module) {
     while (!types.empty() || !attrs.empty()) {
       if (!types.empty()) {
         auto type = types.back(); types.pop_back();
-        if (llvm::isa<ArrayType>(type)) return true;
+        if (llvm::isa<ArrayType,ReadSpanType>(type)) return true;
         if (!seenTypes.insert(type).second) continue;
         type.walkImmediateSubElements([&](mlir::Attribute attr) { attrs.push_back(attr); },
                                       [&](mlir::Type nested) { types.push_back(nested); });
