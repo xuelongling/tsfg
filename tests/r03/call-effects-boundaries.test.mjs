@@ -146,8 +146,18 @@ test('unsafe context graphs reject without invoking accessors or Proxy traps',()
 test('unsafe selected HIR graphs reject before reading caller behavior',()=>{
  let traps=0;const proxy=new Proxy(clone(first.hir),{get(){traps++;throw new Error('get invoked');},ownKeys(){traps++;throw new Error('keys invoked');}});
  const accessor=clone(first.hir);Object.defineProperty(accessor,'functions',{enumerable:true,get(){traps++;throw new Error('getter invoked');}});
- for(const hir of [proxy,accessor])for(const action of [()=>analyzeModuleCalls(hir,{mode:'initial'}),()=>selected(hir,{mode:'initial'})])
-  rejects(action,'context');
+ // The accepted module-callable selector rejects an outer Proxy before the
+ // legacy call-effects walker. A functions getter still reaches that walker.
+ // Exact BASE reproduces this distinction; both boundaries invoke zero traps.
+ for(const action of [()=>analyzeModuleCalls(proxy,{mode:'initial'}),()=>selected(proxy,{mode:'initial'})])
+  assert.throws(action,error=>{
+   assert.ok(error instanceof TypeError);
+   assert.equal(Reflect.get(error,'code'),'r03-module-callable-input');
+   assert.equal(error.message,'r03-module-callable-input: invalid module callable candidate');
+   assert.equal(Reflect.get(error,'ruleId'),'r01-input-boundary');
+   assert.equal(Reflect.get(error,'phase'),'hir');return true;
+  });
+ for(const action of [()=>analyzeModuleCalls(accessor,{mode:'initial'}),()=>selected(accessor,{mode:'initial'})])rejects(action,'context');
  assert.equal(traps,0);
 });
 

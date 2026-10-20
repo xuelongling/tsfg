@@ -5,6 +5,7 @@ import { rejectUnknownModuleKernel } from './module-callable-publication.mjs';
 import { analyzeModuleCalls } from './module-hir.mjs';
 import { checkCallEffectsInputs } from './call-effects.mjs';
 import { checkGenericJsonValueBudget } from './generic-json-budget.mjs';
+import { copyGenericJsonBytes, readGenericJson } from './generic-json.mjs';
 import { canonical, own } from './identity.mjs';
 
 // Match the bounded JSON profile in 0023. Its HIR/context errors stay unchanged;
@@ -16,6 +17,8 @@ const messages = {
   'r03-d-kernel-access-identity': 'kernel parallel group identity differs',
   'r03-d-kernel-access-limit': 'kernel parallel group budget exceeded',
   'r03-d-kernel-access-conflict': 'published global access sets conflict',
+  'r03-d-kernel-access-proof': 'kernel parallel proof differs from verified inputs',
+  'r03-d-kernel-access-canonical': 'kernel parallel proof is not canonical',
 };
 /** @param {string} [code] @param {any} [details] @returns {never} */
 function failure(code = 'r03-d-kernel-access', details = undefined) {
@@ -123,4 +126,32 @@ export function verifyKernelParallelGroup(hir, fixedPublicationContext, request)
   checkBudget(proof);
   // No caller or analysis graph is shared by the returned independently frozen DTO.
   return own(JSON.parse(canonical(proof)));
+}
+
+/** Cold proof verification recomputes the complete current fixed analysis.
+ * A supplied proof can never authorize a target or substitute for its inputs.
+ * @param {any} proof @param {any} hir @param {any} context @param {any} request */
+export function verifyKernelParallelProof(proof, hir, context, request) {
+  checkBudget(proof);
+  const expected = verifyKernelParallelGroup(hir, context, request);
+  if (canonical(proof) !== canonical(expected)) failure('r03-d-kernel-access-proof');
+  return expected;
+}
+/** @param {any} proof @param {any} hir @param {any} context @param {any} request */
+export function printKernelParallelProof(proof, hir, context, request) {
+  return canonical(verifyKernelParallelProof(proof, hir, context, request)) + '\n';
+}
+// The existing value limit counts canonical JSON without LF. Its transport adds
+// precisely one byte; the same value policy is reapplied before accepting a DTO.
+const transportPolicy = Object.freeze({ ...policy, bytes: policy.bytes + 1 });
+/** @param {Uint8Array} bytes @param {any} hir @param {any} context @param {any} request */
+export function readKernelParallelProof(bytes, hir, context, request) {
+  let input;
+  try { input = readGenericJson(copyGenericJsonBytes(bytes, transportPolicy), transportPolicy); }
+  catch (error) {
+    failure(error?.code?.endsWith('-limit') ? 'r03-d-kernel-access-limit' : 'r03-d-kernel-access-canonical');
+  }
+  const expected = verifyKernelParallelProof(input.value, hir, context, request);
+  if (input.text !== canonical(expected) + '\n') failure('r03-d-kernel-access-canonical');
+  return expected;
 }

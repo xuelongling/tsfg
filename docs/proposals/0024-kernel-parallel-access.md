@@ -126,3 +126,33 @@ Source012 admission. Main37 remains open for broader official
 Source/Query/borrow/indirect/device responsibilities.
 Rollback removes the new export/module/input record; existing default and
 Published-call behavior and all external state remain unchanged.
+
+## Cold proof verification and canonical transport
+
+The existing proof now has three public adapters in compiler/hir.mjs:
+verifyKernelParallelProof(proof,hir,fixedPublicationContext,request),
+printKernelParallelProof(proof,hir,fixedPublicationContext,request), and
+readKernelParallelProof(bytes,hir,fixedPublicationContext,request).
+Verification checks the complete untrusted proof budget, recomputes the existing
+verifyKernelParallelGroup from all current inputs, and requires exact equality
+of every proof field. A self-reported inputIdentity/digest or empty access set
+cannot authorize a target. Existing HIR, context, Host/Top and conflict errors
+propagate unchanged. No cached analysis or supplied report is trusted.
+
+The printer emits canonical JSON plus exactly one LF. The reader first snapshots
+a plain Uint8Array or Buffer through the shared bounded JSON module, rejecting
+invalid UTF8, BOM, duplicate keys and malformed JSON. It then performs the same
+complete proof verification and requires those exact canonical+LF bytes. The
+existing canonical value budget remains 8MiB/depth128/200000tokens/1MiB strings;
+transport permits one extra byte for the single LF and reapplies the unchanged
+value budget. No prototype/accessor/Proxy behavior is invoked at the boundary.
+
+Two new TypeError diagnostics use the existing ruleId r01-kernel and phase hir:
+r03-d-kernel-access-proof: kernel parallel proof differs from verified inputs;
+r03-d-kernel-access-canonical: kernel parallel proof is not canonical.
+Malformed transport uses canonical, exhausted budgets use the existing limit,
+and malformed proof graphs retain the existing kernel-access error.
+Results are independently owned and deeply frozen. This completes cold proof
+consumption for the existing scalar/GlobalId interface; it adds no effect facet,
+Array/ReadSpan bridge, scheduling/device/execution permission or formal format.
+No new build input, dependency, schema or identity algorithm is introduced.
