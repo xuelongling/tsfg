@@ -2,6 +2,7 @@
 #include "bytecode.h"
 #include "core-verify.h"
 #include "dialect.h"
+#include "exception.h"
 #include "native_cost.h"
 #include "nullable.h"
 #include "nullable-wire.h"
@@ -41,6 +42,8 @@ public:
 } // namespace
 
 int main(int argc, char **argv) {
+  if (argc == 2 && llvm::StringRef(argv[1]) == "--canonicalize-exception-candidate")
+    return tsfg::exception::canonicalizeCandidate();
   if (argc == 2 && llvm::StringRef(argv[1]) == "--inspect-native-instructions") {
     auto input = llvm::MemoryBuffer::getSTDIN();
     if (!input) return 2;
@@ -57,6 +60,12 @@ int main(int argc, char **argv) {
   if (!input) {
     llvm::errs() << "[core-ir-input] cannot read stdin\n";
     return 2;
+  }
+  if (tsfg::exception::mentionsPrivate((*input)->getBuffer())) {
+    llvm::errs() << (llvm::StringRef(argv[1]) == "--emit-bytecode"
+      ? "[r04-core-exception-unsupported] wire9 cannot encode a private exception candidate\n"
+      : "[core-ir-exception-private-mode] private exception candidate requires its explicit command\n");
+    return 3;
   }
   mlir::DialectRegistry registry;
   tsfg::registerCoreDialect(registry);

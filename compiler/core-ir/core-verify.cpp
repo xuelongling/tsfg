@@ -1,5 +1,6 @@
 // SPDX-License-Identifier: MIT
 #include "core-verify.h"
+#include "exception.h"
 #include "bytecode.h"
 #include "nullable.h"
 #include "string-core.h"
@@ -11,6 +12,10 @@
 
 namespace tsfg {
 mlir::LogicalResult verifyCoreModule(mlir::ModuleOp module) {
+  if (exception::usesCandidate(module)) {
+    llvm::errs() << "[core-ir-exception-private-mode] private candidate requires its explicit verifier\n";
+    return mlir::failure();
+  }
   if (arrays::usesCandidate(module)) return arrays::verifyCandidate(module);
   if (strings::usesCandidate(module)) return strings::verifyCandidate(module);
   if (module->hasAttr("tsfg_core.nullable")) return nullable::verifyCandidate(module);
