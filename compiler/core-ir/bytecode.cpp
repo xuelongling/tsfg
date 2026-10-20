@@ -1,5 +1,6 @@
 // SPDX-License-Identifier: MIT
 #include "bytecode.h"
+#include "closure.h"
 #include "bytecode_encoding.h"
 #include "dialect.h"
 #include "module.h"
@@ -67,6 +68,10 @@ uint8_t scalarOpcode(llvm::StringRef name) {
 // Formal R04 producer: derive register instructions from verified MLIR SSA.
 // No frontend Snapshot or AST is available to this consumer.
 mlir::LogicalResult verifiedBytecode(mlir::ModuleOp module, Bytes &packet) {
+  if (closure::usesCandidate(module)) {
+    packet.clear();
+    return closure::reject("r04-core-closure-unsupported", "wire9 cannot encode a closure candidate module");
+  }
   auto reject = [&]() {
     llvm::errs() << "[r04-core-invalid] unsupported Core identity, target, SSA or source map\n";
     return mlir::failure();

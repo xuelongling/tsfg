@@ -1,5 +1,6 @@
 // SPDX-License-Identifier: MIT
 #include "core-verify.h"
+#include "closure.h"
 #include "exception.h"
 #include "bytecode.h"
 #include "nullable.h"
@@ -15,6 +16,15 @@ mlir::LogicalResult verifyCoreModule(mlir::ModuleOp module) {
   if (exception::usesCandidate(module)) {
     llvm::errs() << "[core-ir-exception-private-mode] private candidate requires its explicit verifier\n";
     return mlir::failure();
+  }
+  if (closure::usesCandidate(module)) {
+    if (!module->hasAttr("tsfg_core.closure"))
+      return closure::reject("core-ir-closure-marker", "closure types or operations require their exact marker");
+    if (arrays::usesCandidate(module) || strings::usesCandidate(module) ||
+        nullable::usesCandidate(module) || module->hasAttr("tsfg_core.reference"))
+      return closure::reject("core-ir-closure-marker", "mixed candidate domains are not permitted");
+    closure::ClosureRootAnalysis roots;
+    return closure::analyzeRoots(module, roots);
   }
   if (arrays::usesCandidate(module)) return arrays::verifyCandidate(module);
   if (strings::usesCandidate(module)) return strings::verifyCandidate(module);

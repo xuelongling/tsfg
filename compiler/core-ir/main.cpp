@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: MIT
 #include "bytecode.h"
 #include "core-verify.h"
+#include "closure.h"
 #include "dialect.h"
 #include "exception.h"
 #include "native_cost.h"
@@ -69,6 +70,7 @@ int main(int argc, char **argv) {
   }
   mlir::DialectRegistry registry;
   tsfg::registerCoreDialect(registry);
+  tsfg::closure::registerDialect(registry);
   tsfg::nullable::registerDialect(registry);
   tsfg::strings::registerDialect(registry);
   tsfg::arrays::registerDialect(registry);
@@ -80,6 +82,7 @@ int main(int argc, char **argv) {
     llvm::errs() << "[core-ir-invalid] parse or verification failed\n";
     return 3;
   }
+  const bool closureCandidate = tsfg::closure::usesCandidate(*module);
   const bool reference = module->getOperation()->hasAttr("tsfg_core.reference");
   const bool nullable = tsfg::nullable::usesCandidate(*module);
   const bool stringCandidate = tsfg::strings::usesCandidate(*module);
@@ -87,9 +90,9 @@ int main(int argc, char **argv) {
   const bool nullableWire = llvm::StringRef(argv[1]) == "--emit-nullable-candidate";
   // The shared legacy stdin/MLIR parser remains unchanged. Apply the private
   // format budget before candidate metadata, typed verification and CFG work.
-  if ((reference || nullable || nullableWire || stringCandidate || arrayCandidate) && (*input)->getBufferSize() > referenceByteBudget) {
+  if ((reference || nullable || nullableWire || stringCandidate || arrayCandidate || closureCandidate) && (*input)->getBufferSize() > referenceByteBudget) {
     llvm::errs() << (arrayCandidate ? "[core-ir-array-budget]" : stringCandidate ? "[core-ir-string-budget]" :
-                     nullable || nullableWire ? "[core-ir-nullable-budget]" : "[core-ir-reference-budget]")
+                     closureCandidate ? "[core-ir-closure-budget]" : nullable || nullableWire ? "[core-ir-nullable-budget]" : "[core-ir-reference-budget]")
                  << " input exceeds candidate byte budget\n";
     return 3;
   }
@@ -104,6 +107,10 @@ int main(int argc, char **argv) {
     return 3;
   }
   if (mlir::failed(tsfg::verifyCoreModule(*module))) return 3;
+  if (closureCandidate && (nullableWire || llvm::StringRef(argv[1]) == "--emit-bytecode")) {
+    llvm::errs() << "[r04-core-closure-unsupported] wire9 cannot encode a closure candidate module\n";
+    return 3;
+  }
   if (arrayCandidate && (nullableWire || llvm::StringRef(argv[1]) == "--emit-bytecode")) {
 #if defined(_WIN32)
     // This private wire diagnostic has an exact LF byte contract. LLVM exposes
@@ -145,13 +152,13 @@ int main(int argc, char **argv) {
   }
   // The current optimization pipeline is deliberately the canonical identity
   // pass: it performs full verification and retains every event/failure anchor.
-  if (reference || nullable || stringCandidate || arrayCandidate) {
+  if (reference || nullable || stringCandidate || arrayCandidate || closureCandidate) {
     ReferenceOutput output;
     module->print(output, mlir::OpPrintingFlags().printGenericOpForm());
     output << '\n';
     if (output.exceeded()) {
       llvm::errs() << (arrayCandidate ? "[core-ir-array-budget]" : stringCandidate ? "[core-ir-string-budget]" :
-                       nullable ? "[core-ir-nullable-budget]" : "[core-ir-reference-budget]")
+                       closureCandidate ? "[core-ir-closure-budget]" : nullable ? "[core-ir-nullable-budget]" : "[core-ir-reference-budget]")
                    << " output exceeds candidate byte budget\n";
       return 3;
     }

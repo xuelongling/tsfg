@@ -171,6 +171,14 @@ public:
   }
 };
 
+mlir::Type scalarType(mlir::MLIRContext *context, llvm::StringRef name) {
+  if (name == "i32") return mlir::IntegerType::get(context,32);
+  if (name == "bool") return mlir::IntegerType::get(context,1);
+  if (name == "f32") return mlir::Float32Type::get(context);
+  if (name == "f64") return mlir::Float64Type::get(context);
+  for (uint8_t code = 3; code <= 11; ++code) if (name == scalarNames[code]) return IntegerType::get(context,code);
+  return {};
+}
 llvm::StringRef scalarName(uint8_t code) { return scalarNames[code]; }
 void registerCoreDialect(mlir::DialectRegistry &registry) { registry.insert<CoreDialect>(); }
 } // namespace tsfg

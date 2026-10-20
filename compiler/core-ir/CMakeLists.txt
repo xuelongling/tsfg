@@ -51,6 +51,8 @@ add_llvm_executable(tsfg-core-ir main.cpp dialect.cpp bytecode.cpp bytecode_enco
   reference.cpp reference-index.cpp reference-cfg.cpp reference-verify.cpp
   reference-construction.cpp reference-roots.cpp
   exception.cpp exception-json.cpp exception-source.cpp exception-provenance.cpp
-  exception-hir.cpp exception-cfg.cpp exception-verify.cpp exception-command.cpp)
+  exception-hir.cpp exception-cfg.cpp exception-verify.cpp exception-command.cpp
+  managed-cfg.cpp managed-liveness.cpp closure.cpp closure-metadata.cpp closure-identities.cpp closure-verify.cpp
+  closure-cfg.cpp closure-roots.cpp closure-initialization.cpp closure-init-flow.cpp)
 target_link_libraries(tsfg-core-ir PRIVATE MLIRIR MLIRParser MLIRFuncDialect MLIRControlFlowDialect
   LLVMCore LLVMObject LLVMX86CodeGen LLVMX86Desc LLVMX86Info LLVMX86Disassembler)
