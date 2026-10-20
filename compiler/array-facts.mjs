@@ -6,7 +6,7 @@ import { copyGenericJsonBytes, readGenericJson, checkGenericJsonValueBudget } fr
 import { arrayFactsLimits as policy, arrayFactsFailure as failure, arrayCheck as check,
   arrayRecord as record, validateArrayFactsPayload } from './array-facts-model.mjs';
 
-const schemaHash = 'sha256:3067c8bb8296ab6687ee6549dd44522cae17f4b87b0a3996616ba7b373952617';
+const schemaHash = 'sha256:d2ee930b76b8fd5c2270ad69579c9c61377831a97034d3a8890d8aa770ebabc2';
 export const arrayFactsFormat = own({ family: 'tsfg.array-facts-package-candidate', version: 7, schemaHash });
 check(sha256(canonical(descriptor) + '\n') === schemaHash, 'identity');
 const valuePolicy = Object.freeze({ ...policy, bytes: policy.bytes - 1 });

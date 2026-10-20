@@ -38,7 +38,7 @@ let old18Promise;
 /** @returns {Promise<any>} */
 export function old18Oracle() {
   return old18Promise ??= pinnedContainer('./legacy-v7-old18-oracle.json',6089299,
-    'bc28aa392702dd1618cd4526e592c3e7f832938eac1aa26a9564e5831577840c').then(value=>{
+    '9a36b9ae1f4c1498b711d4dfff1c6dc52654518eef3deef902591b0e3fd0ef2a').then(value=>{
     assert.equal(value.family,'tsfg.r03.legacy-v5-old18-oracle');assert.equal(value.version,5);
     assert.equal(value.crosspin.interface.sha256,'000e7af23a8ad45c5bb0407eeb0697e3ef5eb6c9b250bc2fdba77a15f3a158fa');
     assert.equal(value.cases.length,18);
@@ -55,7 +55,7 @@ export function old18Oracle() {
       const dts=packet.payload.files.find(f=>f.path.endsWith('/minimal-arrays-v3.d.ts'));assert.ok(dts);
       assert.equal(dts.byteLength,484);assert.equal(dts.utf16Length,484);
       assert.equal(dts.sha256,'282b335a6e0e0493fa74a3c1dd56f234f8c679079acdaf0600cefb8306c26415');
-      assert.equal(row.hir.format.version,7);assert.equal(row.hir.types.length,4);
+      assert.equal(row.hir.format.version,8);assert.equal(row.hir.types.length,4);
       assert.equal(row.hir.types[3].name,'ReadSpan');assert.equal(row.hir.types[3].readonly,true);
       assert.ok(!Object.hasOwn(row.hir,'readSpanPlan'),'passive metadata is not an actual view');
     }
@@ -98,10 +98,10 @@ export async function fixtures() {
 }
 /** @returns {Promise<any>} */
 export async function coreOracle() {
-  const value=await pinnedContainer('./legacy-v7-old8-core-oracle.json',806405,
-    '0e976fb9f7e36ef4035b6b2019da6e35897bd81690245bedaa1ec455e2b77724');
+  const value=await pinnedContainer('./legacy-v7-old8-core-oracle.json',806522,
+    'ae78ba65233ba7b2f4166914622271408f3cf5f62d19c3ca356b779beb5ea075');
   const legacy=await pinned('./array-core-oracle-v3.json',122335,'44c460f568aebd9dba7b25dab00857a47fe431a3f7cc4679a6d1d09a427552d5');
-  const h=await hirOracle();assert.equal(value.cases.length,8);assert.equal(value.format.version,7);
+  const h=await hirOracle();assert.equal(value.cases.length,8);assert.equal(value.format.version,8);
   return {...value,quoteVectors:legacy.quoteVectors,jcsPreimageVectors:legacy.jcsPreimageVectors,
     additionalIndependentPreimages:legacy.additionalIndependentPreimages,cases:value.cases.map((c,i)=>{
       assert.equal(c.name,h.cases[i].name);

@@ -7,7 +7,7 @@ import { readArrayFactsCandidate,writeArrayFactsCandidate } from '../../compiler
 import { buildHir,verifyHir,printHir,readHir,lowerHir,analyzeArrayCalls,verifyArrayCalls,printArrayCalls,readArrayCalls } from '../../compiler/hir.mjs';
 import { canonical,hash,fresh,factsContext,caught,deeplyFrozen } from './array-call-test-helpers.mjs';
 // Exact independent v7 whole data; the original depth16 Source program is unchanged.
-const fixturePin={bytes:136986,sha256:'ceb07230d52cec6b1297c559f97ba23417812be518c81d4466d861d1be3ca2ac'};
+const fixturePin={bytes:136986,sha256:'59baf99dd0209a279205d3b7b642ae278819e282f59c688bb7d74af9070ec5b3'};
 const frozen=readFile(new URL('./legacy-v7-depth16-oracle.json',import.meta.url)).then(bytes=>{
   assert.equal(bytes.length,fixturePin.bytes);assert.equal(hash(bytes),'sha256:'+fixturePin.sha256);
   const bundle=JSON.parse(bytes.toString('utf8'));
@@ -17,7 +17,7 @@ const frozen=readFile(new URL('./legacy-v7-depth16-oracle.json',import.meta.url)
   assert.deepEqual(row.sourceBundlePin,{bytes:18326,sha256:'dc3879d5e1c6aca40e38a943263e0166e12b1a82080a8a479f7e523a9f6705f5'});
   assert.equal(row.inheritedProvenance.productImported,false);assert.equal(row.inheritedProvenance.productionOutputSampled,false);
   assert.deepEqual(row.inheritedProvenance.official.diagnostics,{syntax:0,semantic:0,program:0,global:0});
-  assert.equal(row.hir.format.version,7);assert.equal(row.analysis.format.version,7);
+  assert.equal(row.hir.format.version,8);assert.equal(row.analysis.format.version,8);
   assert.equal(row.hir.types.length,4);assert.equal(row.hir.types[3].readonly,true);
   assert.equal(row.inheritedProvenance.official.sourceRangeRoles,95);
   return row;

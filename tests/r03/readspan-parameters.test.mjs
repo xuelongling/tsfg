@@ -11,13 +11,13 @@ import { pinned,pinnedContainer,jcs,sha,fresh,wire,deeplyFrozen } from './array-
 
 // The preserved corrected FIRST container is pretty JSON; its embedded wire texts are canonical.
 const firstBytes=await readFile(new URL('./legacy-v7-first-parameter-oracle.json',import.meta.url));
-assert.equal(firstBytes.length,159540);
-assert.equal(sha(firstBytes),'49640a0c66422f1719f6c8aecfe2883fec7132577f10d7ecd35af2034cbe8963');
+assert.equal(firstBytes.length,159566);
+assert.equal(sha(firstBytes),'4c9c1dc8ac1ec282e4c01783bd60db48fac1ed10e2a2ddf8f33294b0fa437012');
 const first=JSON.parse(firstBytes.toString());
-const adjacent=await pinnedContainer('./legacy-v7-parameter-adjacent-oracle.json',1004017,
-  'c2160373837edae079b341edeb16d7ecd23afd25a950639303d1f99aeb878163');
+const adjacent=await pinnedContainer('./legacy-v7-parameter-adjacent-oracle.json',1004199,
+  'b998b26f10793791664e5d540a9b0dd0f1223c5458bfebe11ddcd7f16470d6bc');
 const controls=await pinnedContainer('./legacy-v7-parameter-cold-oracle.json',352496,
-  '825d34b198da3ab1269c34bebfd671efec41fe1090ebfb0aa29df0da2df3320c');
+  'fd25a9a92806c128599a8c73a1d4a997ddf531a7b8e01f0354127b4df2249ac2');
 // This pinned v5 custody is historical; Root separately qualifies current v7 actual frames.
 const official=await pinned('./readspan-parameters-official-crosscheck.json',15590,
   '5478d8d5740c9541ee52ef1c861f52cdfe781d7515f1391f2f03fc419409bb30');
@@ -176,8 +176,8 @@ test('26b retained official custody and private6 full slots/shared completion/fi
   const mixed=byId('mixed-full-slots');
   assert.ok(mixed.hir.readSpanPlan.calls.some(call=>call.arguments.some(arg=>arg.index>0)));
   for(const row of cases){
-    assert.equal(row.hir.format.version,7);assert.equal(row.hir.facts.version,7);
-    assert.equal(row.hir.readSpanPlan.version,3);assert.equal(row.context.version,3);
+    assert.equal(row.hir.format.version,8);assert.equal(row.hir.facts.version,7);
+    assert.equal(row.hir.readSpanPlan.version,4);assert.equal(row.context.version,4);
     assert.equal(JSON.parse(row.packageText).version,7);
   }
 });

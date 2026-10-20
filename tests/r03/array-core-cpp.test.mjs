@@ -18,15 +18,15 @@ function refused(actual,diagnostic) {
 }
 
 test('26c same real C++ CLI preserves Array7 no-view/no-call packages and independent candidate boundaries',async t=>{
-  const manifest=await pinnedContainer('./array-core-cpp-cases-v7.json',2544769,'36f8dcae2795224d307af1ea5c23acda001f3ffa966dc0692c8d3992f94cd89f');
-  const oracle=await pinnedContainer('./legacy-v7-old8-core-oracle.json',806405,'0e976fb9f7e36ef4035b6b2019da6e35897bd81690245bedaa1ec455e2b77724');
+  const manifest=await pinnedContainer('./array-core-cpp-cases-v7.json',2546031,'ca5e6763d905c0ce20aeaa4a9c39bbcb02c6c0d4f6ba74f141c5a904f973f7e5');
+  const oracle=await pinnedContainer('./legacy-v7-old8-core-oracle.json',806522,'ae78ba65233ba7b2f4166914622271408f3cf5f62d19c3ca356b779beb5ea075');
   assert.deepEqual(manifest.provenance,{CLIExecuted:false,coldCasesReproveSource:false,compiled:false,linked:false,
     newCppOutputSampled:false,productEmitterImported:false,sourceModuleImported:false,
     wholeSourceCredit:'only separate pinned independent whole oracle; no cold Source admission'});
   assert.equal(manifest.version,5);assert.equal(oracle.version,5);
-  assert.deepEqual(oracle.format,{family:'tsfg.core-array-candidate',version:7,facts_version:7,
-    profile:'dense-f64-array-readspan-return-scc-checked-v7',
-    schemaHash:'sha256:013901ef2c1facede763e14438f2c747181f2713fdfc385bdd54ee98bb6e1e9b'});
+  assert.deepEqual(oracle.format,{family:'tsfg.core-array-candidate',version:8,facts_version:7,
+    profile:'dense-f64-array-readspan-array-origin-return-scc-checked-v8',
+    schemaHash:'sha256:8993ff55453d52e916743184c57d292182fdf15d948e4509cdbe3a4d4729a654'});
   assert.equal(manifest.cases.length,105);assert.equal(new Set(manifest.cases.map(c=>c.id)).size,105);
   assert.equal(manifest.cases.filter(c=>c.expected.exitCode===0).length,15);
   assert.equal(manifest.cases.filter(c=>c.expected.exitCode===3).length,90);
@@ -40,8 +40,8 @@ test('26c same real C++ CLI preserves Array7 no-view/no-call packages and indepe
     assert.ok(legacy.input.includes('version = '+version+' : i32'));
     assert.ok(legacy.input.includes('facts_version = '+version+' : i32'));
   }
-  const marker7='tsfg_core.array = {family = "tsfg.core-array-candidate", version = 7 : i32, schema = "sha256:013901ef2c1facede763e14438f2c747181f2713fdfc385bdd54ee98bb6e1e9b", profile = "dense-f64-array-readspan-return-scc-checked-v7", facts_version = 7 : i32}';
-  for(const c of manifest.cases.filter(c=>c.expected.exitCode===0))assert.ok(c.input.includes(marker7),c.id+' legal7 marker');
+  const marker8='tsfg_core.array = {family = "tsfg.core-array-candidate", version = 8 : i32, schema = "sha256:8993ff55453d52e916743184c57d292182fdf15d948e4509cdbe3a4d4729a654", profile = "dense-f64-array-readspan-array-origin-return-scc-checked-v8", facts_version = 7 : i32}';
+  for(const c of manifest.cases.filter(c=>c.expected.exitCode===0))assert.ok(c.input.includes(marker8),c.id+' legal8 marker');
   assert.equal(15*4+90+manifest.wire.length+2,168,'preserved authorized CLI geometry');
   assert.equal(1+manifest.cases.length+manifest.wire.length+2,124,'complete parent and TAP subtests');
   let whole={functions:0,parameters:0,sites:0,aliases:0,elements:0,checkedReads:0,stores:0,resizes:0,constants:0,operations:0,registers:0};

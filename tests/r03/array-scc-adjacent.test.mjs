@@ -10,8 +10,8 @@ import { actualSccPackets } from './array-scc-actual-fixtures.mjs';
 import { stateFor,entries,checkEntry,captureState,unchangedState,jcs,sha,rejects,deeplyFrozen } from './readspan-return-test-helpers.mjs';
 
 const bytes=await readFile(new URL('./array-scc-adjacent-oracle.json',import.meta.url));
-assert.equal(bytes.length,315270);
-assert.equal(sha(bytes),'b1a6e5650ed7c43c7cefdf7a728001e35a8591bb98dbdca3602577828fdcf13e');
+assert.equal(bytes.length,315374);
+assert.equal(sha(bytes),'a64815fa0440a7a97c369fea0c733ac503e9af90c45754344ee8570bfe00dace');
 const frozen=JSON.parse(bytes.toString('utf8'));
 /** @type {any[]} */
 const rows=frozen.cases;

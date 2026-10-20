@@ -8,8 +8,8 @@ import { copyGenericJsonBytes, checkGenericJsonValueBudget } from './generic-jso
 import { readArrayFactsCandidate } from './array-facts.mjs';
 import { arrayFactsLimits } from './array-facts-model.mjs';
 
-const schemaHash = 'sha256:a9f717b963ec6e777013c0ccd76ac23e7230a8bafe9367e8c0bb54eaaf011a1f';
-export const arrayHirFormat = own({ family: 'tsfg.array-hir-candidate', version: 7, schemaHash });
+const schemaHash = 'sha256:073fac908486f522ecd8beaa1f684bdbb102f60c97ff49e215a53d58f0ee7a0d';
+export const arrayHirFormat = own({ family: 'tsfg.array-hir-candidate', version: 8, schemaHash });
 export const arrayHirType = own({ kind: 'managedReference', name: 'Array',
   elementType: scalarTypeIds.f64, id: arrayTypeId });
 const target = own(bytecode.target), policy = arrayFactsLimits;

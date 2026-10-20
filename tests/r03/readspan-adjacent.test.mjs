@@ -9,7 +9,7 @@ import { buildHir,verifyHir,printHir,readHir,lowerHir,analyzeArrayCalls,
 import { pinnedContainer,jcs,fresh,wire,deeplyFrozen } from './array-test-fixtures.mjs';
 
 const oracle=await pinnedContainer('./legacy-v7-adjacent-oracle.json',5365418,
-  'e5b617739a9daa3b792cce0fccc67cc99cc5ed767167e142be97fbff4f9b491c');
+  'f22ad988bc831233bd09f743573c89ab0b5631c5fd7a86e35459b4f06176a822');
 assert.equal(oracle.family,'tsfg.r03.legacy-v5-adjacent-oracle');
 assert.equal(oracle.version,5);assert.equal(new Set(oracle.cases.map(row=>row.requestText)).size,18);
 assert.equal(oracle.crosspin.interface.sha256,
@@ -122,7 +122,7 @@ test('26a adjacent corpus retains independent official closures and complete str
     assert.equal(row.inheritedProvenance.facetsCrosscheckedWithExplicitHandRecipe,true);
     assert.equal(row.inheritedProvenance.noRuntimeGCOrPhysicalSingletonClaim,true);
     assert.equal(jcs(JSON.parse(row.packageText))+'\n',row.packageText);
-    assert.equal(row.hir.format.version,7);assert.equal(row.hir.types.length,4);
+    assert.equal(row.hir.format.version,8);assert.equal(row.hir.types.length,4);
     assert.ok(row.hir.readSpanPlan);
     if(row.analysis)assert.deepEqual(row.analysis,row.preConsumerAnalysis);
   }

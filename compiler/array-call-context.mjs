@@ -25,7 +25,7 @@ function record(value, keys) {
 const hash = value => typeof value === 'string' && /^sha256:[0-9a-f]{64}$/.test(value);
 function shape(context) {
   record(context,['family','version','mode','scopeDigest','expectedDigest','contracts']);
-  check(context.family === 'tsfg.array-publication-context-candidate' && context.version === 3 && context.mode === 'fixed');
+  check(context.family === 'tsfg.array-publication-context-candidate' && context.version === 4 && context.mode === 'fixed');
   check(hash(context.scopeDigest) && hash(context.expectedDigest) && Array.isArray(context.contracts)
     && context.contracts.length >= 1 && context.contracts.length <= 16);
   for (const row of context.contracts) {
@@ -62,25 +62,24 @@ function publication(hir, context) {
       check(!p.write && !p.structural,'identity');
     const origin = row.upper.returnOrigin;
     check(fn.returnType.id === readSpanTypeId ? origin === null
-      || fn.parameters[origin.index]?.type === readSpanTypeId : origin === null,'identity');
+      || [arrayTypeId,readSpanTypeId].includes(fn.parameters[origin.index]?.type) : origin === null,'identity');
     const {digest,...body} = row;
-    check(digest === sha256('tsfg.array-published-contract.v3\0' + canonical(body)),'identity');
+    check(digest === sha256('tsfg.array-published-contract.v4\0' + canonical(body)),'identity');
     records.set(fn.id,row);
   }
-  const scope = {profile:'array-readspan-return-scc-owner-relative-fixed-v3',rootFile:hir.rootFile,
+  const scope = {profile:'array-readspan-array-origin-return-scc-owner-relative-fixed-v4',rootFile:hir.rootFile,
     functions:functions.map(fn => ({functionId:fn.id,name:fn.name,sourcePath:fn.sourcePath,
       signatureHash:fn.signatureHash,parameterTypes:fn.parameters.map(p => p.type === arrayTypeId ? 'array.f64'
         : p.type === readSpanTypeId ? 'readspan.f64' : scalarName(p.type)),
       returnType:fn.returnType.id === readSpanTypeId ? 'readspan.f64' : 'f64'})),exports:hir.exports.map(row => ({name:row.name,functionId:row.functionId}))};
-  const scopeDigest = sha256('tsfg.array-call-scope.v3\0' + canonical(scope));
-  check(context.scopeDigest === scopeDigest && context.expectedDigest === sha256('tsfg.array-publication.v3\0'
+  const scopeDigest = sha256('tsfg.array-call-scope.v4\0' + canonical(scope));
+  check(context.scopeDigest === scopeDigest && context.expectedDigest === sha256('tsfg.array-publication.v4\0'
     + canonical({scopeDigest,contracts:context.contracts})),'identity');
   return {records,scopeDigest};
 }
-function returnFailure(fn, kind) {
-  const diagnostic = own({code:'r03-d-readspan-return-' + kind,ruleId:'r01-span',phase:'hir',
-    message:kind === 'escape' ? 'ReadSpan return may escape a local Array owner'
-      : 'ReadSpan return source is outside the required view-parameter profile',
+function returnEscape(fn) {
+  const diagnostic = own({code:'r03-d-readspan-return-escape',ruleId:'r01-span',phase:'hir',
+    message:'ReadSpan return may escape a local Array owner',
     primary:{sourceId:fn.sourcePath,...fn.body.at(-1).value.range}});
   throw Object.freeze(Object.assign(new TypeError(diagnostic.message),diagnostic));
 }
@@ -95,9 +94,7 @@ export function prepareArrayCalls(hir, context) {
     const violate = facet => arrayCallFailure('contract',{functionId:fn.id,facet,primary:{sourceId:fn.sourcePath,...fn.range}});
     if (fn.returnType.id === readSpanTypeId) {
       const origin = row.derivedReturnOrigin;
-      if (origin?.kind === 'allocation') returnFailure(fn,'escape');
-      if (origin?.kind === 'parameter' && fn.parameters[origin.index]?.type === arrayTypeId)
-        returnFailure(fn,'capability');
+      if (origin?.kind === 'allocation') returnEscape(fn);
       if (canonical(origin) !== canonical(row.effectiveReturnOrigin)) violate('returnOrigin');
     }
     for (const p of upper.parameters) for (const flag of flags) {

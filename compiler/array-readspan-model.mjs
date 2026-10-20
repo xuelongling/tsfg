@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: MIT
 // Complete formal/local view provenance and call completion, derived from verified owned HIR.
-import { canonical, own, sha256, readSpanTypeId } from './identity.mjs';
+import { canonical, own, sha256, arrayTypeId, readSpanTypeId } from './identity.mjs';
 
 /** @param {any} diagnostic @returns {never} */
 function failure(diagnostic) {
@@ -15,6 +15,8 @@ export function deriveReadSpanPlan(hir, prepared) {
   let work = 0;
   const charge = () => { if (++work > 1024) limit(); };
   const calls = prepared.flow.calls;
+  /** @type {Map<string,any>} */
+  const targets = new Map(hir.functions.map(fn => [fn.id,fn]));
   const callIndices = new Map(calls.map((call,index) => [
     canonical([call.functionId,call.expressionPath]),index,
   ]));
@@ -47,21 +49,30 @@ export function deriveReadSpanPlan(hir, prepared) {
       }
       view.lastUseEvent = sequence;
     };
-    const use = (binding,kind,index,path,range,fields = {}) => {
+    const useFamily = (view,binding,kind,index,path,range,fields = {}) => {
       charge();
-      const view = families.get(binding);
       const sequence = event(index,path,kind,range,{viewId:view.viewId,binding,...fields});
       completeUse(view,sequence);
       return sequence;
     };
+    const use = (binding,kind,index,path,range,fields = {}) =>
+      useFamily(families.get(binding),binding,kind,index,path,range,fields);
     const read = (value,index,path) => {
       if (value?.kind === 'readSpanReadChecked')
         use(value.receiver.binding,'view-read-complete',index,path,value.range);
       else if (value?.kind === 'readSpanLength')
         use(value.receiver.binding,'view-length-complete',index,path,value.range);
     };
-    const ordinaryCall = (value,index,path) => {
+    const callInfo = (value,path) => {
       const callIndex = callIndices.get(canonical([fn.id,path]));
+      const returnedView = calls[callIndex].returnedView;
+      // Only the trusted original target slot selects new versus existing family.
+      const arrayOrigin = returnedView !== null
+        && targets.get(value.target).parameters[returnedView.index].type === arrayTypeId;
+      return {callIndex,returnedView,arrayOrigin};
+    };
+    const ordinaryCall = (value,index,path) => {
+      const info = callInfo(value,path), {callIndex} = info;
       event(index,path,'array-call-effect',value.range,{callIndex});
       const uses = value.arguments.flatMap((argument,slot) => {
         if (argument.type !== readSpanTypeId) return [];
@@ -74,12 +85,28 @@ export function deriveReadSpanPlan(hir, prepared) {
         const sequence = event(index,path,'view-call-complete',value.range,{callIndex,uses});
         for (const occurrence of uses) completeUse(families.get(occurrence.binding),sequence);
       }
-      return {callIndex,returnedView:calls[callIndex].returnedView};
+      return info;
+    };
+    const createCallResult = (call,binding,index,path,range) => {
+      // Even an unused/discarded result registers after whole argument completion.
+      charge();
+      const {callIndex,returnedView} = call, parameterIndex = returnedView.index;
+      const viewId = sha256('tsfg.readspan.call-result-view.v1\0' + canonical({
+        functionId:fn.id,expressionPath:path,callRange:range,parameterIndex,
+      }));
+      const createEvent = event(index,path,'view-call-result-create-complete',range,
+        {viewId,binding,callIndex,parameterIndex});
+      const view = {viewId,binding,owner:returnedView.owner,origin:{kind:'callResult',createEvent},
+        aliases:[],useEvents:[],lastUseEvent:createEvent};
+      views.push(view);
+      if (binding !== null) families.set(binding,view);
+      return view;
     };
     for (const [index,stmt] of fn.body.entries()) {
       if (stmt.kind === 'local' && stmt.binding.type === readSpanTypeId) {
-        charge();
         const init = stmt.initializer, path = ['body',index,'initializer'];
+        // Preserve old alias registration before the call; new roots register after it.
+        if (init.kind !== 'arrayDirectCall' || !callInfo(init,path).arrayOrigin) charge();
         if (init.kind === 'readSpanCreateChecked') {
           const viewId = sha256('tsfg.readspan.view.v1\0' + canonical({
             functionId:fn.id,bindingId:stmt.binding.id,createRange:init.range,
@@ -90,12 +117,15 @@ export function deriveReadSpanPlan(hir, prepared) {
             origin:{kind:'local',createEvent},aliases:[],useEvents:[],lastUseEvent:createEvent};
           views.push(view); families.set(stmt.binding.id,view);
         } else if (init.kind === 'arrayDirectCall') {
-          const {callIndex,returnedView} = ordinaryCall(init,index,path);
-          const view = families.get(returnedView.binding);
-          families.set(stmt.binding.id,view);
-          const sequence = use(stmt.binding.id,'view-call-result-alias-complete',index,path,init.range,
-            {initializerBinding:returnedView.binding,callIndex,parameterIndex:returnedView.index});
-          view.aliases.push({binding:stmt.binding.id,initializerBinding:returnedView.binding,event:sequence});
+          const call = ordinaryCall(init,index,path);
+          if (call.arrayOrigin) createCallResult(call,stmt.binding.id,index,path,init.range);
+          else {
+            const {callIndex,returnedView} = call, view = families.get(returnedView.binding);
+            families.set(stmt.binding.id,view);
+            const sequence = use(stmt.binding.id,'view-call-result-alias-complete',index,path,init.range,
+              {initializerBinding:returnedView.binding,callIndex,parameterIndex:returnedView.index});
+            view.aliases.push({binding:stmt.binding.id,initializerBinding:returnedView.binding,event:sequence});
+          }
         } else {
           const view = families.get(init.binding);
           families.set(stmt.binding.id,view);
@@ -112,8 +142,12 @@ export function deriveReadSpanPlan(hir, prepared) {
         const field = stmt.kind === 'expression' ? 'expression' : 'value', value = stmt[field];
         const path = ['body',index,field];
         if (value.kind === 'arrayDirectCall') {
-          const {callIndex,returnedView} = ordinaryCall(value,index,path);
-          if (stmt.kind === 'return' && value.type === readSpanTypeId)
+          const call = ordinaryCall(value,index,path), {callIndex,returnedView} = call;
+          if (call.arrayOrigin) {
+            const view = createCallResult(call,null,index,path,value.range);
+            if (stmt.kind === 'return') useFamily(view,null,'view-return-complete',index,path,value.range,
+              {callIndex,parameterIndex:returnedView.index});
+          } else if (stmt.kind === 'return' && value.type === readSpanTypeId)
             use(returnedView.binding,'view-return-complete',index,path,value.range,
               {callIndex,parameterIndex:returnedView.index});
         } else if (stmt.kind === 'return' && value.type === readSpanTypeId)
@@ -123,7 +157,7 @@ export function deriveReadSpanPlan(hir, prepared) {
     }
     return {functionId:fn.id,views,events};
   });
-  return {plan:{version:3,publication:{scopeDigest:prepared.scopeDigest,
+  return {plan:{version:4,publication:{scopeDigest:prepared.scopeDigest,
     publishedDigest:prepared.publishedDigest},calls,functions},work};
 }
 
@@ -169,7 +203,7 @@ export function consumeReadSpanPlan(hir, prepared, registrationAndUseWork) {
       for (const view of state.views) {
         // Unused formals have no live interval; never coerce their null last use to event zero.
         if (view.lastUseEvent === null) continue;
-        if (view.origin.kind === 'local' && !(view.origin.createEvent < event.sequence)) continue;
+        if (view.origin.kind !== 'parameter' && !(view.origin.createEvent < event.sequence)) continue;
         if (!(event.sequence < view.lastUseEvent)) continue;
         // Global registration/use fees are already complete. Duplicated slots still charge.
         if (++work > 1024) limit();

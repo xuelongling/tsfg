@@ -9,7 +9,7 @@ import { buildHir,verifyHir,printHir,readHir,lowerHir,analyzeArrayCalls,
 import { pinnedContainer,jcs,sha,fresh,wire,deeplyFrozen } from './array-test-fixtures.mjs';
 
 const oracle=await pinnedContainer('./readspan-first-oracle-v7.json',140038,
-  'b7a2a9a21bce59ea6e8b9b0feba1f32bfff3283d14c9b067ff35d5bbab52c314');
+  '3d48f9a7830e5ac3ab24e0058cd37fdb6909c6a193041702f10a69dd6a3de4e9');
 assert.equal(oracle.family,'tsfg.r03.legacy-v5-readspan-first-oracle');assert.equal(oracle.version,5);
 assert.deepEqual(oracle.contractPin,{bytes:432866,
   sha256:'0b0cbffa7efc0d44589ba45bc71f5380d7cc7a089a6303dc2f224e9cc7505081'});
@@ -22,8 +22,8 @@ for(const row of oracle.cases){
   assert.deepEqual(row.official.diagnostics,{syntax:0,semantic:0,program:0,global:0});
   assert.equal(jcs(JSON.parse(row.packageText))+'\n',row.packageText);
   assert.equal(row.work.owner,30);
-  assert.equal(JSON.parse(row.packageText).version,7);assert.equal(row.hir.format.version,7);
-  assert.equal(row.context.version,3);assert.equal(row.hir.readSpanPlan.version,3);
+  assert.equal(JSON.parse(row.packageText).version,7);assert.equal(row.hir.format.version,8);
+  assert.equal(row.context.version,4);assert.equal(row.hir.readSpanPlan.version,4);
 }
 assert.deepEqual([before.work.borrowTotal,after.work.borrowTotal],[5,4]);
 
@@ -61,9 +61,9 @@ function seams(row,hir,context,report=row.analysis??row.preConsumerAnalysis){
  * @param {any} context */
 function resign(context){
   for(const row of context.contracts){
-    const {digest,...body}=row;row.digest='sha256:'+sha('tsfg.array-published-contract.v3\0'+jcs(body));
+    const {digest,...body}=row;row.digest='sha256:'+sha('tsfg.array-published-contract.v4\0'+jcs(body));
   }
-  context.expectedDigest='sha256:'+sha('tsfg.array-publication.v3\0'+jcs({
+  context.expectedDigest='sha256:'+sha('tsfg.array-publication.v4\0'+jcs({
     scopeDigest:context.scopeDigest,contracts:context.contracts}));
   return context;
 }

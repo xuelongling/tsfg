@@ -54,11 +54,11 @@ export function upstream(row,raw) {
   assert.deepEqual(writeArrayFactsCandidate(packet),raw);deeplyFrozen(packet);
   const base=projectArrayFacts(packet);assert.deepEqual(base,expectedBase(row));
   const context=row.publicationContext;
-  const scopeDigest='sha256:'+sha('tsfg.array-call-scope.v3\0'+jcs(row.scope));
+  const scopeDigest='sha256:'+sha('tsfg.array-call-scope.v4\0'+jcs(row.scope));
   assert.equal(context.scopeDigest,scopeDigest);
   for(const {digest,...body} of context.contracts)
-    assert.equal(digest,'sha256:'+sha('tsfg.array-published-contract.v3\0'+jcs(body)));
-  assert.equal(context.expectedDigest,'sha256:'+sha('tsfg.array-publication.v3\0'
+    assert.equal(digest,'sha256:'+sha('tsfg.array-published-contract.v4\0'+jcs(body)));
+  assert.equal(context.expectedDigest,'sha256:'+sha('tsfg.array-publication.v4\0'
     +jcs({scopeDigest,contracts:context.contracts})));
   if(row.completeFlow===null) {rejects(()=>prepareArrayCalls(base,fresh(context)),row.expectedDiagnostic);return;}
   const prepared=prepareArrayCalls(base,fresh(context));assert.deepEqual(prepared.flow,row.completeFlow);

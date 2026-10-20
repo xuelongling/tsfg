@@ -9,8 +9,8 @@ import { prepareArrayCalls } from '../../compiler/array-call-context.mjs';
 import { stateFor,entries,checkEntry,captureState,unchangedState,jcs,sha,deeplyFrozen,rejects } from './readspan-return-test-helpers.mjs';
 
 const original=await readFile(new URL('./array-scc-first-oracle.json',import.meta.url));
-assert.equal(original.length,166732);
-assert.equal(sha(original),'54e71d95306bba546cac49410912b0dfa6fe029bebc24ec5cb86289e977367b5');
+assert.equal(original.length,166784);
+assert.equal(sha(original),'fb1eb1e4334f79452c3db09395540783ff70d0318ee36c9fb0871c001b0caa52');
 const frozen=JSON.parse(original.toString('utf8'));
 /** @type {any[]} */
 const rows=frozen.firstCases;

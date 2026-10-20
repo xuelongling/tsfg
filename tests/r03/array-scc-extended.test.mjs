@@ -10,14 +10,14 @@ import { actualSccPackets } from './array-scc-actual-fixtures.mjs';
 import { stateFor,entries,checkEntry,captureState,unchangedState,jcs,sha,rejects,deeplyFrozen } from './readspan-return-test-helpers.mjs';
 
 const bytes=await readFile(new URL('./array-scc-extended-oracle.json',import.meta.url));
-assert.equal(bytes.length,6989103);
-assert.equal(sha(bytes),'78310a81142d2483ed5ef26f3ed0d2954b99fea25a916bb7f19e3796bc54d509');
+assert.equal(bytes.length,6989194);
+assert.equal(sha(bytes),'ec264901a0bc5623e1ac83dd3795f706d811c0b13aa3cabe7d4a9b17f30ae794');
 const frozen=JSON.parse(bytes.toString('utf8'));
 /** @type {any[]} */
 const extendedRows=frozen.cases;
 const firstBytes=await readFile(new URL('./array-scc-first-oracle.json',import.meta.url));
-assert.equal(firstBytes.length,166732);
-assert.equal(sha(firstBytes),'54e71d95306bba546cac49410912b0dfa6fe029bebc24ec5cb86289e977367b5');
+assert.equal(firstBytes.length,166784);
+assert.equal(sha(firstBytes),'fb1eb1e4334f79452c3db09395540783ff70d0318ee36c9fb0871c001b0caa52');
 /** @type {any[]} */
 const rows=[...JSON.parse(firstBytes.toString('utf8')).firstCases,...extendedRows];
 const actual=await actualSccPackets();

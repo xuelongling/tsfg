@@ -26,7 +26,7 @@ test('25d eight actual official Source publications reach whole HIR and static C
   assert.equal(state.exit.code,0);assert.equal(state.close.code,0);
   assert.equal(capture.all8ByteExactToPreproductionIndependentOracle,true);
   const rows=await fixtures(),actuals=[];
-  const core=await pinnedContainer('./legacy-v7-old8-core-oracle.json',806405,'0e976fb9f7e36ef4035b6b2019da6e35897bd81690245bedaa1ec455e2b77724');
+  const core=await pinnedContainer('./legacy-v7-old8-core-oracle.json',806522,'ae78ba65233ba7b2f4166914622271408f3cf5f62d19c3ca356b779beb5ea075');
   assert.deepEqual(capture.cases.map(c=>c.name),rows.map(r=>r.facts.name));
   for(let i=0;i<rows.length;i++){
     const row=rows[i],record=capture.cases[i],raw=await readFile(record.raw.path);

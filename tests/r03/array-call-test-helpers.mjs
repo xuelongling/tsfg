@@ -121,9 +121,9 @@ export function reframe(value) {
 export function resign(context) {
   for (const row of context.contracts) {
     const { digest, ...body } = row;
-    row.digest = hash('tsfg.array-published-contract.v3\0' + canonical(body));
+    row.digest = hash('tsfg.array-published-contract.v4\0' + canonical(body));
   }
-  context.expectedDigest = hash('tsfg.array-publication.v3\0' + canonical({
+  context.expectedDigest = hash('tsfg.array-publication.v4\0' + canonical({
     scopeDigest: context.scopeDigest, contracts: context.contracts,
   }));
   return context;

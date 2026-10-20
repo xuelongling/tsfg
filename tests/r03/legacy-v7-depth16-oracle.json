@@ -7,7 +7,7 @@
         "calls": [
           {
             "arguments": [],
-            "consumedDigest": "sha256:8d66ea29c9f07f0cc2a7e4060efaf525f8961d542ad6aa4c90391343831c4d5a",
+            "consumedDigest": "sha256:b77d07e7401ca8bfe04db7f98d1f6507756c3a03a9d4169abd97ab99f22c405d",
             "expressionPath": [
               "body",
               0,
@@ -25,7 +25,7 @@
           },
           {
             "arguments": [],
-            "consumedDigest": "sha256:bf6e5468bc71a7a7ba04c70919905b4803fb1e4a982fea6c12bbea4303496580",
+            "consumedDigest": "sha256:e2bfcee02ca2fbffaa090ac170f7293020b157a7480898a82ba234bbddd087a7",
             "expressionPath": [
               "body",
               0,
@@ -43,7 +43,7 @@
           },
           {
             "arguments": [],
-            "consumedDigest": "sha256:0df285a7054771b84b1b0d6ec9a2a10a591f027353f014de5ef9f3e28b043c79",
+            "consumedDigest": "sha256:1f84c1c118bb9bbc954c906a25150e92a47d589d6d3d389a36718539cda578f0",
             "expressionPath": [
               "body",
               0,
@@ -61,7 +61,7 @@
           },
           {
             "arguments": [],
-            "consumedDigest": "sha256:0f238d0e0451f86d383623d881ef1ac8fcb1aba1afdf0f9072b231d8a3b860ea",
+            "consumedDigest": "sha256:1c58b006db6f29864f7281b383ab5a6840cf2bb6646de9a161cd8201fdf94c5f",
             "expressionPath": [
               "body",
               0,
@@ -79,7 +79,7 @@
           },
           {
             "arguments": [],
-            "consumedDigest": "sha256:0f82c21ccd15489cbf6ca7a5b1336a254bcc1ca2d03cc33caf22badaeef27e4f",
+            "consumedDigest": "sha256:67ce0ec21294b55ba51f5fe47fb99ba844a1de4611ec36f76b5066af60885f00",
             "expressionPath": [
               "body",
               0,
@@ -97,7 +97,7 @@
           },
           {
             "arguments": [],
-            "consumedDigest": "sha256:7df24401da10a5d9e323e932f895e89065f5b2a3ee834deadac59f0415336c78",
+            "consumedDigest": "sha256:42d94bb6fc116709a6248c7425eef0cad6b7cc7f89a26067b04d1ef55ea09c9a",
             "expressionPath": [
               "body",
               0,
@@ -115,7 +115,7 @@
           },
           {
             "arguments": [],
-            "consumedDigest": "sha256:00fd23d0c8d8965b6b96a97ac057b247a7beca0bf78ad6a2f5b7f676f34b5023",
+            "consumedDigest": "sha256:f685acd3fd3025e3b82229a9cc50aaa8ae5187494ea5d332bae330d9577ba1fc",
             "expressionPath": [
               "body",
               0,
@@ -133,7 +133,7 @@
           },
           {
             "arguments": [],
-            "consumedDigest": "sha256:86109911e5645742f5ecad391059e5f8af0fb891a3b6c999baa6015c6f9aed22",
+            "consumedDigest": "sha256:ff52edb1f39ba60a5815a2a06f16b9f9367aad43e8203cedcae52ae048ed9678",
             "expressionPath": [
               "body",
               0,
@@ -151,7 +151,7 @@
           },
           {
             "arguments": [],
-            "consumedDigest": "sha256:c0f0881c3e4f8f130a48247ee864fa3483dd255d304d2eefd988a7bcc86d6032",
+            "consumedDigest": "sha256:7e0a44106de4f7a7c79e2547d218cd3269e019ad34eb3a19e5622d080d6b8dfc",
             "expressionPath": [
               "body",
               0,
@@ -169,7 +169,7 @@
           },
           {
             "arguments": [],
-            "consumedDigest": "sha256:50498f4729ae59828129d6def034183265a8431004b5b6187a918f9a12ae4aa9",
+            "consumedDigest": "sha256:8b52f5e0d8ea73d649408bca7f1429c0898f0921cd4075782631c2ac50b009ab",
             "expressionPath": [
               "body",
               0,
@@ -187,7 +187,7 @@
           },
           {
             "arguments": [],
-            "consumedDigest": "sha256:ee01904525a5a8d5cd9d4ebb8a4f09417bcacb71a0a4f7db332ac607ed3988a6",
+            "consumedDigest": "sha256:1b332119c455380e8408a67b84e3c093ca6eedba866f3ccddd72f36de1e4abf8",
             "expressionPath": [
               "body",
               0,
@@ -205,7 +205,7 @@
           },
           {
             "arguments": [],
-            "consumedDigest": "sha256:891cf2c3f51254eb8dd4b1f2bd47f213398bd896f777cd15bce5ec1de8538578",
+            "consumedDigest": "sha256:6fd07367b6a45ebb552da0d7640cb47be9b08067a5d11bbc4815c7a929f97a6a",
             "expressionPath": [
               "body",
               0,
@@ -223,7 +223,7 @@
           },
           {
             "arguments": [],
-            "consumedDigest": "sha256:97ce36a8e785f598a439bf4aa2113af76ab0cf5d45bd47105d5c788a17017736",
+            "consumedDigest": "sha256:681ed6b9fe1d2e9241ae104e128f1debf96989cf178a2fb616e2c8119426c266",
             "expressionPath": [
               "body",
               0,
@@ -241,7 +241,7 @@
           },
           {
             "arguments": [],
-            "consumedDigest": "sha256:be213c6a7ee1e5d2a398be318b9af9ebc72647273a5894c6ab0dc875321f9dde",
+            "consumedDigest": "sha256:b81ece0469197a99061fb40d51d9a558ab04757173816a0e788e91d1cf12b578",
             "expressionPath": [
               "body",
               0,
@@ -259,7 +259,7 @@
           },
           {
             "arguments": [],
-            "consumedDigest": "sha256:9eb02c5783e5df83be4a07226472cb8bcbb8aa797a3fbbafe4dd3fbb268ef7b2",
+            "consumedDigest": "sha256:2fdb7970f2864ab35f0edf3b4f2be2918423cd02133ab2410be42635d919716e",
             "expressionPath": [
               "body",
               0,
@@ -278,7 +278,7 @@
         ],
         "contracts": [
           {
-            "digest": "sha256:bf6e5468bc71a7a7ba04c70919905b4803fb1e4a982fea6c12bbea4303496580",
+            "digest": "sha256:e2bfcee02ca2fbffaa090ac170f7293020b157a7480898a82ba234bbddd087a7",
             "functionId": "sha256:0b9d85b9b9b4663e246599cab0730d8e6b8d06cec06ef5964bb87f62acf0f759",
             "signatureHash": "sha256:1a3c0248ecb7e498007af6b22ac9e18eb5df6b9390677401805ce98ab2934d96",
             "upper": {
@@ -292,7 +292,7 @@
             }
           },
           {
-            "digest": "sha256:50498f4729ae59828129d6def034183265a8431004b5b6187a918f9a12ae4aa9",
+            "digest": "sha256:8b52f5e0d8ea73d649408bca7f1429c0898f0921cd4075782631c2ac50b009ab",
             "functionId": "sha256:15c9ca49f34d45ea5c08d2bdcec2d3d489a400fe2596ad7fbf800bd89d178da0",
             "signatureHash": "sha256:1a3c0248ecb7e498007af6b22ac9e18eb5df6b9390677401805ce98ab2934d96",
             "upper": {
@@ -306,7 +306,7 @@
             }
           },
           {
-            "digest": "sha256:00fd23d0c8d8965b6b96a97ac057b247a7beca0bf78ad6a2f5b7f676f34b5023",
+            "digest": "sha256:f685acd3fd3025e3b82229a9cc50aaa8ae5187494ea5d332bae330d9577ba1fc",
             "functionId": "sha256:232e2809e64449332c8bfe92cd58a394caf29d9c1863d0aaa1d29530d4d9ea16",
             "signatureHash": "sha256:1a3c0248ecb7e498007af6b22ac9e18eb5df6b9390677401805ce98ab2934d96",
             "upper": {
@@ -320,7 +320,7 @@
             }
           },
           {
-            "digest": "sha256:86109911e5645742f5ecad391059e5f8af0fb891a3b6c999baa6015c6f9aed22",
+            "digest": "sha256:ff52edb1f39ba60a5815a2a06f16b9f9367aad43e8203cedcae52ae048ed9678",
             "functionId": "sha256:5b48c83e49f1ab585aa962a8e2e44b06b6f1b1a50955dbf86c02f89d2bda5289",
             "signatureHash": "sha256:1a3c0248ecb7e498007af6b22ac9e18eb5df6b9390677401805ce98ab2934d96",
             "upper": {
@@ -334,7 +334,7 @@
             }
           },
           {
-            "digest": "sha256:944caa85636be13e2f7ef2427ae147c6b22a6842fd26e90ef5173f9425973b34",
+            "digest": "sha256:873015d9f359fe6582af523dcd329d9716db0b2ed1e96c0c3315b3ce2b9c63a5",
             "functionId": "sha256:66c692a80648e02b6d5c9f3e2600380331f3be1eb653163a5c98e5caa6dedbff",
             "signatureHash": "sha256:1a3c0248ecb7e498007af6b22ac9e18eb5df6b9390677401805ce98ab2934d96",
             "upper": {
@@ -348,7 +348,7 @@
             }
           },
           {
-            "digest": "sha256:0f238d0e0451f86d383623d881ef1ac8fcb1aba1afdf0f9072b231d8a3b860ea",
+            "digest": "sha256:1c58b006db6f29864f7281b383ab5a6840cf2bb6646de9a161cd8201fdf94c5f",
             "functionId": "sha256:6b96c4d9cf0b2631d239b15d0988718643957f4cc00919a1c50efb62f3b2233a",
             "signatureHash": "sha256:1a3c0248ecb7e498007af6b22ac9e18eb5df6b9390677401805ce98ab2934d96",
             "upper": {
@@ -362,7 +362,7 @@
             }
           },
           {
-            "digest": "sha256:ee01904525a5a8d5cd9d4ebb8a4f09417bcacb71a0a4f7db332ac607ed3988a6",
+            "digest": "sha256:1b332119c455380e8408a67b84e3c093ca6eedba866f3ccddd72f36de1e4abf8",
             "functionId": "sha256:6d3f5868cc6700bd4581721dd0e321bb1013c26272c265da7fe21804737c6fce",
             "signatureHash": "sha256:1a3c0248ecb7e498007af6b22ac9e18eb5df6b9390677401805ce98ab2934d96",
             "upper": {
@@ -376,7 +376,7 @@
             }
           },
           {
-            "digest": "sha256:97ce36a8e785f598a439bf4aa2113af76ab0cf5d45bd47105d5c788a17017736",
+            "digest": "sha256:681ed6b9fe1d2e9241ae104e128f1debf96989cf178a2fb616e2c8119426c266",
             "functionId": "sha256:76c3ab315cfc78e32d378a6549448acb86283e092e95c36602108e121b4dfe90",
             "signatureHash": "sha256:1a3c0248ecb7e498007af6b22ac9e18eb5df6b9390677401805ce98ab2934d96",
             "upper": {
@@ -390,7 +390,7 @@
             }
           },
           {
-            "digest": "sha256:0df285a7054771b84b1b0d6ec9a2a10a591f027353f014de5ef9f3e28b043c79",
+            "digest": "sha256:1f84c1c118bb9bbc954c906a25150e92a47d589d6d3d389a36718539cda578f0",
             "functionId": "sha256:7b3be569be9936a15749fec3ed743bfbb31f0c4d76c95dcfbe7ae79a6c725908",
             "signatureHash": "sha256:1a3c0248ecb7e498007af6b22ac9e18eb5df6b9390677401805ce98ab2934d96",
             "upper": {
@@ -404,7 +404,7 @@
             }
           },
           {
-            "digest": "sha256:891cf2c3f51254eb8dd4b1f2bd47f213398bd896f777cd15bce5ec1de8538578",
+            "digest": "sha256:6fd07367b6a45ebb552da0d7640cb47be9b08067a5d11bbc4815c7a929f97a6a",
             "functionId": "sha256:97cd47ee986bab4d5fed10bda5455c164402a2dc3f719dfe48654c9434c83b2e",
             "signatureHash": "sha256:1a3c0248ecb7e498007af6b22ac9e18eb5df6b9390677401805ce98ab2934d96",
             "upper": {
@@ -418,7 +418,7 @@
             }
           },
           {
-            "digest": "sha256:7df24401da10a5d9e323e932f895e89065f5b2a3ee834deadac59f0415336c78",
+            "digest": "sha256:42d94bb6fc116709a6248c7425eef0cad6b7cc7f89a26067b04d1ef55ea09c9a",
             "functionId": "sha256:a0aee9872e4e1167eb610bf50c2ccd932af06c1afd308e4dac23d71e93892a55",
             "signatureHash": "sha256:1a3c0248ecb7e498007af6b22ac9e18eb5df6b9390677401805ce98ab2934d96",
             "upper": {
@@ -432,7 +432,7 @@
             }
           },
           {
-            "digest": "sha256:9eb02c5783e5df83be4a07226472cb8bcbb8aa797a3fbbafe4dd3fbb268ef7b2",
+            "digest": "sha256:2fdb7970f2864ab35f0edf3b4f2be2918423cd02133ab2410be42635d919716e",
             "functionId": "sha256:b636910e07cb0cb031bf0fd2eb8cce17255cc683b59dc3000397b41675cc190c",
             "signatureHash": "sha256:1a3c0248ecb7e498007af6b22ac9e18eb5df6b9390677401805ce98ab2934d96",
             "upper": {
@@ -446,7 +446,7 @@
             }
           },
           {
-            "digest": "sha256:be213c6a7ee1e5d2a398be318b9af9ebc72647273a5894c6ab0dc875321f9dde",
+            "digest": "sha256:b81ece0469197a99061fb40d51d9a558ab04757173816a0e788e91d1cf12b578",
             "functionId": "sha256:ba8ed99f857e0f98ddaf7075d33d44e047fd564fef3fc4ae52f9e63a5b4045db",
             "signatureHash": "sha256:1a3c0248ecb7e498007af6b22ac9e18eb5df6b9390677401805ce98ab2934d96",
             "upper": {
@@ -460,7 +460,7 @@
             }
           },
           {
-            "digest": "sha256:0f82c21ccd15489cbf6ca7a5b1336a254bcc1ca2d03cc33caf22badaeef27e4f",
+            "digest": "sha256:67ce0ec21294b55ba51f5fe47fb99ba844a1de4611ec36f76b5066af60885f00",
             "functionId": "sha256:c38f42fc30436a18b798a836784b895e4e808af4c9cbba42157c45be15686913",
             "signatureHash": "sha256:1a3c0248ecb7e498007af6b22ac9e18eb5df6b9390677401805ce98ab2934d96",
             "upper": {
@@ -474,7 +474,7 @@
             }
           },
           {
-            "digest": "sha256:8d66ea29c9f07f0cc2a7e4060efaf525f8961d542ad6aa4c90391343831c4d5a",
+            "digest": "sha256:b77d07e7401ca8bfe04db7f98d1f6507756c3a03a9d4169abd97ab99f22c405d",
             "functionId": "sha256:c62d90112b153b8ee7c8fbe00b9ffcf034830a28cdda036033a52f3b2bf610d8",
             "signatureHash": "sha256:1a3c0248ecb7e498007af6b22ac9e18eb5df6b9390677401805ce98ab2934d96",
             "upper": {
@@ -488,7 +488,7 @@
             }
           },
           {
-            "digest": "sha256:c0f0881c3e4f8f130a48247ee864fa3483dd255d304d2eefd988a7bcc86d6032",
+            "digest": "sha256:7e0a44106de4f7a7c79e2547d218cd3269e019ad34eb3a19e5622d080d6b8dfc",
             "functionId": "sha256:cfff658dd10fb0596f1110e3757a0cde7e4c97566a6a1fed565ca3c4f962eaf1",
             "signatureHash": "sha256:1a3c0248ecb7e498007af6b22ac9e18eb5df6b9390677401805ce98ab2934d96",
             "upper": {
@@ -504,14 +504,14 @@
         ],
         "format": {
           "family": "tsfg.array-calls-candidate",
-          "schemaHash": "sha256:a99ce730a4251012d283d5078f731471db7e6ed39ae6735f244863f4ba180369",
-          "version": 7
+          "version": 8,
+          "schemaHash": "sha256:391d1e7e87f7b3b83dc15fe6a1732c843f97777a1d807259aeb989a26b7622eb"
         },
         "functions": [
           {
             "dependencies": [
               {
-                "digest": "sha256:8d66ea29c9f07f0cc2a7e4060efaf525f8961d542ad6aa4c90391343831c4d5a",
+                "digest": "sha256:b77d07e7401ca8bfe04db7f98d1f6507756c3a03a9d4169abd97ab99f22c405d",
                 "functionId": "sha256:c62d90112b153b8ee7c8fbe00b9ffcf034830a28cdda036033a52f3b2bf610d8"
               }
             ],
@@ -534,7 +534,7 @@
           {
             "dependencies": [
               {
-                "digest": "sha256:bf6e5468bc71a7a7ba04c70919905b4803fb1e4a982fea6c12bbea4303496580",
+                "digest": "sha256:e2bfcee02ca2fbffaa090ac170f7293020b157a7480898a82ba234bbddd087a7",
                 "functionId": "sha256:0b9d85b9b9b4663e246599cab0730d8e6b8d06cec06ef5964bb87f62acf0f759"
               }
             ],
@@ -557,7 +557,7 @@
           {
             "dependencies": [
               {
-                "digest": "sha256:0df285a7054771b84b1b0d6ec9a2a10a591f027353f014de5ef9f3e28b043c79",
+                "digest": "sha256:1f84c1c118bb9bbc954c906a25150e92a47d589d6d3d389a36718539cda578f0",
                 "functionId": "sha256:7b3be569be9936a15749fec3ed743bfbb31f0c4d76c95dcfbe7ae79a6c725908"
               }
             ],
@@ -580,7 +580,7 @@
           {
             "dependencies": [
               {
-                "digest": "sha256:0f238d0e0451f86d383623d881ef1ac8fcb1aba1afdf0f9072b231d8a3b860ea",
+                "digest": "sha256:1c58b006db6f29864f7281b383ab5a6840cf2bb6646de9a161cd8201fdf94c5f",
                 "functionId": "sha256:6b96c4d9cf0b2631d239b15d0988718643957f4cc00919a1c50efb62f3b2233a"
               }
             ],
@@ -603,7 +603,7 @@
           {
             "dependencies": [
               {
-                "digest": "sha256:0f82c21ccd15489cbf6ca7a5b1336a254bcc1ca2d03cc33caf22badaeef27e4f",
+                "digest": "sha256:67ce0ec21294b55ba51f5fe47fb99ba844a1de4611ec36f76b5066af60885f00",
                 "functionId": "sha256:c38f42fc30436a18b798a836784b895e4e808af4c9cbba42157c45be15686913"
               }
             ],
@@ -626,7 +626,7 @@
           {
             "dependencies": [
               {
-                "digest": "sha256:7df24401da10a5d9e323e932f895e89065f5b2a3ee834deadac59f0415336c78",
+                "digest": "sha256:42d94bb6fc116709a6248c7425eef0cad6b7cc7f89a26067b04d1ef55ea09c9a",
                 "functionId": "sha256:a0aee9872e4e1167eb610bf50c2ccd932af06c1afd308e4dac23d71e93892a55"
               }
             ],
@@ -649,7 +649,7 @@
           {
             "dependencies": [
               {
-                "digest": "sha256:00fd23d0c8d8965b6b96a97ac057b247a7beca0bf78ad6a2f5b7f676f34b5023",
+                "digest": "sha256:f685acd3fd3025e3b82229a9cc50aaa8ae5187494ea5d332bae330d9577ba1fc",
                 "functionId": "sha256:232e2809e64449332c8bfe92cd58a394caf29d9c1863d0aaa1d29530d4d9ea16"
               }
             ],
@@ -672,7 +672,7 @@
           {
             "dependencies": [
               {
-                "digest": "sha256:86109911e5645742f5ecad391059e5f8af0fb891a3b6c999baa6015c6f9aed22",
+                "digest": "sha256:ff52edb1f39ba60a5815a2a06f16b9f9367aad43e8203cedcae52ae048ed9678",
                 "functionId": "sha256:5b48c83e49f1ab585aa962a8e2e44b06b6f1b1a50955dbf86c02f89d2bda5289"
               }
             ],
@@ -713,7 +713,7 @@
           {
             "dependencies": [
               {
-                "digest": "sha256:c0f0881c3e4f8f130a48247ee864fa3483dd255d304d2eefd988a7bcc86d6032",
+                "digest": "sha256:7e0a44106de4f7a7c79e2547d218cd3269e019ad34eb3a19e5622d080d6b8dfc",
                 "functionId": "sha256:cfff658dd10fb0596f1110e3757a0cde7e4c97566a6a1fed565ca3c4f962eaf1"
               }
             ],
@@ -736,7 +736,7 @@
           {
             "dependencies": [
               {
-                "digest": "sha256:50498f4729ae59828129d6def034183265a8431004b5b6187a918f9a12ae4aa9",
+                "digest": "sha256:8b52f5e0d8ea73d649408bca7f1429c0898f0921cd4075782631c2ac50b009ab",
                 "functionId": "sha256:15c9ca49f34d45ea5c08d2bdcec2d3d489a400fe2596ad7fbf800bd89d178da0"
               }
             ],
@@ -759,7 +759,7 @@
           {
             "dependencies": [
               {
-                "digest": "sha256:ee01904525a5a8d5cd9d4ebb8a4f09417bcacb71a0a4f7db332ac607ed3988a6",
+                "digest": "sha256:1b332119c455380e8408a67b84e3c093ca6eedba866f3ccddd72f36de1e4abf8",
                 "functionId": "sha256:6d3f5868cc6700bd4581721dd0e321bb1013c26272c265da7fe21804737c6fce"
               }
             ],
@@ -782,7 +782,7 @@
           {
             "dependencies": [
               {
-                "digest": "sha256:891cf2c3f51254eb8dd4b1f2bd47f213398bd896f777cd15bce5ec1de8538578",
+                "digest": "sha256:6fd07367b6a45ebb552da0d7640cb47be9b08067a5d11bbc4815c7a929f97a6a",
                 "functionId": "sha256:97cd47ee986bab4d5fed10bda5455c164402a2dc3f719dfe48654c9434c83b2e"
               }
             ],
@@ -805,7 +805,7 @@
           {
             "dependencies": [
               {
-                "digest": "sha256:97ce36a8e785f598a439bf4aa2113af76ab0cf5d45bd47105d5c788a17017736",
+                "digest": "sha256:681ed6b9fe1d2e9241ae104e128f1debf96989cf178a2fb616e2c8119426c266",
                 "functionId": "sha256:76c3ab315cfc78e32d378a6549448acb86283e092e95c36602108e121b4dfe90"
               }
             ],
@@ -828,7 +828,7 @@
           {
             "dependencies": [
               {
-                "digest": "sha256:be213c6a7ee1e5d2a398be318b9af9ebc72647273a5894c6ab0dc875321f9dde",
+                "digest": "sha256:b81ece0469197a99061fb40d51d9a558ab04757173816a0e788e91d1cf12b578",
                 "functionId": "sha256:ba8ed99f857e0f98ddaf7075d33d44e047fd564fef3fc4ae52f9e63a5b4045db"
               }
             ],
@@ -851,7 +851,7 @@
           {
             "dependencies": [
               {
-                "digest": "sha256:9eb02c5783e5df83be4a07226472cb8bcbb8aa797a3fbbafe4dd3fbb268ef7b2",
+                "digest": "sha256:2fdb7970f2864ab35f0edf3b4f2be2918423cd02133ab2410be42635d919716e",
                 "functionId": "sha256:b636910e07cb0cb031bf0fd2eb8cce17255cc683b59dc3000397b41675cc190c"
               }
             ],
@@ -872,15 +872,15 @@
             "effectiveReturnOrigin": null
           }
         ],
-        "hirDigest": "sha256:891997d319ce2e4568de0843ecac83a69ed0c2c893aa6fd2ebec96aa107b4224",
-        "inputIdentity": "sha256:c779b1a54c85bc4d3d0b3ba3eaec3dc8fd8fdd21e12845c644eeb18d275ee50a",
-        "publishedDigest": "sha256:164018f769f6166e22122178a98b0140fdb6746f8cce5f0e01b4cf562257119f",
-        "scopeDigest": "sha256:741bb3974d26296a4a7deab37e97c94148ae09fca93df4f1c529ba36cc5b9aea"
+        "hirDigest": "sha256:230fc0b7a39f70be1574c4dd0ca97ccbd37e03c4eacbef665fdc2cbaebd238cc",
+        "inputIdentity": "sha256:f3ad0db0cd54c0bd0dcecdfa46321e99ccb6809dbd464e17f66a29897570f412",
+        "publishedDigest": "sha256:9e8c7dbf4c663357b928cba32aad314120155900a36cc789e3682d9b4b37a2e8",
+        "scopeDigest": "sha256:56d9aa112571e764fa232eb7191632c15ca069c9c41976794113514c17f8d489"
       },
       "context": {
         "contracts": [
           {
-            "digest": "sha256:bf6e5468bc71a7a7ba04c70919905b4803fb1e4a982fea6c12bbea4303496580",
+            "digest": "sha256:e2bfcee02ca2fbffaa090ac170f7293020b157a7480898a82ba234bbddd087a7",
             "functionId": "sha256:0b9d85b9b9b4663e246599cab0730d8e6b8d06cec06ef5964bb87f62acf0f759",
             "signatureHash": "sha256:1a3c0248ecb7e498007af6b22ac9e18eb5df6b9390677401805ce98ab2934d96",
             "upper": {
@@ -894,7 +894,7 @@
             }
           },
           {
-            "digest": "sha256:50498f4729ae59828129d6def034183265a8431004b5b6187a918f9a12ae4aa9",
+            "digest": "sha256:8b52f5e0d8ea73d649408bca7f1429c0898f0921cd4075782631c2ac50b009ab",
             "functionId": "sha256:15c9ca49f34d45ea5c08d2bdcec2d3d489a400fe2596ad7fbf800bd89d178da0",
             "signatureHash": "sha256:1a3c0248ecb7e498007af6b22ac9e18eb5df6b9390677401805ce98ab2934d96",
             "upper": {
@@ -908,7 +908,7 @@
             }
           },
           {
-            "digest": "sha256:00fd23d0c8d8965b6b96a97ac057b247a7beca0bf78ad6a2f5b7f676f34b5023",
+            "digest": "sha256:f685acd3fd3025e3b82229a9cc50aaa8ae5187494ea5d332bae330d9577ba1fc",
             "functionId": "sha256:232e2809e64449332c8bfe92cd58a394caf29d9c1863d0aaa1d29530d4d9ea16",
             "signatureHash": "sha256:1a3c0248ecb7e498007af6b22ac9e18eb5df6b9390677401805ce98ab2934d96",
             "upper": {
@@ -922,7 +922,7 @@
             }
           },
           {
-            "digest": "sha256:86109911e5645742f5ecad391059e5f8af0fb891a3b6c999baa6015c6f9aed22",
+            "digest": "sha256:ff52edb1f39ba60a5815a2a06f16b9f9367aad43e8203cedcae52ae048ed9678",
             "functionId": "sha256:5b48c83e49f1ab585aa962a8e2e44b06b6f1b1a50955dbf86c02f89d2bda5289",
             "signatureHash": "sha256:1a3c0248ecb7e498007af6b22ac9e18eb5df6b9390677401805ce98ab2934d96",
             "upper": {
@@ -936,7 +936,7 @@
             }
           },
           {
-            "digest": "sha256:944caa85636be13e2f7ef2427ae147c6b22a6842fd26e90ef5173f9425973b34",
+            "digest": "sha256:873015d9f359fe6582af523dcd329d9716db0b2ed1e96c0c3315b3ce2b9c63a5",
             "functionId": "sha256:66c692a80648e02b6d5c9f3e2600380331f3be1eb653163a5c98e5caa6dedbff",
             "signatureHash": "sha256:1a3c0248ecb7e498007af6b22ac9e18eb5df6b9390677401805ce98ab2934d96",
             "upper": {
@@ -950,7 +950,7 @@
             }
           },
           {
-            "digest": "sha256:0f238d0e0451f86d383623d881ef1ac8fcb1aba1afdf0f9072b231d8a3b860ea",
+            "digest": "sha256:1c58b006db6f29864f7281b383ab5a6840cf2bb6646de9a161cd8201fdf94c5f",
             "functionId": "sha256:6b96c4d9cf0b2631d239b15d0988718643957f4cc00919a1c50efb62f3b2233a",
             "signatureHash": "sha256:1a3c0248ecb7e498007af6b22ac9e18eb5df6b9390677401805ce98ab2934d96",
             "upper": {
@@ -964,7 +964,7 @@
             }
           },
           {
-            "digest": "sha256:ee01904525a5a8d5cd9d4ebb8a4f09417bcacb71a0a4f7db332ac607ed3988a6",
+            "digest": "sha256:1b332119c455380e8408a67b84e3c093ca6eedba866f3ccddd72f36de1e4abf8",
             "functionId": "sha256:6d3f5868cc6700bd4581721dd0e321bb1013c26272c265da7fe21804737c6fce",
             "signatureHash": "sha256:1a3c0248ecb7e498007af6b22ac9e18eb5df6b9390677401805ce98ab2934d96",
             "upper": {
@@ -978,7 +978,7 @@
             }
           },
           {
-            "digest": "sha256:97ce36a8e785f598a439bf4aa2113af76ab0cf5d45bd47105d5c788a17017736",
+            "digest": "sha256:681ed6b9fe1d2e9241ae104e128f1debf96989cf178a2fb616e2c8119426c266",
             "functionId": "sha256:76c3ab315cfc78e32d378a6549448acb86283e092e95c36602108e121b4dfe90",
             "signatureHash": "sha256:1a3c0248ecb7e498007af6b22ac9e18eb5df6b9390677401805ce98ab2934d96",
             "upper": {
@@ -992,7 +992,7 @@
             }
           },
           {
-            "digest": "sha256:0df285a7054771b84b1b0d6ec9a2a10a591f027353f014de5ef9f3e28b043c79",
+            "digest": "sha256:1f84c1c118bb9bbc954c906a25150e92a47d589d6d3d389a36718539cda578f0",
             "functionId": "sha256:7b3be569be9936a15749fec3ed743bfbb31f0c4d76c95dcfbe7ae79a6c725908",
             "signatureHash": "sha256:1a3c0248ecb7e498007af6b22ac9e18eb5df6b9390677401805ce98ab2934d96",
             "upper": {
@@ -1006,7 +1006,7 @@
             }
           },
           {
-            "digest": "sha256:891cf2c3f51254eb8dd4b1f2bd47f213398bd896f777cd15bce5ec1de8538578",
+            "digest": "sha256:6fd07367b6a45ebb552da0d7640cb47be9b08067a5d11bbc4815c7a929f97a6a",
             "functionId": "sha256:97cd47ee986bab4d5fed10bda5455c164402a2dc3f719dfe48654c9434c83b2e",
             "signatureHash": "sha256:1a3c0248ecb7e498007af6b22ac9e18eb5df6b9390677401805ce98ab2934d96",
             "upper": {
@@ -1020,7 +1020,7 @@
             }
           },
           {
-            "digest": "sha256:7df24401da10a5d9e323e932f895e89065f5b2a3ee834deadac59f0415336c78",
+            "digest": "sha256:42d94bb6fc116709a6248c7425eef0cad6b7cc7f89a26067b04d1ef55ea09c9a",
             "functionId": "sha256:a0aee9872e4e1167eb610bf50c2ccd932af06c1afd308e4dac23d71e93892a55",
             "signatureHash": "sha256:1a3c0248ecb7e498007af6b22ac9e18eb5df6b9390677401805ce98ab2934d96",
             "upper": {
@@ -1034,7 +1034,7 @@
             }
           },
           {
-            "digest": "sha256:9eb02c5783e5df83be4a07226472cb8bcbb8aa797a3fbbafe4dd3fbb268ef7b2",
+            "digest": "sha256:2fdb7970f2864ab35f0edf3b4f2be2918423cd02133ab2410be42635d919716e",
             "functionId": "sha256:b636910e07cb0cb031bf0fd2eb8cce17255cc683b59dc3000397b41675cc190c",
             "signatureHash": "sha256:1a3c0248ecb7e498007af6b22ac9e18eb5df6b9390677401805ce98ab2934d96",
             "upper": {
@@ -1048,7 +1048,7 @@
             }
           },
           {
-            "digest": "sha256:be213c6a7ee1e5d2a398be318b9af9ebc72647273a5894c6ab0dc875321f9dde",
+            "digest": "sha256:b81ece0469197a99061fb40d51d9a558ab04757173816a0e788e91d1cf12b578",
             "functionId": "sha256:ba8ed99f857e0f98ddaf7075d33d44e047fd564fef3fc4ae52f9e63a5b4045db",
             "signatureHash": "sha256:1a3c0248ecb7e498007af6b22ac9e18eb5df6b9390677401805ce98ab2934d96",
             "upper": {
@@ -1062,7 +1062,7 @@
             }
           },
           {
-            "digest": "sha256:0f82c21ccd15489cbf6ca7a5b1336a254bcc1ca2d03cc33caf22badaeef27e4f",
+            "digest": "sha256:67ce0ec21294b55ba51f5fe47fb99ba844a1de4611ec36f76b5066af60885f00",
             "functionId": "sha256:c38f42fc30436a18b798a836784b895e4e808af4c9cbba42157c45be15686913",
             "signatureHash": "sha256:1a3c0248ecb7e498007af6b22ac9e18eb5df6b9390677401805ce98ab2934d96",
             "upper": {
@@ -1076,7 +1076,7 @@
             }
           },
           {
-            "digest": "sha256:8d66ea29c9f07f0cc2a7e4060efaf525f8961d542ad6aa4c90391343831c4d5a",
+            "digest": "sha256:b77d07e7401ca8bfe04db7f98d1f6507756c3a03a9d4169abd97ab99f22c405d",
             "functionId": "sha256:c62d90112b153b8ee7c8fbe00b9ffcf034830a28cdda036033a52f3b2bf610d8",
             "signatureHash": "sha256:1a3c0248ecb7e498007af6b22ac9e18eb5df6b9390677401805ce98ab2934d96",
             "upper": {
@@ -1090,7 +1090,7 @@
             }
           },
           {
-            "digest": "sha256:c0f0881c3e4f8f130a48247ee864fa3483dd255d304d2eefd988a7bcc86d6032",
+            "digest": "sha256:7e0a44106de4f7a7c79e2547d218cd3269e019ad34eb3a19e5622d080d6b8dfc",
             "functionId": "sha256:cfff658dd10fb0596f1110e3757a0cde7e4c97566a6a1fed565ca3c4f962eaf1",
             "signatureHash": "sha256:1a3c0248ecb7e498007af6b22ac9e18eb5df6b9390677401805ce98ab2934d96",
             "upper": {
@@ -1104,11 +1104,11 @@
             }
           }
         ],
-        "expectedDigest": "sha256:164018f769f6166e22122178a98b0140fdb6746f8cce5f0e01b4cf562257119f",
+        "expectedDigest": "sha256:9e8c7dbf4c663357b928cba32aad314120155900a36cc789e3682d9b4b37a2e8",
         "family": "tsfg.array-publication-context-candidate",
         "mode": "fixed",
-        "scopeDigest": "sha256:741bb3974d26296a4a7deab37e97c94148ae09fca93df4f1c529ba36cc5b9aea",
-        "version": 3
+        "scopeDigest": "sha256:56d9aa112571e764fa232eb7191632c15ca069c9c41976794113514c17f8d489",
+        "version": 4
       },
       "contractPin": {
         "bytes": 257929,
@@ -1126,8 +1126,8 @@
         "ruleId": "r01-ts-baseline"
       },
       "factsContext": {
-        "expectedPackageId": "sha256:c779b1a54c85bc4d3d0b3ba3eaec3dc8fd8fdd21e12845c644eeb18d275ee50a",
-        "factsBytes": "{\"family\":\"tsfg.array-facts-package-candidate\",\"packageId\":\"sha256:c779b1a54c85bc4d3d0b3ba3eaec3dc8fd8fdd21e12845c644eeb18d275ee50a\",\"payload\":{\"arrayLength\":{\"declarationRange\":{\"end\":290,\"start\":275},\"id\":\"sha256:8a15099652ad0aa13b95ca5e230158b507063eae8d48d15e48678eb61d23408d\",\"kind\":\"property\",\"name\":\"length\",\"nameRange\":{\"end\":281,\"start\":275},\"officialType\":\"number\",\"ownerType\":\"array.f64\",\"sourcePath\":\"/array-owner23e/minimal-arrays-v3.d.ts\",\"typeRange\":{\"end\":289,\"start\":283},\"writeType\":\"u32\"},\"config\":{\"allowJs\":false,\"noEmit\":true,\"strict\":true},\"declarations\":{\"paths\":[\"/array-owner23e/minimal-arrays-v3.d.ts\"],\"version\":\"minimal-arrays-v3\"},\"diagnostics\":[],\"exports\":[{\"functionId\":\"sha256:386997bae5e651e20bfab46edfb6bd6d6c2a29c660a5092a7d68ffe860081b9b\",\"name\":\"f0\"}],\"files\":[{\"byteLength\":594,\"content\":\"export function f0(): f64 { return f1(); }\\nfunction f1(): f64 { return f2(); }\\nfunction f2(): f64 { return f3(); }\\nfunction f3(): f64 { return f4(); }\\nfunction f4(): f64 { return f5(); }\\nfunction f5(): f64 { return f6(); }\\nfunction f6(): f64 { return f7(); }\\nfunction f7(): f64 { return f8(); }\\nfunction f8(): f64 { return f9(); }\\nfunction f9(): f64 { return f10(); }\\nfunction f10(): f64 { return f11(); }\\nfunction f11(): f64 { return f12(); }\\nfunction f12(): f64 { return f13(); }\\nfunction f13(): f64 { return f14(); }\\nfunction f14(): f64 { return f15(); }\\nfunction f15(): f64 { return 1.0; }\\n\",\"path\":\"/array-owner23e/app.ts\",\"sha256\":\"161ba7da8476f79f72b367122642a953d5a82802d4a4a309001f6bc9c0f61847\",\"utf16Length\":594},{\"byteLength\":484,\"content\":\"// SPDX-License-Identifier: MIT\\ninterface Object {}\\ninterface Function {}\\ninterface CallableFunction {}\\ninterface NewableFunction {}\\ninterface IArguments {}\\ninterface String {}\\ninterface Number {}\\ninterface Boolean {}\\ninterface RegExp {}\\ninterface Array<T> { [n: number]: T; length: number; }\\ntype f64 = number;\\ntype u32 = number;\\ninterface ReadSpan<T> { readonly [n: number]: T; readonly length: u32; }\\ndeclare function readSpan<T>(owner: T[], start: u32, length: u32): ReadSpan<T>;\\n\",\"path\":\"/array-owner23e/minimal-arrays-v3.d.ts\",\"sha256\":\"282b335a6e0e0493fa74a3c1dd56f234f8c679079acdaf0600cefb8306c26415\",\"utf16Length\":484}],\"functions\":[{\"bindings\":[],\"body\":[{\"kind\":\"return\",\"range\":{\"end\":40,\"start\":28},\"value\":{\"arguments\":[],\"callee\":\"sha256:9a9616ee5567a9ca06d1d4922cfb0277e35d064285ea6cf97c44fb1eea775909\",\"calleeRange\":{\"end\":37,\"start\":35},\"kind\":\"directCall\",\"range\":{\"end\":39,\"start\":35},\"type\":\"f64\"}}],\"declarationRange\":{\"end\":42,\"start\":0},\"id\":\"sha256:386997bae5e651e20bfab46edfb6bd6d6c2a29c660a5092a7d68ffe860081b9b\",\"name\":\"f0\",\"nameRange\":{\"end\":18,\"start\":16},\"parameters\":[],\"returnAnnotationRange\":{\"end\":25,\"start\":22},\"returnType\":\"f64\",\"sourcePath\":\"/array-owner23e/app.ts\"},{\"bindings\":[],\"body\":[{\"kind\":\"return\",\"range\":{\"end\":76,\"start\":64},\"value\":{\"arguments\":[],\"callee\":\"sha256:994b10be705d793b1c17022d006078036de772bbcc852b889db8839b47125888\",\"calleeRange\":{\"end\":73,\"start\":71},\"kind\":\"directCall\",\"range\":{\"end\":75,\"start\":71},\"type\":\"f64\"}}],\"declarationRange\":{\"end\":78,\"start\":43},\"id\":\"sha256:9a9616ee5567a9ca06d1d4922cfb0277e35d064285ea6cf97c44fb1eea775909\",\"name\":\"f1\",\"nameRange\":{\"end\":54,\"start\":52},\"parameters\":[],\"returnAnnotationRange\":{\"end\":61,\"start\":58},\"returnType\":\"f64\",\"sourcePath\":\"/array-owner23e/app.ts\"},{\"bindings\":[],\"body\":[{\"kind\":\"return\",\"range\":{\"end\":112,\"start\":100},\"value\":{\"arguments\":[],\"callee\":\"sha256:d076e7c2a51e6b99b7339606bd6f30af6c170324b73c791f1bcdd590a08033bb\",\"calleeRange\":{\"end\":109,\"start\":107},\"kind\":\"directCall\",\"range\":{\"end\":111,\"start\":107},\"type\":\"f64\"}}],\"declarationRange\":{\"end\":114,\"start\":79},\"id\":\"sha256:994b10be705d793b1c17022d006078036de772bbcc852b889db8839b47125888\",\"name\":\"f2\",\"nameRange\":{\"end\":90,\"start\":88},\"parameters\":[],\"returnAnnotationRange\":{\"end\":97,\"start\":94},\"returnType\":\"f64\",\"sourcePath\":\"/array-owner23e/app.ts\"},{\"bindings\":[],\"body\":[{\"kind\":\"return\",\"range\":{\"end\":148,\"start\":136},\"value\":{\"arguments\":[],\"callee\":\"sha256:9a2612f478059d5c8bc983d0742027862e11b74d9738340fea526bcf8a135f29\",\"calleeRange\":{\"end\":145,\"start\":143},\"kind\":\"directCall\",\"range\":{\"end\":147,\"start\":143},\"type\":\"f64\"}}],\"declarationRange\":{\"end\":150,\"start\":115},\"id\":\"sha256:d076e7c2a51e6b99b7339606bd6f30af6c170324b73c791f1bcdd590a08033bb\",\"name\":\"f3\",\"nameRange\":{\"end\":126,\"start\":124},\"parameters\":[],\"returnAnnotationRange\":{\"end\":133,\"start\":130},\"returnType\":\"f64\",\"sourcePath\":\"/array-owner23e/app.ts\"},{\"bindings\":[],\"body\":[{\"kind\":\"return\",\"range\":{\"end\":184,\"start\":172},\"value\":{\"arguments\":[],\"callee\":\"sha256:faca5ccfe4b0323179ca30699a2a3b2b6d3c4458d06a06939c7ddc4f43200a37\",\"calleeRange\":{\"end\":181,\"start\":179},\"kind\":\"directCall\",\"range\":{\"end\":183,\"start\":179},\"type\":\"f64\"}}],\"declarationRange\":{\"end\":186,\"start\":151},\"id\":\"sha256:9a2612f478059d5c8bc983d0742027862e11b74d9738340fea526bcf8a135f29\",\"name\":\"f4\",\"nameRange\":{\"end\":162,\"start\":160},\"parameters\":[],\"returnAnnotationRange\":{\"end\":169,\"start\":166},\"returnType\":\"f64\",\"sourcePath\":\"/array-owner23e/app.ts\"},{\"bindings\":[],\"body\":[{\"kind\":\"return\",\"range\":{\"end\":220,\"start\":208},\"value\":{\"arguments\":[],\"callee\":\"sha256:72f001e98b981cccf42e9ffaff1a2990dc8d5a370e4f457dc4f2a046b8843d88\",\"calleeRange\":{\"end\":217,\"start\":215},\"kind\":\"directCall\",\"range\":{\"end\":219,\"start\":215},\"type\":\"f64\"}}],\"declarationRange\":{\"end\":222,\"start\":187},\"id\":\"sha256:faca5ccfe4b0323179ca30699a2a3b2b6d3c4458d06a06939c7ddc4f43200a37\",\"name\":\"f5\",\"nameRange\":{\"end\":198,\"start\":196},\"parameters\":[],\"returnAnnotationRange\":{\"end\":205,\"start\":202},\"returnType\":\"f64\",\"sourcePath\":\"/array-owner23e/app.ts\"},{\"bindings\":[],\"body\":[{\"kind\":\"return\",\"range\":{\"end\":256,\"start\":244},\"value\":{\"arguments\":[],\"callee\":\"sha256:454064111993467ada3aeb8acc2f1ae90f08ea5c337d4900892b426abc2deb12\",\"calleeRange\":{\"end\":253,\"start\":251},\"kind\":\"directCall\",\"range\":{\"end\":255,\"start\":251},\"type\":\"f64\"}}],\"declarationRange\":{\"end\":258,\"start\":223},\"id\":\"sha256:72f001e98b981cccf42e9ffaff1a2990dc8d5a370e4f457dc4f2a046b8843d88\",\"name\":\"f6\",\"nameRange\":{\"end\":234,\"start\":232},\"parameters\":[],\"returnAnnotationRange\":{\"end\":241,\"start\":238},\"returnType\":\"f64\",\"sourcePath\":\"/array-owner23e/app.ts\"},{\"bindings\":[],\"body\":[{\"kind\":\"return\",\"range\":{\"end\":292,\"start\":280},\"value\":{\"arguments\":[],\"callee\":\"sha256:c645eaf4e92da9f7c38d7d520cf51ee94171c9467d40ca1ffe5c9c6fe7aa2c8f\",\"calleeRange\":{\"end\":289,\"start\":287},\"kind\":\"directCall\",\"range\":{\"end\":291,\"start\":287},\"type\":\"f64\"}}],\"declarationRange\":{\"end\":294,\"start\":259},\"id\":\"sha256:454064111993467ada3aeb8acc2f1ae90f08ea5c337d4900892b426abc2deb12\",\"name\":\"f7\",\"nameRange\":{\"end\":270,\"start\":268},\"parameters\":[],\"returnAnnotationRange\":{\"end\":277,\"start\":274},\"returnType\":\"f64\",\"sourcePath\":\"/array-owner23e/app.ts\"},{\"bindings\":[],\"body\":[{\"kind\":\"return\",\"range\":{\"end\":328,\"start\":316},\"value\":{\"arguments\":[],\"callee\":\"sha256:3b63ad9c666378a07f2db07fa71d56107ffb8c8844acfc50f4eae4f96eb9b539\",\"calleeRange\":{\"end\":325,\"start\":323},\"kind\":\"directCall\",\"range\":{\"end\":327,\"start\":323},\"type\":\"f64\"}}],\"declarationRange\":{\"end\":330,\"start\":295},\"id\":\"sha256:c645eaf4e92da9f7c38d7d520cf51ee94171c9467d40ca1ffe5c9c6fe7aa2c8f\",\"name\":\"f8\",\"nameRange\":{\"end\":306,\"start\":304},\"parameters\":[],\"returnAnnotationRange\":{\"end\":313,\"start\":310},\"returnType\":\"f64\",\"sourcePath\":\"/array-owner23e/app.ts\"},{\"bindings\":[],\"body\":[{\"kind\":\"return\",\"range\":{\"end\":365,\"start\":352},\"value\":{\"arguments\":[],\"callee\":\"sha256:e51db20993ab6bcb09ccf6cec0ff00e89c6cf8e7208cbd921ae0206932e4f785\",\"calleeRange\":{\"end\":362,\"start\":359},\"kind\":\"directCall\",\"range\":{\"end\":364,\"start\":359},\"type\":\"f64\"}}],\"declarationRange\":{\"end\":367,\"start\":331},\"id\":\"sha256:3b63ad9c666378a07f2db07fa71d56107ffb8c8844acfc50f4eae4f96eb9b539\",\"name\":\"f9\",\"nameRange\":{\"end\":342,\"start\":340},\"parameters\":[],\"returnAnnotationRange\":{\"end\":349,\"start\":346},\"returnType\":\"f64\",\"sourcePath\":\"/array-owner23e/app.ts\"},{\"bindings\":[],\"body\":[{\"kind\":\"return\",\"range\":{\"end\":403,\"start\":390},\"value\":{\"arguments\":[],\"callee\":\"sha256:cb56359ee155b76bd0681f396f0528a7a9454ec7b031312c14fe05170fef02bb\",\"calleeRange\":{\"end\":400,\"start\":397},\"kind\":\"directCall\",\"range\":{\"end\":402,\"start\":397},\"type\":\"f64\"}}],\"declarationRange\":{\"end\":405,\"start\":368},\"id\":\"sha256:e51db20993ab6bcb09ccf6cec0ff00e89c6cf8e7208cbd921ae0206932e4f785\",\"name\":\"f10\",\"nameRange\":{\"end\":380,\"start\":377},\"parameters\":[],\"returnAnnotationRange\":{\"end\":387,\"start\":384},\"returnType\":\"f64\",\"sourcePath\":\"/array-owner23e/app.ts\"},{\"bindings\":[],\"body\":[{\"kind\":\"return\",\"range\":{\"end\":441,\"start\":428},\"value\":{\"arguments\":[],\"callee\":\"sha256:45c21b99c0ae84a8878e559a07dc11aa3b247df547330cd652200d72d9ff43ec\",\"calleeRange\":{\"end\":438,\"start\":435},\"kind\":\"directCall\",\"range\":{\"end\":440,\"start\":435},\"type\":\"f64\"}}],\"declarationRange\":{\"end\":443,\"start\":406},\"id\":\"sha256:cb56359ee155b76bd0681f396f0528a7a9454ec7b031312c14fe05170fef02bb\",\"name\":\"f11\",\"nameRange\":{\"end\":418,\"start\":415},\"parameters\":[],\"returnAnnotationRange\":{\"end\":425,\"start\":422},\"returnType\":\"f64\",\"sourcePath\":\"/array-owner23e/app.ts\"},{\"bindings\":[],\"body\":[{\"kind\":\"return\",\"range\":{\"end\":479,\"start\":466},\"value\":{\"arguments\":[],\"callee\":\"sha256:846c4e90159d7029a5cb5313cda3843120be5e1cbbae4a3cfb97cb91c5fcbc30\",\"calleeRange\":{\"end\":476,\"start\":473},\"kind\":\"directCall\",\"range\":{\"end\":478,\"start\":473},\"type\":\"f64\"}}],\"declarationRange\":{\"end\":481,\"start\":444},\"id\":\"sha256:45c21b99c0ae84a8878e559a07dc11aa3b247df547330cd652200d72d9ff43ec\",\"name\":\"f12\",\"nameRange\":{\"end\":456,\"start\":453},\"parameters\":[],\"returnAnnotationRange\":{\"end\":463,\"start\":460},\"returnType\":\"f64\",\"sourcePath\":\"/array-owner23e/app.ts\"},{\"bindings\":[],\"body\":[{\"kind\":\"return\",\"range\":{\"end\":517,\"start\":504},\"value\":{\"arguments\":[],\"callee\":\"sha256:317f2feba6b435f821768fc79e53863b5776a36bf21d30bd40e5a8182bf0e5c7\",\"calleeRange\":{\"end\":514,\"start\":511},\"kind\":\"directCall\",\"range\":{\"end\":516,\"start\":511},\"type\":\"f64\"}}],\"declarationRange\":{\"end\":519,\"start\":482},\"id\":\"sha256:846c4e90159d7029a5cb5313cda3843120be5e1cbbae4a3cfb97cb91c5fcbc30\",\"name\":\"f13\",\"nameRange\":{\"end\":494,\"start\":491},\"parameters\":[],\"returnAnnotationRange\":{\"end\":501,\"start\":498},\"returnType\":\"f64\",\"sourcePath\":\"/array-owner23e/app.ts\"},{\"bindings\":[],\"body\":[{\"kind\":\"return\",\"range\":{\"end\":555,\"start\":542},\"value\":{\"arguments\":[],\"callee\":\"sha256:eb2843d89a00f6bd3766bce707e6dc349f23c8767b44da5f55f695887901bc9b\",\"calleeRange\":{\"end\":552,\"start\":549},\"kind\":\"directCall\",\"range\":{\"end\":554,\"start\":549},\"type\":\"f64\"}}],\"declarationRange\":{\"end\":557,\"start\":520},\"id\":\"sha256:317f2feba6b435f821768fc79e53863b5776a36bf21d30bd40e5a8182bf0e5c7\",\"name\":\"f14\",\"nameRange\":{\"end\":532,\"start\":529},\"parameters\":[],\"returnAnnotationRange\":{\"end\":539,\"start\":536},\"returnType\":\"f64\",\"sourcePath\":\"/array-owner23e/app.ts\"},{\"bindings\":[],\"body\":[{\"kind\":\"return\",\"range\":{\"end\":591,\"start\":580},\"value\":{\"bits\":\"3ff0000000000000\",\"kind\":\"numericLiteral\",\"range\":{\"end\":590,\"start\":587},\"token\":\"1.0\",\"type\":\"f64\"}}],\"declarationRange\":{\"end\":593,\"start\":558},\"id\":\"sha256:eb2843d89a00f6bd3766bce707e6dc349f23c8767b44da5f55f695887901bc9b\",\"name\":\"f15\",\"nameRange\":{\"end\":570,\"start\":567},\"parameters\":[],\"returnAnnotationRange\":{\"end\":577,\"start\":574},\"returnType\":\"f64\",\"sourcePath\":\"/array-owner23e/app.ts\"}],\"positionUnit\":\"utf16\",\"readSpanIntrinsic\":{\"declarationRange\":{\"end\":483,\"start\":404},\"id\":\"sha256:894419bca7875c61ed42fc4dd665b21d422598acac6f074d8f8b76e9794ba8ec\",\"kind\":\"intrinsic\",\"name\":\"readSpan\",\"nameRange\":{\"end\":429,\"start\":421},\"parameters\":[{\"declarationRange\":{\"end\":443,\"start\":433},\"name\":\"owner\",\"nameRange\":{\"end\":438,\"start\":433},\"typeRange\":{\"end\":443,\"start\":440}},{\"declarationRange\":{\"end\":455,\"start\":445},\"name\":\"start\",\"nameRange\":{\"end\":450,\"start\":445},\"typeRange\":{\"end\":455,\"start\":452}},{\"declarationRange\":{\"end\":468,\"start\":457},\"name\":\"length\",\"nameRange\":{\"end\":463,\"start\":457},\"typeRange\":{\"end\":468,\"start\":465}}],\"returnTypeRange\":{\"end\":482,\"start\":471},\"sourcePath\":\"/array-owner23e/minimal-arrays-v3.d.ts\",\"typeParameterRange\":{\"end\":431,\"start\":430}},\"readSpanLength\":{\"declarationRange\":{\"end\":401,\"start\":380},\"id\":\"sha256:59bb62c08c44255796c966889d454a17165e4530b9985775f9d69a3ba8b211c0\",\"kind\":\"property\",\"name\":\"length\",\"nameRange\":{\"end\":395,\"start\":389},\"officialType\":\"number\",\"ownerType\":\"readspan.f64\",\"readType\":\"u32\",\"readonly\":true,\"sourcePath\":\"/array-owner23e/minimal-arrays-v3.d.ts\",\"typeRange\":{\"end\":400,\"start\":397}},\"rootFile\":\"/array-owner23e/app.ts\",\"sourceRoot\":\"/array-owner23e\",\"types\":[{\"declarationRange\":{\"end\":311,\"start\":293},\"id\":\"f64\",\"kind\":\"scalar\",\"nameRange\":{\"end\":301,\"start\":298},\"sourcePath\":\"/array-owner23e/minimal-arrays-v3.d.ts\"},{\"declarationRange\":{\"end\":292,\"start\":238},\"elementType\":\"f64\",\"id\":\"array.f64\",\"indexSignatureRange\":{\"end\":274,\"start\":259},\"kind\":\"array\",\"nameRange\":{\"end\":253,\"start\":248},\"sourcePath\":\"/array-owner23e/minimal-arrays-v3.d.ts\"},{\"declarationRange\":{\"end\":330,\"start\":312},\"id\":\"u32\",\"kind\":\"scalar\",\"nameRange\":{\"end\":320,\"start\":317},\"sourcePath\":\"/array-owner23e/minimal-arrays-v3.d.ts\"},{\"declarationRange\":{\"end\":403,\"start\":331},\"elementType\":\"f64\",\"id\":\"readspan.f64\",\"indexSignatureRange\":{\"end\":379,\"start\":355},\"kind\":\"readSpan\",\"nameRange\":{\"end\":349,\"start\":341},\"readonly\":true,\"sourcePath\":\"/array-owner23e/minimal-arrays-v3.d.ts\"}]},\"requestId\":\"sha256:997c30ee7c29fcb2b239a6b83e292770d9e66f03101c87812da8922b58d121a2\",\"schemaHash\":\"sha256:3067c8bb8296ab6687ee6549dd44522cae17f4b87b0a3996616ba7b373952617\",\"version\":7}\n",
+        "expectedPackageId": "sha256:f3ad0db0cd54c0bd0dcecdfa46321e99ccb6809dbd464e17f66a29897570f412",
+        "factsBytes": "{\"family\":\"tsfg.array-facts-package-candidate\",\"packageId\":\"sha256:f3ad0db0cd54c0bd0dcecdfa46321e99ccb6809dbd464e17f66a29897570f412\",\"payload\":{\"arrayLength\":{\"declarationRange\":{\"end\":290,\"start\":275},\"id\":\"sha256:8a15099652ad0aa13b95ca5e230158b507063eae8d48d15e48678eb61d23408d\",\"kind\":\"property\",\"name\":\"length\",\"nameRange\":{\"end\":281,\"start\":275},\"officialType\":\"number\",\"ownerType\":\"array.f64\",\"sourcePath\":\"/array-owner23e/minimal-arrays-v3.d.ts\",\"typeRange\":{\"end\":289,\"start\":283},\"writeType\":\"u32\"},\"config\":{\"allowJs\":false,\"noEmit\":true,\"strict\":true},\"declarations\":{\"paths\":[\"/array-owner23e/minimal-arrays-v3.d.ts\"],\"version\":\"minimal-arrays-v3\"},\"diagnostics\":[],\"exports\":[{\"functionId\":\"sha256:386997bae5e651e20bfab46edfb6bd6d6c2a29c660a5092a7d68ffe860081b9b\",\"name\":\"f0\"}],\"files\":[{\"byteLength\":594,\"content\":\"export function f0(): f64 { return f1(); }\\nfunction f1(): f64 { return f2(); }\\nfunction f2(): f64 { return f3(); }\\nfunction f3(): f64 { return f4(); }\\nfunction f4(): f64 { return f5(); }\\nfunction f5(): f64 { return f6(); }\\nfunction f6(): f64 { return f7(); }\\nfunction f7(): f64 { return f8(); }\\nfunction f8(): f64 { return f9(); }\\nfunction f9(): f64 { return f10(); }\\nfunction f10(): f64 { return f11(); }\\nfunction f11(): f64 { return f12(); }\\nfunction f12(): f64 { return f13(); }\\nfunction f13(): f64 { return f14(); }\\nfunction f14(): f64 { return f15(); }\\nfunction f15(): f64 { return 1.0; }\\n\",\"path\":\"/array-owner23e/app.ts\",\"sha256\":\"161ba7da8476f79f72b367122642a953d5a82802d4a4a309001f6bc9c0f61847\",\"utf16Length\":594},{\"byteLength\":484,\"content\":\"// SPDX-License-Identifier: MIT\\ninterface Object {}\\ninterface Function {}\\ninterface CallableFunction {}\\ninterface NewableFunction {}\\ninterface IArguments {}\\ninterface String {}\\ninterface Number {}\\ninterface Boolean {}\\ninterface RegExp {}\\ninterface Array<T> { [n: number]: T; length: number; }\\ntype f64 = number;\\ntype u32 = number;\\ninterface ReadSpan<T> { readonly [n: number]: T; readonly length: u32; }\\ndeclare function readSpan<T>(owner: T[], start: u32, length: u32): ReadSpan<T>;\\n\",\"path\":\"/array-owner23e/minimal-arrays-v3.d.ts\",\"sha256\":\"282b335a6e0e0493fa74a3c1dd56f234f8c679079acdaf0600cefb8306c26415\",\"utf16Length\":484}],\"functions\":[{\"bindings\":[],\"body\":[{\"kind\":\"return\",\"range\":{\"end\":40,\"start\":28},\"value\":{\"arguments\":[],\"callee\":\"sha256:9a9616ee5567a9ca06d1d4922cfb0277e35d064285ea6cf97c44fb1eea775909\",\"calleeRange\":{\"end\":37,\"start\":35},\"kind\":\"directCall\",\"range\":{\"end\":39,\"start\":35},\"type\":\"f64\"}}],\"declarationRange\":{\"end\":42,\"start\":0},\"id\":\"sha256:386997bae5e651e20bfab46edfb6bd6d6c2a29c660a5092a7d68ffe860081b9b\",\"name\":\"f0\",\"nameRange\":{\"end\":18,\"start\":16},\"parameters\":[],\"returnAnnotationRange\":{\"end\":25,\"start\":22},\"returnType\":\"f64\",\"sourcePath\":\"/array-owner23e/app.ts\"},{\"bindings\":[],\"body\":[{\"kind\":\"return\",\"range\":{\"end\":76,\"start\":64},\"value\":{\"arguments\":[],\"callee\":\"sha256:994b10be705d793b1c17022d006078036de772bbcc852b889db8839b47125888\",\"calleeRange\":{\"end\":73,\"start\":71},\"kind\":\"directCall\",\"range\":{\"end\":75,\"start\":71},\"type\":\"f64\"}}],\"declarationRange\":{\"end\":78,\"start\":43},\"id\":\"sha256:9a9616ee5567a9ca06d1d4922cfb0277e35d064285ea6cf97c44fb1eea775909\",\"name\":\"f1\",\"nameRange\":{\"end\":54,\"start\":52},\"parameters\":[],\"returnAnnotationRange\":{\"end\":61,\"start\":58},\"returnType\":\"f64\",\"sourcePath\":\"/array-owner23e/app.ts\"},{\"bindings\":[],\"body\":[{\"kind\":\"return\",\"range\":{\"end\":112,\"start\":100},\"value\":{\"arguments\":[],\"callee\":\"sha256:d076e7c2a51e6b99b7339606bd6f30af6c170324b73c791f1bcdd590a08033bb\",\"calleeRange\":{\"end\":109,\"start\":107},\"kind\":\"directCall\",\"range\":{\"end\":111,\"start\":107},\"type\":\"f64\"}}],\"declarationRange\":{\"end\":114,\"start\":79},\"id\":\"sha256:994b10be705d793b1c17022d006078036de772bbcc852b889db8839b47125888\",\"name\":\"f2\",\"nameRange\":{\"end\":90,\"start\":88},\"parameters\":[],\"returnAnnotationRange\":{\"end\":97,\"start\":94},\"returnType\":\"f64\",\"sourcePath\":\"/array-owner23e/app.ts\"},{\"bindings\":[],\"body\":[{\"kind\":\"return\",\"range\":{\"end\":148,\"start\":136},\"value\":{\"arguments\":[],\"callee\":\"sha256:9a2612f478059d5c8bc983d0742027862e11b74d9738340fea526bcf8a135f29\",\"calleeRange\":{\"end\":145,\"start\":143},\"kind\":\"directCall\",\"range\":{\"end\":147,\"start\":143},\"type\":\"f64\"}}],\"declarationRange\":{\"end\":150,\"start\":115},\"id\":\"sha256:d076e7c2a51e6b99b7339606bd6f30af6c170324b73c791f1bcdd590a08033bb\",\"name\":\"f3\",\"nameRange\":{\"end\":126,\"start\":124},\"parameters\":[],\"returnAnnotationRange\":{\"end\":133,\"start\":130},\"returnType\":\"f64\",\"sourcePath\":\"/array-owner23e/app.ts\"},{\"bindings\":[],\"body\":[{\"kind\":\"return\",\"range\":{\"end\":184,\"start\":172},\"value\":{\"arguments\":[],\"callee\":\"sha256:faca5ccfe4b0323179ca30699a2a3b2b6d3c4458d06a06939c7ddc4f43200a37\",\"calleeRange\":{\"end\":181,\"start\":179},\"kind\":\"directCall\",\"range\":{\"end\":183,\"start\":179},\"type\":\"f64\"}}],\"declarationRange\":{\"end\":186,\"start\":151},\"id\":\"sha256:9a2612f478059d5c8bc983d0742027862e11b74d9738340fea526bcf8a135f29\",\"name\":\"f4\",\"nameRange\":{\"end\":162,\"start\":160},\"parameters\":[],\"returnAnnotationRange\":{\"end\":169,\"start\":166},\"returnType\":\"f64\",\"sourcePath\":\"/array-owner23e/app.ts\"},{\"bindings\":[],\"body\":[{\"kind\":\"return\",\"range\":{\"end\":220,\"start\":208},\"value\":{\"arguments\":[],\"callee\":\"sha256:72f001e98b981cccf42e9ffaff1a2990dc8d5a370e4f457dc4f2a046b8843d88\",\"calleeRange\":{\"end\":217,\"start\":215},\"kind\":\"directCall\",\"range\":{\"end\":219,\"start\":215},\"type\":\"f64\"}}],\"declarationRange\":{\"end\":222,\"start\":187},\"id\":\"sha256:faca5ccfe4b0323179ca30699a2a3b2b6d3c4458d06a06939c7ddc4f43200a37\",\"name\":\"f5\",\"nameRange\":{\"end\":198,\"start\":196},\"parameters\":[],\"returnAnnotationRange\":{\"end\":205,\"start\":202},\"returnType\":\"f64\",\"sourcePath\":\"/array-owner23e/app.ts\"},{\"bindings\":[],\"body\":[{\"kind\":\"return\",\"range\":{\"end\":256,\"start\":244},\"value\":{\"arguments\":[],\"callee\":\"sha256:454064111993467ada3aeb8acc2f1ae90f08ea5c337d4900892b426abc2deb12\",\"calleeRange\":{\"end\":253,\"start\":251},\"kind\":\"directCall\",\"range\":{\"end\":255,\"start\":251},\"type\":\"f64\"}}],\"declarationRange\":{\"end\":258,\"start\":223},\"id\":\"sha256:72f001e98b981cccf42e9ffaff1a2990dc8d5a370e4f457dc4f2a046b8843d88\",\"name\":\"f6\",\"nameRange\":{\"end\":234,\"start\":232},\"parameters\":[],\"returnAnnotationRange\":{\"end\":241,\"start\":238},\"returnType\":\"f64\",\"sourcePath\":\"/array-owner23e/app.ts\"},{\"bindings\":[],\"body\":[{\"kind\":\"return\",\"range\":{\"end\":292,\"start\":280},\"value\":{\"arguments\":[],\"callee\":\"sha256:c645eaf4e92da9f7c38d7d520cf51ee94171c9467d40ca1ffe5c9c6fe7aa2c8f\",\"calleeRange\":{\"end\":289,\"start\":287},\"kind\":\"directCall\",\"range\":{\"end\":291,\"start\":287},\"type\":\"f64\"}}],\"declarationRange\":{\"end\":294,\"start\":259},\"id\":\"sha256:454064111993467ada3aeb8acc2f1ae90f08ea5c337d4900892b426abc2deb12\",\"name\":\"f7\",\"nameRange\":{\"end\":270,\"start\":268},\"parameters\":[],\"returnAnnotationRange\":{\"end\":277,\"start\":274},\"returnType\":\"f64\",\"sourcePath\":\"/array-owner23e/app.ts\"},{\"bindings\":[],\"body\":[{\"kind\":\"return\",\"range\":{\"end\":328,\"start\":316},\"value\":{\"arguments\":[],\"callee\":\"sha256:3b63ad9c666378a07f2db07fa71d56107ffb8c8844acfc50f4eae4f96eb9b539\",\"calleeRange\":{\"end\":325,\"start\":323},\"kind\":\"directCall\",\"range\":{\"end\":327,\"start\":323},\"type\":\"f64\"}}],\"declarationRange\":{\"end\":330,\"start\":295},\"id\":\"sha256:c645eaf4e92da9f7c38d7d520cf51ee94171c9467d40ca1ffe5c9c6fe7aa2c8f\",\"name\":\"f8\",\"nameRange\":{\"end\":306,\"start\":304},\"parameters\":[],\"returnAnnotationRange\":{\"end\":313,\"start\":310},\"returnType\":\"f64\",\"sourcePath\":\"/array-owner23e/app.ts\"},{\"bindings\":[],\"body\":[{\"kind\":\"return\",\"range\":{\"end\":365,\"start\":352},\"value\":{\"arguments\":[],\"callee\":\"sha256:e51db20993ab6bcb09ccf6cec0ff00e89c6cf8e7208cbd921ae0206932e4f785\",\"calleeRange\":{\"end\":362,\"start\":359},\"kind\":\"directCall\",\"range\":{\"end\":364,\"start\":359},\"type\":\"f64\"}}],\"declarationRange\":{\"end\":367,\"start\":331},\"id\":\"sha256:3b63ad9c666378a07f2db07fa71d56107ffb8c8844acfc50f4eae4f96eb9b539\",\"name\":\"f9\",\"nameRange\":{\"end\":342,\"start\":340},\"parameters\":[],\"returnAnnotationRange\":{\"end\":349,\"start\":346},\"returnType\":\"f64\",\"sourcePath\":\"/array-owner23e/app.ts\"},{\"bindings\":[],\"body\":[{\"kind\":\"return\",\"range\":{\"end\":403,\"start\":390},\"value\":{\"arguments\":[],\"callee\":\"sha256:cb56359ee155b76bd0681f396f0528a7a9454ec7b031312c14fe05170fef02bb\",\"calleeRange\":{\"end\":400,\"start\":397},\"kind\":\"directCall\",\"range\":{\"end\":402,\"start\":397},\"type\":\"f64\"}}],\"declarationRange\":{\"end\":405,\"start\":368},\"id\":\"sha256:e51db20993ab6bcb09ccf6cec0ff00e89c6cf8e7208cbd921ae0206932e4f785\",\"name\":\"f10\",\"nameRange\":{\"end\":380,\"start\":377},\"parameters\":[],\"returnAnnotationRange\":{\"end\":387,\"start\":384},\"returnType\":\"f64\",\"sourcePath\":\"/array-owner23e/app.ts\"},{\"bindings\":[],\"body\":[{\"kind\":\"return\",\"range\":{\"end\":441,\"start\":428},\"value\":{\"arguments\":[],\"callee\":\"sha256:45c21b99c0ae84a8878e559a07dc11aa3b247df547330cd652200d72d9ff43ec\",\"calleeRange\":{\"end\":438,\"start\":435},\"kind\":\"directCall\",\"range\":{\"end\":440,\"start\":435},\"type\":\"f64\"}}],\"declarationRange\":{\"end\":443,\"start\":406},\"id\":\"sha256:cb56359ee155b76bd0681f396f0528a7a9454ec7b031312c14fe05170fef02bb\",\"name\":\"f11\",\"nameRange\":{\"end\":418,\"start\":415},\"parameters\":[],\"returnAnnotationRange\":{\"end\":425,\"start\":422},\"returnType\":\"f64\",\"sourcePath\":\"/array-owner23e/app.ts\"},{\"bindings\":[],\"body\":[{\"kind\":\"return\",\"range\":{\"end\":479,\"start\":466},\"value\":{\"arguments\":[],\"callee\":\"sha256:846c4e90159d7029a5cb5313cda3843120be5e1cbbae4a3cfb97cb91c5fcbc30\",\"calleeRange\":{\"end\":476,\"start\":473},\"kind\":\"directCall\",\"range\":{\"end\":478,\"start\":473},\"type\":\"f64\"}}],\"declarationRange\":{\"end\":481,\"start\":444},\"id\":\"sha256:45c21b99c0ae84a8878e559a07dc11aa3b247df547330cd652200d72d9ff43ec\",\"name\":\"f12\",\"nameRange\":{\"end\":456,\"start\":453},\"parameters\":[],\"returnAnnotationRange\":{\"end\":463,\"start\":460},\"returnType\":\"f64\",\"sourcePath\":\"/array-owner23e/app.ts\"},{\"bindings\":[],\"body\":[{\"kind\":\"return\",\"range\":{\"end\":517,\"start\":504},\"value\":{\"arguments\":[],\"callee\":\"sha256:317f2feba6b435f821768fc79e53863b5776a36bf21d30bd40e5a8182bf0e5c7\",\"calleeRange\":{\"end\":514,\"start\":511},\"kind\":\"directCall\",\"range\":{\"end\":516,\"start\":511},\"type\":\"f64\"}}],\"declarationRange\":{\"end\":519,\"start\":482},\"id\":\"sha256:846c4e90159d7029a5cb5313cda3843120be5e1cbbae4a3cfb97cb91c5fcbc30\",\"name\":\"f13\",\"nameRange\":{\"end\":494,\"start\":491},\"parameters\":[],\"returnAnnotationRange\":{\"end\":501,\"start\":498},\"returnType\":\"f64\",\"sourcePath\":\"/array-owner23e/app.ts\"},{\"bindings\":[],\"body\":[{\"kind\":\"return\",\"range\":{\"end\":555,\"start\":542},\"value\":{\"arguments\":[],\"callee\":\"sha256:eb2843d89a00f6bd3766bce707e6dc349f23c8767b44da5f55f695887901bc9b\",\"calleeRange\":{\"end\":552,\"start\":549},\"kind\":\"directCall\",\"range\":{\"end\":554,\"start\":549},\"type\":\"f64\"}}],\"declarationRange\":{\"end\":557,\"start\":520},\"id\":\"sha256:317f2feba6b435f821768fc79e53863b5776a36bf21d30bd40e5a8182bf0e5c7\",\"name\":\"f14\",\"nameRange\":{\"end\":532,\"start\":529},\"parameters\":[],\"returnAnnotationRange\":{\"end\":539,\"start\":536},\"returnType\":\"f64\",\"sourcePath\":\"/array-owner23e/app.ts\"},{\"bindings\":[],\"body\":[{\"kind\":\"return\",\"range\":{\"end\":591,\"start\":580},\"value\":{\"bits\":\"3ff0000000000000\",\"kind\":\"numericLiteral\",\"range\":{\"end\":590,\"start\":587},\"token\":\"1.0\",\"type\":\"f64\"}}],\"declarationRange\":{\"end\":593,\"start\":558},\"id\":\"sha256:eb2843d89a00f6bd3766bce707e6dc349f23c8767b44da5f55f695887901bc9b\",\"name\":\"f15\",\"nameRange\":{\"end\":570,\"start\":567},\"parameters\":[],\"returnAnnotationRange\":{\"end\":577,\"start\":574},\"returnType\":\"f64\",\"sourcePath\":\"/array-owner23e/app.ts\"}],\"positionUnit\":\"utf16\",\"readSpanIntrinsic\":{\"declarationRange\":{\"end\":483,\"start\":404},\"id\":\"sha256:894419bca7875c61ed42fc4dd665b21d422598acac6f074d8f8b76e9794ba8ec\",\"kind\":\"intrinsic\",\"name\":\"readSpan\",\"nameRange\":{\"end\":429,\"start\":421},\"parameters\":[{\"declarationRange\":{\"end\":443,\"start\":433},\"name\":\"owner\",\"nameRange\":{\"end\":438,\"start\":433},\"typeRange\":{\"end\":443,\"start\":440}},{\"declarationRange\":{\"end\":455,\"start\":445},\"name\":\"start\",\"nameRange\":{\"end\":450,\"start\":445},\"typeRange\":{\"end\":455,\"start\":452}},{\"declarationRange\":{\"end\":468,\"start\":457},\"name\":\"length\",\"nameRange\":{\"end\":463,\"start\":457},\"typeRange\":{\"end\":468,\"start\":465}}],\"returnTypeRange\":{\"end\":482,\"start\":471},\"sourcePath\":\"/array-owner23e/minimal-arrays-v3.d.ts\",\"typeParameterRange\":{\"end\":431,\"start\":430}},\"readSpanLength\":{\"declarationRange\":{\"end\":401,\"start\":380},\"id\":\"sha256:59bb62c08c44255796c966889d454a17165e4530b9985775f9d69a3ba8b211c0\",\"kind\":\"property\",\"name\":\"length\",\"nameRange\":{\"end\":395,\"start\":389},\"officialType\":\"number\",\"ownerType\":\"readspan.f64\",\"readType\":\"u32\",\"readonly\":true,\"sourcePath\":\"/array-owner23e/minimal-arrays-v3.d.ts\",\"typeRange\":{\"end\":400,\"start\":397}},\"rootFile\":\"/array-owner23e/app.ts\",\"sourceRoot\":\"/array-owner23e\",\"types\":[{\"declarationRange\":{\"end\":311,\"start\":293},\"id\":\"f64\",\"kind\":\"scalar\",\"nameRange\":{\"end\":301,\"start\":298},\"sourcePath\":\"/array-owner23e/minimal-arrays-v3.d.ts\"},{\"declarationRange\":{\"end\":292,\"start\":238},\"elementType\":\"f64\",\"id\":\"array.f64\",\"indexSignatureRange\":{\"end\":274,\"start\":259},\"kind\":\"array\",\"nameRange\":{\"end\":253,\"start\":248},\"sourcePath\":\"/array-owner23e/minimal-arrays-v3.d.ts\"},{\"declarationRange\":{\"end\":330,\"start\":312},\"id\":\"u32\",\"kind\":\"scalar\",\"nameRange\":{\"end\":320,\"start\":317},\"sourcePath\":\"/array-owner23e/minimal-arrays-v3.d.ts\"},{\"declarationRange\":{\"end\":403,\"start\":331},\"elementType\":\"f64\",\"id\":\"readspan.f64\",\"indexSignatureRange\":{\"end\":379,\"start\":355},\"kind\":\"readSpan\",\"nameRange\":{\"end\":349,\"start\":341},\"readonly\":true,\"sourcePath\":\"/array-owner23e/minimal-arrays-v3.d.ts\"}]},\"requestId\":\"sha256:997c30ee7c29fcb2b239a6b83e292770d9e66f03101c87812da8922b58d121a2\",\"schemaHash\":\"sha256:d2ee930b76b8fd5c2270ad69579c9c61377831a97034d3a8890d8aa770ebabc2\",\"version\":7}\n",
         "family": "tsfg.array-facts-context-candidate",
         "version": 1
       },
@@ -1162,13 +1162,13 @@
         ],
         "facts": {
           "requestId": "sha256:997c30ee7c29fcb2b239a6b83e292770d9e66f03101c87812da8922b58d121a2",
-          "schemaHash": "sha256:3067c8bb8296ab6687ee6549dd44522cae17f4b87b0a3996616ba7b373952617",
+          "schemaHash": "sha256:d2ee930b76b8fd5c2270ad69579c9c61377831a97034d3a8890d8aa770ebabc2",
           "version": 7
         },
         "format": {
           "family": "tsfg.array-hir-candidate",
-          "schemaHash": "sha256:a9f717b963ec6e777013c0ccd76ac23e7230a8bafe9367e8c0bb54eaaf011a1f",
-          "version": 7
+          "version": 8,
+          "schemaHash": "sha256:073fac908486f522ecd8beaa1f684bdbb102f60c97ff49e215a53d58f0ee7a0d"
         },
         "functions": [
           {
@@ -1966,7 +1966,7 @@
             "sourcePath": "/array-owner23e/app.ts"
           }
         ],
-        "inputIdentity": "sha256:c779b1a54c85bc4d3d0b3ba3eaec3dc8fd8fdd21e12845c644eeb18d275ee50a",
+        "inputIdentity": "sha256:f3ad0db0cd54c0bd0dcecdfa46321e99ccb6809dbd464e17f66a29897570f412",
         "readSpanIntrinsic": {
           "declarationRange": {
             "end": 483,
@@ -2669,7 +2669,7 @@
         }
       },
       "name": "forward-chain16",
-      "packageText": "{\"family\":\"tsfg.array-facts-package-candidate\",\"packageId\":\"sha256:c779b1a54c85bc4d3d0b3ba3eaec3dc8fd8fdd21e12845c644eeb18d275ee50a\",\"payload\":{\"arrayLength\":{\"declarationRange\":{\"end\":290,\"start\":275},\"id\":\"sha256:8a15099652ad0aa13b95ca5e230158b507063eae8d48d15e48678eb61d23408d\",\"kind\":\"property\",\"name\":\"length\",\"nameRange\":{\"end\":281,\"start\":275},\"officialType\":\"number\",\"ownerType\":\"array.f64\",\"sourcePath\":\"/array-owner23e/minimal-arrays-v3.d.ts\",\"typeRange\":{\"end\":289,\"start\":283},\"writeType\":\"u32\"},\"config\":{\"allowJs\":false,\"noEmit\":true,\"strict\":true},\"declarations\":{\"paths\":[\"/array-owner23e/minimal-arrays-v3.d.ts\"],\"version\":\"minimal-arrays-v3\"},\"diagnostics\":[],\"exports\":[{\"functionId\":\"sha256:386997bae5e651e20bfab46edfb6bd6d6c2a29c660a5092a7d68ffe860081b9b\",\"name\":\"f0\"}],\"files\":[{\"byteLength\":594,\"content\":\"export function f0(): f64 { return f1(); }\\nfunction f1(): f64 { return f2(); }\\nfunction f2(): f64 { return f3(); }\\nfunction f3(): f64 { return f4(); }\\nfunction f4(): f64 { return f5(); }\\nfunction f5(): f64 { return f6(); }\\nfunction f6(): f64 { return f7(); }\\nfunction f7(): f64 { return f8(); }\\nfunction f8(): f64 { return f9(); }\\nfunction f9(): f64 { return f10(); }\\nfunction f10(): f64 { return f11(); }\\nfunction f11(): f64 { return f12(); }\\nfunction f12(): f64 { return f13(); }\\nfunction f13(): f64 { return f14(); }\\nfunction f14(): f64 { return f15(); }\\nfunction f15(): f64 { return 1.0; }\\n\",\"path\":\"/array-owner23e/app.ts\",\"sha256\":\"161ba7da8476f79f72b367122642a953d5a82802d4a4a309001f6bc9c0f61847\",\"utf16Length\":594},{\"byteLength\":484,\"content\":\"// SPDX-License-Identifier: MIT\\ninterface Object {}\\ninterface Function {}\\ninterface CallableFunction {}\\ninterface NewableFunction {}\\ninterface IArguments {}\\ninterface String {}\\ninterface Number {}\\ninterface Boolean {}\\ninterface RegExp {}\\ninterface Array<T> { [n: number]: T; length: number; }\\ntype f64 = number;\\ntype u32 = number;\\ninterface ReadSpan<T> { readonly [n: number]: T; readonly length: u32; }\\ndeclare function readSpan<T>(owner: T[], start: u32, length: u32): ReadSpan<T>;\\n\",\"path\":\"/array-owner23e/minimal-arrays-v3.d.ts\",\"sha256\":\"282b335a6e0e0493fa74a3c1dd56f234f8c679079acdaf0600cefb8306c26415\",\"utf16Length\":484}],\"functions\":[{\"bindings\":[],\"body\":[{\"kind\":\"return\",\"range\":{\"end\":40,\"start\":28},\"value\":{\"arguments\":[],\"callee\":\"sha256:9a9616ee5567a9ca06d1d4922cfb0277e35d064285ea6cf97c44fb1eea775909\",\"calleeRange\":{\"end\":37,\"start\":35},\"kind\":\"directCall\",\"range\":{\"end\":39,\"start\":35},\"type\":\"f64\"}}],\"declarationRange\":{\"end\":42,\"start\":0},\"id\":\"sha256:386997bae5e651e20bfab46edfb6bd6d6c2a29c660a5092a7d68ffe860081b9b\",\"name\":\"f0\",\"nameRange\":{\"end\":18,\"start\":16},\"parameters\":[],\"returnAnnotationRange\":{\"end\":25,\"start\":22},\"returnType\":\"f64\",\"sourcePath\":\"/array-owner23e/app.ts\"},{\"bindings\":[],\"body\":[{\"kind\":\"return\",\"range\":{\"end\":76,\"start\":64},\"value\":{\"arguments\":[],\"callee\":\"sha256:994b10be705d793b1c17022d006078036de772bbcc852b889db8839b47125888\",\"calleeRange\":{\"end\":73,\"start\":71},\"kind\":\"directCall\",\"range\":{\"end\":75,\"start\":71},\"type\":\"f64\"}}],\"declarationRange\":{\"end\":78,\"start\":43},\"id\":\"sha256:9a9616ee5567a9ca06d1d4922cfb0277e35d064285ea6cf97c44fb1eea775909\",\"name\":\"f1\",\"nameRange\":{\"end\":54,\"start\":52},\"parameters\":[],\"returnAnnotationRange\":{\"end\":61,\"start\":58},\"returnType\":\"f64\",\"sourcePath\":\"/array-owner23e/app.ts\"},{\"bindings\":[],\"body\":[{\"kind\":\"return\",\"range\":{\"end\":112,\"start\":100},\"value\":{\"arguments\":[],\"callee\":\"sha256:d076e7c2a51e6b99b7339606bd6f30af6c170324b73c791f1bcdd590a08033bb\",\"calleeRange\":{\"end\":109,\"start\":107},\"kind\":\"directCall\",\"range\":{\"end\":111,\"start\":107},\"type\":\"f64\"}}],\"declarationRange\":{\"end\":114,\"start\":79},\"id\":\"sha256:994b10be705d793b1c17022d006078036de772bbcc852b889db8839b47125888\",\"name\":\"f2\",\"nameRange\":{\"end\":90,\"start\":88},\"parameters\":[],\"returnAnnotationRange\":{\"end\":97,\"start\":94},\"returnType\":\"f64\",\"sourcePath\":\"/array-owner23e/app.ts\"},{\"bindings\":[],\"body\":[{\"kind\":\"return\",\"range\":{\"end\":148,\"start\":136},\"value\":{\"arguments\":[],\"callee\":\"sha256:9a2612f478059d5c8bc983d0742027862e11b74d9738340fea526bcf8a135f29\",\"calleeRange\":{\"end\":145,\"start\":143},\"kind\":\"directCall\",\"range\":{\"end\":147,\"start\":143},\"type\":\"f64\"}}],\"declarationRange\":{\"end\":150,\"start\":115},\"id\":\"sha256:d076e7c2a51e6b99b7339606bd6f30af6c170324b73c791f1bcdd590a08033bb\",\"name\":\"f3\",\"nameRange\":{\"end\":126,\"start\":124},\"parameters\":[],\"returnAnnotationRange\":{\"end\":133,\"start\":130},\"returnType\":\"f64\",\"sourcePath\":\"/array-owner23e/app.ts\"},{\"bindings\":[],\"body\":[{\"kind\":\"return\",\"range\":{\"end\":184,\"start\":172},\"value\":{\"arguments\":[],\"callee\":\"sha256:faca5ccfe4b0323179ca30699a2a3b2b6d3c4458d06a06939c7ddc4f43200a37\",\"calleeRange\":{\"end\":181,\"start\":179},\"kind\":\"directCall\",\"range\":{\"end\":183,\"start\":179},\"type\":\"f64\"}}],\"declarationRange\":{\"end\":186,\"start\":151},\"id\":\"sha256:9a2612f478059d5c8bc983d0742027862e11b74d9738340fea526bcf8a135f29\",\"name\":\"f4\",\"nameRange\":{\"end\":162,\"start\":160},\"parameters\":[],\"returnAnnotationRange\":{\"end\":169,\"start\":166},\"returnType\":\"f64\",\"sourcePath\":\"/array-owner23e/app.ts\"},{\"bindings\":[],\"body\":[{\"kind\":\"return\",\"range\":{\"end\":220,\"start\":208},\"value\":{\"arguments\":[],\"callee\":\"sha256:72f001e98b981cccf42e9ffaff1a2990dc8d5a370e4f457dc4f2a046b8843d88\",\"calleeRange\":{\"end\":217,\"start\":215},\"kind\":\"directCall\",\"range\":{\"end\":219,\"start\":215},\"type\":\"f64\"}}],\"declarationRange\":{\"end\":222,\"start\":187},\"id\":\"sha256:faca5ccfe4b0323179ca30699a2a3b2b6d3c4458d06a06939c7ddc4f43200a37\",\"name\":\"f5\",\"nameRange\":{\"end\":198,\"start\":196},\"parameters\":[],\"returnAnnotationRange\":{\"end\":205,\"start\":202},\"returnType\":\"f64\",\"sourcePath\":\"/array-owner23e/app.ts\"},{\"bindings\":[],\"body\":[{\"kind\":\"return\",\"range\":{\"end\":256,\"start\":244},\"value\":{\"arguments\":[],\"callee\":\"sha256:454064111993467ada3aeb8acc2f1ae90f08ea5c337d4900892b426abc2deb12\",\"calleeRange\":{\"end\":253,\"start\":251},\"kind\":\"directCall\",\"range\":{\"end\":255,\"start\":251},\"type\":\"f64\"}}],\"declarationRange\":{\"end\":258,\"start\":223},\"id\":\"sha256:72f001e98b981cccf42e9ffaff1a2990dc8d5a370e4f457dc4f2a046b8843d88\",\"name\":\"f6\",\"nameRange\":{\"end\":234,\"start\":232},\"parameters\":[],\"returnAnnotationRange\":{\"end\":241,\"start\":238},\"returnType\":\"f64\",\"sourcePath\":\"/array-owner23e/app.ts\"},{\"bindings\":[],\"body\":[{\"kind\":\"return\",\"range\":{\"end\":292,\"start\":280},\"value\":{\"arguments\":[],\"callee\":\"sha256:c645eaf4e92da9f7c38d7d520cf51ee94171c9467d40ca1ffe5c9c6fe7aa2c8f\",\"calleeRange\":{\"end\":289,\"start\":287},\"kind\":\"directCall\",\"range\":{\"end\":291,\"start\":287},\"type\":\"f64\"}}],\"declarationRange\":{\"end\":294,\"start\":259},\"id\":\"sha256:454064111993467ada3aeb8acc2f1ae90f08ea5c337d4900892b426abc2deb12\",\"name\":\"f7\",\"nameRange\":{\"end\":270,\"start\":268},\"parameters\":[],\"returnAnnotationRange\":{\"end\":277,\"start\":274},\"returnType\":\"f64\",\"sourcePath\":\"/array-owner23e/app.ts\"},{\"bindings\":[],\"body\":[{\"kind\":\"return\",\"range\":{\"end\":328,\"start\":316},\"value\":{\"arguments\":[],\"callee\":\"sha256:3b63ad9c666378a07f2db07fa71d56107ffb8c8844acfc50f4eae4f96eb9b539\",\"calleeRange\":{\"end\":325,\"start\":323},\"kind\":\"directCall\",\"range\":{\"end\":327,\"start\":323},\"type\":\"f64\"}}],\"declarationRange\":{\"end\":330,\"start\":295},\"id\":\"sha256:c645eaf4e92da9f7c38d7d520cf51ee94171c9467d40ca1ffe5c9c6fe7aa2c8f\",\"name\":\"f8\",\"nameRange\":{\"end\":306,\"start\":304},\"parameters\":[],\"returnAnnotationRange\":{\"end\":313,\"start\":310},\"returnType\":\"f64\",\"sourcePath\":\"/array-owner23e/app.ts\"},{\"bindings\":[],\"body\":[{\"kind\":\"return\",\"range\":{\"end\":365,\"start\":352},\"value\":{\"arguments\":[],\"callee\":\"sha256:e51db20993ab6bcb09ccf6cec0ff00e89c6cf8e7208cbd921ae0206932e4f785\",\"calleeRange\":{\"end\":362,\"start\":359},\"kind\":\"directCall\",\"range\":{\"end\":364,\"start\":359},\"type\":\"f64\"}}],\"declarationRange\":{\"end\":367,\"start\":331},\"id\":\"sha256:3b63ad9c666378a07f2db07fa71d56107ffb8c8844acfc50f4eae4f96eb9b539\",\"name\":\"f9\",\"nameRange\":{\"end\":342,\"start\":340},\"parameters\":[],\"returnAnnotationRange\":{\"end\":349,\"start\":346},\"returnType\":\"f64\",\"sourcePath\":\"/array-owner23e/app.ts\"},{\"bindings\":[],\"body\":[{\"kind\":\"return\",\"range\":{\"end\":403,\"start\":390},\"value\":{\"arguments\":[],\"callee\":\"sha256:cb56359ee155b76bd0681f396f0528a7a9454ec7b031312c14fe05170fef02bb\",\"calleeRange\":{\"end\":400,\"start\":397},\"kind\":\"directCall\",\"range\":{\"end\":402,\"start\":397},\"type\":\"f64\"}}],\"declarationRange\":{\"end\":405,\"start\":368},\"id\":\"sha256:e51db20993ab6bcb09ccf6cec0ff00e89c6cf8e7208cbd921ae0206932e4f785\",\"name\":\"f10\",\"nameRange\":{\"end\":380,\"start\":377},\"parameters\":[],\"returnAnnotationRange\":{\"end\":387,\"start\":384},\"returnType\":\"f64\",\"sourcePath\":\"/array-owner23e/app.ts\"},{\"bindings\":[],\"body\":[{\"kind\":\"return\",\"range\":{\"end\":441,\"start\":428},\"value\":{\"arguments\":[],\"callee\":\"sha256:45c21b99c0ae84a8878e559a07dc11aa3b247df547330cd652200d72d9ff43ec\",\"calleeRange\":{\"end\":438,\"start\":435},\"kind\":\"directCall\",\"range\":{\"end\":440,\"start\":435},\"type\":\"f64\"}}],\"declarationRange\":{\"end\":443,\"start\":406},\"id\":\"sha256:cb56359ee155b76bd0681f396f0528a7a9454ec7b031312c14fe05170fef02bb\",\"name\":\"f11\",\"nameRange\":{\"end\":418,\"start\":415},\"parameters\":[],\"returnAnnotationRange\":{\"end\":425,\"start\":422},\"returnType\":\"f64\",\"sourcePath\":\"/array-owner23e/app.ts\"},{\"bindings\":[],\"body\":[{\"kind\":\"return\",\"range\":{\"end\":479,\"start\":466},\"value\":{\"arguments\":[],\"callee\":\"sha256:846c4e90159d7029a5cb5313cda3843120be5e1cbbae4a3cfb97cb91c5fcbc30\",\"calleeRange\":{\"end\":476,\"start\":473},\"kind\":\"directCall\",\"range\":{\"end\":478,\"start\":473},\"type\":\"f64\"}}],\"declarationRange\":{\"end\":481,\"start\":444},\"id\":\"sha256:45c21b99c0ae84a8878e559a07dc11aa3b247df547330cd652200d72d9ff43ec\",\"name\":\"f12\",\"nameRange\":{\"end\":456,\"start\":453},\"parameters\":[],\"returnAnnotationRange\":{\"end\":463,\"start\":460},\"returnType\":\"f64\",\"sourcePath\":\"/array-owner23e/app.ts\"},{\"bindings\":[],\"body\":[{\"kind\":\"return\",\"range\":{\"end\":517,\"start\":504},\"value\":{\"arguments\":[],\"callee\":\"sha256:317f2feba6b435f821768fc79e53863b5776a36bf21d30bd40e5a8182bf0e5c7\",\"calleeRange\":{\"end\":514,\"start\":511},\"kind\":\"directCall\",\"range\":{\"end\":516,\"start\":511},\"type\":\"f64\"}}],\"declarationRange\":{\"end\":519,\"start\":482},\"id\":\"sha256:846c4e90159d7029a5cb5313cda3843120be5e1cbbae4a3cfb97cb91c5fcbc30\",\"name\":\"f13\",\"nameRange\":{\"end\":494,\"start\":491},\"parameters\":[],\"returnAnnotationRange\":{\"end\":501,\"start\":498},\"returnType\":\"f64\",\"sourcePath\":\"/array-owner23e/app.ts\"},{\"bindings\":[],\"body\":[{\"kind\":\"return\",\"range\":{\"end\":555,\"start\":542},\"value\":{\"arguments\":[],\"callee\":\"sha256:eb2843d89a00f6bd3766bce707e6dc349f23c8767b44da5f55f695887901bc9b\",\"calleeRange\":{\"end\":552,\"start\":549},\"kind\":\"directCall\",\"range\":{\"end\":554,\"start\":549},\"type\":\"f64\"}}],\"declarationRange\":{\"end\":557,\"start\":520},\"id\":\"sha256:317f2feba6b435f821768fc79e53863b5776a36bf21d30bd40e5a8182bf0e5c7\",\"name\":\"f14\",\"nameRange\":{\"end\":532,\"start\":529},\"parameters\":[],\"returnAnnotationRange\":{\"end\":539,\"start\":536},\"returnType\":\"f64\",\"sourcePath\":\"/array-owner23e/app.ts\"},{\"bindings\":[],\"body\":[{\"kind\":\"return\",\"range\":{\"end\":591,\"start\":580},\"value\":{\"bits\":\"3ff0000000000000\",\"kind\":\"numericLiteral\",\"range\":{\"end\":590,\"start\":587},\"token\":\"1.0\",\"type\":\"f64\"}}],\"declarationRange\":{\"end\":593,\"start\":558},\"id\":\"sha256:eb2843d89a00f6bd3766bce707e6dc349f23c8767b44da5f55f695887901bc9b\",\"name\":\"f15\",\"nameRange\":{\"end\":570,\"start\":567},\"parameters\":[],\"returnAnnotationRange\":{\"end\":577,\"start\":574},\"returnType\":\"f64\",\"sourcePath\":\"/array-owner23e/app.ts\"}],\"positionUnit\":\"utf16\",\"readSpanIntrinsic\":{\"declarationRange\":{\"end\":483,\"start\":404},\"id\":\"sha256:894419bca7875c61ed42fc4dd665b21d422598acac6f074d8f8b76e9794ba8ec\",\"kind\":\"intrinsic\",\"name\":\"readSpan\",\"nameRange\":{\"end\":429,\"start\":421},\"parameters\":[{\"declarationRange\":{\"end\":443,\"start\":433},\"name\":\"owner\",\"nameRange\":{\"end\":438,\"start\":433},\"typeRange\":{\"end\":443,\"start\":440}},{\"declarationRange\":{\"end\":455,\"start\":445},\"name\":\"start\",\"nameRange\":{\"end\":450,\"start\":445},\"typeRange\":{\"end\":455,\"start\":452}},{\"declarationRange\":{\"end\":468,\"start\":457},\"name\":\"length\",\"nameRange\":{\"end\":463,\"start\":457},\"typeRange\":{\"end\":468,\"start\":465}}],\"returnTypeRange\":{\"end\":482,\"start\":471},\"sourcePath\":\"/array-owner23e/minimal-arrays-v3.d.ts\",\"typeParameterRange\":{\"end\":431,\"start\":430}},\"readSpanLength\":{\"declarationRange\":{\"end\":401,\"start\":380},\"id\":\"sha256:59bb62c08c44255796c966889d454a17165e4530b9985775f9d69a3ba8b211c0\",\"kind\":\"property\",\"name\":\"length\",\"nameRange\":{\"end\":395,\"start\":389},\"officialType\":\"number\",\"ownerType\":\"readspan.f64\",\"readType\":\"u32\",\"readonly\":true,\"sourcePath\":\"/array-owner23e/minimal-arrays-v3.d.ts\",\"typeRange\":{\"end\":400,\"start\":397}},\"rootFile\":\"/array-owner23e/app.ts\",\"sourceRoot\":\"/array-owner23e\",\"types\":[{\"declarationRange\":{\"end\":311,\"start\":293},\"id\":\"f64\",\"kind\":\"scalar\",\"nameRange\":{\"end\":301,\"start\":298},\"sourcePath\":\"/array-owner23e/minimal-arrays-v3.d.ts\"},{\"declarationRange\":{\"end\":292,\"start\":238},\"elementType\":\"f64\",\"id\":\"array.f64\",\"indexSignatureRange\":{\"end\":274,\"start\":259},\"kind\":\"array\",\"nameRange\":{\"end\":253,\"start\":248},\"sourcePath\":\"/array-owner23e/minimal-arrays-v3.d.ts\"},{\"declarationRange\":{\"end\":330,\"start\":312},\"id\":\"u32\",\"kind\":\"scalar\",\"nameRange\":{\"end\":320,\"start\":317},\"sourcePath\":\"/array-owner23e/minimal-arrays-v3.d.ts\"},{\"declarationRange\":{\"end\":403,\"start\":331},\"elementType\":\"f64\",\"id\":\"readspan.f64\",\"indexSignatureRange\":{\"end\":379,\"start\":355},\"kind\":\"readSpan\",\"nameRange\":{\"end\":349,\"start\":341},\"readonly\":true,\"sourcePath\":\"/array-owner23e/minimal-arrays-v3.d.ts\"}]},\"requestId\":\"sha256:997c30ee7c29fcb2b239a6b83e292770d9e66f03101c87812da8922b58d121a2\",\"schemaHash\":\"sha256:3067c8bb8296ab6687ee6549dd44522cae17f4b87b0a3996616ba7b373952617\",\"version\":7}\n",
+      "packageText": "{\"family\":\"tsfg.array-facts-package-candidate\",\"packageId\":\"sha256:f3ad0db0cd54c0bd0dcecdfa46321e99ccb6809dbd464e17f66a29897570f412\",\"payload\":{\"arrayLength\":{\"declarationRange\":{\"end\":290,\"start\":275},\"id\":\"sha256:8a15099652ad0aa13b95ca5e230158b507063eae8d48d15e48678eb61d23408d\",\"kind\":\"property\",\"name\":\"length\",\"nameRange\":{\"end\":281,\"start\":275},\"officialType\":\"number\",\"ownerType\":\"array.f64\",\"sourcePath\":\"/array-owner23e/minimal-arrays-v3.d.ts\",\"typeRange\":{\"end\":289,\"start\":283},\"writeType\":\"u32\"},\"config\":{\"allowJs\":false,\"noEmit\":true,\"strict\":true},\"declarations\":{\"paths\":[\"/array-owner23e/minimal-arrays-v3.d.ts\"],\"version\":\"minimal-arrays-v3\"},\"diagnostics\":[],\"exports\":[{\"functionId\":\"sha256:386997bae5e651e20bfab46edfb6bd6d6c2a29c660a5092a7d68ffe860081b9b\",\"name\":\"f0\"}],\"files\":[{\"byteLength\":594,\"content\":\"export function f0(): f64 { return f1(); }\\nfunction f1(): f64 { return f2(); }\\nfunction f2(): f64 { return f3(); }\\nfunction f3(): f64 { return f4(); }\\nfunction f4(): f64 { return f5(); }\\nfunction f5(): f64 { return f6(); }\\nfunction f6(): f64 { return f7(); }\\nfunction f7(): f64 { return f8(); }\\nfunction f8(): f64 { return f9(); }\\nfunction f9(): f64 { return f10(); }\\nfunction f10(): f64 { return f11(); }\\nfunction f11(): f64 { return f12(); }\\nfunction f12(): f64 { return f13(); }\\nfunction f13(): f64 { return f14(); }\\nfunction f14(): f64 { return f15(); }\\nfunction f15(): f64 { return 1.0; }\\n\",\"path\":\"/array-owner23e/app.ts\",\"sha256\":\"161ba7da8476f79f72b367122642a953d5a82802d4a4a309001f6bc9c0f61847\",\"utf16Length\":594},{\"byteLength\":484,\"content\":\"// SPDX-License-Identifier: MIT\\ninterface Object {}\\ninterface Function {}\\ninterface CallableFunction {}\\ninterface NewableFunction {}\\ninterface IArguments {}\\ninterface String {}\\ninterface Number {}\\ninterface Boolean {}\\ninterface RegExp {}\\ninterface Array<T> { [n: number]: T; length: number; }\\ntype f64 = number;\\ntype u32 = number;\\ninterface ReadSpan<T> { readonly [n: number]: T; readonly length: u32; }\\ndeclare function readSpan<T>(owner: T[], start: u32, length: u32): ReadSpan<T>;\\n\",\"path\":\"/array-owner23e/minimal-arrays-v3.d.ts\",\"sha256\":\"282b335a6e0e0493fa74a3c1dd56f234f8c679079acdaf0600cefb8306c26415\",\"utf16Length\":484}],\"functions\":[{\"bindings\":[],\"body\":[{\"kind\":\"return\",\"range\":{\"end\":40,\"start\":28},\"value\":{\"arguments\":[],\"callee\":\"sha256:9a9616ee5567a9ca06d1d4922cfb0277e35d064285ea6cf97c44fb1eea775909\",\"calleeRange\":{\"end\":37,\"start\":35},\"kind\":\"directCall\",\"range\":{\"end\":39,\"start\":35},\"type\":\"f64\"}}],\"declarationRange\":{\"end\":42,\"start\":0},\"id\":\"sha256:386997bae5e651e20bfab46edfb6bd6d6c2a29c660a5092a7d68ffe860081b9b\",\"name\":\"f0\",\"nameRange\":{\"end\":18,\"start\":16},\"parameters\":[],\"returnAnnotationRange\":{\"end\":25,\"start\":22},\"returnType\":\"f64\",\"sourcePath\":\"/array-owner23e/app.ts\"},{\"bindings\":[],\"body\":[{\"kind\":\"return\",\"range\":{\"end\":76,\"start\":64},\"value\":{\"arguments\":[],\"callee\":\"sha256:994b10be705d793b1c17022d006078036de772bbcc852b889db8839b47125888\",\"calleeRange\":{\"end\":73,\"start\":71},\"kind\":\"directCall\",\"range\":{\"end\":75,\"start\":71},\"type\":\"f64\"}}],\"declarationRange\":{\"end\":78,\"start\":43},\"id\":\"sha256:9a9616ee5567a9ca06d1d4922cfb0277e35d064285ea6cf97c44fb1eea775909\",\"name\":\"f1\",\"nameRange\":{\"end\":54,\"start\":52},\"parameters\":[],\"returnAnnotationRange\":{\"end\":61,\"start\":58},\"returnType\":\"f64\",\"sourcePath\":\"/array-owner23e/app.ts\"},{\"bindings\":[],\"body\":[{\"kind\":\"return\",\"range\":{\"end\":112,\"start\":100},\"value\":{\"arguments\":[],\"callee\":\"sha256:d076e7c2a51e6b99b7339606bd6f30af6c170324b73c791f1bcdd590a08033bb\",\"calleeRange\":{\"end\":109,\"start\":107},\"kind\":\"directCall\",\"range\":{\"end\":111,\"start\":107},\"type\":\"f64\"}}],\"declarationRange\":{\"end\":114,\"start\":79},\"id\":\"sha256:994b10be705d793b1c17022d006078036de772bbcc852b889db8839b47125888\",\"name\":\"f2\",\"nameRange\":{\"end\":90,\"start\":88},\"parameters\":[],\"returnAnnotationRange\":{\"end\":97,\"start\":94},\"returnType\":\"f64\",\"sourcePath\":\"/array-owner23e/app.ts\"},{\"bindings\":[],\"body\":[{\"kind\":\"return\",\"range\":{\"end\":148,\"start\":136},\"value\":{\"arguments\":[],\"callee\":\"sha256:9a2612f478059d5c8bc983d0742027862e11b74d9738340fea526bcf8a135f29\",\"calleeRange\":{\"end\":145,\"start\":143},\"kind\":\"directCall\",\"range\":{\"end\":147,\"start\":143},\"type\":\"f64\"}}],\"declarationRange\":{\"end\":150,\"start\":115},\"id\":\"sha256:d076e7c2a51e6b99b7339606bd6f30af6c170324b73c791f1bcdd590a08033bb\",\"name\":\"f3\",\"nameRange\":{\"end\":126,\"start\":124},\"parameters\":[],\"returnAnnotationRange\":{\"end\":133,\"start\":130},\"returnType\":\"f64\",\"sourcePath\":\"/array-owner23e/app.ts\"},{\"bindings\":[],\"body\":[{\"kind\":\"return\",\"range\":{\"end\":184,\"start\":172},\"value\":{\"arguments\":[],\"callee\":\"sha256:faca5ccfe4b0323179ca30699a2a3b2b6d3c4458d06a06939c7ddc4f43200a37\",\"calleeRange\":{\"end\":181,\"start\":179},\"kind\":\"directCall\",\"range\":{\"end\":183,\"start\":179},\"type\":\"f64\"}}],\"declarationRange\":{\"end\":186,\"start\":151},\"id\":\"sha256:9a2612f478059d5c8bc983d0742027862e11b74d9738340fea526bcf8a135f29\",\"name\":\"f4\",\"nameRange\":{\"end\":162,\"start\":160},\"parameters\":[],\"returnAnnotationRange\":{\"end\":169,\"start\":166},\"returnType\":\"f64\",\"sourcePath\":\"/array-owner23e/app.ts\"},{\"bindings\":[],\"body\":[{\"kind\":\"return\",\"range\":{\"end\":220,\"start\":208},\"value\":{\"arguments\":[],\"callee\":\"sha256:72f001e98b981cccf42e9ffaff1a2990dc8d5a370e4f457dc4f2a046b8843d88\",\"calleeRange\":{\"end\":217,\"start\":215},\"kind\":\"directCall\",\"range\":{\"end\":219,\"start\":215},\"type\":\"f64\"}}],\"declarationRange\":{\"end\":222,\"start\":187},\"id\":\"sha256:faca5ccfe4b0323179ca30699a2a3b2b6d3c4458d06a06939c7ddc4f43200a37\",\"name\":\"f5\",\"nameRange\":{\"end\":198,\"start\":196},\"parameters\":[],\"returnAnnotationRange\":{\"end\":205,\"start\":202},\"returnType\":\"f64\",\"sourcePath\":\"/array-owner23e/app.ts\"},{\"bindings\":[],\"body\":[{\"kind\":\"return\",\"range\":{\"end\":256,\"start\":244},\"value\":{\"arguments\":[],\"callee\":\"sha256:454064111993467ada3aeb8acc2f1ae90f08ea5c337d4900892b426abc2deb12\",\"calleeRange\":{\"end\":253,\"start\":251},\"kind\":\"directCall\",\"range\":{\"end\":255,\"start\":251},\"type\":\"f64\"}}],\"declarationRange\":{\"end\":258,\"start\":223},\"id\":\"sha256:72f001e98b981cccf42e9ffaff1a2990dc8d5a370e4f457dc4f2a046b8843d88\",\"name\":\"f6\",\"nameRange\":{\"end\":234,\"start\":232},\"parameters\":[],\"returnAnnotationRange\":{\"end\":241,\"start\":238},\"returnType\":\"f64\",\"sourcePath\":\"/array-owner23e/app.ts\"},{\"bindings\":[],\"body\":[{\"kind\":\"return\",\"range\":{\"end\":292,\"start\":280},\"value\":{\"arguments\":[],\"callee\":\"sha256:c645eaf4e92da9f7c38d7d520cf51ee94171c9467d40ca1ffe5c9c6fe7aa2c8f\",\"calleeRange\":{\"end\":289,\"start\":287},\"kind\":\"directCall\",\"range\":{\"end\":291,\"start\":287},\"type\":\"f64\"}}],\"declarationRange\":{\"end\":294,\"start\":259},\"id\":\"sha256:454064111993467ada3aeb8acc2f1ae90f08ea5c337d4900892b426abc2deb12\",\"name\":\"f7\",\"nameRange\":{\"end\":270,\"start\":268},\"parameters\":[],\"returnAnnotationRange\":{\"end\":277,\"start\":274},\"returnType\":\"f64\",\"sourcePath\":\"/array-owner23e/app.ts\"},{\"bindings\":[],\"body\":[{\"kind\":\"return\",\"range\":{\"end\":328,\"start\":316},\"value\":{\"arguments\":[],\"callee\":\"sha256:3b63ad9c666378a07f2db07fa71d56107ffb8c8844acfc50f4eae4f96eb9b539\",\"calleeRange\":{\"end\":325,\"start\":323},\"kind\":\"directCall\",\"range\":{\"end\":327,\"start\":323},\"type\":\"f64\"}}],\"declarationRange\":{\"end\":330,\"start\":295},\"id\":\"sha256:c645eaf4e92da9f7c38d7d520cf51ee94171c9467d40ca1ffe5c9c6fe7aa2c8f\",\"name\":\"f8\",\"nameRange\":{\"end\":306,\"start\":304},\"parameters\":[],\"returnAnnotationRange\":{\"end\":313,\"start\":310},\"returnType\":\"f64\",\"sourcePath\":\"/array-owner23e/app.ts\"},{\"bindings\":[],\"body\":[{\"kind\":\"return\",\"range\":{\"end\":365,\"start\":352},\"value\":{\"arguments\":[],\"callee\":\"sha256:e51db20993ab6bcb09ccf6cec0ff00e89c6cf8e7208cbd921ae0206932e4f785\",\"calleeRange\":{\"end\":362,\"start\":359},\"kind\":\"directCall\",\"range\":{\"end\":364,\"start\":359},\"type\":\"f64\"}}],\"declarationRange\":{\"end\":367,\"start\":331},\"id\":\"sha256:3b63ad9c666378a07f2db07fa71d56107ffb8c8844acfc50f4eae4f96eb9b539\",\"name\":\"f9\",\"nameRange\":{\"end\":342,\"start\":340},\"parameters\":[],\"returnAnnotationRange\":{\"end\":349,\"start\":346},\"returnType\":\"f64\",\"sourcePath\":\"/array-owner23e/app.ts\"},{\"bindings\":[],\"body\":[{\"kind\":\"return\",\"range\":{\"end\":403,\"start\":390},\"value\":{\"arguments\":[],\"callee\":\"sha256:cb56359ee155b76bd0681f396f0528a7a9454ec7b031312c14fe05170fef02bb\",\"calleeRange\":{\"end\":400,\"start\":397},\"kind\":\"directCall\",\"range\":{\"end\":402,\"start\":397},\"type\":\"f64\"}}],\"declarationRange\":{\"end\":405,\"start\":368},\"id\":\"sha256:e51db20993ab6bcb09ccf6cec0ff00e89c6cf8e7208cbd921ae0206932e4f785\",\"name\":\"f10\",\"nameRange\":{\"end\":380,\"start\":377},\"parameters\":[],\"returnAnnotationRange\":{\"end\":387,\"start\":384},\"returnType\":\"f64\",\"sourcePath\":\"/array-owner23e/app.ts\"},{\"bindings\":[],\"body\":[{\"kind\":\"return\",\"range\":{\"end\":441,\"start\":428},\"value\":{\"arguments\":[],\"callee\":\"sha256:45c21b99c0ae84a8878e559a07dc11aa3b247df547330cd652200d72d9ff43ec\",\"calleeRange\":{\"end\":438,\"start\":435},\"kind\":\"directCall\",\"range\":{\"end\":440,\"start\":435},\"type\":\"f64\"}}],\"declarationRange\":{\"end\":443,\"start\":406},\"id\":\"sha256:cb56359ee155b76bd0681f396f0528a7a9454ec7b031312c14fe05170fef02bb\",\"name\":\"f11\",\"nameRange\":{\"end\":418,\"start\":415},\"parameters\":[],\"returnAnnotationRange\":{\"end\":425,\"start\":422},\"returnType\":\"f64\",\"sourcePath\":\"/array-owner23e/app.ts\"},{\"bindings\":[],\"body\":[{\"kind\":\"return\",\"range\":{\"end\":479,\"start\":466},\"value\":{\"arguments\":[],\"callee\":\"sha256:846c4e90159d7029a5cb5313cda3843120be5e1cbbae4a3cfb97cb91c5fcbc30\",\"calleeRange\":{\"end\":476,\"start\":473},\"kind\":\"directCall\",\"range\":{\"end\":478,\"start\":473},\"type\":\"f64\"}}],\"declarationRange\":{\"end\":481,\"start\":444},\"id\":\"sha256:45c21b99c0ae84a8878e559a07dc11aa3b247df547330cd652200d72d9ff43ec\",\"name\":\"f12\",\"nameRange\":{\"end\":456,\"start\":453},\"parameters\":[],\"returnAnnotationRange\":{\"end\":463,\"start\":460},\"returnType\":\"f64\",\"sourcePath\":\"/array-owner23e/app.ts\"},{\"bindings\":[],\"body\":[{\"kind\":\"return\",\"range\":{\"end\":517,\"start\":504},\"value\":{\"arguments\":[],\"callee\":\"sha256:317f2feba6b435f821768fc79e53863b5776a36bf21d30bd40e5a8182bf0e5c7\",\"calleeRange\":{\"end\":514,\"start\":511},\"kind\":\"directCall\",\"range\":{\"end\":516,\"start\":511},\"type\":\"f64\"}}],\"declarationRange\":{\"end\":519,\"start\":482},\"id\":\"sha256:846c4e90159d7029a5cb5313cda3843120be5e1cbbae4a3cfb97cb91c5fcbc30\",\"name\":\"f13\",\"nameRange\":{\"end\":494,\"start\":491},\"parameters\":[],\"returnAnnotationRange\":{\"end\":501,\"start\":498},\"returnType\":\"f64\",\"sourcePath\":\"/array-owner23e/app.ts\"},{\"bindings\":[],\"body\":[{\"kind\":\"return\",\"range\":{\"end\":555,\"start\":542},\"value\":{\"arguments\":[],\"callee\":\"sha256:eb2843d89a00f6bd3766bce707e6dc349f23c8767b44da5f55f695887901bc9b\",\"calleeRange\":{\"end\":552,\"start\":549},\"kind\":\"directCall\",\"range\":{\"end\":554,\"start\":549},\"type\":\"f64\"}}],\"declarationRange\":{\"end\":557,\"start\":520},\"id\":\"sha256:317f2feba6b435f821768fc79e53863b5776a36bf21d30bd40e5a8182bf0e5c7\",\"name\":\"f14\",\"nameRange\":{\"end\":532,\"start\":529},\"parameters\":[],\"returnAnnotationRange\":{\"end\":539,\"start\":536},\"returnType\":\"f64\",\"sourcePath\":\"/array-owner23e/app.ts\"},{\"bindings\":[],\"body\":[{\"kind\":\"return\",\"range\":{\"end\":591,\"start\":580},\"value\":{\"bits\":\"3ff0000000000000\",\"kind\":\"numericLiteral\",\"range\":{\"end\":590,\"start\":587},\"token\":\"1.0\",\"type\":\"f64\"}}],\"declarationRange\":{\"end\":593,\"start\":558},\"id\":\"sha256:eb2843d89a00f6bd3766bce707e6dc349f23c8767b44da5f55f695887901bc9b\",\"name\":\"f15\",\"nameRange\":{\"end\":570,\"start\":567},\"parameters\":[],\"returnAnnotationRange\":{\"end\":577,\"start\":574},\"returnType\":\"f64\",\"sourcePath\":\"/array-owner23e/app.ts\"}],\"positionUnit\":\"utf16\",\"readSpanIntrinsic\":{\"declarationRange\":{\"end\":483,\"start\":404},\"id\":\"sha256:894419bca7875c61ed42fc4dd665b21d422598acac6f074d8f8b76e9794ba8ec\",\"kind\":\"intrinsic\",\"name\":\"readSpan\",\"nameRange\":{\"end\":429,\"start\":421},\"parameters\":[{\"declarationRange\":{\"end\":443,\"start\":433},\"name\":\"owner\",\"nameRange\":{\"end\":438,\"start\":433},\"typeRange\":{\"end\":443,\"start\":440}},{\"declarationRange\":{\"end\":455,\"start\":445},\"name\":\"start\",\"nameRange\":{\"end\":450,\"start\":445},\"typeRange\":{\"end\":455,\"start\":452}},{\"declarationRange\":{\"end\":468,\"start\":457},\"name\":\"length\",\"nameRange\":{\"end\":463,\"start\":457},\"typeRange\":{\"end\":468,\"start\":465}}],\"returnTypeRange\":{\"end\":482,\"start\":471},\"sourcePath\":\"/array-owner23e/minimal-arrays-v3.d.ts\",\"typeParameterRange\":{\"end\":431,\"start\":430}},\"readSpanLength\":{\"declarationRange\":{\"end\":401,\"start\":380},\"id\":\"sha256:59bb62c08c44255796c966889d454a17165e4530b9985775f9d69a3ba8b211c0\",\"kind\":\"property\",\"name\":\"length\",\"nameRange\":{\"end\":395,\"start\":389},\"officialType\":\"number\",\"ownerType\":\"readspan.f64\",\"readType\":\"u32\",\"readonly\":true,\"sourcePath\":\"/array-owner23e/minimal-arrays-v3.d.ts\",\"typeRange\":{\"end\":400,\"start\":397}},\"rootFile\":\"/array-owner23e/app.ts\",\"sourceRoot\":\"/array-owner23e\",\"types\":[{\"declarationRange\":{\"end\":311,\"start\":293},\"id\":\"f64\",\"kind\":\"scalar\",\"nameRange\":{\"end\":301,\"start\":298},\"sourcePath\":\"/array-owner23e/minimal-arrays-v3.d.ts\"},{\"declarationRange\":{\"end\":292,\"start\":238},\"elementType\":\"f64\",\"id\":\"array.f64\",\"indexSignatureRange\":{\"end\":274,\"start\":259},\"kind\":\"array\",\"nameRange\":{\"end\":253,\"start\":248},\"sourcePath\":\"/array-owner23e/minimal-arrays-v3.d.ts\"},{\"declarationRange\":{\"end\":330,\"start\":312},\"id\":\"u32\",\"kind\":\"scalar\",\"nameRange\":{\"end\":320,\"start\":317},\"sourcePath\":\"/array-owner23e/minimal-arrays-v3.d.ts\"},{\"declarationRange\":{\"end\":403,\"start\":331},\"elementType\":\"f64\",\"id\":\"readspan.f64\",\"indexSignatureRange\":{\"end\":379,\"start\":355},\"kind\":\"readSpan\",\"nameRange\":{\"end\":349,\"start\":341},\"readonly\":true,\"sourcePath\":\"/array-owner23e/minimal-arrays-v3.d.ts\"}]},\"requestId\":\"sha256:997c30ee7c29fcb2b239a6b83e292770d9e66f03101c87812da8922b58d121a2\",\"schemaHash\":\"sha256:d2ee930b76b8fd5c2270ad69579c9c61377831a97034d3a8890d8aa770ebabc2\",\"version\":7}\n",
       "requestText": "{\"family\":\"tsfg.array-facts-request-candidate\",\"input\":{\"config\":{\"allowJs\":false,\"noEmit\":true,\"strict\":true},\"declarations\":{\"paths\":[\"/array-owner23e/minimal-arrays-v3.d.ts\"],\"version\":\"minimal-arrays-v3\"},\"files\":[{\"content\":\"export function f0(): f64 { return f1(); }\\nfunction f1(): f64 { return f2(); }\\nfunction f2(): f64 { return f3(); }\\nfunction f3(): f64 { return f4(); }\\nfunction f4(): f64 { return f5(); }\\nfunction f5(): f64 { return f6(); }\\nfunction f6(): f64 { return f7(); }\\nfunction f7(): f64 { return f8(); }\\nfunction f8(): f64 { return f9(); }\\nfunction f9(): f64 { return f10(); }\\nfunction f10(): f64 { return f11(); }\\nfunction f11(): f64 { return f12(); }\\nfunction f12(): f64 { return f13(); }\\nfunction f13(): f64 { return f14(); }\\nfunction f14(): f64 { return f15(); }\\nfunction f15(): f64 { return 1.0; }\\n\",\"path\":\"/array-owner23e/app.ts\",\"sha256\":\"161ba7da8476f79f72b367122642a953d5a82802d4a4a309001f6bc9c0f61847\"},{\"content\":\"// SPDX-License-Identifier: MIT\\ninterface Object {}\\ninterface Function {}\\ninterface CallableFunction {}\\ninterface NewableFunction {}\\ninterface IArguments {}\\ninterface String {}\\ninterface Number {}\\ninterface Boolean {}\\ninterface RegExp {}\\ninterface Array<T> { [n: number]: T; length: number; }\\ntype f64 = number;\\ntype u32 = number;\\ninterface ReadSpan<T> { readonly [n: number]: T; readonly length: u32; }\\ndeclare function readSpan<T>(owner: T[], start: u32, length: u32): ReadSpan<T>;\\n\",\"path\":\"/array-owner23e/minimal-arrays-v3.d.ts\",\"sha256\":\"282b335a6e0e0493fa74a3c1dd56f234f8c679079acdaf0600cefb8306c26415\"}],\"rootFile\":\"/array-owner23e/app.ts\",\"sourceRoot\":\"/array-owner23e\"},\"version\":7}\n",
       "sourceBundlePin": {
         "bytes": 18326,
