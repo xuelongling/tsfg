@@ -11,11 +11,13 @@ import { buildHir, lowerHir } from "./hir.mjs";
 import { canonical, sha256 } from "./identity.mjs";
 import registry from "../contracts/registry.json" with { type: "json" };
 import { verifyCounterHostContract } from "../eng/host-semantic-contract.mjs";
+import { coreIrInputs } from "../eng/core-ir-inputs.mjs";
 import bytecodeSchema from "../contracts/bytecode.schema.json" with { type: "json" };
 
 const productRoot = fileURLToPath(new URL("../", import.meta.url));
 
-async function verifiedConsumer(executable, role) {
+/** Verify the actual source-built consumer admission boundary without executing it. */
+export async function verifiedConsumer(executable, role) {
   if (!executable) throw new TypeError(`r03-tool-${role}: formal executable is required`);
   const manifest = JSON.parse(await readFile(path.join(path.dirname(executable), "artifact-manifest.json"), "utf8"));
   const output = manifest.outputs?.find(output => output.path === path.basename(executable));
@@ -24,9 +26,7 @@ async function verifiedConsumer(executable, role) {
   if (manifest.buildIdentity?.target !== "windows-x86_64-msvc"
       || manifest.buildIdentity?.profile !== "debug")
     throw new TypeError(`r03-tool-${role}: unsupported target/profile identity`);
-  const required = role === "core" ? ["compiler/core-ir/main.cpp", "compiler/core-ir/module.cpp", "compiler/core-ir/module.h", "compiler/core-ir/native_cost.cpp", "compiler/core-ir/native_cost.h", "compiler/core-ir/CMakeLists.txt",
-    "compiler/core-ir/dialect.h", "compiler/core-ir/dialect.cpp", "compiler/core-ir/scalar_ops.h",
-    "compiler/core-ir/bytecode.h", "compiler/core-ir/bytecode.cpp", "compiler/core-ir/bytecode_encoding.h", "compiler/core-ir/bytecode_encoding.cpp"]
+  const required = role === "core" ? [...coreIrInputs, "eng/core-ir-inputs.mjs"]
     : ["runtime/root.zig", "runtime/bytecode.zig", "runtime/bytecode_model.zig", "runtime/bytecode_decode.zig", "runtime/bytecode_view.zig", "runtime/module_format.zig", "runtime/module.zig", "runtime/request.zig", "runtime/clock.zig", "runtime/host_counter.zig", "runtime/host_counter.c", "runtime/host_counter_bridge.c", "runtime/vm.zig", "runtime/runtime.zig", "runtime/managed-heap.zig", "runtime/string-codec.zig", "runtime/main.zig", "runtime/contract.zig", "eng/host-counter.mjs", "eng/host-counter-binary.mjs", "eng/host-cost-source.lock.json", "eng/vm-build.mjs", "runtime/execution_frame.zig", "runtime/scalar.zig", "runtime/host-bindings.zig", "runtime/host-semantic-contract.zig",
       "eng/host-semantic-contract.mjs", "contracts/host-counter-semantic-v1.json"];
   required.push("contracts/registry.json", "contracts/bytecode.schema.json");
