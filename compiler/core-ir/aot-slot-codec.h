@@ -58,7 +58,7 @@ public:
   }
   std::string load(mlir::Type type, unsigned p) {
     const auto code = typeCode(type);
-    const auto bits = code == 2 ? 1u : width(code);
+    const auto bits = code == 2 ? 1u : code == 12 ? 32u : width(code);
     auto at = address("%arguments", p * 8), low = tmp();
     auto upper = address("%arguments", p * 8 + 4), high = tmp();
     // Slot alignment is4 even for64-bit types; never issue an aligned i64 load.
@@ -73,7 +73,7 @@ public:
     }
     if (bits <= 32) {
       equals(high, 0);
-      if (bits == 32) return low;
+      if (bits == 32) return code == 12 ? convert("bitcast", low, "i32", "f32") : low;
       auto maximum = constant((UINT64_C(1) << bits) - 1), valid = tmp();
       out << "  " << valid << " = arith.cmpi ule, " << low << ", " << maximum << " : i32\n";
       allow(valid);
@@ -84,13 +84,14 @@ public:
     auto amount = constant(32, "i64"), shifted = tmp(), value = tmp();
     out << "  " << shifted << " = arith.shli " << upper64 << ", " << amount << " : i64\n"
         << "  " << value << " = arith.ori " << lower64 << ", " << shifted << " : i64\n";
-    return value;
+    return code == 13 ? convert("bitcast", value, "i64", "f64") : value;
   }
   // Called only from the wrapper's successful kind8 continuation. Full zeroing
   // precedes the typed result store and is independent of caller initialization.
   void store(mlir::Type type, std::string value) {
     const auto code = typeCode(type);
-    const auto bits = code == 2 ? 1u : width(code);
+    const auto bits = code == 2 ? 1u : code == 12 ? 32u : width(code);
+    if (floating(code)) value = convert("bitcast", value, code == 12 ? "f32" : "f64", code == 12 ? "i32" : "i64");
     auto zero = constant(0), upper = address("%output", 4);
     out << "  llvm.store " << zero << ", %output : i32, !llvm.ptr\n"
         << "  llvm.store " << zero << ", " << upper << " : i32, !llvm.ptr\n";

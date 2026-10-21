@@ -6,9 +6,9 @@ export function readCompilerLLVM(text) {
   const functions=[];let fn=null,block=null;
   for(const source of text.split('\n')) {
     const line=source.trim();
-    const header=/^define (i1|i8|i16|i32|i64) @([A-Za-z0-9_]+)\((.*)\) \{$/.exec(line);
+    const header=/^define (i1|i8|i16|i32|i64|float|double) @([A-Za-z0-9_]+)\((.*)\)(?: #\d+)? \{$/.exec(line);
     if(header) {
-      const args=[...header[3].matchAll(/(ptr|i1|i8|i16|i32|i64) (%[-a-zA-Z0-9_.$]+)/g)].map(m=>({type:m[1],value:m[2]}));
+      const args=[...header[3].matchAll(/(ptr|i1|i8|i16|i32|i64|float|double) (%[-a-zA-Z0-9_.$]+)/g)].map(m=>({type:m[1],value:m[2]}));
       const entry=String(Math.max(-1,...args.map(arg=>Number(arg.value.slice(1))))+1);
       block={name:entry,instructions:[],successors:[],condition:null};
       fn={name:header[2],result:header[1],args,entry,predecessors:new Map(),dominators:new Map(),blocks:new Map([[entry,block]]),defs:new Map(),events:[],calls:[],markers:[]};
@@ -28,7 +28,7 @@ export function readCompilerLLVM(text) {
     else if(jump)block.successors=[jump[1]];
     const event=/call i32 (%[-a-zA-Z0-9_.$]+)\(ptr (%[-a-zA-Z0-9_.$]+), i32 (-?\d+), i32 (-?\d+), i32 (-?\d+), i32 (-?\d+), i64 (-?\d+)\)/.exec(instruction.rhs);
     if(event)fn.events.push({...instruction,target:event[1],state:event[2],kind:Number(event[3]),logical:Number(event[4]),start:Number(event[5]),end:Number(event[6]),id:BigInt(event[7])});
-    const direct=/^call (i1|i8|i16|i32|i64) @native_(\d+)\((.*)\)$/.exec(instruction.rhs);
+    const direct=/^call (i1|i8|i16|i32|i64|float|double) @native_(\d+)\((.*)\)(?: #\d+)?$/.exec(instruction.rhs);
     if(direct)fn.calls.push({...instruction,type:direct[1],callee:Number(direct[2]),args:direct[3]});
     const marker=/@llvm.experimental.stackmap\(i64 (-?\d+), i32 0\)/.exec(line);
     if(marker)fn.markers.push({...instruction,id:BigInt.asUintN(64,BigInt(marker[1]))});
@@ -106,7 +106,11 @@ export function checkCompilerGraph(text,expected) {
   }
   assert.equal(wrapper.markers[0].id,0xffffffffn);
   assert.deepEqual(wrapper.calls.map(c=>c.callee),native.map((_,i)=>i));
-  for(const store of instructions(wrapper).filter(op=>op.rhs.startsWith('store '))) {
+  const output=wrapper.args[7].value;
+  for(const store of instructions(wrapper).filter(op=>{
+    const pointer=/^store [^,]+, ptr ([^,]+)/.exec(op.rhs)?.[1];
+    return pointer===output||wrapper.defs.get(pointer)?.rhs.startsWith('getelementptr i8, ptr '+output+',');
+  })) {
     const sentinel=wrapper.events.find(e=>e.kind===8&&dominates(wrapper,e,store));assert.ok(sentinel);
     const gate=successGate(wrapper,sentinel.result,store);assert.ok(!reaches(wrapper,gate.successors[1],store.block));
   }

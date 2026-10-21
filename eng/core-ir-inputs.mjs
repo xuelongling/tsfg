@@ -3,6 +3,10 @@
 // and artifact admission. Keep aligned with CMakeLists.txt and quoted includes.
 export const coreIrInputs = Object.freeze([
   "compiler/core-ir/CMakeLists.txt",
+  "compiler/core-ir/aot-fenv.cpp",
+  "compiler/core-ir/aot-float.cpp",
+  "compiler/core-ir/aot-float.h",
+  "compiler/core-ir/aot-fmod.cpp",
   "compiler/core-ir/aot-lowering.cpp",
   "compiler/core-ir/aot-lowering.h",
   "compiler/core-ir/aot-slot-codec.h",

@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: MIT
 #include "aot.h"
 #include "aot-lowering.h"
+#include "aot-float.h"
 #include "mlir/Conversion/ArithToLLVM/ArithToLLVM.h"
 #include "mlir/Conversion/ControlFlowToLLVM/ControlFlowToLLVM.h"
 #include "mlir/Conversion/FuncToLLVM/ConvertFuncToLLVM.h"
@@ -30,7 +31,7 @@ mlir::LogicalResult tsfg::emitNativeLLVM(mlir::ModuleOp verifiedCore,
                                         llvm::raw_ostream &output, NativeOutput kind) {
   std::string text;
   if (mlir::failed(lowerNativeCore(verifiedCore, text))) {
-    llvm::errs() << "[r07-native-capability] AOT requires complete integer/bool Core with at most 512 functions\n";
+    llvm::errs() << "[r07-native-capability] AOT requires complete scalar Core with at most 512 functions\n";
     return mlir::failure();
   }
   mlir::DialectRegistry registry;
@@ -54,10 +55,12 @@ mlir::LogicalResult tsfg::emitNativeLLVM(mlir::ModuleOp verifiedCore,
   llvm::LLVMContext llvmContext;
   auto native = mlir::translateModuleToLLVMIR(*lowered, llvmContext, "tsfg-native");
   if (!native) return mlir::failure();
+  materializeNativeFloating(*native);
   const llvm::Triple triple(verifiedCore->getAttrOfType<mlir::StringAttr>("tsfg_core.triple").getValue());
   native->setTargetTriple(triple);
   LLVMInitializeX86TargetInfo(); LLVMInitializeX86Target();
   LLVMInitializeX86TargetMC(); LLVMInitializeX86AsmPrinter();
+  LLVMInitializeX86AsmParser();
   std::string error;
   const auto *machineTarget = llvm::TargetRegistry::lookupTarget(triple, error);
   if (!machineTarget) { llvm::errs() << "[r07-native-target] " << error << '\n'; return mlir::failure(); }

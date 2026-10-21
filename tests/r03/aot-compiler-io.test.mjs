@@ -5,6 +5,7 @@ import {spawn} from 'node:child_process';
 import {mkdir,writeFile,readFile,open} from 'node:fs/promises';
 import path from 'node:path';
 import fixtures from './aot-compiler-fixtures.mjs';
+import {table} from './strict-floating-aot-fixtures.mjs';
 let sequence=0;
 // A standard read-only file descriptor makes only this child's selected output
 // fail. No guest, native object, instruction inspector or tool probe is executed.
@@ -30,5 +31,8 @@ for(const command of ['--emit-native-llvm','--emit-native-object'])test(command+
  await failedWrite(command,fixtures.minimal,'stdout');
 });
 test('capability stderr write failure exits2 and clears LLVM stream error',async()=>{
- await failedWrite('--emit-native-llvm',fixtures.negative[0].input,'stderr');
+ await failedWrite('--emit-native-llvm',fixtures.negative.find(row=>row.id==='initializer-with-empty-globals').input,'stderr');
+});
+for(const command of ['--emit-native-llvm','--emit-native-object'])test(command+' floating stdout write failure exits2',async()=>{
+ await failedWrite(command,table(1).input,'stdout');
 });

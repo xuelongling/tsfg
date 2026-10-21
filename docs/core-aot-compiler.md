@@ -4,7 +4,7 @@
 
 The Core CLI accepts `--emit-native-llvm` and `--emit-native-object` with a complete Core0.10 module on stdin. The first command prints ordinary LLVM IR; the second writes Windows x64 COFF bytes. Both run the existing complete Core parser, identity, target, SSA, CFG, signature and event checks before a separate whole-module capability check. Failed stages publish no stdout. New output I/O failures exit2; invalid or unsupported Core exits3.
 
-The supported profile is one through512 complete functions with at most64 parameters each, all existing nominal integer/bool function parameters/results and SSA/block arguments, explicit fuel/events, branches, direct calls including recursion, and the existing integer operations. A module containing module lifecycle/global/Host metadata, managed/private candidates, floats or an unsupported operation is rejected in full. Functions and metadata are never filtered to make a smaller eligible module. The512-function table does not change the caller's dynamic depth64 limit.
+The supported profile is one through512 complete functions with at most64 parameters each, all existing nominal integer/bool/f32/f64 function parameters/results and SSA/block arguments, explicit fuel/events, branches, direct calls including recursion, and the existing scalar operations. A module containing module lifecycle/global/Host metadata, managed/private candidates, String values or an unsupported operation is rejected in full. Functions and metadata are never filtered to make a smaller eligible module. The512-function table does not change the caller's dynamic depth64 limit.
 
 The lowering preserves the existing callback order, first arithmetic trap, failure continuation, stackmap markers and fixed eight-byte scalar slot layout. The caller supplies the opaque state and event callback and owns outer frame admission. LLVM verification and the actual target machine layout check precede publication. The target remains the admitted Windows x64 profile without AVX.
 
@@ -35,5 +35,35 @@ Each slot has size8 and alignment4, and all bytes are specified:
 | bool | Bytes0..3 zero; byte4 is0 or1; bytes5..7 zero |
 | i8/u8/i16/u16 | Low nominal-width bits at0, zero extended through all remaining bytes |
 | i64/u64/isize/usize | Complete64-bit little endian bit pattern |
+| f32 | Raw IEEE low32 bits at0..3; bytes4..7 zero |
+| f64 | Complete raw IEEE64-bit little endian bit pattern |
 
 Signed values use their nominal-width two's-complement low bits; narrow signed values are zero extended in the slot. The wrapper loads/stores two aligned u32 halves for64-bit values, never an i64 at a possibly4-aligned slot. The actual LLVM target DataLayout must confirm both legacy i32/bool and two-word slot layouts, little endianness and pointer width/alignment before publication. Parameter slot high bits and bool canonicality are checked before the native call. After a guest return, the existing kind8 failure gate must succeed before either output half is cleared or written. Success clears both halves, stores the complete canonical result and returns1. A callback failure returns0 without modifying output. First-trap behavior, event order and source positions remain the existing semantics.
+
+Floating parameters, constants, SSA edges, calls and result slots preserve raw bits,
+including signaling NaNs. Private implementations in the same LLVM module perform
+each arithmetic operation with constrained LLVM RNE at its declared width, without
+fusion or intermediate extension. Arithmetic NaNs, including unary plus/minus,
+become positive quiet7fc00000/7ff8000000000000. Comparisons use ordered predicates
+except unordered inequality. Remainder uses bounded binary integer long division,
+preserving dividend-signed zero and gradual underflow without a libm import.
+
+Modules using floats save the full entry MXCSR and x87 control per native function
+and wrapper. They establish masked RNE with FTZ/DAZ clear, restore the entry state
+before external event callbacks, reestablish strict mode afterwards, and restore
+the entry state on every return, including rejected wrappers and failure returns.
+State lives in each native frame, so nested calls and reentrant callbacks do not
+share mutable state. Integer-only modules keep their existing LLVM/COFF bytes.
+The MSVC floating-use marker is defined as a coalescible read-only `_fltused`
+COMDAT in the object, avoiding implicit CRT initialization. The existing source
+CMake build links the locked LLVM X86AsmParser component to assemble x87 control
+instructions; no library path or new tool source is embedded in product code.
+Large wrappers retain the existing Windows `__chkstk` target-support obligation
+already present in integer-only512-function objects. A standalone typed caller
+link must explicitly supply that stack probe from its admitted compiler-support
+library; stack probing is never disabled to make a link pass.
+
+These compiler checks inspect real CLI LLVM/COFF output and compile typed callers.
+Frozen mathematical expectations precede the implementation. They are not an IR
+interpreter, a machine execution result or a VM cross-check; formal Native loading,
+dynamic floating-environment proof and execution equivalence remain separate work.

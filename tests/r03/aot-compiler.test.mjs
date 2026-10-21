@@ -84,7 +84,7 @@ for(const fixture of fixtures.positive.filter(p=>p.id!=='complete-call-order'))t
 });
 for(const row of fixtures.negative)test('whole capability '+row.id,async()=>{
  assert.equal(hash(row.input),row.inputSHA256);accepted(await invokeCore(row.input));
- for(const command of commands){const result=await invokeCore(row.input,command);rejected(result);assert.match(result.stderr.toString('utf8'),/r07-native-capability/);}
+ for(const command of commands){const result=await invokeCore(row.input,command);if(row.id==='late-f64')accepted(result);else{rejected(result);assert.match(result.stderr.toString('utf8'),/r07-native-capability/);}}
 });
 test('complete128 function and64 mixed parameter backend boundaries',async()=>{
  const whole=scalarModule(128);const result=await invokeCore(whole,commands[0]);accepted(result);checkCompilerGraph(result.stdout.toString('utf8'),{nativeFunctions:128});

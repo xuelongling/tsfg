@@ -11,6 +11,7 @@
 #include <cstdint>
 #include <string>
 #include <vector>
+#include <set>
 
 namespace {
 // Reject the entire unsupported profile before indexing any operation or lowering
@@ -25,21 +26,21 @@ bool supportsNativeCore(mlir::ModuleOp module) {
     for (auto name : allowed) known |= attribute.getName() == name;
     if (!known) return false;
   }
-  auto integer = [](mlir::Type type) {
-    const auto code = tsfg::typeCode(type); return code >= 1 && code <= 11;
+  auto supportedScalar = [](mlir::Type type) {
+    const auto code = tsfg::typeCode(type); return code >= 1 && code <= 13;
   };
   unsigned count = 0;
   for (auto &top : module.getBody()->getOperations()) {
     auto fn = llvm::dyn_cast<mlir::func::FuncOp>(top);
     if (!fn || ++count > 512 || fn.isExternal() || fn.getFunctionType().getNumResults() != 1
-        || fn.getNumArguments() > 64 || !integer(fn.getFunctionType().getResult(0))) return false;
-    for (auto type : fn.getFunctionType().getInputs()) if (!integer(type)) return false;
+        || fn.getNumArguments() > 64 || !supportedScalar(fn.getFunctionType().getResult(0))) return false;
+    for (auto type : fn.getFunctionType().getInputs()) if (!supportedScalar(type)) return false;
     for (auto &block : fn.getBody()) {
-      for (auto argument : block.getArguments()) if (!integer(argument.getType())) return false;
+      for (auto argument : block.getArguments()) if (!supportedScalar(argument.getType())) return false;
       for (auto &op : block) {
         if (op.getNumRegions()) return false;
-        for (auto type : op.getOperandTypes()) if (!integer(type)) return false;
-        for (auto type : op.getResultTypes()) if (!integer(type)) return false;
+        for (auto type : op.getOperandTypes()) if (!supportedScalar(type)) return false;
+        for (auto type : op.getResultTypes()) if (!supportedScalar(type)) return false;
         auto name = op.getName().getStringRef();
         const auto operands = op.getNumOperands(), results = op.getNumResults();
         if (name == "tsfg_core.fuel") { if (operands || results) return false; }
@@ -50,7 +51,7 @@ bool supportsNativeCore(mlir::ModuleOp module) {
           uint64_t bits;
           if (operands || results != 1 || !tsfg::constantBits(&op, bits)) return false;
         } else {
-          bool unary = name == "tsfg_core.neg" || name == "tsfg_core.not" || name == "tsfg_core.bool_not";
+          bool unary = name == "tsfg_core.neg" || name == "tsfg_core.pos" || name == "tsfg_core.not" || name == "tsfg_core.bool_not";
           bool binary = false;
           for (auto suffix : {"add", "sub", "mul", "and", "or", "xor", "div", "rem",
                               "shl", "shr", "ushr", "eq", "ne", "lt", "le", "gt", "ge"})
@@ -72,6 +73,7 @@ class Lowering {
   llvm::DenseMap<mlir::Value, unsigned> values;
   llvm::DenseMap<mlir::Block *, unsigned> blocks;
   std::vector<mlir::func::FuncOp> functions;
+  std::set<std::string> floatingFunctions;
   unsigned temporary = 0, continuation = 0, functionIndex = 0;
   uint64_t intervalId = 0;
   mlir::Type resultType;
@@ -81,10 +83,15 @@ class Lowering {
     return "%v" + std::to_string(values.lookup(v));
   }
   std::string type(mlir::Type t) {
+    if (t.isF32()) return "f32";
+    if (t.isF64()) return "f64";
     return t.isSignlessInteger(1) ? "i1" : "i" + std::to_string(tsfg::width(tsfg::typeCode(t)));
   }
   std::string constant(int64_t v, llvm::StringRef t = "i32") {
-    auto id = tmp(); out << "  " << id << " = arith.constant " << v << " : " << t << '\n';
+    auto id = tmp(); out << "  " << id << " = arith.constant ";
+    if (t == "f32" || t == "f64") out << "0.0";
+    else out << v;
+    out << " : " << t << '\n';
     return id;
   }
   void stackmap(uint64_t id) {
@@ -164,6 +171,12 @@ class Lowering {
     const auto result = value(op.getResult(0)), resultName = type(op.getResult(0).getType());
     if (name == "tsfg_core.constant") {
       uint64_t bits; if (!tsfg::constantBits(&op, bits)) return false;
+      if (resultName == "f32" || resultName == "f64") {
+        const auto integerType = resultName == "f32" ? "i32" : "i64";
+        auto raw = constant(llvm::APInt(resultName == "f32" ? 32 : 64, bits).getSExtValue(), integerType);
+        out << "  " << result << " = arith.bitcast " << raw << " : " << integerType << " to " << resultName << '\n';
+        return true;
+      }
       const unsigned width = resultName == "i1" ? 1 : tsfg::width(tsfg::typeCode(op.getResult(0).getType()));
       out << "  " << result << " = arith.constant " << llvm::APInt(width, bits).getSExtValue()
           << " : " << resultName << '\n'; return true;
@@ -193,6 +206,20 @@ class Lowering {
       return true;
     }
     const auto left = value(op.getOperand(0)), operandType = type(op.getOperand(0).getType());
+    if (tsfg::floating(tsfg::typeCode(op.getOperand(0).getType()))) {
+      const auto suffix = name.drop_front(10).str();
+      const auto helper = "tsfg_aot_" + operandType + "_" + suffix;
+      floatingFunctions.insert(operandType + "_" + suffix);
+      out << "  " << result << " = func.call @" << helper << '(';
+      for (unsigned i = 0; i < op.getNumOperands(); ++i) {
+        if (i) out << ", "; out << value(op.getOperand(i));
+      }
+      out << ") : (";
+      for (unsigned i = 0; i < op.getNumOperands(); ++i) {
+        if (i) out << ", "; out << operandType;
+      }
+      out << ") -> " << resultName << '\n'; return true;
+    }
     if (op.getNumOperands() == 1 &&
         (name == "tsfg_core.neg" || name == "tsfg_core.not" || name == "tsfg_core.bool_not")) {
       const auto mask = constant(name == "tsfg_core.neg" ? 0 : -1, operandType);
@@ -343,6 +370,14 @@ public:
     }
     out << "^wrapper_fail:\n";
     auto zero = constant(0); out << "  func.return " << zero << " : i32\n}\n";
+    for (const auto &helper : floatingFunctions) {
+      const auto format = helper.substr(0, 3), name = helper.substr(4);
+      const bool unary = name == "neg" || name == "pos";
+      const bool comparison = name == "eq" || name == "ne" || name == "lt" || name == "le" || name == "gt" || name == "ge";
+      out << "func.func private @tsfg_aot_" << helper << '(' << format;
+      if (!unary) out << ", " << format;
+      out << ") -> " << (comparison ? "i1" : format) << '\n';
+    }
     out << "}\n"; return true;
   }
   llvm::StringRef getText() const { return text; }

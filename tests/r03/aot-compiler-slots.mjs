@@ -19,14 +19,16 @@ export function checkCompilerSlots(graph,signatures) {
   for(const [index,arg]of fn.args.slice(2).entries()){
    const low=load(call,index*8),high=load(call,index*8+4);
    for(const check of typeLoads)assert.ok(dominates(wrapper,check,low),'complete type table checked before slots');
-   const bits=Number(arg.type.slice(1));
+   const bits=arg.type==='float'?32:arg.type==='double'?64:Number(arg.type.slice(1));
    if(bits===64){
     const lo=before(call,'zext i32 '+low.result+' to i64'),hi=before(call,'zext i32 '+high.result+' to i64');
-    const shifted=before(call,'shl i64 '+hi.result+', 32');before(call,'or i64 '+lo.result+', '+shifted.result);
+    const shifted=before(call,'shl i64 '+hi.result+', 32'),value=before(call,'or i64 '+lo.result+', '+shifted.result);
+    if(arg.type==='double')before(call,'bitcast i64 '+value.result+' to double');
    }else if(bits===1){
     gate(call,before(call,'icmp eq i32 '+low.result+', 0'));gate(call,before(call,'icmp ule i32 '+high.result+', 1'));before(call,'trunc i32 '+high.result+' to i1');
    }else{
     gate(call,before(call,'icmp eq i32 '+high.result+', 0'));
+    if(arg.type==='float')before(call,'bitcast i32 '+low.result+' to float');
     if(bits<32){gate(call,before(call,'icmp ule i32 '+low.result+', '+(bits===8?255:65535)));before(call,'trunc i32 '+low.result+' to '+arg.type);}
    }
   }
@@ -37,6 +39,7 @@ export function checkCompilerSlots(graph,signatures) {
   const lowerZero=zeroAt(0),upperZero=zeroAt(4);assert.ok(lowerZero&&upperZero);
   let value=call.result,type=fn.result;
   const conversion=(rhs)=>{const op=all.find(op=>op.rhs===rhs&&dominates(wrapper,sentinel,op));assert.ok(op,rhs);return op.result;};
+  if(type==='float'||type==='double'){const integer=type==='float'?'i32':'i64';value=conversion('bitcast '+type+' '+value+' to '+integer);type=integer;}
   if(type==='i1'){value=conversion('zext i1 '+value+' to i8');type='i8';}
   else if(type==='i8'||type==='i16'){value=conversion('zext '+type+' '+value+' to i32');type='i32';}
   const storeAt=(wanted,width,offset)=>stores.find(op=>{const m=/^store (i8|i32) ([^,]+), ptr ([^,]+), align [14]$/.exec(op.rhs);return m&&m[1]===width&&m[2]===wanted&&at(m[3],output,offset);});

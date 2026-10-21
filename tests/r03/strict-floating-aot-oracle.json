@@ -1,0 +1,4564 @@
+{
+  "schema": "tsfg-independent-floating-expectations-v1",
+  "license": "MIT",
+  "status": "EXPECTED_ONLY_FROZEN_BEFORE_PRODUCT_MODIFICATION",
+  "ticket": "17a-strict-floating-aot",
+  "fixedBASE": "fb132e0e35677535a7d5d33df7874390549d61fc",
+  "normativeSources": [
+    "E:/ws/pro_tsfg/tcfg/docs/r01-language-contract.md:87,106,169-176",
+    "E:/ws/pro_tsfg/tcfg/docs/r03-float-vm.md:27-43",
+    "E:/ws/pro_tsfg/.scratch/tsfg_r03/issues/17a-strict-floating-aot.md:17-26"
+  ],
+  "method": {
+    "arithmetic": "Decode raw IEEE to signed BigInt numerator/positive denominator; exact rational operations; choose binary exponent; integer quotient/remainder RNE ties-even once at declared width. No JS Number floating expectations.",
+    "fmod": "Exact rational truncated quotient and subtraction; no Runtime significand long-division implementation reuse.",
+    "nan": "Canonical positive quiet arithmetic NaN including unary; comparisons unordered except ne; transport unchanged.",
+    "zero": "IEEE RNE cancellation positive zero except both negative zeros; mul/div xor signs; fmod dividend sign.",
+    "hostNumberUse": "Only exact small integer metadata: widths, exponents, indices and counts; never arithmetic values or expected bits.",
+    "independence": "No compiler/float.mjs, runtime/scalar.zig or product imports; read normative existing semantics only.",
+    "scope": "Bounded mathematical value/ABI data, not a second Core interpreter or LLVM syntax oracle."
+  },
+  "generator": {
+    "file": "generate-floating-semantic-oracle.mjs",
+    "bytes": 18835,
+    "sha256": "9f4192751f99ee1a8404fff703e0215cd3a0d678f754af8a3378664b58a4295a"
+  },
+  "priorLiteralReference": {
+    "path": "E:/ws/pro_tsfg/.scratch/tsfg_r03/worktrees/r03-runtime-artifact-copy-root01/tcfg/tests/r03/fixtures/exact-float-oracle.PREPARED.json",
+    "bytes": 63430,
+    "sha256": "ac59c356703cd3e309b0e9f6ab076c0d06d823bc7830310384a8de819f438e94",
+    "caseCount": 54,
+    "scope": "Existing exact literal expectations only; no new literal execution credit"
+  },
+  "formats": {
+    "f32": {
+      "fraction": 23,
+      "exponent": 8,
+      "bias": 127
+    },
+    "f64": {
+      "fraction": 52,
+      "exponent": 11,
+      "bias": 1023
+    }
+  },
+  "arithmeticCases": [
+    {
+      "id": "f32-basic-add",
+      "type": "f32",
+      "opcode": 4,
+      "operation": "add",
+      "leftBits": "3f800000",
+      "rightBits": "40000000",
+      "expectedBits": "40400000",
+      "exactInputs": [
+        {
+          "numerator": "8388608",
+          "denominator": "8388608",
+          "negativeZero": false
+        },
+        {
+          "numerator": "8388608",
+          "denominator": "4194304",
+          "negativeZero": false
+        }
+      ]
+    },
+    {
+      "id": "f32-basic-sub",
+      "type": "f32",
+      "opcode": 5,
+      "operation": "sub",
+      "leftBits": "3f800000",
+      "rightBits": "40000000",
+      "expectedBits": "bf800000",
+      "exactInputs": [
+        {
+          "numerator": "8388608",
+          "denominator": "8388608",
+          "negativeZero": false
+        },
+        {
+          "numerator": "8388608",
+          "denominator": "4194304",
+          "negativeZero": false
+        }
+      ]
+    },
+    {
+      "id": "f32-basic-mul",
+      "type": "f32",
+      "opcode": 6,
+      "operation": "mul",
+      "leftBits": "bf800000",
+      "rightBits": "40000000",
+      "expectedBits": "c0000000",
+      "exactInputs": [
+        {
+          "numerator": "-8388608",
+          "denominator": "8388608",
+          "negativeZero": false
+        },
+        {
+          "numerator": "8388608",
+          "denominator": "4194304",
+          "negativeZero": false
+        }
+      ]
+    },
+    {
+      "id": "f32-one-third",
+      "type": "f32",
+      "opcode": 7,
+      "operation": "div",
+      "leftBits": "3f800000",
+      "rightBits": "40400000",
+      "expectedBits": "3eaaaaab",
+      "exactInputs": [
+        {
+          "numerator": "8388608",
+          "denominator": "8388608",
+          "negativeZero": false
+        },
+        {
+          "numerator": "12582912",
+          "denominator": "4194304",
+          "negativeZero": false
+        }
+      ]
+    },
+    {
+      "id": "f32-ties-even-low",
+      "type": "f32",
+      "opcode": 4,
+      "operation": "add",
+      "leftBits": "3f800000",
+      "rightBits": "33800000",
+      "expectedBits": "3f800000",
+      "exactInputs": [
+        {
+          "numerator": "8388608",
+          "denominator": "8388608",
+          "negativeZero": false
+        },
+        {
+          "numerator": "8388608",
+          "denominator": "140737488355328",
+          "negativeZero": false
+        }
+      ]
+    },
+    {
+      "id": "f32-ties-even-high",
+      "type": "f32",
+      "opcode": 4,
+      "operation": "add",
+      "leftBits": "3f800001",
+      "rightBits": "33800000",
+      "expectedBits": "3f800002",
+      "exactInputs": [
+        {
+          "numerator": "8388609",
+          "denominator": "8388608",
+          "negativeZero": false
+        },
+        {
+          "numerator": "8388608",
+          "denominator": "140737488355328",
+          "negativeZero": false
+        }
+      ]
+    },
+    {
+      "id": "f32-negative-tie",
+      "type": "f32",
+      "opcode": 4,
+      "operation": "add",
+      "leftBits": "bf800000",
+      "rightBits": "b3800000",
+      "expectedBits": "bf800000",
+      "exactInputs": [
+        {
+          "numerator": "-8388608",
+          "denominator": "8388608",
+          "negativeZero": false
+        },
+        {
+          "numerator": "-8388608",
+          "denominator": "140737488355328",
+          "negativeZero": false
+        }
+      ]
+    },
+    {
+      "id": "f32-subnormal-half-tie",
+      "type": "f32",
+      "opcode": 7,
+      "operation": "div",
+      "leftBits": "00000001",
+      "rightBits": "40000000",
+      "expectedBits": "00000000",
+      "exactInputs": [
+        {
+          "numerator": "1",
+          "denominator": "713623846352979940529142984724747568191373312",
+          "negativeZero": false
+        },
+        {
+          "numerator": "8388608",
+          "denominator": "4194304",
+          "negativeZero": false
+        }
+      ]
+    },
+    {
+      "id": "f32-subnormal-three-halves",
+      "type": "f32",
+      "opcode": 7,
+      "operation": "div",
+      "leftBits": "00000003",
+      "rightBits": "40000000",
+      "expectedBits": "00000002",
+      "exactInputs": [
+        {
+          "numerator": "3",
+          "denominator": "713623846352979940529142984724747568191373312",
+          "negativeZero": false
+        },
+        {
+          "numerator": "8388608",
+          "denominator": "4194304",
+          "negativeZero": false
+        }
+      ]
+    },
+    {
+      "id": "f32-negative-underflow",
+      "type": "f32",
+      "opcode": 7,
+      "operation": "div",
+      "leftBits": "80000001",
+      "rightBits": "40000000",
+      "expectedBits": "80000000",
+      "exactInputs": [
+        {
+          "numerator": "-1",
+          "denominator": "713623846352979940529142984724747568191373312",
+          "negativeZero": false
+        },
+        {
+          "numerator": "8388608",
+          "denominator": "4194304",
+          "negativeZero": false
+        }
+      ]
+    },
+    {
+      "id": "f32-normal-to-subnormal",
+      "type": "f32",
+      "opcode": 6,
+      "operation": "mul",
+      "leftBits": "00800000",
+      "rightBits": "3f000000",
+      "expectedBits": "00400000",
+      "exactInputs": [
+        {
+          "numerator": "8388608",
+          "denominator": "713623846352979940529142984724747568191373312",
+          "negativeZero": false
+        },
+        {
+          "numerator": "8388608",
+          "denominator": "16777216",
+          "negativeZero": false
+        }
+      ]
+    },
+    {
+      "id": "f32-subnormal-carry",
+      "type": "f32",
+      "opcode": 4,
+      "operation": "add",
+      "leftBits": "007fffff",
+      "rightBits": "00000001",
+      "expectedBits": "00800000",
+      "exactInputs": [
+        {
+          "numerator": "8388607",
+          "denominator": "713623846352979940529142984724747568191373312",
+          "negativeZero": false
+        },
+        {
+          "numerator": "1",
+          "denominator": "713623846352979940529142984724747568191373312",
+          "negativeZero": false
+        }
+      ]
+    },
+    {
+      "id": "f32-subnormal-cancellation",
+      "type": "f32",
+      "opcode": 5,
+      "operation": "sub",
+      "leftBits": "00800000",
+      "rightBits": "007fffff",
+      "expectedBits": "00000001",
+      "exactInputs": [
+        {
+          "numerator": "8388608",
+          "denominator": "713623846352979940529142984724747568191373312",
+          "negativeZero": false
+        },
+        {
+          "numerator": "8388607",
+          "denominator": "713623846352979940529142984724747568191373312",
+          "negativeZero": false
+        }
+      ]
+    },
+    {
+      "id": "f32-overflow-add",
+      "type": "f32",
+      "opcode": 4,
+      "operation": "add",
+      "leftBits": "7f7fffff",
+      "rightBits": "7f7fffff",
+      "expectedBits": "7f800000",
+      "exactInputs": [
+        {
+          "numerator": "340282346638528859811704183484516925440",
+          "denominator": "1",
+          "negativeZero": false
+        },
+        {
+          "numerator": "340282346638528859811704183484516925440",
+          "denominator": "1",
+          "negativeZero": false
+        }
+      ]
+    },
+    {
+      "id": "f32-overflow-mul",
+      "type": "f32",
+      "opcode": 6,
+      "operation": "mul",
+      "leftBits": "7f7fffff",
+      "rightBits": "40000000",
+      "expectedBits": "7f800000",
+      "exactInputs": [
+        {
+          "numerator": "340282346638528859811704183484516925440",
+          "denominator": "1",
+          "negativeZero": false
+        },
+        {
+          "numerator": "8388608",
+          "denominator": "4194304",
+          "negativeZero": false
+        }
+      ]
+    },
+    {
+      "id": "f32-underflow-large-divisor",
+      "type": "f32",
+      "opcode": 7,
+      "operation": "div",
+      "leftBits": "00000001",
+      "rightBits": "7f7fffff",
+      "expectedBits": "00000000",
+      "exactInputs": [
+        {
+          "numerator": "1",
+          "denominator": "713623846352979940529142984724747568191373312",
+          "negativeZero": false
+        },
+        {
+          "numerator": "340282346638528859811704183484516925440",
+          "denominator": "1",
+          "negativeZero": false
+        }
+      ]
+    },
+    {
+      "id": "f32-cancel-zero",
+      "type": "f32",
+      "opcode": 4,
+      "operation": "add",
+      "leftBits": "3f800000",
+      "rightBits": "bf800000",
+      "expectedBits": "00000000",
+      "exactInputs": [
+        {
+          "numerator": "8388608",
+          "denominator": "8388608",
+          "negativeZero": false
+        },
+        {
+          "numerator": "-8388608",
+          "denominator": "8388608",
+          "negativeZero": false
+        }
+      ]
+    },
+    {
+      "id": "f32-zero-plus-negative-zero",
+      "type": "f32",
+      "opcode": 4,
+      "operation": "add",
+      "leftBits": "00000000",
+      "rightBits": "80000000",
+      "expectedBits": "00000000",
+      "exactInputs": [
+        {
+          "numerator": "0",
+          "denominator": "1",
+          "negativeZero": false
+        },
+        {
+          "numerator": "0",
+          "denominator": "1",
+          "negativeZero": true
+        }
+      ]
+    },
+    {
+      "id": "f32-negative-zero-plus-negative-zero",
+      "type": "f32",
+      "opcode": 4,
+      "operation": "add",
+      "leftBits": "80000000",
+      "rightBits": "80000000",
+      "expectedBits": "80000000",
+      "exactInputs": [
+        {
+          "numerator": "0",
+          "denominator": "1",
+          "negativeZero": true
+        },
+        {
+          "numerator": "0",
+          "denominator": "1",
+          "negativeZero": true
+        }
+      ]
+    },
+    {
+      "id": "f32-negative-zero-sub-positive-zero",
+      "type": "f32",
+      "opcode": 5,
+      "operation": "sub",
+      "leftBits": "80000000",
+      "rightBits": "00000000",
+      "expectedBits": "80000000",
+      "exactInputs": [
+        {
+          "numerator": "0",
+          "denominator": "1",
+          "negativeZero": true
+        },
+        {
+          "numerator": "0",
+          "denominator": "1",
+          "negativeZero": false
+        }
+      ]
+    },
+    {
+      "id": "f32-negative-zero-multiply",
+      "type": "f32",
+      "opcode": 6,
+      "operation": "mul",
+      "leftBits": "80000000",
+      "rightBits": "40000000",
+      "expectedBits": "80000000",
+      "exactInputs": [
+        {
+          "numerator": "0",
+          "denominator": "1",
+          "negativeZero": true
+        },
+        {
+          "numerator": "8388608",
+          "denominator": "4194304",
+          "negativeZero": false
+        }
+      ]
+    },
+    {
+      "id": "f32-negative-zero-divide",
+      "type": "f32",
+      "opcode": 7,
+      "operation": "div",
+      "leftBits": "80000000",
+      "rightBits": "40000000",
+      "expectedBits": "80000000",
+      "exactInputs": [
+        {
+          "numerator": "0",
+          "denominator": "1",
+          "negativeZero": true
+        },
+        {
+          "numerator": "8388608",
+          "denominator": "4194304",
+          "negativeZero": false
+        }
+      ]
+    },
+    {
+      "id": "f32-positive-div-zero",
+      "type": "f32",
+      "opcode": 7,
+      "operation": "div",
+      "leftBits": "3f800000",
+      "rightBits": "00000000",
+      "expectedBits": "7f800000",
+      "exactInputs": [
+        {
+          "numerator": "8388608",
+          "denominator": "8388608",
+          "negativeZero": false
+        },
+        {
+          "numerator": "0",
+          "denominator": "1",
+          "negativeZero": false
+        }
+      ]
+    },
+    {
+      "id": "f32-negative-div-zero",
+      "type": "f32",
+      "opcode": 7,
+      "operation": "div",
+      "leftBits": "3f800000",
+      "rightBits": "80000000",
+      "expectedBits": "ff800000",
+      "exactInputs": [
+        {
+          "numerator": "8388608",
+          "denominator": "8388608",
+          "negativeZero": false
+        },
+        {
+          "numerator": "0",
+          "denominator": "1",
+          "negativeZero": true
+        }
+      ]
+    },
+    {
+      "id": "f32-zero-div-zero",
+      "type": "f32",
+      "opcode": 7,
+      "operation": "div",
+      "leftBits": "80000000",
+      "rightBits": "00000000",
+      "expectedBits": "7fc00000",
+      "exactInputs": [
+        {
+          "numerator": "0",
+          "denominator": "1",
+          "negativeZero": true
+        },
+        {
+          "numerator": "0",
+          "denominator": "1",
+          "negativeZero": false
+        }
+      ]
+    },
+    {
+      "id": "f32-infinity-cancel",
+      "type": "f32",
+      "opcode": 4,
+      "operation": "add",
+      "leftBits": "7f800000",
+      "rightBits": "ff800000",
+      "expectedBits": "7fc00000",
+      "exactInputs": [
+        {
+          "kind": "infinity",
+          "negative": false
+        },
+        {
+          "kind": "infinity",
+          "negative": true
+        }
+      ]
+    },
+    {
+      "id": "f32-zero-times-infinity",
+      "type": "f32",
+      "opcode": 6,
+      "operation": "mul",
+      "leftBits": "80000000",
+      "rightBits": "7f800000",
+      "expectedBits": "7fc00000",
+      "exactInputs": [
+        {
+          "numerator": "0",
+          "denominator": "1",
+          "negativeZero": true
+        },
+        {
+          "kind": "infinity",
+          "negative": false
+        }
+      ]
+    },
+    {
+      "id": "f32-infinity-div-infinity",
+      "type": "f32",
+      "opcode": 7,
+      "operation": "div",
+      "leftBits": "7f800000",
+      "rightBits": "ff800000",
+      "expectedBits": "7fc00000",
+      "exactInputs": [
+        {
+          "kind": "infinity",
+          "negative": false
+        },
+        {
+          "kind": "infinity",
+          "negative": true
+        }
+      ]
+    },
+    {
+      "id": "f32-finite-div-infinity",
+      "type": "f32",
+      "opcode": 7,
+      "operation": "div",
+      "leftBits": "bf800000",
+      "rightBits": "7f800000",
+      "expectedBits": "80000000",
+      "exactInputs": [
+        {
+          "numerator": "-8388608",
+          "denominator": "8388608",
+          "negativeZero": false
+        },
+        {
+          "kind": "infinity",
+          "negative": false
+        }
+      ]
+    },
+    {
+      "id": "f32-fmod-truncate-not-nearest",
+      "type": "f32",
+      "opcode": 8,
+      "operation": "fmod",
+      "leftBits": "40e00000",
+      "rightBits": "40800000",
+      "expectedBits": "40400000",
+      "exactInputs": [
+        {
+          "numerator": "14680064",
+          "denominator": "2097152",
+          "negativeZero": false
+        },
+        {
+          "numerator": "8388608",
+          "denominator": "2097152",
+          "negativeZero": false
+        }
+      ],
+      "truncatedQuotient": "1"
+    },
+    {
+      "id": "f32-fmod-negative-dividend",
+      "type": "f32",
+      "opcode": 8,
+      "operation": "fmod",
+      "leftBits": "c0e00000",
+      "rightBits": "40800000",
+      "expectedBits": "c0400000",
+      "exactInputs": [
+        {
+          "numerator": "-14680064",
+          "denominator": "2097152",
+          "negativeZero": false
+        },
+        {
+          "numerator": "8388608",
+          "denominator": "2097152",
+          "negativeZero": false
+        }
+      ],
+      "truncatedQuotient": "-1"
+    },
+    {
+      "id": "f32-fmod-negative-divisor",
+      "type": "f32",
+      "opcode": 8,
+      "operation": "fmod",
+      "leftBits": "40e00000",
+      "rightBits": "c0800000",
+      "expectedBits": "40400000",
+      "exactInputs": [
+        {
+          "numerator": "14680064",
+          "denominator": "2097152",
+          "negativeZero": false
+        },
+        {
+          "numerator": "-8388608",
+          "denominator": "2097152",
+          "negativeZero": false
+        }
+      ],
+      "truncatedQuotient": "-1"
+    },
+    {
+      "id": "f32-fmod-exact-negative-zero",
+      "type": "f32",
+      "opcode": 8,
+      "operation": "fmod",
+      "leftBits": "c1000000",
+      "rightBits": "40000000",
+      "expectedBits": "80000000",
+      "exactInputs": [
+        {
+          "numerator": "-8388608",
+          "denominator": "1048576",
+          "negativeZero": false
+        },
+        {
+          "numerator": "8388608",
+          "denominator": "4194304",
+          "negativeZero": false
+        }
+      ],
+      "truncatedQuotient": "-4"
+    },
+    {
+      "id": "f32-fmod-finite-infinity",
+      "type": "f32",
+      "opcode": 8,
+      "operation": "fmod",
+      "leftBits": "bf800000",
+      "rightBits": "7f800000",
+      "expectedBits": "bf800000",
+      "exactInputs": [
+        {
+          "numerator": "-8388608",
+          "denominator": "8388608",
+          "negativeZero": false
+        },
+        {
+          "kind": "infinity",
+          "negative": false
+        }
+      ]
+    },
+    {
+      "id": "f32-fmod-infinite-dividend",
+      "type": "f32",
+      "opcode": 8,
+      "operation": "fmod",
+      "leftBits": "7f800000",
+      "rightBits": "40000000",
+      "expectedBits": "7fc00000",
+      "exactInputs": [
+        {
+          "kind": "infinity",
+          "negative": false
+        },
+        {
+          "numerator": "8388608",
+          "denominator": "4194304",
+          "negativeZero": false
+        }
+      ]
+    },
+    {
+      "id": "f32-fmod-zero-divisor",
+      "type": "f32",
+      "opcode": 8,
+      "operation": "fmod",
+      "leftBits": "3f800000",
+      "rightBits": "80000000",
+      "expectedBits": "7fc00000",
+      "exactInputs": [
+        {
+          "numerator": "8388608",
+          "denominator": "8388608",
+          "negativeZero": false
+        },
+        {
+          "numerator": "0",
+          "denominator": "1",
+          "negativeZero": true
+        }
+      ]
+    },
+    {
+      "id": "f32-fmod-quotient-overflow",
+      "type": "f32",
+      "opcode": 8,
+      "operation": "fmod",
+      "leftBits": "7f7fffff",
+      "rightBits": "00000003",
+      "expectedBits": "00000000",
+      "exactInputs": [
+        {
+          "numerator": "340282346638528859811704183484516925440",
+          "denominator": "1",
+          "negativeZero": false
+        },
+        {
+          "numerator": "3",
+          "denominator": "713623846352979940529142984724747568191373312",
+          "negativeZero": false
+        }
+      ],
+      "truncatedQuotient": "80944532351401659733469436802188912414770791074256452317135348761721678220503285760"
+    },
+    {
+      "id": "f32-fmod-large-quotient-nonzero",
+      "type": "f32",
+      "opcode": 8,
+      "operation": "fmod",
+      "leftBits": "7f7fffff",
+      "rightBits": "0000000b",
+      "expectedBits": "0000000a",
+      "exactInputs": [
+        {
+          "numerator": "340282346638528859811704183484516925440",
+          "denominator": "1",
+          "negativeZero": false
+        },
+        {
+          "numerator": "11",
+          "denominator": "713623846352979940529142984724747568191373312",
+          "negativeZero": false
+        }
+      ],
+      "truncatedQuotient": "22075781550382270836400755491506067022210215747524486995582367844105912241955441570"
+    },
+    {
+      "id": "f32-fmod-subnormal-nonzero",
+      "type": "f32",
+      "opcode": 8,
+      "operation": "fmod",
+      "leftBits": "00000005",
+      "rightBits": "00000003",
+      "expectedBits": "00000002",
+      "exactInputs": [
+        {
+          "numerator": "5",
+          "denominator": "713623846352979940529142984724747568191373312",
+          "negativeZero": false
+        },
+        {
+          "numerator": "3",
+          "denominator": "713623846352979940529142984724747568191373312",
+          "negativeZero": false
+        }
+      ],
+      "truncatedQuotient": "1"
+    },
+    {
+      "id": "f32-fmod-smaller-negative-dividend",
+      "type": "f32",
+      "opcode": 8,
+      "operation": "fmod",
+      "leftBits": "80000001",
+      "rightBits": "3f800000",
+      "expectedBits": "80000001",
+      "exactInputs": [
+        {
+          "numerator": "-1",
+          "denominator": "713623846352979940529142984724747568191373312",
+          "negativeZero": false
+        },
+        {
+          "numerator": "8388608",
+          "denominator": "8388608",
+          "negativeZero": false
+        }
+      ],
+      "truncatedQuotient": "0"
+    },
+    {
+      "id": "f32-overflow-exact-tie",
+      "type": "f32",
+      "opcode": 4,
+      "operation": "add",
+      "leftBits": "7f7fffff",
+      "rightBits": "73000000",
+      "expectedBits": "7f800000",
+      "exactInputs": [
+        {
+          "numerator": "340282346638528859811704183484516925440",
+          "denominator": "1",
+          "negativeZero": false
+        },
+        {
+          "numerator": "10141204801825835211973625643008",
+          "denominator": "1",
+          "negativeZero": false
+        }
+      ]
+    },
+    {
+      "id": "f32-overflow-below-tie",
+      "type": "f32",
+      "opcode": 4,
+      "operation": "add",
+      "leftBits": "7f7fffff",
+      "rightBits": "72800000",
+      "expectedBits": "7f7fffff",
+      "exactInputs": [
+        {
+          "numerator": "340282346638528859811704183484516925440",
+          "denominator": "1",
+          "negativeZero": false
+        },
+        {
+          "numerator": "5070602400912917605986812821504",
+          "denominator": "1",
+          "negativeZero": false
+        }
+      ]
+    },
+    {
+      "id": "f32-left-snan-add",
+      "type": "f32",
+      "opcode": 4,
+      "operation": "add",
+      "leftBits": "7f800017",
+      "rightBits": "3f800000",
+      "expectedBits": "7fc00000",
+      "exactInputs": [
+        {
+          "kind": "nan",
+          "negative": false
+        },
+        {
+          "numerator": "8388608",
+          "denominator": "8388608",
+          "negativeZero": false
+        }
+      ]
+    },
+    {
+      "id": "f32-right-negative-qnan-add",
+      "type": "f32",
+      "opcode": 4,
+      "operation": "add",
+      "leftBits": "3f800000",
+      "rightBits": "ffc00123",
+      "expectedBits": "7fc00000",
+      "exactInputs": [
+        {
+          "numerator": "8388608",
+          "denominator": "8388608",
+          "negativeZero": false
+        },
+        {
+          "kind": "nan",
+          "negative": true
+        }
+      ]
+    },
+    {
+      "id": "f32-left-snan-sub",
+      "type": "f32",
+      "opcode": 5,
+      "operation": "sub",
+      "leftBits": "7f800017",
+      "rightBits": "3f800000",
+      "expectedBits": "7fc00000",
+      "exactInputs": [
+        {
+          "kind": "nan",
+          "negative": false
+        },
+        {
+          "numerator": "8388608",
+          "denominator": "8388608",
+          "negativeZero": false
+        }
+      ]
+    },
+    {
+      "id": "f32-right-negative-qnan-sub",
+      "type": "f32",
+      "opcode": 5,
+      "operation": "sub",
+      "leftBits": "3f800000",
+      "rightBits": "ffc00123",
+      "expectedBits": "7fc00000",
+      "exactInputs": [
+        {
+          "numerator": "8388608",
+          "denominator": "8388608",
+          "negativeZero": false
+        },
+        {
+          "kind": "nan",
+          "negative": true
+        }
+      ]
+    },
+    {
+      "id": "f32-left-snan-mul",
+      "type": "f32",
+      "opcode": 6,
+      "operation": "mul",
+      "leftBits": "7f800017",
+      "rightBits": "3f800000",
+      "expectedBits": "7fc00000",
+      "exactInputs": [
+        {
+          "kind": "nan",
+          "negative": false
+        },
+        {
+          "numerator": "8388608",
+          "denominator": "8388608",
+          "negativeZero": false
+        }
+      ]
+    },
+    {
+      "id": "f32-right-negative-qnan-mul",
+      "type": "f32",
+      "opcode": 6,
+      "operation": "mul",
+      "leftBits": "3f800000",
+      "rightBits": "ffc00123",
+      "expectedBits": "7fc00000",
+      "exactInputs": [
+        {
+          "numerator": "8388608",
+          "denominator": "8388608",
+          "negativeZero": false
+        },
+        {
+          "kind": "nan",
+          "negative": true
+        }
+      ]
+    },
+    {
+      "id": "f32-left-snan-div",
+      "type": "f32",
+      "opcode": 7,
+      "operation": "div",
+      "leftBits": "7f800017",
+      "rightBits": "3f800000",
+      "expectedBits": "7fc00000",
+      "exactInputs": [
+        {
+          "kind": "nan",
+          "negative": false
+        },
+        {
+          "numerator": "8388608",
+          "denominator": "8388608",
+          "negativeZero": false
+        }
+      ]
+    },
+    {
+      "id": "f32-right-negative-qnan-div",
+      "type": "f32",
+      "opcode": 7,
+      "operation": "div",
+      "leftBits": "3f800000",
+      "rightBits": "ffc00123",
+      "expectedBits": "7fc00000",
+      "exactInputs": [
+        {
+          "numerator": "8388608",
+          "denominator": "8388608",
+          "negativeZero": false
+        },
+        {
+          "kind": "nan",
+          "negative": true
+        }
+      ]
+    },
+    {
+      "id": "f32-left-snan-fmod",
+      "type": "f32",
+      "opcode": 8,
+      "operation": "fmod",
+      "leftBits": "7f800017",
+      "rightBits": "3f800000",
+      "expectedBits": "7fc00000",
+      "exactInputs": [
+        {
+          "kind": "nan",
+          "negative": false
+        },
+        {
+          "numerator": "8388608",
+          "denominator": "8388608",
+          "negativeZero": false
+        }
+      ]
+    },
+    {
+      "id": "f32-right-negative-qnan-fmod",
+      "type": "f32",
+      "opcode": 8,
+      "operation": "fmod",
+      "leftBits": "3f800000",
+      "rightBits": "ffc00123",
+      "expectedBits": "7fc00000",
+      "exactInputs": [
+        {
+          "numerator": "8388608",
+          "denominator": "8388608",
+          "negativeZero": false
+        },
+        {
+          "kind": "nan",
+          "negative": true
+        }
+      ]
+    },
+    {
+      "id": "f32-snan-positive",
+      "type": "f32",
+      "opcode": 33,
+      "operation": "positive",
+      "leftBits": "7f800017",
+      "expectedBits": "7fc00000",
+      "exactInputs": [
+        {
+          "kind": "nan",
+          "negative": false
+        }
+      ]
+    },
+    {
+      "id": "f32-nsnan-positive",
+      "type": "f32",
+      "opcode": 33,
+      "operation": "positive",
+      "leftBits": "ff800019",
+      "expectedBits": "7fc00000",
+      "exactInputs": [
+        {
+          "kind": "nan",
+          "negative": true
+        }
+      ]
+    },
+    {
+      "id": "f32-qnan-positive",
+      "type": "f32",
+      "opcode": 33,
+      "operation": "positive",
+      "leftBits": "7fc00035",
+      "expectedBits": "7fc00000",
+      "exactInputs": [
+        {
+          "kind": "nan",
+          "negative": false
+        }
+      ]
+    },
+    {
+      "id": "f32-nqnan-positive",
+      "type": "f32",
+      "opcode": 33,
+      "operation": "positive",
+      "leftBits": "ffc00123",
+      "expectedBits": "7fc00000",
+      "exactInputs": [
+        {
+          "kind": "nan",
+          "negative": true
+        }
+      ]
+    },
+    {
+      "id": "f32-pz-positive",
+      "type": "f32",
+      "opcode": 33,
+      "operation": "positive",
+      "leftBits": "00000000",
+      "expectedBits": "00000000",
+      "exactInputs": [
+        {
+          "numerator": "0",
+          "denominator": "1",
+          "negativeZero": false
+        }
+      ]
+    },
+    {
+      "id": "f32-nz-positive",
+      "type": "f32",
+      "opcode": 33,
+      "operation": "positive",
+      "leftBits": "80000000",
+      "expectedBits": "80000000",
+      "exactInputs": [
+        {
+          "numerator": "0",
+          "denominator": "1",
+          "negativeZero": true
+        }
+      ]
+    },
+    {
+      "id": "f32-pinf-positive",
+      "type": "f32",
+      "opcode": 33,
+      "operation": "positive",
+      "leftBits": "7f800000",
+      "expectedBits": "7f800000",
+      "exactInputs": [
+        {
+          "kind": "infinity",
+          "negative": false
+        }
+      ]
+    },
+    {
+      "id": "f32-ninf-positive",
+      "type": "f32",
+      "opcode": 33,
+      "operation": "positive",
+      "leftBits": "ff800000",
+      "expectedBits": "ff800000",
+      "exactInputs": [
+        {
+          "kind": "infinity",
+          "negative": true
+        }
+      ]
+    },
+    {
+      "id": "f32-snan-negative",
+      "type": "f32",
+      "opcode": 15,
+      "operation": "negative",
+      "leftBits": "7f800017",
+      "expectedBits": "7fc00000",
+      "exactInputs": [
+        {
+          "kind": "nan",
+          "negative": false
+        }
+      ]
+    },
+    {
+      "id": "f32-nsnan-negative",
+      "type": "f32",
+      "opcode": 15,
+      "operation": "negative",
+      "leftBits": "ff800019",
+      "expectedBits": "7fc00000",
+      "exactInputs": [
+        {
+          "kind": "nan",
+          "negative": true
+        }
+      ]
+    },
+    {
+      "id": "f32-qnan-negative",
+      "type": "f32",
+      "opcode": 15,
+      "operation": "negative",
+      "leftBits": "7fc00035",
+      "expectedBits": "7fc00000",
+      "exactInputs": [
+        {
+          "kind": "nan",
+          "negative": false
+        }
+      ]
+    },
+    {
+      "id": "f32-nqnan-negative",
+      "type": "f32",
+      "opcode": 15,
+      "operation": "negative",
+      "leftBits": "ffc00123",
+      "expectedBits": "7fc00000",
+      "exactInputs": [
+        {
+          "kind": "nan",
+          "negative": true
+        }
+      ]
+    },
+    {
+      "id": "f32-pz-negative",
+      "type": "f32",
+      "opcode": 15,
+      "operation": "negative",
+      "leftBits": "00000000",
+      "expectedBits": "80000000",
+      "exactInputs": [
+        {
+          "numerator": "0",
+          "denominator": "1",
+          "negativeZero": false
+        }
+      ]
+    },
+    {
+      "id": "f32-nz-negative",
+      "type": "f32",
+      "opcode": 15,
+      "operation": "negative",
+      "leftBits": "80000000",
+      "expectedBits": "00000000",
+      "exactInputs": [
+        {
+          "numerator": "0",
+          "denominator": "1",
+          "negativeZero": true
+        }
+      ]
+    },
+    {
+      "id": "f32-pinf-negative",
+      "type": "f32",
+      "opcode": 15,
+      "operation": "negative",
+      "leftBits": "7f800000",
+      "expectedBits": "ff800000",
+      "exactInputs": [
+        {
+          "kind": "infinity",
+          "negative": false
+        }
+      ]
+    },
+    {
+      "id": "f32-ninf-negative",
+      "type": "f32",
+      "opcode": 15,
+      "operation": "negative",
+      "leftBits": "ff800000",
+      "expectedBits": "7f800000",
+      "exactInputs": [
+        {
+          "kind": "infinity",
+          "negative": true
+        }
+      ]
+    },
+    {
+      "id": "f64-basic-add",
+      "type": "f64",
+      "opcode": 4,
+      "operation": "add",
+      "leftBits": "3ff0000000000000",
+      "rightBits": "4000000000000000",
+      "expectedBits": "4008000000000000",
+      "exactInputs": [
+        {
+          "numerator": "4503599627370496",
+          "denominator": "4503599627370496",
+          "negativeZero": false
+        },
+        {
+          "numerator": "4503599627370496",
+          "denominator": "2251799813685248",
+          "negativeZero": false
+        }
+      ]
+    },
+    {
+      "id": "f64-basic-sub",
+      "type": "f64",
+      "opcode": 5,
+      "operation": "sub",
+      "leftBits": "3ff0000000000000",
+      "rightBits": "4000000000000000",
+      "expectedBits": "bff0000000000000",
+      "exactInputs": [
+        {
+          "numerator": "4503599627370496",
+          "denominator": "4503599627370496",
+          "negativeZero": false
+        },
+        {
+          "numerator": "4503599627370496",
+          "denominator": "2251799813685248",
+          "negativeZero": false
+        }
+      ]
+    },
+    {
+      "id": "f64-basic-mul",
+      "type": "f64",
+      "opcode": 6,
+      "operation": "mul",
+      "leftBits": "bff0000000000000",
+      "rightBits": "4000000000000000",
+      "expectedBits": "c000000000000000",
+      "exactInputs": [
+        {
+          "numerator": "-4503599627370496",
+          "denominator": "4503599627370496",
+          "negativeZero": false
+        },
+        {
+          "numerator": "4503599627370496",
+          "denominator": "2251799813685248",
+          "negativeZero": false
+        }
+      ]
+    },
+    {
+      "id": "f64-one-third",
+      "type": "f64",
+      "opcode": 7,
+      "operation": "div",
+      "leftBits": "3ff0000000000000",
+      "rightBits": "4008000000000000",
+      "expectedBits": "3fd5555555555555",
+      "exactInputs": [
+        {
+          "numerator": "4503599627370496",
+          "denominator": "4503599627370496",
+          "negativeZero": false
+        },
+        {
+          "numerator": "6755399441055744",
+          "denominator": "2251799813685248",
+          "negativeZero": false
+        }
+      ]
+    },
+    {
+      "id": "f64-ties-even-low",
+      "type": "f64",
+      "opcode": 4,
+      "operation": "add",
+      "leftBits": "3ff0000000000000",
+      "rightBits": "3ca0000000000000",
+      "expectedBits": "3ff0000000000000",
+      "exactInputs": [
+        {
+          "numerator": "4503599627370496",
+          "denominator": "4503599627370496",
+          "negativeZero": false
+        },
+        {
+          "numerator": "4503599627370496",
+          "denominator": "40564819207303340847894502572032",
+          "negativeZero": false
+        }
+      ]
+    },
+    {
+      "id": "f64-ties-even-high",
+      "type": "f64",
+      "opcode": 4,
+      "operation": "add",
+      "leftBits": "3ff0000000000001",
+      "rightBits": "3ca0000000000000",
+      "expectedBits": "3ff0000000000002",
+      "exactInputs": [
+        {
+          "numerator": "4503599627370497",
+          "denominator": "4503599627370496",
+          "negativeZero": false
+        },
+        {
+          "numerator": "4503599627370496",
+          "denominator": "40564819207303340847894502572032",
+          "negativeZero": false
+        }
+      ]
+    },
+    {
+      "id": "f64-negative-tie",
+      "type": "f64",
+      "opcode": 4,
+      "operation": "add",
+      "leftBits": "bff0000000000000",
+      "rightBits": "bca0000000000000",
+      "expectedBits": "bff0000000000000",
+      "exactInputs": [
+        {
+          "numerator": "-4503599627370496",
+          "denominator": "4503599627370496",
+          "negativeZero": false
+        },
+        {
+          "numerator": "-4503599627370496",
+          "denominator": "40564819207303340847894502572032",
+          "negativeZero": false
+        }
+      ]
+    },
+    {
+      "id": "f64-subnormal-half-tie",
+      "type": "f64",
+      "opcode": 7,
+      "operation": "div",
+      "leftBits": "0000000000000001",
+      "rightBits": "4000000000000000",
+      "expectedBits": "0000000000000000",
+      "exactInputs": [
+        {
+          "numerator": "1",
+          "denominator": "202402253307310618352495346718917307049556649764142118356901358027430339567995346891960383701437124495187077864316811911389808737385793476867013399940738509921517424276566361364466907742093216341239767678472745068562007483424692698618103355649159556340810056512358769552333414615230502532186327508646006263307707741093494784",
+          "negativeZero": false
+        },
+        {
+          "numerator": "4503599627370496",
+          "denominator": "2251799813685248",
+          "negativeZero": false
+        }
+      ]
+    },
+    {
+      "id": "f64-subnormal-three-halves",
+      "type": "f64",
+      "opcode": 7,
+      "operation": "div",
+      "leftBits": "0000000000000003",
+      "rightBits": "4000000000000000",
+      "expectedBits": "0000000000000002",
+      "exactInputs": [
+        {
+          "numerator": "3",
+          "denominator": "202402253307310618352495346718917307049556649764142118356901358027430339567995346891960383701437124495187077864316811911389808737385793476867013399940738509921517424276566361364466907742093216341239767678472745068562007483424692698618103355649159556340810056512358769552333414615230502532186327508646006263307707741093494784",
+          "negativeZero": false
+        },
+        {
+          "numerator": "4503599627370496",
+          "denominator": "2251799813685248",
+          "negativeZero": false
+        }
+      ]
+    },
+    {
+      "id": "f64-negative-underflow",
+      "type": "f64",
+      "opcode": 7,
+      "operation": "div",
+      "leftBits": "8000000000000001",
+      "rightBits": "4000000000000000",
+      "expectedBits": "8000000000000000",
+      "exactInputs": [
+        {
+          "numerator": "-1",
+          "denominator": "202402253307310618352495346718917307049556649764142118356901358027430339567995346891960383701437124495187077864316811911389808737385793476867013399940738509921517424276566361364466907742093216341239767678472745068562007483424692698618103355649159556340810056512358769552333414615230502532186327508646006263307707741093494784",
+          "negativeZero": false
+        },
+        {
+          "numerator": "4503599627370496",
+          "denominator": "2251799813685248",
+          "negativeZero": false
+        }
+      ]
+    },
+    {
+      "id": "f64-normal-to-subnormal",
+      "type": "f64",
+      "opcode": 6,
+      "operation": "mul",
+      "leftBits": "0010000000000000",
+      "rightBits": "3fe0000000000000",
+      "expectedBits": "0008000000000000",
+      "exactInputs": [
+        {
+          "numerator": "4503599627370496",
+          "denominator": "202402253307310618352495346718917307049556649764142118356901358027430339567995346891960383701437124495187077864316811911389808737385793476867013399940738509921517424276566361364466907742093216341239767678472745068562007483424692698618103355649159556340810056512358769552333414615230502532186327508646006263307707741093494784",
+          "negativeZero": false
+        },
+        {
+          "numerator": "4503599627370496",
+          "denominator": "9007199254740992",
+          "negativeZero": false
+        }
+      ]
+    },
+    {
+      "id": "f64-subnormal-carry",
+      "type": "f64",
+      "opcode": 4,
+      "operation": "add",
+      "leftBits": "000fffffffffffff",
+      "rightBits": "0000000000000001",
+      "expectedBits": "0010000000000000",
+      "exactInputs": [
+        {
+          "numerator": "4503599627370495",
+          "denominator": "202402253307310618352495346718917307049556649764142118356901358027430339567995346891960383701437124495187077864316811911389808737385793476867013399940738509921517424276566361364466907742093216341239767678472745068562007483424692698618103355649159556340810056512358769552333414615230502532186327508646006263307707741093494784",
+          "negativeZero": false
+        },
+        {
+          "numerator": "1",
+          "denominator": "202402253307310618352495346718917307049556649764142118356901358027430339567995346891960383701437124495187077864316811911389808737385793476867013399940738509921517424276566361364466907742093216341239767678472745068562007483424692698618103355649159556340810056512358769552333414615230502532186327508646006263307707741093494784",
+          "negativeZero": false
+        }
+      ]
+    },
+    {
+      "id": "f64-subnormal-cancellation",
+      "type": "f64",
+      "opcode": 5,
+      "operation": "sub",
+      "leftBits": "0010000000000000",
+      "rightBits": "000fffffffffffff",
+      "expectedBits": "0000000000000001",
+      "exactInputs": [
+        {
+          "numerator": "4503599627370496",
+          "denominator": "202402253307310618352495346718917307049556649764142118356901358027430339567995346891960383701437124495187077864316811911389808737385793476867013399940738509921517424276566361364466907742093216341239767678472745068562007483424692698618103355649159556340810056512358769552333414615230502532186327508646006263307707741093494784",
+          "negativeZero": false
+        },
+        {
+          "numerator": "4503599627370495",
+          "denominator": "202402253307310618352495346718917307049556649764142118356901358027430339567995346891960383701437124495187077864316811911389808737385793476867013399940738509921517424276566361364466907742093216341239767678472745068562007483424692698618103355649159556340810056512358769552333414615230502532186327508646006263307707741093494784",
+          "negativeZero": false
+        }
+      ]
+    },
+    {
+      "id": "f64-overflow-add",
+      "type": "f64",
+      "opcode": 4,
+      "operation": "add",
+      "leftBits": "7fefffffffffffff",
+      "rightBits": "7fefffffffffffff",
+      "expectedBits": "7ff0000000000000",
+      "exactInputs": [
+        {
+          "numerator": "179769313486231570814527423731704356798070567525844996598917476803157260780028538760589558632766878171540458953514382464234321326889464182768467546703537516986049910576551282076245490090389328944075868508455133942304583236903222948165808559332123348274797826204144723168738177180919299881250404026184124858368",
+          "denominator": "1",
+          "negativeZero": false
+        },
+        {
+          "numerator": "179769313486231570814527423731704356798070567525844996598917476803157260780028538760589558632766878171540458953514382464234321326889464182768467546703537516986049910576551282076245490090389328944075868508455133942304583236903222948165808559332123348274797826204144723168738177180919299881250404026184124858368",
+          "denominator": "1",
+          "negativeZero": false
+        }
+      ]
+    },
+    {
+      "id": "f64-overflow-mul",
+      "type": "f64",
+      "opcode": 6,
+      "operation": "mul",
+      "leftBits": "7fefffffffffffff",
+      "rightBits": "4000000000000000",
+      "expectedBits": "7ff0000000000000",
+      "exactInputs": [
+        {
+          "numerator": "179769313486231570814527423731704356798070567525844996598917476803157260780028538760589558632766878171540458953514382464234321326889464182768467546703537516986049910576551282076245490090389328944075868508455133942304583236903222948165808559332123348274797826204144723168738177180919299881250404026184124858368",
+          "denominator": "1",
+          "negativeZero": false
+        },
+        {
+          "numerator": "4503599627370496",
+          "denominator": "2251799813685248",
+          "negativeZero": false
+        }
+      ]
+    },
+    {
+      "id": "f64-underflow-large-divisor",
+      "type": "f64",
+      "opcode": 7,
+      "operation": "div",
+      "leftBits": "0000000000000001",
+      "rightBits": "7fefffffffffffff",
+      "expectedBits": "0000000000000000",
+      "exactInputs": [
+        {
+          "numerator": "1",
+          "denominator": "202402253307310618352495346718917307049556649764142118356901358027430339567995346891960383701437124495187077864316811911389808737385793476867013399940738509921517424276566361364466907742093216341239767678472745068562007483424692698618103355649159556340810056512358769552333414615230502532186327508646006263307707741093494784",
+          "negativeZero": false
+        },
+        {
+          "numerator": "179769313486231570814527423731704356798070567525844996598917476803157260780028538760589558632766878171540458953514382464234321326889464182768467546703537516986049910576551282076245490090389328944075868508455133942304583236903222948165808559332123348274797826204144723168738177180919299881250404026184124858368",
+          "denominator": "1",
+          "negativeZero": false
+        }
+      ]
+    },
+    {
+      "id": "f64-cancel-zero",
+      "type": "f64",
+      "opcode": 4,
+      "operation": "add",
+      "leftBits": "3ff0000000000000",
+      "rightBits": "bff0000000000000",
+      "expectedBits": "0000000000000000",
+      "exactInputs": [
+        {
+          "numerator": "4503599627370496",
+          "denominator": "4503599627370496",
+          "negativeZero": false
+        },
+        {
+          "numerator": "-4503599627370496",
+          "denominator": "4503599627370496",
+          "negativeZero": false
+        }
+      ]
+    },
+    {
+      "id": "f64-zero-plus-negative-zero",
+      "type": "f64",
+      "opcode": 4,
+      "operation": "add",
+      "leftBits": "0000000000000000",
+      "rightBits": "8000000000000000",
+      "expectedBits": "0000000000000000",
+      "exactInputs": [
+        {
+          "numerator": "0",
+          "denominator": "1",
+          "negativeZero": false
+        },
+        {
+          "numerator": "0",
+          "denominator": "1",
+          "negativeZero": true
+        }
+      ]
+    },
+    {
+      "id": "f64-negative-zero-plus-negative-zero",
+      "type": "f64",
+      "opcode": 4,
+      "operation": "add",
+      "leftBits": "8000000000000000",
+      "rightBits": "8000000000000000",
+      "expectedBits": "8000000000000000",
+      "exactInputs": [
+        {
+          "numerator": "0",
+          "denominator": "1",
+          "negativeZero": true
+        },
+        {
+          "numerator": "0",
+          "denominator": "1",
+          "negativeZero": true
+        }
+      ]
+    },
+    {
+      "id": "f64-negative-zero-sub-positive-zero",
+      "type": "f64",
+      "opcode": 5,
+      "operation": "sub",
+      "leftBits": "8000000000000000",
+      "rightBits": "0000000000000000",
+      "expectedBits": "8000000000000000",
+      "exactInputs": [
+        {
+          "numerator": "0",
+          "denominator": "1",
+          "negativeZero": true
+        },
+        {
+          "numerator": "0",
+          "denominator": "1",
+          "negativeZero": false
+        }
+      ]
+    },
+    {
+      "id": "f64-negative-zero-multiply",
+      "type": "f64",
+      "opcode": 6,
+      "operation": "mul",
+      "leftBits": "8000000000000000",
+      "rightBits": "4000000000000000",
+      "expectedBits": "8000000000000000",
+      "exactInputs": [
+        {
+          "numerator": "0",
+          "denominator": "1",
+          "negativeZero": true
+        },
+        {
+          "numerator": "4503599627370496",
+          "denominator": "2251799813685248",
+          "negativeZero": false
+        }
+      ]
+    },
+    {
+      "id": "f64-negative-zero-divide",
+      "type": "f64",
+      "opcode": 7,
+      "operation": "div",
+      "leftBits": "8000000000000000",
+      "rightBits": "4000000000000000",
+      "expectedBits": "8000000000000000",
+      "exactInputs": [
+        {
+          "numerator": "0",
+          "denominator": "1",
+          "negativeZero": true
+        },
+        {
+          "numerator": "4503599627370496",
+          "denominator": "2251799813685248",
+          "negativeZero": false
+        }
+      ]
+    },
+    {
+      "id": "f64-positive-div-zero",
+      "type": "f64",
+      "opcode": 7,
+      "operation": "div",
+      "leftBits": "3ff0000000000000",
+      "rightBits": "0000000000000000",
+      "expectedBits": "7ff0000000000000",
+      "exactInputs": [
+        {
+          "numerator": "4503599627370496",
+          "denominator": "4503599627370496",
+          "negativeZero": false
+        },
+        {
+          "numerator": "0",
+          "denominator": "1",
+          "negativeZero": false
+        }
+      ]
+    },
+    {
+      "id": "f64-negative-div-zero",
+      "type": "f64",
+      "opcode": 7,
+      "operation": "div",
+      "leftBits": "3ff0000000000000",
+      "rightBits": "8000000000000000",
+      "expectedBits": "fff0000000000000",
+      "exactInputs": [
+        {
+          "numerator": "4503599627370496",
+          "denominator": "4503599627370496",
+          "negativeZero": false
+        },
+        {
+          "numerator": "0",
+          "denominator": "1",
+          "negativeZero": true
+        }
+      ]
+    },
+    {
+      "id": "f64-zero-div-zero",
+      "type": "f64",
+      "opcode": 7,
+      "operation": "div",
+      "leftBits": "8000000000000000",
+      "rightBits": "0000000000000000",
+      "expectedBits": "7ff8000000000000",
+      "exactInputs": [
+        {
+          "numerator": "0",
+          "denominator": "1",
+          "negativeZero": true
+        },
+        {
+          "numerator": "0",
+          "denominator": "1",
+          "negativeZero": false
+        }
+      ]
+    },
+    {
+      "id": "f64-infinity-cancel",
+      "type": "f64",
+      "opcode": 4,
+      "operation": "add",
+      "leftBits": "7ff0000000000000",
+      "rightBits": "fff0000000000000",
+      "expectedBits": "7ff8000000000000",
+      "exactInputs": [
+        {
+          "kind": "infinity",
+          "negative": false
+        },
+        {
+          "kind": "infinity",
+          "negative": true
+        }
+      ]
+    },
+    {
+      "id": "f64-zero-times-infinity",
+      "type": "f64",
+      "opcode": 6,
+      "operation": "mul",
+      "leftBits": "8000000000000000",
+      "rightBits": "7ff0000000000000",
+      "expectedBits": "7ff8000000000000",
+      "exactInputs": [
+        {
+          "numerator": "0",
+          "denominator": "1",
+          "negativeZero": true
+        },
+        {
+          "kind": "infinity",
+          "negative": false
+        }
+      ]
+    },
+    {
+      "id": "f64-infinity-div-infinity",
+      "type": "f64",
+      "opcode": 7,
+      "operation": "div",
+      "leftBits": "7ff0000000000000",
+      "rightBits": "fff0000000000000",
+      "expectedBits": "7ff8000000000000",
+      "exactInputs": [
+        {
+          "kind": "infinity",
+          "negative": false
+        },
+        {
+          "kind": "infinity",
+          "negative": true
+        }
+      ]
+    },
+    {
+      "id": "f64-finite-div-infinity",
+      "type": "f64",
+      "opcode": 7,
+      "operation": "div",
+      "leftBits": "bff0000000000000",
+      "rightBits": "7ff0000000000000",
+      "expectedBits": "8000000000000000",
+      "exactInputs": [
+        {
+          "numerator": "-4503599627370496",
+          "denominator": "4503599627370496",
+          "negativeZero": false
+        },
+        {
+          "kind": "infinity",
+          "negative": false
+        }
+      ]
+    },
+    {
+      "id": "f64-fmod-truncate-not-nearest",
+      "type": "f64",
+      "opcode": 8,
+      "operation": "fmod",
+      "leftBits": "401c000000000000",
+      "rightBits": "4010000000000000",
+      "expectedBits": "4008000000000000",
+      "exactInputs": [
+        {
+          "numerator": "7881299347898368",
+          "denominator": "1125899906842624",
+          "negativeZero": false
+        },
+        {
+          "numerator": "4503599627370496",
+          "denominator": "1125899906842624",
+          "negativeZero": false
+        }
+      ],
+      "truncatedQuotient": "1"
+    },
+    {
+      "id": "f64-fmod-negative-dividend",
+      "type": "f64",
+      "opcode": 8,
+      "operation": "fmod",
+      "leftBits": "c01c000000000000",
+      "rightBits": "4010000000000000",
+      "expectedBits": "c008000000000000",
+      "exactInputs": [
+        {
+          "numerator": "-7881299347898368",
+          "denominator": "1125899906842624",
+          "negativeZero": false
+        },
+        {
+          "numerator": "4503599627370496",
+          "denominator": "1125899906842624",
+          "negativeZero": false
+        }
+      ],
+      "truncatedQuotient": "-1"
+    },
+    {
+      "id": "f64-fmod-negative-divisor",
+      "type": "f64",
+      "opcode": 8,
+      "operation": "fmod",
+      "leftBits": "401c000000000000",
+      "rightBits": "c010000000000000",
+      "expectedBits": "4008000000000000",
+      "exactInputs": [
+        {
+          "numerator": "7881299347898368",
+          "denominator": "1125899906842624",
+          "negativeZero": false
+        },
+        {
+          "numerator": "-4503599627370496",
+          "denominator": "1125899906842624",
+          "negativeZero": false
+        }
+      ],
+      "truncatedQuotient": "-1"
+    },
+    {
+      "id": "f64-fmod-exact-negative-zero",
+      "type": "f64",
+      "opcode": 8,
+      "operation": "fmod",
+      "leftBits": "c020000000000000",
+      "rightBits": "4000000000000000",
+      "expectedBits": "8000000000000000",
+      "exactInputs": [
+        {
+          "numerator": "-4503599627370496",
+          "denominator": "562949953421312",
+          "negativeZero": false
+        },
+        {
+          "numerator": "4503599627370496",
+          "denominator": "2251799813685248",
+          "negativeZero": false
+        }
+      ],
+      "truncatedQuotient": "-4"
+    },
+    {
+      "id": "f64-fmod-finite-infinity",
+      "type": "f64",
+      "opcode": 8,
+      "operation": "fmod",
+      "leftBits": "bff0000000000000",
+      "rightBits": "7ff0000000000000",
+      "expectedBits": "bff0000000000000",
+      "exactInputs": [
+        {
+          "numerator": "-4503599627370496",
+          "denominator": "4503599627370496",
+          "negativeZero": false
+        },
+        {
+          "kind": "infinity",
+          "negative": false
+        }
+      ]
+    },
+    {
+      "id": "f64-fmod-infinite-dividend",
+      "type": "f64",
+      "opcode": 8,
+      "operation": "fmod",
+      "leftBits": "7ff0000000000000",
+      "rightBits": "4000000000000000",
+      "expectedBits": "7ff8000000000000",
+      "exactInputs": [
+        {
+          "kind": "infinity",
+          "negative": false
+        },
+        {
+          "numerator": "4503599627370496",
+          "denominator": "2251799813685248",
+          "negativeZero": false
+        }
+      ]
+    },
+    {
+      "id": "f64-fmod-zero-divisor",
+      "type": "f64",
+      "opcode": 8,
+      "operation": "fmod",
+      "leftBits": "3ff0000000000000",
+      "rightBits": "8000000000000000",
+      "expectedBits": "7ff8000000000000",
+      "exactInputs": [
+        {
+          "numerator": "4503599627370496",
+          "denominator": "4503599627370496",
+          "negativeZero": false
+        },
+        {
+          "numerator": "0",
+          "denominator": "1",
+          "negativeZero": true
+        }
+      ]
+    },
+    {
+      "id": "f64-fmod-quotient-overflow",
+      "type": "f64",
+      "opcode": 8,
+      "operation": "fmod",
+      "leftBits": "7fefffffffffffff",
+      "rightBits": "0000000000000003",
+      "expectedBits": "0000000000000002",
+      "exactInputs": [
+        {
+          "numerator": "179769313486231570814527423731704356798070567525844996598917476803157260780028538760589558632766878171540458953514382464234321326889464182768467546703537516986049910576551282076245490090389328944075868508455133942304583236903222948165808559332123348274797826204144723168738177180919299881250404026184124858368",
+          "denominator": "1",
+          "negativeZero": false
+        },
+        {
+          "numerator": "3",
+          "denominator": "202402253307310618352495346718917307049556649764142118356901358027430339567995346891960383701437124495187077864316811911389808737385793476867013399940738509921517424276566361364466907742093216341239767678472745068562007483424692698618103355649159556340810056512358769552333414615230502532186327508646006263307707741093494784",
+          "negativeZero": false
+        }
+      ],
+      "truncatedQuotient": "12128571375040524433615600232818916614280924810353423010324521066417278400921043958073503482066584192715389653175178658501374553580419910186497178639692740023279747099581600435097626213611842643621331558119203862999673564531491587632949310097184198230056734395738348562698318553591307525379323276780870620075006645194066533707156416407716624155373790522385287434361443438200855356472144183777668731591492504753450400656619789353406710411496066049658845389879435232300168279610239920291838082072169658934627576194225784059001376429615951487694668790993796918781506516643699247987867990544111630612277326228956681118392441516715584170"
+    },
+    {
+      "id": "f64-fmod-large-quotient-nonzero",
+      "type": "f64",
+      "opcode": 8,
+      "operation": "fmod",
+      "leftBits": "7fefffffffffffff",
+      "rightBits": "000000000000000b",
+      "expectedBits": "0000000000000004",
+      "exactInputs": [
+        {
+          "numerator": "179769313486231570814527423731704356798070567525844996598917476803157260780028538760589558632766878171540458953514382464234321326889464182768467546703537516986049910576551282076245490090389328944075868508455133942304583236903222948165808559332123348274797826204144723168738177180919299881250404026184124858368",
+          "denominator": "1",
+          "negativeZero": false
+        },
+        {
+          "numerator": "11",
+          "denominator": "202402253307310618352495346718917307049556649764142118356901358027430339567995346891960383701437124495187077864316811911389808737385793476867013399940738509921517424276566361364466907742093216341239767678472745068562007483424692698618103355649159556340810056512358769552333414615230502532186327508646006263307707741093494784",
+          "negativeZero": false
+        }
+      ],
+      "truncatedQuotient": "3307792193192870300076981881677886349349343130096388093724869381750166836614830170383682767836341143467833541775048725045829423703750884596317412356279838188167203754431345573208443512803229811896726788577964689909001881235861342081713448208322963153651836653383185971644995969161265688739815439122055623656819994143836327374679022656649988406011033778832351118462211846782051460856039322848455108615861592205486472906350851641838193748589836195361503288148936881536409530802792705534137658746955361527625702598425213834273102662622532223916727852089217341485865413630099794905782179239303171985166543516988185759561574959104250228"
+    },
+    {
+      "id": "f64-fmod-subnormal-nonzero",
+      "type": "f64",
+      "opcode": 8,
+      "operation": "fmod",
+      "leftBits": "0000000000000005",
+      "rightBits": "0000000000000003",
+      "expectedBits": "0000000000000002",
+      "exactInputs": [
+        {
+          "numerator": "5",
+          "denominator": "202402253307310618352495346718917307049556649764142118356901358027430339567995346891960383701437124495187077864316811911389808737385793476867013399940738509921517424276566361364466907742093216341239767678472745068562007483424692698618103355649159556340810056512358769552333414615230502532186327508646006263307707741093494784",
+          "negativeZero": false
+        },
+        {
+          "numerator": "3",
+          "denominator": "202402253307310618352495346718917307049556649764142118356901358027430339567995346891960383701437124495187077864316811911389808737385793476867013399940738509921517424276566361364466907742093216341239767678472745068562007483424692698618103355649159556340810056512358769552333414615230502532186327508646006263307707741093494784",
+          "negativeZero": false
+        }
+      ],
+      "truncatedQuotient": "1"
+    },
+    {
+      "id": "f64-fmod-smaller-negative-dividend",
+      "type": "f64",
+      "opcode": 8,
+      "operation": "fmod",
+      "leftBits": "8000000000000001",
+      "rightBits": "3ff0000000000000",
+      "expectedBits": "8000000000000001",
+      "exactInputs": [
+        {
+          "numerator": "-1",
+          "denominator": "202402253307310618352495346718917307049556649764142118356901358027430339567995346891960383701437124495187077864316811911389808737385793476867013399940738509921517424276566361364466907742093216341239767678472745068562007483424692698618103355649159556340810056512358769552333414615230502532186327508646006263307707741093494784",
+          "negativeZero": false
+        },
+        {
+          "numerator": "4503599627370496",
+          "denominator": "4503599627370496",
+          "negativeZero": false
+        }
+      ],
+      "truncatedQuotient": "0"
+    },
+    {
+      "id": "f64-overflow-exact-tie",
+      "type": "f64",
+      "opcode": 4,
+      "operation": "add",
+      "leftBits": "7fefffffffffffff",
+      "rightBits": "7c90000000000000",
+      "expectedBits": "7ff0000000000000",
+      "exactInputs": [
+        {
+          "numerator": "179769313486231570814527423731704356798070567525844996598917476803157260780028538760589558632766878171540458953514382464234321326889464182768467546703537516986049910576551282076245490090389328944075868508455133942304583236903222948165808559332123348274797826204144723168738177180919299881250404026184124858368",
+          "denominator": "1",
+          "negativeZero": false
+        },
+        {
+          "numerator": "9979201547673599058281863565184192830337256302177287707512736212186059459344820328924789827463178505446712234220962476219862189941967968303695858991424157101600028364755428382587688607221814935913266783722719619966654052275604351944444276342240220787535604534378780208211792476151720049639424",
+          "denominator": "1",
+          "negativeZero": false
+        }
+      ]
+    },
+    {
+      "id": "f64-overflow-below-tie",
+      "type": "f64",
+      "opcode": 4,
+      "operation": "add",
+      "leftBits": "7fefffffffffffff",
+      "rightBits": "7c80000000000000",
+      "expectedBits": "7fefffffffffffff",
+      "exactInputs": [
+        {
+          "numerator": "179769313486231570814527423731704356798070567525844996598917476803157260780028538760589558632766878171540458953514382464234321326889464182768467546703537516986049910576551282076245490090389328944075868508455133942304583236903222948165808559332123348274797826204144723168738177180919299881250404026184124858368",
+          "denominator": "1",
+          "negativeZero": false
+        },
+        {
+          "numerator": "4989600773836799529140931782592096415168628151088643853756368106093029729672410164462394913731589252723356117110481238109931094970983984151847929495712078550800014182377714191293844303610907467956633391861359809983327026137802175972222138171120110393767802267189390104105896238075860024819712",
+          "denominator": "1",
+          "negativeZero": false
+        }
+      ]
+    },
+    {
+      "id": "f64-left-snan-add",
+      "type": "f64",
+      "opcode": 4,
+      "operation": "add",
+      "leftBits": "7ff0000000000017",
+      "rightBits": "3ff0000000000000",
+      "expectedBits": "7ff8000000000000",
+      "exactInputs": [
+        {
+          "kind": "nan",
+          "negative": false
+        },
+        {
+          "numerator": "4503599627370496",
+          "denominator": "4503599627370496",
+          "negativeZero": false
+        }
+      ]
+    },
+    {
+      "id": "f64-right-negative-qnan-add",
+      "type": "f64",
+      "opcode": 4,
+      "operation": "add",
+      "leftBits": "3ff0000000000000",
+      "rightBits": "fff8000000000123",
+      "expectedBits": "7ff8000000000000",
+      "exactInputs": [
+        {
+          "numerator": "4503599627370496",
+          "denominator": "4503599627370496",
+          "negativeZero": false
+        },
+        {
+          "kind": "nan",
+          "negative": true
+        }
+      ]
+    },
+    {
+      "id": "f64-left-snan-sub",
+      "type": "f64",
+      "opcode": 5,
+      "operation": "sub",
+      "leftBits": "7ff0000000000017",
+      "rightBits": "3ff0000000000000",
+      "expectedBits": "7ff8000000000000",
+      "exactInputs": [
+        {
+          "kind": "nan",
+          "negative": false
+        },
+        {
+          "numerator": "4503599627370496",
+          "denominator": "4503599627370496",
+          "negativeZero": false
+        }
+      ]
+    },
+    {
+      "id": "f64-right-negative-qnan-sub",
+      "type": "f64",
+      "opcode": 5,
+      "operation": "sub",
+      "leftBits": "3ff0000000000000",
+      "rightBits": "fff8000000000123",
+      "expectedBits": "7ff8000000000000",
+      "exactInputs": [
+        {
+          "numerator": "4503599627370496",
+          "denominator": "4503599627370496",
+          "negativeZero": false
+        },
+        {
+          "kind": "nan",
+          "negative": true
+        }
+      ]
+    },
+    {
+      "id": "f64-left-snan-mul",
+      "type": "f64",
+      "opcode": 6,
+      "operation": "mul",
+      "leftBits": "7ff0000000000017",
+      "rightBits": "3ff0000000000000",
+      "expectedBits": "7ff8000000000000",
+      "exactInputs": [
+        {
+          "kind": "nan",
+          "negative": false
+        },
+        {
+          "numerator": "4503599627370496",
+          "denominator": "4503599627370496",
+          "negativeZero": false
+        }
+      ]
+    },
+    {
+      "id": "f64-right-negative-qnan-mul",
+      "type": "f64",
+      "opcode": 6,
+      "operation": "mul",
+      "leftBits": "3ff0000000000000",
+      "rightBits": "fff8000000000123",
+      "expectedBits": "7ff8000000000000",
+      "exactInputs": [
+        {
+          "numerator": "4503599627370496",
+          "denominator": "4503599627370496",
+          "negativeZero": false
+        },
+        {
+          "kind": "nan",
+          "negative": true
+        }
+      ]
+    },
+    {
+      "id": "f64-left-snan-div",
+      "type": "f64",
+      "opcode": 7,
+      "operation": "div",
+      "leftBits": "7ff0000000000017",
+      "rightBits": "3ff0000000000000",
+      "expectedBits": "7ff8000000000000",
+      "exactInputs": [
+        {
+          "kind": "nan",
+          "negative": false
+        },
+        {
+          "numerator": "4503599627370496",
+          "denominator": "4503599627370496",
+          "negativeZero": false
+        }
+      ]
+    },
+    {
+      "id": "f64-right-negative-qnan-div",
+      "type": "f64",
+      "opcode": 7,
+      "operation": "div",
+      "leftBits": "3ff0000000000000",
+      "rightBits": "fff8000000000123",
+      "expectedBits": "7ff8000000000000",
+      "exactInputs": [
+        {
+          "numerator": "4503599627370496",
+          "denominator": "4503599627370496",
+          "negativeZero": false
+        },
+        {
+          "kind": "nan",
+          "negative": true
+        }
+      ]
+    },
+    {
+      "id": "f64-left-snan-fmod",
+      "type": "f64",
+      "opcode": 8,
+      "operation": "fmod",
+      "leftBits": "7ff0000000000017",
+      "rightBits": "3ff0000000000000",
+      "expectedBits": "7ff8000000000000",
+      "exactInputs": [
+        {
+          "kind": "nan",
+          "negative": false
+        },
+        {
+          "numerator": "4503599627370496",
+          "denominator": "4503599627370496",
+          "negativeZero": false
+        }
+      ]
+    },
+    {
+      "id": "f64-right-negative-qnan-fmod",
+      "type": "f64",
+      "opcode": 8,
+      "operation": "fmod",
+      "leftBits": "3ff0000000000000",
+      "rightBits": "fff8000000000123",
+      "expectedBits": "7ff8000000000000",
+      "exactInputs": [
+        {
+          "numerator": "4503599627370496",
+          "denominator": "4503599627370496",
+          "negativeZero": false
+        },
+        {
+          "kind": "nan",
+          "negative": true
+        }
+      ]
+    },
+    {
+      "id": "f64-snan-positive",
+      "type": "f64",
+      "opcode": 33,
+      "operation": "positive",
+      "leftBits": "7ff0000000000017",
+      "expectedBits": "7ff8000000000000",
+      "exactInputs": [
+        {
+          "kind": "nan",
+          "negative": false
+        }
+      ]
+    },
+    {
+      "id": "f64-nsnan-positive",
+      "type": "f64",
+      "opcode": 33,
+      "operation": "positive",
+      "leftBits": "fff0000000000019",
+      "expectedBits": "7ff8000000000000",
+      "exactInputs": [
+        {
+          "kind": "nan",
+          "negative": true
+        }
+      ]
+    },
+    {
+      "id": "f64-qnan-positive",
+      "type": "f64",
+      "opcode": 33,
+      "operation": "positive",
+      "leftBits": "7ff8000000000035",
+      "expectedBits": "7ff8000000000000",
+      "exactInputs": [
+        {
+          "kind": "nan",
+          "negative": false
+        }
+      ]
+    },
+    {
+      "id": "f64-nqnan-positive",
+      "type": "f64",
+      "opcode": 33,
+      "operation": "positive",
+      "leftBits": "fff8000000000123",
+      "expectedBits": "7ff8000000000000",
+      "exactInputs": [
+        {
+          "kind": "nan",
+          "negative": true
+        }
+      ]
+    },
+    {
+      "id": "f64-pz-positive",
+      "type": "f64",
+      "opcode": 33,
+      "operation": "positive",
+      "leftBits": "0000000000000000",
+      "expectedBits": "0000000000000000",
+      "exactInputs": [
+        {
+          "numerator": "0",
+          "denominator": "1",
+          "negativeZero": false
+        }
+      ]
+    },
+    {
+      "id": "f64-nz-positive",
+      "type": "f64",
+      "opcode": 33,
+      "operation": "positive",
+      "leftBits": "8000000000000000",
+      "expectedBits": "8000000000000000",
+      "exactInputs": [
+        {
+          "numerator": "0",
+          "denominator": "1",
+          "negativeZero": true
+        }
+      ]
+    },
+    {
+      "id": "f64-pinf-positive",
+      "type": "f64",
+      "opcode": 33,
+      "operation": "positive",
+      "leftBits": "7ff0000000000000",
+      "expectedBits": "7ff0000000000000",
+      "exactInputs": [
+        {
+          "kind": "infinity",
+          "negative": false
+        }
+      ]
+    },
+    {
+      "id": "f64-ninf-positive",
+      "type": "f64",
+      "opcode": 33,
+      "operation": "positive",
+      "leftBits": "fff0000000000000",
+      "expectedBits": "fff0000000000000",
+      "exactInputs": [
+        {
+          "kind": "infinity",
+          "negative": true
+        }
+      ]
+    },
+    {
+      "id": "f64-snan-negative",
+      "type": "f64",
+      "opcode": 15,
+      "operation": "negative",
+      "leftBits": "7ff0000000000017",
+      "expectedBits": "7ff8000000000000",
+      "exactInputs": [
+        {
+          "kind": "nan",
+          "negative": false
+        }
+      ]
+    },
+    {
+      "id": "f64-nsnan-negative",
+      "type": "f64",
+      "opcode": 15,
+      "operation": "negative",
+      "leftBits": "fff0000000000019",
+      "expectedBits": "7ff8000000000000",
+      "exactInputs": [
+        {
+          "kind": "nan",
+          "negative": true
+        }
+      ]
+    },
+    {
+      "id": "f64-qnan-negative",
+      "type": "f64",
+      "opcode": 15,
+      "operation": "negative",
+      "leftBits": "7ff8000000000035",
+      "expectedBits": "7ff8000000000000",
+      "exactInputs": [
+        {
+          "kind": "nan",
+          "negative": false
+        }
+      ]
+    },
+    {
+      "id": "f64-nqnan-negative",
+      "type": "f64",
+      "opcode": 15,
+      "operation": "negative",
+      "leftBits": "fff8000000000123",
+      "expectedBits": "7ff8000000000000",
+      "exactInputs": [
+        {
+          "kind": "nan",
+          "negative": true
+        }
+      ]
+    },
+    {
+      "id": "f64-pz-negative",
+      "type": "f64",
+      "opcode": 15,
+      "operation": "negative",
+      "leftBits": "0000000000000000",
+      "expectedBits": "8000000000000000",
+      "exactInputs": [
+        {
+          "numerator": "0",
+          "denominator": "1",
+          "negativeZero": false
+        }
+      ]
+    },
+    {
+      "id": "f64-nz-negative",
+      "type": "f64",
+      "opcode": 15,
+      "operation": "negative",
+      "leftBits": "8000000000000000",
+      "expectedBits": "0000000000000000",
+      "exactInputs": [
+        {
+          "numerator": "0",
+          "denominator": "1",
+          "negativeZero": true
+        }
+      ]
+    },
+    {
+      "id": "f64-pinf-negative",
+      "type": "f64",
+      "opcode": 15,
+      "operation": "negative",
+      "leftBits": "7ff0000000000000",
+      "expectedBits": "fff0000000000000",
+      "exactInputs": [
+        {
+          "kind": "infinity",
+          "negative": false
+        }
+      ]
+    },
+    {
+      "id": "f64-ninf-negative",
+      "type": "f64",
+      "opcode": 15,
+      "operation": "negative",
+      "leftBits": "fff0000000000000",
+      "expectedBits": "7ff0000000000000",
+      "exactInputs": [
+        {
+          "kind": "infinity",
+          "negative": true
+        }
+      ]
+    }
+  ],
+  "comparisonCases": [
+    {
+      "id": "f32-compare-nan-left",
+      "type": "f32",
+      "leftBits": "7f800017",
+      "rightBits": "3f800000",
+      "opcodes": {
+        "eq": 18,
+        "ne": 19,
+        "lt": 20,
+        "le": 21,
+        "gt": 22,
+        "ge": 23
+      },
+      "expected": {
+        "eq": false,
+        "ne": true,
+        "lt": false,
+        "le": false,
+        "gt": false,
+        "ge": false
+      }
+    },
+    {
+      "id": "f32-compare-nan-right",
+      "type": "f32",
+      "leftBits": "3f800000",
+      "rightBits": "ffc00123",
+      "opcodes": {
+        "eq": 18,
+        "ne": 19,
+        "lt": 20,
+        "le": 21,
+        "gt": 22,
+        "ge": 23
+      },
+      "expected": {
+        "eq": false,
+        "ne": true,
+        "lt": false,
+        "le": false,
+        "gt": false,
+        "ge": false
+      }
+    },
+    {
+      "id": "f32-compare-nan-both",
+      "type": "f32",
+      "leftBits": "7f800017",
+      "rightBits": "ff800019",
+      "opcodes": {
+        "eq": 18,
+        "ne": 19,
+        "lt": 20,
+        "le": 21,
+        "gt": 22,
+        "ge": 23
+      },
+      "expected": {
+        "eq": false,
+        "ne": true,
+        "lt": false,
+        "le": false,
+        "gt": false,
+        "ge": false
+      }
+    },
+    {
+      "id": "f32-compare-zeros",
+      "type": "f32",
+      "leftBits": "00000000",
+      "rightBits": "80000000",
+      "opcodes": {
+        "eq": 18,
+        "ne": 19,
+        "lt": 20,
+        "le": 21,
+        "gt": 22,
+        "ge": 23
+      },
+      "expected": {
+        "eq": true,
+        "ne": false,
+        "lt": false,
+        "le": true,
+        "gt": false,
+        "ge": true
+      }
+    },
+    {
+      "id": "f32-compare-finite",
+      "type": "f32",
+      "leftBits": "bf800000",
+      "rightBits": "3f800000",
+      "opcodes": {
+        "eq": 18,
+        "ne": 19,
+        "lt": 20,
+        "le": 21,
+        "gt": 22,
+        "ge": 23
+      },
+      "expected": {
+        "eq": false,
+        "ne": true,
+        "lt": true,
+        "le": true,
+        "gt": false,
+        "ge": false
+      }
+    },
+    {
+      "id": "f32-compare-equal",
+      "type": "f32",
+      "leftBits": "3f800000",
+      "rightBits": "3f800000",
+      "opcodes": {
+        "eq": 18,
+        "ne": 19,
+        "lt": 20,
+        "le": 21,
+        "gt": 22,
+        "ge": 23
+      },
+      "expected": {
+        "eq": true,
+        "ne": false,
+        "lt": false,
+        "le": true,
+        "gt": false,
+        "ge": true
+      }
+    },
+    {
+      "id": "f32-compare-infinities",
+      "type": "f32",
+      "leftBits": "ff800000",
+      "rightBits": "7f800000",
+      "opcodes": {
+        "eq": 18,
+        "ne": 19,
+        "lt": 20,
+        "le": 21,
+        "gt": 22,
+        "ge": 23
+      },
+      "expected": {
+        "eq": false,
+        "ne": true,
+        "lt": true,
+        "le": true,
+        "gt": false,
+        "ge": false
+      }
+    },
+    {
+      "id": "f32-compare-subnormal",
+      "type": "f32",
+      "leftBits": "00000001",
+      "rightBits": "00000000",
+      "opcodes": {
+        "eq": 18,
+        "ne": 19,
+        "lt": 20,
+        "le": 21,
+        "gt": 22,
+        "ge": 23
+      },
+      "expected": {
+        "eq": false,
+        "ne": true,
+        "lt": false,
+        "le": false,
+        "gt": true,
+        "ge": true
+      }
+    },
+    {
+      "id": "f32-compare-negative-subnormal",
+      "type": "f32",
+      "leftBits": "80000001",
+      "rightBits": "80000000",
+      "opcodes": {
+        "eq": 18,
+        "ne": 19,
+        "lt": 20,
+        "le": 21,
+        "gt": 22,
+        "ge": 23
+      },
+      "expected": {
+        "eq": false,
+        "ne": true,
+        "lt": true,
+        "le": true,
+        "gt": false,
+        "ge": false
+      }
+    },
+    {
+      "id": "f64-compare-nan-left",
+      "type": "f64",
+      "leftBits": "7ff0000000000017",
+      "rightBits": "3ff0000000000000",
+      "opcodes": {
+        "eq": 18,
+        "ne": 19,
+        "lt": 20,
+        "le": 21,
+        "gt": 22,
+        "ge": 23
+      },
+      "expected": {
+        "eq": false,
+        "ne": true,
+        "lt": false,
+        "le": false,
+        "gt": false,
+        "ge": false
+      }
+    },
+    {
+      "id": "f64-compare-nan-right",
+      "type": "f64",
+      "leftBits": "3ff0000000000000",
+      "rightBits": "fff8000000000123",
+      "opcodes": {
+        "eq": 18,
+        "ne": 19,
+        "lt": 20,
+        "le": 21,
+        "gt": 22,
+        "ge": 23
+      },
+      "expected": {
+        "eq": false,
+        "ne": true,
+        "lt": false,
+        "le": false,
+        "gt": false,
+        "ge": false
+      }
+    },
+    {
+      "id": "f64-compare-nan-both",
+      "type": "f64",
+      "leftBits": "7ff0000000000017",
+      "rightBits": "fff0000000000019",
+      "opcodes": {
+        "eq": 18,
+        "ne": 19,
+        "lt": 20,
+        "le": 21,
+        "gt": 22,
+        "ge": 23
+      },
+      "expected": {
+        "eq": false,
+        "ne": true,
+        "lt": false,
+        "le": false,
+        "gt": false,
+        "ge": false
+      }
+    },
+    {
+      "id": "f64-compare-zeros",
+      "type": "f64",
+      "leftBits": "0000000000000000",
+      "rightBits": "8000000000000000",
+      "opcodes": {
+        "eq": 18,
+        "ne": 19,
+        "lt": 20,
+        "le": 21,
+        "gt": 22,
+        "ge": 23
+      },
+      "expected": {
+        "eq": true,
+        "ne": false,
+        "lt": false,
+        "le": true,
+        "gt": false,
+        "ge": true
+      }
+    },
+    {
+      "id": "f64-compare-finite",
+      "type": "f64",
+      "leftBits": "bff0000000000000",
+      "rightBits": "3ff0000000000000",
+      "opcodes": {
+        "eq": 18,
+        "ne": 19,
+        "lt": 20,
+        "le": 21,
+        "gt": 22,
+        "ge": 23
+      },
+      "expected": {
+        "eq": false,
+        "ne": true,
+        "lt": true,
+        "le": true,
+        "gt": false,
+        "ge": false
+      }
+    },
+    {
+      "id": "f64-compare-equal",
+      "type": "f64",
+      "leftBits": "3ff0000000000000",
+      "rightBits": "3ff0000000000000",
+      "opcodes": {
+        "eq": 18,
+        "ne": 19,
+        "lt": 20,
+        "le": 21,
+        "gt": 22,
+        "ge": 23
+      },
+      "expected": {
+        "eq": true,
+        "ne": false,
+        "lt": false,
+        "le": true,
+        "gt": false,
+        "ge": true
+      }
+    },
+    {
+      "id": "f64-compare-infinities",
+      "type": "f64",
+      "leftBits": "fff0000000000000",
+      "rightBits": "7ff0000000000000",
+      "opcodes": {
+        "eq": 18,
+        "ne": 19,
+        "lt": 20,
+        "le": 21,
+        "gt": 22,
+        "ge": 23
+      },
+      "expected": {
+        "eq": false,
+        "ne": true,
+        "lt": true,
+        "le": true,
+        "gt": false,
+        "ge": false
+      }
+    },
+    {
+      "id": "f64-compare-subnormal",
+      "type": "f64",
+      "leftBits": "0000000000000001",
+      "rightBits": "0000000000000000",
+      "opcodes": {
+        "eq": 18,
+        "ne": 19,
+        "lt": 20,
+        "le": 21,
+        "gt": 22,
+        "ge": 23
+      },
+      "expected": {
+        "eq": false,
+        "ne": true,
+        "lt": false,
+        "le": false,
+        "gt": true,
+        "ge": true
+      }
+    },
+    {
+      "id": "f64-compare-negative-subnormal",
+      "type": "f64",
+      "leftBits": "8000000000000001",
+      "rightBits": "8000000000000000",
+      "opcodes": {
+        "eq": 18,
+        "ne": 19,
+        "lt": 20,
+        "le": 21,
+        "gt": 22,
+        "ge": 23
+      },
+      "expected": {
+        "eq": false,
+        "ne": true,
+        "lt": true,
+        "le": true,
+        "gt": false,
+        "ge": false
+      }
+    }
+  ],
+  "rawTransportCases": [
+    {
+      "id": "f32-transport-snan",
+      "type": "f32",
+      "inputBits": "7f800017",
+      "through": [
+        "constant",
+        "local",
+        "store-load",
+        "parameter",
+        "call",
+        "block-argument",
+        "return"
+      ],
+      "expectedBits": "7f800017",
+      "arithmeticPerformed": false
+    },
+    {
+      "id": "f32-transport-nsnan",
+      "type": "f32",
+      "inputBits": "ff800019",
+      "through": [
+        "constant",
+        "local",
+        "store-load",
+        "parameter",
+        "call",
+        "block-argument",
+        "return"
+      ],
+      "expectedBits": "ff800019",
+      "arithmeticPerformed": false
+    },
+    {
+      "id": "f32-transport-qnan",
+      "type": "f32",
+      "inputBits": "7fc00035",
+      "through": [
+        "constant",
+        "local",
+        "store-load",
+        "parameter",
+        "call",
+        "block-argument",
+        "return"
+      ],
+      "expectedBits": "7fc00035",
+      "arithmeticPerformed": false
+    },
+    {
+      "id": "f32-transport-nqnan",
+      "type": "f32",
+      "inputBits": "ffc00123",
+      "through": [
+        "constant",
+        "local",
+        "store-load",
+        "parameter",
+        "call",
+        "block-argument",
+        "return"
+      ],
+      "expectedBits": "ffc00123",
+      "arithmeticPerformed": false
+    },
+    {
+      "id": "f32-transport-nz",
+      "type": "f32",
+      "inputBits": "80000000",
+      "through": [
+        "constant",
+        "local",
+        "store-load",
+        "parameter",
+        "call",
+        "block-argument",
+        "return"
+      ],
+      "expectedBits": "80000000",
+      "arithmeticPerformed": false
+    },
+    {
+      "id": "f32-transport-minsub",
+      "type": "f32",
+      "inputBits": "00000001",
+      "through": [
+        "constant",
+        "local",
+        "store-load",
+        "parameter",
+        "call",
+        "block-argument",
+        "return"
+      ],
+      "expectedBits": "00000001",
+      "arithmeticPerformed": false
+    },
+    {
+      "id": "f32-transport-max",
+      "type": "f32",
+      "inputBits": "7f7fffff",
+      "through": [
+        "constant",
+        "local",
+        "store-load",
+        "parameter",
+        "call",
+        "block-argument",
+        "return"
+      ],
+      "expectedBits": "7f7fffff",
+      "arithmeticPerformed": false
+    },
+    {
+      "id": "f32-transport-pinf",
+      "type": "f32",
+      "inputBits": "7f800000",
+      "through": [
+        "constant",
+        "local",
+        "store-load",
+        "parameter",
+        "call",
+        "block-argument",
+        "return"
+      ],
+      "expectedBits": "7f800000",
+      "arithmeticPerformed": false
+    },
+    {
+      "id": "f64-transport-snan",
+      "type": "f64",
+      "inputBits": "7ff0000000000017",
+      "through": [
+        "constant",
+        "local",
+        "store-load",
+        "parameter",
+        "call",
+        "block-argument",
+        "return"
+      ],
+      "expectedBits": "7ff0000000000017",
+      "arithmeticPerformed": false
+    },
+    {
+      "id": "f64-transport-nsnan",
+      "type": "f64",
+      "inputBits": "fff0000000000019",
+      "through": [
+        "constant",
+        "local",
+        "store-load",
+        "parameter",
+        "call",
+        "block-argument",
+        "return"
+      ],
+      "expectedBits": "fff0000000000019",
+      "arithmeticPerformed": false
+    },
+    {
+      "id": "f64-transport-qnan",
+      "type": "f64",
+      "inputBits": "7ff8000000000035",
+      "through": [
+        "constant",
+        "local",
+        "store-load",
+        "parameter",
+        "call",
+        "block-argument",
+        "return"
+      ],
+      "expectedBits": "7ff8000000000035",
+      "arithmeticPerformed": false
+    },
+    {
+      "id": "f64-transport-nqnan",
+      "type": "f64",
+      "inputBits": "fff8000000000123",
+      "through": [
+        "constant",
+        "local",
+        "store-load",
+        "parameter",
+        "call",
+        "block-argument",
+        "return"
+      ],
+      "expectedBits": "fff8000000000123",
+      "arithmeticPerformed": false
+    },
+    {
+      "id": "f64-transport-nz",
+      "type": "f64",
+      "inputBits": "8000000000000000",
+      "through": [
+        "constant",
+        "local",
+        "store-load",
+        "parameter",
+        "call",
+        "block-argument",
+        "return"
+      ],
+      "expectedBits": "8000000000000000",
+      "arithmeticPerformed": false
+    },
+    {
+      "id": "f64-transport-minsub",
+      "type": "f64",
+      "inputBits": "0000000000000001",
+      "through": [
+        "constant",
+        "local",
+        "store-load",
+        "parameter",
+        "call",
+        "block-argument",
+        "return"
+      ],
+      "expectedBits": "0000000000000001",
+      "arithmeticPerformed": false
+    },
+    {
+      "id": "f64-transport-max",
+      "type": "f64",
+      "inputBits": "7fefffffffffffff",
+      "through": [
+        "constant",
+        "local",
+        "store-load",
+        "parameter",
+        "call",
+        "block-argument",
+        "return"
+      ],
+      "expectedBits": "7fefffffffffffff",
+      "arithmeticPerformed": false
+    },
+    {
+      "id": "f64-transport-pinf",
+      "type": "f64",
+      "inputBits": "7ff0000000000000",
+      "through": [
+        "constant",
+        "local",
+        "store-load",
+        "parameter",
+        "call",
+        "block-argument",
+        "return"
+      ],
+      "expectedBits": "7ff0000000000000",
+      "arithmeticPerformed": false
+    }
+  ],
+  "roundingCounterexamples": [
+    {
+      "id": "f32-rational-direct-not-via-f64",
+      "scope": "exact-rational/literal expectation, not a new Core cast",
+      "numerator": "18014399583223809",
+      "denominator": "18014398509481984",
+      "expectedBits": "3f800001",
+      "forbiddenViaPrecision53Bits": "3f800000"
+    },
+    {
+      "id": "f64-add-direct-not-via-precision64",
+      "scope": "two f64 inputs, direct target rounding",
+      "leftBits": "3ff0000000000000",
+      "rightBits": "3ca0000000000001",
+      "exactNumerator": "40564819207303345351494129942529",
+      "exactDenominator": "40564819207303340847894502572032",
+      "expectedBits": "3ff0000000000001",
+      "forbiddenViaPrecision64Bits": "3ff0000000000000"
+    }
+  ],
+  "callAndCFGCases": [
+    {
+      "id": "f32-no-fma",
+      "type": "f32",
+      "kind": "separate-operations",
+      "inputs": {
+        "a": "3f800001",
+        "b": "3f7ffffe",
+        "c": "bf800000"
+      },
+      "operations": [
+        {
+          "op": "mul",
+          "left": "a",
+          "right": "b",
+          "resultBits": "3f800000"
+        },
+        {
+          "op": "add",
+          "left": "previous",
+          "right": "c",
+          "resultBits": "00000000"
+        }
+      ],
+      "expectedBits": "00000000",
+      "forbiddenFusedAlternativeBits": "a8800000"
+    },
+    {
+      "id": "f32-round-each-add",
+      "type": "f32",
+      "kind": "nested-call",
+      "inputs": {
+        "a": "3f800000",
+        "b": "33800000"
+      },
+      "calls": [
+        {
+          "callee": "add",
+          "arguments": [
+            "a",
+            "b"
+          ],
+          "expectedBits": "3f800000"
+        },
+        {
+          "callee": "add",
+          "arguments": [
+            "previous",
+            "b"
+          ],
+          "expectedBits": "3f800000"
+        }
+      ],
+      "expectedBits": "3f800000",
+      "forbiddenUnroundedChainBits": "3f800001"
+    },
+    {
+      "id": "f32-parallel-phi-swap",
+      "type": "f32",
+      "kind": "cfg-parallel-block-arguments",
+      "initialBits": [
+        "7f800017",
+        "ffc00123"
+      ],
+      "edges": [
+        {
+          "simultaneousSources": [
+            1,
+            0
+          ],
+          "expectedBits": [
+            "ffc00123",
+            "7f800017"
+          ]
+        },
+        {
+          "simultaneousSources": [
+            1,
+            0
+          ],
+          "expectedBits": [
+            "7f800017",
+            "ffc00123"
+          ]
+        }
+      ],
+      "expectedReturnBits": "7f800017"
+    },
+    {
+      "id": "f32-comparison-branch-payload",
+      "type": "f32",
+      "kind": "conditional-call",
+      "compare": {
+        "op": "ne",
+        "left": "7f800017",
+        "right": "3f800000",
+        "expected": true
+      },
+      "thenCall": {
+        "callee": "identity",
+        "inputBits": "ff800019"
+      },
+      "elseCall": {
+        "callee": "identity",
+        "inputBits": "3f800000"
+      },
+      "expectedBits": "ff800019"
+    },
+    {
+      "id": "f32-recursive-negate",
+      "type": "f32",
+      "kind": "bounded-recursion",
+      "depth": 3,
+      "initialBits": "3f800000",
+      "perStepOperation": "negative",
+      "expectedStepBits": [
+        "bf800000",
+        "3f800000",
+        "bf800000"
+      ],
+      "expectedBits": "bf800000"
+    },
+    {
+      "id": "f64-no-fma",
+      "type": "f64",
+      "kind": "separate-operations",
+      "inputs": {
+        "a": "3ff0000000000001",
+        "b": "3feffffffffffffe",
+        "c": "bff0000000000000"
+      },
+      "operations": [
+        {
+          "op": "mul",
+          "left": "a",
+          "right": "b",
+          "resultBits": "3ff0000000000000"
+        },
+        {
+          "op": "add",
+          "left": "previous",
+          "right": "c",
+          "resultBits": "0000000000000000"
+        }
+      ],
+      "expectedBits": "0000000000000000",
+      "forbiddenFusedAlternativeBits": "b970000000000000"
+    },
+    {
+      "id": "f64-round-each-add",
+      "type": "f64",
+      "kind": "nested-call",
+      "inputs": {
+        "a": "3ff0000000000000",
+        "b": "3ca0000000000000"
+      },
+      "calls": [
+        {
+          "callee": "add",
+          "arguments": [
+            "a",
+            "b"
+          ],
+          "expectedBits": "3ff0000000000000"
+        },
+        {
+          "callee": "add",
+          "arguments": [
+            "previous",
+            "b"
+          ],
+          "expectedBits": "3ff0000000000000"
+        }
+      ],
+      "expectedBits": "3ff0000000000000",
+      "forbiddenUnroundedChainBits": "3ff0000000000001"
+    },
+    {
+      "id": "f64-parallel-phi-swap",
+      "type": "f64",
+      "kind": "cfg-parallel-block-arguments",
+      "initialBits": [
+        "7ff0000000000017",
+        "fff8000000000123"
+      ],
+      "edges": [
+        {
+          "simultaneousSources": [
+            1,
+            0
+          ],
+          "expectedBits": [
+            "fff8000000000123",
+            "7ff0000000000017"
+          ]
+        },
+        {
+          "simultaneousSources": [
+            1,
+            0
+          ],
+          "expectedBits": [
+            "7ff0000000000017",
+            "fff8000000000123"
+          ]
+        }
+      ],
+      "expectedReturnBits": "7ff0000000000017"
+    },
+    {
+      "id": "f64-comparison-branch-payload",
+      "type": "f64",
+      "kind": "conditional-call",
+      "compare": {
+        "op": "ne",
+        "left": "7ff0000000000017",
+        "right": "3ff0000000000000",
+        "expected": true
+      },
+      "thenCall": {
+        "callee": "identity",
+        "inputBits": "fff0000000000019"
+      },
+      "elseCall": {
+        "callee": "identity",
+        "inputBits": "3ff0000000000000"
+      },
+      "expectedBits": "fff0000000000019"
+    },
+    {
+      "id": "f64-recursive-negate",
+      "type": "f64",
+      "kind": "bounded-recursion",
+      "depth": 3,
+      "initialBits": "3ff0000000000000",
+      "perStepOperation": "negative",
+      "expectedStepBits": [
+        "bff0000000000000",
+        "3ff0000000000000",
+        "bff0000000000000"
+      ],
+      "expectedBits": "bff0000000000000"
+    }
+  ],
+  "abi": {
+    "version": 3,
+    "entry": "tsfg_native_invoke_v3",
+    "slotBytes": 8,
+    "slotAlignment": 4,
+    "endianness": "little",
+    "nominalCanonicalSlots": [
+      {
+        "typeCode": 1,
+        "type": "i32",
+        "rawBits": "ffffffff",
+        "lowU32Hex": "ffffffff",
+        "highU32Hex": "00000000",
+        "bytesLE": "ffffffff00000000"
+      },
+      {
+        "typeCode": 2,
+        "type": "bool",
+        "rawBits": "1",
+        "lowU32Hex": "00000000",
+        "highU32Hex": "00000001",
+        "bytesLE": "0000000001000000"
+      },
+      {
+        "typeCode": 3,
+        "type": "i8",
+        "rawBits": "80",
+        "lowU32Hex": "00000080",
+        "highU32Hex": "00000000",
+        "bytesLE": "8000000000000000"
+      },
+      {
+        "typeCode": 4,
+        "type": "i16",
+        "rawBits": "8000",
+        "lowU32Hex": "00008000",
+        "highU32Hex": "00000000",
+        "bytesLE": "0080000000000000"
+      },
+      {
+        "typeCode": 5,
+        "type": "i64",
+        "rawBits": "8000000000000000",
+        "lowU32Hex": "00000000",
+        "highU32Hex": "80000000",
+        "bytesLE": "0000000000000080"
+      },
+      {
+        "typeCode": 6,
+        "type": "u8",
+        "rawBits": "ff",
+        "lowU32Hex": "000000ff",
+        "highU32Hex": "00000000",
+        "bytesLE": "ff00000000000000"
+      },
+      {
+        "typeCode": 7,
+        "type": "u16",
+        "rawBits": "ffff",
+        "lowU32Hex": "0000ffff",
+        "highU32Hex": "00000000",
+        "bytesLE": "ffff000000000000"
+      },
+      {
+        "typeCode": 8,
+        "type": "u32",
+        "rawBits": "ffffffff",
+        "lowU32Hex": "ffffffff",
+        "highU32Hex": "00000000",
+        "bytesLE": "ffffffff00000000"
+      },
+      {
+        "typeCode": 9,
+        "type": "u64",
+        "rawBits": "ffffffffffffffff",
+        "lowU32Hex": "ffffffff",
+        "highU32Hex": "ffffffff",
+        "bytesLE": "ffffffffffffffff"
+      },
+      {
+        "typeCode": 10,
+        "type": "isize",
+        "rawBits": "8000000000000000",
+        "lowU32Hex": "00000000",
+        "highU32Hex": "80000000",
+        "bytesLE": "0000000000000080"
+      },
+      {
+        "typeCode": 11,
+        "type": "usize",
+        "rawBits": "ffffffffffffffff",
+        "lowU32Hex": "ffffffff",
+        "highU32Hex": "ffffffff",
+        "bytesLE": "ffffffffffffffff"
+      },
+      {
+        "typeCode": 12,
+        "type": "f32",
+        "rawBits": "7f800017",
+        "lowU32Hex": "7f800017",
+        "highU32Hex": "00000000",
+        "bytesLE": "1700807f00000000"
+      },
+      {
+        "typeCode": 13,
+        "type": "f64",
+        "rawBits": "fff8000000000123",
+        "lowU32Hex": "00000123",
+        "highU32Hex": "fff80000",
+        "bytesLE": "230100000000f8ff"
+      }
+    ],
+    "mixed64": {
+      "argumentCount": 64,
+      "orderedTypes": [
+        "i32",
+        "bool",
+        "i8",
+        "i16",
+        "i64",
+        "u8",
+        "u16",
+        "u32",
+        "u64",
+        "isize",
+        "usize",
+        "f32",
+        "f64",
+        "i32",
+        "bool",
+        "i8",
+        "i16",
+        "i64",
+        "u8",
+        "u16",
+        "u32",
+        "u64",
+        "isize",
+        "usize",
+        "f32",
+        "f64",
+        "i32",
+        "bool",
+        "i8",
+        "i16",
+        "i64",
+        "u8",
+        "u16",
+        "u32",
+        "u64",
+        "isize",
+        "usize",
+        "f32",
+        "f64",
+        "i32",
+        "bool",
+        "i8",
+        "i16",
+        "i64",
+        "u8",
+        "u16",
+        "u32",
+        "u64",
+        "isize",
+        "usize",
+        "f32",
+        "f64",
+        "i32",
+        "bool",
+        "i8",
+        "i16",
+        "i64",
+        "u8",
+        "u16",
+        "u32",
+        "u64",
+        "isize",
+        "usize",
+        "f32"
+      ],
+      "orderedTypeCodes": [
+        1,
+        2,
+        3,
+        4,
+        5,
+        6,
+        7,
+        8,
+        9,
+        10,
+        11,
+        12,
+        13,
+        1,
+        2,
+        3,
+        4,
+        5,
+        6,
+        7,
+        8,
+        9,
+        10,
+        11,
+        12,
+        13,
+        1,
+        2,
+        3,
+        4,
+        5,
+        6,
+        7,
+        8,
+        9,
+        10,
+        11,
+        12,
+        13,
+        1,
+        2,
+        3,
+        4,
+        5,
+        6,
+        7,
+        8,
+        9,
+        10,
+        11,
+        12,
+        13,
+        1,
+        2,
+        3,
+        4,
+        5,
+        6,
+        7,
+        8,
+        9,
+        10,
+        11,
+        12
+      ],
+      "arguments": [
+        {
+          "index": 0,
+          "typeCode": 1,
+          "type": "i32",
+          "rawBits": "ffffffff",
+          "lowU32Hex": "ffffffff",
+          "highU32Hex": "00000000",
+          "bytesLE": "ffffffff00000000"
+        },
+        {
+          "index": 1,
+          "typeCode": 2,
+          "type": "bool",
+          "rawBits": "1",
+          "lowU32Hex": "00000000",
+          "highU32Hex": "00000001",
+          "bytesLE": "0000000001000000"
+        },
+        {
+          "index": 2,
+          "typeCode": 3,
+          "type": "i8",
+          "rawBits": "80",
+          "lowU32Hex": "00000080",
+          "highU32Hex": "00000000",
+          "bytesLE": "8000000000000000"
+        },
+        {
+          "index": 3,
+          "typeCode": 4,
+          "type": "i16",
+          "rawBits": "8000",
+          "lowU32Hex": "00008000",
+          "highU32Hex": "00000000",
+          "bytesLE": "0080000000000000"
+        },
+        {
+          "index": 4,
+          "typeCode": 5,
+          "type": "i64",
+          "rawBits": "8000000000000000",
+          "lowU32Hex": "00000000",
+          "highU32Hex": "80000000",
+          "bytesLE": "0000000000000080"
+        },
+        {
+          "index": 5,
+          "typeCode": 6,
+          "type": "u8",
+          "rawBits": "ff",
+          "lowU32Hex": "000000ff",
+          "highU32Hex": "00000000",
+          "bytesLE": "ff00000000000000"
+        },
+        {
+          "index": 6,
+          "typeCode": 7,
+          "type": "u16",
+          "rawBits": "ffff",
+          "lowU32Hex": "0000ffff",
+          "highU32Hex": "00000000",
+          "bytesLE": "ffff000000000000"
+        },
+        {
+          "index": 7,
+          "typeCode": 8,
+          "type": "u32",
+          "rawBits": "ffffffff",
+          "lowU32Hex": "ffffffff",
+          "highU32Hex": "00000000",
+          "bytesLE": "ffffffff00000000"
+        },
+        {
+          "index": 8,
+          "typeCode": 9,
+          "type": "u64",
+          "rawBits": "ffffffffffffffff",
+          "lowU32Hex": "ffffffff",
+          "highU32Hex": "ffffffff",
+          "bytesLE": "ffffffffffffffff"
+        },
+        {
+          "index": 9,
+          "typeCode": 10,
+          "type": "isize",
+          "rawBits": "8000000000000000",
+          "lowU32Hex": "00000000",
+          "highU32Hex": "80000000",
+          "bytesLE": "0000000000000080"
+        },
+        {
+          "index": 10,
+          "typeCode": 11,
+          "type": "usize",
+          "rawBits": "ffffffffffffffff",
+          "lowU32Hex": "ffffffff",
+          "highU32Hex": "ffffffff",
+          "bytesLE": "ffffffffffffffff"
+        },
+        {
+          "index": 11,
+          "typeCode": 12,
+          "type": "f32",
+          "rawBits": "7f800017",
+          "lowU32Hex": "7f800017",
+          "highU32Hex": "00000000",
+          "bytesLE": "1700807f00000000"
+        },
+        {
+          "index": 12,
+          "typeCode": 13,
+          "type": "f64",
+          "rawBits": "fff8000000000123",
+          "lowU32Hex": "00000123",
+          "highU32Hex": "fff80000",
+          "bytesLE": "230100000000f8ff"
+        },
+        {
+          "index": 13,
+          "typeCode": 1,
+          "type": "i32",
+          "rawBits": "ffffffff",
+          "lowU32Hex": "ffffffff",
+          "highU32Hex": "00000000",
+          "bytesLE": "ffffffff00000000"
+        },
+        {
+          "index": 14,
+          "typeCode": 2,
+          "type": "bool",
+          "rawBits": "1",
+          "lowU32Hex": "00000000",
+          "highU32Hex": "00000001",
+          "bytesLE": "0000000001000000"
+        },
+        {
+          "index": 15,
+          "typeCode": 3,
+          "type": "i8",
+          "rawBits": "80",
+          "lowU32Hex": "00000080",
+          "highU32Hex": "00000000",
+          "bytesLE": "8000000000000000"
+        },
+        {
+          "index": 16,
+          "typeCode": 4,
+          "type": "i16",
+          "rawBits": "8000",
+          "lowU32Hex": "00008000",
+          "highU32Hex": "00000000",
+          "bytesLE": "0080000000000000"
+        },
+        {
+          "index": 17,
+          "typeCode": 5,
+          "type": "i64",
+          "rawBits": "8000000000000000",
+          "lowU32Hex": "00000000",
+          "highU32Hex": "80000000",
+          "bytesLE": "0000000000000080"
+        },
+        {
+          "index": 18,
+          "typeCode": 6,
+          "type": "u8",
+          "rawBits": "ff",
+          "lowU32Hex": "000000ff",
+          "highU32Hex": "00000000",
+          "bytesLE": "ff00000000000000"
+        },
+        {
+          "index": 19,
+          "typeCode": 7,
+          "type": "u16",
+          "rawBits": "ffff",
+          "lowU32Hex": "0000ffff",
+          "highU32Hex": "00000000",
+          "bytesLE": "ffff000000000000"
+        },
+        {
+          "index": 20,
+          "typeCode": 8,
+          "type": "u32",
+          "rawBits": "ffffffff",
+          "lowU32Hex": "ffffffff",
+          "highU32Hex": "00000000",
+          "bytesLE": "ffffffff00000000"
+        },
+        {
+          "index": 21,
+          "typeCode": 9,
+          "type": "u64",
+          "rawBits": "ffffffffffffffff",
+          "lowU32Hex": "ffffffff",
+          "highU32Hex": "ffffffff",
+          "bytesLE": "ffffffffffffffff"
+        },
+        {
+          "index": 22,
+          "typeCode": 10,
+          "type": "isize",
+          "rawBits": "8000000000000000",
+          "lowU32Hex": "00000000",
+          "highU32Hex": "80000000",
+          "bytesLE": "0000000000000080"
+        },
+        {
+          "index": 23,
+          "typeCode": 11,
+          "type": "usize",
+          "rawBits": "ffffffffffffffff",
+          "lowU32Hex": "ffffffff",
+          "highU32Hex": "ffffffff",
+          "bytesLE": "ffffffffffffffff"
+        },
+        {
+          "index": 24,
+          "typeCode": 12,
+          "type": "f32",
+          "rawBits": "7f800017",
+          "lowU32Hex": "7f800017",
+          "highU32Hex": "00000000",
+          "bytesLE": "1700807f00000000"
+        },
+        {
+          "index": 25,
+          "typeCode": 13,
+          "type": "f64",
+          "rawBits": "fff8000000000123",
+          "lowU32Hex": "00000123",
+          "highU32Hex": "fff80000",
+          "bytesLE": "230100000000f8ff"
+        },
+        {
+          "index": 26,
+          "typeCode": 1,
+          "type": "i32",
+          "rawBits": "ffffffff",
+          "lowU32Hex": "ffffffff",
+          "highU32Hex": "00000000",
+          "bytesLE": "ffffffff00000000"
+        },
+        {
+          "index": 27,
+          "typeCode": 2,
+          "type": "bool",
+          "rawBits": "1",
+          "lowU32Hex": "00000000",
+          "highU32Hex": "00000001",
+          "bytesLE": "0000000001000000"
+        },
+        {
+          "index": 28,
+          "typeCode": 3,
+          "type": "i8",
+          "rawBits": "80",
+          "lowU32Hex": "00000080",
+          "highU32Hex": "00000000",
+          "bytesLE": "8000000000000000"
+        },
+        {
+          "index": 29,
+          "typeCode": 4,
+          "type": "i16",
+          "rawBits": "8000",
+          "lowU32Hex": "00008000",
+          "highU32Hex": "00000000",
+          "bytesLE": "0080000000000000"
+        },
+        {
+          "index": 30,
+          "typeCode": 5,
+          "type": "i64",
+          "rawBits": "8000000000000000",
+          "lowU32Hex": "00000000",
+          "highU32Hex": "80000000",
+          "bytesLE": "0000000000000080"
+        },
+        {
+          "index": 31,
+          "typeCode": 6,
+          "type": "u8",
+          "rawBits": "ff",
+          "lowU32Hex": "000000ff",
+          "highU32Hex": "00000000",
+          "bytesLE": "ff00000000000000"
+        },
+        {
+          "index": 32,
+          "typeCode": 7,
+          "type": "u16",
+          "rawBits": "ffff",
+          "lowU32Hex": "0000ffff",
+          "highU32Hex": "00000000",
+          "bytesLE": "ffff000000000000"
+        },
+        {
+          "index": 33,
+          "typeCode": 8,
+          "type": "u32",
+          "rawBits": "ffffffff",
+          "lowU32Hex": "ffffffff",
+          "highU32Hex": "00000000",
+          "bytesLE": "ffffffff00000000"
+        },
+        {
+          "index": 34,
+          "typeCode": 9,
+          "type": "u64",
+          "rawBits": "ffffffffffffffff",
+          "lowU32Hex": "ffffffff",
+          "highU32Hex": "ffffffff",
+          "bytesLE": "ffffffffffffffff"
+        },
+        {
+          "index": 35,
+          "typeCode": 10,
+          "type": "isize",
+          "rawBits": "8000000000000000",
+          "lowU32Hex": "00000000",
+          "highU32Hex": "80000000",
+          "bytesLE": "0000000000000080"
+        },
+        {
+          "index": 36,
+          "typeCode": 11,
+          "type": "usize",
+          "rawBits": "ffffffffffffffff",
+          "lowU32Hex": "ffffffff",
+          "highU32Hex": "ffffffff",
+          "bytesLE": "ffffffffffffffff"
+        },
+        {
+          "index": 37,
+          "typeCode": 12,
+          "type": "f32",
+          "rawBits": "7f800017",
+          "lowU32Hex": "7f800017",
+          "highU32Hex": "00000000",
+          "bytesLE": "1700807f00000000"
+        },
+        {
+          "index": 38,
+          "typeCode": 13,
+          "type": "f64",
+          "rawBits": "fff8000000000123",
+          "lowU32Hex": "00000123",
+          "highU32Hex": "fff80000",
+          "bytesLE": "230100000000f8ff"
+        },
+        {
+          "index": 39,
+          "typeCode": 1,
+          "type": "i32",
+          "rawBits": "ffffffff",
+          "lowU32Hex": "ffffffff",
+          "highU32Hex": "00000000",
+          "bytesLE": "ffffffff00000000"
+        },
+        {
+          "index": 40,
+          "typeCode": 2,
+          "type": "bool",
+          "rawBits": "1",
+          "lowU32Hex": "00000000",
+          "highU32Hex": "00000001",
+          "bytesLE": "0000000001000000"
+        },
+        {
+          "index": 41,
+          "typeCode": 3,
+          "type": "i8",
+          "rawBits": "80",
+          "lowU32Hex": "00000080",
+          "highU32Hex": "00000000",
+          "bytesLE": "8000000000000000"
+        },
+        {
+          "index": 42,
+          "typeCode": 4,
+          "type": "i16",
+          "rawBits": "8000",
+          "lowU32Hex": "00008000",
+          "highU32Hex": "00000000",
+          "bytesLE": "0080000000000000"
+        },
+        {
+          "index": 43,
+          "typeCode": 5,
+          "type": "i64",
+          "rawBits": "8000000000000000",
+          "lowU32Hex": "00000000",
+          "highU32Hex": "80000000",
+          "bytesLE": "0000000000000080"
+        },
+        {
+          "index": 44,
+          "typeCode": 6,
+          "type": "u8",
+          "rawBits": "ff",
+          "lowU32Hex": "000000ff",
+          "highU32Hex": "00000000",
+          "bytesLE": "ff00000000000000"
+        },
+        {
+          "index": 45,
+          "typeCode": 7,
+          "type": "u16",
+          "rawBits": "ffff",
+          "lowU32Hex": "0000ffff",
+          "highU32Hex": "00000000",
+          "bytesLE": "ffff000000000000"
+        },
+        {
+          "index": 46,
+          "typeCode": 8,
+          "type": "u32",
+          "rawBits": "ffffffff",
+          "lowU32Hex": "ffffffff",
+          "highU32Hex": "00000000",
+          "bytesLE": "ffffffff00000000"
+        },
+        {
+          "index": 47,
+          "typeCode": 9,
+          "type": "u64",
+          "rawBits": "ffffffffffffffff",
+          "lowU32Hex": "ffffffff",
+          "highU32Hex": "ffffffff",
+          "bytesLE": "ffffffffffffffff"
+        },
+        {
+          "index": 48,
+          "typeCode": 10,
+          "type": "isize",
+          "rawBits": "8000000000000000",
+          "lowU32Hex": "00000000",
+          "highU32Hex": "80000000",
+          "bytesLE": "0000000000000080"
+        },
+        {
+          "index": 49,
+          "typeCode": 11,
+          "type": "usize",
+          "rawBits": "ffffffffffffffff",
+          "lowU32Hex": "ffffffff",
+          "highU32Hex": "ffffffff",
+          "bytesLE": "ffffffffffffffff"
+        },
+        {
+          "index": 50,
+          "typeCode": 12,
+          "type": "f32",
+          "rawBits": "7f800017",
+          "lowU32Hex": "7f800017",
+          "highU32Hex": "00000000",
+          "bytesLE": "1700807f00000000"
+        },
+        {
+          "index": 51,
+          "typeCode": 13,
+          "type": "f64",
+          "rawBits": "fff8000000000123",
+          "lowU32Hex": "00000123",
+          "highU32Hex": "fff80000",
+          "bytesLE": "230100000000f8ff"
+        },
+        {
+          "index": 52,
+          "typeCode": 1,
+          "type": "i32",
+          "rawBits": "ffffffff",
+          "lowU32Hex": "ffffffff",
+          "highU32Hex": "00000000",
+          "bytesLE": "ffffffff00000000"
+        },
+        {
+          "index": 53,
+          "typeCode": 2,
+          "type": "bool",
+          "rawBits": "1",
+          "lowU32Hex": "00000000",
+          "highU32Hex": "00000001",
+          "bytesLE": "0000000001000000"
+        },
+        {
+          "index": 54,
+          "typeCode": 3,
+          "type": "i8",
+          "rawBits": "80",
+          "lowU32Hex": "00000080",
+          "highU32Hex": "00000000",
+          "bytesLE": "8000000000000000"
+        },
+        {
+          "index": 55,
+          "typeCode": 4,
+          "type": "i16",
+          "rawBits": "8000",
+          "lowU32Hex": "00008000",
+          "highU32Hex": "00000000",
+          "bytesLE": "0080000000000000"
+        },
+        {
+          "index": 56,
+          "typeCode": 5,
+          "type": "i64",
+          "rawBits": "8000000000000000",
+          "lowU32Hex": "00000000",
+          "highU32Hex": "80000000",
+          "bytesLE": "0000000000000080"
+        },
+        {
+          "index": 57,
+          "typeCode": 6,
+          "type": "u8",
+          "rawBits": "ff",
+          "lowU32Hex": "000000ff",
+          "highU32Hex": "00000000",
+          "bytesLE": "ff00000000000000"
+        },
+        {
+          "index": 58,
+          "typeCode": 7,
+          "type": "u16",
+          "rawBits": "ffff",
+          "lowU32Hex": "0000ffff",
+          "highU32Hex": "00000000",
+          "bytesLE": "ffff000000000000"
+        },
+        {
+          "index": 59,
+          "typeCode": 8,
+          "type": "u32",
+          "rawBits": "ffffffff",
+          "lowU32Hex": "ffffffff",
+          "highU32Hex": "00000000",
+          "bytesLE": "ffffffff00000000"
+        },
+        {
+          "index": 60,
+          "typeCode": 9,
+          "type": "u64",
+          "rawBits": "ffffffffffffffff",
+          "lowU32Hex": "ffffffff",
+          "highU32Hex": "ffffffff",
+          "bytesLE": "ffffffffffffffff"
+        },
+        {
+          "index": 61,
+          "typeCode": 10,
+          "type": "isize",
+          "rawBits": "8000000000000000",
+          "lowU32Hex": "00000000",
+          "highU32Hex": "80000000",
+          "bytesLE": "0000000000000080"
+        },
+        {
+          "index": 62,
+          "typeCode": 11,
+          "type": "usize",
+          "rawBits": "ffffffffffffffff",
+          "lowU32Hex": "ffffffff",
+          "highU32Hex": "ffffffff",
+          "bytesLE": "ffffffffffffffff"
+        },
+        {
+          "index": 63,
+          "typeCode": 12,
+          "type": "f32",
+          "rawBits": "7f800017",
+          "lowU32Hex": "7f800017",
+          "highU32Hex": "00000000",
+          "bytesLE": "1700807f00000000"
+        }
+      ],
+      "expectedFrameBytesLE": "ffffffff000000000000000001000000800000000000000000800000000000000000000000000080ff00000000000000ffff000000000000ffffffff00000000ffffffffffffffff0000000000000080ffffffffffffffff1700807f00000000230100000000f8ffffffffff000000000000000001000000800000000000000000800000000000000000000000000080ff00000000000000ffff000000000000ffffffff00000000ffffffffffffffff0000000000000080ffffffffffffffff1700807f00000000230100000000f8ffffffffff000000000000000001000000800000000000000000800000000000000000000000000080ff00000000000000ffff000000000000ffffffff00000000ffffffffffffffff0000000000000080ffffffffffffffff1700807f00000000230100000000f8ffffffffff000000000000000001000000800000000000000000800000000000000000000000000080ff00000000000000ffff000000000000ffffffff00000000ffffffffffffffff0000000000000080ffffffffffffffff1700807f00000000230100000000f8ffffffffff000000000000000001000000800000000000000000800000000000000000000000000080ff00000000000000ffff000000000000ffffffff00000000ffffffffffffffff0000000000000080ffffffffffffffff1700807f00000000",
+      "calls": [
+        {
+          "callee": "identity-f32",
+          "argumentIndex": 63,
+          "expectedResult": {
+            "type": "f32",
+            "rawBits": "7f800017",
+            "lowU32Hex": "7f800017",
+            "highU32Hex": "00000000",
+            "bytesLE": "1700807f00000000"
+          }
+        },
+        {
+          "callee": "identity-f64",
+          "argumentIndex": 12,
+          "expectedResult": {
+            "type": "f64",
+            "rawBits": "fff8000000000123",
+            "lowU32Hex": "00000123",
+            "highU32Hex": "fff80000",
+            "bytesLE": "230100000000f8ff"
+          }
+        }
+      ]
+    },
+    "rejections": [
+      {
+        "id": "count-mismatch",
+        "mutate": {
+          "argumentCount": 63
+        },
+        "expectedGuestCalls": 0
+      },
+      {
+        "id": "late-type-mismatch",
+        "mutate": {
+          "typeIndex": 63,
+          "typeCode": 13
+        },
+        "expectedGuestCalls": 0
+      },
+      {
+        "id": "result-type-mismatch",
+        "mutate": {
+          "expectedTypeCode": 13,
+          "requestedTypeCode": 12
+        },
+        "expectedGuestCalls": 0
+      },
+      {
+        "id": "noncanonical-f32-upper",
+        "mutate": {
+          "typeCode": 12,
+          "lowU32Hex": "7f800017",
+          "highU32Hex": "00000001"
+        },
+        "expectedGuestCalls": 0
+      },
+      {
+        "id": "noncanonical-bool-low",
+        "mutate": {
+          "typeCode": 2,
+          "lowU32Hex": "00000001",
+          "highU32Hex": "00000001"
+        },
+        "expectedGuestCalls": 0
+      }
+    ],
+    "failureOutputCanaryBytesLE": "1032547698badcfe",
+    "expectedFailureOutputBytesLE": "1032547698badcfe",
+    "gates": [
+      "whole signature before slot reads",
+      "canonical slot validation before guest call",
+      "successful kind8 before any output store"
+    ],
+    "expectedNon8OutputBytesLE": "1032547698badcfe"
+  },
+  "wholeModuleObligations": {
+    "maximumFunctions": 512,
+    "maximumArguments": 64,
+    "preserveEntireOrderedTable": true,
+    "rejectFunctionCount513": true,
+    "rejectUnsupportedType14WholeModule": true,
+    "projectionAllowed": false,
+    "executionEvidence": false
+  },
+  "fpEnvironmentObligations": {
+    "rounding": "nearest-ties-even",
+    "FTZ": false,
+    "DAZ": false,
+    "exceptions": "masked",
+    "restoreCaller": [
+      "entire MXCSR including sticky flags",
+      "x87 control"
+    ],
+    "paths": [
+      "success",
+      "wrapper rejection",
+      "trap/non8 return",
+      "nested calls"
+    ],
+    "dynamicEnvironmentValidated": false
+  },
+  "handCheckAnchors": [
+    {
+      "id": "f32 tie",
+      "expectedBits": "3f800000"
+    },
+    {
+      "id": "f32 odd tie",
+      "expectedBits": "3f800002"
+    },
+    {
+      "id": "f64 subnormal",
+      "expectedBits": "0000000000000002"
+    },
+    {
+      "id": "f32 noFMA",
+      "expectedBits": "a8800000"
+    },
+    {
+      "id": "f64 noFMA",
+      "expectedBits": "b970000000000000"
+    },
+    {
+      "id": "f32 direct rational",
+      "expectedBits": "3f800001"
+    },
+    {
+      "id": "f32 via wider",
+      "expectedBits": "3f800000"
+    },
+    {
+      "id": "f64 direct add",
+      "expectedBits": "3ff0000000000001"
+    },
+    {
+      "id": "f64 via wider",
+      "expectedBits": "3ff0000000000000"
+    }
+  ],
+  "execution": {
+    "generatorOnly": true,
+    "AOTInvocations": 0,
+    "VMInvocations": 0,
+    "guestInvocations": 0,
+    "nativeExecution": 0,
+    "structuralPassClaim": false,
+    "RF": null,
+    "ResourceProof": null,
+    "parent17": "OPEN"
+  }
+}

@@ -93,10 +93,10 @@ test('one whole73-function COFF has real complete symbols relocations and stackm
 for(const row of fixtures.negative)test('formerly unsupported whole boundary now admitted '+row.id,async()=>{
  assert.equal(hash(row.input),row.inputSHA256);accepted(await invokeCore(row.input));for(const command of commands)accepted(await invokeCore(row.input,command));
 });
-test('floating internal SSA remains unsupported with a bool result',async()=>{
- // Fresh structural negative derived from the public typed literal grammar, not Source evidence.
+test('floating internal SSA with a bool result is admitted by complete scalar AOT',async()=>{
+ // Fresh structural Core derived from the public typed literal grammar, not Source evidence.
  const input=fixtures.causal.input.replaceAll('!tsfg_core.integer<"u64">','f64').replaceAll('value = "18446744073709551615"','value = "0000000000000000"').replaceAll('value = "1"','value = "3ff0000000000000"').replaceAll('value = "0"','value = "0000000000000000"');
- assert.notEqual(input,fixtures.causal.input);accepted(await invokeCore(input));for(const command of commands)refused(await invokeCore(input,command),true);
+ assert.notEqual(input,fixtures.causal.input);accepted(await invokeCore(input));for(const command of commands)accepted(await invokeCore(input,command));
 });
 for(const [name,input]of [['unknown nominal',fixtures.causal.input.replaceAll('integer<"u64">','integer<"u128">')],
  ['overflow literal',fixtures.causal.input.replace('18446744073709551615','18446744073709551616')]])test('original Core gate rejects '+name,async()=>{
