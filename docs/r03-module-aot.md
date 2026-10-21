@@ -296,3 +296,109 @@ BI and HSC identities even with the same source and tool closures.
 Current-source ordinary Counter compilation emits a false certificate. Required
 Host31 still passes the real signature, HSC and `Counter.admitted()` checks;
 this build cannot turn an unqualified Counter into a positive capability.
+
+## Typed CLI request and outcome contract
+
+This section makes the existing shared typed CLI interface explicit. It applies
+to the common `--requests` and `--module-requests` modes; it adds no JSON field,
+new request kind, executable selection mechanism or resource qualification.
+It is a protocol clarification based on the shared parser/writer interface,
+not a previously available independent semantic oracle.
+
+The argument is one JSON array. Outcomes preserve request order and are emitted
+as one JSON array followed by a newline. A returned request, trap, managed
+exception or execution-abort is an outcome; a successfully processed array uses
+CLI exit0 even when some outcomes fail. Invalid CLI usage, JSON syntax, request
+record field types or FunctionId text is a CLI error rather than a guest trap;
+the CLI emits its diagnostic on stderr and does not publish a partial array.
+The JSON text is bounded by the existing1MiB CLI input limit.
+
+### Request records and preflight
+
+| Field | Existing representation/default |
+| --- | --- |
+| `kind` | String; `function` by default, or `module-initialization` |
+| `functionId` | Optional lowercase64-hex digest, also accepting the `sha256:` prefix; omission selects the original designated default |
+| `signatureHash` | Optional exact `sha256:`-prefixed lowercase64-hex signature digest |
+| `arguments` | Ordered typed values; default empty |
+| `capabilities` | Existing typed Host grant records; default empty; no implicit grant |
+| `memoryBytes` | u64 JSON integer, default16384 |
+| `instructionBudget` | u64 JSON integer, default4097 |
+| `semanticFuel` | u64 JSON integer, default4097 |
+| `depth` | u32 JSON integer, default1 |
+| `hostTimeNanos` | Optional u64 JSON integer or null, default null |
+| `stringOutput` | Existing `strict`/`lossy` string-output mode; default `strict` |
+
+A typed argument has exactly `type` and `value`. Integer values use canonical
+decimal strings, floats use fixed-width lowercase raw-bit hex strings, bool
+uses a JSON boolean, and String input uses its existing UTF16 code-unit array.
+Explicit undefined/null use the corresponding type and a JSON null value.
+Omission, undefined and null retain their distinct declared presence semantics.
+
+After JSON/FunctionId syntax, preflight checks function lookup, signature,
+arguments, capability syntax and request kind in that order. The static AOT
+consumer then checks the declared public root and required Host grants. A
+known retained nonroot cannot be invoked publicly and reports
+`r05-request-function`. An unsupported kind reports `r05-request-kind`.
+Preflight failure consumes no guest Semantic Fuel and does not begin guest
+initialization or change a previously ready/failed instance. No guest-operation
+anchor is invented: a known function uses its original function declaration
+span; an unknown ID uses the original designated default source span and
+retains the requested FunctionId.
+
+### JSON outcomes
+
+Every outcome has `status`, `functionId`, `source`, `activeRequests`,
+`fuelRemaining` and `fuelConsumed`. Function/source hashes have the `sha256:`
+prefix followed by64 lowercase hex digits. `source` has `path`, `hash`, `start` and `end`; positions are
+half-open UTF16 offsets serialized as decimal strings. The active-request and
+fuel fields are also decimal strings; a finished synchronous request exposes
+`activeRequests` as `0`. JSON object member order is not semantic.
+
+| `status` | Additional fields |
+| --- | --- |
+| `returned` | `result` with `type` and `value`; no failure fields |
+| `failed` | `code`, `category`, `ruleIds`; no result or `exceptionKind` |
+| `exception` | `code`, `category`, `ruleIds`, `exceptionKind`; no result |
+
+Returned integers retain their nominal type and canonical decimal string;
+float results retain their fixed-width raw-bit string, including signed zero
+and permitted NaN payload transport; bool results are JSON booleans. String
+results additionally carry `byteLength` and `encoding` under `result` and use
+the existing strict/lossy owned-output lease contract. A strict encoding failure
+is a failed `string-output` outcome, not an invented successful replacement.
+
+Request failures have category `request` and an empty Rule list. Arithmetic,
+conversion, Semantic Fuel and depth failures have category `trap` and their
+R01 Rule. Physical budget/deadline failure has category `execution-abort`,
+code `r05-execution-abort` and no invented language trap. TDZ is status
+`exception`, category `managed-exception`, `exceptionKind` `ReferenceError`,
+code `r01-e-reference` and Rule `r01-modules`. The stable ABI4 failure mappings
+are listed in [the exchange contract](../contracts/bytecode.md#abi4-failure-identities).
+
+### Request and instance lifetime
+
+`--requests` shares one host while keeping guest instance state local to each
+request. A later request does not reuse earlier global stores or initializer
+failure memo. It emits the base outcome only and does not expose an internal
+instance-status field. Instance allocation timing is not a public identity or
+physical-memory promise, especially for a rejected preflight.
+
+`--module-requests` shares one module instance for the array. Successful
+initialization is reused; an initialization failure is memoized; a request
+trap in a ready instance leaves it ready and retains prior stores. Preflight
+still precedes memo replay. Each base outcome adds `moduleStatus`, `hostEvents`,
+`requestHostEvents` and `hostCounter`. `moduleStatus` is `uninitialized`,
+`initializing`, `initialized` or `failed`; an absent instance and an uninitialized
+instance both serialize as `uninitialized`. The three Counter fields are JSON
+integers; request events are the u64 modular difference from the request start.
+These observations do not establish a positive Host certificate or ResourceProof.
+
+`hostTimeNanos` is a request duration converted to an actual QPC deadline.
+Null means no explicit request duration; the existing bounded Host-callback
+default still applies when required. Zero is valid and already due at the first
+deadline observation, not a disabled timer. Positive durations round up to QPC
+ticks and saturate instead of wrapping. Checks retain the existing semantic/
+physical charge ordering; a prior preflight, memo or physical failure is not
+replaced by a later clock failure. No exact event/stack/resource totals are
+implied by this duration contract.

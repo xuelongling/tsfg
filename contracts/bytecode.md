@@ -205,3 +205,40 @@ Host admission; unused metadata grants no authority. Complete validation still
 checks unselected functions and declarations. Old0.11/wire11 identities reject.
 See [ordinary instance ABI](../docs/r03-module-aot.md) for the separate linked
 AOT consumer, storage ownership and precise lifecycle/failure channels.
+
+## ABI4 failure identities
+
+This table makes the existing stable diagnostics explicit; it does not change
+wire12, ABI4 layout, operation semantics or the separate Host event numbers.
+Failure `kind`/`reason` are the stored ABI4 integers, not event IDs.
+
+| Failure | kind | reason | Code | Rule |
+| --- | --- | --- | --- | --- |
+| Division by zero | 1 | 1 | `r01-t-divide-zero` | `r01-division` |
+| Remainder by zero | 1 | 2 | `r01-t-remainder-zero` | `r01-division` |
+| Invalid shift count | 1 | 3 | `r01-t-shift-count` | `r01-shifts` |
+| Rejected nonfinite checked conversion | 1 | 4 | `r01-t-conversion-nonfinite` | `r01-conversions` |
+| Checked conversion outside target range | 1 | 5 | `r01-t-conversion-range` | `r01-conversions` |
+| TDZ global read/write | 4 | 6 | `r01-e-reference` | `r01-modules` |
+| Semantic Fuel exhausted | 1 | 7 | `r01-t-fuel` | `r01-fuel` |
+| Active depth exhausted | 1 | 8 | `r01-t-depth` | `r01-depth` |
+
+The checked-conversion rule determines when a nonfinite value is rejected;
+this row does not reject signed infinity for a float-to-float conversion that
+the conversion contract permits. In particular, event9/nonfinite and event10/
+range remain notifications; neither is the corresponding stored ABI reason.
+The first source failure and its original function/source/UTF16 anchor remain
+authoritative. A memo replay preserves that same identity without guest events.
+
+Request-level kind3 reasons10,11,12/15,13,14 map respectively to
+`r05-request-instance`, `r05-request-function`, `r05-request-arguments`,
+`r05-request-capability`, `r05-request-host-contract`. An unsupported JSON
+request kind is a preflight `r05-request-kind`; it is not an ABI guest failure.
+Physical failures and otherwise unsupported ABI failure identities become
+`r05-execution-abort`, never an invented language trap.
+
+The shared CLI shape, public-root preflight attribution, duration-zero meaning
+and per-mode instance lifetime are explicit in the
+[typed CLI contract](../docs/r03-module-aot.md#typed-cli-request-and-outcome-contract).
+These diagnostic/transport clauses do not qualify a build, Host resource
+certificate, physical event-count model, Source producer, VM or RF.
