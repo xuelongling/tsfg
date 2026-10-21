@@ -2,6 +2,7 @@
 // Independent Core5 metadata migration retains the original ordered SSA traces.
 import test from 'node:test';
 import assert from 'node:assert/strict';
+import { expectedArrayCore13 } from './array-core13-literal.mjs';
 import { readArrayFactsCandidate,writeArrayFactsCandidate } from '../../compiler/array-facts.mjs';
 import { buildHir,verifyHir,printHir,readHir,lowerHir } from '../../compiler/hir.mjs';
 import { fixtures,fresh,context,coreOracle,sha } from './array-test-fixtures.mjs';
@@ -47,7 +48,7 @@ test('25d eight whole facts and HIR controls precede complete public Core equali
   t.diagnostic('25d ALL_EIGHT_INDEPENDENT_WHOLE_CONTROLS_COMPLETE; static compiler evidence only');
   for(const {row,c,ctx}of prepared)await t.test(c.name,()=>{
     const h=fresh(row.hir.expectedHir),before=fresh(h);
-    const text=lowerHir(h,ctx);assert.equal(text,c.core);
-    assertArrayCoreSemantics(text,c);assert.deepEqual(h,before);
+    const text=lowerHir(h,ctx),expectedCore=expectedArrayCore13(h,ctx);assert.equal(text,expectedCore);
+    assertArrayCoreSemantics(text,{...c,core:expectedCore});assert.deepEqual(h,before);
   });
 });

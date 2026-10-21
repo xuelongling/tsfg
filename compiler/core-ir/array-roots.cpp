@@ -23,6 +23,8 @@ mlir::LogicalResult verifyCallRoots(const Function &function, const OwnerGraph &
         if (llvm::isa<ArrayType>(owner->second.value.getType())) arrays.insert(graph.registers.lookup(owner->second.value));
       } else return reject("core-ir-array-roots","unmanaged value in Array/View roots");
     }
+    if (arrays.size()>25 || views.size()>57 || arrays.size()+views.size()>57)
+      return reject("core-ir-array-roots","exact call root role count exceeds limit");
     std::vector<mlir::Attribute> arrayRows,viewRows;
     for (auto reg : arrays) arrayRows.push_back(builder.getI64IntegerAttr(reg));
     for (auto reg : views) viewRows.push_back(builder.getI64IntegerAttr(reg));

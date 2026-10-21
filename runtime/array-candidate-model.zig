@@ -36,9 +36,9 @@ pub fn hash(bytes: []const u8) Digest {
     std.crypto.hash.sha2.Sha256.hash(bytes, &value.bytes, .{});
     return value;
 }
-pub const schema = digest("04ea70eebde87bae20ff7a35f7f1b0ad5065c0f031c41317169e374d67a0982d");
+pub const schema = digest("195743441bc95e89e8002eb058277ee5cb91b68b0fc14a94d442b75761388718");
 pub const formal_schema = digest("3dea6ce5de996dfa3e7141cced985243ea74ac9bb80f03636c6694343118f2a6");
-pub const core_schema = digest("b959fee0646c337d231e9e0be6e7dd6fc53f6b6ef8f1f681a692b59bc78f7cf6");
+pub const core_schema = digest("39a7877720fab4c3e7fc78d28f2232576865ab3c949e064ef7cc1e979548976b");
 pub const f64_id = digest("dfbc72c48bec549ea679cd6aff531f9ebef95e001f6ae0bf419d2f33bf988a6c");
 pub const array_id = digest("74dab77c8fbdacf6cf058e37cac033757417c808d57ee23a9c8866565202cb68");
 pub const u32_id = digest("b72109639ea1cc95816abe01a09e7e4c78c11902a1251c00090a5715cf9b979c");
@@ -175,16 +175,17 @@ pub const ViewOwner = union(enum) {
 pub const ViewOrigin = union(enum) {
     parameter: u8,
     create: u16,
+    call: u16,
     pub fn jsonStringify(self: ViewOrigin, w: anytype) !void {
         try w.beginObject();
         try w.objectField("kind");
-        try w.write(@as(u8, if (self == .parameter) 1 else 2));
+        try w.write(@as(u8, switch (self) { .parameter => 1, .create => 2, .call => 3 }));
         switch (self) {
             .parameter => |value| {
                 try w.objectField("index");
                 try w.write(value);
             },
-            .create => |value| {
+            .create, .call => |value| {
                 try w.objectField("instruction");
                 try w.write(value);
             },
@@ -195,7 +196,8 @@ pub const ViewOrigin = union(enum) {
 pub const ViewLifetime = struct { viewRegister: u16, owner: ViewOwner, origin: ViewOrigin, lastUseInstruction: ?u16 };
 pub const EffectFlags = struct { read: bool, write: bool, structural: bool };
 pub const PublishedParameter = struct { index: u8, read: bool, write: bool, structural: bool };
-pub const PublishedUpper = struct { parameters: []const PublishedParameter, local: EffectFlags, returnOrigin: ?u8 = null };
+pub const ReturnOrigin = struct { kind: []const u8 = "parameter", index: u8 };
+pub const PublishedUpper = struct { parameters: []const PublishedParameter, local: EffectFlags, returnOrigin: ?ReturnOrigin = null };
 pub const PublishedContract = struct { functionId: Digest, signatureHash: Digest, upper: PublishedUpper, digest: Digest };
 pub const Publication = struct { family: []const u8, version: u8, mode: []const u8, scopeDigest: Digest, expectedDigest: Digest, contracts: []const PublishedContract };
 pub const Literal = union(enum) {
@@ -226,7 +228,7 @@ pub const Tail = union(enum) {
     view_create: struct { intrinsic: Digest, receiverBinding: Digest, receiverRange: Range, calleeRange: Range, start: ScalarUse, length: ScalarUse, local: Local },
     view_read: ViewRead,
     view_length: struct { receiverBinding: Digest, receiverRange: Range, property: Digest, propertyNameRange: Range, statementRange: Range },
-    call: struct { callee: []const u8, sourceCallee: Digest, calleeRange: Range, arguments: []const ScalarUse, statementRange: Range, functionId: Digest, signatureHash: Digest, consumedDigest: ?Digest },
+    call: struct { callee: []const u8, sourceCallee: Digest, calleeRange: Range, arguments: []const ScalarUse, statementRange: Range, functionId: Digest, signatureHash: Digest, consumedDigest: ?Digest, local: ?Local },
     returned: struct { value: ScalarUse },
     view_alias: struct { targetBinding: Digest, local: Local },
 };
@@ -259,6 +261,7 @@ pub const Function = struct {
     sourceBinding: Digest,
     nameRange: Range,
     returnAnnotationRange: Range,
+    returnElementAnnotationRange: ?Range,
     parameters: []const Parameter,
     registerCount: u16,
     blockCount: u8,

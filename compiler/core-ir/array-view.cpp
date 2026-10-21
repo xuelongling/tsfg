@@ -7,7 +7,61 @@
 #include <algorithm>
 #include <map>
 namespace tsfg::arrays {
-mlir::LogicalResult collectOwners(const Function &function, OwnerGraph &graph) {
+namespace {
+// Original full slots, not may-alias equivalence, determine a returned owner.
+// View functions lie outside every cyclic outgoing domain. Memoize each body
+// once in callee-first order; old f64 owner/effect fees are unchanged.
+class ReturnOrigins {
+  Metadata &metadata; std::vector<unsigned> state;
+  mlir::LogicalResult trace(size_t index) {
+    auto &function=metadata.functions[index];
+    if (!llvm::isa<ReadSpanType>(function.resultType) || state[index]==2) return mlir::success();
+    if (state[index]==1) return reject("core-ir-readspan-capability","cyclic View return origin");
+    state[index]=1; llvm::DenseMap<mlir::Value,int> origins;
+    auto &block=llvm::cast<mlir::func::FuncOp>(function.operation).getBody().front();
+    for (auto argument : block.getArguments()) if (llvm::isa<ArrayType,ReadSpanType>(argument.getType()))
+      origins[argument]=argument.getArgNumber();
+    for (auto &op : block) {
+      const auto name=op.getName().getStringRef();
+      if (name=="tsfg_array.create") origins[op.getResult(0)]=-1;
+      else if (name=="tsfg_array.alias" || name=="tsfg_array.view_alias" || name=="tsfg_array.view_create_checked") {
+        auto origin=origins.find(op.getOperand(0));
+        if (origin==origins.end()) return reject("core-ir-readspan-lifetime","return origin operand absent");
+        origins[op.getResult(0)]=origin->second;
+      } else if (auto call=llvm::dyn_cast<mlir::func::CallOp>(&op)) {
+        if (!llvm::isa<ReadSpanType>(op.getResult(0).getType())) continue;
+        size_t target=metadata.functions.size();
+        for (size_t i=0;i<metadata.functions.size();++i)
+          if (llvm::cast<mlir::func::FuncOp>(metadata.functions[i].operation).getSymName()==call.getCallee()) target=i;
+        if (target==metadata.functions.size()) return reject("core-ir-array-call","return origin target absent");
+        if (mlir::failed(trace(target))) return mlir::failure();
+        const int slot=metadata.functions[target].returnOrigin;
+        if (slot<0 || size_t(slot)>=op.getNumOperands()) return reject("core-ir-readspan-lifetime","callee actual return slot absent");
+        auto origin=origins.find(op.getOperand(slot));
+        if (origin==origins.end()) return reject("core-ir-readspan-lifetime","returned actual origin absent");
+        origins[op.getResult(0)]=origin->second;
+      } else if (name=="func.return") {
+        auto origin=origins.find(op.getOperand(0));
+        if (origin==origins.end() || origin->second<0 || size_t(origin->second)>=function.parameters.size())
+          return reject("core-ir-readspan-capability","View result escapes a local fresh owner");
+        const auto type=function.parameters[origin->second].type;
+        if (!llvm::isa<ArrayType,ReadSpanType>(type)) return reject("core-ir-readspan-lifetime","returned origin must be a full reference slot");
+        function.returnOrigin=origin->second;
+      }
+    }
+    if (function.returnOrigin<0) return reject("core-ir-readspan-lifetime","complete View return origin absent");
+    state[index]=2; return mlir::success();
+  }
+public:
+  explicit ReturnOrigins(Metadata &metadata) : metadata(metadata),state(metadata.functions.size()) {}
+  mlir::LogicalResult verify() {
+    for (size_t i=0;i<metadata.functions.size();++i) if (mlir::failed(trace(i))) return mlir::failure();
+    return mlir::success();
+  }
+};
+} // namespace
+mlir::LogicalResult deriveReturnOrigins(Metadata &metadata) { return ReturnOrigins(metadata).verify(); }
+mlir::LogicalResult collectOwners(const Function &function, const Metadata &metadata, OwnerGraph &graph) {
   auto &block=llvm::cast<mlir::func::FuncOp>(function.operation).getBody().front(); unsigned next=0;
   for (auto argument : block.getArguments()) {
     graph.registers[argument]=next++;
@@ -22,11 +76,21 @@ mlir::LogicalResult collectOwners(const Function &function, OwnerGraph &graph) {
       if (owner==graph.owners.end()) return reject("core-ir-readspan-lifetime","reference owner absent");
       graph.owners[op.getResult(0)]=owner->second;
     }
+    if (auto call=llvm::dyn_cast<mlir::func::CallOp>(&op)) if (llvm::isa<ReadSpanType>(op.getResult(0).getType())) {
+      const Function *target=nullptr;
+      for (const auto &candidate : metadata.functions)
+        if (llvm::cast<mlir::func::FuncOp>(candidate.operation).getSymName()==call.getCallee()) target=&candidate;
+      if (!target || target->returnOrigin<0 || size_t(target->returnOrigin)>=op.getNumOperands())
+        return reject("core-ir-readspan-lifetime","call return origin absent");
+      auto owner=graph.owners.find(op.getOperand(target->returnOrigin));
+      if (owner==graph.owners.end()) return reject("core-ir-readspan-lifetime","returned actual owner absent");
+      graph.owners[op.getResult(0)]=owner->second;
+    }
   }
   return mlir::success();
 }
 namespace {
-struct Family { Owner owner; int64_t create=-1,last=-1; unsigned parameter=0; };
+struct Family { Owner owner; int64_t create=-1,last=-1; unsigned parameter=0; bool call=false; };
 struct View { mlir::Value value; unsigned family,reg; };
 int64_t literal(mlir::Value value) {
   auto *definition=value.getDefiningOp(); uint64_t bits=0;
@@ -57,7 +121,24 @@ mlir::LogicalResult verifyViewLifetimes(const Function &function, const Metadata
       auto found=familyOf.find(op.getOperand(0));
       if (found==familyOf.end()) return reject("core-ir-readspan-lifetime","View alias family absent");
       add(op.getResult(0),found->second);
+    } else if (auto call=llvm::dyn_cast<mlir::func::CallOp>(&op)) if (llvm::isa<ReadSpanType>(op.getResult(0).getType())) {
+      const Function *target=nullptr;
+      for (const auto &candidate : metadata.functions)
+        if (llvm::cast<mlir::func::FuncOp>(candidate.operation).getSymName()==call.getCallee()) target=&candidate;
+      if (!target || target->returnOrigin<0 || size_t(target->returnOrigin)>=target->parameters.size())
+        return reject("core-ir-readspan-lifetime","call family return slot absent");
+      const unsigned slot=target->returnOrigin;
+      if (llvm::isa<ArrayType>(target->parameters[slot].type)) {
+        // Effects/actual uses at this instruction precede the new family birth.
+        const unsigned id=families.size();
+        families.push_back({graph.owners.lookup(op.getResult(0)),instruction,-1,0,true}); add(op.getResult(0),id);
+      } else {
+        auto found=familyOf.find(op.getOperand(slot));
+        if (found==familyOf.end()) return reject("core-ir-readspan-lifetime","returned View actual family absent");
+        add(op.getResult(0),found->second);
+      }
     }
+    if (views.size()>57 || families.size()>40) return reject("core-ir-array-budget","View row/family count exceeds limit");
     ++instruction;
   }
   llvm::DenseMap<mlir::Value,int64_t> lengths;
@@ -107,7 +188,7 @@ mlir::LogicalResult verifyViewLifetimes(const Function &function, const Metadata
         builder.getNamedAttr("index",builder.getI64IntegerAttr(family.parameter))})
       : builder.getDictionaryAttr({builder.getNamedAttr("kind",builder.getStringAttr("array")),
         builder.getNamedAttr("register",builder.getI64IntegerAttr(graph.registers.lookup(family.owner.value)))});
-    auto origin=builder.getDictionaryAttr({builder.getNamedAttr("kind",builder.getStringAttr(formal ? "parameter" : "create")),
+    auto origin=builder.getDictionaryAttr({builder.getNamedAttr("kind",builder.getStringAttr(formal ? "parameter" : family.call ? "call" : "create")),
         builder.getNamedAttr(formal ? "index" : "instruction",builder.getI64IntegerAttr(formal ? family.parameter : family.create))});
     std::vector<int64_t> last; if (family.last>=0) last.push_back(family.last);
     rows.push_back(builder.getDictionaryAttr({builder.getNamedAttr("view_register",builder.getI64IntegerAttr(view.reg)),

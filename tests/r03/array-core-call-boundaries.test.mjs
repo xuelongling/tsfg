@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: MIT
 import test from 'node:test';
 import assert from 'node:assert/strict';
+import { expectedArrayCore13 } from './array-core13-literal.mjs';
 import {readFile} from 'node:fs/promises';
 import {lowerHir,verifyHir} from '../../compiler/hir.mjs';
 import {parseArrayCore} from './array-core-structural-oracle.mjs';
@@ -15,8 +16,8 @@ o.core=scalarWhole.core;
 const context=()=>({...o.factsContext,factsBytes:Buffer.from(o.sourcePacket)});
 test('whole ordinary-call Core retains both complete functions and every typed edge',()=>{
   const input=fresh(o.hir),before=fresh(input),ctx=context(),bytes=Buffer.from(ctx.factsBytes);
-  const core=lowerHir(input,ctx,o.publication);assert.equal(core,o.core);
-  assert.deepEqual(parseArrayCore(core),parseArrayCore(o.core));
+  const core=lowerHir(input,ctx,o.publication),expectedCore=expectedArrayCore13(input,ctx,o.publication);assert.equal(core,expectedCore);
+  assert.deepEqual(parseArrayCore(core),parseArrayCore(expectedCore));
   assert.deepEqual(input,before);assert.deepEqual(ctx.factsBytes,bytes);
   assert.equal(parseArrayCore(core).functions.length,2);
   assert.deepEqual(parseArrayCore(core).functions[1].operations.map(op=>op.name),
@@ -47,19 +48,20 @@ test('actual Array parameters, ReadSpan RR and floating returns retain whole sou
     factsBytes:Buffer.from(view.source.packetText)};
   assert.deepEqual(verifyHir(fresh(view.hir),viewCtx,view.context),view.hir);
   const viewExpected=nodeWhole.cases.find(c=>c.name===view.name);assert.ok(viewExpected);
-  const viewBefore=fresh(view.hir),contextBefore=fresh(view.context);
-  assert.equal(lowerHir(fresh(view.hir),viewCtx,view.context),viewExpected.core);
-  assert.deepEqual(view.hir,viewBefore);assert.deepEqual(view.context,contextBefore);
+  const viewInput=fresh(view.hir),viewBefore=fresh(view.hir),contextBefore=fresh(view.context);
+  assert.equal(lowerHir(viewInput,viewCtx,view.context),expectedArrayCore13(viewInput,viewCtx,view.context));
+  assert.deepEqual(viewInput,viewBefore);assert.deepEqual(view.hir,viewBefore);assert.deepEqual(view.context,contextBefore);
   for(const name of ['first-touch-alias','core-new-return-only-refusal']){
     const row=all.cases.find(row=>row.name===name);assert.ok(row);
     const ctx={...row.factsContext,factsBytes:Buffer.from(row.packageText)};
     assert.deepEqual(verifyHir(fresh(row.hir),ctx),row.hir);
     if(name==='first-touch-alias'){
-      const core=parseArrayCore(lowerHir(fresh(row.hir),ctx));
+      const input=fresh(row.hir),text=lowerHir(input,ctx);assert.equal(text,expectedArrayCore13(input,ctx));
+      const core=parseArrayCore(text);
       assert.deepEqual(core.functions.map(fn=>fn.properties.sym_name),['touch','entry']);continue;
     }
     const expected=nodeWhole.cases.find(c=>c.name===name);assert.ok(expected);
     const input=fresh(row.hir),before=fresh(input);
-    assert.equal(lowerHir(input,ctx),expected.core);assert.deepEqual(input,before);
+    assert.equal(lowerHir(input,ctx),expectedArrayCore13(input,ctx));assert.deepEqual(input,before);
   }
 });

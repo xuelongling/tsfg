@@ -101,7 +101,11 @@ fn instruction(r: *m.Reader, a: m.Allocator) m.Error!m.Instruction {
             const callee_range = try r.range();
             const args = try r.table(m.ScalarUse, a, try r.int(u8), 8, 41);
             for (args) |*value| value.* = try scalar(r);
-            break :blk .{ .call = .{ .callee = callee, .functionId = id, .signatureHash = signature, .sourceCallee = binding, .calleeRange = callee_range, .arguments = args, .statementRange = try r.range(), .consumedDigest = try optionalDigest(r) } };
+            break :blk .{ .call = .{ .callee = callee, .functionId = id, .signatureHash = signature, .sourceCallee = binding, .calleeRange = callee_range, .arguments = args, .statementRange = try r.range(), .consumedDigest = try optionalDigest(r), .local = switch (try r.int(u8)) {
+                0 => null,
+                1 => try local(r),
+                else => return r.reject("r04-array-shape"),
+            } } };
         },
         12 => .{ .returned = .{ .value = try scalarUse(r, true) } },
         13 => .{ .view_alias = .{ .targetBinding = try r.readDigest(), .local = try local(r) } },
@@ -115,10 +119,12 @@ fn function(r: *m.Reader, a: m.Allocator) m.Error!m.Function {
     value.functionId = try r.readDigest();
     value.signatureHash = try r.readDigest();
     value.returnTypeId = try r.readDigest();
+    try r.require(m.eq(value.returnTypeId, m.f64_id) or m.eq(value.returnTypeId, m.view_id), "r04-array-type");
     value.sourceRange = try r.range();
     value.sourceBinding = try r.readDigest();
     value.nameRange = try r.range();
     value.returnAnnotationRange = try r.range();
+    value.returnElementAnnotationRange = if (m.eq(value.returnTypeId, m.view_id)) try r.range() else null;
     const parameters = try r.table(m.Parameter, a, try r.int(u8), 8, 63);
     for (parameters) |*p| {
         p.id = try r.readDigest();
@@ -140,7 +146,9 @@ fn function(r: *m.Reader, a: m.Allocator) m.Error!m.Function {
         row.block = try r.int(u8);
         row.instruction = try r.int(u16);
         inline for (.{ "arrayRegisters", "viewRegisters" }) |key| {
-            const registers = try r.table(u16, a, try r.int(u16), 4219, 2);
+            const count = try r.int(u16);
+            try r.require(count <= 57 - (if (m.text(key, "viewRegisters")) row.arrayRegisters.len else 0), "r04-array-limit");
+            const registers = try r.table(u16, a, count, if (m.text(key, "arrayRegisters")) 25 else 57, 2);
             if (registers.len > 1048576 - root_entries) return r.reject("r04-array-limit");
             root_entries += registers.len;
             for (registers) |*item| item.* = try r.int(u16);
@@ -148,7 +156,7 @@ fn function(r: *m.Reader, a: m.Allocator) m.Error!m.Function {
         }
     }
     value.callRoots = roots;
-    const views = try r.table(m.ViewLifetime, a, try r.int(u8), 25, 7);
+    const views = try r.table(m.ViewLifetime, a, try r.int(u8), 57, 7);
     for (views) |*row| {
         row.viewRegister = try r.int(u16);
         row.owner = switch (try r.int(u8)) {
@@ -159,6 +167,7 @@ fn function(r: *m.Reader, a: m.Allocator) m.Error!m.Function {
         row.origin = switch (try r.int(u8)) {
             1 => .{ .parameter = try r.int(u8) },
             2 => .{ .create = try r.int(u16) },
+            3 => .{ .call = try r.int(u16) },
             else => return r.reject("r04-array-lifetime"),
         };
         row.lastUseInstruction = switch (try r.int(u8)) {
@@ -236,7 +245,11 @@ fn publication(r: *m.Reader, a: m.Allocator) m.Error!?m.Publication {
         const parameters = try r.table(m.PublishedParameter, a, try r.int(u8), 8, 4);
         for (parameters) |*p| p.* = .{ .index = try r.int(u8), .read = try flag(r), .write = try flag(r), .structural = try flag(r) };
         row.upper = .{ .parameters = parameters, .local = .{ .read = try flag(r), .write = try flag(r), .structural = try flag(r) } };
-        try r.require(try r.int(u8) == 0, "r04-array-publication");
+        row.upper.returnOrigin = switch (try r.int(u8)) {
+            0 => null,
+            1 => .{ .index = try r.int(u8) },
+            else => return r.reject("r04-array-publication"),
+        };
         row.digest = try r.readDigest();
     }
     value.contracts = rows;
@@ -244,7 +257,7 @@ fn publication(r: *m.Reader, a: m.Allocator) m.Error!?m.Publication {
 }
 pub fn parse(r: *m.Reader, a: m.Allocator) m.Error!m.Snapshot {
     const header: m.Header = .{ .magic = try r.take(8), .version = try r.int(u32), .schema = try r.readDigest(), .totalBytes = try r.int(u32), .payloadHash = try r.readDigest() };
-    try r.require(m.text(header.magic, "TSFGARR1") and header.version == 2, "r04-array-format");
+    try r.require(m.text(header.magic, "TSFGARR1") and header.version == 3, "r04-array-format");
     try r.require(m.eq(header.schema, m.schema), "r04-array-schema");
     try r.require(header.totalBytes == r.bytes.len, "r04-array-framing");
     try r.require(m.eq(header.payloadHash, m.hash(r.bytes[80..])), "r04-array-hash");

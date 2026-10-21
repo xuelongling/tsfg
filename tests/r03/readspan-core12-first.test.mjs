@@ -2,6 +2,7 @@
 // Independent complete Core12 text was frozen before any new SUT execution.
 import test from 'node:test';
 import assert from 'node:assert/strict';
+import { expectedArrayCore13 } from './array-core13-literal.mjs';
 import {readArrayFactsCandidate} from '../../compiler/array-facts.mjs';
 import {buildHir,verifyHir,lowerHir,analyzeArrayCalls} from '../../compiler/hir.mjs';
 import {pinnedContainer,fresh} from './array-test-fixtures.mjs';
@@ -16,7 +17,8 @@ test('26f FIRST complete required ReadSpan parameters and original fixed publica
   assert.deepEqual(built,{status:'ok',hir:row.hir});
   assert.deepEqual(verifyHir(built.hir,facts,fixed),row.hir);
   assert.deepEqual(analyzeArrayCalls(built.hir,facts,fixed),row.analysis);
-  assert.equal(lowerHir(built.hir,facts,fixed),expectedCore);
+  assert.ok(expectedCore.includes('version = 12 : i32'),'original Core12 FIRST literal remains historical data');
+  assert.equal(lowerHir(built.hir,facts,fixed),expectedArrayCore13(built.hir,facts,fixed));
   assert.deepEqual(hir,before.hir);assert.deepEqual(fixed,before.fixed);assert.deepEqual(facts.factsBytes,before.packet);
   assert.deepEqual(packet,JSON.parse(row.packageText));
 });

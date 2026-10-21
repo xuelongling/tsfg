@@ -2,6 +2,7 @@
 // 26d cold joins use independent current gold; legacy39/helper migration remains STOP.
 // Keep this direct-public harness separate until that blocked migration can be qualified.
 import assert from 'node:assert/strict';
+import { expectedArrayCore13 } from './array-core13-literal.mjs';
 import { readFile } from 'node:fs/promises';
 import test from 'node:test';
 import { readArrayFactsCandidate,writeArrayFactsCandidate } from '../../compiler/array-facts.mjs';
@@ -238,9 +239,9 @@ function rejects(action,expected) {
   const dto={message:publicError.message,...Object.fromEntries(Object.keys(publicError).map(key=>[key,publicError[key]]))};
   whole(dto,expected,'complete public diagnostic');
 }
-/** @param {any} base @param {string} name @param {()=>any} action */
-function normal(base,name,action) {
-  if(name==='lowerHir'){rejects(action,base.expectedLowerDiagnostic);return;}
+/** @param {any} base @param {string} name @param {()=>any} action @param {any} state */
+function normal(base,name,action,state) {
+  if(name==='lowerHir'){assert.equal(action(),expectedArrayCore13(state.hir,state.facts,state.context));return;}
   const result=action();
   if(name==='printHir')text(result,jcs(base.completeHir)+'\n','original complete HIR text');
   else if(name==='printArrayCalls')text(result,jcs(base.completeAnalysis)+'\n','original complete report text');
@@ -269,7 +270,7 @@ for(const row of rows)test('26d Array-origin cold full-source join: '+row.id,asy
       const result=entry(state);whole(result,{status:'error',diagnostics:[error]},'complete build refusal');
       deeplyFrozen(result);
     }else if(error)rejects(()=>entry(state),error);
-    else normal(base,name,()=>entry(state));
+    else normal(base,name,()=>entry(state),state);
     assert.equal(state.getGetterCalls(),0,'public preflight never evaluates a getter');
     unchanged(state,before);bytes(raw,originalRaw,'Root actual Source bytes unchanged');
   });

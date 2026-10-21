@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: MIT
 // Test-owned data and complete comparisons; no expected value comes from a producer.
 import assert from 'node:assert/strict';
+import { expectedArrayCore13 } from './array-core13-literal.mjs';
 import { readFile } from 'node:fs/promises';
 import { readArrayFactsCandidate,writeArrayFactsCandidate } from '../../compiler/array-facts.mjs';
 import { projectArrayFacts } from '../../compiler/array-hir-model.mjs';
@@ -101,8 +102,8 @@ export const entries={
   printArrayCalls:s=>printArrayCalls(s.report,s.hir,s.facts,s.context),
   readArrayCalls:s=>readArrayCalls(s.reportBytes,s.hir,s.facts,s.context),
 };
-/** @param {any} row @param {string} entry @param {()=>any} action @param {any} coreDiagnostic */
-export function checkEntry(row,entry,action,coreDiagnostic) {
+/** @param {any} row @param {string} entry @param {()=>any} action @param {any} state */
+export function checkEntry(row,entry,action,state) {
   if(row.expectedDiagnostic) {
     // The fixed contract maps identity failures only at HIR seams; ArrayCalls keeps its own DTO.
     const expected=row.expectedDiagnostic.code==='r03-d-array-call-effects-identity'
@@ -114,7 +115,9 @@ export function checkEntry(row,entry,action,coreDiagnostic) {
     }else rejects(action,expected);
     return;
   }
-  if(entry==='lowerHir') {rejects(action,coreDiagnostic);return;}
+  if(entry==='lowerHir') {
+    assert.equal(action(),expectedArrayCore13(state.hir,state.facts,state.context));return;
+  }
   const expected=entry==='buildHir'?{status:'ok',hir:row.completeHir}:
     entry==='printHir'?jcs(row.completeHir)+'\n':entry==='printArrayCalls'?jcs(row.completeAnalysis)+'\n':
     entry.endsWith('ArrayCalls')?row.completeAnalysis:row.completeHir;

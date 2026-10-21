@@ -81,10 +81,10 @@ mlir::LogicalResult marker(mlir::ModuleOp module) {
     return reject("core-ir-array-marker", "candidate marker fields differ");
   auto version = llvm::dyn_cast_or_null<mlir::IntegerAttr>(value.get("version"));
   auto facts = llvm::dyn_cast_or_null<mlir::IntegerAttr>(value.get("facts_version"));
-  if (!version || !version.getType().isSignlessInteger(32) || version.getInt() != 12 ||
+  if (!version || !version.getType().isSignlessInteger(32) || version.getInt() != 13 ||
       !facts || !facts.getType().isSignlessInteger(32) || facts.getInt() != 7 ||
       text(value, "family") != "tsfg.core-array-candidate" || text(value, "schema") != schema ||
-      text(value, "profile") != "dense-f64-array-readspan-parameters-checked-v12")
+      text(value, "profile") != "dense-f64-array-readspan-returns-checked-v13")
     return reject("core-ir-array-marker", "candidate marker identity differs");
   return mlir::success();
 }
@@ -300,6 +300,8 @@ mlir::LogicalResult verifyMetadata(mlir::ModuleOp module, Metadata &metadata) {
     if (metadata.functions.size() == 16) return reject("core-ir-array-budget", "function count exceeds limit");
     std::vector<llvm::StringRef> keys={"sym_name", "function_type", "tsfg_core.function_id", "tsfg_core.signature_hash", "tsfg_core.type_id",
         "tsfg_core.function_start", "tsfg_core.function_end", "tsfg_array.source_binding", "tsfg_array.name_range", "tsfg_array.return_annotation_range", "tsfg_array.parameters"};
+    if (function.getFunctionType().getNumResults()==1 && llvm::isa<ReadSpanType>(function.getFunctionType().getResult(0)))
+      keys.push_back("tsfg_array.return_element_annotation_range");
     if (function->hasAttr("tsfg_array.view_lifetimes")) keys.push_back("tsfg_array.view_lifetimes");
     if (function->hasAttr("tsfg_array.call_roots")) keys.push_back("tsfg_array.call_roots");
     if (!attributes(function,keys))
@@ -308,9 +310,10 @@ mlir::LogicalResult verifyMetadata(mlir::ModuleOp module, Metadata &metadata) {
     if (name.size() > 1048576) return reject("core-ir-array-budget", "function name exceeds limit");
     if (!validText(name) || !names.insert(name.str()).second) return reject("core-ir-array-identity", "invalid/duplicate function name");
     auto type = function.getFunctionType();
-    if (type.getNumResults() != 1 || !type.getResult(0).isF64())
-      return reject("core-ir-array-type", "function must return f64");
-    Function item{function.getOperation(), {}, {}, {}};
+    if (type.getNumResults() != 1 || (!type.getResult(0).isF64() && !llvm::isa<ReadSpanType>(type.getResult(0))))
+      return reject("core-ir-array-type", "function must return f64 or nominal ReadSpan");
+    const bool viewResult=llvm::isa<ReadSpanType>(type.getResult(0));
+    Function item; item.operation=function.getOperation(); item.resultType=type.getResult(0);
     if (!number(function->getAttr("tsfg_core.function_start"), item.declaration.start) ||
         !number(function->getAttr("tsfg_core.function_end"), item.declaration.end) ||
         item.declaration.start >= item.declaration.end || item.declaration.end > metadata.length || item.declaration.start < previous ||
@@ -318,6 +321,9 @@ mlir::LogicalResult verifyMetadata(mlir::ModuleOp module, Metadata &metadata) {
         !encloses(item.declaration, item.name) || !encloses(item.declaration, item.annotation) ||
         item.name.start <= item.declaration.start || item.name.end >= item.annotation.start || item.annotation.end >= item.declaration.end)
       return reject("core-ir-array-source", "function anchors differ");
+    if (viewResult && (!span(function->getAttr("tsfg_array.return_element_annotation_range"),item.elementAnnotation) ||
+        item.elementAnnotation.start<=item.annotation.start || item.elementAnnotation.end>=item.annotation.end))
+      return reject("core-ir-array-source","View return element annotation must be strictly inside nominal annotation");
     auto binding = sourceIdentity(metadata.path, item.name);
     if (text(function, "tsfg_array.source_binding") != binding || !metadata.bindings.insert(binding).second)
       return reject("core-ir-array-identity", "function source binding differs");
@@ -327,7 +333,7 @@ mlir::LogicalResult verifyMetadata(mlir::ModuleOp module, Metadata &metadata) {
       if (i) shape += ',';
       shape += llvm::isa<ArrayType>(item.parameters[i].type) ? "array.f64" : llvm::isa<ReadSpanType>(item.parameters[i].type) ? "readspan.f64" : tsfg::typeCode(item.parameters[i].type)==8 ? "u32" : "f64";
     }
-    shape += ")->f64";
+    shape += viewResult ? ")->readspan.f64" : ")->f64";
     std::string signaturePreimage("tsfg.signature\0",15); signaturePreimage += shape;
     auto signature = hash(signaturePreimage);
     std::string preimage("tsfg.function\0",14);
@@ -336,9 +342,10 @@ mlir::LogicalResult verifyMetadata(mlir::ModuleOp module, Metadata &metadata) {
     auto identity = hash(preimage);
     auto id = metadata.functions.size() < ids.size() ? llvm::dyn_cast<mlir::StringAttr>(ids[metadata.functions.size()]) : mlir::StringAttr();
     if (!id || id.getValue() != identity || text(function,"tsfg_core.function_id") != identity ||
-        text(function,"tsfg_core.signature_hash") != signature || text(function,"tsfg_core.type_id") != f64Id || !identities.insert(identity).second)
+        text(function,"tsfg_core.signature_hash") != signature || text(function,"tsfg_core.type_id") != (viewResult ? readSpanId : f64Id) || !identities.insert(identity).second)
       return reject("core-ir-array-identity","function identity/ordered table differs");
-    previous = item.declaration.end; metadata.functions.push_back(item); expectedExports.emplace_back(name.str(), identity);
+    previous = item.declaration.end; metadata.functions.push_back(item);
+    if (!viewResult) expectedExports.emplace_back(name.str(), identity);
   }
   if (metadata.functions.size() != ids.size())
     return reject("core-ir-array-identity", "complete function/export count differs");

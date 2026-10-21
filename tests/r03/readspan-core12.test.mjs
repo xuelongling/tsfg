@@ -2,6 +2,7 @@
 // Original Source envelopes and independent whole Core texts are immutable data.
 import test from 'node:test';
 import assert from 'node:assert/strict';
+import { expectedArrayCore13 } from './array-core13-literal.mjs';
 import {readArrayFactsCandidate} from '../../compiler/array-facts.mjs';
 import {buildHir,verifyHir,lowerHir,analyzeArrayCalls} from '../../compiler/hir.mjs';
 import {pinnedContainer,fresh} from './array-test-fixtures.mjs';
@@ -20,7 +21,7 @@ for(const expected of gold.cases.filter(row=>row.rawNodeExpected))test('26f whol
   const packet=readArrayFactsCandidate(facts.factsBytes),built=buildHir(packet,facts,fixed);
   assert.deepEqual(built,{status:'ok',hir:row.hir});assert.deepEqual(verifyHir(built.hir,facts,fixed),row.hir);
   assert.deepEqual(analyzeArrayCalls(built.hir,facts,fixed),row.analysis??row.expectedReport);
-  assert.equal(lowerHir(built.hir,facts,fixed),expected.core);
+  assert.equal(lowerHir(built.hir,facts,fixed),expectedArrayCore13(built.hir,facts,fixed));
   assert.deepEqual(packet,JSON.parse(row.packageText));assert.deepEqual(hir,before.hir);
   assert.deepEqual(fixed,before.fixed);assert.deepEqual(facts.factsBytes,before.bytes);
 });

@@ -28,6 +28,7 @@ pub fn verify(r: *m.Reader, f: m.Function, whole_work: *usize, model: *const own
         try r.require(point > 0, "r04-array-roots");
         point -= 1;
         const row = f.callRoots[point];
+        try r.require(row.arrayRegisters.len <= 25 and row.viewRegisters.len <= 57 and row.arrayRegisters.len + row.viewRegisters.len <= 57, "r04-array-roots");
         try r.require(row.block == 0 and row.instruction == index, "r04-array-roots");
         var arrays: [4219]bool = @splat(false);
         var views: [4219]bool = @splat(false);

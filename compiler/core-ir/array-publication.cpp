@@ -29,7 +29,8 @@ std::string upperJson(const Function &function, const PublishedContract &contrac
     if (!first) result+=','; first=false;
     result+="{\"index\":"+std::to_string(i)+","+flagJson(contract.parameters[i])+"}";
   }
-  return result+"],\"returnOrigin\":null}";
+  return result+"],\"returnOrigin\":"+(contract.returnOrigin<0 ? std::string("null")
+    : "{\"index\":"+std::to_string(contract.returnOrigin)+",\"kind\":\"parameter\"}")+"}";
 }
 std::string domainHash(llvm::StringRef domain, const std::string &json) {
   std::string preimage=domain.str(); preimage+='\0'; preimage+=json; return identityHash(preimage);
@@ -55,7 +56,7 @@ std::string scopeJson(mlir::ModuleOp module, const Metadata &metadata, const std
       if (!firstParameter) result+=','; firstParameter=false;
       result+=identityQuote(llvm::isa<ArrayType>(parameter.type) ? "array.f64" : llvm::isa<ReadSpanType>(parameter.type) ? "readspan.f64" : typeCode(parameter.type)==8 ? "u32" : "f64");
     }
-    result+="],\"returnType\":\"f64\",\"signatureHash\":"+identityQuote(text(op,"tsfg_core.signature_hash"))+",\"sourcePath\":"+identityQuote(metadata.path)+"}";
+    result+="],\"returnType\":"+identityQuote(llvm::isa<ReadSpanType>(function.resultType) ? "readspan.f64" : "f64")+",\"signatureHash\":"+identityQuote(text(op,"tsfg_core.signature_hash"))+",\"sourcePath\":"+identityQuote(metadata.path)+"}";
   }
   return result+"],\"profile\":\"array-readspan-array-origin-return-scc-owner-relative-fixed-v4\",\"rootFile\":"+identityQuote(metadata.path)+"}";
 }
@@ -77,9 +78,17 @@ mlir::LogicalResult publication(mlir::ModuleOp module, Metadata &metadata) {
         text(row,"signature_hash")!=text(function.operation,"tsfg_core.signature_hash"))
       return reject("core-ir-array-publication","contract identity/order differs");
     auto upper=llvm::dyn_cast_or_null<mlir::DictionaryAttr>(row.get("upper"));
-    if (!fields(upper,{"parameters","local","return_origin"}) || !llvm::isa_and_nonnull<mlir::UnitAttr>(upper.get("return_origin")) ||
+    if (!fields(upper,{"parameters","local","return_origin"}) ||
         !flags(llvm::dyn_cast_or_null<mlir::DictionaryAttr>(upper.get("local")),contract.local))
       return reject("core-ir-array-publication","upper local/return fields differ");
+    if (llvm::isa<ReadSpanType>(function.resultType)) {
+      auto origin=llvm::dyn_cast_or_null<mlir::DictionaryAttr>(upper.get("return_origin")); uint32_t slot=0;
+      if (!fields(origin,{"kind","index"}) || text(origin,"kind")!="parameter" || !number(origin.get("index"),slot) ||
+          slot>=function.parameters.size() || !reference(function.parameters[slot].type))
+        return reject("core-ir-array-publication","View upper requires an original full reference return slot");
+      contract.returnOrigin=slot;
+    } else if (!llvm::isa_and_nonnull<mlir::UnitAttr>(upper.get("return_origin")))
+      return reject("core-ir-array-publication","f64 upper requires null return origin");
     auto parameters=llvm::dyn_cast_or_null<mlir::ArrayAttr>(upper.get("parameters"));
     if (!parameters || parameters.size()>8) return reject("core-ir-array-publication","upper parameter table differs");
     contract.parameters.resize(function.parameters.size()); size_t position=0;
@@ -112,7 +121,7 @@ mlir::LogicalResult coverage(Metadata &metadata, const std::vector<Call> &calls)
     slot=owner->second.parameter ? owner->second.index : localSlot; return slot<slots;
   };
   for (size_t i=0;i<count;++i) {
-    auto &effect=effects[i]; if (mlir::failed(collectOwners(metadata.functions[i],effect.owners))) return mlir::failure();
+    auto &effect=effects[i]; if (mlir::failed(collectOwners(metadata.functions[i],metadata,effect.owners))) return mlir::failure();
     for (auto &op : llvm::cast<mlir::func::FuncOp>(metadata.functions[i].operation).getBody().front()) {
       const auto name=op.getName().getStringRef(); unsigned mask=name=="tsfg_array.read_checked" || name=="tsfg_array.view_read_checked" || name=="tsfg_array.view_create_checked" ? 1
         : name=="tsfg_array.store_dense_checked" ? 6 : name=="tsfg_array.resize_checked" ? 4 : 0;
@@ -126,7 +135,8 @@ mlir::LogicalResult coverage(Metadata &metadata, const std::vector<Call> &calls)
     std::copy(effect.direct,effect.direct+slots,effect.derived); std::copy(effect.direct,effect.direct+slots,effect.effective);
   }
   // Each changed facet crosses a finite original-slot edge at most once. Fresh
-  // callee effects remain caller-local; no returned owner exists in this domain.
+  // callee local effects remain caller-local; returned Views map their exact
+  // original parameter owner through the independently reconstructed graph.
   std::vector<std::vector<size_t>> outgoing(count*slots);
   for (const auto &call : calls) {
     auto &caller=effects[call.caller]; const auto &callee=metadata.functions[call.target];
@@ -162,7 +172,7 @@ mlir::LogicalResult verifyPublication(mlir::ModuleOp module, Metadata &metadata)
   const size_t count=metadata.functions.size(); bool reachable[16][16]{}; bool hasView=false,cyclic=false;
   std::vector<Call> calls;
   for (size_t i=0;i<count;++i) {
-    const auto &function=metadata.functions[i];
+    const auto &function=metadata.functions[i]; hasView|=llvm::isa<ReadSpanType>(function.resultType);
     for (const auto &parameter : function.parameters) hasView|=llvm::isa<ReadSpanType>(parameter.type);
     for (auto &op : llvm::cast<mlir::func::FuncOp>(function.operation).getBody().front()) {
       for (auto result : op.getResults()) hasView|=llvm::isa<ReadSpanType>(result.getType());
@@ -185,6 +195,7 @@ mlir::LogicalResult verifyPublication(mlir::ModuleOp module, Metadata &metadata)
   // functions. A fresh owner passed by an outside acyclic caller is permitted.
   for (size_t i=0;i<count;++i) if (reachable[i][i]) for (size_t j=0;j<count;++j) if (i==j || reachable[i][j]) {
     const auto &function=metadata.functions[j];
+    if (llvm::isa<ReadSpanType>(function.resultType)) return reject("core-ir-array-call","cyclic outgoing domain contains a View result");
     for (const auto &parameter : function.parameters) if (llvm::isa<ReadSpanType>(parameter.type))
       return reject("core-ir-array-call","cyclic outgoing domain contains a View parameter");
     for (auto &op : llvm::cast<mlir::func::FuncOp>(function.operation).getBody().front()) {
@@ -193,6 +204,10 @@ mlir::LogicalResult verifyPublication(mlir::ModuleOp module, Metadata &metadata)
         return reject("core-ir-array-call","cyclic outgoing domain contains a View");
     }
   }
+  if (mlir::failed(deriveReturnOrigins(metadata))) return mlir::failure();
+  if (metadata.fixedPublication) for (size_t i=0;i<count;++i)
+    if (metadata.functions[i].returnOrigin!=metadata.contracts[i].returnOrigin)
+      return reject("core-ir-array-publication","fixed return origin differs from complete actual SSA provenance");
   for (const auto &call : calls) {
     const auto consumed=call.operation->getAttr("consumed_digest");
     if (metadata.fixedPublication ? text(call.operation,"consumed_digest")!=metadata.contracts[call.target].digest : !llvm::isa_and_nonnull<mlir::UnitAttr>(consumed))

@@ -55,7 +55,13 @@ const JsonHash = struct {
             self.flag(parameter.write);
             self.raw("}");
         }
-        self.raw("],\"returnOrigin\":null}");
+        self.raw("],\"returnOrigin\":");
+        if (value.returnOrigin) |origin| {
+            self.raw("{\"index\":");
+            self.number(origin.index);
+            self.raw(",\"kind\":\"parameter\"}");
+        } else self.raw("null");
+        self.raw("}");
     }
     fn contract(self: *JsonHash, value: m.PublishedContract, include_digest: bool) void {
         self.raw("{");
@@ -112,7 +118,9 @@ fn scope(p: m.Payload, order: []const usize) m.Digest {
             if (j != 0) json.raw(",");
             json.string(logical(parameter.type));
         }
-        json.raw("],\"returnType\":\"f64\",\"signatureHash\":");
+        json.raw("],\"returnType\":");
+        json.string(if (m.eq(f.returnTypeId, m.view_id)) "readspan.f64" else "f64");
+        json.raw(",\"signatureHash\":");
         json.digest(f.signatureHash);
         json.raw(",\"sourcePath\":");
         json.string(p.sourcePath);
@@ -130,6 +138,7 @@ pub fn contract(p: m.Payload, id: m.Digest) ?m.PublishedContract {
 pub fn verifyContext(r: *m.Reader, p: m.Payload, cyclic: bool) m.Error!void {
     var has_view = false;
     for (p.functions) |f| {
+        has_view = has_view or m.eq(f.returnTypeId, m.view_id);
         for (f.parameters) |parameter| if (parameter.type == 4) {
             has_view = true;
         };
@@ -145,6 +154,11 @@ pub fn verifyContext(r: *m.Reader, p: m.Payload, cyclic: bool) m.Error!void {
         for (publication.contracts, order[0..p.functions.len]) |row, index| {
             const f = p.functions[index];
             try r.require(m.eq(row.functionId, f.functionId) and m.eq(row.signatureHash, f.signatureHash), "r04-array-publication");
+            if (row.upper.returnOrigin) |origin| {
+                try r.require(m.eq(f.returnTypeId, m.view_id) and origin.index < f.parameters.len, "r04-array-publication");
+                const kind = f.parameters[origin.index].type;
+                try r.require(kind == 3 or kind == 4, "r04-array-publication");
+            } else try r.require(m.eq(f.returnTypeId, m.f64_id), "r04-array-publication");
             var count: usize = 0;
             for (f.parameters, 0..) |parameter, slot| {
                 if (parameter.type != 3 and parameter.type != 4) continue;
@@ -180,7 +194,7 @@ pub fn verifyContext(r: *m.Reader, p: m.Payload, cyclic: bool) m.Error!void {
 fn mask(flags: anytype) u3 {
     return @as(u3, if (flags.read) 1 else 0) | @as(u3, if (flags.write) 2 else 0) | @as(u3, if (flags.structural) 4 else 0);
 }
-// f64-only results cannot export a fresh owner. For coverage, all distinct local
+// Accepted results cannot export a fresh owner. For coverage, all distinct local
 // allocations/call-local owners share the upper.local facet; actual borrow owner
 // identity remains distinct in owners.Model. No transmitted field is projected.
 pub const Analysis = struct {

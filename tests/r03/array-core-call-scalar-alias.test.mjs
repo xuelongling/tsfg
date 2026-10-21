@@ -3,6 +3,7 @@ import {pinnedContainer} from './array-test-fixtures.mjs';
 // Owned-facts metamorphic positive; never a claimed actual Source execution.
 import test from 'node:test';
 import assert from 'node:assert/strict';
+import { expectedArrayCore13 } from './array-core13-literal.mjs';
 import {readFile} from 'node:fs/promises';
 import {readArrayFactsCandidate} from '../../compiler/array-facts.mjs';
 import {buildHir,verifyHir,lowerHir} from '../../compiler/hir.mjs';
@@ -17,8 +18,9 @@ test('independent owned-facts multi-scalar call and live alias whole Core are ex
   const facts=readArrayFactsCandidate(ctx().factsBytes),built=buildHir(facts,ctx());
   assert.equal(built.status,'ok',JSON.stringify(built.diagnostics));assert.deepEqual(built.hir,o.hir);
   assert.deepEqual(verifyHir(fresh(o.hir),ctx()),o.hir);
-  assert.equal(lowerHir(built.hir,ctx()),o.core);
-  const core=parseArrayCore(o.core),call=core.functions[1].operations[6];
+  const lowerContext=ctx(),text=lowerHir(built.hir,lowerContext);
+  assert.equal(text,expectedArrayCore13(built.hir,lowerContext));
+  const core=parseArrayCore(text),call=core.functions[1].operations[6];
   assert.deepEqual(call.operands,['%v5','%v0','%v1','%v6']);
   assert.deepEqual(core.functions[1].operations.slice(4,6).map(op=>op.attributes.value),['3ff8000000000000','4294967295']);
   assert.deepEqual(o.expectedCallRoots[0].records,[{block:0,instruction:6,registers:[3,4]}]);
@@ -42,7 +44,9 @@ test('existing complete SCC controls reject allocation cycles before Core emissi
     if(name==='spin-wide-local-upper')assert.deepEqual(verifyHir(fresh(row.completeHir),context,row.publicationContext),row.completeHir);
     if(name==='spin-wide-local-upper'){
       const current=await pinnedContainer('./readspan-core12-oracle.json',474847,'ea662dcd137a240a947c1fc3c57d9a17dbed31661e99338a4d76950e5dce9ba0');
-      assert.equal(lowerHir(fresh(row.completeHir),context,row.publicationContext),current.cases.find(c=>c.name===name).core);
+      assert.ok(current.cases.find(c=>c.name===name));
+      const input=fresh(row.completeHir);
+      assert.equal(lowerHir(input,context,row.publicationContext),expectedArrayCore13(input,context,row.publicationContext));
       assert.throws(()=>lowerHir(fresh(row.completeHir),context),{code:'r03-array-hir-context'});continue;
     }
     assert.throws(()=>lowerHir(fresh(row.completeHir),context,row.publicationContext),error=>{

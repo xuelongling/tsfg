@@ -61,7 +61,7 @@ for(const row of rows)test('26d representative family forms and SCC refusals thr
   for(const [name,action]of Object.entries(entries))await t.test(name,()=>{
     const state=stateFor(row,raw),snapshot=captureState(state);
     // Each complete success or preserved SCC capability is fixed by the independent oracle.
-    checkEntry(row,name,()=>action(state),row.expectedLowerDiagnostic);
+    checkEntry(row,name,()=>action(state),state);
     unchangedState(state,snapshot);
     assert.deepEqual(raw,before);
   });

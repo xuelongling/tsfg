@@ -37,7 +37,8 @@ function publication(context) {
       'upper = '+dictionary(['parameters = '+table(row.upper.parameters.map(parameter => dictionary([
         'index = '+parameter.index+' : i64','read = '+parameter.read,
         'write = '+parameter.write,'structural = '+parameter.structural]))),
-        'local = '+flags(row.upper.local),'return_origin = unit']),field('digest',row.digest)])))]);
+        'local = '+flags(row.upper.local),'return_origin = '+(row.upper.returnOrigin === null ? 'unit'
+          : dictionary([field('kind',row.upper.returnOrigin.kind),'index = '+row.upper.returnOrigin.index+' : i64']))]),field('digest',row.digest)])))]);
 }
 function elementTarget(target) {
   return dictionary([field('receiver_binding',target.receiver.binding),'receiver_range = '+span(target.receiver.range),
@@ -48,16 +49,17 @@ export function emitArrayCore(hir, context, fixedContext = undefined) {
   const verified = verifyArrayHir(hir, context, fixedContext);
   const unsupported = (fn, range) => {
     const code = 'r03-d-core-array-capability';
-    throw Object.assign(new TypeError('Array Core lowering requires complete nominal Array/ReadSpan calls and an f64 result'),
+    throw Object.assign(new TypeError('Array Core lowering requires complete nominal Array/ReadSpan calls and an f64 or ReadSpan result'),
       {code,ruleId:'r01-ts-baseline',phase:'lowering',primary:{sourceId:fn.sourcePath,...range}});
   };
   // Inspect complete verified Source order before reserving even the module header.
   for (const fn of verified.functions) {
-    if (fn.returnType.id !== scalarTypeIds.f64) unsupported(fn,fn.returnAnnotationRange);
+    if (![scalarTypeIds.f64,readSpanTypeId].includes(fn.returnType.id)) unsupported(fn,fn.returnAnnotationRange);
     for (const statement of fn.body) {
       if (statement.kind === 'local' && statement.binding.type === readSpanTypeId
-          && !['readSpanCreateChecked','reference'].includes(statement.initializer.kind)) unsupported(fn,statement.initializer.range);
-      const value = statement.kind === 'expression' ? statement.expression : statement.kind === 'return' ? statement.value : undefined;
+          && !['readSpanCreateChecked','reference','arrayDirectCall'].includes(statement.initializer.kind)) unsupported(fn,statement.initializer.range);
+      const value = statement.kind === 'local' ? statement.initializer
+        : statement.kind === 'expression' ? statement.expression : statement.kind === 'return' ? statement.value : undefined;
       if (statement.kind === 'expression' && !['arrayDirectCall','readSpanLength','readSpanReadChecked'].includes(value?.kind)) unsupported(fn,value.range);
       if (value?.kind === 'arrayDirectCall' && (value.arguments.some(argument => !['reference','constant','floating'].includes(argument.kind)
             || ![arrayHirType.id,readSpanTypeId,scalarTypeIds.f64,scalarTypeIds.u32].includes(argument.type)))) unsupported(fn,value.range);
@@ -73,7 +75,7 @@ export function emitArrayCore(hir, context, fixedContext = undefined) {
     field('tsfg_core.triple', verified.target.triple), field('tsfg_core.data_layout', verified.target.llvmDataLayout),
     field('tsfg_core.bytecode_schema', coreExchangeFormat.bytecodeSchema),
     'tsfg_core.source_length = ' + source.content.length + ' : i64',
-    'tsfg_core.array = ' + dictionary([field('family', descriptor.family), 'version = 12 : i32',
+    'tsfg_core.array = ' + dictionary([field('family', descriptor.family), 'version = 13 : i32',
       field('schema', schemaHash), field('profile', descriptor.profile), 'facts_version = 7 : i32']),
     'tsfg_array.function_ids = ' + table(verified.functions.map(fn => quote(fn.id))),
     'tsfg_array.exports = ' + table(verified.exports.map(item => dictionary([
@@ -134,16 +136,17 @@ export function emitArrayCore(hir, context, fixedContext = undefined) {
       .filter(value => ['arrayReadChecked','readSpanReadChecked'].includes(value.kind));
     const views = locals.filter(statement => statement.initializer.kind === 'readSpanCreateChecked');
     const lengths = fn.body.filter(statement => statement.expression?.kind === 'readSpanLength');
-    const callStatements = new Map(fn.body.filter(statement => (statement.expression ?? statement.value)?.kind === 'arrayDirectCall')
-      .map(statement => [statement.expression ?? statement.value,statement]));
+    const callStatements = new Map(fn.body.filter(statement => (statement.initializer ?? statement.expression ?? statement.value)?.kind === 'arrayDirectCall')
+      .map(statement => [statement.initializer ?? statement.expression ?? statement.value,statement]));
+    const callLocals = locals.filter(statement => statement.initializer.kind === 'arrayDirectCall').length;
     const calls = [...callStatements.keys()], returnCall = fn.body.at(-1).value.kind === 'arrayDirectCall' ? 1 : 0;
     const argumentsCount = calls.reduce((sum, call) => sum + call.arguments.length, 0);
     const scalars = [...reads.map(read => read.index),...stores.flatMap(statement => [statement.target.index,statement.value]),...resizes.map(statement => statement.value),...calls.flatMap(call => call.arguments),
       ...views.flatMap(statement => [statement.initializer.start,statement.initializer.length]),fn.body.at(-1).value];
     const constants = elements + scalars.filter(value => value.kind === 'constant' || value.kind === 'floating').length;
-    const count = locals.length, expected = {registers:fn.parameters.length + constants + count + reads.length + calls.length + lengths.length,
-      lines:constants + count + reads.length + stores.length + resizes.length + calls.length + lengths.length + 2,
-      steps:elements + 2*count + 4*stores.length + 3*resizes.length + 2*reads.length + calls.length + argumentsCount + 2 - returnCall + 3*views.length + 3*lengths.length + 2*standalone.length};
+    const count = locals.length, expected = {registers:fn.parameters.length + constants + count - callLocals + reads.length + calls.length + lengths.length,
+      lines:constants + count - callLocals + reads.length + stores.length + resizes.length + calls.length + lengths.length + 2,
+      steps:elements + 2*count + 4*stores.length + 3*resizes.length + 2*reads.length + calls.length + argumentsCount + 2 - returnCall + 3*views.length + 3*lengths.length + 2*standalone.length - callLocals};
     let blocks = 0, parameters = 0, registers = 0, lines = 0, steps = 0;
     const shape = condition => { if (!condition) arrayHirFailure('invalid'); };
     const emitCall = (call, statement, api) => {
@@ -153,7 +156,8 @@ export function emitArrayCore(hir, context, fixedContext = undefined) {
           + ', ' + field('tsfg_core.signature_hash',target.signatureHash) + ', ' + field('source_callee',call.sourceCallee)
           + ', consumed_digest = '+(fixed ? quote(contracts.get(call.target).digest) : 'unit')
           + ', callee_range = ' + span(call.calleeRange) + ', arguments = ' + table(call.arguments.map(scalarUse))
-          + ', statement_range = ' + span(statement.range), call.range);
+          + ', statement_range = ' + span(statement.range)
+          + (statement.kind === 'local' ? ', local = '+localMetadata(statement) : ''), call.range);
     };
     const core = emitCoreSsaFunction(fn, { verified, coreType, functionSymbol: target => target.name,
       returnAttributes: value => 'tsfg_array.value = '+scalarUse(value),
@@ -243,6 +247,7 @@ export function emitArrayCore(hir, context, fixedContext = undefined) {
       'tsfg_core.function_end = ' + fn.range.end + ' : i64', field('tsfg_array.source_binding', fn.sourceBinding),
       'tsfg_array.name_range = ' + span(fn.nameRange),
       'tsfg_array.return_annotation_range = ' + span(fn.returnAnnotationRange),
+      ...(fn.returnType.id === readSpanTypeId ? ['tsfg_array.return_element_annotation_range = '+span(fn.returnElementAnnotationRange)] : []),
       'tsfg_array.parameters = '+table(fn.parameters.map(parameter => dictionary([
         field('id',parameter.id),field('name',parameter.name),field('type',parameter.type),'writable = '+parameter.writable,
         'declaration_range = '+span(parameter.range),'name_range = '+span(parameter.nameRange),

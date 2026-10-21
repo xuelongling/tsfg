@@ -18,7 +18,7 @@ constexpr size_t headerBytes = 80;
 constexpr size_t packetLimit = 8388608;
 constexpr size_t payloadLimit = packetLimit - headerBytes;
 constexpr llvm::StringLiteral wireSchema =
-    "sha256:04ea70eebde87bae20ff7a35f7f1b0ad5065c0f031c41317169e374d67a0982d";
+    "sha256:195743441bc95e89e8002eb058277ee5cb91b68b0fc14a94d442b75761388718";
 using Dictionary = mlir::DictionaryAttr;
 Dictionary dictionary(mlir::Attribute attribute) { return llvm::cast<Dictionary>(attribute); }
 llvm::StringRef text(Dictionary value, llvm::StringRef key) {
@@ -167,8 +167,11 @@ class ArrayPayload {
         auto item = dictionary(parameter); integer(number(item, "index"), 1); effects(item);
       }
       effects(dictionary(upper.get("local")));
-      if (!llvm::isa<mlir::UnitAttr>(upper.get("return_origin"))) valid = false;
-      integer(0, 1); digest(contract, "digest");
+      auto origin = upper.get("return_origin");
+      const bool parameter = !llvm::isa<mlir::UnitAttr>(origin);
+      integer(parameter ? 1 : 0, 1);
+      if (parameter) integer(number(dictionary(origin), "index"), 1);
+      digest(contract, "digest");
     }
   }
   void registers(mlir::Attribute attribute) {
@@ -192,8 +195,10 @@ class ArrayPayload {
       const bool array = text(owner, "kind") == "array";
       integer(array ? 1 : 2, 1); integer(number(owner, array ? "register" : "index"), array ? 2 : 1);
       auto origin = dictionary(value.get("origin"));
-      const bool parameter = text(origin, "kind") == "parameter";
-      integer(parameter ? 1 : 2, 1);
+      const auto kind = text(origin, "kind");
+      const bool parameter = kind == "parameter";
+      if (!parameter && kind != "create" && kind != "call") valid = false;
+      integer(parameter ? 1 : kind == "create" ? 2 : 3, 1);
       integer(number(origin, parameter ? "index" : "instruction"), parameter ? 1 : 2);
       auto last = llvm::cast<mlir::DenseI64ArrayAttr>(value.get("last_use")).asArrayRef();
       if (last.size() > 1) { valid = false; return; }
@@ -243,7 +248,10 @@ class ArrayPayload {
       span(value.get("callee_range"));
       auto arguments = llvm::cast<mlir::ArrayAttr>(value.get("arguments")); integer(arguments.size(), 1);
       for (auto argument : arguments) scalar(argument);
-      span(value.get("statement_range")); optionalDigest(value.get("consumed_digest")); break;
+      span(value.get("statement_range")); optionalDigest(value.get("consumed_digest"));
+      auto binding = value.get("local"); integer(binding ? 1 : 0, 1);
+      if (binding) local(binding);
+      break;
     }
     case 12: scalar(value.get("tsfg_array.value"), true); break;
     case 13: digest(value, "target_binding"); local(value.get("local")); break;
@@ -255,6 +263,8 @@ class ArrayPayload {
     for (auto key : {"tsfg_core.function_id", "tsfg_core.signature_hash", "tsfg_core.type_id"}) digest(value, key);
     sourceRange(value, "tsfg_core.function_start", "tsfg_core.function_end");
     digest(value, "tsfg_array.source_binding"); spans(value, {"tsfg_array.name_range", "tsfg_array.return_annotation_range"});
+    if (llvm::isa<arrays::ReadSpanType>(fn.getFunctionType().getResult(0)))
+      span(value.get("tsfg_array.return_element_annotation_range"));
     auto parameters = fn->getAttrOfType<mlir::ArrayAttr>("tsfg_array.parameters"); integer(parameters.size(), 1);
     for (auto row : llvm::enumerate(parameters)) parameter(row.value(), fn.getFunctionType().getInput(row.index()));
     llvm::DenseMap<mlir::Value, uint16_t> registers;
@@ -314,7 +324,7 @@ mlir::LogicalResult arrayCandidateBytecode(mlir::ModuleOp module, Bytes &packet)
   if (!encode.encode(module) || body.size() != measure.size() || encode.size() != measure.size()) return reject();
   Bytes result; result.reserve(headerBytes + body.size());
   const uint8_t magic[] = {'T', 'S', 'F', 'G', 'A', 'R', 'R', '1'};
-  result.insert(result.end(), std::begin(magic), std::end(magic)); bytecode::integer(result, 2, 4);
+  result.insert(result.end(), std::begin(magic), std::end(magic)); bytecode::integer(result, 3, 4);
   if (!digest(result, wireSchema)) return reject();
   bytecode::integer(result, headerBytes + body.size(), 4);
   bytecode::appendHash(result, llvm::SHA256::hash(body)); result.insert(result.end(), body.begin(), body.end());

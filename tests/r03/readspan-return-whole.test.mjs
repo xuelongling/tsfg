@@ -2,10 +2,10 @@
 // Actual publications are input only; every whole expected value was frozen independently.
 import assert from 'node:assert/strict';
 import test from 'node:test';
-import { returnRows,returnContextControls,returnCoreDiagnostics,returnSyntheticInputs } from './readspan-return-fixtures.mjs';
+import { returnRows,returnContextControls,returnSyntheticInputs } from './readspan-return-fixtures.mjs';
 import { actualPackets,upstream,stateFor,entries,checkEntry,captureState,unchangedState,jcs } from './readspan-return-test-helpers.mjs';
 
-const rows=await returnRows(),actual=await actualPackets(),core=await returnCoreDiagnostics();
+const rows=await returnRows(),actual=await actualPackets();
 const synthetic=await returnSyntheticInputs();
 assert.equal(rows.length,18);assert.equal(new Set(rows.map(row=>row.name)).size,18);
 assert.equal(actual.size,18);
@@ -25,7 +25,7 @@ for(const row of rows)test('26c actual complete facts/projection/flow/plan and n
   await t.test('whole upstream facts to fixed flow and plan',()=>upstream(row,raw));
   for(const [entry,action]of Object.entries(entries))await t.test(entry,()=>{
     const state=stateFor(row,raw,candidate),before=captureState(state);
-    checkEntry(row,entry,()=>action(state),core[row.name]);
+    checkEntry(row,entry,()=>action(state),state);
     unchangedState(state,before);
     assert.deepEqual(raw,rawBefore,'original actual bytes remain unchanged');
   });
@@ -38,7 +38,7 @@ for(const control of await returnContextControls())test('26c fixed full-slot ret
   const row={...base,publicationContext:control.publicationContext,expectedDiagnostic:control.expectedDiagnostic};
   for(const [entry,action]of Object.entries(entries))await t.test(entry,()=>{
     const state=stateFor(row,raw),before=captureState(state);
-    checkEntry(row,entry,()=>action(state),null);unchangedState(state,before);
+    checkEntry(row,entry,()=>action(state),state);unchangedState(state,before);
   });
 });
 

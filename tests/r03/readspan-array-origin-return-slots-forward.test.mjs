@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: MIT
 // Whole expectations are independent literals; actual Source bytes come only from explicit Root pins.
 import assert from 'node:assert/strict';
+import { expectedArrayCore13 } from './array-core13-literal.mjs';
 import { readFile } from 'node:fs/promises';
 import test from 'node:test';
 import { readArrayFactsCandidate,writeArrayFactsCandidate } from '../../compiler/array-facts.mjs';
@@ -104,9 +105,9 @@ function publicPlanLedger(hir,row) {
   assert.equal(views.length+aliases,row.work.viewRegistrations);
   assert.equal(uses,row.work.viewUses);assert.equal(views.length+aliases+uses,row.work.viewGlobal);
 }
-/** @param {any} row @param {string} name @param {()=>any} action */
-function checkEntry(row,name,action) {
-  if(name==='lowerHir'){rejects(action,row.expectedLowerDiagnostic);return;}
+/** @param {any} row @param {string} name @param {()=>any} action @param {any} state */
+function checkEntry(row,name,action,state) {
+  if(name==='lowerHir'){assert.equal(action(),expectedArrayCore13(state.hir,state.facts,state.context));return;}
   const result=action();
   if(name==='printHir')equalText(result,jcs(row.completeHir)+'\n','complete canonical HIR');
   else if(name==='printArrayCalls')equalText(result,jcs(row.completeAnalysis)+'\n','complete canonical report');
@@ -130,7 +131,7 @@ for(const row of rows)test('26d mixed original slots or two forwarding layers th
   const raw=actual.get(row.name);assert.ok(raw);const before=Buffer.from(raw);
   for(const [name,action]of Object.entries(entries))await t.test(name,()=>{
     const state=stateFor(row,raw),captured=snapshot(state);
-    checkEntry(row,name,()=>action(state));unchanged(state,captured);
+    checkEntry(row,name,()=>action(state),state);unchanged(state,captured);
     equalBytes(raw,before,'original actual Source bytes unchanged');
   });
   equalText(jcs(frozen),originalExpectations,'independent whole oracle unchanged');

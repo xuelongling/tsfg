@@ -22,6 +22,7 @@ pub fn verify(r: *m.Reader, p: m.Payload) m.Error!bool {
         cyclic = true;
         for (p.functions, 0..) |f, j| {
             if (i != j and !reachable[i][j]) continue;
+            try r.require(!m.eq(f.returnTypeId, m.view_id), "r04-array-call");
             for (f.parameters) |parameter| try r.require(parameter.type != 4, "r04-array-call");
             for (f.instructions) |op| try r.require(op.opcode != 3 and op.resultType != 4 and op.opcode != 9 and op.opcode != 10, "r04-array-call");
         }

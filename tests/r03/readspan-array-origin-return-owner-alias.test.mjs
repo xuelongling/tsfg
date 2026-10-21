@@ -3,6 +3,7 @@
 // 26d keeps the direct-public-seam harness local while the legacy helper migration is STOP;
 // consolidate shared setup after that independently blocked migration is qualified, not during these controls.
 import assert from 'node:assert/strict';
+import { expectedArrayCore13 } from './array-core13-literal.mjs';
 import { readFile } from 'node:fs/promises';
 import test from 'node:test';
 import { readArrayFactsCandidate,writeArrayFactsCandidate } from '../../compiler/array-facts.mjs';
@@ -106,8 +107,8 @@ function publicPlanLedger(hir,row) {
   assert.equal(views.length,row.work.viewRegistrations);assert.equal(uses,row.work.viewUses);
   assert.equal(views.length+uses,row.work.viewGlobal);
 }
-/** @param {any} row @param {string} name @param {()=>any} action */
-function checkEntry(row,name,action) {
+/** @param {any} row @param {string} name @param {()=>any} action @param {any} state */
+function checkEntry(row,name,action,state) {
   if(row.expectedDiagnostic) {
     if(name==='buildHir') {
       const result=action();equalWhole(result,{status:'error',diagnostics:[row.expectedDiagnostic]},
@@ -115,7 +116,7 @@ function checkEntry(row,name,action) {
     }else rejects(action,row.expectedDiagnostic);
     return;
   }
-  if(name==='lowerHir'){rejects(action,row.expectedLowerDiagnostic);return;}
+  if(name==='lowerHir'){assert.equal(action(),expectedArrayCore13(state.hir,state.facts,state.context));return;}
   const result=action();
   if(name==='printHir')equalText(result,jcs(row.completeHir)+'\n','complete canonical HIR');
   else if(name==='printArrayCalls')equalText(result,jcs(row.completeAnalysis)+'\n','complete canonical report');
@@ -138,7 +139,7 @@ for(const row of rows)test('26d fresh disjoint or Array parameter may-alias thro
   const raw=actual.get(row.name);assert.ok(raw);const before=Buffer.from(raw);
   for(const [name,action]of Object.entries(entries))await t.test(name,()=>{
     const state=stateFor(row,raw),captured=snapshot(state);
-    checkEntry(row,name,()=>action(state));unchanged(state,captured);
+    checkEntry(row,name,()=>action(state),state);unchanged(state,captured);
     equalBytes(raw,before,'original actual Source bytes unchanged');
   });
   equalText(jcs(frozen),originalExpectations,'independent whole oracle unchanged');

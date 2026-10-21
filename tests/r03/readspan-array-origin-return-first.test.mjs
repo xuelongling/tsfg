@@ -43,10 +43,11 @@ for(const row of manifest.cases) {
 }
 assert.equal(actual.size,2);
 
-// The existing Core subset checks the first borrowed parameter before reserving output.
+// Retain the original first capability diagnostic as historical data only.
 const lowerDiagnostic={code:'r03-d-core-array-capability',ruleId:'r01-ts-baseline',phase:'lowering',
   message:'Array Core lowering requires nominal Array/scalar calls and a final checked read or f64 direct call',
   primary:{sourceId:'/readspan26d/app.ts',start:16,end:24}};
+assert.equal(lowerDiagnostic.code,'r03-d-core-array-capability');
 
 for(const row of rows)test('26d actual complete facts and owned HIR8 projection: '+row.name,()=>{
   const raw=actual.get(row.name);assert.ok(raw);
@@ -65,8 +66,8 @@ for(const row of rows)test('26d Array-origin family and caller last use through 
   const before=Buffer.from(raw);
   for(const [name,action]of Object.entries(entries))await t.test(name,()=>{
     const state=stateFor(row,raw),snapshot=captureState(state);
-    // Feature expectations remain structural refusal / whole success during Phase1 capability RED.
-    checkEntry(row,name,()=>action(state),lowerDiagnostic);
+    // Preserve upstream refusals; each current lowerHir success uses a complete independent literal.
+    checkEntry(row,name,()=>action(state),state);
     unchangedState(state,snapshot);
     assert.deepEqual(raw,before);
   });

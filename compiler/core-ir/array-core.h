@@ -14,7 +14,7 @@
 namespace mlir { class DialectRegistry; }
 namespace tsfg::arrays {
 inline constexpr llvm::StringLiteral schema =
-    "sha256:b959fee0646c337d231e9e0be6e7dd6fc53f6b6ef8f1f681a692b59bc78f7cf6";
+    "sha256:39a7877720fab4c3e7fc78d28f2232576865ab3c949e064ef7cc1e979548976b";
 inline constexpr llvm::StringLiteral f64Id =
     "sha256:dfbc72c48bec549ea679cd6aff531f9ebef95e001f6ae0bf419d2f33bf988a6c";
 inline constexpr llvm::StringLiteral arrayId =
@@ -41,11 +41,12 @@ public:
 struct Range { uint32_t start = 0, end = 0; };
 struct Parameter { std::string id, name; mlir::Type type; Range declaration, nameRange, annotation, elementAnnotation; };
 struct Function {
-  mlir::Operation *operation; Range declaration, name, annotation;
+  mlir::Operation *operation; Range declaration, name, annotation, elementAnnotation;
+  mlir::Type resultType; int returnOrigin = -1;
   std::vector<Parameter> parameters;
 };
 struct Access { bool read = false, write = false, structural = false; };
-struct PublishedContract { std::vector<Access> parameters; Access local; std::string digest; };
+struct PublishedContract { std::vector<Access> parameters; Access local; std::string digest; int returnOrigin = -1; };
 // A parameter owner retains its original full slot. Fresh Array aliases retain
 // the canonical creating SSA; formal Views never fabricate an Array register.
 struct Owner { mlir::Value value; unsigned index = 0; bool parameter = false; };
@@ -77,7 +78,8 @@ std::string identityHash(llvm::StringRef preimage);
 std::string sourceIdentity(llvm::StringRef path, Range anchor, bool site = false);
 mlir::LogicalResult reject(llvm::StringRef code, llvm::StringRef detail);
 mlir::LogicalResult verifyMetadata(mlir::ModuleOp module, Metadata &metadata);
-mlir::LogicalResult collectOwners(const Function &function, OwnerGraph &graph);
+mlir::LogicalResult deriveReturnOrigins(Metadata &metadata);
+mlir::LogicalResult collectOwners(const Function &function, const Metadata &metadata, OwnerGraph &graph);
 mlir::LogicalResult verifyPublication(mlir::ModuleOp module, Metadata &metadata);
 mlir::LogicalResult verifyViewLifetimes(const Function &function, const Metadata &metadata, const OwnerGraph &graph);
 mlir::LogicalResult verifyCallRoots(const Function &function, const OwnerGraph &graph, uint64_t &work);

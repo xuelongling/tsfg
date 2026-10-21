@@ -1,5 +1,5 @@
 // SPDX-License-Identifier: MIT
-// Complete one-block Core12 statement grammar. All operations must be consumed,
+// Complete one-block Core13 statement grammar. All operations must be consumed,
 // not merely well-typed; checked operations are retained and never evaluated.
 const std = @import("std");
 const m = @import("array-candidate-model.zig");
@@ -18,7 +18,7 @@ const Body = struct {
     previous: u32,
     locals: usize = 0,
     mutations: usize = 0,
-    calls: usize = 0,
+    calls_and_views: usize = 0,
     fn need(self: *Body, value: bool, code: []const u8) m.Error!void {
         try self.r.require(value, code);
     }
@@ -48,7 +48,8 @@ const Body = struct {
                 1, 6, 7, 12 => 0,
                 2 => op.resultType,
                 3, 4 => 3,
-                5, 9, 11 => 1,
+                5, 9 => 1,
+                11 => op.resultType,
                 8, 13 => 4,
                 10 => 2,
                 else => return self.r.reject("r04-array-shape"),
@@ -83,7 +84,8 @@ const Body = struct {
                 8 => try self.need(self.types[op.operands[0]] == 3 and self.types[op.operands[1]] == 2 and self.types[op.operands[2]] == 2, "r04-array-type"),
                 10 => try self.need(self.types[op.operands[0]] == 4, "r04-array-type"),
                 13 => try self.need(self.types[op.operands[0]] == 4, "r04-array-type"),
-                12 => try self.need(self.types[op.operands[0]] == 1, "r04-array-type"),
+                11 => try self.need(result == 1 or result == 4, "r04-array-type"),
+                12 => try self.need(m.eq(m.typeId(self.types[op.operands[0]]).?, self.f.returnTypeId), "r04-array-type"),
                 else => {},
             }
         }
@@ -102,7 +104,7 @@ const Body = struct {
         try self.need(m.eq(use.typeId, m.typeId(kind).?) and m.encloses(self.f.sourceRange, use.range), "r04-array-type");
         if (use.kind == 3) {
             const reg = try self.binding(use.binding.?);
-            try self.need(reg < self.f.parameters.len and self.types[reg] == kind, "r04-array-type");
+            try self.need((kind == 4 or reg < self.f.parameters.len) and self.types[reg] == kind, "r04-array-type");
             return .{ .reg = reg, .anchor = use.range };
         }
         if (use.kind == (if (kind == 2) @as(u8, 1) else 2)) {
@@ -182,9 +184,9 @@ const Body = struct {
         const length = try self.scalar(d.length, 2, true);
         try self.need(self.position == endpoint and op.operands[0] == owner and op.operands[1] == start.reg and op.operands[2] == length.reg, "r04-array-ssa");
         try self.need(d.calleeRange[1] < d.receiverRange[0] and d.receiverRange[1] < start.anchor[0] and start.anchor[1] < length.anchor[0] and length.anchor[1] < op.sourceRange[1], "r04-array-source");
-        try self.local(op, d.local, true);
-        const annotations = d.local.annotations.typed;
-        try self.need(annotations.elementAnnotationRange[0] > annotations.annotationRange[0] and annotations.elementAnnotationRange[1] < annotations.annotationRange[1], "r04-array-source");
+        self.calls_and_views += 1;
+        try self.need(self.calls_and_views <= 32, "r04-array-limit");
+        try self.viewBinding(op, d.local);
         self.position += 1;
     }
     fn viewLength(self: *Body, endpoint: usize) m.Error!void {
@@ -203,12 +205,15 @@ const Body = struct {
         const op = self.f.instructions[endpoint];
         const d = op.metadata.view_alias;
         try self.need(self.position == endpoint and op.operands[0] == try self.binding(d.targetBinding), "r04-array-ssa");
-        try self.local(op, d.local, false);
-        if (d.local.annotations == .typed) {
-            const a = d.local.annotations.typed;
+        try self.viewBinding(op, d.local);
+        self.position += 1;
+    }
+    fn viewBinding(self: *Body, op: m.Instruction, value: m.Local) m.Error!void {
+        try self.local(op, value, false);
+        if (value.annotations == .typed) {
+            const a = value.annotations.typed;
             try self.need(a.elementAnnotationRange[0] > a.annotationRange[0] and a.elementAnnotationRange[1] < a.annotationRange[1], "r04-array-source");
         }
-        self.position += 1;
     }
     fn standaloneRead(self: *Body, endpoint: usize) m.Error!void {
         const op = self.f.instructions[endpoint];
@@ -251,8 +256,8 @@ const Body = struct {
         self.position += 1;
     }
     fn call(self: *Body, endpoint: usize, returning: bool) m.Error!m.Range {
-        self.calls += 1;
-        try self.need(self.calls <= 32, "r04-array-limit");
+        self.calls_and_views += 1;
+        try self.need(self.calls_and_views <= 32, "r04-array-limit");
         const op = self.f.instructions[endpoint];
         const d = op.metadata.call;
         var target: ?m.Function = null;
@@ -261,11 +266,13 @@ const Body = struct {
         };
         try self.need(target != null, "r04-array-call");
         const t = target.?;
+        try self.need(m.eq(m.typeId(op.resultType).?, t.returnTypeId), "r04-array-type");
+        try self.need(d.local == null or (!returning and op.resultType == 4), "r04-array-call");
         try self.need(m.eq(t.functionId, d.functionId) and m.eq(t.signatureHash, d.signatureHash) and m.eq(t.sourceBinding, d.sourceCallee) and d.arguments.len == t.parameters.len and op.operands.len == d.arguments.len, "r04-array-call");
         const s = d.statementRange;
         const e = op.sourceRange;
         const c = d.calleeRange;
-        try self.need(m.encloses(self.f.sourceRange, s) and m.encloses(s, e) and s[0] >= self.previous and s[1] < self.f.sourceRange[1] and (if (returning) s[0] < e[0] else s[0] == e[0]) and e[0] == c[0] and m.encloses(e, c) and e[1] - c[1] >= 2, "r04-array-source");
+        try self.need(m.encloses(self.f.sourceRange, s) and m.encloses(s, e) and s[0] >= self.previous and s[1] < self.f.sourceRange[1] and (if (returning or d.local != null) s[0] < e[0] else s[0] == e[0]) and e[0] == c[0] and m.encloses(e, c) and e[1] - c[1] >= 2, "r04-array-source");
         var previous = c[1];
         for (d.arguments, 0..) |arg, i| {
             try self.need(arg.kind >= 1 and arg.kind <= 3, "r04-array-call");
@@ -281,7 +288,10 @@ const Body = struct {
         }
         try self.need(self.position == endpoint, "r04-array-ssa");
         self.position += 1;
-        if (!returning) self.previous = s[1];
+        if (d.local) |value| {
+            try self.need(m.same(value.statementRange, s), "r04-array-source");
+            try self.viewBinding(op, value);
+        } else if (!returning) self.previous = s[1];
         return s;
     }
     fn verify(self: *Body) m.Error!void {
@@ -302,18 +312,18 @@ const Body = struct {
                 10 => try self.viewLength(endpoint),
                 6, 7 => try self.mutation(endpoint),
                 11 => {
-                    const returning = endpoint + 2 == self.f.instructions.len and self.f.instructions[endpoint + 1].opcode == 12 and self.f.instructions[endpoint + 1].operands[0] == op.resultRegister;
+                    const returning = op.metadata.call.local == null and endpoint + 2 == self.f.instructions.len and self.f.instructions[endpoint + 1].opcode == 12 and self.f.instructions[endpoint + 1].operands[0] == op.resultRegister;
                     const statement = try self.call(endpoint, returning);
                     if (returning) {
                         const returned = self.f.instructions[self.position];
                         const use = returned.metadata.returned.value;
-                        try self.need(m.same(returned.sourceRange, statement) and use.kind == 6 and use.binding == null and m.eq(use.typeId, m.f64_id) and m.same(use.range, op.sourceRange), "r04-array-call");
+                        try self.need(m.same(returned.sourceRange, statement) and use.kind == 6 and use.binding == null and m.eq(use.typeId, self.f.returnTypeId) and m.eq(m.typeId(op.resultType).?, self.f.returnTypeId) and m.same(use.range, op.sourceRange), "r04-array-call");
                         self.position += 1;
                     }
                 },
                 12 => {
                     const use = op.metadata.returned.value;
-                    const value = try self.scalar(use, 1, false);
+                    const value = try self.scalar(use, if (m.eq(self.f.returnTypeId, m.view_id)) 4 else 1, false);
                     try self.need(self.position == endpoint and endpoint + 1 == self.f.instructions.len and op.operands[0] == value.reg, "r04-array-ssa");
                     const s = op.sourceRange;
                     try self.need(m.encloses(self.f.sourceRange, s) and s[0] >= self.previous and s[1] < self.f.sourceRange[1] and m.encloses(s, value.anchor) and s[0] < value.anchor[0], "r04-array-source");

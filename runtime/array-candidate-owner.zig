@@ -2,13 +2,77 @@
 // One canonical owner/family reconstruction, shared by borrow, roots and fixed coverage.
 const std = @import("std");
 const m = @import("array-candidate-model.zig");
+// Actual SSA provenance is derived before any Published claim is compared. The
+// full graph has already rejected View-containing cyclic outgoing domains; this
+// cache visits each View-return body once, without expanding caller paths.
+pub const ReturnOrigins = struct {
+    const State = enum { unseen, active, done };
+    slots: [16]?u8 = @splat(null),
+    state: [16]State = @splat(.unseen),
+    fn target(r: *m.Reader, p: m.Payload, op: m.Instruction) m.Error!usize {
+        for (p.functions, 0..) |f, i| if (m.eq(f.functionId, op.metadata.call.functionId)) return i;
+        return r.reject("r04-array-call");
+    }
+    fn trace(self: *ReturnOrigins, r: *m.Reader, p: m.Payload, index: usize) m.Error!void {
+        const f = p.functions[index];
+        if (!m.eq(f.returnTypeId, m.view_id) or self.state[index] == .done) return;
+        try r.require(self.state[index] == .unseen, "r04-array-call");
+        self.state[index] = .active;
+        // 255 denotes a local fresh or non-reference value, never a formal slot.
+        var origins: [4219]u8 = @splat(255);
+        for (f.parameters, 0..) |parameter, slot| if (parameter.type == 3 or parameter.type == 4) {
+            origins[slot] = @intCast(slot);
+        };
+        for (f.instructions) |op| switch (op.opcode) {
+            4, 8, 13 => origins[op.resultRegister] = origins[op.operands[0]],
+            11 => if (op.resultType == 4) {
+                const callee = try target(r, p, op);
+                try self.trace(r, p, callee);
+                const slot = self.slots[callee] orelse return r.reject("r04-array-publication-coverage");
+                try r.require(slot < op.operands.len, "r04-array-call");
+                origins[op.resultRegister] = origins[op.operands[slot]];
+            },
+            12 => {
+                const slot = origins[op.operands[0]];
+                try r.require(slot < f.parameters.len, "r04-array-publication-coverage");
+                try r.require(f.parameters[slot].type == 3 or f.parameters[slot].type == 4, "r04-array-publication-coverage");
+                self.slots[index] = slot;
+            },
+            else => {},
+        };
+        try r.require(self.slots[index] != null, "r04-array-publication-coverage");
+        self.state[index] = .done;
+    }
+    pub fn derive(r: *m.Reader, p: m.Payload) m.Error!ReturnOrigins {
+        var result: ReturnOrigins = .{};
+        for (0..p.functions.len) |index| try result.trace(r, p, index);
+        return result;
+    }
+    pub fn verify(self: *const ReturnOrigins, r: *m.Reader, p: m.Payload) m.Error!void {
+        if (p.publication) |publication| for (p.functions, 0..) |f, index| {
+            for (publication.contracts) |row| {
+                if (!m.eq(row.functionId, f.functionId)) continue;
+                const actual = self.slots[index];
+                try r.require((row.upper.returnOrigin != null) == (actual != null), "r04-array-publication-coverage");
+                if (actual) |slot| try r.require(row.upper.returnOrigin.?.index == slot, "r04-array-publication-coverage");
+            }
+        };
+    }
+    fn selected(self: *const ReturnOrigins, r: *m.Reader, p: m.Payload, op: m.Instruction) m.Error!struct { slot: u8, array: bool } {
+        const callee = try target(r, p, op);
+        const slot = self.slots[callee] orelse return r.reject("r04-array-publication-coverage");
+        try r.require(slot < p.functions[callee].parameters.len and slot < op.operands.len, "r04-array-call");
+        return .{ .slot = slot, .array = p.functions[callee].parameters[slot].type == 3 };
+    }
+};
 pub const Model = struct {
     owners: [4219]u16 = @splat(65535),
     types: [4219]u8 = @splat(0),
     parameter_owner: [4219]bool = @splat(false),
     family: [4219]u16 = @splat(65535),
-    views: [25]m.ViewLifetime = undefined,
+    views: [57]m.ViewLifetime = undefined,
     count: usize = 0,
+    families: usize = 0,
     pub fn owner(self: *const Model, reg: u16) m.ViewOwner {
         return if (self.types[reg] == 4) self.views[self.family[reg]].owner else .{ .array = self.owners[reg] };
     }
@@ -23,6 +87,10 @@ pub const Model = struct {
     }
     fn append(self: *Model, r: *m.Reader, reg: u16, value: m.ViewOwner, origin: m.ViewOrigin, family: ?u16) m.Error!void {
         try r.require(self.count < self.views.len, "r04-array-limit");
+        if (family == null) {
+            try r.require(self.families < 40, "r04-array-limit");
+            self.families += 1;
+        }
         self.family[reg] = family orelse @intCast(self.count);
         self.views[self.count] = .{ .viewRegister = reg, .owner = value, .origin = origin, .lastUseInstruction = null };
         self.count += 1;
@@ -32,15 +100,15 @@ pub fn charge(r: *m.Reader, work: *usize, count: usize) m.Error!void {
     try r.require(count <= 16384 - work.*, "r04-array-limit");
     work.* += count;
 }
-pub fn derive(r: *m.Reader, f: m.Function, work: *usize) m.Error!Model {
+pub fn derive(r: *m.Reader, p: m.Payload, f: m.Function, origins: *const ReturnOrigins, work: *usize) m.Error!Model {
     var model: Model = .{};
-    for (f.parameters, 0..) |p, i| {
-        model.types[i] = p.type;
-        if (p.type == 3) {
+    for (f.parameters, 0..) |parameter, i| {
+        model.types[i] = parameter.type;
+        if (parameter.type == 3) {
             model.owners[i] = @intCast(i);
             model.parameter_owner[i] = true;
         }
-        if (p.type == 4) try model.append(r, @intCast(i), .{ .parameter = @intCast(i) }, .{ .parameter = @intCast(i) }, null);
+        if (parameter.type == 4) try model.append(r, @intCast(i), .{ .parameter = @intCast(i) }, .{ .parameter = @intCast(i) }, null);
     }
     for (f.instructions, 0..) |op, i| {
         try charge(r, work, 1);
@@ -56,6 +124,20 @@ pub fn derive(r: *m.Reader, f: m.Function, work: *usize) m.Error!Model {
                 const root = model.owners[op.operands[0]];
                 try r.require(root != 65535, "r04-array-owner");
                 try model.append(r, op.resultRegister, .{ .array = root }, .{ .create = @intCast(i) }, null);
+            },
+            11 => if (op.resultType == 4) {
+                const selected = try origins.selected(r, p, op);
+                const actual = op.operands[selected.slot];
+                if (selected.array) {
+                    const root = model.owners[actual];
+                    try r.require(root != 65535, "r04-array-owner");
+                    try model.append(r, op.resultRegister, .{ .array = root }, .{ .call = @intCast(i) }, null);
+                } else {
+                    const family = model.family[actual];
+                    try r.require(family < model.count, "r04-array-owner");
+                    const first = model.views[family];
+                    try model.append(r, op.resultRegister, first.owner, first.origin, family);
+                }
             },
             13 => {
                 const family = model.family[op.operands[0]];
@@ -81,7 +163,7 @@ fn active(view: m.ViewLifetime, index: usize, call: bool) bool {
     const last = view.lastUseInstruction orelse return false;
     const began = switch (view.origin) {
         .parameter => true,
-        .create => |at| at < index,
+        .create, .call => |at| at < index,
     };
     return began and (if (call) index <= last else index < last);
 }

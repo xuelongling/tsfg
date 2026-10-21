@@ -5,7 +5,7 @@
 #include <vector>
 
 namespace tsfg {
-// Complete validated Core12 to private Array packet v2. Retain original
+// Complete validated Core13 to private Array packet v3. Retain original
 // identities and canonical proof tables; no projection, evaluation or wire9.
 mlir::LogicalResult arrayCandidateBytecode(mlir::ModuleOp module,
                                          std::vector<uint8_t> &packet);

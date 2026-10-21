@@ -2,6 +2,7 @@
 // Exercise the new public lowering route while reusing qualified upstream protocol rules.
 import test from 'node:test';
 import assert from 'node:assert/strict';
+import { expectedArrayCore13 } from './array-core13-literal.mjs';
 import { readFile } from 'node:fs/promises';
 import { lowerHir, verifyHir, printHir, readHir } from '../../compiler/hir.mjs';
 import { fixtures, fresh, context, failure, hirError, trustedHirError, coreOracle, sha } from './array-test-fixtures.mjs';
@@ -30,16 +31,21 @@ test('25c repeated owned output and offset context views preserve complete input
       backing.subarray(3,3+original.length)];
     for(const view of views) {
       const h=fresh(row.hir.expectedHir),before=fresh(h),ctx=context(row,view);
-      const result=lowerHir(h,ctx);
-      assert.equal(result,c.core);assert.equal(lowerHir(fresh(h),Object.assign(Object.create(null),ctx)),c.core);
-      assert.equal(lowerHir(nullRecords(h),context(row)),c.core);
-      assert.equal(lowerHir(readHir(Buffer.from(row.hir.hirText),context(row)),context(row)),c.core);
+      const result=lowerHir(h,ctx),expectedCore=expectedArrayCore13(h,ctx);
+      assert.equal(result,expectedCore);
+      const repeated=fresh(h),nullContext=Object.assign(Object.create(null),ctx);
+      assert.equal(lowerHir(repeated,nullContext),expectedArrayCore13(repeated,nullContext));
+      const nullHir=nullRecords(h),plainContext=context(row);
+      assert.equal(lowerHir(nullHir,plainContext),expectedArrayCore13(nullHir,plainContext));
+      const roundtrip=readHir(Buffer.from(row.hir.hirText),context(row)),roundtripContext=context(row);
+      assert.equal(lowerHir(roundtrip,roundtripContext),expectedArrayCore13(roundtrip,roundtripContext));
       assert.equal(printHir(h,context(row)),row.hir.hirText);
       assert.deepEqual(h,before);assert.deepEqual(Buffer.from(view),original);
       view.fill(0);
-      assert.equal(result,c.core,'primitive result owns its text after caller byte mutation');
+      assert.equal(result,expectedCore,'primitive result owns its text after caller byte mutation');
       assert.deepEqual(failure(()=>lowerHir(h,ctx)),hirError('context'));
-      assert.equal(lowerHir(fresh(h),context(row)),c.core,'prior success never caches admission');
+      const recovered=fresh(h),recoveredContext=context(row);
+      assert.equal(lowerHir(recovered,recoveredContext),expectedArrayCore13(recovered,recoveredContext),'prior success never caches admission');
     }
     assert.equal(sha(row.facts.packageText),c.factsPackageSHA256);
   });

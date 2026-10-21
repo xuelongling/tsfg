@@ -2,6 +2,7 @@
 // Independent closure gold predates output; no Source process or legacy helper migration runs here.
 // Direct public seams keep this slice separate until the stopped legacy39 migration is qualified.
 import assert from 'node:assert/strict';
+import { expectedArrayCore13 } from './array-core13-literal.mjs';
 import { readFile } from 'node:fs/promises';
 import test from 'node:test';
 import { readArrayFactsCandidate,writeArrayFactsCandidate } from '../../compiler/array-facts.mjs';
@@ -136,8 +137,8 @@ function fortyRootWitness(hir) {
   const uses=allViews.reduce((sum,view)=>sum+view.useEvents.length,0);
   assert.equal(uses,1);assert.equal(allViews.length+uses,42);
 }
-/** @param {any} row @param {string} name @param {()=>any} action */
-function checkEntry(row,name,action) {
+/** @param {any} row @param {string} name @param {()=>any} action @param {any} state */
+function checkEntry(row,name,action,state) {
   if(row.expectedDiagnostic) {
     if(name==='buildHir') {
       const result=action();whole(result,{status:'error',diagnostics:[row.expectedDiagnostic]},
@@ -145,7 +146,7 @@ function checkEntry(row,name,action) {
     }else rejects(action,row.expectedDiagnostic);
     return;
   }
-  if(name==='lowerHir'){rejects(action,row.expectedLowerDiagnostic);return;}
+  if(name==='lowerHir'){assert.equal(action(),expectedArrayCore13(state.hir,state.facts,state.context));return;}
   const result=action();
   if(name==='printHir')text(result,jcs(row.completeHir)+'\n','complete canonical HIR');
   else if(name==='printArrayCalls')text(result,jcs(row.completeAnalysis)+'\n','complete canonical report');
@@ -168,7 +169,7 @@ for(const row of rows)test('26d call-return escape or reachable40 roots through 
   const raw=actual.get(row.name);assert.ok(raw);const before=Buffer.from(raw);
   for(const [name,action]of Object.entries(entries))await t.test(name,()=>{
     const state=stateFor(row,raw),captured=snapshot(state);
-    checkEntry(row,name,()=>action(state));unchanged(state,captured);
+    checkEntry(row,name,()=>action(state),state);unchanged(state,captured);
     bytes(raw,before,'Root actual Source bytes unchanged');
   });
   text(jcs(frozen),originalExpectations,'independent closure oracle unchanged');

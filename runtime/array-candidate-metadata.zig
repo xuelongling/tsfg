@@ -1,5 +1,5 @@
 // SPDX-License-Identifier: MIT
-// Finite Core12 origin/identity grammar. No Source reconstruction or generic JCS.
+// Finite Core13 origin/identity grammar. No Source reconstruction or generic JCS.
 const std = @import("std");
 const m = @import("array-candidate-model.zig");
 const Sha = std.crypto.hash.sha2.Sha256;
@@ -41,7 +41,7 @@ pub fn sourceIdentity(path: []const u8, anchor: m.Range, site: bool) m.Digest {
     state.update("}");
     return finish(&state);
 }
-fn signature(parameters: []const m.Parameter) m.Digest {
+fn signature(parameters: []const m.Parameter, returned: m.Digest) m.Digest {
     var state = Sha.init(.{});
     state.update("tsfg.signature\x00(");
     for (parameters, 0..) |p, i| {
@@ -54,7 +54,7 @@ fn signature(parameters: []const m.Parameter) m.Digest {
             else => unreachable,
         });
     }
-    state.update(")->f64");
+    state.update(if (m.eq(returned, m.view_id)) ")->readspan.f64" else ")->f64");
     return finish(&state);
 }
 fn functionIdentity(path: []const u8, name: []const u8, sig: m.Digest) m.Digest {
@@ -150,7 +150,7 @@ const Bindings = struct {
 };
 pub fn verify(r: *m.Reader, p: m.Payload) m.Error!void {
     try r.require(m.text(p.coreVersion, "0.9.0") and m.text(p.target, "windows-x86_64-msvc") and m.text(p.triple, "x86_64-pc-windows-msvc") and m.text(p.dataLayout, "e-m:w-p270:32:32-p271:32:32-p272:64:64-i64:64-i128:128-f80:128-n8:16:32:64-S128") and m.eq(p.formalBytecodeSchema, m.formal_schema), "r04-array-identity");
-    try r.require(m.text(p.marker.family, "tsfg.core-array-candidate") and p.marker.version == 12 and m.eq(p.marker.schema, m.core_schema) and m.text(p.marker.profile, "dense-f64-array-readspan-parameters-checked-v12") and p.marker.factsVersion == 7, "r04-array-identity");
+    try r.require(m.text(p.marker.family, "tsfg.core-array-candidate") and p.marker.version == 13 and m.eq(p.marker.schema, m.core_schema) and m.text(p.marker.profile, "dense-f64-array-readspan-returns-checked-v13") and p.marker.factsVersion == 7, "r04-array-identity");
     const dts = try sources(r, p);
     try origins(r, p, dts);
     var bindings: Bindings = .{};
@@ -173,9 +173,12 @@ pub fn verify(r: *m.Reader, p: m.Payload) m.Error!void {
             try bindings.add(r, param.id);
             prior = param.declarationRange[1];
         }
-        const sig = signature(f.parameters);
+        if (f.returnElementAnnotationRange) |element| {
+            try r.require(m.eq(f.returnTypeId, m.view_id) and element[0] > t[0] and element[1] < t[1], "r04-array-source");
+        } else try r.require(m.eq(f.returnTypeId, m.f64_id), "r04-array-type");
+        const sig = signature(f.parameters, f.returnTypeId);
         const id = functionIdentity(p.sourcePath, f.name, sig);
-        try r.require(m.eq(f.signatureHash, sig) and m.eq(f.functionId, id) and m.eq(p.functionIds[i], id) and m.eq(f.returnTypeId, m.f64_id), "r04-array-identity");
+        try r.require(m.eq(f.signatureHash, sig) and m.eq(f.functionId, id) and m.eq(p.functionIds[i], id), "r04-array-identity");
         for (p.functions[0..i]) |old| try r.require(!m.eq(old.functionId, id), "r04-array-identity");
         previous = d[1];
     }
@@ -185,6 +188,7 @@ pub fn verify(r: *m.Reader, p: m.Payload) m.Error!void {
             .alias => |v| v.local,
             .view_create => |v| v.local,
             .view_alias => |v| v.local,
+            .call => |v| v.local,
             else => null,
         };
         if (loc) |value| try bindings.add(r, value.id);
@@ -193,6 +197,7 @@ pub fn verify(r: *m.Reader, p: m.Payload) m.Error!void {
         try r.require(i == 0 or std.mem.lessThan(u8, p.exports[i - 1].name, ex.name), "r04-array-identity");
         var found = false;
         for (p.functions) |f| if (m.text(ex.name, f.name) and m.eq(ex.functionId, f.functionId)) {
+            try r.require(m.eq(f.returnTypeId, m.f64_id), "r04-array-type");
             found = true;
         };
         try r.require(found, "r04-array-identity");

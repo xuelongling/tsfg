@@ -2,6 +2,7 @@
 import {pinnedContainer} from './array-test-fixtures.mjs';
 import test from 'node:test';
 import assert from 'node:assert/strict';
+import { expectedArrayCore13 } from './array-core13-literal.mjs';
 import {readFile} from 'node:fs/promises';
 import {readArrayFactsCandidate} from '../../compiler/array-facts.mjs';
 import {buildHir,verifyHir,lowerHir} from '../../compiler/hir.mjs';
@@ -16,7 +17,8 @@ for(const row of o.cases)test('complete actual Array parameter package: '+row.na
   assert.equal(built.status,'ok');assert.deepEqual(built.hir,row.hir);
   assert.deepEqual(verifyHir(built.hir,ctx,row.publication),row.hir);
   const core=lowerHir(built.hir,ctx,row.publication);
-  assert.equal(core,row.core);assert.deepEqual(parseArrayCore(core),parseArrayCore(row.core));
+  const expectedCore=expectedArrayCore13(built.hir,ctx,row.publication);
+  assert.equal(core,expectedCore);assert.deepEqual(parseArrayCore(core),parseArrayCore(expectedCore));
   assert.equal(JSON.stringify(row.hir),input);assert.deepEqual(ctx.factsBytes,packet);
 });
 test('actual package identity, full parameters, aliases, call SSA facts and exports cannot be substituted',()=>{

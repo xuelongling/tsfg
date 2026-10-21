@@ -21,11 +21,13 @@ fn validate(r: *m.Reader, p: m.Payload) m.Error!void {
     try body.verify(r, p);
     const cyclic = try graph.verify(r, p);
     try publication.verifyContext(r, p, cyclic);
+    const origins = try owner.ReturnOrigins.derive(r, p);
+    try origins.verify(r, p);
     var work: usize = 0;
     var owner_work: usize = 0;
     var effects: publication.Analysis = .{};
     for (p.functions, 0..) |f, index| {
-        const model = try owner.derive(r, f, &owner_work);
+        const model = try owner.derive(r, p, f, &origins, &owner_work);
         try effects.add(r, p, index, &model, &owner_work);
         try owner.verify(r, p, f, &model);
         try roots.verify(r, f, &work, &model);
