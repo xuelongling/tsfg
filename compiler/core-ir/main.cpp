@@ -10,6 +10,7 @@
 #include "string-core.h"
 #include "string-wire.h"
 #include "array-core.h"
+#include "array-owner-proof.h"
 #include "array-wire.h"
 #include "kernel-access.h"
 #include "mlir/Dialect/Func/IR/FuncOps.h"
@@ -71,6 +72,8 @@ int readPrivatePacketInput(std::string &bytes, llvm::StringRef budgetCode) {
 } // namespace
 
 int main(int argc, char **argv) {
+  if (argc>1 && llvm::StringRef(argv[1])=="--array-owner-proof")
+    return tsfg::arrays::ownerproof::ownerProofCommand(argc);
   if (argc == 2 && llvm::StringRef(argv[1]) == "--canonicalize-exception-candidate")
     return tsfg::exception::canonicalizeCandidate();
   if (argc == 2 && llvm::StringRef(argv[1]) == "--inspect-native-instructions") {

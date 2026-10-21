@@ -18,7 +18,7 @@ const cmake=await readFile(path.join(coreRoot,'CMakeLists.txt'),'utf8');
 const target=/add_llvm_executable\(tsfg-core-ir\s+([\s\S]*?)\)\s*target_link_libraries/.exec(cmake);
 assert.ok(target);
 const translationUnits=target[1].trim().split(/\s+/);
-assert.equal(translationUnits.length,49);
+assert.equal(translationUnits.length,55);
 for(const name of translationUnits)assert.match(name,/^[a-z0-9_-]+\.cpp$/);
 const closure=new Set(['CMakeLists.txt']),pending=[...translationUnits];
 while(pending.length){const name=pending.pop();if(closure.has(name))continue;closure.add(name);
@@ -26,7 +26,7 @@ while(pending.length){const name=pending.pop();if(closure.has(name))continue;clo
  for(const match of text.matchAll(/^#include "([a-z0-9_-]+\.h)"/gm))pending.push(match[1]);
 }
 const coreFiles=[...closure].sort().map(name=>'compiler/core-ir/'+name);
-assert.equal(coreFiles.length,76);
+assert.equal(coreFiles.length,84);
 const declaration=JSON.parse(await readFile(path.join(productRoot,'eng/build-inputs.json'),'utf8'));
 const entries=await Promise.all(declaration.entries.map(async entry=>({projectId:entry.projectId,
  repositoryRelativePath:entry.path,sha256:hash(await readFile(path.join(productRoot,entry.path)))})));
@@ -48,7 +48,7 @@ async function inputFixture(label,changed){const root=await fixture(label);
   await copyFile(path.join(productRoot,name),path.join(root,name));}
  return root;
 }
-test('production source copy stages the complete49TU and quoted include closure byte-exactly',async()=>{
+test('production source copy stages the complete55TU and quoted include closure byte-exactly',async()=>{
  const product=await fixture('whole');await stageMlirProductSources({productRoot,product,identity});
  assert.deepEqual(await allFiles(product),stageFiles.sort());
  for(const name of stageFiles)assert.deepEqual(await readFile(path.join(product,name)),await readFile(path.join(productRoot,name)),name);

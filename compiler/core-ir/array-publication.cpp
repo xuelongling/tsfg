@@ -107,8 +107,10 @@ mlir::LogicalResult publication(mlir::ModuleOp module, Metadata &metadata) {
     contracts+="{\"digest\":"+identityQuote(contract.digest)+","+body.substr(1);
   }
   contracts+=']'; const auto scope=domainHash("tsfg.array-call-scope.v4",scopeJson(module,metadata,order));
-  if (text(data,"scope_digest")!=scope || text(data,"expected_digest")!=domainHash("tsfg.array-publication.v4","{\"contracts\":"+contracts+",\"scopeDigest\":"+identityQuote(scope)+"}"))
+  const auto published=domainHash("tsfg.array-publication.v4","{\"contracts\":"+contracts+",\"scopeDigest\":"+identityQuote(scope)+"}");
+  if (text(data,"scope_digest")!=scope || text(data,"expected_digest")!=published)
     return reject("core-ir-array-publication","scope/whole publication digest differs");
+  metadata.scopeDigest=scope; metadata.publishedDigest=published;
   metadata.fixedPublication=true; return mlir::success();
 }
 struct Call { size_t caller,target; mlir::func::CallOp operation; };

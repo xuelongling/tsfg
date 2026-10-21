@@ -3,6 +3,7 @@
 #include "mlir/IR/BuiltinOps.h"
 #include "mlir/IR/BuiltinAttributes.h"
 #include "mlir/IR/TypeSupport.h"
+#include "mlir/Support/LogicalResult.h"
 #include "llvm/ADT/ArrayRef.h"
 #include "llvm/ADT/DenseMap.h"
 #include "llvm/ADT/StringRef.h"
@@ -56,11 +57,28 @@ struct OwnerGraph {
 };
 struct Metadata {
   std::string path, lengthProperty, viewLengthProperty, viewIntrinsic;
+  std::string scopeDigest, publishedDigest;
   uint32_t length = 0;
   std::vector<Function> functions;
   std::set<std::string> bindings, sites;
   std::vector<PublishedContract> contracts; bool fixedPublication = false;
 };
+// Published only after the entire old Array verifier succeeds. The module must
+// outlive this result and remain unchanged while its indexed SSA is consumed.
+class ValidatedAnalysis {
+  Metadata data;
+  std::vector<std::vector<mlir::Operation *>> indexed;
+  std::vector<OwnerGraph> ownerGraphs;
+  friend mlir::FailureOr<ValidatedAnalysis> analyzeCandidate(mlir::ModuleOp);
+  ValidatedAnalysis() = default;
+public:
+  ValidatedAnalysis(ValidatedAnalysis &&) = default;
+  ValidatedAnalysis &operator=(ValidatedAnalysis &&) = default;
+  const Metadata &metadata() const { return data; }
+  const std::vector<mlir::Operation *> &operations(size_t index) const { return indexed[index]; }
+  const OwnerGraph &owners(size_t index) const { return ownerGraphs[index]; }
+};
+mlir::FailureOr<ValidatedAnalysis> analyzeCandidate(mlir::ModuleOp module);
 void registerDialect(mlir::DialectRegistry &registry);
 bool usesCandidate(mlir::ModuleOp module);
 bool fields(mlir::DictionaryAttr dictionary, llvm::ArrayRef<llvm::StringRef> names);

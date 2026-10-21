@@ -433,21 +433,29 @@ public:
     if (ops.back()->getName().getStringRef()!="func.return") return reject("core-ir-array-shape","complete local/final-return grammar required");
     return mlir::success();
   }
+  std::vector<mlir::Operation *> takeOperations() { return std::move(ops); }
 };
 } // namespace
-mlir::LogicalResult verifyCandidate(mlir::ModuleOp module) {
-  Metadata metadata;
+mlir::FailureOr<ValidatedAnalysis> analyzeCandidate(mlir::ModuleOp module) {
+  ValidatedAnalysis analysis; auto &metadata=analysis.data;
   if (mlir::failed(verifyMetadata(module,metadata))) return mlir::failure();
   size_t elements=0;
-  for (const auto &function : metadata.functions)
-    if (mlir::failed(Body(function,metadata,elements).verify())) return mlir::failure();
-  if (mlir::failed(verifyPublication(module,metadata))) return mlir::failure();
-  uint64_t work=0;
   for (const auto &function : metadata.functions) {
-    OwnerGraph graph;
+    Body body(function,metadata,elements);
+    if (mlir::failed(body.verify())) return mlir::failure();
+    analysis.indexed.push_back(body.takeOperations());
+  }
+  if (mlir::failed(verifyPublication(module,metadata))) return mlir::failure();
+  uint64_t work=0; analysis.ownerGraphs.resize(metadata.functions.size());
+  for (size_t index=0;index<metadata.functions.size();++index) {
+    const auto &function=metadata.functions[index]; auto &graph=analysis.ownerGraphs[index];
     if (mlir::failed(collectOwners(function,metadata,graph)) || mlir::failed(verifyViewLifetimes(function,metadata,graph)) ||
         mlir::failed(verifyCallRoots(function,graph,work))) return mlir::failure();
   }
-  return mlir::success();
+  return std::move(analysis);
+}
+mlir::LogicalResult verifyCandidate(mlir::ModuleOp module) {
+  auto analysis=analyzeCandidate(module);
+  return mlir::success(mlir::succeeded(analysis));
 }
 } // namespace tsfg::arrays
