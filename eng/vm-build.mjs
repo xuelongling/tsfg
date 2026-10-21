@@ -155,7 +155,7 @@ export async function createVmLinkObjectRetention({stage,logPath,output,counterO
       catch(error){fail(error);}return result;}};
   return observer;
 }
-const runtimeSources = [...["root", "bytecode", "bytecode_model", "bytecode_decode", "bytecode_view", "nullable-bytecode", "nullable-model", "nullable-decode", "nullable-cfg", "nullable-tags", "string-candidate", "string-candidate-model", "string-candidate-decode", "string-candidate-verify", "vm", "runtime", "main", "contract", "module_format", "module", "request", "host_counter", "clock", "execution_frame", "scalar", "managed-heap", "managed-payload", "string-codec", "host-bindings", "host-semantic-contract"].map(name => `runtime/${name}.zig`), "runtime/host_counter.c", "runtime/host_counter_bridge.c"];
+const runtimeSources = [...["root", "bytecode", "bytecode_model", "bytecode_decode", "bytecode_view", "nullable-bytecode", "nullable-model", "nullable-decode", "nullable-cfg", "nullable-tags", "string-candidate", "string-candidate-model", "string-candidate-decode", "string-candidate-verify", "array-candidate", "array-candidate-model", "array-candidate-decode", "array-candidate-metadata", "array-candidate-body", "array-candidate-owner", "array-candidate-roots", "array-candidate-graph", "vm", "runtime", "main", "contract", "module_format", "module", "request", "host_counter", "clock", "execution_frame", "scalar", "managed-heap", "managed-payload", "string-codec", "host-bindings", "host-semantic-contract"].map(name => `runtime/${name}.zig`), "runtime/host_counter.c", "runtime/host_counter_bridge.c"];
 
 /** Actual production copy boundary, also exercised without starting the VM. */
 export async function stageVmRuntimeSources({productRoot,product,identity,sha256}) {

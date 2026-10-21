@@ -36,3 +36,6 @@ pub const nullable = @import("nullable-bytecode.zig");
 
 // Private immutable String data; no formal loader or execution qualification.
 pub const stringCandidate = @import("string-candidate.zig");
+
+// Private complete Array data admission; no formal VM qualification.
+pub const arrayCandidate = @import("array-candidate.zig");
