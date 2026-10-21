@@ -3,6 +3,11 @@ import assert from 'node:assert/strict';
 import {createHash} from 'node:crypto';
 import {readFile} from 'node:fs/promises';
 import test from 'node:test';
+import {moduleCallableCoreView} from '../../compiler/module-callable-core.mjs';
+const coreGoldBytes=await readFile(new URL('./module-callable-core-kernel.json',import.meta.url));
+assert.equal(createHash('sha256').update(coreGoldBytes).digest('hex'),
+  '2c187d3d228a52f89d9a1ebd8ca9bb68e3c63eef7c819e40c66223865d775671');
+const coreOracle=JSON.parse(coreGoldBytes.toString('utf8'));
 import {importCapturedFrontendResponse} from '../../compiler/frontend-response.mjs';
 import {buildHir,verifyHir,printHir,readHir,analyzeModuleCalls,verifyModuleCalls,
   printModuleCalls,readModuleCalls,verifyKernelParallelGroup,lowerHir} from '../../compiler/hir.mjs';
@@ -57,7 +62,13 @@ for(const c of data.kernelCases)test('fixed alias Published and kernel whole: '+
   const consume=()=>verifyKernelParallelGroup(cold,clone(c.context),{targets:clone(c.proofs[0].targets)});
   if(c.kernelExpected.status==='ok'){const proof=consume();assert.deepEqual(proof,c.kernelExpected.proof);frozen(proof);}
   else rejects(consume,c.kernelExpected.error);
-  rejects(()=>lowerHir(cold),c.lowerError);assert.equal(jcs(c),before);
+  const gold=coreOracle.rows.find(row=>row.name===c.name);
+  const {functionSelection,...view}=moduleCallableCoreView(cold);
+  assert.equal(functionSelection,'complete-original-universe');
+  const {emissionSelection,...expectedView}=gold.expectedFormalView;
+  assert.deepEqual(emissionSelection,{policy:functionSelection,functionIds:view.functions.map(fn=>fn.id)});
+  assert.deepEqual(view,expectedView);
+  assert.equal(lowerHir(cold),gold.expectedRawCore);assert.equal(jcs(c),before);
 });
 
 test('real body writes cover both read-write orientations and write-write without fake alias GlobalId',()=>{

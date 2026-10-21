@@ -1,0 +1,1344 @@
+{
+  "family": "tsfg.m23i-independent-formal-core-whole-oracle",
+  "version": 1,
+  "base": "a6c4d59cd06f4820bd0313169ac5416ac29030e8",
+  "rows": [
+    {
+      "id": "bool",
+      "originalSelector": "$",
+      "actualSelector": "$",
+      "publicConfiguration": {
+        "seam": "lowerHir",
+        "argumentCount": 1,
+        "hirSelector": "$.hir"
+      },
+      "expectedRawCore": "module attributes {tsfg_core.version = \"0.9.0\", tsfg_core.input_identity = \"sha256:eb1164b3a681be1aa760d2f32f42991b587878cccddd57904d9fa8ce59c7040e\", tsfg_core.source_hash = \"sha256:96b6db8cf548132041bab6f138b1cc548711658eb3ad35ecac27057f92501285\", tsfg_core.source_path = \"/src/app.ts\", tsfg_core.target = \"windows-x86_64-msvc\", tsfg_core.triple = \"x86_64-pc-windows-msvc\", tsfg_core.data_layout = \"e-m:w-p270:32:32-p271:32:32-p272:64:64-i64:64-i128:128-f80:128-n8:16:32:64-S128\", tsfg_core.bytecode_schema = \"sha256:3dea6ce5de996dfa3e7141cced985243ea74ac9bb80f03636c6694343118f2a6\", tsfg_core.source_length = 254 : i64, tsfg_core.sources = [{path = \"/src/app.ts\", hash = \"sha256:96b6db8cf548132041bab6f138b1cc548711658eb3ad35ecac27057f92501285\", length = 254 : i64}, {path = \"/src/minimal-integers-v3.d.ts\", hash = \"sha256:9fc1955899e303b5815590f7150f60662f3cece0a633c94a2a06669cf509a96e\", length = 1214 : i64}], tsfg_core.modules = [{id = \"sha256:5de2f73a69e4070b6a4d4dfd21403b51483f644bdb9dca611433f1a5998f246e\", source = 0 : i64, initializer = 0 : i64, dependencies = []}], tsfg_core.globals = [{id = \"sha256:b44756c0279c999dc141179c7e44e906ebd1da73f2be98cd4aa68de36dc5bae7\", source = 0 : i64, name = \"shared\", binding_kind = \"source\", type = \"sha256:811afa3745352bcd218d039b4539ec7e7ca8d103420dbc4c8ab8d6119e850721\", writable = true, start = 22 : i64, end = 29 : i64}], tsfg_core.hosts = [], tsfg_core.roots = [{kind = \"kernel\", source = 0 : i64, name = \"entry\", function = 3 : i64}, {kind = \"kernel\", source = 0 : i64, name = \"peer\", function = 1 : i64}], tsfg_core.initialization = [0 : i64]} {\n  func.func @\"f0633561aa079c7cce80bdab8eaa08cbd8baa2de4a528651e84dae9341b453217\"() -> i32 attributes {tsfg_core.function_id = \"sha256:0633561aa079c7cce80bdab8eaa08cbd8baa2de4a528651e84dae9341b453217\", tsfg_core.signature_hash = \"sha256:ac9438b17e41c86e042aaa640f76bd95693245676c19c4cbfd89cf43315df6f9\", tsfg_core.type_id = \"sha256:a499279eb079e9a530729c0e20165237b946527f01f48d1426b927e2c2e7d727\", tsfg_core.function_start = 0 : i64, tsfg_core.function_end = 254 : i64, tsfg_core.logical_name = \"$moduleInit\", tsfg_core.source_index = 0 : i64, tsfg_core.initializer = true} {\n    %v0 = \"tsfg_core.constant\"() {value = 0 : i1, tsfg_source.start = 37 : i64, tsfg_source.end = 43 : i64} : () -> i1\n    \"tsfg_core.global_store\"(%v0) {global = 0 : i64, initialize = true, tsfg_source.start = 22 : i64, tsfg_source.end = 43 : i64} : (i1) -> ()\n    %v1 = \"tsfg_core.constant\"() {value = 0 : i32, tsfg_source.start = 0 : i64, tsfg_source.end = 254 : i64} : () -> i32\n    \"func.return\"(%v1) {tsfg_source.start = 0 : i64, tsfg_source.end = 254 : i64} : (i32) -> ()\n  }\n  func.func @\"f69feb3e7a4e8e92076b9883440c832cf9094b07ae8c5e0e39f22556a0b82b805\"(%v0: i1) -> i1 attributes {tsfg_core.function_id = \"sha256:69feb3e7a4e8e92076b9883440c832cf9094b07ae8c5e0e39f22556a0b82b805\", tsfg_core.signature_hash = \"sha256:176f0c2d74ef9b180f6aa17b92935546bf3661b0a8944833e96892a14d968395\", tsfg_core.type_id = \"sha256:811afa3745352bcd218d039b4539ec7e7ca8d103420dbc4c8ab8d6119e850721\", tsfg_core.function_start = 185 : i64, tsfg_core.function_end = 253 : i64, tsfg_core.logical_name = \"peer\", tsfg_core.source_index = 0 : i64, tsfg_core.initializer = false} {\n    \"tsfg_core.fuel\"() {event = 1 : i32, tsfg_source.start = 185 : i64, tsfg_source.end = 253 : i64} : () -> ()\n    %v1 = \"tsfg_core.global_load\"() {global = 0 : i64, tsfg_source.start = 235 : i64, tsfg_source.end = 241 : i64} : () -> i1\n    cf.cond_br %v1, ^bb2, ^bb1 {tsfg_source.start = 235 : i64, tsfg_source.end = 250 : i64}\n  ^bb1:\n    cf.br ^bb3(%v0 : i1) {tsfg_source.start = 235 : i64, tsfg_source.end = 250 : i64}\n  ^bb2:\n    cf.br ^bb3(%v1 : i1) {tsfg_source.start = 235 : i64, tsfg_source.end = 250 : i64}\n  ^bb3(%v2: i1):\n    \"func.return\"(%v2) {tsfg_source.start = 227 : i64, tsfg_source.end = 251 : i64} : (i1) -> ()\n  }\n  func.func @\"fa3889950e85949a8bc472f7c0d6b5646e3cedefb28b03bed5810661f12750cdf\"(%v0: i1) -> i1 attributes {tsfg_core.function_id = \"sha256:a3889950e85949a8bc472f7c0d6b5646e3cedefb28b03bed5810661f12750cdf\", tsfg_core.signature_hash = \"sha256:176f0c2d74ef9b180f6aa17b92935546bf3661b0a8944833e96892a14d968395\", tsfg_core.type_id = \"sha256:811afa3745352bcd218d039b4539ec7e7ca8d103420dbc4c8ab8d6119e850721\", tsfg_core.function_start = 44 : i64, tsfg_core.function_end = 105 : i64, tsfg_core.logical_name = \"leaf\", tsfg_core.source_index = 0 : i64, tsfg_core.initializer = false} {\n    \"tsfg_core.fuel\"() {event = 1 : i32, tsfg_source.start = 44 : i64, tsfg_source.end = 105 : i64} : () -> ()\n    %v1 = \"tsfg_core.global_load\"() {global = 0 : i64, tsfg_source.start = 87 : i64, tsfg_source.end = 93 : i64} : () -> i1\n    cf.cond_br %v1, ^bb2, ^bb1 {tsfg_source.start = 87 : i64, tsfg_source.end = 102 : i64}\n  ^bb1:\n    cf.br ^bb3(%v0 : i1) {tsfg_source.start = 87 : i64, tsfg_source.end = 102 : i64}\n  ^bb2:\n    cf.br ^bb3(%v1 : i1) {tsfg_source.start = 87 : i64, tsfg_source.end = 102 : i64}\n  ^bb3(%v2: i1):\n    \"func.return\"(%v2) {tsfg_source.start = 79 : i64, tsfg_source.end = 103 : i64} : (i1) -> ()\n  }\n  func.func @\"f34a2b0a0197f14f293bcbd71949e1a22c282960bd58763c6c987b5bb2f57b323\"(%v0: i1) -> i1 attributes {tsfg_core.function_id = \"sha256:34a2b0a0197f14f293bcbd71949e1a22c282960bd58763c6c987b5bb2f57b323\", tsfg_core.signature_hash = \"sha256:176f0c2d74ef9b180f6aa17b92935546bf3661b0a8944833e96892a14d968395\", tsfg_core.type_id = \"sha256:811afa3745352bcd218d039b4539ec7e7ca8d103420dbc4c8ab8d6119e850721\", tsfg_core.function_start = 122 : i64, tsfg_core.function_end = 185 : i64, tsfg_core.logical_name = \"entry\", tsfg_core.source_index = 0 : i64, tsfg_core.initializer = false} {\n    \"tsfg_core.fuel\"() {event = 1 : i32, tsfg_source.start = 122 : i64, tsfg_source.end = 185 : i64} : () -> ()\n    %v1 = \"func.call\"(%v0) {callee = @\"fa3889950e85949a8bc472f7c0d6b5646e3cedefb28b03bed5810661f12750cdf\", tsfg_core.function_id = \"sha256:a3889950e85949a8bc472f7c0d6b5646e3cedefb28b03bed5810661f12750cdf\", tsfg_core.signature_hash = \"sha256:176f0c2d74ef9b180f6aa17b92935546bf3661b0a8944833e96892a14d968395\", tsfg_source.start = 172 : i64, tsfg_source.end = 182 : i64} : (i1) -> i1\n    \"func.return\"(%v1) {tsfg_source.start = 165 : i64, tsfg_source.end = 183 : i64} : (i1) -> ()\n  }\n}\n",
+      "expectedFormalView": {
+        "exchange": {
+          "version": "0.9.0",
+          "bytecodeSchema": "sha256:3dea6ce5de996dfa3e7141cced985243ea74ac9bb80f03636c6694343118f2a6"
+        },
+        "inputIdentity": "sha256:eb1164b3a681be1aa760d2f32f42991b587878cccddd57904d9fa8ce59c7040e",
+        "source": {
+          "path": "/src/app.ts",
+          "hash": "sha256:96b6db8cf548132041bab6f138b1cc548711658eb3ad35ecac27057f92501285",
+          "length": 254
+        },
+        "target": {
+          "llvmDataLayout": "e-m:w-p270:32:32-p271:32:32-p272:64:64-i64:64-i128:128-f80:128-n8:16:32:64-S128",
+          "pointerBits": "64",
+          "target": "windows-x86_64-msvc",
+          "triple": "x86_64-pc-windows-msvc"
+        },
+        "functions": [
+          {
+            "id": "sha256:0633561aa079c7cce80bdab8eaa08cbd8baa2de4a528651e84dae9341b453217",
+            "name": "$moduleInit",
+            "symbol": "f0633561aa079c7cce80bdab8eaa08cbd8baa2de4a528651e84dae9341b453217",
+            "kind": "module-initialization",
+            "sourcePath": "/src/app.ts",
+            "signatureHash": "sha256:ac9438b17e41c86e042aaa640f76bd95693245676c19c4cbfd89cf43315df6f9",
+            "returnType": {
+              "kind": "scalar",
+              "name": "i32",
+              "id": "sha256:a499279eb079e9a530729c0e20165237b946527f01f48d1426b927e2c2e7d727"
+            },
+            "parameters": [],
+            "range": {
+              "end": 254,
+              "start": 0
+            },
+            "body": [
+              {
+                "global": "sha256:b44756c0279c999dc141179c7e44e906ebd1da73f2be98cd4aa68de36dc5bae7",
+                "kind": "initialize",
+                "range": {
+                  "end": 43,
+                  "start": 22
+                },
+                "value": {
+                  "kind": "boolean",
+                  "range": {
+                    "end": 43,
+                    "start": 37
+                  },
+                  "type": "sha256:811afa3745352bcd218d039b4539ec7e7ca8d103420dbc4c8ab8d6119e850721",
+                  "value": false
+                }
+              }
+            ]
+          },
+          {
+            "id": "sha256:69feb3e7a4e8e92076b9883440c832cf9094b07ae8c5e0e39f22556a0b82b805",
+            "name": "peer",
+            "symbol": "f69feb3e7a4e8e92076b9883440c832cf9094b07ae8c5e0e39f22556a0b82b805",
+            "kind": "source",
+            "sourcePath": "/src/app.ts",
+            "signatureHash": "sha256:176f0c2d74ef9b180f6aa17b92935546bf3661b0a8944833e96892a14d968395",
+            "returnType": {
+              "kind": "scalar",
+              "name": "bool",
+              "id": "sha256:811afa3745352bcd218d039b4539ec7e7ca8d103420dbc4c8ab8d6119e850721"
+            },
+            "parameters": [
+              {
+                "id": "p0",
+                "name": "value",
+                "range": {
+                  "end": 212,
+                  "start": 207
+                },
+                "type": "sha256:811afa3745352bcd218d039b4539ec7e7ca8d103420dbc4c8ab8d6119e850721",
+                "writable": true
+              }
+            ],
+            "range": {
+              "end": 253,
+              "start": 185
+            },
+            "body": [
+              {
+                "kind": "return",
+                "range": {
+                  "end": 251,
+                  "start": 227
+                },
+                "value": {
+                  "kind": "shortCircuit",
+                  "left": {
+                    "global": "sha256:b44756c0279c999dc141179c7e44e906ebd1da73f2be98cd4aa68de36dc5bae7",
+                    "kind": "global",
+                    "name": "shared",
+                    "range": {
+                      "end": 241,
+                      "start": 235
+                    },
+                    "type": "sha256:811afa3745352bcd218d039b4539ec7e7ca8d103420dbc4c8ab8d6119e850721"
+                  },
+                  "operator": "||",
+                  "range": {
+                    "end": 250,
+                    "start": 235
+                  },
+                  "right": {
+                    "binding": "p0",
+                    "kind": "reference",
+                    "range": {
+                      "end": 250,
+                      "start": 245
+                    },
+                    "type": "sha256:811afa3745352bcd218d039b4539ec7e7ca8d103420dbc4c8ab8d6119e850721"
+                  },
+                  "type": "sha256:811afa3745352bcd218d039b4539ec7e7ca8d103420dbc4c8ab8d6119e850721"
+                }
+              }
+            ]
+          },
+          {
+            "id": "sha256:a3889950e85949a8bc472f7c0d6b5646e3cedefb28b03bed5810661f12750cdf",
+            "name": "leaf",
+            "symbol": "fa3889950e85949a8bc472f7c0d6b5646e3cedefb28b03bed5810661f12750cdf",
+            "kind": "source",
+            "sourcePath": "/src/app.ts",
+            "signatureHash": "sha256:176f0c2d74ef9b180f6aa17b92935546bf3661b0a8944833e96892a14d968395",
+            "returnType": {
+              "kind": "scalar",
+              "name": "bool",
+              "id": "sha256:811afa3745352bcd218d039b4539ec7e7ca8d103420dbc4c8ab8d6119e850721"
+            },
+            "parameters": [
+              {
+                "id": "p0",
+                "name": "value",
+                "range": {
+                  "end": 64,
+                  "start": 59
+                },
+                "type": "sha256:811afa3745352bcd218d039b4539ec7e7ca8d103420dbc4c8ab8d6119e850721",
+                "writable": true
+              }
+            ],
+            "range": {
+              "end": 105,
+              "start": 44
+            },
+            "body": [
+              {
+                "kind": "return",
+                "range": {
+                  "end": 103,
+                  "start": 79
+                },
+                "value": {
+                  "kind": "shortCircuit",
+                  "left": {
+                    "global": "sha256:b44756c0279c999dc141179c7e44e906ebd1da73f2be98cd4aa68de36dc5bae7",
+                    "kind": "global",
+                    "name": "shared",
+                    "range": {
+                      "end": 93,
+                      "start": 87
+                    },
+                    "type": "sha256:811afa3745352bcd218d039b4539ec7e7ca8d103420dbc4c8ab8d6119e850721"
+                  },
+                  "operator": "||",
+                  "range": {
+                    "end": 102,
+                    "start": 87
+                  },
+                  "right": {
+                    "binding": "p0",
+                    "kind": "reference",
+                    "range": {
+                      "end": 102,
+                      "start": 97
+                    },
+                    "type": "sha256:811afa3745352bcd218d039b4539ec7e7ca8d103420dbc4c8ab8d6119e850721"
+                  },
+                  "type": "sha256:811afa3745352bcd218d039b4539ec7e7ca8d103420dbc4c8ab8d6119e850721"
+                }
+              }
+            ]
+          },
+          {
+            "id": "sha256:34a2b0a0197f14f293bcbd71949e1a22c282960bd58763c6c987b5bb2f57b323",
+            "name": "entry",
+            "symbol": "f34a2b0a0197f14f293bcbd71949e1a22c282960bd58763c6c987b5bb2f57b323",
+            "kind": "source",
+            "sourcePath": "/src/app.ts",
+            "signatureHash": "sha256:176f0c2d74ef9b180f6aa17b92935546bf3661b0a8944833e96892a14d968395",
+            "returnType": {
+              "kind": "scalar",
+              "name": "bool",
+              "id": "sha256:811afa3745352bcd218d039b4539ec7e7ca8d103420dbc4c8ab8d6119e850721"
+            },
+            "parameters": [
+              {
+                "id": "p0",
+                "name": "value",
+                "range": {
+                  "end": 150,
+                  "start": 145
+                },
+                "type": "sha256:811afa3745352bcd218d039b4539ec7e7ca8d103420dbc4c8ab8d6119e850721",
+                "writable": true
+              }
+            ],
+            "range": {
+              "end": 185,
+              "start": 122
+            },
+            "body": [
+              {
+                "kind": "return",
+                "range": {
+                  "end": 183,
+                  "start": 165
+                },
+                "value": {
+                  "arguments": [
+                    {
+                      "binding": "p0",
+                      "kind": "reference",
+                      "range": {
+                        "end": 181,
+                        "start": 176
+                      },
+                      "type": "sha256:811afa3745352bcd218d039b4539ec7e7ca8d103420dbc4c8ab8d6119e850721"
+                    }
+                  ],
+                  "kind": "call",
+                  "name": "op",
+                  "range": {
+                    "end": 182,
+                    "start": 172
+                  },
+                  "signatureHash": "sha256:176f0c2d74ef9b180f6aa17b92935546bf3661b0a8944833e96892a14d968395",
+                  "target": "sha256:a3889950e85949a8bc472f7c0d6b5646e3cedefb28b03bed5810661f12750cdf",
+                  "type": "sha256:811afa3745352bcd218d039b4539ec7e7ca8d103420dbc4c8ab8d6119e850721"
+                }
+              }
+            ]
+          }
+        ],
+        "moduleState": {
+          "sources": [
+            {
+              "path": "/src/app.ts",
+              "hash": "sha256:96b6db8cf548132041bab6f138b1cc548711658eb3ad35ecac27057f92501285",
+              "length": 254
+            },
+            {
+              "path": "/src/minimal-integers-v3.d.ts",
+              "hash": "sha256:9fc1955899e303b5815590f7150f60662f3cece0a633c94a2a06669cf509a96e",
+              "length": 1214
+            }
+          ],
+          "modules": [
+            {
+              "bindings": [
+                {
+                  "name": "entry",
+                  "target": "sha256:34a2b0a0197f14f293bcbd71949e1a22c282960bd58763c6c987b5bb2f57b323"
+                },
+                {
+                  "name": "leaf",
+                  "target": "sha256:a3889950e85949a8bc472f7c0d6b5646e3cedefb28b03bed5810661f12750cdf"
+                },
+                {
+                  "name": "op",
+                  "target": "sha256:a3889950e85949a8bc472f7c0d6b5646e3cedefb28b03bed5810661f12750cdf"
+                },
+                {
+                  "name": "peer",
+                  "target": "sha256:69feb3e7a4e8e92076b9883440c832cf9094b07ae8c5e0e39f22556a0b82b805"
+                },
+                {
+                  "name": "shared",
+                  "target": "sha256:b44756c0279c999dc141179c7e44e906ebd1da73f2be98cd4aa68de36dc5bae7"
+                }
+              ],
+              "dependencies": [],
+              "exports": [
+                {
+                  "name": "entry",
+                  "target": "sha256:34a2b0a0197f14f293bcbd71949e1a22c282960bd58763c6c987b5bb2f57b323"
+                },
+                {
+                  "name": "peer",
+                  "target": "sha256:69feb3e7a4e8e92076b9883440c832cf9094b07ae8c5e0e39f22556a0b82b805"
+                }
+              ],
+              "id": "sha256:5de2f73a69e4070b6a4d4dfd21403b51483f644bdb9dca611433f1a5998f246e",
+              "initializer": "sha256:0633561aa079c7cce80bdab8eaa08cbd8baa2de4a528651e84dae9341b453217",
+              "sourcePath": "/src/app.ts"
+            }
+          ],
+          "globals": [
+            {
+              "bindingKind": "source",
+              "id": "sha256:b44756c0279c999dc141179c7e44e906ebd1da73f2be98cd4aa68de36dc5bae7",
+              "name": "shared",
+              "range": {
+                "end": 29,
+                "start": 22
+              },
+              "sourcePath": "/src/app.ts",
+              "type": "sha256:811afa3745352bcd218d039b4539ec7e7ca8d103420dbc4c8ab8d6119e850721",
+              "writable": true
+            }
+          ],
+          "hostImports": [],
+          "closure": {
+            "functions": [
+              "sha256:0633561aa079c7cce80bdab8eaa08cbd8baa2de4a528651e84dae9341b453217",
+              "sha256:69feb3e7a4e8e92076b9883440c832cf9094b07ae8c5e0e39f22556a0b82b805",
+              "sha256:a3889950e85949a8bc472f7c0d6b5646e3cedefb28b03bed5810661f12750cdf",
+              "sha256:34a2b0a0197f14f293bcbd71949e1a22c282960bd58763c6c987b5bb2f57b323"
+            ],
+            "initialization": [
+              "sha256:0633561aa079c7cce80bdab8eaa08cbd8baa2de4a528651e84dae9341b453217"
+            ],
+            "modules": [
+              "sha256:5de2f73a69e4070b6a4d4dfd21403b51483f644bdb9dca611433f1a5998f246e"
+            ],
+            "requiredRoots": [],
+            "roots": [
+              {
+                "kind": "kernel",
+                "name": "entry",
+                "sourcePath": "/src/app.ts",
+                "target": "sha256:34a2b0a0197f14f293bcbd71949e1a22c282960bd58763c6c987b5bb2f57b323"
+              },
+              {
+                "kind": "kernel",
+                "name": "peer",
+                "sourcePath": "/src/app.ts",
+                "target": "sha256:69feb3e7a4e8e92076b9883440c832cf9094b07ae8c5e0e39f22556a0b82b805"
+              }
+            ]
+          }
+        }
+      },
+      "identityMapping": [
+        {
+          "index": 0,
+          "name": "$moduleInit",
+          "kind": "module-initialization",
+          "candidateFunctionId": "sha256:0633561aa079c7cce80bdab8eaa08cbd8baa2de4a528651e84dae9341b453217",
+          "formalFunctionId": "sha256:0633561aa079c7cce80bdab8eaa08cbd8baa2de4a528651e84dae9341b453217",
+          "candidateSignatureId": "sha256:405d7118c8dc4f40ef6a37e7c80722827b789606aaf100011a5d809756bd51c0",
+          "candidateSignatureHash": "sha256:2c4526fce4b846eda64613d13c1ce7f7d444e0d5ee842b8fd235c98514af4617",
+          "formalSignatureHash": "sha256:ac9438b17e41c86e042aaa640f76bd95693245676c19c4cbfd89cf43315df6f9",
+          "formalSymbol": "f0633561aa079c7cce80bdab8eaa08cbd8baa2de4a528651e84dae9341b453217",
+          "sourcePath": "/src/app.ts",
+          "range": {
+            "end": 254,
+            "start": 0
+          },
+          "definitionRange": {
+            "end": 254,
+            "start": 0
+          },
+          "returnType": "sha256:a499279eb079e9a530729c0e20165237b946527f01f48d1426b927e2c2e7d727",
+          "parameters": [],
+          "functionPreimageUTF8Hex": "747366672e6d6f64756c652d696e697469616c697a65722e7631002f7372632f6170702e7473007368613235363a39366236646238636635343831333230343162616236663133386231636335343837313136353865623361643335656361633237303537663932353031323835007368613235363a35646532663733613639653430373062366134643464666432313430336235313438336636343462646239646361363131343333663161353939386632343665007368613235363a61633934333862313765343163383665303432616161363430663736626439353639333234353637366331396334636266643839636634333331356466366639",
+          "signaturePreimageUTF8Hex": "747366672e7369676e61747572650028292d3e693332"
+        },
+        {
+          "index": 1,
+          "name": "peer",
+          "kind": "source",
+          "candidateFunctionId": "sha256:1ec6777e31da8fdf7464722c8a940dcf23b3c70c073ad65b0c8569b9cf4aefb7",
+          "formalFunctionId": "sha256:69feb3e7a4e8e92076b9883440c832cf9094b07ae8c5e0e39f22556a0b82b805",
+          "candidateSignatureId": "sha256:d1ba0876312f9e664f3eb639fb46aa1b5377a0a8c9edc27ea6a42f0c8653d57e",
+          "candidateSignatureHash": "sha256:c6ff23bd5d6c6cec75c62db7ebd0a87bc1a4984227a5624b614fb4eb62891da1",
+          "formalSignatureHash": "sha256:176f0c2d74ef9b180f6aa17b92935546bf3661b0a8944833e96892a14d968395",
+          "formalSymbol": "f69feb3e7a4e8e92076b9883440c832cf9094b07ae8c5e0e39f22556a0b82b805",
+          "sourcePath": "/src/app.ts",
+          "range": {
+            "end": 253,
+            "start": 185
+          },
+          "definitionRange": {
+            "end": 206,
+            "start": 201
+          },
+          "returnType": "sha256:811afa3745352bcd218d039b4539ec7e7ca8d103420dbc4c8ab8d6119e850721",
+          "parameters": [
+            {
+              "id": "p0",
+              "name": "value",
+              "range": {
+                "end": 212,
+                "start": 207
+              },
+              "type": "sha256:811afa3745352bcd218d039b4539ec7e7ca8d103420dbc4c8ab8d6119e850721",
+              "writable": true
+            }
+          ],
+          "functionPreimageUTF8Hex": "747366672e66756e6374696f6e002f7372632f6170702e747300706565720031373666306332643734656639623138306636616131376239323933353534366266333636316230613839343438333365393638393261313464393638333935",
+          "signaturePreimageUTF8Hex": "747366672e7369676e61747572650028626f6f6c292d3e626f6f6c"
+        },
+        {
+          "index": 2,
+          "name": "leaf",
+          "kind": "source",
+          "candidateFunctionId": "sha256:ad0ac2a0c31e8ea663cb3391d7d2312675615b6bbf4fd68354da18de22e2625a",
+          "formalFunctionId": "sha256:a3889950e85949a8bc472f7c0d6b5646e3cedefb28b03bed5810661f12750cdf",
+          "candidateSignatureId": "sha256:d1ba0876312f9e664f3eb639fb46aa1b5377a0a8c9edc27ea6a42f0c8653d57e",
+          "candidateSignatureHash": "sha256:c6ff23bd5d6c6cec75c62db7ebd0a87bc1a4984227a5624b614fb4eb62891da1",
+          "formalSignatureHash": "sha256:176f0c2d74ef9b180f6aa17b92935546bf3661b0a8944833e96892a14d968395",
+          "formalSymbol": "fa3889950e85949a8bc472f7c0d6b5646e3cedefb28b03bed5810661f12750cdf",
+          "sourcePath": "/src/app.ts",
+          "range": {
+            "end": 105,
+            "start": 44
+          },
+          "definitionRange": {
+            "end": 58,
+            "start": 53
+          },
+          "returnType": "sha256:811afa3745352bcd218d039b4539ec7e7ca8d103420dbc4c8ab8d6119e850721",
+          "parameters": [
+            {
+              "id": "p0",
+              "name": "value",
+              "range": {
+                "end": 64,
+                "start": 59
+              },
+              "type": "sha256:811afa3745352bcd218d039b4539ec7e7ca8d103420dbc4c8ab8d6119e850721",
+              "writable": true
+            }
+          ],
+          "functionPreimageUTF8Hex": "747366672e66756e6374696f6e002f7372632f6170702e7473006c6561660031373666306332643734656639623138306636616131376239323933353534366266333636316230613839343438333365393638393261313464393638333935",
+          "signaturePreimageUTF8Hex": "747366672e7369676e61747572650028626f6f6c292d3e626f6f6c"
+        },
+        {
+          "index": 3,
+          "name": "entry",
+          "kind": "source",
+          "candidateFunctionId": "sha256:ed3e6aaebb165cc28a815963ea95a9bfb0483c9f0670eae33573df8e583c4500",
+          "formalFunctionId": "sha256:34a2b0a0197f14f293bcbd71949e1a22c282960bd58763c6c987b5bb2f57b323",
+          "candidateSignatureId": "sha256:d1ba0876312f9e664f3eb639fb46aa1b5377a0a8c9edc27ea6a42f0c8653d57e",
+          "candidateSignatureHash": "sha256:c6ff23bd5d6c6cec75c62db7ebd0a87bc1a4984227a5624b614fb4eb62891da1",
+          "formalSignatureHash": "sha256:176f0c2d74ef9b180f6aa17b92935546bf3661b0a8944833e96892a14d968395",
+          "formalSymbol": "f34a2b0a0197f14f293bcbd71949e1a22c282960bd58763c6c987b5bb2f57b323",
+          "sourcePath": "/src/app.ts",
+          "range": {
+            "end": 185,
+            "start": 122
+          },
+          "definitionRange": {
+            "end": 144,
+            "start": 138
+          },
+          "returnType": "sha256:811afa3745352bcd218d039b4539ec7e7ca8d103420dbc4c8ab8d6119e850721",
+          "parameters": [
+            {
+              "id": "p0",
+              "name": "value",
+              "range": {
+                "end": 150,
+                "start": 145
+              },
+              "type": "sha256:811afa3745352bcd218d039b4539ec7e7ca8d103420dbc4c8ab8d6119e850721",
+              "writable": true
+            }
+          ],
+          "functionPreimageUTF8Hex": "747366672e66756e6374696f6e002f7372632f6170702e747300656e7472790031373666306332643734656639623138306636616131376239323933353534366266333636316230613839343438333365393638393261313464393638333935",
+          "signaturePreimageUTF8Hex": "747366672e7369676e61747572650028626f6f6c292d3e626f6f6c"
+        }
+      ],
+      "referenceOccurrences": [
+        {
+          "pointer": "/functions/0/id",
+          "candidate": "sha256:0633561aa079c7cce80bdab8eaa08cbd8baa2de4a528651e84dae9341b453217",
+          "formal": "sha256:0633561aa079c7cce80bdab8eaa08cbd8baa2de4a528651e84dae9341b453217"
+        },
+        {
+          "pointer": "/functions/1/id",
+          "candidate": "sha256:1ec6777e31da8fdf7464722c8a940dcf23b3c70c073ad65b0c8569b9cf4aefb7",
+          "formal": "sha256:69feb3e7a4e8e92076b9883440c832cf9094b07ae8c5e0e39f22556a0b82b805"
+        },
+        {
+          "pointer": "/functions/2/id",
+          "candidate": "sha256:ad0ac2a0c31e8ea663cb3391d7d2312675615b6bbf4fd68354da18de22e2625a",
+          "formal": "sha256:a3889950e85949a8bc472f7c0d6b5646e3cedefb28b03bed5810661f12750cdf"
+        },
+        {
+          "pointer": "/functions/3/body/0/value/target",
+          "candidate": "sha256:ad0ac2a0c31e8ea663cb3391d7d2312675615b6bbf4fd68354da18de22e2625a",
+          "formal": "sha256:a3889950e85949a8bc472f7c0d6b5646e3cedefb28b03bed5810661f12750cdf"
+        },
+        {
+          "pointer": "/functions/3/id",
+          "candidate": "sha256:ed3e6aaebb165cc28a815963ea95a9bfb0483c9f0670eae33573df8e583c4500",
+          "formal": "sha256:34a2b0a0197f14f293bcbd71949e1a22c282960bd58763c6c987b5bb2f57b323"
+        },
+        {
+          "pointer": "/modules/0/bindings/0/target",
+          "candidate": "sha256:ed3e6aaebb165cc28a815963ea95a9bfb0483c9f0670eae33573df8e583c4500",
+          "formal": "sha256:34a2b0a0197f14f293bcbd71949e1a22c282960bd58763c6c987b5bb2f57b323"
+        },
+        {
+          "pointer": "/modules/0/bindings/1/target",
+          "candidate": "sha256:ad0ac2a0c31e8ea663cb3391d7d2312675615b6bbf4fd68354da18de22e2625a",
+          "formal": "sha256:a3889950e85949a8bc472f7c0d6b5646e3cedefb28b03bed5810661f12750cdf"
+        },
+        {
+          "pointer": "/modules/0/bindings/2/target",
+          "candidate": "sha256:ad0ac2a0c31e8ea663cb3391d7d2312675615b6bbf4fd68354da18de22e2625a",
+          "formal": "sha256:a3889950e85949a8bc472f7c0d6b5646e3cedefb28b03bed5810661f12750cdf"
+        },
+        {
+          "pointer": "/modules/0/bindings/3/target",
+          "candidate": "sha256:1ec6777e31da8fdf7464722c8a940dcf23b3c70c073ad65b0c8569b9cf4aefb7",
+          "formal": "sha256:69feb3e7a4e8e92076b9883440c832cf9094b07ae8c5e0e39f22556a0b82b805"
+        },
+        {
+          "pointer": "/modules/0/exports/0/target",
+          "candidate": "sha256:ed3e6aaebb165cc28a815963ea95a9bfb0483c9f0670eae33573df8e583c4500",
+          "formal": "sha256:34a2b0a0197f14f293bcbd71949e1a22c282960bd58763c6c987b5bb2f57b323"
+        },
+        {
+          "pointer": "/modules/0/exports/1/target",
+          "candidate": "sha256:1ec6777e31da8fdf7464722c8a940dcf23b3c70c073ad65b0c8569b9cf4aefb7",
+          "formal": "sha256:69feb3e7a4e8e92076b9883440c832cf9094b07ae8c5e0e39f22556a0b82b805"
+        },
+        {
+          "pointer": "/modules/0/initializer",
+          "candidate": "sha256:0633561aa079c7cce80bdab8eaa08cbd8baa2de4a528651e84dae9341b453217",
+          "formal": "sha256:0633561aa079c7cce80bdab8eaa08cbd8baa2de4a528651e84dae9341b453217"
+        },
+        {
+          "pointer": "/closure/functions/0",
+          "candidate": "sha256:0633561aa079c7cce80bdab8eaa08cbd8baa2de4a528651e84dae9341b453217",
+          "formal": "sha256:0633561aa079c7cce80bdab8eaa08cbd8baa2de4a528651e84dae9341b453217"
+        },
+        {
+          "pointer": "/closure/functions/1",
+          "candidate": "sha256:1ec6777e31da8fdf7464722c8a940dcf23b3c70c073ad65b0c8569b9cf4aefb7",
+          "formal": "sha256:69feb3e7a4e8e92076b9883440c832cf9094b07ae8c5e0e39f22556a0b82b805"
+        },
+        {
+          "pointer": "/closure/functions/2",
+          "candidate": "sha256:ad0ac2a0c31e8ea663cb3391d7d2312675615b6bbf4fd68354da18de22e2625a",
+          "formal": "sha256:a3889950e85949a8bc472f7c0d6b5646e3cedefb28b03bed5810661f12750cdf"
+        },
+        {
+          "pointer": "/closure/functions/3",
+          "candidate": "sha256:ed3e6aaebb165cc28a815963ea95a9bfb0483c9f0670eae33573df8e583c4500",
+          "formal": "sha256:34a2b0a0197f14f293bcbd71949e1a22c282960bd58763c6c987b5bb2f57b323"
+        },
+        {
+          "pointer": "/closure/initialization/0",
+          "candidate": "sha256:0633561aa079c7cce80bdab8eaa08cbd8baa2de4a528651e84dae9341b453217",
+          "formal": "sha256:0633561aa079c7cce80bdab8eaa08cbd8baa2de4a528651e84dae9341b453217"
+        },
+        {
+          "pointer": "/closure/roots/0/target",
+          "candidate": "sha256:ed3e6aaebb165cc28a815963ea95a9bfb0483c9f0670eae33573df8e583c4500",
+          "formal": "sha256:34a2b0a0197f14f293bcbd71949e1a22c282960bd58763c6c987b5bb2f57b323"
+        },
+        {
+          "pointer": "/closure/roots/1/target",
+          "candidate": "sha256:1ec6777e31da8fdf7464722c8a940dcf23b3c70c073ad65b0c8569b9cf4aefb7",
+          "formal": "sha256:69feb3e7a4e8e92076b9883440c832cf9094b07ae8c5e0e39f22556a0b82b805"
+        }
+      ],
+      "ssaTrace": [
+        {
+          "functionId": "sha256:0633561aa079c7cce80bdab8eaa08cbd8baa2de4a528651e84dae9341b453217",
+          "name": "$moduleInit",
+          "registers": 2,
+          "blocks": [
+            {
+              "name": "bb0",
+              "parameters": [],
+              "lines": [
+                "    %v0 = \"tsfg_core.constant\"() {value = 0 : i1, tsfg_source.start = 37 : i64, tsfg_source.end = 43 : i64} : () -> i1",
+                "    \"tsfg_core.global_store\"(%v0) {global = 0 : i64, initialize = true, tsfg_source.start = 22 : i64, tsfg_source.end = 43 : i64} : (i1) -> ()",
+                "    %v1 = \"tsfg_core.constant\"() {value = 0 : i32, tsfg_source.start = 0 : i64, tsfg_source.end = 254 : i64} : () -> i32",
+                "    \"func.return\"(%v1) {tsfg_source.start = 0 : i64, tsfg_source.end = 254 : i64} : (i32) -> ()"
+              ]
+            }
+          ]
+        },
+        {
+          "functionId": "sha256:69feb3e7a4e8e92076b9883440c832cf9094b07ae8c5e0e39f22556a0b82b805",
+          "name": "peer",
+          "registers": 3,
+          "blocks": [
+            {
+              "name": "bb0",
+              "parameters": [
+                {
+                  "name": "%v0",
+                  "type": "sha256:811afa3745352bcd218d039b4539ec7e7ca8d103420dbc4c8ab8d6119e850721"
+                }
+              ],
+              "lines": [
+                "    \"tsfg_core.fuel\"() {event = 1 : i32, tsfg_source.start = 185 : i64, tsfg_source.end = 253 : i64} : () -> ()",
+                "    %v1 = \"tsfg_core.global_load\"() {global = 0 : i64, tsfg_source.start = 235 : i64, tsfg_source.end = 241 : i64} : () -> i1",
+                "    cf.cond_br %v1, ^bb2, ^bb1 {tsfg_source.start = 235 : i64, tsfg_source.end = 250 : i64}"
+              ]
+            },
+            {
+              "name": "bb1",
+              "parameters": [],
+              "lines": [
+                "    cf.br ^bb3(%v0 : i1) {tsfg_source.start = 235 : i64, tsfg_source.end = 250 : i64}"
+              ]
+            },
+            {
+              "name": "bb2",
+              "parameters": [],
+              "lines": [
+                "    cf.br ^bb3(%v1 : i1) {tsfg_source.start = 235 : i64, tsfg_source.end = 250 : i64}"
+              ]
+            },
+            {
+              "name": "bb3",
+              "parameters": [
+                {
+                  "name": "%v2",
+                  "type": "sha256:811afa3745352bcd218d039b4539ec7e7ca8d103420dbc4c8ab8d6119e850721"
+                }
+              ],
+              "lines": [
+                "    \"func.return\"(%v2) {tsfg_source.start = 227 : i64, tsfg_source.end = 251 : i64} : (i1) -> ()"
+              ]
+            }
+          ]
+        },
+        {
+          "functionId": "sha256:a3889950e85949a8bc472f7c0d6b5646e3cedefb28b03bed5810661f12750cdf",
+          "name": "leaf",
+          "registers": 3,
+          "blocks": [
+            {
+              "name": "bb0",
+              "parameters": [
+                {
+                  "name": "%v0",
+                  "type": "sha256:811afa3745352bcd218d039b4539ec7e7ca8d103420dbc4c8ab8d6119e850721"
+                }
+              ],
+              "lines": [
+                "    \"tsfg_core.fuel\"() {event = 1 : i32, tsfg_source.start = 44 : i64, tsfg_source.end = 105 : i64} : () -> ()",
+                "    %v1 = \"tsfg_core.global_load\"() {global = 0 : i64, tsfg_source.start = 87 : i64, tsfg_source.end = 93 : i64} : () -> i1",
+                "    cf.cond_br %v1, ^bb2, ^bb1 {tsfg_source.start = 87 : i64, tsfg_source.end = 102 : i64}"
+              ]
+            },
+            {
+              "name": "bb1",
+              "parameters": [],
+              "lines": [
+                "    cf.br ^bb3(%v0 : i1) {tsfg_source.start = 87 : i64, tsfg_source.end = 102 : i64}"
+              ]
+            },
+            {
+              "name": "bb2",
+              "parameters": [],
+              "lines": [
+                "    cf.br ^bb3(%v1 : i1) {tsfg_source.start = 87 : i64, tsfg_source.end = 102 : i64}"
+              ]
+            },
+            {
+              "name": "bb3",
+              "parameters": [
+                {
+                  "name": "%v2",
+                  "type": "sha256:811afa3745352bcd218d039b4539ec7e7ca8d103420dbc4c8ab8d6119e850721"
+                }
+              ],
+              "lines": [
+                "    \"func.return\"(%v2) {tsfg_source.start = 79 : i64, tsfg_source.end = 103 : i64} : (i1) -> ()"
+              ]
+            }
+          ]
+        },
+        {
+          "functionId": "sha256:34a2b0a0197f14f293bcbd71949e1a22c282960bd58763c6c987b5bb2f57b323",
+          "name": "entry",
+          "registers": 2,
+          "blocks": [
+            {
+              "name": "bb0",
+              "parameters": [
+                {
+                  "name": "%v0",
+                  "type": "sha256:811afa3745352bcd218d039b4539ec7e7ca8d103420dbc4c8ab8d6119e850721"
+                }
+              ],
+              "lines": [
+                "    \"tsfg_core.fuel\"() {event = 1 : i32, tsfg_source.start = 122 : i64, tsfg_source.end = 185 : i64} : () -> ()",
+                "    %v1 = \"func.call\"(%v0) {callee = @\"fa3889950e85949a8bc472f7c0d6b5646e3cedefb28b03bed5810661f12750cdf\", tsfg_core.function_id = \"sha256:a3889950e85949a8bc472f7c0d6b5646e3cedefb28b03bed5810661f12750cdf\", tsfg_core.signature_hash = \"sha256:176f0c2d74ef9b180f6aa17b92935546bf3661b0a8944833e96892a14d968395\", tsfg_source.start = 172 : i64, tsfg_source.end = 182 : i64} : (i1) -> i1",
+                "    \"func.return\"(%v1) {tsfg_source.start = 165 : i64, tsfg_source.end = 183 : i64} : (i1) -> ()"
+              ]
+            }
+          ]
+        }
+      ],
+      "counts": {
+        "functions": 4,
+        "initializers": 1,
+        "sources": 2,
+        "modules": 1,
+        "globals": 1,
+        "bindings": 5,
+        "exports": 2,
+        "roots": 2,
+        "calls": 1
+      },
+      "unserializedFields": "module bindings/exports and closure ID lists are independently remapped in expectedFormalView, not invented Core attributes",
+      "credit": "Independent expected input/literal only, no SUT/canonical-printer/bytecode/Source/VM execution result."
+    },
+    {
+      "id": "i32",
+      "originalSelector": "$.i32",
+      "actualSelector": "$.i32",
+      "publicConfiguration": {
+        "seam": "lowerHir",
+        "argumentCount": 1,
+        "hirSelector": "$.i32.hir"
+      },
+      "expectedRawCore": "module attributes {tsfg_core.version = \"0.9.0\", tsfg_core.input_identity = \"sha256:be61479e8b8267a2b57b2cce5b5041bec891187fa468b6149a12c6ce868dbe69\", tsfg_core.source_hash = \"sha256:7ea7b47324d264055dd2a39e99e3b57f57ba9898f5f62df2f0cade02e03ae743\", tsfg_core.source_path = \"/src/app.ts\", tsfg_core.target = \"windows-x86_64-msvc\", tsfg_core.triple = \"x86_64-pc-windows-msvc\", tsfg_core.data_layout = \"e-m:w-p270:32:32-p271:32:32-p272:64:64-i64:64-i128:128-f80:128-n8:16:32:64-S128\", tsfg_core.bytecode_schema = \"sha256:3dea6ce5de996dfa3e7141cced985243ea74ac9bb80f03636c6694343118f2a6\", tsfg_core.source_length = 202 : i64, tsfg_core.sources = [{path = \"/src/app.ts\", hash = \"sha256:7ea7b47324d264055dd2a39e99e3b57f57ba9898f5f62df2f0cade02e03ae743\", length = 202 : i64}, {path = \"/src/minimal-integers-v3.d.ts\", hash = \"sha256:9fc1955899e303b5815590f7150f60662f3cece0a633c94a2a06669cf509a96e\", length = 1214 : i64}], tsfg_core.modules = [{id = \"sha256:5de2f73a69e4070b6a4d4dfd21403b51483f644bdb9dca611433f1a5998f246e\", source = 0 : i64, initializer = 0 : i64, dependencies = []}], tsfg_core.globals = [], tsfg_core.hosts = [], tsfg_core.roots = [{kind = \"kernel\", source = 0 : i64, name = \"entry\", function = 1 : i64}, {kind = \"kernel\", source = 0 : i64, name = \"peer\", function = 2 : i64}], tsfg_core.initialization = [0 : i64]} {\n  func.func @\"f084d0b3b843aec851d8a48239a87a66ded8fe56767a104c21c726e4ad76d6b1d\"() -> i32 attributes {tsfg_core.function_id = \"sha256:084d0b3b843aec851d8a48239a87a66ded8fe56767a104c21c726e4ad76d6b1d\", tsfg_core.signature_hash = \"sha256:ac9438b17e41c86e042aaa640f76bd95693245676c19c4cbfd89cf43315df6f9\", tsfg_core.type_id = \"sha256:a499279eb079e9a530729c0e20165237b946527f01f48d1426b927e2c2e7d727\", tsfg_core.function_start = 0 : i64, tsfg_core.function_end = 202 : i64, tsfg_core.logical_name = \"$moduleInit\", tsfg_core.source_index = 0 : i64, tsfg_core.initializer = true} {\n    %v0 = \"tsfg_core.constant\"() {value = 0 : i32, tsfg_source.start = 0 : i64, tsfg_source.end = 202 : i64} : () -> i32\n    \"func.return\"(%v0) {tsfg_source.start = 0 : i64, tsfg_source.end = 202 : i64} : (i32) -> ()\n  }\n  func.func @\"ff1148c6b6e33f837c72b5af5a4196e7c5127ed1dc00861564c5592a8e42dbb58\"(%v0: i32) -> i32 attributes {tsfg_core.function_id = \"sha256:f1148c6b6e33f837c72b5af5a4196e7c5127ed1dc00861564c5592a8e42dbb58\", tsfg_core.signature_hash = \"sha256:76a2b373b39865c4ebbc583bf6084f46f2cc9d396cb7d36953e67d586f472af4\", tsfg_core.type_id = \"sha256:a499279eb079e9a530729c0e20165237b946527f01f48d1426b927e2c2e7d727\", tsfg_core.function_start = 84 : i64, tsfg_core.function_end = 145 : i64, tsfg_core.logical_name = \"entry\", tsfg_core.source_index = 0 : i64, tsfg_core.initializer = false} {\n    \"tsfg_core.fuel\"() {event = 1 : i32, tsfg_source.start = 84 : i64, tsfg_source.end = 145 : i64} : () -> ()\n    %v1 = \"func.call\"(%v0) {callee = @\"f6ba57d299a496fe944d91007688bd797821ff96bb95dd5272d641c5024490395\", tsfg_core.function_id = \"sha256:6ba57d299a496fe944d91007688bd797821ff96bb95dd5272d641c5024490395\", tsfg_core.signature_hash = \"sha256:76a2b373b39865c4ebbc583bf6084f46f2cc9d396cb7d36953e67d586f472af4\", tsfg_source.start = 132 : i64, tsfg_source.end = 142 : i64} : (i32) -> i32\n    \"func.return\"(%v1) {tsfg_source.start = 125 : i64, tsfg_source.end = 143 : i64} : (i32) -> ()\n  }\n  func.func @\"f336492574c99468d0c079cc5a5007bfa971a5f054c17c608a8c8c422f6d516ae\"(%v0: i32) -> i32 attributes {tsfg_core.function_id = \"sha256:336492574c99468d0c079cc5a5007bfa971a5f054c17c608a8c8c422f6d516ae\", tsfg_core.signature_hash = \"sha256:76a2b373b39865c4ebbc583bf6084f46f2cc9d396cb7d36953e67d586f472af4\", tsfg_core.type_id = \"sha256:a499279eb079e9a530729c0e20165237b946527f01f48d1426b927e2c2e7d727\", tsfg_core.function_start = 145 : i64, tsfg_core.function_end = 201 : i64, tsfg_core.logical_name = \"peer\", tsfg_core.source_index = 0 : i64, tsfg_core.initializer = false} {\n    \"tsfg_core.fuel\"() {event = 1 : i32, tsfg_source.start = 145 : i64, tsfg_source.end = 201 : i64} : () -> ()\n    \"func.return\"(%v0) {tsfg_source.start = 185 : i64, tsfg_source.end = 199 : i64} : (i32) -> ()\n  }\n  func.func @\"f6ba57d299a496fe944d91007688bd797821ff96bb95dd5272d641c5024490395\"(%v0: i32) -> i32 attributes {tsfg_core.function_id = \"sha256:6ba57d299a496fe944d91007688bd797821ff96bb95dd5272d641c5024490395\", tsfg_core.signature_hash = \"sha256:76a2b373b39865c4ebbc583bf6084f46f2cc9d396cb7d36953e67d586f472af4\", tsfg_core.type_id = \"sha256:a499279eb079e9a530729c0e20165237b946527f01f48d1426b927e2c2e7d727\", tsfg_core.function_start = 0 : i64, tsfg_core.function_end = 67 : i64, tsfg_core.logical_name = \"leaf\", tsfg_core.source_index = 0 : i64, tsfg_core.initializer = false} {\n    \"tsfg_core.fuel\"() {event = 1 : i32, tsfg_source.start = 0 : i64, tsfg_source.end = 67 : i64} : () -> ()\n    \"func.return\"(%v0) {tsfg_source.start = 51 : i64, tsfg_source.end = 65 : i64} : (i32) -> ()\n  }\n}\n",
+      "expectedFormalView": {
+        "exchange": {
+          "version": "0.9.0",
+          "bytecodeSchema": "sha256:3dea6ce5de996dfa3e7141cced985243ea74ac9bb80f03636c6694343118f2a6"
+        },
+        "inputIdentity": "sha256:be61479e8b8267a2b57b2cce5b5041bec891187fa468b6149a12c6ce868dbe69",
+        "source": {
+          "path": "/src/app.ts",
+          "hash": "sha256:7ea7b47324d264055dd2a39e99e3b57f57ba9898f5f62df2f0cade02e03ae743",
+          "length": 202
+        },
+        "target": {
+          "llvmDataLayout": "e-m:w-p270:32:32-p271:32:32-p272:64:64-i64:64-i128:128-f80:128-n8:16:32:64-S128",
+          "pointerBits": "64",
+          "target": "windows-x86_64-msvc",
+          "triple": "x86_64-pc-windows-msvc"
+        },
+        "functions": [
+          {
+            "id": "sha256:084d0b3b843aec851d8a48239a87a66ded8fe56767a104c21c726e4ad76d6b1d",
+            "name": "$moduleInit",
+            "symbol": "f084d0b3b843aec851d8a48239a87a66ded8fe56767a104c21c726e4ad76d6b1d",
+            "kind": "module-initialization",
+            "sourcePath": "/src/app.ts",
+            "signatureHash": "sha256:ac9438b17e41c86e042aaa640f76bd95693245676c19c4cbfd89cf43315df6f9",
+            "returnType": {
+              "kind": "scalar",
+              "name": "i32",
+              "id": "sha256:a499279eb079e9a530729c0e20165237b946527f01f48d1426b927e2c2e7d727"
+            },
+            "parameters": [],
+            "range": {
+              "end": 202,
+              "start": 0
+            },
+            "body": []
+          },
+          {
+            "id": "sha256:f1148c6b6e33f837c72b5af5a4196e7c5127ed1dc00861564c5592a8e42dbb58",
+            "name": "entry",
+            "symbol": "ff1148c6b6e33f837c72b5af5a4196e7c5127ed1dc00861564c5592a8e42dbb58",
+            "kind": "source",
+            "sourcePath": "/src/app.ts",
+            "signatureHash": "sha256:76a2b373b39865c4ebbc583bf6084f46f2cc9d396cb7d36953e67d586f472af4",
+            "returnType": {
+              "kind": "scalar",
+              "name": "i32",
+              "id": "sha256:a499279eb079e9a530729c0e20165237b946527f01f48d1426b927e2c2e7d727"
+            },
+            "parameters": [
+              {
+                "id": "p0",
+                "name": "value",
+                "range": {
+                  "end": 112,
+                  "start": 107
+                },
+                "type": "sha256:a499279eb079e9a530729c0e20165237b946527f01f48d1426b927e2c2e7d727",
+                "writable": true
+              }
+            ],
+            "range": {
+              "end": 145,
+              "start": 84
+            },
+            "body": [
+              {
+                "kind": "return",
+                "range": {
+                  "end": 143,
+                  "start": 125
+                },
+                "value": {
+                  "arguments": [
+                    {
+                      "binding": "p0",
+                      "kind": "reference",
+                      "range": {
+                        "end": 141,
+                        "start": 136
+                      },
+                      "type": "sha256:a499279eb079e9a530729c0e20165237b946527f01f48d1426b927e2c2e7d727"
+                    }
+                  ],
+                  "kind": "call",
+                  "name": "op",
+                  "range": {
+                    "end": 142,
+                    "start": 132
+                  },
+                  "signatureHash": "sha256:76a2b373b39865c4ebbc583bf6084f46f2cc9d396cb7d36953e67d586f472af4",
+                  "target": "sha256:6ba57d299a496fe944d91007688bd797821ff96bb95dd5272d641c5024490395",
+                  "type": "sha256:a499279eb079e9a530729c0e20165237b946527f01f48d1426b927e2c2e7d727"
+                }
+              }
+            ]
+          },
+          {
+            "id": "sha256:336492574c99468d0c079cc5a5007bfa971a5f054c17c608a8c8c422f6d516ae",
+            "name": "peer",
+            "symbol": "f336492574c99468d0c079cc5a5007bfa971a5f054c17c608a8c8c422f6d516ae",
+            "kind": "source",
+            "sourcePath": "/src/app.ts",
+            "signatureHash": "sha256:76a2b373b39865c4ebbc583bf6084f46f2cc9d396cb7d36953e67d586f472af4",
+            "returnType": {
+              "kind": "scalar",
+              "name": "i32",
+              "id": "sha256:a499279eb079e9a530729c0e20165237b946527f01f48d1426b927e2c2e7d727"
+            },
+            "parameters": [
+              {
+                "id": "p0",
+                "name": "value",
+                "range": {
+                  "end": 172,
+                  "start": 167
+                },
+                "type": "sha256:a499279eb079e9a530729c0e20165237b946527f01f48d1426b927e2c2e7d727",
+                "writable": true
+              }
+            ],
+            "range": {
+              "end": 201,
+              "start": 145
+            },
+            "body": [
+              {
+                "kind": "return",
+                "range": {
+                  "end": 199,
+                  "start": 185
+                },
+                "value": {
+                  "binding": "p0",
+                  "kind": "reference",
+                  "range": {
+                    "end": 198,
+                    "start": 192
+                  },
+                  "type": "sha256:a499279eb079e9a530729c0e20165237b946527f01f48d1426b927e2c2e7d727"
+                }
+              }
+            ]
+          },
+          {
+            "id": "sha256:6ba57d299a496fe944d91007688bd797821ff96bb95dd5272d641c5024490395",
+            "name": "leaf",
+            "symbol": "f6ba57d299a496fe944d91007688bd797821ff96bb95dd5272d641c5024490395",
+            "kind": "source",
+            "sourcePath": "/src/app.ts",
+            "signatureHash": "sha256:76a2b373b39865c4ebbc583bf6084f46f2cc9d396cb7d36953e67d586f472af4",
+            "returnType": {
+              "kind": "scalar",
+              "name": "i32",
+              "id": "sha256:a499279eb079e9a530729c0e20165237b946527f01f48d1426b927e2c2e7d727"
+            },
+            "parameters": [
+              {
+                "id": "p0",
+                "name": "value",
+                "range": {
+                  "end": 38,
+                  "start": 33
+                },
+                "type": "sha256:a499279eb079e9a530729c0e20165237b946527f01f48d1426b927e2c2e7d727",
+                "writable": true
+              }
+            ],
+            "range": {
+              "end": 67,
+              "start": 0
+            },
+            "body": [
+              {
+                "kind": "return",
+                "range": {
+                  "end": 65,
+                  "start": 51
+                },
+                "value": {
+                  "binding": "p0",
+                  "kind": "reference",
+                  "range": {
+                    "end": 64,
+                    "start": 58
+                  },
+                  "type": "sha256:a499279eb079e9a530729c0e20165237b946527f01f48d1426b927e2c2e7d727"
+                }
+              }
+            ]
+          }
+        ],
+        "moduleState": {
+          "sources": [
+            {
+              "path": "/src/app.ts",
+              "hash": "sha256:7ea7b47324d264055dd2a39e99e3b57f57ba9898f5f62df2f0cade02e03ae743",
+              "length": 202
+            },
+            {
+              "path": "/src/minimal-integers-v3.d.ts",
+              "hash": "sha256:9fc1955899e303b5815590f7150f60662f3cece0a633c94a2a06669cf509a96e",
+              "length": 1214
+            }
+          ],
+          "modules": [
+            {
+              "bindings": [
+                {
+                  "name": "entry",
+                  "target": "sha256:f1148c6b6e33f837c72b5af5a4196e7c5127ed1dc00861564c5592a8e42dbb58"
+                },
+                {
+                  "name": "leaf",
+                  "target": "sha256:6ba57d299a496fe944d91007688bd797821ff96bb95dd5272d641c5024490395"
+                },
+                {
+                  "name": "op",
+                  "target": "sha256:6ba57d299a496fe944d91007688bd797821ff96bb95dd5272d641c5024490395"
+                },
+                {
+                  "name": "peer",
+                  "target": "sha256:336492574c99468d0c079cc5a5007bfa971a5f054c17c608a8c8c422f6d516ae"
+                }
+              ],
+              "dependencies": [],
+              "exports": [
+                {
+                  "name": "entry",
+                  "target": "sha256:f1148c6b6e33f837c72b5af5a4196e7c5127ed1dc00861564c5592a8e42dbb58"
+                },
+                {
+                  "name": "peer",
+                  "target": "sha256:336492574c99468d0c079cc5a5007bfa971a5f054c17c608a8c8c422f6d516ae"
+                }
+              ],
+              "id": "sha256:5de2f73a69e4070b6a4d4dfd21403b51483f644bdb9dca611433f1a5998f246e",
+              "initializer": "sha256:084d0b3b843aec851d8a48239a87a66ded8fe56767a104c21c726e4ad76d6b1d",
+              "sourcePath": "/src/app.ts"
+            }
+          ],
+          "globals": [],
+          "hostImports": [],
+          "closure": {
+            "functions": [
+              "sha256:084d0b3b843aec851d8a48239a87a66ded8fe56767a104c21c726e4ad76d6b1d",
+              "sha256:f1148c6b6e33f837c72b5af5a4196e7c5127ed1dc00861564c5592a8e42dbb58",
+              "sha256:336492574c99468d0c079cc5a5007bfa971a5f054c17c608a8c8c422f6d516ae",
+              "sha256:6ba57d299a496fe944d91007688bd797821ff96bb95dd5272d641c5024490395"
+            ],
+            "initialization": [
+              "sha256:084d0b3b843aec851d8a48239a87a66ded8fe56767a104c21c726e4ad76d6b1d"
+            ],
+            "modules": [
+              "sha256:5de2f73a69e4070b6a4d4dfd21403b51483f644bdb9dca611433f1a5998f246e"
+            ],
+            "requiredRoots": [],
+            "roots": [
+              {
+                "kind": "kernel",
+                "name": "entry",
+                "sourcePath": "/src/app.ts",
+                "target": "sha256:f1148c6b6e33f837c72b5af5a4196e7c5127ed1dc00861564c5592a8e42dbb58"
+              },
+              {
+                "kind": "kernel",
+                "name": "peer",
+                "sourcePath": "/src/app.ts",
+                "target": "sha256:336492574c99468d0c079cc5a5007bfa971a5f054c17c608a8c8c422f6d516ae"
+              }
+            ]
+          }
+        }
+      },
+      "identityMapping": [
+        {
+          "index": 0,
+          "name": "$moduleInit",
+          "kind": "module-initialization",
+          "candidateFunctionId": "sha256:084d0b3b843aec851d8a48239a87a66ded8fe56767a104c21c726e4ad76d6b1d",
+          "formalFunctionId": "sha256:084d0b3b843aec851d8a48239a87a66ded8fe56767a104c21c726e4ad76d6b1d",
+          "candidateSignatureId": "sha256:405d7118c8dc4f40ef6a37e7c80722827b789606aaf100011a5d809756bd51c0",
+          "candidateSignatureHash": "sha256:2c4526fce4b846eda64613d13c1ce7f7d444e0d5ee842b8fd235c98514af4617",
+          "formalSignatureHash": "sha256:ac9438b17e41c86e042aaa640f76bd95693245676c19c4cbfd89cf43315df6f9",
+          "formalSymbol": "f084d0b3b843aec851d8a48239a87a66ded8fe56767a104c21c726e4ad76d6b1d",
+          "sourcePath": "/src/app.ts",
+          "range": {
+            "end": 202,
+            "start": 0
+          },
+          "definitionRange": {
+            "end": 202,
+            "start": 0
+          },
+          "returnType": "sha256:a499279eb079e9a530729c0e20165237b946527f01f48d1426b927e2c2e7d727",
+          "parameters": [],
+          "functionPreimageUTF8Hex": "747366672e6d6f64756c652d696e697469616c697a65722e7631002f7372632f6170702e7473007368613235363a37656137623437333234643236343035356464326133396539396533623537663537626139383938663566363264663266306361646530326530336165373433007368613235363a35646532663733613639653430373062366134643464666432313430336235313438336636343462646239646361363131343333663161353939386632343665007368613235363a61633934333862313765343163383665303432616161363430663736626439353639333234353637366331396334636266643839636634333331356466366639",
+          "signaturePreimageUTF8Hex": "747366672e7369676e61747572650028292d3e693332"
+        },
+        {
+          "index": 1,
+          "name": "entry",
+          "kind": "source",
+          "candidateFunctionId": "sha256:1623c5d59258d56e2c04b784f7c3dac1dd3a0d9c0d0cc0ae09c024a7270cce3a",
+          "formalFunctionId": "sha256:f1148c6b6e33f837c72b5af5a4196e7c5127ed1dc00861564c5592a8e42dbb58",
+          "candidateSignatureId": "sha256:b4881d64d3bcd4b63bb20f5203228d080064431fd5c4dc1669c81a4ad7156571",
+          "candidateSignatureHash": "sha256:f527427794fb5343edafdabd86f1dde99af6f0531b3963f06341af28e5791fd3",
+          "formalSignatureHash": "sha256:76a2b373b39865c4ebbc583bf6084f46f2cc9d396cb7d36953e67d586f472af4",
+          "formalSymbol": "ff1148c6b6e33f837c72b5af5a4196e7c5127ed1dc00861564c5592a8e42dbb58",
+          "sourcePath": "/src/app.ts",
+          "range": {
+            "end": 145,
+            "start": 84
+          },
+          "definitionRange": {
+            "end": 106,
+            "start": 100
+          },
+          "returnType": "sha256:a499279eb079e9a530729c0e20165237b946527f01f48d1426b927e2c2e7d727",
+          "parameters": [
+            {
+              "id": "p0",
+              "name": "value",
+              "range": {
+                "end": 112,
+                "start": 107
+              },
+              "type": "sha256:a499279eb079e9a530729c0e20165237b946527f01f48d1426b927e2c2e7d727",
+              "writable": true
+            }
+          ],
+          "functionPreimageUTF8Hex": "747366672e66756e6374696f6e002f7372632f6170702e747300656e7472790037366132623337336233393836356334656262633538336266363038346634366632636339643339366362376433363935336536376435383666343732616634",
+          "signaturePreimageUTF8Hex": "747366672e7369676e61747572650028693332292d3e693332"
+        },
+        {
+          "index": 2,
+          "name": "peer",
+          "kind": "source",
+          "candidateFunctionId": "sha256:23dc6b5673dc73319ac74a6276df1eb1251ba133724dc571ab16098e971d17bb",
+          "formalFunctionId": "sha256:336492574c99468d0c079cc5a5007bfa971a5f054c17c608a8c8c422f6d516ae",
+          "candidateSignatureId": "sha256:b4881d64d3bcd4b63bb20f5203228d080064431fd5c4dc1669c81a4ad7156571",
+          "candidateSignatureHash": "sha256:f527427794fb5343edafdabd86f1dde99af6f0531b3963f06341af28e5791fd3",
+          "formalSignatureHash": "sha256:76a2b373b39865c4ebbc583bf6084f46f2cc9d396cb7d36953e67d586f472af4",
+          "formalSymbol": "f336492574c99468d0c079cc5a5007bfa971a5f054c17c608a8c8c422f6d516ae",
+          "sourcePath": "/src/app.ts",
+          "range": {
+            "end": 201,
+            "start": 145
+          },
+          "definitionRange": {
+            "end": 166,
+            "start": 161
+          },
+          "returnType": "sha256:a499279eb079e9a530729c0e20165237b946527f01f48d1426b927e2c2e7d727",
+          "parameters": [
+            {
+              "id": "p0",
+              "name": "value",
+              "range": {
+                "end": 172,
+                "start": 167
+              },
+              "type": "sha256:a499279eb079e9a530729c0e20165237b946527f01f48d1426b927e2c2e7d727",
+              "writable": true
+            }
+          ],
+          "functionPreimageUTF8Hex": "747366672e66756e6374696f6e002f7372632f6170702e747300706565720037366132623337336233393836356334656262633538336266363038346634366632636339643339366362376433363935336536376435383666343732616634",
+          "signaturePreimageUTF8Hex": "747366672e7369676e61747572650028693332292d3e693332"
+        },
+        {
+          "index": 3,
+          "name": "leaf",
+          "kind": "source",
+          "candidateFunctionId": "sha256:d5e86c8971240921d6accf68a1a7e6eb22e500733d4bfe9d9c6ab7f11ffd9af9",
+          "formalFunctionId": "sha256:6ba57d299a496fe944d91007688bd797821ff96bb95dd5272d641c5024490395",
+          "candidateSignatureId": "sha256:b4881d64d3bcd4b63bb20f5203228d080064431fd5c4dc1669c81a4ad7156571",
+          "candidateSignatureHash": "sha256:f527427794fb5343edafdabd86f1dde99af6f0531b3963f06341af28e5791fd3",
+          "formalSignatureHash": "sha256:76a2b373b39865c4ebbc583bf6084f46f2cc9d396cb7d36953e67d586f472af4",
+          "formalSymbol": "f6ba57d299a496fe944d91007688bd797821ff96bb95dd5272d641c5024490395",
+          "sourcePath": "/src/app.ts",
+          "range": {
+            "end": 67,
+            "start": 0
+          },
+          "definitionRange": {
+            "end": 32,
+            "start": 27
+          },
+          "returnType": "sha256:a499279eb079e9a530729c0e20165237b946527f01f48d1426b927e2c2e7d727",
+          "parameters": [
+            {
+              "id": "p0",
+              "name": "value",
+              "range": {
+                "end": 38,
+                "start": 33
+              },
+              "type": "sha256:a499279eb079e9a530729c0e20165237b946527f01f48d1426b927e2c2e7d727",
+              "writable": true
+            }
+          ],
+          "functionPreimageUTF8Hex": "747366672e66756e6374696f6e002f7372632f6170702e7473006c6561660037366132623337336233393836356334656262633538336266363038346634366632636339643339366362376433363935336536376435383666343732616634",
+          "signaturePreimageUTF8Hex": "747366672e7369676e61747572650028693332292d3e693332"
+        }
+      ],
+      "referenceOccurrences": [
+        {
+          "pointer": "/functions/0/id",
+          "candidate": "sha256:084d0b3b843aec851d8a48239a87a66ded8fe56767a104c21c726e4ad76d6b1d",
+          "formal": "sha256:084d0b3b843aec851d8a48239a87a66ded8fe56767a104c21c726e4ad76d6b1d"
+        },
+        {
+          "pointer": "/functions/1/body/0/value/target",
+          "candidate": "sha256:d5e86c8971240921d6accf68a1a7e6eb22e500733d4bfe9d9c6ab7f11ffd9af9",
+          "formal": "sha256:6ba57d299a496fe944d91007688bd797821ff96bb95dd5272d641c5024490395"
+        },
+        {
+          "pointer": "/functions/1/id",
+          "candidate": "sha256:1623c5d59258d56e2c04b784f7c3dac1dd3a0d9c0d0cc0ae09c024a7270cce3a",
+          "formal": "sha256:f1148c6b6e33f837c72b5af5a4196e7c5127ed1dc00861564c5592a8e42dbb58"
+        },
+        {
+          "pointer": "/functions/2/id",
+          "candidate": "sha256:23dc6b5673dc73319ac74a6276df1eb1251ba133724dc571ab16098e971d17bb",
+          "formal": "sha256:336492574c99468d0c079cc5a5007bfa971a5f054c17c608a8c8c422f6d516ae"
+        },
+        {
+          "pointer": "/functions/3/id",
+          "candidate": "sha256:d5e86c8971240921d6accf68a1a7e6eb22e500733d4bfe9d9c6ab7f11ffd9af9",
+          "formal": "sha256:6ba57d299a496fe944d91007688bd797821ff96bb95dd5272d641c5024490395"
+        },
+        {
+          "pointer": "/modules/0/bindings/0/target",
+          "candidate": "sha256:1623c5d59258d56e2c04b784f7c3dac1dd3a0d9c0d0cc0ae09c024a7270cce3a",
+          "formal": "sha256:f1148c6b6e33f837c72b5af5a4196e7c5127ed1dc00861564c5592a8e42dbb58"
+        },
+        {
+          "pointer": "/modules/0/bindings/1/target",
+          "candidate": "sha256:d5e86c8971240921d6accf68a1a7e6eb22e500733d4bfe9d9c6ab7f11ffd9af9",
+          "formal": "sha256:6ba57d299a496fe944d91007688bd797821ff96bb95dd5272d641c5024490395"
+        },
+        {
+          "pointer": "/modules/0/bindings/2/target",
+          "candidate": "sha256:d5e86c8971240921d6accf68a1a7e6eb22e500733d4bfe9d9c6ab7f11ffd9af9",
+          "formal": "sha256:6ba57d299a496fe944d91007688bd797821ff96bb95dd5272d641c5024490395"
+        },
+        {
+          "pointer": "/modules/0/bindings/3/target",
+          "candidate": "sha256:23dc6b5673dc73319ac74a6276df1eb1251ba133724dc571ab16098e971d17bb",
+          "formal": "sha256:336492574c99468d0c079cc5a5007bfa971a5f054c17c608a8c8c422f6d516ae"
+        },
+        {
+          "pointer": "/modules/0/exports/0/target",
+          "candidate": "sha256:1623c5d59258d56e2c04b784f7c3dac1dd3a0d9c0d0cc0ae09c024a7270cce3a",
+          "formal": "sha256:f1148c6b6e33f837c72b5af5a4196e7c5127ed1dc00861564c5592a8e42dbb58"
+        },
+        {
+          "pointer": "/modules/0/exports/1/target",
+          "candidate": "sha256:23dc6b5673dc73319ac74a6276df1eb1251ba133724dc571ab16098e971d17bb",
+          "formal": "sha256:336492574c99468d0c079cc5a5007bfa971a5f054c17c608a8c8c422f6d516ae"
+        },
+        {
+          "pointer": "/modules/0/initializer",
+          "candidate": "sha256:084d0b3b843aec851d8a48239a87a66ded8fe56767a104c21c726e4ad76d6b1d",
+          "formal": "sha256:084d0b3b843aec851d8a48239a87a66ded8fe56767a104c21c726e4ad76d6b1d"
+        },
+        {
+          "pointer": "/closure/functions/0",
+          "candidate": "sha256:084d0b3b843aec851d8a48239a87a66ded8fe56767a104c21c726e4ad76d6b1d",
+          "formal": "sha256:084d0b3b843aec851d8a48239a87a66ded8fe56767a104c21c726e4ad76d6b1d"
+        },
+        {
+          "pointer": "/closure/functions/1",
+          "candidate": "sha256:1623c5d59258d56e2c04b784f7c3dac1dd3a0d9c0d0cc0ae09c024a7270cce3a",
+          "formal": "sha256:f1148c6b6e33f837c72b5af5a4196e7c5127ed1dc00861564c5592a8e42dbb58"
+        },
+        {
+          "pointer": "/closure/functions/2",
+          "candidate": "sha256:23dc6b5673dc73319ac74a6276df1eb1251ba133724dc571ab16098e971d17bb",
+          "formal": "sha256:336492574c99468d0c079cc5a5007bfa971a5f054c17c608a8c8c422f6d516ae"
+        },
+        {
+          "pointer": "/closure/functions/3",
+          "candidate": "sha256:d5e86c8971240921d6accf68a1a7e6eb22e500733d4bfe9d9c6ab7f11ffd9af9",
+          "formal": "sha256:6ba57d299a496fe944d91007688bd797821ff96bb95dd5272d641c5024490395"
+        },
+        {
+          "pointer": "/closure/initialization/0",
+          "candidate": "sha256:084d0b3b843aec851d8a48239a87a66ded8fe56767a104c21c726e4ad76d6b1d",
+          "formal": "sha256:084d0b3b843aec851d8a48239a87a66ded8fe56767a104c21c726e4ad76d6b1d"
+        },
+        {
+          "pointer": "/closure/roots/0/target",
+          "candidate": "sha256:1623c5d59258d56e2c04b784f7c3dac1dd3a0d9c0d0cc0ae09c024a7270cce3a",
+          "formal": "sha256:f1148c6b6e33f837c72b5af5a4196e7c5127ed1dc00861564c5592a8e42dbb58"
+        },
+        {
+          "pointer": "/closure/roots/1/target",
+          "candidate": "sha256:23dc6b5673dc73319ac74a6276df1eb1251ba133724dc571ab16098e971d17bb",
+          "formal": "sha256:336492574c99468d0c079cc5a5007bfa971a5f054c17c608a8c8c422f6d516ae"
+        }
+      ],
+      "ssaTrace": [
+        {
+          "functionId": "sha256:084d0b3b843aec851d8a48239a87a66ded8fe56767a104c21c726e4ad76d6b1d",
+          "name": "$moduleInit",
+          "registers": 1,
+          "blocks": [
+            {
+              "name": "bb0",
+              "parameters": [],
+              "lines": [
+                "    %v0 = \"tsfg_core.constant\"() {value = 0 : i32, tsfg_source.start = 0 : i64, tsfg_source.end = 202 : i64} : () -> i32",
+                "    \"func.return\"(%v0) {tsfg_source.start = 0 : i64, tsfg_source.end = 202 : i64} : (i32) -> ()"
+              ]
+            }
+          ]
+        },
+        {
+          "functionId": "sha256:f1148c6b6e33f837c72b5af5a4196e7c5127ed1dc00861564c5592a8e42dbb58",
+          "name": "entry",
+          "registers": 2,
+          "blocks": [
+            {
+              "name": "bb0",
+              "parameters": [
+                {
+                  "name": "%v0",
+                  "type": "sha256:a499279eb079e9a530729c0e20165237b946527f01f48d1426b927e2c2e7d727"
+                }
+              ],
+              "lines": [
+                "    \"tsfg_core.fuel\"() {event = 1 : i32, tsfg_source.start = 84 : i64, tsfg_source.end = 145 : i64} : () -> ()",
+                "    %v1 = \"func.call\"(%v0) {callee = @\"f6ba57d299a496fe944d91007688bd797821ff96bb95dd5272d641c5024490395\", tsfg_core.function_id = \"sha256:6ba57d299a496fe944d91007688bd797821ff96bb95dd5272d641c5024490395\", tsfg_core.signature_hash = \"sha256:76a2b373b39865c4ebbc583bf6084f46f2cc9d396cb7d36953e67d586f472af4\", tsfg_source.start = 132 : i64, tsfg_source.end = 142 : i64} : (i32) -> i32",
+                "    \"func.return\"(%v1) {tsfg_source.start = 125 : i64, tsfg_source.end = 143 : i64} : (i32) -> ()"
+              ]
+            }
+          ]
+        },
+        {
+          "functionId": "sha256:336492574c99468d0c079cc5a5007bfa971a5f054c17c608a8c8c422f6d516ae",
+          "name": "peer",
+          "registers": 1,
+          "blocks": [
+            {
+              "name": "bb0",
+              "parameters": [
+                {
+                  "name": "%v0",
+                  "type": "sha256:a499279eb079e9a530729c0e20165237b946527f01f48d1426b927e2c2e7d727"
+                }
+              ],
+              "lines": [
+                "    \"tsfg_core.fuel\"() {event = 1 : i32, tsfg_source.start = 145 : i64, tsfg_source.end = 201 : i64} : () -> ()",
+                "    \"func.return\"(%v0) {tsfg_source.start = 185 : i64, tsfg_source.end = 199 : i64} : (i32) -> ()"
+              ]
+            }
+          ]
+        },
+        {
+          "functionId": "sha256:6ba57d299a496fe944d91007688bd797821ff96bb95dd5272d641c5024490395",
+          "name": "leaf",
+          "registers": 1,
+          "blocks": [
+            {
+              "name": "bb0",
+              "parameters": [
+                {
+                  "name": "%v0",
+                  "type": "sha256:a499279eb079e9a530729c0e20165237b946527f01f48d1426b927e2c2e7d727"
+                }
+              ],
+              "lines": [
+                "    \"tsfg_core.fuel\"() {event = 1 : i32, tsfg_source.start = 0 : i64, tsfg_source.end = 67 : i64} : () -> ()",
+                "    \"func.return\"(%v0) {tsfg_source.start = 51 : i64, tsfg_source.end = 65 : i64} : (i32) -> ()"
+              ]
+            }
+          ]
+        }
+      ],
+      "counts": {
+        "functions": 4,
+        "initializers": 1,
+        "sources": 2,
+        "modules": 1,
+        "globals": 0,
+        "bindings": 4,
+        "exports": 2,
+        "roots": 2,
+        "calls": 1
+      },
+      "unserializedFields": "module bindings/exports and closure ID lists are independently remapped in expectedFormalView, not invented Core attributes",
+      "credit": "Independent expected input/literal only, no SUT/canonical-printer/bytecode/Source/VM execution result."
+    }
+  ]
+}

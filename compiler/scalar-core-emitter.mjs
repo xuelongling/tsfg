@@ -20,7 +20,8 @@ export function emitScalarCore(view) {
     `tsfg_core.source_length = ${verified.source.length} : i64`];
   const state=view.moduleState;
   const moduleMode=!!state;
-  const emittedFunctions=moduleMode?verified.functions.filter(fn=>state.closure.functions.includes(fn.id)):verified.functions;
+  const emittedFunctions=moduleMode && view.functionSelection !== 'complete-original-universe'
+    ? verified.functions.filter(fn=>state.closure.functions.includes(fn.id)) : verified.functions;
   const functionSymbol=fn=>fn.symbol;
   const dictionary=fields=>`{${Object.entries(fields).map(([name,value])=>`${name} = ${value}`).join(', ')}}`;
   const integer=value=>`${value} : i64`,array=values=>`[${values.join(', ')}]`;

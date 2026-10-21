@@ -1,5 +1,6 @@
 import { familyOf } from './module-callable-common.mjs';
 import { buildModuleCallableHir } from './module-callable-hir.mjs';
+import { emitModuleCallableCore } from './module-callable-core.mjs';
 export { verifyModuleCalls, printModuleCalls, readModuleCalls } from './module-callable-publication.mjs';
 // SPDX-License-Identifier: MIT
 import { buildExceptionHir } from "./exception-hir.mjs";
@@ -217,8 +218,7 @@ export function lowerHir(hir, factsContext = undefined, callPublicationContext =
   if (isArrayFactsContext(factsContext)) return emitArrayCore(hir, factsContext, callPublicationContext);
   if (factsContext !== undefined) return emitStringCore(hir, factsContext);
   if (familyOf(hir) === 'tsfg.module-callable-hir-candidate') {
-    verifyHir(hir);
-    throw Object.assign(new TypeError('r03-d-capability: module callable Core lowering is not implemented'), {code:'r03-d-capability',ruleId:'r01-ts-baseline',phase:'lowering'});
+    return emitModuleCallableCore(hir);
   }
   if (hir?.format?.family === "tsfg.exception-hir-candidate") return emitExceptionCore(hir);
   if (hir?.format?.family === "tsfg.nullable-hir-candidate") return emitNullableCore(hir);
