@@ -7,6 +7,35 @@ import { pathToFileURL } from "node:url";
 import { readMlirSourceLegalFiles } from "../../eng/mlir-source-legal.mjs";
 import { createMlirFixture } from "./mlir-fixtures.mjs";
 
+test("M18 normal Core mandatory AOT sources retain exact standard and project-grant inputs", async () => {
+  const { readMlirSourceBuildLegalInputs } = await import("../../eng/mlir-source-legal.mjs");
+  const paths = ["llvm/lib/Analysis/AliasAnalysis.cpp", "llvm/lib/CodeGen/SelectionDAG/TargetLowering.cpp",
+    "llvm/lib/Analysis/StaticDataProfileInfo.cpp", "mlir/lib/Analysis/SliceWalk.cpp"];
+  const result = await readMlirSourceBuildLegalInputs({ sourceRoot: process.env.TSFG_MLIR_SOURCE,
+    git: process.env.TSFG_GIT, paths });
+  assert.deepEqual(result.files.map(file => file.path), paths);
+  for (const file of result.files) {
+    assert.equal(file.license, "Apache-2.0 WITH LLVM-exception");
+    assert.equal(file.role, "compiler-side-M01");
+    assert.match(file.blob, /^[0-9a-f]{40}$/);
+    assert.match(file.sha256, /^sha256:[0-9a-f]{64}$/);
+    assert.ok(file.licenseBasis.length > 0);
+  }
+  for (const file of result.files.slice(0, 2))
+    assert.match(file.completeOriginalAttribution, /SPDX-License-Identifier: Apache-2.0 WITH LLVM-exception/);
+  for (const file of result.files.slice(2)) {
+    assert.equal(file.noticeStart, "0"); assert.equal(file.noticeEnd, "0");
+    assert.equal(file.completeOriginalAttribution, "");
+  }
+  await assert.rejects(readMlirSourceBuildLegalInputs({ sourceRoot: process.env.TSFG_MLIR_SOURCE,
+    git: process.env.TSFG_GIT, paths: ["llvm/lib/Target/AArch64/AArch64TargetMachine.cpp"] }),
+  { issueCode: "mlir-source-license" });
+  // The copied table's source-specific grant remains unresolved.
+  await assert.rejects(readMlirSourceBuildLegalInputs({ sourceRoot: process.env.TSFG_MLIR_SOURCE,
+    git: process.env.TSFG_GIT, paths: ["llvm/lib/Target/X86/MCTargetDesc/X86InstComments.cpp"] }),
+  { issueCode: "mlir-source-license" });
+});
+
 test("M05 mandatory control flow source registration retains exact fixed-source original terms", async () => {
   const { readMlirSourceBuildLegalInputs } = await import("../../eng/mlir-source-legal.mjs");
   const paths = ["mlir/lib/Dialect/ControlFlow/IR/ControlFlowOps.cpp", "mlir/lib/Dialect/Arith/IR/ArithOps.cpp",

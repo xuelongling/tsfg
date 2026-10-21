@@ -115,6 +115,26 @@ APFloat-exception conversion headers are not registered. Explicit project
 license grants and their stated exception mechanisms are checked per file;
 absence of a file SPDX annotation is recorded, never filled with a guessed one.
 
+The M18 complete69TU target's captured CMake/Ninja plan exposed1379 previously
+unregistered mandatory paths. Its supplement retains all5394 prior entry
+objects and all five original license materials. The supplement relies on the
+two LLVM/MLIR project license materials and adds1378 exact files:1367 carry
+the original Apache-2.0 WITH LLVM-exception SPDX declaration;11 have no local
+declaration and are recorded under the explicit project grant after checking
+every relevant ancestor for the two third-party exception mechanisms. No local
+SPDX is invented, and no optional backend or Runtime consumption is admitted.
+Original algorithm-source citations remain retained as source attribution
+rather than inferred additional license terms.
+
+One mandatory file remains unregistered:
+`llvm/lib/Target/X86/MCTargetDesc/X86InstComments.cpp`. Although its header has
+the standard LLVM SPDX declaration, its TernlogFunctions table is attributed
+as copied from an external DougallJ Gist. The exact upstream source and
+introduction commit are known, but a source-specific grant for that copied
+material has not been established. The strict reader therefore still rejects
+this path, and the complete normal Core source build remains blocked. This
+does not revoke the independently established provenance of other entries.
+
 Shared TargetParser generation consumes some AArch64, ARM, PowerPC and RISCV
 TableGen inputs even with only the X86 backend enabled. Their exact discovered
 dependencies are registered individually. Four files without local license
