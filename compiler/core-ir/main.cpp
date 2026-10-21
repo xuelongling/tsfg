@@ -1,5 +1,6 @@
 // SPDX-License-Identifier: MIT
 #include "bytecode.h"
+#include "aot.h"
 #include "core-verify.h"
 #include "closure.h"
 #include "dialect.h"
@@ -69,6 +70,28 @@ int readPrivatePacketInput(std::string &bytes, llvm::StringRef budgetCode) {
     if (!std::cin) return 2;
   }
 }
+// Only the new ordinary compiler outputs use this publication path. Buffering
+// prevents a failed capability/lowering/codegen stage from publishing a prefix.
+int nativeFailure(int status) {
+  llvm::errs().flush();
+  if (llvm::errs().has_error()) { llvm::errs().clear_error(); return 2; }
+  return status;
+}
+int nativeOutput(mlir::ModuleOp module, tsfg::NativeOutput kind) {
+  std::string bytes; llvm::raw_string_ostream output(bytes);
+  if (mlir::failed(tsfg::emitNativeLLVM(module, output, kind))) return nativeFailure(3);
+  if (llvm::sys::ChangeStdoutToBinary()) {
+    llvm::errs() << "[core-ir-output] cannot set stdout binary mode\n";
+    return nativeFailure(2);
+  }
+  llvm::outs().write(bytes.data(), bytes.size()); llvm::outs().flush();
+  if (llvm::outs().has_error()) {
+    llvm::outs().clear_error();
+    llvm::errs() << "[core-ir-output] cannot write stdout\n";
+    return nativeFailure(2);
+  }
+  return 0;
+}
 } // namespace
 
 int main(int argc, char **argv) {
@@ -83,6 +106,8 @@ int main(int argc, char **argv) {
   }
   if (argc != 2 || (llvm::StringRef(argv[1]) != "--canonicalize" &&
                     llvm::StringRef(argv[1]) != "--emit-bytecode" &&
+                    llvm::StringRef(argv[1]) != "--emit-native-llvm" &&
+                    llvm::StringRef(argv[1]) != "--emit-native-object" &&
                     llvm::StringRef(argv[1]) != "--emit-nullable-candidate" &&
                     llvm::StringRef(argv[1]) != "--emit-string-candidate" &&
                     llvm::StringRef(argv[1]) != "--emit-array-candidate" &&
@@ -154,6 +179,10 @@ int main(int argc, char **argv) {
     return 3;
   }
   if (mlir::failed(tsfg::verifyCoreModule(*module))) return 3;
+  if (llvm::StringRef(argv[1]) == "--emit-native-llvm")
+    return nativeOutput(*module, tsfg::NativeOutput::LLVM);
+  if (llvm::StringRef(argv[1]) == "--emit-native-object")
+    return nativeOutput(*module, tsfg::NativeOutput::Object);
   if (closureCandidate && (nullableWire || llvm::StringRef(argv[1]) == "--emit-bytecode")) {
     llvm::errs() << "[r04-core-closure-unsupported] wire9 cannot encode a closure candidate module\n";
     return 3;
