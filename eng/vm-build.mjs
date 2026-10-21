@@ -159,6 +159,9 @@ export async function createVmLinkObjectRetention({stage,logPath,output,counterO
 }
 const runtimeSources = [...["root", "bytecode", "bytecode_model", "bytecode_decode", "bytecode_view", "nullable-bytecode", "nullable-model", "nullable-decode", "nullable-cfg", "nullable-tags", "string-candidate", "string-candidate-model", "string-candidate-decode", "string-candidate-verify", "array-candidate", "array-candidate-model", "array-candidate-decode", "array-candidate-metadata", "array-candidate-body", "array-candidate-owner", "array-candidate-roots", "array-candidate-graph", "array-candidate-publication", "vm", "runtime", "main", "contract", "module-plan", "aot-instance", "module_format", "module", "request", "host_counter", "clock", "execution_frame", "scalar", "conversions", "managed-heap", "managed-payload", "string-codec", "host-bindings", "host-semantic-contract", "floating-environment", "outcome-writer", "string-arguments", "string-budget", "string-frame", "string-instructions", "string-output", "string-value", "vm-execution", "vm-instance", "runtime-state", "request-values", "request-json", "module-outcome-writer"].map(name => `runtime/${name}.zig`), "runtime/host_counter.c", "runtime/host_counter_bridge.c", "runtime/admitted-entry.c"];
 
+runtimeSources.push(...['array-element','managed-array','managed-handles','managed-heap-model','managed-heap-arrays','managed-heap-collector']
+  .map(name => `runtime/${name}.zig`));
+
 /** Actual production copy boundary, also exercised without starting the VM. */
 export async function stageVmRuntimeSources({productRoot,product,identity,sha256}) {
   for (const name of runtimeSources) {

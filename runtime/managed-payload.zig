@@ -3,8 +3,9 @@
 const std = @import("std");
 const Allocator = std.mem.Allocator;
 const codec = @import("string-codec.zig");
+const arrays = @import("managed-array.zig");
 
-pub const Error = Allocator.Error || error{
+pub const Error = arrays.Error || error{
     TypeMismatch,
     StringTooLarge,
     InvalidString,
@@ -20,6 +21,7 @@ pub const Payload = union(enum) {
     scalar: u64,
     string: StringPayload,
     array_f64: ArrayPayload,
+    array: arrays.Array,
 
     pub fn fromString(allocator: Allocator, units: []const u16) Error!Payload {
         const bytes = codec.encodeAlloc(allocator, units) catch |err| switch (err) {
@@ -79,6 +81,7 @@ pub const Payload = union(enum) {
             .scalar => {},
             .string => |value| allocator.free(value.bytes),
             .array_f64 => |value| allocator.free(value.items),
+            .array => |value| value.deinit(allocator),
         }
     }
 
@@ -91,6 +94,7 @@ pub const Payload = union(enum) {
             } },
             // Only the initialized logical prefix survives; capacity is private and may change at GC.
             .array_f64 => |value| try fromArrayF64(allocator, value.items[0..value.length]),
+            .array => |value| .{ .array = try value.clone(allocator) },
         };
     }
 

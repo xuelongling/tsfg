@@ -2,6 +2,10 @@
 const std = @import("std");
 const Allocator = std.mem.Allocator;
 const payloads = @import("managed-payload.zig");
+const model = @import("managed-heap-model.zig");
+const collector = @import("managed-heap-collector.zig");
+const arrays = @import("managed-heap-arrays.zig");
+const element = @import("array-element.zig");
 
 // IDs never derive from wrapper addresses. Exhaustion permanently refuses new owners.
 var next_owner = std.atomic.Value(u64).init(1);
@@ -25,29 +29,17 @@ pub const Error = payloads.Error || error{
     InvalidScope,
     IdentityExhausted,
 };
-pub const Handle = struct { owner: u64, slot: usize, generation: u64 };
-pub const Lifetime = enum { persistent, temporary };
-pub const Scope = struct { owner: u64, serial: u64, parent: u64 };
+pub const Handle = @import("managed-handles.zig").Handle;
+pub const Lifetime = @import("managed-handles.zig").Lifetime;
+pub const Scope = @import("managed-handles.zig").Scope;
+pub const ArrayLayout = element.Layout;
+pub const ArrayInput = element.Input;
+pub const ArrayValue = element.Value;
 pub const Value = struct { identity: u64, type_id: u64, scalar: u64, edge_count: usize };
 const Payload = payloads.Payload;
-const Object = struct {
-    identity: u64,
-    type_id: u64,
-    payload: Payload,
-    edges: []?*Object,
-    index: usize,
-};
-const Root = struct {
-    object: ?*Object = null,
-    generation: u64 = 1,
-    scope: u64 = 0,
-    retired: bool = false,
-};
-
-const State = struct {
-    objects: std.ArrayList(*Object) = .empty,
-    roots: std.ArrayList(Root) = .empty,
-};
+const Object = model.Object;
+const Root = model.Root;
+const State = model.State;
 
 /// Serial, exclusively owned heap. init may be returned/copied before first use.
 /// After first use this wrapper must remain at its address until deinit; copied
@@ -85,7 +77,7 @@ pub const ManagedHeap = struct {
         try self.check();
         if (self.storage != null) {
             const state = self.owned();
-            for (state.objects.items) |object| self.destroyObject(object);
+            for (state.objects.items) |object| collector.destroy(self.allocator, object);
             state.objects.deinit(self.allocator);
             state.roots.deinit(self.allocator);
             self.allocator.destroy(state);
@@ -164,10 +156,8 @@ pub const ManagedHeap = struct {
 
     fn resolve(self: *ManagedHeap, handle: Handle) Error!*Object {
         try self.check();
-        if (handle.owner != self.owner or self.storage == null or handle.slot >= self.owned().roots.items.len) return error.InvalidHandle;
-        const root = self.owned().roots.items[handle.slot];
-        if (root.retired or root.generation != handle.generation) return error.InvalidHandle;
-        return root.object orelse error.InvalidHandle;
+        if (self.storage == null) return error.InvalidHandle;
+        return model.resolve(self.owned(), self.owner, handle);
     }
 
     fn invalidate(root: *Root) void {
@@ -265,7 +255,7 @@ pub const ManagedHeap = struct {
         if (object.type_id != expected_type) return error.TypeMismatch;
         const scalar = switch (object.payload) {
             .scalar => |value| value,
-            .string, .array_f64 => return error.TypeMismatch,
+            .string, .array_f64, .array => return error.TypeMismatch,
         };
         return .{ .identity = object.identity, .type_id = object.type_id, .scalar = scalar, .edge_count = object.edges.len };
     }
@@ -275,7 +265,7 @@ pub const ManagedHeap = struct {
         if (object.type_id != expected_type) return error.TypeMismatch;
         switch (object.payload) {
             .scalar => |*value| value.* = scalar,
-            .string, .array_f64 => return error.TypeMismatch,
+            .string, .array_f64, .array => return error.TypeMismatch,
         }
     }
 
@@ -334,6 +324,50 @@ pub const ManagedHeap = struct {
         try object.payload.resizeArrayF64(length);
     }
 
+    pub fn createTypedArray(self: *ManagedHeap, layout: ArrayLayout, inputs: []const ArrayInput, lifetime: Lifetime) Error!Handle {
+        try self.check();
+        const scope = try self.scopeFor(lifetime);
+        if (self.next_identity == std.math.maxInt(u64)) return error.IdentityExhausted;
+        const slot = try self.availableRoot();
+        const state = self.owned();
+        try state.objects.ensureUnusedCapacity(self.allocator, 1);
+        const object = try arrays.create(self.allocator, state, self.owner, self.next_identity, layout, inputs);
+        state.objects.appendAssumeCapacity(object);
+        self.next_identity += 1;
+        return self.installRoot(slot, object, scope);
+    }
+
+    pub fn typedArrayLength(self: *ManagedHeap, handle: Handle, expected: ArrayLayout) Error!u32 {
+        return (try arrays.array(try self.resolve(handle), expected)).length;
+    }
+
+    pub fn readTypedArray(self: *ManagedHeap, handle: Handle, expected: ArrayLayout, index: u32, lifetime: Lifetime) Error!ArrayValue {
+        const object = try self.resolve(handle);
+        const value = try arrays.array(object, expected);
+        const source = try value.readBytes(index);
+        const scope = try self.scopeFor(lifetime);
+        const bytes = try self.allocator.dupe(u8, source);
+        errdefer self.allocator.free(bytes);
+        const references = try self.allocator.alloc(?Handle, value.layout.reference_count);
+        errdefer self.allocator.free(references);
+        // Reserve every possible root before publishing even the first one.
+        try self.owned().roots.ensureUnusedCapacity(self.allocator, references.len);
+        const start = @as(usize, index) * value.layout.reference_count;
+        for (references, object.edges[start..][0..references.len]) |*out, target| {
+            out.* = if (target) |child| self.installRoot(try self.availableRoot(), child, scope) else null;
+        }
+        return .{ .tag = value.tags[index], .bytes = bytes, .references = references };
+    }
+
+    pub fn storeTypedArray(self: *ManagedHeap, handle: Handle, expected: ArrayLayout, index: u32, value: ArrayInput) Error!void {
+        const object = try self.resolve(handle);
+        try arrays.store(self.allocator, self.owned(), self.owner, object, expected, index, value);
+    }
+
+    pub fn resizeTypedArray(self: *ManagedHeap, handle: Handle, expected: ArrayLayout, length: u32) Error!void {
+        try arrays.resize(try self.resolve(handle), expected, length);
+    }
+
     pub fn sameObject(self: *ManagedHeap, left: Handle, right: Handle) Error!bool {
         const left_object = try self.resolve(left);
         return left_object == try self.resolve(right);
@@ -341,6 +375,8 @@ pub const ManagedHeap = struct {
 
     pub fn setEdge(self: *ManagedHeap, handle: Handle, index: usize, target: ?Handle) Error!void {
         const object = try self.resolve(handle);
+        // Typed elements must update through the variant-aware write barrier.
+        if (object.payload == .array) return error.TypeMismatch;
         if (index >= object.edges.len) return error.InvalidField;
         const edge = if (target) |value| try self.resolve(value) else null;
         object.edges[index] = edge;
@@ -360,61 +396,9 @@ pub const ManagedHeap = struct {
         return if (self.storage != null) self.owned().objects.items.len else 0;
     }
 
-    fn destroyObject(self: *ManagedHeap, object: *Object) void {
-        object.payload.deinit(self.allocator);
-        self.allocator.free(object.edges);
-        self.allocator.destroy(object);
-    }
-
-    fn copyObject(self: *ManagedHeap, old: *Object, forwarded: []?*Object, copies: *std.ArrayList(*Object)) Error!*Object {
-        if (forwarded[old.index]) |copy| return copy;
-        const copy = try self.allocator.create(Object);
-        errdefer self.allocator.destroy(copy);
-        const edges = try self.allocator.dupe(?*Object, old.edges);
-        errdefer self.allocator.free(edges);
-        copy.* = .{
-            .identity = old.identity,
-            .type_id = old.type_id,
-            .payload = try old.payload.clone(self.allocator),
-            .edges = edges,
-            .index = copies.items.len,
-        };
-        copies.appendAssumeCapacity(copy);
-        forwarded[old.index] = copy;
-        return copy;
-    }
-
-    /// Copies reachable objects while old allocations are still live, so each
-    /// surviving object moves. Forwarding is collector-local; roots and heap
-    /// edges store actual addresses and are rewritten at the commit point.
-    /// All fallible work precedes root publication; OOM leaves the old graph valid.
     pub fn collect(self: *ManagedHeap) Error!void {
         try self.check();
-        if (self.storage == null or self.owned().objects.items.len == 0) return;
-        const forwarded = try self.allocator.alloc(?*Object, self.owned().objects.items.len);
-        defer self.allocator.free(forwarded);
-        @memset(forwarded, null);
-        var copies: std.ArrayList(*Object) = .empty;
-        errdefer {
-            for (copies.items) |object| self.destroyObject(object);
-            copies.deinit(self.allocator);
-        }
-        try copies.ensureTotalCapacity(self.allocator, self.owned().objects.items.len);
-        for (self.owned().roots.items) |root| {
-            if (root.object) |object| _ = try self.copyObject(object, forwarded, &copies);
-        }
-        var cursor: usize = 0;
-        while (cursor < copies.items.len) : (cursor += 1) {
-            for (copies.items[cursor].edges) |*edge| {
-                if (edge.*) |old| edge.* = try self.copyObject(old, forwarded, &copies);
-            }
-        }
-        for (self.owned().roots.items) |*root| {
-            if (root.object) |old| root.object = forwarded[old.index].?;
-        }
-        for (self.owned().objects.items) |object| self.destroyObject(object);
-        self.owned().objects.deinit(self.allocator);
-        self.owned().objects = copies;
+        if (self.storage != null) try collector.collect(self.allocator, self.owned());
     }
 };
 
