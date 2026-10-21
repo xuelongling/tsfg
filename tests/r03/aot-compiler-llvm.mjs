@@ -72,7 +72,8 @@ export function checkCompilerGraph(text,expected) {
   assert.deepEqual(native.map(fn=>fn.name),Array.from({length:expected.nativeFunctions},(_,i)=>'native_'+i));
   const wrapper=functions.find(fn=>fn.name==='tsfg_native_invoke');assert.ok(wrapper);
   const markers=functions.flatMap(fn=>fn.markers);assert.equal(new Set(markers.map(m=>String(m.id))).size,markers.length);
-  const events=functions.flatMap(fn=>fn.events);assert.deepEqual(events.map(e=>e.id),events.map((_,i)=>BigInt(i+1)));
+  const events=functions.flatMap(fn=>fn.events);if(expected.allowElidedEvents)for(let i=0;i<events.length;i++)assert.ok(events[i].id>0n&&(i===0||events[i].id>events[i-1].id));
+  else assert.deepEqual(events.map(e=>e.id),events.map((_,i)=>BigInt(i+1)));
   for(const fn of functions)for(const event of fn.events) {
     assert.equal(event.target,fn.args[1].value);assert.equal(event.state,fn.args[0].value);
     const marker=fn.markers.find(m=>m.block===event.block&&m.index===event.index-1);assert.ok(marker);

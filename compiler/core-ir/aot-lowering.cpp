@@ -1,5 +1,7 @@
 // SPDX-License-Identifier: MIT
 #include "aot-lowering.h"
+#include "dialect.h"
+#include "llvm/ADT/APInt.h"
 #include "mlir/Dialect/ControlFlow/IR/ControlFlowOps.h"
 #include "mlir/Dialect/Func/IR/FuncOps.h"
 #include "llvm/ADT/DenseMap.h"
@@ -25,6 +27,9 @@ bool supportsNativeCore(mlir::ModuleOp module) {
   auto scalar = [](mlir::Type type) {
     return type.isSignlessInteger(1) || type.isSignlessInteger(32);
   };
+  auto integer = [](mlir::Type type) {
+    const auto code = tsfg::typeCode(type); return code >= 1 && code <= 11;
+  };
   unsigned count = 0;
   for (auto &top : module.getBody()->getOperations()) {
     auto fn = llvm::dyn_cast<mlir::func::FuncOp>(top);
@@ -32,11 +37,11 @@ bool supportsNativeCore(mlir::ModuleOp module) {
         || fn.getNumArguments() > 64 || !scalar(fn.getFunctionType().getResult(0))) return false;
     for (auto type : fn.getFunctionType().getInputs()) if (!scalar(type)) return false;
     for (auto &block : fn.getBody()) {
-      for (auto argument : block.getArguments()) if (!scalar(argument.getType())) return false;
+      for (auto argument : block.getArguments()) if (!integer(argument.getType())) return false;
       for (auto &op : block) {
         if (op.getNumRegions()) return false;
-        for (auto type : op.getOperandTypes()) if (!scalar(type)) return false;
-        for (auto type : op.getResultTypes()) if (!scalar(type)) return false;
+        for (auto type : op.getOperandTypes()) if (!integer(type)) return false;
+        for (auto type : op.getResultTypes()) if (!integer(type)) return false;
         auto name = op.getName().getStringRef();
         const auto operands = op.getNumOperands(), results = op.getNumResults();
         if (name == "tsfg_core.fuel") { if (operands || results) return false; }
@@ -44,7 +49,8 @@ bool supportsNativeCore(mlir::ModuleOp module) {
         else if (llvm::isa<mlir::cf::BranchOp, mlir::cf::CondBranchOp>(op)) { if (results) return false; }
         else if (llvm::isa<mlir::func::CallOp>(op)) { if (results != 1) return false; }
         else if (name == "tsfg_core.constant") {
-          if (operands || results != 1 || !op.getAttrOfType<mlir::IntegerAttr>("value")) return false;
+          uint64_t bits;
+          if (operands || results != 1 || !tsfg::constantBits(&op, bits)) return false;
         } else {
           bool unary = name == "tsfg_core.neg" || name == "tsfg_core.not" || name == "tsfg_core.bool_not";
           bool binary = false;
@@ -76,7 +82,9 @@ class Lowering {
   std::string value(mlir::Value v) {
     return "%v" + std::to_string(values.lookup(v));
   }
-  std::string type(mlir::Type t) { return t.isSignlessInteger(1) ? "i1" : "i32"; }
+  std::string type(mlir::Type t) {
+    return t.isSignlessInteger(1) ? "i1" : "i" + std::to_string(tsfg::width(tsfg::typeCode(t)));
+  }
   std::string constant(int64_t v, llvm::StringRef t = "i32") {
     auto id = tmp(); out << "  " << id << " = arith.constant " << v << " : " << t << '\n';
     return id;
@@ -157,8 +165,9 @@ class Lowering {
     }
     const auto result = value(op.getResult(0)), resultName = type(op.getResult(0).getType());
     if (name == "tsfg_core.constant") {
-      auto attr = op.getAttrOfType<mlir::IntegerAttr>("value");
-      out << "  " << result << " = arith.constant " << attr.getValue().getSExtValue()
+      uint64_t bits; if (!tsfg::constantBits(&op, bits)) return false;
+      const unsigned width = resultName == "i1" ? 1 : tsfg::width(tsfg::typeCode(op.getResult(0).getType()));
+      out << "  " << result << " = arith.constant " << llvm::APInt(width, bits).getSExtValue()
           << " : " << resultName << '\n'; return true;
     }
     if (auto call = llvm::dyn_cast<mlir::func::CallOp>(&op)) {
@@ -192,40 +201,58 @@ class Lowering {
       out << "  " << result << " = arith." << (name == "tsfg_core.neg" ? "subi" : "xori")
           << ' ' << mask << ", " << left << " : " << operandType << '\n'; return true;
     }
-    const auto right = value(op.getOperand(1));
+    auto right = value(op.getOperand(1));
+    const auto code = tsfg::typeCode(op.getOperand(0).getType());
+    const auto width = code == 2 ? 1u : tsfg::width(code);
+    const bool signedValue = tsfg::signedInteger(code);
     if (name == "tsfg_core.div" || name == "tsfg_core.rem") {
-      const auto zero = constant(0), valid = tmp();
-      out << "  " << valid << " = arith.cmpi ne, " << right << ", " << zero << " : i32\n";
+      const auto zero = constant(0, operandType), valid = tmp();
+      out << "  " << valid << " = arith.cmpi ne, " << right << ", " << zero << " : " << operandType << '\n';
       guard(valid, name == "tsfg_core.div" ? 5 : 6, start, end);
-      const auto min = constant(INT32_MIN), neg = constant(-1), one = constant(1);
+      if (!signedValue) {
+        out << "  " << result << " = arith." << (name == "tsfg_core.div" ? "divui" : "remui")
+            << ' ' << left << ", " << right << " : " << operandType << '\n'; return true;
+      }
+      const auto min = constant(llvm::APInt::getSignedMinValue(width).getSExtValue(), operandType);
+      const auto neg = constant(-1, operandType), one = constant(1, operandType);
       const auto isMin = tmp(), isNeg = tmp(), overflow = tmp(), divisor = tmp(), quotient = tmp();
-      out << "  " << isMin << " = arith.cmpi eq, " << left << ", " << min << " : i32\n"
-          << "  " << isNeg << " = arith.cmpi eq, " << right << ", " << neg << " : i32\n"
+      out << "  " << isMin << " = arith.cmpi eq, " << left << ", " << min << " : " << operandType << '\n'
+          << "  " << isNeg << " = arith.cmpi eq, " << right << ", " << neg << " : " << operandType << '\n'
           << "  " << overflow << " = arith.andi " << isMin << ", " << isNeg << " : i1\n"
-          << "  " << divisor << " = arith.select " << overflow << ", " << one << ", " << right << " : i32\n"
+          << "  " << divisor << " = arith.select " << overflow << ", " << one << ", " << right << " : " << operandType << '\n'
           << "  " << quotient << " = arith." << (name == "tsfg_core.div" ? "divsi" : "remsi")
-          << ' ' << left << ", " << divisor << " : i32\n"
+          << ' ' << left << ", " << divisor << " : " << operandType << '\n'
           << "  " << result << " = arith.select " << overflow << ", "
-          << (name == "tsfg_core.div" ? min : zero) << ", " << quotient << " : i32\n";
+          << (name == "tsfg_core.div" ? min : zero) << ", " << quotient << " : " << operandType << '\n';
       return true;
     }
     if (name == "tsfg_core.shl" || name == "tsfg_core.shr" || name == "tsfg_core.ushr") {
-      auto bound = constant(32), valid = tmp();
+      auto bound = constant(width), valid = tmp();
       out << "  " << valid << " = arith.cmpi ult, " << right << ", " << bound << " : i32\n";
       guard(valid, 7, start, end);
+      // Core shift counts remain i32. Adapt only after the count guard; these
+      // are compiler-internal operations, never new public Core numeric casts.
+      if (width != 32) {
+        const auto adapted = tmp();
+        out << "  " << adapted << " = arith." << (width < 32 ? "trunci " : "extui ")
+            << right << " : i32 to " << operandType << '\n'; right = adapted;
+      }
     }
     struct Mapping { llvm::StringRef core, arithmetic; };
     static const Mapping mapping[] = {{"add", "addi"}, {"sub", "subi"}, {"mul", "muli"},
       {"and", "andi"}, {"or", "ori"}, {"xor", "xori"}, {"shl", "shli"},
       {"shr", "shrsi"}, {"ushr", "shrui"}};
     for (auto entry : mapping) if (name == ("tsfg_core." + entry.core).str()) {
-      out << "  " << result << " = arith." << entry.arithmetic << ' ' << left << ", " << right
+      const auto arithmetic = entry.core == "shr" && !signedValue ? "shrui" : entry.arithmetic;
+      out << "  " << result << " = arith." << arithmetic << ' ' << left << ", " << right
           << " : " << operandType << '\n'; return true;
     }
     static const Mapping comparisons[] = {{"eq", "eq"}, {"ne", "ne"}, {"lt", "slt"},
       {"le", "sle"}, {"gt", "sgt"}, {"ge", "sge"}};
     for (auto entry : comparisons) if (name == ("tsfg_core." + entry.core).str()) {
-      out << "  " << result << " = arith.cmpi " << entry.arithmetic << ", " << left << ", " << right
+      const auto predicate = signedValue || entry.core == "eq" || entry.core == "ne"
+          ? entry.arithmetic.str() : ("u" + entry.core).str();
+      out << "  " << result << " = arith.cmpi " << predicate << ", " << left << ", " << right
           << " : " << operandType << '\n'; return true;
     }
     return false;
@@ -243,11 +270,9 @@ public:
       for (auto &block : fn.getBody()) {
         blocks[&block] = blocks.size();
         for (auto argument : block.getArguments()) {
-          if (!argument.getType().isSignlessInteger(32) && !argument.getType().isSignlessInteger(1)) return false;
           values[argument] = values.size();
         }
         for (auto &op : block) for (auto result : op.getResults()) {
-          if (!result.getType().isSignlessInteger(32) && !result.getType().isSignlessInteger(1)) return false;
           values[result] = values.size();
         }
       }

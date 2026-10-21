@@ -30,7 +30,7 @@ mlir::LogicalResult tsfg::emitNativeLLVM(mlir::ModuleOp verifiedCore,
                                         llvm::raw_ostream &output, NativeOutput kind) {
   std::string text;
   if (mlir::failed(lowerNativeCore(verifiedCore, text))) {
-    llvm::errs() << "[r07-native-capability] AOT requires a complete scalar i32/bool module with at most 128 functions\n";
+    llvm::errs() << "[r07-native-capability] AOT requires i32/bool function boundaries and complete integer Core with at most 128 functions\n";
     return mlir::failure();
   }
   mlir::DialectRegistry registry;
