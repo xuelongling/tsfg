@@ -20,6 +20,7 @@ export const coreIrInputs = Object.freeze([
   "compiler/core-ir/aot-module-services.cpp",
   "compiler/core-ir/aot-module.cpp",
   "compiler/core-ir/aot-module.h",
+  "compiler/core-ir/aot-program.cpp",
   "compiler/core-ir/aot-slot-codec.h",
   "compiler/core-ir/aot.cpp",
   "compiler/core-ir/aot.h",
@@ -111,5 +112,6 @@ export const coreIrInputs = Object.freeze([
   "compiler/core-ir/string-wire.cpp",
   "compiler/core-ir/string-wire.h",
   "compiler/core-ir/string.cpp",
-  "runtime/aot-instance.h"
+  "runtime/aot-instance.h",
+  "runtime/aot-program.h"
 ]);

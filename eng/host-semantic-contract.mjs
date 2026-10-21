@@ -14,9 +14,11 @@ function checkedIdentity(identity) {
   const bi = identity?.buildIdentity, inputs = identity?.buildInputSet;
   exact(bi, ['buildInputSetDigest','options','profile','source_date_epoch','target','toolchainClosureDigest','digest']);
   exact(inputs, ['entries','schemaVersion','digest']);
-  exact(bi.options, ['sourceTarget','simdDispatch']);
-  if (bi.target !== profile.abi.target || bi.profile !== 'debug' || bi.options.sourceTarget !== 'tsfg-vm'
-      || bi.options.simdDispatch !== 'runtime-detected' || !/^[1-9][0-9]*$/.test(bi.source_date_epoch)
+  const aot=bi.options?.sourceTarget==='tsfg-aot';
+  exact(bi.options, aot?['sourceTarget','simdDispatch','programCore']:['sourceTarget','simdDispatch']);
+  if (bi.target !== profile.abi.target || bi.profile !== 'debug' || !['tsfg-vm','tsfg-aot'].includes(bi.options.sourceTarget)
+      || bi.options.simdDispatch !== 'runtime-detected' || aot&&!digestPattern.test(bi.options.programCore)
+      || !/^[1-9][0-9]*$/.test(bi.source_date_epoch)
       || !digestPattern.test(bi.toolchainClosureDigest) || inputs.schemaVersion !== '1'
       || !Array.isArray(inputs.entries) || inputs.entries.length === 0 || inputs.entries.length > 4096)
     reject('unsupported identity');
@@ -41,7 +43,7 @@ function checkedIdentity(identity) {
 }
 function bytesLiteral(digest) { return '[_]u8{ ' + [...Buffer.from(digest.slice(7),'hex')].join(', ') + ' }'; }
 
-/** Only executeVmTarget supplies the identity used for the compiled Runtime.
+/** Only the normal VM/AOT builders supply the compiled Runtime identity.
  * Unit callers may check recipes, but cannot replace the generated module in a
  * published build: the normal builder generates and retains that dependency. */
 export function createCounterHostContract(identity) {

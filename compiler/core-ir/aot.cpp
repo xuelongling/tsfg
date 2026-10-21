@@ -32,7 +32,8 @@
 mlir::LogicalResult tsfg::emitNativeLLVM(mlir::ModuleOp verifiedCore,
                                         llvm::raw_ostream &output, NativeOutput kind) {
   std::string text;
-  if (mlir::failed(lowerNativeCore(verifiedCore, text))) {
+  const bool program = kind == NativeOutput::ProgramLLVM || kind == NativeOutput::ProgramObject;
+  if (mlir::failed(lowerNativeCore(verifiedCore, text, program))) {
     llvm::errs() << "[r07-native-capability] AOT requires complete scalar Core with at most 512 functions\n";
     return mlir::failure();
   }
@@ -59,7 +60,7 @@ mlir::LogicalResult tsfg::emitNativeLLVM(mlir::ModuleOp verifiedCore,
   if (!native) return mlir::failure();
   materializeNativeConversions(*native);
   materializeNativeFloating(*native);
-  if(!materializeNativeModule(*native,verifiedCore)) {
+  if(!materializeNativeModule(*native,verifiedCore,program)) {
     llvm::errs()<<"[core-ir-module-aot] instance materialization failed\n";return mlir::failure();
   }
   const llvm::Triple triple(verifiedCore->getAttrOfType<mlir::StringAttr>("tsfg_core.triple").getValue());
@@ -81,6 +82,10 @@ mlir::LogicalResult tsfg::emitNativeLLVM(mlir::ModuleOp verifiedCore,
     return mlir::failure();
   }
   native->setDataLayout(layout);
+  if (!verifyProgramMetadataLayout(*native)) {
+    llvm::errs() << "[r07-native-program-layout] compiled table differs from C target layout\n";
+    return mlir::failure();
+  }
   auto *i32 = llvm::Type::getInt32Ty(llvmContext), *i8 = llvm::Type::getInt8Ty(llvmContext);
   auto *slot = llvm::StructType::get(llvmContext, {i32, i8, llvm::ArrayType::get(i8, 3)});
   const auto *slotLayout = layout.getStructLayout(slot);
@@ -95,9 +100,9 @@ mlir::LogicalResult tsfg::emitNativeLLVM(mlir::ModuleOp verifiedCore,
     return mlir::failure();
   }
   new llvm::GlobalVariable(*native, i32, true, llvm::GlobalValue::ExternalLinkage,
-      llvm::ConstantInt::get(i32, verifiedCore->hasAttr("tsfg_core.sources")?4:NativeABIVersion), "tsfg_native_abi_version");
+      llvm::ConstantInt::get(i32, program || verifiedCore->hasAttr("tsfg_core.sources")?4:NativeABIVersion), "tsfg_native_abi_version");
   if (llvm::verifyModule(*native, &llvm::errs())) return mlir::failure();
-  if (kind == NativeOutput::LLVM) native->print(output, nullptr);
+  if (kind == NativeOutput::LLVM || kind == NativeOutput::ProgramLLVM) native->print(output, nullptr);
   else {
     llvm::SmallVector<char, 0> bytes;
     llvm::raw_svector_ostream objectStream(bytes);

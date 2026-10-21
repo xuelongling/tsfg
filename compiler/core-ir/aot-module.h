@@ -12,8 +12,12 @@ struct ModuleAotContext {
   ModuleTables tables;
   std::vector<mlir::func::FuncOp> functions;
   std::array<uint8_t, 32> identity;
+  mlir::ModuleOp core;
+  bool implicitProgram = false;
 };
 bool materializeModuleServices(ModuleAotContext &);
 bool materializeModuleEntry(ModuleAotContext &);
-bool materializeNativeModule(llvm::Module &, mlir::ModuleOp);
+bool materializeProgramMetadata(ModuleAotContext &);
+bool verifyProgramMetadataLayout(const llvm::Module &);
+bool materializeNativeModule(llvm::Module &, mlir::ModuleOp, bool program = false);
 } // namespace tsfg

@@ -4,6 +4,12 @@
 
 The Core CLI accepts `--emit-native-llvm` and `--emit-native-object` with a complete Core0.12 module on stdin. The first command prints ordinary LLVM IR; the second writes Windows x64 COFF bytes. Both run the existing complete Core parser, identity, target, SSA, CFG, signature and event checks before a separate whole-module capability check. Failed stages publish no stdout. New output I/O failures exit2; invalid or unsupported Core exits3.
 
+`--emit-program-llvm` and `--emit-program-object` use the same complete validation
+and additionally emit immutable program metadata version1 and execution ABI4.
+They supply the normal static Runtime link and shared typed request consumer
+described in [the module interface](r03-module-aot.md#static-production-request-consumer).
+The original native output commands retain their existing ABI behavior.
+
 The scalar ABI0.3 path supports one through512 complete functions with at most64 logical parameters each (128 physical payload/state parameters), all existing nominal integer/bool/f32/f64 function parameters/results and SSA/block arguments, explicit fuel/events, branches, direct calls including recursion, and the existing scalar operations. Complete module lifecycle/global/Host metadata uses the separate [ordinary instance ABI4](r03-module-aot.md), including its retained code universe, execution plan and actual Host admission gate. A complete package containing managed/private candidates, String values or an unsupported operation is rejected in full. Functions and metadata are never filtered to make a smaller eligible module. The512-function table does not change the caller's dynamic depth64 limit.
 
 The lowering also consumes all286 checked/wrap/reinterpret entries and ordinary

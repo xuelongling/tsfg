@@ -6,6 +6,6 @@
 namespace tsfg {
 // Internal seam: the complete verified scalar profile is admitted before any
 // lowering. Failure leaves text unchanged; no Core fields are projected away.
-mlir::LogicalResult lowerNativeCore(mlir::ModuleOp core, std::string &text);
+mlir::LogicalResult lowerNativeCore(mlir::ModuleOp core, std::string &text, bool program = false);
 }
 #endif

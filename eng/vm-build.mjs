@@ -8,6 +8,7 @@ import {prepareHostCounter,prepareUnqualifiedCurrentCounter,inspectCounterLink,w
 
 import {createCounterHostContract} from "./host-semantic-contract.mjs";
 import {prepareRuntimeEntry} from './runtime-entry.mjs';
+import {requireOrdinaryEAncestor} from './output-storage.mjs';
 
 export class VmBuildError extends Error {
   constructor(message, issueCode = "vm-source-build") { super(message); this.issueCode = issueCode; }
@@ -156,7 +157,7 @@ export async function createVmLinkObjectRetention({stage,logPath,output,counterO
       catch(error){fail(error);}return result;}};
   return observer;
 }
-const runtimeSources = [...["root", "bytecode", "bytecode_model", "bytecode_decode", "bytecode_view", "nullable-bytecode", "nullable-model", "nullable-decode", "nullable-cfg", "nullable-tags", "string-candidate", "string-candidate-model", "string-candidate-decode", "string-candidate-verify", "array-candidate", "array-candidate-model", "array-candidate-decode", "array-candidate-metadata", "array-candidate-body", "array-candidate-owner", "array-candidate-roots", "array-candidate-graph", "array-candidate-publication", "vm", "runtime", "main", "contract", "module-plan", "aot-instance", "module_format", "module", "request", "host_counter", "clock", "execution_frame", "scalar", "conversions", "managed-heap", "managed-payload", "string-codec", "host-bindings", "host-semantic-contract", "floating-environment", "outcome-writer", "string-arguments", "string-budget", "string-frame", "string-instructions", "string-output", "string-value", "vm-execution", "vm-instance", "runtime-state", "request-values"].map(name => `runtime/${name}.zig`), "runtime/host_counter.c", "runtime/host_counter_bridge.c", "runtime/admitted-entry.c"];
+const runtimeSources = [...["root", "bytecode", "bytecode_model", "bytecode_decode", "bytecode_view", "nullable-bytecode", "nullable-model", "nullable-decode", "nullable-cfg", "nullable-tags", "string-candidate", "string-candidate-model", "string-candidate-decode", "string-candidate-verify", "array-candidate", "array-candidate-model", "array-candidate-decode", "array-candidate-metadata", "array-candidate-body", "array-candidate-owner", "array-candidate-roots", "array-candidate-graph", "array-candidate-publication", "vm", "runtime", "main", "contract", "module-plan", "aot-instance", "module_format", "module", "request", "host_counter", "clock", "execution_frame", "scalar", "conversions", "managed-heap", "managed-payload", "string-codec", "host-bindings", "host-semantic-contract", "floating-environment", "outcome-writer", "string-arguments", "string-budget", "string-frame", "string-instructions", "string-output", "string-value", "vm-execution", "vm-instance", "runtime-state", "request-values", "request-json", "module-outcome-writer"].map(name => `runtime/${name}.zig`), "runtime/host_counter.c", "runtime/host_counter_bridge.c", "runtime/admitted-entry.c"];
 
 /** Actual production copy boundary, also exercised without starting the VM. */
 export async function stageVmRuntimeSources({productRoot,product,identity,sha256}) {
@@ -237,16 +238,8 @@ export async function copyVmBuildSnapshots({stage,publish,label,maximumFileBytes
 }
 
 async function ordinaryAncestor(directory) {
-  for (let current = directory;; current = path.dirname(current)) {
-    const state = await lstat(current).catch(error => { if (error.code === "ENOENT") return undefined; throw error; });
-    if (state) {
-      if (!state.isDirectory() || state.isSymbolicLink() || !/^E:[\\/]/i.test(await realpath(current))
-          || path.relative(current, await realpath(current)) !== "")
-        throw new VmBuildError("VM output must use an ordinary nonredirected E directory", "vm-output-integrity");
-      return;
-    }
-    if (path.dirname(current) === current) throw new VmBuildError("VM output has no ordinary E ancestor", "vm-output-integrity");
-  }
+  await requireOrdinaryEAncestor(directory,reason=>new VmBuildError(reason==='missing'
+    ?'VM output has no ordinary E ancestor':'VM output must use an ordinary nonredirected E directory','vm-output-integrity'));
 }
 
 
@@ -358,7 +351,7 @@ export async function executeVmTarget({ options, runtime, tools, productRoot, wo
   if (await lstat(output).catch(error => { if (error.code === "ENOENT") return undefined; throw error; }))
     throw new VmBuildError("Independent VM build output already exists", "vm-output-integrity");
   const identity = await createIdentity(runtime, productRoot);
-  const required = [...runtimeSources, "contracts/registry.json", "contracts/bytecode.schema.json", "eng/vm-build.mjs", "eng/runtime-entry.mjs", "eng/host-counter.mjs", "eng/host-counter-objects.mjs", "eng/host-counter-binary.mjs", "eng/host-cost-source.lock.json", "eng/host-semantic-contract.mjs", "contracts/host-counter-semantic-v1.json"];
+  const required = [...runtimeSources, "contracts/registry.json", "contracts/bytecode.schema.json", "eng/vm-build.mjs", "eng/output-storage.mjs", "eng/runtime-entry.mjs", "eng/host-counter.mjs", "eng/host-counter-objects.mjs", "eng/host-counter-binary.mjs", "eng/host-cost-source.lock.json", "eng/host-semantic-contract.mjs", "contracts/host-counter-semantic-v1.json"];
   for (const name of required) {
     const state = await lstat(path.join(productRoot, name));
     const entry = identity.buildInputSet.entries.find(entry => entry.projectId === "tsfg" && entry.repositoryRelativePath === name);

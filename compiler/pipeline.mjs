@@ -13,11 +13,13 @@ import registry from "../contracts/registry.json" with { type: "json" };
 import { verifyCounterHostContract } from "../eng/host-semantic-contract.mjs";
 import { coreIrInputs } from "../eng/core-ir-inputs.mjs";
 import bytecodeSchema from "../contracts/bytecode.schema.json" with { type: "json" };
+import {verifyProducedPacket} from './producer-packet.mjs';
 
 const productRoot = fileURLToPath(new URL("../", import.meta.url));
 
 /** Verify the actual source-built consumer admission boundary without executing it. */
 export async function verifiedConsumer(executable, role) {
+  if (!["core", "vm", "aot"].includes(role)) throw new TypeError("r03-tool-role: unsupported consumer");
   if (!executable) throw new TypeError(`r03-tool-${role}: formal executable is required`);
   const manifest = JSON.parse(await readFile(path.join(path.dirname(executable), "artifact-manifest.json"), "utf8"));
   const output = manifest.outputs?.find(output => output.path === path.basename(executable));
@@ -28,9 +30,11 @@ export async function verifiedConsumer(executable, role) {
     throw new TypeError(`r03-tool-${role}: unsupported target/profile identity`);
   const required = role === "core" ? [...coreIrInputs, "eng/core-ir-inputs.mjs"]
     : ["runtime/root.zig", "runtime/bytecode.zig", "runtime/bytecode_model.zig", "runtime/bytecode_decode.zig", "runtime/bytecode_view.zig", "runtime/module_format.zig", "runtime/module-plan.zig", "runtime/aot-instance.zig", "runtime/module.zig", "runtime/request.zig", "runtime/clock.zig", "runtime/host_counter.zig", "runtime/host_counter.c", "runtime/host_counter_bridge.c", "runtime/admitted-entry.c", "eng/runtime-entry.mjs", "runtime/vm.zig", "runtime/runtime.zig", "runtime/managed-heap.zig", "runtime/string-codec.zig", "runtime/main.zig", "runtime/contract.zig", "eng/host-counter.mjs", "eng/host-counter-binary.mjs", "eng/host-cost-source.lock.json", "eng/vm-build.mjs", "runtime/execution_frame.zig", "runtime/scalar.zig", "runtime/conversions.zig", "runtime/host-bindings.zig", "runtime/host-semantic-contract.zig",
-      "runtime/floating-environment.zig", "runtime/outcome-writer.zig", "runtime/string-arguments.zig", "runtime/string-budget.zig", "runtime/string-frame.zig", "runtime/string-instructions.zig", "runtime/string-output.zig", "runtime/string-value.zig", "runtime/vm-execution.zig", "runtime/vm-instance.zig", "runtime/runtime-state.zig", "runtime/request-values.zig",
-      "eng/host-semantic-contract.mjs", "contracts/host-counter-semantic-v1.json"];
+      "runtime/floating-environment.zig", "runtime/outcome-writer.zig", "runtime/string-arguments.zig", "runtime/string-budget.zig", "runtime/string-frame.zig", "runtime/string-instructions.zig", "runtime/string-output.zig", "runtime/string-value.zig", "runtime/vm-execution.zig", "runtime/vm-instance.zig", "runtime/runtime-state.zig", "runtime/request-values.zig", "runtime/request-json.zig", "runtime/module-outcome-writer.zig", "eng/host-counter-objects.mjs",
+      "eng/output-storage.mjs", "eng/host-semantic-contract.mjs", "contracts/host-counter-semantic-v1.json"];
   required.push("contracts/registry.json", "contracts/bytecode.schema.json");
+  if (role === "aot") required.push("runtime/aot-main.zig", "runtime/aot-program.zig", "runtime/aot-program.h",
+    "runtime/aot-request.zig", "runtime/aot-events.zig", "runtime/request-json.zig", "runtime/module-outcome-writer.zig", "eng/aot-build.mjs");
   for (const name of required) {
     const entry = manifest.buildInputSet?.entries?.find(entry => entry.projectId === "tsfg" && entry.repositoryRelativePath === name);
     if (entry?.sha256 !== sha256(await readFile(path.join(productRoot, name))))
@@ -47,6 +51,25 @@ export async function verifiedConsumer(executable, role) {
     const summary=JSON.parse(bytes.toString("utf8"));
     if(summary.summaryVersion!=="tsfg-host-cost-v1"||summary.linkedRuntimeHash!==output.sha256)
       throw new TypeError("r03-tool-vm: host summary belongs to a different Runtime");
+  }
+  if (role === "aot") {
+    if (manifest.executionBackend !== "aot-v4" || manifest.buildIdentity.options?.sourceTarget !== "tsfg-aot")
+      throw new TypeError("r03-tool-aot: not a statically compiled ordinary program");
+    const artifact = async name => {
+      const bytes = await readFile(path.join(path.dirname(executable), name));
+      if (manifest.outputs?.find(output => output.path === name)?.sha256 !== sha256(bytes))
+        throw new TypeError(`r03-tool-aot: changed ${name}`);
+      return bytes;
+    };
+    const wire = await artifact("program.tbc");
+    verifyProducedPacket(wire);
+    const programCore=sha256(await artifact("program.mlir"));
+    if (manifest.program?.core !== programCore || manifest.buildIdentity.options.programCore !== programCore
+        || manifest.program?.object !== sha256(await artifact("program.obj"))
+        || manifest.program?.bytecode !== sha256(wire)
+        || manifest.program?.compiledTableId !== sha256(Buffer.concat([Buffer.from("tsfg.aot-compiled-module.v4\0"), wire])))
+      throw new TypeError("r03-tool-aot: compiled program identity mismatch");
+    verifyCounterHostContract(await artifact("host-semantic-contract.json"), manifest);
   }
   return executable;
 }
@@ -92,11 +115,7 @@ async function produceBytecode(hir, options, lower = value => lowerFormalHir(val
     const core = await verifiedConsumer(options.core, "core");
     const canonicalCore = consume(core, [options.optimize ? "--optimize" : "--canonicalize"], lower(hir)).toString("utf8");
     const bytecode = consume(core, ["--emit-bytecode"], canonicalCore);
-    if (bytecode.length < 80 || bytecode.subarray(0, 8).toString("ascii") !== "TSFGTBC0"
-        || bytecode.readUInt32LE(8) !== 10 || bytecode.readUInt32LE(44) !== bytecode.length
-        || `sha256:${bytecode.subarray(12, 44).toString("hex")}` !== registry["tsfg.bytecode"].schemaHash
-        || `sha256:${bytecode.subarray(48, 80).toString("hex")}` !== sha256(bytecode.subarray(80)))
-      throw new TypeError("r04-producer-identity: C++ output differs from registered R04 packet");
+    verifyProducedPacket(bytecode);
     return { status: "ok", hir, core: canonicalCore, bytecode };
   } catch (error) {
     return { status: "tool-error", code: "r03-d-consumer", message: error.message };
@@ -110,11 +129,35 @@ export async function compileOwnedHir(hir, options) {
   return produceBytecode(hir, options);
 }
 
+/** Produce one whole statically linked program object from complete owned HIR.
+ * Existing Source admission is independent; no frontend lock is relaxed here.
+ */
+export async function compileOwnedStaticProgram(hir, options) {
+  const result = await produceBytecode(hir, options);
+  if (result.status !== "ok") return result;
+  try {
+    const executable = await verifiedConsumer(options.core, "core");
+    const object = consume(executable, ["--emit-program-object"], result.core);
+    // The generated metadata and instance use exactly this original packet;
+    // neither a projection nor a re-signed surrogate program enters the link.
+    const compiledIdentity = sha256(Buffer.concat([Buffer.from("tsfg.aot-compiled-module.v4\0"), result.bytecode]));
+    return { ...result, object, compiledIdentity };
+  } catch (error) {
+    return { status: "tool-error", code: "r03-d-consumer", message: error.message };
+  }
+}
+
+/** Official source checking uses its existing exact producer admission. */
+export async function compileStaticProgram(input, options) {
+  const highLevel = await compileHir(input, options);
+  return highLevel.status === "ok" ? compileOwnedStaticProgram(highLevel.hir, options) : highLevel;
+}
+
 const sessionInputs = ["compiler/conversions.mjs", "compiler/presence.mjs", "compiler/scalar-hir-body.mjs", "compiler/scalar-hir-module.mjs", "compiler/scalar-hir-expression.mjs", "compiler/scalar-hir-state.mjs", "compiler/scalar-source.mjs", "compiler/scalar-state-emitter.mjs", "compiler/minimal-conversions-v5.d.ts", "contracts/conversion-entries.json", "compiler/generic-package-frontend.mjs", "compiler/generic-package.mjs", "compiler/generic-package-shape.mjs",
   "compiler/generic-package-io.mjs", "compiler/generic-package-io-shape.mjs", "compiler/generic-instance.mjs",
   "compiler/generic-hir.mjs", "compiler/generic-json.mjs", "compiler/generic-json-budget.mjs", "compiler/frontend.mjs", "compiler/frontend-response.mjs", "compiler/frontend-execution.mjs", "compiler/hir.mjs", "compiler/identity.mjs", "compiler/scalar-core-emitter.mjs",
   "compiler/module-facts.mjs", "compiler/module-hir-source.mjs", "compiler/module-hir.mjs", "compiler/modules.mjs",
-  "compiler/pipeline.mjs", "compiler/core-ssa-emitter.mjs", "compiler/string-formal-emitter.mjs", "compiler/float.mjs", "contracts/registry.json", "contracts/hir.schema.json", "contracts/bytecode.schema.json"];
+  "compiler/pipeline.mjs", "compiler/producer-packet.mjs", "compiler/core-ssa-emitter.mjs", "compiler/string-formal-emitter.mjs", "compiler/float.mjs", "contracts/registry.json", "contracts/hir.schema.json", "contracts/bytecode.schema.json"];
 async function sessionFingerprint() {
   const inputs = await Promise.all(sessionInputs.map(async name => [name, sha256(await readFile(path.join(productRoot, name)))]));
   return sha256(canonical(inputs));
@@ -160,6 +203,12 @@ export async function runBytecode(bytes, { vm, requests = [{}], command = "--req
   const args = command === "--requests" || command === "--module-requests" ? [command, JSON.stringify(requests)] : [command];
   const result = consume(executable, args, bytes);
   return command === "--roundtrip" ? result : JSON.parse(result.toString("utf8"));
+}
+
+/** The executable is a source-built static program, never a request loader. */
+export async function runStaticProgram({ executable, requests = [{}], persistent = false }) {
+  const admitted = await verifiedConsumer(executable, "aot");
+  return JSON.parse(consume(admitted, [persistent ? "--module-requests" : "--requests", JSON.stringify(requests)], undefined).toString("utf8"));
 }
 
 /** Evaluate a serial batch against one persistent module instance. */

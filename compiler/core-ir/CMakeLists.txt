@@ -44,7 +44,7 @@ set(CMAKE_CXX_STANDARD 17)
 include_directories(${LLVM_INCLUDE_DIRS}
   ${LLVM_MAIN_SRC_DIR}/../mlir/include
   ${LLVM_BINARY_DIR}/tools/mlir/include)
-add_llvm_executable(tsfg-core-ir aot-capability.cpp aot-module.cpp aot-module-services.cpp aot-module-entry.cpp aot-module-codec.cpp aot.cpp aot-lowering.cpp aot-float.cpp aot-fmod.cpp aot-fenv.cpp aot-conversions.cpp main.cpp dialect.cpp bytecode.cpp bytecode_encoding.cpp
+add_llvm_executable(tsfg-core-ir aot-capability.cpp aot-module.cpp aot-program.cpp aot-module-services.cpp aot-module-entry.cpp aot-module-codec.cpp aot.cpp aot-lowering.cpp aot-float.cpp aot-fmod.cpp aot-fenv.cpp aot-conversions.cpp main.cpp dialect.cpp bytecode.cpp bytecode_encoding.cpp
   module.cpp module-plan.cpp native_cost.cpp core-verify.cpp kernel-access.cpp kernel-access-metadata.cpp nullable.cpp nullable-cfg.cpp nullable-metadata.cpp nullable-wire.cpp
   string.cpp string-formal.cpp string-verify.cpp string-wire.cpp array.cpp array-metadata.cpp array-verify.cpp array-view.cpp array-publication.cpp array-roots.cpp array-wire.cpp
   array-owner-json.cpp array-owner-canonical.cpp array-owner-schema.cpp

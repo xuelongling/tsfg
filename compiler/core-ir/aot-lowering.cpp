@@ -336,10 +336,11 @@ class Lowering {
     return false;
   }
 public:
-  explicit Lowering(mlir::ModuleOp module) : out(text), moduleMode(module->hasAttr("tsfg_core.sources")) {
+  explicit Lowering(mlir::ModuleOp module, bool program) : out(text), moduleMode(program || module->hasAttr("tsfg_core.sources")) {
     for (auto function : module.getOps<mlir::func::FuncOp>()) {
       functions.push_back(function);
-      functionSources.push_back(moduleMode ? function->getAttrOfType<mlir::IntegerAttr>("tsfg_core.source_index").getInt() : 0);
+      auto source = function->getAttrOfType<mlir::IntegerAttr>("tsfg_core.source_index");
+      functionSources.push_back(source ? source.getInt() : 0);
     }
   }
   bool lower() {
@@ -461,9 +462,9 @@ public:
 };
 }
 
-mlir::LogicalResult tsfg::lowerNativeCore(mlir::ModuleOp core, std::string &text) {
+mlir::LogicalResult tsfg::lowerNativeCore(mlir::ModuleOp core, std::string &text, bool program) {
   if (!supportsNativeCore(core)) return mlir::failure();
-  Lowering lowering(core);
+  Lowering lowering(core, program);
   if (!lowering.lower()) return mlir::failure();
   text = lowering.getText().str();
   return mlir::success();

@@ -246,3 +246,53 @@ its own fixed linked component checks. Any full package containing an unsupporte
 domain rejects as a whole; retaining its functions does not grant that domain's
 execution qualification. Formal Source, VM, Native, Resource and RF obligations
 remain separately open until their real approved paths have evidence.
+
+## Static production request consumer
+
+The program output commands `--emit-program-llvm` and `--emit-program-object`
+retain the complete verified Core program and add immutable program metadata.
+They use the existing instance ABI4 for both scalar and multi-source inputs.
+Scalar inputs retain their original Core and wire identity, have no invented
+initializer, and expose their original complete function set as public roots.
+Existing `--emit-native-*` output keeps its prior ABI3/ABI4 behavior.
+
+`runtime/aot-program.h` defines metadata version1 independently of execution
+ABI4. The160-byte program record points to complete source, function, signature,
+presence, module, global, Host, root and initialization arrays. C, LLVM target
+layout and Zig assertions bind the field sizes and offsets. The compiled table
+identity remains the existing ABI4 domain hash of the exact complete wire12
+packet; Build Identity and HSC remain separate identities. No JSON field or
+filesystem input supplies these pointers or selects executable code.
+
+`runtime/request-json.zig` is shared by the existing VM and static program
+entry. Providers supply the original default function and FunctionId lookup;
+the parser retains FunctionId, signature, arguments, capability syntax and kind
+failure order. `runtime/aot-request.zig` then validates roots and actual required
+Host grants before instance allocation or guest initialization. It reuses the
+existing typed values, argument acceptance and outcome writers. Omitted and
+explicit undefined values become canonical physical payload0/state1; explicit
+null stays state2 and is accepted only by the declared presence mask.
+
+`runtime/aot-events.zig` consumes the generated ordered event calls. It charges
+Semantic Fuel, dispatch work, depth and deadlines, maps precise first failures
+to the existing request outcomes, and accepts only cleanup after failure apart
+from the one mandatory initial arithmetic/conversion failure notification.
+Initializer failure memo belongs to the instance; ready-request failure belongs
+only to its request. Active machine stack and owned off-stack storage are
+counted once at actual events, with overflow and partial overlap rejected.
+This guard does not establish a future machine-frame or pre-prologue proof;
+formal Native and Resource qualification still require their actual evidence.
+
+The normal `tsfg-aot` build consumes complete Core through the admitted current
+C++ producer, links its real program object with `runtime/aot-main.zig` and the
+current Runtime-owned Counter objects, and publishes the executable with its
+full Core/wire/object identities. The static entry uses the same request and
+outcome protocol; it loads no bytecode, descriptor or caller-selected code.
+The SHA256 of the exact complete Core bytes is the required `programCore`
+Build Identity option. Identity creation checks it before and after the build;
+HSC binds that complete BI, and executable admission recomputes the digest
+from the retained Core artifact. Different programs therefore have different
+BI and HSC identities even with the same source and tool closures.
+Current-source ordinary Counter compilation emits a false certificate. Required
+Host31 still passes the real signature, HSC and `Counter.admitted()` checks;
+this build cannot turn an unqualified Counter into a positive capability.

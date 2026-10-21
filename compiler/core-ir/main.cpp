@@ -108,6 +108,8 @@ int main(int argc, char **argv) {
                     llvm::StringRef(argv[1]) != "--emit-bytecode" &&
                     llvm::StringRef(argv[1]) != "--emit-native-llvm" &&
                     llvm::StringRef(argv[1]) != "--emit-native-object" &&
+                    llvm::StringRef(argv[1]) != "--emit-program-llvm" &&
+                    llvm::StringRef(argv[1]) != "--emit-program-object" &&
                     llvm::StringRef(argv[1]) != "--emit-nullable-candidate" &&
                     llvm::StringRef(argv[1]) != "--emit-string-candidate" &&
                     llvm::StringRef(argv[1]) != "--emit-array-candidate" &&
@@ -184,6 +186,10 @@ int main(int argc, char **argv) {
     return nativeOutput(*module, tsfg::NativeOutput::LLVM);
   if (llvm::StringRef(argv[1]) == "--emit-native-object")
     return nativeOutput(*module, tsfg::NativeOutput::Object);
+  if (llvm::StringRef(argv[1]) == "--emit-program-llvm")
+    return nativeOutput(*module, tsfg::NativeOutput::ProgramLLVM);
+  if (llvm::StringRef(argv[1]) == "--emit-program-object")
+    return nativeOutput(*module, tsfg::NativeOutput::ProgramObject);
   if (closureCandidate && (nullableWire || llvm::StringRef(argv[1]) == "--emit-bytecode")) {
     llvm::errs() << "[r04-core-closure-unsupported] wire9 cannot encode a closure candidate module\n";
     return 3;

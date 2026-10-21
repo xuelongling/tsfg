@@ -229,8 +229,8 @@ class Entry {
   }
   bool validate() {
     const auto &tables = context.tables;
-    if (!tables.present || context.functions.empty() || context.functions.size() > 512 || tables.modules.size() > 128
-        || tables.globals.size() > 4096 || tables.roots.empty() || tables.roots.size() > 128 || tables.initialization.size() > 128
+    if ((!tables.present && !context.implicitProgram) || context.functions.empty() || context.functions.size() > 512 || tables.modules.size() > 128
+        || tables.globals.size() > 4096 || tables.roots.empty() || tables.roots.size() > (context.implicitProgram ? 512 : 128) || tables.initialization.size() > 128
         || tables.plan.hosts.size() != tables.hosts.size() || tables.plan.functions.size() != context.functions.size()
         || tables.plan.modules.size() != tables.modules.size()) return false;
     for (unsigned i = 0; i < tables.hosts.size(); ++i) if (tables.plan.hosts[i]) {
@@ -250,9 +250,10 @@ class Entry {
         if (callee->getArg(p + 4)->getType() != ModuleAotCodec::scalar(b.getContext(), tsfg::typeCode(signature.getInput(p)))) return false;
       auto source = fn->getAttrOfType<mlir::IntegerAttr>("tsfg_core.source_index");
       auto start = fn->getAttrOfType<mlir::IntegerAttr>("tsfg_core.function_start"), end = fn->getAttrOfType<mlir::IntegerAttr>("tsfg_core.function_end");
-      if (!source || !start || !end || source.getInt() < 0 || uint64_t(source.getInt()) >= tables.sources.size()
-          || start.getInt() < 0 || end.getInt() < start.getInt() || uint64_t(end.getInt()) > tables.sources[source.getInt()].length) return false;
-      native.push_back(callee); anchors.push_back({i, uint32_t(source.getInt()), uint32_t(start.getInt()), uint32_t(end.getInt())});
+      const auto sourceIndex = source ? source.getInt() : 0;
+      if ((!source && !context.implicitProgram) || !start || !end || sourceIndex < 0 || uint64_t(sourceIndex) >= tables.sources.size()
+          || start.getInt() < 0 || end.getInt() < start.getInt() || uint64_t(end.getInt()) > tables.sources[sourceIndex].length) return false;
+      native.push_back(callee); anchors.push_back({i, uint32_t(sourceIndex), uint32_t(start.getInt()), uint32_t(end.getInt())});
     }
     for (auto initializer : tables.initialization)
       if (initializer >= native.size() || native[initializer]->arg_size() != 4 || native[initializer]->getReturnType() != b.getInt32Ty()) return false;

@@ -50,6 +50,7 @@ import { executeMlirTarget, MlirBuildError } from "./mlir-build.mjs";
 import { MlirPythonError } from "./mlir-python.mjs";
 import { executeVmTarget, VmBuildError } from "./vm-build.mjs";
 import {prepareVmBootstrapWithControls} from "./vm-bootstrap.mjs";
+import { executeAotTarget } from "./aot-build.mjs";
 
 class ConfigurationError extends Error {
   constructor(message, issueCode = "invalid-configuration") {
@@ -376,7 +377,7 @@ function parseOptions(arguments_, allowed, flags = new Set()) {
 
 function parseBuildOptions(arguments_) {
   return parseOptions(arguments_, new Set([
-    "--dev", "--target", "--profile", "--simd-dispatch", "--workspace", "--out", "--report", "--source-target", "--intake-plan", "--intake-consumption", "--upgrade-plan", "--generation",
+    "--dev", "--target", "--profile", "--simd-dispatch", "--workspace", "--out", "--report", "--source-target", "--intake-plan", "--intake-consumption", "--upgrade-plan", "--generation", "--program-core", "--core",
   ]), new Set(["--dev"]));
 }
 
@@ -412,7 +413,12 @@ function validateSmokeOptions(options, command, requireInput = false) {
     );
   }
   if (command === "build" && options.get("--source-target") === "mlir-core") validateMlirConfiguration(options);
-  if (command === "build" && options.get("--source-target") === "tsfg-vm") validateVmConfiguration(options);
+  if (command === "build" && ["tsfg-vm", "tsfg-aot"].includes(options.get("--source-target"))) validateVmConfiguration(options);
+  if (options.get("--source-target") === "tsfg-aot") {
+    if (!options.has("--program-core") || !options.has("--core"))
+      throw new ConfigurationError("Static AOT build requires --program-core and --core", "aot-configuration");
+  } else if (options.has("--program-core") || options.has("--core"))
+    throw new ConfigurationError("Program/producer options require --source-target tsfg-aot", "aot-configuration");
   payloadOptions(options);
   const cpuFixture = options.get("--cpu-fixture");
   if (cpuFixture && (command !== "test" || cpuFixture !== "x86-64-v2")) {
@@ -7437,7 +7443,7 @@ async function runCommandLine() {
   const reportPath = invalidGoReport || overlappingSourceReport ? undefined : requestedReportPath;
   // Reject unsupported MLIR requests before inspecting runtime/tool inputs or
   // dispatching any Windows boundary. Report destination safety remains first.
-  if (command === "build" && ["mlir-core", "tsfg-vm"].includes(sourceTarget)) {
+  if (command === "build" && ["mlir-core", "tsfg-vm", "tsfg-aot"].includes(sourceTarget)) {
     try {
       if (sourceTarget === "mlir-core") validateMlirConfiguration(parseBuildOptions(arguments_));
       else validateVmConfiguration(parseBuildOptions(arguments_));
@@ -7473,7 +7479,7 @@ async function runCommandLine() {
         process.env.TSFG_RUNTIME_CACHE,
         process.env.TSFG_RUNTIME_PLATFORM,
         { nativeControls: !((command === "build" || typedProbeTest || frontendTest || sourceReproCheck) && arguments_.includes("--dev") &&
-            ["typescript-dependencies", "typescript-ast", "typescript-frontend", "intake-ledger", "upgrade-review", "mlir-core", "tsfg-vm"].includes(arguments_[arguments_.indexOf("--source-target") + 1])) },
+            ["typescript-dependencies", "typescript-ast", "typescript-frontend", "intake-ledger", "upgrade-review", "mlir-core", "tsfg-vm", "tsfg-aot"].includes(arguments_[arguments_.indexOf("--source-target") + 1])) },
       );
     } catch (error) {
       runtimeIntegrityError = error;
@@ -7606,6 +7612,29 @@ async function runCommandLine() {
         process.exitCode = await succeed(command, await executeIntakeLedgerTarget(options), reportPath, "offline");
       } else if (options.get("--source-target") === "typescript-frontend") {
         process.exitCode = await succeed(command, await runFrontendTarget(options, runtimeClosure, command), reportPath, "offline");
+      } else if (options.get("--source-target") === "tsfg-aot") {
+        const workspaceState = inspectProductWorkspace(options, true, command);
+        const result = await executeAotTarget({ options, runtime: runtimeClosure,
+          tools: runtimeClosure ? windowsToolchain(runtimeClosure) : undefined,
+          productRoot: workspaceState.root, workspaceState, serialize: canonicalize, sha256: digest,
+          core: await readFile(options.get("--program-core"), "utf8"), coreExecutable: options.get("--core"),
+          normalize: async ({ executable, pdb, stage, product, environment, identity, tools, runtime }) => {
+            const guid = await normalizeWindowsPdb(pdb, tools.pdbutil,
+              [[product, "."], [runtime.closurePath, ".toolchain"], [stage, ".build"],
+                [/^(\s+(?:- Module|ObjFile):\s+')\.build\\zig-local\\tmp\\[0-9a-f]{16}\\tsfg-aot_zcu\.obj'$/gm,
+                  "$1.build/tsfg-aot_zcu.obj'"]], stage, environment);
+            await writeFile(executable, await normalizeWindowsExecutable(executable, guid,
+              Number.parseInt(identity.buildIdentity.source_date_epoch, 10)));
+          },
+          createIdentity: (runtime, root, programCore) => createBuildIdentity(runtime, "windows-x86_64-msvc", "debug", root,
+            { sourceTarget: "tsfg-aot", simdDispatch: "runtime-detected", programCore }),
+          verifyTools: async () => {
+            const current = await verifyRuntimeClosure(process.env.TSFG_RUNTIME_LOCK, runtimeClosure.cachePath,
+              "windows-x86_64-msvc", { nativeControls: false });
+            if (current.lockDigest !== runtimeClosure.lockDigest)
+              throw new VmBuildError("Tool closure changed during static AOT build", "aot-tool-integrity");
+          } });
+        process.exitCode = await succeed(command, result, reportPath, "offline");
       } else if (options.get("--source-target") === "tsfg-vm") {
         const workspaceState = inspectProductWorkspace(options, true, command);
         const result = await executeVmTarget({ options, runtime: runtimeClosure,
