@@ -26,7 +26,7 @@ while(pending.length){const name=pending.pop();if(closure.has(name))continue;clo
  for(const match of text.matchAll(/^#include "([a-z0-9_-]+\.h)"/gm))pending.push(match[1]);
 }
 const coreFiles=[...closure].sort().map(name=>'compiler/core-ir/'+name);
-assert.equal(coreFiles.length,88);
+assert.equal(coreFiles.length,89);
 const declaration=JSON.parse(await readFile(path.join(productRoot,'eng/build-inputs.json'),'utf8'));
 const entries=await Promise.all(declaration.entries.map(async entry=>({projectId:entry.projectId,
  repositoryRelativePath:entry.path,sha256:hash(await readFile(path.join(productRoot,entry.path)))})));

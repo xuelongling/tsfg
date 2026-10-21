@@ -87,11 +87,11 @@ test('one whole73-function LLVM module retains all nine internal integer semanti
 test('one whole73-function COFF has real complete symbols relocations and stackmaps',async()=>{
  const result=await invokeCore(whole.input,commands[1]);accepted(result);const object=readCompilerCoff(result.stdout);assert.equal(object.timestamp,0);
  assert.ok(object.sections.some(section=>section.name==='.text'&&section.size>0));
- assert.deepEqual(new Set(object.stackmaps.frames.map(frame=>frame.symbol)),new Set([...whole.functions.map(row=>'native_'+row.index),'tsfg_native_invoke']));
+ assert.deepEqual(new Set(object.stackmaps.frames.map(frame=>frame.symbol)),new Set([...whole.functions.map(row=>'native_'+row.index),'tsfg_native_invoke_v3']));
  for(const row of whole.functions)assert.ok(object.symbols.some(symbol=>symbol.name==='native_'+row.index&&symbol.section>0));
 });
-for(const row of fixtures.negative)test('whole scalar boundary remains exact '+row.id,async()=>{
- assert.equal(hash(row.input),row.inputSHA256);accepted(await invokeCore(row.input));for(const command of commands)refused(await invokeCore(row.input,command),true);
+for(const row of fixtures.negative)test('formerly unsupported whole boundary now admitted '+row.id,async()=>{
+ assert.equal(hash(row.input),row.inputSHA256);accepted(await invokeCore(row.input));for(const command of commands)accepted(await invokeCore(row.input,command));
 });
 test('floating internal SSA remains unsupported with a bool result',async()=>{
  // Fresh structural negative derived from the public typed literal grammar, not Source evidence.

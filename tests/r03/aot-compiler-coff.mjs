@@ -61,7 +61,7 @@ export function readCompilerCoff(bytes) {
   const s64=offset=>stackRange(offset,8).readBigUInt64LE();
   assert.equal(stackRange(0,1)[0],3);assert.equal(stackRange(1,1)[0],0);assert.equal(s16(2),0);
   const functions=s32(4),constants=s32(8),records=s32(12);
-  assert.ok(functions>0&&functions<=129&&constants<=65536&&records<=1000000);
+  assert.ok(functions>0&&functions<=513&&constants<=65536&&records<=1000000);
   let cursor=16,totalRecords=0n;const frames=[];
   for(let index=0;index<functions;index++) {
     const address=cursor,recordCount=s64(cursor+16);

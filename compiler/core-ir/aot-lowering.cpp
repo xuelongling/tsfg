@@ -1,5 +1,6 @@
 // SPDX-License-Identifier: MIT
 #include "aot-lowering.h"
+#include "aot-slot-codec.h"
 #include "dialect.h"
 #include "llvm/ADT/APInt.h"
 #include "mlir/Dialect/ControlFlow/IR/ControlFlowOps.h"
@@ -24,18 +25,15 @@ bool supportsNativeCore(mlir::ModuleOp module) {
     for (auto name : allowed) known |= attribute.getName() == name;
     if (!known) return false;
   }
-  auto scalar = [](mlir::Type type) {
-    return type.isSignlessInteger(1) || type.isSignlessInteger(32);
-  };
   auto integer = [](mlir::Type type) {
     const auto code = tsfg::typeCode(type); return code >= 1 && code <= 11;
   };
   unsigned count = 0;
   for (auto &top : module.getBody()->getOperations()) {
     auto fn = llvm::dyn_cast<mlir::func::FuncOp>(top);
-    if (!fn || ++count > 128 || fn.isExternal() || fn.getFunctionType().getNumResults() != 1
-        || fn.getNumArguments() > 64 || !scalar(fn.getFunctionType().getResult(0))) return false;
-    for (auto type : fn.getFunctionType().getInputs()) if (!scalar(type)) return false;
+    if (!fn || ++count > 512 || fn.isExternal() || fn.getFunctionType().getNumResults() != 1
+        || fn.getNumArguments() > 64 || !integer(fn.getFunctionType().getResult(0))) return false;
+    for (auto type : fn.getFunctionType().getInputs()) if (!integer(type)) return false;
     for (auto &block : fn.getBody()) {
       for (auto argument : block.getArguments()) if (!integer(argument.getType())) return false;
       for (auto &op : block) {
@@ -265,7 +263,6 @@ public:
     out << "module {\n";
     for (auto fn : functions) {
       resultType = fn.getFunctionType().getResult(0);
-      if (!resultType.isSignlessInteger(32) && !resultType.isSignlessInteger(1)) return false;
       values.clear(); blocks.clear(); temporary = 0; continuation = 0;
       for (auto &block : fn.getBody()) {
         blocks[&block] = blocks.size();
@@ -278,7 +275,6 @@ public:
       }
       out << "func.func @native_" << functionIndex << "(%state: !llvm.ptr, %event: !llvm.ptr";
       for (auto argument : fn.getBody().front().getArguments()) {
-        if (!argument.getType().isSignlessInteger(32) && !argument.getType().isSignlessInteger(1)) return false;
         out << ", " << value(argument) << ": " << type(argument.getType());
       }
       out << ") -> " << type(resultType) << " {\n";
@@ -309,8 +305,9 @@ public:
     // The C ABI wrapper uses the same fixed typed argument/result frame as the
     // fixed slot layout. Internal bool values are i1; the boundary is canonical u8.
     // The outer caller owns admission of its logical frame.
-    out << "func.func @tsfg_native_invoke(%state: !llvm.ptr, %event: !llvm.ptr, %index: i32, %arguments: !llvm.ptr, %output: !llvm.ptr) -> i32 {\n";
+    out << "func.func @tsfg_native_invoke_v3(%state: !llvm.ptr, %event: !llvm.ptr, %index: i32, %argument_count: i32, %argument_types: !llvm.ptr, %result_type: i8, %arguments: !llvm.ptr, %output: !llvm.ptr) -> i32 {\n";
     temporary = 0; continuation = 0;
+    tsfg::AOTSlotCodec slots(out, temporary, continuation);
     stackmap(UINT32_MAX);
     for (size_t index = 0; index < functions.size(); ++index) {
       auto id = constant(index), matches = tmp();
@@ -323,27 +320,9 @@ public:
       out << "^invoke" << index << ":\n";
       std::vector<std::string> arguments;
       auto fn = functions[index];
+      slots.signature(fn.getFunctionType());
       for (size_t p = 0; p < fn.getFunctionType().getNumInputs(); ++p) {
-        auto parameterType = fn.getFunctionType().getInput(p);
-        const bool boolean = parameterType.isSignlessInteger(1);
-        auto offset = constant(p * 8), address = tmp(), loaded = tmp();
-        auto tailOffset = constant(p * 8 + 4), tailAddress = tmp(), tail = tmp();
-        out << "  " << address << " = llvm.getelementptr %arguments[" << offset << "] : (!llvm.ptr, i32) -> !llvm.ptr, i8\n"
-            << "  " << loaded << " = llvm.load " << address << " : !llvm.ptr -> i32\n"
-            << "  " << tailAddress << " = llvm.getelementptr %arguments[" << tailOffset << "] : (!llvm.ptr, i32) -> !llvm.ptr, i8\n"
-            << "  " << tail << " = llvm.load " << tailAddress << " : !llvm.ptr -> i32\n";
-        auto zero = constant(0), valid = tmp();
-        if (boolean) {
-          auto one = constant(1), integerZero = tmp(), canonicalTail = tmp();
-          out << "  " << integerZero << " = arith.cmpi eq, " << loaded << ", " << zero << " : i32\n"
-              << "  " << canonicalTail << " = arith.cmpi ule, " << tail << ", " << one << " : i32\n"
-              << "  " << valid << " = arith.andi " << integerZero << ", " << canonicalTail << " : i1\n";
-        } else out << "  " << valid << " = arith.cmpi eq, " << tail << ", " << zero << " : i32\n";
-        allow(valid, "wrapper_fail");
-        if (boolean) {
-          auto normalized = tmp(); out << "  " << normalized << " = arith.trunci " << tail << " : i32 to i1\n";
-          arguments.push_back(normalized);
-        } else arguments.push_back(loaded);
+        arguments.push_back(slots.load(fn.getFunctionType().getInput(p), p));
       }
       auto result = tmp();
       out << "  " << result << " = func.call @native_" << index << "(%state, %event";
@@ -359,19 +338,7 @@ public:
 
       out << "  " << yes << " = arith.cmpi ne, " << success << ", " << zero << " : i32\n"
           << "  cf.cond_br " << yes << ", ^store" << index << ", ^wrapper_fail\n^store" << index << ":\n";
-      const bool boolean = returnedType.isSignlessInteger(1);
-      // Canonicalize the whole output slot independently of caller initialization.
-      auto slotZero = constant(0), upperOffset = constant(4), upperAddress = tmp();
-      out << "  " << upperAddress << " = llvm.getelementptr %output[" << upperOffset << "] : (!llvm.ptr, i32) -> !llvm.ptr, i8\n"
-          << "  llvm.store " << slotZero << ", %output : i32, !llvm.ptr\n"
-          << "  llvm.store " << slotZero << ", " << upperAddress << " : i32, !llvm.ptr\n";
-      if (boolean) {
-        auto widened = tmp(); out << "  " << widened << " = arith.extui " << result << " : i1 to i8\n";
-        result = widened;
-      }
-      auto offset = constant(boolean ? 4 : 0), address = tmp();
-      out << "  " << address << " = llvm.getelementptr %output[" << offset << "] : (!llvm.ptr, i32) -> !llvm.ptr, i8\n"
-          << "  llvm.store " << result << ", " << address << " : " << (boolean ? "i8" : "i32") << ", !llvm.ptr\n";
+      slots.store(returnedType, result);
       auto one = constant(1); out << "  func.return " << one << " : i32\n";
     }
     out << "^wrapper_fail:\n";

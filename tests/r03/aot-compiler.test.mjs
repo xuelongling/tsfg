@@ -78,8 +78,8 @@ for(const fixture of fixtures.positive.filter(p=>p.id!=='complete-call-order'))t
  const result=await invokeCore(fixture.input,commands[1]);accepted(result);const object=readCompilerCoff(result.stdout);
  assert.equal(object.timestamp,0);assert.ok(object.sections.some(s=>s.name==='.text'&&s.size>0));
  for(let index=0;index<fixture.expected.nativeFunctions;index++)assert.ok(object.symbols.some(s=>s.name==='native_'+index&&s.section>0));
- assert.ok(object.symbols.some(s=>s.name==='tsfg_native_invoke'&&s.section>0));
- assert.deepEqual(new Set(object.stackmaps.frames.map(f=>f.symbol)),new Set([...fixture.functions.map((_,i)=>'native_'+i),'tsfg_native_invoke']));
+ assert.ok(object.symbols.some(s=>s.name==='tsfg_native_invoke_v3'&&s.section>0));
+ assert.deepEqual(new Set(object.stackmaps.frames.map(f=>f.symbol)),new Set([...fixture.functions.map((_,i)=>'native_'+i),'tsfg_native_invoke_v3']));
  for(const id of object.stackmaps.ids)assert.ok((id>>63n)===1n||id===0xffffffffn||id<BigInt(fixture.expected.nativeFunctions));
 });
 for(const row of fixtures.negative)test('whole capability '+row.id,async()=>{
@@ -88,17 +88,17 @@ for(const row of fixtures.negative)test('whole capability '+row.id,async()=>{
 });
 test('complete128 function and64 mixed parameter backend boundaries',async()=>{
  const whole=scalarModule(128);const result=await invokeCore(whole,commands[0]);accepted(result);checkCompilerGraph(result.stdout.toString('utf8'),{nativeFunctions:128});
- const excess=scalarModule(129);accepted(await invokeCore(excess));
- for(const command of commands){const result=await invokeCore(excess,command);rejected(result);assert.match(result.stderr.toString('utf8'),/r07-native-capability/);}
+ const extra=scalarModule(129);accepted(await invokeCore(extra));
+ for(const command of commands)accepted(await invokeCore(extra,command));
  const parameters=Array.from({length:64},(_,i)=>i%2?'bool':'i32');
  const wide=await invokeCore(scalarModule(1,parameters),commands[0]);accepted(wide);const graph=checkCompilerGraph(wide.stdout.toString('utf8'),{nativeFunctions:1});
  assert.equal(graph.native[0].args.length,66);const wrapper=instructions(graph.wrapper);
- comparison(graph.wrapper,/^getelementptr i8, ptr %3, i32 504$/);comparison(graph.wrapper,/^getelementptr i8, ptr %3, i32 508$/);
+ comparison(graph.wrapper,/^getelementptr i8, ptr %6, i32 504$/);comparison(graph.wrapper,/^getelementptr i8, ptr %6, i32 508$/);
  assert.ok(wrapper.some(op=>op.rhs.startsWith('trunc i32 ')));
  for(const command of commands)rejected(await invokeCore(scalarModule(1,[...parameters,'i32']),command));
 });
-test('nominal u32/i64 are complete capability refusals',async()=>{
- for(const name of ['u32','i64']) {const input=scalarModule(1,[name]);accepted(await invokeCore(input));for(const command of commands){const result=await invokeCore(input,command);rejected(result);assert.match(result.stderr.toString('utf8'),/r07-native-capability/);}}
+test('nominal u32/i64 are complete ordinary ABI signatures',async()=>{
+ for(const name of ['u32','i64']) {const input=scalarModule(1,[name]);accepted(await invokeCore(input));for(const command of commands)accepted(await invokeCore(input,command));}
 });
 test('original Core gate rejects i32 unary pos before capability',async()=>{
  const input=fixtures.positive[0].input.replace('"tsfg_core.neg"','"tsfg_core.pos"');

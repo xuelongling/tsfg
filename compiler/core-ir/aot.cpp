@@ -30,7 +30,7 @@ mlir::LogicalResult tsfg::emitNativeLLVM(mlir::ModuleOp verifiedCore,
                                         llvm::raw_ostream &output, NativeOutput kind) {
   std::string text;
   if (mlir::failed(lowerNativeCore(verifiedCore, text))) {
-    llvm::errs() << "[r07-native-capability] AOT requires i32/bool function boundaries and complete integer Core with at most 128 functions\n";
+    llvm::errs() << "[r07-native-capability] AOT requires complete integer/bool Core with at most 512 functions\n";
     return mlir::failure();
   }
   mlir::DialectRegistry registry;
@@ -75,12 +75,18 @@ mlir::LogicalResult tsfg::emitNativeLLVM(mlir::ModuleOp verifiedCore,
   auto *i32 = llvm::Type::getInt32Ty(llvmContext), *i8 = llvm::Type::getInt8Ty(llvmContext);
   auto *slot = llvm::StructType::get(llvmContext, {i32, i8, llvm::ArrayType::get(i8, 3)});
   const auto *slotLayout = layout.getStructLayout(slot);
+  auto *words = llvm::StructType::get(llvmContext, {i32, i32});
+  const auto *wordLayout = layout.getStructLayout(words);
   if (layout.getTypeAllocSize(slot).getFixedValue() != 8 || layout.getABITypeAlign(slot).value() != 4 ||
       slotLayout->getElementOffset(0) != 0 || slotLayout->getElementOffset(1) != 4 || slotLayout->getElementOffset(2) != 5 ||
+      layout.getTypeAllocSize(words).getFixedValue() != 8 || layout.getABITypeAlign(words).value() != 4 ||
+      wordLayout->getElementOffset(0) != 0 || wordLayout->getElementOffset(1) != 4 || !layout.isLittleEndian() ||
       layout.getPointerSize() != 8 || layout.getPointerABIAlignment(0).value() != 8) {
     llvm::errs() << "[r07-native-abi] actual target ScalarSlot/pointer layout differs from the fixed scalar slot layout\n";
     return mlir::failure();
   }
+  new llvm::GlobalVariable(*native, i32, true, llvm::GlobalValue::ExternalLinkage,
+      llvm::ConstantInt::get(i32, NativeABIVersion), "tsfg_native_abi_version");
   if (llvm::verifyModule(*native, &llvm::errs())) return mlir::failure();
   if (kind == NativeOutput::LLVM) native->print(output, nullptr);
   else {

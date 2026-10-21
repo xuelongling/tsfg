@@ -1,13 +1,14 @@
 // SPDX-License-Identifier: MIT
 // Structural LLVM graph checks, never an IR evaluator or a machine decoder.
 import assert from 'node:assert/strict';
+import {checkCompilerSlots} from './aot-compiler-slots.mjs';
 export function readCompilerLLVM(text) {
   const functions=[];let fn=null,block=null;
   for(const source of text.split('\n')) {
     const line=source.trim();
-    const header=/^define (i1|i32) @([A-Za-z0-9_]+)\((.*)\) \{$/.exec(line);
+    const header=/^define (i1|i8|i16|i32|i64) @([A-Za-z0-9_]+)\((.*)\) \{$/.exec(line);
     if(header) {
-      const args=[...header[3].matchAll(/(ptr|i1|i32) (%[-a-zA-Z0-9_.$]+)/g)].map(m=>({type:m[1],value:m[2]}));
+      const args=[...header[3].matchAll(/(ptr|i1|i8|i16|i32|i64) (%[-a-zA-Z0-9_.$]+)/g)].map(m=>({type:m[1],value:m[2]}));
       const entry=String(Math.max(-1,...args.map(arg=>Number(arg.value.slice(1))))+1);
       block={name:entry,instructions:[],successors:[],condition:null};
       fn={name:header[2],result:header[1],args,entry,predecessors:new Map(),dominators:new Map(),blocks:new Map([[entry,block]]),defs:new Map(),events:[],calls:[],markers:[]};
@@ -27,7 +28,7 @@ export function readCompilerLLVM(text) {
     else if(jump)block.successors=[jump[1]];
     const event=/call i32 (%[-a-zA-Z0-9_.$]+)\(ptr (%[-a-zA-Z0-9_.$]+), i32 (-?\d+), i32 (-?\d+), i32 (-?\d+), i32 (-?\d+), i64 (-?\d+)\)/.exec(instruction.rhs);
     if(event)fn.events.push({...instruction,target:event[1],state:event[2],kind:Number(event[3]),logical:Number(event[4]),start:Number(event[5]),end:Number(event[6]),id:BigInt(event[7])});
-    const direct=/^call (i1|i32) @native_(\d+)\((.*)\)$/.exec(instruction.rhs);
+    const direct=/^call (i1|i8|i16|i32|i64) @native_(\d+)\((.*)\)$/.exec(instruction.rhs);
     if(direct)fn.calls.push({...instruction,type:direct[1],callee:Number(direct[2]),args:direct[3]});
     const marker=/@llvm.experimental.stackmap\(i64 (-?\d+), i32 0\)/.exec(line);
     if(marker)fn.markers.push({...instruction,id:BigInt.asUintN(64,BigInt(marker[1]))});
@@ -68,9 +69,11 @@ export function checkCompilerGraph(text,expected) {
   assert.match(text,/target triple = "x86_64-pc-windows-msvc"/);
   assert.match(text,/target datalayout = "e-m:w-p270:32:32-p271:32:32-p272:64:64-i64:64-i128:128-f80:128-n8:16:32:64-S128"/);
   assert.ok(!text.includes('tsfg_native_descriptor'));
+  assert.match(text,/@tsfg_native_abi_version = constant i32 3/);
+  assert.ok(!text.includes('@tsfg_native_invoke('));
   const functions=readCompilerLLVM(text),native=functions.filter(fn=>fn.name.startsWith('native_'));
   assert.deepEqual(native.map(fn=>fn.name),Array.from({length:expected.nativeFunctions},(_,i)=>'native_'+i));
-  const wrapper=functions.find(fn=>fn.name==='tsfg_native_invoke');assert.ok(wrapper);
+  const wrapper=functions.find(fn=>fn.name==='tsfg_native_invoke_v3');assert.ok(wrapper);
   const markers=functions.flatMap(fn=>fn.markers);assert.equal(new Set(markers.map(m=>String(m.id))).size,markers.length);
   const events=functions.flatMap(fn=>fn.events);if(expected.allowElidedEvents)for(let i=0;i<events.length;i++)assert.ok(events[i].id>0n&&(i===0||events[i].id>events[i-1].id));
   else assert.deepEqual(events.map(e=>e.id),events.map((_,i)=>BigInt(i+1)));
@@ -108,42 +111,5 @@ export function checkCompilerGraph(text,expected) {
     const gate=successGate(wrapper,sentinel.result,store);assert.ok(!reaches(wrapper,gate.successors[1],store.block));
   }
   if(expected.staticExpandedStackmapRecords!==undefined)assert.equal(markers.length,expected.staticExpandedStackmapRecords);
-  const graph={functions,native,wrapper};checkScalarSlots(graph);return graph;
-}
-
-function checkScalarSlots(graph) {
-  const {wrapper,native}=graph,all=instructions(wrapper),input=wrapper.args[3].value,output=wrapper.args[4].value;
-  function atAddress(value,base,offset) {
-    return offset===0&&value===base||wrapper.defs.get(value)?.rhs==='getelementptr i8, ptr '+base+', i32 '+offset;
-  }
-  for(const call of wrapper.calls) {
-    const fn=native[call.callee];
-    function load(offset) {
-      const found=all.find(op=>{const match=/^load i32, ptr ([^,]+), align 4$/.exec(op.rhs);return match&&atAddress(match[1],input,offset)&&dominates(wrapper,op,call);});
-      assert.ok(found,'argument half loaded at '+offset);return found;
-    }
-    for(const [index,arg]of fn.args.slice(2).entries()) {
-      const lower=load(index*8),upper=load(index*8+4);
-      let condition;
-      if(arg.type==='i1') {
-        const zero=all.find(op=>op.rhs==='icmp eq i32 '+lower.result+', 0'&&dominates(wrapper,op,call));
-        const canonical=all.find(op=>op.rhs==='icmp ule i32 '+upper.result+', 1'&&dominates(wrapper,op,call));
-        assert.ok(zero&&canonical);
-        condition=all.find(op=>{const pair=/^and i1 ([^,]+), (.+)$/.exec(op.rhs);return pair&&new Set(pair.slice(1)).size===2&&pair.slice(1).includes(zero.result)&&pair.slice(1).includes(canonical.result)&&dominates(wrapper,op,call);});
-        assert.ok(all.some(op=>op.rhs==='trunc i32 '+upper.result+' to i1'&&dominates(wrapper,op,call)));
-      } else condition=all.find(op=>op.rhs==='icmp eq i32 '+upper.result+', 0'&&dominates(wrapper,op,call));
-      assert.ok(condition);const block=wrapper.blocks.get(condition.block);assert.equal(block.condition,condition.result);
-      assert.ok(wrapper.dominators.get(call.block).has(block.successors[0]));
-      assert.ok(!reaches(wrapper,block.successors[1],call.block),'invalid slot cannot call the function');
-    }
-    const sentinel=wrapper.events.find(event=>event.kind===8&&event.logical===call.callee);assert.ok(sentinel);
-    const stores=all.filter(op=>op.rhs.startsWith('store ')&&dominates(wrapper,sentinel,op));
-    const zeros=stores.filter(op=>op.rhs.startsWith('store i32 0, ptr '));
-    const lowerZero=zeros.find(op=>{const match=/^store i32 0, ptr ([^,]+), align 4$/.exec(op.rhs);return match&&atAddress(match[1],output,0);});
-    const upperZero=zeros.find(op=>{const match=/^store i32 0, ptr ([^,]+), align 4$/.exec(op.rhs);return match&&atAddress(match[1],output,4);});assert.ok(lowerZero&&upperZero);
-    let value=call.result;
-    if(fn.result==='i1'){const widened=all.find(op=>op.rhs==='zext i1 '+call.result+' to i8');assert.ok(widened);value=widened.result;}
-    const store=stores.find(op=>{const match=/^store (i32|i8) ([^,]+), ptr ([^,]+), align [14]$/.exec(op.rhs);return match&&match[1]===(fn.result==='i1'?'i8':'i32')&&match[2]===value&&atAddress(match[3],output,fn.result==='i1'?4:0);});
-    assert.ok(store&&dominates(wrapper,lowerZero,store)&&dominates(wrapper,upperZero,store),'both slot halves cleared before typed result store');
-  }
+  const graph={functions,native,wrapper};checkCompilerSlots(graph,expected.signatures);return graph;
 }
