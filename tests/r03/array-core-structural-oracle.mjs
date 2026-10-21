@@ -94,6 +94,7 @@ export function parseArrayCore(text) {
       return {kind:'integer',value:atom.value,width};
     }
     if (atom.value === 'true' || atom.value === 'false') return {kind:'boolean',value:atom.value};
+    if (atom.value === 'unit') return {kind:'unit'};
     assert.fail('unexpected attribute value ' + atom.value);
   }
   /** @returns {Record<string,any>} */
@@ -102,7 +103,8 @@ export function parseArrayCore(text) {
     if (peek() !== '}') {
       do {
         const key = take();assert.ok(key.kind === 'word' || key.kind === 'string');
-        take('=');entries.push([key.value,value()]);
+        // Generic MLIR may elide the value of a named UnitAttr.
+        entries.push([key.value,peek()==='='?(take('='),value()):{kind:'unit'}]);
         if (peek() !== ',') break;take(',');
       } while (true);
     }
@@ -208,4 +210,12 @@ export function assertArrayCoreSemantics(actual, expected) {
     resizes:count('tsfg_array.resize_checked'),constants:count('tsfg_core.constant'),
     operations:operations.length,
     registers:parsed.functions.reduce((n,fn)=>n+fn.parameters.length+fn.operations.reduce((m,op)=>m+op.results.length,0),0)};
+}
+
+/** Empty optional proof tables carry the same zero-row value; every other field is retained.
+ * @param {string} text */
+export function parseArrayCoreProofValue(text){const value=parseArrayCore(text);
+ for(const fn of value.functions)for(const key of ['tsfg_array.call_roots','tsfg_array.view_lifetimes'])
+  if(Array.isArray(fn.attributes[key])&&fn.attributes[key].length===0)delete fn.attributes[key];
+ return value;
 }

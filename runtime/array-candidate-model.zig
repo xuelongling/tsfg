@@ -36,9 +36,9 @@ pub fn hash(bytes: []const u8) Digest {
     std.crypto.hash.sha2.Sha256.hash(bytes, &value.bytes, .{});
     return value;
 }
-pub const schema = digest("807b15d87fea3ab8f30d1f20893992509e50f8a8bdc96c62db0d66dfdc4c4e91");
+pub const schema = digest("04ea70eebde87bae20ff7a35f7f1b0ad5065c0f031c41317169e374d67a0982d");
 pub const formal_schema = digest("3dea6ce5de996dfa3e7141cced985243ea74ac9bb80f03636c6694343118f2a6");
-pub const core_schema = digest("4099a1f8633db0326e39bf81f514e63e6287a2589f2128ac7a23e65404e82b06");
+pub const core_schema = digest("b959fee0646c337d231e9e0be6e7dd6fc53f6b6ef8f1f681a692b59bc78f7cf6");
 pub const f64_id = digest("dfbc72c48bec549ea679cd6aff531f9ebef95e001f6ae0bf419d2f33bf988a6c");
 pub const array_id = digest("74dab77c8fbdacf6cf058e37cac033757417c808d57ee23a9c8866565202cb68");
 pub const u32_id = digest("b72109639ea1cc95816abe01a09e7e4c78c11902a1251c00090a5715cf9b979c");
@@ -151,8 +151,53 @@ pub const ScalarUse = struct {
     }
 };
 pub const ElementTarget = struct { receiverBinding: Digest, receiverRange: Range, index: ScalarUse, range: Range };
-pub const CallRoots = struct { block: u8, instruction: u16, registers: []const u16 };
-pub const ViewLifetime = struct { viewRegister: u16, ownerRegister: u16, createInstruction: u16, lastUseInstruction: u16 };
+pub const CallRoots = struct { block: u8, instruction: u16, arrayRegisters: []const u16, viewRegisters: []const u16 };
+pub const ViewOwner = union(enum) {
+    array: u16,
+    parameter: u8,
+    pub fn jsonStringify(self: ViewOwner, w: anytype) !void {
+        try w.beginObject();
+        try w.objectField("kind");
+        try w.write(@as(u8, if (self == .array) 1 else 2));
+        switch (self) {
+            .array => |value| {
+                try w.objectField("register");
+                try w.write(value);
+            },
+            .parameter => |value| {
+                try w.objectField("index");
+                try w.write(value);
+            },
+        }
+        try w.endObject();
+    }
+};
+pub const ViewOrigin = union(enum) {
+    parameter: u8,
+    create: u16,
+    pub fn jsonStringify(self: ViewOrigin, w: anytype) !void {
+        try w.beginObject();
+        try w.objectField("kind");
+        try w.write(@as(u8, if (self == .parameter) 1 else 2));
+        switch (self) {
+            .parameter => |value| {
+                try w.objectField("index");
+                try w.write(value);
+            },
+            .create => |value| {
+                try w.objectField("instruction");
+                try w.write(value);
+            },
+        }
+        try w.endObject();
+    }
+};
+pub const ViewLifetime = struct { viewRegister: u16, owner: ViewOwner, origin: ViewOrigin, lastUseInstruction: ?u16 };
+pub const EffectFlags = struct { read: bool, write: bool, structural: bool };
+pub const PublishedParameter = struct { index: u8, read: bool, write: bool, structural: bool };
+pub const PublishedUpper = struct { parameters: []const PublishedParameter, local: EffectFlags, returnOrigin: ?u8 = null };
+pub const PublishedContract = struct { functionId: Digest, signatureHash: Digest, upper: PublishedUpper, digest: Digest };
+pub const Publication = struct { family: []const u8, version: u8, mode: []const u8, scopeDigest: Digest, expectedDigest: Digest, contracts: []const PublishedContract };
 pub const Literal = union(enum) {
     floating: u64,
     integer: u32,
@@ -169,6 +214,7 @@ pub const Literal = union(enum) {
     }
 };
 pub const Read = struct { receiverBinding: Digest, receiverRange: Range, index: ScalarUse };
+pub const ViewRead = struct { receiverBinding: Digest, receiverRange: Range, index: ScalarUse, statementRange: ?Range };
 pub const Tail = union(enum) {
     fuel: struct { event: u8 },
     constant: struct { value: Literal },
@@ -178,10 +224,11 @@ pub const Tail = union(enum) {
     store: struct { target: ElementTarget, value: ScalarUse, expressionRange: Range, operatorRange: Range },
     resize: struct { receiverBinding: Digest, receiverRange: Range, property: Digest, propertyNameRange: Range, targetRange: Range, newLength: ScalarUse, expressionRange: Range, operatorRange: Range },
     view_create: struct { intrinsic: Digest, receiverBinding: Digest, receiverRange: Range, calleeRange: Range, start: ScalarUse, length: ScalarUse, local: Local },
-    view_read: Read,
+    view_read: ViewRead,
     view_length: struct { receiverBinding: Digest, receiverRange: Range, property: Digest, propertyNameRange: Range, statementRange: Range },
-    call: struct { callee: []const u8, sourceCallee: Digest, calleeRange: Range, arguments: []const ScalarUse, statementRange: Range, functionId: Digest, signatureHash: Digest },
-    returned: void,
+    call: struct { callee: []const u8, sourceCallee: Digest, calleeRange: Range, arguments: []const ScalarUse, statementRange: Range, functionId: Digest, signatureHash: Digest, consumedDigest: ?Digest },
+    returned: struct { value: ScalarUse },
+    view_alias: struct { targetBinding: Digest, local: Local },
 };
 pub const Instruction = struct {
     opcode: u8,
@@ -198,10 +245,6 @@ pub const Instruction = struct {
         }
         try w.objectField("metadata");
         switch (self.metadata) {
-            .returned => {
-                try w.beginObject();
-                try w.endObject();
-            },
             inline else => |value| try w.write(value),
         }
         try w.endObject();
@@ -244,6 +287,7 @@ pub const Payload = struct {
     functionIds: []const Digest,
     exports: []const Export,
     functions: []const Function,
+    publication: ?Publication,
 };
 pub const Snapshot = struct { header: Header, payload: Payload };
 pub const Module = struct { allocator: Allocator, arena: std.heap.ArenaAllocator, bytes: []u8, snapshot: Snapshot };

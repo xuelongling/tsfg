@@ -27,14 +27,23 @@ mlir::LogicalResult verifyOperation(mlir::Operation *operation) {
   const bool create=name=="tsfg_array.create",alias=name=="tsfg_array.alias",read=name=="tsfg_array.read_checked";
   const bool store=name=="tsfg_array.store_dense_checked",resize=name=="tsfg_array.resize_checked";
   const bool viewCreate=name=="tsfg_array.view_create_checked",viewRead=name=="tsfg_array.view_read_checked",viewLength=name=="tsfg_array.view_length";
+  if (name=="tsfg_array.view_alias") {
+    if (operation->getNumRegions() || operation->getNumSuccessors() || operation->getNumOperands()!=1 || operation->getNumResults()!=1 ||
+        !attributes(operation,{"target_binding","local","tsfg_source.start","tsfg_source.end"}))
+      return reject("core-ir-array-shape","View alias shape/fields differ");
+    if (!llvm::isa<ReadSpanType>(operation->getOperand(0).getType()) || operation->getResult(0).getType()!=operation->getOperand(0).getType())
+      return reject("core-ir-array-type","View alias nominal type differs");
+    return mlir::success();
+  }
   if (viewCreate || viewRead || viewLength) {
     const auto count=viewCreate ? 3u : viewRead ? 2u : 1u;
     if (operation->getNumRegions() || operation->getNumSuccessors() || operation->getNumResults()!=1 || operation->getNumOperands()!=count)
       return reject("core-ir-array-shape","view operation shape differs");
-    const std::vector<llvm::StringRef> keys=viewCreate
+    std::vector<llvm::StringRef> keys=viewCreate
       ? std::vector<llvm::StringRef>{"intrinsic","receiver_binding","receiver_range","callee_range","start","length","local","tsfg_source.start","tsfg_source.end"}
       : viewRead ? std::vector<llvm::StringRef>{"receiver_binding","receiver_range","index","tsfg_source.start","tsfg_source.end"}
       : std::vector<llvm::StringRef>{"receiver_binding","receiver_range","property","property_name_range","statement_range","tsfg_source.start","tsfg_source.end"};
+    if (viewRead && operation->hasAttr("statement_range")) keys.push_back("statement_range");
     if (!attributes(operation,keys)) return reject("core-ir-array-metadata","view operation fields differ");
     const auto result=operation->getResult(0).getType();
     if (!(viewCreate ? llvm::isa<ReadSpanType>(result) : viewRead ? result.isF64() : tsfg::typeCode(result)==8))
@@ -84,6 +93,7 @@ ARRAY_OP(ResizeOp, "resize_checked", mlir::OpTrait::NOperands<2>::Impl, mlir::Op
 ARRAY_OP(ViewCreateOp, "view_create_checked", mlir::OpTrait::NOperands<3>::Impl, mlir::OpTrait::OneResult)
 ARRAY_OP(ViewReadOp, "view_read_checked", mlir::OpTrait::NOperands<2>::Impl, mlir::OpTrait::OneResult)
 ARRAY_OP(ViewLengthOp, "view_length", mlir::OpTrait::OneOperand, mlir::OpTrait::OneResult)
+ARRAY_OP(ViewAliasOp, "view_alias", mlir::OpTrait::OneOperand, mlir::OpTrait::OneResult)
 #undef ARRAY_OP
 class ArrayDialect : public mlir::Dialect {
 public:
@@ -91,7 +101,7 @@ public:
   static llvm::StringRef getDialectNamespace() { return "tsfg_array"; }
   explicit ArrayDialect(mlir::MLIRContext *context)
       : Dialect(getDialectNamespace(), context, mlir::TypeID::get<ArrayDialect>()) {
-    addTypes<ArrayType,ReadSpanType>(); addOperations<CreateOp, AliasOp, ReadOp, StoreOp, ResizeOp,ViewCreateOp,ViewReadOp,ViewLengthOp>();
+    addTypes<ArrayType,ReadSpanType>(); addOperations<CreateOp, AliasOp, ReadOp, StoreOp, ResizeOp,ViewCreateOp,ViewReadOp,ViewLengthOp,ViewAliasOp>();
   }
   mlir::Type parseType(mlir::DialectAsmParser &parser) const override {
     llvm::StringRef mnemonic;

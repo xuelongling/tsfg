@@ -45,7 +45,7 @@ mlir::LogicalResult recomputeManagedLiveness(mlir::func::FuncOp function, Manage
   bool valid = true; size_t workCount = 0;
   auto step = [&]() { if ((closureDomain || arrayDomain) && ++workCount > 1000000) valid = false; };
   auto managed = [&](mlir::Type type) {
-    return arrayDomain ? llvm::isa<arrays::ArrayType>(type)
+    return arrayDomain ? llvm::isa<arrays::ArrayType,arrays::ReadSpanType>(type)
       : closureDomain ? llvm::isa<closure::EnvironmentType,closure::ClosureType>(type) : llvm::isa<ReferenceType>(type);
   };
   auto add = [&](llvm::BitVector &live, mlir::Value value) {

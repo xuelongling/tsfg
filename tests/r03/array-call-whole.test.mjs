@@ -1,15 +1,17 @@
 // SPDX-License-Identifier: MIT
-import {migrateArrayCore11} from './array-test-fixtures.mjs';
 // Private5 migration expectations are independent data; old wire originals remain refusal controls.
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { readArrayFactsCandidate,writeArrayFactsCandidate } from '../../compiler/array-facts.mjs';
 import { buildHir,verifyHir,printHir,readHir,lowerHir,analyzeArrayCalls,verifyArrayCalls,printArrayCalls,readArrayCalls } from '../../compiler/hir.mjs';
 import { canonical,fresh,factsContext,caught,deeplyFrozen,analysisError } from './array-call-test-helpers.mjs';
-import { callOracle,pinned } from './array-test-fixtures.mjs';
+import { callOracle,pinned,pinnedContainer } from './array-test-fixtures.mjs';
 import {parseArrayCore} from './array-core-structural-oracle.mjs';
 import coreCallOracle from './array-core-call-oracle.json' with {type:'json'};
 const oraclePromise=callOracle();
+const nodeWhole=await pinnedContainer('./array-core12-node-additions.json',1330667,
+  '60abad7dd96ab271f822e63a12bb3ba7816dd142c8eecbd172e01566b32b4792');
+
 test('23e ten independent complete Source packets and typed HIR preserve every source field',async t=>{
   const oracle=await oraclePromise;
   assert.equal(oracle.family,'tsfg.r03.legacy-v5-old18-oracle');assert.equal(oracle.version,5);assert.equal(oracle.cases.length,10);
@@ -45,21 +47,21 @@ test('23e whole owner-relative Derived and fixed caller-effective reports use pr
     assert.deepEqual(h,beforeH);assert.deepEqual(context,beforeC);
   });
 });
-test('37d complete call-only Core succeeds; remaining parameter and final-return gaps retain exact anchors',async t=>{
+test('26f complete ordinary calls, parameters and actual final returns retain independent whole Core',async t=>{
   const oracle=await oraclePromise;
   for(const row of oracle.cases)await t.test(row.name,()=>{
     const input=fresh(row.hir),before=fresh(input);
     if(row.name==='core-call-only-refusal') {
       assert.deepEqual(input,coreCallOracle.hir);
-      assert.equal(lowerHir(input,factsContext(row)),migrateArrayCore11(coreCallOracle.core));
+      const expected=nodeWhole.cases.find(c=>c.name===row.name);assert.ok(expected);
+      assert.equal(lowerHir(input,factsContext(row)),expected.core);
     } else if (['first-touch-alias','two-slots-alias-and-independent-fresh','parameter-alias-permanent-unknown','leaf-read-exceeds-fixed'].includes(row.name)) {
       const core=parseArrayCore(lowerHir(input,factsContext(row)));
       assert.deepEqual(core.functions.map(fn=>fn.properties.sym_name),row.hir.functions.map(fn=>fn.name));
       assert.equal(core.functions.length,row.hir.functions.length);
     } else {
-      const error=caught(()=>lowerHir(input,factsContext(row)));
-      for(const[key,value]of Object.entries(row.coreError))assert.deepEqual(error[key],key==='message'?"Array Core lowering requires nominal Array/scalar calls and a final checked read or f64 direct call"
-        :key==='primary'?{sourceId:input.functions[0].sourcePath,...input.functions[0].body.at(-1).range}:value,key);
+      const expected=nodeWhole.cases.find(c=>c.name===row.name);assert.ok(expected);
+      assert.equal(lowerHir(input,factsContext(row)),expected.core);
     }
     assert.deepEqual(input,before);
   });

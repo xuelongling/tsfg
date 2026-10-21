@@ -81,10 +81,10 @@ mlir::LogicalResult marker(mlir::ModuleOp module) {
     return reject("core-ir-array-marker", "candidate marker fields differ");
   auto version = llvm::dyn_cast_or_null<mlir::IntegerAttr>(value.get("version"));
   auto facts = llvm::dyn_cast_or_null<mlir::IntegerAttr>(value.get("facts_version"));
-  if (!version || !version.getType().isSignlessInteger(32) || version.getInt() != 11 ||
+  if (!version || !version.getType().isSignlessInteger(32) || version.getInt() != 12 ||
       !facts || !facts.getType().isSignlessInteger(32) || facts.getInt() != 7 ||
       text(value, "family") != "tsfg.core-array-candidate" || text(value, "schema") != schema ||
-      text(value, "profile") != "dense-f64-array-local-readspan-checked-v11")
+      text(value, "profile") != "dense-f64-array-readspan-parameters-checked-v12")
     return reject("core-ir-array-marker", "candidate marker identity differs");
   return mlir::success();
 }
@@ -231,16 +231,16 @@ mlir::LogicalResult parameters(mlir::func::FuncOp fn, Function &function, Metada
   uint32_t previous=function.name.end; std::set<std::string> names;
   for (size_t i=0;i<rows.size();++i) {
     auto row=llvm::dyn_cast<mlir::DictionaryAttr>(rows[i]);
-    const auto type=fn.getFunctionType().getInput(i); const bool array=llvm::isa<ArrayType>(type);
-    if (!(array ? fields(row,{"id","name","type","writable","declaration_range","name_range","annotation_range","element_annotation_range"})
+    const auto type=fn.getFunctionType().getInput(i); const bool array=llvm::isa<ArrayType>(type), view=llvm::isa<ReadSpanType>(type);
+    if (!((array || view) ? fields(row,{"id","name","type","writable","declaration_range","name_range","annotation_range","element_annotation_range"})
         : fields(row,{"id","name","type","writable","declaration_range","name_range","annotation_range"})))
       return reject("core-ir-array-metadata","parameter fields differ");
     auto name=text(row,"name"); auto writable=llvm::dyn_cast_or_null<mlir::BoolAttr>(row.get("writable"));
     if (name.size()>1048576) return reject("core-ir-array-budget","parameter name exceeds limit");
     if (!validText(name) || !names.insert(name.str()).second) return reject("core-ir-array-identity","duplicate/invalid parameter name");
-    if (!writable || !writable.getValue()) return reject("core-ir-array-metadata","parameter writable differs");
+    if (!writable || writable.getValue()==view) return reject("core-ir-array-metadata","parameter writable differs");
     unsigned code=tsfg::typeCode(type);
-    if ((!array && code!=8 && code!=13) || text(row,"type") != (array ? arrayId : code==8 ? u32Id : f64Id))
+    if ((!array && !view && code!=8 && code!=13) || text(row,"type") != (array ? arrayId : view ? readSpanId : code==8 ? u32Id : f64Id))
       return reject("core-ir-array-type","parameter nominal type differs");
     Parameter item{text(row,"id").str(),name.str(),type,{},{},{},{}};
     if (!span(row.get("declaration_range"),item.declaration) || !span(row.get("name_range"),item.nameRange) ||
@@ -249,9 +249,10 @@ mlir::LogicalResult parameters(mlir::func::FuncOp fn, Function &function, Metada
         item.declaration.start!=item.nameRange.start || item.declaration.end!=item.annotation.end ||
         item.nameRange.end>=item.annotation.start || !encloses(item.declaration,item.nameRange) || !encloses(item.declaration,item.annotation))
       return reject("core-ir-array-source","parameter source ranges differ");
-    if (array && (!span(row.get("element_annotation_range"),item.elementAnnotation) ||
-        !encloses(item.annotation,item.elementAnnotation) || item.elementAnnotation.end>=item.annotation.end))
-      return reject("core-ir-array-source","Array element annotation range differs");
+    if ((array || view) && (!span(row.get("element_annotation_range"),item.elementAnnotation) ||
+        !encloses(item.annotation,item.elementAnnotation) || item.elementAnnotation.end>=item.annotation.end ||
+        (view && item.elementAnnotation.start<=item.annotation.start)))
+      return reject("core-ir-array-source","nominal element annotation range differs");
     if (item.id!=sourceIdentity(metadata.path,item.nameRange) || !metadata.bindings.insert(item.id).second)
       return reject("core-ir-array-identity","parameter binding differs");
     function.parameters.push_back(item); previous=item.declaration.end;
@@ -259,6 +260,8 @@ mlir::LogicalResult parameters(mlir::func::FuncOp fn, Function &function, Metada
   return mlir::success();
 }
 } // namespace
+std::string identityQuote(llvm::StringRef value) { return jcsQuote(value); }
+std::string identityHash(llvm::StringRef value) { return hash(value); }
 std::string sourceIdentity(llvm::StringRef path, Range anchor, bool site) {
   std::string preimage = site ? "tsfg.array-facts.allocation-site.v1" : "tsfg.array-facts.binding.v1";
   preimage += '\0';
@@ -272,7 +275,7 @@ mlir::LogicalResult verifyMetadata(mlir::ModuleOp module, Metadata &metadata) {
   if (!attributes(module, {"tsfg_core.version", "tsfg_core.input_identity", "tsfg_core.source_hash", "tsfg_core.source_path",
       "tsfg_core.target", "tsfg_core.triple", "tsfg_core.data_layout", "tsfg_core.bytecode_schema", "tsfg_core.source_length",
       "tsfg_core.array", "tsfg_array.function_ids", "tsfg_array.exports", "tsfg_array.sources", "tsfg_array.types", "tsfg_array.request_id", "tsfg_array.length_property",
-      "tsfg_array.readspan_length_property", "tsfg_array.readspan_intrinsic"}))
+      "tsfg_array.readspan_length_property", "tsfg_array.readspan_intrinsic", "tsfg_array.publication"}))
     return reject("core-ir-array-metadata", "module fields differ");
   if (text(module, "tsfg_core.version") != "0.9.0" || text(module, "tsfg_core.target") != "windows-x86_64-msvc" ||
       text(module, "tsfg_core.triple") != "x86_64-pc-windows-msvc" ||
@@ -322,7 +325,7 @@ mlir::LogicalResult verifyMetadata(mlir::ModuleOp module, Metadata &metadata) {
     std::string shape = "(";
     for (size_t i = 0; i < item.parameters.size(); ++i) {
       if (i) shape += ',';
-      shape += llvm::isa<ArrayType>(item.parameters[i].type) ? "array.f64" : tsfg::typeCode(item.parameters[i].type)==8 ? "u32" : "f64";
+      shape += llvm::isa<ArrayType>(item.parameters[i].type) ? "array.f64" : llvm::isa<ReadSpanType>(item.parameters[i].type) ? "readspan.f64" : tsfg::typeCode(item.parameters[i].type)==8 ? "u32" : "f64";
     }
     shape += ")->f64";
     std::string signaturePreimage("tsfg.signature\0",15); signaturePreimage += shape;

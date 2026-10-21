@@ -1,5 +1,5 @@
 // SPDX-License-Identifier: MIT
-import {migrateArrayCore11} from './array-test-fixtures.mjs';
+import {pinnedContainer} from './array-test-fixtures.mjs';
 // Owned-facts metamorphic positive; never a claimed actual Source execution.
 import test from 'node:test';
 import assert from 'node:assert/strict';
@@ -9,7 +9,8 @@ import {buildHir,verifyHir,lowerHir} from '../../compiler/hir.mjs';
 import {fresh} from './array-test-fixtures.mjs';
 import {parseArrayCore} from './array-core-structural-oracle.mjs';
 const o=JSON.parse(await readFile(new URL('./array-core-call-scalar-alias-oracle.json',import.meta.url),'utf8'));
-o.core=migrateArrayCore11(o.core);
+const currentCore12=await pinnedContainer('./array-core12-legacy-oracle.json',1058670,'5d508df006d7191686dd950744d7bf212466fe562f33c5708e041a9b07ece535');
+o.core=currentCore12.cases.find(row=>row.name==='owned-facts-scalar-alias-ordinary-call').core;
 const ctx=()=>({...o.factsContext,factsBytes:Buffer.from(o.sourcePacket)});
 test('independent owned-facts multi-scalar call and live alias whole Core are exact',()=>{
   assert.equal(o.provenance.sourceExecution,false);assert.equal(o.provenance.productionImportedForExpected,false);
@@ -40,8 +41,8 @@ test('existing complete SCC controls reject allocation cycles before Core emissi
     const context={...row.factsContext,factsBytes:Buffer.from(row.packageText)};
     if(name==='spin-wide-local-upper')assert.deepEqual(verifyHir(fresh(row.completeHir),context,row.publicationContext),row.completeHir);
     if(name==='spin-wide-local-upper'){
-      const current=JSON.parse(await readFile(new URL('./array-core-parameter-oracle.json',import.meta.url),'utf8'));
-      assert.equal(lowerHir(fresh(row.completeHir),context,row.publicationContext),migrateArrayCore11(current.cases.find(c=>c.name===name).core));
+      const current=await pinnedContainer('./readspan-core12-oracle.json',474847,'ea662dcd137a240a947c1fc3c57d9a17dbed31661e99338a4d76950e5dce9ba0');
+      assert.equal(lowerHir(fresh(row.completeHir),context,row.publicationContext),current.cases.find(c=>c.name===name).core);
       assert.throws(()=>lowerHir(fresh(row.completeHir),context),{code:'r03-array-hir-context'});continue;
     }
     assert.throws(()=>lowerHir(fresh(row.completeHir),context,row.publicationContext),error=>{

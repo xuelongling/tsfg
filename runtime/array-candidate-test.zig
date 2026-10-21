@@ -3,17 +3,13 @@ const std = @import("std");
 const bytecode = @import("bytecode.zig");
 const s = bytecode.arrayCandidate;
 const a = std.testing.allocator;
+const comparison = @import("array-candidate-test-support.zig");
 const Input = struct { packets: []const struct { name: []const u8, bytes: usize, sha256: []const u8, hex: []const u8 } };
-fn digestEqual(expected: []const u8, bytes: []const u8) !void {
-    var hash: [32]u8 = undefined;
-    std.crypto.hash.sha2.Sha256.hash(bytes, &hash, .{});
-    try std.testing.expectEqualStrings(expected, &std.fmt.bytesToHex(hash, .lower));
-}
 fn decoded(hex: []const u8, length: usize, expected: []const u8) ![]u8 {
     const bytes = try a.alloc(u8, length);
     errdefer a.free(bytes);
-    _ = try std.fmt.hexToBytes(bytes, hex);
-    try digestEqual(expected, bytes);
+    try std.testing.expectEqual(length, (try std.fmt.hexToBytes(bytes, hex)).len);
+    try comparison.hashEqual(expected, bytes);
     return bytes;
 }
 fn accepted(allocator: std.mem.Allocator, bytes: []const u8) !*s.ValidatedArrayCandidate {
@@ -30,56 +26,37 @@ fn exact(handle: *const s.ValidatedArrayCandidate, bytes: []const u8) !void {
     defer a.free(copy);
     try std.testing.expectEqualSlices(u8, bytes, copy);
 }
-fn whole(index: usize) !void {
-    const inputs = try std.json.parseFromSlice(Input, a, @embedFile("testdata/array-packet-inputs.json"), .{ .ignore_unknown_fields = true });
+fn whole(comptime input_file: []const u8, comptime oracle_file: []const u8, count: usize, index: usize) !void {
+    const inputs = try std.json.parseFromSlice(Input, a, @embedFile(input_file), .{ .ignore_unknown_fields = true });
     defer inputs.deinit();
-    const oracle = try std.json.parseFromSlice(std.json.Value, a, @embedFile("testdata/array-packet-oracle.json"), .{});
+    const oracle = try std.json.parseFromSlice(std.json.Value, a, @embedFile(oracle_file), .{});
     defer oracle.deinit();
-    try std.testing.expectEqual(@as(usize, 9), inputs.value.packets.len);
+    try std.testing.expectEqual(count, inputs.value.packets.len);
     const input = inputs.value.packets[index];
     const bytes = try decoded(input.hex, input.bytes, input.sha256);
     defer a.free(bytes);
     const handle = try accepted(a, bytes);
     defer s.unload(handle);
     const expected = oracle.value.object.get("cases").?.array.items[index].object.get("decoded").?;
-    const expected_text = try std.json.Stringify.valueAlloc(a, expected, .{});
-    defer a.free(expected_text);
     const actual = try s.inspect(handle, a);
     defer a.free(actual);
-    try std.testing.expectEqualStrings(expected_text, actual);
+    try comparison.equal(expected, actual);
     try exact(handle, bytes);
+    std.debug.print("Array v2 whole {s}: {d} bytes, complete DTO and exact serialization\n", .{ input.name, bytes.len });
 }
-test "whole two slots alias independent fresh" {
-    try whole(0);
+test "all17 complete current-domain modules match independent whole DTO and bytes" {
+    for (0..17) |index| try whole("testdata/array-packet-v2-inputs.json", "testdata/array-packet-v2-oracle.json", 17, index);
 }
-test "whole parameter alias permanently unknown" {
-    try whole(1);
+test "all10 independent legacy whole modules retain Unit and fixed-context semantics in v2" {
+    for (0..10) |index| try whole("testdata/array-packet-v2-legacy-inputs.json", "testdata/array-packet-v2-legacy-oracle.json", 10, index);
 }
-test "whole recursive parameter-only domain" {
-    try whole(2);
-}
-test "whole actual local ReadSpan" {
-    try whole(3);
-}
-test "whole overwrite and equal resize" {
-    try whole(4);
-}
-test "whole RHS last use permits append" {
-    try whole(5);
-}
-test "whole full-u32 checked endpoints" {
-    try whole(6);
-}
-test "cold-only length before original final View read" {
-    try whole(7);
-}
-test "cold-only discarded length is actual last View use" {
-    try whole(8);
+test "all3 additional complete scalar and owner-work boundary modules match independent whole gold" {
+    for (0..3) |index| try whole("testdata/array-packet-v2-additional-inputs.json", "testdata/array-packet-v2-additional-oracle.json", 3, index);
 }
 
 test "owned immutable ArrayCandidate isolates caller bytes and another handle lifetime" {
     try std.testing.expect(s.ValidatedArrayCandidate != bytecode.VerifiedModule);
-    const inputs = try std.json.parseFromSlice(Input, a, @embedFile("testdata/array-packet-inputs.json"), .{ .ignore_unknown_fields = true });
+    const inputs = try std.json.parseFromSlice(Input, a, @embedFile("testdata/array-packet-v2-inputs.json"), .{ .ignore_unknown_fields = true });
     defer inputs.deinit();
     const input = inputs.value.packets[0];
     const bytes = try decoded(input.hex, input.bytes, input.sha256);
@@ -96,8 +73,8 @@ test "owned immutable ArrayCandidate isolates caller bytes and another handle li
     try std.testing.expectEqualStrings(before, after);
     const stored = try s.serialize(first, a);
     defer a.free(stored);
-    try digestEqual(input.sha256, stored);
-    try std.testing.expectEqual(@as(usize, 2), s.snapshot(first).payload.functions.len);
+    try comparison.hashEqual(input.sha256, stored);
+    try std.testing.expect(s.snapshot(first).payload.functions.len > 0);
     try std.testing.expect(@typeInfo(@TypeOf(s.snapshot(first).payload.functions)).pointer.is_const);
     try std.testing.expect(@typeInfo(@TypeOf(s.snapshot(first).payload.functions[0].instructions)).pointer.is_const);
 }
@@ -123,8 +100,8 @@ fn allocationFailures(bytes: []const u8, name: []const u8) !void {
     try std.testing.expect(reached and failures > 0);
     std.debug.print("Array actual load OOM {s}: {d} allocation points, all cleaned then success\n", .{ name, failures });
 }
-test "every actual load OOM point across all nine whole models is unpublished and cleaned" {
-    const inputs = try std.json.parseFromSlice(Input, a, @embedFile("testdata/array-packet-inputs.json"), .{ .ignore_unknown_fields = true });
+test "every actual load OOM point across all17 complete whole models is unpublished and cleaned" {
+    const inputs = try std.json.parseFromSlice(Input, a, @embedFile("testdata/array-packet-v2-inputs.json"), .{ .ignore_unknown_fields = true });
     defer inputs.deinit();
     for (inputs.value.packets) |input| {
         const bytes = try decoded(input.hex, input.bytes, input.sha256);
@@ -133,7 +110,7 @@ test "every actual load OOM point across all nine whole models is unpublished an
     }
 }
 test "inspect and exact serialization OOM preserve the loaded whole model" {
-    const inputs = try std.json.parseFromSlice(Input, a, @embedFile("testdata/array-packet-inputs.json"), .{ .ignore_unknown_fields = true });
+    const inputs = try std.json.parseFromSlice(Input, a, @embedFile("testdata/array-packet-v2-inputs.json"), .{ .ignore_unknown_fields = true });
     defer inputs.deinit();
     const input = inputs.value.packets[0];
     const bytes = try decoded(input.hex, input.bytes, input.sha256);

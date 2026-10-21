@@ -7,7 +7,7 @@ import { readFile } from 'node:fs/promises';
 import { readArrayFactsCandidate } from '../../compiler/array-facts.mjs';
 import { buildHir, verifyHir, printHir, readHir, lowerHir, analyzeArrayCalls,
   verifyArrayCalls, printArrayCalls, readArrayCalls } from '../../compiler/hir.mjs';
-import { jcs, sha, fresh, wire, deeplyFrozen } from './array-test-fixtures.mjs';
+import { jcs, sha, fresh, wire, deeplyFrozen, pinnedContainer } from './array-test-fixtures.mjs';
 
 // The exact independently frozen container is pretty JSON, not a wire frame.
 const oracleBytes = await readFile(new URL('./legacy-v7-parameter-budget-oracle.json', import.meta.url));
@@ -16,6 +16,7 @@ assert.equal(sha(oracleBytes), '85b6aa13c308a50e6487073001ace305ef65d113df6883fb
 const oracle = JSON.parse(oracleBytes.toString());
 assert.equal(oracle.staticValidation.allPassed, true);
 assert.equal(oracle.cases.length, 2);
+const currentCore12=await pinnedContainer('./array-core12-legacy-oracle.json',1058670,'5d508df006d7191686dd950744d7bf212466fe562f33c5708e041a9b07ece535');
 
 /** @param {any} row @returns {any} */
 function cold(row) {
@@ -88,7 +89,9 @@ function checked(row, entry, outcome) {
     return;
   }
   if (entry === 'lowerHir') {
-    rejected(outcome, row.core.expectedDiagnostic);
+    assert.equal(outcome.threw,false,outcome.error?.stack);
+    const expected=currentCore12.cases.find(value=>value.id===row.id);assert.ok(expected);
+    assert.equal(outcome.value,expected.core);
     return;
   }
   assert.equal(outcome.threw, false, outcome.error?.stack);

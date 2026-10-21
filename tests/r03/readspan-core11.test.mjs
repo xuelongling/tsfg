@@ -7,8 +7,10 @@ import {buildHir,verifyHir,lowerHir,analyzeArrayCalls} from '../../compiler/hir.
 import {pinnedContainer,fresh} from './array-test-fixtures.mjs';
 const source=await pinnedContainer('./legacy-v7-adjacent-oracle.json',5365418,
   'f22ad988bc831233bd09f743573c89ab0b5631c5fd7a86e35459b4f06176a822');
-const gold=await pinnedContainer('./readspan-core11-oracle.json',77575,
+const original=await pinnedContainer('./readspan-core11-oracle.json',77575,
   '6969a1ed0de2f71bb663565290b6c913c3c9957232b360dc31645e80554b77c4');
+const current=await pinnedContainer('./readspan-core12-oracle.json',474847,'ea662dcd137a240a947c1fc3c57d9a17dbed31661e99338a4d76950e5dce9ba0');
+const gold={...original,cases:original.cases.map(row=>{const expected=current.cases.find(value=>value.name===row.name);assert.ok(expected);return {...row,core:expected.core};})};
 for(const expected of gold.cases)test('26e complete actual Source → HIR → nominal Core: '+expected.name,()=>{
   const row=source.cases.find(row=>row.name===expected.name);
   assert.ok(row);assert.equal(row.hir.functions.length,1);

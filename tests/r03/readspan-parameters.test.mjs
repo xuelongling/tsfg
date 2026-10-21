@@ -47,6 +47,9 @@ const normalized=row=>{
   return {...row,id:row.id??row.name,analysis:row.analysis??row.expectedReport,
     coreDiagnostic:row.expectedCoreDiagnostic??row.core?.expectedDiagnostic};
 };
+const core12=await pinnedContainer('./readspan-core12-oracle.json',474847,'ea662dcd137a240a947c1fc3c57d9a17dbed31661e99338a4d76950e5dce9ba0');
+const legacyCore12=await pinnedContainer('./array-core12-legacy-oracle.json',1058670,'5d508df006d7191686dd950744d7bf212466fe562f33c5708e041a9b07ece535');
+const coreTexts=new Map([...core12.cases.map(row=>[row.name,row.core]),...legacyCore12.cases.map(row=>[row.id,row.core])]);
 const cases=[...first.cases,...adjacentProduct,...adjacent.contextOnlyControls].map(normalized);
 assert.equal(cases.length,16);
 /** @param {string} id @returns {any} */
@@ -101,7 +104,8 @@ function checked(row,entry,outcome){
     }else rejected(outcome,row.expectedDiagnostic);
     return;
   }
-  if(entry==='lowerHir'){rejected(outcome,row.coreDiagnostic);return;}
+  if(entry==='lowerHir'){assert.equal(outcome.threw,false,outcome.error?.stack);
+    assert.ok(coreTexts.has(row.id));assert.equal(outcome.value,coreTexts.get(row.id));return;}
   assert.equal(outcome.threw,false,outcome.error?.stack);
   const expected=entry==='buildHir'?{status:'ok',hir:row.hir}:
     entry==='printHir'?jcs(row.hir)+'\n':

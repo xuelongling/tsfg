@@ -8,6 +8,7 @@ const body = @import("array-candidate-body.zig");
 const owner = @import("array-candidate-owner.zig");
 const roots = @import("array-candidate-roots.zig");
 const graph = @import("array-candidate-graph.zig");
+const publication = @import("array-candidate-publication.zig");
 pub const ValidatedArrayCandidate = opaque {};
 pub const Failure = m.Failure;
 pub const Snapshot = m.Snapshot;
@@ -18,12 +19,18 @@ fn owned(handle: *const ValidatedArrayCandidate) *const m.Module {
 fn validate(r: *m.Reader, p: m.Payload) m.Error!void {
     try metadata.verify(r, p);
     try body.verify(r, p);
-    try graph.verify(r, p);
+    const cyclic = try graph.verify(r, p);
+    try publication.verifyContext(r, p, cyclic);
     var work: usize = 0;
-    for (p.functions) |f| {
-        try owner.verify(r, f);
-        try roots.verify(r, f, &work);
+    var owner_work: usize = 0;
+    var effects: publication.Analysis = .{};
+    for (p.functions, 0..) |f, index| {
+        const model = try owner.derive(r, f, &owner_work);
+        try effects.add(r, p, index, &model, &owner_work);
+        try owner.verify(r, p, f, &model);
+        try roots.verify(r, f, &work, &model);
     }
+    try effects.verify(r, p, &owner_work);
 }
 pub fn load(allocator: m.Allocator, bytes: []const u8) Outcome {
     if (bytes.len > 8388608) return .{ .rejected = .{ .code = "r04-array-limit", .offset = 0 } };

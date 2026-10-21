@@ -139,7 +139,8 @@ export function emitCoreSsaFunction(fn, context) {
       else if(statement.kind==='expression')emit(statement.value);
       else if (statement.kind === "return") {
         const result = emit(statement.value), type = coreType(fn.returnType.id);
-        line(`    "func.return"(${result}) {${attrsFor(statement.range)}} : (${type}) -> ()`);
+        const metadata = context.returnAttributes?.(statement.value);
+        line(`    "func.return"(${result}) {${metadata ? metadata + ", " : ""}${attrsFor(statement.range)}} : (${type}) -> ()`);
         current.terminated = true; current = null;
       } else if (statement.kind === "block") {
         const outer = new Set(declared);

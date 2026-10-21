@@ -1,5 +1,5 @@
 // SPDX-License-Identifier: MIT
-// Complete one-block Core11 statement grammar. All operations must be consumed,
+// Complete one-block Core12 statement grammar. All operations must be consumed,
 // not merely well-typed; checked operations are retained and never evaluated.
 const std = @import("std");
 const m = @import("array-candidate-model.zig");
@@ -49,7 +49,7 @@ const Body = struct {
                 2 => op.resultType,
                 3, 4 => 3,
                 5, 9, 11 => 1,
-                8 => 4,
+                8, 13 => 4,
                 10 => 2,
                 else => return self.r.reject("r04-array-shape"),
             };
@@ -62,7 +62,7 @@ const Body = struct {
             }
             const arity: ?usize = switch (op.opcode) {
                 1, 2 => 0,
-                4, 10, 12 => 1,
+                4, 10, 12, 13 => 1,
                 5, 7, 9 => 2,
                 6, 8 => 3,
                 else => null,
@@ -82,6 +82,7 @@ const Body = struct {
                 7 => try self.need(self.types[op.operands[0]] == 3 and self.types[op.operands[1]] == 2, "r04-array-type"),
                 8 => try self.need(self.types[op.operands[0]] == 3 and self.types[op.operands[1]] == 2 and self.types[op.operands[2]] == 2, "r04-array-type"),
                 10 => try self.need(self.types[op.operands[0]] == 4, "r04-array-type"),
+                13 => try self.need(self.types[op.operands[0]] == 4, "r04-array-type"),
                 12 => try self.need(self.types[op.operands[0]] == 1, "r04-array-type"),
                 else => {},
             }
@@ -123,7 +124,8 @@ const Body = struct {
         try self.need(endpoint < self.f.instructions.len, "r04-array-shape");
         const op = self.f.instructions[endpoint];
         try self.need((op.opcode == 5 or op.opcode == 9) and (expected == 0 or (op.opcode == 9) == (expected == 5)), "r04-array-shape");
-        const data = if (op.opcode == 5) op.metadata.read else op.metadata.view_read;
+        const data: m.Read = if (op.opcode == 5) op.metadata.read else .{ .receiverBinding = op.metadata.view_read.receiverBinding, .receiverRange = op.metadata.view_read.receiverRange, .index = op.metadata.view_read.index };
+        if (op.opcode == 9) try self.need(op.metadata.view_read.statementRange == null, "r04-array-source");
         const reg = try self.receiver(data.receiverBinding, data.receiverRange, op.sourceRange);
         const index = try self.scalar(data.index, 2, false);
         try self.need(self.position == endpoint and op.operands[0] == reg and op.operands[1] == index.reg, "r04-array-ssa");
@@ -197,6 +199,29 @@ const Body = struct {
         self.previous = s[1];
         self.position += 1;
     }
+    fn viewAlias(self: *Body, endpoint: usize) m.Error!void {
+        const op = self.f.instructions[endpoint];
+        const d = op.metadata.view_alias;
+        try self.need(self.position == endpoint and op.operands[0] == try self.binding(d.targetBinding), "r04-array-ssa");
+        try self.local(op, d.local, false);
+        if (d.local.annotations == .typed) {
+            const a = d.local.annotations.typed;
+            try self.need(a.elementAnnotationRange[0] > a.annotationRange[0] and a.elementAnnotationRange[1] < a.annotationRange[1], "r04-array-source");
+        }
+        self.position += 1;
+    }
+    fn standaloneRead(self: *Body, endpoint: usize) m.Error!void {
+        const op = self.f.instructions[endpoint];
+        const d = op.metadata.view_read;
+        const statement = d.statementRange orelse return self.r.reject("r04-array-source");
+        try self.need(m.encloses(self.f.sourceRange, statement) and statement[0] >= self.previous and statement[1] < self.f.sourceRange[1] and statement[0] == op.sourceRange[0] and m.encloses(statement, op.sourceRange), "r04-array-source");
+        const receiver_reg = try self.receiver(d.receiverBinding, d.receiverRange, op.sourceRange);
+        const index = try self.scalar(d.index, 2, false);
+        try self.need(self.position == endpoint and op.operands[0] == receiver_reg and op.operands[1] == index.reg, "r04-array-ssa");
+        try self.need(op.sourceRange[0] == d.receiverRange[0] and d.receiverRange[1] < index.anchor[0] and index.anchor[1] < op.sourceRange[1], "r04-array-source");
+        self.previous = statement[1];
+        self.position += 1;
+    }
     fn mutation(self: *Body, endpoint: usize) m.Error!void {
         self.mutations += 1;
         try self.need(self.mutations <= 32, "r04-array-limit");
@@ -245,10 +270,10 @@ const Body = struct {
         for (d.arguments, 0..) |arg, i| {
             try self.need(arg.kind >= 1 and arg.kind <= 3, "r04-array-call");
             var value: Scalar = undefined;
-            if (t.parameters[i].type == 3) {
-                try self.need(arg.kind == 3 and m.eq(arg.typeId, m.array_id) and m.encloses(self.f.sourceRange, arg.range), "r04-array-call");
+            if (t.parameters[i].type == 3 or t.parameters[i].type == 4) {
+                try self.need(arg.kind == 3 and m.eq(arg.typeId, m.typeId(t.parameters[i].type).?) and m.encloses(self.f.sourceRange, arg.range), "r04-array-call");
                 const reg = try self.binding(arg.binding.?);
-                try self.need(self.types[reg] == 3, "r04-array-type");
+                try self.need(self.types[reg] == t.parameters[i].type, "r04-array-type");
                 value = .{ .reg = reg, .anchor = arg.range };
             } else value = try self.scalar(arg, t.parameters[i].type, true);
             try self.need(value.anchor[0] > previous and value.anchor[1] < e[1] and op.operands[i] == value.reg and self.types[value.reg] == t.parameters[i].type, "r04-array-call");
@@ -266,24 +291,29 @@ const Body = struct {
             statements += 1;
             try self.need(statements <= 50, "r04-array-limit");
             var endpoint = self.position;
-            while (endpoint < self.f.instructions.len and (self.f.instructions[endpoint].opcode == 2 or self.f.instructions[endpoint].opcode == 5 or self.f.instructions[endpoint].opcode == 9)) : (endpoint += 1) {}
+            while (endpoint < self.f.instructions.len and (self.f.instructions[endpoint].opcode == 2 or self.f.instructions[endpoint].opcode == 5 or (self.f.instructions[endpoint].opcode == 9 and self.f.instructions[endpoint].metadata.view_read.statementRange == null))) : (endpoint += 1) {}
             try self.need(endpoint < self.f.instructions.len, "r04-array-shape");
             const op = self.f.instructions[endpoint];
             switch (op.opcode) {
                 3, 4 => try self.arrayLocal(endpoint),
                 8 => try self.viewLocal(endpoint),
+                13 => try self.viewAlias(endpoint),
+                9 => try self.standaloneRead(endpoint),
                 10 => try self.viewLength(endpoint),
                 6, 7 => try self.mutation(endpoint),
                 11 => {
                     const returning = endpoint + 2 == self.f.instructions.len and self.f.instructions[endpoint + 1].opcode == 12 and self.f.instructions[endpoint + 1].operands[0] == op.resultRegister;
                     const statement = try self.call(endpoint, returning);
                     if (returning) {
-                        try self.need(m.same(self.f.instructions[self.position].sourceRange, statement), "r04-array-call");
+                        const returned = self.f.instructions[self.position];
+                        const use = returned.metadata.returned.value;
+                        try self.need(m.same(returned.sourceRange, statement) and use.kind == 6 and use.binding == null and m.eq(use.typeId, m.f64_id) and m.same(use.range, op.sourceRange), "r04-array-call");
                         self.position += 1;
                     }
                 },
                 12 => {
-                    const value = try self.read(0);
+                    const use = op.metadata.returned.value;
+                    const value = try self.scalar(use, 1, false);
                     try self.need(self.position == endpoint and endpoint + 1 == self.f.instructions.len and op.operands[0] == value.reg, "r04-array-ssa");
                     const s = op.sourceRange;
                     try self.need(m.encloses(self.f.sourceRange, s) and s[0] >= self.previous and s[1] < self.f.sourceRange[1] and m.encloses(s, value.anchor) and s[0] < value.anchor[0], "r04-array-source");
@@ -292,11 +322,7 @@ const Body = struct {
                 else => return self.r.reject("r04-array-shape"),
             }
         }
-        var array_parameter = false;
-        for (self.f.parameters) |param| if (param.type == 3) {
-            array_parameter = true;
-        };
-        try self.need((self.locals > 0 or array_parameter) and self.f.instructions[self.f.instructions.len - 1].opcode == 12, "r04-array-shape");
+        try self.need(self.f.instructions[self.f.instructions.len - 1].opcode == 12, "r04-array-shape");
     }
 };
 pub fn verify(r: *m.Reader, p: m.Payload) m.Error!void {

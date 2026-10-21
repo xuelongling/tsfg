@@ -1,18 +1,18 @@
 // SPDX-License-Identifier: MIT
-// Finite Core11 origin/identity grammar. No Source reconstruction or generic JCS.
+// Finite Core12 origin/identity grammar. No Source reconstruction or generic JCS.
 const std = @import("std");
 const m = @import("array-candidate-model.zig");
 const Sha = std.crypto.hash.sha2.Sha256;
-fn finish(state: *Sha) m.Digest {
+pub fn finish(state: *Sha) m.Digest {
     var value: m.Digest = undefined;
     state.final(&value.bytes);
     return value;
 }
-fn decimal(state: *Sha, value: u32) void {
+pub fn decimal(state: *Sha, value: u32) void {
     var buffer: [10]u8 = undefined;
     state.update(std.fmt.bufPrint(&buffer, "{d}", .{value}) catch unreachable);
 }
-fn quote(state: *Sha, value: []const u8) void {
+pub fn quote(state: *Sha, value: []const u8) void {
     state.update("\"");
     for (value) |c| switch (c) {
         '"' => state.update("\\\""),
@@ -50,6 +50,7 @@ fn signature(parameters: []const m.Parameter) m.Digest {
             1 => "f64",
             2 => "u32",
             3 => "array.f64",
+            4 => "readspan.f64",
             else => unreachable,
         });
     }
@@ -123,14 +124,15 @@ fn origins(r: *m.Reader, p: m.Payload, dts: []const u8) m.Error!void {
     for (vi.parameters, 0..) |row, i| try r.require(m.text(row.name, param_names[i]) and m.same(row.declarationRange, param_decls[i]) and m.same(row.nameRange, param_ranges[i]) and m.same(row.typeRange, param_types[i]), "r04-array-source");
 }
 fn parameter(r: *m.Reader, p: m.Payload, f: m.Function, value: m.Parameter, previous: u32) m.Error!void {
-    try r.require(value.type >= 1 and value.type <= 3 and value.writable == 1, "r04-array-type");
+    try r.require(value.type >= 1 and value.type <= 4 and value.writable == (if (value.type == 4) @as(u8, 0) else 1), "r04-array-type");
     const d = value.declarationRange;
     const n = value.nameRange;
     const t = value.annotationRange;
     try r.require(m.encloses(f.sourceRange, d) and d[0] > previous and d[1] < f.returnAnnotationRange[0] and d[0] == n[0] and d[1] == t[1] and n[1] < t[0] and m.encloses(d, n) and m.encloses(d, t), "r04-array-source");
-    if (value.type == 3) {
+    if (value.type == 3 or value.type == 4) {
         const element = value.elementAnnotationRange.?;
-        try r.require(m.encloses(t, element) and element[1] < t[1], "r04-array-source");
+        // Original f64[] starts at its element annotation; ReadSpan<T> nests T.
+        try r.require(m.encloses(t, element) and (value.type != 4 or element[0] > t[0]) and element[1] < t[1], "r04-array-source");
     }
     try r.require(m.eq(value.id, sourceIdentity(p.sourcePath, n, false)), "r04-array-identity");
 }
@@ -148,7 +150,7 @@ const Bindings = struct {
 };
 pub fn verify(r: *m.Reader, p: m.Payload) m.Error!void {
     try r.require(m.text(p.coreVersion, "0.9.0") and m.text(p.target, "windows-x86_64-msvc") and m.text(p.triple, "x86_64-pc-windows-msvc") and m.text(p.dataLayout, "e-m:w-p270:32:32-p271:32:32-p272:64:64-i64:64-i128:128-f80:128-n8:16:32:64-S128") and m.eq(p.formalBytecodeSchema, m.formal_schema), "r04-array-identity");
-    try r.require(m.text(p.marker.family, "tsfg.core-array-candidate") and p.marker.version == 11 and m.eq(p.marker.schema, m.core_schema) and m.text(p.marker.profile, "dense-f64-array-local-readspan-checked-v11") and p.marker.factsVersion == 7, "r04-array-identity");
+    try r.require(m.text(p.marker.family, "tsfg.core-array-candidate") and p.marker.version == 12 and m.eq(p.marker.schema, m.core_schema) and m.text(p.marker.profile, "dense-f64-array-readspan-parameters-checked-v12") and p.marker.factsVersion == 7, "r04-array-identity");
     const dts = try sources(r, p);
     try origins(r, p, dts);
     var bindings: Bindings = .{};
@@ -182,6 +184,7 @@ pub fn verify(r: *m.Reader, p: m.Payload) m.Error!void {
             .create => |v| v.local,
             .alias => |v| v.local,
             .view_create => |v| v.local,
+            .view_alias => |v| v.local,
             else => null,
         };
         if (loc) |value| try bindings.add(r, value.id);

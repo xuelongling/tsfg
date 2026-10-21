@@ -14,15 +14,6 @@ export function jcs(value) {
 }
 /** @param {string | Uint8Array} value */
 export const sha = value => createHash('sha256').update(value).digest('hex');
-/** Exact test-only private marker migration; original pinned fixtures stay byte intact.
- * No semantic field, operation, operand, range or negative malformed marker changes.
- * @param {string} text */
-export const migrateArrayCore11 = text => [
-  'version = 8 : i32, schema = "sha256:8993ff55453d52e916743184c57d292182fdf15d948e4509cdbe3a4d4729a654", profile = "dense-f64-array-readspan-array-origin-return-scc-checked-v8", facts_version = 7 : i32',
-  'version = 9 : i32, schema = "sha256:cf82210252abc6ff9778f85d8116d419b4bea62affdc4ac844a6401127d207ca", profile = "dense-f64-array-scalar-call-roots-checked-v9", facts_version = 7 : i32',
-  'version = 10 : i32, schema = "sha256:7a1b9747e100cdc60119a37dbc31e477a5630f05b715a6f6a795a7573dd43f05", profile = "dense-f64-array-parameter-call-roots-checked-v10", facts_version = 7 : i32',
-].reduce((value,prior)=>value.replaceAll(prior,
-  'version = 11 : i32, schema = "sha256:4099a1f8633db0326e39bf81f514e63e6287a2589f2128ac7a23e65404e82b06", profile = "dense-f64-array-local-readspan-checked-v11", facts_version = 7 : i32'),text);
 /** @param {any} value @returns {any} */
 export const fresh = value => JSON.parse(jcs(value));
 /** @param {any} value */
@@ -110,12 +101,14 @@ export async function coreOracle() {
   const value=await pinnedContainer('./legacy-v7-old8-core-oracle.json',806522,
     'ae78ba65233ba7b2f4166914622271408f3cf5f62d19c3ca356b779beb5ea075');
   const legacy=await pinned('./array-core-oracle-v3.json',122335,'44c460f568aebd9dba7b25dab00857a47fe431a3f7cc4679a6d1d09a427552d5');
+  const current=await pinnedContainer('./array-core12-legacy-oracle.json',1058670,
+    '5d508df006d7191686dd950744d7bf212466fe562f33c5708e041a9b07ece535');
   const h=await hirOracle();assert.equal(value.cases.length,8);assert.equal(value.format.version,8);
-  return {...value,format:{...value.format,version:11,profile:'dense-f64-array-local-readspan-checked-v11',
-    schemaHash:'sha256:4099a1f8633db0326e39bf81f514e63e6287a2589f2128ac7a23e65404e82b06'},quoteVectors:legacy.quoteVectors,jcsPreimageVectors:legacy.jcsPreimageVectors,
+  return {...value,format:{...value.format,...current.format},quoteVectors:legacy.quoteVectors,jcsPreimageVectors:legacy.jcsPreimageVectors,
     additionalIndependentPreimages:legacy.additionalIndependentPreimages,cases:value.cases.map((c,i)=>{
       assert.equal(c.name,h.cases[i].name);
-      const core=migrateArrayCore11(c.core);
+      const expected=current.cases[i];assert.equal(expected.name,c.name);
+      const core=expected.core;
       return {...c,core,coreBytes:Buffer.byteLength(core),coreSHA256:sha(core),hirBytes:h.cases[i].hirBytes,hirSHA256:h.cases[i].hirSHA256};
     })};
 }

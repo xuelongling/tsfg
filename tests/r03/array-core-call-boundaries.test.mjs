@@ -1,13 +1,17 @@
 // SPDX-License-Identifier: MIT
-import {migrateArrayCore11} from './array-test-fixtures.mjs';
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import {readFile} from 'node:fs/promises';
 import {lowerHir,verifyHir} from '../../compiler/hir.mjs';
 import {parseArrayCore} from './array-core-structural-oracle.mjs';
-import {old18Oracle,fresh} from './array-test-fixtures.mjs';
+import {old18Oracle,fresh,pinnedContainer} from './array-test-fixtures.mjs';
 const o=JSON.parse(await readFile(new URL('./array-core-call-oracle.json',import.meta.url),'utf8'));
-o.core=migrateArrayCore11(o.core);
+const legacyWhole=await pinnedContainer('./array-core12-legacy-oracle.json',1058670,
+  '5d508df006d7191686dd950744d7bf212466fe562f33c5708e041a9b07ece535');
+const nodeWhole=await pinnedContainer('./array-core12-node-additions.json',1330667,
+  '60abad7dd96ab271f822e63a12bb3ba7816dd142c8eecbd172e01566b32b4792');
+const scalarWhole=legacyWhole.cases.find(c=>c.name==='actual-source-scalar-ordinary-call');assert.ok(scalarWhole);
+o.core=scalarWhole.core;
 const context=()=>({...o.factsContext,factsBytes:Buffer.from(o.sourcePacket)});
 test('whole ordinary-call Core retains both complete functions and every typed edge',()=>{
   const input=fresh(o.hir),before=fresh(input),ctx=context(),bytes=Buffer.from(ctx.factsBytes);
@@ -35,18 +39,17 @@ test('call target, signature, source binding, original range and whole graph can
   for(const change of mutations){const h=fresh(o.hir);change(h);
     assert.throws(()=>lowerHir(h,context(),o.publication),{code:'r03-array-hir-invalid'});}
 });
-test('actual Array parameter and ReadSpan packages retain precise capability boundaries',async()=>{
+test('actual Array parameters, ReadSpan RR and floating returns retain whole source Core',async()=>{
   const all=await old18Oracle();
   const prior=JSON.parse(await readFile(new URL('./array-parallel-oracle.json',import.meta.url),'utf8'));
   const view=prior.cases.find(row=>row.name==='shared-readspan-RR');assert.ok(view);
   const viewCtx={family:'tsfg.array-facts-context-candidate',version:1,expectedPackageId:view.hir.inputIdentity,
     factsBytes:Buffer.from(view.source.packetText)};
   assert.deepEqual(verifyHir(fresh(view.hir),viewCtx,view.context),view.hir);
-  const viewFunction=view.hir.functions[0];
-  assert.throws(()=>lowerHir(fresh(view.hir),viewCtx,view.context),error=>{
-    const e=/** @type {any} */(error);assert.equal(e.code,'r03-d-core-array-capability');
-    assert.deepEqual(e.primary,{sourceId:viewFunction.sourcePath,...viewFunction.parameters[0].range});return true;
-  });
+  const viewExpected=nodeWhole.cases.find(c=>c.name===view.name);assert.ok(viewExpected);
+  const viewBefore=fresh(view.hir),contextBefore=fresh(view.context);
+  assert.equal(lowerHir(fresh(view.hir),viewCtx,view.context),viewExpected.core);
+  assert.deepEqual(view.hir,viewBefore);assert.deepEqual(view.context,contextBefore);
   for(const name of ['first-touch-alias','core-new-return-only-refusal']){
     const row=all.cases.find(row=>row.name===name);assert.ok(row);
     const ctx={...row.factsContext,factsBytes:Buffer.from(row.packageText)};
@@ -55,9 +58,8 @@ test('actual Array parameter and ReadSpan packages retain precise capability bou
       const core=parseArrayCore(lowerHir(fresh(row.hir),ctx));
       assert.deepEqual(core.functions.map(fn=>fn.properties.sym_name),['touch','entry']);continue;
     }
-    assert.throws(()=>lowerHir(fresh(row.hir),ctx),error=>{
-      const e=/** @type {any} */(error);assert.equal(e.code,'r03-d-core-array-capability');
-      assert.deepEqual(e.primary,row.coreError.primary);return true;
-    });
+    const expected=nodeWhole.cases.find(c=>c.name===name);assert.ok(expected);
+    const input=fresh(row.hir),before=fresh(input);
+    assert.equal(lowerHir(input,ctx),expected.core);assert.deepEqual(input,before);
   }
 });
