@@ -2,6 +2,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { createHash } from 'node:crypto';
+import { readFile } from 'node:fs/promises';
 import oracle from './host-counter-semantic-oracle.json' with { type: 'json' };
 import { createCounterHostContract, verifyCounterHostContract } from '../../eng/host-semantic-contract.mjs';
 
@@ -21,7 +22,7 @@ function rehashIdentity(identity) {
   return identity;
 }
 
-test('M22 complete independent Counter profile and old real identity recipe', () => {
+test('M22 complete independent Counter profile and fixed identity recipe', () => {
   const actual = createCounterHostContract(oracle.identity);
   assert.deepEqual(actual.contract, oracle.expectedContract);
   assert.equal(actual.contractText, oracle.expectedCanonicalText);
@@ -88,4 +89,13 @@ test('M22 transport is exact canonical UTF-8 and bounded, with no hidden safety 
   for (const bytes of [Buffer.alloc(16385), Buffer.from([255]), Buffer.from('{}'),
       Buffer.from(oracle.expectedCanonicalText.trimEnd()), Buffer.from(' ' + oracle.expectedCanonicalText)])
     assert.throws(() => verifyCounterHostContract(bytes, oracle.identity), /host-semantic-contract/);
+});
+
+test('M18 Counter source binding matches actual reviewed leaf and bridge', async () => {
+  const profile = JSON.parse(await readFile(new URL('../../contracts/host-counter-semantic-v1.json', import.meta.url), 'utf8'));
+  assert.deepEqual(profile.implementation, oracle.expectedContract.implementation);
+  for (const source of oracle.expectedContract.implementation) {
+    const bytes = await readFile(new URL('../../' + source.path, import.meta.url));
+    assert.equal(hash(bytes), source.sha256, source.path);
+  }
 });
