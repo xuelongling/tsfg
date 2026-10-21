@@ -10,4 +10,3 @@ __attribute__((disable_tail_calls))
 uint32_t tsfg_host_counter_bridge(struct TsfgCounter *counter, uint32_t delta) {
   return tsfg_host_counter(counter, delta);
 }
-
