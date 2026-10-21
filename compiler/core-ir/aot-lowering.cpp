@@ -1,5 +1,7 @@
 // SPDX-License-Identifier: MIT
 #include "aot-lowering.h"
+#include "aot-capability.h"
+#include "aot-module-ops.h"
 #include "aot-slot-codec.h"
 #include "scalar-presence.h"
 #include "dialect.h"
@@ -15,56 +17,6 @@
 #include <set>
 
 namespace {
-// Reject the entire unsupported profile before indexing any operation or lowering
-// a prefix. Core verification remains the caller's first, independent gate.
-bool supportsNativeCore(mlir::ModuleOp module) {
-  constexpr llvm::StringLiteral allowed[] = {"tsfg_core.version", "tsfg_core.input_identity",
-    "tsfg_core.source_hash", "tsfg_core.source_path", "tsfg_core.target",
-    "tsfg_core.triple", "tsfg_core.data_layout", "tsfg_core.bytecode_schema",
-    "tsfg_core.source_length"};
-  for (auto attribute : module->getAttrs()) {
-    bool known = false;
-    for (auto name : allowed) known |= attribute.getName() == name;
-    if (!known) return false;
-  }
-  auto supportedScalar = [](mlir::Type type) {
-    const auto code = tsfg::typeCode(type); return code >= 1 && code <= 13;
-  };
-  unsigned count = 0;
-  for (auto &top : module.getBody()->getOperations()) {
-    auto fn = llvm::dyn_cast<mlir::func::FuncOp>(top);
-    std::vector<uint8_t> presence;
-    if (!fn || !tsfg::parameterPresence(fn, presence) || ++count > 512 || fn.isExternal() || fn.getFunctionType().getNumResults() != 1
-        || fn.getNumArguments() > 128 || !supportedScalar(fn.getFunctionType().getResult(0))) return false;
-    for (auto type : fn.getFunctionType().getInputs()) if (!supportedScalar(type)) return false;
-    for (auto &block : fn.getBody()) {
-      for (auto argument : block.getArguments()) if (!supportedScalar(argument.getType())) return false;
-      for (auto &op : block) {
-        if (op.getNumRegions()) return false;
-        for (auto type : op.getOperandTypes()) if (!supportedScalar(type)) return false;
-        for (auto type : op.getResultTypes()) if (!supportedScalar(type)) return false;
-        auto name = op.getName().getStringRef();
-        const auto operands = op.getNumOperands(), results = op.getNumResults();
-        if (name == "tsfg_core.fuel") { if (operands || results) return false; }
-        else if (llvm::isa<mlir::func::ReturnOp>(op)) { if (operands != 1 || results) return false; }
-        else if (llvm::isa<mlir::cf::BranchOp, mlir::cf::CondBranchOp>(op)) { if (results) return false; }
-        else if (llvm::isa<mlir::func::CallOp>(op)) { if (results != 1) return false; }
-        else if (name == "tsfg_core.constant") {
-          uint64_t bits;
-          if (operands || results != 1 || !tsfg::constantBits(&op, bits)) return false;
-        } else {
-          bool unary = name == "tsfg_core.convert_checked" || name == "tsfg_core.convert_wrap" || name == "tsfg_core.reinterpret" || name == "tsfg_core.neg" || name == "tsfg_core.pos" || name == "tsfg_core.not" || name == "tsfg_core.bool_not";
-          bool binary = false;
-          for (auto suffix : {"add", "sub", "mul", "and", "or", "xor", "div", "rem",
-                              "shl", "shr", "ushr", "eq", "ne", "lt", "le", "gt", "ge"})
-            binary |= name == (llvm::Twine("tsfg_core.") + suffix).str();
-          if ((!unary && !binary) || results != 1 || operands != (unary ? 1u : 2u)) return false;
-        }
-      }
-    }
-  }
-  return count != 0;
-}
 // Events are calls through a caller-owned C callback. They have observable
 // effects and cannot be speculated, removed or reordered by LLVM optimization.
 // 0 enter; 1 fuel+step; 2 step; 3 leave; 4 return-source; 5 divide-zero;
@@ -80,6 +32,8 @@ class Lowering {
   unsigned temporary = 0, continuation = 0, functionIndex = 0;
   uint64_t intervalId = 0;
   mlir::Type resultType;
+  bool moduleMode;
+  std::vector<unsigned> functionSources;
 
   std::string tmp() { return "%t" + std::to_string(temporary++); }
   std::string value(mlir::Value v) {
@@ -110,10 +64,20 @@ class Lowering {
     stackmap((UINT64_C(1) << 63) | id);
     const auto k = constant(kind), f = constant(eventFunction == UINT32_MAX ? functionIndex : eventFunction),
       s = constant(start), e = constant(end), b = constant(id, "i64");
+    const auto source=moduleMode?constant(functionSources[eventFunction==UINT32_MAX?functionIndex:eventFunction]):"";
+    if(moduleMode && (kind>=5&&kind<=7||kind>=9&&kind<=11)) {
+      const auto category=constant(kind==11?3:1),reason=constant(kind<=7?kind-4:kind==11?15:kind-5);
+      out<<"  func.call @tsfg_aot_record_failure_v4(%request, "<<category<<", "<<reason<<", "<<f<<", "<<source<<", "<<s<<", "<<e
+         <<") : (!llvm.ptr, i32, i32, i32, i32, i32, i32) -> ()\n";
+    }
     auto result = tmp();
     out << "  " << result << " = llvm.call %event(%state, " << k << ", " << f
         << ", " << s << ", " << e << ", " << b
         << ") : !llvm.ptr, (!llvm.ptr, i32, i32, i32, i32, i64) -> i32\n";
+    if(moduleMode) {
+      auto checked=tmp();out<<"  "<<checked<<" = func.call @tsfg_aot_event_result_v4(%request, "<<result<<", "<<f<<", "<<source<<", "<<s<<", "<<e
+        <<") : (!llvm.ptr, i32, i32, i32, i32, i32) -> i32\n";result=checked;
+    }
     return result;
   }
   void allow(std::string condition, llvm::StringRef rejected = "fail") {
@@ -123,6 +87,10 @@ class Lowering {
   }
   void checkpoint(unsigned kind, unsigned start, unsigned end,
                   llvm::StringRef rejected = "fail") {
+    if(moduleMode) {
+      auto healthy=tmp(),zero=constant(0),yes=tmp();out<<"  "<<healthy<<" = func.call @tsfg_aot_continue_v4(%request) : (!llvm.ptr) -> i32\n"
+        <<"  "<<yes<<" = arith.cmpi ne, "<<healthy<<", "<<zero<<" : i32\n";allow(yes,rejected);
+    }
     auto result = event(kind, start, end);
     const auto zero = constant(0), yes = tmp();
     out << "  " << yes << " = arith.cmpi ne, " << result << ", " << zero << " : i32\n";
@@ -198,14 +166,19 @@ class Lowering {
       out << "  " << valid << " = arith.cmpi ne, " << status << ", " << expected << " : i32\n";
       guard(valid, failure == 1 ? 9 : 10, start, end);
     }
-    auto integer = "i" + std::to_string(tsfg::width(targetCode));
-    if (tsfg::width(targetCode) < 64) {
-      auto narrowed = tsfg::floating(targetCode) ? tmp() : value(result);
+    decode(result,bits);
+  }
+  void decode(mlir::Value result,std::string bits) {
+    const auto code=tsfg::typeCode(result.getType());
+    const auto width=code==2?1:tsfg::width(code);
+    const auto integer="i"+std::to_string(width);
+    if (width < 64) {
+      auto narrowed = tsfg::floating(code) ? tmp() : value(result);
       out << "  " << narrowed << " = arith.trunci " << bits << " : i64 to " << integer << '\n';
       bits = narrowed;
     }
-    if (tsfg::floating(targetCode)) out << "  " << value(result) << " = arith.bitcast " << bits << " : " << integer << " to " << type(result.getType()) << '\n';
-    else if (tsfg::width(targetCode) == 64) {
+    if (tsfg::floating(code)) out << "  " << value(result) << " = arith.bitcast " << bits << " : " << integer << " to " << type(result.getType()) << '\n';
+    else if (width == 64) {
       auto zero = constant(0, "i64");
       out << "  " << value(result) << " = arith.ori " << bits << ", " << zero << " : i64\n";
     }
@@ -227,6 +200,13 @@ class Lowering {
       out << "  cf.cond_br " << value(branch.getCondition()) << ", ";
       edge(branch.getTrueDest(), branch.getTrueDestOperands()); out << ", ";
       edge(branch.getFalseDest(), branch.getFalseDestOperands()); out << '\n'; return true;
+    }
+    if(moduleMode && (name=="tsfg_core.global_load"||name=="tsfg_core.global_store"||name=="tsfg_core.authorized_host")) {
+      const auto operand=op.getNumOperands()?name=="tsfg_core.global_store"?raw(value(op.getOperand(0)),op.getOperand(0).getType()):value(op.getOperand(0)):"";
+      const auto result=tsfg::emitModuleOperation(out,temporary,op,operand,functionIndex,functionSources[functionIndex],start,end);
+      const auto zero=constant(0),yes=tmp();out<<"  "<<yes<<" = arith.cmpi ne, "<<result.status<<", "<<zero<<" : i32\n";allow(yes);
+      if(op.getNumResults())decode(op.getResult(0),result.bits);
+      return true;
     }
     const auto result = value(op.getResult(0)), resultName = type(op.getResult(0).getType());
     if (name == "tsfg_core.constant") {
@@ -264,8 +244,10 @@ class Lowering {
       out << "  " << yes << " = arith.cmpi ne, " << entered << ", " << zero << " : i32\n";
       allow(yes);
       out << "  " << result << " = func.call @native_" << destination << "(%state, %event";
+      if(moduleMode)out << ", %instance, %request";
       for (auto operand : op.getOperands()) out << ", " << value(operand);
       out << ") : (!llvm.ptr, !llvm.ptr";
+      if(moduleMode)out << ", !llvm.ptr, !llvm.ptr";
       for (auto operand : op.getOperands()) out << ", " << type(operand.getType());
       out << ") -> " << resultName << '\n';
       // The caller reaches this work checkpoint after either a normal callee
@@ -354,8 +336,11 @@ class Lowering {
     return false;
   }
 public:
-  explicit Lowering(mlir::ModuleOp module) : out(text) {
-    for (auto function : module.getOps<mlir::func::FuncOp>()) functions.push_back(function);
+  explicit Lowering(mlir::ModuleOp module) : out(text), moduleMode(module->hasAttr("tsfg_core.sources")) {
+    for (auto function : module.getOps<mlir::func::FuncOp>()) {
+      functions.push_back(function);
+      functionSources.push_back(moduleMode ? function->getAttrOfType<mlir::IntegerAttr>("tsfg_core.source_index").getInt() : 0);
+    }
   }
   bool lower() {
     out << "module {\n";
@@ -372,6 +357,7 @@ public:
         }
       }
       out << "func.func @native_" << functionIndex << "(%state: !llvm.ptr, %event: !llvm.ptr";
+      if(moduleMode)out << ", %instance: !llvm.ptr, %request: !llvm.ptr";
       for (auto argument : fn.getBody().front().getArguments()) {
         out << ", " << value(argument) << ": " << type(argument.getType());
       }
@@ -400,6 +386,7 @@ public:
       out << "  func.return " << zero << " : " << type(resultType) << "\n}\n";
       ++functionIndex;
     }
+    if(!moduleMode) {
     // The C ABI wrapper uses the same fixed typed argument/result frame as the
     // fixed slot layout. Internal bool values are i1; the boundary is canonical u8.
     // The outer caller owns admission of its logical frame.
@@ -449,6 +436,15 @@ public:
     }
     out << "^wrapper_fail:\n";
     auto zero = constant(0); out << "  func.return " << zero << " : i32\n}\n";
+    }
+    if(moduleMode) {
+      out << "func.func private @tsfg_aot_record_failure_v4(!llvm.ptr, i32, i32, i32, i32, i32, i32)\n"
+          << "func.func private @tsfg_aot_continue_v4(!llvm.ptr) -> i32\n"
+          << "func.func private @tsfg_aot_event_result_v4(!llvm.ptr, i32, i32, i32, i32, i32) -> i32\n"
+          << "func.func private @tsfg_aot_global_load_v4(!llvm.ptr, !llvm.ptr, i32, i32, i32, i32, i32) -> (i64, i32)\n"
+          << "func.func private @tsfg_aot_global_store_v4(!llvm.ptr, !llvm.ptr, i32, i64, i32, i32, i32, i32, i32) -> i32\n"
+          << "func.func private @tsfg_aot_host31_v4(!llvm.ptr, !llvm.ptr, !llvm.ptr, !llvm.ptr, i32, i32, i32, i32, i32, i32) -> (i32, i32)\n";
+    }
     for (const auto &helper : floatingFunctions) {
       const auto format = helper.substr(0, 3), name = helper.substr(4);
       const bool unary = name == "neg" || name == "pos";

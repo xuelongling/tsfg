@@ -63,7 +63,7 @@ export function generalStringProgram(functionCount=3) {
   ];
   for(const fn of functions.slice(2))body.push('  func.func @"'+fn.name+'"('+fn.params.map((t,r)=>'%v'+r+': '+types[t]).join(', ')+') -> '+types[14]+' attributes {'+metadata(fn)+'} {',
     op('tsfg_core.fuel',[],[],0,'event = 1 : i32'),op('func.return',[63],[14],0),'  }');
-  const attrs={version:'0.11.0',input_identity:'sha256:'+input,source_hash:'sha256:'+sourceHash,source_path:path,
+  const attrs={version:'0.12.0',input_identity:'sha256:'+input,source_hash:'sha256:'+sourceHash,source_path:path,
     target:schema.target.target,triple:schema.target.triple,data_layout:schema.target.llvmDataLayout,bytecode_schema:registry['tsfg.bytecode'].schemaHash};
   const core='module attributes {'+Object.entries(attrs).map(([k,v])=>'tsfg_core.'+k+' = '+JSON.stringify(v)).join(', ')+', tsfg_core.source_length = 1000 : i64} {\n'+body.join('\n')+'\n}\n';
   const p=new Wire();p.text(schema.target.target);p.text(schema.target.triple);p.text(schema.target.llvmDataLayout);
@@ -77,7 +77,7 @@ export function generalStringProgram(functionCount=3) {
       for(const n of i.tail)p.n(n,i.op===28?8:2);
     }
   }
-  const payload=p.bytes(),header=new Wire();header.parts.push(Buffer.from('TSFGTBC0'));header.n(11,4);header.digest(registry['tsfg.bytecode'].schemaHash);
+  const payload=p.bytes(),header=new Wire();header.parts.push(Buffer.from('TSFGTBC0'));header.n(12,4);header.digest(registry['tsfg.bytecode'].schemaHash);
   header.n(80+payload.length,4);header.digest(hash(payload));header.parts.push(payload);
   return {core,packet:header.bytes(),functions};
 }
@@ -91,7 +91,7 @@ export function globalStringProgram() {
   entry.registers=1;entry.blocks=[{args:[],ops:[instruction(26,0,0,1),instruction(29,14,0),instruction(2,14,0)]}];
   setter.registers=2;setter.blocks=[{args:[[0,14]],ops:[instruction(26,0,0,1),instruction(30,14,0),instruction(29,14,1),instruction(2,14,1)]}];
   const functions=[initializer,entry,setter],q=JSON.stringify;
-  const attrs={version:'0.11.0',input_identity:'sha256:'+input,source_hash:'sha256:'+sourceHash,source_path:path,
+  const attrs={version:'0.12.0',input_identity:'sha256:'+input,source_hash:'sha256:'+sourceHash,source_path:path,
     target:schema.target.target,triple:schema.target.triple,data_layout:schema.target.llvmDataLayout,bytecode_schema:registry['tsfg.bytecode'].schemaHash};
   const tables=[
     'tsfg_core.sources = [{path = '+q(path)+', hash = "sha256:'+sourceHash+'", length = 1000 : i64}]',
@@ -124,7 +124,7 @@ export function globalStringProgram() {
     const b=fn.blocks[0];p.n(b.args.length,2);for(const[r,t]of b.args){p.n(r,2);p.n(t,1);p.n(0,1);}p.n(b.ops.length,2);
     for(const i of b.ops){p.n(i.op,1);p.n(i.type,1);p.n(i.reg,2);p.n(i.payload,4);p.n(1,4);p.n(99,4);for(const n of i.tail)p.n(n,2);}
   }
-  const payload=p.bytes(),header=new Wire();header.parts.push(Buffer.from('TSFGTBC0'));header.n(11,4);header.digest(registry['tsfg.bytecode'].schemaHash);
+  const payload=p.bytes(),header=new Wire();header.parts.push(Buffer.from('TSFGTBC0'));header.n(12,4);header.digest(registry['tsfg.bytecode'].schemaHash);
   header.n(80+payload.length,4);header.digest(hash(payload));header.parts.push(payload);
   return {core,packet:header.bytes(),functions};
 }

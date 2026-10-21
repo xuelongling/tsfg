@@ -21,18 +21,14 @@ export function emitScalarCore(view) {
     `tsfg_core.source_length = ${verified.source.length} : i64`];
   const state=view.moduleState;
   const moduleMode=!!state;
-  const emittedFunctions=moduleMode && view.functionSelection !== 'complete-original-universe'
-    ? verified.functions.filter(fn=>state.closure.functions.includes(fn.id)) : verified.functions;
+  const emittedFunctions=verified.functions;
   const functionSymbol=fn=>fn.symbol;
   const dictionary=fields=>`{${Object.entries(fields).map(([name,value])=>`${name} = ${value}`).join(', ')}}`;
   const integer=value=>`${value} : i64`,array=values=>`[${values.join(', ')}]`;
   const sourceIndex=path=>state.sources.findIndex(source=>source.path===path);
-  const emittedModules=(state?.modules??[]).filter(module=>state.closure.modules.includes(module.id));
-  const emittedGlobals=(state?.globals??[]).filter(global=>emittedModules.some(module=>module.sourcePath===global.sourcePath));
-  const usedHosts=new Set();
-  const collectHosts=value=>{if(value&&typeof value==='object'){if(value.kind==='host')usedHosts.add(value.target);for(const nested of Object.values(value))collectHosts(nested);}};
-  emittedFunctions.forEach(fn=>collectHosts(fn.body));
-  const emittedHosts=(state?.hostImports??[]).filter(host=>usedHosts.has(host.id));
+  // Retained code/metadata and the verified execution plan are distinct. In
+  // particular, unselected declarations never acquire initializer side effects.
+  const emittedModules=state?.modules??[],emittedGlobals=state?.globals??[],emittedHosts=state?.hostImports??[];
   if(moduleMode) {
     attrs.push(`tsfg_core.sources = ${array(state.sources.map(source=>dictionary({path:quote(source.path),hash:quote(source.hash),length:integer(source.length)})))}`);
     attrs.push(`tsfg_core.modules = ${array(emittedModules.map(module=>dictionary({id:quote(module.id),source:integer(sourceIndex(module.sourcePath)),

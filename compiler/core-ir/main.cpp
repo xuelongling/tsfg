@@ -170,7 +170,7 @@ int main(int argc, char **argv) {
   }
   const bool privateCandidate = reference || nullable || arrayCandidate || closureCandidate || kernelCandidate || module->getOperation()->hasAttr("tsfg_core.string");
   auto version = module->getOperation()->getAttrOfType<mlir::StringAttr>("tsfg_core.version");
-  if (!version || version.getValue() != (privateCandidate ? "0.9.0" : "0.11.0")) {
+  if (!version || version.getValue() != (privateCandidate ? "0.9.0" : "0.12.0")) {
     llvm::errs() << (arrayCandidate ? "[core-ir-array-identity]" : stringCandidate ? "[core-ir-string-identity]" : "[core-ir-identity]")
                  << " expected exact current Core IR identity\n";
     return 3;

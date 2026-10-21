@@ -1,8 +1,8 @@
 <!-- SPDX-License-Identifier: MIT -->
 
-# tsfg.bytecode 0.11.0
+# tsfg.bytecode 0.12.0
 
-Core0.11 / wire11 retains nominal managed String type14 and adds numeric conversions
+Core0.12 / wire12 retains nominal managed String type14 and adds numeric conversions
 and logical parameter presence under capability119. The complete
 String operation, root and output contract is described in [formal String](../docs/r03-formal-string-runtime.md)
 and the exact machine schema. Compiler/reader and ordinary compilation evidence remain
@@ -20,7 +20,7 @@ invalidate caches and are rejected. The registry owns version and JCS schema
 hash. The JSON schema owns wire field order and bounds.
 
 All integers use little endian. The 80-byte header is magic `TSFGTBC0`, u32 wire
-version 11, raw 32-byte schema SHA256, u32 total length and raw 32-byte SHA256 of
+version 12, raw 32-byte schema SHA256, u32 total length and raw 32-byte SHA256 of
 the payload. UTF8 strings have a u32 length, no terminator or padding. The
 checksum supplies integrity, not publisher authenticity. Target/triple and LLVM
 DataLayout are fixed in the schema. LLVM derives i32 and pointer size/alignment; Zig checks
@@ -136,8 +136,8 @@ The `TSFGREQ1` transport remains u32 count plus length-delimited R04 packets,
 1..128 matching requests and total1MiB/no trailing bytes, served by one Runtime.
 It adds no language semantics.
 
-The current formal development producer/reader requires Core0.11, wire11 and
-capability119. FrontendSnapshot is0.9; HIR is0.12.
+The current formal development producer/reader requires Core0.12, wire12 and
+capability119. FrontendSnapshot is0.9; HIR is0.13.
 Private marked profiles retain their own exact Core0.9 metadata and verifiers;
 they are never accepted as formal packets. Old unmarked formal0.9/0.10, wire9/10,
 wrong schema hashes and mixed identities reject. Scalar identities, original
@@ -154,7 +154,7 @@ Historically, the0.9 producer/reader rejected wire8 and Core0.8;0.10 also reject
 
 ## Numeric conversions and logical parameter presence
 
-The exact current development identity is Core0.11.0 / wire11, capability119.
+The exact current development identity is Core0.12.0 / wire12, capability119.
 String opcodes34..39 retain their meanings. New opcodes40/41/42 encode checked,
 integer wrap and equal-width numeric reinterpret respectively. Each16-byte record
 contains destination type:u8 and register:u16, operand register:u16, source
@@ -189,3 +189,19 @@ presence. The wrapper rejects malformed carriers without invoking a guest/event.
 
 Old wire10, old schema hashes and mixed versions are rejected; there is no fallback
 reader. Private0.9 candidates retain their independently registered exact identities.
+
+## Complete module universe and execution plan (0.12.0)
+
+All original functions, module/source/global/Host declarations and indexes remain
+in the formal packet. The initialization count is0..moduleCount, not necessarily
+moduleCount. Compiler and Runtime independently derive the selected functions,
+owner modules and required Host declarations from explicit roots, direct calls,
+global accesses and static dependencies. Parameter defaults have already entered
+the ordinary function CFG. Ordered-root dependency DFS followed by UTF8-sorted
+retained owners must equal the serialized initializer sequence exactly. Cycles
+visit once; unselected modules do not initialize. Public module requests must name
+a declared root. Only selected Host capability IDs require grants and trigger
+Host admission; unused metadata grants no authority. Complete validation still
+checks unselected functions and declarations. Old0.11/wire11 identities reject.
+See [ordinary instance ABI](../docs/r03-module-aot.md) for the separate linked
+AOT consumer, storage ownership and precise lifecycle/failure channels.

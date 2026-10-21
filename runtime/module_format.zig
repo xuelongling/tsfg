@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: MIT
 const std = @import("std");
 const contract = @import("contract.zig");
+const module_plan = @import("module-plan.zig");
 const Hash = [32]u8;
 const Sha256 = std.crypto.hash.sha2.Sha256;
 pub const Source = struct { path: []const u8, hash: Hash, start: u32, end: u32 };
@@ -17,6 +18,7 @@ pub const Tables = struct {
     hosts: []const HostDeclaration = &.{},
     roots: []const Root = &.{},
     initialization: []const u16 = &.{},
+    plan: module_plan.Plan = .{},
 };
 pub fn identity(parts: []const []const u8) Hash {
     var hash = Sha256.init(.{});
@@ -116,7 +118,7 @@ pub fn parse(reader: anytype, allocator: std.mem.Allocator) !Tables {
         for (roots[0..index]) |previous| if (root.kind == previous.kind and root.source_index == previous.source_index and std.mem.eql(u8, root.name, previous.name)) return reader.reject("r04-module-root", reader.offset);
     }
     tables.roots = roots;
-    const initialization = try allocator.alloc(u16, try count(reader, @intCast(modules.len), @intCast(modules.len)));
+    const initialization = try allocator.alloc(u16, try count(reader, @intCast(modules.len), 0));
     for (initialization, 0..) |*function, index| {
         function.* = try reader.int(u16);
         if (std.mem.indexOfScalar(u16, initialization[0..index], function.*) != null) return reader.reject("r04-module-initialization", reader.offset);
@@ -125,19 +127,14 @@ pub fn parse(reader: anytype, allocator: std.mem.Allocator) !Tables {
     return tables;
 }
 
-fn visit(tables: Tables, index: usize, visited: *[128]bool, output: *[128]u16, next: *usize) void {
-    if (visited[index]) return; visited[index] = true;
-    for (tables.modules[index].dependencies) |dependency| visit(tables, dependency, visited, output, next);
-    output[next.*] = tables.modules[index].initializer; next.* += 1;
-}
-pub fn verify(reader: anytype, tables: Tables, functions: anytype) !void {
+pub fn verify(reader: anytype, verified: *Tables, functions: anytype) !void {
+    const tables = verified.*;
     if (!tables.present) return;
     for (tables.modules) |module| {
         if (module.initializer >= functions.len) return reader.reject("r04-module-initialization", reader.offset);
         const info = functions[module.initializer].info;
         if (!info.initializer or info.source_index != module.source_index or !std.mem.eql(u8, info.function_name, "$moduleInit")
             or info.return_type != 1 or info.parameter_types.len != 0 or info.function_start != 0 or info.function_end != tables.sources[module.source_index].length) return reader.reject("r04-module-initialization", reader.offset);
-        if (std.mem.indexOfScalar(u16, tables.initialization, module.initializer) == null) return reader.reject("r04-module-initialization", reader.offset);
     }
     for (functions, 0..) |function, index| {
         if (!owns(tables, function.info.source_index)) return reader.reject("r04-module-source", reader.offset);
@@ -145,7 +142,10 @@ pub fn verify(reader: anytype, tables: Tables, functions: anytype) !void {
         for (tables.modules) |module| if (module.initializer == index) { association += 1; };
         if (function.info.initializer != (association == 1)) return reader.reject("r04-module-initialization", reader.offset);
         for (function.instructions) |op| {
-            if (op.opcode == 27 and functions[op.left].info.initializer) return reader.reject("r04-module-initialization", reader.offset);
+            if (op.opcode == 27) {
+                if (op.left >= functions.len) return reader.reject("r04-call-target", reader.offset);
+                if (functions[op.left].info.initializer) return reader.reject("r04-module-initialization", reader.offset);
+            }
             if (op.opcode == 29 or op.opcode == 30) {
                 if (op.left >= tables.globals.len) return reader.reject("r04-module-global", reader.offset);
                 const global = tables.globals[op.left];
@@ -160,13 +160,14 @@ pub fn verify(reader: anytype, tables: Tables, functions: anytype) !void {
         if (root.function_index >= functions.len or functions[root.function_index].info.initializer != (root.kind == 1)) return reader.reject("r04-module-root", reader.offset);
         if (root.kind == 1 and functions[root.function_index].info.source_index != root.source_index) return reader.reject("r04-module-root", reader.offset);
     }
-    var visited = [_]bool{false} ** 128; var expected: [128]u16 = undefined; var next: usize = 0;
-    for (tables.roots) |root| for (tables.modules, 0..) |module, index| if (root.source_index == module.source_index) { visit(tables, index, &visited, &expected, &next); };
-    var order: [128]u16 = undefined;
-    for (tables.modules, 0..) |_, index| order[index] = @intCast(index);
-    for (0..tables.modules.len) |a| for (a + 1..tables.modules.len) |b| {
-        if (std.mem.order(u8, tables.sources[tables.modules[order[a]].source_index].path, tables.sources[tables.modules[order[b]].source_index].path) == .gt) std.mem.swap(u16, &order[a], &order[b]);
-    };
-    for (order[0..tables.modules.len]) |index| visit(tables, index, &visited, &expected, &next);
-    if (next != tables.initialization.len or !std.mem.eql(u16, expected[0..next], tables.initialization)) return reader.reject("r04-module-initialization", reader.offset);
+    verified.plan = module_plan.derive(tables, functions) catch |err| return reader.reject(switch (err) {
+        error.InvalidCount => "r04-module-count",
+        error.InvalidSource => "r04-module-source",
+        error.InvalidDependency => "r04-module-dependency",
+        error.InvalidInitialization => "r04-module-initialization",
+        error.InvalidRoot => "r04-module-root",
+        error.InvalidCallTarget => "r04-call-target",
+        error.InvalidGlobal => "r04-module-global",
+        error.InvalidHost => "r04-module-host",
+    }, reader.offset);
 }

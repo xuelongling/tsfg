@@ -92,3 +92,20 @@ test("embedding roots resolve exported aliases to their owned function and owner
   input.modules[0].exports[0].target=functionIdentity("/src/foreign.ts","leaf");
   assert.throws(()=>compilationClosure(input),/r03-d-closure-dependency/);
 });
+
+test("parameter defaults retain real call owners without executing unrelated modules", () => {
+  const input = facts();
+  input.configuration = {roots:[{kind:'application',sourcePath:'/src/0.ts',name:'entry'}],requiredRoots:[]};
+  input.modules[0].dependencies = [];
+  const entry = input.functions.find(fn => fn.sourcePath === '/src/0.ts' && fn.name === 'entry');
+  const leaf = input.functions.find(fn => fn.sourcePath === '/src/leaf-0.ts' && fn.name === 'leaf');
+  entry.body = [];
+  entry.parameterInitializers = [{kind:'call',target:leaf.id}];
+  const closure = compilationClosure(input);
+  assert.deepEqual(closure.initialization, [input.modules[0].initializer, input.modules[1].initializer]);
+  assert.ok(closure.functions.includes(leaf.id));
+  assert.equal(closure.modules.length, 2);
+  assert.ok(!closure.functions.includes(input.unused.id));
+  entry.parameterInitializers[0].target = functionIdentity('/src/missing.ts','missing');
+  assert.throws(() => compilationClosure(input), /r03-d-closure-dependency/);
+});

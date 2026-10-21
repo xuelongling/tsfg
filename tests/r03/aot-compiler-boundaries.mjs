@@ -1,15 +1,15 @@
 // SPDX-License-Identifier: MIT
-// Fresh structural Core0.9 data, using the independent public identity formulas.
+// Fresh structural current Core data, using the independent public identity formulas.
 // No Source qualification is claimed and no old capture is re-signed.
 import {createHash} from 'node:crypto';
 const sha=text=>createHash('sha256').update(text).digest('hex');
 const type=name=>name==='bool'?'i1':name==='i32'?'i32':'!tsfg_core.integer<"'+name+'">';
 export function scalarModule(count=1,parameters=['i32'],result=parameters[0]??'i32') {
  const source='/aot15a/structural.ts';
- const attrs={version:'0.11.0',input_identity:'sha256:'+sha('15a structural complete module'),
+ const attrs={version:'0.12.0',input_identity:'sha256:'+sha('15a structural complete module'),
  source_hash:'sha256:'+sha('x'.repeat(100)),source_path:source,target:'windows-x86_64-msvc',
  triple:'x86_64-pc-windows-msvc',data_layout:'e-m:w-p270:32:32-p271:32:32-p272:64:64-i64:64-i128:128-f80:128-n8:16:32:64-S128',
- bytecode_schema:'sha256:e6c3d9d46f12f48f53a8ffa88bdc93ba010079db3c5c38bba52325fea8eff516'};
+ bytecode_schema:'sha256:fec456a47f509480d96f65e5c03d465c7c204d60f09630e71b19c714d4aaafa7'};
  const fields=Object.entries(attrs).map(([name,value])=>'tsfg_core.'+name+' = '+JSON.stringify(value));
  fields.push('tsfg_core.source_length = 100 : i64');const functions=[];
  for(let i=0;i<count;i++) {

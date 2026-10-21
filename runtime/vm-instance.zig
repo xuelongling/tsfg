@@ -39,18 +39,19 @@ pub const ModuleInstance = struct {
     fn preflight(self: *ModuleInstance, id: *const FunctionId, arguments: []const TypedValue, capabilities: []const Capability, init_only: bool) Preflight {
         const tables = bytecode.moduleTablesView(self.state.module);
         var selected: ?*const bytecode.Function = null;
-        for (bytecode.functions(self.state.module)) |*function| if (std.mem.eql(u8, id, &function.info.function_id)) { selected = function; break; };
+        var selected_index: usize = 0;
+        for (bytecode.functions(self.state.module), 0..) |*function, index| if (std.mem.eql(u8, id, &function.info.function_id)) { selected = function; selected_index = index; break; };
         const function = selected orelse return .{ .code = "r05-request-function" };
         if (function.info.initializer != init_only) return .{ .code = "r05-request-function", .selected = function };
-        if (init_only) {
+        if (tables.present or init_only) {
             var root = false;
-            for (tables.roots) |candidate| if (candidate.kind == 1 and std.mem.eql(u8, &bytecode.functions(self.state.module)[candidate.function_index].info.function_id, id)) { root = true; break; };
+            for (tables.roots) |candidate| if (candidate.function_index == selected_index and (candidate.kind == 1) == init_only) { root = true; break; };
             if (!root) return .{ .code = "r05-request-function", .selected = function };
         }
         if (!request.acceptsArguments(&function.info, arguments)) return .{ .code = "r05-request-arguments", .selected = function };
         for (capabilities, 0..) |capability, index| {
             var required = false;
-            for (tables.hosts) |host| if (host.capability == capability.id) {
+            for (tables.hosts, 0..) |host, host_index| if (tables.plan.hostRequired(host_index) and host.capability == capability.id) {
                 required = true;
                 const signature = capability.signature orelse return .{ .code = "r05-request-capability", .selected = function };
                 const claim = capability.semantic_contract orelse return .{ .code = "r05-request-host-contract", .selected = function };
@@ -61,7 +62,8 @@ pub const ModuleInstance = struct {
             if (!required) return .{ .code = "r05-request-capability", .selected = function };
             for (capabilities[0..index]) |previous| if (previous.id == capability.id) return .{ .code = "r05-request-capability", .selected = function };
         }
-        for (tables.hosts) |host| {
+        for (tables.hosts, 0..) |host, host_index| {
+            if (!tables.plan.hostRequired(host_index)) continue;
             var authorized = false;
             for (capabilities) |capability| if (capability.id == host.capability) { authorized = true; break; };
             if (!authorized) return .{ .code = "r05-request-capability", .selected = function };
@@ -95,7 +97,7 @@ pub const ModuleInstance = struct {
             function = initializer orelse return .{ .kind = .request, .code = "r05-request-instance", .function = function };
         }
         var admitted: Admission = .allowed;
-        if (tables.hosts.len != 0) {
+        if (tables.plan.hasRequiredHosts()) {
             if (!function.info.initializer and limits.depth < 1) {
                 admitted = .depth;
             } else {
@@ -224,7 +226,7 @@ pub const ModuleInstance = struct {
         defer caller_environment.restore();
         // Preserve the original clock-before-no-host-depth ordering. This
         // Budget and the result are owned by this synchronous public call.
-        const time_limit = limits.host_time_ns orelse if (bytecode.moduleTablesView(self.state.module).hosts.len != 0) @as(?u64, 1000000000) else null;
+        const time_limit = limits.host_time_ns orelse if (bytecode.moduleTablesView(self.state.module).plan.hasRequiredHosts()) @as(?u64, 1000000000) else null;
         var budget: Budget = .{ .fuel = limits.semantic_fuel, .work = limits.instruction_budget, .deadline = clock.Deadline.init(time_limit) catch {
             storeRequestFailure(outcome, "r05-execution-abort", id, &bytecode.moduleInfoView(self.state.module).source);
             finish(outcome, limits.*, limits.semantic_fuel); return;

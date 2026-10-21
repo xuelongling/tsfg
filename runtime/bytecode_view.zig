@@ -152,7 +152,7 @@ fn inspectFunction(module: *const VerifiedModule, function: Function, allocator:
     for (info.parameter_types, parameter_types) |type_code, *type_name| type_name.* = contract.typeName(type_code);
     return std.json.Stringify.valueAlloc(allocator, .{
         .familyId = "tsfg.bytecode",
-        .semver = "0.11.0",
+        .semver = "0.12.0",
         .schemaHash = "sha256:" ++ contract.schema_hash_hex,
         .target = contract.target,
         .triple = contract.triple,

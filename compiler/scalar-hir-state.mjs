@@ -88,14 +88,23 @@ function loopCarriedStates(statement, locals, fail) {
       if (!state.has(value.binding)) fail();
       return state.get(value.binding).states;
     }
+    if (value.kind === 'global')return 1;
     if (value.kind === "absence") return value.absence === "undefined" ? 2 : 4;
     if (value.kind === "group") return expression(value.operand, state);
     if (value.kind === "update") {
+      if(expressionLeaf(value.operand)?.kind==='global')return 1;
       const local = state.get(localReferenceTarget(value.operand)?.binding);
       if (!local) fail();
       local.states = 1; return 1;
     }
     if (value.kind === "write") {
+      if(expressionLeaf(value.left)?.kind==='global') {
+        if(value.operator==='??=')return 1;
+        const right=['&&=','||='].includes(value.operator)?cloneLocals(state):state;
+        expression(value.right,right);
+        if(right!==state)merge(state,[state,right]);
+        return 1;
+      }
       const id = localReferenceTarget(value.left)?.binding, local = state.get(id);
       if (!local) fail();
       const previous = local.states;
@@ -120,7 +129,7 @@ function loopCarriedStates(statement, locals, fail) {
     }
     if (["binary", "presenceTest"].includes(value.kind)) { expression(value.left, state); expression(value.right, state); }
     else if (["unary", "conversion"].includes(value.kind)) expression(value.operand, state);
-    else if (value.kind === "call") { for (const argument of value.arguments) expression(argument, state); }
+    else if (value.kind === "call" || value.kind==='host') { for (const argument of value.arguments) expression(argument, state); }
     else if (!["constant", "floating", "boolean"].includes(value.kind)) fail();
     return 1;
   };
@@ -131,11 +140,12 @@ function loopCarriedStates(statement, locals, fail) {
       if (item.kind === "local") {
         const states = item.initializer ? expression(item.initializer, state) : 2;
         state.set(item.binding.id, { ...item.binding, states });
-      } else if (item.kind === "assign") {
+      } else if(item.kind==='assign'&&item.target.kind==='global')expression(item.value,state);
+      else if (item.kind === "assign") {
         const states = expression(item.value, state), local = state.get(item.target.binding);
         if (!local) fail();
         local.states = states;
-      } else if (item.kind === "evaluate") expression(item.value, state);
+      } else if (item.kind === "evaluate" || item.kind==='expression') expression(item.value, state);
       else if (item.kind === "return") { expression(item.value, state); return true; }
       else if (item.kind === "block") {
         const scoped = cloneLocals(state), returned = body(item.body, scoped, depth + 1);

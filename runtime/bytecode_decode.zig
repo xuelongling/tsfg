@@ -115,7 +115,7 @@ fn parse(reader: *Reader, allocator: Allocator, module: *Module) (error{Invalid}
     }
     if (reader.offset != reader.bytes.len) return reader.reject("r04-trailing", reader.offset);
     try model.verifyCalls(reader,module.functions);
-    try module_format.verify(reader, module.tables, module.functions);
+    try module_format.verify(reader, &module.tables, module.functions);
     return module.functions[0].info;
 }
 

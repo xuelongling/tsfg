@@ -177,7 +177,8 @@ export function buildHir(snapshot, factsContext = undefined, callPublicationCont
   if(moduleFacts) {
     const ownedId=id=>functions.get(id)?.id??globalBySymbol.get(id)?.id??hostBySymbol.get(id)?.id;
     const sources=[...moduleFacts.sources.values()].map(source=>({...source,hash:sha256(source.content)}));
-    const modules=snapshot.modules.map(module=>({id:moduleIdentity(module.sourcePath),sourcePath:module.sourcePath,
+    const modules=snapshot.modules.map(module=>({id:moduleIdentity(module.sourcePath),sourcePath:module.sourcePath,external:module.external,
+      imports:module.imports.map(({kind,specifier,sourcePath,range})=>({kind,specifier,sourcePath,range:{...range}})),
       dependencies:[...new Set(module.imports.map(imp=>imp.sourcePath))],initializer:initializerIdentity(module.sourcePath,sha256(moduleFacts.sources.get(module.sourcePath).content)),
       exports:module.exports.map(binding=>({name:binding.name,target:ownedId(binding.target)})),
       bindings:[...moduleFacts.views.get(module.sourcePath)].map(([name,id])=>({name,target:ownedId(id)}))}));
@@ -189,7 +190,7 @@ export function buildHir(snapshot, factsContext = undefined, callPublicationCont
     contractVersion: contract().semver, schemaHash: contract().schemaHash, inputIdentity: snapshot.inputIdentity,
     source: { ...snapshot.source, hash: sha256(snapshot.source.content) }, target: bytecodeSchema.target,
     functions: projectedFunctions,
-    ...(!moduleFacts && snapshot.capability === "minimal-conversions-v5" ? { inputScope: structuredClone(snapshot.identityInput) } : {}),
+    ...(moduleFacts || snapshot.capability === "minimal-conversions-v5" ? { inputScope: structuredClone(snapshot.identityInput) } : {}),
     ...moduleState,
   };
   try { return { status: "ok", hir: verifyHir(hir) }; }

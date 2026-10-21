@@ -1,7 +1,8 @@
 // SPDX-License-Identifier: MIT
-import path from "node:path";
 import { canonical, signatureHash, scalarTypeIds, scalarName, sha256 } from "./identity.mjs";
 import { normalizeClosure, moduleIdentity, globalIdentity, defaultBindingIdentity, compilationClosure, initializerIdentity, hostIdentity } from "./modules.mjs";
+import {sourceIsExternal} from './conversions.mjs';
+import {relativeModuleSource,verifyModuleSources} from './module-hir-source.mjs';
 
 export function skipCallTrivia(source) {
   let index = 0;
@@ -101,7 +102,8 @@ export function validateModuleFacts(snapshot) {
   for (const module of snapshot.modules) {
     if (!exact(module,["sourcePath","external","imports","exports","globals","initialization"])
         || !sources.has(module.sourcePath) || module.sourcePath.endsWith(".d.ts") || modules.has(module.sourcePath)
-        || typeof module.external !== "boolean" || !Array.isArray(module.imports) || !Array.isArray(module.globals)
+        || typeof module.external !== "boolean" || sourceIsExternal(sources.get(module.sourcePath).content)!==module.external
+        || !Array.isArray(module.imports) || !Array.isArray(module.globals)
         || !Array.isArray(module.exports) || !Array.isArray(module.initialization)
         || new Set(module.globals).size !== module.globals.length) fail();
     modules.set(module.sourcePath,module);
@@ -186,9 +188,7 @@ export function validateModuleFacts(snapshot) {
       const anchor = trivia(source.slice(imp.range.start,imp.range.end)).trim();
       const quoted = anchor.match(/(?:from\s*)?(['"])([^'"\r\n]+)\1\s*;?$/);
       if (!new RegExp(`^${imp.kind}\\b`).test(anchor) || quoted?.[2] !== imp.specifier) fail();
-      const logical = path.posix.normalize(path.posix.join(path.posix.dirname(module.sourcePath),imp.specifier));
-      const candidates=[logical,`${logical}.ts`,`${logical}/index.ts`,logical.replace(/\.js$/, ".ts")];
-      if (!candidates.includes(imp.sourcePath)) fail();
+      if (relativeModuleSource(module.sourcePath,imp.specifier,new Map(claim.files.map(file=>[file.path,file])))!==imp.sourcePath) fail();
       for (const binding of imp.bindings) {
         const symbol=symbols.get(binding.target);
         if (!exact(binding,["name","target","range"]) || typeof binding.name!=="string" || !binding.name || !symbol
@@ -237,22 +237,28 @@ const anchor=(range,source)=>exact(range,['start','end'])&&Number.isSafeInteger(
 /** Independently verify module ownership before body verification or pruning. */
 export function verifyModuleHir(hir,fail) {
   const sources=new Map(),modules=new Map(),globals=new Map(),hosts=new Map(),definitions=new Map();
+  const scope=hir.inputScope;
+  if(!scope?.compilationClosure || canonical(normalizeClosure(scope.compilationClosure))!==canonical({
+    roots:hir.closure.roots.map(({kind,sourcePath,name})=>({kind,sourcePath,name})),requiredRoots:hir.closure.requiredRoots}))fail();
   for(const source of hir.sources??[]) {
     if(!exact(source,['path','content','hash'])||typeof source.path!=='string'||!source.path.startsWith('/')
       ||!source.path.endsWith('.ts')||/[\\:\0]/.test(source.path)||source.path.slice(1).split('/').some(p=>!p||p==='.'||p==='..')
-      ||typeof source.content!=='string'||!source.content.isWellFormed()||source.hash!==sha256(source.content)||sources.has(source.path))fail();
+      ||typeof source.content!=='string'||!source.content.isWellFormed()||source.hash!==sha256(source.content)||sources.has(source.path)
+      ||scope.files.find(file=>file.path===source.path)?.content!==source.content)fail();
     sources.set(source.path,source);
   }
   if(!sources.size||canonical(sources.get(hir.source.path))!==canonical(hir.source))fail();
   for(const module of hir.modules??[]) {
-    if(!exact(module,['id','sourcePath','dependencies','initializer','exports','bindings'])
+    if(!exact(module,['id','sourcePath','external','imports','dependencies','initializer','exports','bindings'])
       ||module.id!==moduleIdentity(module.sourcePath)||!sources.has(module.sourcePath)||module.sourcePath.endsWith('.d.ts')
       ||modules.has(module.sourcePath)||module.initializer!==initializerIdentity(module.sourcePath,sources.get(module.sourcePath)?.hash)
-      ||!Array.isArray(module.dependencies)||new Set(module.dependencies).size!==module.dependencies.length
+      ||typeof module.external!=='boolean'||sourceIsExternal(sources.get(module.sourcePath).content)!==module.external
+      ||!Array.isArray(module.imports)||!Array.isArray(module.dependencies)||new Set(module.dependencies).size!==module.dependencies.length
       ||!Array.isArray(module.exports)||!Array.isArray(module.bindings))fail();
     modules.set(module.sourcePath,module);
   }
   if(modules.size!==[...sources.keys()].filter(p=>!p.endsWith('.d.ts')).length)fail();
+  if(scope.files.some(file=>!file.path.endsWith('.d.ts')&&!modules.has(file.path)))fail();
   for(const global of hir.globals??[]) {
     if(!exact(global,['id','sourcePath','name','bindingKind','type','writable','range'])||!modules.has(global.sourcePath)
       ||typeof global.name!=='string'||!global.name||!['source','default-export-expression'].includes(global.bindingKind)
@@ -270,13 +276,16 @@ export function verifyModuleHir(hir,fail) {
       ||!module.exports.some(binding=>binding.name==='default' && binding.target===global.id)))fail();
   }
   for(const host of hir.hostImports??[]) {
+    const configured=(scope.hostImports??[]).find(row=>row.sourcePath===host.sourcePath && row.name===host.name);
     if(!exact(host,['id','sourcePath','name','capabilityId','signatureHash','parameterTypes','returnType','range'])
       ||!sources.has(host.sourcePath)||!host.sourcePath.endsWith('.d.ts')||typeof host.name!=='string'||!host.name
       ||host.id!==hostIdentity(host.sourcePath,host.name)||host.capabilityId!==31
       ||host.signatureHash!==signatureHash('i32',['i32'])||canonical(host.parameterTypes)!==canonical([scalarTypeIds.i32])
-      ||host.returnType!==scalarTypeIds.i32||!anchor(host.range,sources.get(host.sourcePath))||hosts.has(host.id))fail();
+      ||host.returnType!==scalarTypeIds.i32||!anchor(host.range,sources.get(host.sourcePath))||hosts.has(host.id)
+      ||!configured||configured.capabilityId!==host.capabilityId||configured.returnType!=='i32'||canonical(configured.parameterTypes)!=='["i32"]')fail();
     hosts.set(host.id,host);definitions.set(host.id,host);
   }
+  if(hosts.size!==(scope.hostImports??[]).length)fail();
   const association=new Map();
   for(const fn of hir.functions) {
     if(!modules.has(fn.sourcePath)||!['source','module-initialization'].includes(fn.kind))fail();
@@ -306,6 +315,7 @@ export function verifyModuleHir(hir,fail) {
     }
     views.set(module.sourcePath,visible);
   }
+  verifyModuleSources(hir,{sources,modules,globals,hosts},fail);
   const expected=compilationClosure({modules:hir.modules,functions:hir.functions,globals:hir.globals,configuration:{roots:hir.closure.roots.map(({kind,sourcePath,name})=>({kind,sourcePath,name})),requiredRoots:hir.closure.requiredRoots}});
   if(canonical(expected)!==canonical(hir.closure))fail();
   return {sources,modules,globals,hosts,views};

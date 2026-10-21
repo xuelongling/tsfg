@@ -1,8 +1,8 @@
 <!-- SPDX-License-Identifier: MIT -->
 
-# tsfg.hir 0.11.0
+# tsfg.hir 0.13.0
 
-Root-adopted exact development format. The ordinary scalar/module shape and256-function limit remain. The explicit selected string-facts context additionally admits1..64 zero-parameter functions with nominal managed String constants or explicit concat operations and returns. HIR0.11 and the existing Core0.9 exchange have independent version metadata; the scalar emitter still admits the concrete512-function generic closure.
+Current exact development format. The ordinary scalar/module256-function limit remains. The module execution extension below retains complete code and metadata independently of its selected initialization plan. The explicit selected string-facts context additionally admits1..64 zero-parameter functions with nominal managed String constants or explicit concat operations and returns. HIR0.13 and the exact Core0.12/wire12 exchange have independent schema identities; the scalar emitter still admits the concrete512-function generic closure.
 
 `createCompilerSession` reuses owned HIR/Core/R04 output only for an unchanged
 checked Snapshot identity, compiler input fingerprint and source-built producer
@@ -102,7 +102,7 @@ transfer in parallel in R04. The entry and each while header carry explicit
 `tsfg_core.fuel` events before condition operations. Source conditions, braces,
 else clauses and nested statement delimiters are checked against owned anchors.
 
-Core exchange0.9.0 uses registered typed scalar operations and fuel plus official
+The current Core exchange0.12.0 uses registered typed scalar operations and fuel plus official
 `cf.br`/`cf.cond_br`, `func.call`, `func.return` and MLIR block arguments. Each
 function owns its identity, signature, return type and range attributes; module
 source and target attributes remain global. The C++ consumer resolves every
@@ -116,7 +116,7 @@ claimed. Logical events remain explicit and cannot be replaced with physical
 instruction accounting. Full/incremental compiler outputs and formal Runtime
 results are tested across source/control changes.
 
-This registry sets HIR to0.11.0 and Core/bytecode to0.9.0, wire9 and capability19; FrontendSnapshot remains0.8.0. They include nominal integers, bool, f32/f64 and owned module/authorized-host records. docs/r03-integer-vm.md records the earlier M07 wire6/capability17 slice; it does not describe the current wire. Old and mixed schema identities are rejected, and no older-format compatibility window is promised. Scalar identities, original source anchors, complete verification and logical/physical budget ordering remain in force.
+The current registry sets HIR to0.13.0 and Core/bytecode to0.12.0, wire12 and capability119; FrontendSnapshot remains0.9.0. They include nominal integers, bool, f32/f64 and owned module/authorized-host records. docs/r03-integer-vm.md records the earlier M07 wire6/capability17 slice; it does not describe the current wire. Old and mixed schema identities are rejected, and no older-format compatibility window is promised. Scalar identities, original source anchors, complete verification and logical/physical budget ordering remain in force.
 
 Module-mode HIR owns complete source, module, global, host-import and closure
 records. Functions retain their sourcePath and source/module-initialization
@@ -127,9 +127,9 @@ generated initializers are lifecycle-only. The verifier checks all supplied
 owned facts before closure pruning. These records lower to the prospective wire9
 module tables described by contracts/bytecode.md, rather than a second format.
 
-Generic concrete owned HIR remains its distinct candidate-v1 cold format. `lowerGenericHir` independently validates package context, instance linkage, signatures, original metadata/anchors and complete closure before using the ordinary scalar emitter. It emits the exact same Core0.9 version and bytecode schema hash as `lowerHir`; neither fabricated source content nor a second lowering is introduced. `compilePackage` routes its owned frontend result through the shared producer and unchanged formal-artifact input checks. This source route alone is not evidence that candidate Source/Runtime executables were admitted or run. The complete previous registry/source/artifact combination is the rollback unit; old Core0.8/wire8 and mixed schema identities reject.
+Generic concrete owned HIR remains its distinct candidate-v1 cold format. `lowerGenericHir` independently validates package context, instance linkage, signatures, original metadata/anchors and complete closure before using the ordinary scalar emitter. It emits the current exact Core0.12 version and bytecode schema hash as `lowerHir`; neither fabricated source content nor a second lowering is introduced. `compilePackage` routes its owned frontend result through the shared producer and unchanged formal-artifact input checks. This source route alone is not evidence that candidate Source/Runtime executables were admitted or run. The complete previous registry/source/artifact combination is the rollback unit; old Core0.8/wire8 and mixed schema identities reject.
 
-## Selected string-facts projection
+## Selected string-facts projection history (0.11.0)
 
 The existing buildHir/verifyHir/readHir/printHir/lowerHir interfaces accept an optional
 stringFactsContext. V1 has exactly the own data fields factsBytes and expectedPackageId;
@@ -154,7 +154,7 @@ is retained, never evaluated or folded into a result. Empty arrays, NUL, isolate
 and reversed surrogate units and normalization-distinct values remain exact.
 There is no heap handle, ABI tag, parser, decoded replacement string or session cache.
 
-The same HIR wire family uses exact0.11 identity and JCS+oneLF. Old0.10/mixed
+That historical HIR wire family used exact0.11 identity and JCS+oneLF. Old0.10/mixed
 metadata rejects; v1 facts remain unchanged and old HIR goldens migrate only their
 root version/schemaHash. Each cold read/print/verify requires its selected facts
 context again; overwriting caller context cannot be rescued by a hidden cache.
@@ -167,13 +167,13 @@ iterators and prototype traversal, with the original view offset preserved.
 Cold v2 failures retain r03-string-facts codes, r01-input-boundary/phase input and
 causes. HIR failures retain context/invalid/limit/canonical categories and use the
 verified facts' function, return, concat, plus or individual leaf primary anchor.
-Core exchange stays0.9 via x-coreExchangeVersion. A fully verified String lowerHir
+That historical projection kept Core exchange0.9 via x-coreExchangeVersion. A fully verified String lowerHir
 remains explicitly unsupported: no Core String, Runtime/VM execution, Frontend012
 admission, physical storage or StringView is supplied here.
 
 ## Ordinary expression restoration (0.12.0)
 
-The current exact owned HIR version0.12.0 restores the declared286 checked/wrap/
+The0.12.0 restoration introduced the declared286 checked/wrap/
 reinterpret origins and finite parameter/local presence. Conversion origin binds
 the exact declaration entry/span, brands, declaration digest and complete admitted
 input scope; a name alone cannot grant conversion semantics. The scalar Source
@@ -185,6 +185,20 @@ The shared SSA emitter captures the compound-assignment old payload before its R
 returns the pre-update value for postfix, and carries payload/state together through
 ordinary expression, branch and loop joins. Default initializers, optional omission
 and explicit undefined/null are retained until this single lowering. Formal output
-uses Core0.11/wire11 presence metadata and the original source anchors. This is
+uses the current exact Core/wire presence metadata and the original source anchors. This is
 ordinary scalar consumption; private managed-reference candidates do not provide
 an alternative default/absence execution path.
+
+## Complete module ordinary expressions (0.13.0)
+
+Module HIR retains the exact normalized inputScope and each module external flag,
+with source/declaration hashes, original bindings and configured Host declarations.
+The ordinary scalar verifier consumes both module bodies and defaults using the
+original source and module visibility context. Writable storage does not confer
+write permission on imports. Compound/update/global operations retain one source
+evaluation path; all original functions are preserved. Closure discovery visits
+parameter defaults before the body and keeps execution selection distinct from
+code retention. The formal exchange is Core0.12/wire12; independent private
+Core0.9 candidates retain their own explicit identities and grant no module
+execution admission. Old or mixed HIR0.12 metadata rejects. See the
+[module instance design](../docs/r03-module-aot.md).

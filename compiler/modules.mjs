@@ -129,7 +129,8 @@ export function compilationClosure({ modules, functions, globals = [], configura
     if (retainedFunctions.has(id)) continue;
     const fn = byFunction.get(id);
     if (!fn) failure("r03-d-closure-dependency");
-    retainedFunctions.add(id); retainModule(fn.sourcePath); visit(fn.body, fn);
+    retainedFunctions.add(id); retainModule(fn.sourcePath);
+    visit(fn.parameterInitializers, fn); visit(fn.body, fn);
   }
   const initialization = [], state = new Map();
   const initialize = path => {

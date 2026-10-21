@@ -33,7 +33,7 @@ using bytecode::integer;
 using bytecode::string;
 using bytecode::appendHash;
 constexpr llvm::StringLiteral bytecodeSchema =
-    "e6c3d9d46f12f48f53a8ffa88bdc93ba010079db3c5c38bba52325fea8eff516";
+    "fec456a47f509480d96f65e5c03d465c7c204d60f09630e71b19c714d4aaafa7";
 constexpr llvm::StringLiteral target = "windows-x86_64-msvc";
 constexpr llvm::StringLiteral triple = "x86_64-pc-windows-msvc";
 constexpr llvm::StringLiteral layout =
@@ -83,7 +83,7 @@ static mlir::LogicalResult compileCore(mlir::ModuleOp module, Bytes &packet, boo
     auto value = module->getAttrOfType<mlir::StringAttr>(key);
     return value ? value.getValue() : llvm::StringRef();
   };
-  if (text("tsfg_core.version") != (emptyReference ? "0.9.0" : "0.11.0")) return reject();
+  if (text("tsfg_core.version") != (emptyReference ? "0.9.0" : "0.12.0")) return reject();
   const bool moduleMode = bool(module->getAttr("tsfg_core.sources"));
   std::vector<llvm::StringRef> moduleAttributes = {"tsfg_core.version", "tsfg_core.input_identity",
       "tsfg_core.source_hash", "tsfg_core.source_path",
@@ -483,7 +483,7 @@ static mlir::LogicalResult compileCore(mlir::ModuleOp module, Bytes &packet, boo
   integer(payload, functions.size(), 2);
   payload.insert(payload.end(), functionPayload.begin(), functionPayload.end());
   packet = Bytes{'T','S','F','G','T','B','C','0'};
-  integer(packet, 11, 4);
+  integer(packet, 12, 4);
   Hash schema; if (!decodeHash(("sha256:" + bytecodeSchema).str(), schema)) return reject();
   appendHash(packet, schema); integer(packet, static_cast<uint32_t>(80 + payload.size()), 4);
   appendHash(packet, llvm::SHA256::hash(payload));

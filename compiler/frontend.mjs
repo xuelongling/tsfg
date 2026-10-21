@@ -58,7 +58,7 @@ export function validateFrontendSnapshot(snapshot) {
   }
   const moduleFacts = snapshot.modules ? validateModuleFacts(snapshot) : undefined;
   let source = snapshot.source;
-  const completeSource = !moduleFacts && completeFunctionSource(source.content, snapshot.functions, identifierName);
+  const completeSource = Boolean(moduleFacts) || completeFunctionSource(source.content, snapshot.functions, identifierName);
   let calls = 0;
   const usedNodes = new Set();
   const sameRange = (left, right) => left?.start === right?.start && left?.end === right?.end;
@@ -70,6 +70,11 @@ export function validateFrontendSnapshot(snapshot) {
     }
     return source.content.slice(range.start, range.end).trim();
   };
+  const writableBinding=(symbol,target)=>symbol.writable && (['local','parameter'].includes(symbol.kind)
+    || moduleFacts && symbol.kind==='global' && symbol.bindingKind==='source'
+      && staticBindingName(target.name)===symbol.name && scopeForWrite(symbol));
+  const scopeForWrite=symbol=>symbol.sourcePath===source.path || !moduleFacts.modules.get(symbol.sourcePath)?.external
+    && !moduleFacts.modules.get(source.path)?.external;
   const checkNode = (value, kind) => {
     const node = resolveNode(snapshot, value.node);
     if (node.kind !== kind || !sameRange(node.range, value.range)
@@ -114,9 +119,10 @@ export function validateFrontendSnapshot(snapshot) {
           || symbol.type !== expression.type) {
         throw new TypeError("reference differs from its symbol");
       }
-      if (!moduleFacts) {
+      {
         const stateful=Boolean(symbol.presence?.undefined || symbol.presence?.null),flow=expression.presenceFlow;
-        if (Object.keys(expression).sort().join(",") !== (stateful ? "kind,node,presenceFlow,range,symbol,type,typeRef" : "kind,node,range,symbol,type,typeRef")
+        const keys=['kind','node','range','symbol','type','typeRef',...(stateful?['presenceFlow']:[]),...(moduleFacts?['name']:[])].sort().join(',');
+        if (Object.keys(expression).sort().join(",") !== keys
             || stateful && (!flow || Object.keys(flow).sort().join(",") !== "null,undefined"
               || typeof flow.undefined !== "boolean" || typeof flow.null !== "boolean"
               || flow.undefined && !symbol.presence.undefined || flow.null && !symbol.presence.null))
@@ -149,8 +155,7 @@ export function validateFrontendSnapshot(snapshot) {
       const target = localReferenceTarget(expression.operand);
       const symbol = resolveSymbol(snapshot, target?.symbol);
       if (Object.keys(expression).sort().join(",") !== "kind,node,operand,operator,prefix,range,type,typeRef"
-          || !target || !symbol.writable
-          || !["local", "parameter"].includes(symbol.kind)
+          || !target || !writableBinding(symbol,target)
           || !["++", "--"].includes(expression.operator) || typeof expression.prefix !== "boolean"
           || expression.type !== symbol.type)
         throw new TypeError("update differs from its checked local binding or types");
@@ -160,8 +165,7 @@ export function validateFrontendSnapshot(snapshot) {
       const symbol = resolveSymbol(snapshot, left?.symbol);
       const logical = ["&&=","||="].includes(expression.operator), flow=expression.presenceFlow;
       if (Object.keys(expression).sort().join(",") !== (logical ? "kind,left,node,operator,presenceFlow,range,right,type,typeRef" : "kind,left,node,operator,range,right,type,typeRef")
-          || left?.kind !== "reference" || !symbol.writable
-          || !["local", "parameter"].includes(symbol.kind)
+          || left?.kind !== "reference" || !writableBinding(symbol,left)
           || !["=", "+=", "-=", "*=", "/=", "%=", "<<=", ">>=", ">>>=", "&=", "|=", "^=", "&&=", "||=", "??="].includes(expression.operator)
           || expression.type !== symbol.type || expression.right?.type !== (["<<=", ">>=", ">>>="].includes(expression.operator) ? "i32" : symbol.type)
           || logical && (!flow || Object.keys(flow).sort().join(",") !== "null,undefined" || typeof flow.undefined !== "boolean" || typeof flow.null !== "boolean"
@@ -174,7 +178,7 @@ export function validateFrontendSnapshot(snapshot) {
       if (!completeSource || !verifyConversionOrigin(origin, snapshot.inputIdentity) || snapshot.capability !== conversionDeclaration.version
           || !admittedConversionScope(snapshot.identityInput, snapshot.inputIdentity)
           || origin.declarationPath !== snapshot.identityInput.declarations.paths[0]
-          || snapshot.functions.some(fn => fn.name === entry.name)
+          || snapshot.functions.some(fn => fn.name === entry.name && (!moduleFacts || fn.sourcePath===source.path))
           || declaration?.kind !== "declaration-root" || declaration.sha256 !== conversionDeclaration.sha256
           || expression.type !== entry.to || expression.operand?.type !== entry.from
           || Object.keys(expression).sort().join(",") !== "conversion,kind,node,operand,range,type,typeRef"

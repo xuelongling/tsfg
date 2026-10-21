@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: MIT
 import path from "node:path";
 import {canonical,sha256} from "./identity.mjs";
+import {normalizeClosure} from "./modules.mjs";
 import entries from "../contracts/conversion-entries.json" with { type: "json" };
 import bytecodeSchema from "../contracts/bytecode.schema.json" with { type: "json" };
 
@@ -69,7 +70,10 @@ const logicalPath = value => typeof value === "string" && value.isWellFormed() &
 export function admittedInputScope(scope, inputIdentity) {
   try {
     const version = scope?.declarations?.version, numeric = ["minimal-integers-v3", "minimal-floats-v4", entries.version].includes(version);
-    if (!declarationFiles[version] || !exactKeys(scope, numeric ? "config,declarations,files,rootFile,sourceRoot,target" : "config,declarations,files,rootFile,sourceRoot")
+    const moduleInput = scope?.compilationClosure !== undefined;
+    const keys = ['config','declarations','files','rootFile','sourceRoot',...(numeric ? ['target'] : []),
+      ...(moduleInput ? ['compilationClosure',...(scope.hostImports !== undefined ? ['hostImports'] : [])] : [])].sort().join(',');
+    if (!declarationFiles[version] || !exactKeys(scope, keys)
         || !exactKeys(scope.config, "allowJs,noEmit,strict") || scope.config.allowJs !== false || scope.config.noEmit !== true || scope.config.strict !== true
         || !exactKeys(scope.declarations, "paths,version") || !logicalPath(scope.sourceRoot) || !logicalPath(scope.rootFile)
         || !scope.rootFile.endsWith(".ts") || scope.rootFile.endsWith(".d.ts")
@@ -82,13 +86,34 @@ export function admittedInputScope(scope, inputIdentity) {
     for (const file of scope.files) {
       if (!exactKeys(file, "content,path") || !logicalPath(file.path) || !file.path.startsWith(`${scope.sourceRoot}/`)
           || typeof file.content !== "string" || !file.content.isWellFormed() || file.content.length > 0xffffffff
-          || (file.path !== scope.rootFile && !file.path.endsWith(".d.ts")) || files.has(file.path)
+          || (file.path !== scope.rootFile && !file.path.endsWith(".d.ts") && !(moduleInput && file.path.endsWith('.ts'))) || files.has(file.path)
           || (previous !== undefined && Buffer.from(previous).compare(Buffer.from(file.path)) >= 0)) return false;
       files.set(file.path, file.content); previous = file.path;
     }
     return files.has(scope.rootFile) && scope.declarations.paths.every(name => typeof name === "string" && name.endsWith(".d.ts") && files.has(name))
+      && (!moduleInput || admittedModuleScope(scope, files))
       && sha256(canonical(scope)) === inputIdentity;
   } catch { return false; }
+}
+
+function admittedModuleScope(scope, files) {
+  if (canonical(normalizeClosure(scope.compilationClosure)) !== canonical(scope.compilationClosure)
+      || [...scope.compilationClosure.roots,...scope.compilationClosure.requiredRoots]
+        .some(root=>!logicalPath(root.sourcePath) || !root.name.isWellFormed() || !files.has(root.sourcePath))) return false;
+  if (scope.hostImports === undefined) return true;
+  if (!Array.isArray(scope.hostImports)) return false;
+  const names = new Set(); let previous;
+  for (const host of scope.hostImports) {
+    if (!exactKeys(host, 'capabilityId,name,parameterTypes,returnType,sourcePath')
+        || typeof host.name !== 'string' || !host.name || !host.name.isWellFormed() || host.name.includes('\0')
+        || !logicalPath(host.sourcePath) || !host.sourcePath.endsWith('.d.ts') || !files.has(host.sourcePath)
+        || host.capabilityId !== 31 || host.returnType !== 'i32' || canonical(host.parameterTypes) !== '["i32"]'
+        || names.has(host.name)) return false;
+    const key = `${host.sourcePath}\0${host.name}`;
+    if (previous !== undefined && Buffer.from(previous).compare(Buffer.from(key)) >= 0) return false;
+    names.add(host.name); previous = key;
+  }
+  return true;
 }
 
 export function admittedConversionScope(scope, inputIdentity) {
@@ -110,6 +135,16 @@ const namedToken = (token,value) => token?.kind==='name'&&token.value===value;
 // augments the admitted global symbols. References and member/module names
 // remain legal. Comments, quoted text and escaped identifiers are lexical data.
 function declarationTokens(source) {
+  try { return scanDeclarationTokens(source); } catch { return undefined; }
+}
+
+// Shared lexical provenance for the independent cold module-source boundary.
+// Original UTF16 offsets do not confer parser, name-resolution or type authority.
+export function sourceLexicalTokens(source) {
+  return declarationTokens(source)?.tokens??null;
+}
+
+function scanDeclarationTokens(source) {
   const tokens = [],references=[],types=[];
   for (let index=0;index<source.length;) {
     if (/\s/u.test(source[index])) {index++;continue;}
@@ -124,23 +159,29 @@ function declarationTokens(source) {
       while(index<source.length){const character=source[index++];if(character==='\\'){index++;continue;}if(character===quote){closed=true;break;}}
       if(!closed)return undefined;
       const text=source.slice(start,index-1).replace(/\\(?:u\{([0-9a-fA-F]{1,6})\}|u([0-9a-fA-F]{4})|x([0-9a-fA-F]{2})|([^\r\n]))/g,(_,point,unit,byte,character)=>point||unit||byte?String.fromCodePoint(Number.parseInt(point??unit??byte,16)):character);
-      tokens.push({kind:'text',value:text});continue;
+      tokens.push({kind:'text',value:text,start:start-1,end:index});continue;
     }
     const identifier=source.slice(index).match(/^(?:[$_\p{ID_Start}]|\\u(?:\{[0-9a-fA-F]{1,6}\}|[0-9a-fA-F]{4}))(?:[$\u200c\u200d\p{ID_Continue}]|\\u(?:\{[0-9a-fA-F]{1,6}\}|[0-9a-fA-F]{4}))*/u)?.[0];
-    if(identifier){tokens.push({kind:'name',value:identifier.replace(/\\u(?:\{([0-9a-fA-F]{1,6})\}|([0-9a-fA-F]{4}))/g,(_,point,unit)=>String.fromCodePoint(Number.parseInt(point??unit,16)))});index+=identifier.length;}
-    else tokens.push({kind:'punctuation',value:source[index++]});
+    if(identifier){tokens.push({kind:'name',value:identifier.replace(/\\u(?:\{([0-9a-fA-F]{1,6})\}|([0-9a-fA-F]{4}))/g,(_,point,unit)=>String.fromCodePoint(Number.parseInt(point??unit,16))),start:index,end:index+identifier.length});index+=identifier.length;}
+    else {tokens.push({kind:'punctuation',value:source[index],start:index,end:index+1});index++;}
   }
   return {tokens,references,types};
 }
 
 function exclusiveConversionScope(scope,officialPath) {
-  const files=new Map(scope.files.map(file=>[file.path,file])),loaded=new Set(),pending=[scope.rootFile,...scope.declarations.paths],ambient=new Set();
+  const moduleInput=scope.compilationClosure!==undefined;
+  // Module inputs retain the complete checked file universe, including files
+  // outside the execution plan. Every script/global augmentation participates.
+  // External module-local bindings remain legal; per-use visibility is checked
+  // by the source/HIR consumer, not inferred from package-wide name equality.
+  const files=new Map(scope.files.map(file=>[file.path,file])),loaded=new Set(),
+    pending=moduleInput?[...files.keys()]:[scope.rootFile,...scope.declarations.paths],ambient=new Set();
   let required=[];
   while(pending.length||required.length){
    while(pending.length){
     const name=pending.pop();if(loaded.has(name))continue;loaded.add(name);
     const lexical=declarationTokens(files.get(name)?.content??'');if(!lexical)return false;
-    if(name!==scope.rootFile&&name!==officialPath&&!exclusiveConversionDeclarations(lexical.tokens))return false;
+    if(name!==officialPath&&(moduleInput||name!==scope.rootFile)&&!exclusiveConversionDeclarations(lexical.tokens))return false;
     if(!externalDeclarationFile(lexical.tokens)){
       let depth=0;
       for(let index=0;index<lexical.tokens.length;index++){
@@ -159,6 +200,9 @@ function exclusiveConversionScope(scope,officialPath) {
       }
       if(!resolved){const target=declarationModuleFile(files,name,type);if(!target)return false;pending.push(target);}
     }
+    // Source module resolution belongs to the already checked module facts.
+    // The declaration dependency guard must not invent a second TS resolver.
+    if(moduleInput&&!name.endsWith('.d.ts'))continue;
     for(let index=0;index<lexical.tokens.length;index++){
       const token=lexical.tokens[index],next=lexical.tokens[index+1];let specifier;
       if(token.kind==='name'&&token.value==='from'&&next?.kind==='text')specifier=next.value;
@@ -205,6 +249,14 @@ function externalDeclarationFile(tokens) {
   return external;
 }
 
+// Bounded lexical classification for already checked ordinary sources. Dynamic
+// import() is not an external-module indicator; this is not a syntax checker.
+export function sourceIsExternal(source) {
+  if (typeof source !== 'string' || !source.isWellFormed()) return null;
+  const lexical=declarationTokens(source);
+  return lexical ? externalDeclarationFile(lexical.tokens) : null;
+}
+
 function exclusiveConversionDeclarations(tokens) {
   const scopes=[!externalDeclarationFile(tokens)],declarationKinds=new Set(['function','class','interface','type','enum','namespace','module']);
   const bindingCollision = start => {
@@ -239,17 +291,19 @@ function exclusiveConversionDeclarations(tokens) {
     if(!scopes.at(-1)||token.kind!=='name')continue;
     if(declarationKinds.has(token.value)&&next?.kind==='name'&&conversionNames.has(next.value))return false;
     if(['const','let','var'].includes(token.value)){
-      // A declaration list may have commas inside types. Only commas at the
-      // list's own nesting level introduce another global binding.
-      let nesting=0,binding=true;
+      // A declaration list may have commas inside types. Angle brackets only
+      // nest the annotation; `<` in an ordinary initializer is a comparison.
+      // This bounded guard is not a parser for generic initializer expressions.
+      let nesting=0,binding=true,initializer=false;
       for(let cursor=index+1;cursor<tokens.length;cursor++){
         const item=tokens[cursor];
         if(nesting===0&&(punctuation(item,';')||punctuation(item,'}')))break;
         if(binding){if(bindingCollision(cursor).collision)return false;binding=false;}
         if(item.kind==='punctuation'){
-          if(['(','[','{','<'].includes(item.value))nesting++;
-          if([')',']','}','>'].includes(item.value)&&nesting>0)nesting--;
-          if(nesting===0&&item.value===',')binding=true;
+          if(nesting===0&&item.value==='=')initializer=true;
+          if(['(','[','{'].includes(item.value)||!initializer&&item.value==='<')nesting++;
+          if(([')',']','}'].includes(item.value)||!initializer&&item.value==='>')&&nesting>0)nesting--;
+          if(nesting===0&&item.value===','){binding=true;initializer=false;}
         }
       }
     }

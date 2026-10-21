@@ -5,12 +5,14 @@ import { hasState, validParameterPresence, validLocalPresence, annotationStates,
 import { sourceTokens, identifierToken, bindingFact, declaredStates, cloneLocals, expressionStates, narrowLocals, loopCarriedStates, range, noShortIf } from './scalar-hir-state.mjs';
 import { completeFunctionSource } from './conversions.mjs';
 import { verifyScalarExpression as verifyExpression } from './scalar-hir-expression.mjs';
+import {verifyGlobal,verifyInitialization} from './scalar-hir-module.mjs';
 
 const types=scalarTypeIds;
 const exactKeys=(value,keys)=>value && typeof value==='object' && !Array.isArray(value) && Object.keys(value).sort().join(',')===[...keys].sort().join(',');
-export function verifyScalarFunctionBody(hir,fn,functions,parameterNames,fail) {
-const completeSource=completeFunctionSource(hir.source.content,hir.functions,identifierName);
-  const source = hir.source.content, declarations = new Map(), ids = new Set();
+export function verifyScalarFunctionBody(hir,fn,functions,parameterNames,fail,modules=undefined) {
+  const sourceView=modules?.sources.get(fn.sourcePath)??hir.source;
+  const completeSource=modules!==undefined || completeFunctionSource(sourceView.content,hir.functions,identifierName);
+  const source = sourceView.content, declarations = new Map(), ids = new Set(), initializedGlobals=new Set();
   let declarationIndex = 0, remainingStatements = 4096;
   const collect = (body, depth = 0) => {
     if (!Array.isArray(body) || body.length > 128 || depth > 128) fail();
@@ -26,7 +28,7 @@ const completeSource=completeFunctionSource(hir.source.content,hir.functions,ide
     }
   };
   collect(fn.body);
-  const budget = { remaining: 4096, sourcePath: hir.source.path, declarations, functions, completeSource, inputScope:hir.inputScope, inputIdentity:hir.inputIdentity };
+  const budget = { remaining: 4096, sourcePath: sourceView.path, declarations, functions, modules, completeSource, inputScope:hir.inputScope, inputIdentity:hir.inputIdentity };
   const clone = cloneLocals;
   const body = (statements, parent, locals, frame = "plain", outerBindings = new Map()) => {
     // Lexical visibility starts at scope entry, including each declaration's
@@ -43,13 +45,20 @@ const completeSource=completeFunctionSource(hir.source.content,hir.functions,ide
     for (const [index, statement] of statements.entries()) {
       if (--budget.remaining < 0 || !range(statement?.range, parent) || statement.range.start < previousEnd) fail();
       let before = sourceTokens(source, previousEnd, statement.range.start);
-      if (index === 0 && frame !== "plain") {
+      if (index === 0 && frame !== "plain" && frame !== 'module') {
         const header = frame === "function" ? before.match(/^(?:[^{}]|\\u\{[0-9a-fA-F]+\})*\{(const|let)?$/)
           : before.match(/^\{(const|let)?$/);
         if (!header) fail();
         before = header[1] ?? "";
       }
-      if (statement.kind === "local") {
+      if (statement.kind === 'initialize') {
+        if(frame!=='module')fail();
+        declarationKind=verifyInitialization(statement,source,fail,budget,initializedGlobals,before,declarationKind);
+        verifyExpression(statement.value,statement.range,source,fail,budget,locals,visibleBindings);
+        const tail=sourceTokens(source,statement.value.range.end,statement.range.end);
+        if(!/^;?$/.test(tail))fail();
+        if(tail===';')declarationKind=undefined;
+      } else if (statement.kind === "local") {
         const binding = statement.binding, value = statement.initializer;
         if (!exactKeys(statement, ["kind", "range", "binding", "initializer"])
             || !bindingFact(binding, statement.range, source) || binding.presence && !validLocalPresence(binding.presence,binding,value,source,statement.range) || ids.has(binding.id)
@@ -71,8 +80,8 @@ const completeSource=completeFunctionSource(hir.source.content,hir.functions,ide
         names.add(binding.name); ids.add(binding.id);
       } else {
         declarationKind = undefined;
-        if (!/^;?$/.test(before)) fail();
-        if (statement.kind === "evaluate") {
+        if (frame!=='module' && !/^;?$/.test(before)) fail();
+        if (statement.kind === "evaluate" || statement.kind === 'expression' && modules) {
           if (!exactKeys(statement, ["kind", "range", "value"])) fail();
           verifyExpression(statement.value, statement.range, source, fail, budget, locals, visibleBindings,7);
           if (sourceTokens(source, statement.range.start, statement.value.range.start) !== ""
@@ -127,6 +136,12 @@ const completeSource=completeFunctionSource(hir.source.content,hir.functions,ide
             if (!exactKeys(statement, ["kind", "range", "value"]) || value?.type !== fn.returnType.id
                 || sourceTokens(source, statement.range.start, value.range.start) !== "return") fail();
             returns = true;
+          } else if (statement.kind === 'assign' && statement.target?.kind==='global') {
+            const target=statement.target;
+            verifyGlobal(target,statement.range,source,fail,budget,visibleBindings,true);
+            if(!exactKeys(statement,['kind','range','target','value']) || value?.type!==target.type
+                || target.range.end>value.range.start || sourceTokens(source,statement.range.start,target.range.start)!==''
+                || sourceTokens(source,target.range.end,value.range.start)!=='=')fail();
           } else if (statement.kind === "assign") {
             const target = statement.target, local = locals.get(target?.binding);
             if (!exactKeys(statement, ["kind", "range", "target", "value"])
@@ -139,19 +154,32 @@ const completeSource=completeFunctionSource(hir.source.content,hir.functions,ide
                 || sourceTokens(source, target.range.end, value.range.start) !== "="
                 || hasState(local.presence) && !validPresenceFlow(target.presenceFlow,local.presence)) fail();
           } else fail();
-          verifyExpression(value, statement.range, source, fail, budget, locals, visibleBindings,statement.kind === "assign" ? declaredStates(locals.get(statement.target.binding).presence) : 1);
+          const assigned=statement.kind==='assign' && statement.target.kind==='reference';
+          verifyExpression(value, statement.range, source, fail, budget, locals, visibleBindings,assigned ? declaredStates(locals.get(statement.target.binding).presence) : 1);
           if (!/^;?$/.test(sourceTokens(source, value.range.end, statement.range.end))) fail();
-          if (statement.kind === "assign") { const local=locals.get(statement.target.binding); local.initialized = true; local.states=expressionStates(value,locals); }
+          if (assigned) { const local=locals.get(statement.target.binding); local.initialized = true; local.states=expressionStates(value,locals); }
         }
       }
       previousEnd = statement.range.end;
     }
     const tail = sourceTokens(source, previousEnd, parent.end);
-    if (statements.length === 0 && frame === "block" ? tail !== "{}"
-      : !(frame === "plain" ? /^;?$/ : /^;?\}$/).test(tail)) fail();
+    if (frame!=='module' && (statements.length === 0 && frame === "block" ? tail !== "{}"
+      : !(frame === "plain" ? /^;?$/ : /^;?\}$/).test(tail))) fail();
     return returns;
   };
   const initial = new Map(), visible = new Map();
+  if(fn.kind==='module-initialization') {
+    body(fn.body,fn.range,initial,'module',visible);
+    const expected=[...modules.globals.values()].filter(global=>global.sourcePath===fn.sourcePath).map(global=>global.id);
+    if(JSON.stringify([...initializedGlobals])!==JSON.stringify(expected))fail();
+    return;
+  }
+  // Module default declarations retain either their real local name or the
+  // official anonymous "default" identity. Share this guard with parameter
+  // defaults; only the module context admits an anonymous function header.
+  const headerName=(header,spelling)=>spelling.trim()===''
+    ? modules!==undefined && fn.name==='default' && /^\s*export\s+default\s+function\s*\(/.test(header)
+    : /\bfunction\s+/.test(header) && identifierToken(spelling,{start:0,end:spelling.length})===fn.name;
   if (fn.parameters.some(parameter=>parameter.presence)) {
     let previous=fn.range.start;
     for (const [index,parameter] of fn.parameters.entries()) {
@@ -160,8 +188,9 @@ const completeSource=completeFunctionSource(hir.source.content,hir.functions,ide
           || visible.has(parameter.name) || !validParameterPresence(parameter.presence,parameter,initializer,source,fn.range)) fail();
       const gap=sourceTrivia(source,previous,parameter.presence.range.start).trim();
       if (index === 0) {
-        const opening=gap.match(/^(?:export\s+)?function\s+([^()]+)\(\s*$/);
-        if (!opening || identifierToken(opening[1],{start:0,end:opening[1].length}) !== fn.name) fail();
+        const opening=modules ? gap.match(/^(?:export\s+(?:default\s+)?)?function\s*([^()]*)\(\s*$/)
+          : gap.match(/^(?:export\s+)?function\s+([^()]+)\(\s*$/);
+        if (!opening || !headerName(gap,opening[1])) fail();
       } else if (gap !== ",") fail();
       let initializerStates=0;
       if (initializer) {
@@ -179,8 +208,10 @@ const completeSource=completeFunctionSource(hir.source.content,hir.functions,ide
     if (!names.some(name => ["",","].some(comma => [`${comma}):${name}{`, `${comma}):${name}{let`, `${comma}):${name}{const`].includes(ending)))) fail();
   } else {
   const header = sourceTrivia(source,fn.range.start,fn.body[0].range.start);
-  const parsedHeader = header.match(/^\s*(?:export\s+)?function\s+([^()]+)\(([^()]*)\)\s*:\s*(i8|i16|i32|i64|u8|u16|u32|u64|isize|usize|bool|boolean|f32|f64|number)\s*\{\s*(?:(?:const|let)\s*)?$/d);
-  if (!parsedHeader || identifierToken(parsedHeader[1],{start:0,end:parsedHeader[1].length}) !== fn.name
+  const parsedHeader = modules
+    ? header.match(/^\s*(?:export\s+(?:default\s+)?)?function\s*([^()]*)\(([^()]*)\)\s*:\s*(i8|i16|i32|i64|u8|u16|u32|u64|isize|usize|bool|boolean|f32|f64|number)\s*\{\s*(?:(?:const|let)\s*)?$/d)
+    : header.match(/^\s*(?:export\s+)?function\s+([^()]+)\(([^()]*)\)\s*:\s*(i8|i16|i32|i64|u8|u16|u32|u64|isize|usize|bool|boolean|f32|f64|number)\s*\{\s*(?:(?:const|let)\s*)?$/d);
+  if (!parsedHeader || !headerName(header,parsedHeader[1])
       || ({boolean:"bool",number:"f64"}[parsedHeader[3]] ?? parsedHeader[3]) !== fn.returnType.name) fail();
   const parameterTokens = parsedHeader[2].trim() === "" ? [] : parsedHeader[2].split(",");
   if (parameterTokens.length > 1 && parameterTokens.at(-1).trim() === "") parameterTokens.pop();

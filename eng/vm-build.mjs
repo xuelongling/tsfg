@@ -7,6 +7,7 @@ import path from "node:path";
 import {prepareHostCounter,inspectCounterLink,writeHostCertificate,intakeUnqualifiedHostCounter,verifyUnqualifiedHostCounterInputs} from "./host-counter.mjs";
 
 import {createCounterHostContract} from "./host-semantic-contract.mjs";
+import {prepareRuntimeEntry} from './runtime-entry.mjs';
 
 export class VmBuildError extends Error {
   constructor(message, issueCode = "vm-source-build") { super(message); this.issueCode = issueCode; }
@@ -155,7 +156,7 @@ export async function createVmLinkObjectRetention({stage,logPath,output,counterO
       catch(error){fail(error);}return result;}};
   return observer;
 }
-const runtimeSources = [...["root", "bytecode", "bytecode_model", "bytecode_decode", "bytecode_view", "nullable-bytecode", "nullable-model", "nullable-decode", "nullable-cfg", "nullable-tags", "string-candidate", "string-candidate-model", "string-candidate-decode", "string-candidate-verify", "array-candidate", "array-candidate-model", "array-candidate-decode", "array-candidate-metadata", "array-candidate-body", "array-candidate-owner", "array-candidate-roots", "array-candidate-graph", "array-candidate-publication", "vm", "runtime", "main", "contract", "module_format", "module", "request", "host_counter", "clock", "execution_frame", "scalar", "conversions", "managed-heap", "managed-payload", "string-codec", "host-bindings", "host-semantic-contract", "floating-environment", "outcome-writer", "string-arguments", "string-budget", "string-frame", "string-instructions", "string-output", "string-value", "vm-execution", "vm-instance", "runtime-state", "request-values"].map(name => `runtime/${name}.zig`), "runtime/host_counter.c", "runtime/host_counter_bridge.c"];
+const runtimeSources = [...["root", "bytecode", "bytecode_model", "bytecode_decode", "bytecode_view", "nullable-bytecode", "nullable-model", "nullable-decode", "nullable-cfg", "nullable-tags", "string-candidate", "string-candidate-model", "string-candidate-decode", "string-candidate-verify", "array-candidate", "array-candidate-model", "array-candidate-decode", "array-candidate-metadata", "array-candidate-body", "array-candidate-owner", "array-candidate-roots", "array-candidate-graph", "array-candidate-publication", "vm", "runtime", "main", "contract", "module-plan", "aot-instance", "module_format", "module", "request", "host_counter", "clock", "execution_frame", "scalar", "conversions", "managed-heap", "managed-payload", "string-codec", "host-bindings", "host-semantic-contract", "floating-environment", "outcome-writer", "string-arguments", "string-budget", "string-frame", "string-instructions", "string-output", "string-value", "vm-execution", "vm-instance", "runtime-state", "request-values"].map(name => `runtime/${name}.zig`), "runtime/host_counter.c", "runtime/host_counter_bridge.c", "runtime/admitted-entry.c"];
 
 /** Actual production copy boundary, also exercised without starting the VM. */
 export async function stageVmRuntimeSources({productRoot,product,identity,sha256}) {
@@ -355,7 +356,7 @@ export async function executeVmTarget({ options, runtime, tools, productRoot, wo
   if (await lstat(output).catch(error => { if (error.code === "ENOENT") return undefined; throw error; }))
     throw new VmBuildError("Independent VM build output already exists", "vm-output-integrity");
   const identity = await createIdentity(runtime, productRoot);
-  const required = [...runtimeSources, "contracts/registry.json", "contracts/bytecode.schema.json", "eng/vm-build.mjs", "eng/host-counter.mjs", "eng/host-counter-binary.mjs", "eng/host-cost-source.lock.json", "eng/host-semantic-contract.mjs", "contracts/host-counter-semantic-v1.json"];
+  const required = [...runtimeSources, "contracts/registry.json", "contracts/bytecode.schema.json", "eng/vm-build.mjs", "eng/runtime-entry.mjs", "eng/host-counter.mjs", "eng/host-counter-binary.mjs", "eng/host-cost-source.lock.json", "eng/host-semantic-contract.mjs", "contracts/host-counter-semantic-v1.json"];
   for (const name of required) {
     const state = await lstat(path.join(productRoot, name));
     const entry = identity.buildInputSet.entries.find(entry => entry.projectId === "tsfg" && entry.repositoryRelativePath === name);
@@ -414,7 +415,8 @@ export async function executeVmTarget({ options, runtime, tools, productRoot, wo
   const counter=unqualified===null?await prepareHostCounter({productRoot,product,stage,tools,environment:env,run}):
     await verifyUnqualifiedHostCounterInputs(unqualified,{product,stage});
   const executable=path.join(publish,"tsfg-vm.exe");
-  const args=["build-exe","runtime/main.zig",counter.object,counter.bridgeObject,"--zig-lib-dir",path.join(path.dirname(tools.zig),"lib"),
+  const runtimeEntry=await prepareRuntimeEntry({product,stage,tools,environment:env,run});
+  const args=["build-exe","runtime/main.zig",counter.object,counter.bridgeObject,runtimeEntry,"--zig-lib-dir",path.join(path.dirname(tools.zig),"lib"),
     "--verbose-link","-target","x86_64-windows-msvc","-mcpu","x86_64_v2","-ODebug","-fno-lto",
     "--cache-dir",env.ZIG_LOCAL_CACHE_DIR,"--global-cache-dir",env.ZIG_GLOBAL_CACHE_DIR,`-femit-bin=${executable}`];
   let qualified=false, linked, admittedBoundaryBytes=0;

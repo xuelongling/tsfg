@@ -349,6 +349,11 @@ export function emitCoreSsaFunction(fn, context) {
   };
   const api = {
     emit, coreType, attrsFor, quote, branchValue, lookup: id => definitions.get(id),
+    storeGlobal: (target,payload,anchor) => {
+      const index=emittedGlobals.findIndex(global=>global.id===target.global);
+      if(index<0)throw new TypeError('verified global is absent from complete Core table');
+      operationLine(null,'tsfg_core.global_store',[payload],[target.type],null,`global = ${index} : i64, initialize = false`,anchor);
+    },
     assign: (id,value) => definitions.set(id,value),
     declare: (id,type) => { declared.add(id); bindingTypes.set(id,type); },
     operation: (name, operands, operandTypes, resultType, attributes, anchor) => {

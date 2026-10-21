@@ -87,9 +87,6 @@ export function moduleCallableCoreView(hir) {
     initialization: verified.closure.initialization.map(functionId)};
   return own({exchange: coreExchangeFormat, inputIdentity: verified.inputIdentity,
     source: source(verified.source), target: verified.target, functions,
-    // Full package preservation is independent of the original proof closure.
-    // In particular a retargeted alias may leave a valid original function unrooted.
-    functionSelection: 'complete-original-universe',
     moduleState: {sources: verified.sources.map(source), modules, globals: verified.globals,
       hostImports: verified.hostImports, closure}});
 }

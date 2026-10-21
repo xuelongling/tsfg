@@ -14,7 +14,7 @@ for(const c of cases)test('formal String complete HIR/Core/packet gold: '+c.name
   assert.equal((core.match(/func.func @/g)??[]).length,c.hir.functions.length);
   assert.match(lowerHir(c.hir,c.context),/tsfg_core.version = "0.9.0"/);
   const packet=expectedStringPacket(c.hir);
-  assert.equal(packet.readUInt32LE(8),11);assert.equal(packet.readUInt32LE(44),packet.length);
+  assert.equal(packet.readUInt32LE(8),12);assert.equal(packet.readUInt32LE(44),packet.length);
 });
 test('formal C++ complete typed String CFG/calls/all operations and original capacities',{skip:!cpp},()=>{
   for(const count of [3,512]) {
@@ -31,7 +31,7 @@ test('formal C++ retains String global lifecycle and complete module tables',{sk
 test('formal C++ rejects old/mixed identities, forged markers, wrong types/signatures and capacities',{skip:!cpp},()=>{
   const {core}=generalStringProgram();
   const bad=[
-    core.replace('version = "0.11.0"','version = "0.9.0"'),
+    core.replace('version = "0.12.0"','version = "0.9.0"'),
     core.replace(/bytecode_schema = "sha256:[a-f0-9]+"/,'bytecode_schema = "sha256:'+'0'.repeat(64)+'"'),
     core.replace('tsfg_core.source_length =','tsfg_core.string = {}, tsfg_core.source_length ='),
     core.replace('tsfg_core.source_length =','tsfg_core.reference = {}, tsfg_core.source_length ='),
@@ -44,6 +44,7 @@ test('formal C++ rejects old/mixed identities, forged markers, wrong types/signa
     generalStringProgram(513).core,
   ];
   for(const input of bad) {
+    assert.notEqual(input,core);
     const result=spawnSync(cpp,['--emit-bytecode'],{input,maxBuffer:16*1024*1024,windowsHide:true});
     assert.equal(result.status,3,result.stderr.toString());assert.equal(result.stdout.length,0);
   }

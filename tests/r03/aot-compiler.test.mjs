@@ -84,7 +84,17 @@ for(const fixture of fixtures.positive.filter(p=>p.id!=='complete-call-order'))t
 });
 for(const row of fixtures.negative)test('whole capability '+row.id,async()=>{
  assert.equal(hash(row.input),row.inputSHA256);accepted(await invokeCore(row.input));
- for(const command of commands){const result=await invokeCore(row.input,command);if(row.id==='late-f64')accepted(result);else{rejected(result);assert.match(result.stderr.toString('utf8'),/r07-native-capability/);}}
+ for(const command of commands){
+  const result=await invokeCore(row.input,command);
+  if(row.id==='late-f64')accepted(result);
+  else if(row.id==='initializer-with-empty-globals') {
+   // This complete module formerly exceeded scalar ABI3. It now uses the real
+   // ABI4 lifecycle, retaining its initializer and all three ordinary functions.
+   accepted(result);
+   const symbols=command==='--emit-native-llvm'?result.stdout.toString('utf8'):readCompilerCoff(result.stdout).symbols.map(symbol=>symbol.name).join('\n');
+   for(const symbol of ['tsfg_aot_instance_init_v4','tsfg_aot_invoke_v4',...Array.from({length:4},(_,index)=>'native_'+index)])assert.ok(symbols.includes(symbol),symbol);
+  } else {rejected(result);assert.match(result.stderr.toString('utf8'),/r07-native-capability/);}
+ }
 });
 test('complete128 function and64 mixed parameter backend boundaries',async()=>{
  const whole=scalarModule(128);const result=await invokeCore(whole,commands[0]);accepted(result);checkCompilerGraph(result.stdout.toString('utf8'),{nativeFunctions:128});
@@ -106,7 +116,7 @@ test('original Core gate rejects i32 unary pos before capability',async()=>{
 });
 /** @type {[string,(input:string)=>string][]} */
 const malformed=[
- ['old-version',input=>input.replace('"0.11.0"','"0.9.0"')],
+ ['old-version',input=>input.replace('"0.12.0"','"0.9.0"')],
  ['mixed-schema',input=>input.replace(fixtures.identity.bytecodeSchema,'sha256:'+'0'.repeat(64))],
  ['target',input=>input.replace('windows-x86_64-msvc','linux-x86_64-gnu')],
  ['triple',input=>input.replace('x86_64-pc-windows-msvc','x86_64-unknown-linux-gnu')],
@@ -135,8 +145,8 @@ test('complete private families never project scalar functions',async()=>{
  ['Global',(await json('./module-callable-core-first.json')).rows[1].expectedRawCore]];
  for(const [name,input]of rows){assert.equal(typeof input,'string',name);for(const command of commands)rejected(await invokeCore(input,command));}
 });
-test('unchanged scalar bytecode and actual owner mode remain byte-exact consumers',async()=>{
- const old=await invokeCore(fixtures.minimal,'--emit-bytecode');accepted(old);assert.equal(old.stdout.subarray(0,8).toString('ascii'),'TSFGTBC0');assert.equal(old.stdout.readUInt32LE(8),11);
+test('current scalar bytecode identity and unchanged actual owner mode remain consumers',async()=>{
+ const old=await invokeCore(fixtures.minimal,'--emit-bytecode');accepted(old);assert.equal(old.stdout.subarray(0,8).toString('ascii'),'TSFGTBC0');assert.equal(old.stdout.readUInt32LE(8),12);
  const array=await json('./array-owner-proof/literals.json');const result=await invokeCore(array.files['fresh-disjoint/request.json'],'--array-owner-proof');accepted(result);
  assert.deepEqual(result.stdout,Buffer.from(array.files['fresh-disjoint/expected.stdout.json']));
 });

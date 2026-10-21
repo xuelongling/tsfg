@@ -1,5 +1,6 @@
 // SPDX-License-Identifier: MIT
-import { sourceTrivia } from './module-facts.mjs';
+import { sourceTrivia, staticBindingName } from './module-facts.mjs';
+import {verifyGlobal,verifyGlobalMutation} from './scalar-hir-module.mjs';
 import { localReferenceTarget, expressionLeaf, hasOnlyToken } from './scalar-source.mjs';
 import { scalarName, scalarTypeIds, i32TypeId, boolTypeId, integerNames, integerRange } from './identity.mjs';
 import { floatNames, floatBits } from './float.mjs';
@@ -13,7 +14,11 @@ const floatType=id=>floatNames.includes(scalarName(id));
 export function verifyScalarExpression(value, parent, source, fail, budget, locals, visibleBindings, allowedStates = 1) {
   if (--budget.remaining < 0 || !value || !Object.values(types).includes(value.type)
       || !range(value.range, parent)) fail();
-  if (value.kind === "reference") {
+  if(['write','update'].includes(value.kind)
+      && verifyGlobalMutation(value,source,fail,budget,locals,visibleBindings,verifyScalarExpression))return;
+  if (value.kind === 'global') {
+    verifyGlobal(value,parent,source,fail,budget,visibleBindings);
+  } else if (value.kind === "reference") {
     const local = locals.get(value.binding);
     if (!exactKeys(value, ["kind", "type", "binding", "range", ...(hasState(local?.presence) ? ["presenceFlow"] : [])])) fail();
     const declaration = budget.declarations.get(value.binding);
@@ -138,30 +143,37 @@ export function verifyScalarExpression(value, parent, source, fail, budget, loca
     if (!exactKeys(value, ["kind", "type", "range", "origin", "operand"]) || !verifyConversionOrigin(value.origin, budget.inputIdentity)
         || !admittedConversionScope(budget.inputScope,budget.inputIdentity) || value.origin.declarationPath !== budget.inputScope.declarations.paths[0]
         || value.type !== types[entry.to] || value.operand?.type !== types[entry.from]
-        || !budget.completeSource || visibleBindings.has(entry.name) || [...budget.functions.values()].some(fn => fn.name === entry.name)
+        || !budget.completeSource || visibleBindings.has(entry.name) || (budget.modules
+          ? budget.modules.views.get(budget.sourcePath)?.has(entry.name)
+          : [...budget.functions.values()].some(fn => fn.name === entry.name))
         || !conversionCallSpelling(source, value.range, value.operand.range, entry)) fail();
     verifyScalarExpression(value.operand, value.range, source, fail, budget, locals, visibleBindings);
-  } else if (value.kind === "call") {
-    const target = budget.functions.get(value.target);
-    if (!exactKeys(value, ["kind", "type", "range", "target", "signatureHash", "arguments"])
-        || !target || target.signatureHash !== value.signatureHash || target.returnType.id !== value.type
-        || visibleBindings.has(target.name) || !Array.isArray(value.arguments)
-        || value.arguments.length > target.parameters.length
-        || target.parameters.slice(value.arguments.length).some(p => !p.presence?.optional)) fail();
+  } else if (value.kind === "call" || value.kind === 'host') {
+    const host=value.kind==='host',target=host?budget.modules?.hosts.get(value.target):budget.functions.get(value.target);
+    const parameters=host?target?.parameterTypes.map(type=>({type})):target?.parameters;
+    const callee=budget.modules?value.name:target?.name;
+    if (!exactKeys(value, ["kind", "type", "range", "target", "signatureHash", "arguments",...(budget.modules?['name']:[])])
+        || !target || target.kind==='module-initialization' || target.signatureHash !== value.signatureHash
+        || (host?target.returnType:target.returnType.id) !== value.type
+        || visibleBindings.has(callee) || budget.modules && (budget.modules.views.get(budget.sourcePath)?.get(callee)!==value.target
+          || visibleBindings.has(staticBindingName(callee).split('.')[0])) || !Array.isArray(value.arguments)
+        || value.arguments.length > parameters.length
+        || parameters.slice(value.arguments.length).some(p => !p.presence?.optional)) fail();
+    const calleeToken=text=>budget.modules?staticBindingName(text):identifierToken(text,{start:0,end:text.length});
     let previous = value.range.start;
     for (const [index, argument] of value.arguments.entries()) {
-      verifyScalarExpression(argument, value.range, source, fail, budget, locals, visibleBindings,declaredStates(target.parameters[index].presence));
+      verifyScalarExpression(argument, value.range, source, fail, budget, locals, visibleBindings,declaredStates(parameters[index].presence));
       const prefix = sourceTrivia(source, previous, argument.range.start).trim();
-      if (argument.type !== target.parameters[index].type || argument.range.start < previous) fail();
-      if (argument.kind === "absence" && !target.parameters[index].presence?.[argument.absence]) fail();
+      if (argument.type !== parameters[index].type || argument.range.start < previous) fail();
+      if (argument.kind === "absence" && !parameters[index].presence?.[argument.absence]) fail();
       if (index === 0) {
-        if (!prefix.endsWith("(") || identifierToken(prefix, {start:0,end:prefix.length-1}) !== target.name) fail();
+        if (!prefix.endsWith("(") || calleeToken(prefix.slice(0,-1)) !== callee) fail();
       } else if (prefix !== ",") fail();
       previous = argument.range.end;
     }
     const tail = sourceTrivia(source, previous, value.range.end).trim();
     if (value.arguments.length ? !/^,?\s*\)$/.test(tail) : !/\(\s*\)$/.test(tail)
-        || identifierToken(tail,{start:0,end:tail.lastIndexOf("(")}) !== target.name) fail();
+        || calleeToken(tail.slice(0,tail.lastIndexOf("("))) !== callee) fail();
   } else if (value.kind === "constant") {
     if (!exactKeys(value, ["kind", "type", "decimal", "token", "range"])
         || !integerType(value.type) || typeof value.decimal !== "string"

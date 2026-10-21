@@ -4,7 +4,6 @@
 #include "llvm/Support/SHA256.h"
 #include "llvm/Support/ConvertUTF.h"
 #include <algorithm>
-#include <functional>
 #include <set>
 
 namespace tsfg {
@@ -108,7 +107,7 @@ mlir::LogicalResult readModuleTables(mlir::ModuleOp module, ModuleTables &tables
   auto sourceAttributes = module->getAttrOfType<mlir::ArrayAttr>("tsfg_core.sources");
   if (!sourceAttributes) return mlir::success();
   tables.present = true;
-  if (sourceAttributes.empty() || sourceAttributes.size() > 128) return reject();
+  if (sourceAttributes.empty() || sourceAttributes.size() > 128 || functions.empty() || functions.size() > 512) return reject();
   std::set<std::string> paths;
   for (auto attribute : sourceAttributes) {
     auto dictionary = llvm::dyn_cast<mlir::DictionaryAttr>(attribute); ModuleSource source;
@@ -120,7 +119,7 @@ mlir::LogicalResult readModuleTables(mlir::ModuleOp module, ModuleTables &tables
   auto array = [&](llvm::StringRef key) { return module->getAttrOfType<mlir::ArrayAttr>(key); };
   auto modules = array("tsfg_core.modules"), globals = array("tsfg_core.globals"), hosts = array("tsfg_core.hosts"), roots = array("tsfg_core.roots"), initialization = array("tsfg_core.initialization");
   if (!modules || modules.empty() || modules.size() > 128 || !globals || globals.size() > 4096 || !hosts || hosts.size() > 128
-      || !roots || roots.empty() || roots.size() > 128 || !initialization || initialization.size() != modules.size()) return reject();
+      || !roots || roots.empty() || roots.size() > 128 || !initialization || initialization.size() > modules.size()) return reject();
   std::set<ModuleHash> ids; std::set<uint16_t> owners, initializers;
   for (auto attribute : modules) {
     auto dictionary = llvm::dyn_cast<mlir::DictionaryAttr>(attribute); ModuleDeclaration declaration; uint32_t source, initializer;
@@ -192,23 +191,9 @@ mlir::LogicalResult readModuleTables(mlir::ModuleOp module, ModuleTables &tables
   }
   std::set<uint16_t> seen;
   for (auto attribute : initialization) { uint32_t index; if (!number(attribute, index) || index >= functions.size() || !initializers.count(static_cast<uint16_t>(index)) || !seen.insert(static_cast<uint16_t>(index)).second) return reject(); tables.initialization.push_back(static_cast<uint16_t>(index)); }
-  std::vector<bool> visited(tables.modules.size(), false); std::vector<uint16_t> expected;
-  std::function<void(uint16_t)> initialize = [&](uint16_t index) {
-    if (visited[index]) return; visited[index] = true;
-    for (auto dependency : tables.modules[index].dependencies) initialize(dependency);
-    expected.push_back(tables.modules[index].initializer);
-  };
-  for (const auto &root : tables.roots) {
-    auto owner = std::find_if(tables.modules.begin(), tables.modules.end(), [&](const auto &declaration) { return declaration.source == root.source; });
-    initialize(static_cast<uint16_t>(owner - tables.modules.begin()));
-  }
-  std::vector<uint16_t> remaining;
-  for (size_t i = 0; i < tables.modules.size(); ++i) remaining.push_back(static_cast<uint16_t>(i));
-  std::sort(remaining.begin(), remaining.end(), [&](auto a, auto b) { return tables.sources[tables.modules[a].source].path < tables.sources[tables.modules[b].source].path; });
-  for (auto index : remaining) initialize(index);
-  if (expected != tables.initialization) return reject();
   for (size_t i = 0; i < functions.size(); ++i) {
     auto fn = functions[i]; uint32_t source, start, end;
+    if (!fn) return reject();
     auto initializer = fn->getAttrOfType<mlir::BoolAttr>("tsfg_core.initializer"); std::string name;
     if (!initializer || initializer.getValue() != bool(initializers.count(static_cast<uint16_t>(i)))
         || !number(fn->getAttr("tsfg_core.source_index"), source) || source >= tables.sources.size() || !owners.count(static_cast<uint16_t>(source))
@@ -220,6 +205,7 @@ mlir::LogicalResult readModuleTables(mlir::ModuleOp module, ModuleTables &tables
           || !number(fn->getAttr("tsfg_core.function_end"), end) || start != 0 || end != tables.sources[source].length) return reject();
     }
   }
+  if (mlir::failed(deriveModulePlan(tables, functions, tables.plan))) return reject();
   return mlir::success();
 }
 } // namespace tsfg

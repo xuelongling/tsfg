@@ -3,6 +3,8 @@
 // and artifact admission. Keep aligned with CMakeLists.txt and quoted includes.
 export const coreIrInputs = Object.freeze([
   "compiler/core-ir/CMakeLists.txt",
+  "compiler/core-ir/aot-capability.cpp",
+  "compiler/core-ir/aot-capability.h",
   "compiler/core-ir/aot-conversions.cpp",
   "compiler/core-ir/aot-conversions.h",
   "compiler/core-ir/aot-fenv.cpp",
@@ -11,6 +13,13 @@ export const coreIrInputs = Object.freeze([
   "compiler/core-ir/aot-fmod.cpp",
   "compiler/core-ir/aot-lowering.cpp",
   "compiler/core-ir/aot-lowering.h",
+  "compiler/core-ir/aot-module-codec.cpp",
+  "compiler/core-ir/aot-module-codec.h",
+  "compiler/core-ir/aot-module-entry.cpp",
+  "compiler/core-ir/aot-module-ops.h",
+  "compiler/core-ir/aot-module-services.cpp",
+  "compiler/core-ir/aot-module.cpp",
+  "compiler/core-ir/aot-module.h",
   "compiler/core-ir/aot-slot-codec.h",
   "compiler/core-ir/aot.cpp",
   "compiler/core-ir/aot.h",
@@ -71,6 +80,7 @@ export const coreIrInputs = Object.freeze([
   "compiler/core-ir/managed-cfg.h",
   "compiler/core-ir/managed-liveness.cpp",
   "compiler/core-ir/managed-liveness.h",
+  "compiler/core-ir/module-plan.cpp",
   "compiler/core-ir/module.cpp",
   "compiler/core-ir/module.h",
   "compiler/core-ir/native_cost.cpp",
@@ -100,5 +110,6 @@ export const coreIrInputs = Object.freeze([
   "compiler/core-ir/string-verify.cpp",
   "compiler/core-ir/string-wire.cpp",
   "compiler/core-ir/string-wire.h",
-  "compiler/core-ir/string.cpp"
+  "compiler/core-ir/string.cpp",
+  "runtime/aot-instance.h"
 ]);

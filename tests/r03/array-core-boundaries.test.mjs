@@ -149,7 +149,7 @@ test('25c absent Array selection keeps the complete old scalar public path',asyn
   // The raw-pinned fixture retains its private Core identity; its property order is not JCS.
   const bytes=await readFile(new URL('./string-core-default-scalar.json',import.meta.url));
   assert.equal(bytes.length,2809);
-  assert.equal(sha(bytes),'548008d67c97cffcf7b870ce69d8d43d1e609de8c641550480e6e00044d76eb2');
+  assert.equal(sha(bytes),'d33fb852bd564e41d1f96d2545326ff751e5ae9ce90d8ddccf9d8a34f46a4425');
   const f=JSON.parse(bytes.toString('utf8'));
   // Rebind only the formal metadata; the frozen function body and anchors remain exact.
   const current=f.core.replace('tsfg_core.version = "0.9.0"',`tsfg_core.version = "${registry['tsfg.bytecode'].semver}"`)

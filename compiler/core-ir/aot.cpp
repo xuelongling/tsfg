@@ -1,5 +1,6 @@
 // SPDX-License-Identifier: MIT
 #include "aot.h"
+#include "aot-module.h"
 #include "aot-lowering.h"
 #include "aot-float.h"
 #include "aot-conversions.h"
@@ -58,6 +59,9 @@ mlir::LogicalResult tsfg::emitNativeLLVM(mlir::ModuleOp verifiedCore,
   if (!native) return mlir::failure();
   materializeNativeConversions(*native);
   materializeNativeFloating(*native);
+  if(!materializeNativeModule(*native,verifiedCore)) {
+    llvm::errs()<<"[core-ir-module-aot] instance materialization failed\n";return mlir::failure();
+  }
   const llvm::Triple triple(verifiedCore->getAttrOfType<mlir::StringAttr>("tsfg_core.triple").getValue());
   native->setTargetTriple(triple);
   LLVMInitializeX86TargetInfo(); LLVMInitializeX86Target();
@@ -91,7 +95,7 @@ mlir::LogicalResult tsfg::emitNativeLLVM(mlir::ModuleOp verifiedCore,
     return mlir::failure();
   }
   new llvm::GlobalVariable(*native, i32, true, llvm::GlobalValue::ExternalLinkage,
-      llvm::ConstantInt::get(i32, NativeABIVersion), "tsfg_native_abi_version");
+      llvm::ConstantInt::get(i32, verifiedCore->hasAttr("tsfg_core.sources")?4:NativeABIVersion), "tsfg_native_abi_version");
   if (llvm::verifyModule(*native, &llvm::errs())) return mlir::failure();
   if (kind == NativeOutput::LLVM) native->print(output, nullptr);
   else {

@@ -22,7 +22,7 @@ export function createScalarStateEmitter(fn, api) {
   const represent=value=>value.kind==='group' ? represent(value.operand)
     // Payload reads retain the shared emitter's domain leaf and budget hooks.
     : value.kind==='reference' ? {payload:api.emit(value),state:stateful.has(value.binding)?api.lookup(stateBinding(value.binding)):null}
-    : value.kind==='write' ? (api.emit(value),represent(localReferenceTarget(value.left)))
+    : value.kind==='write' ? written(value)
     : value.kind==='absence' ? {payload:constant(value.type,'0',value.range),state:constant(i32TypeId,value.absence==='undefined'?'1':'2',value.range)}
     : {payload:api.emit(value),state:null};
   const store=(id,value,range)=> {
@@ -30,6 +30,12 @@ export function createScalarStateEmitter(fn, api) {
     if(stateful.has(id))api.assign(stateBinding(id),value.state??constant(i32TypeId,'0',range));
     return value.payload;
   };
+  const written=value=>{
+    const payload=api.emit(value),target=expressionLeaf(value.left);
+    return target.kind==='global'?{payload,state:null}:represent(target);
+  };
+  const storeTarget=(target,value,range)=>target.kind==='global'
+    ? (api.storeGlobal(target,value.payload,range),value.payload):store(target.binding,value,range);
   const emit=value=>{
     if(value.kind==='absence')return represent(value).payload;
     if(value.kind==='presenceTest') {
@@ -40,24 +46,25 @@ export function createScalarStateEmitter(fn, api) {
     if(value.kind==='update') {
       const old=api.emit(value.operand), one=constant(value.type,'1',value.range);
       const next=operation(value.operator==='++'?'add':'sub',[old,one],[value.type,value.type],value.type,value.range);
-      store(localReferenceTarget(value.operand).binding,{payload:next,state:null},value.range);
+      storeTarget(expressionLeaf(value.operand),{payload:next,state:null},value.range);
       return value.prefix?next:old;
     }
     if(value.kind!=='write')return undefined;
-    const target=localReferenceTarget(value.left);
+    const target=expressionLeaf(value.left);
     if(value.operator==='??=') {
+      if(target.kind==='global')return api.emit(value.left);
       if(!stateful.has(target.binding))return api.lookup(target.binding);
       const condition=operation('ne',[api.lookup(stateBinding(target.binding)),constant(i32TypeId,'0',value.left.range)],[i32TypeId,i32TypeId],boolTypeId,value.range);
       return api.branchValue(condition,value.type,value.range,()=>store(target.binding,represent(value.right),value.range),()=>api.lookup(target.binding));
     }
     if(['&&=','||='].includes(value.operator)) {
-      const old=api.emit(value.left), rhs=()=>store(target.binding,represent(value.right),value.range), shortcut=()=>old;
+      const old=api.emit(value.left), rhs=()=>storeTarget(target,represent(value.right),value.range), shortcut=()=>old;
       return api.branchValue(old,value.type,value.range,value.operator==='&&='?rhs:shortcut,value.operator==='&&='?shortcut:rhs);
     }
     // Capture the old payload before RHS side effects can replace its binding.
     const old=value.operator==='='?null:api.emit(value.left), rhs=represent(value.right);
     const result=value.operator==='='?rhs.payload:operation(scalarOperations[value.operator.slice(0,-1)],[old,rhs.payload],[value.type,value.right.type],value.type,value.range);
-    return store(target.binding,{payload:result,state:value.operator==='='?rhs.state:null},value.range);
+    return storeTarget(target,{payload:result,state:value.operator==='='?rhs.state:null},value.range);
   };
   return {emit,represent,constant,
     local(binding,value,range) {

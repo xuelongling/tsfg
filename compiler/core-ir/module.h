@@ -17,6 +17,8 @@ struct ModuleDeclaration { ModuleHash id; uint16_t source, initializer; std::vec
 struct GlobalDeclaration { ModuleHash id; uint16_t source; std::string name; uint8_t type; bool writable, generated; uint32_t start, end; };
 struct HostDeclaration { ModuleHash id, signature; uint16_t source; std::string name; uint32_t capability, start, end; };
 struct ModuleRoot { uint8_t kind; uint16_t source, function; std::string name; };
+// Derived execution membership is immutable after validation and never wire data.
+struct ModulePlan { std::vector<bool> functions, modules, hosts; };
 struct ModuleTables {
   bool present = false;
   std::vector<ModuleSource> sources;
@@ -25,9 +27,12 @@ struct ModuleTables {
   std::vector<HostDeclaration> hosts;
   std::vector<ModuleRoot> roots;
   std::vector<uint16_t> initialization;
+  ModulePlan plan;
 };
 mlir::LogicalResult readModuleTables(mlir::ModuleOp module, ModuleTables &tables,
                                   llvm::ArrayRef<mlir::func::FuncOp> functions);
+mlir::LogicalResult deriveModulePlan(const ModuleTables &tables,
+    llvm::ArrayRef<mlir::func::FuncOp> functions, ModulePlan &plan);
 
 class GlobalLoadOp : public mlir::Op<GlobalLoadOp, mlir::OpTrait::ZeroOperands,
     mlir::OpTrait::OneResult, mlir::OpTrait::ZeroRegions> {

@@ -16,7 +16,7 @@ const canonical = value => Array.isArray(value)
   : value !== null && typeof value === "object"
     ? `{${Object.keys(value).sort().map(key => `${JSON.stringify(key)}:${canonical(value[key])}`).join(",")}}`
     : JSON.stringify(value);
-const currentBytecodeHash = "sha256:e6c3d9d46f12f48f53a8ffa88bdc93ba010079db3c5c38bba52325fea8eff516";
+const currentBytecodeHash = "sha256:fec456a47f509480d96f65e5c03d465c7c204d60f09630e71b19c714d4aaafa7";
 const previousBytecodeHash = "sha256:3dea6ce5de996dfa3e7141cced985243ea74ac9bb80f03636c6694343118f2a6";
 
 test("registered global operations preserve scalars and add nominal managed String", async () => {
@@ -25,8 +25,8 @@ test("registered global operations preserve scalars and add nominal managed Stri
   assert.equal(schema.typeCodes.string, "14");
   assert.deepEqual(schema.instructions.global_load.record[1], ["type", "u8:1..14"]);
   assert.deepEqual(schema.instructions.global_store.record[1], ["type", "u8:1..14"]);
-  assert.equal(schema.semver, "0.11.0");
-  assert.deepEqual(schema.header[1], ["version", "u32:11"]);
+  assert.equal(schema.semver, "0.12.0");
+  assert.deepEqual(schema.header[1], ["version", "u32:12"]);
 });
 
 test("registry verifies all current schema bytes and keeps old identities distinct", async () => {
@@ -52,11 +52,11 @@ test("R00 current Contract Set fixture is the canonical registered mapping", asy
   assert.equal(currentContractSetId, `sha256:${digest(currentContractSetCanonical)}`);
 });
 
-test("independent Zig fixture has the current v11 header and explicit single-source mode byte", async () => {
+test("independent Zig fixture has the current v12 header and explicit single-source mode byte", async () => {
   const source = await read("runtime/fixture.zig");
   const packet = Buffer.from([...source.matchAll(/0x([a-f0-9]{2})/g)].map(match => parseInt(match[1], 16)));
   assert.equal(packet.subarray(0, 8).toString(), "TSFGTBC0");
-  assert.equal(packet.readUInt32LE(8), 11);
+  assert.equal(packet.readUInt32LE(8), 12);
   assert.equal(packet.subarray(12, 44).toString("hex"), currentBytecodeHash.slice(7));
   assert.equal(packet.readUInt32LE(44), packet.length);
   assert.equal(packet.subarray(48, 80).toString("hex"), digest(packet.subarray(80)));

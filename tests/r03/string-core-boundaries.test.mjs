@@ -20,7 +20,7 @@ async function pinned(file, length, digest) {
 /** @returns {Promise<any[]>} */
 async function cases() {
   const bytes = await pinned('./string-core-oracle.json', 43500,
-    '30ba4f71ac0118d27aa00630c90c39b2b6954afa432fd7be981fc0b99677b4e0');
+    'c6ce728e5663e658629cd3e63a9887f54e6bf57f90d7e397a2a49b19c9f84e9f');
   const oracle = JSON.parse(bytes.toString('utf8'));
   const out = [];
   for (const c of oracle.cases) {
@@ -188,7 +188,7 @@ test('24g upstream input budgets preserve the old exact limit DTO before Core em
 // verifyHir to manufacture a public overflow. C++ input8MiB is tested separately.
 
 test('24g absent context keeps the complete scalar Core path across formal identity migration', async () => {
-  const bytes = await pinned('./string-core-default-scalar.json', 2809, '548008d67c97cffcf7b870ce69d8d43d1e609de8c641550480e6e00044d76eb2');
+  const bytes = await pinned('./string-core-default-scalar.json', 2809, 'd33fb852bd564e41d1f96d2545326ff751e5ae9ce90d8ddccf9d8a34f46a4425');
   const f = JSON.parse(bytes.toString('utf8'));
   assert.equal(f.provenance.sourceCompilerRun, false); assert.equal(f.provenance.emitterCalled, false);
   assert.deepEqual(verifyHir(clone(f.hir)), f.hir);

@@ -47,12 +47,12 @@ export function expectedStringPacket(hir) {
     op(2,14,concat?2:0,0,returned.range);
   }
   const payload=p.done(),header=new Bytes();header.put(Buffer.from('TSFGTBC0'));
-  header.integer(11,4);header.hash(registry['tsfg.bytecode'].schemaHash);
+  header.integer(12,4);header.hash(registry['tsfg.bytecode'].schemaHash);
   header.integer(payload.length+80,4);header.put(digest(payload));header.put(payload);
   return header.done();
 }
 export function expectedStringCore(hir) {
-  const q=JSON.stringify,attrs={version:'0.11.0',input_identity:hir.inputIdentity,
+  const q=JSON.stringify,attrs={version:'0.12.0',input_identity:hir.inputIdentity,
     source_hash:hir.source.hash,source_path:hir.source.path,target:schema.target.target,
     triple:schema.target.triple,data_layout:schema.target.llvmDataLayout,bytecode_schema:registry['tsfg.bytecode'].schemaHash};
   const range=r=>'tsfg_source.start = '+r.start+' : i64, tsfg_source.end = '+r.end+' : i64';
