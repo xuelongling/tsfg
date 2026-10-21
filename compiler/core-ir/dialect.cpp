@@ -40,7 +40,7 @@ uint8_t typeCode(mlir::Type type) {
 }
 unsigned width(uint8_t code) {
   switch (code) { case 3: case 6: return 8; case 4: case 7: return 16;
-    case 1: case 8: return 32; default: return 64; }
+    case 1: case 8: case 12: return 32; default: return 64; }
 }
 bool signedInteger(uint8_t code) { return code == 1 || code == 3 || code == 4 || code == 5 || code == 10; }
 bool integer(uint8_t code) { return code >= 1 && code <= 11 && code != 2; }
@@ -146,6 +146,31 @@ TSFG_SCALAR_OPERATION(GtOp, "gt", mlir::OpTrait::NOperands<2>::Impl, Comparison)
 TSFG_SCALAR_OPERATION(GeOp, "ge", mlir::OpTrait::NOperands<2>::Impl, Comparison)
 #undef TSFG_SCALAR_OPERATION
 
+bool conversionTypes(mlir::Operation *operation, unsigned mode) {
+  const auto source = typeCode(operation->getOperand(0).getType());
+  const auto target = typeCode(operation->getResult(0).getType());
+  if (!(integer(source) || floating(source)) || !(integer(target) || floating(target))) return false;
+  if (mode == 41) return integer(source) && integer(target);
+  if (mode == 42) return width(source) == width(target);
+  return true;
+}
+#define TSFG_CONVERSION_OPERATION(Class, Name, Mode) \
+class Class : public mlir::Op<Class, mlir::OpTrait::OneOperand, mlir::OpTrait::OneResult, mlir::OpTrait::ZeroRegions> { \
+public: \
+  using Op::Op; \
+  MLIR_DEFINE_EXPLICIT_INTERNAL_INLINE_TYPE_ID(Class) \
+  static llvm::StringRef getOperationName() { return "tsfg_core." Name; } \
+  static llvm::ArrayRef<llvm::StringRef> getAttributeNames() { return {}; } \
+  mlir::LogicalResult verify() { \
+    if (!conversionTypes(getOperation(), Mode)) return emitOpError("[core-ir-conversion-type] illegal nominal source/result pair"); \
+    return mlir::success(); \
+  } \
+};
+TSFG_CONVERSION_OPERATION(CheckedConversionOp, "convert_checked", 40)
+TSFG_CONVERSION_OPERATION(WrapConversionOp, "convert_wrap", 41)
+TSFG_CONVERSION_OPERATION(ReinterpretOp, "reinterpret", 42)
+#undef TSFG_CONVERSION_OPERATION
+
 class CoreDialect : public mlir::Dialect {
 public:
   MLIR_DEFINE_EXPLICIT_INTERNAL_INLINE_TYPE_ID(CoreDialect)
@@ -154,7 +179,7 @@ public:
       : Dialect(getDialectNamespace(), context, mlir::TypeID::get<CoreDialect>()) {
     addOperations<FuelOp, ConstantOp, AddOp, SubOp, MulOp, DivOp, RemOp, ShlOp,
                   ShrOp, UshrOp, AndOp, OrOp, XorOp, NegOp, NotOp, BoolNotOp,
-                  EqOp, NeOp, LtOp, LeOp, GtOp, GeOp, PosOp, GlobalLoadOp, GlobalStoreOp, AuthorizedHostOp,
+                  EqOp, NeOp, LtOp, LeOp, GtOp, GeOp, PosOp, CheckedConversionOp, WrapConversionOp, ReinterpretOp, GlobalLoadOp, GlobalStoreOp, AuthorizedHostOp,
                   ReferenceAllocOp, ReferenceBaseOp, ReferenceViewOp, ReferenceFieldReadOp,
                   ReferenceFieldWriteOp, ReferenceCallOp, ReferenceIdentityOp>();
     addTypes<IntegerType, ReferenceType>();

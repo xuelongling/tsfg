@@ -39,3 +39,5 @@ export function validScalarBinary(kind, operator, result, left, right, leftExpre
       || precedence[rightExpression.operator] <= precedence[operator])) return false;
   return true;
 }
+
+export { comparisons as scalarComparisons, precedence as scalarPrecedence };

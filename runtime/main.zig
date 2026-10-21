@@ -79,10 +79,11 @@ fn parseRequest(allocator: std.mem.Allocator, module: *const runtime.VerifiedMod
         const expected = runtime.digestText(info.signature_hash);
         if (!std.mem.eql(u8, text, &expected)) { result_out.* = .{ .failed = .{ .code = "r05-request-signature", .category = "request", .function_id = function_id, .source = info.source, .fuel_remaining = request.semanticFuel } }; return false; }
     }
-    var valid = request.arguments.len <= 64 and request.arguments.len == info.parameter_types.len;
+    var valid = request.arguments.len <= 64 and request.arguments.len <= info.presence_masks.len;
     const arguments: []runtime.TypedValue = if (valid) parsed.argument_storage[0..request.arguments.len] else &.{};
     // Preserve the original typed JSON and write only into owned typed slots.
     // String roots are reclaimed even after a later argument fails validation.
+    var physical: usize = 0;
     if (valid) for (request.arguments, 0..) |original, index| {
         const argument = &original;
         if (argument.* != .object or argument.object.count() != 2) {
@@ -101,8 +102,9 @@ fn parseRequest(allocator: std.mem.Allocator, module: *const runtime.VerifiedMod
             valid = false;
             break;
         }
-        const code = info.parameter_types[index];
-        if (std.mem.eql(u8, type_value.string, "bool") and code == 2 and value.* == .bool) arguments[index] = .{ .boolean = value.bool } else if (std.mem.eql(u8, type_value.string, contract.typeName(code)) and contract.integerType(code) and value.* == .string) {
+        const code = info.parameter_types[physical];
+        physical += if (info.presence_masks[index] & 3 != 0) @as(usize, 2) else 1;
+        if (std.mem.eql(u8, type_value.string, "undefined") and value.* == .null) arguments[index] = .{ .undefined_value = {} } else if (std.mem.eql(u8, type_value.string, "null") and value.* == .null) arguments[index] = .{ .null_value = {} } else if (std.mem.eql(u8, type_value.string, "bool") and code == 2 and value.* == .bool) arguments[index] = .{ .boolean = value.bool } else if (std.mem.eql(u8, type_value.string, contract.typeName(code)) and contract.integerType(code) and value.* == .string) {
             var bits: u64 = undefined;
             var buffer: [32]u8 = undefined;
             const canonical = if (contract.signedType(code)) blk: {
@@ -140,6 +142,7 @@ fn parseRequest(allocator: std.mem.Allocator, module: *const runtime.VerifiedMod
         }
         parsed.argument_count += 1;
     };
+    if (valid) valid = @import("request.zig").acceptsArguments(info,arguments);
     if (!valid) { result_out.* = .{ .failed = .{ .code = "r05-request-arguments", .category = "request", .function_id = function_id, .source = info.source, .fuel_remaining = request.semanticFuel } }; return false; }
     const capabilities = &parsed.capabilities;
     var capabilities_valid = request.capabilities.len <= 128;

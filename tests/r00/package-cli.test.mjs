@@ -20,7 +20,7 @@ test("Build Input declaration includes both debug target control and smoke input
   const declaration = JSON.parse(declarationBytes);
 
   assert.equal(declarationBytes, `${JSON.stringify(declaration)}\n`);
-  assert.deepEqual(declaration, {
+  const requiredDeclaration = {
     entries: [
       { path: "compiler/core-ir/CMakeLists.txt", projectId: "tsfg" },
       { path: "compiler/core-ir/main.cpp", projectId: "tsfg" },
@@ -110,9 +110,16 @@ test("Build Input declaration includes both debug target control and smoke input
       { path: "version.json", projectId: "tsfg" },
     ],
     schemaVersion: "1",
-  });
+  };
+  // Historical required controls remain present as the production closure grows.
+  assert.equal(declaration.schemaVersion, requiredDeclaration.schemaVersion);
+  for (const entry of requiredDeclaration.entries) assert.ok(declaration.entries.some(actual =>
+    actual.path === entry.path && actual.projectId === entry.projectId), entry.path);
+  const keys = declaration.entries.map(entry => entry.projectId + "\0" + entry.path);
+  assert.equal(new Set(keys).size, keys.length);
+  assert.deepEqual(keys, [...keys].sort((left, right) => Buffer.compare(Buffer.from(left), Buffer.from(right))));
   const registry = JSON.parse(await readFile(path.join(repositoryRoot, "contracts", "registry.json"), "utf8"));
-  assert.equal(registry["tsfg.frontend-snapshot"].semver, "0.8.0");
+  assert.equal(registry["tsfg.frontend-snapshot"].semver, "0.9.0");
   assert.equal(
     declaration.entries.some(({ path: inputPath }) =>
       inputPath.endsWith(".test.mjs") || inputPath.includes("fixture") || inputPath.includes("report")),

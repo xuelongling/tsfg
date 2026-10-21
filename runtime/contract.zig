@@ -1,8 +1,8 @@
 // SPDX-License-Identifier: MIT
 const std = @import("std");
 
-pub const version: u32 = 10;
-pub const schema_hash_hex = "834206c45eaf6a1c47fa481970869e87c5badfa631af039576cb97e34fcac6ac";
+pub const version: u32 = 11;
+pub const schema_hash_hex = "e6c3d9d46f12f48f53a8ffa88bdc93ba010079db3c5c38bba52325fea8eff516";
 pub const schema_hash = hexDigest(schema_hash_hex);
 pub const max_bytes = 1048576;
 pub const target = "windows-x86_64-msvc";

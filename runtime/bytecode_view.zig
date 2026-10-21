@@ -69,7 +69,7 @@ fn inspectFunction(module: *const VerifiedModule, function: Function, allocator:
     var arena = std.heap.ArenaAllocator.init(allocator);
     defer arena.deinit();
     const temporary = arena.allocator();
-    const View = struct { codeUnits: ?[]const u16 = null, third: ?u16 = null, opcode: []const u8, type: []const u8, register: []const u8, immediate: ?[]const u8 = null, left: ?[]const u8 = null, right: ?[]const u8 = null, target: ?[]const u8 = null, trueTarget: ?[]const u8 = null, falseTarget: ?[]const u8 = null, arguments: ?[]const []const u8 = null, trueArguments: ?[]const []const u8 = null, falseArguments: ?[]const []const u8 = null, event: ?[]const u8 = null, start: []const u8, end: []const u8 };
+    const View = struct { codeUnits: ?[]const u16 = null, third: ?u16 = null, sourceType: ?[]const u8 = null, opcode: []const u8, type: []const u8, register: []const u8, immediate: ?[]const u8 = null, left: ?[]const u8 = null, right: ?[]const u8 = null, target: ?[]const u8 = null, trueTarget: ?[]const u8 = null, falseTarget: ?[]const u8 = null, arguments: ?[]const []const u8 = null, trueArguments: ?[]const []const u8 = null, falseArguments: ?[]const []const u8 = null, event: ?[]const u8 = null, start: []const u8, end: []const u8 };
     const views = try temporary.alloc(View, info.instruction_count);
     for (function.instructions, views) |op, *view| {
         const names = [_][]const u8{ "add", "sub", "mul", "div", "rem", "shl", "shr", "ushr", "and", "or", "xor", "neg", "not", "bool_not", "eq", "ne", "lt", "le", "gt", "ge" };
@@ -94,8 +94,15 @@ fn inspectFunction(module: *const VerifiedModule, function: Function, allocator:
             37 => "string_code_unit",
             38 => "string_slice",
             39 => "string_compare",
+            40 => "convert_checked",
+            41 => "convert_wrap",
+            42 => "reinterpret",
             else => unreachable,
         }, .type = contract.typeName(op.type_code), .register = try std.fmt.allocPrint(temporary, "{d}", .{op.register}), .start = try std.fmt.allocPrint(temporary, "{d}", .{op.source.start}), .end = try std.fmt.allocPrint(temporary, "{d}", .{op.source.end}) };
+        if (op.opcode >= 40 and op.opcode <= 42) {
+            view.left = try std.fmt.allocPrint(temporary, "{d}", .{op.left});
+            view.sourceType = contract.typeName(@intCast(op.right));
+        }
         if (op.opcode == 34) view.codeUnits = op.code_units;
         if (op.opcode == 38) view.third = op.third;
         if (op.opcode == 1 or op.opcode == 3) view.immediate = try std.fmt.allocPrint(temporary, "{d}", .{op.immediate});
@@ -145,7 +152,7 @@ fn inspectFunction(module: *const VerifiedModule, function: Function, allocator:
     for (info.parameter_types, parameter_types) |type_code, *type_name| type_name.* = contract.typeName(type_code);
     return std.json.Stringify.valueAlloc(allocator, .{
         .familyId = "tsfg.bytecode",
-        .semver = "0.10.0",
+        .semver = "0.11.0",
         .schemaHash = "sha256:" ++ contract.schema_hash_hex,
         .target = contract.target,
         .triple = contract.triple,
@@ -154,7 +161,7 @@ fn inspectFunction(module: *const VerifiedModule, function: Function, allocator:
         .i32Align = "4",
         .pointerBits = "64",
         .pointerAlign = "8",
-        .capabilities = "51",
+        .capabilities = "119",
         .totalBytes = try std.fmt.allocPrint(temporary, "{d}", .{decoded(module).bytes.len}),
         .inputIdentity = @as([]const u8, &input_identity),
         .functionId = @as([]const u8, &function_id),
@@ -169,6 +176,8 @@ fn inspectFunction(module: *const VerifiedModule, function: Function, allocator:
         .returnType = contract.typeName(info.return_type),
         .parameterCount = try std.fmt.allocPrint(temporary, "{d}", .{info.parameter_types.len}),
         .parameterTypes = parameter_types,
+        .logicalParameterCount = try std.fmt.allocPrint(temporary, "{d}", .{info.presence_masks.len}),
+        .presenceMasks = info.presence_masks,
         .registerCount = try std.fmt.allocPrint(temporary, "{d}", .{info.register_count}),
         .blockCount = try std.fmt.allocPrint(temporary, "{d}", .{info.block_count}),
         .instructionCount = try std.fmt.allocPrint(temporary, "{d}", .{info.instruction_count}),

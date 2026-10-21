@@ -9,6 +9,7 @@ import { ownClosureSnapshot, matchesClosureSnapshot } from "./closure-frontend.m
 import { readJson as readClosureJson, origin as checkClosureOrigin, capturedDeclarationProfiles } from "./closure-common.mjs";
 import { readFile } from "node:fs/promises";
 import path from "node:path";
+import { admittedInputScope } from "./conversions.mjs";
 import { normalizeClosure } from "./modules.mjs";
 import contractRegistry from "../contracts/registry.json" with { type: "json" };
 import bytecodeSchema from "../contracts/bytecode.schema.json" with { type: "json" };
@@ -67,12 +68,12 @@ export function matchesSnapshotContract(snapshot) {
   try {
     const claim = snapshot?.identityInput;
     const files = new Map(claim.files.map(file => [file.path, file.content]));
-    matchesInput = digest(canonical(claim)) === snapshot.inputIdentity
+    matchesInput = (claim.compilationClosure ? digest(canonical(claim)) === snapshot.inputIdentity : admittedInputScope(claim, snapshot.inputIdentity))
       && files.size === claim.files.length
       && claim.rootFile === snapshot.source?.path
       && files.get(claim.rootFile) === snapshot.source.content
       && claim.declarations.version === snapshot.capability
-      && (!["minimal-integers-v3", "minimal-floats-v4"].includes(snapshot.capability) || canonical(claim.target) === canonical({ ...bytecodeSchema.target, pointerBits: "64" }))
+      && (!["minimal-integers-v3", "minimal-floats-v4", "minimal-conversions-v5"].includes(snapshot.capability) || canonical(claim.target) === canonical({ ...bytecodeSchema.target, pointerBits: "64" }))
       && Array.isArray(snapshot.inputs)
       && new Set(snapshot.inputs.map(file => file.path)).size === snapshot.inputs.length
       && snapshot.inputs.some(file => file.path === claim.rootFile)
@@ -130,7 +131,7 @@ export async function prepareFrontendInput(input, captured = false) {
   const rootFile = ownedInput?.rootFile;
   const files = ownedInput?.files;
   const seen = new Set();
-  const integerInput = ["minimal-integers-v3", "minimal-floats-v4"].includes(ownedInput?.declarations?.version);
+  const integerInput = ["minimal-integers-v3", "minimal-floats-v4", "minimal-conversions-v5"].includes(ownedInput?.declarations?.version);
   const moduleInput = ownedInput?.compilationClosure !== undefined;
   const inputKeys = ["config","declarations","files","rootFile","sourceRoot",...(integerInput ? ["target"] : []),
     ...(moduleInput ? ["compilationClosure",...(ownedInput.hostImports !== undefined ? ["hostImports"] : [])] : [])].sort().join(",");
@@ -154,7 +155,8 @@ export async function prepareFrontendInput(input, captured = false) {
   const declarationFile = declarationVersion === "minimal-bool-v1" ? "minimal-bool-v1.d.ts"
     : declarationVersion === "minimal-scalars-v2" ? "minimal-scalars-v2.d.ts"
     : declarationVersion === "minimal-integers-v3" ? "minimal-integers-v3.d.ts"
-    : declarationVersion === "minimal-floats-v4" ? "minimal-floats-v4.d.ts" : null;
+    : declarationVersion === "minimal-floats-v4" ? "minimal-floats-v4.d.ts"
+    : declarationVersion === "minimal-conversions-v5" ? "minimal-conversions-v5.d.ts" : null;
   if (!declarationFile) return rejectInput(inputIdentity, rootFile);
   const declarationBytes = await readFile(new URL(`./${declarationFile}`, import.meta.url), "utf8");
   const declarationPaths = ownedInput?.declarations?.paths;
@@ -210,6 +212,7 @@ export function materializeFrontendResponse(prepared, response, frontendSource) 
   const symbols = output.symbols.map(symbol => ({ ...symbol, ref: { snapshotId, id: symbol.id } }));
   const expression = value => ({
     ...value,
+    ...(value.conversion ? { conversion: { ...value.conversion, inputIdentity } } : {}),
     ...(value.symbol ? { symbol: { snapshotId, id: value.symbol } } : {}),
     ...(value.target ? { target: { snapshotId, id: value.target } } : {}),
     ...(value.arguments ? { arguments: value.arguments.map(expression) } : {}),
@@ -229,6 +232,7 @@ export function materializeFrontendResponse(prepared, response, frontendSource) 
     ...fn,
     symbol: { snapshotId, id: fn.symbol },
     parameters: fn.parameters.map(parameter => ({ ...parameter, ref: { snapshotId, id: parameter.id } })),
+    ...(fn.parameterInitializers !== undefined ? { parameterInitializers: fn.parameterInitializers.map(value => value ? expression(value) : null) } : {}),
     body: fn.body.map(statement),
   }));
   const nodes = [];
@@ -270,6 +274,7 @@ export function materializeFrontendResponse(prepared, response, frontendSource) 
     recordNode(fn, "function");
     fn.returnTypeRef = typeRef(fn.returnType);
     for (const parameter of fn.parameters) recordNode(parameter, "parameter");
+    for (const value of fn.parameterInitializers ?? []) if (value) recordExpression(value);
     for (const item of fn.body) recordStatement(item);
   }
   const modules = moduleInput && Array.isArray(output.modules) ? output.modules.map(module => ({ ...module,

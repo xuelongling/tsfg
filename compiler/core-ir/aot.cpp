@@ -2,6 +2,7 @@
 #include "aot.h"
 #include "aot-lowering.h"
 #include "aot-float.h"
+#include "aot-conversions.h"
 #include "mlir/Conversion/ArithToLLVM/ArithToLLVM.h"
 #include "mlir/Conversion/ControlFlowToLLVM/ControlFlowToLLVM.h"
 #include "mlir/Conversion/FuncToLLVM/ConvertFuncToLLVM.h"
@@ -55,6 +56,7 @@ mlir::LogicalResult tsfg::emitNativeLLVM(mlir::ModuleOp verifiedCore,
   llvm::LLVMContext llvmContext;
   auto native = mlir::translateModuleToLLVMIR(*lowered, llvmContext, "tsfg-native");
   if (!native) return mlir::failure();
+  materializeNativeConversions(*native);
   materializeNativeFloating(*native);
   const llvm::Triple triple(verifiedCore->getAttrOfType<mlir::StringAttr>("tsfg_core.triple").getValue());
   native->setTargetTriple(triple);

@@ -8,6 +8,7 @@
 #include "dialect.h"
 #include "module.h"
 #include "scalar_ops.h"
+#include "scalar-presence.h"
 #include "mlir/Dialect/ControlFlow/IR/ControlFlowOps.h"
 #include "mlir/IR/Dominance.h"
 #include "llvm/Support/SHA256.h"
@@ -21,7 +22,6 @@
 #include <algorithm>
 #include <iterator>
 #include <utility>
-
 namespace tsfg {
 namespace {
 using bytecode::Bytes;
@@ -33,7 +33,7 @@ using bytecode::integer;
 using bytecode::string;
 using bytecode::appendHash;
 constexpr llvm::StringLiteral bytecodeSchema =
-    "834206c45eaf6a1c47fa481970869e87c5badfa631af039576cb97e34fcac6ac";
+    "e6c3d9d46f12f48f53a8ffa88bdc93ba010079db3c5c38bba52325fea8eff516";
 constexpr llvm::StringLiteral target = "windows-x86_64-msvc";
 constexpr llvm::StringLiteral triple = "x86_64-pc-windows-msvc";
 constexpr llvm::StringLiteral layout =
@@ -55,8 +55,10 @@ bool attributes(mlir::Operation *operation,
     if (!llvm::is_contained(allowed, attr.getName().strref())) return false;
   return true;
 }
-
 uint8_t scalarOpcode(llvm::StringRef name) {
+  if (name == "tsfg_core.convert_checked") return 40;
+  if (name == "tsfg_core.convert_wrap") return 41;
+  if (name == "tsfg_core.reinterpret") return 42;
   if (name == "tsfg_core.pos") return 33;
   static const llvm::StringRef names[] = {"add", "sub", "mul", "div", "rem",
       "shl", "shr", "ushr", "and", "or", "xor", "neg", "not", "bool_not",
@@ -67,9 +69,7 @@ uint8_t scalarOpcode(llvm::StringRef name) {
   return 0;
 }
 } // namespace
-
-// Formal R04 producer: derive register instructions from verified MLIR SSA.
-// No frontend Snapshot or AST is available to this consumer.
+// Formal R04 producer derives verified SSA instructions, without frontend facts.
 static mlir::LogicalResult compileCore(mlir::ModuleOp module, Bytes &packet, bool emptyReference) {
   if (closure::usesCandidate(module)) {
     packet.clear();
@@ -83,7 +83,7 @@ static mlir::LogicalResult compileCore(mlir::ModuleOp module, Bytes &packet, boo
     auto value = module->getAttrOfType<mlir::StringAttr>(key);
     return value ? value.getValue() : llvm::StringRef();
   };
-  if (text("tsfg_core.version") != (emptyReference ? "0.9.0" : "0.10.0")) return reject();
+  if (text("tsfg_core.version") != (emptyReference ? "0.9.0" : "0.11.0")) return reject();
   const bool moduleMode = bool(module->getAttr("tsfg_core.sources"));
   std::vector<llvm::StringRef> moduleAttributes = {"tsfg_core.version", "tsfg_core.input_identity",
       "tsfg_core.source_hash", "tsfg_core.source_path",
@@ -118,7 +118,7 @@ static mlir::LogicalResult compileCore(mlir::ModuleOp module, Bytes &packet, boo
     mlir::func::FuncOp operation;
     Hash id, signature, type;
     uint32_t start, end;
-    std::vector<uint8_t> parameters;
+    std::vector<uint8_t> parameters, presence;
     uint16_t source = 0;
     bool initializer = false;
     std::string name;
@@ -137,15 +137,14 @@ static mlir::LogicalResult compileCore(mlir::ModuleOp module, Bytes &packet, boo
   }
   const size_t functionCount = module.getBody()->getOperations().size();
   if (functionCount == 0 || functionCount > 512) return reject();
-  // Resolve every signature and logical identity before visiting any call.
-  // This admits forward and mutual calls without trusting frontend metadata.
+  // Resolve all signatures and identities before calls, including mutual calls.
   for (mlir::Operation &operation : *module.getBody()) {
     auto fn = llvm::dyn_cast<mlir::func::FuncOp>(&operation);
     std::vector<llvm::StringRef> functionAttributes = {"sym_name", "function_type", "tsfg_core.function_id",
-          "tsfg_core.signature_hash", "tsfg_core.type_id",
+          "tsfg_core.signature_hash", "tsfg_core.type_id", "tsfg_core.parameter_presence",
           "tsfg_core.function_start", "tsfg_core.function_end"};
     if (moduleMode) for (auto name : {"tsfg_core.logical_name", "tsfg_core.source_index", "tsfg_core.initializer"}) functionAttributes.push_back(name);
-    if (!fn || fn.getFunctionType().getNumInputs() > 64 ||
+    if (!fn || fn.getFunctionType().getNumInputs() > 128 ||
         fn.getFunctionType().getNumResults() != 1 || fn.getBody().empty() || !attributes(fn, functionAttributes)) return reject();
     llvm::StringRef name = fn.getSymName();
     if (name.empty() || name.size() > 4096 || name.contains('\0') || !validUTF8(name)) return reject();
@@ -178,10 +177,10 @@ static mlir::LogicalResult compileCore(mlir::ModuleOp module, Bytes &packet, boo
     for (mlir::Type parameter : fn.getFunctionType().getInputs()) {
       auto code = typeCodeOf(parameter);
       if (!code) return reject();
-      if (!function.parameters.empty()) signatureDomain += ',';
-      signatureDomain += tsfg::scalarName(code);
       function.parameters.push_back(code);
     }
+    if (!tsfg::parameterPresence(fn, function.presence)) return reject();
+    tsfg::appendPresenceSignature(signatureDomain, fn.getFunctionType(), function.presence);
     typeDomain += tsfg::scalarName(returnCode);
     signatureDomain += ")->";
     signatureDomain += tsfg::scalarName(returnCode);
@@ -251,7 +250,6 @@ static mlir::LogicalResult compileCore(mlir::ModuleOp module, Bytes &packet, boo
         }
     }
     if (registers.empty() || instructionCount > 8192) return reject();
-
     // Reachability and fuel are graph properties, independent of block order.
     // Removing all condition-event blocks must leave an acyclic graph: merely
     // finding one fuel somewhere in an SCC would admit a cycle that bypasses it.
@@ -305,7 +303,6 @@ static mlir::LogicalResult compileCore(mlir::ModuleOp module, Bytes &packet, boo
       for (auto next : edges[pending[i]])
         if (!conditionEvent[next] && --incoming[next] == 0) pending.push_back(next);
     if (pending.size() != uncharged) return reject();
-
     Bytes table;
     for (mlir::Block &block : fn.getBody()) {
       integer(table, block.getNumArguments(), 2);
@@ -410,6 +407,7 @@ static mlir::LogicalResult compileCore(mlir::ModuleOp module, Bytes &packet, boo
                 argument.getType() != callee.operation.getFunctionType().getInput(i)) return reject();
             integer(edgeArguments, registers.lookup(argument), 2);
           }
+          if (!tsfg::knownPresenceCarriers(operation, callee.presence)) return reject();
           opcode = 27; immediate = static_cast<uint32_t>(destination);
         } else if (operation.getName().getDialectNamespace() == "tsfg_string") {
           if (!strings::encodeFormalOperation(operation, registers, opcode, immediate, edgeArguments, stringLiteralUnits)) return reject();
@@ -417,7 +415,10 @@ static mlir::LogicalResult compileCore(mlir::ModuleOp module, Bytes &packet, boo
           if (!attributes(&operation, {"tsfg_source.start", "tsfg_source.end"}) ||
               !registers.count(operation.getOperand(0))) return reject();
           immediate = registers.lookup(operation.getOperand(0));
-          if (operation.getNumOperands() == 2) {
+          if (opcode >= 40) {
+            if (emptyReference) return reject();
+            immediate |= static_cast<uint32_t>(tsfg::typeCode(operation.getOperand(0).getType())) << 16;
+          } else if (operation.getNumOperands() == 2) {
             if (!registers.count(operation.getOperand(1))) return reject();
             immediate |= static_cast<uint32_t>(registers.lookup(operation.getOperand(1))) << 16;
           }
@@ -436,6 +437,8 @@ static mlir::LogicalResult compileCore(mlir::ModuleOp module, Bytes &packet, boo
     integer(functionPayload, returnCode, 1);
     integer(functionPayload, function.parameters.size(), 1);
     for (auto parameter : function.parameters) integer(functionPayload, parameter, 1);
+    integer(functionPayload, function.presence.size(), 1);
+    for (auto mask : function.presence) integer(functionPayload, mask, 1);
     integer(functionPayload, static_cast<uint32_t>(registers.size()), 2);
     integer(functionPayload, static_cast<uint32_t>(blockCount), 2);
     integer(functionPayload, static_cast<uint32_t>(instructionCount), 2);
@@ -456,7 +459,7 @@ static mlir::LogicalResult compileCore(mlir::ModuleOp module, Bytes &packet, boo
   string(payload, target); string(payload, triple); string(payload, layout);
   integer(payload, static_cast<uint32_t>(size), 2);
   integer(payload, static_cast<uint32_t>(align), 2);
-  integer(payload, pointerBits, 2); integer(payload, pointerAlign, 2); integer(payload, 51, 4);
+  integer(payload, pointerBits, 2); integer(payload, pointerAlign, 2); integer(payload, emptyReference ? 51 : 119, 4);
   appendHash(payload, input); appendHash(payload, source);
   string(payload, path); integer(payload, sourceLength, 4);
   integer(payload, moduleMode, 1);
@@ -480,7 +483,7 @@ static mlir::LogicalResult compileCore(mlir::ModuleOp module, Bytes &packet, boo
   integer(payload, functions.size(), 2);
   payload.insert(payload.end(), functionPayload.begin(), functionPayload.end());
   packet = Bytes{'T','S','F','G','T','B','C','0'};
-  integer(packet, 10, 4);
+  integer(packet, 11, 4);
   Hash schema; if (!decodeHash(("sha256:" + bytecodeSchema).str(), schema)) return reject();
   appendHash(packet, schema); integer(packet, static_cast<uint32_t>(80 + payload.size()), 4);
   appendHash(packet, llvm::SHA256::hash(payload));
@@ -488,9 +491,7 @@ static mlir::LogicalResult compileCore(mlir::ModuleOp module, Bytes &packet, boo
   if (packet.size() > 1048576) return reject();
   return mlir::success();
 }
-mlir::LogicalResult verifiedBytecode(mlir::ModuleOp module, Bytes &packet) {
-  return compileCore(module, packet, false);
-}
+mlir::LogicalResult verifiedBytecode(mlir::ModuleOp module, Bytes &packet) { return compileCore(module, packet, false); }
 mlir::LogicalResult verifyEmptyReferenceCore(mlir::ModuleOp module) {
   ReferenceMetadata metadata;
   if (!module->hasAttr("tsfg_core.reference") || mlir::failed(verifyReferenceMetadata(module, metadata)) || !metadata.classes.empty()) return mlir::failure();

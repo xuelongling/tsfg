@@ -16,7 +16,7 @@ const canonical = value => Array.isArray(value)
   : value !== null && typeof value === "object"
     ? `{${Object.keys(value).sort().map(key => `${JSON.stringify(key)}:${canonical(value[key])}`).join(",")}}`
     : JSON.stringify(value);
-const currentBytecodeHash = "sha256:834206c45eaf6a1c47fa481970869e87c5badfa631af039576cb97e34fcac6ac";
+const currentBytecodeHash = "sha256:e6c3d9d46f12f48f53a8ffa88bdc93ba010079db3c5c38bba52325fea8eff516";
 const previousBytecodeHash = "sha256:3dea6ce5de996dfa3e7141cced985243ea74ac9bb80f03636c6694343118f2a6";
 
 test("registered global operations preserve scalars and add nominal managed String", async () => {
@@ -25,8 +25,8 @@ test("registered global operations preserve scalars and add nominal managed Stri
   assert.equal(schema.typeCodes.string, "14");
   assert.deepEqual(schema.instructions.global_load.record[1], ["type", "u8:1..14"]);
   assert.deepEqual(schema.instructions.global_store.record[1], ["type", "u8:1..14"]);
-  assert.equal(schema.semver, "0.10.0");
-  assert.deepEqual(schema.header[1], ["version", "u32:10"]);
+  assert.equal(schema.semver, "0.11.0");
+  assert.deepEqual(schema.header[1], ["version", "u32:11"]);
 });
 
 test("registry verifies all current schema bytes and keeps old identities distinct", async () => {
@@ -52,11 +52,11 @@ test("R00 current Contract Set fixture is the canonical registered mapping", asy
   assert.equal(currentContractSetId, `sha256:${digest(currentContractSetCanonical)}`);
 });
 
-test("independent Zig fixture has the current v10 header and explicit single-source mode byte", async () => {
+test("independent Zig fixture has the current v11 header and explicit single-source mode byte", async () => {
   const source = await read("runtime/fixture.zig");
   const packet = Buffer.from([...source.matchAll(/0x([a-f0-9]{2})/g)].map(match => parseInt(match[1], 16)));
   assert.equal(packet.subarray(0, 8).toString(), "TSFGTBC0");
-  assert.equal(packet.readUInt32LE(8), 10);
+  assert.equal(packet.readUInt32LE(8), 11);
   assert.equal(packet.subarray(12, 44).toString("hex"), currentBytecodeHash.slice(7));
   assert.equal(packet.readUInt32LE(44), packet.length);
   assert.equal(packet.subarray(48, 80).toString("hex"), digest(packet.subarray(80)));
@@ -71,7 +71,7 @@ test("independent Zig fixture has the current v10 header and explicit single-sou
   assert.equal(string(), "e-m:w-p270:32:32-p271:32:32-p272:64:64-i64:64-i128:128-f80:128-n8:16:32:64-S128");
   assert.deepEqual([0, 2, 4, 6].map(at => packet.readUInt16LE(offset + at)), [4, 4, 64, 8]);
   offset += 8;
-  assert.equal(packet.readUInt32LE(offset), 51); offset += 4 + 64;
+  assert.equal(packet.readUInt32LE(offset), 119); offset += 4 + 64;
   assert.equal(string(), "/fixture.ts");
   assert.equal(packet.readUInt32LE(offset), 46); offset += 4;
   assert.equal(packet[offset++], 0, "moduleMode0 precedes even a single-source function table");

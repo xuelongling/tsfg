@@ -19,6 +19,7 @@ import { moduleIdentity, globalIdentity, defaultBindingIdentity, compilationClos
 import { canonical, functionIdentity, signatureHash, i32TypeId, scalarTypeIds, sha256 } from './identity.mjs';
 import registry from '../contracts/registry.json' with {type:'json'};
 import bytecodeSchema from '../contracts/bytecode.schema.json' with {type:'json'};
+import { presenceIdentity, presenceSignature } from "./presence.mjs";
 import { floatNames } from './float.mjs';
 import { emitScalarCore } from './scalar-core-emitter.mjs';
 import { emitReferenceCore } from './reference-core-emitter.mjs';
@@ -72,7 +73,7 @@ export function buildHir(snapshot, factsContext = undefined, callPublicationCont
   const moduleFacts=snapshot.modules?validateModuleFacts(snapshot):undefined;
   if (!moduleFacts && snapshot.functions.length < 1 || snapshot.functions.length > 128 || snapshot.functions.some(fn => fn.parameters.length > 64
       || !Object.hasOwn(types, resolveType(snapshot, fn.returnTypeRef).scalar)
-      || snapshot.capability !== "minimal-floats-v4" && (floatNames.includes(fn.returnType) || fn.parameters.some(p => floatNames.includes(p.type)))
+      || !["minimal-floats-v4", "minimal-conversions-v5"].includes(snapshot.capability) && (floatNames.includes(fn.returnType) || fn.parameters.some(p => floatNames.includes(p.type)))
       || fn.parameters.some(parameter => !types[parameter.type]) || fn.body.length < 1 || fn.body.length > 128)) {
     const result = { status: "error", diagnostics: [{ code: "r03-d-capability", ruleId: "r01-ts-baseline", phase: "hir",
       message: "current execution capability requires nominal integer/bool functions with direct calls, locals, structured control and returns",
@@ -88,10 +89,10 @@ export function buildHir(snapshot, factsContext = undefined, callPublicationCont
     capabilityId:host.capabilityId,signatureHash:signatureHash(host.returnType,host.parameterTypes),parameterTypes:host.parameterTypes.map(type=>types[type]),returnType:types[host.returnType],range:host.range}));
   const hostBySymbol=new Map((snapshot.hostImports??[]).map((host,index)=>[host.symbol,hosts[index]]));
   const functions = new Map(snapshot.functions.map(fn => [fn.symbol.id, {
-    id: functionIdentity(moduleFacts?fn.sourcePath:snapshot.source.path, fn.name, fn.returnType, fn.parameters.map(p => p.type)), name: fn.name,
-    signatureHash: signatureHash(fn.returnType, fn.parameters.map(p => p.type)),
+    id: presenceIdentity(moduleFacts?fn.sourcePath:snapshot.source.path, fn.name, fn.returnType, fn.parameters.map(p=>({...p,type:types[p.type]}))), name: fn.name,
+    signatureHash: presenceSignature(fn.returnType, fn.parameters.map(p=>({...p,type:types[p.type]}))),
     returnType: { kind: "scalar", name: fn.returnType, id: types[fn.returnType] },
-    parameters: fn.parameters.map((p,index) => ({id:`p${index}`,name:p.name,type:types[p.type],writable:true,range:p.range})),
+    parameters: fn.parameters.map((p,index) => ({id:`p${index}`,name:p.name,type:types[p.type],writable:true,range:p.range,...(p.presence ? {presence:structuredClone(p.presence)} : {})})),
     range: fn.range,
     ...(moduleFacts?{sourcePath:fn.sourcePath,kind:'source'}:{}),
   }]));
@@ -108,7 +109,7 @@ export function buildHir(snapshot, factsContext = undefined, callPublicationCont
     const type = types[resolveType(snapshot, value.typeRef).scalar];
     if (!type) throw new TypeError("unsupported expression type");
     let projectedRange = value.range;
-    if (value.kind === "call" && parentRange && value.range.start < parentRange.start
+    if (["call", "conversion"].includes(value.kind) && parentRange && value.range.start < parentRange.start
         && sourceTrivia(source.content, value.range.start, parentRange.start).trim() === "") {
       projectedRange = { ...value.range, start: parentRange.start };
     }
@@ -118,8 +119,9 @@ export function buildHir(snapshot, factsContext = undefined, callPublicationCont
       const global=globalBySymbol.get(symbol.id);
       if(global)return {kind:'global',...common,global:global.id,name:value.name};
       if (!binding) throw new TypeError("local reference has no preceding owned declaration");
-      return { kind: "reference", ...common, binding: binding.id };
+      return { kind: "reference", ...common, binding: binding.id, ...(value.presenceFlow ? {presenceFlow:structuredClone(value.presenceFlow)} : {}) };
     }
+    if (value.kind === "conversion") return { kind:"conversion", ...common, origin:structuredClone(value.conversion), operand:project(value.operand,common.range) };
     if (value.kind === "call") {
       const symbol=resolveSymbol(snapshot,value.target),target = functions.get(symbol.id)??hostBySymbol.get(symbol.id);
       if (!target) throw new TypeError("call target is outside owned function closure");
@@ -129,6 +131,9 @@ export function buildHir(snapshot, factsContext = undefined, callPublicationCont
     if (value.kind === "integer") return { kind: "constant", ...common, decimal: value.literal.decimal, token: value.literal.token };
     if (value.kind === "floating") return { kind: "floating", ...common, bits: value.float.bits, token: value.float.token };
     if (value.kind === "boolean") return { kind: "boolean", ...common, value: value.boolean };
+    if (value.kind === "absence") return {kind:"absence", ...common, absence:value.absence};
+    if (value.kind === "write" || value.kind === "presenceTest") return {kind:value.kind,...common,operator:value.operator,left:project(value.left,common.range),right:project(value.right,common.range),...(value.presenceFlow ? {presenceFlow:structuredClone(value.presenceFlow)} : {})};
+    if (value.kind === "update") return {kind:"update",...common,operator:value.operator,prefix:value.prefix,operand:project(value.operand,common.range)};
     if (value.kind === "group") return { kind: "group", ...common, operand: project(value.operand, common.range) };
     if (value.kind === "unary" && ["+", "-", "~", "!"].includes(value.operator))
       return { kind: "unary", ...common, operator: value.operator, operand: project(value.operand, common.range) };
@@ -144,12 +149,12 @@ export function buildHir(snapshot, factsContext = undefined, callPublicationCont
       if(!global||fn.kind!=='module-initialization')throw new TypeError('invalid module initialization ownership');
       return {kind:'initialize',global:global.id,range:item.range,value:project(item.initializer,item.range)};
     }
-    if(item.kind==='expression')return {kind:'expression',range:item.range,value:project(item.expression,item.range)};
+    if(item.kind==='expression')return {kind:moduleFacts?'expression':'evaluate',range:item.range,value:project(item.expression,item.range)};
     if (item.kind === "variable") {
       const symbol = resolveSymbol(snapshot, item.symbol.ref), type = types[symbol.type];
       if (symbol.kind !== "local" || !type) throw new TypeError("unsupported local type");
       const initializer = item.initializer ? project(item.initializer, item.range) : null;
-      const binding = { id: `l${bindings.size - fn.parameters.length}`, name: symbol.name, type, writable: symbol.writable, range: symbol.range };
+      const binding = { id: `l${bindings.size - fn.parameters.length}`, name: symbol.name, type, writable: symbol.writable, range: symbol.range, ...(symbol.presence ? {presence:structuredClone(symbol.presence)} : {}) };
       bindings.set(symbol.id, binding);
       return { kind: "local", range: item.range, binding, initializer };
     }
@@ -166,25 +171,27 @@ export function buildHir(snapshot, factsContext = undefined, callPublicationCont
       primary: { sourceId: snapshot.source.path, ...(expression?.range ?? fn.range) } }] };
       return /** @type {typeof result & {status:"error",hir?:undefined}} */ (result);
   }
-  projectedFunctions.push({...descriptor,body:projected});
+  projectedFunctions.push({...descriptor,body:projected, ...(!moduleFacts || fn.parameterInitializers !== undefined ? {parameterInitializers:(fn.parameterInitializers ?? fn.parameters.map(()=>null)).map(value=>value ? project(value,fn.range) : null)} : {})});
+  }
+  let moduleState = {};
+  if(moduleFacts) {
+    const ownedId=id=>functions.get(id)?.id??globalBySymbol.get(id)?.id??hostBySymbol.get(id)?.id;
+    const sources=[...moduleFacts.sources.values()].map(source=>({...source,hash:sha256(source.content)}));
+    const modules=snapshot.modules.map(module=>({id:moduleIdentity(module.sourcePath),sourcePath:module.sourcePath,
+      dependencies:[...new Set(module.imports.map(imp=>imp.sourcePath))],initializer:initializerIdentity(module.sourcePath,sha256(moduleFacts.sources.get(module.sourcePath).content)),
+      exports:module.exports.map(binding=>({name:binding.name,target:ownedId(binding.target)})),
+      bindings:[...moduleFacts.views.get(module.sourcePath)].map(([name,id])=>({name,target:ownedId(id)}))}));
+    try{moduleState={sources,globals,hostImports:hosts,modules,closure:compilationClosure({modules,functions:projectedFunctions,globals,configuration:snapshot.compilationClosure})};}
+    catch(error){const result = {status:'error',diagnostics:[{code:error.code??'r03-d-closure-dependency',ruleId:error.ruleId??'r01-compilation-closure',phase:'hir',message:error.message,primary:error.primary}]};
+      return /** @type {typeof result & {status:"error",hir?:undefined}} */ (result);}
   }
   const hir = {
     contractVersion: contract().semver, schemaHash: contract().schemaHash, inputIdentity: snapshot.inputIdentity,
     source: { ...snapshot.source, hash: sha256(snapshot.source.content) }, target: bytecodeSchema.target,
     functions: projectedFunctions,
+    ...(!moduleFacts && snapshot.capability === "minimal-conversions-v5" ? { inputScope: structuredClone(snapshot.identityInput) } : {}),
+    ...moduleState,
   };
-  if(moduleFacts) {
-    const ownedId=id=>functions.get(id)?.id??globalBySymbol.get(id)?.id??hostBySymbol.get(id)?.id;
-    hir.sources=[...moduleFacts.sources.values()].map(source=>({...source,hash:sha256(source.content)}));
-    hir.globals=globals;hir.hostImports=hosts;
-    hir.modules=snapshot.modules.map(module=>({id:moduleIdentity(module.sourcePath),sourcePath:module.sourcePath,
-      dependencies:[...new Set(module.imports.map(imp=>imp.sourcePath))],initializer:initializerIdentity(module.sourcePath,sha256(moduleFacts.sources.get(module.sourcePath).content)),
-      exports:module.exports.map(binding=>({name:binding.name,target:ownedId(binding.target)})),
-      bindings:[...moduleFacts.views.get(module.sourcePath)].map(([name,id])=>({name,target:ownedId(id)}))}));
-    try{hir.closure=compilationClosure({modules:hir.modules,functions:projectedFunctions,globals,configuration:snapshot.compilationClosure});}
-    catch(error){const result = {status:'error',diagnostics:[{code:error.code??'r03-d-closure-dependency',ruleId:error.ruleId??'r01-compilation-closure',phase:'hir',message:error.message,primary:error.primary}]};
-      return /** @type {typeof result & {status:"error",hir?:undefined}} */ (result);}
-  }
   try { return { status: "ok", hir: verifyHir(hir) }; }
   catch (error) {
     if (error instanceof KernelHostSemanticError) {

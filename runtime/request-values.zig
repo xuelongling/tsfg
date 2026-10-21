@@ -5,6 +5,7 @@ const bytecode = @import("bytecode.zig");
 const FunctionId = bytecode.FunctionId;
 const Source = bytecode.Source;
 pub const TypedValue = union(enum) {
+    undefined_value: void, null_value: void,
     i32: i32, boolean: bool, i8: i8, i16: i16, i64: i64,
     u8: u8, u16: u16, u32: u32, u64: u64, isize: isize, usize: usize,
     f32_bits: u32, f64_bits: u64,
@@ -13,6 +14,7 @@ pub const TypedValue = union(enum) {
         // Fixed decisions preserve the nominal wire codes while avoiding an
         // unqualified Debug jump table in request preflight's machine graph.
         const tag = std.meta.activeTag(self);
+        if (tag == .undefined_value or tag == .null_value) return 0;
         if (tag == .i32) return 1;
         if (tag == .boolean) return 2;
         if (tag == .i8) return 3;
@@ -29,8 +31,15 @@ pub const TypedValue = union(enum) {
         if (tag == .string) return 14;
         unreachable;
     }
+    pub fn presenceState(self: TypedValue) u8 {
+        const tag = std.meta.activeTag(self);
+        if (tag == .undefined_value) return 1;
+        if (tag == .null_value) return 2;
+        return 0;
+    }
     pub fn bits(self: TypedValue) u64 {
         const tag = std.meta.activeTag(self);
+        if (tag == .undefined_value or tag == .null_value) return 0;
         if (tag == .i32) return @as(u32, @bitCast(self.i32));
         if (tag == .boolean) return @intFromBool(self.boolean);
         if (tag == .i8) return @as(u8, @bitCast(self.i8));

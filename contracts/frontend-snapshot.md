@@ -41,3 +41,10 @@ edges are erased from runtime initialization, while value bindings preserve
 resolved symbol identity. Snapshot-local IDs are validated and copied into HIR
 identities at the boundary. Neither source spellings nor display names confer
 generated-binding or host authorization.
+
+The current exact owned Snapshot0.9.0 admits minimal-conversions-v5 and retains
+ordinary write/update, parameterInitializers and finite presence/flow facts. Facts
+continue to require the actual owned Source origin; this registered adapter version
+does not adopt a different Source fork, executable or aggregate publication. The
+current Source fork already contains the conversion/default producer; execution
+qualification remains bound to its separate intake and current artefacts.

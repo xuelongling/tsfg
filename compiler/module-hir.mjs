@@ -17,6 +17,9 @@ import { initializerIdentity } from './modules.mjs';
 import { canonical, functionIdentity, signatureHash, i32TypeId, boolTypeId, scalarTypeIds, scalarName, integerNames, integerRange, own, sha256 } from './identity.mjs';
 import registry from '../contracts/registry.json' with {type:'json'};
 import bytecodeSchema from '../contracts/bytecode.schema.json' with {type:'json'};
+import { conversionEntries, verifyConversionOrigin, conversionCallSpelling, admittedConversionScope, admittedInputScope, completeFunctionSource } from "./conversions.mjs";
+import { verifyScalarFunctionBody } from "./scalar-hir-body.mjs";
+import { presenceIdentity, presenceSignature, presenceMask, validParameterPresence } from "./presence.mjs";
 import { floatNames, floatBits } from './float.mjs';
 
 // This module owns complete cold HIR validation before any pruning or lowering.
@@ -37,7 +40,7 @@ function identifierToken(source, anchor) {
   catch { return undefined; }
 }
 function bindingFact(binding, parent, source) {
-  return exactKeys(binding, ["id", "name", "type", "writable", "range"])
+  return exactKeys(binding, ["id", "name", "type", "writable", "range", ...(binding?.presence ? ["presence"] : [])])
     && validText(binding.name) && Object.values(types).includes(binding.type)
     && typeof binding.writable === "boolean" && range(binding.range, parent)
     && identifierToken(source, binding.range) === binding.name;
@@ -80,6 +83,14 @@ function verifyExpression(value, parent, source, fail, budget, locals, visibleBi
         primary: { sourceId: budget.sourcePath, ...value.range } });
       throw error;
     }
+  } else if (value.kind === "conversion") {
+    const entry = conversionEntries.get(value.origin?.entryId);
+    if (!exactKeys(value, ["kind", "type", "range", "origin", "operand"]) || !verifyConversionOrigin(value.origin, budget.inputIdentity)
+        || !admittedConversionScope(budget.inputScope,budget.inputIdentity) || value.origin.declarationPath !== budget.inputScope.declarations.paths[0]
+        || value.type !== types[entry.to] || value.operand?.type !== types[entry.from]
+        || !budget.completeSource || visibleBindings.has(entry.name) || [...budget.functions.values()].some(fn => fn.name === entry.name)
+        || !conversionCallSpelling(source, value.range, value.operand.range, entry)) fail();
+    verifyExpression(value.operand, value.range, source, fail, budget, locals, visibleBindings);
   } else if (value.kind === "call" || value.kind === "host") {
     const host=value.kind==='host';
     const target = host ? budget.modules?.hosts.get(value.target) : budget.functions.get(value.target);
@@ -204,8 +215,10 @@ function verifyWholeHir(hir, factsContext = undefined, selectedCalls = false) {
   if (hir?.format?.family === 'tsfg.closure-hir-candidate') return verifyClosureHir(hir);
   const fail = () => { throw new TypeError("r03-hir-invalid: owned HIR identity, type, source or structure differs"); };
   const moduleMode=hir?.modules!==undefined;
-  if (!exactKeys(hir, ["contractVersion", "schemaHash", "inputIdentity", "source", "target", "functions",...(moduleMode?['sources','modules','globals','hostImports','closure']:[])])
+  if (!exactKeys(hir, ["contractVersion", "schemaHash", "inputIdentity", "source", "target", "functions",...(hir?.inputScope !== undefined ? ["inputScope"] : []),...(moduleMode?['sources','modules','globals','hostImports','closure']:[])])
       || hir.contractVersion !== contract()?.semver || hir.schemaHash !== contract()?.schemaHash
+      || hir.inputScope !== undefined && (!admittedInputScope(hir.inputScope,hir.inputIdentity)
+        || hir.inputScope.rootFile !== hir.source?.path || hir.inputScope.files.find(file=>file.path===hir.source.path)?.content !== hir.source.content)
       || !hash(hir.inputIdentity) || canonical(hir.target) !== canonical(bytecodeSchema.target)
       || !exactKeys(hir.source, ["path", "content", "hash"])
       || !validText(hir.source.path) || !hir.source.path.startsWith("/")
@@ -230,12 +243,15 @@ function verifyWholeHir(hir, factsContext = undefined, selectedCalls = false) {
   const parameterTypesByFunction = new Map();
   for (const fn of hir.functions) {
   if (!Array.isArray(fn.parameters)) fail();
+  if (fn.parameterInitializers !== undefined && (!Array.isArray(fn.parameterInitializers)
+      || fn.parameterInitializers.length !== fn.parameters.length
+      || moduleMode && fn.parameterInitializers.some(value=>value!==null))) fail();
   const parameterNames = fn.parameters.map(parameter => Object.entries(types).find(([,id]) => id === parameter?.type)?.[0]);
   const sourcePath=moduleMode?fn.sourcePath:hir.source.path,source=moduleFacts?.sources.get(sourcePath)??hir.source;
-  if (!exactKeys(fn, ["id", "name", "signatureHash", "returnType", "parameters", "range", "body",...(moduleMode?['sourcePath','kind']:[])])
+  if (!exactKeys(fn, ["id", "name", "signatureHash", "returnType", "parameters", "range", "body",...(fn.parameterInitializers !== undefined ? ["parameterInitializers"] : []),...(moduleMode?['sourcePath','kind']:[])])
       || !validText(fn.name) || !Object.hasOwn(types, fn.returnType?.name)
-      || fn.id !== (fn.kind==='module-initialization'?initializerIdentity(sourcePath,source.hash):functionIdentity(sourcePath, fn.name, fn.returnType.name, parameterNames))
-      || fn.signatureHash !== signatureHash(fn.returnType.name, parameterNames)
+      || fn.id !== (fn.kind==='module-initialization'?initializerIdentity(sourcePath,source.hash):presenceIdentity(sourcePath, fn.name, fn.returnType.name, fn.parameters))
+      || fn.signatureHash !== presenceSignature(fn.returnType.name, fn.parameters)
       || canonical(fn.returnType) !== canonical({ kind: "scalar", name: fn.returnType.name, id: types[fn.returnType.name] })
       || !Array.isArray(fn.parameters) || fn.parameters.length > 64 || parameterNames.some(name => !name)
       || fn.kind!=='module-initialization' && !range(fn.range, { start: 0, end: source.content.length })
@@ -246,6 +262,10 @@ function verifyWholeHir(hir, factsContext = undefined, selectedCalls = false) {
   // have been validated, including functions that are never executed.
   for (const fn of hir.functions) {
   const parameterNames = parameterTypesByFunction.get(fn.id);
+  if (!moduleMode && fn.parameterInitializers !== undefined) {
+    if (!Array.isArray(fn.parameterInitializers) || fn.parameterInitializers.length !== fn.parameters.length) fail();
+    verifyScalarFunctionBody(hir,fn,functions,parameterNames,fail); continue;
+  }
   const sourcePath=moduleMode?fn.sourcePath:hir.source.path;
   const source = (moduleFacts?.sources.get(sourcePath)??hir.source).content, declarations = new Map(), ids = new Set(), initializedGlobals=new Set();
   let declarationIndex = 0, remainingStatements = 4096;
@@ -263,7 +283,8 @@ function verifyWholeHir(hir, factsContext = undefined, selectedCalls = false) {
     }
   };
   collect(fn.body);
-  const budget = { remaining: 4096, sourcePath, declarations, functions, modules:moduleFacts };
+  const budget = { remaining: 4096, sourcePath, declarations, functions, modules:moduleFacts,
+    inputIdentity:hir.inputIdentity, inputScope:hir.inputScope, completeSource:!moduleMode && completeFunctionSource(source, hir.functions, identifierName) };
   const clone = locals => new Map([...locals].map(([id, local]) => [id, { ...local }]));
   const body = (statements, parent, locals, frame = "plain", outerBindings = new Map()) => {
     // Lexical visibility starts at scope entry, including each declaration's
@@ -423,7 +444,7 @@ function verifyWholeHir(hir, factsContext = undefined, selectedCalls = false) {
   let parameterEnd = fn.range.start;
   let parameterStart = fn.range.start + parsedHeader.indices[2][0];
   for (const [index, parameter] of fn.parameters.entries()) {
-    if (!bindingFact(parameter, fn.range, source) || parameter.id !== `p${index}` || !parameter.writable
+    if (!bindingFact(parameter, fn.range, source) || parameter.presence && (presenceMask(parameter.presence) !== 0 || !validParameterPresence(parameter.presence,parameter,null,source,fn.range)) || parameter.id !== `p${index}` || !parameter.writable
         || visible.has(parameter.name) || parameter.range.start < parameterEnd) fail();
     const parts=parameterTokens[index].split(":");
     if(parts.length !== 2 || identifierToken(parts[0],{start:0,end:parts[0].length}) !== parameter.name

@@ -1,4 +1,5 @@
 // SPDX-License-Identifier: MIT
+import { presenceEncoding } from "./presence.mjs";
 import { emitCoreSsaFunction, coreQuote as quote } from './core-ssa-emitter.mjs';
 
 // Internal emitter seam. Each public lowering entry validates its own owned
@@ -48,6 +49,7 @@ export function emitScalarCore(view) {
   const core = emitCoreSsaFunction(fn, { verified, emittedGlobals, emittedHosts, functionSymbol });
   const type = core.resultType, text = core.blocksText, coreTypeFor = core.coreType;
   const functionAttrs = `tsfg_core.function_id = ${quote(fn.id)}, tsfg_core.signature_hash = ${quote(fn.signatureHash)}, tsfg_core.type_id = ${quote(fn.returnType.id)}, tsfg_core.function_start = ${fn.range.start} : i64, tsfg_core.function_end = ${fn.range.end} : i64`
+    +(fn.parameterInitializers !== undefined ? `, tsfg_core.parameter_presence = ${quote(presenceEncoding(fn.parameters))}` : "")
     +(moduleMode?`, tsfg_core.logical_name = ${quote(fn.name)}, tsfg_core.source_index = ${sourceIndex(fn.sourcePath)} : i64, tsfg_core.initializer = ${fn.kind==='module-initialization'?'true':'false'}`:'');
   return `  func.func @${quote(functionSymbol(fn))}(${core.entryParameters.map(p => `${p.name}: ${coreTypeFor(p.type)}`).join(", ")}) -> ${type} attributes {${functionAttrs}} {\n${text}\n  }`;
   };

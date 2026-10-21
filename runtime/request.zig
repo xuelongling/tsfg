@@ -38,3 +38,23 @@ pub fn storeManagedReference(out: *RequestOutcome, id: *const FunctionId, source
 pub fn storeReturned(out: *RequestOutcome, value: TypedValue, id: *const FunctionId, source: *const Source) void {
     out.* = .{ .returned = .{ .result = value, .function_id = id.*, .source = source.* } };
 }
+
+/// Check logical caller values before any guest activation or state mutation.
+/// Omitted optional parameters are canonical undefined, never host defaults.
+pub fn acceptsArguments(info: *const bytecode.ModuleInfo, arguments: []const TypedValue) bool {
+    if (arguments.len > info.presence_masks.len) return false;
+    var physical: usize = 0;
+    for (info.presence_masks, 0..) |presence, index| {
+        if (index >= arguments.len) {
+            if (presence & 4 == 0) return false;
+        } else {
+            const argument = arguments[index];
+            const state = argument.presenceState();
+            if (state == 0 and argument.typeCode() != info.parameter_types[physical]
+                or state == 1 and presence & 1 == 0 or state == 2 and presence & 2 == 0) return false;
+            if (argument == .string) _ = argument.string.owner.heap.stringLength(argument.string.handle) catch return false;
+        }
+        physical += if (presence & 3 != 0) @as(usize, 2) else 1;
+    }
+    return true;
+}

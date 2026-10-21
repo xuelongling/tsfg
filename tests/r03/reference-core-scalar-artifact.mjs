@@ -30,7 +30,8 @@ const attr = value => typeof value === 'string' ? quote(value) : typeof value ==
   : '{' + Object.keys(value).sort().map(key => key + ' = ' + attr(value[key])).join(', ') + '}';
 // Keep the independent private profile's original metadata. This fixture does
 // not make old unmarked Core eligible for the formal producer.
-const privateScalar = scalar.replace('tsfg_core.version = "0.10.0"', 'tsfg_core.version = "0.9.0"')
+assert.match(scalar, /tsfg_core.version = "0.11.0"/);
+const privateScalar = scalar.replace('tsfg_core.version = "0.11.0"', 'tsfg_core.version = "0.9.0"')
   .replace(registry['tsfg.bytecode'].schemaHash, 'sha256:3dea6ce5de996dfa3e7141cced985243ea74ac9bb80f03636c6694343118f2a6');
 const boundary = privateScalar.indexOf('} {');
 assert.ok(boundary >= 0);

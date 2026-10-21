@@ -1,6 +1,10 @@
 import { familyOf } from './module-callable-common.mjs';
 import { verifyModuleCallableSnapshot } from './module-callable-facts.mjs';
 // SPDX-License-Identifier: MIT
+import { canonical } from "./identity.mjs";
+import { validLocalPresence, validParameterPresence } from "./presence.mjs";
+import { localReferenceTarget, expressionLeaf, hasOnlyToken } from "./scalar-source.mjs";
+import { conversionDeclaration, conversionEntries, verifyConversionOrigin, conversionCallSpelling, admittedConversionScope, completeFunctionSource } from "./conversions.mjs";
 import { verifyNullableSnapshot } from "./nullable-frontend.mjs";
 import { verifyExceptionSnapshot } from "./exception-frontend.mjs";
 import { verifyClosureSnapshot } from "./closure-frontend.mjs";
@@ -54,6 +58,7 @@ export function validateFrontendSnapshot(snapshot) {
   }
   const moduleFacts = snapshot.modules ? validateModuleFacts(snapshot) : undefined;
   let source = snapshot.source;
+  const completeSource = !moduleFacts && completeFunctionSource(source.content, snapshot.functions, identifierName);
   let calls = 0;
   const usedNodes = new Set();
   const sameRange = (left, right) => left?.start === right?.start && left?.end === right?.end;
@@ -109,9 +114,75 @@ export function validateFrontendSnapshot(snapshot) {
           || symbol.type !== expression.type) {
         throw new TypeError("reference differs from its symbol");
       }
+      if (!moduleFacts) {
+        const stateful=Boolean(symbol.presence?.undefined || symbol.presence?.null),flow=expression.presenceFlow;
+        if (Object.keys(expression).sort().join(",") !== (stateful ? "kind,node,presenceFlow,range,symbol,type,typeRef" : "kind,node,range,symbol,type,typeRef")
+            || stateful && (!flow || Object.keys(flow).sort().join(",") !== "null,undefined"
+              || typeof flow.undefined !== "boolean" || typeof flow.null !== "boolean"
+              || flow.undefined && !symbol.presence.undefined || flow.null && !symbol.presence.null))
+          throw new TypeError("reference differs from its official presence flow");
+      }
     } else if (expression.symbol) {
       throw new TypeError("non-reference expression has a symbol");
     }
+    if (expression.kind === "absence") {
+      if (Object.keys(expression).sort().join(",") !== "absence,kind,node,range,type,typeRef"
+          || !["undefined","null"].includes(expression.absence)
+          || (expression.absence === "undefined"
+            ? identifierName(sourceSpan(expression.range)) !== "undefined"
+            : !hasOnlyToken(sourceSpan(expression.range), "null"))
+          || expression.absence === "undefined" && scope.has("undefined"))
+        throw new TypeError("absence differs from its checked builtin source");
+    }
+    if (expression.kind === "presenceTest") {
+      const left=expressionLeaf(expression.left),right=expressionLeaf(expression.right);
+      const reference=left?.kind === "reference" ? left : right;
+      const absence=left?.kind === "absence" ? left : right;
+      const symbol=resolveSymbol(snapshot,reference?.symbol);
+      if (Object.keys(expression).sort().join(",") !== "kind,left,node,operator,range,right,type,typeRef"
+          || !["===","!=="].includes(expression.operator) || expression.type !== "bool"
+          || reference?.kind !== "reference" || absence?.kind !== "absence" || reference.type !== absence.type
+          || !symbol.presence || !symbol.presence.undefined && !symbol.presence.null)
+        throw new TypeError("presence test differs from its checked finite binding");
+    }
+    if (expression.kind === "update") {
+      const target = localReferenceTarget(expression.operand);
+      const symbol = resolveSymbol(snapshot, target?.symbol);
+      if (Object.keys(expression).sort().join(",") !== "kind,node,operand,operator,prefix,range,type,typeRef"
+          || !target || !symbol.writable
+          || !["local", "parameter"].includes(symbol.kind)
+          || !["++", "--"].includes(expression.operator) || typeof expression.prefix !== "boolean"
+          || expression.type !== symbol.type)
+        throw new TypeError("update differs from its checked local binding or types");
+    }
+    if (expression.kind === "write") {
+      const left = localReferenceTarget(expression.left);
+      const symbol = resolveSymbol(snapshot, left?.symbol);
+      const logical = ["&&=","||="].includes(expression.operator), flow=expression.presenceFlow;
+      if (Object.keys(expression).sort().join(",") !== (logical ? "kind,left,node,operator,presenceFlow,range,right,type,typeRef" : "kind,left,node,operator,range,right,type,typeRef")
+          || left?.kind !== "reference" || !symbol.writable
+          || !["local", "parameter"].includes(symbol.kind)
+          || !["=", "+=", "-=", "*=", "/=", "%=", "<<=", ">>=", ">>>=", "&=", "|=", "^=", "&&=", "||=", "??="].includes(expression.operator)
+          || expression.type !== symbol.type || expression.right?.type !== (["<<=", ">>=", ">>>="].includes(expression.operator) ? "i32" : symbol.type)
+          || logical && (!flow || Object.keys(flow).sort().join(",") !== "null,undefined" || typeof flow.undefined !== "boolean" || typeof flow.null !== "boolean"
+            || flow.undefined && !symbol.presence?.undefined || flow.null && !symbol.presence?.null))
+        throw new TypeError("write differs from its checked local binding or types");
+    }
+    if (expression.kind === "conversion") {
+      const origin = expression.conversion, entry = conversionEntries.get(origin?.entryId);
+      const declaration = snapshot.inputs.find(file => file.path === origin?.declarationPath);
+      if (!completeSource || !verifyConversionOrigin(origin, snapshot.inputIdentity) || snapshot.capability !== conversionDeclaration.version
+          || !admittedConversionScope(snapshot.identityInput, snapshot.inputIdentity)
+          || origin.declarationPath !== snapshot.identityInput.declarations.paths[0]
+          || snapshot.functions.some(fn => fn.name === entry.name)
+          || declaration?.kind !== "declaration-root" || declaration.sha256 !== conversionDeclaration.sha256
+          || expression.type !== entry.to || expression.operand?.type !== entry.from
+          || Object.keys(expression).sort().join(",") !== "conversion,kind,node,operand,range,type,typeRef"
+          || scope.has(entry.name)
+          || !conversionCallSpelling(source.content, expression.range, expression.operand.range, entry)) {
+        throw new TypeError("conversion differs from admitted declaration origin or nominal types");
+      }
+    } else if (expression.conversion) { throw new TypeError("non-conversion expression has conversion origin"); }
     if (expression.kind === "call" && !expression.target) {
       throw new TypeError("call has no target");
     }
@@ -134,9 +205,11 @@ export function validateFrontendSnapshot(snapshot) {
           || expression.signature.returnType !== fn.returnType
           || expression.type !== fn.returnType
           || expression.signature.parameters.length !== parameters.length
-          || arguments_.length !== parameters.length
+          || arguments_.length > parameters.length
+          || parameters.slice(arguments_.length).some((_,index) => !fn.parameters?.[arguments_.length+index].presence?.optional)
+          || fn.parameterInitializers !== undefined && canonical(expression.signature.presence ?? []) !== canonical(fn.parameters.map(p => p.presence))
           || parameters.some((type, index) => expression.signature.parameters[index] !== type
-            || arguments_[index]?.type !== type)) {
+            || index < arguments_.length && arguments_[index]?.type !== type)) {
         throw new TypeError("call signature differs from its target or arguments");
       }
       calls++;
@@ -161,6 +234,8 @@ export function validateFrontendSnapshot(snapshot) {
       const symbol = resolveSymbol(snapshot, statement.symbol.ref);
       if (symbol.id !== statement.symbol.id || symbol.name !== statement.symbol.name
           || symbol.kind !== statement.symbol.kind || symbol.type !== statement.symbol.type
+          || canonical(symbol.presence) !== canonical(statement.symbol.presence)
+          || symbol.presence && !validLocalPresence(symbol.presence,symbol,statement.initializer,source.content,statement.range)
           || !sameRange(symbol.range, statement.symbol.range)
           || symbol.range?.start < statement.range?.start
           || symbol.range?.end > statement.range?.end) {
@@ -193,16 +268,20 @@ export function validateFrontendSnapshot(snapshot) {
     }
     const parameterScope = new Map(moduleFacts?.views.get(fn.sourcePath) ?? []);
     for (const parameter of fn.parameters) parameterScope.set(parameter.name,parameter.id);
-    for (const parameter of fn.parameters) {
+    if (fn.parameterInitializers !== undefined && (!Array.isArray(fn.parameterInitializers) || fn.parameterInitializers.length !== fn.parameters.length)) throw new TypeError("invalid parameter initializers");
+    for (const [index, parameter] of fn.parameters.entries()) {
       checkNode(parameter, "parameter");
       checkType(parameter.type, parameter.typeRef);
       const symbol = resolveSymbol(snapshot, parameter.ref);
       if (symbol.id !== parameter.id || symbol.kind !== "parameter"
           || symbol.name !== parameter.name || symbol.type !== parameter.type
+          || canonical(symbol.presence) !== canonical(parameter.presence)
+          || parameter.presence && !validParameterPresence(parameter.presence,parameter,fn.parameterInitializers?.[index],source.content,fn.range)
           || !sameRange(symbol.range, parameter.range)) {
         throw new TypeError("parameter differs from its symbol");
       }
     }
+    for (const value of fn.parameterInitializers ?? []) if (value) visitExpression(value,parameterScope);
     visitStatements(fn.body, parameterScope);
   }
   for (const module of snapshot.modules ?? []) {

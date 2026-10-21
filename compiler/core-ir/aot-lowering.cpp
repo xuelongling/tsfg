@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: MIT
 #include "aot-lowering.h"
 #include "aot-slot-codec.h"
+#include "scalar-presence.h"
 #include "dialect.h"
 #include "llvm/ADT/APInt.h"
 #include "mlir/Dialect/ControlFlow/IR/ControlFlowOps.h"
@@ -32,8 +33,9 @@ bool supportsNativeCore(mlir::ModuleOp module) {
   unsigned count = 0;
   for (auto &top : module.getBody()->getOperations()) {
     auto fn = llvm::dyn_cast<mlir::func::FuncOp>(top);
-    if (!fn || ++count > 512 || fn.isExternal() || fn.getFunctionType().getNumResults() != 1
-        || fn.getNumArguments() > 64 || !supportedScalar(fn.getFunctionType().getResult(0))) return false;
+    std::vector<uint8_t> presence;
+    if (!fn || !tsfg::parameterPresence(fn, presence) || ++count > 512 || fn.isExternal() || fn.getFunctionType().getNumResults() != 1
+        || fn.getNumArguments() > 128 || !supportedScalar(fn.getFunctionType().getResult(0))) return false;
     for (auto type : fn.getFunctionType().getInputs()) if (!supportedScalar(type)) return false;
     for (auto &block : fn.getBody()) {
       for (auto argument : block.getArguments()) if (!supportedScalar(argument.getType())) return false;
@@ -51,7 +53,7 @@ bool supportsNativeCore(mlir::ModuleOp module) {
           uint64_t bits;
           if (operands || results != 1 || !tsfg::constantBits(&op, bits)) return false;
         } else {
-          bool unary = name == "tsfg_core.neg" || name == "tsfg_core.pos" || name == "tsfg_core.not" || name == "tsfg_core.bool_not";
+          bool unary = name == "tsfg_core.convert_checked" || name == "tsfg_core.convert_wrap" || name == "tsfg_core.reinterpret" || name == "tsfg_core.neg" || name == "tsfg_core.pos" || name == "tsfg_core.not" || name == "tsfg_core.bool_not";
           bool binary = false;
           for (auto suffix : {"add", "sub", "mul", "and", "or", "xor", "div", "rem",
                               "shl", "shr", "ushr", "eq", "ne", "lt", "le", "gt", "ge"})
@@ -66,14 +68,15 @@ bool supportsNativeCore(mlir::ModuleOp module) {
 // Events are calls through a caller-owned C callback. They have observable
 // effects and cannot be speculated, removed or reordered by LLVM optimization.
 // 0 enter; 1 fuel+step; 2 step; 3 leave; 4 return-source; 5 divide-zero;
-// 6 remainder-zero; 7 invalid-shift; 8 wrapper existing-failure check.
+// 6 remainder-zero; 7 invalid-shift; 8 wrapper existing-failure check;
+// 9 conversion-nonfinite; 10 conversion-range; 11 malformed presence carrier.
 class Lowering {
   std::string text;
   llvm::raw_string_ostream out;
   llvm::DenseMap<mlir::Value, unsigned> values;
   llvm::DenseMap<mlir::Block *, unsigned> blocks;
   std::vector<mlir::func::FuncOp> functions;
-  std::set<std::string> floatingFunctions;
+  std::set<std::string> floatingFunctions, conversionFunctions;
   unsigned temporary = 0, continuation = 0, functionIndex = 0;
   uint64_t intervalId = 0;
   mlir::Type resultType;
@@ -150,6 +153,63 @@ class Lowering {
   unsigned anchor(mlir::Operation *op, llvm::StringRef attribute) {
     return static_cast<unsigned>(op->getAttrOfType<mlir::IntegerAttr>(attribute).getInt());
   }
+  std::string raw(std::string v, mlir::Type t) {
+    const auto code = tsfg::typeCode(t);
+    const auto bits = code == 2 ? 1u : tsfg::width(code);
+    auto name = type(t);
+    if (tsfg::floating(code)) {
+      const auto converted = tmp(), integer = "i" + std::to_string(bits);
+      out << "  " << converted << " = arith.bitcast " << v << " : " << name << " to " << integer << '\n';
+      v = converted; name = integer;
+    }
+    if (bits == 64) return v;
+    auto extended = tmp();
+    out << "  " << extended << " = arith.extui " << v << " : " << name << " to i64\n";
+    return extended;
+  }
+  std::string carrier(std::string payload, mlir::Type t, std::string state, uint8_t mask) {
+    const auto zero = constant(0), zero64 = constant(0, "i64"), present = tmp();
+    out << "  " << present << " = arith.cmpi eq, " << state << ", " << zero << " : i32\n";
+    auto valid = present;
+    for (unsigned member = 1; member <= 2; ++member) if (mask & (1u << (member - 1))) {
+      auto tag = constant(member), equal = tmp(), joined = tmp();
+      out << "  " << equal << " = arith.cmpi eq, " << state << ", " << tag << " : i32\n"
+          << "  " << joined << " = arith.ori " << valid << ", " << equal << " : i1\n";
+      valid = joined;
+    }
+    auto bits = raw(payload, t), canonical = tmp(), payloadValid = tmp(), result = tmp();
+    out << "  " << canonical << " = arith.cmpi eq, " << bits << ", " << zero64 << " : i64\n"
+        << "  " << payloadValid << " = arith.ori " << present << ", " << canonical << " : i1\n"
+        << "  " << result << " = arith.andi " << valid << ", " << payloadValid << " : i1\n";
+    return result;
+  }
+  void convert(mlir::Operation &op, unsigned start, unsigned end) {
+    auto name = op.getName().getStringRef();
+    const unsigned mode = name == "tsfg_core.convert_checked" ? 40 : name == "tsfg_core.convert_wrap" ? 41 : 42;
+    const auto source = op.getOperand(0);
+    const auto result = op.getResult(0);
+    const auto sourceCode = tsfg::typeCode(source.getType()), targetCode = tsfg::typeCode(result.getType());
+    const auto helper = std::to_string(mode) + "_" + std::to_string(sourceCode) + "_" + std::to_string(targetCode);
+    conversionFunctions.insert(helper);
+    auto input = raw(value(source), source.getType()), bits = tmp(), status = tmp();
+    out << "  " << bits << ", " << status << " = func.call @tsfg_aot_convert_" << helper << '(' << input << ") : (i64) -> (i64, i32)\n";
+    for (unsigned failure = 1; failure <= 2; ++failure) {
+      auto expected = constant(failure), valid = tmp();
+      out << "  " << valid << " = arith.cmpi ne, " << status << ", " << expected << " : i32\n";
+      guard(valid, failure == 1 ? 9 : 10, start, end);
+    }
+    auto integer = "i" + std::to_string(tsfg::width(targetCode));
+    if (tsfg::width(targetCode) < 64) {
+      auto narrowed = tsfg::floating(targetCode) ? tmp() : value(result);
+      out << "  " << narrowed << " = arith.trunci " << bits << " : i64 to " << integer << '\n';
+      bits = narrowed;
+    }
+    if (tsfg::floating(targetCode)) out << "  " << value(result) << " = arith.bitcast " << bits << " : " << integer << " to " << type(result.getType()) << '\n';
+    else if (tsfg::width(targetCode) == 64) {
+      auto zero = constant(0, "i64");
+      out << "  " << value(result) << " = arith.ori " << bits << ", " << zero << " : i64\n";
+    }
+  }
   bool operation(mlir::Operation &op) {
     unsigned start = anchor(&op, "tsfg_source.start"), end = anchor(&op, "tsfg_source.end");
     const auto name = op.getName().getStringRef();
@@ -190,6 +250,14 @@ class Lowering {
       // this operation. Check the callee's depth/resources in the caller, before
       // executing a call instruction or creating a native callee frame.
       auto callee = functions[destination];
+      std::vector<uint8_t> presence; tsfg::parameterPresence(callee, presence);
+      size_t physical = 0;
+      for (auto mask : presence) {
+        auto payload = call.getOperand(physical++);
+        if (!(mask & 3)) continue;
+        auto state = call.getOperand(physical++);
+        guard(carrier(value(payload), payload.getType(), value(state), mask), 11, start, end);
+      }
       auto entered = event(0, anchor(callee, "tsfg_core.function_start"),
                             anchor(callee, "tsfg_core.function_end"), destination);
       auto zero = constant(0), yes = tmp();
@@ -204,6 +272,9 @@ class Lowering {
       // return or its prepaid failure return. It is never a wrapper kind8.
       checkpoint(2, start, end);
       return true;
+    }
+    if (name == "tsfg_core.convert_checked" || name == "tsfg_core.convert_wrap" || name == "tsfg_core.reinterpret") {
+      convert(op, start, end); return true;
     }
     const auto left = value(op.getOperand(0)), operandType = type(op.getOperand(0).getType());
     if (tsfg::floating(tsfg::typeCode(op.getOperand(0).getType()))) {
@@ -351,6 +422,14 @@ public:
       for (size_t p = 0; p < fn.getFunctionType().getNumInputs(); ++p) {
         arguments.push_back(slots.load(fn.getFunctionType().getInput(p), p));
       }
+      std::vector<uint8_t> presence; tsfg::parameterPresence(fn, presence);
+      size_t physical = 0;
+      for (auto mask : presence) {
+        auto payload = physical++;
+        if (!(mask & 3)) continue;
+        auto state = physical++;
+        allow(carrier(arguments[payload], fn.getFunctionType().getInput(payload), arguments[state], mask), "wrapper_fail");
+      }
       auto result = tmp();
       out << "  " << result << " = func.call @native_" << index << "(%state, %event";
       for (auto argument : arguments) out << ", " << argument;
@@ -378,6 +457,8 @@ public:
       if (!unary) out << ", " << format;
       out << ") -> " << (comparison ? "i1" : format) << '\n';
     }
+    for (const auto &helper : conversionFunctions)
+      out << "func.func private @tsfg_aot_convert_" << helper << "(i64) -> (i64, i32)\n";
     out << "}\n"; return true;
   }
   llvm::StringRef getText() const { return text; }

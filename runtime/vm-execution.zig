@@ -32,6 +32,7 @@ const StackSnapshot = @import("host_counter.zig").StackSnapshot;
 const strings = @import("string-value.zig");
 const string_frame = @import("string-frame.zig");
 const clock = @import("clock.zig");
+const conversions = @import("conversions.zig");
 pub const Budget = struct { fuel: u64, work: u64, deadline: clock.Deadline };
 
 // The loop owns Frames/cursor and all cleanup. This synchronous private helper
@@ -122,11 +123,19 @@ pub fn execute(allocator: std.mem.Allocator, state: *module_state.State, request
         if (action == .call_host) { suspended_host = true; return false; }
         if (action == .enter_root) {
             execution.active = enter(allocator, function, null, state.strings) catch { storeRequestFailure(result_out, "r05-execution-abort", function_id, &info.source); return true; };
-            for (arguments, function.blocks[0].parameters) |argument, parameter| {
+            var physical: usize = 0;
+            for (info.presence_masks, 0..) |presence, index| {
+                const argument: TypedValue = if (index < arguments.len) arguments[index] else .{ .undefined_value = {} };
+                const parameter = function.blocks[0].parameters[physical];
+                physical += 1;
                 if (argument == .string) {
                     const root = argument.string.import(state.strings) catch { storeRequestFailure(result_out, "r05-execution-abort", function_id, &info.source); return true; };
                     execution.active.?.roots.install(parameter.register, root);
                 } else execution.active.?.registers[parameter.register] = argument.bits();
+                if (presence & 3 != 0) {
+                    execution.active.?.registers[function.blocks[0].parameters[physical].register] = argument.presenceState();
+                    physical += 1;
+                }
             }
         } else if (action == .call_guest) {
             const callee = execution.pending_function.?;
@@ -210,6 +219,12 @@ fn executeStep(execution: *ExecutionState, state: *module_state.State, limits: *
                 } else storeReturned(result_out, typedValue(result, op.type_code), current_id, source);
                 return .terminal;
             }
+        } else if (op.opcode >= 40 and op.opcode <= 42) {
+            switch (conversions.convert(op.opcode, frame[op.left], @intCast(op.right), op.type_code)) {
+                .value => |bits| frame[op.register] = bits,
+                .nonfinite => { storeArithmeticTrap(result_out, "r01-t-conversion-nonfinite", "r01-conversions", current_id, source); return .terminal; },
+                .range => { storeArithmeticTrap(result_out, "r01-t-conversion-range", "r01-conversions", current_id, source); return .terminal; },
+            }
         } else if (op.opcode >= 4 and op.opcode <= 8) {
             if (!@call(.never_inline, executeArithmeticInstruction, .{ current, op, result_out })) return .terminal;
         } else if ((op.opcode >= 9 and op.opcode <= 17) or op.opcode == 33) {
@@ -225,6 +240,16 @@ fn executeStep(execution: *ExecutionState, state: *module_state.State, limits: *
 
         } else if (op.opcode == 27) {
             const callee = &all_functions[op.left];
+            var physical: usize = 0;
+            for (callee.info.presence_masks) |presence| {
+                const payload = frame[op.edges[0][physical]]; physical += 1;
+                if (presence & 3 != 0) {
+                    const tag = frame[op.edges[0][physical]]; physical += 1;
+                    if (tag > 2 or tag == 1 and presence & 1 == 0 or tag == 2 and presence & 2 == 0 or tag != 0 and payload != 0) {
+                        storeRequestFailure(result_out,"r05-presence-state",&callee.info.function_id,source); return .terminal;
+                    }
+                }
+            }
             if (execution.depth >= limits.depth) { storeArithmeticTrap(result_out, "r01-t-depth", "r01-depth", &callee.info.function_id, &callee.info.source); return .terminal; }
             const bytes = frameSize(callee);
             if (state.strings.budget.used > limits.memory_bytes - execution.used_memory or bytes > limits.memory_bytes - execution.used_memory - state.strings.budget.used) { storeRequestFailure(result_out, "r05-execution-abort", &callee.info.function_id, &callee.info.source); return .terminal; }

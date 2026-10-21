@@ -2,6 +2,9 @@
 import { i32TypeId, boolTypeId, scalarName, own } from './identity.mjs';
 import { scalarOperations as operations } from './scalar-operators.mjs';
 import { floatNames } from './float.mjs';
+import { hasState } from "./presence.mjs";
+import { createScalarStateEmitter, scalarAbiTypes, stateBinding } from "./scalar-state-emitter.mjs";
+import { conversionEntries } from "./conversions.mjs";
 import registry from '../contracts/registry.json' with { type: 'json' };
 
 // HIR representation versions evolve independently from the admitted Core exchange.
@@ -58,17 +61,30 @@ export function emitCoreSsaFunction(fn, context) {
       + ') {' + (attributes ? attributes + ', ' : '') + attrsFor(anchor) + '} : ('
       + operandTypes.map(coreType).join(', ') + ') -> ' + (resultType === null ? '()' : coreType(resultType)));
   };
-  current = newBlock(fn.parameters.map(parameter => parameter.type));
-  fn.parameters.forEach((parameter,index) => {
-    definitions.set(parameter.id,current.parameters[index].name); declared.add(parameter.id);
+  current = newBlock(scalarAbiTypes(fn.parameters));
+  let parameterIndex = 0;
+  fn.parameters.forEach(parameter => {
+    definitions.set(parameter.id,current.parameters[parameterIndex++].name); declared.add(parameter.id);
     bindingTypes.set(parameter.id,parameter.type);
+    if (hasState(parameter.presence)) {
+      const id=stateBinding(parameter.id); definitions.set(id,current.parameters[parameterIndex++].name);
+      declared.add(id); bindingTypes.set(id,i32TypeId);
+    }
   });
   if(fn.kind!=='module-initialization'&&!context.exception)fuel(1, fn.range);
   const emit = expression => {
     context.budget?.step();
     const special = context.emitValueLeaf?.(expression, api);
     if (special !== undefined) return special;
+    const scalarValue = scalarState.emit(expression);
+    if (scalarValue !== undefined) return scalarValue;
     if (expression.kind === "reference") return definitions.get(expression.binding);
+    if (expression.kind === "conversion") {
+      const operand = emit(expression.operand), entry = conversionEntries.get(expression.origin.entryId), name = variable();
+      const op = {checked:"convert_checked", wrap:"convert_wrap", reinterpret:"reinterpret"}[entry.mode];
+      operationLine(name, "tsfg_core." + op, [operand], [expression.operand.type], expression.type, "", expression.range);
+      return name;
+    }
     if(expression.kind==='global') {
       const name=variable(),index=emittedGlobals.findIndex(global=>global.id===expression.global);
       line(`    ${name} = "tsfg_core.global_load"() {global = ${index} : i64, ${attrsFor(expression.range)}} : () -> ${coreType(expression.type)}`);
@@ -80,15 +96,11 @@ export function emitCoreSsaFunction(fn, context) {
       return name;
     }
     if (expression.kind === "call") {
-      const operands = expression.arguments.map(emit), target = verified.functions.find(fn => fn.id === expression.target);
+      const target = verified.functions.find(fn => fn.id === expression.target);
+      const call = scalarState.call(target,expression.arguments,expression.range), operands=call.operands;
       const name = variable();
-      line(`    ${name} = "func.call"(${operands.join(", ")}) {callee = @${quote(functionSymbol(target))}, tsfg_core.function_id = ${quote(target.id)}, tsfg_core.signature_hash = ${quote(target.signatureHash)}, ${attrsFor(expression.range)}} : (${expression.arguments.map(argument => coreType(argument.type)).join(", ")}) -> ${coreType(expression.type)}`);
+      line(`    ${name} = "func.call"(${operands.join(", ")}) {callee = @${quote(functionSymbol(target))}, tsfg_core.function_id = ${quote(target.id)}, tsfg_core.signature_hash = ${quote(target.signatureHash)}, ${attrsFor(expression.range)}} : (${call.types.map(coreType).join(", ")}) -> ${coreType(expression.type)}`);
       return name;
-    }
-    if (expression.kind === "write") {
-      const value = emit(expression.right); let target = expression.left;
-      while (target.kind === "group") target = target.operand;
-      definitions.set(target.binding, value); return value;
     }
     if (expression.kind === "group" || expression.kind === "unary" && expression.operator === "+" && !floatType(expression.type)) return emit(expression.operand);
     if (expression.kind === "shortCircuit") {
@@ -127,20 +139,16 @@ export function emitCoreSsaFunction(fn, context) {
       if (statement.kind === "local") {
         bindingTypes.set(statement.binding.id, statement.binding.type);
         declared.add(statement.binding.id);
-        if (statement.initializer) {
-          const value = emit(statement.initializer);
-          definitions.set(statement.binding.id, value);
-        }
+        scalarState.local(statement.binding,statement.initializer,statement.range);
       } else if(statement.kind==='initialize'||statement.kind==='assign'&&statement.target.kind==='global') {
         const value=emit(statement.value),global=statement.kind==='initialize'?statement.global:statement.target.global;
         const descriptor=emittedGlobals.find(item=>item.id===global),index=emittedGlobals.indexOf(descriptor);
         line(`    "tsfg_core.global_store"(${value}) {global = ${index} : i64, initialize = ${statement.kind==='initialize'?'true':'false'}, ${attrsFor(statement.range)}} : (${coreType(descriptor.type)}) -> ()`);
       } else if (statement.kind === "assign") {
         let target = statement.target; while (target.kind === "group") target = target.operand;
-        const value = emit(statement.value);
-        definitions.set(target.binding, value);
+        scalarState.assign(target.binding,statement.value,statement.range);
       }
-      else if(statement.kind==='expression')emit(statement.value);
+      else if(statement.kind==='expression'||statement.kind==='evaluate')emit(statement.value);
       else if (statement.kind === "return") {
         const result = emit(statement.value), type = coreType(fn.returnType.id);
         const metadata = context.returnAttributes?.(statement.value);
@@ -341,12 +349,16 @@ export function emitCoreSsaFunction(fn, context) {
   };
   const api = {
     emit, coreType, attrsFor, quote, branchValue, lookup: id => definitions.get(id),
+    assign: (id,value) => definitions.set(id,value),
+    declare: (id,type) => { declared.add(id); bindingTypes.set(id,type); },
     operation: (name, operands, operandTypes, resultType, attributes, anchor) => {
       const result = resultType === null ? null : variable();
       operationLine(result, name, operands, operandTypes, resultType, attributes, anchor);
       return result;
     },
   };
+  const scalarState = createScalarStateEmitter(fn,api);
+  if (!context.exception) scalarState.initialize();
   const trace = context.exception ? emitExceptionalBody() : undefined;
   if (!context.exception) emitBody(fn.body);
   if(fn.kind==='module-initialization'&&current) {

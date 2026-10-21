@@ -27,7 +27,7 @@ export async function verifiedConsumer(executable, role) {
       || manifest.buildIdentity?.profile !== "debug")
     throw new TypeError(`r03-tool-${role}: unsupported target/profile identity`);
   const required = role === "core" ? [...coreIrInputs, "eng/core-ir-inputs.mjs"]
-    : ["runtime/root.zig", "runtime/bytecode.zig", "runtime/bytecode_model.zig", "runtime/bytecode_decode.zig", "runtime/bytecode_view.zig", "runtime/module_format.zig", "runtime/module.zig", "runtime/request.zig", "runtime/clock.zig", "runtime/host_counter.zig", "runtime/host_counter.c", "runtime/host_counter_bridge.c", "runtime/vm.zig", "runtime/runtime.zig", "runtime/managed-heap.zig", "runtime/string-codec.zig", "runtime/main.zig", "runtime/contract.zig", "eng/host-counter.mjs", "eng/host-counter-binary.mjs", "eng/host-cost-source.lock.json", "eng/vm-build.mjs", "runtime/execution_frame.zig", "runtime/scalar.zig", "runtime/host-bindings.zig", "runtime/host-semantic-contract.zig",
+    : ["runtime/root.zig", "runtime/bytecode.zig", "runtime/bytecode_model.zig", "runtime/bytecode_decode.zig", "runtime/bytecode_view.zig", "runtime/module_format.zig", "runtime/module.zig", "runtime/request.zig", "runtime/clock.zig", "runtime/host_counter.zig", "runtime/host_counter.c", "runtime/host_counter_bridge.c", "runtime/vm.zig", "runtime/runtime.zig", "runtime/managed-heap.zig", "runtime/string-codec.zig", "runtime/main.zig", "runtime/contract.zig", "eng/host-counter.mjs", "eng/host-counter-binary.mjs", "eng/host-cost-source.lock.json", "eng/vm-build.mjs", "runtime/execution_frame.zig", "runtime/scalar.zig", "runtime/conversions.zig", "runtime/host-bindings.zig", "runtime/host-semantic-contract.zig",
       "runtime/floating-environment.zig", "runtime/outcome-writer.zig", "runtime/string-arguments.zig", "runtime/string-budget.zig", "runtime/string-frame.zig", "runtime/string-instructions.zig", "runtime/string-output.zig", "runtime/string-value.zig", "runtime/vm-execution.zig", "runtime/vm-instance.zig", "runtime/runtime-state.zig", "runtime/request-values.zig",
       "eng/host-semantic-contract.mjs", "contracts/host-counter-semantic-v1.json"];
   required.push("contracts/registry.json", "contracts/bytecode.schema.json");
@@ -110,9 +110,9 @@ export async function compileOwnedHir(hir, options) {
   return produceBytecode(hir, options);
 }
 
-const sessionInputs = ["compiler/generic-package-frontend.mjs", "compiler/generic-package.mjs", "compiler/generic-package-shape.mjs",
+const sessionInputs = ["compiler/conversions.mjs", "compiler/presence.mjs", "compiler/scalar-hir-body.mjs", "compiler/scalar-hir-expression.mjs", "compiler/scalar-hir-state.mjs", "compiler/scalar-source.mjs", "compiler/scalar-state-emitter.mjs", "compiler/minimal-conversions-v5.d.ts", "contracts/conversion-entries.json", "compiler/generic-package-frontend.mjs", "compiler/generic-package.mjs", "compiler/generic-package-shape.mjs",
   "compiler/generic-package-io.mjs", "compiler/generic-package-io-shape.mjs", "compiler/generic-instance.mjs",
-  "compiler/generic-hir.mjs", "compiler/generic-json.mjs", "compiler/generic-json-budget.mjs", "compiler/frontend.mjs", "compiler/frontend-execution.mjs", "compiler/hir.mjs", "compiler/identity.mjs", "compiler/scalar-core-emitter.mjs",
+  "compiler/generic-hir.mjs", "compiler/generic-json.mjs", "compiler/generic-json-budget.mjs", "compiler/frontend.mjs", "compiler/frontend-response.mjs", "compiler/frontend-execution.mjs", "compiler/hir.mjs", "compiler/identity.mjs", "compiler/scalar-core-emitter.mjs",
   "compiler/module-facts.mjs", "compiler/module-hir.mjs", "compiler/modules.mjs",
   "compiler/pipeline.mjs", "compiler/core-ssa-emitter.mjs", "compiler/string-formal-emitter.mjs", "compiler/float.mjs", "contracts/registry.json", "contracts/hir.schema.json", "contracts/bytecode.schema.json"];
 async function sessionFingerprint() {
@@ -194,7 +194,7 @@ export async function runRequestSequence(bytecodes, { vm, requests = undefined }
 }
 
 export async function sourceInput(source, { sourcePath = "/src/main.ts", declarationVersion = "minimal-floats-v4" } = {}) {
-  if (!["minimal-integers-v3", "minimal-floats-v4"].includes(declarationVersion)) throw new TypeError("unsupported source declaration version");
+  if (!["minimal-integers-v3", "minimal-floats-v4", "minimal-conversions-v5"].includes(declarationVersion)) throw new TypeError("unsupported source declaration version");
   const declarations = await readFile(new URL(`./${declarationVersion}.d.ts`, import.meta.url), "utf8");
   return { sourceRoot: "/src", rootFile: sourcePath,
     files: [{ path: sourcePath, content: source }, { path: `/src/${declarationVersion}.d.ts`, content: declarations }],

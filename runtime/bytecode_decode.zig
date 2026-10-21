@@ -31,7 +31,7 @@ const Reader = struct {
         self.failure = .{ .code = code, .offset = offset };
         return error.Invalid;
     }
-    fn take(self: *Reader, count: usize) error{Invalid}![]const u8 {
+    pub fn take(self: *Reader, count: usize) error{Invalid}![]const u8 {
         if (count > self.bytes.len - self.offset) return self.reject("r04-truncated", self.offset);
         const result = self.bytes[self.offset..][0..count];
         self.offset += count;
@@ -89,7 +89,7 @@ fn parse(reader: *Reader, allocator: Allocator, module: *Module) (error{Invalid}
     try reader.expected(u16, @alignOf(i32), "r04-layout");
     try reader.expected(u16, @bitSizeOf(usize), "r04-layout");
     try reader.expected(u16, @alignOf(usize), "r04-layout");
-    try reader.expected(u32, 51, "r04-capability");
+    try reader.expected(u32, 119, "r04-capability");
     const input_identity = try reader.digest();
     const source_hash = try reader.digest();
     const source_path = try reader.string(4096);
@@ -114,13 +114,7 @@ fn parse(reader: *Reader, allocator: Allocator, module: *Module) (error{Invalid}
         for (module.functions[0..index]) |previous| if (std.mem.eql(u8, &previous.info.function_id, &function.info.function_id) or previous.info.source_index == function.info.source_index and previous.info.initializer == function.info.initializer and std.mem.eql(u8, previous.info.function_name, function.info.function_name)) return reader.reject("r04-function", reader.offset);
     }
     if (reader.offset != reader.bytes.len) return reader.reject("r04-trailing", reader.offset);
-    for (module.functions) |function| for (function.instructions) |op| if (op.opcode == 27) {
-        if (op.left >= count) return reader.reject("r04-call-target", function.info.instruction_offset);
-        const target = module.functions[op.left];
-        if (op.type_code != target.info.return_type) return reader.reject("r04-type", function.info.instruction_offset);
-        if (op.edges[0].len != target.info.parameter_types.len) return reader.reject("r04-call-arity", function.info.instruction_offset);
-        for (op.edges[0], target.info.parameter_types) |argument, type_code| if (function.register_types[argument] != type_code) return reader.reject("r04-type", function.info.instruction_offset);
-    };
+    try model.verifyCalls(reader,module.functions);
     try module_format.verify(reader, module.tables, module.functions);
     return module.functions[0].info;
 }
@@ -166,19 +160,9 @@ fn parseFunction(reader: *Reader, allocator: Allocator, global: Global, tables: 
     if (!rangeValid(function_start, function_end, 0, source_length) and !(initializer and function_start == 0 and function_end == 0 and source_length == 0)) return reader.reject("r04-source-range", reader.offset - 8);
     const return_type = try reader.int(u8);
     if (!contract.validType(return_type)) return reader.reject("r04-type", reader.offset - 1);
-    const signature_parameter_count = try reader.int(u8);
-    if (signature_parameter_count > 64) return reader.reject("r04-signature", reader.offset - 1);
-    const parameter_types = try allocator.dupe(u8, try reader.take(signature_parameter_count));
-    var signature = Sha256.init(.{});
-    signature.update("tsfg.signature\x00(");
-    for (parameter_types, 0..) |type_code, index| {
-        if (!contract.validType(type_code)) return reader.reject("r04-type", reader.offset);
-        if (index != 0) signature.update(",");
-        signature.update(contract.typeName(type_code));
-    }
-    signature.update(")->"); signature.update(contract.typeName(return_type));
-    var expected_signature: [32]u8 = undefined;
-    signature.final(&expected_signature);
+    const shape = try model.readParameterShape(reader,allocator,return_type);
+    const parameter_types = shape.types;
+    const expected_signature = shape.signature;
     var type_hash = Sha256.init(.{}); type_hash.update("tsfg.type\x00"); type_hash.update(contract.typeName(return_type));
     var expected_type_id: [32]u8 = undefined; type_hash.final(&expected_type_id);
     if (!std.mem.eql(u8, &signature_hash, &expected_signature)) return reader.reject("r04-signature", signature_offset);
@@ -265,7 +249,7 @@ fn parseFunction(reader: *Reader, allocator: Allocator, global: Global, tables: 
                     if (payload != 0) return reader.reject("r04-reserved", offset + 4);
                     if (type_code != return_type) return reader.reject("r04-type", offset + 1);
                 } else {
-                    if (opcode < 1 or (opcode > 23 and (opcode < 27 or opcode > 39))) return reader.reject("r04-instruction", offset);
+                    if (opcode < 1 or (opcode > 23 and (opcode < 27 or opcode > 42))) return reader.reject("r04-instruction", offset);
                     if ((opcode == 29 or opcode == 31) and !tables.present) return reader.reject("r04-module-mode", offset);
                     if (reg != next_register or next_register >= register_count) return reader.reject("r04-register", offset + 2);
                     register_types[next_register] = type_code;
@@ -278,6 +262,14 @@ fn parseFunction(reader: *Reader, allocator: Allocator, global: Global, tables: 
                         if (type_code != (if (opcode == 1) @as(u8, 1) else 2)) return reader.reject("r04-type", offset + 1);
                         if (opcode == 3 and payload > 1) return reader.reject("r04-boolean", offset + 4);
                     } else if (((opcode >= 15 and opcode <= 17) or opcode == 33) and payload >> 16 != 0) return reader.reject("r04-reserved", offset + 6);
+                    if (opcode >= 40 and opcode <= 42) {
+                        if (payload >> 24 != 0) return reader.reject("r04-reserved", offset + 7);
+                        const source_type: u8 = @truncate(payload >> 16);
+                        if ((!contract.integerType(source_type) and !contract.floatType(source_type)) or
+                            (!contract.integerType(type_code) and !contract.floatType(type_code))) return reader.reject("r04-conversion-type", offset + 1);
+                        if (opcode == 41 and (!contract.integerType(source_type) or !contract.integerType(type_code))) return reader.reject("r04-conversion-type", offset + 1);
+                        if (opcode == 42 and contract.bitWidth(source_type) != contract.bitWidth(type_code)) return reader.reject("r04-conversion-type", offset + 1);
+                    }
                     if (opcode == 28) {
                         if (type_code < 3 or !contract.integerType(type_code) or payload != 0) return reader.reject("r04-type", offset + 1);
                         op.literal_bits = try reader.int(u64);
@@ -291,7 +283,7 @@ fn parseFunction(reader: *Reader, allocator: Allocator, global: Global, tables: 
                     if (opcode == 27) {
                         if (payload >> 16 != 0) return reader.reject("r04-reserved", offset + 6);
                         const count = try reader.int(u16);
-                        if (count > 64) return reader.reject("r04-call-arity", reader.offset - 2);
+                        if (count > 128) return reader.reject("r04-call-arity", reader.offset - 2);
                         const arguments = try allocator.alloc(u16, count);
                         for (arguments) |*argument| argument.* = try reader.int(u16);
                         op.edges[0] = arguments;
@@ -341,6 +333,7 @@ fn parseFunction(reader: *Reader, allocator: Allocator, global: Global, tables: 
         for (ops[block.start..][0..block.count], 0..) |op, position| {
             const global_position = block.start + position;
             if (op.opcode == 2 or op.opcode == 25) try use(reader, op.register, op.type_code, block_index, global_position, register_count, &register_types, &definition_blocks, &definition_positions, &dominators);
+            if (op.opcode >= 40 and op.opcode <= 42) try use(reader, op.left, @intCast(op.right), block_index, global_position, register_count, &register_types, &definition_blocks, &definition_positions, &dominators);
             if (op.opcode == 30) try use(reader, op.register, op.type_code, block_index, global_position, register_count, &register_types, &definition_blocks, &definition_positions, &dominators);
             if (op.opcode == 31) try use(reader, op.right, 1, block_index, global_position, register_count, &register_types, &definition_blocks, &definition_positions, &dominators);
             if ((op.opcode >= 4 and op.opcode <= 23) or op.opcode == 33) {
@@ -415,7 +408,7 @@ fn parseFunction(reader: *Reader, allocator: Allocator, global: Global, tables: 
         };
     }
     if (removed_count != no_fuel_count) return reader.reject("r04-fuel-cycle", instruction_offset);
-    return .{ .info = .{ .function_id = function_id, .function_name = function_name, .source = .{ .path = source_path, .hash = source_hash, .start = function_start, .end = function_end }, .input_identity = input_identity, .signature_hash = signature_hash, .type_id = type_id, .source_utf16_length = source_length, .function_start = function_start, .function_end = function_end, .return_type = return_type, .register_count = register_count, .block_count = block_count, .instruction_count = instruction_count, .instruction_offset = instruction_offset, .parameter_types = parameter_types, .source_index = source_index, .initializer = initializer }, .instructions = ops, .blocks = blocks, .register_types = try allocator.dupe(u8, register_types[0..register_count]) };
+    return .{ .info = .{ .function_id = function_id, .function_name = function_name, .source = .{ .path = source_path, .hash = source_hash, .start = function_start, .end = function_end }, .input_identity = input_identity, .signature_hash = signature_hash, .type_id = type_id, .source_utf16_length = source_length, .function_start = function_start, .function_end = function_end, .return_type = return_type, .register_count = register_count, .block_count = block_count, .instruction_count = instruction_count, .instruction_offset = instruction_offset, .parameter_types = parameter_types, .presence_masks = shape.masks, .source_index = source_index, .initializer = initializer }, .instructions = ops, .blocks = blocks, .register_types = try allocator.dupe(u8, register_types[0..register_count]) };
 }
 
 fn use(reader: *Reader, reg: u16, expected_type: u8, block: usize, position: usize, count: u16, types: *const [4096]u8, definitions: *const [4096]u16, positions: *const [4096]usize, dominators: *const [256][4]u64) error{Invalid}!void {

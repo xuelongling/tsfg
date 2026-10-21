@@ -1,8 +1,9 @@
 <!-- SPDX-License-Identifier: MIT -->
 
-# tsfg.bytecode 0.10.0
+# tsfg.bytecode 0.11.0
 
-Core0.10 / wire10 adds nominal managed String type14 and capability51. The complete
+Core0.11 / wire11 retains nominal managed String type14 and adds numeric conversions
+and logical parameter presence under capability119. The complete
 String operation, root and output contract is described in [formal String](../docs/r03-formal-string-runtime.md)
 and the exact machine schema. Compiler/reader and ordinary compilation evidence remain
 separate from formal guest execution and Runtime certification.
@@ -19,7 +20,7 @@ invalidate caches and are rejected. The registry owns version and JCS schema
 hash. The JSON schema owns wire field order and bounds.
 
 All integers use little endian. The 80-byte header is magic `TSFGTBC0`, u32 wire
-version 10, raw 32-byte schema SHA256, u32 total length and raw 32-byte SHA256 of
+version 11, raw 32-byte schema SHA256, u32 total length and raw 32-byte SHA256 of
 the payload. UTF8 strings have a u32 length, no terminator or padding. The
 checksum supplies integrity, not publisher authenticity. Target/triple and LLVM
 DataLayout are fixed in the schema. LLVM derives i32 and pointer size/alignment; Zig checks
@@ -135,10 +136,10 @@ The `TSFGREQ1` transport remains u32 count plus length-delimited R04 packets,
 1..128 matching requests and total1MiB/no trailing bytes, served by one Runtime.
 It adds no language semantics.
 
-The current formal development producer/reader requires Core0.10, wire10 and
-capability51. FrontendSnapshot remains0.8; HIR retains its independent version.
+The current formal development producer/reader requires Core0.11, wire11 and
+capability119. FrontendSnapshot is0.9; HIR is0.12.
 Private marked profiles retain their own exact Core0.9 metadata and verifiers;
-they are never accepted as formal packets. Old unmarked formal0.9, old wire9,
+they are never accepted as formal packets. Old unmarked formal0.9/0.10, wire9/10,
 wrong schema hashes and mixed identities reject. Scalar identities, original
 source anchors, complete verification and logical/physical ordering remain.
 
@@ -147,6 +148,44 @@ description of already implemented f32/f64 support. At that earlier correction,
 Contract SemVer0.8.0 and wire8 remained unchanged; its JCS schema hash and derived
 Contract Set ID changed atomically across producer, loader and fixtures under
 accepted ECP-0002. That historical correction did not establish formal Runtime
-acceptance. The subsequent0.9 candidate used wire9; current0.10 uses wire10 with its own exact schema.
+acceptance. The subsequent0.9 candidate used wire9;0.10 used wire10 with its own exact schema.
 
-Historically, the0.9 producer/reader rejected wire8 and Core0.8; current0.10 also rejects wire9 and unmarked formal0.9. The generic owned-HIR candidate still proves its own package/instance linkage before emitting the same concrete Core0.10 scalar operations; Runtime receives no generic definitions or Source session. Source package/IO/HIR family adoption and Source executable admission remain separate.
+Historically, the0.9 producer/reader rejected wire8 and Core0.8;0.10 also rejected wire9 and unmarked formal0.9. The generic owned-HIR candidate still proves its own package/instance linkage before emitting concrete scalar Core operations; Runtime receives no generic definitions or Source session. Source package/IO/HIR family adoption and Source executable admission remain separate.
+
+## Numeric conversions and logical parameter presence
+
+The exact current development identity is Core0.11.0 / wire11, capability119.
+String opcodes34..39 retain their meanings. New opcodes40/41/42 encode checked,
+integer wrap and equal-width numeric reinterpret respectively. Each16-byte record
+contains destination type:u8 and register:u16, operand register:u16, source
+nominal type:u8 and reserved:u8=0, then original UTF16 start/end:u32. All286
+entries retain the established R01 conversion semantics: checked float-to-integer
+first truncates toward zero and then checks the exact destination range, rejecting
+NaN/infinity separately. Checked floating results round directly to the destination
+format, ties to even; a finite result rounding to infinity is a range trap.
+Checked NaNs become the target canonical NaN, while reinterpret preserves every bit.
+Wrap sign-extends a signed mathematical integer before retaining destination low bits.
+An operand is evaluated once, without a conversion callee/depth/entry-fuel event.
+
+After physical parameter count:u8 and its type bytes, every function descriptor
+contains logical count:u8 and one presence mask:u8 per logical parameter. The
+limits are128 physical and64 logical. Mask bits0/1 allow undefined/null, bit2
+allows omission, bit3 marks a default; optional requires undefined and default
+requires both optional and undefined. Nonzero masks apply only to scalar1..13.
+A logical payload is followed by an i32 state iff mask&3:0 present,1 undefined,
+2 null. A nonzero state requires an all-zero payload. Direct known malformed
+carriers reject in Core/loader; computed carriers are checked before callee frame
+admission, depth and entry fuel. Request rejection is r05-request-arguments and
+a malformed guest carrier is r05-presence-state, distinct from arithmetic traps.
+
+Logical signature tokens append @0 plus the lowercase mask digit only for a
+nonzero mask; mask0 retains the original nominal signature/function identity.
+Source calls evaluate supplied operands left to right and explicitly fill omitted
+optional carriers. Defaults evaluate only for state1; state2 never triggers them.
+The existing ordinary compiler ABI0.3 consumes the complete physical Core signature
+using the same canonical8-byte slots; absence is explicitly payload0 plus state1/2.
+Its callback adds9 conversion-nonfinite,10 conversion-range and11 invalid guest
+presence. The wrapper rejects malformed carriers without invoking a guest/event.
+
+Old wire10, old schema hashes and mixed versions are rejected; there is no fallback
+reader. Private0.9 candidates retain their independently registered exact identities.

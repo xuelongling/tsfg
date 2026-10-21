@@ -170,3 +170,21 @@ verified facts' function, return, concat, plus or individual leaf primary anchor
 Core exchange stays0.9 via x-coreExchangeVersion. A fully verified String lowerHir
 remains explicitly unsupported: no Core String, Runtime/VM execution, Frontend012
 admission, physical storage or StringView is supplied here.
+
+## Ordinary expression restoration (0.12.0)
+
+The current exact owned HIR version0.12.0 restores the declared286 checked/wrap/
+reinterpret origins and finite parameter/local presence. Conversion origin binds
+the exact declaration entry/span, brands, declaration digest and complete admitted
+input scope; a name alone cannot grant conversion semantics. The scalar Source
+consumer independently checks write/update operators, local mutability, declaration
+presence and official presenceFlow against original source spans. Plain as remains
+a type assertion, never a numerical conversion.
+
+The shared SSA emitter captures the compound-assignment old payload before its RHS,
+returns the pre-update value for postfix, and carries payload/state together through
+ordinary expression, branch and loop joins. Default initializers, optional omission
+and explicit undefined/null are retained until this single lowering. Formal output
+uses Core0.11/wire11 presence metadata and the original source anchors. This is
+ordinary scalar consumption; private managed-reference candidates do not provide
+an alternative default/absence execution path.

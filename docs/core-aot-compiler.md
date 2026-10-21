@@ -2,19 +2,27 @@
 
 # Core scalar compiler outputs
 
-The Core CLI accepts `--emit-native-llvm` and `--emit-native-object` with a complete Core0.10 module on stdin. The first command prints ordinary LLVM IR; the second writes Windows x64 COFF bytes. Both run the existing complete Core parser, identity, target, SSA, CFG, signature and event checks before a separate whole-module capability check. Failed stages publish no stdout. New output I/O failures exit2; invalid or unsupported Core exits3.
+The Core CLI accepts `--emit-native-llvm` and `--emit-native-object` with a complete Core0.11 module on stdin. The first command prints ordinary LLVM IR; the second writes Windows x64 COFF bytes. Both run the existing complete Core parser, identity, target, SSA, CFG, signature and event checks before a separate whole-module capability check. Failed stages publish no stdout. New output I/O failures exit2; invalid or unsupported Core exits3.
 
-The supported profile is one through512 complete functions with at most64 parameters each, all existing nominal integer/bool/f32/f64 function parameters/results and SSA/block arguments, explicit fuel/events, branches, direct calls including recursion, and the existing scalar operations. A module containing module lifecycle/global/Host metadata, managed/private candidates, String values or an unsupported operation is rejected in full. Functions and metadata are never filtered to make a smaller eligible module. The512-function table does not change the caller's dynamic depth64 limit.
+The supported profile is one through512 complete functions with at most64 logical parameters each (128 physical payload/state parameters), all existing nominal integer/bool/f32/f64 function parameters/results and SSA/block arguments, explicit fuel/events, branches, direct calls including recursion, and the existing scalar operations. A module containing module lifecycle/global/Host metadata, managed/private candidates, String values or an unsupported operation is rejected in full. Functions and metadata are never filtered to make a smaller eligible module. The512-function table does not change the caller's dynamic depth64 limit.
+
+The lowering also consumes all286 checked/wrap/reinterpret entries and ordinary
+compound assignments, prefix/postfix updates, defaults and optional parameters
+through the shared SSA form. Conversion helpers use bounded integer IEEE decoding,
+exact destination rounding and raw-bit transport; they contain no FP-to-int casts.
+Checked failure callbacks distinguish nonfinite9 and range10 at the conversion
+source span. Presence metadata validates physical carriers before wrapper invocation
+or guest frame admission; invalid guest carriers use callback11.
 
 The lowering preserves the existing callback order, first arithmetic trap, failure continuation, stackmap markers and fixed eight-byte scalar slot layout. The caller supplies the opaque state and event callback and owns outer frame admission. LLVM verification and the actual target machine layout check precede publication. The target remains the admitted Windows x64 profile without AVX.
 
 These outputs contain no Native descriptor or Native artifact identity. The backend is a bounded extraction of the lowering/codegen from the independent M15 implementation at7a0f2f278b11a80ca47e46ab66cb0b0b83915e01. Native0.4, ABI0.2, Runtime loading/execution, machine-work certification, ResourceProof and RF remain outside this compiler slice. The parent M15 task remains open; no output here establishes those qualifications.
 
-Integers preserve the existing Core typeCode, width, signedness and constant-bit rules. Arithmetic wraps at its nominal width. Signed and unsigned division/remainder, comparisons and right shifts keep that distinction. Shift counts remain Core i32: the unsigned count/width guard precedes any compiler-internal extension or truncation needed by LLVM. Boundary bit representation conversions are internal LLVM operations; they add no public Core numeric conversion or descriptor format.
+Integers preserve the existing Core typeCode, width, signedness and constant-bit rules. Arithmetic wraps at its nominal width. Signed and unsigned division/remainder, comparisons and right shifts keep that distinction. Shift counts remain Core i32: the unsigned count/width guard precedes any compiler-internal extension or truncation needed by LLVM. The arithmetic boundary bit adapters are internal LLVM operations. Source numeric conversions use the separately verified Core40–42 operations described above.
 
 ## Ordinary compiler ABI0.3
 
-This same-repository development interface is unpublished. Outputs carry the actual externally visible read-only u32 symbol `tsfg_native_abi_version = 3` (major0/minor3), and export only the new wrapper symbol below. The old five-argument `tsfg_native_invoke` symbol is absent, so linking an old caller with a new object fails. This does not migrate the separately retained formal Native0.4/Core0.8/ABI0.2 producer, loader or Runtime. Formal Native0.5/Core0.10/ABI0.3 adoption and its resource/identity gates remain separate work.
+This same-repository development interface is unpublished. Outputs carry the actual externally visible read-only u32 symbol `tsfg_native_abi_version = 3` (major0/minor3), and export only the new wrapper symbol below. The old five-argument `tsfg_native_invoke` symbol is absent, so linking an old caller with a new object fails. This does not migrate the separately retained formal Native0.4/Core0.8/ABI0.2 producer, loader or Runtime. Formal Native0.5/Core0.11/ABI0.3 adoption and its resource/identity gates remain separate work.
 
 ```c
 typedef struct { uint32_t low; uint32_t high; } TsfgScalarSlot;

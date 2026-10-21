@@ -16,7 +16,7 @@ for (const fixture of fixtures) {
     const hir = verifyHir(fixture.hir), before = structuredClone(fixture.hir);
     const text = lowerHir(hir);
     assert.equal(text, lowerHir(readHir(new TextEncoder().encode(printHir(hir)))));
-    assert.ok(text.includes('tsfg_core.version = "0.10.0"'));
+    assert.ok(text.includes('tsfg_core.version = "0.11.0"'));
     assert.ok(text.includes('tsfg_core.bytecode_schema = "' + registry['tsfg.bytecode'].schemaHash + '"'));
     assert.ok(text.includes('tsfg_core.source_length = ' + hir.source.content.length + ' : i64'));
     assert.ok(text.includes('tsfg_core.source_hash = "' + hir.source.hash + '"'));
@@ -51,7 +51,7 @@ test('ordinary module view retains lifecycle tables and stable emitted symbols',
 });
 test('real generic Source facts emit the same concrete Core exchange after independent cold validation', () => {
   const hir = candidate(), before = printGenericHir(hir), text = lowerGenericHir(hir);
-  assert.equal(genericCoreFormat.version, '0.10.0');
+  assert.equal(genericCoreFormat.version, '0.11.0');
   assert.equal(genericCoreFormat.bytecodeSchema, registry['tsfg.bytecode'].schemaHash);
   assert.ok(text.includes('tsfg_core.version = "' + genericCoreFormat.version + '"'));
   assert.ok(text.includes('tsfg_core.bytecode_schema = "' + genericCoreFormat.bytecodeSchema + '"'));

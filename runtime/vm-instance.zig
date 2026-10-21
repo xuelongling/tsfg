@@ -47,11 +47,7 @@ pub const ModuleInstance = struct {
             for (tables.roots) |candidate| if (candidate.kind == 1 and std.mem.eql(u8, &bytecode.functions(self.state.module)[candidate.function_index].info.function_id, id)) { root = true; break; };
             if (!root) return .{ .code = "r05-request-function", .selected = function };
         }
-        if (arguments.len != function.info.parameter_types.len) return .{ .code = "r05-request-arguments", .selected = function };
-        for (arguments, function.info.parameter_types) |argument, code| {
-            if (argument.typeCode() != code) return .{ .code = "r05-request-arguments", .selected = function };
-            if (argument == .string) _ = argument.string.owner.heap.stringLength(argument.string.handle) catch return .{ .code = "r05-request-arguments", .selected = function };
-        }
+        if (!request.acceptsArguments(&function.info, arguments)) return .{ .code = "r05-request-arguments", .selected = function };
         for (capabilities, 0..) |capability, index| {
             var required = false;
             for (tables.hosts) |host| if (host.capability == capability.id) {

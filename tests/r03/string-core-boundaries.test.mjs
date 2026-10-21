@@ -20,7 +20,7 @@ async function pinned(file, length, digest) {
 /** @returns {Promise<any[]>} */
 async function cases() {
   const bytes = await pinned('./string-core-oracle.json', 43500,
-    '966556b4d767fe0643b1e52eb3df477c931e5107cbf510ccf30a60a805230e04');
+    '30ba4f71ac0118d27aa00630c90c39b2b6954afa432fd7be981fc0b99677b4e0');
   const oracle = JSON.parse(bytes.toString('utf8'));
   const out = [];
   for (const c of oracle.cases) {
@@ -188,13 +188,13 @@ test('24g upstream input budgets preserve the old exact limit DTO before Core em
 // verifyHir to manufacture a public overflow. C++ input8MiB is tested separately.
 
 test('24g absent context keeps the complete scalar Core path across formal identity migration', async () => {
-  const bytes = await pinned('./string-core-default-scalar.json', 2809, '52a85829476312f5fd335f89b26b8a5bed71942cd8f0d6ea466728dd8e37c007');
+  const bytes = await pinned('./string-core-default-scalar.json', 2809, '548008d67c97cffcf7b870ce69d8d43d1e609de8c641550480e6e00044d76eb2');
   const f = JSON.parse(bytes.toString('utf8'));
   assert.equal(f.provenance.sourceCompilerRun, false); assert.equal(f.provenance.emitterCalled, false);
   assert.deepEqual(verifyHir(clone(f.hir)), f.hir);
   // Preserve the frozen original. Only the current formal version/schema change;
   // every identity, function, SSA body and anchor stays byte-for-byte identical.
-  const current = f.core.replace('tsfg_core.version = "0.9.0"', 'tsfg_core.version = "0.10.0"')
+  const current = f.core.replace('tsfg_core.version = "0.9.0"', `tsfg_core.version = "${registry['tsfg.bytecode'].semver}"`)
     .replace('sha256:3dea6ce5de996dfa3e7141cced985243ea74ac9bb80f03636c6694343118f2a6', registry['tsfg.bytecode'].schemaHash);
   assert.equal(lowerHir(clone(f.hir)), current);
   assert.equal(lowerHir(clone(f.hir), undefined), current);

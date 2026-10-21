@@ -25,12 +25,12 @@ export function expectedStringPacket(hir) {
   const p=new Bytes();
   p.string(hir.target.target);p.string(hir.target.triple);p.string(hir.target.llvmDataLayout);
   for(const n of [4,4,64,8])p.integer(n,2);
-  p.integer(51,4);p.hash(hir.inputIdentity);p.hash(hir.source.hash);p.string(hir.source.path);
+  p.integer(119,4);p.hash(hir.inputIdentity);p.hash(hir.source.hash);p.string(hir.source.path);
   p.integer(hir.source.content.length,4);p.integer(0,1);p.integer(hir.functions.length,2);
   for(const fn of hir.functions) {
     const returned=fn.body[0],value=returned.value,concat=value.kind==='stringConcat';
     p.hash(fn.id);p.hash(fn.signatureHash);p.hash(fn.returnType.id);p.string(fn.name);
-    p.integer(fn.range.start,4);p.integer(fn.range.end,4);p.integer(14,1);p.integer(0,1);
+    p.integer(fn.range.start,4);p.integer(fn.range.end,4);p.integer(14,1);p.integer(0,1);p.integer(0,1);
     p.integer(concat?3:1,2);p.integer(1,2);p.integer(concat?5:3,2);
     p.integer(0,2);p.integer(concat?5:3,2);
     const op=(opcode,type,reg,payload,range)=>{
@@ -47,12 +47,12 @@ export function expectedStringPacket(hir) {
     op(2,14,concat?2:0,0,returned.range);
   }
   const payload=p.done(),header=new Bytes();header.put(Buffer.from('TSFGTBC0'));
-  header.integer(10,4);header.hash(registry['tsfg.bytecode'].schemaHash);
+  header.integer(11,4);header.hash(registry['tsfg.bytecode'].schemaHash);
   header.integer(payload.length+80,4);header.put(digest(payload));header.put(payload);
   return header.done();
 }
 export function expectedStringCore(hir) {
-  const q=JSON.stringify,attrs={version:'0.10.0',input_identity:hir.inputIdentity,
+  const q=JSON.stringify,attrs={version:'0.11.0',input_identity:hir.inputIdentity,
     source_hash:hir.source.hash,source_path:hir.source.path,target:schema.target.target,
     triple:schema.target.triple,data_layout:schema.target.llvmDataLayout,bytecode_schema:registry['tsfg.bytecode'].schemaHash};
   const range=r=>'tsfg_source.start = '+r.start+' : i64, tsfg_source.end = '+r.end+' : i64';

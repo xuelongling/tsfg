@@ -5,6 +5,7 @@ import assert from 'node:assert/strict';
 import { expectedArrayCore13 } from './array-core13-literal.mjs';
 import { readFile } from 'node:fs/promises';
 import { lowerHir, verifyHir, printHir, readHir } from '../../compiler/hir.mjs';
+import registry from '../../contracts/registry.json' with { type: 'json' };
 import { fixtures, fresh, context, failure, hirError, trustedHirError, coreOracle, sha } from './array-test-fixtures.mjs';
 
 // Keep this standard prototype-conversion recipe local so Core adversarial input
@@ -145,11 +146,14 @@ test('25c existing upstream limits remain exact before Core emission',async t=>{
 // never weaken input verification to manufacture an output overflow witness.
 
 test('25c absent Array selection keeps the complete old scalar public path',async()=>{
-  // This unchanged pre-existing fixture is raw-pinned; its property order is not JCS.
+  // The raw-pinned fixture retains its private Core identity; its property order is not JCS.
   const bytes=await readFile(new URL('./string-core-default-scalar.json',import.meta.url));
   assert.equal(bytes.length,2809);
-  assert.equal(sha(bytes),'52a85829476312f5fd335f89b26b8a5bed71942cd8f0d6ea466728dd8e37c007');
+  assert.equal(sha(bytes),'548008d67c97cffcf7b870ce69d8d43d1e609de8c641550480e6e00044d76eb2');
   const f=JSON.parse(bytes.toString('utf8'));
-  assert.equal(lowerHir(fresh(f.hir)),f.core);
-  assert.equal(lowerHir(fresh(f.hir),undefined),f.core);
+  // Rebind only the formal metadata; the frozen function body and anchors remain exact.
+  const current=f.core.replace('tsfg_core.version = "0.9.0"',`tsfg_core.version = "${registry['tsfg.bytecode'].semver}"`)
+    .replace('sha256:3dea6ce5de996dfa3e7141cced985243ea74ac9bb80f03636c6694343118f2a6',registry['tsfg.bytecode'].schemaHash);
+  assert.equal(lowerHir(fresh(f.hir)),current);
+  assert.equal(lowerHir(fresh(f.hir),undefined),current);
 });
