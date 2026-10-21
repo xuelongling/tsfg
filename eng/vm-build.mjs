@@ -4,7 +4,7 @@ import { spawn } from "node:child_process";
 import { watch } from "node:fs";
 import { copyFile, lstat, mkdir, open, readFile, readdir, realpath, rename, writeFile } from "node:fs/promises";
 import path from "node:path";
-import {prepareHostCounter,inspectCounterLink,writeHostCertificate,intakeUnqualifiedHostCounter,verifyUnqualifiedHostCounterInputs} from "./host-counter.mjs";
+import {prepareHostCounter,prepareUnqualifiedCurrentCounter,inspectCounterLink,writeHostCertificate,intakeUnqualifiedHostCounter,verifyUnqualifiedHostCounterInputs} from "./host-counter.mjs";
 
 import {createCounterHostContract} from "./host-semantic-contract.mjs";
 import {prepareRuntimeEntry} from './runtime-entry.mjs';
@@ -343,7 +343,9 @@ export function startVmBuildChild({command,logFd,logPath,observer=null}) {
 }
 
 /** Build the formal Zig request consumer through the existing locked control plane. */
-export async function executeVmTarget({ options, runtime, tools, productRoot, workspaceState, serialize, sha256, createIdentity, verifyTools, normalize, unqualifiedHostCounterReceipt=undefined }) {
+export async function executeVmTarget({ options, runtime, tools, productRoot, workspaceState, serialize, sha256, createIdentity, verifyTools, normalize, unqualifiedHostCounterReceipt=undefined, currentSourceCounter=false }) {
+  if (typeof currentSourceCounter !== 'boolean' || currentSourceCounter && unqualifiedHostCounterReceipt !== undefined)
+    throw new VmBuildError('Choose current-source initial-false or one cold receipt, never both', 'vm-counter-selection');
   if (!runtime || !tools || !verifyTools) throw new VmBuildError("VM build requires the verified tool closure", "vm-tool-integrity");
   const output = path.resolve(options.get("--out"));
   if (!/^E:[\\/]/i.test(output)) throw new VmBuildError("VM output must be absolute E storage", "vm-output-integrity");
@@ -356,7 +358,7 @@ export async function executeVmTarget({ options, runtime, tools, productRoot, wo
   if (await lstat(output).catch(error => { if (error.code === "ENOENT") return undefined; throw error; }))
     throw new VmBuildError("Independent VM build output already exists", "vm-output-integrity");
   const identity = await createIdentity(runtime, productRoot);
-  const required = [...runtimeSources, "contracts/registry.json", "contracts/bytecode.schema.json", "eng/vm-build.mjs", "eng/runtime-entry.mjs", "eng/host-counter.mjs", "eng/host-counter-binary.mjs", "eng/host-cost-source.lock.json", "eng/host-semantic-contract.mjs", "contracts/host-counter-semantic-v1.json"];
+  const required = [...runtimeSources, "contracts/registry.json", "contracts/bytecode.schema.json", "eng/vm-build.mjs", "eng/runtime-entry.mjs", "eng/host-counter.mjs", "eng/host-counter-objects.mjs", "eng/host-counter-binary.mjs", "eng/host-cost-source.lock.json", "eng/host-semantic-contract.mjs", "contracts/host-counter-semantic-v1.json"];
   for (const name of required) {
     const state = await lstat(path.join(productRoot, name));
     const entry = identity.buildInputSet.entries.find(entry => entry.projectId === "tsfg" && entry.repositoryRelativePath === name);
@@ -408,11 +410,12 @@ export async function executeVmTarget({ options, runtime, tools, productRoot, wo
     if(exit.code===0&&objectRetention?.first)throw new VmBuildError(objectRetention.first,'vm-object-retention');
     return{...exit,objectRetention,processObservation};
   }
-  // Internal source-built bootstrap evidence only; no public CLI or supported
-  // execution contract selects this independently anchored cold prefix.
+  // Explicit internal current-source initial-false never consumes a receipt.
+  // A supplied cold receipt keeps its exact validation and cannot fall back.
   const unqualified=unqualifiedHostCounterReceipt===undefined?null:
     await intakeUnqualifiedHostCounter({...unqualifiedHostCounterReceipt,product,stage,tools});
-  const counter=unqualified===null?await prepareHostCounter({productRoot,product,stage,tools,environment:env,run}):
+  const counter=currentSourceCounter?await prepareUnqualifiedCurrentCounter({productRoot,product,stage,tools,environment:env,run}):
+    unqualified===null?await prepareHostCounter({productRoot,product,stage,tools,environment:env,run}):
     await verifyUnqualifiedHostCounterInputs(unqualified,{product,stage});
   const executable=path.join(publish,"tsfg-vm.exe");
   const runtimeEntry=await prepareRuntimeEntry({product,stage,tools,environment:env,run});
@@ -432,8 +435,8 @@ export async function executeVmTarget({ options, runtime, tools, productRoot, wo
         counterSource:{objectHash:counter.leaf.objectHash,bridgeObjectHash:counter.bridge.objectHash,
           mcProducerLockHash:counter.lockHash,coldBundleHash:unqualified?.bundleHash??null},
         command:{executable:tools.zig,args,cwd:product,environment:env,label}});
-      if(unqualified!==null){
-        await verifyUnqualifiedHostCounterInputs(unqualified,{product,stage});await verifyTools();
+      if(currentSourceCounter||unqualified!==null){
+        if(unqualified!==null)await verifyUnqualifiedHostCounterInputs(unqualified,{product,stage});await verifyTools();
         const current=await createIdentity(runtime,productRoot);
         if(serialize(current.buildIdentity)!==serialize(identity.buildIdentity)||
             serialize(current.buildInputSet)!==serialize(identity.buildInputSet))

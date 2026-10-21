@@ -3,6 +3,7 @@ import {createHash} from 'node:crypto';
 import {lstat,open,readFile,realpath,writeFile} from 'node:fs/promises';
 import {spawnSync} from 'node:child_process';
 import path from 'node:path';
+import {prepareCounterObjects} from './host-counter-objects.mjs';
 import {canonical,own} from '../compiler/identity.mjs';
 import {inspectCounterObject,inspectCounterBridgeObject,inspectCounterLinkBytes,validateCounterMcFacts,validateCounterBridgeMcFacts} from './host-counter-binary.mjs';
 
@@ -111,31 +112,7 @@ export async function writeHostCertificate(file,leaf,linked,qualified) {
 }
 
 export async function prepareHostCounter({productRoot,product,stage,tools,environment,run}) {
-  const object=path.join(stage,'host_counter.obj'),source=path.join(product,'runtime/host_counter.c');
-  const bridgeObject=path.join(stage,'host_counter_bridge.obj'),bridgeSource=path.join(product,'runtime/host_counter_bridge.c');
-  const compilerBytes=await readFile(tools.clangcl),sourceBytes=await readFile(source),bridgeBytes=await readFile(bridgeSource);
-  const relativeHeaders=['llvm/lib/clang/22/include/stdint.h','msvc-tools/VC/Tools/MSVC/14.44.35207/include/stdint.h',
-    'msvc-tools/VC/Tools/MSVC/14.44.35207/include/vcruntime.h','msvc-tools/VC/Tools/MSVC/14.44.35207/include/sal.h',
-    'msvc-tools/VC/Tools/MSVC/14.44.35207/include/concurrencysal.h','llvm/lib/clang/22/include/vadefs.h',
-    'msvc-tools/VC/Tools/MSVC/14.44.35207/include/vadefs.h'];
-  const closure=path.resolve(path.dirname(tools.clangcl),'../..');
-  const headers=await Promise.all(relativeHeaders.map(async name=>{const file=path.join(closure,name);return {path:file,sha256:digest(await readFile(file))};}));
-  const before={compiler:tools.clangcl,compilerHash:digest(compilerBytes),sourceHash:digest(sourceBytes),bridgeSourceHash:digest(bridgeBytes),headers};
-  await writeFile(path.join(stage,'host.before.json'),JSON.stringify(before,null,2)+'\n');
-  const args=['/nologo','/c','/O2','/GS-','/Zl','/Brepro','/showIncludes','/clang:-fno-ident',source,`/Fo${object}`];
-  const result=await run({executable:tools.clangcl,args,cwd:product,environment:{...environment,INCLUDE:tools.include.join(';')},label:'host-counter'});
-  if(result.code!==0)reject();
-  const bridgeArgs=[...args.slice(0,-2),bridgeSource,`/Fo${bridgeObject}`];
-  const bridgeResult=await run({executable:tools.clangcl,args:bridgeArgs,cwd:product,environment:{...environment,INCLUDE:tools.include.join(';')},label:'host-counter-bridge'});
-  if(bridgeResult.code!==0)reject();
-  for(const label of ['host-counter','host-counter-bridge']){
-  const trace=(await readFile(path.join(stage,`${label}.log`),'utf8')).split(/\r?\n/)
-    .flatMap(line=>{const match=/^Note: including file:\s+(.+)$/.exec(line);return match?[path.resolve(match[1].trim())]:[];});
-  if(new Set(trace).size!==headers.length||trace.some(file=>!headers.some(h=>h.path.toLowerCase()===file.toLowerCase())))reject();
-  }
-  for(const header of headers)if(digest(await readFile(header.path))!==header.sha256)reject();
-  if(digest(await readFile(source))!==before.sourceHash||digest(await readFile(bridgeSource))!==before.bridgeSourceHash||digest(await readFile(tools.clangcl))!==before.compilerHash)reject();
-  const leaf=inspectCounterObject(await readFile(object)),bridge=inspectCounterBridgeObject(await readFile(bridgeObject));
+  const {object,bridgeObject,leaf,bridge,before}=await prepareCounterObjects({productRoot,product,stage,tools,environment,run});
   const lockBytes=await readFile(path.join(productRoot,'eng/host-cost-source.lock.json')),lock=JSON.parse(lockBytes.toString("utf8"));
   if(lock.status!=='admitted'||lock.summaryVersion!=='tsfg-host-cost-v1'||!process.env.TSFG_HOST_COST_CORE_EXE)reject();
   if(lock.adapterSources?.length!==2||!lock.adapterSources.some(s=>s.path==='runtime/host_counter.c'&&s.sha256===before.sourceHash)
@@ -149,6 +126,18 @@ export async function prepareHostCounter({productRoot,product,stage,tools,enviro
   await writeFile(path.join(stage,'host.after.json'),JSON.stringify({...before,objectHash:leaf.objectHash,leaf,bridge,mcProducerLockHash:digest(lockBytes)},null,2)+'\n');
   await writeHostCertificate(path.join(product,'runtime/host_certificate.zig'),leaf,null,false);
   return {object,bridgeObject,leaf,bridge,before,mc,bridgeMc,lockHash:digest(lockBytes)};
+}
+
+// Current source builds can retain real objects without invoking the separate
+// MC producer. This never creates a receipt, positive witness or Host admission.
+export async function prepareUnqualifiedCurrentCounter({productRoot,product,stage,tools,environment,run}) {
+  const counter=await prepareCounterObjects({productRoot,product,stage,tools,environment,run});
+  await writeFile(path.join(stage,'host.after.json'),JSON.stringify({...counter.before,
+    kind:'current-source-unqualified-counter-objects',objectHash:counter.leaf.objectHash,
+    leaf:counter.leaf,bridge:counter.bridge,sourceLockHash:counter.sourceLockHash,mcProducerLockHash:null,
+    qualified:false,executionAuthority:false,resourceProof:null},null,2)+'\n',{flag:'wx'});
+  await writeHostCertificate(path.join(product,'runtime/host_certificate.zig'),counter.leaf,null,false);
+  return {...counter,lockHash:null};
 }
 
 // Cold receipt intake creates a NEW unqualified input for one new owned build.
