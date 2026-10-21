@@ -7,6 +7,7 @@ export { KernelHostSemanticError } from './call-effects.mjs';
 import { verifyStringHir } from './string-hir-model.mjs';
 import { isArrayFactsContext } from './array-hir-model.mjs';
 import { verifySelectedArrayHir as verifyArrayHir } from './array-hir.mjs';
+import {isTypedArrayContext,verifyTypedArrayHir} from './typed-array-hir.mjs';
 import { verifyExceptionHir } from './exception-hir.mjs';
 import { verifyNullableHir } from './nullable-hir.mjs';
 import { verifyClosureHir } from './closure-hir.mjs';
@@ -31,6 +32,7 @@ const hash = value => typeof value === "string" && /^sha256:[0-9a-f]{64}$/.test(
 const types = scalarTypeIds;
 /** @param {any} hir @param {any} [factsContext] @param {any} [callPublicationContext] */
 export function verifyHir(hir, factsContext = undefined, callPublicationContext = undefined) {
+  if(isTypedArrayContext(factsContext))return verifyTypedArrayHir(hir,factsContext);
   if (isArrayFactsContext(factsContext)) return verifyArrayHir(hir,factsContext,callPublicationContext);
   if (callPublicationContext === undefined) return verifyWholeHir(hir, factsContext);
   return selectedModuleCalls(hir, factsContext, callPublicationContext).hir;

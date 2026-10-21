@@ -9,6 +9,12 @@ Runtime implementation for the complete M25 effort. Formal Source, HIR/Core,
 wire and VM consumers remain separate outstanding acceptance obligations; the
 component tests do not establish their execution.
 
+The reviewed `88ebb486` checkpoint's `ReferenceType.object: u64` identifies only
+the existing generic tagged scalar objects. It has no official Source class
+qualification. Formal classes and fixed values require a complete 32-byte
+identity and a uniquely validated canonical layout in the same heap/collector;
+truncating a Source runtimeKey is not an implementation of that boundary.
+
 The element layout has a semantic 32-byte TypeId, byte stride/alignment, fixed
 reference-slot count, and finite variants. Each variant has its own tag, active
 scalar fields (offset and existing scalar code), and active reference slots with

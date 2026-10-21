@@ -1,0 +1,49 @@
+// SPDX-License-Identifier: MIT
+// Whole owned HIR is always reconstructed against a separately selected packet.
+import {isProxy} from 'node:util/types';
+import {canonical,own} from './identity.mjs';
+import {copyGenericJsonBytes,readGenericJson,checkGenericJsonValueBudget} from './generic-json.mjs';
+import {typedArrayJsonPolicy as policy,typedArrayFailure,check,hash} from './typed-array-schema.mjs';
+import {readTypedArrayFacts,writeTypedArrayFacts} from './typed-array-facts.mjs';
+import {projectTypedArrayFacts} from './typed-array-project.mjs';
+
+export function isTypedArrayContext(value) {
+  if(!value||typeof value!=='object'||isProxy(value)||![Object.prototype,null].includes(Object.getPrototypeOf(value)))return false;
+  const fields=Object.getOwnPropertyDescriptors(value);
+  return fields.family?.value==='tsfg.array-facts-context-candidate'&&fields.version?.value===2;
+}
+function context(value) {
+  check(value&&typeof value==='object'&&!isProxy(value)&&[Object.prototype,null].includes(Object.getPrototypeOf(value)),'context');
+  const keys=Reflect.ownKeys(value),wanted=['family','version','factsBytes','expectedPackageId'];
+  check(keys.length===wanted.length&&wanted.every(key=>keys.includes(key)),'context');
+  const fields=Object.getOwnPropertyDescriptors(value);
+  check(wanted.every(key=>fields[key].enumerable&&Object.hasOwn(fields[key],'value')),'context');
+  const selected=Object.fromEntries(wanted.map(key=>[key,fields[key].value]));
+  check(selected.family==='tsfg.array-facts-context-candidate'&&selected.version===2,'context');hash(selected.expectedPackageId);
+  const bytes=copyGenericJsonBytes(selected.factsBytes,policy),facts=readTypedArrayFacts(bytes);
+  check(facts.packageId===selected.expectedPackageId,'context');return {bytes,facts};
+}
+export function verifyTypedArrayHir(hir,factsContext) {
+  const {facts}=context(factsContext);
+  checkGenericJsonValueBudget(hir,policy);
+  const expected=projectTypedArrayFacts(facts);
+  check(canonical(hir)===canonical(expected),'hir-projection');return own(expected);
+}
+export function buildTypedArrayHir(input,factsContext) {
+  try {
+    const {bytes,facts}=context(factsContext);
+    check(writeTypedArrayFacts(input).equals(bytes),'context');
+    const result=Object.freeze({status:'ok',hir:own(projectTypedArrayFacts(facts))});
+    return /** @type {typeof result & {diagnostics?:undefined}} */(result);
+  }catch(error) {
+    const result=Object.freeze({status:'error',diagnostics:own([{code:error.code??'r03-typed-array-hir',
+      ruleId:error.ruleId??'r01-input-boundary',phase:'hir',message:error.message,
+      ...(error.primary?{primary:error.primary}:{})}])});
+    return /** @type {typeof result & {hir?:undefined}} */(result);
+  }
+}
+export function readTypedArrayHir(bytes,factsContext) {
+  const input=readGenericJson(copyGenericJsonBytes(bytes,policy),policy);
+  const hir=verifyTypedArrayHir(input.value,factsContext);
+  check(input.text===canonical(hir)+'\n','canonical');return hir;
+}

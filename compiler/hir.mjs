@@ -29,6 +29,7 @@ import { buildArrayHir, readArrayHir } from './array-hir.mjs';
 import { emitArrayCore } from './array-core-emitter.mjs';
 export { analyzeArrayCalls, verifyArrayCalls, printArrayCalls, readArrayCalls } from './array-call-publication.mjs';
 import { isArrayFactsContext } from './array-hir-model.mjs';
+import {isTypedArrayContext,buildTypedArrayHir,readTypedArrayHir} from './typed-array-hir.mjs';
 
 import { buildClosureHir } from "./closure-hir.mjs";
 export { verifyHir };
@@ -43,6 +44,7 @@ const types = scalarTypeIds;
 /** @param {any} snapshot @param {any} [factsContext] @param {any} [callPublicationContext] */
 // Error casts describe omitted hir fields without adding runtime keys or erasing family diagnostics.
 export function buildHir(snapshot, factsContext = undefined, callPublicationContext = undefined) {
+  if(isTypedArrayContext(factsContext))return buildTypedArrayHir(snapshot,factsContext);
   if (isArrayFactsContext(factsContext)) return buildArrayHir(snapshot, factsContext, callPublicationContext);
   if (factsContext !== undefined) return buildStringHir(snapshot, factsContext);
   try {
@@ -210,6 +212,7 @@ export function buildHir(snapshot, factsContext = undefined, callPublicationCont
 export const printHir = (hir, factsContext = undefined, callPublicationContext = undefined) => `${canonical(verifyHir(hir, factsContext, callPublicationContext))}\n`;
 /** @param {Uint8Array} bytes @param {any} [factsContext] @param {any} [callPublicationContext] */
 export function readHir(bytes, factsContext = undefined, callPublicationContext = undefined) {
+  if(isTypedArrayContext(factsContext))return readTypedArrayHir(bytes,factsContext);
   if (isArrayFactsContext(factsContext)) return readArrayHir(bytes, factsContext, callPublicationContext);
   if (factsContext !== undefined) return readStringHir(bytes, factsContext);
   const { text, value } = readHirWire(bytes);
