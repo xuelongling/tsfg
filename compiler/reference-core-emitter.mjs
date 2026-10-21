@@ -1,10 +1,9 @@
 // SPDX-License-Identifier: MIT
 import { verifyReferenceHir } from './reference-hir.mjs';
 import { floatBits } from './float.mjs';
-import { coreExchangeFormat } from './core-ssa-emitter.mjs';
+import { privateCoreExchangeFormat } from './core-ssa-emitter.mjs';
 import { referenceCoreModel, referenceCoreFailure as reject } from './reference-core-model.mjs';
 import bytecodeSchema from '../contracts/bytecode.schema.json' with { type: 'json' };
-import registry from '../contracts/registry.json' with { type: 'json' };
 import referenceSchema from '../contracts/core-reference-candidate.schema.json' with { type: 'json' };
 
 const quote = text => '"' + [...text].map(character => {
@@ -271,7 +270,7 @@ export function emitReferenceCore(input) {
     functions.push(header + lines.join('\n') + '\n' + reserve('  }'));
   }
   const source = hir.sources.find(value => !value.declaration);
-  const attributes = { 'tsfg_core.version': coreExchangeFormat.version, 'tsfg_core.bytecode_schema': registry['tsfg.bytecode'].schemaHash,
+  const attributes = { 'tsfg_core.version': privateCoreExchangeFormat.version, 'tsfg_core.bytecode_schema': privateCoreExchangeFormat.bytecodeSchema,
     'tsfg_core.input_identity': hir.context.factsDigest, 'tsfg_core.source_path': source.path,
     'tsfg_core.source_hash': source.sha256, 'tsfg_core.source_length': source.utf16Length,
     'tsfg_core.target': bytecodeSchema.target.target, 'tsfg_core.triple': bytecodeSchema.target.triple,

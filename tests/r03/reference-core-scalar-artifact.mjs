@@ -5,6 +5,7 @@ import { lowerHir } from '../../compiler/hir.mjs';
 import { canonical, sha256 } from '../../compiler/identity.mjs';
 import { scalarCoreFixtures } from '../../eng/scalar-core-emitter-fixtures.mjs';
 import schema from '../../contracts/core-reference-candidate.schema.json' with { type: 'json' };
+import registry from '../../contracts/registry.json' with { type: 'json' };
 
 // Core representation positive control, not successful Source/checker facts.
 // The existing public scalar HIR fixture supplies the whole unchanged program.
@@ -27,8 +28,12 @@ const quote = text => '"' + [...text].map(character => {
 const attr = value => typeof value === 'string' ? quote(value) : typeof value === 'number' ? value + ' : i64'
   : typeof value === 'boolean' ? String(value) : Array.isArray(value) ? '[' + value.map(attr).join(', ') + ']'
   : '{' + Object.keys(value).sort().map(key => key + ' = ' + attr(value[key])).join(', ') + '}';
-const boundary = scalar.indexOf('} {');
+// Keep the independent private profile's original metadata. This fixture does
+// not make old unmarked Core eligible for the formal producer.
+const privateScalar = scalar.replace('tsfg_core.version = "0.10.0"', 'tsfg_core.version = "0.9.0"')
+  .replace(registry['tsfg.bytecode'].schemaHash, 'sha256:3dea6ce5de996dfa3e7141cced985243ea74ac9bb80f03636c6694343118f2a6');
+const boundary = privateScalar.indexOf('} {');
 assert.ok(boundary >= 0);
-const extended = scalar.slice(0, boundary) + ', tsfg_core.reference = ' + attr(extension) + scalar.slice(boundary);
+const extended = privateScalar.slice(0, boundary) + ', tsfg_core.reference = ' + attr(extension) + privateScalar.slice(boundary);
 const artifact = text => { const bytes = Buffer.from(text); return { bytes: bytes.length, sha256: sha256(bytes), coreBase64: bytes.toString('base64') }; };
 console.log('TSFG_REFERENCE_CORE_SCALAR_V1 ' + canonical({ scalar: artifact(scalar), extended: artifact(extended) }));

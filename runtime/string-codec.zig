@@ -240,6 +240,15 @@ const CodeUnits = struct {
     }
 };
 
+/// Copy all logical units in linear time; no view into String storage escapes.
+pub fn decodeInto(bytes: []const u8, out: []u16) (LengthError || error{BufferTooSmall})!usize {
+    const count = try canonicalLength(bytes);
+    if (count > out.len) return error.BufferTooSmall;
+    var units: CodeUnits = .{ .bytes = bytes };
+    for (out[0..count]) |*unit| unit.* = (try units.next()).?;
+    return count;
+}
+
 /// Validate both complete encodings before any early lexicographic decision.
 pub fn compare(left: []const u8, right: []const u8) LengthError!std.math.Order {
     _ = try canonicalLength(left);

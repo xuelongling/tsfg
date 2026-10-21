@@ -5,27 +5,7 @@ const bytecode = @import("bytecode.zig");
 const vm = @import("vm.zig");
 const managed = @import("managed-heap.zig");
 
-/// A serial host request context. Concurrent hosts use separate Runtime values.
-/// init allocates nothing. After first heap/request use the Runtime is pinned:
-/// transfer ownership before use, then retain its address through deinit.
-pub const Runtime = struct {
-    allocator: Allocator,
-    heap: managed.ManagedHeap,
-    active_requests: usize = 0,
-
-    pub fn init(allocator: Allocator) Runtime {
-        return .{ .allocator = allocator, .heap = managed.ManagedHeap.init(allocator) };
-    }
-
-    pub fn deinit(self: *Runtime) !void {
-        if (self.active_requests != 0) return error.RuntimeBusy;
-        try self.heap.deinit();
-    }
-
-    pub fn activeRequests(self: *const Runtime) usize {
-        return self.active_requests;
-    }
-};
+pub const Runtime = @import("runtime-state.zig").Runtime;
 
 pub inline fn eval_bytecode(host: *Runtime, module: *const bytecode.VerifiedModule, function_id: bytecode.FunctionId, arguments: []const vm.TypedValue, capabilities: []const vm.Capability, limits: vm.RequestLimits) vm.RequestOutcome {
     const scope = host.heap.beginScope() catch {

@@ -1,5 +1,8 @@
 // SPDX-License-Identifier: MIT
 #include "bytecode.h"
+#include "string-formal.h"
+#include "empty-reference.h"
+#include "reference-metadata.h"
 #include "closure.h"
 #include "bytecode_encoding.h"
 #include "dialect.h"
@@ -30,7 +33,7 @@ using bytecode::integer;
 using bytecode::string;
 using bytecode::appendHash;
 constexpr llvm::StringLiteral bytecodeSchema =
-    "3dea6ce5de996dfa3e7141cced985243ea74ac9bb80f03636c6694343118f2a6";
+    "834206c45eaf6a1c47fa481970869e87c5badfa631af039576cb97e34fcac6ac";
 constexpr llvm::StringLiteral target = "windows-x86_64-msvc";
 constexpr llvm::StringLiteral triple = "x86_64-pc-windows-msvc";
 constexpr llvm::StringLiteral layout =
@@ -67,7 +70,7 @@ uint8_t scalarOpcode(llvm::StringRef name) {
 
 // Formal R04 producer: derive register instructions from verified MLIR SSA.
 // No frontend Snapshot or AST is available to this consumer.
-mlir::LogicalResult verifiedBytecode(mlir::ModuleOp module, Bytes &packet) {
+static mlir::LogicalResult compileCore(mlir::ModuleOp module, Bytes &packet, bool emptyReference) {
   if (closure::usesCandidate(module)) {
     packet.clear();
     return closure::reject("r04-core-closure-unsupported", "wire9 cannot encode a closure candidate module");
@@ -80,14 +83,17 @@ mlir::LogicalResult verifiedBytecode(mlir::ModuleOp module, Bytes &packet) {
     auto value = module->getAttrOfType<mlir::StringAttr>(key);
     return value ? value.getValue() : llvm::StringRef();
   };
+  if (text("tsfg_core.version") != (emptyReference ? "0.9.0" : "0.10.0")) return reject();
   const bool moduleMode = bool(module->getAttr("tsfg_core.sources"));
   std::vector<llvm::StringRef> moduleAttributes = {"tsfg_core.version", "tsfg_core.input_identity",
       "tsfg_core.source_hash", "tsfg_core.source_path",
       "tsfg_core.target", "tsfg_core.triple", "tsfg_core.data_layout",
       "tsfg_core.bytecode_schema", "tsfg_core.source_length"};
+  if (emptyReference) moduleAttributes.push_back("tsfg_core.reference");
   if (moduleMode) for (auto name : {"tsfg_core.sources", "tsfg_core.modules", "tsfg_core.globals", "tsfg_core.hosts", "tsfg_core.roots", "tsfg_core.initialization"}) moduleAttributes.push_back(name);
   if (!attributes(module, moduleAttributes)) return reject();
-  if (text("tsfg_core.bytecode_schema") != ("sha256:" + bytecodeSchema).str() ||
+  const auto expectedSchema = emptyReference ? "sha256:3dea6ce5de996dfa3e7141cced985243ea74ac9bb80f03636c6694343118f2a6" : ("sha256:" + bytecodeSchema).str();
+  if (text("tsfg_core.bytecode_schema") != expectedSchema ||
       text("tsfg_core.target") != target || text("tsfg_core.triple") != triple ||
       text("tsfg_core.data_layout") != layout) return reject();
   llvm::StringRef path = text("tsfg_core.source_path");
@@ -107,7 +113,7 @@ mlir::LogicalResult verifiedBytecode(mlir::ModuleOp module, Bytes &packet) {
   };
   uint32_t sourceLength;
   if (!number(module, "tsfg_core.source_length", sourceLength)) return reject();
-  auto typeCodeOf = tsfg::typeCode;
+  auto typeCodeOf = [&](mlir::Type type) { auto code = tsfg::typeCode(type); return emptyReference && code == 14 ? uint8_t(0) : code; };
   struct Function {
     mlir::func::FuncOp operation;
     Hash id, signature, type;
@@ -218,6 +224,7 @@ mlir::LogicalResult verifiedBytecode(mlir::ModuleOp module, Bytes &packet) {
       if (!dominatesReturns) return reject();
     }
   }
+  size_t stringLiteralUnits = 0;
   Bytes functionPayload;
   for (const Function &function : functions) {
     auto fn = function.operation;
@@ -404,6 +411,8 @@ mlir::LogicalResult verifiedBytecode(mlir::ModuleOp module, Bytes &packet) {
             integer(edgeArguments, registers.lookup(argument), 2);
           }
           opcode = 27; immediate = static_cast<uint32_t>(destination);
+        } else if (operation.getName().getDialectNamespace() == "tsfg_string") {
+          if (!strings::encodeFormalOperation(operation, registers, opcode, immediate, edgeArguments, stringLiteralUnits)) return reject();
         } else if ((opcode = scalarOpcode(operation.getName().getStringRef()))) {
           if (!attributes(&operation, {"tsfg_source.start", "tsfg_source.end"}) ||
               !registers.count(operation.getOperand(0))) return reject();
@@ -447,7 +456,7 @@ mlir::LogicalResult verifiedBytecode(mlir::ModuleOp module, Bytes &packet) {
   string(payload, target); string(payload, triple); string(payload, layout);
   integer(payload, static_cast<uint32_t>(size), 2);
   integer(payload, static_cast<uint32_t>(align), 2);
-  integer(payload, pointerBits, 2); integer(payload, pointerAlign, 2); integer(payload, 19, 4);
+  integer(payload, pointerBits, 2); integer(payload, pointerAlign, 2); integer(payload, 51, 4);
   appendHash(payload, input); appendHash(payload, source);
   string(payload, path); integer(payload, sourceLength, 4);
   integer(payload, moduleMode, 1);
@@ -471,12 +480,20 @@ mlir::LogicalResult verifiedBytecode(mlir::ModuleOp module, Bytes &packet) {
   integer(payload, functions.size(), 2);
   payload.insert(payload.end(), functionPayload.begin(), functionPayload.end());
   packet = Bytes{'T','S','F','G','T','B','C','0'};
-  integer(packet, 9, 4);
+  integer(packet, 10, 4);
   Hash schema; if (!decodeHash(("sha256:" + bytecodeSchema).str(), schema)) return reject();
   appendHash(packet, schema); integer(packet, static_cast<uint32_t>(80 + payload.size()), 4);
   appendHash(packet, llvm::SHA256::hash(payload));
   packet.insert(packet.end(), payload.begin(), payload.end());
   if (packet.size() > 1048576) return reject();
   return mlir::success();
+}
+mlir::LogicalResult verifiedBytecode(mlir::ModuleOp module, Bytes &packet) {
+  return compileCore(module, packet, false);
+}
+mlir::LogicalResult verifyEmptyReferenceCore(mlir::ModuleOp module) {
+  ReferenceMetadata metadata;
+  if (!module->hasAttr("tsfg_core.reference") || mlir::failed(verifyReferenceMetadata(module, metadata)) || !metadata.classes.empty()) return mlir::failure();
+  Bytes discarded; return compileCore(module, discarded, true);
 }
 } // namespace tsfg

@@ -1,10 +1,16 @@
 <!-- SPDX-License-Identifier: MIT -->
 
-# tsfg.bytecode 0.9.0
+# tsfg.bytecode 0.10.0
 
-Prospective isolated M14 candidate: this document/registry/schema combination has not been adopted by the Owner or integrated into Product/M13. Direct C++ protocol checks do not establish formal artifact admission or Runtime execution.
+Core0.10 / wire10 adds nominal managed String type14 and capability51. The complete
+String operation, root and output contract is described in [formal String](../docs/r03-formal-string-runtime.md)
+and the exact machine schema. Compiler/reader and ordinary compilation evidence remain
+separate from formal guest execution and Runtime certification.
 
-The registered 0.9.0 binding-origin records use the implemented M13 owned shape: module globals carry explicit `bindingKind`. Ordinary bindings retain `tsfg.global` identity, including legal `$default` and escaped identifiers. A scalar default export expression is readonly and uses `sha256(utf8("tsfg.default-export-binding.v1" NUL sourcePath NUL sourceHash NUL moduleIdentity NUL scalarName NUL decimalUTF16Start NUL decimalUTF16End))`; digest components include the `sha256:` prefix and ranges retain official UTF-16 expression anchors. The Snapshot/HIR importer verifies its default export and initializer association. Display names grant no generated privileges. The global flags byte is 0 ordinary readonly, 1 ordinary writable, or 2 generated readonly; 3 and unknown values are rejected. Core `binding_kind` and Runtime inspection `bindingKind` expose the same origin. Exact changed draft schema digests reject old or mixed packets. This exact development format establishes no older-format compatibility window; source admission and formal Core/Runtime acceptance remain separate obligations.
+The binding-origin rules introduced in0.9 remain unchanged: ordinary globals use
+`tsfg.global`; generated default expression bindings use the exact
+`tsfg.default-export-binding.v1` recipe in the schema. Flags0/1/2 retain their
+meaning and3/unknown flags reject. Display names grant no generated authority.
 
 This exact, same-repository development format is the formal R04 compiler to
 Zig Runtime seam. It has no published or supported older external consumer.
@@ -13,7 +19,7 @@ invalidate caches and are rejected. The registry owns version and JCS schema
 hash. The JSON schema owns wire field order and bounds.
 
 All integers use little endian. The 80-byte header is magic `TSFGTBC0`, u32 wire
-version 9, raw 32-byte schema SHA256, u32 total length and raw 32-byte SHA256 of
+version 10, raw 32-byte schema SHA256, u32 total length and raw 32-byte SHA256 of
 the payload. UTF8 strings have a u32 length, no terminator or padding. The
 checksum supplies integrity, not publisher authenticity. Target/triple and LLVM
 DataLayout are fixed in the schema. LLVM derives i32 and pointer size/alignment; Zig checks
@@ -24,13 +30,11 @@ empty/dot/parent components and backslashes reject. The primary source must end
 in .ts and cannot be a declaration .d.ts; module source tables retain declaration
 paths for host declarations. Exact path bytes remain in IDs and source maps.
 Entity identity domains remain unchanged: SHA256 of
-`tsfg.type\0<scalar>`, `tsfg.signature\0(<comma-separated scalar parameters>)-><scalar>` and
+`tsfg.type\0<nominal type>`, `tsfg.signature\0(<comma-separated nominal type parameters>)-><scalar>` and
 `tsfg.function\0<sourcePath>\0<name>\0<signatureHashHex>`.
 
-Capability19 admits 1..512 nominal integer/bool/f32/f64 functions, each with 0..64 scalar parameters,
-up to256 reachable blocks,4096 SSA registers and8192 instructions. Only the complete
-function table capacity changes in0.9; per-function and execution budgets remain
-unchanged. Existing u16 function counts and low-u16 call targets represent512
+Capability51 admits 1..512 nominal integer/bool/f32/f64/String functions, each with 0..64 typed parameters,
+up to256 reachable blocks,4096 SSA registers and8192 instructions. Existing function/per-function bounds and execution budgets remain unchanged. Existing u16 function counts and low-u16 call targets represent512
 without a record-layout change. Global
 payload fields are target/triple/layout strings, i32 size/alignment u16, pointer bits/alignment u16,
 capability u32, input/source hashes, logical source path, source length u32,
@@ -46,9 +50,9 @@ parameter types u8, followed by register/block/instruction counts u16 and its
 block table and instruction sequences. Each block
 has parameterCount u16, each parameter's register u16/type u8/reserved zero u8,
 then instructionCount u16. Registers are globally unique in block order: block
-parameters followed by scalar results. Block arguments are phi values.
+parameters followed by typed results. Block arguments are phi values.
 
-Global load/store opcodes29/30 carry a type code1..13, register, global index
+Global load/store opcodes29/30 carry a type code1..14, register, global index
 and source range. The store initialization flag distinguishes its unique
 initializer from later assignment; table binding origin controls write permission.
 Opcode31 is the explicitly authorized i32 host call. Module, global, root and
@@ -88,7 +92,7 @@ do not constrain unrelated branches. Unknown/truncated/trailing inputs reject.
 A verified module owns immutable bytes and predecoded instructions behind an
 opaque handle. Edge arguments are read into temporary values before destination
 phi registers are written, preserving parallel transfer even for loop swaps.
-`eval_bytecode` takes a verified module, FunctionId, typed scalar argument and
+`eval_bytecode` takes a verified module, FunctionId, typed argument and
 capability tables and explicit request limits. Its public host accepts
 `{type:"<concrete integer>",value:"<canonical in-range decimal>"}` and
 `{type:"bool",value:true|false}` argument records; optional `signatureHash`
@@ -120,8 +124,8 @@ Integer arithmetic wraps, guarded division/remainder and shift traps keep their
 R01 codes, Rules and operation anchors. The first actual trap ends the request;
 unreached branches/short-circuit operands cannot fail early. Runtime frees its
 frame, activeRequests returns0 and the same host accepts later requests. It
-runs no user catch/finally or callbacks and promises no rollback. Managed roots,
-borrows, user exceptions and side effects remain later capability obligations.
+runs no user catch/finally or callbacks and promises no rollback. String roots and result ownership use the managed Handle lifecycle. Other managed
+domains and user exceptions retain their separate capability obligations.
 
 Load failures carry `r04-*` and byte offsets, never untrusted source attribution.
 Request preflight errors keep `r05-request-function`, `r05-request-arguments`
@@ -131,13 +135,18 @@ The `TSFGREQ1` transport remains u32 count plus length-delimited R04 packets,
 1..128 matching requests and total1MiB/no trailing bytes, served by one Runtime.
 It adds no language semantics.
 
-This prospective HIR/Core and bytecode candidate uses0.9.0, bytecode wire9 and capability19; FrontendSnapshot remains0.8.0. They include nominal integers, bool, f32/f64 and owned module/authorized-host records. docs/r03-integer-vm.md records the earlier M07 wire6/capability17 slice; it does not describe the current wire. Old and mixed schema identities are rejected, and no older-format compatibility window is promised. Scalar identities, original source anchors, complete verification and logical/physical budget ordering remain in force.
+The current formal development producer/reader requires Core0.10, wire10 and
+capability51. FrontendSnapshot remains0.8; HIR retains its independent version.
+Private marked profiles retain their own exact Core0.9 metadata and verifiers;
+they are never accepted as formal packets. Old unmarked formal0.9, old wire9,
+wrong schema hashes and mixed identities reject. Scalar identities, original
+source anchors, complete verification and logical/physical ordering remain.
 
 Historically, the0.8 global operation type-range registration corrected an omitted
 description of already implemented f32/f64 support. At that earlier correction,
 Contract SemVer0.8.0 and wire8 remained unchanged; its JCS schema hash and derived
 Contract Set ID changed atomically across producer, loader and fixtures under
 accepted ECP-0002. That historical correction did not establish formal Runtime
-acceptance. The present0.9 candidate uses wire9 and its new exact schema.
+acceptance. The subsequent0.9 candidate used wire9; current0.10 uses wire10 with its own exact schema.
 
-The0.9 producer/reader reject old wire8, Core0.8, wrong schema hashes and mixed identities. The generic owned-HIR candidate still proves its own package/instance linkage before emitting the same concrete Core0.9 scalar operations; Runtime receives no generic definitions or Source session. Source package/IO/HIR family adoption and Source executable admission remain separate.
+Historically, the0.9 producer/reader rejected wire8 and Core0.8; current0.10 also rejects wire9 and unmarked formal0.9. The generic owned-HIR candidate still proves its own package/instance linkage before emitting the same concrete Core0.10 scalar operations; Runtime receives no generic definitions or Source session. Source package/IO/HIR family adoption and Source executable admission remain separate.

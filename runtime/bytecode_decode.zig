@@ -18,11 +18,13 @@ const LoadOutcome = model.LoadOutcome;
 const builtin = @import("builtin");
 const Sha256 = std.crypto.hash.sha2.Sha256;
 const Global = struct { input_identity: [32]u8, source_hash: [32]u8, source_path: []const u8, source_length: u32 };
+const strings = @import("string-instructions.zig");
 
 // Complete bounded decode/verification owns load failure and storage cleanup.
 const Reader = struct {
     bytes: []const u8,
     offset: usize = 0,
+    string_units: usize = 0,
     failure: LoadFailure = .{ .code = "r04-truncated", .offset = 0 },
 
     pub fn reject(self: *Reader, code: []const u8, offset: usize) error{Invalid} {
@@ -87,7 +89,7 @@ fn parse(reader: *Reader, allocator: Allocator, module: *Module) (error{Invalid}
     try reader.expected(u16, @alignOf(i32), "r04-layout");
     try reader.expected(u16, @bitSizeOf(usize), "r04-layout");
     try reader.expected(u16, @alignOf(usize), "r04-layout");
-    try reader.expected(u32, 19, "r04-capability");
+    try reader.expected(u32, 51, "r04-capability");
     const input_identity = try reader.digest();
     const source_hash = try reader.digest();
     const source_path = try reader.string(4096);
@@ -263,7 +265,7 @@ fn parseFunction(reader: *Reader, allocator: Allocator, global: Global, tables: 
                     if (payload != 0) return reader.reject("r04-reserved", offset + 4);
                     if (type_code != return_type) return reader.reject("r04-type", offset + 1);
                 } else {
-                    if (opcode < 1 or (opcode > 23 and opcode != 27 and opcode != 28 and opcode != 29 and opcode != 31 and opcode != 32 and opcode != 33)) return reader.reject("r04-instruction", offset);
+                    if (opcode < 1 or (opcode > 23 and (opcode < 27 or opcode > 39))) return reader.reject("r04-instruction", offset);
                     if ((opcode == 29 or opcode == 31) and !tables.present) return reader.reject("r04-module-mode", offset);
                     if (reg != next_register or next_register >= register_count) return reader.reject("r04-register", offset + 2);
                     register_types[next_register] = type_code;
@@ -271,6 +273,7 @@ fn parseFunction(reader: *Reader, allocator: Allocator, global: Global, tables: 
                     // Parameters are available at block start; operation results only after execution.
                     definition_positions[next_register] = block.start + position + 1;
                     next_register += 1;
+                    if (opcode >= 34 and opcode <= 39) try strings.decode(reader, allocator, op, &reader.string_units);
                     if (opcode == 1 or opcode == 3) {
                         if (type_code != (if (opcode == 1) @as(u8, 1) else 2)) return reader.reject("r04-type", offset + 1);
                         if (opcode == 3 and payload > 1) return reader.reject("r04-boolean", offset + 4);
@@ -343,6 +346,7 @@ fn parseFunction(reader: *Reader, allocator: Allocator, global: Global, tables: 
             if ((op.opcode >= 4 and op.opcode <= 23) or op.opcode == 33) {
                 if (op.left >= register_count) return reader.reject("r04-register", instruction_offset);
                 const operand_type = register_types[op.left];
+                if (operand_type == 14) return reader.reject("r04-type", instruction_offset);
                 if (op.opcode == 17) {
                     if (operand_type != 2) return reader.reject("r04-type", instruction_offset);
                 } else if (op.opcode == 33) {
@@ -352,6 +356,11 @@ fn parseFunction(reader: *Reader, allocator: Allocator, global: Global, tables: 
                 if (op.type_code != (if (op.opcode >= 17 and op.opcode <= 23) @as(u8, 2) else operand_type)) return reader.reject("r04-type", instruction_offset);
                 try use(reader, op.left, operand_type, block_index, global_position, register_count, &register_types, &definition_blocks, &definition_positions, &dominators);
                 if ((op.opcode < 15 or op.opcode > 17) and op.opcode != 33) try use(reader, op.right, if (op.opcode >= 9 and op.opcode <= 11) 1 else operand_type, block_index, global_position, register_count, &register_types, &definition_blocks, &definition_positions, &dominators);
+            }
+            if (op.opcode >= 34 and op.opcode <= 39) {
+                var operands: [3]strings.Operand = undefined;
+                for (strings.operands(op, &operands)) |operand|
+                    try use(reader, operand.register, operand.type_code, block_index, global_position, register_count, &register_types, &definition_blocks, &definition_positions, &dominators);
             }
             if (op.opcode == 24 or op.opcode == 25) {
                 for (0..(if (op.opcode == 24) @as(usize, 1) else 2)) |edge| {

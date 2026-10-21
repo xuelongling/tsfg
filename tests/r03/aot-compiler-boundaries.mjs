@@ -6,10 +6,10 @@ const sha=text=>createHash('sha256').update(text).digest('hex');
 const type=name=>name==='bool'?'i1':name==='i32'?'i32':'!tsfg_core.integer<"'+name+'">';
 export function scalarModule(count=1,parameters=['i32'],result=parameters[0]??'i32') {
  const source='/aot15a/structural.ts';
- const attrs={version:'0.9.0',input_identity:'sha256:'+sha('15a structural complete module'),
+ const attrs={version:'0.10.0',input_identity:'sha256:'+sha('15a structural complete module'),
  source_hash:'sha256:'+sha('x'.repeat(100)),source_path:source,target:'windows-x86_64-msvc',
  triple:'x86_64-pc-windows-msvc',data_layout:'e-m:w-p270:32:32-p271:32:32-p272:64:64-i64:64-i128:128-f80:128-n8:16:32:64-S128',
- bytecode_schema:'sha256:3dea6ce5de996dfa3e7141cced985243ea74ac9bb80f03636c6694343118f2a6'};
+ bytecode_schema:'sha256:834206c45eaf6a1c47fa481970869e87c5badfa631af039576cb97e34fcac6ac'};
  const fields=Object.entries(attrs).map(([name,value])=>'tsfg_core.'+name+' = '+JSON.stringify(value));
  fields.push('tsfg_core.source_length = 100 : i64');const functions=[];
  for(let i=0;i<count;i++) {

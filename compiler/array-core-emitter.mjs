@@ -2,7 +2,7 @@
 // Whole owned Array HIR uses the shared SSA definition and emission machinery.
 import descriptor from '../contracts/core-array-candidate.schema.json' with { type: 'json' };
 import { canonical, sha256, scalarTypeIds, readSpanTypeId } from './identity.mjs';
-import { emitCoreSsaFunction, coreQuote as quote, coreExchangeFormat } from './core-ssa-emitter.mjs';
+import { emitCoreSsaFunction, coreQuote as quote, privateCoreExchangeFormat } from './core-ssa-emitter.mjs';
 import { arrayHirType, arrayHirFailure } from './array-hir-model.mjs';
 import { verifySelectedArrayHir as verifyArrayHir } from './array-hir.mjs';
 
@@ -69,11 +69,11 @@ export function emitArrayCore(hir, context, fixedContext = undefined) {
   const source = verified.sources.find(item => item.path === verified.rootFile);
   const fixed = fixedContext === undefined ? undefined : JSON.parse(canonical(fixedContext));
   const contracts = new Map((fixed?.contracts ?? []).map(row => [row.functionId,row]));
-  const attributes = [field('tsfg_core.version', coreExchangeFormat.version),
+  const attributes = [field('tsfg_core.version', privateCoreExchangeFormat.version),
     field('tsfg_core.input_identity', verified.inputIdentity), field('tsfg_core.source_hash', source.hash),
     field('tsfg_core.source_path', source.path), field('tsfg_core.target', verified.target.target),
     field('tsfg_core.triple', verified.target.triple), field('tsfg_core.data_layout', verified.target.llvmDataLayout),
-    field('tsfg_core.bytecode_schema', coreExchangeFormat.bytecodeSchema),
+    field('tsfg_core.bytecode_schema', privateCoreExchangeFormat.bytecodeSchema),
     'tsfg_core.source_length = ' + source.content.length + ' : i64',
     'tsfg_core.array = ' + dictionary([field('family', descriptor.family), 'version = 13 : i32',
       field('schema', schemaHash), field('profile', descriptor.profile), 'facts_version = 7 : i32']),

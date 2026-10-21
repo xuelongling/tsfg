@@ -1,5 +1,6 @@
 // SPDX-License-Identifier: MIT
 import { createHash } from 'node:crypto';
+import registry from '../../contracts/registry.json' with { type: 'json' };
 
 // Hand-authored Core conformance input. This is neither official Source output
 // nor an execution oracle: only the real C++ Core boundary is under test.
@@ -37,7 +38,8 @@ const at = range => 'tsfg_source.start = ' + range.start + ' : i64, tsfg_source.
 /** @param {string[]} functions @param {string} source @param {string} path @param {boolean} nullable */
 function moduleText(functions, source, path, nullable) {
   const attrs = [
-    'tsfg_core.version = "0.9.0"', 'tsfg_core.bytecode_schema = "' + formalSchema + '"',
+    'tsfg_core.version = "' + (nullable ? '0.9.0' : registry['tsfg.bytecode'].semver) + '"',
+    'tsfg_core.bytecode_schema = "' + (nullable ? formalSchema : registry['tsfg.bytecode'].schemaHash) + '"',
     'tsfg_core.target = "windows-x86_64-msvc"', 'tsfg_core.triple = "x86_64-pc-windows-msvc"',
     'tsfg_core.data_layout = "' + layout + '"',
     'tsfg_core.input_identity = "' + sha256('M20 hand-authored Core input\0' + source) + '"',

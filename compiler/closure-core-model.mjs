@@ -1,8 +1,7 @@
 // SPDX-License-Identifier: MIT
 import { canonical, sha256, scalarName } from './identity.mjs';
-import { coreQuote as quote } from './core-ssa-emitter.mjs';
+import { coreQuote as quote, privateCoreExchangeFormat } from './core-ssa-emitter.mjs';
 import schema from '../contracts/core-closure-candidate.schema.json' with { type: 'json' };
-import registry from '../contracts/registry.json' with { type: 'json' };
 import { closureCoreInitialization } from './closure-core-initialization.mjs';
 export { schema };
 
@@ -90,7 +89,7 @@ export function closureCoreModel(program, programHash, selection = undefined) {
     'tsfg_core.target = ' + quote(program.target.target),
     'tsfg_core.triple = ' + quote(program.target.triple),
     'tsfg_core.data_layout = ' + quote(program.target.llvmDataLayout),
-    'tsfg_core.bytecode_schema = ' + quote(registry['tsfg.bytecode'].schemaHash),
+    'tsfg_core.bytecode_schema = ' + quote(privateCoreExchangeFormat.bytecodeSchema),
     'tsfg_core.source_length = ' + program.source.content.length + ' : i64',
     'tsfg_core.closure = ' + attribute(metadata),
     ...(initialization.publication === null ? [] : ['tsfg_core.closure_publication = ' + quote(canonical(initialization.publication))]),

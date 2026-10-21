@@ -11,28 +11,37 @@ const scalar = @import("scalar.zig");
 const floatArithmetic = scalar.floatArithmetic;
 const floatCompare = scalar.floatCompare;
 const storeArithmeticTrap = request.storeArithmeticTrap;
+const string_frame = @import("string-frame.zig");
+const strings = @import("string-value.zig");
 
 // The VerifiedModule owns immutable descriptors and outlives every State and
 // execution frame. Borrow that descriptor instead of duplicating it per call.
-pub const Frame = struct { previous: ?*Frame, function: *const bytecode.Function, registers: []u64, transfer: []u64, cursor: usize = 0, return_register: u16 = 0, bytes: usize };
+pub const Frame = struct { previous: ?*Frame, function: *const bytecode.Function, registers: []u64, transfer: []u64, roots: string_frame.Roots, cursor: usize = 0, return_register: u16 = 0, bytes: usize, backing_bytes: usize };
 pub fn frameSize(function: *const bytecode.Function) usize {
     var max_parameters: usize = 0;
     for (function.blocks) |block| max_parameters = @max(max_parameters, block.parameters.len);
+    return backingSize(function, max_parameters) + (@as(usize, function.info.register_count) + max_parameters) * @sizeOf(?strings.Handle);
+}
+fn backingSize(function: *const bytecode.Function, max_parameters: usize) usize {
     return @sizeOf(Frame) + (@as(usize, function.info.register_count) + max_parameters) * @sizeOf(u64);
 }
-pub fn enter(allocator: std.mem.Allocator, function: *const bytecode.Function, previous: ?*Frame) AllocatorError!*Frame {
+pub fn enter(allocator: std.mem.Allocator, function: *const bytecode.Function, previous: ?*Frame, owner: *strings.Owner) AllocatorError!*Frame {
     comptime {
         if (@alignOf(Frame) > @alignOf(u64) or @sizeOf(Frame) % @sizeOf(u64) != 0)
             @compileError("Frame must fit aligned u64 backing");
     }
-    const bytes = frameSize(function);
+    var max_parameters: usize = 0;
+    for (function.blocks) |block| max_parameters = @max(max_parameters, block.parameters.len);
+    const bytes = backingSize(function, max_parameters);
     const backing = try allocator.alloc(u64, bytes / @sizeOf(u64));
+    errdefer allocator.free(backing);
+    const roots = try string_frame.Roots.init(allocator, owner, function.info.register_count, max_parameters);
     const frame: *Frame = @ptrCast(backing.ptr);
     const registers_start = @sizeOf(Frame) / @sizeOf(u64);
     const transfer_start = registers_start + @as(usize, function.info.register_count);
     frame.* = .{ .previous = previous, .function = function,
         .registers = backing[registers_start..transfer_start],
-        .transfer = backing[transfer_start..], .bytes = bytes };
+        .transfer = backing[transfer_start..], .bytes = frameSize(function), .backing_bytes = bytes, .roots = roots };
     return frame;
 }
 const AllocatorError = std.mem.Allocator.Error;
@@ -47,7 +56,11 @@ pub fn hostStorage(state: *const module_state.State, capabilities: []const Capab
     if (global_size[1] != 0 or initialized_size[1] != 0) return null;
     const globals = snapshot.outsideBytes(@intFromPtr(state.globals.ptr), global_size[0]) orelse return null;
     const initialized = snapshot.outsideBytes(@intFromPtr(state.initialized.ptr), initialized_size[0]) orelse return null;
-    for ([_]usize{ globals, initialized }) |bytes| {
+    const root_size = @mulWithOverflow(state.string_globals.len, @sizeOf(?strings.Handle));
+    if (root_size[1] != 0) return null;
+    const roots = snapshot.outsideBytes(@intFromPtr(state.string_globals.ptr), root_size[0]) orelse return null;
+    const owner = snapshot.outsideBytes(@intFromPtr(state.strings), @sizeOf(strings.Owner)) orelse return null;
+    for ([_]usize{ globals, initialized, roots, owner, state.strings.budget.used }) |bytes| {
         const sum = @addWithOverflow(storage, bytes);
         if (sum[1] != 0) return null;
         storage = sum[0];
@@ -89,8 +102,8 @@ pub fn preRunAdmission(state: *const module_state.State, selected: *const byteco
 pub fn preExecuteAdmission(state: *const module_state.State, function: *const bytecode.Function, capabilities: []const Capability, limits: RequestLimits) Admission {
     if (!function.info.initializer and limits.depth < 1) return .depth;
     if (bytecode.moduleTablesView(state.module).hosts.len == 0) {
-        const storage = if (bytecode.moduleTablesView(state.module).present) state.storageBytes() else 0;
-        return if (storage > limits.memory_bytes or frameSize(function) > limits.memory_bytes - storage)
+        const storage = state.storageBytes();
+        return if (storage > limits.memory_bytes or state.strings.budget.used > limits.memory_bytes - storage or frameSize(function) > limits.memory_bytes - storage - state.strings.budget.used)
             .abort else .allowed;
     }
     const snapshot = StackSnapshot.read();
@@ -107,8 +120,9 @@ pub fn preExecuteAdmission(state: *const module_state.State, function: *const by
     return if (snapshot.admits(future_stack, heap[0], limits.memory_bytes)) .allowed else .abort;
 }
 pub fn leave(allocator: std.mem.Allocator, frame: *Frame) void {
+    frame.roots.deinit(allocator);
     const backing: [*]u64 = @ptrCast(frame);
-    allocator.free(backing[0 .. frame.bytes / @sizeOf(u64)]);
+    allocator.free(backing[0 .. frame.backing_bytes / @sizeOf(u64)]);
 }
 // Borrowed Frame/Instruction remain owned by the synchronous run; no address escapes.
 pub fn executeArithmeticInstruction(current: *Frame, op: *const bytecode.Instruction, result_out: *RequestOutcome) bool {
@@ -189,8 +203,8 @@ pub fn executeComparisonInstruction(current: *Frame, op: *const bytecode.Instruc
             const edge: usize = if (op.opcode == 24 or frame[op.register] != 0) 0 else 1;
             const target = if (edge == 0) op.left else op.right;
             const block = &current.function.blocks[target];
-            for (op.edges[edge], 0..) |reg, i| transfer[i] = frame[reg];
-            for (block.parameters, 0..) |parameter, i| frame[parameter.register] = transfer[i];
+            for (op.edges[edge], block.parameters, 0..) |reg, parameter, i| if (parameter.type_code != 14) { transfer[i] = frame[reg]; };
+            for (block.parameters, 0..) |parameter, i| if (parameter.type_code != 14) { frame[parameter.register] = transfer[i]; };
             current.cursor = block.start;
 
     } else unreachable;

@@ -1,5 +1,6 @@
 // SPDX-License-Identifier: MIT
 #include "string-core.h"
+#include "string-formal.h"
 #include "mlir/IR/BuiltinAttributes.h"
 #include "mlir/IR/Dialect.h"
 #include "mlir/IR/DialectImplementation.h"
@@ -22,29 +23,7 @@ mlir::LogicalResult reject(llvm::StringRef code, llvm::StringRef detail) {
 }
 namespace {
 mlir::LogicalResult verifyOperation(mlir::Operation *operation) {
-  const bool constant = operation->getName().getStringRef() == "tsfg_string.constant";
-  if (operation->getNumResults() != 1 || operation->getNumRegions() ||
-      operation->getNumSuccessors() || operation->getNumOperands() != (constant ? 0 : 2))
-    return reject("core-ir-string-shape", "operation shape differs");
-  if (constant ? !attributes(operation, {"code_units", "tsfg_source.start", "tsfg_source.end"})
-               : !attributes(operation, {"tsfg_source.operator_start", "tsfg_source.operator_end",
-                                          "tsfg_source.start", "tsfg_source.end"}))
-    return reject("core-ir-string-metadata", "operation fields differ");
-  if (!llvm::isa<StringType>(operation->getResult(0).getType()))
-    return reject("core-ir-string-type", "result requires the nominal String type");
-  for (auto operand : operation->getOperands())
-    if (!llvm::isa<StringType>(operand.getType()))
-      return reject("core-ir-string-type", "operand requires the nominal String type");
-  if (constant) {
-    auto units = operation->getAttrOfType<mlir::DenseI32ArrayAttr>("code_units");
-    if (!units) return reject("core-ir-string-type", "code_units requires DenseI32ArrayAttr");
-    if (units.asArrayRef().size() > 16384)
-      return reject("core-ir-string-budget", "literal exceeds the code-unit budget");
-    for (int32_t unit : units.asArrayRef())
-      if (unit < 0 || unit > 65535)
-        return reject("core-ir-string-type", "code unit is outside uint16");
-  }
-  return mlir::success();
+  return verifyFormalOperation(operation);
 }
 #define STRING_OP(Class, Name, Operands) \
 class Class : public mlir::Op<Class, Operands, mlir::OpTrait::OneResult, mlir::OpTrait::ZeroRegions> { \
@@ -57,6 +36,10 @@ public: \
 };
 STRING_OP(ConstantOp, "constant", mlir::OpTrait::ZeroOperands)
 STRING_OP(ConcatOp, "concat", mlir::OpTrait::NOperands<2>::Impl)
+STRING_OP(LengthOp, "length", mlir::OpTrait::OneOperand)
+STRING_OP(CodeUnitOp, "codeunit", mlir::OpTrait::NOperands<2>::Impl)
+STRING_OP(SliceOp, "slice", mlir::OpTrait::NOperands<3>::Impl)
+STRING_OP(CompareOp, "compare", mlir::OpTrait::NOperands<2>::Impl)
 #undef STRING_OP
 class StringDialect : public mlir::Dialect {
 public:
@@ -64,7 +47,7 @@ public:
   static llvm::StringRef getDialectNamespace() { return "tsfg_string"; }
   explicit StringDialect(mlir::MLIRContext *context)
       : Dialect(getDialectNamespace(), context, mlir::TypeID::get<StringDialect>()) {
-    addTypes<StringType>(); addOperations<ConstantOp, ConcatOp>();
+    addTypes<StringType>(); addOperations<ConstantOp, ConcatOp, LengthOp, CodeUnitOp, SliceOp, CompareOp>();
   }
   mlir::Type parseType(mlir::DialectAsmParser &parser) const override {
     llvm::StringRef mnemonic;

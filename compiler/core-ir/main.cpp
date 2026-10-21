@@ -168,10 +168,11 @@ int main(int argc, char **argv) {
                  << " input exceeds candidate byte budget\n";
     return 3;
   }
+  const bool privateCandidate = reference || nullable || arrayCandidate || closureCandidate || kernelCandidate || module->getOperation()->hasAttr("tsfg_core.string");
   auto version = module->getOperation()->getAttrOfType<mlir::StringAttr>("tsfg_core.version");
-  if (!version || version.getValue() != "0.9.0") {
+  if (!version || version.getValue() != (privateCandidate ? "0.9.0" : "0.10.0")) {
     llvm::errs() << (arrayCandidate ? "[core-ir-array-identity]" : stringCandidate ? "[core-ir-string-identity]" : "[core-ir-identity]")
-                 << " expected Core IR 0.9.0\n";
+                 << " expected exact current Core IR identity\n";
     return 3;
   }
   if (mlir::failed(mlir::verify(*module))) {
@@ -203,7 +204,7 @@ int main(int argc, char **argv) {
     llvm::errs() << "[r04-core-kernel-unsupported] GlobalId proof candidate has no wire encoding\n";
     return 3;
   }
-  if (stringCandidate && (nullableWire || llvm::StringRef(argv[1]) == "--emit-bytecode")) {
+  if (module->getOperation()->hasAttr("tsfg_core.string") && (nullableWire || llvm::StringRef(argv[1]) == "--emit-bytecode")) {
     llvm::errs() << "[r04-core-string-unsupported] String candidate has no wire encoding\n";
     return 3;
   }
@@ -219,7 +220,7 @@ int main(int argc, char **argv) {
     return 0;
   }
   if (stringWire) {
-    if (!stringCandidate) {
+    if (!module->getOperation()->hasAttr("tsfg_core.string")) {
       llvm::errs() << "[r04-core-string-required] --emit-string-candidate requires a marked String candidate module\n";
       return 3;
     }

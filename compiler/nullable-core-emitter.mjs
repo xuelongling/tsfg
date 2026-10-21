@@ -1,9 +1,8 @@
 // SPDX-License-Identifier: MIT
-import registry from '../contracts/registry.json' with { type: 'json' };
 import { boolTypeId } from './identity.mjs';
 import { verifyNullableHir } from './nullable-hir.mjs';
 import { check, coreSchema, scalarType, typeFor, presenceMask, candidate } from './nullable-common.mjs';
-import { emitCoreSsaFunction, coreQuote as quote } from './core-ssa-emitter.mjs';
+import { emitCoreSsaFunction, coreQuote as quote, privateCoreExchangeFormat } from './core-ssa-emitter.mjs';
 
 const presenceBoolTypeId = candidate('tsfg.core-nullable-candidate.type.v1', { kind: 'scalar', name: 'bool' });
 
@@ -20,7 +19,7 @@ export function emitNullableCore(hir, context = undefined) {
     'tsfg_core.version = "0.9.0"', 'tsfg_core.input_identity = ' + quote(verified.inputIdentity),
     'tsfg_core.source_hash = ' + quote(source.hash), 'tsfg_core.source_path = ' + quote(source.path),
     'tsfg_core.target = ' + quote(verified.target.target), 'tsfg_core.triple = ' + quote(verified.target.triple),
-    'tsfg_core.data_layout = ' + quote(verified.target.llvmDataLayout), 'tsfg_core.bytecode_schema = ' + quote(registry['tsfg.bytecode'].schemaHash),
+    'tsfg_core.data_layout = ' + quote(verified.target.llvmDataLayout), 'tsfg_core.bytecode_schema = ' + quote(privateCoreExchangeFormat.bytecodeSchema),
     'tsfg_core.source_length = ' + source.content.length + ' : i64',
     'tsfg_core.nullable = {family = "tsfg.core-nullable-candidate", version = 1 : i32, schema = ' + quote(coreSchema) + ', profile = "i32-null-undefined-internal-v1"}',
   ];

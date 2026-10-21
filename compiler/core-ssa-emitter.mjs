@@ -2,12 +2,16 @@
 import { i32TypeId, boolTypeId, scalarName, own } from './identity.mjs';
 import { scalarOperations as operations } from './scalar-operators.mjs';
 import { floatNames } from './float.mjs';
-import hirDescriptor from '../contracts/hir.schema.json' with { type: 'json' };
 import registry from '../contracts/registry.json' with { type: 'json' };
 
 // HIR representation versions evolve independently from the admitted Core exchange.
-export const coreExchangeFormat = own({ version: hirDescriptor['x-coreExchangeVersion'],
+export const coreExchangeFormat = own({ version: registry['tsfg.bytecode'].semver,
   bytecodeSchema: registry['tsfg.bytecode'].schemaHash });
+
+// Independent current private profiles bind this exact base; this does not
+// admit old unmarked formal Core or provide a packet compatibility route.
+export const privateCoreExchangeFormat = own({ version: "0.9.0",
+  bytecodeSchema: "sha256:3dea6ce5de996dfa3e7141cced985243ea74ac9bb80f03636c6694343118f2a6" });
 
 const floatType = id => floatNames.includes(scalarName(id));
 

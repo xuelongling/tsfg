@@ -3,6 +3,7 @@
 #include "closure.h"
 #include "exception.h"
 #include "bytecode.h"
+#include "empty-reference.h"
 #include "nullable.h"
 #include "string-core.h"
 #include "array-core.h"
@@ -29,7 +30,7 @@ mlir::LogicalResult verifyCoreModule(mlir::ModuleOp module) {
     return closure::analyzeRoots(module, roots);
   }
   if (arrays::usesCandidate(module)) return arrays::verifyCandidate(module);
-  if (strings::usesCandidate(module)) return strings::verifyCandidate(module);
+  if (module->hasAttr("tsfg_core.string")) return strings::verifyCandidate(module);
   if (module->hasAttr("tsfg_core.nullable")) return nullable::verifyCandidate(module);
   if (nullable::usesCandidate(module))
     return nullable::reject("core-ir-nullable-marker", "candidate types or operations require their exact marker");
@@ -38,10 +39,6 @@ mlir::LogicalResult verifyCoreModule(mlir::ModuleOp module) {
   ReferenceMetadata metadata;
   if (mlir::failed(verifyReferenceMetadata(module, metadata))) return mlir::failure();
   if (!metadata.classes.empty()) return verifyReferenceProgram(module, metadata);
-  // Only the fully validated empty extension is projected away. The remaining
-  // scalar program still passes every existing identity, SSA, CFG and R04 check.
-  mlir::OwningOpRef<mlir::ModuleOp> scalar(llvm::cast<mlir::ModuleOp>(module->clone()));
-  scalar->getOperation()->removeAttr("tsfg_core.reference");
-  return verifiedBytecode(*scalar, discarded);
+  return verifyEmptyReferenceCore(module);
 }
 } // namespace tsfg

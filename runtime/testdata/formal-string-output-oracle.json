@@ -1,0 +1,200 @@
+{
+  "author": "/root independent from both24l implementation owners",
+  "basis": "Accepted Q10/R01 UTF16 code-unit preservation, canonical WTF8 storage, strictUTF8/lossy selected explicitly. Literal byte expectations fixed here without reading newString implementation outputs. No Unicode normalization; byteLength is unescaped UTF8, not JSONescaped size.",
+  "cases": [
+    {
+      "name": "empty",
+      "units": [],
+      "strictHex": "",
+      "lossyHex": "",
+      "byteLength": 0
+    },
+    {
+      "name": "nul",
+      "units": [
+        0
+      ],
+      "strictHex": "00",
+      "lossyHex": "00",
+      "byteLength": 1
+    },
+    {
+      "name": "ascii",
+      "units": [
+        65,
+        90
+      ],
+      "strictHex": "415a",
+      "lossyHex": "415a",
+      "byteLength": 2
+    },
+    {
+      "name": "supplementary",
+      "units": [
+        55357,
+        56832
+      ],
+      "strictHex": "f09f9880",
+      "lossyHex": "f09f9880",
+      "byteLength": 4
+    },
+    {
+      "name": "decomposed",
+      "units": [
+        97,
+        769
+      ],
+      "strictHex": "61cc81",
+      "lossyHex": "61cc81",
+      "byteLength": 3
+    },
+    {
+      "name": "precomposed",
+      "units": [
+        225
+      ],
+      "strictHex": "c3a1",
+      "lossyHex": "c3a1",
+      "byteLength": 2
+    },
+    {
+      "name": "bmpBeforeSurrogates",
+      "units": [
+        55295
+      ],
+      "strictHex": "ed9fbf",
+      "lossyHex": "ed9fbf",
+      "byteLength": 3
+    },
+    {
+      "name": "bmpAfterSurrogates",
+      "units": [
+        57344
+      ],
+      "strictHex": "ee8080",
+      "lossyHex": "ee8080",
+      "byteLength": 3
+    },
+    {
+      "name": "maximumUnicode",
+      "units": [
+        56319,
+        57343
+      ],
+      "strictHex": "f48fbfbf",
+      "lossyHex": "f48fbfbf",
+      "byteLength": 4
+    },
+    {
+      "name": "loneHigh",
+      "units": [
+        55296
+      ],
+      "strictError": "InvalidUtf8",
+      "lossyHex": "efbfbd",
+      "byteLength": 3
+    },
+    {
+      "name": "loneLow",
+      "units": [
+        56320
+      ],
+      "strictError": "InvalidUtf8",
+      "lossyHex": "efbfbd",
+      "byteLength": 3
+    },
+    {
+      "name": "lowThenHigh",
+      "units": [
+        56320,
+        55296
+      ],
+      "strictError": "InvalidUtf8",
+      "lossyHex": "efbfbdefbfbd",
+      "byteLength": 6
+    },
+    {
+      "name": "highThenValidPair",
+      "units": [
+        55296,
+        55296,
+        56320
+      ],
+      "strictError": "InvalidUtf8",
+      "lossyHex": "efbfbdf0908080",
+      "byteLength": 7
+    },
+    {
+      "name": "splitPairRejoined",
+      "units": [
+        55357,
+        56832
+      ],
+      "strictHex": "f09f9880",
+      "lossyHex": "f09f9880",
+      "byteLength": 4
+    }
+  ],
+  "relations": [
+    {
+      "left": "decomposed",
+      "right": "precomposed",
+      "utf16Compare": -1,
+      "equal": false
+    },
+    {
+      "leftUnits": [
+        55357,
+        56832
+      ],
+      "rightUnits": [
+        57344
+      ],
+      "utf16Compare": -1,
+      "note": "UTF16 ordering differs from Unicode scalar value ordering"
+    },
+    {
+      "sourceUnits": [
+        55357,
+        56832
+      ],
+      "sliceStart": 0,
+      "sliceEnd": 1,
+      "sliceUnits": [
+        55357
+      ],
+      "strictError": "InvalidUtf8",
+      "lossyHex": "efbfbd"
+    },
+    {
+      "sourceUnits": [
+        55357,
+        56832
+      ],
+      "sliceStart": 1,
+      "sliceEnd": 2,
+      "sliceUnits": [
+        56832
+      ],
+      "strictError": "InvalidUtf8",
+      "lossyHex": "efbfbd"
+    }
+  ],
+  "lifetime": [
+    "Actualinstance/frame/global/argument/resultroots retain before release and survive GC forwarding",
+    "Outcome String remains valid after source instance is destroyed, independent owner/root released after writer returns or fails",
+    "Copied initialized Lease must reject read/end both before and after first read; rejection precedes owner or storage dereference",
+    "Retained old token after end rejects before owner/storage dereference even if source owner was destroyed",
+    "Repeated begin while active cannot overwrite resources; ended lease may restart only with a distinct managed root generation/token",
+    "Wrongowner/slot/generation token does not expose bytes",
+    "Byte address stable during consumer callback despite heap relocation because actual output owns its bounded copy",
+    "Writer/encoding/GC/eachOOM failure cleans owned allocations/roots with earlierString values intact"
+  ],
+  "budgets": [
+    "Literal16384/package65536 units inherited from accepted privateString profile, not arbitrary reductions",
+    "Dynamicconcat is bounded by actual heap/request budgets and UTF16 overflow, not old fixed32768 concat profile",
+    "Outputmaximum counts unescaped UTF8 bytes: NUL1, supplementary4, not JSONescape length",
+    "Alltemporary unit buffers, roots/frame/global storage and result owner allocations have explicitbudget/accounting; output serialization budget independent and documented"
+  ],
+  "credit": "Only expected semantic data and review predicates. Does not claim any new VM/guest/Source/Host/native execution, formalRuntime qualification or RF."
+}

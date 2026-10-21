@@ -69,13 +69,13 @@ fn inspectFunction(module: *const VerifiedModule, function: Function, allocator:
     var arena = std.heap.ArenaAllocator.init(allocator);
     defer arena.deinit();
     const temporary = arena.allocator();
-    const View = struct { opcode: []const u8, type: []const u8, register: []const u8, immediate: ?[]const u8 = null, left: ?[]const u8 = null, right: ?[]const u8 = null, target: ?[]const u8 = null, trueTarget: ?[]const u8 = null, falseTarget: ?[]const u8 = null, arguments: ?[]const []const u8 = null, trueArguments: ?[]const []const u8 = null, falseArguments: ?[]const []const u8 = null, event: ?[]const u8 = null, start: []const u8, end: []const u8 };
+    const View = struct { codeUnits: ?[]const u16 = null, third: ?u16 = null, opcode: []const u8, type: []const u8, register: []const u8, immediate: ?[]const u8 = null, left: ?[]const u8 = null, right: ?[]const u8 = null, target: ?[]const u8 = null, trueTarget: ?[]const u8 = null, falseTarget: ?[]const u8 = null, arguments: ?[]const []const u8 = null, trueArguments: ?[]const []const u8 = null, falseArguments: ?[]const []const u8 = null, event: ?[]const u8 = null, start: []const u8, end: []const u8 };
     const views = try temporary.alloc(View, info.instruction_count);
     for (function.instructions, views) |op, *view| {
         const names = [_][]const u8{ "add", "sub", "mul", "div", "rem", "shl", "shr", "ushr", "and", "or", "xor", "neg", "not", "bool_not", "eq", "ne", "lt", "le", "gt", "ge" };
         view.* = .{ .opcode = switch (op.opcode) {
             1 => "const_i32",
-            2 => if (op.type_code == 1) "return_i32" else if (op.type_code == 2) "return_bool" else if (contract.floatType(op.type_code)) "return_float" else "return_integer",
+            2 => if (op.type_code == 14) "return_string" else if (op.type_code == 1) "return_i32" else if (op.type_code == 2) "return_bool" else if (contract.floatType(op.type_code)) "return_float" else "return_integer",
             3 => "const_bool",
             4...23 => names[op.opcode - 4],
             24 => "br",
@@ -88,14 +88,22 @@ fn inspectFunction(module: *const VerifiedModule, function: Function, allocator:
             31 => "authorized_host",
             32 => "const_float",
             33 => "pos",
+            34 => "string_constant",
+            35 => "string_concat",
+            36 => "string_length",
+            37 => "string_code_unit",
+            38 => "string_slice",
+            39 => "string_compare",
             else => unreachable,
         }, .type = contract.typeName(op.type_code), .register = try std.fmt.allocPrint(temporary, "{d}", .{op.register}), .start = try std.fmt.allocPrint(temporary, "{d}", .{op.source.start}), .end = try std.fmt.allocPrint(temporary, "{d}", .{op.source.end}) };
+        if (op.opcode == 34) view.codeUnits = op.code_units;
+        if (op.opcode == 38) view.third = op.third;
         if (op.opcode == 1 or op.opcode == 3) view.immediate = try std.fmt.allocPrint(temporary, "{d}", .{op.immediate});
         if (op.opcode == 28) view.immediate = if (contract.signedType(op.type_code)) try std.fmt.allocPrint(temporary, "{d}", .{contract.signedValue(op.literal_bits, op.type_code)}) else try std.fmt.allocPrint(temporary, "{d}", .{op.literal_bits});
         if (op.opcode == 32) view.immediate = if (op.type_code == 12) try std.fmt.allocPrint(temporary, "{x:0>8}", .{op.literal_bits}) else try std.fmt.allocPrint(temporary, "{x:0>16}", .{op.literal_bits});
-        if ((op.opcode >= 4 and op.opcode <= 23) or op.opcode == 33) {
+        if ((op.opcode >= 4 and op.opcode <= 23) or op.opcode == 33 or (op.opcode >= 35 and op.opcode <= 39)) {
             view.left = try std.fmt.allocPrint(temporary, "{d}", .{op.left});
-            if ((op.opcode < 15 or op.opcode > 17) and op.opcode != 33) view.right = try std.fmt.allocPrint(temporary, "{d}", .{op.right});
+            if ((op.opcode < 15 or op.opcode > 17) and op.opcode != 33 and op.opcode != 36) view.right = try std.fmt.allocPrint(temporary, "{d}", .{op.right});
         }
         if (op.opcode >= 29 and op.opcode <= 31) {
             view.left = try std.fmt.allocPrint(temporary, "{d}", .{op.left});
@@ -137,7 +145,7 @@ fn inspectFunction(module: *const VerifiedModule, function: Function, allocator:
     for (info.parameter_types, parameter_types) |type_code, *type_name| type_name.* = contract.typeName(type_code);
     return std.json.Stringify.valueAlloc(allocator, .{
         .familyId = "tsfg.bytecode",
-        .semver = "0.9.0",
+        .semver = "0.10.0",
         .schemaHash = "sha256:" ++ contract.schema_hash_hex,
         .target = contract.target,
         .triple = contract.triple,
@@ -146,7 +154,7 @@ fn inspectFunction(module: *const VerifiedModule, function: Function, allocator:
         .i32Align = "4",
         .pointerBits = "64",
         .pointerAlign = "8",
-        .capabilities = "19",
+        .capabilities = "51",
         .totalBytes = try std.fmt.allocPrint(temporary, "{d}", .{decoded(module).bytes.len}),
         .inputIdentity = @as([]const u8, &input_identity),
         .functionId = @as([]const u8, &function_id),

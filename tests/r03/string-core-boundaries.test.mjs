@@ -6,6 +6,7 @@ import assert from 'node:assert/strict';
 import { readFile } from 'node:fs/promises';
 import { createHash } from 'node:crypto';
 import { lowerHir, verifyHir, readHir, printHir } from '../../compiler/hir.mjs';
+import registry from '../../contracts/registry.json' with { type: 'json' };
 
 /** @param {string | Uint8Array} value */
 const sha = value => createHash('sha256').update(value).digest('hex');
@@ -186,12 +187,16 @@ test('24g upstream input budgets preserve the old exact limit DTO before Core em
 // bound every reachable output below it. Do not weaken upstream limits or stub
 // verifyHir to manufacture a public overflow. C++ input8MiB is tested separately.
 
-test('24g absent context keeps the unchanged complete scalar Core path', async () => {
+test('24g absent context keeps the complete scalar Core path across formal identity migration', async () => {
   const bytes = await pinned('./string-core-default-scalar.json', 2809, '52a85829476312f5fd335f89b26b8a5bed71942cd8f0d6ea466728dd8e37c007');
   const f = JSON.parse(bytes.toString('utf8'));
   assert.equal(f.provenance.sourceCompilerRun, false); assert.equal(f.provenance.emitterCalled, false);
   assert.deepEqual(verifyHir(clone(f.hir)), f.hir);
-  assert.equal(lowerHir(clone(f.hir)), f.core);
-  assert.equal(lowerHir(clone(f.hir), undefined), f.core);
+  // Preserve the frozen original. Only the current formal version/schema change;
+  // every identity, function, SSA body and anchor stays byte-for-byte identical.
+  const current = f.core.replace('tsfg_core.version = "0.9.0"', 'tsfg_core.version = "0.10.0"')
+    .replace('sha256:3dea6ce5de996dfa3e7141cced985243ea74ac9bb80f03636c6694343118f2a6', registry['tsfg.bytecode'].schemaHash);
+  assert.equal(lowerHir(clone(f.hir)), current);
+  assert.equal(lowerHir(clone(f.hir), undefined), current);
   assert.deepEqual(failure(() => lowerHir(clone(f.hir), {})), expectedError('context'));
 });

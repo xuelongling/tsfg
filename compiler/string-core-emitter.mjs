@@ -1,9 +1,8 @@
 // SPDX-License-Identifier: MIT
 // A complete selected String HIR is lowered through the existing SSA producer.
-import registry from '../contracts/registry.json' with { type: 'json' };
 import descriptor from '../contracts/core-string-candidate.schema.json' with { type: 'json' };
 import { canonical, sha256 } from './identity.mjs';
-import { emitCoreSsaFunction, coreQuote as quote, coreExchangeFormat } from './core-ssa-emitter.mjs';
+import { emitCoreSsaFunction, coreQuote as quote, privateCoreExchangeFormat } from './core-ssa-emitter.mjs';
 import { readStringFactsContext, stringHirFailure, stringHirType, verifyStringHir } from './string-hir-model.mjs';
 
 const schemaHash = sha256(canonical(descriptor));
@@ -25,12 +24,12 @@ export function emitStringCore(hir, context) {
     return '!tsfg_string.string';
   };
   const attributes = [
-    'tsfg_core.version = ' + quote(coreExchangeFormat.version),
+    'tsfg_core.version = ' + quote(privateCoreExchangeFormat.version),
     'tsfg_core.input_identity = ' + quote(verified.inputIdentity),
     'tsfg_core.source_hash = ' + quote(source.hash), 'tsfg_core.source_path = ' + quote(source.path),
     'tsfg_core.target = ' + quote(verified.target.target), 'tsfg_core.triple = ' + quote(verified.target.triple),
     'tsfg_core.data_layout = ' + quote(verified.target.llvmDataLayout),
-    'tsfg_core.bytecode_schema = ' + quote(registry['tsfg.bytecode'].schemaHash),
+    'tsfg_core.bytecode_schema = ' + quote(privateCoreExchangeFormat.bytecodeSchema),
     'tsfg_core.source_length = ' + source.content.length + ' : i64',
     'tsfg_core.string = {family = ' + quote(descriptor.family) + ', version = ' + descriptor.version
       + ' : i32, schema = ' + quote(schemaHash) + ', profile = ' + quote(descriptor.profile)

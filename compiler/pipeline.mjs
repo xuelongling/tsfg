@@ -7,7 +7,7 @@ import { analyzeFrontend } from "./frontend.mjs";
 import { compilePackageHir } from "./generic-package-frontend.mjs";
 import { lowerGenericHir } from "./generic-hir.mjs";
 export { compilePackageHir };
-import { buildHir, lowerHir } from "./hir.mjs";
+import { buildHir, lowerFormalHir } from "./hir.mjs";
 import { canonical, sha256 } from "./identity.mjs";
 import registry from "../contracts/registry.json" with { type: "json" };
 import { verifyCounterHostContract } from "../eng/host-semantic-contract.mjs";
@@ -28,6 +28,7 @@ export async function verifiedConsumer(executable, role) {
     throw new TypeError(`r03-tool-${role}: unsupported target/profile identity`);
   const required = role === "core" ? [...coreIrInputs, "eng/core-ir-inputs.mjs"]
     : ["runtime/root.zig", "runtime/bytecode.zig", "runtime/bytecode_model.zig", "runtime/bytecode_decode.zig", "runtime/bytecode_view.zig", "runtime/module_format.zig", "runtime/module.zig", "runtime/request.zig", "runtime/clock.zig", "runtime/host_counter.zig", "runtime/host_counter.c", "runtime/host_counter_bridge.c", "runtime/vm.zig", "runtime/runtime.zig", "runtime/managed-heap.zig", "runtime/string-codec.zig", "runtime/main.zig", "runtime/contract.zig", "eng/host-counter.mjs", "eng/host-counter-binary.mjs", "eng/host-cost-source.lock.json", "eng/vm-build.mjs", "runtime/execution_frame.zig", "runtime/scalar.zig", "runtime/host-bindings.zig", "runtime/host-semantic-contract.zig",
+      "runtime/floating-environment.zig", "runtime/outcome-writer.zig", "runtime/string-arguments.zig", "runtime/string-budget.zig", "runtime/string-frame.zig", "runtime/string-instructions.zig", "runtime/string-output.zig", "runtime/string-value.zig", "runtime/vm-execution.zig", "runtime/vm-instance.zig", "runtime/runtime-state.zig", "runtime/request-values.zig",
       "eng/host-semantic-contract.mjs", "contracts/host-counter-semantic-v1.json"];
   required.push("contracts/registry.json", "contracts/bytecode.schema.json");
   for (const name of required) {
@@ -86,13 +87,13 @@ async function compileSnapshot(snapshot, options) {
   return produceBytecode(highLevel.hir, options);
 }
 
-async function produceBytecode(hir, options, lower = lowerHir) {
+async function produceBytecode(hir, options, lower = value => lowerFormalHir(value, options.factsContext)) {
   try {
     const core = await verifiedConsumer(options.core, "core");
     const canonicalCore = consume(core, [options.optimize ? "--optimize" : "--canonicalize"], lower(hir)).toString("utf8");
     const bytecode = consume(core, ["--emit-bytecode"], canonicalCore);
     if (bytecode.length < 80 || bytecode.subarray(0, 8).toString("ascii") !== "TSFGTBC0"
-        || bytecode.readUInt32LE(8) !== 9 || bytecode.readUInt32LE(44) !== bytecode.length
+        || bytecode.readUInt32LE(8) !== 10 || bytecode.readUInt32LE(44) !== bytecode.length
         || `sha256:${bytecode.subarray(12, 44).toString("hex")}` !== registry["tsfg.bytecode"].schemaHash
         || `sha256:${bytecode.subarray(48, 80).toString("hex")}` !== sha256(bytecode.subarray(80)))
       throw new TypeError("r04-producer-identity: C++ output differs from registered R04 packet");
@@ -102,11 +103,18 @@ async function produceBytecode(hir, options, lower = lowerHir) {
   }
 }
 
+/** Compile a complete persisted owned HIR through the same formal producer.
+ * The String facts context is verified by lowering; this does not admit Source.
+ */
+export async function compileOwnedHir(hir, options) {
+  return produceBytecode(hir, options);
+}
+
 const sessionInputs = ["compiler/generic-package-frontend.mjs", "compiler/generic-package.mjs", "compiler/generic-package-shape.mjs",
   "compiler/generic-package-io.mjs", "compiler/generic-package-io-shape.mjs", "compiler/generic-instance.mjs",
   "compiler/generic-hir.mjs", "compiler/generic-json.mjs", "compiler/generic-json-budget.mjs", "compiler/frontend.mjs", "compiler/frontend-execution.mjs", "compiler/hir.mjs", "compiler/identity.mjs", "compiler/scalar-core-emitter.mjs",
   "compiler/module-facts.mjs", "compiler/module-hir.mjs", "compiler/modules.mjs",
-  "compiler/pipeline.mjs", "compiler/float.mjs", "contracts/registry.json", "contracts/hir.schema.json", "contracts/bytecode.schema.json"];
+  "compiler/pipeline.mjs", "compiler/core-ssa-emitter.mjs", "compiler/string-formal-emitter.mjs", "compiler/float.mjs", "contracts/registry.json", "contracts/hir.schema.json", "contracts/bytecode.schema.json"];
 async function sessionFingerprint() {
   const inputs = await Promise.all(sessionInputs.map(async name => [name, sha256(await readFile(path.join(productRoot, name)))]));
   return sha256(canonical(inputs));

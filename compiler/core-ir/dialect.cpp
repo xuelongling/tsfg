@@ -1,5 +1,6 @@
 // SPDX-License-Identifier: MIT
 #include "dialect.h"
+#include "string-core.h"
 #include "module.h"
 #include "reference.h"
 #include "scalar_ops.h"
@@ -10,7 +11,7 @@
 #include <string>
 
 namespace tsfg {
-constexpr llvm::StringLiteral scalarNames[] = {"none", "i32", "bool", "i8", "i16", "i64", "u8", "u16", "u32", "u64", "isize", "usize", "f32", "f64"};
+constexpr llvm::StringLiteral scalarNames[] = {"none", "i32", "bool", "i8", "i16", "i64", "u8", "u16", "u32", "u64", "isize", "usize", "f32", "f64", "string"};
 struct IntegerStorage : public mlir::TypeStorage {
   using KeyTy = uint8_t;
   explicit IntegerStorage(uint8_t code) : code(code) {}
@@ -33,6 +34,7 @@ uint8_t typeCode(mlir::Type type) {
   if (type.isSignlessInteger(1)) return 2;
   if (type.isF32()) return 12;
   if (type.isF64()) return 13;
+  if (llvm::isa<strings::StringType>(type)) return 14;
   if (auto integer = llvm::dyn_cast<IntegerType>(type)) return integer.code();
   return 0;
 }
@@ -92,7 +94,7 @@ bool scalarTypes(mlir::Operation *operation, ScalarKind kind) {
   const auto result = operation->getResult(0).getType();
   const auto first = operation->getOperand(0).getType();
   const auto code = typeCode(first);
-  if (!code) return false;
+  if (!code || code == 14) return false;
   if (kind == ScalarKind::Shift) return integer(code) && result == first && operation->getOperand(1).getType().isSignlessInteger(32);
   for (mlir::Value operand : operation->getOperands())
     if (operand.getType() != first) return false;
@@ -176,6 +178,7 @@ mlir::Type scalarType(mlir::MLIRContext *context, llvm::StringRef name) {
   if (name == "bool") return mlir::IntegerType::get(context,1);
   if (name == "f32") return mlir::Float32Type::get(context);
   if (name == "f64") return mlir::Float64Type::get(context);
+  if (name == "string") return strings::StringType::get(context);
   for (uint8_t code = 3; code <= 11; ++code) if (name == scalarNames[code]) return IntegerType::get(context,code);
   return {};
 }

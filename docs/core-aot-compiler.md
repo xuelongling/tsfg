@@ -2,7 +2,7 @@
 
 # Core scalar compiler outputs
 
-The Core CLI accepts `--emit-native-llvm` and `--emit-native-object` with a complete Core0.9 module on stdin. The first command prints ordinary LLVM IR; the second writes Windows x64 COFF bytes. Both run the existing complete Core parser, identity, target, SSA, CFG, signature and event checks before a separate whole-module capability check. Failed stages publish no stdout. New output I/O failures exit2; invalid or unsupported Core exits3.
+The Core CLI accepts `--emit-native-llvm` and `--emit-native-object` with a complete Core0.10 module on stdin. The first command prints ordinary LLVM IR; the second writes Windows x64 COFF bytes. Both run the existing complete Core parser, identity, target, SSA, CFG, signature and event checks before a separate whole-module capability check. Failed stages publish no stdout. New output I/O failures exit2; invalid or unsupported Core exits3.
 
 The supported profile is one through512 complete functions with at most64 parameters each, all existing nominal integer/bool function parameters/results and SSA/block arguments, explicit fuel/events, branches, direct calls including recursion, and the existing integer operations. A module containing module lifecycle/global/Host metadata, managed/private candidates, floats or an unsupported operation is rejected in full. Functions and metadata are never filtered to make a smaller eligible module. The512-function table does not change the caller's dynamic depth64 limit.
 
@@ -14,7 +14,7 @@ Integers preserve the existing Core typeCode, width, signedness and constant-bit
 
 ## Ordinary compiler ABI0.3
 
-This same-repository development interface is unpublished. Outputs carry the actual externally visible read-only u32 symbol `tsfg_native_abi_version = 3` (major0/minor3), and export only the new wrapper symbol below. The old five-argument `tsfg_native_invoke` symbol is absent, so linking an old caller with a new object fails. This does not migrate the separately retained formal Native0.4/Core0.8/ABI0.2 producer, loader or Runtime. Formal Native0.5/Core0.9/ABI0.3 adoption and its resource/identity gates remain separate work.
+This same-repository development interface is unpublished. Outputs carry the actual externally visible read-only u32 symbol `tsfg_native_abi_version = 3` (major0/minor3), and export only the new wrapper symbol below. The old five-argument `tsfg_native_invoke` symbol is absent, so linking an old caller with a new object fails. This does not migrate the separately retained formal Native0.4/Core0.8/ABI0.2 producer, loader or Runtime. Formal Native0.5/Core0.10/ABI0.3 adoption and its resource/identity gates remain separate work.
 
 ```c
 typedef struct { uint32_t low; uint32_t high; } TsfgScalarSlot;

@@ -59,11 +59,11 @@ bool exact(mlir::DictionaryAttr attributes, llvm::ArrayRef<llvm::StringRef> name
   if (!attributes || attributes.size() != names.size()) return false;
   return std::all_of(names.begin(), names.end(), [&](auto name) { return bool(attributes.get(name)); });
 }
-constexpr llvm::StringLiteral names[] = {"none", "i32", "bool", "i8", "i16", "i64", "u8", "u16", "u32", "u64", "isize", "usize", "f32", "f64"};
+constexpr llvm::StringLiteral names[] = {"none", "i32", "bool", "i8", "i16", "i64", "u8", "u16", "u32", "u64", "isize", "usize", "f32", "f64", "string"};
 uint8_t scalar(mlir::Attribute attribute) {
   ModuleHash type;
   if (!decode(attribute, type)) return 0;
-  for (uint8_t code = 1; code <= 13; ++code) {
+  for (uint8_t code = 1; code <= 14; ++code) {
     std::string domain("tsfg.type\0", 10); domain += names[code];
     if (type == hash(domain)) return code;
   }

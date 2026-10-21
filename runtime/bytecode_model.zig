@@ -33,6 +33,8 @@ pub const Instruction = struct {
     register: u16,
     immediate: i32,
     literal_bits: u64 = 0,
+    code_units: []const u16 = &.{},
+    third: u16 = 0,
     left: u16,
     right: u16,
     source: Source,

@@ -8,15 +8,15 @@ import { scalarCoreFixtures } from './scalar-core-emitter-fixtures.mjs';
 import registry from '../contracts/registry.json' with { type: 'json' };
 
 const fixtures = scalarCoreFixtures();
-const packageBytes = new Uint8Array(await readFile(new URL('../tests/r03/fixtures/generic-package-source-v5.json', import.meta.url)));
-const instanceFixture = JSON.parse(await readFile(new URL('../tests/r03/fixtures/generic-instance-source-v5.json', import.meta.url), 'utf8'));
+const packageBytes = new Uint8Array(await readFile(new URL('../tests/r03/fixtures/generic-package-source-v6.json', import.meta.url)));
+const instanceFixture = JSON.parse(await readFile(new URL('../tests/r03/fixtures/generic-instance-source-v6.json', import.meta.url), 'utf8'));
 const candidate = () => buildGenericHir(packageBytes, instanceFixture.result, instanceFixture.requests);
 for (const fixture of fixtures) {
   test('shared scalar emitter retains ordinary cold representation: ' + fixture.name, () => {
     const hir = verifyHir(fixture.hir), before = structuredClone(fixture.hir);
     const text = lowerHir(hir);
     assert.equal(text, lowerHir(readHir(new TextEncoder().encode(printHir(hir)))));
-    assert.ok(text.includes('tsfg_core.version = "0.9.0"'));
+    assert.ok(text.includes('tsfg_core.version = "0.10.0"'));
     assert.ok(text.includes('tsfg_core.bytecode_schema = "' + registry['tsfg.bytecode'].schemaHash + '"'));
     assert.ok(text.includes('tsfg_core.source_length = ' + hir.source.content.length + ' : i64'));
     assert.ok(text.includes('tsfg_core.source_hash = "' + hir.source.hash + '"'));
@@ -51,7 +51,7 @@ test('ordinary module view retains lifecycle tables and stable emitted symbols',
 });
 test('real generic Source facts emit the same concrete Core exchange after independent cold validation', () => {
   const hir = candidate(), before = printGenericHir(hir), text = lowerGenericHir(hir);
-  assert.equal(genericCoreFormat.version, '0.9.0');
+  assert.equal(genericCoreFormat.version, '0.10.0');
   assert.equal(genericCoreFormat.bytecodeSchema, registry['tsfg.bytecode'].schemaHash);
   assert.ok(text.includes('tsfg_core.version = "' + genericCoreFormat.version + '"'));
   assert.ok(text.includes('tsfg_core.bytecode_schema = "' + genericCoreFormat.bytecodeSchema + '"'));

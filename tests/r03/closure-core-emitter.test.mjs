@@ -166,9 +166,9 @@ test('real returned closure emits all four typed SSA functions with activation a
   assert.equal(schema.version, 2);
   assert.equal(schema.status, 'private Node producer candidate');
   const registry = JSON.parse(await readFile(new URL('../../contracts/registry.json', import.meta.url), 'utf8'));
-  assert.equal(registry['tsfg.bytecode'].semver, '0.9.0');
-  const wireHash = registry['tsfg.bytecode'].schemaHash;
-  assert.equal(wireHash, 'sha256:3dea6ce5de996dfa3e7141cced985243ea74ac9bb80f03636c6694343118f2a6');
+  assert.equal(registry['tsfg.bytecode'].semver, '0.10.0');
+  const wireHash = 'sha256:3dea6ce5de996dfa3e7141cced985243ea74ac9bb80f03636c6694343118f2a6';
+  assert.notEqual(registry['tsfg.bytecode'].schemaHash, wireHash, 'private closure metadata retains its own exact base');
   const entry = declaration(program.functions, 'entry', 0, 269), make = declaration(program.functions, 'make', 41, 137);
   const read = declaration(program.functions, 'read', 82, 122), invoke = declaration(program.functions, 'invoke', 137, 192);
   assert.deepEqual(program.functions.map(fn => fn.id), [entry.id, make.id, read.id, invoke.id]);

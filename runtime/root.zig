@@ -23,6 +23,7 @@ pub const typedValue = vm.typedValue;
 pub const Capability = vm.Capability;
 pub const RequestLimits = vm.RequestLimits;
 pub const RequestOutcome = vm.RequestOutcome;
+pub const deinitOutcome = @import("request.zig").deinitOutcome;
 pub const Runtime = runtime.Runtime;
 pub const eval_bytecode = runtime.eval_bytecode;
 pub const ModuleInstance = vm.ModuleInstance;

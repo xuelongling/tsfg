@@ -2,7 +2,7 @@
 // Private static GlobalId proof carrier; original private identities remain visible.
 import descriptor from '../contracts/core-kernel-global-candidate.schema.json' with {type:'json'};
 import {canonical,sha256,boolTypeId,i32TypeId} from './identity.mjs';
-import {coreExchangeFormat,coreQuote} from './core-ssa-emitter.mjs';
+import {privateCoreExchangeFormat,coreQuote} from './core-ssa-emitter.mjs';
 import {emitScalarCore} from './scalar-core-emitter.mjs';
 import {checkGenericJsonValueBudget} from './generic-json-budget.mjs';
 import {verifyModuleCallableHir} from './module-callable-hir.mjs';
@@ -65,7 +65,7 @@ export function lowerKernelGlobalCore(hir,context,request,supplied=undefined){
   const text=canonical(payload);
   if(Buffer.byteLength(text)>descriptor.limits.bytes)limit();
   const source=checked.source;
-  const core=emitScalarCore({exchange:coreExchangeFormat,inputIdentity:checked.inputIdentity,
+  const core=emitScalarCore({exchange:privateCoreExchangeFormat,inputIdentity:checked.inputIdentity,
     source:{path:source.path,hash:source.hash,length:source.content.length},target:checked.target,
     functions:checked.functions.map(fn=>({...fn,returnType:{id:fn.returnType},symbol:'f'+fn.id.slice(7)})),
     moduleState:{sources:checked.sources.map(s=>({path:s.path,hash:s.hash,length:s.content.length})),modules:checked.modules,globals:checked.globals,

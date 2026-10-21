@@ -295,6 +295,10 @@ pub const ManagedHeap = struct {
         return (try self.resolve(handle)).payload.copyStringBytes(out);
     }
 
+    pub fn copyStringCodeUnits(self: *ManagedHeap, handle: Handle, out: []u16) Error!usize {
+        return (try self.resolve(handle)).payload.copyStringCodeUnits(out);
+    }
+
     pub fn createArrayF64(self: *ManagedHeap, values: []const f64, lifetime: Lifetime) Error!Handle {
         try self.check();
         const scope = try self.scopeFor(lifetime);

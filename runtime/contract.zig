@@ -1,8 +1,8 @@
 // SPDX-License-Identifier: MIT
 const std = @import("std");
 
-pub const version: u32 = 9;
-pub const schema_hash_hex = "3dea6ce5de996dfa3e7141cced985243ea74ac9bb80f03636c6694343118f2a6";
+pub const version: u32 = 10;
+pub const schema_hash_hex = "834206c45eaf6a1c47fa481970869e87c5badfa631af039576cb97e34fcac6ac";
 pub const schema_hash = hexDigest(schema_hash_hex);
 pub const max_bytes = 1048576;
 pub const target = "windows-x86_64-msvc";
@@ -23,9 +23,10 @@ pub fn typeName(code: u8) []const u8 {
     if (code == 11) return "usize";
     if (code == 12) return "f32";
     if (code == 13) return "f64";
+    if (code == 14) return "string";
     return "none";
 }
-pub fn validType(code: u8) bool { return code >= 1 and code <= 13; }
+pub fn validType(code: u8) bool { return code >= 1 and code <= 14; }
 pub fn integerType(code: u8) bool { return code >= 1 and code <= 11 and code != 2; }
 pub fn floatType(code: u8) bool { return code == 12 or code == 13; }
 pub fn bitWidth(code: u8) u8 {

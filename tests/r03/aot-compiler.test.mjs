@@ -106,7 +106,7 @@ test('original Core gate rejects i32 unary pos before capability',async()=>{
 });
 /** @type {[string,(input:string)=>string][]} */
 const malformed=[
- ['old-version',input=>input.replace('"0.9.0"','"0.8.0"')],
+ ['old-version',input=>input.replace('"0.10.0"','"0.9.0"')],
  ['mixed-schema',input=>input.replace(fixtures.identity.bytecodeSchema,'sha256:'+'0'.repeat(64))],
  ['target',input=>input.replace('windows-x86_64-msvc','linux-x86_64-gnu')],
  ['triple',input=>input.replace('x86_64-pc-windows-msvc','x86_64-unknown-linux-gnu')],
@@ -136,7 +136,7 @@ test('complete private families never project scalar functions',async()=>{
  for(const [name,input]of rows){assert.equal(typeof input,'string',name);for(const command of commands)rejected(await invokeCore(input,command));}
 });
 test('unchanged scalar bytecode and actual owner mode remain byte-exact consumers',async()=>{
- const old=await invokeCore(fixtures.minimal,'--emit-bytecode');accepted(old);assert.equal(old.stdout.subarray(0,8).toString('ascii'),'TSFGTBC0');assert.equal(old.stdout.readUInt32LE(8),9);
+ const old=await invokeCore(fixtures.minimal,'--emit-bytecode');accepted(old);assert.equal(old.stdout.subarray(0,8).toString('ascii'),'TSFGTBC0');assert.equal(old.stdout.readUInt32LE(8),10);
  const array=await json('./array-owner-proof/literals.json');const result=await invokeCore(array.files['fresh-disjoint/request.json'],'--array-owner-proof');accepted(result);
  assert.deepEqual(result.stdout,Buffer.from(array.files['fresh-disjoint/expected.stdout.json']));
 });

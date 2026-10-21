@@ -109,6 +109,14 @@ pub const Payload = union(enum) {
         return (try self.asString()).bytes.len;
     }
 
+    pub fn copyStringCodeUnits(self: Payload, out: []u16) Error!usize {
+        return codec.decodeInto((try self.asString()).bytes, out) catch |err| switch (err) {
+            error.InvalidCanonicalWtf8 => error.InvalidString,
+            error.LengthOverflow => error.StringTooLarge,
+            error.BufferTooSmall => error.BufferTooSmall,
+        };
+    }
+
     pub fn readStringCodeUnit(self: Payload, index: usize) Error!u16 {
         const value = try self.asString();
         if (index >= value.utf16_length) return error.IndexOutOfBounds;

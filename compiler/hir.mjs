@@ -23,6 +23,7 @@ import { floatNames } from './float.mjs';
 import { emitScalarCore } from './scalar-core-emitter.mjs';
 import { emitReferenceCore } from './reference-core-emitter.mjs';
 import { emitStringCore } from './string-core-emitter.mjs';
+import { emitFormalStringCore } from './string-formal-emitter.mjs';
 import { buildArrayHir, readArrayHir } from './array-hir.mjs';
 import { emitArrayCore } from './array-core-emitter.mjs';
 export { analyzeArrayCalls, verifyArrayCalls, printArrayCalls, readArrayCalls } from './array-call-publication.mjs';
@@ -235,4 +236,13 @@ export function lowerHir(hir, factsContext = undefined, callPublicationContext =
     functions: verified.functions.map(fn => ({ ...fn, symbol: moduleMode ? 'f' + fn.id.slice(7) : fn.name })),
     ...(moduleMode ? { moduleState: { sources: verified.sources.map(sourceView), modules: verified.modules,
       globals: verified.globals, hostImports: verified.hostImports, closure: verified.closure } } : {}) });
+}
+
+/** The ordinary formal Core/R04 route. Private representations keep lowerHir's
+ * explicit candidate route; String HIR is revalidated and compiled directly.
+ * @param {any} hir @param {any} [factsContext] */
+export function lowerFormalHir(hir, factsContext = undefined) {
+  if (factsContext !== undefined && !isArrayFactsContext(factsContext))
+    return emitFormalStringCore(hir, factsContext);
+  return lowerHir(hir, factsContext);
 }

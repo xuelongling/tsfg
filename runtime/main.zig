@@ -15,51 +15,15 @@ const Request = struct {
     semanticFuel: u64 = 4097,
     depth: u32 = 1,
     hostTimeNanos: ?u64 = null,
+    stringOutput: @import("string-output.zig").Mode = .strict,
 };
 
-fn writeOutcome(writer: *std.Io.Writer, outcome: *const runtime.RequestOutcome, host: *const runtime.Runtime) !void {
-    const function_id = switch (outcome.*) {
-        .returned => |r| r.function_id,
-        .failed => |r| r.function_id,
-    };
-    const source = switch (outcome.*) {
-        .returned => |r| r.source,
-        .failed => |r| r.source,
-    };
-    const function_hex = runtime.digestText(function_id);
-    const source_hex = runtime.digestText(source.hash);
-    var buffers: [6][32]u8 = undefined;
-    const start = try std.fmt.bufPrint(&buffers[0], "{d}", .{source.start});
-    const end = try std.fmt.bufPrint(&buffers[1], "{d}", .{source.end});
-    const active = try std.fmt.bufPrint(&buffers[2], "{d}", .{host.activeRequests()});
-    const fuel_remaining = try std.fmt.bufPrint(&buffers[4], "{d}", .{switch (outcome.*) {
-        .returned => |r| r.fuel_remaining,
-        .failed => |r| r.fuel_remaining,
-    }});
-    const fuel_consumed = try std.fmt.bufPrint(&buffers[5], "{d}", .{switch (outcome.*) {
-        .returned => |r| r.fuel_consumed,
-        .failed => |r| r.fuel_consumed,
-    }});
-    const source_view = .{ .path = source.path, .hash = @as([]const u8, &source_hex), .start = start, .end = end };
-    switch (outcome.*) {
-        .returned => |returned| {
-            switch (returned.result) {
-                .boolean => |value| try std.json.Stringify.value(.{ .status = "returned", .result = .{ .type = "bool", .value = value }, .source = source_view, .functionId = @as([]const u8, &function_hex), .activeRequests = active, .fuelRemaining = fuel_remaining, .fuelConsumed = fuel_consumed }, .{}, writer),
-                else => {
-                    const code = returned.result.typeCode();
-                    const text = if (code == 12) try std.fmt.bufPrint(&buffers[3], "{x:0>8}", .{returned.result.bits()}) else if (code == 13) try std.fmt.bufPrint(&buffers[3], "{x:0>16}", .{returned.result.bits()}) else if (contract.signedType(code)) try std.fmt.bufPrint(&buffers[3], "{d}", .{contract.signedValue(returned.result.bits(), code)}) else try std.fmt.bufPrint(&buffers[3], "{d}", .{returned.result.bits()});
-                    try std.json.Stringify.value(.{ .status = "returned", .result = .{ .type = contract.typeName(code), .value = text }, .source = source_view, .functionId = @as([]const u8, &function_hex), .activeRequests = active, .fuelRemaining = fuel_remaining, .fuelConsumed = fuel_consumed }, .{}, writer);
-                },
-            }
-        },
-        .failed => |failed| if (failed.exception_kind) |exception_kind| try std.json.Stringify.value(.{ .status = "exception", .code = failed.code, .category = failed.category, .exceptionKind = exception_kind, .ruleIds = failed.rule_ids, .functionId = @as([]const u8, &function_hex), .source = source_view, .activeRequests = active, .fuelRemaining = fuel_remaining, .fuelConsumed = fuel_consumed }, .{}, writer) else try std.json.Stringify.value(.{ .status = "failed", .code = failed.code, .category = failed.category, .ruleIds = failed.rule_ids, .functionId = @as([]const u8, &function_hex), .source = source_view, .activeRequests = active, .fuelRemaining = fuel_remaining, .fuelConsumed = fuel_consumed }, .{}, writer),
-    }
-}
+const writeOutcome = @import("outcome-writer.zig").writeOutcome;
 
-fn writeModuleOutcome(writer: *std.Io.Writer, outcome: *const runtime.RequestOutcome, host: *const runtime.Runtime, instance: *const runtime.ModuleInstance, counter: *const runtime.Counter, events_before: u64) !void {
+fn writeModuleOutcome(writer: *std.Io.Writer, outcome: *const runtime.RequestOutcome, host: *const runtime.Runtime, instance: *const runtime.ModuleInstance, counter: *const runtime.Counter, events_before: u64, mode: @import("string-output.zig").Mode) !void {
     var base: std.Io.Writer.Allocating = .init(host.allocator);
     defer base.deinit();
-    try writeOutcome(&base.writer, outcome, host);
+    try writeOutcome(&base.writer, outcome, host, mode);
     const bytes = base.written();
     try writer.writeAll(bytes[0..bytes.len - 1]);
     try writer.writeAll(",\"moduleStatus\":");
@@ -81,6 +45,8 @@ const guest_allocator = std.heap.page_allocator;
 const ParsedRequest = struct {
     function_id: runtime.FunctionId,
     arguments: []runtime.TypedValue,
+    argument_storage: [64]runtime.TypedValue,
+    argument_owner: ?*@import("string-value.zig").Owner = null,
     argument_count: usize,
     capabilities: [2]runtime.Capability,
     capability_count: usize,
@@ -88,20 +54,11 @@ const ParsedRequest = struct {
     limits: runtime.RequestLimits,
 };
 
-// Only the private CLI's arena-owned, single-use request arrays enter this seam.
+// The CLI owns typed argument slots and every String input root until invocation.
 // Parse owns each original Value array until all synchronous evaluation/formatting
 // finishes. Parsed.deinit releases arena blocks without revisiting Value tags.
 // The bytes/arena/metadata retain their original heap and callback fees.
-fn argumentStorage(values: []const std.json.Value) []runtime.TypedValue {
-    comptime {
-        if (@sizeOf(runtime.TypedValue) > @sizeOf(std.json.Value) or @alignOf(runtime.TypedValue) > @alignOf(std.json.Value))
-            @compileError("CLI argument storage cannot compact the locked JSON Value layout");
-    }
-    const bytes = std.mem.sliceAsBytes(@constCast(values));
-    return std.mem.bytesAsSlice(runtime.TypedValue, bytes[0..values.len * @sizeOf(runtime.TypedValue)]);
-}
-
-fn parseRequest(module: *const runtime.VerifiedModule, request: *const Request, counter: *runtime.Counter, parsed: *ParsedRequest, result_out: *runtime.RequestOutcome) !bool {
+fn parseRequest(allocator: std.mem.Allocator, module: *const runtime.VerifiedModule, request: *const Request, counter: *runtime.Counter, parsed: *ParsedRequest, result_out: *runtime.RequestOutcome) !bool {
     const default_info = @import("bytecode.zig").moduleInfoView(module);
     var function_id = default_info.function_id;
     if (request.functionId) |text| {
@@ -123,9 +80,9 @@ fn parseRequest(module: *const runtime.VerifiedModule, request: *const Request, 
         if (!std.mem.eql(u8, text, &expected)) { result_out.* = .{ .failed = .{ .code = "r05-request-signature", .category = "request", .function_id = function_id, .source = info.source, .fuel_remaining = request.semanticFuel } }; return false; }
     }
     var valid = request.arguments.len <= 64 and request.arguments.len == info.parameter_types.len;
-    const arguments: []runtime.TypedValue = if (valid) argumentStorage(request.arguments) else &.{};
-    // Capture the complete original Value before a compact write. For index i,
-    // (i+1)*TypedValue.size <= (i+1)*Value.size, so unread later Values survive.
+    const arguments: []runtime.TypedValue = if (valid) parsed.argument_storage[0..request.arguments.len] else &.{};
+    // Preserve the original typed JSON and write only into owned typed slots.
+    // String roots are reclaimed even after a later argument fails validation.
     if (valid) for (request.arguments, 0..) |original, index| {
         const argument = &original;
         if (argument.* != .object or argument.object.count() != 2) {
@@ -169,10 +126,19 @@ fn parseRequest(module: *const runtime.VerifiedModule, request: *const Request, 
             if (!valid) break;
             const bits = std.fmt.parseInt(u64, value.string, 16) catch { valid = false; break; };
             arguments[index] = runtime.typedValue(bits, code);
+        } else if (code == 14 and std.mem.eql(u8, type_value.string, "string") and value.* == .array) {
+            arguments[index] = .{ .string = @import("string-arguments.zig").read(allocator, &parsed.argument_owner, value.*, request.memoryBytes) catch |err| {
+                if (err == error.OutOfMemory or err == error.IdentityExhausted) {
+                    result_out.* = .{ .failed = .{ .code = "r05-execution-abort", .category = "execution-abort", .function_id = function_id, .source = info.source, .fuel_remaining = request.semanticFuel } };
+                    return false;
+                }
+                valid = false; break;
+            } };
         } else {
             valid = false;
             break;
         }
+        parsed.argument_count += 1;
     };
     if (!valid) { result_out.* = .{ .failed = .{ .code = "r05-request-arguments", .category = "request", .function_id = function_id, .source = info.source, .fuel_remaining = request.semanticFuel } }; return false; }
     const capabilities = &parsed.capabilities;
@@ -199,7 +165,13 @@ fn parseRequest(module: *const runtime.VerifiedModule, request: *const Request, 
 
 fn evaluateRequest(host: *runtime.Runtime, module: *const runtime.VerifiedModule, request: *const Request, instance: ?*runtime.ModuleInstance, counter: *runtime.Counter, result_out: *runtime.RequestOutcome) !void {
     var parsed: ParsedRequest = undefined;
-    if (!try @call(.never_inline, parseRequest, .{ module, request, counter, &parsed, result_out })) return;
+    parsed.argument_count = 0;
+    parsed.argument_owner = null;
+    defer {
+        for (parsed.argument_storage[0..parsed.argument_count]) |*argument| if (argument.* == .string) argument.string.deinit();
+        if (parsed.argument_owner) |owner| owner.release();
+    }
+    if (!try @call(.never_inline, parseRequest, .{ host.allocator, module, request, counter, &parsed, result_out })) return;
     var fresh: runtime.ModuleInstance = undefined;
     var owns_fresh = false;
     var active = false;
@@ -297,7 +269,8 @@ fn runSequence(init: *const std.process.Init, bytes: []const u8, requests_json: 
         if (index != 0) try output.writer.writeByte(',');
         var outcome: runtime.RequestOutcome = undefined;
         try evaluateRequest(&host, module, request, null, &counter, &outcome);
-        try writeOutcome(&output.writer, &outcome, &host);
+        defer runtime.deinitOutcome(&outcome);
+        try writeOutcome(&output.writer, &outcome, &host, request.stringOutput);
     }
     try output.writer.writeAll("]\n");
     try std.Io.File.stdout().writeStreamingAll(init.io, output.written());
@@ -394,7 +367,8 @@ fn runMode(init: *const std.process.Init, mode: Mode, bytes: []const u8, request
         const events_before = counter.events;
         var outcome: runtime.RequestOutcome = undefined;
         try evaluateRequest(&host, module, request, instance, &counter, &outcome);
-        if (mode == .module_requests) try writeModuleOutcome(&output.writer, &outcome, &host, instance.?, &counter, events_before) else try writeOutcome(&output.writer, &outcome, &host);
+        defer runtime.deinitOutcome(&outcome);
+        if (mode == .module_requests) try writeModuleOutcome(&output.writer, &outcome, &host, instance.?, &counter, events_before, request.stringOutput) else try writeOutcome(&output.writer, &outcome, &host, request.stringOutput);
     }
     try output.writer.writeAll("]\n");
     try std.Io.File.stdout().writeStreamingAll(init.io, output.written());
