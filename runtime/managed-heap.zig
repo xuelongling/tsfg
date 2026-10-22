@@ -361,7 +361,13 @@ pub const ManagedHeap = struct {
         try arrays.resize(try self.resolve(handle), expected, length);
     }
 
-    pub fn createTypedCell(self: *ManagedHeap, layout: CellLayout, lifetime: Lifetime) Error!Handle {
+    pub fn createTypedCell(self: *ManagedHeap, layout: CellLayout, lifetime: Lifetime) Error!Handle { return self.publishCell(layout, lifetime, null); }
+    pub fn createBackedCell(self: *ManagedHeap, module: anytype, id: [32]u8, lifetime: Lifetime) Error!Handle {
+        comptime { if (@TypeOf(module) != @import("typed-field-backing.zig").Module) @compileError("verified field backing module required"); }
+        const contract = try module.cell(id);
+        return self.publishCell(contract.backing, lifetime, contract.declared);
+    }
+    fn publishCell(self: *ManagedHeap, layout: CellLayout, lifetime: Lifetime, declared: ?CellLayout) Error!Handle {
         try self.check();
         const scope = try self.scopeFor(lifetime);
         if (self.next_identity == std.math.maxInt(u64)) return error.IdentityExhausted;
@@ -370,11 +376,11 @@ pub const ManagedHeap = struct {
         try state.objects.ensureUnusedCapacity(self.allocator, 1);
         const object = try cells.create(self.allocator, state, self.next_identity, layout);
         errdefer collector.destroy(self.allocator, object);
-        try state.types.admitCell(self.allocator, layout);
+        if (declared) |source| try state.types.admitBacking(self.allocator, source, layout)
+        else try state.types.admitCell(self.allocator, layout);
         state.objects.appendAssumeCapacity(object); self.next_identity += 1;
         return self.installRoot(slot, object, scope);
     }
-
     pub fn hasTypedField(self: *ManagedHeap, handle: Handle, expected: CellLayout, id: [32]u8) Error!bool {
         const value = try cells.cell(try self.resolve(handle), expected);
         return value.initialized[try value.layout.fieldIndex(id)];
@@ -406,8 +412,9 @@ pub const ManagedHeap = struct {
         try cells.write(self.allocator, self.owned(), self.owner, object, expected, id, input, initialize);
     }
 
-    pub fn writeViewedField(self: *ManagedHeap, module: @import("typed-reference-views.zig").Module, receiver: Handle,
+    pub fn writeViewedField(self: *ManagedHeap, module: anytype, receiver: Handle,
         target: [32]u8, member: [32]u8, representation: ArrayLayout, input: ArrayInput) Error!void {
+        comptime { if (@TypeOf(module) != @import("typed-reference-views.zig").Module and @TypeOf(module) != @import("typed-field-backing.zig").Module) @compileError("verified member module required"); }
         const object = try self.resolve(receiver);
         try cells.writeViewed(self.allocator, self.owned(), self.owner, object, module, target, member, representation, input);
     }

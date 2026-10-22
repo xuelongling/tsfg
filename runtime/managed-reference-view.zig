@@ -13,7 +13,7 @@ pub const Value = struct {
 pub const Callable = struct {
     function_id: views.Id, signature: views.Id, actual_type: views.Id, runtime_key: views.Id, receiver: managed.Handle,
 };
-pub fn read(heap: *managed.ManagedHeap, module: views.Module, receiver: managed.Handle,
+pub fn read(heap: *managed.ManagedHeap, module: anytype, receiver: managed.Handle,
     target: views.Id, member: views.Id, lifetime: managed.Lifetime) Error!Value {
     const actual = try heap.copyTypedCellLayout(receiver); defer actual.deinit(heap.allocator);
     const id = try module.field(actual, target, member);
@@ -23,7 +23,7 @@ pub fn read(heap: *managed.ManagedHeap, module: views.Module, receiver: managed.
 }
 // Input uses the actual representation returned by read, not a target field's
 // physical layout. Source assignment adaptation belongs to formal lowering.
-pub fn write(heap: *managed.ManagedHeap, module: views.Module, receiver: managed.Handle,
+pub fn write(heap: *managed.ManagedHeap, module: anytype, receiver: managed.Handle,
     target: views.Id, member: views.Id, value: Value) Error!void {
     const actual = try heap.copyTypedCellLayout(receiver); defer actual.deinit(heap.allocator);
     const id = try module.field(actual, target, member);
@@ -31,7 +31,7 @@ pub fn write(heap: *managed.ManagedHeap, module: views.Module, receiver: managed
     try heap.writeViewedField(module, receiver, target, member, value.layout,
         .{ .tag = value.value.tag, .bytes = value.value.bytes, .references = value.value.references });
 }
-pub fn method(heap: *managed.ManagedHeap, module: views.Module, receiver: managed.Handle,
+pub fn method(heap: *managed.ManagedHeap, module: anytype, receiver: managed.Handle,
     target: views.Id, member: views.Id, lifetime: managed.Lifetime) Error!Callable {
     const actual = try heap.copyTypedCellLayout(receiver); defer actual.deinit(heap.allocator);
     const selected = try module.method(actual, target, member);

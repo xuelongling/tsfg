@@ -17,6 +17,10 @@ pub const Module = struct {
     methods: []Method,
     views: []View,
     pub fn deinit(self: *Module) void { self.layouts.deinit(); self.arena.deinit(); self.* = undefined; }
+    pub fn readonly(self: Module, target: Id, member: Id) Error!bool {
+        const value = (try self.layouts.find(target)).cell orelse return error.InvalidViewModule;
+        return value.fields[try value.fieldIndex(member)].readonly;
+    }
     pub fn view(self: Module, actual: cells.Layout, target: Id) Error!View {
         const entry = try self.layouts.find(actual.type_id);
         if (entry.cell == null or !entry.cell.?.same(actual)) return error.InvalidViewModule;

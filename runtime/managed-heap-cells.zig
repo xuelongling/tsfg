@@ -49,13 +49,12 @@ pub fn createValue(allocator: std.mem.Allocator, state: *model.State, owner: u64
 // Source writes are authorized by the validated static target member. Physical
 // readonly/initialization metadata is not a deep freeze of a writable alias.
 pub fn writeViewed(allocator: std.mem.Allocator, state: *model.State, owner: u64, object: *model.Object,
-    module: @import("typed-reference-views.zig").Module, target: [32]u8, member: [32]u8,
+    module: anytype, target: [32]u8, member: [32]u8,
     representation: element.Layout, input: element.Input) Error!void {
     if (object.payload != .cell) return error.TypeMismatch;
     const value = &object.payload.cell; const actual = value.layout;
     const id = try module.field(actual, target, member);
-    const view = (try module.layouts.find(target)).cell orelse return error.InvalidViewModule;
-    if (view.fields[try view.fieldIndex(member)].readonly) return error.ReadonlyField;
+    if (try module.readonly(target, member)) return error.ReadonlyField;
     const index = try actual.fieldIndex(id); const field = actual.fields[index];
     if (!field.layout.same(representation)) return error.TypeMismatch;
     const edges = try arrays.edges(allocator, state, owner, field.layout, input); defer allocator.free(edges);

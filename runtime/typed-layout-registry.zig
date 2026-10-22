@@ -22,9 +22,30 @@ fn measure(layout: element.Layout, remaining: *usize) Error!void {
 }
 pub const Registry = struct {
     entries: std.ArrayList(Entry) = .empty,
+    // Canonical semantic entries remain unchanged. Each actual class admits one
+    // fixed whole-module backing contract, cloned independently of its reader.
+    backings: std.ArrayList(cells.Layout) = .empty,
     pub fn deinit(self: *Registry, allocator: std.mem.Allocator) void {
         for (self.entries.items) |entry| entry.deinit(allocator);
         self.entries.deinit(allocator);
+        for (self.backings.items) |value| value.deinit(allocator);
+        self.backings.deinit(allocator);
+    }
+    pub fn admitBacking(self: *Registry, allocator: std.mem.Allocator, declared: cells.Layout, backing: cells.Layout) Error!void {
+        const entry = self.entries.items[self.index(declared.type_id) orelse return error.TypeMismatch];
+        if (entry.cell == null or !entry.cell.?.same(declared) or
+            !std.mem.eql(u8, &declared.type_id, &backing.type_id) or !std.mem.eql(u8, &declared.runtime_key, &backing.runtime_key) or
+            declared.kind != .reference or backing.kind != .reference or declared.fields.len != backing.fields.len) return error.TypeMismatch;
+        try backing.validate();
+        for (declared.fields, backing.fields) |a, b| if (!std.mem.eql(u8, &a.id, &b.id) or a.readonly != b.readonly) return error.TypeMismatch;
+        for (self.backings.items) |prior| if (std.mem.eql(u8, &prior.type_id, &backing.type_id)) {
+            if (!prior.same(backing)) return error.TypeMismatch;
+            return;
+        };
+        if (self.backings.items.len == 4096) return error.LayoutLimit;
+        var work: usize = 100000; for (backing.fields) |field| try measure(field.layout, &work);
+        const owned = try backing.clone(allocator); errdefer owned.deinit(allocator);
+        try self.backings.append(allocator, owned);
     }
     fn index(self: Registry, id: [32]u8) ?usize {
         for (self.entries.items, 0..) |entry, i| if (std.mem.eql(u8, &entry.layout.type_id, &id)) return i;
