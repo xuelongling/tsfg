@@ -13,6 +13,14 @@ target initialization and instruction inspection. Native lowering and X86
 libraries belong only to this full target. There is no alternative verifier,
 interpreter, language profile, or duplicate IR implementation.
 
+The static target binds AddLLVM's component selection in a local CMake function:
+`LLVM_LINK_COMPONENTS` is `Support`, `USE_SHARED` is empty, and
+`DISABLE_LLVM_LINK_LLVM_DYLIB` prevents the umbrella-library branch. Its complete
+Core dependencies come from the common object's MLIR target interfaces. Caller
+variables cannot add Native components to this target; the full Native target
+keeps its existing variable scope. This declaration still requires actual
+configuration and observed-consumption verification before SDK qualification.
+
 Production selection is `--source-target mlir-core --core-command-role static`
 or `native`; omission retains the full native target. The produced manifest
 binds `coreCommandRole` to the build identity. Ordinary compilation accepts

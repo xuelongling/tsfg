@@ -93,8 +93,16 @@ add_library(tsfg-core-common OBJECT
   closure-roots.cpp closure-initialization.cpp closure-init-flow.cpp core-command.cpp
 )
 target_link_libraries(tsfg-core-common PUBLIC MLIRIR MLIRParser MLIRFuncDialect MLIRControlFlowDialect)
-add_llvm_executable(tsfg-core-static static-main.cpp)
-target_link_libraries(tsfg-core-static PRIVATE tsfg-core-common)
+# AddLLVM inherits these variables from its caller. Keep the ordinary tool's
+# component selection local so a parent project cannot select the LLVM umbrella
+# or Native components. The full Native target retains its original scope.
+function(add_tsfg_static_core_tool)
+  set(USE_SHARED "")
+  set(LLVM_LINK_COMPONENTS Support)
+  add_llvm_executable(tsfg-core-static DISABLE_LLVM_LINK_LLVM_DYLIB static-main.cpp)
+  target_link_libraries(tsfg-core-static PRIVATE tsfg-core-common)
+endfunction()
+add_tsfg_static_core_tool()
 # The existing full compiler name and native capabilities remain unchanged.
 add_llvm_executable(tsfg-core-ir
   aot-capability.cpp aot-module.cpp aot-program.cpp aot-module-services.cpp
