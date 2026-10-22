@@ -292,3 +292,34 @@ stores do not prove an earlier read. Every Array read remains in
 `unprovedMemoryReads` until those memory obligations are independently closed.
 Missing resource authority and unknown owner paths also remain explicitly
 unproved. These necessary equations do not activate unified admission or wire.
+
+The next development contract separates ordered Array read sources from that
+capacity union. Each real initial operand and successful store has one bound
+version. The HIR producer records predecessor versions, and the independent C++
+consumer reconstructs them from actual SSA/CFG before consuming any claim.
+It follows definite views/returned-parameter identities, remaps CFG arguments,
+checks selected-callee Array effects, and iterates cyclic query equations in
+the same production MemoryVersion engine. A later store cannot feed an earlier
+read merely because they share a capacity owner.
+
+Reads proved to select an initial ordinal or the same successfully written SSA
+index consume those real input values. Index/length eligibility is separate:
+conditional payload bounds need not prove a dynamic index in range. Unknown
+modifying calls, aliases and unresolved loop-entry states remain pending.
+The atomic checked operations, Source operand order and original failure
+anchors stay present. This is neither Source evaluation nor executable Core
+qualification, and Published ABI bounds remain a separate authority role.
+
+`nodes` records ordered payload possibilities; `carrierNodes` preserves the
+finite representation maxima used by the emitter. Their domains can differ
+without narrowing a fixed ABI. The independent C++ normalizer runs the same
+equation engine for each role: capacity paths exact-check the representation
+maximum, then proved preceding write inputs constrain the actual-value flow.
+Only the latter publishes actual payload evidence. Both spend the original
+shared proof budget; no maximum alternative becomes an actual seed merely to
+satisfy an ABI comparison.
+
+`carrierCalls` and `carrierFields` describe representation dispatch only;
+ordered `calls` and `fields` cannot acquire actual targets from those tables.
+Pending reads publish no actual SSA/return evidence. Physical backing encoders
+continue to consume the maximum role, preserving their existing binary bytes.

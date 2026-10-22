@@ -5,6 +5,7 @@ import {verifyHir} from './module-hir.mjs';
 import {buildTypedLayouts} from './typed-layouts.mjs';
 import {buildTypedReferenceViews} from './typed-reference-views.mjs';
 import {buildFiniteFieldReaching} from './finite-field-reaching.mjs';
+import {buildFiniteArrayReaching} from './finite-array-reaching.mjs';
 import {finiteCallables} from './finite-callables.mjs';
 import {canonical,own,sha256} from './identity.mjs';
 
@@ -32,15 +33,26 @@ function buildPlans(input,context,options,definitions) {
     const fieldReaching=buildFiniteFieldReaching(verifyHir(input,context),initial,charge);
     const result=fieldReaching.reads.some(row=>row.reaching.length)
       ?solveFiniteActualDomains(input,context,charge,fieldReaching,mode):initial;
-    return {...result,fieldReaching};
+    const arrayReaching=buildFiniteArrayReaching(verifyHir(input,context),{...result,fieldReaching},charge);
+    const ordered=arrayReaching.reads.length
+      ?solveFiniteActualDomains(input,context,charge,fieldReaching,mode,arrayReaching):result;
+    // Refined payloads do not silently republish a narrower ABI. Representation
+    // maxima retain their original finite role, separately from ordered data.
+    const domains=new Map([...result.domains,...ordered.domains].map(row=>[row.id,row]));
+    const calls=ordered.calls.map(call=>({...call,targets:call.targets.map(target=>({...target,
+      abi:result.abi.find(row=>row.functionId===target.functionId).id}))}));
+    return {...result,nodes:ordered.nodes,carrierNodes:result.nodes,calls,fields:ordered.fields,
+      carrierCalls:result.calls,carrierFields:result.fields,
+      domains:[...domains.values()].sort((a,b)=>a.id<b.id?-1:1),fieldReaching,arrayReaching};
   }
   const reached=build('reached'),definition=definitions?build('definition'):null;
   return own({reached:{...reached,work:(options.work??100000)-remaining},
     ...(definition?{definition:{...definition,work:(options.work??100000)-remaining}}:{})});
 }
 
-function solveFiniteActualDomains(input,context,charge,fieldReaching,mode) {
+function solveFiniteActualDomains(input,context,charge,fieldReaching,mode,arrayReaching=null) {
   const refinements=new Map((fieldReaching?.reads??[]).map(row=>[row.node,row.reaching]));
+  const arrayReads=new Map((arrayReaching?.reads??[]).filter(row=>row.status==='proven').map(row=>[row.node,row.sources]));
   charge();const hir=verifyHir(input,context);
   const types=new Map(hir.types.map(type=>[type.id,type]));
   const layouts=buildTypedLayouts(hir,context),physical=new Map(layouts.entries.map(row=>[row.typeId,row.layout]));
@@ -382,8 +394,11 @@ function solveFiniteActualDomains(input,context,charge,fieldReaching,mode) {
       if(types.get(target.returnType.id).kind==='void')insert(call.id,'actual',target.returnType.id);
       else copy(returned(target),call.id);
     }
-    for(const read of reads)if(read.receiver===current)for(const allocation of nodes.get(current).owners)
-      copy(owners.get(allocation),read.result);
+    for(const read of reads)if(read.receiver===current) {
+      if(arrayReads.has(read.result))for(const source of arrayReads.get(read.result))copy(source,read.result);
+      else if(arrayReaching)insert(read.result,'pending','unproved-ordered-array-read:'+read.result);
+      else for(const allocation of nodes.get(current).owners)copy(owners.get(allocation),read.result);
+    }
     for(const store of stores)if(store.receiver===current)for(const allocation of nodes.get(current).owners)
       copy(store.value,owners.get(allocation));
     for(const read of fieldReads)if(read.receiver===current)for(const actual of nodes.get(current).actual) {

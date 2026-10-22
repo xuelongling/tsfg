@@ -9,7 +9,8 @@ namespace tsfg::finite {
 class ArrayFlow {
 public:
   using Id=PayloadFlow::Id;
-  ArrayFlow(ModuleProof &proof,PayloadFlow &flow,std::function<Id(mlir::Value)> payload);
+  enum class Role {CarrierMaximum,OrderedPayload};
+  ArrayFlow(ModuleProof &proof,PayloadFlow &flow,std::function<Id(mlir::Value)> payload,Role role);
   bool build();
   bool finish();
 private:
@@ -22,6 +23,7 @@ private:
   ModuleProof &proof;
   PayloadFlow &flow;
   std::function<Id(mlir::Value)> payload;
+  Role role;
   llvm::DenseMap<mlir::Value,Id> values;
   std::map<std::string,Id> returns;
   std::map<std::string,std::string> constructions;

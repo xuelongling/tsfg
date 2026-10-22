@@ -6,6 +6,18 @@ import {canonical,own} from './identity.mjs';
 import {finiteCallables} from './finite-callables.mjs';
 import {finiteFieldPhases} from './finite-field-phases.mjs';
 
+// These are the production proof-state snapshots, not Source-value copies.
+function versionCopy(values,charge) {
+  const result=new Set();for(const value of values){charge();result.add(value);}return result;
+}
+export function copyFieldReachingState(state,charge) {
+  const result=new Map();
+  for(const [key,value] of state){charge();result.set(key,versionCopy(value,charge));}return result;
+}
+export function copyFieldReachingAliases(env,charge) {
+  const result=new Map();for(const [id,token] of env){charge();result.set(id,token);}return result;
+}
+
 export function buildFiniteFieldReaching(hir,plan,charge) {
   const selections=new Map(plan.fields.map(row=>[row.id,row]));
   const calls=new Map(plan.calls.map(row=>[row.id,row]));
@@ -49,12 +61,21 @@ export function buildFiniteFieldReaching(hir,plan,charge) {
       charge();if(!effects.has(target)||effects.get(target).writes){effect.writes=true;changed=true;break;}
     }
   }
-  const clone=state=>new Map([...state].map(([key,value])=>{charge();return [key,new Set(value)];}));
+  const clone=state=>copyFieldReachingState(state,charge);
   function join(left,right) {
     if(!left)return right;if(!right)return left;
     const result=new Map();
-    for(const [key,value] of left){charge();if(right.has(key))result.set(key,new Set([...value,...right.get(key)]));}
+    for(const [key,value] of left) {
+      charge();if(!right.has(key))continue;const versions=versionCopy(value,charge);
+      for(const version of right.get(key)){charge();versions.add(version);}result.set(key,versions);
+    }
     return result;
+  }
+  function meetAliases(env,left,right,leftLive=true,rightLive=true) {
+    const keys=new Set(),result=new Map();
+    for(const side of [left,right])for(const id of side.keys()){charge();keys.add(id);}
+    for(const id of keys){charge();result.set(id,!leftLive?right.get(id):!rightLive?left.get(id):left.get(id)===right.get(id)?left.get(id):null);}
+    env.clear();for(const [id,token] of result){charge();env.set(id,token);}
   }
   // Direct-base completions are proved before derived bodies. This is an
   // ancestry order, not a fabricated constructor invocation or allocation.
@@ -109,7 +130,7 @@ export function buildFiniteFieldReaching(hir,plan,charge) {
       // versions actually established on every successful callee exit.
       state.clear();if(!token)return;
       for(const row of completions.get(construction)??[])if(actualTypes.includes(row.actualType))
-        state.set(key(token,{actualType:row.actualType,fieldId:row.field}),new Set(row.versions));
+        {charge();state.set(key(token,{actualType:row.actualType,fieldId:row.field}),versionCopy(row.versions,charge));}
     }
     function initialize(statement,state,env) {
       const owner=types.get(statement.ownerType),phase=phases.get(statement.construction);
@@ -177,11 +198,11 @@ export function buildFiniteFieldReaching(hir,plan,charge) {
         const token=expression(value.target.receiver,path+'/target/receiver',state,env);
         const rhs=child('value');access(value,path,state,token,'store',path+'/value');return rhs;
       }
-      if(value.kind==='shortCircuit') {
-        child('left');const right=clone(state),rightEnv=new Map(env);
+      if(value.kind==='shortCircuit'||value.kind==='binary'&&['&&','||'].includes(value.operator)) {
+        child('left');const right=clone(state),rightEnv=copyFieldReachingAliases(env,charge);
         expression(value.right,path+'/right',right,rightEnv);
-        const merged=join(state,right);state.clear();for(const pair of merged)state.set(...pair);
-        for(const [id,token] of env)if(rightEnv.get(id)!==token)env.set(id,null);return null;
+        const merged=join(state,right);state.clear();for(const pair of merged){charge();state.set(...pair);}
+        meetAliases(env,env,rightEnv);return null;
       }
       if(value.kind==='superConstruct') {
         for(const [index,argument] of value.arguments.entries())expression(argument,path+'/arguments/'+index,state,env);
@@ -199,7 +220,7 @@ export function buildFiniteFieldReaching(hir,plan,charge) {
           for(const [index,parameter] of callee.parameters.entries())if(tokens[index]) {
             const prefix=tokens[index]+'\0',destination=callee.id+'/parameter/'+parameter.id;
             for(const [location,versions] of state)if(location.startsWith(prefix)) {
-              charge();fields.set(destination+location.slice(tokens[index].length),new Set(versions));
+              charge();fields.set(destination+location.slice(tokens[index].length),versionCopy(versions,charge));
             }
           }
           contexts.set(path+'\0'+target,{target,fields});
@@ -208,13 +229,13 @@ export function buildFiniteFieldReaching(hir,plan,charge) {
           for(const output of outputs.get(target)??[])if(tokens[output.parameter]) {
             charge();const location=key(tokens[output.parameter],{actualType:output.actualType,fieldId:output.field}),
               versions=continuation.get(location)??new Set();
-            for(const version of output.versions)versions.add(version);continuation.set(location,versions);
+            for(const version of output.versions){charge();versions.add(version);}continuation.set(location,versions);
           }
           continuations.push(continuation);
         }
         if(targets.some(id=>id!==hir.intrinsics.readSpan.id&&(!effects.has(id)||effects.get(id).writes))) {
           state.clear();const continuation=continuations.length?continuations.reduce((left,right)=>join(left,right)):new Map();
-          for(const pair of continuation)state.set(...pair);
+          for(const pair of continuation){charge();state.set(...pair);}
         }
         return returned.length&&returned.every(token=>token&&token===returned[0])?returned[0]:null;
       }
@@ -247,17 +268,16 @@ export function buildFiniteFieldReaching(hir,plan,charge) {
           exits.push(value.value&&value.kind==='constructorReturn'?new Map():clone(state));return null;
         }else if(value.kind==='if') {
           expression(value.condition,p+'/condition',state,env);
-          const leftEnv=new Map(env),rightEnv=new Map(env),
+          const leftEnv=copyFieldReachingAliases(env,charge),rightEnv=copyFieldReachingAliases(env,charge),
             left=statements(value.then,p+'/then',clone(state),leftEnv),
             right=statements(value.else??[],p+'/else',clone(state),rightEnv),merged=join(left,right);
           if(!merged)return null;state=merged;
-          for(const id of new Set([...leftEnv.keys(),...rightEnv.keys()]))
-            env.set(id,!left?rightEnv.get(id):!right?leftEnv.get(id):leftEnv.get(id)===rightEnv.get(id)?leftEnv.get(id):null);
+          meetAliases(env,leftEnv,rightEnv,!!left,!!right);
         }else if(value.kind==='while') {
           // A loop-carried write or alias is not a proof for its first turn.
-          state.clear();for(const id of env.keys())env.set(id,null);
+          state.clear();for(const id of env.keys()){charge();env.set(id,null);}
           expression(value.condition,p+'/condition',state,env);
-          statements(value.body,p+'/body',new Map(),new Map(env));state.clear();
+          statements(value.body,p+'/body',new Map(),copyFieldReachingAliases(env,charge));state.clear();
         }else if(value.kind==='block')state=statements(value.body,p+'/body',state,env);
         else if(value.kind==='initializeOwnFields')initialize(value,state,env);
         else if(value.kind==='forwardBaseConstruction')completed(value.construction,env.get(value.receiverBinding),state);

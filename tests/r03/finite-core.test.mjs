@@ -81,9 +81,11 @@ test('actual Source scalar/absence transport has per-slot finite domains and nat
   const scalar=plan.nodes.find(node=>node.id===fn.id+'/binding/'+fn.parameters[0].id);
   assert.equal(domain(plan,scalar).nativeType,'u32');assert.equal(domain(plan,scalar).referenceCount,0);
   const returned=plan.nodes.find(node=>node.id===fn.id+'/return'),types=domain(plan,returned).actualTypes;
-  assert.deepEqual(new Set(types.map(id=>hir.types.find(type=>type.id===id).kind)),new Set(['scalar','undefined']));
-  assert.equal(types.length,2);assert.equal(domain(plan,returned).referenceCount,0);
-  assert.equal(domain(plan,returned).tagBytes,2);
+  assert.deepEqual(new Set(types.map(id=>hir.types.find(type=>type.id===id).kind)),new Set(['undefined']));
+  assert.equal(types.length,1);assert.equal(domain(plan,returned).referenceCount,0);
+  const maximum=plan.carrierNodes.find(row=>row.id===returned.id);
+  assert.equal(domain(plan,maximum).actualTypes.length,2);assert.equal(domain(plan,maximum).tagBytes,2);
+  assert.equal(plan.abi.find(row=>row.functionId===fn.id).result,maximum.domainId);
 });
 
 test('writable covariant alias flows actual Base replacement into original Derived read without retagging',async()=>{
@@ -91,7 +93,8 @@ test('writable covariant alias flows actual Base replacement into original Deriv
   const derived=hir.types.find(type=>type.base),base=hir.types.find(type=>type.id===derived.base);
   const read=plan.expressions.find(row=>row.kind==='arrayReadChecked'),readNode=plan.nodes.find(row=>row.id===read.id);
   assert.equal(readNode.viewType,derived.id);
-  assert.deepEqual(new Set(domain(plan,readNode).actualTypes),new Set([derived.id,base.id]));
+  assert.deepEqual(new Set(domain(plan,readNode).actualTypes),new Set([base.id]));
+  assert.deepEqual(new Set(domain(plan,plan.carrierNodes.find(row=>row.id===read.id)).actualTypes),new Set([derived.id,base.id]));
   assert.equal(domain(plan,readNode).representation,'reference');assert.equal(domain(plan,readNode).tagBytes,0);
   assert.equal(domain(plan,readNode).referenceCount,1);assert.deepEqual(readNode.pending,[]);
 });
@@ -230,8 +233,9 @@ const primitiveIds={bool:'aa472de340f45c64b9b63c95cd7765ab411f657f86b86e553d7cb0
   usize:'8ad3b2148809b4f20c2322d1c1c6b187bbed97151628f171c46b95ca32c949ff'};
 for(const [name,id] of Object.entries(primitiveIds))test('actual concrete element formal transport: '+name,async()=>{
   const {hir,context}=await load('typed-array-actual-v8',id),plan=buildFiniteActualDomains(hir,context);
-  const returned=plan.nodes.find(row=>row.id===hir.functions[0].id+'/return'),representation=domain(plan,returned);
+  const returned=plan.carrierNodes.find(row=>row.id===hir.functions[0].id+'/return'),representation=domain(plan,returned);
   assert.equal(representation.actualTypes.length,1);assert.equal(representation.referenceCount,name==='string'?1:0);
+  assert.ok(plan.nodes.find(row=>row.id===returned.id).pending.length,'unproved entry read never publishes its carrier as an actual source');
   if(!['null','undefined','string'].includes(name))assert.equal(representation.nativeType,name);
   assert.match(lowerFormalHir(hir,context),/"tsfg_core.domain.array_read"/);
 });
@@ -242,8 +246,9 @@ async function entryActual(id) {
 test('actual host entry parameters may share one covariant array owner',async()=>{
   const {hir,context}=await entryActual('06b4f526067edba140db846a26d32539bcee0c402d9797002ca5fee8a936f041');
   const plan=buildFiniteActualDomains(hir,context),derived=hir.types.find(type=>type.base),
-    read=plan.expressions.find(row=>row.kind==='arrayReadChecked'),value=plan.nodes.find(row=>row.id===read.id);
+    read=plan.expressions.find(row=>row.kind==='arrayReadChecked'),value=plan.carrierNodes.find(row=>row.id===read.id);
   assert.deepEqual(new Set(domain(plan,value).actualTypes),new Set([derived.id,derived.base]));
+  assert.ok(plan.nodes.find(row=>row.id===read.id).pending.length,'may-alias capacity does not prove first write or length');
 });
 
 test('actual distinct native entry representations retain separate native domains',async()=>{
@@ -261,8 +266,9 @@ test('actual different exports conservatively share compatible persistent publis
   const {hir,context}=await entryActual('fd1633b7257bbd3c9438a00f716fbe01700373d05ce535de9ef81731aeb5f47c');
   const plan=buildFiniteActualDomains(hir,context),read=plan.expressions.find(row=>row.kind==='arrayReadChecked');
   assert.equal(plan.published.length,2);assert.equal(plan.aliases.length,1);
-  assert.deepEqual(new Set(domain(plan,plan.nodes.find(row=>row.id===read.id)).actualTypes),
+  assert.deepEqual(new Set(domain(plan,plan.carrierNodes.find(row=>row.id===read.id)).actualTypes),
     new Set(hir.types.filter(row=>row.kind==='reference').map(row=>row.id)));
+  assert.ok(plan.nodes.find(row=>row.id===read.id).pending.length);
   assert.match(lowerFormalHir(hir,context),/"tsfg_core.domain.array_store"/);
 });
 
@@ -283,7 +289,8 @@ test('actual inherited method call consumes the finite dispatch in the ordinary 
   const plan=buildFiniteActualDomains(hir,context),core=lowerFormalHir(hir,context),
     method=hir.functions.find(fn=>fn.name==='m'),derived=hir.types.find(type=>type.base);
   assert.equal(plan.calls.length,1);
-  assert.deepEqual(plan.calls[0].targets.map(row=>[row.actualType,row.functionId]),[[derived.id,method.id]]);
+  assert.deepEqual(plan.carrierCalls[0].targets.map(row=>[row.actualType,row.functionId]),[[derived.id,method.id]]);
+  assert.deepEqual(plan.calls[0].targets,[],'unproved receiver read supplies no actual method invocation seed');
   assert.match(core,/"tsfg_core.domain.method_call"/);
   assert.ok(core.includes('dispatch = '));assert.match(core,/receiver_view = /);
   assert.equal(core.split('callee = @"f'+method.id.slice(7)+'"').length-1,0,'method implementation is selected from actual receiver authority');

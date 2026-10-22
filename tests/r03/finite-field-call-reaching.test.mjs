@@ -6,6 +6,7 @@ import {readTypedArrayFacts} from '../../compiler/typed-array-facts.mjs';
 import {buildHir,lowerFormalHir} from '../../compiler/hir.mjs';
 import {buildFiniteCoreDomains} from '../../compiler/finite-actual-domains.mjs';
 import {scalarTypeIds,sha256} from '../../compiler/identity.mjs';
+import {copyFieldReachingState,copyFieldReachingAliases} from '../../compiler/finite-field-reaching.mjs';
 import capture from './testdata/typed-array-entry/field-call.json' with {type:'json'};
 
 test('actual read-before-call capture stays SSA while a later read follows the real field-writing callee',async()=>{
@@ -38,4 +39,16 @@ test('actual read-before-call capture stays SSA while a later read follows the r
       assert.ok(read.reaching.every(row=>row.versions.every(version=>version.startsWith(clear.id+'/'))));
     }
   }
+});
+
+test('production Field snapshots charge versions and alias bindings before publishing',()=>{
+  const state=new Map([['location',new Set(['v1','v2'])]]),aliases=new Map([['a','one'],['b','two']]),
+    exhausted=new Error('bounded-work'),cancelled=new Error('cancelled');
+  let count=0,published;
+  assert.throws(()=>{published=copyFieldReachingState(state,()=>{if(++count>2)throw exhausted;});},error=>error===exhausted);
+  assert.equal(published,undefined);assert.equal(state.get('location').size,2);
+  count=0;assert.throws(()=>copyFieldReachingAliases(aliases,()=>{if(++count>1)throw exhausted;}),error=>error===exhausted);
+  assert.deepEqual([...aliases],[['a','one'],['b','two']]);
+  count=0;assert.throws(()=>copyFieldReachingState(state,()=>{if(++count===2)throw cancelled;}),error=>error===cancelled);
+  const copy=copyFieldReachingState(state,()=>{});copy.get('location').clear();assert.equal(state.get('location').size,2);
 });

@@ -10,7 +10,7 @@ const require=(condition,message)=>{if(!condition)throw new TypeError('r03-field
 export function buildTypedFieldBacking(input,context) {
   const hir=verifyHir(input,context),declared=buildTypedLayouts(hir,context),
     definition=buildFiniteCoreDomains(hir,context).definition,
-    nodes=new Map(definition.nodes.map(node=>[node.id,node])),domains=new Map(definition.domains.map(domain=>[domain.id,domain]));
+    nodes=new Map(definition.carrierNodes.map(node=>[node.id,node])),domains=new Map(definition.domains.map(domain=>[domain.id,domain]));
   const cells=[];
   for(const entry of declared.entries) {
     if(entry.cell?.kind!=='reference')continue;

@@ -2,6 +2,7 @@
 #include "finite-module.h"
 #include "finite-domain.h"
 #include "mlir/Dialect/ControlFlow/IR/ControlFlowOps.h"
+#include <algorithm>
 
 namespace tsfg::finite {
 namespace {
@@ -111,8 +112,9 @@ bool function(ModuleProof &proof, mlir::func::FuncOp fn) {
 }
 bool verifyAbi(ModuleProof &proof) {
   const auto *rows = proof.callables.getAsArray(); const auto *plan = proof.plan.getAsObject();
-  const auto *abi = plan->getArray("abi"), *nodes = plan->getArray("nodes");
-  if (!rows || rows->empty() || rows->size() > 4096 || !abi || !nodes) return proof.reject("callable/ABI/node catalogue");
+  const auto *abi = plan->getArray("abi"), *nodes = plan->getArray("carrierNodes"), *ordered = plan->getArray("nodes");
+  if (!rows || rows->empty() || rows->size() > 4096 || !abi || !nodes || !ordered || nodes->size()!=ordered->size())
+    return proof.reject("callable/ABI/dual-role node catalogue");
   std::string previous;
   for (const auto &value : *rows) {
     const auto *row = value.getAsObject();
@@ -131,6 +133,21 @@ bool verifyAbi(ModuleProof &proof) {
         !proof.domains.count(string(*row,"domainId")) || !proof.catalog.count(string(*row,"viewType")) ||
         (!previous.empty() && string(*row,"id") <= previous)) return proof.reject("unresolved or unordered definition value domain");
     previous = string(*row,"id"); nodeDomains.emplace(previous,string(*row,"domainId"));
+  }
+  // Ordered claims are not authority for their own payloads. Require the exact
+  // same SSA catalogue and a compatible carrier; ActualFlow rebuilds sources.
+  for(size_t i=0;i<ordered->size();++i) {
+    if(!proof.charge())return false;
+    const auto *row=(*ordered)[i].getAsObject(),*maximum=(*nodes)[i].getAsObject();
+    if(!row||row->size()!=5||string(*row,"id")!=string(*maximum,"id")||
+       string(*row,"viewType")!=string(*maximum,"viewType")||!row->getArray("pending")||!row->getArray("arrayOwners")||
+       !proof.domains.count(string(*row,"domainId")))return proof.reject("ordered/carrier SSA identity join");
+    const auto &actual=proof.domains.at(string(*row,"domainId")).alternatives,
+      &upper=proof.domains.at(string(*maximum,"domainId")).alternatives;
+    for(const auto &type:actual) {
+      if(!proof.charge())return false;
+      if(std::find(upper.begin(),upper.end(),type)==upper.end())return proof.reject("ordered claim exceeds its fixed representation carrier");
+    }
   }
   for (const auto &[id,row] : proof.callable) {
     const auto &parameters = *row->getArray("parameters"), &bounds = *proof.abi.at(id)->getArray("parameters");

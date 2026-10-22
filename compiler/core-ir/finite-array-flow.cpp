@@ -11,8 +11,8 @@ std::string attr(mlir::Operation *op,llvm::StringRef key) {
   return value?value.getValue().str():std::string();
 }
 }
-ArrayFlow::ArrayFlow(ModuleProof &p,PayloadFlow &f,std::function<Id(mlir::Value)> resolve)
-    :proof(p),flow(f),payload(std::move(resolve)){}
+ArrayFlow::ArrayFlow(ModuleProof &p,PayloadFlow &f,std::function<Id(mlir::Value)> resolve,Role r)
+    :proof(p),flow(f),payload(std::move(resolve)),role(r){}
 ArrayFlow::Id ArrayFlow::node(bool identity) {
   const auto id=identity?flow.node(PayloadFlow::AtomDomain::IdentityOrigin):flow.node();
   valid&=id!=PayloadFlow::none;return id;
@@ -58,7 +58,10 @@ bool ArrayFlow::collect() {
       if(!proof.charge())return false;
       if(op.getName().getStringRef()!="tsfg_core.domain.array_create")continue;
       const auto source=attr(&op,"owner");
-      if(source.size()>4096||source.rfind(id+"/",0)!=0||!declared.insert(source).second)
+      const auto &contract=*proof.callable.at(id);const auto construction=string(contract,"construction");
+      const bool ownInitializer=string(contract,"role")=="construction-body"&&!construction.empty()&&
+        source.rfind("construction/"+construction+"/initialization/",0)==0;
+      if(source.size()>4096||(source.rfind(id+"/",0)!=0&&!ownInitializer)||!declared.insert(source).second)
         return proof.reject("array allocation owner/source binding");
       const auto index=owners.size();allocations.emplace(&op,index);
       owners.push_back({"#allocation/"+std::to_string(index),node(),node(true),&op,nullptr});
@@ -188,6 +191,13 @@ bool ArrayFlow::operation(mlir::Operation *op,const std::string &function) {
     const auto input=read?payload(op->getResult(0)):payload(op->getOperand(2));
     if(read) {
       reads.push_back(op);if(!flow.requireEvidence(input))return false;
+      const auto ordered=proof.arrayReadInputs.find(op);
+      if(role==Role::OrderedPayload&&ordered!=proof.arrayReadInputs.end()) {
+        for(const auto source:ordered->second)
+          if(!proof.charge()||!edge(payload(source),input)||!copy(source,op->getResult(0)))return false;
+        return valid;
+      }
+      if(role==Role::OrderedPayload)return flow.unknown(input)&&uncertain(op->getResult(0));
       if(receiver==PayloadFlow::none)return flow.unknown(input)&&uncertain(op->getResult(0));
       if(!flow.connect({receiver,input,PayloadFlow::none,{},{},true,true}))return false;
     } else if(receiver==PayloadFlow::none)return true; // No successful Array owner; runtime checks still execute.
@@ -219,15 +229,15 @@ bool ArrayFlow::finish() {
     const auto *computed=flow.evidence(owner.elements);
     if(!computed)return false;
     if(computed->pending)proof.unprovedActualBounds.insert(attr(owner.allocation->getParentOp(),"tsfg_core.function_id"));
-    if(!computed->pending&&flow.exact(owner.elements,{domain.alternatives.begin(),domain.alternatives.end()})!=PayloadFlow::Fit::Proven)
+    if(role==Role::CarrierMaximum&&!computed->pending&&flow.exact(owner.elements,{domain.alternatives.begin(),domain.alternatives.end()})!=PayloadFlow::Fit::Proven)
       return proof.reject("closed Array backing contains unproved extra element alternatives");
   }
   for(auto *op:reads) {
     if(!proof.charge())return false;const auto *computed=flow.evidence(payload(op->getResult(0)));
     if(!computed)return false;
-    // This owner-wide capacity bound is not an index/length or first-write
-    // proof. Keep successful memory eligibility open even when payload closes.
-    proof.unprovedMemoryReads.insert(op);
+    // Capacity alone never discharges memory eligibility. Only the independent
+    // ordered IR query can establish successful source and index/length facts.
+    if(role==Role::OrderedPayload&&!proof.provedArrayReads.count(op))proof.unprovedMemoryReads.insert(op);
   }
   return true;
 }

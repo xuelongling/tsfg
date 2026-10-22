@@ -65,6 +65,10 @@ struct ModuleProof {
   std::map<std::string,EntryArrayResource> entryArrays;
   llvm::DenseMap<mlir::Value,std::set<std::string>> entryArrayOwners;
   std::map<mlir::Operation *,std::vector<mlir::Value>> fieldReadInputs;
+  // Successful Array read sources come from independent ordered IR versions,
+  // not the owner-wide capacity union. Bounds eligibility remains separate.
+  std::map<mlir::Operation *,std::vector<mlir::Value>> arrayReadInputs;
+  std::set<mlir::Operation *> provedArrayReads;
   std::set<mlir::Operation *> fieldReadUndefined;
   llvm::DenseMap<mlir::Value,PayloadEvidence> actualPayloads;
   std::map<std::string,PayloadEvidence> actualReturns;

@@ -17,11 +17,12 @@ struct ActualFlow {
   ModuleProof &proof;
   static constexpr size_t noGate=PayloadFlow::none;
   PayloadFlow flow;
+  ArrayFlow::Role role;
   llvm::DenseMap<mlir::Value,size_t> values;
   std::map<std::string,size_t> returns;
   std::map<std::string,std::string> constructions;
   bool valid=true;
-  explicit ActualFlow(ModuleProof &value):proof(value),flow(value.remaining){}
+  ActualFlow(ModuleProof &value,ArrayFlow::Role mode):proof(value),flow(value.remaining),role(mode){}
 
   size_t node() { const auto id=flow.node();valid&=id!=PayloadFlow::none;return id; }
   size_t value(mlir::Value item) {
@@ -139,7 +140,8 @@ struct ActualFlow {
       const auto *carrier=valueDomain(proof,item.getType());const auto &evidence=*flow.evidence(id);
       if(!proof.charge()||!carrier||flow.covers(id,{carrier->alternatives.begin(),carrier->alternatives.end()})==PayloadFlow::Fit::Mismatch)
         return proof.reject("actual IR propagation exceeds an SSA representation carrier");
-      proof.actualPayloads.try_emplace(item,evidence);
+      if(role==ArrayFlow::Role::OrderedPayload&&!evidence.pending&&!evidence.alternatives.empty())
+        proof.actualPayloads.try_emplace(item,evidence);
     }
     for(auto &[function,fn]:proof.functions) {
       const auto &abi=*proof.abi.at(function);const auto &parameters=*abi.getArray("parameters");
@@ -148,17 +150,20 @@ struct ActualFlow {
         if(!proof.charge())return false;const auto &computed=*flow.evidence(value(fn.getArgument(index)));
         const auto &declared=proof.domains.at(parameters[index].getAsString()->str()).alternatives;
         if(computed.pending||computed.alternatives.empty())pendingBound=true;
-        else if(flow.exact(value(fn.getArgument(index)),{declared.begin(),declared.end()})!=PayloadFlow::Fit::Proven)
+        else if((role==ArrayFlow::Role::CarrierMaximum?flow.exact(value(fn.getArgument(index)),{declared.begin(),declared.end()}):
+          flow.covers(value(fn.getArgument(index)),{declared.begin(),declared.end()}))!=PayloadFlow::Fit::Proven)
           return proof.reject("closed parameter ABI contains unproved extra actual alternatives");
       }
       if(returns.count(function)) {
         const auto &computed=*flow.evidence(returns.at(function));
         const auto &declared=proof.domains.at(abi.getString("result")->str()).alternatives;
-        proof.actualReturns.emplace(function,computed);
+        if(role==ArrayFlow::Role::OrderedPayload&&!computed.pending&&!computed.alternatives.empty())
+          proof.actualReturns.emplace(function,computed);
         // A recursive/divergent return equation with no productive seed is not
         // permission to change the published signature into a bottom ABI.
         if(computed.pending||computed.alternatives.empty())pendingBound=true;
-        else if(flow.exact(returns.at(function),{declared.begin(),declared.end()})!=PayloadFlow::Fit::Proven)
+        else if((role==ArrayFlow::Role::CarrierMaximum?flow.exact(returns.at(function),{declared.begin(),declared.end()}):
+          flow.covers(returns.at(function),{declared.begin(),declared.end()}))!=PayloadFlow::Fit::Proven)
           return proof.reject("closed result ABI differs from the independently reached return payloads");
       }
       if(pendingBound)proof.unprovedActualBounds.insert(function);
@@ -176,7 +181,7 @@ struct ActualFlow {
     for(const auto &[argument,types]:proof.definitionParameters)for(const auto &type:types)if(!insert(value(argument),type))return false;
     for(auto &[id,fn]:proof.functions)for(auto &block:fn.getBody())for(auto &op:block)
       if(!proof.charge()||!operation(&op,id))return false;
-    ArrayFlow arrays(proof,flow,[this](mlir::Value item){return value(item);});
+    ArrayFlow arrays(proof,flow,[this](mlir::Value item){return value(item);},role);
     if(!arrays.build())return proof.reject(flow.error().empty()?"actual Array owner normalization":flow.error());
     if(!valid||!flow.solve())return proof.reject(flow.error());
     if(!arrays.finish())return proof.reject(flow.error().empty()?"actual Array backing/read evidence":flow.error());
@@ -184,5 +189,10 @@ struct ActualFlow {
   }
 };
 }
-bool verifyActualFlow(ModuleProof &proof) { return ActualFlow{proof}.run(); }
+bool verifyActualFlow(ModuleProof &proof) {
+  // The same IR normalizer/engine proves two different obligations. Maximum
+  // ABI evidence is never copied into the ordered actual-value seed ledger.
+  return ActualFlow{proof,ArrayFlow::Role::CarrierMaximum}.run()&&
+    ActualFlow{proof,ArrayFlow::Role::OrderedPayload}.run();
+}
 } // namespace tsfg::finite

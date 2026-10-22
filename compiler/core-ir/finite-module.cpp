@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: MIT
 #include "finite-module.h"
 #include "finite-domain.h"
+#include "finite-array-memory.h"
 #include "module.h"
 #include "llvm/Support/SHA256.h"
 #include "mlir/IR/Diagnostics.h"
@@ -129,7 +130,7 @@ mlir::LogicalResult verifyModuleContracts(mlir::ModuleOp module) {
       !sources(proof) || !verifyCatalog(proof) || !verifyDomains(proof) || !verifyAbi(proof) ||
       !verifyValueContracts(proof) || !verifyMemberContracts(proof) || !verifyDefinitionBounds(proof) ||
       !verifyFlowContracts(proof) || !verifyReturnedParameters(proof) ||
-      !verifyMemoryContracts(proof) || !verifyActualFlow(proof))
+      !verifyMemoryContracts(proof) || !verifyArrayMemory(proof) || !verifyActualFlow(proof))
     return mlir::failure();
   return mlir::success();
 }

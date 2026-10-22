@@ -30,8 +30,9 @@ function memberWitnessContracts(hir) {
 export function emitFiniteCore(input,context) {
   const hir=verifyHir(input,context),proofs=buildFiniteCoreDomains(hir,context),plan=proofs.definition;
   const fieldPhases=buildFiniteFieldPhases(hir,context);
-  const domains=new Map(plan.domains.map(row=>[row.id,row])),nodes=new Map(plan.nodes.map(row=>[row.id,row]));
+  const domains=new Map(plan.domains.map(row=>[row.id,row])),nodes=new Map(plan.carrierNodes.map(row=>[row.id,row]));
   const occurrences=new Map(plan.expressions.map(row=>[row.id,row]));
+  const arrayWrites=new Map(plan.arrayReaching.writes.map(row=>[row.id,row]));
   const types=new Map([...hir.types,...plan.intrinsics].map(type=>[type.id,type]));
   const selected=id=>{const row=nodes.get(id);if(!row)pending('missing domain '+id);
     if(row.pending.length)pending(row.pending.join(', '));
@@ -45,6 +46,7 @@ export function emitFiniteCore(input,context) {
   };
   function adapt(value,path,fn) {
     const result={...value,type:selected(path).domainId,semanticType:value.type,domainNode:path};
+    if(value.kind==='binary'&&['&&','||'].includes(value.operator))result.kind='shortCircuit';
     for(const key of ['operand','receiver','index','value','left','right','target'])if(value[key]&&typeof value[key]==='object') {
       // Targets describe locations, not produced SSA values.
       if(key==='target')result.target={...value.target,...Object.fromEntries(['receiver','index'].filter(key=>value.target[key])
@@ -93,7 +95,7 @@ export function emitFiniteCore(input,context) {
     const op=(api,name,values,result,attrs,range)=>api.operation('tsfg_core.domain.'+name,values.map(value=>value.name),
       values.map(value=>value.type),result,attrs,range);
     function fieldDispatch(value) {
-      const selection=plan.fields.find(row=>row.id===value.domainNode);
+      const selection=plan.carrierFields.find(row=>row.id===value.domainNode);
       if(!selection?.targets.length)pending('missing actual field targets',value.range);
       const reaching=plan.fieldReaching.reads.find(row=>row.node===value.domainNode);
       const versions=selection.kind==='store'?plan.fieldReaching.writes.filter(row=>row.node===value.domainNode+'/value'):[];
@@ -187,8 +189,9 @@ export function emitFiniteCore(input,context) {
         }
         if(['undefined','null'].includes(value.kind))return op(api,'literal',[],value.type,opAttrs(value),value.range);
         if(value.kind==='arrayCreate')return op(api,'array_create',value.elements.map(evaluated),value.type,
-          opAttrs(value)+', owner = '+quote(value.domainNode)+', element_domain = '+quote(selected(value.domainNode+'/elements').domainId),value.range);
-        if(value.kind==='arrayReadChecked')return op(api,'array_read',[evaluated(value.receiver),evaluated(value.index)],value.type,opAttrs(value),value.range);
+            opAttrs(value)+', owner = '+quote(value.domainNode)+', element_domain = '+quote(selected(value.domainNode+'/elements').domainId)
+              +', array_versions = '+quote(canonical(value.elements.map((_,index)=>arrayWrites.get(value.domainNode+'/initial/'+index+'/array-version')))),value.range);
+          if(value.kind==='arrayReadChecked')return op(api,'array_read',[evaluated(value.receiver),evaluated(value.index)],value.type,opAttrs(value)+', array_node = '+quote(value.domainNode),value.range);
         if(value.kind==='arrayLength'||value.kind==='readSpanLength')return op(api,'array_length',[evaluated(value.receiver)],value.type,opAttrs(value),value.range);
         if(value.kind==='arrayResizeChecked') {
           const receiver=evaluated(value.target.receiver),rhs=evaluated(value.value);
@@ -196,20 +199,20 @@ export function emitFiniteCore(input,context) {
         }
         if(value.kind==='arrayStoreDenseChecked') {
           const receiver=evaluated(value.target.receiver),index=evaluated(value.target.index),rhs=evaluated(value.value);
-          op(api,'array_store',[receiver,index,rhs],null,`view_type = ${quote(value.target.receiver.semanticType)}`,value.range);
+            op(api,'array_store',[receiver,index,rhs],null,`view_type = ${quote(value.target.receiver.semanticType)}, array_node = ${quote(value.domainNode)}, array_versions = ${quote(canonical([arrayWrites.get(value.domainNode+'/array-version')]))}`,value.range);
           return rhs.name;
         }
         if(value.kind==='arrayCompoundAssignment'||value.kind==='arrayUpdate') {
           const receiver=evaluated(value.target.receiver),index=evaluated(value.target.index);
           const oldType=selected(value.domainNode+'/old-value').domainId;
-          const old=op(api,'array_read',[receiver,index],oldType,`view_type = ${quote(value.semanticType)}`,value.target.range);
+            const old=op(api,'array_read',[receiver,index],oldType,`view_type = ${quote(value.semanticType)}, array_node = ${quote(value.domainNode+'/old-value')}`,value.target.range);
           const domain=domains.get(oldType);if(domain.representation!=='native')pending('operation-domain-check mapping',value.range);
           const rhs=value.kind==='arrayUpdate'?{name:api.operation('tsfg_core.constant',[],[],oldType,
             domain.nativeType==='i32'?'value = 1 : i32':domain.nativeType==='f32'?'value = "3f800000"'
               :domain.nativeType==='f64'?'value = "3ff0000000000000"':'value = "1"',value.range),type:oldType}:evaluated(value.value);
           const operator=value.kind==='arrayUpdate'?(value.operator==='++'?'+':'-'):value.operator.slice(0,-1);
           const next=api.operation('tsfg_core.'+scalarOperations[operator],[old,rhs.name],[oldType,rhs.type],value.type,'',value.range);
-          op(api,'array_store',[receiver,index,{name:next,type:value.type}],null,`view_type = ${quote(value.target.receiver.semanticType)}`,value.range);
+            op(api,'array_store',[receiver,index,{name:next,type:value.type}],null,`view_type = ${quote(value.target.receiver.semanticType)}, array_node = ${quote(value.domainNode)}, array_versions = ${quote(canonical([arrayWrites.get(value.domainNode+'/array-version')]))}`,value.range);
           return value.kind==='arrayUpdate'&&!value.prefix?old:next;
         }
         if(value.kind==='assignment') {
@@ -240,7 +243,7 @@ export function emitFiniteCore(input,context) {
         if(value.kind==='call') {
           if(value.target===hir.intrinsics.readSpan.id)return op(api,'read_span',value.arguments.map(evaluated),value.type,opAttrs(value),value.range);
           if(value.receiver) {
-            const dispatch=plan.calls.find(row=>row.id===value.domainNode);
+            const dispatch=plan.carrierCalls.find(row=>row.id===value.domainNode);
             if(!dispatch?.targets.length)pending('missing actual method targets',value.range);
             const values=[evaluated(value.receiver),...value.arguments.map(evaluated)];
             const zero=dispatch.targets.every(row=>plan.abi.find(abi=>abi.functionId===row.functionId).result===null);
@@ -287,6 +290,7 @@ export function emitFiniteCore(input,context) {
       .sort((a,b)=>a.functionId<b.functionId?-1:a.functionId>b.functionId?1:a.parameterBinding<b.parameterBinding?-1:a.parameterBinding>b.parameterBinding?1:0)),
     compatibility_witnesses:canonical(memberWitnessContracts(hir)),
     field_phases:canonical(fieldPhases),
+    array_reaching:canonical(plan.arrayReaching),
     member_views:canonical(buildTypedReferenceViews(hir,context)),target:hir.target.target,triple:hir.target.triple,data_layout:hir.target.llvmDataLayout};
   const result='module attributes {'+Object.entries(attrs).map(([key,value])=>'tsfg_core.'+key+' = '+quote(value)).join(', ')+'} {\n'+functions.join('\n')+'\n}\n';
   if(Buffer.byteLength(result)>8388608)pending('Core byte limit');return result;

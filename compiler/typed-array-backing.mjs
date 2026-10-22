@@ -9,13 +9,13 @@ const require=(value,message)=>{if(!value)throw new TypeError('r03-array-backing
 
 export function buildTypedArrayBacking(input,context) {
   const hir=verifyHir(input,context),definition=buildFiniteCoreDomains(hir,context).definition,
-    types=new Map(hir.types.map(type=>[type.id,type])),nodes=new Map(definition.nodes.map(row=>[row.id,row])),
+    types=new Map(hir.types.map(type=>[type.id,type])),nodes=new Map(definition.carrierNodes.map(row=>[row.id,row])),
     domains=new Map(definition.domains.map(row=>[row.id,row])),groups=new Map(),ownerViews=new Map();
   let work=100000;
-  for(const node of definition.nodes)if(['array','readSpan'].includes(types.get(node.viewType)?.kind))for(const owner of node.arrayOwners) {
+  for(const node of definition.carrierNodes)if(['array','readSpan'].includes(types.get(node.viewType)?.kind))for(const owner of node.arrayOwners) {
     require(work-->0,'view work limit');if(!ownerViews.has(owner))ownerViews.set(owner,new Set());ownerViews.get(owner).add(node.viewType);
   }
-  for(const row of definition.nodes) {
+  for(const row of definition.carrierNodes) {
     if(!row.id.endsWith('/elements'))continue;
     const owner=row.id.slice(0,-9),typeId=nodes.get(owner)?.viewType??owner.split('/entry-owner/')[1],type=types.get(typeId);
     if(type?.kind!=='array')continue;
