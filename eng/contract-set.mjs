@@ -8,7 +8,7 @@ function decodeContractJson(bytes) {
   catch { throw new TypeError("invalid UTF-8 contract JSON"); }
 }
 
-function parseUniqueJson(text) {
+export function parseUniqueJson(text) {
   const value = JSON.parse(text);
   let offset = 0;
   const skipWhitespace = () => {

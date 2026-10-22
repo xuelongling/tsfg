@@ -47,6 +47,7 @@ import { prefetchGoDependencies, readGoDependencyLock, verifyGoDependencies } fr
 import { executeFrontendTarget, FrontendBuildError } from "./frontend-build.mjs";
 import { verifiedContractSet } from "./contract-set.mjs";
 import { executeMlirTarget, MlirBuildError } from "./mlir-build.mjs";
+import { MlirSdkError, validateMlirSdkInputDeclaration } from "./mlir-sdk.mjs";
 import { MlirPythonError } from "./mlir-python.mjs";
 import { executeVmTarget, VmBuildError } from "./vm-build.mjs";
 import {prepareVmBootstrapWithControls} from "./vm-bootstrap.mjs";
@@ -2521,7 +2522,8 @@ function verifyBuildInputLicenses(product, entries, coverage) {
     "eng/build-inputs.json",
     "license-input-coverage",
   );
-  if (declaration.schemaVersion !== "1" || !Array.isArray(declaration.entries)) {
+  if (declaration.schemaVersion === "2") validateMlirSdkInputDeclaration(declaration, canonicalize);
+  else if (declaration.schemaVersion !== "1" || !Array.isArray(declaration.entries)) {
     throw new WorkspaceMismatchError(
       "license-input-coverage",
       "Build Input Set declaration has an invalid shape",
@@ -5548,7 +5550,8 @@ async function buildInputSet(workspaceRoot) {
     path.join(workspaceRoot, "eng", "build-inputs.json"),
     "Build Input declaration",
   );
-  if (declaration.schemaVersion !== "1" || !Array.isArray(declaration.entries)) {
+  if (declaration.schemaVersion === "2") validateMlirSdkInputDeclaration(declaration, canonicalize);
+  else if (declaration.schemaVersion !== "1" || !Array.isArray(declaration.entries)) {
     throw new PackageFailureError("unsupported Build Input declaration schema");
   }
   const sortedDeclarations = [...declaration.entries].sort(compareInputEntries);
@@ -7713,7 +7716,7 @@ async function runCommandLine() {
       const isUndeclaredInput = error instanceof UndeclaredInputError;
       const isSandboxBoundary = error instanceof SandboxBoundaryError;
       const isGoIntegrity = error instanceof GoInputIntegrityError;
-      const isMlirIntegrity = (error instanceof VmBuildError &&
+      const isMlirIntegrity = error instanceof MlirSdkError || (error instanceof VmBuildError &&
         ["vm-tool-integrity", "vm-source-integrity", "vm-artifact-integrity", "vm-output-integrity"].includes(error.issueCode)) || error instanceof MlirPythonError ||
         (error instanceof IntakeLedgerError && error.issueCode === "mlir-source-license") || (error instanceof MlirBuildError &&
         ["mlir-source-integrity", "mlir-tool-integrity", "mlir-artifact-integrity", "mlir-output-integrity",

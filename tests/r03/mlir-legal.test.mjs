@@ -111,14 +111,13 @@ test("M01 selected build legal inventory binds mandatory configuration and trans
 
 test("M01 selected build registration refuses changed original legal materials before source consumption", async () => {
   const root = await createMlirFixture("mlir-build-legal-damaged-");
-  for (const name of ["mlir-source-legal.mjs", "mlir-source.mjs", "intake-ledger.mjs", "source-admission.mjs"])
+  for (const name of ["mlir-source-registration.mjs", "intake-ledger.mjs", "source-admission.mjs"])
     await copyFile(new URL(`../../eng/${name}`, import.meta.url), path.join(root, name));
   const lock = JSON.parse(await readFile(new URL("../../eng/mlir-source-build-legal.lock.json", import.meta.url), "utf8"));
   lock.licenseMaterials[0].completeOriginalNotice = "incomplete original terms";
   await writeFile(path.join(root, "mlir-source-build-legal.lock.json"), `${JSON.stringify(lock)}\n`);
-  const isolated = await import(pathToFileURL(path.join(root, "mlir-source-legal.mjs")).href);
-  await assert.rejects(isolated.readMlirSourceBuildLegalInputs({ sourceRoot: process.env.TSFG_MLIR_SOURCE,
-    git: process.env.TSFG_GIT, paths: ["llvm/CMakeLists.txt"] }), { issueCode: "mlir-source-license" });
+  const isolated = await import(pathToFileURL(path.join(root, "mlir-source-registration.mjs")).href);
+  await assert.rejects(isolated.readMlirLegalRegistration("build"), { issueCode: "mlir-source-license" });
 });
 
 test("M01 selected build legal reader admits mandatory IR and YAML generators observed in the real target graph", async () => {

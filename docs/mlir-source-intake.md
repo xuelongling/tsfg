@@ -126,6 +126,22 @@ SPDX is invented, and no optional backend or Runtime consumption is admitted.
 Original algorithm-source citations remain retained as source attribution
 rather than inferred additional license terms.
 
+The separately accepted SDKv2 input role uses the exact locked6601 inventory.
+Its finite source supplement retains all6772 existing entry objects in order
+and all five complete original materials, then adds180 exact source members
+from that SDK inventory. These180 are distinct from the1378 captured
+CMake-plan additions; they are not claimed to all occur in the current2925
+planned-source set. The fixed Git/source and SDK-lock raw hashes agree for
+each addition.179 preserve their original Apache-2.0 WITH LLVM-exception SPDX
+headers. `llvm/lib/CodeGen/AsmPrinter/DIEHashAttributes.def` has no local
+header and is recorded under the complete LLVM project grant, with no invented
+SPDX, after the existing40 relevant ancestor checks. Original references to
+algorithms and factual documentation remain attributed. This supplement
+adds no license, source version, target, optional-library or Runtime role.
+The resulting6952-entry registration leaves exactly the copied-table path
+below unresolved in the SDK source-membership join, with no raw-hash mismatch.
+The SDK reader rejects it before reading the first external SDK body.
+
 One mandatory file remains unregistered:
 `llvm/lib/Target/X86/MCTargetDesc/X86InstComments.cpp`. Although its header has
 the standard LLVM SPDX declaration, its TernlogFunctions table is attributed
