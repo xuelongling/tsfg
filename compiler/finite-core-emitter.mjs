@@ -6,10 +6,11 @@ import {verifyHir} from './module-hir.mjs';
 import {buildFiniteCoreDomains} from './finite-actual-domains.mjs';
 import {buildFiniteFieldPhases} from './finite-field-phases.mjs';
 import {finiteCallables,finiteCallableContracts} from './finite-callables.mjs';
+import {isFiniteAbsence} from './finite-presence.mjs';
 import {buildTypedLayouts} from './typed-layouts.mjs';
 import {buildTypedReferenceViews} from './typed-reference-views.mjs';
 import {coreExchangeFormat,coreQuote as quote,emitCoreSsaFunction} from './core-ssa-emitter.mjs';
-import {canonical,sha256,scalarName,i32TypeId} from './identity.mjs';
+import {canonical,sha256,scalarName,i32TypeId,boolTypeId} from './identity.mjs';
 import {scalarOperations} from './scalar-operators.mjs';
 
 function pending(message,range) {throw Object.assign(new TypeError('r03-finite-core-capability: '+message),
@@ -219,6 +220,33 @@ export function emitFiniteCore(input,context,publicationContext=undefined) {
           const target=selected(fn.id+'/binding/'+value.target.binding).domainId;
           const rhs=api.emit(wrap(value.value,target));api.assign(value.target.binding,rhs);return rhs;
         }
+        if(['binary','shortCircuit'].includes(value.kind)&&value.operator==='??') {
+          let left=evaluated(value.left),alternatives=domains.get(left.type).actualTypes,
+            previous=null;
+          const anchor=value.operatorRange??value.range,
+            absent=alternatives.filter(id=>{budget.step();return isFiniteAbsence(types.get(id).kind);}),
+            present=alternatives.filter(id=>{budget.step();return !absent.includes(id);}),
+            domainFor=ids=>{const id=sha256('tsfg.actual-domain.v1\0'+canonical([...ids].sort()));
+              if(!domains.has(id))pending('missing nullish intermediate carrier',anchor);return id;},
+            widen=payload=>payload.type===value.type?payload.name:api.operation('tsfg_core.domain.view',
+              [payload.name],[payload.type],value.type,opAttrs(value),value.range),
+            filter=()=>{if(previous===null)return;alternatives=alternatives.filter(id=>{budget.step();return id!==previous;});
+              const target=domainFor(alternatives),proof={type:previous,equal:false,range:anchor};
+              left={name:api.operation('tsfg_core.domain.refine',[left.name],[left.type],target,
+                `view_type = ${quote(value.semanticType)}, domain = ${quote(target)}, presence_proof = ${quote(canonical(proof))}`,anchor),type:target};
+              previous=null;};
+          if(!absent.length)return widen(left);
+          if(!present.length)return widen(evaluated(value.right));
+          const predicates=absent.map(type=>()=>{
+            filter();previous=type;const literalType=domainFor([type]),
+              literal=api.operation('tsfg_core.domain.literal',[],[],literalType,
+                `view_type = ${quote(type)}, domain = ${quote(literalType)}`,anchor);
+            return api.operation('tsfg_core.domain.presence_equal',[left.name,literal],[left.type,literalType],boolTypeId,
+              'operator = "!=="',anchor);
+          });
+          return api.branchValue(predicates,value.type,value.range,
+            ()=>{filter();return widen(left);},()=>widen(evaluated(value.right)));
+        }
         if(value.kind==='binary'||value.kind==='unary') {
           const operands=value.kind==='binary'?[value.left,value.right]:[value.operand];
           if(value.kind==='unary'&&value.operator==='+'&&domains.get(value.operand.type).representation==='native'
@@ -238,6 +266,7 @@ export function emitFiniteCore(input,context,publicationContext=undefined) {
           if(operands.some(operand=>domains.get(operand.type).representation!=='native'))pending('operation-domain-check mapping',value.range);
           const values=operands.map(evaluated),name=value.kind==='binary'?scalarOperations[value.operator]
             :({'+':'pos','-':'neg','~':'not','!':'bool_not'})[value.operator];
+          if(!name)pending('unmodeled native operator '+value.operator,value.range);
           return api.operation('tsfg_core.'+name,values.map(row=>row.name),values.map(row=>row.type),value.type,'',value.range);
         }
         if(value.kind==='call') {

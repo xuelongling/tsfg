@@ -332,3 +332,21 @@ Work and cancellation options keep their existing meaning. Views and cyclic
 call closures require actual publication authority, while already provable
 acyclic Array programs retain the ordinary context-free route. An internal
 projection never substitutes for whole typed HIR validation.
+
+Nullish coalescing preserves the nonabsence left payload or the original RHS
+payload. Its solver edges exclude only `null`/`undefined` from the left and
+gate the RHS result by actual left absence; the static result type is not a
+seed. Ordered Array/Field states and binding aliases retain both continuations
+unless complete actual presence evidence selects one. Zero and empty String
+remain present values. Pending evidence never becomes a must-write claim.
+
+Core lowering evaluates the left once, compares its allowed absence tags and
+uses the existing typed `branchValue` merge. A bounded chain of presence tests
+shares one RHS block, including when both null and undefined are possible.
+The pass edges progressively refine the same payload; no scalar conversion,
+bool result phi, duplicated RHS or eager store replaces the coalesce. Test
+constants and intermediate carriers are compiler-derived predicates anchored
+at the original `??`, not invented Source literal/initialization events. The
+same shared SSA budget bounds each predicate/block and partial output never
+escapes on failure. This produces data/SSA only; it does not qualify C++
+semantic admission, ordinary wire or VM execution.

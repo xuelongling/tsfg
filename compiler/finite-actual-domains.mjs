@@ -8,6 +8,7 @@ import {buildFiniteFieldReaching} from './finite-field-reaching.mjs';
 import {buildFiniteArrayReaching} from './finite-array-reaching.mjs';
 import {finiteCallables} from './finite-callables.mjs';
 import {canonical,own,sha256} from './identity.mjs';
+import {isFiniteAbsence} from './finite-presence.mjs';
 
 function fail(message) {throw Object.assign(new TypeError('r03-finite-domain: '+message),
   {code:'r03-finite-domain',ruleId:'r01-input-boundary',phase:'lowering'});}
@@ -63,7 +64,7 @@ function solveFiniteActualDomains(input,context,charge,fieldReaching,mode,arrayR
     const value={id:undefinedId,kind:'undefined',name:'undefined'};types.set(undefinedId,value);intrinsics.push(value);
     physical.set(undefinedId,{alignment:1,byteSize:0,referenceCount:0});
   }
-  const nodes=new Map(),edges=new Map(),owners=new Map(),queue=[],queued=new Set(),expressions=[];
+  const nodes=new Map(),edges=new Map(),owners=new Map(),queue=[],queued=new Set(),expressions=[],gates=new Map(),coalesces=[];
   const reads=[],stores=[],fieldReads=[],fieldStores=[],entryOwners=[],methodCalls=[],allocations=[],definitionSeeds=[];
   const views=buildTypedReferenceViews(hir,context,options);
   const methodViews=new Map(),fieldViews=new Map(),fieldOwners=new Map();
@@ -91,10 +92,15 @@ function solveFiniteActualDomains(input,context,charge,fieldReaching,mode,arrayR
   }
   function copy(from,to,predicate=null) {
     const targets=edges.get(from);if(targets.has(to))return;charge();
+    if(predicate?.gate){charge();if(!gates.has(predicate.gate))gates.set(predicate.gate,[]);gates.get(predicate.gate).push({from,to,predicate});}
     targets.set(to,predicate);propagate(from,to,predicate);
   }
+  const absent=id=>{charge();return isFiniteAbsence(types.get(id)?.kind);};
   function propagate(from,to,predicate) {
+    if(predicate?.gate){const gate=nodes.get(predicate.gate);for(const reason of gate.pending){charge();insert(to,'pending',reason);}
+      let enabled=false;for(const type of gate.actual){charge();if(absent(type))enabled=true;}if(!enabled)return;}
     for(const key of ['actual','owners','pending'])for(const value of nodes.get(from)[key]) {
+      charge();if(predicate?.presentOnly&&key==='actual'&&absent(value))continue;
       if(predicate?.ownerOnly&&key!=='owners')continue;
       if(predicate&&key==='actual'&&(predicate.equal?value!==predicate.type:value===predicate.type))continue;
       if(predicate?.equal&&key==='owners')continue;
@@ -309,6 +315,9 @@ function solveFiniteActualDomains(input,context,charge,fieldReaching,mode,arrayR
       const receiver=expression(v.target.receiver,p+'/target/receiver',fn,guards),value=child('value');
       fieldStores.push({id,receiver,field:v.target.property,value,
         viewType:['reference','value'].includes(types.get(v.target.receiver.type).kind)?v.target.receiver.type:fieldOwners.get(v.target.property).owner,targets:new Map()});copy(value,id);
+    }else if(['binary','shortCircuit'].includes(v.kind)&&v.operator==='??') {
+      const left=child('left'),right=child('right');coalesces.push(left);
+      copy(left,id,{presentOnly:true});copy(right,id,{gate:left});
     }else if(['binary','unary','shortCircuit','arrayLength','readSpanLength','arrayCompoundAssignment','arrayUpdate',
       'arrayResizeChecked','update','fieldUpdate','stringConcat'].includes(v.kind)) {
       // Results of approved operations are native/declared; dependent operand
@@ -378,6 +387,7 @@ function solveFiniteActualDomains(input,context,charge,fieldReaching,mode,arrayR
   while(cursor<queue.length) {
     charge();const current=queue[cursor++];queued.delete(current);
     for(const [target,predicate] of edges.get(current))propagate(current,target,predicate);
+    for(const edge of gates.get(current)??[]){charge();propagate(edge.from,edge.to,edge.predicate);}
     for(const call of methodCalls)if(call.receiver===current)for(const actual of nodes.get(current).actual) {
       charge();if(call.targets.has(actual))continue;const target=actualMethod(actual,call);
       if(!target){insert(call.id,'pending','unresolved-actual-method:'+actual+':'+call.member);continue;}
@@ -437,6 +447,10 @@ function solveFiniteActualDomains(input,context,charge,fieldReaching,mode,arrayR
   }
   const resultNodes=[...nodes.values()].map(row=>({id:row.id,viewType:row.viewType,domainId:domain(row.actual),
     arrayOwners:[...row.owners].sort(),pending:[...row.pending].sort()})).sort((a,b)=>a.id<b.id?-1:a.id>b.id?1:0);
+  // These canonical intermediate carriers serve compiler-derived presence
+  // tests/refinements, not new actual seeds or fabricated Source literals.
+  for(const left of coalesces){let remaining=[...nodes.get(left).actual].sort();
+    for(const type of remaining.filter(absent)){charge();domain(new Set([type]));remaining=remaining.filter(id=>id!==type);domain(new Set(remaining));}}
   const byId=new Map(resultNodes.map(row=>[row.id,row]));
   const abi=callables.map(fn=>{
     const parameters=fn.parameters.map(parameter=>byId.get(binding(fn,parameter.id,parameter.type)).domainId);

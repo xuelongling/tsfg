@@ -1,6 +1,6 @@
 {
   "family": "tsfg.core-finite-domains-development",
-  "version": 16,
+  "version": 17,
   "status": "development contract; ordinary Core integration, not admitted bytecode or executable private profile",
   "hir": "0.16.0",
   "identity": {
@@ -37,6 +37,7 @@
     },
     "edges": {
       "copy": "initializer, assignment, structured-control join, call argument, return, parentheses, nonNull and pure as preserve all reached actual facts",
+      "nullish": "For binary ??, flow only nonabsence actual left payload/owners to the result, plus the real RHS payload/owners gated by a reached null or undefined left alternative. Pending left evidence cannot prove either path impossible. This is not a declared/native result seed or a truthiness conversion. Array/Field ordered versions and outer bindings meet the skipped and taken states, or select a single path only from complete actual presence evidence. Carrier bounds remain independent of actual execution/definedness.",
       "arrayRead": "every reached owner element slot flows to the checked read expression",
       "arrayStore": "RHS flows to every reached owner element slot; a static alias does not create a new owner",
       "operators": "native operation consumes only its approved operand domain; numeric absence consumption with no approved R01 mapping is local capability-pending",

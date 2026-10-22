@@ -3,6 +3,7 @@
 // Unknown aliases/callees retain pending; capacity bounds remain independent.
 import {own} from './identity.mjs';
 import {finiteCallables} from './finite-callables.mjs';
+import {finitePresence} from './finite-presence.mjs';
 
 // The production state-copy seam also admits bounded component budget checks;
 // its version tokens are proof identities, never synthetic Source expressions.
@@ -23,7 +24,8 @@ export function buildFiniteArrayReaching(hir,plan,charge) {
   const functions=finiteCallables(hir),types=new Map(hir.types.map(row=>[row.id,row])),
     calls=new Map(plan.calls.map(row=>[row.id,row])),
     aliases=new Map((plan.fieldReaching?.returnAliases??[]).map(row=>[row.functionId,row.parameter])),
-    effects=new Map(functions.map(fn=>[fn.id,{writes:false,callees:new Set()}])),writes=new Map(),reads=new Map();
+    effects=new Map(functions.map(fn=>[fn.id,{writes:false,callees:new Set()}])),writes=new Map(),reads=new Map(),
+    presence=finitePresence(plan,types,charge);
   function arrayCarrier(id) {
     const stack=[id],seen=new Set();while(stack.length) {
       charge();const current=stack.pop();if(seen.has(current))continue;seen.add(current);const type=types.get(current);
@@ -168,11 +170,15 @@ export function buildFiniteArrayReaching(hir,plan,charge) {
         const ordinals=targets.map(id=>aliases.get(id)),ordinal=ordinals[0],actual=receiver?[receiver,...args]:args;
         return ordinal!==null&&ordinal!==undefined&&ordinals.every(index=>index===ordinal)?actual[ordinal]??{}:{symbol:path};
       }
-      if(value.kind==='shortCircuit'||value.kind==='binary'&&['&&','||'].includes(value.operator)) {
-        child('left');const right=clone(state),branchBindings=copyBindings(bindings);
-        expression(value.right,path+'/right',right,branchBindings);
+      if(value.kind==='shortCircuit'||value.kind==='binary'&&['&&','||','??'].includes(value.operator)) {
+        const left=child('left'),possibilities=value.operator==='??'?presence(path+'/left'):{present:true,absent:true};
+        if(!possibilities.absent)return left;
+        if(!possibilities.present)return child('right');
+        const right=clone(state),branchBindings=copyBindings(bindings),
+          result=expression(value.right,path+'/right',right,branchBindings);
         const merged=join(state,right);state.clear();for(const [id,row] of merged){charge();state.set(id,row);}
-        meetBindings(bindings,bindings,branchBindings);return {symbol:path};
+        meetBindings(bindings,bindings,branchBindings);
+        return value.operator==='??'&&left.owner&&['owner','offset','limit'].every(key=>left[key]===result[key])?left:{symbol:path};
       }
       // Unmodeled aliases never acquire an owner identity. Still traverse all
       // real evaluation children and conservatively discard mutating effects.

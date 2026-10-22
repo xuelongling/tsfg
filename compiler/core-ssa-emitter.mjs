@@ -312,7 +312,7 @@ export function emitCoreSsaFunction(fn, context) {
     current = null; return own(trace);
   };
   /** Merge a value without exposing blocks or definition state to leaf policies.
-   * @param {string | null} condition
+   * @param {string | null | (() => string)[]} condition
    * @param {string} resultType
    * @param {{start: number, end: number}} anchor
    * @param {() => string | null | undefined} onTrue
@@ -320,22 +320,33 @@ export function emitCoreSsaFunction(fn, context) {
    */
   const branchValue = (condition, resultType, anchor, onTrue, onFalse) => {
     context.budget?.step();
-    if (!current || current.terminated || typeof condition !== "string" || !condition)
+    const predicates=typeof condition==='string'?[()=>condition]:condition;
+    if (!current || current.terminated || !Array.isArray(predicates) || !predicates.length)
       throw new TypeError("r03-hir-cfg: branch value requires a live condition");
-    const outer = new Map(definitions), outerDeclared = new Set(declared);
+    const copyDefinitions=source=>{const result=new Map();for(const [id,value] of source){context.budget?.step();result.set(id,value);}return result;},
+      copyDeclared=source=>{const result=new Set();for(const id of source){context.budget?.step();result.add(id);}return result;},
+      outer=copyDefinitions(definitions),outerDeclared=copyDeclared(declared);
     const yes = newBlock(), no = newBlock(), join = newBlock([resultType]);
-    conditional(condition, yes, no, anchor);
+    // Every predicate must pass. All failed edges share the same false arm,
+    // so a nullish RHS is emitted once even when both absence tags are legal.
+    for(const [index,predicate] of predicates.entries()) {
+      context.budget?.step();const selected=predicate();
+      if(typeof selected!=='string'||!selected)throw new TypeError('r03-hir-cfg: invalid branch predicate');
+      const next=index===predicates.length-1?yes:newBlock();
+      conditional(selected,next,no,anchor);current=next;
+    }
     const arm = (block, callback) => {
-      current = block; definitions = new Map(outer); declared = new Set(outerDeclared);
+      current = block; definitions = copyDefinitions(outer); declared = copyDeclared(outerDeclared);
       const value = callback();
       if (!current || current.terminated || typeof value !== "string" || !value)
         throw new TypeError("r03-hir-cfg: branch value requires both exits and values");
-      return { exit: current, value, definitions: new Map(definitions), declared: new Set(declared) };
+      return { exit: current, value, definitions: copyDefinitions(definitions), declared: copyDeclared(declared) };
     };
     const left = arm(yes, onTrue), right = arm(no, onFalse);
-    const changed = [...outerDeclared].filter(id => left.definitions.get(id) !== outer.get(id)
-      || right.definitions.get(id) !== outer.get(id));
+    const changed = [...outerDeclared].filter(id => {context.budget?.step();return left.definitions.get(id) !== outer.get(id)
+      || right.definitions.get(id) !== outer.get(id);});
     for (const id of changed) {
+      context.budget?.step();context.budget?.parameters(join.parameters.length+1);
       if (!left.declared.has(id) || !right.declared.has(id) || !bindingTypes.has(id)
           || typeof left.definitions.get(id) !== "string" || typeof right.definitions.get(id) !== "string")
         throw new TypeError("r03-hir-cfg: branch value lost an outer binding");
@@ -343,7 +354,7 @@ export function emitCoreSsaFunction(fn, context) {
     }
     current = left.exit; branch(join, [left.value, ...changed.map(id => left.definitions.get(id))], anchor);
     current = right.exit; branch(join, [right.value, ...changed.map(id => right.definitions.get(id))], anchor);
-    current = join; definitions = new Map(outer); declared = outerDeclared;
+    current = join; definitions = copyDefinitions(outer); declared = outerDeclared;
     changed.forEach((id, index) => definitions.set(id, join.parameters[index + 1].name));
     return join.parameters[0].name;
   };

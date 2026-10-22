@@ -5,6 +5,7 @@
 import {canonical,own} from './identity.mjs';
 import {finiteCallables} from './finite-callables.mjs';
 import {finiteFieldPhases} from './finite-field-phases.mjs';
+import {finitePresence} from './finite-presence.mjs';
 
 // These are the production proof-state snapshots, not Source-value copies.
 function versionCopy(values,charge) {
@@ -22,6 +23,7 @@ export function buildFiniteFieldReaching(hir,plan,charge) {
   const selections=new Map(plan.fields.map(row=>[row.id,row]));
   const calls=new Map(plan.calls.map(row=>[row.id,row]));
   const types=new Map(hir.types.map(type=>[type.id,type])),valueDomains=new Map();
+  const presence=finitePresence(plan,types,charge);
   function copiesValue(id) {
     if(valueDomains.has(id))return valueDomains.get(id);
     const stack=[id],seen=new Set();let result=false;
@@ -198,11 +200,14 @@ export function buildFiniteFieldReaching(hir,plan,charge) {
         const token=expression(value.target.receiver,path+'/target/receiver',state,env);
         const rhs=child('value');access(value,path,state,token,'store',path+'/value');return rhs;
       }
-      if(value.kind==='shortCircuit'||value.kind==='binary'&&['&&','||'].includes(value.operator)) {
-        child('left');const right=clone(state),rightEnv=copyFieldReachingAliases(env,charge);
-        expression(value.right,path+'/right',right,rightEnv);
+      if(value.kind==='shortCircuit'||value.kind==='binary'&&['&&','||','??'].includes(value.operator)) {
+        const left=child('left'),possibilities=value.operator==='??'?presence(path+'/left'):{present:true,absent:true};
+        if(!possibilities.absent)return left;
+        if(!possibilities.present)return child('right');
+        const right=clone(state),rightEnv=copyFieldReachingAliases(env,charge),
+          result=expression(value.right,path+'/right',right,rightEnv);
         const merged=join(state,right);state.clear();for(const pair of merged){charge();state.set(...pair);}
-        meetAliases(env,env,rightEnv);return null;
+        meetAliases(env,env,rightEnv);return value.operator==='??'&&left&&left===result?left:null;
       }
       if(value.kind==='superConstruct') {
         for(const [index,argument] of value.arguments.entries())expression(argument,path+'/arguments/'+index,state,env);
