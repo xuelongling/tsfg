@@ -281,6 +281,10 @@ export function emitFiniteCore(input,context) {
     language_intrinsics:canonical(plan.intrinsics),
     source_closure:canonical(hir.sources),canonical_layouts:canonical(buildTypedLayouts(hir,context)),
     callable_contracts:canonical(finiteCallableContracts(hir)),
+    source_exports:canonical(hir.exports),
+    entry_compatibility_roots:canonical(hir.entryCompatibilityRoots.map(row=>({...row,roots:[...row.roots]
+      .sort((a,b)=>a.sourceType<b.sourceType?-1:a.sourceType>b.sourceType?1:a.targetType<b.targetType?-1:a.targetType>b.targetType?1:0)}))
+      .sort((a,b)=>a.functionId<b.functionId?-1:a.functionId>b.functionId?1:a.parameterBinding<b.parameterBinding?-1:a.parameterBinding>b.parameterBinding?1:0)),
     compatibility_witnesses:canonical(memberWitnessContracts(hir)),
     field_phases:canonical(fieldPhases),
     member_views:canonical(buildTypedReferenceViews(hir,context)),target:hir.target.target,triple:hir.target.triple,data_layout:hir.target.llvmDataLayout};

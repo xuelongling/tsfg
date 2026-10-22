@@ -80,6 +80,7 @@ export const coreIrInputs = Object.freeze([
   "compiler/core-ir/finite-domain.cpp",
   "compiler/core-ir/finite-domain.h",
   "compiler/core-ir/finite-domains.cpp",
+  "compiler/core-ir/finite-entry.cpp",
   "compiler/core-ir/finite-fields.cpp",
   "compiler/core-ir/finite-flow.cpp",
   "compiler/core-ir/finite-members.cpp",

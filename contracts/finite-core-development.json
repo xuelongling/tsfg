@@ -1,6 +1,6 @@
 {
   "family": "tsfg.core-finite-domains-development",
-  "version": 11,
+  "version": 12,
   "status": "development contract; ordinary Core integration, not admitted bytecode or executable private profile",
   "hir": "0.15.0",
   "identity": {
@@ -161,7 +161,7 @@
         "range": "original UTF16 {start,end}",
         "signatureHash": "existing Source signature, including implicit owner receiver and original nominal constructor result",
         "returnType": "original owned semantic TypeId",
-        "parameters": "ordered [{id:owned binding,type:declared semantic TypeId}]; receiver first when present",
+        "parameters": "ordered [{id:owned BindingId,type:declared TypeId,origin:{source,start,end}|null}]; origin is the real Source ParameterDeclaration or inherited declaration, null only for implicit receiver. Construction body has no result despite Source owner result signature.",
         "ownerType": "owned TypeId or null",
         "construction": "ConstructionId for construction-body only, else null",
         "overrideTarget": "actual owned M12 override FunctionId or null",
@@ -182,6 +182,14 @@
       "memory": "Real field_store versions bind to exact actual field dispatch, successful SSA RHS and original Source origin. NativeDefine/initializer/parameter field versions bind to their actual phase and real SSA inputs. Local read evidence must reference these real writes, retain every write payload/valid undefined, and select the first successful version across every CFG predecessor. A later write cannot modify an earlier SSA value. Unknown alias/entry/callee continuation proofs remain explicitly unproved, never qualify native reads.",
       "effectVocabulary": "Only modeled operation effects are allowed; host/global/opaque operations are not implicitly pure. Array element mutation is separate from class-field effects. Actual call targets preserve definition-domain upper bounds and are not replaced by the narrower reached ledger.",
       "remaining": "This slice is not complete independent published upper-bound/alias/call-continuation/field storage proof or verifyCoreModule admission. Ordinary canonical roundtrip/wire and VM remain unqualified."
+    },
+    "definitionAuthority": {
+      "exportsAttribute": "tsfg_core.source_exports",
+      "entryAttribute": "tsfg_core.entry_compatibility_roots",
+      "entries": "Required canonical owned [{functionId,parameterBinding,viewType,origin,roots:[{sourceType,targetType}]}]. Order by owned FunctionId then BindingId; roots by owned sourceType then targetType. Every actual exported parameter has exactly one record, including native empty roots. Export aliases share one function ABI; source_exports retains the original names.",
+      "origin": "Entry origin equals the original callable parameter origin exactly. Every root must reference an already checked M12 record at that same declaration origin. Expression-origin proofs cannot be promoted to entry authority. Reachable reference targets include payload union/container/value/nominal fields and effective method explicit parameters/returns; an inherited base or overridden method is not an extra payload leaf.",
+      "definition": "Every nonexport callable parameter has one exact role seed; receiver parameters require owner plus real nominal descendants only. Ordinary parameters require declared concrete leaves, selected published entry references for that role, and incoming actual flows. Scalar/value identities remain exact seeds; scalar seeds do not discard additional actual absence propagated by real calls/as/aliases.",
+      "consumer": "C++ ModuleContracts checks entry/published/definition roles, same-origin roots, all ordered parameter seed obligations and fixed Published Call Contract identity against actual function ABI. This is an independent necessary lower bound. Actual-flow upper-bound completeness/minimality, alias/resource state and remaining memory eligibility must still be discharged before unified admission; extra unproved variants are not authorized by this check."
     }
   },
   "localPending": [

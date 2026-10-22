@@ -22,7 +22,7 @@ test('ordinary Core carries every independent Source callable and its ordered bi
     for(const row of rows) {
       const oracle=gold.find(value=>value.functionId===row.id);
       assert.equal(row.signatureHash,oracle.sourceSignature.signatureHash);
-      assert.deepEqual(row.parameters,oracle.parameters.map(value=>({id:value.binding,type:value.declaredOwnedType})));
+      assert.deepEqual(row.parameters.map(({id,type})=>({id,type})),oracle.parameters.map(value=>({id:value.binding,type:value.declaredOwnedType})));
       assert.ok(text.includes('tsfg_core.function_id = "'+row.id+'"'));
       assert.ok(built.hir.sources.some(source=>source.path===row.sourcePath&&row.range.start>=0&&row.range.end<=source.content.length));
       if(row.role==='construction-body') {

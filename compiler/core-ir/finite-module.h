@@ -25,6 +25,7 @@ struct ModuleProof {
   Json types = nullptr, intrinsics = nullptr, layouts = nullptr, plan = nullptr;
   Json sources = nullptr, callables = nullptr;
   Json witnesses = nullptr, views = nullptr, phases = nullptr;
+  Json sourceExports = nullptr, entryRoots = nullptr;
   std::map<std::string, const Object *> catalog, callable, abi;
   std::map<std::string, Domain> domains;
   // Existing native SSA implementation temporaries (e.g. String compare i32)
@@ -58,6 +59,7 @@ bool verifyValueContracts(ModuleProof &proof);
 bool verifyMemberContracts(ModuleProof &proof);
 bool verifyFlowContracts(ModuleProof &proof);
 bool verifyMemoryContracts(ModuleProof &proof);
+bool verifyDefinitionBounds(ModuleProof &proof);
 const Domain *valueDomain(ModuleProof &proof, mlir::Type type);
 bool carrier(ModuleProof &proof, llvm::StringRef domain, mlir::Type type);
 // Development module contracts, not yet the command's whole-flow admission

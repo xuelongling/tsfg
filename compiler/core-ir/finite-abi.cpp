@@ -27,11 +27,19 @@ bool header(ModuleProof &proof, const Object &row) {
       !proof.catalog.count(string(row,"returnType")) || (role != "function" && role != "construction-body"))
     return proof.reject("callable contract fields/original source range");
   std::string arguments; std::set<std::string> bindings;
+  size_t ordinal=0;
   for (const auto &parameter : *parameters) {
     const auto *p = parameter.getAsObject();
-    if (!proof.charge() || !p || p->size() != 2 || string(*p,"id").empty() ||
+    if (!proof.charge() || !p || p->size() != 3 || !p->get("origin") || string(*p,"id").empty() ||
         !bindings.insert(string(*p,"id")).second || !proof.catalog.count(string(*p,"type")))
       return proof.reject("ordered callable parameter binding/type");
+    const auto *origin=p->getObject("origin"); uint32_t from=0,to=0;
+    if ((p->get("origin")->kind()==Json::Null)!=(ordinal++==0 && !owner.empty()))
+      return proof.reject("only an implicit receiver lacks a Source parameter declaration");
+    if (p->get("origin")->kind()!=Json::Null && (!origin || origin->size()!=3 ||
+        !unsignedInteger(*origin,"start",from)||!unsignedInteger(*origin,"end",to)||from>to||
+        !proof.sourceLengths.count(string(*origin,"source"))||to>proof.sourceLengths.at(string(*origin,"source"))))
+      return proof.reject("ordered parameter original declaration anchor");
     if (!arguments.empty()) arguments += ',';
     arguments += string(*proof.catalog.at(string(*p,"type")),"name");
   }

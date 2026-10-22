@@ -162,3 +162,31 @@ checked Source packet distinguishes an SSA capture before clear(b) from a new
 read after that real field-writing callee. The latter retains undefined despite
 the official checker's i32 flow type. These are static producer comparisons;
 they do not execute the Source program, Core compiler or VM.
+
+The version 12 boundary carries original `source_exports` and owned
+`entry_compatibility_roots` in the same ordinary Core module. Ordered callable
+parameters retain their real Source declaration origins (including inherited
+implicit-constructor parameter declarations); only the synthesized receiver has
+no parameter declaration. Entry records must join that exact parameter origin,
+not an expression or a convenient same-shaped class proof. The independent C++
+consumer checks every exported parameter, including native empty-root records,
+and accepts only already validated same-origin M12 reference roots whose target
+is reachable through the parameter's actual payload/member signature closure.
+Overridden ancestor headers are not extra public payloads.
+
+Every nonexport parameter has its exact definition seed role. Receiver bounds
+must include the owner and real nominal descendants; other parameter bounds
+retain declared concrete seeds and selected published reference alternatives.
+This is a lower-bound obligation, so it never filters real call-propagated
+undefined out of a static i32 slot. Scalar seeds alone remain native without GC
+slots. Published contracts must match the actual ordered ABI, Source signature
+and complete input identity, including the existing fixed hash. Export aliases
+share that function contract.
+
+These necessary obligations now feed ModuleContracts before flow and memory
+validation. They do not establish the maximum/minimum complete actual-flow
+solution, authorize unused extra alternatives, discharge unproved memory reads
+or activate the ordinary admission hook. The independent seven-source expected
+ABI is compared against the real producer, not recomputed from its plan. C++
+object checks and Node comparisons remain distinct from semantic verifier,
+canonical roundtrip and executable wire qualification.
