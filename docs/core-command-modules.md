@@ -1,0 +1,43 @@
+# Core command modules
+
+The complete Core language has one command Implementation in
+`compiler/core-ir/core-command.cpp`: dialect registration, parsing, identity
+checks, complete verification, canonical printing, optimization, and existing
+formal/private wire commands. Both executables compile the same common object
+library. Language and protocol identities remain unchanged.
+
+`tsfg-core-static.exe` exposes those ordinary Core commands.
+`tsfg-core-ir.exe` retains the existing full compiler name and all Native/AOT
+commands. Its small adapter receives a verified module and owns native output,
+target initialization and instruction inspection. Native lowering and X86
+libraries belong only to this full target. There is no alternative verifier,
+interpreter, language profile, or duplicate IR implementation.
+
+Production selection is `--source-target mlir-core --core-command-role static`
+or `native`; omission retains the full native target. The produced manifest
+binds `coreCommandRole` to the build identity. Ordinary compilation accepts
+either role; AOT requires the full native role. `compileOwnedStaticProgram`
+can take `nativeCore` separately when `core` selects the ordinary tool.
+
+SDKv2 membership remains complete and unchanged. The current authenticated SDK
+intake actually reads the historical full compiler and every inventory body.
+Consequently a static target does not itself qualify an independent SDK
+consumption closure. A static SDK build stops before those reads with
+`mlir-static-sdk-consumption`. Direct-source builds retain the existing
+source/legal/trace gates. Neither source separation nor object compilation
+proves the transitive imported-library closure or authorizes linking.
+
+R03 M14/M37 and M25 track removing this local HOLD: establish an authenticated
+ordinary dependency closure (including configuration evaluation, source
+licenses, headers, libraries, original provenance and observed inputs) without
+consuming the held full compiler or LLVMX86Desc external table, then run the
+ordinary production build and independent review. Preserve the full SDK lock
+and original native intake; do not trim or relabel their membership. Existing
+Native/AOT provenance restrictions remain independent. No link/CLI execution is
+credited by this refactor.
+
+The production control entry is now a bounded CLI coordinator. Its option,
+identity, acquisition, workspace, isolation, build and delivery implementations
+use static responsibility modules rather than sharing an 8,000-line scope.
+[ADR 0009](adr/0009-separate-build-command-responsibilities.md) records the seams,
+dependency direction and unchanged execution restrictions.

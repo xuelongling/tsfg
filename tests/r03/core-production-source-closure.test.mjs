@@ -15,10 +15,13 @@ const coreRoot=path.join(productRoot,'compiler/core-ir');
 const cmake=await readFile(path.join(coreRoot,'CMakeLists.txt'),'utf8');
 // This finite target declaration and its quoted local headers are the independent
 // closure oracle. Do not execute or generally interpret CMake to discover inputs.
-const target=/add_llvm_executable\(tsfg-core-ir\s+([\s\S]*?)\)\s*target_link_libraries/.exec(cmake);
-assert.ok(target);
-const translationUnits=target[1].trim().split(/\s+/);
-assert.equal(translationUnits.length,69);
+const common=/add_library\(tsfg-core-common OBJECT\s+([\s\S]*?)\)/.exec(cmake);
+const native=/add_llvm_executable\(tsfg-core-ir\s+([\s\S]*?)\)/.exec(cmake);
+const ordinary=/add_llvm_executable\(tsfg-core-static\s+([\s\S]*?)\)/.exec(cmake);
+assert.ok(common);assert.ok(native);assert.ok(ordinary);
+const translationUnits=[common[1],native[1],ordinary[1]].flatMap(row=>row.trim().split(/\s+/));
+assert.equal(translationUnits.length,71);
+assert.equal(new Set(translationUnits).size,71);
 for(const name of translationUnits)assert.match(name,/^[a-z0-9_-]+\.cpp$/);
 const closure=new Set(['compiler/core-ir/CMakeLists.txt']),pending=translationUnits.map(name=>'compiler/core-ir/'+name);
 while(pending.length){const name=pending.pop();if(closure.has(name))continue;closure.add(name);
@@ -27,7 +30,7 @@ while(pending.length){const name=pending.pop();if(closure.has(name))continue;clo
   pending.push(path.posix.normalize(path.posix.join(path.posix.dirname(name),match[1])));
 }
 const coreFiles=[...closure].sort();
-assert.equal(coreFiles.length,112);
+assert.equal(coreFiles.length,115);
 const declaration=JSON.parse(await readFile(path.join(productRoot,'eng/build-inputs.json'),'utf8'));
 const entries=await Promise.all(declaration.entries.map(async entry=>({projectId:entry.projectId,
  repositoryRelativePath:entry.path,sha256:hash(await readFile(path.join(productRoot,entry.path)))})));
@@ -49,7 +52,7 @@ async function inputFixture(label,changed){const root=await fixture(label);
   await copyFile(path.join(productRoot,name),path.join(root,name));}
  return root;
 }
-test('production source copy stages the complete69TU and quoted include closure byte-exactly',async()=>{
+test('production source copy stages the complete71TU and quoted include closure byte-exactly',async()=>{
  const product=await fixture('whole');await stageMlirProductSources({productRoot,product,identity});
  assert.deepEqual(await allFiles(product),stageFiles.sort());
  for(const name of stageFiles)assert.deepEqual(await readFile(path.join(product,name)),await readFile(path.join(productRoot,name)),name);
@@ -69,7 +72,7 @@ test('production source copy rejects changed source bytes',async()=>{
 });
 async function artifact(label,rows){const root=await fixture(label),file=path.join(root,'not-executed.artifact');
  const bytes=Buffer.from('data-only admission fixture; not a compiler result\n');await writeFile(file,bytes);
- await writeFile(path.join(root,'artifact-manifest.json'),JSON.stringify({outputs:[{path:path.basename(file),sha256:hash(bytes)}],
+ await writeFile(path.join(root,'artifact-manifest.json'),JSON.stringify({coreCommandRole:'native',outputs:[{path:path.basename(file),sha256:hash(bytes)}],
  buildIdentity:{target:'windows-x86_64-msvc',profile:'debug'},buildInputSet:{entries:rows}}));return file;
 }
 test('actual Core consumer input gate admits a complete current data-only manifest',async()=>{

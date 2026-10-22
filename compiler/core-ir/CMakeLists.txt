@@ -74,19 +74,35 @@ set(CMAKE_CXX_STANDARD 17)
 include_directories(${LLVM_INCLUDE_DIRS}
   ${LLVM_MAIN_SRC_DIR}/../mlir/include
   ${LLVM_BINARY_DIR}/tools/mlir/include)
-add_llvm_executable(tsfg-core-ir aot-capability.cpp aot-module.cpp aot-program.cpp aot-module-services.cpp aot-module-entry.cpp aot-module-codec.cpp aot.cpp aot-lowering.cpp aot-float.cpp aot-fmod.cpp aot-fenv.cpp aot-conversions.cpp main.cpp dialect.cpp bytecode.cpp bytecode_encoding.cpp
-  module.cpp module-plan.cpp native_cost.cpp core-verify.cpp kernel-access.cpp kernel-access-metadata.cpp nullable.cpp nullable-cfg.cpp nullable-metadata.cpp nullable-wire.cpp
-  string.cpp string-formal.cpp string-verify.cpp string-wire.cpp array.cpp array-metadata.cpp array-verify.cpp array-view.cpp array-publication.cpp array-roots.cpp array-wire.cpp
-  array-owner-json.cpp array-owner-canonical.cpp array-owner-schema.cpp
-  array-owner-analysis.cpp array-owner-pairs.cpp array-owner-command.cpp
-  reference-metadata.cpp reference-provenance.cpp
-  reference.cpp reference-index.cpp reference-cfg.cpp reference-verify.cpp
-  reference-construction.cpp reference-roots.cpp
-  exception.cpp exception-json.cpp exception-source.cpp exception-provenance.cpp
-  exception-hir.cpp exception-cfg.cpp exception-verify.cpp exception-command.cpp
-  managed-cfg.cpp managed-liveness.cpp closure.cpp closure-metadata.cpp closure-identities.cpp closure-verify.cpp
-  closure-cfg.cpp closure-roots.cpp closure-initialization.cpp closure-init-flow.cpp)
-target_link_libraries(tsfg-core-ir PRIVATE MLIRIR MLIRParser MLIRFuncDialect MLIRControlFlowDialect
+# Both tools compile the exact same dialect, complete verifier and wire
+# implementation. Native lowering/target initialization is a separate adapter.
+add_library(tsfg-core-common OBJECT
+  dialect.cpp bytecode.cpp bytecode_encoding.cpp module.cpp
+  module-plan.cpp core-verify.cpp kernel-access.cpp kernel-access-metadata.cpp
+  nullable.cpp nullable-cfg.cpp nullable-metadata.cpp nullable-wire.cpp
+  string.cpp string-formal.cpp string-verify.cpp string-wire.cpp
+  array.cpp array-metadata.cpp array-verify.cpp array-view.cpp
+  array-publication.cpp array-roots.cpp array-wire.cpp array-owner-json.cpp
+  array-owner-canonical.cpp array-owner-schema.cpp array-owner-analysis.cpp array-owner-pairs.cpp
+  array-owner-command.cpp reference-metadata.cpp reference-provenance.cpp reference.cpp
+  reference-index.cpp reference-cfg.cpp reference-verify.cpp reference-construction.cpp
+  reference-roots.cpp exception.cpp exception-json.cpp exception-source.cpp
+  exception-provenance.cpp exception-hir.cpp exception-cfg.cpp exception-verify.cpp
+  exception-command.cpp managed-cfg.cpp managed-liveness.cpp closure.cpp
+  closure-metadata.cpp closure-identities.cpp closure-verify.cpp closure-cfg.cpp
+  closure-roots.cpp closure-initialization.cpp closure-init-flow.cpp core-command.cpp
+)
+target_link_libraries(tsfg-core-common PUBLIC MLIRIR MLIRParser MLIRFuncDialect MLIRControlFlowDialect)
+add_llvm_executable(tsfg-core-static static-main.cpp)
+target_link_libraries(tsfg-core-static PRIVATE tsfg-core-common)
+# The existing full compiler name and native capabilities remain unchanged.
+add_llvm_executable(tsfg-core-ir
+  aot-capability.cpp aot-module.cpp aot-program.cpp aot-module-services.cpp
+  aot-module-entry.cpp aot-module-codec.cpp aot.cpp aot-lowering.cpp
+  aot-float.cpp aot-fmod.cpp aot-fenv.cpp aot-conversions.cpp
+  main.cpp native_cost.cpp
+)
+target_link_libraries(tsfg-core-ir PRIVATE tsfg-core-common
   MLIRArithDialect MLIRLLVMDialect MLIRArithToLLVM MLIRControlFlowToLLVM MLIRFuncToLLVM
   MLIRLLVMCommonConversion MLIRTransforms MLIRLLVMToLLVMIRTranslation
   MLIRBuiltinToLLVMIRTranslation MLIRTargetLLVMIRExport

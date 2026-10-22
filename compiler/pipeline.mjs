@@ -19,7 +19,7 @@ const productRoot = fileURLToPath(new URL("../", import.meta.url));
 
 /** Verify the actual source-built consumer admission boundary without executing it. */
 export async function verifiedConsumer(executable, role) {
-  if (!["core", "vm", "aot"].includes(role)) throw new TypeError("r03-tool-role: unsupported consumer");
+  if (!["core", "core-native", "vm", "aot"].includes(role)) throw new TypeError("r03-tool-role: unsupported consumer");
   if (!executable) throw new TypeError(`r03-tool-${role}: formal executable is required`);
   const manifest = JSON.parse(await readFile(path.join(path.dirname(executable), "artifact-manifest.json"), "utf8"));
   const output = manifest.outputs?.find(output => output.path === path.basename(executable));
@@ -28,7 +28,14 @@ export async function verifiedConsumer(executable, role) {
   if (manifest.buildIdentity?.target !== "windows-x86_64-msvc"
       || manifest.buildIdentity?.profile !== "debug")
     throw new TypeError(`r03-tool-${role}: unsupported target/profile identity`);
-  const required = role === "core" ? [...coreIrInputs, "eng/core-ir-inputs.mjs"]
+  if (["core", "core-native"].includes(role) && !["static", "native"].includes(manifest.coreCommandRole))
+    throw new TypeError("r03-tool-core: explicit compiler command role is required");
+  if (["core", "core-native"].includes(role) &&
+      manifest.coreCommandRole !== (manifest.buildIdentity.options?.coreCommandRole ?? "native"))
+    throw new TypeError("r03-tool-core: compiler command role differs from build identity");
+  if (role === "core-native" && manifest.coreCommandRole !== "native")
+    throw new TypeError("r03-tool-core-native: full native compiler command role is required");
+  const required = ["core", "core-native"].includes(role) ? [...coreIrInputs, "eng/core-ir-inputs.mjs", "eng/mlir-command.mjs"]
     : ["runtime/root.zig", "runtime/bytecode.zig", "runtime/bytecode_model.zig", "runtime/bytecode_decode.zig", "runtime/bytecode_view.zig", "runtime/module_format.zig", "runtime/module-plan.zig", "runtime/aot-instance.zig", "runtime/module.zig", "runtime/request.zig", "runtime/clock.zig", "runtime/host_counter.zig", "runtime/host_counter.c", "runtime/host_counter_bridge.c", "runtime/admitted-entry.c", "eng/runtime-entry.mjs", "runtime/vm.zig", "runtime/runtime.zig", "runtime/managed-heap.zig", "runtime/string-codec.zig", "runtime/main.zig", "runtime/contract.zig", "eng/host-counter.mjs", "eng/host-counter-binary.mjs", "eng/host-cost-source.lock.json", "eng/vm-build.mjs", "runtime/execution_frame.zig", "runtime/scalar.zig", "runtime/conversions.zig", "runtime/host-bindings.zig", "runtime/host-semantic-contract.zig",
       "runtime/floating-environment.zig", "runtime/outcome-writer.zig", "runtime/string-arguments.zig", "runtime/string-budget.zig", "runtime/string-frame.zig", "runtime/string-instructions.zig", "runtime/string-output.zig", "runtime/string-value.zig", "runtime/vm-execution.zig", "runtime/vm-instance.zig", "runtime/runtime-state.zig", "runtime/request-values.zig", "runtime/request-json.zig", "runtime/module-outcome-writer.zig", "eng/host-counter-objects.mjs",
       "eng/output-storage.mjs", "eng/host-semantic-contract.mjs", "contracts/host-counter-semantic-v1.json"];
@@ -136,7 +143,7 @@ export async function compileOwnedStaticProgram(hir, options) {
   const result = await produceBytecode(hir, options);
   if (result.status !== "ok") return result;
   try {
-    const executable = await verifiedConsumer(options.core, "core");
+    const executable = await verifiedConsumer(options.nativeCore ?? options.core, "core-native");
     const object = consume(executable, ["--emit-program-object"], result.core);
     // The generated metadata and instance use exactly this original packet;
     // neither a projection nor a re-signed surrogate program enters the link.

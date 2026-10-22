@@ -88,7 +88,7 @@ export async function executeAotTarget({options,runtime,tools,productRoot,worksp
     if(!state.isFile()||state.isSymbolicLink()||entry?.sha256!==sha256(await readFile(path.join(productRoot,name))))
       throw new AotBuildError('AOT input absent or changed: '+name,'aot-source-integrity');
   }
-  const producer=await verifiedConsumer(coreExecutable,'core');
+  const producer=await verifiedConsumer(coreExecutable,'core-native');
   const manifestPath=path.join(path.dirname(producer),'artifact-manifest.json');
   const producerIdentity={executable:sha256(await readFile(producer)),manifest:sha256(await readFile(manifestPath))};
   await mkdir(path.dirname(output),{recursive:true});await ordinaryAncestor(path.dirname(output));
