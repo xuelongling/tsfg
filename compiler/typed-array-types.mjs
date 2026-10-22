@@ -2,6 +2,7 @@
 // Logical source type catalogue validation; physical layout is a separate domain.
 import {canonical,sha256,scalarTypeIds} from './identity.mjs';
 import {check,byteOrder,hash,sourceRange,originId} from './typed-array-schema.mjs';
+import {checkTypedValueContainment} from './typed-array-type-graphs.mjs';
 
 export function validateTypedArrayTypes(payload,sources) {
   const types=new Map();
@@ -62,15 +63,7 @@ export function validateTypedArrayTypes(payload,sources) {
   }
   // Value-containment must be finite; managed reference/container edges stop the
   // walk. This proves a layout exists without rejecting legal reference cycles.
-  const active=new Set(),complete=new Set();
-  function finite(id) {
-    if(complete.has(id))return;check(!active.has(id),'recursive-value');active.add(id);
-    const type=requireType(id);
-    if(type.kind==='union')for(const member of type.members)finite(member);
-    if(type.kind==='value')for(const field of type.fields)finite(field.type);
-    active.delete(id);complete.add(id);
-  }
-  for(const id of types.keys())finite(id);
+  checkTypedValueContainment(types);
   return types;
 }
 

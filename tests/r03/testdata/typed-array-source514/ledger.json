@@ -1,0 +1,20 @@
+[
+  {
+    "file": "151532d95626ca56ac00e7d051980f85d1aa47654d037d87089a0a5f2cf3e00e-package.json",
+    "expect": "accept",
+    "packageId": "sha256:1f42ffabdac00d679eed1d293de97ff3f9c2082d1a48ebb67c4f2d99af6a74db",
+    "requestId": "sha256:4c8b6c82e645edc2992106e57f6af723b60c4284b4bdf4dd17e94988c721659e",
+    "sha256": "8cac548406aafd27faea3b0f73fb9737830ab775c4b27b998703e12bc19ec0de",
+    "capture": "MULTIROOT-TARGET-SELECTED-GREEN01-captures/151532d95626ca56ac00e7d051980f85d1aa47654d037d87089a0a5f2cf3e00e-package.json",
+    "case": "seed"
+  },
+  {
+    "file": "de33a7e554d978ecdd8c165149b8247f40ca2c665a760695979aa0a6526216f5-package.json",
+    "expect": "accept",
+    "packageId": "sha256:a09f2227caff960e2fe59ecce42b296857c3bcd26cf95f32261f672a54cb9825",
+    "requestId": "sha256:cc57d31638b05dff9f45df25bd4b70912f3216a9d9bac7847e1b626becd65006",
+    "sha256": "395b036d3e3c4d94543369c82b4d1ea54390b0a91bc04639f8fc8a788d3df845",
+    "capture": "MULTIROOT-TARGET-SELECTED-GREEN01-captures/de33a7e554d978ecdd8c165149b8247f40ca2c665a760695979aa0a6526216f5-package.json",
+    "case": "main"
+  }
+]

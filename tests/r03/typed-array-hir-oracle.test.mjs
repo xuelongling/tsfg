@@ -24,9 +24,10 @@ test('initialized undefined and assignment result keep their separate concrete t
   assert.equal(local.initializer.elements[1].decimal,'7');
   assert.equal(store.expression.type,undefinedId);
   assert.equal(store.expression.value.type,undefinedId);
-  assert.equal(store.expression.target.type,returned.value.type);
+  assert.equal(store.expression.target.type,returned.value.declaredType);
   assert.equal(returned.value.kind,'arrayReadChecked');
-  assert.notEqual(returned.value.type,undefinedId);
+  assert.equal(returned.value.type,undefinedId);
+  assert.notEqual(returned.value.declaredType,undefinedId);
 });
 test('compound receiver index and RHS trees occur once and preserve call identities',async()=>{
   const hir=build(await packet('f2c9d4e124c4cc6331012390387c1e803adf0c4707ef653d9de4303066d75954'));
@@ -59,11 +60,14 @@ test('String code units retain isolated surrogate NUL and concat operands',async
 test('official structural projection and constructor parameter initialization survive ownership',async()=>{
   const hir=build(await packet('dddcc5ca1ceacd4dba3f824b236855267666a179c3b200cf44603f7e3a20e82f'));
   const fn=hir.functions.find(row=>row.name==='read'),element=fn.body[0].initializer.elements[0];
-  const from=hir.types.find(type=>type.id===element.compatibility.sourceType);
-  const to=hir.types.find(type=>type.id===element.compatibility.targetType);
+  const [root]=element.compatibilityRoots;
+  const proof=hir.compatibilityWitnesses.find(record=>record.compatibility.sourceType===root.sourceType
+    &&record.compatibility.targetType===root.targetType&&record.compatibility.origin.start===element.range.start).compatibility;
+  const from=hir.types.find(type=>type.id===root.sourceType);
+  const to=hir.types.find(type=>type.id===root.targetType);
   assert.notEqual(from.id,to.id);assert.equal(from.nominalKey.declarationPath[0],'Other');
   assert.equal(to.nominalKey.declarationPath[0],'Base');
-  assert.deepEqual(element.compatibility.members,[{source:from.fields.find(row=>row.name==='n').id,target:to.fields[0].id}]);
+  assert.deepEqual(proof.members,[{source:from.fields.find(row=>row.name==='n').id,target:to.fields[0].id}]);
   const box=build(await packet('38ac49ad717fc41a9c3fdc4178ac0284ce2e9f26794790d42bb41d6eeba66fe3'));
   const type=box.types.find(row=>row.kind==='reference'),ctor=box.functions.find(row=>row.id===type.constructor);
   assert.equal(type.fields[0].parameterBinding,ctor.parameters[1].id);
@@ -121,8 +125,7 @@ test('cold reference witnesses reject forged mappings after packet identity is r
     ['forged member',proof=>{proof.members[0].source=digest('not-a-member');}],
   ];
   for(const [name,mutate] of cases)await t.test(name,()=>{
-    const value=structuredClone(original),proof=nodes(value.payload,'new')[0]?.compatibility
-      ??value.payload.functions.find(fn=>fn.name==='read').body[0].initializer.elements[0].compatibility;
+    const value=structuredClone(original),proof=value.payload.compatibilityWitnesses[0].compatibility;
     mutate(proof);value.packageId=digest('tsfg.array-facts.package.v8\0'+value.schemaHash+'\0'+stable(value.payload));
     assert.throws(()=>readTypedArrayFacts(encoded(value)));
   });

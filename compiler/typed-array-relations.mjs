@@ -2,10 +2,14 @@
 // Adapt the independently owned catalogue to the established M12 witness
 // verifier. Source edges are retained; names never synthesize member mappings.
 import {verifyReferenceWitness} from './reference-relations.mjs';
-import {check} from './typed-array-schema.mjs';
+import {byteOrder,check} from './typed-array-schema.mjs';
+import {typedArrayRepresentation} from './typed-array-representation.mjs';
+import {typedArrayWitnesses} from './typed-array-witnesses.mjs';
+import {typedReferenceWeights} from './typed-array-type-graphs.mjs';
 
-export function typedArrayRelations(types,functions) {
-  const state={types:new Map(),classes:new Map(),methods:new Map(),symbols:new Map()};
+export function typedArrayRelations(types,functions,records) {
+  const state={types:new Map(),classes:new Map(),methods:new Map(),symbols:new Map()},fields=new Map();
+  for(const type of types.values())for(const field of type.fields??[])fields.set(field.id,field);
   for(const type of types.values())if(type.kind==='reference') {
     const fields=type.fields.map(field=>({id:field.id,symbol:field.id,name:field.name}));
     const methods=(type.methods??[]).map(id=>{
@@ -18,20 +22,53 @@ export function typedArrayRelations(types,functions) {
     for(const field of fields)state.symbols.set(field.id,{kind:'field',name:field.name});
     for(const method of methods)state.symbols.set(method.id,{kind:'method',name:method.name});
   }
-  const weights=new Map(),active=new Set();
-  function weight(id) {
-    if(weights.has(id))return weights.get(id);
-    check(!active.has(id),'inheritance');active.add(id);
-    const value=state.classes.get(id);check(value,'compatibility');
-    const result=value.fields.length+value.methods.length+1+(value.base?weight(value.base):0);
-    active.delete(id);weights.set(id,result);return result;
-  }
-  for(const id of state.classes.keys())weight(id);
   let remaining=100000;
-  return (proof,anchor)=>{
-    check(types.get(proof.sourceType)?.kind==='reference'&&types.get(proof.targetType)?.kind==='reference','compatibility');
-    remaining-=weight(proof.sourceType)+weight(proof.targetType)+proof.members.length;
-    check(remaining>=0,'limit');
-    verifyReferenceWitness(state,proof,proof.sourceType,proof.targetType,anchor);
-  };
+  const spend=(amount=1)=>{remaining-=amount;check(remaining>=0,'limit');};
+  const weights=typedReferenceWeights(state.classes,spend);
+  const representation=typedArrayRepresentation(types,spend);
+  const witnesses=typedArrayWitnesses(records,spend);
+  function validate(proof,reference) {
+    const from=proof.sourceType,to=proof.targetType;
+    check(types.get(from)?.kind==='reference'&&types.get(to)?.kind==='reference','compatibility');
+    spend(weights.get(from)+weights.get(to)+proof.members.length);
+    verifyReferenceWitness(state,proof,from,to,proof.origin);
+    const selected=new Map();
+    function slot(from,to) {
+      const choice=representation.logical(from,to,reference);check(choice!==null,'representation');
+      representation.merge(selected,choice);
+    }
+    for(const member of proof.members) {
+      const source=fields.get(member.source),target=fields.get(member.target);
+      if(source&&target)slot(source.type,target.type);
+      else {
+        const source=functions.get(member.source),target=functions.get(member.target);
+        check(source&&target,'compatibility');
+        if(target.returnType!=='void')slot(source.returnType,target.returnType);
+        for(let i=0;i<Math.min(source.parameters.length,target.parameters.length);i++)
+          slot(target.parameters[i].declaredType,source.parameters[i].declaredType);
+      }
+    }
+    return selected;
+  }
+  function expression(value,expected,anchor) {
+    const selected=value.compatibilityRoots??[],roots=new Map(),used=new Map();let previous;
+    check(!value.compatibilityRoots||selected.length>0,'compatibility-root');
+    for(const pair of selected) {
+      spend();check(!previous||byteOrder(previous.sourceType,pair.sourceType)<0
+        ||previous.sourceType===pair.sourceType&&byteOrder(previous.targetType,pair.targetType)<0,'compatibility-order');
+      previous=pair;roots.set(pair.sourceType+'\0'+pair.targetType,witnesses.select(pair,anchor));
+    }
+    function reference(from,to) {
+      spend();return roots.has(from+'\0'+to);
+    }
+    if(value.kind==='as')representation.merge(used,representation.assertion(value.expression.flowType,value.flowType,reference));
+    else if(roots.size)check(expected,'compatibility-context');
+    if(expected) {
+      const choice=representation.logical(value.flowType,expected,reference);check(choice!==null,'slot');
+      representation.merge(used,choice);
+    }
+    check(used.size===roots.size,'compatibility-root');
+    for(const key of used.keys())witnesses.verify(roots.get(key),validate);
+  }
+  return {expression,finish:witnesses.finish};
 }

@@ -1,0 +1,38 @@
+[
+  {
+    "file": "043012675fb0be448f8a0197bb19243bf8fef9099e8a31ac55fe0810e021fcbf-package.json",
+    "capture": "MULTIROOT-FINAL-GREEN01-captures/043012675fb0be448f8a0197bb19243bf8fef9099e8a31ac55fe0810e021fcbf-package.json",
+    "packageId": "sha256:3d055c9aefc7625c4ec8218b62c627173eb7a09ec8ea273465a0f972044ba3b0",
+    "requestId": "sha256:4ae5b4c077ad6d56006f30936f0008365338d323d2bd57643516759dfba8438e",
+    "sha256": "1d470415a6817ed8239f57e87ad361053975f7d608ab01a0845f9daa906ba57a"
+  },
+  {
+    "file": "84c930117a45e4bad76945df7a04bf03adc67db1df6762ea83fb987fa6a07d1f-package.json",
+    "capture": "MULTIROOT-FINAL-GREEN01-captures/84c930117a45e4bad76945df7a04bf03adc67db1df6762ea83fb987fa6a07d1f-package.json",
+    "packageId": "sha256:5f8c1f89a0078b6b84dcd1bd7d4d058f3994a369c0b72e4cbeefa1acb88efa8c",
+    "requestId": "sha256:099cb3487d7f2b3c317fa647372cf330e14e70eb3d688e37eead569babf214f8",
+    "sha256": "c732bd5b694aec7f78d48937d78e79ad88236683ea3ec6b5168315a59177d758"
+  },
+  {
+    "file": "8929c29478f722bf994902b3223c2e6c4aff1d65fce77899ab7fc982ca994eb1-package.json",
+    "capture": "MULTIROOT-FINAL-GREEN01-captures/8929c29478f722bf994902b3223c2e6c4aff1d65fce77899ab7fc982ca994eb1-package.json",
+    "packageId": "sha256:9cf8ef6ed3ebf091fdda377610f0db83e4fd057f19f48d6490bb61b8960093dc",
+    "requestId": "sha256:b2274db18773c4ae4ea4bf2afac045c78ffe7ca1d4ebaaa0f19f18ff1a139a09",
+    "sha256": "87b78d895ad1fb4ba335384f626af99f18328aedecd14cc91a6b5714faf49d5a"
+  },
+  {
+    "file": "dea4193deb83f75011f58ddb718d58eac4855d8d7ad681a8a737f4ef46ba0768-package.json",
+    "capture": "MULTIROOT-FINAL-GREEN01-captures/dea4193deb83f75011f58ddb718d58eac4855d8d7ad681a8a737f4ef46ba0768-package.json",
+    "packageId": "sha256:0debdb5a47c99345df31a67649704a54c52e872781e5a829f0ece0098d0455a7",
+    "requestId": "sha256:95fd014e0d896eb2662672797addfa9ccf928d48165b7ad13bc33342ea0febbd",
+    "sha256": "d50fdf3031dff764a40e1f3641bded34239dd3bb1716875aaa84f7fea19e6d86"
+  },
+  {
+    "file": "21877f177513ee463153b3937e867c1f6f678882efec5f57060ff1af2eff7165-package.json",
+    "expect": "accept",
+    "packageId": "sha256:e62e0d64504eeb78b860ba5c8b3d08fac8e72381cdb16aa68105339fab47d055",
+    "requestId": "sha256:38f306e8c4d63c3acde64614f55b2e282826486820c8307b1022056285e199b9",
+    "sha256": "0a7db2cd3914104602ce40782b1dccc842ac1ddd16085e8330a6b378ea543695",
+    "capture": "MULTIROOT-FINAL-GREEN01-captures/21877f177513ee463153b3937e867c1f6f678882efec5f57060ff1af2eff7165-package.json"
+  }
+]

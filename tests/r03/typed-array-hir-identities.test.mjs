@@ -33,10 +33,7 @@ test('actual packets produce a closed owned type member and callable graph',asyn
         assert.equal(value.target,type.constructor??type.id,'owned constructor target');
       }
       if(value.kind==='this')assert.ok(types.has(value.ownerType),'owned initializer this');
-      if(value.compatibility) {
-        assert.ok(types.has(value.compatibility.sourceType)&&types.has(value.compatibility.targetType));
-        for(const member of value.compatibility.members)assert.ok(members.has(member.source)&&members.has(member.target));
-      }
+      for(const pair of value.compatibilityRoots??[])assert.ok(types.has(pair.sourceType)&&types.has(pair.targetType));
     }
     for(const type of hir.types) {
       if(type.elementType)assert.ok(types.has(type.elementType));
@@ -55,6 +52,12 @@ test('actual packets produce a closed owned type member and callable graph',asyn
       if(fn.ownerType)assert.ok(types.has(fn.ownerType));
       if(fn.overrideTarget)assert.ok(functions.has(fn.overrideTarget));
       walk(fn.parameters,expression);walk(fn.body,expression);
+    }
+    for(const record of hir.compatibilityWitnesses) {
+      const proof=record.compatibility;
+      assert.ok(types.has(proof.sourceType)&&types.has(proof.targetType));
+      for(const member of proof.members)assert.ok(members.has(member.source)&&members.has(member.target));
+      for(const pair of record.dependencies)assert.ok(types.has(pair.sourceType)&&types.has(pair.targetType));
     }
     for(const entry of hir.exports)assert.ok(functions.has(entry.functionId));
   });

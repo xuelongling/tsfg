@@ -31,6 +31,8 @@ export function projectTypedArrayFacts(facts) {
   const fields=new Map(payload.types.flatMap(row=>(row.fields??[]).map(field=>[field.id,
     sha256('tsfg.field\0'+typeIds.get(row.id)+'\0'+field.name)])));
   const member=id=>fields.get(id)??functionIds.get(id);
+  const compatibility=proof=>({...structuredClone(proof),sourceType:typeIds.get(proof.sourceType),targetType:typeIds.get(proof.targetType),
+    members:proof.members.map(row=>({source:member(row.source),target:member(row.target)}))});
   function expression(value,fn) {
     const common={type:typeIds.get(value.flowType??value.type),declaredType:typeIds.get(value.type),range:{...value.range}};
     const kinds={numericLiteral:['f32','f64'].includes(value.type)?'floating':'constant',booleanLiteral:'boolean',
@@ -63,9 +65,8 @@ export function projectTypedArrayFacts(facts) {
         returnType:typeIds.get(value.signature.returnType)};
       result.signatureHash=signatures.get(value.callee)??null;
     }
-    if(value.compatibility)result.compatibility={...structuredClone(value.compatibility),
-      sourceType:typeIds.get(value.compatibility.sourceType),targetType:typeIds.get(value.compatibility.targetType),
-      members:value.compatibility.members.map(row=>({source:member(row.source),target:member(row.target)}))};
+    if(value.compatibilityRoots)result.compatibilityRoots=value.compatibilityRoots.map(pair=>({
+      sourceType:typeIds.get(pair.sourceType),targetType:typeIds.get(pair.targetType)}));
     return result;
   }
   function binding(row){return {id:row.id,name:row.name,type:typeIds.get(row.declaredType),writable:row.writable,
@@ -116,6 +117,8 @@ export function projectTypedArrayFacts(facts) {
     facts:{version:8,schemaHash:facts.schemaHash,requestId:facts.requestId},rootFile:payload.rootFile,
     sources:payload.files.map(row=>({path:row.path,content:row.content,hash:'sha256:'+row.sha256})),
     target:structuredClone(bytecode.target),types,functions:functions.map(projectFunction),
+    compatibilityWitnesses:payload.compatibilityWitnesses.map(record=>({compatibility:compatibility(record.compatibility),
+      dependencies:record.dependencies.map(pair=>({sourceType:typeIds.get(pair.sourceType),targetType:typeIds.get(pair.targetType)}))})),
     exports:payload.exports.map(row=>({name:row.name,functionId:functionIds.get(row.functionId)})),
     intrinsics:{arrayLength:structuredClone(payload.arrayLength),readSpanLength:structuredClone(payload.readSpanLength),
       readSpan:structuredClone(payload.readSpanIntrinsic)}};

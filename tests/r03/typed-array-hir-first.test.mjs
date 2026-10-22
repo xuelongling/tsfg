@@ -9,7 +9,7 @@ test('actual official generic Array facts retain T and initialized undefined in 
   const packet=JSON.parse(bytes.toString('utf8'));
   // Producer identity/provenance lives in the main25 single summary. This test
   // reads captured bytes only, never starts Source/VM or invents checker facts.
-  assert.equal(packet.packageId,'sha256:c0d7a3928beedd534636c8c35f8caaa5d199a1ca72ad3206c53649b7d8f7bd5f');
+  assert.equal(packet.packageId,'sha256:318d15d7503e0698bdd5dc45f24311e3dec0f77e31fefa39a0a349737eab642f');
   const context={family:'tsfg.array-facts-context-candidate',version:2,factsBytes:bytes,expectedPackageId:packet.packageId};
   const built=buildHir(packet,context);
   assert.equal(built.status,'ok',JSON.stringify(built.diagnostics));
@@ -23,7 +23,8 @@ test('actual official generic Array facts retain T and initialized undefined in 
   assert.equal(statements[0].initializer.elements[0].kind,'undefined');
   assert.equal(statements[1].expression.kind,'arrayStoreDenseChecked');
   assert.equal(statements[2].value.kind,'arrayReadChecked');
-  assert.equal(statements[2].value.type,union.id);
+  assert.equal(statements[2].value.declaredType,union.id);
+  assert.equal(statements[2].value.type,hir.types.find(type=>type.kind==='undefined').id);
   assert.deepEqual(verifyHir(hir,context),hir);
   assert.deepEqual(readHir(Buffer.from(printHir(hir,context)),context),hir);
   assert.ok(Object.isFrozen(hir)&&Object.isFrozen(hir.types)&&Object.isFrozen(statements));

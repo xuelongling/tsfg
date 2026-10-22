@@ -42,21 +42,54 @@ versioned bytecode adoption remain unfinished. Version 7 private f64 facts are
 not reinterpreted as version 8. Their existing qualification does not qualify
 this generic route.
 
-The current checkpoint consumes 41 real captured Source packets with one
-descriptor identity. Those examples cover concrete primitives, String code
-units, presence, value/reference elements, methods, read spans, assignments,
-updates, loops and a multi-file closure. They do not establish every legal
-input. Independent Source review found outstanding narrowed-flow cases,
-alias-length tracking and a recursive alias boundary; the producer owner is
-repairing those cases. R01 also requires `as` not to convert an already typed
-scalar representation. That producer and cold-consumer guard is still open in
-this checkpoint. Existing captured packets are retained unchanged until the
-producer's replacement contract and targeted results are reviewed.
+The cold boundary validates R01 pure assertions separately from ordinary slot
+relations. Assertions can select an existing numeric union variant; they cannot
+retag typed numeric scalars, including homogeneous Array/ReadSpan elements.
+Ordinary relations cover every source variant. Value members retain their
+nominal identity through presence widening. M12's explicit member projections
+bind field representations and method returns (source to target) and parameters
+(target to source); matching names never create member edges.
 
-Full M25 remains open: each semantic TypeId must bind one canonical physical
-layout at module/import and wire boundaries; complete 32-byte class/value cells
-must use the same heap and collector as arrays. The reviewed generic tagged
-object `u64` identity is not a Source class implementation. Formal Core
+The exact facts descriptor requires a selected compatibility proof directory.
+Each record retains an unchanged M12 proof and explicit same-origin dependency
+pairs. An expression's `compatibilityRoots` explicitly lists its selected
+source/target pairs; one ordinary union conversion can require several roots
+at the same original anchor. Complete M12 proofs live only in the directory.
+The cold reader validates sorted unique records and roots, matching expression
+anchors, selected nested field/method relations, complete root/dependency consumption
+and root reachability under a shared 100000 work budget. A worklist validates
+recursive reference proofs without recursively expanding cycles. Projection
+owns every TypeId, FieldId and FunctionId in both roots and their closure.
+Logical relations first return their selected pair set without consuming any
+proof. A failing target-union candidate discards its local choices; source-union
+choices merge only after every source member succeeds. Roots and nested
+dependencies are consumed only after their complete relation succeeds.
+Actual captured packets and independent hostile-data tests establish this
+boundary; they do not establish every legal Source input or formal admission.
+Removing presence from a union of several reference identities retains those
+identities and its checked operand; it does not fabricate member conversions.
+Structural assertions also visit every nonpresence source variant, including
+homogeneous container variants. Each changed reference view selects its own
+authoritative same-origin root; a target union uses the same bounded, selected
+pair choice as ordinary relations. Numeric assertion checks and value nominal
+identity rules remain separate. The operand's actual representation is retained.
+Flat value-containment and inheritance TypeId graphs also use explicit stacks
+and the existing 100000 work ceiling. JSON nesting alone does not bound those
+graphs. Managed reference/container edges stop by-value containment; legal
+reference cycles remain supported without adding a language depth restriction.
+
+An assertion changes the static view, not the actual payload. For example,
+`a[i] as undefined` on `(i32|undefined)[]` must retain an actual i32 tag/payload
+when present. The HIR retains the checked operand and complete catalogue, but
+actual representation domains through return/alias/storage and formal lowering
+remain open. No new cast trap or Array invariance rule resolves that obligation.
+
+Full M25 remains open. The separate canonical layout checkpoint binds semantic
+TypeIds and full 32-byte class/value cells to the same heap and collector as
+arrays. Structural views must map target members to actual members while
+retaining the actual cell runtime key; a target class layout cannot reinterpret
+the actual object. The generic tagged object `u64` identity remains a separate
+domain. Formal Core
 verification/printing, wire decoding, VM lowering and execution, traps, roots,
 and the full independent language oracle remain necessary. M34 owns Array/Span
 AOT. None of the static Node checks executes Source binaries, VM or Native code.

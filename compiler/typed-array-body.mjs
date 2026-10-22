@@ -27,30 +27,18 @@ export function validateTypedArrayFunctions(payload,sources,types) {
       for(const key of ['annotationRange','elementAnnotationRange'])if(row[key])sourceRange(row[key],source.content,row.declarationRange);
     }
   }
-  const relation=typedArrayRelations(types,functions);
+  const relation=typedArrayRelations(types,functions,payload.compatibilityWitnesses);
   function verifyFunction(fn,initializers=[]) {
     const source=sources.get(fn.sourcePath).content,bindings=new Map([...fn.parameters,...fn.bindings].map(row=>[row.id,row]));
     let declared=new Set(fn.parameters.map(row=>row.id));
     const seenDeclarations=new Set(declared);
     const spelling=range=>source.slice(range.start,range.end);
-    function witness(value,expected) {
-      const proof=value.compatibility;if(!proof)return;
-      check(proof.sourceType===value.flowType,'compatibility');
-      if(expected)check(proof.targetType===expected||types.get(expected)?.members?.includes(proof.targetType),'compatibility');
-      relation(proof,{source:fn.sourcePath,...value.range});
-    }
     function expression(value,parent=fn.declarationRange,target=false,expected=undefined) {
       sourceRange(value.range,source,parent);check(types.has(value.type),'type');
       if(!target)check(types.has(value.flowType),'type');
       if(!target&&['scalar','string','null','undefined','void'].includes(types.get(value.type).kind))
         check(value.flowType===value.type,'flow');
-      witness(value,expected);
-      if(expected&&!target) {
-        const allowed=types.get(expected)?.members??[expected];
-        const actual=types.get(value.flowType)?.members??[value.flowType];
-        check(actual.every(id=>allowed.includes(id))||allowed.includes(value.compatibility?.targetType)
-          ||expected==='void'&&value.flowType==='undefined','slot');
-      }
+      if(!target)relation.expression(value,expected,{source:fn.sourcePath,...value.range});
       if(['bindingReference','bindingTarget'].includes(value.kind)) {
         const row=bindings.get(value.binding);check(row&&declared.has(row.id)&&row.declaredType===value.type,'binding');
         check(identifierName(spelling(value.range))===row.name,'source');
@@ -83,7 +71,8 @@ export function validateTypedArrayFunctions(payload,sources,types) {
       if(value.target)expression(value.target,value.range,true);
       for(const key of ['receiver','index','expression','value','left','right'])if(value[key]) {
         const slot=key==='value'&&value.target?value.target.type
-          :key==='receiver'&&value.kind==='call'?functions.get(value.callee)?.ownerType:undefined;
+          :key==='receiver'&&value.kind==='call'?functions.get(value.callee)?.ownerType
+          :key==='expression'&&value.kind==='parentheses'?expected:undefined;
         expression(value[key],value.range,false,slot);
       }
       for(const [index,child] of (value.arguments??value.elements??[]).entries())expression(child,value.range,false,
@@ -140,6 +129,7 @@ export function validateTypedArrayFunctions(payload,sources,types) {
       parameters:[],bindings:[],body:[]},type.fields.flatMap(field=>field.initializer?[{value:field.initializer,type:field.type}]:[]));
   }
   for(const row of payload.exports)check(functions.get(row.functionId)?.name===row.name,'export');
+  relation.finish();
   return functions;
 }
 

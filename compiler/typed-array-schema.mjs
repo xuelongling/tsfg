@@ -3,7 +3,7 @@
 import descriptor from '../contracts/array-generic-facts.schema.json' with {type:'json'};
 import {canonical, own, sha256} from './identity.mjs';
 export const typedArrayFactsFormat = own({family:'tsfg.array-facts-package-candidate',version:8,
-  schemaHash:'sha256:a733732b125667035a0e2258b91f42608ddc40f948dc0f8fbfac823b25826458'});
+  schemaHash:'sha256:bb3b48ce1764a29124fd7fb7cb9e164d7e656fcd49e62406e9ef15693f97cba5'});
 export const typedArrayJsonPolicy = Object.freeze({bytes:2097152,depth:64,jsonTokens:200000,
   stringBytes:1048576,safeNonnegativeIntegers:true,allowNul:true,rejectPrototypeKeys:false});
 export function typedArrayFailure(kind, primary = undefined, cause = undefined) {
@@ -26,7 +26,7 @@ function kindKeys(value, name) {
     ? value.kind==='numericLiteral'?['decimal','bits']:value.kind==='call'?['receiver']:value.kind==='stringConcat'?['operator']:[]
     : name==='arrayGenericType'&&['value','reference'].includes(value.kind)?['markerOrigin','base','methods']
     : name==='arrayGenericStatement'&&value.kind==='return'?['value']:[];
-  if(name==='arrayGenericExpression')optional.push('compatibility');
+  if(name==='arrayGenericExpression')optional.push('compatibilityRoots');
   const base=descriptor.objects[name].required;
   check(Object.keys(value).every(key=>base.includes(key)||specific.includes(key)||optional.includes(key)),'schema');
 }
