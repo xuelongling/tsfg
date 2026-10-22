@@ -1,0 +1,253 @@
+// SPDX-License-Identifier: MIT
+#include "finite-module.h"
+#include "finite-domain.h"
+#include <algorithm>
+#include <tuple>
+
+namespace tsfg::finite {
+namespace {
+using Pair = std::pair<std::string,std::string>;
+struct Members { std::map<std::string,const Object *> fields, methods; };
+struct MemberProof {
+  ModuleProof &proof;
+  std::map<std::string,Members> cache;
+  std::map<Pair,Json> views;
+  std::vector<std::string> lineage(std::string type) {
+    std::vector<std::string> result; std::set<std::string> seen;
+    while (!type.empty()) {
+      if (!proof.charge() || !proof.catalog.count(type) || !seen.insert(type).second) return {};
+      result.push_back(type); type = string(*proof.catalog.at(type),"base");
+    }
+    std::reverse(result.begin(),result.end());
+    return result;
+  }
+  bool members(const std::string &id) {
+    if (cache.count(id)) return true;
+    const auto path = lineage(id); if (path.empty()) return proof.reject("member inheritance cycle/type"); Members result;
+    for (const auto &type : path) {
+      const auto &row = *proof.catalog.at(type); const auto *fields = row.getArray("fields"), *methods = row.getArray("methods");
+      if (!fields || !methods) return proof.reject("nominal member catalogue");
+      for (const auto &field : *fields) { if (!proof.charge()) return false; const auto *f = field.getAsObject();
+        if (!f || !result.fields.emplace(string(*f,"id"),f).second) return proof.reject("duplicate physical field identity"); }
+      for (const auto &method : *methods) {
+        if (!proof.charge() || !method.getAsString() || !proof.callable.count(method.getAsString()->str())) return proof.reject("missing owned method callable");
+        const auto *fn = proof.callable.at(method.getAsString()->str());
+        if (string(*fn,"ownerType") != type || string(*fn,"role") != "function") return proof.reject("method owner/role");
+        const auto overridden = string(*fn,"overrideTarget");
+        if (!overridden.empty() && !result.methods.erase(overridden)) return proof.reject("override target is not an inherited effective method");
+        result.methods.emplace(string(*fn,"id"),fn);
+      }
+    }
+    cache.emplace(id,std::move(result)); return true;
+  }
+  std::string implementation(const std::string &actual, const std::string &member) {
+    if (!members(actual)) return {};
+    std::string selected;
+    for (const auto &[id,fn] : cache.at(actual).methods) {
+      const Object *current = fn; std::set<std::string> visited;
+      while (current) {
+        if (!proof.charge() || !visited.insert(string(*current,"id")).second) return {};
+        if (string(*current,"id") == member) { if (!selected.empty()) return {}; selected=id; break; }
+        const auto next = proof.callable.find(string(*current,"overrideTarget")); current = next == proof.callable.end() ? nullptr : next->second;
+      }
+    }
+    return selected;
+  }
+  bool logical(const std::string &from, const std::string &to, const std::set<Pair> &available, std::set<Pair> &used) {
+    struct Frame {
+      Pair pair; bool any=false; size_t next=0;
+      std::vector<Pair> children; std::set<Pair> checkpoint;
+    };
+    if (!proof.charge(1+used.size())) return false;
+    auto selected=used;
+    std::vector<Frame> frames{{{from,to}}}; std::set<Pair> active;
+    std::optional<bool> completed;
+    const auto finish=[&](bool success) {
+      active.erase(frames.back().pair); frames.pop_back(); completed=success;
+    };
+    // Explicit continuations preserve source-union ALL / target-union ANY
+    // semantics. A failed candidate restores its ledger before the next one;
+    // only a successful entire relation publishes selected dependencies.
+    while (true) {
+      if (!proof.charge()) return false;
+      if (completed) {
+        if (frames.empty()) { if (*completed) used=std::move(selected); return *completed; }
+        auto &parent=frames.back(); const bool success=*completed; completed.reset();
+        if (parent.any ? success : !success) { finish(success); continue; }
+        if (parent.any) {
+          if (!proof.charge(parent.checkpoint.size())) return false;
+          selected=parent.checkpoint;
+        }
+        if (parent.next==parent.children.size()) { finish(!parent.any); continue; }
+        const auto child=parent.children[parent.next++]; frames.push_back({child}); continue;
+      }
+      auto &frame=frames.back(); const auto [sourceId,targetId]=frame.pair;
+      if (!proof.catalog.count(sourceId) || !proof.catalog.count(targetId)) {
+        finish(false); continue;
+      }
+      if (!active.insert(frame.pair).second) return proof.reject("recursive logical container/union pair");
+      if (sourceId==targetId) { finish(true); continue; }
+      const auto &source=*proof.catalog.at(sourceId),&target=*proof.catalog.at(targetId);
+      const auto a=string(source,"kind"),b=string(target,"kind");
+      if (a=="union" || b=="union") {
+        frame.any=a!="union";
+        const auto *members=(frame.any?target:source).getArray("members");
+        if (!members || !proof.charge(members->size())) return false;
+        for (const auto &member:*members) {
+          const auto id=member.getAsString(); if (!id) return false;
+          frame.children.emplace_back(frame.any?sourceId:id->str(),frame.any?id->str():targetId);
+        }
+      } else if ((a=="array" || a=="readSpan") && a==b)
+        frame.children.emplace_back(string(source,"elementType"),string(target,"elementType"));
+      else {
+        const bool match=a=="reference" && b=="reference" && available.count(frame.pair);
+        if (match) selected.insert(frame.pair);
+        // Numeric representations and value identities never gain conversions.
+        finish(match); continue;
+      }
+      if (frame.children.empty()) { finish(false); continue; }
+      if (frame.any) { if (!proof.charge(selected.size())) return false; frame.checkpoint=selected; }
+      const auto child=frame.children[frame.next++]; frames.push_back({child});
+    }
+  }
+  bool relation(const Object &compatibility, const std::set<Pair> &dependencies) {
+    const auto source=string(compatibility,"sourceType"),target=string(compatibility,"targetType");
+    if (!members(source) || !members(target) || compatibility.getBoolean("assignable") != true) return proof.reject("member proof pair/assignability");
+    const auto *pairs=compatibility.getArray("members"); if (!pairs || pairs->size()>512) return proof.reject("member proof count");
+    std::set<Pair> used; std::set<std::string> targets;
+    std::string previous;
+    for (const auto &value : *pairs) {
+      const auto *pair=value.getAsObject(); if (!proof.charge() || !pair || pair->size()!=2) return proof.reject("member proof fields");
+      const auto a=string(*pair,"source"),b=string(*pair,"target");
+      if ((!previous.empty()&&b<=previous)||!targets.insert(b).second) return proof.reject("duplicate or unordered target member");previous=b;
+      if (cache.at(source).fields.count(a)) {
+        if (!cache.at(target).fields.count(b) || string(*cache.at(source).fields.at(a),"name")!=string(*cache.at(target).fields.at(b),"name") ||
+            !logical(string(*cache.at(source).fields.at(a),"type"),
+            string(*cache.at(target).fields.at(b),"type"),dependencies,used)) return proof.reject("field proof logical representation");
+      } else {
+        if (!cache.at(source).methods.count(a) || !cache.at(target).methods.count(b)) return proof.reject("method proof identity");
+        const auto &s=*cache.at(source).methods.at(a), &t=*cache.at(target).methods.at(b);
+        const auto &sp=*s.getArray("parameters"), &tp=*t.getArray("parameters");
+        if (string(s,"name")!=string(t,"name") || (string(*proof.catalog.at(string(t,"returnType")),"kind")!="void"&&
+            !logical(string(s,"returnType"),string(t,"returnType"),dependencies,used))) return proof.reject("method proof name/return");
+        for (size_t i=1;i<std::min(sp.size(),tp.size());++i) if (!logical(string(*tp[i].getAsObject(),"type"),string(*sp[i].getAsObject(),"type"),dependencies,used))
+          return proof.reject("method proof parameter direction/representation");
+      }
+    }
+    return (used==dependencies && targets.size()==cache.at(target).fields.size()+cache.at(target).methods.size()) ||
+      proof.reject("unselected dependency or incomplete target member projection");
+  }
+  bool project(const Object &compatibility) {
+    const auto source=string(compatibility,"sourceType"),target=string(compatibility,"targetType");
+    for (const auto &[actual,row] : proof.catalog) if (string(*row,"kind")=="reference") {
+      const auto path=lineage(actual); if (!proof.remaining) return false;
+      if (std::find(path.begin(),path.end(),source)==path.end()) continue;
+      if (!members(actual)) return false;
+      std::map<std::string,std::string> fields,methods;
+      for (const auto &value : *compatibility.getArray("members")) {
+        if (!proof.charge()) return false;const auto &pair=*value.getAsObject();const auto a=string(pair,"source"),b=string(pair,"target");
+        if (cache.at(source).fields.count(a)) {if (!cache.at(actual).fields.count(a)) return proof.reject("actual field disappeared");fields[b]=a;}
+        else {const auto selected=implementation(actual,a);if (selected.empty()) return proof.reject("missing actual callable implementation");methods[b]=selected;}
+      }
+      const auto pairs=[](const std::map<std::string,std::string> &values){llvm::json::Array result;
+        for(const auto &[target,source]:values)result.emplace_back(Object{{"source",source},{"target",target}});return result;};
+      Json result=Object{{"actualType",actual},{"targetType",target},{"fields",pairs(fields)},{"methods",pairs(methods)}};
+      const auto prior=views.find({actual,target}); std::string a,b;
+      if (prior!=views.end() && (!canonical(prior->second,a)||!canonical(result,b)||a!=b)) return proof.reject("ambiguous same actual/static member map");
+      views.insert_or_assign({actual,target},std::move(result));
+      if (views.size()>4096) return proof.reject("member view count");
+    }
+    return true;
+  }
+  std::string selectedMember(const std::string &actual, const std::string &view, const std::string &member, bool method) {
+    if (!members(actual)) return {};
+    if (method) { const auto direct=implementation(actual,member); if (!direct.empty()) return direct; }
+    else if (cache.at(actual).fields.count(member)) return member;
+    const auto found=views.find({actual,view}); if(found==views.end())return {};
+    const auto *pairs=found->second.getAsObject()->getArray(method?"methods":"fields");
+    for(const auto &value:*pairs) {if(!proof.charge())return {};const auto &pair=*value.getAsObject();if(string(pair,"target")==member)return string(pair,"source");}
+    return {};
+  }
+  bool accesses() {
+    bool valid=true;
+    proof.module.walk([&](mlir::Operation *op){
+      if(!valid)return;
+      const auto name=op->getName().getStringRef();const bool method=name=="tsfg_core.domain.method_call";
+      if(!method&&name!="tsfg_core.domain.field_read"&&name!="tsfg_core.domain.field_store")return;
+      if(!proof.charge()){valid=false;return;}
+      const auto text=[&](llvm::StringRef key){const auto a=op->getAttrOfType<mlir::StringAttr>(key);return a?a.getValue().str():std::string();};
+      const auto view=text("receiver_view"),member=text("member");
+      if(!members(view)||(method?!cache.at(view).methods.count(member):!cache.at(view).fields.count(member))) {
+        valid=proof.reject("static access member is absent from its owned receiver view");return;}
+      // Source readonly is checked on the selected static member. The actual
+      // cell's declaration does not deep-freeze another legal writable view.
+      if(name=="tsfg_core.domain.field_store"&&cache.at(view).fields.at(member)->getBoolean("readonly")!=false) {
+        valid=proof.reject("ordinary field store has no mutable static member authority");return;}
+      const auto *receiver=valueDomain(proof,op->getOperand(0).getType());
+      if(!receiver||receiver->alternatives.empty()){valid=proof.reject("access has no finite actual receiver domain");return;}
+      llvm::json::Array expected;bool zero=false,valued=false;
+      for(const auto &actual:receiver->alternatives) {
+        const auto selected=selectedMember(actual,view,member,method);
+        if(selected.empty()){valid=proof.reject("actual receiver has no selected member implementation");return;}
+        if(method) {
+          const auto &fn=*proof.callable.at(selected),&abi=*proof.abi.at(selected);
+          const auto &parameters=*abi.getArray("parameters");const auto *result=abi.get("result");
+          if(parameters.size()>op->getNumOperands()||parameters.empty()||
+             !proof.domains.count(parameters[0].getAsString()->str())) {valid=proof.reject("method dispatch ABI arity");return;}
+          const auto &bound=proof.domains.at(parameters[0].getAsString()->str());
+          if(std::find(bound.alternatives.begin(),bound.alternatives.end(),actual)==bound.alternatives.end()) {
+            valid=proof.reject("dispatch arm cannot preserve its selected actual receiver");return;}
+          for(size_t i=1;i<parameters.size();++i) {
+            if(!proof.charge()){valid=false;return;}const auto *input=valueDomain(proof,op->getOperand(i).getType());
+            const auto &target=proof.domains.at(parameters[i].getAsString()->str());
+            if(!input||!std::includes(target.alternatives.begin(),target.alternatives.end(),input->alternatives.begin(),input->alternatives.end())) {
+              valid=proof.reject("method argument would lose a payload alternative");return;}
+          }
+          if(result->kind()==Json::Null)zero=true;
+          else {valued=true;const auto *output=op->getNumResults()==1?valueDomain(proof,op->getResult(0).getType()):nullptr;
+            const auto &target=proof.domains.at(result->getAsString()->str());
+            if(!output||!std::includes(output->alternatives.begin(),output->alternatives.end(),target.alternatives.begin(),target.alternatives.end())) {
+              valid=proof.reject("method result would discard an actual return alternative");return;}}
+          expected.emplace_back(Object{{"actualType",actual},{"functionId",selected},{"signatureHash",string(fn,"signatureHash")},{"abi",string(abi,"id")}});
+        } else expected.emplace_back(Object{{"actualType",actual},{"fieldId",selected},{"fieldType",string(*cache.at(actual).fields.at(selected),"type")}});
+      }
+      if(method&&(zero&&valued||(zero?op->getNumResults()!=0:op->getNumResults()!=1))) {valid=proof.reject("method dispatch void/value ABI disagreement");return;}
+      Json given=nullptr;std::string encoded;
+      if(!arrays::ownerproof::parseCanonical(text(method?"dispatch":"field_dispatch")+"\n",given)||!canonical(std::move(expected),encoded)||encoded!=text(method?"dispatch":"field_dispatch"))
+        valid=proof.reject("access dispatch differs from exact actual/member authority");
+    });
+    return valid;
+  }
+};
+}
+bool verifyMemberContracts(ModuleProof &proof) {
+  MemberProof members{proof}; const auto *rows=proof.witnesses.getAsArray();if (!rows || rows->size()>100000) return proof.reject("member witness directory");
+  using Key=std::tuple<std::string,uint32_t,uint32_t,std::string,std::string>;
+  std::map<Key,std::set<Pair>> directory;std::optional<Key> previous;
+  for(const auto &value:*rows) {
+    const auto *row=value.getAsObject();const auto *c=row?row->getObject("compatibility"):nullptr;
+    const auto *origin=c?c->getObject("origin"):nullptr;const auto *deps=row?row->getArray("dependencies"):nullptr;uint32_t start=0,end=0;
+    if(!proof.charge()||!row||row->size()!=2||!c||!origin||!deps||!unsignedInteger(*origin,"start",start)||!unsignedInteger(*origin,"end",end)||
+       !proof.sourceLengths.count(string(*origin,"source"))||start>end||end>proof.sourceLengths.at(string(*origin,"source"))) return proof.reject("member proof original anchor");
+    const Key key{string(*origin,"source"),start,end,string(*c,"sourceType"),string(*c,"targetType")};
+    if(previous && *previous>=key)return proof.reject("member proof directory order");previous=key;
+    std::set<Pair> selected;std::optional<Pair> prior;
+    for(const auto &d:*deps){const auto *dep=d.getAsObject();if(!dep||dep->size()!=2||!proof.charge())return proof.reject("member dependency fields");
+      const Pair p{string(*dep,"sourceType"),string(*dep,"targetType")};if(prior && *prior>=p)return proof.reject("member dependency order");prior=p;selected.insert(p);}
+    if(!members.relation(*c,selected))return false;directory.emplace(key,std::move(selected));
+  }
+  for(const auto &[key,deps]:directory)for(const auto &[source,target]:deps){if(!proof.charge()||!directory.count({std::get<0>(key),std::get<1>(key),std::get<2>(key),source,target}))return proof.reject("member proof closure edge");}
+  for(const auto &value:*rows)if(!members.project(*value.getAsObject()->getObject("compatibility")))return false;
+  llvm::json::Array methods,views;
+  for(const auto &[id,fn]:proof.callable) {
+    const auto owner=string(*fn,"ownerType");if(owner.empty()||string(*proof.catalog.at(owner),"kind")!="reference"||string(*fn,"role")!="function")continue;
+    methods.emplace_back(Object{{"id",id},{"ownerType",owner},{"signatureHash",string(*fn,"signatureHash")},{"overrideTarget",*fn->get("overrideTarget")}});
+  }
+  for(const auto &[key,value]:members.views)views.push_back(value);
+  const auto input=proof.module->getAttrOfType<mlir::StringAttr>("tsfg_core.input_identity");
+  const Json expected=Object{{"family","tsfg.typed-reference-view-development"},{"version",1},{"inputIdentity",input.getValue().str()},{"methods",std::move(methods)},{"views",std::move(views)}};
+  std::string a,b;
+  if(!canonical(expected,a)||!canonical(proof.views,b)||a!=b)return proof.reject("member view table is not the selected M12 physical projection");
+  return members.accesses();
+}
+} // namespace tsfg::finite

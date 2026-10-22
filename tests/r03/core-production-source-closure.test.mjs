@@ -22,8 +22,8 @@ assert.ok(common);assert.ok(native);assert.ok(ordinary);
 const ordinarySource=/^DISABLE_LLVM_LINK_LLVM_DYLIB\s+(static-main\.cpp)$/.exec(ordinary[1].trim());
 assert.ok(ordinarySource);
 const translationUnits=[common[1],native[1],ordinarySource[1]].flatMap(row=>row.trim().split(/\s+/));
-assert.equal(translationUnits.length,73);
-assert.equal(new Set(translationUnits).size,73);
+assert.equal(translationUnits.length,79);
+assert.equal(new Set(translationUnits).size,79);
 for(const name of translationUnits)assert.match(name,/^[a-z0-9_-]+\.cpp$/);
 const closure=new Set(['compiler/core-ir/CMakeLists.txt']),pending=translationUnits.map(name=>'compiler/core-ir/'+name);
 while(pending.length){const name=pending.pop();if(closure.has(name))continue;closure.add(name);
@@ -32,7 +32,7 @@ while(pending.length){const name=pending.pop();if(closure.has(name))continue;clo
   pending.push(path.posix.normalize(path.posix.join(path.posix.dirname(name),match[1])));
 }
 const coreFiles=[...closure].sort();
-assert.equal(coreFiles.length,118);
+assert.equal(coreFiles.length,125);
 const declaration=JSON.parse(await readFile(path.join(productRoot,'eng/build-inputs.json'),'utf8'));
 const entries=await Promise.all(declaration.entries.map(async entry=>({projectId:entry.projectId,
  repositoryRelativePath:entry.path,sha256:hash(await readFile(path.join(productRoot,entry.path)))})));
@@ -54,7 +54,7 @@ async function inputFixture(label,changed){const root=await fixture(label);
   await copyFile(path.join(productRoot,name),path.join(root,name));}
  return root;
 }
-test('production source copy stages the complete73TU and quoted include closure byte-exactly',async()=>{
+test('production source copy stages the complete79TU and quoted include closure byte-exactly',async()=>{
  const product=await fixture('whole');await stageMlirProductSources({productRoot,product,identity});
  assert.deepEqual(await allFiles(product),stageFiles.sort());
  for(const name of stageFiles)assert.deepEqual(await readFile(path.join(product,name)),await readFile(path.join(productRoot,name)),name);

@@ -71,9 +71,12 @@ their native representation and zero GC slots; reference receiver bounds use
 the owned nominal implementation and its real descendants. Closed call, alias,
 container and field relations propagate payloads without static filtering.
 The reached ledger remains separate and keeps uninvoked receiver sets empty.
-All 22 callable identities in the independent seven-source inventory now have
-SSA definitions; this identity/count check does not independently validate the
-new universal ABI hashes or complete ordinary Core admission.
+All 22 callable identities in the independent seven-source inventory have SSA
+definitions. The independently authored universal ABI oracle now checks all
+22 definitions, 29 ordered parameter slots, 11 nonvoid result slots and all
+20 distinct domains, including native layout and maximum active references.
+This covers those seven actual Source closures; it is not a full-language or
+Core execution result.
 
 R01 currently supplies no operation-consumption mapping for an initialized
 undefined element narrowed by `as i32` then used by `+`. That dependent
@@ -88,3 +91,42 @@ receiver identity, source anchors and dominating owned phase markers. Its
 object compilation and the existing registered dialect checks do not link or
 execute Core. Whole-module domain/effect/ABI proof, ordinary wire and native
 field-state consumption remain open.
+
+The version 10 development boundary additionally publishes a canonical owned
+callable catalogue. The C++ module consumer reconstructs TypeIds, full runtime
+identities, declared layouts/cells, finite-domain layouts and ABI identities,
+then joins every real function body, ordered binding and direct call. It uses
+the existing bounded canonical JSON reader. Its registry is local to one
+verification attempt and is discarded on failure. Declared field layouts are
+not claimed to be actual-field storage domains: native empty definitions and
+later assignments still require their whole-program storage/state consumer.
+
+This new C++ consumer has object-only compilation coverage. It is not yet the
+ordinary `verifyCoreModule` admission route: independent member authority,
+SSA/field read-reaching and effect closure must be completed before that hook
+can authorize printing or a new wire version. No existing bytecode encoder or
+Runtime execution is qualified by this development metadata.
+
+The member consumer now reconstructs views from the original owned M12 proof
+directory, including same-origin dependency closure, logical member types and
+override identities. Accesses select actual declaring fields/callables while
+write permission comes from the static target member. An actual readonly
+declaration does not deep-freeze a separately legal writable view. Native
+implementation temporaries remain native and do not add Source catalogue rows
+or widen any exported domain.
+
+All operation arities/regions and CFG block terminators are checked globally
+before MLIR verification or cross-operation traversal. View stripping and
+presence-edge inspection also defend their local dereferences. Presence
+refinement requires the original matching comparison edge to dominate the use;
+pure assertions retain their actual alternatives. These checks have object
+coverage; malformed-module execution/negative cases still require an allowed
+ordinary Core link and CLI, and are not claimed here.
+
+Selected method implementations may consume fewer arguments than the static
+view. Every Source argument is evaluated once in order before dispatch; only
+the actual callable's parameter prefix receives bindings. A target-void view
+retains the actual call and discards the produced value at its void consumer.
+Two additional actual Source packets cover these behaviors, including an extra
+argument with a checked compound array store. Missing default-argument domain
+evidence remains local capability-pending rather than inventing a value.

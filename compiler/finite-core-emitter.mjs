@@ -5,7 +5,7 @@ import descriptor from '../contracts/finite-core-development.json' with {type:'j
 import {verifyHir} from './module-hir.mjs';
 import {buildFiniteCoreDomains} from './finite-actual-domains.mjs';
 import {buildFiniteFieldPhases} from './finite-field-phases.mjs';
-import {finiteCallables} from './finite-callables.mjs';
+import {finiteCallables,finiteCallableContracts} from './finite-callables.mjs';
 import {buildTypedLayouts} from './typed-layouts.mjs';
 import {buildTypedReferenceViews} from './typed-reference-views.mjs';
 import {coreExchangeFormat,coreQuote as quote,emitCoreSsaFunction} from './core-ssa-emitter.mjs';
@@ -14,6 +14,18 @@ import {scalarOperations} from './scalar-operators.mjs';
 
 function pending(message,range) {throw Object.assign(new TypeError('r03-finite-core-capability: '+message),
   {code:'r03-finite-core-capability',ruleId:'r01-ts-baseline',phase:'lowering',...(range?{primary:range}:{})});}
+
+// Source DTO order used Source identities. This Core boundary orders already
+// owned identities explicitly; rehashing an ID never preserves its old order.
+function memberWitnessContracts(hir) {
+  const order=(a,b)=>a<b?-1:a>b?1:0;
+  return hir.compatibilityWitnesses.map(record=>({compatibility:{...record.compatibility,
+    members:[...record.compatibility.members].sort((a,b)=>order(a.target,b.target))},
+    dependencies:[...record.dependencies].sort((a,b)=>order(a.sourceType,b.sourceType)||order(a.targetType,b.targetType))}))
+    .sort((a,b)=>{const x=a.compatibility,y=b.compatibility;
+      return Buffer.compare(Buffer.from(x.origin.source),Buffer.from(y.origin.source))||x.origin.start-y.origin.start||x.origin.end-y.origin.end
+        ||order(x.sourceType,y.sourceType)||order(x.targetType,y.targetType);});
+}
 
 export function emitFiniteCore(input,context) {
   const hir=verifyHir(input,context),proofs=buildFiniteCoreDomains(hir,context),plan=proofs.definition;
@@ -268,6 +280,8 @@ export function emitFiniteCore(input,context) {
     reached_domains:canonical(proofs.reached),
     language_intrinsics:canonical(plan.intrinsics),
     source_closure:canonical(hir.sources),canonical_layouts:canonical(buildTypedLayouts(hir,context)),
+    callable_contracts:canonical(finiteCallableContracts(hir)),
+    compatibility_witnesses:canonical(memberWitnessContracts(hir)),
     field_phases:canonical(fieldPhases),
     member_views:canonical(buildTypedReferenceViews(hir,context)),target:hir.target.target,triple:hir.target.triple,data_layout:hir.target.llvmDataLayout};
   const result='module attributes {'+Object.entries(attrs).map(([key,value])=>'tsfg_core.'+key+' = '+quote(value)).join(', ')+'} {\n'+functions.join('\n')+'\n}\n';

@@ -372,7 +372,13 @@ function solveFiniteActualDomains(input,context,charge,fieldReaching,mode) {
       // Each dispatch arm receives only its selected actual receiver. Copying
       // the entire static-view union into every arm would lose this authority.
       insert(binding(target,target.parameters[0].id,target.parameters[0].type),'actual',actual);
-      call.arguments.forEach((argument,index)=>copy(argument,binding(target,target.parameters[index+1].id,target.parameters[index+1].type)));
+      // Source evaluates all arguments, including extras, before dispatch. Only
+      // real selected-callee parameters receive slots; ignored extras retain
+      // their expression/effect nodes and are never copied into invented binds.
+      target.parameters.slice(1).forEach((parameter,index)=>{
+        if(index<call.arguments.length)copy(call.arguments[index],binding(target,parameter.id,parameter.type));
+        else insert(call.id,'pending','method-argument-default-domain:'+target.id+':'+index);
+      });
       if(types.get(target.returnType.id).kind==='void')insert(call.id,'actual',target.returnType.id);
       else copy(returned(target),call.id);
     }

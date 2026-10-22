@@ -11,3 +11,13 @@ export function finiteCallables(hir) {
       body:value.body};
   })];
 }
+
+// Boundary DTO for the independent C++ module verifier. Parameters keep their
+// ordered owned bindings; construction bodies retain Source signature identity
+// while their executable ABI has no result. No function body is dropped.
+export function finiteCallableContracts(hir) {
+  return finiteCallables(hir).map(fn=>({id:fn.id,name:fn.name,sourcePath:fn.sourcePath,range:{...fn.range},
+    signatureHash:fn.signatureHash,returnType:fn.returnType.id,parameters:fn.parameters.map(row=>({id:row.id,type:row.type})),
+    ownerType:fn.ownerType??null,construction:fn.construction??null,overrideTarget:fn.overrideTarget??null,
+    role:fn.role??'function'})).sort((a,b)=>a.id<b.id?-1:a.id>b.id?1:0);
+}

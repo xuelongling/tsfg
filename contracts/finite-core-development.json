@@ -1,6 +1,6 @@
 {
   "family": "tsfg.core-finite-domains-development",
-  "version": 9,
+  "version": 10,
   "status": "development contract; ordinary Core integration, not admitted bytecode or executable private profile",
   "hir": "0.15.0",
   "identity": {
@@ -150,7 +150,33 @@
     "firstFailure": "each effect uses original operation/target anchor; preceding calls and checks cannot be reordered across it",
     "verification": "C++ ordinary Core parser/verifier must independently derive finite-domain/layout/ABI closure and validate every operation and active root map before canonical print or wire emission; Node text generation is not Core verification The field phase consumer additionally checks actual constructor receiver identity, exact per-path commit order/anchors, and a dominating owned marker for each commit. Its successful object-only compilation is not validation of whole-module domain/effect/ABI closure or an executable Core run.",
     "wire": "a new exact ordinary wire version is required before publication; existing bytecode0.12/schema and Runtime admission remain unchanged until independent verifier/reader checks pass",
-    "implicitConstruction": "Every owned implicit constructor body is an ordinary zero-result SSA function keyed by its real ConstructionId/signature/receiver/parameters/class provenance. The universal definition ABI proves its representation without inventing reached instances. Actual direct-base forwarding, initializer expressions and field commits use the shared SSA producer; no Source AST function, literal or extra base allocation is fabricated."
+    "implicitConstruction": "Every owned implicit constructor body is an ordinary zero-result SSA function keyed by its real ConstructionId/signature/receiver/parameters/class provenance. The universal definition ABI proves its representation without inventing reached instances. Actual direct-base forwarding, initializer expressions and field commits use the shared SSA producer; no Source AST function, literal or extra base allocation is fabricated.",
+    "callableContracts": {
+      "attribute": "tsfg_core.callable_contracts",
+      "encoding": "canonical JSON array; strict ascending owned id, unique, complete finiteCallables closure",
+      "row": {
+        "id": "FunctionId or real implicit ConstructionId",
+        "name": "original owned name; <implicit-construction> only for actual implicit bodies",
+        "sourcePath": "member of source_closure",
+        "range": "original UTF16 {start,end}",
+        "signatureHash": "existing Source signature, including implicit owner receiver and original nominal constructor result",
+        "returnType": "original owned semantic TypeId",
+        "parameters": "ordered [{id:owned binding,type:declared semantic TypeId}]; receiver first when present",
+        "ownerType": "owned TypeId or null",
+        "construction": "ConstructionId for construction-body only, else null",
+        "overrideTarget": "actual owned M12 override FunctionId or null",
+        "role": "function or construction-body"
+      },
+      "consumer": "C++ finite module verifier independently hashes semantic names/signatures/function identities, joins every body, parameter and result to its ABI/domain, and validates direct-call identity and carriers. Constructor body ABI is zero-result without changing Source signature.",
+      "status": "development; metadata and ABI validation do not establish value-flow/reaching/member authority or publish ordinary wire"
+    },
+    "memberWitnesses": {
+      "attribute": "tsfg_core.compatibility_witnesses",
+      "record": "original owned HIR {compatibility:{assignable,members,origin,sourceType,targetType},dependencies:[{sourceType,targetType}]} with no inferred edges",
+      "order": "Core ownership boundary sorts records by origin.source UTF8, start, end, owned sourceType, owned targetType; members by owned target identity; dependencies by owned sourceType then targetType, all strict unique. The original Source DTO order need not survive identity rehashing.",
+      "consumer": "Independent C++ validates original anchors, complete same-kind/name-crosschecked explicit target member coverage, ordinary all-source-variant logical representations, reversed method parameter direction, target-void discard and nested same-origin proof closure. Failed union candidates do not consume dependencies. It reconstructs each actual reference descendant physical projection and compares member_views, then joins real access dispatch and static target write permissions without actual-cell readonly deep freeze.",
+      "pending": "Entry/root reachability to each Source occurrence and whole alias/read-reaching/effect admission remain mandatory; this table alone is not full Core verification or a runtime callable implementation."
+    }
   },
   "localPending": [
     "valid undefined payload narrowed by pure as then consumed by native arithmetic: approved operation failure/coercion mapping absent",
