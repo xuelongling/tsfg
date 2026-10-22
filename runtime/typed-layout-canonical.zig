@@ -5,7 +5,7 @@ const input = @import("typed-layout-input.zig");
 const element = @import("array-element.zig");
 const cells = @import("managed-cell.zig");
 pub const Error = input.Error || cells.Error;
-pub const Entry = struct { type_id: [32]u8, name: []const u8, layout: element.Layout, cell: ?cells.Layout = null };
+pub const Entry = struct { type_id: [32]u8, name: []const u8, layout: element.Layout, cell: ?cells.Layout = null, base: ?[32]u8 = null };
 pub const Module = struct {
     arena: std.heap.ArenaAllocator,
     entries: []Entry,
@@ -190,7 +190,7 @@ pub fn load(allocator: std.mem.Allocator, bytes: []const u8) Error!Module {
     @memset(builder.names, null); @memset(builder.layouts, null); @memset(builder.naming, false); @memset(builder.laying, false);
     const entries = try alloc.alloc(Entry, count);
     for (source.types, entries, 0..) |type_def, *entry, index| {
-        entry.* = .{ .type_id = type_def.id, .name = try builder.name(index, 0), .layout = try builder.layout(index, 0) };
+        entry.* = .{ .type_id = type_def.id, .name = try builder.name(index, 0), .layout = try builder.layout(index, 0), .base = type_def.base };
         if (type_def.kind == .value or type_def.kind == .reference) entry.cell = try builder.cell(index);
     }
     return .{ .arena = arena, .entries = entries };

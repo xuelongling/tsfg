@@ -79,10 +79,10 @@ scanning, value copies, wrong identities and allocation failures. The additional
 handwritten nested-layout tests establish Runtime behavior, not new Source
 checker results. Newly repaired Source assertion packets are not adopted here.
 
-Structural views still require the real M12 member witness to map target field
-access to the actual cell's declaring field. A target layout must never be
-applied to another actual class, even when its bytes happen to fit. The current
-direct cell API checks the actual complete layout; structural view propagation,
-mutable Array covariance, the cold assertion guard, formal Core/wire/VM,
-language trap identities/anchors and full M25 execution remain open. No substitute
-evaluator or private VM loader participates in this component seam.
+The real M12 witness now feeds the independent member-view component documented
+in [actual cell member views](r03-typed-reference-views.md). It maps target members
+to actual fields/callables while this direct API continues to check the actual
+complete layout. A target layout never reinterprets another actual class. Formal
+view/actual-domain propagation, mutable Array covariance, method execution,
+Core/wire/VM, language trap identities/anchors and full M25 execution remain open.
+No substitute evaluator or private VM loader participates in this component seam.

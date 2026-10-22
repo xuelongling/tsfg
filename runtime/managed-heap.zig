@@ -380,6 +380,12 @@ pub const ManagedHeap = struct {
         return value.initialized[try value.layout.fieldIndex(id)];
     }
 
+    pub fn copyTypedCellLayout(self: *ManagedHeap, handle: Handle) Error!CellLayout {
+        const object = try self.resolve(handle);
+        if (object.payload != .cell) return error.TypeMismatch;
+        return object.payload.cell.layout.clone(self.allocator);
+    }
+
     pub fn installTypedLayouts(self: *ManagedHeap, module: @import("typed-layout-canonical.zig").Module) Error!void {
         try self.check();
         try (try self.ensureState()).types.admitModule(self.allocator, module);
