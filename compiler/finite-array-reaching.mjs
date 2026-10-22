@@ -21,7 +21,7 @@ export function copyArrayReachingState(state,charge) {
 }
 
 export function buildFiniteArrayReaching(hir,plan,charge) {
-  const functions=finiteCallables(hir),types=new Map(hir.types.map(row=>[row.id,row])),
+  const functions=finiteCallables(hir),byFunction=new Map(functions.map(fn=>[fn.id,fn])),types=new Map(hir.types.map(row=>[row.id,row])),
     calls=new Map(plan.calls.map(row=>[row.id,row])),
     aliases=new Map((plan.fieldReaching?.returnAliases??[]).map(row=>[row.functionId,row.parameter])),
     effects=new Map(functions.map(fn=>[fn.id,{writes:false,callees:new Set()}])),writes=new Map(),reads=new Map(),
@@ -76,13 +76,21 @@ export function buildFiniteArrayReaching(hir,plan,charge) {
       out.set(owner,{length:a.length===b.length?a.length:null,slots});
     }return out;
   }
-  for(const fn of functions) {
-    const initial=new Map(),env=new Map(fn.parameters.map(parameter=>[parameter.id,{symbol:fn.id+'/parameter/'+parameter.id,
-      ...(arrayCarrier(parameter.type)?{owner:fn.id+'/parameter/'+parameter.id}:{})}]));
+  function parameters(fn) {
+    const env=new Map();for(const parameter of fn.parameters) {
+      charge();env.set(parameter.id,{symbol:fn.id+'/parameter/'+parameter.id,
+        ...(arrayCarrier(parameter.type)?{owner:fn.id+'/parameter/'+parameter.id}:{})});
+    }return env;
+  }
+  function analyze(fn,initial,env,active,applyCalls,recordReads=true) {
+    const exits=[];
     const origin=value=>({source:fn.sourcePath,...value.range});
     const key=index=>index?.constant!==undefined?'c:'+index.constant:index?.symbol?'s:'+index.symbol:null;
     function version(path,value,node,owner,index,kind) {
-      const id=path+'/array-version';charge();writes.set(id,{id,node,owner,index,kind,origin:origin(value)});return id;
+      const id=path+'/array-version';charge();
+      // Canonical source bindings are collected independently in the first
+      // pass. Contextual application never rewrites that version's identity.
+      if(!writes.has(id))writes.set(id,{id,node,owner,index,kind,origin:origin(value)});return id;
     }
     function invalidate(state) {for(const row of state.values()){charge();row.slots.clear();row.length=null;}}
     function load(value,path,state,receiver,index) {
@@ -94,7 +102,7 @@ export function buildFiniteArrayReaching(hir,plan,charge) {
         versions=index?.constant!==undefined?memory?.slots.get('c:'+(index.constant+receiver.offset)):null;
       }
       const status=missing||bounds?'missing':versions?.size?'proven':'pending';
-      reads.set(path,{node:path,owner:receiver?.owner??null,index:slot,status,
+      if(recordReads)reads.set(path,{node:path,owner:receiver?.owner??null,index:slot,status,
         versions:status==='proven'?[...versions].sort():[],sources:status==='proven'?[...new Set([...versions].map(id=>writes.get(id).node))].sort():[],origin:origin(value)});
       return {symbol:path};
     }
@@ -165,10 +173,32 @@ export function buildFiniteArrayReaching(hir,plan,charge) {
             available!==undefined&&available!==null&&start.constant+length.constant<=available?
             {owner:owner.owner,offset:(owner.offset??0)+start.constant,limit:length.constant,symbol:path}:{};
         }
-        const targets=value.receiver?(calls.get(path)?.targets??[]).map(row=>row.functionId):[value.target];
-        if(!targets.length||targets.some(id=>!effects.has(id)||effects.get(id).writes))invalidate(state);
-        const ordinals=targets.map(id=>aliases.get(id)),ordinal=ordinals[0],actual=receiver?[receiver,...args]:args;
-        return ordinal!==null&&ordinal!==undefined&&ordinals.every(index=>index===ordinal)?actual[ordinal]??{}:{symbol:path};
+        const targets=[];let unknown=false,modifies=false,recursive=false,ordinal,consistent=true;
+        if(receiver)for(const target of calls.get(path)?.targets??[]){charge();targets.push(target.functionId);}
+        else {charge();targets.push(value.target);}
+        for(const [index,id] of targets.entries()) {
+          charge();unknown||=!effects.has(id);modifies||=effects.get(id)?.writes??false;recursive||=active.has(id);
+          const returned=aliases.get(id);if(index===0)ordinal=returned;else consistent&&=ordinal===returned;
+        }
+        const actual=[];if(receiver){charge();actual.push(receiver);}for(const arg of args){charge();actual.push(arg);}
+        if(!targets.length||unknown)invalidate(state);
+        else if(modifies) {
+          if(!applyCalls||recursive)invalidate(state);
+          else {
+            let merged;
+            for(const id of targets) {
+              charge();const callee=byFunction.get(id),local=new Map(),nextActive=new Set();
+              for(const parent of active){charge();nextActive.add(parent);}nextActive.add(id);
+              for(const [index,parameter] of callee.parameters.entries()) {
+                charge();local.set(parameter.id,actual[index]??{});
+              }
+              const result=analyze(callee,clone(state),local,nextActive,true,false);
+              merged=merged?join(merged,result):result;
+            }
+            state.clear();for(const [id,row] of merged){charge();state.set(id,row);}
+          }
+        }
+        return ordinal!==null&&ordinal!==undefined&&consistent?actual[ordinal]??{}:{symbol:path};
       }
       if(value.kind==='shortCircuit'||value.kind==='binary'&&['&&','||','??'].includes(value.operator)) {
         const left=child('left'),possibilities=value.operator==='??'?presence(path+'/left'):{present:true,absent:true};
@@ -193,7 +223,9 @@ export function buildFiniteArrayReaching(hir,plan,charge) {
         charge();const p=path+'/'+index;
         if(row.kind==='local')bindings.set(row.binding.id,expression(row.initializer,p+'/initializer',state,bindings));
         else if(row.kind==='expression')expression(row.expression,p+'/expression',state,bindings);
-        else if(row.kind==='return'||row.kind==='constructorReturn') {if(row.value)expression(row.value,p+'/value',state,bindings);return null;}
+        else if(row.kind==='return'||row.kind==='constructorReturn') {
+          if(row.value)expression(row.value,p+'/value',state,bindings);exits.push(clone(state));return null;
+        }
         else if(row.kind==='block') {state=statements(row.body,p+'/body',state,bindings);if(!state)return null;}
         else if(row.kind==='if') {
           expression(row.condition,p+'/condition',state,bindings);const a=copyBindings(bindings),b=copyBindings(bindings),
@@ -209,8 +241,19 @@ export function buildFiniteArrayReaching(hir,plan,charge) {
         }else if(row.kind==='forwardBaseConstruction')invalidate(state);
       }return state;
     }
-    statements(fn.body,fn.id+'/body',initial,env);
+    const fallthrough=statements(fn.body,fn.id+'/body',initial,env);if(fallthrough)exits.push(fallthrough);
+    let result=null;for(const exit of exits){charge();result=result?join(result,exit):exit;}
+    // A nonproductive recursive/divergent path is not an initialized-state
+    // witness. The active-call guard above retains pending rather than an
+    // unbounded HIR walk or a made-up normal return.
+    if(!result){invalidate(initial);return initial;}return result;
   }
+  // Isolated source versions/read obligations stay stable across call sites.
+  // The second pass applies parameterized memory transfer, not execution of
+  // Source values; it only selects existing successful write-version tokens.
+  for(const fn of functions)analyze(fn,new Map(),parameters(fn),new Set([fn.id]),false);
+  reads.clear();
+  for(const fn of functions)analyze(fn,new Map(),parameters(fn),new Set([fn.id]),true);
   return own({reads:[...reads.values()].sort((a,b)=>a.node<b.node?-1:1),writes:[...writes.values()].sort((a,b)=>a.id<b.id?-1:1),
     qualification:'ordered successful version sources; unresolved indices/aliases/callee effects remain pending; no independent runtime guard or borrow admission'});
 }

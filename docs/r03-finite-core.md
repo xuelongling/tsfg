@@ -350,3 +350,21 @@ at the original `??`, not invented Source literal/initialization events. The
 same shared SSA budget bounds each predicate/block and partial output never
 escapes on failure. This produces data/SSA only; it does not qualify C++
 semantic admission, ordinary wire or VM execution.
+
+Array reaching also consumes selected owned calls. Checked HIR first binds
+canonical write occurrences in isolated callable bodies, then applies their
+parameterized memory transfers at each call. Returned-parameter authority
+preserves the original owner; each possible callee's normal exits are met.
+Caller parameter identities may alias, and a recursive/unknown transfer still
+invalidates the affected evidence. Contextual visits do not overwrite the
+isolated callee's read claim or manufacture call-site Source versions.
+
+The independent C++ Array query reconstructs normal-return summaries from real
+SSA/CFG, mapping actual operands to the selected formal owner/index slots.
+Successful callee versions replace incoming memory. Only a symbolic incoming
+summary path continues that caller's own predecessor; it never shares one
+caller's previous writes with all callers. Multiple formal identities do not
+prove distinct storage. Unresolved aliases/entries and bounds remain pending.
+The unchanged MemoryVersion fixed-point engine supplies the bounded equations;
+object compilation validates this IR adapter's interface, not its semantics.
+Neither the representation maximum nor fixed ABI becomes a read source.

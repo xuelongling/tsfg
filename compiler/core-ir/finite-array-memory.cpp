@@ -130,14 +130,23 @@ struct ArrayMemory {
     const auto unknown=[&](auto id){return outcome(graph.unknown(id));};
     const auto connect=[&](PayloadFlow::Edge edge){return outcome(graph.connect(std::move(edge)));};
     using Id=PayloadFlow::Id;
-    struct Task {mlir::Operation *before;mlir::Value owner;Index index;Id node;};
-    std::vector<Task> tasks;std::map<std::tuple<mlir::Operation *,size_t,std::string>,Id> nodes;
-    const auto at=[&](mlir::Operation *before,mlir::Value owner,Index selected) {
+    const std::string input="#incoming-array-memory";
+    struct Task {mlir::Operation *before;mlir::Value owner;Index index;Id node;size_t scope;};
+    std::vector<std::set<size_t>> scopes(1);
+    std::map<std::tuple<std::string,std::vector<size_t>,std::string>,std::pair<size_t,Id>> summaries;
+    std::vector<Task> tasks;std::map<std::tuple<mlir::Operation *,size_t,std::string,size_t>,Id> nodes;
+    const auto indexKey=[&](Index selected){return selected.constant?
+      "#constant/"+std::to_string(*selected.constant):"#ssa/"+std::to_string(identity(selected.value));};
+    const auto at=[&](mlir::Operation *before,mlir::Value owner,Index selected,size_t scope) {
       owner=strip(owner);const auto key=std::make_tuple(before,identity(owner),selected.constant?
-        "#constant/"+std::to_string(*selected.constant):"#ssa/"+std::to_string(identity(selected.value)));
+        "#constant/"+std::to_string(*selected.constant):"#ssa/"+std::to_string(identity(selected.value)),scope);
       auto found=nodes.find(key);if(found!=nodes.end())return found->second;
       const auto node=graph.node();if(node==PayloadFlow::none){valid=false;proof.reject(graph.error());return node;}
-      nodes.emplace(key,node);tasks.push_back({before,owner,selected,node});return node;
+      nodes.emplace(key,node);tasks.push_back({before,owner,selected,node,scope});return node;
+    };
+    const auto sameOwner=[&](const Task &task,mlir::Value receiver) {
+      const auto actual=identity(receiver),owner=identity(task.owner);
+      return actual==owner||(task.scope&&scopes[task.scope].count(owner)&&scopes[task.scope].count(actual));
     };
     auto owner=strip(read->getOperand(0));auto selected=index(read->getOperand(1));
     if(!valid)return {};
@@ -148,10 +157,10 @@ struct ArrayMemory {
       if(!selected.constant||!start.constant||!length.constant||*selected.constant>=*length.constant||uint64_t(*selected.constant)+*start.constant>UINT32_MAX)return {};
       selected.constant=*selected.constant+*start.constant;owner=strip(span->getOperand(0));if(!valid)return {};
     }
-    const auto result=at(read,owner,selected);
+    const auto result=at(read,owner,selected,0);
     for(size_t cursor=0;cursor<tasks.size()&&valid;++cursor) {
       if(!charge())return {};const auto task=tasks[cursor];auto *previous=task.before->getPrevNode();
-      const auto pass=[&](mlir::Operation *point,mlir::Value receiver,Index slot){const auto prior=at(point,receiver,slot);return valid&&connect({prior,task.node});};
+      const auto pass=[&](mlir::Operation *point,mlir::Value receiver,Index slot){const auto prior=at(point,receiver,slot,task.scope);return valid&&connect({prior,task.node});};
       if(!previous) {
         auto *block=task.before->getBlock();bool predecessor=false;
         for(auto *parent:block->getPredecessors()) {
@@ -167,7 +176,7 @@ struct ArrayMemory {
             if(branch.getFalseDest()==block&&!connect(branch.getFalseDestOperands()))return {};
           }else if(!unknown(task.node))return {};
         }
-        if(!predecessor&&!unknown(task.node))return {};continue;
+        if(!predecessor&&!(task.scope?seed(task.node,input):unknown(task.node)))return {};continue;
       }
       const auto name=previous->getName().getStringRef();
       if(name=="tsfg_core.domain.array_create"&&identity(previous->getResult(0))==identity(task.owner)) {
@@ -182,7 +191,7 @@ struct ArrayMemory {
       }
       if(name=="tsfg_core.domain.array_store"||name=="tsfg_core.domain.array_resize") {
         const auto receiver=strip(previous->getOperand(0));
-        if(identity(receiver)!=identity(task.owner)) {
+        if(!sameOwner(task,receiver)) {
           if(fresh(receiver)&&fresh(task.owner)){if(!pass(previous,task.owner,task.index))return {};}
           else if(!unknown(task.node))return {};continue;
         }
@@ -199,14 +208,52 @@ struct ArrayMemory {
       const auto callees=proof.selectedCallees.find(previous);
       if(callees!=proof.selectedCallees.end()) {
         bool modifies=false;for(const auto &target:callees->second){if(!charge())return {};modifies|=effects.at(target);}
-        if(modifies){if(!unknown(task.node))return {};continue;}
+        if(modifies) {
+          // A summary contains either successful callee versions or a symbolic
+          // incoming path. Substitute this caller's predecessor only for that
+          // path; never mix one caller's old writes into every invocation.
+          for(const auto &target:callees->second) {
+            if(!charge())return {};auto fn=proof.functions.at(target);
+            const bool allocation=previous->getName().getStringRef()=="tsfg_core.domain.construct";
+            const size_t offset=allocation?1:0;std::vector<size_t> aliases;
+            mlir::Value formal;auto slot=task.index;
+            for(size_t i=offset;i<fn.getNumArguments();++i) {
+              if(!charge()||i-offset>=previous->getNumOperands())return {};
+              const auto argument=previous->getOperand(i-offset);
+              if(sameOwner(task,argument)) {aliases.push_back(identity(fn.getArgument(i)));if(!formal)formal=fn.getArgument(i);}
+              if(!slot.constant&&identity(argument)==identity(task.index.value))slot=index(fn.getArgument(i));
+            }
+            if(!valid)return {};
+            if(!formal){if(!unknown(task.node))return {};continue;}
+            const auto key=std::make_tuple(target,aliases,indexKey(slot));auto found=summaries.find(key);
+            if(found==summaries.end()) {
+              if(!charge())return {};const auto scope=scopes.size(),summary=graph.node();
+              if(summary==PayloadFlow::none){valid=false;proof.reject(graph.error());return {};}
+              if(!outcome(graph.requireEvidence(summary)))return {};
+              scopes.emplace_back();for(const auto alias:aliases){if(!charge())return {};scopes.back().insert(alias);}
+              summaries.emplace(key,std::make_pair(scope,summary));
+              for(auto &block:fn.getBody()) {
+                if(!charge())return {};
+                if(auto returned=llvm::dyn_cast<mlir::func::ReturnOp>(block.getTerminator())) {
+                  const auto origin=at(returned,formal,slot,scope);
+                  if(!valid||!connect({origin,summary}))return {};
+                }
+              }
+              found=summaries.find(key);
+            }
+            const auto summary=found->second.second,prior=at(previous,task.owner,task.index,task.scope);
+            if(!valid||!connect({summary,task.node,PayloadFlow::none,{},input,false})||
+               !connect({prior,task.node,summary,input}))return {};
+          }
+          continue;
+        }
       }
       if(!pass(previous,task.owner,task.index))return {};
     }
     if(!valid)return {};
     if(!graph.solve()){proof.reject(graph.error());valid=false;return {};}
     const auto *evidence=graph.evidence(result);Selection out;
-    if(!evidence||evidence->pending||evidence->alternatives.empty()||evidence->alternatives.count("#missing"))return out;
+    if(!evidence||evidence->pending||evidence->alternatives.empty()||evidence->alternatives.count("#missing")||evidence->alternatives.count(input))return out;
     out.bounds=!evidence->alternatives.count("#unchecked");
     for(const auto &id:evidence->alternatives)if(id!="#unchecked")out.versions.insert(id);
     out.proven=!out.versions.empty();return out;
