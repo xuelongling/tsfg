@@ -28,7 +28,8 @@ pub fn write(heap: *managed.ManagedHeap, module: views.Module, receiver: managed
     const actual = try heap.copyTypedCellLayout(receiver); defer actual.deinit(heap.allocator);
     const id = try module.field(actual, target, member);
     if (!actual.fields[try actual.fieldIndex(id)].layout.same(value.layout)) return error.TypeMismatch;
-    try heap.writeTypedField(receiver, actual, id, .{ .tag = value.value.tag, .bytes = value.value.bytes, .references = value.value.references }, false);
+    try heap.writeViewedField(module, receiver, target, member, value.layout,
+        .{ .tag = value.value.tag, .bytes = value.value.bytes, .references = value.value.references });
 }
 pub fn method(heap: *managed.ManagedHeap, module: views.Module, receiver: managed.Handle,
     target: views.Id, member: views.Id, lifetime: managed.Lifetime) Error!Callable {

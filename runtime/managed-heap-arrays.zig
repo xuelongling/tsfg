@@ -20,6 +20,7 @@ fn checkReference(object: *model.Object, expected: element.ReferenceType) Error!
     const valid = switch (expected) {
         .object => |id| object.payload == .scalar and object.type_id == id,
         .string => object.payload == .string,
+        .cell_domain => object.payload == .cell and object.payload.cell.layout.kind == .reference,
         .array => |id| object.payload == .array and std.mem.eql(u8, &object.payload.array.layout.type_id, &id),
         .cell => |id| object.payload == .cell and std.mem.eql(u8, &object.payload.cell.layout.type_id, &id),
     };

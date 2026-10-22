@@ -4,7 +4,7 @@ const std = @import("std");
 const handles = @import("managed-handles.zig");
 const Allocator = std.mem.Allocator;
 pub const Error = Allocator.Error || error{ InvalidArrayLayout, InvalidArrayElement, TypeMismatch, ArrayTooLarge, IndexOutOfBounds, UninitializedGrowth };
-pub const ReferenceType = union(enum) { object: u64, string: void, array: [32]u8, cell: [32]u8 };
+pub const ReferenceType = union(enum) { object: u64, string: void, array: [32]u8, cell: [32]u8, cell_domain: void };
 pub const Reference = struct { slot: u16, type: ReferenceType };
 pub const Field = struct { offset: u32, code: u8 };
 // Nested fixed values retain their own discriminant in the byte plane. Their

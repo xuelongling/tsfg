@@ -21,7 +21,7 @@ fn reserveOwner() error{IdentityExhausted}!u64 {
     return error.IdentityExhausted;
 }
 
-pub const Error = payloads.Error || @import("typed-layout-registry.zig").Error || error{
+pub const Error = payloads.Error || @import("typed-layout-registry.zig").Error || @import("typed-reference-views.zig").Error || error{
     InvalidOwner,
     HeapDestroyed,
     InvalidHandle,
@@ -406,6 +406,11 @@ pub const ManagedHeap = struct {
         try cells.write(self.allocator, self.owned(), self.owner, object, expected, id, input, initialize);
     }
 
+    pub fn writeViewedField(self: *ManagedHeap, module: @import("typed-reference-views.zig").Module, receiver: Handle,
+        target: [32]u8, member: [32]u8, representation: ArrayLayout, input: ArrayInput) Error!void {
+        const object = try self.resolve(receiver);
+        try cells.writeViewed(self.allocator, self.owned(), self.owner, object, module, target, member, representation, input);
+    }
     pub fn createTypedValue(self: *ManagedHeap, layout: CellLayout, expected: ArrayLayout, input: ArrayInput, lifetime: Lifetime) Error!Handle {
         try self.check();
         const scope = try self.scopeFor(lifetime);

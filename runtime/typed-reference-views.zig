@@ -24,10 +24,22 @@ pub const Module = struct {
         return error.MissingView;
     }
     pub fn field(self: Module, actual: cells.Layout, target: Id, member: Id) Error!Id {
+        if (same(actual.type_id, target)) {
+            const entry = (try self.layouts.find(target)).cell orelse return error.InvalidViewModule;
+            if (!entry.same(actual)) return error.InvalidViewModule;
+            _ = try actual.fieldIndex(member); return member;
+        }
         for ((try self.view(actual, target)).fields) |pair| if (same(pair.target, member)) return pair.source;
         return error.InvalidViewMember;
     }
     pub fn method(self: Module, actual: cells.Layout, target: Id, member: Id) Error!Method {
+        if (same(actual.type_id, target)) {
+            const entry = (try self.layouts.find(target)).cell orelse return error.InvalidViewModule;
+            if (!entry.same(actual)) return error.InvalidViewModule;
+            var work: usize = 100000;
+            if (!try self.effective(target, member, &work)) return error.InvalidViewMember;
+            return self.findMethod(member);
+        }
         for ((try self.view(actual, target)).methods) |pair| if (same(pair.target, member)) return self.findMethod(pair.source);
         return error.InvalidViewMember;
     }

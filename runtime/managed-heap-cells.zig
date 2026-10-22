@@ -5,7 +5,7 @@ const model = @import("managed-heap-model.zig");
 const cells = @import("managed-cell.zig");
 const arrays = @import("managed-heap-arrays.zig");
 const element = @import("array-element.zig");
-pub const Error = cells.Error || arrays.Error;
+pub const Error = cells.Error || arrays.Error || @import("typed-reference-views.zig").Error;
 pub fn cell(object: *model.Object, expected: cells.Layout) Error!*cells.Cell {
     if (object.payload != .cell or !object.payload.cell.layout.same(expected)) return error.TypeMismatch;
     return &object.payload.cell;
@@ -45,4 +45,21 @@ pub fn createValue(allocator: std.mem.Allocator, state: *model.State, owner: u64
     try object.payload.cell.unpack(allocator, expected, input);
     const edges = try arrays.edges(allocator, state, owner, expected, input);
     allocator.free(object.edges); object.edges = edges; return object;
+}
+// Source writes are authorized by the validated static target member. Physical
+// readonly/initialization metadata is not a deep freeze of a writable alias.
+pub fn writeViewed(allocator: std.mem.Allocator, state: *model.State, owner: u64, object: *model.Object,
+    module: @import("typed-reference-views.zig").Module, target: [32]u8, member: [32]u8,
+    representation: element.Layout, input: element.Input) Error!void {
+    if (object.payload != .cell) return error.TypeMismatch;
+    const value = &object.payload.cell; const actual = value.layout;
+    const id = try module.field(actual, target, member);
+    const view = (try module.layouts.find(target)).cell orelse return error.InvalidViewModule;
+    if (view.fields[try view.fieldIndex(member)].readonly) return error.ReadonlyField;
+    const index = try actual.fieldIndex(id); const field = actual.fields[index];
+    if (!field.layout.same(representation)) return error.TypeMismatch;
+    const edges = try arrays.edges(allocator, state, owner, field.layout, input); defer allocator.free(edges);
+    field.layout.copyBytes(input.tag, value.fieldBytes(index), input.bytes);
+    @memcpy(object.edges[field.reference_offset..][0..field.layout.reference_count], edges);
+    value.tags[index] = input.tag; value.initialized[index] = true;
 }
