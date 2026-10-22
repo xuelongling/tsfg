@@ -1,38 +1,38 @@
 [
   {
     "file": "043012675fb0be448f8a0197bb19243bf8fef9099e8a31ac55fe0810e021fcbf-package.json",
-    "capture": "MULTIROOT-FINAL-GREEN01-captures/043012675fb0be448f8a0197bb19243bf8fef9099e8a31ac55fe0810e021fcbf-package.json",
-    "packageId": "sha256:3d055c9aefc7625c4ec8218b62c627173eb7a09ec8ea273465a0f972044ba3b0",
+    "capture": "E:/ws/pro_tsfg/.scratch/tsfg_r03/M25-source-generic-array-checks-20261022/SUPER-NATIVE-PUBLIC-REFRESH01-captures/043012675fb0be448f8a0197bb19243bf8fef9099e8a31ac55fe0810e021fcbf-package.json",
+    "packageId": "sha256:85cb87b10fba6b0177a0a0644e61cdc6c336c4503952f6740fa5c39eade23464",
     "requestId": "sha256:4ae5b4c077ad6d56006f30936f0008365338d323d2bd57643516759dfba8438e",
-    "sha256": "1d470415a6817ed8239f57e87ad361053975f7d608ab01a0845f9daa906ba57a"
+    "sha256": "4d177ec857e68d402206658676172d311aa7ae33c85bf6f889ea34c47de6960e"
   },
   {
     "file": "84c930117a45e4bad76945df7a04bf03adc67db1df6762ea83fb987fa6a07d1f-package.json",
-    "capture": "MULTIROOT-FINAL-GREEN01-captures/84c930117a45e4bad76945df7a04bf03adc67db1df6762ea83fb987fa6a07d1f-package.json",
-    "packageId": "sha256:5f8c1f89a0078b6b84dcd1bd7d4d058f3994a369c0b72e4cbeefa1acb88efa8c",
+    "capture": "E:/ws/pro_tsfg/.scratch/tsfg_r03/M25-source-generic-array-checks-20261022/SUPER-NATIVE-PUBLIC-REFRESH01-captures/84c930117a45e4bad76945df7a04bf03adc67db1df6762ea83fb987fa6a07d1f-package.json",
+    "packageId": "sha256:28f4bed47585448c165f9229424a7f97a2f80396531fc88704b58d78d2eaa72e",
     "requestId": "sha256:099cb3487d7f2b3c317fa647372cf330e14e70eb3d688e37eead569babf214f8",
-    "sha256": "c732bd5b694aec7f78d48937d78e79ad88236683ea3ec6b5168315a59177d758"
+    "sha256": "ebd341c49d225efe82e4fe8b97b238f8479d782079add2d323ebc7e16332460c"
   },
   {
     "file": "8929c29478f722bf994902b3223c2e6c4aff1d65fce77899ab7fc982ca994eb1-package.json",
-    "capture": "MULTIROOT-FINAL-GREEN01-captures/8929c29478f722bf994902b3223c2e6c4aff1d65fce77899ab7fc982ca994eb1-package.json",
-    "packageId": "sha256:9cf8ef6ed3ebf091fdda377610f0db83e4fd057f19f48d6490bb61b8960093dc",
+    "capture": "E:/ws/pro_tsfg/.scratch/tsfg_r03/M25-source-generic-array-checks-20261022/SUPER-NATIVE-PUBLIC-REFRESH01-captures/8929c29478f722bf994902b3223c2e6c4aff1d65fce77899ab7fc982ca994eb1-package.json",
+    "packageId": "sha256:9ef7c98a942d8aab56d65154f95e7a963c876791fb396edd3fe45052a1f42219",
     "requestId": "sha256:b2274db18773c4ae4ea4bf2afac045c78ffe7ca1d4ebaaa0f19f18ff1a139a09",
-    "sha256": "87b78d895ad1fb4ba335384f626af99f18328aedecd14cc91a6b5714faf49d5a"
+    "sha256": "bf8f22b72e29d6f5ceaaecb45c206cf18c6c6687a76f2002ea668a678dfdf057"
   },
   {
     "file": "dea4193deb83f75011f58ddb718d58eac4855d8d7ad681a8a737f4ef46ba0768-package.json",
-    "capture": "MULTIROOT-FINAL-GREEN01-captures/dea4193deb83f75011f58ddb718d58eac4855d8d7ad681a8a737f4ef46ba0768-package.json",
-    "packageId": "sha256:0debdb5a47c99345df31a67649704a54c52e872781e5a829f0ece0098d0455a7",
+    "capture": "E:/ws/pro_tsfg/.scratch/tsfg_r03/M25-source-generic-array-checks-20261022/SUPER-NATIVE-PUBLIC-REFRESH01-captures/dea4193deb83f75011f58ddb718d58eac4855d8d7ad681a8a737f4ef46ba0768-package.json",
+    "packageId": "sha256:1ba5673a9a1792b8a541eae6e2ce08a032586268f70872776a59852e16643772",
     "requestId": "sha256:95fd014e0d896eb2662672797addfa9ccf928d48165b7ad13bc33342ea0febbd",
-    "sha256": "d50fdf3031dff764a40e1f3641bded34239dd3bb1716875aaa84f7fea19e6d86"
+    "sha256": "26f0ea055cbe52e91b9159e9c23d34cc79da8bbf26dbd4099645443b89635680"
   },
   {
     "file": "21877f177513ee463153b3937e867c1f6f678882efec5f57060ff1af2eff7165-package.json",
     "expect": "accept",
-    "packageId": "sha256:e62e0d64504eeb78b860ba5c8b3d08fac8e72381cdb16aa68105339fab47d055",
+    "packageId": "sha256:083ba54b6ff55ec6d5a099279c628ef7eaed88b0691bfee021e0ae2b9317fd1d",
     "requestId": "sha256:38f306e8c4d63c3acde64614f55b2e282826486820c8307b1022056285e199b9",
-    "sha256": "0a7db2cd3914104602ce40782b1dccc842ac1ddd16085e8330a6b378ea543695",
-    "capture": "MULTIROOT-FINAL-GREEN01-captures/21877f177513ee463153b3937e867c1f6f678882efec5f57060ff1af2eff7165-package.json"
+    "sha256": "e04fac306b9ecb9a144ecabec085333da3da67706d10a44498153f3a1865b4b2",
+    "capture": "E:/ws/pro_tsfg/.scratch/tsfg_r03/M25-source-generic-array-checks-20261022/SUPER-NATIVE-PUBLIC-REFRESH01-captures/21877f177513ee463153b3937e867c1f6f678882efec5f57060ff1af2eff7165-package.json"
   }
 ]

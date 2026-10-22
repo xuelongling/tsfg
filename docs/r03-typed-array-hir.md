@@ -25,6 +25,37 @@ members receive owned identities. Constructor parameter properties retain the
 explicit parameter-to-field relationship; field initializers retain their real
 lexical owner without inventing a Source constructor body.
 
+The selected constructor descriptor is the exact reviewed Source1b108a/c113
+format; former bb3/beec formats have no fallback. Construction validation checks
+real explicit parameter bindings, inherited parameter origins, direct-base
+forwarding, complete identity member proofs and the selected signature's actual
+declaration. A real ancestor constructor owns that declaration; a completely
+declaration-less chain uses the current class provenance. Logical construction
+IDs use `tsfg.construction` over the complete owned owner TypeId. Implicit
+parameters have owned bindings and retain their real `inheritedFrom` relation.
+
+`construct` invokes its owned construction plan. An explicit base constructor
+body starts `initializeOwnFields`; each real `superConstruct` retains its void
+expression result, direct-base construction, original ordered arguments and
+current receiver, then initializes derived own fields only after success.
+Construction receiver bindings preserve the actual instance domain through base
+bodies and implicit forwarding. The base TypeId is a static view; entering its
+body neither allocates a Base object nor narrows the actual runtime identity.
+Conditional super occurrences remain in their original branches. Default
+derived construction has a logical forwarding body, never a fabricated Source
+function. Explicit functions carry the construction-body role; bare
+`constructorReturn` has no fabricated owner-valued expression. The selected
+construct result and body completion stay distinct for subsequent Core lowering.
+
+Under the pinned ESNext/native field options, ordinary own field definitions
+and initializers precede parameter-property assignments. Initializer trees occur
+only in the construction plan. `fieldDefine` records native undefined definition
+semantics without inventing an AST literal or granting typed native storage an
+initialization proof. For example, `readonly x:i32; ... this.x=a[i]` retains both
+the definition and legal later checked assignment. The physical uninitialized
+bit must not become a new source trap for otherwise legal observations through
+escaped `this`; full actual-domain construction/ABI execution remains open.
+
 Expression result types use checked flow types; declared slot types remain
 separate. Initialized undefined and null are values. Checked element reads and
 stores retain receiver/index trees, source anchors, wrappers and operators.
@@ -36,7 +67,7 @@ establish retained structure, not runtime execution of this ordering.
 
 `verifyHir`, `printHir` and `readHir` reconstruct the complete expected HIR from
 the separately selected facts. They reject substitutions, omitted or changed
-owned nodes and noncanonical serialization. The `0.13.0` descriptor is a
+owned nodes and noncanonical serialization. The `0.14.0` descriptor is a
 development HIR contract; registry publication, formal Core lowering and
 versioned bytecode adoption remain unfinished. Version 7 private f64 facts are
 not reinterpreted as version 8. Their existing qualification does not qualify

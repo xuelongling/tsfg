@@ -6,7 +6,7 @@ import {readTypedArrayFacts} from '../../compiler/typed-array-facts.mjs';
 import {buildHir} from '../../compiler/hir.mjs';
 import {buildTypedReferenceViews,writeTypedReferenceViews} from '../../compiler/typed-reference-views.mjs';
 import {buildTypedLayouts} from '../../compiler/typed-layouts.mjs';
-const output='E:/ws/pro_tsfg/.scratch/tsfg_r03/M25-formal-array-checks-20261022/typed-view-captures';
+const output='E:/ws/pro_tsfg/.scratch/tsfg_r03/M25-formal-array-checks-20261022/typed-view-construction-captures';
 const cases={offset:'b0e28ab90ccb45257bd8f81b8554949109b3bbe8e22db6231b274ffa680193c9',
   nested:'84c930117a45e4bad76945df7a04bf03adc67db1df6762ea83fb987fa6a07d1f',
   method:'38da6ecc5dd455700f3a667ae47e6110f1a58a6d74025a4f409deab4b509d7cf',

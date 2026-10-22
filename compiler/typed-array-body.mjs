@@ -6,6 +6,7 @@ import {identifierName} from './module-facts.mjs';
 import {check,hash,sourceRange,originId,signatureId} from './typed-array-schema.mjs';
 import {typedArrayInteger} from './typed-array-literals.mjs';
 import {typedArrayRelations} from './typed-array-relations.mjs';
+import {validateTypedArrayConstruction} from './typed-array-construction.mjs';
 
 export function validateTypedArrayFunctions(payload,sources,types) {
   const functions=new Map(),all=[...payload.functions];
@@ -28,6 +29,7 @@ export function validateTypedArrayFunctions(payload,sources,types) {
     }
   }
   const relation=typedArrayRelations(types,functions,payload.compatibilityWitnesses);
+  validateTypedArrayConstruction(payload,types,sources);
   function verifyFunction(fn,initializers=[]) {
     const source=sources.get(fn.sourcePath).content,bindings=new Map([...fn.parameters,...fn.bindings].map(row=>[row.id,row]));
     let declared=new Set(fn.parameters.map(row=>row.id));
@@ -88,12 +90,15 @@ export function validateTypedArrayFunctions(payload,sources,types) {
         check(signature.id===signatureId(signature.sourcePath,signature.declarationRange)
           &&signature.parameters.length===value.arguments.length&&types.has(signature.returnType),'signature');
         for(const id of signature.parameters)check(types.has(id),'signature');
-        if(value.kind==='new') {
-          const type=types.get(value.type),ctor=type?.constructor,origin=ctor??type;
-          check(['value','reference'].includes(type?.kind)&&value.flowType===type.id
-            &&value.callee===(ctor?.id??type.id)&&signature.returnType===type.id
-            &&signature.sourcePath===origin.sourcePath&&canonical(signature.declarationRange)===canonical(origin.declarationRange)
-            &&canonical(signature.parameters)===canonical(ctor?.parameters.map(row=>row.declaredType)??[]),'signature');
+        if(value.kind==='new'||value.kind==='superConstruct') {
+          const type=types.get(value.kind==='superConstruct'?value.callee:value.type),construction=type?.construction;
+          check(['value','reference'].includes(type?.kind)&&(value.kind==='new'
+            ?value.type===type.id&&value.flowType===type.id
+            :type.kind==='reference'&&value.type==='void'&&value.flowType==='void'),'signature');
+          check(value.callee===type.id&&canonical(signature)===canonical(construction.signature),'signature');
+          if(value.kind==='superConstruct')check(types.get(fn.ownerType)?.constructor?.id===fn.id
+            &&types.get(fn.ownerType).base===type.id&&spelling(value.calleeRange)==='super'
+            &&!value.receiver&&!value.allocationSite,'construction-super');
         }
         if(value.kind==='call'&&value.callee!==payload.readSpanIntrinsic.id) {
           const callee=functions.get(value.callee);check(callee&&callee.sourcePath===signature.sourcePath

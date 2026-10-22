@@ -77,7 +77,9 @@ checks compare 41 captured catalogue layouts across implementations and exercise
 actual Box identity, field initialization, roots, Array aliases, nested variant
 scanning, value copies, wrong identities and allocation failures. The additional
 handwritten nested-layout tests establish Runtime behavior, not new Source
-checker results. Newly repaired Source assertion packets are not adopted here.
+checker results. The reviewed constructor-facts refresh is adopted at the cold
+HIR boundary; all41 original logical layout binaries remain byte-identical.
+That refresh does not grant new Runtime language execution or Source admission.
 
 The real M12 witness now feeds the independent member-view component documented
 in [actual cell member views](r03-typed-reference-views.md). It maps target members

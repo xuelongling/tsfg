@@ -9,12 +9,12 @@ test('actual official generic Array facts retain T and initialized undefined in 
   const packet=JSON.parse(bytes.toString('utf8'));
   // Producer identity/provenance lives in the main25 single summary. This test
   // reads captured bytes only, never starts Source/VM or invents checker facts.
-  assert.equal(packet.packageId,'sha256:318d15d7503e0698bdd5dc45f24311e3dec0f77e31fefa39a0a349737eab642f');
+  assert.equal(packet.packageId,'sha256:e14a10f185438c4e688fab8cd3a1a745f9a17beb821f8adffc65ef29f56550e9');
   const context={family:'tsfg.array-facts-context-candidate',version:2,factsBytes:bytes,expectedPackageId:packet.packageId};
   const built=buildHir(packet,context);
   assert.equal(built.status,'ok',JSON.stringify(built.diagnostics));
   const hir=built.hir;
-  assert.equal(hir.format.contractVersion,'0.13.0');
+  assert.equal(hir.format.contractVersion,'0.14.0');
   const array=hir.types.find(type=>type.kind==='array');
   const union=hir.types.find(type=>type.kind==='union');
   assert.equal(array.elementType,union.id);
