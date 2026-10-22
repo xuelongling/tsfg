@@ -1,8 +1,10 @@
 // SPDX-License-Identifier: MIT
 #pragma once
 #include "array-owner-json.h"
+#include "finite-payload-flow.h"
 #include "mlir/IR/BuiltinOps.h"
 #include "mlir/Dialect/Func/IR/FuncOps.h"
+#include "llvm/ADT/DenseMap.h"
 #include <map>
 #include <set>
 #include <string>
@@ -42,6 +44,14 @@ struct ModuleProof {
   // Necessary local memory evidence is separate from full interprocedural
   // eligibility. Whole admission must discharge every remaining read.
   std::set<mlir::Operation *> unprovedMemoryReads;
+  // Actual values are independently derived from IR, never seeded from a
+  // carrier's alternatives. A pending payload cannot authorize ABI admission.
+  llvm::DenseMap<mlir::Value,std::set<std::string>> definitionParameters;
+  std::map<mlir::Operation *,std::vector<mlir::Value>> fieldReadInputs;
+  std::set<mlir::Operation *> fieldReadUndefined;
+  llvm::DenseMap<mlir::Value,PayloadEvidence> actualPayloads;
+  std::map<std::string,PayloadEvidence> actualReturns;
+  std::set<std::string> unprovedActualBounds;
   size_t remaining = 100000;
   explicit ModuleProof(mlir::ModuleOp value) : module(value) {}
   bool charge(size_t count = 1);
@@ -60,6 +70,7 @@ bool verifyMemberContracts(ModuleProof &proof);
 bool verifyFlowContracts(ModuleProof &proof);
 bool verifyMemoryContracts(ModuleProof &proof);
 bool verifyDefinitionBounds(ModuleProof &proof);
+bool verifyActualFlow(ModuleProof &proof);
 const Domain *valueDomain(ModuleProof &proof, mlir::Type type);
 bool carrier(ModuleProof &proof, llvm::StringRef domain, mlir::Type type);
 // Development module contracts, not yet the command's whole-flow admission

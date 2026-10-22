@@ -157,6 +157,7 @@ struct Memory {
     for(const auto &value:*targets){if(!proof.charge()||!value.getAsObject())return false;
       expectedTargets.insert({string(*value.getAsObject(),"actualType"),string(*value.getAsObject(),"fieldId")});}
     bool complete=true;std::string previousActual;
+    std::vector<mlir::Value> inputValues;bool inputUndefined=false;
     for (const auto &value:*rows) {
       if (!proof.charge()) return false;const auto *row=value.getAsObject();
       const auto *ids=row?row->getArray("versions"):nullptr,*sources=row?row->getArray("sources"):nullptr;
@@ -178,6 +179,7 @@ struct Memory {
           local &= write.write && write.write->getParentOfType<mlir::func::FuncOp>()==op->getParentOfType<mlir::func::FuncOp>() && same(write.receiver,op->getOperand(0));
           if (!write.source.empty()) expectedSources.insert(write.source);undefined |= write.state!=Version::State::Initialized;
           if (write.value) {
+            inputValues.push_back(write.value);
             const auto *input=valueDomain(proof,write.value.getType());
             if (!input || !std::includes(result->alternatives.begin(),result->alternatives.end(),input->alternatives.begin(),input->alternatives.end()))
               return proof.reject("field read drops a real reaching write payload");
@@ -185,6 +187,7 @@ struct Memory {
         }
       }
       const auto undefinedType=hash(std::string("tsfg.type\0undefined",19));
+      inputUndefined|=undefined;
       const auto *intrinsics=row->getArray("intrinsics");
       if(!undefined && row->get("intrinsics"))return proof.reject("memory predecessor fabricates a native empty definition");
       if (undefined && (std::find(result->alternatives.begin(),result->alternatives.end(),undefinedType)==result->alternatives.end() ||
@@ -198,6 +201,10 @@ struct Memory {
       complete &= status==Reaching::Proven;
     }
     if (!complete || seenTargets!=expectedTargets) proof.unprovedMemoryReads.insert(op);
+    else {
+      proof.fieldReadInputs.emplace(op,std::move(inputValues));
+      if(inputUndefined)proof.fieldReadUndefined.insert(op);
+    }
     return valid;
   }
   bool run() {

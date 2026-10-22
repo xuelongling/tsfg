@@ -167,6 +167,7 @@ struct Entries {
         const auto &actual=proof.domains.at(bounds[index].getAsString()->str()).alternatives;
         if(!std::includes(actual.begin(),actual.end(),expected.begin(),expected.end()))
           return proof.reject("definition ABI drops a declared/selected published payload or actual receiver descendant");
+        proof.definitionParameters.try_emplace(proof.functions.at(id).getArgument(index),std::move(expected));
       }
     }
     return seeds.size()==seed_count || proof.reject("unused definition seed binding");

@@ -128,7 +128,7 @@ mlir::LogicalResult verifyModuleContracts(mlir::ModuleOp module) {
       !proof.document("tsfg_core.entry_compatibility_roots", proof.entryRoots) ||
       !sources(proof) || !verifyCatalog(proof) || !verifyDomains(proof) || !verifyAbi(proof) ||
       !verifyValueContracts(proof) || !verifyMemberContracts(proof) || !verifyDefinitionBounds(proof) ||
-      !verifyFlowContracts(proof) || !verifyMemoryContracts(proof))
+      !verifyFlowContracts(proof) || !verifyMemoryContracts(proof) || !verifyActualFlow(proof))
     return mlir::failure();
   return mlir::success();
 }

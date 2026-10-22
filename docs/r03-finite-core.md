@@ -190,3 +190,26 @@ or activate the ordinary admission hook. The independent seven-source expected
 ABI is compared against the real producer, not recomputed from its plan. C++
 object checks and Node comparisons remain distinct from semantic verifier,
 canonical roundtrip and executable wire qualification.
+
+Version 13 adds an independent actual-payload fixed point after the memory
+consumer. The IR adapter validates seeds and normalizes real CFG arguments,
+views, checked presence refinements, direct calls, actual method arms,
+construction receivers and returns into one production `PayloadFlow` engine.
+The engine is independent of LLVM; ModuleContracts and the native equation
+component checks use that same implementation. There is no second evaluator.
+
+Seeds come from verified definition/entry authority and real typed primitives
+or allocation operations. A carrier's alternative list is never a payload
+seed. Existing native implementation temporaries retain their precise scalar
+identity without inventing Source catalogue rows. Completed local field-read
+proofs contribute real successful SSA inputs or defined undefined. Unproved
+field/Array owner reads propagate pending, including through calls and loops.
+
+Every inferred payload must fit its SSA representation. Closed nonempty ABI
+equations must equal the independently solved alternatives. Pending equations
+and unproductive recursive returns remain explicit unproved obligations; they
+cannot turn a fixed published ABI into bottom or authorize whole admission.
+The bounded engine exposes no partial evidence after work/variant failure.
+Its native graph tests establish equation semantics only. IR normalization has
+object-only qualification; complete alias/call-context/value ownership,
+canonical roundtrip, versioned wire and the unified admission hook remain open.
