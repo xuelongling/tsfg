@@ -57,3 +57,57 @@ bodies. Initial and final SDK intake use the same declarations and current
 registrations. This optimization grants neither MC fact authenticity nor a
 resource certificate by itself; those require the new producer's actual raw
 publication and independent current consumption proofs.
+
+## Ordinary Core intake remains unqualified
+
+The `static` command role uses the complete shared Core implementation. Its
+target-local `Support`, empty `USE_SHARED`, and
+`DISABLE_LLVM_LINK_LLVM_DYLIB` settings constrain the declared target. The
+reviewed package metadata closes 21 imported target declarations, including
+`MLIRShapedOpInterfaces`; it does not record an actual configuration or selected
+archive paths. The seven declared Windows system-library edges of
+`LLVMSupport` also require the existing verified tool closure. Neither target
+names nor absence of an X86 edge proves the bytes a new build will consume.
+
+The missing input is an authenticated, target-specific consumption record for
+the new ordinary producer, joined to the original SDK producer's derivations.
+It must cover the following existing production observations together:
+
+- The exact product/source/SDK/tool identities, actual CMake command and natural
+  terminal, cache, expanded trace with physical evaluation origins, and generated
+  Ninja plan for `tsfg-core-static`. The plan must establish effective package
+  configuration, imported library paths, system inputs, flags and commands.
+- The SDK producer's source snapshot and actual consumption records, joined
+  through each selected archive/object or generated header to all original
+  source, header, configuration, generator and license inputs. An exported
+  library name or its locked digest supplies identity, not this derivation.
+  Availability of a complete per-archive join in the retained producer records
+  is still unknown; it must not be reconstructed by running the held producer.
+- Exact admission of every such physical input and its complete original
+  notices, including copied material and generated-input ancestry. Existing
+  finite registrations contain fixed-target/use limits; their presence alone
+  does not approve a new profile. In particular the unregistered
+  `X86InstComments.cpp` copied table cannot be qualified through its header,
+  enclosing archive or an assertion that a target is static.
+- Planned and final observed inputs from the same ordinary production factory:
+  `cmake-trace.jsonl`, `ninja-commands.txt`, `ninja-inputs.nul`,
+  `ninja-configuration-inputs.nul`, `ninja-deps.txt`, `input-trace.json` and their
+  legal joins. Planned inputs permit only their admitted build; final records
+  must reconcile actual consumption before publication.
+
+There is no accepted descriptor or authenticated record for that consumption
+set today. SDKv2 binds all 6601 files, all physical source registrations and the
+historical full executable provenance. Removing members or skipping that
+executable under the existing descriptor would change its contract. A future
+ordinary descriptor must bind its own exact inventory, source/legal derivation
+and provenance without relying on the held full executable; the original
+SDKv2 descriptor, full lock and Native intake remain intact. Its production
+factory integration must verify those inputs before consuming their bodies.
+
+Consequently `requireMlirSdkCommandIntake` still rejects static SDK mode before
+`readMlirSourceSdk`, staging or configuration. No static SDK configuration,
+archive consumption, linking or CLI execution is credited. The next bounded
+step is to establish the missing original-producer derivation and admitted
+configuration input set, then review the concrete descriptor and factory
+change. This document does not authorize those external reads or executions,
+infer a grant, or replace the current guard with caller-supplied observations.
