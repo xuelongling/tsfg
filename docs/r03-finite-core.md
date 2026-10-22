@@ -213,3 +213,26 @@ The bounded engine exposes no partial evidence after work/variant failure.
 Its native graph tests establish equation semantics only. IR normalization has
 object-only qualification; complete alias/call-context/value ownership,
 canonical roundtrip, versioned wire and the unified admission hook remain open.
+
+Version 14 replaces the local-only backward memory scan with real SSA/callee
+normalization into that same `PayloadFlow`. Each query names one actual field
+and a definite receiver. A successful strong write terminates its predecessor
+equation; CFG paths join first-write versions. A real callee summary contributes
+its writes and continues the caller predecessor only on its input-preserving
+paths. Recursive contexts reach a bounded fixed point without host recursion.
+
+Contexts use actual ordered parameter SSA mappings and the verified selected
+call graph. Distinct parameters never establish noalias. Unknown aliases,
+inline-value parameter copies and unresolved entry state remain pending. A
+fresh constructor frame is reachable only through actual construct/super
+operations; ordinary `func.call` cannot fabricate its not-defined precondition.
+No nativeDefine event or successful payload is invented from a type catalogue.
+
+Memory-version atoms use the work budget rather than the 256 concrete-payload
+limit, so a many-way join of one payload representation does not acquire a new
+language restriction. The single std-only engine has native tests for callee
+overwrite/pass-through, recursive summaries, unknown alias and version counts.
+Cpp IR normalization still has object-only qualification. Existing checked
+Source cf99 versions, sources and statement ordering are reused unchanged;
+full caller-entry/returned aliases, value-copy ownership, Array owner state,
+whole admission and canonical wire remain open.

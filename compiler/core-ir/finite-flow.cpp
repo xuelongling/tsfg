@@ -77,6 +77,8 @@ struct Flow {
     if (auto call=llvm::dyn_cast<mlir::func::CallOp>(op)) {
       const auto target=attr(op,"tsfg_core.function_id");
       if (!arguments(op,target,0,0)) return false;
+      if(string(*proof.callable.at(target),"role")!="function")
+        return proof.reject("ordinary func.call cannot manufacture a constructor frame");
       calls[op].insert(target); return true;
     }
     if (name=="tsfg_core.domain.construct" || name=="tsfg_core.domain.super")
@@ -134,8 +136,11 @@ struct Flow {
         if (!effects.at(caller).writes) { effects.at(caller).writes=true; work.push_back(caller); }
       }
     }
-    for (const auto &[op,targets]:calls) for (const auto &target:targets) {
-      if (!proof.charge()) return false; if (effects.at(target).writes) proof.fieldEffects[op]=true;
+    for (const auto &[op,targets]:calls) {
+      if(!targets.empty())proof.selectedCallees.emplace(op,targets);
+      for (const auto &target:targets) {
+        if (!proof.charge()) return false; if (effects.at(target).writes) proof.fieldEffects[op]=true;
+      }
     }
     const auto *memory=proof.plan.getAsObject()->getObject("fieldReaching");
     const auto *rows=memory?memory->getArray("effects"):nullptr;

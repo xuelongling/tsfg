@@ -86,6 +86,45 @@ bool invalidAndImmutableGraphs() {
   CHECK(!other.seed(b,"undefined"));CHECK(other.evidence(b)==nullptr);
   return true;
 }
+bool memoryCallAndInputContinuation() {
+  size_t budget=100000;PayloadFlow graph(budget,PayloadFlow::AtomDomain::MemoryVersion);
+  const auto before=graph.node(),captured=graph.node(),clear=graph.node(),maybe=graph.node(),
+    afterClear=graph.node(),afterMaybe=graph.node();
+  CHECK(graph.seed(before,"write/i32"));CHECK(graph.seed(clear,"write/undefined"));
+  CHECK(graph.seed(maybe,"input"));CHECK(graph.seed(maybe,"write/undefined"));
+  CHECK(graph.connect({before,captured}));
+  CHECK(graph.connect({clear,afterClear,PayloadFlow::none,{},"input",false}));
+  CHECK(graph.connect({before,afterClear,clear,"input"}));
+  CHECK(graph.connect({maybe,afterMaybe,PayloadFlow::none,{},"input",false}));
+  CHECK(graph.connect({before,afterMaybe,maybe,"input"}));CHECK(graph.solve());
+  CHECK(graph.exact(captured,{"write/i32"})==PayloadFlow::Fit::Proven);
+  CHECK(graph.exact(afterClear,{"write/undefined"})==PayloadFlow::Fit::Proven);
+  CHECK(graph.exact(afterMaybe,{"write/i32","write/undefined"})==PayloadFlow::Fit::Proven);
+  CHECK(graph.exact(afterClear,{"write/i32"})==PayloadFlow::Fit::Mismatch);
+  return true;
+}
+bool recursiveMemoryAndUnknownAlias() {
+  size_t budget=100000;PayloadFlow graph(budget,PayloadFlow::AtomDomain::MemoryVersion);
+  const auto entry=graph.node(),summary=graph.node(),baseWrite=graph.node(),recursiveCall=graph.node(),
+    old=graph.node(),after=graph.node(),unknownAlias=graph.node(),unknownAfter=graph.node();
+  CHECK(graph.seed(entry,"input"));CHECK(graph.seed(baseWrite,"write/undefined"));CHECK(graph.seed(old,"write/i32"));
+  CHECK(graph.connect({baseWrite,summary}));CHECK(graph.connect({recursiveCall,summary}));
+  CHECK(graph.connect({summary,recursiveCall,PayloadFlow::none,{},"input",false}));
+  CHECK(graph.connect({entry,recursiveCall,summary,"input"}));
+  CHECK(graph.connect({summary,after,PayloadFlow::none,{},"input",false}));
+  CHECK(graph.connect({old,after,summary,"input"}));
+  CHECK(graph.unknown(unknownAlias));CHECK(graph.connect({unknownAlias,unknownAfter}));CHECK(graph.solve());
+  CHECK(graph.exact(summary,{"write/undefined"})==PayloadFlow::Fit::Proven);
+  CHECK(graph.exact(after,{"write/undefined"})==PayloadFlow::Fit::Proven);
+  CHECK(graph.exact(unknownAfter,{"write/i32"})==PayloadFlow::Fit::Pending);
+  return true;
+}
+bool memoryVersionsAreNotPayloadVariants() {
+  size_t budget=100000;PayloadFlow graph(budget,PayloadFlow::AtomDomain::MemoryVersion);const auto join=graph.node();
+  for(unsigned i=0;i<257;++i)CHECK(graph.seed(join,"write/"+std::to_string(i)));
+  CHECK(graph.solve());CHECK(graph.evidence(join)->alternatives.size()==257);
+  return true;
+}
 int main() {
   const struct {const char *name;bool (*run)();} tests[]={
     {"pure views preserve payload through recursive phi equations",viewsAndRecursivePhi},
@@ -94,8 +133,12 @@ int main() {
     {"authorized presence filtering differs from pure static view",genuinePresenceFilter},
     {"low work budget exposes no partial fixed-point evidence",partialWorkDoesNotPublish},
     {"256 variants accepted and 257 rejected transactionally",finiteVariantLimit},
-    {"invalid gates and mutation after solve cannot publish proof",invalidAndImmutableGraphs}};
-  unsigned failures=0;std::puts("TAP version 13");std::puts("1..7");
-  for(unsigned i=0;i<7;++i){const bool passed=tests[i].run();failures+=!passed;std::printf("%s %u - %s\n",passed?"ok":"not ok",i+1,tests[i].name);}
-  std::printf("# tests 7\n# pass %u\n# fail %u\n",7-failures,failures);return failures?1:0;
+    {"invalid gates and mutation after solve cannot publish proof",invalidAndImmutableGraphs},
+    {"callee overwrite replaces memory while input paths continue the caller",memoryCallAndInputContinuation},
+    {"recursive memory summaries converge and unknown aliases stay pending",recursiveMemoryAndUnknownAlias},
+    {"memory version joins do not inherit the payload256 variant limit",memoryVersionsAreNotPayloadVariants}};
+  constexpr unsigned count=sizeof(tests)/sizeof(tests[0]);
+  unsigned failures=0;std::puts("TAP version 13");std::printf("1..%u\n",count);
+  for(unsigned i=0;i<count;++i){const bool passed=tests[i].run();failures+=!passed;std::printf("%s %u - %s\n",passed?"ok":"not ok",i+1,tests[i].name);}
+  std::printf("# tests %u\n# pass %u\n# fail %u\n",count,count-failures,failures);return failures?1:0;
 }

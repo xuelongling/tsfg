@@ -16,13 +16,15 @@ class PayloadFlow {
 public:
   using Id=size_t;
   static constexpr Id none=SIZE_MAX;
+  enum class AtomDomain { Payload, MemoryVersion };
   enum class Fit { Proven, Pending, Mismatch };
   struct Edge {
     Id from,to,gate=none;
     std::string selected,filter;
     bool equal=true,pendingOnly=false;
   };
-  explicit PayloadFlow(size_t &budget):remaining(budget){}
+  explicit PayloadFlow(size_t &budget,AtomDomain domain=AtomDomain::Payload)
+      :remaining(budget),alternativeLimit(domain==AtomDomain::Payload?256:100000){}
   Id node();
   bool seed(Id id,const std::string &type);
   bool unknown(Id id);
@@ -36,6 +38,7 @@ private:
   enum class State { Building, Solving, Solved, Failed } state=State::Building;
   struct Node { PayloadEvidence value; std::vector<Id> edges; bool queued=false; };
   size_t &remaining;
+  size_t alternativeLimit;
   std::vector<Node> nodes;
   std::vector<Edge> edges;
   std::vector<Id> work;

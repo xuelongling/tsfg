@@ -1,6 +1,6 @@
 {
   "family": "tsfg.core-finite-domains-development",
-  "version": 13,
+  "version": 14,
   "status": "development contract; ordinary Core integration, not admitted bytecode or executable private profile",
   "hir": "0.15.0",
   "identity": {
@@ -190,6 +190,16 @@
         "fixedPoint": "The single production std-only PayloadFlow engine owns nodes/edges and solves a bounded monotone work queue; the IR adapter validates authority and normalizes once. Source/gate changes revisit the same edge, including loops and recursive calls. Retain at most256 concrete alternatives per node and charge node/edge/propagation work against the existing100000 budget before publishing a successful solution. Failed or budget-exhausted engines expose no evidence. All state belongs to transaction-local ModuleProof; failure discards it.",
         "checks": "Every inferred payload must fit its real SSA carrier. For closed nonempty parameter/return equations, ordered ABI alternatives equal the independently computed least solution. A pending equation or unproductive recursive return remains unprovedActualBounds; no bottom observation changes the fixed published signature. Synthesized representation widening may retain a larger intermediate carrier but cannot create new actual alternatives.",
         "result": "Actual SSA and return evidence is consumed by ModuleContracts and retained only for downstream whole-flow proof. The same std-only engine has native graph component positive/negative tests without LLVM or Source execution; IR normalization retains object-only qualification. This slice does not discharge all field/owner aliases, occurrence authority, productive completion, callbacks or value-copy ownership, and never activates verifyCoreModule admission by library success alone."
+      },
+      "firstWriteCalls": {
+        "consumer": "C++ memory consumer normalizes real SSA/CFG and verified selected callees into the same production std-only PayloadFlow used for actual payloads; the former local-only reaching algorithm is removed.",
+        "query": "One actual reference-cell FieldId plus definite receiver identity. Only verified view/refine operations strip to the same SSA identity. Distinct host parameters or unknown aliases are never noalias evidence. Inline-value parameter copy paths remain pending until value ownership is independently proved.",
+        "control": "A strong actual-field write seeds its real VersionId and stops previous versions. CFG predecessors join. Ordinary entry is an internal input-state token. A fresh constructor receiver starts with the exact existing not-defined version; ordinary func.call cannot target construction-body. Construct/super retain the verified actual receiver/direct-base constraints.",
+        "call": "Real ordered operands map only to actual selected-callee parameters. A callee summary contributes non-input first-write versions. Only a successful input-preserving path admits the caller predecessor. Unknown alias writes propagate pending. Method arms can select the known queried actual receiver; otherwise all validated arms remain possible. Body callables are never replaced by producer callOutputs or purity metadata.",
+        "recursion": "Context keys bind function plus definite SSA parameter aliases, actual type and field. Normalize contexts iteratively; recursive calls reference existing summary nodes. The same bounded worklist solves version equations. An empty/unproductive or unresolved input result remains pending, not a fabricated write.",
+        "atomDomain": "Concrete payloads retain256 variants. MemoryVersion atoms are independently bounded by the existing100000 work budget, not by payload representation count; no extra depth or256-writes language gate is added. Failed engines expose no partial evidence.",
+        "consumed": "Only complete independently selected versions may validate the producer field_reaching claims. Sources must bind actual successful SSA writes/phase states. Those real inputs and valid undefined then feed actual-payload equations. Still-pending reads cannot authorize unified admission.",
+        "qualification": "Native std-only equation tests execute the same engine; current IR normalization is object-only, not full C++ Core semantic or Source/VM execution. Full entry/returned-alias/value/Array ownership/whole admission/print/wire obligations remain open."
       }
     },
     "definitionAuthority": {

@@ -1,5 +1,5 @@
 // SPDX-License-Identifier: MIT
-#include "finite-module.h"
+#include "finite-memory-flow.h"
 #include <algorithm>
 
 namespace tsfg::finite {
@@ -8,12 +8,7 @@ std::string attr(mlir::Operation *op, llvm::StringRef key) {
   const auto value=op->getAttrOfType<mlir::StringAttr>(key);
   return value?value.getValue().str():std::string();
 }
-struct Version {
-  enum class State { NotDefined, DefinedUndefined, Initialized };
-  mlir::Operation *write; mlir::Value receiver, value;
-  std::string id, actual, field, source;
-  State state=State::Initialized;
-};
+using Version=MemoryVersion;
 struct Memory {
   ModuleProof &proof;
   bool valid=true;
@@ -112,39 +107,6 @@ struct Memory {
     }
     return true;
   }
-  enum class Reaching { Proven, Pending, Invalid };
-  Reaching reaches(mlir::Operation *read, const std::string &actual, const std::string &field,
-                   const std::set<std::string> &claimed) {
-    // A local proof scans all predecessor paths, stopping at the first real
-    // successful write to this location. It does not follow Source order labels
-    // or let a later write retroactively change an already-produced SSA value.
-    using Cursor=std::pair<mlir::Block *,mlir::Operation *>;
-    std::vector<Cursor> work{{read->getBlock(),read->getPrevNode()}};std::set<Cursor> seen;std::set<std::string> selected;
-    while (!work.empty()) {
-      if (!proof.charge()) return Reaching::Invalid;
-      auto [block,cursor]=work.back();work.pop_back();if(!seen.insert({block,cursor}).second)continue;
-      bool found=false;
-      for (auto *op=cursor;op;op=op->getPrevNode()) {
-        if (!proof.charge()) return Reaching::Invalid;
-        const auto bound=writes.find(op);
-        if (bound!=writes.end()) for (const auto &version:bound->second) {
-          if (!proof.charge()) return Reaching::Invalid;
-          if (version.actual!=actual || version.field!=field) continue;
-          if (!same(version.receiver,read->getOperand(0))) return Reaching::Pending;
-          if (!claimed.count(version.id)) return Reaching::Invalid;
-          selected.insert(version.id);found=true;break;
-        }
-        if (found) break;
-        // A field-writing call requires the interprocedural continuation/alias
-        // proof. An unchecked producer purity bit can never authorize crossing.
-        if (proof.fieldEffects.count(op) && proof.fieldEffects.at(op)) return Reaching::Pending;
-      }
-      if (found) continue;
-      if (block->hasNoPredecessors()) return Reaching::Pending; // Entry/callee context is not a local SSA write.
-      for (auto *predecessor:block->getPredecessors()) { if (!proof.charge()) return Reaching::Invalid;work.push_back({predecessor,predecessor->getTerminator()}); }
-    }
-    return selected==claimed?Reaching::Proven:Reaching::Invalid;
-  }
   bool read(mlir::Operation *op) {
     if (!op->hasAttr("field_reaching")) { proof.unprovedMemoryReads.insert(op); return true; }
     Json evidence=nullptr,dispatch=nullptr;
@@ -168,7 +130,7 @@ struct Memory {
       previousActual=actual;
       // Inline value copies need their own memory SSA ownership proof; sharing
       // one SSA spelling is not authority to mutate a copied value's fields.
-      bool local=proof.catalog.count(actual) && string(*proof.catalog.at(actual),"kind")=="reference";
+      const bool referenceCell=proof.catalog.count(actual) && string(*proof.catalog.at(actual),"kind")=="reference";
       bool undefined=false;std::string previous;
       for (const auto &id:*ids) {
         const auto version=id.getAsString();if(!proof.charge() || !version || (!previous.empty() && *version<=previous))return proof.reject("memory predecessor identity order");
@@ -176,7 +138,6 @@ struct Memory {
         if (found==versions.end()) return proof.reject("memory predecessor has no real SSA write or owned fresh-frame precondition");
         for (const auto &write:found->second) {
           if (!proof.charge() || write.field!=field) return proof.reject("memory version selects another physical field");
-          local &= write.write && write.write->getParentOfType<mlir::func::FuncOp>()==op->getParentOfType<mlir::func::FuncOp>() && same(write.receiver,op->getOperand(0));
           if (!write.source.empty()) expectedSources.insert(write.source);undefined |= write.state!=Version::State::Initialized;
           if (write.value) {
             inputValues.push_back(write.value);
@@ -193,12 +154,14 @@ struct Memory {
       if (undefined && (std::find(result->alternatives.begin(),result->alternatives.end(),undefinedType)==result->alternatives.end() ||
           !intrinsics || intrinsics->size()!=1 || (*intrinsics)[0].getAsString()!=llvm::StringRef("undefined")))
         return proof.reject("native empty definition cannot become uninitialized storage or a native zero payload");
-      if (!local) {complete=false;continue;}
       llvm::json::Array expected;for(const auto &source:expectedSources)expected.emplace_back(source);
       std::string a,b;if(!canonical(std::move(expected),a)||!canonical(llvm::json::Array(*sources),b)||a!=b)return proof.reject("memory source nodes are detached from their SSA writes");
-      const auto status=reaches(op,actual,field,claimed);
-      if(status==Reaching::Invalid)return proof.reject("claimed local field version is stale or not selected on every predecessor");
-      complete &= status==Reaching::Proven;
+      if(!referenceCell){complete=false;continue;}
+      const auto selected=proveMemoryFirstWrites(proof,op,actual,field,writes);
+      if(selected.status==MemorySelection::Status::Invalid)return false;
+      if(selected.status==MemorySelection::Status::Proven&&selected.versions!=claimed)
+        return proof.reject("claimed field version is stale or not first on every successful CFG/callee path");
+      complete &= selected.status==MemorySelection::Status::Proven;
     }
     if (!complete || seenTargets!=expectedTargets) proof.unprovedMemoryReads.insert(op);
     else {

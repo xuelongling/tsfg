@@ -41,6 +41,7 @@ struct ModuleProof {
   // an unverified purity claim from the producer's diagnostic ledger.
   std::map<std::string, bool> functionFieldEffects;
   std::map<mlir::Operation *, bool> fieldEffects;
+  std::map<mlir::Operation *,std::set<std::string>> selectedCallees;
   // Necessary local memory evidence is separate from full interprocedural
   // eligibility. Whole admission must discharge every remaining read.
   std::set<mlir::Operation *> unprovedMemoryReads;

@@ -26,7 +26,7 @@ void PayloadFlow::changed(Id id) {
 bool PayloadFlow::insert(Id id,const std::string &type) {
   if(!spend()||id>=nodes.size()||type.empty())return reject("invalid actual payload seed");
   if(nodes[id].value.alternatives.insert(type).second) {
-    if(nodes[id].value.alternatives.size()>256)return reject("actual payload variant limit");
+    if(nodes[id].value.alternatives.size()>alternativeLimit)return reject("actual payload variant limit");
     changed(id);
   }
   return true;
