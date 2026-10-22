@@ -108,7 +108,8 @@ struct Memory {
     return true;
   }
   bool read(mlir::Operation *op) {
-    if (!op->hasAttr("field_reaching")) { proof.unprovedMemoryReads.insert(op); return true; }
+    const bool reachable=proof.mayReach(op->getBlock());
+    if (!op->hasAttr("field_reaching")) { if(reachable)proof.unprovedMemoryReads.insert(op); return true; }
     Json evidence=nullptr,dispatch=nullptr;
     if(!document(op,"field_reaching",evidence)||!document(op,"field_dispatch",dispatch))return false;
     const auto *root=evidence.getAsObject();const auto *rows=root?root->getArray("reaching"):nullptr;
@@ -156,6 +157,9 @@ struct Memory {
         return proof.reject("native empty definition cannot become uninitialized storage or a native zero payload");
       llvm::json::Array expected;for(const auto &source:expectedSources)expected.emplace_back(source);
       std::string a,b;if(!canonical(std::move(expected),a)||!canonical(llvm::json::Array(*sources),b)||a!=b)return proof.reject("memory source nodes are detached from their SSA writes");
+      // Dead paths still validate every supplied identity and source document.
+      // Only the path-dependent first-write proof is conditional.
+      if(!reachable)continue;
       if(!referenceCell){complete=false;continue;}
       const auto selected=proveMemoryFirstWrites(proof,op,actual,field,writes);
       if(selected.status==MemorySelection::Status::Invalid)return false;
@@ -163,6 +167,7 @@ struct Memory {
         return proof.reject("claimed field version is stale or not first on every successful CFG/callee path");
       complete &= selected.status==MemorySelection::Status::Proven;
     }
+    if(!reachable)return valid;
     if (!complete || seenTargets!=expectedTargets) proof.unprovedMemoryReads.insert(op);
     else {
       proof.fieldReadInputs.emplace(op,std::move(inputValues));

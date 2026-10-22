@@ -3,6 +3,7 @@
 // Reconstruct the monotone IR flow before deciding which ABI slots are closed.
 #include "finite-module.h"
 #include "finite-array-flow.h"
+#include "finite-control-paths.h"
 #include "dialect.h"
 #include "mlir/Dialect/ControlFlow/IR/ControlFlowOps.h"
 #include <algorithm>
@@ -18,11 +19,12 @@ struct ActualFlow {
   static constexpr size_t noGate=PayloadFlow::none;
   PayloadFlow flow;
   ArrayFlow::Role role;
+  bool controlOnly;
   llvm::DenseMap<mlir::Value,size_t> values;
   std::map<std::string,size_t> returns;
   std::map<std::string,std::string> constructions;
   bool valid=true;
-  ActualFlow(ModuleProof &value,ArrayFlow::Role mode):proof(value),flow(value.remaining),role(mode){}
+  ActualFlow(ModuleProof &value,ArrayFlow::Role mode,bool control=false):proof(value),flow(value.remaining),role(mode),controlOnly(control){}
 
   size_t node() { const auto id=flow.node();valid&=id!=PayloadFlow::none;return id; }
   size_t value(mlir::Value item) {
@@ -80,12 +82,15 @@ struct ActualFlow {
     for(const auto result:op->getResults())value(result);
     if(!valid)return proof.reject(flow.error());
     if(auto branch=llvm::dyn_cast<mlir::cf::BranchOp>(op)) {
+      if(!controlOnly&&role==ArrayFlow::Role::OrderedPayload&&!proof.mayTraverse(op,0))return true;
       for(size_t i=0;i<branch.getDestOperands().size();++i)if(!copy(branch.getDestOperands()[i],branch.getDest()->getArgument(i)))return false;
       return true;
     }
     if(auto branch=llvm::dyn_cast<mlir::cf::CondBranchOp>(op)) {
-      for(size_t i=0;i<branch.getTrueDestOperands().size();++i)if(!copy(branch.getTrueDestOperands()[i],branch.getTrueDest()->getArgument(i)))return false;
-      for(size_t i=0;i<branch.getFalseDestOperands().size();++i)if(!copy(branch.getFalseDestOperands()[i],branch.getFalseDest()->getArgument(i)))return false;
+      if(controlOnly||role==ArrayFlow::Role::CarrierMaximum||proof.mayTraverse(op,0))
+        for(size_t i=0;i<branch.getTrueDestOperands().size();++i)if(!copy(branch.getTrueDestOperands()[i],branch.getTrueDest()->getArgument(i)))return false;
+      if(controlOnly||role==ArrayFlow::Role::CarrierMaximum||proof.mayTraverse(op,1))
+        for(size_t i=0;i<branch.getFalseDestOperands().size();++i)if(!copy(branch.getFalseDestOperands()[i],branch.getFalseDest()->getArgument(i)))return false;
       return true;
     }
     if(auto returned=llvm::dyn_cast<mlir::func::ReturnOp>(op)) {
@@ -118,12 +123,13 @@ struct ActualFlow {
     }
     if(name=="tsfg_core.domain.field_read") {
       const auto result=value(op->getResult(0));
+      if(controlOnly)return pending(result);
       if(proof.unprovedMemoryReads.count(op)||!proof.fieldReadInputs.count(op))return pending(result);
       for(const auto input:proof.fieldReadInputs.at(op))if(!edge(value(input),result))return false;
       if(proof.fieldReadUndefined.count(op)&&!insert(result,hash(std::string("tsfg.type\0undefined",19))))return false;
       return true;
     }
-    if(name=="tsfg_core.domain.array_read")return true; // Coupled owner/element equations below.
+    if(name=="tsfg_core.domain.array_read")return !controlOnly||pending(value(op->getResult(0))); // Coupled owner/element equations below.
     if(name=="tsfg_core.domain.literal"||name=="tsfg_core.domain.array_create"||name=="tsfg_core.domain.read_span")
       return insert(value(op->getResult(0)),attr(op,"view_type"));
     if(primitive(op))for(const auto result:op->getResults()) {
@@ -170,6 +176,44 @@ struct ActualFlow {
     }
     return true;
   }
+  bool controlPaths() {
+    ControlPaths paths(proof.remaining);
+    std::map<mlir::Block *,size_t> blocks;
+    std::map<std::pair<mlir::Operation *,unsigned>,size_t> edges;
+    for(auto &[id,fn]:proof.functions)for(auto &block:fn.getBody()) {
+      if(!proof.charge())return false;const auto key=paths.block();
+      if(key==PayloadFlow::none)return proof.reject(paths.error());blocks.emplace(&block,key);
+      if(&block==&fn.getBody().front()&&!paths.entry(key))return proof.reject(paths.error());
+    }
+    for(auto &[id,fn]:proof.functions)for(auto &block:fn.getBody()) {
+      if(!proof.charge())return false;auto *terminator=block.getTerminator();ControlPaths::Predicate predicate;
+      if(auto branch=llvm::dyn_cast<mlir::cf::CondBranchOp>(terminator)) {
+        auto *condition=branch.getCondition().getDefiningOp();
+        if(condition&&condition->getName().getStringRef()=="tsfg_core.constant"&&typeCode(branch.getCondition().getType())==2) {
+          uint64_t bits=0;if(!constantBits(condition,bits))return proof.reject("conditional Boolean literal authority");
+          predicate.literal=bits!=0;
+        }else if(condition&&condition->getName().getStringRef()=="tsfg_core.domain.presence_equal") {
+          for(unsigned i=0;i<2;++i) {
+            if(!proof.charge())return false;auto *literal=condition->getOperand(i).getDefiningOp();
+            if(!literal||literal->getName().getStringRef()!="tsfg_core.domain.literal")continue;
+            predicate.tested=attr(literal,"view_type");predicate.equal=attr(condition,"operator")=="===";
+            predicate.input=flow.evidence(value(condition->getOperand(1-i)));
+            if(!predicate.input)return proof.reject("conditional predicate has no solved IR origin");break;
+          }
+        }
+      }
+      for(unsigned i=0;i<terminator->getNumSuccessors();++i) {
+        if(!proof.charge())return false;
+        const auto edge=paths.edge(blocks.at(&block),blocks.at(terminator->getSuccessor(i)),predicate,i==0);
+        if(edge==PayloadFlow::none)return proof.reject(paths.error());edges.emplace(std::make_pair(terminator,i),edge);
+      }
+    }
+    if(!paths.solve())return proof.reject(paths.error());
+    std::set<mlir::Block *> possible;std::set<std::pair<mlir::Operation *,unsigned>> selected;
+    for(const auto &[block,id]:blocks){if(!proof.charge())return false;if(paths.reaches(id))possible.insert(block);}
+    for(const auto &[edge,id]:edges){if(!proof.charge())return false;if(paths.traverses(id))selected.insert(edge);}
+    proof.possibleBlocks=std::move(possible);proof.possibleEdges=std::move(selected);proof.controlReady=true;return true;
+  }
   bool run() {
     for(auto &[id,fn]:proof.functions) {
       const auto &contract=*proof.callable.at(id);
@@ -180,7 +224,11 @@ struct ActualFlow {
     if(!valid)return false;
     for(const auto &[argument,types]:proof.definitionParameters)for(const auto &type:types)if(!insert(value(argument),type))return false;
     for(auto &[id,fn]:proof.functions)for(auto &block:fn.getBody())for(auto &op:block)
-      if(!proof.charge()||!operation(&op,id))return false;
+      if(!proof.charge()||((controlOnly||role==ArrayFlow::Role::CarrierMaximum||proof.mayReach(&block))&&!operation(&op,id)))return false;
+    // A conservative control prepass uses the very same real-IR payload
+    // normalizer. Memory inputs remain unknown; no producer ledger/capacity
+    // alternative or unverified read claim can prune a path here.
+    if(controlOnly)return flow.solve()?controlPaths():proof.reject(flow.error());
     ArrayFlow arrays(proof,flow,[this](mlir::Value item){return value(item);},role);
     if(!arrays.build())return proof.reject(flow.error().empty()?"actual Array owner normalization":flow.error());
     if(!valid||!flow.solve())return proof.reject(flow.error());
@@ -194,5 +242,8 @@ bool verifyActualFlow(ModuleProof &proof) {
   // ABI evidence is never copied into the ordered actual-value seed ledger.
   return ActualFlow{proof,ArrayFlow::Role::CarrierMaximum}.run()&&
     ActualFlow{proof,ArrayFlow::Role::OrderedPayload}.run();
+}
+bool verifyControlPaths(ModuleProof &proof) {
+  return ActualFlow{proof,ArrayFlow::Role::OrderedPayload,true}.run();
 }
 } // namespace tsfg::finite

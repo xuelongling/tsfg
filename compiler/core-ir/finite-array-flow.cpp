@@ -144,14 +144,16 @@ bool ArrayFlow::call(mlir::Operation *op,const std::string &target,size_t offset
 }
 bool ArrayFlow::operation(mlir::Operation *op,const std::string &function) {
   if(auto branch=llvm::dyn_cast<mlir::cf::BranchOp>(op)) {
+    if(role==Role::OrderedPayload&&!proof.mayTraverse(op,0))return true;
     for(size_t i=0;i<branch.getDestOperands().size();++i)
       if(!proof.charge()||!copy(branch.getDestOperands()[i],branch.getDest()->getArgument(i)))return false;
     return true;
   }
   if(auto branch=llvm::dyn_cast<mlir::cf::CondBranchOp>(op)) {
+    if(role==Role::CarrierMaximum||proof.mayTraverse(op,0))
     for(size_t i=0;i<branch.getTrueDestOperands().size();++i)
       if(!proof.charge()||!copy(branch.getTrueDestOperands()[i],branch.getTrueDest()->getArgument(i)))return false;
-    for(size_t i=0;i<branch.getFalseDestOperands().size();++i)
+    if(role==Role::CarrierMaximum||proof.mayTraverse(op,1))for(size_t i=0;i<branch.getFalseDestOperands().size();++i)
       if(!proof.charge()||!copy(branch.getFalseDestOperands()[i],branch.getFalseDest()->getArgument(i)))return false;
     return true;
   }
@@ -217,7 +219,7 @@ bool ArrayFlow::operation(mlir::Operation *op,const std::string &function) {
 bool ArrayFlow::build() {
   if(!collect()||!entrySeeds())return false;
   for(auto &[id,fn]:proof.functions)for(auto &block:fn.getBody())for(auto &op:block)
-    if(!proof.charge()||!operation(&op,id))return false;
+    if(!proof.charge()||((role==Role::CarrierMaximum||proof.mayReach(&block))&&!operation(&op,id)))return false;
   return valid;
 }
 bool ArrayFlow::finish() {

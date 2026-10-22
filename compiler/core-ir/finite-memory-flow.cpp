@@ -159,10 +159,12 @@ struct FirstWrites {
     }
     if(!valid||!entry(current)||!edge(current.entry,current.blocks.at(&fn.getBody().front())))return false;
     for(auto &block:fn.getBody())for(auto &op:block) {
-      if(!proof.charge()||!operation(&op,current,current.before.at(&op),current.after.at(&op)))return false;
+      if(!proof.charge())return false;
+      if(!proof.mayReach(&block))continue;
+      if(!operation(&op,current,current.before.at(&op),current.after.at(&op)))return false;
       if(llvm::isa<mlir::func::ReturnOp>(&op)&&!edge(current.before.at(&op),current.returned))return false;
-      for(auto *successor:op.getSuccessors())
-        if(!proof.charge()||!edge(current.after.at(&op),current.blocks.at(successor)))return false;
+      for(unsigned i=0;i<op.getNumSuccessors();++i)
+        if(!proof.charge()||(proof.mayTraverse(&op,i)&&!edge(current.after.at(&op),current.blocks.at(op.getSuccessor(i)))))return false;
     }
     contexts[id]=std::move(current);return true;
   }

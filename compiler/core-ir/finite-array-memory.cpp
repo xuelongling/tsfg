@@ -164,7 +164,11 @@ struct ArrayMemory {
       if(!previous) {
         auto *block=task.before->getBlock();bool predecessor=false;
         for(auto *parent:block->getPredecessors()) {
-          if(!charge())return {};predecessor=true;auto *term=parent->getTerminator();
+          if(!charge())return {};auto *term=parent->getTerminator();
+          bool possible=false;for(unsigned i=0;i<term->getNumSuccessors();++i) {
+            if(!charge())return {};possible|=term->getSuccessor(i)==block&&proof.mayTraverse(term,i);
+          }
+          if(!possible)continue;predecessor=true;
           auto connect=[&](mlir::ValueRange inputs) {
             auto remap=[&](mlir::Value value){if(auto argument=llvm::dyn_cast<mlir::BlockArgument>(value);argument&&argument.getOwner()==block)return inputs[argument.getArgNumber()];return value;};
             auto next=task.index;if(!next.constant)next=index(remap(next.value));
@@ -172,8 +176,8 @@ struct ArrayMemory {
           };
           if(auto branch=llvm::dyn_cast<mlir::cf::BranchOp>(term)) {if(!connect(branch.getDestOperands()))return {};}
           else if(auto branch=llvm::dyn_cast<mlir::cf::CondBranchOp>(term)) {
-            if(branch.getTrueDest()==block&&!connect(branch.getTrueDestOperands()))return {};
-            if(branch.getFalseDest()==block&&!connect(branch.getFalseDestOperands()))return {};
+            if(branch.getTrueDest()==block&&proof.mayTraverse(term,0)&&!connect(branch.getTrueDestOperands()))return {};
+            if(branch.getFalseDest()==block&&proof.mayTraverse(term,1)&&!connect(branch.getFalseDestOperands()))return {};
           }else if(!unknown(task.node))return {};
         }
         if(!predecessor&&!(task.scope?seed(task.node,input):unknown(task.node)))return {};continue;
@@ -234,6 +238,7 @@ struct ArrayMemory {
               summaries.emplace(key,std::make_pair(scope,summary));
               for(auto &block:fn.getBody()) {
                 if(!charge())return {};
+                if(!proof.mayReach(&block))continue;
                 if(auto returned=llvm::dyn_cast<mlir::func::ReturnOp>(block.getTerminator())) {
                   const auto origin=at(returned,formal,slot,scope);
                   if(!valid||!connect({origin,summary}))return {};
@@ -280,12 +285,15 @@ struct ArrayMemory {
       }
       for(const auto &version:expected){if(!charge())return false;expectedSources.insert(versions.at(version).source);}
       if(claimedSources!=expectedSources)return proof.reject("Array read sources differ from actual version bindings");
+      if(status!="proven"&&((status!="pending"&&status!="missing")||!expected.empty()))
+        return proof.reject("unknown Array read state/claimed versions");
+      if(!proof.mayReach(op.getBlock()))continue;
       const auto selected=query(&op);if(!valid)return false;
       if(status=="proven") {
         if(!selected.proven||selected.versions!=expected)return proof.reject("Array read versions differ from independently preceding IR writes");
         for(const auto &version:selected.versions)proof.arrayReadInputs[&op].push_back(versions.at(version).value);
         if(selected.bounds)proof.provedArrayReads.insert(&op);
-      }else if((status!="pending"&&status!="missing")||!expected.empty())return proof.reject("unknown Array read state/claimed versions");
+      }
     }
     return seen.size()==declaredReads.size()||proof.reject("Array claim has no actual read");
   }

@@ -368,3 +368,23 @@ prove distinct storage. Unresolved aliases/entries and bounds remain pending.
 The unchanged MemoryVersion fixed-point engine supplies the bounded equations;
 object compilation validates this IR adapter's interface, not its semantics.
 Neither the representation maximum nor fixed ABI becomes a read source.
+
+ModuleContracts now derives conservative normal CFG paths before memory
+queries. The existing real-IR payload normalizer supplies presence inputs;
+this prepass treats every Array/field read as unknown and never consumes an
+unchecked reaching claim or owner capacity. Only an actual Boolean constant
+selects a Boolean edge. A bool TypeId, unknown/pending input, empty recursive
+equation or missing value evidence retains both paths. Presence tests compare
+the original operand with its verified null/undefined literal, not truthiness.
+
+The standard-only production ControlPaths graph shares the original proof
+work budget and publishes no partial result on failure. Ordered payload and
+owner phi edges, field first-write queries and Array predecessor/callee-return
+queries all consume the same verified edge occurrence; two edges to one block
+retain their separate operands. CarrierMaximum is unchanged. Memory-dependent
+conditions that this conservative prepass cannot settle stay possible, rather
+than being narrowed from a producer ledger or from the condition's own phi.
+This discharges a necessary control-path obligation only. Parameter-role
+external memory, unresolved aliases/value copies, full actual-bound completion,
+uniform admission, canonical roundtrip and versioned wire still require their
+own complete proofs; object compilation is not semantic IR execution.

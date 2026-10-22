@@ -73,6 +73,13 @@ struct ModuleProof {
   llvm::DenseMap<mlir::Value,PayloadEvidence> actualPayloads;
   std::map<std::string,PayloadEvidence> actualReturns;
   std::set<std::string> unprovedActualBounds;
+  // Conservative independently derived normal paths. Unknown predicates keep
+  // both edges; these sets never allocate an owner or seed an actual payload.
+  bool controlReady=false;
+  std::set<mlir::Block *> possibleBlocks;
+  std::set<std::pair<mlir::Operation *,unsigned>> possibleEdges;
+  bool mayReach(mlir::Block *block)const{return !controlReady||possibleBlocks.count(block);}
+  bool mayTraverse(mlir::Operation *op,unsigned index)const{return !controlReady||possibleEdges.count({op,index});}
   size_t remaining = 100000;
   explicit ModuleProof(mlir::ModuleOp value) : module(value) {}
   bool charge(size_t count = 1);
@@ -94,6 +101,7 @@ bool verifyMemoryContracts(ModuleProof &proof);
 bool verifyDefinitionBounds(ModuleProof &proof);
 bool verifyEntryArrayBounds(ModuleProof &proof);
 bool verifyActualFlow(ModuleProof &proof);
+bool verifyControlPaths(ModuleProof &proof);
 const Domain *valueDomain(ModuleProof &proof, mlir::Type type);
 bool carrier(ModuleProof &proof, llvm::StringRef domain, mlir::Type type);
 // Development module contracts, not yet the command's whole-flow admission
