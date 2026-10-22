@@ -42,6 +42,9 @@ struct ModuleProof {
   std::map<std::string, bool> functionFieldEffects;
   std::map<mlir::Operation *, bool> fieldEffects;
   std::map<mlir::Operation *,std::set<std::string>> selectedCallees;
+  // Every normal return preserves this one formal identity; independently
+  // derived from SSA/CFG/calls, never the producer's diagnostic alias ledger.
+  std::map<std::string,size_t> returnedParameters;
   // Necessary local memory evidence is separate from full interprocedural
   // eligibility. Whole admission must discharge every remaining read.
   std::set<mlir::Operation *> unprovedMemoryReads;
@@ -69,6 +72,7 @@ bool verifyAbi(ModuleProof &proof);
 bool verifyValueContracts(ModuleProof &proof);
 bool verifyMemberContracts(ModuleProof &proof);
 bool verifyFlowContracts(ModuleProof &proof);
+bool verifyReturnedParameters(ModuleProof &proof);
 bool verifyMemoryContracts(ModuleProof &proof);
 bool verifyDefinitionBounds(ModuleProof &proof);
 bool verifyActualFlow(ModuleProof &proof);

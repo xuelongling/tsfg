@@ -37,9 +37,22 @@ struct FirstWrites {
   mlir::Value strip(mlir::Value value) {
     while(auto *op=value.getDefiningOp()) {
       const auto name=op->getName().getStringRef();
-      if(name!="tsfg_core.domain.view"&&name!="tsfg_core.domain.refine")break;
       if(!proof.charge()){valid=false;return {};}
-      value=op->getOperand(0); // Global shape preflight precedes all traversal.
+      if(name=="tsfg_core.domain.view"||name=="tsfg_core.domain.refine") {
+        value=op->getOperand(0);continue; // Global shape preflight precedes traversal.
+      }
+      if(name!="func.call"&&name!="tsfg_core.domain.method_call")break;
+      const auto targets=proof.selectedCallees.find(op);
+      if(targets==proof.selectedCallees.end()||targets->second.empty())break;
+      size_t ordinal=SIZE_MAX;bool proved=true;
+      for(const auto &target:targets->second) {
+        if(!proof.charge()){valid=false;return {};}
+        const auto returned=proof.returnedParameters.find(target);
+        if(returned==proof.returnedParameters.end()||(ordinal!=SIZE_MAX&&ordinal!=returned->second)){proved=false;break;}
+        ordinal=returned->second;
+      }
+      if(!proved||ordinal>=op->getNumOperands())break;
+      value=op->getOperand(ordinal);
     }
     return value;
   }

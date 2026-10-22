@@ -236,3 +236,18 @@ Cpp IR normalization still has object-only qualification. Existing checked
 Source cf99 versions, sources and statement ordering are reused unchanged;
 full caller-entry/returned aliases, value-copy ownership, Array owner state,
 whole admission and canonical wire remain open.
+
+The returned-parameter consumer independently normalizes real SSA returns,
+branch arguments and selected callee operands into identity-origin equations.
+Reference/Array/ReadSpan parameters seed their own ordinal; views preserve that
+identity. Fresh values, reads, inline value copies and unknown results remain
+pending. A call substitutes each actual ordered operand for the corresponding
+formal return origin, including productive recursive summaries. No origin is
+seeded from the producer's `returnAliases` table or a representation carrier.
+
+Only a fully solved, nonpending singleton parameter origin is published. The
+memory query may follow a call result when every selected callee proves the
+same parameter ordinal. Mixed, unproductive and unresolved returns confer no
+must-alias authority. Identity origins use the existing work limit, rather than
+the payload256 bound. This closes that specific receiver-identity seam; unknown
+entry aliasing, inline ownership and complete Array memory remain unproved.

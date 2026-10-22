@@ -16,7 +16,7 @@ class PayloadFlow {
 public:
   using Id=size_t;
   static constexpr Id none=SIZE_MAX;
-  enum class AtomDomain { Payload, MemoryVersion };
+  enum class AtomDomain { Payload, MemoryVersion, IdentityOrigin };
   enum class Fit { Proven, Pending, Mismatch };
   struct Edge {
     Id from,to,gate=none;

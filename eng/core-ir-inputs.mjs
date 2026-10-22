@@ -92,6 +92,7 @@ export const coreIrInputs = Object.freeze([
   "compiler/core-ir/finite-module.h",
   "compiler/core-ir/finite-payload-flow.cpp",
   "compiler/core-ir/finite-payload-flow.h",
+  "compiler/core-ir/finite-return-alias.cpp",
   "compiler/core-ir/finite-values.cpp",
   "compiler/core-ir/kernel-access-metadata.cpp",
   "compiler/core-ir/kernel-access.cpp",

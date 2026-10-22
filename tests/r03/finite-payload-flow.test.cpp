@@ -125,6 +125,33 @@ bool memoryVersionsAreNotPayloadVariants() {
   CHECK(graph.solve());CHECK(graph.evidence(join)->alternatives.size()==257);
   return true;
 }
+bool returnedParameterSubstitution() {
+  size_t budget=100000;PayloadFlow graph(budget,PayloadFlow::AtomDomain::IdentityOrigin);
+  const auto parameter=graph.node(),summary=graph.node(),recur=graph.node(),callerArgument=graph.node(),result=graph.node();
+  CHECK(graph.seed(parameter,"#parameter/1"));CHECK(graph.connect({parameter,summary}));
+  CHECK(graph.connect({recur,summary}));
+  CHECK(graph.connect({parameter,recur,summary,"#parameter/1"}));
+  CHECK(graph.seed(callerArgument,"#parameter/0"));
+  CHECK(graph.connect({callerArgument,result,summary,"#parameter/1"}));CHECK(graph.solve());
+  CHECK(graph.exact(summary,{"#parameter/1"})==PayloadFlow::Fit::Proven);
+  CHECK(graph.exact(result,{"#parameter/0"})==PayloadFlow::Fit::Proven);
+  return true;
+}
+bool mixedAndFreshReturnsCannotProveAlias() {
+  size_t budget=100000;PayloadFlow graph(budget,PayloadFlow::AtomDomain::IdentityOrigin);
+  const auto mixed=graph.node(),fresh=graph.node(),a=graph.node(),b=graph.node(),selected=graph.node(),unknown=graph.node(),empty=graph.node();
+  CHECK(graph.seed(mixed,"#parameter/0"));CHECK(graph.seed(mixed,"#parameter/1"));
+  CHECK(graph.seed(a,"#parameter/3"));CHECK(graph.seed(b,"#parameter/4"));
+  CHECK(graph.connect({a,selected,mixed,"#parameter/0"}));CHECK(graph.connect({b,selected,mixed,"#parameter/1"}));
+  CHECK(graph.seed(fresh,"#parameter/0"));CHECK(graph.unknown(fresh));
+  CHECK(graph.connect({a,unknown,fresh,"#parameter/0"}));
+  CHECK(graph.connect({empty,empty}));CHECK(graph.solve());
+  CHECK(graph.exact(selected,{"#parameter/3"})==PayloadFlow::Fit::Mismatch);
+  CHECK(graph.exact(selected,{"#parameter/3","#parameter/4"})==PayloadFlow::Fit::Proven);
+  CHECK(graph.exact(unknown,{"#parameter/3"})==PayloadFlow::Fit::Pending);
+  CHECK(graph.evidence(empty)->alternatives.empty());
+  return true;
+}
 int main() {
   const struct {const char *name;bool (*run)();} tests[]={
     {"pure views preserve payload through recursive phi equations",viewsAndRecursivePhi},
@@ -136,7 +163,9 @@ int main() {
     {"invalid gates and mutation after solve cannot publish proof",invalidAndImmutableGraphs},
     {"callee overwrite replaces memory while input paths continue the caller",memoryCallAndInputContinuation},
     {"recursive memory summaries converge and unknown aliases stay pending",recursiveMemoryAndUnknownAlias},
-    {"memory version joins do not inherit the payload256 variant limit",memoryVersionsAreNotPayloadVariants}};
+    {"memory version joins do not inherit the payload256 variant limit",memoryVersionsAreNotPayloadVariants},
+    {"productive recursive returns substitute the real ordered caller parameter",returnedParameterSubstitution},
+    {"mixed fresh and unproductive returns cannot prove one parameter alias",mixedAndFreshReturnsCannotProveAlias}};
   constexpr unsigned count=sizeof(tests)/sizeof(tests[0]);
   unsigned failures=0;std::puts("TAP version 13");std::printf("1..%u\n",count);
   for(unsigned i=0;i<count;++i){const bool passed=tests[i].run();failures+=!passed;std::printf("%s %u - %s\n",passed?"ok":"not ok",i+1,tests[i].name);}
