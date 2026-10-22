@@ -27,6 +27,12 @@ struct FirstWrites {
   llvm::DenseMap<mlir::Value,size_t> values;
   std::map<Key,size_t> indexed;
   std::vector<Context> contexts;
+  // Entry equations are separate from the parameterized call summaries above:
+  // a particular caller's writes must not contaminate every call continuation.
+  std::map<size_t,size_t> incoming;
+  std::vector<size_t> entryWork;
+  std::map<std::string,std::vector<mlir::Operation *>> callers;
+  size_t normalized=0;
   bool valid=true;
   explicit FirstWrites(ModuleProof &p,const std::string &a,const std::string &f,
     const std::map<mlir::Operation *,std::vector<MemoryVersion>> &w)
@@ -160,14 +166,77 @@ struct FirstWrites {
     }
     contexts[id]=std::move(current);return true;
   }
+  bool normalizePending() {
+    while(valid&&normalized<contexts.size())if(!normalize(normalized++))return false;
+    return valid;
+  }
+  size_t entryNode(size_t context) {
+    const auto found=incoming.find(context);if(found!=incoming.end())return found->second;
+    const auto result=node();incoming.emplace(context,result);entryWork.push_back(context);return result;
+  }
+  bool continueInput(size_t before,size_t entry,size_t into) {
+    return flow.connect({before,into,PayloadFlow::none,{},input,false})&&
+      flow.connect({entry,into,before,input});
+  }
+  bool incomingEntries() {
+    std::set<std::string> exported;
+    for(const auto &row:*proof.sourceExports.getAsArray()) {
+      if(!proof.charge())return false;exported.insert(string(*row.getAsObject(),"functionId"));
+    }
+    for(const auto &[op,targets]:proof.selectedCallees)for(const auto &target:targets) {
+      if(!proof.charge())return false;callers[target].push_back(op);
+    }
+    for(size_t cursor=0;cursor<entryWork.size();++cursor) {
+      if(!normalizePending()||!proof.charge())return false;
+      const auto id=entryWork[cursor],into=incoming.at(id);const auto current=contexts[id];
+      auto fn=proof.functions.at(current.function);const auto &contract=*proof.callable.at(current.function);
+      // Methods may be called by a published receiver outside these direct
+      // sites. Constructor entry phase remains its separate fresh-frame rule.
+      if(exported.count(current.function)||string(contract,"role")!="function"||
+         !string(contract,"ownerType").empty()||callers[current.function].empty()) {
+        if(!flow.seed(into,input))return false;continue;
+      }
+      std::vector<size_t> parameters;
+      for(size_t i=0;i<fn.getNumArguments();++i) {
+        if(!proof.charge())return false;
+        if(matches(current,fn.getArgument(i))&&!copiesValue(string(*(*contract.getArray("parameters"))[i].getAsObject(),"type")))parameters.push_back(i);
+      }
+      if(!valid)return false;
+      if(parameters.empty()){if(!flow.seed(into,input))return false;continue;}
+      for(auto *op:callers.at(current.function)) {
+        if(!proof.charge())return false;
+        mlir::Value actualArgument;bool definite=op->getName().getStringRef()=="func.call";
+        for(const auto parameter:parameters) {
+          if(!proof.charge())return false;
+          if(parameter>=op->getNumOperands()){definite=false;break;}
+          const auto argument=strip(op->getOperand(parameter));
+          if(!actualArgument)actualArgument=argument;else if(actualArgument!=argument)definite=false;
+        }
+        if(!valid)return false;
+        // Several formal identities do not establish equality of distinct
+        // actual arguments. Such a caller retains the unresolved input path.
+        if(!definite||!actualArgument){if(!flow.seed(into,input))return false;continue;}
+        const auto parent=op->getParentOfType<mlir::func::FuncOp>();
+        const auto caller=context(attr(parent,"tsfg_core.function_id"),{identity(actualArgument)});
+        const auto callerEntry=entryNode(caller);
+        if(!valid||!normalizePending()||!continueInput(contexts[caller].before.at(op),callerEntry,into))return false;
+      }
+    }
+    return true;
+  }
   MemorySelection run(mlir::Operation *read) {
     const auto fn=read->getParentOfType<mlir::func::FuncOp>();const auto id=attr(fn,"tsfg_core.function_id");
     const auto root=context(id,{identity(read->getOperand(0))});
-    for(size_t cursor=0;valid&&cursor<contexts.size();++cursor)if(!normalize(cursor)) {
+    const auto actualEntry=entryNode(root);
+    if(!normalizePending()||!incomingEntries()) {
       proof.reject(flow.error().empty()?"memory call/CFG normalization failed":flow.error());return {MemorySelection::Status::Invalid,{}};
     }
+    const auto selected=node();
+    if(!valid||!continueInput(contexts[root].before.at(read),actualEntry,selected)) {
+      proof.reject(flow.error());return {MemorySelection::Status::Invalid,{}};
+    }
     if(!valid||!flow.solve()) {proof.reject(flow.error());return {MemorySelection::Status::Invalid,{}};}
-    const auto *evidence=flow.evidence(contexts[root].before.at(read));if(!evidence)return {MemorySelection::Status::Invalid,{}};
+    const auto *evidence=flow.evidence(selected);if(!evidence)return {MemorySelection::Status::Invalid,{}};
     MemorySelection result;
     if(evidence->pending||evidence->alternatives.empty()||evidence->alternatives.count(input))return result;
     for(const auto &version:evidence->alternatives) {

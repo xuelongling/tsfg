@@ -251,3 +251,20 @@ same parameter ordinal. Mixed, unproductive and unresolved returns confer no
 must-alias authority. Identity origins use the existing work limit, rather than
 the payload256 bound. This closes that specific receiver-identity seam; unknown
 entry aliasing, inline ownership and complete Array memory remain unproved.
+
+Internal free-function field reads also consume an independent caller-entry
+equation. The reverse index comes from the verified selected call graph; each
+edge binds actual ordered operands to the queried formal identity. The caller's
+state immediately before that call supplies successful versions. Only its
+input-preserving paths continue to the caller's own entry, so recursive caller
+contexts form a bounded iterative fixed point. Source exports, instance methods,
+missing callers and nondefinite parameter mappings retain unresolved input.
+
+Reached entry equations never replace the parameterized callee summaries used
+for normal caller continuation. Otherwise one caller's prior write could leak
+into another caller's memory state. The final read combines local successful
+writes with reached entry only where a real input-preserving path remains.
+Inline-value copies, unresolved owner aliases and full Array memory still need
+their own proofs. Native component checks cover these equation semantics;
+ordinary IR normalization remains object-only until independent Core execution
+is available within the actual dependency restrictions.

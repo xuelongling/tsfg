@@ -152,6 +152,30 @@ bool mixedAndFreshReturnsCannotProveAlias() {
   CHECK(graph.evidence(empty)->alternatives.empty());
   return true;
 }
+bool callerEntryDoesNotPolluteParametricSummary() {
+  size_t budget=100000;PayloadFlow graph(budget,PayloadFlow::AtomDomain::MemoryVersion);
+  const auto callerBefore=graph.node(),callerEntry=graph.node(),calleeEntry=graph.node(),summary=graph.node(),read=graph.node();
+  CHECK(graph.seed(callerBefore,"write/i32"));CHECK(graph.seed(callerEntry,"input"));CHECK(graph.seed(summary,"input"));
+  CHECK(graph.connect({callerBefore,calleeEntry,PayloadFlow::none,{},"input",false}));
+  CHECK(graph.connect({callerEntry,calleeEntry,callerBefore,"input"}));
+  CHECK(graph.connect({summary,read,PayloadFlow::none,{},"input",false}));
+  CHECK(graph.connect({calleeEntry,read,summary,"input"}));CHECK(graph.solve());
+  CHECK(graph.exact(read,{"write/i32"})==PayloadFlow::Fit::Proven);
+  CHECK(graph.exact(summary,{"input"})==PayloadFlow::Fit::Proven);
+  return true;
+}
+bool recursiveCallerEntriesKeepExternalInput() {
+  size_t budget=100000;PayloadFlow graph(budget,PayloadFlow::AtomDomain::MemoryVersion);
+  const auto entryA=graph.node(),entryB=graph.node(),callerA=graph.node(),callerB=graph.node(),overwrite=graph.node();
+  CHECK(graph.seed(entryA,"input"));CHECK(graph.seed(callerA,"write/i32"));CHECK(graph.seed(callerB,"write/undefined"));
+  CHECK(graph.connect({callerA,entryA}));CHECK(graph.connect({callerB,entryB}));
+  CHECK(graph.connect({entryA,entryB}));CHECK(graph.connect({entryB,entryA}));
+  CHECK(graph.seed(overwrite,"write/local"));CHECK(graph.solve());
+  CHECK(graph.exact(entryB,{"input","write/i32","write/undefined"})==PayloadFlow::Fit::Proven);
+  CHECK(graph.exact(entryB,{"write/i32","write/undefined"})==PayloadFlow::Fit::Mismatch);
+  CHECK(graph.exact(overwrite,{"write/local"})==PayloadFlow::Fit::Proven);
+  return true;
+}
 int main() {
   const struct {const char *name;bool (*run)();} tests[]={
     {"pure views preserve payload through recursive phi equations",viewsAndRecursivePhi},
@@ -165,7 +189,9 @@ int main() {
     {"recursive memory summaries converge and unknown aliases stay pending",recursiveMemoryAndUnknownAlias},
     {"memory version joins do not inherit the payload256 variant limit",memoryVersionsAreNotPayloadVariants},
     {"productive recursive returns substitute the real ordered caller parameter",returnedParameterSubstitution},
-    {"mixed fresh and unproductive returns cannot prove one parameter alias",mixedAndFreshReturnsCannotProveAlias}};
+    {"mixed fresh and unproductive returns cannot prove one parameter alias",mixedAndFreshReturnsCannotProveAlias},
+    {"reached caller entry does not contaminate parameterized callee summaries",callerEntryDoesNotPolluteParametricSummary},
+    {"recursive caller joins retain external input while strong writes replace it",recursiveCallerEntriesKeepExternalInput}};
   constexpr unsigned count=sizeof(tests)/sizeof(tests[0]);
   unsigned failures=0;std::puts("TAP version 13");std::printf("1..%u\n",count);
   for(unsigned i=0;i<count;++i){const bool passed=tests[i].run();failures+=!passed;std::printf("%s %u - %s\n",passed?"ok":"not ok",i+1,tests[i].name);}
