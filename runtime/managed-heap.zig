@@ -8,7 +8,6 @@ const arrays = @import("managed-heap-arrays.zig");
 const element = @import("array-element.zig");
 const cells = @import("managed-heap-cells.zig");
 const roots = @import("managed-heap-roots.zig");
-
 // IDs never derive from wrapper addresses. Exhaustion permanently refuses new owners.
 var next_owner = std.atomic.Value(u64).init(1);
 fn reserveOwner() error{IdentityExhausted}!u64 {
@@ -20,7 +19,6 @@ fn reserveOwner() error{IdentityExhausted}!u64 {
     }
     return error.IdentityExhausted;
 }
-
 pub const Error = payloads.Error || @import("typed-layout-registry.zig").Error || @import("typed-reference-views.zig").Error || error{
     InvalidOwner,
     HeapDestroyed,
@@ -42,7 +40,6 @@ pub const Value = struct { identity: u64, type_id: u64, scalar: u64, edge_count:
 const Payload = payloads.Payload;
 const Object = model.Object;
 const State = model.State;
-
 /// Serial, exclusively owned heap. init may be returned/copied before first use.
 /// After first use this wrapper must remain at its address until deinit; copied
 /// wrappers reject all operations before dereferencing owned storage. Runtime is
@@ -61,11 +58,9 @@ pub const ManagedHeap = struct {
     next_identity: u64 = 1,
     next_scope: u64 = 1,
     active_scope: u64 = 0,
-
     pub fn init(allocator: Allocator) ManagedHeap {
         return .{ .allocator = allocator };
     }
-
     fn check(self: *ManagedHeap) Error!void {
         if (self.binding != 0 and self.binding != @intFromPtr(self)) return error.InvalidOwner;
         if (self.closed) return error.HeapDestroyed;
@@ -74,7 +69,6 @@ pub const ManagedHeap = struct {
             self.binding = @intFromPtr(self);
         }
     }
-
     pub fn deinit(self: *ManagedHeap) Error!void {
         try self.check();
         if (self.storage != null) {
@@ -89,7 +83,6 @@ pub const ManagedHeap = struct {
         self.parents.deinit(self.allocator);
         self.closed = true;
     }
-
     pub fn beginScope(self: *ManagedHeap) Error!Scope {
         try self.check();
         if (self.next_scope == std.math.maxInt(u64)) return error.IdentityExhausted;
@@ -102,7 +95,6 @@ pub const ManagedHeap = struct {
         self.active_parent = scope.parent;
         return scope;
     }
-
     pub fn endScope(self: *ManagedHeap, scope: Scope) Error!void {
         try self.check();
         if (scope.owner != self.owner or scope.serial == 0 or scope.serial != self.active_scope or scope.parent != self.active_parent)
@@ -120,17 +112,14 @@ pub const ManagedHeap = struct {
             self.active_parent = 0;
         }
     }
-
     fn scopeFor(self: *ManagedHeap, lifetime: Lifetime) Error!u64 {
         if (lifetime == .persistent) return 0;
         if (self.active_scope == 0) return error.ScopeRequired;
         return self.active_scope;
     }
-
     fn owned(self: *ManagedHeap) *State {
         return @ptrCast(@alignCast(self.storage.?));
     }
-
     fn ensureState(self: *ManagedHeap) Error!*State {
         if (self.storage == null) {
             const state = try self.allocator.create(State);
@@ -139,15 +128,12 @@ pub const ManagedHeap = struct {
         }
         return self.owned();
     }
-
     fn availableRoot(self: *ManagedHeap) Error!usize {
         return roots.available(self.allocator, try self.ensureState());
     }
-
     fn installRoot(self: *ManagedHeap, index: usize, object: *Object, scope: u64) Handle {
         return roots.install(self.owned(), self.owner, index, object, scope);
     }
-
     fn resolve(self: *ManagedHeap, handle: Handle) Error!*Object {
         try self.check();
         if (self.storage == null) return error.InvalidHandle;
@@ -326,6 +312,19 @@ pub const ManagedHeap = struct {
         return self.installRoot(slot, object, scope);
     }
 
+    pub fn createBackedArray(self: *ManagedHeap, module: anytype, id: [32]u8, inputs: []const ArrayInput, lifetime: Lifetime) Error!Handle {
+        comptime { if (@TypeOf(module) != @import("typed-array-backing.zig").Module) @compileError("verified array backing required"); }
+        const contract = try module.array(id);
+        try self.check();
+        try (try self.ensureState()).types.admitArrayBacking(self.allocator, id, contract.element_type, contract.domain.layout);
+        const handle = try self.createTypedArray(contract.domain.layout, inputs, lifetime);
+        const object = try self.resolve(handle);
+        object.payload.array.semantic_type = id; object.payload.array.element_type = contract.element_type;
+        return handle;
+    }
+    pub fn typedArrayIdentity(self: *ManagedHeap, handle: Handle) Error![32]u8 {
+        const object = try self.resolve(handle); if (object.payload != .array) return error.TypeMismatch; return object.payload.array.semantic_type;
+    }
     pub fn typedArrayLength(self: *ManagedHeap, handle: Handle, expected: ArrayLayout) Error!u32 {
         return (try arrays.array(try self.resolve(handle), expected)).length;
     }

@@ -161,7 +161,7 @@ const runtimeSources = [...["root", "bytecode", "bytecode_model", "bytecode_deco
 
 runtimeSources.push(...['array-element','managed-array','managed-handles','managed-heap-model','managed-heap-arrays','managed-heap-collector',
   'managed-cell','managed-heap-cells','managed-heap-roots','typed-layout-input','typed-layout-canonical','typed-layout-registry',
-  'typed-reference-views','managed-reference-view','typed-field-backing']
+  'typed-reference-views','managed-reference-view','typed-field-backing','finite-backing-domain','typed-backing-value','typed-array-backing']
   .map(name => `runtime/${name}.zig`));
 
 /** Actual production copy boundary, also exercised without starting the VM. */

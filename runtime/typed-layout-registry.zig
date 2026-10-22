@@ -25,11 +25,28 @@ pub const Registry = struct {
     // Canonical semantic entries remain unchanged. Each actual class admits one
     // fixed whole-module backing contract, cloned independently of its reader.
     backings: std.ArrayList(cells.Layout) = .empty,
+    array_backings: std.ArrayList(struct { type_id: [32]u8, layout: element.Layout }) = .empty,
     pub fn deinit(self: *Registry, allocator: std.mem.Allocator) void {
         for (self.entries.items) |entry| entry.deinit(allocator);
         self.entries.deinit(allocator);
         for (self.backings.items) |value| value.deinit(allocator);
         self.backings.deinit(allocator);
+        for (self.array_backings.items) |value| value.layout.deinit(allocator);
+        self.array_backings.deinit(allocator);
+    }
+    pub fn admitArrayBacking(self: *Registry, allocator: std.mem.Allocator, id: [32]u8, member: [32]u8, backing: element.Layout) Error!void {
+        const entry = self.entries.items[self.index(id) orelse return error.TypeMismatch];
+        const variant = try entry.layout.selectVariant(0);
+        if (entry.cell != null or variant.references.len != 1 or variant.references[0].type != .array or
+            !std.mem.eql(u8, &variant.references[0].type.array, &member)) return error.TypeMismatch;
+        try backing.validate(); var work: usize = 100000; try measure(backing, &work);
+        for (self.array_backings.items) |prior| if (std.mem.eql(u8, &prior.type_id, &id)) {
+            if (!prior.layout.same(backing)) return error.TypeMismatch;
+            return;
+        };
+        if (self.array_backings.items.len == 4096) return error.LayoutLimit;
+        const owned = try backing.clone(allocator); errdefer owned.deinit(allocator);
+        try self.array_backings.append(allocator, .{ .type_id = id, .layout = owned });
     }
     pub fn admitBacking(self: *Registry, allocator: std.mem.Allocator, declared: cells.Layout, backing: cells.Layout) Error!void {
         const entry = self.entries.items[self.index(declared.type_id) orelse return error.TypeMismatch];

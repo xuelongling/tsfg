@@ -6,6 +6,9 @@ const Allocator = std.mem.Allocator;
 pub const Error = element.Error;
 pub const Array = struct {
     layout: element.Layout,
+    // These are allocation identities; the physical domain layout is separate.
+    semantic_type: [32]u8,
+    element_type: [32]u8,
     bytes: []u8,
     tags: []u16,
     length: u32,
@@ -25,7 +28,8 @@ pub const Array = struct {
             tags[index] = value.tag;
             layout.copyBytes(value.tag, bytes[index * layout.byte_size ..][0..layout.byte_size], value.bytes);
         }
-        return .{ .layout = owned_layout, .bytes = bytes, .tags = tags, .length = @intCast(values.len) };
+        return .{ .layout = owned_layout, .semantic_type = layout.type_id, .element_type = layout.type_id,
+            .bytes = bytes, .tags = tags, .length = @intCast(values.len) };
     }
 
     pub fn byteCount(layout: element.Layout, count: usize) Error!usize {
@@ -48,7 +52,8 @@ pub const Array = struct {
         const tags = try allocator.dupe(u16, self.tags[0..self.length]);
         errdefer allocator.free(tags);
         const bytes = try allocator.dupe(u8, self.bytes[0..try byteCount(layout, self.length)]);
-        return .{ .layout = layout, .tags = tags, .bytes = bytes, .length = self.length };
+        return .{ .layout = layout, .semantic_type = self.semantic_type, .element_type = self.element_type,
+            .tags = tags, .bytes = bytes, .length = self.length };
     }
 
     pub fn check(self: Array, expected: element.Layout) Error!void {
@@ -76,6 +81,7 @@ pub const Array = struct {
         const old_size = try byteCount(layout, self.length);
         @memcpy(bytes[0..old_size], self.bytes[0..old_size]);
         layout.copyBytes(value.tag, bytes[old_size..], value.bytes);
-        return .{ .layout = layout, .tags = tags, .bytes = bytes, .length = length };
+        return .{ .layout = layout, .semantic_type = self.semantic_type, .element_type = self.element_type,
+            .tags = tags, .bytes = bytes, .length = length };
     }
 };
