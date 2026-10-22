@@ -3,7 +3,7 @@
 import {canonical,integerNames,integerRange} from './identity.mjs';
 import {floatBits} from './float.mjs';
 import {identifierName} from './module-facts.mjs';
-import {check,hash,sourceRange,originId,signatureId} from './typed-array-schema.mjs';
+import {check,hash,sourceRange,originId,signatureId,byteOrder} from './typed-array-schema.mjs';
 import {typedArrayInteger} from './typed-array-literals.mjs';
 import {typedArrayRelations} from './typed-array-relations.mjs';
 import {validateTypedArrayConstruction} from './typed-array-construction.mjs';
@@ -134,6 +134,18 @@ export function validateTypedArrayFunctions(payload,sources,types) {
       parameters:[],bindings:[],body:[]},type.fields.flatMap(field=>field.initializer?[{value:field.initializer,type:field.type}]:[]));
   }
   for(const row of payload.exports)check(functions.get(row.functionId)?.name===row.name,'export');
+  const exported=new Set(payload.exports.map(row=>row.functionId)),entries=new Set();let previousEntry;
+  for(const row of payload.entryCompatibilityRoots) {
+    const fn=functions.get(row.functionId),parameter=fn?.parameters.find(value=>value.id===row.parameterBinding);
+    check(exported.has(row.functionId)&&parameter&&parameter.declaredType===row.viewType
+      &&row.origin.source===fn.sourcePath&&row.origin.start===parameter.declarationRange.start
+      &&row.origin.end===parameter.declarationRange.end,'compatibility-entry');
+    check(!previousEntry||byteOrder(previousEntry.functionId,row.functionId)<0
+      ||previousEntry.functionId===row.functionId&&byteOrder(previousEntry.parameterBinding,row.parameterBinding)<0,'compatibility-order');
+    previousEntry=row;entries.add(row.functionId+'\0'+row.parameterBinding);relation.entry(row);
+  }
+  for(const id of exported)for(const parameter of functions.get(id).parameters)
+    check(entries.has(id+'\0'+parameter.id),'compatibility-entry');
   relation.finish();
   return functions;
 }

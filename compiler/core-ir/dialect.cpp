@@ -3,6 +3,7 @@
 #include "string-core.h"
 #include "module.h"
 #include "reference.h"
+#include "finite-domain.h"
 #include "scalar_ops.h"
 #include "mlir/IR/Dialect.h"
 #include "mlir/IR/DialectImplementation.h"
@@ -181,19 +182,29 @@ public:
                   ShrOp, UshrOp, AndOp, OrOp, XorOp, NegOp, NotOp, BoolNotOp,
                   EqOp, NeOp, LtOp, LeOp, GtOp, GeOp, PosOp, CheckedConversionOp, WrapConversionOp, ReinterpretOp, GlobalLoadOp, GlobalStoreOp, AuthorizedHostOp,
                   ReferenceAllocOp, ReferenceBaseOp, ReferenceViewOp, ReferenceFieldReadOp,
-                  ReferenceFieldWriteOp, ReferenceCallOp, ReferenceIdentityOp>();
-    addTypes<IntegerType, ReferenceType>();
+                  ReferenceFieldWriteOp, ReferenceCallOp, ReferenceIdentityOp,
+                  DomainLiteralOp, DomainViewOp, DomainRefineOp, DomainReadSpanOp, DomainArrayCreateOp, DomainArrayReadOp,
+                  DomainArrayStoreOp, DomainArrayResizeOp, DomainArrayLengthOp,
+                  DomainIdentityEqualOp, DomainPresenceEqualOp, DomainConstructOp, DomainSuperOp,
+                  DomainInitializeFieldsOp, DomainFieldDefineOp, DomainFieldInitializeOp,
+                  DomainMethodCallOp, DomainFieldReadOp, DomainFieldStoreOp>();
+    addTypes<IntegerType, ReferenceType, FiniteDomainType>();
   }
   mlir::Type parseType(mlir::DialectAsmParser &parser) const override {
     llvm::StringRef keyword; std::string name;
     if (parser.parseKeyword(&keyword) || parser.parseLess() || parser.parseString(&name) || parser.parseGreater()) return {};
     if (keyword == "ref") return ReferenceType::get(getContext(), name);
+    if (keyword == "domain") {
+      if (finiteDomainIdentity(name)) return FiniteDomainType::get(getContext(), name);
+      parser.emitError(parser.getNameLoc(), "[core-ir-finite-domain] invalid descriptor identity"); return {};
+    }
     if (keyword != "integer") return {};
     for (uint8_t code = 3; code <= 11; ++code) if (name == scalarNames[code]) return IntegerType::get(getContext(), code);
     parser.emitError(parser.getNameLoc(), "[core-ir-type] unknown nominal integer"); return {};
   }
   void printType(mlir::Type type, mlir::DialectAsmPrinter &printer) const override {
     if (auto reference = llvm::dyn_cast<ReferenceType>(type)) { printer << "ref<\"" << reference.key() << "\">"; return; }
+    if (auto domain = llvm::dyn_cast<FiniteDomainType>(type)) { printer << "domain<\"" << domain.key() << "\">"; return; }
     printer << "integer<\"" << scalarNames[llvm::cast<IntegerType>(type).code()] << "\">";
   }
 };

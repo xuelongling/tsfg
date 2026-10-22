@@ -1,6 +1,6 @@
 {
-  "schemaHash": "sha256:1b108a3524bc8e42d4a28c0a7059991967689bad5d29cbb6e574ec7049a2f197",
-  "dtoSHA256": "c11323893a3c0548953f5438a7f645554869b532a655908a8580c3907686ffbd",
+  "schemaHash": "sha256:72dbf45fe1bc910892fef065af517787aed1819f43901f123f42ebaf6aef52ba",
+  "dtoSHA256": "72c39c4c708c5e40db5d9e7e5a7e05e9043aab3a97a806620c0217ade781140c",
   "actor": "actual public owned Go checker IO; no derived/relabelled packages or JS/VM execution",
   "directory": "E:/ws/pro_tsfg/.scratch/tsfg_r03/M25-source-generic-array-checks-20261022/WRITABLE-ALIAS-PUBLIC01-captures",
   "actualNewSources": 2,
@@ -10,12 +10,12 @@
     {
       "variant": "direct",
       "sourceSHA256": "7c258eb5388544dd79d724ba144befbaa06b77d100cef7dad9363c38b8cc4aea",
-      "source": "E:/ws/pro_tsfg/.scratch/tsfg_r03/M25-source-generic-array-checks-20261022/WRITABLE-ALIAS-PUBLIC01-captures/7c258eb5388544dd79d724ba144befbaa06b77d100cef7dad9363c38b8cc4aea-source.ts",
-      "request": "E:/ws/pro_tsfg/.scratch/tsfg_r03/M25-source-generic-array-checks-20261022/WRITABLE-ALIAS-PUBLIC01-captures/7c258eb5388544dd79d724ba144befbaa06b77d100cef7dad9363c38b8cc4aea-request.json",
+      "source": "E:/ws/pro_tsfg/.scratch/tsfg_r03/M25-source-generic-array-checks-20261022/ENTRY-WITNESS-PUBLISHED-FINAL01-captures/7c258eb5388544dd79d724ba144befbaa06b77d100cef7dad9363c38b8cc4aea-source.ts",
+      "request": "E:/ws/pro_tsfg/.scratch/tsfg_r03/M25-source-generic-array-checks-20261022/ENTRY-WITNESS-PUBLISHED-FINAL01-captures/7c258eb5388544dd79d724ba144befbaa06b77d100cef7dad9363c38b8cc4aea-request.json",
       "requestSHA256": "04e0613f631b9423518d2e4ddbe68b3d7cccb36e2c82111fee4c834d6fdf7288",
-      "package": "E:/ws/pro_tsfg/.scratch/tsfg_r03/M25-source-generic-array-checks-20261022/WRITABLE-ALIAS-PUBLIC01-captures/7c258eb5388544dd79d724ba144befbaa06b77d100cef7dad9363c38b8cc4aea-package.json",
-      "packageSHA256": "fb865216767ca91990c37ee5869ed59022ebe0e47a522b7c2bbd2d4494669834",
-      "packageID": "sha256:37cca546affa3d3b12ee40257ae54639439f96f7bdeca894205482a58a11f5ba",
+      "package": "E:/ws/pro_tsfg/.scratch/tsfg_r03/M25-source-generic-array-checks-20261022/ENTRY-WITNESS-PUBLISHED-FINAL01-captures/7c258eb5388544dd79d724ba144befbaa06b77d100cef7dad9363c38b8cc4aea-package.json",
+      "packageSHA256": "6eab615edbc6f1cbead82e956c944f573f425ea62d3e8e19d791c5f57aeb4fbe",
+      "packageID": "sha256:fd2a9743bacd632ccf73db71caae812c97fafa8037e300fa2cdf3061d2075e13",
       "runtimeKeys": {
         "base": "sha256:12b83bdee47149423ee904b698fc386aa5a65c9841dd9ff9129edf2845722a6c",
         "derived": "sha256:fdfabb7a2a15f79ff22ec79aa784da95550456a9d8411d5f746e28f35a46dc5e"
@@ -58,12 +58,12 @@
     {
       "variant": "parameter-return",
       "sourceSHA256": "b37ee6351a6d88a3a5b21a32423deb4f953f05fe689700157148fd208ae21d59",
-      "source": "E:/ws/pro_tsfg/.scratch/tsfg_r03/M25-source-generic-array-checks-20261022/WRITABLE-ALIAS-PUBLIC01-captures/b37ee6351a6d88a3a5b21a32423deb4f953f05fe689700157148fd208ae21d59-source.ts",
-      "request": "E:/ws/pro_tsfg/.scratch/tsfg_r03/M25-source-generic-array-checks-20261022/WRITABLE-ALIAS-PUBLIC01-captures/b37ee6351a6d88a3a5b21a32423deb4f953f05fe689700157148fd208ae21d59-request.json",
+      "source": "E:/ws/pro_tsfg/.scratch/tsfg_r03/M25-source-generic-array-checks-20261022/ENTRY-WITNESS-PUBLISHED-FINAL01-captures/b37ee6351a6d88a3a5b21a32423deb4f953f05fe689700157148fd208ae21d59-source.ts",
+      "request": "E:/ws/pro_tsfg/.scratch/tsfg_r03/M25-source-generic-array-checks-20261022/ENTRY-WITNESS-PUBLISHED-FINAL01-captures/b37ee6351a6d88a3a5b21a32423deb4f953f05fe689700157148fd208ae21d59-request.json",
       "requestSHA256": "642ba609a32811908418c0420ed8d8494bca52836e7e1a15079774a72a5fc624",
-      "package": "E:/ws/pro_tsfg/.scratch/tsfg_r03/M25-source-generic-array-checks-20261022/WRITABLE-ALIAS-PUBLIC01-captures/b37ee6351a6d88a3a5b21a32423deb4f953f05fe689700157148fd208ae21d59-package.json",
-      "packageSHA256": "5d540356e91724d401b5942dc144e0b32d69285812e1f94e57fef59f4c6d5139",
-      "packageID": "sha256:35c74c8ee6322ef47961053bd090237041d23f3df66469dfeadef50e07b515ab",
+      "package": "E:/ws/pro_tsfg/.scratch/tsfg_r03/M25-source-generic-array-checks-20261022/ENTRY-WITNESS-PUBLISHED-FINAL01-captures/b37ee6351a6d88a3a5b21a32423deb4f953f05fe689700157148fd208ae21d59-package.json",
+      "packageSHA256": "382604a7074b320293b7c49a295db248c26a189f024a1158830ccb8dff8a0888",
+      "packageID": "sha256:59b2b262554a1a5a7b1749c5341dc2181f16be30f0f84ed5da74bd5ddc2a383e",
       "runtimeKeys": {
         "base": "sha256:54c590a42a054229bdca5eb5e4b66477c7083595c0309d83745122370fc7ef16",
         "derived": "sha256:2ac76dfe6d05aea72a694136bd3b57595c1c91f12414eb9212e4e0c5c889c050"

@@ -70,5 +70,38 @@ export function typedArrayRelations(types,functions,records) {
     check(used.size===roots.size,'compatibility-root');
     for(const key of used.keys())witnesses.verify(roots.get(key),validate);
   }
-  return {expression,finish:witnesses.finish};
+  function entry(row) {
+    // Follow payload members, not the nominal base as an additional payload.
+    // Inherited fields and method headers still contribute their real types.
+    const targets=new Set(),seen=new Set(),pending=[row.viewType];
+    while(pending.length) {
+      spend();const id=pending.pop();if(seen.has(id))continue;seen.add(id);
+      const type=types.get(id);check(type,'type');
+      if(type.kind==='reference')targets.add(id);
+      if(type.kind==='union')pending.push(...type.members);
+      if(['array','readSpan'].includes(type.kind))pending.push(type.elementType);
+      if(['reference','value'].includes(type.kind)) {
+        let owner=type;const bases=new Set();
+        while(owner) {
+          spend();check(!bases.has(owner.id),'type');bases.add(owner.id);
+          for(const field of owner.fields??[]){spend();pending.push(field.type);}
+          for(const method of owner.methods??[]) {
+            spend();const fn=functions.get(method);check(fn,'function');
+            pending.push(fn.returnType,...fn.parameters.map(parameter=>parameter.declaredType));
+          }
+          owner=types.get(owner.base);
+        }
+      }
+    }
+    let previous;
+    for(const pair of row.roots) {
+      spend();check(!previous||byteOrder(previous.sourceType,pair.sourceType)<0
+        ||previous.sourceType===pair.sourceType&&byteOrder(previous.targetType,pair.targetType)<0,'compatibility-order');
+      previous=pair;
+      check(pair.sourceType!==pair.targetType&&types.get(pair.sourceType)?.kind==='reference'
+        &&targets.has(pair.targetType),'compatibility-entry');
+      witnesses.verify(witnesses.select(pair,row.origin),validate);
+    }
+  }
+  return {expression,entry,finish:witnesses.finish};
 }

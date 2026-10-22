@@ -1,0 +1,160 @@
+{
+  "family": "tsfg.core-finite-domains-development",
+  "version": 9,
+  "status": "development contract; ordinary Core integration, not admitted bytecode or executable private profile",
+  "hir": "0.15.0",
+  "identity": {
+    "type": "existing owned semantic TypeId; complete 32-byte runtime identity stays in actual cell/header",
+    "node": "functionId plus JSON pointer in the verified owned function; binding and return slots use explicit suffixes",
+    "owner": "arrayCreate expression node or a published entry-array parameter node; aliases propagate the same owner set",
+    "domain": "sha256(tsfg.actual-domain.v1 NUL canonical JSON sorted unique concrete actual TypeIds)",
+    "abi": "sha256(tsfg.finite-abi.v1 NUL canonical JSON {parameters:[domainId in ordered receiver/parameter order],result:domainId or null}); null only for zero-result void/construction body, never a value undefined/null",
+    "function": "Existing functionIdentity(sourcePath,qualifiedName,returnName,parameterTypeNames). Qualified name for method/constructor=owner canonical typeName+'.'+source fn.name; implicit receiver type prepended; returnName is original Source/HIR returnType canonical name (constructor identity uses owner nominal result). Construction-body zero-result ABI is a separate role, not a changed FunctionId.",
+    "receiverBinding": "explicit this@SourceFunctionId; implicit this@ownedConstructionId"
+  },
+  "analysis": {
+    "nodes": [
+      "expression",
+      "binding",
+      "return",
+      "array-owner-elements",
+      "actual-field",
+      "successful-field-write-version"
+    ],
+    "facts": [
+      "actualTypes",
+      "arrayOwners",
+      "pendingBoundaryAuthorities"
+    ],
+    "join": "set union; static view never filters or retags actualTypes",
+    "seeds": {
+      "literal": "its concrete actual TypeId",
+      "construct": "allocated owner TypeId, preserved through base/super body on the same instance",
+      "arrayCreate": "actual array TypeId and unique allocation owner; each element flows to that owner's element slot",
+      "entry": "Derive and fix a Published Call Contract from declared signature, complete selected Source closure, verified nominal descendants and per-parameter entryCompatibilityRoots with same-ParameterDeclaration M12 authority, plus all internal call flows. Ordinary expression roots cannot supply missing published-entry evidence. Native scalar/value identity leaves and closed containers stay precise; no Owner declaration is required.",
+      "call": "argument to actual selected parameter; selected callee return to call expression; receiver remains the actual instance",
+      "fields": "actual selected M12 member IDs, never matching names; initializer/store to actual field slot and field slot to reads"
+    },
+    "edges": {
+      "copy": "initializer, assignment, structured-control join, call argument, return, parentheses, nonNull and pure as preserve all reached actual facts",
+      "arrayRead": "every reached owner element slot flows to the checked read expression",
+      "arrayStore": "RHS flows to every reached owner element slot; a static alias does not create a new owner",
+      "operators": "native operation consumes only its approved operand domain; numeric absence consumption with no approved R01 mapping is local capability-pending",
+      "publishedResources": "All compatible host-callable array parameters across the complete export closure may alias the same persistent owner. Join their element slots only when shared actual nonpresence representation/nominal compatibility is proven; a common undefined/null leaf alone cannot join incompatible native numeric arrays.",
+      "methodCall": "Receiver actual types select exact owned member/override identities along actual nominal lineage, or the selected M12 target-to-actual callable mapping for unrelated structural views. Only that actual type flows to the chosen implementation receiver, arguments flow to its actual parameter slots, and its return flows to the call. Unused static-header implementations remain unseeded; no discarded definition or invented actual instance.",
+      "fieldSelection": "Each field read/store selects exact owned inherited member identity or the shared physical-view module's actualType/targetType/member M12 mapping, including a proof lifted from an actual ancestor. Only that actual field slot participates in flow. The ordinary Core field operation consumes the resulting finite actual member table; static readonly/mutable permission is verified on the original target view, independently from actual layout flags.",
+      "fieldReaching": "Close conservative actual storage and actual callee dispatch first. Then build ordered local memory-version constraints for definite receiver aliases. A successful field assignment publishes its RHS node as a version only after receiver and RHS effects. Branches join successful reaching predecessors. Another possibly-aliasing host parameter write invalidates remembered versions; fresh allocations remain distinct in that frame. Unknown receiver writes, field-writing actual callees, constructor/super and loop boundaries invalidate strong memory evidence. Call write effects close transitively over actual selected implementations. Re-solve read edges from proven reaching versions, retaining whole-field storage edges for unproved variants. Both closures and reaching analysis share one bounded transaction/cancellation budget. This is static memory-flow analysis, not evaluation of Source values."
+    },
+    "boundary": "No module-wide all-types seed. Published reference entry upper bounds use compatible reachable instances, not one observed caller's narrower domain. A genuine unanalyzable native boundary or actual domain outside the compiled/published closure remains a specific capability result; ordinary exported parameters do not require Owner-supplied domain declarations.",
+    "publishedCallContract": "{functionId,sourceSignature,closureIdentity,parameterBounds:[domainId],resultBound:domainId|null,abi:ABIHash,id}; id=sha256(tsfg.published-call.v1 NUL canonical JSON of the preceding six fields). Derive once after closure fixed point and retain the exact identity for dependants; no per-invocation ABI specialization.",
+    "limits": {
+      "types": 4096,
+      "constraintsAndPropagations": 100000,
+      "variantsPerDomain": 256
+    },
+    "failure": "Build a local transaction, charge before mutation, observe cancellation before each charged step. Publish an immutable result only after closure succeeds; failure returns no partial plan. Graph traversal and propagation are iterative.",
+    "definitionBounds": {
+      "role": "Universally quantified per-callable representation upper bounds, never an allocation, invocation, actual instance or reached-call observation. The reached ledger is computed separately and remains unchanged by these seeds.",
+      "seeds": "Every real owned callable parameter has its declared leaf bound. Native singleton scalars retain native representation and zero GC slots. Receiver slots of methods/constructors contain only the nominal owner and verified nominal descendants; structural view receivers dispatch to the actual implementation, never reinterpret an unrelated nominal header. Other reference parameters use their selected closure/entry authority and all actual call flows. Container bounds retain owner element relations; incompatible native resources do not alias.",
+      "closure": "Apply the same Source literal/new/as/call/array alias/store/member rules, including widened actual payloads and absence, in a separate definition transaction. Definition seeds never enter the reached ledger. All emitted function/call/return/dispatch ABI slots consume the completed definition plan, not per-call narrowing or static filtering.",
+      "identity": "Same finite DomainId/ABI hashes describe the representation bound; family tsfg.finite-definition-bounds-development distinguishes the proof role. definitionSeeds:[{functionId,binding,viewType,authority:owned-receiver-definition-bound|owned-parameter-definition-bound}]. Published entries retain their real entry authority. Both ledgers share one 100000-work/cancellation transaction.",
+      "validation": "All callable definitions are retained. Definition bounds still require independent whole C++ validation; identity/count checks against the original 22 callable oracle do not validate new universal ABI hashes."
+    },
+    "fieldMemory": {
+      "states": "Allocation state is not-defined. This creates no Source field definition, valid-undefined publication or initialized/native-read bit. Only a real ordered fieldDefine phase produces defined-native-undefined; initializer/parameter/store success produces initialized. The storage representation may admit Undefined without claiming a field is already defined.",
+      "phases": "phaseWrites:[{id:existing FieldVersionId,field,node:original initializer node|current binding node|null,state:defined-native-undefined|initialized,actualTypes:[TypeId],origin}]. nativeDefine has node:null and never invents a Source literal. Constructor body completion is the intersection of known fields on all normal exits; a replacement-object return supplies no original-this completion proof.",
+      "completion": "completions:[{construction,fields:[{actualType,field,versions}]}]. Direct-base completion is applied on the same actual receiver before the actual derived afterSuccess initializer sequence. Constructor frames are ordered by real direct-base ancestry. No Base allocation or static Base retag is permitted.",
+      "calls": "Every real direct/actual-method call site contributes an incoming parameter-field context, initially unknown. Meet includes all sites and host entries; unknown callers cannot borrow another caller’s strong version. Fixed point effects close over real selected callees. Successful normal callee exit fields map back to the original caller aliases only on continuation; unknown/loop/value-copy/replacement receiver boundaries remain conservative.",
+      "schema": "fieldReaching additionally has phaseWrites,completions,callContexts:[{site:callNode+NUL+functionId,target,fields:[{location:calleeParameterAlias+NUL+actualType+NUL+field,versions}]}],callOutputs:[{functionId,fields:[{parameter:ordinal,actualType,field,versions}]}],returnAliases:[{functionId,parameter:ordinal|null}]. reads.reaching sources are successful write/phase source NodeIds, with optional intrinsics:[undefined] only for a consumed real nativeDefine version or the separately identified fresh-frame not-defined entry. A returned reference parameter preserves alias identity only if all normal returns prove the same ordinal; inline value copies do not.",
+      "runtimePending": "This analysis does not yet install actual-field-domain layouts or definedness/constructor permission consumers in Heap. Existing Variant.undefined_value and initialized bit remain the physical primitive; ordinary Source readonly is static permission, never global cell immutability. Not-defined versus definedUndefined observation and actual native-read eligibility must remain separate.",
+      "notDefinedEntries": "allocationEntries:[{id:constructionId+\"/entry/not-defined/\"+actualType+\"/\"+fieldId,construction,actualType,field,state:not-defined,node:null,origin:real owned construction origin}]. Only a constructor receiver with a proved real reached domain gets these rows in the reached ledger; definition frames have the separately marked universal role. They are fresh-frame preconditions, not Source field definition events, valid-undefined publication, fabricated initializer literals or native initialized bits. All actual/inherited fields are absent on fresh entry; direct-base normal completion carries remaining absent fields on the same receiver until the derived own phase reaches them. Plain Source member reads may produce undefined from this absence without reading inactive native bytes. Existence/definedness observations still distinguish not-defined from defined-native-undefined."
+    }
+  },
+  "fieldPhases": {
+    "plan": "{constructionId,ownerType,receiverBinding,activation:'before-body'|'after-successful-super',entry:'unbound'|'allocated',events:[event],completion:[FieldVersionId]}; same actual instance throughout; direct base has a separate plan on that receiver, never another allocation",
+    "versionId": "constructionId+'/field/'+ownedFieldId+'/version/'+eventOrdinal; prepend nativeDefine for each parameter-property field in real constructor parameter order, then the verified ordinary-fields/parameter-write sequence. Native empty declarations are derived from actual parameterBinding and pinned official runtimesyntax.go:684-707, not fabricated Source expressions. Successful ordinary field stores use functionId+'/field-write/'+JSON pointer.",
+    "version": "{id,field,previous:FieldVersionId|null,state:'absent'|'defined-native-undefined'|'initialized',valueNode:NodeId|null,parameterBinding:BindingId|null,origin:{source,start,end}}",
+    "event": "{ordinal,kind:'nativeDefine'|'initializerWrite'|'parameterWrite',input:FieldVersionId|null,output:version}; expression evaluation and write success precede publication of output; exceptions retain input and cannot publish a partially initialized output",
+    "nativeDefine": "fieldDefine creates defined-native-undefined at original field origin; it has initialized Source undefined semantics but no native payload-read qualification. No fabricated Source literal, numeric zero or allocation is introduced. A parameter-property prefix definition retains its original parameterBinding as declaration provenance only; it does not evaluate/load that binding. The later parameterWrite must match the same field/binding definition and reads the actual binding only at that write phase.",
+    "initializerWrite": "evaluate original owned initializer once in the current receiver environment, then publish its actual value domain as an initialized field version; earlier observable calls see only earlier completed versions",
+    "parameterWrite": "after ordinary native fields, copy the actual constructor binding domain at its original declaration origin, then publish initialized version; it is not reordered before ordinary fields",
+    "read": "{node:NodeId,actualField:ownedFieldId,reaching:[FieldVersionId],requiresNativePayload:boolean}; use only versions proven to reach that read by CFG/call/receiver-alias flow. A pure as does not filter them. Missing native initialization does not erase Source undefined; an operation lacking an approved consumption mapping stays locally pending.",
+    "join": "{id,field,inputs:[sorted unique FieldVersionId]}; branches join all successful predecessors; a loop/call/escaped receiver uses its proven effect summary. No static declared field type can remove a reached version.",
+    "completion": "List final successful versions sorted by owned FieldId. Successful construction publishes completed versions for all actually executed initializations/constructor writes; callers receive that actual receiver state. Constructor body closure, parameter effects, explicit object-return replacement and this escape remain visible; no blanket source prohibition. Native read/root eligibility is derived per reached version independently from Source definedness.",
+    "remaining": "Constructor phase events are a required consumed Core initialization plan. Complete read-reaching/effect summaries and mixed-representation mutable field ABI remain capability-pending until their independent consumer is implemented; no success is inferred from the event list alone.",
+    "localReaching": "Ordinary successful write version id=fieldAssignmentNodeId+\"/field-version/\"+actualType+\"/\"+actualFieldId; source=that original RHS expression node. A memory key is a definite receiver alias plus actual type/member, never field name or static target offset. Unknown entry storage has no local strong version. A local read uses exact selected actual-field versions and sources when proven; it does not replace the storage upper bound or prove native empty construction/read qualification. R01 inline value assignment/parameters copy payload: they never inherit a reference alias token. Such value-memory proofs remain conservative until the inline-copy consumer is implemented; no Source rejection or reference reinterpretation is introduced."
+  },
+  "representation": {
+    "native": "singleton scalar domain uses the existing native Core scalar type and ABI; zero GC slots",
+    "absence": "singleton undefined/null has no inactive payload; initialized absence is distinct from missing storage",
+    "reference": "same ManagedHeap Handle plus actual header identity; homogeneous reference domain needs no per-value copy of full TypeId; roots and active edges use the existing collector",
+    "finiteUnion": "inline finite discriminant and fixed maximum native bytes/reference slots derived only from that value's proven variants; no implicit heap box, global Any carrier, or module maximum union",
+    "value": "canonical owned value layout with exact nominal identity, recursively active reference maps; padding and inactive payload are not observable",
+    "array": "same heap owner/header and domain-qualified element storage; static Array/ReadSpan view is separate; validated source target permission is carried through the existing view service",
+    "abi": "each concrete parameter/result and SSA join has its own proven domain/layout; changing a static view does not narrow actual payload. Call edges adapt only between proven finite representations without conversion or allocation."
+  },
+  "core": {
+    "entry": "lowerFormalHir selects verified HIR0.15 before legacy String/Array dispatch and uses the shared Core SSA control-flow emitter",
+    "nativeOps": "existing tsfg_core scalar operations remain native when operand domains are singleton approved native types",
+    "domainOps": [
+      "tsfg_core.domain.literal",
+      "tsfg_core.domain.view",
+      "tsfg_core.domain.refine",
+      "tsfg_core.domain.read_span",
+      "tsfg_core.domain.presence_equal",
+      "tsfg_core.domain.identity_equal",
+      "tsfg_core.domain.array_length",
+      "tsfg_core.domain.array_create",
+      "tsfg_core.domain.array_read",
+      "tsfg_core.domain.array_store",
+      "tsfg_core.domain.array_resize",
+      "tsfg_core.domain.field_read",
+      "tsfg_core.domain.field_store",
+      "tsfg_core.domain.construct",
+      "tsfg_core.domain.super",
+      "tsfg_core.domain.initialize_fields",
+      "tsfg_core.domain.field_define",
+      "tsfg_core.domain.field_initialize",
+      "tsfg_core.domain.method_call"
+    ],
+    "carrierType": "!tsfg_core.domain<domainId>; refers to a finite immutable module domain descriptor, not an open dynamic value",
+    "metadata": "StringAttr values canonical JSON: tsfg_core.finite_domains=analysis object; semantic_types=owned HIR types; source_closure=owned sources; canonical_layouts=existing typed-layout module object; member_views=existing typed-reference-view module object. input_identity/finite_contract are exact hashes. No Source DTO crosses this boundary. reached_domains is the separate reached analysis ledger; finite_domains is the universal definition ABI plan used by all emitted functions. language_intrinsics contains only canonical undefined when required by real construction semantics, not fabricated Source catalogue rows.",
+    "domainDescriptor": "{id,actualTypes:[sorted unique TypeId],representation:bottom|native|reference|absence|inline|finite-union,nativeType:scalarName|null,alignment:powerOfTwo,tagBytes:0|2,byteSize:integer,referenceCount:integer}; bottom is an unreached analysis slot, never an executable carrier. Reference alternatives share the same actual-header Handle representation; finite union tag is local to its variants.",
+    "analysisObject": "{family:tsfg.finite-actual-domains-development,version:1,inputIdentity,published:[PublishedCallContract],calls:[{id:NodeId,member:FunctionId,viewType:TypeId,targets:[{actualType:TypeId,functionId:FunctionId,signatureHash,abi}]}],fields:[{id:NodeId,kind:read|store,member:FieldId,viewType:TypeId,targets:[{actualType:TypeId,fieldId:FieldId,fieldType:TypeId}]}],aliases:[{left:OwnerId,right:OwnerId,authority:complete-published-resource-boundary,elementTypes:[TypeId,TypeId]}],domains:[sorted id],nodes:[sorted id {id,viewType,domainId,arrayOwners:[sorted ownerId],pending:[sorted capability]}],expressions:[{id,kind,range,functionId,presenceProof?}],abi:[{functionId,parameters:[domainId],result:domainId|null,id}],fieldReaching:{reads:[{node,reaching:[{actualType,field,versions:[sorted VersionId],sources:[sorted NodeId]}]}],writes:[{id,node,actualType,field,origin}],effects:[{functionId,writesFields:boolean}]},work:integer}; work is charged diagnostic cost, excluded from semantic domain/ABI identities. New representation-role fields: intrinsics:[canonical undefined type if absent from owned Source catalogue],allocations:[{node,actualType,state:not-defined}],definitionSeeds? as analysis.definitionBounds,fieldReaching extensions as analysis.fieldMemory. Storage-domain alternatives do not publish definedness. fieldReaching.allocationEntries binds the distinct fresh-frame not-defined preconditions in analysis.fieldMemory.notDefinedEntries; no nativeDefine operation is created for them.",
+    "operationSyntax": {
+      "common": "generic MLIR operation syntax; all operations have tsfg_source.start/end:i64, plus original operator/target anchors where applicable. Operand/result native types or !tsfg_core.domain<domainId> must match domain descriptors. A native result still has its exact singleton domain in the analysis table.",
+      "literal": "() -> domain; attrs view_type:TypeId,domain:DomainId; string also code_units:canonical JSON UTF16 array",
+      "view": "(source) -> destination; attrs view_type:TypeId,domain:DomainId,compatibility_roots?:canonical JSON owned exact pairs. Actual payload preserved; representation widening embeds without conversion, filtering, trapping or allocating.",
+      "refine": "(source) -> destination; attrs view_type,domain,presence_proof:canonical JSON {type:absence TypeId,equal:boolean,range:original predicate range}. Only original dominating ===/!== absence predicate plus unchanged binding version can remove actual alternatives. Pure as never uses this operation.",
+      "read_span": "(owner,start:u32,length:u32) -> finite ReadSpan; attrs view_type,domain. Retains the same owner and checked range, no new array allocation; borrow/lifetime proof remains mandatory.",
+      "presence_equal": "(left,right) -> native bool; attrs operator:'==='|'!=='; at least one proven absence operand, compare actual tag without reading inactive payload",
+      "string": "singleton String uses existing !tsfg_string.string and ordinary tsfg_string.constant(code_units=array<i32>) / concat / compare; equality compares UTF16 content via compare, not Handle identity",
+      "array_create": "(elements in Source order) -> arrayHandle; attrs view_type,domain,owner:NodeId,element_domain:DomainId",
+      "array_read": "(receiver,index:u32) -> reached elementDomain; attrs view_type:element static TypeId,domain:result DomainId; checked current owner bounds/presence at original read anchor",
+      "array_store": "(receiver,index:u32,rhs) -> (); attrs view_type:static Array TypeId; all operands evaluated before dynamic dense/gap validation; actual owner element domain selects existing storage service",
+      "array_resize": "(receiver,length:u32) -> (); attrs view_type:static Array TypeId; no uninitialized growth publication",
+      "array_length": "(receiver) -> native u32; attrs view_type:u32 TypeId,domain:DomainId",
+      "identity_equal": "(left,right) -> native bool; attrs operator:'==='|'!=='; Handle/tag comparison preserves actual object identity",
+      "construct": "(arguments in Source order) -> actual owner value; attrs view_type,domain,construction:ConstructionId; constructor plans/signatures in owned semantic_types are mandatory consumed definitions",
+      "super": "(currentActualReceiver,arguments in Source order) -> (); attrs view_type:void TypeId,construction:directBaseConstructionId; successful continuation initializes derived fields on same actual receiver For owned implicit forward statements, view_type is the direct-base instance signature result TypeId and implicit_forward is canonical JSON of the verified owned M12 forwarding relation. The statement has no produced Source value; body ABI is still zero-result. Forwarded arguments use actual inherited binding order and adapt only to the selected finite ABI without conversion/allocation. Internal adaptation/control anchors use the real implicit-forward class origin, while ancestor parameter origins remain in the parameter/forward proof.",
+      "initialize_fields": "(currentActualReceiver) -> (); attrs construction:ConstructionId,owner_type:TypeId,field_plan:canonical JSON fieldPhases plan. This is the phase/authority marker for the explicit following field_define/field_initialize operations; it never evaluates initializer trees again. Each initializer is lowered through the shared SSA emitter at its original field expression anchor.",
+      "field_read": "(receiver) -> actual fieldDomain; attrs view_type:static field TypeId,domain:DomainId,member:owned FieldId,receiver_view:static receiver TypeId,field_dispatch:canonical JSON [{actualType,fieldId,fieldType}] strict actualType sorted unique with <=256 targets. Resolve on the actual canonical cell layout through the selected inherited identity/M12 actual member map, never target offsets. The table does not itself prove field read-reaching/native initialization. Optional field_reaching:canonical JSON {node,reaching:[{actualType,field,versions,sources}]} binds the exact successful local versions consumed by domain closure; the independent verifier must prove dominance, alias and actual-call effect boundaries before native payload eligibility.",
+      "field_store": "(receiver,rhs) -> (); attrs view_type:static writable receiver TypeId,member:owned FieldId,receiver_view,field_dispatch same exact actual-field table. Source target permission is verified independently from actual-header readonly; this is not deep freezing or an arbitrary caller permission flag. All selected layouts/active reference maps and successful write domains require whole-module validation. Required memory_node:the original fieldAssignment NodeId,input_node:memory_node+\"/value\",field_versions:canonical JSON sorted by actualType [{id:memory_node+\"/field-version/\"+actualType+\"/\"+fieldId,node:input_node,actualType,field:actualFieldId,origin:original assignment source/range}]. Versions publish only after the field write succeeds; they bind read-reaching source nodes to this actual store operation, not a detached event table. Unknown aliases still have successful write versions but do not establish a local strong receiver version.",
+      "call": "ordinary func.call with callee symbol, tsfg_core.function_id/signature_hash/finite_abi; zero-result void call has () result, otherwise exact result domain; argument adaptation cannot drop variants",
+      "field_define": "(currentActualReceiver) -> (); attrs construction,owner_type,member:owned FieldId,ordinal:i64,field_version:FieldVersionId. Publishes actual defined Source undefined without evaluating a fabricated literal or reading inactive/native payload. The per-field storage domain must admit that absence; whole field-domain validation remains mandatory.",
+      "field_initialize": "(currentActualReceiver,actualValue) -> (); attrs construction,owner_type,member,ordinal,field_version,input_domain:DomainId. Only the validated ordered constructor event grants this write; ordinary-field expressions execute exactly once before this operation, parameter-property values come from the actual binding at their later event. This write is not an arbitrary initialization boolean or a general readonly bypass.",
+      "method_call": "(receiver once,arguments in Source order) -> zero or one reached result; attrs view_type,domain,member:static owned FunctionId,receiver_view:owned TypeId,dispatch:canonical JSON [{actualType,functionId,signatureHash,abi}] strict actualType sorted unique with <=256 targets. Each arm is selected by actual receiver identity and validated member/override authority, not by the static header function. Its parameter/result finite ABI adaptations preserve actual payload without numeric conversion/boxing/traps. Existing sameHeap view/method service is the Runtime integration seam; this development Core op does not itself qualify VM or Runtime execution."
+    },
+    "readOrder": "receiver once, index once, checked old read before compound/update RHS; simple store evaluates receiver/index/RHS before dynamic dense/gap validation according to R01",
+    "constructOrder": "allocation once; direct base receives same actual instance; successful super then derived own initialization; pinned ESNext ordinary own fields before parameter-property assignments; all source anchors retained Explicit constructor functions carry construction/owner_type/receiver_binding attrs and zero-result body ABI. Field initializers are actual shared-SSA expressions and calls, followed by explicit successful field writes; the phase marker alone never executes a Source tree.",
+    "firstFailure": "each effect uses original operation/target anchor; preceding calls and checks cannot be reordered across it",
+    "verification": "C++ ordinary Core parser/verifier must independently derive finite-domain/layout/ABI closure and validate every operation and active root map before canonical print or wire emission; Node text generation is not Core verification The field phase consumer additionally checks actual constructor receiver identity, exact per-path commit order/anchors, and a dominating owned marker for each commit. Its successful object-only compilation is not validation of whole-module domain/effect/ABI closure or an executable Core run.",
+    "wire": "a new exact ordinary wire version is required before publication; existing bytecode0.12/schema and Runtime admission remain unchanged until independent verifier/reader checks pass",
+    "implicitConstruction": "Every owned implicit constructor body is an ordinary zero-result SSA function keyed by its real ConstructionId/signature/receiver/parameters/class provenance. The universal definition ABI proves its representation without inventing reached instances. Actual direct-base forwarding, initializer expressions and field commits use the shared SSA producer; no Source AST function, literal or extra base allocation is fabricated."
+  },
+  "localPending": [
+    "valid undefined payload narrowed by pure as then consumed by native arithmetic: approved operation failure/coercion mapping absent",
+    "A genuinely unanalyzable external boundary or missing selected-producer entry authority remains local pending; ordinary exported parameters have compiler-derived finite bounds.",
+    "mixed representation field writes and construction object-return replacement need complete actual-field/receiver flow before ABI publication"
+  ]
+}

@@ -1,0 +1,25 @@
+{
+  "sourceCommit": "dc770c0deab4fd556e50a9760efffd7511af60f3",
+  "manifestSHA256": "f6c255214cceffe5305a09186ea80032fc0220547ba5dd4fbbf42a9a7dc4932b",
+  "actor": "agent-run official owned Go public frontend component via external test overlay",
+  "cases": [
+    {
+      "name": "A",
+      "file": "0061ba5a41c97a1386ef07c36f26beefd1699732664f51d9ba2b8cab262cafce-package.json",
+      "sourceSHA256": "0061ba5a41c97a1386ef07c36f26beefd1699732664f51d9ba2b8cab262cafce",
+      "requestSHA256": "cb649dc2b2208275f7e7b893e7fe79a550e5b2f1f6f4e5443fe6366e62198adc",
+      "packageSHA256": "cd6773b561f2bb9e9a15270bc167285c3e64a515c6251f5da5e2411802dd275e",
+      "packageBytes": 4995,
+      "arrayEffect": false
+    },
+    {
+      "name": "B",
+      "file": "daf03f20790b9536dec7c8bba8cb0ea40066cbc928faa903e46dbc563219216e-package.json",
+      "sourceSHA256": "daf03f20790b9536dec7c8bba8cb0ea40066cbc928faa903e46dbc563219216e",
+      "requestSHA256": "57c490c71677938fa2a67754b694fc9e3fbe99c9bdb7fad64b64a71703b7b7ba",
+      "packageSHA256": "3eba7f4e3539b1dc3f66751bd20d458c8f89fac4d9c2deeb8e7094827a757f39",
+      "packageBytes": 7279,
+      "arrayEffect": true
+    }
+  ]
+}

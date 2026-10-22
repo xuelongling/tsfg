@@ -30,6 +30,7 @@ import { emitArrayCore } from './array-core-emitter.mjs';
 export { analyzeArrayCalls, verifyArrayCalls, printArrayCalls, readArrayCalls } from './array-call-publication.mjs';
 import { isArrayFactsContext } from './array-hir-model.mjs';
 import {isTypedArrayContext,buildTypedArrayHir,readTypedArrayHir} from './typed-array-hir.mjs';
+import {emitFiniteCore} from './finite-core-emitter.mjs';
 
 import { buildClosureHir } from "./closure-hir.mjs";
 export { verifyHir };
@@ -253,6 +254,7 @@ export function lowerHir(hir, factsContext = undefined, callPublicationContext =
  * explicit candidate route; String HIR is revalidated and compiled directly.
  * @param {any} hir @param {any} [factsContext] */
 export function lowerFormalHir(hir, factsContext = undefined) {
+  if(isTypedArrayContext(factsContext))return emitFiniteCore(hir,factsContext);
   if (factsContext !== undefined && !isArrayFactsContext(factsContext))
     return emitFormalStringCore(hir, factsContext);
   return lowerHir(hir, factsContext);

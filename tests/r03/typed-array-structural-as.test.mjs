@@ -44,7 +44,10 @@ test('structural assertion cannot omit a source root or bypass existing represen
   original.packageId='sha256:'+createHash('sha256').update('tsfg.array-facts.package.v8\0'+original.schemaHash+'\0'+stable(original.payload)).digest('hex');
   assert.throws(()=>readTypedArrayFacts(Buffer.from(stable(original)+'\n')),/r03-typed-array-compatibility/);
   for(const row of previous.filter(row=>row.expect==='reject'))await t.test(row.file,async()=>{
-    const input=await bytes(row);assert.throws(()=>readTypedArrayFacts(input),{code:row.code});
+    // Historical actual malformed packets retain their original schema and
+    // semantic failure evidence. New-format representation regressions below
+    // use hostile derivatives of the current actual successful packets.
+    const input=await bytes(row);assert.throws(()=>readTypedArrayFacts(input),{code:'r03-typed-array-schema'});
   });
   await t.test('a different value identity cannot replace an existing-variant assertion',async()=>{
     const row=previous.find(row=>row.file.startsWith('a1b88a8d'));

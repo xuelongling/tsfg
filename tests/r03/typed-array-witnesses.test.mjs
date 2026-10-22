@@ -39,6 +39,7 @@ test('actual nested method union and cyclic M12 proofs produce a closed owned gr
     for(const fn of hir.functions)walk(fn,node=>{
       for(const pair of node.compatibilityRoots??[])reach({...pair,origin:{source:fn.sourcePath,...node.range}});
     });
+    for(const entry of hir.entryCompatibilityRoots)for(const pair of entry.roots)reach({...pair,origin:entry.origin});
     assert.equal(reachable.size,directory.size);assert.equal(directory.size,packet.payload.compatibilityWitnesses.length);
     const changed=structuredClone(hir);changed.compatibilityWitnesses[0].compatibility.sourceType='sha256:'+'0'.repeat(64);
     assert.throws(()=>verifyHir(changed,context),/r03-typed-array-hir-projection/);
@@ -50,7 +51,10 @@ test('cold proof closure rejects missing invented orphan duplicate and cross-ori
   const mutations={
     missingRoot:p=>{p.compatibilityWitnesses.shift();},
     missingNested:p=>{p.compatibilityWitnesses.pop();},
-    missingDependency:p=>{p.compatibilityWitnesses[0].dependencies=[];},
+    missingDependency:p=>{
+      const selected=p.compatibilityWitnesses.find(record=>record.dependencies.length>0);
+      assert.ok(selected,'actual nonempty selected dependency');selected.dependencies=[];
+    },
     duplicate:p=>{p.compatibilityWitnesses.push(structuredClone(p.compatibilityWitnesses.at(-1)));},
     orphan:p=>{walk(p.functions,node=>{delete node.compatibilityRoots;});},
     crossOrigin:p=>{p.compatibilityWitnesses[1].compatibility.origin.end--;},

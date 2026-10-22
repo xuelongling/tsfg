@@ -1,0 +1,68 @@
+{
+  "sourceSHA256": "d724c83ab1f944c4d01c4cd3aa600855e3b6db9afac4cd224bb2e1b162532288",
+  "requestSHA256": "d56566e57eef0326e697e99d75e7a90edef1b84985d87535a4f59a68f8f2a2fa",
+  "packageSHA256": "0a09ce0c298dbe9e666c34ab9a198a198552bd67e020935827bf5c175080fa95",
+  "packageId": "sha256:fb54aa7efe0b3b5886f745c79fada3302268b831e844d3b782512e376c18c9df",
+  "file": "d724c83ab1f944c4d01c4cd3aa600855e3b6db9afac4cd224bb2e1b162532288-package.json",
+  "schemaHash": "sha256:72dbf45fe1bc910892fef065af517787aed1819f43901f123f42ebaf6aef52ba",
+  "dtoSHA256": "72c39c4c708c5e40db5d9e7e5a7e05e9043aab3a97a806620c0217ade781140c",
+  "sourceCapture": "E:/ws/pro_tsfg/.scratch/tsfg_r03/M25-source-generic-array-checks-20261022/FIELD-REACHING-ACTUAL-CAPTURE.json",
+  "original122Changed": false,
+  "expectation": {
+    "entry": "One actual Box reference; possible incoming n i32|undefined, no declaration allocation seed",
+    "firstWrite": "Successful b.n=1 creates an initialized i32 field version",
+    "earlierRead": "Same receiver/member read is dominated by first write; no call/branch/alias mutation intervenes. Its reaching version is firstWrite, not laterWrite.",
+    "capturedLocal": "const after captures the read value; later store cannot change that copied binding",
+    "laterWrite": "b.n=undefined creates a later initialized valid-undefined version for future field reads, not missing/native-uninitialized",
+    "return": "Return refers to original after binding, with native i32/0GC obligation once actual reaching is proven. No reloaded b.n and no invented as/coercion.",
+    "domainProof": "Source checker flow/type is retained evidence, not by itself an actual-domain proof. Consumer must independently establish order/member/alias/version reaching."
+  },
+  "occurrences": {
+    "firstWrite": {
+      "kind": "fieldAssignment",
+      "type": "union<i32,undefined>",
+      "flowType": "i32",
+      "binding": null,
+      "range": {
+        "end": 72,
+        "start": 67
+      },
+      "originalText": "b.n=1"
+    },
+    "earlierRead": {
+      "kind": "fieldAccess",
+      "type": "union<i32,undefined>",
+      "flowType": "i32",
+      "binding": null,
+      "range": {
+        "end": 92,
+        "start": 89
+      },
+      "originalText": "b.n"
+    },
+    "laterWrite": {
+      "kind": "fieldAssignment",
+      "type": "union<i32,undefined>",
+      "flowType": "undefined",
+      "binding": null,
+      "range": {
+        "end": 106,
+        "start": 93
+      },
+      "originalText": "b.n=undefined"
+    },
+    "returnCapturedLocal": {
+      "kind": "bindingReference",
+      "type": "i32",
+      "flowType": "i32",
+      "binding": "sha256:7e8730ebfd4140ebda98a3aeeb76856d9a55ea2c716fe44ce8ac68859209f5dc",
+      "range": {
+        "end": 119,
+        "start": 114
+      },
+      "originalText": "after"
+    }
+  },
+  "sourceCommit": "f8a0a4c0cd044a71c1930b136ab593e1c12badb4",
+  "sourceProductionCommit": "a54ae484edca8717daad1f66852952dde124a748"
+}

@@ -349,6 +349,10 @@ export function emitCoreSsaFunction(fn, context) {
   };
   const api = {
     emit, coreType, attrsFor, quote, branchValue, lookup: id => definitions.get(id),
+    returnValue: (value,type,anchor) => {
+      line(`    "func.return"(${value===null?'':value}) {${attrsFor(anchor)}} : (${value===null?'':coreType(type)}) -> ()`);
+      current.terminated=true;current=null;
+    },
     storeGlobal: (target,payload,anchor) => {
       const index=emittedGlobals.findIndex(global=>global.id===target.global);
       if(index<0)throw new TypeError('verified global is absent from complete Core table');
@@ -366,6 +370,7 @@ export function emitCoreSsaFunction(fn, context) {
   if (!context.exception) scalarState.initialize();
   const trace = context.exception ? emitExceptionalBody() : undefined;
   if (!context.exception) emitBody(fn.body);
+  if(current)context.emitFallthrough?.(api);
   if(fn.kind==='module-initialization'&&current) {
     const name=variable();
     line(`    ${name} = "tsfg_core.constant"() {value = 0 : i32, ${attrsFor(fn.range)}} : () -> i32`);
@@ -373,7 +378,7 @@ export function emitCoreSsaFunction(fn, context) {
     current.terminated=true;current=null;
   }
   if (current || blocks.some(block => !block.terminated)) throw new TypeError("r03-hir-cfg: reachable function fallthrough");
-  const type = coreType(fn.returnType.id);
+  const type = context.resultType??coreType(fn.returnType.id);
   const text = blocks.map((block, index) => {
     const label = index ? '  ^' + block.name + (block.parameters.length
       ? '(' + block.parameters.map(p => p.name + ': ' + coreType(p.type)).join(', ') + ')' : '') + ':\n' : '';

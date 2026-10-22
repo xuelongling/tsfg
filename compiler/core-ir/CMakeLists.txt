@@ -78,7 +78,7 @@ include_directories(${LLVM_INCLUDE_DIRS}
 # implementation. Native lowering/target initialization is a separate adapter.
 add_library(tsfg-core-common OBJECT
   dialect.cpp bytecode.cpp bytecode_encoding.cpp module.cpp
-  module-plan.cpp core-verify.cpp kernel-access.cpp kernel-access-metadata.cpp
+  module-plan.cpp core-verify.cpp finite-domain.cpp finite-fields.cpp kernel-access.cpp kernel-access-metadata.cpp
   nullable.cpp nullable-cfg.cpp nullable-metadata.cpp nullable-wire.cpp
   string.cpp string-formal.cpp string-verify.cpp string-wire.cpp
   array.cpp array-metadata.cpp array-verify.cpp array-view.cpp

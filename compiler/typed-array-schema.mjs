@@ -3,7 +3,7 @@
 import descriptor from '../contracts/array-generic-facts.schema.json' with {type:'json'};
 import {canonical, own, sha256} from './identity.mjs';
 export const typedArrayFactsFormat = own({family:'tsfg.array-facts-package-candidate',version:8,
-  schemaHash:'sha256:1b108a3524bc8e42d4a28c0a7059991967689bad5d29cbb6e574ec7049a2f197'});
+  schemaHash:'sha256:72dbf45fe1bc910892fef065af517787aed1819f43901f123f42ebaf6aef52ba'});
 export const typedArrayJsonPolicy = Object.freeze({bytes:2097152,depth:64,jsonTokens:200000,
   stringBytes:1048576,safeNonnegativeIntegers:true,allowNul:true,rejectPrototypeKeys:false});
 export function typedArrayFailure(kind, primary = undefined, cause = undefined) {

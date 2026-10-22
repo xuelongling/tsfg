@@ -3,7 +3,7 @@
 import descriptor from '../contracts/typed-array-hir.schema.json' with {type:'json'};
 import bytecode from '../contracts/bytecode.schema.json' with {type:'json'};
 import {canonical,own,sha256,functionIdentity,signatureHash} from './identity.mjs';
-export const typedArrayHirFormat=own({contractVersion:'0.14.0',schemaHash:sha256(canonical(descriptor)+'\n')});
+export const typedArrayHirFormat=own({contractVersion:'0.15.0',schemaHash:sha256(canonical(descriptor)+'\n')});
 
 export function projectTypedArrayFacts(facts) {
   const payload=facts.payload,sourceTypes=new Map(payload.types.map(row=>[row.id,row]));
@@ -168,6 +168,9 @@ export function projectTypedArrayFacts(facts) {
     target:structuredClone(bytecode.target),types,functions:functions.map(projectFunction),
     compatibilityWitnesses:payload.compatibilityWitnesses.map(record=>({compatibility:compatibility(record.compatibility),
       dependencies:record.dependencies.map(pair=>({sourceType:typeIds.get(pair.sourceType),targetType:typeIds.get(pair.targetType)}))})),
+    entryCompatibilityRoots:payload.entryCompatibilityRoots.map(row=>({functionId:functionIds.get(row.functionId),
+      parameterBinding:row.parameterBinding,viewType:typeIds.get(row.viewType),origin:{...row.origin},
+      roots:row.roots.map(pair=>({sourceType:typeIds.get(pair.sourceType),targetType:typeIds.get(pair.targetType)}))})),
     exports:payload.exports.map(row=>({name:row.name,functionId:functionIds.get(row.functionId)})),
     intrinsics:{arrayLength:structuredClone(payload.arrayLength),readSpanLength:structuredClone(payload.readSpanLength),
       readSpan:structuredClone(payload.readSpanIntrinsic)}};
