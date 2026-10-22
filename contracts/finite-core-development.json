@@ -1,8 +1,8 @@
 {
   "family": "tsfg.core-finite-domains-development",
-  "version": 15,
+  "version": 16,
   "status": "development contract; ordinary Core integration, not admitted bytecode or executable private profile",
-  "hir": "0.15.0",
+  "hir": "0.16.0",
   "identity": {
     "type": "existing owned semantic TypeId; complete 32-byte runtime identity stays in actual cell/header",
     "node": "functionId plus JSON pointer in the verified owned function; binding and return slots use explicit suffixes",

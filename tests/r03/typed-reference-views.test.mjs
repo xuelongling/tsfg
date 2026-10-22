@@ -1,12 +1,14 @@
 // SPDX-License-Identifier: MIT
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import {readFile,mkdir,writeFile} from 'node:fs/promises';
+import {readFile,mkdir} from 'node:fs/promises';
+import {writeTypedArrayCandidate} from './typed-array-artifacts.mjs';
 import {readTypedArrayFacts} from '../../compiler/typed-array-facts.mjs';
 import {buildHir} from '../../compiler/hir.mjs';
 import {buildTypedReferenceViews,writeTypedReferenceViews} from '../../compiler/typed-reference-views.mjs';
 import {buildTypedLayouts} from '../../compiler/typed-layouts.mjs';
-const output='E:/ws/pro_tsfg/.scratch/tsfg_r03/M25-formal-array-checks-20261022/typed-view-construction-captures';
+import {optionalArrayPublication} from './typed-array-publication-fixtures.mjs';
+const output='E:/ws/pro_tsfg/.scratch/tsfg_r03/M25-formal-array-checks-20261022/array-consumer-review-current/views';
 const cases={offset:'b0e28ab90ccb45257bd8f81b8554949109b3bbe8e22db6231b274ffa680193c9',
   nested:'84c930117a45e4bad76945df7a04bf03adc67db1df6762ea83fb987fa6a07d1f',
   method:'38da6ecc5dd455700f3a667ae47e6110f1a58a6d74025a4f409deab4b509d7cf',
@@ -15,8 +17,9 @@ const cases={offset:'b0e28ab90ccb45257bd8f81b8554949109b3bbe8e22db6231b274ffa680
 for(const [name,id] of Object.entries(cases))test('actual selected physical reference view: '+name,async()=>{
   const bytes=await readFile(new URL('./testdata/typed-array-source514/'+id+'-package.json',import.meta.url));
   const facts=readTypedArrayFacts(bytes),context={family:'tsfg.array-facts-context-candidate',version:2,factsBytes:bytes,expectedPackageId:facts.packageId};
-  const built=buildHir(facts,context);assert.equal(built.status,'ok');const hir=built.hir;
-  const module=buildTypedReferenceViews(hir,context),layouts=buildTypedLayouts(hir,context);
+  const publication=optionalArrayPublication(facts),options={publicationContext:publication};
+  const built=buildHir(facts,context,publication);assert.equal(built.status,'ok');const hir=built.hir;
+  const module=buildTypedReferenceViews(hir,context,options),layouts=buildTypedLayouts(hir,context,options);
   for(const record of hir.compatibilityWitnesses) {
     const proof=record.compatibility,view=module.views.find(view=>view.actualType===proof.sourceType&&view.targetType===proof.targetType);
     assert.ok(view);
@@ -42,6 +45,6 @@ for(const [name,id] of Object.entries(cases))test('actual selected physical refe
     assert.notEqual(from.returnType.id,to.returnType.id);assert.notEqual(from.signatureHash,to.signatureHash);
     assert.equal(module.methods.find(fn=>fn.id===from.id).signatureHash,from.signatureHash);
   }
-  await mkdir(output,{recursive:true});await writeFile(output+'/'+name+'.bin',writeTypedReferenceViews(hir,context));
-  await writeFile(output+'/'+name+'.json',JSON.stringify({module,types:hir.types,layouts},null,2)+'\n');
+  await mkdir(output,{recursive:true});await writeTypedArrayCandidate(output+'/'+name+'.bin',writeTypedReferenceViews(hir,context,options));
+  await writeTypedArrayCandidate(output+'/'+name+'.json',JSON.stringify({module,types:hir.types,layouts},null,2)+'\n');
 });

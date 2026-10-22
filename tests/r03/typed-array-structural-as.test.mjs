@@ -5,6 +5,7 @@ import assert from 'node:assert/strict';
 import {readFile} from 'node:fs/promises';
 import {createHash} from 'node:crypto';
 import {readTypedArrayFacts} from '../../compiler/typed-array-facts.mjs';
+import {optionalArrayPublication as staticPublication} from './typed-array-publication-fixtures.mjs';
 import {buildHir,printHir,readHir} from '../../compiler/hir.mjs';
 import manifest from './testdata/typed-array-source514/structural-as.json' with {type:'json'};
 import previous from './testdata/typed-array-source514/manifest.json' with {type:'json'};
@@ -19,7 +20,8 @@ test('actual multi-reference structural assertions consume every authoritative r
   for(const row of manifest)await t.test(row.case,async()=>{
     const input=await bytes(row),facts=readTypedArrayFacts(input);
     const context={family:'tsfg.array-facts-context-candidate',version:2,factsBytes:input,expectedPackageId:row.packageId};
-    const built=buildHir(facts,context);assert.equal(built.status,'ok',JSON.stringify(built.diagnostics));
+    const publication=staticPublication(facts);
+    const built=buildHir(facts,context,publication);assert.equal(built.status,'ok',JSON.stringify(built.diagnostics));
     const hir=built.hir,types=new Map(hir.types.map(type=>[type.id,type]));
     const assertions=nodes(hir,'assertType');assert.ok(assertions.length>0);
     const assertion=assertions.find(node=>node.compatibilityRoots?.length===2);assert.ok(assertion);
@@ -33,7 +35,7 @@ test('actual multi-reference structural assertions consume every authoritative r
     assert.notEqual(assertion.operand.type,assertion.type,'static view retains the original operand type');
     assert.equal(nodes(hir,'arrayReadChecked').length,nodes(facts.payload,'checkedElementAccess').length,
       'as retains every actual checked access, including array-return cases with none');
-    assert.deepEqual(readHir(Buffer.from(printHir(hir,context)),context),hir);
+    assert.deepEqual(readHir(Buffer.from(printHir(hir,context,publication)),context,publication),hir);
   });
 });
 

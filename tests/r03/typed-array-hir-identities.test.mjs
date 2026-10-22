@@ -6,6 +6,7 @@ import {readFile} from 'node:fs/promises';
 import {createHash} from 'node:crypto';
 import {buildHir} from '../../compiler/hir.mjs';
 import {readTypedArrayFacts} from '../../compiler/typed-array-facts.mjs';
+import {optionalArrayPublication as staticPublication} from './typed-array-publication-fixtures.mjs';
 import manifest from './testdata/typed-array-actual-v8/manifest.json' with {type:'json'};
 
 function walk(value,visit) {
@@ -16,7 +17,7 @@ test('actual packets produce a closed owned type member and callable graph',asyn
   for(const row of manifest)await t.test(row.file,async()=>{
     const bytes=await readFile(new URL('./testdata/typed-array-actual-v8/'+row.file,import.meta.url));
     const facts=readTypedArrayFacts(bytes),built=buildHir(facts,{family:'tsfg.array-facts-context-candidate',
-      version:2,factsBytes:bytes,expectedPackageId:row.packageId});
+      version:2,factsBytes:bytes,expectedPackageId:row.packageId},staticPublication(facts));
     assert.equal(built.status,'ok');const hir=built.hir;
     const types=new Map(hir.types.map(type=>[type.id,type]));
     const functions=new Map(hir.functions.map(fn=>[fn.id,fn]));

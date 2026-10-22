@@ -25,10 +25,7 @@ import { emitScalarCore } from './scalar-core-emitter.mjs';
 import { emitReferenceCore } from './reference-core-emitter.mjs';
 import { emitStringCore } from './string-core-emitter.mjs';
 import { emitFormalStringCore } from './string-formal-emitter.mjs';
-import { buildArrayHir, readArrayHir } from './array-hir.mjs';
-import { emitArrayCore } from './array-core-emitter.mjs';
 export { analyzeArrayCalls, verifyArrayCalls, printArrayCalls, readArrayCalls } from './array-call-publication.mjs';
-import { isArrayFactsContext } from './array-hir-model.mjs';
 import {isTypedArrayContext,buildTypedArrayHir,readTypedArrayHir} from './typed-array-hir.mjs';
 import {emitFiniteCore} from './finite-core-emitter.mjs';
 
@@ -45,8 +42,7 @@ const types = scalarTypeIds;
 /** @param {any} snapshot @param {any} [factsContext] @param {any} [callPublicationContext] */
 // Error casts describe omitted hir fields without adding runtime keys or erasing family diagnostics.
 export function buildHir(snapshot, factsContext = undefined, callPublicationContext = undefined) {
-  if(isTypedArrayContext(factsContext))return buildTypedArrayHir(snapshot,factsContext);
-  if (isArrayFactsContext(factsContext)) return buildArrayHir(snapshot, factsContext, callPublicationContext);
+  if(isTypedArrayContext(factsContext))return buildTypedArrayHir(snapshot,factsContext,callPublicationContext);
   if (factsContext !== undefined) return buildStringHir(snapshot, factsContext);
   try {
     if (familyOf(snapshot) === 'tsfg.frontend-module-callable-candidate') return {status:'ok',hir:buildModuleCallableHir(snapshot)};
@@ -213,8 +209,7 @@ export function buildHir(snapshot, factsContext = undefined, callPublicationCont
 export const printHir = (hir, factsContext = undefined, callPublicationContext = undefined) => `${canonical(verifyHir(hir, factsContext, callPublicationContext))}\n`;
 /** @param {Uint8Array} bytes @param {any} [factsContext] @param {any} [callPublicationContext] */
 export function readHir(bytes, factsContext = undefined, callPublicationContext = undefined) {
-  if(isTypedArrayContext(factsContext))return readTypedArrayHir(bytes,factsContext);
-  if (isArrayFactsContext(factsContext)) return readArrayHir(bytes, factsContext, callPublicationContext);
+  if(isTypedArrayContext(factsContext))return readTypedArrayHir(bytes,factsContext,callPublicationContext);
   if (factsContext !== undefined) return readStringHir(bytes, factsContext);
   const { text, value } = readHirWire(bytes);
   const hir = verifyHir(value, undefined, callPublicationContext);
@@ -228,7 +223,7 @@ export function readHir(bytes, factsContext = undefined, callPublicationContext 
 
 /** @param {any} hir @param {any} [factsContext] @param {any} [callPublicationContext] */
 export function lowerHir(hir, factsContext = undefined, callPublicationContext = undefined) {
-  if (isArrayFactsContext(factsContext)) return emitArrayCore(hir, factsContext, callPublicationContext);
+  if(isTypedArrayContext(factsContext))return emitFiniteCore(hir,factsContext,callPublicationContext);
   if (factsContext !== undefined) return emitStringCore(hir, factsContext);
   if (familyOf(hir) === 'tsfg.module-callable-hir-candidate') {
     return emitModuleCallableCore(hir);
@@ -252,10 +247,10 @@ export function lowerHir(hir, factsContext = undefined, callPublicationContext =
 
 /** The ordinary formal Core/R04 route. Private representations keep lowerHir's
  * explicit candidate route; String HIR is revalidated and compiled directly.
- * @param {any} hir @param {any} [factsContext] */
-export function lowerFormalHir(hir, factsContext = undefined) {
-  if(isTypedArrayContext(factsContext))return emitFiniteCore(hir,factsContext);
-  if (factsContext !== undefined && !isArrayFactsContext(factsContext))
+ * @param {any} hir @param {any} [factsContext] @param {any} [callPublicationContext] */
+export function lowerFormalHir(hir, factsContext = undefined, callPublicationContext = undefined) {
+  if(isTypedArrayContext(factsContext))return emitFiniteCore(hir,factsContext,callPublicationContext);
+  if (factsContext !== undefined)
     return emitFormalStringCore(hir, factsContext);
-  return lowerHir(hir, factsContext);
+  return lowerHir(hir, factsContext,callPublicationContext);
 }

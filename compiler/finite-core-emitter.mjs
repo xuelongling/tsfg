@@ -27,9 +27,9 @@ function memberWitnessContracts(hir) {
         ||order(x.sourceType,y.sourceType)||order(x.targetType,y.targetType);});
 }
 
-export function emitFiniteCore(input,context) {
-  const hir=verifyHir(input,context),proofs=buildFiniteCoreDomains(hir,context),plan=proofs.definition;
-  const fieldPhases=buildFiniteFieldPhases(hir,context);
+export function emitFiniteCore(input,context,publicationContext=undefined) {
+  const options={publicationContext},hir=verifyHir(input,context,publicationContext),proofs=buildFiniteCoreDomains(hir,context,options),plan=proofs.definition;
+  const fieldPhases=buildFiniteFieldPhases(hir,context,options);
   const domains=new Map(plan.domains.map(row=>[row.id,row])),nodes=new Map(plan.carrierNodes.map(row=>[row.id,row]));
   const occurrences=new Map(plan.expressions.map(row=>[row.id,row]));
   const arrayWrites=new Map(plan.arrayReaching.writes.map(row=>[row.id,row]));
@@ -282,7 +282,7 @@ export function emitFiniteCore(input,context) {
     finite_contract:sha256(canonical(descriptor)+'\n'),finite_domains:canonical(plan),semantic_types:canonical(hir.types),
     reached_domains:canonical(proofs.reached),
     language_intrinsics:canonical(plan.intrinsics),
-    source_closure:canonical(hir.sources),canonical_layouts:canonical(buildTypedLayouts(hir,context)),
+    source_closure:canonical(hir.sources),canonical_layouts:canonical(buildTypedLayouts(hir,context,options)),
     callable_contracts:canonical(finiteCallableContracts(hir)),
     source_exports:canonical(hir.exports),
     entry_compatibility_roots:canonical(hir.entryCompatibilityRoots.map(row=>({...row,roots:[...row.roots]
@@ -291,7 +291,7 @@ export function emitFiniteCore(input,context) {
     compatibility_witnesses:canonical(memberWitnessContracts(hir)),
     field_phases:canonical(fieldPhases),
     array_reaching:canonical(plan.arrayReaching),
-    member_views:canonical(buildTypedReferenceViews(hir,context)),target:hir.target.target,triple:hir.target.triple,data_layout:hir.target.llvmDataLayout};
+    member_views:canonical(buildTypedReferenceViews(hir,context,options)),target:hir.target.target,triple:hir.target.triple,data_layout:hir.target.llvmDataLayout};
   const result='module attributes {'+Object.entries(attrs).map(([key,value])=>'tsfg_core.'+key+' = '+quote(value)).join(', ')+'} {\n'+functions.join('\n')+'\n}\n';
   if(Buffer.byteLength(result)>8388608)pending('Core byte limit');return result;
 }

@@ -5,8 +5,6 @@ import { analyzeModuleCallableCalls } from './module-callable-publication.mjs';
 import { analyzeVerifiedModuleCalls, checkCallEffectsInputs, callEffectsFailure, verifyKernelHostSemantics } from './call-effects.mjs';
 export { KernelHostSemanticError } from './call-effects.mjs';
 import { verifyStringHir } from './string-hir-model.mjs';
-import { isArrayFactsContext } from './array-hir-model.mjs';
-import { verifySelectedArrayHir as verifyArrayHir } from './array-hir.mjs';
 import {isTypedArrayContext,verifyTypedArrayHir} from './typed-array-hir.mjs';
 import { verifyExceptionHir } from './exception-hir.mjs';
 import { verifyNullableHir } from './nullable-hir.mjs';
@@ -32,8 +30,7 @@ const hash = value => typeof value === "string" && /^sha256:[0-9a-f]{64}$/.test(
 const types = scalarTypeIds;
 /** @param {any} hir @param {any} [factsContext] @param {any} [callPublicationContext] */
 export function verifyHir(hir, factsContext = undefined, callPublicationContext = undefined) {
-  if(isTypedArrayContext(factsContext))return verifyTypedArrayHir(hir,factsContext);
-  if (isArrayFactsContext(factsContext)) return verifyArrayHir(hir,factsContext,callPublicationContext);
+  if(isTypedArrayContext(factsContext))return verifyTypedArrayHir(hir,factsContext,callPublicationContext);
   if (callPublicationContext === undefined) return verifyWholeHir(hir, factsContext);
   return selectedModuleCalls(hir, factsContext, callPublicationContext).hir;
 }
@@ -64,7 +61,6 @@ function selectedModuleCalls(hir, factsContext, context) {
 /** @param {any} hir @param {any} [factsContext] @param {boolean} [selectedCalls] */
 function verifyWholeHir(hir, factsContext = undefined, selectedCalls = false) {
   // An explicit facts context owns selection and must reject before any HIR inspection.
-  if (isArrayFactsContext(factsContext)) return verifyArrayHir(hir, factsContext);
   if (factsContext !== undefined) return verifyStringHir(hir, factsContext);
   if (familyOf(hir) === 'tsfg.module-callable-hir-candidate') return verifyModuleCallableHir(hir);
   if (hir?.format?.family === "tsfg.exception-hir-candidate") return verifyExceptionHir(hir);

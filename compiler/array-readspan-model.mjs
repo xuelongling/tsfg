@@ -1,229 +1,187 @@
 // SPDX-License-Identifier: MIT
-// Complete formal/local view provenance and call completion, derived from verified owned HIR.
-import { canonical, own, sha256, arrayTypeId, readSpanTypeId } from './identity.mjs';
+// Typed borrow families consume the exact Source-order owner trace and fixed table.
+import {canonical,own,sha256} from './identity.mjs';
+import {arrayAnalysisTypes,arrayReferenceBinding} from './array-analysis-types.mjs';
+import {parameterArrayOwner} from './array-owner-trace.mjs';
+import {finiteCallables} from './finite-callables.mjs';
 
-/** @param {any} diagnostic @returns {never} */
 function failure(diagnostic) {
-  const checked = own(diagnostic);
-  throw Object.freeze(Object.assign(new TypeError(checked.message),checked));
+  const checked=own(diagnostic);throw Object.freeze(Object.assign(new TypeError(checked.message),checked));
 }
 function limit() {
-  failure({code:'r03-d-readspan-limit',ruleId:'r01-input-boundary',phase:'hir',
-    message:'ReadSpan analysis exceeds work limit'});
+  failure({code:'r03-d-readspan-limit',ruleId:'r01-input-boundary',phase:'hir',message:'ReadSpan analysis exceeds work limit'});
 }
-export function deriveReadSpanPlan(hir, prepared) {
-  let work = 0;
-  const charge = () => { if (++work > 1024) limit(); };
-  const calls = prepared.flow.calls;
-  /** @type {Map<string,any>} */
-  const targets = new Map(hir.functions.map(fn => [fn.id,fn]));
-  const callIndices = new Map(calls.map((call,index) => [
-    canonical([call.functionId,call.expressionPath]),index,
-  ]));
-  const functions = hir.functions.map(fn => {
-    const model = prepared.ownerModel.functions.get(fn.id);
-    const families = new Map(), views = [], events = [];
-    // Input views already exist at entry. They are registered even when unused,
-    // but entry itself is neither a body event nor an owner read/allocation.
-    fn.parameters.forEach((parameter,index) => {
-      if (parameter.type !== readSpanTypeId) return;
-      charge();
-      const viewId = sha256('tsfg.readspan.parameter-view.v1\0' + canonical({
-        functionId:fn.id,bindingId:parameter.id,index,parameterRange:parameter.range,
-      }));
-      const view = {viewId,binding:parameter.id,owner:model.bindings.get(parameter.id),
-        origin:{kind:'parameter',index,range:{...parameter.range}},
-        aliases:[],useEvents:[],lastUseEvent:null};
-      views.push(view); families.set(parameter.id,view);
+export function deriveReadSpanPlan(hir,prepared) {
+  let work=0;const charge=()=>{if(++work>1024)limit();},type=arrayAnalysisTypes(hir);
+  const callables=finiteCallables(hir),calls=prepared.flow.calls,targets=new Map(callables.map(fn=>[fn.id,fn]));
+  const indices=new Map(calls.map((call,index)=>[canonical([call.functionId,call.expressionPath]),index]));
+  const functions=callables.map(fn=>{
+    const model=prepared.ownerModel.functions.get(fn.id),families=new Map(),results=new Map(),views=[],events=[];
+    const event=(operation,kind,fields)=>{
+      if(events.length>=100)limit();const sequence=events.length;
+      events.push({sequence,statementIndex:operation.statementIndex,expressionPath:[...operation.path],
+        kind,range:{...operation.range},...fields});return sequence;
+    };
+    const use=(view,binding,operation,kind,fields={})=>{
+      charge();if(!view)failure({code:'r03-d-readspan-origin',ruleId:'r01-span',phase:'hir',
+        message:'ReadSpan use has no proven live family',primary:{sourceId:fn.sourcePath,...operation.range}});
+      const sequence=event(operation,kind,{viewId:view.viewId,binding,...fields});
+      if(view.useEvents.at(-1)!==sequence){if(view.useEvents.length>=50)limit();view.useEvents.push(sequence);}
+      view.lastUseEvent=sequence;return sequence;
+    };
+    const family=(value,path)=>{
+      if(value.kind==='reference')return families.get(value.binding)??[];
+      if(['group','assertType','nonNull'].includes(value.kind))return family(value.operand,[...path,'operand']);
+      if(value.kind==='assignment')return family(value.value,[...path,'value']);
+      return results.get(canonical(path))??[];
+    };
+    const returnedCall=(value,path)=>{
+      while(['group','assertType','nonNull'].includes(value.kind)){value=value.operand;path=[...path,'operand'];}
+      const callIndex=value.kind==='call'?indices.get(canonical([fn.id,path])):undefined;
+      return {callIndex,returned:callIndex===undefined?null:calls[callIndex].returnedView};
+    };
+    const create=(operation,kind,owner,fields={})=>{
+      charge();if(views.length>=40)limit();
+      const viewId=sha256('tsfg.readspan.typed-family.v1\0'+canonical({functionId:fn.id,expressionPath:operation.path,range:operation.range,kind,...fields}));
+      const createEvent=event(operation,kind==='callResult'?'view-call-result-create-complete':'view-create-complete',
+        {viewId,binding:null,...fields});
+      const view={viewId,binding:null,owner,origin:{kind,createEvent},aliases:[],useEvents:[],lastUseEvent:createEvent};
+      views.push(view);results.set(canonical(operation.path),[view]);return view;
+    };
+    fn.parameters.forEach((parameter,index)=>{
+      if(!type.isView(parameter.type))return;charge();
+      const viewId=sha256('tsfg.readspan.parameter-view.v1\0'+canonical({functionId:fn.id,bindingId:parameter.id,index,parameterRange:parameter.range}));
+      const view={viewId,binding:parameter.id,owner:parameterArrayOwner(fn,index),origin:{kind:'parameter',index,range:{...parameter.range}},
+        aliases:[],useEvents:[],lastUseEvent:null};views.push(view);families.set(parameter.id,[view]);
     });
-    const event = (statementIndex,expressionPath,kind,range,fields) => {
-      if (events.length >= 100) limit();
-      const sequence = events.length;
-      events.push({sequence,statementIndex,expressionPath,kind,range:{...range},...fields});
-      return sequence;
-    };
-    const completeUse = (view, sequence) => {
-      if (view.useEvents.at(-1) !== sequence) {
-        if (view.useEvents.length >= 50) limit();
-        view.useEvents.push(sequence);
-      }
-      view.lastUseEvent = sequence;
-    };
-    const useFamily = (view,binding,kind,index,path,range,fields = {}) => {
-      charge();
-      const sequence = event(index,path,kind,range,{viewId:view.viewId,binding,...fields});
-      completeUse(view,sequence);
-      return sequence;
-    };
-    const use = (binding,kind,index,path,range,fields = {}) =>
-      useFamily(families.get(binding),binding,kind,index,path,range,fields);
-    const read = (value,index,path) => {
-      if (value?.kind === 'readSpanReadChecked')
-        use(value.receiver.binding,'view-read-complete',index,path,value.range);
-      else if (value?.kind === 'readSpanLength')
-        use(value.receiver.binding,'view-length-complete',index,path,value.range);
-    };
-    const callInfo = (value,path) => {
-      const callIndex = callIndices.get(canonical([fn.id,path]));
-      const returnedView = calls[callIndex].returnedView;
-      // Only the trusted original target slot selects new versus existing family.
-      const arrayOrigin = returnedView !== null
-        && targets.get(value.target).parameters[returnedView.index].type === arrayTypeId;
-      return {callIndex,returnedView,arrayOrigin};
-    };
-    const ordinaryCall = (value,index,path) => {
-      const info = callInfo(value,path), {callIndex} = info;
-      event(index,path,'array-call-effect',value.range,{callIndex});
-      const uses = value.arguments.flatMap((argument,slot) => {
-        if (argument.type !== readSpanTypeId) return [];
-        // Each original reference pays, including repeated references to one family.
-        charge();
-        const view = families.get(argument.binding);
-        return [{index:slot,binding:argument.binding,viewId:view.viewId,range:{...argument.range}}];
-      });
-      if (uses.length) {
-        const sequence = event(index,path,'view-call-complete',value.range,{callIndex,uses});
-        for (const occurrence of uses) completeUse(families.get(occurrence.binding),sequence);
-      }
-      return info;
-    };
-    const createCallResult = (call,binding,index,path,range) => {
-      // Even an unused/discarded result registers after whole argument completion.
-      charge();
-      const {callIndex,returnedView} = call, parameterIndex = returnedView.index;
-      const viewId = sha256('tsfg.readspan.call-result-view.v1\0' + canonical({
-        functionId:fn.id,expressionPath:path,callRange:range,parameterIndex,
-      }));
-      const createEvent = event(index,path,'view-call-result-create-complete',range,
-        {viewId,binding,callIndex,parameterIndex});
-      const view = {viewId,binding,owner:returnedView.owner,origin:{kind:'callResult',createEvent},
-        aliases:[],useEvents:[],lastUseEvent:createEvent};
-      views.push(view);
-      if (binding !== null) families.set(binding,view);
-      return view;
-    };
-    for (const [index,stmt] of fn.body.entries()) {
-      if (stmt.kind === 'local' && stmt.binding.type === readSpanTypeId) {
-        const init = stmt.initializer, path = ['body',index,'initializer'];
-        // Preserve old alias registration before the call; new roots register after it.
-        if (init.kind !== 'arrayDirectCall' || !callInfo(init,path).arrayOrigin) charge();
-        if (init.kind === 'readSpanCreateChecked') {
-          const viewId = sha256('tsfg.readspan.view.v1\0' + canonical({
-            functionId:fn.id,bindingId:stmt.binding.id,createRange:init.range,
-          }));
-          const createEvent = event(index,path,'view-create-complete',init.range,
-            {viewId,binding:stmt.binding.id});
-          const view = {viewId,binding:stmt.binding.id,owner:model.bindings.get(stmt.binding.id),
-            origin:{kind:'local',createEvent},aliases:[],useEvents:[],lastUseEvent:createEvent};
-          views.push(view); families.set(stmt.binding.id,view);
-        } else if (init.kind === 'arrayDirectCall') {
-          const call = ordinaryCall(init,index,path);
-          if (call.arrayOrigin) createCallResult(call,stmt.binding.id,index,path,init.range);
-          else {
-            const {callIndex,returnedView} = call, view = families.get(returnedView.binding);
-            families.set(stmt.binding.id,view);
-            const sequence = use(stmt.binding.id,'view-call-result-alias-complete',index,path,init.range,
-              {initializerBinding:returnedView.binding,callIndex,parameterIndex:returnedView.index});
-            view.aliases.push({binding:stmt.binding.id,initializerBinding:returnedView.binding,event:sequence});
-          }
-        } else {
-          const view = families.get(init.binding);
-          families.set(stmt.binding.id,view);
-          const sequence = use(stmt.binding.id,'view-alias-copy-complete',index,path,init.range,
-            {initializerBinding:init.binding});
-          view.aliases.push({binding:stmt.binding.id,initializerBinding:init.binding,event:sequence});
+    for(const operation of model.operations) {
+      if(operation.kind==='viewCreate')create(operation,'local',operation.owner);
+      else if(operation.kind==='read') {
+        const value=operation.value;
+        if(type.isView(value.receiver.type)) {
+          const possible=family(value.receiver,[...operation.path,'receiver']);
+          if(!possible.length)use(undefined,null,operation,'view-read-complete');
+          for(const view of possible)use(view,arrayReferenceBinding(value.receiver),operation,
+            value.kind==='readSpanLength'?'view-length-complete':'view-read-complete');
         }
-      } else if (stmt.kind === 'arrayStoreDenseChecked') {
-        read(stmt.value,index,['body',index,'value']);
-        event(index,['body',index],'array-store-effect',stmt.expressionRange,model.proofs.get(index));
-      } else if (stmt.kind === 'arrayResizeChecked') {
-        event(index,['body',index],'array-resize-effect',stmt.expressionRange,model.proofs.get(index));
-      } else if (stmt.kind === 'expression' || stmt.kind === 'return') {
-        const field = stmt.kind === 'expression' ? 'expression' : 'value', value = stmt[field];
-        const path = ['body',index,field];
-        if (value.kind === 'arrayDirectCall') {
-          const call = ordinaryCall(value,index,path), {callIndex,returnedView} = call;
-          if (call.arrayOrigin) {
-            const view = createCallResult(call,null,index,path,value.range);
-            if (stmt.kind === 'return') useFamily(view,null,'view-return-complete',index,path,value.range,
-              {callIndex,parameterIndex:returnedView.index});
-          } else if (stmt.kind === 'return' && value.type === readSpanTypeId)
-            use(returnedView.binding,'view-return-complete',index,path,value.range,
-              {callIndex,parameterIndex:returnedView.index});
-        } else if (stmt.kind === 'return' && value.type === readSpanTypeId)
-          use(value.binding,'view-return-complete',index,path,value.range,{callIndex:null,parameterIndex:null});
-        else read(value,index,path);
+      }else if(operation.kind==='call') {
+        const {call}=operation,callIndex=indices.get(canonical([fn.id,operation.path]));
+        event(operation,'array-call-effect',{callIndex});
+        const callee=targets.get(call.target),value=operation.value;
+        const actuals=callee.ownerType?[value.receiver,...value.arguments]:value.arguments;
+        const actualPath=slot=>callee.ownerType&&slot===0?[...operation.path,'receiver']
+          :[...operation.path,'arguments',slot-(callee.ownerType?1:0)];
+        const uses=[];
+        actuals.forEach((argument,slot)=>{
+          if(!argument||!type.isView(argument.type))return;charge();const possible=family(argument,actualPath(slot));
+          if(!possible.length)failure({code:'r03-d-readspan-origin',ruleId:'r01-span',phase:'hir',message:'ReadSpan argument has no proven live family',
+            primary:{sourceId:fn.sourcePath,...argument.range}});
+          for(const view of possible)uses.push({index:slot,binding:arrayReferenceBinding(argument),viewId:view.viewId,range:{...argument.range}});
+        });
+        if(uses.length) {
+          const sequence=event(operation,'view-call-complete',{callIndex,uses});
+          for(const occurrence of uses) {
+            const view=views.find(row=>row.viewId===occurrence.viewId);
+            if(view.useEvents.at(-1)!==sequence){if(view.useEvents.length>=50)limit();view.useEvents.push(sequence);}view.lastUseEvent=sequence;
+          }
+        }
+        if(type.isView(value.type)) {
+          const returned=call.returnedView;
+          if(!returned)failure({code:'r03-d-readspan-origin',ruleId:'r01-span',phase:'hir',message:'Returned ReadSpan has no exact original parameter',
+            primary:{sourceId:fn.sourcePath,...value.range}});
+          const parameterIndex=returned.index;
+          if(type.isArray(callee.parameters[parameterIndex].type))create(operation,'callResult',returned.owner,{callIndex,parameterIndex});
+          else results.set(canonical(operation.path),family(actuals[parameterIndex],actualPath(parameterIndex)));
+        }
+      }else if(operation.kind==='binding'&&type.isView(operation.type)) {
+        const possible=family(operation.value,operation.path);if(!possible.length)continue;
+        const prior=operation.conditional?families.get(operation.binding)??[]:[];
+        families.set(operation.binding,[...new Set([...prior,...possible])]);
+        for(const view of possible) {
+          if(view.binding===null&&view.origin.kind!=='parameter') {
+            view.binding=operation.binding;events[view.origin.createEvent].binding=operation.binding;
+          }else {
+            const {callIndex,returned}=returnedCall(operation.value,operation.path);
+            const initializerBinding=arrayReferenceBinding(operation.value)??returned?.binding??view.binding;
+            const fields=returned?{initializerBinding,callIndex,parameterIndex:returned.index}:{initializerBinding};
+            charge();const sequence=use(view,operation.binding,operation,
+              returned?'view-call-result-alias-complete':'view-alias-copy-complete',fields);
+            view.aliases.push({binding:operation.binding,initializerBinding,event:sequence});
+          }
+        }
+      }else if(operation.kind==='store'||operation.kind==='resize')event(operation,
+        operation.kind==='store'?'array-store-effect':'array-resize-effect',operation.proof);
+      else if(operation.kind==='return'&&type.isView(operation.value.type)) {
+        const possible=family(operation.value,operation.path);
+        if(!possible.length)use(undefined,null,operation,'view-return-complete');
+        const {callIndex,returned}=returnedCall(operation.value,operation.path);
+        for(const view of possible)use(view,arrayReferenceBinding(operation.value)??returned?.binding??null,
+          operation,'view-return-complete',{callIndex:callIndex??null,parameterIndex:returned?.index??null});
       }
     }
-    return {functionId:fn.id,views,events};
+    return {functionId:fn.id,views,events,loops:model.loops};
   });
-  return {plan:{version:4,publication:{scopeDigest:prepared.scopeDigest,
-    publishedDigest:prepared.publishedDigest},calls,functions},work};
+  return {plan:{version:5,publication:{scopeDigest:prepared.scopeDigest,publishedDigest:prepared.publishedDigest},calls,functions},work};
 }
-
-function mayAlias(left, right) {
-  if (canonical(left) === canonical(right)) return true;
-  return left.kind === 'parameter' && right.kind === 'parameter'
-    && left.functionId === right.functionId;
+function mutuallyExclusive(left,right) {
+  const n=Math.min(left.length,right.length);
+  for(let i=0;i<n;i++)if(left[i]!==right[i])return left[i]==='then'&&right[i]==='else'||left[i]==='else'&&right[i]==='then';
+  return false;
 }
-function conflict(fn, state, event, view, owner, sourceKind, fixed = {}) {
-  const at = (kind,range) => ({kind,sourceId:fn.sourcePath,...range});
-  const last = state.events[view.lastUseEvent];
-  const aliases = new Map(view.aliases.map(alias => [alias.binding,alias]));
-  const chain = [];
-  // Trusted group rows retain original slot order; the first family match is the lowest slot.
-  let binding = last.kind === 'view-call-complete'
-    ? last.uses.find(use => use.viewId === view.viewId).binding : last.binding;
-  while (binding !== view.binding) {
-    const alias = aliases.get(binding);
-    chain.push(alias); binding = alias.initializerBinding;
+const prefix=(path,base)=>base.every((key,index)=>path[index]===key);
+function loopBackedge(event,last,view,state) {
+  const loops=state.loops.filter(loop=>prefix(event.expressionPath,loop));
+  const origin=view.origin.kind==='parameter'?null:state.events[view.origin.createEvent].expressionPath;
+  return loops.some(loop=>prefix(last.expressionPath,loop)&&(!origin||!prefix(origin,loop)));
+}
+function conflict(fn,state,event,view,owner,sourceKind,fixed={}) {
+  const at=(kind,range)=>({kind,sourceId:fn.sourcePath,...range}),last=state.events[view.lastUseEvent];
+  const origin=view.origin.kind==='parameter'?view.origin.range:state.events[view.origin.createEvent].range;
+  const related=[at('borrow-origin',origin)];
+  const chain=[],visited=new Set();
+  let binding=last.kind==='view-call-complete'?last.uses.find(use=>use.viewId===view.viewId).binding:last.binding;
+  while(binding!==null&&binding!==view.binding&&!visited.has(binding)) {
+    visited.add(binding);
+    const alias=view.aliases.findLast(row=>row.binding===binding&&row.event<=view.lastUseEvent);
+    if(!alias)break;chain.push(alias);binding=alias.initializerBinding;
   }
-  const originRange = view.origin.kind === 'parameter'
-    ? view.origin.range : state.events[view.origin.createEvent].range;
-  const related = [at('borrow-origin',originRange)];
-  for (const alias of chain.reverse()) {
-    const sourceEvent = state.events[alias.event];
-    related.push(at('borrow-alias',fn.body[sourceEvent.statementIndex].range));
-  }
+  for(const alias of chain.reverse())related.push(at('borrow-alias',state.events[alias.event].range));
   related.push(at('borrow-last-use',last.range));
   failure({code:'r03-d-readspan-structural-conflict',ruleId:'r01-span',phase:'hir',
-    message:'active ReadSpan may overlap a structural Array operation',
-    primary:{sourceId:fn.sourcePath,...event.range},related,
-    conflict:{functionId:fn.id,operationPath:event.expressionPath,sequence:event.sequence,
-      viewId:view.viewId,viewOwner:view.owner,structuralOwner:owner,
-      lastUsePath:last.expressionPath,sourceKind,...fixed}});
+    message:'active ReadSpan may overlap a structural Array operation',primary:{sourceId:fn.sourcePath,...event.range},related,
+    conflict:{functionId:fn.id,operationPath:event.expressionPath,sequence:event.sequence,viewId:view.viewId,
+      viewOwner:view.owner,structuralOwner:owner,lastUsePath:last.expressionPath,sourceKind,...fixed}});
 }
-/** Called only after the complete supplied HIR/plan has matched the trusted reconstruction. */
-export function consumeReadSpanPlan(hir, prepared, registrationAndUseWork) {
-  let work = registrationAndUseWork;
-  const plan = hir.readSpanPlan;
-  for (const [index,state] of plan.functions.entries()) {
-    const fn = hir.functions[index];
-    const compare = (event,owner,sourceKind,fixed = {}) => {
-      for (const view of state.views) {
-        // Unused formals have no live interval; never coerce their null last use to event zero.
-        if (view.lastUseEvent === null) continue;
-        if (view.origin.kind !== 'parameter' && !(view.origin.createEvent < event.sequence)) continue;
-        if (!(event.sequence < view.lastUseEvent)) continue;
-        // Global registration/use fees are already complete. Duplicated slots still charge.
-        if (++work > 1024) limit();
-        if (mayAlias(view.owner,owner)) conflict(fn,state,event,view,owner,sourceKind,fixed);
+export function consumeReadSpanPlan(hir,prepared,registrationAndUseWork) {
+  let work=registrationAndUseWork;const plan=hir.readSpanPlan,callables=finiteCallables(hir);
+  for(const [index,state]of plan.functions.entries()) {
+    const fn=callables[index];
+    const compare=(event,owner,sourceKind,fixed={})=>{
+      for(const view of state.views) {
+        if(view.lastUseEvent===null)continue;
+        if(view.origin.kind!=='parameter'&&!(view.origin.createEvent<event.sequence))continue;
+        const last=state.events[view.lastUseEvent],backedge=loopBackedge(event,last,view,state);
+        if(!(event.sequence<view.lastUseEvent)&&!backedge)continue;
+        if(!backedge&&mutuallyExclusive(event.expressionPath,last.expressionPath))continue;
+        if(++work>1024)limit();if(prepared.ownerTools.mayAlias(view.owner,owner))conflict(fn,state,event,view,owner,sourceKind,fixed);
       }
     };
-    for (const event of state.events) {
-      if (event.kind === 'array-call-effect') {
-        const call = plan.calls[event.callIndex], upper = prepared.records.get(call.target).upper;
-        for (const parameter of upper.parameters) {
-          if (!parameter.structural) continue;
-          const actual = call.arguments.find(argument => argument.index === parameter.index);
+    for(const event of state.events) {
+      if(event.kind==='array-call-effect') {
+        const site=plan.calls[event.callIndex];
+        for(const arm of site.targets) {
+        const call={...site,...arm},upper=prepared.records.get(call.target).upper;
+        for(const parameter of upper.parameters)if(parameter.structural) {
+          const actual=call.arguments.find(argument=>argument.index===parameter.index);
           compare(event,actual.owner,'fixedCall',{target:call.target,parameterIndex:parameter.index,
-            consumedDigest:call.consumedDigest,scopeDigest:plan.publication.scopeDigest,
-            publishedDigest:plan.publication.publishedDigest});
+            consumedDigest:call.consumedDigest,scopeDigest:plan.publication.scopeDigest,publishedDigest:plan.publication.publishedDigest});
         }
-      } else if (event.kind === 'array-store-effect' && !event.nonStructural)
-        compare(event,event.owner,'directStore');
-      else if (event.kind === 'array-resize-effect' && !event.nonStructural)
-        compare(event,event.owner,'directResize');
+        if(upper.local.structural)compare(event,{kind:'unknown'},'fixedCallLocal',{
+          target:call.target,consumedDigest:call.consumedDigest,scopeDigest:plan.publication.scopeDigest,
+          publishedDigest:plan.publication.publishedDigest});
+        }
+      }else if(event.kind==='array-store-effect'&&!event.nonStructural)compare(event,event.owner,'directStore');
+      else if(event.kind==='array-resize-effect'&&!event.nonStructural)compare(event,event.owner,'directResize');
     }
   }
 }

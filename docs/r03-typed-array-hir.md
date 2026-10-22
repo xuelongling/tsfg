@@ -1,6 +1,83 @@
 <!-- SPDX-License-Identifier: MIT -->
 # Generic Array facts and owned HIR
 
+The ordinary public HIR route now uses only facts8/context2 and typed HIR0.16.
+Actual borrowed expressions, borrowed parameters/results and cyclic calls require
+an independently selected fixed publication context5. Explicit ArrayCalls
+analysis always requires that context. Source facts validation remains a
+structural ownership boundary; it does not independently admit borrowed code.
+
+The fixed scope contains the complete static parameter and result TypeIds.
+It never substitutes an operational payload set, inferred callee effects or a
+narrowed return expression for a definition's Published maximum or ABI carrier.
+Derived owner effects are computed independently; Effective caller effects
+consume the fixed maxima. Original slots and exact borrowed return origins are
+checked, including full union, value, reference and container element types.
+
+ArrayCalls9 and ReadSpanPlan5 share one complete typed preparation. The owner
+trace follows receiver/index/operand/RHS and argument completion in the original
+expression tree. Returned Array-origin views create their own family after
+callee completion; returned ReadSpan actuals keep their existing family.
+Aliases retain bindings, reads and length/return uses extend the actual family,
+and every complete reconstructed plan is compared before structural stability
+is consumed. Bound, discarded and tail call results remain distinct occurrences.
+Unknown ownership conservatively overlaps every owner, and branch merges retain
+all possible aliases. Recursive allocation paths forget disjointness at a cycle
+instead of growing without bound. This grants no Runtime or recursion execution
+qualification.
+
+Binary `&&`, `||` and `??` retain a skipped RHS path. Conditional view rebinding
+keeps both possible families, while the assignment expression itself returns
+the RHS family. Conditional storage or alias changes do not establish a must
+length; the cold reader retains checked operations after the join.
+
+Method calls retain their static selected declaration, signature and ABI carrier.
+Their separate `targets` records identify every possible fixed effect maximum
+by implementation, signature and digest. The complete owned inheritance and
+override catalogue and the selected M12 member maps supply that authority;
+member names never invent edges. The same pure authority calculation serves
+physical reference views after full verification. Ordinary preparation consumes
+it only after the complete selected facts have been checked and projected.
+Derived effects, caller Effective effects, returned owner slots, borrow checks
+and parallel proofs all account for the authorized implementations.
+
+The inclusive owner-work meter covers leaf expansion, shared DAGs, call paths,
+canonical keys and comparisons before allocating or sorting their expanded
+results. Per-preparation immutable key and call-mapping caches avoid repeating
+that work. Catalogue selection, trace, coverage and borrow comparisons share
+the same meter; exhaustion and cancellation preserve their original failure.
+
+The same owned callable catalogue covers explicit constructors and real implicit
+ConstructionIds. Receiver slot zero and original argument slots remain distinct;
+base forwarding uses the current receiver and original argument bindings. Own
+field initializers are visited in their actual construction-plan order. These
+are static effect and borrow checks, not constructor execution qualification.
+
+The public build/verify/print/read/lowering entry points forward their optional
+third publication context. Layout, member-view and Array-backing consumers carry
+it in their existing limits/options object as `publicationContext`; layout and
+binary encoding semantics remain unchanged. Missing or stale fixed contexts,
+context1/facts7, old report versions and fabricated plans reject without a
+compatibility branch. Historical descriptors, Source captures, independent
+oracles and parser/Runtime packet tests retain their original identities.
+
+The retired private facts7/HIR8 tests map to actual v8 public-route coverage:
+dense aliases and bounds use the eight original sources plus cold density
+controls; owner calls, returns, aliases and last uses use the borrowed-result
+and borrow-edge captures; SCC and global 1024/1025 budgets use new official
+captures of the original source boundaries. Fixed/report/plan and parallel
+controls exercise the current public readers. The obsolete private Node emitter
+route is replaced by the shared finite lowering entry, whose component checks
+include the selected publication context through backing and layout consumers.
+Fixed historical JSON inputs,
+independent C++ parser tests and Runtime packet tests are retained.
+
+The cold facts reader also checks definite dense-store gaps and uninitialized
+length growth from actual fresh allocations and aliases. Dynamic indices,
+unknown lengths, calls and control-flow merges retain checked operations.
+Receiver/index/RHS ordering determines which static length facts still apply;
+physical capacity or an operational payload domain never supplies a length proof.
+
 The M25 consumer reads the exact version 8 logical facts descriptor from
 `contracts/array-generic-facts.schema.json`. A caller selects immutable input
 bytes and their expected package identity through facts context version 2.
@@ -67,7 +144,7 @@ establish retained structure, not runtime execution of this ordering.
 
 `verifyHir`, `printHir` and `readHir` reconstruct the complete expected HIR from
 the separately selected facts. They reject substitutions, omitted or changed
-owned nodes and noncanonical serialization. The `0.14.0` descriptor is a
+owned nodes and noncanonical serialization. The `0.16.0` descriptor is a
 development HIR contract; registry publication, formal Core lowering and
 versioned bytecode adoption remain unfinished. Version 7 private f64 facts are
 not reinterpreted as version 8. Their existing qualification does not qualify

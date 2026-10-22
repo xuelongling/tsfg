@@ -3,7 +3,7 @@
 import descriptor from '../contracts/typed-array-hir.schema.json' with {type:'json'};
 import bytecode from '../contracts/bytecode.schema.json' with {type:'json'};
 import {canonical,own,sha256,functionIdentity,signatureHash} from './identity.mjs';
-export const typedArrayHirFormat=own({contractVersion:'0.15.0',schemaHash:sha256(canonical(descriptor)+'\n')});
+export const typedArrayHirFormat=own({contractVersion:'0.16.0',schemaHash:sha256(canonical(descriptor)+'\n')});
 
 export function projectTypedArrayFacts(facts) {
   const payload=facts.payload,sourceTypes=new Map(payload.types.map(row=>[row.id,row]));

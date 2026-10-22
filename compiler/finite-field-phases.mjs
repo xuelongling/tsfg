@@ -4,8 +4,8 @@
 import {verifyHir} from './module-hir.mjs';
 import {own} from './identity.mjs';
 
-export function buildFiniteFieldPhases(input,context) {
-  const hir=verifyHir(input,context);let remaining=100000;
+export function buildFiniteFieldPhases(input,context,options={}) {
+  const hir=verifyHir(input,context,options.publicationContext);let remaining=100000;
   const charge=()=>{if(--remaining<0)throw new TypeError('r03-finite-field-phase: work limit');};
   return finiteFieldPhases(hir,charge);
 }

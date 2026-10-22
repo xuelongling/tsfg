@@ -13,7 +13,7 @@ function fail(message) {throw Object.assign(new TypeError('r03-finite-domain: '+
   {code:'r03-finite-domain',ruleId:'r01-input-boundary',phase:'lowering'});}
 
 /** @param {any} input @param {any} context
- * @param {{work?:number,cancelled?:()=>boolean}} [options] */
+ * @param {{work?:number,cancelled?:()=>boolean,publicationContext?:any}} [options] */
 export function buildFiniteActualDomains(input,context,options={}) {
   return buildPlans(input,context,options,false).reached;
 }
@@ -29,13 +29,14 @@ function buildPlans(input,context,options,definitions) {
   if(!Number.isInteger(remaining)||remaining<1||remaining>100000)fail('invalid work limit');
   const charge=()=>{if(options.cancelled?.())fail('cancelled');if(remaining--<=0)fail('work limit');};
   function build(mode) {
-    const initial=solveFiniteActualDomains(input,context,charge,null,mode);
-    const fieldReaching=buildFiniteFieldReaching(verifyHir(input,context),initial,charge);
+    const solve=(field=null,array=null)=>solveFiniteActualDomains(input,context,charge,field,mode,array,options.publicationContext);
+    const initial=solve();
+    const fieldReaching=buildFiniteFieldReaching(verifyHir(input,context,options.publicationContext),initial,charge);
     const result=fieldReaching.reads.some(row=>row.reaching.length)
-      ?solveFiniteActualDomains(input,context,charge,fieldReaching,mode):initial;
-    const arrayReaching=buildFiniteArrayReaching(verifyHir(input,context),{...result,fieldReaching},charge);
+      ?solve(fieldReaching):initial;
+    const arrayReaching=buildFiniteArrayReaching(verifyHir(input,context,options.publicationContext),{...result,fieldReaching},charge);
     const ordered=arrayReaching.reads.length
-      ?solveFiniteActualDomains(input,context,charge,fieldReaching,mode,arrayReaching):result;
+      ?solve(fieldReaching,arrayReaching):result;
     // Refined payloads do not silently republish a narrower ABI. Representation
     // maxima retain their original finite role, separately from ordered data.
     const domains=new Map([...result.domains,...ordered.domains].map(row=>[row.id,row]));
@@ -50,12 +51,12 @@ function buildPlans(input,context,options,definitions) {
     ...(definition?{definition:{...definition,work:(options.work??100000)-remaining}}:{})});
 }
 
-function solveFiniteActualDomains(input,context,charge,fieldReaching,mode,arrayReaching=null) {
+function solveFiniteActualDomains(input,context,charge,fieldReaching,mode,arrayReaching=null,publicationContext=undefined) {
   const refinements=new Map((fieldReaching?.reads??[]).map(row=>[row.node,row.reaching]));
   const arrayReads=new Map((arrayReaching?.reads??[]).filter(row=>row.status==='proven').map(row=>[row.node,row.sources]));
-  charge();const hir=verifyHir(input,context);
+  charge();const hir=verifyHir(input,context,publicationContext);
   const types=new Map(hir.types.map(type=>[type.id,type]));
-  const layouts=buildTypedLayouts(hir,context),physical=new Map(layouts.entries.map(row=>[row.typeId,row.layout]));
+  const options={publicationContext},layouts=buildTypedLayouts(hir,context,options),physical=new Map(layouts.entries.map(row=>[row.typeId,row.layout]));
   const undefinedId=sha256('tsfg.type\0undefined'),intrinsics=[];
   if(!types.has(undefinedId)&&hir.types.some(type=>type.construction)) {
     charge();if(types.size>=4096)fail('formal type limit including intrinsic undefined');
@@ -64,7 +65,7 @@ function solveFiniteActualDomains(input,context,charge,fieldReaching,mode,arrayR
   }
   const nodes=new Map(),edges=new Map(),owners=new Map(),queue=[],queued=new Set(),expressions=[];
   const reads=[],stores=[],fieldReads=[],fieldStores=[],entryOwners=[],methodCalls=[],allocations=[],definitionSeeds=[];
-  const views=buildTypedReferenceViews(hir,context);
+  const views=buildTypedReferenceViews(hir,context,options);
   const methodViews=new Map(),fieldViews=new Map(),fieldOwners=new Map();
   for(const type of hir.types)for(const field of type.fields??[]) {
     charge();fieldOwners.set(field.id,{owner:type.id,field});

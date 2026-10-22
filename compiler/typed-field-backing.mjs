@@ -7,9 +7,9 @@ import {writeTypedReferenceViews} from './typed-reference-views.mjs';
 import {canonical,sha256,own} from './identity.mjs';
 const require=(condition,message)=>{if(!condition)throw new TypeError('r03-field-backing: '+message);};
 
-export function buildTypedFieldBacking(input,context) {
-  const hir=verifyHir(input,context),declared=buildTypedLayouts(hir,context),
-    definition=buildFiniteCoreDomains(hir,context).definition,
+export function buildTypedFieldBacking(input,context,options={}) {
+  const hir=verifyHir(input,context,options.publicationContext),declared=buildTypedLayouts(hir,context,options),
+    definition=buildFiniteCoreDomains(hir,context,options).definition,
     nodes=new Map(definition.carrierNodes.map(node=>[node.id,node])),domains=new Map(definition.domains.map(domain=>[domain.id,domain]));
   const cells=[];
   for(const entry of declared.entries) {
@@ -29,8 +29,8 @@ export function buildTypedFieldBacking(input,context) {
   return own({family:'tsfg.typed-field-backing-development',version:1,cells});
 }
 
-export function writeTypedFieldBacking(hir,context) {
-  const plan=buildTypedFieldBacking(hir,context),authority=writeTypedReferenceViews(hir,context),chunks=[Buffer.from('TSGFLD01')];
+export function writeTypedFieldBacking(hir,context,options={}) {
+  const plan=buildTypedFieldBacking(hir,context,options),authority=writeTypedReferenceViews(hir,context,options),chunks=[Buffer.from('TSGFLD01')];
   const word=n=>{const b=Buffer.alloc(2);b.writeUInt16LE(n);chunks.push(b);},
     id=value=>{require(/^sha256:[0-9a-f]{64}$/.test(value),'invalid identity');chunks.push(Buffer.from(value.slice(7),'hex'));};
   const size=Buffer.alloc(4);size.writeUInt32LE(authority.length);chunks.push(size,authority);word(plan.cells.length);

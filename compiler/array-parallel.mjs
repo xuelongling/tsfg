@@ -2,10 +2,11 @@
 // Explicit access proofs consume existing verified call mappings and fixed Published bounds.
 import { analyzeArrayCalls } from './array-call-publication.mjs';
 import { canonical, own } from './identity.mjs';
-import { arrayFactsLimits } from './array-facts-common.mjs';
+import {createArrayOwnerTools} from './array-owner-trace.mjs';
+import { typedArrayJsonPolicy as arrayFactsLimits } from './typed-array-schema.mjs';
 import { checkGenericJsonValueBudget, copyGenericJsonBytes, readGenericJson } from './generic-json.mjs';
 
-const policy = Object.freeze({ ...arrayFactsLimits, bytes: arrayFactsLimits.bytes - 1 });
+const policy = Object.freeze({ ...arrayFactsLimits, bytes: arrayFactsLimits.bytes - 1,rejectPrototypeKeys:true });
 const messages = {
   '': 'invalid explicit Array call parallel group',
   identity: 'Array call parallel group identity differs',
@@ -33,13 +34,6 @@ const exact = (value, keys) => value !== null && typeof value === 'object' && !A
 const site = value => Array.isArray(value) && value.length === 3 && value[0] === 'body'
   && Number.isInteger(value[1]) && !Object.is(value[1], -0) && value[1] >= 0 && value[1] < 50
   && ['expression', 'value', 'initializer'].includes(value[2]);
-const order = (left, right) => left < right ? -1 : left > right ? 1 : 0;
-const uniqueOwners = values => [...new Map(values.map(owner => [canonical(owner), owner]))]
-  .sort((a, b) => order(a[0], b[0])).map(([, owner]) => owner);
-// Parameter slots are relative origins, not no-alias promises. Fresh identities
-// are distinct only within this same caller activation, as established by Array analysis.
-const mayAlias = (left, right) => canonical(left) === canonical(right)
-  || left.kind === 'parameter' && right.kind === 'parameter';
 
 /** Callee-entry accesses only, after original argument evaluation. This is not
  * a scheduling/reordering permission, whole-kernel proof or cross-activation claim.
@@ -49,6 +43,10 @@ export function verifyArrayCallParallelGroup(hir, factsContext, fixedPublication
   // Full existing facts/HIR/publication and borrow checks precede any new selection.
   // Their errors and work meter remain authoritative; no supplied report is trusted.
   const analysis = analyzeArrayCalls(hir, factsContext, fixedPublicationContext);
+  let work=0;const charge=()=>{if(++work>1000000)failure('limit');};
+  const ownerTools=createArrayOwnerTools(charge),mayAlias=ownerTools.mayAlias;
+  const uniqueOwners=values=>[...new Map(values.map(owner=>[ownerTools.key(owner),owner]))]
+    .sort(([a],[b])=>ownerTools.compare(a,b)).map(([,owner])=>owner);
   if (!exact(request, ['functionId', 'sites']) || !hash(request.functionId) || !Array.isArray(request.sites)) failure();
   if (request.sites.length > 32) failure('limit');
   if (request.sites.length < 2) failure();
@@ -66,11 +64,13 @@ export function verifyArrayCallParallelGroup(hir, factsContext, fixedPublication
   for (const selected of request.sites) {
     const call = calls.find(value => canonical(value.expressionPath) === canonical(selected.expressionPath));
     if (!call || call.consumedDigest !== selected.consumedDigest) failure('identity');
+    const selectedContracts=call.targets.map(arm=>{charge();const contract=contracts.get(arm.target);
+      if(contract?.digest!==arm.consumedDigest)failure('identity');return contract;});
     const contract = contracts.get(call.target);
     if (contract.digest !== call.consumedDigest) failure('identity');
     // The existing local wildcard is not an externally identified argument owner.
     // Preserve this specific gap rather than pretending its regions are disjoint.
-    if (Object.values(contract.upper.local).some(Boolean)) failure('capability', {
+    if (selectedContracts.some(record=>Object.values(record.upper.local).some(Boolean))) failure('capability', {
       primary: { sourceId: caller.sourcePath, ...call.range }, functionId: call.target, facet: 'local',
     });
     const owners = uniqueOwners(call.arguments.map(argument => argument.owner));
@@ -78,7 +78,7 @@ export function verifyArrayCallParallelGroup(hir, factsContext, fixedPublication
       consumedDigest: contract.digest, owners, reads: [], writes: [], structural: [] };
     for (const [key, flag] of [['reads', 'read'], ['writes', 'write'], ['structural', 'structural']]) {
       access[key] = uniqueOwners(call.arguments.filter(argument =>
-        contract.upper.parameters.find(parameter => parameter.index === argument.index)[flag])
+        selectedContracts.some(record=>record.upper.parameters.find(parameter=>parameter.index===argument.index)?.[flag]))
         .map(argument => argument.owner));
     }
     accesses.push(access); selectedCalls.push(call);
@@ -87,12 +87,12 @@ export function verifyArrayCallParallelGroup(hir, factsContext, fixedPublication
     hirDigest: analysis.hirDigest, scopeDigest: analysis.scopeDigest, publishedDigest: analysis.publishedDigest,
     functionId: caller.id, sites: request.sites, accesses, pairs: [] };
   budget(proof);
-  let bytes = Buffer.byteLength(canonical(proof)), work = 0;
+  let bytes = Buffer.byteLength(canonical(proof));
   const reserve = extra => { if (bytes + extra > policy.bytes) failure('limit'); bytes += extra; };
   const overlaps = (left, right) => {
     const result = [];
     for (const a of left) for (const b of right) {
-      if (++work > 1000000) failure('limit');
+      charge();
       if (!mayAlias(a, b)) continue;
       const value = { left: a, right: b };
       reserve(Buffer.byteLength(canonical(value)) + (result.length ? 1 : 0));

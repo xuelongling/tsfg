@@ -7,8 +7,8 @@ import {writeTypedReferenceViews} from './typed-reference-views.mjs';
 import {canonical,sha256,own} from './identity.mjs';
 const require=(value,message)=>{if(!value)throw new TypeError('r03-array-backing: '+message);};
 
-export function buildTypedArrayBacking(input,context) {
-  const hir=verifyHir(input,context),definition=buildFiniteCoreDomains(hir,context).definition,
+export function buildTypedArrayBacking(input,context,options={}) {
+  const hir=verifyHir(input,context,options.publicationContext),definition=buildFiniteCoreDomains(hir,context,options).definition,
     types=new Map(hir.types.map(type=>[type.id,type])),nodes=new Map(definition.carrierNodes.map(row=>[row.id,row])),
     domains=new Map(definition.domains.map(row=>[row.id,row])),groups=new Map(),ownerViews=new Map();
   let work=100000;
@@ -33,8 +33,8 @@ export function buildTypedArrayBacking(input,context) {
   return own({family:'tsfg.typed-array-backing-development',version:1,inputIdentity:hir.inputIdentity,arrays});
 }
 
-export function writeTypedArrayBacking(hir,context) {
-  const plan=buildTypedArrayBacking(hir,context),authority=writeTypedReferenceViews(hir,context),chunks=[Buffer.from('TSGARR01')];
+export function writeTypedArrayBacking(hir,context,options={}) {
+  const plan=buildTypedArrayBacking(hir,context,options),authority=writeTypedReferenceViews(hir,context,options),chunks=[Buffer.from('TSGARR01')];
   const word=n=>{require(Number.isInteger(n)&&n>=0&&n<=65535,'word limit');const b=Buffer.alloc(2);b.writeUInt16LE(n);chunks.push(b);},
     id=value=>{require(/^sha256:[0-9a-f]{64}$/.test(value),'identity');chunks.push(Buffer.from(value.slice(7),'hex'));};
   const size=Buffer.alloc(4);size.writeUInt32LE(authority.length);chunks.push(size,authority);word(plan.arrays.length);

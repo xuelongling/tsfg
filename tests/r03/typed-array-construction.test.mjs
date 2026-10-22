@@ -6,6 +6,7 @@ import {readFile} from 'node:fs/promises';
 import {createHash} from 'node:crypto';
 import {buildHir,printHir,readHir} from '../../compiler/hir.mjs';
 import {readTypedArrayFacts} from '../../compiler/typed-array-facts.mjs';
+import {optionalArrayPublication as staticPublication} from './typed-array-publication-fixtures.mjs';
 import manifest from './testdata/typed-array-source514/construction.json' with {type:'json'};
 const stable=value=>Array.isArray(value)?'['+value.map(stable).join(',')+']':value&&typeof value==='object'
   ?'{'+Object.keys(value).sort().map(key=>JSON.stringify(key)+':'+stable(value[key])).join(',')+'}':JSON.stringify(value);
@@ -22,7 +23,8 @@ test('actual explicit super implicit forwarding and native initialization enter 
   for(const row of manifest)await t.test(row.case,async()=>{
     const bytes=await load(row),facts=readTypedArrayFacts(bytes);
     const context={family:'tsfg.array-facts-context-candidate',version:2,factsBytes:bytes,expectedPackageId:row.packageId};
-    const built=buildHir(facts,context);assert.equal(built.status,'ok',JSON.stringify(built.diagnostics));const hir=built.hir;
+    const publication=staticPublication(facts);
+    const built=buildHir(facts,context,publication);assert.equal(built.status,'ok',JSON.stringify(built.diagnostics));const hir=built.hir;
     const types=new Map(hir.types.map(type=>[type.id,type])),bySource=new Map(hir.types.map(type=>[type.sourceType,type]));
     const functions=new Map(hir.functions.map(fn=>[fn.id,fn]));
     for(const source of facts.payload.types.filter(type=>type.construction)) {
@@ -102,7 +104,7 @@ test('actual explicit super implicit forwarding and native initialization enter 
       const fn=functions.get(derived.constructor),assignment=nodes(fn.body,'fieldAssignment').find(value=>value.target.property===field.id);
       assert.ok(assignment);assert.equal(assignment.value.kind,'arrayReadChecked');
     }
-    assert.deepEqual(readHir(Buffer.from(printHir(hir,context)),context),hir);
+    assert.deepEqual(readHir(Buffer.from(printHir(hir,context,publication)),context,publication),hir);
   });
 });
 test('construction boundary rejects repaired identities with forged order forwarding provenance and super target',async t=>{

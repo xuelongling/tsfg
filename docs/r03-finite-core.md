@@ -323,3 +323,12 @@ satisfy an ABI comparison.
 ordered `calls` and `fields` cannot acquire actual targets from those tables.
 Pending reads publish no actual SSA/return evidence. Physical backing encoders
 continue to consume the maximum role, preserving their existing binary bytes.
+
+The ordinary typed HIR 0.16 entry forwards its selected fixed5 publication to
+finite analysis and every revalidating layout, member-view, phase and backing
+consumer. `emitFiniteCore` accepts it as its third argument; domain/backing
+builders retain their options argument and use `options.publicationContext`.
+Work and cancellation options keep their existing meaning. Views and cyclic
+call closures require actual publication authority, while already provable
+acyclic Array programs retain the ordinary context-free route. An internal
+projection never substitutes for whole typed HIR validation.

@@ -7,6 +7,7 @@ import {typedArrayFactsFormat as format,typedArrayJsonPolicy as policy,
   typedArrayFailure,check,checkTypedArrayShape,logicalPath,byteOrder} from './typed-array-schema.mjs';
 import {validateTypedArrayTypes,validateTypedArrayDeclarations} from './typed-array-types.mjs';
 import {validateTypedArrayFunctions} from './typed-array-body.mjs';
+import {validateTypedArrayDensity} from './typed-array-density.mjs';
 export {typedArrayFactsFormat} from './typed-array-schema.mjs';
 
 function verify(value) {
@@ -34,6 +35,7 @@ function verify(value) {
     '0d30a2f626bb7455decf36f5a7a8d3308d4254100d2cb10e7c0d2353d28b141e','declaration');
   const types=validateTypedArrayTypes(payload,sources);
   validateTypedArrayDeclarations(payload,sources);validateTypedArrayFunctions(payload,sources,types);
+  validateTypedArrayDensity(payload);
   const request={family:'tsfg.array-facts-request-candidate',version:8,input:{
     sourceRoot:payload.sourceRoot,rootFile:payload.rootFile,
     files:payload.files.map(({path,content,sha256})=>({path,content,sha256})),

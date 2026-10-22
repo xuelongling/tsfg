@@ -5,6 +5,7 @@ import assert from 'node:assert/strict';
 import {readFile} from 'node:fs/promises';
 import {createHash} from 'node:crypto';
 import {readTypedArrayFacts} from '../../compiler/typed-array-facts.mjs';
+import {optionalArrayPublication as staticPublication} from './typed-array-publication-fixtures.mjs';
 import {buildHir,printHir,readHir} from '../../compiler/hir.mjs';
 import {typedArrayRepresentation} from '../../compiler/typed-array-representation.mjs';
 import manifest from './testdata/typed-array-source514/container-union.json' with {type:'json'};
@@ -23,7 +24,8 @@ test('actual Array and ReadSpan assertions select authoritative container-union 
   for(const row of manifest)await t.test(row.case,async()=>{
     const bytes=await load(row),facts=readTypedArrayFacts(bytes);
     const context={family:'tsfg.array-facts-context-candidate',version:2,factsBytes:bytes,expectedPackageId:row.packageId};
-    const built=buildHir(facts,context);assert.equal(built.status,'ok',JSON.stringify(built.diagnostics));
+    const publication=staticPublication(facts);
+    const built=buildHir(facts,context,publication);assert.equal(built.status,'ok',JSON.stringify(built.diagnostics));
     const hir=built.hir,assertion=nodes(hir,'assertType')[0],types=new Map(hir.types.map(type=>[type.id,type]));
     assert.equal(assertion.compatibilityRoots.length,1);
     const pair=assertion.compatibilityRoots[0];
@@ -31,7 +33,7 @@ test('actual Array and ReadSpan assertions select authoritative container-union 
     assert.equal(types.get(pair.targetType).nominalKey.declarationPath[0],row.case==='Base seed'?'Base':'OnlyLeftView');
     assert.notEqual(assertion.operand.type,assertion.type);
     assert.equal(assertion.operand.kind,'reference');
-    assert.deepEqual(readHir(Buffer.from(printHir(hir,context)),context),hir);
+    assert.deepEqual(readHir(Buffer.from(printHir(hir,context,publication)),context,publication),hir);
   });
 });
 test('container-union assertions cannot omit their selected root',async t=>{

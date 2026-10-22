@@ -7,6 +7,7 @@ import {buildHir} from '../../compiler/hir.mjs';
 import {buildTypedLayouts} from '../../compiler/typed-layouts.mjs';
 import {buildTypedArrayBacking,writeTypedArrayBacking} from '../../compiler/typed-array-backing.mjs';
 import {scalarTypeIds,sha256} from '../../compiler/identity.mjs';
+import {optionalArrayPublication} from './typed-array-publication-fixtures.mjs';
 const output='E:/ws/pro_tsfg/.scratch/tsfg_r03/M25-formal-array-checks-20261022/array-backing-captures';
 test('real Source narrow allocation has separate identity and actual U capacity through a wide alias',async()=>{
   const bytes=await readFile(new URL('./testdata/typed-array-entry/87d0326f6f0e3e1eb887a77b7eb207a938c3ca173f094f8cdb21f1820284a4ad-package.json',import.meta.url));
@@ -35,11 +36,12 @@ const cases=[
 test('actual Source value/reference/scalar variants, nested owners and readonly views use the same producer',async()=>{
   for(const [name,file] of cases) {
     const bytes=await readFile(new URL('./testdata/'+file,import.meta.url)),facts=readTypedArrayFacts(bytes),
-      context={family:'tsfg.array-facts-context-candidate',version:2,factsBytes:bytes,expectedPackageId:facts.packageId},built=buildHir(facts,context);
-    assert.equal(built.status,'ok',name);const plan=buildTypedArrayBacking(built.hir,context);assert.ok(plan.arrays.length,name);
+      context={family:'tsfg.array-facts-context-candidate',version:2,factsBytes:bytes,expectedPackageId:facts.packageId},publication=optionalArrayPublication(facts),
+      built=buildHir(facts,context,publication),options={publicationContext:publication};
+    assert.equal(built.status,'ok',name);const plan=buildTypedArrayBacking(built.hir,context,options);assert.ok(plan.arrays.length,name);
     if(name==='empty')assert.ok(plan.arrays.some(row=>row.members.length===0));
     else assert.ok(plan.arrays.every(row=>row.members.length>0));
-    await writeFile(output+'/'+name+'.bin',writeTypedArrayBacking(built.hir,context));
+    await writeFile(output+'/'+name+'.bin',writeTypedArrayBacking(built.hir,context,options));
     await writeFile(output+'/'+name+'.json',JSON.stringify(plan,null,2)+'\n');
   }
 });

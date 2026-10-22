@@ -14,7 +14,7 @@ test('actual official generic Array facts retain T and initialized undefined in 
   const built=buildHir(packet,context);
   assert.equal(built.status,'ok',JSON.stringify(built.diagnostics));
   const hir=built.hir;
-  assert.equal(hir.format.contractVersion,'0.15.0');
+  assert.equal(hir.format.contractVersion,'0.16.0');
   const array=hir.types.find(type=>type.kind==='array');
   const union=hir.types.find(type=>type.kind==='union');
   assert.equal(array.elementType,union.id);

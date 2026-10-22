@@ -45,11 +45,11 @@ export function checkTypedLayoutBudget(catalogue,limits={}) {
   }
   return {work,depth};
 }
-/** @param {any} hir @param {any} context @param {{depth?:number,work?:number}} [limits] */
+/** @param {any} hir @param {any} context @param {{depth?:number,work?:number,publicationContext?:any}} [limits] */
 export function buildTypedLayouts(hir,context,limits={}) {
   const bound=policy(limits);let work=bound.work;
   const spend=(count=1)=>{require(count<=work,'layout work limit');work-=count;};
-  const owned=verifyHir(hir,context),types=new Map(owned.types.map(type=>[type.id,type]));
+  const owned=verifyHir(hir,context,limits.publicationContext),types=new Map(owned.types.map(type=>[type.id,type]));
   require(owned.types.length<=4096,'catalogue budget');
   const layouts=new Map(),cells=new Map(),active=new Set();
   const blank=(type,byteSize=0,alignment=1,referenceCount=0)=>({typeId:type.id,byteSize,alignment,referenceCount,
@@ -115,9 +115,9 @@ export function buildTypedLayouts(hir,context,limits={}) {
 }
 
 const kinds={scalar:1,undefined:2,null:3,void:4,union:5,array:6,readSpan:7,reference:8,value:9,string:10};
-/** @param {any} hir @param {any} context @param {{depth?:number,work?:number}} [limits] */
+/** @param {any} hir @param {any} context @param {{depth?:number,work?:number,publicationContext?:any}} [limits] */
 export function writeTypedLayoutModule(hir,context,limits={}) {
-  const owned=verifyHir(hir,context);buildTypedLayouts(hir,context,limits);
+  const owned=verifyHir(hir,context,limits.publicationContext);buildTypedLayouts(hir,context,limits);
   require(owned.types.length<=4096,'catalogue budget');
   const chunks=[Buffer.from('TSGLAY01')];
   const u8=value=>{const b=Buffer.alloc(1);b.writeUInt8(value);chunks.push(b);};
