@@ -123,8 +123,9 @@ mlir::LogicalResult verifyModuleContracts(mlir::ModuleOp module) {
       !proof.document("tsfg_core.callable_contracts", proof.callables) ||
       !proof.document("tsfg_core.compatibility_witnesses", proof.witnesses) ||
       !proof.document("tsfg_core.member_views", proof.views) ||
+      !proof.document("tsfg_core.field_phases", proof.phases) ||
       !sources(proof) || !verifyCatalog(proof) || !verifyDomains(proof) || !verifyAbi(proof) ||
-      !verifyValueContracts(proof) || !verifyMemberContracts(proof))
+      !verifyValueContracts(proof) || !verifyMemberContracts(proof) || !verifyFlowContracts(proof) || !verifyMemoryContracts(proof))
     return mlir::failure();
   return mlir::success();
 }

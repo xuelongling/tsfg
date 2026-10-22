@@ -24,7 +24,7 @@ struct ModuleProof {
   mlir::ModuleOp module;
   Json types = nullptr, intrinsics = nullptr, layouts = nullptr, plan = nullptr;
   Json sources = nullptr, callables = nullptr;
-  Json witnesses = nullptr, views = nullptr;
+  Json witnesses = nullptr, views = nullptr, phases = nullptr;
   std::map<std::string, const Object *> catalog, callable, abi;
   std::map<std::string, Domain> domains;
   // Existing native SSA implementation temporaries (e.g. String compare i32)
@@ -33,6 +33,14 @@ struct ModuleProof {
   std::map<std::string, Physical> physical;
   std::map<std::string, uint32_t> sourceLengths;
   std::map<std::string, mlir::func::FuncOp> functions;
+  // Independently derived from actual SSA field commits and the complete
+  // selected call graph. Memory proofs consume these, never a caller flag or
+  // an unverified purity claim from the producer's diagnostic ledger.
+  std::map<std::string, bool> functionFieldEffects;
+  std::map<mlir::Operation *, bool> fieldEffects;
+  // Necessary local memory evidence is separate from full interprocedural
+  // eligibility. Whole admission must discharge every remaining read.
+  std::set<mlir::Operation *> unprovedMemoryReads;
   size_t remaining = 100000;
   explicit ModuleProof(mlir::ModuleOp value) : module(value) {}
   bool charge(size_t count = 1);
@@ -48,6 +56,8 @@ bool verifyDomains(ModuleProof &proof);
 bool verifyAbi(ModuleProof &proof);
 bool verifyValueContracts(ModuleProof &proof);
 bool verifyMemberContracts(ModuleProof &proof);
+bool verifyFlowContracts(ModuleProof &proof);
+bool verifyMemoryContracts(ModuleProof &proof);
 const Domain *valueDomain(ModuleProof &proof, mlir::Type type);
 bool carrier(ModuleProof &proof, llvm::StringRef domain, mlir::Type type);
 // Development module contracts, not yet the command's whole-flow admission

@@ -130,3 +130,35 @@ retains the actual call and discards the produced value at its void consumer.
 Two additional actual Source packets cover these behaviors, including an extra
 argument with a checked compound array store. Missing default-argument domain
 evidence remains local capability-pending rather than inventing a value.
+
+The next module consumer follows real SSA edges, CFG successor arguments,
+normal returns and constructor calls. A direct base body receives the current
+actual instance; it cannot allocate another Base or narrow the derived header.
+Field effects are computed from actual field commits and the complete selected
+call graph, including cycles, with the shared work budget. Empty constructor
+and phase markers are not field writes. The older producer summary may remain
+conservative, but it cannot claim purity when this independent graph writes.
+These IR-derived effects feed the memory consumer's call boundaries directly.
+
+Memory versions now bind to actual SSA stores, phase commits, original source
+nodes and actual member dispatch. Parameter-property commits consume the real
+constructor argument. Local field-read evidence is checked backwards through
+all CFG predecessors: the first successful write must be selected, its payload
+must survive in the result, and later writes cannot change a previously read
+SSA value. Native empty definitions retain a valid undefined tag. Fresh-frame
+not-defined entries are independently derived preconditions, never synthesized
+fieldDefine events or initialized native payloads.
+
+This is still a necessary development proof, not complete admission. Incoming
+entry state, cross-callee continuations, unproved receiver aliases and inline
+value copies are recorded as unproved reads rather than granted payload-read
+eligibility. Their full proof, published definition bounds, the unified
+verifyCoreModule hook and canonical wire remain open. Object-only compilation
+does not establish C++ malformed-module rejection or whole verifier execution.
+
+An independent four-source oracle checks all 16 callable definitions, seven
+selected call edges and real field commits in the ordinary producer. A new
+checked Source packet distinguishes an SSA capture before clear(b) from a new
+read after that real field-writing callee. The latter retains undefined despite
+the official checker's i32 flow type. These are static producer comparisons;
+they do not execute the Source program, Core compiler or VM.

@@ -1,0 +1,17 @@
+{
+  "file": "cf99adbdbf23ac0119b60ee3a8c3bb6c2330d5d0e17e3469ba69ef709e552972-package.json",
+  "bytes": 14800,
+  "sha256": "f77798459e57ee3572568721dc945711b2c406c0f4df55b664e76bfc72267e66",
+  "source": {
+    "path": "E:/ws/pro_tsfg/.scratch/tsfg_r03/M25-source-generic-array-checks-20261022/FIELD-CALL-REACHING-FACTS-PUBLIC01-captures/cf99adbdbf23ac0119b60ee3a8c3bb6c2330d5d0e17e3469ba69ef709e552972-source.ts",
+    "bytes": 240,
+    "sha256": "cf99adbdbf23ac0119b60ee3a8c3bb6c2330d5d0e17e3469ba69ef709e552972"
+  },
+  "request": {
+    "path": "E:/ws/pro_tsfg/.scratch/tsfg_r03/M25-source-generic-array-checks-20261022/FIELD-CALL-REACHING-FACTS-PUBLIC01-captures/cf99adbdbf23ac0119b60ee3a8c3bb6c2330d5d0e17e3469ba69ef709e552972-request.json",
+    "bytes": 1809,
+    "sha256": "4994eeef2016130e12499d42cea4f3e45e200bfcf6f7c8e9f821f31ac46a7781"
+  },
+  "externalManifestSHA256": "b132761d9f10167f8e02a06ff0367d9626150d23435bedf53bbd361578889e3f",
+  "executionCredit": "actual Source public Go facts only; not source/VM runtime values"
+}

@@ -1,6 +1,6 @@
 {
   "family": "tsfg.core-finite-domains-development",
-  "version": 10,
+  "version": 11,
   "status": "development contract; ordinary Core integration, not admitted bytecode or executable private profile",
   "hir": "0.15.0",
   "identity": {
@@ -176,6 +176,12 @@
       "order": "Core ownership boundary sorts records by origin.source UTF8, start, end, owned sourceType, owned targetType; members by owned target identity; dependencies by owned sourceType then targetType, all strict unique. The original Source DTO order need not survive identity rehashing.",
       "consumer": "Independent C++ validates original anchors, complete same-kind/name-crosschecked explicit target member coverage, ordinary all-source-variant logical representations, reversed method parameter direction, target-void discard and nested same-origin proof closure. Failed union candidates do not consume dependencies. It reconstructs each actual reference descendant physical projection and compares member_views, then joins real access dispatch and static target write permissions without actual-cell readonly deep freeze.",
       "pending": "Entry/root reachability to each Source occurrence and whole alias/read-reaching/effect admission remain mandatory; this table alone is not full Core verification or a runtime callable implementation."
+    },
+    "wholeFlow": {
+      "consumer": "C++ ModuleContracts verifies CFG argument/normal-return actual domain inclusion, actual constructor body parameters/direct-base same-instance receiver, and the whole IR selected call graph. Real field commits seed a bounded reverse-call fixed point; producer purity claims may overapproximate but cannot omit real writes. Empty constructor/phase markers are not themselves field writes.",
+      "memory": "Real field_store versions bind to exact actual field dispatch, successful SSA RHS and original Source origin. NativeDefine/initializer/parameter field versions bind to their actual phase and real SSA inputs. Local read evidence must reference these real writes, retain every write payload/valid undefined, and select the first successful version across every CFG predecessor. A later write cannot modify an earlier SSA value. Unknown alias/entry/callee continuation proofs remain explicitly unproved, never qualify native reads.",
+      "effectVocabulary": "Only modeled operation effects are allowed; host/global/opaque operations are not implicitly pure. Array element mutation is separate from class-field effects. Actual call targets preserve definition-domain upper bounds and are not replaced by the narrower reached ledger.",
+      "remaining": "This slice is not complete independent published upper-bound/alias/call-continuation/field storage proof or verifyCoreModule admission. Ordinary canonical roundtrip/wire and VM remain unqualified."
     }
   },
   "localPending": [
