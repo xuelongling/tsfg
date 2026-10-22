@@ -16,17 +16,19 @@ bool PayloadFlow::spend(size_t count) {
 bool PayloadFlow::building() {
   return state==State::Building||reject("actual payload equations are immutable after solving starts");
 }
-PayloadFlow::Id PayloadFlow::node() {
+PayloadFlow::Id PayloadFlow::boundedNode(size_t limit) {
   if(!building()||!spend())return none;
-  nodes.emplace_back();return nodes.size()-1;
+  nodes.emplace_back();nodes.back().alternativeLimit=limit;return nodes.size()-1;
 }
+PayloadFlow::Id PayloadFlow::node() {return boundedNode(alternativeLimit);}
+PayloadFlow::Id PayloadFlow::node(AtomDomain domain) {return boundedNode(domain==AtomDomain::Payload?256:100000);}
 void PayloadFlow::changed(Id id) {
   if(!nodes[id].queued){nodes[id].queued=true;work.push_back(id);}
 }
 bool PayloadFlow::insert(Id id,const std::string &type) {
   if(!spend()||id>=nodes.size()||type.empty())return reject("invalid actual payload seed");
   if(nodes[id].value.alternatives.insert(type).second) {
-    if(nodes[id].value.alternatives.size()>alternativeLimit)return reject("actual payload variant limit");
+    if(nodes[id].value.alternatives.size()>nodes[id].alternativeLimit)return reject("actual payload variant limit");
     changed(id);
   }
   return true;
@@ -39,6 +41,11 @@ bool PayloadFlow::unknown(Id id) {
   if(!building()||!spend()||id>=nodes.size())return reject("invalid pending payload node");
   pending(id);return true;
 }
+bool PayloadFlow::requireEvidence(Id id) {
+  if(!building()||!spend()||id>=nodes.size())return reject("invalid required payload origin");
+  if(!nodes[id].requiresEvidence){nodes[id].requiresEvidence=true;required.push_back(id);}
+  return true;
+}
 bool PayloadFlow::connect(Edge edge) {
   if(!building()||!spend(3)||edge.from>=nodes.size()||edge.to>=nodes.size()||
      (edge.gate!=none&&(edge.gate>=nodes.size()||edge.selected.empty()))||
@@ -48,9 +55,8 @@ bool PayloadFlow::connect(Edge edge) {
   if(stored.gate!=none&&stored.gate!=stored.from)nodes[stored.gate].edges.push_back(id);
   return true;
 }
-bool PayloadFlow::solve() {
-  if(!building())return false;state=State::Solving;
-  for(size_t cursor=0;cursor<work.size();++cursor) {
+bool PayloadFlow::drain(size_t &cursor) {
+  for(;cursor<work.size();++cursor) {
     if(!spend())return false;const auto id=work[cursor];nodes[id].queued=false;
     for(const auto index:nodes[id].edges) {
       if(!spend())return false;const auto &e=edges[index];
@@ -66,6 +72,18 @@ bool PayloadFlow::solve() {
       for(const auto &type:alternatives)if((e.filter.empty()||(type==e.filter)==e.equal)&&!insert(e.to,type))return false;
     }
   }
+  return true;
+}
+bool PayloadFlow::solve() {
+  if(!building())return false;state=State::Solving;size_t cursor=0;
+  if(!drain(cursor))return false;
+  // Positive origins are now at their least fixed point. Missing required
+  // origins introduce pending only; propagate that uncertainty transactionally.
+  for(const auto id:required) {
+    if(!spend())return false;
+    if(nodes[id].value.alternatives.empty())pending(id);
+  }
+  if(!drain(cursor))return false;
   state=State::Solved;return true;
 }
 const PayloadEvidence *PayloadFlow::evidence(Id id) const {

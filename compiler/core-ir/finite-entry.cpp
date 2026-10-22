@@ -2,6 +2,7 @@
 // Independent published-role/definition seed obligations. These are necessary
 // bounds, not permission to admit a producer's entire upper-bound ledger.
 #include "finite-module.h"
+#include "finite-entry-arrays.h"
 #include <algorithm>
 #include <tuple>
 
@@ -191,8 +192,118 @@ struct Entries {
     }
     return seen.size()==exported.size() || proof.reject("published function contract omitted");
   }
-  bool run(){return exports()&&authorities()&&definitions()&&published();}
+  bool arrays() {
+    std::map<std::string,EntryArrayType> types;
+    for(const auto &[id,row]:proof.catalog) {
+      if(!proof.charge())return false;EntryArrayType type;
+      type.kind=string(*row,"kind");type.elementType=string(*row,"elementType");type.base=string(*row,"base");
+      if(type.kind=="union")for(const auto &member:*row->getArray("members")) {
+        if(!proof.charge())return false;type.members.insert(member.getAsString()->str());
+      }
+      if(type.kind=="reference"||type.kind=="value") {
+        std::vector<std::string> lineage;std::set<std::string> seen,methods;
+        for(auto owner=id;!owner.empty();owner=string(*proof.catalog.at(owner),"base")) {
+          if(!proof.charge()||!proof.catalog.count(owner)||!seen.insert(owner).second)
+            return proof.reject("entry array owned payload lineage");
+          lineage.push_back(owner);
+        }
+        std::reverse(lineage.begin(),lineage.end());
+        for(const auto &owner:lineage) {
+          const auto &nominal=*proof.catalog.at(owner);
+          for(const auto &field:*nominal.getArray("fields")) {
+            if(!proof.charge())return false;const auto &item=*field.getAsObject();
+            type.relations.emplace("field/"+string(item,"id"),string(item,"type"));
+          }
+          for(const auto &method:*nominal.getArray("methods")) {
+            if(!proof.charge())return false;const auto methodId=method.getAsString()->str();
+            if(!proof.callable.count(methodId))return proof.reject("entry array owned method closure");
+            methods.erase(string(*proof.callable.at(methodId),"overrideTarget"));methods.insert(methodId);
+          }
+        }
+        for(const auto &method:methods) {
+          const auto &fn=*proof.callable.at(method);const auto role="method/"+method;
+          type.relations.emplace(role+"/return",string(fn,"returnType"));
+          const auto &parameters=*fn.getArray("parameters");
+          for(size_t index=1;index<parameters.size();++index) {
+            if(!proof.charge())return false;const auto &parameter=*parameters[index].getAsObject();
+            type.relations.emplace(role+"/parameter/"+string(parameter,"id"),string(parameter,"type"));
+          }
+        }
+      }
+      types.emplace(id,std::move(type));
+    }
+    std::vector<EntryArraySeed> seeds;
+    std::map<std::string,mlir::Value> arguments;
+    // An internal definition can reuse an entry declaration's structural roots
+    // only along that declaration's verified complete signature/resource graph.
+    // Matching a target TypeId in an unrelated entry is not provenance.
+    std::map<Pair,std::set<std::string>> scopes;
+    for(const auto &[key,authority]:entries) {
+      auto &scope=scopes[key];std::vector<std::string> work{string(*authority,"viewType")};
+      while(!work.empty()) {
+        if(!proof.charge())return false;const auto type=work.back();work.pop_back();
+        if(!scope.insert(type).second)continue;const auto &row=types.at(type);
+        work.insert(work.end(),row.members.begin(),row.members.end());
+        if(!row.elementType.empty())work.push_back(row.elementType);
+        for(const auto &[role,related]:row.relations){if(!proof.charge())return false;work.push_back(related);}
+        if(row.kind=="reference") {
+          for(const auto &[candidate,value]:types)if(value.kind=="reference") {
+            bool derived=false;if(!descendant(candidate,type,derived))return false;if(derived)work.push_back(candidate);
+          }
+          for(const auto &value:*authority->getArray("roots")) {
+            if(!proof.charge())return false;const auto &pair=*value.getAsObject();
+            if(string(pair,"targetType")==type)work.push_back(string(pair,"sourceType"));
+          }
+        }
+      }
+    }
+    for(const auto &[id,fn]:proof.callable) {
+      const auto &parameters=*fn->getArray("parameters");
+      for(size_t index=0;index<parameters.size();++index) {
+        if(!proof.charge())return false;const auto &parameter=*parameters[index].getAsObject();
+        const Pair key{id,string(parameter,"id")};EntryArraySeed seed;
+        seed.id=id+"/binding/"+key.second;seed.type=string(parameter,"type");
+        const bool receiver=index==0&&!string(*fn,"ownerType").empty();
+        seed.nominalReceiver=receiver;
+        const auto add=[&](const Object &authority)->bool {
+          std::set<std::string> targets;if(!leaves(string(authority,"viewType"),targets))return false;
+          for(const auto &target:targets){if(!proof.charge())return false;seed.references.try_emplace(target);}
+          for(const auto &value:*authority.getArray("roots")) {
+            if(!proof.charge())return false;const auto &pair=*value.getAsObject();
+            seed.references[string(pair,"targetType")].insert(string(pair,"sourceType"));
+          }
+          return true;
+        };
+        if(exported.count(id)){if(!add(*entries.at(key)))return false;}
+        else {
+          seed.completeAuthority=false;
+          for(const auto &[entry,authority]:entries)if(scopes.at(entry).count(seed.type)) {
+            if(!add(*authority))return false;seed.completeAuthority=true;
+          }
+        }
+        arguments.emplace(seed.id,proof.functions.at(id).getArgument(index));seeds.push_back(std::move(seed));
+      }
+      // Host-returned handles can be retained and re-enter another export.
+      // Their public signature resources belong to the same static boundary,
+      // while only real parameter values receive entryArrayOwners below.
+      if(exported.count(id))seeds.push_back({id+"/return",string(*fn,"returnType"),{},false,false});
+    }
+    EntryArrayBounds bounds;
+    if(!deriveEntryArrayBounds(types,seeds,bounds,proof.remaining))return proof.reject(bounds.error);
+    // Publish atomically only after the entire declaration/resource closure and
+    // alias proof succeeds. These are not actual element/owner initial states.
+    std::map<std::string,EntryArrayResource> resources;
+    for(auto &[id,bound]:bounds.resources)resources.emplace(id,EntryArrayResource{
+      std::move(bound.semanticType),std::move(bound.elementTypes),std::move(bound.elementOwners),std::move(bound.aliases),bound.aliasesComplete});
+    llvm::DenseMap<mlir::Value,std::set<std::string>> owners;
+    for(auto &[id,selected]:bounds.owners)if(arguments.count(id))owners.try_emplace(arguments.at(id),std::move(selected));
+    proof.entryArrays=std::move(resources);proof.entryArrayOwners=std::move(owners);return true;
+  }
+  bool run(){return exports()&&authorities()&&definitions()&&published()&&arrays();}
 };
 }
 bool verifyDefinitionBounds(ModuleProof &proof) { return Entries{proof}.run(); }
+bool verifyEntryArrayBounds(ModuleProof &proof) {
+  Entries entries{proof};return entries.exports()&&entries.authorities()&&entries.published()&&entries.arrays();
+}
 } // namespace tsfg::finite

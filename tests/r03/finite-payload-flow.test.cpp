@@ -176,6 +176,55 @@ bool recursiveCallerEntriesKeepExternalInput() {
   CHECK(graph.exact(overwrite,{"write/local"})==PayloadFlow::Fit::Proven);
   return true;
 }
+bool coupledOwnerAndElementPayloads() {
+  size_t budget=100000;PayloadFlow graph(budget);
+  const auto allocation=graph.node(PayloadFlow::AtomDomain::IdentityOrigin),wide=graph.node(PayloadFlow::AtomDomain::IdentityOrigin),
+    returnedOwner=graph.node(PayloadFlow::AtomDomain::IdentityOrigin),elements=graph.node(),initial=graph.node(),stored=graph.node(),read=graph.node(),copied=graph.node();
+  CHECK(graph.seed(allocation,"#allocation/0"));CHECK(graph.seed(initial,"i32"));CHECK(graph.seed(stored,"undefined"));
+  CHECK(graph.connect({allocation,wide}));CHECK(graph.connect({wide,returnedOwner}));
+  CHECK(graph.connect({initial,elements}));CHECK(graph.connect({stored,elements,wide,"#allocation/0"}));
+  CHECK(graph.connect({elements,read,returnedOwner,"#allocation/0"}));CHECK(graph.requireEvidence(read));
+  CHECK(graph.connect({read,copied}));CHECK(graph.connect({copied,elements,allocation,"#allocation/0"}));CHECK(graph.solve());
+  CHECK(graph.exact(copied,{"i32","undefined"})==PayloadFlow::Fit::Proven);
+  CHECK(graph.exact(returnedOwner,{"#allocation/0"})==PayloadFlow::Fit::Proven);
+  CHECK(graph.covers(copied,{"i32"})==PayloadFlow::Fit::Mismatch);
+  return true;
+}
+bool emptyReadDoesNotCreatePayload() {
+  size_t budget=100000;PayloadFlow graph(budget);
+  const auto owner=graph.node(PayloadFlow::AtomDomain::IdentityOrigin),elements=graph.node(),read=graph.node(),returned=graph.node();
+  CHECK(graph.seed(owner,"#allocation/empty"));CHECK(graph.connect({elements,read,owner,"#allocation/empty"}));
+  CHECK(graph.connect({read,elements}));CHECK(graph.connect({read,returned}));CHECK(graph.requireEvidence(read));CHECK(graph.solve());
+  CHECK(graph.evidence(read)->alternatives.empty());CHECK(graph.evidence(returned)->pending);
+  CHECK(graph.exact(returned,{"i32"})==PayloadFlow::Fit::Pending);
+  size_t productiveBudget=100000;PayloadFlow productive(productiveBudget);
+  const auto a=productive.node(),b=productive.node();CHECK(productive.requireEvidence(b));
+  CHECK(productive.connect({a,b}));CHECK(productive.connect({b,a}));CHECK(productive.seed(a,"undefined"));CHECK(productive.solve());
+  CHECK(productive.exact(b,{"undefined"})==PayloadFlow::Fit::Proven);
+  return true;
+}
+bool unknownOwnerCannotCloseRead() {
+  size_t budget=100000;PayloadFlow graph(budget);
+  const auto receiver=graph.node(PayloadFlow::AtomDomain::IdentityOrigin),elements=graph.node(),read=graph.node(),resultOwner=graph.node(PayloadFlow::AtomDomain::IdentityOrigin);
+  CHECK(graph.seed(elements,"i32"));CHECK(graph.unknown(receiver));
+  CHECK(graph.connect({elements,read,receiver,"#entry/verified"}));CHECK(graph.requireEvidence(read));
+  CHECK(graph.connect({read,resultOwner,PayloadFlow::none,{},{},true,true}));CHECK(graph.solve());
+  CHECK(graph.evidence(read)->alternatives.empty());CHECK(graph.evidence(read)->pending);
+  CHECK(graph.evidence(resultOwner)->alternatives.empty());CHECK(graph.evidence(resultOwner)->pending);
+  return true;
+}
+bool mixedNodeRolesRetainPayloadLimit() {
+  size_t budget=100000;PayloadFlow graph(budget);
+  const auto owner=graph.node(PayloadFlow::AtomDomain::IdentityOrigin),payload=graph.node();
+  for(unsigned i=0;i<257;++i)CHECK(graph.seed(owner,"owner/"+std::to_string(i)));
+  CHECK(graph.seed(payload,"i32"));CHECK(graph.solve());CHECK(graph.evidence(owner)->alternatives.size()==257);
+  CHECK(graph.exact(payload,{"i32"})==PayloadFlow::Fit::Proven);
+  size_t otherBudget=100000;PayloadFlow other(otherBudget,PayloadFlow::AtomDomain::IdentityOrigin);
+  const auto concrete=other.node(PayloadFlow::AtomDomain::Payload);
+  for(unsigned i=0;i<256;++i)CHECK(other.seed(concrete,"type/"+std::to_string(i)));
+  CHECK(!other.seed(concrete,"type/256"));CHECK(other.evidence(concrete)==nullptr);
+  return true;
+}
 int main() {
   const struct {const char *name;bool (*run)();} tests[]={
     {"pure views preserve payload through recursive phi equations",viewsAndRecursivePhi},
@@ -191,7 +240,11 @@ int main() {
     {"productive recursive returns substitute the real ordered caller parameter",returnedParameterSubstitution},
     {"mixed fresh and unproductive returns cannot prove one parameter alias",mixedAndFreshReturnsCannotProveAlias},
     {"reached caller entry does not contaminate parameterized callee summaries",callerEntryDoesNotPolluteParametricSummary},
-    {"recursive caller joins retain external input while strong writes replace it",recursiveCallerEntriesKeepExternalInput}};
+    {"recursive caller joins retain external input while strong writes replace it",recursiveCallerEntriesKeepExternalInput},
+    {"Array owner alias and copied element payload share one production fixed point",coupledOwnerAndElementPayloads},
+    {"successful read requires a productive origin without fabricating empty elements",emptyReadDoesNotCreatePayload},
+    {"unknown owner keeps payload and nested owner reads explicitly pending",unknownOwnerCannotCloseRead},
+    {"owner roles do not weaken the concrete payload variant limit",mixedNodeRolesRetainPayloadLimit}};
   constexpr unsigned count=sizeof(tests)/sizeof(tests[0]);
   unsigned failures=0;std::puts("TAP version 13");std::printf("1..%u\n",count);
   for(unsigned i=0;i<count;++i){const bool passed=tests[i].run();failures+=!passed;std::printf("%s %u - %s\n",passed?"ok":"not ok",i+1,tests[i].name);}

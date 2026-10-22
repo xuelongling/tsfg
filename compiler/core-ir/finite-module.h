@@ -20,6 +20,17 @@ struct Domain {
   Physical physical;
   unsigned tagBytes = 0;
 };
+// A verified parameter-role resource bound, never an allocation/length or
+// initialized-element observation. semanticType is its declared Array/ReadSpan
+// leaf; elementOwners name nested resources. aliases means possible sharing,
+// not identity equality/noalias. Only the independent entry verifier publishes.
+struct EntryArrayResource {
+  std::string semanticType;
+  std::set<std::string> elementTypes,elementOwners,aliases;
+  // All related sharing/separation pairs are justified; never runtime noalias.
+  // Unknown absence bridges leave this false and actual element flow pending.
+  bool aliasesComplete=false;
+};
 // All pointers refer to the owned, canonical documents below. No pointer or
 // partial registry escapes verification; a failed load discards this object.
 struct ModuleProof {
@@ -51,6 +62,8 @@ struct ModuleProof {
   // Actual values are independently derived from IR, never seeded from a
   // carrier's alternatives. A pending payload cannot authorize ABI admission.
   llvm::DenseMap<mlir::Value,std::set<std::string>> definitionParameters;
+  std::map<std::string,EntryArrayResource> entryArrays;
+  llvm::DenseMap<mlir::Value,std::set<std::string>> entryArrayOwners;
   std::map<mlir::Operation *,std::vector<mlir::Value>> fieldReadInputs;
   std::set<mlir::Operation *> fieldReadUndefined;
   llvm::DenseMap<mlir::Value,PayloadEvidence> actualPayloads;
@@ -75,6 +88,7 @@ bool verifyFlowContracts(ModuleProof &proof);
 bool verifyReturnedParameters(ModuleProof &proof);
 bool verifyMemoryContracts(ModuleProof &proof);
 bool verifyDefinitionBounds(ModuleProof &proof);
+bool verifyEntryArrayBounds(ModuleProof &proof);
 bool verifyActualFlow(ModuleProof &proof);
 const Domain *valueDomain(ModuleProof &proof, mlir::Type type);
 bool carrier(ModuleProof &proof, llvm::StringRef domain, mlir::Type type);

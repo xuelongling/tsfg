@@ -26,8 +26,14 @@ public:
   explicit PayloadFlow(size_t &budget,AtomDomain domain=AtomDomain::Payload)
       :remaining(budget),alternativeLimit(domain==AtomDomain::Payload?256:100000){}
   Id node();
+  // Coupled payload/owner equations use one fixed point. Identity atoms are
+  // work-bounded without weakening a payload node's256 concrete variants.
+  Id node(AtomDomain domain);
   bool seed(Id id,const std::string &type);
   bool unknown(Id id);
+  // A successful read with no independently reachable origin stays pending;
+  // an empty recursive equation must not manufacture a native payload.
+  bool requireEvidence(Id id);
   bool connect(Edge edge);
   bool solve();
   const PayloadEvidence *evidence(Id id) const;
@@ -36,19 +42,25 @@ public:
   const std::string &error() const { return failure; }
 private:
   enum class State { Building, Solving, Solved, Failed } state=State::Building;
-  struct Node { PayloadEvidence value; std::vector<Id> edges; bool queued=false; };
+  struct Node {
+    PayloadEvidence value; std::vector<Id> edges;
+    bool queued=false,requiresEvidence=false; size_t alternativeLimit=256;
+  };
   size_t &remaining;
   size_t alternativeLimit;
   std::vector<Node> nodes;
   std::vector<Edge> edges;
   std::vector<Id> work;
+  std::vector<Id> required;
   std::string failure;
   bool reject(const std::string &message);
   bool spend(size_t count=1);
   bool building();
+  Id boundedNode(size_t limit);
   bool insert(Id id,const std::string &type);
   void pending(Id id);
   void changed(Id id);
+  bool drain(size_t &cursor);
   Fit compare(Id id,const std::set<std::string> &allowed,bool exact) const;
 };
 } // namespace tsfg::finite

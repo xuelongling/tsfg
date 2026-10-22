@@ -2,6 +2,7 @@
 // Representation carriers are upper bounds, not allocation/payload facts.
 // Reconstruct the monotone IR flow before deciding which ABI slots are closed.
 #include "finite-module.h"
+#include "finite-array-flow.h"
 #include "dialect.h"
 #include "mlir/Dialect/ControlFlow/IR/ControlFlowOps.h"
 #include <algorithm>
@@ -121,7 +122,7 @@ struct ActualFlow {
       if(proof.fieldReadUndefined.count(op)&&!insert(result,hash(std::string("tsfg.type\0undefined",19))))return false;
       return true;
     }
-    if(name=="tsfg_core.domain.array_read")return pending(value(op->getResult(0)));
+    if(name=="tsfg_core.domain.array_read")return true; // Coupled owner/element equations below.
     if(name=="tsfg_core.domain.literal"||name=="tsfg_core.domain.array_create"||name=="tsfg_core.domain.read_span")
       return insert(value(op->getResult(0)),attr(op,"view_type"));
     if(primitive(op))for(const auto result:op->getResults()) {
@@ -175,7 +176,10 @@ struct ActualFlow {
     for(const auto &[argument,types]:proof.definitionParameters)for(const auto &type:types)if(!insert(value(argument),type))return false;
     for(auto &[id,fn]:proof.functions)for(auto &block:fn.getBody())for(auto &op:block)
       if(!proof.charge()||!operation(&op,id))return false;
+    ArrayFlow arrays(proof,flow,[this](mlir::Value item){return value(item);});
+    if(!arrays.build())return proof.reject(flow.error().empty()?"actual Array owner normalization":flow.error());
     if(!valid||!flow.solve())return proof.reject(flow.error());
+    if(!arrays.finish())return proof.reject(flow.error().empty()?"actual Array backing/read evidence":flow.error());
     return bounds();
   }
 };

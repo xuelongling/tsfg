@@ -268,3 +268,27 @@ Inline-value copies, unresolved owner aliases and full Array memory still need
 their own proofs. Native component checks cover these equation semantics;
 ordinary IR normalization remains object-only until independent Core execution
 is available within the actual dependency restrictions.
+
+Array owner equations now share the actual-payload fixed point. A real
+`array_create` introduces an independent owner token and its actual SSA initial
+elements. Views, CFG successor arguments, normal returns and selected calls
+transfer owner possibilities. Stores contribute actual RHS payloads through
+receiver-owner gates; reads consume that owner's element and nested-owner
+possibilities. The same production engine separates work-bounded identity atoms
+from concrete payload nodes with256 variants. After positive convergence, a
+successful read with no productive origin becomes pending rather than a
+fabricated zero or undefined value.
+
+An independently verified entry Array resource supplies possible external
+element alternatives only when reachable from a real parameter-role SSA root.
+Its complete sharing/separation authority is required; absence alone cannot
+bridge incompatible native representations. Nested element resources inherit
+that role, while field/return directory prototypes do not independently seed
+allocation or element facts. No entry bound asserts length or initialization.
+
+This owner-wide element set validates backing capacity, not an individual
+read's preceding write, bounds or initialized storage. In particular, later
+stores do not prove an earlier read. Every Array read remains in
+`unprovedMemoryReads` until those memory obligations are independently closed.
+Missing resource authority and unknown owner paths also remain explicitly
+unproved. These necessary equations do not activate unified admission or wire.
