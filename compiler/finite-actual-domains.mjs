@@ -32,12 +32,28 @@ function buildPlans(input,context,options,definitions) {
   function build(mode) {
     const solve=(field=null,array=null)=>solveFiniteActualDomains(input,context,charge,field,mode,array,options.publicationContext);
     const initial=solve();
-    const fieldReaching=buildFiniteFieldReaching(verifyHir(input,context,options.publicationContext),initial,charge);
+    // Field short-circuit control also must not consume capacity-based Array
+    // reads. This is the same conservative solver role as the ordered start.
+    const controlInitial=solve(null,{reads:[]});
+    const fieldReaching=buildFiniteFieldReaching(verifyHir(input,context,options.publicationContext),controlInitial,charge);
     const result=fieldReaching.reads.some(row=>row.reaching.length)
       ?solve(fieldReaching):initial;
-    const arrayReaching=buildFiniteArrayReaching(verifyHir(input,context,options.publicationContext),{...result,fieldReaching},charge);
-    const ordered=arrayReaching.reads.length
-      ?solve(fieldReaching,arrayReaching):result;
+    const hir=verifyHir(input,context,options.publicationContext);
+    // The first control query must not inherit Array read alternatives from
+    // the carrier/capacity solution. A non-null empty reaching directory makes
+    // every unproved read pending in this same solver, before any edge is cut.
+    let arrayReaching,ordered=solve(fieldReaching,{reads:[]}),previous;
+    // Memory-dependent presence may remove an incoming call edge only after
+    // its actual read sources are proved. Iterate the same solver, sharing the
+    // original budget; representation maxima never become memory witnesses.
+    for(;;) {
+      arrayReaching=buildFiniteArrayReaching(hir,{...ordered,carrierNodes:result.nodes,fieldReaching},charge);
+      if(!arrayReaching.reads.length)break;
+      const rows=[];for(const read of arrayReaching.reads){charge();const versions=[];
+        for(const id of read.versions){charge();versions.push(id);}rows.push([read.node,read.status,versions]);}
+      const current=canonical(rows);if(current===previous)break;previous=current;
+      ordered=arrayReaching.reads.length?solve(fieldReaching,arrayReaching):result;
+    }
     // Refined payloads do not silently republish a narrower ABI. Representation
     // maxima retain their original finite role, separately from ordered data.
     const domains=new Map([...result.domains,...ordered.domains].map(row=>[row.id,row]));

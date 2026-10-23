@@ -103,6 +103,26 @@ bool sources(ModuleProof &proof) {
   }
   return true;
 }
+bool clearMemory(ModuleProof &proof) {
+  // Every copied/rebuilt source occurrence is part of the one proof budget.
+  for(const auto &set:{&proof.unprovedMemoryReads,&proof.provedArrayReads,&proof.fieldReadUndefined})
+    for(auto *op:*set)if(!proof.charge())return false;
+  for(const auto &map:{&proof.fieldReadInputs,&proof.arrayReadInputs})for(const auto &[op,values]:*map) {
+    if(!proof.charge())return false;for(const auto value:values)if(!proof.charge())return false;
+  }
+  proof.unprovedMemoryReads.clear();proof.provedArrayReads.clear();proof.fieldReadUndefined.clear();
+  proof.fieldReadInputs.clear();proof.arrayReadInputs.clear();return true;
+}
+bool memoryPaths(ModuleProof &proof) {
+  bool changed;
+  do {
+    if(!clearMemory(proof)||!verifyMemoryContracts(proof,false)||!verifyArrayMemory(proof,false)||
+        !verifyControlPaths(proof,true,&changed))return false;
+  }while(changed);
+  // Candidate documents were shape/identity checked throughout, but never
+  // seeded control. Compare their claims only on the independently closed CFG.
+  return clearMemory(proof)&&verifyMemoryContracts(proof)&&verifyArrayMemory(proof);
+}
 }
 bool usesModule(mlir::ModuleOp module) {
   if (module->hasAttr("tsfg_core.finite_domains")) return true;
@@ -130,7 +150,7 @@ mlir::LogicalResult verifyModuleContracts(mlir::ModuleOp module) {
       !sources(proof) || !verifyCatalog(proof) || !verifyDomains(proof) || !verifyAbi(proof) ||
       !verifyValueContracts(proof) || !verifyMemberContracts(proof) || !verifyDefinitionBounds(proof) ||
       !verifyFlowContracts(proof) || !verifyReturnedParameters(proof) || !verifyControlPaths(proof) ||
-      !verifyMemoryContracts(proof) || !verifyArrayMemory(proof) || !verifyActualFlow(proof))
+      !memoryPaths(proof) || !verifyActualFlow(proof))
     return mlir::failure();
   return mlir::success();
 }

@@ -13,15 +13,18 @@ struct Version {std::string id,source;mlir::Value value;};
 struct Index {mlir::Value value;std::optional<uint32_t> constant;};
 struct ArrayMemory {
   ModuleProof &proof;
+  bool compareClaims;
   Json document=nullptr;
   std::map<std::string,const Object *> declaredReads,declaredWrites;
   std::map<std::string,Version> versions;
   std::map<mlir::Operation *,std::vector<std::string>> initial;
   std::map<mlir::Operation *,std::string> stores;
   std::map<std::string,bool> effects;
+  std::set<std::string> exported;
+  std::map<std::string,std::vector<mlir::Operation *>> callers;
   llvm::DenseMap<mlir::Value,size_t> identities;
   bool valid=true;
-  explicit ArrayMemory(ModuleProof &p):proof(p){}
+  explicit ArrayMemory(ModuleProof &p,bool compare):proof(p),compareClaims(compare){}
   bool charge(){if(!proof.charge()){valid=false;return false;}return true;}
   bool parse(mlir::Operation *op,llvm::StringRef key,Json &result) {
     const auto text=attr(op,key);if(!proof.charge(text.size()/64+1))return false;
@@ -107,6 +110,9 @@ struct ArrayMemory {
     if(create&&rows->empty())initial.emplace(op,std::vector<std::string>{});return true;
   }
   bool collect() {
+    for(const auto &value:*proof.sourceExports.getAsArray()) {
+      if(!charge())return false;exported.insert(string(*value.getAsObject(),"functionId"));
+    }
     for(auto &[id,fn]:proof.functions) {
       if(!charge())return false;bool writes=false;
       for(auto &block:fn.getBody())for(auto &op:block) {
@@ -120,7 +126,11 @@ struct ArrayMemory {
         for(const auto &target:targets) {if(!charge())return false;
           if(!effects.at(id)&&effects.at(target)){effects[id]=true;changed=true;break;}}
       }
-    }return versions.size()==declaredWrites.size()||proof.reject("unbound Array memory version");
+    }
+    for(const auto &[op,targets]:proof.selectedCallees)for(const auto &target:targets) {
+      if(!charge())return false;callers[target].push_back(op);
+    }
+    return versions.size()==declaredWrites.size()||proof.reject("unbound Array memory version");
   }
   struct Selection {std::set<std::string> versions;bool proven=false,bounds=false;};
   Selection query(mlir::Operation *read) {
@@ -180,7 +190,36 @@ struct ArrayMemory {
             if(branch.getFalseDest()==block&&proof.mayTraverse(term,1)&&!connect(branch.getFalseDestOperands()))return {};
           }else if(!unknown(task.node))return {};
         }
-        if(!predecessor&&!(task.scope?seed(task.node,input):unknown(task.node)))return {};continue;
+        if(!predecessor) {
+          if(task.scope){if(!seed(task.node,input))return {};continue;}
+          auto fn=task.before->getParentOfType<mlir::func::FuncOp>();
+          const auto id=attr(fn,"tsfg_core.function_id");const auto &contract=*proof.callable.at(id);
+          // at()/index() already normalized these values. Re-stripping here
+          // could exhaust the budget before a nullable dyn_cast.
+          const auto owner=llvm::dyn_cast<mlir::BlockArgument>(task.owner);
+          // Only complete internal direct callers can supply a definition's
+          // entry. Host/method/prototype bounds do not observe an instance.
+          if(exported.count(id)||string(contract,"role")!="function"||!string(contract,"ownerType").empty()||
+              callers[id].empty()||!owner||owner.getOwner()!=&fn.getBody().front()) {
+            if(!unknown(task.node))return {};continue;
+          }
+          for(auto *call:callers.at(id)) {
+            if(!charge())return {};if(!proof.mayReach(call->getBlock()))continue;
+            if(call->getName().getStringRef()!="func.call"||owner.getArgNumber()>=call->getNumOperands()) {
+              if(!unknown(task.node))return {};continue;
+            }
+            auto slot=task.index;bool mapped=bool(slot.constant);
+            if(!slot.constant) {
+              const auto index=llvm::dyn_cast<mlir::BlockArgument>(slot.value);
+              if(index&&index.getOwner()==&fn.getBody().front()&&index.getArgNumber()<call->getNumOperands()) {
+                slot=this->index(call->getOperand(index.getArgNumber()));if(!valid)return {};mapped=true;
+              }
+            }
+            if(!mapped){if(!unknown(task.node))return {};continue;}
+            const auto origin=at(call,call->getOperand(owner.getArgNumber()),slot,0);
+            if(!valid||!connect({origin,task.node}))return {};
+          }
+        }continue;
       }
       const auto name=previous->getName().getStringRef();
       if(name=="tsfg_core.domain.array_create"&&identity(previous->getResult(0))==identity(task.owner)) {
@@ -289,6 +328,16 @@ struct ArrayMemory {
         return proof.reject("unknown Array read state/claimed versions");
       if(!proof.mayReach(op.getBlock()))continue;
       const auto selected=query(&op);if(!valid)return false;
+      if(!compareClaims) {
+        if(selected.proven) {
+          for(const auto &version:selected.versions) {
+            if(!charge()||!versions.count(version))return proof.reject("independent Array version has no SSA binding");
+            proof.arrayReadInputs[&op].push_back(versions.at(version).value);
+          }
+          if(selected.bounds)proof.provedArrayReads.insert(&op);
+        }
+        continue;
+      }
       if(status=="proven") {
         if(!selected.proven||selected.versions!=expected)return proof.reject("Array read versions differ from independently preceding IR writes");
         for(const auto &version:selected.versions)proof.arrayReadInputs[&op].push_back(versions.at(version).value);
@@ -300,5 +349,5 @@ struct ArrayMemory {
   bool run(){return directory()&&collect()&&reads();}
 };
 }
-bool verifyArrayMemory(ModuleProof &proof){return ArrayMemory{proof}.run();}
+bool verifyArrayMemory(ModuleProof &proof,bool compareClaims){return ArrayMemory{proof,compareClaims}.run();}
 } // namespace tsfg::finite

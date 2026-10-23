@@ -371,7 +371,7 @@ Neither the representation maximum nor fixed ABI becomes a read source.
 
 ModuleContracts now derives conservative normal CFG paths before memory
 queries. The existing real-IR payload normalizer supplies presence inputs;
-this prepass treats every Array/field read as unknown and never consumes an
+the initial prepass treats every Array/field read as unknown and never consumes an
 unchecked reaching claim or owner capacity. Only an actual Boolean constant
 selects a Boolean edge. A bool TypeId, unknown/pending input, empty recursive
 equation or missing value evidence retains both paths. Presence tests compare
@@ -381,10 +381,36 @@ The standard-only production ControlPaths graph shares the original proof
 work budget and publishes no partial result on failure. Ordered payload and
 owner phi edges, field first-write queries and Array predecessor/callee-return
 queries all consume the same verified edge occurrence; two edges to one block
-retain their separate operands. CarrierMaximum is unchanged. Memory-dependent
-conditions that this conservative prepass cannot settle stay possible, rather
-than being narrowed from a producer ledger or from the condition's own phi.
+retain their separate operands. CarrierMaximum is unchanged. Independent
+first-write queries then provide actual SSA input values for memory-dependent
+presence tests. The same normalizer repeats with all original phi inputs and
+only removes edges already established possible by the preceding iteration.
+It never imports candidate read versions as control seeds. Each iteration
+validates global metadata, reconstructs sources, and spends the original work
+budget; candidate versions are compared after the edge set converges. Empty,
+pending or unresolved memory still retains both conditional continuations.
 This discharges a necessary control-path obligation only. Parameter-role
 external memory, unresolved aliases/value copies, full actual-bound completion,
 uniform admission, canonical roundtrip and versioned wire still require their
 own complete proofs; object compilation is not semantic IR execution.
+
+Internal direct functions now meet their real callers' incoming Array memory
+and literal-index constraints. The HIR producer starts every call-site state
+unknown and iterates to a bounded fixed point; copies and merges charge each
+binding, slot and version. The independent IR query remaps the selected formal
+owner/index into each actual call's predecessor. This entry query is separate
+from parameterized normal-return summaries: an incoming summary token resumes
+only that caller's old state. Distinct parameters are never noalias evidence.
+Exports, published methods, unresolved span rebasing and callers without a
+productive source retain pending. No ABI/resource bound manufactures length,
+an initialized cell, a successful allocation, or a concrete version.
+
+Canonical Source call/version identities are collected on every lexical path.
+Incoming memory is collected separately on feasible normal paths: direct
+Boolean literals and independently proved actual presence can exclude a call;
+unknown/pending conditions retain both branches. A dead-only helper acquires
+no instance or initialized cell. The same bounded ordered solver refines
+memory-dependent presence to a fixed point without changing carrier maxima or
+fixed ABI identities. Phi/view results are not Boolean literal authority.
+The first ordered pass marks all Array reads pending; carrier/capacity read
+alternatives cannot authorize the first control-path refinement.

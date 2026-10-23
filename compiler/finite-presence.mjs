@@ -6,13 +6,15 @@ export function finitePresence(plan,types,charge) {
   const nodes=new Map(),domains=new Map();
   for(const row of plan.nodes){charge();nodes.set(row.id,row);}
   for(const row of plan.domains){charge();domains.set(row.id,row);}
-  return path=>{
+  // A tested tag uses the same complete actual evidence, e.g. x===undefined.
+  // With no tag the existing nullish classification is unchanged.
+  return (path,tested=undefined)=>{
     charge();const node=nodes.get(path),actual=domains.get(node?.domainId)?.actualTypes;
     if(!node||node.pending.length||!actual?.length)return {present:true,absent:true};
     let present=false,absent=false;
     for(const id of actual){charge();const kind=types.get(id)?.kind;
       if(!kind)return {present:true,absent:true};
-      if(isFiniteAbsence(kind))absent=true;else present=true;}
+      if(tested===undefined?isFiniteAbsence(kind):kind===tested)absent=true;else present=true;}
     return {present,absent};
   };
 }

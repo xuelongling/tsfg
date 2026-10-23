@@ -11,6 +11,7 @@ std::string attr(mlir::Operation *op, llvm::StringRef key) {
 using Version=MemoryVersion;
 struct Memory {
   ModuleProof &proof;
+  bool compareClaims;
   bool valid=true;
   std::map<std::pair<std::string,std::string>,std::vector<Version>> versions;
   std::map<mlir::Operation *,std::vector<Version>> writes;
@@ -141,7 +142,7 @@ struct Memory {
           if (!proof.charge() || write.field!=field) return proof.reject("memory version selects another physical field");
           if (!write.source.empty()) expectedSources.insert(write.source);undefined |= write.state!=Version::State::Initialized;
           if (write.value) {
-            inputValues.push_back(write.value);
+            if(compareClaims)inputValues.push_back(write.value);
             const auto *input=valueDomain(proof,write.value.getType());
             if (!input || !std::includes(result->alternatives.begin(),result->alternatives.end(),input->alternatives.begin(),input->alternatives.end()))
               return proof.reject("field read drops a real reaching write payload");
@@ -149,7 +150,7 @@ struct Memory {
         }
       }
       const auto undefinedType=hash(std::string("tsfg.type\0undefined",19));
-      inputUndefined|=undefined;
+      if(compareClaims)inputUndefined|=undefined;
       const auto *intrinsics=row->getArray("intrinsics");
       if(!undefined && row->get("intrinsics"))return proof.reject("memory predecessor fabricates a native empty definition");
       if (undefined && (std::find(result->alternatives.begin(),result->alternatives.end(),undefinedType)==result->alternatives.end() ||
@@ -163,8 +164,18 @@ struct Memory {
       if(!referenceCell){complete=false;continue;}
       const auto selected=proveMemoryFirstWrites(proof,op,actual,field,writes);
       if(selected.status==MemorySelection::Status::Invalid)return false;
-      if(selected.status==MemorySelection::Status::Proven&&selected.versions!=claimed)
+      if(compareClaims&&selected.status==MemorySelection::Status::Proven&&selected.versions!=claimed)
         return proof.reject("claimed field version is stale or not first on every successful CFG/callee path");
+      // Control refinement consumes independent first-write results, never the
+      // producer's candidate versions. Claims are compared after convergence.
+      if(!compareClaims&&selected.status==MemorySelection::Status::Proven)for(const auto &id:selected.versions) {
+        if(!proof.charge())return false;const auto found=versions.find({id,actual});
+        if(found==versions.end())return proof.reject("independent field version has no SSA binding");
+        for(const auto &write:found->second) {
+          if(!proof.charge()||write.field!=field)return proof.reject("independent field version selects another member");
+          if(write.value)inputValues.push_back(write.value);inputUndefined|=write.state!=Version::State::Initialized;
+        }
+      }
       complete &= selected.status==MemorySelection::Status::Proven;
     }
     if(!reachable)return valid;
@@ -203,5 +214,5 @@ struct Memory {
   }
 };
 }
-bool verifyMemoryContracts(ModuleProof &proof) { return Memory{proof}.run(); }
+bool verifyMemoryContracts(ModuleProof &proof,bool compareClaims) { return Memory{proof,compareClaims}.run(); }
 } // namespace tsfg::finite

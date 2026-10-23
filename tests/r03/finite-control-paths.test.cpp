@@ -68,6 +68,28 @@ bool sameDestinationKeepsOperandOccurrences(){
     CHECK(owners.solve());CHECK(owners.exact(phi,{"parameter/a","parameter/b"})==PayloadFlow::Fit::Proven);
   }return true;
 }
+bool independentlySelectedMemoryFeedsPresence(){
+  for(unsigned mode=0;mode<3;++mode){
+    size_t budget=100000;PayloadFlow payload(budget);
+    const auto version=payload.node(PayloadFlow::AtomDomain::MemoryVersion),
+      native=payload.node(),absence=payload.node(),read=payload.node(),capacity=payload.node();
+    CHECK(payload.seed(native,"i32"));CHECK(payload.seed(absence,"undefined"));
+    CHECK(payload.seed(capacity,"i32"));CHECK(payload.seed(capacity,"undefined"));
+    CHECK(payload.seed(version,mode==1?"initial/0":"preceding/store"));
+    if(mode==2)CHECK(payload.unknown(version));
+    CHECK(payload.connect({native,read,version,"initial/0"}));
+    CHECK(payload.connect({absence,read,version,"preceding/store"}));
+    CHECK(payload.requireEvidence(read));CHECK(payload.solve());
+    // A physical capacity admits both tags, but is not connected as a read
+    // source. Only the selected successful version supplies the predicate.
+    CHECK(payload.exact(capacity,{"i32","undefined"})==PayloadFlow::Fit::Proven);
+    ControlPaths control(budget);const auto entry=control.block(),present=control.block(),rhs=control.block();
+    CHECK(control.entry(entry));const auto input=payload.evidence(read);CHECK(input);
+    const auto left=control.edge(entry,present,{input,"undefined",false,{}}),
+      right=control.edge(entry,rhs,{input,"undefined",false,{}},false);
+    CHECK(control.solve());CHECK(control.traverses(left)==(mode!=0));CHECK(control.traverses(right)==(mode!=1));
+  }return true;
+}
 bool workFailureCannotPublish(){
   size_t budget=10;ControlPaths graph(budget);PayloadEvidence input{{"i32","String","undefined"},false};
   const auto a=graph.block(),b=graph.block();CHECK(graph.entry(a));const auto edge=graph.edge(a,b,{&input,"undefined",false,{}});
@@ -89,6 +111,7 @@ int main(){
     {"impossible predecessor cannot contribute phi or read origins",impossibleSourceCannotEnterPhi},
     {"real Boolean literals and cyclic reachability remain bounded",booleanAndCycles},
     {"same-destination edges retain both original operand occurrences",sameDestinationKeepsOperandOccurrences},
+    {"selected memory versions feed presence while capacity remains independent",independentlySelectedMemoryFeedsPresence},
     {"shared work exhaustion publishes no partial control proof",workFailureCannotPublish},
     {"malformed and immutable graphs retain structured failure",malformedGraphsCannotPublish}};
   unsigned failures=0;std::puts("TAP version 13");std::printf("1..%zu\n",sizeof(tests)/sizeof(tests[0]));

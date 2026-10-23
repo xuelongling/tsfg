@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: MIT
 // Ordered version constraints over checked owned HIR, not payload evaluation.
 // Unknown aliases/callees retain pending; capacity bounds remain independent.
-import {own} from './identity.mjs';
+import {canonical,own} from './identity.mjs';
 import {finiteCallables} from './finite-callables.mjs';
 import {finitePresence} from './finite-presence.mjs';
 
@@ -24,8 +24,10 @@ export function buildFiniteArrayReaching(hir,plan,charge) {
   const functions=finiteCallables(hir),byFunction=new Map(functions.map(fn=>[fn.id,fn])),types=new Map(hir.types.map(row=>[row.id,row])),
     calls=new Map(plan.calls.map(row=>[row.id,row])),
     aliases=new Map((plan.fieldReaching?.returnAliases??[]).map(row=>[row.functionId,row.parameter])),
-    effects=new Map(functions.map(fn=>[fn.id,{writes:false,callees:new Set()}])),writes=new Map(),reads=new Map(),
-    presence=finitePresence(plan,types,charge);
+    effects=new Map(functions.map(fn=>[fn.id,{writes:false,callees:new Set()}])),writes=new Map(),reads=new Map(),contexts=new Map(),
+    presence=finitePresence(plan,types,charge),carriers=new Map();
+  for(const row of plan.carrierNodes??plan.nodes){charge();carriers.set(row.id,row.domainId);}
+  let contextWrites=new Map();
   function arrayCarrier(id) {
     const stack=[id],seen=new Set();while(stack.length) {
       charge();const current=stack.pop();if(seen.has(current))continue;seen.add(current);const type=types.get(current);
@@ -40,7 +42,7 @@ export function buildFiniteArrayReaching(hir,plan,charge) {
       charge();const {value,path}=stack.pop();if(!value||typeof value!=='object')continue;
       if(['arrayStoreDenseChecked','arrayResizeChecked','arrayCompoundAssignment','arrayUpdate'].includes(value.kind))effect.writes=true;
       if(value.kind==='call')for(const id of value.receiver?(calls.get(path)?.targets??[]).map(row=>row.functionId):[value.target]) {
-        if(id!==hir.intrinsics.readSpan.id)effect.callees.add(id);
+        if(id!==hir.intrinsics.readSpan.id){effect.callees.add(id);contexts.set(path+'\0'+id,{target:id,possible:true,state:new Map(),constants:new Map()});}
       }
       if(value.kind==='construct'||value.kind==='superConstruct')effect.writes=true;
       for(const [key,child] of Object.entries(value))if(child&&typeof child==='object')stack.push({value:child,path:path+'/'+key});
@@ -59,7 +61,7 @@ export function buildFiniteArrayReaching(hir,plan,charge) {
     for(const side of [left,right])for(const id of side.keys()){charge();keys.add(id);}
     for(const id of keys) {
       charge();const a=left.get(id),b=right.get(id),same=a&&b&&
-        ['owner','constant','symbol','offset','limit'].every(key=>a[key]===b[key]);
+        ['owner','constant','symbol','offset','limit','truth'].every(key=>a[key]===b[key]);
       result.set(id,!leftLive?b:!rightLive?a:same?a:{});
     }
     target.clear();for(const [id,value] of result){charge();target.set(id,value);}
@@ -76,13 +78,24 @@ export function buildFiniteArrayReaching(hir,plan,charge) {
       out.set(owner,{length:a.length===b.length?a.length:null,slots});
     }return out;
   }
-  function parameters(fn) {
+  function parameters(fn,incoming=[]) {
     const env=new Map();for(const parameter of fn.parameters) {
+      let constant;for(const [index,row] of incoming.entries()) {
+        charge();const candidate=row.constants.get(parameter.id);if(index===0)constant=candidate;else if(constant!==candidate)constant=undefined;
+      }
       charge();env.set(parameter.id,{symbol:fn.id+'/parameter/'+parameter.id,
-        ...(arrayCarrier(parameter.type)?{owner:fn.id+'/parameter/'+parameter.id}:{})});
+        ...(arrayCarrier(parameter.type)?{owner:fn.id+'/parameter/'+parameter.id}:{}),...(constant!==undefined?{constant}:{})});
     }return env;
   }
-  function analyze(fn,initial,env,active,applyCalls,recordReads=true) {
+  function predicateTruth(value,path) {
+    charge();if(value.kind==='boolean')return value.value;
+    if(value.kind!=='binary'||!['===','!=='].includes(value.operator))return undefined;
+    let classified;
+    if(['undefined','null'].includes(value.right.kind))classified=presence(path+'/left',value.right.kind);
+    else if(['undefined','null'].includes(value.left.kind))classified=presence(path+'/right',value.left.kind);
+    return classified&&classified.present!==classified.absent?(value.operator==='==='?classified.absent:classified.present):undefined;
+  }
+  function analyze(fn,initial,env,active,applyCalls,recordReads=true,collectAll=false) {
     const exits=[];
     const origin=value=>({source:fn.sourcePath,...value.range});
     const key=index=>index?.constant!==undefined?'c:'+index.constant:index?.symbol?'s:'+index.symbol:null;
@@ -128,8 +141,9 @@ export function buildFiniteArrayReaching(hir,plan,charge) {
     }
     function expression(value,path,state,bindings) {
       if(!value)return {};charge();const child=name=>expression(value[name],path+'/'+name,state,bindings);
-      if(value.kind==='reference')return bindings.get(value.binding)??{symbol:fn.id+'/parameter/'+value.binding};
-      if(['group','nonNull','assertType'].includes(value.kind))return child('operand');
+      if(value.kind==='reference')return adapt(bindings.get(value.binding)??{symbol:fn.id+'/parameter/'+value.binding},fn.id+'/binding/'+value.binding,path);
+      if(['group','nonNull','assertType'].includes(value.kind)) {const {truth,...result}=child('operand');return result;}
+      if(value.kind==='boolean')return {truth:value.value,symbol:path};
       if(value.kind==='constant') {
         const number=Number(value.decimal);return Number.isInteger(number)&&number>=0&&number<=4294967295?{constant:number,symbol:path}:{symbol:path};
       }
@@ -159,7 +173,7 @@ export function buildFiniteArrayReaching(hir,plan,charge) {
         store(value,path,value.kind==='arrayStoreDenseChecked'?path+'/value':path,state,receiver,index);
         return value.kind==='arrayStoreDenseChecked'?rhs:{symbol:path};
       }
-      if(value.kind==='assignment') {const rhs=child('value');bindings.set(value.target.binding,rhs);return rhs;}
+      if(value.kind==='assignment') {const rhs=child('value');bindings.set(value.target.binding,adapt(rhs,path+'/value',fn.id+'/binding/'+value.target.binding));return rhs;}
       if(value.kind==='arrayLength'||value.kind==='readSpanLength') {
         const receiver=child('receiver'),length=receiver.limit??state.get(receiver.owner)?.length;
         return length!==undefined&&length!==null?{constant:length,symbol:path}:{symbol:path};
@@ -181,6 +195,32 @@ export function buildFiniteArrayReaching(hir,plan,charge) {
           const returned=aliases.get(id);if(index===0)ordinal=returned;else consistent&&=ordinal===returned;
         }
         const actual=[];if(receiver){charge();actual.push(receiver);}for(const arg of args){charge();actual.push(arg);}
+        // A definition's read obligations meet every real caller's incoming
+        // state. This is distinct from applying a callee's return transfer to
+        // this caller; contextual visits cannot overwrite canonical contexts.
+        if(recordReads&&!collectAll)for(const id of targets) {
+          charge();const callee=byFunction.get(id);if(!callee)continue;
+          const incoming=new Map(),constants=new Map();
+          for(const [index,parameter] of callee.parameters.entries()) {
+            charge();const argument=actual[index];if(argument?.constant!==undefined)constants.set(parameter.id,argument.constant);
+            const memory=state.get(argument?.owner);
+            // A span's rebased indices need their own incoming view mapping;
+            // copying the backing owner's absolute slots would invent a read.
+            if(!memory||argument.offset||argument.limit!==undefined)continue;
+            const slots=new Map();for(const [slot,versions] of memory.slots) {
+              charge();let mapped=slot;
+              if(slot.startsWith('s:')) {
+                mapped=null;for(const [ordinal,value] of actual.entries()) {
+                  charge();if(value.symbol&&slot==='s:'+value.symbol&&callee.parameters[ordinal])
+                    mapped='s:'+id+'/parameter/'+callee.parameters[ordinal].id;
+                }
+              }
+              if(mapped){const copied=new Set();for(const version of versions){charge();copied.add(version);}slots.set(mapped,copied);}
+            }
+            incoming.set(id+'/parameter/'+parameter.id,{length:memory.length,slots});
+          }
+          contextWrites.set(path+'\0'+id,{target:id,possible:true,state:incoming,constants});
+        }
         if(!targets.length||unknown)invalidate(state);
         else if(modifies) {
           if(!applyCalls||recursive)invalidate(state);
@@ -201,14 +241,20 @@ export function buildFiniteArrayReaching(hir,plan,charge) {
         return ordinal!==null&&ordinal!==undefined&&consistent?actual[ordinal]??{}:{symbol:path};
       }
       if(value.kind==='shortCircuit'||value.kind==='binary'&&['&&','||','??'].includes(value.operator)) {
-        const left=child('left'),possibilities=value.operator==='??'?presence(path+'/left'):{present:true,absent:true};
-        if(!possibilities.absent)return left;
-        if(!possibilities.present)return child('right');
+        const left=child('left'),possibilities=collectAll?{present:true,absent:true}:value.operator==='??'?presence(path+'/left'):
+          {present:left.truth===undefined||left.truth===(value.operator==='||'),absent:left.truth===undefined||left.truth===(value.operator==='&&')};
+        const resultValue=result=>{if(value.operator!=='??')forgetAssignedTruth(value.right,bindings);
+          return value.operator==='??'?adapt(result,result.symbol,path):{symbol:path};};
+        if(!possibilities.absent)return resultValue(left);
+        if(!possibilities.present)return resultValue(child('right'));
         const right=clone(state),branchBindings=copyBindings(bindings),
           result=expression(value.right,path+'/right',right,branchBindings);
         const merged=join(state,right);state.clear();for(const [id,row] of merged){charge();state.set(id,row);}
         meetBindings(bindings,bindings,branchBindings);
-        return value.operator==='??'&&left.owner&&['owner','offset','limit'].every(key=>left[key]===result[key])?left:{symbol:path};
+        return resultValue(value.operator==='??'&&left.owner&&['owner','offset','limit'].every(key=>left[key]===result[key])?left:{symbol:path});
+      }
+      if(value.kind==='binary'&&['===','!=='].includes(value.operator)) {
+        child('left');child('right');return {symbol:path,truth:predicateTruth(value,path)};
       }
       // Unmodeled aliases never acquire an owner identity. Still traverse all
       // real evaluation children and conservatively discard mutating effects.
@@ -218,23 +264,50 @@ export function buildFiniteArrayReaching(hir,plan,charge) {
       if(['construct','superConstruct','fieldAssignment','fieldUpdate','update'].includes(value.kind))invalidate(state);
       return {symbol:path};
     }
+    // A representation-changing adaptation emits domain.view, which is not
+    // Boolean value authority for ControlPaths. Never infer truth from type.
+    function adapt(value,from,to) {
+      charge();if(value.truth!==undefined&&carriers.get(from)!==carriers.get(to)){const {truth,...rest}=value;return rest;}return value;
+    }
+    function forgetTruth(bindings) {
+      for(const [id,value] of bindings){charge();const {truth,...rest}=value;bindings.set(id,rest);}
+    }
+    function forgetAssignedTruth(root,bindings) {
+      const stack=[root];while(stack.length) {
+        charge();const value=stack.pop();if(!value||typeof value!=='object')continue;
+        if(value.kind==='assignment'&&bindings.has(value.target.binding)) {
+          const {truth,...rest}=bindings.get(value.target.binding);bindings.set(value.target.binding,rest);
+        }
+        for(const child of Object.values(value)){charge();if(child&&typeof child==='object')stack.push(child);}
+      }
+    }
     function statements(body,path,state,bindings) {
       for(const [index,row] of body.entries()) {
         charge();const p=path+'/'+index;
-        if(row.kind==='local')bindings.set(row.binding.id,expression(row.initializer,p+'/initializer',state,bindings));
+        if(row.kind==='local')bindings.set(row.binding.id,adapt(expression(row.initializer,p+'/initializer',state,bindings),p+'/initializer',fn.id+'/binding/'+row.binding.id));
         else if(row.kind==='expression')expression(row.expression,p+'/expression',state,bindings);
         else if(row.kind==='return'||row.kind==='constructorReturn') {
           if(row.value)expression(row.value,p+'/value',state,bindings);exits.push(clone(state));return null;
         }
         else if(row.kind==='block') {state=statements(row.body,p+'/body',state,bindings);if(!state)return null;}
         else if(row.kind==='if') {
-          expression(row.condition,p+'/condition',state,bindings);const a=copyBindings(bindings),b=copyBindings(bindings),
-            left=statements(row.then,p+'/then',clone(state),a),right=statements(row.else??[],p+'/else',clone(state),b);
+          const condition=expression(row.condition,p+'/condition',state,bindings),a=copyBindings(bindings),b=copyBindings(bindings),
+            left=!collectAll&&condition.truth===false?null:statements(row.then,p+'/then',clone(state),a),
+            right=!collectAll&&condition.truth===true?null:statements(row.else??[],p+'/else',clone(state),b);
           state=join(left,right);if(!state)return null;
-          meetBindings(bindings,a,b,!!left,!!right);
+          meetBindings(bindings,a,b,!!left,!!right);forgetTruth(bindings);
         }else if(row.kind==='while') {
+          // Header phis are not a pre-loop binding's literal value. A direct
+          // literal or independently solved actual presence can cut the body;
+          // pending/empty evidence keeps the original conservative loop.
+          forgetTruth(bindings);
+          const truth=collectAll?undefined:predicateTruth(row.condition,p+'/condition');
+          if(truth===false) {
+            expression(row.condition,p+'/condition',state,bindings);continue;
+          }
           invalidate(state);for(const id of bindings.keys()){charge();bindings.set(id,{});}
           expression(row.condition,p+'/condition',state,bindings);statements(row.body,p+'/body',clone(state),copyBindings(bindings));invalidate(state);
+          if(truth===true)return null;
         }else if(row.kind==='initializeOwnFields') {
           for(const init of types.get(row.ownerType).construction.initialization)if(init.value)
             expression(init.value,'construction/'+row.construction+'/initialization/'+init.field,state,bindings);
@@ -248,12 +321,35 @@ export function buildFiniteArrayReaching(hir,plan,charge) {
     // unbounded HIR walk or a made-up normal return.
     if(!result){invalidate(initial);return initial;}return result;
   }
-  // Isolated source versions/read obligations stay stable across call sites.
-  // The second pass applies parameterized memory transfer, not execution of
-  // Source values; it only selects existing successful write-version tokens.
-  for(const fn of functions)analyze(fn,new Map(),parameters(fn),new Set([fn.id]),false);
-  reads.clear();
-  for(const fn of functions)analyze(fn,new Map(),parameters(fn),new Set([fn.id]),true);
+  // Canonical Source versions stay isolated from contextual return transfers.
+  // Begin every real incoming site unknown; meet all sites before importing a
+  // function's memory or literal index facts. Host/method entries stay unknown.
+  for(const fn of functions)analyze(fn,new Map(),parameters(fn),new Set([fn.id]),false,true,true);
+  const canonicalReads=new Map();for(const [id,row] of reads){charge();canonicalReads.set(id,{...row,status:'pending',versions:[],sources:[]});}
+  const exported=new Set(hir.exports.map(row=>row.functionId));
+  function ledger() {
+    const snapshot=[];for(const [site,row] of contexts) {
+      charge();const state=[];for(const [owner,memory] of row.state) {
+        charge();const slots=[];for(const [key,versions] of memory.slots) {
+          charge();const values=[];for(const version of versions){charge();values.push(version);}values.sort((a,b)=>{charge();return a<b?-1:a>b?1:0;});slots.push([key,values]);
+        }slots.sort(([a],[b])=>{charge();return a<b?-1:a>b?1:0;});state.push([owner,memory.length,slots]);
+      }state.sort(([a],[b])=>{charge();return a<b?-1:a>b?1:0;});
+      const constants=[];for(const pair of row.constants){charge();constants.push(pair);}constants.sort(([a],[b])=>{charge();return a<b?-1:a>b?1:0;});
+      snapshot.push([site,row.target,row.possible,state,constants]);
+    }return canonical(snapshot);
+  }
+  let before;
+  do {
+    charge();before=ledger();reads.clear();contextWrites=new Map();
+    for(const [id,row] of canonicalReads){charge();reads.set(id,row);}
+    for(const fn of functions) {
+      const incoming=[];for(const row of contexts.values()){charge();if(row.target===fn.id&&row.possible)incoming.push(row);}
+      if(exported.has(fn.id)||fn.ownerType||!incoming.length)incoming.push({state:new Map(),constants:new Map()});
+      let state;for(const row of incoming){charge();state=state?join(state,row.state):clone(row.state);}
+      analyze(fn,state,parameters(fn,incoming),new Set([fn.id]),true);
+    }
+    for(const [site,row] of contexts){charge();contexts.set(site,contextWrites.get(site)??{target:row.target,possible:false,state:new Map(),constants:new Map()});}
+  }while(before!==ledger());
   return own({reads:[...reads.values()].sort((a,b)=>a.node<b.node?-1:1),writes:[...writes.values()].sort((a,b)=>a.id<b.id?-1:1),
     qualification:'ordered successful version sources; unresolved indices/aliases/callee effects remain pending; no independent runtime guard or borrow admission'});
 }

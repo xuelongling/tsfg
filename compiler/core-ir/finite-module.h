@@ -97,11 +97,11 @@ bool verifyValueContracts(ModuleProof &proof);
 bool verifyMemberContracts(ModuleProof &proof);
 bool verifyFlowContracts(ModuleProof &proof);
 bool verifyReturnedParameters(ModuleProof &proof);
-bool verifyMemoryContracts(ModuleProof &proof);
+bool verifyMemoryContracts(ModuleProof &proof,bool compareClaims=true);
 bool verifyDefinitionBounds(ModuleProof &proof);
 bool verifyEntryArrayBounds(ModuleProof &proof);
 bool verifyActualFlow(ModuleProof &proof);
-bool verifyControlPaths(ModuleProof &proof);
+bool verifyControlPaths(ModuleProof &proof,bool memorySources=false,bool *changed=nullptr);
 const Domain *valueDomain(ModuleProof &proof, mlir::Type type);
 bool carrier(ModuleProof &proof, llvm::StringRef domain, mlir::Type type);
 // Development module contracts, not yet the command's whole-flow admission

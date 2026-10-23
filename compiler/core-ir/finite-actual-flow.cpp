@@ -20,11 +20,12 @@ struct ActualFlow {
   PayloadFlow flow;
   ArrayFlow::Role role;
   bool controlOnly;
+  bool memorySources;
   llvm::DenseMap<mlir::Value,size_t> values;
   std::map<std::string,size_t> returns;
   std::map<std::string,std::string> constructions;
   bool valid=true;
-  ActualFlow(ModuleProof &value,ArrayFlow::Role mode,bool control=false):proof(value),flow(value.remaining),role(mode),controlOnly(control){}
+  ActualFlow(ModuleProof &value,ArrayFlow::Role mode,bool control=false,bool memory=false):proof(value),flow(value.remaining),role(mode),controlOnly(control),memorySources(memory){}
 
   size_t node() { const auto id=flow.node();valid&=id!=PayloadFlow::none;return id; }
   size_t value(mlir::Value item) {
@@ -123,13 +124,19 @@ struct ActualFlow {
     }
     if(name=="tsfg_core.domain.field_read") {
       const auto result=value(op->getResult(0));
-      if(controlOnly)return pending(result);
+      if(controlOnly&&!memorySources)return pending(result);
       if(proof.unprovedMemoryReads.count(op)||!proof.fieldReadInputs.count(op))return pending(result);
       for(const auto input:proof.fieldReadInputs.at(op))if(!edge(value(input),result))return false;
       if(proof.fieldReadUndefined.count(op)&&!insert(result,hash(std::string("tsfg.type\0undefined",19))))return false;
       return true;
     }
-    if(name=="tsfg_core.domain.array_read")return !controlOnly||pending(value(op->getResult(0))); // Coupled owner/element equations below.
+    if(name=="tsfg_core.domain.array_read") {
+      if(!controlOnly)return true; // Coupled owner/element equations below.
+      const auto result=value(op->getResult(0));const auto sources=proof.arrayReadInputs.find(op);
+      if(!memorySources||sources==proof.arrayReadInputs.end())return pending(result);
+      for(const auto source:sources->second)if(!proof.charge()||!edge(value(source),result))return false;
+      return true;
+    }
     if(name=="tsfg_core.domain.literal"||name=="tsfg_core.domain.array_create"||name=="tsfg_core.domain.read_span")
       return insert(value(op->getResult(0)),attr(op,"view_type"));
     if(primitive(op))for(const auto result:op->getResults()) {
@@ -176,7 +183,7 @@ struct ActualFlow {
     }
     return true;
   }
-  bool controlPaths() {
+  bool controlPaths(bool *changed) {
     ControlPaths paths(proof.remaining);
     std::map<mlir::Block *,size_t> blocks;
     std::map<std::pair<mlir::Operation *,unsigned>,size_t> edges;
@@ -204,6 +211,9 @@ struct ActualFlow {
       }
       for(unsigned i=0;i<terminator->getNumSuccessors();++i) {
         if(!proof.charge())return false;
+        // Earlier edge proofs were established on a conservative superset.
+        // Refinement is monotone; omitted paths never provide phi operands.
+        if(memorySources&&!proof.mayTraverse(terminator,i))continue;
         const auto edge=paths.edge(blocks.at(&block),blocks.at(terminator->getSuccessor(i)),predicate,i==0);
         if(edge==PayloadFlow::none)return proof.reject(paths.error());edges.emplace(std::make_pair(terminator,i),edge);
       }
@@ -212,23 +222,27 @@ struct ActualFlow {
     std::set<mlir::Block *> possible;std::set<std::pair<mlir::Operation *,unsigned>> selected;
     for(const auto &[block,id]:blocks){if(!proof.charge())return false;if(paths.reaches(id))possible.insert(block);}
     for(const auto &[edge,id]:edges){if(!proof.charge())return false;if(paths.traverses(id))selected.insert(edge);}
+    if(changed) {
+      if(!proof.charge(possible.size()+selected.size()))return false;
+      *changed=possible!=proof.possibleBlocks||selected!=proof.possibleEdges;
+    }
     proof.possibleBlocks=std::move(possible);proof.possibleEdges=std::move(selected);proof.controlReady=true;return true;
   }
-  bool run() {
+  bool run(bool *changed=nullptr) {
     for(auto &[id,fn]:proof.functions) {
       const auto &contract=*proof.callable.at(id);
       if(string(contract,"role")=="construction-body")constructions.emplace(string(contract,"construction"),id);
       if(proof.abi.at(id)->get("result")->kind()!=Json::Null)returns.emplace(id,node());
       for(auto &block:fn.getBody())for(const auto argument:block.getArguments())value(argument);
     }
-    if(!valid)return false;
+    if(!valid)return proof.reject(flow.error());
     for(const auto &[argument,types]:proof.definitionParameters)for(const auto &type:types)if(!insert(value(argument),type))return false;
     for(auto &[id,fn]:proof.functions)for(auto &block:fn.getBody())for(auto &op:block)
       if(!proof.charge()||((controlOnly||role==ArrayFlow::Role::CarrierMaximum||proof.mayReach(&block))&&!operation(&op,id)))return false;
     // A conservative control prepass uses the very same real-IR payload
     // normalizer. Memory inputs remain unknown; no producer ledger/capacity
     // alternative or unverified read claim can prune a path here.
-    if(controlOnly)return flow.solve()?controlPaths():proof.reject(flow.error());
+    if(controlOnly)return flow.solve()?controlPaths(changed):proof.reject(flow.error());
     ArrayFlow arrays(proof,flow,[this](mlir::Value item){return value(item);},role);
     if(!arrays.build())return proof.reject(flow.error().empty()?"actual Array owner normalization":flow.error());
     if(!valid||!flow.solve())return proof.reject(flow.error());
@@ -243,7 +257,7 @@ bool verifyActualFlow(ModuleProof &proof) {
   return ActualFlow{proof,ArrayFlow::Role::CarrierMaximum}.run()&&
     ActualFlow{proof,ArrayFlow::Role::OrderedPayload}.run();
 }
-bool verifyControlPaths(ModuleProof &proof) {
-  return ActualFlow{proof,ArrayFlow::Role::OrderedPayload,true}.run();
+bool verifyControlPaths(ModuleProof &proof,bool memorySources,bool *changed) {
+  return ActualFlow{proof,ArrayFlow::Role::OrderedPayload,true,memorySources}.run(changed);
 }
 } // namespace tsfg::finite
