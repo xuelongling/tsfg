@@ -1,0 +1,33 @@
+{
+  "frozenAt": "2026-10-23T23:06:46.515Z",
+  "actor": "Root from independent Spec review of e260, frozen before any25p public packet or production repair",
+  "candidateTree": "e2603b17e5fbbf5282afa55fa79bc93fda24b695",
+  "rule": "R01 section5.4/ADR0020 true last-use includes the next condition evaluation of a persistent Span. Only the corresponding owner is frozen; do not ban loops.",
+  "cases": [
+    {
+      "name": "span-loop-condition-conflict",
+      "source": {
+        "path": "E:/ws/pro_tsfg/.scratch/tsfg_r03/M25-source-generic-array-checks-20261022/span-loop-condition-conflict-source.ts",
+        "bytes": 189,
+        "sha256": "2bdf05fac527890db92331d514391a889494fd43d3c4e0e35a5b781086128d0e"
+      },
+      "expected": "Reject with first r03-d-readspan-structural-conflict at a.length=0, no HIR",
+      "mutationStart": 166,
+      "lastUseStart": 151,
+      "qualification": "Static normative expectation only; no program termination or guest/runtime execution requirement."
+    },
+    {
+      "name": "span-loop-condition-independent-owner",
+      "source": {
+        "path": "E:/ws/pro_tsfg/.scratch/tsfg_r03/M25-source-generic-array-checks-20261022/span-loop-condition-independent-owner-source.ts",
+        "bytes": 189,
+        "sha256": "4187ec3d4b9fa7203ccbba7f63f5d5a71134a471985d082ffd7a5c5aae2c243c"
+      },
+      "expected": "Accept static construction; condition view is A and body resize is independent B",
+      "mutationStart": 166,
+      "lastUseStart": 151,
+      "qualification": "Static normative expectation only; no program termination or guest/runtime execution requirement."
+    }
+  ],
+  "reason": "Loop condition last-use currently precedes body mutation in linear order and lies outside recorded body-only backedge. The next condition still reads SpanA; shortening A must be rejected, whereas shortening independent B remains permitted."
+}

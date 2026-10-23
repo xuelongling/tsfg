@@ -1,0 +1,44 @@
+{
+  "frozenAt": "2026-10-23T22:15:02.542Z",
+  "actor": "Root normative expectations frozen before any25n packet",
+  "source": [
+    {
+      "path": "E:/ws/pro_tsfg/.scratch/tsfg_r03/M25-source-generic-array-checks-20261022/span-return-live-conflict-source.ts",
+      "bytes": 199,
+      "sha256": "c7b6c0c87af39d02653c8a2b37090227e442fdf90357b73194e71f32ed8b3be2"
+    },
+    {
+      "path": "E:/ws/pro_tsfg/.scratch/tsfg_r03/M25-source-generic-array-checks-20261022/span-return-local-owner-pending-source.ts",
+      "bytes": 168,
+      "sha256": "cf4a3838eaa0cd571c1cd8ad4a268ecda53f4b3cf198b8885f184913a93f5dfb"
+    },
+    {
+      "path": "E:/ws/pro_tsfg/.scratch/tsfg_r03/M25-source-generic-array-checks-20261022/span-void-return-positive-source.ts",
+      "bytes": 249,
+      "sha256": "18bfdb9b6efdee560571fbba03488f05adbe4940c254a207b5b51b0f8abccc9c"
+    }
+  ],
+  "contract": [
+    "R01 section5.1 value copy and reference sharing",
+    "R01 section5.4 / ADR0020 actual last use and owner lifetime",
+    "R03 line35: missing actual static escape proof rejects relevant operation, not a permanent whole-language prohibition"
+  ],
+  "cases": {
+    "liveConflict": {
+      "expected": "r03-d-readspan-structural-conflict",
+      "rangeStart": 108,
+      "reason": "The Span remains contained in h and normal aggregate return makes it observable by the caller; its last use cannot stop at the constructor."
+    },
+    "localOwnerPending": {
+      "expected": "current missing-lifetime-proof return-escape/pending rejection",
+      "permanentLanguageBan": false,
+      "reason": "Current consumer lacks independent cross-frame owner retention/static escape proof. A locally allocated Array is not itself an unconditional R01 syntax prohibition. Future complete actual owner lifetime evidence may discharge this boundary."
+    },
+    "voidReturn": {
+      "expectedStatic": "accept if original official frontend accepts the baseline source",
+      "normativeResult": 1,
+      "reason": "Actual unconditional return terminates the callee; subsequent lexical field store must not enter successful caller-output snapshots. H retains A and B may shrink."
+    }
+  },
+  "qualification": "No Source/IR/VM execution result or permission is claimed by this frozen oracle; actual Source checker and consumer checks must separately run."
+}

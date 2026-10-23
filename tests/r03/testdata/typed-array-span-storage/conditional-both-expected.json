@@ -1,0 +1,18 @@
+{
+  "frozenAt": "2026-10-23T22:40:13.170Z",
+  "actor": "Root follow-up on same independent P2; frozen before both-arm public packet or consumer execution",
+  "source": {
+    "path": "E:/ws/pro_tsfg/.scratch/tsfg_r03/M25-source-generic-array-checks-20261022/span-conditional-both-overwrite-source.ts",
+    "bytes": 317,
+    "sha256": "48d22779ee79f2344d0de41e4f69c50d1634fc96264869fb3155dce9bdabda59"
+  },
+  "expected": "Accept static Array/ReadSpan construction; no structural-conflict at original a.length=0",
+  "mutationStart": 287,
+  "lastUseStart": 305,
+  "reason": "Both normal arms strongly overwrite the existing H.span(A) with B or C before control rejoins. A is no longer borrowed through the final field read, so retaining A merely because each call is conditional would overextend its borrow past its true last use.",
+  "rules": [
+    "R01 section5.4",
+    "ADR0020 real last-use rather than whole-function overextension"
+  ],
+  "qualification": "Static expectation only; runtime result2/3 is not execution credit. Original negative Source/oracle unchanged."
+}

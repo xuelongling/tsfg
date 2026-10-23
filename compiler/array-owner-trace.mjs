@@ -4,6 +4,7 @@ import {canonical} from './identity.mjs';
 import {arrayAnalysisTypes,arrayExpressionChildren,arrayReferenceBinding,hasConditionalArrayRhs} from './array-analysis-types.mjs';
 import {finiteCallables} from './finite-callables.mjs';
 import {typedReferenceAuthority} from './typed-reference-authority.mjs';
+import {createSpanStorage} from './array-span-storage.mjs';
 
 export const unknownArrayOwner=Object.freeze({kind:'unknown'});
 export const parameterArrayOwner=(fn,index)=>({kind:'parameter',functionId:fn.id,index});
@@ -95,13 +96,15 @@ export function traceArrayOwners(hir,contracts,fail,charge,insert,empty,tools=cr
     return authority.possibleMethods(value.receiver.type,value.target);
   };
   const bases=new Map(),callSites=new Map(),models=new Map(),origins=new Map(),active=new Set();
+  const storage=createSpanStorage(hir,tools,charge,()=>authority??=typedReferenceAuthority(hir,charge));
   const trace=fn=>{
     if(models.has(fn.id))return;
     if(active.has(fn.id))return;
     active.add(fn.id);
     const base=empty(),bindings=new Map(),calls=[],lengths=new Map(),contents=new Map(),expressions=new Map(),operations=[];
     let callCount=0,conditionalDepth=0;
-    const model={bindings,expressions,operations,loops:[]};models.set(fn.id,model);bases.set(fn.id,base);callSites.set(fn.id,calls);
+    const stored=storage.begin(fn),model={bindings,expressions,operations,loops:[],storage:stored.model};
+    models.set(fn.id,model);bases.set(fn.id,base);callSites.set(fn.id,calls);
     fn.parameters.forEach((p,index)=>{
       if(!type.isOwner(p.type))return;
       const owner=parameterArrayOwner(fn,index);bindings.set(p.id,owner);insert(base.owners,owner);lengths.set(canonical(owner),null);
@@ -121,7 +124,7 @@ export function traceArrayOwners(hir,contracts,fail,charge,insert,empty,tools=cr
     };
     const expression=(value,path,index)=>{
       if(!value)return null;
-      charge();let owner=null;
+      charge();let owner=null,storageCall=null;
       if(value.kind==='reference')owner=bindings.get(value.binding);
       else if(['group','assertType','nonNull'].includes(value.kind))owner=expression(value.operand,[...path,'operand'],index);
       else if(value.kind==='arrayCreate') {
@@ -165,7 +168,7 @@ export function traceArrayOwners(hir,contracts,fail,charge,insert,empty,tools=cr
             if(type.isView(value.type)&&slots[0]!==null&&slots.every(slot=>slot===slots[0]))
               call.returnedView=args.find(row=>row.index===slots[0])??null;
           }
-          calls.push(call);operations.push({kind:'call',path,range:value.range,call,value,statementIndex:index});
+          storageCall=call;calls.push(call);operations.push({kind:'call',path,range:value.range,call,value,statementIndex:index});
           for(const argument of args)lengths.set(canonical(argument.owner),null);
         }
       }else if(['arrayStoreDenseChecked','arrayResizeChecked','arrayCompoundAssignment','arrayUpdate'].includes(value.kind)) {
@@ -179,7 +182,9 @@ export function traceArrayOwners(hir,contracts,fail,charge,insert,empty,tools=cr
           mergeArrayOwners([contents.get(canonical(receiver)),expressions.get(canonical([...path,'value']))]));
       }else if(hasConditionalArrayRhs(value)) {
         const left=expression(value.left,[...path,'left'],index),before=snapshot(bindings);
+        const storageBefore=stored.state();
         conditionalDepth++;const right=expression(value.right,[...path,'right'],index);conditionalDepth--;
+        stored.join([storageBefore,stored.state()]);
         for(const [id,prior]of before)bindings.set(id,mergeArrayOwners([prior,bindings.get(id)]));
         for(const key of lengths.keys()){charge();lengths.set(key,null);}
         owner=mergeArrayOwners([left,right]);
@@ -199,16 +204,21 @@ export function traceArrayOwners(hir,contracts,fail,charge,insert,empty,tools=cr
         }
         else if(type.isOwner(value.type))owner=mergeArrayOwners([...children,unknownArrayOwner]);
       }
+      owner=stored.record(value,path,owner,storageCall);
       owner=own(value,owner);expressions.set(canonical(path),owner);return owner;
     };
     const returns=[];
     const body=(rows,path=['body'])=>{
+      // Normal control flow is independent of whether aggregate provenance
+      // is enabled. Still visit lexical facts after a terminated path.
+      let fallthrough=true;
       for(const [index,row] of rows.entries()) {
-        charge();const at=[...path,index];
+        charge();const at=[...path,index],incoming=fallthrough;
         if(row.kind==='initializeOwnFields') {
           const owner=constructions.get(row.construction),typeIndex=hir.types.indexOf(owner);
           for(const [ordinal,step]of owner.construction.initialization.entries())if(step.value)
             expression(step.value,['types',typeIndex,'construction','initialization',ordinal,'value'],index);
+          stored.initialize(row);
         }else if(row.kind==='forwardBaseConstruction') {
           const range={start:row.origin.start,end:row.origin.end};
           const reference=argument=>({kind:'reference',type:argument.type,binding:argument.binding,
@@ -217,37 +227,54 @@ export function traceArrayOwners(hir,contracts,fail,charge,insert,empty,tools=cr
             receiver:{kind:'reference',type:fn.ownerType,binding:row.receiverBinding,range},arguments:row.arguments.map(reference)},at,index);
         }else if(row.kind==='local') {
           const owner=expression(row.initializer,[...at,'initializer'],index);
+          stored.bind(row.binding.id,stored.get([...at,'initializer']));
           if(type.isOwner(row.binding.type))bindings.set(row.binding.id,owner);
           operations.push({kind:'binding',path:[...at,'initializer'],binding:row.binding.id,type:row.binding.type,value:row.initializer,
             range:row.range,owner,statementIndex:index,conditional:conditionalDepth>0});
         }else {
+          // The condition is evaluated on every backedge, not only before
+          // the first body. Its field inputs share the loop-entry labels.
+          const loopEntry=row.kind==='while'?stored.state():null;
+          if(row.kind==='while')stored.enterLoop(loopEntry);
           if(row.condition)expression(row.condition,[...at,'condition'],index);
           for(const key of ['expression','value'])if(row[key]) {
             const owner=expression(row[key],[...at,key],index);
             if(row.kind==='return'&&type.isOwner(fn.returnType.id))returns.push(owner);
             if(row.kind==='return')operations.push({kind:'return',path:[...at,key],value:row[key],range:row[key].range,owner,statementIndex:index});
+            if(row.kind==='return')stored.returned(stored.get([...at,key]),[...at,key]);
           }
+          if(row.kind==='return'&&!row.value)stored.returned(undefined,at);
+          if(row.kind==='return')fallthrough=false;
           if(row.then||row.else) {
             const before=snapshot(bindings),beforeLengths=snapshot(lengths);
-            conditionalDepth++;body(row.then??[],[...at,'then']);const yes=snapshot(bindings);
+            const storageBefore=stored.state();
+            conditionalDepth++;const yesExit=body(row.then??[],[...at,'then']),yes=snapshot(bindings);
+            const storageYes=stored.state();stored.restore(storageBefore);
             bindings.clear();for(const [id,owner]of before){charge();bindings.set(id,owner);}
             lengths.clear();for(const [key,length]of beforeLengths){charge();lengths.set(key,length);}
-            body(row.else??[],[...at,'else']);conditionalDepth--;
+            const noExit=body(row.else??[],[...at,'else']);conditionalDepth--;
+            fallthrough=incoming&&(yesExit||noExit);
+            stored.join([storageYes,stored.state()]);
             for(const [id,owner]of yes)bindings.set(id,mergeArrayOwners([owner,bindings.get(id)]));
             for(const key of lengths.keys()){charge();lengths.set(key,null);}
           }
           if(row.body&&row.kind==='while') {
             // A loop proof must hold on its backedge, not only on the first iteration.
             for(const key of lengths.keys()){charge();lengths.set(key,null);}
-            model.loops.push([...at,'body']);conditionalDepth++;
-            const before=snapshot(bindings);body(row.body,[...at,'body']);conditionalDepth--;
+            const before=snapshot(bindings),conditionExit=stored.state();conditionalDepth++;
+            const bodyExit=body(row.body,[...at,'body']);conditionalDepth--;
+            // Only a normally completed body can repeat its condition. The
+            // shared scope also distinguishes views freshly made each turn.
+            if(incoming&&bodyExit)model.loops.push(at);
+            stored.leaveLoop(loopEntry,conditionExit);
             for(const [id,owner]of before)bindings.set(id,mergeArrayOwners([owner,bindings.get(id)]));
             for(const key of lengths.keys()){charge();lengths.set(key,null);}
-          }else if(row.body)body(row.body,[...at,'body']);
+          }else if(row.body){const nestedExit=body(row.body,[...at,'body']);fallthrough=incoming&&nestedExit;}
         }
       }
+      return fallthrough;
     };
-    body(fn.body);origins.set(fn.id,mergeArrayOwners(returns));active.delete(fn.id);
+    body(fn.body);stored.finish();origins.set(fn.id,mergeArrayOwners(returns));active.delete(fn.id);
   };
   for(const fn of callables)trace(fn);
   return {bases,callSites,models,origins};

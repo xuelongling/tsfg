@@ -1,0 +1,30 @@
+{
+  "frozenAt": "2026-10-23T23:23:49.722Z",
+  "actor": "Root from e75 independent Spec regression, before any25q packet or repair",
+  "candidateTree": "e75b978b4916b791ea8c4849a97a8d534e1a0651",
+  "rules": [
+    "R01 section5.4 real last use",
+    "ADR0020 feasible backedge; no whole-loop ban"
+  ],
+  "cases": [
+    {
+      "name": "span-loop-return-positive",
+      "path": "E:/ws/pro_tsfg/.scratch/tsfg_r03/M25-source-generic-array-checks-20261022/span-loop-return-positive-source.ts",
+      "bytes": 130,
+      "sha256": "653c7cd0c53fdca77d41cad957328cc5d8796eb6af57ad736540c8f99203e8fa",
+      "expected": "Node ok: body return has no next condition, actual lastuse is s[0] before resize",
+      "mutationStart": 98,
+      "lastUseStart": 88
+    },
+    {
+      "name": "span-loop-fallthrough-conflict",
+      "path": "E:/ws/pro_tsfg/.scratch/tsfg_r03/M25-source-generic-array-checks-20261022/span-loop-fallthrough-conflict-source.ts",
+      "bytes": 121,
+      "sha256": "b10154357fea9cc79c59c10493810263fa6f3597d86fa2643b5643a0a353958f",
+      "expected": "Node structural-conflict at a.length=0 with related next-condition s[0]",
+      "mutationStart": 98,
+      "lastUseStart": 88
+    }
+  ],
+  "qualification": "Public static facts/Node borrow analysis only; no guest/IR/VM/runtime execution or result credit."
+}

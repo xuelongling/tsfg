@@ -16,7 +16,7 @@ export function deriveReadSpanPlan(hir,prepared) {
   const callables=finiteCallables(hir),calls=prepared.flow.calls,targets=new Map(callables.map(fn=>[fn.id,fn]));
   const indices=new Map(calls.map((call,index)=>[canonical([call.functionId,call.expressionPath]),index]));
   const functions=callables.map(fn=>{
-    const model=prepared.ownerModel.functions.get(fn.id),families=new Map(),results=new Map(),views=[],events=[];
+    const model=prepared.ownerModel.functions.get(fn.id),families=new Map(),results=new Map(),storedFamilies=new Map(),views=[],events=[];
     const event=(operation,kind,fields)=>{
       if(events.length>=100)limit();const sequence=events.length;
       events.push({sequence,statementIndex:operation.statementIndex,expressionPath:[...operation.path],
@@ -30,6 +30,13 @@ export function deriveReadSpanPlan(hir,prepared) {
       view.lastUseEvent=sequence;return sequence;
     };
     const family=(value,path)=>{
+      const stored=model.storage?.reads.get(canonical(path));
+      // An unresolved current field version cannot fall back to a stale
+      // lexical alias family from before an unknown selected-target write.
+      if(stored?.pending)return [];
+      if(stored&&!stored.pending){const possible=[];
+        for(const source of stored.sources){charge();const view=storedFamilies.get(source.id);if(view)possible.push(view);else return [];}
+        if(possible.length)return [...new Set(possible)];}
       if(value.kind==='reference')return families.get(value.binding)??[];
       if(['group','assertType','nonNull'].includes(value.kind))return family(value.operand,[...path,'operand']);
       if(value.kind==='assignment')return family(value.value,[...path,'value']);
@@ -53,9 +60,12 @@ export function deriveReadSpanPlan(hir,prepared) {
       const viewId=sha256('tsfg.readspan.parameter-view.v1\0'+canonical({functionId:fn.id,bindingId:parameter.id,index,parameterRange:parameter.range}));
       const view={viewId,binding:parameter.id,owner:parameterArrayOwner(fn,index),origin:{kind:'parameter',index,range:{...parameter.range}},
         aliases:[],useEvents:[],lastUseEvent:null};views.push(view);families.set(parameter.id,[view]);
+      storedFamilies.set('parameter/'+fn.id+'/'+index,view);
     });
     for(const operation of model.operations) {
-      if(operation.kind==='viewCreate')create(operation,'local',operation.owner);
+      if(operation.kind==='viewCreate'){
+        const view=create(operation,'local',operation.owner);storedFamilies.set(fn.id+'@'+canonical(operation.path),view);
+      }
       else if(operation.kind==='read') {
         const value=operation.value;
         if(type.isView(value.receiver.type)) {
@@ -93,6 +103,12 @@ export function deriveReadSpanPlan(hir,prepared) {
           if(type.isArray(callee.parameters[parameterIndex].type))create(operation,'callResult',returned.owner,{callIndex,parameterIndex});
           else results.set(canonical(operation.path),family(actuals[parameterIndex],actualPath(parameterIndex)));
         }
+        for(const source of model.storage?.captures.values()??[]){
+          charge();if(canonical(source.callPath)!==canonical(operation.path))continue;
+          const existing=type.isView(value.type)?results.get(canonical(operation.path))?.[0]:null;
+          const view=existing??create(operation,'callResult',source.owner,{callIndex,storageOrigin:source.storedOrigin});
+          storedFamilies.set(source.id,view);
+        }
       }else if(operation.kind==='binding'&&type.isView(operation.type)) {
         const possible=family(operation.value,operation.path);if(!possible.length)continue;
         const prior=operation.conditional?families.get(operation.binding)??[]:[];
@@ -111,12 +127,25 @@ export function deriveReadSpanPlan(hir,prepared) {
         }
       }else if(operation.kind==='store'||operation.kind==='resize')event(operation,
         operation.kind==='store'?'array-store-effect':'array-resize-effect',operation.proof);
-      else if(operation.kind==='return'&&type.isView(operation.value.type)) {
-        const possible=family(operation.value,operation.path);
-        if(!possible.length)use(undefined,null,operation,'view-return-complete');
-        const {callIndex,returned}=returnedCall(operation.value,operation.path);
-        for(const view of possible)use(view,arrayReferenceBinding(operation.value)??returned?.binding??null,
-          operation,'view-return-complete',{callIndex:callIndex??null,parameterIndex:returned?.index??null});
+      else if(operation.kind==='return') {
+        if(type.isView(operation.value.type)){
+          const possible=family(operation.value,operation.path);
+          if(!possible.length)use(undefined,null,operation,'view-return-complete');
+          const {callIndex,returned}=returnedCall(operation.value,operation.path);
+          for(const view of possible)use(view,arrayReferenceBinding(operation.value)??returned?.binding??null,
+            operation,'view-return-complete',{callIndex:callIndex??null,parameterIndex:returned?.index??null});
+        }else {
+          const evidence=model.storage?.returnReads.get(canonical(operation.path));
+          if(evidence?.pending)use(undefined,null,operation,'view-storage-return-complete');
+          for(const source of evidence?.sources??[]){
+          charge();const view=storedFamilies.get(source.id);
+          if(!view)use(undefined,null,operation,'view-storage-return-complete');
+          if(prepared.ownerTools.leaves(view.owner).some(owner=>{charge();return owner.kind!=='parameter'||owner.functionId!==fn.id;}))
+            failure({code:'r03-d-readspan-return-escape',ruleId:'r01-span',phase:'hir',message:'Stored ReadSpan return has no caller-owned lifetime proof',
+              primary:{sourceId:fn.sourcePath,...operation.range}});
+          use(view,null,operation,'view-storage-return-complete');
+          }
+        }
       }
     }
     return {functionId:fn.id,views,events,loops:model.loops};
