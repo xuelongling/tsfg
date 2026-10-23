@@ -2,8 +2,10 @@
 #include "finite-module.h"
 #include "finite-domain.h"
 #include "finite-array-memory.h"
+#include "bytecode.h"
 #include "module.h"
 #include "llvm/Support/SHA256.h"
+#include "llvm/ADT/DenseSet.h"
 #include "mlir/IR/Diagnostics.h"
 #include "mlir/IR/Verifier.h"
 #include <array>
@@ -124,17 +126,61 @@ bool memoryPaths(ModuleProof &proof) {
   return clearMemory(proof)&&verifyMemoryContracts(proof)&&verifyArrayMemory(proof);
 }
 }
-bool usesModule(mlir::ModuleOp module) {
-  if (module->hasAttr("tsfg_core.finite_domains")) return true;
-  bool found = false;
-  module.walk([&](mlir::Operation *op) {
-    if (op->getName().getStringRef().starts_with("tsfg_core.domain.")) found = true;
-    for (auto type : op->getResultTypes()) if (llvm::isa<FiniteDomainType>(type)) found = true;
-  });
-  return found;
+namespace {
+enum class Discovery { Absent, Finite, Limit };
+Discovery discover(mlir::ModuleOp module) {
+  // A removed marker must not redirect unused/nested signatures or residual
+  // finite documents into a successful scalar/private candidate verifier.
+  static const std::set<llvm::StringRef> documents={
+    "tsfg_core.semantic_types","tsfg_core.language_intrinsics","tsfg_core.canonical_layouts",
+    "tsfg_core.finite_domains","tsfg_core.callable_contracts","tsfg_core.compatibility_witnesses",
+    "tsfg_core.member_views","tsfg_core.field_phases","tsfg_core.source_exports",
+    "tsfg_core.entry_compatibility_roots","tsfg_core.array_reaching","tsfg_core.array_call_authority"};
+  std::vector<mlir::Operation *> operations{module.getOperation()};
+  std::vector<mlir::Type> types;std::vector<mlir::Attribute> attributes;
+  llvm::DenseSet<mlir::Type> seenTypes;llvm::DenseSet<mlir::Attribute> seenAttributes;
+  size_t remaining=100000;
+  const auto charge=[&](){if(!remaining)return false;--remaining;return true;};
+  while(!operations.empty()) {
+    if(!charge())return Discovery::Limit;
+    auto *op=operations.back();operations.pop_back();
+    if(op->getName().getStringRef().starts_with("tsfg_core.domain."))return Discovery::Finite;
+    for(const auto &entry:op->getAttrs()) {
+      if(!charge())return Discovery::Limit;
+      if(documents.count(entry.getName().strref()))return Discovery::Finite;
+      attributes.push_back(entry.getValue());
+    }
+    for(auto type:op->getOperandTypes()){if(!charge())return Discovery::Limit;types.push_back(type);}
+    for(auto type:op->getResultTypes()){if(!charge())return Discovery::Limit;types.push_back(type);}
+    for(auto &region:op->getRegions())for(auto &block:region) {
+      if(!charge())return Discovery::Limit;
+      for(auto argument:block.getArguments()){if(!charge())return Discovery::Limit;types.push_back(argument.getType());}
+      for(auto &nested:block){if(!charge())return Discovery::Limit;operations.push_back(&nested);}
+    }
+    while(!types.empty()||!attributes.empty()) {
+      if(!charge())return Discovery::Limit;
+      if(!types.empty()) {
+        const auto type=types.back();types.pop_back();
+        if(llvm::isa<FiniteDomainType>(type))return Discovery::Finite;
+        if(!seenTypes.insert(type).second)continue;
+        type.walkImmediateSubElements([&](mlir::Attribute value){if(charge())attributes.push_back(value);},
+                                      [&](mlir::Type value){if(charge())types.push_back(value);});
+      }else {
+        const auto attribute=attributes.back();attributes.pop_back();
+        if(!seenAttributes.insert(attribute).second)continue;
+        attribute.walkImmediateSubElements([&](mlir::Attribute value){if(charge())attributes.push_back(value);},
+                                           [&](mlir::Type value){if(charge())types.push_back(value);});
+      }
+      if(!remaining)return Discovery::Limit;
+    }
+  }
+  return Discovery::Absent;
 }
-mlir::LogicalResult verifyModuleContracts(mlir::ModuleOp module) {
-  ModuleProof proof(module);
+}
+bool usesModule(mlir::ModuleOp module) {return discover(module)!=Discovery::Absent;}
+namespace {
+bool contracts(ModuleProof &proof) {
+  auto module=proof.module;
   if (!preflight(proof) || mlir::failed(mlir::verify(module)) ||
       !proof.document("tsfg_core.semantic_types", proof.types) ||
       !proof.document("tsfg_core.language_intrinsics", proof.intrinsics) ||
@@ -151,7 +197,129 @@ mlir::LogicalResult verifyModuleContracts(mlir::ModuleOp module) {
       !verifyValueContracts(proof) || !verifyMemberContracts(proof) || !verifyDefinitionBounds(proof) ||
       !verifyFlowContracts(proof) || !verifyReturnedParameters(proof) || !verifyControlPaths(proof) ||
       !memoryPaths(proof) || !verifyActualFlow(proof) || !verifyBorrowContracts(proof))
-    return mlir::failure();
-  return mlir::success();
+    return false;
+  return true;
+}
+bool ownerResources(ModuleProof &proof,mlir::Type type,std::set<std::string> &seen,bool &found) {
+  if(!proof.charge())return false;
+  const auto *domain=valueDomain(proof,type);
+  if(!domain)return proof.reject("owner boundary has no independently verified carrier");
+  if(!domain->native.empty())return true;
+  std::vector<std::string> work;
+  for(const auto &id:domain->alternatives){if(!proof.charge())return false;work.push_back(id);}
+  while(!work.empty()) {
+    if(!proof.charge())return false;const auto id=work.back();work.pop_back();
+    if(!seen.insert(id).second)continue;
+    const auto entry=proof.catalog.find(id);
+    if(entry==proof.catalog.end())return proof.reject("owner boundary leaves the verified type catalogue");
+    const auto &row=*entry->second;const auto kind=string(row,"kind");
+    if(kind=="array"||kind=="readSpan"){found=true;return true;}
+    if(kind=="union")for(const auto &member:*row.getArray("members")) {
+      if(!proof.charge())return false;work.push_back(member.getAsString()->str());
+    }
+    if(kind=="reference"||kind=="value") {
+      const auto base=string(row,"base");if(!base.empty())work.push_back(base);
+      for(const auto &field:*row.getArray("fields")) {
+        if(!proof.charge())return false;work.push_back(string(*field.getAsObject(),"type"));
+      }
+    }
+  }
+  return true;
+}
+bool definitionOwners(ModuleProof &proof,mlir::func::FuncOp fn,bool &found) {
+  std::set<std::string> seen;
+  for(auto type:fn.getArgumentTypes()) {
+    if(!ownerResources(proof,type,seen,found))return false;if(found)return true;
+  }
+  for(auto type:fn.getResultTypes()) {
+    if(!ownerResources(proof,type,seen,found))return false;if(found)return true;
+  }
+  for(auto &block:fn.getBody()) {
+    if(!proof.charge())return false;if(!proof.mayReach(&block))continue;
+    for(auto argument:block.getArguments()) {
+      if(!ownerResources(proof,argument.getType(),seen,found))return false;if(found)return true;
+    }
+    for(auto &op:block) {
+      if(!proof.charge())return false;
+      for(auto type:op.getOperandTypes()) {
+        if(!ownerResources(proof,type,seen,found))return false;if(found)return true;
+      }
+      for(auto type:op.getResultTypes()) {
+        if(!ownerResources(proof,type,seen,found))return false;if(found)return true;
+      }
+    }
+  }
+  return true;
+}
+bool complete(ModuleProof &proof) {
+  // All three analyses above run on this transaction. A successful local
+  // contract only validates supplied claims; it cannot discharge a read from
+  // capacity, a Published cell source, or a producer's "proven" label.
+  if(!proof.unprovedMemoryReads.empty()) {
+    auto *op=*proof.unprovedMemoryReads.begin();
+    op->emitError("[core-ir-finite-module] whole admission requires independently proved memory source and bounds");
+    return false;
+  }
+  if(!proof.unprovedActualBounds.empty()) {
+    const auto &id=*proof.unprovedActualBounds.begin();
+    const auto found=proof.functions.find(id);
+    if(found==proof.functions.end())return proof.reject("unproved actual bound has no owned callable");
+    found->second.emitError("[core-ir-finite-module] whole admission requires complete actual parameter, return and Array backing bounds");
+    return false;
+  }
+  // A provided publication covers every definition, including exports with no
+  // callsite. Successful local validation can still leave its effect/return
+  // equations pending; only the same solved transaction publishes completion.
+  const bool authority=proof.module->hasAttr("tsfg_core.array_call_authority");
+  for(auto &[id,fn]:proof.functions) {
+    if(!proof.charge())return false;
+    bool owners=false;
+    if(!authority&&!definitionOwners(proof,fn,owners))return false;
+    // Missing optional context remains valid only for a real owner-free
+    // definition. A formal Span return is an owner-bearing boundary even when
+    // there is no callsite and the borrow's same-frame lifetime is proved.
+    if((authority||owners)&&!proof.arrayCallDefinitionsComplete.count(id)) {
+      fn.emitError("[core-ir-finite-module] whole admission requires complete Array call definition authority");
+      return false;
+    }
+  }
+  for(const auto &[op,targets]:proof.selectedCallees) {
+    if(!proof.charge())return false;
+    if(!proof.mayReach(op->getBlock()))continue;
+    bool ownerCall=false,valid=true;
+    const auto owner=[&](mlir::Type type) {
+      const auto *domain=valueDomain(proof,type);if(!domain)return false;
+      for(const auto &id:domain->alternatives) {
+        if(!proof.charge()){valid=false;return false;}
+        const auto found=proof.catalog.find(id);if(found==proof.catalog.end())continue;
+        const auto kind=string(*found->second,"kind");if(kind=="array"||kind=="readSpan")return true;
+      }
+      return false;
+    };
+    for(auto type:op->getOperandTypes())ownerCall|=owner(type);
+    for(auto type:op->getResultTypes())ownerCall|=owner(type);
+    if(!valid)return false;
+    if(ownerCall&&!proof.arrayCallEffectsComplete.count(op)) {
+      op->emitError("[core-ir-finite-module] whole admission requires complete Array/ReadSpan call authority");
+      return false;
+    }
+  }
+  return true;
+}
+}
+mlir::LogicalResult verifyModuleContracts(mlir::ModuleOp module) {
+  ModuleProof proof(module);
+  return mlir::success(contracts(proof));
+}
+mlir::LogicalResult verifyModule(mlir::ModuleOp module) {
+  ModuleProof proof(module);
+  if(discover(module)==Discovery::Limit) {
+    proof.reject("finite identity discovery work limit");return mlir::failure();
+  }
+  coreHeader::Identity header;
+  if(!coreHeader::read(module,header)) {
+    proof.reject("whole admission requires the exact formal Core header");return mlir::failure();
+  }
+  return mlir::success(contracts(proof)&&complete(proof));
 }
 } // namespace tsfg::finite

@@ -32,12 +32,10 @@ using bytecode::decodeHash;
 using bytecode::integer;
 using bytecode::string;
 using bytecode::appendHash;
-constexpr llvm::StringLiteral bytecodeSchema =
-    "fec456a47f509480d96f65e5c03d465c7c204d60f09630e71b19c714d4aaafa7";
-constexpr llvm::StringLiteral target = "windows-x86_64-msvc";
-constexpr llvm::StringLiteral triple = "x86_64-pc-windows-msvc";
-constexpr llvm::StringLiteral layout =
-    "e-m:w-p270:32:32-p271:32:32-p272:64:64-i64:64-i128:128-f80:128-n8:16:32:64-S128";
+using coreHeader::bytecodeSchema;
+using coreHeader::target;
+using coreHeader::triple;
+using coreHeader::layout;
 bool anchor(mlir::Operation *operation, uint32_t lower, uint32_t upper,
             uint32_t &start, uint32_t &end, bool emptyInitializer = false) {
   auto from = operation->getAttrOfType<mlir::IntegerAttr>("tsfg_source.start");
@@ -83,7 +81,8 @@ static mlir::LogicalResult compileCore(mlir::ModuleOp module, Bytes &packet, boo
     auto value = module->getAttrOfType<mlir::StringAttr>(key);
     return value ? value.getValue() : llvm::StringRef();
   };
-  if (text("tsfg_core.version") != (emptyReference ? "0.9.0" : "0.12.0")) return reject();
+  coreHeader::Identity header;
+  if (!coreHeader::read(module, header, emptyReference)) return reject();
   const bool moduleMode = bool(module->getAttr("tsfg_core.sources"));
   std::vector<llvm::StringRef> moduleAttributes = {"tsfg_core.version", "tsfg_core.input_identity",
       "tsfg_core.source_hash", "tsfg_core.source_path",
@@ -92,27 +91,19 @@ static mlir::LogicalResult compileCore(mlir::ModuleOp module, Bytes &packet, boo
   if (emptyReference) moduleAttributes.push_back("tsfg_core.reference");
   if (moduleMode) for (auto name : {"tsfg_core.sources", "tsfg_core.modules", "tsfg_core.globals", "tsfg_core.hosts", "tsfg_core.roots", "tsfg_core.initialization"}) moduleAttributes.push_back(name);
   if (!attributes(module, moduleAttributes)) return reject();
-  const auto expectedSchema = emptyReference ? "sha256:3dea6ce5de996dfa3e7141cced985243ea74ac9bb80f03636c6694343118f2a6" : ("sha256:" + bytecodeSchema).str();
-  if (text("tsfg_core.bytecode_schema") != expectedSchema ||
-      text("tsfg_core.target") != target || text("tsfg_core.triple") != triple ||
-      text("tsfg_core.data_layout") != layout) return reject();
-  llvm::StringRef path = text("tsfg_core.source_path");
+  llvm::StringRef path = header.sourcePath;
   auto validUTF8 = [](llvm::StringRef value) {
     const auto *cursor = reinterpret_cast<const llvm::UTF8 *>(value.data());
     return llvm::isLegalUTF8String(&cursor, cursor + value.size());
   };
-  if (!tsfg::validSourcePath(path, false)) return reject();
-  Hash input, source;
-  if (!decodeHash(text("tsfg_core.input_identity"), input) ||
-      !decodeHash(text("tsfg_core.source_hash"), source)) return reject();
+  const Hash input = header.input, source = header.source;
   auto number = [](mlir::Operation *operation, llvm::StringRef key, uint32_t &result) {
     auto value = operation->getAttrOfType<mlir::IntegerAttr>(key);
     if (!value || !value.getType().isSignlessInteger(64) ||
         value.getInt() < 0 || value.getInt() > UINT32_MAX) return false;
     result = static_cast<uint32_t>(value.getInt()); return true;
   };
-  uint32_t sourceLength;
-  if (!number(module, "tsfg_core.source_length", sourceLength)) return reject();
+  const uint32_t sourceLength = header.sourceLength;
   auto typeCodeOf = [&](mlir::Type type) { auto code = tsfg::typeCode(type); return emptyReference && code == 14 ? uint8_t(0) : code; };
   struct Function {
     mlir::func::FuncOp operation;

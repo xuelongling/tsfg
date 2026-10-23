@@ -76,6 +76,10 @@ struct ModuleProof {
   // publishes these. Missing/empty maps alone never establish call purity.
   std::map<mlir::Operation *,std::vector<mlir::Value>> arrayCallStructuralInputs;
   std::set<mlir::Operation *> arrayCallEffectsComplete,arrayCallLocalStructural;
+  // Actual SSA owner projections from the independently solved call/normal-
+  // return equations. Roots are same-frame formals or real array allocations;
+  // this is neither object identity nor a Published/length/initialized seed.
+  llvm::DenseMap<mlir::Value,std::vector<mlir::Value>> arrayOwnerProjections;
   // Independently proved existing-element writes; never a capacity/producer
   // hint, and never permission to omit the operation's dynamic store checks.
   std::set<mlir::Operation *> nonStructuralArrayEffects;
@@ -96,6 +100,9 @@ struct ModuleProof {
   bool mayReach(mlir::Block *block)const{return !controlReady||possibleBlocks.count(block);}
   bool mayTraverse(mlir::Operation *op,unsigned index)const{return !controlReady||possibleEdges.count({op,index});}
   size_t remaining = 100000;
+  // Complete actual owner/effect/normal-return proof for each definition,
+  // including exports without a callsite. Missing authority is not purity.
+  std::set<std::string> arrayCallDefinitionsComplete;
   explicit ModuleProof(mlir::ModuleOp value) : module(value) {}
   bool charge(size_t count = 1);
   bool reject(llvm::StringRef message);
@@ -126,4 +133,7 @@ bool carrier(ModuleProof &proof, llvm::StringRef domain, mlir::Type type);
 // hook. They do not encode bytecode or authorize VM/native execution (M25).
 bool usesModule(mlir::ModuleOp module);
 mlir::LogicalResult verifyModuleContracts(mlir::ModuleOp module);
+// Complete finite-module admission; development contract success alone does
+// not discharge outstanding memory, actual-domain or lifetime obligations.
+mlir::LogicalResult verifyModule(mlir::ModuleOp module);
 } // namespace tsfg::finite

@@ -12,6 +12,7 @@ struct Borrows {
   llvm::DenseMap<mlir::Value,Id> values;
   std::map<mlir::Operation *,Id> points;
   std::map<Id,mlir::Operation *> operations;
+  llvm::DenseMap<mlir::Value,PayloadEvidence> projectedOwners;
   std::set<std::string> viewOwners,effectOwners;
   mlir::Operation *unprovedLifetime=nullptr;
   bool valid=true;
@@ -38,8 +39,25 @@ struct Borrows {
   }
   const PayloadEvidence &owners(mlir::Value value) {
     static const PayloadEvidence unknown{{},true};
+    const auto projected=projectedOwners.find(value);if(projected!=projectedOwners.end())return projected->second;
     const auto found=proof.actualArrayOwners.find(value);
     return found==proof.actualArrayOwners.end()?unknown:found->second;
+  }
+  bool projectOwners() {
+    // The call engine has already substituted actual operands through every
+    // productive selected return. Instantiate only its real relative roots;
+    // neither a fixed return promise nor a new view object creates an owner.
+    for(const auto &[value,roots]:proof.arrayOwnerProjections) {
+      if(!proof.charge())return false;PayloadEvidence identity;identity.pending=roots.empty();
+      for(auto root:roots) {
+        if(!proof.charge())return false;const auto found=proof.actualArrayOwners.find(root);
+        if(found==proof.actualArrayOwners.end()){identity.pending=true;continue;}
+        identity.pending|=found->second.pending||found->second.alternatives.empty();
+        for(const auto &token:found->second.alternatives){if(!proof.charge())return false;identity.alternatives.insert(token);}
+      }
+      projectedOwners.try_emplace(value,std::move(identity));
+    }
+    return true;
   }
   bool value(mlir::Value input) {
     if(values.count(input)||!borrowed(input))return valid;
@@ -88,6 +106,12 @@ struct Borrows {
       auto source=strip(returned.getOperand(0));if(!valid)return false;auto fn=op->getParentOfType<mlir::func::FuncOp>();
       const auto isParameter=[&](mlir::Value value){const auto argument=llvm::dyn_cast<mlir::BlockArgument>(value);return argument&&argument.getOwner()==&fn.getBody().front();};
       if(isParameter(source))return true;
+      const auto projection=proof.arrayOwnerProjections.find(returned.getOperand(0));
+      if(projection!=proof.arrayOwnerProjections.end()&&!projection->second.empty()) {
+        bool parameters=true;
+        for(auto root:projection->second){if(!proof.charge())return false;parameters&=isParameter(root);}
+        if(parameters)return true;
+      }
       auto *created=source.getDefiningOp();
       if(created&&created->getName().getStringRef()=="tsfg_core.domain.read_span") {
         const auto owner=strip(created->getOperand(0));if(!valid)return false;
@@ -197,7 +221,7 @@ struct Borrows {
   bool run() {
     // Provided authority is unconditionally checked, including modules without
     // a tracked view. Missing authority cannot later be mistaken for purity.
-    if(!verifyArrayOverwriteEffects(proof)||!verifyArrayCallEffects(proof)||!collect())return false;if(values.empty())return true;
+    if(!verifyArrayOverwriteEffects(proof)||!verifyArrayCallEffects(proof)||!projectOwners()||!collect())return false;if(values.empty())return true;
     if(!actions()||!edges()||!aliases())return false;
     if(!flow.solve())return proof.reject(flow.error());
     const auto *result=flow.result();if(!result)return proof.reject(flow.error());

@@ -111,5 +111,42 @@ int main() {
     require(f.function(bound())==Flow::none&&!f.solve()&&f.error()==first);
     done(count,"sealed graph mutation invalidates proof and preserves first cause");
   }
+  {
+    size_t budget=100000;Flow f(budget);const auto view=f.function({{{0,1}},0,true,0}),p=parameter(f,view),span=f.value(view);
+    require(f.copy(p,span)&&f.returned(view,span)&&f.solve());std::set<Flow::Id> roots;bool pending=true;
+    require(f.projection(span,roots,pending)&&!pending&&roots==std::set<Flow::Id>{p});
+    done(count,"new returned Span projects its owner to the actual formal without claiming object identity");
+  }
+  {
+    size_t budget=100000;Flow f(budget);const auto caller=f.function(bound()),view=f.function({{{0,1}},0,true,0});
+    const auto p=parameter(f,view),span=f.value(view),a=f.value(caller),b=f.value(caller),x=f.value(caller),y=f.value(caller),phi=f.value(caller);
+    require(f.copy(p,span)&&f.returned(view,span)&&f.local(a)&&f.local(b));
+    require(f.call(caller,view,{a},x)&&f.call(caller,view,{b},y)&&f.copy(x,phi)&&f.copy(y,phi)&&f.solve());
+    std::set<Flow::Id> roots;bool pending=true;
+    require(f.projection(x,roots,pending)&&!pending&&roots==std::set<Flow::Id>{a});
+    require(f.projection(y,roots,pending)&&!pending&&roots==std::set<Flow::Id>{b});
+    const std::set<Flow::Id> both{a,b};require(f.projection(phi,roots,pending)&&!pending&&roots==both);
+    done(count,"two callsites retain distinct real allocations and a feasible phi preserves both owners");
+  }
+  {
+    size_t budget=100000;Flow f(budget);const auto identity=f.function({{{0,1}},0,true,0}),forward=f.function({{{1,1}},0,true,1});
+    const auto s=parameter(f,identity),q=parameter(f,forward,1),result=f.value(forward);
+    require(f.returned(identity,s)&&f.call(forward,identity,{q},result)&&f.returned(forward,result)&&f.solve());
+    std::set<Flow::Id> roots;bool pending=true;
+    require(f.projection(result,roots,pending)&&!pending&&roots==std::set<Flow::Id>{q});
+    done(count,"normal forwarding return instantiates the full actual caller slot");
+  }
+  {
+    size_t budget=100000;Flow f(budget);const auto fn=f.function({{{0,1}},0,true,0}),p=parameter(f,fn),result=f.value(fn);
+    require(f.call(fn,fn,{p},result)&&f.returned(fn,result)&&f.solve());std::set<Flow::Id> roots{p};bool pending=false;
+    require(f.projection(result,roots,pending)&&pending&&roots.empty());
+    done(count,"a fixed recursive promise publishes no owner projection without productive normal returns");
+  }
+  {
+    size_t budget=100000;Flow f(budget);const auto fn=f.function(bound()),p=parameter(f,fn);require(f.solve());
+    std::set<Flow::Id> roots{Flow::none};bool pending=true;budget=0;
+    require(!f.projection(p,roots,pending)&&roots==std::set<Flow::Id>{Flow::none}&&pending&&!f.proved(fn));
+    done(count,"projection budget exhaustion keeps output transactional and invalidates proof");
+  }
   std::cout<<"1.."<<count<<'\n';
 }

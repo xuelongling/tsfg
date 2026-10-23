@@ -20,6 +20,8 @@ struct ArrayCalls {
   std::set<std::string> arrays,views;
   std::map<mlir::Operation *,std::vector<mlir::Value>> structural;
   std::set<mlir::Operation *> complete,local;
+  std::set<std::string> provedDefinitions;
+  llvm::DenseMap<mlir::Value,std::vector<mlir::Value>> projections;
   std::map<mlir::Operation *,std::set<std::string>> calls;
   ArrayCallFlow flow{proof.remaining};
   std::map<std::string,ArrayCallFlow::Id> definitions;
@@ -193,17 +195,21 @@ struct ArrayCalls {
     }
     for(auto &[id,fn]:proof.functions)for(auto &block:fn.getBody())for(auto &operation:block) {
       if(!proof.charge())return false;auto *op=&operation;const auto name=op->getName().getStringRef();
+      // Global shape/authority checks precede this path-sensitive equation
+      // consumer. Dead edges cannot contribute a productive normal return.
+      if(!proof.mayReach(&block))continue;
       if(auto branch=llvm::dyn_cast<mlir::cf::BranchOp>(op)) {
+        if(!proof.mayTraverse(op,0))continue;
         for(size_t i=0;i<branch.getDestOperands().size();++i) {
           if(!proof.charge())return false;
           if(!alias(branch.getDestOperands()[i],branch.getDest()->getArgument(i),id))return fail(flow.error());
         }
       }else if(auto branch=llvm::dyn_cast<mlir::cf::CondBranchOp>(op)) {
-        for(size_t i=0;i<branch.getTrueDestOperands().size();++i) {
+        if(proof.mayTraverse(op,0))for(size_t i=0;i<branch.getTrueDestOperands().size();++i) {
           if(!proof.charge())return false;
           if(!alias(branch.getTrueDestOperands()[i],branch.getTrueDest()->getArgument(i),id))return fail(flow.error());
         }
-        for(size_t i=0;i<branch.getFalseDestOperands().size();++i) {
+        if(proof.mayTraverse(op,1))for(size_t i=0;i<branch.getFalseDestOperands().size();++i) {
           if(!proof.charge())return false;
           if(!alias(branch.getFalseDestOperands()[i],branch.getFalseDest()->getArgument(i),id))return fail(flow.error());
         }
@@ -242,9 +248,25 @@ struct ArrayCalls {
       }
     }
     if(!flow.solve())return fail(flow.error());
+    for(const auto &[id,definition]:definitions) {
+      if(!proof.charge())return false;if(flow.proved(definition))provedDefinitions.insert(id);
+    }
     for(const auto &[op,targets]:calls) {
       bool proved=true;for(const auto &target:targets) {if(!proof.charge())return false;proved&=flow.proved(definitions.at(target));}
       if(proved)complete.insert(op);
+    }
+    std::map<ArrayCallFlow::Id,mlir::Value> roots;
+    for(const auto &[input,id]:values){if(!proof.charge())return false;roots.emplace(id,input);}
+    for(const auto &[input,id]:values) {
+      if(!proof.charge())return false;std::set<ArrayCallFlow::Id> relative;bool pending=true;
+      if(!flow.projection(id,relative,pending))return fail(flow.error());if(pending)continue;
+      std::vector<mlir::Value> inputs;
+      for(const auto root:relative) {
+        if(!proof.charge())return false;const auto found=roots.find(root);
+        if(found==roots.end())return fail("actual owner projection has no SSA root");
+        inputs.push_back(found->second);
+      }
+      projections.try_emplace(input,std::move(inputs));
     }
     return true;
   }
@@ -252,7 +274,8 @@ struct ArrayCalls {
     // Optional absence carries no evidence, even for a currently empty body.
     // Borrow/whole admission must leave any dependent obligation pending.
     if(!proof.module->hasAttr("tsfg_core.array_call_authority")) {
-      proof.arrayCallStructuralInputs.clear();proof.arrayCallEffectsComplete.clear();proof.arrayCallLocalStructural.clear();return true;
+      proof.arrayCallStructuralInputs.clear();proof.arrayCallEffectsComplete.clear();proof.arrayCallLocalStructural.clear();
+      proof.arrayOwnerProjections.clear();proof.arrayCallDefinitionsComplete.clear();return true;
     }
     if(!proof.document("tsfg_core.array_call_authority",authority)||!classify()||!publication())return false;
     std::map<std::string,std::string> constructions;
@@ -288,7 +311,8 @@ struct ArrayCalls {
     // No output may escape an invalid later row/call or an exhausted shared
     // ModuleProof work meter. local structural remains unknown-owner evidence.
     proof.arrayCallStructuralInputs=std::move(structural);proof.arrayCallEffectsComplete=std::move(complete);
-    proof.arrayCallLocalStructural=std::move(local);return true;
+    proof.arrayCallLocalStructural=std::move(local);proof.arrayOwnerProjections=std::move(projections);
+    proof.arrayCallDefinitionsComplete=std::move(provedDefinitions);return true;
   }
 };
 }

@@ -20,7 +20,7 @@ ArrayCallFlow::Id ArrayCallFlow::function(Bound bound) {
   if(bound.local>7||(bound.returnOrigin&&(!bound.returnsView||!bound.parameters.count(*bound.returnOrigin)))) {
     reject("Array call flow published return/local grammar");return none;
   }
-  const auto id=functions.size();functions.push_back({std::move(bound),{},none,false});
+  const auto id=functions.size();functions.push_back({std::move(bound),{},none,false,{}});
   if(functions[id].bound.returnsView) {const auto summary=value(id);if(summary==none)return none;functions[id].summary=summary;}
   return id;
 }
@@ -32,11 +32,16 @@ ArrayCallFlow::Id ArrayCallFlow::value(Id function) {
 bool ArrayCallFlow::parameter(Id value,size_t slot) {
   if(!building())return false;
   if(value>=owners.size()||!functions[owners[value]].bound.parameters.count(slot))return reject("Array call flow formal slot");
-  return origins.seed(value,"#parameter/"+std::to_string(slot))||reject(origins.error());
+  const auto atom="#parameter/"+std::to_string(slot);auto &roots=functions[owners[value]].roots;
+  const auto [entry,added]=roots.emplace(atom,value);
+  if(!added&&entry->second!=value)return reject("Array call flow duplicate formal root");
+  return origins.seed(value,atom)||reject(origins.error());
 }
 bool ArrayCallFlow::local(Id value) {
   if(!building())return false;
-  return (value<owners.size()&&origins.seed(value,"#local"))||reject("Array call flow local origin: "+origins.error());
+  if(value>=owners.size())return reject("Array call flow local origin");
+  const auto atom="#local/"+std::to_string(value);functions[owners[value]].roots.emplace(atom,value);
+  return origins.seed(value,atom)||reject(origins.error());
 }
 bool ArrayCallFlow::unknown(Id value) {
   if(!building())return false;
@@ -88,7 +93,7 @@ bool ArrayCallFlow::coverage(const Effect &effect) {
   if(value->pending||value->alternatives.empty())function.pending=true;
   for(const auto &origin:value->alternatives) {
     if(!spend())return false;unsigned allowed=function.bound.local;
-    if(origin!="#local") {
+    if(origin.rfind("#local/",0)!=0) {
       bool found=false;
       for(const auto &[slot,flags]:function.bound.parameters) {
         if(!spend())return false;
@@ -123,4 +128,17 @@ bool ArrayCallFlow::solve() {
   solved=true;return true;
 }
 bool ArrayCallFlow::proved(Id function)const {return solved&&failure.empty()&&valid(function)&&!functions[function].pending;}
+bool ArrayCallFlow::projection(Id value,std::set<Id> &roots,bool &pending) {
+  if(!spend())return false;
+  if(!solved||value>=owners.size())return reject("Array call flow projection requires a solved owned value");
+  const auto fn=owners[value];const auto *evidence=origins.evidence(value);
+  if(!evidence)return reject(origins.error());
+  std::set<Id> result;const bool unresolved=!proved(fn)||evidence->pending||evidence->alternatives.empty();
+  if(!unresolved)for(const auto &atom:evidence->alternatives) {
+    if(!spend())return false;const auto found=functions[fn].roots.find(atom);
+    if(found==functions[fn].roots.end())return reject("Array call flow projection leaves actual relative roots");
+    result.insert(found->second);
+  }
+  roots=std::move(result);pending=unresolved;return true;
+}
 } // namespace tsfg::finite

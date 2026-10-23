@@ -10,11 +10,25 @@
 #include "kernel-access.h"
 #include "reference-metadata.h"
 #include "reference-verify.h"
+#include "finite-module.h"
 #include "mlir/IR/OwningOpRef.h"
 #include "llvm/Support/raw_ostream.h"
 
 namespace tsfg {
 mlir::LogicalResult verifyCoreModule(mlir::ModuleOp module) {
+  // Finite identity must be selected before any private candidate can return
+  // success. String operations/types are shared with finite Core; its old
+  // private module marker, unlike those operations, selects a different ABI.
+  if (finite::usesModule(module)) {
+    if (kernelGlobal::usesCandidate(module) || exception::usesCandidate(module) ||
+        closure::usesCandidate(module) || arrays::usesCandidate(module) ||
+        nullable::usesCandidate(module) || module->hasAttr("tsfg_core.string") ||
+        module->hasAttr("tsfg_core.reference")) {
+      module.emitError("[core-ir-finite-module] mixed finite/private candidate identities");
+      return mlir::failure();
+    }
+    return finite::verifyModule(module);
+  }
   if (kernelGlobal::usesCandidate(module)) return kernelGlobal::verifyCandidate(module);
   if (exception::usesCandidate(module)) {
     llvm::errs() << "[core-ir-exception-private-mode] private candidate requires its explicit verifier\n";

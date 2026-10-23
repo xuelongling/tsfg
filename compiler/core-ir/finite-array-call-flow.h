@@ -30,9 +30,12 @@ public:
   bool returned(Id function,Id value);
   bool solve();
   bool proved(Id function)const;
+  // Actual relative roots after the complete return/effect proof, not fixed
+  // returnOrigin promises. Local roots retain their allocation SSA identity.
+  bool projection(Id value,std::set<Id> &roots,bool &pending);
   const std::string &error()const {return failure;}
 private:
-  struct Function {Bound bound;std::set<Id> callers;Id summary=none;bool pending=false;};
+  struct Function {Bound bound;std::set<Id> callers;Id summary=none;bool pending=false;std::map<std::string,Id> roots;};
   struct Effect {Id function,value;unsigned flags;};
   size_t &remaining;
   PayloadFlow origins;
