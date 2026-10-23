@@ -414,3 +414,21 @@ memory-dependent presence to a fixed point without changing carrier maxima or
 fixed ABI identities. Phi/view results are not Boolean literal authority.
 The first ordered pass marks all Array reads pending; carrier/capacity read
 alternatives cannot authorize the first control-path refinement.
+
+Checked external Array cells have a separate normal-result source. The
+independent maximum-role IR equations close verified entry resources over
+selected calls, possible aliases and actual write RHS payloads. Only real
+exported parameter roots and their verified nested resources publish this
+host-retained cell boundary; an unused definition prototype does not. Thus a
+narrow parameter view cannot erase a wider possible alias write.
+
+Ordered ArrayFlow consumes these closed boundaries through the production
+CheckedEntryCells owner gates only when a real checked read has no stronger
+independent preceding SSA write. Uncovered/mixed/unknown owners remain pending.
+A retained allocation-site token is not a new invocation's child instance;
+unresolved child identities remain pending. A successful cell source does not
+prove any concrete index, length, initialized-cell event or Source version.
+The checked operation, unproved memory/bounds obligations and producer's
+pending/empty-version read record remain. Control prepasses do not consume
+these external boundary alternatives. This is a necessary normal-result proof,
+not completed whole-module admission, borrow, wire or executable IR authority.

@@ -183,7 +183,7 @@ public:
                   EqOp, NeOp, LtOp, LeOp, GtOp, GeOp, PosOp, CheckedConversionOp, WrapConversionOp, ReinterpretOp, GlobalLoadOp, GlobalStoreOp, AuthorizedHostOp,
                   ReferenceAllocOp, ReferenceBaseOp, ReferenceViewOp, ReferenceFieldReadOp,
                   ReferenceFieldWriteOp, ReferenceCallOp, ReferenceIdentityOp,
-                  DomainLiteralOp, DomainViewOp, DomainRefineOp, DomainReadSpanOp, DomainArrayCreateOp, DomainArrayReadOp,
+                  DomainLiteralOp, DomainViewOp, DomainCopyOp, DomainRefineOp, DomainReadSpanOp, DomainArrayCreateOp, DomainArrayReadOp,
                   DomainArrayStoreOp, DomainArrayResizeOp, DomainArrayLengthOp,
                   DomainIdentityEqualOp, DomainPresenceEqualOp, DomainConstructOp, DomainSuperOp,
                   DomainInitializeFieldsOp, DomainFieldDefineOp, DomainFieldInitializeOp,

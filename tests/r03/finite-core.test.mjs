@@ -12,6 +12,8 @@ import {canonical,sha256} from '../../compiler/identity.mjs';
 import entryManifest from './testdata/typed-array-entry/manifest.json' with {type:'json'};
 import independentExpected from './testdata/typed-array-entry/finite-core-expected.json' with {type:'json'};
 import reachingExpected from './testdata/typed-array-entry/field-reaching.json' with {type:'json'};
+import finiteContract from '../../contracts/finite-core-development.json' with {type:'json'};
+import {staticPublication,optionalArrayPublication} from './typed-array-publication-fixtures.mjs';
 const entryRoot=new URL('./testdata/typed-array-entry/',import.meta.url);
 async function entryBytes(id) {
   const packet=entryManifest.packets.find(row=>row.sourceSHA256===id);
@@ -19,15 +21,17 @@ async function entryBytes(id) {
   assert.equal(sha256(bytes).slice(7),packet.packageSHA256);return bytes;
 }
 
-async function load(dir,id) {
+async function load(dir,id,publish=false) {
   const bytes=await readFile(new URL('./testdata/'+dir+'/'+id+'-package.json',import.meta.url));
-  return loadBytes(bytes);
+  return loadBytes(bytes,publish);
 }
-function loadBytes(bytes) {
+/** @param {Buffer} bytes @param {boolean|'views'} [publish] */
+function loadBytes(bytes,publish=false) {
   const facts=readTypedArrayFacts(bytes),context={family:'tsfg.array-facts-context-candidate',version:2,
     factsBytes:bytes,expectedPackageId:facts.packageId};
-  const built=buildHir(facts,context);assert.equal(built.status,'ok',JSON.stringify(built.diagnostics));
-  return {hir:built.hir,context};
+  const publicationContext=publish==='views'?optionalArrayPublication(facts):publish?staticPublication(facts):undefined;
+  const built=buildHir(facts,context,publicationContext);assert.equal(built.status,'ok',JSON.stringify(built.diagnostics));
+  return {hir:built.hir,context,publicationContext};
 }
 const probe=()=>load('typed-array-actual-v8','c4cd2bcc06fe4844f95fce28a0ba398afb1a8139f5c7bb594cc7a8474a223cb4');
 const direct=()=>load('typed-array-reference-domain','7c258eb5388544dd79d724ba144befbaa06b77d100cef7dad9363c38b8cc4aea');
@@ -62,9 +66,9 @@ test('actual new entry protocol preserves every selected whole Source closure th
   const packets=entryManifest.packets;assert.equal(packets.length,122);
   for(const packet of packets)await t.test(packet.sourceSHA256,async()=>{
     const bytes=await entryBytes(packet.sourceSHA256);
-    const {hir,context}=loadBytes(bytes);
-    assert.equal(hir.format.contractVersion,'0.15.0');
-    assert.deepEqual(readHir(Buffer.from(printHir(hir,context)),context),hir);
+    const {hir,context,publicationContext}=loadBytes(bytes,'views');
+    assert.equal(hir.format.contractVersion,finiteContract.hir);
+    assert.deepEqual(readHir(Buffer.from(printHir(hir,context,publicationContext)),context,publicationContext),hir);
     assert.equal(hir.entryCompatibilityRoots.length,
       [...new Set(hir.exports.map(row=>row.functionId))].reduce((count,id)=>count+hir.functions.find(fn=>fn.id===id).parameters.length,0));
   });
@@ -140,7 +144,8 @@ test('actual invoked implicit constructors lower their owned forward and initial
 test('actual implicit inherited signatures forward scalar, reference, value and ReadSpan payloads without inventing instances',async t=>{
   for(const id of ['87131d58f03fdc39f35b821b1f08435d421c41271db6771c996a9a8a38047cd6',
     '2ccc5de4b45f62e9586cc187c89cf8c72edeb99fb0e5f657ed796c20478a7e1d'])await t.test(id,async()=>{
-    const {hir,context}=await load('typed-array-source514',id),plan=buildFiniteActualDomains(hir,context),core=lowerFormalHir(hir,context);
+    const {hir,context,publicationContext}=await load('typed-array-source514',id,id.startsWith('2ccc5de4')),
+      plan=buildFiniteActualDomains(hir,context,{publicationContext}),core=lowerFormalHir(hir,context,publicationContext);
     const implicit=hir.types.filter(type=>type.construction&&!type.constructor);
     for(const type of implicit) {
       const parameter=plan.nodes.find(row=>row.id===type.construction.id+'/binding/'+type.construction.receiver.id),
@@ -212,13 +217,13 @@ test('actual managed String retains UTF16 units and uses existing ordinary Strin
 });
 
 test('actual ReadSpan shares its array owner and only a dominating presence guard refines its payload',async()=>{
-  const {hir,context}=await load('typed-array-actual-v8','d70e95378e645d194db0875bfa9de4bbe1e774bde2ffa5a2872ce21d1ef89969');
-  const plan=buildFiniteActualDomains(hir,context),span=plan.expressions.find(row=>row.kind==='call'),
+  const {hir,context,publicationContext}=await load('typed-array-actual-v8','d70e95378e645d194db0875bfa9de4bbe1e774bde2ffa5a2872ce21d1ef89969',true);
+  const plan=buildFiniteActualDomains(hir,context,{publicationContext}),span=plan.expressions.find(row=>row.kind==='call'),
     spanNode=plan.nodes.find(row=>row.id===span.id),parameter=plan.nodes.find(row=>row.id===hir.functions[0].id+'/binding/'+hir.functions[0].parameters[0].id);
   assert.deepEqual(spanNode.arrayOwners,parameter.arrayOwners);assert.equal(spanNode.arrayOwners.length,1);
   const result=plan.nodes.find(row=>row.id===hir.functions[0].id+'/return');
   assert.equal(domain(plan,result).actualTypes.length,1);assert.equal(hir.types.find(type=>type.id===domain(plan,result).actualTypes[0]).kind,'string');
-  const core=lowerFormalHir(hir,context);assert.match(core,/"tsfg_core.domain.read_span"/);
+  const core=lowerFormalHir(hir,context,publicationContext);assert.match(core,/"tsfg_core.domain.read_span"/);
   assert.match(core,/"tsfg_core.domain.presence_equal"/);assert.match(core,/"tsfg_core.domain.refine"/);
 });
 
@@ -337,7 +342,7 @@ test('memory constraint unit invalidates strong versions across possibly aliasin
       functions=[fn,callee];
     }
     fn.body.splice(2,0,extra);
-    const reaching=buildFiniteFieldReaching({...hir,functions},{fields,calls:[]},()=>{});
+    const reaching=buildFiniteFieldReaching({...hir,functions},{fields,calls:[],nodes:[],domains:[]},()=>{});
     assert.deepEqual(reaching.reads.find(row=>row.node===laterRead).reaching,[],boundary+' cannot silently supply noalias/noeffect');
   }
 });
@@ -377,7 +382,7 @@ test('memory constraint unit never treats an inline value copy as a reference al
       value:{kind:'constant',type:field.type,range}}},
     {kind:'return',value:{kind:'fieldAccess',receiver:reference(parameter),property:field.id,type:field.type,range}}];
   const reaching=buildFiniteFieldReaching({...hir,functions:[{...fn,parameters:[{...fn.parameters[0],type:pair.id}],body}]},
-    {calls:[],fields:[{id:fn.id+'/body/1/expression',targets:[target]},
+    {calls:[],nodes:[],domains:[],fields:[{id:fn.id+'/body/1/expression',targets:[target]},
       {id:fn.id+'/body/2/value',targets:[target]}]},()=>{});
   assert.deepEqual(reaching.reads[0].reaching,[],'copy mutation supplies no reaching version for original value');
   assert.equal(reaching.writes.length,1,'successful write still has its own explicit version');
@@ -391,7 +396,7 @@ test('memory constraint unit joins both successful branch versions and retains a
     const fn=structuredClone(original),assignment=fn.body[1];
     fn.body[1]={kind:'if',condition:{kind:'boolean',type:fn.returnType.id},then:[assignment],else:both?[structuredClone(assignment)]:[]};
     const fields=[read,...['then','else'].map(branch=>({...store,id:fn.id+'/body/1/'+branch+'/0/expression'}))];
-    const reaching=buildFiniteFieldReaching({...hir,functions:[fn]},{fields,calls:[]},()=>{});
+    const reaching=buildFiniteFieldReaching({...hir,functions:[fn]},{fields,calls:[],nodes:[],domains:[]},()=>{});
     const observed=reaching.reads.find(row=>row.node===read.id).reaching;
     if(both) {
       assert.equal(observed.length,read.targets.length);
@@ -414,12 +419,12 @@ test('memory constraint unit carries a successful caller version into a read-onl
     caller={...original,body:[...original.body.slice(0,2),{kind:'return',value:call,range:original.range}]},
     helperRead={...read,id:helper.id+'/body/0/value'},
     result=buildFiniteFieldReaching({...hir,functions:[caller,helper]},
-      {fields:[store,helperRead],calls:[]},()=>{}),reaching=result.reads.find(row=>row.node===helperRead.id);
+      {fields:[store,helperRead],calls:[],nodes:[],domains:[]},()=>{}),reaching=result.reads.find(row=>row.node===helperRead.id);
   assert.equal(reaching.reaching.length,read.targets.length);
   for(const target of reaching.reaching)assert.deepEqual(target.sources,[store.id+'/value']);
   const unknown={...original,id:original.id+'/constraint-unknown',body:[{kind:'return',value:call,range:original.range}]},
     mixed=buildFiniteFieldReaching({...hir,functions:[caller,helper,unknown]},
-      {fields:[store,helperRead],calls:[]},()=>{});
+      {fields:[store,helperRead],calls:[],nodes:[],domains:[]},()=>{});
   assert.equal(mixed.reads.find(row=>row.node===helperRead.id).reaching.length,0,
     'one unqualified caller prevents borrowing another caller\'s strong field version');
 });
@@ -435,7 +440,7 @@ test('memory constraint unit consumes successful callee writes only on the call 
     helperStore={...store,id:store.id.replace(original.id,helper.id)},
     helperRead={...read,id:read.id.replace(original.id,helper.id)},callerRead={...read,id:original.id+'/body/1/value'},
     result=buildFiniteFieldReaching({...hir,functions:[caller,helper]},
-      {fields:[helperStore,helperRead,callerRead],calls:[]},()=>{}),reaching=result.reads.find(row=>row.node===callerRead.id);
+      {fields:[helperStore,helperRead,callerRead],calls:[],nodes:[],domains:[]},()=>{}),reaching=result.reads.find(row=>row.node===callerRead.id);
   assert.equal(reaching.reaching.length,read.targets.length);
   for(const target of reaching.reaching)assert.deepEqual(target.sources,[helperStore.id+'/value']);
 });

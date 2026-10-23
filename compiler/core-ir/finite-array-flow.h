@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: MIT
 #pragma once
 #include "finite-module.h"
+#include "finite-entry-cells.h"
 #include <functional>
 
 namespace tsfg::finite {
@@ -31,6 +32,8 @@ private:
   std::map<std::string,size_t> resources;
   std::map<mlir::Operation *,size_t> allocations;
   std::vector<mlir::Operation *> reads;
+  CheckedEntryCells entryCells;
+  std::map<mlir::Operation *,Id> boundaryReads;
   bool valid=true;
   Id node(bool identity=false);
   bool container(mlir::Type type);
@@ -40,6 +43,7 @@ private:
   bool uncertain(mlir::Value value);
   bool collect();
   bool entrySeeds();
+  bool publishCells();
   bool call(mlir::Operation *op,const std::string &target,size_t offset,Id gate=PayloadFlow::none,const std::string &selected={},bool forward=true);
   bool operation(mlir::Operation *op,const std::string &function);
 };

@@ -112,6 +112,15 @@ bool verifyValueContracts(ModuleProof &proof) {
       for (auto value : op->getResults()) if (!proof.charge() || !domain(proof,value.getType())) return proof.reject("SSA result has an unknown carrier");
       if (!result(proof,op)) return false;
       if (name.starts_with("tsfg_core.domain.") && mlir::failed(verifyFiniteDomainOperation(op))) return false;
+      if (name == "tsfg_core.domain.copy") {
+        const auto *from=domain(proof,op->getOperand(0).getType());bool hasValue=false;
+        if(!from)return proof.reject("copy has no actual input domain");
+        for(const auto &actual:from->alternatives) {
+          if(!proof.charge())return false;
+          hasValue|=proof.catalog.count(actual)&&string(*proof.catalog.at(actual),"kind")=="value";
+        }
+        if(!hasValue)return proof.reject("copy has no inline value alternative");
+      }
       if (name == "tsfg_core.domain.view" || name == "tsfg_core.domain.refine") {
         const auto *from = domain(proof,op->getOperand(0).getType()), *to = domain(proof,op->getResult(0).getType());
         if (!from || !to) return proof.reject("view has no concrete source/result domain");

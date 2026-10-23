@@ -46,6 +46,7 @@ public: \
 };
 TSFG_DOMAIN_OPERATION(DomainLiteralOp, "literal", mlir::OpTrait::ZeroOperands, mlir::OpTrait::OneResult)
 TSFG_DOMAIN_OPERATION(DomainViewOp, "view", mlir::OpTrait::OneOperand, mlir::OpTrait::OneResult)
+TSFG_DOMAIN_OPERATION(DomainCopyOp, "copy", mlir::OpTrait::OneOperand, mlir::OpTrait::OneResult)
 TSFG_DOMAIN_OPERATION(DomainRefineOp, "refine", mlir::OpTrait::OneOperand, mlir::OpTrait::OneResult)
 TSFG_DOMAIN_OPERATION(DomainReadSpanOp, "read_span", mlir::OpTrait::NOperands<3>::Impl, mlir::OpTrait::OneResult)
 TSFG_DOMAIN_OPERATION(DomainArrayCreateOp, "array_create", mlir::OpTrait::VariadicOperands, mlir::OpTrait::OneResult)

@@ -51,7 +51,7 @@ namespace {
 // another operation's operands, successor edges or constructor phase marker.
 bool preflight(ModuleProof &proof) {
   static const std::map<std::string,std::array<unsigned,4>> shapes = {
-    {"literal",{0,0,1,1}},{"view",{1,1,1,1}},{"refine",{1,1,1,1}},
+    {"literal",{0,0,1,1}},{"view",{1,1,1,1}},{"copy",{1,1,1,1}},{"refine",{1,1,1,1}},
     {"read_span",{3,3,1,1}},{"array_create",{0,UINT32_MAX,1,1}},
     {"array_read",{2,2,1,1}},{"array_store",{3,3,0,0}},{"array_resize",{2,2,0,0}},
     {"array_length",{1,1,1,1}},{"identity_equal",{2,2,1,1}},{"presence_equal",{2,2,1,1}},

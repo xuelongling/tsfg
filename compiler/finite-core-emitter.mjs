@@ -95,6 +95,11 @@ export function emitFiniteCore(input,context,publicationContext=undefined) {
     const opAttrs=value=>`view_type = ${quote(value.semanticType)}, domain = ${quote(value.type)}`;
     const op=(api,name,values,result,attrs,range)=>api.operation('tsfg_core.domain.'+name,values.map(value=>value.name),
       values.map(value=>value.type),result,attrs,range);
+    const copy=(api,value,semanticType,range)=>{
+      let inline=false;for(const actual of domains.get(value.type).actualTypes){budget.step();inline ||= types.get(actual).kind==='value';}
+      return inline?{name:op(api,'copy',[value],value.type,
+        `view_type = ${quote(semanticType)}, domain = ${quote(value.type)}`,range),type:value.type}:value;
+    };
     function fieldDispatch(value) {
       const selection=plan.carrierFields.find(row=>row.id===value.domainNode);
       if(!selection?.targets.length)pending('missing actual field targets',value.range);
@@ -125,12 +130,18 @@ export function emitFiniteCore(input,context,publicationContext=undefined) {
           if(!source)pending('missing construction parameter binding',output.origin);
           value={name:api.lookup(source.id),type:source.type};
         }
+        value=copy(api,value,owner.fields.find(field=>field.id===output.field).type,output.origin);
         op(api,'field_initialize',[receiver,value],null,attrs+`, input_domain = ${quote(value.type)}`,output.origin);
       }
     }
     const emission=emitCoreSsaFunction(fn,{verified:hir,coreType,functionSymbol:symbol,budget,
       ...(voidResult?{resultType:'()',emitFallthrough:api=>api.returnValue(null,null,fn.range)}:{}),
       emitStatementLeaf(statement,api) {
+        if(statement.kind==='local') {
+          const value=copy(api,{name:api.emit(statement.initializer),type:statement.binding.type},
+            statement.initializer.semanticType,statement.range);
+          api.declare(statement.binding.id,statement.binding.type);api.assign(statement.binding.id,value.name);return true;
+        }
         if(statement.kind==='forwardBaseConstruction') {
           const target=hir.types.find(type=>type.construction?.id===statement.construction),
             callee=target.constructor??target.construction.id,targetAbi=plan.abi.find(row=>row.functionId===callee),
@@ -140,7 +151,7 @@ export function emitFiniteCore(input,context,publicationContext=undefined) {
             let name=api.lookup(argument.binding);
             if(parameter.type!==type)name=op(api,'view',[{name,type:parameter.type}],type,
               `view_type = ${quote(argument.type)}, domain = ${quote(type)}`,statement.origin);
-            args.push({name,type});
+            args.push(copy(api,{name,type},argument.type,statement.origin));
           }
           op(api,'super',[receiver,...args],null,`view_type = ${quote(target.id)}, construction = ${quote(statement.construction)}, implicit_forward = ${quote(canonical(types.get(original.ownerType).construction.implicitForward))}`,statement.origin);
           return true;
@@ -156,7 +167,9 @@ export function emitFiniteCore(input,context,publicationContext=undefined) {
             }
             api.returnValue(null,null,statement.range);return true;
           }
-          api.returnValue(statement.value?api.emit(statement.value):null,fn.returnType.id,statement.range);return true;
+          const value=statement.value?copy(api,{name:api.emit(statement.value),type:statement.value.type},
+            statement.value.semanticType,statement.range):null;
+          api.returnValue(value?.name??null,fn.returnType.id,statement.range);return true;
         }
         return false;
       },
@@ -189,7 +202,7 @@ export function emitFiniteCore(input,context,publicationContext=undefined) {
             `tsfg_source.operator_start = ${value.operatorRange.start} : i64, tsfg_source.operator_end = ${value.operatorRange.end} : i64`,value.range);
         }
         if(['undefined','null'].includes(value.kind))return op(api,'literal',[],value.type,opAttrs(value),value.range);
-        if(value.kind==='arrayCreate')return op(api,'array_create',value.elements.map(evaluated),value.type,
+        if(value.kind==='arrayCreate')return op(api,'array_create',value.elements.map(element=>copy(api,evaluated(element),element.semanticType,element.range)),value.type,
             opAttrs(value)+', owner = '+quote(value.domainNode)+', element_domain = '+quote(selected(value.domainNode+'/elements').domainId)
               +', array_versions = '+quote(canonical(value.elements.map((_,index)=>arrayWrites.get(value.domainNode+'/initial/'+index+'/array-version')))),value.range);
           if(value.kind==='arrayReadChecked')return op(api,'array_read',[evaluated(value.receiver),evaluated(value.index)],value.type,opAttrs(value)+', array_node = '+quote(value.domainNode),value.range);
@@ -199,7 +212,7 @@ export function emitFiniteCore(input,context,publicationContext=undefined) {
           op(api,'array_resize',[receiver,rhs],null,`view_type = ${quote(value.target.receiver.semanticType)}`,value.range);return rhs.name;
         }
         if(value.kind==='arrayStoreDenseChecked') {
-          const receiver=evaluated(value.target.receiver),index=evaluated(value.target.index),rhs=evaluated(value.value);
+          const receiver=evaluated(value.target.receiver),index=evaluated(value.target.index),rhs=copy(api,evaluated(value.value),value.value.semanticType,value.value.range);
             op(api,'array_store',[receiver,index,rhs],null,`view_type = ${quote(value.target.receiver.semanticType)}, array_node = ${quote(value.domainNode)}, array_versions = ${quote(canonical([arrayWrites.get(value.domainNode+'/array-version')]))}`,value.range);
           return rhs.name;
         }
@@ -218,7 +231,8 @@ export function emitFiniteCore(input,context,publicationContext=undefined) {
         }
         if(value.kind==='assignment') {
           const target=selected(fn.id+'/binding/'+value.target.binding).domainId;
-          const rhs=api.emit(wrap(value.value,target));api.assign(value.target.binding,rhs);return rhs;
+          const rhs=copy(api,{name:api.emit(wrap(value.value,target)),type:target},value.target.type,value.range);
+          api.assign(value.target.binding,rhs.name);return rhs.name;
         }
         if(['binary','shortCircuit'].includes(value.kind)&&value.operator==='??') {
           let left=evaluated(value.left),alternatives=domains.get(left.type).actualTypes,
@@ -274,21 +288,21 @@ export function emitFiniteCore(input,context,publicationContext=undefined) {
           if(value.receiver) {
             const dispatch=plan.carrierCalls.find(row=>row.id===value.domainNode);
             if(!dispatch?.targets.length)pending('missing actual method targets',value.range);
-            const values=[evaluated(value.receiver),...value.arguments.map(evaluated)];
+            const values=[evaluated(value.receiver),...value.arguments.map(argument=>copy(api,evaluated(argument),argument.semanticType,argument.range))];
             const zero=dispatch.targets.every(row=>plan.abi.find(abi=>abi.functionId===row.functionId).result===null);
             return op(api,'method_call',values,zero?null:value.type,opAttrs(value)
               +`, member = ${quote(dispatch.member)}, receiver_view = ${quote(dispatch.viewType)}, dispatch = ${quote(canonical(dispatch.targets))}`,value.range);
           }
           const target=hir.functions.find(fn=>fn.id===value.target),targetAbi=plan.abi.find(row=>row.functionId===value.target);
-          const args=value.arguments.map((argument,index)=>evaluated(wrap(argument,targetAbi.parameters[index])));
+          const args=value.arguments.map((argument,index)=>copy(api,evaluated(wrap(argument,targetAbi.parameters[index])),argument.semanticType,argument.range));
           return api.operation('func.call',args.map(row=>row.name),args.map(row=>row.type),targetAbi.result===null?null:value.type,
             `callee = @${quote(symbol(target))}, tsfg_core.function_id = ${quote(target.id)}, tsfg_core.signature_hash = ${quote(target.signatureHash)}, tsfg_core.finite_abi = ${quote(targetAbi.id)}`,value.range);
         }
-        if(value.kind==='construct')return op(api,'construct',value.arguments.map(evaluated),value.type,
+        if(value.kind==='construct')return op(api,'construct',value.arguments.map(argument=>copy(api,evaluated(argument),argument.semanticType,argument.range)),value.type,
           opAttrs(value)+', construction = '+quote(value.construction),value.range);
         if(value.kind==='superConstruct') {
           const receiver={name:api.lookup(value.receiverBinding),type:fn.parameters[0].type};
-          op(api,'super',[receiver,...value.arguments.map(evaluated)],null,
+          op(api,'super',[receiver,...value.arguments.map(argument=>copy(api,evaluated(argument),argument.semanticType,argument.range))],null,
             `view_type = ${quote(value.semanticType)}, construction = ${quote(value.construction)}`,value.range);
           const after=value.afterSuccess;
           initializeFields(after,api);
@@ -297,7 +311,7 @@ export function emitFiniteCore(input,context,publicationContext=undefined) {
         if(value.kind==='fieldAccess')return op(api,'field_read',[evaluated(value.receiver)],value.type,
           opAttrs(value)+', '+fieldDispatch(value),value.range);
         if(value.kind==='fieldAssignment') {
-          const receiver=evaluated(value.target.receiver),rhs=evaluated(value.value);
+          const receiver=evaluated(value.target.receiver),rhs=copy(api,evaluated(value.value),value.value.semanticType,value.value.range);
           op(api,'field_store',[receiver,rhs],null,`view_type = ${quote(value.target.receiver.semanticType)}, `+fieldDispatch(value),value.range);return rhs.name;
         }
         if(value.kind==='shortCircuit')return undefined; // shared SSA control.

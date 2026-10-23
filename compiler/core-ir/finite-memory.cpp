@@ -15,6 +15,7 @@ struct Memory {
   bool valid=true;
   std::map<std::pair<std::string,std::string>,std::vector<Version>> versions;
   std::map<mlir::Operation *,std::vector<Version>> writes;
+  MemoryOrigins origins;
   bool document(mlir::Operation *op, llvm::StringRef name, Json &out) {
     const auto text=attr(op,name);
     return proof.charge(text.size()/64+1) && arrays::ownerproof::parseCanonical(text+"\n",out) ||
@@ -24,7 +25,7 @@ struct Memory {
     const auto strip=[&](mlir::Value value) {
       while (auto *op=value.getDefiningOp()) {
         const auto name=op->getName().getStringRef();
-        if (name!="tsfg_core.domain.view" && name!="tsfg_core.domain.refine") break;
+        if (name!="tsfg_core.domain.view" && name!="tsfg_core.domain.refine" && name!="tsfg_core.domain.copy") break;
         if (!proof.charge()) { valid=false;return mlir::Value(); }
         value=op->getOperand(0); // All shapes were globally checked before traversal.
       }
@@ -122,6 +123,7 @@ struct Memory {
       expectedTargets.insert({string(*value.getAsObject(),"actualType"),string(*value.getAsObject(),"fieldId")});}
     bool complete=true;std::string previousActual;
     std::vector<mlir::Value> inputValues;bool inputUndefined=false;
+    std::vector<MemoryOrigin> inputOrigins;
     for (const auto &value:*rows) {
       if (!proof.charge()) return false;const auto *row=value.getAsObject();
       const auto *ids=row?row->getArray("versions"):nullptr,*sources=row?row->getArray("sources"):nullptr;
@@ -130,9 +132,8 @@ struct Memory {
       if(!expectedTargets.count({actual,field})||!seenTargets.insert({actual,field}).second||(!previousActual.empty()&&actual<=previousActual))
         return proof.reject("memory predecessor does not match the selected actual field");
       previousActual=actual;
-      // Inline value copies need their own memory SSA ownership proof; sharing
-      // one SSA spelling is not authority to mutate a copied value's fields.
-      const bool referenceCell=proof.catalog.count(actual) && string(*proof.catalog.at(actual),"kind")=="reference";
+      const auto kind=proof.catalog.count(actual)?string(*proof.catalog.at(actual),"kind"):std::string();
+      const bool fieldCell=kind=="reference"||kind=="value";
       bool undefined=false;std::string previous;
       for (const auto &id:*ids) {
         const auto version=id.getAsString();if(!proof.charge() || !version || (!previous.empty() && *version<=previous))return proof.reject("memory predecessor identity order");
@@ -161,11 +162,19 @@ struct Memory {
       // Dead paths still validate every supplied identity and source document.
       // Only the path-dependent first-write proof is conditional.
       if(!reachable)continue;
-      if(!referenceCell){complete=false;continue;}
-      const auto selected=proveMemoryFirstWrites(proof,op,actual,field,writes);
+      if(!fieldCell){complete=false;continue;}
+      const auto selected=proveMemoryFirstWrites(proof,op,actual,field,writes,origins);
       if(selected.status==MemorySelection::Status::Invalid)return false;
       if(compareClaims&&selected.status==MemorySelection::Status::Proven&&selected.versions!=claimed)
         return proof.reject("claimed field version is stale or not first on every successful CFG/callee path");
+      if(selected.status==MemorySelection::Status::Proven)for(const auto &id:selected.versions) {
+        if(!proof.charge())return false;
+        const auto found=versions.find({id,actual});if(found==versions.end())return proof.reject("field identity has no independent write");
+        for(const auto &write:found->second) {
+          if(!proof.charge())return false;
+          if(write.value)inputOrigins.push_back({write.value,id});
+        }
+      }
       // Control refinement consumes independent first-write results, never the
       // producer's candidate versions. Claims are compared after convergence.
       if(!compareClaims&&selected.status==MemorySelection::Status::Proven)for(const auto &id:selected.versions) {
@@ -181,7 +190,9 @@ struct Memory {
     if(!reachable)return valid;
     if (!complete || seenTargets!=expectedTargets) proof.unprovedMemoryReads.insert(op);
     else {
+      proof.unprovedMemoryReads.erase(op);
       proof.fieldReadInputs.emplace(op,std::move(inputValues));
+      origins.emplace(op,std::move(inputOrigins));
       if(inputUndefined)proof.fieldReadUndefined.insert(op);
     }
     return valid;
@@ -208,8 +219,12 @@ struct Memory {
     }
     for (auto &[id,function]:proof.functions) for (auto &block:function.getBody()) for(auto &op:block)
       if(!proof.charge() || !bind(&op,function))return false;
-    for (auto &[id,function]:proof.functions) for (auto &block:function.getBody()) for(auto &op:block)
-      if(op.getName().getStringRef()=="tsfg_core.domain.field_read" && (!proof.charge() || !read(&op)))return false;
+    size_t previous;
+    do {
+      previous=proof.fieldReadInputs.size();
+      for (auto &[id,function]:proof.functions) for (auto &block:function.getBody()) for(auto &op:block)
+        if(op.getName().getStringRef()=="tsfg_core.domain.field_read" && (!proof.charge() || !read(&op)))return false;
+    }while(previous!=proof.fieldReadInputs.size());
     return true;
   }
 };

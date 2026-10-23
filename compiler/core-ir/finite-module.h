@@ -31,6 +31,10 @@ struct EntryArrayResource {
   // Unknown absence bridges leave this false and actual element flow pending.
   bool aliasesComplete=false;
 };
+// A closed host-retained cell boundary, not a Source write, allocation or
+// observed initialized element. Only the independently solved published
+// resource/alias/write equations may populate it.
+struct PublishedArrayCell { PayloadEvidence payload,nestedOwners; };
 // All pointers refer to the owned, canonical documents below. No pointer or
 // partial registry escapes verification; a failed load discards this object.
 struct ModuleProof {
@@ -64,6 +68,8 @@ struct ModuleProof {
   llvm::DenseMap<mlir::Value,std::set<std::string>> definitionParameters;
   std::map<std::string,EntryArrayResource> entryArrays;
   llvm::DenseMap<mlir::Value,std::set<std::string>> entryArrayOwners;
+  std::map<std::string,PublishedArrayCell> publishedArrayCells;
+  std::map<mlir::Operation *,std::set<std::string>> checkedEntryCellSources;
   std::map<mlir::Operation *,std::vector<mlir::Value>> fieldReadInputs;
   // Successful Array read sources come from independent ordered IR versions,
   // not the owner-wide capacity union. Bounds eligibility remains separate.

@@ -14,9 +14,12 @@ struct MemorySelection {
   enum class Status { Proven, Pending, Invalid } status=Status::Pending;
   std::set<std::string> versions;
 };
+struct MemoryOrigin { mlir::Value value; std::string version; };
+using MemoryOrigins=std::map<mlir::Operation *,std::vector<MemoryOrigin>>;
 // Derive first successful versions from real IR and actual selected callees.
 // Caller metadata cannot seed these equations or assert receiver noalias.
 MemorySelection proveMemoryFirstWrites(ModuleProof &proof,mlir::Operation *read,
   const std::string &actual,const std::string &field,
-  const std::map<mlir::Operation *,std::vector<MemoryVersion>> &writes);
+  const std::map<mlir::Operation *,std::vector<MemoryVersion>> &writes,
+  const MemoryOrigins &origins);
 } // namespace tsfg::finite

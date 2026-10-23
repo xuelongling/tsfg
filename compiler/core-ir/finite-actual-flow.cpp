@@ -114,7 +114,7 @@ struct ActualFlow {
       }
       return true;
     }
-    if(name=="tsfg_core.domain.view"||name=="tsfg_core.domain.refine") {
+    if(name=="tsfg_core.domain.view"||name=="tsfg_core.domain.refine"||name=="tsfg_core.domain.copy") {
       std::string filter;bool equal=true;
       if(name=="tsfg_core.domain.refine") {
         Json predicate=nullptr;if(!arrays::ownerproof::parseCanonical(attr(op,"presence_proof")+"\n",predicate)||!predicate.getAsObject())return false;

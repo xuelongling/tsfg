@@ -12,7 +12,7 @@ std::string attr(mlir::Operation *op,llvm::StringRef key) {
 }
 }
 ArrayFlow::ArrayFlow(ModuleProof &p,PayloadFlow &f,std::function<Id(mlir::Value)> resolve,Role r)
-    :proof(p),flow(f),payload(std::move(resolve)),role(r){}
+    :proof(p),flow(f),payload(std::move(resolve)),role(r),entryCells(f,p.remaining){}
 ArrayFlow::Id ArrayFlow::node(bool identity) {
   const auto id=identity?flow.node(PayloadFlow::AtomDomain::IdentityOrigin):flow.node();
   valid&=id!=PayloadFlow::none;return id;
@@ -132,7 +132,53 @@ bool ArrayFlow::entrySeeds() {
       if(!flow.seed(target,owners[resources.at(id)].token))return false;
     }
   }
+  if(role==Role::OrderedPayload) {
+    for(const auto &owner:owners)if(!entryCells.owner(owner.token))return proof.reject(entryCells.error());
+    for(const auto &[id,boundary]:proof.publishedArrayCells) {
+      if(!proof.charge()||!resources.count(id))return proof.reject("published cell has no verified resource");
+      const auto &owner=owners[resources.at(id)];
+      if(!owner.entry->aliasesComplete)return proof.reject("published cell alias closure is incomplete");
+      if(!entryCells.boundary(id,owner.token,boundary.payload,boundary.nestedOwners))return proof.reject(entryCells.error());
+    }
+  }
   return true;
+}
+bool ArrayFlow::publishCells() {
+  std::set<std::string> exported,seen;std::vector<std::string> work;
+  for(const auto &row:*proof.sourceExports.getAsArray()) {
+    if(!proof.charge())return false;exported.insert(string(*row.getAsObject(),"functionId"));
+  }
+  for(const auto &[argument,ids]:proof.entryArrayOwners) {
+    if(!proof.charge())return false;
+    auto parameter=argument;const auto fn=parameter.getParentBlock()->getParentOp();
+    if(!exported.count(attr(fn,"tsfg_core.function_id")))continue;
+    for(const auto &id:ids){if(!proof.charge())return false;if(seen.insert(id).second)work.push_back(id);}
+  }
+  std::map<std::string,PublishedArrayCell> result;
+  for(size_t cursor=0;cursor<work.size();++cursor) {
+    if(!proof.charge()||!resources.count(work[cursor]))return proof.reject("published cell root leaves entry resources");
+    const auto &id=work[cursor];const auto &owner=owners[resources.at(id)];
+    // The maximum graph already closed all real writes, calls and verified
+    // possible aliases. Only a real exported parameter roots host-retained
+    // cells; an unused internal parameter prototype is not an invocation.
+    if(!owner.entry->aliasesComplete)continue;
+    const auto *values=flow.evidence(owner.elements),*nested=flow.evidence(owner.nested);
+    if(!values||!nested)return proof.reject(flow.error());
+    PublishedArrayCell cell;cell.payload.pending=values->pending;cell.nestedOwners.pending=nested->pending;
+    for(const auto &type:values->alternatives){if(!proof.charge())return false;cell.payload.alternatives.insert(type);}
+    for(const auto &token:nested->alternatives) {
+      if(!proof.charge())return false;const auto child=token.rfind("#entry/",0)==0?token.substr(7):std::string();
+      if(child.empty()||!resources.count(child)||!owners[resources.at(child)].entry->aliasesComplete) {
+        // A retained allocation-site token is not this invocation's instance.
+        // Keep its payload type but do not fabricate child memory identity.
+        cell.nestedOwners.pending=true;continue;
+      }
+      cell.nestedOwners.alternatives.insert(token);
+      if(seen.insert(child).second)work.push_back(child);
+    }
+    result.emplace(id,std::move(cell));
+  }
+  proof.publishedArrayCells=std::move(result);return true;
 }
 bool ArrayFlow::call(mlir::Operation *op,const std::string &target,size_t offset,Id gate,const std::string &selected,bool forward) {
   if(!proof.functions.count(target))return false;auto fn=proof.functions.at(target);
@@ -174,7 +220,7 @@ bool ArrayFlow::operation(mlir::Operation *op,const std::string &function) {
     const auto found=constructions.find(attr(op,"construction"));
     return found!=constructions.end()&&call(op,found->second,name=="tsfg_core.domain.construct"?1:0,PayloadFlow::none,{},false);
   }
-  if(name=="tsfg_core.domain.view"||name=="tsfg_core.domain.refine"||name=="tsfg_core.domain.read_span")
+  if(name=="tsfg_core.domain.view"||name=="tsfg_core.domain.refine"||name=="tsfg_core.domain.copy"||name=="tsfg_core.domain.read_span")
     return copy(op->getOperand(0),op->getResult(0));
   if(name=="tsfg_core.domain.field_read") {
     if(proof.unprovedMemoryReads.count(op)||!proof.fieldReadInputs.count(op))return uncertain(op->getResult(0));
@@ -199,7 +245,11 @@ bool ArrayFlow::operation(mlir::Operation *op,const std::string &function) {
           if(!proof.charge()||!edge(payload(source),input)||!copy(source,op->getResult(0)))return false;
         return valid;
       }
-      if(role==Role::OrderedPayload)return flow.unknown(input)&&uncertain(op->getResult(0));
+      if(role==Role::OrderedPayload) {
+        if(receiver==PayloadFlow::none)return flow.unknown(input)&&uncertain(op->getResult(0));
+        if(!entryCells.read(receiver,input,value(op->getResult(0))))return proof.reject(entryCells.error());
+        boundaryReads.emplace(op,receiver);return valid;
+      }
       if(receiver==PayloadFlow::none)return flow.unknown(input)&&uncertain(op->getResult(0));
       if(!flow.connect({receiver,input,PayloadFlow::none,{},{},true,true}))return false;
     } else if(receiver==PayloadFlow::none)return true; // No successful Array owner; runtime checks still execute.
@@ -241,6 +291,14 @@ bool ArrayFlow::finish() {
     // ordered IR query can establish successful source and index/length facts.
     if(role==Role::OrderedPayload&&!proof.provedArrayReads.count(op))proof.unprovedMemoryReads.insert(op);
   }
+  if(role==Role::CarrierMaximum)return publishCells();
+  std::map<mlir::Operation *,std::set<std::string>> sources;
+  for(const auto &[op,receiver]:boundaryReads) {
+    if(!proof.charge())return false;std::set<std::string> origins;
+    if(!entryCells.origins(receiver,origins))return proof.reject(entryCells.error());
+    if(!origins.empty())sources.emplace(op,std::move(origins));
+  }
+  proof.checkedEntryCellSources=std::move(sources);
   return true;
 }
 } // namespace tsfg::finite

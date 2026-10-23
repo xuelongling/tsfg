@@ -151,6 +151,9 @@ mlir::LogicalResult verifyFiniteDomainOperation(mlir::Operation *operation) {
       name == "tsfg_core.domain.array_resize" || name == "tsfg_core.domain.field_store";
   const bool super = name == "tsfg_core.domain.super";
   if (!store && !super && !resultDomain(operation)) return reject("result domain identity/type mismatch");
+  if (name == "tsfg_core.domain.copy" && (!domainOperand(operation,0) ||
+      operation->getOperand(0).getType()!=operation->getResult(0).getType()))
+    return reject("value copy must preserve the complete input carrier");
   if (name == "tsfg_core.domain.refine") {
     const auto proof = operation->getAttrOfType<mlir::StringAttr>("presence_proof");
     if (!proof || proof.getValue().empty() || proof.getValue().size() > 4096)

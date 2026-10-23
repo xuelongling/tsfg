@@ -44,6 +44,13 @@ struct ArrayMemory {
       if(!charge()){valid=false;return {};}
       const auto name=op->getName().getStringRef();
       if(name=="tsfg_core.domain.view"||name=="tsfg_core.domain.refine"){value=op->getOperand(0);continue;}
+      if(name=="tsfg_core.domain.copy") {
+        const auto *domain=valueDomain(proof,value.getType());bool array=false;
+        if(domain)for(const auto &id:domain->alternatives) {
+          if(!charge())return {};const auto kind=string(*proof.catalog.at(id),"kind");array|=kind=="array"||kind=="readSpan";
+        }
+        if(array){value=op->getOperand(0);continue;}
+      }
       if(name!="func.call"&&name!="tsfg_core.domain.method_call")break;
       const auto selected=proof.selectedCallees.find(op);if(selected==proof.selectedCallees.end()||selected->second.empty())break;
       size_t ordinal=SIZE_MAX;bool same=true;
@@ -338,8 +345,11 @@ struct ArrayMemory {
         }
         continue;
       }
-      if(status=="proven") {
-        if(!selected.proven||selected.versions!=expected)return proof.reject("Array read versions differ from independently preceding IR writes");
+      if(status=="proven"&&(!selected.proven||selected.versions!=expected))
+        return proof.reject("Array read versions differ from independently preceding IR writes");
+      // A conservative producer claim cannot hide stronger independently
+      // selected local writes behind a host boundary/capacity approximation.
+      if(selected.proven) {
         for(const auto &version:selected.versions)proof.arrayReadInputs[&op].push_back(versions.at(version).value);
         if(selected.bounds)proof.provedArrayReads.insert(&op);
       }

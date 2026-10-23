@@ -40,11 +40,14 @@ export function buildFiniteFieldReaching(hir,plan,charge) {
   const actuals=id=>domains.get(nodes.get(id)?.domainId)?.actualTypes??[];
   const effects=new Map(callables.map(fn=>[fn.id,{writes:false,callees:new Set()}]));
   const writes=new Map(),reads=new Map(),phaseWrites=new Map(),allocationEntries=new Map(),completions=new Map(),contexts=new Map(),returnAliases=new Map(),outputs=new Map();
+  const storedTokens=new Map(),returnedFields=new Map(),cyclicFunctions=new Set();
+  const projectedOutputs=new Map(),returnValueParameters=new Map();
   for(const fn of callables) {
     const stack=[{value:fn.body,path:fn.id+'/body'}],effect=effects.get(fn.id);
     while(stack.length) {
       charge();const {value,path}=stack.pop();if(!value||typeof value!=='object')continue;
       if(['fieldAssignment','fieldUpdate','initializeOwnFields','superConstruct','construct'].includes(value.kind))effect.writes=true;
+      if(value.kind==='while')cyclicFunctions.add(fn.id);
       if(value.kind==='call') {
         const targets=value.receiver?(calls.get(path)?.targets??[]).map(row=>row.functionId):[value.target];
         for(const target of targets)if(target!==hir.intrinsics.readSpan.id) {
@@ -88,7 +91,8 @@ export function buildFiniteFieldReaching(hir,plan,charge) {
   function ledger() {
     const snapshot={contexts:[...contexts].map(([id,row])=>({id,target:row.target,
       fields:[...row.fields].sort(([a],[b])=>a<b?-1:1).map(([key,versions])=>[key,[...versions].sort()])})),
-      completions:[...completions],returnAliases:[...returnAliases],outputs:[...outputs]};
+      completions:[...completions],returnAliases:[...returnAliases],outputs:[...outputs],returnedFields:[...returnedFields],
+      projectedOutputs:[...projectedOutputs],returnValueParameters:[...returnValueParameters]};
     /** @type {unknown[]} */
     const stack=[snapshot];while(stack.length) {
       charge();const row=stack.pop();if(row&&typeof row==='object')stack.push(...Object.values(row));
@@ -102,12 +106,32 @@ export function buildFiniteFieldReaching(hir,plan,charge) {
   do {
   charge();previous=ledger();
   for(const fn of ordered) {
-    // R01 value assignment/parameters copy payload. They cannot inherit the
-    // reference alias token used below. Their field versions remain at the
-    // conservative bound until inline value memory SSA owns that proof.
-    const aliases=new Map(fn.parameters.map(parameter=>[parameter.id,
-      copiesValue(parameter.type)?null:fn.id+'/parameter/'+parameter.id]));
-    const key=(token,target)=>token+'\0'+target.actualType+'\0'+target.fieldId;
+    // Each value parameter owns its field plane. Mixed carriers retain the
+    // reference branch's identity independently from their copied value plane.
+    const aliases=new Map(fn.parameters.map(parameter=>[parameter.id,fn.id+'/parameter/'+parameter.id]));
+    const referenceOrigins=new Map(),copyOrigins=new Map(),returnStates=[],returnValueRoots=[],referenceProjections=new Map();
+    const originOf=(origins,token)=>origins.has(token)?origins.get(token):token;
+    const physicalToken=(token,actual)=>types.get(actual)?.kind==='value'?token:referenceOrigins.has(token)?referenceOrigins.get(token):token;
+    const key=(token,target)=>{const physical=physicalToken(token,target.actualType);return physical?physical+'\0'+target.actualType+'\0'+target.fieldId:null;};
+    function copyToken(token,destination,state) {
+      charge();
+      referenceOrigins.set(destination,originOf(referenceOrigins,token));
+      copyOrigins.set(destination,originOf(copyOrigins,token));
+      const pending=[];
+      if(token)for(const [location,versions] of state) {
+        charge();const [source,actual,field]=location.split('\0');
+        if(source===token&&types.get(actual)?.kind==='value')pending.push([destination+'\0'+actual+'\0'+field,versionCopy(versions,charge)]);
+      }
+      for(const row of pending){charge();state.set(...row);}
+      return destination;
+    }
+    function retainValues(state) {
+      for(const location of state.keys()){charge();if(types.get(location.split('\0')[1])?.kind!=='value')state.delete(location);}
+    }
+    function projectedToken(root,version,source) {
+      charge();const token='#frame/'+canonical([root,version,source]);
+      referenceProjections.set(token,{root,version,source});return token;
+    }
     const receiver=fn.role==='construction-body'?aliases.get(fn.parameters[0].id):null,exits=[],returnedTokens=[];
     const receiverTypes=receiver?actuals(fn.id+'/binding/'+fn.parameters[0].id):[];
     const fresh=new Map();
@@ -130,7 +154,7 @@ export function buildFiniteFieldReaching(hir,plan,charge) {
     function completed(construction,token,state,actualTypes=receiverTypes) {
       // A call may mutate any alias before it completes. Retain only the
       // versions actually established on every successful callee exit.
-      state.clear();if(!token)return;
+      retainValues(state);if(!token)return;
       for(const row of completions.get(construction)??[])if(actualTypes.includes(row.actualType))
         {charge();state.set(key(token,{actualType:row.actualType,fieldId:row.field}),versionCopy(row.versions,charge));}
     }
@@ -141,7 +165,7 @@ export function buildFiniteFieldReaching(hir,plan,charge) {
         charge();const output=event.output;
         if(event.kind==='initializerWrite') {
           const init=owner.construction.initialization.find(row=>row.field===output.field&&row.value);
-          expression(init.value,output.valueNode,state,env);
+          storedTokens.set(output.id,{function:fn.id,token:expression(init.value,output.valueNode,state,env),fresh:init.value.kind==='construct'});
         }
         const node=event.kind==='nativeDefine'?null:event.kind==='parameterWrite'
           ?fn.id+'/binding/'+output.parameterBinding:output.valueNode;
@@ -151,24 +175,31 @@ export function buildFiniteFieldReaching(hir,plan,charge) {
           state.set(key(receiver,{actualType,fieldId:output.field}),new Set([output.id]));
       }
     }
-    function access(value,path,state,token,kind,source=null) {
+    function access(value,path,state,token,kind,source=null,payload=null) {
       const selection=selections.get(path);if(!selection)return;
       if(kind==='store') {
         for(const target of selection.targets) {
           charge();const id=path+'/field-version/'+target.actualType+'/'+target.fieldId;
           writes.set(id,{id,node:source,actualType:target.actualType,field:target.fieldId,origin:{source:fn.sourcePath,...value.range}});
+          storedTokens.set(id,{function:fn.id,token:payload,fresh:value.value?.kind==='construct'});
         }
-        if(!token){state.clear();return;}
+        if(!token){
+          if(selection.targets.every(target=>types.get(target.actualType)?.kind==='reference'))retainValues(state);else state.clear();
+          return;
+        }
         // Separate host parameters do not establish noalias. A write through
         // another parameter may replace any previously remembered field of an
         // aliased parameter; fresh allocations remain distinct in this frame.
-        if(token.includes('/parameter/'))for(const stored of state.keys()) {
-          const other=stored.slice(0,stored.indexOf('\0'));
-          if(other!==token&&other.includes('/parameter/')){charge();state.delete(stored);}
+        const referenceTokens=new Set();
+        for(const target of selection.targets){charge();if(types.get(target.actualType)?.kind==='reference')referenceTokens.add(physicalToken(token,target.actualType));}
+        if([...referenceTokens].some(token=>token?.includes('/parameter/')))for(const stored of state.keys()) {
+          const [other,actual]=stored.split('\0');
+          if(!referenceTokens.has(other)&&other.includes('/parameter/')&&types.get(actual)?.kind!=='value'){charge();state.delete(stored);}
         }
         for(const target of selection.targets) {
           charge();const id=path+'/field-version/'+target.actualType+'/'+target.fieldId;
-          state.set(key(token,target),new Set([id]));
+          const location=key(token,target);
+          if(location)state.set(location,new Set([id]));else retainValues(state);
         }
       }else {
         const reaching=[];
@@ -182,6 +213,19 @@ export function buildFiniteFieldReaching(hir,plan,charge) {
           }
         }
         reads.set(path,{node:path,reaching});
+        const tokens=[];
+        for(const row of reaching)for(const version of row.versions) {
+          charge();const source=storedTokens.get(version);
+          if(source?.function===fn.id)tokens.push(source.token);
+          else {
+            // Qualify a constructor's fresh child by the owning value's
+            // original plane, not the callee's lexical allocation alone.
+            const physical=physicalToken(token,row.actualType),root=originOf(copyOrigins,physical);
+            tokens.push(source?.fresh&&root&&!cyclicFunctions.has(source.function)&&!cyclicFunctions.has(fn.id)
+              ?projectedToken(root,version,source.token):null);
+          }
+        }
+        return tokens.length&&tokens.every(token=>token&&token===tokens[0])?tokens[0]:null;
       }
     }
     function expression(value,path,state,env) {
@@ -190,15 +234,17 @@ export function buildFiniteFieldReaching(hir,plan,charge) {
       if(value.kind==='reference')return env.get(value.binding)??null;
       if(['group','nonNull','assertType'].includes(value.kind))return child('operand');
       if(value.kind==='assignment') {
-        const token=child('value'),alias=copiesValue(value.target.type)?null:token;
+        const token=child('value'),alias=copiesValue(value.target.type)?copyToken(token,path+'/copy',state):token;
         env.set(value.target.binding,alias);return alias;
       }
       if(value.kind==='fieldAccess') {
-        const token=child('receiver');access(value,path,state,token,'read');return null;
+        const token=child('receiver'),payload=access(value,path,state,token,'read');
+        return copiesValue(value.type)?copyToken(payload,path+'/copy',state):payload;
       }
       if(value.kind==='fieldAssignment') {
         const token=expression(value.target.receiver,path+'/target/receiver',state,env);
-        const rhs=child('value');access(value,path,state,token,'store',path+'/value');return rhs;
+        const rhs=child('value'),payload=copiesValue(value.value.type)?copyToken(rhs,path+'/stored-copy',state):rhs;
+        access(value,path,state,token,'store',path+'/value',payload);return rhs;
       }
       if(value.kind==='shortCircuit'||value.kind==='binary'&&['&&','||','??'].includes(value.operator)) {
         const left=child('left'),possibilities=value.operator==='??'?presence(path+'/left'):{present:true,absent:true};
@@ -216,31 +262,63 @@ export function buildFiniteFieldReaching(hir,plan,charge) {
       }
       if(value.kind==='call') {
         const tokens=[...(value.receiver?[child('receiver')]:[]),
-          ...value.arguments.map((argument,index)=>expression(argument,path+'/arguments/'+index,state,env))];
+          ...value.arguments.map((argument,index)=>{
+            const token=expression(argument,path+'/arguments/'+index,state,env);
+            return copiesValue(argument.type)?copyToken(token,path+'/arguments/'+index+'/copy',state):token;
+          })];
         const targets=value.receiver?(calls.get(path)?.targets??[]).map(row=>row.functionId):[value.target];
-        const returned=[],continuations=[];
+        const returned=[],continuations=[],valueReturns=[];
         for(const target of targets) {
           const callee=functions.get(target);if(!callee){returned.push(null);continuations.push(new Map());continue;}
           const fields=new Map();
           for(const [index,parameter] of callee.parameters.entries())if(tokens[index]) {
-            const prefix=tokens[index]+'\0',destination=callee.id+'/parameter/'+parameter.id;
-            for(const [location,versions] of state)if(location.startsWith(prefix)) {
-              charge();fields.set(destination+location.slice(tokens[index].length),versionCopy(versions,charge));
+            const destination=callee.id+'/parameter/'+parameter.id;
+            for(const [location,versions] of state) {
+              charge();const [stored,actual,field]=location.split('\0');
+              if(stored===physicalToken(tokens[index],actual))fields.set(destination+'\0'+actual+'\0'+field,versionCopy(versions,charge));
             }
           }
           contexts.set(path+'\0'+target,{target,fields});
+          const returnedState=new Map();
+          for(const row of returnedFields.get(target)??[]) {
+            charge();returnedState.set(row.location,versionCopy(row.versions,charge));
+          }
+          valueReturns.push(returnedState);
           const ordinal=returnAliases.get(target);returned.push(Number.isInteger(ordinal)?tokens[ordinal]:null);
           const continuation=new Map();
-          for(const output of outputs.get(target)??[])if(tokens[output.parameter]) {
+          for(const output of outputs.get(target)??[])if(tokens[output.parameter]&&
+              (output.parameter===0&&callee.ownerType||types.get(output.actualType)?.kind!=='value')) {
             charge();const location=key(tokens[output.parameter],{actualType:output.actualType,fieldId:output.field}),
               versions=continuation.get(location)??new Set();
-            for(const version of output.versions){charge();versions.add(version);}continuation.set(location,versions);
+            for(const version of output.versions){charge();versions.add(version);}if(location)continuation.set(location,versions);
+          }
+          for(const output of projectedOutputs.get(target)??[])if(tokens[output.parameter]) {
+            charge();const root=originOf(copyOrigins,tokens[output.parameter]);if(!root)continue;
+            const origin=projectedToken(root,output.origin.version,output.origin.source),
+              location=key(origin,{actualType:output.actualType,fieldId:output.field});
+            continuation.set(location,versionCopy(output.versions,charge));
           }
           continuations.push(continuation);
         }
         if(targets.some(id=>id!==hir.intrinsics.readSpan.id&&(!effects.has(id)||effects.get(id).writes))) {
-          state.clear();const continuation=continuations.length?continuations.reduce((left,right)=>join(left,right)):new Map();
+          retainValues(state);const continuation=continuations.length?continuations.reduce((left,right)=>join(left,right)):new Map();
+          // Explicit method receivers borrow their own value plane; ordinary
+          // value arguments are copies. An unproved receiver write invalidates
+          // only that borrowed plane before publishing successful outputs.
+          if(value.receiver&&tokens[0])for(const location of state.keys()) {
+            charge();if(location.startsWith(tokens[0]+'\0'))state.delete(location);
+          }
           for(const pair of continuation){charge();state.set(...pair);}
+        }
+        if(copiesValue(value.type)) {
+          const result=path+'/returned-copy',fields=valueReturns.length?valueReturns.reduce((a,b)=>join(a,b)):new Map();
+          for(const [location,versions] of fields){charge();state.set(result+'\0'+location,versionCopy(versions,charge));}
+          const roots=[],references=[];
+          for(const target of targets){charge();const index=returnValueParameters.get(target),token=Number.isInteger(index)?tokens[index]:null;
+            roots.push(token?originOf(copyOrigins,token):null);references.push(token?originOf(referenceOrigins,token):null);}
+          if(roots.length&&roots.every(root=>root&&root===roots[0])){charge();copyOrigins.set(result,roots[0]);}
+          if(references.length&&references.every(root=>root&&root===references[0])){charge();referenceOrigins.set(result,references[0]);}
+          return result;
         }
         return returned.length&&returned.every(token=>token&&token===returned[0])?returned[0]:null;
       }
@@ -262,11 +340,19 @@ export function buildFiniteFieldReaching(hir,plan,charge) {
         charge();const p=path+'/'+index;
         if(value.kind==='local') {
           const token=expression(value.initializer,p+'/initializer',state,env);
-          env.set(value.binding.id,copiesValue(value.binding.type)?null:token);
+          env.set(value.binding.id,copiesValue(value.binding.type)?copyToken(token,p+'/copy',state):token);
         }
         else if(value.kind==='expression')expression(value.expression,p+'/expression',state,env);
         else if(value.kind==='return'||value.kind==='constructorReturn') {
           const token=value.value?expression(value.value,p+'/value',state,env):null;
+          if(value.value&&copiesValue(value.value.type)) {
+            returnValueRoots.push(originOf(copyOrigins,token));
+            const fields=new Map();
+            if(token)for(const [location,versions] of state)if(location.startsWith(token+'\0')) {
+              charge();fields.set(location.slice(token.length+1),versionCopy(versions,charge));
+            }
+            returnStates.push(fields);
+          }
           returnedTokens.push(value.value&&!copiesValue(value.value.type)?token:null);
           // Replacement-object completion requires its own actual receiver
           // proof; it cannot inherit the original this-field versions.
@@ -310,6 +396,20 @@ export function buildFiniteFieldReaching(hir,plan,charge) {
       }
     }
     outputs.set(fn.id,outgoing.sort((a,b)=>a.parameter-b.parameter||(a.actualType+a.field<b.actualType+b.field?-1:1)));
+    const projected=[];
+    if(exits.length)for(const [location,versions] of exits.reduce((a,b)=>join(a,b))) {
+      charge();const [token,actualType,field]=location.split('\0'),origin=referenceProjections.get(token);
+      if(!origin)continue;const parameter=fn.parameters.findIndex(parameter=>fn.id+'/parameter/'+parameter.id===origin.root);
+      if(parameter>=0)projected.push({parameter,origin,actualType,field,versions:[...versions].sort()});
+    }
+    projectedOutputs.set(fn.id,projected.sort((a,b)=>canonical(a)<canonical(b)?-1:1));
+    const returnedParameter=returnValueRoots.length&&returnValueRoots.every(root=>root&&root===returnValueRoots[0])
+      ?fn.parameters.findIndex(parameter=>fn.id+'/parameter/'+parameter.id===returnValueRoots[0]):-1;
+    // A field-writing helper may return a new child from each activation.
+    // Only pure forwarding preserves a parameter's reference-origin root.
+    returnValueParameters.set(fn.id,returnedParameter>=0&&!effects.get(fn.id).writes?returnedParameter:null);
+    const valueReturn=returnStates.length?returnStates.reduce((a,b)=>join(a,b)):new Map();
+    returnedFields.set(fn.id,[...valueReturn].sort(([a],[b])=>a<b?-1:1).map(([location,versions])=>({location,versions:[...versions].sort()})));
     if(receiver&&exits.length) {
       const state=exits.reduce((left,right)=>join(left,right)),rows=[];
       for(const [location,versions] of state)if(location.startsWith(receiver+'\0')) {
