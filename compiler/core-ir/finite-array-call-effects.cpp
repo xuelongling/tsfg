@@ -234,7 +234,7 @@ struct ArrayCalls {
       if(name=="tsfg_core.domain.read_span"||name=="tsfg_core.domain.array_read")flags=ArrayCallFlow::Read;
       if(name=="tsfg_core.domain.array_store")flags=ArrayCallFlow::Write|
         (proof.nonStructuralArrayEffects.count(op)?0:ArrayCallFlow::Structural);
-      if(name=="tsfg_core.domain.array_resize")flags=ArrayCallFlow::Structural;
+      if(name=="tsfg_core.domain.array_resize"&&!proof.nonStructuralArrayEffects.count(op))flags=ArrayCallFlow::Structural;
       if(flags&&!flow.effect(definitions.at(id),value(op->getOperand(0),id,true),flags))return fail(flow.error());
       if(llvm::isa<mlir::func::ReturnOp>(op)&&views.count(string(*proof.callable.at(id),"returnType"))) {
         if(op->getNumOperands()!=1)return fail("normal view return arity");

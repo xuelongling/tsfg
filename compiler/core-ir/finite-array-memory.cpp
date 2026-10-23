@@ -1,5 +1,6 @@
 // SPDX-License-Identifier: MIT
 #include "finite-array-memory.h"
+#include "finite-array-length.h"
 #include "mlir/Dialect/ControlFlow/IR/ControlFlowOps.h"
 #include <optional>
 #include <tuple>
@@ -368,6 +369,7 @@ struct ArrayMemory {
       const auto selected=query(&op);if(!valid)return false;
       if(selected.proven&&selected.bounds)proved.insert(&op);
     }
+    if(!proveArrayNoChangeResizes(proof,[&](mlir::Value value){return strip(value);},proved)||!valid)return false;
     proof.nonStructuralArrayEffects=std::move(proved);return true;
   }
 };

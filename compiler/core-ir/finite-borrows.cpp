@@ -133,7 +133,9 @@ struct Borrows {
             if(values.count(input)&&!outcome(flow.use(point,values.at(input))))return false;
           }
         }
-        if(name=="tsfg_core.domain.array_resize") {if(!effect(&op,op.getOperand(0)))return false;}
+        if(name=="tsfg_core.domain.array_resize"&&!proof.nonStructuralArrayEffects.count(&op)) {
+          if(!effect(&op,op.getOperand(0)))return false;
+        }
         if(name=="tsfg_core.domain.array_store") {
           // No length/initialization claim or carrier count is an overwrite
           // proof. The independent memory consumer alone may discharge it.
