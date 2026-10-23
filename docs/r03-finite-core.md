@@ -432,3 +432,18 @@ The checked operation, unproved memory/bounds obligations and producer's
 pending/empty-version read record remain. Control prepasses do not consume
 these external boundary alternatives. This is a necessary normal-result proof,
 not completed whole-module admission, borrow, wire or executable IR authority.
+
+Readonly constructor-body stores consume the verified explicit construction
+frame and direct current receiver, the declaring class's own FieldId and original
+static owner view. The member consumer reconstructs the required native,
+initializer and parameter-property event identities from that owned catalogue.
+Its production `ConstructorWrites` worklist checks every normal CFG predecessor:
+derived frames first complete the same-receiver direct base call, then activate
+and finish the full ordered own phase before the body store. A marker alone,
+another instance, an inherited readonly declaration or an ordinary method grants
+no permission. A completed body may assign repeatedly, including after a field
+initializer; readonly is neither a once-only bit nor actual-layout deep freezing.
+The existing mutable structural view remains independent. Shared-budget and
+cancellation failures discard the proof and preserve their first cause. The
+std component runs this same phase protocol; the real IR adapter retains only
+object/static-review qualification while Core semantic execution is held.
