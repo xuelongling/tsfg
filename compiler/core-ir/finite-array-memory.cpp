@@ -357,7 +357,21 @@ struct ArrayMemory {
     return seen.size()==declaredReads.size()||proof.reject("Array claim has no actual read");
   }
   bool run(){return directory()&&collect()&&reads();}
+  bool overwrites() {
+    if(!directory()||!collect())return false;
+    std::set<mlir::Operation *> proved;
+    for(auto &[id,fn]:proof.functions)for(auto &block:fn.getBody())for(auto &op:block) {
+      if(!charge())return false;
+      if(op.getName().getStringRef()!="tsfg_core.domain.array_store"||!proof.mayReach(&block))continue;
+      // Query the actual pre-store state using its real receiver/index SSA.
+      // Successful existing-element evidence is separate from owner capacity.
+      const auto selected=query(&op);if(!valid)return false;
+      if(selected.proven&&selected.bounds)proved.insert(&op);
+    }
+    proof.nonStructuralArrayEffects=std::move(proved);return true;
+  }
 };
 }
 bool verifyArrayMemory(ModuleProof &proof,bool compareClaims){return ArrayMemory{proof,compareClaims}.run();}
+bool verifyArrayOverwriteEffects(ModuleProof &proof){return ArrayMemory{proof,false}.overwrites();}
 } // namespace tsfg::finite

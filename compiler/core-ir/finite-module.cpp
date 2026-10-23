@@ -150,7 +150,7 @@ mlir::LogicalResult verifyModuleContracts(mlir::ModuleOp module) {
       !sources(proof) || !verifyCatalog(proof) || !verifyDomains(proof) || !verifyAbi(proof) ||
       !verifyValueContracts(proof) || !verifyMemberContracts(proof) || !verifyDefinitionBounds(proof) ||
       !verifyFlowContracts(proof) || !verifyReturnedParameters(proof) || !verifyControlPaths(proof) ||
-      !memoryPaths(proof) || !verifyActualFlow(proof))
+      !memoryPaths(proof) || !verifyActualFlow(proof) || !verifyBorrowContracts(proof))
     return mlir::failure();
   return mlir::success();
 }

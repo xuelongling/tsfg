@@ -70,6 +70,15 @@ struct ModuleProof {
   llvm::DenseMap<mlir::Value,std::set<std::string>> entryArrayOwners;
   std::map<std::string,PublishedArrayCell> publishedArrayCells;
   std::map<mlir::Operation *,std::set<std::string>> checkedEntryCellSources;
+  // Ordered SSA owner possibilities, not an allocation/length observation.
+  llvm::DenseMap<mlir::Value,PayloadEvidence> actualArrayOwners;
+  // Only the independently verified fixed Published call authority consumer
+  // publishes these. Missing/empty maps alone never establish call purity.
+  std::map<mlir::Operation *,std::vector<mlir::Value>> arrayCallStructuralInputs;
+  std::set<mlir::Operation *> arrayCallEffectsComplete,arrayCallLocalStructural;
+  // Independently proved existing-element writes; never a capacity/producer
+  // hint, and never permission to omit the operation's dynamic store checks.
+  std::set<mlir::Operation *> nonStructuralArrayEffects;
   std::map<mlir::Operation *,std::vector<mlir::Value>> fieldReadInputs;
   // Successful Array read sources come from independent ordered IR versions,
   // not the owner-wide capacity union. Bounds eligibility remains separate.
@@ -106,6 +115,9 @@ bool verifyReturnedParameters(ModuleProof &proof);
 bool verifyMemoryContracts(ModuleProof &proof,bool compareClaims=true);
 bool verifyDefinitionBounds(ModuleProof &proof);
 bool verifyEntryArrayBounds(ModuleProof &proof);
+bool verifyArrayCallEffects(ModuleProof &proof);
+bool verifyArrayOverwriteEffects(ModuleProof &proof);
+bool verifyBorrowContracts(ModuleProof &proof);
 bool verifyActualFlow(ModuleProof &proof);
 bool verifyControlPaths(ModuleProof &proof,bool memorySources=false,bool *changed=nullptr);
 const Domain *valueDomain(ModuleProof &proof, mlir::Type type);

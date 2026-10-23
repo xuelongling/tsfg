@@ -298,6 +298,14 @@ bool ArrayFlow::finish() {
     if(!entryCells.origins(receiver,origins))return proof.reject(entryCells.error());
     if(!origins.empty())sources.emplace(op,std::move(origins));
   }
+  llvm::DenseMap<mlir::Value,PayloadEvidence> identities;
+  for(const auto &[value,node]:values) {
+    if(!proof.charge())return false;const auto *evidence=flow.evidence(node);
+    if(!evidence)return proof.reject(flow.error());PayloadEvidence identity;identity.pending=evidence->pending;
+    for(const auto &token:evidence->alternatives){if(!proof.charge())return false;identity.alternatives.insert(token);}
+    identities.try_emplace(value,std::move(identity));
+  }
+  proof.actualArrayOwners=std::move(identities);
   proof.checkedEntryCellSources=std::move(sources);
   return true;
 }

@@ -327,6 +327,7 @@ export function emitFiniteCore(input,context,publicationContext=undefined) {
     language_intrinsics:canonical(plan.intrinsics),
     source_closure:canonical(hir.sources),canonical_layouts:canonical(buildTypedLayouts(hir,context,options)),
     callable_contracts:canonical(finiteCallableContracts(hir)),
+    ...(publicationContext===undefined?{}:{array_call_authority:canonical({rootFile:hir.rootFile,publicationContext})}),
     source_exports:canonical(hir.exports),
     entry_compatibility_roots:canonical(hir.entryCompatibilityRoots.map(row=>({...row,roots:[...row.roots]
       .sort((a,b)=>a.sourceType<b.sourceType?-1:a.sourceType>b.sourceType?1:a.targetType<b.targetType?-1:a.targetType>b.targetType?1:0)}))
