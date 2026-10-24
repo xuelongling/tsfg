@@ -37,7 +37,7 @@ struct EntryArrayResource {
 struct PublishedArrayCell { PayloadEvidence payload,nestedOwners; };
 // A replayable path through real selected call occurrences, relative to the
 // containing source query. Numeric MemoryFrames ids never cross that query.
-struct MemoryCallStep {mlir::Operation *call=nullptr;std::string function;};
+struct MemoryCallStep {mlir::Operation *call=nullptr;std::string function;bool incoming=false;};
 using MemoryCallPath=std::vector<MemoryCallStep>;
 // descriptor remains SSA in its original activation, not a caller SSA input.
 struct StoredSpanSlice {mlir::Value descriptor;MemoryCallPath activation;};
@@ -56,6 +56,8 @@ struct StoredFieldSource {
   // result. They propagate uncertainty only, never result payload/identity.
   std::vector<mlir::Value> dependencies;
   std::vector<StoredSpanSlice> slices;
+  // Actual query-entry call chain, not an invocation/allocation identity.
+  MemoryCallPath entry;
 };
 // All pointers refer to the owned, canonical documents below. No pointer or
 // partial registry escapes verification; a failed load discards this object.

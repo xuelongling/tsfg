@@ -67,6 +67,24 @@ ArrayMemory::Selection ArrayMemory::query(mlir::Operation *read,mlir::Value rece
           }else if(!unknown(task.node))return {};
         }
         if(!predecessor) {
+          if(activation&&task.level<activation->size()&&(*activation)[task.level].incoming){
+            const auto &step=(*activation)[task.level];auto fn=task.before->getParentOfType<mlir::func::FuncOp>();
+            const auto selected=proof.selectedCallees.find(step.call);
+            if(attr(fn,"tsfg_core.function_id")!=step.function||selected==proof.selectedCallees.end()||
+                !selected->second.count(step.function)){if(!unknown(task.node))return {};continue;}
+            auto receiver=task.owner;auto slot=task.index;
+            const auto substitute=[&](mlir::Value value)->mlir::Value{
+              auto parameter=llvm::dyn_cast<mlir::BlockArgument>(value);
+              if(!parameter||parameter.getOwner()!=&fn.getBody().front())return value;
+              auto index=parameter.getArgNumber();const bool construct=step.call->getName().getStringRef()=="tsfg_core.domain.construct";
+              if(construct){if(!index)return step.call->getResult(0);--index;}
+              return index<step.call->getNumOperands()?step.call->getOperand(index):mlir::Value();
+            };
+            receiver=substitute(receiver);if(!slot.constant)slot=index(substitute(slot.value));
+            if(!valid||!receiver)return {};
+            const auto prior=at(step.call,receiver,slot,0,true,task.level+1);
+            if(!valid||!connect({prior,task.node}))return {};continue;
+          }
           if(activation&&task.level<activation->size()){if(!unknown(task.node))return {};continue;}
           if(task.scope){if(!seed(task.node,input))return {};continue;}
           auto fn=task.before->getParentOfType<mlir::func::FuncOp>();
@@ -105,7 +123,7 @@ ArrayMemory::Selection ArrayMemory::query(mlir::Operation *read,mlir::Value rece
           same(task.index,index(previous->getOperand(1)))){
         if(!valid||!seed(task.node,checkedSlot))return {};continue;
       }
-      if(activation&&task.level<activation->size()&&previous==(*activation)[task.level].call){
+      if(activation&&task.level<activation->size()&&!(*activation)[task.level].incoming&&previous==(*activation)[task.level].call){
         const auto &step=(*activation)[task.level];bool productive=false;
         for(auto &block:proof.functions.at(step.function).getBody()){
           if(!charge())return {};if(!proof.mayReach(&block))continue;
@@ -280,11 +298,20 @@ bool proveSpanSliceSources(ModuleProof &proof,mlir::Operation *read,mlir::Value 
     if(!proof.charge(1+step.function.size()/64))return false;
     const auto selected=proof.selectedCallees.find(step.call);
     if(!step.call||selected==proof.selectedCallees.end()||!selected->second.count(step.function)||
-        !proof.functions.count(step.function)||attr(step.call->getParentOp(),"tsfg_core.function_id")!=function||
+        !proof.functions.count(step.function)||
         !proof.mayReach(step.call->getBlock())){destination=std::move(result);return true;}
-    function=step.function;
+    const auto caller=attr(step.call->getParentOp(),"tsfg_core.function_id");
+    if((step.incoming?step.function:caller)!=function){destination=std::move(result);return true;}
+    function=step.incoming?caller:step.function;
   }
-  if(attr(receiver.getParentBlock()->getParentOp(),"tsfg_core.function_id")!=function){destination=std::move(result);return true;}
+  if(attr(receiver.getParentBlock()->getParentOp(),"tsfg_core.function_id")!=function){
+    // A real query-entry formal may name that ancestor owner. Its actual
+    // binding is substituted only when the query reaches the incoming edge.
+    auto argument=llvm::dyn_cast<mlir::BlockArgument>(receiver);auto fn=read->getParentOfType<mlir::func::FuncOp>();
+    if(!argument||argument.getOwner()!=&fn.getBody().front()||activation.empty()||!activation.front().incoming){
+      destination=std::move(result);return true;
+    }
+  }
   ArrayMemory memory{proof,false};if(!memory.directory()||!memory.collect())return false;
   result.complete=true;result.staticBounds=indices!=nullptr;
   const auto append=[&](uint32_t index){

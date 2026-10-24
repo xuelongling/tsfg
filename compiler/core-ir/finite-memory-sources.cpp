@@ -7,7 +7,8 @@
 namespace tsfg::finite {
 bool storeFieldSource(ModuleProof &proof,const MemoryOrigin &source,StoredFieldSource &destination){
   if(!proof.charge(source.version.size()/64+1))return false;
-  StoredFieldSource value;value.capture=source.capture;value.version=source.version;value.retained=source.retained;
+  StoredFieldSource value;value.capture=source.capture;
+  for(const auto &step:source.entry){if(!proof.charge(1+step.function.size()/64))return false;value.entry.push_back(step);}value.version=source.version;value.retained=source.retained;
   for(auto input:source.values){if(!proof.charge())return false;value.values.push_back(input);}
   for(const auto &type:source.introduced){if(!proof.charge())return false;value.introduced.insert(type);}
   for(auto owner:source.owners){if(!proof.charge())return false;value.owners.push_back(owner);}
@@ -165,7 +166,10 @@ bool MemorySources::retainedSpan(MemoryFrames::Origin source,Id query,MemoryOrig
     if(name!="tsfg_core.domain.array_create"||string(*found->second,"kind")!="array"||
         string(*found->second,"elementType")!=item.element)return false;
     productive=true;
+    const auto parameters=rebase(origin,query);
+    if(!valid)return false;
     if(origin.frame==query)owners.push_back(value);
+    else if(!parameters.empty())for(auto parameter:parameters){if(!proof.charge()){valid=false;return false;}owners.push_back(parameter);}
     else retained.insert("#retained/"+std::to_string(origin.frame)+"/"+std::to_string(origin.value));
   }
   if(!valid||!productive)return false;
@@ -175,6 +179,7 @@ bool MemorySources::retainedSpan(MemoryFrames::Origin source,Id query,MemoryOrig
 }
 MemoryOrigin MemorySources::project(Id frame,mlir::Value value,const std::string &version,Id query,bool held){
   MemoryOrigin result;result.version=version;result.retained=held;bool retentionSeen=false;
+  if(!entryPath(query,result.entry)){result.pending=true;return result;}
   struct Item {MemoryFrames::Origin origin;bool owner,dependency;};
   std::vector<Item> work;std::set<std::tuple<Id,Id,bool,bool>> seen;
   const auto add=[&](mlir::Value value,Id frame,bool owner,bool dependency=false){
@@ -199,6 +204,13 @@ MemoryOrigin MemorySources::project(Id frame,mlir::Value value,const std::string
       else if(item.owner)result.owners.push_back(source);
       else{
         result.values.push_back(source);result.value=result.values.size()==1?source:mlir::Value();
+        if(op&&op->getName().getStringRef()=="tsfg_core.domain.construct"){
+          const auto known=proof.catalog.find(attr(op,"view_type"));
+          if(known!=proof.catalog.end()&&string(*known->second,"kind")=="reference"){
+            if(!frames.unique(origin)||repeats(op))result.pending=true;
+            else{if(!proof.charge()){valid=false;break;}result.receivers.push_back({source,origin.frame,query});}
+          }
+        }
         retentionSeen=true;result.retained&=held&&retainedSpan(origin,query,result);
       }
       continue;
@@ -212,6 +224,15 @@ MemoryOrigin MemorySources::project(Id frame,mlir::Value value,const std::string
     const auto name=op->getName().getStringRef();
     if(name=="tsfg_core.domain.view"||name=="tsfg_core.domain.refine"||name=="tsfg_core.domain.copy"){
       add(op->getOperand(0),origin.frame,item.owner,item.dependency);continue;
+    }
+    if(!item.owner&&!item.dependency&&name=="tsfg_core.domain.construct"){
+      const auto type=attr(op,"view_type");const auto known=proof.catalog.find(type);
+      if(known!=proof.catalog.end()&&string(*known->second,"kind")=="reference"&&frames.unique(origin)&&!repeats(op)){
+        // Actual checked construction, not a nominal/static field path. Keep
+        // its activation private; never export foreign SSA as a caller input.
+        if(!proof.charge()){valid=false;break;}
+        result.receivers.push_back({source,origin.frame,query});result.introduced.insert(type);continue;
+      }
     }
     if(name=="tsfg_core.domain.field_read"){
       // These are current-pass FirstWrites results at this exact read, not a
@@ -233,6 +254,7 @@ MemoryOrigin MemorySources::project(Id frame,mlir::Value value,const std::string
       }
       if(found->second.empty()&&!undefined)result.pending=true;
       for(const auto &selected:found->second){
+        if(!applies(origin.frame,selected.entry))continue;
         if(!proof.charge()){valid=false;break;}bool productive=false;std::set<std::string> descriptors;
         for(auto input:selected.values){productive=true;append(input,item.dependency);}
         for(const auto &source:selected.slices){
@@ -265,7 +287,9 @@ MemoryOrigin MemorySources::project(Id frame,mlir::Value value,const std::string
       if(!item.owner){result.introduced.insert(attr(op,"view_type"));
         StoredSpanSlice descriptor;if(!slice(origin,query,descriptor))result.pending=true;
         else result.slices.push_back(std::move(descriptor));
-        auto *at=capture(origin.frame,query);if(!at||(result.capture&&result.capture!=at))result.pending=true;else result.capture=at;}
+        auto *at=capture(origin.frame,query);
+        if(at){if(result.capture&&result.capture!=at)result.pending=true;else result.capture=at;}
+        else if(!held)result.pending=true;}
       retentionSeen=true;
       if(held&&retainedSpan(origin,query,result))continue;
       result.retained=false;add(op->getOperand(0),origin.frame,true);continue;

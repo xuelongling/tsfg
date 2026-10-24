@@ -148,7 +148,9 @@ struct StoredCalls {
   ModuleProof &proof;
   const std::map<mlir::Operation *,std::vector<MemoryVersion>> &writes;
   const MemoryOrigins &origins;MemorySources &sources;
-  using Need=std::tuple<size_t,std::string,std::string>;
+  using Member=std::pair<std::string,std::string>;
+  using Route=std::vector<Member>;
+  using Need=std::pair<size_t,Route>;
   std::map<std::string,std::set<Need>> needs;
   std::map<std::string,std::vector<mlir::Operation *>> callers;
   std::vector<std::pair<std::string,Need>> work;
@@ -170,14 +172,81 @@ struct StoredCalls {
     }
     return slot<call->getNumOperands()?call->getOperand(slot):mlir::Value();
   }
-  bool require(mlir::Operation *point,mlir::Value receiver,const std::string &actual,const std::string &field){
-    const auto demand=proveMemoryEntryDemand(proof,point,receiver,actual,field,writes,origins,sources);
-    if(!demand.valid)return false;const auto id=function(point);
-    if(!demand.complete){incomplete.insert(id);return true;}
-    if(!demand.incoming)return true;const auto slot=formal(receiver);if(!valid)return false;
-    if(slot==SIZE_MAX){incomplete.insert(id);return true;}
-    if(!proof.charge(1+(id.size()+actual.size()+field.size())/64))return false;
-    Need need{slot,actual,field};if(needs[id].insert(need).second)work.push_back({id,std::move(need)});return true;
+  bool require(mlir::Operation *point,mlir::Value receiver,const Route &route){
+    struct Item {mlir::Operation *point;mlir::Value receiver;Route route;};
+    std::vector<Item> pending{{point,receiver,route}};
+    std::set<std::tuple<mlir::Operation *,const void *,Route>> seen;const auto id=function(point);
+    for(size_t cursor=0;cursor<pending.size();++cursor){
+      if(!proof.charge(1+pending[cursor].route.size()))return false;const auto item=pending[cursor];
+      if(item.route.empty()||!seen.emplace(item.point,item.receiver.getAsOpaquePointer(),item.route).second)continue;
+      const auto &[actual,field]=item.route.front();
+      const auto demand=proveMemoryEntryDemand(proof,item.point,item.receiver,actual,field,writes,origins,sources);
+      if(!demand.valid)return false;
+      if(!demand.complete){incomplete.insert(id);continue;}
+      if(!demand.incoming){
+        if(item.route.size()==1)continue;
+        // Continue only a locally selected actual SSA. A nominal member path
+        // cannot stand in for the old or current field value.
+        const Route tail(item.route.begin()+1,item.route.end());bool productive=false;
+        for(const auto &source:demand.sources){
+          if(!proof.charge())return false;if(source.pending){incomplete.insert(id);continue;}
+          for(auto input:source.values){
+            if(!proof.charge())return false;
+            if(input.getParentBlock()->getParentOp()!=point->getParentOp()){incomplete.insert(id);continue;}
+            productive=true;pending.push_back({point,input,tail});
+          }
+        }
+        if(!productive)incomplete.insert(id);continue;
+      }
+      auto value=item.receiver;
+      while(auto *op=value.getDefiningOp()){
+        if(!proof.charge())return false;const auto name=op->getName().getStringRef();
+        if(name!="tsfg_core.domain.view"&&name!="tsfg_core.domain.refine"&&name!="tsfg_core.domain.copy")break;
+        value=op->getOperand(0);
+      }
+      const auto slot=formal(value);if(!valid)return false;
+      if(slot!=SIZE_MAX){
+        if(!proof.charge(1+id.size()/64+item.route.size()))return false;
+        Need need{slot,item.route};if(needs[id].insert(need).second)work.push_back({id,std::move(need)});continue;
+      }
+      auto *read=value.getDefiningOp();
+      if(!read||read->getName().getStringRef()!="tsfg_core.domain.field_read"||!proof.memberFields.count(read)){
+        incomplete.insert(id);continue;
+      }
+      for(const auto &[parent,member]:proof.memberFields.at(read)){
+        if(!proof.charge(1+item.route.size()))return false;if(member.empty()){incomplete.insert(id);continue;}
+        Route path{{parent,member}};path.insert(path.end(),item.route.begin(),item.route.end());
+        pending.push_back({read,read->getOperand(0),std::move(path)});
+      }
+    }
+    return true;
+  }
+  MemorySelection select(mlir::Operation *point,mlir::Value receiver,const Route &route){
+    MemorySelection result;if(route.empty())return result;std::vector<MemoryReceiver> cursors;
+    for(size_t index=0;index<route.size();++index){
+      if(!proof.charge())return {MemorySelection::Status::Invalid,{}};const auto &[actual,field]=route[index];
+      if(!index){
+        result=proveMemoryFirstWrites(proof,point,receiver,actual,field,writes,origins,sources);
+        if(result.status!=MemorySelection::Status::Proven)return result;
+      }else{
+        MemorySelection joined;joined.status=MemorySelection::Status::Proven;
+        for(const auto &cursor:cursors){
+          if(!proof.charge())return {MemorySelection::Status::Invalid,{}};
+          auto selected=proveMemoryCursorWrites(proof,point,cursor,actual,field,writes,origins,sources);
+          if(selected.status!=MemorySelection::Status::Proven)return selected;
+          for(const auto &version:selected.versions){if(!proof.charge(1+version.size()/64))return {MemorySelection::Status::Invalid,{}};joined.versions.insert(version);}
+          for(auto &source:selected.sources){if(!proof.charge())return {MemorySelection::Status::Invalid,{}};joined.sources.push_back(std::move(source));}
+        }
+        result=std::move(joined);
+      }
+      if(index+1==route.size())return result;cursors.clear();
+      for(const auto &source:result.sources){
+        if(!proof.charge())return {MemorySelection::Status::Invalid,{}};if(source.pending||source.receivers.empty())return {};
+        for(const auto &cursor:source.receivers){if(!proof.charge())return {MemorySelection::Status::Invalid,{}};cursors.push_back(cursor);}
+      }
+      if(cursors.empty())return {};
+    }
+    return result;
   }
   bool run(){
     for(const auto &[call,targets]:proof.selectedCallees)for(const auto &target:targets){
@@ -190,7 +259,7 @@ struct StoredCalls {
       for(const auto &type:domain->alternatives){if(!proof.charge())return false;span|=string(*proof.catalog.at(type),"kind")=="readSpan";}
       if(!span)continue;
       for(const auto &[actual,field]:proof.memberFields.at(&op)){
-        if(!proof.charge())return false;if(!field.empty()&&!require(&op,op.getOperand(0),actual,field))return false;
+        if(!proof.charge())return false;if(!field.empty()&&!require(&op,op.getOperand(0),{{actual,field}}))return false;
       }
     }
     // Propagate entry requirements through actual call/first-write equations,
@@ -198,9 +267,9 @@ struct StoredCalls {
     for(size_t cursor=0;cursor<work.size();++cursor){
       if(!proof.charge())return false;const auto [id,need]=work[cursor];
       for(auto *call:callers[id]){
-        if(!proof.charge())return false;auto receiver=argument(call,std::get<0>(need));
+        if(!proof.charge())return false;auto receiver=argument(call,need.first);
         if(!receiver)return proof.reject("stored call demand lost its actual operand");
-        if(!require(call,receiver,std::get<1>(need),std::get<2>(need)))return false;
+        if(!require(call,receiver,need.second))return false;
       }
     }
     bool changed=true;while(changed){
@@ -218,9 +287,9 @@ struct StoredCalls {
       for(const auto &target:targets){
         if(!proof.charge())return false;if(incomplete.count(target))pending.insert(call);
         for(const auto &need:needs[target]){
-          if(!proof.charge())return false;auto receiver=argument(call,std::get<0>(need));
+          if(!proof.charge())return false;auto receiver=argument(call,need.first);
           if(!receiver)return proof.reject("stored call source lost its actual operand");
-          const auto selected=proveMemoryFirstWrites(proof,call,receiver,std::get<1>(need),std::get<2>(need),writes,origins,sources);
+          const auto selected=select(call,receiver,need.second);
           if(selected.status==MemorySelection::Status::Invalid)return false;
           if(selected.status!=MemorySelection::Status::Proven){pending.insert(call);continue;}
           for(const auto &source:selected.sources){
@@ -248,7 +317,17 @@ bool proveArrayReadSources(ModuleProof &proof){
     const auto *receiver=valueDomain(proof,op.getOperand(0).getType());if(!receiver)return false;
     for(const auto &type:receiver->alternatives){if(!proof.charge())return false;span|=string(*proof.catalog.at(type),"kind")=="readSpan";}
     if(!span&&proof.provedArrayReads.count(&op))continue;
-    const auto selected=sources.arrayRead(sources.root(id),&op);
+    MemorySelection selected;selected.status=MemorySelection::Status::Proven;selected.staticBounds=true;
+    const auto entries=sources.entries(id);if(!sources.good())return proof.reject(sources.error());
+    if(entries.empty())selected.status=MemorySelection::Status::Pending;
+    for(const auto frame:entries){
+      if(!proof.charge())return false;auto current=sources.arrayRead(frame,&op);
+      if(current.status==MemorySelection::Status::Invalid)return proof.reject(sources.error());
+      if(current.status!=MemorySelection::Status::Proven){selected.status=MemorySelection::Status::Pending;continue;}
+      selected.staticBounds&=current.staticBounds;
+      for(const auto &version:current.versions){if(!proof.charge(1+version.size()/64))return false;selected.versions.insert(version);}
+      for(auto &source:current.sources){if(!proof.charge())return false;selected.sources.push_back(std::move(source));}
+    }
     if(selected.status==MemorySelection::Status::Invalid)return proof.reject(sources.error());
     if(selected.status!=MemorySelection::Status::Proven){
       // Optional precision for ordinary reads must not erase independently

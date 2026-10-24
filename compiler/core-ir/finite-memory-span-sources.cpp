@@ -6,18 +6,30 @@
 
 namespace tsfg::finite {
 bool MemorySources::path(Id frame,Id query,MemoryCallPath &destination){
+  std::set<Id> ancestors;std::vector<Id> before,after;
+  for(auto current=frame;current!=MemoryFrames::none;current=frames.parent(current)){
+    if(!proof.charge()){valid=false;return false;}ancestors.insert(current);
+  }
+  auto common=query;
+  while(common!=MemoryFrames::none&&!ancestors.count(common)){
+    if(!proof.charge()){valid=false;return false;}before.push_back(common);common=frames.parent(common);
+  }
+  if(common==MemoryFrames::none)return false;
+  for(auto current=frame;current!=common;current=frames.parent(current)){
+    if(!proof.charge()){valid=false;return false;}after.push_back(current);
+  }
   MemoryCallPath result;
-  for(auto current=frame;current!=query;current=frames.parent(current)){
-    if(!proof.charge()){valid=false;return false;}
-    if(current==MemoryFrames::none||!frameFunctions.count(current)||!frames.exact(current))return false;
+  const auto append=[&](Id current,bool incoming){
+    if(!proof.charge()){valid=false;return false;}if(!frameFunctions.count(current)||!frames.exact(current))return false;
     const auto site=frames.site(current);if(site>=operations.size())return false;
     auto *call=operations[site];const auto &function=frameFunctions.at(current);
     const auto selected=proof.selectedCallees.find(call);
     if(selected==proof.selectedCallees.end()||!selected->second.count(function)||!proof.mayReach(call->getBlock()))return false;
-    if(!proof.charge(1+function.size()/64)){valid=false;return false;}
-    result.push_back({call,function});
-  }
-  std::reverse(result.begin(),result.end());destination=std::move(result);return true;
+    if(!proof.charge(1+function.size()/64)){valid=false;return false;}result.push_back({call,function,incoming});return true;
+  };
+  for(const auto current:before)if(!append(current,true))return false;
+  for(auto it=after.rbegin();it!=after.rend();++it)if(!append(*it,false))return false;
+  destination=std::move(result);return true;
 }
 bool MemorySources::slice(MemoryFrames::Origin source,Id query,StoredSpanSlice &destination){
   if(!proof.charge()){valid=false;return false;}source=frames.resolve(source);
@@ -35,8 +47,12 @@ MemorySources::Id MemorySources::replay(Id base,const StoredSpanSlice &source){
     if(current==MemoryFrames::none||!frameFunctions.count(current)||!step.call)return MemoryFrames::none;
     const auto selected=proof.selectedCallees.find(step.call);
     if(selected==proof.selectedCallees.end()||!selected->second.count(step.function)||
-        attr(step.call->getParentOp(),"tsfg_core.function_id")!=frameFunctions.at(current)||!proof.mayReach(step.call->getBlock()))return MemoryFrames::none;
-    current=enter(current,step.call,step.function);
+        (!step.incoming&&attr(step.call->getParentOp(),"tsfg_core.function_id")!=frameFunctions.at(current))||!proof.mayReach(step.call->getBlock()))return MemoryFrames::none;
+    if(step.incoming){
+      if(!frames.exact(current)||frames.site(current)>=operations.size()||operations[frames.site(current)]!=step.call||
+          frameFunctions.at(current)!=step.function)return MemoryFrames::none;
+      current=frames.parent(current);
+    }else current=enter(current,step.call,step.function);
   }
   if(current==MemoryFrames::none||!frameFunctions.count(current)||!values.count(source.descriptor))return MemoryFrames::none;
   auto descriptor=source.descriptor;auto *op=descriptor.getDefiningOp();
@@ -87,6 +103,7 @@ MemorySelection MemorySources::spanRead(Id query,mlir::Operation *read,const std
         pending=true;continue;
       }
       for(const auto &source:found->second){
+        if(!applies(origin.frame,source.entry))continue;
         if(!proof.charge()){valid=false;break;}bool supplied=false;std::set<std::string> tags;
         for(auto input:source.values){
           if(!proof.charge()){valid=false;break;}
@@ -139,6 +156,8 @@ MemorySelection MemorySources::spanRead(Id query,mlir::Operation *read,const std
       if(owner.frame!=query&&(!created||created->getName().getStringRef()!="tsfg_core.domain.array_create"||
           !frames.unique(owner)||repeats(created))){pending=true;continue;}
       MemoryCallPath activation;if(!path(owner.frame,query,activation)){pending=true;continue;}
+      const auto parameters=rebase(owner,query);if(!good())break;
+      if(!parameters.empty())input=parameters.front();
       const auto append=[&](const ArrayCellEvidence &selected){
         if(!selected.complete){pending=true;return true;}staticBounds&=selected.staticBounds;
         for(const auto &cell:selected.cells){
