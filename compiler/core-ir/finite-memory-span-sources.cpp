@@ -106,7 +106,8 @@ MemorySelection MemorySources::spanRead(Id query,mlir::Operation *read,const std
     }
     if(name!="tsfg_core.domain.read_span"||!frames.unique(origin)||repeats(op)){pending=true;continue;}
     std::set<uint32_t> starts,counts;
-    if(!indices(origin.frame,op->getOperand(1),starts)||!indices(origin.frame,op->getOperand(2),counts)){pending=true;continue;}
+    const bool knownStart=indices(origin.frame,op->getOperand(1),starts);if(!good())break;
+    const bool knownCount=indices(origin.frame,op->getOperand(2),counts);if(!good())break;
     std::optional<uint32_t> createdLength;
     const auto normalize=[&](mlir::Value input){
       while(auto *copy=input.getDefiningOp()){
@@ -116,10 +117,7 @@ MemorySelection MemorySources::spanRead(Id query,mlir::Operation *read,const std
       }
       return input;
     };
-    if(!proveArrayLength(proof,op,op->getOperand(0),normalize,createdLength)){valid=false;break;}
-    // An impossible creation cannot supply a productive returned descriptor.
-    // Unknown creation ranges retain their separate successful-range proof.
-    if(!createdLength){pending=true;continue;}
+    if(knownStart&&knownCount&&!proveArrayLength(proof,op,op->getOperand(0),normalize,createdLength)){valid=false;break;}
     // Normalize the original owner through real formal/phi/alias bindings.
     // It remains an origin cursor when foreign, never a caller SSA input.
     std::vector<MemoryFrames::Origin> owners{{values.at(op->getOperand(0)),origin.frame}};
@@ -141,18 +139,37 @@ MemorySelection MemorySources::spanRead(Id query,mlir::Operation *read,const std
       if(owner.frame!=query&&(!created||created->getName().getStringRef()!="tsfg_core.domain.array_create"||
           !frames.unique(owner)||repeats(created))){pending=true;continue;}
       MemoryCallPath activation;if(!path(owner.frame,query,activation)){pending=true;continue;}
+      const auto append=[&](const ArrayCellEvidence &selected){
+        if(!selected.complete){pending=true;return true;}staticBounds&=selected.staticBounds;
+        for(const auto &cell:selected.cells){
+          if(!proof.charge(1+cell.version.size()/64)){valid=false;return false;}
+          auto source=project(owner.frame,cell.value,cell.version,query,true);
+          if(!good()){valid=false;return false;}pending|=source.pending;
+          result.versions.insert(cell.version);result.sources.push_back(std::move(source));productive=true;
+        }
+        return true;
+      };
+      const bool exactRange=knownStart&&knownCount&&createdLength.has_value();
+      if(!exactRange){
+        // Successful creation and observation retain their runtime checks.
+        // Their normal result is a subset of these independently selected
+        // current backing cells, not a statically valid slice or index.
+        // A foreign allocation cursor cannot stand for a caller instance.
+        if(owner.frame!=query){pending=true;continue;}
+        std::optional<uint32_t> currentLength;
+        if(!proveArrayLength(proof,read,input,normalize,currentLength)){valid=false;break;}
+        if(!currentLength){pending=true;continue;}
+        ArrayCellEvidence selected;
+        if(!proveSpanSliceSources(proof,read,input,0,*currentLength,nullptr,activation,selected)){valid=false;break;}
+        staticBounds=false;if(!append(selected))break;
+        continue;
+      }
       for(const auto start:starts){if(!valid)break;for(const auto count:counts){
         if(!proof.charge()){valid=false;break;}
         if(start>*createdLength||count>*createdLength-start){staticBounds=false;continue;}
         ArrayCellEvidence selected;
         if(!proveSpanSliceSources(proof,read,input,start,count,selectedIndices,activation,selected)){valid=false;break;}
-        if(!selected.complete){pending=true;continue;}staticBounds&=selected.staticBounds;
-        for(const auto &cell:selected.cells){
-          if(!proof.charge(1+cell.version.size()/64)){valid=false;break;}
-          auto source=project(owner.frame,cell.value,cell.version,query,true);
-          if(!good()){valid=false;break;}pending|=source.pending;
-          result.versions.insert(cell.version);result.sources.push_back(std::move(source));productive=true;
-        }
+        if(!append(selected))break;
       }}
     }
   }
