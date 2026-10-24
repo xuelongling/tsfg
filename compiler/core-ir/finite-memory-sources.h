@@ -30,6 +30,7 @@ private:
   std::map<mlir::Block *,bool> repeating;
   bool valid=true;
   bool repeats(mlir::Operation *op);
+  bool incoming(MemoryFrames::Origin source,std::vector<MemoryFrames::Origin> &result);
   bool literalIndex(Id frame,mlir::Value value,uint32_t &index);
   bool retainedSpan(MemoryFrames::Origin source,Id query,MemoryOrigin &result);
   mlir::Operation *capture(Id frame,Id query);

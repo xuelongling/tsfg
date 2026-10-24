@@ -73,6 +73,32 @@ mlir::Operation *MemorySources::capture(Id frame,Id query){
   }
   return nullptr;
 }
+bool MemorySources::incoming(MemoryFrames::Origin source,std::vector<MemoryFrames::Origin> &result){
+  // Phi authority is an actual edge occurrence and operand, never the block
+  // argument's carrier. Two arms targeting one block keep both operands.
+  if(source.value>=sources.size())return false;
+  const auto argument=llvm::dyn_cast<mlir::BlockArgument>(sources[source.value]);
+  if(!argument)return false;auto *block=argument.getOwner();
+  std::vector<MemoryFrames::Origin> selected;std::set<mlir::Operation *> seen;
+  for(auto *parent:block->getPredecessors()){
+    if(!proof.charge()){valid=false;return false;}auto *term=parent->getTerminator();
+    if(!seen.insert(term).second)continue;
+    for(unsigned edge=0;edge<term->getNumSuccessors();++edge){
+      if(!proof.charge()){valid=false;return false;}
+      if(term->getSuccessor(edge)!=block||!proof.mayTraverse(term,edge))continue;
+      mlir::ValueRange operands;
+      if(auto branch=llvm::dyn_cast<mlir::cf::BranchOp>(term))operands=branch.getDestOperands();
+      else if(auto branch=llvm::dyn_cast<mlir::cf::CondBranchOp>(term))
+        operands=edge==0?branch.getTrueDestOperands():branch.getFalseDestOperands();
+      else return false;
+      if(argument.getArgNumber()>=operands.size())return false;
+      const auto value=operands[argument.getArgNumber()];
+      if(!proof.charge()||!values.count(value)){valid=false;return false;}
+      selected.push_back({values.at(value),source.frame});
+    }
+  }
+  if(selected.empty())return false;result=std::move(selected);return true;
+}
 bool MemorySources::retainedSpan(MemoryFrames::Origin source,Id query,MemoryOrigin &result){
   struct Item {MemoryFrames::Origin origin;std::string element;};
   std::vector<Item> work{{source,{}}};std::set<std::tuple<Id,Id,std::string>> seen;
@@ -82,12 +108,17 @@ bool MemorySources::retainedSpan(MemoryFrames::Origin source,Id query,MemoryOrig
     if(!frames.error().empty()){valid=false;return false;}
     if(origin.frame==MemoryFrames::none||origin.value>=sources.size())return false;
     if(!seen.emplace(origin.value,origin.frame,item.element).second)continue;
-    auto value=sources[origin.value];auto *op=value.getDefiningOp();if(!op)return false;
-    const auto name=op->getName().getStringRef();
+    auto value=sources[origin.value];auto *op=value.getDefiningOp();
     const auto add=[&](mlir::Value next,Id frame,const std::string &element){
-      if(!proof.charge()||!values.count(next)){valid=false;return;}
+      if(!proof.charge(1+element.size()/64)||!values.count(next)){valid=false;return;}
       work.push_back({{values.at(next),frame},element});
     };
+    if(!op){
+      std::vector<MemoryFrames::Origin> inputs;if(!incoming(origin,inputs))return false;
+      for(const auto &input:inputs)add(sources[input.value],input.frame,item.element);
+      continue;
+    }
+    const auto name=op->getName().getStringRef();
     if(name=="tsfg_core.domain.copy"||name=="tsfg_core.domain.view"||name=="tsfg_core.domain.refine"){
       add(op->getOperand(0),origin.frame,item.element);continue;
     }
@@ -154,7 +185,13 @@ MemoryOrigin MemorySources::project(Id frame,mlir::Value value,const std::string
       }
       continue;
     }
-    if(!op){result.pending=true;continue;}const auto name=op->getName().getStringRef();
+    if(!op){
+      std::vector<MemoryFrames::Origin> inputs;
+      if(!incoming(origin,inputs)){result.pending=true;continue;}
+      for(const auto &input:inputs)add(sources[input.value],input.frame,item.owner);
+      continue;
+    }
+    const auto name=op->getName().getStringRef();
     if(name=="tsfg_core.domain.view"||name=="tsfg_core.domain.refine"||name=="tsfg_core.domain.copy"){
       add(op->getOperand(0),origin.frame,item.owner);continue;
     }
