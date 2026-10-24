@@ -73,7 +73,8 @@ struct Lengths {
     }
     return true;
   }
-  bool unchanged(mlir::Operation *resize){
+  bool query(mlir::Operation *point,mlir::Value receiver,const DenseLength::Term *requested,
+      std::optional<uint32_t> &length){
     DenseLength graph(proof.remaining);
     struct Task {mlir::Operation *before;mlir::Value owner;Id node;};
     std::vector<Task> tasks;std::map<std::pair<mlir::Operation *,size_t>,Id> nodes;
@@ -84,8 +85,7 @@ struct Lengths {
       const auto id=graph.node();if(id==DenseLength::none){valid=false;proof.reject(graph.error());return id;}
       nodes.emplace(key,id);tasks.push_back({before,receiver,id});return id;
     };
-    const auto requested=term(resize->getOperand(1));if(!valid)return false;
-    const auto result=at(resize,resize->getOperand(0));
+    const auto result=at(point,receiver);
     for(size_t cursor=0;cursor<tasks.size()&&valid;++cursor){
       if(!charge())return false;const auto task=tasks[cursor];auto *previous=task.before->getPrevNode();
       const auto pass=[&](mlir::Operation *point,mlir::Value receiver){const auto prior=at(point,receiver);return valid&&outcome(graph.pass(prior,task.node));};
@@ -148,11 +148,29 @@ struct Lengths {
       if(!pass(previous,task.owner))return false;
     }
     if(!valid||!outcome(graph.solve()))return false;
-    const auto unchanged=graph.unchanged(result,requested);
+    if(!requested){
+      const auto *value=graph.evidence(result);
+      if(!value||value->pending||value->alternatives.size()!=1)return false;
+      const auto &atom=*value->alternatives.begin();uint64_t size=0;
+      if(atom.rfind("#length/",0)!=0||llvm::StringRef(atom).drop_front(8).getAsInteger(10,size)||size>UINT32_MAX)return false;
+      length=uint32_t(size);return true;
+    }
+    const auto unchanged=graph.unchanged(result,*requested);
     if(!graph.error().empty()){valid=false;proof.reject(graph.error());return false;}
     return unchanged;
   }
+  bool unchanged(mlir::Operation *resize){
+    const auto requested=term(resize->getOperand(1));if(!valid)return false;
+    std::optional<uint32_t> length;return query(resize,resize->getOperand(0),&requested,length);
+  }
 };
+}
+bool proveArrayLength(ModuleProof &proof,mlir::Operation *point,mlir::Value receiver,
+    const std::function<mlir::Value(mlir::Value)> &normalize,std::optional<uint32_t> &length){
+  const std::set<mlir::Operation *> overwrites;
+  Lengths lengths{proof,normalize,overwrites};if(!lengths.collect())return false;
+  std::optional<uint32_t> result;lengths.query(point,receiver,nullptr,result);
+  if(!lengths.valid)return false;length=result;return true;
 }
 bool proveArrayNoChangeResizes(ModuleProof &proof,const std::function<mlir::Value(mlir::Value)> &normalize,
     std::set<mlir::Operation *> &nonStructural){

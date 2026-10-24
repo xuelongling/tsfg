@@ -140,8 +140,8 @@ struct ArrayMemory {
     }
     return versions.size()==declaredWrites.size()||proof.reject("unbound Array memory version");
   }
-  struct Selection {std::set<std::string> versions;bool proven=false,bounds=false;};
-  Selection query(mlir::Operation *read) {
+  struct Selection {std::set<std::string> versions;bool proven=false,bounds=false,foreign=false;};
+  Selection query(mlir::Operation *read,mlir::Value receiver,Index selected) {
     PayloadFlow graph(proof.remaining,PayloadFlow::AtomDomain::MemoryVersion);
     const auto outcome=[&](bool result){if(!result){valid=false;proof.reject(graph.error());}return result;};
     const auto seed=[&](auto id,const std::string &value){return outcome(graph.seed(id,value));};
@@ -149,24 +149,24 @@ struct ArrayMemory {
     const auto connect=[&](PayloadFlow::Edge edge){return outcome(graph.connect(std::move(edge)));};
     using Id=PayloadFlow::Id;
     const std::string input="#incoming-array-memory";
-    struct Task {mlir::Operation *before;mlir::Value owner;Index index;Id node;size_t scope;};
+    struct Task {mlir::Operation *before;mlir::Value owner;Index index;Id node;size_t scope;bool foreign;};
     std::vector<std::set<size_t>> scopes(1);
     std::map<std::tuple<std::string,std::vector<size_t>,std::string>,std::pair<size_t,Id>> summaries;
-    std::vector<Task> tasks;std::map<std::tuple<mlir::Operation *,size_t,std::string,size_t>,Id> nodes;
+    std::vector<Task> tasks;std::map<std::tuple<mlir::Operation *,size_t,std::string,size_t,bool>,Id> nodes;
     const auto indexKey=[&](Index selected){return selected.constant?
       "#constant/"+std::to_string(*selected.constant):"#ssa/"+std::to_string(identity(selected.value));};
-    const auto at=[&](mlir::Operation *before,mlir::Value owner,Index selected,size_t scope) {
+    const auto at=[&](mlir::Operation *before,mlir::Value owner,Index selected,size_t scope,bool foreign=false) {
       owner=strip(owner);const auto key=std::make_tuple(before,identity(owner),selected.constant?
-        "#constant/"+std::to_string(*selected.constant):"#ssa/"+std::to_string(identity(selected.value)),scope);
+        "#constant/"+std::to_string(*selected.constant):"#ssa/"+std::to_string(identity(selected.value)),scope,foreign);
       auto found=nodes.find(key);if(found!=nodes.end())return found->second;
       const auto node=graph.node();if(node==PayloadFlow::none){valid=false;proof.reject(graph.error());return node;}
-      nodes.emplace(key,node);tasks.push_back({before,owner,selected,node,scope});return node;
+      nodes.emplace(key,node);tasks.push_back({before,owner,selected,node,scope,foreign});return node;
     };
     const auto sameOwner=[&](const Task &task,mlir::Value receiver) {
       const auto actual=identity(receiver),owner=identity(task.owner);
       return actual==owner||(task.scope&&scopes[task.scope].count(owner)&&scopes[task.scope].count(actual));
     };
-    auto owner=strip(read->getOperand(0));auto selected=index(read->getOperand(1));
+    auto owner=strip(receiver);
     if(!valid)return {};
     while(auto *span=owner.getDefiningOp()) {
       if(span->getName().getStringRef()!="tsfg_core.domain.read_span")break;
@@ -178,7 +178,10 @@ struct ArrayMemory {
     const auto result=at(read,owner,selected,0);
     for(size_t cursor=0;cursor<tasks.size()&&valid;++cursor) {
       if(!charge())return {};const auto task=tasks[cursor];auto *previous=task.before->getPrevNode();
-      const auto pass=[&](mlir::Operation *point,mlir::Value receiver,Index slot){const auto prior=at(point,receiver,slot,task.scope);return valid&&connect({prior,task.node});};
+      const auto pass=[&](mlir::Operation *point,mlir::Value receiver,Index slot){const auto prior=at(point,receiver,slot,task.scope,task.foreign);return valid&&connect({prior,task.node});};
+      // Lexical version identity is sufficient for claims, but not retention:
+      // the same SSA in a recursive activation is a different stored source.
+      const auto version=[&](const std::string &id){return seed(task.node,task.foreign?"#foreign-array-version/"+id:id);};
       if(!previous) {
         auto *block=task.before->getBlock();bool predecessor=false;
         for(auto *parent:block->getPredecessors()) {
@@ -224,7 +227,7 @@ struct ArrayMemory {
               }
             }
             if(!mapped){if(!unknown(task.node))return {};continue;}
-            const auto origin=at(call,call->getOperand(owner.getArgNumber()),slot,0);
+            const auto origin=at(call,call->getOperand(owner.getArgNumber()),slot,0,true);
             if(!valid||!connect({origin,task.node}))return {};
           }
         }continue;
@@ -234,9 +237,9 @@ struct ArrayMemory {
         const auto &values=initial.at(previous);
         if(task.index.constant) {
           if(*task.index.constant>=values.size()){if(!seed(task.node,"#missing"))return {};}
-          else if(!seed(task.node,values[*task.index.constant]))return {};
+          else if(!version(values[*task.index.constant]))return {};
         }else {
-          for(const auto &id:values)if(!charge()||!seed(task.node,id))return {};
+          for(const auto &id:values)if(!charge()||!version(id))return {};
           if(!seed(task.node,"#unchecked"))return {};
         }continue;
       }
@@ -248,7 +251,7 @@ struct ArrayMemory {
         }
         const auto slot=index(previous->getOperand(1));
         if(name=="tsfg_core.domain.array_store") {
-          if(same(slot,task.index)){if(!seed(task.node,stores.at(previous)))return {};}
+          if(same(slot,task.index)){if(!version(stores.at(previous)))return {};}
           else if(slot.constant&&task.index.constant){if(!pass(previous,task.owner,task.index))return {};}
           else if(!unknown(task.node))return {};
         }else if(slot.constant&&task.index.constant&&*task.index.constant<*slot.constant) {
@@ -287,13 +290,13 @@ struct ArrayMemory {
                 if(!charge())return {};
                 if(!proof.mayReach(&block))continue;
                 if(auto returned=llvm::dyn_cast<mlir::func::ReturnOp>(block.getTerminator())) {
-                  const auto origin=at(returned,formal,slot,scope);
+                  const auto origin=at(returned,formal,slot,scope,true);
                   if(!valid||!connect({origin,summary}))return {};
                 }
               }
               found=summaries.find(key);
             }
-            const auto summary=found->second.second,prior=at(previous,task.owner,task.index,task.scope);
+            const auto summary=found->second.second,prior=at(previous,task.owner,task.index,task.scope,task.foreign);
             if(!valid||!connect({summary,task.node,PayloadFlow::none,{},input,false})||
                !connect({prior,task.node,summary,input}))return {};
           }
@@ -307,8 +310,29 @@ struct ArrayMemory {
     const auto *evidence=graph.evidence(result);Selection out;
     if(!evidence||evidence->pending||evidence->alternatives.empty()||evidence->alternatives.count("#missing")||evidence->alternatives.count(input))return out;
     out.bounds=!evidence->alternatives.count("#unchecked");
-    for(const auto &id:evidence->alternatives)if(id!="#unchecked")out.versions.insert(id);
+    for(const auto &id:evidence->alternatives)if(id!="#unchecked"){
+      if(!charge())return {};
+      const llvm::StringRef atom(id),prefix("#foreign-array-version/");
+      if(atom.starts_with(prefix)){out.foreign=true;out.versions.insert(atom.drop_front(prefix.size()).str());}
+      else out.versions.insert(id);
+    }
     out.proven=!out.versions.empty();return out;
+  }
+  Selection query(mlir::Operation *read){return query(read,read->getOperand(0),index(read->getOperand(1)));}
+  bool extent(mlir::Operation *point,mlir::Value receiver,ArrayExtent &destination){
+    if(!directory()||!collect())return false;
+    std::optional<uint32_t> length;
+    if(!proveArrayLength(proof,point,receiver,[&](mlir::Value value){return strip(value);},length)||!valid)return false;
+    ArrayExtent result;if(!length){destination=std::move(result);return true;}
+    for(uint64_t i=0;i<*length;++i){
+      if(!charge())return false;const auto selected=query(point,receiver,Index{{},uint32_t(i)});
+      if(!valid)return false;if(!selected.proven||!selected.bounds||selected.foreign){destination=ArrayExtent{};return true;}
+      for(const auto &version:selected.versions){
+        if(!charge()||!proof.charge(version.size()/64+1))return false;
+        result.cells.push_back({version,versions.at(version).value});
+      }
+    }
+    result.proven=true;destination=std::move(result);return true;
   }
   bool reads() {
     std::set<std::string> seen;
@@ -375,5 +399,8 @@ struct ArrayMemory {
 };
 }
 bool verifyArrayMemory(ModuleProof &proof,bool compareClaims){return ArrayMemory{proof,compareClaims}.run();}
+bool proveArrayExtent(ModuleProof &proof,mlir::Operation *point,mlir::Value receiver,ArrayExtent &extent){
+  return ArrayMemory{proof,false}.extent(point,receiver,extent);
+}
 bool verifyArrayOverwriteEffects(ModuleProof &proof){return ArrayMemory{proof,false}.overwrites();}
 } // namespace tsfg::finite

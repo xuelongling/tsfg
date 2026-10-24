@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: MIT
 #include "finite-memory-lifetime.h"
 #include "finite-memory-sources.h"
+#include "finite-array-memory.h"
 
 namespace tsfg::finite {
 namespace {
@@ -46,9 +47,39 @@ class StoredReturns {
       if(!seen.emplace(item.receiver.getAsOpaquePointer(),item.actual).second)continue;
       const auto found=proof.catalog.find(item.actual);if(found==proof.catalog.end())return false;
       const auto kind=string(*found->second,"kind");
-      // Direct view return has its own SSA/parameter-relative consumer. Array
-      // slots need the separate complete escaping-extent proof, not fields.
+      // Direct view return has its own SSA/parameter-relative consumer.
       if(kind=="readSpan")continue;relevant=true;
+      if(kind=="array"){
+        ArrayExtent extent;if(!proveArrayExtent(proof,point,item.receiver,extent))return false;
+        if(!extent.proven){pending=true;continue;}
+        auto fn=point->getParentOfType<mlir::func::FuncOp>();
+        const auto name=fn->getAttrOfType<mlir::StringAttr>("tsfg_core.function_id");
+        const auto frame=sources.root(name?name.getValue().str():std::string());
+        for(const auto &cell:extent.cells){
+          if(!proof.charge())return false;
+          // Version selection may find a callee write. Its lexical SSA is
+          // not in this return activation; only a qualified capture can
+          // transport it. Keep that separate source obligation pending.
+          auto input=cell.value;
+          if(input.getParentBlock()->getParentOp()!=fn.getOperation()){pending=true;continue;}
+          const auto *domain=valueDomain(proof,cell.value.getType());if(!domain)return false;
+          bool span=false,nested=false;
+          for(const auto &id:domain->alternatives){
+            if(!proof.charge())return false;
+            if(string(*proof.catalog.at(id),"kind")=="readSpan")span=true;
+            else if(borrowed(id))nested=true;
+          }
+          if(nested)add(cell.value);
+          if(span){
+            const auto projected=sources.project(frame,cell.value,cell.version,frame,true);
+            if(!sources.good())return proof.reject(sources.error());
+            if(projected.pending){pending=true;continue;}
+            StoredFieldSource value;if(!storeFieldSource(proof,projected,value))return false;
+            result.push_back(std::move(value));
+          }
+        }
+        continue;
+      }
       if(kind!="reference"&&kind!="value"){pending=true;continue;}
       std::set<std::string> bases;
       for(auto actual=item.actual;!actual.empty();actual=string(*proof.catalog.at(actual),"base")){
