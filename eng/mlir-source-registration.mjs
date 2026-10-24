@@ -4,7 +4,7 @@ import { readFile } from "node:fs/promises";
 import { IntakeLedgerError } from "./intake-ledger.mjs";
 
 const registrations = {
-  build: ["mlir-source-build-legal.lock.json", "sha256:8dd21ea165bf1d1b0f778c4023dc0900838413599a5f216d607ce28192ab08be"],
+  build: ["mlir-source-build-legal.lock.json", "sha256:e3a212bd09442fc8fa8bc7abef223365ccc502fbc41562256e5e59e34e47e9dd"],
   file: ["mlir-source-legal.lock.json", "sha256:30024bdeb99966ec45d01961b675bcc5e8f8fa94c7cab3208a205b68a325f04c"]
 };
 

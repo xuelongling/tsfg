@@ -29,14 +29,17 @@ export function selectMlirPrecompilePaths({ files, sdk = null, productRoot }) {
   return selected;
 }
 
-/** Select only declared physical SDK configuration members; this grants no execution authority.
+/** Classify only selected source inputs for preconfigure legal verification.
+ * Direct sources include configure-file templates; SDK kinds and physical membership stay fixed.
+ * This does not register another source or grant execution authority.
  * @param {{sourceEntries:Array<{repositoryRelativePath:string,blob:string,sha256:string}>,sdk?:object|null,productRoot?:string}} input
  */
 export function selectMlirConfigurationPaths({ sourceEntries, sdk = null, productRoot }) {
   const proof = sdk ? inspectMlirSdkProvenance(sdk, productRoot) : null;
   const entries = proof ? proof.sourceEntries : sourceEntries;
   const candidates = entries.filter(entry => /^(llvm|mlir|cmake)\//.test(entry.repositoryRelativePath) &&
-    /(?:^|\/)CMakeLists\.txt$|\.cmake$|\.cmake\.in$/.test(entry.repositoryRelativePath) &&
+    (/(?:^|\/)CMakeLists\.txt$|\.cmake$|\.cmake\.in$/.test(entry.repositoryRelativePath) ||
+      (!proof && /\.in$|(?:^|\/)module\.modulemap\.build$/.test(entry.repositoryRelativePath))) &&
     !/(?:^|\/)(?:test|tests|examples|docs|benchmark|benchmarks)\//.test(entry.repositoryRelativePath));
   if (!proof) return candidates.map(entry => entry.repositoryRelativePath);
   const members = new Map(proof.files.map(file => [file.path, file.sha256]));

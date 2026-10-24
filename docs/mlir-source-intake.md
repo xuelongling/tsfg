@@ -142,6 +142,28 @@ The resulting6952-entry registration leaves exactly the copied-table path
 below unresolved in the SDK source-membership join, with no raw-hash mismatch.
 The SDK reader rejects it before reading the first external SDK body.
 
+The M14 direct-source static configure exposed four mandatory templates:
+`llvm/include/module.modulemap.build`,
+`llvm/tools/llvm-config/BuildVariables.inc.in`, and the two
+`llvm/utils/llvm-lit/llvm-lit.in` and `llvm-lit.cmd.in` wrappers. The finite
+supplement appends their exact four objects to make6956 entries, preserving all
+prior6952 objects in order and all five original legal materials. Their fixed
+base and source blobs agree; ordinary physical bytes match their strict UTF-8
+Git objects without normalization. BuildVariables retains its original Apache
+SPDX header. The other three have no local SPDX and use the explicit LLVM
+project grant, which includes configuration files, after checking the seven
+relevant ancestors and complete original texts for both stated third-party
+exception mechanisms. No SPDX is invented or file-specific exception expanded.
+
+Direct-source preconfigure classification includes selected `.in` templates and
+`module.modulemap.build` as well as the existing CMake inputs. It does not
+discover or register another path: every selected configuration input still
+passes the fixed registration, physical-byte and notice checks before CMake.
+Existing test/example/documentation exclusions and SDK configuration kinds and
+physical membership remain unchanged. Registration and template generation
+grant no permission to execute llvm-lit or prove a configured/link closure;
+actual CMake/Ninja dependencies must still reconcile before a target build.
+
 One mandatory file remains unregistered:
 `llvm/lib/Target/X86/MCTargetDesc/X86InstComments.cpp`. Although its header has
 the standard LLVM SPDX declaration, its TernlogFunctions table is attributed
