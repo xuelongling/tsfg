@@ -7,7 +7,7 @@ import {createSpanPlanes} from './array-span-planes.mjs';
 export function createSpanStorage(hir,tools,charge,authority,resolveContext=undefined){
   const type=arrayAnalysisTypes(hir),summaries=new Map();
   const key=tools.pathKey;
-  const {unknown,choice,leaves,inherit,aggregate,copy,read,write,snapshot,cloneSnapshot,restore,index,array,truncate,elements,extent}=createSpanPlanes(type,charge,authority);
+  const {unknown,choice,leaves,inherit,aggregate,copy,inputField,read,write,snapshot,cloneSnapshot,restore,index,array,truncate,elements,extent}=createSpanPlanes(type,charge,authority);
   const parents=new Map(),contains=new Set(),work=[],typeIndices=new Map();
   for(const [index,row]of hir.types.entries()){
     typeIndices.set(row.id,index);
@@ -71,9 +71,16 @@ export function createSpanStorage(hir,tools,charge,authority,resolveContext=unde
     };
     const changed=(object,member)=>{charge();mutations.push([object,member]);};
     const store=(receiver,property,payload)=>{
+      // A symbolic nested receiver is only an entry demand, not a mutable
+      // instance plane. Until writeback is proved, preserve the dependency.
+      for(const row of leaves(receiver))if(row.kind==='inputField'){
+        charge();const dependency={kind:'dependency',reason:'nested-writeback',target:fn.id,path:[],range:fn.range,sourcePath:fn.sourcePath};
+        dependencies.push(dependency);requirements.push(dependency);
+      }
       // Distinct formal references have no noalias privilege. An update may
       // invalidate another formal's incoming field, even before its first read.
       for(const object of leaves(receiver))if(object.kind==='aggregate'&&object.slot!==null&&
+        !(fn.construction&&object===parameters[0])&&
         (type.isArray(object.type)||type.types.get(object.type)?.kind==='reference'))
         for(const parameter of parameters)if(parameter!==object&&parameter.kind==='aggregate'&&
           (type.isArray(parameter.type)||type.types.get(parameter.type)?.kind==='reference')){
@@ -108,7 +115,7 @@ export function createSpanStorage(hir,tools,charge,authority,resolveContext=unde
         for(const member of members){charge();const payloads=[];
           for(const row of states){charge();const plane=row.planes.get(object);if(!plane)continue;
             payloads.push(plane.fields.get(member)??(object.fallback!==null&&!plane.invalidated
-              ?{kind:'inputField',index:object.fallback,property:member}:unknown));}
+              ?inputField(object.fallback,member):unknown));}
           object.fields.set(member,choice(payloads));}
         let extent;for(const row of states){charge();const plane=row.planes.get(object);if(!plane)continue;
           object.invalidated||=plane.invalidated;object.extentChanged||=plane.extentChanged;
@@ -176,7 +183,9 @@ export function createSpanStorage(hir,tools,charge,authority,resolveContext=unde
         charge();if(!value)return unknown;
         if(value.kind==='loaded')return {kind:'loaded',value:project(value.value),tokens:value.tokens};
         if(value.kind==='choice')return choice(value.values.map(project));
-        if(value.kind==='inputField')return read(original[value.index],value.property);
+        if(value.kind==='inputField'){
+          let result=original[value.index];for(const member of value.properties){charge();result=read(result,member);}return result;
+        }
         if(value.kind==='owner'){
           if(value.parameter!==undefined)return actuals[value.parameter]??unknown;
           if(value.span&&value.sources.length===1&&value.sources[0].parameter!==undefined)return actuals[value.sources[0].parameter]??unknown;
@@ -333,7 +342,7 @@ export function createSpanStorage(hir,tools,charge,authority,resolveContext=unde
             charge();const members=new Set();for(const member of prior.fields.keys()){charge();members.add(member);}
             for(const state of states){charge();for(const member of state.get(object)?.fields.keys()??[]){charge();members.add(member);}}
             for(const member of members){charge();const alternatives=[];for(const state of states){charge();const item=state.get(object);
-              alternatives.push(item?.fields.get(member)??(object.fallback!==null&&!item?.invalidated?{kind:'inputField',index:object.fallback,property:member}:unknown));}
+              alternatives.push(item?.fields.get(member)??(object.fallback!==null&&!item?.invalidated?inputField(object.fallback,member):unknown));}
               object.fields.set(member,choice(alternatives));}
             object.invalidated=states.some(state=>{charge();return state.get(object)?.invalidated??true;});
           }

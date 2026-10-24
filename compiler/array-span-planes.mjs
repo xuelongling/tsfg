@@ -2,7 +2,7 @@
 // Private stored-value graph: shared reference planes, value copies and
 // transactional snapshots. Source traversal and call selection remain outside.
 /** @typedef {{kind:'unknown'}|{kind:'owner',owner:any,span:boolean,sources:any[],type?:string}|StoredPlane|
- * {kind:'choice',values:StoredValue[]}|{kind:'inputField',index:number,property:string}|
+ * {kind:'choice',values:StoredValue[]}|{kind:'inputField',index:number,properties:(string|number)[]}|
  * {kind:'loaded',value:StoredValue,tokens:any[]}} StoredValue */
 /** @typedef {{kind:'aggregate',id:number,type:string,slot:number|null,fallback:number|null,
  * invalidated:boolean,extent:number|null,extentChanged:boolean,extentTokens:any[],fields:Map<string,StoredValue>,owner?:any}} StoredPlane */
@@ -52,16 +52,21 @@ export function createSpanPlanes(type,charge,authority){
       for(const pair of view.fields){charge();if(pair.target===property)return pair.source;}
     return null;
   };
+  const inputField=(index,property,before=[])=>{
+    const properties=[];for(const member of before){charge();properties.push(member);}charge();properties.push(property);
+    return {kind:'inputField',index,properties};
+  };
   const read=(receiver,property)=>transform(receiver,object=>{
+    if(object.kind==='inputField')return property===null?unknown:inputField(object.index,property,object.properties);
     charge();if(object.kind!=='aggregate'||property===null)return unknown;const member=field(object,property);if(!member)return unknown;
     if(object.fields.has(member))return object.fields.get(member);
-    return object.fallback===null||object.invalidated?unknown:{kind:'inputField',index:object.fallback,property:member};
+    return object.fallback===null||object.invalidated?unknown:inputField(object.fallback,member);
   });
   const write=(receiver,property,payload,changed)=>{
     const objects=leaves(receiver);
     for(const object of objects){charge();if(object.kind!=='aggregate')continue;const member=field(object,property);if(!member)continue;
       const previous=object.fields.get(member)??(object.fallback!==null&&!object.invalidated
-        ?{kind:'inputField',index:object.fallback,property:member}:unknown);
+        ?inputField(object.fallback,member):unknown);
       changed(object,member);object.fields.set(member,objects.length!==1?choice([previous,payload]):payload);
       if(type.isArray(object.type)){
         const slot=Number(member.slice(5));
@@ -130,5 +135,5 @@ export function createSpanPlanes(type,charge,authority){
     for(let i=0;i<plane.extent;++i){charge();const member='slot/'+i;
       if(!plane.fields.has(member))return null;values.push(plane.fields.get(member));}return values;
   };
-  return {unknown,choice,leaves,inherit,aggregate,copy,read,write,snapshot,cloneSnapshot,restore,index,array,truncate,elements,extent};
+  return {unknown,choice,leaves,inherit,aggregate,copy,inputField,read,write,snapshot,cloneSnapshot,restore,index,array,truncate,elements,extent};
 }

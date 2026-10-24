@@ -20,7 +20,8 @@ export function deriveReadSpanPlan(hir,prepared) {
     const model=prepared.ownerModel.functions.get(fn.id),families=new Map(),results=new Map(),storedFamilies=new Map(),views=[],events=[];
     for(const dependency of model.storage?.dependencies??[]){
       charge();failure({code:'r03-d-readspan-context-pending',ruleId:'r01-span',phase:'hir',functionId:fn.id,
-        message:'Stored parameter context depends on an incomplete recursive storage summary: '+dependency.target,
+        message:dependency.reason==='nested-writeback'?'Stored parameter context has unproved nested field writeback: '+dependency.target
+          :'Stored parameter context depends on an incomplete recursive storage summary: '+dependency.target,
         primary:{sourceId:dependency.sourcePath,...dependency.range}});
     }
     for(const demand of model.storage?.demands??[]){
