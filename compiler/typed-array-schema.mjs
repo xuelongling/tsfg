@@ -15,11 +15,11 @@ check(sha256(canonical(descriptor)+'\n')===typedArrayFactsFormat.schemaHash,'sch
 export const hash = value => check(typeof value==='string'&&/^sha256:[0-9a-f]{64}$/.test(value),'identity');
 export const byteOrder = (a,b) => Buffer.compare(Buffer.from(a),Buffer.from(b));
 
-function kindKeys(value, name) {
+function kindKeys(value, name, selected) {
   const group = {arrayGenericExpression:'expressionKinds',arrayGenericTarget:'targetKinds',
     arrayGenericStatement:'statementKinds',arrayGenericType:'typeKinds'}[name];
   if(!group)return;
-  const specific=descriptor[group][value.kind];
+  const specific=selected[group][value.kind];
   check(Array.isArray(specific),'kind');
   check(specific.every(key=>Object.hasOwn(value,key)),'schema');
   const optional = name==='arrayGenericExpression'
@@ -27,17 +27,17 @@ function kindKeys(value, name) {
     : name==='arrayGenericType'&&['value','reference'].includes(value.kind)?['markerOrigin','base','methods']
     : name==='arrayGenericStatement'&&value.kind==='return'?['value']:[];
   if(name==='arrayGenericExpression')optional.push('compatibilityRoots');
-  const base=descriptor.objects[name].required;
+  const base=selected.objects[name].required;
   check(Object.keys(value).every(key=>base.includes(key)||specific.includes(key)||optional.includes(key)),'schema');
 }
 
 /** Field tables are hashed with the protocol: unknown keys cannot disappear in projection. */
-export function checkTypedArrayShape(value, name='arrayGenericPackage', nullable=false) {
+export function checkTypedArrayShape(value, name='arrayGenericPackage', nullable=false, selected=descriptor) {
   if(nullable&&value===null)return;
-  if(name.startsWith('*'))return checkTypedArrayShape(value,name.slice(1),true);
+  if(name.startsWith('*'))return checkTypedArrayShape(value,name.slice(1),true,selected);
   if(name.startsWith('[]')) {
     check(Array.isArray(value),'schema');
-    for(const item of value)checkTypedArrayShape(item,name.slice(2));
+    for(const item of value)checkTypedArrayShape(item,name.slice(2),false,selected);
     return;
   }
   if(name==='string'){check(typeof value==='string'&&value.isWellFormed(),'schema');return;}
@@ -45,14 +45,14 @@ export function checkTypedArrayShape(value, name='arrayGenericPackage', nullable
   if(name==='int'||name==='int32') {
     check(Number.isSafeInteger(value)&&!Object.is(value,-0)&&value>=0&&(name!=='int32'||value<=2147483647),'schema');return;
   }
-  const object=descriptor.objects[name];check(object,'schema');
+  const object=selected.objects[name];check(object,'schema');
   check(value&&typeof value==='object'&&!Array.isArray(value),'schema');
   check(object.required.every(key=>Object.hasOwn(value,key))
     &&Object.keys(value).every(key=>Object.hasOwn(object.properties,key)),'schema');
-  kindKeys(value,name);
+  kindKeys(value,name,selected);
   for(const [key,child] of Object.entries(value)) {
     check(child!==null||object.required.includes(key),'schema');
-    checkTypedArrayShape(child,object.properties[key]);
+    checkTypedArrayShape(child,object.properties[key],false,selected);
   }
 }
 

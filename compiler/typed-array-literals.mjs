@@ -18,3 +18,34 @@ export function typedArrayInteger(token) {
   coefficient=trimmed+'0'.repeat(scale);
   return sign*BigInt(coefficient);
 }
+
+// Lossless decoding of one bounded original string token, never source parsing
+// or evaluation. Presence keys use the same code-unit vocabulary as literals.
+export function typedArrayStringUnits(token) {
+  check(token.length<=1048576,'limit');
+  const quote=token[0];check(['"',"'"].includes(quote)&&token.at(-1)===quote,'literal');
+  const result=[];
+  for(let index=1;index<token.length-1;index++) {
+    let character=token[index];
+    check(character!==quote&&!/[\r\n]/.test(character),'literal');
+    if(character!=='\\'){result.push(token.charCodeAt(index));continue;}
+    character=token[++index];check(index<token.length-1,'literal');
+    if(/[\r\n\u2028\u2029]/.test(character)) {
+      if(character==='\r'&&token[index+1]==='\n')index++;
+      continue;
+    }
+    if(character==='u'||character==='x') {
+      const braced=character==='u'&&token[index+1]==='{',start=index+(braced?2:1);
+      const end=braced?token.indexOf('}',start):start+(character==='u'?4:2),digits=token.slice(start,end);
+      check(end>start&&end<token.length-1&&/^[0-9a-fA-F]+$/.test(digits)
+        &&(braced?digits.length<=6:digits.length===(character==='u'?4:2)),'literal');
+      const point=Number.parseInt(digits,16);check(point<=0x10ffff,'literal');
+      const decoded=String.fromCodePoint(point);for(let n=0;n<decoded.length;n++)result.push(decoded.charCodeAt(n));
+      index=braced?end:end-1;
+    }else {
+      check(!/[1-9]/.test(character)&&(character!=='0'||!/[0-9]/.test(token[index+1])),'literal');
+      result.push((({b:'\b',f:'\f',n:'\n',r:'\r',t:'\t',v:'\v',0:'\0'})[character]??character).charCodeAt(0));
+    }
+  }
+  return result;
+}

@@ -22,7 +22,7 @@ export function typedArrayWitnesses(records,spend) {
         ||prior.sourceType===dependency.sourceType&&byteOrder(prior.targetType,dependency.targetType)<0,'compatibility-order');
       prior=dependency;dependencies.set(pair(dependency.sourceType,dependency.targetType),dependency);
     }
-    directory.set(key,{proof,dependencies});consumed.set(key,new Set());
+    directory.set(key,{proof,dependencies,missingOptionalProperties:record.missingOptionalProperties});consumed.set(key,new Set());
   }
   for(const {proof,dependencies} of directory.values())for(const dependency of dependencies.values()) {
     spend();check(directory.has(identity({...dependency,origin:proof.origin})),'compatibility-closure');
@@ -41,7 +41,7 @@ export function typedArrayWitnesses(records,spend) {
       if(complete.has(key))continue;
       const choices=validate(current.proof,(sourceType,targetType)=>{
         spend();return current.dependencies.has(pair(sourceType,targetType));
-      });
+      },current.missingOptionalProperties);
       for(const choice of choices.values()) {
         spend();const selected=pair(choice.sourceType,choice.targetType);consumed.get(key).add(selected);
         pending.push(directory.get(identity({...choice,origin:current.proof.origin})));

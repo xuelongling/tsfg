@@ -8,7 +8,7 @@ import {typedArrayInteger} from './typed-array-literals.mjs';
 import {typedArrayRelations} from './typed-array-relations.mjs';
 import {validateTypedArrayConstruction} from './typed-array-construction.mjs';
 
-export function validateTypedArrayFunctions(payload,sources,types) {
+export function validateTypedArrayFunctions(payload,sources,types,profile=undefined) {
   const functions=new Map(),all=[...payload.functions];
   for(const type of types.values())if(type.constructor)all.push(type.constructor);
   for(const fn of all) {
@@ -28,7 +28,7 @@ export function validateTypedArrayFunctions(payload,sources,types) {
       for(const key of ['annotationRange','elementAnnotationRange'])if(row[key])sourceRange(row[key],source.content,row.declarationRange);
     }
   }
-  const relation=typedArrayRelations(types,functions,payload.compatibilityWitnesses);
+  const relation=typedArrayRelations(types,functions,payload.compatibilityWitnesses,profile);
   validateTypedArrayConstruction(payload,types,sources);
   function verifyFunction(fn,initializers=[]) {
     const source=sources.get(fn.sourcePath).content,bindings=new Map([...fn.parameters,...fn.bindings].map(row=>[row.id,row]));
@@ -38,6 +38,7 @@ export function validateTypedArrayFunctions(payload,sources,types) {
     function expression(value,parent=fn.declarationRange,target=false,expected=undefined) {
       sourceRange(value.range,source,parent);check(types.has(value.type),'type');
       if(!target)check(types.has(value.flowType),'type');
+      if(profile)profile.validateExpression(value,types,source);
       if(!target&&['scalar','string','null','undefined','void'].includes(types.get(value.type).kind))
         check(value.flowType===value.type,'flow');
       if(!target)relation.expression(value,expected,{source:fn.sourcePath,...value.range});

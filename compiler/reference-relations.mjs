@@ -18,7 +18,7 @@ export function referenceMembers(state, typeId) {
 /** Validate explicit official edges; never derive assignability or a projection
  * from runtime keys, equal type IDs, matching names, field ordinals or layout.
  */
-export function verifyReferenceWitness(state, value, sourceType, targetType, anchor) {
+export function verifyReferenceWitness(state, value, sourceType, targetType, anchor, missingOptionalProperties=[]) {
   record(value, ['assignable','members','origin','sourceType','targetType']);
   check(value.assignable === true && value.sourceType === sourceType && value.targetType === targetType
     && same(value.origin, anchor), 'witness', 'missing or inconsistent official conversion witness', anchor);
@@ -41,6 +41,13 @@ export function verifyReferenceWitness(state, value, sourceType, targetType, anc
     // Names only cross-check an already explicit edge. They never create one.
     check(actual && view && actual.kind === view.kind && actual.name === view.name, 'witness');
     seen.add(projection.target); previous = projection.target;
+  }
+  // Only an explicitly selected second profile supplies these independently
+  // validated absent optional target members. They never synthesize source IDs.
+  const sourceNames=missingOptionalProperties.length?new Set([...source.values()].map(row=>row.name)):null;
+  for(const id of missingOptionalProperties) {
+    check(target.get(id)?.optional===true&&!seen.has(id)
+      &&!sourceNames.has(target.get(id).name),'witness');seen.add(id);
   }
   check(seen.size === target.size, 'witness', 'official member projection is incomplete', anchor);
 }

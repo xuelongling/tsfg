@@ -7,11 +7,11 @@ import {typedArrayRepresentation} from './typed-array-representation.mjs';
 import {typedArrayWitnesses} from './typed-array-witnesses.mjs';
 import {typedReferenceWeights} from './typed-array-type-graphs.mjs';
 
-export function typedArrayRelations(types,functions,records) {
+export function typedArrayRelations(types,functions,records,profile=undefined) {
   const state={types:new Map(),classes:new Map(),methods:new Map(),symbols:new Map()},fields=new Map();
   for(const type of types.values())for(const field of type.fields??[])fields.set(field.id,field);
   for(const type of types.values())if(type.kind==='reference') {
-    const fields=type.fields.map(field=>({id:field.id,symbol:field.id,name:field.name}));
+    const fields=type.fields.map(field=>({id:field.id,symbol:field.id,name:field.name,optional:field.propertyPresence?.optional===true}));
     const methods=(type.methods??[]).map(id=>{
       const fn=functions.get(id);check(fn&&fn.ownerType===type.id,'compatibility');
       const method={id,symbol:id,name:fn.name,overrideTarget:fn.overrideTarget??''};
@@ -27,11 +27,12 @@ export function typedArrayRelations(types,functions,records) {
   const weights=typedReferenceWeights(state.classes,spend);
   const representation=typedArrayRepresentation(types,spend);
   const witnesses=typedArrayWitnesses(records,spend);
-  function validate(proof,reference) {
+  function validate(proof,reference,missingOptionalProperties) {
     const from=proof.sourceType,to=proof.targetType;
     check(types.get(from)?.kind==='reference'&&types.get(to)?.kind==='reference','compatibility');
     spend(weights.get(from)+weights.get(to)+proof.members.length);
-    verifyReferenceWitness(state,proof,from,to,proof.origin);
+    const missing=profile?profile.validateMissing(state,proof,missingOptionalProperties,spend):undefined;
+    verifyReferenceWitness(state,proof,from,to,proof.origin,missing);
     const selected=new Map();
     function slot(from,to) {
       const choice=representation.logical(from,to,reference);check(choice!==null,'representation');

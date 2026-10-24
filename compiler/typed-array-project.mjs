@@ -5,7 +5,7 @@ import bytecode from '../contracts/bytecode.schema.json' with {type:'json'};
 import {canonical,own,sha256,functionIdentity,signatureHash} from './identity.mjs';
 export const typedArrayHirFormat=own({contractVersion:'0.16.0',schemaHash:sha256(canonical(descriptor)+'\n')});
 
-export function projectTypedArrayFacts(facts) {
+export function projectTypedArrayFacts(facts,profile=undefined) {
   const payload=facts.payload,sourceTypes=new Map(payload.types.map(row=>[row.id,row]));
   const names=new Map(),typeIds=new Map();
   function typeName(id) {
@@ -61,8 +61,9 @@ export function projectTypedArrayFacts(facts) {
     }
     for(const key of ['token','decimal','bits','codeUnits','binding','allocationSite','operator','prefix'])
       if(Object.hasOwn(value,key))result[key]=structuredClone(value[key]);
-    if(value.property)result.property=['fieldAccess','fieldTarget'].includes(value.kind)
+    if(value.property)result.property=['fieldAccess','fieldTarget',...(profile?['propertyPresenceTest']:[])].includes(value.kind)
       ?fields.get(value.property):value.property;
+    if(profile&&value.kind==='propertyPresenceTest')result.semantics='prototype-aware';
     if(value.kind==='booleanLiteral')result.value=value.token==='true';
     for(const key of ['operatorRange','annotationRange','calleeRange','nameRange'])if(value[key])result[key]={...value[key]};
     for(const key of ['receiver','index','expression','value','left','right','target'])
@@ -131,6 +132,7 @@ export function projectTypedArrayFacts(facts) {
     if(row.markerOrigin)result.markerOrigin=structuredClone(row.markerOrigin);
     if(row.fields)result.fields=row.fields.map(field=>({id:fields.get(field.id),sourceBinding:field.id,name:field.name,
       type:typeIds.get(field.type),readonly:field.readonly,origin:{...field.origin},
+      ...(profile?{propertyPresence:{...structuredClone(field.propertyPresence),declaredType:typeIds.get(field.propertyPresence.declaredType)}}:{}),
       ...(field.parameterBinding?{parameterBinding:field.parameterBinding}:{})}));
     if(row.methods)result.methods=row.methods.map(id=>functionIds.get(id));
     if(['value','reference'].includes(row.kind))result.constructor=row.constructor?functionIds.get(row.constructor.id):null;
@@ -162,11 +164,12 @@ export function projectTypedArrayFacts(facts) {
     }
     return result;
   }).sort((a,b)=>a.id<b.id?-1:a.id>b.id?1:0);
-  return {format:{...typedArrayHirFormat},inputIdentity:facts.packageId,
-    facts:{version:8,schemaHash:facts.schemaHash,requestId:facts.requestId},rootFile:payload.rootFile,
+  return {format:{...(profile?.hirFormat??typedArrayHirFormat)},inputIdentity:facts.packageId,
+    facts:{version:facts.version,schemaHash:facts.schemaHash,requestId:facts.requestId},rootFile:payload.rootFile,
     sources:payload.files.map(row=>({path:row.path,content:row.content,hash:'sha256:'+row.sha256})),
     target:structuredClone(bytecode.target),types,functions:functions.map(projectFunction),
     compatibilityWitnesses:payload.compatibilityWitnesses.map(record=>({compatibility:compatibility(record.compatibility),
+      ...(profile?{missingOptionalProperties:record.missingOptionalProperties.map(id=>fields.get(id))}:{}),
       dependencies:record.dependencies.map(pair=>({sourceType:typeIds.get(pair.sourceType),targetType:typeIds.get(pair.targetType)}))})),
     entryCompatibilityRoots:payload.entryCompatibilityRoots.map(row=>({functionId:functionIds.get(row.functionId),
       parameterBinding:row.parameterBinding,viewType:typeIds.get(row.viewType),origin:{...row.origin},
