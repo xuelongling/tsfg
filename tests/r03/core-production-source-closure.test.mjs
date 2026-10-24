@@ -38,7 +38,7 @@ const entries=await Promise.all(declaration.entries.map(async entry=>({projectId
  repositoryRelativePath:entry.path,sha256:hash(await readFile(path.join(productRoot,entry.path)))})));
 const identity={buildInputSet:{entries}};
 for(const name of coreFiles)assert.equal(entries.filter(row=>row.repositoryRelativePath===name).length,1);
-const stageFiles=[...coreFiles,'eng/mlir-python-policy.cmake','eng/mlir-compiler-launcher.mjs'];
+const stageFiles=[...coreFiles,'eng/mlir-python-policy.cmake','eng/mlir-compiler-launcher.mjs','eng/mlir-configuration-sources.cmake'];
 const omitted='compiler/core-ir/array-publication.cpp';
 async function fixture(label){return createMlirFixture('m14l-'+label+'-');}
 async function allFiles(root,prefix=''){const result=[];

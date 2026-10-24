@@ -64,6 +64,32 @@ and backend source/artifact edges before inspecting dependency bodies, including
 CMake EVAL origins. The original native role still selects X86 and creates the
 full compiler. Neither role changes common language semantics or source members.
 
+Static configuration keeps `LLVM_INCLUDE_TOOLS=ON`: that directory admits MLIR
+and the external Core project. It uses LLVM's supported per-tool build options
+to skip optional tool directories named by the selected source inventory, while
+explicitly retaining those two projects. `LLVM_INCLUDE_UTILS=OFF` skips optional
+utilities; LLVM's early `utils/TableGen` entry and MLIR's required generators
+remain. Every actual static role cache setting is checked before plan admission.
+Native and SDK configuration keep their prior behavior.
+
+These options reduce optional declarations; they do not close configuration's
+source-presence requirements. The fixed MLIR source has no generic
+`MLIR_INCLUDE_TOOLS` switch, and many libraries and MLIR tools are declared even
+when the Core target does not compile them. Their missing `SOURCES` require
+exact configuration metadata and ordinary source intake; a first-missing-file
+diagnostic is neither a complete source list nor a compiler dependency trace.
+
+The direct static factory stages the declared `mlir-configuration-sources.cmake`
+helper and injects it through `CMAKE_PROJECT_INCLUDE`. An official deferred call
+walks the configured directories and build-system targets before Generate,
+writing `configuration-sources.json` in that stage. It records each target's
+type, source/binary directories, and raw `SOURCES` and `INTERFACE_SOURCES`.
+Generator expressions, path resolution and generated status remain unknown;
+the helper reads no source bodies and changes no upstream targets. This allows
+precise source-intake work even when Generate rejects absent declarations.
+These declarations do not replace the actual Ninja or compiler dependency
+checks and grant no permission to consume an unregistered source.
+
 The finite candidate is not evidence of a complete CMake or link closure. LLVM
 can declare sources for components outside the selected build target. Missing
 configuration, generation or declaration members are absent from the staged

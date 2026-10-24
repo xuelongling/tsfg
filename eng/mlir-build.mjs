@@ -17,7 +17,7 @@ import { coreIrInputs } from "./core-ir-inputs.mjs";
 import { isPhysicalCmakeEvaluationCall } from "./mlir-cmake-evaluation.mjs";
 import { readMlirDirectSourceSelection, mlirRoleConfiguration, assertMlirRoleCache, assertMlirRoleDependency, requireMlirSourceDependency } from "./mlir-static-closure.mjs";
 
-const stagedProductInputs = [...coreIrInputs, "eng/mlir-python-policy.cmake", "eng/mlir-compiler-launcher.mjs"];
+const stagedProductInputs = [...coreIrInputs, "eng/mlir-python-policy.cmake", "eng/mlir-compiler-launcher.mjs", "eng/mlir-configuration-sources.cmake"];
 
 /** Actual production source-copy boundary; no compiler or source evaluation. */
 export async function stageMlirProductSources({productRoot,product,identity}) {
@@ -254,7 +254,7 @@ export async function executeMlirTarget({ options, runtime, tools, productRoot, 
   // Require immutable product approval/configuration bytes before source execution.
   for (const name of ["eng/mlir-source-legal.lock.json", "eng/mlir-source-build-legal.lock.json", "eng/mlir-source-notices.lock.json", "eng/mlir-python.lock.json", "eng/mlir-source.lock.json",
     "eng/mlir-build.mjs", "eng/mlir-command.mjs", "eng/mlir-build-inputs.mjs", "eng/mlir-sdk.mjs", "eng/mlir-sdk-admission.mjs",
-    "eng/mlir-source-registration.mjs", "eng/mlir-sdk-paths.mjs", "eng/mlir-static-closure.mjs", "eng/mlir-sdk.lock.json", "eng/core-ir-inputs.mjs", "eng/mlir-cmake-evaluation.mjs", "eng/mlir-compiler-launcher.mjs", "eng/mlir-python-policy.cmake", ...coreIrInputs]) {
+    "eng/mlir-source-registration.mjs", "eng/mlir-sdk-paths.mjs", "eng/mlir-static-closure.mjs", "eng/mlir-sdk.lock.json", "eng/core-ir-inputs.mjs", "eng/mlir-cmake-evaluation.mjs", "eng/mlir-compiler-launcher.mjs", "eng/mlir-python-policy.cmake", "eng/mlir-configuration-sources.cmake", ...coreIrInputs]) {
     const raw = await readFile(path.join(productRoot, name));
     const committed = gitBytes(git, productRoot, ["show", `HEAD:${name}`]);
     if (!raw.equals(committed)) throw new MlirBuildError(`Intake input must match committed product bytes: ${name}`, "mlir-source-integrity");
@@ -295,7 +295,7 @@ export async function executeMlirTarget({ options, runtime, tools, productRoot, 
       "eng/mlir-python-policy.cmake", "eng/mlir-source.mjs", "eng/mlir-source.lock.json", "eng/mlir-python.mjs",
       "eng/mlir-python.lock.json", "eng/mlir-source-legal.mjs", "eng/mlir-source-legal.lock.json"];
     requiredProductInputs.push("eng/mlir-compiler-launcher.mjs", "eng/mlir-source-notices.lock.json");
-    requiredProductInputs.push("eng/mlir-source-build-legal.lock.json");
+    requiredProductInputs.push("eng/mlir-source-build-legal.lock.json", "eng/mlir-configuration-sources.cmake");
     for (const name of requiredProductInputs) {
       const entry = productIdentity.buildInputSet.entries.find(entry => entry.projectId === "tsfg" && entry.repositoryRelativePath === name);
       if (!entry || entry.sha256 !== digest(await readFile(path.join(productRoot, name))))
@@ -341,7 +341,9 @@ export async function executeMlirTarget({ options, runtime, tools, productRoot, 
       ...(sdk ? [`-DTSFG_VERIFIED_SOURCE_SDK=${cmakePath(sdk.root)}`] : [
         "-DLLVM_ENABLE_PROJECTS=mlir", "-DLLVM_ENABLE_ASSERTIONS=ON", "-DLLVM_ENABLE_LTO=OFF",
         "-DLLVM_EXTERNAL_PROJECTS=tsfg-core-ir", `-DLLVM_EXTERNAL_TSFG_CORE_IR_SOURCE_DIR=${cmakePath(path.join(product, "compiler/core-ir"))}`]),
-      ...mlirRoleConfiguration(command, sdk),
+      ...mlirRoleConfiguration(command, sdk, sourceEntries),
+      ...(!sdk && command.role === "static" ? [`-DCMAKE_PROJECT_INCLUDE=${cmakePath(path.join(product, "eng/mlir-configuration-sources.cmake"))}`,
+        `-DTSFG_CONFIGURATION_SOURCES=${cmakePath(path.join(stage, "configuration-sources.json"))}`] : []),
       "-DCMAKE_BUILD_TYPE=Debug", `-DCMAKE_MAKE_PROGRAM=${cmakePath(tools.ninja)}`, `-DCMAKE_C_COMPILER=${cmakePath(tools.clangcl)}`,
       `-DCMAKE_CXX_COMPILER=${cmakePath(tools.clangcl)}`, `-DCMAKE_LINKER=${cmakePath(tools.lld)}`,
       `-DCMAKE_C_COMPILER_LAUNCHER=${compilerLauncher}`, `-DCMAKE_CXX_COMPILER_LAUNCHER=${compilerLauncher}`,
@@ -365,7 +367,7 @@ export async function executeMlirTarget({ options, runtime, tools, productRoot, 
     await writeFile(path.join(stage, "configuration-legal.json"), serialize(configurationLegal));
     await runLogged(tools.cmake, args, stage, env, path.join(stage, "configure.log"));
     const cache = await readFile(path.join(build, "CMakeCache.txt"), "utf8");
-    assertMlirRoleCache(command, cache);
+    assertMlirRoleCache(command, cache, sourceEntries);
     for (const name of disabled) {
       const value = cache.match(new RegExp(`^${name}:[^=\\r\\n]+=([^\\r\\n]*)`, "m"));
       if (!value || value[1] !== "OFF") throw new MlirBuildError(`Optional dependency configuration changed: ${name}`);

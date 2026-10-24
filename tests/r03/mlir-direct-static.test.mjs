@@ -103,12 +103,39 @@ test('selected source refuses mutated bytes, source junctions and redirected out
 
 const staticRole = selectMlirCommandRole(new Map([['--core-command-role', 'static']]));
 const nativeRole = selectMlirCommandRole(new Map());
+test('static role excludes optional LLVM declarations and preserves required project and generator entries', () => {
+  const sourceEntries = ['llvm/tools/llvm-config/CMakeLists.txt', 'llvm/tools/opt/CMakeLists.txt',
+    'llvm/tools/mlir/CMakeLists.txt', 'llvm/tools/tsfg-core-ir/CMakeLists.txt',
+    'llvm/utils/TableGen/CMakeLists.txt', 'mlir/tools/mlir-tblgen/CMakeLists.txt']
+    .map(repositoryRelativePath => ({ repositoryRelativePath }));
+  assert.deepEqual(mlirRoleConfiguration(staticRole, null, sourceEntries), [
+    '-DTSFG_CORE_BUILD_ROLE=static', '-DLLVM_TARGETS_TO_BUILD=', '-DLLVM_EXPERIMENTAL_TARGETS_TO_BUILD=',
+    '-DLLVM_INCLUDE_TOOLS=ON', '-DLLVM_INCLUDE_UTILS=OFF',
+    '-DLLVM_TOOL_MLIR_BUILD=ON', '-DLLVM_TOOL_TSFG_CORE_IR_BUILD=ON',
+    '-DLLVM_TOOL_LLVM_CONFIG_BUILD=OFF', '-DLLVM_TOOL_OPT_BUILD=OFF']);
+  assert.deepEqual(mlirRoleConfiguration(nativeRole, null, sourceEntries), [
+    '-DTSFG_CORE_BUILD_ROLE=native', '-DLLVM_TARGETS_TO_BUILD=X86', '-DLLVM_EXPERIMENTAL_TARGETS_TO_BUILD=']);
+  assert.deepEqual(mlirRoleConfiguration(nativeRole, {}, sourceEntries), ['-DTSFG_CORE_BUILD_ROLE=native']);
+  const cache = 'TSFG_CORE_BUILD_ROLE:STRING=static\nLLVM_TARGETS_TO_BUILD:STRING=\nLLVM_EXPERIMENTAL_TARGETS_TO_BUILD:STRING=\n' +
+    'LLVM_INCLUDE_TOOLS:BOOL=ON\nLLVM_INCLUDE_UTILS:BOOL=OFF\nLLVM_TOOL_MLIR_BUILD:BOOL=ON\n' +
+    'LLVM_TOOL_TSFG_CORE_IR_BUILD:BOOL=ON\nLLVM_TOOL_LLVM_CONFIG_BUILD:BOOL=OFF\nLLVM_TOOL_OPT_BUILD:BOOL=OFF\n';
+  assertMlirRoleCache(staticRole, cache, sourceEntries);
+  for (const line of cache.trim().split('\n').slice(3)) {
+    const changed = line.endsWith('=ON') ? line.replace('=ON', '=OFF') : line.replace('=OFF', '=ON');
+    for (const bad of [cache.replace(line, changed), cache.replace(line + '\n', '')])
+      assert.throws(() => assertMlirRoleCache(staticRole, bad, sourceEntries), { issueCode: 'mlir-source-integrity' });
+  }
+});
+
 test('static role uses no LLVM backend, native preserves X86, and cache drift fails closed', () => {
   assert.deepEqual(mlirRoleConfiguration(staticRole), ['-DTSFG_CORE_BUILD_ROLE=static',
-    '-DLLVM_TARGETS_TO_BUILD=', '-DLLVM_EXPERIMENTAL_TARGETS_TO_BUILD=']);
+    '-DLLVM_TARGETS_TO_BUILD=', '-DLLVM_EXPERIMENTAL_TARGETS_TO_BUILD=',
+    '-DLLVM_INCLUDE_TOOLS=ON', '-DLLVM_INCLUDE_UTILS=OFF',
+    '-DLLVM_TOOL_MLIR_BUILD=ON', '-DLLVM_TOOL_TSFG_CORE_IR_BUILD=ON']);
   assert.deepEqual(mlirRoleConfiguration(nativeRole), ['-DTSFG_CORE_BUILD_ROLE=native',
     '-DLLVM_TARGETS_TO_BUILD=X86', '-DLLVM_EXPERIMENTAL_TARGETS_TO_BUILD=']);
-  const cache = 'TSFG_CORE_BUILD_ROLE:STRING=static\nLLVM_TARGETS_TO_BUILD:STRING=\nLLVM_EXPERIMENTAL_TARGETS_TO_BUILD:STRING=\n';
+  const cache = 'TSFG_CORE_BUILD_ROLE:STRING=static\nLLVM_TARGETS_TO_BUILD:STRING=\nLLVM_EXPERIMENTAL_TARGETS_TO_BUILD:STRING=\n' +
+    'LLVM_INCLUDE_TOOLS:BOOL=ON\nLLVM_INCLUDE_UTILS:BOOL=OFF\nLLVM_TOOL_MLIR_BUILD:BOOL=ON\nLLVM_TOOL_TSFG_CORE_IR_BUILD:BOOL=ON\n';
   assertMlirRoleCache(staticRole, cache);
   for (const bad of [cache.replace('STRING=\n', 'STRING=X86\n'), cache.replace('=static', '=native'),
     cache.replace('LLVM_EXPERIMENTAL_TARGETS_TO_BUILD:STRING=\n', '')])

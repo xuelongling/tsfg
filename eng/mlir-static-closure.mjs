@@ -50,16 +50,32 @@ export async function readMlirDirectSourceSelection(identity, command) {
 }
 
 /** Explicit build responsibilities over the unchanged complete Core language. */
-export function mlirRoleConfiguration(command, sdk = null) {
-  return [`-DTSFG_CORE_BUILD_ROLE=${command.role}`, ...(sdk ? [] : [
+export function mlirRoleConfiguration(command, sdk = null, sourceEntries = []) {
+  const configuration = [`-DTSFG_CORE_BUILD_ROLE=${command.role}`, ...(sdk ? [] : [
     `-DLLVM_TARGETS_TO_BUILD=${command.native ? 'X86' : ''}`, '-DLLVM_EXPERIMENTAL_TARGETS_TO_BUILD='])];
+  if (command.role !== 'static' || sdk) return configuration;
+  // LLVM's tools directory also admits MLIR and the external Core project.
+  // Keep that entry point, but disable its optional per-tool subdirectories.
+  const required = new Set(['MLIR', 'TSFG_CORE_IR']);
+  const tools = new Set(sourceEntries.flatMap(entry => {
+    const directory = /^llvm\/tools\/([^/]+)\/CMakeLists\.txt$/.exec(entry.repositoryRelativePath);
+    const name = directory?.[1].replaceAll('-', '_').toUpperCase();
+    return name && !required.has(name) ? [name] : [];
+  }));
+  return [...configuration, '-DLLVM_INCLUDE_TOOLS=ON', '-DLLVM_INCLUDE_UTILS=OFF',
+    '-DLLVM_TOOL_MLIR_BUILD=ON', '-DLLVM_TOOL_TSFG_CORE_IR_BUILD=ON',
+    ...[...tools].sort().map(name => `-DLLVM_TOOL_${name}_BUILD=OFF`)];
 }
 
-export function assertMlirRoleCache(command, cache) {
+export function assertMlirRoleCache(command, cache, sourceEntries = []) {
   const value = name => cache.match(new RegExp(`^${name}:[^=\\r\\n]+=([^\\r\\n]*)`, 'm'))?.[1];
   if (value('TSFG_CORE_BUILD_ROLE') !== command.role) reject('Configured Core build role differs from its identity');
-  if (command.role === 'static' && (value('LLVM_TARGETS_TO_BUILD') !== '' || value('LLVM_EXPERIMENTAL_TARGETS_TO_BUILD') !== ''))
-    reject('Static configuration selected or omitted an LLVM backend setting');
+  if (command.role !== 'static') return;
+  for (const flag of mlirRoleConfiguration(command, null, sourceEntries).slice(1)) {
+    const separator = flag.indexOf('='), name = flag.slice(2, separator), expected = flag.slice(separator + 1);
+    const key = name.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+    if (value(key) !== expected) reject('Static configuration selected or omitted a required role setting: ' + name);
+  }
 }
 
 /** Runs before a dependency body (including a CMake EVAL origin) is read. */
