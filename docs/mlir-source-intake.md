@@ -164,7 +164,34 @@ physical membership remain unchanged. Registration and template generation
 grant no permission to execute llvm-lit or prove a configured/link closure;
 actual CMake/Ninja dependencies must still reconcile before a target build.
 
-One mandatory file remains unregistered:
+M14's actual static Configure declarations exposed1190 additional fixed Git
+blobs needed for source presence, rather than the earlier360 first-missing
+diagnostics. The finite supplement appends1188 inspected objects to make8144
+entries, preserving the prior6956 objects in order and all five original
+materials. Every physical file matches its fixed Git blob and strict UTF-8 raw
+hash.1172 retain their original Apache SPDX header;16 have no local SPDX and
+use the explicit original project grant without inventing an annotation.
+The370 relevant ancestor directories contain only the original root, LLVM and
+MLIR project licenses. Complete original leading attributions remain intact.
+
+ComplexToStandard and PolynomialApproximation retain their complete original
+Apache headers and verbatim Cephes, StackOverflow and mathematical-paper
+citations. The existing algorithm-source attribution rule covers their fixed
+coefficients and MLIR expressions; a formula or algorithm reference alone does
+not establish copied implementation or additional license terms. This is no
+claim of an independent external-code license audit or a new license grant.
+Two exact paths remain unregistered pending original-material review:
+MPIToLLVM's MPICH COPYRIGHT reference and GPU EliminateBarriers' explicitly
+named Polygeist implementation. The other admitted inputs remain independent
+of these local gaps.
+This supplement permits conditional source presence for the fixed direct static
+Core configuration. It grants no optional-library/backend compilation,
+generated/installed output, execution or Runtime role. Source selection still
+requires the current physical, notice and hash checks; a complete actual Ninja
+plan and final compiler/link dependencies remain unqualified. SDKv2 inventory,
+its historical provenance, and the copied X86 table refusal remain unchanged.
+
+The original native/full-source copied table remains unregistered:
 `llvm/lib/Target/X86/MCTargetDesc/X86InstComments.cpp`. Although its header has
 the standard LLVM SPDX declaration, its TernlogFunctions table is attributed
 as copied from an external DougallJ Gist. The exact upstream source and

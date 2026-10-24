@@ -38,7 +38,7 @@ test("M14 configuration registration binds four fixed original templates and not
       "sha256:927f66770d42360a62788466e0114e25b144ead94af513cd766f550feaebcb85", "48",
       "sha256:f1db4f136ffa12d14cea29ff1114e28917e836ff4917da3ad563de886ff72113"]
   ];
-  const added = lock.files.slice(6952);
+  const added = lock.files.slice(6952, 6956);
   assert.deepEqual(added.map(file => [file.path, file.mode, file.blob, file.sha256, file.noticeEnd, file.noticeSha256]), expected);
   assert.equal(lock.sourceCommit, "4cb57d27ddcad7c3a89d23ef576662a5c891e8c8");
   assert.equal(lock.baseCommit, "fc4aad7b5db3fff421df9a9637605b9ca5667881");
@@ -73,6 +73,55 @@ test("M14 template classification cannot approve an unknown input or Runtime rol
     /No qualified mandatory build input: llvm\/include\/not-registered-config-template\.in/);
   await assert.rejects(readMlirSourceBuildLegalInputs({ sourceRoot: undefined, git: undefined,
     paths: ["llvm/include/module.modulemap.build"], role: "game-runtime" }), /compiler-side M01 only/);
+});
+
+test("M14 configured source presence binds the exact reviewed supplement without granting unresolved sources", async () => {
+  const { lock } = await readMlirLegalRegistration("build");
+  const hash = value => "sha256:" + createHash("sha256").update(JSON.stringify(value)).digest("hex");
+  assert.equal(hash(lock.files.slice(0, 6956)), "sha256:a6fe96cc53e5da87ebab9347d554800e1b22623206e7a1fa6dd658a97876737c");
+  assert.equal(hash(lock.licenseMaterials), "sha256:1362f33d6d0378ac7e10464f28c2d025e9332f12e8e7eabe7422921412ea1755");
+  const added = lock.files.slice(6956);
+  assert.equal(added.length, 1188);
+  assert.equal(hash(added.slice(0, 1186).map(file => [file.path, file.mode, file.blob, file.sha256, file.noticeSha256])),
+    "sha256:b270e56a365edfc50c462819d3094b9796b9fdce311ad4fcd577547ee9d35d59");
+  assert.deepEqual(added.slice(1186).map(file => [file.path, file.blob, file.sha256, file.noticeEnd, file.noticeSha256]), [
+    ["mlir/lib/Conversion/ComplexToStandard/ComplexToStandard.cpp", "9e46b7d78baca6db65c31e44292420509769fbf4",
+      "sha256:17d923a6f93461cdfb7787b85c7100df7c9a8055ad8eca24e8b34c566a07173c", "370",
+      "sha256:f0b96cbbaeddba106cee8d4eca6ea19fa04fd2859a80192dc2bec7c5a00fd2d4"],
+    ["mlir/lib/Dialect/Math/Transforms/PolynomialApproximation.cpp", "cd014f5f530f0ebf704c5440d82c97caaaaf7c86",
+      "sha256:bd1506b56e0f3583b62b87c0fca272805d1d043421d4f7af25b8b86fbc8b7168", "586",
+      "sha256:bab2911d3215ee7e3cef8d18bf3d1dfa9b6f5213e63947197167bbdd654c23ee"]
+  ]);
+  assert.match(added[1186].licenseBasis.join("\n"), /Algorithm copied from cephes cosm1\./);
+  for (const reference of ["stackoverflow.com/a/42683455", "35966695", "Shepherd and J. G. Laframboise", "Polynomial approximation from Cephes."])
+    assert.ok(added[1187].licenseBasis.join("\n").includes(reference));
+  assert.equal(added.filter(file => file.completeOriginalAttribution.includes("SPDX-License-Identifier")).length, 1172);
+  for (const file of added) {
+    assert.equal(file.mode, "100644"); assert.equal(file.role, "compiler-side-M01");
+    assert.equal(file.license, "Apache-2.0 WITH LLVM-exception");
+    assert.equal(file.checkoutByteNormalization, "none"); assert.equal(file.observedCheckoutSha256, file.sha256);
+    assert.equal(file.noticeStart, "0");
+    assert.equal(Buffer.byteLength(file.completeOriginalAttribution), Number(file.noticeEnd));
+    assert.equal(file.completeOriginalNotice, file.completeOriginalAttribution);
+    assert.equal("sha256:" + createHash("sha256").update(file.completeOriginalNotice).digest("hex"), file.noticeSha256);
+    assert.deepEqual(file.licenseMaterialPaths, [file.path.startsWith("llvm/") ? "llvm/LICENSE.TXT" : "mlir/LICENSE.TXT"]);
+    assert.match(file.use, /configuration source presence/); assert.match(file.use, /no optional-library\/backend compilation/);
+  }
+  const { readMlirDirectSourceSelection } = await import("../../eng/mlir-static-closure.mjs");
+  const selected = await readMlirDirectSourceSelection({ baseCommit: lock.baseCommit, sourceCommit: lock.sourceCommit,
+    sourceTree: "1ad1b903614825daa3ca3a5258fbb21e08d3c580", inspectedFiles: [] }, { role: "static" });
+  assert.match(selected.qualification, /finite registered candidate/);
+  const visible = new Set(selected.entries.map(file => file.repositoryRelativePath));
+  assert.ok(added.every(file => visible.has(file.path)));
+  const { readMlirSourceBuildLegalInputs } = await import("../../eng/mlir-source-legal.mjs");
+  for (const name of ["mlir/lib/Conversion/MPIToLLVM/MPIToLLVM.cpp", "mlir/lib/Dialect/GPU/Transforms/EliminateBarriers.cpp",
+    "llvm/lib/Target/X86/MCTargetDesc/X86InstComments.cpp"]) {
+    assert.ok(!visible.has(name));
+    await assert.rejects(readMlirSourceBuildLegalInputs({ sourceRoot: undefined, git: undefined, paths: [name] }),
+      /No qualified mandatory build input:/);
+  }
+  await assert.rejects(readMlirSourceBuildLegalInputs({ sourceRoot: undefined, git: undefined,
+    paths: [added[0].path], role: "game-runtime" }), /compiler-side M01 only/);
 });
 
 test("M18 normal Core mandatory AOT sources retain exact standard and project-grant inputs", async () => {
