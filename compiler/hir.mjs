@@ -10,7 +10,8 @@ import { coreExchangeFormat } from './core-ssa-emitter.mjs';
 import { emitExceptionCore } from "./exception-core-emitter.mjs";
 import { readHirWire } from "./hir-wire.mjs";
 import { failure as exceptionHirFailure } from "./exception-hir-common.mjs";
-import { buildNullableHir } from "./nullable-hir.mjs";
+import { isNullableGroupsContext, check as nullableCheck } from './nullable-common.mjs';
+import { buildNullableHir, readNullableGroupsHir } from "./nullable-hir.mjs";
 import { emitNullableCore } from "./nullable-core-emitter.mjs";
 import { validateFrontendSnapshot, resolveType, resolveSymbol } from './frontend.mjs';
 import { validateModuleFacts, sourceTrivia } from './module-facts.mjs';
@@ -42,6 +43,12 @@ const types = scalarTypeIds;
 /** @param {any} snapshot @param {any} [factsContext] @param {any} [callPublicationContext] */
 // Error casts describe omitted hir fields without adding runtime keys or erasing family diagnostics.
 export function buildHir(snapshot, factsContext = undefined, callPublicationContext = undefined) {
+  if (isNullableGroupsContext(factsContext)) {
+    try { nullableCheck(callPublicationContext === undefined, 'context'); return { status: 'ok', hir: buildNullableHir(snapshot, factsContext) }; }
+    catch (error) { const result = { status: 'error', diagnostics: [{ code: error.code, ruleId: error.ruleId, phase: error.phase, message: error.message,
+      ...(error.primary ? { primary: error.primary } : {}) }] };
+      return /** @type {typeof result & {status:"error",hir?:undefined}} */ (result); }
+  }
   if(isTypedArrayContext(factsContext))return buildTypedArrayHir(snapshot,factsContext,callPublicationContext);
   if (factsContext !== undefined) return buildStringHir(snapshot, factsContext);
   try {
@@ -209,6 +216,9 @@ export function buildHir(snapshot, factsContext = undefined, callPublicationCont
 export const printHir = (hir, factsContext = undefined, callPublicationContext = undefined) => `${canonical(verifyHir(hir, factsContext, callPublicationContext))}\n`;
 /** @param {Uint8Array} bytes @param {any} [factsContext] @param {any} [callPublicationContext] */
 export function readHir(bytes, factsContext = undefined, callPublicationContext = undefined) {
+  if (isNullableGroupsContext(factsContext)) {
+    nullableCheck(callPublicationContext === undefined, 'context'); return readNullableGroupsHir(bytes, factsContext);
+  }
   if(isTypedArrayContext(factsContext))return readTypedArrayHir(bytes,factsContext,callPublicationContext);
   if (factsContext !== undefined) return readStringHir(bytes, factsContext);
   const { text, value } = readHirWire(bytes);
@@ -223,6 +233,9 @@ export function readHir(bytes, factsContext = undefined, callPublicationContext 
 
 /** @param {any} hir @param {any} [factsContext] @param {any} [callPublicationContext] */
 export function lowerHir(hir, factsContext = undefined, callPublicationContext = undefined) {
+  if (isNullableGroupsContext(factsContext)) {
+    nullableCheck(callPublicationContext === undefined, 'context'); return emitNullableCore(hir, factsContext);
+  }
   if(isTypedArrayContext(factsContext))return emitFiniteCore(hir,factsContext,callPublicationContext);
   if (factsContext !== undefined) return emitStringCore(hir, factsContext);
   if (familyOf(hir) === 'tsfg.module-callable-hir-candidate') {

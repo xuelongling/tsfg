@@ -2,7 +2,7 @@
 import { nullableSnapshotFacts } from './nullable-frontend.mjs';
 import presenceHirDescriptor from '../contracts/nullable-presence-hir-candidate.schema.json' with { type: 'json' };
 import { check, record, budget, same, own, candidate, valueType, typeFor, scalarType, nullableTypes, hirFormat, canonical, sha256,
-  presenceBudget, presenceDomainBudget, presenceOwn, presenceOrigin, presenceSourceSchema } from './nullable-common.mjs';
+  presenceBudget, presenceDomainBudget, presenceOwn, presenceOrigin, presenceSourceSchema, groupsSourceSchema, groupsHirFormat, readGroupsHirJson } from './nullable-common.mjs';
 
 const presenceHirFormat = Object.freeze({ family: hirFormat.family, version: 4, schemaHash: sha256(canonical(presenceHirDescriptor)) });
 check(presenceHirFormat.schemaHash === 'sha256:9892edc555999b98f964ae409e10d6ba576e8a819b2c4ed68783f626f2665eed', 'schema');
@@ -40,7 +40,8 @@ function selectedContext(context) {
   // The S5 selector is checked here before reading HIR fields; the complete S5
   // validator repeats selection and capture binding at its own cold Interface.
   record(context, ['sourceVersion','sourceSchemaHash','expectedPackageId','expectedOrigin']);
-  demand(context.sourceVersion === 4 && context.sourceSchemaHash === presenceSourceSchema
+  demand((context.sourceVersion === 4 && context.sourceSchemaHash === presenceSourceSchema
+    || context.sourceVersion === 5 && context.sourceSchemaHash === groupsSourceSchema)
     && typeof context.expectedPackageId === 'string' && /^sha256:[0-9a-f]{64}$/.test(context.expectedPackageId), 'context');
   presenceOrigin(context.expectedOrigin);
 }
@@ -57,9 +58,9 @@ function selectedBudget(input, hir) {
     if (Array.isArray(types)) demand(types.length <= 5, 'limit');
   }
 }
-/** @param {typeof hirFormat | typeof presenceHirFormat} [format] */
+/** @param {typeof hirFormat | typeof presenceHirFormat | typeof groupsHirFormat} [format] */
 function project(snapshot, format = hirFormat) {
-  const source = snapshot.source, selected = format === presenceHirFormat; let hasGuards = false;
+  const source = snapshot.source, selected = format !== hirFormat; let hasGuards = false;
   // Signatures and owned bindings select only this program's nullable records.
   const usedTypes = new Set(snapshot.symbols.flatMap(symbol => [valueType(symbol.presence), valueType(symbol.returnPresence)]));
   const headers = snapshot.functions.map(fn => {
@@ -77,6 +78,7 @@ function project(snapshot, format = hirFormat) {
       return { kind: 'nullableWrap', type: expected, operand: value, range: value.range };
     };
     function expression(raw) {
+      if (raw.kind === 'group') { const operand = expression(raw.operand); return { kind: 'group', type: operand.type, operand, range: raw.range }; }
       if (raw.kind === 'reference') return { kind: 'reference', type: valueType(bindings.get(raw.symbol).presence), binding: raw.symbol, range: raw.range };
       if (raw.kind === 'shortCircuit') return { kind: 'nullableCoalesce', type: scalarType.id,
         left: expression(raw.left), right: expression(raw.right), range: raw.range };
@@ -141,7 +143,7 @@ function verifyProjection(actual, expected) {
     else if (original.kind === 'nullableTagTest') {
       at(value.tag === original.tag, 'flow', original.tagRange); rangeAt(value.tagRange, original.tagRange);
       node(value.operand, original.operand);
-    } else if (original.kind === 'nullableGet' || original.kind === 'nullableWrap') node(value.operand, original.operand);
+    } else if (original.kind === 'nullableGet' || original.kind === 'nullableWrap' || original.kind === 'group') node(value.operand, original.operand);
     else if (original.kind === 'nullableCoalesce') { node(value.left, original.left); node(value.right, original.right); }
   }
   demand(same(actual.inputIdentity, expected.inputIdentity) && same(actual.source, expected.source)
@@ -171,7 +173,7 @@ export function buildNullableHir(snapshot, context = undefined) {
   if (context === undefined) { const result = project(nullableSnapshotFacts(snapshot)); budget(result); return own(result); }
   try {
     selectedContext(context); selectedBudget(snapshot, false);
-    const result = project(nullableSnapshotFacts(snapshot, context), presenceHirFormat);
+    const result = project(nullableSnapshotFacts(snapshot, context), context.sourceVersion === 5 ? groupsHirFormat : presenceHirFormat);
     selectedBudget(result, true); return presenceOwn(result);
   } catch (error) { selectedRethrow(error); }
 }
@@ -185,8 +187,14 @@ export function verifyNullableHir(hir, context = undefined) {
   try {
     selectedContext(context); selectedBudget(hir, true);
     record(hir, ['format','snapshot','inputIdentity','source','target','types','functions']);
-    demand(same(hir.format, presenceHirFormat), 'schema');
-    const expected = project(nullableSnapshotFacts(hir.snapshot, context), presenceHirFormat);
+    demand(same(hir.format, context.sourceVersion === 5 ? groupsHirFormat : presenceHirFormat), 'schema');
+    const expected = project(nullableSnapshotFacts(hir.snapshot, context), context.sourceVersion === 5 ? groupsHirFormat : presenceHirFormat);
     selectedBudget(expected, true); verifyProjection(hir, expected); return presenceOwn(expected);
   } catch (error) { selectedRethrow(error); }
+}
+
+// Selected5 reader checks the caller context before copying or inspecting bytes.
+export function readNullableGroupsHir(bytes, context) {
+  try { selectedContext(context); return verifyNullableHir(readGroupsHirJson(bytes), context); }
+  catch (error) { selectedRethrow(error); }
 }

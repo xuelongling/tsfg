@@ -1,4 +1,6 @@
 // SPDX-License-Identifier: MIT
+import { isProxy } from 'node:util/types';
+import groupsDescriptor from '../contracts/nullable-groups-candidate.schema.json' with { type: 'json' };
 import descriptor from '../contracts/nullable-owned-bridge-candidate.schema.json' with { type: 'json' };
 import presenceDescriptor from '../contracts/nullable-presence-capture-candidate.schema.json' with { type: 'json' };
 import coreDescriptor from '../contracts/core-nullable-candidate.schema.json' with { type: 'json' };
@@ -142,4 +144,25 @@ export function presenceOwn(value) {
   presenceBudget(value);
   // JSON expands already-safe aliases at each serialized position; structuredClone alone preserves them.
   return own(JSON.parse(canonical(value)));
+}
+
+// Source5 extends ordinary value expressions; Source3/4 remain distinct contracts.
+export const groupsSourceSchema = groupsDescriptor.sourceSchemaHash;
+export const groupsSchemaHash = sha256(canonical(groupsDescriptor));
+check(groupsSchemaHash === 'sha256:16278abcc5c2c3639856a350e32bdb94d0d5e3ff669a91124032f674136924af'
+  && sha256(canonical(groupsDescriptor.sourceDescriptor)) === groupsSourceSchema, 'schema');
+export const groupsSnapshotFormat = Object.freeze({ family: snapshotFormat.family, version: 5, schemaHash: groupsSchemaHash });
+export const groupsHirFormat = Object.freeze({ family: hirFormat.family, version: 5, schemaHash: groupsSchemaHash });
+// Public dispatch inspects only a plain own data selector; validators then preflight the entire context.
+export function isNullableGroupsContext(value) {
+  if (!value || typeof value !== 'object' || isProxy(value)
+      || ![Object.prototype, null].includes(Object.getPrototypeOf(value))) return false;
+  return Object.getOwnPropertyDescriptor(value, 'sourceVersion')?.value === 5;
+}
+
+export function readGroupsHirJson(bytes) {
+  try {
+    const input = readGenericJson(copyGenericJsonBytes(bytes, presenceLimits), presenceLimits);
+    presenceBudget(input.value); check(input.text === canonical(input.value) + '\n', 'canonical'); return input.value;
+  } catch (error) { presenceRethrow(error); }
 }
