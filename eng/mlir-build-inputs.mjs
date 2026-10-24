@@ -21,37 +21,125 @@ export function gitBytes(git, root, args) {
   return child.stdout;
 }
 
+async function ordinaryAncestor(directory) {
+  let current = directory;
+  for (;;) {
+    const state = await lstat(current).catch(error => { if (error.code === "ENOENT") return null; throw error; });
+    if (state) {
+      if (!state.isDirectory() || state.isSymbolicLink() || path.relative(current, await realpath(current)) !== "")
+        throw new MlirBuildError("Selected source root/destination ancestor is redirected", "mlir-source-integrity");
+      return;
+    }
+    const parent = path.dirname(current);
+    if (parent === current) throw new MlirBuildError("Selected source destination has no ordinary ancestor", "mlir-source-integrity");
+    current = parent;
+  }
+}
 
-export async function materializeSource(identity, git, destination) {
+/** Registered staged source bodies require an ordinary physical path before
+ * opening, even when redirected bytes would happen to have the expected hash.
+ * Inspect every component so an intermediate junction cannot escape or alias
+ * the admitted source root. Unknown identities are rejected by the caller first.
+ */
+export async function readMlirPhysicalSource(source, absolute, entry) {
+  const relative = path.relative(source, absolute).replaceAll("\\", "/");
+  if (!within(source, absolute) || relative.toLowerCase() !== entry?.repositoryRelativePath?.toLowerCase() ||
+      !/^sha256:[0-9a-f]{64}$/.test(entry?.sha256 ?? ""))
+    throw new MlirBuildError(`Missing or mismatched physical source identity: ${relative}`, "mlir-source-integrity");
+  try {
+    await ordinaryAncestor(source);
+    let current = source;
+    const parts = relative.split("/");
+    for (const [index, part] of parts.entries()) {
+      current = path.join(current, part);
+      const state = await lstat(current);
+      if (state.isSymbolicLink() || (index === parts.length - 1 ? !state.isFile() : !state.isDirectory()))
+        throw new MlirBuildError(`Nonregular or redirected source dependency: ${relative}`, "mlir-source-integrity");
+      const actual = await realpath(current);
+      if (path.relative(current, actual) !== "" || !within(source, actual))
+        throw new MlirBuildError(`Nonregular or redirected source dependency: ${relative}`, "mlir-source-integrity");
+    }
+    const bytes = await readFile(absolute);
+    if (digest(bytes) !== entry.sha256)
+      throw new MlirBuildError(`Changed physical source dependency: ${relative}`, "mlir-source-integrity");
+    return bytes;
+  } catch (error) {
+    if (error instanceof MlirBuildError) throw error;
+    throw new MlirBuildError(`Cannot inspect physical source dependency ${relative}: ${error.message}`, "mlir-source-integrity");
+  }
+}
+
+export async function materializeSource(identity, git, destination, selection = null) {
   const rawTree = gitBytes(git, identity.sourceRoot,
     ["ls-tree", "-r", "-z", identity.sourceCommit, "--", "llvm", "mlir", "cmake", "third-party", "UPSTREAM.toml"]);
+  const tree = rawTree.toString("utf8").split("\0").filter(Boolean).map(line => {
+    const match = /^(100644|100755|120000) blob ([0-9a-f]{40})\t(.+)$/.exec(line);
+    if (!match) throw new MlirBuildError("Source materialization contains an unsupported Git entry", "mlir-source-integrity");
+    return { mode: match[1], blob: match[2], name: match[3] };
+  });
+  /** @type {Array<{mode:string,blob:string,name:string,sha256?:string}>} */
+  let selected = tree;
+  if (selection) {
+    if (selection.sourceCommit !== identity.sourceCommit || selection.sourceTree !== identity.sourceTree ||
+        !Array.isArray(selection.entries) || !selection.entries.length)
+      throw new MlirBuildError("Source selection has another or missing immutable identity", "mlir-source-integrity");
+    const byName = new Map(tree.map(entry => [entry.name, entry]));
+    const seen = new Set();
+    selected = selection.entries.map(entry => {
+      const name = entry.repositoryRelativePath;
+      if (typeof name !== "string" || !/^(?:llvm|mlir|cmake|third-party)\/.+|^UPSTREAM\.toml$/.test(name) ||
+          name.split("/").some(part => !part || part === "." || part === ".." || /[\\:\x00-\x1f]|[. ]$/.test(part)) ||
+          seen.has(name.toLowerCase()) || !/^sha256:[0-9a-f]{64}$/.test(entry.sha256 ?? ""))
+        throw new MlirBuildError(`Invalid or duplicate qualified source path: ${name}`, "mlir-source-integrity");
+      seen.add(name.toLowerCase());
+      const tracked = byName.get(name);
+      if (!tracked || tracked.mode === "120000" || tracked.blob !== entry.blob ||
+          (entry.normalizedMode && tracked.mode !== entry.normalizedMode))
+        throw new MlirBuildError(`Qualified source is absent or differs from the immutable tree: ${name}`, "mlir-source-integrity");
+      return { ...tracked, sha256: entry.sha256 };
+    });
+    if (!path.isAbsolute(destination) || within(identity.sourceRoot, destination) || within(destination, identity.sourceRoot))
+      throw new MlirBuildError("Selected source requires an independent destination", "mlir-source-integrity");
+    await ordinaryAncestor(identity.sourceRoot);
+    await ordinaryAncestor(destination);
+  }
   const entries = [];
   const unmaterialized = [];
   const checkoutDifferences = [];
-  for (const line of rawTree.toString("utf8").split("\0").filter(Boolean)) {
-    const link = /^120000 blob ([0-9a-f]{40})\t(.+)$/.exec(line);
-    if (link) {
-      unmaterialized.push({ path: link[2], mode: "120000", blob: link[1], reason: "nonregular input is never materialized or admitted for consumption" });
+  for (const entry of selected) {
+    if (entry.mode === "120000") {
+      unmaterialized.push({ path: entry.name, mode: "120000", blob: entry.blob, reason: "nonregular input is never materialized or admitted for consumption" });
       continue;
     }
-    const match = /^(100644|100755) blob ([0-9a-f]{40})\t(.+)$/.exec(line);
-    if (!match) throw new MlirBuildError("Source materialization contains an unsupported Git entry", "mlir-source-integrity");
-    const name = match[3];
+    const name = entry.name;
     const original = path.join(identity.sourceRoot, name);
+    if (selection) {
+      let parent = identity.sourceRoot;
+      for (const part of name.split("/").slice(0, -1)) {
+        parent = path.join(parent, part);
+        const state = await lstat(parent);
+        if (!state.isDirectory() || state.isSymbolicLink() || path.relative(parent, await realpath(parent)) !== "")
+          throw new MlirBuildError(`Redirected selected source parent: ${name}`, "mlir-source-integrity");
+      }
+    }
     const state = await lstat(original);
     if (!state.isFile() || state.isSymbolicLink() || !within(identity.sourceRoot, await realpath(original)))
       throw new MlirBuildError(`Nonregular source input: ${name}`, "mlir-source-integrity");
     const checkout = await readFile(original);
     let bytes;
-    try { bytes = mlirCommittedSourceBytes(checkout, match[2], name); }
+    try { bytes = mlirCommittedSourceBytes(checkout, entry.blob, name); }
     catch (error) { throw new MlirBuildError(error.message, "mlir-source-integrity"); }
+    if (selection && digest(bytes) !== entry.sha256)
+      throw new MlirBuildError(`Qualified source raw SHA mismatch: ${name}`, "mlir-source-integrity");
     if (!bytes.equals(checkout)) checkoutDifferences.push({ path: name, observedCheckoutSha256: digest(checkout),
-      committedBlob: match[2], consumedRawSha256: digest(bytes), method: "only CRLF-to-LF; exact immutable Git object equality proven" });
+      committedBlob: entry.blob, consumedRawSha256: digest(bytes), method: "only CRLF-to-LF; exact immutable Git object equality proven" });
     const target = path.join(destination, name);
+    if (selection) await ordinaryAncestor(path.dirname(target));
     await mkdir(path.dirname(target), { recursive: true });
+    if (selection) await ordinaryAncestor(path.dirname(target));
     await writeFile(target, bytes, { flag: "wx" });
     entries.push({ projectId: "llvm-project.git", repositoryRelativePath: name,
-      normalizedMode: match[1], sha256: digest(bytes), blob: match[2] });
+      normalizedMode: entry.mode, sha256: digest(bytes), blob: entry.blob });
   }
   return { entries, unmaterialized, checkoutDifferences };
 }

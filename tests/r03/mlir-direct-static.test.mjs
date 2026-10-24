@@ -1,0 +1,305 @@
+// SPDX-License-Identifier: MIT
+import assert from 'node:assert/strict';
+import { createHash } from 'node:crypto';
+import { spawnSync } from 'node:child_process';
+import { mkdir, readFile, readdir, rename, symlink, writeFile } from 'node:fs/promises';
+import fs from 'node:fs/promises';
+import { syncBuiltinESMExports } from 'node:module';
+import path from 'node:path';
+import test from 'node:test';
+import { materializeSource, readMlirPhysicalSource } from '../../eng/mlir-build-inputs.mjs';
+import { selectMlirCommandRole } from '../../eng/mlir-command.mjs';
+import { readMlirBuildTrace } from '../../eng/mlir-build.mjs';
+import { readMlirDirectSourceSelection, mlirRoleConfiguration, assertMlirRoleCache,
+  assertMlirRoleDependency, requireMlirSourceDependency } from '../../eng/mlir-static-closure.mjs';
+import { readMlirLegalRegistration } from '../../eng/mlir-source-registration.mjs';
+import { sourceGitEnvironment } from '../../eng/intake-ledger.mjs';
+import { createMlirFixture } from './mlir-fixtures.mjs';
+
+const hash = bytes => 'sha256:' + createHash('sha256').update(bytes).digest('hex');
+async function fixture() {
+  const root = await createMlirFixture('direct-static-');
+  const sourceRoot = path.join(root, 'upstream');
+  await mkdir(path.join(sourceRoot, 'llvm'), { recursive: true });
+  const git = process.env.TSFG_GIT;
+  assert.ok(git, 'fixture Git must be explicit');
+  const run = (args, input = undefined) => {
+    const child = spawnSync(git, args, { cwd: sourceRoot, input, encoding: 'utf8',
+      env: sourceGitEnvironment(), windowsHide: true });
+    assert.ifError(child.error); assert.equal(child.status, 0, child.stderr);
+    return child.stdout.trim();
+  };
+  run(['init', '--quiet']);
+  const entries = [];
+  for (const name of ['selected.cpp', 'unselected.cpp']) {
+    const bytes = Buffer.from('// ordinary controlled fixture ' + name + '\n');
+    await writeFile(path.join(sourceRoot, 'llvm', name), bytes);
+    const blob = run(['hash-object', '-w', '--stdin'], bytes);
+    entries.push({ projectId: 'llvm-project.git', repositoryRelativePath: 'llvm/' + name,
+      normalizedMode: '100644', blob, sha256: hash(bytes) });
+  }
+  const llvm = run(['mktree'], entries.map(row => `100644 blob ${row.blob}\t${path.basename(row.repositoryRelativePath)}\n`).join(''));
+  const tree = run(['mktree'], `040000 tree ${llvm}\tllvm\n`);
+  return { root, git, identity: { sourceRoot, sourceCommit: tree, sourceTree: tree }, entries };
+}
+
+test('direct static materialization reads and copies only its exact qualified selection', async () => {
+  const { root, git, identity, entries } = await fixture();
+  const destination = path.join(root, 'staged');
+  const selection = { sourceCommit: identity.sourceCommit, sourceTree: identity.sourceTree, entries: [entries[0]] };
+  const result = await materializeSource(identity, git, destination, selection);
+  assert.deepEqual(await readdir(path.join(destination, 'llvm')), ['selected.cpp'],
+    'unselected ordinary source must never be copied by the static factory');
+  assert.deepEqual(result.entries, [entries[0]]);
+  assert.equal(hash(await readFile(path.join(destination, 'llvm/selected.cpp'))), entries[0].sha256);
+});
+
+test('unselected missing bodies cannot block or be read by selected source materialization', async () => {
+  const { root, git, identity, entries } = await fixture();
+  await rename(path.join(identity.sourceRoot, 'llvm/unselected.cpp'), path.join(root, 'unselected-original.cpp'));
+  await materializeSource(identity, git, path.join(root, 'staged'), { ...identity, entries: [entries[0]] });
+});
+
+for (const damage of ['missing', 'sha', 'blob', 'mode', 'duplicate', 'escape', 'absolute', 'backslash', 'identity']) {
+  test('selected source refuses ' + damage + ' before copying any input', async () => {
+    const { root, git, identity, entries } = await fixture();
+    const row = { ...entries[0] };
+    const selection = { ...identity, entries: [row] };
+    if (damage === 'missing') row.repositoryRelativePath = 'llvm/missing.cpp';
+    if (damage === 'sha') row.sha256 = 'sha256:' + '0'.repeat(64);
+    if (damage === 'blob') row.blob = '0'.repeat(40);
+    if (damage === 'mode') row.normalizedMode = '100755';
+    if (damage === 'duplicate') selection.entries.push({ ...row });
+    if (damage === 'escape') row.repositoryRelativePath = 'llvm/../outside.cpp';
+    if (damage === 'absolute') row.repositoryRelativePath = 'E:/outside.cpp';
+    if (damage === 'backslash') row.repositoryRelativePath = 'llvm/dir\\escape.cpp';
+    if (damage === 'identity') selection.sourceCommit = '0'.repeat(40);
+    const destination = path.join(root, 'staged');
+    await assert.rejects(materializeSource(identity, git, destination, selection), { issueCode: 'mlir-source-integrity' });
+    assert.deepEqual(await readdir(root), ['upstream']);
+  });
+}
+
+test('selected source refuses mutated bytes, source junctions and redirected output ancestors', async () => {
+  for (const damage of ['bytes', 'source-parent', 'output-parent']) {
+    const { root, git, identity, entries } = await fixture();
+    const destination = path.join(root, 'staged');
+    if (damage === 'bytes') await writeFile(path.join(identity.sourceRoot, 'llvm/selected.cpp'), 'changed fixture bytes');
+    if (damage === 'source-parent') {
+      await rename(path.join(identity.sourceRoot, 'llvm'), path.join(root, 'saved-llvm'));
+      await symlink(path.join(root, 'saved-llvm'), path.join(identity.sourceRoot, 'llvm'), 'junction');
+    }
+    if (damage === 'output-parent') {
+      await mkdir(path.join(root, 'saved-output'));
+      await symlink(path.join(root, 'saved-output'), destination, 'junction');
+    }
+    await assert.rejects(materializeSource(identity, git, destination, { ...identity, entries: [entries[0]] }),
+      { issueCode: 'mlir-source-integrity' });
+    if (damage === 'output-parent') assert.deepEqual(await readdir(path.join(root, 'saved-output')), []);
+  }
+});
+
+const staticRole = selectMlirCommandRole(new Map([['--core-command-role', 'static']]));
+const nativeRole = selectMlirCommandRole(new Map());
+test('static role uses no LLVM backend, native preserves X86, and cache drift fails closed', () => {
+  assert.deepEqual(mlirRoleConfiguration(staticRole), ['-DTSFG_CORE_BUILD_ROLE=static',
+    '-DLLVM_TARGETS_TO_BUILD=', '-DLLVM_EXPERIMENTAL_TARGETS_TO_BUILD=']);
+  assert.deepEqual(mlirRoleConfiguration(nativeRole), ['-DTSFG_CORE_BUILD_ROLE=native',
+    '-DLLVM_TARGETS_TO_BUILD=X86', '-DLLVM_EXPERIMENTAL_TARGETS_TO_BUILD=']);
+  const cache = 'TSFG_CORE_BUILD_ROLE:STRING=static\nLLVM_TARGETS_TO_BUILD:STRING=\nLLVM_EXPERIMENTAL_TARGETS_TO_BUILD:STRING=\n';
+  assertMlirRoleCache(staticRole, cache);
+  for (const bad of [cache.replace('STRING=\n', 'STRING=X86\n'), cache.replace('=static', '=native'),
+    cache.replace('LLVM_EXPERIMENTAL_TARGETS_TO_BUILD:STRING=\n', '')])
+    assert.throws(() => assertMlirRoleCache(staticRole, bad), { issueCode: 'mlir-source-integrity' });
+});
+
+test('real pinned registration selects no X86 bodies and cannot transfer source identity', async () => {
+  const { lock } = await readMlirLegalRegistration('build');
+  const identity = { sourceCommit: lock.sourceCommit, baseCommit: lock.baseCommit,
+    sourceTree: '0'.repeat(40), inspectedFiles: [] };
+  const result = await readMlirDirectSourceSelection(identity, staticRole);
+  assert.ok(result.entries.length > 6000);
+  assert.equal(result.entries.some(row => row.repositoryRelativePath.startsWith('llvm/lib/Target/X86/')), false);
+  assert.ok(result.entries.some(row => row.repositoryRelativePath === 'llvm/lib/Analysis/AliasAnalysis.cpp'));
+  assert.ok(result.entries.some(row => row.repositoryRelativePath === 'llvm/lib/Target/ARM/ARMCallingConv.td'));
+  await assert.rejects(readMlirDirectSourceSelection({ ...identity, sourceCommit: '0'.repeat(40) }, staticRole),
+    { issueCode: 'mlir-source-integrity' });
+  assert.equal(await readMlirDirectSourceSelection(identity, nativeRole), null);
+});
+
+test('planned/final source and link admission rejects native and backend edges before a body read', async () => {
+  const root = await createMlirFixture('static-edges-');
+  const roots = { source: path.join(root, 'source'), product: path.join(root, 'product'), build: path.join(root, 'build') };
+  const forbidden = [path.join(roots.source, 'llvm/lib/Target/X86/CMakeLists.txt'),
+    path.join(roots.source, 'llvm/lib/Target/AArch64/AArch64TargetMachine.cpp'),
+    path.join(roots.product, 'compiler/core-ir/main.cpp'), path.join(roots.product, 'compiler/core-ir/aot-lowering.cpp'),
+    path.join(roots.build, 'lib/LLVMX86Desc.lib'), path.join(roots.build, 'lib/LLVMCodeGen.lib'),
+    path.join(roots.build, 'lib/LLVMLoongArchDesc.lib'), path.join(roots.build, 'compiler/core-ir/tsfg-core-ir.dir/main.cpp.obj')];
+  for (const file of forbidden) {
+    assert.throws(() => assertMlirRoleDependency(staticRole, file, roots), { issueCode: 'mlir-source-integrity' });
+    assertMlirRoleDependency(nativeRole, file, roots);
+  }
+  for (const file of ['llvm/lib/Support/Process.cpp', 'llvm/lib/Target/ARM/ARMCallingConv.td'])
+    assertMlirRoleDependency(staticRole, path.join(roots.source, file), roots);
+  const physical = forbidden[0];
+  const cmakeTrace = [{ file: physical, line: 1, cmd: 'cmake_language', args: ['EVAL','CODE','set(x y)'] },
+    { file: physical + ':1:EVAL', line: 1, cmd: 'set', args: ['x','y'] }].map(row => JSON.stringify(row)).join('\n');
+  await assert.rejects(readMlirBuildTrace({ cmakeTrace, build: roots.build,
+    inputRoots: [roots.source, roots.product], command: staticRole }), { issueCode: 'mlir-source-integrity' });
+});
+
+test('unknown ordinary source and EVAL dependencies report the exact gap before body access', async () => {
+  const root = await createMlirFixture('static-missing-dependency-');
+  const source = path.join(root, 'source'), build = path.join(root, 'build');
+  const physical = path.join(source, 'llvm/configuration-unknown.cmake');
+  const missing = error => error.issueCode === 'mlir-source-integrity' && error.sourceBodyRead === false &&
+    JSON.stringify(error.missingPaths) === '["llvm/configuration-unknown.cmake"]';
+  assert.throws(() => requireMlirSourceDependency(physical, source, new Map()), missing);
+  const cmakeTrace = [{ file: physical, line: 1, cmd: 'cmake_language', args: ['EVAL','CODE','set(x y)'] },
+    { file: physical + ':1:EVAL', line: 1, cmd: 'set', args: ['x','y'] }].map(row => JSON.stringify(row)).join('\n');
+  await assert.rejects(readMlirBuildTrace({ cmakeTrace, build, inputRoots: [source, path.join(root, 'product')],
+    command: staticRole }), missing);
+});
+
+test('registered EVAL origin refuses an intermediate junction before reading its body', async t => {
+  const root = await createMlirFixture('static-eval-redirect-');
+  const source = path.join(root, 'source'), outside = path.join(root, 'outside');
+  await mkdir(path.join(source, 'llvm'), { recursive: true });
+  await mkdir(outside);
+  const bytes = Buffer.from('cmake_language(EVAL CODE "set(x y)")\n');
+  const physical = path.join(source, 'llvm/entry.cmake');
+  await writeFile(physical, bytes);
+  await writeFile(path.join(outside, 'entry.cmake'), bytes);
+  await rename(path.join(source, 'llvm'), path.join(root, 'saved-llvm'));
+  await symlink(outside, path.join(source, 'llvm'), 'junction');
+  const reads = [];
+  const original = fs.readFile;
+  t.mock.method(fs, 'readFile', async function(file, ...args) {
+    if (String(file) === physical) reads.push(String(file));
+    return original.call(this, file, ...args);
+  });
+  syncBuiltinESMExports();
+  t.after(() => { t.mock.restoreAll(); syncBuiltinESMExports(); });
+  const cmakeTrace = [{ file: physical, line: 1, cmd: 'cmake_language', args: ['EVAL','CODE','set(x y)'] },
+    { file: physical + ':1:EVAL', line: 1, cmd: 'set', args: ['x','y'] }].map(row => JSON.stringify(row)).join('\n');
+  const error = await readMlirBuildTrace({ cmakeTrace, build: path.join(root, 'build'),
+    inputRoots: [source, path.join(root, 'product')], command: staticRole,
+    sourceEntries: [{ repositoryRelativePath: 'llvm/entry.cmake', sha256: hash(bytes) }] }).then(() => null, failure => failure);
+  assert.deepEqual(reads, [], 'a registered lexical path must not open a junction-redirected body, even with identical bytes');
+  assert.equal(error?.issueCode, 'mlir-source-integrity');
+});
+
+test('unknown static product EVAL origin refuses before reading its body', async t => {
+  const root = await createMlirFixture('static-product-eval-unknown-');
+  const source = path.join(root, 'source'), product = path.join(root, 'product');
+  await mkdir(product);
+  const physical = path.join(product, 'unknown.cmake');
+  await writeFile(physical, 'cmake_language(EVAL CODE "set(x y)")\n');
+  const reads = [], original = fs.readFile;
+  t.mock.method(fs, 'readFile', async function(file, ...args) {
+    if (String(file) === physical) reads.push(String(file));
+    return original.call(this, file, ...args);
+  });
+  syncBuiltinESMExports();
+  t.after(() => { t.mock.restoreAll(); syncBuiltinESMExports(); });
+  const cmakeTrace = [{ file: physical, line: 1, cmd: 'cmake_language', args: ['EVAL','CODE','set(x y)'] },
+    { file: physical + ':1:EVAL', line: 1, cmd: 'set', args: ['x','y'] }].map(row => JSON.stringify(row)).join('\n');
+  const error = await readMlirBuildTrace({ cmakeTrace, build: path.join(root, 'build'),
+    inputRoots: [source, product], command: staticRole }).then(() => null, failure => failure);
+  assert.deepEqual(reads, [], 'a product directory does not admit an unknown EVAL body');
+  assert.equal(error?.issueCode, 'mlir-source-integrity');
+  assert.deepEqual(error?.missingPaths, ['unknown.cmake']);
+});
+
+test('static EVAL accepts exact ordinary source and product members and rejects changed bytes', async () => {
+  const root = await createMlirFixture('static-eval-physical-positive-');
+  const source = path.join(root, 'source'), product = path.join(root, 'product');
+  const bytes = Buffer.from('cmake_language(EVAL CODE "set(x y)")\n');
+  for (const [directory, relative] of [[source, 'llvm/entry.cmake'], [product, 'compiler/entry.cmake']]) {
+    const physical = path.join(directory, relative);
+    await mkdir(path.dirname(physical), { recursive: true });
+    await writeFile(physical, bytes);
+    const cmakeTrace = [{ file: physical, line: 1, cmd: 'cmake_language', args: ['EVAL','CODE','set(x y)'] },
+      { file: physical + ':1:EVAL', line: 1, cmd: 'set', args: ['x','y'] }].map(row => JSON.stringify(row)).join('\n');
+    const entry = { projectId: directory === source ? 'llvm-project.git' : 'tsfg', repositoryRelativePath: relative, sha256: hash(bytes) };
+    const input = { cmakeTrace, build: path.join(root, 'build'), inputRoots: [source, product], command: staticRole,
+      sourceEntries: directory === source ? [entry] : [], productEntries: directory === product ? [entry] : [] };
+    assert.deepEqual((await readMlirBuildTrace(input)).files, [physical]);
+    await writeFile(physical, 'cmake_language(EVAL CODE "set(x changed)")\n');
+    await assert.rejects(readMlirBuildTrace(input), { issueCode: 'mlir-source-integrity' });
+  }
+});
+
+test('registered static product EVAL refuses an intermediate junction before body access', async t => {
+  const root = await createMlirFixture('static-product-eval-redirect-');
+  const product = path.join(root, 'product'), outside = path.join(root, 'outside');
+  await mkdir(path.join(product, 'compiler'), { recursive: true });
+  await mkdir(outside);
+  const bytes = Buffer.from('cmake_language(EVAL CODE "set(x y)")\n');
+  const physical = path.join(product, 'compiler/entry.cmake');
+  await writeFile(physical, bytes);
+  await writeFile(path.join(outside, 'entry.cmake'), bytes);
+  await rename(path.join(product, 'compiler'), path.join(root, 'saved-compiler'));
+  await symlink(outside, path.join(product, 'compiler'), 'junction');
+  const reads = [], original = fs.readFile;
+  t.mock.method(fs, 'readFile', async function(file, ...args) {
+    if (String(file) === physical) reads.push(String(file));
+    return original.call(this, file, ...args);
+  });
+  syncBuiltinESMExports();
+  t.after(() => { t.mock.restoreAll(); syncBuiltinESMExports(); });
+  const cmakeTrace = [{ file: physical, line: 1, cmd: 'cmake_language', args: ['EVAL','CODE','set(x y)'] },
+    { file: physical + ':1:EVAL', line: 1, cmd: 'set', args: ['x','y'] }].map(row => JSON.stringify(row)).join('\n');
+  await assert.rejects(readMlirBuildTrace({ cmakeTrace, build: path.join(root, 'build'),
+    inputRoots: [path.join(root, 'source'), product], command: staticRole,
+    productEntries: [{ projectId: 'tsfg', repositoryRelativePath: 'compiler/entry.cmake', sha256: hash(bytes) }] }),
+  { issueCode: 'mlir-source-integrity' });
+  assert.deepEqual(reads, []);
+});
+
+test('physical source reader accepts ordinary registered bytes and rejects changed bytes', async () => {
+  const root = await createMlirFixture('static-physical-positive-');
+  const source = path.join(root, 'source');
+  await mkdir(path.join(source, 'llvm'), { recursive: true });
+  const absolute = path.join(source, 'llvm/input.cpp'), bytes = Buffer.from('// ordinary source fixture\n');
+  await writeFile(absolute, bytes);
+  const entry = { repositoryRelativePath: 'llvm/input.cpp', sha256: hash(bytes) };
+  assert.deepEqual(await readMlirPhysicalSource(source, absolute, entry), bytes);
+  await writeFile(absolute, '// changed ordinary fixture\n');
+  await assert.rejects(readMlirPhysicalSource(source, absolute, entry), { issueCode: 'mlir-source-integrity' });
+});
+
+for (const damage of ['directory', 'final-junction', 'intermediate-junction', 'root-junction', 'escape', 'identity']) {
+  test('physical source reader refuses ' + damage + ' before opening a body', async t => {
+    const root = await createMlirFixture('static-physical-negative-');
+    const source = path.join(root, 'source'), outside = path.join(root, 'outside');
+    await mkdir(path.join(source, 'llvm'), { recursive: true });
+    await mkdir(outside);
+    const bytes = Buffer.from('// ordinary boundary fixture\n');
+    const absolute = path.join(source, 'llvm/input.cpp');
+    const entry = { repositoryRelativePath: 'llvm/input.cpp', sha256: hash(bytes) };
+    if (damage === 'directory') await mkdir(absolute);
+    if (damage === 'final-junction') await symlink(outside, absolute, 'junction');
+    if (damage === 'intermediate-junction') {
+      await rename(path.join(source, 'llvm'), path.join(root, 'saved-llvm'));
+      await writeFile(path.join(outside, 'input.cpp'), bytes);
+      await symlink(outside, path.join(source, 'llvm'), 'junction');
+    }
+    if (damage === 'root-junction') {
+      await rename(source, path.join(root, 'saved-source'));
+      await mkdir(path.join(outside, 'llvm'));
+      await writeFile(path.join(outside, 'llvm/input.cpp'), bytes);
+      await symlink(outside, source, 'junction');
+    }
+    if (damage === 'identity') entry.sha256 = '';
+    const reads = [], original = fs.readFile;
+    t.mock.method(fs, 'readFile', async function(file, ...args) {
+      reads.push(String(file)); return original.call(this, file, ...args);
+    });
+    syncBuiltinESMExports();
+    t.after(() => { t.mock.restoreAll(); syncBuiltinESMExports(); });
+    const requested = damage === 'escape' ? path.join(outside, 'input.cpp') : absolute;
+    await assert.rejects(readMlirPhysicalSource(source, requested, entry), { issueCode: 'mlir-source-integrity' });
+    assert.deepEqual(reads, []);
+  });
+}

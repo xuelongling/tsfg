@@ -32,8 +32,30 @@ intake actually reads the historical full compiler and every inventory body.
 Consequently a static target does not itself qualify an independent SDK
 consumption closure. A static SDK build stops before those reads with
 `mlir-static-sdk-consumption`. Direct-source builds retain the existing
-source/legal/trace gates. Neither source separation nor object compilation
-proves the transitive imported-library closure or authorizes linking.
+source/legal/trace gates. Static materialization additionally selects a finite
+candidate from the existing pinned source, notice and provenance registrations
+before reading upstream bodies. Each selected path must match its immutable Git
+tree member and registered raw hash; unselected bodies are never read or copied.
+Backend implementations are excluded; registered shared AArch64/ARM/PowerPC/RISCV
+TableGen inputs remain available to TargetParser. Native source selection and
+full SDK intake retain their contracts.
+
+`TSFG_CORE_BUILD_ROLE=static` creates the complete common language and ordinary
+tool while leaving the native target undeclared. The factory explicitly selects
+no LLVM or experimental backend and checks those cache values after configure.
+Its planned and final dependency checks reject native product implementations
+and backend source/artifact edges before inspecting dependency bodies, including
+CMake EVAL origins. The original native role still selects X86 and creates the
+full compiler. Neither role changes common language semantics or source members.
+
+The finite candidate is not evidence of a complete CMake or link closure. LLVM
+can declare sources for components outside the selected build target. Missing
+configuration, generation or declaration members are absent from the staged
+tree and fail locally; their exact identities require the existing registration
+process before a future build can consume them. Only an actual qualified
+configure, Ninja plan and final compilation/link trace can establish closure.
+No real configure, compiler, linker, SDK or CLI execution is credited by these
+data-only factory regressions.
 
 R03 M14/M37 and M25 track removing this local HOLD: establish an authenticated
 ordinary dependency closure (including configuration evaluation, source

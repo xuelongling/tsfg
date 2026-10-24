@@ -2,6 +2,15 @@
 cmake_minimum_required(VERSION 3.20)
 project(tsfg-core-ir LANGUAGES C CXX)
 
+set(TSFG_CORE_BUILD_ROLE "native" CACHE STRING "Core command build responsibility")
+if(NOT TSFG_CORE_BUILD_ROLE STREQUAL "native" AND NOT TSFG_CORE_BUILD_ROLE STREQUAL "static")
+  message(FATAL_ERROR "Core build role must be native or static")
+endif()
+if(TSFG_CORE_BUILD_ROLE STREQUAL "static" AND
+   (LLVM_TARGETS_TO_BUILD OR LLVM_EXPERIMENTAL_TARGETS_TO_BUILD OR TSFG_VERIFIED_SOURCE_SDK))
+  message(FATAL_ERROR "Static Core requires an independent direct-source build without LLVM backends")
+endif()
+
 # The optional SDK boundary is qualified by the formal HBE before CMake. It
 # imports only the exact read-only source-built packages; no ambient package
 # search or alternative compiler is allowed. All new outputs use this build.
@@ -106,6 +115,7 @@ function(add_tsfg_static_core_tool)
 endfunction()
 add_tsfg_static_core_tool()
 # The existing full compiler name and native capabilities remain unchanged.
+if(TSFG_CORE_BUILD_ROLE STREQUAL "native")
 add_llvm_executable(tsfg-core-ir
   aot-capability.cpp aot-module.cpp aot-program.cpp aot-module-services.cpp
   aot-module-entry.cpp aot-module-codec.cpp aot.cpp aot-lowering.cpp
@@ -117,3 +127,4 @@ target_link_libraries(tsfg-core-ir PRIVATE tsfg-core-common
   MLIRLLVMCommonConversion MLIRTransforms MLIRLLVMToLLVMIRTranslation
   MLIRBuiltinToLLVMIRTranslation MLIRTargetLLVMIRExport
   LLVMCore LLVMObject LLVMX86CodeGen LLVMX86Desc LLVMX86Info LLVMX86Disassembler LLVMX86AsmParser)
+endif()

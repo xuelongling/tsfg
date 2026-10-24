@@ -10,11 +10,12 @@ import { readMlirSourceSdk, describeMlirSdkSourceIdentity, inspectMlirSdkProvena
   projectMlirSdkBuildIdentity, verifyMlirSdkBuildInputSet, verifyMlirSdkSourceInputs } from "./mlir-sdk.mjs";
 import { readMlirSdkDependency } from "./mlir-sdk.mjs";
 import { selectMlirConfigurationPaths, selectMlirPrecompilePaths } from "./mlir-sdk-paths.mjs";
-import { MlirBuildError, gitBytes, materializeSource, retainedNoticeBundle } from "./mlir-build-inputs.mjs";
+import { MlirBuildError, gitBytes, materializeSource, retainedNoticeBundle, readMlirPhysicalSource } from "./mlir-build-inputs.mjs";
 export { MlirBuildError } from "./mlir-build-inputs.mjs";
 import { selectMlirCommandRole, requireMlirSdkCommandIntake } from "./mlir-command.mjs";
 import { coreIrInputs } from "./core-ir-inputs.mjs";
 import { isPhysicalCmakeEvaluationCall } from "./mlir-cmake-evaluation.mjs";
+import { readMlirDirectSourceSelection, mlirRoleConfiguration, assertMlirRoleCache, assertMlirRoleDependency, requireMlirSourceDependency } from "./mlir-static-closure.mjs";
 
 const stagedProductInputs = [...coreIrInputs, "eng/mlir-python-policy.cmake", "eng/mlir-compiler-launcher.mjs"];
 
@@ -96,10 +97,13 @@ async function validatePublication(directory, manifest, serialize) {
 }
 
 /** Read-only CMake trace origins; callers still qualify every returned physical input. */
-export async function readMlirBuildTrace({ cmakeTrace, build, inputRoots, sdk = null, productRoot = undefined }) {
+export async function readMlirBuildTrace({ cmakeTrace, build, inputRoots, sdk = null, productRoot = undefined, command = null, sourceEntries = [], productEntries = [] }) {
   const cmakeFiles = new Set();
   const cmakeEvaluationFrames = new Map();
   const evaluationCalls = new Map();
+  const sourceInventory = new Map(sourceEntries.map(entry => [entry.repositoryRelativePath.toLowerCase(), entry]));
+  const productInventory = new Map(productEntries.filter(entry => entry.projectId === "tsfg")
+    .map(entry => [entry.repositoryRelativePath.toLowerCase(), entry]));
   for (const line of cmakeTrace.split(/\r?\n/).filter(Boolean)) {
     const record = JSON.parse(line);
     if (!record.file) continue;
@@ -129,10 +133,17 @@ export async function readMlirBuildTrace({ cmakeTrace, build, inputRoots, sdk = 
     }
     if (evaluationLines.length) {
       const absoluteOrigin = path.resolve(build, physical);
+      assertMlirRoleDependency(command, absoluteOrigin, { source: inputRoots[0], product: inputRoots[1], build });
       if (!inputRoots.some(root => within(root, absoluteOrigin)))
         throw new MlirBuildError(`CMake evaluation origin is outside admitted input roots: ${name}`, "mlir-source-integrity");
+      const sourceEntry = !sdk && command && within(inputRoots[0], absoluteOrigin) ?
+        requireMlirSourceDependency(absoluteOrigin, inputRoots[0], sourceInventory) : null;
+      const productEntry = command?.role === "static" && within(inputRoots[1], absoluteOrigin) ?
+        requireMlirSourceDependency(absoluteOrigin, inputRoots[1], productInventory) : null;
       const original = sdk && within(sdk.root, absoluteOrigin)
-        ? (await readMlirSdkDependency(sdk, absoluteOrigin, productRoot)).toString("utf8") : await readFile(absoluteOrigin, "utf8");
+        ? (await readMlirSdkDependency(sdk, absoluteOrigin, productRoot)).toString("utf8") : sourceEntry
+          ? (await readMlirPhysicalSource(inputRoots[0], absoluteOrigin, sourceEntry)).toString("utf8") : productEntry
+            ? (await readMlirPhysicalSource(inputRoots[1], absoluteOrigin, productEntry)).toString("utf8") : await readFile(absoluteOrigin, "utf8");
       if (!isPhysicalCmakeEvaluationCall(original, Number(evaluationLines[0])))
         throw new MlirBuildError(`CMake evaluation has no physical origin at the recorded line: ${name}`, "mlir-source-integrity");
       cmakeEvaluationFrames.set(name, { traceFile: name, physicalFile: physical, evaluationLines, evaluationCodeHashes });
@@ -157,7 +168,7 @@ async function collectConsumedInputs({ tools, build, source, sourceEntries, prod
   await writeFile(path.join(stage, "ninja-configuration-inputs.nul"), configurationInputs);
   await writeFile(path.join(stage, "ninja-deps.txt"), deps);
   const cmakeTrace = await readFile(path.join(stage, "cmake-trace.jsonl"), "utf8");
-  const cmakeOrigins = await readMlirBuildTrace({ cmakeTrace, build, sdk, productRoot: sdk ? productRoot : undefined,
+  const cmakeOrigins = await readMlirBuildTrace({ cmakeTrace, build, sdk, command, sourceEntries, productEntries, productRoot: sdk ? productRoot : undefined,
     inputRoots: [source, product, runtime.closurePath, ...(sdk ? [sdk.root] : [])] });
   const observed = new Set([...inputs.split("\0").filter(Boolean),
     ...configurationInputs.split("\0").filter(Boolean), ...cmakeOrigins.files,
@@ -170,16 +181,17 @@ async function collectConsumedInputs({ tools, build, source, sourceEntries, prod
   const sdkInputs = [];
   for (const name of observed) {
     const absolute = path.resolve(build, name);
+    assertMlirRoleDependency(command, absolute, { source, product, build });
     if (within(source, absolute)) {
       const relative = path.relative(source, absolute).replaceAll("\\", "/");
-      const entry = upstream.get(relative.toLowerCase());
-      if (!entry || digest(sdk ? await readMlirSdkDependency(sdk, absolute, productRoot) : await readFile(absolute)) !== entry.sha256)
+      const entry = requireMlirSourceDependency(absolute, source, upstream);
+      if (digest(sdk ? await readMlirSdkDependency(sdk, absolute, productRoot) : await readMlirPhysicalSource(source, absolute, entry)) !== entry.sha256)
         throw new MlirBuildError(`Unregistered or changed source dependency: ${relative}`, "mlir-source-integrity");
       consumed.set(entry.repositoryRelativePath, entry);
     } else if (within(product, absolute)) {
       const relative = path.relative(product, absolute).replaceAll("\\", "/");
       const entry = productEntries.find(entry => entry.projectId === "tsfg" && entry.repositoryRelativePath === relative);
-      if (!entry || digest(await readFile(absolute)) !== entry.sha256)
+      if (!entry || digest(command.role === "static" ? await readMlirPhysicalSource(product, absolute, entry) : await readFile(absolute)) !== entry.sha256)
         throw new MlirBuildError(`Undeclared or changed staged product dependency: ${relative}`, "mlir-source-integrity");
       consumedProduct.set(relative, entry);
     } else if (within(runtime.closurePath, absolute)) {
@@ -241,7 +253,7 @@ export async function executeMlirTarget({ options, runtime, tools, productRoot, 
   // Require immutable product approval/configuration bytes before source execution.
   for (const name of ["eng/mlir-source-legal.lock.json", "eng/mlir-source-build-legal.lock.json", "eng/mlir-source-notices.lock.json", "eng/mlir-python.lock.json", "eng/mlir-source.lock.json",
     "eng/mlir-build.mjs", "eng/mlir-command.mjs", "eng/mlir-build-inputs.mjs", "eng/mlir-sdk.mjs", "eng/mlir-sdk-admission.mjs",
-    "eng/mlir-source-registration.mjs", "eng/mlir-sdk-paths.mjs", "eng/mlir-sdk.lock.json", "eng/core-ir-inputs.mjs", "eng/mlir-cmake-evaluation.mjs", "eng/mlir-compiler-launcher.mjs", "eng/mlir-python-policy.cmake", ...coreIrInputs]) {
+    "eng/mlir-source-registration.mjs", "eng/mlir-sdk-paths.mjs", "eng/mlir-static-closure.mjs", "eng/mlir-sdk.lock.json", "eng/core-ir-inputs.mjs", "eng/mlir-cmake-evaluation.mjs", "eng/mlir-compiler-launcher.mjs", "eng/mlir-python-policy.cmake", ...coreIrInputs]) {
     const raw = await readFile(path.join(productRoot, name));
     const committed = gitBytes(git, productRoot, ["show", `HEAD:${name}`]);
     if (!raw.equals(committed)) throw new MlirBuildError(`Intake input must match committed product bytes: ${name}`, "mlir-source-integrity");
@@ -257,8 +269,10 @@ export async function executeMlirTarget({ options, runtime, tools, productRoot, 
   // rather than writing through a publication path after an integrity refusal.
   const failureHandle = await open(path.join(stage, "failure.json"), "wx");
   try {
+    const sourceSelection = sdk ? null : await readMlirDirectSourceSelection(identity, command);
     const { entries: sourceEntries, unmaterialized, checkoutDifferences } = sdk ?
-      { entries: sdk.sourceEntries, unmaterialized: sdk.unmaterialized, checkoutDifferences: sdk.checkoutDifferences } : await materializeSource(identity, git, source);
+      { entries: sdk.sourceEntries, unmaterialized: sdk.unmaterialized, checkoutDifferences: sdk.checkoutDifferences } : await materializeSource(identity, git, source, sourceSelection);
+    if (sourceSelection) await writeFile(path.join(stage, "source-selection.json"), serialize(sourceSelection));
     await writeFile(path.join(stage, "source-snapshot.json"), serialize({ sourceCommit: identity.sourceCommit,
       sourceTree: identity.sourceTree, entries: sourceEntries, unmaterialized, checkoutDifferences }));
     if (sdk) await writeFile(path.join(stage, "source-sdk.json"), serialize({ ...sdk.identity, root: sdk.root,
@@ -276,7 +290,7 @@ export async function executeMlirTarget({ options, runtime, tools, productRoot, 
       PYTHONDONTWRITEBYTECODE: "1", PYTHONNOUSERSITE: "1", PYTHONPYCACHEPREFIX: path.join(stage, "python-cache"),
       INCLUDE: tools.include.join(";"), LIB: tools.lib.join(";"), LIBPATH: tools.lib.join(";") };
     const requiredProductInputs = ["eng/mlir-command.mjs", "eng/mlir-build-inputs.mjs", "eng/mlir-sdk.mjs", "eng/mlir-sdk-admission.mjs",
-      "eng/mlir-source-registration.mjs", "eng/mlir-sdk-paths.mjs", "eng/mlir-sdk.lock.json", ...coreIrInputs, "eng/core-ir-inputs.mjs", "eng/mlir-build.mjs", "eng/mlir-cmake-evaluation.mjs",
+      "eng/mlir-source-registration.mjs", "eng/mlir-sdk-paths.mjs", "eng/mlir-static-closure.mjs", "eng/mlir-sdk.lock.json", ...coreIrInputs, "eng/core-ir-inputs.mjs", "eng/mlir-build.mjs", "eng/mlir-cmake-evaluation.mjs",
       "eng/mlir-python-policy.cmake", "eng/mlir-source.mjs", "eng/mlir-source.lock.json", "eng/mlir-python.mjs",
       "eng/mlir-python.lock.json", "eng/mlir-source-legal.mjs", "eng/mlir-source-legal.lock.json"];
     requiredProductInputs.push("eng/mlir-compiler-launcher.mjs", "eng/mlir-source-notices.lock.json");
@@ -324,8 +338,9 @@ export async function executeMlirTarget({ options, runtime, tools, productRoot, 
     const args = ["--trace-expand", "--trace-format=json-v1", `--trace-redirect=${cmakePath(path.join(stage, "cmake-trace.jsonl"))}`,
       "-S", cmakePath(path.join(sdk ? product : source, sdk ? "compiler/core-ir" : "llvm")), "-B", cmakePath(build), "-G", "Ninja",
       ...(sdk ? [`-DTSFG_VERIFIED_SOURCE_SDK=${cmakePath(sdk.root)}`] : [
-        "-DLLVM_ENABLE_PROJECTS=mlir", "-DLLVM_TARGETS_TO_BUILD=X86", "-DLLVM_ENABLE_ASSERTIONS=ON", "-DLLVM_ENABLE_LTO=OFF",
+        "-DLLVM_ENABLE_PROJECTS=mlir", "-DLLVM_ENABLE_ASSERTIONS=ON", "-DLLVM_ENABLE_LTO=OFF",
         "-DLLVM_EXTERNAL_PROJECTS=tsfg-core-ir", `-DLLVM_EXTERNAL_TSFG_CORE_IR_SOURCE_DIR=${cmakePath(path.join(product, "compiler/core-ir"))}`]),
+      ...mlirRoleConfiguration(command, sdk),
       "-DCMAKE_BUILD_TYPE=Debug", `-DCMAKE_MAKE_PROGRAM=${cmakePath(tools.ninja)}`, `-DCMAKE_C_COMPILER=${cmakePath(tools.clangcl)}`,
       `-DCMAKE_CXX_COMPILER=${cmakePath(tools.clangcl)}`, `-DCMAKE_LINKER=${cmakePath(tools.lld)}`,
       `-DCMAKE_C_COMPILER_LAUNCHER=${compilerLauncher}`, `-DCMAKE_CXX_COMPILER_LAUNCHER=${compilerLauncher}`,
@@ -349,6 +364,7 @@ export async function executeMlirTarget({ options, runtime, tools, productRoot, 
     await writeFile(path.join(stage, "configuration-legal.json"), serialize(configurationLegal));
     await runLogged(tools.cmake, args, stage, env, path.join(stage, "configure.log"));
     const cache = await readFile(path.join(build, "CMakeCache.txt"), "utf8");
+    assertMlirRoleCache(command, cache);
     for (const name of disabled) {
       const value = cache.match(new RegExp(`^${name}:[^=\\r\\n]+=([^\\r\\n]*)`, "m"));
       if (!value || value[1] !== "OFF") throw new MlirBuildError(`Optional dependency configuration changed: ${name}`);
@@ -377,7 +393,9 @@ export async function executeMlirTarget({ options, runtime, tools, productRoot, 
     // Previously observed transitive TableGen dependencies are explicit entries;
     // Ninja's initial input graph alone does not contain those discovered edges.
     const legalInventory = JSON.parse(await readFile(path.join(productRoot, "eng/mlir-source-build-legal.lock.json"), "utf8"));
-    const precompileLegal = await readMlirSourceBuildLegalInputs({ sourceRoot, git, paths: selectMlirPrecompilePaths({ files: legalInventory.files, sdk, productRoot }), sdk, canonicalize: serialize });
+    const visible = new Set(sourceEntries.map(entry => entry.repositoryRelativePath));
+    const files = sourceSelection ? legalInventory.files.filter(file => visible.has(file.path)) : legalInventory.files;
+    const precompileLegal = await readMlirSourceBuildLegalInputs({ sourceRoot, git, paths: selectMlirPrecompilePaths({ files, sdk, productRoot }), sdk, canonicalize: serialize });
     for (const file of precompileLegal.files) {
       const staged = path.join(source, file.path);
       const state = await lstat(staged);
