@@ -302,16 +302,25 @@ bool ArrayFlow::finish() {
   for(auto *op:reads) {
     if(!proof.charge())return false;const auto *computed=flow.evidence(payload(op->getResult(0)));
     if(!computed)return false;
-    // Capacity alone never discharges memory eligibility. Only the independent
-    // ordered IR query can establish successful source and index/length facts.
-    if(role==Role::OrderedPayload&&!proof.provedArrayReads.count(op))proof.unprovedMemoryReads.insert(op);
   }
   if(role==Role::CarrierMaximum)return publishCells();
   std::map<mlir::Operation *,std::set<std::string>> sources;
   for(const auto &[op,receiver]:boundaryReads) {
     if(!proof.charge())return false;std::set<std::string> origins;
     if(!entryCells.origins(receiver,origins))return proof.reject(entryCells.error());
-    if(!origins.empty())sources.emplace(op,std::move(origins));
+    if(!origins.empty()){
+      const auto *computed=flow.evidence(payload(op->getResult(0)));if(!computed)return proof.reject(flow.error());
+      if(!computed->pending&&!computed->alternatives.empty()){
+        if(!proof.charge())return false;proof.checkedArrayReadSources.insert(op);
+      }
+      sources.emplace(op,std::move(origins));
+    }
+  }
+  // Independent entry-cell authority describes a successful checked read;
+  // neither it nor a backing capacity proves the index statically in bounds.
+  for(auto *op:reads){
+    if(!proof.charge())return false;
+    if(!proof.provedArrayReads.count(op)&&!proof.checkedArrayReadSources.count(op))proof.unprovedMemoryReads.insert(op);
   }
   llvm::DenseMap<mlir::Value,PayloadEvidence> identities;
   for(const auto &[value,node]:values) {

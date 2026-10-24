@@ -145,7 +145,7 @@ struct ArrayMemory {
     std::set<std::string> versions;std::set<std::pair<mlir::Operation *,uint32_t>> captures;
     bool proven=false,bounds=false,foreign=false;
   };
-  Selection query(mlir::Operation *read,mlir::Value receiver,Index selected) {
+  Selection query(mlir::Operation *read,mlir::Value receiver,Index selected,bool checkedSuccess=false) {
     PayloadFlow graph(proof.remaining,PayloadFlow::AtomDomain::MemoryVersion);
     const auto outcome=[&](bool result){if(!result){valid=false;proof.reject(graph.error());}return result;};
     const auto seed=[&](auto id,const std::string &value){return outcome(graph.seed(id,value));};
@@ -324,9 +324,11 @@ struct ArrayMemory {
     if(!valid)return {};
     if(!graph.solve()){proof.reject(graph.error());valid=false;return {};}
     const auto *evidence=graph.evidence(result);Selection out;
-    if(!evidence||evidence->pending||evidence->alternatives.empty()||evidence->alternatives.count("#missing")||evidence->alternatives.count(input))return out;
-    out.bounds=!evidence->alternatives.count("#unchecked");
-    for(const auto &id:evidence->alternatives)if(id!="#unchecked"){
+    if(!evidence||evidence->pending||evidence->alternatives.empty()||(!checkedSuccess&&evidence->alternatives.count("#missing"))||evidence->alternatives.count(input))return out;
+    // Only the actual checked read's normal continuation excludes a known
+    // missing cell. Unknown, incoming and unresolved effects stay pending.
+    out.bounds=!evidence->alternatives.count("#unchecked")&&!evidence->alternatives.count("#missing");
+    for(const auto &id:evidence->alternatives)if(id!="#unchecked"&&id!="#missing"){
       if(!charge())return {};
       const llvm::StringRef atom(id),prefix("#foreign-array-version/");
       if(atom.starts_with(prefix)){out.foreign=true;out.versions.insert(atom.drop_front(prefix.size()).str());}
@@ -337,7 +339,7 @@ struct ArrayMemory {
       }
       else out.versions.insert(id);
     }
-    out.proven=!out.versions.empty()&&out.captures.empty();return out;
+    out.proven=(checkedSuccess||!out.versions.empty())&&out.captures.empty();return out;
   }
   Selection query(mlir::Operation *read){return query(read,read->getOperand(0),index(read->getOperand(1)));}
   bool cell(mlir::Operation *point,mlir::Value receiver,uint32_t slot,ArrayExtent &destination){
@@ -413,7 +415,7 @@ struct ArrayMemory {
           MemorySources sources(proof);if(!sources.good())return proof.reject(sources.error());
           captured=sources.arrayRead(sources.root(id),&op);
           if(captured.status==MemorySelection::Status::Invalid)return proof.reject(sources.error());
-          proven=captured.status==MemorySelection::Status::Proven;actual=&captured.versions;
+          proven=captured.status==MemorySelection::Status::Proven&&captured.staticBounds;actual=&captured.versions;
         }
         if(!proven||*actual!=expected)return proof.reject("Array read versions differ from independently preceding IR writes");
       }
@@ -425,6 +427,28 @@ struct ArrayMemory {
       }
     }
     return seen.size()==declaredReads.size()||proof.reject("Array claim has no actual read");
+  }
+  bool checked(mlir::Operation *read,const std::set<uint32_t> *actualIndices,CheckedArraySources &destination){
+    if(read->getName().getStringRef()!="tsfg_core.domain.array_read"||read->getNumOperands()!=2||read->getNumResults()!=1)
+      return proof.reject("normal Array sources require the actual checked read");
+    if(!directory()||!collect())return false;auto receiver=strip(read->getOperand(0));if(!valid)return false;
+    std::optional<uint32_t> length;
+    auto *span=receiver.getDefiningOp();
+    if(span&&span->getName().getStringRef()=="tsfg_core.domain.read_span")length=index(span->getOperand(2)).constant;
+    else if(!proveArrayLength(proof,read,receiver,[&](mlir::Value value){return strip(value);},length))return false;
+    if(!valid)return false;CheckedArraySources result;if(!length){destination=std::move(result);return true;}
+    std::vector<uint32_t> candidates;
+    if(actualIndices)for(const auto i:*actualIndices){if(!charge())return false;if(i<*length)candidates.push_back(i);}
+    else for(uint64_t i=0;i<*length;++i){if(!charge())return false;candidates.push_back(uint32_t(i));}
+    for(const auto i:candidates){
+      if(!charge())return false;const auto selected=query(read,receiver,Index{{},i},true);
+      if(!valid)return false;if(!selected.proven||selected.foreign){destination=CheckedArraySources{};return true;}
+      for(const auto &id:selected.versions){
+        if(!charge()||!proof.charge(id.size()/64+1))return false;
+        result.cells.push_back({id,versions.at(id).value});
+      }
+    }
+    result.complete=true;destination=std::move(result);return true;
   }
   bool run(){return directory()&&collect()&&reads();}
   bool overwrites() {
@@ -451,4 +475,8 @@ bool proveArrayCell(ModuleProof &proof,mlir::Operation *point,mlir::Value receiv
   return ArrayMemory{proof,false}.cell(point,receiver,index,cell);
 }
 bool verifyArrayOverwriteEffects(ModuleProof &proof){return ArrayMemory{proof,false}.overwrites();}
+bool proveCheckedArraySources(ModuleProof &proof,mlir::Operation *read,
+    const std::set<uint32_t> *actualIndices,CheckedArraySources &sources){
+  return ArrayMemory{proof,false}.checked(read,actualIndices,sources);
+}
 } // namespace tsfg::finite

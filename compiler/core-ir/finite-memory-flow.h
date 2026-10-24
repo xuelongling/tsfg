@@ -32,6 +32,9 @@ struct MemorySelection {
   enum class Status { Proven, Pending, Invalid } status=Status::Pending;
   std::set<std::string> versions;
   std::vector<MemoryOrigin> sources;
+  // Array reads only: normal-success payload evidence does not by itself
+  // prove a statically valid index. Ordinary field selections ignore this.
+  bool staticBounds=false;
 };
 using MemoryOrigins=std::map<mlir::Operation *,std::vector<MemoryOrigin>>;
 class MemorySources;

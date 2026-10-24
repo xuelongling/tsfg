@@ -159,7 +159,7 @@ bool proveArrayReadSources(ModuleProof &proof){
       // Optional precision for ordinary reads must not erase independently
       // established external checked-entry payload authority on an unknown
       // index. Span capture/lifetime still needs its complete source proof.
-      if(span){proof.arrayReadInputs.erase(&op);proof.provedArrayReads.erase(&op);proof.unprovedMemoryReads.insert(&op);}
+      if(span){proof.arrayReadInputs.erase(&op);proof.provedArrayReads.erase(&op);proof.checkedArrayReadSources.erase(&op);proof.unprovedMemoryReads.insert(&op);}
       continue;
     }
     std::vector<StoredFieldSource> projected;std::vector<mlir::Value> inputs;
@@ -168,7 +168,8 @@ bool proveArrayReadSources(ModuleProof &proof){
       for(auto input:origin.values){if(!proof.charge())return false;inputs.push_back(input);}
       projected.push_back(std::move(value));
     }
-    proof.arrayReadInputs.insert_or_assign(&op,std::move(inputs));proof.provedArrayReads.insert(&op);
+    proof.arrayReadInputs.insert_or_assign(&op,std::move(inputs));
+    if(selected.staticBounds)proof.provedArrayReads.insert(&op);else proof.checkedArrayReadSources.insert(&op);
     proof.unprovedMemoryReads.erase(&op);result.emplace(&op,std::move(projected));
   }
   proof.arrayReadSources=std::move(result);return true;

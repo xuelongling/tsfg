@@ -124,6 +124,9 @@ struct ModuleProof {
   // Actual checked Array cells projected into this read's activation. Foreign
   // sources have real capture/retained references, never raw callee SSA.
   std::map<mlir::Operation *,std::vector<StoredFieldSource>> arrayReadSources;
+  // Payload/owner sources only on the original checked read's successful
+  // continuation. This set grants no static index/extent/overwrite authority.
+  std::set<mlir::Operation *> checkedArrayReadSources;
   explicit ModuleProof(mlir::ModuleOp value) : module(value) {}
   bool charge(size_t count = 1);
   bool reject(llvm::StringRef message);

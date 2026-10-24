@@ -20,4 +20,9 @@ struct ArrayExtent {
 };
 bool proveArrayExtent(ModuleProof &proof,mlir::Operation *point,mlir::Value receiver,ArrayExtent &extent);
 bool proveArrayCell(ModuleProof &proof,mlir::Operation *point,mlir::Value receiver,uint32_t index,ArrayExtent &cell);
+// Current source alternatives only on this verified checked read's normal
+// continuation. This never proves static bounds or an overwrite exemption.
+struct CheckedArraySources {bool complete=false;std::vector<ArrayCellSource> cells;};
+bool proveCheckedArraySources(ModuleProof &proof,mlir::Operation *read,
+  const std::set<uint32_t> *actualIndices,CheckedArraySources &sources);
 } // namespace tsfg::finite

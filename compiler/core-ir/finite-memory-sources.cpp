@@ -285,7 +285,24 @@ MemoryOrigin MemorySources::project(Id frame,mlir::Value value,const std::string
 MemorySelection MemorySources::arrayRead(Id frame,mlir::Operation *read){
   MemorySelection result;std::set<uint32_t> slots;
   const bool known=indices(frame,read->getOperand(1),slots);
-  if(!good()){result.status=MemorySelection::Status::Invalid;return result;}if(!known)return result;
+  if(!good()){result.status=MemorySelection::Status::Invalid;return result;}
+  const auto normalSources=[&](){
+    MemorySelection result;CheckedArraySources checked;
+    if(!proveCheckedArraySources(proof,read,known?&slots:nullptr,checked)){result.status=MemorySelection::Status::Invalid;return result;}
+    if(!checked.complete||checked.cells.empty())return result;bool pending=false;
+    for(const auto &cell:checked.cells){
+      if(!proof.charge()){result.status=MemorySelection::Status::Invalid;return result;}
+      auto source=cell.value;
+      if(source.getParentBlock()->getParentOp()!=read->getParentOp()){pending=true;continue;}
+      auto origin=project(frame,source,cell.version,frame,true);
+      if(!good()){result.status=MemorySelection::Status::Invalid;return result;}pending|=origin.pending;
+      if(!proof.charge(cell.version.size()/64+1)){result.status=MemorySelection::Status::Invalid;return result;}
+      result.versions.insert(cell.version);result.sources.push_back(std::move(origin));
+    }
+    if(!pending&&!result.sources.empty())result.status=MemorySelection::Status::Proven;
+    return result; // Conditional on the original read's runtime guards only.
+  };
+  if(!known)return normalSources();
   // Selector chooses a descriptor/slot. Observer selects its underlying
   // Array payload now; it must not regress to the descriptor's creation point.
   struct Item {Id frame;mlir::Operation *selector,*observer;mlir::Value receiver;uint32_t index;std::vector<uint32_t> after;};
@@ -363,7 +380,8 @@ MemorySelection MemorySources::arrayRead(Id frame,mlir::Operation *read){
     }
   }
   if(!good())result.status=MemorySelection::Status::Invalid;
-  else if(!pending&&!result.sources.empty())result.status=MemorySelection::Status::Proven;
+  else if(!pending&&!result.sources.empty()){result.status=MemorySelection::Status::Proven;result.staticBounds=true;}
+  if(result.status==MemorySelection::Status::Pending)return normalSources();
   return result;
 }
 } // namespace tsfg::finite

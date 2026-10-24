@@ -172,6 +172,9 @@ struct Borrows {
     const auto source=strip(value);if(!valid)return false;auto *created=source.getDefiningOp();
     return created&&created->getName().getStringRef()=="tsfg_core.domain.read_span"&&parameter(created->getOperand(0),point);
   }
+  bool selectedRead(mlir::Operation *op)const{
+    return (proof.provedArrayReads.count(op)||proof.checkedArrayReadSources.count(op))&&proof.arrayReadSources.count(op);
+  }
   bool closedStorage(mlir::Value root,std::set<const void *> &seen){
     if(!proof.charge())return false;std::vector<mlir::Value> work{root};
     while(!work.empty()){
@@ -190,7 +193,7 @@ struct Borrows {
         }else if(use.getOperandNumber()==0&&(name=="tsfg_core.domain.array_store"||name=="tsfg_core.domain.array_resize")){
           // Real structural effects still run through Borrow liveness below.
         }else if(use.getOperandNumber()==0&&name=="tsfg_core.domain.array_read"){
-          if(!proof.provedArrayReads.count(op)||!proof.arrayReadSources.count(op))return false;
+          if(!selectedRead(op))return false;
         }else return false; // The actual escaping/call/CFG continuation is still unproved.
       }
     }
@@ -257,7 +260,7 @@ struct Borrows {
       if(!proof.charge())return false;if(values.count(input)&&!localStorage(op->getResult(0)))unprovedLifetime=op;
     }
     if(name=="tsfg_core.domain.array_read"&&values.count(op->getResult(0))&&
-        (!proof.provedArrayReads.count(op)||!proof.arrayReadSources.count(op)))unprovedLifetime=op;
+        !selectedRead(op))unprovedLifetime=op;
     if(auto returned=llvm::dyn_cast<mlir::func::ReturnOp>(op);returned&&returned.getNumOperands()==1&&values.count(returned.getOperand(0))) {
       if(parameterSource(returned.getOperand(0),op))return true;if(!valid)return false;
       // A caller/field returned view is not a fresh current-frame allocation.
@@ -302,7 +305,7 @@ struct Borrows {
         }
         if(name=="tsfg_core.domain.array_read"&&values.count(op.getResult(0))){
           const auto found=proof.arrayReadInputs.find(&op);
-          if(!proof.provedArrayReads.count(&op)||!proof.arrayReadSources.count(&op)||found==proof.arrayReadInputs.end())unprovedLifetime=&op;
+          if(!selectedRead(&op)||found==proof.arrayReadInputs.end())unprovedLifetime=&op;
           else for(auto input:found->second){
             if(!proof.charge())return false;
             if(values.count(input)&&!outcome(flow.use(point,values.at(input))))return false;
