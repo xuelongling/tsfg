@@ -78,6 +78,29 @@ struct Borrows {
     }
     return true;
   }
+  bool storedSources(){
+    // A view made inside a callee begins its caller-visible lifetime only on
+    // successful return at that real call. Later field reads keep it live
+    // across intervening caller mutations; no synthetic Array is allocated.
+    for(const auto &[read,sources]:proof.fieldReadSources){
+      if(!proof.charge())return false;if(!values.count(read->getResult(0)))continue;
+      for(const auto &source:sources){
+        if(!proof.charge())return false;if(!source.capture)continue;
+        if(!points.count(source.capture)||source.capture->getParentOfType<mlir::func::FuncOp>()!=read->getParentOfType<mlir::func::FuncOp>())
+          return proof.reject("stored Span source has no actual same-frame capture point");
+        PayloadEvidence identity;identity.pending=source.owners.empty();
+        for(auto root:source.owners){
+          if(!proof.charge())return false;const auto &input=owners(root);
+          identity.pending|=input.pending||input.alternatives.empty();
+          for(const auto &token:input.alternatives){if(!proof.charge())return false;identity.alternatives.insert(token);viewOwners.insert(token);}
+        }
+        const auto value=flow.value(identity);
+        if(value==BorrowFlow::none||!outcome(flow.define(points.at(source.capture),value))||!outcome(flow.use(points.at(read),value)))
+          return proof.reject(flow.error());
+      }
+    }
+    return true;
+  }
   mlir::Value strip(mlir::Value value) {
     while(auto *op=value.getDefiningOp()) {
       if(!proof.charge()){valid=false;return {};}
@@ -222,7 +245,7 @@ struct Borrows {
     // Provided authority is unconditionally checked, including modules without
     // a tracked view. Missing authority cannot later be mistaken for purity.
     if(!verifyArrayOverwriteEffects(proof)||!verifyArrayCallEffects(proof)||!projectOwners()||!collect())return false;if(values.empty())return true;
-    if(!actions()||!edges()||!aliases())return false;
+    if(!storedSources()||!actions()||!edges()||!aliases())return false;
     if(!flow.solve())return proof.reject(flow.error());
     const auto *result=flow.result();if(!result)return proof.reject(flow.error());
     if(result->status!=BorrowFlow::Status::Safe) {

@@ -112,8 +112,17 @@ bool clearMemory(ModuleProof &proof) {
   for(const auto &map:{&proof.fieldReadInputs,&proof.arrayReadInputs})for(const auto &[op,values]:*map) {
     if(!proof.charge())return false;for(const auto value:values)if(!proof.charge())return false;
   }
+  for(const auto &[op,sources]:proof.fieldReadSources){
+    if(!proof.charge())return false;
+    for(const auto &source:sources){
+    if(!proof.charge())return false;
+    for(auto value:source.values)if(!proof.charge())return false;
+    for(const auto &type:source.introduced)if(!proof.charge())return false;
+    for(auto owner:source.owners)if(!proof.charge())return false;
+    }
+  }
   proof.unprovedMemoryReads.clear();proof.provedArrayReads.clear();proof.fieldReadUndefined.clear();
-  proof.fieldReadInputs.clear();proof.arrayReadInputs.clear();return true;
+  proof.fieldReadInputs.clear();proof.arrayReadInputs.clear();proof.fieldReadSources.clear();return true;
 }
 bool memoryPaths(ModuleProof &proof) {
   bool changed;

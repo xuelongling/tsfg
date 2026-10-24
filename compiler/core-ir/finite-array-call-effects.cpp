@@ -233,6 +233,17 @@ struct ArrayCalls {
           if(name=="tsfg_core.domain.array_create") {if(!flow.local(result))return fail(flow.error());}
           else if(name=="tsfg_core.domain.view"||name=="tsfg_core.domain.refine"||name=="tsfg_core.domain.copy"||name=="tsfg_core.domain.read_span") {
             if(!alias(op->getOperand(0),op->getResult(0),id))return fail(flow.error());
+          }else if(name=="tsfg_core.domain.field_read"&&!proof.unprovedMemoryReads.count(op)&&proof.fieldReadSources.count(op)){
+            bool productive=false;
+            for(const auto &source:proof.fieldReadSources.at(op)){
+              for(auto input:source.values){
+                if(!proof.charge()||!alias(input,op->getResult(0),id))return fail(flow.error());productive=true;
+              }
+              for(auto root:source.owners){
+                if(!proof.charge()||!alias(root,op->getResult(0),id))return fail(flow.error());productive=true;
+              }
+            }
+            if(!productive&&!flow.unknown(result))return fail(flow.error());
           }else if(!flow.unknown(result))return fail(flow.error());
         }
       }

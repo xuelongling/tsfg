@@ -127,6 +127,9 @@ struct ActualFlow {
       if(controlOnly&&!memorySources)return pending(result);
       if(proof.unprovedMemoryReads.count(op)||!proof.fieldReadInputs.count(op))return pending(result);
       for(const auto input:proof.fieldReadInputs.at(op))if(!edge(value(input),result))return false;
+      const auto projected=proof.fieldReadSources.find(op);
+      if(projected!=proof.fieldReadSources.end())for(const auto &source:projected->second)for(const auto &type:source.introduced)
+        if(!proof.charge()||!insert(result,type))return false;
       if(proof.fieldReadUndefined.count(op)&&!insert(result,hash(std::string("tsfg.type\0undefined",19))))return false;
       return true;
     }

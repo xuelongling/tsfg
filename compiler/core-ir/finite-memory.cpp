@@ -1,5 +1,6 @@
 // SPDX-License-Identifier: MIT
 #include "finite-memory-flow.h"
+#include "finite-memory-sources.h"
 #include <algorithm>
 
 namespace tsfg::finite {
@@ -16,6 +17,9 @@ struct Memory {
   std::map<std::pair<std::string,std::string>,std::vector<Version>> versions;
   std::map<mlir::Operation *,std::vector<Version>> writes;
   MemoryOrigins origins;
+  // One immutable SSA/formal directory per memory transaction, shared by all
+  // actual field queries rather than rebuilding the module for every read.
+  MemorySources sources{proof};
   bool document(mlir::Operation *op, llvm::StringRef name, Json &out) {
     const auto text=attr(op,name);
     return proof.charge(text.size()/64+1) && arrays::ownerproof::parseCanonical(text+"\n",out) ||
@@ -143,7 +147,6 @@ struct Memory {
           if (!proof.charge() || write.field!=field) return proof.reject("memory version selects another physical field");
           if (!write.source.empty()) expectedSources.insert(write.source);undefined |= write.state!=Version::State::Initialized;
           if (write.value) {
-            if(compareClaims)inputValues.push_back(write.value);
             const auto *input=valueDomain(proof,write.value.getType());
             if (!input || !std::includes(result->alternatives.begin(),result->alternatives.end(),input->alternatives.begin(),input->alternatives.end()))
               return proof.reject("field read drops a real reaching write payload");
@@ -151,7 +154,6 @@ struct Memory {
         }
       }
       const auto undefinedType=hash(std::string("tsfg.type\0undefined",19));
-      if(compareClaims)inputUndefined|=undefined;
       const auto *intrinsics=row->getArray("intrinsics");
       if(!undefined && row->get("intrinsics"))return proof.reject("memory predecessor fabricates a native empty definition");
       if (undefined && (std::find(result->alternatives.begin(),result->alternatives.end(),undefinedType)==result->alternatives.end() ||
@@ -163,7 +165,7 @@ struct Memory {
       // Only the path-dependent first-write proof is conditional.
       if(!reachable)continue;
       if(!fieldCell){complete=false;continue;}
-      const auto selected=proveMemoryFirstWrites(proof,op,actual,field,writes,origins);
+      auto selected=proveMemoryFirstWrites(proof,op,actual,field,writes,origins,this->sources);
       if(selected.status==MemorySelection::Status::Invalid)return false;
       if(compareClaims&&selected.status==MemorySelection::Status::Proven&&selected.versions!=claimed)
         return proof.reject("claimed field version is stale or not first on every successful CFG/callee path");
@@ -172,18 +174,15 @@ struct Memory {
         const auto found=versions.find({id,actual});if(found==versions.end())return proof.reject("field identity has no independent write");
         for(const auto &write:found->second) {
           if(!proof.charge())return false;
-          if(write.value)inputOrigins.push_back({write.value,id});
+          inputUndefined|=write.state!=Version::State::Initialized;
         }
       }
       // Control refinement consumes independent first-write results, never the
       // producer's candidate versions. Claims are compared after convergence.
-      if(!compareClaims&&selected.status==MemorySelection::Status::Proven)for(const auto &id:selected.versions) {
-        if(!proof.charge())return false;const auto found=versions.find({id,actual});
-        if(found==versions.end())return proof.reject("independent field version has no SSA binding");
-        for(const auto &write:found->second) {
-          if(!proof.charge()||write.field!=field)return proof.reject("independent field version selects another member");
-          if(write.value)inputValues.push_back(write.value);inputUndefined|=write.state!=Version::State::Initialized;
-        }
+      if(selected.status==MemorySelection::Status::Proven)for(auto &source:selected.sources) {
+        if(!proof.charge())return false;complete&=!source.pending;
+        for(auto input:source.values){if(!proof.charge())return false;inputValues.push_back(input);}
+        inputOrigins.push_back(std::move(source));
       }
       complete &= selected.status==MemorySelection::Status::Proven;
     }
@@ -191,8 +190,16 @@ struct Memory {
     if (!complete || seenTargets!=expectedTargets) proof.unprovedMemoryReads.insert(op);
     else {
       proof.unprovedMemoryReads.erase(op);
-      proof.fieldReadInputs.emplace(op,std::move(inputValues));
-      origins.emplace(op,std::move(inputOrigins));
+      std::vector<StoredFieldSource> projected;
+      for(const auto &source:inputOrigins){
+        if(!proof.charge())return false;StoredFieldSource row;row.capture=source.capture;row.version=source.version;
+        for(auto value:source.values){if(!proof.charge())return false;row.values.push_back(value);}
+        for(const auto &type:source.introduced){if(!proof.charge())return false;row.introduced.insert(type);}
+        for(auto owner:source.owners){if(!proof.charge())return false;row.owners.push_back(owner);}
+        projected.push_back(std::move(row));
+      }
+      proof.fieldReadInputs.insert_or_assign(op,std::move(inputValues));
+      proof.fieldReadSources.insert_or_assign(op,std::move(projected));origins.insert_or_assign(op,std::move(inputOrigins));
       if(inputUndefined)proof.fieldReadUndefined.insert(op);
     }
     return valid;

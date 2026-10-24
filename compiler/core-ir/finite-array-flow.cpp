@@ -225,6 +225,9 @@ bool ArrayFlow::operation(mlir::Operation *op,const std::string &function) {
   if(name=="tsfg_core.domain.field_read") {
     if(proof.unprovedMemoryReads.count(op)||!proof.fieldReadInputs.count(op))return uncertain(op->getResult(0));
     for(const auto input:proof.fieldReadInputs.at(op))if(!proof.charge()||!copy(input,op->getResult(0)))return false;
+    const auto sources=proof.fieldReadSources.find(op);
+    if(sources!=proof.fieldReadSources.end())for(const auto &source:sources->second)for(auto owner:source.owners)
+      if(!proof.charge()||!copy(owner,op->getResult(0)))return false;
     return true;
   }
   if(name=="tsfg_core.domain.array_create") {

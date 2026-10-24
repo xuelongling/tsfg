@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: MIT
 // Backward memory equations normalized from real SSA, not producer summaries.
 #include "finite-memory-flow.h"
+#include "finite-memory-sources.h"
 #include <algorithm>
 
 namespace tsfg::finite {
@@ -15,11 +16,13 @@ struct FirstWrites {
   const std::map<mlir::Operation *,std::vector<MemoryVersion>> &writes;
   const MemoryOrigins &origins;
   PayloadFlow flow;
+  MemorySources &sources;
   // This token is internal to the equation language, never an owned version.
   const std::string input="#incoming-memory";
-  using Key=std::pair<std::string,std::vector<size_t>>;
+  using Key=std::tuple<std::string,std::vector<size_t>,size_t>;
   struct Context {
     std::string function;
+    size_t activation;
     std::set<size_t> aliases;
     size_t entry,returned;
     std::map<mlir::Block *,size_t> blocks;
@@ -37,13 +40,24 @@ struct FirstWrites {
   std::map<std::string,std::vector<mlir::Operation *>> callers;
   size_t normalized=0;
   bool valid=true;
+  struct Source {std::string version;mlir::Value value;size_t activation;};
+  std::map<std::tuple<std::string,size_t,size_t>,std::string> atoms;
+  std::map<std::string,Source> seeded;
   std::set<const void *> stripping;
   explicit FirstWrites(ModuleProof &p,const std::string &a,const std::string &f,
-    const std::map<mlir::Operation *,std::vector<MemoryVersion>> &w,const MemoryOrigins &o)
-      :proof(p),actual(a),field(f),writes(w),origins(o),flow(p.remaining,PayloadFlow::AtomDomain::MemoryVersion){}
+    const std::map<mlir::Operation *,std::vector<MemoryVersion>> &w,const MemoryOrigins &o,MemorySources &s)
+      :proof(p),actual(a),field(f),writes(w),origins(o),flow(p.remaining,PayloadFlow::AtomDomain::MemoryVersion),sources(s){}
   size_t node() {const auto id=flow.node();valid&=id!=PayloadFlow::none;return id;}
   bool edge(size_t from,size_t to) {return flow.connect({from,to});}
-  bool seed(size_t id,const std::string &version) {return flow.seed(id,"#version/"+version);}
+  bool seed(size_t id,const std::string &version,const Context &current,mlir::Value value={}) {
+    const auto key=std::make_tuple(version,current.activation,value?rawIdentity(value):SIZE_MAX);
+    auto found=atoms.find(key);
+    if(found==atoms.end()){
+      if(!proof.charge())return false;const auto token="#version/"+std::to_string(atoms.size());
+      found=atoms.emplace(key,token).first;seeded.emplace(token,Source{version,value,current.activation});
+    }
+    return valid&&flow.seed(id,found->second);
+  }
   mlir::Value strip(mlir::Value value) {
     const auto original=value;
     if(!stripping.insert(value.getAsOpaquePointer()).second)return value;
@@ -96,7 +110,7 @@ struct FirstWrites {
       const auto found=origins.find(op);
       if(op->getName().getStringRef()=="tsfg_core.domain.field_read"&&found!=origins.end()&&found->second.size()==1) {
         const auto &origin=found->second.front();const auto receiver=planeRoot(op->getOperand(0));
-        const auto from=origin.value.getDefiningOp();
+        const auto from=origin.value?origin.value.getDefiningOp():nullptr;
         // Only a real allocation has this frame-relative fresh identity.
         // Formal values require actual argument projection, not this rule.
         if(from&&from->getName().getStringRef()=="tsfg_core.domain.construct"&&
@@ -212,17 +226,17 @@ struct FirstWrites {
     }
     return false;
   }
-  size_t context(const std::string &function,std::vector<size_t> aliases) {
+  size_t context(const std::string &function,std::vector<size_t> aliases,size_t activation) {
     std::sort(aliases.begin(),aliases.end());aliases.erase(std::unique(aliases.begin(),aliases.end()),aliases.end());
-    const Key key{function,aliases};const auto found=indexed.find(key);if(found!=indexed.end())return found->second;
+    const Key key{function,aliases,activation};const auto found=indexed.find(key);if(found!=indexed.end())return found->second;
     if(!proof.charge()||!proof.functions.count(function)){valid=false;return SIZE_MAX;}
     const auto id=contexts.size(),entry=node(),returned=node();
-    contexts.push_back({function,{aliases.begin(),aliases.end()},entry,returned,{},{},{}});indexed.emplace(key,id);return id;
+    contexts.push_back({function,activation,{aliases.begin(),aliases.end()},entry,returned,{},{},{}});indexed.emplace(key,id);return id;
   }
   bool entry(Context &current) {
     auto fn=proof.functions.at(current.function);const auto &contract=*proof.callable.at(current.function);
     if(string(contract,"role")=="construction-body"&&fn.getNumArguments()&&matches(current,fn.getArgument(0)))
-      return seed(current.entry,string(contract,"construction")+"/entry/not-defined/"+actual+"/"+field);
+      return seed(current.entry,string(contract,"construction")+"/entry/not-defined/"+actual+"/"+field,current);
     return flow.seed(current.entry,input);
   }
   bool selected(mlir::Operation *op,const Context &current,std::set<std::string> &targets) {
@@ -262,7 +276,7 @@ struct FirstWrites {
           aliases.push_back(identity(fn.getArgument(index)));
         if(!project(current,op->getOperand(index-offset),fn.getArgument(index),aliases))return false;
       }
-      const auto next=context(target,std::move(aliases));if(!valid)return false;
+      const auto next=context(target,std::move(aliases),sources.enter(current.activation,op,target));if(!valid||!sources.good())return false;
       const auto returned=contexts[next].returned;
       // Successful callee writes replace the old state. Only an actual input
       // path in its summary allows the caller predecessor to continue.
@@ -276,12 +290,12 @@ struct FirstWrites {
     // destination has no edge from its own old state or from later source
     // writes. The source query shares the same CFG/call equation engine.
     if(inlineStorage()&&op->getName().getStringRef()=="tsfg_core.domain.copy"&&matches(current,op->getResult(0))) {
-      const auto source=context(current.function,{identity(op->getOperand(0))});
+      const auto source=context(current.function,{identity(op->getOperand(0))},current.activation);
       const auto sourceEntry=entryNode(source);
       if(!valid)return false;
       snapshots.push_back({source,op,sourceEntry,after});return true;
     }
-    if(inlineStorage()&&op->getNumResults()==1&&matches(current,op->getResult(0))&&
+    if(op->getNumResults()==1&&matches(current,op->getResult(0))&&
         (op->getName().getStringRef()=="func.call"||op->getName().getStringRef()=="tsfg_core.domain.method_call")) {
       std::set<std::string> targets;if(!selected(op,current,targets))return flow.unknown(after);
       bool found=false;
@@ -291,7 +305,7 @@ struct FirstWrites {
           if(!proof.charge())return false;
           auto returned=llvm::dyn_cast<mlir::func::ReturnOp>(&operation);
           if(!returned||returned.getNumOperands()!=1||!proof.mayReach(&block))continue;
-          found=true;const auto source=context(target,{identity(returned.getOperand(0))});
+          found=true;const auto source=context(target,{identity(returned.getOperand(0))},sources.enter(current.activation,op,target));
           const auto sourceEntry=entryNode(source);if(!valid)return false;
           snapshots.push_back({source,&operation,sourceEntry,after});
         }
@@ -307,7 +321,7 @@ struct FirstWrites {
     if(relevant) {
       if(!definite)return flow.unknown(after); // Distinct SSA is not noalias.
       for(const auto &version:bound->second)if(version.actual==actual&&version.field==field)
-        if(!seed(after,version.id))return false;
+        if(!seed(after,version.id,current,version.value))return false;
       return true;
     }
     if(proof.selectedCallees.count(op)&&proof.fieldEffects.count(op)&&proof.fieldEffects.at(op))
@@ -404,7 +418,7 @@ struct FirstWrites {
         // actual arguments. Such a caller retains the unresolved input path.
         if(!definite||!actualArgument){if(!flow.seed(into,input))return false;continue;}
         const auto parent=op->getParentOfType<mlir::func::FuncOp>();
-        const auto caller=context(attr(parent,"tsfg_core.function_id"),std::move(aliases));
+        const auto caller=context(attr(parent,"tsfg_core.function_id"),std::move(aliases),sources.root(attr(parent,"tsfg_core.function_id")));
         const auto callerEntry=entryNode(caller);
         if(!valid||!normalizePending()||!continueInput(contexts[caller].before.at(op),callerEntry,into))return false;
       }
@@ -413,30 +427,32 @@ struct FirstWrites {
   }
   MemorySelection run(mlir::Operation *read) {
     const auto fn=read->getParentOfType<mlir::func::FuncOp>();const auto id=attr(fn,"tsfg_core.function_id");
-    const auto root=context(id,{identity(read->getOperand(0))});
+    const auto activation=sources.root(id),root=context(id,{identity(read->getOperand(0))},activation);
     const auto actualEntry=entryNode(root);
     if(!normalizePending()||!connectSnapshots()||!incomingEntries()||!connectSnapshots()) {
-      proof.reject(flow.error().empty()?"memory call/CFG normalization failed":flow.error());return {MemorySelection::Status::Invalid,{}};
+      proof.reject(!sources.error().empty()?sources.error():flow.error().empty()?"memory call/CFG normalization failed":flow.error());return {MemorySelection::Status::Invalid,{}};
     }
     const auto selected=node();
     if(!valid||!continueInput(contexts[root].before.at(read),actualEntry,selected)) {
       proof.reject(flow.error());return {MemorySelection::Status::Invalid,{}};
     }
-    if(!valid||!flow.solve()) {proof.reject(flow.error());return {MemorySelection::Status::Invalid,{}};}
+    if(!valid||!sources.good()||!flow.solve()) {proof.reject(sources.error().empty()?flow.error():sources.error());return {MemorySelection::Status::Invalid,{}};}
     const auto *evidence=flow.evidence(selected);if(!evidence)return {MemorySelection::Status::Invalid,{}};
     MemorySelection result;
     if(evidence->pending||evidence->alternatives.empty()||evidence->alternatives.count(input))return result;
     for(const auto &version:evidence->alternatives) {
-      if(!proof.charge()||version.rfind("#version/",0)!=0)return {MemorySelection::Status::Invalid,{}};
-      result.versions.insert(version.substr(9));
+      if(!proof.charge()||!seeded.count(version))return {MemorySelection::Status::Invalid,{}};
+      const auto &source=seeded.at(version);result.versions.insert(source.version);
+      if(source.value)result.sources.push_back(sources.project(source.activation,source.value,source.version,activation));
     }
+    if(!sources.good()){proof.reject(sources.error().empty()?"stored-source activation normalization failed":sources.error());return {MemorySelection::Status::Invalid,{}};}
     result.status=MemorySelection::Status::Proven;return result;
   }
 };
 }
 MemorySelection proveMemoryFirstWrites(ModuleProof &proof,mlir::Operation *read,
   const std::string &actual,const std::string &field,
-  const std::map<mlir::Operation *,std::vector<MemoryVersion>> &writes,const MemoryOrigins &origins) {
-  return FirstWrites(proof,actual,field,writes,origins).run(read);
+  const std::map<mlir::Operation *,std::vector<MemoryVersion>> &writes,const MemoryOrigins &origins,MemorySources &sources) {
+  return FirstWrites(proof,actual,field,writes,origins,sources).run(read);
 }
 } // namespace tsfg::finite

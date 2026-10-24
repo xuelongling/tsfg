@@ -35,6 +35,16 @@ struct EntryArrayResource {
 // observed initialized element. Only the independently solved published
 // resource/alias/write equations may populate it.
 struct PublishedArrayCell { PayloadEvidence payload,nestedOwners; };
+// Selected real memory origins after activation substitution. Same-frame
+// values remain ordinary SSA inputs. A callee-created Span additionally names
+// its real call boundary and caller-owned roots; no allocation/escape promise.
+struct StoredFieldSource {
+  std::vector<mlir::Value> values;
+  std::set<std::string> introduced;
+  std::vector<mlir::Value> owners;
+  mlir::Operation *capture=nullptr;
+  std::string version;
+};
 // All pointers refer to the owned, canonical documents below. No pointer or
 // partial registry escapes verification; a failed load discards this object.
 struct ModuleProof {
@@ -103,6 +113,7 @@ struct ModuleProof {
   // Complete actual owner/effect/normal-return proof for each definition,
   // including exports without a callsite. Missing authority is not purity.
   std::set<std::string> arrayCallDefinitionsComplete;
+  std::map<mlir::Operation *,std::vector<StoredFieldSource>> fieldReadSources;
   explicit ModuleProof(mlir::ModuleOp value) : module(value) {}
   bool charge(size_t count = 1);
   bool reject(llvm::StringRef message);
