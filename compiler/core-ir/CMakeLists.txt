@@ -110,13 +110,16 @@ target_link_libraries(tsfg-core-common PUBLIC MLIRIR MLIRParser MLIRFuncDialect 
 function(add_tsfg_static_core_tool)
   set(USE_SHARED "")
   set(LLVM_LINK_COMPONENTS Support)
-  add_llvm_executable(tsfg-core-static DISABLE_LLVM_LINK_LLVM_DYLIB static-main.cpp)
+  # Each tool lists its own sources; this directory also holds common objects
+  # and the other command adapter. Tell AddLLVM these are intentional subsets.
+  add_llvm_executable(tsfg-core-static PARTIAL_SOURCES_INTENDED
+    DISABLE_LLVM_LINK_LLVM_DYLIB static-main.cpp)
   target_link_libraries(tsfg-core-static PRIVATE tsfg-core-common)
 endfunction()
 add_tsfg_static_core_tool()
 # The existing full compiler name and native capabilities remain unchanged.
 if(TSFG_CORE_BUILD_ROLE STREQUAL "native")
-add_llvm_executable(tsfg-core-ir
+add_llvm_executable(tsfg-core-ir PARTIAL_SOURCES_INTENDED
   aot-capability.cpp aot-module.cpp aot-program.cpp aot-module-services.cpp
   aot-module-entry.cpp aot-module-codec.cpp aot.cpp aot-lowering.cpp
   aot-float.cpp aot-fmod.cpp aot-fenv.cpp aot-conversions.cpp

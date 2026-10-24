@@ -16,10 +16,10 @@ const cmake=await readFile(path.join(coreRoot,'CMakeLists.txt'),'utf8');
 // This finite target declaration and its quoted local headers are the independent
 // closure oracle. Do not execute or generally interpret CMake to discover inputs.
 const common=/add_library\(tsfg-core-common OBJECT\s+([\s\S]*?)\)/.exec(cmake);
-const native=/add_llvm_executable\(tsfg-core-ir\s+([\s\S]*?)\)/.exec(cmake);
+const native=/add_llvm_executable\(tsfg-core-ir\s+PARTIAL_SOURCES_INTENDED\s+([\s\S]*?)\)/.exec(cmake);
 const ordinary=/add_llvm_executable\(tsfg-core-static\s+([\s\S]*?)\)/.exec(cmake);
 assert.ok(common);assert.ok(native);assert.ok(ordinary);
-const ordinarySource=/^DISABLE_LLVM_LINK_LLVM_DYLIB\s+(static-main\.cpp)$/.exec(ordinary[1].trim());
+const ordinarySource=/^PARTIAL_SOURCES_INTENDED\s+DISABLE_LLVM_LINK_LLVM_DYLIB\s+(static-main\.cpp)$/.exec(ordinary[1].trim());
 assert.ok(ordinarySource);
 const translationUnits=[common[1],native[1],ordinarySource[1]].flatMap(row=>row.trim().split(/\s+/));
 assert.equal(translationUnits.length,104);
