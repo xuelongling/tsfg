@@ -7,14 +7,14 @@ namespace tsfg::finite {
 // Claims are compared only after independent source/bounds reconstruction.
 bool verifyArrayMemory(ModuleProof &proof,bool compareClaims=true);
 struct ArrayCellSource {std::string version;mlir::Value value;};
-// Index is already rebased through each real read_span start. The call alone
-// cannot identify the selected cell when continuation crosses a slice view.
-struct ArrayCellCapture {mlir::Operation *call;uint32_t index;};
+// A real call or descriptor-load boundary plus the already rebased index.
+// Neither the boundary nor the descriptor type establishes a cell payload.
+struct ArrayCellCapture {mlir::Operation *boundary;uint32_t index;};
 // Complete current normal-return extent, selected by the same ordered version
 // equations as real Array reads. No producer claim or capacity supplies cells.
 struct ArrayExtent {
   bool proven=false;std::vector<ArrayCellSource> cells;
-  // A real call-result boundary reached without an intervening selected
+  // A real result boundary reached without an intervening selected
   // overwrite. It is continuation, not an initialized cell or owner seed.
   std::vector<ArrayCellCapture> captures;
 };

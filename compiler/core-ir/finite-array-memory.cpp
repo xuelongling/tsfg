@@ -265,7 +265,8 @@ struct ArrayMemory {
         continue;
       }
       const auto callees=proof.selectedCallees.find(previous);
-      if(previous==task.owner.getDefiningOp()&&callees!=proof.selectedCallees.end()){
+      const bool descriptor=name=="tsfg_core.domain.array_read"||name=="tsfg_core.domain.field_read"||name=="tsfg_core.domain.read_span";
+      if(previous==task.owner.getDefiningOp()&&(callees!=proof.selectedCallees.end()||descriptor)){
         if(!charge())return {};
         if(!task.index.constant){if(!unknown(task.node))return {};continue;}
         const auto key=std::make_pair(previous,*task.index.constant);auto found=captures.find(key);
@@ -332,7 +333,7 @@ struct ArrayMemory {
       else if(atom.starts_with("#array-capture/")){
         size_t index=0;if(atom.drop_front(15).getAsInteger(10,index)||index>=captureSites.size()){
           valid=false;proof.reject("Array cell capture identity");return {};}
-        out.captures.emplace(captureSites[index].call,captureSites[index].index);
+        out.captures.emplace(captureSites[index].boundary,captureSites[index].index);
       }
       else out.versions.insert(id);
     }

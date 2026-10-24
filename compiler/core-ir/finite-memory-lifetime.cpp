@@ -150,6 +150,8 @@ bool proveArrayReadSources(ModuleProof &proof){
     if(op.getName().getStringRef()!="tsfg_core.domain.array_read"||!proof.mayReach(&block))continue;
     const auto *domain=valueDomain(proof,op.getResult(0).getType());if(!domain)return false;bool span=false;
     for(const auto &type:domain->alternatives){if(!proof.charge())return false;span|=string(*proof.catalog.at(type),"kind")=="readSpan";}
+    const auto *receiver=valueDomain(proof,op.getOperand(0).getType());if(!receiver)return false;
+    for(const auto &type:receiver->alternatives){if(!proof.charge())return false;span|=string(*proof.catalog.at(type),"kind")=="readSpan";}
     if(!span)continue;
     const auto selected=sources.arrayRead(sources.root(id),&op);
     if(selected.status==MemorySelection::Status::Invalid)return proof.reject(sources.error());
