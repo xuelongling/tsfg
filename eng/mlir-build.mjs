@@ -12,7 +12,7 @@ import { readMlirSdkDependency } from "./mlir-sdk.mjs";
 import { selectMlirConfigurationPaths, selectMlirPrecompilePaths } from "./mlir-sdk-paths.mjs";
 import { MlirBuildError, gitBytes, materializeSource, retainedNoticeBundle, readMlirPhysicalSource } from "./mlir-build-inputs.mjs";
 export { MlirBuildError } from "./mlir-build-inputs.mjs";
-import { selectMlirCommandRole, requireMlirSdkCommandIntake } from "./mlir-command.mjs";
+import { selectMlirCommandRole, selectMlirBuildPhase, finishMlirPlanning, requireMlirSdkCommandIntake } from "./mlir-command.mjs";
 import { coreIrInputs } from "./core-ir-inputs.mjs";
 import { isPhysicalCmakeEvaluationCall } from "./mlir-cmake-evaluation.mjs";
 import { readMlirDirectSourceSelection, mlirRoleConfiguration, assertMlirRoleCache, assertMlirRoleDependency, requireMlirSourceDependency } from "./mlir-static-closure.mjs";
@@ -226,6 +226,7 @@ export async function executeMlirTarget({ options, runtime, tools, productRoot, 
   const command = selectMlirCommandRole(options);
   const git = process.env.TSFG_GIT;
   const sdkRoot = process.env.TSFG_MLIR_SDK_ROOT, sdkArtifact = process.env.TSFG_MLIR_SDK_ARTIFACT_ROOT;
+  const phase = selectMlirBuildPhase(options, command, !!(sdkRoot || sdkArtifact));
   if (!!sdkRoot !== !!sdkArtifact) throw new MlirBuildError("SDK requires both exact dependency and original artifact roots", "mlir-source-integrity");
   requireMlirSdkCommandIntake(command, !!sdkRoot);
   const sdk = sdkRoot ? await readMlirSourceSdk({ root: sdkRoot, artifactRoot: sdkArtifact, productRoot, canonicalize: serialize }) : null;
@@ -408,6 +409,16 @@ export async function executeMlirTarget({ options, runtime, tools, productRoot, 
       verifyMlirSdkSourceInputs(sdk, precompileLegal.files.map(file => ({ projectId: "llvm-project.git", repositoryRelativePath: file.path, sha256: file.sha256 })));
     }
     await writeFile(path.join(stage, "precompile-consumption-legal.json"), serialize(precompileLegal));
+    const planning = await finishMlirPlanning({ phase, command, stage, trace: plannedTrace, source: identity, legal, python,
+      productIdentity, workspaceState, serialize, verifyInputs: async () => {
+        await readMlirSourceIdentity({ sourceRoot, git });
+        await readMlirPythonTool({ toolRoot: process.env.TSFG_MLIR_PYTHON_TOOL_ROOT });
+        const current = await createIdentity(scopedRuntime, productRoot);
+        if (serialize(current.buildIdentity) !== serialize(productIdentity.buildIdentity))
+          throw new MlirBuildError("Declared product inputs changed during source planning", "mlir-source-integrity");
+        await verifyTools();
+      } });
+    if (planning) return planning;
     await runLogged(tools.cmake, ["--build", cmakePath(build), "--target", command.target, "--parallel", "4"], stage, env, path.join(stage, "build.log"));
     const trace = await collectConsumedInputs({ tools, build, source, sourceEntries, product,
       productEntries: productIdentity.buildInputSet.entries, productRoot, runtime, env, stage, sdk, command });

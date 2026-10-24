@@ -27,6 +27,22 @@ binds `coreCommandRole` to the build identity. Ordinary compilation accepts
 either role; AOT requires the full native role. `compileOwnedStaticProgram`
 can take `nativeCore` separately when `core` selects the ordinary tool.
 
+`--mlir-build-phase plan` is an operational stop point for direct-source static
+builds. The CLI and direct factory reject unknown phases, native planning and
+SDK planning before source intake. After the existing configuration, actual
+Ninja plan and precompile qualification, the factory rechecks source, Python,
+product and tool identities, writes `planned-input-trace.json`, and returns
+`status: planned` with `sourceBuild: not-run`. It starts no Core target build and
+publishes no executable, PDB or artifact manifest. The result is planning
+evidence; final compiler/link dependencies remain unqualified. Omission or
+`--mlir-build-phase build` preserves the complete build workflow.
+
+Configuration may itself invoke approved compiler ABI/feature checks and Python
+probes. A planning-stage release must cover those ordinary configure actions;
+the phase selector does not grant tool, source or execution permission. Actual
+configure and target-build releases remain separate decisions. No real tools or
+Core commands are credited by the data-only phase-interface tests.
+
 SDKv2 membership remains complete and unchanged. The current authenticated SDK
 intake actually reads the historical full compiler and every inventory body.
 Consequently a static target does not itself qualify an independent SDK

@@ -7,13 +7,15 @@ import fs from 'node:fs/promises';
 import { syncBuiltinESMExports } from 'node:module';
 import path from 'node:path';
 import test from 'node:test';
-import { materializeSource, readMlirPhysicalSource } from '../../eng/mlir-build-inputs.mjs';
-import { selectMlirCommandRole } from '../../eng/mlir-command.mjs';
-import { readMlirBuildTrace } from '../../eng/mlir-build.mjs';
+import { materializeSource, readMlirPhysicalSource, MlirBuildError } from '../../eng/mlir-build-inputs.mjs';
+import { selectMlirCommandRole, selectMlirBuildPhase, finishMlirPlanning } from '../../eng/mlir-command.mjs';
+import { readMlirBuildTrace, executeMlirTarget } from '../../eng/mlir-build.mjs';
 import { readMlirDirectSourceSelection, mlirRoleConfiguration, assertMlirRoleCache,
   assertMlirRoleDependency, requireMlirSourceDependency } from '../../eng/mlir-static-closure.mjs';
 import { readMlirLegalRegistration } from '../../eng/mlir-source-registration.mjs';
 import { sourceGitEnvironment } from '../../eng/intake-ledger.mjs';
+import { parseBuildOptions, validateMlirConfiguration, validateSmokeOptions } from '../../eng/build-options.mjs';
+import { ConfigurationError } from '../../eng/build-errors.mjs';
 import { createMlirFixture } from './mlir-fixtures.mjs';
 
 const hash = bytes => 'sha256:' + createHash('sha256').update(bytes).digest('hex');
@@ -303,3 +305,84 @@ for (const damage of ['directory', 'final-junction', 'intermediate-junction', 'r
     assert.deepEqual(reads, []);
   });
 }
+
+test('static planning phase is accepted by the production build options and configuration boundary', () => {
+  const options = parseBuildOptions(['build', '--dev', '--target', 'windows-x86_64-msvc', '--profile', 'debug',
+    '--source-target', 'mlir-core', '--core-command-role', 'static', '--mlir-build-phase', 'plan']);
+  validateMlirConfiguration(options);
+  assert.equal(options.get('--mlir-build-phase'), 'plan');
+  assert.equal(selectMlirBuildPhase(options, staticRole), 'plan');
+  assert.equal(selectMlirBuildPhase(new Map(), nativeRole, true), 'build');
+  assert.equal(selectMlirBuildPhase(new Map([['--mlir-build-phase', 'build']]), staticRole), 'build');
+});
+
+test('static planning rejects unsupported roles, phases and SDK use before any intake body', async t => {
+  const keys = ['TSFG_MLIR_SOURCE', 'TSFG_MLIR_SDK_ROOT', 'TSFG_MLIR_SDK_ARTIFACT_ROOT'];
+  const prior = keys.map(key => process.env[key]);
+  t.after(() => keys.forEach((key, index) => { if (prior[index] === undefined) delete process.env[key]; else process.env[key] = prior[index]; }));
+  process.env.TSFG_MLIR_SOURCE = 'E:/phase-fixture-source-must-not-be-read';
+  delete process.env.TSFG_MLIR_SDK_ROOT; delete process.env.TSFG_MLIR_SDK_ARTIFACT_ROOT;
+  const reads = [], original = fs.readFile;
+  t.mock.method(fs, 'readFile', async function(file, ...args) { reads.push(String(file)); return original.call(this, file, ...args); });
+  syncBuiltinESMExports();
+  t.after(() => { t.mock.restoreAll(); syncBuiltinESMExports(); });
+  for (const [role, phase, sdk] of [['native','plan',false], [undefined,'plan',false], ['static','configure',false],
+    ['__proto__','plan',false], ['static','plan',true]]) {
+    if (sdk) process.env.TSFG_MLIR_SDK_ROOT = 'E:/phase-fixture-sdk-must-not-be-read';
+    const options = new Map([['--dev', true], ['--target', 'windows-x86_64-msvc'], ['--profile', 'debug'],
+      ['--source-target', 'mlir-core'], ['--mlir-build-phase', phase]]);
+    if (role) options.set('--core-command-role', role);
+    assert.throws(() => validateMlirConfiguration(options), error => error instanceof ConfigurationError && error.issueCode === 'mlir-configuration');
+    await assert.rejects(executeMlirTarget({ options, runtime: undefined, tools: undefined, productRoot: 'E:/unused-phase-product',
+      workspaceState: undefined, serialize: undefined, createIdentity: undefined, scopedToolchainDigest: undefined, verifyTools: undefined }),
+    error => error instanceof MlirBuildError && error.issueCode === 'mlir-command-role');
+  }
+  assert.deepEqual(reads, []);
+});
+
+test('static planning phase cannot be attached to another build source target', () => {
+  const options = new Map([['--target','windows-x86_64-msvc'],['--profile','debug'],['--out','E:/unused-phase-output'],
+    ['--source-target','intake-ledger'],['--mlir-build-phase','plan']]);
+  assert.throws(() => validateSmokeOptions(options, 'build'), error => error instanceof ConfigurationError && error.issueCode === 'mlir-configuration');
+  assert.throws(() => selectMlirBuildPhase(options, staticRole), error => error instanceof MlirBuildError && error.issueCode === 'mlir-command-role');
+});
+
+// Controlled postqualification data exercises the production stopping/result
+// boundary. These fixtures are not CMake, compiler or dependency qualification.
+async function planningFixture() {
+  const stage = await createMlirFixture('static-planning-data-');
+  return { phase: 'plan', command: staticRole, stage, trace: { qualification: 'data-only fixture; no tool result', files: [] },
+    source: { sourceBuild: 'not-run' }, legal: {}, python: {}, productIdentity: { buildIdentity: { digest: 'fixture-only' } },
+    workspaceState: { dirty: false }, serialize: JSON.stringify, verifyInputs: async () => {} };
+}
+
+test('static planning completion verifies inputs and writes only explicitly unbuilt plan evidence', async () => {
+  const input = await planningFixture();
+  let verifications = 0;
+  input.verifyInputs = async () => { verifications++; };
+  const result = await finishMlirPlanning(input);
+  assert.equal(verifications, 1);
+  assert.equal(result.status, 'planned'); assert.equal(result.sourceBuild, 'not-run');
+  assert.equal(result.publishable, false); assert.equal(result.intakeComplete, false);
+  assert.equal(result.planning.targetBuild, 'not-started');
+  assert.equal(result.planning.finalDependencyClosure, 'not-qualified');
+  for (const key of ['outputs','output','artifactManifest','buildInputSet','buildIdentity']) assert.equal(Object.hasOwn(result, key), false, key);
+  assert.deepEqual(await readdir(input.stage), ['planned-input-trace.json']);
+  assert.deepEqual(JSON.parse(await readFile(result.trace, 'utf8')), input.trace);
+});
+
+test('static planning completion cannot turn a failed recheck into planning success', async () => {
+  const input = await planningFixture();
+  input.verifyInputs = async () => { throw Object.assign(Error('controlled identity failure'), { issueCode: 'mlir-source-integrity' }); };
+  await assert.rejects(finishMlirPlanning(input), { issueCode: 'mlir-source-integrity' });
+  assert.deepEqual(await readdir(input.stage), []);
+});
+
+test('static planning completion preserves the native build continuation and rejects invalid stops', async () => {
+  const input = await planningFixture();
+  input.verifyInputs = async () => { assert.fail('the default full build must not run plan completion checks'); };
+  assert.equal(await finishMlirPlanning({ ...input, command: nativeRole, phase: 'build' }), null);
+  for (const change of [{ command: nativeRole }, { phase: 'unknown' }])
+    await assert.rejects(finishMlirPlanning({ ...input, ...change }), { issueCode: 'mlir-command-role' });
+  assert.deepEqual(await readdir(input.stage), []);
+});

@@ -2,6 +2,7 @@
 import process from "node:process";
 import { ConfigurationError } from "./build-errors.mjs";
 import { validateAmbientBuildPolicy } from "./build-policy.mjs";
+import { selectMlirCommandRole, selectMlirBuildPhase } from "./mlir-command.mjs";
 
 export function parseReportPath(arguments_) {
   const index = arguments_.indexOf("--report");
@@ -41,14 +42,15 @@ export function parseOptions(arguments_, allowed, flags = new Set()) {
 
 export function parseBuildOptions(arguments_) {
   return parseOptions(arguments_, new Set([
-    "--dev", "--target", "--profile", "--simd-dispatch", "--workspace", "--out", "--report", "--source-target", "--intake-plan", "--intake-consumption", "--upgrade-plan", "--generation", "--program-core", "--core", "--core-command-role",
+    "--dev", "--target", "--profile", "--simd-dispatch", "--workspace", "--out", "--report", "--source-target", "--intake-plan", "--intake-consumption", "--upgrade-plan", "--generation", "--program-core", "--core", "--core-command-role", "--mlir-build-phase",
   ]), new Set(["--dev"]));
 }
 
 export function validateMlirConfiguration(options) {
-  const role = options.get("--core-command-role");
-  if (role !== undefined && !["static", "native"].includes(role))
-    throw new ConfigurationError("Core command role must be static or native", "mlir-configuration");
+  try {
+    selectMlirBuildPhase(options, selectMlirCommandRole(options),
+      !!(process.env.TSFG_MLIR_SDK_ROOT || process.env.TSFG_MLIR_SDK_ARTIFACT_ROOT));
+  } catch (error) { throw new ConfigurationError(error.message, "mlir-configuration"); }
   if (!options.has("--dev") || process.platform !== "win32" || options.get("--target") !== "windows-x86_64-msvc" ||
       options.get("--profile") !== "debug") {
     throw new ConfigurationError("MLIR intake requires explicit local-development Windows debug configuration", "mlir-configuration");
@@ -88,6 +90,8 @@ export function validateSmokeOptions(options, command, requireInput = false) {
     throw new ConfigurationError("Program/producer options require --source-target tsfg-aot", "aot-configuration");
   if (options.has("--core-command-role") && options.get("--source-target") !== "mlir-core")
     throw new ConfigurationError("Core command role requires --source-target mlir-core", "mlir-configuration");
+  if (options.has("--mlir-build-phase") && (command !== "build" || options.get("--source-target") !== "mlir-core"))
+    throw new ConfigurationError("Core build phase requires build --source-target mlir-core", "mlir-configuration");
   payloadOptions(options);
   const cpuFixture = options.get("--cpu-fixture");
   if (cpuFixture && (command !== "test" || cpuFixture !== "x86-64-v2")) {
