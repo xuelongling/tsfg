@@ -2,14 +2,12 @@
 // Typed member provenance, not payload evaluation. The existing owner trace
 // supplies actual Source-order completions and the selected callable graph.
 import {arrayAnalysisTypes,hasConditionalArrayRhs} from './array-analysis-types.mjs';
-/** @typedef {{kind:'unknown'}|{kind:'owner',owner:any,span:boolean,sources:any[]}|StoredPlane|
- * {kind:'choice',values:StoredValue[]}|{kind:'inputField',index:number,property:string}|
- * {kind:'loaded',value:StoredValue,tokens:any[]}} StoredValue */
-/** @typedef {{kind:'aggregate',id:number,type:string,slot:number|null,fallback:number|null,
- * invalidated:boolean,fields:Map<string,StoredValue>}} StoredPlane */
+import {createSpanPlanes} from './array-span-planes.mjs';
+/** @typedef {import('./array-span-planes.mjs').StoredValue} StoredValue */
 export function createSpanStorage(hir,tools,charge,authority,resolveContext=undefined){
   const type=arrayAnalysisTypes(hir),summaries=new Map();
-  const key=tools.pathKey,unknown=Object.freeze({kind:'unknown'});
+  const key=tools.pathKey;
+  const {unknown,choice,leaves,inherit,aggregate,copy,read,write,snapshot,cloneSnapshot,restore,index,array,truncate}=createSpanPlanes(type,charge,authority);
   const parents=new Map(),contains=new Set(),work=[],typeIndices=new Map();
   for(const [index,row]of hir.types.entries()){
     typeIndices.set(row.id,index);
@@ -21,62 +19,8 @@ export function createSpanStorage(hir,tools,charge,authority,resolveContext=unde
     if(row.elementType)parent(row.elementType);
   }
   for(let index=0;index<work.length;++index)for(const parent of parents.get(work[index])??[]){charge();if(!contains.has(parent)){contains.add(parent);work.push(parent);}}
-  const enabled=hir.types.some(row=>{charge();return ['reference','value'].includes(row.kind)&&contains.has(row.id);});
-  let serial=0,loopSerial=0;
-  const choice=rows=>{
-    const values=new Set(),work=[];for(const row of rows){charge();work.push(row??unknown);}
-    while(work.length){charge();const row=work.pop();if(row.kind==='choice')for(const child of row.values){charge();work.push(child);}else values.add(row);}
-    return values.size===1?[...values][0]:{kind:'choice',values:[...values]};
-  };
-  const leaves=value=>{const result=[],work=[value??unknown];while(work.length){charge();const row=work.pop();
-    if(row.kind==='loaded')work.push(row.value);
-    else if(row.kind==='choice')for(const child of row.values){charge();work.push(child);}else result.push(row);}return result;};
-  const transform=(value,map)=>{
-    charge();if(value?.kind==='loaded')return {kind:'loaded',value:transform(value.value,map),tokens:value.tokens};
-    return value?.kind==='choice'?choice(value.values.map(row=>transform(row,map))):map(value??unknown);
-  };
-  const inherit=(value,from)=>{
-    const tokens=[],work=[from];while(work.length){charge();const row=work.pop();
-      if(row?.kind==='loaded'){for(const token of row.tokens){charge();tokens.push(token);}work.push(row.value);}
-      else if(row?.kind==='choice')for(const child of row.values){charge();work.push(child);}}
-    return tokens.length?{kind:'loaded',value,tokens}:value;
-  };
-  /** @returns {StoredPlane} */
-  const aggregate=(actual,slot=null)=>({kind:'aggregate',id:++serial,type:actual,slot,
-    fallback:slot===null?null:slot,invalidated:false,fields:new Map()});
-  const copy=value=>{
-    const copied=new Map(),work=[];
-    const one=row=>{
-      charge();if(row?.kind==='loaded')return {kind:'loaded',value:one(row.value),tokens:row.tokens};
-      if(row?.kind==='choice')return choice(row.values.map(one));
-      if(row?.kind!=='aggregate'||type.types.get(row.type)?.kind!=='value')return row??unknown;
-      if(copied.has(row))return copied.get(row);const target=aggregate(row.type);target.fallback=row.fallback;
-      target.invalidated=row.invalidated;copied.set(row,target);work.push([row,target]);return target;
-    };
-    const result=one(value);
-    while(work.length){charge();const [from,to]=work.pop();for(const [field,payload]of from.fields){charge();to.fields.set(field,one(payload));}}
-    return result;
-  };
-  const field=(object,property)=>{
-    let current=type.types.get(object.type);
-    while(current){charge();for(const item of current.fields??[]){charge();if(item.id===property)return item.id;}current=type.types.get(current.base);}
-    for(const view of authority().views.values())if(view.actualType===object.type)
-      for(const pair of view.fields){charge();if(pair.target===property)return pair.source;}
-    return null;
-  };
-  const read=(receiver,property)=>transform(receiver,object=>{
-    charge();if(object.kind!=='aggregate')return unknown;const member=field(object,property);if(!member)return unknown;
-    if(object.fields.has(member))return object.fields.get(member);
-    return object.fallback===null||object.invalidated?unknown:{kind:'inputField',index:object.fallback,property:member};
-  });
-  const write=(receiver,property,payload,changed)=>{
-    const objects=leaves(receiver);
-    for(const object of objects){charge();if(object.kind!=='aggregate')continue;const member=field(object,property);if(!member)continue;
-      const previous=object.fields.get(member)??(object.fallback!==null&&!object.invalidated
-        ?{kind:'inputField',index:object.fallback,property:member}:unknown);
-      changed(object,member);object.fields.set(member,objects.length!==1?choice([previous,payload]):payload);
-    }
-  };
+  const enabled=hir.types.some(row=>{charge();return ['reference','value','array'].includes(row.kind)&&contains.has(row.id);});
+  let loopSerial=0;
   const origins=value=>{
     const result=new Map(),inputs=[];let pending=false;
     for(const row of leaves(value)){charge();if(row.kind==='inputField'){inputs.push(row);continue;}
@@ -85,13 +29,13 @@ export function createSpanStorage(hir,tools,charge,authority,resolveContext=unde
     return {sources:[...result.values()],pending:pending||inputs.length>0,inputs,unknown:pending};
   };
   const effectOwner=value=>{
-    const owners=[];for(const row of leaves(value)){charge();owners.push(row.kind==='owner'?row.owner:{kind:'unknown'});}
+    const owners=[];for(const row of leaves(value)){charge();owners.push(row.kind==='owner'||row.kind==='aggregate'&&row.owner?row.owner:{kind:'unknown'});}
     return tools.merge(owners);
   };
   const aggregateBoundary=id=>{
     const work=[id],seen=new Set();while(work.length){
       charge();const next=work.pop();if(seen.has(next))continue;seen.add(next);const row=type.types.get(next);
-      if(contains.has(next)&&['reference','value'].includes(row?.kind))return true;
+      if(contains.has(next)&&['reference','value','array'].includes(row?.kind))return true;
       if(row?.kind==='union')for(const member of row.members){charge();work.push(member);}
     }
     return false;
@@ -109,8 +53,10 @@ export function createSpanStorage(hir,tools,charge,authority,resolveContext=unde
       /** @type {StoredValue} */
       let value=unknown;
       if(type.isOwner(p.type)){
-        const owner={kind:'parameter',functionId:fn.id,index};value={kind:'owner',owner,span:type.isView(p.type),sources:[]};
-        if(value.span)value.sources.push({id:'parameter/'+fn.id+'/'+index,functionId:fn.id,parameter:index,owner});
+        const owner={kind:'parameter',functionId:fn.id,index};
+        if(type.isArray(p.type)&&contains.has(p.type))value=aliases[index]<index?parameters[aliases[index]]:aggregate(p.type,index,owner);
+        else{value={kind:'owner',owner,span:type.isView(p.type),sources:[]};
+          if(value.span)value.sources.push({id:'parameter/'+fn.id+'/'+index,functionId:fn.id,parameter:index,owner});}
       }else if(['reference','value'].includes(t?.kind))value=t.kind==='reference'&&aliases[index]<index
         ?parameters[aliases[index]]:aggregate(p.type,index);
       parameters.push(value);bindings.set(p.id,value);
@@ -123,34 +69,15 @@ export function createSpanStorage(hir,tools,charge,authority,resolveContext=unde
     const store=(receiver,property,payload)=>{
       // Distinct formal references have no noalias privilege. An update may
       // invalidate another formal's incoming field, even before its first read.
-      for(const object of leaves(receiver))if(object.kind==='aggregate'&&object.slot!==null&&type.types.get(object.type)?.kind==='reference')
-        for(const parameter of parameters)if(parameter!==object&&parameter.kind==='aggregate'&&type.types.get(parameter.type)?.kind==='reference'){
+      for(const object of leaves(receiver))if(object.kind==='aggregate'&&object.slot!==null&&
+        (type.isArray(object.type)||type.types.get(object.type)?.kind==='reference'))
+        for(const parameter of parameters)if(parameter!==object&&parameter.kind==='aggregate'&&
+          (type.isArray(parameter.type)||type.types.get(parameter.type)?.kind==='reference')){
           invalidate(parameter);
         }
+      if(property===null){for(const object of leaves(receiver))if(object.kind==='aggregate')invalidate(object);return;}
       write(receiver,property,payload,changed);
     };
-    const snapshot=(roots,extra=[])=>{
-      const state=new Map(),work=[];for(const rows of [roots,extra])for(const root of rows){charge();work.push(root);}
-      while(work.length){charge();const row=work.pop();
-        if(row?.kind==='loaded'){work.push(row.value);continue;}
-        if(row?.kind==='choice'){for(const value of row.values){charge();work.push(value);}continue;}
-        if(row?.kind!=='aggregate'||state.has(row))continue;
-        const fields=new Map();for(const [member,value]of row.fields){charge();fields.set(member,value);work.push(value);}
-        state.set(row,{fields,invalidated:row.invalidated});
-      }
-      return state;
-    };
-    const cloneSnapshot=state=>{
-      const clones=new Map();
-      for(const [object,item]of state){charge();const clone=aggregate(object.type,object.slot);clone.fallback=object.fallback;
-        clone.invalidated=item.invalidated;clones.set(object,clone);}
-      const remap=row=>{charge();if(row?.kind==='loaded')return {kind:'loaded',value:remap(row.value),tokens:row.tokens};
-        return row?.kind==='choice'?choice(row.values.map(remap)):clones.get(row)??row;};
-      for(const [object,clone]of clones)for(const [member,payload]of state.get(object).fields){charge();clone.fields.set(member,remap(payload));}
-      return {clones,remap};
-    };
-    const restore=state=>{for(const [object,stored]of state){charge();for(const member of object.fields.keys()){charge();object.fields.delete(member);}
-      for(const [member,value]of stored.fields){charge();object.fields.set(member,value);}object.invalidated=stored.invalidated;}};
     const bind=(id,value)=>{
       if(terminated)return;
       charge();bindingWrites.push(id);bindings.set(id,copy(value));
@@ -255,7 +182,8 @@ export function createSpanStorage(hir,tools,charge,authority,resolveContext=unde
         }
         if(value.kind!=='aggregate')return unknown;
         if(value.slot!==null)return actuals[value.slot]??unknown;
-        if(memo.has(value))return memo.get(value);const result=aggregate(value.type);
+        if(memo.has(value))return memo.get(value);const result=aggregate(value.type,null,value.owner
+          ?tools.map(value.owner,call,fn.id,()=>{throw new TypeError('r03-d-readspan-storage: invalid array substitution');}):undefined);
         if(value.fallback!==null){
           let current=type.types.get(value.type);
           while(current){charge();for(const member of current.fields??[]){charge();result.fields.set(member.id,copy(read(original[value.fallback],member.id)));}
@@ -323,7 +251,15 @@ export function createSpanStorage(hir,tools,charge,authority,resolveContext=unde
       const child=name=>get([...path,name]);
       if(value.kind==='reference')result=bindings.get(value.binding)??unknown;
       else if(['group','assertType','nonNull'].includes(value.kind))result=child('operand');
-      else if(value.kind==='arrayCreate')result={kind:'owner',owner,span:false,sources:[]};
+      else if(value.kind==='arrayCreate'){
+        if(!contains.has(value.type))result={kind:'owner',owner,span:false,sources:[]};
+        else result=array(value.type,owner,value.elements.length,index=>get([...path,'elements',index]));
+      }else if(value.kind==='arrayReadChecked'&&contains.has(value.receiver.type))result=read(child('receiver'),index(value.index));
+      else if(value.kind==='arrayStoreDenseChecked'&&contains.has(value.target.receiver.type)){
+        result=copy(child('value'));store(get([...path,'target','receiver']),index(value.target.index),result);
+      }else if(value.kind==='arrayResizeChecked'&&contains.has(value.target.receiver.type)){
+        truncate(get([...path,'target','receiver']),value.value,changed,invalidate);
+      }
       else if(value.kind==='fieldAccess')result=read(child('receiver'),value.property);
       else if(value.kind==='fieldAssignment'){
         result=child('value');store(get([...path,'target','receiver']),value.target.property,copy(result));
@@ -347,7 +283,8 @@ export function createSpanStorage(hir,tools,charge,authority,resolveContext=unde
             // evidence selects a recursive continuation of the same walker.
             const aliases=[],seen=new Map();
             for(const [index,actual]of actuals.entries()){
-              charge();const rows=leaves(actual),plane=rows.length===1&&rows[0].kind==='aggregate'&&type.types.get(rows[0].type)?.kind==='reference'?rows[0]:null;
+              charge();const rows=leaves(actual),plane=rows.length===1&&rows[0].kind==='aggregate'&&
+                (type.isArray(rows[0].type)||type.types.get(rows[0].type)?.kind==='reference')?rows[0]:null;
               if(plane&&!seen.has(plane))seen.set(plane,index);aliases.push(plane?seen.get(plane):index);
             }
             const summary=(target.target===fn.id||context?resolveContext?.(target.target,facts,aliases):null)??summaries.get(target.target);
@@ -390,7 +327,7 @@ export function createSpanStorage(hir,tools,charge,authority,resolveContext=unde
       }
       if(type.isView(value.type)){const evidence=origins(result);reads.set(key(path),evidence);
         charge();observations.push({value:result,evidence,aggregate:false});}
-      const payloadOwners=[];for(const payload of leaves(result))if(payload.kind==='owner'){charge();payloadOwners.push(payload.owner);}
+      const payloadOwners=[];for(const payload of leaves(result))if(payload.kind==='owner'||payload.kind==='aggregate'&&payload.owner){charge();payloadOwners.push(payload.owner);}
       return payloadOwners.length?tools.merge(payloadOwners):owner;
     };
     const initialize=statement=>{
@@ -410,6 +347,11 @@ export function createSpanStorage(hir,tools,charge,authority,resolveContext=unde
         else if(row?.kind==='choice')for(const child of row.values){charge();work.push({value:child,borrowed});}
         else if(row?.kind==='aggregate'&&!seen.has(row)){
           seen.add(row);let current=type.types.get(row.type);
+          if(type.isArray(row.type)){
+            // Slot source proof does not yet prove the complete escaping
+            // descriptor extent or its owner roots across a returned frame.
+            pending=true;for(const value of row.fields.values()){charge();work.push({value,borrowed:true});}
+          }
           while(current){charge();for(const member of current.fields??[]){charge();if(contains.has(member.type))
             work.push({value:row.fields.get(member.id)??unknown,borrowed:true});}current=type.types.get(current.base);}
         }else if(row?.kind==='owner'&&row.span)for(const source of row.sources){charge();sources.set(source.id,source);}
@@ -432,7 +374,7 @@ export function createSpanStorage(hir,tools,charge,authority,resolveContext=unde
         if(!terminated&&fallsThrough){const state=cloneSnapshot(snapshot(parameters));exits.push(parameters.map(parameter=>state.remap(parameter)));}
         const outputs=parameters.map((parameter,index)=>{
           charge();if(parameter.kind!=='aggregate')return parameter;
-          const result=aggregate(parameter.type,index),members=new Set();
+          const result=aggregate(parameter.type,index,parameter.owner),members=new Set();
           for(const exit of exits){charge();for(const member of exit[index].fields.keys()){charge();members.add(member);}
             result.invalidated||=exit[index].invalidated;}
           for(const member of members){charge();const payloads=[];for(const exit of exits){charge();payloads.push(read(exit[index],member));}
