@@ -32,7 +32,9 @@ pub const Layout = struct {
     fn validateAt(self: Layout, depth: usize, work: *usize) Error!void {
         if (depth > 32 or work.* == 0) return error.InvalidArrayLayout;
         work.* -= 1;
-        if (std.mem.allEqual(u8, &self.type_id, 0) or self.byte_size > 65536 or self.reference_count > 256 or
+        // A finite domain adds a two-byte tag and up to six alignment bytes
+        // around a concrete value; concrete cell layouts retain their own cap.
+        if (std.mem.allEqual(u8, &self.type_id, 0) or self.byte_size > 65544 or self.reference_count > 256 or
             self.alignment == 0 or self.alignment > 8 or !std.math.isPowerOfTwo(self.alignment) or
             self.byte_size % self.alignment != 0 or self.variants.len == 0 or self.variants.len > 256)
             return error.InvalidArrayLayout;
@@ -212,3 +214,38 @@ pub const Value = struct {
         self.* = undefined;
     }
 };
+
+test "tagged backing preserves the last field of a maximum concrete value" {
+    const concrete = Layout{ .type_id = .{1} ** 32, .byte_size = 65536, .alignment = 8,
+        .reference_count = 0, .variants = &.{.{ .tag = 3, .fields = &.{.{ .offset = 65528, .code = 5 }} }} };
+    const domain = Layout{ .type_id = .{2} ** 32, .byte_size = 65544, .alignment = 8,
+        .reference_count = 0, .variants = &.{
+            .{ .tag = 7, .children = &.{.{ .tag_offset = 0, .offset = 8, .reference_offset = 0, .layout = &concrete }} },
+            .{ .tag = 8, .kind = .undefined_value },
+        } };
+    try concrete.validate();
+    try domain.validate();
+    const source = try std.testing.allocator.alloc(u8, domain.byte_size);
+    defer std.testing.allocator.free(source);
+    const destination = try std.testing.allocator.alloc(u8, domain.byte_size);
+    defer std.testing.allocator.free(destination);
+    @memset(source, 0xa5);
+    std.mem.writeInt(u16, source[0..2], 3, .little);
+    std.mem.writeInt(u64, source[65536..][0..8], 0xfedcba9876543210, .little);
+    _ = try domain.checkBytes(7, source);
+    domain.copyBytes(7, destination, source);
+    try std.testing.expectEqual(@as(u16, 3), std.mem.readInt(u16, destination[0..2], .little));
+    try std.testing.expect(std.mem.allEqual(u8, destination[2..65536], 0));
+    try std.testing.expectEqual(@as(u64, 0xfedcba9876543210), std.mem.readInt(u64, destination[65536..][0..8], .little));
+    _ = try domain.checkBytes(7, destination);
+    domain.copyBytes(8, destination, source);
+    try std.testing.expect(std.mem.allEqual(u8, destination, 0));
+    std.mem.writeInt(u16, source[0..2], 99, .little);
+    try std.testing.expectError(error.InvalidArrayElement, domain.checkBytes(7, source));
+    var oversized = domain;
+    oversized.byte_size = 65552;
+    try std.testing.expectError(error.InvalidArrayLayout, oversized.validate());
+    var unaligned = domain;
+    unaligned.byte_size = 65545;
+    try std.testing.expectError(error.InvalidArrayLayout, unaligned.validate());
+}
