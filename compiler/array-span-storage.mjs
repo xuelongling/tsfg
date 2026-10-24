@@ -7,7 +7,7 @@ import {createSpanPlanes} from './array-span-planes.mjs';
 export function createSpanStorage(hir,tools,charge,authority,resolveContext=undefined){
   const type=arrayAnalysisTypes(hir),summaries=new Map();
   const key=tools.pathKey;
-  const {unknown,choice,leaves,inherit,aggregate,copy,read,write,snapshot,cloneSnapshot,restore,index,array,truncate}=createSpanPlanes(type,charge,authority);
+  const {unknown,choice,leaves,inherit,aggregate,copy,read,write,snapshot,cloneSnapshot,restore,index,array,truncate,elements,extent}=createSpanPlanes(type,charge,authority);
   const parents=new Map(),contains=new Set(),work=[],typeIndices=new Map();
   for(const [index,row]of hir.types.entries()){
     typeIndices.set(row.id,index);
@@ -66,7 +66,8 @@ export function createSpanStorage(hir,tools,charge,authority,resolveContext=unde
     }
     const get=path=>values.get(key(path))??unknown;
     const invalidate=object=>{
-      charge();mutations.push([object,null]);for(const member of object.fields.keys()){charge();object.fields.delete(member);}object.invalidated=true;
+      charge();mutations.push([object,null]);for(const member of object.fields.keys()){charge();object.fields.delete(member);}
+      object.invalidated=true;object.extent=null;object.extentChanged=true;
     };
     const changed=(object,member)=>{charge();mutations.push([object,member]);};
     const store=(receiver,property,payload)=>{
@@ -103,13 +104,16 @@ export function createSpanStorage(hir,tools,charge,authority,resolveContext=unde
         for(const name of row.bindings.keys()){charge();names.add(name);}}
       for(const object of objects){charge();const members=new Set();
         for(const row of states){charge();for(const member of row.planes.get(object)?.fields.keys()??[]){charge();members.add(member);}}
-        for(const member of object.fields.keys()){charge();object.fields.delete(member);}object.invalidated=false;
+        for(const member of object.fields.keys()){charge();object.fields.delete(member);}object.invalidated=false;object.extentChanged=false;object.extentTokens=[];
         for(const member of members){charge();const payloads=[];
           for(const row of states){charge();const plane=row.planes.get(object);if(!plane)continue;
             payloads.push(plane.fields.get(member)??(object.fallback!==null&&!plane.invalidated
               ?{kind:'inputField',index:object.fallback,property:member}:unknown));}
           object.fields.set(member,choice(payloads));}
-        for(const row of states){charge();object.invalidated||=row.planes.get(object)?.invalidated??false;}
+        let extent;for(const row of states){charge();const plane=row.planes.get(object);if(!plane)continue;
+          object.invalidated||=plane.invalidated;object.extentChanged||=plane.extentChanged;
+          for(const token of plane.extentTokens){charge();object.extentTokens.push(token);}
+          extent=extent===undefined?plane.extent:extent===plane.extent?extent:null;}object.extent=extent??null;
       }
       for(const id of bindings.keys()){charge();bindings.delete(id);}
       for(const name of names){charge();const payloads=[];for(const row of states){charge();payloads.push(row.bindings.get(name)??unknown);}
@@ -120,8 +124,9 @@ export function createSpanStorage(hir,tools,charge,authority,resolveContext=unde
       // Symbolic entry labels expose only loop-carried dependencies. Strong
       // writes kill these labels; unchanged slots retain their exact payload.
       for(const [name,value]of bindings){charge();bindings.set(name,{kind:'loaded',value,tokens:[{loop:id,binding:name}]});}
-      for(const [object,plane]of before.planes)for(const [member,value]of plane.fields){
-        charge();object.fields.set(member,{kind:'loaded',value,tokens:[{loop:id,object,member}]});}
+      for(const [object,plane]of before.planes){
+        charge();object.extentTokens.push({loop:id,object});
+        for(const [member,value]of plane.fields){charge();object.fields.set(member,{kind:'loaded',value,tokens:[{loop:id,object,member}]});}}
     };
     const leaveLoop=(before,conditionExit,repeats=true,zero=true)=>{
       // Even zero iterations evaluate the condition. Preserve its successful
@@ -142,6 +147,9 @@ export function createSpanStorage(hir,tools,charge,authority,resolveContext=unde
         if(value?.kind==='aggregate'&&!settled.has(value)){settled.set(value,value);pending.push(value);}return value??unknown;
       };
       const drain=()=>{while(pending.length){charge();const object=pending.pop();
+        const keep=[];for(const token of object.extentTokens){charge();if(token.loop!==before.loop)keep.push(token);
+          else if(repeats&&(slots.get(token.object)?.has('extent')||slots.get(token.object)?.has(null)))object.extent=null;}
+        object.extentTokens=keep;
         for(const [member,value]of object.fields){charge();object.fields.set(member,settle(value));}}};
       for(const [name,value]of bindings){charge();bindings.set(name,settle(value));}
       for(const parameter of parameters)settle(parameter);drain();
@@ -189,7 +197,9 @@ export function createSpanStorage(hir,tools,charge,authority,resolveContext=unde
         if(value.kind!=='aggregate')return unknown;
         if(value.slot!==null)return actuals[value.slot]??unknown;
         if(memo.has(value))return memo.get(value);const result=aggregate(value.type,null,value.owner
-          ?tools.map(value.owner,call,fn.id,()=>{throw new TypeError('r03-d-readspan-storage: invalid array substitution');}):undefined);
+            ?tools.map(value.owner,call,fn.id,()=>{throw new TypeError('r03-d-readspan-storage: invalid array substitution');}):undefined);
+        result.extent=value.extent;result.extentChanged=value.extentChanged;
+        for(const token of value.extentTokens){charge();result.extentTokens.push(token);}
         if(value.fallback!==null){
           let current=type.types.get(value.type);
           while(current){charge();for(const member of current.fields??[]){charge();result.fields.set(member.id,copy(read(original[value.fallback],member.id)));}
@@ -234,6 +244,7 @@ export function createSpanStorage(hir,tools,charge,authority,resolveContext=unde
       for(const [index,parameter]of summary.parameters.entries()){
         charge();if(parameter.kind!=='aggregate'||!(summary.receiver&&index===0)&&type.types.get(parameter.type)?.kind==='value')continue;
         if(parameter.invalidated)for(const target of leaves(actuals[index]))if(target.kind==='aggregate')invalidate(target);
+        if(type.isArray(parameter.type)&&parameter.extentChanged)extent(actuals[index],parameter.extent,changed,invalidate);
         for(const [member,payload]of parameter.fields){charge();store(actuals[index],member,project(payload));}
       }
       const result=project(summary.returned);
@@ -365,9 +376,9 @@ export function createSpanStorage(hir,tools,charge,authority,resolveContext=unde
           seen.add(row);let current=type.types.get(row.type);
           const owned=['reference','value'].includes(current?.kind);
           if(type.isArray(row.type)){
-            // Slot source proof does not yet prove the complete escaping
-            // descriptor extent or its owner roots across a returned frame.
-            pending=true;for(const value of row.fields.values()){charge();work.push({value,borrowed:true,retaining:false});}
+            const slots=elements(row);
+            if(slots===null){pending=true;for(const value of row.fields.values()){charge();work.push({value,borrowed:true,retaining:false});}}
+            else for(const value of slots){charge();work.push({value,borrowed:true,retaining:true});}
           }
           while(current){charge();for(const member of current.fields??[]){charge();if(contains.has(member.type))
             work.push({value:row.fields.get(member.id)??unknown,borrowed:true,retaining:owned});}current=type.types.get(current.base);}
@@ -395,8 +406,13 @@ export function createSpanStorage(hir,tools,charge,authority,resolveContext=unde
         const outputs=parameters.map((parameter,index)=>{
           charge();if(parameter.kind!=='aggregate')return parameter;
           const result=aggregate(parameter.type,index,parameter.owner),members=new Set();
-          for(const exit of exits){charge();for(const member of exit[index].fields.keys()){charge();members.add(member);}
+          let extent;for(const exit of exits){charge();const plane=exit[index];
+            extent=extent===undefined?plane.extent:extent===plane.extent?extent:null;
+            for(const member of plane.fields.keys()){charge();members.add(member);}
             result.invalidated||=exit[index].invalidated;}
+          for(const exit of exits){charge();result.extentChanged||=exit[index].extentChanged;
+            for(const token of exit[index].extentTokens){charge();result.extentTokens.push(token);}}
+          result.extent=extent??null;
           for(const member of members){charge();const payloads=[];for(const exit of exits){charge();payloads.push(read(exit[index],member));}
             result.fields.set(member,choice(payloads));}
           return result;

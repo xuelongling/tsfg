@@ -1,0 +1,31 @@
+{
+  "frozenBeforeSourceProducerWork": true,
+  "sourcePins": [
+    {
+      "kind": "overwrite",
+      "path": "E:/ws/pro_tsfg/.scratch/tsfg_r03/M25-source-generic-array-checks-20261022/span-array-return-overwrite-source.ts",
+      "bytes": 247,
+      "sha256": "68605cc997970ee5ea1aa9e4812a0ac4a55a779280a4dafe702d1b12616170d5"
+    },
+    {
+      "kind": "live-conflict",
+      "path": "E:/ws/pro_tsfg/.scratch/tsfg_r03/M25-source-generic-array-checks-20261022/span-array-return-live-conflict-source.ts",
+      "bytes": 170,
+      "sha256": "652df141967fa40c10730842cc8cf4587c015aea10bc02ecc34e33a71c919b69"
+    }
+  ],
+  "positive": {
+    "extent": 1,
+    "slot0": "current B span",
+    "alias": "same slots Array identity",
+    "oldA": "overwritten before resize, no live borrow from returned slot",
+    "result": 2
+  },
+  "negative": {
+    "extent": 1,
+    "slot0": "live A span",
+    "required": "A resize conflicts with Span retained through normal return and caller double read; actual precise rejection, generic pending is not semantic GREEN"
+  },
+  "sourceResponsibility": "Official typed original facts only; both programs TypeScript diagnostics zero. No borrow license encoded by source. Preserve generic ReadSpan array return/call/double-index original bindings and UTF16 ranges.",
+  "coreQualification": "C++ true IR execution separately unresolved; this independent expectation does not assert actual execution."
+}
