@@ -35,6 +35,12 @@ struct EntryArrayResource {
 // observed initialized element. Only the independently solved published
 // resource/alias/write equations may populate it.
 struct PublishedArrayCell { PayloadEvidence payload,nestedOwners; };
+// A replayable path through real selected call occurrences, relative to the
+// containing source query. Numeric MemoryFrames ids never cross that query.
+struct MemoryCallStep {mlir::Operation *call=nullptr;std::string function;};
+using MemoryCallPath=std::vector<MemoryCallStep>;
+// descriptor remains SSA in its original activation, not a caller SSA input.
+struct StoredSpanSlice {mlir::Value descriptor;MemoryCallPath activation;};
 // Selected real memory origins after activation substitution. Same-frame
 // values remain ordinary SSA inputs. A callee-created Span additionally names
 // its real call boundary and caller-owned roots; no allocation/escape promise.
@@ -49,6 +55,7 @@ struct StoredFieldSource {
   // Actual query-frame operands required by an introduced checked native
   // result. They propagate uncertainty only, never result payload/identity.
   std::vector<mlir::Value> dependencies;
+  std::vector<StoredSpanSlice> slices;
 };
 // All pointers refer to the owned, canonical documents below. No pointer or
 // partial registry escapes verification; a failed load discards this object.

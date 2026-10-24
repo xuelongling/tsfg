@@ -84,6 +84,8 @@ export const coreIrInputs = Object.freeze([
   "compiler/core-ir/finite-array-flow.h",
   "compiler/core-ir/finite-array-length.cpp",
   "compiler/core-ir/finite-array-length.h",
+  "compiler/core-ir/finite-array-memory-internal.h",
+  "compiler/core-ir/finite-array-memory-query.cpp",
   "compiler/core-ir/finite-array-memory.cpp",
   "compiler/core-ir/finite-array-memory.h",
   "compiler/core-ir/finite-borrow-flow.cpp",
@@ -116,6 +118,7 @@ export const coreIrInputs = Object.freeze([
   "compiler/core-ir/finite-memory-lifetime.h",
   "compiler/core-ir/finite-memory-sources.cpp",
   "compiler/core-ir/finite-memory-sources.h",
+  "compiler/core-ir/finite-memory-span-sources.cpp",
   "compiler/core-ir/finite-memory.cpp",
   "compiler/core-ir/finite-module.cpp",
   "compiler/core-ir/finite-module.h",
@@ -164,5 +167,5 @@ export const coreIrInputs = Object.freeze([
   "compiler/core-ir/string-wire.h",
   "compiler/core-ir/string.cpp",
   "runtime/aot-instance.h",
-  "runtime/aot-program.h"
+  "runtime/aot-program.h",
 ]);

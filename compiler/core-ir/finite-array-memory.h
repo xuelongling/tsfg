@@ -23,6 +23,11 @@ bool proveArrayCell(ModuleProof &proof,mlir::Operation *point,mlir::Value receiv
 // Current source alternatives only on this verified checked read's normal
 // continuation. This never proves static bounds or an overwrite exemption.
 struct CheckedArraySources {bool complete=false;std::vector<ArrayCellSource> cells;};
+// A source cursor at an actual observing operation. A nonempty path names
+// the foreign owner's selected activation; it is never caller SSA identity.
+struct ArrayCellEvidence {bool complete=false,staticBounds=false;std::vector<ArrayCellSource> cells;};
+bool proveSpanSliceSources(ModuleProof &proof,mlir::Operation *read,mlir::Value receiver,
+  uint32_t start,uint32_t count,const std::set<uint32_t> *indices,const MemoryCallPath &activation,ArrayCellEvidence &sources);
 bool proveCheckedArraySources(ModuleProof &proof,mlir::Operation *read,
   const std::set<uint32_t> *actualIndices,CheckedArraySources &sources);
 } // namespace tsfg::finite

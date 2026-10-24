@@ -126,6 +126,10 @@ bool clearMemory(ModuleProof &proof) {
     for(auto owner:source.owners)if(!proof.charge())return false;
     for(auto dependency:source.dependencies)if(!proof.charge())return false;
     for(const auto &owner:source.retainedOwners)if(!proof.charge())return false;
+    for(const auto &slice:source.slices){
+      if(!proof.charge())return false;
+      for(const auto &step:slice.activation)if(!proof.charge(1+step.function.size()/64))return false;
+    }
     }
   }
   proof.unprovedMemoryReads.clear();proof.provedArrayReads.clear();proof.fieldReadUndefined.clear();

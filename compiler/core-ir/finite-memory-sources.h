@@ -28,11 +28,16 @@ private:
   std::map<mlir::Operation *,Id> sites;
   std::vector<mlir::Operation *> operations;
   std::map<mlir::Block *,bool> repeating;
+  std::map<Id,std::string> frameFunctions;
   bool valid=true;
   bool repeats(mlir::Operation *op);
   bool incoming(MemoryFrames::Origin source,std::vector<MemoryFrames::Origin> &result);
   bool indices(Id frame,mlir::Value value,std::set<uint32_t> &result);
   bool retainedSpan(MemoryFrames::Origin source,Id query,MemoryOrigin &result);
+  bool slice(MemoryFrames::Origin source,Id query,StoredSpanSlice &result);
+  Id replay(Id base,const StoredSpanSlice &slice);
+  bool path(Id frame,Id query,MemoryCallPath &result);
+  MemorySelection spanRead(Id query,mlir::Operation *read,const std::set<uint32_t> *indices);
   mlir::Operation *capture(Id frame,Id query);
   std::string attr(mlir::Operation *op,llvm::StringRef name);
 };

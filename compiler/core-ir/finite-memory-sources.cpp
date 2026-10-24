@@ -13,6 +13,11 @@ bool storeFieldSource(ModuleProof &proof,const MemoryOrigin &source,StoredFieldS
   for(auto owner:source.owners){if(!proof.charge())return false;value.owners.push_back(owner);}
   for(const auto &owner:source.retainedOwners){if(!proof.charge())return false;value.retainedOwners.insert(owner);}
   for(auto dependency:source.dependencies){if(!proof.charge())return false;value.dependencies.push_back(dependency);}
+  for(const auto &slice:source.slices){
+    if(!proof.charge())return false;StoredSpanSlice copy;copy.descriptor=slice.descriptor;
+    for(const auto &step:slice.activation){if(!proof.charge(1+step.function.size()/64))return false;copy.activation.push_back(step);}
+    value.slices.push_back(std::move(copy));
+  }
   destination=std::move(value);return true;
 }
 std::string MemorySources::attr(mlir::Operation *op,llvm::StringRef name){
@@ -37,7 +42,12 @@ MemorySources::MemorySources(ModuleProof &p):proof(p),frames(p.remaining){
   }
 }
 MemorySources::Id MemorySources::root(const std::string &function){
-  if(!valid||!functions.count(function)){valid=false;return MemoryFrames::none;}return frames.root(functions.at(function));
+  if(!valid||!functions.count(function)){valid=false;return MemoryFrames::none;}
+  const auto id=frames.root(functions.at(function));
+  if(id!=MemoryFrames::none&&!frameFunctions.count(id)){
+    if(!proof.charge(1+function.size()/64)){valid=false;return MemoryFrames::none;}frameFunctions.emplace(id,function);
+  }
+  return id;
 }
 bool MemorySources::repeats(mlir::Operation *op){
   auto *block=op->getBlock();const auto found=repeating.find(block);if(found!=repeating.end())return found->second;
@@ -66,7 +76,11 @@ MemorySources::Id MemorySources::enter(Id parent,mlir::Operation *call,const std
     bindings.push_back({values.at(fn.getArgument(i)),{values.at(actual),parent}});
   }
   const bool repeated=repeats(call);if(!valid)return MemoryFrames::none;
-  return frames.call(parent,sites.at(call),functions.at(function),bindings,repeated);
+  const auto id=frames.call(parent,sites.at(call),functions.at(function),bindings,repeated);
+  if(id!=MemoryFrames::none&&!frameFunctions.count(id)){
+    if(!proof.charge(1+function.size()/64)){valid=false;return MemoryFrames::none;}frameFunctions.emplace(id,function);
+  }
+  return id;
 }
 mlir::Operation *MemorySources::capture(Id frame,Id query){
   for(auto current=frame;current!=MemoryFrames::none;current=frames.parent(current)){
@@ -218,8 +232,14 @@ MemoryOrigin MemorySources::project(Id frame,mlir::Value value,const std::string
       }
       if(found->second.empty()&&!undefined)result.pending=true;
       for(const auto &selected:found->second){
-        if(!proof.charge()){valid=false;break;}bool productive=false;
+        if(!proof.charge()){valid=false;break;}bool productive=false;std::set<std::string> descriptors;
         for(auto input:selected.values){productive=true;append(input,item.dependency);}
+        for(const auto &source:selected.slices){
+          if(!proof.charge()){valid=false;break;}const auto actual=replay(origin.frame,source);
+          if(actual==MemoryFrames::none||item.dependency){result.pending=true;continue;}
+          auto descriptor=source.descriptor;descriptors.insert(attr(descriptor.getDefiningOp(),"view_type"));
+          productive=true;add(descriptor,actual,item.owner);
+        }
         for(const auto &type:selected.introduced){
           if(!proof.charge()){valid=false;break;}const auto known=proof.catalog.find(type);
           const auto kind=known==proof.catalog.end()?std::string():string(*known->second,"kind");
@@ -227,8 +247,9 @@ MemoryOrigin MemorySources::project(Id frame,mlir::Value value,const std::string
           if(known==proof.catalog.end())for(unsigned code=1;code<=13;++code){
             if(!proof.charge()){valid=false;break;}scalar|=type==hash(std::string("tsfg.type\0",10)+scalarName(code).str());
           }
-          // An introduced Span or a retained token lacks its original source
-          // activation here. Never relabel that descriptor as caller SSA.
+          // Only a replayed actual descriptor can transport a Span source;
+          // its introduced tag or retained owner alone still cannot do so.
+          if(kind=="readSpan"&&descriptors.count(type))continue;
           if(!scalar||item.owner){result.pending=true;continue;}
           productive=true;if(!item.dependency)result.introduced.insert(type);
         }
@@ -241,6 +262,8 @@ MemoryOrigin MemorySources::project(Id frame,mlir::Value value,const std::string
       if(item.dependency){result.pending=true;continue;}
       if(!frames.unique(origin)||repeats(op)){result.pending=true;continue;}
       if(!item.owner){result.introduced.insert(attr(op,"view_type"));
+        StoredSpanSlice descriptor;if(!slice(origin,query,descriptor))result.pending=true;
+        else result.slices.push_back(std::move(descriptor));
         auto *at=capture(origin.frame,query);if(!at||(result.capture&&result.capture!=at))result.pending=true;else result.capture=at;}
       retentionSeen=true;
       if(held&&retainedSpan(origin,query,result))continue;
@@ -287,6 +310,8 @@ MemorySelection MemorySources::arrayRead(Id frame,mlir::Operation *read){
   const bool known=indices(frame,read->getOperand(1),slots);
   if(!good()){result.status=MemorySelection::Status::Invalid;return result;}
   const auto normalSources=[&](){
+    auto span=spanRead(frame,read,known?&slots:nullptr);
+    if(span.status!=MemorySelection::Status::Pending)return span;
     MemorySelection result;CheckedArraySources checked;
     if(!proveCheckedArraySources(proof,read,known?&slots:nullptr,checked)){result.status=MemorySelection::Status::Invalid;return result;}
     if(!checked.complete||checked.cells.empty())return result;bool pending=false;

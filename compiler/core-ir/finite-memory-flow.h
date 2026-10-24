@@ -27,6 +27,7 @@ struct MemoryOrigin {
   bool retained=false;
   bool pending=false;
   std::vector<mlir::Value> dependencies;
+  std::vector<StoredSpanSlice> slices;
 };
 struct MemorySelection {
   enum class Status { Proven, Pending, Invalid } status=Status::Pending;
