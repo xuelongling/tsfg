@@ -425,15 +425,15 @@ struct FirstWrites {
     }
     return true;
   }
-  MemorySelection run(mlir::Operation *read) {
-    const auto fn=read->getParentOfType<mlir::func::FuncOp>();const auto id=attr(fn,"tsfg_core.function_id");
-    const auto activation=sources.root(id),root=context(id,{identity(read->getOperand(0))},activation);
+  MemorySelection run(mlir::Operation *point,mlir::Value receiver) {
+    const auto fn=point->getParentOfType<mlir::func::FuncOp>();const auto id=attr(fn,"tsfg_core.function_id");
+    const auto activation=sources.root(id),root=context(id,{identity(receiver)},activation);
     const auto actualEntry=entryNode(root);
     if(!normalizePending()||!connectSnapshots()||!incomingEntries()||!connectSnapshots()) {
       proof.reject(!sources.error().empty()?sources.error():flow.error().empty()?"memory call/CFG normalization failed":flow.error());return {MemorySelection::Status::Invalid,{}};
     }
     const auto selected=node();
-    if(!valid||!continueInput(contexts[root].before.at(read),actualEntry,selected)) {
+    if(!valid||!continueInput(contexts[root].before.at(point),actualEntry,selected)) {
       proof.reject(flow.error());return {MemorySelection::Status::Invalid,{}};
     }
     if(!valid||!sources.good()||!flow.solve()) {proof.reject(sources.error().empty()?flow.error():sources.error());return {MemorySelection::Status::Invalid,{}};}
@@ -443,16 +443,17 @@ struct FirstWrites {
     for(const auto &version:evidence->alternatives) {
       if(!proof.charge()||!seeded.count(version))return {MemorySelection::Status::Invalid,{}};
       const auto &source=seeded.at(version);result.versions.insert(source.version);
-      if(source.value)result.sources.push_back(sources.project(source.activation,source.value,source.version,activation));
+      if(source.value)result.sources.push_back(sources.project(source.activation,source.value,source.version,activation,
+        proof.catalog.count(actual)&&(string(*proof.catalog.at(actual),"kind")=="reference"||string(*proof.catalog.at(actual),"kind")=="value")));
     }
     if(!sources.good()){proof.reject(sources.error().empty()?"stored-source activation normalization failed":sources.error());return {MemorySelection::Status::Invalid,{}};}
     result.status=MemorySelection::Status::Proven;return result;
   }
 };
 }
-MemorySelection proveMemoryFirstWrites(ModuleProof &proof,mlir::Operation *read,
+MemorySelection proveMemoryFirstWrites(ModuleProof &proof,mlir::Operation *point,mlir::Value receiver,
   const std::string &actual,const std::string &field,
   const std::map<mlir::Operation *,std::vector<MemoryVersion>> &writes,const MemoryOrigins &origins,MemorySources &sources) {
-  return FirstWrites(proof,actual,field,writes,origins,sources).run(read);
+  return FirstWrites(proof,actual,field,writes,origins,sources).run(point,receiver);
 }
 } // namespace tsfg::finite

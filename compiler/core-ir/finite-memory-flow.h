@@ -20,6 +20,11 @@ struct MemoryOrigin {
   std::set<std::string> introduced;
   std::vector<mlir::Value> owners;
   mlir::Operation *capture=nullptr;
+  // Only an independently selected current managed field can retain this
+  // exact original typed Array reference. These tokens are activation-local,
+  // never caller SSA or allocation-site noalias evidence.
+  std::set<std::string> retainedOwners;
+  bool retained=false;
   bool pending=false;
 };
 struct MemorySelection {
@@ -31,7 +36,7 @@ using MemoryOrigins=std::map<mlir::Operation *,std::vector<MemoryOrigin>>;
 class MemorySources;
 // Derive first successful versions from real IR and actual selected callees.
 // Caller metadata cannot seed these equations or assert receiver noalias.
-MemorySelection proveMemoryFirstWrites(ModuleProof &proof,mlir::Operation *read,
+MemorySelection proveMemoryFirstWrites(ModuleProof &proof,mlir::Operation *point,mlir::Value receiver,
   const std::string &actual,const std::string &field,
   const std::map<mlir::Operation *,std::vector<MemoryVersion>> &writes,
   const MemoryOrigins &origins,MemorySources &sources);

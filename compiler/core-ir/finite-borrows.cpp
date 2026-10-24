@@ -43,6 +43,21 @@ struct Borrows {
     const auto found=proof.actualArrayOwners.find(value);
     return found==proof.actualArrayOwners.end()?unknown:found->second;
   }
+  bool sourceOwners(const StoredFieldSource &source,PayloadEvidence &identity){
+    bool productive=false;
+    const auto append=[&](const PayloadEvidence &input){
+      identity.pending|=input.pending||input.alternatives.empty();
+      for(const auto &token:input.alternatives){if(!proof.charge())return false;identity.alternatives.insert(token);productive=true;}return true;
+    };
+    for(auto root:source.owners)if(!proof.charge()||!append(owners(root)))return false;
+    for(auto input:source.values){
+      if(!proof.charge())return false;if(borrowed(input)&&!append(owners(input)))return false;
+    }
+    if(source.retained)for(const auto &token:source.retainedOwners){
+      if(!proof.charge())return false;identity.alternatives.insert(token);productive=true;
+    }
+    identity.pending|=!productive;return valid;
+  }
   bool projectOwners() {
     // The call engine has already substituted actual operands through every
     // productive selected return. Instantiate only its real relative roots;
@@ -56,6 +71,15 @@ struct Borrows {
         for(const auto &token:found->second.alternatives){if(!proof.charge())return false;identity.alternatives.insert(token);}
       }
       projectedOwners.try_emplace(value,std::move(identity));
+    }
+    for(const auto &[read,sources]:proof.fieldReadSources){
+      if(!proof.charge())return false;
+      // Ordinary Array fields already have the independently proved owner
+      // projection above. Only a possible Span needs this capture evidence.
+      if(!borrowed(read->getResult(0)))continue;
+      PayloadEvidence identity;identity.pending=sources.empty();
+      for(const auto &source:sources)if(!proof.charge()||!sourceOwners(source,identity))return false;
+      projectedOwners.insert_or_assign(read->getResult(0),std::move(identity));
     }
     return true;
   }
@@ -88,17 +112,42 @@ struct Borrows {
         if(!proof.charge())return false;if(!source.capture)continue;
         if(!points.count(source.capture)||source.capture->getParentOfType<mlir::func::FuncOp>()!=read->getParentOfType<mlir::func::FuncOp>())
           return proof.reject("stored Span source has no actual same-frame capture point");
-        PayloadEvidence identity;identity.pending=source.owners.empty();
-        for(auto root:source.owners){
-          if(!proof.charge())return false;const auto &input=owners(root);
-          identity.pending|=input.pending||input.alternatives.empty();
-          for(const auto &token:input.alternatives){if(!proof.charge())return false;identity.alternatives.insert(token);viewOwners.insert(token);}
-        }
+        PayloadEvidence identity;if(!sourceOwners(source,identity))return false;
+        for(const auto &token:identity.alternatives){if(!proof.charge())return false;viewOwners.insert(token);}
         const auto value=flow.value(identity);
         if(value==BorrowFlow::none||!outcome(flow.define(points.at(source.capture),value))||!outcome(flow.use(points.at(read),value)))
           return proof.reject(flow.error());
       }
     }
+    return true;
+  }
+  bool returnedSources(){
+    for(const auto &[point,sources]:proof.aggregateReturnSources){
+      if(!proof.charge())return false;
+      for(const auto &source:sources){
+        if(!proof.charge())return false;
+        bool parameterRoots=true,productive=false;
+        for(auto input:source.values){
+          if(!proof.charge())return false;if(borrowed(input)){productive=true;parameterRoots&=parameterSource(input,point);}
+        }
+        for(auto owner:source.owners){if(!proof.charge())return false;productive=true;parameterRoots&=parameter(owner,point);}
+        if(!source.retained&&(!productive||!parameterRoots))unprovedLifetime=point;
+        for(auto input:source.values){
+          if(!proof.charge())return false;
+          if(values.count(input)&&!outcome(flow.use(points.at(point),values.at(input))))return false;
+        }
+        if(source.capture){
+          if(!points.count(source.capture)||source.capture->getParentOfType<mlir::func::FuncOp>()!=point->getParentOfType<mlir::func::FuncOp>())
+            return proof.reject("stored return has no real same-frame capture");
+          PayloadEvidence identity;if(!sourceOwners(source,identity))return false;
+          for(const auto &token:identity.alternatives){if(!proof.charge())return false;viewOwners.insert(token);}
+          const auto value=flow.value(identity);
+          if(value==BorrowFlow::none||!outcome(flow.define(points.at(source.capture),value))||!outcome(flow.use(points.at(point),value)))
+            return proof.reject(flow.error());
+        }
+      }
+    }
+    for(auto *op:proof.unprovedStoredReturns){if(!proof.charge())return false;unprovedLifetime=op;}
     return true;
   }
   mlir::Value strip(mlir::Value value) {
@@ -110,6 +159,85 @@ struct Borrows {
     }
     return value;
   }
+  bool parameter(mlir::Value value,mlir::Operation *point){
+    value=strip(value);if(!valid)return false;const auto argument=llvm::dyn_cast<mlir::BlockArgument>(value);
+    auto fn=point->getParentOfType<mlir::func::FuncOp>();return argument&&argument.getOwner()==&fn.getBody().front();
+  }
+  bool parameterSource(mlir::Value value,mlir::Operation *point){
+    if(parameter(value,point))return true;
+    const auto projection=proof.arrayOwnerProjections.find(value);
+    if(projection!=proof.arrayOwnerProjections.end()&&!projection->second.empty()){
+      bool complete=true;for(auto root:projection->second){if(!proof.charge())return false;complete&=parameter(root,point);}if(complete)return true;
+    }
+    const auto source=strip(value);if(!valid)return false;auto *created=source.getDefiningOp();
+    return created&&created->getName().getStringRef()=="tsfg_core.domain.read_span"&&parameter(created->getOperand(0),point);
+  }
+  bool closedStorage(mlir::Value root,std::set<const void *> &seen){
+    if(!proof.charge())return false;std::vector<mlir::Value> work{root};
+    while(!work.empty()){
+      if(!proof.charge())return false;auto value=work.back();work.pop_back();
+      if(!seen.insert(value.getAsOpaquePointer()).second)continue;
+      for(auto &use:value.getUses()){
+        if(!proof.charge())return false;auto *op=use.getOwner();if(!proof.mayReach(op->getBlock()))continue;
+        const auto name=op->getName().getStringRef();
+        if(name=="tsfg_core.domain.view"||name=="tsfg_core.domain.refine"||name=="tsfg_core.domain.copy"){
+          if(!proof.charge())return false;work.push_back(op->getResult(0));
+        }else if(llvm::isa<mlir::func::ReturnOp>(op)){
+          if(!proof.aggregateReturnSources.count(op)||proof.unprovedStoredReturns.count(op))return false;
+        }else if(use.getOperandNumber()==0&&(name=="tsfg_core.domain.field_store"||name=="tsfg_core.domain.field_read"||
+            name=="tsfg_core.domain.field_initialize"||name=="tsfg_core.domain.field_define"||name=="tsfg_core.domain.initialize_fields")){
+          if(name=="tsfg_core.domain.field_read"&&proof.unprovedMemoryReads.count(op))return false;
+        }else return false; // The actual escaping/call/CFG continuation is still unproved.
+      }
+    }
+    return true;
+  }
+  bool localStorage(mlir::Value receiver){
+    // A reference alias preserves this plane; an inline copy begins its own.
+    auto root=receiver;
+    while(auto *op=root.getDefiningOp()){
+      if(!proof.charge())return false;const auto name=op->getName().getStringRef();
+      if(name=="tsfg_core.domain.copy"){
+        const auto actual=proof.actualPayloads.find(root);const auto *carrier=valueDomain(proof,root.getType());
+        bool inlineOnly=carrier&&!carrier->alternatives.empty();
+        const auto test=[&](const auto &alternatives){
+          for(const auto &id:alternatives){
+            if(!proof.charge())return false;
+            if(!proof.catalog.count(id)||string(*proof.catalog.at(id),"kind")!="value")inlineOnly=false;
+          }
+          return true;
+        };
+        if(actual!=proof.actualPayloads.end()&&!actual->second.pending&&!actual->second.alternatives.empty()){
+          if(!test(actual->second.alternatives))return false;
+        }else if(carrier){if(!test(carrier->alternatives))return false;}
+        if(inlineOnly){std::set<const void *> seen;return closedStorage(root,seen);}
+        // An active reference branch keeps the operand's alias identity.
+        // Copy syntax alone cannot privatize an external Holder parameter.
+        root=op->getOperand(0);continue;
+      }
+      if(name!="tsfg_core.domain.view"&&name!="tsfg_core.domain.refine")break;root=op->getOperand(0);
+    }
+    std::set<const void *> seen;
+    if(auto *created=root.getDefiningOp()){
+      const auto name=created->getName().getStringRef();
+      return name=="tsfg_core.domain.construct"&&closedStorage(root,seen);
+    }
+    auto argument=llvm::dyn_cast<mlir::BlockArgument>(root);if(!argument||argument.getArgNumber()!=0)return false;
+    auto fn=llvm::dyn_cast<mlir::func::FuncOp>(argument.getOwner()->getParentOp());
+    if(!fn||argument.getOwner()!=&fn.getBody().front())return false;
+    const auto id=attr(fn,"tsfg_core.function_id");const auto contract=proof.callable.find(id);
+    if(contract==proof.callable.end()||string(*contract->second,"role")!="construction-body")return false;
+    // A closed caller result does not close a receiver alias leaked earlier
+    // by the constructor body itself. Both sides of this frame must close.
+    if(!closedStorage(root,seen))return false;
+    bool productive=false;
+    for(const auto &[op,targets]:proof.selectedCallees){
+      if(!proof.charge())return false;if(!targets.count(id))continue;
+      if(op->getName().getStringRef()!="tsfg_core.domain.construct"||!closedStorage(op->getResult(0),seen))return false;
+      productive=true;
+    }
+    return productive;
+  }
   bool lifetime(mlir::Operation *op) {
     const auto name=op->getName().getStringRef();
     if(name=="tsfg_core.domain.read_span") {
@@ -119,27 +247,14 @@ struct Borrows {
     // Storing/capturing a view needs the separate lifetime/storage proof; an
     // SSA last use cannot silently end a borrow still held in a memory slot.
     if(name=="tsfg_core.domain.field_store"||name=="tsfg_core.domain.field_initialize") {
-      if(values.count(op->getOperand(1)))unprovedLifetime=op;
+      if(values.count(op->getOperand(1))&&!localStorage(op->getOperand(0)))unprovedLifetime=op;
     }else if(name=="tsfg_core.domain.array_store"&&values.count(op->getOperand(2)))unprovedLifetime=op;
     else if(name=="tsfg_core.domain.array_create")for(auto input:op->getOperands()) {
       if(!proof.charge())return false;if(values.count(input))unprovedLifetime=op;
     }
     if(name=="tsfg_core.domain.array_read"&&values.count(op->getResult(0)))unprovedLifetime=op;
     if(auto returned=llvm::dyn_cast<mlir::func::ReturnOp>(op);returned&&returned.getNumOperands()==1&&values.count(returned.getOperand(0))) {
-      auto source=strip(returned.getOperand(0));if(!valid)return false;auto fn=op->getParentOfType<mlir::func::FuncOp>();
-      const auto isParameter=[&](mlir::Value value){const auto argument=llvm::dyn_cast<mlir::BlockArgument>(value);return argument&&argument.getOwner()==&fn.getBody().front();};
-      if(isParameter(source))return true;
-      const auto projection=proof.arrayOwnerProjections.find(returned.getOperand(0));
-      if(projection!=proof.arrayOwnerProjections.end()&&!projection->second.empty()) {
-        bool parameters=true;
-        for(auto root:projection->second){if(!proof.charge())return false;parameters&=isParameter(root);}
-        if(parameters)return true;
-      }
-      auto *created=source.getDefiningOp();
-      if(created&&created->getName().getStringRef()=="tsfg_core.domain.read_span") {
-        const auto owner=strip(created->getOperand(0));if(!valid)return false;
-        if(isParameter(owner))return true;
-      }
+      if(parameterSource(returned.getOperand(0),op))return true;if(!valid)return false;
       // A caller/field returned view is not a fresh current-frame allocation.
       // Until its real owner lifetime is proved, retain the precise obligation.
       unprovedLifetime=op;
@@ -244,8 +359,8 @@ struct Borrows {
   bool run() {
     // Provided authority is unconditionally checked, including modules without
     // a tracked view. Missing authority cannot later be mistaken for purity.
-    if(!verifyArrayOverwriteEffects(proof)||!verifyArrayCallEffects(proof)||!projectOwners()||!collect())return false;if(values.empty())return true;
-    if(!storedSources()||!actions()||!edges()||!aliases())return false;
+    if(!verifyArrayOverwriteEffects(proof)||!verifyArrayCallEffects(proof)||!projectOwners()||!collect())return false;
+    if(!storedSources()||!returnedSources()||!actions()||!edges()||!aliases())return false;
     if(!flow.solve())return proof.reject(flow.error());
     const auto *result=flow.result();if(!result)return proof.reject(flow.error());
     if(result->status!=BorrowFlow::Status::Safe) {

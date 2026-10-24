@@ -242,6 +242,11 @@ struct ArrayCalls {
               for(auto root:source.owners){
                 if(!proof.charge()||!alias(root,op->getResult(0),id))return fail(flow.error());productive=true;
               }
+              // A frame-qualified retained local Array is a local relative
+              // effect root, not a fabricated caller SSA/parameter identity.
+              if(source.retained&&!source.retainedOwners.empty()){
+                if(!proof.charge()||!flow.local(result))return fail(flow.error());productive=true;
+              }
             }
             if(!productive&&!flow.unknown(result))return fail(flow.error());
           }else if(!flow.unknown(result))return fail(flow.error());

@@ -44,6 +44,8 @@ struct StoredFieldSource {
   std::vector<mlir::Value> owners;
   mlir::Operation *capture=nullptr;
   std::string version;
+  std::set<std::string> retainedOwners;
+  bool retained=false;
 };
 // All pointers refer to the owned, canonical documents below. No pointer or
 // partial registry escapes verification; a failed load discards this object.
@@ -114,6 +116,8 @@ struct ModuleProof {
   // including exports without a callsite. Missing authority is not purity.
   std::set<std::string> arrayCallDefinitionsComplete;
   std::map<mlir::Operation *,std::vector<StoredFieldSource>> fieldReadSources;
+  std::map<mlir::Operation *,std::vector<StoredFieldSource>> aggregateReturnSources;
+  std::set<mlir::Operation *> unprovedStoredReturns;
   explicit ModuleProof(mlir::ModuleOp value) : module(value) {}
   bool charge(size_t count = 1);
   bool reject(llvm::StringRef message);

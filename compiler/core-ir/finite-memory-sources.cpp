@@ -3,6 +3,15 @@
 #include "mlir/Dialect/ControlFlow/IR/ControlFlowOps.h"
 
 namespace tsfg::finite {
+bool storeFieldSource(ModuleProof &proof,const MemoryOrigin &source,StoredFieldSource &destination){
+  if(!proof.charge(source.version.size()/64+1))return false;
+  StoredFieldSource value;value.capture=source.capture;value.version=source.version;value.retained=source.retained;
+  for(auto input:source.values){if(!proof.charge())return false;value.values.push_back(input);}
+  for(const auto &type:source.introduced){if(!proof.charge())return false;value.introduced.insert(type);}
+  for(auto owner:source.owners){if(!proof.charge())return false;value.owners.push_back(owner);}
+  for(const auto &owner:source.retainedOwners){if(!proof.charge())return false;value.retainedOwners.insert(owner);}
+  destination=std::move(value);return true;
+}
 std::string MemorySources::attr(mlir::Operation *op,llvm::StringRef name){
   const auto value=op->getAttrOfType<mlir::StringAttr>(name);return value?value.getValue().str():std::string();
 }
@@ -63,8 +72,60 @@ mlir::Operation *MemorySources::capture(Id frame,Id query){
   }
   return nullptr;
 }
-MemoryOrigin MemorySources::project(Id frame,mlir::Value value,const std::string &version,Id query){
-  MemoryOrigin result;result.version=version;
+bool MemorySources::retainedSpan(MemoryFrames::Origin source,Id query,MemoryOrigin &result){
+  struct Item {MemoryFrames::Origin origin;std::string element;};
+  std::vector<Item> work{{source,{}}};std::set<std::tuple<Id,Id,std::string>> seen;
+  std::set<std::string> retained;std::vector<mlir::Value> owners;bool productive=false;
+  for(size_t cursor=0;cursor<work.size();++cursor){
+    if(!proof.charge()){valid=false;return false;}const auto item=work[cursor];const auto origin=frames.resolve(item.origin);
+    if(!frames.error().empty()){valid=false;return false;}
+    if(origin.frame==MemoryFrames::none||origin.value>=sources.size())return false;
+    if(!seen.emplace(origin.value,origin.frame,item.element).second)continue;
+    auto value=sources[origin.value];auto *op=value.getDefiningOp();if(!op)return false;
+    const auto name=op->getName().getStringRef();
+    const auto add=[&](mlir::Value next,Id frame,const std::string &element){
+      if(!proof.charge()||!values.count(next)){valid=false;return;}
+      work.push_back({{values.at(next),frame},element});
+    };
+    if(name=="tsfg_core.domain.copy"||name=="tsfg_core.domain.view"||name=="tsfg_core.domain.refine"){
+      add(op->getOperand(0),origin.frame,item.element);continue;
+    }
+    if(name=="func.call"||name=="tsfg_core.domain.method_call"){
+      const auto targets=proof.selectedCallees.find(op);if(targets==proof.selectedCallees.end()||targets->second.empty())return false;
+      for(const auto &target:targets->second){
+        if(!proof.charge()){valid=false;return false;}const auto child=enter(origin.frame,op,target);bool returned=false;
+        for(auto &block:proof.functions.at(target).getBody()){
+          if(!proof.charge()){valid=false;return false;}if(!proof.mayReach(&block))continue;
+          auto ret=llvm::dyn_cast<mlir::func::ReturnOp>(block.getTerminator());if(!ret||ret.getNumOperands()!=1)continue;
+          returned=true;add(ret.getOperand(0),child,item.element);
+        }
+        if(!returned)return false;
+      }
+      continue;
+    }
+    if(!frames.unique(origin)||repeats(op))return false;
+    const auto type=attr(op,"view_type");const auto found=proof.catalog.find(type);
+    if(found==proof.catalog.end())return false;
+    if(item.element.empty()){
+      if(name!="tsfg_core.domain.read_span"||string(*found->second,"kind")!="readSpan")return false;
+      const auto element=string(*found->second,"elementType");if(element.empty())return false;
+      add(op->getOperand(0),origin.frame,element);continue;
+    }
+    // Check the original Array allocation type, not an intervening narrow
+    // view, carrier maximum or the number of references in a layout.
+    if(name!="tsfg_core.domain.array_create"||string(*found->second,"kind")!="array"||
+        string(*found->second,"elementType")!=item.element)return false;
+    productive=true;
+    if(origin.frame==query)owners.push_back(value);
+    else retained.insert("#retained/"+std::to_string(origin.frame)+"/"+std::to_string(origin.value));
+  }
+  if(!valid||!productive)return false;
+  for(auto owner:owners){if(!proof.charge()){valid=false;return false;}result.owners.push_back(owner);}
+  for(const auto &owner:retained){if(!proof.charge()){valid=false;return false;}result.retainedOwners.insert(owner);}
+  return true;
+}
+MemoryOrigin MemorySources::project(Id frame,mlir::Value value,const std::string &version,Id query,bool held){
+  MemoryOrigin result;result.version=version;result.retained=held;bool retentionSeen=false;
   struct Item {MemoryFrames::Origin origin;bool owner;};
   std::vector<Item> work;std::set<std::tuple<Id,Id,bool>> seen;
   const auto add=[&](mlir::Value value,Id frame,bool owner){
@@ -86,7 +147,10 @@ MemoryOrigin MemorySources::project(Id frame,mlir::Value value,const std::string
         result.pending=true;continue;
       }
       if(item.owner)result.owners.push_back(source);
-      else{result.values.push_back(source);result.value=result.values.size()==1?source:mlir::Value();}
+      else{
+        result.values.push_back(source);result.value=result.values.size()==1?source:mlir::Value();
+        retentionSeen=true;result.retained&=held&&retainedSpan(origin,query,result);
+      }
       continue;
     }
     if(!op){result.pending=true;continue;}const auto name=op->getName().getStringRef();
@@ -97,7 +161,9 @@ MemoryOrigin MemorySources::project(Id frame,mlir::Value value,const std::string
       if(!frames.unique(origin)||repeats(op)){result.pending=true;continue;}
       if(!item.owner){result.introduced.insert(attr(op,"view_type"));
         auto *at=capture(origin.frame,query);if(!at||(result.capture&&result.capture!=at))result.pending=true;else result.capture=at;}
-      add(op->getOperand(0),origin.frame,true);continue;
+      retentionSeen=true;
+      if(held&&retainedSpan(origin,query,result))continue;
+      result.retained=false;add(op->getOperand(0),origin.frame,true);continue;
     }
     if(!item.owner&&name=="tsfg_core.domain.literal"){
       result.introduced.insert(attr(op,"view_type"));continue;
@@ -125,8 +191,9 @@ MemoryOrigin MemorySources::project(Id frame,mlir::Value value,const std::string
     result.pending=true;
   }
   if(!valid||!frames.error().empty()){result.pending=true;return result;}
-  if(result.values.empty()&&result.introduced.empty()&&result.owners.empty())result.pending=true;
-  if(result.capture&&result.owners.empty())result.pending=true;
+  if(result.values.empty()&&result.introduced.empty()&&result.owners.empty()&&result.retainedOwners.empty())result.pending=true;
+  if(result.capture&&result.owners.empty()&&result.retainedOwners.empty())result.pending=true;
+  result.retained&=retentionSeen&&!result.pending;
   return result;
 }
 } // namespace tsfg::finite

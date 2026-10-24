@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: MIT
 #include "finite-memory-flow.h"
 #include "finite-memory-sources.h"
+#include "finite-memory-lifetime.h"
 #include <algorithm>
 
 namespace tsfg::finite {
@@ -165,7 +166,7 @@ struct Memory {
       // Only the path-dependent first-write proof is conditional.
       if(!reachable)continue;
       if(!fieldCell){complete=false;continue;}
-      auto selected=proveMemoryFirstWrites(proof,op,actual,field,writes,origins,this->sources);
+      auto selected=proveMemoryFirstWrites(proof,op,op->getOperand(0),actual,field,writes,origins,this->sources);
       if(selected.status==MemorySelection::Status::Invalid)return false;
       if(compareClaims&&selected.status==MemorySelection::Status::Proven&&selected.versions!=claimed)
         return proof.reject("claimed field version is stale or not first on every successful CFG/callee path");
@@ -192,10 +193,7 @@ struct Memory {
       proof.unprovedMemoryReads.erase(op);
       std::vector<StoredFieldSource> projected;
       for(const auto &source:inputOrigins){
-        if(!proof.charge())return false;StoredFieldSource row;row.capture=source.capture;row.version=source.version;
-        for(auto value:source.values){if(!proof.charge())return false;row.values.push_back(value);}
-        for(const auto &type:source.introduced){if(!proof.charge())return false;row.introduced.insert(type);}
-        for(auto owner:source.owners){if(!proof.charge())return false;row.owners.push_back(owner);}
+        StoredFieldSource row;if(!storeFieldSource(proof,source,row))return false;
         projected.push_back(std::move(row));
       }
       proof.fieldReadInputs.insert_or_assign(op,std::move(inputValues));
@@ -232,7 +230,7 @@ struct Memory {
       for (auto &[id,function]:proof.functions) for (auto &block:function.getBody()) for(auto &op:block)
         if(op.getName().getStringRef()=="tsfg_core.domain.field_read" && (!proof.charge() || !read(&op)))return false;
     }while(previous!=proof.fieldReadInputs.size());
-    return true;
+    return proveStoredReturns(proof,writes,origins,sources);
   }
 };
 }

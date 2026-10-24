@@ -4,6 +4,9 @@
 #include "finite-memory-frames.h"
 
 namespace tsfg::finite {
+// Own the complete projected-source conversion at this boundary. On failure
+// the destination remains unchanged; every copied member uses the proof meter.
+bool storeFieldSource(ModuleProof &proof,const MemoryOrigin &source,StoredFieldSource &destination);
 // Normalizes checked SSA/formal bindings into activation substitution. Memory
 // versions are selected only by FirstWrites' existing PayloadFlow graph.
 class MemorySources {
@@ -12,7 +15,7 @@ public:
   explicit MemorySources(ModuleProof &proof);
   Id root(const std::string &function);
   Id enter(Id parent,mlir::Operation *call,const std::string &function);
-  MemoryOrigin project(Id frame,mlir::Value value,const std::string &version,Id query);
+  MemoryOrigin project(Id frame,mlir::Value value,const std::string &version,Id query,bool held);
   bool good()const{return valid&&frames.error().empty();}
   std::string error()const{return !frames.error().empty()?frames.error():valid?std::string():"stored-source SSA/activation normalization failed";}
 private:
@@ -26,6 +29,7 @@ private:
   std::map<mlir::Block *,bool> repeating;
   bool valid=true;
   bool repeats(mlir::Operation *op);
+  bool retainedSpan(MemoryFrames::Origin source,Id query,MemoryOrigin &result);
   mlir::Operation *capture(Id frame,Id query);
   std::string attr(mlir::Operation *op,llvm::StringRef name);
 };

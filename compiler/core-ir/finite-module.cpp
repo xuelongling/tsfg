@@ -107,22 +107,24 @@ bool sources(ModuleProof &proof) {
 }
 bool clearMemory(ModuleProof &proof) {
   // Every copied/rebuilt source occurrence is part of the one proof budget.
-  for(const auto &set:{&proof.unprovedMemoryReads,&proof.provedArrayReads,&proof.fieldReadUndefined})
+  for(const auto &set:{&proof.unprovedMemoryReads,&proof.provedArrayReads,&proof.fieldReadUndefined,&proof.unprovedStoredReturns})
     for(auto *op:*set)if(!proof.charge())return false;
   for(const auto &map:{&proof.fieldReadInputs,&proof.arrayReadInputs})for(const auto &[op,values]:*map) {
     if(!proof.charge())return false;for(const auto value:values)if(!proof.charge())return false;
   }
-  for(const auto &[op,sources]:proof.fieldReadSources){
+  for(const auto *map:{&proof.fieldReadSources,&proof.aggregateReturnSources})for(const auto &[op,sources]:*map){
     if(!proof.charge())return false;
     for(const auto &source:sources){
     if(!proof.charge())return false;
     for(auto value:source.values)if(!proof.charge())return false;
     for(const auto &type:source.introduced)if(!proof.charge())return false;
     for(auto owner:source.owners)if(!proof.charge())return false;
+    for(const auto &owner:source.retainedOwners)if(!proof.charge())return false;
     }
   }
   proof.unprovedMemoryReads.clear();proof.provedArrayReads.clear();proof.fieldReadUndefined.clear();
-  proof.fieldReadInputs.clear();proof.arrayReadInputs.clear();proof.fieldReadSources.clear();return true;
+  proof.fieldReadInputs.clear();proof.arrayReadInputs.clear();proof.fieldReadSources.clear();
+  proof.aggregateReturnSources.clear();proof.unprovedStoredReturns.clear();return true;
 }
 bool memoryPaths(ModuleProof &proof) {
   bool changed;
