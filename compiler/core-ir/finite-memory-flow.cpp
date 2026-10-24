@@ -425,19 +425,29 @@ struct FirstWrites {
     }
     return true;
   }
-  MemorySelection run(mlir::Operation *point,mlir::Value receiver) {
+  const PayloadEvidence *solve(mlir::Operation *point,mlir::Value receiver,bool relative,size_t &activation) {
     const auto fn=point->getParentOfType<mlir::func::FuncOp>();const auto id=attr(fn,"tsfg_core.function_id");
-    const auto activation=sources.root(id),root=context(id,{identity(receiver)},activation);
+    activation=sources.root(id);const auto root=context(id,{identity(receiver)},activation);
     const auto actualEntry=entryNode(root);
-    if(!normalizePending()||!connectSnapshots()||!incomingEntries()||!connectSnapshots()) {
-      proof.reject(!sources.error().empty()?sources.error():flow.error().empty()?"memory call/CFG normalization failed":flow.error());return {MemorySelection::Status::Invalid,{}};
+    if(!normalizePending()||!connectSnapshots()||(!relative&&!incomingEntries())||!connectSnapshots()) {
+      proof.reject(!sources.error().empty()?sources.error():flow.error().empty()?"memory call/CFG normalization failed":flow.error());return nullptr;
+    }
+    if(relative)for(const auto &[context,entry]:incoming){
+      if(!proof.charge())return nullptr;if(!flow.seed(entry,input)){proof.reject(flow.error());return nullptr;}
     }
     const auto selected=node();
     if(!valid||!continueInput(contexts[root].before.at(point),actualEntry,selected)) {
-      proof.reject(flow.error());return {MemorySelection::Status::Invalid,{}};
+      proof.reject(flow.error());return nullptr;
     }
-    if(!valid||!sources.good()||!flow.solve()) {proof.reject(sources.error().empty()?flow.error():sources.error());return {MemorySelection::Status::Invalid,{}};}
-    const auto *evidence=flow.evidence(selected);if(!evidence)return {MemorySelection::Status::Invalid,{}};
+    if(!valid||!sources.good()||!flow.solve()) {proof.reject(sources.error().empty()?flow.error():sources.error());return nullptr;}
+    return flow.evidence(selected);
+  }
+  MemoryDemand demand(mlir::Operation *point,mlir::Value receiver){
+    size_t activation;const auto *evidence=solve(point,receiver,true,activation);
+    return {evidence!=nullptr,evidence&&!evidence->pending&&!evidence->alternatives.empty(),evidence&&evidence->alternatives.count(input)!=0};
+  }
+  MemorySelection run(mlir::Operation *point,mlir::Value receiver) {
+    size_t activation;const auto *evidence=solve(point,receiver,false,activation);if(!evidence)return {MemorySelection::Status::Invalid,{}};
     MemorySelection result;
     if(evidence->pending||evidence->alternatives.empty()||evidence->alternatives.count(input))return result;
     for(const auto &version:evidence->alternatives) {
@@ -456,4 +466,7 @@ MemorySelection proveMemoryFirstWrites(ModuleProof &proof,mlir::Operation *point
   const std::map<mlir::Operation *,std::vector<MemoryVersion>> &writes,const MemoryOrigins &origins,MemorySources &sources) {
   return FirstWrites(proof,actual,field,writes,origins,sources).run(point,receiver);
 }
+MemoryDemand proveMemoryEntryDemand(ModuleProof &proof,mlir::Operation *point,mlir::Value receiver,
+  const std::string &actual,const std::string &field,const std::map<mlir::Operation *,std::vector<MemoryVersion>> &writes,
+  const MemoryOrigins &origins,MemorySources &sources){return FirstWrites(proof,actual,field,writes,origins,sources).demand(point,receiver);}
 } // namespace tsfg::finite

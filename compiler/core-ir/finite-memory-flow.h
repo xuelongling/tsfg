@@ -38,10 +38,16 @@ struct MemorySelection {
   bool staticBounds=false;
 };
 using MemoryOrigins=std::map<mlir::Operation *,std::vector<MemoryOrigin>>;
+// Parameter-relative entry demand, not a field value/version or an instance.
+struct MemoryDemand {bool valid=true,complete=false,incoming=false;};
 class MemorySources;
 // Derive first successful versions from real IR and actual selected callees.
 // Caller metadata cannot seed these equations or assert receiver noalias.
 MemorySelection proveMemoryFirstWrites(ModuleProof &proof,mlir::Operation *point,mlir::Value receiver,
+  const std::string &actual,const std::string &field,
+  const std::map<mlir::Operation *,std::vector<MemoryVersion>> &writes,
+  const MemoryOrigins &origins,MemorySources &sources);
+MemoryDemand proveMemoryEntryDemand(ModuleProof &proof,mlir::Operation *point,mlir::Value receiver,
   const std::string &actual,const std::string &field,
   const std::map<mlir::Operation *,std::vector<MemoryVersion>> &writes,
   const MemoryOrigins &origins,MemorySources &sources);

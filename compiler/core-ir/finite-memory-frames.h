@@ -22,26 +22,29 @@ public:
   struct Binding { Id parameter; Origin actual; };
   explicit MemoryFrames(size_t &work):remaining(work){}
   Id function();
-  Id value(Id function,bool parameter=false);
+  Id value(Id function,bool parameter=false,bool invariant=false);
   Id root(Id function);
-  // A recursive activation returns none (unproved), without growing an
-  // unbounded call string. A malformed binding still fails before that test.
+  // Stable actual parameters may form a finite recursive summary. Its local
+  // values are never unique instances or replayable capture occurrences.
   Id call(Id parent,Id site,Id function,const std::vector<Binding> &bindings,bool repeated);
   Origin resolve(Origin origin);
   bool unique(Origin origin);
+  bool exact(Id frame)const;
   Id parent(Id frame)const;
   Id site(Id frame)const;
   const std::string &error()const{return failure;}
 private:
-  struct Value {Id function;bool parameter;};
-  struct Frame {Id function,parent,site;std::map<Id,Origin> bindings;bool repeated;};
+  struct Value {Id function;bool parameter,invariant;};
+  struct Frame {Id function,parent,site;std::map<Id,Origin> bindings;bool repeated,summary=false;};
   size_t &remaining;
   std::vector<std::vector<Id>> functions;
   std::vector<bool> activated;
   std::vector<Value> values;
   std::vector<Frame> frames;
   std::map<Id,Id> roots;
-  std::map<std::tuple<Id,Id,Id>,Id> calls;
+  struct Call {Id frame;bool repeated;std::vector<std::tuple<Id,Id,Id>> bindings;};
+  std::map<std::tuple<Id,Id,Id>,Call> calls;
+  std::map<std::pair<Id,std::vector<std::tuple<Id,Id,Id>>>,Id> summaries;
   std::string failure;
   bool spend();
   bool reject(const std::string &message);

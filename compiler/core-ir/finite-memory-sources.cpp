@@ -29,14 +29,14 @@ MemorySources::MemorySources(ModuleProof &p):proof(p),frames(p.remaining){
     if(function==MemoryFrames::none){valid=false;return;}functions.emplace(id,function);
     for(auto &block:fn.getBody()){
       const bool entry=&block==&fn.getBody().front();
-      const auto add=[&](mlir::Value value,bool parameter){
-        if(!proof.charge())return false;const auto index=frames.value(function,parameter);
+      const auto add=[&](mlir::Value value,bool parameter,bool invariant=false){
+        if(!proof.charge())return false;const auto index=frames.value(function,parameter,invariant);
         if(index==MemoryFrames::none)return false;values.try_emplace(value,index);sources.push_back(value);return true;
       };
       for(auto argument:block.getArguments())if(!add(argument,entry)){valid=false;return;}
       for(auto &op:block){
         if(!proof.charge()){valid=false;return;}sites.emplace(&op,operations.size());operations.push_back(&op);
-        for(auto value:op.getResults())if(!add(value,false)){valid=false;return;}
+        for(auto value:op.getResults())if(!add(value,false,op.getName().getStringRef()=="tsfg_core.constant")){valid=false;return;}
       }
     }
   }
@@ -85,6 +85,7 @@ MemorySources::Id MemorySources::enter(Id parent,mlir::Operation *call,const std
 mlir::Operation *MemorySources::capture(Id frame,Id query){
   for(auto current=frame;current!=MemoryFrames::none;current=frames.parent(current)){
     if(!proof.charge()){valid=false;return nullptr;}
+    if(!frames.exact(current))return nullptr;
     if(frames.parent(current)==query){const auto site=frames.site(current);return site<operations.size()?operations[site]:nullptr;}
   }
   return nullptr;

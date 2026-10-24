@@ -142,6 +142,10 @@ struct ModuleProof {
   // Payload/owner sources only on the original checked read's successful
   // continuation. This set grants no static index/extent/overwrite authority.
   std::set<mlir::Operation *> checkedArrayReadSources;
+  // Actual caller field versions demanded at this selected call entry. The
+  // parameter-relative incoming marker never enters these payload sources.
+  std::map<mlir::Operation *,std::vector<StoredFieldSource>> storedCallSources;
+  std::set<mlir::Operation *> unprovedStoredCalls;
   explicit ModuleProof(mlir::ModuleOp value) : module(value) {}
   bool charge(size_t count = 1);
   bool reject(llvm::StringRef message);

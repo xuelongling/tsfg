@@ -52,8 +52,47 @@ int main(){
   {
     size_t work=10000;Flow f(work);const auto fn=f.function(),p=f.value(fn,true),root=f.root(fn);
     const auto recursive=f.call(root,7,fn,{{p,{p,root}}},false);
-    require(recursive==Flow::none&&f.error().empty());require(f.resolve({p,recursive}).frame==Flow::none);
-    done(count,"recursive activation is explicitly unproved without growing a call string");
+    require(recursive!=Flow::none&&f.error().empty());require((f.resolve({p,recursive})==Flow::Origin{p,root}));
+    require(recursive==f.call(recursive,7,fn,{{p,{p,recursive}}},false));
+    done(count,"recursive parameter forwarding closes without claiming a new instance");
+  }
+  {
+    size_t work=10000;Flow f(work);const auto main=f.function(),fn=f.function();
+    const auto a=f.value(main),b=f.value(main),p=f.value(fn,true),q=f.value(fn,true),local=f.value(fn),root=f.root(main);
+    const auto entry=f.call(root,1,fn,{{p,{a,root}},{q,{b,root}}},false);
+    const auto swap=f.call(entry,2,fn,{{p,{q,entry}},{q,{p,entry}}},false);
+    require((f.resolve({p,swap})==Flow::Origin{b,root}));require((f.resolve({q,swap})==Flow::Origin{a,root}));
+    const auto back=f.call(swap,2,fn,{{p,{q,swap}},{q,{p,swap}}},false);
+    require(back!=swap);require(swap==f.call(back,2,fn,{{p,{q,back}},{q,{p,back}}},false));
+    require(!f.unique({local,swap})&&!f.exact(swap));require(f.exact(entry));
+    done(count,"recursive alias permutations keep distinct actual bindings and fold a finite SCC");
+  }
+  {
+    size_t work=10000;Flow f(work);const auto fn=f.function(),p=f.value(fn,true),local=f.value(fn),root=f.root(fn);
+    require(f.call(root,1,fn,{{p,{local,root}}},false)==Flow::none&&f.error().empty());
+    done(count,"a fresh local per recurrence cannot become a stable parameter instance");
+  }
+  {
+    size_t work=10000;Flow f(work);const auto main=f.function(),fn=f.function();
+    const auto a=f.value(main),yes=f.value(main,false,true),p=f.value(fn,true),flag=f.value(fn,true);
+    const auto no=f.value(fn,false,true),local=f.value(fn),root=f.root(main);
+    const auto entry=f.call(root,1,fn,{{p,{a,root}},{flag,{yes,root}}},false);
+    const auto child=f.call(entry,2,fn,{{p,{p,entry}},{flag,{no,entry}}},false);
+    const auto next=f.call(child,2,fn,{{p,{p,child}},{flag,{no,child}}},false);
+    require(child==next);require((f.resolve({p,child})==Flow::Origin{a,root}));
+    require(f.resolve({flag,child}).value==no);require(!f.unique({local,child})&&!f.exact(child));
+    done(count,"verified immutable boolean literals close recursive state without literal-frame growth");
+  }
+  {
+    size_t work=10000;Flow f(work);const auto fn=f.function(),p=f.value(fn,true),q=f.value(fn,true),root=f.root(fn);
+    require(f.call(root,2,fn,{{p,{p,root}},{q,{q,root}}},false)!=Flow::none);
+    require(f.call(root,2,fn,{{p,{q,root}},{q,{p,root}}},false)==Flow::none&&!f.error().empty());
+    done(count,"a recursive occurrence cannot change registered operands behind its summary");
+  }
+  {
+    size_t work=10000;Flow f(work);const auto fn=f.function();
+    require(f.value(fn,true,true)==Flow::none&&!f.error().empty());
+    done(count,"only a verified literal value may be marked activation-invariant");
   }
   {
     size_t work=10000;Flow f(work);const auto main=f.function(),callee=f.function();

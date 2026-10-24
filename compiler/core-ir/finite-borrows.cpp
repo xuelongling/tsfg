@@ -102,22 +102,41 @@ struct Borrows {
     }
     return true;
   }
+  bool storedUse(mlir::Operation *point,const StoredFieldSource &source,bool entry){
+    bool tracked=false,span=false;
+    if(entry){
+      for(auto input:source.values){
+        if(!proof.charge())return false;if(!values.count(input))continue;tracked=span=true;
+        if(!outcome(flow.use(points.at(point),values.at(input))))return false;
+      }
+      for(const auto &type:source.introduced){if(!proof.charge())return false;span|=string(*proof.catalog.at(type),"kind")=="readSpan";}
+      if(!span)return true;
+    }
+    if(!source.capture&&(!entry||tracked))return true;
+    if(source.capture&&(!points.count(source.capture)||source.capture->getParentOfType<mlir::func::FuncOp>()!=point->getParentOfType<mlir::func::FuncOp>()))
+      return proof.reject("stored Span use has no actual same-frame capture point");
+    if(!source.capture&&!source.retained){unprovedLifetime=point;return true;}
+    PayloadEvidence identity;if(!sourceOwners(source,identity))return false;
+    for(const auto &token:identity.alternatives){if(!proof.charge())return false;viewOwners.insert(token);}
+    const auto value=flow.value(identity);if(value==BorrowFlow::none)return proof.reject(flow.error());
+    if(source.capture){if(!outcome(flow.define(points.at(source.capture),value)))return false;}
+    else{
+      // A proved incoming field already holds its managed Span at entry;
+      // this is a borrow obligation, never a new Array or payload instance.
+      auto fn=point->getParentOfType<mlir::func::FuncOp>();
+      if(!outcome(flow.parameter(points.at(&fn.getBody().front().front()),value)))return false;
+    }
+    return outcome(flow.use(points.at(point),value));
+  }
   bool storedSources(){
-    // A view made inside a callee begins its caller-visible lifetime only on
-    // successful return at that real call. Later field reads keep it live
-    // across intervening caller mutations; no synthetic Array is allocated.
     for(const auto *map:{&proof.fieldReadSources,&proof.arrayReadSources})for(const auto &[read,sources]:*map){
       if(!proof.charge())return false;if(!values.count(read->getResult(0)))continue;
-      for(const auto &source:sources){
-        if(!proof.charge())return false;if(!source.capture)continue;
-        if(!points.count(source.capture)||source.capture->getParentOfType<mlir::func::FuncOp>()!=read->getParentOfType<mlir::func::FuncOp>())
-          return proof.reject("stored Span source has no actual same-frame capture point");
-        PayloadEvidence identity;if(!sourceOwners(source,identity))return false;
-        for(const auto &token:identity.alternatives){if(!proof.charge())return false;viewOwners.insert(token);}
-        const auto value=flow.value(identity);
-        if(value==BorrowFlow::none||!outcome(flow.define(points.at(source.capture),value))||!outcome(flow.use(points.at(read),value)))
-          return proof.reject(flow.error());
-      }
+      for(const auto &source:sources)if(!proof.charge()||!storedUse(read,source,false))return false;
+    }
+    for(auto *call:proof.unprovedStoredCalls){if(!proof.charge())return false;unprovedLifetime=call;}
+    for(const auto &[call,sources]:proof.storedCallSources){
+      if(!proof.charge())return false;
+      for(const auto &source:sources)if(!proof.charge()||!storedUse(call,source,true))return false;
     }
     return true;
   }

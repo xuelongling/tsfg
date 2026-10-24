@@ -9,7 +9,7 @@ bool MemorySources::path(Id frame,Id query,MemoryCallPath &destination){
   MemoryCallPath result;
   for(auto current=frame;current!=query;current=frames.parent(current)){
     if(!proof.charge()){valid=false;return false;}
-    if(current==MemoryFrames::none||!frameFunctions.count(current))return false;
+    if(current==MemoryFrames::none||!frameFunctions.count(current)||!frames.exact(current))return false;
     const auto site=frames.site(current);if(site>=operations.size())return false;
     auto *call=operations[site];const auto &function=frameFunctions.at(current);
     const auto selected=proof.selectedCallees.find(call);

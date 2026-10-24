@@ -2,6 +2,7 @@
 #include "finite-memory-lifetime.h"
 #include "finite-memory-sources.h"
 #include "finite-array-memory.h"
+#include <tuple>
 
 namespace tsfg::finite {
 namespace {
@@ -142,6 +143,100 @@ public:
 }
 bool proveStoredReturns(ModuleProof &proof,const std::map<mlir::Operation *,std::vector<MemoryVersion>> &writes,
   const MemoryOrigins &origins,MemorySources &sources){return StoredReturns(proof,writes,origins,sources).run();}
+namespace {
+struct StoredCalls {
+  ModuleProof &proof;
+  const std::map<mlir::Operation *,std::vector<MemoryVersion>> &writes;
+  const MemoryOrigins &origins;MemorySources &sources;
+  using Need=std::tuple<size_t,std::string,std::string>;
+  std::map<std::string,std::set<Need>> needs;
+  std::map<std::string,std::vector<mlir::Operation *>> callers;
+  std::vector<std::pair<std::string,Need>> work;
+  std::set<std::string> incomplete;bool valid=true;
+  std::string function(mlir::Operation *op){return op->getParentOfType<mlir::func::FuncOp>()->getAttrOfType<mlir::StringAttr>("tsfg_core.function_id").getValue().str();}
+  size_t formal(mlir::Value value){
+    while(auto *op=value.getDefiningOp()){
+      if(!proof.charge()){valid=false;return SIZE_MAX;}const auto name=op->getName().getStringRef();
+      if(name!="tsfg_core.domain.copy"&&name!="tsfg_core.domain.view"&&name!="tsfg_core.domain.refine")break;
+      value=op->getOperand(0);
+    }
+    auto argument=llvm::dyn_cast<mlir::BlockArgument>(value);if(!argument)return SIZE_MAX;
+    auto fn=llvm::dyn_cast<mlir::func::FuncOp>(argument.getOwner()->getParentOp());
+    return fn&&argument.getOwner()==&fn.getBody().front()?argument.getArgNumber():SIZE_MAX;
+  }
+  mlir::Value argument(mlir::Operation *call,size_t slot){
+    if(call->getName().getStringRef()=="tsfg_core.domain.construct"){
+      if(!slot)return call->getResult(0);--slot;
+    }
+    return slot<call->getNumOperands()?call->getOperand(slot):mlir::Value();
+  }
+  bool require(mlir::Operation *point,mlir::Value receiver,const std::string &actual,const std::string &field){
+    const auto demand=proveMemoryEntryDemand(proof,point,receiver,actual,field,writes,origins,sources);
+    if(!demand.valid)return false;const auto id=function(point);
+    if(!demand.complete){incomplete.insert(id);return true;}
+    if(!demand.incoming)return true;const auto slot=formal(receiver);if(!valid)return false;
+    if(slot==SIZE_MAX){incomplete.insert(id);return true;}
+    if(!proof.charge(1+(id.size()+actual.size()+field.size())/64))return false;
+    Need need{slot,actual,field};if(needs[id].insert(need).second)work.push_back({id,std::move(need)});return true;
+  }
+  bool run(){
+    for(const auto &[call,targets]:proof.selectedCallees)for(const auto &target:targets){
+      if(!proof.charge())return false;if(proof.mayReach(call->getBlock()))callers[target].push_back(call);
+    }
+    for(auto &[id,fn]:proof.functions)for(auto &block:fn.getBody())for(auto &op:block){
+      if(!proof.charge())return false;
+      if(op.getName().getStringRef()!="tsfg_core.domain.field_read"||!proof.mayReach(&block))continue;
+      const auto *domain=valueDomain(proof,op.getResult(0).getType());if(!domain)return false;bool span=false;
+      for(const auto &type:domain->alternatives){if(!proof.charge())return false;span|=string(*proof.catalog.at(type),"kind")=="readSpan";}
+      if(!span)continue;
+      for(const auto &[actual,field]:proof.memberFields.at(&op)){
+        if(!proof.charge())return false;if(!field.empty()&&!require(&op,op.getOperand(0),actual,field))return false;
+      }
+    }
+    // Propagate entry requirements through actual call/first-write equations,
+    // including SCC backedges. A callee overwrite kills the old entry demand.
+    for(size_t cursor=0;cursor<work.size();++cursor){
+      if(!proof.charge())return false;const auto [id,need]=work[cursor];
+      for(auto *call:callers[id]){
+        if(!proof.charge())return false;auto receiver=argument(call,std::get<0>(need));
+        if(!receiver)return proof.reject("stored call demand lost its actual operand");
+        if(!require(call,receiver,std::get<1>(need),std::get<2>(need)))return false;
+      }
+    }
+    bool changed=true;while(changed){
+      changed=false;for(const auto &[call,targets]:proof.selectedCallees){
+        if(!proof.charge())return false;if(!proof.mayReach(call->getBlock()))continue;
+        for(const auto &target:targets){if(!proof.charge())return false;
+          if(incomplete.count(target))changed|=incomplete.insert(function(call)).second;
+        }
+      }
+    }
+    std::map<mlir::Operation *,std::vector<StoredFieldSource>> result;std::set<mlir::Operation *> pending;
+    for(const auto &[call,targets]:proof.selectedCallees){
+      if(!proof.charge())return false;if(!proof.mayReach(call->getBlock()))continue;
+      std::vector<StoredFieldSource> inputs;
+      for(const auto &target:targets){
+        if(!proof.charge())return false;if(incomplete.count(target))pending.insert(call);
+        for(const auto &need:needs[target]){
+          if(!proof.charge())return false;auto receiver=argument(call,std::get<0>(need));
+          if(!receiver)return proof.reject("stored call source lost its actual operand");
+          const auto selected=proveMemoryFirstWrites(proof,call,receiver,std::get<1>(need),std::get<2>(need),writes,origins,sources);
+          if(selected.status==MemorySelection::Status::Invalid)return false;
+          if(selected.status!=MemorySelection::Status::Proven){pending.insert(call);continue;}
+          for(const auto &source:selected.sources){
+            if(!proof.charge())return false;if(source.pending){pending.insert(call);continue;}
+            StoredFieldSource value;if(!storeFieldSource(proof,source,value))return false;inputs.push_back(std::move(value));
+          }
+        }
+      }
+      result.emplace(call,std::move(inputs));
+    }
+    proof.storedCallSources=std::move(result);proof.unprovedStoredCalls=std::move(pending);return valid;
+  }
+};
+}
+bool proveStoredCallSources(ModuleProof &proof,const std::map<mlir::Operation *,std::vector<MemoryVersion>> &writes,
+  const MemoryOrigins &origins,MemorySources &sources){return StoredCalls{proof,writes,origins,sources}.run();}
 bool proveArrayReadSources(ModuleProof &proof){
   MemorySources sources(proof);if(!sources.good())return proof.reject(sources.error());
   std::map<mlir::Operation *,std::vector<StoredFieldSource>> result;

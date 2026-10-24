@@ -118,12 +118,12 @@ bool clearMemory(ModuleProof &proof) {
   for(const auto &[op,outcomes]:proof.memberOutcomes)if(!proof.charge(1+outcomes.size()))return false;
   proof.memberOutcomes.clear();
   // Every copied/rebuilt source occurrence is part of the one proof budget.
-  for(const auto &set:{&proof.unprovedMemoryReads,&proof.provedArrayReads,&proof.checkedArrayReadSources,&proof.fieldReadUndefined,&proof.unprovedStoredReturns})
+  for(const auto &set:{&proof.unprovedMemoryReads,&proof.provedArrayReads,&proof.checkedArrayReadSources,&proof.fieldReadUndefined,&proof.unprovedStoredReturns,&proof.unprovedStoredCalls})
     for(auto *op:*set)if(!proof.charge())return false;
   for(const auto &map:{&proof.fieldReadInputs,&proof.arrayReadInputs})for(const auto &[op,values]:*map) {
     if(!proof.charge())return false;for(const auto value:values)if(!proof.charge())return false;
   }
-  for(const auto *map:{&proof.fieldReadSources,&proof.aggregateReturnSources,&proof.arrayReadSources})for(const auto &[op,sources]:*map){
+  for(const auto *map:{&proof.fieldReadSources,&proof.aggregateReturnSources,&proof.arrayReadSources,&proof.storedCallSources})for(const auto &[op,sources]:*map){
     if(!proof.charge())return false;
     for(const auto &source:sources){
     if(!proof.charge())return false;
@@ -140,6 +140,7 @@ bool clearMemory(ModuleProof &proof) {
   }
   proof.unprovedMemoryReads.clear();proof.provedArrayReads.clear();proof.fieldReadUndefined.clear();
   proof.checkedArrayReadSources.clear();
+  proof.storedCallSources.clear();proof.unprovedStoredCalls.clear();
   proof.fieldReadInputs.clear();proof.arrayReadInputs.clear();proof.fieldReadSources.clear();
   proof.aggregateReturnSources.clear();proof.arrayReadSources.clear();proof.unprovedStoredReturns.clear();return true;
 }

@@ -258,7 +258,7 @@ struct Memory {
     }while(previous!=proof.fieldReadInputs.size());
     for(auto &[id,function]:proof.functions)for(auto &block:function.getBody())for(auto &op:block)
       if(op.getName().getStringRef()=="tsfg_core.domain.member_present"&&(!proof.charge()||!presence(&op)))return false;
-    return proveStoredReturns(proof,writes,origins,sources);
+    return proveStoredReturns(proof,writes,origins,sources)&&proveStoredCallSources(proof,writes,origins,sources);
   }
 };
 }

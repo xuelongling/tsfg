@@ -9,4 +9,7 @@ bool proveStoredReturns(ModuleProof &proof,
   const std::map<mlir::Operation *,std::vector<MemoryVersion>> &writes,
   const MemoryOrigins &origins,MemorySources &sources);
 bool proveArrayReadSources(ModuleProof &proof);
+bool proveStoredCallSources(ModuleProof &proof,
+  const std::map<mlir::Operation *,std::vector<MemoryVersion>> &writes,
+  const MemoryOrigins &origins,MemorySources &sources);
 } // namespace tsfg::finite
