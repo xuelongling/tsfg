@@ -167,10 +167,11 @@ export function deriveReadSpanPlan(hir,prepared) {
         }else {
           const evidence=model.storage?.returnReads.get(canonical(operation.path));
           if(evidence?.pending)use(undefined,null,operation,'view-storage-return-complete');
+          const retained=new Set();for(const id of evidence?.retainedSources??[]){charge();retained.add(id);}
           for(const source of evidence?.sources??[]){
           charge();const view=storedFamilies.get(source.id);
           if(!view)use(undefined,null,operation,'view-storage-return-complete');
-          if(prepared.ownerTools.leaves(view.owner).some(owner=>{charge();return owner.kind!=='parameter'||owner.functionId!==fn.id;}))
+          if(!retained.has(source.id)&&prepared.ownerTools.leaves(view.owner).some(owner=>{charge();return owner.kind!=='parameter'||owner.functionId!==fn.id;}))
             failure({code:'r03-d-readspan-return-escape',ruleId:'r01-span',phase:'hir',message:'Stored ReadSpan return has no caller-owned lifetime proof',
               primary:{sourceId:fn.sourcePath,...operation.range}});
           use(view,null,operation,'view-storage-return-complete');

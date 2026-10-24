@@ -21,6 +21,9 @@ export function createSpanStorage(hir,tools,charge,authority,resolveContext=unde
   for(let index=0;index<work.length;++index)for(const parent of parents.get(work[index])??[]){charge();if(!contains.has(parent)){contains.add(parent);work.push(parent);}}
   const enabled=hir.types.some(row=>{charge();return ['reference','value','array'].includes(row.kind)&&contains.has(row.id);});
   let loopSerial=0;
+  const rootedOwner=owner=>{
+    const roots=tools.leaves(owner);return roots.length>0&&roots.every(root=>{charge();return root.kind==='allocation';});
+  };
   const origins=value=>{
     const result=new Map(),inputs=[];let pending=false;
     for(const row of leaves(value)){charge();if(row.kind==='inputField'){inputs.push(row);continue;}
@@ -55,7 +58,7 @@ export function createSpanStorage(hir,tools,charge,authority,resolveContext=unde
       if(type.isOwner(p.type)){
         const owner={kind:'parameter',functionId:fn.id,index};
         if(type.isArray(p.type)&&contains.has(p.type))value=aliases[index]<index?parameters[aliases[index]]:aggregate(p.type,index,owner);
-        else{value={kind:'owner',owner,span:type.isView(p.type),sources:[]};
+        else{value={kind:'owner',owner,span:type.isView(p.type),sources:[],type:p.type};
           if(value.span)value.sources.push({id:'parameter/'+fn.id+'/'+index,functionId:fn.id,parameter:index,owner});}
       }else if(['reference','value'].includes(t?.kind))value=t.kind==='reference'&&aliases[index]<index
         ?parameters[aliases[index]]:aggregate(p.type,index);
@@ -169,13 +172,16 @@ export function createSpanStorage(hir,tools,charge,authority,resolveContext=unde
         if(value.kind==='owner'){
           if(value.parameter!==undefined)return actuals[value.parameter]??unknown;
           if(value.span&&value.sources.length===1&&value.sources[0].parameter!==undefined)return actuals[value.sources[0].parameter]??unknown;
+          if(!value.span&&type.isArray(value.type)&&value.owner?.kind==='parameter'&&value.owner.functionId===call.target)
+            return actuals[value.owner.index]??unknown;
           const owner=tools.map(value.owner,call,fn.id,()=>{throw new TypeError('r03-d-readspan-storage: invalid owner substitution');});
           const sources=[];
           for(const source of value.sources){charge();const id=fn.id+'@'+key(path)+'@'+source.id;
             const at=[];for(const part of path){charge();at.push(part);}
-            const mapped={id,functionId:fn.id,path:at,owner,storedOrigin:{functionId:source.functionId,path:source.path??null}};
+            const mapped={id,functionId:fn.id,path:at,owner,ownerRooted:source.ownerRooted===true&&rootedOwner(owner),
+              storedOrigin:{functionId:source.functionId,path:source.path??null}};
             captures.set(id,{...mapped,range,callPath:at});sources.push(mapped);}
-          let result={kind:'owner',owner,span:value.span,sources};
+          let result={kind:'owner',owner,span:value.span,sources,type:value.type};
           for(const root of tools.leaves(value.owner))if(root.kind==='parameter'&&root.functionId===call.target)
             result=inherit(result,actuals[root.index]);
           return result;
@@ -252,7 +258,7 @@ export function createSpanStorage(hir,tools,charge,authority,resolveContext=unde
       if(value.kind==='reference')result=bindings.get(value.binding)??unknown;
       else if(['group','assertType','nonNull'].includes(value.kind))result=child('operand');
       else if(value.kind==='arrayCreate'){
-        if(!contains.has(value.type))result={kind:'owner',owner,span:false,sources:[]};
+        if(!contains.has(value.type))result={kind:'owner',owner,span:false,sources:[],type:value.type};
         else result=array(value.type,owner,value.elements.length,index=>get([...path,'elements',index]));
       }else if(value.kind==='arrayReadChecked'&&contains.has(value.receiver.type))result=read(child('receiver'),index(value.index));
       else if(value.kind==='arrayStoreDenseChecked'&&contains.has(value.target.receiver.type)){
@@ -268,7 +274,15 @@ export function createSpanStorage(hir,tools,charge,authority,resolveContext=unde
       else if(['call','construct','superConstruct'].includes(value.kind)){
         const arguments_=value.arguments.map((_,i)=>{charge();return get([...path,'arguments',i]);});
         if(value.target===hir.intrinsics.readSpan.id){
-          result=inherit({kind:'owner',owner,span:true,sources:[{id:fn.id+'@'+key(path),functionId:fn.id,path:[...path],owner}]},arguments_[0]);
+          // The descriptor carries the original typed Array reference. A
+          // narrower static view or an unresolved owner cannot prove that edge.
+          const span=type.types.get(value.type),arrays=leaves(arguments_[0]);
+          const ownerRooted=arrays.length>0&&arrays.every(row=>{
+            charge();const declared=type.types.get(row.type);
+            return declared?.kind==='array'&&span?.kind==='readSpan'&&declared.elementType===span.elementType&&rootedOwner(row.owner);
+          });
+          result=inherit({kind:'owner',owner,span:true,type:value.type,sources:[{id:fn.id+'@'+key(path),
+            functionId:fn.id,path:[...path],owner,ownerRooted}]},arguments_[0]);
         }else if(call){
           const constructor=value.kind!=='call',receiver=constructor
             ?value.kind==='superConstruct'?bindings.get(value.receiverBinding):aggregate(value.type):child('receiver');
@@ -314,7 +328,7 @@ export function createSpanStorage(hir,tools,charge,authority,resolveContext=unde
           }
           result=constructor?receiver:choice(results);
         }
-      }else if(type.isOwner(value.type)&&owner)result={kind:'owner',owner,span:type.isView(value.type),sources:[]};
+      }else if(type.isOwner(value.type)&&owner)result={kind:'owner',owner,span:type.isView(value.type),sources:[],type:value.type};
       values.set(key(path),result);
       if(['arrayReadChecked','readSpanLength'].includes(value.kind)&&type.isView(value.receiver.type)){
         const at=[...path,'receiver'];requireInput(get(at),at,value.range);
@@ -341,23 +355,29 @@ export function createSpanStorage(hir,tools,charge,authority,resolveContext=unde
       }
     };
     const returnOrigins=value=>{
-      const work=[{value,borrowed:contains.has(fn.returnType.id)}],seen=new Set(),sources=new Map();let pending=false;
-      while(work.length){charge();const {value:row,borrowed}=work.pop();
-        if(row?.kind==='loaded')work.push({value:row.value,borrowed});
-        else if(row?.kind==='choice')for(const child of row.values){charge();work.push({value:child,borrowed});}
+      // Only the current normal-return graph roots these sources. Merely
+      // having stored a descriptor earlier does not keep an overwritten one.
+      const work=[{value,borrowed:contains.has(fn.returnType.id),retaining:false}],seen=new Set(),sources=new Map(),retained=new Map();let pending=false;
+      while(work.length){charge();const {value:row,borrowed,retaining}=work.pop();
+        if(row?.kind==='loaded')work.push({value:row.value,borrowed,retaining});
+        else if(row?.kind==='choice')for(const child of row.values){charge();work.push({value:child,borrowed,retaining});}
         else if(row?.kind==='aggregate'&&!seen.has(row)){
           seen.add(row);let current=type.types.get(row.type);
+          const owned=['reference','value'].includes(current?.kind);
           if(type.isArray(row.type)){
             // Slot source proof does not yet prove the complete escaping
             // descriptor extent or its owner roots across a returned frame.
-            pending=true;for(const value of row.fields.values()){charge();work.push({value,borrowed:true});}
+            pending=true;for(const value of row.fields.values()){charge();work.push({value,borrowed:true,retaining:false});}
           }
           while(current){charge();for(const member of current.fields??[]){charge();if(contains.has(member.type))
-            work.push({value:row.fields.get(member.id)??unknown,borrowed:true});}current=type.types.get(current.base);}
-        }else if(row?.kind==='owner'&&row.span)for(const source of row.sources){charge();sources.set(source.id,source);}
+            work.push({value:row.fields.get(member.id)??unknown,borrowed:true,retaining:owned});}current=type.types.get(current.base);}
+        }else if(row?.kind==='owner'&&row.span)for(const source of row.sources){
+          charge();sources.set(source.id,source);const rooted=retaining&&source.ownerRooted===true;
+          retained.set(source.id,rooted&&(retained.get(source.id)??true));}
         else if(borrowed&&row?.kind!=='aggregate')pending=true;
       }
-      return {sources:[...sources.values()],pending};
+      const retainedSources=[];for(const [id,rooted]of retained){charge();if(rooted)retainedSources.push(id);}
+      return {sources:[...sources.values()],pending,retainedSources};
     };
     return {model,record,initialize,bind,get,state,restore:restoreState,join,enterLoop,leaveLoop,
       returned:(value,path)=>{

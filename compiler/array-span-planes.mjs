@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: MIT
 // Private stored-value graph: shared reference planes, value copies and
 // transactional snapshots. Source traversal and call selection remain outside.
-/** @typedef {{kind:'unknown'}|{kind:'owner',owner:any,span:boolean,sources:any[]}|StoredPlane|
+/** @typedef {{kind:'unknown'}|{kind:'owner',owner:any,span:boolean,sources:any[],type?:string}|StoredPlane|
  * {kind:'choice',values:StoredValue[]}|{kind:'inputField',index:number,property:string}|
  * {kind:'loaded',value:StoredValue,tokens:any[]}} StoredValue */
 /** @typedef {{kind:'aggregate',id:number,type:string,slot:number|null,fallback:number|null,

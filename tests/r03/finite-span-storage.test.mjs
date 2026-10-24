@@ -6,6 +6,7 @@ import {readTypedArrayFacts} from '../../compiler/typed-array-facts.mjs';
 import {buildHir,verifyHir,printHir,readHir,lowerFormalHir} from '../../compiler/hir.mjs';
 import {sha256} from '../../compiler/identity.mjs';
 import {staticPublication} from './typed-array-publication-fixtures.mjs';
+import {buildTypedLayouts} from '../../compiler/typed-layouts.mjs';
 const expected=JSON.parse(await readFile(new URL('./testdata/typed-array-span-storage/source-expected.json',import.meta.url),'utf8'));
 const packetHashes={positive:'4f54e484e19e751647e15fd7932571538e00ca5d60f20c2bf456b13600170778',
   negative:'313fc367bdf150c97012e2c96052322808cca96418c2aba7ea8a2d0659c3af4a'};
@@ -101,12 +102,22 @@ test('actual aggregate return keeps its contained Span live through the callee m
   assert.equal(file.content.slice(diagnostic.primary.start,diagnostic.primary.end),'a.length=0');
   assert.ok(diagnostic.related.some(row=>row.kind==='borrow-last-use'&&file.content.slice(row.start,row.end)==='h'));
 });
-test('actual local aggregate Span return remains pending without an owner-lifetime proof',async()=>{
+test('actual local aggregate Span return retains its actual managed Array owner',async()=>{
   const {oracle,context,publication,facts}=await returnActual(1,'aca22df55b6f43ec9a258c74a1e674c3fb5e0d4dba77fe1b65fb9c2f50809762');
   assert.equal(oracle.cases.localOwnerPending.permanentLanguageBan,false);
-  const built=buildHir(facts,context,publication);assert.equal(built.status,'error');assert.equal(built.hir,undefined);
-  assert.equal(built.diagnostics[0].code,'r03-d-readspan-return-escape');
-  assert.match(built.diagnostics[0].message,/lifetime proof/,'missing proof, not a permanent local-Array syntax restriction');
+  const built=buildHir(facts,context,publication);assert.equal(built.status,'ok',JSON.stringify(built.diagnostics));
+  const hir=built.hir,wrap=hir.functions.find(fn=>fn.name==='wrap'),caller=hir.functions.find(fn=>fn.name==='run');
+  const state=hir.readSpanPlan.functions.find(row=>row.functionId===caller.id),read=state.events.findLast(row=>row.kind==='view-read-complete');
+  assert.ok(read);const family=state.views.find(row=>row.viewId===read.viewId);
+  const allocation=wrap.body.find(row=>row.kind==='local'&&row.binding.name==='a');
+  assert.equal(family.owner.kind,'allocation');assert.equal(family.owner.functionId,wrap.id);
+  assert.equal(family.owner.allocationSite,allocation.initializer.allocationSite);
+  assert.equal(family.owner.callPath[0].functionId,caller.id,'the root belongs to the actual normal call outcome');
+  const layouts=buildTypedLayouts(hir,context,{publicationContext:publication}),span=hir.types.find(row=>row.kind==='readSpan');
+  const representation=layouts.entries.find(row=>row.typeId===span.id).layout;
+  assert.equal(representation.referenceCount,1);assert.deepEqual(representation.variants[0].references,[{slot:0,kind:'array',typeId:span.elementType}]);
+  assert.deepEqual(verifyHir(hir,context,publication),hir);
+  assert.deepEqual(readHir(Buffer.from(printHir(hir,context,publication)),context,publication),hir);
 });
 test('actual void return excludes a later lexical field write from successful caller state',async()=>{
   const none={read:false,write:false,structural:false};
