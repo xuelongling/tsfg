@@ -31,7 +31,14 @@ function memberWitnessContracts(hir) {
 }
 
 export function emitFiniteCore(input,context,publicationContext=undefined) {
-  const options={publicationContext},hir=verifyHir(input,context,publicationContext),proofs=buildFiniteCoreDomains(hir,context,options),plan=proofs.definition;
+  const options={publicationContext},hir=verifyHir(input,context,publicationContext);
+  // The selected root is not necessarily the first member of the complete
+  // Source closure. Bind the formal header to that original owned text.
+  const roots=hir.sources.filter(source=>source.path===hir.rootFile),root=roots[0];
+  if(roots.length!==1||!root.path.endsWith('.ts')||root.path.endsWith('.d.ts')
+    ||Buffer.byteLength(root.path)>4096||root.content.length>0xffffffff||sha256(root.content)!==root.hash)
+    pending('formal root Source identity');
+  const proofs=buildFiniteCoreDomains(hir,context,options),plan=proofs.definition;
   const fieldPhases=buildFiniteFieldPhases(hir,context,options);
   const domains=new Map(plan.domains.map(row=>[row.id,row])),nodes=new Map(plan.carrierNodes.map(row=>[row.id,row]));
   const occurrences=new Map(plan.expressions.map(row=>[row.id,row]));
@@ -332,6 +339,7 @@ export function emitFiniteCore(input,context,publicationContext=undefined) {
     return `  func.func @${quote(symbol(fn))}(${emission.entryParameters.map(row=>row.name+': '+coreType(row.type)).join(', ')}) -> ${emission.resultType} attributes {${attrs}} {\n${emission.blocksText}\n  }`;
   });
   const attrs={version:coreExchangeFormat.version,bytecode_schema:coreExchangeFormat.bytecodeSchema,input_identity:hir.inputIdentity,
+    source_path:root.path,source_hash:root.hash,source_length:root.content.length,
     finite_contract:sha256(canonical(descriptor)+'\n'),finite_domains:canonical(plan),semantic_types:canonical(hir.types),
     reached_domains:canonical(proofs.reached),
     language_intrinsics:canonical(plan.intrinsics),
@@ -346,6 +354,7 @@ export function emitFiniteCore(input,context,publicationContext=undefined) {
     field_phases:canonical(fieldPhases),
     array_reaching:canonical(plan.arrayReaching),
     member_views:canonical(buildTypedReferenceViews(hir,context,options)),target:hir.target.target,triple:hir.target.triple,data_layout:hir.target.llvmDataLayout};
-  const result='module attributes {'+Object.entries(attrs).map(([key,value])=>'tsfg_core.'+key+' = '+quote(value)).join(', ')+'} {\n'+functions.join('\n')+'\n}\n';
+  const result='module attributes {'+Object.entries(attrs).map(([key,value])=>'tsfg_core.'+key+' = '
+    +(typeof value==='number'?value+' : i64':quote(value))).join(', ')+'} {\n'+functions.join('\n')+'\n}\n';
   if(Buffer.byteLength(result)>8388608)pending('Core byte limit');return result;
 }

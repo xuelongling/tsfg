@@ -88,10 +88,11 @@ bool preflight(ModuleProof &proof) {
   });
   return valid;
 }
-bool sources(ModuleProof &proof) {
+bool sources(ModuleProof &proof, const coreHeader::Identity *header) {
   const auto *rows = proof.sources.getAsArray();
   if (!rows || rows->empty() || rows->size() > 64) return proof.reject("source closure count");
   std::string previous;
+  bool rootFound = header == nullptr;
   for (const auto &value : *rows) {
     const auto *row = value.getAsObject();
     if (!row || row->size() != 3 || !proof.charge()) return proof.reject("source closure shape");
@@ -104,9 +105,14 @@ bool sources(ModuleProof &proof) {
         return proof.reject("source closure Unicode/work limit");
       length += point > 65535 ? 2 : 1;
     }
+    if (header && llvm::StringRef(path) == header->sourcePath) {
+      if (rootFound || string(*row, "hash") != "sha256:" + bytecode::hex(header->source) ||
+          length != header->sourceLength) return proof.reject("formal root Source identity differs from source closure");
+      rootFound = true;
+    }
     proof.sourceLengths.emplace(path, length); previous = path;
   }
-  return true;
+  return rootFound || proof.reject("formal root Source is absent from source closure");
 }
 bool clearMemory(ModuleProof &proof) {
   for(const auto &[op,outcomes]:proof.memberOutcomes)if(!proof.charge(1+outcomes.size()))return false;
@@ -201,7 +207,7 @@ Discovery discover(mlir::ModuleOp module) {
 }
 bool usesModule(mlir::ModuleOp module) {return discover(module)!=Discovery::Absent;}
 namespace {
-bool contracts(ModuleProof &proof) {
+bool contracts(ModuleProof &proof, const coreHeader::Identity *header = nullptr) {
   auto module=proof.module;
   // Exact unpublished development descriptor; synchronize this gate when it changes.
   constexpr char expectedContract[] =
@@ -221,7 +227,7 @@ bool contracts(ModuleProof &proof) {
       !proof.document("tsfg_core.field_phases", proof.phases) ||
       !proof.document("tsfg_core.source_exports", proof.sourceExports) ||
       !proof.document("tsfg_core.entry_compatibility_roots", proof.entryRoots) ||
-      !sources(proof) || !verifyCatalog(proof) || !verifyDomains(proof) || !verifyAbi(proof) ||
+      !sources(proof,header) || !verifyCatalog(proof) || !verifyDomains(proof) || !verifyAbi(proof) ||
       !verifyValueContracts(proof) || !verifyMemberContracts(proof) || !verifyDefinitionBounds(proof) ||
       !verifyFlowContracts(proof) || !verifyReturnedParameters(proof) || !verifyControlPaths(proof) ||
       !memoryPaths(proof) || !verifyActualFlow(proof) || !verifyBorrowContracts(proof))
@@ -348,6 +354,6 @@ mlir::LogicalResult verifyModule(mlir::ModuleOp module) {
   if(!coreHeader::read(module,header)) {
     proof.reject("whole admission requires the exact formal Core header");return mlir::failure();
   }
-  return mlir::success(contracts(proof)&&complete(proof)&&!proof.failed);
+  return mlir::success(contracts(proof,&header)&&complete(proof)&&!proof.failed);
 }
 } // namespace tsfg::finite
