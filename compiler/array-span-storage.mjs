@@ -17,6 +17,7 @@ export function createSpanStorage(hir,tools,charge,authority){
     const parent=child=>{charge();if(!parents.has(child))parents.set(child,new Set());parents.get(child).add(row.id);};
     for(const child of row.members??[])parent(child);
     for(const child of row.fields??[])parent(child.type);
+    if(row.base)parent(row.base);
     if(row.elementType)parent(row.elementType);
   }
   for(let index=0;index<work.length;++index)for(const parent of parents.get(work[index])??[]){charge();if(!contains.has(parent)){contains.add(parent);work.push(parent);}}
@@ -77,18 +78,32 @@ export function createSpanStorage(hir,tools,charge,authority){
     }
   };
   const origins=value=>{
-    const result=new Map();let pending=false;
-    for(const row of leaves(value)){charge();if(row.kind!=='owner'||!row.span){pending=true;continue;}
+    const result=new Map(),inputs=[];let pending=false;
+    for(const row of leaves(value)){charge();if(row.kind==='inputField'){inputs.push(row);continue;}
+      if(row.kind!=='owner'||!row.span){pending=true;continue;}
       for(const source of row.sources){charge();result.set(source.id,source);}}
-    return {sources:[...result.values()],pending};
+    return {sources:[...result.values()],pending:pending||inputs.length>0,inputs,unknown:pending};
+  };
+  const effectOwner=value=>{
+    const owners=[];for(const row of leaves(value)){charge();owners.push(row.kind==='owner'?row.owner:{kind:'unknown'});}
+    return tools.merge(owners);
+  };
+  const aggregateBoundary=id=>{
+    const work=[id],seen=new Set();while(work.length){
+      charge();const next=work.pop();if(seen.has(next))continue;seen.add(next);const row=type.types.get(next);
+      if(contains.has(next)&&['reference','value'].includes(row?.kind))return true;
+      if(row?.kind==='union')for(const member of row.members){charge();work.push(member);}
+    }
+    return false;
   };
   function begin(fn){
     if(!enabled)return {model:undefined,record:(value,path,owner,call)=>owner,
       bind:(id,value)=>{},initialize:statement=>{},get:path=>null,returned:(value,path)=>{},finish:()=>{},
       state:()=>null,restore:state=>{},join:states=>{},enterLoop:state=>{},leaveLoop:(entry,exit)=>{}};
     const values=new Map(),bindings=new Map(),captures=new Map(),reads=new Map(),returnReads=new Map(),returns=[],parameters=[],exits=[];
+    const requirements=[],demands=[],dependencies=[],deferred=new Map(),callEvents=new Map(),projectedEvents=[],callLoops=[];
     let terminated=false;const mutations=[],bindingWrites=[],observations=[];
-    const model={values,reads,captures,returnReads,parameters};
+    const model={values,reads,captures,returnReads,parameters,demands,dependencies,deferred,callEvents,callLoops};
     for(const [index,p]of fn.parameters.entries()){
       charge();const t=type.types.get(p.type);
       /** @type {StoredValue} */
@@ -142,7 +157,8 @@ export function createSpanStorage(hir,tools,charge,authority){
     const state=()=>{
       const names=new Map();for(const [id,value]of bindings){charge();names.set(id,value);}
       return {bindings:names,planes:snapshot(bindings.values(),parameters),terminated,
-        mutations:mutations.length,writes:bindingWrites.length,observations:observations.length};
+        mutations:mutations.length,writes:bindingWrites.length,observations:observations.length,
+        requirements:requirements.length,projected:projectedEvents.length};
     };
     const restoreState=before=>{
       restore(before.planes);for(const id of bindings.keys()){charge();bindings.delete(id);}
@@ -202,6 +218,10 @@ export function createSpanStorage(hir,tools,charge,authority){
       // graphs, so a later iteration cannot rewrite an earlier normal exit.
       for(let i=before.observations;i<observations.length;++i){charge();const row=observations[i];
         row.value=settle(row.value);drain();Object.assign(row.evidence,row.aggregate?returnOrigins(row.value):origins(row.value));}
+      for(let i=before.requirements;i<requirements.length;++i){charge();const row=requirements[i];
+        if(row.kind!=='dependency'){row.value=settle(row.value);drain();}}
+      for(let i=before.projected;i<projectedEvents.length;++i){charge();const row=projectedEvents[i];
+        row.value=settle(row.value);drain();if(row.kind==='use')row.evidence=origins(row.value);else row.owner=effectOwner(row.value);}
       for(let i=0;i<returns.length;++i){charge();returns[i]=settle(returns[i]);}
       for(const exit of exits)for(let i=0;i<exit.length;++i){charge();exit[i]=settle(exit[i]);}drain();
       const after=state();join([conditionExit,after]);
@@ -242,6 +262,38 @@ export function createSpanStorage(hir,tools,charge,authority){
         }
         result.invalidated=value.invalidated;memo.set(value,result);pending.push([value,result]);return result;
       };
+      // These are read-time field requirements, not definition-level owner
+      // seeds. Every actual activation must discharge its own entry snapshot.
+      {
+        const mappedPath=tail=>{
+          const at=[];for(const parts of [path,['callee',call.target],tail])for(const part of parts){charge();at.push(part);}return at;
+        };
+        for(const loop of summary.loops){charge();callLoops.push(mappedPath(loop));}
+        const events=[];
+        for(const row of summary.requirements){
+          charge();if(row.kind==='dependency'){
+            const dependency={...row,path:mappedPath(row.path)};dependencies.push(dependency);requirements.push(dependency);continue;
+          }
+          charge();const value=project(row.value),evidence=origins(value);
+          const mapped={...row,value,path:mappedPath(row.path)};
+          if(row.kind==='use'){
+            const demand={contexts:0,failed:false,formal:evidence.inputs.length>0,range:row.range};demands.push(demand);
+            const checks=[demand];for(const check of row.checks){charge();checks.push(check);}
+            if(evidence.unknown)for(const check of checks){charge();check.failed=true;}
+            else if(evidence.inputs.length)requirements.push({...mapped,checks});
+            else{
+              for(const check of checks){charge();check.contexts++;}
+              events.push({...mapped,evidence});
+            }
+          }else{
+            requirements.push(mapped);events.push({...mapped,owner:effectOwner(value)});
+          }
+        }
+        if(events.length){
+          const id=key(path);if(!callEvents.has(id))callEvents.set(id,[]);
+          for(const event of events){charge();callEvents.get(id).push(event);projectedEvents.push(event);}
+        }
+      }
       // Parameter field outputs are actual successful body/initialization
       // snapshots. A value argument is an independent plane, except this.
       for(const [index,parameter]of summary.parameters.entries()){
@@ -254,7 +306,13 @@ export function createSpanStorage(hir,tools,charge,authority){
         for(const [member,payload]of from.fields){charge();to.fields.set(member,project(payload));}}
       return result;
     };
-    const record=(value,path,owner,call)=>{
+    const requireInput=(value,path,range)=>{
+      const evidence=origins(value);
+      if(!evidence.inputs.length||evidence.unknown)return;
+      const demand={contexts:0,failed:false,formal:true,range};demands.push(demand);deferred.set(key(path),demand);
+      requirements.push({kind:'use',value,path,range,sourcePath:fn.sourcePath,checks:[demand]});
+    };
+    const record=(value,path,owner,call,effect)=>{
       if(terminated)return owner;
       charge();
       /** @type {StoredValue} */
@@ -283,7 +341,16 @@ export function createSpanStorage(hir,tools,charge,authority){
           for(const target of call.targets){
             charge();restore(before);const selected={...call,target:target.target},summary=summaries.get(target.target);
             const inputs=actuals.map((value,index)=>{charge();return summary?.receiver&&index===0?value:copy(value);});
-            if(!summary)for(const [object]of before)invalidate(object);
+            if(!summary){
+              // A returning arm must not erase its unresolved activation.
+              // Only this storage family needs this dependency; unrelated
+              // scalar/ordinary Span recursion keeps its existing analysis.
+              const needs=aggregateBoundary(value.type)||value.receiver&&aggregateBoundary(value.receiver.type)
+                ||value.arguments.some(argument=>{charge();return aggregateBoundary(argument.type);});
+              if(needs){const dependency={kind:'dependency',target:target.target,path,range:value.range,sourcePath:fn.sourcePath};
+                dependencies.push(dependency);requirements.push(dependency);}
+              for(const [object]of before)invalidate(object);
+            }
             const result=invoke(summary,inputs,selected,path,value.range);results.push(result);branches.push(snapshot(before.keys(),[result]));
           }
           restore(before);
@@ -301,6 +368,15 @@ export function createSpanStorage(hir,tools,charge,authority){
         }
       }else if(type.isOwner(value.type)&&owner)result={kind:'owner',owner,span:type.isView(value.type),sources:[]};
       values.set(key(path),result);
+      if(['arrayReadChecked','readSpanLength'].includes(value.kind)&&type.isView(value.receiver.type)){
+        const at=[...path,'receiver'];requireInput(get(at),at,value.range);
+      }else if(['arrayResizeChecked','arrayStoreDenseChecked','arrayCompoundAssignment','arrayUpdate'].includes(value.kind)){
+        requirements.push({kind:'effect',value:get([...path,'target','receiver']),path,range:value.range,
+          sourcePath:fn.sourcePath,structural:!effect?.nonStructural});
+      }
+      if(['call','construct','superConstruct'].includes(value.kind))for(const [index,argument]of value.arguments.entries()){
+        charge();if(type.isView(argument.type)){const at=[...path,'arguments',index];requireInput(get(at),at,argument.range);}
+      }
       if(type.isView(value.type)){const evidence=origins(result);reads.set(key(path),evidence);
         charge();observations.push({value:result,evidence,aggregate:false});}
       const payloadOwners=[];for(const payload of leaves(result))if(payload.kind==='owner'){charge();payloadOwners.push(payload.owner);}
@@ -338,7 +414,7 @@ export function createSpanStorage(hir,tools,charge,authority){
         observations.push({value:frozen,evidence,aggregate:true});
         returns.push(frozen);exits.push(parameters.map(parameter=>state.remap(parameter)));terminated=true;
       },
-      finish:()=>{
+      finish:(loops=[])=>{
         // Only normal-return field snapshots reach a caller. A conditional
         // return also retains the possible fallthrough state; a later store
         // cannot rewrite the snapshot of an earlier return.
@@ -352,7 +428,8 @@ export function createSpanStorage(hir,tools,charge,authority){
             result.fields.set(member,choice(payloads));}
           return result;
         });
-        summaries.set(fn.id,{parameters:outputs,receiver:!!fn.ownerType,returned:returns.length?choice(returns):unknown});
+        const scopes=[];for(const rows of [loops,callLoops])for(const scope of rows){charge();scopes.push(scope);}
+        summaries.set(fn.id,{parameters:outputs,receiver:!!fn.ownerType,returned:returns.length?choice(returns):unknown,requirements,loops:scopes});
       }};
   }
   return {begin};

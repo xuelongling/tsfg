@@ -1,0 +1,25 @@
+{
+  "family": "tsfg.source-holder-parameter-span-independent-expected",
+  "version": 1,
+  "scope": "Source facts establish real declaration, field/call/formal-actual and UTF16 anchors only; Node permission is an independent consumer result; no IR/VM credit",
+  "positive": {
+    "sourceSha256": "a6dbdf59c0970bf4916dc0a4ea583f2afa09a6e77b3fec7959d888cab957b2cf",
+    "expect": "accept after actual caller field context projection",
+    "formalSpanRead": {
+      "start": 81,
+      "end": 87
+    }
+  },
+  "conflict": {
+    "sourceSha256": "37f2ae77d503cd8bff00a5dd66fcac2410e20b0fc0bd7ba719f9659f30c37659",
+    "expect": "structural-conflict",
+    "primary": {
+      "start": 82,
+      "end": 92
+    },
+    "relatedSpanRead": {
+      "start": 100,
+      "end": 106
+    }
+  }
+}

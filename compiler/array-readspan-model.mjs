@@ -14,9 +14,20 @@ function limit() {
 export function deriveReadSpanPlan(hir,prepared) {
   let work=0;const charge=()=>{if(++work>1024)limit();},type=arrayAnalysisTypes(hir);
   const callables=finiteCallables(hir),calls=prepared.flow.calls,targets=new Map(callables.map(fn=>[fn.id,fn]));
+  const exported=new Set(hir.exports.map(row=>{charge();return row.functionId;}));
   const indices=new Map(calls.map((call,index)=>[canonical([call.functionId,call.expressionPath]),index]));
   const functions=callables.map(fn=>{
     const model=prepared.ownerModel.functions.get(fn.id),families=new Map(),results=new Map(),storedFamilies=new Map(),views=[],events=[];
+    for(const dependency of model.storage?.dependencies??[]){
+      charge();failure({code:'r03-d-readspan-context-pending',ruleId:'r01-span',phase:'hir',functionId:fn.id,
+        message:'Stored parameter context depends on an incomplete recursive storage summary: '+dependency.target,
+        primary:{sourceId:dependency.sourcePath,...dependency.range}});
+    }
+    for(const demand of model.storage?.demands??[]){
+      charge();if(demand.failed||!demand.contexts||demand.formal&&exported.has(fn.id))
+        failure({code:'r03-d-readspan-origin',ruleId:'r01-span',phase:'hir',message:'Stored parameter Span has no complete actual caller field context',
+          primary:{sourceId:fn.sourcePath,...demand.range}});
+    }
     const event=(operation,kind,fields)=>{
       if(events.length>=100)limit();const sequence=events.length;
       events.push({sequence,statementIndex:operation.statementIndex,expressionPath:[...operation.path],
@@ -70,13 +81,31 @@ export function deriveReadSpanPlan(hir,prepared) {
         const value=operation.value;
         if(type.isView(value.receiver.type)) {
           const possible=family(value.receiver,[...operation.path,'receiver']);
+          if(!possible.length&&model.storage?.deferred.has(canonical([...operation.path,'receiver'])))continue;
           if(!possible.length)use(undefined,null,operation,'view-read-complete');
           for(const view of possible)use(view,arrayReferenceBinding(value.receiver),operation,
             value.kind==='readSpanLength'?'view-length-complete':'view-read-complete');
         }
       }else if(operation.kind==='call') {
         const {call}=operation,callIndex=indices.get(canonical([fn.id,operation.path]));
+        const storedUses=[];
+        for(const row of model.storage?.callEvents.get(canonical(operation.path))??[]){
+          charge();const at={...operation,path:row.path,range:row.range};
+          if(row.kind==='effect'){
+            if(!row.structural)continue;
+            event(at,'view-stored-call-structural',{owner:row.owner,sourcePath:row.sourcePath});
+          }else{
+            if(row.evidence.pending||!row.evidence.sources.length)use(undefined,null,at,'view-stored-call-use');
+            for(const source of row.evidence.sources){
+              charge();const view=storedFamilies.get(source.id);
+              use(view,null,at,'view-stored-call-use',{sourcePath:row.sourcePath});storedUses.push({view,at,sourcePath:row.sourcePath});
+            }
+          }
+        }
         event(operation,'array-call-effect',{callIndex});
+        // Fixed Published effects remain an upper bound for the entire call;
+        // precise body events do not shrink it or supply an instance seed.
+        for(const row of storedUses)use(row.view,null,row.at,'view-stored-call-complete',{sourcePath:row.sourcePath});
         const callee=targets.get(call.target),value=operation.value;
         const actuals=callee.ownerType?[value.receiver,...value.arguments]:value.arguments;
         const actualPath=slot=>callee.ownerType&&slot===0?[...operation.path,'receiver']
@@ -84,6 +113,7 @@ export function deriveReadSpanPlan(hir,prepared) {
         const uses=[];
         actuals.forEach((argument,slot)=>{
           if(!argument||!type.isView(argument.type))return;charge();const possible=family(argument,actualPath(slot));
+          if(!possible.length&&model.storage?.deferred.has(canonical(actualPath(slot))))return;
           if(!possible.length)failure({code:'r03-d-readspan-origin',ruleId:'r01-span',phase:'hir',message:'ReadSpan argument has no proven live family',
             primary:{sourceId:fn.sourcePath,...argument.range}});
           for(const view of possible)uses.push({index:slot,binding:arrayReferenceBinding(argument),viewId:view.viewId,range:{...argument.range}});
@@ -148,13 +178,15 @@ export function deriveReadSpanPlan(hir,prepared) {
         }
       }
     }
-    return {functionId:fn.id,views,events,loops:model.loops};
+    const loops=[];for(const scopes of [model.loops,model.storage?.callLoops??[]])for(const scope of scopes){charge();loops.push(scope);}
+    return {functionId:fn.id,views,events,loops};
   });
   return {plan:{version:5,publication:{scopeDigest:prepared.scopeDigest,publishedDigest:prepared.publishedDigest},calls,functions},work};
 }
 function mutuallyExclusive(left,right) {
   const n=Math.min(left.length,right.length);
-  for(let i=0;i<n;i++)if(left[i]!==right[i])return left[i]==='then'&&right[i]==='else'||left[i]==='else'&&right[i]==='then';
+  for(let i=0;i<n;i++)if(left[i]!==right[i])return left[i]==='then'&&right[i]==='else'||left[i]==='else'&&right[i]==='then'
+    ||left[i-1]==='callee'&&right[i-1]==='callee'; // Selected targets of this same actual call.
   return false;
 }
 const prefix=(path,base)=>base.every((key,index)=>path[index]===key);
@@ -164,7 +196,7 @@ function loopBackedge(event,last,view,state) {
   return loops.some(loop=>prefix(last.expressionPath,loop)&&(!origin||!prefix(origin,loop)));
 }
 function conflict(fn,state,event,view,owner,sourceKind,fixed={}) {
-  const at=(kind,range)=>({kind,sourceId:fn.sourcePath,...range}),last=state.events[view.lastUseEvent];
+  const at=(kind,range,sourceId=fn.sourcePath)=>({kind,sourceId,...range}),last=state.events[view.lastUseEvent];
   const origin=view.origin.kind==='parameter'?view.origin.range:state.events[view.origin.createEvent].range;
   const related=[at('borrow-origin',origin)];
   const chain=[],visited=new Set();
@@ -175,9 +207,9 @@ function conflict(fn,state,event,view,owner,sourceKind,fixed={}) {
     if(!alias)break;chain.push(alias);binding=alias.initializerBinding;
   }
   for(const alias of chain.reverse())related.push(at('borrow-alias',state.events[alias.event].range));
-  related.push(at('borrow-last-use',last.range));
+  related.push(at('borrow-last-use',last.range,last.sourcePath));
   failure({code:'r03-d-readspan-structural-conflict',ruleId:'r01-span',phase:'hir',
-    message:'active ReadSpan may overlap a structural Array operation',primary:{sourceId:fn.sourcePath,...event.range},related,
+    message:'active ReadSpan may overlap a structural Array operation',primary:{sourceId:event.sourcePath??fn.sourcePath,...event.range},related,
     conflict:{functionId:fn.id,operationPath:event.expressionPath,sequence:event.sequence,viewId:view.viewId,
       viewOwner:view.owner,structuralOwner:owner,lastUsePath:last.expressionPath,sourceKind,...fixed}});
 }
@@ -211,6 +243,7 @@ export function consumeReadSpanPlan(hir,prepared,registrationAndUseWork) {
         }
       }else if(event.kind==='array-store-effect'&&!event.nonStructural)compare(event,event.owner,'directStore');
       else if(event.kind==='array-resize-effect'&&!event.nonStructural)compare(event,event.owner,'directResize');
+      else if(event.kind==='view-stored-call-structural')compare(event,event.owner,'storedCall');
     }
   }
 }

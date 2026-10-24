@@ -204,7 +204,7 @@ export function traceArrayOwners(hir,contracts,fail,charge,insert,empty,tools=cr
         }
         else if(type.isOwner(value.type))owner=mergeArrayOwners([...children,unknownArrayOwner]);
       }
-      owner=stored.record(value,path,owner,storageCall);
+      owner=stored.record(value,path,owner,storageCall,operations.at(-1)?.proof);
       owner=own(value,owner);expressions.set(canonical(path),owner);return owner;
     };
     const returns=[];
@@ -274,7 +274,7 @@ export function traceArrayOwners(hir,contracts,fail,charge,insert,empty,tools=cr
       }
       return fallthrough;
     };
-    body(fn.body);stored.finish();origins.set(fn.id,mergeArrayOwners(returns));active.delete(fn.id);
+    body(fn.body);stored.finish(model.loops);origins.set(fn.id,mergeArrayOwners(returns));active.delete(fn.id);
   };
   for(const fn of callables)trace(fn);
   return {bases,callSites,models,origins};
