@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: MIT
 #include "finite-memory-sources.h"
 #include "finite-array-memory.h"
+#include "dialect.h"
 #include "mlir/Dialect/ControlFlow/IR/ControlFlowOps.h"
 
 namespace tsfg::finite {
@@ -196,6 +197,45 @@ MemoryOrigin MemorySources::project(Id frame,mlir::Value value,const std::string
     const auto name=op->getName().getStringRef();
     if(name=="tsfg_core.domain.view"||name=="tsfg_core.domain.refine"||name=="tsfg_core.domain.copy"){
       add(op->getOperand(0),origin.frame,item.owner,item.dependency);continue;
+    }
+    if(name=="tsfg_core.domain.field_read"){
+      // These are current-pass FirstWrites results at this exact read, not a
+      // previous actual-payload fixed point. Inputs are relative to the read's
+      // function and must be substituted through this actual activation.
+      const auto found=proof.fieldReadSources.find(op);
+      if(proof.unprovedMemoryReads.count(op)||!proof.fieldReadInputs.count(op)||found==proof.fieldReadSources.end()){
+        result.pending=true;continue;
+      }
+      const auto append=[&](mlir::Value input,bool dependency){
+        if(!proof.charge()){valid=false;return;}
+        if(input.getParentBlock()->getParentOp()!=op->getParentOp()){result.pending=true;return;}
+        add(input,origin.frame,dependency?false:item.owner,dependency);
+      };
+      const bool undefined=proof.fieldReadUndefined.count(op);
+      if(undefined){
+        if(item.owner)result.pending=true;
+        else if(!item.dependency)result.introduced.insert(hash(std::string("tsfg.type\0undefined",19)));
+      }
+      if(found->second.empty()&&!undefined)result.pending=true;
+      for(const auto &selected:found->second){
+        if(!proof.charge()){valid=false;break;}bool productive=false;
+        for(auto input:selected.values){productive=true;append(input,item.dependency);}
+        for(const auto &type:selected.introduced){
+          if(!proof.charge()){valid=false;break;}const auto known=proof.catalog.find(type);
+          const auto kind=known==proof.catalog.end()?std::string():string(*known->second,"kind");
+          bool scalar=kind=="scalar"||kind=="string"||kind=="null"||kind=="undefined";
+          if(known==proof.catalog.end())for(unsigned code=1;code<=13;++code){
+            if(!proof.charge()){valid=false;break;}scalar|=type==hash(std::string("tsfg.type\0",10)+scalarName(code).str());
+          }
+          // An introduced Span or a retained token lacks its original source
+          // activation here. Never relabel that descriptor as caller SSA.
+          if(!scalar||item.owner){result.pending=true;continue;}
+          productive=true;if(!item.dependency)result.introduced.insert(type);
+        }
+        for(auto dependency:selected.dependencies)append(dependency,true);
+        if(!productive&&!undefined)result.pending=true;
+      }
+      continue;
     }
     if(name=="tsfg_core.domain.read_span"){
       if(item.dependency){result.pending=true;continue;}
