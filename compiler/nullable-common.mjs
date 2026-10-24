@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: MIT
 import { isProxy } from 'node:util/types';
 import groupsDescriptor from '../contracts/nullable-groups-candidate.schema.json' with { type: 'json' };
+import typeofDescriptor from '../contracts/nullable-typeof-undefined-candidate.schema.json' with { type: 'json' };
 import descriptor from '../contracts/nullable-owned-bridge-candidate.schema.json' with { type: 'json' };
 import presenceDescriptor from '../contracts/nullable-presence-capture-candidate.schema.json' with { type: 'json' };
 import coreDescriptor from '../contracts/core-nullable-candidate.schema.json' with { type: 'json' };
@@ -154,11 +155,25 @@ check(groupsSchemaHash === 'sha256:16278abcc5c2c3639856a350e32bdb94d0d5e3ff669a9
 export const groupsSnapshotFormat = Object.freeze({ family: snapshotFormat.family, version: 5, schemaHash: groupsSchemaHash });
 export const groupsHirFormat = Object.freeze({ family: hirFormat.family, version: 5, schemaHash: groupsSchemaHash });
 // Public dispatch inspects only a plain own data selector; validators then preflight the entire context.
-export function isNullableGroupsContext(value) {
+function isNullableSourceVersion(value, version) {
   if (!value || typeof value !== 'object' || isProxy(value)
       || ![Object.prototype, null].includes(Object.getPrototypeOf(value))) return false;
-  return Object.getOwnPropertyDescriptor(value, 'sourceVersion')?.value === 5;
+  return Object.getOwnPropertyDescriptor(value, 'sourceVersion')?.value === version;
 }
+export function isNullableGroupsContext(value) {
+  return isNullableSourceVersion(value, 5);
+}
+
+// Independent private6 selector; never routes an old context through the new grammar.
+export function isNullableTypeofContext(value) {
+  return isNullableSourceVersion(value, 6);
+}
+export const typeofSourceSchema = typeofDescriptor.sourceSchemaHash;
+export const typeofSchemaHash = sha256(canonical(typeofDescriptor));
+check(typeofSchemaHash === 'sha256:cad90ff57a58a4094cc7315c6b41d199a13f5c38302acc573d311ae98f652822'
+  && sha256(canonical(typeofDescriptor.sourceDescriptor)) === typeofSourceSchema, 'schema');
+export const typeofSnapshotFormat = Object.freeze({ family: snapshotFormat.family, version: 6, schemaHash: typeofSchemaHash });
+export const typeofHirFormat = Object.freeze({ family: hirFormat.family, version: 6, schemaHash: typeofSchemaHash });
 
 export function readGroupsHirJson(bytes) {
   try {

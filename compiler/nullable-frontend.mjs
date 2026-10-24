@@ -3,7 +3,7 @@ import path from 'node:path';
 import bytecodeSchema from '../contracts/bytecode.schema.json' with { type: 'json' };
 import { capturedDeclarationProfiles } from './closure-common.mjs';
 import { check, record, array, same, budget, canonical, sha256, origin, readJson, own, schemaHash, snapshotFormat, presenceSourceSchema, presenceSnapshotFormat, groupsSourceSchema, groupsSnapshotFormat,
-  presenceBudget, presenceDomainBudget, presenceOrigin, presenceOwn, presenceRethrow, readPresenceJson } from './nullable-common.mjs';
+  typeofSourceSchema, typeofSnapshotFormat, presenceBudget, presenceDomainBudget, presenceOrigin, presenceOwn, presenceRethrow, readPresenceJson } from './nullable-common.mjs';
 import { verifyNullableFacts } from './nullable-facts.mjs';
 
 // Explicit finite captured versions share complete input reconstruction; M19 and default3 stay independent.
@@ -36,13 +36,14 @@ function capturedInput(input, version = 3) {
 function selectedContext(context) {
   presenceBudget(context); record(context, ['sourceVersion','sourceSchemaHash','expectedPackageId','expectedOrigin']);
   check((context.sourceVersion === 4 && context.sourceSchemaHash === presenceSourceSchema
-    || context.sourceVersion === 5 && context.sourceSchemaHash === groupsSourceSchema)
+    || context.sourceVersion === 5 && context.sourceSchemaHash === groupsSourceSchema
+    || context.sourceVersion === 6 && context.sourceSchemaHash === typeofSourceSchema)
     && typeof context.expectedPackageId === 'string' && /^sha256:[0-9a-f]{64}$/.test(context.expectedPackageId), 'context');
   presenceOrigin(context.expectedOrigin); return context;
 }
 function reconstruct(requestBytes, responseBytes, sourceOrigin, context = undefined) {
   const selected = context === undefined ? undefined : selectedContext(context), version = selected?.sourceVersion ?? 3;
-  const sourceSchema = version === 5 ? groupsSourceSchema : version === 4 ? presenceSourceSchema : schemaHash;
+  const sourceSchema = version === 6 ? typeofSourceSchema : version === 5 ? groupsSourceSchema : version === 4 ? presenceSourceSchema : schemaHash;
   if (version >= 4) { presenceOrigin(sourceOrigin); check(same(sourceOrigin, selected.expectedOrigin), 'identity'); }
   else origin(sourceOrigin);
   const read = version >= 4 ? readPresenceJson : readJson;
@@ -60,7 +61,7 @@ function reconstruct(requestBytes, responseBytes, sourceOrigin, context = undefi
   record(request.value, ['family','version','schemaHash','input']);
   check(request.value.family === 'tsfg.nullable-facts-request-candidate' && request.value.version === version && request.value.schemaHash === sourceSchema, 'schema');
   const input = request.value.input;
-  if (version === 5) check(sourceOrigin.testedInputSetHash === sha256(canonical({ rootFile: input.rootFile, files: input.files })), 'identity');
+  if (version >= 5) check(sourceOrigin.testedInputSetHash === sha256(canonical({ rootFile: input.rootFile, files: input.files })), 'identity');
   const identityInput = capturedInput(input, version), inputIdentity = sha256(canonical(identityInput));
   const value = response.value; record(value, ['family','version','schemaHash','requestId','packageId','payload']);
   check(value.family === 'tsfg.nullable-facts-package-candidate' && value.version === version && value.schemaHash === sourceSchema, 'schema');
@@ -75,7 +76,7 @@ function reconstruct(requestBytes, responseBytes, sourceOrigin, context = undefi
   check(same(facts.inputs, files.map(file => file.path)), 'input');
   const source = { path: input.rootFile, content: input.files.find(file => file.path === input.rootFile).content };
   verifyNullableFacts(source, facts, exports, version);
-  const format = version === 5 ? groupsSnapshotFormat : version === 4 ? presenceSnapshotFormat : snapshotFormat;
+  const format = version === 6 ? typeofSnapshotFormat : version === 5 ? groupsSnapshotFormat : version === 4 ? presenceSnapshotFormat : snapshotFormat;
   const snapshotId = sha256('tsfg.frontend-nullable-candidate.snapshot.v' + version + '\0' + format.schemaHash + '\0' + canonical({ inputIdentity, sourceOrigin }));
   const snapshot = { format, snapshotId, sourceOrigin, inputIdentity, identityInput,
     source: { ...source, hash: sha256(source.content) }, target: input.target, inputs: files, functions: facts.functions, symbols: facts.symbols, exports,
@@ -94,7 +95,7 @@ export function nullableSnapshotFacts(snapshot, context = undefined) {
     if (context !== undefined) { selectedContext(context); presenceBudget(snapshot); presenceDomainBudget(snapshot); }
     else budget(snapshot);
     record(snapshot, ['format','snapshotId','sourceOrigin','inputIdentity','identityInput','source','target','inputs','functions','symbols','exports','capture']);
-    check(same(snapshot.format, context === undefined ? snapshotFormat : context.sourceVersion === 5 ? groupsSnapshotFormat : presenceSnapshotFormat), 'schema'); record(snapshot.capture, ['request','response']);
+    check(same(snapshot.format, context === undefined ? snapshotFormat : context.sourceVersion === 6 ? typeofSnapshotFormat : context.sourceVersion === 5 ? groupsSnapshotFormat : presenceSnapshotFormat), 'schema'); record(snapshot.capture, ['request','response']);
     check(typeof snapshot.capture.request === 'string' && typeof snapshot.capture.response === 'string', 'input');
     const expected = reconstruct(Buffer.from(snapshot.capture.request), Buffer.from(snapshot.capture.response), snapshot.sourceOrigin, context);
     check(same(snapshot, expected), 'snapshot'); return context === undefined ? own(expected) : presenceOwn(expected);

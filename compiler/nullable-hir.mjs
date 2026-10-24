@@ -2,7 +2,7 @@
 import { nullableSnapshotFacts } from './nullable-frontend.mjs';
 import presenceHirDescriptor from '../contracts/nullable-presence-hir-candidate.schema.json' with { type: 'json' };
 import { check, record, budget, same, own, candidate, valueType, typeFor, scalarType, nullableTypes, hirFormat, canonical, sha256,
-  presenceBudget, presenceDomainBudget, presenceOwn, presenceOrigin, presenceSourceSchema, groupsSourceSchema, groupsHirFormat, readGroupsHirJson } from './nullable-common.mjs';
+  presenceBudget, presenceDomainBudget, presenceOwn, presenceOrigin, presenceSourceSchema, groupsSourceSchema, groupsHirFormat, typeofSourceSchema, typeofHirFormat, readGroupsHirJson } from './nullable-common.mjs';
 
 const presenceHirFormat = Object.freeze({ family: hirFormat.family, version: 4, schemaHash: sha256(canonical(presenceHirDescriptor)) });
 check(presenceHirFormat.schemaHash === 'sha256:9892edc555999b98f964ae409e10d6ba576e8a819b2c4ed68783f626f2665eed', 'schema');
@@ -41,7 +41,8 @@ function selectedContext(context) {
   // validator repeats selection and capture binding at its own cold Interface.
   record(context, ['sourceVersion','sourceSchemaHash','expectedPackageId','expectedOrigin']);
   demand((context.sourceVersion === 4 && context.sourceSchemaHash === presenceSourceSchema
-    || context.sourceVersion === 5 && context.sourceSchemaHash === groupsSourceSchema)
+    || context.sourceVersion === 5 && context.sourceSchemaHash === groupsSourceSchema
+    || context.sourceVersion === 6 && context.sourceSchemaHash === typeofSourceSchema)
     && typeof context.expectedPackageId === 'string' && /^sha256:[0-9a-f]{64}$/.test(context.expectedPackageId), 'context');
   presenceOrigin(context.expectedOrigin);
 }
@@ -58,7 +59,7 @@ function selectedBudget(input, hir) {
     if (Array.isArray(types)) demand(types.length <= 5, 'limit');
   }
 }
-/** @param {typeof hirFormat | typeof presenceHirFormat | typeof groupsHirFormat} [format] */
+/** @param {typeof hirFormat | typeof presenceHirFormat | typeof groupsHirFormat | typeof typeofHirFormat} [format] */
 function project(snapshot, format = hirFormat) {
   const source = snapshot.source, selected = format !== hirFormat; let hasGuards = false;
   // Signatures and owned bindings select only this program's nullable records.
@@ -79,7 +80,14 @@ function project(snapshot, format = hirFormat) {
     };
     function expression(raw) {
       if (raw.kind === 'group') { const operand = expression(raw.operand); return { kind: 'group', type: operand.type, operand, range: raw.range }; }
-      if (raw.kind === 'reference') return { kind: 'reference', type: valueType(bindings.get(raw.symbol).presence), binding: raw.symbol, range: raw.range };
+      if (raw.kind === 'reference') {
+        const operand = { kind: 'reference', type: valueType(bindings.get(raw.symbol).presence), binding: raw.symbol, range: raw.range };
+        // Source6's complete branch validator alone authorizes these scalar uses.
+        // The storage type remains the original declaration, including mask3.
+        return format === typeofHirFormat && guarded && operand.type !== scalarType.id && raw.presenceFlow
+          && !raw.presenceFlow.undefined && !raw.presenceFlow.null
+          ? { kind: 'nullableGet', type: scalarType.id, operand, range: raw.range } : operand;
+      }
       if (raw.kind === 'shortCircuit') return { kind: 'nullableCoalesce', type: scalarType.id,
         left: expression(raw.left), right: expression(raw.right), range: raw.range };
       const target = headers.find(item => item.source.symbol === raw.target);
@@ -87,10 +95,14 @@ function project(snapshot, format = hirFormat) {
         arguments: raw.arguments.map((arg, index) => lift(expression(arg), target.parameterTypes[index])), range: raw.range };
     }
     function statement(item, final = false) {
-      if (selected && item.kind === 'if') return { kind: 'if', condition: {
-        kind: 'nullableTagTest', type: boolType.id, operand: expression(item.condition.left),
-        tag: item.condition.right.absence === 'undefined' ? 1 : 2, tagRange: item.condition.right.range, range: item.condition.range,
-      }, thenBody: item.thenBody.map(block => statement(block)), elseBody: [], range: item.range };
+      if (selected && item.kind === 'if') {
+        const condition = item.condition, typeOf = format === typeofHirFormat && condition.kind === 'type-test';
+        return { kind: 'if', condition: {
+          kind: 'nullableTagTest', type: boolType.id, operand: expression(typeOf ? condition.operand : condition.left),
+          tag: typeOf ? condition.operator === '!==' ? 0 : 1 : condition.right.absence === 'undefined' ? 1 : 2,
+          tagRange: typeOf ? condition.typeTest.tagRange : condition.right.range, range: condition.range,
+        }, thenBody: item.thenBody.map(block => statement(block)), elseBody: [], range: item.range };
+      }
       if (selected && item.kind === 'block') return { kind: 'block', body: item.body.map(value => statement(value)), range: item.range };
       if (item.kind === 'variable') return {
         kind: 'local', binding: { id: item.symbol.id, name: item.symbol.name, type: valueType(item.symbol.presence), mutable: false, range: item.symbol.range },
@@ -99,7 +111,7 @@ function project(snapshot, format = hirFormat) {
       const operand = expression(item.expression);
       // Only S5's complete, revalidated finite guard/return plan reaches this
       // final fallthrough. All absence exits return; the declaration stays nullable.
-      const value = final ? { kind: 'nullableGet', type: scalarType.id, operand, range: operand.range } : operand;
+      const value = final && format !== typeofHirFormat ? { kind: 'nullableGet', type: scalarType.id, operand, range: operand.range } : operand;
       return { kind: 'return', value: lift(value, header.returnId), range: item.range };
     }
     return { id: header.id, name: fn.name, ownedSymbol: fn.symbol, signatureHash: header.signatureHash,
@@ -173,7 +185,7 @@ export function buildNullableHir(snapshot, context = undefined) {
   if (context === undefined) { const result = project(nullableSnapshotFacts(snapshot)); budget(result); return own(result); }
   try {
     selectedContext(context); selectedBudget(snapshot, false);
-    const result = project(nullableSnapshotFacts(snapshot, context), context.sourceVersion === 5 ? groupsHirFormat : presenceHirFormat);
+    const result = project(nullableSnapshotFacts(snapshot, context), context.sourceVersion === 6 ? typeofHirFormat : context.sourceVersion === 5 ? groupsHirFormat : presenceHirFormat);
     selectedBudget(result, true); return presenceOwn(result);
   } catch (error) { selectedRethrow(error); }
 }
@@ -187,8 +199,8 @@ export function verifyNullableHir(hir, context = undefined) {
   try {
     selectedContext(context); selectedBudget(hir, true);
     record(hir, ['format','snapshot','inputIdentity','source','target','types','functions']);
-    demand(same(hir.format, context.sourceVersion === 5 ? groupsHirFormat : presenceHirFormat), 'schema');
-    const expected = project(nullableSnapshotFacts(hir.snapshot, context), context.sourceVersion === 5 ? groupsHirFormat : presenceHirFormat);
+    demand(same(hir.format, context.sourceVersion === 6 ? typeofHirFormat : context.sourceVersion === 5 ? groupsHirFormat : presenceHirFormat), 'schema');
+    const expected = project(nullableSnapshotFacts(hir.snapshot, context), context.sourceVersion === 6 ? typeofHirFormat : context.sourceVersion === 5 ? groupsHirFormat : presenceHirFormat);
     selectedBudget(expected, true); verifyProjection(hir, expected); return presenceOwn(expected);
   } catch (error) { selectedRethrow(error); }
 }

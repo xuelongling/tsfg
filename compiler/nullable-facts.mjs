@@ -1,12 +1,13 @@
 // SPDX-License-Identifier: MIT
 import { check, failure, record, array, text, range, same, budget, scalarType, typeFor, presenceMask, valueType, coreTextLimits, presenceBudget, presenceDomainBudget, presenceFailure, presenceRethrow } from './nullable-common.mjs';
 import { sourceGrammar } from './closure-source-grammar.mjs';
+import { verifyTypeofBody } from './nullable-typeof.mjs';
 
 // Reuse only the bounded token guards. Nullable declarations, flow and export
 // rules are independent of M19's nonnullable closure grammar.
 export function verifyNullableFacts(source, facts, exports, sourceVersion = 3) {
   try {
-    check(sourceVersion === 3 || sourceVersion === 4 || sourceVersion === 5, 'schema');
+    check([3,4,5,6].includes(sourceVersion), 'schema');
     const result = verify(source, facts, exports, sourceVersion); return sourceVersion === 3 ? result : undefined;
   }
   catch (error) {
@@ -99,15 +100,16 @@ function verify(source, facts, exports, sourceVersion) {
   for (const fn of functions) {
     const visible = new Map(top), localNames = new Set(), initialized = new Set();
     for (const p of fn.parameters) { check(!localNames.has(p.name), 'scope'); localNames.add(p.name); visible.set(p.name, p.id); initialized.add(p.id); }
-    function expression(value, parent, returning = false, depth = 0) {
-      check(++steps <= 200000 && depth <= 128, 'limit'); record(value, ['kind','type','range'], ['symbol','target','arguments','signature','presenceFlow','operator','left','right', ...(sourceVersion === 5 ? ['operand'] : [])]);
+    function expression(value, parent, returning = false, depth = 0, narrowing = undefined, narrowedUses = undefined, referenceConstraint = undefined) {
+      check(++steps <= 200000 && depth <= 128, 'limit'); record(value, ['kind','type','range'], ['symbol','target','arguments','signature','presenceFlow','operator','left','right', ...(sourceVersion >= 5 ? ['operand'] : [])]);
       check(value.type === 'i32', 'type'); within(value.range, parent);
+      if (referenceConstraint !== undefined) check(value.kind === 'group' || value.kind === 'reference', 'capability');
       let type;
-      if (sourceVersion === 5 && value.kind === 'group') {
+      if (sourceVersion >= 5 && value.kind === 'group') {
         record(value, ['kind','type','operand','range'], ['presenceFlow']);
         const tokens = grammar.between(value.range.start, value.range.end), open = tokens[0], close = tokens.at(-1);
         check(open?.text === '(' && close?.text === ')' && value.range.start === open.start && value.range.end === close.end, 'range');
-        type = expression(value.operand, { start: open.end, end: close.start }, false, depth + 1);
+        type = expression(value.operand, { start: open.end, end: close.start }, false, depth + 1, narrowing, narrowedUses, referenceConstraint);
         const inner = grammar.between(value.operand.range.start, value.operand.range.end);
         check(inner.length > 0 && inner.at(-1).end === value.operand.range.end, 'range');
         check(value.operand.range.start === (['reference','call'].includes(value.operand.kind) ? open.end : inner[0].start), 'range');
@@ -115,7 +117,11 @@ function verify(source, facts, exports, sourceVersion) {
       } else if (value.kind === 'reference') {
         record(value, ['kind','type','range','symbol'], ['presenceFlow']);
         const def = defs.get(value.symbol); check(def && def.kind !== 'function' && visible.get(def.name) === def.id && initialized.has(def.id), 'binding');
-        grammar.name(value.range, def.name); type = valueType(def.presence);
+        if (referenceConstraint !== undefined) check(referenceConstraint(def), 'binding');
+        grammar.name(value.range, def.name);
+        const mask = narrowing?.get(def.id);
+        if (mask !== undefined) narrowedUses?.add(def.id);
+        type = mask === undefined ? valueType(def.presence) : valueType({ undefined: !!(mask & 1), null: !!(mask & 2) });
       } else if (value.kind === 'call') {
         record(value, ['kind','type','range','target','arguments','signature'], ['presenceFlow']);
         const target = fns.get(value.target); check(target && visible.get(target.name) === target.symbol, 'binding');
@@ -128,7 +134,7 @@ function verify(source, facts, exports, sourceVersion) {
         const name = grammar.between(value.range.start, value.range.end)[0]; check(name, 'source'); grammar.name({ start: name.start, end: name.end }, target.name);
         let end = name.end;
         for (const [index, arg] of args.entries()) {
-          grammar.expect(end, arg.range?.start, [index ? ',' : '(']); fit(expression(arg, value.range, false, depth + 1), valueType(target.parameters[index].presence)); end = arg.range.end;
+          grammar.expect(end, arg.range?.start, [index ? ',' : '(']); fit(expression(arg, value.range, false, depth + 1, narrowing, narrowedUses), valueType(target.parameters[index].presence)); end = arg.range.end;
         }
         const tail = grammar.spelling(end, value.range.end);
         check(same(tail, args.length ? [')'] : ['(',')']) || args.length > 0 && same(tail, [',',')']), 'source');
@@ -137,8 +143,8 @@ function verify(source, facts, exports, sourceVersion) {
         record(value, ['kind','type','range','operator','left','right','presenceFlow']); check(value.operator === '??', 'capability');
         // Direct-call ranges retain leading trivia; its first token still starts
         // the whole coalesce. Operands must retain their actual Source anchors.
-        const left = expression(value.left, parent, false, depth + 1);
-        const right = expression(value.right, value.range, false, depth + 1);
+        const left = expression(value.left, parent, false, depth + 1, narrowing, narrowedUses);
+        const right = expression(value.right, value.range, false, depth + 1, narrowing, narrowedUses);
         check(typeFor(left).kind === 'nullable-i32' && right === scalarType.id, 'type');
         const leftTokens = grammar.between(value.left.range.start, value.left.range.end);
         const rightTokens = grammar.between(value.right.range.start, value.right.range.end);
@@ -155,13 +161,14 @@ function verify(source, facts, exports, sourceVersion) {
         grammar.expect(value.right.range.end, value.range.end, []); type = scalarType.id;
       } else failure('capability', 'only required references, direct calls and nullish coalesce are represented');
       const shape = typeFor(type);
-      if (sourceVersion === 5 && value.kind === 'group') {
+      if (sourceVersion >= 5 && value.kind === 'group') {
         if (returning && fn.returnPresence) {
           record(value.presenceFlow, ['undefined','null']);
           check(same(value.presenceFlow, { undefined: shape.kind === 'nullable-i32' && shape.undefined, null: shape.kind === 'nullable-i32' && shape.null }), 'flow');
         } else check(value.presenceFlow === undefined, 'flow');
       } else if (shape.kind === 'nullable-i32') check(same(value.presenceFlow, { undefined: shape.undefined, null: shape.null }), 'capability', 'nullable narrowing/get/retype is not represented');
       else check(value.kind === 'shortCircuit' || returning && fn.returnPresence
+        || sourceVersion === 6 && value.kind === 'reference' && narrowing?.has(value.symbol)
         ? same(value.presenceFlow, { undefined: false, null: false }) : value.presenceFlow === undefined, 'flow');
       return type;
     }
@@ -169,7 +176,10 @@ function verify(source, facts, exports, sourceVersion) {
     try {
     check(body.length > 0, 'return');
     if (sourceVersion >= 4 && grammar.between(header.start, header.end).some(token => token.text === 'if')) {
-      steps += verifyPresenceBody(source, fn, body, header, grammar, top); check(steps <= 200000, 'limit'); continue;
+      steps += sourceVersion === 6 && grammar.between(header.start, header.end).some(token => token.text === 'typeof')
+        ? verifyTypeofBody(source, fn, body, header, grammar, expression)
+        : verifyPresenceBody(source, fn, body, header, grammar, top);
+      check(steps <= 200000, 'limit'); continue;
     }
     for (const item of body) {
       check(!returned, 'return'); within(item.range, header); check(item.range.start >= end, 'range');
