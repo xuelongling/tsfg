@@ -2,7 +2,8 @@
 #include "finite-array-memory-internal.h"
 
 namespace tsfg::finite::memorydetail {
-ArrayMemory::Selection ArrayMemory::query(mlir::Operation *read,mlir::Value receiver,Index selected,bool checkedSuccess,const MemoryCallPath *activation) {
+ArrayMemory::Selection ArrayMemory::query(mlir::Operation *read,mlir::Value receiver,Index selected,bool checkedSuccess,
+    const MemoryCallPath *activation,Purpose purpose) {
     PayloadFlow graph(proof.remaining,PayloadFlow::AtomDomain::MemoryVersion);
     const auto outcome=[&](bool result){if(!result){valid=false;proof.reject(graph.error());}return result;};
     const auto seed=[&](auto id,const std::string &value){return outcome(graph.seed(id,value));};
@@ -10,6 +11,8 @@ ArrayMemory::Selection ArrayMemory::query(mlir::Operation *read,mlir::Value rece
     const auto connect=[&](PayloadFlow::Edge edge){return outcome(graph.connect(std::move(edge)));};
     using Id=PayloadFlow::Id;
     const std::string input="#incoming-array-memory";
+    const bool boundsOnly=purpose==Purpose::ExistingSlot;
+    const std::string checkedSlot="#checked-existing-array-slot";
     struct Task {mlir::Operation *before;mlir::Value owner;Index index;Id node;size_t scope;bool foreign;size_t level;};
     std::vector<std::set<size_t>> scopes(1);
     std::map<std::tuple<std::string,std::vector<size_t>,std::string>,std::pair<size_t,Id>> summaries;
@@ -43,7 +46,7 @@ ArrayMemory::Selection ArrayMemory::query(mlir::Operation *read,mlir::Value rece
       const auto pass=[&](mlir::Operation *point,mlir::Value receiver,Index slot){const auto prior=at(point,receiver,slot,task.scope,task.foreign,task.level);return valid&&connect({prior,task.node});};
       // Lexical version identity is sufficient for claims, but not retention:
       // the same SSA in a recursive activation is a different stored source.
-      const auto version=[&](const std::string &id){return seed(task.node,task.foreign?"#foreign-array-version/"+id:id);};
+      const auto version=[&](const std::string &id){return seed(task.node,boundsOnly?checkedSlot:task.foreign?"#foreign-array-version/"+id:id);};
       if(!previous) {
         auto *block=task.before->getBlock();bool predecessor=false;
         for(auto *parent:block->getPredecessors()) {
@@ -96,6 +99,12 @@ ArrayMemory::Selection ArrayMemory::query(mlir::Operation *read,mlir::Value rece
         }continue;
       }
       const auto name=previous->getName().getStringRef();
+      // This is the actual earlier operation on a normal path, not the
+      // producer's proven marker or its payload-success source ledger.
+      if(boundsOnly&&name=="tsfg_core.domain.array_read"&&sameOwner(task,previous->getOperand(0))&&
+          same(task.index,index(previous->getOperand(1)))){
+        if(!valid||!seed(task.node,checkedSlot))return {};continue;
+      }
       if(activation&&task.level<activation->size()&&previous==(*activation)[task.level].call){
         const auto &step=(*activation)[task.level];bool productive=false;
         for(auto &block:proof.functions.at(step.function).getBody()){
@@ -126,6 +135,9 @@ ArrayMemory::Selection ArrayMemory::query(mlir::Operation *read,mlir::Value rece
         const auto slot=index(previous->getOperand(1));
         if(name=="tsfg_core.domain.array_store") {
           if(same(slot,task.index)){if(!version(stores.at(previous)))return {};}
+          // A successful store to this known owner can overwrite or append,
+          // never shorten it. This grants no element/source fact at our slot.
+          else if(boundsOnly){if(!pass(previous,task.owner,task.index))return {};}
           else if(slot.constant&&task.index.constant){if(!pass(previous,task.owner,task.index))return {};}
           else if(!unknown(task.node))return {};
         }else if(slot.constant&&task.index.constant&&*task.index.constant<*slot.constant) {
@@ -137,6 +149,7 @@ ArrayMemory::Selection ArrayMemory::query(mlir::Operation *read,mlir::Value rece
       const bool descriptor=name=="tsfg_core.domain.array_read"||name=="tsfg_core.domain.field_read"||name=="tsfg_core.domain.read_span";
       if(previous==task.owner.getDefiningOp()&&(callees!=proof.selectedCallees.end()||descriptor)){
         if(!charge())return {};
+        if(boundsOnly){if(!unknown(task.node))return {};continue;}
         if(!task.index.constant){if(!unknown(task.node))return {};continue;}
         const auto key=std::make_pair(previous,*task.index.constant);auto found=captures.find(key);
         if(found==captures.end()){found=captures.emplace(key,captureSites.size()).first;captureSites.push_back({previous,*task.index.constant});}
@@ -148,6 +161,7 @@ ArrayMemory::Selection ArrayMemory::query(mlir::Operation *read,mlir::Value rece
       if(callees!=proof.selectedCallees.end()) {
         bool modifies=false;for(const auto &target:callees->second){if(!charge())return {};modifies|=effects.at(target);}
         if(modifies) {
+          if(boundsOnly){if(!unknown(task.node))return {};continue;}
           // No alias or effect summary alone identifies a foreign local cell.
           if(activation){if(!unknown(task.node))return {};continue;}
           // A summary contains either successful callee versions or a symbolic
@@ -196,6 +210,11 @@ ArrayMemory::Selection ArrayMemory::query(mlir::Operation *read,mlir::Value rece
     if(!graph.solve()){proof.reject(graph.error());valid=false;return {};}
     const auto *evidence=graph.evidence(result);Selection out;
     if(!evidence||evidence->pending||evidence->alternatives.empty()||(!checkedSuccess&&evidence->alternatives.count("#missing"))||evidence->alternatives.count(input))return out;
+    if(boundsOnly){
+      // A distinct authority: no versions, captures, payload or extent leave
+      // an ExistingSlot query, even when a real write supplied the witness.
+      out.proven=out.bounds=evidence->alternatives.size()==1&&evidence->alternatives.count(checkedSlot);return out;
+    }
     // Only the actual checked read's normal continuation excludes a known
     // missing cell. Unknown, incoming and unresolved effects stay pending.
     out.bounds=!evidence->alternatives.count("#unchecked")&&!evidence->alternatives.count("#missing");

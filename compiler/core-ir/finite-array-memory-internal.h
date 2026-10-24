@@ -145,7 +145,9 @@ struct ArrayMemory {
     std::set<std::string> versions;std::set<std::pair<mlir::Operation *,uint32_t>> captures;
     bool proven=false,bounds=false,foreign=false;
   };
-  Selection query(mlir::Operation *read,mlir::Value receiver,Index selected,bool checkedSuccess=false,const MemoryCallPath *activation=nullptr);
+  enum class Purpose { Cells,ExistingSlot };
+  Selection query(mlir::Operation *read,mlir::Value receiver,Index selected,bool checkedSuccess=false,
+    const MemoryCallPath *activation=nullptr,Purpose purpose=Purpose::Cells);
   Selection query(mlir::Operation *read){return query(read,read->getOperand(0),index(read->getOperand(1)));}
   bool cell(mlir::Operation *point,mlir::Value receiver,uint32_t slot,ArrayExtent &destination){
     if(!directory()||!collect())return false;const auto selected=query(point,receiver,Index{{},slot});
@@ -242,7 +244,7 @@ struct ArrayMemory {
       if(op.getName().getStringRef()!="tsfg_core.domain.array_store"||!proof.mayReach(&block))continue;
       // Query the actual pre-store state using its real receiver/index SSA.
       // Successful existing-element evidence is separate from owner capacity.
-      const auto selected=query(&op);if(!valid)return false;
+      const auto selected=query(&op,op.getOperand(0),index(op.getOperand(1)),false,nullptr,Purpose::ExistingSlot);if(!valid)return false;
       if(selected.proven&&selected.bounds)proved.insert(&op);
     }
     if(!proveArrayNoChangeResizes(proof,[&](mlir::Value value){return strip(value);},proved)||!valid)return false;
