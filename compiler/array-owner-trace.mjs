@@ -5,6 +5,7 @@ import {arrayAnalysisTypes,arrayExpressionChildren,arrayReferenceBinding,hasCond
 import {finiteCallables} from './finite-callables.mjs';
 import {typedReferenceAuthority} from './typed-reference-authority.mjs';
 import {createSpanStorage} from './array-span-storage.mjs';
+import {createSpanContexts} from './array-span-contexts.mjs';
 
 export const unknownArrayOwner=Object.freeze({kind:'unknown'});
 export const parameterArrayOwner=(fn,index)=>({kind:'parameter',functionId:fn.id,index});
@@ -96,16 +97,37 @@ export function traceArrayOwners(hir,contracts,fail,charge,insert,empty,tools=cr
     return authority.possibleMethods(value.receiver.type,value.target);
   };
   const bases=new Map(),callSites=new Map(),models=new Map(),origins=new Map(),active=new Set();
-  const storage=createSpanStorage(hir,tools,charge,()=>authority??=typedReferenceAuthority(hir,charge));
-  const trace=fn=>{
-    if(models.has(fn.id))return;
-    if(active.has(fn.id))return;
-    active.add(fn.id);
+  const contexts=createSpanContexts(tools,charge);
+  const storage=createSpanStorage(hir,tools,charge,()=>authority??=typedReferenceAuthority(hir,charge),
+    (id,facts,aliases)=>contexts.resolve(functions.get(id),facts,aliases,(fn,context)=>trace(fn,context)));
+  const trace=(fn,context=null)=>{
+    if(!context&&models.has(fn.id))return;
+    if(!context&&active.has(fn.id))return;
+    if(!context)active.add(fn.id);
     const base=empty(),bindings=new Map(),calls=[],lengths=new Map(),contents=new Map(),expressions=new Map(),operations=[];
     let callCount=0,conditionalDepth=0;
-    const stored=storage.begin(fn),model={bindings,expressions,operations,loops:[],storage:stored.model};
-    models.set(fn.id,model);bases.set(fn.id,base);callSites.set(fn.id,calls);
+    const truthBindings=new Map(),truthValues=new Map();
+    const meetTruth=states=>{
+      const names=new Set();for(const state of states)for(const name of state.keys()){charge();names.add(name);}
+      truthBindings.clear();for(const name of names){charge();let value,first=true;
+        for(const state of states){charge();const next=state.get(name)??null;if(first){value=next;first=false;}else if(value!==next)value=null;}
+        truthBindings.set(name,value??null);}
+    };
+    // Reclassify only a side-effect-free boolean predicate at the backedge.
+    // Calls, field/element payloads and carrier types supply no truth here.
+    const predicate=value=>{
+      charge();if(value.kind==='boolean')return value.value;
+      if(value.kind==='reference')return truthBindings.get(value.binding)??null;
+      if(['group','assertType','nonNull'].includes(value.kind))return predicate(value.operand);
+      if(value.kind==='binary'&&['===','!=='].includes(value.operator)){
+        const left=predicate(value.left),right=predicate(value.right);
+        if(typeof left==='boolean'&&typeof right==='boolean')return value.operator==='==='?left===right:left!==right;
+      }return null;
+    };
+    const stored=storage.begin(fn,!!context,context?.aliases),model={bindings,expressions,operations,loops:[],storage:stored.model};
+    if(!context){models.set(fn.id,model);bases.set(fn.id,base);callSites.set(fn.id,calls);}
     fn.parameters.forEach((p,index)=>{
+      charge();truthBindings.set(p.id,context?.facts[index]??null);
       if(!type.isOwner(p.type))return;
       const owner=parameterArrayOwner(fn,index);bindings.set(p.id,owner);insert(base.owners,owner);lengths.set(canonical(owner),null);
     });
@@ -124,7 +146,7 @@ export function traceArrayOwners(hir,contracts,fail,charge,insert,empty,tools=cr
     };
     const expression=(value,path,index)=>{
       if(!value)return null;
-      charge();let owner=null,storageCall=null;
+      charge();let owner=null,storageCall=null,facts=[];
       if(value.kind==='reference')owner=bindings.get(value.binding);
       else if(['group','assertType','nonNull'].includes(value.kind))owner=expression(value.operand,[...path,'operand'],index);
       else if(value.kind==='arrayCreate') {
@@ -153,7 +175,10 @@ export function traceArrayOwners(hir,contracts,fail,charge,insert,empty,tools=cr
             charge();args.push({index:slot,binding:arrayReferenceBinding((callee.ownerType?[value.receiver,...value.arguments]:value.arguments)[slot]),
               owner:values[slot]??unknownArrayOwner});
           }
-          for(const arm of targets)trace(functions.get(arm.target));
+          if(!context)for(const arm of targets)trace(functions.get(arm.target));
+          const scalarArguments=callee.ownerType?[value.receiver,...value.arguments]:value.arguments;
+          for(const [i]of scalarArguments.entries()){charge();facts.push(truthValues.get(canonical(
+            callee.ownerType&&i===0?[...path,'receiver']:[...path,'arguments',i-(callee.ownerType?1:0)]))??null);}
           const call={functionId:fn.id,expressionPath:path,range:{...value.range},target:targetId,
             signatureHash:callee.signatureHash,arguments:args,consumedDigest:contract.digest,targets,
             publishedLocal:targets.some(arm=>Object.values(contracts.get(arm.target).upper.local).some(Boolean))
@@ -182,11 +207,17 @@ export function traceArrayOwners(hir,contracts,fail,charge,insert,empty,tools=cr
           mergeArrayOwners([contents.get(canonical(receiver)),expressions.get(canonical([...path,'value']))]));
       }else if(hasConditionalArrayRhs(value)) {
         const left=expression(value.left,[...path,'left'],index),before=snapshot(bindings);
-        const storageBefore=stored.state();
-        conditionalDepth++;const right=expression(value.right,[...path,'right'],index);conditionalDepth--;
-        stored.join([storageBefore,stored.state()]);
-        for(const [id,prior]of before)bindings.set(id,mergeArrayOwners([prior,bindings.get(id)]));
-        for(const key of lengths.keys()){charge();lengths.set(key,null);}
+        const storageBefore=stored.state(),priorTruth=snapshot(truthBindings);
+        const leftTruth=truthValues.get(canonical([...path,'left'])),op=value.operator;
+        const executes=context&&typeof leftTruth==='boolean'?(op==='&&'?leftTruth:op==='||'?!leftTruth:op==='??'?false:null):null;
+        let right=null;
+        if(executes!==false){conditionalDepth++;right=expression(value.right,[...path,'right'],index);conditionalDepth--;}
+        if(executes===null){
+          stored.join([storageBefore,stored.state()]);
+          for(const [id,prior]of before)bindings.set(id,mergeArrayOwners([prior,bindings.get(id)]));
+          meetTruth([priorTruth,snapshot(truthBindings)]);
+          for(const key of lengths.keys()){charge();lengths.set(key,null);}
+        }
         owner=mergeArrayOwners([left,right]);
       }else if(value.kind==='assignment') {
         owner=expression(value.value,[...path,'value'],index);bindings.set(value.target.binding,owner);
@@ -204,7 +235,17 @@ export function traceArrayOwners(hir,contracts,fail,charge,insert,empty,tools=cr
         }
         else if(type.isOwner(value.type))owner=mergeArrayOwners([...children,unknownArrayOwner]);
       }
-      owner=stored.record(value,path,owner,storageCall,operations.at(-1)?.proof);
+      let truth=null;
+      if(value.kind==='boolean')truth=value.value;
+      else if(value.kind==='reference')truth=truthBindings.get(value.binding)??null;
+      else if(['group','assertType','nonNull'].includes(value.kind))truth=truthValues.get(canonical([...path,'operand']))??null;
+      else if(value.kind==='assignment'){truth=truthValues.get(canonical([...path,'value']))??null;truthBindings.set(value.target.binding,truth);}
+      else if(value.kind==='binary'&&['===','!=='].includes(value.operator)){
+        const left=truthValues.get(canonical([...path,'left'])),right=truthValues.get(canonical([...path,'right']));
+        if(typeof left==='boolean'&&typeof right==='boolean')truth=value.operator==='==='?left===right:left!==right;
+      }
+      truthValues.set(canonical(path),truth);
+      owner=stored.record(value,path,owner,storageCall,operations.at(-1)?.proof,facts);
       owner=own(value,owner);expressions.set(canonical(path),owner);return owner;
     };
     const returns=[];
@@ -213,6 +254,7 @@ export function traceArrayOwners(hir,contracts,fail,charge,insert,empty,tools=cr
       // is enabled. Still visit lexical facts after a terminated path.
       let fallthrough=true;
       for(const [index,row] of rows.entries()) {
+        if(context&&!fallthrough)break;
         charge();const at=[...path,index],incoming=fallthrough;
         if(row.kind==='initializeOwnFields') {
           const owner=constructions.get(row.construction),typeIndex=hir.types.indexOf(owner);
@@ -228,6 +270,7 @@ export function traceArrayOwners(hir,contracts,fail,charge,insert,empty,tools=cr
         }else if(row.kind==='local') {
           const owner=expression(row.initializer,[...at,'initializer'],index);
           stored.bind(row.binding.id,stored.get([...at,'initializer']));
+          truthBindings.set(row.binding.id,truthValues.get(canonical([...at,'initializer']))??null);
           if(type.isOwner(row.binding.type))bindings.set(row.binding.id,owner);
           operations.push({kind:'binding',path:[...at,'initializer'],binding:row.binding.id,type:row.binding.type,value:row.initializer,
             range:row.range,owner,statementIndex:index,conditional:conditionalDepth>0});
@@ -246,35 +289,53 @@ export function traceArrayOwners(hir,contracts,fail,charge,insert,empty,tools=cr
           if(row.kind==='return'&&!row.value)stored.returned(undefined,at);
           if(row.kind==='return')fallthrough=false;
           if(row.then||row.else) {
+            const condition=context?truthValues.get(canonical([...at,'condition'])):null;
+            if(typeof condition==='boolean'){
+              fallthrough=incoming&&body(condition?row.then??[]:row.else??[],[...at,condition?'then':'else']);continue;
+            }
             const before=snapshot(bindings),beforeLengths=snapshot(lengths);
+            const priorTruth=snapshot(truthBindings);
             const storageBefore=stored.state();
             conditionalDepth++;const yesExit=body(row.then??[],[...at,'then']),yes=snapshot(bindings);
             const storageYes=stored.state();stored.restore(storageBefore);
+            const yesTruth=snapshot(truthBindings);truthBindings.clear();for(const [id,value]of priorTruth){charge();truthBindings.set(id,value);}
             bindings.clear();for(const [id,owner]of before){charge();bindings.set(id,owner);}
             lengths.clear();for(const [key,length]of beforeLengths){charge();lengths.set(key,length);}
             const noExit=body(row.else??[],[...at,'else']);conditionalDepth--;
             fallthrough=incoming&&(yesExit||noExit);
             stored.join([storageYes,stored.state()]);
+            meetTruth([...(yesExit?[yesTruth]:[]),...(noExit?[snapshot(truthBindings)]:[])]);
             for(const [id,owner]of yes)bindings.set(id,mergeArrayOwners([owner,bindings.get(id)]));
             for(const key of lengths.keys()){charge();lengths.set(key,null);}
           }
           if(row.body&&row.kind==='while') {
+            if(context&&truthValues.get(canonical([...at,'condition']))===false){stored.leaveLoop(loopEntry,stored.state());continue;}
+            const entryTruth=truthValues.get(canonical([...at,'condition'])),beforeTruth=snapshot(truthBindings);
             // A loop proof must hold on its backedge, not only on the first iteration.
             for(const key of lengths.keys()){charge();lengths.set(key,null);}
+            for(const id of truthBindings.keys()){charge();truthBindings.set(id,null);}
             const before=snapshot(bindings),conditionExit=stored.state();conditionalDepth++;
             const bodyExit=body(row.body,[...at,'body']);conditionalDepth--;
+            const backedgeTruth=predicate(row.condition),afterTruth=snapshot(truthBindings);
             // Only a normally completed body can repeat its condition. The
             // shared scope also distinguishes views freshly made each turn.
-            if(incoming&&bodyExit)model.loops.push(at);
-            stored.leaveLoop(loopEntry,conditionExit);
+            const repeats=backedgeTruth!==false,zero=!(context&&entryTruth===true);
+            if(incoming&&bodyExit&&repeats)model.loops.push(at);
+            stored.leaveLoop(loopEntry,conditionExit,repeats,zero);
+            // Entry true is not an invariant. A proved false backedge yields
+            // an actual normal continuation; unresolved cycles do not.
+            if(context&&entryTruth===true&&(repeats||!bodyExit))fallthrough=false;
             for(const [id,owner]of before)bindings.set(id,mergeArrayOwners([owner,bindings.get(id)]));
+            if(!repeats)meetTruth([...(zero?[beforeTruth]:[]),...(bodyExit?[afterTruth]:[])]);
+            else for(const id of truthBindings.keys()){charge();truthBindings.set(id,null);}
             for(const key of lengths.keys()){charge();lengths.set(key,null);}
           }else if(row.body){const nestedExit=body(row.body,[...at,'body']);fallthrough=incoming&&nestedExit;}
         }
       }
       return fallthrough;
     };
-    body(fn.body);stored.finish(model.loops);origins.set(fn.id,mergeArrayOwners(returns));active.delete(fn.id);
+    const fallsThrough=body(fn.body);const summary=stored.finish(model.loops,fallsThrough);
+    if(!context){origins.set(fn.id,mergeArrayOwners(returns));active.delete(fn.id);}return summary;
   };
   for(const fn of callables)trace(fn);
   return {bases,callSites,models,origins};

@@ -7,7 +7,7 @@ import {arrayAnalysisTypes,hasConditionalArrayRhs} from './array-analysis-types.
  * {kind:'loaded',value:StoredValue,tokens:any[]}} StoredValue */
 /** @typedef {{kind:'aggregate',id:number,type:string,slot:number|null,fallback:number|null,
  * invalidated:boolean,fields:Map<string,StoredValue>}} StoredPlane */
-export function createSpanStorage(hir,tools,charge,authority){
+export function createSpanStorage(hir,tools,charge,authority,resolveContext=undefined){
   const type=arrayAnalysisTypes(hir),summaries=new Map();
   const key=tools.pathKey,unknown=Object.freeze({kind:'unknown'});
   const parents=new Map(),contains=new Set(),work=[],typeIndices=new Map();
@@ -96,7 +96,7 @@ export function createSpanStorage(hir,tools,charge,authority){
     }
     return false;
   };
-  function begin(fn){
+  function begin(fn,context=false,aliases=[]){
     if(!enabled)return {model:undefined,record:(value,path,owner,call)=>owner,
       bind:(id,value)=>{},initialize:statement=>{},get:path=>null,returned:(value,path)=>{},finish:()=>{},
       state:()=>null,restore:state=>{},join:states=>{},enterLoop:state=>{},leaveLoop:(entry,exit)=>{}};
@@ -111,7 +111,8 @@ export function createSpanStorage(hir,tools,charge,authority){
       if(type.isOwner(p.type)){
         const owner={kind:'parameter',functionId:fn.id,index};value={kind:'owner',owner,span:type.isView(p.type),sources:[]};
         if(value.span)value.sources.push({id:'parameter/'+fn.id+'/'+index,functionId:fn.id,parameter:index,owner});
-      }else if(['reference','value'].includes(t?.kind))value=aggregate(p.type,index);
+      }else if(['reference','value'].includes(t?.kind))value=t.kind==='reference'&&aliases[index]<index
+        ?parameters[aliases[index]]:aggregate(p.type,index);
       parameters.push(value);bindings.set(p.id,value);
     }
     const get=path=>values.get(key(path))??unknown;
@@ -192,10 +193,10 @@ export function createSpanStorage(hir,tools,charge,authority){
       for(const [object,plane]of before.planes)for(const [member,value]of plane.fields){
         charge();object.fields.set(member,{kind:'loaded',value,tokens:[{loop:id,object,member}]});}
     };
-    const leaveLoop=(before,conditionExit)=>{
+    const leaveLoop=(before,conditionExit,repeats=true,zero=true)=>{
       // Even zero iterations evaluate the condition. Preserve its successful
       // effects rather than restoring the state from before that evaluation.
-      if(terminated){restoreState(conditionExit);return;}
+      if(terminated){if(zero)restoreState(conditionExit);return;}
       const slots=new Map(),names=new Set();
       for(let i=before.mutations;i<mutations.length;++i){charge();const [object,member]=mutations[i];
         if(!slots.has(object))slots.set(object,new Set());slots.get(object).add(member);}
@@ -204,7 +205,7 @@ export function createSpanStorage(hir,tools,charge,authority){
       const settle=value=>{
         charge();if(value?.kind==='loaded'){
           const keep=[];for(const token of value.tokens){charge();if(token.loop!==before.loop){keep.push(token);continue;}
-            if(token.binding!==undefined?names.has(token.binding):slots.get(token.object)?.has(null)||slots.get(token.object)?.has(token.member))return unknown;}
+            if(repeats&&(token.binding!==undefined?names.has(token.binding):slots.get(token.object)?.has(null)||slots.get(token.object)?.has(token.member)))return unknown;}
           const payload=settle(value.value);return keep.length?{kind:'loaded',value:payload,tokens:keep}:payload;
         }
         if(value?.kind==='choice')return choice(value.values.map(settle));
@@ -224,7 +225,7 @@ export function createSpanStorage(hir,tools,charge,authority){
         row.value=settle(row.value);drain();if(row.kind==='use')row.evidence=origins(row.value);else row.owner=effectOwner(row.value);}
       for(let i=0;i<returns.length;++i){charge();returns[i]=settle(returns[i]);}
       for(const exit of exits)for(let i=0;i<exit.length;++i){charge();exit[i]=settle(exit[i]);}drain();
-      const after=state();join([conditionExit,after]);
+      if(zero){const after=state();join([conditionExit,after]);}
     };
     const invoke=(summary,actuals,call,path,range)=>{
       if(!summary)return unknown;
@@ -308,11 +309,13 @@ export function createSpanStorage(hir,tools,charge,authority){
     };
     const requireInput=(value,path,range)=>{
       const evidence=origins(value);
+      if(context&&evidence.unknown){const dependency={kind:'dependency',target:fn.id,path,range,sourcePath:fn.sourcePath};
+        dependencies.push(dependency);requirements.push(dependency);}
       if(!evidence.inputs.length||evidence.unknown)return;
       const demand={contexts:0,failed:false,formal:true,range};demands.push(demand);deferred.set(key(path),demand);
       requirements.push({kind:'use',value,path,range,sourcePath:fn.sourcePath,checks:[demand]});
     };
-    const record=(value,path,owner,call,effect)=>{
+    const record=(value,path,owner,call,effect,facts=[])=>{
       if(terminated)return owner;
       charge();
       /** @type {StoredValue} */
@@ -339,7 +342,15 @@ export function createSpanStorage(hir,tools,charge,authority){
           // joins its skip path; selected targets alone share this prestate.
           const before=snapshot(bindings.values(),actuals),branches=[];
           for(const target of call.targets){
-            charge();restore(before);const selected={...call,target:target.target},summary=summaries.get(target.target);
+            charge();restore(before);const selected={...call,target:target.target};
+            // The entry planes remain parameter-relative. Only actual scalar
+            // evidence selects a recursive continuation of the same walker.
+            const aliases=[],seen=new Map();
+            for(const [index,actual]of actuals.entries()){
+              charge();const rows=leaves(actual),plane=rows.length===1&&rows[0].kind==='aggregate'&&type.types.get(rows[0].type)?.kind==='reference'?rows[0]:null;
+              if(plane&&!seen.has(plane))seen.set(plane,index);aliases.push(plane?seen.get(plane):index);
+            }
+            const summary=(target.target===fn.id||context?resolveContext?.(target.target,facts,aliases):null)??summaries.get(target.target);
             const inputs=actuals.map((value,index)=>{charge();return summary?.receiver&&index===0?value:copy(value);});
             if(!summary){
               // A returning arm must not erase its unresolved activation.
@@ -414,11 +425,11 @@ export function createSpanStorage(hir,tools,charge,authority){
         observations.push({value:frozen,evidence,aggregate:true});
         returns.push(frozen);exits.push(parameters.map(parameter=>state.remap(parameter)));terminated=true;
       },
-      finish:(loops=[])=>{
+      finish:(loops=[],fallsThrough=true)=>{
         // Only normal-return field snapshots reach a caller. A conditional
         // return also retains the possible fallthrough state; a later store
         // cannot rewrite the snapshot of an earlier return.
-        if(!terminated){const state=cloneSnapshot(snapshot(parameters));exits.push(parameters.map(parameter=>state.remap(parameter)));}
+        if(!terminated&&fallsThrough){const state=cloneSnapshot(snapshot(parameters));exits.push(parameters.map(parameter=>state.remap(parameter)));}
         const outputs=parameters.map((parameter,index)=>{
           charge();if(parameter.kind!=='aggregate')return parameter;
           const result=aggregate(parameter.type,index),members=new Set();
@@ -429,7 +440,9 @@ export function createSpanStorage(hir,tools,charge,authority){
           return result;
         });
         const scopes=[];for(const rows of [loops,callLoops])for(const scope of rows){charge();scopes.push(scope);}
-        summaries.set(fn.id,{parameters:outputs,receiver:!!fn.ownerType,returned:returns.length?choice(returns):unknown,requirements,loops:scopes});
+        const summary={parameters:outputs,receiver:!!fn.ownerType,returned:returns.length?choice(returns):unknown,
+          requirements,loops:scopes,productive:exits.length>0};
+        if(!context)summaries.set(fn.id,summary);return summary;
       }};
   }
   return {begin};

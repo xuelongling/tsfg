@@ -54,23 +54,25 @@ async function recursiveActual(kind){
   assert.equal(sha256(source.content).slice(7),oracle.sourceSha256);
   const context={family:'tsfg.array-facts-context-candidate',version:2,factsBytes:bytes,expectedPackageId:facts.packageId};
   const publication=staticPublication(facts,{first:{local:{read:true,write:false,structural:false}},trim:{local:{read:false,write:false,structural:false}}});
-  return {oracle,source,built:buildHir(facts,context,publication)};
+  return {oracle,source,context,publication,built:buildHir(facts,context,publication)};
 }
-test('HOLDER25s safe recursive field context retains its missing proof instead of false completion',async()=>{
-  const {built}=await recursiveActual('safe');
-  // This is the current proof capability, not a language ban on recursion.
-  assert.equal(built.status,'error');assert.equal(built.diagnostics[0].code,'r03-d-readspan-context-pending');
-  assert.match(built.diagnostics[0].message,/recursive.*summary|summary.*recursive/);
+test('HOLDER25s safe productive recursive field context accepts its real caller Span',async()=>{
+  const {built,source,context,publication}=await recursiveActual('safe');
+  assert.equal(built.status,'ok',JSON.stringify(built.diagnostics));
+  const caller=built.hir.functions.find(fn=>fn.name==='run'),state=built.hir.readSpanPlan.functions.find(row=>row.functionId===caller.id);
+  const use=state.events.find(event=>event.kind==='view-stored-call-use'&&event.range.start===source.content.indexOf('h.span[0]'));
+  assert.ok(use,'productive normal recursive exit must reach the actual Span use');
+  const family=state.views.find(view=>view.viewId===use.viewId),a=caller.body.find(row=>row.kind==='local'&&row.binding.name==='a');
+  assert.equal(family.owner.kind,'allocation');assert.equal(family.owner.allocationSite,a.initializer.allocationSite);
+  assert.deepEqual(verifyHir(built.hir,context,publication),built.hir);
+  assert.deepEqual(readHir(Buffer.from(printHir(built.hir,context,publication)),context,publication),built.hir);
 });
 test('HOLDER25s recursive stored B use cannot disappear behind another completed caller context',async()=>{
   const {built,oracle}=await recursiveActual('recursiveConflict');assert.equal(built.status,'error');
   const diagnostic=built.diagnostics[0];
-  if(diagnostic.code==='r03-d-readspan-structural-conflict'){
-    assert.deepEqual({start:diagnostic.primary.start,end:diagnostic.primary.end},oracle.primary);
-    assert.ok(diagnostic.related.some(row=>row.kind==='borrow-last-use'&&row.start===oracle.lastUse.start&&row.end===oracle.lastUse.end));
-  }else{
-    assert.equal(diagnostic.code,'r03-d-readspan-context-pending');assert.match(diagnostic.message,/recursive.*summary|summary.*recursive/);
-  }
+  assert.equal(diagnostic.code,'r03-d-readspan-structural-conflict');
+  assert.deepEqual({start:diagnostic.primary.start,end:diagnostic.primary.end},oracle.primary);
+  assert.ok(diagnostic.related.some(row=>row.kind==='borrow-last-use'&&row.start===oracle.lastUse.start&&row.end===oracle.lastUse.end));
 });
 test('HOLDER25s nested effect-only helper retains its own mutation and later field-use anchors',async()=>{
   const {built,source,oracle}=await recursiveActual('nestedEffect');assert.equal(built.status,'error');
@@ -91,10 +93,7 @@ test('INHERITED25t inherited-only Span fields retain the recursive context depen
   const publication=staticPublication(facts,{first:{local:{read:true,write:false,structural:false}}});
   const built=buildHir(facts,context,publication);assert.equal(built.status,'error');
   const diagnostic=built.diagnostics[0];
-  if(diagnostic.code==='r03-d-readspan-structural-conflict'){
-    assert.deepEqual({start:diagnostic.primary.start,end:diagnostic.primary.end},oracle.primary);
-    assert.ok(diagnostic.related.some(row=>row.kind==='borrow-last-use'&&row.start===oracle.lastUse.start&&row.end===oracle.lastUse.end));
-  }else{
-    assert.equal(diagnostic.code,'r03-d-readspan-context-pending');assert.match(diagnostic.message,/recursive.*summary|summary.*recursive/);
-  }
+  assert.equal(diagnostic.code,'r03-d-readspan-structural-conflict');
+  assert.deepEqual({start:diagnostic.primary.start,end:diagnostic.primary.end},oracle.primary);
+  assert.ok(diagnostic.related.some(row=>row.kind==='borrow-last-use'&&row.start===oracle.lastUse.start&&row.end===oracle.lastUse.end));
 });
