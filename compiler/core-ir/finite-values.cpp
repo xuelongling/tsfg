@@ -101,6 +101,21 @@ bool result(ModuleProof &proof, mlir::Operation *op) {
   return op->getNumResults() == 1 && carrier(proof,id,op->getResult(0).getType()) || proof.reject("operation domain/carrier join");
 }
 }
+bool nativePayloadOperation(mlir::Operation *op) {
+  // This vocabulary has already passed the ordinary typed operation verifier.
+  // Only its semantic native/String result is a seed; finite carriers never
+  // enter here merely because they happen to have one declared alternative.
+  static const std::set<std::string> native={
+    "tsfg_core.constant","tsfg_core.add","tsfg_core.sub","tsfg_core.mul","tsfg_core.div","tsfg_core.rem",
+    "tsfg_core.shl","tsfg_core.shr","tsfg_core.ushr","tsfg_core.and","tsfg_core.or","tsfg_core.xor",
+    "tsfg_core.neg","tsfg_core.pos","tsfg_core.not","tsfg_core.bool_not","tsfg_core.eq","tsfg_core.ne",
+    "tsfg_core.lt","tsfg_core.le","tsfg_core.gt","tsfg_core.ge","tsfg_core.convert_checked","tsfg_core.convert_wrap",
+    "tsfg_core.reinterpret","tsfg_string.constant","tsfg_string.concat","tsfg_string.compare","tsfg_string.length",
+    "tsfg_string.code_unit_at","tsfg_string.slice","tsfg_core.domain.identity_equal",
+    "tsfg_core.domain.presence_equal","tsfg_core.domain.array_length"};
+  if(!native.count(op->getName().getStringRef().str()))return false;
+  return true;
+}
 const Domain *valueDomain(ModuleProof &proof, mlir::Type type) { return domain(proof,type); }
 bool verifyValueContracts(ModuleProof &proof) {
   for (auto &[id,fn] : proof.functions) for (auto &block : fn.getBody()) {

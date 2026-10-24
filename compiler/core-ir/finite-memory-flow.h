@@ -26,6 +26,7 @@ struct MemoryOrigin {
   std::set<std::string> retainedOwners;
   bool retained=false;
   bool pending=false;
+  std::vector<mlir::Value> dependencies;
 };
 struct MemorySelection {
   enum class Status { Proven, Pending, Invalid } status=Status::Pending;

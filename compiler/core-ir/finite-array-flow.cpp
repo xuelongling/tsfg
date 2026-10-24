@@ -250,6 +250,10 @@ bool ArrayFlow::operation(mlir::Operation *op,const std::string &function) {
         if(projected!=proof.arrayReadSources.end())for(const auto &source:projected->second){
           if(!proof.charge())return false;
           for(const auto &type:source.introduced)if(!proof.charge()||!flow.seed(input,type))return false;
+          for(auto dependency:source.dependencies){
+            if(!proof.charge())return false;const auto from=payload(dependency);
+            if(!flow.requireEvidence(from)||!flow.connect({from,input,PayloadFlow::none,{},{},true,true}))return false;
+          }
           for(auto owner:source.owners)if(!proof.charge()||!copy(owner,op->getResult(0)))return false;
           // Retained references are not current-frame Array allocations or
           // element seeds. Their owner evidence is consumed by Borrow only.

@@ -120,6 +120,7 @@ bool clearMemory(ModuleProof &proof) {
     for(auto value:source.values)if(!proof.charge())return false;
     for(const auto &type:source.introduced)if(!proof.charge())return false;
     for(auto owner:source.owners)if(!proof.charge())return false;
+    for(auto dependency:source.dependencies)if(!proof.charge())return false;
     for(const auto &owner:source.retainedOwners)if(!proof.charge())return false;
     }
   }

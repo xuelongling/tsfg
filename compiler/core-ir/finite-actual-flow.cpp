@@ -48,21 +48,6 @@ struct ActualFlow {
     return valid&&(flow.connect({from,to,gate,std::move(selected),std::move(filter),equal,pendingOnly})||proof.reject(flow.error()));
   }
   bool copy(mlir::Value from,mlir::Value to) { const auto a=value(from),b=value(to);return edge(a,b); }
-  bool primitive(mlir::Operation *op) {
-    // This vocabulary has already passed the ordinary typed operation verifier.
-    // Only its semantic native/String result is a seed; finite carriers never
-    // enter here merely because they happen to have one declared alternative.
-    static const std::set<std::string> native={
-      "tsfg_core.constant","tsfg_core.add","tsfg_core.sub","tsfg_core.mul","tsfg_core.div","tsfg_core.rem",
-      "tsfg_core.shl","tsfg_core.shr","tsfg_core.ushr","tsfg_core.and","tsfg_core.or","tsfg_core.xor",
-      "tsfg_core.neg","tsfg_core.pos","tsfg_core.not","tsfg_core.bool_not","tsfg_core.eq","tsfg_core.ne",
-      "tsfg_core.lt","tsfg_core.le","tsfg_core.gt","tsfg_core.ge","tsfg_core.convert_checked","tsfg_core.convert_wrap",
-      "tsfg_core.reinterpret","tsfg_string.constant","tsfg_string.concat","tsfg_string.compare","tsfg_string.length",
-      "tsfg_string.code_unit_at","tsfg_string.slice","tsfg_core.domain.identity_equal",
-      "tsfg_core.domain.presence_equal","tsfg_core.domain.array_length"};
-    if(!native.count(op->getName().getStringRef().str()))return false;
-    return true;
-  }
   bool call(mlir::Operation *op,const std::string &target,size_t sourceOffset,size_t targetOffset,
             size_t gate=noGate,const std::string &selected={},bool forwardResult=true) {
     if(!proof.functions.count(target))return proof.reject("actual flow call leaves owned closure");
@@ -128,8 +113,13 @@ struct ActualFlow {
       if(proof.unprovedMemoryReads.count(op)||!proof.fieldReadInputs.count(op))return pending(result);
       for(const auto input:proof.fieldReadInputs.at(op))if(!edge(value(input),result))return false;
       const auto projected=proof.fieldReadSources.find(op);
-      if(projected!=proof.fieldReadSources.end())for(const auto &source:projected->second)for(const auto &type:source.introduced)
-        if(!proof.charge()||!insert(result,type))return false;
+      if(projected!=proof.fieldReadSources.end())for(const auto &source:projected->second){
+        for(const auto &type:source.introduced)if(!proof.charge()||!insert(result,type))return false;
+        for(auto dependency:source.dependencies){
+          if(!proof.charge())return false;const auto input=value(dependency);
+          if(!flow.requireEvidence(input)||!edge(input,result,noGate,{},{},true,true))return proof.reject(flow.error());
+        }
+      }
       if(proof.fieldReadUndefined.count(op)&&!insert(result,hash(std::string("tsfg.type\0undefined",19))))return false;
       return true;
     }
@@ -139,13 +129,18 @@ struct ActualFlow {
       if(!memorySources||sources==proof.arrayReadInputs.end())return pending(result);
       for(const auto source:sources->second)if(!proof.charge()||!edge(value(source),result))return false;
       const auto projected=proof.arrayReadSources.find(op);
-      if(projected!=proof.arrayReadSources.end())for(const auto &source:projected->second)for(const auto &type:source.introduced)
-        if(!proof.charge()||!insert(result,type))return false;
+      if(projected!=proof.arrayReadSources.end())for(const auto &source:projected->second){
+        for(const auto &type:source.introduced)if(!proof.charge()||!insert(result,type))return false;
+        for(auto dependency:source.dependencies){
+          if(!proof.charge())return false;const auto input=value(dependency);
+          if(!flow.requireEvidence(input)||!edge(input,result,noGate,{},{},true,true))return proof.reject(flow.error());
+        }
+      }
       return true;
     }
     if(name=="tsfg_core.domain.literal"||name=="tsfg_core.domain.array_create"||name=="tsfg_core.domain.read_span")
       return insert(value(op->getResult(0)),attr(op,"view_type"));
-    if(primitive(op))for(const auto result:op->getResults()) {
+    if(nativePayloadOperation(op))for(const auto result:op->getResults()) {
       const auto *bound=valueDomain(proof,result.getType());const auto to=value(result);
       if(!bound||bound->alternatives.size()!=1)return proof.reject("primitive result has no exact native/String identity");
       if(!insert(to,bound->alternatives[0]))return false;

@@ -11,6 +11,7 @@ bool storeFieldSource(ModuleProof &proof,const MemoryOrigin &source,StoredFieldS
   for(const auto &type:source.introduced){if(!proof.charge())return false;value.introduced.insert(type);}
   for(auto owner:source.owners){if(!proof.charge())return false;value.owners.push_back(owner);}
   for(const auto &owner:source.retainedOwners){if(!proof.charge())return false;value.retainedOwners.insert(owner);}
+  for(auto dependency:source.dependencies){if(!proof.charge())return false;value.dependencies.push_back(dependency);}
   destination=std::move(value);return true;
 }
 std::string MemorySources::attr(mlir::Operation *op,llvm::StringRef name){
@@ -158,18 +159,18 @@ bool MemorySources::retainedSpan(MemoryFrames::Origin source,Id query,MemoryOrig
 }
 MemoryOrigin MemorySources::project(Id frame,mlir::Value value,const std::string &version,Id query,bool held){
   MemoryOrigin result;result.version=version;result.retained=held;bool retentionSeen=false;
-  struct Item {MemoryFrames::Origin origin;bool owner;};
-  std::vector<Item> work;std::set<std::tuple<Id,Id,bool>> seen;
-  const auto add=[&](mlir::Value value,Id frame,bool owner){
+  struct Item {MemoryFrames::Origin origin;bool owner,dependency;};
+  std::vector<Item> work;std::set<std::tuple<Id,Id,bool,bool>> seen;
+  const auto add=[&](mlir::Value value,Id frame,bool owner,bool dependency=false){
     if(!proof.charge()||!values.count(value)){valid=false;return;}
-    work.push_back({{values.at(value),frame},owner});
+    work.push_back({{values.at(value),frame},owner,dependency});
   };
   add(value,frame,false);
   for(size_t index=0;valid&&index<work.size();++index){
     if(!proof.charge()){valid=false;break;}const auto item=work[index];const auto origin=frames.resolve(item.origin);
     if(!frames.error().empty()){valid=false;break;}
     if(origin.frame==MemoryFrames::none||origin.value>=sources.size()){result.pending=true;continue;}
-    if(!seen.emplace(origin.value,origin.frame,item.owner).second)continue;
+    if(!seen.emplace(origin.value,origin.frame,item.owner,item.dependency).second)continue;
     auto source=sources[origin.value];auto *op=source.getDefiningOp();
     if(origin.frame==query){
       // Root-frame SSA remains under the existing actual owner/payload rules.
@@ -178,7 +179,8 @@ MemoryOrigin MemorySources::project(Id frame,mlir::Value value,const std::string
           (!frames.unique(origin)||repeats(op))){
         result.pending=true;continue;
       }
-      if(item.owner)result.owners.push_back(source);
+      if(item.dependency)result.dependencies.push_back(source);
+      else if(item.owner)result.owners.push_back(source);
       else{
         result.values.push_back(source);result.value=result.values.size()==1?source:mlir::Value();
         retentionSeen=true;result.retained&=held&&retainedSpan(origin,query,result);
@@ -188,14 +190,15 @@ MemoryOrigin MemorySources::project(Id frame,mlir::Value value,const std::string
     if(!op){
       std::vector<MemoryFrames::Origin> inputs;
       if(!incoming(origin,inputs)){result.pending=true;continue;}
-      for(const auto &input:inputs)add(sources[input.value],input.frame,item.owner);
+      for(const auto &input:inputs)add(sources[input.value],input.frame,item.owner,item.dependency);
       continue;
     }
     const auto name=op->getName().getStringRef();
     if(name=="tsfg_core.domain.view"||name=="tsfg_core.domain.refine"||name=="tsfg_core.domain.copy"){
-      add(op->getOperand(0),origin.frame,item.owner);continue;
+      add(op->getOperand(0),origin.frame,item.owner,item.dependency);continue;
     }
     if(name=="tsfg_core.domain.read_span"){
+      if(item.dependency){result.pending=true;continue;}
       if(!frames.unique(origin)||repeats(op)){result.pending=true;continue;}
       if(!item.owner){result.introduced.insert(attr(op,"view_type"));
         auto *at=capture(origin.frame,query);if(!at||(result.capture&&result.capture!=at))result.pending=true;else result.capture=at;}
@@ -204,11 +207,16 @@ MemoryOrigin MemorySources::project(Id frame,mlir::Value value,const std::string
       result.retained=false;add(op->getOperand(0),origin.frame,true);continue;
     }
     if(!item.owner&&name=="tsfg_core.domain.literal"){
-      result.introduced.insert(attr(op,"view_type"));continue;
+      if(!item.dependency)result.introduced.insert(attr(op,"view_type"));continue;
     }
-    if(!item.owner&&name=="tsfg_core.constant"){
+    if(!item.owner&&nativePayloadOperation(op)){
+      // The verified operation supplies its semantic result identity, but
+      // cannot hide uncertain operands. Only actual query-frame dependencies
+      // are exported; the existing PayloadFlow solves them with pendingOnly.
       const auto *domain=valueDomain(proof,source.getType());
-      if(domain&&domain->alternatives.size()==1)result.introduced.insert(domain->alternatives.front());else result.pending=true;
+      if(!domain||domain->alternatives.size()!=1){result.pending=true;continue;}
+      if(!item.dependency)result.introduced.insert(domain->alternatives.front());
+      for(auto operand:op->getOperands())add(operand,origin.frame,false,true);
       continue;
     }
     if(name=="func.call"||name=="tsfg_core.domain.method_call"){
@@ -218,7 +226,7 @@ MemoryOrigin MemorySources::project(Id frame,mlir::Value value,const std::string
         for(auto &block:proof.functions.at(target).getBody()){
           if(!proof.charge()){valid=false;break;}if(!proof.mayReach(&block))continue;
           auto ret=llvm::dyn_cast<mlir::func::ReturnOp>(block.getTerminator());if(!ret||ret.getNumOperands()!=1)continue;
-          returned=true;add(ret.getOperand(0),child,item.owner);
+          returned=true;add(ret.getOperand(0),child,item.owner,item.dependency);
         }
         if(!returned)result.pending=true;
       }

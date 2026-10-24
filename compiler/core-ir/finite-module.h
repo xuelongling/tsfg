@@ -46,6 +46,9 @@ struct StoredFieldSource {
   std::string version;
   std::set<std::string> retainedOwners;
   bool retained=false;
+  // Actual query-frame operands required by an introduced checked native
+  // result. They propagate uncertainty only, never result payload/identity.
+  std::vector<mlir::Value> dependencies;
 };
 // All pointers refer to the owned, canonical documents below. No pointer or
 // partial registry escapes verification; a failed load discards this object.
@@ -146,6 +149,7 @@ bool verifyBorrowContracts(ModuleProof &proof);
 bool verifyActualFlow(ModuleProof &proof);
 bool verifyControlPaths(ModuleProof &proof,bool memorySources=false,bool *changed=nullptr);
 const Domain *valueDomain(ModuleProof &proof, mlir::Type type);
+bool nativePayloadOperation(mlir::Operation *op);
 bool carrier(ModuleProof &proof, llvm::StringRef domain, mlir::Type type);
 // Development module contracts, not yet the command's whole-flow admission
 // hook. They do not encode bytecode or authorize VM/native execution (M25).
