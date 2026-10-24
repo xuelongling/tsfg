@@ -405,11 +405,11 @@ struct ArrayMemory {
         continue;
       }
       if(status=="proven"){
-        const auto *actual=&selected.versions;bool proven=selected.proven;MemorySelection captured;
-        if(!proven&&!selected.captures.empty()){
-          // A real call boundary is not evidence by itself. Compare claims
-          // only after independently selecting every normal-return cell and
-          // qualifying its actual activation/capture through MemorySources.
+        const auto *actual=&selected.versions;bool proven=selected.proven&&selected.bounds;MemorySelection captured;
+        if(!proven){
+          // A call marker or a dynamic index carrier is not evidence. Compare
+          // only after actual finite index alternatives, preceding cells and
+          // normal-return activations are independently closed together.
           MemorySources sources(proof);if(!sources.good())return proof.reject(sources.error());
           captured=sources.arrayRead(sources.root(id),&op);
           if(captured.status==MemorySelection::Status::Invalid)return proof.reject(sources.error());

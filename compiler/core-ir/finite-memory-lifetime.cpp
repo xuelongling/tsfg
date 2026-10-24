@@ -152,11 +152,15 @@ bool proveArrayReadSources(ModuleProof &proof){
     for(const auto &type:domain->alternatives){if(!proof.charge())return false;span|=string(*proof.catalog.at(type),"kind")=="readSpan";}
     const auto *receiver=valueDomain(proof,op.getOperand(0).getType());if(!receiver)return false;
     for(const auto &type:receiver->alternatives){if(!proof.charge())return false;span|=string(*proof.catalog.at(type),"kind")=="readSpan";}
-    if(!span)continue;
+    if(!span&&proof.provedArrayReads.count(&op))continue;
     const auto selected=sources.arrayRead(sources.root(id),&op);
     if(selected.status==MemorySelection::Status::Invalid)return proof.reject(sources.error());
     if(selected.status!=MemorySelection::Status::Proven){
-      proof.arrayReadInputs.erase(&op);proof.provedArrayReads.erase(&op);proof.unprovedMemoryReads.insert(&op);continue;
+      // Optional precision for ordinary reads must not erase independently
+      // established external checked-entry payload authority on an unknown
+      // index. Span capture/lifetime still needs its complete source proof.
+      if(span){proof.arrayReadInputs.erase(&op);proof.provedArrayReads.erase(&op);proof.unprovedMemoryReads.insert(&op);}
+      continue;
     }
     std::vector<StoredFieldSource> projected;std::vector<mlir::Value> inputs;
     for(const auto &origin:selected.sources){

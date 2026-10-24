@@ -111,6 +111,7 @@ export const coreIrInputs = Object.freeze([
   "compiler/core-ir/finite-memory-flow.h",
   "compiler/core-ir/finite-memory-frames.cpp",
   "compiler/core-ir/finite-memory-frames.h",
+  "compiler/core-ir/finite-memory-indices.cpp",
   "compiler/core-ir/finite-memory-lifetime.cpp",
   "compiler/core-ir/finite-memory-lifetime.h",
   "compiler/core-ir/finite-memory-sources.cpp",

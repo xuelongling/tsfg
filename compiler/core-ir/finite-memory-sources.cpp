@@ -282,38 +282,18 @@ MemoryOrigin MemorySources::project(Id frame,mlir::Value value,const std::string
   result.retained&=retentionSeen&&!result.pending;
   return result;
 }
-bool MemorySources::literalIndex(Id frame,mlir::Value value,uint32_t &index){
-  // Actual immutable formal bindings may transport a literal, but a singleton
-  // u32 carrier never supplies its numeric value.
-  while(valid&&frame!=MemoryFrames::none){
-    if(!proof.charge()||!values.count(value)){valid=false;return false;}
-    const auto origin=frames.resolve({values.at(value),frame});
-    if(!frames.error().empty()){valid=false;return false;}
-    if(origin.frame==MemoryFrames::none||origin.value>=sources.size())return false;
-    value=sources[origin.value];frame=origin.frame;
-    auto *op=value.getDefiningOp();if(!op)return false;const auto name=op->getName().getStringRef();
-    if(name=="tsfg_core.domain.view"||name=="tsfg_core.domain.refine"||name=="tsfg_core.domain.copy"){
-      value=op->getOperand(0);continue;}
-    if(name!="tsfg_core.constant")return false;
-    if(const auto number=op->getAttrOfType<mlir::IntegerAttr>("value")){
-      if(number.getValue().isNegative()||number.getValue().getActiveBits()>32)return false;
-      index=uint32_t(number.getValue().getZExtValue());return true;
-    }else if(const auto text=op->getAttrOfType<mlir::StringAttr>("value")){
-      uint64_t number=0;if(text.getValue().getAsInteger(10,number)||number>UINT32_MAX)return false;
-      index=uint32_t(number);return true;
-    }
-    return false;
-  }
-  return false;
-}
 MemorySelection MemorySources::arrayRead(Id frame,mlir::Operation *read){
-  MemorySelection result;uint32_t slot=0;
-  const bool known=literalIndex(frame,read->getOperand(1),slot);
-  if(!valid){result.status=MemorySelection::Status::Invalid;return result;}if(!known)return result;
+  MemorySelection result;std::set<uint32_t> slots;
+  const bool known=indices(frame,read->getOperand(1),slots);
+  if(!good()){result.status=MemorySelection::Status::Invalid;return result;}if(!known)return result;
   // Selector chooses a descriptor/slot. Observer selects its underlying
   // Array payload now; it must not regress to the descriptor's creation point.
   struct Item {Id frame;mlir::Operation *selector,*observer;mlir::Value receiver;uint32_t index;std::vector<uint32_t> after;};
-  std::vector<Item> work{{frame,read,read,read->getOperand(0),slot,{}}};
+  std::vector<Item> work;
+  for(const auto slot:slots){
+    if(!proof.charge()){result.status=MemorySelection::Status::Invalid;return result;}
+    work.push_back({frame,read,read,read->getOperand(0),slot,{}});
+  }
   std::set<std::tuple<Id,mlir::Operation *,mlir::Operation *,const void *,uint32_t,std::vector<uint32_t>>> seen;
   bool pending=false;
   for(size_t cursor=0;valid&&cursor<work.size();++cursor){
@@ -341,10 +321,14 @@ MemorySelection MemorySources::arrayRead(Id frame,mlir::Operation *read){
       auto *call=capture.boundary;
       if(!proof.charge()){valid=false;break;}const auto name=call->getName().getStringRef();
       if(name=="tsfg_core.domain.array_read"){
-        uint32_t index=0;if(!literalIndex(item.frame,call->getOperand(1),index)){pending=true;continue;}
-        if(!proof.charge(1+item.after.size())){valid=false;break;}
-        std::vector<uint32_t> after{capture.index};after.insert(after.end(),item.after.begin(),item.after.end());
-        work.push_back({item.frame,call,item.observer,call->getOperand(0),index,std::move(after)});continue;
+        std::set<uint32_t> indices;
+        if(!this->indices(item.frame,call->getOperand(1),indices)){pending=true;continue;}
+        for(const auto index:indices){
+          if(!proof.charge(1+item.after.size())){valid=false;break;}
+          std::vector<uint32_t> after{capture.index};after.insert(after.end(),item.after.begin(),item.after.end());
+          work.push_back({item.frame,call,item.observer,call->getOperand(0),index,std::move(after)});
+        }
+        continue;
       }
       if(name=="tsfg_core.domain.field_read"){
         const auto found=proof.fieldReadSources.find(call);
