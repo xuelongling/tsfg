@@ -35,10 +35,12 @@ bool unsignedInteger(const Object &value, llvm::StringRef key, uint32_t &out) {
   out = static_cast<uint32_t>(*selected); return true;
 }
 bool ModuleProof::reject(llvm::StringRef message) {
-  module.emitError("[core-ir-finite-module] ") << message; return false;
+  if(!failed){failed=true;firstFailure=message.str();module.emitError("[core-ir-finite-module] ") << firstFailure;}
+  return false;
 }
 bool ModuleProof::charge(size_t count) {
-  if (count > remaining) return reject("finite proof work limit");
+  if(failed)return false;
+  if (count > remaining) {remaining=0;return reject("finite proof work limit");}
   remaining -= count; return true;
 }
 bool ModuleProof::document(llvm::StringRef attribute, Json &destination) {
@@ -60,7 +62,7 @@ bool preflight(ModuleProof &proof) {
     {"array_length",{1,1,1,1}},{"identity_equal",{2,2,1,1}},{"presence_equal",{2,2,1,1}},
     {"construct",{0,UINT32_MAX,1,1}},{"super",{1,UINT32_MAX,0,0}},
     {"initialize_fields",{1,1,0,0}},{"field_define",{1,1,0,0}},{"field_initialize",{2,2,0,0}},
-    {"method_call",{1,UINT32_MAX,0,1}},{"field_read",{1,1,1,1}},{"field_store",{2,2,0,0}}
+    {"method_call",{1,UINT32_MAX,0,1}},{"field_read",{1,1,1,1}},{"field_store",{2,2,0,0}},{"member_present",{1,1,1,1}}
   };
   bool valid=true;
   proof.module.walk([&](mlir::Operation *op) {
@@ -107,6 +109,8 @@ bool sources(ModuleProof &proof) {
   return true;
 }
 bool clearMemory(ModuleProof &proof) {
+  for(const auto &[op,outcomes]:proof.memberOutcomes)if(!proof.charge(1+outcomes.size()))return false;
+  proof.memberOutcomes.clear();
   // Every copied/rebuilt source occurrence is part of the one proof budget.
   for(const auto &set:{&proof.unprovedMemoryReads,&proof.provedArrayReads,&proof.checkedArrayReadSources,&proof.fieldReadUndefined,&proof.unprovedStoredReturns})
     for(auto *op:*set)if(!proof.charge())return false;
@@ -195,6 +199,12 @@ bool usesModule(mlir::ModuleOp module) {return discover(module)!=Discovery::Abse
 namespace {
 bool contracts(ModuleProof &proof) {
   auto module=proof.module;
+  // Exact unpublished development descriptor; synchronize this gate when it changes.
+  constexpr char expectedContract[] =
+      "sha256:0f4747b536062c441fcd30c2f24fb059dfcae90d31a23ec35dba768312e9de0f";
+  const auto contract=module->getAttrOfType<mlir::StringAttr>("tsfg_core.finite_contract");
+  if(!contract || contract.getValue()!=expectedContract)
+    return proof.reject("finite development contract identity differs");
   if (!preflight(proof) || mlir::failed(mlir::verify(module)) ||
       !proof.document("tsfg_core.semantic_types", proof.types) ||
       !proof.document("tsfg_core.language_intrinsics", proof.intrinsics) ||
@@ -323,7 +333,7 @@ bool complete(ModuleProof &proof) {
 }
 mlir::LogicalResult verifyModuleContracts(mlir::ModuleOp module) {
   ModuleProof proof(module);
-  return mlir::success(contracts(proof));
+  return mlir::success(contracts(proof)&&!proof.failed);
 }
 mlir::LogicalResult verifyModule(mlir::ModuleOp module) {
   ModuleProof proof(module);
@@ -334,6 +344,6 @@ mlir::LogicalResult verifyModule(mlir::ModuleOp module) {
   if(!coreHeader::read(module,header)) {
     proof.reject("whole admission requires the exact formal Core header");return mlir::failure();
   }
-  return mlir::success(contracts(proof)&&complete(proof));
+  return mlir::success(contracts(proof)&&complete(proof)&&!proof.failed);
 }
 } // namespace tsfg::finite

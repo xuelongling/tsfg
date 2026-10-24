@@ -204,6 +204,7 @@ export function buildFiniteFieldReaching(hir,plan,charge) {
       }else {
         const reaching=[];
         for(const target of selection.targets) {
+          if(target.missing)continue; // Structural absence has no storage/version.
           charge();const versions=token?state.get(key(token,target)):null;
           if(versions) {
             const values=[...versions].map(id=>writes.get(id)??phaseWrites.get(id)??allocationEntries.get(id));

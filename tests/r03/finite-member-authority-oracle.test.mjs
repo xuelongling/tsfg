@@ -29,11 +29,19 @@ test('actual formal producer matches independent actual-member and static permis
     for(const sample of expected.cases.filter(row=>row.input===index)) {
       const fn=hir.functions.find(row=>row.id===sample.functionId);assert.ok(fn);
       if('dispatch' in sample) {
-        const call=plan.calls.find(row=>row.id.startsWith(fn.id+'/')&&row.member===sample.staticTargetMember);assert.ok(call);
+        // This oracle covers static selected dispatch/ABI, the same carrier
+        // role consumed by the actual emitter. Ordered memory remains separate.
+        const call=plan.carrierCalls.find(row=>row.id.startsWith(fn.id+'/')&&row.member===sample.staticTargetMember);assert.ok(call);
         assert.equal(call.viewType,sample.staticReceiver);
         const keys=['actualType','functionId','signatureHash'],select=row=>Object.fromEntries(keys.map(key=>[key,row[key]]));
         assert.deepEqual(call.targets.map(select),sample.dispatch.map(select));
-        assert.deepEqual(domain(call.id).actualTypes,sample.payload.actualResultTypes);
+        const result=plan.carrierNodes.find(row=>row.id===call.id);
+        assert.deepEqual(plan.domains.find(row=>row.id===result.domainId).actualTypes,sample.payload.actualResultTypes);
+        if(sample.id==='inherited-D-Base-method') {
+          assert.deepEqual(plan.calls.find(row=>row.id===call.id).targets,[]);
+          assert.ok(plan.nodes.find(row=>row.id===call.id+'/receiver').pending.some(reason=>reason.startsWith('unproved-ordered-array-read:')),
+            'an external Array bound supplies no actual initialized-cell source');
+        }
         for(const target of sample.dispatch) {
           assert.equal(types.get(target.actualType).runtimeKey,target.runtimeKey);
           assert.equal(hir.functions.find(row=>row.id===target.functionId).ownerType,target.declaringType);

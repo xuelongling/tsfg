@@ -11,6 +11,10 @@ export {optionalPropertyFactsFormat,optionalPropertyHirFormat} from './optional-
 
 export const readOptionalPropertyFacts=bytes=>readSelectedTypedArrayFacts(bytes,profile);
 export const writeOptionalPropertyFacts=value=>writeSelectedTypedArrayFacts(value,profile);
+export function isOptionalPropertyContext(value) {
+  if(!value||typeof value!=='object'||isProxy(value)||![Object.prototype,null].includes(Object.getPrototypeOf(value)))return false;
+  return Object.getOwnPropertyDescriptor(value,'family')?.value==='tsfg.optional-property-facts-context-candidate';
+}
 function context(value) {
   check(value&&typeof value==='object'&&!isProxy(value)&&[Object.prototype,null].includes(Object.getPrototypeOf(value)),'context');
   const wanted=['family','version','factsBytes','expectedPackageId'],keys=Reflect.ownKeys(value);

@@ -185,7 +185,7 @@ public:
                   ReferenceFieldWriteOp, ReferenceCallOp, ReferenceIdentityOp,
                   DomainLiteralOp, DomainViewOp, DomainCopyOp, DomainRefineOp, DomainReadSpanOp, DomainArrayCreateOp, DomainArrayReadOp,
                   DomainArrayStoreOp, DomainArrayResizeOp, DomainArrayLengthOp,
-                  DomainIdentityEqualOp, DomainPresenceEqualOp, DomainConstructOp, DomainSuperOp,
+                  DomainIdentityEqualOp, DomainPresenceEqualOp, DomainMemberPresentOp, DomainConstructOp, DomainSuperOp,
                   DomainInitializeFieldsOp, DomainFieldDefineOp, DomainFieldInitializeOp,
                   DomainMethodCallOp, DomainFieldReadOp, DomainFieldStoreOp>();
     addTypes<IntegerType, ReferenceType, FiniteDomainType>();

@@ -9,6 +9,7 @@ import {buildFiniteArrayReaching} from './finite-array-reaching.mjs';
 import {finiteCallables} from './finite-callables.mjs';
 import {canonical,own,sha256} from './identity.mjs';
 import {isFiniteAbsence} from './finite-presence.mjs';
+import {actualFieldResolver} from './member-presence.mjs';
 
 function fail(message) {throw Object.assign(new TypeError('r03-finite-domain: '+message),
   {code:'r03-finite-domain',ruleId:'r01-input-boundary',phase:'lowering'});}
@@ -81,7 +82,7 @@ function solveFiniteActualDomains(input,context,charge,fieldReaching,mode,arrayR
     physical.set(undefinedId,{alignment:1,byteSize:0,referenceCount:0});
   }
   const nodes=new Map(),edges=new Map(),owners=new Map(),queue=[],queued=new Set(),expressions=[],gates=new Map(),coalesces=[];
-  const reads=[],stores=[],fieldReads=[],fieldStores=[],entryOwners=[],methodCalls=[],allocations=[],definitionSeeds=[];
+  const reads=[],stores=[],fieldReads=[],fieldStores=[],presenceTests=[],entryOwners=[],methodCalls=[],allocations=[],definitionSeeds=[];
   const views=buildTypedReferenceViews(hir,context,options);
   const methodViews=new Map(),fieldViews=new Map(),fieldOwners=new Map();
   for(const type of hir.types)for(const field of type.fields??[]) {
@@ -92,7 +93,7 @@ function solveFiniteActualDomains(input,context,charge,fieldReaching,mode,arrayR
       charge();methodViews.set(view.actualType+'\0'+view.targetType+'\0'+pair.target,pair.source);
     }
     for(const pair of view.fields) {
-      charge();fieldViews.set(view.actualType+'\0'+view.targetType+'\0'+pair.target,pair.source);
+      charge();fieldViews.set(view.actualType+'\0'+view.targetType+'\0'+pair.target,pair.missing?{missing:true,type:undefinedId}:pair.source);
     }
   }
   const callables=finiteCallables(hir),functions=new Map(callables.map(fn=>[fn.id,fn]));
@@ -325,6 +326,9 @@ function solveFiniteActualDomains(input,context,charge,fieldReaching,mode,arrayR
       copy(binding(fn,v.receiverBinding,fn.ownerType),binding(target,target.parameters[0].id,target.parameters[0].type));
       children('arguments').forEach((argument,index)=>copy(argument,binding(target,target.parameters[index+1].id,target.parameters[index+1].type)));
       insert(id,'actual',v.type);
+    }else if(v.kind==='propertyPresenceTest') {
+      child('left');const receiver=child('right');insert(id,'actual',v.type);
+      presenceTests.push({id,receiver,field:v.property,viewType:fieldOwners.get(v.property).owner,targets:new Map()});
     }else if(v.kind==='fieldAccess')fieldReads.push({id,receiver:child('receiver'),field:v.property,result:id,
       viewType:['reference','value'].includes(types.get(v.receiver.type).kind)?v.receiver.type:fieldOwners.get(v.property).owner,targets:new Map()});
     else if(v.kind==='fieldAssignment') {
@@ -350,19 +354,7 @@ function solveFiniteActualDomains(input,context,charge,fieldReaching,mode,arrayR
   // Actual fields are addressed by owned member identities. No name based
   // structural layout reconstruction is permitted at this seam.
   const fieldNode=(actual,field)=>node('field/'+actual+'/'+field.id,field.type).id;
-  function actualField(actual,id,viewType) {
-    // A selected structural view may originate on an ancestor. The shared
-    // physical-view builder already lifts that exact M12 member map onto each
-    // actual descendant; scanning arbitrary proof records here loses that join.
-    const mapped=fieldViews.get(actual+'\0'+viewType+'\0'+id);
-    if(mapped)return fieldOwners.get(mapped).field;
-    let type=types.get(actual);const seen=new Set();
-    while(type){charge();if(seen.has(type.id))fail('inheritance cycle');seen.add(type.id);
-      const direct=type.fields?.find(row=>row.id===id);if(direct)return direct;
-      type=type.base?types.get(type.base):null;
-    }
-    return null;
-  }
+  const actualField=actualFieldResolver(types,fieldViews,fieldOwners,charge);
   function actualMethod(actual,call) {
     const lineage=[];let type=types.get(actual);
     while(type){charge();if(lineage.includes(type.id))fail('inheritance cycle');lineage.unshift(type.id);type=types.get(type.base);}
@@ -430,7 +422,8 @@ function solveFiniteActualDomains(input,context,charge,fieldReaching,mode,arrayR
       copy(store.value,owners.get(allocation));
     for(const read of fieldReads)if(read.receiver===current)for(const actual of nodes.get(current).actual) {
       const field=actualField(actual,read.field,read.viewType);
-      if(field){read.targets.set(actual,field);
+      if(field?.missing){read.targets.set(actual,field);insert(read.result,'actual',undefinedId);}
+      else if(field){read.targets.set(actual,field);
         const reaching=refinements.get(read.id)?.find(row=>row.actualType===actual&&row.field===field.id);
         if(reaching) {
           for(const source of reaching.sources)copy(source,read.result);
@@ -441,8 +434,12 @@ function solveFiniteActualDomains(input,context,charge,fieldReaching,mode,arrayR
     }
     for(const store of fieldStores)if(store.receiver===current)for(const actual of nodes.get(current).actual) {
       const field=actualField(actual,store.field,store.viewType);
-      if(field){store.targets?.set(actual,field);copy(store.value,fieldNode(actual,field));}
+      if(field&&!field.missing){store.targets?.set(actual,field);copy(store.value,fieldNode(actual,field));}
       else insert(store.value,'pending','unresolved-actual-field:'+actual+':'+store.field);
+    }
+    for(const test of presenceTests)if(test.receiver===current)for(const actual of nodes.get(current).actual) {
+      const field=actualField(actual,test.field,test.viewType);
+      if(field)test.targets.set(actual,field);else insert(test.id,'pending','unresolved-actual-field:'+actual+':'+test.field);
     }
   }
   const domains=new Map();
@@ -482,9 +479,11 @@ function solveFiniteActualDomains(input,context,charge,fieldReaching,mode,arrayR
   const calls=methodCalls.map(call=>({id:call.id,member:call.member,viewType:call.viewType,
     targets:[...call.targets].sort(([a],[b])=>a<b?-1:1).map(([actualType,functionId])=>({actualType,functionId,
       signatureHash:functions.get(functionId).signatureHash,abi:abi.find(row=>row.functionId===functionId).id}))}));
-  const fields=[...fieldReads.map(row=>({...row,kind:'read'})),...fieldStores.filter(row=>row.id).map(row=>({...row,kind:'store'}))]
+  const fields=[...fieldReads.map(row=>({...row,kind:'read'})),...fieldStores.filter(row=>row.id).map(row=>({...row,kind:'store'})),
+    ...presenceTests.map(row=>({...row,kind:'presence'}))]
     .map(row=>({id:row.id,kind:row.kind,member:row.field,viewType:row.viewType,
-      targets:[...row.targets].sort(([a],[b])=>a<b?-1:1).map(([actualType,field])=>({actualType,fieldId:field.id,fieldType:field.type}))}));
+      targets:[...row.targets].sort(([a],[b])=>a<b?-1:1).map(([actualType,field])=>field.missing
+        ?{actualType,missing:true,fieldType:undefinedId}:{actualType,fieldId:field.id,fieldType:field.type})}));
   return own({family:mode==='definition'?'tsfg.finite-definition-bounds-development':'tsfg.finite-actual-domains-development',version:1,
     inputIdentity:hir.inputIdentity,...(mode==='definition'?{definitionSeeds}:{}),published,aliases,calls,fields,allocations,intrinsics,
     domains:[...domains.values()].sort((a,b)=>a.id<b.id?-1:1),nodes:resultNodes,expressions,abi});

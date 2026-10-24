@@ -50,8 +50,9 @@ bool fieldDispatch(mlir::Operation *operation) {
     if (!target || target->size() != 3) return false;
     const auto actual = target->getString("actualType"), field = target->getString("fieldId"),
         type = target->getString("fieldType");
-    if (!actual || !field || !type || !finiteDomainIdentity(*actual) ||
-        !finiteDomainIdentity(*field) || !finiteDomainIdentity(*type) ||
+    const bool missing=target->getBoolean("missing")==true;
+    if (!actual || !type || !finiteDomainIdentity(*actual) ||
+        (missing ? bool(field)||operation->getName().getStringRef()=="tsfg_core.domain.field_store" : !field||!finiteDomainIdentity(*field)) || !finiteDomainIdentity(*type) ||
         (!previous.empty() && *actual <= previous)) return false;
     previous = actual->str();
   }
@@ -179,7 +180,9 @@ mlir::LogicalResult verifyFiniteDomainOperation(mlir::Operation *operation) {
   if ((name == "tsfg_core.domain.construct" || super) && !identity(operation, "construction"))
     return reject("missing owned construction identity");
   if (super && !domainOperand(operation, 0)) return reject("super requires current actual instance");
-  if (name == "tsfg_core.domain.field_read" || name == "tsfg_core.domain.field_store")
+  if (name == "tsfg_core.domain.member_present" && typeCode(operation->getResult(0).getType())!=2)
+    return reject("member presence requires native bool result");
+  if (name == "tsfg_core.domain.field_read" || name == "tsfg_core.domain.field_store" || name == "tsfg_core.domain.member_present")
     if (!domainOperand(operation, 0) || !identity(operation, "member") || !fieldDispatch(operation))
       return reject("field access requires domain receiver and bounded actual member dispatch");
   if (name == "tsfg_core.domain.field_store" && !fieldVersions(operation))

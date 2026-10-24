@@ -20,6 +20,32 @@ rejects missing/duplicate fields, incomplete target field/method maps, invalid
 owners, hidden overridden methods, malformed identities and trailing bytes.
 This development format is not formal wire, Source admission or executable code.
 
+The explicitly selected optional-property profile uses development version 2,
+`TSGVIEW2`. After the embedded layouts, a u16 declaration count precedes the
+method table. Each declaration is owner TypeId, FieldId, u16 UTF-8 name length
+and name bytes, read TypeId, declared TypeId, and one optional byte (0 or 1).
+Declarations are strictly ordered by FieldId and cover every nominal own field;
+inherited layout slots join that same declaration. The reader verifies the
+existing `tsfg.field\0owner\0name` identity, complete actual layout coverage and
+the exact declared/read union relation. Names are arena-owned after decoding.
+
+Version 2 field pairs begin with a byte: 0 means source FieldId then target
+FieldId; 1 means target FieldId only. Method pairs retain their version 1
+encoding. A missing pair requires an optional target and no same-name field in
+the complete actual nominal lineage. It has no source field, offset, payload or
+storage version. Unknown members are rejected, never encoded as missing.
+The version 1 producer remains confined to the existing nonoptional profile and
+its actual-slot-only grammar; changing a version 2 magic to version 1 is invalid.
+
+`managed-reference-view.present` uses this same member resolution, returning
+false for legitimate structural absence and `ManagedHeap.hasTypedField` for an
+actual field. A field defined with undefined remains present. Missing reads
+return owned native undefined with zero bytes and zero references. The existing
+backing capture retains missing provenance and revalidates it on copy, including
+declared assignment permission. Explicit writes use declared types; the wider
+optional read type does not permit an explicit undefined assignment. Internal
+constructor definition events retain their separate native-undefined commit.
+
 `managed-reference-view.zig` consumes those plans against the actual ManagedHeap
 cell. It compares the complete actual TypeId/runtimeKey/layout, resolves a member
 ID and then uses the existing typed-field API and graph barrier. The target

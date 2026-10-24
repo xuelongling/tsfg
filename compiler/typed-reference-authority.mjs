@@ -2,10 +2,12 @@
 // Precondition: a complete validated owned catalogue. This computes member
 // authority only; callers retain their full facts/HIR admission boundary.
 import {canonical} from './identity.mjs';
+import {memberPresence} from './member-presence.mjs';
 export function typedReferenceAuthority(owned,charge=undefined) {
   let remaining=100000;
   const require=value=>{if(!value)throw new TypeError('r03-typed-view: invalid selected member view');};
   const spend=charge??(()=>require(--remaining>=0));
+  const presence=memberPresence(owned,spend);
   const types=new Map(owned.types.map(type=>[type.id,type]));
   const methods=new Map(owned.functions.filter(fn=>types.get(fn.ownerType)?.kind==='reference'
     &&types.get(fn.ownerType).methods?.includes(fn.id)).map(fn=>[fn.id,fn]));
@@ -50,6 +52,15 @@ export function typedReferenceAuthority(owned,charge=undefined) {
           const selected=override(actual.id,pair.source);require(selected);functions.push({source:selected,target:pair.target});
         }
       }
+      let unresolved=false;const covered=new Set(proof.members.map(pair=>pair.target));
+      for(const member of record.missingOptionalProperties??[]) {
+        spend();require(target.fields.has(member)&&!covered.has(member));covered.add(member);
+        require(presence.missing(proof.sourceType,member)?.missing===true);
+        const selected=presence.missing(actual.id,member);
+        if(selected)fields.push(selected);else unresolved=true;
+      }
+      require(covered.size===target.fields.size+target.functions.size);
+      if(unresolved)continue;
       const order=(a,b)=>{spend();return a.target<b.target?-1:a.target>b.target?1:0;};fields.sort(order);functions.sort(order);
       require(fields.length<=256&&functions.length<=256);
       const view={actualType:actual.id,targetType:proof.targetType,fields,methods:functions},key=actual.id+'\0'+proof.targetType;

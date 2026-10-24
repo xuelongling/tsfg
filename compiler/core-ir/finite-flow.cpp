@@ -110,7 +110,7 @@ struct Flow {
       "tsfg_string.code_unit_at","tsfg_string.slice","tsfg_core.domain.literal","tsfg_core.domain.view","tsfg_core.domain.copy","tsfg_core.domain.refine",
       "tsfg_core.domain.read_span","tsfg_core.domain.array_create","tsfg_core.domain.array_read","tsfg_core.domain.array_store",
       "tsfg_core.domain.array_resize","tsfg_core.domain.array_length","tsfg_core.domain.identity_equal",
-      "tsfg_core.domain.presence_equal","tsfg_core.domain.initialize_fields","tsfg_core.domain.field_read"};
+      "tsfg_core.domain.presence_equal","tsfg_core.domain.member_present","tsfg_core.domain.initialize_fields","tsfg_core.domain.field_read"};
     return pure.count(name.str()) || proof.reject("operation has no closed finite field-effect contract: "+name.str());
   }
   bool run() {

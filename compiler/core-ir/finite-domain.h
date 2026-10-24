@@ -56,6 +56,7 @@ TSFG_DOMAIN_OPERATION(DomainArrayResizeOp, "array_resize", mlir::OpTrait::NOpera
 TSFG_DOMAIN_OPERATION(DomainArrayLengthOp, "array_length", mlir::OpTrait::OneOperand, mlir::OpTrait::OneResult)
 TSFG_DOMAIN_OPERATION(DomainIdentityEqualOp, "identity_equal", mlir::OpTrait::NOperands<2>::Impl, mlir::OpTrait::OneResult)
 TSFG_DOMAIN_OPERATION(DomainPresenceEqualOp, "presence_equal", mlir::OpTrait::NOperands<2>::Impl, mlir::OpTrait::OneResult)
+TSFG_DOMAIN_OPERATION(DomainMemberPresentOp, "member_present", mlir::OpTrait::OneOperand, mlir::OpTrait::OneResult)
 TSFG_DOMAIN_OPERATION(DomainConstructOp, "construct", mlir::OpTrait::VariadicOperands, mlir::OpTrait::OneResult)
 TSFG_DOMAIN_OPERATION(DomainSuperOp, "super", mlir::OpTrait::AtLeastNOperands<1>::Impl, mlir::OpTrait::ZeroResults)
 TSFG_DOMAIN_OPERATION(DomainInitializeFieldsOp, "initialize_fields", mlir::OpTrait::OneOperand, mlir::OpTrait::ZeroResults)

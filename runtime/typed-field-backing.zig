@@ -17,7 +17,7 @@ pub const Cell = struct { declared: cells.Layout, backing: cells.Layout, fields:
 // target type or a bool for the original static member authority.
 pub const Value = opaque {};
 const Captured = struct {
-    heap: *managed.ManagedHeap, input_identity: Id, actual_type: Id, actual_field: Id,
+    heap: *managed.ManagedHeap, input_identity: Id, actual_type: Id, actual_field: ?Id,
     source_view: Id, source_member: Id, payload: access.Value,
 };
 fn same(a: Id, b: Id) bool { return std.mem.eql(u8, &a, &b); }
@@ -37,6 +37,12 @@ pub const Module = struct {
     pub fn field(self: Module, layout: cells.Layout, target: Id, member: Id) Error!Id {
         return self.authority.field((try self.actual(layout)).declared, target, member);
     }
+    pub fn resolveField(self: Module, layout: cells.Layout, target: Id, member: Id) Error!views.FieldSelection {
+        return self.authority.resolveField((try self.actual(layout)).declared, target, member);
+    }
+    pub fn present(self: Module, heap: *managed.ManagedHeap, receiver: managed.Handle, target: Id, member: Id) managed.Error!bool {
+        return access.present(heap, self, receiver, target, member);
+    }
     pub fn readonly(self: Module, target: Id, member: Id) Error!bool { return self.authority.readonly(target, member); }
     pub fn method(self: Module, layout: cells.Layout, target: Id, member: Id) Error!views.Method {
         return self.authority.method((try self.actual(layout)).declared, target, member);
@@ -49,9 +55,7 @@ pub const Module = struct {
     // Static target permission is checked before any mutation or root publish.
     pub fn write(self: Module, heap: *managed.ManagedHeap, receiver: managed.Handle, target: Id, member: Id,
         source_type: Id, input: element.Input) managed.Error!void {
-        const target_cell = (try self.authority.layouts.find(target)).cell orelse return error.InvalidViewModule;
-        const target_layout = target_cell.fields[try target_cell.fieldIndex(member)].layout;
-        if (!try self.accepted(source_type, target_layout)) return error.TypeMismatch;
+        if (!try codec.assignment(self.authority, source_type, try self.authority.declaredType(target, member))) return error.TypeMismatch;
         try self.storeActive(heap, receiver, target, member, source_type, input);
     }
     fn storeActive(self: Module, heap: *managed.ManagedHeap, receiver: managed.Handle, target: Id, member: Id,
@@ -76,7 +80,7 @@ pub const Module = struct {
     // precedes read's transactional root publication.
     pub fn capture(self: Module, heap: *managed.ManagedHeap, receiver: managed.Handle, target: Id, member: Id) managed.Error!*Value {
         const actual_layout = try heap.copyTypedCellLayout(receiver); defer actual_layout.deinit(heap.allocator);
-        const actual_field = try self.field(actual_layout, target, member);
+        const actual_field: ?Id = switch (try self.resolveField(actual_layout, target, member)) { .actual => |id| id, .missing => null };
         const result = try heap.allocator.create(Captured); errdefer heap.allocator.destroy(result);
         result.* = .{ .heap = heap, .input_identity = self.authority.input_identity, .actual_type = actual_layout.type_id,
             .actual_field = actual_field, .source_view = target, .source_member = member,
@@ -93,13 +97,20 @@ pub const Module = struct {
         const captured: *const Captured = @ptrCast(@alignCast(value));
         if (captured.heap != heap or !same(captured.input_identity, self.authority.input_identity)) return error.InvalidViewModule;
         const source = try self.cell(captured.actual_type);
-        if (!same(try self.authority.field(source.declared, captured.source_view, captured.source_member), captured.actual_field)) return error.InvalidViewModule;
+        const actual_field: ?Id = switch (try self.authority.resolveField(source.declared, captured.source_view, captured.source_member)) { .actual => |id| id, .missing => null };
+        if (!std.meta.eql(actual_field, captured.actual_field)) return error.InvalidViewModule;
         const source_static = (try self.authority.layouts.find(captured.source_view)).cell orelse return error.InvalidViewModule;
         const target_static = (try self.authority.layouts.find(target)).cell orelse return error.InvalidViewModule;
         const from = source_static.fields[try source_static.fieldIndex(captured.source_member)].layout;
-        const to = target_static.fields[try target_static.fieldIndex(member)].layout;
-        if (!try self.assignment(from, to)) return error.TypeMismatch;
-        const field_value = source.fields[try source.backing.fieldIndex(captured.actual_field)];
+        _ = target_static.fields[try target_static.fieldIndex(member)];
+        if (!try codec.assignment(self.authority, from.type_id, try self.authority.declaredType(target, member))) return error.TypeMismatch;
+        if (captured.actual_field == null) {
+            var empty = try access.undefinedValue(heap.allocator); defer empty.deinit(heap.allocator);
+            if (!captured.payload.layout.same(empty.layout) or captured.payload.value.tag != 0 or
+                captured.payload.value.bytes.len != 0 or captured.payload.value.references.len != 0) return error.InvalidViewModule;
+            return self.storeActive(heap, receiver, target, member, empty.layout.type_id, .{ .bytes = &.{}, .references = &.{} });
+        }
+        const field_value = source.fields[try source.backing.fieldIndex(captured.actual_field.?)];
         if (!captured.payload.layout.same(field_value.domain.layout)) return error.InvalidViewModule;
         const active = try codec.unpack(heap, field_value.domain, captured.payload.value);
         try self.storeActive(heap, receiver, target, member, active.type_id, active.input);

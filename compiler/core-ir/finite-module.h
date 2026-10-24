@@ -104,6 +104,12 @@ struct ModuleProof {
   std::map<mlir::Operation *,std::vector<mlir::Value>> arrayReadInputs;
   std::set<mlir::Operation *> provedArrayReads;
   std::set<mlir::Operation *> fieldReadUndefined;
+  // Published only by the independent complete member/witness reconstruction.
+  // Empty field identity means legitimate structural absence; no storage exists.
+  std::map<mlir::Operation *,std::map<std::string,std::string>> memberFields;
+  // A singleton outcome is proved from those same members and actual current
+  // MemoryVersions. Missing/unknown current state never proves a Boolean.
+  std::map<mlir::Operation *,std::set<bool>> memberOutcomes;
   llvm::DenseMap<mlir::Value,PayloadEvidence> actualPayloads;
   std::map<std::string,PayloadEvidence> actualReturns;
   std::set<std::string> unprovedActualBounds;
@@ -115,6 +121,8 @@ struct ModuleProof {
   bool mayReach(mlir::Block *block)const{return !controlReady||possibleBlocks.count(block);}
   bool mayTraverse(mlir::Operation *op,unsigned index)const{return !controlReady||possibleEdges.count({op,index});}
   size_t remaining = 100000;
+  bool failed=false;
+  std::string firstFailure;
   // Complete actual owner/effect/normal-return proof for each definition,
   // including exports without a callsite. Missing authority is not purity.
   std::set<std::string> arrayCallDefinitionsComplete;

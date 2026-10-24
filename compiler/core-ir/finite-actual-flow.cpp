@@ -200,6 +200,9 @@ struct ActualFlow {
         if(condition&&condition->getName().getStringRef()=="tsfg_core.constant"&&typeCode(branch.getCondition().getType())==2) {
           uint64_t bits=0;if(!constantBits(condition,bits))return proof.reject("conditional Boolean literal authority");
           predicate.literal=bits!=0;
+        }else if(memorySources&&condition&&condition->getName().getStringRef()=="tsfg_core.domain.member_present") {
+          const auto found=proof.memberOutcomes.find(condition);
+          if(found!=proof.memberOutcomes.end()&&found->second.size()==1)predicate.literal=*found->second.begin();
         }else if(condition&&condition->getName().getStringRef()=="tsfg_core.domain.presence_equal") {
           for(unsigned i=0;i<2;++i) {
             if(!proof.charge())return false;auto *literal=condition->getOperand(i).getDefiningOp();

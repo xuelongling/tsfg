@@ -6,6 +6,7 @@ import { analyzeVerifiedModuleCalls, checkCallEffectsInputs, callEffectsFailure,
 export { KernelHostSemanticError } from './call-effects.mjs';
 import { verifyStringHir } from './string-hir-model.mjs';
 import {isTypedArrayContext,verifyTypedArrayHir} from './typed-array-hir.mjs';
+import {isOptionalPropertyContext,verifyOptionalPropertyHir} from './optional-property-hir.mjs';
 import { verifyExceptionHir } from './exception-hir.mjs';
 import { isNullableGroupsContext, isNullableTypeofContext, check as nullableCheck } from './nullable-common.mjs';
 import { verifyNullableHir } from './nullable-hir.mjs';
@@ -31,6 +32,10 @@ const hash = value => typeof value === "string" && /^sha256:[0-9a-f]{64}$/.test(
 const types = scalarTypeIds;
 /** @param {any} hir @param {any} [factsContext] @param {any} [callPublicationContext] */
 export function verifyHir(hir, factsContext = undefined, callPublicationContext = undefined) {
+  if(isOptionalPropertyContext(factsContext)) {
+    if(callPublicationContext!==undefined)throw new TypeError('r03-optional-property-context: unexpected publication');
+    return verifyOptionalPropertyHir(hir,factsContext);
+  }
   if (isNullableGroupsContext(factsContext) || isNullableTypeofContext(factsContext)) {
     nullableCheck(callPublicationContext === undefined, 'context'); return verifyNullableHir(hir, factsContext);
   }

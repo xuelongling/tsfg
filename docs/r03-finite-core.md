@@ -447,3 +447,37 @@ The existing mutable structural view remains independent. Shared-budget and
 cancellation failures discard the proof and preserve their first cause. The
 std component runs this same phase protocol; the real IR adapter retains only
 object/static-review qualification while Core semantic execution is held.
+
+Development 28 consumes the complete explicitly selected optional-property HIR
+through the ordinary finite producer. It preserves the exterior
+`missingOptionalProperties` witness lists, all definitions, construction bodies,
+calls, exports and original ranges. Member authority has three outcomes: a real
+FieldId, independently witnessed legitimate absence, or unknown. Complete
+witness coverage, optional declared/read type relation and actual nominal member
+lookup establish absence; descendants are resolved again and do not inherit a
+base absence conclusion. Unknown still prevents publication.
+
+`domain.member_present` consumes the real receiver once, a static owned member,
+and the same `field_dispatch` authority as field reads. Its result is native
+bool. Actual arms retain `{actualType,fieldId,fieldType}`; missing arms contain
+`{actualType,missing:true,fieldType:undefinedTypeId}`. Missing reads contribute
+native undefined without a fabricated FieldId or MemoryVersion. Actual arms
+retain the existing ordered reaching/SSA engines and nullish CFG. Independent
+C++ reconstructs the complete declaration/witness maps, checks the canonical
+view table and actual dispatch, then uses real current MemoryVersion states for
+definedness: NotDefined is absent; DefinedUndefined and Initialized are present.
+Unknown state preserves both CFG continuations. Definition carriers remain ABI
+bounds and never supply an observed initialized Array cell.
+
+Explicit stores check the selected target declared type, separately from its
+optional read union. This checks static Source assignment permission from the
+real RHS SSA view; it does not filter actual payloads. A legal narrow read or
+pure `as` can still carry native undefined or references through an unchanged
+domain. The producer retains its original semantic view and RHS source anchor
+using the existing `domain.view`, after any by-value copy. Unknown static
+permission remains pending. Native undefined constructor definitions still use their
+existing independent phase events. Physical views use the selected `TSGVIEW2`
+component contract described in `r03-typed-reference-views.md`. New traversals
+share the existing bounded work/first-failure transaction. These component checks
+do not establish formal Source012, Core semantic command execution, ordinary
+wire, VM, or whole Runtime/GC/ABI qualification.

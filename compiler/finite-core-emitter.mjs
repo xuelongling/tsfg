@@ -12,6 +12,7 @@ import {buildTypedReferenceViews} from './typed-reference-views.mjs';
 import {coreExchangeFormat,coreQuote as quote,emitCoreSsaFunction} from './core-ssa-emitter.mjs';
 import {canonical,sha256,scalarName,i32TypeId,boolTypeId} from './identity.mjs';
 import {scalarOperations} from './scalar-operators.mjs';
+import {memberPresence} from './member-presence.mjs';
 
 function pending(message,range) {throw Object.assign(new TypeError('r03-finite-core-capability: '+message),
   {code:'r03-finite-core-capability',ruleId:'r01-ts-baseline',phase:'lowering',...(range?{primary:range}:{})});}
@@ -22,6 +23,7 @@ function memberWitnessContracts(hir) {
   const order=(a,b)=>a<b?-1:a>b?1:0;
   return hir.compatibilityWitnesses.map(record=>({compatibility:{...record.compatibility,
     members:[...record.compatibility.members].sort((a,b)=>order(a.target,b.target))},
+    ...(record.missingOptionalProperties?{missingOptionalProperties:[...record.missingOptionalProperties].sort(order)}:{}),
     dependencies:[...record.dependencies].sort((a,b)=>order(a.sourceType,b.sourceType)||order(a.targetType,b.targetType))}))
     .sort((a,b)=>{const x=a.compatibility,y=b.compatibility;
       return Buffer.compare(Buffer.from(x.origin.source),Buffer.from(y.origin.source))||x.origin.start-y.origin.start||x.origin.end-y.origin.end
@@ -83,6 +85,7 @@ export function emitFiniteCore(input,context,publicationContext=undefined) {
   const budget={step(){if(--work<0)pending('work limit');},register(count){if(count>4096)pending('register limit');},
     block(count){if(count>4096)pending('block limit');},parameters(count){if(count>256)pending('parameter limit');},
     line(line){bytes+=Buffer.byteLength(line)+1;if(bytes>8388608)pending('Core byte limit');}};
+  const members=memberPresence(hir,()=>budget.step());
   // Every definition consumes its quantified ABI upper bound. The reached
   // ledger remains separate; no definition seed is a runtime instance claim.
   const functions=finiteCallables(hir).map(original=>{
@@ -106,7 +109,7 @@ export function emitFiniteCore(input,context,publicationContext=undefined) {
       const reaching=plan.fieldReaching.reads.find(row=>row.node===value.domainNode);
       const versions=selection.kind==='store'?plan.fieldReaching.writes.filter(row=>row.node===value.domainNode+'/value'):[];
       return `member = ${quote(selection.member)}, receiver_view = ${quote(selection.viewType)}, field_dispatch = ${quote(canonical(selection.targets))}`
-        +(reaching?.reaching.length?`, field_reaching = ${quote(canonical(reaching))}`:'')
+        +(reaching&&(reaching.reaching.length||selection.targets.some(row=>row.missing))?`, field_reaching = ${quote(canonical(reaching))}`:'')
         +(selection.kind==='store'?`, memory_node = ${quote(value.domainNode)}, input_node = ${quote(value.domainNode+'/value')}, field_versions = ${quote(canonical(versions))}`:'');
     }
     function initializeFields(statement,api) {
@@ -308,11 +311,18 @@ export function emitFiniteCore(input,context,publicationContext=undefined) {
           initializeFields(after,api);
           return null;
         }
+        if(value.kind==='propertyPresenceTest') {
+          api.emit(value.left); // Preserve the real key's Source evaluation.
+          return op(api,'member_present',[evaluated(value.right)],value.type,opAttrs(value)+', '+fieldDispatch(value),value.range);
+        }
         if(value.kind==='fieldAccess')return op(api,'field_read',[evaluated(value.receiver)],value.type,
           opAttrs(value)+', '+fieldDispatch(value),value.range);
         if(value.kind==='fieldAssignment') {
           const receiver=evaluated(value.target.receiver),rhs=copy(api,evaluated(value.value),value.value.semanticType,value.value.range);
-          op(api,'field_store',[receiver,rhs],null,`view_type = ${quote(value.target.receiver.semanticType)}, `+fieldDispatch(value),value.range);return rhs.name;
+          const field=members.fields.get(value.target.property),declared=field.propertyPresence?.declaredType??field.type;
+          if(!members.compatible(value.value.semanticType,declared))pending('explicit field assignment violates declared type',value.range);
+          const source={name:op(api,'view',[rhs],rhs.type,`view_type = ${quote(value.value.semanticType)}, domain = ${quote(rhs.type)}`,value.value.range),type:rhs.type};
+          op(api,'field_store',[receiver,source],null,`view_type = ${quote(value.target.receiver.semanticType)}, `+fieldDispatch(value),value.range);return rhs.name;
         }
         if(value.kind==='shortCircuit')return undefined; // shared SSA control.
         pending('operation '+value.kind,value.range);

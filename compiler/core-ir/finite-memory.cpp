@@ -124,10 +124,16 @@ struct Memory {
     if (!root || root->size()!=2 || !rows || !result) return proof.reject("field read reaching document");
     const auto *targets=dispatch.getAsArray();if(!targets)return proof.reject("field read actual member coverage");
     std::set<std::pair<std::string,std::string>> expectedTargets,seenTargets;
-    for(const auto &value:*targets){if(!proof.charge()||!value.getAsObject())return false;
-      expectedTargets.insert({string(*value.getAsObject(),"actualType"),string(*value.getAsObject(),"fieldId")});}
+    if(!proof.memberFields.count(op))return proof.reject("field read lacks independent member authority");
+    bool structuralUndefined=false;
+    for(const auto &[actual,field]:proof.memberFields.at(op)) {
+      if(!proof.charge())return false;
+      if(field.empty())structuralUndefined=true;else expectedTargets.insert({actual,field});
+    }
     bool complete=true;std::string previousActual;
-    std::vector<mlir::Value> inputValues;bool inputUndefined=false;
+    std::vector<mlir::Value> inputValues;bool inputUndefined=structuralUndefined;
+    if(structuralUndefined&&std::find(result->alternatives.begin(),result->alternatives.end(),hash(std::string("tsfg.type\0undefined",19)))==result->alternatives.end())
+      return proof.reject("missing member read drops native undefined");
     std::vector<MemoryOrigin> inputOrigins;
     for (const auto &value:*rows) {
       if (!proof.charge()) return false;const auto *row=value.getAsObject();
@@ -202,6 +208,26 @@ struct Memory {
     }
     return valid;
   }
+  bool presence(mlir::Operation *op) {
+    if(!proof.memberFields.count(op))return proof.reject("member predicate lacks independent authority");
+    std::set<bool> outcomes;bool complete=true;
+    for(const auto &[actual,field]:proof.memberFields.at(op)) {
+      if(!proof.charge())return false;
+      if(field.empty()){outcomes.insert(false);continue;}
+      const auto selected=proveMemoryFirstWrites(proof,op,op->getOperand(0),actual,field,writes,origins,sources);
+      if(selected.status==MemorySelection::Status::Invalid)return false;
+      if(selected.status!=MemorySelection::Status::Proven||selected.versions.empty()){complete=false;continue;}
+      for(const auto &id:selected.versions) {
+        if(!proof.charge())return false;const auto found=versions.find({id,actual});
+        if(found==versions.end())return proof.reject("member definedness has no real selected version");
+        for(const auto &write:found->second){if(!proof.charge()||write.field!=field)return proof.reject("member definedness selects another field");
+          outcomes.insert(write.state!=Version::State::NotDefined);}
+      }
+    }
+    if(complete&&!outcomes.empty())proof.memberOutcomes.insert_or_assign(op,std::move(outcomes));
+    else proof.memberOutcomes.erase(op);
+    return true;
+  }
   bool run() {
     // These are derived entry preconditions, not successful commits, values or
     // nativeDefine events. A later cross-frame proof still has to reach them.
@@ -230,6 +256,8 @@ struct Memory {
       for (auto &[id,function]:proof.functions) for (auto &block:function.getBody()) for(auto &op:block)
         if(op.getName().getStringRef()=="tsfg_core.domain.field_read" && (!proof.charge() || !read(&op)))return false;
     }while(previous!=proof.fieldReadInputs.size());
+    for(auto &[id,function]:proof.functions)for(auto &block:function.getBody())for(auto &op:block)
+      if(op.getName().getStringRef()=="tsfg_core.domain.member_present"&&(!proof.charge()||!presence(&op)))return false;
     return proveStoredReturns(proof,writes,origins,sources);
   }
 };
