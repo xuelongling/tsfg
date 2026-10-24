@@ -16,6 +16,7 @@ public:
   Id root(const std::string &function);
   Id enter(Id parent,mlir::Operation *call,const std::string &function);
   MemoryOrigin project(Id frame,mlir::Value value,const std::string &version,Id query,bool held);
+  MemorySelection arrayRead(Id frame,mlir::Operation *read);
   bool good()const{return valid&&frames.error().empty();}
   std::string error()const{return !frames.error().empty()?frames.error():valid?std::string():"stored-source SSA/activation normalization failed";}
 private:

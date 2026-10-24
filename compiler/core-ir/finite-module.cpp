@@ -2,6 +2,7 @@
 #include "finite-module.h"
 #include "finite-domain.h"
 #include "finite-array-memory.h"
+#include "finite-memory-lifetime.h"
 #include "bytecode.h"
 #include "module.h"
 #include "llvm/Support/SHA256.h"
@@ -112,7 +113,7 @@ bool clearMemory(ModuleProof &proof) {
   for(const auto &map:{&proof.fieldReadInputs,&proof.arrayReadInputs})for(const auto &[op,values]:*map) {
     if(!proof.charge())return false;for(const auto value:values)if(!proof.charge())return false;
   }
-  for(const auto *map:{&proof.fieldReadSources,&proof.aggregateReturnSources})for(const auto &[op,sources]:*map){
+  for(const auto *map:{&proof.fieldReadSources,&proof.aggregateReturnSources,&proof.arrayReadSources})for(const auto &[op,sources]:*map){
     if(!proof.charge())return false;
     for(const auto &source:sources){
     if(!proof.charge())return false;
@@ -124,17 +125,17 @@ bool clearMemory(ModuleProof &proof) {
   }
   proof.unprovedMemoryReads.clear();proof.provedArrayReads.clear();proof.fieldReadUndefined.clear();
   proof.fieldReadInputs.clear();proof.arrayReadInputs.clear();proof.fieldReadSources.clear();
-  proof.aggregateReturnSources.clear();proof.unprovedStoredReturns.clear();return true;
+  proof.aggregateReturnSources.clear();proof.arrayReadSources.clear();proof.unprovedStoredReturns.clear();return true;
 }
 bool memoryPaths(ModuleProof &proof) {
   bool changed;
   do {
-    if(!clearMemory(proof)||!verifyMemoryContracts(proof,false)||!verifyArrayMemory(proof,false)||
+    if(!clearMemory(proof)||!verifyMemoryContracts(proof,false)||!verifyArrayMemory(proof,false)||!proveArrayReadSources(proof)||
         !verifyControlPaths(proof,true,&changed))return false;
   }while(changed);
   // Candidate documents were shape/identity checked throughout, but never
   // seeded control. Compare their claims only on the independently closed CFG.
-  return clearMemory(proof)&&verifyMemoryContracts(proof)&&verifyArrayMemory(proof);
+  return clearMemory(proof)&&verifyMemoryContracts(proof)&&verifyArrayMemory(proof)&&proveArrayReadSources(proof);
 }
 }
 namespace {

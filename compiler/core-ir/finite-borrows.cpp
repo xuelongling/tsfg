@@ -72,7 +72,7 @@ struct Borrows {
       }
       projectedOwners.try_emplace(value,std::move(identity));
     }
-    for(const auto &[read,sources]:proof.fieldReadSources){
+    for(const auto *map:{&proof.fieldReadSources,&proof.arrayReadSources})for(const auto &[read,sources]:*map){
       if(!proof.charge())return false;
       // Ordinary Array fields already have the independently proved owner
       // projection above. Only a possible Span needs this capture evidence.
@@ -106,7 +106,7 @@ struct Borrows {
     // A view made inside a callee begins its caller-visible lifetime only on
     // successful return at that real call. Later field reads keep it live
     // across intervening caller mutations; no synthetic Array is allocated.
-    for(const auto &[read,sources]:proof.fieldReadSources){
+    for(const auto *map:{&proof.fieldReadSources,&proof.arrayReadSources})for(const auto &[read,sources]:*map){
       if(!proof.charge())return false;if(!values.count(read->getResult(0)))continue;
       for(const auto &source:sources){
         if(!proof.charge())return false;if(!source.capture)continue;
@@ -187,6 +187,10 @@ struct Borrows {
         }else if(use.getOperandNumber()==0&&(name=="tsfg_core.domain.field_store"||name=="tsfg_core.domain.field_read"||
             name=="tsfg_core.domain.field_initialize"||name=="tsfg_core.domain.field_define"||name=="tsfg_core.domain.initialize_fields")){
           if(name=="tsfg_core.domain.field_read"&&proof.unprovedMemoryReads.count(op))return false;
+        }else if(use.getOperandNumber()==0&&(name=="tsfg_core.domain.array_store"||name=="tsfg_core.domain.array_resize")){
+          // Real structural effects still run through Borrow liveness below.
+        }else if(use.getOperandNumber()==0&&name=="tsfg_core.domain.array_read"){
+          if(!proof.provedArrayReads.count(op)||!proof.arrayReadSources.count(op))return false;
         }else return false; // The actual escaping/call/CFG continuation is still unproved.
       }
     }
@@ -220,7 +224,7 @@ struct Borrows {
     std::set<const void *> seen;
     if(auto *created=root.getDefiningOp()){
       const auto name=created->getName().getStringRef();
-      return name=="tsfg_core.domain.construct"&&closedStorage(root,seen);
+      return (name=="tsfg_core.domain.construct"||name=="tsfg_core.domain.array_create")&&closedStorage(root,seen);
     }
     auto argument=llvm::dyn_cast<mlir::BlockArgument>(root);if(!argument||argument.getArgNumber()!=0)return false;
     auto fn=llvm::dyn_cast<mlir::func::FuncOp>(argument.getOwner()->getParentOp());
@@ -248,11 +252,12 @@ struct Borrows {
     // SSA last use cannot silently end a borrow still held in a memory slot.
     if(name=="tsfg_core.domain.field_store"||name=="tsfg_core.domain.field_initialize") {
       if(values.count(op->getOperand(1))&&!localStorage(op->getOperand(0)))unprovedLifetime=op;
-    }else if(name=="tsfg_core.domain.array_store"&&values.count(op->getOperand(2)))unprovedLifetime=op;
+    }else if(name=="tsfg_core.domain.array_store"&&values.count(op->getOperand(2))&&!localStorage(op->getOperand(0)))unprovedLifetime=op;
     else if(name=="tsfg_core.domain.array_create")for(auto input:op->getOperands()) {
-      if(!proof.charge())return false;if(values.count(input))unprovedLifetime=op;
+      if(!proof.charge())return false;if(values.count(input)&&!localStorage(op->getResult(0)))unprovedLifetime=op;
     }
-    if(name=="tsfg_core.domain.array_read"&&values.count(op->getResult(0)))unprovedLifetime=op;
+    if(name=="tsfg_core.domain.array_read"&&values.count(op->getResult(0))&&
+        (!proof.provedArrayReads.count(op)||!proof.arrayReadSources.count(op)))unprovedLifetime=op;
     if(auto returned=llvm::dyn_cast<mlir::func::ReturnOp>(op);returned&&returned.getNumOperands()==1&&values.count(returned.getOperand(0))) {
       if(parameterSource(returned.getOperand(0),op))return true;if(!valid)return false;
       // A caller/field returned view is not a fresh current-frame allocation.
@@ -291,6 +296,14 @@ struct Borrows {
           const auto found=proof.fieldReadInputs.find(&op);
           if(proof.unprovedMemoryReads.count(&op)||found==proof.fieldReadInputs.end())unprovedLifetime=&op;
           else for(auto input:found->second) {
+            if(!proof.charge())return false;
+            if(values.count(input)&&!outcome(flow.use(point,values.at(input))))return false;
+          }
+        }
+        if(name=="tsfg_core.domain.array_read"&&values.count(op.getResult(0))){
+          const auto found=proof.arrayReadInputs.find(&op);
+          if(!proof.provedArrayReads.count(&op)||!proof.arrayReadSources.count(&op)||found==proof.arrayReadInputs.end())unprovedLifetime=&op;
+          else for(auto input:found->second){
             if(!proof.charge())return false;
             if(values.count(input)&&!outcome(flow.use(point,values.at(input))))return false;
           }

@@ -233,9 +233,11 @@ struct ArrayCalls {
           if(name=="tsfg_core.domain.array_create") {if(!flow.local(result))return fail(flow.error());}
           else if(name=="tsfg_core.domain.view"||name=="tsfg_core.domain.refine"||name=="tsfg_core.domain.copy"||name=="tsfg_core.domain.read_span") {
             if(!alias(op->getOperand(0),op->getResult(0),id))return fail(flow.error());
-          }else if(name=="tsfg_core.domain.field_read"&&!proof.unprovedMemoryReads.count(op)&&proof.fieldReadSources.count(op)){
+          }else if((name=="tsfg_core.domain.field_read"||name=="tsfg_core.domain.array_read")&&!proof.unprovedMemoryReads.count(op)&&
+              (name=="tsfg_core.domain.field_read"?proof.fieldReadSources.count(op):proof.arrayReadSources.count(op))){
             bool productive=false;
-            for(const auto &source:proof.fieldReadSources.at(op)){
+            const auto &sources=name=="tsfg_core.domain.field_read"?proof.fieldReadSources.at(op):proof.arrayReadSources.at(op);
+            for(const auto &source:sources){
               for(auto input:source.values){
                 if(!proof.charge()||!alias(input,op->getResult(0),id))return fail(flow.error());productive=true;
               }

@@ -138,6 +138,9 @@ struct ActualFlow {
       const auto result=value(op->getResult(0));const auto sources=proof.arrayReadInputs.find(op);
       if(!memorySources||sources==proof.arrayReadInputs.end())return pending(result);
       for(const auto source:sources->second)if(!proof.charge()||!edge(value(source),result))return false;
+      const auto projected=proof.arrayReadSources.find(op);
+      if(projected!=proof.arrayReadSources.end())for(const auto &source:projected->second)for(const auto &type:source.introduced)
+        if(!proof.charge()||!insert(result,type))return false;
       return true;
     }
     if(name=="tsfg_core.domain.literal"||name=="tsfg_core.domain.array_create"||name=="tsfg_core.domain.read_span")

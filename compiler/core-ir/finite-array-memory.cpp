@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: MIT
 #include "finite-array-memory.h"
 #include "finite-array-length.h"
+#include "finite-memory-sources.h"
 #include "mlir/Dialect/ControlFlow/IR/ControlFlowOps.h"
 #include <optional>
 #include <tuple>
@@ -140,7 +141,10 @@ struct ArrayMemory {
     }
     return versions.size()==declaredWrites.size()||proof.reject("unbound Array memory version");
   }
-  struct Selection {std::set<std::string> versions;bool proven=false,bounds=false,foreign=false;};
+  struct Selection {
+    std::set<std::string> versions;std::set<std::pair<mlir::Operation *,uint32_t>> captures;
+    bool proven=false,bounds=false,foreign=false;
+  };
   Selection query(mlir::Operation *read,mlir::Value receiver,Index selected) {
     PayloadFlow graph(proof.remaining,PayloadFlow::AtomDomain::MemoryVersion);
     const auto outcome=[&](bool result){if(!result){valid=false;proof.reject(graph.error());}return result;};
@@ -153,6 +157,7 @@ struct ArrayMemory {
     std::vector<std::set<size_t>> scopes(1);
     std::map<std::tuple<std::string,std::vector<size_t>,std::string>,std::pair<size_t,Id>> summaries;
     std::vector<Task> tasks;std::map<std::tuple<mlir::Operation *,size_t,std::string,size_t,bool>,Id> nodes;
+    std::map<std::pair<mlir::Operation *,uint32_t>,size_t> captures;std::vector<ArrayCellCapture> captureSites;
     const auto indexKey=[&](Index selected){return selected.constant?
       "#constant/"+std::to_string(*selected.constant):"#ssa/"+std::to_string(identity(selected.value));};
     const auto at=[&](mlir::Operation *before,mlir::Value owner,Index selected,size_t scope,bool foreign=false) {
@@ -260,6 +265,16 @@ struct ArrayMemory {
         continue;
       }
       const auto callees=proof.selectedCallees.find(previous);
+      if(previous==task.owner.getDefiningOp()&&callees!=proof.selectedCallees.end()){
+        if(!charge())return {};
+        if(!task.index.constant){if(!unknown(task.node))return {};continue;}
+        const auto key=std::make_pair(previous,*task.index.constant);auto found=captures.find(key);
+        if(found==captures.end()){found=captures.emplace(key,captureSites.size()).first;captureSites.push_back({previous,*task.index.constant});}
+        const auto atom="#array-capture/"+std::to_string(found->second);
+        if(task.foreign){if(!unknown(task.node))return {};}
+        else if(!seed(task.node,atom))return {};
+        continue;
+      }
       if(callees!=proof.selectedCallees.end()) {
         bool modifies=false;for(const auto &target:callees->second){if(!charge())return {};modifies|=effects.at(target);}
         if(modifies) {
@@ -314,11 +329,29 @@ struct ArrayMemory {
       if(!charge())return {};
       const llvm::StringRef atom(id),prefix("#foreign-array-version/");
       if(atom.starts_with(prefix)){out.foreign=true;out.versions.insert(atom.drop_front(prefix.size()).str());}
+      else if(atom.starts_with("#array-capture/")){
+        size_t index=0;if(atom.drop_front(15).getAsInteger(10,index)||index>=captureSites.size()){
+          valid=false;proof.reject("Array cell capture identity");return {};}
+        out.captures.emplace(captureSites[index].call,captureSites[index].index);
+      }
       else out.versions.insert(id);
     }
-    out.proven=!out.versions.empty();return out;
+    out.proven=!out.versions.empty()&&out.captures.empty();return out;
   }
   Selection query(mlir::Operation *read){return query(read,read->getOperand(0),index(read->getOperand(1)));}
+  bool cell(mlir::Operation *point,mlir::Value receiver,uint32_t slot,ArrayExtent &destination){
+    if(!directory()||!collect())return false;const auto selected=query(point,receiver,Index{{},slot});
+    if(!valid)return false;ArrayExtent result;
+    if(selected.bounds&&!selected.foreign&&(selected.proven||!selected.captures.empty())){
+      for(const auto &id:selected.versions){
+        if(!charge()||!proof.charge(id.size()/64+1))return false;
+        result.cells.push_back({id,versions.at(id).value});
+      }
+      for(const auto &[call,index]:selected.captures){if(!charge())return false;result.captures.push_back({call,index});}
+      result.proven=true;
+    }
+    destination=std::move(result);return true;
+  }
   bool extent(mlir::Operation *point,mlir::Value receiver,ArrayExtent &destination){
     if(!directory()||!collect())return false;
     std::optional<uint32_t> length;
@@ -370,8 +403,19 @@ struct ArrayMemory {
         }
         continue;
       }
-      if(status=="proven"&&(!selected.proven||selected.versions!=expected))
-        return proof.reject("Array read versions differ from independently preceding IR writes");
+      if(status=="proven"){
+        const auto *actual=&selected.versions;bool proven=selected.proven;MemorySelection captured;
+        if(!proven&&!selected.captures.empty()){
+          // A real call boundary is not evidence by itself. Compare claims
+          // only after independently selecting every normal-return cell and
+          // qualifying its actual activation/capture through MemorySources.
+          MemorySources sources(proof);if(!sources.good())return proof.reject(sources.error());
+          captured=sources.arrayRead(sources.root(id),&op);
+          if(captured.status==MemorySelection::Status::Invalid)return proof.reject(sources.error());
+          proven=captured.status==MemorySelection::Status::Proven;actual=&captured.versions;
+        }
+        if(!proven||*actual!=expected)return proof.reject("Array read versions differ from independently preceding IR writes");
+      }
       // A conservative producer claim cannot hide stronger independently
       // selected local writes behind a host boundary/capacity approximation.
       if(selected.proven) {
@@ -401,6 +445,9 @@ struct ArrayMemory {
 bool verifyArrayMemory(ModuleProof &proof,bool compareClaims){return ArrayMemory{proof,compareClaims}.run();}
 bool proveArrayExtent(ModuleProof &proof,mlir::Operation *point,mlir::Value receiver,ArrayExtent &extent){
   return ArrayMemory{proof,false}.extent(point,receiver,extent);
+}
+bool proveArrayCell(ModuleProof &proof,mlir::Operation *point,mlir::Value receiver,uint32_t index,ArrayExtent &cell){
+  return ArrayMemory{proof,false}.cell(point,receiver,index,cell);
 }
 bool verifyArrayOverwriteEffects(ModuleProof &proof){return ArrayMemory{proof,false}.overwrites();}
 } // namespace tsfg::finite

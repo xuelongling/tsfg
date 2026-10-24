@@ -142,4 +142,29 @@ public:
 }
 bool proveStoredReturns(ModuleProof &proof,const std::map<mlir::Operation *,std::vector<MemoryVersion>> &writes,
   const MemoryOrigins &origins,MemorySources &sources){return StoredReturns(proof,writes,origins,sources).run();}
+bool proveArrayReadSources(ModuleProof &proof){
+  MemorySources sources(proof);if(!sources.good())return proof.reject(sources.error());
+  std::map<mlir::Operation *,std::vector<StoredFieldSource>> result;
+  for(auto &[id,fn]:proof.functions)for(auto &block:fn.getBody())for(auto &op:block){
+    if(!proof.charge())return false;
+    if(op.getName().getStringRef()!="tsfg_core.domain.array_read"||!proof.mayReach(&block))continue;
+    const auto *domain=valueDomain(proof,op.getResult(0).getType());if(!domain)return false;bool span=false;
+    for(const auto &type:domain->alternatives){if(!proof.charge())return false;span|=string(*proof.catalog.at(type),"kind")=="readSpan";}
+    if(!span)continue;
+    const auto selected=sources.arrayRead(sources.root(id),&op);
+    if(selected.status==MemorySelection::Status::Invalid)return proof.reject(sources.error());
+    if(selected.status!=MemorySelection::Status::Proven){
+      proof.arrayReadInputs.erase(&op);proof.provedArrayReads.erase(&op);proof.unprovedMemoryReads.insert(&op);continue;
+    }
+    std::vector<StoredFieldSource> projected;std::vector<mlir::Value> inputs;
+    for(const auto &origin:selected.sources){
+      if(!proof.charge())return false;StoredFieldSource value;if(!storeFieldSource(proof,origin,value))return false;
+      for(auto input:origin.values){if(!proof.charge())return false;inputs.push_back(input);}
+      projected.push_back(std::move(value));
+    }
+    proof.arrayReadInputs.insert_or_assign(&op,std::move(inputs));proof.provedArrayReads.insert(&op);
+    proof.unprovedMemoryReads.erase(&op);result.emplace(&op,std::move(projected));
+  }
+  proof.arrayReadSources=std::move(result);return true;
+}
 } // namespace tsfg::finite

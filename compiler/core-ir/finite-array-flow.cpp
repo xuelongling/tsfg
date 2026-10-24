@@ -246,6 +246,14 @@ bool ArrayFlow::operation(mlir::Operation *op,const std::string &function) {
       if(role==Role::OrderedPayload&&ordered!=proof.arrayReadInputs.end()) {
         for(const auto source:ordered->second)
           if(!proof.charge()||!edge(payload(source),input)||!copy(source,op->getResult(0)))return false;
+        const auto projected=proof.arrayReadSources.find(op);
+        if(projected!=proof.arrayReadSources.end())for(const auto &source:projected->second){
+          if(!proof.charge())return false;
+          for(const auto &type:source.introduced)if(!proof.charge()||!flow.seed(input,type))return false;
+          for(auto owner:source.owners)if(!proof.charge()||!copy(owner,op->getResult(0)))return false;
+          // Retained references are not current-frame Array allocations or
+          // element seeds. Their owner evidence is consumed by Borrow only.
+        }
         return valid;
       }
       if(role==Role::OrderedPayload) {

@@ -118,6 +118,9 @@ struct ModuleProof {
   std::map<mlir::Operation *,std::vector<StoredFieldSource>> fieldReadSources;
   std::map<mlir::Operation *,std::vector<StoredFieldSource>> aggregateReturnSources;
   std::set<mlir::Operation *> unprovedStoredReturns;
+  // Actual checked Array cells projected into this read's activation. Foreign
+  // sources have real capture/retained references, never raw callee SSA.
+  std::map<mlir::Operation *,std::vector<StoredFieldSource>> arrayReadSources;
   explicit ModuleProof(mlir::ModuleOp value) : module(value) {}
   bool charge(size_t count = 1);
   bool reject(llvm::StringRef message);

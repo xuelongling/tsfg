@@ -1,5 +1,6 @@
 // SPDX-License-Identifier: MIT
 #include "finite-memory-sources.h"
+#include "finite-array-memory.h"
 #include "mlir/Dialect/ControlFlow/IR/ControlFlowOps.h"
 
 namespace tsfg::finite {
@@ -194,6 +195,65 @@ MemoryOrigin MemorySources::project(Id frame,mlir::Value value,const std::string
   if(result.values.empty()&&result.introduced.empty()&&result.owners.empty()&&result.retainedOwners.empty())result.pending=true;
   if(result.capture&&result.owners.empty()&&result.retainedOwners.empty())result.pending=true;
   result.retained&=retentionSeen&&!result.pending;
+  return result;
+}
+MemorySelection MemorySources::arrayRead(Id frame,mlir::Operation *read){
+  MemorySelection result;uint32_t slot=0;auto index=read->getOperand(1);
+  // This boundary consumes real literal evidence, never a singleton u32 type.
+  while(auto *op=index.getDefiningOp()){
+    if(!proof.charge()){valid=false;break;}const auto name=op->getName().getStringRef();
+    if(name=="tsfg_core.domain.view"||name=="tsfg_core.domain.refine"||name=="tsfg_core.domain.copy"){
+      index=op->getOperand(0);continue;}
+    break;
+  }
+  auto *constant=index.getDefiningOp();bool known=false;
+  if(constant&&constant->getName().getStringRef()=="tsfg_core.constant"){
+    if(const auto number=constant->getAttrOfType<mlir::IntegerAttr>("value")){
+      known=!number.getValue().isNegative()&&number.getValue().getActiveBits()<=32;
+      if(known)slot=uint32_t(number.getValue().getZExtValue());
+    }else if(const auto text=constant->getAttrOfType<mlir::StringAttr>("value")){
+      uint64_t number=0;known=!text.getValue().getAsInteger(10,number)&&number<=UINT32_MAX;if(known)slot=uint32_t(number);
+    }
+  }
+  if(!valid){result.status=MemorySelection::Status::Invalid;return result;}if(!known)return result;
+  struct Item {Id frame;mlir::Operation *point;mlir::Value receiver;uint32_t index;};
+  std::vector<Item> work{{frame,read,read->getOperand(0),slot}};
+  std::set<std::tuple<Id,mlir::Operation *,const void *,uint32_t>> seen;bool pending=false;
+  for(size_t cursor=0;valid&&cursor<work.size();++cursor){
+    if(!proof.charge()){valid=false;break;}const auto item=work[cursor];
+    if(!seen.emplace(item.frame,item.point,item.receiver.getAsOpaquePointer(),item.index).second)continue;
+    if(item.frame==MemoryFrames::none){pending=true;continue;}
+    ArrayExtent selected;
+    if(!proveArrayCell(proof,item.point,item.receiver,item.index,selected)){valid=false;break;}
+    if(!selected.proven){pending=true;continue;}
+    for(const auto &cell:selected.cells){
+      if(!proof.charge()){valid=false;break;}
+      auto source=cell.value;
+      if(source.getParentBlock()->getParentOp()!=item.point->getParentOp()){pending=true;continue;}
+      auto origin=project(item.frame,source,cell.version,frame,true);
+      if(!good()){valid=false;break;}pending|=origin.pending;
+      if(!proof.charge(cell.version.size()/64+1)){valid=false;break;}
+      result.versions.insert(cell.version);result.sources.push_back(std::move(origin));
+    }
+    for(const auto &capture:selected.captures){
+      auto *call=capture.call;
+      if(!proof.charge()){valid=false;break;}const auto targets=proof.selectedCallees.find(call);
+      if(targets==proof.selectedCallees.end()||targets->second.empty()){pending=true;continue;}
+      for(const auto &target:targets->second){
+        if(!proof.charge()){valid=false;break;}const auto child=enter(item.frame,call,target);bool productive=false;
+        if(child==MemoryFrames::none){pending=true;continue;}
+        for(auto &block:proof.functions.at(target).getBody()){
+          if(!proof.charge()){valid=false;break;}if(!proof.mayReach(&block))continue;
+          auto returned=llvm::dyn_cast<mlir::func::ReturnOp>(block.getTerminator());
+          if(!returned||returned.getNumOperands()!=1)continue;productive=true;
+          work.push_back({child,returned.getOperation(),returned.getOperand(0),capture.index});
+        }
+        if(!productive)pending=true;
+      }
+    }
+  }
+  if(!good())result.status=MemorySelection::Status::Invalid;
+  else if(!pending&&!result.sources.empty())result.status=MemorySelection::Status::Proven;
   return result;
 }
 } // namespace tsfg::finite
