@@ -7,6 +7,7 @@ import fs from 'node:fs/promises';
 import { syncBuiltinESMExports } from 'node:module';
 import path from 'node:path';
 import test from 'node:test';
+import { Readable } from 'node:stream';
 import { materializeSource, readMlirPhysicalSource, MlirBuildError } from '../../eng/mlir-build-inputs.mjs';
 import { selectMlirCommandRole, selectMlirBuildPhase, finishMlirPlanning } from '../../eng/mlir-command.mjs';
 import { readMlirBuildTrace, executeMlirTarget } from '../../eng/mlir-build.mjs';
@@ -19,6 +20,7 @@ import { ConfigurationError } from '../../eng/build-errors.mjs';
 import { createMlirFixture } from './mlir-fixtures.mjs';
 
 const hash = bytes => 'sha256:' + createHash('sha256').update(bytes).digest('hex');
+const traceStream = text => Readable.from([Buffer.from(text)]);
 async function fixture() {
   const root = await createMlirFixture('direct-static-');
   const sourceRoot = path.join(root, 'upstream');
@@ -200,7 +202,7 @@ test('planned/final source and link admission rejects native and backend edges b
   const physical = forbidden[0];
   const cmakeTrace = [{ file: physical, line: 1, cmd: 'cmake_language', args: ['EVAL','CODE','set(x y)'] },
     { file: physical + ':1:EVAL', line: 1, cmd: 'set', args: ['x','y'] }].map(row => JSON.stringify(row)).join('\n');
-  await assert.rejects(readMlirBuildTrace({ cmakeTrace, build: roots.build,
+  await assert.rejects(readMlirBuildTrace({ cmakeTrace: traceStream(cmakeTrace), build: roots.build,
     inputRoots: [roots.source, roots.product], command: staticRole }), { issueCode: 'mlir-source-integrity' });
 });
 
@@ -213,7 +215,7 @@ test('unknown ordinary source and EVAL dependencies report the exact gap before 
   assert.throws(() => requireMlirSourceDependency(physical, source, new Map()), missing);
   const cmakeTrace = [{ file: physical, line: 1, cmd: 'cmake_language', args: ['EVAL','CODE','set(x y)'] },
     { file: physical + ':1:EVAL', line: 1, cmd: 'set', args: ['x','y'] }].map(row => JSON.stringify(row)).join('\n');
-  await assert.rejects(readMlirBuildTrace({ cmakeTrace, build, inputRoots: [source, path.join(root, 'product')],
+  await assert.rejects(readMlirBuildTrace({ cmakeTrace: traceStream(cmakeTrace), build, inputRoots: [source, path.join(root, 'product')],
     command: staticRole }), missing);
 });
 
@@ -238,7 +240,7 @@ test('registered EVAL origin refuses an intermediate junction before reading its
   t.after(() => { t.mock.restoreAll(); syncBuiltinESMExports(); });
   const cmakeTrace = [{ file: physical, line: 1, cmd: 'cmake_language', args: ['EVAL','CODE','set(x y)'] },
     { file: physical + ':1:EVAL', line: 1, cmd: 'set', args: ['x','y'] }].map(row => JSON.stringify(row)).join('\n');
-  const error = await readMlirBuildTrace({ cmakeTrace, build: path.join(root, 'build'),
+  const error = await readMlirBuildTrace({ cmakeTrace: traceStream(cmakeTrace), build: path.join(root, 'build'),
     inputRoots: [source, path.join(root, 'product')], command: staticRole,
     sourceEntries: [{ repositoryRelativePath: 'llvm/entry.cmake', sha256: hash(bytes) }] }).then(() => null, failure => failure);
   assert.deepEqual(reads, [], 'a registered lexical path must not open a junction-redirected body, even with identical bytes');
@@ -260,7 +262,7 @@ test('unknown static product EVAL origin refuses before reading its body', async
   t.after(() => { t.mock.restoreAll(); syncBuiltinESMExports(); });
   const cmakeTrace = [{ file: physical, line: 1, cmd: 'cmake_language', args: ['EVAL','CODE','set(x y)'] },
     { file: physical + ':1:EVAL', line: 1, cmd: 'set', args: ['x','y'] }].map(row => JSON.stringify(row)).join('\n');
-  const error = await readMlirBuildTrace({ cmakeTrace, build: path.join(root, 'build'),
+  const error = await readMlirBuildTrace({ cmakeTrace: traceStream(cmakeTrace), build: path.join(root, 'build'),
     inputRoots: [source, product], command: staticRole }).then(() => null, failure => failure);
   assert.deepEqual(reads, [], 'a product directory does not admit an unknown EVAL body');
   assert.equal(error?.issueCode, 'mlir-source-integrity');
@@ -278,11 +280,11 @@ test('static EVAL accepts exact ordinary source and product members and rejects 
     const cmakeTrace = [{ file: physical, line: 1, cmd: 'cmake_language', args: ['EVAL','CODE','set(x y)'] },
       { file: physical + ':1:EVAL', line: 1, cmd: 'set', args: ['x','y'] }].map(row => JSON.stringify(row)).join('\n');
     const entry = { projectId: directory === source ? 'llvm-project.git' : 'tsfg', repositoryRelativePath: relative, sha256: hash(bytes) };
-    const input = { cmakeTrace, build: path.join(root, 'build'), inputRoots: [source, product], command: staticRole,
-      sourceEntries: directory === source ? [entry] : [], productEntries: directory === product ? [entry] : [] };
-    assert.deepEqual((await readMlirBuildTrace(input)).files, [physical]);
+    const input = () => ({ cmakeTrace: traceStream(cmakeTrace), build: path.join(root, 'build'), inputRoots: [source, product], command: staticRole,
+      sourceEntries: directory === source ? [entry] : [], productEntries: directory === product ? [entry] : [] });
+    assert.deepEqual((await readMlirBuildTrace(input())).files, [physical]);
     await writeFile(physical, 'cmake_language(EVAL CODE "set(x changed)")\n');
-    await assert.rejects(readMlirBuildTrace(input), { issueCode: 'mlir-source-integrity' });
+    await assert.rejects(readMlirBuildTrace(input()), { issueCode: 'mlir-source-integrity' });
   }
 });
 
@@ -306,7 +308,7 @@ test('registered static product EVAL refuses an intermediate junction before bod
   t.after(() => { t.mock.restoreAll(); syncBuiltinESMExports(); });
   const cmakeTrace = [{ file: physical, line: 1, cmd: 'cmake_language', args: ['EVAL','CODE','set(x y)'] },
     { file: physical + ':1:EVAL', line: 1, cmd: 'set', args: ['x','y'] }].map(row => JSON.stringify(row)).join('\n');
-  await assert.rejects(readMlirBuildTrace({ cmakeTrace, build: path.join(root, 'build'),
+  await assert.rejects(readMlirBuildTrace({ cmakeTrace: traceStream(cmakeTrace), build: path.join(root, 'build'),
     inputRoots: [path.join(root, 'source'), product], command: staticRole,
     productEntries: [{ projectId: 'tsfg', repositoryRelativePath: 'compiler/entry.cmake', sha256: hash(bytes) }] }),
   { issueCode: 'mlir-source-integrity' });

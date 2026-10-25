@@ -1,4 +1,44 @@
 // SPDX-License-Identifier: MIT
+import { createHash } from 'node:crypto';
+
+// Bound each record at 128 MiB, matching the existing Ninja capture budget.
+// This per-record guard is new: oversize input is rejected, never truncated.
+const traceRecordBudget = 128 * 1024 * 1024;
+/** @param {import("node:stream").Readable} stream @param {(record: any) => void} consume */
+export async function readCmakeTraceEvents(stream, consume) {
+  if (!stream || typeof stream.destroy !== "function") throw new TypeError("CMake trace requires a byte stream");
+  const hash = createHash('sha256');
+  let parts = [], pendingBytes = 0, bytes = 0, codeUnits = 0, records = 0, maxRecordBytes = 0;
+  const append = part => {
+    pendingBytes += part.length;
+    if (pendingBytes > traceRecordBudget)
+      throw new RangeError(`CMake trace record ${records + 1} exceeds ${traceRecordBudget}-byte parsing budget`);
+    if (part.length) parts.push(part);
+  };
+  const parse = terminated => {
+    const text = Buffer.concat(parts, pendingBytes).toString("utf8");
+    codeUnits += text.length + Number(terminated);
+    maxRecordBytes = Math.max(maxRecordBytes, pendingBytes);
+    const line = terminated && text.endsWith('\r') ? text.slice(0, -1) : text;
+    parts = []; pendingBytes = 0;
+    if (!line) return;
+    consume(JSON.parse(line)); records++;
+  };
+  try {
+    for await (const chunk of stream) {
+      if (!Buffer.isBuffer(chunk)) throw new TypeError('CMake trace requires raw byte chunks');
+      hash.update(chunk); bytes += chunk.length;
+      let start = 0, end;
+      while ((end = chunk.indexOf(10, start)) !== -1) {
+        append(chunk.subarray(start, end)); parse(true); start = end + 1;
+      }
+      append(chunk.subarray(start));
+    }
+    if (pendingBytes) parse(false);
+    return { sha256: `sha256:${hash.digest('hex')}`, bytes, codeUnits, records, maxRecordBytes, recordBudget: traceRecordBudget };
+  } finally { stream.destroy(); }
+}
+
 
 export function isPhysicalCmakeEvaluationCall(original, recordedLine) {
   const lines = original.split("\n");

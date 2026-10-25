@@ -5,6 +5,9 @@ import { spawnSync } from "node:child_process";
 import { cp, mkdir, readFile, readdir, symlink, writeFile } from "node:fs/promises";
 import path from "node:path";
 import test from "node:test";
+import { Readable } from "node:stream";
+import * as cmakeEvaluation from "../../eng/mlir-cmake-evaluation.mjs";
+const traceStream = text => Readable.from([Buffer.from(text)]);
 import { fileURLToPath, pathToFileURL } from "node:url";
 import { createMlirFixture } from "./mlir-fixtures.mjs";
 import { MlirBuildError, readMlirBuildTrace } from "../../eng/mlir-build.mjs";
@@ -169,6 +172,32 @@ test("M14 activated MPI mapping refuses foreign identity, native role and overri
   assert.deepEqual(await readdir(root), [], "no source or stage body exists or can be consumed by these refusals");
 });
 
+test("MLIR trace events preserve raw bytes across UTF8 and line boundaries and close failures", async () => {
+  const text = "{\"file\":\"config-雪.cmake\",\"line\":1}\r\n\r\n{\"version\":{\"major\":1}}";
+  const events = [];
+  const chunks = Readable.from([...Buffer.from(text)].map(byte => Buffer.from([byte])));
+  const result = await cmakeEvaluation.readCmakeTraceEvents(chunks, event => events.push(event));
+  assert.deepEqual(events, [{ file: "config-雪.cmake", line: 1 }, { version: { major: 1 } }]);
+  assert.equal(result.sha256, "sha256:e02136f44b85b992f47de1f3c3a0145a33a48b01fe071d4d0aec1cd0104ac171");
+  assert.equal(result.bytes, Buffer.byteLength(text));
+  assert.equal(result.codeUnits, text.length);
+  assert.equal(result.records, 2);
+  assert.equal(chunks.destroyed, true);
+  const malformed = Readable.from([Buffer.from("{bad}\n"), Buffer.from("never consumed\n")]);
+  await assert.rejects(cmakeEvaluation.readCmakeTraceEvents(malformed, () => {}), SyntaxError);
+  assert.equal(malformed.destroyed, true);
+  const failure = Error("owned consumer failure");
+  const consumer = Readable.from([Buffer.from("{}\n"), Buffer.from("never consumed\n")]);
+  await assert.rejects(cmakeEvaluation.readCmakeTraceEvents(consumer, () => { throw failure; }), error => error === failure);
+  assert.equal(consumer.destroyed, true);
+  const broken = Readable.from((async function* () { yield Buffer.from("{}\n"); throw failure; })());
+  await assert.rejects(cmakeEvaluation.readCmakeTraceEvents(broken, () => {}), error => error === failure);
+  assert.equal(broken.destroyed, true);
+  const textChunks = Readable.from(["{}\n"]);
+  await assert.rejects(cmakeEvaluation.readCmakeTraceEvents(textChunks, () => {}), /raw byte chunks/);
+  assert.equal(textChunks.destroyed, true);
+});
+
 test("MLIR trace reader requires a physical EVAL CODE command, not a CALL, comment or string", async () => {
   const root = await createMlirFixture("mlir-eval-origin-");
   const file = path.join(root, "GNUInstallDirs.cmake");
@@ -182,22 +211,22 @@ test("MLIR trace reader requires a physical EVAL CODE command, not a CALL, comme
     { file, line, cmd: "cmake_language", args: ["EVAL", "CODE", "set(result value)"] },
     { file: `${file}:${line}:EVAL`, line: 1, cmd: "set", args: ["result", "value"] }
   ].map(record => JSON.stringify(record)).join("\n");
-  const result = await readMlirBuildTrace({ cmakeTrace: trace(485), build: root, inputRoots: [root] });
+  const result = await readMlirBuildTrace({ cmakeTrace: traceStream(trace(485)), build: root, inputRoots: [root] });
   assert.deepEqual(result.files, [file]);
   assert.equal(result.evaluationFrames[0].physicalFile, file);
   assert.deepEqual(result.evaluationFrames[0].evaluationLines, ["485"]);
   for (const line of [290, 484]) await assert.rejects(
-    readMlirBuildTrace({ cmakeTrace: trace(line), build: root, inputRoots: [root] }),
+    readMlirBuildTrace({ cmakeTrace: traceStream(trace(line)), build: root, inputRoots: [root] }),
     error => error instanceof MlirBuildError && error.issueCode === "mlir-source-integrity");
   for (const text of ['set(text "\ncmake_language(EVAL CODE fake)\n")',
     'set(text [=[\ncmake_language(EVAL CODE fake)\n]=])',
     '#[=[\ncmake_language(EVAL CODE fake)\n]=]',
     'set(text\ncmake_language(EVAL CODE fake)\n)']) {
     await writeFile(file, text);
-    await assert.rejects(readMlirBuildTrace({ cmakeTrace: trace(2), build: root, inputRoots: [root] }),
+    await assert.rejects(readMlirBuildTrace({ cmakeTrace: traceStream(trace(2)), build: root, inputRoots: [root] }),
       error => error instanceof MlirBuildError && error.issueCode === "mlir-source-integrity");
   }
-  await assert.rejects(readMlirBuildTrace({ cmakeTrace: trace(485), build: root, inputRoots: [] }),
+  await assert.rejects(readMlirBuildTrace({ cmakeTrace: traceStream(trace(485)), build: root, inputRoots: [] }),
     error => error instanceof MlirBuildError && error.issueCode === "mlir-source-integrity");
 });
 

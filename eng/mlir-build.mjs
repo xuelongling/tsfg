@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: MIT
 import { createHash, randomUUID } from "node:crypto";
 import { spawn, spawnSync } from "node:child_process";
+import { createReadStream } from "node:fs";
 import { copyFile, lstat, mkdir, open, readFile, readdir, realpath, rename, writeFile } from "node:fs/promises";
 import path from "node:path";
 import { readMlirSourceIdentity } from "./mlir-source.mjs";
@@ -14,7 +15,7 @@ import { MlirBuildError, gitBytes, materializeSource, retainedNoticeBundle, read
 export { MlirBuildError } from "./mlir-build-inputs.mjs";
 import { selectMlirCommandRole, selectMlirBuildPhase, finishMlirPlanning, requireMlirSdkCommandIntake } from "./mlir-command.mjs";
 import { coreIrInputs } from "./core-ir-inputs.mjs";
-import { isPhysicalCmakeEvaluationCall } from "./mlir-cmake-evaluation.mjs";
+import { isPhysicalCmakeEvaluationCall, readCmakeTraceEvents } from "./mlir-cmake-evaluation.mjs";
 import { readMlirDirectSourceSelection, mlirRoleConfiguration, assertMlirRoleCache, assertMlirRoleDependency, requireMlirSourceDependency } from "./mlir-static-closure.mjs";
 
 const stagedProductInputs = [...coreIrInputs, "eng/mlir-python-policy.cmake", "eng/mlir-compiler-launcher.mjs", "eng/mlir-configuration-sources.cmake"];
@@ -104,9 +105,8 @@ export async function readMlirBuildTrace({ cmakeTrace, build, inputRoots, sdk = 
   const sourceInventory = new Map(sourceEntries.map(entry => [entry.repositoryRelativePath.toLowerCase(), entry]));
   const productInventory = new Map(productEntries.filter(entry => entry.projectId === "tsfg")
     .map(entry => [entry.repositoryRelativePath.toLowerCase(), entry]));
-  for (const line of cmakeTrace.split(/\r?\n/).filter(Boolean)) {
-    const record = JSON.parse(line);
-    if (!record.file) continue;
+  const traceStats = await readCmakeTraceEvents(cmakeTrace, record => {
+    if (!record.file) return;
     cmakeFiles.add(record.file);
     if (record.cmd === "cmake_language" && record.args?.[0] === "EVAL" && record.args?.[1] === "CODE" &&
       Number.isSafeInteger(record.line) && record.line > 0) {
@@ -115,7 +115,7 @@ export async function readMlirBuildTrace({ cmakeTrace, build, inputRoots, sdk = 
       call.codeHashes.add(digest(JSON.stringify(record.args.slice(2))));
       evaluationCalls.set(key, call);
     }
-  }
+  });
   for (const name of [...cmakeFiles]) {
     // CMake identifies cmake_language(EVAL CODE) frames as file:line:EVAL,
     // including nested evaluations. Their code originates in the physical
@@ -151,7 +151,7 @@ export async function readMlirBuildTrace({ cmakeTrace, build, inputRoots, sdk = 
     }
     cmakeFiles.add(physical);
   }
-  return { files: [...cmakeFiles], evaluationFrames: [...cmakeEvaluationFrames.values()], sha256: digest(cmakeTrace) };
+  return { files: [...cmakeFiles], evaluationFrames: [...cmakeEvaluationFrames.values()], sha256: traceStats.sha256, traceStats };
 }
 
 async function collectConsumedInputs({ tools, build, source, sourceEntries, product, productEntries, productRoot, runtime, env, stage, sdk = null, command }) {
@@ -167,7 +167,7 @@ async function collectConsumedInputs({ tools, build, source, sourceEntries, prod
   await writeFile(path.join(stage, "ninja-inputs.nul"), inputs);
   await writeFile(path.join(stage, "ninja-configuration-inputs.nul"), configurationInputs);
   await writeFile(path.join(stage, "ninja-deps.txt"), deps);
-  const cmakeTrace = await readFile(path.join(stage, "cmake-trace.jsonl"), "utf8");
+  const cmakeTrace = createReadStream(path.join(stage, "cmake-trace.jsonl"), { highWaterMark: 64 * 1024 });
   const cmakeOrigins = await readMlirBuildTrace({ cmakeTrace, build, sdk, command, sourceEntries, productEntries, productRoot: sdk ? productRoot : undefined,
     inputRoots: [source, product, runtime.closurePath, ...(sdk ? [sdk.root] : [])] });
   const observed = new Set([...inputs.split("\0").filter(Boolean),
