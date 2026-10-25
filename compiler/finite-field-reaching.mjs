@@ -7,6 +7,7 @@ import {finiteCallables} from './finite-callables.mjs';
 import {finiteFieldPhases} from './finite-field-phases.mjs';
 import {finitePresence} from './finite-presence.mjs';
 import {createFieldReturnGraphs} from './finite-field-return-graphs.mjs';
+import {finiteFieldEffects} from './finite-field-effects.mjs';
 
 // These are the production proof-state snapshots, not Source-value copies.
 function versionCopy(values,charge) {
@@ -39,42 +40,12 @@ export function buildFiniteFieldReaching(hir,plan,charge) {
   const functions=new Map(callables.map(fn=>[fn.id,fn]));
   const nodes=new Map((plan.nodes??[]).map(row=>[row.id,row])),domains=new Map((plan.domains??[]).map(row=>[row.id,row]));
   const actuals=id=>domains.get(nodes.get(id)?.domainId)?.actualTypes??[];
-  const effects=new Map(callables.map(fn=>[fn.id,{writes:false,callees:new Set()}]));
   const writes=new Map(),reads=new Map(),phaseWrites=new Map(),allocationEntries=new Map(),completions=new Map(),contexts=new Map(),returnAliases=new Map(),outputs=new Map();
-  const storedTokens=new Map(),returnedFields=new Map(),cyclicFunctions=new Set();
+  const storedTokens=new Map(),returnedFields=new Map();
   const projectedOutputs=new Map(),returnValueParameters=new Map(),returnGraphs=createFieldReturnGraphs(charge);
   const constructors=new Map();for(const fn of callables){charge();if(fn.role==='construction-body')constructors.set(fn.construction,fn);}
-  for(const fn of callables) {
-    const stack=[{value:fn.body,path:fn.id+'/body'}],effect=effects.get(fn.id);
-    while(stack.length) {
-      charge();const {value,path}=stack.pop();if(!value||typeof value!=='object')continue;
-      if(['fieldAssignment','fieldUpdate','initializeOwnFields','superConstruct','construct'].includes(value.kind))effect.writes=true;
-      if(value.kind==='while')cyclicFunctions.add(fn.id);
-      if(value.kind==='call') {
-        const targets=value.receiver?(calls.get(path)?.targets??[]).map(row=>row.functionId):[value.target];
-        for(const target of targets)if(target!==hir.intrinsics.readSpan.id) {
-          effect.callees.add(target);contexts.set(path+'\0'+target,{target,fields:new Map()});
-        }
-      }
-      for(const [key,child] of Object.entries(value))if(child&&typeof child==='object')
-        stack.push({value:child,path:path+'/'+key});
-    }
-  }
-  // Propagate effects across the actual selected call graph, including cycles.
-  let changed=true;
-  while(changed) {
-    changed=false;
-    for(const effect of effects.values())if(!effect.writes)for(const target of effect.callees) {
-      charge();if(!effects.has(target)||effects.get(target).writes){effect.writes=true;changed=true;break;}
-    }
-  }
-  const recursive=new Set();
-  for(const [id,effect]of effects){
-    const work=[],seen=new Set();for(const target of effect.callees){charge();work.push(target);}
-    for(let cursor=0;cursor<work.length;++cursor){charge();const target=work[cursor];
-      if(target===id){recursive.add(id);break;}if(seen.has(target))continue;seen.add(target);
-      for(const child of effects.get(target)?.callees??[]){charge();work.push(child);}}
-  }
+  const {effects,sites,recursive,cyclicFunctions}=finiteFieldEffects(hir,plan,callables,phases,charge);
+  for(const [site,target]of sites){charge();contexts.set(site,{target,fields:new Map()});}
   const clone=state=>copyFieldReachingState(state,charge);
   function join(left,right) {
     if(!left)return right;if(!right)return left;
@@ -176,9 +147,15 @@ export function buildFiniteFieldReaching(hir,plan,charge) {
           const location=key(tokens[output.parameter],{actualType:output.actualType,fieldId:output.field});
           if(location)continuation.set(location,versionCopy(output.versions,charge));}
       }
-      // A call may mutate any alias before it completes. Retain only the
-      // versions actually established on every successful callee exit.
-      retainValues(state);for(const row of continuation){charge();state.set(...row);}if(!token)return;
+      // A physical FieldId outside the complete write closure cannot change,
+      // even through an unknown alias. Preserve its existing caller evidence;
+      // universal constructor parameter entries remain unknown below.
+      const effect=callee&&effects.get(callee.id);
+      for(const location of state.keys()) {
+        charge();const [,actual,field]=location.split('\0');
+        if(types.get(actual)?.kind!=='value'&&(!effect||effect.unknown||effect.fields.has(field)))state.delete(location);
+      }
+      for(const row of continuation){charge();state.set(...row);}if(!token)return;
       for(const row of completions.get(construction)??[])if(actualTypes.some(actual=>{charge();return actual===row.actualType;}))
         {charge();state.set(key(token,{actualType:row.actualType,fieldId:row.field}),versionCopy(row.versions,charge));
           if(callee&&tokens)for(const version of row.versions){charge();const source=storedTokens.get(version);
