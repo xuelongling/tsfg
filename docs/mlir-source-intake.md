@@ -193,6 +193,32 @@ source supplement preserves all8144 prior objects and the five materials.
 MPIToLLVM remains unregistered: its MPICH COPYRIGHT has separate terms and
 notice obligations, which the original LLVM SPDX header does not discharge.
 Other admitted inputs remain independent of this exact gap.
+
+The prepared MPI notice seam does not register that file: the production build
+lock remains8145 entries and its independent pin is unchanged. Only that pinned
+lock can create an opaque staged-source policy. The sole supported descriptor
+kind is `prepend-mpich-copyright-comment-v1`, limited to the exact MPIToLLVM path,
+source commit and compiler-side-M01 direct-static role. Unknown fields, caller
+overrides, other roles, notice hash changes and comment-terminator injection
+refuse before source consumption. Owned synthetic fixtures are not approvals.
+
+If an exact descriptor is later adopted, its original blob/raw SHA and complete
+original attribution remain intact. After qualifying those bytes, materialization
+can prepend a C++ comment containing the independently identified original MPICH
+COPYRIGHT to the separate staged copy. The descriptor binds the original source,
+complete notice and derived byte count/SHA. This is an explicit transformation,
+not a checkout normalization or an unchanged Git object. Precompile and dependency
+guards check actual staged bytes; source snapshots and traces retain both
+identities, while the source Build Input Set hashes the actual staged input.
+
+Notice retention also covers a transformed file materialized only for configure
+presence, with a separate `materializedSourceNotices` provenance section. It does
+not invent target compiler consumption. The original source stays unmodified;
+the complete notice accompanies the staged prologue and its retained provenance.
+The additional mpich2 expression and exact real-file descriptor remain unadopted;
+this engineering seam grants no real MPI materialization, SDK/native transfer,
+configuration, compilation, source redistribution or Runtime qualification.
+
 This supplement permits conditional source presence for the fixed direct static
 Core configuration. It grants no optional-library/backend compilation,
 generated/installed output, execution or Runtime role. Source selection still

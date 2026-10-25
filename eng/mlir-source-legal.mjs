@@ -11,6 +11,95 @@ import { readMlirLegalRegistration } from "./mlir-source-registration.mjs";
 
 const digest = bytes => `sha256:${createHash("sha256").update(bytes).digest("hex")}`;
 const reject = message => { throw new IntakeLedgerError("mlir-source-license", message); };
+const stagedPolicies = new WeakMap();
+const stagedPath = "mlir/lib/Conversion/MPIToLLVM/MPIToLLVM.cpp";
+const keys = (value, names) => value && typeof value === "object" && !Array.isArray(value) &&
+  Object.keys(value).sort().join(",") === names.split(",").sort().join(",");
+const oid = bytes => createHash("sha1").update(`blob ${Buffer.byteLength(bytes)}\0`).update(bytes).digest("hex");
+const positiveBytes = value => Number.isSafeInteger(value) && value > 0;
+const rawHash = value => /^sha256:[0-9a-f]{64}$/.test(value ?? "");
+const gitHash = value => /^[0-9a-f]{40}$/.test(value ?? "");
+function freeze(value) {
+  if (value && typeof value === "object") { Object.values(value).forEach(freeze); Object.freeze(value); }
+  return value;
+}
+
+function stagedPolicy({ lock, sha256 }, identity) {
+  const mappings = new Map();
+  for (const file of lock.files) {
+    const d = file.stagedTransform;
+    if (d === undefined) continue;
+    if (lock.role !== "compiler-side-M01" || file.role !== lock.role || file.path !== stagedPath || file.mode !== "100644" ||
+        file.license !== "(Apache-2.0 WITH LLVM-exception) AND mpich2" ||
+        !keys(d, "schemaVersion,kind,path,sourceCommit,role,consumer,original,notice,staged") || d.schemaVersion !== "1" ||
+        d.kind !== "prepend-mpich-copyright-comment-v1" || d.path !== file.path || d.sourceCommit !== lock.sourceCommit ||
+        d.role !== lock.role || d.consumer !== "direct-source-static" ||
+        !keys(d.original, "blob,sha256,bytes") || d.original.blob !== file.blob || d.original.sha256 !== file.sha256 ||
+        !gitHash(d.original.blob) || !rawHash(d.original.sha256) || !positiveBytes(d.original.bytes) ||
+        !keys(d.notice, "repository,path,commit,blob,sha256,bytes,expression,completeOriginalNotice") ||
+        d.notice.repository !== "pmodels/mpich" || d.notice.path !== "COPYRIGHT" || d.notice.expression !== "mpich2" ||
+        !gitHash(d.notice.commit) || !gitHash(d.notice.blob) || !rawHash(d.notice.sha256) || !positiveBytes(d.notice.bytes) ||
+        typeof d.notice.completeOriginalNotice !== "string" || d.notice.completeOriginalNotice.includes("*/") ||
+        Buffer.from(d.notice.completeOriginalNotice).toString("utf8") !== d.notice.completeOriginalNotice ||
+        d.notice.completeOriginalNotice.includes("\0") || Buffer.byteLength(d.notice.completeOriginalNotice) !== d.notice.bytes ||
+        digest(Buffer.from(d.notice.completeOriginalNotice)) !== d.notice.sha256 || oid(d.notice.completeOriginalNotice) !== d.notice.blob ||
+        !keys(d.staged, "sha256,bytes") || !rawHash(d.staged.sha256) || !positiveBytes(d.staged.bytes) ||
+        d.staged.bytes !== d.original.bytes + d.notice.bytes + 7 || mappings.has(file.path))
+      reject(`Invalid independently registered staged transformation: ${file.path}`);
+    if (identity.baseCommit !== lock.baseCommit || identity.sourceCommit !== lock.sourceCommit)
+      reject("Staged transformation has another immutable source identity");
+    mappings.set(file.path, freeze(d));
+  }
+  const policy = Object.freeze({ registrationLockSha256: sha256 });
+  stagedPolicies.set(policy, mappings);
+  return policy;
+}
+
+/** Only the independently pinned build registration can create this opaque policy.
+ * Current production has no such entry: implementing the seam grants no MPI use.
+ */
+export async function readMlirStagedSourcePolicy(identity) {
+  return stagedPolicy(await readMlirLegalRegistration("build"), identity);
+}
+
+export function mlirStagedSourceDescriptor(policy, name) {
+  const mappings = stagedPolicies.get(policy);
+  if (!mappings) reject("Unknown staged transformation policy");
+  return mappings.get(name);
+}
+
+export function assertMlirStagedSourceSelection(policy, selection) {
+  const mappings = stagedPolicies.get(policy);
+  if (!mappings) reject("Unknown staged transformation policy");
+  if (!selection && mappings.size) reject("Staged transformations require direct-source static selection");
+  for (const entry of selection?.entries ?? []) {
+    const d = mappings.get(entry.repositoryRelativePath);
+    if (d ? selection.registrationLockSha256 !== policy.registrationLockSha256 || entry.blob !== d.original.blob ||
+        entry.sha256 !== d.original.sha256 || JSON.stringify(entry.stagedTransform) !== JSON.stringify(d)
+      : entry.stagedTransform !== undefined) reject(`Unregistered staged transformation override: ${entry.repositoryRelativePath}`);
+  }
+}
+
+/** Produces bytes only for a mapping in the opaque policy, never a caller grant. */
+export function deriveMlirStagedSource(policy, name, original) {
+  const d = mlirStagedSourceDescriptor(policy, name);
+  if (!d) return null;
+  if (original.length !== d.original.bytes || digest(original) !== d.original.sha256 || oid(original) !== d.original.blob)
+    reject(`Original staged-transformation source changed: ${name}`);
+  const bytes = Buffer.concat([Buffer.from("/*\n"), Buffer.from(d.notice.completeOriginalNotice), Buffer.from("\n*/\n"), original]);
+  if (bytes.length !== d.staged.bytes || digest(bytes) !== d.staged.sha256)
+    reject(`Derived staged-transformation identity changed: ${name}`);
+  return { bytes, stagedTransform: d };
+}
+
+export function qualifyMlirStagedSourceEntry(policy, entry) {
+  const d = mlirStagedSourceDescriptor(policy, entry.repositoryRelativePath);
+  if (d ? entry.blob !== d.original.blob || entry.sha256 !== d.staged.sha256 ||
+      entry.normalizedMode !== "100644" || entry.projectId !== "llvm-project.git" ||
+      JSON.stringify(entry.stagedTransform) !== JSON.stringify(d) : entry.stagedTransform !== undefined)
+    reject(`Changed staged source provenance: ${entry.repositoryRelativePath}`);
+  return d;
+}
 
 /** Read only bytes proven to be the exact immutable Git object, never a guessed normalization. */
 export function mlirCommittedSourceBytes(checkout, blob, name) {
@@ -37,6 +126,9 @@ export async function readMlirSourceBuildLegalInputs({ sourceRoot, git, paths, r
       if (!file) reject(`No qualified mandatory build input: ${name}`);
       return file;
     });
+    const staged = stagedPolicy({ lock, sha256: registrationHash }, lock);
+    if (sdk && selected.some(file => mlirStagedSourceDescriptor(staged, file.path)))
+      reject("Staged transformations cannot transfer to the SDK role");
     // Historical registration hashes identify the original build. The current
     // finite mapping independently qualifies every selected physical member.
     const identity = proof ? { baseCommit: proof.sourceNotices.baseCommit, sourceCommit: proof.identity.sourceCommit } :

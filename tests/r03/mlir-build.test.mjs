@@ -1,12 +1,149 @@
 // SPDX-License-Identifier: MIT
 import assert from "node:assert/strict";
+import { createHash } from "node:crypto";
 import { spawnSync } from "node:child_process";
 import { cp, mkdir, readFile, readdir, symlink, writeFile } from "node:fs/promises";
 import path from "node:path";
 import test from "node:test";
-import { fileURLToPath } from "node:url";
+import { fileURLToPath, pathToFileURL } from "node:url";
 import { createMlirFixture } from "./mlir-fixtures.mjs";
 import { MlirBuildError, readMlirBuildTrace } from "../../eng/mlir-build.mjs";
+
+async function stagedNoticeFixture(change = undefined) {
+  const root = await createMlirFixture("mlir-staged-notice-");
+  const eng = path.join(root, "eng"), source = path.join(root, "source");
+  await cp(new URL("../../eng/", import.meta.url), eng,
+    { recursive: true, filter: name => !path.extname(name) || name.endsWith(".mjs") });
+  const name = "mlir/lib/Conversion/MPIToLLVM/MPIToLLVM.cpp";
+  const attribution = "// Owned original attribution.\n";
+  const original = Buffer.from(attribution + "int ordinary = 7;\n");
+  const notice = "Fixture copyright.\n";
+  // A worked byte golden, independent of the production transformation.
+  const expected = Buffer.from("/*\nFixture copyright.\n\n*/\n// Owned original attribution.\nint ordinary = 7;\n");
+  const hash = bytes => "sha256:" + createHash("sha256").update(bytes).digest("hex");
+  const blob = bytes => createHash("sha1").update(`blob ${Buffer.byteLength(bytes)}\0`).update(bytes).digest("hex");
+  for (const directory of [path.dirname(name), "llvm"])
+    await mkdir(path.join(source, directory), { recursive: true });
+  await writeFile(path.join(source, name), original);
+  for (const component of ["llvm", "mlir"])
+    await writeFile(path.join(source, component, "LICENSE.TXT"), "Owned fixture license.\n");
+  const git = (...args) => {
+    const result = spawnSync(process.env.TSFG_GIT, ["-C", source, ...args],
+      { env: { ...process.env, GIT_AUTHOR_DATE: "2026-10-25T00:00:00Z", GIT_COMMITTER_DATE: "2026-10-25T00:00:00Z" },
+        windowsHide: true, encoding: "utf8" });
+    assert.ifError(result.error); assert.equal(result.status, 0, result.stderr);
+    return result.stdout.trim();
+  };
+  const sourceLock = JSON.parse(await readFile(new URL("../../eng/mlir-source.lock.json", import.meta.url), "utf8"));
+  git("init", "-b", "r03-m01-source");
+  git("config", "user.name", "Owned fixture"); git("config", "user.email", "fixture@example.invalid");
+  git("config", "core.autocrlf", "false"); git("remote", "add", "origin", sourceLock.carrierUrl);
+  git("add", "."); git("commit", "-m", "owned fixture base");
+  const baseCommit = git("rev-parse", "HEAD"), localChanges = "owned provenance fixture only";
+  await writeFile(path.join(source, "UPSTREAM.toml"), `base_oid = "${baseCommit}"\ncanonical_url = "${sourceLock.canonicalUrl}"\nlicense = "${sourceLock.license}"\nsync_branch = "refs/heads/r03-m01-source"\nlocal_changes = "${localChanges}"\n`);
+  git("add", "UPSTREAM.toml"); git("commit", "-m", "owned fixture provenance");
+  const sourceCommit = git("rev-parse", "HEAD"), sourceTree = git("rev-parse", "HEAD^{tree}");
+  const identity = { sourceRoot: source, baseCommit, sourceCommit, sourceTree, inspectedFiles: [] };
+  sourceLock.baseCommit = baseCommit; sourceLock.sourceCommit = sourceCommit;
+  sourceLock.sourceTree = sourceTree; sourceLock.localChanges = localChanges;
+  sourceLock.files = await Promise.all(sourceLock.files.map(async file => ({ path: file.path,
+    blob: git("rev-parse", `${sourceCommit}:${file.path}`), sha256: hash(await readFile(path.join(source, file.path))) })));
+  const descriptor = { schemaVersion: "1", kind: "prepend-mpich-copyright-comment-v1", path: name,
+    sourceCommit, role: "compiler-side-M01", consumer: "direct-source-static",
+    original: { blob: blob(original), sha256: hash(original), bytes: original.length },
+    notice: { repository: "pmodels/mpich", path: "COPYRIGHT", commit: "e0b3d1dd2c62c80048e5fc3b60d0b24e0d2a863d",
+      blob: blob(notice), sha256: hash(notice), bytes: Buffer.byteLength(notice), expression: "mpich2", completeOriginalNotice: notice },
+    staged: { sha256: hash(expected), bytes: expected.length } };
+  const row = { mode: "100644", path: name, blob: blob(original), sha256: hash(original), role: "compiler-side-M01",
+    license: "(Apache-2.0 WITH LLVM-exception) AND mpich2", noticeStart: "0", noticeEnd: String(Buffer.byteLength(attribution)),
+    completeOriginalAttribution: attribution, completeOriginalNotice: attribution, noticeSha256: hash(attribution),
+    stagedTransform: descriptor };
+  const lock = { schemaVersion: "1", baseCommit, sourceCommit, role: "compiler-side-M01", files: [row], licenseMaterials: [] };
+  if (change) change(lock);
+  const empty = { ...lock, files: [], purpose: "owned fixture notice retention" };
+  const buildRaw = JSON.stringify(lock) + "\n", fileRaw = JSON.stringify(empty) + "\n";
+  let registration = await readFile(path.join(eng, "mlir-source-registration.mjs"), "utf8");
+  registration = registration.replace(/(build: \["mlir-source-build-legal.lock.json", ")[^"]+/, `$1${hash(buildRaw)}`)
+    .replace(/(file: \["mlir-source-legal.lock.json", ")[^"]+/, `$1${hash(fileRaw)}`);
+  for (const [file, bytes] of [["mlir-source-registration.mjs", registration], ["mlir-source-build-legal.lock.json", buildRaw],
+    ["mlir-source-legal.lock.json", fileRaw], ["mlir-source-notices.lock.json", fileRaw], ["mlir-source.lock.json", JSON.stringify(sourceLock)]])
+    await writeFile(path.join(eng, file), bytes);
+  const inputs = await import(pathToFileURL(path.join(eng, "mlir-build-inputs.mjs")).href);
+  const legal = await import(pathToFileURL(path.join(eng, "mlir-source-legal.mjs")).href);
+  const selection = await import(pathToFileURL(path.join(eng, "mlir-static-closure.mjs")).href);
+  return { root, eng, source, name, identity, original, expected, descriptor, row, inputs, legal, selection, git: process.env.TSFG_GIT };
+}
+
+test("M14 staged notice preserves original provenance and retains configure-only attribution", async () => {
+  const f = await stagedNoticeFixture();
+  const legal = await f.legal.readMlirSourceBuildLegalInputs({ sourceRoot: f.source, git: f.git, paths: [f.name] });
+  const selected = await f.selection.readMlirDirectSourceSelection(f.identity, { role: "static" });
+  const staged = path.join(f.root, "staged");
+  const result = await f.inputs.materializeSource(f.identity, f.git, staged, selected);
+  assert.deepEqual(await readFile(path.join(staged, f.name)), f.expected);
+  assert.deepEqual(await readFile(path.join(f.source, f.name)), f.original);
+  const entry = result.entries.find(row => row.repositoryRelativePath === f.name);
+  assert.equal(entry.sha256, f.descriptor.staged.sha256);
+  assert.equal(entry.stagedTransform.original.sha256, f.row.sha256);
+  await f.inputs.verifyMlirStagedSourceInputs({ source: staged, sourceEntries: result.entries, files: legal.files, identity: f.identity });
+  const retained = await f.inputs.retainedNoticeBundle({ source: staged, sourceEntries: result.entries,
+    productRoot: f.root, identity: f.identity, legal: { approvalLockSha256: "fixture-only" }, serialize: JSON.stringify });
+  assert.equal(retained.bundle.materializedSourceNotices[0].notice.completeOriginalNotice, "Fixture copyright.\n");
+  assert.equal(retained.bundle.materializedSourceNotices[0].original.sha256, f.row.sha256);
+  assert.equal(retained.bundle.materializedSourceNotices[0].staged.sha256, entry.sha256);
+  assert.deepEqual(retained.inputs.map(row => row.repositoryRelativePath), [f.name]);
+  assert.equal(retained.bundle.actualConsumption, undefined, "materialization does not invent target consumption");
+});
+
+test("M14 staged notice rejects unknown pinned descriptors before source bodies", async () => {
+  for (const change of [lock => { lock.files[0].stagedTransform.kind = "unknown-transform"; },
+    lock => { lock.files[0].stagedTransform.path = "../foreign.cpp"; },
+    lock => { lock.files[0].stagedTransform.role = "game-runtime"; },
+    lock => { lock.files[0].stagedTransform.sourceCommit = "0".repeat(40); },
+    lock => { lock.files[0].stagedTransform.original.sha256 = "sha256:" + "0".repeat(64); },
+    lock => { lock.files[0].stagedTransform.notice.localPath = "E:/must-not-open/COPYRIGHT"; },
+    lock => { lock.files[0].stagedTransform.notice.sha256 = "sha256:" + "0".repeat(64); },
+    lock => {
+      const d = lock.files[0].stagedTransform, notice = "Fixture copyright.*/\n";
+      d.notice.completeOriginalNotice = notice; d.notice.bytes = Buffer.byteLength(notice);
+      d.notice.sha256 = "sha256:" + createHash("sha256").update(notice).digest("hex");
+      d.notice.blob = createHash("sha1").update(`blob ${Buffer.byteLength(notice)}\0`).update(notice).digest("hex");
+      const expected = "/*\nFixture copyright.*/\n\n*/\n// Owned original attribution.\nint ordinary = 7;\n";
+      d.staged.bytes = Buffer.byteLength(expected);
+      d.staged.sha256 = "sha256:" + createHash("sha256").update(expected).digest("hex");
+    }]) {
+    const f = await stagedNoticeFixture(change);
+    await assert.rejects(f.legal.readMlirSourceBuildLegalInputs({ sourceRoot: undefined, git: undefined, paths: [f.name] }),
+      /Invalid independently registered staged transformation:/);
+    await assert.rejects(f.selection.readMlirDirectSourceSelection(f.identity, { role: "static" }),
+      /Invalid independently registered staged transformation:/);
+  }
+});
+
+test("M14 staged notice refuses caller overrides and distinct original or staged byte damage", async () => {
+  const f = await stagedNoticeFixture();
+  const selected = await f.selection.readMlirDirectSourceSelection(f.identity, { role: "static" });
+  const override = JSON.parse(JSON.stringify(selected));
+  override.entries[0].stagedTransform.staged.sha256 = "sha256:" + "0".repeat(64);
+  const staged = path.join(f.root, "staged");
+  await assert.rejects(f.inputs.materializeSource({ ...f.identity, sourceRoot: path.join(f.root, "must-not-read") },
+    f.git, staged, override), /Unregistered staged transformation override:/);
+  assert.ok(!(await readdir(f.root)).includes("staged"));
+  const result = await f.inputs.materializeSource(f.identity, f.git, staged, selected);
+  await writeFile(path.join(staged, f.name), f.original);
+  await assert.rejects(f.inputs.verifyMlirStagedSourceInputs({ source: staged, sourceEntries: result.entries,
+    files: [f.row], identity: f.identity }), /Changed physical source dependency:/);
+  await assert.rejects(f.inputs.retainedNoticeBundle({ source: staged, sourceEntries: result.entries,
+    productRoot: f.root, identity: f.identity, legal: { approvalLockSha256: "fixture-only" }, serialize: JSON.stringify }),
+  /Changed physical source dependency:/);
+  const forged = result.entries.map(row => ({ ...row, sha256: f.row.sha256 }));
+  await assert.rejects(f.inputs.verifyMlirStagedSourceInputs({ source: staged, sourceEntries: forged,
+    files: [f.row], identity: f.identity }), /Changed staged source provenance:/);
+  await writeFile(path.join(f.source, f.name), Buffer.concat([f.original, Buffer.from("// changed\n")]));
+  await assert.rejects(f.inputs.materializeSource(f.identity, f.git, path.join(f.root, "other-stage"), selected),
+    /Source differs beyond Git checkout line endings:/);
+  assert.ok(!(await readdir(f.root)).includes("other-stage"));
+});
 
 test("MLIR trace reader requires a physical EVAL CODE command, not a CALL, comment or string", async () => {
   const root = await createMlirFixture("mlir-eval-origin-");

@@ -3,6 +3,7 @@ import { readFile } from 'node:fs/promises';
 import path from 'node:path';
 import { MlirBuildError } from './mlir-build-inputs.mjs';
 import { readMlirLegalRegistration } from './mlir-source-registration.mjs';
+import { readMlirStagedSourcePolicy, mlirStagedSourceDescriptor } from './mlir-source-legal.mjs';
 
 const reject = message => { throw new MlirBuildError(message, 'mlir-source-integrity'); };
 const within = (root, file) => {
@@ -33,11 +34,14 @@ export async function readMlirDirectSourceSelection(identity, command) {
       reject('Static source registration has another immutable source identity');
   }
   if (build.lock.role !== 'compiler-side-M01') reject('Static source registration has another source role');
+  const stagedPolicy = await readMlirStagedSourcePolicy(identity);
   const selected = new Map();
   for (const row of [...build.lock.files, ...build.lock.licenseMaterials, ...file.lock.files,
     ...notices.files, ...identity.inspectedFiles]) {
     if (!isStaticCoreSourcePath(row.path)) continue;
     const entry = { repositoryRelativePath: row.path, blob: row.blob, sha256: row.sha256 };
+    const stagedTransform = mlirStagedSourceDescriptor(stagedPolicy, row.path);
+    if (stagedTransform) Object.assign(entry, { stagedTransform });
     const prior = selected.get(row.path);
     if (prior && (prior.blob !== entry.blob || prior.sha256 !== entry.sha256))
       reject('Conflicting static source registration: ' + row.path);

@@ -10,6 +10,18 @@ import { selectMlirConfigurationPaths } from "../../eng/mlir-sdk-paths.mjs";
 import { readMlirLegalRegistration } from "../../eng/mlir-source-registration.mjs";
 import { createMlirFixture } from "./mlir-fixtures.mjs";
 
+test("M14 current pin grants no MPI transformation and caller data cannot create a policy", async () => {
+  const legal = await import("../../eng/mlir-source-legal.mjs");
+  const { lock, sha256 } = await readMlirLegalRegistration("build");
+  const policy = await legal.readMlirStagedSourcePolicy(lock);
+  const name = "mlir/lib/Conversion/MPIToLLVM/MPIToLLVM.cpp";
+  assert.equal(legal.deriveMlirStagedSource(policy, name, Buffer.from("owned ordinary fixture")), null);
+  assert.throws(() => legal.deriveMlirStagedSource({ registrationLockSha256: sha256 }, name, Buffer.from("owned")),
+    /Unknown staged transformation policy/);
+  await assert.rejects(legal.readMlirSourceBuildLegalInputs({ sourceRoot: undefined, git: undefined, paths: [name] }),
+    /No qualified mandatory build input:/);
+});
+
 test("M14 direct configuration selects its source templates before configure", () => {
   const paths = ["llvm/CMakeLists.txt", "llvm/include/module.modulemap.build",
     "llvm/tools/llvm-config/BuildVariables.inc.in", "llvm/utils/llvm-lit/llvm-lit.in",

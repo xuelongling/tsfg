@@ -4,7 +4,8 @@ import { spawnSync } from "node:child_process";
 import { lstat, mkdir, readFile, realpath, writeFile } from "node:fs/promises";
 import path from "node:path";
 import { sourceGitEnvironment } from "./intake-ledger.mjs";
-import { mlirCommittedSourceBytes } from "./mlir-source-legal.mjs";
+import { mlirCommittedSourceBytes, readMlirStagedSourcePolicy, assertMlirStagedSourceSelection,
+  deriveMlirStagedSource, qualifyMlirStagedSourceEntry } from "./mlir-source-legal.mjs";
 import { inspectMlirSdkProvenance, verifyMlirSdkNoticeRecord } from "./mlir-sdk.mjs";
 const digest = bytes => `sha256:${createHash("sha256").update(bytes).digest("hex")}`;
 const within = (root, file) => {
@@ -70,6 +71,8 @@ export async function readMlirPhysicalSource(source, absolute, entry) {
 }
 
 export async function materializeSource(identity, git, destination, selection = null) {
+  const stagedPolicy = await readMlirStagedSourcePolicy(identity);
+  assertMlirStagedSourceSelection(stagedPolicy, selection);
   const rawTree = gitBytes(git, identity.sourceRoot,
     ["ls-tree", "-r", "-z", identity.sourceCommit, "--", "llvm", "mlir", "cmake", "third-party", "UPSTREAM.toml"]);
   const tree = rawTree.toString("utf8").split("\0").filter(Boolean).map(line => {
@@ -133,15 +136,34 @@ export async function materializeSource(identity, git, destination, selection = 
       throw new MlirBuildError(`Qualified source raw SHA mismatch: ${name}`, "mlir-source-integrity");
     if (!bytes.equals(checkout)) checkoutDifferences.push({ path: name, observedCheckoutSha256: digest(checkout),
       committedBlob: entry.blob, consumedRawSha256: digest(bytes), method: "only CRLF-to-LF; exact immutable Git object equality proven" });
+    const derived = deriveMlirStagedSource(stagedPolicy, name, bytes);
+    const stagedBytes = derived?.bytes ?? bytes;
     const target = path.join(destination, name);
     if (selection) await ordinaryAncestor(path.dirname(target));
     await mkdir(path.dirname(target), { recursive: true });
     if (selection) await ordinaryAncestor(path.dirname(target));
-    await writeFile(target, bytes, { flag: "wx" });
+    await writeFile(target, stagedBytes, { flag: "wx" });
     entries.push({ projectId: "llvm-project.git", repositoryRelativePath: name,
-      normalizedMode: entry.mode, sha256: digest(bytes), blob: entry.blob });
+      normalizedMode: entry.mode, sha256: digest(stagedBytes), blob: entry.blob,
+      ...(derived ? { stagedTransform: derived.stagedTransform } : {}) });
   }
   return { entries, unmaterialized, checkoutDifferences };
+}
+
+/** Original legal bytes and actual staged compiler bytes have separate identities. */
+export async function verifyMlirStagedSourceInputs({ source, sourceEntries, files, identity }) {
+  const policy = await readMlirStagedSourcePolicy(identity);
+  const inventory = new Map(sourceEntries.map(entry => [entry.repositoryRelativePath, entry]));
+  for (const file of files) {
+    const entry = inventory.get(file.path);
+    if (!entry || entry.blob !== file.blob)
+      throw new MlirBuildError(`Precompile source has no immutable provenance: ${file.path}`, "mlir-source-integrity");
+    const d = qualifyMlirStagedSourceEntry(policy, entry);
+    if (d ? file.sha256 !== d.original.sha256 || JSON.stringify(file.stagedTransform) !== JSON.stringify(d)
+      : entry.sha256 !== file.sha256)
+      throw new MlirBuildError(`Precompile source differs from its qualified mapping: ${file.path}`, "mlir-source-integrity");
+    await readMlirPhysicalSource(source, path.join(source, file.path), entry);
+  }
 }
 
 export async function retainedNoticeBundle({ source, sourceEntries, productRoot, identity, legal, sdk = null, serialize }) {
@@ -156,6 +178,18 @@ export async function retainedNoticeBundle({ source, sourceEntries, productRoot,
   }
   const entries = new Map(sourceEntries.map(entry => [entry.repositoryRelativePath, entry]));
   const inputs = [];
+  const policy = await readMlirStagedSourcePolicy(identity);
+  const materializedSourceNotices = [];
+  for (const entry of sourceEntries) {
+    const d = qualifyMlirStagedSourceEntry(policy, entry);
+    if (!d) continue;
+    await readMlirPhysicalSource(source, path.join(source, entry.repositoryRelativePath), entry);
+    inputs.push(entry);
+    materializedSourceNotices.push({ path: entry.repositoryRelativePath, sourceCommit: d.sourceCommit,
+      registrationLockSha256: policy.registrationLockSha256, kind: d.kind,
+      original: d.original, staged: d.staged, notice: d.notice,
+      purpose: "materialized source attribution; not a target compiler-consumption claim" });
+  }
   for (const file of lock.files) {
     const entry = entries.get(file.path);
     if (!entry || entry.blob !== file.blob || entry.sha256 !== file.sha256)
@@ -169,5 +203,6 @@ export async function retainedNoticeBundle({ source, sourceEntries, productRoot,
   }
   return { inputs, bundle: { schemaVersion: "1", baseCommit: identity.baseCommit, sourceCommit: identity.sourceCommit,
     role: "compiler-side-M01", approvalLockSha256: legal.approvalLockSha256,
-    purpose: lock.purpose, files: lock.files } };
+    purpose: lock.purpose, files: lock.files,
+    ...(materializedSourceNotices.length ? { materializedSourceNotices } : {}) } };
 }

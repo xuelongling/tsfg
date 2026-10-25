@@ -10,7 +10,7 @@ import { readMlirSourceSdk, describeMlirSdkSourceIdentity, inspectMlirSdkProvena
   projectMlirSdkBuildIdentity, verifyMlirSdkBuildInputSet, verifyMlirSdkSourceInputs } from "./mlir-sdk.mjs";
 import { readMlirSdkDependency } from "./mlir-sdk.mjs";
 import { selectMlirConfigurationPaths, selectMlirPrecompilePaths } from "./mlir-sdk-paths.mjs";
-import { MlirBuildError, gitBytes, materializeSource, retainedNoticeBundle, readMlirPhysicalSource } from "./mlir-build-inputs.mjs";
+import { MlirBuildError, gitBytes, materializeSource, retainedNoticeBundle, readMlirPhysicalSource, verifyMlirStagedSourceInputs } from "./mlir-build-inputs.mjs";
 export { MlirBuildError } from "./mlir-build-inputs.mjs";
 import { selectMlirCommandRole, selectMlirBuildPhase, finishMlirPlanning, requireMlirSdkCommandIntake } from "./mlir-command.mjs";
 import { coreIrInputs } from "./core-ir-inputs.mjs";
@@ -399,13 +399,7 @@ export async function executeMlirTarget({ options, runtime, tools, productRoot, 
     const visible = new Set(sourceEntries.map(entry => entry.repositoryRelativePath));
     const files = sourceSelection ? legalInventory.files.filter(file => visible.has(file.path)) : legalInventory.files;
     const precompileLegal = await readMlirSourceBuildLegalInputs({ sourceRoot, git, paths: selectMlirPrecompilePaths({ files, sdk, productRoot }), sdk, canonicalize: serialize });
-    for (const file of precompileLegal.files) {
-      const staged = path.join(source, file.path);
-      const state = await lstat(staged);
-      if (!state.isFile() || state.isSymbolicLink() || path.relative(staged, await realpath(staged)) !== "" ||
-          digest(await readFile(staged)) !== file.sha256)
-        throw new MlirBuildError(`Precompile staged source differs from its qualified input: ${file.path}`, "mlir-source-integrity");
-    }
+    await verifyMlirStagedSourceInputs({ source, sourceEntries, files: precompileLegal.files, identity });
     if (sdk) {
       verifyMlirSdkSourceInputs(sdk, plannedTrace.files);
       verifyMlirSdkSourceInputs(sdk, precompileLegal.files.map(file => ({ projectId: "llvm-project.git", repositoryRelativePath: file.path, sha256: file.sha256 })));
@@ -428,13 +422,13 @@ export async function executeMlirTarget({ options, runtime, tools, productRoot, 
     const consumedPaths = trace.files.map(file => file.repositoryRelativePath).filter(name => !["UPSTREAM.toml", "llvm/LICENSE.TXT", "mlir/LICENSE.TXT"].includes(name));
     const consumedLegal = await readMlirSourceBuildLegalInputs({ sourceRoot, git, paths: consumedPaths, sdk, canonicalize: serialize });
     await writeFile(path.join(stage, "actual-consumption-legal.json"), serialize(consumedLegal));
-    notices.bundle.actualConsumption = consumedLegal;
+    const qualifiedNotices = { ...notices.bundle, actualConsumption: consumedLegal };
     const materialInputs = sdk ? [] : consumedLegal.licenseMaterials.map(material => sourceEntries.find(entry => entry.repositoryRelativePath === material.path));
     if (materialInputs.some(entry => !entry)) throw new MlirBuildError("A consumed original license material was not staged", "mlir-source-license");
     const sourceInputs = new Map([...trace.files, ...notices.inputs, ...materialInputs].map(entry => [entry.repositoryRelativePath, entry]));
     if (sdk) verifyMlirSdkSourceInputs(sdk, sourceInputs.values());
     const inputPayload = sdk ? { schemaVersion: "1", entries: productIdentity.buildInputSet.entries } : { schemaVersion: "1", entries: [...productIdentity.buildInputSet.entries,
-      ...[...sourceInputs.values()].map(({ blob, ...entry }) => entry)].sort((a, b) => Buffer.from(`${a.projectId}\0${a.repositoryRelativePath}`)
+      ...[...sourceInputs.values()].map(({ blob, stagedTransform, ...entry }) => entry)].sort((a, b) => Buffer.from(`${a.projectId}\0${a.repositoryRelativePath}`)
         .compare(Buffer.from(`${b.projectId}\0${b.repositoryRelativePath}`))) };
     const buildInputSet = { ...inputPayload, digest: digest(serialize(inputPayload)) };
     const buildIdentity = { ...productIdentity.buildIdentity, buildInputSetDigest: buildInputSet.digest };
@@ -448,7 +442,7 @@ export async function executeMlirTarget({ options, runtime, tools, productRoot, 
       await writeFile(path.join(publish, name), raw, { flag: "wx" });
       outputs.push({ path: name, sha256: digest(raw) });
     }
-    const noticeBytes = serialize(notices.bundle);
+    const noticeBytes = serialize(qualifiedNotices);
     await writeFile(path.join(publish, "source-notices.json"), noticeBytes, { flag: "wx" });
     outputs.push({ path: "source-notices.json", sha256: digest(noticeBytes) });
     outputs.sort((a, b) => Buffer.from(a.path).compare(Buffer.from(b.path)));
