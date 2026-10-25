@@ -127,6 +127,33 @@ test('static role excludes optional LLVM declarations and preserves required pro
   }
 });
 
+test('static role cache accepts defined CMake BOOL constants without loosening role strings', () => {
+  // Real CMake emitted TRUE for both required project entries in ACTUAL04.
+  const cache = 'TSFG_CORE_BUILD_ROLE:STRING=static\nLLVM_TARGETS_TO_BUILD:STRING=\n' +
+    'LLVM_EXPERIMENTAL_TARGETS_TO_BUILD:STRING=\nLLVM_INCLUDE_TOOLS:BOOL=TRUE\n' +
+    'LLVM_INCLUDE_UTILS:BOOL=FALSE\nLLVM_TOOL_MLIR_BUILD:BOOL=TRUE\nLLVM_TOOL_TSFG_CORE_IR_BUILD:BOOL=TRUE\n';
+  for (const on of ['ON', 'TRUE', 'true', 'YES', 'Y', '1'])
+    assert.doesNotThrow(() => assertMlirRoleCache(staticRole, cache.replaceAll('=TRUE', '=' + on)));
+  for (const off of ['OFF', 'FALSE', 'false', 'NO', 'N', '0', 'IGNORE', 'NOTFOUND', 'dependency-NOTFOUND', ''])
+    assert.doesNotThrow(() => assertMlirRoleCache(staticRole, cache.replace('=FALSE', '=' + off)));
+  for (const [name, value] of [
+    ['LLVM_INCLUDE_TOOLS', 'FALSE'], ['LLVM_TOOL_MLIR_BUILD', 'FALSE'],
+    ['LLVM_TOOL_TSFG_CORE_IR_BUILD', '0'], ['LLVM_INCLUDE_UTILS', 'TRUE'],
+    ['LLVM_TOOL_MLIR_BUILD', 'unknown'], ['LLVM_INCLUDE_UTILS', 'unknown'],
+    ['LLVM_TOOL_MLIR_BUILD', 'TRUE;FALSE'], ['LLVM_TOOL_MLIR_BUILD', ' TRUE '],
+  ]) {
+    const bad = cache.replace(new RegExp('^' + name + ':BOOL=.*$', 'm'), name + ':BOOL=' + value);
+    assert.throws(() => assertMlirRoleCache(staticRole, bad), { issueCode: 'mlir-source-integrity' });
+  }
+  for (const bad of [
+    cache.replace('LLVM_INCLUDE_UTILS:BOOL=FALSE\n', ''),
+    cache.replace('LLVM_TOOL_MLIR_BUILD:BOOL=TRUE\n', ''),
+    cache.replace('TSFG_CORE_BUILD_ROLE:STRING=static', 'TSFG_CORE_BUILD_ROLE:STRING=TRUE'),
+    cache.replace('LLVM_TARGETS_TO_BUILD:STRING=', 'LLVM_TARGETS_TO_BUILD:STRING=FALSE'),
+    cache.replace('LLVM_TARGETS_TO_BUILD:STRING=', 'LLVM_TARGETS_TO_BUILD:STRING=X86'),
+  ]) assert.throws(() => assertMlirRoleCache(staticRole, bad), { issueCode: 'mlir-source-integrity' });
+});
+
 test('static role uses no LLVM backend, native preserves X86, and cache drift fails closed', () => {
   assert.deepEqual(mlirRoleConfiguration(staticRole), ['-DTSFG_CORE_BUILD_ROLE=static',
     '-DLLVM_TARGETS_TO_BUILD=', '-DLLVM_EXPERIMENTAL_TARGETS_TO_BUILD=',

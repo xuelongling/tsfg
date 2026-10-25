@@ -71,6 +71,16 @@ export function mlirRoleConfiguration(command, sdk = null, sourceEntries = []) {
     ...[...tools].sort().map(name => `-DLLVM_TOOL_${name}_BUILD=OFF`)];
 }
 
+// BOOL cache entries can serialize as TRUE/FALSE rather than ON/OFF.
+// Recognize explicit constants only: arbitrary nonempty variables grant no role.
+/** @param {string | undefined} value */
+function cmakeBoolean(value) {
+  if (value === undefined) return null;
+  if (/^(?:1|ON|YES|TRUE|Y)$/i.test(value)) return true;
+  if (/^(?:0|OFF|NO|FALSE|N|IGNORE|NOTFOUND|.*-NOTFOUND)?$/i.test(value)) return false;
+  return null;
+}
+
 export function assertMlirRoleCache(command, cache, sourceEntries = []) {
   const value = name => cache.match(new RegExp(`^${name}:[^=\\r\\n]+=([^\\r\\n]*)`, 'm'))?.[1];
   if (value('TSFG_CORE_BUILD_ROLE') !== command.role) reject('Configured Core build role differs from its identity');
@@ -78,7 +88,9 @@ export function assertMlirRoleCache(command, cache, sourceEntries = []) {
   for (const flag of mlirRoleConfiguration(command, null, sourceEntries).slice(1)) {
     const separator = flag.indexOf('='), name = flag.slice(2, separator), expected = flag.slice(separator + 1);
     const key = name.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
-    if (value(key) !== expected) reject('Static configuration selected or omitted a required role setting: ' + name);
+    const actual = value(key);
+    const matches = expected === 'ON' || expected === 'OFF' ? cmakeBoolean(actual) === (expected === 'ON') : actual === expected;
+    if (!matches) reject('Static configuration selected or omitted a required role setting: ' + name);
   }
 }
 
