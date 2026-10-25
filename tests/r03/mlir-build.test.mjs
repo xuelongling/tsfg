@@ -145,6 +145,30 @@ test("M14 staged notice refuses caller overrides and distinct original or staged
   assert.ok(!(await readdir(f.root)).includes("other-stage"));
 });
 
+test("M14 activated MPI mapping refuses foreign identity, native role and overrides before body access", async () => {
+  const root = await createMlirFixture("mlir-mpi-identity-");
+  const legal = await import("../../eng/mlir-source-legal.mjs");
+  const inputs = await import("../../eng/mlir-build-inputs.mjs");
+  const { readMlirLegalRegistration } = await import("../../eng/mlir-source-registration.mjs");
+  const { lock, sha256 } = await readMlirLegalRegistration("build");
+  const row = lock.files.find(file => file.path === "mlir/lib/Conversion/MPIToLLVM/MPIToLLVM.cpp");
+  const identity = { baseCommit: lock.baseCommit, sourceCommit: lock.sourceCommit,
+    sourceTree: "0".repeat(40), sourceRoot: path.join(root, "must-not-open") };
+  const selection = { ...identity, registrationLockSha256: sha256, entries: [{ repositoryRelativePath: row.path,
+    blob: row.blob, sha256: row.sha256, stagedTransform: row.stagedTransform }] };
+  const foreign = { ...identity, sourceCommit: "0".repeat(40) }, destination = path.join(root, "must-not-create");
+  for (const selected of [selection, null])
+    await assert.rejects(inputs.materializeSource(foreign, undefined, destination, selected), /another immutable source identity/);
+  await assert.rejects(inputs.materializeSource(identity, undefined, destination, null), /require direct-source static selection/);
+  const override = JSON.parse(JSON.stringify(selection));
+  override.entries[0].stagedTransform.role = "game-runtime";
+  await assert.rejects(inputs.materializeSource(identity, undefined, destination, override), /Unregistered staged transformation override:/);
+  const policy = await legal.readMlirStagedSourcePolicy(foreign);
+  assert.throws(() => legal.deriveMlirStagedSource(policy, row.path, Buffer.from("owned fixture")), /another immutable source identity/);
+  assert.throws(() => legal.qualifyMlirStagedSourceEntry(policy, { repositoryRelativePath: row.path }), /another immutable source identity/);
+  assert.deepEqual(await readdir(root), [], "no source or stage body exists or can be consumed by these refusals");
+});
+
 test("MLIR trace reader requires a physical EVAL CODE command, not a CALL, comment or string", async () => {
   const root = await createMlirFixture("mlir-eval-origin-");
   const file = path.join(root, "GNUInstallDirs.cmake");

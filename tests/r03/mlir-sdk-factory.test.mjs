@@ -80,7 +80,7 @@ test("current locked SDK source gaps fail in the normal factory before any exter
 
 test("current finite registration admits the SDK source supplement and refuses the unresolved copied table", async t => {
   const result = await readMlirLegalRegistration("build");
-  assert.equal(result.lock.files.length, 8145);
+  assert.equal(result.lock.files.length, 8146);
   assert.equal(result.lock.licenseMaterials.length, 5);
   assert.equal(result.lock.sourceCommit, "4cb57d27ddcad7c3a89d23ef576662a5c891e8c8");
   const local = result.lock.files.find(file => file.path === "llvm/lib/Bitcode/Reader/MetadataLoader.h");

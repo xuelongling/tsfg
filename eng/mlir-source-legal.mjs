@@ -46,34 +46,40 @@ function stagedPolicy({ lock, sha256 }, identity) {
         !keys(d.staged, "sha256,bytes") || !rawHash(d.staged.sha256) || !positiveBytes(d.staged.bytes) ||
         d.staged.bytes !== d.original.bytes + d.notice.bytes + 7 || mappings.has(file.path))
       reject(`Invalid independently registered staged transformation: ${file.path}`);
-    if (identity.baseCommit !== lock.baseCommit || identity.sourceCommit !== lock.sourceCommit)
-      reject("Staged transformation has another immutable source identity");
     mappings.set(file.path, freeze(d));
   }
   const policy = Object.freeze({ registrationLockSha256: sha256 });
-  stagedPolicies.set(policy, mappings);
+  // A side mapping cannot bind unrelated selected sources to its version.
+  // Its own identity is captured privately and enforced at every actual lookup.
+  stagedPolicies.set(policy, Object.freeze({ mappings,
+    identityMatches: identity.baseCommit === lock.baseCommit && identity.sourceCommit === lock.sourceCommit }));
   return policy;
 }
 
-/** Only the independently pinned build registration can create this opaque policy.
- * Current production has no such entry: implementing the seam grants no MPI use.
+/** Only the independently pinned build registration creates this policy's exact mappings.
+ * Adoption alone does not release actual staging, configuration or execution.
  */
 export async function readMlirStagedSourcePolicy(identity) {
   return stagedPolicy(await readMlirLegalRegistration("build"), identity);
 }
 
 export function mlirStagedSourceDescriptor(policy, name) {
-  const mappings = stagedPolicies.get(policy);
-  if (!mappings) reject("Unknown staged transformation policy");
-  return mappings.get(name);
+  const registered = stagedPolicies.get(policy);
+  if (!registered) reject("Unknown staged transformation policy");
+  const descriptor = registered.mappings.get(name);
+  if (descriptor && !registered.identityMatches) reject("Staged transformation has another immutable source identity");
+  return descriptor;
 }
 
 export function assertMlirStagedSourceSelection(policy, selection) {
-  const mappings = stagedPolicies.get(policy);
+  const mappings = stagedPolicies.get(policy)?.mappings;
   if (!mappings) reject("Unknown staged transformation policy");
-  if (!selection && mappings.size) reject("Staged transformations require direct-source static selection");
+  if (!selection && mappings.size) {
+    mlirStagedSourceDescriptor(policy, stagedPath);
+    reject("Staged transformations require direct-source static selection");
+  }
   for (const entry of selection?.entries ?? []) {
-    const d = mappings.get(entry.repositoryRelativePath);
+    const d = mlirStagedSourceDescriptor(policy, entry.repositoryRelativePath);
     if (d ? selection.registrationLockSha256 !== policy.registrationLockSha256 || entry.blob !== d.original.blob ||
         entry.sha256 !== d.original.sha256 || JSON.stringify(entry.stagedTransform) !== JSON.stringify(d)
       : entry.stagedTransform !== undefined) reject(`Unregistered staged transformation override: ${entry.repositoryRelativePath}`);

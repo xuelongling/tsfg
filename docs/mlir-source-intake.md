@@ -166,10 +166,10 @@ actual CMake/Ninja dependencies must still reconcile before a target build.
 
 M14's actual static Configure declarations exposed1190 additional fixed Git
 blobs needed for source presence, rather than the earlier360 first-missing
-diagnostics. The finite supplement appends1189 inspected objects to make8145
+diagnostics. The finite supplement appends1190 inspected objects to make8146
 entries, preserving the prior6956 objects in order and all five original
 materials. Every physical file matches its fixed Git blob and strict UTF-8 raw
-hash.1173 retain their original Apache SPDX header;16 have no local SPDX and
+hash.1174 retain their original Apache SPDX header;16 have no local SPDX and
 use the explicit original project grant without inventing an annotation.
 The370 relevant ancestor directories contain only the original root, LLVM and
 MLIR project licenses. Complete original leading attributions remain intact.
@@ -190,21 +190,37 @@ Apache2.0 and LLVM exception terms match the retained MLIR license after
 whitespace comparison and excluding the separate project-introduction sentence;
 the two raw originals differ and remain independently retained. This exact
 source supplement preserves all8144 prior objects and the five materials.
-MPIToLLVM remains unregistered: its MPICH COPYRIGHT has separate terms and
-notice obligations, which the original LLVM SPDX header does not discharge.
-Other admitted inputs remain independent of this exact gap.
+The exact MPIToLLVM supplement appends one object, preserving all8145 prior
+objects and the five original materials. Its selected expression is
+`(Apache-2.0 WITH LLVM-exception) AND mpich2`, limited to this fixed source and
+compiler-side-M01 direct-static role. The original LLVM SPDX header and complete
+Argonne/MPICH pointer remain unchanged. The complete official
+[COPYRIGHT](https://github.com/pmodels/mpich/blob/e0b3d1dd2c62c80048e5fc3b60d0b24e0d2a863d/COPYRIGHT)
+is retained verbatim in the descriptor:1893 bytes, blob
+`f33ad73b89bf3e3a967fba9650df0e6d28e5a569`, SHA256
+`60fc73dd0d561c98aa1987fcd68c57be2fcb55add62ad69d3a35f42e10967399`.
+Its separate terms and prologue/source-listing notice obligations are retained;
+the original Apache header does not erase them. This exact scoped adoption
+does not expand the global license list or grant another file/version/role.
 
-The prepared MPI notice seam does not register that file: the production build
-lock remains8145 entries and its independent pin is unchanged. Only that pinned
-lock can create an opaque staged-source policy. The sole supported descriptor
+Only the independently pinned build lock creates an opaque staged-source policy.
+The sole supported descriptor
 kind is `prepend-mpich-copyright-comment-v1`, limited to the exact MPIToLLVM path,
 source commit and compiler-side-M01 direct-static role. Unknown fields, caller
 overrides, other roles, notice hash changes and comment-terminator injection
 refuse before source consumption. Owned synthetic fixtures are not approvals.
+The policy captures identity matching privately and enforces it whenever the MPI
+mapping is requested, derived or qualified, including a full-source route that
+could contain it. Unrelated selected sources retain their existing scope; the
+legal reader's complete immutable-source checks remain in force.
 
-If an exact descriptor is later adopted, its original blob/raw SHA and complete
-original attribution remain intact. After qualifying those bytes, materialization
-can prepend a C++ comment containing the independently identified original MPICH
+The adopted descriptor keeps the original31514-byte source identity separate
+from its33414-byte staged identity. Their SHA256 values are
+`03f6877003751099bbfcf06b1baf976969f74f9b040a09544f97279ae6590349` and
+`fb3c5a436b11efc34f1ba733636688d1f377c673504da4e2fa2f4be0b26ba7c0`.
+The original blob/raw SHA and complete attribution remain intact. After
+qualifying those bytes, materialization prepends a C++ comment containing the
+independently identified original MPICH
 COPYRIGHT to the separate staged copy. The descriptor binds the original source,
 complete notice and derived byte count/SHA. This is an explicit transformation,
 not a checkout normalization or an unchanged Git object. Precompile and dependency
@@ -215,9 +231,11 @@ Notice retention also covers a transformed file materialized only for configure
 presence, with a separate `materializedSourceNotices` provenance section. It does
 not invent target compiler consumption. The original source stays unmodified;
 the complete notice accompanies the staged prologue and its retained provenance.
-The additional mpich2 expression and exact real-file descriptor remain unadopted;
-this engineering seam grants no real MPI materialization, SDK/native transfer,
-configuration, compilation, source redistribution or Runtime qualification.
+This registration resolves the exact source-specific legal/notice input gap.
+Fresh actual staging/configuration still requires the applicable phase release;
+it has not run for this registration. SDK/native transfer, final dependency
+closure, compilation, source redistribution, execution and Runtime remain
+unqualified by this adoption.
 
 This supplement permits conditional source presence for the fixed direct static
 Core configuration. It grants no optional-library/backend compilation,
