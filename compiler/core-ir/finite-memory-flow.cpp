@@ -30,6 +30,8 @@ struct FirstWrites {
   };
   llvm::DenseMap<mlir::Value,size_t> values;
   std::map<std::pair<const void *,size_t>,std::pair<size_t,mlir::Value>> identities;
+  std::map<std::pair<const void *,size_t>,size_t> normalizedIdentities;
+  bool identityCacheable=true;
   size_t activeFrame=MemoryFrames::none;
   size_t nextIdentity=0;
   std::map<Key,size_t> indexed;
@@ -48,7 +50,7 @@ struct FirstWrites {
     const std::map<mlir::Operation *,std::vector<MemoryVersion>> &w,const MemoryOrigins &o,MemorySources &s)
       :proof(p),actual(a),field(f),writes(w),origins(o),flow(p.remaining,PayloadFlow::AtomDomain::MemoryVersion),sources(s){}
   size_t node() {const auto id=flow.node();valid&=id!=PayloadFlow::none;return id;}
-  bool edge(size_t from,size_t to) {return flow.connect({from,to});}
+  bool edge(size_t from,size_t to) {return from==to||flow.connect({from,to});}
   bool seed(size_t id,const std::string &version,const Context &current,mlir::Value value={}) {
     const auto key=std::make_tuple(version,current.activation,value?rawIdentity(value):SIZE_MAX);
     auto found=atoms.find(key);
@@ -60,20 +62,20 @@ struct FirstWrites {
   }
   mlir::Value strip(mlir::Value value) {
     const auto original=value;
-    if(!stripping.insert(value.getAsOpaquePointer()).second)return value;
+    if(!stripping.insert(value.getAsOpaquePointer()).second){identityCacheable=false;return value;}
     struct Exit {std::set<const void *> &set;const void *value;~Exit(){set.erase(value);}} exit{stripping,value.getAsOpaquePointer()};
     std::set<const void *> seen;
     while(auto *op=value.getDefiningOp()) {
       const auto name=op->getName().getStringRef();
       if(!proof.charge()){valid=false;return {};}
-      if(!seen.insert(value.getAsOpaquePointer()).second)return original;
+      if(!seen.insert(value.getAsOpaquePointer()).second){identityCacheable=false;return original;}
       if(name=="tsfg_core.domain.view"||name=="tsfg_core.domain.refine"||
           (name=="tsfg_core.domain.copy"&&!inlineStorage())) {
         value=op->getOperand(0);continue; // Global shape preflight precedes traversal.
       }
       if(name=="tsfg_core.domain.field_read"&&!inlineStorage()) {
         const auto inputs=proof.fieldReadInputs.find(op);
-        if(inputs==proof.fieldReadInputs.end()||inputs->second.empty()||proof.fieldReadUndefined.count(op))break;
+        if(inputs==proof.fieldReadInputs.end()||inputs->second.empty()||proof.fieldReadUndefined.count(op)){identityCacheable=false;break;}
         mlir::Value source;bool same=true;
         for(const auto inputValue:inputs->second) {
           if(!proof.charge()){valid=false;return {};}
@@ -87,11 +89,11 @@ struct FirstWrites {
           const auto candidate=strip(inputValue);
           if(!source)source=candidate;else same&=candidate==source;
         }
-        if(!same||!source)break;value=source;continue;
+        if(!same||!source){identityCacheable=false;break;}value=source;continue;
       }
       if(name!="func.call"&&name!="tsfg_core.domain.method_call")break;
       const auto targets=proof.selectedCallees.find(op);
-      if(targets==proof.selectedCallees.end()||targets->second.empty())break;
+      if(targets==proof.selectedCallees.end()||targets->second.empty()){identityCacheable=false;break;}
       size_t ordinal=SIZE_MAX;bool proved=true;
       for(const auto &target:targets->second) {
         if(!proof.charge()){valid=false;return {};}
@@ -99,7 +101,7 @@ struct FirstWrites {
         if(returned==proof.returnedParameters.end()||(ordinal!=SIZE_MAX&&ordinal!=returned->second)){proved=false;break;}
         ordinal=returned->second;
       }
-      if(!proved||ordinal>=op->getNumOperands())break;
+      if(!proved||ordinal>=op->getNumOperands()){identityCacheable=false;break;}
       value=op->getOperand(ordinal);
     }
     return value;
@@ -114,27 +116,44 @@ struct FirstWrites {
     std::set<std::pair<const void *,size_t>> seen;
     while(actualValue){
       if(!proof.charge()){valid=false;return SIZE_MAX;}
-      if(!seen.emplace(actualValue.getAsOpaquePointer(),resolved.frame).second)break;
+      if(!seen.emplace(actualValue.getAsOpaquePointer(),resolved.frame).second){identityCacheable=false;break;}
       auto *op=actualValue.getDefiningOp();if(!op)break;const auto name=op->getName().getStringRef();
       if(name!="tsfg_core.domain.view"&&name!="tsfg_core.domain.refine"&&(name!="tsfg_core.domain.copy"||inlineStorage()))break;
       resolved=sources.resolve(resolved.frame,op->getOperand(0));actualValue=sources.source(resolved);
     }
-    if(!sources.good()){valid=false;return SIZE_MAX;}if(!actualValue)actualValue=value;
+    if(!sources.good()){valid=false;return SIZE_MAX;}
+    if(!actualValue||resolved.frame==MemoryFrames::none)identityCacheable=false;
+    if(!actualValue)actualValue=value;
     const auto key=std::make_pair(actualValue.getAsOpaquePointer(),resolved.frame);
     const auto found=identities.find(key);if(found!=identities.end())return found->second.first;
     if(!proof.charge()){valid=false;return SIZE_MAX;}const auto id=nextIdentity++;
     identities.emplace(key,std::make_pair(id,actualValue));return id;
   }
   size_t identity(mlir::Value value) {
+    if(!valid||!sources.good()||!proof.charge()){valid=false;return SIZE_MAX;}
+    const auto key=std::make_pair(value.getAsOpaquePointer(),activeFrame);
+    const auto found=normalizedIdentities.find(key);if(found!=normalizedIdentities.end())return found->second;
+    // Proof inputs and frame bindings are immutable during this one query.
+    // Never reuse across read publication, actual/field queries or activations.
+    const bool prior=identityCacheable;identityCacheable=true;
+    const auto result=resolveIdentity(value);
+    if(valid&&sources.good()&&identityCacheable&&result!=SIZE_MAX)normalizedIdentities.emplace(key,result);
+    identityCacheable=prior;return result;
+  }
+  size_t resolveIdentity(mlir::Value value) {
     value=strip(value);if(!value){valid=false;return SIZE_MAX;}
     if(!inlineStorage())if(auto *op=value.getDefiningOp()){
       const auto found=origins.find(op);size_t selected=SIZE_MAX;bool ambiguous=false;
-      if(found!=origins.end())for(const auto &origin:found->second)for(const auto &receiver:origin.receivers){
+      if(found!=origins.end())for(const auto &origin:found->second){
+        if(origin.pending)identityCacheable=false;
+        for(const auto &receiver:origin.receivers){
         if(!proof.charge()){valid=false;return SIZE_MAX;}if(receiver.query!=activeFrame)continue;
         const auto id=identityAt(receiver.value,receiver.activation);
         if(selected==SIZE_MAX)selected=id;else ambiguous|=selected!=id;
+        }
       }
       if(selected!=SIZE_MAX&&!ambiguous)return selected;
+      if(found!=origins.end())identityCacheable=false;
     }
     return identityAt(value,activeFrame);
   }
@@ -249,6 +268,13 @@ struct FirstWrites {
     if(proof.fieldEffects.count(op)&&proof.fieldEffects.at(op)&&bound==writes.end())return flow.unknown(after);
     return edge(before,after);
   }
+  bool separatesMemory(mlir::Operation *op) const {
+    const auto name=op->getName().getStringRef();
+    return writes.count(op)||name=="tsfg_core.domain.copy"||name=="func.call"||
+      name=="tsfg_core.domain.method_call"||name=="tsfg_core.domain.construct"||
+      name=="tsfg_core.domain.initialize_fields"||proof.selectedCallees.count(op)||
+      (proof.fieldEffects.count(op)&&proof.fieldEffects.at(op));
+  }
   bool normalize(size_t id) {
     // context() can grow the outer vector. Work on an owned copy, then publish
     // it back after all operations have been normalized; no dangling reference.
@@ -257,7 +283,11 @@ struct FirstWrites {
       const auto first=node();current.blocks.emplace(&block,first);auto previous=first;
       for(auto &op:block) {
         if(!proof.charge())return false;
-        current.before.emplace(&op,previous);const auto after=node();current.after.emplace(&op,after);previous=after;
+        // Adjacent identity transfers are the same memory state in this exact
+        // context. Retain every SSA position and still verify operation() below;
+        // writes, copies and calls keep their own capture/continuation boundary.
+        current.before.emplace(&op,previous);const auto after=separatesMemory(&op)?node():previous;
+        current.after.emplace(&op,after);previous=after;
       }
     }
     if(!valid||!entry(current)||!edge(current.entry,current.blocks.at(&fn.getBody().front())))return false;
