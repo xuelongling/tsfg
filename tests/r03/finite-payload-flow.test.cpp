@@ -225,6 +225,34 @@ bool mixedNodeRolesRetainPayloadLimit() {
   CHECK(!other.seed(concrete,"type/256"));CHECK(other.evidence(concrete)==nullptr);
   return true;
 }
+bool guardedWritersRequireNormalCompletion() {
+  for(unsigned mode=0;mode<3;++mode) {
+    size_t budget=100000;PayloadFlow graph(budget);
+    const auto completion=graph.node(),result=graph.node(),coupled=graph.node();
+    CHECK(graph.guard(result,completion,"@normal"));
+    CHECK(graph.seed(result,"i32"));CHECK(graph.seed(coupled,"undefined"));
+    CHECK(graph.connect({coupled,result}));CHECK(graph.requireEvidence(result));
+    if(mode==1)CHECK(graph.seed(completion,"@normal"));
+    if(mode==2)CHECK(graph.unknown(completion));CHECK(graph.solve());
+    if(mode==1)CHECK(graph.exact(result,{"i32","undefined"})==PayloadFlow::Fit::Proven);
+    else {CHECK(graph.evidence(result)->alternatives.empty());CHECK(graph.evidence(result)->pending==(mode==2));}
+  }
+  return true;
+}
+bool recursiveCompletionCannotInventSuccess() {
+  size_t budget=100000;PayloadFlow graph(budget);
+  const auto entry=graph.node(),completion=graph.node(),after=graph.node(),literal=graph.node();
+  CHECK(graph.seed(entry,"@normal"));CHECK(graph.connect({entry,after,completion,"@normal"}));
+  CHECK(graph.guard(literal,after,"@normal"));CHECK(graph.seed(literal,"i32"));
+  CHECK(graph.connect({entry,completion,literal,"i32"}));CHECK(graph.requireEvidence(completion));
+  CHECK(graph.solve());CHECK(graph.evidence(completion)->alternatives.empty());
+  CHECK(graph.evidence(literal)->alternatives.empty());CHECK(graph.evidence(literal)->pending);
+  size_t lateBudget=100000;PayloadFlow late(lateBudget);const auto a=late.node(),b=late.node();
+  CHECK(late.connect({a,b}));CHECK(!late.guard(b,a,"@normal"));CHECK(late.evidence(b)==nullptr);
+  size_t requiredBudget=100000;PayloadFlow required(requiredBudget);const auto c=required.node(),d=required.node();
+  CHECK(required.requireEvidence(d));CHECK(!required.guard(d,c,"@normal"));CHECK(required.evidence(d)==nullptr);
+  return true;
+}
 int main() {
   const struct {const char *name;bool (*run)();} tests[]={
     {"pure views preserve payload through recursive phi equations",viewsAndRecursivePhi},
@@ -244,7 +272,9 @@ int main() {
     {"Array owner alias and copied element payload share one production fixed point",coupledOwnerAndElementPayloads},
     {"successful read requires a productive origin without fabricating empty elements",emptyReadDoesNotCreatePayload},
     {"unknown owner keeps payload and nested owner reads explicitly pending",unknownOwnerCannotCloseRead},
-    {"owner roles do not weaken the concrete payload variant limit",mixedNodeRolesRetainPayloadLimit}};
+    {"owner roles do not weaken the concrete payload variant limit",mixedNodeRolesRetainPayloadLimit},
+    {"all coupled writers require real normal completion",guardedWritersRequireNormalCompletion},
+    {"recursive completion cannot fabricate success and late guards reject",recursiveCompletionCannotInventSuccess}};
   constexpr unsigned count=sizeof(tests)/sizeof(tests[0]);
   unsigned failures=0;std::puts("TAP version 13");std::printf("1..%u\n",count);
   for(unsigned i=0;i<count;++i){const bool passed=tests[i].run();failures+=!passed;std::printf("%s %u - %s\n",passed?"ok":"not ok",i+1,tests[i].name);}

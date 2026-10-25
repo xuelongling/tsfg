@@ -126,8 +126,12 @@ struct ModuleProof {
   // both edges; these sets never allocate an owner or seed an actual payload.
   bool controlReady=false;
   std::set<mlir::Block *> possibleBlocks;
+  // Positive checked-trap proofs, not absence of a recursive return seed.
+  std::set<std::string> trapOnlyFunctions;
+  std::set<mlir::Operation *> possibleOperations;
   std::set<std::pair<mlir::Operation *,unsigned>> possibleEdges;
   bool mayReach(mlir::Block *block)const{return !controlReady||possibleBlocks.count(block);}
+  bool mayExecute(mlir::Operation *op)const{return !controlReady||possibleOperations.count(op);}
   bool mayTraverse(mlir::Operation *op,unsigned index)const{return !controlReady||possibleEdges.count({op,index});}
   size_t remaining = 100000;
   bool failed=false;

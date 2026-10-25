@@ -6,6 +6,7 @@ import {verifyHir} from './module-hir.mjs';
 import {buildFiniteCoreDomains} from './finite-actual-domains.mjs';
 import {buildFiniteFieldPhases} from './finite-field-phases.mjs';
 import {finiteCallables,finiteCallableContracts} from './finite-callables.mjs';
+import {finiteNumericUse} from './finite-numeric-use.mjs';
 import {isFiniteAbsence} from './finite-presence.mjs';
 import {buildTypedLayouts} from './typed-layouts.mjs';
 import {buildTypedReferenceViews} from './typed-reference-views.mjs';
@@ -287,10 +288,18 @@ export function emitFiniteCore(input,context,publicationContext=undefined) {
           if(value.kind==='binary'&&['===','!=='].includes(value.operator)&&operands.every(operand=>domains.get(operand.type).actualTypes
             .every(id=>['reference','array','null','undefined'].includes(types.get(id).kind))))
             return op(api,'identity_equal',operands.map(evaluated),value.type,'operator = '+quote(value.operator),value.range);
-          if(operands.some(operand=>domains.get(operand.type).representation!=='native'))pending('operation-domain-check mapping',value.range);
+          const checked=operands.some(operand=>domains.get(operand.type).representation!=='native');
+          if(checked&&(!finiteNumericUse(value)||operands.some(operand=>domains.get(operand.type).actualTypes
+            .some(id=>id!==i32TypeId&&types.get(id).kind!=='undefined'))))pending('operation-domain-check mapping',value.range);
+          // Source evaluates both sides before an operation can consume either.
           const values=operands.map(evaluated),name=value.kind==='binary'?scalarOperations[value.operator]
             :({'+':'pos','-':'neg','~':'not','!':'bool_not'})[value.operator];
           if(!name)pending('unmodeled native operator '+value.operator,value.range);
+          if(checked)for(const [index,row] of values.entries()) {
+            budget.step();if(domains.get(row.type)?.representation==='native')continue;
+            const attrs=`numeric_group = ${quote(value.domainNode)}, numeric_operator = ${quote('tsfg_core.'+name)}, numeric_arity = ${values.length} : i32, numeric_operand = ${index} : i32, target_type = ${quote(i32TypeId)}, trap_code = ${quote('r01-t-undefined-numeric-use')}, rule_id = ${quote('r01-numeric-use')}`;
+            values[index]={name:api.checkedSuccessor('tsfg_core.domain.numeric_use',row.name,row.type,i32TypeId,attrs,value.range),type:i32TypeId};
+          }
           return api.operation('tsfg_core.'+name,values.map(row=>row.name),values.map(row=>row.type),value.type,'',value.range);
         }
         if(value.kind==='call') {

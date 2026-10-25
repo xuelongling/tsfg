@@ -4,6 +4,7 @@
 #include "dialect.h"
 #include "string-core.h"
 #include "mlir/Dialect/ControlFlow/IR/ControlFlowOps.h"
+#include "mlir/IR/Dominance.h"
 #include <algorithm>
 
 namespace tsfg::finite {
@@ -95,6 +96,77 @@ bool refinement(ModuleProof &proof, mlir::Operation *op, mlir::func::FuncOp fn, 
   }
   return authorized || proof.reject("refinement has no matching dominating original presence edge");
 }
+bool numericUse(ModuleProof &proof,mlir::Operation *op,mlir::func::FuncOp fn) {
+  const auto target=hash(std::string("tsfg.type\0i32",13)), absent=hash(std::string("tsfg.type\0undefined",19));
+  const auto *input=domain(proof,op->getOperand(0).getType());
+  if(!input||attr(op,"target_type")!=target||
+      std::find(input->alternatives.begin(),input->alternatives.end(),absent)==input->alternatives.end())
+    return proof.reject("numeric use requires actual i32/undefined input, never a static retag");
+  for(const auto &type:input->alternatives)if(!proof.charge()||(type!=target&&type!=absent))
+    return proof.reject("numeric use cannot consume null, a different number or an unrelated payload");
+  const auto group=attr(op,"numeric_group"),name=attr(op,"numeric_operator");
+  static const std::set<std::string> unary={"tsfg_core.neg","tsfg_core.pos","tsfg_core.not"}, binary={
+    "tsfg_core.add","tsfg_core.sub","tsfg_core.mul","tsfg_core.div","tsfg_core.rem","tsfg_core.shl",
+    "tsfg_core.shr","tsfg_core.ushr","tsfg_core.and","tsfg_core.or","tsfg_core.xor",
+    "tsfg_core.lt","tsfg_core.le","tsfg_core.gt","tsfg_core.ge"};
+  const auto arity=op->getAttrOfType<mlir::IntegerAttr>("numeric_arity").getInt();
+  if(!(arity==1?unary:binary).count(name))return proof.reject("numeric use has no selected i32 numeric consumer");
+  const auto start=op->getAttr("tsfg_source.start"),end=op->getAttr("tsfg_source.end");
+  const auto *expressions=proof.plan.getAsObject()->getArray("expressions");bool joined=false;
+  if(expressions)for(const auto &entry:*expressions) {
+    if(!proof.charge())return false;const auto *row=entry.getAsObject();
+    if(!row||string(*row,"id")!=group)continue;
+    const auto *range=row->getObject("range");
+    joined=!joined&&string(*row,"functionId")==attr(fn,"tsfg_core.function_id")&&
+      string(*row,"kind")== (arity==1?"unary":"binary")&&range&&
+      range->getInteger("start")==llvm::cast<mlir::IntegerAttr>(start).getInt()&&
+      range->getInteger("end")==llvm::cast<mlir::IntegerAttr>(end).getInt();
+    if(!joined)return proof.reject("numeric use expression/function/full-range join differs");
+  }
+  if(!joined)return proof.reject("numeric use has no complete numeric expression anchor");
+  auto *first=op;
+  while(auto *previous=first->getBlock()->getSinglePredecessor()) {
+    if(!proof.charge())return false;auto *prior=previous->getTerminator();
+    if(prior->getName().getStringRef()!="tsfg_core.domain.numeric_use"||attr(prior,"numeric_group")!=group)break;
+    first=prior;
+  }
+  mlir::DominanceInfo dominance(fn);std::map<unsigned,mlir::Value> checked;auto *cursor=first;
+  int64_t previous=-1;
+  while(cursor->getName().getStringRef()=="tsfg_core.domain.numeric_use") {
+    if(!proof.charge())return false;
+    const auto index=cursor->getAttrOfType<mlir::IntegerAttr>("numeric_operand").getInt();
+    if(attr(cursor,"numeric_group")!=group||attr(cursor,"numeric_operator")!=name||
+        cursor->getAttr("numeric_arity")!=op->getAttr("numeric_arity")||
+        cursor->getAttr("tsfg_source.start")!=start||cursor->getAttr("tsfg_source.end")!=end||
+        index<=previous||!dominance.dominates(cursor->getOperand(0),first))
+      return proof.reject("numeric checks must follow full operand evaluation in original operand order");
+    auto *next=cursor->getSuccessor(0);
+    if(next->empty()||next->getSinglePredecessor()!=cursor->getBlock())
+      return proof.reject("numeric success carrier cannot have another incoming edge");
+    checked.emplace(unsigned(index),next->getArgument(0));previous=index;cursor=&next->front();
+  }
+  if(cursor->getName().getStringRef()!=name||cursor->getNumOperands()!=unsigned(arity)||
+      cursor->getAttr("tsfg_source.start")!=start||cursor->getAttr("tsfg_source.end")!=end)
+    return proof.reject("numeric success must immediately consume the checked original operation");
+  size_t members=0;
+  for(auto &block:fn.getBody())for(auto &candidate:block) {
+    if(!proof.charge())return false;
+    if(candidate.getName().getStringRef()=="tsfg_core.domain.numeric_use"&&attr(&candidate,"numeric_group")==group)++members;
+  }
+  if(members!=checked.size())return proof.reject("numeric expression has duplicate or disconnected consumption checks");
+  for(unsigned i=0;i<unsigned(arity);++i) {
+    if(!proof.charge())return false;
+    if(checked.count(i)) {
+      if(cursor->getOperand(i)!=checked.at(i))return proof.reject("numeric consumer changed its checked operand");
+      for(auto &use:checked.at(i).getUses())if(!proof.charge()||use.getOwner()!=cursor||use.getOperandNumber()!=i)
+        return proof.reject("numeric checked payload cannot escape to transfer, return or another operation");
+    }else if(typeCode(cursor->getOperand(i).getType())!=1||!dominance.dominates(cursor->getOperand(i),first))
+      return proof.reject("numeric operand evaluation must precede every consumption check");
+  }
+  // These joins prove the numeric IR group and complete producer anchor. The
+  // Core source catalogue is not an independent TypeScript AST checker.
+  return true;
+}
 bool result(ModuleProof &proof, mlir::Operation *op) {
   if (!op->getNumResults() || !op->hasAttr("domain")) return true;
   const auto id = attr(op,"domain");
@@ -127,6 +199,7 @@ bool verifyValueContracts(ModuleProof &proof) {
       for (auto value : op->getResults()) if (!proof.charge() || !domain(proof,value.getType())) return proof.reject("SSA result has an unknown carrier");
       if (!result(proof,op)) return false;
       if (name.starts_with("tsfg_core.domain.") && mlir::failed(verifyFiniteDomainOperation(op))) return false;
+      if (name == "tsfg_core.domain.numeric_use" && !numericUse(proof,op,fn)) return false;
       if (name == "tsfg_core.domain.copy") {
         const auto *from=domain(proof,op->getOperand(0).getType());bool hasValue=false;
         if(!from)return proof.reject("copy has no actual input domain");

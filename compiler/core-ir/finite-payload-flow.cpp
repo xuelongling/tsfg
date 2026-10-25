@@ -33,16 +33,30 @@ bool PayloadFlow::insert(Id id,const std::string &type) {
   }
   return true;
 }
-bool PayloadFlow::seed(Id id,const std::string &type) { return building()&&insert(id,type); }
+bool PayloadFlow::seed(Id id,const std::string &type) {
+  if(!building()||id>=nodes.size())return reject("invalid guarded payload seed");
+  nodes[id].written=true;return insert(nodes[id].incoming==none?id:nodes[id].incoming,type);
+}
+bool PayloadFlow::guard(Id id,Id gate,const std::string &selected) {
+  if(!building()||!spend()||id>=nodes.size()||gate>=nodes.size()||id==gate||selected.empty()||
+      nodes[id].incoming!=none||nodes[id].written||nodes[id].requiresEvidence||!nodes[id].value.alternatives.empty()||nodes[id].value.pending)
+    return reject("invalid or late normal payload guard");
+  // Install before any external writer. The one internal edge deliberately
+  // retains the public target, while later connects/seeds enter candidates.
+  const auto raw=boundedNode(nodes[id].alternativeLimit);
+  if(raw==none||!connect({raw,id,gate,selected}))return false;
+  nodes[id].incoming=raw;return true;
+}
 void PayloadFlow::pending(Id id) {
   if(!nodes[id].value.pending){nodes[id].value.pending=true;changed(id);}
 }
 bool PayloadFlow::unknown(Id id) {
   if(!building()||!spend()||id>=nodes.size())return reject("invalid pending payload node");
-  pending(id);return true;
+  nodes[id].written=true;pending(nodes[id].incoming==none?id:nodes[id].incoming);return true;
 }
 bool PayloadFlow::requireEvidence(Id id) {
   if(!building()||!spend()||id>=nodes.size())return reject("invalid required payload origin");
+  if(nodes[id].incoming!=none)id=nodes[id].incoming;
   if(!nodes[id].requiresEvidence){nodes[id].requiresEvidence=true;required.push_back(id);}
   return true;
 }
@@ -50,6 +64,8 @@ bool PayloadFlow::connect(Edge edge) {
   if(!building()||!spend(3)||edge.from>=nodes.size()||edge.to>=nodes.size()||
      (edge.gate!=none&&(edge.gate>=nodes.size()||edge.selected.empty()))||
      (edge.gate==none&&!edge.selected.empty()))return reject("invalid actual payload equation");
+  nodes[edge.to].written=true;
+  if(nodes[edge.to].incoming!=none)edge.to=nodes[edge.to].incoming;
   const auto id=edges.size();edges.push_back(std::move(edge));
   const auto &stored=edges.back();nodes[stored.from].edges.push_back(id);
   if(stored.gate!=none&&stored.gate!=stored.from)nodes[stored.gate].edges.push_back(id);

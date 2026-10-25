@@ -7,7 +7,8 @@ import {buildTypedReferenceViews} from './typed-reference-views.mjs';
 import {buildFiniteFieldReaching} from './finite-field-reaching.mjs';
 import {buildFiniteArrayReaching} from './finite-array-reaching.mjs';
 import {finiteCallables} from './finite-callables.mjs';
-import {canonical,own,sha256} from './identity.mjs';
+import {canonical,own,sha256,i32TypeId} from './identity.mjs';
+import {finiteNumericUse,finiteNormalFlow,finiteNormalBody} from './finite-numeric-use.mjs';
 import {isFiniteAbsence} from './finite-presence.mjs';
 import {actualFieldResolver} from './member-presence.mjs';
 
@@ -104,13 +105,14 @@ function solveFiniteActualDomains(input,context,charge,fieldReaching,mode,arrayR
   }
   const enqueue=id=>{if(!queued.has(id)){charge();queued.add(id);queue.push(id);}};
   function insert(id,key,value) {
-    const selected=nodes.get(id)[key];if(selected.has(value))return;charge();
-    if(key==='actual'&&selected.size>=256)fail('variant limit');selected.add(value);enqueue(id);
+    const publish=()=>{const selected=nodes.get(id)[key];if(selected.has(value))return;charge();
+      if(key==='actual'&&selected.size>=256)fail('variant limit');selected.add(value);enqueue(id);flow.changed(id);};
+    if(key==='pending')publish();else flow.publish(id,publish);
   }
   function copy(from,to,predicate=null) {
-    const targets=edges.get(from);if(targets.has(to))return;charge();
+    const targets=edges.get(from),key=to+'\0'+canonical(predicate);if(targets.has(key))return;charge();
     if(predicate?.gate){charge();if(!gates.has(predicate.gate))gates.set(predicate.gate,[]);gates.get(predicate.gate).push({from,to,predicate});}
-    targets.set(to,predicate);propagate(from,to,predicate);
+    targets.set(key,{to,predicate});propagate(from,to,predicate);
   }
   const absent=id=>{charge();return isFiniteAbsence(types.get(id)?.kind);};
   function propagate(from,to,predicate) {
@@ -118,12 +120,13 @@ function solveFiniteActualDomains(input,context,charge,fieldReaching,mode,arrayR
       let enabled=false;for(const type of gate.actual){charge();if(absent(type))enabled=true;}if(!enabled)return;}
     for(const key of ['actual','owners','pending'])for(const value of nodes.get(from)[key]) {
       charge();if(predicate?.presentOnly&&key==='actual'&&absent(value))continue;
-      if(predicate?.ownerOnly&&key!=='owners')continue;
+      if(predicate?.ownerOnly&&key!=='owners'||predicate?.pendingOnly&&key!=='pending')continue;
       if(predicate&&key==='actual'&&(predicate.equal?value!==predicate.type:value===predicate.type))continue;
       if(predicate?.equal&&key==='owners')continue;
       insert(to,key,value);
     }
   }
+  const flow=finiteNormalFlow(arrayReaching!==null,charge,nodes);
   function leaves(id) {
     const result=[],seen=new Set(),stack=[id];
     while(stack.length){charge();const current=stack.pop();if(seen.has(current))continue;seen.add(current);
@@ -226,68 +229,51 @@ function solveFiniteActualDomains(input,context,charge,fieldReaching,mode,arrayR
       elementTypes:[left.type,right.type]});
   }
   const tasks=[];
-  function expression(value,path,fn,guards=new Map()) {
+  function expression(value,path,fn,guards=new Map(),incoming=flow.always) {
+    flow.entry(path,incoming);
     const result=node(path,value.type).id;expressions.push({id:result,kind:value.kind,range:{...value.range},functionId:fn.id,
       ...(value.kind==='reference'&&guards.has(value.binding)?{presenceProof:guards.get(value.binding)}:{})});
     tasks.push({value,path,fn,guards});return result;
   }
-  function branchGuard(condition,truth,guards) {
-    const next=new Map(guards);let a=condition.left,b=condition.right;
-    if(condition.kind!=='binary'||!['===','!=='].includes(condition.operator))return next;
-    while(a?.kind==='group')a=a.operand;while(b?.kind==='group')b=b.operand;
-    const binding=a?.kind==='reference'?a:b,absence=binding===a?b:a;
-    if(binding?.kind==='reference'&&['undefined','null'].includes(absence?.kind))
-      next.set(binding.binding,{type:absence.type,equal:(condition.operator==='===')===truth,range:{...condition.range}});
-    return next;
-  }
-  function stableGuards(guards,body) {
-    const result=new Map(guards),stack=[body];
-    while(stack.length) {
-      charge();const value=stack.pop();if(!value||typeof value!=='object')continue;
-      if(value.kind==='assignment')result.delete(value.target.binding);
-      if(value.kind==='update')result.delete(value.operand?.binding??value.target?.binding);
-      for(const child of Object.values(value))if(child&&typeof child==='object')stack.push(child);
-    }return result;
-  }
-  function body(statements,path,fn) {
-    const stack=statements.map((value,index)=>({value,path:path+'/'+index,guards:new Map()})).reverse();
-    while(stack.length) {
-      charge();const {value:s,path:p,guards}=stack.pop(),emit=(value,path)=>expression(value,path,fn,guards);
-      if(s.kind==='local')copy(emit(s.initializer,p+'/initializer'),binding(fn,s.binding.id,s.binding.type));
-      else if(s.kind==='return'||s.kind==='constructorReturn') {
-        if(s.value)copy(emit(s.value,p+'/value'),returned(fn));
-      }else if(s.kind==='expression')emit(s.expression,p+'/expression');
-      else if(s.kind==='if'||s.kind==='while')emit(s.condition,p+'/condition');
-      for(const key of ['body','then','else'])if(s[key])
-        for(let i=s[key].length-1;i>=0;i--)stack.push({value:s[key][i],path:p+'/'+key+'/'+i,
-          guards:stableGuards(s.kind==='if'?branchGuard(s.condition,key==='then',guards):new Map(guards),s[key])});
-    }
-  }
-  for(const fn of hir.functions)body(fn.body,fn.id+'/body',fn);
   function constructionFrame(type) {
     return functions.get(type.constructor??type.construction.id);
   }
+  const constructionNormal=new Map();
   for(const type of hir.types)if(type.construction) {
-    const frame=constructionFrame(type),receiver=binding(frame,frame.parameters[0].id,type.id);
+    const requirements=type.construction.initialization.filter(init=>init.value)
+      .map(init=>flow.normal('construction/'+type.construction.id+'/initialization/'+init.field));
+    if(type.construction.implicitForward)requirements.push(flow.returned(constructionFrame(types.get(type.base)).id));
+    constructionNormal.set(constructionFrame(type).id,requirements);
+  }
+  for(const fn of hir.functions)finiteNormalBody(fn.body,fn.id+'/body',fn,{flow,expression,binding,copy,charge,
+    voidResult:fn.role==='construction-body'||types.get(fn.returnType.id).kind==='void',requirements:constructionNormal.get(fn.id)??[]});
+  for(const fn of callables)if(!hir.functions.includes(fn))flow.returns(fn.id,[flow.all(constructionNormal.get(fn.id)??[])]);
+  for(const type of hir.types)if(type.construction) {
+    const frame=constructionFrame(type),receiver=binding(frame,frame.parameters[0].id,type.id),requirements=[];
     frame.parameters.forEach(parameter=>binding(frame,parameter.id,parameter.type));
     for(const init of type.construction.initialization) {
-      if(init.value)fieldStores.push({receiver,field:init.field,
-        value:expression(init.value,'construction/'+type.construction.id+'/initialization/'+init.field,frame)});
+      if(init.value) {const value=expression(init.value,'construction/'+type.construction.id+'/initialization/'+init.field,frame,new Map(),flow.all(requirements));
+        fieldStores.push({receiver,field:init.field,value});requirements.push(flow.normal(value));}
       else if(init.binding)fieldStores.push({receiver,field:init.field,
         value:binding(frame,init.binding,type.fields.find(field=>field.id===init.field).type)});
     }
     if(type.construction.implicitForward) {
-      const base=constructionFrame(types.get(type.base));copy(receiver,binding(base,base.parameters[0].id,base.parameters[0].type));
+      const base=constructionFrame(types.get(type.base));
+      copy(receiver,binding(base,base.parameters[0].id,base.parameters[0].type));
       type.construction.implicitForward.parameters.forEach(pair=>{
         const source=frame.parameters.find(parameter=>parameter.id===pair.source),target=base.parameters.find(parameter=>parameter.id===pair.target);
         copy(binding(frame,source.id,source.type),binding(base,target.id,target.type));
       });
     }
   }
+
   for(let cursor=0;cursor<tasks.length;cursor++) {
     charge();const {value:v,path:p,fn,guards}=tasks[cursor],id=p;
-    const child=key=>expression(v[key],p+'/'+key,fn,guards);
-    const children=key=>(v[key]??[]).map((value,index)=>expression(value,p+'/'+key+'/'+index,fn,guards));
+    let continuation=flow.incoming(p);const dependencies=[],requirements=[];
+    const at=(value,path)=>{const id=expression(value,path,fn,guards,continuation);copy(id,p,{pendingOnly:true});
+      continuation=flow.normal(id);dependencies.push(continuation);return id;};
+    const child=key=>at(v[key],p+'/'+key);
+    const children=key=>(v[key]??[]).map((value,index)=>at(value,p+'/'+key+'/'+index));
     if(['constant','floating','boolean','undefined','null','stringLiteral'].includes(v.kind))insert(id,'actual',v.type);
     else if(v.kind==='reference')copy(binding(fn,v.binding,v.type),id,guards.get(v.binding));
     else if(['group','nonNull','assertType'].includes(v.kind))copy(child('operand'),id);
@@ -296,61 +282,71 @@ function solveFiniteActualDomains(input,context,charge,fieldReaching,mode,arrayR
       for(const elementValue of children('elements'))copy(elementValue,element);
     }else if(v.kind==='arrayReadChecked')reads.push({receiver:child('receiver'),index:child('index'),result:id});
     else if(v.kind==='arrayStoreDenseChecked') {
-      const receiver=expression(v.target.receiver,p+'/target/receiver',fn,guards);
-      expression(v.target.index,p+'/target/index',fn,guards);const value=child('value');
+      const receiver=at(v.target.receiver,p+'/target/receiver');
+      at(v.target.index,p+'/target/index');const value=child('value');
       stores.push({receiver,value});copy(value,id);
     }else if(v.kind==='assignment') {const value=child('value');copy(value,binding(fn,v.target.binding,v.target.type));copy(value,id);}
     else if(v.kind==='call') {
       const target=functions.get(v.target),arguments_=children('arguments');
       const receiver=v.receiver?child('receiver'):null;
       if(v.target===hir.intrinsics.readSpan.id) {
-        insert(id,'actual',v.type);copy(arguments_[0],id,{ownerOnly:true});continue;
+        insert(id,'actual',v.type);copy(arguments_[0],id,{ownerOnly:true});flow.finish(id,dependencies);continue;
       }
-      if(!target){insert(id,'pending','unresolved-call:'+id);continue;}
+      if(!target){insert(id,'pending','unresolved-call:'+id);flow.finish(id,dependencies);continue;}
       if(receiver) {
         methodCalls.push({id,receiver,arguments:arguments_,member:v.target,
           viewType:types.get(v.receiver.type).kind==='reference'?v.receiver.type:target.ownerType,targets:new Map()});
-        continue;
+        flow.finish(id,dependencies);continue;
       }
       arguments_.forEach((argument,index)=>copy(argument,binding(target,target.parameters[index].id,target.parameters[index].type)));
+      requirements.push(flow.returned(target.id));
       if(types.get(target.returnType.id).kind==='void')insert(id,'actual',target.returnType.id);else copy(returned(target),id);
     }else if(v.kind==='construct') {
       insert(id,'actual',v.type);const actual=types.get(v.type),target=constructionFrame(actual),arguments_=children('arguments');
       if(actual.kind==='reference')allocations.push({node:id,actualType:actual.id,state:'not-defined'});
       if(target) {
-        copy(id,binding(target,target.parameters[0].id,target.parameters[0].type));
+        // Allocation supplies the internal receiver before constructor completion;
+        // only the public result waits for that successful completion.
+        flow.when(flow.all([flow.incoming(id),...dependencies]),()=>
+          insert(binding(target,target.parameters[0].id,target.parameters[0].type),'actual',v.type));
+        requirements.push(flow.returned(target.id));
         arguments_.forEach((argument,index)=>copy(argument,binding(target,target.parameters[index+1].id,target.parameters[index+1].type)));
       }
     }else if(v.kind==='superConstruct') {
       const base=hir.types.find(type=>type.construction?.id===v.construction),target=constructionFrame(base);
       copy(binding(fn,v.receiverBinding,fn.ownerType),binding(target,target.parameters[0].id,target.parameters[0].type));
       children('arguments').forEach((argument,index)=>copy(argument,binding(target,target.parameters[index+1].id,target.parameters[index+1].type)));
-      insert(id,'actual',v.type);
+      requirements.push(flow.returned(target.id));insert(id,'actual',v.type);
     }else if(v.kind==='propertyPresenceTest') {
       child('left');const receiver=child('right');insert(id,'actual',v.type);
       presenceTests.push({id,receiver,field:v.property,viewType:fieldOwners.get(v.property).owner,targets:new Map()});
     }else if(v.kind==='fieldAccess')fieldReads.push({id,receiver:child('receiver'),field:v.property,result:id,
       viewType:['reference','value'].includes(types.get(v.receiver.type).kind)?v.receiver.type:fieldOwners.get(v.property).owner,targets:new Map()});
     else if(v.kind==='fieldAssignment') {
-      const receiver=expression(v.target.receiver,p+'/target/receiver',fn,guards),value=child('value');
+      const receiver=at(v.target.receiver,p+'/target/receiver'),value=child('value');
       fieldStores.push({id,receiver,field:v.target.property,value,
         viewType:['reference','value'].includes(types.get(v.target.receiver.type).kind)?v.target.receiver.type:fieldOwners.get(v.target.property).owner,targets:new Map()});copy(value,id);
     }else if(['binary','shortCircuit'].includes(v.kind)&&v.operator==='??') {
       const left=child('left'),right=child('right');coalesces.push(left);
-      copy(left,id,{presentOnly:true});copy(right,id,{gate:left});
+      copy(left,id,{presentOnly:true});copy(right,id,{gate:left});dependencies.splice(1);
     }else if(['binary','unary','shortCircuit','arrayLength','readSpanLength','arrayCompoundAssignment','arrayUpdate',
       'arrayResizeChecked','update','fieldUpdate','stringConcat'].includes(v.kind)) {
-      // Results of approved operations are native/declared; dependent operand
-      // domains are checked by the formal producer, never coerced here.
+      // Carrier capacity stays declared. Ordered numeric success requires each
+      // operand's real i32 alternative, independently from its static view.
       for(const key of ['left','right','operand','receiver','index','value'])if(v[key])child(key);
-      if(v.target)for(const key of ['receiver','index'])if(v.target[key])expression(v.target[key],p+'/target/'+key,fn,guards);
-      children('arguments');for(const type of leaves(v.type))insert(id,'actual',type);
+      if(v.target)for(const key of ['receiver','index'])if(v.target[key])at(v.target[key],p+'/target/'+key);
+      children('arguments');if(finiteNumericUse(v))for(const key of v.kind==='binary'?['left','right']:['operand'])
+        requirements.push({node:p+'/'+key,type:i32TypeId,possible:true});
+      if(v.kind==='shortCircuit'||v.kind==='binary'&&['&&','||'].includes(v.operator))dependencies.splice(1);
+      for(const type of leaves(v.type))insert(id,'actual',type);
       if(v.kind==='arrayCompoundAssignment'||v.kind==='arrayUpdate') {
         const old=node(p+'/old-value',v.target.type).id;
         stores.push({receiver:p+'/target/receiver',value:id});reads.push({receiver:p+'/target/receiver',result:old});
       }
     }else insert(id,'pending','unsupported-expression:'+v.kind+':'+id);
+    flow.finish(id,dependencies,requirements);
   }
+  flow.seal();
   // Actual fields are addressed by owned member identities. No name based
   // structural layout reconstruction is permitted at this seam.
   const fieldNode=(actual,field)=>node('field/'+actual+'/'+field.id,field.type).id;
@@ -394,7 +390,7 @@ function solveFiniteActualDomains(input,context,charge,fieldReaching,mode,arrayR
   let cursor=0;
   while(cursor<queue.length) {
     charge();const current=queue[cursor++];queued.delete(current);
-    for(const [target,predicate] of edges.get(current))propagate(current,target,predicate);
+    for(const {to,predicate} of edges.get(current).values())propagate(current,to,predicate);
     for(const edge of gates.get(current)??[]){charge();propagate(edge.from,edge.to,edge.predicate);}
     for(const call of methodCalls)if(call.receiver===current)for(const actual of nodes.get(current).actual) {
       charge();if(call.targets.has(actual))continue;const target=actualMethod(actual,call);
@@ -410,7 +406,7 @@ function solveFiniteActualDomains(input,context,charge,fieldReaching,mode,arrayR
         if(index<call.arguments.length)copy(call.arguments[index],binding(target,parameter.id,parameter.type));
         else insert(call.id,'pending','method-argument-default-domain:'+target.id+':'+index);
       });
-      if(types.get(target.returnType.id).kind==='void')insert(call.id,'actual',target.returnType.id);
+      if(types.get(target.returnType.id).kind==='void')flow.when(flow.returned(target.id),()=>insert(call.id,'actual',target.returnType.id));
       else copy(returned(target),call.id);
     }
     for(const read of reads)if(read.receiver===current) {

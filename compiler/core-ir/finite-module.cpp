@@ -56,7 +56,7 @@ namespace {
 // another operation's operands, successor edges or constructor phase marker.
 bool preflight(ModuleProof &proof) {
   static const std::map<std::string,std::array<unsigned,4>> shapes = {
-    {"literal",{0,0,1,1}},{"view",{1,1,1,1}},{"copy",{1,1,1,1}},{"refine",{1,1,1,1}},
+    {"numeric_use",{1,1,0,0}},{"literal",{0,0,1,1}},{"view",{1,1,1,1}},{"copy",{1,1,1,1}},{"refine",{1,1,1,1}},
     {"read_span",{3,3,1,1}},{"array_create",{0,UINT32_MAX,1,1}},
     {"array_read",{2,2,1,1}},{"array_store",{3,3,0,0}},{"array_resize",{2,2,0,0}},
     {"array_length",{1,1,1,1}},{"identity_equal",{2,2,1,1}},{"presence_equal",{2,2,1,1}},
@@ -74,7 +74,7 @@ bool preflight(ModuleProof &proof) {
       if(found==shapes.end()){valid=proof.reject("unknown finite operation");return;}
       const auto &s=found->second;
       if(op->getNumOperands()<s[0]||op->getNumOperands()>s[1]||op->getNumResults()<s[2]||op->getNumResults()>s[3]||
-         op->getNumRegions()!=0||op->getNumSuccessors()!=0){valid=proof.reject("finite operation arity/regions/successors");return;}
+         op->getNumRegions()!=0||op->getNumSuccessors()!=(name=="numeric_use"?1u:0u)){valid=proof.reject("finite operation arity/regions/successors");return;}
     }
     if(op->getName().getStringRef()=="cf.cond_br" && (op->getNumOperands()<1||op->getNumSuccessors()!=2||op->getNumResults()!=0)) {
       valid=proof.reject("conditional branch shape");return;}
@@ -213,7 +213,7 @@ bool contracts(ModuleProof &proof, const coreHeader::Identity *header = nullptr)
   auto module=proof.module;
   // Exact unpublished development descriptor; synchronize this gate when it changes.
   constexpr char expectedContract[] =
-      "sha256:0f4747b536062c441fcd30c2f24fb059dfcae90d31a23ec35dba768312e9de0f";
+      "sha256:2f96b85766950b7e39a2a9192672d97a5d12e7c663cde144d203c3420b96b259";
   const auto contract=module->getAttrOfType<mlir::StringAttr>("tsfg_core.finite_contract");
   if(!contract || contract.getValue()!=expectedContract)
     return proof.reject("finite development contract identity differs");

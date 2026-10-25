@@ -90,7 +90,7 @@ mlir::LogicalResult ConstantOp::verify() {
   return mlir::success();
 }
 
-enum class ScalarKind { Arithmetic, Float, Integer, Shift, Comparison, Equality, Boolean };
+enum class ScalarKind { Arithmetic, Positive, Integer, Shift, Comparison, Equality, Boolean };
 bool scalarTypes(mlir::Operation *operation, ScalarKind kind) {
   const auto result = operation->getResult(0).getType();
   const auto first = operation->getOperand(0).getType();
@@ -101,7 +101,7 @@ bool scalarTypes(mlir::Operation *operation, ScalarKind kind) {
     if (operand.getType() != first) return false;
   if (kind == ScalarKind::Integer) return integer(code) && result == first;
   if (kind == ScalarKind::Arithmetic) return (integer(code) || floating(code)) && result == first;
-  if (kind == ScalarKind::Float) return floating(code) && result == first;
+  if (kind == ScalarKind::Positive) return (floating(code) || code == 1) && result == first;
   if (!result.isSignlessInteger(1)) return false;
   if (kind == ScalarKind::Comparison) return integer(code) || floating(code);
   if (kind == ScalarKind::Boolean) return first.isSignlessInteger(1);
@@ -136,7 +136,7 @@ TSFG_SCALAR_OPERATION(AndOp, "and", mlir::OpTrait::NOperands<2>::Impl, Integer)
 TSFG_SCALAR_OPERATION(OrOp, "or", mlir::OpTrait::NOperands<2>::Impl, Integer)
 TSFG_SCALAR_OPERATION(XorOp, "xor", mlir::OpTrait::NOperands<2>::Impl, Integer)
 TSFG_SCALAR_OPERATION(NegOp, "neg", mlir::OpTrait::OneOperand, Arithmetic)
-TSFG_SCALAR_OPERATION(PosOp, "pos", mlir::OpTrait::OneOperand, Float)
+TSFG_SCALAR_OPERATION(PosOp, "pos", mlir::OpTrait::OneOperand, Positive)
 TSFG_SCALAR_OPERATION(NotOp, "not", mlir::OpTrait::OneOperand, Integer)
 TSFG_SCALAR_OPERATION(BoolNotOp, "bool_not", mlir::OpTrait::OneOperand, Boolean)
 TSFG_SCALAR_OPERATION(EqOp, "eq", mlir::OpTrait::NOperands<2>::Impl, Equality)
@@ -183,7 +183,7 @@ public:
                   EqOp, NeOp, LtOp, LeOp, GtOp, GeOp, PosOp, CheckedConversionOp, WrapConversionOp, ReinterpretOp, GlobalLoadOp, GlobalStoreOp, AuthorizedHostOp,
                   ReferenceAllocOp, ReferenceBaseOp, ReferenceViewOp, ReferenceFieldReadOp,
                   ReferenceFieldWriteOp, ReferenceCallOp, ReferenceIdentityOp,
-                  DomainLiteralOp, DomainViewOp, DomainCopyOp, DomainRefineOp, DomainReadSpanOp, DomainArrayCreateOp, DomainArrayReadOp,
+                  DomainNumericUseOp, DomainLiteralOp, DomainViewOp, DomainCopyOp, DomainRefineOp, DomainReadSpanOp, DomainArrayCreateOp, DomainArrayReadOp,
                   DomainArrayStoreOp, DomainArrayResizeOp, DomainArrayLengthOp,
                   DomainIdentityEqualOp, DomainPresenceEqualOp, DomainMemberPresentOp, DomainConstructOp, DomainSuperOp,
                   DomainInitializeFieldsOp, DomainFieldDefineOp, DomainFieldInitializeOp,

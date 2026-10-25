@@ -284,7 +284,7 @@ bool ArrayFlow::operation(mlir::Operation *op,const std::string &function) {
 bool ArrayFlow::build() {
   if(!collect()||!entrySeeds())return false;
   for(auto &[id,fn]:proof.functions)for(auto &block:fn.getBody())for(auto &op:block)
-    if(!proof.charge()||((role==Role::CarrierMaximum||proof.mayReach(&block))&&!operation(&op,id)))return false;
+    if(!proof.charge()||((role==Role::CarrierMaximum||proof.mayExecute(&op))&&!operation(&op,id)))return false;
   return valid;
 }
 bool ArrayFlow::finish() {

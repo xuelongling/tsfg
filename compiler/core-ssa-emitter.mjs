@@ -371,6 +371,13 @@ export function emitCoreSsaFunction(fn, context) {
     },
     assign: (id,value) => definitions.set(id,value),
     declare: (id,type) => { declared.add(id); bindingTypes.set(id,type); },
+    checkedSuccessor: (name,operand,operandType,resultType,attributes,anchor) => {
+      if(!current||current.terminated)throw new TypeError('r03-hir-cfg: checked successor requires a live block');
+      const next=newBlock([resultType]);
+      line('    '+quote(name)+'('+operand+')[^'+next.name+'] {'+attributes+', '+attrsFor(anchor)
+        +'} : ('+coreType(operandType)+') -> ()');
+      current.terminated=true;current=next;return next.parameters[0].name;
+    },
     operation: (name, operands, operandTypes, resultType, attributes, anchor) => {
       const result = resultType === null ? null : variable();
       operationLine(result, name, operands, operandTypes, resultType, attributes, anchor);

@@ -102,7 +102,7 @@ struct Flow {
     // not silently pure. Allocation/initialization markers are not writes: the
     // actual field commits and constructor call graph determine their effects.
     static const std::set<std::string> pure={
-      "cf.unreachable","tsfg_core.fuel","tsfg_core.constant","tsfg_core.add","tsfg_core.sub","tsfg_core.mul",
+      "tsfg_core.domain.numeric_use","cf.unreachable","tsfg_core.fuel","tsfg_core.constant","tsfg_core.add","tsfg_core.sub","tsfg_core.mul",
       "tsfg_core.div","tsfg_core.rem","tsfg_core.shl","tsfg_core.shr","tsfg_core.ushr","tsfg_core.and","tsfg_core.or",
       "tsfg_core.xor","tsfg_core.neg","tsfg_core.pos","tsfg_core.not","tsfg_core.bool_not","tsfg_core.eq","tsfg_core.ne",
       "tsfg_core.lt","tsfg_core.le","tsfg_core.gt","tsfg_core.ge","tsfg_core.convert_checked","tsfg_core.convert_wrap",

@@ -96,6 +96,26 @@ mlir::LogicalResult verifyFiniteDomainOperation(mlir::Operation *operation) {
   };
   if (!anchor(operation)) return reject("requires bounded original source anchor");
   const auto name = operation->getName().getStringRef();
+  if (name == "tsfg_core.domain.numeric_use") {
+    const auto arity=operation->getAttrOfType<mlir::IntegerAttr>("numeric_arity"),
+        index=operation->getAttrOfType<mlir::IntegerAttr>("numeric_operand");
+    const auto group=operation->getAttrOfType<mlir::StringAttr>("numeric_group"),
+        target=operation->getAttrOfType<mlir::StringAttr>("target_type"),
+        code=operation->getAttrOfType<mlir::StringAttr>("trap_code"),
+        rule=operation->getAttrOfType<mlir::StringAttr>("rule_id");
+    if(operation->getNumOperands()!=1||operation->getNumResults()!=0||operation->getNumSuccessors()!=1||
+        !domainOperand(operation,0)||!group||group.getValue().empty()||group.getValue().size()>4096||
+        !target||!finiteDomainIdentity(target.getValue())||!arity||!index||
+        !arity.getType().isSignlessInteger(32)||!index.getType().isSignlessInteger(32)||
+        arity.getInt()<1||arity.getInt()>2||index.getInt()<0||index.getInt()>=arity.getInt()||
+        !code||code.getValue()!="r01-t-undefined-numeric-use"||!rule||rule.getValue()!="r01-numeric-use")
+      return reject("invalid checked numeric consumption identity/operand");
+    auto *next=operation->getSuccessor(0);
+    if(next->getParent()!=operation->getBlock()->getParent()||next->getNumArguments()!=1||
+        typeCode(next->getArgument(0).getType())!=1)
+      return reject("numeric consumption requires one same-function native i32 success argument");
+    return mlir::success();
+  }
   if (name == "tsfg_core.domain.method_call") {
     const auto dispatch = operation->getAttrOfType<mlir::StringAttr>("dispatch");
     if (!domainOperand(operation, 0) || !identity(operation, "view_type") || !identity(operation, "domain") || !identity(operation, "member") ||

@@ -65,5 +65,18 @@ TSFG_DOMAIN_OPERATION(DomainFieldInitializeOp, "field_initialize", mlir::OpTrait
 TSFG_DOMAIN_OPERATION(DomainMethodCallOp, "method_call", mlir::OpTrait::AtLeastNOperands<1>::Impl, mlir::OpTrait::VariadicResults)
 TSFG_DOMAIN_OPERATION(DomainFieldReadOp, "field_read", mlir::OpTrait::OneOperand, mlir::OpTrait::OneResult)
 TSFG_DOMAIN_OPERATION(DomainFieldStoreOp, "field_store", mlir::OpTrait::NOperands<2>::Impl, mlir::OpTrait::ZeroResults)
+// A successful checked consumption transfers the unchanged i32 payload to its
+// unique continuation. Undefined terminates the request, with no SSA result.
+class DomainNumericUseOp : public mlir::Op<DomainNumericUseOp,
+    mlir::OpTrait::OneOperand, mlir::OpTrait::ZeroResults,
+    mlir::OpTrait::ZeroRegions, mlir::OpTrait::OneSuccessor,
+    mlir::OpTrait::IsTerminator> {
+public:
+  using Op::Op;
+  MLIR_DEFINE_EXPLICIT_INTERNAL_INLINE_TYPE_ID(DomainNumericUseOp)
+  static llvm::StringRef getOperationName() { return "tsfg_core.domain.numeric_use"; }
+  static llvm::ArrayRef<llvm::StringRef> getAttributeNames() { return {}; }
+  mlir::LogicalResult verify() { return verifyFiniteDomainOperation(getOperation()); }
+};
 #undef TSFG_DOMAIN_OPERATION
 } // namespace tsfg

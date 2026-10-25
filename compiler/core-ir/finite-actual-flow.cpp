@@ -22,7 +22,10 @@ struct ActualFlow {
   bool controlOnly;
   bool memorySources;
   llvm::DenseMap<mlir::Value,size_t> values;
-  std::map<std::string,size_t> returns;
+  std::map<std::string,size_t> returns,completions;
+  std::map<mlir::Block *,size_t> normalBlocks;
+  std::map<mlir::Operation *,size_t> normalResults,normalInputs;
+  static constexpr const char *normalAtom="@tsfg.normal-completion";
   std::map<std::string,std::string> constructions;
   bool valid=true;
   ActualFlow(ModuleProof &value,ArrayFlow::Role mode,bool control=false,bool memory=false):proof(value),flow(value.remaining),role(mode),controlOnly(control),memorySources(memory){}
@@ -30,7 +33,15 @@ struct ActualFlow {
   size_t node() { const auto id=flow.node();valid&=id!=PayloadFlow::none;return id; }
   size_t value(mlir::Value item) {
     const auto found=values.find(item);if(found!=values.end())return found->second;
-    const auto result=node();values.try_emplace(item,result);return result;
+    const auto result=node();values.try_emplace(item,result);
+    size_t gate=noGate;
+    if(auto *op=item.getDefiningOp()) {
+      const auto found=normalResults.find(op);if(found!=normalResults.end())gate=found->second;
+    }else if(auto argument=llvm::dyn_cast<mlir::BlockArgument>(item)) {
+      const auto found=normalBlocks.find(argument.getOwner());if(found!=normalBlocks.end())gate=found->second;
+    }
+    if(gate!=noGate)valid&=flow.guard(result,gate,normalAtom);
+    return result;
   }
   bool insert(size_t id, const std::string &type) {
     if(!proof.charge())return false;
@@ -84,11 +95,20 @@ struct ActualFlow {
     }
     if(llvm::isa<mlir::func::CallOp>(op))return call(op,attr(op,"tsfg_core.function_id"),0,0);
     const auto name=op->getName().getStringRef();
+    if(name=="tsfg_core.domain.numeric_use") {
+      if(!controlOnly&&role==ArrayFlow::Role::OrderedPayload&&!proof.mayTraverse(op,0))return true;
+      return edge(value(op->getOperand(0)),value(op->getSuccessor(0)->getArgument(0)),
+        noGate,{},attr(op,"target_type"));
+    }
     if(name=="tsfg_core.domain.construct"||name=="tsfg_core.domain.super") {
       const auto found=constructions.find(attr(op,"construction"));if(found==constructions.end())return proof.reject("actual construction body");
       if(name=="tsfg_core.domain.super")return call(op,found->second,0,0,noGate,{},false);
-      const auto result=value(op->getResult(0)),receiver=value(proof.functions.at(found->second).getArgument(0));
-      return insert(result,attr(op,"view_type"))&&edge(result,receiver)&&call(op,found->second,0,1,noGate,{},false);
+      const auto result=value(op->getResult(0)),receiver=value(proof.functions.at(found->second).getArgument(0)),allocated=node();
+      // The body receives the actual allocation before it completes. Only the
+      // public expression result waits for successful constructor completion.
+      if(!flow.guard(allocated,normalInputs.at(op),normalAtom))return proof.reject(flow.error());
+      return insert(allocated,attr(op,"view_type"))&&edge(allocated,receiver)&&edge(allocated,result)&&
+        call(op,found->second,0,1,noGate,{},false);
     }
     if(name=="tsfg_core.domain.method_call") {
       Json dispatch=nullptr;if(!arrays::ownerproof::parseCanonical(attr(op,"dispatch")+"\n",dispatch)||!dispatch.getAsArray())return false;
@@ -143,8 +163,17 @@ struct ActualFlow {
     if(nativePayloadOperation(op))for(const auto result:op->getResults()) {
       const auto *bound=valueDomain(proof,result.getType());const auto to=value(result);
       if(!bound||bound->alternatives.size()!=1)return proof.reject("primitive result has no exact native/String identity");
-      if(!insert(to,bound->alternatives[0]))return false;
-      for(const auto input:op->getOperands())if(!edge(value(input),to,noGate,{},{},true,true))return false;
+      // A typed native result is conditional on productive operands. In
+      // particular a numeric-use success block never seeds a fictitious i32.
+      auto source=node();if(!insert(source,bound->alternatives[0]))return false;
+      for(const auto input:op->getOperands()) {
+        const auto *actual=valueDomain(proof,input.getType());
+        if(!actual||actual->alternatives.empty())return proof.reject("native operation input has no semantic carrier");
+        const auto next=node();
+        for(const auto &type:actual->alternatives)if(!proof.charge()||!edge(source,next,value(input),type))return false;
+        source=next;
+      }
+      if(!edge(source,to))return false;
     }
     else if(op->getNumResults())return proof.reject("result-producing operation lacks an independent actual-flow rule");
     return true;
@@ -175,9 +204,9 @@ struct ActualFlow {
           proof.actualReturns.emplace(function,computed);
         // A recursive/divergent return equation with no productive seed is not
         // permission to change the published signature into a bottom ABI.
-        if(computed.pending||computed.alternatives.empty())pendingBound=true;
-        else if((role==ArrayFlow::Role::CarrierMaximum?flow.exact(returns.at(function),{declared.begin(),declared.end()}):
-          flow.covers(returns.at(function),{declared.begin(),declared.end()}))!=PayloadFlow::Fit::Proven)
+        if(computed.pending||(computed.alternatives.empty()&&!proof.trapOnlyFunctions.count(function)))pendingBound=true;
+        else if(!computed.alternatives.empty()&&((role==ArrayFlow::Role::CarrierMaximum?flow.exact(returns.at(function),{declared.begin(),declared.end()}):
+          flow.covers(returns.at(function),{declared.begin(),declared.end()}))!=PayloadFlow::Fit::Proven))
           return proof.reject("closed result ABI differs from the independently reached return payloads");
       }
       if(pendingBound)proof.unprovedActualBounds.insert(function);
@@ -213,7 +242,20 @@ struct ActualFlow {
           }
         }
       }
-      for(unsigned i=0;i<terminator->getNumSuccessors();++i) {
+      if(terminator->getName().getStringRef()=="tsfg_core.domain.numeric_use") {
+        predicate.tested=attr(terminator,"target_type");predicate.equal=true;
+        predicate.input=flow.evidence(value(terminator->getOperand(0)));
+        if(!predicate.input)return proof.reject("numeric use has no solved original payload");
+      }
+      bool stopped=false;
+      for(auto &op:block) {
+        if(!proof.charge())return false;const auto found=proof.selectedCallees.find(&op);
+        if(found!=proof.selectedCallees.end()&&!found->second.empty()) {
+          bool all=true;for(const auto &target:found->second)if(!proof.charge()||!proof.trapOnlyFunctions.count(target))all=false;
+          stopped|=all;
+        }
+      }
+      for(unsigned i=0;!stopped&&i<terminator->getNumSuccessors();++i) {
         if(!proof.charge())return false;
         // Earlier edge proofs were established on a conservative superset.
         // Refinement is monotone; omitted paths never provide phi operands.
@@ -226,23 +268,107 @@ struct ActualFlow {
     std::set<mlir::Block *> possible;std::set<std::pair<mlir::Operation *,unsigned>> selected;
     for(const auto &[block,id]:blocks){if(!proof.charge())return false;if(paths.reaches(id))possible.insert(block);}
     for(const auto &[edge,id]:edges){if(!proof.charge())return false;if(paths.traverses(id))selected.insert(edge);}
-    if(changed) {
-      if(!proof.charge(possible.size()+selected.size()))return false;
-      *changed=possible!=proof.possibleBlocks||selected!=proof.possibleEdges;
+    // Least fixed point of positively known trap frontiers. A cycle or an
+    // empty recursive return equation has no seed and therefore stays unknown.
+    auto trapped=proof.trapOnlyFunctions;std::set<mlir::Block *> dead;bool grew;
+    const auto stoppedCall=[&](mlir::Operation *op) {
+      const auto found=proof.selectedCallees.find(op);
+      if(found==proof.selectedCallees.end()||found->second.empty())return false;
+      for(const auto &target:found->second)if(!proof.charge()||!trapped.count(target))return false;
+      return true;
+    };
+    do {
+      grew=false;
+      for(auto &[id,fn]:proof.functions)for(auto &block:fn.getBody()) {
+        if(!proof.charge())return false;if(dead.count(&block))continue;
+        bool trap=false;
+        for(auto &op:block){if(!proof.charge())return false;trap|=stoppedCall(&op);}
+        auto *end=block.getTerminator();
+        if(end->getName().getStringRef()=="tsfg_core.domain.numeric_use") {
+          const auto *input=flow.evidence(value(end->getOperand(0)));
+          trap|=input&&!input->pending&&!input->alternatives.empty()&&!input->alternatives.count(attr(end,"target_type"));
+        }
+        bool outgoing=false,all=true;
+        for(unsigned i=0;i<end->getNumSuccessors();++i) {
+          if(!proof.charge())return false;if(!selected.count({end,i}))continue;
+          outgoing=true;all&=dead.count(end->getSuccessor(i))!=0;
+        }
+        if(trap||(outgoing&&all)){dead.insert(&block);grew=true;}
+      }
+      for(auto &[id,fn]:proof.functions)if(dead.count(&fn.getBody().front())&&trapped.insert(id).second)grew=true;
+    }while(grew);
+    std::set<mlir::Operation *> operations;
+    for(auto &[id,fn]:proof.functions)for(auto &block:fn.getBody())if(possible.count(&block))for(auto &op:block) {
+      if(!proof.charge())return false;operations.insert(&op);if(stoppedCall(&op))break;
     }
-    proof.possibleBlocks=std::move(possible);proof.possibleEdges=std::move(selected);proof.controlReady=true;return true;
+    if(changed) {
+      if(!proof.charge(possible.size()+selected.size()+operations.size()+trapped.size()))return false;
+      *changed=possible!=proof.possibleBlocks||selected!=proof.possibleEdges||
+        operations!=proof.possibleOperations||trapped!=proof.trapOnlyFunctions;
+    }
+    proof.possibleBlocks=std::move(possible);proof.possibleEdges=std::move(selected);
+    proof.possibleOperations=std::move(operations);proof.trapOnlyFunctions=std::move(trapped);
+    proof.controlReady=true;return true;
+  }
+  bool normalGraph() {
+    // Completion atoms are internal control evidence, never semantic TypeIds,
+    // payload capacity, a runtime value or a producer-provided completion flag.
+    for(auto &[id,fn]:proof.functions) {
+      completions.emplace(id,node());
+      for(auto &block:fn.getBody()){if(!proof.charge())return false;normalBlocks.emplace(&block,node());}
+    }
+    struct Call {size_t before,after;mlir::Operation *op;};std::vector<Call> calls;
+    for(auto &[id,fn]:proof.functions)for(auto &block:fn.getBody()) {
+      auto current=normalBlocks.at(&block);
+      if(&block==&fn.getBody().front()&&!flow.seed(current,normalAtom))return proof.reject(flow.error());
+      for(auto &op:block) {
+        if(!proof.charge())return false;
+        normalInputs.emplace(&op,current);
+        const auto found=proof.selectedCallees.find(&op);
+        if(found!=proof.selectedCallees.end()&&!found->second.empty()) {
+          const auto next=node();calls.push_back({current,next,&op});current=next;
+        }
+        normalResults.emplace(&op,current);
+      }
+    }
+    for(const auto &call:calls)for(const auto &target:proof.selectedCallees.at(call.op)) {
+      if(!proof.charge()||!completions.count(target))return proof.reject("normal call completion leaves owned closure");
+      const auto completion=completions.at(target);
+      if(!proof.trapOnlyFunctions.count(target)&&!flow.requireEvidence(completion))return proof.reject(flow.error());
+      if(!edge(call.before,call.after,completion,normalAtom))return false;
+    }
+    for(auto &[id,fn]:proof.functions)for(auto &block:fn.getBody()) {
+      if(!proof.charge())return false;auto *op=block.getTerminator();const auto current=normalResults.at(op);
+      if(auto returned=llvm::dyn_cast<mlir::func::ReturnOp>(op)) {
+        if(returned.getNumOperands()==0){if(!edge(current,completions.at(id)))return false;}
+        else {
+          const auto *bound=valueDomain(proof,returned.getOperand(0).getType());if(!bound)return false;
+          for(const auto &type:bound->alternatives)if(!proof.charge()||
+              !edge(current,completions.at(id),value(returned.getOperand(0)),type))return false;
+        }
+      }
+      for(unsigned i=0;i<op->getNumSuccessors();++i) {
+        if(!proof.charge())return false;
+        if(!controlOnly&&role==ArrayFlow::Role::OrderedPayload&&!proof.mayTraverse(op,i))continue;
+        if(op->getName().getStringRef()=="tsfg_core.domain.numeric_use") {
+          if(!edge(current,normalBlocks.at(op->getSuccessor(i)),value(op->getOperand(0)),attr(op,"target_type")))return false;
+        }else if(!edge(current,normalBlocks.at(op->getSuccessor(i))))return false;
+      }
+    }
+    return valid||proof.reject(flow.error());
   }
   bool run(bool *changed=nullptr) {
     for(auto &[id,fn]:proof.functions) {
       const auto &contract=*proof.callable.at(id);
       if(string(contract,"role")=="construction-body")constructions.emplace(string(contract,"construction"),id);
       if(proof.abi.at(id)->get("result")->kind()!=Json::Null)returns.emplace(id,node());
-      for(auto &block:fn.getBody())for(const auto argument:block.getArguments())value(argument);
     }
+    if(!normalGraph())return false;
+    for(auto &[id,fn]:proof.functions)for(auto &block:fn.getBody())for(const auto argument:block.getArguments())value(argument);
     if(!valid)return proof.reject(flow.error());
     for(const auto &[argument,types]:proof.definitionParameters)for(const auto &type:types)if(!insert(value(argument),type))return false;
     for(auto &[id,fn]:proof.functions)for(auto &block:fn.getBody())for(auto &op:block)
-      if(!proof.charge()||((controlOnly||role==ArrayFlow::Role::CarrierMaximum||proof.mayReach(&block))&&!operation(&op,id)))return false;
+      if(!proof.charge()||((controlOnly||role==ArrayFlow::Role::CarrierMaximum||proof.mayExecute(&op))&&!operation(&op,id)))return false;
     // A conservative control prepass uses the very same real-IR payload
     // normalizer. Memory inputs remain unknown; no producer ledger/capacity
     // alternative or unverified read claim can prune a path here.
