@@ -10,6 +10,10 @@ mlir::LogicalResult analyzeRoots(mlir::ModuleOp module, ClosureRootAnalysis &out
   if (mlir::failed(mlir::verify(module))) return mlir::failure();
   Metadata metadata;
   if (mlir::failed(verifyMetadata(module,metadata)) || mlir::failed(verifyProgram(module,metadata))) return mlir::failure();
+  return analyzeProgramRoots(module,metadata,output);
+}
+mlir::LogicalResult analyzeProgramRoots(mlir::ModuleOp module, const Metadata &, ClosureRootAnalysis &output) {
+  output = ClosureRootAnalysis{};
   ClosureRootAnalysis result; size_t entries = 0; uint64_t work = 0;
   for (auto function : module.getOps<mlir::func::FuncOp>()) {
     ManagedLiveness live;

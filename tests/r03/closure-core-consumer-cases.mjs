@@ -73,7 +73,7 @@ function localInfo(item, name = 'entry') {
 function moveAfter(text, line, destination) {
   return replace(replace(text, line + '\n', ''), destination + '\n', destination + '\n' + line + '\n');
 }
-async function sourceCase(name) {
+export async function readClosureSourceCase(name) {
   const pin = inputs[name], directory = new URL('../fixtures/r03/' + pin.directory + '/', import.meta.url);
   /** @type {Record<string, Buffer>} */ const frames = {};
   for (const kind of ['request', 'response', 'original', 'provenance']) {
@@ -113,6 +113,11 @@ async function sourceCase(name) {
   assert.equal(imported.status, 'ok', JSON.stringify(imported)); validateFrontendSnapshot(imported.snapshot);
   const built = buildHir(imported.snapshot); assert.equal(built.status, 'ok', JSON.stringify(built));
   const hirBytes = printHir(verifyHir(built.hir)), hir = readHir(Buffer.from(hirBytes));
+  return {hir,provenance,pin};
+}
+async function sourceCase(name) {
+  const {hir,provenance,pin}=await readClosureSourceCase(name);
+  const hirBytes=printHir(hir);
   const program = lowerClosureEnvironments(hir); assert.deepEqual(verifyClosureEnvironments(program, hir), program);
   const programBytes = printClosureEnvironments(program, hir), text = emitClosureCore(program, hir);
   const schema = JSON.parse(await readFile(new URL('../../contracts/core-closure-candidate.schema.json', import.meta.url), 'utf8'));

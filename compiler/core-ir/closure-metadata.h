@@ -43,6 +43,8 @@ bool digest(llvm::StringRef);
 std::string hash(llvm::StringRef);
 std::string quoted(llvm::StringRef);
 mlir::LogicalResult verifyMetadata(mlir::ModuleOp, Metadata &);
+mlir::LogicalResult readTables(mlir::DictionaryAttr, Metadata &);
+mlir::LogicalResult analyzeProgramRoots(mlir::ModuleOp, const Metadata &, ClosureRootAnalysis &);
 // Internal verified-table boundary; public verifyCandidate/analyzeRoots always
 // obtain Metadata anew from the actual module, never from caller assertions.
 mlir::LogicalResult verifyProgram(mlir::ModuleOp, const Metadata &);

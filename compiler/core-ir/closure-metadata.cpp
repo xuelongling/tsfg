@@ -76,6 +76,11 @@ mlir::LogicalResult verifyMetadata(mlir::ModuleOp module, Metadata &output) {
       || !string(extension,"root_policy",rootPolicy) || rootPolicy != "consumer-recompute-required"
       || !string(extension,"program_hash",result.programHash) || !digest(result.programHash)
       || !string(extension,"hir_hash",result.hirHash) || !digest(result.hirHash)) return fail("candidate identity differs");
+  if (mlir::failed(readTables(extension,result))) return mlir::failure();
+  output = std::move(result); return mlir::success();
+}
+mlir::LogicalResult readTables(mlir::DictionaryAttr extension, Metadata &result) {
+  auto fail = [](llvm::StringRef detail) { return reject("core-ir-closure-metadata",detail); };
   auto types = extension.getAs<mlir::ArrayAttr>("types"), environments = extension.getAs<mlir::ArrayAttr>("environments");
   auto functions = extension.getAs<mlir::ArrayAttr>("functions");
   if (!types || types.empty() || types.size() > 4096 || !environments || environments.size() > 128
@@ -135,6 +140,6 @@ mlir::LogicalResult verifyMetadata(mlir::ModuleOp module, Metadata &output) {
   }
   Index index(result);
   if (!index.validate()) return fail("type, lexical or environment identities differ");
-  output = std::move(result); return mlir::success();
+  return mlir::success();
 }
 } // namespace tsfg::closure

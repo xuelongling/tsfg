@@ -20,10 +20,17 @@ export function emitClosureCore(program, hir, context = undefined) {
   }
   const verified = verifyClosureEnvironments(program, hir);
   const model = closureCoreModel(verified, sha256(printClosureEnvironments(verified, hir)), selection);
+  return emitClosureProgram(verified,model);
+}
+
+/** Shared complete environment SSA emission. Both callers cold-verify their
+ * domain input and construct their own independently admitted module header.
+ */
+export function emitClosureProgram(program,model) {
   const header = 'module attributes {' + model.moduleAttributes + '} {\n';
   model.reserveText(header);
   const functions = [];
-  for (const fn of verified.functions) {
+  for (const fn of program.functions) {
     const policy = model.functionPolicy(fn), core = emitCoreSsaFunction(policy.view, policy.context);
     const parameters = core.entryParameters.map(parameter => parameter.name + ': ' + model.coreType(parameter.type)).join(', ');
     const text = '  func.func @' + quote(model.symbol(fn)) + '(' + parameters + ') -> ' + core.resultType

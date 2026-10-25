@@ -29,6 +29,7 @@ import { emitFormalStringCore } from './string-formal-emitter.mjs';
 export { analyzeArrayCalls, verifyArrayCalls, printArrayCalls, readArrayCalls } from './array-call-publication.mjs';
 import {isTypedArrayContext,buildTypedArrayHir,readTypedArrayHir} from './typed-array-hir.mjs';
 import {emitFiniteCore} from './finite-core-emitter.mjs';
+import {emitFormalClosureCore} from './formal-closure-core.mjs';
 import {isOptionalPropertyContext,buildOptionalPropertyHir,readOptionalPropertyHir} from './optional-property-hir.mjs';
 
 import { buildClosureHir } from "./closure-hir.mjs";
@@ -266,6 +267,7 @@ export function lowerHir(hir, factsContext = undefined, callPublicationContext =
  * explicit candidate route; String HIR is revalidated and compiled directly.
  * @param {any} hir @param {any} [factsContext] @param {any} [callPublicationContext] */
 export function lowerFormalHir(hir, factsContext = undefined, callPublicationContext = undefined) {
+  if(hir?.format?.family==='tsfg.closure-hir-candidate')return emitFormalClosureCore(hir);
   if(isOptionalPropertyContext(factsContext))return emitFiniteCore(hir,factsContext,callPublicationContext);
   if(isTypedArrayContext(factsContext))return emitFiniteCore(hir,factsContext,callPublicationContext);
   if (factsContext !== undefined)

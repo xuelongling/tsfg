@@ -3,6 +3,7 @@
 #include "bytecode.h"
 #include "core-verify.h"
 #include "closure.h"
+#include "formal-closure.h"
 #include "dialect.h"
 #include "exception.h"
 #include "nullable.h"
@@ -136,6 +137,7 @@ int tsfg::runCoreCommand(int argc, char **argv, const CoreNativeCommands *native
     return 3;
   }
   const bool closureCandidate = tsfg::closure::usesCandidate(*module);
+  const bool formalClosure = tsfg::formalClosure::uses(*module);
   const bool reference = module->getOperation()->hasAttr("tsfg_core.reference");
   const bool nullable = tsfg::nullable::usesCandidate(*module);
   const bool stringCandidate = tsfg::strings::usesCandidate(*module);
@@ -150,7 +152,8 @@ int tsfg::runCoreCommand(int argc, char **argv, const CoreNativeCommands *native
                  << " input exceeds candidate byte budget\n";
     return 3;
   }
-  const bool privateCandidate = reference || nullable || arrayCandidate || closureCandidate || kernelCandidate || module->getOperation()->hasAttr("tsfg_core.string");
+  const bool privateCandidate = reference || nullable || arrayCandidate ||
+    (closureCandidate && !formalClosure) || kernelCandidate || module->getOperation()->hasAttr("tsfg_core.string");
   auto version = module->getOperation()->getAttrOfType<mlir::StringAttr>("tsfg_core.version");
   if (!version || version.getValue() != (privateCandidate ? "0.9.0" : "0.12.0")) {
     llvm::errs() << (arrayCandidate ? "[core-ir-array-identity]" : stringCandidate ? "[core-ir-string-identity]" : "[core-ir-identity]")

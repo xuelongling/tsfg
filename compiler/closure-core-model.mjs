@@ -192,5 +192,6 @@ export function closureCoreModel(program, programHash, selection = undefined) {
     return { view, context: { coreType, emitValueLeaf, emitStatementLeaf, budget } };
   }
   return { moduleAttributes, functionAttributes, functionPolicy, symbol, coreType, reserveText,
+    attribute, tables:{types:metadata.types,environments:metadata.environments,functions:metadata.functions},
     finishFunction: (text, reservedBodyBytes) => reserve(Buffer.byteLength(text, 'utf8') - reservedBodyBytes) };
 }

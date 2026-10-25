@@ -102,6 +102,7 @@ add_library(tsfg-core-common OBJECT
   exception-command.cpp managed-cfg.cpp managed-liveness.cpp closure.cpp
   closure-metadata.cpp closure-identities.cpp closure-verify.cpp closure-cfg.cpp
   closure-roots.cpp closure-initialization.cpp closure-init-flow.cpp core-command.cpp
+  formal-closure.cpp formal-closure-source.cpp formal-closure-targets.cpp
 )
 # Shared bytecode validation queries LLVM IR types and DataLayout directly.
 # Propagate that dependency to both command adapters.
