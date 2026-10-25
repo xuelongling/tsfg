@@ -103,7 +103,9 @@ add_library(tsfg-core-common OBJECT
   closure-metadata.cpp closure-identities.cpp closure-verify.cpp closure-cfg.cpp
   closure-roots.cpp closure-initialization.cpp closure-init-flow.cpp core-command.cpp
 )
-target_link_libraries(tsfg-core-common PUBLIC MLIRIR MLIRParser MLIRFuncDialect MLIRControlFlowDialect)
+# Shared bytecode validation queries LLVM IR types and DataLayout directly.
+# Propagate that dependency to both command adapters.
+target_link_libraries(tsfg-core-common PUBLIC LLVMCore MLIRIR MLIRParser MLIRFuncDialect MLIRControlFlowDialect)
 # AddLLVM inherits these variables from its caller. Keep the ordinary tool's
 # component selection local so a parent project cannot select the LLVM umbrella
 # or Native components. The full Native target retains its original scope.
