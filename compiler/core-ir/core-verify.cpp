@@ -13,11 +13,13 @@
 #include "finite-module.h"
 #include "formal-closure.h"
 #include "formal-exception.h"
+#include "common-program.h"
 #include "mlir/IR/OwningOpRef.h"
 #include "llvm/Support/raw_ostream.h"
 
 namespace tsfg {
 mlir::LogicalResult verifyCoreModule(mlir::ModuleOp module) {
+  if (commonProgram::uses(module)) return commonProgram::verify(module);
   if (formalException::uses(module)) return formalException::verify(module);
   if (formalClosure::uses(module)) return formalClosure::verify(module);
   // Finite identity must be selected before any private candidate can return

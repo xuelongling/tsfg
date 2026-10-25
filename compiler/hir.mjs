@@ -1,4 +1,9 @@
 import {emitFormalExceptionCore} from './formal-exception-core.mjs';
+import {isProxy} from 'node:util/types';
+import {isCommonProgramContext,buildCommonProgramHir,readCommonProgramHir} from './common-program-hir.mjs';
+import {emitCommonProgramCore} from './common-program-core.mjs';
+import {commonRecord,commonBudget} from './common-program-common.mjs';
+export {createCommonProgramPublication,analyzeCommonProgram,verifyCommonKernelGroup,verifyCommonKernelProof} from './common-program-analysis.mjs';
 import { familyOf } from './module-callable-common.mjs';
 import { buildModuleCallableHir } from './module-callable-hir.mjs';
 import { emitModuleCallableCore } from './module-callable-core.mjs';
@@ -45,6 +50,13 @@ const types = scalarTypeIds;
 /** @param {any} snapshot @param {any} [factsContext] @param {any} [callPublicationContext] */
 // Error casts describe omitted hir fields without adding runtime keys or erasing family diagnostics.
 export function buildHir(snapshot, factsContext = undefined, callPublicationContext = undefined) {
+  const rawFamily=snapshot&&typeof snapshot==='object'&&!isProxy(snapshot)?Object.getOwnPropertyDescriptor(snapshot,'family')?.value:undefined;
+  if(isCommonProgramContext(factsContext)||rawFamily==='tsfg.program-facts-package-candidate'){
+    try { if(callPublicationContext!==undefined)throw new TypeError('r03-common-program-context: unexpected publication while building');
+      return {status:'ok',hir:buildCommonProgramHir(snapshot,factsContext)};
+    }catch(error){const result={status:'error',diagnostics:[{code:error.code??'r03-common-program-context',ruleId:error.ruleId??'r01-input-boundary',
+      phase:error.phase??'hir',message:error.message,...(error.primary?{primary:error.primary}:{})}]};return /** @type {typeof result & {status:'error',hir?:undefined}} */(result);}
+  }
   if(isOptionalPropertyContext(factsContext)&&callPublicationContext===undefined)return buildOptionalPropertyHir(snapshot,factsContext);
   if (isNullableGroupsContext(factsContext) || isNullableTypeofContext(factsContext)) {
     try { nullableCheck(callPublicationContext === undefined, 'context'); return { status: 'ok', hir: buildNullableHir(snapshot, factsContext) }; }
@@ -219,6 +231,7 @@ export function buildHir(snapshot, factsContext = undefined, callPublicationCont
 export const printHir = (hir, factsContext = undefined, callPublicationContext = undefined) => `${canonical(verifyHir(hir, factsContext, callPublicationContext))}\n`;
 /** @param {Uint8Array} bytes @param {any} [factsContext] @param {any} [callPublicationContext] */
 export function readHir(bytes, factsContext = undefined, callPublicationContext = undefined) {
+  if(isCommonProgramContext(factsContext))return verifyHir(readCommonProgramHir(bytes),factsContext,callPublicationContext);
   if(isOptionalPropertyContext(factsContext)&&callPublicationContext===undefined)return readOptionalPropertyHir(bytes,factsContext);
   if (isNullableGroupsContext(factsContext) || isNullableTypeofContext(factsContext)) {
     nullableCheck(callPublicationContext === undefined, 'context'); return readNullableGroupsHir(bytes, factsContext);
@@ -237,6 +250,10 @@ export function readHir(bytes, factsContext = undefined, callPublicationContext 
 
 /** @param {any} hir @param {any} [factsContext] @param {any} [callPublicationContext] */
 export function lowerHir(hir, factsContext = undefined, callPublicationContext = undefined) {
+  if(isCommonProgramContext(factsContext)||familyOf(hir)==='tsfg.program-hir-candidate'){
+    const checked=verifyHir(hir,factsContext);commonBudget(callPublicationContext);commonRecord(callPublicationContext,['publication','request']);
+    return emitCommonProgramCore(checked,callPublicationContext.publication,callPublicationContext.request);
+  }
   if(isOptionalPropertyContext(factsContext))return emitFiniteCore(hir,factsContext,callPublicationContext);
   if (isNullableGroupsContext(factsContext) || isNullableTypeofContext(factsContext)) {
     nullableCheck(callPublicationContext === undefined, 'context'); return emitNullableCore(hir, factsContext);

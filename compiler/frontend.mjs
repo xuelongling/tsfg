@@ -1,4 +1,6 @@
 import { familyOf } from './module-callable-common.mjs';
+import {isProxy} from 'node:util/types';
+import {verifyCommonProgramFacts} from './common-program-facts.mjs';
 import { verifyModuleCallableSnapshot } from './module-callable-facts.mjs';
 // SPDX-License-Identifier: MIT
 import { canonical } from "./identity.mjs";
@@ -45,6 +47,8 @@ export const resolveNode = (snapshot, ref) => resolveLocal(snapshot, ref, "nodes
 export const resolveType = (snapshot, ref) => resolveLocal(snapshot, ref, "types");
 
 export function validateFrontendSnapshot(snapshot) {
+  const rawFamily=snapshot&&typeof snapshot==='object'&&!isProxy(snapshot)?Object.getOwnPropertyDescriptor(snapshot,'family')?.value:undefined;
+  if(rawFamily==='tsfg.program-facts-package-candidate')return verifyCommonProgramFacts(snapshot);
   if (familyOf(snapshot) === 'tsfg.frontend-module-callable-candidate') return verifyModuleCallableSnapshot(snapshot);
   if (snapshot?.format?.family === "tsfg.frontend-exception-candidate") return verifyExceptionSnapshot(snapshot);
   if (snapshot?.format?.family === "tsfg.frontend-nullable-candidate") return verifyNullableSnapshot(snapshot);

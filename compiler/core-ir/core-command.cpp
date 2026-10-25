@@ -5,6 +5,7 @@
 #include "closure.h"
 #include "formal-closure.h"
 #include "formal-exception.h"
+#include "common-program.h"
 #include "dialect.h"
 #include "exception.h"
 #include "nullable.h"
@@ -119,6 +120,7 @@ int tsfg::runCoreCommand(int argc, char **argv, const CoreNativeCommands *native
   tsfg::registerCoreDialect(registry);
   tsfg::closure::registerDialect(registry);
   tsfg::formalException::registerDialect(registry);
+  tsfg::commonProgram::registerDialect(registry);
   tsfg::nullable::registerDialect(registry);
   tsfg::strings::registerDialect(registry);
   tsfg::arrays::registerDialect(registry);
@@ -133,6 +135,7 @@ int tsfg::runCoreCommand(int argc, char **argv, const CoreNativeCommands *native
   const bool closureCandidate = tsfg::closure::usesCandidate(*module);
   const bool formalClosure = tsfg::formalClosure::uses(*module);
   const bool formalException = tsfg::formalException::uses(*module);
+  const bool commonProgram = tsfg::commonProgram::uses(*module);
   const bool reference = module->getOperation()->hasAttr("tsfg_core.reference");
   const bool nullable = tsfg::nullable::usesCandidate(*module);
   const bool stringCandidate = tsfg::strings::usesCandidate(*module);
@@ -152,6 +155,10 @@ int tsfg::runCoreCommand(int argc, char **argv, const CoreNativeCommands *native
     return 3;
   }
   if (mlir::failed(tsfg::verifyCoreModule(*module))) return 3;
+  if (commonProgram && (nativeCommand || nullableWire || stringWire || arrayWire || name == "--emit-bytecode")) {
+    llvm::errs() << "[r04-core-program-unsupported] complete common development Core has no selected wire/native encoding\n";
+    return 3;
+  }
   if (formalException && (nativeCommand || name == "--emit-bytecode" || nullableWire || stringWire || arrayWire)) {
     llvm::errs() << "[r04-core-exception-unsupported] the current wire and native consumers do not encode exceptional control\n";
     return 3;
@@ -231,7 +238,7 @@ int tsfg::runCoreCommand(int argc, char **argv, const CoreNativeCommands *native
   }
   // The current optimization pipeline is deliberately the canonical identity
   // pass: it performs full verification and retains every event/failure anchor.
-  if (formalException || reference || nullable || stringCandidate || arrayCandidate || closureCandidate || kernelCandidate) {
+  if (commonProgram || formalException || reference || nullable || stringCandidate || arrayCandidate || closureCandidate || kernelCandidate) {
     ReferenceOutput output;
     module->print(output, mlir::OpPrintingFlags().printGenericOpForm());
     output << '\n';

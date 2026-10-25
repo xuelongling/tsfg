@@ -1,4 +1,7 @@
 import { familyOf } from './module-callable-common.mjs';
+import {verifyCommonProgramHir,buildCommonProgramHir,isCommonProgramContext} from './common-program-hir.mjs';
+import {analyzeCommonProgram} from './common-program-analysis.mjs';
+import {commonCheck,commonRecord,commonBudget,commonSame} from './common-program-common.mjs';
 import { verifyModuleCallableHir } from './module-callable-hir.mjs';
 import { analyzeModuleCallableCalls } from './module-callable-publication.mjs';
 // SPDX-License-Identifier: MIT
@@ -32,6 +35,12 @@ const hash = value => typeof value === "string" && /^sha256:[0-9a-f]{64}$/.test(
 const types = scalarTypeIds;
 /** @param {any} hir @param {any} [factsContext] @param {any} [callPublicationContext] */
 export function verifyHir(hir, factsContext = undefined, callPublicationContext = undefined) {
+  if(isCommonProgramContext(factsContext)||familyOf(hir)==='tsfg.program-hir-candidate'){
+    const checked=verifyCommonProgramHir(hir);
+    if(factsContext!==undefined)commonCheck(isCommonProgramContext(factsContext)&&commonSame(checked,buildCommonProgramHir(checked.snapshot,factsContext)),'context');
+    if(callPublicationContext!==undefined){commonBudget(callPublicationContext);commonRecord(callPublicationContext,['publication','request']);analyzeCommonProgram(checked,callPublicationContext.publication);}
+    return checked;
+  }
   if(isOptionalPropertyContext(factsContext)) {
     if(callPublicationContext!==undefined)throw new TypeError('r03-optional-property-context: unexpected publication');
     return verifyOptionalPropertyHir(hir,factsContext);

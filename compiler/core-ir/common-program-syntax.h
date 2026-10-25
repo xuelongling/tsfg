@@ -1,0 +1,32 @@
+// SPDX-License-Identifier: MIT
+#pragma once
+#include "common-program-source.h"
+namespace tsfg::commonProgram {
+struct SourceToken {std::string text;uint32_t start=0,end=0;};
+struct SourceSyntax {
+  SourceModel &model;std::string path;std::u16string content;std::vector<SourceToken> tokens;
+  bool read(llvm::StringRef);
+  bool span(const Json &,size_t &,size_t &)const;
+  bool name(const Json &,llvm::StringRef)const;
+  bool sequence(const Json &,const std::vector<Json> &,bool semicolon=false)const;
+  bool range(const Json &,SourceAnchor &)const;
+};
+struct SourceBodies {
+  SourceModel &model;std::map<std::string,SourceSyntax> &syntax;
+  std::map<std::string,const Json *> bindings;
+  std::map<std::string,std::map<std::string,std::string>> visible;
+  const Json *current=nullptr;SourceSyntax *source=nullptr;
+  std::map<std::string,std::string> scope;std::set<std::string> initialized,declared;
+  bool inventory();bool function(const Json &);bool module(const Json &);
+  std::string resolve(const Json &);
+  bool expression(const Json &,bool target=false);
+  bool statements(const Json &,size_t,size_t);
+  bool annotation(const Json &,const std::string &);
+  bool setScope(const std::map<std::string,std::string> &);
+  bool logical(const std::string &,const std::string &);
+  bool assertion(const std::string &,const std::string &);
+};
+bool verifyCommonDeclarations(SourceModel &,SourceBodies &,std::map<std::string,SourceSyntax> &,
+  std::map<std::string,std::vector<Json>> &);
+bool verifyCommonModules(SourceModel &,std::map<std::string,SourceSyntax> &);
+} // namespace tsfg::commonProgram
