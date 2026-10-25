@@ -78,13 +78,21 @@ definitions. The independently authored universal ABI oracle now checks all
 This covers those seven actual Source closures; it is not a full-language or
 Core execution result.
 
-R01 currently supplies no operation-consumption mapping for an initialized
-undefined element narrowed by `as i32` then used by `+`. That dependent
-operation remains capability-pending. It is not an uninitialized or bounds
-failure. Possible future choices are an explicit operation-domain failure
-contract, or a separately approved coercion revision affecting native numeric
-semantics. Neither is implemented here. Reference/absence transport proceeds
-independently.
+The Owner adopted an operation-consumption failure on 2026-10-25. An initialized
+undefined transported through `as i32`, an alias, storage or a call retains its
+actual value. Only an executed numeric operation consumes it: the first i32
+component accepts actual i32 unchanged and terminates the request on undefined,
+using trap `r01-t-undefined-numeric-use` and rule `r01-numeric-use`. Binary operands
+are fully evaluated left to right before consumption checks in operand order;
+unary operands are evaluated first. An operand's own failure may therefore occur
+before consumption. The original operation's full UTF16 range and FunctionId
+identify the failure, without an extra fuel event or user catch/finally entry.
+Pure transport, equality and nullish coalescing add no such check; null and other
+numeric types are separate mappings. A U-only operation has no successful return.
+`tsfg_core.domain.numeric_use` has one carrier operand, no result and one normal
+successor carrying i32. Node production, independent Core validation and normal
+exit proofs are implemented; ordinary wire, Runtime, VM and AOT consumption
+remain OPEN. This is neither an uninitialized read nor a bounds failure.
 
 The C++ field-plan consumer checks real per-path SSA commits, constructor
 receiver identity, source anchors and dominating owned phase markers. Its
