@@ -47,6 +47,22 @@ struct Entries {
     result=seen.count(target);ancestors.emplace(actual,std::move(seen));
     return true;
   }
+  bool collectMethods(const std::string &owner, std::set<std::string> &effective) {
+    const auto &nominal=*proof.catalog.at(owner);const auto *declared=nominal.getArray("methods");
+    if(nominal.get("methods")&&!declared)return proof.reject("entry payload method catalogue");
+    if(!declared)return true;
+    for(const auto &method:*declared) {
+      if(!proof.charge()||!method.getAsString()||!proof.callable.count(method.getAsString()->str()))
+        return proof.reject("entry payload method catalogue");
+      const auto id=method.getAsString()->str();const auto &fn=*proof.callable.at(id);
+      if(string(fn,"ownerType")!=owner||string(fn,"role")!="function")return proof.reject("entry method owner/role");
+      const auto overridden=string(fn,"overrideTarget");
+      if(!overridden.empty()&&(!effective.count(overridden)||string(*proof.callable.at(overridden),"ownerType")==owner||!effective.erase(overridden)))
+        return proof.reject("entry method override is not an inherited effective method");
+      effective.insert(id);
+    }
+    return true;
+  }
   // A nominal payload is a leaf itself. Inherited members are traversed, but a
   // base declaration is not an extra payload leaf of a Derived parameter.
   bool leaves(const std::string &root, std::set<std::string> &references) {
@@ -68,12 +84,7 @@ struct Entries {
         for(const auto &owner:lineage) {
           const auto *nominal=proof.catalog.at(owner);
           for(const auto &field:*nominal->getArray("fields")){if(!proof.charge())return false;work.push_back(string(*field.getAsObject(),"type"));}
-          const auto *declaredMethods=nominal->getArray("methods");
-          if(nominal->get("methods")&&!declaredMethods)return proof.reject("entry payload method catalogue");
-          if(declaredMethods)for(const auto &method:*declaredMethods) {
-            if(!proof.charge() || !method.getAsString() || !proof.callable.count(method.getAsString()->str()))return proof.reject("entry payload method catalogue");
-            const auto method_id=method.getAsString()->str();methods.erase(string(*proof.callable.at(method_id),"overrideTarget"));methods.insert(method_id);
-          }
+          if(!collectMethods(owner,methods))return false;
         }
         for(const auto &method:methods) {
           const auto *fn=proof.callable.at(method);work.push_back(string(*fn,"returnType"));const auto &parameters=*fn->getArray("parameters");
@@ -216,13 +227,7 @@ struct Entries {
             if(!proof.charge())return false;const auto &item=*field.getAsObject();
             type.relations.emplace("field/"+string(item,"id"),string(item,"type"));
           }
-          const auto *declaredMethods=nominal.getArray("methods");
-          if(nominal.get("methods")&&!declaredMethods)return proof.reject("entry array owned method closure");
-          if(declaredMethods)for(const auto &method:*declaredMethods) {
-            if(!proof.charge()||!method.getAsString())return proof.reject("entry array owned method closure");const auto methodId=method.getAsString()->str();
-            if(!proof.callable.count(methodId))return proof.reject("entry array owned method closure");
-            methods.erase(string(*proof.callable.at(methodId),"overrideTarget"));methods.insert(methodId);
-          }
+          if(!collectMethods(owner,methods))return false;
         }
         for(const auto &method:methods) {
           const auto &fn=*proof.callable.at(method);const auto role="method/"+method;

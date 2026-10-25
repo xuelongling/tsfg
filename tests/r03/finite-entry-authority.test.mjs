@@ -90,3 +90,59 @@ test('Core nominal method catalogue rejects present bad shape, elements and unkn
     assert.match(result.stderr.toString('utf8'),/core-ir-finite-module/);
   });
 });
+
+/** @param {string} core @param {string} name @param {any} value */
+function finiteDocument(core,name,value) {
+  const pattern=new RegExp('tsfg_core\\.'+name+' = ("(?:[^"\\\\]|\\\\.)*")');
+  assert.ok(pattern.test(core));return core.replace(pattern,()=> 'tsfg_core.'+name+' = '+JSON.stringify(canonical(value)));
+}
+async function unvisitedEntryMethods() {
+  const bytes=await readFile(new URL('./testdata/typed-array-entry/150f37c076b15138c89dadddd650c8a58025d8b679742f7a2bbaeede0e673b76-package.json',import.meta.url));
+  assert.equal(bytes.length,13200);assert.equal(sha256(bytes),'sha256:e1664102f7b67d2a011d0a335cdb83ed5eb6928fb278b8319a3d85cfbbc3e7af');
+  const facts=readTypedArrayFacts(bytes),context={family:'tsfg.array-facts-context-candidate',version:2,
+    factsBytes:bytes,expectedPackageId:facts.packageId},built=buildHir(facts,context);assert.equal(built.status,'ok');
+  const core=lowerFormalHir(built.hir,context),types=attribute(core,'semantic_types'),
+    holder=types.find(/** @param {any} row */ row=>row.nominalKey?.declarationPath[0]==='Holder');assert.ok(holder);assert.equal(holder.base,undefined);
+  const witnesses=attribute(core,'compatibility_witnesses');
+  assert.ok(witnesses.every(/** @param {any} row */ row=>row.compatibility.sourceType!==holder.id&&row.compatibility.targetType!==holder.id));
+  assert.doesNotMatch(core,/"tsfg_core\.domain\.(?:field_read|field_store|method_call|member_present)"/);
+  const callables=attribute(core,'callable_contracts'),views=attribute(core,'member_views');
+  assert.ok(views.views.every(/** @param {any} row */ row=>row.actualType!==holder.id&&row.targetType!==holder.id));
+  const method=callables.find(/** @param {any} row */ row=>row.ownerType===holder.id&&row.role==='function'),
+    constructor=callables.find(/** @param {any} row */ row=>row.ownerType===holder.id&&row.role==='construction-body'),
+    free=callables.find(/** @param {any} row */ row=>row.ownerType===null&&row.name==='f');
+  assert.ok(method&&constructor&&free);return {core,types,holder,callables,views,method,constructor,free};
+}
+test('Core entry method authority rejects bad declarations before using unvisited payload signatures',{skip:!hasCore},async t=>{
+  const f=await unvisitedEntryMethods();
+  /** @type {Array<[string,unknown]>} */
+  const cases=[['null',null],['nonarray',{}],['element',[0]],['unknown',['sha256:'+'0'.repeat(64)]],
+    ['owner',[f.free.id]],['role',[f.constructor.id]]];
+  for(const [name,methods] of cases)await t.test(name,async()=>{
+    const rows=f.types.map(/** @param {any} row */ row=>row.id===f.holder.id?{...row,methods}:row);
+    const result=await invokeCore(finiteDocument(f.core,'semantic_types',rows));rejected(result);
+    assert.match(result.stderr.toString('utf8'),name==='owner'||name==='role'?/\[core-ir-finite-module\] entry method owner\/role/:/\[core-ir-finite-module\] entry payload method catalogue/);
+  });
+  await t.test('override',async()=>{
+    const contracts=f.callables.map(/** @param {any} row */ row=>row.id===f.method.id?{...row,overrideTarget:f.free.id}:row),
+      views={...f.views,methods:f.views.methods.map(/** @param {any} row */ row=>row.id===f.method.id?{...row,overrideTarget:f.free.id}:row)};
+    const input=finiteDocument(finiteDocument(f.core,'callable_contracts',contracts),'member_views',views);
+    const result=await invokeCore(input);rejected(result);
+    assert.match(result.stderr.toString('utf8'),/\[core-ir-finite-module\] entry method override/);
+  });
+});
+test('Core entry method authority retains an unvisited declared method',{skip:!hasCore},async()=>{
+  const {core}=await unvisitedEntryMethods(),first=await invokeCore(core);accepted(first);
+  const fixed=await invokeCore(first.stdout);accepted(fixed);assert.deepEqual(fixed.stdout,first.stdout);
+});
+
+test('Core entry method authority preserves inherited selection before the separate Array gate',{skip:!hasCore},async()=>{
+  const bytes=await readFile(new URL('./testdata/typed-array-source514/a72e067ed8bbbeb893ed9c082a28a7f15b27cbca23bfb4640e60b66763806d95-package.json',import.meta.url));
+  assert.equal(bytes.length,11325);assert.equal(sha256(bytes),'sha256:506b3a554cb9c67bb68f212506d4d3e336ace1a6149d66e9d406450d946d7c97');
+  const facts=readTypedArrayFacts(bytes),context={family:'tsfg.array-facts-context-candidate',version:2,
+    factsBytes:bytes,expectedPackageId:facts.packageId},built=buildHir(facts,context);assert.equal(built.status,'ok');
+  const core=lowerFormalHir(built.hir,context),types=attribute(core,'semantic_types');
+  assert.ok(types.some(/** @param {any} row */ row=>row.base));
+  const result=await invokeCore(core);rejected(result);
+  assert.match(result.stderr.toString('utf8'),/whole admission requires complete Array call definition authority/);
+});
