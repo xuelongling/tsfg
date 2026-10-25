@@ -166,10 +166,10 @@ actual CMake/Ninja dependencies must still reconcile before a target build.
 
 M14's actual static Configure declarations exposed1190 additional fixed Git
 blobs needed for source presence, rather than the earlier360 first-missing
-diagnostics. The finite supplement appends1188 inspected objects to make8144
+diagnostics. The finite supplement appends1189 inspected objects to make8145
 entries, preserving the prior6956 objects in order and all five original
 materials. Every physical file matches its fixed Git blob and strict UTF-8 raw
-hash.1172 retain their original Apache SPDX header;16 have no local SPDX and
+hash.1173 retain their original Apache SPDX header;16 have no local SPDX and
 use the explicit original project grant without inventing an annotation.
 The370 relevant ancestor directories contain only the original root, LLVM and
 MLIR project licenses. Complete original leading attributions remain intact.
@@ -180,10 +180,19 @@ citations. The existing algorithm-source attribution rule covers their fixed
 coefficients and MLIR expressions; a formula or algorithm reference alone does
 not establish copied implementation or additional license terms. This is no
 claim of an independent external-code license audit or a new license grant.
-Two exact paths remain unregistered pending original-material review:
-MPIToLLVM's MPICH COPYRIGHT reference and GPU EliminateBarriers' explicitly
-named Polygeist implementation. The other admitted inputs remain independent
-of these local gaps.
+GPU EliminateBarriers retains its complete original Polygeist implementation
+attribution and existing Apache LLVM expression. The official Polygeist
+[LICENSE](https://github.com/llvm/Polygeist/blob/c0fd591a92ba5ed26ecd0a8df4732c71d6730255/LICENSE)
+(blob `117691b3b9af2be33ef2f5e3aa4e28a43ec4a616`,13205 bytes, SHA256
+`f2db94d30c9657f2556732f3e80973d49fc4d093eede0a54ffda88152296f695`)
+is unchanged at the snapshot before LLVM's July2023 adaptation. Its complete
+Apache2.0 and LLVM exception terms match the retained MLIR license after
+whitespace comparison and excluding the separate project-introduction sentence;
+the two raw originals differ and remain independently retained. This exact
+source supplement preserves all8144 prior objects and the five materials.
+MPIToLLVM remains unregistered: its MPICH COPYRIGHT has separate terms and
+notice obligations, which the original LLVM SPDX header does not discharge.
+Other admitted inputs remain independent of this exact gap.
 This supplement permits conditional source presence for the fixed direct static
 Core configuration. It grants no optional-library/backend compilation,
 generated/installed output, execution or Runtime role. Source selection still

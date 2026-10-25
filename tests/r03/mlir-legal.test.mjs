@@ -81,7 +81,8 @@ test("M14 configured source presence binds the exact reviewed supplement without
   assert.equal(hash(lock.files.slice(0, 6956)), "sha256:a6fe96cc53e5da87ebab9347d554800e1b22623206e7a1fa6dd658a97876737c");
   assert.equal(hash(lock.licenseMaterials), "sha256:1362f33d6d0378ac7e10464f28c2d025e9332f12e8e7eabe7422921412ea1755");
   const added = lock.files.slice(6956);
-  assert.equal(added.length, 1188);
+  assert.equal(added.length, 1189);
+  assert.equal(hash(lock.files.slice(0, 8144)), "sha256:55e7288987a41e996e9e73779085bfe6f229d1182b1a1d2b9ec6bc2c772b4ef9");
   assert.equal(hash(added.slice(0, 1186).map(file => [file.path, file.mode, file.blob, file.sha256, file.noticeSha256])),
     "sha256:b270e56a365edfc50c462819d3094b9796b9fdce311ad4fcd577547ee9d35d59");
   assert.deepEqual(added.slice(1186).map(file => [file.path, file.blob, file.sha256, file.noticeEnd, file.noticeSha256]), [
@@ -90,12 +91,20 @@ test("M14 configured source presence binds the exact reviewed supplement without
       "sha256:f0b96cbbaeddba106cee8d4eca6ea19fa04fd2859a80192dc2bec7c5a00fd2d4"],
     ["mlir/lib/Dialect/Math/Transforms/PolynomialApproximation.cpp", "cd014f5f530f0ebf704c5440d82c97caaaaf7c86",
       "sha256:bd1506b56e0f3583b62b87c0fca272805d1d043421d4f7af25b8b86fbc8b7168", "586",
-      "sha256:bab2911d3215ee7e3cef8d18bf3d1dfa9b6f5213e63947197167bbdd654c23ee"]
+      "sha256:bab2911d3215ee7e3cef8d18bf3d1dfa9b6f5213e63947197167bbdd654c23ee"],
+    ["mlir/lib/Dialect/GPU/Transforms/EliminateBarriers.cpp", "025d1acf8d6bacc00453a61f56ede30f878c0bb2",
+      "sha256:970ed0542ebc35d104f4a0ca58fce37cd14f8efbeb284cd6da96b6d571e00fca", "867",
+      "sha256:13b6829ab88fd594694f8ff7d7e0eca620cc9205e90b86e082109bff68b74f74"]
   ]);
   assert.match(added[1186].licenseBasis.join("\n"), /Algorithm copied from cephes cosm1\./);
   for (const reference of ["stackoverflow.com/a/42683455", "35966695", "Shepherd and J. G. Laframboise", "Polynomial approximation from Cephes."])
     assert.ok(added[1187].licenseBasis.join("\n").includes(reference));
-  assert.equal(added.filter(file => file.completeOriginalAttribution.includes("SPDX-License-Identifier")).length, 1172);
+  assert.equal(added.filter(file => file.completeOriginalAttribution.includes("SPDX-License-Identifier")).length, 1173);
+  assert.match(added[1188].completeOriginalAttribution, /implementation in Polygeist\./);
+  for (const reference of ["c0fd591a92ba5ed26ecd0a8df4732c71d6730255", "117691b3b9af2be33ef2f5e3aa4e28a43ec4a616",
+    "f2db94d30c9657f2556732f3e80973d49fc4d093eede0a54ffda88152296f695", "e288f7b56fe108435b99a6ffcc3f64958dca1ff3",
+    "9ab34689b08ee66f0868d38456fccc8b80d1b656", "https://github.com/llvm/Polygeist/blob/"])
+    assert.ok(added[1188].licenseBasis.join("\n").includes(reference));
   for (const file of added) {
     assert.equal(file.mode, "100644"); assert.equal(file.role, "compiler-side-M01");
     assert.equal(file.license, "Apache-2.0 WITH LLVM-exception");
@@ -114,7 +123,7 @@ test("M14 configured source presence binds the exact reviewed supplement without
   const visible = new Set(selected.entries.map(file => file.repositoryRelativePath));
   assert.ok(added.every(file => visible.has(file.path)));
   const { readMlirSourceBuildLegalInputs } = await import("../../eng/mlir-source-legal.mjs");
-  for (const name of ["mlir/lib/Conversion/MPIToLLVM/MPIToLLVM.cpp", "mlir/lib/Dialect/GPU/Transforms/EliminateBarriers.cpp",
+  for (const name of ["mlir/lib/Conversion/MPIToLLVM/MPIToLLVM.cpp",
     "llvm/lib/Target/X86/MCTargetDesc/X86InstComments.cpp"]) {
     assert.ok(!visible.has(name));
     await assert.rejects(readMlirSourceBuildLegalInputs({ sourceRoot: undefined, git: undefined, paths: [name] }),
