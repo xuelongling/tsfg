@@ -4,10 +4,10 @@
 import {arrayAnalysisTypes,hasConditionalArrayRhs} from './array-analysis-types.mjs';
 import {createSpanPlanes} from './array-span-planes.mjs';
 /** @typedef {import('./array-span-planes.mjs').StoredValue} StoredValue */
-export function createSpanStorage(hir,tools,charge,authority,resolveContext=undefined){
+export function createSpanStorage(hir,tools,charge,authority,resolveContext=undefined,published=undefined){
   const type=arrayAnalysisTypes(hir),summaries=new Map();
   const key=tools.pathKey;
-  const {unknown,choice,leaves,inherit,aggregate,copy,inputField,read,write,snapshot,cloneSnapshot,restore,index,array,truncate,elements,extent,substitute,applyWrites}=createSpanPlanes(type,charge,authority);
+  const {unknown,choice,leaves,inherit,aggregate,copy,inputField,read,write,snapshot,cloneSnapshot,restore,index,array,truncate,elements,extent,substitute,applyWrites,entryAliases,resolveEntry}=createSpanPlanes(type,charge,authority);
   const parents=new Map(),contains=new Set(),work=[],typeIndices=new Map();
   for(const [index,row]of hir.types.entries()){
     typeIndices.set(row.id,index);
@@ -43,7 +43,7 @@ export function createSpanStorage(hir,tools,charge,authority,resolveContext=unde
     }
     return false;
   };
-  function begin(fn,context=false,aliases=[]){
+  function begin(fn,context=false,aliases={groups:[],nested:[]}){
     if(!enabled)return {model:undefined,record:(value,path,owner,call)=>owner,
       bind:(id,value)=>{},initialize:statement=>{},get:path=>null,returned:(value,path)=>{},finish:()=>{},
       state:()=>null,restore:state=>{},join:states=>{},enterLoop:state=>{},leaveLoop:(entry,exit)=>{}};
@@ -62,7 +62,7 @@ export function createSpanStorage(hir,tools,charge,authority,resolveContext=unde
         slots.set(id,slot);}
       return slot;
     };
-    const readStored=(receiver,property)=>substitute(read(receiver,property),value=>{
+    const readStored=(receiver,property)=>substitute(resolveEntry(read(receiver,property),parameters,aliases.nested),value=>{
       if(value.kind!=='inputField')return value;const slot=slotFor(value);
       for(const id of writtenSlots){charge();const other=slots.get(id);
         if(id!==slot.key&&other.input.properties.at(-1)===value.properties.at(-1))return unknown;}
@@ -75,11 +75,11 @@ export function createSpanStorage(hir,tools,charge,authority,resolveContext=unde
       let value=unknown;
       if(type.isOwner(p.type)){
         const owner={kind:'parameter',functionId:fn.id,index};
-        if(type.isArray(p.type)&&contains.has(p.type))value=aliases[index]<index?parameters[aliases[index]]:aggregate(p.type,index,owner);
+        if(type.isArray(p.type)&&contains.has(p.type))value=aliases.groups[index]<index?parameters[aliases.groups[index]]:aggregate(p.type,index,owner);
         else{value={kind:'owner',owner,span:type.isView(p.type),sources:[],type:p.type};
           if(value.span)value.sources.push({id:'parameter/'+fn.id+'/'+index,functionId:fn.id,parameter:index,owner});}
-      }else if(['reference','value'].includes(t?.kind))value=t.kind==='reference'&&aliases[index]<index
-        ?parameters[aliases[index]]:aggregate(p.type,index);
+      }else if(['reference','value'].includes(t?.kind))value=t.kind==='reference'&&aliases.groups[index]<index
+        ?parameters[aliases.groups[index]]:aggregate(p.type,index);
       parameters.push(value);bindings.set(p.id,value);
     }
     const get=path=>values.get(key(path))??unknown;
@@ -194,7 +194,7 @@ export function createSpanStorage(hir,tools,charge,authority,resolveContext=unde
       for(let i=before.requirements;i<requirements.length;++i){charge();const row=requirements[i];
         if(row.kind!=='dependency'){row.value=settle(row.value);drain();}}
       for(let i=before.projected;i<projectedEvents.length;++i){charge();const row=projectedEvents[i];
-        row.value=settle(row.value);drain();if(row.kind==='use')row.evidence=origins(row.value);else row.owner=effectOwner(row.value);}
+        row.value=settle(row.value);drain();if(row.kind!=='effect')row.evidence=origins(row.value);else row.owner=effectOwner(row.value);}
       for(let i=0;i<returns.length;++i){charge();returns[i]=settle(returns[i]);}
       for(const exit of exits)for(let i=0;i<exit.length;++i){charge();exit[i]=settle(exit[i]);}
       for(const exit of slotExits)for(const [id,value]of exit){charge();exit.set(id,settle(value));}drain();
@@ -269,7 +269,7 @@ export function createSpanStorage(hir,tools,charge,authority,resolveContext=unde
               events.push({...mapped,evidence});
             }
           }else{
-            requirements.push(mapped);events.push({...mapped,owner:effectOwner(value)});
+            requirements.push(mapped);events.push(row.kind==='create'?{...mapped,evidence}:{...mapped,owner:effectOwner(value)});
           }
         }
         if(events.length){
@@ -313,7 +313,10 @@ export function createSpanStorage(hir,tools,charge,authority,resolveContext=unde
       const evidence=origins(value);
       if(context&&evidence.unknown){const dependency={kind:'dependency',target:fn.id,path,range,sourcePath:fn.sourcePath};
         dependencies.push(dependency);requirements.push(dependency);}
-      if(!evidence.inputs.length||evidence.unknown)return;
+      if(context&&evidence.unknown)return;
+      if(!evidence.inputs.length&&!evidence.unknown){
+        if(context)requirements.push({kind:'use',value,path,range,sourcePath:fn.sourcePath,checks:[]});return;
+      }
       const demand={contexts:0,failed:false,formal:true,range};demands.push(demand);deferred.set(key(path),demand);
       requirements.push({kind:'use',value,path,range,sourcePath:fn.sourcePath,checks:[demand]});
     };
@@ -351,6 +354,7 @@ export function createSpanStorage(hir,tools,charge,authority,resolveContext=unde
           });
           result=inherit({kind:'owner',owner,span:true,type:value.type,sources:[{id:fn.id+'@'+key(path),
             functionId:fn.id,path:[...path],owner,ownerRooted}]},arguments_[0]);
+          requirements.push({kind:'create',value:result,path,range:value.range,sourcePath:fn.sourcePath});
         }else if(call){
           const constructor=value.kind!=='call',receiver=constructor
             ?value.kind==='superConstruct'?bindings.get(value.receiverBinding):aggregate(value.type):child('receiver');
@@ -363,14 +367,15 @@ export function createSpanStorage(hir,tools,charge,authority,resolveContext=unde
             charge();restoreState(before);const selected={...call,target:target.target};
             // The entry planes remain parameter-relative. Only actual scalar
             // evidence selects a recursive continuation of the same walker.
-            const aliases=[],seen=new Map();
-            for(const [index,actual]of actuals.entries()){
-              charge();const rows=leaves(actual),plane=rows.length===1&&rows[0].kind==='aggregate'&&
-                (type.isArray(rows[0].type)||type.types.get(rows[0].type)?.kind==='reference')?rows[0]:null;
-              if(plane&&!seen.has(plane))seen.set(plane,index);aliases.push(plane?seen.get(plane):index);
-            }
-            const summary=(target.target===fn.id||context?resolveContext?.(target.target,facts,aliases):null)??summaries.get(target.target);
+            const aliases=entryAliases(actuals);
+            const summary=resolveContext?.(target.target,facts,aliases,summaries.get(target.target))??summaries.get(target.target);
             const inputs=actuals.map((value,index)=>{charge();return summary?.receiver&&index===0?value:copy(value);});
+            // Keep the fixed entry interval independently of detailed effects;
+            // report a real body mutation first when both establish a conflict.
+            const upper=published?.(target.target),at=[...path,'callee',target.target],uppers=[];
+            for(const slot of upper?.parameters??[]){charge();if(slot.structural)uppers.push({kind:'effect',fixedUpper:true,
+              value:inputs[slot.index]??unknown,path:at,range:value.range,sourcePath:fn.sourcePath,structural:true});}
+            if(upper?.local.structural)uppers.push({kind:'effect',fixedUpper:true,value:unknown,path:at,range:value.range,sourcePath:fn.sourcePath,structural:true});
             if(!summary){
               // A returning arm must not erase its unresolved activation.
               // Only this storage family needs this dependency; unrelated
@@ -382,6 +387,7 @@ export function createSpanStorage(hir,tools,charge,authority,resolveContext=unde
               for(const [object]of before.planes)invalidate(object);
             }
             const result=invoke(summary,inputs,selected,path,value.range);results.push(result);
+            for(const row of uppers){charge();requirements.push(row);}
             const branch=state();branch.planes=snapshot(before.planes.keys(),[result]);branches.push(branch);
           }
           // Entry-slot versions and aggregate planes share the same target

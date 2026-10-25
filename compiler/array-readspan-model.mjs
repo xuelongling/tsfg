@@ -17,6 +17,8 @@ export function deriveReadSpanPlan(hir,prepared) {
   const exported=new Set(hir.exports.map(row=>{charge();return row.functionId;}));
   const indices=new Map(calls.map((call,index)=>[canonical([call.functionId,call.expressionPath]),index]));
   const functions=callables.map(fn=>{
+    // A known caller cannot discharge the independent host entry of a method.
+    const unknownEntry=exported.has(fn.id)||Boolean(fn.ownerType&&fn.role!=='construction-body');
     const model=prepared.ownerModel.functions.get(fn.id),families=new Map(),results=new Map(),storedFamilies=new Map(),views=[],events=[];
     for(const dependency of model.storage?.dependencies??[]){
       charge();failure({code:'r03-d-readspan-context-pending',ruleId:'r01-span',phase:'hir',functionId:fn.id,
@@ -25,7 +27,7 @@ export function deriveReadSpanPlan(hir,prepared) {
         primary:{sourceId:dependency.sourcePath,...dependency.range}});
     }
     for(const demand of model.storage?.demands??[]){
-      charge();if(demand.failed||!demand.contexts||demand.formal&&exported.has(fn.id))
+      charge();if(demand.failed||!demand.contexts||demand.formal&&unknownEntry)
         failure({code:'r03-d-readspan-origin',ruleId:'r01-span',phase:'hir',message:'Stored parameter Span has no complete actual caller field context',
           primary:{sourceId:fn.sourcePath,...demand.range}});
     }
@@ -92,9 +94,15 @@ export function deriveReadSpanPlan(hir,prepared) {
         const storedUses=[];
         for(const row of model.storage?.callEvents.get(canonical(operation.path))??[]){
           charge();const at={...operation,path:row.path,range:row.range};
-          if(row.kind==='effect'){
+          if(row.kind==='create'){
+            // Materialize the actual callee creation at its ordered occurrence,
+            // before any later projected mutation or use in this same call.
+            for(const source of row.evidence.sources){charge();if(storedFamilies.has(source.id))continue;
+              const view=create(at,'callResult',source.owner,{callIndex,storageOrigin:source.storedOrigin});
+              storedFamilies.set(source.id,view);}
+          }else if(row.kind==='effect'){
             if(!row.structural)continue;
-            event(at,'view-stored-call-structural',{owner:row.owner,sourcePath:row.sourcePath});
+            event(at,'view-stored-call-structural',{owner:row.owner,sourcePath:row.sourcePath,...(row.fixedUpper?{fixedUpper:true}:{})});
           }else{
             if(row.evidence.pending||!row.evidence.sources.length)use(undefined,null,at,'view-stored-call-use');
             for(const source of row.evidence.sources){
@@ -104,8 +112,8 @@ export function deriveReadSpanPlan(hir,prepared) {
           }
         }
         event(operation,'array-call-effect',{callIndex});
-        // Fixed Published effects remain an upper bound for the entire call;
-        // precise body events do not shrink it or supply an instance seed.
+        // Fixed entry uppers stay independent; actual body effects retain
+        // their original occurrence for precise first-conflict diagnostics.
         for(const row of storedUses)use(row.view,null,row.at,'view-stored-call-complete',{sourcePath:row.sourcePath});
         const callee=targets.get(call.target),value=operation.value;
         const actuals=callee.ownerType?[value.receiver,...value.arguments]:value.arguments;
@@ -135,7 +143,7 @@ export function deriveReadSpanPlan(hir,prepared) {
           else results.set(canonical(operation.path),family(actuals[parameterIndex],actualPath(parameterIndex)));
         }
         for(const source of model.storage?.captures.values()??[]){
-          charge();if(canonical(source.callPath)!==canonical(operation.path))continue;
+          charge();if(canonical(source.callPath)!==canonical(operation.path)||storedFamilies.has(source.id))continue;
           const existing=type.isView(value.type)?results.get(canonical(operation.path))?.[0]:null;
           const view=existing??create(operation,'callResult',source.owner,{callIndex,storageOrigin:source.storedOrigin});
           storedFamilies.set(source.id,view);
@@ -223,6 +231,14 @@ export function consumeReadSpanPlan(hir,prepared,registrationAndUseWork) {
       for(const view of state.views) {
         if(view.lastUseEvent===null)continue;
         if(view.origin.kind!=='parameter'&&!(view.origin.createEvent<event.sequence))continue;
+        if((event.kind==='array-call-effect'||event.fixedUpper)&&view.origin.kind!=='parameter'){
+          const created=state.events[view.origin.createEvent].expressionPath,entry=event.expressionPath;
+          let inside=created.length>entry.length&&(event.fixedUpper||created[entry.length]==='callee');
+          for(let i=0;inside&&i<entry.length;++i){if(++work>1024)limit();inside=created[i]===entry[i];}
+          // This upper covers incoming families, not a descriptor born inside
+          // this very activation. Nested uppers are projected at their entry.
+          if(inside)continue;
+        }
         const last=state.events[view.lastUseEvent],backedge=loopBackedge(event,last,view,state);
         if(!(event.sequence<view.lastUseEvent)&&!backedge)continue;
         if(!backedge&&mutuallyExclusive(event.expressionPath,last.expressionPath))continue;

@@ -1,0 +1,32 @@
+{
+  "kind": "independent Source-only instance-method unknown-entry regression",
+  "source": {
+    "path": "E:/ws/pro_tsfg/.scratch/tsfg_r03/M25-source-generic-array-checks-20261022/holder-method-unknown-entry-source.ts",
+    "bytes": 508,
+    "sha256": "1dde441db1967ef0a9c49f9ae6848a66b68e50294f1c8a02da070d65fad64c2d"
+  },
+  "knownCall": {
+    "method": "P.first",
+    "shrink": false,
+    "actualAlias": "O.h and the independent H argument are the same current h",
+    "expectedCurrentField": "C",
+    "safeCurrentInvocation": true
+  },
+  "unknownEntry": {
+    "role": "ownerType instance method, not construction-body",
+    "allHostInputsCovered": false,
+    "knownInvocationCannotCloseHostFieldDemand": true,
+    "reason": "unknown shrink and actual aliases retain a genuine independent method entry"
+  },
+  "required": {
+    "status": "error",
+    "code": "r03-d-readspan-origin",
+    "message": "Stored parameter Span has no complete actual caller field context",
+    "primary": {
+      "start": 297,
+      "end": 306,
+      "text": "x.span[0]"
+    }
+  },
+  "qualification": "Ordinary locally closed methods are not banned. Only unresolved formal field demands must meet the method unknown entry. No Source/IR/VM execution claim."
+}

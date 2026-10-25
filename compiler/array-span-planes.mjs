@@ -125,6 +125,40 @@ export function createSpanPlanes(type,charge,authority){
     for(const [plane,members]of grouped)for(const [member,payloads]of members){charge();write(plane,member,choice(payloads),changed);}
     return complete;
   };
+  // Only exact current reference planes establish entry aliases. These paths
+  // are parameter-relative; neither allocation owners nor payloads enter a key.
+  const entryAliases=actuals=>{
+    const groups=[],targets=new Map(),nested=[];
+    const exact=value=>{
+      charge();while(value?.kind==='loaded'){if(value.tokens.length)return null;charge();value=value.value;}
+      return value?.kind==='aggregate'?value:null;
+    };
+    for(const [index,value]of actuals.entries()){
+      charge();const plane=exact(value),reference=plane&&(type.isArray(plane.type)||type.types.get(plane.type)?.kind==='reference');
+      if(reference&&!targets.has(plane))targets.set(plane,index);groups.push(reference?targets.get(plane):index);
+    }
+    for(const [index,value]of actuals.entries()){
+      charge();const work=[{value,properties:[]}],seen=new Set();
+      while(work.length){charge();const item=work.pop(),plane=exact(item.value);if(!plane)continue;
+        if(item.properties.length&&targets.has(plane)){
+          const properties=[];for(const member of item.properties){charge();properties.push(member);}
+          nested.push({index,properties,target:targets.get(plane)});
+        }
+        if(seen.has(plane))continue;seen.add(plane);
+        for(const [member,value]of plane.fields){charge();const properties=[];
+          for(const before of item.properties){charge();properties.push(before);}properties.push(member);work.push({value,properties});}
+      }
+    }
+    return {groups,nested};
+  };
+  const resolveEntry=(value,parameters,relations)=>transform(value,row=>{
+    if(row.kind!=='inputField')return row;
+    for(const relation of relations){charge();if(relation.index!==row.index||relation.properties.length!==row.properties.length)continue;
+      let same=true;for(let i=0;i<relation.properties.length;++i){charge();if(relation.properties[i]!==row.properties[i])same=false;}
+      if(same)return parameters[relation.target]??unknown;
+    }
+    return row;
+  });
   const extent=(receiver,limit,changed,invalidate)=>{
     const candidates=leaves(receiver),unique=candidates.length===1;
     for(const plane of candidates)if(plane.kind==='aggregate'){
@@ -149,5 +183,5 @@ export function createSpanPlanes(type,charge,authority){
     for(let i=0;i<plane.extent;++i){charge();const member='slot/'+i;
       if(!plane.fields.has(member))return null;values.push(plane.fields.get(member));}return values;
   };
-  return {unknown,choice,leaves,inherit,aggregate,copy,inputField,read,write,snapshot,cloneSnapshot,restore,index,array,truncate,elements,extent,substitute:transform,applyWrites};
+  return {unknown,choice,leaves,inherit,aggregate,copy,inputField,read,write,snapshot,cloneSnapshot,restore,index,array,truncate,elements,extent,substitute:transform,applyWrites,entryAliases,resolveEntry};
 }

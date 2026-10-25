@@ -99,7 +99,7 @@ export function traceArrayOwners(hir,contracts,fail,charge,insert,empty,tools=cr
   const bases=new Map(),callSites=new Map(),models=new Map(),origins=new Map(),active=new Set();
   const contexts=createSpanContexts(tools,charge);
   const storage=createSpanStorage(hir,tools,charge,()=>authority??=typedReferenceAuthority(hir,charge),
-    (id,facts,aliases)=>contexts.resolve(functions.get(id),facts,aliases,(fn,context)=>trace(fn,context)));
+    (id,facts,aliases,baseline)=>contexts.resolve(functions.get(id),facts,aliases,(fn,context)=>trace(fn,context),baseline),id=>contracts.get(id).upper);
   const trace=(fn,context=null)=>{
     if(!context&&models.has(fn.id))return;
     if(!context&&active.has(fn.id))return;
