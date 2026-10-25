@@ -32,10 +32,11 @@ struct MemberProof {
     const auto path = lineage(id); if (path.empty()) return proof.reject("member inheritance cycle/type"); Members result;
     for (const auto &type : path) {
       const auto &row = *proof.catalog.at(type); const auto *fields = row.getArray("fields"), *methods = row.getArray("methods");
-      if (!fields || !methods) return proof.reject("nominal member catalogue");
+      // The owned catalogue omits methods when the declaration has none.
+      if (!fields || (row.get("methods") && !methods)) return proof.reject("nominal member catalogue");
       for (const auto &field : *fields) { if (!proof.charge()) return false; const auto *f = field.getAsObject();
         if (!f || !result.fields.emplace(string(*f,"id"),f).second) return proof.reject("duplicate physical field identity"); }
-      for (const auto &method : *methods) {
+      if (methods) for (const auto &method : *methods) {
         if (!proof.charge() || !method.getAsString() || !proof.callable.count(method.getAsString()->str())) return proof.reject("missing owned method callable");
         const auto *fn = proof.callable.at(method.getAsString()->str());
         if (string(*fn,"ownerType") != type || string(*fn,"role") != "function") return proof.reject("method owner/role");

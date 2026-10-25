@@ -68,8 +68,10 @@ struct Entries {
         for(const auto &owner:lineage) {
           const auto *nominal=proof.catalog.at(owner);
           for(const auto &field:*nominal->getArray("fields")){if(!proof.charge())return false;work.push_back(string(*field.getAsObject(),"type"));}
-          for(const auto &method:*nominal->getArray("methods")) {
-            if(!proof.charge() || !proof.callable.count(method.getAsString()->str()))return false;
+          const auto *declaredMethods=nominal->getArray("methods");
+          if(nominal->get("methods")&&!declaredMethods)return proof.reject("entry payload method catalogue");
+          if(declaredMethods)for(const auto &method:*declaredMethods) {
+            if(!proof.charge() || !method.getAsString() || !proof.callable.count(method.getAsString()->str()))return proof.reject("entry payload method catalogue");
             const auto method_id=method.getAsString()->str();methods.erase(string(*proof.callable.at(method_id),"overrideTarget"));methods.insert(method_id);
           }
         }
@@ -214,8 +216,10 @@ struct Entries {
             if(!proof.charge())return false;const auto &item=*field.getAsObject();
             type.relations.emplace("field/"+string(item,"id"),string(item,"type"));
           }
-          for(const auto &method:*nominal.getArray("methods")) {
-            if(!proof.charge())return false;const auto methodId=method.getAsString()->str();
+          const auto *declaredMethods=nominal.getArray("methods");
+          if(nominal.get("methods")&&!declaredMethods)return proof.reject("entry array owned method closure");
+          if(declaredMethods)for(const auto &method:*declaredMethods) {
+            if(!proof.charge()||!method.getAsString())return proof.reject("entry array owned method closure");const auto methodId=method.getAsString()->str();
             if(!proof.callable.count(methodId))return proof.reject("entry array owned method closure");
             methods.erase(string(*proof.callable.at(methodId),"overrideTarget"));methods.insert(methodId);
           }

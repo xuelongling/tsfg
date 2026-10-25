@@ -6,6 +6,7 @@ import {readTypedArrayFacts} from '../../compiler/typed-array-facts.mjs';
 import {buildHir,lowerFormalHir} from '../../compiler/hir.mjs';
 import {canonical,sha256} from '../../compiler/identity.mjs';
 import expected from './testdata/typed-array-entry/universal-definition-abi-expected.json' with {type:'json'};
+import {invokeCore,accepted,rejected} from './generic-core-package-capture.mjs';
 const order=(a,b)=>a<b?-1:a>b?1:0;
 function attribute(text,name) {
   const encoded=new RegExp('tsfg_core\\.'+name+' = ("(?:[^"\\\\]|\\\\.)*")').exec(text);
@@ -49,4 +50,43 @@ test('ordinary Core preserves independent Source entry authority and all definit
     }
   });
   assert.deepEqual({definitions,parameters,results},{definitions:22,parameters:29,results:11});assert.ok(entries>0);
+});
+
+// Real C++ admission for the same owned entry fixture used above. No Source
+// process is needed, and the original producer output is never edited in place.
+async function nominalCore() {
+  const input=expected.caseInputs.find(row=>row.case==='readonly');assert.ok(input);
+  const bytes=await readFile(new URL('../../'+input.packetPath,import.meta.url));
+  assert.equal(sha256(bytes).slice(7),input.packetSHA256);
+  const facts=readTypedArrayFacts(bytes),context={family:'tsfg.array-facts-context-candidate',version:2,
+    factsBytes:bytes,expectedPackageId:facts.packageId},built=buildHir(facts,context);
+  assert.equal(built.status,'ok');return lowerFormalHir(built.hir,context);
+}
+/** @param {string} core @param {unknown} methods */
+function withNominalMethods(core,methods) {
+  const pattern=/tsfg_core\.semantic_types = ("(?:[^"\\]|\\.)*")/;
+  const selected=pattern.exec(core);assert.ok(selected);
+  /** @type {Array<Record<string,unknown>>} */
+  const types=JSON.parse(JSON.parse(selected[1]));
+  const changed=types.map(row=>row.kind==='reference'||row.kind==='value'?{...row,methods}:row);
+  return core.replace(pattern,()=> 'tsfg_core.semantic_types = '+JSON.stringify(canonical(changed)));
+}
+const hasCore=Boolean(process.env.TSFG_CORE_IR_EXE);
+test('Core nominal method catalogue accepts absent and explicit empty directories',{skip:!hasCore},async t=>{
+  const core=await nominalCore(),types=attribute(core,'semantic_types');
+  assert.ok(types.some(/** @param {any} row */ row=>row.kind==='reference'));
+  assert.ok(types.every(/** @param {any} row */ row=>!Object.hasOwn(row,'methods')));
+  for(const [name,input] of [['absent',core],['empty',withNominalMethods(core,[])]])await t.test(name,async()=>{
+    const first=await invokeCore(input);accepted(first);
+    const fixed=await invokeCore(first.stdout);accepted(fixed);assert.deepEqual(fixed.stdout,first.stdout);
+  });
+});
+test('Core nominal method catalogue rejects present bad shape, elements and unknown callables',{skip:!hasCore},async t=>{
+  const core=await nominalCore();
+  /** @type {Array<[string,unknown]>} */
+  const cases=[['null',null],['object',{}],['string','invalid'],['element',[0]],['callable',['sha256:'+'0'.repeat(64)]]];
+  for(const [name,methods] of cases)await t.test(name,async()=>{
+    const result=await invokeCore(withNominalMethods(core,methods));rejected(result);
+    assert.match(result.stderr.toString('utf8'),/core-ir-finite-module/);
+  });
 });
