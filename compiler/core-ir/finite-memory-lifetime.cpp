@@ -33,24 +33,28 @@ class StoredReturns {
     contains.emplace(type,result);return result;
   }
   bool returns(mlir::Operation *point,mlir::Value root){
-    struct Item {mlir::Value receiver;std::string actual;};
-    std::vector<Item> work;std::set<std::pair<const void *,std::string>> seen;
+    struct Item {mlir::Value receiver;std::string actual;MemoryReceiver cursor;bool qualified=false;};
+    using Key=std::tuple<const void *,std::string,size_t,size_t,bool>;
+    std::vector<Item> work;std::set<Key> seen;
     std::vector<StoredFieldSource> result;bool pending=false,relevant=false;
     const auto add=[&](mlir::Value value){
       const auto *domain=valueDomain(proof,value.getType());if(!domain){valid=false;return;}
       for(const auto &type:domain->alternatives){
-        if(!proof.charge()){valid=false;return;}if(borrowed(type))work.push_back({value,type});
+        if(!proof.charge()){valid=false;return;}if(borrowed(type))work.push_back({value,type,{}});
       }
     };
     add(root);
     for(size_t cursor=0;valid&&cursor<work.size();++cursor){
       if(!proof.charge())return false;const auto item=work[cursor];
-      if(!seen.emplace(item.receiver.getAsOpaquePointer(),item.actual).second)continue;
+      if(!seen.emplace(item.receiver.getAsOpaquePointer(),item.actual,item.cursor.activation,item.cursor.query,item.qualified).second)continue;
       const auto found=proof.catalog.find(item.actual);if(found==proof.catalog.end())return false;
       const auto kind=string(*found->second,"kind");
       // Direct view return has its own SSA/parameter-relative consumer.
       if(kind=="readSpan")continue;relevant=true;
       if(kind=="array"){
+        // Extent currently accepts a query-frame receiver, not a foreign
+        // cursor. A proved nested reference must not grant Array cell facts.
+        if(item.qualified){pending=true;continue;}
         ArrayExtent extent;if(!proveArrayExtent(proof,point,item.receiver,extent))return false;
         if(!extent.proven){pending=true;continue;}
         auto fn=point->getParentOfType<mlir::func::FuncOp>();
@@ -89,7 +93,9 @@ class StoredReturns {
         for(const auto &field:*fields){
           if(!proof.charge())return false;const auto &row=*field.getAsObject();const auto type=string(row,"type");
           if(!borrowed(type))continue;
-          auto selected=proveMemoryFirstWrites(proof,point,item.receiver,item.actual,string(row,"id"),writes,origins,sources);
+          auto selected=item.qualified?
+            proveMemoryCursorWrites(proof,point,item.cursor,item.actual,string(row,"id"),writes,origins,sources):
+            proveMemoryFirstWrites(proof,point,item.receiver,item.actual,string(row,"id"),writes,origins,sources);
           if(selected.status==MemorySelection::Status::Invalid)return false;
           if(selected.status!=MemorySelection::Status::Proven||selected.sources.empty()){pending=true;continue;}
           for(const auto &source:selected.sources){
@@ -100,7 +106,21 @@ class StoredReturns {
               if(!proof.charge()){valid=false;return;}const auto found=proof.catalog.find(id);
               if(found==proof.catalog.end()){valid=false;return;}
               const auto kind=string(*found->second,"kind");span|=kind=="readSpan";
-              if(kind!="readSpan"&&borrowed(id))pending=true;
+              if(kind!="readSpan"&&borrowed(id)){
+                bool productive=false;
+                // Only a cursor derived from this selected actual construction
+                // may continue a foreign object plane. A nominal introduction
+                // alone carries neither an instance nor its current fields.
+                for(const auto &receiver:source.receivers){
+                  if(!proof.charge(1+id.size()/64)){valid=false;return;}
+                  auto *created=receiver.value.getDefiningOp();
+                  const auto actual=created?created->getAttrOfType<mlir::StringAttr>("view_type"):mlir::StringAttr();
+                  if(kind!="reference"||!created||created->getName().getStringRef()!="tsfg_core.domain.construct"||
+                      !actual||actual.getValue()!=id||receiver.activation==MemoryFrames::none||receiver.query==MemoryFrames::none)continue;
+                  work.push_back({receiver.value,id,receiver,true});productive=true;
+                }
+                if(!productive)pending=true;
+              }
             };
             for(const auto &id:source.introduced)classify(id);
             for(auto value:source.values){
