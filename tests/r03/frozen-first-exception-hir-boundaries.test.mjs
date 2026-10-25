@@ -2,6 +2,7 @@
 // Independent first172B HIR relation and wire negatives; Root installs and runs this candidate.
 import assert from 'node:assert/strict';
 import { createHash } from 'node:crypto';
+import registry from '../../contracts/registry.json' with {type:'json'};
 import { readFile } from 'node:fs/promises';
 import test from 'node:test';
 import { importCapturedFrontendResponse } from '../../compiler/frontend.mjs';
@@ -9,7 +10,7 @@ import { buildHir, verifyHir, printHir, readHir } from '../../compiler/hir.mjs';
 
 const fixture = new URL('../fixtures/r03/m21-exception/first/', import.meta.url);
 const family = 'tsfg.exception-hir-candidate';
-const schema = 'sha256:af8317d8403ea2817e1eba2c47e1d4ef38090f7127897204b05e369ec545ddfd';
+const schema = 'sha256:fb37661820a43016639059f0b9e82275414da0de87d2320e5efdfe8423921ee5';
 const hash = value => createHash('sha256').update(value).digest('hex');
 const copy = value => JSON.parse(JSON.stringify(value));
 /** @param {any} value @returns {string} */
@@ -63,8 +64,9 @@ function once(text, anchor, replacement) {
 }
 
 
-// Data-only current formal scalar control: independently literal, no Source invocation.
-const formalControl = {"contractVersion":"0.11.0","schemaHash":"sha256:fe225e07d8445184ec49e3cce978c9df7b9be6db0ca64d6e45c63d5a5aaaf1bd","inputIdentity":"sha256:1784522b2da941a9e6db262bec31723f4d0d67e30984b7a1846d6d3d20f9db90","source":{"path":"/src/formal.ts","content":"function entry(): i32 { return 0; }","hash":"sha256:e6493af175ecd6467ee9b41b70ab3cd7af24560bef9802d053b3573471fcc708"},"target":{"llvmDataLayout":"e-m:w-p270:32:32-p271:32:32-p272:64:64-i64:64-i128:128-f80:128-n8:16:32:64-S128","target":"windows-x86_64-msvc","triple":"x86_64-pc-windows-msvc"},"functions":[{"id":"sha256:072c0491b98615305be3cb2945b83e4380109b81a95daec8ac806fdcb77c9917","name":"entry","signatureHash":"sha256:ac9438b17e41c86e042aaa640f76bd95693245676c19c4cbfd89cf43315df6f9","returnType":{"kind":"scalar","name":"i32","id":"sha256:a499279eb079e9a530729c0e20165237b946527f01f48d1426b927e2c2e7d727"},"parameters":[],"range":{"start":0,"end":35},"body":[{"kind":"return","range":{"start":24,"end":33},"value":{"kind":"constant","type":"sha256:a499279eb079e9a530729c0e20165237b946527f01f48d1426b927e2c2e7d727","range":{"start":31,"end":32},"decimal":"0","token":"0"}}]}]};
+// Independent scalar body; this dispatch control follows only the current
+// ordinary HIR header, not a new frozen wire/Source identity.
+const formalControl = {contractVersion:registry['tsfg.hir'].semver,schemaHash:registry['tsfg.hir'].schemaHash,"inputIdentity":"sha256:1784522b2da941a9e6db262bec31723f4d0d67e30984b7a1846d6d3d20f9db90","source":{"path":"/src/formal.ts","content":"function entry(): i32 { return 0; }","hash":"sha256:e6493af175ecd6467ee9b41b70ab3cd7af24560bef9802d053b3573471fcc708"},"target":{"llvmDataLayout":"e-m:w-p270:32:32-p271:32:32-p272:64:64-i64:64-i128:128-f80:128-n8:16:32:64-S128","target":"windows-x86_64-msvc","triple":"x86_64-pc-windows-msvc"},"functions":[{"id":"sha256:072c0491b98615305be3cb2945b83e4380109b81a95daec8ac806fdcb77c9917","name":"entry","signatureHash":"sha256:ac9438b17e41c86e042aaa640f76bd95693245676c19c4cbfd89cf43315df6f9","returnType":{"kind":"scalar","name":"i32","id":"sha256:a499279eb079e9a530729c0e20165237b946527f01f48d1426b927e2c2e7d727"},"parameters":[],"range":{"start":0,"end":35},"body":[{"kind":"return","range":{"start":24,"end":33},"value":{"kind":"constant","type":"sha256:a499279eb079e9a530729c0e20165237b946527f01f48d1426b927e2c2e7d727","range":{"start":31,"end":32},"decimal":"0","token":"0"}}]}]};
 
 // This seed is the actual first packet already checked against the unchanged
 // 1fcef118 full manual oracle. It supplies negative baselines, not a new oracle.
@@ -86,7 +88,7 @@ test('first exception HIR rejects derived corruption and malformed cold input', 
     const result = buildHir(snapshot);
     assert.equal(result.status, 'ok', JSON.stringify(result));
     seed = result.hir; seedText = canonical(seed); wire = seedText + '\n';
-    assert.deepEqual(seed.format, {family,version:1,schemaHash:schema});
+    assert.deepEqual(seed.format, {family,version:2,schemaHash:schema});
     assert.deepEqual(Object.keys(seed).sort(), ['exports','format','functions','inputIdentity',
       'modules','snapshot','sources','target','types']);
     assert.equal(catchRead(seed).binding, caught(seed).binding);
@@ -101,14 +103,14 @@ test('first exception HIR rejects derived corruption and malformed cold input', 
   });
   if (!controlPassed) return;
 
-  await t.test('legacyFormalWithoutFormatStillRoundTrips', () => {
+  await t.test('currentOrdinaryFormalWithoutFormatStillRoundTrips', () => {
     assert.equal(Object.hasOwn(formalControl, 'format'), false);
     const text = canonical(formalControl) + '\n', before = canonical(formalControl);
     assert.deepEqual(verifyHir(formalControl), formalControl);
     assert.equal(printHir(formalControl), text);
     assert.deepEqual(readHir(Buffer.from(text)), formalControl);
     assert.equal(canonical(formalControl), before);
-    // Old formal canonical rejection keeps its established unstructured error.
+    // Current ordinary HIR keeps its own canonical diagnostic boundary.
     assert.throws(() => readHir(Buffer.from(text.slice(0,-1))), error => {
       assert.ok(error instanceof TypeError); assert.match(error.message, /r03-hir-canonical/);
       assert.equal(Object.hasOwn(error, 'code'), false); return true;
@@ -152,7 +154,8 @@ test('first exception HIR rejects derived corruption and malformed cold input', 
     ['variantHasSecondPayload', h => { catchRead(h).literal = {decimal:'0'}; }],
     ['absentCatchAnnotationInvented', h => { caught(h).annotationRange = {start:87,end:93}; }],
     ['presentFinallyErased', h => { attempt(h).finallyRegion = null; }],
-    ['formatVersionTwo', h => { h.format.version = 2; }],
+    ['historicalVersionOneHasNoNormalFallback', h => { h.format.version = 1; }],
+    ['unknownVersionThree', h => { h.format.version = 3; }],
     ['formatSchemaMismatch', h => { h.format.schemaHash = 'sha256:' + '0'.repeat(64); }],
   ];
   for (const [name, change] of relations) await t.test('typedRelation/' + name, () => {

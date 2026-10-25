@@ -1,11 +1,11 @@
 // SPDX-License-Identifier: MIT
-import descriptorValue from '../contracts/exception-hir-candidate-v1.schema.json' with { type: 'json' };
+import descriptorValue from '../contracts/exception-hir-v2.schema.json' with { type: 'json' };
 import { canonical, own, sha256 } from './identity.mjs';
 import { checkGenericJsonValueBudget, readGenericJson } from './generic-json.mjs';
 export { canonical, own, sha256 };
 export const descriptor = own(descriptorValue);
 export const hirSchemaHash = sha256(canonical(descriptor));
-export const hirFormat = own({ family: 'tsfg.exception-hir-candidate', version: 1, schemaHash: hirSchemaHash });
+export const hirFormat = own({ family: 'tsfg.exception-hir-candidate', version: 2, schemaHash: hirSchemaHash });
 export const limits = descriptor.limits;
 /** @returns {never} */
 export function failure(category, message = 'owned exception HIR differs') {
@@ -14,7 +14,7 @@ export function failure(category, message = 'owned exception HIR differs') {
     { code, ruleId: capability ? 'r01-ts-baseline' : 'r01-input-boundary', phase: 'hir' });
 }
 export const check = (condition, category = 'schema', message = undefined) => { if (!condition) failure(category, message); };
-check(hirSchemaHash === 'sha256:af8317d8403ea2817e1eba2c47e1d4ef38090f7127897204b05e369ec545ddfd', 'schema');
+check(hirSchemaHash === 'sha256:fb37661820a43016639059f0b9e82275414da0de87d2320e5efdfe8423921ee5', 'schema');
 export const wholePolicy = own({ bytes: limits.whole.bytesIncludingFinalLF, depth: limits.whole.depth,
   jsonTokens: limits.whole.jsonTokens, stringBytes: limits.whole.stringBytes,
   allowNul: true, rejectPrototypeKeys: true, safeNonnegativeIntegers: true });

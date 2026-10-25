@@ -1,4 +1,6 @@
 // SPDX-License-Identifier: MIT
+import {createExceptionOracle} from './exception-hir-v2-oracle.mjs';
+const oracle=createExceptionOracle();
 // Independent complete i16/f32 payload-reference throw HIR oracle.
 import assert from 'node:assert/strict';
 import { createHash } from 'node:crypto';
@@ -9,7 +11,7 @@ import { buildHir, verifyHir, printHir, readHir, lowerHir } from '../../compiler
 
 const root=new URL('../fixtures/r03/m21-exception/corpus/',import.meta.url),sourcePath='/src/main.ts';
 const bridge='sha256:5221b50822965c633418462b28a9b58bfbc41b01e0fa4b6d31c50ab83805424d';
-const schema='sha256:af8317d8403ea2817e1eba2c47e1d4ef38090f7127897204b05e369ec545ddfd';
+const schema='sha256:fb37661820a43016639059f0b9e82275414da0de87d2320e5efdfe8423921ee5';
 const target={target:'windows-x86_64-msvc',triple:'x86_64-pc-windows-msvc',pointerBits:'64',
   llvmDataLayout:'e-m:w-p270:32:32-p271:32:32-p272:64:64-i64:64-i128:128-f80:128-n8:16:32:64-S128'};
 const integers="interface Object {}\ninterface Function {}\ninterface CallableFunction {}\ninterface NewableFunction {}\ninterface IArguments {}\ninterface String {}\ninterface Number {}\ninterface Boolean {}\ninterface RegExp {}\ninterface Array<T> {}\ntype bool = boolean;\ndeclare const __tsfg_i32: unique symbol;\ntype i32 = number & { readonly [__tsfg_i32]: true };\ntype f64 = number;\ndeclare const __tsfg_i8: unique symbol;\ntype i8 = number & { readonly [__tsfg_i8]: true };\ndeclare const __tsfg_i16: unique symbol;\ntype i16 = number & { readonly [__tsfg_i16]: true };\ndeclare const __tsfg_i64: unique symbol;\ntype i64 = number & { readonly [__tsfg_i64]: true };\ndeclare const __tsfg_u8: unique symbol;\ntype u8 = number & { readonly [__tsfg_u8]: true };\ndeclare const __tsfg_u16: unique symbol;\ntype u16 = number & { readonly [__tsfg_u16]: true };\ndeclare const __tsfg_u32: unique symbol;\ntype u32 = number & { readonly [__tsfg_u32]: true };\ndeclare const __tsfg_u64: unique symbol;\ntype u64 = number & { readonly [__tsfg_u64]: true };\ndeclare const __tsfg_isize: unique symbol;\ntype isize = number & { readonly [__tsfg_isize]: true };\ndeclare const __tsfg_usize: unique symbol;\ntype usize = number & { readonly [__tsfg_usize]: true };\n";
@@ -28,7 +30,7 @@ function jcs(value) {
   if(typeof value==='number')assert.ok(Number.isSafeInteger(value)&&value>=0&&!Object.is(value,-0));
   return JSON.stringify(value)??assert.fail('non-JSON oracle');
 }
-const entity=(kind,record)=>hash('tsfg.exception-hir-candidate.'+kind+'.v1\0'+schema+'\0'+jcs(record));
+const entity=oracle.entity;
 const presence=()=>({undefined:false,null:false,optional:false,default:false,range:range(29,41),annotation:range(38,41)});
 /** @param {any} spec */
 function sourceFacts(spec) {
@@ -66,7 +68,7 @@ function manualHir(spec,snapshot) {
   const moduleScope=entity('scope',{ownerKind:'module',owner:moduleId,path:[]}),scope=entity('scope',{ownerKind:'function',owner:functionId,path:[]});
   const parameter=entity('binding',{ownerKind:'function',owner:functionId,scopePath:[],role:'parameter',index:0});
   const types=[{kind:'scalar',id:scalar,name:spec.scalar},{kind:'callable',id:callable,...signature}].sort((a,b)=>a.id<b.id?-1:a.id>b.id?1:0);
-  return {format:{family:'tsfg.exception-hir-candidate',version:1,schemaHash:schema},snapshot:copy(snapshot),inputIdentity:snapshot.inputIdentity,
+  return {format:{family:'tsfg.exception-hir-candidate',version:2,schemaHash:schema},snapshot:copy(snapshot),inputIdentity:snapshot.inputIdentity,
     sources:[{path:sourcePath,content:spec.source,hash:hash(spec.source),length:66,positionUnit:'utf16'}],target:copy(target),types,functions:[
       {id:functionId,module:moduleId,sourcePath,name:'entry',nameRange:range(22,28),range:range(0,66),type:callable,signatureHash,
         lexicalParent:null,declaringScope:moduleScope,parameters:[parameter],parameterInitializers:[null],captures:null,returnPresence:null,
@@ -121,7 +123,7 @@ test('actual i16 and f32 throws retain complete scalar-width HIR',async t=>{
     await t.test('completeManualScalarClosureTypedBindingAndColdBoundaries',()=>{
       const expected=manualHir(spec,expectedCold),fn=expected.functions[0];
       assert.deepEqual({scalar:fn.body.bindings[0].type,callable:fn.type,signature:fn.signatureHash,module:fn.module,function:fn.id,
-        moduleScope:fn.declaringScope,scope:fn.body.scope,parameter:fn.parameters[0]},identityPins[spec.id]);
+        moduleScope:fn.declaringScope,scope:fn.body.scope,parameter:fn.parameters[0]},oracle.data(identityPins[spec.id]));
       const caller=copy(snapshot),callerBefore=jcs(caller),result=buildHir(caller);assert.equal(result.status,'ok',JSON.stringify(result));
       assert.deepEqual(result.hir,expected,'complete manual two-type scalar closure, current payload, binding, metadata, module and exports');
       assert.equal(result.hir.types.length,2);assert.equal(jcs(caller),callerBefore);frozen(result.hir);noAliases(result.hir,caller);
@@ -130,7 +132,7 @@ test('actual i16 and f32 throws retain complete scalar-width HIR',async t=>{
       const read=readHir(bytes);assert.deepEqual(read,expected);frozen(read);bytes.fill(0);cold.functions[0].body.bindings[0].writable=false;
       caller.sources[0].content='caller mutation';assert.deepEqual(result.hir,expected);assert.deepEqual(read,expected);assert.deepEqual(verified,expected);
       assert.deepEqual(buildHir(copy(snapshot)).hir,expected);assert.equal(printHir(readHir(Buffer.from(text))),text);
-      assert.throws(()=>lowerHir(result.hir),{name:'TypeError',code:'r03-d-capability',ruleId:'r01-ts-baseline',phase:'lowering'});
+      if(result.hir.target!==null)assert.match(lowerHir(result.hir),/tsfg_core.exception_program/);else assert.throws(()=>lowerHir(result.hir),{name:'TypeError',code:'r03-d-capability',ruleId:'r01-ts-baseline',phase:'lowering'});
       assert.deepEqual(buffers.map(hash),before);
       for(const change of [
         h=>{h.functions[0].body.bindings[0].type=h.functions[0].type;},

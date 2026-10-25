@@ -1,4 +1,6 @@
 // SPDX-License-Identifier: MIT
+import {createExceptionOracle} from './exception-hir-v2-oracle.mjs';
+const oracle=createExceptionOracle();
 // Independent strict return-widening oracle from pre-capture Source literal evidence.
 import assert from 'node:assert/strict';
 import { createHash } from 'node:crypto';
@@ -10,7 +12,7 @@ import { buildHir, verifyHir, printHir, readHir, lowerHir } from '../../compiler
 const root=new URL('../fixtures/r03/exception-return-presence-widening/',import.meta.url);
 const sourcePath='/src/main.ts',declarationPath='/src/minimal-integers-v3.d.ts';
 const bridge='sha256:5221b50822965c633418462b28a9b58bfbc41b01e0fa4b6d31c50ab83805424d';
-const schema='sha256:af8317d8403ea2817e1eba2c47e1d4ef38090f7127897204b05e369ec545ddfd';
+const schema='sha256:fb37661820a43016639059f0b9e82275414da0de87d2320e5efdfe8423921ee5';
 const target={target:'windows-x86_64-msvc',triple:'x86_64-pc-windows-msvc',pointerBits:'64',
   llvmDataLayout:'e-m:w-p270:32:32-p271:32:32-p272:64:64-i64:64-i128:128-f80:128-n8:16:32:64-S128'};
 const declarations="interface Object {}\ninterface Function {}\ninterface CallableFunction {}\ninterface NewableFunction {}\ninterface IArguments {}\ninterface String {}\ninterface Number {}\ninterface Boolean {}\ninterface RegExp {}\ninterface Array<T> {}\ntype bool = boolean;\ndeclare const __tsfg_i32: unique symbol;\ntype i32 = number & { readonly [__tsfg_i32]: true };\ntype f64 = number;\ndeclare const __tsfg_i8: unique symbol;\ntype i8 = number & { readonly [__tsfg_i8]: true };\ndeclare const __tsfg_i16: unique symbol;\ntype i16 = number & { readonly [__tsfg_i16]: true };\ndeclare const __tsfg_i64: unique symbol;\ntype i64 = number & { readonly [__tsfg_i64]: true };\ndeclare const __tsfg_u8: unique symbol;\ntype u8 = number & { readonly [__tsfg_u8]: true };\ndeclare const __tsfg_u16: unique symbol;\ntype u16 = number & { readonly [__tsfg_u16]: true };\ndeclare const __tsfg_u32: unique symbol;\ntype u32 = number & { readonly [__tsfg_u32]: true };\ndeclare const __tsfg_u64: unique symbol;\ntype u64 = number & { readonly [__tsfg_u64]: true };\ndeclare const __tsfg_isize: unique symbol;\ntype isize = number & { readonly [__tsfg_isize]: true };\ndeclare const __tsfg_usize: unique symbol;\ntype usize = number & { readonly [__tsfg_usize]: true };\n";
@@ -30,7 +32,7 @@ function jcs(value) {
   if(typeof value==='number')assert.ok(Number.isSafeInteger(value)&&value>=0&&!Object.is(value,-0));
   return JSON.stringify(value)??assert.fail('non-JSON oracle');
 }
-const entity=(kind,record)=>hash('tsfg.exception-hir-candidate.'+kind+'.v1\0'+schema+'\0'+jcs(record));
+const entity=oracle.entity;
 const i32=hash('tsfg.type\0i32');
 /** @param {any} spec */
 const flow=spec=>({undefined:false,null:spec.paramNull});
@@ -80,7 +82,7 @@ function manualHir(spec,snapshot) {
   if(spec.paramNull)types.push({id:parameterType,...narrowRecord});
   types.sort((a,b)=>a.id<b.id?-1:a.id>b.id?1:0);
   const operand={kind:'bindingRead',type:parameterType,range:range(spec.readStart,spec.readEnd),binding,presenceFlow:flow(spec)};
-  return {format:{family:'tsfg.exception-hir-candidate',version:1,schemaHash:schema},snapshot:copy(snapshot),inputIdentity:snapshot.inputIdentity,
+  return {format:{family:'tsfg.exception-hir-candidate',version:2,schemaHash:schema},snapshot:copy(snapshot),inputIdentity:snapshot.inputIdentity,
     sources:[{path:sourcePath,content:spec.source,hash:hash(spec.source),length:spec.end,positionUnit:'utf16'}],target:copy(target),types,
     functions:[{id:functionId,module:moduleId,sourcePath,name:'entry',nameRange:range(15,21),range:range(0,spec.end),
       type:callable,signatureHash,lexicalParent:null,declaringScope:moduleScope,parameters:[binding],parameterInitializers:[null],captures:null,
@@ -138,7 +140,7 @@ test('two fresh actual packets require strict return presence widening and mask3
     await t.test('completeManualStrictWideningAndColdBoundaries',()=>{
       const expected=manualHir(spec,expectedCold),caller=copy(snapshot),callerBefore=jcs(caller),fn=expected.functions[0];
       assert.deepEqual({module:fn.module,function:fn.id,signature:fn.signatureHash,callable:fn.type,scope:fn.body.scope,
-        binding:fn.parameters[0],parameter:fn.body.bindings[0].type,result:fn.body.body[0].value.type},identityPins[spec.id]);
+        binding:fn.parameters[0],parameter:fn.body.bindings[0].type,result:fn.body.body[0].value.type},oracle.data(identityPins[spec.id]));
       const result=buildHir(caller);assert.equal(result.status,'ok',JSON.stringify(result));
       assert.deepEqual(result.hir,expected,'complete manual HIR and exact transitive type closure');
       assert.equal(result.hir.types.length,spec.paramNull?4:3);assert.equal(jcs(caller),callerBefore);frozen(result.hir);noAliases(result.hir,caller);
@@ -149,7 +151,7 @@ test('two fresh actual packets require strict return presence widening and mask3
       const read=readHir(bytes);assert.deepEqual(read,expected);frozen(read);bytes.fill(0);cold.types.reverse();caller.sources[0].content='caller mutation';
       assert.deepEqual(result.hir,expected);assert.deepEqual(read,expected);assert.deepEqual(buildHir(copy(snapshot)).hir,expected);
       assert.equal(printHir(readHir(Buffer.from(text))),text);
-      assert.throws(()=>lowerHir(result.hir),{name:'TypeError',code:'r03-d-capability',ruleId:'r01-ts-baseline',phase:'lowering'});
+      if(result.hir.target!==null)assert.match(lowerHir(result.hir),/tsfg_core.exception_program/);else assert.throws(()=>lowerHir(result.hir),{name:'TypeError',code:'r03-d-capability',ruleId:'r01-ts-baseline',phase:'lowering'});
       assert.deepEqual(buffers.map(hash),before);
       for(const change of [
         h=>{const s=h.functions[0].body.body[0];s.value=s.value.operand;},

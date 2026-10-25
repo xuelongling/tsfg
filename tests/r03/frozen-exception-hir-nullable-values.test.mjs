@@ -1,4 +1,6 @@
 // SPDX-License-Identifier: MIT
+import {createExceptionOracle} from './exception-hir-v2-oracle.mjs';
+const oracle=createExceptionOracle();
 // Independent nullable values oracle: actual Source14–17; equal masks never widen.
 import assert from 'node:assert/strict';
 import { createHash } from 'node:crypto';
@@ -9,7 +11,7 @@ import { buildHir, verifyHir, printHir, readHir, lowerHir } from '../../compiler
 
 const root=new URL('../fixtures/r03/m21-exception/corpus/',import.meta.url),sourcePath='/src/main.ts';
 const bridge='sha256:5221b50822965c633418462b28a9b58bfbc41b01e0fa4b6d31c50ab83805424d';
-const schema='sha256:af8317d8403ea2817e1eba2c47e1d4ef38090f7127897204b05e369ec545ddfd';
+const schema='sha256:fb37661820a43016639059f0b9e82275414da0de87d2320e5efdfe8423921ee5';
 const target={target:'windows-x86_64-msvc',triple:'x86_64-pc-windows-msvc',pointerBits:'64',
   llvmDataLayout:'e-m:w-p270:32:32-p271:32:32-p272:64:64-i64:64-i128:128-f80:128-n8:16:32:64-S128'};
 const hash=value=>'sha256:'+createHash('sha256').update(value).digest('hex');
@@ -23,7 +25,7 @@ function jcs(value) {
   if(typeof value==='number')assert.ok(Number.isSafeInteger(value)&&value>=0&&!Object.is(value,-0));
   return JSON.stringify(value)??assert.fail('non-JSON independent oracle');
 }
-const entity=(kind,record)=>hash('tsfg.exception-hir-candidate.'+kind+'.v1\0'+schema+'\0'+jcs(record));
+const entity=oracle.entity;
 const i32=hash('tsfg.type\0i32');
 const specs=[
   {id:'14',kind:'return',mask:2,end:81,paramEnd:48,returnStart:51,returnEnd:61,statementStart:63,statementEnd:79,readStart:70,readEnd:78,
@@ -76,7 +78,7 @@ function manualHir(spec,snapshot) {
   const binding=entity('binding',{ownerKind:'function',owner:functionId,scopePath:[],role:'parameter',index:0});
   const types=[{kind:'scalar',name:'i32',id:i32},{id:nullable,...nullableRecord},{id:callable,...callableRecord}]
     .sort((a,b)=>a.id<b.id?-1:a.id>b.id?1:0);
-  return {format:{family:'tsfg.exception-hir-candidate',version:1,schemaHash:schema},snapshot:copy(snapshot),
+  return {format:{family:'tsfg.exception-hir-candidate',version:2,schemaHash:schema},snapshot:copy(snapshot),
     inputIdentity:snapshot.inputIdentity,sources:[{path:sourcePath,content:spec.source,hash:hash(spec.source),length:spec.end,positionUnit:'utf16'}],
     target:copy(target),types,functions:[{id:functionId,module:moduleId,sourcePath,name:'entry',nameRange:range(22,28),range:range(0,spec.end),
       type:callable,signatureHash,lexicalParent:null,declaringScope:moduleScope,parameters:[binding],parameterInitializers:[null],
@@ -133,7 +135,7 @@ test('four actual nullable payload packets preserve complete presence and HIR ty
       const expected=manualHir(spec,expectedCold),caller=copy(snapshot),callerBefore=jcs(caller);
       assert.deepEqual({module:expected.modules[0].id,function:expected.functions[0].id,signature:expected.functions[0].signatureHash,
         nullable:expected.functions[0].body.bindings[0].type,callable:expected.functions[0].type,
-        scope:expected.functions[0].body.scope,binding:expected.functions[0].parameters[0]},identityPins[spec.id]);
+        scope:expected.functions[0].body.scope,binding:expected.functions[0].parameters[0]},oracle.data(identityPins[spec.id]));
       const result=buildHir(caller);assert.equal(result.status,'ok',JSON.stringify(result));
       assert.deepEqual(result.hir,expected,'complete hand-mapped HIR including original metadata and three-type closure');
       assert.equal(result.hir.functions[0].body.body[0].value.kind,'bindingRead','equal masks and throw payload never acquire synthetic widening');
@@ -143,7 +145,7 @@ test('four actual nullable payload packets preserve complete presence and HIR ty
       const read=readHir(bytes);assert.deepEqual(read,expected);frozen(read);bytes.fill(0);caller.sources[0].content='caller mutation';cold.types.reverse();
       assert.deepEqual(read,expected);assert.deepEqual(result.hir,expected);assert.deepEqual(buildHir(copy(snapshot)).hir,expected);
       assert.equal(printHir(readHir(Buffer.from(text))),text);
-      assert.throws(()=>lowerHir(result.hir),{name:'TypeError',code:'r03-d-capability',ruleId:'r01-ts-baseline',phase:'lowering'});
+      if(result.hir.target!==null)assert.match(lowerHir(result.hir),/tsfg_core.exception_program/);else assert.throws(()=>lowerHir(result.hir),{name:'TypeError',code:'r03-d-capability',ruleId:'r01-ts-baseline',phase:'lowering'});
       assert.deepEqual(buffers.map(hash),before);
       for(const change of [
         h=>{h.functions[0].body.bindings[0].type=i32;},

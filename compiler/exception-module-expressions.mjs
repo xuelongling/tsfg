@@ -19,13 +19,6 @@ export function verifyExceptionModuleExpression(value, parent, scope, context, i
     const mask = exceptionReferencePresence(value, binding, context.profile, write, nullableReturn);
     return { type: value.type, next: index + 1, binding, mask };
   }
-  if (value.kind === 'boolean') {
-    record(value, ['kind','type','range','boolean']);
-    check(!write && value.type === 'bool' && typeof value.boolean === 'boolean', 'type');
-    const next = g.expect(index, value.boolean ? 'true' : 'false');
-    (operatorContext ? g.span : g.raw)(value.range, parent, index);
-    return { type: 'bool', next, mask: 0 };
-  }
   if (value.kind !== 'call') return null;
   record(value, ['kind','type','range','name','target','arguments','signature']);
   check(!write && !operatorContext && !nullableReturn, 'capability', 'only direct ordinary module calls have a cold tracer');

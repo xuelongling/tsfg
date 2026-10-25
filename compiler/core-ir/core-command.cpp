@@ -4,6 +4,7 @@
 #include "core-verify.h"
 #include "closure.h"
 #include "formal-closure.h"
+#include "formal-exception.h"
 #include "dialect.h"
 #include "exception.h"
 #include "nullable.h"
@@ -20,7 +21,6 @@
 #include "mlir/IR/Verifier.h"
 #include "mlir/Parser/Parser.h"
 #include "llvm/Support/MemoryBuffer.h"
-#include "llvm/Support/ErrorOr.h"
 #include "llvm/Support/raw_ostream.h"
 #include "llvm/Support/Program.h"
 #include <algorithm>
@@ -50,9 +50,9 @@ public:
   bool exceeded() const { return overflow; }
   llvm::StringRef value() const { return bytes; }
 };
-// Explicit String and Array packets share the same bounded stdin policy. Other
-// commands retain getSTDIN; never parse or retain the overflow sentinel byte.
-int readPrivatePacketInput(std::string &bytes, llvm::StringRef budgetCode) {
+// All ordinary Core producers publish at most8MiB. Bound stdin before retaining
+// or parsing it; the overflow sentinel is observed but never appended.
+int readCoreInput(std::string &bytes, llvm::StringRef budgetCode) {
   if (llvm::sys::ChangeStdinToBinary()) return 2;
   char chunk[4096];
   while (true) {
@@ -101,22 +101,15 @@ int tsfg::runCoreCommand(int argc, char **argv, const CoreNativeCommands *native
   const bool stringWire = llvm::StringRef(argv[1]) == "--emit-string-candidate";
   const bool arrayWire = llvm::StringRef(argv[1]) == "--emit-array-candidate";
   std::string packetInput;
-  if (stringWire || arrayWire) {
-    const int result = readPrivatePacketInput(packetInput, arrayWire ? "[core-ir-array-budget]" : "[core-ir-string-budget]");
+  {
+    const int result = readCoreInput(packetInput, arrayWire ? "[core-ir-array-budget]" : stringWire ? "[core-ir-string-budget]" : "[core-ir-input-budget]");
     if (result) {
       if (result == 2) llvm::errs() << "[core-ir-input] cannot read stdin\n";
       return result;
     }
   }
-  auto input = [&]() -> llvm::ErrorOr<std::unique_ptr<llvm::MemoryBuffer>> {
-    if (stringWire || arrayWire) return llvm::MemoryBuffer::getMemBuffer(packetInput, "<stdin>", false);
-    return llvm::MemoryBuffer::getSTDIN();
-  }();
-  if (!input) {
-    llvm::errs() << "[core-ir-input] cannot read stdin\n";
-    return 2;
-  }
-  if (tsfg::exception::mentionsPrivate((*input)->getBuffer())) {
+  const auto input = llvm::MemoryBuffer::getMemBuffer(packetInput, "<stdin>", false);
+  if (tsfg::exception::mentionsPrivate(input->getBuffer())) {
     llvm::errs() << (llvm::StringRef(argv[1]) == "--emit-bytecode"
       ? "[r04-core-exception-unsupported] wire9 cannot encode a private exception candidate\n"
       : "[core-ir-exception-private-mode] private exception candidate requires its explicit command\n");
@@ -125,33 +118,27 @@ int tsfg::runCoreCommand(int argc, char **argv, const CoreNativeCommands *native
   mlir::DialectRegistry registry;
   tsfg::registerCoreDialect(registry);
   tsfg::closure::registerDialect(registry);
+  tsfg::formalException::registerDialect(registry);
   tsfg::nullable::registerDialect(registry);
   tsfg::strings::registerDialect(registry);
   tsfg::arrays::registerDialect(registry);
   registry.insert<mlir::func::FuncDialect, mlir::cf::ControlFlowDialect>();
   mlir::MLIRContext context(registry);
   context.disableMultithreading();
-  auto module = mlir::parseSourceString<mlir::ModuleOp>((*input)->getBuffer(), &context);
+  auto module = mlir::parseSourceString<mlir::ModuleOp>(input->getBuffer(), &context);
   if (!module) {
     llvm::errs() << "[core-ir-invalid] parse or verification failed\n";
     return 3;
   }
   const bool closureCandidate = tsfg::closure::usesCandidate(*module);
   const bool formalClosure = tsfg::formalClosure::uses(*module);
+  const bool formalException = tsfg::formalException::uses(*module);
   const bool reference = module->getOperation()->hasAttr("tsfg_core.reference");
   const bool nullable = tsfg::nullable::usesCandidate(*module);
   const bool stringCandidate = tsfg::strings::usesCandidate(*module);
   const bool arrayCandidate = tsfg::arrays::usesCandidate(*module);
   const bool kernelCandidate = tsfg::kernelGlobal::usesCandidate(*module);
   const bool nullableWire = llvm::StringRef(argv[1]) == "--emit-nullable-candidate";
-  // The shared legacy stdin/MLIR parser remains unchanged. Apply the private
-  // format budget before candidate metadata, typed verification and CFG work.
-  if ((reference || nullable || nullableWire || stringCandidate || stringWire || arrayCandidate || arrayWire || closureCandidate || kernelCandidate) && (*input)->getBufferSize() > referenceByteBudget) {
-    llvm::errs() << (kernelCandidate ? "[core-ir-kernel-budget]" : arrayCandidate || arrayWire ? "[core-ir-array-budget]" : stringCandidate || stringWire ? "[core-ir-string-budget]" :
-                     closureCandidate ? "[core-ir-closure-budget]" : nullable || nullableWire ? "[core-ir-nullable-budget]" : "[core-ir-reference-budget]")
-                 << " input exceeds candidate byte budget\n";
-    return 3;
-  }
   const bool privateCandidate = reference || nullable || arrayCandidate ||
     (closureCandidate && !formalClosure) || kernelCandidate || module->getOperation()->hasAttr("tsfg_core.string");
   auto version = module->getOperation()->getAttrOfType<mlir::StringAttr>("tsfg_core.version");
@@ -165,6 +152,10 @@ int tsfg::runCoreCommand(int argc, char **argv, const CoreNativeCommands *native
     return 3;
   }
   if (mlir::failed(tsfg::verifyCoreModule(*module))) return 3;
+  if (formalException && (nativeCommand || name == "--emit-bytecode" || nullableWire || stringWire || arrayWire)) {
+    llvm::errs() << "[r04-core-exception-unsupported] the current wire and native consumers do not encode exceptional control\n";
+    return 3;
+  }
   if (nativeCommand) return native->emit(*module, name);
   if (closureCandidate && (nullableWire || llvm::StringRef(argv[1]) == "--emit-bytecode")) {
     llvm::errs() << "[r04-core-closure-unsupported] wire9 cannot encode a closure candidate module\n";
@@ -240,7 +231,7 @@ int tsfg::runCoreCommand(int argc, char **argv, const CoreNativeCommands *native
   }
   // The current optimization pipeline is deliberately the canonical identity
   // pass: it performs full verification and retains every event/failure anchor.
-  if (reference || nullable || stringCandidate || arrayCandidate || closureCandidate || kernelCandidate) {
+  if (formalException || reference || nullable || stringCandidate || arrayCandidate || closureCandidate || kernelCandidate) {
     ReferenceOutput output;
     module->print(output, mlir::OpPrintingFlags().printGenericOpForm());
     output << '\n';

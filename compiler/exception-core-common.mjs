@@ -1,42 +1,28 @@
 // SPDX-License-Identifier: MIT
-import descriptorValue from '../contracts/exception-core-candidate-v1.schema.json' with { type: 'json' };
-import { canonical, own, sha256, i32TypeId } from './identity.mjs';
-import { checkGenericJsonValueBudget } from './generic-json.mjs';
-export { canonical, own, sha256, i32TypeId };
-export const descriptor = own(descriptorValue), limits = descriptor.limits;
-export const coreSchemaHash = sha256(canonical(descriptor));
-/** @returns {never} */
-export function failure(category, message = 'invalid private exception Core') {
-  const capability = category === 'capability';
-  const code = capability ? 'r03-d-capability' : 'r03-exception-core-' + category;
-  throw Object.assign(new TypeError(code + ': ' + message),
-    { code, ruleId: capability ? 'r01-ts-baseline' : 'r01-input-boundary', phase: 'lowering' });
-}
-export const check = (condition, category = 'schema', message = undefined) => { if (!condition) failure(category, message); };
-check(coreSchemaHash === 'sha256:62e69eda2f22f85d55d132bff04f0b60229db69031ca51113c746d6e9424b359', 'schema');
-export const entity = (kind, record) => sha256(descriptor.identity.domains[kind] + '\0' + coreSchemaHash + '\0' + canonical(record));
-export const payloadTypeId = entity('type', { kind: 'payload', members: [i32TypeId] });
-const hirPolicy = own({ bytes: limits.hirJcsBytesIncludingLF - 1, depth: limits.hirJsonDepth,
-  jsonTokens: limits.hirJsonTokens, stringBytes: limits.hirJcsBytesIncludingLF,
-  allowNul: true, rejectPrototypeKeys: true, safeNonnegativeIntegers: true });
-export function hirBudget(hir) {
-  try { checkGenericJsonValueBudget(hir, hirPolicy); }
-  catch (error) { failure(error.code?.endsWith('-limit') ? 'limit' : 'schema', 'embedded HIR exceeds private Core policy'); }
-}
-export const orderedRange = value => ({ start: value.start, end: value.end });
-export function publicationBudget() {
+import descriptor from '../contracts/formal-exception-core-development.json' with {type:'json'};
+// Publication owns bounded formatting, not Source/HIR admission or type identity.
+const check=(condition,category,message)=>{if(!condition)throw Object.assign(new TypeError('r03-formal-exception-core-'+category+': '+message),{code:'r03-formal-exception-core-'+category,ruleId:'r01-input-boundary',phase:'lowering'});};
+const limits=descriptor.limits;
+export function publicationBudget(policy = limits) {
   let bytes = 0, work = 0, instructions = 0;
-  const step = () => check(++work <= limits.structuralWork, 'limit', 'Core work budget exceeded');
+  const step = () => check(++work <= policy.structuralWork, 'limit', 'Core work budget exceeded');
   const reserve = count => { step(); check(Number.isSafeInteger(count) && count >= 0
-    && count <= limits.coreTextBytes - bytes, 'limit', 'Core text byte budget exceeded'); bytes += count; };
+    && count <= policy.coreTextBytes - bytes, 'limit', 'Core text byte budget exceeded'); bytes += count; };
   const append = text => { reserve(Buffer.byteLength(text)); return text; };
+  // Callers bound fragment counts before mapping. Reserve the whole formatted
+  // text before join allocates that text; fragments already have bounded IDs.
+  const combine = (parts,separator='') => {
+    reserve(parts.reduce((size,part)=>size+Buffer.byteLength(part),0)
+      +Math.max(0,parts.length-1)*Buffer.byteLength(separator));
+    return parts.join(separator);
+  };
   const budget = {
-    step, block: count => check(count <= limits.coreBlocks, 'limit', 'Core block budget exceeded'),
-    register: count => check(count <= limits.coreValues, 'limit', 'Core value budget exceeded'),
-    parameters: count => check(count <= limits.sourceParameters, 'limit', 'Core parameter budget exceeded'),
-    edge: count => check(count <= limits.coreEdges, 'limit', 'Core edge budget exceeded'),
+    step, block: count => check(count <= policy.coreBlocks, 'limit', 'Core block budget exceeded'),
+    register: count => check(count <= policy.coreValues, 'limit', 'Core value budget exceeded'),
+    parameters: count => check(count <= policy.logicalArguments, 'limit', 'Core internal logical argument budget exceeded'),
+    edge: count => check(count <= policy.coreEdges, 'limit', 'Core edge budget exceeded'),
     label: text => reserve(Buffer.byteLength(text)),
-    line: text => { check(++instructions <= limits.coreInstructions, 'limit', 'Core operation budget exceeded'); reserve(Buffer.byteLength(text) + 1); },
+    line: text => { check(++instructions <= policy.coreInstructions, 'limit', 'Core operation budget exceeded'); reserve(Buffer.byteLength(text) + 1); },
   };
   // Measure the escaped form before building it. The input was bounded before
   // canonicalization; this second budget accounts for MLIR byte escaping.
@@ -65,5 +51,5 @@ export function publicationBudget() {
     }
     append(array ? ']' : '}'); return (array ? '[' : '{') + parts.join(', ') + (array ? ']' : '}');
   }
-  return { budget, step, reserve, append, quote, attribute };
+  return { budget, step, reserve, append, combine, quote, attribute };
 }

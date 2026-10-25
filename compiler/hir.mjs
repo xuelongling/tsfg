@@ -1,3 +1,4 @@
+import {emitFormalExceptionCore} from './formal-exception-core.mjs';
 import { familyOf } from './module-callable-common.mjs';
 import { buildModuleCallableHir } from './module-callable-hir.mjs';
 import { emitModuleCallableCore } from './module-callable-core.mjs';
@@ -7,7 +8,6 @@ import { buildExceptionHir } from "./exception-hir.mjs";
 import { buildStringHir } from './string-hir.mjs';
 import { readStringHir } from './string-hir-model.mjs';
 import { coreExchangeFormat } from './core-ssa-emitter.mjs';
-import { emitExceptionCore } from "./exception-core-emitter.mjs";
 import { readHirWire } from "./hir-wire.mjs";
 import { failure as exceptionHirFailure } from "./exception-hir-common.mjs";
 import { isNullableGroupsContext, isNullableTypeofContext, check as nullableCheck } from './nullable-common.mjs';
@@ -246,7 +246,7 @@ export function lowerHir(hir, factsContext = undefined, callPublicationContext =
   if (familyOf(hir) === 'tsfg.module-callable-hir-candidate') {
     return emitModuleCallableCore(hir);
   }
-  if (hir?.format?.family === "tsfg.exception-hir-candidate") return emitExceptionCore(hir);
+  if (hir?.format?.family === "tsfg.exception-hir-candidate") return emitFormalExceptionCore(hir);
   if (hir?.format?.family === "tsfg.nullable-hir-candidate") return emitNullableCore(hir);
   if (hir?.format?.family === "tsfg.closure-hir-candidate") {
     verifyHir(hir);
@@ -268,6 +268,7 @@ export function lowerHir(hir, factsContext = undefined, callPublicationContext =
  * @param {any} hir @param {any} [factsContext] @param {any} [callPublicationContext] */
 export function lowerFormalHir(hir, factsContext = undefined, callPublicationContext = undefined) {
   if(hir?.format?.family==='tsfg.closure-hir-candidate')return emitFormalClosureCore(hir);
+  if(hir?.format?.family==='tsfg.exception-hir-candidate')return emitFormalExceptionCore(hir);
   if(isOptionalPropertyContext(factsContext))return emitFiniteCore(hir,factsContext,callPublicationContext);
   if(isTypedArrayContext(factsContext))return emitFiniteCore(hir,factsContext,callPublicationContext);
   if (factsContext !== undefined)

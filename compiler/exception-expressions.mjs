@@ -1,5 +1,5 @@
 // SPDX-License-Identifier: MIT
-import { check, failure, record, range, wireLimits } from './exception-common.mjs';
+import { check, failure, record, range, same, wireLimits } from './exception-common.mjs';
 import { exceptionValueType, exceptionAssignmentType } from './exception-types.mjs';
 import { exceptionBinding, exceptionOccurrenceType, exceptionWrite } from './exception-scope.mjs';
 import { exceptionReferencePresence } from './exception-presence.mjs';
@@ -15,14 +15,27 @@ export function verifyExceptionExpression(value, parent, scope, context, index, 
   check(depth <= wireLimits.depth && ++context.steps <= wireLimits.jsonTokens, 'limit');
   check(value && typeof value === 'object' && !Array.isArray(value));
   range(value.range, parent, context.source.content);
+  const functionValue = context.functionValues?.expression(value, parent, scope, context, index, depth, verifyExceptionExpression);
+  if (functionValue) {
+    check(!write && !nullableReturn, 'permission', 'function values are not writable targets');
+    return functionValue;
+  }
   const callable = value.type === 'function';
-  if (callable) check(context.returnType === 'function' && value.kind === 'reference' && !write && !operatorContext && !nullableReturn, 'capability', 'only terminal direct callable parameter references are implemented');
+  if (callable) check(['reference','group','write'].includes(value.kind) && !nullableReturn,
+    'capability', 'callable expressions require owned bindings or actual code declarations');
   else {
     exceptionValueType(value.type, context.profile, context.aggregate);
   }
   check(!nullableReturn || value.kind === 'reference', 'capability', 'nullable returns require a direct reference tracer');
   if (write) check(['reference','group'].includes(value.kind), 'permission', 'assignment requires a direct owned binding');
   const g = context.grammar, first = index;
+  if (value.kind === 'boolean') {
+    record(value, ['kind','type','range','boolean']);
+    check(!write && value.type === 'bool' && typeof value.boolean === 'boolean', 'type');
+    const next = g.expect(index, value.boolean ? 'true' : 'false');
+    (operatorContext ? g.span : g.raw)(value.range, parent, index);
+    return { type:'bool', next, mask:0 };
+  }
   const aggregateValue = verifyExceptionAggregateExpression(value, parent, scope, context, index, depth, write, operatorContext, verifyExceptionExpression);
   if (aggregateValue) return aggregateValue;
   const moduleValue = verifyExceptionModuleExpression(value, parent, scope, context, index, depth, write, operatorContext, nullableReturn, verifyExceptionExpression);
@@ -58,8 +71,9 @@ export function verifyExceptionExpression(value, parent, scope, context, index, 
     const right = verifyExceptionExpression(value.right, value.range, scope, context, g.expect(left.next, '='), depth + 1, false, true);
     check(right.mask === 0, 'capability', 'nullable write payloads require a separate flow tracer');
     exceptionAssignmentType(left.type, right.type); check(value.type === right.type, 'type', 'write result must retain the once-evaluated RHS type');
+    if (callable) check(same(left.signature, right.signature), 'signature', 'callable write changes its declared signature');
     exceptionWrite(scope, left.binding.id); g.span(value.range, parent, first, right.next - 1);
-    return { type: value.type, next: right.next, mask: 0 };
+    return { type: value.type, next: right.next, mask: 0, ...(callable ? {signature:right.signature} : {}) };
   }
   if (value.kind === 'type-test') {
     record(value, ['kind','type','range','operator','operand','typeTest']);

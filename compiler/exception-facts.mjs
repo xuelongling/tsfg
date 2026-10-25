@@ -9,6 +9,7 @@ import { exceptionPresenceAnnotation, verifyExceptionParameterPresence, verifyEx
 import { exceptionCallableSignature, exceptionCallableAnnotation } from './exception-callable.mjs';
 import { prepareExceptionClosures } from './exception-closures.mjs';
 import { verifyExceptionExpression } from './exception-expressions.mjs';
+import {exceptionFunctionValues} from './exception-function-values.mjs';
 import { createExceptionAggregateRegistry, verifyExceptionAggregateDeclaration, exceptionAggregatePresenceAnnotation,
   recordExceptionAggregateFunction, finishExceptionAggregates } from './exception-aggregate-facts.mjs';
 
@@ -34,8 +35,8 @@ export function verifyExceptionFacts(prepared, facts, exports) {
     check(['function','parameter','local','class','field'].includes(symbol.kind), 'capability');
     text(symbol.type);
     if (symbol.type === 'function') {
-      check(symbol.kind === 'function' || symbol.kind === 'parameter', 'capability', 'callable locals are not implemented');
-      if (symbol.kind === 'parameter') {
+      check(['function','parameter','local'].includes(symbol.kind), 'capability', 'callable declaration kind differs');
+      if (symbol.kind !== 'function') {
         exceptionCallableSignature(symbol.signature);
         check(!Object.hasOwn(symbol, 'presence'), 'schema', 'callable parameters must omit scalar presence metadata');
       } else check(!Object.hasOwn(symbol, 'signature'), 'signature', 'function result signature belongs to its function DTO');
@@ -60,7 +61,7 @@ export function verifyExceptionFacts(prepared, facts, exports) {
     else if (!aggregate?.byType.has(symbol.type)) exceptionScalar(symbol.type, profile);
   }
   let nextLocal = prefix.length + functions.length + 1;
-  const context = { source, grammar, profile, definitions, aggregate, closures, activeFunction: /** @type {any} */ (null), verifyNestedFunction: /** @type {any} */ (null), returnType: '', returnMask: 0, returnSignature: undefined, steps: 0, claim(id) {
+  const context = { source, grammar, profile, definitions, aggregate, closures, functionValues:exceptionFunctionValues(functions), activeFunction: /** @type {any} */ (null), verifyNestedFunction: /** @type {any} */ (null), returnType: '', returnMask: 0, returnSignature: undefined, steps: 0, claim(id) {
     check(definitions.has(id) && !claimed.has(id), 'symbol', 'definition has missing or duplicate declaration ownership');
     if (closures) closures.claim(definitions.get(id), context.activeFunction);
     else if (definitions.get(id).kind !== 'function') check(id === 's' + nextLocal++, 'symbol', 'declaration registry order differs from source traversal');

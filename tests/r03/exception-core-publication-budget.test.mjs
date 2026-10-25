@@ -1,8 +1,9 @@
 // SPDX-License-Identifier: MIT
-// Independent finite factory boundaries from descriptor62e69eda; not large-Source/public-lowering/native credit.
+// Independent finite factory boundaries from the current ordinary development descriptor; not large-Source/public-lowering/native credit.
 import assert from 'node:assert/strict';
 import test from 'node:test';
 import { publicationBudget } from '../../compiler/exception-core-common.mjs';
+import { createCoreSsaGraph } from '../../compiler/core-ssa-graph.mjs';
 
 // Expectations come from the frozen contract, never from producer limits or descriptor exports.
 const coreBytes=8_388_608;
@@ -11,9 +12,9 @@ const quoteExpected="\"\\22\\5C\\0D\\0A\\09\\00\\F0\\9F\\98\\80\"";
 const attributeExpected="{version = 1 : i32, name = \"\\F0\\9F\\98\\80\", range = {start = 0 : i64, end = 170 : i64}, flags = [true, false]}";
 /** @param {any} error */
 function finiteLimit(error) {
-  assert.equal(error instanceof TypeError,true);assert.equal(error.code,'r03-exception-core-limit');
+  assert.equal(error instanceof TypeError,true);assert.equal(error.code,'r03-formal-exception-core-limit');
   assert.equal(error.ruleId,'r01-input-boundary');assert.equal(error.phase,'lowering');
-  assert.match(error.message,/^r03-exception-core-limit: /);assert.ok(error.message.length<=256);
+  assert.match(error.message,/^r03-formal-exception-core-limit: /);assert.ok(error.message.length<=256);
   return true;
 }
 /** @param {() => unknown} action */
@@ -33,6 +34,10 @@ test('exception Core publication budget enforces frozen finite limits',async t=>
   await t.test('appendAccountsForUtf8BytesBeforeReturningSmallText',()=>{
     const p=publicationBudget();p.reserve(coreBytes-6);assert.equal(p.append('é😀'),'é😀');limit(()=>p.reserve(1));
     const short=publicationBudget();short.reserve(coreBytes-5);limit(()=>short.append('é😀'));
+  });
+  await t.test('headerFragmentsReserveUtf8AndSeparatorsBeforeJoining',()=>{
+    const p=publicationBudget();p.reserve(coreBytes-8);assert.equal(p.combine(['é','😀'],', '),'é, 😀');limit(()=>p.reserve(1));
+    const short=publicationBudget();short.reserve(coreBytes-7);limit(()=>short.combine(['é','😀'],', '));
   });
   await t.test('labelReservesItsBytesBeforePublication',()=>{
     const p=publicationBudget();p.reserve(coreBytes-5);assert.equal(p.budget.label('^bb1:'),undefined);limit(()=>p.reserve(1));
@@ -55,23 +60,30 @@ test('exception Core publication budget enforces frozen finite limits',async t=>
     const p=publicationBudget();p.reserve(coreBytes-109);assert.equal(p.attribute(value),attributeExpected);limit(()=>p.reserve(1));
     const short=publicationBudget();short.reserve(coreBytes-108);limit(()=>short.attribute(value));
   });
-  await t.test('structuralWorkAllowsOneHundredThousandAndRejectsNextStep',()=>{
-    const p=publicationBudget();for(let i=0;i<100_000;i++)p.step();limit(()=>p.step());
+  await t.test('structuralWorkAllowsOneMillionAndRejectsNextStep',()=>{
+    const p=publicationBudget();for(let i=0;i<1_000_000;i++)p.step();limit(()=>p.step());
   });
-  await t.test('blocksAllow256AndReject257',()=>{
-    const p=publicationBudget();assert.equal(p.budget.block(256),undefined);limit(()=>p.budget.block(257));
+  await t.test('blocksAllow16384AndReject16385',()=>{
+    const p=publicationBudget();assert.equal(p.budget.block(16384),undefined);limit(()=>p.budget.block(16385));
   });
-  await t.test('valuesAllow4096AndReject4097',()=>{
-    const p=publicationBudget();assert.equal(p.budget.register(4096),undefined);limit(()=>p.budget.register(4097));
+  await t.test('valuesAllow65536AndReject65537',()=>{
+    const p=publicationBudget();assert.equal(p.budget.register(65536),undefined);limit(()=>p.budget.register(65537));
   });
-  await t.test('instructionsAllow2048AndReject2049',()=>{
-    const p=publicationBudget();for(let i=0;i<2_048;i++)p.budget.line('');limit(()=>p.budget.line(''));
+  await t.test('instructionsAllow65536AndReject65537',()=>{
+    const p=publicationBudget();for(let i=0;i<65_536;i++)p.budget.line('');limit(()=>p.budget.line(''));
   });
-  await t.test('edgesAllow256AndReject257',()=>{
-    const p=publicationBudget();assert.equal(p.budget.edge(256),undefined);limit(()=>p.budget.edge(257));
+  await t.test('edgesAllow32768AndReject32769',()=>{
+    const p=publicationBudget();assert.equal(p.budget.edge(32768),undefined);limit(()=>p.budget.edge(32769));
   });
-  await t.test('parametersAllow64AndReject65',()=>{
-    const p=publicationBudget();assert.equal(p.budget.parameters(64),undefined);limit(()=>p.budget.parameters(65));
+  await t.test('realSsaConditionalAndSuccessorTerminatorsShareEdgeAccounting',()=>{
+    const p=publicationBudget(),graph=createCoreSsaGraph(type=>type,p.budget);
+    const from=graph.newBlock(),left=graph.newBlock(),right=graph.newBlock();
+    graph.successors(32766);graph.conditional(from,'%condition',left,right,{start:0,end:1});
+    limit(()=>graph.branch(left,right,[],{start:0,end:1}));
+    assert.equal(left.lines.length,0,'edge failure precedes publishing a branch');
+  });
+  await t.test('internalLogicalArgumentsAllow4096AndReject4097',()=>{
+    const p=publicationBudget();assert.equal(p.budget.parameters(4096),undefined);limit(()=>p.budget.parameters(4097));
   });
   await t.test('factoryReservationsAreIndependent',()=>{
     const first=publicationBudget();first.reserve(coreBytes);limit(()=>first.append('x'));

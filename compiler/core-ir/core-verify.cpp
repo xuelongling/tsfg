@@ -12,11 +12,13 @@
 #include "reference-verify.h"
 #include "finite-module.h"
 #include "formal-closure.h"
+#include "formal-exception.h"
 #include "mlir/IR/OwningOpRef.h"
 #include "llvm/Support/raw_ostream.h"
 
 namespace tsfg {
 mlir::LogicalResult verifyCoreModule(mlir::ModuleOp module) {
+  if (formalException::uses(module)) return formalException::verify(module);
   if (formalClosure::uses(module)) return formalClosure::verify(module);
   // Finite identity must be selected before any private candidate can return
   // success. String operations/types are shared with finite Core; its old

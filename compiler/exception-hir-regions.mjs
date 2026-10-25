@@ -45,8 +45,6 @@ export function createExceptionHirRegions(context, functions) {
       const index = scope.ordinals.get(role) ?? 0;
       const id = exceptionHirIdentity('binding', { ownerKind: owner.kind, owner: owner.id,
         scopePath: scope.node.path, role, index });
-      if (raw.type === 'function' && role !== 'parameter')
-        failure('capability', 'HIR callable bindings require an owned parameter declaration');
       const type = role === 'function' ? functionType : types.value(raw.type, raw.signature, raw.presence);
       check(typeof type === 'string', 'type', 'HIR declaration has no owned semantic type');
       const binding = { id, name: raw.name, role, type, writable: raw.writable,
@@ -69,8 +67,6 @@ export function createExceptionHirRegions(context, functions) {
     /** @param {any} raw @param {any} scope */
     function target(raw, scope) {
       check(raw && typeof raw === 'object', 'schema', 'HIR write target is missing');
-      if (raw.type === 'function' || raw.signature !== undefined)
-        failure('capability', 'HIR callable write targets require their own tracer');
       if (raw.kind === 'group') {
         const operand = target(raw.operand, scope);
         return { kind: 'targetGroup', type: operand.type, range: raw.range, operand };
@@ -85,7 +81,7 @@ export function createExceptionHirRegions(context, functions) {
     /** @param {any} raw @param {any} scope */
     function expression(raw, scope) {
       check(raw && typeof raw === 'object', 'schema', 'HIR expression is missing');
-      if (raw.kind === 'call') return functions.call(raw, owner.sourcePath,
+      if (['call','functionReference','indirectCall'].includes(raw.kind)) return functions.call(raw, owner.sourcePath,
         /** @param {string} symbol */ symbol => resolve(scope, symbol, false),
         /** @param {any} argument */ argument => expression(argument, scope));
       if (raw.kind === 'construct') {
@@ -103,16 +99,13 @@ export function createExceptionHirRegions(context, functions) {
       if (raw.presenceFlow !== undefined && (raw.kind !== 'reference' || raw.type === 'function'))
         failure('capability', 'HIR presence flow requires a direct noncallable binding read');
       const callable = raw.type === 'function';
-      if (callable) {
-        if (raw.kind !== 'reference' || definitions.get(raw.symbol)?.kind !== 'parameter')
-          failure('capability', 'HIR callable expressions require a direct parameter reference');
-      } else if (raw.signature !== undefined)
+      if (!callable && raw.signature !== undefined)
         failure('capability', 'HIR noncallable expressions cannot carry a callable signature');
       const type = types.value(raw.type, raw.signature, raw.presenceFlow), range = raw.range;
       if (raw.kind === 'reference') {
         const binding = resolve(scope, raw.symbol, false);
-        if (callable) check(binding.role === 'parameter' && binding.type === type,
-          'type', 'HIR callable occurrence differs from its declared parameter type');
+        if (callable) check(binding.type === type,
+          'type', 'HIR callable occurrence differs from its declared binding type');
         return { kind: 'bindingRead', type, range, binding: binding.id, presenceFlow: raw.presenceFlow ?? null };
       }
       if (raw.kind === 'group') return { kind: 'group', type, range, operand: expression(raw.operand, scope) };
@@ -195,6 +188,9 @@ export function createExceptionHirRegions(context, functions) {
           scope.node.body.push({ kind: 'if', range: item.range, condition: expression(item.condition, scope),
             thenRegion: branch(item.thenBody, scope, index, 'then'),
             elseRegion: item.elseBody === undefined ? null : branch(item.elseBody, scope, index, 'else') });
+        } else if (item.kind === 'while') {
+          scope.node.body.push({kind:'while',range:item.range,condition:expression(item.condition,scope),
+            bodyRegion:branch(item.body,scope,index,'loop')});
         } else if (item.kind === 'try') {
           const fact = item.exception;
           check(fact && fact.tryBlock, 'schema', 'HIR try region is missing');

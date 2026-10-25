@@ -2,6 +2,7 @@
 import { check, failure, record, array, range, same, wireLimits } from './exception-common.mjs';
 import { verifyExceptionExpression } from './exception-expressions.mjs';
 import { exceptionAggregateAnnotation } from './exception-aggregate-facts.mjs';
+import { exceptionCallableAnnotation } from './exception-callable.mjs';
 import { exceptionValueType, exceptionAnnotation, exceptionAssignmentType } from './exception-types.mjs';
 import { exceptionScope, declareExceptionBinding, reserveExceptionBindings, exceptionWrite, exceptionBranchScope,
   exceptionDropWrittenProofs, mergeExceptionScopes } from './exception-scope.mjs';
@@ -71,16 +72,19 @@ export function verifyExceptionStatement(item, parent, scope, context, index, de
     const binding = item.symbol, keyword = g.spelling(index);
     check(binding && binding.kind === 'local' && ['const','let'].includes(keyword)
       && binding.writable === (keyword === 'let'), 'source', 'local declaration writability differs');
-    exceptionValueType(binding.type, context.profile, context.aggregate);
+    if (binding.type !== 'function') exceptionValueType(binding.type, context.profile, context.aggregate);
     let next = g.expect(index, keyword); const name = next;
     g.name(binding.range, binding.name, item.range, next++);
     const annotated = g.spelling(next) === ':';
-    if (annotated) next = context.aggregate
+    if (annotated) next = binding.type === 'function'
+      ? exceptionCallableAnnotation(g, g.expect(next, ':'), binding.signature, context.profile)
+      : context.aggregate
       ? exceptionAggregateAnnotation(context.aggregate, g, g.expect(next, ':'), binding.type, context.profile)
       : exceptionAnnotation(g, g.expect(next, ':'), binding.type, context.profile, true);
     next = g.expect(next, '=');
     const value = verifyExceptionExpression(item.initializer, item.range, scope, context, next);
-    check(value.type !== 'function' && value.mask === 0, 'capability', 'callable or nullable local payloads require a separate flow tracer');
+    check(value.mask === 0, 'capability', 'nullable local payloads require a separate flow tracer');
+    if (value.type === 'function') check(same(binding.signature, value.signature), 'signature', 'local callable signature differs');
     if (annotated) exceptionAssignmentType(binding.type, value.type);
     else check(binding.type === value.type, 'type', 'inferred local must retain its actual initializer payload');
     g.raw(item.range, parent, name, value.next - 1);
@@ -90,7 +94,8 @@ export function verifyExceptionStatement(item, parent, scope, context, index, de
     record(item, ['kind','range','target','value']);
     const target = verifyExceptionExpression(item.target, item.range, scope, context, index, 0, true);
     const value = verifyExceptionExpression(item.value, item.range, scope, context, g.expect(target.next, '='));
-    check(value.type !== 'function' && value.mask === 0, 'capability', 'callable or nullable assignment payloads require a separate flow tracer');
+    check(value.mask === 0, 'capability', 'nullable assignment payloads require a separate flow tracer');
+    if (value.type === 'function') check(same(target.signature, value.signature), 'signature', 'assigned callable signature differs');
     exceptionAssignmentType(target.type, value.type); exceptionWrite(scope, target.binding.id);
     const next = terminator(context, value.next); g.raw(item.range, parent, first, next - 1); return next;
   }
@@ -144,6 +149,37 @@ export function verifyExceptionStatement(item, parent, scope, context, index, de
     } else mergeExceptionScopes(scope, normal, paths);
     g.raw(item.range, parent, first, next - 1); return next;
   }
+  if (item.kind === 'while') {
+    record(item, ['kind','range','condition'], ['body']);
+    const body = item.body === undefined ? [] : array(item.body, wireLimits.arrayItems, 1);
+    check(body.length === 1 && body[0].kind === 'block', 'capability', 'while requires its complete owned block');
+    // A condition is revisited after every normal body completion. No narrow
+    // occurrence proof may survive a write in that body, even on its first read.
+    const written = new Set();
+    const writes = value => {
+      if (!value || typeof value !== 'object') return;
+      if (value.kind === 'assignment' || value.kind === 'write') {
+        let target = value.target ?? value.left;
+        while (target?.kind === 'group') target = target.operand;
+        if (target?.kind === 'reference') written.add(target.symbol);
+      }
+      for (const child of Object.values(value)) {
+        check(++context.steps <= wireLimits.jsonTokens, 'limit');
+        if (Array.isArray(child)) child.forEach(writes); else writes(child);
+      }
+    };
+    writes(body);
+    const entry = exceptionScope(scope);
+    exceptionDropWrittenProofs(entry, [{writes:written}]);
+    let next = g.expect(index, 'while'); next = g.expect(next, '(');
+    const condition = verifyExceptionExpression(item.condition, item.range, entry, context, next);
+    check(condition.type === 'bool', 'type'); next = g.expect(condition.next, ')');
+    const repeated = exceptionBranchScope(entry, condition.test, true, context.definitions);
+    next = verifyExceptionStatement(body[0], item.range, repeated, context, next, depth + 1);
+    const exit = exceptionBranchScope(entry, condition.test, false, context.definitions);
+    mergeExceptionScopes(scope, [exit], [repeated]);
+    g.raw(item.range, parent, first, next - 1); return next;
+  }
   failure('capability', 'exception statement kind is not implemented: ' + item.kind);
 }
 
@@ -156,6 +192,7 @@ export function exceptionStatementsCanComplete(body) {
     if (item.kind === 'throw' || item.kind === 'return') current = false;
     if (item.kind === 'block') current = exceptionStatementsCanComplete(item.body ?? []);
     if (item.kind === 'if') current = exceptionStatementsCanComplete(item.thenBody ?? []) || exceptionStatementsCanComplete(item.elseBody ?? []);
+    if (item.kind === 'while') current = item.condition.kind !== 'boolean' || item.condition.boolean !== true;
     if (item.kind === 'try') {
       const fact = item.exception;
       current = exceptionStatementsCanComplete(fact.tryBlock.body)

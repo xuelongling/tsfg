@@ -1,4 +1,6 @@
 // SPDX-License-Identifier: MIT
+import {createExceptionOracle} from './exception-hir-v2-oracle.mjs';
+const oracle=createExceptionOracle();
 // Independent complete lexical declaration, capture and direct-call HIR oracle.
 import assert from 'node:assert/strict';
 import { createHash } from 'node:crypto';
@@ -10,7 +12,7 @@ import { buildHir, verifyHir, printHir, readHir, lowerHir } from '../../compiler
 const root=new URL('../fixtures/r03/m21-exception/corpus/08/',import.meta.url);
 const sourcePath='/src/main.ts',declarationPath='/src/minimal-integers-v3.d.ts';
 const bridge='sha256:5221b50822965c633418462b28a9b58bfbc41b01e0fa4b6d31c50ab83805424d';
-const schema='sha256:af8317d8403ea2817e1eba2c47e1d4ef38090f7127897204b05e369ec545ddfd';
+const schema='sha256:fb37661820a43016639059f0b9e82275414da0de87d2320e5efdfe8423921ee5';
 const target={target:'windows-x86_64-msvc',triple:'x86_64-pc-windows-msvc',pointerBits:'64',
   llvmDataLayout:'e-m:w-p270:32:32-p271:32:32-p272:64:64-i64:64-i128:128-f80:128-n8:16:32:64-S128'};
 const source="/* 😀 */ export function entry(value: i32): bool { try { throw value; } catch (caught) { function inner(): bool { try { throw caught; } catch (nested) { return typeof nested === \"boolean\"; } } return inner(); } }";
@@ -28,7 +30,7 @@ function jcs(value) {
   if(typeof value==='number')assert.ok(Number.isSafeInteger(value)&&value>=0&&!Object.is(value,-0));
   return JSON.stringify(value)??assert.fail('non-JSON oracle');
 }
-const entity=(kind,record)=>hash('tsfg.exception-hir-candidate.'+kind+'.v1\0'+schema+'\0'+jcs(record));
+const entity=oracle.entity;
 const i32=hash('tsfg.type\0i32'),bool=hash('tsfg.type\0bool'),unknown=entity('type',{kind:'unknown'});
 const parameterPresence=()=>({undefined:false,null:false,optional:false,default:false,range:range(31,41),annotation:range(38,41)});
 function sourceFacts() {
@@ -115,7 +117,7 @@ function manualHir(snapshot) {
         {id:innerBinding,name:'inner',role:'function',type:innerType,writable:false,range:range(97,103),presence:null}],body:[
           {kind:'functionDeclaration',range:range(88,192),binding:innerBinding,target:inner},
           {kind:'return',range:range(192,208),value:call}]}},finallyRegion:null};
-  return {format:{family:'tsfg.exception-hir-candidate',version:1,schemaHash:schema},snapshot:copy(snapshot),inputIdentity:snapshot.inputIdentity,
+  return {format:{family:'tsfg.exception-hir-candidate',version:2,schemaHash:schema},snapshot:copy(snapshot),inputIdentity:snapshot.inputIdentity,
     sources:[{path:sourcePath,content:source,hash:hash(source),length:212,positionUnit:'utf16'}],target:copy(target),types,functions:[
       {id:entry,module:moduleId,sourcePath,name:'entry',nameRange:range(24,30),range:range(0,212),type:entryType,signatureHash:entrySignatureHash,
         lexicalParent:null,declaringScope:moduleScope,parameters:[parameter],parameterInitializers:[null],captures:null,returnPresence:null,
@@ -182,7 +184,7 @@ test('actual local lexical declaration capture and call require complete two-fun
       entryScope:entry.body.scope,entryTryScope:entryAttempt.tryRegion.scope,entryCatchScope:entryAttempt.catchClause.region.scope,
       innerScope:inner.body.scope,innerTryScope:innerAttempt.tryRegion.scope,innerCatchScope:innerAttempt.catchClause.region.scope,
       parameter:entry.parameters[0],caught:entryAttempt.catchClause.binding,innerBinding:outerCatch(expected).body[0].binding,
-      nested:innerAttempt.catchClause.binding},identityPins);
+      nested:innerAttempt.catchClause.binding},oracle.data(identityPins));
     const caller=copy(snapshot),callerBefore=jcs(caller),result=buildHir(caller);assert.equal(result.status,'ok',JSON.stringify(result));
     assert.deepEqual(result.hir,expected,'complete manual two-function HIR, declarations, captures, scopes, five-type closure and exports');
     assert.equal(result.hir.types.length,5);assert.equal(result.hir.functions.length,2);assert.equal(jcs(caller),callerBefore);
@@ -192,7 +194,7 @@ test('actual local lexical declaration capture and call require complete two-fun
     const read=readHir(bytes);assert.deepEqual(read,expected);frozen(read);bytes.fill(0);cold.functions[1].captures[0].read=false;
     caller.sources[0].content='caller mutation';assert.deepEqual(result.hir,expected);assert.deepEqual(read,expected);assert.deepEqual(verified,expected);
     assert.deepEqual(buildHir(copy(snapshot)).hir,expected);assert.equal(printHir(readHir(Buffer.from(text))),text);
-    assert.throws(()=>lowerHir(result.hir),{name:'TypeError',code:'r03-d-capability',ruleId:'r01-ts-baseline',phase:'lowering'});
+    if(result.hir.target!==null)assert.match(lowerHir(result.hir),/tsfg_core.exception_program/);else assert.throws(()=>lowerHir(result.hir),{name:'TypeError',code:'r03-d-capability',ruleId:'r01-ts-baseline',phase:'lowering'});
     assert.deepEqual(buffers.map(hash),before);
     for(const change of [
       h=>{h.functions[1].captures=[];},

@@ -41,8 +41,6 @@ export function projectExceptionHirFunctions(context) {
     for (const parameter of fn.parameters) {
       if (parameter.type === 'unknown' || parameter.presence && (parameter.presence.optional || parameter.presence.default))
         failure('capability', 'unknown or optional HIR parameters require their own tracer');
-      if ((parameter.type === 'function') !== (fn.returnType === 'function'))
-        failure('capability', 'mixed callable and scalar HIR declarations require their own tracer');
       parameterTypes.push(types.value(parameter.type, parameter.signature, parameter.presence));
     }
     const returnType = types.value(fn.returnType, fn.returnSignature, fn.returnPresence);
@@ -97,8 +95,24 @@ export function projectExceptionHirFunctions(context) {
     },
     /** @param {any} value @param {string} sourcePath @param {any} lookup @param {any} projectArgument */
     call(value, sourcePath, lookup, projectArgument) {
+      if (value.kind === 'indirectCall') {
+        const callee = projectArgument(value.callee), type = types.value('function',value.signature);
+        check(callee.type === type && value.arguments.length === value.signature.parameters.length,
+          'signature','HIR indirect callee differs from its owned callable type');
+        const argumentsList=value.arguments.map(projectArgument);
+        check(argumentsList.every((argument,index)=>argument.type===types.value(value.signature.parameters[index])), 'type');
+        return {kind:'indirectCall',type:types.value(value.type),range:value.range,callee,
+          signature:{ownerKind:'callableType',owner:type,type},arguments:argumentsList};
+      }
       const info = raw.get(value.target), target = headers.get(value.target);
       if (!info || !target) failure('capability', 'HIR direct call requires an owned declared function');
+      if (value.kind === 'functionReference') {
+        check(target.lexicalParent === null && target.sourcePath === sourcePath
+          && canonical(value.signature) === canonical({parameters:info.fn.parameters.map(p=>p.type),returnType:info.fn.returnType}),
+        'scope','HIR function reference must resolve its same-source owned declaration');
+        return {kind:'functionReference',type:target.type,range:value.range,target:target.id,
+          signature:{ownerKind:'function',owner:target.id,type:target.type}};
+      }
       check(Array.isArray(value.arguments) && value.arguments.length <= limits.derived.parametersPerFunction,
         'limit', 'HIR call argument budget exceeded');
       let signature;

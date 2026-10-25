@@ -49,13 +49,6 @@ export function verifyExceptionAggregateExpression(value, parent, scope, context
     g.span(value.range, parent, index, next - 1);
     return { type: value.type, next, mask: 0, aggregateUse: true };
   }
-  if (value.kind === 'boolean') {
-    record(value, ['kind','type','range','boolean']);
-    check(value.type === 'bool' && typeof value.boolean === 'boolean' && !write, 'type');
-    const next = g.expect(index, value.boolean ? 'true' : 'false');
-    (operatorContext ? g.span : g.raw)(value.range, parent, index);
-    return { type: 'bool', next, mask: 0 };
-  }
   if (value.kind === 'binary') {
     record(value, ['kind','type','range','operator','left','right']);
     check(!write && value.type === 'bool' && ['===','!=='].includes(value.operator), 'capability', 'only aggregate-backed strict boolean equality has a cold tracer');

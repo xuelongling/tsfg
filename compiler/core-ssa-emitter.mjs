@@ -6,6 +6,7 @@ import { hasState } from "./presence.mjs";
 import { createScalarStateEmitter, scalarAbiTypes, stateBinding } from "./scalar-state-emitter.mjs";
 import { conversionEntries } from "./conversions.mjs";
 import registry from '../contracts/registry.json' with { type: 'json' };
+import {createCoreSsaGraph} from './core-ssa-graph.mjs';
 
 // HIR representation versions evolve independently from the admitted Core exchange.
 export const coreExchangeFormat = own({ version: registry['tsfg.bytecode'].semver,
@@ -33,34 +34,17 @@ export const coreQuote = text => JSON.stringify(text).replace(/\\(?:u[0-9a-f]{4}
 export function emitCoreSsaFunction(fn, context) {
   const { verified, emittedGlobals = [], emittedHosts = [], functionSymbol } = context;
   const quote = coreQuote;
-  const blocks = [], bindingTypes = new Map();
-  let valueIndex = 0, current, definitions = new Map(), declared = new Set();
+  const bindingTypes = new Map();
+  let current, definitions = new Map(), declared = new Set();
   const coreType = context.coreType ?? (type => type === i32TypeId ? "i32" : type === boolTypeId ? "i1" : floatType(type) ? scalarName(type) : `!tsfg_core.integer<${quote(scalarName(type))}>`);
-  let reservedBodyBytes = 0;
-  const variable = () => { context.budget?.register(valueIndex + 1); return `%v${valueIndex++}`; };
-  const line = text => { context.budget?.line(text); reservedBodyBytes += Buffer.byteLength(text, "utf8") + 1; current.lines.push(text); };
-  const newBlock = (parameterTypes = []) => {
-    context.budget?.block(blocks.length + 1);
-    if (!blocks.length) context.budget?.parameters(parameterTypes.length);
-    const block = { name: `bb${blocks.length}`, parameters: parameterTypes.map(type => ({ name: variable(), type })), lines: [], terminated: false };
-    blocks.push(block); return block;
-  };
-  const attrsFor = anchor => `tsfg_source.start = ${anchor.start} : i64, tsfg_source.end = ${anchor.end} : i64`;
-  const edge = (block, values = []) => `^${block.name}${values.length ? `(${values.join(", ")} : ${block.parameters.map(p => coreType(p.type)).join(", ")})` : ""}`;
-  const branch = (block, values, anchor) => {
-    line(`    cf.br ${edge(block, values)} {${attrsFor(anchor)}}`);
-    current.terminated = true;
-  };
-  const conditional = (condition, left, right, anchor) => {
-    line(`    cf.cond_br ${condition}, ${edge(left)}, ${edge(right)} {${attrsFor(anchor)}}`);
-    current.terminated = true;
-  };
-  const fuel = (event, anchor) => line(`    "tsfg_core.fuel"() {event = ${event} : i32, ${attrsFor(anchor)}} : () -> ()`);
-  const operationLine = (result, name, operands, operandTypes, resultType, attributes, anchor) => {
-    line('    ' + (result === null ? '' : result + ' = ') + '"' + name + '"(' + operands.join(', ')
-      + ') {' + (attributes ? attributes + ', ' : '') + attrsFor(anchor) + '} : ('
-      + operandTypes.map(coreType).join(', ') + ') -> ' + (resultType === null ? '()' : coreType(resultType)));
-  };
+  const graph=createCoreSsaGraph(coreType,context.budget);
+  const {blocks,variable,newBlock,attrsFor,edge}=graph;
+  const line=text=>graph.line(current,text);
+  const branch=(block,values,anchor)=>graph.branch(current,block,values,anchor);
+  const conditional=(condition,left,right,anchor)=>graph.conditional(current,condition,left,right,anchor);
+  const fuel=(event,anchor)=>graph.fuel(current,event,anchor);
+  const operationLine=(result,name,operands,operandTypes,resultType,attributes,anchor)=>
+    graph.operationLine(current,result,name,operands,operandTypes,resultType,attributes,anchor);
   current = newBlock(scalarAbiTypes(fn.parameters));
   let parameterIndex = 0;
   fn.parameters.forEach(parameter => {
@@ -403,5 +387,5 @@ export function emitCoreSsaFunction(fn, context) {
     if (context.exception && index) context.budget?.label?.(label);
     return label + block.lines.join('\n');
   }).join('\n');
-  return { entryParameters: blocks[0].parameters, blocksText: text, resultType: type, coreType, reservedBodyBytes, ...(trace ? { trace } : {}) };
+  return { entryParameters: blocks[0].parameters, blocksText: text, resultType: type, coreType, reservedBodyBytes:graph.reservedBodyBytes, ...(trace ? { trace } : {}) };
 }

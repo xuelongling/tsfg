@@ -35,12 +35,12 @@ export function createExceptionHirTypes() {
       if (name === 'function') {
         if (presence !== undefined) failure('capability', 'HIR callable values require absent presence metadata');
         // A callable value describes a type, never an inferred runtime target.
-        // The cold consumer currently owns only the exact nonnullable () => bool shape.
         if (!signature || Object.keys(signature).sort().join(',') !== 'parameters,returnType'
-            || !Array.isArray(signature.parameters) || signature.parameters.length !== 0
-            || signature.returnType !== 'bool')
-          failure('capability', 'HIR callable values require a nonnullable zero-parameter bool signature');
-        return intern({ kind: 'callable', parameters: [], returnType: intern({ kind: 'scalar', name: 'bool' }) });
+            || !Array.isArray(signature.parameters) || signature.parameters.length > limits.derived.parametersPerFunction
+            || ![...signature.parameters,signature.returnType].every(name => Object.hasOwn(scalarTypeIds,name)))
+          failure('capability', 'HIR callable values require an owned nonnullable scalar signature');
+        return intern({ kind: 'callable', parameters: signature.parameters.map(name => intern({kind:'scalar',name})),
+          returnType: intern({ kind: 'scalar', name: signature.returnType }) });
       }
       if (signature !== undefined) failure('capability', 'HIR noncallable values cannot carry a callable signature');
       if (aggregates.has(name)) return aggregates.get(name);

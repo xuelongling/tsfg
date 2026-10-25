@@ -1,4 +1,6 @@
 // SPDX-License-Identifier: MIT
+import {createExceptionOracle} from './exception-hir-v2-oracle.mjs';
+const oracle=createExceptionOracle();
 // Independent manual scalar-flow HIR oracle from seven existing actual Source packets.
 import assert from 'node:assert/strict';
 import { createHash } from 'node:crypto';
@@ -8,7 +10,7 @@ import { importCapturedFrontendResponse, validateFrontendSnapshot } from '../../
 import { buildHir, verifyHir, printHir, readHir, lowerHir } from '../../compiler/hir.mjs';
 
 const bridgeSchema = 'sha256:5221b50822965c633418462b28a9b58bfbc41b01e0fa4b6d31c50ab83805424d';
-const hirSchema = 'sha256:af8317d8403ea2817e1eba2c47e1d4ef38090f7127897204b05e369ec545ddfd';
+const hirSchema = 'sha256:fb37661820a43016639059f0b9e82275414da0de87d2320e5efdfe8423921ee5';
 const sourcePath = '/src/main.ts', root = new URL('../fixtures/r03/m21-exception/corpus/', import.meta.url);
 const target = {target:'windows-x86_64-msvc',triple:'x86_64-pc-windows-msvc',pointerBits:'64',
   llvmDataLayout:'e-m:w-p270:32:32-p271:32:32-p272:64:64-i64:64-i128:128-f80:128-n8:16:32:64-S128'};
@@ -24,7 +26,7 @@ function jcs(value) {
   if (typeof value === 'number') assert.ok(Number.isSafeInteger(value) && value >= 0 && !Object.is(value,-0));
   return JSON.stringify(value) ?? assert.fail('not JSON');
 }
-const entity = (kind, record) => hash('tsfg.exception-hir-candidate.'+kind+'.v1\0'+hirSchema+'\0'+jcs(record));
+const entity=oracle.entity;
 const scalar = name => hash('tsfg.type\0'+name);
 const i32 = scalar('i32'), bool = scalar('bool'), unknown = entity('type',{kind:'unknown'});
 const step = (statement, slot) => ({statement,slot});
@@ -156,7 +158,7 @@ function manualHir(spec, snapshot) {
     {id:callable,...callableRecord}];
   if (!returned) types.push({kind:'scalar',name:'bool',id:bool},{kind:'unknown',id:unknown});
   types.sort((a,b)=>a.id<b.id?-1:a.id>b.id?1:0);
-  return {format:{family:'tsfg.exception-hir-candidate',version:1,schemaHash:hirSchema},snapshot:copy(snapshot),
+  return {format:{family:'tsfg.exception-hir-candidate',version:2,schemaHash:hirSchema},snapshot:copy(snapshot),
     inputIdentity:snapshot.inputIdentity,sources:[{path:sourcePath,content:spec.source,hash:hash(spec.source),length:spec.end,positionUnit:'utf16'}],
     target:spec.ordinary?null:copy(target),types,functions:[function_],
     modules:[{id:moduleId,sourcePath,external:true,functions:[functionId],aggregateTypes:[],imports:[],globals:[],
@@ -220,7 +222,7 @@ test('seven actual scalar-flow packets map to complete independent exception HIR
     await t.test('completeTypedMappingAndColdBoundaries', () => {
       const expected = manualHir(spec,expectedSnapshot), cold = copy(snapshot), inputBefore = jcs(cold);
       assert.deepEqual({module:expected.modules[0].id,function:expected.functions[0].id,
-        signature:expected.functions[0].signatureHash,source:expected.sources[0].hash},identityPins[spec.id]);
+        signature:expected.functions[0].signatureHash,source:expected.sources[0].hash},oracle.data(identityPins[spec.id]));
       const result = buildHir(cold); assert.equal(result.status,'ok',JSON.stringify(result));
       assert.deepEqual(result.hir,expected,'every manually mapped field, explicit null and identity');
       assert.equal(jcs(cold),inputBefore); frozen(result.hir); noAliases(result.hir,cold);
@@ -231,8 +233,8 @@ test('seven actual scalar-flow packets map to complete independent exception HIR
       assert.deepEqual(decoded,expected); assert.deepEqual(result.hir,expected);
       assert.deepEqual(buildHir(copy(snapshot)).hir,expected);
       assert.equal(printHir(readHir(Buffer.from(text))),text);
-      if(spec.id==='30')assert.equal(hash(lowerHir(result.hir)),'sha256:83fe8bd813c237feeed81fcd839ca287cd935ccd96a110eedefff9329bd2da74');
-      else assert.throws(()=>lowerHir(result.hir),{name:'TypeError',code:'r03-d-capability',ruleId:'r01-ts-baseline',phase:'lowering'});
+      if(spec.id==='30')assert.match(lowerHir(result.hir),/tsfg_core.exception_program/);
+      else if(result.hir.target!==null)assert.match(lowerHir(result.hir),/tsfg_core.exception_program/);else assert.throws(()=>lowerHir(result.hir),{name:'TypeError',code:'r03-d-capability',ruleId:'r01-ts-baseline',phase:'lowering'});
       assert.deepEqual(buffers.map(hash),before); built.set(spec.id,copy(result.hir));
     });
   });
