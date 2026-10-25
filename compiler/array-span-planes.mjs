@@ -76,6 +76,7 @@ export function createSpanPlanes(type,charge,authority){
       }
     }
   };
+    /** @param {Iterable<StoredValue>} roots @param {Iterable<StoredValue>} extra */
     const snapshot=(roots,extra=[])=>{
       const state=new Map(),work=[];for(const rows of [roots,extra])for(const root of rows){charge();work.push(root);}
       while(work.length){charge();const row=work.pop();
@@ -111,6 +112,19 @@ export function createSpanPlanes(type,charge,authority){
     const result=aggregate(actual,null,owner);result.extent=count;result.extentChanged=true;for(let i=0;i<count;++i){
       charge();result.fields.set('slot/'+i,copy(element(i)));}return result;
   };
+  const applyWrites=(rows,changed)=>{
+    const grouped=new Map();let complete=true;
+    for(const row of rows){charge();const candidates=leaves(row.receiver);
+      for(const plane of candidates){charge();const member=plane.kind==='aggregate'?field(plane,row.property):null;
+        if(member===null){complete=false;continue;}
+        if(!grouped.has(plane))grouped.set(plane,new Map());const members=grouped.get(plane);
+        if(!members.has(member))members.set(member,[]);const payloads=members.get(member);payloads.push(row.value);
+        if(candidates.length!==1)payloads.push(read(plane,row.property));
+      }
+    }
+    for(const [plane,members]of grouped)for(const [member,payloads]of members){charge();write(plane,member,choice(payloads),changed);}
+    return complete;
+  };
   const extent=(receiver,limit,changed,invalidate)=>{
     const candidates=leaves(receiver),unique=candidates.length===1;
     for(const plane of candidates)if(plane.kind==='aggregate'){
@@ -135,5 +149,5 @@ export function createSpanPlanes(type,charge,authority){
     for(let i=0;i<plane.extent;++i){charge();const member='slot/'+i;
       if(!plane.fields.has(member))return null;values.push(plane.fields.get(member));}return values;
   };
-  return {unknown,choice,leaves,inherit,aggregate,copy,inputField,read,write,snapshot,cloneSnapshot,restore,index,array,truncate,elements,extent};
+  return {unknown,choice,leaves,inherit,aggregate,copy,inputField,read,write,snapshot,cloneSnapshot,restore,index,array,truncate,elements,extent,substitute:transform,applyWrites};
 }

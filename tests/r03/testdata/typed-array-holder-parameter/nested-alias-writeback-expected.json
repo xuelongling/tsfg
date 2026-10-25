@@ -1,0 +1,38 @@
+{
+  "kind": "independent Source-only nested possible-alias regression",
+  "source": {
+    "path": "E:/ws/pro_tsfg/.scratch/tsfg_r03/M25-source-generic-array-checks-20261022/holder-alias-writeback-conflict-source.ts",
+    "bytes": 443,
+    "sha256": "5df3cc6975b0154c347624a364190b8ba8b3c8e10cefa30e7e3d0fbe16d257f8"
+  },
+  "semantics": {
+    "actualAlias": "caller constructs O(h) and passes the same h as the independent H argument",
+    "firstWrite": "x.span receives B",
+    "secondWrite": "h.span receives C on that same H instance",
+    "subsequentUse": "x.span[0] consumes current C; old B is invalid",
+    "requiredConflictIfClosed": {
+      "primary": {
+        "start": 228,
+        "end": 240,
+        "text": "c.length = 0"
+      },
+      "lastUse": {
+        "start": 251,
+        "end": 260,
+        "text": "x.span[0]"
+      }
+    }
+  },
+  "checkpointAcceptance": {
+    "mustNotCompleteStaleB": true,
+    "allowed": [
+      "actual C structural-conflict with original callee anchors",
+      "precise pending for unclosed nested/formal alias context"
+    ],
+    "notEvidence": [
+      "later ordinary lowering rejects a stale B plan",
+      "generic failure unrelated to alias provenance"
+    ],
+    "completeKnownAliasPrecision": "OPEN until actual caller relationship closes to C in the same entry projection; no permanent language ban"
+  }
+}

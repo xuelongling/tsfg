@@ -128,9 +128,9 @@ export function buildFiniteFieldReaching(hir,plan,charge) {
     function retainValues(state) {
       for(const location of state.keys()){charge();if(types.get(location.split('\0')[1])?.kind!=='value')state.delete(location);}
     }
-    function projectedToken(root,version,source) {
+    function projectedToken(root,version,source,fresh=false) {
       charge();const token='#frame/'+canonical([root,version,source]);
-      referenceProjections.set(token,{root,version,source});return token;
+      referenceProjections.set(token,{root,version,source,fresh});return token;
     }
     const receiver=fn.role==='construction-body'?aliases.get(fn.parameters[0].id):null,exits=[],returnedTokens=[];
     const receiverTypes=receiver?actuals(fn.id+'/binding/'+fn.parameters[0].id):[];
@@ -167,6 +167,7 @@ export function buildFiniteFieldReaching(hir,plan,charge) {
           const init=owner.construction.initialization.find(row=>row.field===output.field&&row.value);
           storedTokens.set(output.id,{function:fn.id,token:expression(init.value,output.valueNode,state,env),fresh:init.value.kind==='construct'});
         }
+        if(event.kind==='parameterWrite'){charge();storedTokens.set(output.id,{function:fn.id,token:env.get(output.parameterBinding)??null,parameter:true,fresh:false});}
         const node=event.kind==='nativeDefine'?null:event.kind==='parameterWrite'
           ?fn.id+'/binding/'+output.parameterBinding:output.valueNode;
         const version={id:output.id,field:output.field,node,state:output.state,actualTypes:[...receiverTypes],origin:output.origin};
@@ -184,7 +185,10 @@ export function buildFiniteFieldReaching(hir,plan,charge) {
           storedTokens.set(id,{function:fn.id,token:payload,fresh:value.value?.kind==='construct'});
         }
         if(!token){
-          if(selection.targets.every(target=>types.get(target.actualType)?.kind==='reference'))retainValues(state);else state.clear();
+          if(selection.targets.every(target=>types.get(target.actualType)?.kind==='reference')){
+            for(const location of state.keys()){charge();const [,actual,field]=location.split('\0');
+              if(types.get(actual)?.kind!=='value'&&selection.targets.some(target=>{charge();return target.fieldId===field;}))state.delete(location);}
+          }else state.clear();
           return;
         }
         // Separate host parameters do not establish noalias. A write through
@@ -192,10 +196,12 @@ export function buildFiniteFieldReaching(hir,plan,charge) {
         // aliased parameter; fresh allocations remain distinct in this frame.
         const referenceTokens=new Set();
         for(const target of selection.targets){charge();if(types.get(target.actualType)?.kind==='reference')referenceTokens.add(physicalToken(token,target.actualType));}
-        if([...referenceTokens].some(token=>token?.includes('/parameter/')))for(const stored of state.keys()) {
-          const [other,actual]=stored.split('\0');
-          if(!referenceTokens.has(other)&&other.includes('/parameter/')&&types.get(actual)?.kind!=='value'){charge();state.delete(stored);}
-        }
+        if([...referenceTokens].some(token=>token?.includes('/parameter/')||referenceProjections.has(token)&&!referenceProjections.get(token).fresh))
+          for(const stored of state.keys()) {
+            charge();const [other,actual,field]=stored.split('\0');
+            if(!referenceTokens.has(other)&&types.get(actual)?.kind!=='value'&&
+                selection.targets.some(target=>{charge();return target.fieldId===field;}))state.delete(stored);
+          }
         for(const target of selection.targets) {
           charge();const id=path+'/field-version/'+target.actualType+'/'+target.fieldId;
           const location=key(token,target);
@@ -222,8 +228,11 @@ export function buildFiniteFieldReaching(hir,plan,charge) {
             // Qualify a constructor's fresh child by the owning value's
             // original plane, not the callee's lexical allocation alone.
             const physical=physicalToken(token,row.actualType),root=originOf(copyOrigins,physical);
-            tokens.push(source?.fresh&&root&&!cyclicFunctions.has(source.function)&&!cyclicFunctions.has(fn.id)
-              ?projectedToken(root,version,source.token):null);
+            // A parameter-property continuation denotes this independently selected
+            // field version, not the constructor formal as a caller instance.
+            // Such a reference stays potentially aliased when it is written.
+            tokens.push((source?.fresh||source?.parameter)&&source.token&&root&&!cyclicFunctions.has(source.function)&&!cyclicFunctions.has(fn.id)
+              ?projectedToken(root,version,source.token,source.fresh):null);
           }
         }
         return tokens.length&&tokens.every(token=>token&&token===tokens[0])?tokens[0]:null;
@@ -295,7 +304,7 @@ export function buildFiniteFieldReaching(hir,plan,charge) {
           }
           for(const output of projectedOutputs.get(target)??[])if(tokens[output.parameter]) {
             charge();const root=originOf(copyOrigins,tokens[output.parameter]);if(!root)continue;
-            const origin=projectedToken(root,output.origin.version,output.origin.source),
+            const origin=projectedToken(root,output.origin.version,output.origin.source,output.origin.fresh),
               location=key(origin,{actualType:output.actualType,fieldId:output.field});
             continuation.set(location,versionCopy(output.versions,charge));
           }

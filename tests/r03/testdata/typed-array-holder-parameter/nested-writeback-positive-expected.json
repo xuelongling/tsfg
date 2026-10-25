@@ -1,0 +1,15 @@
+{
+  "sourceSha256": "3755d77389efe9d6f19b683a70e52b2cc5b8f07beace25bca82b9111a443d328",
+  "packetSha256": "b191d7c1319abb104fd91caa0573943292694a62a2e9dc5cee6905334c91985f",
+  "origin": "Root pre-producer accepted source expectation: set writes B through o.h, then caller A resize is allowed and actual nested read selects B",
+  "expected": {
+    "status": "ok",
+    "caller": "run",
+    "ownerBinding": "b",
+    "excludedBinding": "a",
+    "effect": "a.length = 0",
+    "lastUse": "o.h.span[0]",
+    "normalReturnValue": 2,
+    "proof": "actual alias-shared nested field state after selected normal return; no static bound, allocation or type seed"
+  }
+}

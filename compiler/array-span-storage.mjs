@@ -7,7 +7,7 @@ import {createSpanPlanes} from './array-span-planes.mjs';
 export function createSpanStorage(hir,tools,charge,authority,resolveContext=undefined){
   const type=arrayAnalysisTypes(hir),summaries=new Map();
   const key=tools.pathKey;
-  const {unknown,choice,leaves,inherit,aggregate,copy,inputField,read,write,snapshot,cloneSnapshot,restore,index,array,truncate,elements,extent}=createSpanPlanes(type,charge,authority);
+  const {unknown,choice,leaves,inherit,aggregate,copy,inputField,read,write,snapshot,cloneSnapshot,restore,index,array,truncate,elements,extent,substitute,applyWrites}=createSpanPlanes(type,charge,authority);
   const parents=new Map(),contains=new Set(),work=[],typeIndices=new Map();
   for(const [index,row]of hir.types.entries()){
     typeIndices.set(row.id,index);
@@ -49,7 +49,25 @@ export function createSpanStorage(hir,tools,charge,authority,resolveContext=unde
       state:()=>null,restore:state=>{},join:states=>{},enterLoop:state=>{},leaveLoop:(entry,exit)=>{}};
     const values=new Map(),bindings=new Map(),captures=new Map(),reads=new Map(),returnReads=new Map(),returns=[],parameters=[],exits=[];
     const requirements=[],demands=[],dependencies=[],deferred=new Map(),callEvents=new Map(),projectedEvents=[],callLoops=[];
-    let terminated=false;const mutations=[],bindingWrites=[],observations=[];
+    let terminated=false;const mutations=[],bindingWrites=[],observations=[],slotExits=[],activeLoops=[];
+    const slots=new Map(),writtenSlots=new Set();
+    const entry=slot=>{
+      if(parameters[slot.input.index]?.invalidated)return unknown;
+      const tokens=activeLoops.map(loop=>{charge();return {loop,binding:slot.key};});
+      return tokens.length?{kind:'loaded',value:slot.input,tokens}:slot.input;
+    };
+    const slotFor=input=>{
+      const id='#entry/'+key([input.index,input.properties]);let slot=slots.get(id);
+      if(!slot){charge();slot={key:id,input,receiverType:null};
+        slots.set(id,slot);}
+      return slot;
+    };
+    const readStored=(receiver,property)=>substitute(read(receiver,property),value=>{
+      if(value.kind!=='inputField')return value;const slot=slotFor(value);
+      for(const id of writtenSlots){charge();const other=slots.get(id);
+        if(id!==slot.key&&other.input.properties.at(-1)===value.properties.at(-1))return unknown;}
+      if(!bindings.has(slot.key))bindings.set(slot.key,entry(slot));return bindings.get(slot.key);
+    });
     const model={values,reads,captures,returnReads,parameters,demands,dependencies,deferred,callEvents,callLoops};
     for(const [index,p]of fn.parameters.entries()){
       charge();const t=type.types.get(p.type);
@@ -68,24 +86,30 @@ export function createSpanStorage(hir,tools,charge,authority,resolveContext=unde
     const invalidate=object=>{
       charge();mutations.push([object,null]);for(const member of object.fields.keys()){charge();object.fields.delete(member);}
       object.invalidated=true;object.extent=null;object.extentChanged=true;
+      // A saved entry-path reference can outlive the aggregate field cache.
+      // Invalidate its current slot version under the very same alias event.
+      for(const slot of slots.values()){charge();if(parameters[slot.input.index]!==object)continue;
+        bindingWrites.push(slot.key);bindings.set(slot.key,unknown);}
     };
     const changed=(object,member)=>{charge();mutations.push([object,member]);};
-    const store=(receiver,property,payload)=>{
-      // A symbolic nested receiver is only an entry demand, not a mutable
-      // instance plane. Until writeback is proved, preserve the dependency.
+    const store=(receiver,property,payload,receiverType=null)=>{
       for(const row of leaves(receiver))if(row.kind==='inputField'){
-        charge();const dependency={kind:'dependency',reason:'nested-writeback',target:fn.id,path:[],range:fn.range,sourcePath:fn.sourcePath};
-        dependencies.push(dependency);requirements.push(dependency);
+        charge();if(property===null||!['reference','array'].includes(type.types.get(receiverType)?.kind)){
+          const dependency={kind:'dependency',reason:'nested-writeback',target:fn.id,path:[],range:fn.range,sourcePath:fn.sourcePath};
+          dependencies.push(dependency);requirements.push(dependency);continue;}
+        const input=inputField(row.index,property,row.properties),slot=slotFor(input);
+        slot.receiverType=receiverType;bindingWrites.push(slot.key);
+        const prior=bindings.get(slot.key)??entry(slot);
+        bindings.set(slot.key,leaves(receiver).length===1?copy(payload):choice([prior,copy(payload)]));writtenSlots.add(slot.key);
+        for(const [index,parameter]of parameters.entries()){charge();if(index!==row.index&&parameter.kind==='aggregate')invalidate(parameter);}
       }
       // Distinct formal references have no noalias privilege. An update may
       // invalidate another formal's incoming field, even before its first read.
       for(const object of leaves(receiver))if(object.kind==='aggregate'&&object.slot!==null&&
         !(fn.construction&&object===parameters[0])&&
         (type.isArray(object.type)||type.types.get(object.type)?.kind==='reference'))
-        for(const parameter of parameters)if(parameter!==object&&parameter.kind==='aggregate'&&
-          (type.isArray(parameter.type)||type.types.get(parameter.type)?.kind==='reference')){
-          invalidate(parameter);
-        }
+        for(const parameter of parameters){charge();if(parameter!==object&&parameter.kind==='aggregate'&&
+          (type.isArray(parameter.type)||type.types.get(parameter.type)?.kind==='reference'))invalidate(parameter);}
       if(property===null){for(const object of leaves(receiver))if(object.kind==='aggregate')invalidate(object);return;}
       write(receiver,property,payload,changed);
     };
@@ -95,13 +119,14 @@ export function createSpanStorage(hir,tools,charge,authority,resolveContext=unde
     };
     const state=()=>{
       const names=new Map();for(const [id,value]of bindings){charge();names.set(id,value);}
-      return {bindings:names,planes:snapshot(bindings.values(),parameters),terminated,
+      const written=new Set();for(const id of writtenSlots){charge();written.add(id);}
+      return {bindings:names,planes:snapshot(bindings.values(),parameters),written,terminated,
         mutations:mutations.length,writes:bindingWrites.length,observations:observations.length,
         requirements:requirements.length,projected:projectedEvents.length};
     };
     const restoreState=before=>{
       restore(before.planes);for(const id of bindings.keys()){charge();bindings.delete(id);}
-      for(const [id,value]of before.bindings){charge();bindings.set(id,value);}terminated=before.terminated;
+      for(const [id,value]of before.bindings){charge();bindings.set(id,value);}writtenSlots.clear();for(const id of before.written){charge();writtenSlots.add(id);}terminated=before.terminated;
     };
     const join=alternatives=>{
       const states=[];for(const row of alternatives){charge();if(!row.terminated)states.push(row);}
@@ -123,11 +148,12 @@ export function createSpanStorage(hir,tools,charge,authority,resolveContext=unde
           extent=extent===undefined?plane.extent:extent===plane.extent?extent:null;}object.extent=extent??null;
       }
       for(const id of bindings.keys()){charge();bindings.delete(id);}
-      for(const name of names){charge();const payloads=[];for(const row of states){charge();payloads.push(row.bindings.get(name)??unknown);}
-        bindings.set(name,choice(payloads));}terminated=false;
+      for(const name of names){charge();const payloads=[];for(const row of states){charge();payloads.push(row.bindings.get(name)??(slots.has(name)?entry(slots.get(name)):unknown));}
+        bindings.set(name,choice(payloads));}writtenSlots.clear();
+      for(const row of states)for(const id of row.written){charge();writtenSlots.add(id);}terminated=false;
     };
     const enterLoop=before=>{
-      const id=++loopSerial;before.loop=id;
+      const id=++loopSerial;before.loop=id;activeLoops.push(id);
       // Symbolic entry labels expose only loop-carried dependencies. Strong
       // writes kill these labels; unchanged slots retain their exact payload.
       for(const [name,value]of bindings){charge();bindings.set(name,{kind:'loaded',value,tokens:[{loop:id,binding:name}]});}
@@ -136,6 +162,7 @@ export function createSpanStorage(hir,tools,charge,authority,resolveContext=unde
         for(const [member,value]of plane.fields){charge();object.fields.set(member,{kind:'loaded',value,tokens:[{loop:id,object,member}]});}}
     };
     const leaveLoop=(before,conditionExit,repeats=true,zero=true)=>{
+      activeLoops.pop();
       // Even zero iterations evaluate the condition. Preserve its successful
       // effects rather than restoring the state from before that evaluation.
       if(terminated){if(zero)restoreState(conditionExit);return;}
@@ -169,7 +196,8 @@ export function createSpanStorage(hir,tools,charge,authority,resolveContext=unde
       for(let i=before.projected;i<projectedEvents.length;++i){charge();const row=projectedEvents[i];
         row.value=settle(row.value);drain();if(row.kind==='use')row.evidence=origins(row.value);else row.owner=effectOwner(row.value);}
       for(let i=0;i<returns.length;++i){charge();returns[i]=settle(returns[i]);}
-      for(const exit of exits)for(let i=0;i<exit.length;++i){charge();exit[i]=settle(exit[i]);}drain();
+      for(const exit of exits)for(let i=0;i<exit.length;++i){charge();exit[i]=settle(exit[i]);}
+      for(const exit of slotExits)for(const [id,value]of exit){charge();exit.set(id,settle(value));}drain();
       if(zero){const after=state();join([conditionExit,after]);}
     };
     const invoke=(summary,actuals,call,path,range)=>{
@@ -178,7 +206,8 @@ export function createSpanStorage(hir,tools,charge,authority,resolveContext=unde
       // Input fields, including nested reference planes, are read at call
       // entry. Later selected-target writes must not mutate that snapshot.
       const incoming=cloneSnapshot(snapshot(actuals));
-      const original=actuals.map(value=>incoming.remap(value));
+      const original=actuals.map(value=>incoming.remap(value)),live=new Map();
+      for(const [actual,clone]of incoming.clones){charge();live.set(clone,actual);}
       const project=value=>{
         charge();if(!value)return unknown;
         if(value.kind==='loaded')return {kind:'loaded',value:project(value.value),tokens:value.tokens};
@@ -248,17 +277,36 @@ export function createSpanStorage(hir,tools,charge,authority,resolveContext=unde
           for(const event of events){charge();callEvents.get(id).push(event);projectedEvents.push(event);}
         }
       }
-      // Parameter field outputs are actual successful body/initialization
-      // snapshots. A value argument is an independent plane, except this.
+      // Snapshot reads preserve entry versions; reference outputs retain
+      // the actual alias identity rather than publishing a snapshot clone.
+      const publish=value=>substitute(project(value),row=>live.has(row)&&type.types.get(row.type)?.kind!=='value'?live.get(row):row);
+      // Every nested output is relative to the immutable call entry. Reading
+      // that snapshot selects the real receiver, not a replacement installed
+      // by another output. All possibly aliased outputs join before writing.
+      const outputs=[];
       for(const [index,parameter]of summary.parameters.entries()){
         charge();if(parameter.kind!=='aggregate'||!(summary.receiver&&index===0)&&type.types.get(parameter.type)?.kind==='value')continue;
         if(parameter.invalidated)for(const target of leaves(actuals[index]))if(target.kind==='aggregate')invalidate(target);
         if(type.isArray(parameter.type)&&parameter.extentChanged)extent(actuals[index],parameter.extent,changed,invalidate);
-        for(const [member,payload]of parameter.fields){charge();store(actuals[index],member,project(payload));}
+        for(const [member,payload]of parameter.fields){charge();outputs.push({receiver:actuals[index],property:member,value:publish(payload),type:parameter.type});}
       }
-      const result=project(summary.returned);
+      for(const row of summary.nested){
+        charge();let receiver=original[row.input.index];
+        for(const member of row.input.properties.slice(0,-1)){charge();receiver=read(receiver,member);}
+        outputs.push({receiver:substitute(receiver,value=>live.get(value)??value),property:row.input.properties.at(-1),value:publish(row.value),type:row.type});
+      }
+      const concrete=[];
+      for(const row of outputs){charge();const candidates=leaves(row.receiver);
+        for(const receiver of candidates){charge();const value=candidates.length===1?row.value:choice([readStored(receiver,row.property),row.value]);
+          if(receiver.kind==='inputField')store(receiver,row.property,value,row.type);
+          else concrete.push({...row,receiver,value});}}
+      if(!applyWrites(concrete,changed)){
+        const dependency={kind:'dependency',reason:'nested-writeback',target:call.target,path,range,sourcePath:fn.sourcePath};
+        dependencies.push(dependency);requirements.push(dependency);
+      }
+      const result=publish(summary.returned);
       while(pending.length){charge();const [from,to]=pending.pop();
-        for(const [member,payload]of from.fields){charge();to.fields.set(member,project(payload));}}
+        for(const [member,payload]of from.fields){charge();to.fields.set(member,publish(payload));}}
       return result;
     };
     const requireInput=(value,path,range)=>{
@@ -280,15 +328,15 @@ export function createSpanStorage(hir,tools,charge,authority,resolveContext=unde
       else if(value.kind==='arrayCreate'){
         if(!contains.has(value.type))result={kind:'owner',owner,span:false,sources:[],type:value.type};
         else result=array(value.type,owner,value.elements.length,index=>get([...path,'elements',index]));
-      }else if(value.kind==='arrayReadChecked'&&contains.has(value.receiver.type))result=read(child('receiver'),index(value.index));
+      }else if(value.kind==='arrayReadChecked'&&contains.has(value.receiver.type))result=readStored(child('receiver'),index(value.index));
       else if(value.kind==='arrayStoreDenseChecked'&&contains.has(value.target.receiver.type)){
-        result=copy(child('value'));store(get([...path,'target','receiver']),index(value.target.index),result);
+        result=copy(child('value'));store(get([...path,'target','receiver']),index(value.target.index),result,value.target.receiver.type);
       }else if(value.kind==='arrayResizeChecked'&&contains.has(value.target.receiver.type)){
         truncate(get([...path,'target','receiver']),value.value,changed,invalidate);
       }
-      else if(value.kind==='fieldAccess')result=read(child('receiver'),value.property);
+      else if(value.kind==='fieldAccess')result=readStored(child('receiver'),value.property);
       else if(value.kind==='fieldAssignment'){
-        result=child('value');store(get([...path,'target','receiver']),value.target.property,copy(result));
+        result=child('value');store(get([...path,'target','receiver']),value.target.property,copy(result),value.target.receiver.type);
       }else if(value.kind==='assignment'){result=child('value');bind(value.target.binding,result);result=bindings.get(value.target.binding);}
       else if(hasConditionalArrayRhs(value))result=choice([child('left'),child('right')]);
       else if(['call','construct','superConstruct'].includes(value.kind)){
@@ -310,9 +358,9 @@ export function createSpanStorage(hir,tools,charge,authority,resolveContext=unde
           const results=[];
           // A call executes on this structured arm. The enclosing branch
           // joins its skip path; selected targets alone share this prestate.
-          const before=snapshot(bindings.values(),actuals),branches=[];
+          const before=state(),branches=[];before.planes=snapshot(bindings.values(),actuals);
           for(const target of call.targets){
-            charge();restore(before);const selected={...call,target:target.target};
+            charge();restoreState(before);const selected={...call,target:target.target};
             // The entry planes remain parameter-relative. Only actual scalar
             // evidence selects a recursive continuation of the same walker.
             const aliases=[],seen=new Map();
@@ -331,21 +379,14 @@ export function createSpanStorage(hir,tools,charge,authority,resolveContext=unde
                 ||value.arguments.some(argument=>{charge();return aggregateBoundary(argument.type);});
               if(needs){const dependency={kind:'dependency',target:target.target,path,range:value.range,sourcePath:fn.sourcePath};
                 dependencies.push(dependency);requirements.push(dependency);}
-              for(const [object]of before)invalidate(object);
+              for(const [object]of before.planes)invalidate(object);
             }
-            const result=invoke(summary,inputs,selected,path,value.range);results.push(result);branches.push(snapshot(before.keys(),[result]));
+            const result=invoke(summary,inputs,selected,path,value.range);results.push(result);
+            const branch=state();branch.planes=snapshot(before.planes.keys(),[result]);branches.push(branch);
           }
-          restore(before);
-          for(const [object,prior]of before){
-            const states=[];
-            for(const state of branches){charge();states.push(state);}
-            charge();const members=new Set();for(const member of prior.fields.keys()){charge();members.add(member);}
-            for(const state of states){charge();for(const member of state.get(object)?.fields.keys()??[]){charge();members.add(member);}}
-            for(const member of members){charge();const alternatives=[];for(const state of states){charge();const item=state.get(object);
-              alternatives.push(item?.fields.get(member)??(object.fallback!==null&&!item?.invalidated?inputField(object.fallback,member):unknown));}
-              object.fields.set(member,choice(alternatives));}
-            object.invalidated=states.some(state=>{charge();return state.get(object)?.invalidated??true;});
-          }
+          // Entry-slot versions and aggregate planes share the same target
+          // fork. A sibling target must never observe an earlier output.
+          if(branches.length)join(branches);else restoreState(before);
           result=constructor?receiver:choice(results);
         }
       }else if(type.isOwner(value.type)&&owner)result={kind:'owner',owner,span:type.isView(value.type),sources:[],type:value.type};
@@ -402,16 +443,20 @@ export function createSpanStorage(hir,tools,charge,authority,resolveContext=unde
     return {model,record,initialize,bind,get,state,restore:restoreState,join,enterLoop,leaveLoop,
       returned:(value,path)=>{
         if(terminated)return;
-        charge();const copied=copy(value),state=cloneSnapshot(snapshot(parameters,[copied]));
+        charge();const copied=copy(value),roots=[copied];
+        for(const binding of bindings.values()){charge();roots.push(binding);}
+        const state=cloneSnapshot(snapshot(parameters,roots));
         const frozen=state.remap(copied),evidence=returnOrigins(frozen);returnReads.set(key(path),evidence);
         observations.push({value:frozen,evidence,aggregate:true});
-        returns.push(frozen);exits.push(parameters.map(parameter=>state.remap(parameter)));terminated=true;
+        returns.push(frozen);exits.push(parameters.map(parameter=>state.remap(parameter)));
+        const output=new Map();for(const id of writtenSlots){charge();output.set(id,state.remap(bindings.get(id)));}slotExits.push(output);terminated=true;
       },
       finish:(loops=[],fallsThrough=true)=>{
         // Only normal-return field snapshots reach a caller. A conditional
         // return also retains the possible fallthrough state; a later store
         // cannot rewrite the snapshot of an earlier return.
-        if(!terminated&&fallsThrough){const state=cloneSnapshot(snapshot(parameters));exits.push(parameters.map(parameter=>state.remap(parameter)));}
+        if(!terminated&&fallsThrough){const state=cloneSnapshot(snapshot(parameters,bindings.values()));exits.push(parameters.map(parameter=>state.remap(parameter)));
+          const output=new Map();for(const id of writtenSlots){charge();output.set(id,state.remap(bindings.get(id)));}slotExits.push(output); }
         const outputs=parameters.map((parameter,index)=>{
           charge();if(parameter.kind!=='aggregate')return parameter;
           const result=aggregate(parameter.type,index,parameter.owner),members=new Set();
@@ -427,7 +472,10 @@ export function createSpanStorage(hir,tools,charge,authority,resolveContext=unde
           return result;
         });
         const scopes=[];for(const rows of [loops,callLoops])for(const scope of rows){charge();scopes.push(scope);}
-        const summary={parameters:outputs,receiver:!!fn.ownerType,returned:returns.length?choice(returns):unknown,
+        const nested=[];for(const slot of slots.values()){charge();if(!slotExits.some(exit=>{charge();return exit.has(slot.key);}))continue;
+          const payloads=[];for(const exit of slotExits){charge();payloads.push(exit.get(slot.key)??slot.input);}
+          nested.push({input:slot.input,type:slot.receiverType,value:choice(payloads)});}
+        const summary={parameters:outputs,nested,receiver:!!fn.ownerType,returned:returns.length?choice(returns):unknown,
           requirements,loops:scopes,productive:exits.length>0};
         if(!context)summaries.set(fn.id,summary);return summary;
       }};
