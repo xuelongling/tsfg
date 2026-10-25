@@ -4,6 +4,7 @@
 import {canonical,own} from './identity.mjs';
 import {finiteCallables} from './finite-callables.mjs';
 import {finitePresence} from './finite-presence.mjs';
+import {createArrayCallContexts} from './finite-array-call-contexts.mjs';
 
 // The production state-copy seam also admits bounded component budget checks;
 // its version tokens are proof identities, never synthetic Source expressions.
@@ -42,7 +43,7 @@ export function buildFiniteArrayReaching(hir,plan,charge) {
       charge();const {value,path}=stack.pop();if(!value||typeof value!=='object')continue;
       if(['arrayStoreDenseChecked','arrayResizeChecked','arrayCompoundAssignment','arrayUpdate'].includes(value.kind))effect.writes=true;
       if(value.kind==='call')for(const id of value.receiver?(calls.get(path)?.targets??[]).map(row=>row.functionId):[value.target]) {
-        if(id!==hir.intrinsics.readSpan.id){effect.callees.add(id);contexts.set(path+'\0'+id,{target:id,possible:true,state:new Map(),constants:new Map()});}
+        if(id!==hir.intrinsics.readSpan.id){effect.callees.add(id);contexts.set(path+'\0'+id,{target:id,possible:true,state:new Map(),constants:new Map(),truths:new Map()});}
       }
       if(value.kind==='construct'||value.kind==='superConstruct')effect.writes=true;
       for(const [key,child] of Object.entries(value))if(child&&typeof child==='object')stack.push({value:child,path:path+'/'+key});
@@ -53,6 +54,7 @@ export function buildFiniteArrayReaching(hir,plan,charge) {
     charge();if(!effects.has(id)||effects.get(id).writes){row.writes=true;changed=true;break;}
   }}
   const clone=state=>copyArrayReachingState(state,charge);
+  const transfers=createArrayCallContexts(charge,clone,(fn,state,bindings)=>analyze(fn,state,bindings,true,false));
   function copyBindings(bindings) {
     const result=new Map();for(const [id,value] of bindings){charge();result.set(id,value);}return result;
   }
@@ -80,11 +82,12 @@ export function buildFiniteArrayReaching(hir,plan,charge) {
   }
   function parameters(fn,incoming=[]) {
     const env=new Map();for(const parameter of fn.parameters) {
-      let constant;for(const [index,row] of incoming.entries()) {
-        charge();const candidate=row.constants.get(parameter.id);if(index===0)constant=candidate;else if(constant!==candidate)constant=undefined;
+      let constant,truth;for(const [index,row] of incoming.entries()) {
+        charge();const candidate=row.constants.get(parameter.id),boolean=row.truths?.get(parameter.id);
+        if(index===0){constant=candidate;truth=boolean;}else{if(constant!==candidate)constant=undefined;if(truth!==boolean)truth=undefined;}
       }
       charge();env.set(parameter.id,{symbol:fn.id+'/parameter/'+parameter.id,
-        ...(arrayCarrier(parameter.type)?{owner:fn.id+'/parameter/'+parameter.id}:{}),...(constant!==undefined?{constant}:{})});
+        ...(arrayCarrier(parameter.type)?{owner:fn.id+'/parameter/'+parameter.id}:{}),...(constant!==undefined?{constant}:{}),...(truth!==undefined?{truth}:{})});
     }return env;
   }
   function predicateTruth(value,path) {
@@ -95,8 +98,8 @@ export function buildFiniteArrayReaching(hir,plan,charge) {
     else if(['undefined','null'].includes(value.left.kind))classified=presence(path+'/right',value.left.kind);
     return classified&&classified.present!==classified.absent?(value.operator==='==='?classified.absent:classified.present):undefined;
   }
-  function analyze(fn,initial,env,active,applyCalls,recordReads=true,collectAll=false) {
-    const exits=[];
+  function analyze(fn,initial,env,applyCalls,recordReads=true,collectAll=false) {
+    const exits=[],mutated=new Set();let complete=true,invalidateAll=false;
     const origin=value=>({source:fn.sourcePath,...value.range});
     const key=index=>index?.constant!==undefined?'c:'+index.constant:index?.symbol?'s:'+index.symbol:null;
     function version(path,value,node,owner,index,kind) {
@@ -105,7 +108,7 @@ export function buildFiniteArrayReaching(hir,plan,charge) {
       // pass. Contextual application never rewrites that version's identity.
       if(!writes.has(id))writes.set(id,{id,node,owner,index,kind,origin:origin(value)});return id;
     }
-    function invalidate(state) {for(const row of state.values()){charge();row.slots.clear();row.length=null;}}
+    function invalidate(state) {invalidateAll=true;for(const row of state.values()){charge();row.slots.clear();row.length=null;}}
     function load(value,path,state,receiver,index) {
       const memory=state.get(receiver?.owner),slot=key(index),missing=memory?.length!==null&&memory?.length!==undefined&&
         index?.constant!==undefined&&index.constant>=memory.length,
@@ -120,6 +123,7 @@ export function buildFiniteArrayReaching(hir,plan,charge) {
       return {symbol:path};
     }
     function store(value,path,node,state,receiver,index) {
+      if(receiver?.owner){charge();mutated.add(receiver.owner);}
       const id=version(path,value,node,receiver?.owner??null,key(index),'store');
       if(!receiver?.owner){invalidate(state);return;}
       if(!state.has(receiver.owner))state.set(receiver.owner,{length:null,slots:new Map()});
@@ -163,6 +167,7 @@ export function buildFiniteArrayReaching(hir,plan,charge) {
         if(value.kind==='arrayCompoundAssignment'||value.kind==='arrayUpdate')load({...value,range:value.target.range},path+'/old-value',state,receiver,index);
         const rhs=value.value?child('value'):{symbol:path};
         if(value.kind==='arrayResizeChecked') {
+          if(receiver?.owner){charge();mutated.add(receiver.owner);}
           const memory=state.get(receiver.owner);
           if(!memory){invalidate(state);return rhs;}
           if(rhs.constant!==undefined&&memory.length!==null&&rhs.constant<=memory.length) {
@@ -187,11 +192,11 @@ export function buildFiniteArrayReaching(hir,plan,charge) {
             available!==undefined&&available!==null&&start.constant+length.constant<=available?
             {owner:owner.owner,offset:(owner.offset??0)+start.constant,limit:length.constant,symbol:path}:{};
         }
-        const targets=[];let unknown=false,modifies=false,recursive=false,ordinal,consistent=true;
+        const targets=[];let unknown=false,modifies=false,ordinal,consistent=true;
         if(receiver)for(const target of calls.get(path)?.targets??[]){charge();targets.push(target.functionId);}
         else {charge();targets.push(value.target);}
         for(const [index,id] of targets.entries()) {
-          charge();unknown||=!effects.has(id);modifies||=effects.get(id)?.writes??false;recursive||=active.has(id);
+          charge();unknown||=!effects.has(id);modifies||=effects.get(id)?.writes??false;
           const returned=aliases.get(id);if(index===0)ordinal=returned;else consistent&&=ordinal===returned;
         }
         const actual=[];if(receiver){charge();actual.push(receiver);}for(const arg of args){charge();actual.push(arg);}
@@ -200,9 +205,10 @@ export function buildFiniteArrayReaching(hir,plan,charge) {
         // this caller; contextual visits cannot overwrite canonical contexts.
         if(recordReads&&!collectAll)for(const id of targets) {
           charge();const callee=byFunction.get(id);if(!callee)continue;
-          const incoming=new Map(),constants=new Map();
+          const incoming=new Map(),constants=new Map(),truths=new Map();
           for(const [index,parameter] of callee.parameters.entries()) {
             charge();const argument=actual[index];if(argument?.constant!==undefined)constants.set(parameter.id,argument.constant);
+            if(typeof argument?.truth==='boolean')truths.set(parameter.id,argument.truth);
             const memory=state.get(argument?.owner);
             // A span's rebased indices need their own incoming view mapping;
             // copying the backing owner's absolute slots would invent a read.
@@ -219,23 +225,24 @@ export function buildFiniteArrayReaching(hir,plan,charge) {
             }
             incoming.set(id+'/parameter/'+parameter.id,{length:memory.length,slots});
           }
-          contextWrites.set(path+'\0'+id,{target:id,possible:true,state:incoming,constants});
+          contextWrites.set(path+'\0'+id,{target:id,possible:true,state:incoming,constants,truths});
         }
-        if(!targets.length||unknown)invalidate(state);
-        else if(modifies) {
-          if(!applyCalls||recursive)invalidate(state);
+        if(!targets.length||unknown){complete=false;invalidate(state);}
+        // Even a read-only recursive target needs a real normal continuation;
+        // its absence of writes cannot supply a productive call witness.
+        else if(applyCalls||modifies) {
+          if(!applyCalls)invalidate(state);
           else {
-            let merged;
+            let merged,pending=false;
             for(const id of targets) {
-              charge();const callee=byFunction.get(id),local=new Map(),nextActive=new Set();
-              for(const parent of active){charge();nextActive.add(parent);}nextActive.add(id);
-              for(const [index,parameter] of callee.parameters.entries()) {
-                charge();local.set(parameter.id,actual[index]??{});
-              }
-              const result=analyze(callee,clone(state),local,nextActive,true,false);
-              merged=merged?join(merged,result):result;
+              charge();const result=transfers.resolve(byFunction.get(id),actual,state);
+              if(!result){pending=true;continue;}
+              invalidateAll||=result.invalidateAll;
+              for(const owner of result.mutated){charge();mutated.add(owner);}
+              merged=merged?join(merged,result.state):result.state;
             }
-            state.clear();for(const [id,row] of merged){charge();state.set(id,row);}
+            if(pending){complete=false;invalidate(state);}
+            else {state.clear();for(const [id,row]of merged){charge();state.set(id,row);}}
           }
         }
         return ordinal!==null&&ordinal!==undefined&&consistent?actual[ordinal]??{}:{symbol:path};
@@ -317,14 +324,15 @@ export function buildFiniteArrayReaching(hir,plan,charge) {
     const fallthrough=statements(fn.body,fn.id+'/body',initial,env);if(fallthrough)exits.push(fallthrough);
     let result=null;for(const exit of exits){charge();result=result?join(result,exit):exit;}
     // A nonproductive recursive/divergent path is not an initialized-state
-    // witness. The active-call guard above retains pending rather than an
+    // witness. Unresolved contextual dependencies retain pending rather than an
     // unbounded HIR walk or a made-up normal return.
-    if(!result){invalidate(initial);return initial;}return result;
+    if(!result){invalidate(initial);return {state:initial,complete,productive:false,invalidateAll,mutated};}
+    return {state:result,complete,productive:true,invalidateAll,mutated};
   }
   // Canonical Source versions stay isolated from contextual return transfers.
   // Begin every real incoming site unknown; meet all sites before importing a
   // function's memory or literal index facts. Host/method entries stay unknown.
-  for(const fn of functions)analyze(fn,new Map(),parameters(fn),new Set([fn.id]),false,true,true);
+  for(const fn of functions)analyze(fn,new Map(),parameters(fn),false,true,true);
   const canonicalReads=new Map();for(const [id,row] of reads){charge();canonicalReads.set(id,{...row,status:'pending',versions:[],sources:[]});}
   const exported=new Set(hir.exports.map(row=>row.functionId));
   function ledger() {
@@ -335,7 +343,8 @@ export function buildFiniteArrayReaching(hir,plan,charge) {
         }slots.sort(([a],[b])=>{charge();return a<b?-1:a>b?1:0;});state.push([owner,memory.length,slots]);
       }state.sort(([a],[b])=>{charge();return a<b?-1:a>b?1:0;});
       const constants=[];for(const pair of row.constants){charge();constants.push(pair);}constants.sort(([a],[b])=>{charge();return a<b?-1:a>b?1:0;});
-      snapshot.push([site,row.target,row.possible,state,constants]);
+      const truths=[];for(const pair of row.truths??[]){charge();truths.push(pair);}truths.sort(([a],[b])=>{charge();return a<b?-1:a>b?1:0;});
+      snapshot.push([site,row.target,row.possible,state,constants,truths]);
     }return canonical(snapshot);
   }
   let before;
@@ -346,9 +355,9 @@ export function buildFiniteArrayReaching(hir,plan,charge) {
       const incoming=[];for(const row of contexts.values()){charge();if(row.target===fn.id&&row.possible)incoming.push(row);}
       if(exported.has(fn.id)||fn.ownerType||!incoming.length)incoming.push({state:new Map(),constants:new Map()});
       let state;for(const row of incoming){charge();state=state?join(state,row.state):clone(row.state);}
-      analyze(fn,state,parameters(fn,incoming),new Set([fn.id]),true);
+      analyze(fn,state,parameters(fn,incoming),true);
     }
-    for(const [site,row] of contexts){charge();contexts.set(site,contextWrites.get(site)??{target:row.target,possible:false,state:new Map(),constants:new Map()});}
+    for(const [site,row] of contexts){charge();contexts.set(site,contextWrites.get(site)??{target:row.target,possible:false,state:new Map(),constants:new Map(),truths:new Map()});}
   }while(before!==ledger());
   return own({reads:[...reads.values()].sort((a,b)=>a.node<b.node?-1:1),writes:[...writes.values()].sort((a,b)=>a.id<b.id?-1:1),
     qualification:'ordered successful version sources; unresolved indices/aliases/callee effects remain pending; no independent runtime guard or borrow admission'});
