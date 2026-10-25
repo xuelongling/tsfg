@@ -12,6 +12,10 @@ const within = (root, file) => {
 };
 const nativeProduct = /(?:^|\/)(?:aot[^/]*|main|native_cost)\.cpp$/i;
 const backendLibrary = /(?:^|\/)(?:lib)?LLVM(?:AArch64|AMDGPU|ARC|ARM|AVR|BPF|CSKY|DirectX|Hexagon|Lanai|LoongArch|M68k|Mips|MSP430|NVPTX|PowerPC|RISCV|Sparc|SPIRV|SystemZ|VE|WebAssembly|X86|XCore|Xtensa|CodeGen|AsmPrinter|SelectionDAG|GlobalISel|ExecutionEngine|MCJIT|Orc|JITLink|RuntimeDyld)[^/]*\.(?:lib|a|obj|o|dll)$/i;
+// CodeGenTypes supplies shared MVT/LLT for the required mlir-tblgen generator,
+// not code emission. Only its standard static build outputs have this role;
+// source registration, physical identity and SHA admission still apply.
+const sharedTypeLibrary = /^lib\/(?:LLVMCodeGenTypes\.lib|libLLVMCodeGenTypes\.a)$/i;
 // TargetParser's registered shared generators consume these TableGen families
 // even without selecting a code generator. This is source selection only: the
 // actual planned and compiler-discovered dependencies must still reconcile.
@@ -102,7 +106,9 @@ export function assertMlirRoleDependency(command, absolute, { source, product, b
     reject('Static dependency selected an unqualified LLVM backend: ' + name);
   if (within(product, absolute) && nativeProduct.test(path.relative(product, absolute).replaceAll('\\', '/')))
     reject('Static dependency selected a native product implementation: ' + name);
-  if (backendLibrary.test(name) ||
+  const sharedTypes = within(build, absolute) &&
+    sharedTypeLibrary.test(path.relative(build, absolute).replaceAll('\\', '/'));
+  if ((backendLibrary.test(name) && !sharedTypes) ||
       (within(build, absolute) && /(?:^|\/)(?:lib\/Target\/(?!CMake)|[^/]*tsfg-core-ir(?:\.dir|\.exe|\.pdb))/.test(name)))
     reject('Static dependency selected a native/backend build artifact: ' + name);
 }

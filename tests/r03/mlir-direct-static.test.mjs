@@ -199,6 +199,15 @@ test('planned/final source and link admission rejects native and backend edges b
   }
   for (const file of ['llvm/lib/Support/Process.cpp', 'llvm/lib/Target/ARM/ARMCallingConv.td'])
     assertMlirRoleDependency(staticRole, path.join(roots.source, file), roots);
+  // The required mlir-tblgen generator links shared MVT/LLT types, not an emitter.
+  for (const name of ['LLVMCodeGenTypes.lib', 'libLLVMCodeGenTypes.a'])
+    assert.doesNotThrow(() => assertMlirRoleDependency(staticRole, path.join(roots.build, 'lib', name), roots));
+  for (const file of [path.join(roots.build, 'lib/LLVMCodeGenTypesExtra.lib'),
+    path.join(roots.build, 'lib/LLVMCodeGenTypes.dll'), path.join(roots.build, 'lib/LLVMCodeGenTypes.obj'),
+    path.join(roots.build, 'other/LLVMCodeGenTypes.lib'), path.join(root, 'LLVMCodeGenTypes.lib'),
+    path.join(roots.build, 'lib/LLVMSelectionDAG.lib'), path.join(roots.build, 'lib/LLVMAsmPrinter.lib'),
+    path.join(roots.build, 'lib/LLVMGlobalISel.lib'), path.join(roots.build, 'lib/LLVMOrcJIT.lib')])
+    assert.throws(() => assertMlirRoleDependency(staticRole, file, roots), { issueCode: 'mlir-source-integrity' });
   const physical = forbidden[0];
   const cmakeTrace = [{ file: physical, line: 1, cmd: 'cmake_language', args: ['EVAL','CODE','set(x y)'] },
     { file: physical + ':1:EVAL', line: 1, cmd: 'set', args: ['x','y'] }].map(row => JSON.stringify(row)).join('\n');
