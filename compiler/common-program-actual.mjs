@@ -116,8 +116,10 @@ export function analyzeCommonGraphs({model,plans},records=null) {
             const mergeSlots=keys=>{const result=a.empty();for(const key of keys){spend();a.merge(result,state.heap.get(key)??a.empty());}return result;};
             if(name==='env_alloc'){const ref=c.activation+'/'+fn+'/environment/'+op.result;value=literal('env:'+p.layout);value.refs.add(ref);objects.set(ref,{type:'env:'+p.layout,weak:repeated.has(fn)||cyclicBlocks.has(fn+'/'+block.name)});if(args.length)put(ref+'/parent',args[0]);}
             else if(name==='env_parent'){for(const ref of args[0].refs){spend();a.merge(value,state.heap.get(ref+'/parent')??a.empty());}}
-            else if(name==='env_load'||name==='env_init'||name==='env_store'){for(const ref of args[0].refs){spend();const key=ref+'/slot/'+p.key;check(objects.get(ref)?.type==='env:'+p.layout,'environment');
-              if(name==='env_load'){check(state.heap.has(key),'environment-initialization');a.merge(value,state.heap.get(key));}else {put(key,args[1],args[0].refs.size===1&&!objects.get(ref).weak);observe('binding/'+p.binding,args[1]);}}}
+            else if(name==='env_load'){const selected=a.environmentSlot(args[0],p.layout,p.layout,p.key,state.heap,objects);
+              check(selected.valid,'environment');check(selected.complete,'environment-initialization');value=selected.value;}
+            else if(name==='env_init'||name==='env_store'){for(const ref of args[0].refs){spend();const key=ref+'/slot/'+p.key;check(objects.get(ref)?.type==='env:'+p.layout,'environment');
+              put(key,args[1],args[0].refs.size===1&&!objects.get(ref).weak);observe('binding/'+p.binding,args[1]);}}
             else if(name==='make_closure'){value=literal(op.view);const environments=p.environment_layout?args[0].refs:new Set([null]);for(const ref of environments){spend();if(ref){check(objects.get(ref)?.type==='env:'+p.environment_layout,'environment');for(const slot of model.environments.get(p.environment_layout).slots){spend();check(state.heap.has(ref+'/slot/'+slot.key),'environment-initialization');}value.refs.add(ref);}value.pairs.set(p.function_id+'\0'+(ref??''),{functionId:p.function_id,environment:ref});}}
             else if(name==='constant')value=literal(op.view,0,Number(p.decimal));
             else if(name==='floating')value=literal(op.view);
@@ -226,7 +228,7 @@ export function analyzeCommonGraphs({model,plans},records=null) {
     }
     do{changed=false;for(const c of contexts.values())execute(c);}while(changed);
     let borrows=null;
-    if(!bounded&&records){const observer=commonBorrowObservations({model,records,objects});
+    if(!bounded&&records){const observer=commonBorrowObservations({model,records,objects,readEnvironmentSlot:(selected,start,target,key,heap)=>a.environmentSlot(selected,start,target,key,heap,objects)});
       for(const c of contexts.values())execute(c,observer);check(!changed,'ssa','final actual observation changed the fixed point');borrows=observer.finish();}
     return {contexts,observed,objects,operations,callTargets,borrows};
   }

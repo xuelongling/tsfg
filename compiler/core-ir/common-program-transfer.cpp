@@ -45,12 +45,13 @@ bool ActualCheck::instruction(ActualContext &context,const Operation &op,size_t 
     }
   }else if(name=="env_init"||name=="env_load"||name=="env_store"){
     const auto layout=string(field(props,"layout")),key=string(field(props,"key"));
-    for(const auto &ref:args[0].objects){
+    if(name=="env_load"){
+      bool complete=false;value=environmentSlot(args[0],layout,layout,key,state.heap,complete);
+      if(!e.message.empty()||!need(complete,"actual environment cell address is uninitialized or differs from its layout"))return false;
+    }else for(const auto &ref:args[0].objects){
       if(!step()||!need(objects.count(ref)&&objects.at(ref).type=="env:"+layout,"actual environment cell owner differs"))return false;
-      const auto slot=ref+"/slot/"+key;auto stored=state.heap.find(slot);
-      if(name=="env_load"){
-        if(!need(stored!=state.heap.end(),"actual environment cell is uninitialized"))return false;merge(value,stored->second);
-      }else if(!put(slot,args[1],!objects.at(ref).weak&&args[0].objects.size()==1))return false;
+      const auto slot=ref+"/slot/"+key;
+      if(!put(slot,args[1],!objects.at(ref).weak&&args[0].objects.size()==1))return false;
     }
     if(name!="env_load")observe(string(field(props,"binding")),args[1]);
   }else if(name=="make_closure"){

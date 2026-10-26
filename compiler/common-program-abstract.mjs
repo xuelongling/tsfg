@@ -84,9 +84,33 @@ export function commonAbstract(model) {
     }
     return result;
   }
+  function environmentSlot(selected,start,target,slotKey,heap,objects){
+    spend(selected.refs.size+selected.tags.size+1);const pending=[],seen=new Set(),value=empty();
+    let complete=!selected.unknown&&selected.refs.size>0,valid=!selected.unknown,hasSlot=false;
+    const targetLayout=model.environments.get(target);
+    for(const slot of targetLayout?.slots??[]){spend();hasSlot ||= slot.key===slotKey;}
+    if(!hasSlot)return {value,complete:false,valid:false};
+    for(const tag of selected.tags){spend();if(tag!=='env:'+start){valid=false;complete=false;}}
+    for(const ref of selected.refs)pending.push({ref,layout:start});
+    for(let i=0;i<pending.length;i++){
+      spend();const row=pending[i],token=row.ref+'\0'+row.layout;if(seen.has(token))continue;seen.add(token);
+      const layout=model.environments.get(row.layout);
+      if(!layout||objects.get(row.ref)?.type!=='env:'+row.layout){valid=false;complete=false;continue;}
+      if(row.layout===target){
+        const stored=heap.get(row.ref+'/slot/'+slotKey);if(!stored){complete=false;continue;}merge(value,stored);continue;
+      }
+      const parent=heap.get(row.ref+'/parent');
+      if(!layout.parent||!parent){complete=false;continue;}
+      if(parent.unknown||!parent.refs.size)complete=false;
+      for(const tag of parent.tags){spend();if(tag!=='env:'+layout.parent){valid=false;complete=false;}}
+      check(pending.length+parent.refs.size<=65536,'limit');spend(parent.refs.size);
+      for(const ref of parent.refs)pending.push({ref,layout:layout.parent});
+    }
+    return {value,complete,valid};
+  }
   const state=()=>({values:new Map(),heap:new Map()});
   const clone=s=>({values:snapshot(s.values),heap:snapshot(s.heap)});
   const join=(to,from)=>{const a=joinHeap(to.values,from.values),b=joinHeap(to.heap,from.heap);return a||b;};
-  return {empty,key,copy,merge,literal,snapshot,joinHeap,fields,declared,reachable,state,clone,join,
+  return {empty,key,copy,merge,literal,snapshot,joinHeap,fields,declared,reachable,environmentSlot,state,clone,join,
     arrayType:element=>arrays.get(element),id:value=>sha256(canonical(value))};
 }

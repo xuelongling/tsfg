@@ -3,8 +3,10 @@
 // Only compact identities/events leave that replay; point heaps are not kept.
 import {commonBorrowGraph} from './common-program-borrows.mjs';
 import {commonCheck as check} from './common-program-common.mjs';
-export function commonBorrowObservations({model,records,objects}) {
+export function commonBorrowObservations({model,records,objects,readEnvironmentSlot=null}) {
   const {spend,types}=model,graph=commonBorrowGraph(spend),returns=new Map(),calls=[],callReturns=new Map(),contexts=new Set(),components=new Map(),allocations=new Map(),creations=new Map();
+  const slotLayouts=new Map();spend(model.environments?.size??0);
+  for(const env of model.environments?.values()??[]){spend(env.slots.length);for(const slot of env.slots){check(!slotLayouts.has(slot.key)||slotLayouts.get(slot.key)===env.id,'environment');slotLayouts.set(slot.key,env.id);}}
   const entry=c=>c.id+'/entry',block=(c,name)=>c.id+'/block/'+name;
   const origin=(c,op)=>({functionId:c.plan.owner.id,primary:{sourceId:c.plan.owner.sourcePath,...op.range}});
   const kind=ref=>types.get(objects.get(ref)?.type)?.kind;
@@ -130,6 +132,19 @@ export function commonBorrowObservations({model,records,objects}) {
     // independently close the GC retention edge, in a unique actual frame.
     return Boolean(span&&array&&array.kind==='array'&&span.element===array.element&&!span.owner.pending&&span.owner.ids.size===1&&span.owner.ids.has(owner));
   }
+  function captureEffect(at,target,slot,args,heap,indirect,where,eligible){
+    spend();const start=model.functions?.get(target)?.lexicalEnvironment,owner=slotLayouts.get(slot);
+    if(!start||!owner||!readEnvironmentSlot){graph.effect(at,{ids:new Set(),pending:true},where,eligible);return;}
+    let selected=args[0];
+    if(indirect){
+      const operand=args[0];spend((operand?.pairs?.size??0)+1);selected={refs:new Set(),tags:new Set(['env:'+start]),unknown:!operand||operand.unknown};let found=false;
+      for(const pair of operand?.pairs?.values()??[]){spend();if(pair.functionId!==target)continue;found=true;if(pair.environment)selected.refs.add(pair.environment);else selected.unknown=true;}
+      if(!found)selected.unknown=true;
+    }
+    if(!selected){graph.effect(at,{ids:new Set(),pending:true},where,eligible);return;}
+    const result=readEnvironmentSlot(selected,start,owner,slot,heap);if(!result.complete)result.value.unknown=true;
+    effect(at,result.value,heap,where,eligible);
+  }
   function callEffects(at,c,op,args,state,eligible=null) {
     const name=op.name,p=op.properties,where=origin(c,op),indirect=name.endsWith('invoke_indirect');let targets;
     if(indirect){spend(p.targets.functions.length);targets=p.targets.functions.map(row=>row.function_id);}
@@ -143,7 +158,7 @@ export function commonBorrowObservations({model,records,objects}) {
       for(const id of upper.globals.writes){spend();const value=state.heap.get('global:'+id);if(value)effect(at,value,state.heap,where,eligible);}
       if(upper.facets.unknownHost){graph.effect(at,{ids:new Set(),pending:true},where,eligible);
         for(const value of args)graph.escape(at,escapingSpans(value,state.heap),false,where);}
-      for(const capture of upper.captures){spend();if(capture.structural)graph.effect(at,{ids:new Set(),pending:true},where,eligible);}
+      for(const capture of upper.captures){spend();if(capture.structural)captureEffect(at,id,capture.slot,args,state.heap,indirect,where,eligible);}
     }
   }
   function prepareCall(at,c,op,args,state,connected) {

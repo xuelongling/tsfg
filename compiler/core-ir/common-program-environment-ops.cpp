@@ -2,6 +2,36 @@
 #include "common-program-plan.h"
 #include "environment-contracts.h"
 namespace tsfg::commonProgram {
+ActualValue ActualCheck::environmentSlot(const ActualValue &selected,const std::string &start,const std::string &owner,
+    const std::string &key,const ActualHeap &heap,bool &addressComplete){
+  addressComplete=true;std::vector<std::string> path;std::set<std::string> visited;auto layout=start;
+  // Only the independently validated lexical layout chain names addresses.
+  // A stable slot key never selects all activation instances in the heap.
+  while(true){
+    if(!step())return {};if(layout.empty()||!environments.count(layout)||!visited.insert(layout).second){addressComplete=false;return {};}
+    path.push_back(layout);if(layout==owner)break;layout=string(field(*environments.at(layout),"parent"));
+  }
+  bool declared=false;
+  for(const auto &slot:items(field(*environments.at(owner),"slots"))){if(!step())return {};declared|=string(field(slot,"key"))==key;}
+  if(!declared){addressComplete=false;return {};}
+  auto current=copy(selected);
+  for(size_t level=0;level<path.size();++level){
+    if(!step(current.tags.size()+current.objects.size()+1))return {};const auto &expected=path[level];
+    addressComplete&=!current.unknown&&!current.callableTop&&current.cells.empty()&&current.callables.empty()&&!current.objects.empty();
+    for(const auto &tag:current.tags)addressComplete&=tag=="env:"+expected;
+    ActualValue next;const bool last=level+1==path.size();
+    for(const auto &ref:current.objects){
+      if(!step())return {};auto object=objects.find(ref);
+      if(object==objects.end()||object->second.type!="env:"+expected){addressComplete=false;continue;}
+      const auto slot=ref+(last?"/slot/"+key:"/parent");auto stored=heap.find(slot);
+      if(stored==heap.end()){addressComplete=false;continue;}merge(next,stored->second);
+    }
+    // A weak object can still have precise current alternatives. Keep those
+    // values; address uncertainty is independent of a stored unknown payload.
+    current=std::move(next);
+  }
+  return current;
+}
 SourcePlan::Reg SourcePlan::environment(const std::string &layout,SourceAnchor r){
   const std::pair<std::string,Reg> available[]={
     {string(field(owner,"lexicalEnvironment")),lexicalEnvironment},

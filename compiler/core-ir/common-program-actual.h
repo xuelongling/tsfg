@@ -56,6 +56,7 @@ struct ActualCheck {
   std::string carrier(const ActualValue &);
   bool environmentRequirements();
   bool environmentGraph(const Function &);
+  ActualValue environmentSlot(const ActualValue &,const std::string &,const std::string &,const std::string &,const ActualHeap &,bool &);
   std::string callableSignature(const std::string &);
   bool indirectAbi(const Function &,const Operation &,std::vector<std::string> &,std::string &);
   std::string joinCarriers(const std::vector<std::string> &);

@@ -37,6 +37,19 @@ method/indirect target, rather than a narrower observed arm. Parameter mapping
 accounts separately for an indirect callee and a lexical hidden environment.
 Unknown effects do not acquire permission from a missing actual target.
 
+Capture effects resolve the current slot from each permitted target's actual
+code/environment pair, or its direct hidden environment argument. The consumer
+follows the verified typed parent chain to the capture's owning layout. Separate
+instances of one lexical definition retain separate slot identities. Missing
+target environments and incomplete parent paths keep unknown effects alongside
+known owner alternatives; TOP and Host effects retain their existing boundary.
+The full permitted target table remains unchanged.
+
+The actual environment-load transfer and capture-effect mapping share this one
+slot query. Effect owners are may facts, including known current slots of weak
+environments. Independent owner survival still requires the separate must proof
+described below.
+
 A complete call graph can treat Span arguments as transport. Callee reads and
 structural changes are still checked in their actual order. Every permitted
 target must be connected and free of unknown Host effects; otherwise the call

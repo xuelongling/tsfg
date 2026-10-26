@@ -31,6 +31,7 @@ struct BorrowTrace::Impl {
   std::vector<Return> returns;
   std::vector<Call> calls;
   std::map<Id,Boundary> boundaries;std::map<Id,std::set<std::string>> connectedTargets;
+  std::map<std::string,std::string> captureLayouts;
   std::set<Id> orderedCalls;std::vector<Barrier> barriers;
   std::optional<Location> lifetime;
   explicit Impl(ActualCheck &check):c(check),flow(check.p.remaining){
@@ -40,6 +41,11 @@ struct BorrowTrace::Impl {
       if(!step())return;if(!context.root)continue;
       for(const auto &value:context.arguments){entryObjects(value);if(!c.e.message.empty())return;}
       for(const auto &[slot,value]:context.entry){if(!step())return;entryObjects(value);if(!c.e.message.empty())return;}
+    }
+    for(const auto &[id,layout]:c.environments){
+      if(!step())return;for(const auto &slot:items(field(*layout,"slots"))){
+        if(!step()||!c.need(captureLayouts.emplace(string(field(slot,"key")),id).second,"borrow capture has duplicate lexical slot authority"))return;
+      }
     }
   }
   void entryObjects(const ActualValue &value){
@@ -265,8 +271,18 @@ struct BorrowTrace::Impl {
         if(i+offset+hidden<args.size())merge(boundary.owner,arrays(args[i+offset+hidden],heap));else boundary.owner.pending=true;
       }
       for(const auto &global:upper.writes){if(!step())return;auto value=heap.find("global:"+global);if(value!=heap.end())merge(boundary.owner,arrays(value->second,heap));}
+      const auto lexical=string(field(*c.sourceFunctions.at(id),"lexicalEnvironment"));ActualValue selected;
+      if(op.name=="invoke"&&!lexical.empty()&&!args.empty())selected=c.copy(args[0]);
+      else if(op.name=="invoke_indirect"&&!args.empty()){
+        selected.unknown=args[0].unknown||args[0].callableTop;
+        for(const auto &[code,environment]:args[0].callables){if(!step())return;if(code!=id)continue;
+          if(environment.empty()||lexical.empty())selected.unknown=true;else{selected.tags.insert("env:"+lexical);selected.objects.insert(environment);}
+        }
+      }else selected.unknown=true;
       for(const auto &[slot,access]:upper.captures){if(!step())return;if(!access.structural)continue;
-        for(const auto &[key,value]:heap){if(!step())return;if(llvm::StringRef(key).ends_with("/slot/"+slot))merge(boundary.owner,arrays(value,heap));}
+        if(!captureLayouts.count(slot)){boundary.owner.pending=true;continue;}
+        bool complete=false;auto value=c.environmentSlot(selected,lexical,captureLayouts.at(slot),slot,heap,complete);
+        if(!c.e.message.empty())return;value.unknown|=!complete;merge(boundary.owner,arrays(value,heap));
       }
       if(upper.unknownHost){boundary.conservative=true;boundary.owner.pending=true;}
     }
