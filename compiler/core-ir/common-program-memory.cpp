@@ -50,15 +50,48 @@ ActualValue ActualCheck::valueCopy(const ActualValue &source,ActualState &state,
     }
   }return value;
 }
-ActualContext *ActualCheck::context(const std::string &target,const std::vector<ActualValue> &args,const ActualHeap &heap,bool root,bool &changed,const std::string &activation){
+bool ActualCheck::repeatedAllocation(const ActualContext &context,size_t block)const{
+  return context.repeated||context.activation.empty()||repeatingFunctions.count(context.function->id)||
+    repeatingBlocks.count(context.function->id+"/"+std::to_string(block));
+}
+std::string ActualCheck::allocationSite(const ActualContext &context,llvm::StringRef kind,uint16_t result){
+  const auto &fn=context.function->id;
+  if(!step((context.activation.size()+fn.size()+kind.size())/64+3))return {};
+  return (context.activation.empty()?"unresolved/"+fn:context.activation)+"/"+fn+"/"+kind.str()+"/"+std::to_string(result);
+}
+std::string ActualCheck::allocate(const ActualContext &context,const Operation &op,size_t block,llvm::StringRef kind,const std::string &type){
+  auto ref=allocationSite(context,kind,op.result);if(!e.message.empty()||!step())return {};
+  auto found=objects.find(ref);const bool weak=repeatedAllocation(context,block);
+  if(found==objects.end())objects.emplace(ref,ActualObject{type,weak});
+  else{if(!need(found->second.type==type,"allocation site changed its actual type"))return {};found->second.weak|=weak;}
+  return ref;
+}
+std::string ActualCheck::callActivation(const ActualContext &context,const Operation &op,size_t block,const std::string &target,bool &repeated){
+  if(!step(context.function->id.size()/64+1))return {};
+  auto site=callSites.find(&op);repeated=repeatedAllocation(context,block)||cyclicFunctions.count(target)||
+    site==callSites.end()||unresolvedCalls.count(&op);
+  if(cyclicFunctions.count(target)){if(!step(target.size()/64+1))return {};return "recursive/"+target;}
+  std::string fallback;const std::string *location;
+  if(site!=callSites.end())location=&site->second;
+  else{
+    if(!step(context.function->id.size()/64+3))return {};
+    fallback=context.function->id+"/unresolved/"+std::to_string(block)+"/"+std::to_string(op.range.start)+":"+std::to_string(op.range.end);location=&fallback;
+  }
+  if(!step((context.activation.size()+location->size()+target.size())/64+4))return {};
+  return "activation/"+digest(canonical(Object{{"parent",context.activation},{"site",*location},{"target",target}}));
+}
+ActualContext *ActualCheck::context(const std::string &target,const std::vector<ActualValue> &args,const ActualHeap &heap,bool root,bool &changed,const std::string &activation,bool repeated){
   if(!step(args.size()+1)||!need(functions.count(target)&&functions.at(target)->blocks[0].parameters.size()==args.size(),"actual call context arity differs"))return nullptr;
   auto entry=reachable(args,heap);Array arguments,memory;
   for(const auto &v:args){if(!step())return nullptr;arguments.push_back(key(v));}
   for(const auto &[id,v]:entry){if(!step())return nullptr;memory.push_back(Array{id,key(v)});}
-  const auto id=target+"/"+digest(canonical(Object{{"activation",activation},{"args",std::move(arguments)},{"memory",std::move(memory)}}));
+  if(!step((activation.size()+target.size())/64+1))return nullptr;const auto physical=root?"entry/"+target:activation;
+  auto upper=p.fixedEffects.find(target);repeated|=physical.empty()||cyclicFunctions.count(target)||upper==p.fixedEffects.end()||upper->second.unknownHost;
+  if(root)repeated=cyclicFunctions.count(target)||upper==p.fixedEffects.end()||upper->second.unknownHost;
+  const auto id=target+"/"+digest(canonical(Object{{"activation",physical},{"repeated",repeated},{"args",std::move(arguments)},{"memory",std::move(memory)}}));
   auto found=contexts.find(id);if(found!=contexts.end()){found->second.called|=!root;return &found->second;}
   if(!need(contexts.size()<4096,"actual call-context bound exceeded"))return nullptr;
-  ActualContext c;c.id=id;c.function=functions.at(target);c.root=root;c.called=!root;c.entry=std::move(entry);
+  ActualContext c;c.id=id;c.function=functions.at(target);c.root=root;c.called=!root;c.entry=std::move(entry);c.activation=physical;c.repeated=repeated;
   for(const auto &v:args)c.arguments.push_back(copy(v));auto inserted=contexts.emplace(id,std::move(c));changed=true;return &inserted.first->second;
 }
 bool ActualCheck::execute(ActualContext &context,bool conditional,bool &changed){

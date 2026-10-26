@@ -12,27 +12,25 @@ import {commonBorrowObservations} from './common-program-borrow-observations.mjs
 const undefinedId=sha256('tsfg.type\0undefined');
 export function analyzeCommonGraphs({model,plans},records=null) {
   const {spend,types}=model,elementSeeds=new Map(),a=commonAbstract({...model,elementSeeds}),byId=new Map(plans.map(plan=>[plan.owner.id,plan])),entryReferences=commonEntryReferences(model.hir,spend),methods=commonMethods(model.hir,spend);
-  const edges=[],callSites=[],incoming=new Map(),cyclicBlocks=new Set();
+  const edges=[],cyclicBlocks=new Set(),uncertainFunctions=new Set();
   for(const plan of plans) {
     const blockEdges=[];
     for(const block of plan.graph.blocks)for(const op of block.instructions){spend();for(const target of op.successors)blockEdges.push({caller:block.name,target});
       if(['tsfg_program.invoke','tsfg_program.invoke_method','tsfg_program.invoke_indirect'].includes(op.name)){
         if(op.name==='tsfg_program.invoke_indirect')spend(op.properties.targets.functions.length);
         const rows=op.name==='tsfg_program.invoke_indirect'?op.properties.targets.functions.map(row=>({target:row.function_id})):op.name==='tsfg_program.invoke_method'?methods.verify(op.properties,plan.graph.registers.get(op.operands[0]).view):[{target:op.properties.function_id}],targets=new Set();
-        for(const {target}of rows){spend();if(targets.has(target))continue;targets.add(target);edges.push({caller:plan.owner.id,target});callSites.push({caller:plan.owner.id,target,block:block.name});incoming.set(target,(incoming.get(target)??0)+1);}}}
+        if(op.name==='tsfg_program.invoke_indirect'&&op.properties.targets.top)uncertainFunctions.add(plan.owner.id);
+        for(const {target}of rows){spend();if(targets.has(target))continue;targets.add(target);edges.push({caller:plan.owner.id,target});}}}
+    if(records?.get(plan.owner.id)?.upper?.facets?.unknownHost)uncertainFunctions.add(plan.owner.id);
     spend(plan.graph.blocks.length+blockEdges.length);
     for(const c of classifyArrayCallGraph(plan.graph.blocks.map(block=>block.name),blockEdges).components)if(c.cyclic)
       for(const name of c.members)cyclicBlocks.add(plan.owner.id+'/'+name);
   }
   const cyclicFunctions=new Set();spend(plans.length+edges.length);
   for(const c of classifyArrayCallGraph(plans.map(plan=>plan.owner.id),edges).components)if(c.cyclic)for(const id of c.members)cyclicFunctions.add(id);
-  for(const root of model.hir.closure.roots)if(root.kind!=='module-initialization')incoming.set(root.target,(incoming.get(root.target)??0)+1);
-  // One static allocation site can represent several live objects when any
-  // caller repeats. Multiplicity propagates through wrappers, loops and SCCs.
-  const repeated=new Set(cyclicFunctions);
-  for(const [id,count]of incoming)if(count>1)repeated.add(id);
-  for(const site of callSites)if(cyclicBlocks.has(site.caller+'/'+site.block))repeated.add(site.target);
-  let propagated;do{propagated=false;for(const edge of edges){spend();if(repeated.has(edge.caller)&&!repeated.has(edge.target)){repeated.add(edge.target);propagated=true;}}}while(propagated);
+  // Unknown invocation can reenter an ancestor. Distinct verified acyclic call
+  // sites alone do not repeat one physical activation or its allocations.
+  let propagated;do{propagated=false;for(const edge of edges){spend();if(uncertainFunctions.has(edge.target)&&!uncertainFunctions.has(edge.caller)){uncertainFunctions.add(edge.caller);propagated=true;}}}while(propagated);
   const fieldSeeds=new Map(),globalSeeds=new Map();
   const tagsOnly=value=>({...a.empty(),tags:new Set(value.tags),unknown:value.unknown,truth:value.truth});
   const seed=(map,id,value)=>{if(!map.has(id))map.set(id,tagsOnly(value));else a.merge(map.get(id),tagsOnly(value));};
@@ -73,11 +71,12 @@ export function analyzeCommonGraphs({model,plans},records=null) {
     };
     function environmentEntry(layoutId,heap,origin){const layout=model.environments.get(layoutId);check(layout,'environment');const value=a.literal('env:'+layoutId),ref=origin+'/environment/'+layoutId;value.refs.add(ref);objects.set(ref,{type:'env:'+layoutId,weak:true});
       for(const slot of layout.slots){spend();heap.set(ref+'/slot/'+slot.key,a.declared(slot.type,heap,origin,fieldSeeds,objects));}if(layout.parent)heap.set(ref+'/parent',environmentEntry(layout.parent,heap,origin));return value;}
-    function context(target,args,heap=new Map(),root=false,activation='entry/'+target) {
+    function context(target,args,heap=new Map(),root=false,activation='entry/'+target,repeated=false,activationSize=activation.length) {
       const plan=byId.get(target);check(plan&&args.length===plan.parameters.length,'ssa');
+      repeated ||= !activation||cyclicFunctions.has(target)||uncertainFunctions.has(target);
       const entryHeap=a.reachable(args,heap);spend(entryHeap.size+args.length);const memory=[...entryHeap].sort(([a],[b])=>{spend();return a<b?-1:a>b?1:0;}).map(([id,v])=>[id,a.key(v)]);
-      const key=target+'/'+sha256(canonical({args:args.map(a.key),memory,activation}));
-      if(!contexts.has(key)){spend();check(contexts.size<4096,'limit');contexts.set(key,{id:key,activation,plan,args:args.map(a.copy),entryHeap,root,
+      const key=target+'/'+sha256(canonical({args:args.map(a.key),memory,activation,repeated}));
+      if(!contexts.has(key)){spend();check(contexts.size<4096,'limit');contexts.set(key,{id:key,activation,activationSize,repeated,plan,args:args.map(a.copy),entryHeap,root,
         returned:a.empty(),thrown:a.empty(),normal:false,language:false,normalHeap:new Map(),languageHeap:new Map()});changed=true;}
       return contexts.get(key);
     }
@@ -88,6 +87,9 @@ export function analyzeCommonGraphs({model,plans},records=null) {
     }
     function execute(c,observer=null) {
         spend();const plan=c.plan,fn=plan.owner.id,entry=a.state();entry.heap=a.snapshot(c.entryHeap);
+        spend(Math.ceil((c.activation.length+fn.length+1)/64));const scope=c.activation+'/'+fn;
+        const site=(kind,...parts)=>{spend(parts.length+1);let bytes=scope.length+kind.length+2;
+          for(const part of parts)bytes+=part.length+1;spend(Math.ceil(bytes/64));return scope+'/'+kind+'/'+parts.join('/');};
         if(c.root){entry.heap=new Map();currentGlobals(entry.heap);
           c.args=plan.parameters.map(parameter=>entryValue(plan,parameter,entry.heap));c.entryHeap=a.snapshot(entry.heap);}
         for(const [index,p]of plan.entry.parameters.entries())entry.values.set(p.name,a.copy(c.args[index]));
@@ -114,7 +116,8 @@ export function analyzeCommonGraphs({model,plans},records=null) {
             const update=(heap,key,value,strong=!weakSlot(key))=>{if(strong||!heap.has(key))heap.set(key,a.copy(value));else a.merge(heap.get(key),value);};
             const put=(key,value,strong=undefined)=>update(state.heap,key,value,strong);
             const mergeSlots=keys=>{const result=a.empty();for(const key of keys){spend();a.merge(result,state.heap.get(key)??a.empty());}return result;};
-            if(name==='env_alloc'){const ref=c.activation+'/'+fn+'/environment/'+op.result;value=literal('env:'+p.layout);value.refs.add(ref);objects.set(ref,{type:'env:'+p.layout,weak:repeated.has(fn)||cyclicBlocks.has(fn+'/'+block.name)});if(args.length)put(ref+'/parent',args[0]);}
+            const allocation=(ref,type,weak=false)=>{weak ||= objects.get(ref)?.weak||c.repeated||cyclicBlocks.has(fn+'/'+block.name);objects.set(ref,{type,weak});return weak;};
+            if(name==='env_alloc'){const ref=site('environment',op.result);value=literal('env:'+p.layout);value.refs.add(ref);allocation(ref,'env:'+p.layout);if(args.length)put(ref+'/parent',args[0]);}
             else if(name==='env_parent'){for(const ref of args[0].refs){spend();a.merge(value,state.heap.get(ref+'/parent')??a.empty());}}
             else if(name==='env_load'){const selected=a.environmentSlot(args[0],p.layout,p.layout,p.key,state.heap,objects);
               check(selected.valid,'environment');check(selected.complete,'environment-initialization');value=selected.value;}
@@ -126,7 +129,9 @@ export function analyzeCommonGraphs({model,plans},records=null) {
             else if(name==='boolean')value=literal(boolTypeId,p.value?2:1);
             else if(name==='undefined'||name==='null'||name==='string')value=literal(op.view);
             else if(name==='cell'||name==='catch_bind') {
-              const id=c.id+'/cell/'+op.result;value.cells.add(id);state.heap.set(id,name==='catch_bind'?a.copy(args[0]):a.empty());
+              // Source captures use environment slots; these private local
+              // Cells keep ordinary assignment semantics and cannot escape.
+              const id=site('cell',op.result);value.cells.add(id);state.heap.set(id,name==='catch_bind'?a.copy(args[0]):a.empty());
               if(name==='catch_bind')observe('binding/'+p.binding,args[0]);
             }else if(name==='load')value=mergeSlots(args[0].cells);
             else if(name==='store'){
@@ -141,15 +146,13 @@ export function analyzeCommonGraphs({model,plans},records=null) {
                 spend();const result=a.copy(source);result.refs.clear();
                 for(const ref of source.refs){spend();const object=objects.get(ref);check(object,'ssa');
                   if(types.get(object.type)?.kind!=='value'){result.refs.add(ref);continue;}
-                  const copied=active.get(ref)??fn+'/copy/'+op.result+'/'+path+'/'+object.type;result.refs.add(copied);if(active.has(ref))continue;
-                  spend(active.size);const nested=new Map(active);nested.set(ref,copied);const weak=objects.get(copied)?.weak||object.weak||repeated.has(fn)||cyclicBlocks.has(fn+'/'+block.name)||source.refs.size>1;
-                  objects.set(copied,{...object,weak});
+                  const copied=active.get(ref)??site('copy',op.result,path,object.type);result.refs.add(copied);if(active.has(ref))continue;
+                  spend(active.size);const nested=new Map(active);nested.set(ref,copied);const weak=allocation(copied,object.type,object.weak||source.refs.size>1);
                   for(const field of a.fields(object.type)){spend();const stored=state.heap.get(ref+'/field/'+field.id);if(stored)put(copied+'/field/'+field.id,copyValue(stored,path+'/'+field.id,nested),!weak);}
                 }return result;
               };value=copyValue(args[0],'root');
             }else if(name==='construct_value'||name==='allocate_reference'||name==='array_create') {
-              value=literal(op.view);const ref=fn+'/object/'+op.result;value.refs.add(ref);
-              const weak=repeated.has(fn)||cyclicBlocks.has(fn+'/'+block.name);objects.set(ref,{type:op.view,weak});
+              value=literal(op.view);const ref=site('object',op.result);value.refs.add(ref);allocation(ref,op.view);
               if(name==='array_create'){args.forEach((v,i)=>{put(ref+'/element/'+i,v);if(bounded){const key='element:'+op.view,before=a.key(elementSeeds.get(key));seed(elementSeeds,key,v);changed ||= before!==a.key(elementSeeds.get(key));}});put(ref+'/length',literal(sha256('tsfg.type\0u32'),0,args.length));}
             }else if(name==='field_load'||name==='field_store') {
               for(const ref of args[0].refs){spend();const object=objects.get(ref);check(object,'ssa');const field=fieldFor(object.type,plan.graph.registers.get(op.operands[0]).view,p.field),row=model.fields.get(field),slot=ref+'/field/'+field;
@@ -160,7 +163,7 @@ export function analyzeCommonGraphs({model,plans},records=null) {
             else if(name==='readspan') {
               // Distinct activations retain distinct descriptors. Recursive
               // summaries use the stable SCC activation to keep keys finite.
-              value=literal(op.view);const ref=(cyclicFunctions.has(fn)?c.activation:c.id)+'/span/'+op.result;objects.set(ref,{type:op.view,weak:repeated.has(fn)||cyclicBlocks.has(fn+'/'+block.name)});value.refs.add(ref);put(ref+'/owner',args[0]);put(ref+'/start',args[1]);put(ref+'/length',args[2]);
+              value=literal(op.view);const ref=site('span',op.result);allocation(ref,op.view);value.refs.add(ref);put(ref+'/owner',args[0]);put(ref+'/start',args[1]);put(ref+'/length',args[2]);
             }else if(name==='array_read'||name==='array_store'||name==='array_resize') {
               const owners=a.empty();for(const ref of args[0].refs){spend();const object=objects.get(ref);check(object,'ssa');
                 if(types.get(object.type)?.kind==='readSpan')a.merge(owners,state.heap.get(ref+'/owner')??a.empty());else owners.refs.add(ref);}
@@ -207,8 +210,11 @@ export function analyzeCommonGraphs({model,plans},records=null) {
                 if(indirect&&model.functions.get(row.target).lexicalEnvironment){const env=a.literal('env:'+model.functions.get(row.target).lexicalEnvironment);check(row.environment,'environment');env.refs.add(row.environment);passed.unshift(env);}
                 if(method){spend(args.length);passed=args.slice(0,byId.get(row.target).parameters.length);const receiver=a.copy(args[0]);receiver.tags.clear();receiver.tags.add(row.receiver_type);
                   for(const ref of receiver.refs){spend();if(objects.get(ref)?.type!==row.receiver_type)receiver.refs.delete(ref);}passed[0]=receiver;}
-                const activation=cyclicFunctions.has(row.target)?'recursive/'+row.target:c.activation+'/'+fn+':'+op.range.start+':'+op.range.end;check(activation.length<=32768,'limit');
-                const call=context(row.target,passed,state.heap,false,activation),key=fn+'/'+op.range.start+':'+op.range.end,targets=callTargets.get(key)??new Set();targets.add(row.target);callTargets.set(key,targets);
+                const recursive=cyclicFunctions.has(row.target),activationSize=recursive?row.target.length+10:c.activationSize+fn.length+block.name.length+row.target.length+String(instruction).length+String(op.range.start).length+String(op.range.end).length+6;
+                check(activationSize<=32768,'limit');spend(Math.ceil((c.activation.length+fn.length+block.name.length+row.target.length+64)/64));
+                const activation=recursive?'recursive/'+row.target:'activation/'+sha256(canonical({parent:c.activation,caller:fn,block:block.name,instruction,range:op.range,target:row.target}));
+                const repeated=c.repeated||cyclicBlocks.has(fn+'/'+block.name)||cyclicFunctions.has(row.target)||uncertainFunctions.has(row.target);
+                const call=context(row.target,passed,state.heap,false,activation,repeated,activationSize),key=fn+'/'+op.range.start+':'+op.range.end,targets=callTargets.get(key)??new Set();targets.add(row.target);callTargets.set(key,targets);
                 observer?.call(point,call,c,op.successors);
                 if(call.normal)complete(op.successors[0],call.returned,call.normalHeap);if(call.language)complete(op.successors[1],call.thrown,call.languageHeap);
               }continues=false;

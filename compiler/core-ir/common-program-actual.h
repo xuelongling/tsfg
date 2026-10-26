@@ -19,6 +19,8 @@ struct ActualContext {
   std::string id;const Function *function=nullptr;std::vector<ActualValue> arguments;
   ActualHeap entry,normalHeap,languageHeap;ActualValue returned,thrown;
   bool normal=false,language=false,root=false,called=false,requestTrap=false;
+  // Physical invocation provenance excludes arguments and abstract heap state.
+  std::string activation;bool repeated=true;
 };
 // This state is rebuilt from the normalized instructions. No Node context,
 // allocation summary, representation row or asserted proof fills these maps.
@@ -37,6 +39,8 @@ struct ActualCheck {
   std::map<std::string,ActualContext> contexts;
   std::set<std::string> repeatingFunctions,repeatingBlocks;
   std::set<std::string> cyclicFunctions;
+  std::map<const Operation *,std::string> callSites;
+  std::set<const Operation *> unresolvedCalls;
   BorrowTrace *borrowTrace=nullptr;
   bool need(bool c,llvm::StringRef message){return c||reject(e,"core-ir-common-actual",message);}
   bool step(size_t n=1){return p.charge(n)||reject(e,"core-ir-common-budget","independent actual SSA work exceeded");}
@@ -63,7 +67,11 @@ struct ActualCheck {
   bool methodAbi(const Function &,const Operation &,std::vector<std::string> &,std::string &);
   ActualHeap reachable(const std::vector<ActualValue> &,const ActualHeap &);
   ActualValue valueCopy(const ActualValue &,ActualState &,const std::string &,bool,std::map<std::string,std::string> = {});
-  ActualContext *context(const std::string &,const std::vector<ActualValue> &,const ActualHeap &,bool,bool &,const std::string &activation={});
+  bool repeatedAllocation(const ActualContext &,size_t)const;
+  std::string allocationSite(const ActualContext &,llvm::StringRef,uint16_t);
+  std::string allocate(const ActualContext &,const Operation &,size_t,llvm::StringRef,const std::string &);
+  std::string callActivation(const ActualContext &,const Operation &,size_t,const std::string &,bool &);
+  ActualContext *context(const std::string &,const std::vector<ActualValue> &,const ActualHeap &,bool,bool &,const std::string &activation={},bool repeated=true);
   bool execute(ActualContext &,bool,bool &);
   bool instruction(ActualContext &,const Operation &,size_t,ActualState &,bool,bool &,
     const std::function<bool(uint16_t,const ActualState &,const std::vector<ActualValue> &)> &,bool &);

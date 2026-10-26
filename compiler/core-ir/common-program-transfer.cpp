@@ -31,12 +31,12 @@ bool ActualCheck::instruction(ActualContext &context,const Operation &op,size_t 
     if(!conditional)return;ActualValue tags;tags.tags=v.tags;tags.unknown=v.unknown;tags.truth=v.truth;
     changed=merge(seeds[id],tags)||changed;
   };
-  const bool weak=repeatingFunctions.count(fn.id)||repeatingBlocks.count(fn.id+"/"+std::to_string(block));
+  const bool weak=repeatedAllocation(context,block);
   if(name=="env_alloc"){
-    const auto layout=string(field(props,"layout")),ref=context.id+"/environment/"+std::to_string(op.result);
+    const auto layout=string(field(props,"layout")),ref=allocate(context,op,block,"environment","env:"+layout);if(!e.message.empty())return false;
     if(!need(environments.count(layout),"actual activation layout missing"))return false;
-    value=literal("env:"+layout);value.objects.insert(ref);objects[ref]={"env:"+layout,weak};
-    if(!args.empty()&&!put(ref+"/parent",args[0],!weak))return false;
+    value=literal("env:"+layout);value.objects.insert(ref);
+    if(!args.empty()&&!put(ref+"/parent",args[0],!objects.at(ref).weak))return false;
   }else if(name=="env_parent"){
     for(const auto &ref:args[0].objects){
       if(!step()||!need(objects.count(ref),"actual environment parent owner missing"))return false;
@@ -67,7 +67,11 @@ bool ActualCheck::instruction(ActualContext &context,const Operation &op,size_t 
   }else if(name=="floating"||name=="undefined"||name=="null"||name=="string")value=literal(op.view);
   else if(name=="boolean")value=literal(typeId("bool"),field(props,"value").getAsBoolean()==true?2:1);
   else if(name=="cell"||name=="catch_bind"){
-    const auto id=context.id+"/cell/"+std::to_string(op.result);value.cells.insert(id);put(id,name=="cell"?ActualValue{}:args[0]);
+    const auto id=allocationSite(context,"cell",op.result);if(!e.message.empty()||!step())return false;
+    // Source Cells are private local storage, never escaped addresses. Captures
+    // use environment objects; changing invocation identity does not widen a
+    // local assignment into a runtime heap alias update.
+    value.cells.insert(id);put(id,name=="cell"?ActualValue{}:args[0]);
     if(name=="catch_bind")observe(string(field(props,"binding")),args[0]);
   }else if(name=="load"){
     for(const auto &cell:args[0].cells){if(!step())return false;auto stored=state.heap.find(cell);if(stored!=state.heap.end())merge(value,stored->second);}
@@ -78,12 +82,12 @@ bool ActualCheck::instruction(ActualContext &context,const Operation &op,size_t 
   }else if(name=="global_store"){
     const auto id=string(field(props,"global")),raw=string(field(*globals.at(id),"sourceBinding"));put("global:"+id,args[0]);observe(raw,args[0]);seed(globalSeeds,raw,args[0]);
   }else if(name=="assert"||name=="view"||name=="carrier_cast"||name=="pack")value=copy(args[0]);
-  else if(name=="value_copy")value=valueCopy(args[0],state,fn.id+"/copy/"+std::to_string(op.result)+"/root",weak);
+  else if(name=="value_copy"){const auto origin=allocationSite(context,"copy",op.result);if(!e.message.empty())return false;value=valueCopy(args[0],state,origin+"/root",weak);}
   else if(name=="construct_value"||name=="allocate_reference"||name=="array_create"){
-    value=literal(op.view);const auto ref=fn.id+"/object/"+std::to_string(op.result);value.objects.insert(ref);objects[ref]={op.view,weak};
+    value=literal(op.view);const auto ref=allocate(context,op,block,"object",op.view);if(!e.message.empty())return false;value.objects.insert(ref);
     if(name=="array_create"){
-      for(size_t i=0;i<args.size();++i){put(ref+"/element/"+std::to_string(i),args[i],!weak);seed(elementSeeds,"element:"+op.view,args[i]);}
-      auto length=literal(typeId("u32"));length.number=args.size();put(ref+"/length",length,!weak);
+      for(size_t i=0;i<args.size();++i){put(ref+"/element/"+std::to_string(i),args[i],!objects.at(ref).weak);seed(elementSeeds,"element:"+op.view,args[i]);}
+      auto length=literal(typeId("u32"));length.number=args.size();put(ref+"/length",length,!objects.at(ref).weak);
     }
   }else if(name=="field_load"||name=="field_store"){
     const auto fieldId=string(field(props,"field"));
@@ -102,9 +106,8 @@ bool ActualCheck::instruction(ActualContext &context,const Operation &op,size_t 
       else{put(slot,args[1],!object.weak&&args[0].objects.size()==1);const auto raw=string(field(*fields.at(selected),"sourceBinding"));observe(raw,args[1]);seed(fieldSeeds,raw,args[1]);}
     }if(args[0].unknown)value.unknown=true;
   }else if(name=="readspan"){
-    value=literal(op.view);const auto activation=cyclicFunctions.count(fn.id)?"recursive/"+fn.id:context.id;
-    const auto ref=activation+"/span/"+std::to_string(op.result);value.objects.insert(ref);objects[ref]={op.view,weak};
-    put(ref+"/owner",args[0],!weak);put(ref+"/start",args[1],!weak);put(ref+"/length",args[2],!weak);
+    value=literal(op.view);const auto ref=allocate(context,op,block,"span",op.view);if(!e.message.empty())return false;value.objects.insert(ref);
+    put(ref+"/owner",args[0],!objects.at(ref).weak);put(ref+"/start",args[1],!objects.at(ref).weak);put(ref+"/length",args[2],!objects.at(ref).weak);
   }else if(name=="array_length"||name=="readspan_length")value=literal(op.view);
   else if(name=="array_read"||name=="array_store"||name=="array_resize"){
     ActualValue owners;
@@ -161,14 +164,8 @@ bool ActualCheck::instruction(ActualContext &context,const Operation &op,size_t 
     };
 
     const auto invoke=[&](const std::string &target,std::vector<ActualValue> actual){
-      const auto &source=*sourceFunctions.at(target);std::string activation;
-      if(!field(source,"activationEnvironment").getAsNull()||!field(source,"lexicalEnvironment").getAsNull())
-        // Recursive SCCs need a finite activation summary even with unchanged
-        // arguments and heap. Multiple incoming/loop calls alone do not merge
-        // activation identities; actual pair environments remain in the key.
-        activation=cyclicFunctions.count(target)?"recursive/"+target:
-          context.id+"/call/"+std::to_string(block)+"/"+std::to_string(op.range.start)+":"+std::to_string(op.range.end);
-      auto *call=this->context(target,actual,state.heap,false,changed,activation);if(!call)return false;
+      bool repeated=false;const auto activation=callActivation(context,op,block,target,repeated);if(!e.message.empty())return false;
+      auto *call=this->context(target,actual,state.heap,false,changed,activation,repeated);if(!call)return false;
       if(borrowTrace&&!borrowTrace->call(context,op,block,*call))return false;
       if(call->normal&&!complete(op.successors[0],call->returned,call->normalHeap))return false;
       if(call->language&&!complete(op.successors[1],call->thrown,call->languageHeap))return false;return true;

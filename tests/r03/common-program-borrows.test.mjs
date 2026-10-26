@@ -10,6 +10,7 @@ import {commonBorrowGraph} from '../../compiler/common-program-borrows.mjs';
 import {commonMeter} from '../../compiler/common-program-common.mjs';
 import {sha256} from '../../compiler/identity.mjs';
 import {analyzeCommonGraphs} from '../../compiler/common-program-actual.mjs';
+import {allocationRepeatedHolderModel} from './common-program-allocation-models.mjs';
 import {commonBorrowModel,commonBorrowAlternativeModel,commonBorrowConstructorModel} from './common-program-borrow-models.mjs';
 const actual=name=>projectCommonProgram(readCommonProgramFacts(readFileSync(new URL('./common-borrow-'+name+'.json',import.meta.url))));
 for(const name of ['valid','conflict'])test('official whole Program aggregate borrow '+name,()=>{
@@ -69,7 +70,8 @@ test('review retention does not admit direct Span or unknown owner returns',()=>
 test('review retention requires original matching element and nonrepeated allocation',()=>{
   let value=commonBorrowModel('return-holder');value.program.model.types.get('unit:Span').elementType='different-element';
   assert.throws(()=>analyzeCommonGraphs(value.program,value.records),/** @param {any} e */e=>e.code==='r03-common-program-borrow-pending');
-  value=commonBorrowModel('return-holder');value.program.model.hir.closure.roots.push({kind:'application',target:'entry'});
+  // Root declarations select embeddings; a real CFG backedge repeats storage.
+  value=allocationRepeatedHolderModel();
   assert.throws(()=>analyzeCommonGraphs(value.program,value.records),/** @param {any} e */e=>e.code==='r03-common-program-borrow-pending');
 });
 test('review retention follows an actual called activation without merging its universal root',()=>{

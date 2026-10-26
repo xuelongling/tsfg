@@ -81,7 +81,7 @@ bool verifyProgram(Program &p,Error &error){
   p.remaining=std::min(p.remaining,size_t(1000000));p.layouts.clear();p.effects.clear();p.fixedEffects.clear();
   if(!verifySource(p,error)||!verifyTypes(p,error))return false;
   ActualCheck check{p,error};
-  return check.run()&&verifyPublication(p,error)&&verifyCommonBorrows(check)&&verifyKernelProof(p,error);
+  return check.run()&&verifyCommonBorrows(check)&&verifyKernelProof(p,error);
 }
 mlir::LogicalResult verify(mlir::ModuleOp module){
   Program p;Error error;

@@ -116,10 +116,20 @@ descriptor path retains its own obligation, including a different simultaneously
 present field. This extends the top-level closure rule without keeping point
 heaps or treating a descriptor's owner link as independent owning storage.
 
-Repeated factory allocation sites still need an independent uniqueness proof;
-field correlation alone does not make weak storage strong. A language-positive
-case rejected for that missing proof remains an open analysis capability rather
-than a new language error.
+Distinct verified acyclic invocations of the same factory retain distinct
+physical allocations, including calls through a shared wrapper. Allocation
+scope follows the verified caller activation, operation and target; actual
+arguments and reachable memory select abstract contexts without granting a new
+physical scope. Arrays, references, value copies, environments, Cells and Span
+descriptors use that same scope. Scope identities stay bounded and their string
+construction and hashing are charged before the work.
+
+CFG loops, recursive components, unresolved invocation and unproved external
+origins remain repeated or weak. Repeated ancestors pass that multiplicity to
+their callees; registration can add weakness and never erase it. Full fixed
+target/Host authority remains conservative even if one observed arm is closed.
+Field correlation alone cannot make those weak storage origins unique. A
+language-positive case missing such a proof remains an analysis capability gap.
 
 An immutable Array binding can still refer to mutable Array contents. Original
 capture occurrences retain their binding read/write meaning, while the fixed

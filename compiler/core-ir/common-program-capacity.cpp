@@ -96,7 +96,18 @@ bool ActualCheck::effects(){
       if(!step())return false;if(llvm::StringRef(fn->carriers[r]).starts_with("cell:"))continue;
       auto found=registerCapacity.find(id+"/"+std::to_string(r));if(found!=registerCapacity.end())obligations.managedReference|=managed(found->second);
     }
-    obligations.escape=managed(resultCapacity[id]);p.effects.insert_or_assign(id,std::move(obligations));
+    obligations.escape=managed(resultCapacity[id]);
+    if(sourceFunctions.count(id)){
+      const auto upper=p.fixedEffects.find(id);
+      if(!need(upper!=p.fixedEffects.end(),"actual ABI has no validated fixed contract"))return false;
+      if((obligations.managedReference&&!upper->second.managedReference)||(obligations.escape&&!upper->second.escape)){
+        e.path=fn->path;e.range=fn->range;
+        return reject(e,"core-ir-common-publication","actual storage or ABI capability exceeds fixed upper");
+      }
+    }
+    // Retain the already discharged Source observations. These two physical
+    // obligations add to them; they cannot replace or narrow that proof.
+    auto &effective=p.effects[id];effective.managedReference|=obligations.managedReference;effective.escape|=obligations.escape;
   }return e.message.empty();
 }
 } // namespace tsfg::commonProgram
