@@ -49,7 +49,13 @@ Json SourceModel::environments(Array &projected){
   for(const auto &[raw,row]:layouts){
     if(!spend())return nullptr;environmentContracts::Environment e;e.owner=string(field(row,"owner"));e.parent=string(field(row,"parent"));size_t ordinal=0;
     for(const auto &slot:items(field(row,"slots"))){if(!spend())return nullptr;
-      e.slots.push_back({string(field(slot,"binding")),string(field(slot,"type")),string(field(slot,"kind")),uint32_t(ordinal++),field(slot,"writable").getAsBoolean().value_or(false)});}
+      const auto binding=string(field(slot,"binding")),role=string(field(slot,"kind"));auto position=uint32_t(ordinal++);
+      if(role=="parameter"){
+        const auto &parameters=catalogue.functions.at(e.owner).parameters;size_t index=0;
+        for(;index<parameters.size();++index){if(!spend())return nullptr;if(parameters[index].binding==binding)break;}
+        if(!need(index<parameters.size(),"captured parameter is absent from its original owner"))return nullptr;position=uint32_t(index);
+      }
+      e.slots.push_back({binding,string(field(slot,"type")),role,position,field(slot,"writable").getAsBoolean().value_or(false)});}
     catalogue.environments.emplace(string(field(row,"id")),std::move(e));ordered.emplace(string(field(row,"id")),row);
   }
   std::string failure;if(!environmentContracts::validate(catalogue,[&](size_t n){return spend(n);},failure)){need(false,failure);return nullptr;}

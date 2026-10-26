@@ -100,7 +100,11 @@ export function validateCommonBodies(payload,sources,types,grammars,visibility,s
         const entry=inventory.get(value.binding)??globals.get(value.binding)?.binding??bindings.get(value.binding)?.row;
         const spelling=staticBindingName(text(value.range));check(entry&&local.get(spelling)===value.binding&&entry.declaredType===value.type,'binding');
         if(!globals.has(value.binding)&&!inventory.has(value.binding)){
-          check(ancestors.some(owner=>{spend();return owner.id===entry.lexicalOwner;})&&entry.kind==='local'&&type(entry.declaredType).kind==='scalar'&&functions.get(entry.lexicalOwner).body.some(row=>{spend();return ['constDeclaration','letDeclaration'].includes(row.kind)&&row.binding===entry.id&&row.initializer;}),'capture');
+          const owner=functions.get(entry.lexicalOwner),kind=type(entry.declaredType).kind;
+          check(ancestors.some(owner=>{spend();return owner.id===entry.lexicalOwner;}),'capture');
+          const initialized=entry.kind==='local'&&['scalar','readSpan'].includes(kind)&&owner.body.some(row=>{spend();return ['constDeclaration','letDeclaration'].includes(row.kind)&&row.binding===entry.id&&row.initializer;});
+          const parameter=entry.kind==='parameter'&&kind==='readSpan'&&owner.parameters.some(row=>{spend();return row.id===entry.id;});
+          check(initialized||parameter,'capture');
           if(!captureObserved.has(entry.id))captureObserved.set(entry.id,[]);captureObserved.get(entry.id).push({range:{...value.range},read:!target||readTarget,write:target});
         }else if(!globals.has(value.binding))check(declared.has(value.binding),'binding');if(target)check(entry.writable,'permission');return;
       }

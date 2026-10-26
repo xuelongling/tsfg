@@ -37,6 +37,31 @@ method/indirect target, rather than a narrower observed arm. Parameter mapping
 accounts separately for an indirect callee and a lexical hidden environment.
 Unknown effects do not acquire permission from a missing actual target.
 
+A complete call graph can treat Span arguments as transport. Callee reads and
+structural changes are still checked in their actual order. Every permitted
+target must be connected and free of unknown Host effects; otherwise the call
+keeps the conservative entry checks. Each actual normal or language return
+retains the complete fixed upper as a barrier for descriptors present at call
+entry, including caller aliases that were not passed. A newly created returned
+Span is checked inside the callee rather than mistaken for a pre-call borrow.
+This rule does not narrow the fixed target table or skip recursive callees.
+
+## Captured views
+
+Initialized function-body ReadSpan locals and original ReadSpan parameters can
+use the existing lexical environment slots. Parameter slots bind to the original
+declaration, independently of sorted slot order and physical hidden arguments.
+The callee initializes a captured parameter in its environment rather than an
+unused local Cell. The producer preserves lexical facts and grants no lifetime
+permission.
+
+Environment initialization and stores are local transport. Actual selected slot
+versions and synchronous calls determine which Span is consumed; an unused
+closure or an overwritten slot does not by itself keep a prior borrow live.
+Escaping closures require a separate walk through actual environment slots and
+parent links. Fresh local environment allocation does not prove that a returned
+or externally stored borrowed closure retains its owner.
+
 ## Survival and failure
 
 External/global storage and aggregate returns have owner-survival obligations in
@@ -46,6 +71,12 @@ actual allocation/origin and closed storage path; repeated or unresolved origins
 cannot gain a retained-owner proof. Returning an aggregate is not itself a
 language error. Direct Span and foreign/unknown storage boundaries retain their
 separate conservative requirements.
+
+Returning or throwing a closure is a boundary use of its captured descriptors.
+Incoming owner evidence includes the original entry environment and parent chain;
+it does not turn a new local environment into a retention proof. Only a normal
+construction-body receiver return delegates survival to caller construction.
+A language exit still checks both descriptor stability and owner survival.
 
 Owning Array evidence is a must fact across actual alternatives, including
 non-reference tags. Concurrent fields combine guarantees; alternative refs

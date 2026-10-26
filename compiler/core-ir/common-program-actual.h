@@ -40,7 +40,7 @@ struct ActualCheck {
   BorrowTrace *borrowTrace=nullptr;
   bool need(bool c,llvm::StringRef message){return c||reject(e,"core-ir-common-actual",message);}
   bool step(size_t n=1){return p.charge(n)||reject(e,"core-ir-common-budget","independent actual SSA work exceeded");}
-  bool catalogs();bool graph();bool source();bool solve(bool conditional);bool representation();bool effects();
+  bool catalogs();bool graph();bool source();bool callGraph();bool solve(bool conditional);bool representation();bool effects();
   bool run();
   bool merge(ActualValue &,const ActualValue &);
   bool mergeHeap(ActualHeap &,const ActualHeap &);

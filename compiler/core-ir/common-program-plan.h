@@ -44,5 +44,6 @@ struct SourcePlan {
   void attempt(const Json &,const Completion &,const std::string &);
 };
 SourceAnchor sourceAnchor(const Json &);
+bool sourceNumeric(const Function &,const Operation &);
 bool matchSourcePlan(ActualCheck &,const SourcePlan &,const Function &);
 } // namespace tsfg::commonProgram

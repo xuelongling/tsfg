@@ -50,6 +50,11 @@ bool BorrowFlow::effect(Id point,const PayloadEvidence &owners) {
   if(!building(point))return false;PayloadEvidence value;if(!copy(owners,value))return false;
   effects.push_back({point,std::move(value)});return true;
 }
+bool BorrowFlow::effect(Id point,const PayloadEvidence &owners,const std::set<Id> &eligible) {
+  if(!building(point))return false;Effect effect{point,{},true,{}};if(!copy(owners,effect.owners))return false;
+  for(const auto value:eligible){if(value==none)return reject("borrow effect eligibility identity");if(!building(point,value))return false;effect.eligible.insert(value);}
+  effects.push_back(std::move(effect));return true;
+}
 bool BorrowFlow::sharing(const std::string &a,const std::string &b,Sharing relation) {
   if(!charge())return false;if(sealed)return reject("borrow proof is sealed");
   if(a.empty()||b.empty()||a==b&&relation!=Sharing::MayShare)return reject("borrow owner relation identity");
@@ -78,7 +83,8 @@ bool BorrowFlow::solve() {
   }
   Result result;
   for(const auto &effect:effects)for(const auto value:points[effect.point].live) {
-    if(!charge())return false;const auto &owner=values[value];bool unknown=owner.pending||effect.owners.pending||owner.alternatives.empty()||effect.owners.alternatives.empty(),overlap=false;
+    if(!charge())return false;if(effect.restricted&&!effect.eligible.count(value))continue;
+    const auto &owner=values[value];bool unknown=owner.pending||effect.owners.pending||owner.alternatives.empty()||effect.owners.alternatives.empty(),overlap=false;
     for(const auto &a:owner.alternatives)for(const auto &b:effect.owners.alternatives) {
       if(!charge())return false;const auto relation=relations.find(std::minmax(a,b));
       const auto sharing=a==b?Sharing::MayShare:relation==relations.end()?Sharing::Unknown:relation->second;

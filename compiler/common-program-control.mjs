@@ -44,7 +44,8 @@ export function planCommonFunction(model,owner) {
     model.spend();const inherited=collections.map(state.cells),previous=handlers;handlers=active;
     for(const [binding,value]of initial) {
       if(binding.startsWith('lexical:'))continue;
-      const b=model.bindings.get(binding);check(b,'identity');const cell=values.op('cell',[],model.cell(binding),{binding},b.range);state.cells.set(binding,cell);
+      const b=model.bindings.get(binding);check(b,'identity');
+      if(!model.slots.has(binding)){const cell=values.op('cell',[],model.cell(binding),{binding},b.range);state.cells.set(binding,cell);}
       values.store({kind:'bindingTarget',binding,type:b.type},value,b.range,true,false);
     }
     for(const [index,statement]of rows.entries()) {

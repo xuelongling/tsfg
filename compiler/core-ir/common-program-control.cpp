@@ -22,8 +22,9 @@ void SourcePlan::region(const Array &rows,const Completion &active,const std::fu
   if(!ok()||!check.step(cells.size()+1))return;auto inherited=cells;const auto previous=handlers;handlers=active;
   for(const auto &[id,value]:initial){
     if(!check.need(check.bindings.count(id),"Source entry binding missing"))return;
-    const auto &b=*check.bindings.at(id);const auto r=sourceAnchor(b);const auto cell=emit("cell",{},"cell:"+id,Object{{"binding",id}},r);
-    cells[id]=cell;store({"binding",id,string(field(b,"type")),cell},value,r,true,false);
+    const auto &b=*check.bindings.at(id);const auto r=sourceAnchor(b);const auto type=string(field(b,"type"));
+    if(!check.environmentSlots.count(id))cells[id]=emit("cell",{},"cell:"+id,Object{{"binding",id}},r);
+    store(bindingLocation(id,type,r),value,r,true,false);
   }
   for(size_t index=0;index<rows.size()&&ok()&&!ended();++index){
     if(!check.step())return;const auto &s=rows[index];const auto kind=string(field(s,"kind")),at=path+"/"+std::to_string(index);const auto r=sourceAnchor(s);

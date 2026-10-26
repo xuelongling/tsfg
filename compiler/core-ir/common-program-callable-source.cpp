@@ -53,10 +53,17 @@ bool SourceBodies::lexicalScope(const Json &fn){
     const auto &b=*bindings.at(id);const auto owner=string(field(b,"lexicalOwner"));bool ancestor=false;
     for(const auto *f:chain){if(!model.spend())return false;ancestor|=string(field(*f,"id"))==owner;}
     const auto type=string(field(b,"declaredType"));
-    if(!model.need(ancestor&&string(field(b,"kind"))=="local"&&model.types.count(type)&&string(field(*model.types.at(type),"kind"))=="scalar","unsupported capture outside initialized function-body scalar local"))return false;
-    bool declaration=false;for(const auto &row:items(field(*model.functions.at(owner),"body"))){if(!model.spend())return false;
-      const auto kind=string(field(row,"kind"));declaration|=(kind=="letDeclaration"||kind=="constDeclaration")&&string(field(row,"binding"))==id&&row.getAsObject()->get("initializer");}
-    if(!model.need(declaration,"captured local lacks an initialized function-body declaration"))return false;
+    const auto role=string(field(b,"kind"));
+    if(!model.need(ancestor&&model.types.count(type),"captured binding owner or type is absent"))return false;
+    const auto kind=string(field(*model.types.at(type),"kind"));
+    if(!model.need((role=="local"&&(kind=="scalar"||kind=="readSpan"))||(role=="parameter"&&kind=="readSpan"),
+      "unsupported capture outside initialized function-body scalar/ReadSpan local or ReadSpan parameter"))return false;
+    bool declaration=false;
+    if(role=="parameter")for(const auto &parameter:items(field(*model.functions.at(owner),"parameters"))){
+      if(!model.spend())return false;declaration|=string(field(parameter,"id"))==id;
+    }else for(const auto &row:items(field(*model.functions.at(owner),"body"))){if(!model.spend())return false;
+      const auto declarationKind=string(field(row,"kind"));declaration|=(declarationKind=="letDeclaration"||declarationKind=="constDeclaration")&&string(field(row,"binding"))==id&&row.getAsObject()->get("initializer");}
+    if(!model.need(declaration,"capture lacks an original initialized body declaration or parameter"))return false;
     // This is a lexical incoming precondition, not an initialization proof.
     // The independent normalized environment CFG must establish it at use.
     initialized.insert(id);

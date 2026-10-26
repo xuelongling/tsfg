@@ -117,7 +117,7 @@ export function analyzeCommonGraphs({model,plans},records=null) {
             if(name==='env_alloc'){const ref=c.activation+'/environment/'+op.result;value=literal('env:'+p.layout);value.refs.add(ref);objects.set(ref,{type:'env:'+p.layout,weak:repeated.has(fn)||cyclicBlocks.has(fn+'/'+block.name)});if(args.length)put(ref+'/parent',args[0]);}
             else if(name==='env_parent'){for(const ref of args[0].refs){spend();a.merge(value,state.heap.get(ref+'/parent')??a.empty());}}
             else if(name==='env_load'||name==='env_init'||name==='env_store'){for(const ref of args[0].refs){spend();const key=ref+'/slot/'+p.key;check(objects.get(ref)?.type==='env:'+p.layout,'environment');
-              if(name==='env_load'){check(state.heap.has(key),'environment-initialization');a.merge(value,state.heap.get(key));}else {put(key,args[1]);observe('binding/'+p.binding,args[1]);}}}
+              if(name==='env_load'){check(state.heap.has(key),'environment-initialization');a.merge(value,state.heap.get(key));}else {put(key,args[1],args[0].refs.size===1&&!objects.get(ref).weak);observe('binding/'+p.binding,args[1]);}}}
             else if(name==='make_closure'){value=literal(op.view);const environments=p.environment_layout?args[0].refs:new Set([null]);for(const ref of environments){spend();if(ref){check(objects.get(ref)?.type==='env:'+p.environment_layout,'environment');for(const slot of model.environments.get(p.environment_layout).slots){spend();check(state.heap.has(ref+'/slot/'+slot.key),'environment-initialization');}value.refs.add(ref);}value.pairs.set(p.function_id+'\0'+(ref??''),{functionId:p.function_id,environment:ref});}}
             else if(name==='constant')value=literal(op.view,0,Number(p.decimal));
             else if(name==='floating')value=literal(op.view);
@@ -198,8 +198,10 @@ export function analyzeCommonGraphs({model,plans},records=null) {
                 check(!args[0].unknown||p.targets.top,'callable-contract','actual unknown callee exceeds finite upper',details);
                 if(p.targets.top){const normalBlock=blocks.get(op.successors[0]),unknown=normalBlock.parameters.length?literal(normalBlock.parameters[0].type):a.empty();unknown.unknown=true;edge(op.successors[0],state,normalBlock.parameters.length?[unknown]:[]);const thrown=a.empty();thrown.unknown=true;edge(op.successors[1],state,[thrown]);}
                 for(const row of alternatives){spend();check(p.targets.top||p.targets.functions.some(bound=>{spend();return bound.function_id===row.target;}),'callable-contract');check(model.functions.get(row.target)?.signatureHash===p.signature_hash,'capability','actual indirect signature differs from the saved callable view',details);}}
-              for(const row of alternatives){
-                spend();if(method&&!args[0].tags.has(row.receiver_type))continue;let passed=args;if(indirect){spend(args.length);passed=args.slice(1);}
+              const selected=[];for(const row of alternatives){spend();if(!method||args[0].tags.has(row.receiver_type))selected.push(row);}
+              if(observer){spend(selected.length);observer.prepareCall(point,c,op,args,state,selected.map(row=>{spend();return row.target;}));}
+              for(const row of selected){
+                spend();let passed=args;if(indirect){spend(args.length);passed=args.slice(1);}
                 if(indirect&&model.functions.get(row.target).lexicalEnvironment){const env=a.literal('env:'+model.functions.get(row.target).lexicalEnvironment);check(row.environment,'environment');env.refs.add(row.environment);passed.unshift(env);}
                 if(method){spend(args.length);passed=args.slice(0,byId.get(row.target).parameters.length);const receiver=a.copy(args[0]);receiver.tags.clear();receiver.tags.add(row.receiver_type);
                   for(const ref of receiver.refs){spend();if(objects.get(ref)?.type!==row.receiver_type)receiver.refs.delete(ref);}passed[0]=receiver;}

@@ -3,14 +3,14 @@
 namespace tsfg::commonProgram {
 namespace {
 bool sameAnchor(SourceAnchor a,SourceAnchor b){return a.start==b.start&&a.end==b.end;}
-bool numeric(const Function &f,const Operation &op){
+}
+bool sourceNumeric(const Function &f,const Operation &op){
   if(op.name!="binary"&&op.name!="unary")return false;
   const auto token=string(field(op.properties,"operator"));
   const std::set<std::string> binary={"+","-","*","/","%","<<",">>",">>>","&","|","^","<","<=",">",">="};
   const auto i32=digest(std::string("tsfg.type")+std::string(1,'\0')+"i32");
   if(op.name=="unary"?token!="+"&&token!="-"&&token!="~":!binary.count(token))return false;
   for(auto r:op.operands)if(f.carriers[r]!=i32)return false;return true;
-}
 }
 bool matchSourcePlan(ActualCheck &c,const SourcePlan &source,const Function &actual){
   const auto &expected=source.function;std::set<uint16_t> numericBlocks;
@@ -59,7 +59,7 @@ bool matchSourcePlan(ActualCheck &c,const SourcePlan &source,const Function &act
           ++index;continue;
         }
         if(raw.name=="numeric_use"){
-          if(!c.need(numeric(expected,op)&&checked<op.operands.size()&&raw.operands.size()==1&&
+          if(!c.need(sourceNumeric(expected,op)&&checked<op.operands.size()&&raw.operands.size()==1&&
               resolve(raw.operands[0])==op.operands[checked]&&sameAnchor(raw.range,op.range)&&
               string(field(raw.properties,"operator"))==string(field(op.properties,"operator"))&&
               field(raw.properties,"index").getAsInteger()==int64_t(checked)&&
@@ -70,7 +70,7 @@ bool matchSourcePlan(ActualCheck &c,const SourcePlan &source,const Function &act
         }break;
       }
       const auto &raw=actual.blocks[block].operations[index++];
-      if(!c.need(checked==(numeric(expected,op)?op.operands.size():0),"numeric request checks are missing"))return false;
+      if(!c.need(checked==(sourceNumeric(expected,op)?op.operands.size():0),"numeric request checks are missing"))return false;
       if(!c.need(raw.name==op.name&&raw.view==op.view&&sameAnchor(raw.range,op.range)&&same(raw.properties,op.properties)&&
         raw.operands.size()==op.operands.size()&&raw.successors.size()==op.successors.size()&&
         (raw.result==noRegister)==(op.result==noRegister),"actual instruction differs from complete Source lowering")){

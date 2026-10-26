@@ -72,7 +72,7 @@ export function validateCommonCallableBounds(hir,fn,value,spend){
   const expected=[];for(const [index,p]of fn.parameters.entries()){spend();if(types.get(p.type)?.kind==='function')expected.push(index);}
   check(Array.isArray(value.parameters)&&value.parameters.length===expected.length,'callable-contract');for(const [i,row]of value.parameters.entries()){spend();record(row,['index','allowed']);check(row.index===expected[i],'callable-contract');bound(row.allowed,types.get(fn.parameters[row.index].type));}
   if(types.get(fn.returnType)?.kind==='function')bound(value.returns,types.get(fn.returnType));else check(value.returns===null,'callable-contract');
-  // This exact Source slice only captures scalar locals. No callable capture
-  // slot can be written, so a nonempty transfer would invent authority.
+  // Scalar/ReadSpan captures have no callable payload. No callable capture
+  // slot can be written, so a nonempty transfer would invent target authority.
   check(Array.isArray(value.slotWrites)&&value.slotWrites.length===0,'callable-contract');
 }

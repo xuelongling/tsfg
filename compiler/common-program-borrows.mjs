@@ -16,7 +16,8 @@ export function commonBorrowGraph(spend) {
     if(!weak)add(point(at).defines,id);
   };
   const use=(at,ids)=>{for(const id of ids)add(point(at).uses,id);};
-  const effect=(at,owners,origin)=>{spend(owners.ids.size+1);point(at).effects.push({owners:new Set(owners.ids),pending:owners.pending,origin});};
+  const effect=(at,owners,origin,eligible=null)=>{spend(owners.ids.size+1+(eligible?.size??0));check(eligible===null||eligible.size<=4096,'limit');
+    point(at).effects.push({owners:new Set(owners.ids),pending:owners.pending,origin,eligible:eligible===null?null:new Set(eligible)});};
   const escape=(at,ids,allowed,origin)=>{spend(ids.size+1);if(ids.size)escapes.push({at,ids:new Set(ids),allowed,origin});};
   function verify() {
     for(const row of escapes){spend();check(typeof row.allowed==='function'?row.allowed():row.allowed,'borrow-pending','borrow escapes unproved storage lifetime',row.origin);}
@@ -34,7 +35,7 @@ export function commonBorrowGraph(spend) {
     for(const p of points.values()){spend();for(const effect of p.effects){spend();
       const active=new Set();for(const id of p.uses)add(active,id);
       for(const to of p.edges){spend();for(const id of live.get(to))add(active,id);}
-      for(const id of active){spend();const borrow=borrows.get(id);check(borrow,'borrow-pending','borrow has no proved definition',effect.origin);
+      for(const id of active){spend();if(effect.eligible!==null&&!effect.eligible.has(id))continue;const borrow=borrows.get(id);check(borrow,'borrow-pending','borrow has no proved definition',effect.origin);
         let overlap=false,pending=borrow.pending||effect.pending;
         for(const owner of borrow.owners)for(const modified of effect.owners){spend();if(owner===modified)overlap=true;
           else if(!fresh.has(owner)||!fresh.has(modified))pending=true;}

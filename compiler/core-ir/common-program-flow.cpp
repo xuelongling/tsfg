@@ -2,9 +2,7 @@
 #include "common-program-actual.h"
 #include "common-program-methods.h"
 namespace tsfg::commonProgram {
-bool ActualCheck::run(){
-  if(!verifyCallableTargets(p,e)||!catalogs()||!graph()||!source())return false;
-  for(const auto &[id,fn]:functions)if(!environmentGraph(*fn))return false;
+bool ActualCheck::callGraph(){
   std::map<std::string,std::set<std::string>> calls;std::map<std::string,size_t> incoming;
   for(const auto &[id,fn]:functions){
     std::vector<std::set<uint16_t>> reachable(fn->blocks.size());
@@ -43,7 +41,12 @@ bool ActualCheck::run(){
   bool changed=true;while(changed){changed=false;for(const auto &[id,targets]:calls)if(repeatingFunctions.count(id))for(const auto &to:targets){
     if(!step())return false;changed|=repeatingFunctions.insert(to).second;
   }}
-  return solve(true)&&representation()&&effects()&&solve(false);
+  return true;
+}
+bool ActualCheck::run(){
+  if(!verifyCallableTargets(p,e)||!catalogs()||!graph()||!source())return false;
+  for(const auto &[id,fn]:functions)if(!environmentGraph(*fn))return false;
+  return callGraph()&&solve(true)&&representation()&&effects()&&solve(false);
 }
 bool verifyOperations(Program &p,Error &e){ActualCheck check{p,e};return check.run();}
 } // namespace tsfg::commonProgram

@@ -24,6 +24,10 @@ public:
   bool use(Id point,Id value);
   bool edge(Id from,Id to,const std::vector<Binding> &bindings={});
   bool effect(Id point,const PayloadEvidence &owners);
+  // Explicit eligibility limits which existing view values a boundary effect
+  // can invalidate. It does not supply liveness or alias evidence. Empty means
+  // no values; the two-argument form remains unrestricted.
+  bool effect(Id point,const PayloadEvidence &owners,const std::set<Id> &eligible);
   bool sharing(const std::string &a,const std::string &b,Sharing relation);
   bool solve();
   const Result *result()const{return solved?&published:nullptr;}
@@ -31,7 +35,7 @@ public:
 private:
   struct Point {std::set<Id> parameters,definitions,uses,live;std::vector<Id> incoming,outgoing;};
   struct Edge {Id from,to;std::map<Id,Id> bindings;};
-  struct Effect {Id point;PayloadEvidence owners;};
+  struct Effect {Id point;PayloadEvidence owners;bool restricted=false;std::set<Id> eligible;};
   size_t &remaining;
   std::function<bool()> cancelled;
   std::vector<PayloadEvidence> values;
