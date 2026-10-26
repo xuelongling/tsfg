@@ -40,7 +40,6 @@ bool SourceModel::directory(){
     "readSpanLength","rootFile","sourceRoot","target","types"}),"complete common Source payload shape differs"))return false;
   if(!need(string(field(facts,"packageId"))==digest(std::string("tsfg.program-facts.package.v1")+std::string(1,'\0')+sourceSchema.str()+
     std::string(1,'\0')+canonical(payload)),"whole Source package hash differs"))return false;
-  if(!need(items(field(payload,"compatibilityWitnesses")).empty(),"M12 nominal witnesses are not supported by this common Source consumer"))return false;
   const auto table=[&](llvm::StringRef name,std::map<std::string,const Json *> &to,llvm::StringRef key,size_t limit){
     const auto &raw=field(payload,name);if(!need(raw.getAsArray()&&items(raw).size()<=limit,"complete directory bounds"))return false;
     for(const auto &row:items(raw)){if(!spend())return false;const auto id=string(field(row,key));

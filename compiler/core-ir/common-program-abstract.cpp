@@ -90,6 +90,76 @@ ActualValue ActualCheck::declared(const std::string &id,ActualHeap &heap,const s
   }
   return out;
 }
+ActualValue ActualCheck::entryDeclared(const std::string &id,const std::string &view,ActualHeap &heap,const std::string &origin,
+    std::set<std::string> active,const Program::EntryRole &role,bool upper,bool &changed){
+  if(!step()||!need(types.count(id)&&types.count(view),"entry actual/logical role type missing"))return {};
+  const auto &t=*types.at(id),&v=*types.at(view);const auto kind=string(field(t,"kind")),vk=string(field(v,"kind"));
+  const auto sources=[&](const std::string &logical,std::vector<std::string> &selected){
+    if(!step()||!need(types.count(logical),"entry storage view missing"))return false;const auto k=string(field(*types.at(logical),"kind"));
+    if(k!="array"&&k!="readSpan"){selected.push_back(logical);return true;}
+    std::vector<std::string> todo{id};std::set<std::string> seen;
+    while(!todo.empty()){if(!step())return false;auto source=std::move(todo.back());todo.pop_back();if(!seen.insert(source).second)continue;
+      if(!need(types.count(source),"entry storage source missing"))return false;const auto &t=*types.at(source);const auto kind=string(field(t,"kind"));
+      if(kind=="union")for(const auto &member:items(field(t,"members"))){if(!step())return false;todo.push_back(string(member));}
+      else if(kind=="array"||kind=="readSpan")selected.push_back(source);
+    }if(selected.empty())selected.push_back(logical);return true;
+  };
+  if(vk=="union"){
+    ActualValue out;for(const auto &member:items(field(v,"members"))){const auto logical=string(member);std::vector<std::string> actual;
+      if(!sources(logical,actual))return {};for(const auto &source:actual){if(!step(active.size()+1))return {};
+        merge(out,entryDeclared(source,logical,heap,origin,active,role,upper,changed));}}return out;
+  }
+  if(kind=="union"){
+    ActualValue out;std::vector<std::string> actual;if(!sources(view,actual))return {};
+    for(const auto &source:actual){if(!step(active.size()+1))return {};merge(out,entryDeclared(source,view,heap,origin,active,role,upper,changed));}return out;
+  }
+  if(vk=="reference"){
+    ActualValue out;std::set<std::string> candidates{view};auto found=role.candidates.find(view);
+    if(found!=role.candidates.end()){if(!step(found->second.size()))return {};candidates.insert(found->second.begin(),found->second.end());}
+    for(const auto &actual:candidates){
+      if(!step(active.size()+1))return {};merge(out,declared(actual,heap,origin));const auto ref=origin+"/"+actual,visit=ref+std::string(1,'\0')+view;
+      if(active.count(visit))continue;if(!step(active.size()+1))return {};auto next=active;next.insert(visit);
+      auto projection=role.fields.find({actual,view});std::set<std::string> actualFields;
+      for(const auto *f:allFields(actual)){if(!step())return {};actualFields.insert(string(field(*f,"id")));}
+      for(const auto *fieldView:allFields(view)){
+        if(!step())return {};const auto target=string(field(*fieldView,"id"));auto selected=target;
+        if(!actualFields.count(target)){if(projection==role.fields.end())continue;auto mapped=projection->second.find(target);if(mapped==projection->second.end())continue;selected=mapped->second;}
+        if(!need(fields.count(selected),"entry role actual field missing"))return {};
+        if(!step(next.size()+1))return {};auto child=entryDeclared(string(field(*fields.at(selected),"type")),string(field(*fieldView,"type")),heap,origin,next,role,upper,changed);
+        merge(heap[ref+"/field/"+selected],child);
+        if(upper)changed=merge(fieldSeeds[string(field(*fields.at(selected),"sourceBinding"))],child)||changed;
+      }
+    }return out;
+  }
+  if(vk!="array"&&vk!="readSpan"&&vk!="value")return declared(view,heap,origin);
+  auto out=declared(id,heap,origin);if(kind!="array"&&kind!="readSpan"&&kind!="value")return out;
+  const auto ref=origin+"/"+id,visit=ref+std::string(1,'\0')+view;if(active.count(visit))return out;
+  if(!step(active.size()+1))return {};active.insert(visit);
+  if(kind=="value"&&id==view)for(const auto *f:allFields(id)){
+    if(!step(active.size()+1))return {};auto child=entryDeclared(string(field(*f,"type")),string(field(*f,"type")),heap,origin,active,role,upper,changed);merge(heap[ref+"/field/"+string(field(*f,"id"))],child);
+  }
+  if(kind=="array"&&(vk=="array"||vk=="readSpan")){
+    if(!step(active.size()+1))return {};auto child=entryDeclared(string(field(t,"elementType")),string(field(v,"elementType")),heap,origin,active,role,upper,changed);merge(heap[ref+"/element/*"],child);
+    if(upper)changed=merge(elementSeeds["element:"+id],child)||changed;
+  }
+  if(kind=="readSpan"&&(vk=="array"||vk=="readSpan")){
+    const Json *array=nullptr;for(const auto &[type,row]:types){if(!step())return {};if(string(field(*row,"kind"))=="array"&&same(field(*row,"elementType"),field(t,"elementType"))){array=row;break;}}
+    if(!need(array,"entry ReadSpan owner type missing")||!step(active.size()+1))return {};auto owner=entryDeclared(string(field(*array,"id")),view,heap,origin,active,role,upper,changed);merge(heap[ref+"/owner"],owner);
+  }return out;
+}
+ActualValue ActualCheck::entryValue(const Function &fn,size_t index,ActualHeap &heap,bool upper,bool &changed){
+  const auto reg=fn.blocks[0].parameters[index];const auto type=views.at(fn.id+"/"+std::to_string(reg));
+  const Program::EntryRole *role=nullptr;
+  if(sourceFunctions.count(fn.id)){
+    const auto &owner=*sourceFunctions.at(fn.id);const size_t receiver=!field(owner,"ownerType").getAsNull();
+    if(index>=receiver&&index-receiver<items(field(owner,"parameters")).size()){
+      const auto binding=string(field(items(field(owner,"parameters"))[index-receiver],"id"));
+      auto found=p.entryCandidates.find(binding);if(found!=p.entryCandidates.end())role=&found->second;
+    }
+  }
+  const auto origin="entry/"+fn.id+"/"+std::to_string(reg);
+  return role?entryDeclared(type,type,heap,origin,{},*role,upper,changed):declared(type,heap,origin);
+}
 std::string ActualCheck::carrier(const ActualValue &v){
   if(!step(weight(v)))return {};if(v.unknown)return "payload:"+schema.str();
   if(v.tags.size()==1){const auto id=*v.tags.begin();if(!need(types.count(id),"unowned actual payload tag"))return {};

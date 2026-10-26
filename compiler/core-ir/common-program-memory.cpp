@@ -69,9 +69,8 @@ bool ActualCheck::execute(ActualContext &context,bool conditional,bool &changed)
         for(const auto &tag:globalSeeds.at(raw).tags){auto alternative=declared(tag,entry.heap,"global-entry/"+id);merge(value,alternative);}}
       entry.heap.emplace("global:"+id,std::move(value));
     }
-    for(auto reg:fn.blocks[0].parameters){
-      const auto type=views.at(fn.id+"/"+std::to_string(reg));context.arguments.push_back(declared(type,entry.heap,"entry/"+fn.id+"/"+std::to_string(reg)));
-    }context.entry=copyHeap(entry.heap);
+    for(size_t i=0;i<fn.blocks[0].parameters.size();++i)context.arguments.push_back(entryValue(fn,i,entry.heap,conditional,changed));
+    context.entry=copyHeap(entry.heap);
   }
   for(size_t i=0;i<context.arguments.size();++i)entry.values.emplace(fn.blocks[0].parameters[i],copy(context.arguments[i]));
   std::map<uint16_t,ActualState> states;states.emplace(0,std::move(entry));std::vector<uint16_t> queue{0};std::set<uint16_t> queued{0};
@@ -107,7 +106,7 @@ bool ActualCheck::solve(bool conditional){
   for(const auto &[id,fn]:functions){
     ActualHeap heap;
     for(const auto &[gid,g]:globals){auto value=declared(string(field(*g,"type")),heap,"global-entry/"+gid);heap.emplace("global:"+gid,std::move(value));}
-    std::vector<ActualValue> args;for(auto reg:fn->blocks[0].parameters)args.push_back(declared(views.at(id+"/"+std::to_string(reg)),heap,"entry/"+id+"/"+std::to_string(reg)));
+    std::vector<ActualValue> args;for(size_t i=0;i<fn->blocks[0].parameters.size();++i)args.push_back(entryValue(*fn,i,heap,conditional,changed));
     if(!context(id,args,heap,true,changed))return false;
   }
   do{

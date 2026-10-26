@@ -116,6 +116,13 @@ struct Program {
   std::map<std::string,Layout> layouts;
   std::map<std::string,Effects> effects;
   std::map<std::string,Effects> fixedEffects;
+  // Independent M12 outputs: eligibility is an entry role, never an observed
+  // allocation. Member projections preserve the actual object's payload/GC ID.
+  using ReferenceCandidates=std::map<std::string,std::set<std::string>>;
+  using ReferenceFields=std::map<std::pair<std::string,std::string>,std::map<std::string,std::string>>;
+  struct EntryRole {ReferenceCandidates candidates;ReferenceFields fields;};
+  ReferenceFields referenceFields;
+  std::map<std::string,EntryRole> entryCandidates;
   size_t remaining=1000000;
   bool charge(size_t n=1){if(n>remaining){remaining=0;return false;}remaining-=n;return true;}
 };

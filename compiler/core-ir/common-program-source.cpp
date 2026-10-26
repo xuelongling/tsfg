@@ -1,7 +1,9 @@
 // SPDX-License-Identifier: MIT
 #include "common-program-syntax.h"
+#include "common-program-relations.h"
 #include "bytecode.h"
 #include "llvm/ADT/STLExtras.h"
+#include <optional>
 namespace tsfg::commonProgram {
 namespace {
 bool path(llvm::StringRef value){
@@ -64,16 +66,28 @@ bool closure(SourceModel &m){
 bool SourceModel::sourceText(){
   std::map<std::string,SourceSyntax> syntax;
   if(!files(*this,syntax)||!closure(*this))return false;
-  SourceBodies bodies{*this,syntax};if(!bodies.inventory())return false;
-  std::set<std::pair<std::string,std::string>> entryParameters;
+  SourceRelations relations{*this};if(!relations.read())return false;
+  SourceBodies bodies{*this,syntax};bodies.relations=&relations;if(!bodies.inventory())return false;
+  std::set<std::pair<std::string,std::string>> entryParameters,expectedEntries;std::set<std::string> exported;Array expectedExports;
+  for(const auto &e:items(field(*modules.at(string(field(payload,"rootFile"))),"exports")))if(string(field(e,"kind"))=="function"){
+    if(!spend()||!need(functions.count(string(field(e,"target"))),"root export function missing"))return false;
+    expectedExports.push_back(Object{{"name",field(e,"name")},{"functionId",field(e,"target")}});exported.insert(string(field(e,"target")));
+  }
+  if(!need(same(Json(std::move(expectedExports)),field(payload,"exports")),"function exports differ from actual root module exports"))return false;
+  for(const auto &id:exported)for(const auto &p:items(field(*functions.at(id),"parameters"))){if(!spend())return false;expectedEntries.emplace(id,string(field(p,"id")));}
+  std::optional<std::pair<std::string,std::string>> priorEntry;
   for(const auto &entry:items(field(payload,"entryCompatibilityRoots"))){
     const auto fn=string(field(entry,"functionId")),binding=string(field(entry,"parameterBinding"));
-    if(!spend()||!need(functions.count(fn)&&entryParameters.emplace(fn,binding).second&&items(field(entry,"roots")).empty(),"entry witness unsupported or parameter identity differs"))return false;
+    const auto identity=std::pair{fn,binding};
+    if(!spend()||!need(exported.count(fn)&&entryParameters.insert(identity).second&&(!priorEntry||*priorEntry<identity),"entry exported parameter identity/order differs"))return false;
+    priorEntry=identity;
     const auto &owner=*functions.at(fn);const Json *parameter=nullptr;
     for(const auto &p:items(field(owner,"parameters"))){if(!spend())return false;if(string(field(p,"id"))==binding){parameter=&p;break;}}
     if(!need(parameter&&same(field(entry,"viewType"),field(*parameter,"declaredType"))&&same(field(entry,"origin"),Object{{"source",field(owner,"sourcePath")},
       {"start",field(field(*parameter,"declarationRange"),"start")},{"end",field(field(*parameter,"declarationRange"),"end")}}),"entry view/origin does not join original parameter"))return false;
+    if(!relations.entry(entry))return false;
   }
+  if(!need(entryParameters==expectedEntries,"exported parameter entry directory is incomplete"))return false;
   // The source and declaration envelopes must cover every ordinary token.
   std::map<std::string,std::vector<Json>> coverage;
   for(const auto &[id,fn]:functions){
@@ -99,6 +113,6 @@ bool SourceModel::sourceText(){
     for(auto [a,b]:spans){if(!need(a==at,"missing, overlapping or repeated complete Source declaration"))return false;at=b;}
     if(!need(at==text.tokens.size(),"unrepresented ordinary Source top-level tokens"))return false;
   }
-  return true;
+  return relations.finish();
 }
 } // namespace tsfg::commonProgram

@@ -1,5 +1,6 @@
 // SPDX-License-Identifier: MIT
 #include "common-program-syntax.h"
+#include "common-program-relations.h"
 #include "llvm/ADT/APInt.h"
 #include "llvm/ADT/APFloat.h"
 #include "llvm/ADT/SmallString.h"
@@ -66,18 +67,18 @@ bool literal(SourceBodies &b,const Json &v){
   return m.need(same(Json(std::move(units)),field(v,"codeUnits")),"original UTF16 String payload differs");
 }
 }
-bool SourceBodies::expression(const Json &v,bool target){
+bool SourceBodies::expression(const Json &v,bool target,const std::string &expected){
   if(!model.spend())return false;size_t a,b;if(!source->span(field(v,"range"),a,b))return false;
   const auto kind=string(field(v,"kind")),type=string(field(v,"type")),actual=flow(v);
   if(!model.need(model.types.count(type)&&(target||model.types.count(actual)),"expression type catalogue membership differs"))return false;
   if(!target){
     const auto declaredKind=string(field(*model.types.at(type),"kind"));
-    if(!model.need(!v.getAsObject()->get("compatibilityRoots"),"M12 expression witness consumption is not supported by this common Source consumer"))return false;
+    if(!model.need(relations,"complete Source relation ledger missing")||!relations->expression(v,expected,source->path))return false;
     if(!model.need(logical(actual,type),"expression flow is not a valid declared view")||
       !model.need(!llvm::is_contained(llvm::ArrayRef<llvm::StringRef>{"scalar","string","undefined","null","void"},declaredKind)||actual==type,"primitive declared/flow type differs"))return false;
   }
   const auto sequence=[&](std::vector<Json> parts){return source->sequence(field(v,"range"),parts);};
-  const auto child=[&](llvm::StringRef key,bool write=false){return expression(field(v,key),write);};
+  const auto child=[&](llvm::StringRef key,bool write=false,const std::string &wanted=std::string()){return expression(field(v,key),write,wanted);};
   if(kind=="bindingReference"||kind=="bindingTarget"){
     const auto id=string(field(v,"binding"));if(!model.need(bindings.count(id)&&resolve(field(v,"range"))==id,"original binding reference resolves to another symbol"))return false;
     const auto &binding=*bindings.at(id);
@@ -87,7 +88,7 @@ bool SourceBodies::expression(const Json &v,bool target){
   if(kind=="thisReference")return model.need(string(field(*current,"ownerType"))==type,"this nominal owner differs")&&sequence({Json("this")});
   if(llvm::StringRef(kind).ends_with("Literal")&&kind!="arrayLiteral")return model.need(actual==type,"literal flow type differs")&&literal(*this,v);
   if(kind=="parentheses")return child("expression")&&model.need(type==string(field(field(v,"expression"),"type"))&&actual==flow(field(v,"expression")),"parenthesized type/flow differs")&&sequence({Json("("),field(field(v,"expression"),"range"),Json(")")});
-  if(kind=="as")return child("expression")&&model.need(assertion(flow(field(v,"expression")),actual),"assertion changes unsupported numeric or nominal view")&&annotation(field(v,"annotationRange"),type)&&source->sequence(field(v,"operatorRange"),{Json("as")})&&
+  if(kind=="as")return child("expression")&&annotation(field(v,"annotationRange"),type)&&source->sequence(field(v,"operatorRange"),{Json("as")})&&
     sequence({field(field(v,"expression"),"range"),Json("as"),field(v,"annotationRange")});
   if(kind=="nonNull")return child("expression")&&source->sequence(field(v,"operatorRange"),{Json("!")})&&sequence({field(field(v,"expression"),"range"),Json("!")});
   if(v.getAsObject()->get("allocationSite")){
@@ -103,7 +104,7 @@ bool SourceBodies::expression(const Json &v,bool target){
   if(kind=="arrayLiteral"){
     if(!model.need(string(field(*model.types.at(type),"kind"))=="array","Array literal catalogue kind differs"))return false;
     const auto element=string(field(*model.types.at(type),"elementType"));std::vector<Json> pieces{Json("[")};size_t i=0;
-    for(const auto &e:items(field(v,"elements"))){if(!expression(e)||!model.need(logical(flow(e),element),"Array literal element type differs"))return false;
+    for(const auto &e:items(field(v,"elements"))){if(!expression(e,false,element))return false;
       if(i++)pieces.push_back(",");pieces.push_back(field(e,"range"));}pieces.push_back("]");return sequence(pieces);
   }
   if(kind=="checkedElementAccess"||kind=="elementTarget"){
@@ -132,7 +133,7 @@ bool SourceBodies::expression(const Json &v,bool target){
     return sequence({field(field(v,"receiver"),"range"),Json("."),field(v,"nameRange")});
   }
   if(llvm::StringRef(kind).ends_with("Assignment")){
-    if(!child("target",true)||!child("value")||!model.need(type==string(field(field(v,"target"),"type"))&&logical(flow(field(v,"value")),type),"assignment result/value type differs"))return false;
+    if(!child("target",true)||!child("value",false,type)||!model.need(type==string(field(field(v,"target"),"type"))&&actual==flow(field(v,"value")),"assignment result/value type differs"))return false;
     return sequence({field(field(v,"target"),"range"),Json(op),field(field(v,"value"),"range")});
   }
   if(llvm::StringRef(kind).ends_with("Update"))return child("target",true)&&model.need(type==string(field(field(v,"target"),"type"))&&(op=="++"||op=="--"),"update type/operator differs")&&
@@ -143,7 +144,7 @@ bool SourceBodies::expression(const Json &v,bool target){
     if(!model.need(string(field(sig,"id"))==digest(std::string("tsfg.array-facts.signature.v8")+std::string(1,'\0')+
       canonical(Object{{"sourcePath",path},{"declarationRange",field(sig,"declarationRange")}}))&&items(field(sig,"parameters")).size()==items(field(v,"arguments")).size(),"original call signature identity/arity differs"))return false;
     std::vector<Json> pieces;if(kind=="new")pieces.push_back("new");pieces.push_back(field(v,"calleeRange"));pieces.push_back("(");size_t i=0;
-    for(const auto &arg:items(field(v,"arguments"))){if(!expression(arg)||!model.need(logical(flow(arg),string(items(field(sig,"parameters"))[i])),"call argument view type differs"))return false;
+    for(const auto &arg:items(field(v,"arguments"))){if(!expression(arg,false,string(items(field(sig,"parameters"))[i])))return false;
       if(i++)pieces.push_back(",");pieces.push_back(field(arg,"range"));}pieces.push_back(")");
     if(kind=="call"){
       if(callee==string(field(field(model.payload,"readSpanIntrinsic"),"id"))){
@@ -164,60 +165,6 @@ bool SourceBodies::expression(const Json &v,bool target){
   return model.need(false,"unsupported complete common Source expression; no partial body admission");
 }
 bool SourceBodies::logical(const std::string &from,const std::string &to){
-  std::function<bool(const std::string &,const std::string &,unsigned)> relation;
-  relation=[&](const std::string &a,const std::string &b,unsigned depth){
-    if(!model.spend()||!model.need(depth<=128&&model.types.count(a)&&model.types.count(b),"logical relation type/depth differs"))return false;
-    if(a==b)return true;const auto &source=*model.types.at(a),&target=*model.types.at(b);
-    const auto sk=string(field(source,"kind")),tk=string(field(target,"kind"));
-    if(sk=="union"){for(const auto &member:items(field(source,"members")))if(!relation(string(member),b,depth+1))return false;return true;}
-    if(tk=="union"){for(const auto &member:items(field(target,"members")))if(relation(a,string(member),depth+1))return true;return false;}
-    const auto container=[](const std::string &k){return k=="array"||k=="readSpan";};
-    if(container(sk)&&container(tk))return relation(string(field(source,"elementType")),string(field(target,"elementType")),depth+1);
-    // Distinct nominal reference slots need the full M12 witness business
-    // verifier. This bounded common slice rejects those proofs explicitly.
-    return sk=="undefined"&&tk=="void";
-  };return relation(from,to,0);
-}
-bool SourceBodies::assertion(const std::string &from,const std::string &to){
-  if(!model.types.count(from)||!model.types.count(to))return false;
-  if(string(field(*model.types.at(from),"kind"))=="unknown"||string(field(*model.types.at(to),"kind"))=="unknown")return true;
-  const auto container=[](const std::string &k){return k=="array"||k=="readSpan";};
-  using Numerics=std::map<unsigned,std::set<std::string>>;
-  const auto numerics=[&](const std::string &root,Numerics &out){
-    std::vector<std::pair<std::string,unsigned>> pending{{root,0}};std::set<std::pair<std::string,unsigned>> seen;
-    while(!pending.empty()){
-      auto [id,depth]=std::move(pending.back());pending.pop_back();if(!model.spend()||!model.need(depth<=128&&model.types.count(id),"assertion numeric graph differs"))return false;
-      if(!seen.emplace(id,depth).second)continue;const auto &t=*model.types.at(id);const auto k=string(field(t,"kind"));
-      if(k=="scalar"&&id!="bool")out[depth].insert(id);
-      else if(k=="union")for(const auto &m:items(field(t,"members"))){if(!model.spend())return false;pending.emplace_back(string(m),depth);}
-      else if(container(k))pending.emplace_back(string(field(t,"elementType")),depth+1);
-    }return true;
-  };
-  Numerics sourceNumeric,targetNumeric;if(!numerics(from,sourceNumeric)||!numerics(to,targetNumeric))return false;
-  for(const auto &[depth,kinds]:sourceNumeric)if(targetNumeric.count(depth)){
-    bool overlap=false;for(const auto &id:kinds){if(!model.spend())return false;overlap|=targetNumeric.at(depth).count(id);}
-    if(!overlap)return false;
-  }
-  const auto payload=[&](const Json &t){std::vector<std::string> result;
-    if(string(field(t,"kind"))!="union")result.push_back(string(field(t,"id")));
-    else for(const auto &m:items(field(t,"members"))){if(!model.spend())return result;if(string(m)!="undefined"&&string(m)!="null")result.push_back(string(m));}return result;};
-  std::function<bool(const std::string &,const std::string &,unsigned)> view;
-  view=[&](const std::string &a,const std::string &b,unsigned depth){
-    if(!model.spend()||!model.need(depth<=128&&model.types.count(a)&&model.types.count(b),"assertion view graph differs"))return false;
-    if(a==b)return true;const auto &s=*model.types.at(a),&t=*model.types.at(b);const auto sk=string(field(s,"kind")),tk=string(field(t,"kind"));
-    if(tk=="undefined"||tk=="null"||tk=="void")return true;
-    if(sk=="union"||tk=="union"){
-      const auto sp=payload(s),tp=payload(t);if(!model.error.message.empty())return false;
-      if(!model.spend((sp.size()+1)*(tp.size()+1)))return false;
-      const auto subset=[](const auto &x,const auto &y){return std::all_of(x.begin(),x.end(),[&](const auto &id){return std::find(y.begin(),y.end(),id)!=y.end();});};
-      if(subset(sp,tp)||subset(tp,sp))return true;
-      if(sk=="union"){for(const auto &id:sp)if(!view(id,b,depth+1))return false;return true;}
-      if(tp.size()==1)return view(a,tp[0],depth+1);
-      if(sk=="value"||sk=="reference")return logical(a,b);
-    }
-    if(container(sk)&&container(tk))return view(string(field(s,"elementType")),string(field(t,"elementType")),depth+1);
-    if(sk=="reference"&&tk=="reference")return false;
-    return sk!="value"&&tk!="value";
-  };return view(from,to,0);
+  return model.need(relations,"complete Source relation ledger missing")&&relations->plainLogical(from,to);
 }
 } // namespace tsfg::commonProgram

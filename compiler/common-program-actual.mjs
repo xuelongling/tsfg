@@ -6,9 +6,10 @@ import {finiteNumericUse} from './finite-numeric-use.mjs';
 import {classifyArrayCallGraph} from './array-call-graph.mjs';
 import {commonAbstract} from './common-program-abstract.mjs';
 import {commonCheck as check} from './common-program-common.mjs';
+import {commonEntryReferences} from './common-program-entry.mjs';
 const undefinedId=sha256('tsfg.type\0undefined');
 export function analyzeCommonGraphs({model,plans}) {
-  const {spend,types}=model,elementSeeds=new Map(),a=commonAbstract({...model,elementSeeds}),byId=new Map(plans.map(plan=>[plan.owner.id,plan]));
+  const {spend,types}=model,elementSeeds=new Map(),a=commonAbstract({...model,elementSeeds}),byId=new Map(plans.map(plan=>[plan.owner.id,plan])),entryReferences=commonEntryReferences(model.hir,spend);
   const edges=[],callSites=[],incoming=new Map(),cyclicBlocks=new Set();
   for(const plan of plans) {
     const blockEdges=[];
@@ -42,12 +43,38 @@ export function analyzeCommonGraphs({model,plans}) {
     if(a.fields(actual).some(row=>row.id===field))return field;
     const mapped=fieldAliases.get(actual+'/'+view)?.get(field);check(mapped,'capability','actual field has no original verified member mapping');return mapped;
   };
+  const methodReceiver=(callee,receiver,caller,range)=>{
+    if(callee?.kind!=='method')return;
+    const details={functionId:caller.id,primary:{sourceId:caller.sourcePath,...range},staticCallee:callee.id};
+    check(receiver&&!receiver.unknown,'capability','method receiver has no proved actual nominal type',details);
+    for(const actualType of receiver.tags){
+      spend();let type=types.get(actualType),selected;
+      while(type&&!selected){
+        spend();for(const id of type.methods??[]){
+          spend();let candidate=model.functions.get(id);
+          while(candidate){spend();if(candidate.id===callee.id){selected=id;break;}candidate=model.functions.get(candidate.overrideTarget);}
+          if(selected)break;
+        }
+        type=types.get(type.base);
+      }
+      // The fixed callee may be inherited unchanged. Resolving an override or
+      // a structural method would require dynamic dispatch, which is not granted.
+      check(selected===callee.id,'capability','actual method dispatch is unsupported',{...details,actualType,effectiveCallee:selected??null});
+    }
+  };
   const dummyHeap=new Map(),dummyObjects=new Map();
   for(const [id,binding]of model.bindings)if(binding.role==='field')seed(fieldSeeds,id,a.declared(binding.type,dummyHeap,'conditional',new Map(),dummyObjects));
   for(const type of types.values())if(type.kind==='array')seed(elementSeeds,'element:'+type.id,a.declared(type.elementType,dummyHeap,'conditional',fieldSeeds,dummyObjects));
   for(const global of model.hir.globals)seed(globalSeeds,global.sourceBinding,a.declared(global.type,dummyHeap,'conditional',fieldSeeds,dummyObjects));
   function solve(bounded) {
     const contexts=new Map(),observed=new Map(),objects=new Map(),operations=new Map(),callTargets=new Map();let changed=false;
+    const entryValue=(plan,parameter,heap)=>{
+      const authority=entryReferences(plan.owner.id,parameter.id),entry=authority?{...authority,observe(kind,id,value){
+        if(!bounded)return;const seeds=kind==='field'?fieldSeeds:elementSeeds,before=a.key(seeds.get(id)??a.empty());
+        seed(seeds,id,value);changed ||= before!==a.key(seeds.get(id));
+      }}:undefined;
+      return a.declared(parameter.type,heap,'entry/'+plan.owner.id+'/'+parameter.id,fieldSeeds,objects,new Set(),entry);
+    };
     const observe=(id,value)=>{spend();if(!observed.has(id))observed.set(id,a.empty());a.merge(observed.get(id),value);};
     const currentGlobals=heap=>{
       for(const global of model.hir.globals){spend();const value=a.declared(global.type,heap,'global-entry/'+global.id,fieldSeeds,objects),upper=globalSeeds.get(global.sourceBinding);
@@ -63,7 +90,7 @@ export function analyzeCommonGraphs({model,plans}) {
       return contexts.get(key);
     }
     for(const plan of plans) {
-      const heap=new Map();currentGlobals(heap);const args=plan.parameters.map(parameter=>a.declared(parameter.type,heap,'entry/'+plan.owner.id+'/'+parameter.id,fieldSeeds,objects));
+      const heap=new Map();currentGlobals(heap);const args=plan.parameters.map(parameter=>entryValue(plan,parameter,heap));
       context(plan.owner.id,args,heap,true);
     }
     do {
@@ -71,7 +98,7 @@ export function analyzeCommonGraphs({model,plans}) {
       for(const c of contexts.values()) {
         spend();const plan=c.plan,fn=plan.owner.id,entry=a.state();entry.heap=a.snapshot(c.entryHeap);
         if(c.root){entry.heap=new Map();currentGlobals(entry.heap);
-          c.args=plan.parameters.map(parameter=>a.declared(parameter.type,entry.heap,'entry/'+plan.owner.id+'/'+parameter.id,fieldSeeds,objects));c.entryHeap=a.snapshot(entry.heap);}
+          c.args=plan.parameters.map(parameter=>entryValue(plan,parameter,entry.heap));c.entryHeap=a.snapshot(entry.heap);}
         for(const [index,p]of plan.entry.parameters.entries())entry.values.set(p.name,a.copy(c.args[index]));
         const blocks=new Map(plan.graph.blocks.map(block=>[block.name,block])),states=new Map([[plan.entry.name,entry]]),queue=[plan.entry.name],queued=new Set(queue);
         const edge=(name,from,args=[])=>{
@@ -159,6 +186,7 @@ export function analyzeCommonGraphs({model,plans}) {
               const key=fn+'/'+op.result;if(!operations.has(key))operations.set(key,{normal:false,requestTrap:false,approved});const record=operations.get(key);record.normal ||= reaches;record.requestTrap ||= trap;
               if(!bounded&&!reaches)continues=false;
             }else if(name==='invoke') {
+              methodReceiver(model.functions.get(p.function_id),args[0],plan.owner,op.range);
               const call=context(p.function_id,args,state.heap);const targets=callTargets.get(fn+'/'+op.range.start+':'+op.range.end)??new Set();targets.add(p.function_id);callTargets.set(fn+'/'+op.range.start+':'+op.range.end,targets);
               const complete=(target,value,heap)=>{const after=a.clone(state);for(const [slot,v]of heap)update(after.heap,slot,v);edge(target,after,blocks.get(target).parameters.length?[value]:[]);};
               if(call.normal)complete(op.successors[0],call.returned,call.normalHeap);if(call.language)complete(op.successors[1],call.thrown,call.languageHeap);continues=false;

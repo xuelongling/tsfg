@@ -23,30 +23,53 @@ export function commonAbstract(model) {
   const fields=id=>{const result=[],layers=[],seen=new Set();let type=types.get(id);
     while(type){spend();check(!seen.has(type.id),'type');seen.add(type.id);layers.push(type.fields??[]);type=types.get(type.base);}
     for(let i=layers.length-1;i>=0;i--){spend(layers[i].length);for(const field of layers[i])result.push(field);}return result;};
-  function declared(id,heap,origin,fieldSeeds,objects,active=new Set()) {
+  function entryStorage(source,view,heap,origin,fieldSeeds,objects,active,entry) {
+    spend();const logical=types.get(view);check(logical,'type');const result=empty();
+    if(logical.kind==='union'){
+      for(const member of logical.members)merge(result,entryStorage(source,member,heap,origin,fieldSeeds,objects,collections.set(active),entry));return result;
+    }
+    if(['array','readSpan'].includes(logical.kind)){
+      const pending=[source],seen=new Set(),containers=[];
+      while(pending.length){spend();const id=pending.pop();if(seen.has(id))continue;seen.add(id);const type=types.get(id);check(type,'type');
+        if(type.kind==='union'){spend(type.members.length);for(const member of type.members)pending.push(member);}
+        else if(['array','readSpan'].includes(type.kind))containers.push(id);}
+      if(!containers.length)containers.push(view);
+      for(const id of containers)merge(result,declared(id,heap,origin,fieldSeeds,objects,collections.set(active),entry,true,view));return result;
+    }
+    return declared(view,heap,origin,fieldSeeds,objects,active,entry);
+  }
+  function declared(id,heap,origin,fieldSeeds,objects,active=new Set(),entry=undefined,selected=false,view=id) {
     spend();const type=types.get(id);check(type,'type');const value=empty();
     if(type.kind==='unknown'){value.unknown=true;return value;}
-    if(type.kind==='union'){for(const member of type.members)merge(value,declared(member,heap,origin,fieldSeeds,objects,collections.set(active)));return value;}
+    if(type.kind==='union'){for(const member of type.members)merge(value,declared(member,heap,origin,fieldSeeds,objects,collections.set(active),entry));return value;}
+    if(type.kind==='reference'&&entry&&!selected){
+      for(const actual of entry.sources(view))merge(value,declared(actual,heap,origin,fieldSeeds,objects,collections.set(active),entry,true,view));return value;
+    }
     value.tags.add(id);if(type.name==='bool')value.truth=3;
     if(['reference','value','array','readSpan'].includes(type.kind)) {
-      const ref=origin+'/'+id;value.refs.add(ref);if(active.has(ref))return value;active.add(ref);objects.set(ref,{type:id,weak:true});
+      const ref=origin+'/'+id,role=entry?ref+'\0'+view:ref;value.refs.add(ref);if(active.has(role))return value;active.add(role);objects.set(ref,{type:id,weak:true});
       if(['value','reference'].includes(type.kind))for(const field of fields(id)) {
-        const slot=ref+'/field/'+field.id;if(heap.has(slot))continue;
+        const slot=ref+'/field/'+field.id;if(heap.has(slot)&&!entry)continue;
         // Reference cycles stop at an existing abstract object. Inline cycles
         // were independently rejected at the cold catalogue seam.
-        const child=declared(field.type,heap,origin,fieldSeeds,objects,collections.set(active));
+        const fieldView=entry?.field(id,view,field.id);
+        const child=fieldView?entryStorage(field.type,fieldView,heap,origin,fieldSeeds,objects,collections.set(active),entry)
+          :declared(field.type,heap,origin,fieldSeeds,objects,collections.set(active));
         if(fieldSeeds.has(field.sourceBinding)){
           const upper=fieldSeeds.get(field.sourceBinding);spend(upper.tags.size);child.unknown ||= upper.unknown;
-          for(const tag of upper.tags)merge(child,declared(tag,heap,origin,fieldSeeds,objects,collections.set(active)));
-        }heap.set(slot,child);
+          for(const tag of upper.tags)merge(child,declared(tag,heap,origin,fieldSeeds,objects,collections.set(active),entry));
+        }if(entry&&heap.has(slot))merge(heap.get(slot),child);else heap.set(slot,child);
+        entry?.observe('field',field.sourceBinding,child);
       }
       if(type.kind==='array'){
-        const child=declared(type.elementType,heap,origin,fieldSeeds,objects,collections.set(active)),upper=model.elementSeeds?.get('element:'+id);
-        if(upper){child.unknown ||= upper.unknown;spend(upper.tags.size);for(const tag of upper.tags)merge(child,declared(tag,heap,origin,fieldSeeds,objects,collections.set(active)));}
-        heap.set(ref+'/element/*',child);
+        const logical=types.get(view),child=entry?entryStorage(type.elementType,logical.elementType,heap,origin,fieldSeeds,objects,collections.set(active),entry)
+          :declared(type.elementType,heap,origin,fieldSeeds,objects,collections.set(active)),upper=model.elementSeeds?.get('element:'+id);
+        if(upper){child.unknown ||= upper.unknown;spend(upper.tags.size);for(const tag of upper.tags)merge(child,declared(tag,heap,origin,fieldSeeds,objects,collections.set(active),entry));}
+        if(entry&&heap.has(ref+'/element/*'))merge(heap.get(ref+'/element/*'),child);else heap.set(ref+'/element/*',child);
+        entry?.observe('element','element:'+id,child);
       }
       if(type.kind==='readSpan'){const array=arrays.get(type.elementType);
-        if(array)heap.set(ref+'/owner',declared(array.id,heap,origin,fieldSeeds,objects,collections.set(active)));}
+        if(array)heap.set(ref+'/owner',declared(array.id,heap,origin,fieldSeeds,objects,collections.set(active),entry,true,view));}
     }
     return value;
   }

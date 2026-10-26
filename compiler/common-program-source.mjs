@@ -5,6 +5,18 @@ import {identifierName} from './module-facts.mjs';
 import {sourceRange} from './typed-array-schema.mjs';
 import {commonCheck as check,commonSame as same} from './common-program-common.mjs';
 
+// The established constructor DTO retains the complete declaration as its
+// nameRange because the original AST has no Name node. Keep that provenance;
+// syntax consumers locate the actual keyword independently from source tokens.
+export function commonCallableNameRange(grammar,fn,types) {
+  if(!fn.ownerType||types.get(fn.ownerType)?.constructor?.id!==fn.id)return fn.nameRange;
+  check(fn.name==='constructor'&&same(fn.nameRange,fn.declarationRange)&&fn.returnAnnotationRange===null,'source');
+  const bounds=grammar.indices(fn.declarationRange);let cursor=bounds.first;
+  while(cursor<bounds.end&&['public','private','protected'].includes(grammar.tokens[cursor].text))cursor++;
+  const token=grammar.tokens[cursor];check(token?.text==='constructor','source');
+  return {start:token.start,end:token.end};
+}
+
 export function commonSourceGrammar(source,spend) {
   const text=source.content,tokens=[];
   // Type-context closing angles are individual tokens (ReadSpan<i32>=...);

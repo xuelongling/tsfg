@@ -88,7 +88,7 @@ include_directories(${LLVM_INCLUDE_DIRS}
 add_library(tsfg-core-common OBJECT
   dialect.cpp bytecode.cpp bytecode_encoding.cpp module.cpp
   module-plan.cpp core-verify.cpp finite-domain.cpp finite-fields.cpp
-  common-program.cpp common-program-read.cpp common-program-shape.cpp common-program-json.cpp
+  common-program.cpp common-program-read.cpp common-program-relations.cpp common-program-shape.cpp common-program-json.cpp
   common-program-identities.cpp common-program-projection.cpp common-program-syntax.cpp
   common-program-source.cpp common-program-declarations.cpp common-program-modules.cpp
   common-program-bodies.cpp common-program-statements.cpp common-program-expressions.cpp
@@ -105,7 +105,7 @@ add_library(tsfg-core-common OBJECT
   array-publication.cpp array-roots.cpp array-wire.cpp array-owner-json.cpp
   array-owner-canonical.cpp array-owner-schema.cpp array-owner-analysis.cpp array-owner-pairs.cpp
   array-owner-command.cpp reference-metadata.cpp reference-provenance.cpp reference.cpp
-  reference-index.cpp reference-cfg.cpp reference-verify.cpp reference-construction.cpp
+  reference-index.cpp reference-cfg.cpp reference-verify.cpp reference-construction.cpp reference-contracts.cpp
   reference-roots.cpp exception.cpp exception-json.cpp exception-source.cpp
   exception-provenance.cpp exception-hir.cpp exception-cfg.cpp exception-verify.cpp
   exception-command.cpp managed-cfg.cpp managed-liveness.cpp closure.cpp

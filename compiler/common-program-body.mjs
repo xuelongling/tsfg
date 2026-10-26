@@ -8,9 +8,10 @@ import {typedArrayInteger,typedArrayStringUnits} from './typed-array-literals.mj
 import {originId,signatureId,sourceRange} from './typed-array-schema.mjs';
 import {typedArrayRelations} from './typed-array-relations.mjs';
 import {validateTypedArrayConstruction} from './typed-array-construction.mjs';
-import {commonTypeSyntax,commonSourceAccess} from './common-program-source.mjs';
+import {commonTypeSyntax,commonSourceAccess,commonCallableNameRange} from './common-program-source.mjs';
 import {commonCheck as check,commonSame as same} from './common-program-common.mjs';
 import {commonCollections} from './common-program-budget.mjs';
+import {validateCommonEntryRoots} from './common-program-entry.mjs';
 
 export function validateCommonBodies(payload,sources,types,grammars,visibility,spend) {
   const collections=commonCollections(spend);
@@ -18,9 +19,10 @@ export function validateCommonBodies(payload,sources,types,grammars,visibility,s
   for(const fn of [...payload.functions,...payload.types.flatMap(row=>row.constructor?[row.constructor]:[])]) {
     spend();check(!functions.has(fn.id)&&types.has(fn.returnType),'function');functions.set(fn.id,fn);
     const source=sources.get(fn.sourcePath),g=grammars.get(fn.sourcePath);check(source&&g,'source');
-    sourceRange(fn.declarationRange,source.content);g.name(fn.nameRange,fn.name);
+    const nameRange=commonCallableNameRange(g,fn,types);
+    sourceRange(fn.declarationRange,source.content);g.name(nameRange,fn.name);
     check(fn.id===sha256('tsfg.array-facts.function.v8\0'+canonical({sourcePath:fn.sourcePath,declarationRange:fn.declarationRange})),'identity');
-    commonSourceAccess(g,fn.declarationRange,fn.nameRange,fn.access);
+    commonSourceAccess(g,fn.declarationRange,nameRange,fn.access);
     if(!fn.ownerType)check(fn.access==='public','permission');
     if(fn.ownerType)check(['value','reference'].includes(types.get(fn.ownerType)?.kind),'function');
     for(const row of [...fn.parameters,...fn.bindings])binding(row,fn.sourcePath,fn.declarationRange);
@@ -207,7 +209,7 @@ export function validateCommonBodies(payload,sources,types,grammars,visibility,s
   }
   for(const fn of functions.values()) {
     const g=grammars.get(fn.sourcePath),bounds=g.indices(fn.declarationRange),last=g.tokens[bounds.end-1];check(last.text==='}','source');
-    let first=fn.returnAnnotationRange?g.indices(fn.returnAnnotationRange).end:g.indices(fn.nameRange).end;
+    let first=fn.returnAnnotationRange?g.indices(fn.returnAnnotationRange).end:g.indices(commonCallableNameRange(g,fn,types)).end;
     while(first<bounds.end&&g.tokens[first].text!=='{'){spend();first++;}check(first<bounds.end,'source');
     const bodyRange={start:g.tokens[first].start,end:last.end};
     functionBody(fn,bodyRange);
@@ -221,6 +223,6 @@ export function validateCommonBodies(payload,sources,types,grammars,visibility,s
     for(const row of module.initialization){const at=g.indices(row.range);const declaration=row.kind==='initialize';
       verifier.rows([row],declaration?at.first-1:at.first,at.end+(g.tokens[at.end]?.text===';'?1:0),owner.declarationRange,scope);}
   }
-  for(const row of payload.entryCompatibilityRoots)relations.entry(row);
+  validateCommonEntryRoots(payload,functions,relations,spend);
   relations.finish();return {functions,bindings};
 }

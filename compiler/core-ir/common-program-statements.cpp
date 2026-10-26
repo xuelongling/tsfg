@@ -34,7 +34,7 @@ bool SourceBodies::statements(const Json &rows,size_t first,size_t end){
       const bool global=kind=="initialize";
       if(!model.need(global?model.globals.count(bindingId)&&string(field(*model.globals.at(bindingId),"sourcePath"))==source->path:
         string(field(binding,"kind"))=="local"&&!declared.count(bindingId)&&field(binding,"writable").getAsBoolean()==(kind=="letDeclaration"),"original local/global declaration kind differs")||
-        !expression(field(row,"initializer"))||!model.need(logical(string(field(field(row,"initializer"),"flowType")),string(field(binding,"declaredType"))),"declaration initializer slot differs"))return false;
+        !expression(field(row,"initializer"),false,string(field(binding,"declaredType"))))return false;
       std::vector<Json> pieces{field(binding,"nameRange")};
       if(!field(binding,"annotationRange").getAsNull()){
         if(!annotation(field(binding,"annotationRange"),string(field(binding,"declaredType"))))return false;
@@ -46,7 +46,7 @@ bool SourceBodies::statements(const Json &rows,size_t first,size_t end){
     }else if(kind=="return"||kind=="throw"||kind=="expression"){
       std::vector<Json> pieces;if(kind!="expression")pieces.push_back(kind);
       if(row.getAsObject()->get("value")){
-        if(!expression(field(row,"value"))||kind=="return"&&!model.need(logical(string(field(field(row,"value"),"flowType")),string(field(*current,"returnType"))),"return flow does not satisfy original function result"))return false;pieces.push_back(field(field(row,"value"),"range"));
+        if(!expression(field(row,"value"),false,kind=="return"?string(field(*current,"returnType")):std::string()))return false;pieces.push_back(field(field(row,"value"),"range"));
       }else if(!model.need(kind=="return"&&string(field(*current,"returnType"))=="void","missing original completion value"))return false;
       if(!source->sequence(field(row,"range"),pieces,true))return false;
     }else if(kind=="block"){

@@ -2,6 +2,7 @@
 #pragma once
 #include "common-program-source.h"
 namespace tsfg::commonProgram {
+class SourceRelations;
 struct SourceToken {std::string text;uint32_t start=0,end=0;};
 struct SourceSyntax {
   SourceModel &model;std::string path;std::u16string content;std::vector<SourceToken> tokens;
@@ -17,14 +18,14 @@ struct SourceBodies {
   std::map<std::string,std::map<std::string,std::string>> visible;
   const Json *current=nullptr;SourceSyntax *source=nullptr;
   std::map<std::string,std::string> scope;std::set<std::string> initialized,declared;
+  SourceRelations *relations=nullptr;
   bool inventory();bool function(const Json &);bool module(const Json &);
   std::string resolve(const Json &);
-  bool expression(const Json &,bool target=false);
+  bool expression(const Json &,bool target=false,const std::string &expected={});
   bool statements(const Json &,size_t,size_t);
   bool annotation(const Json &,const std::string &);
   bool setScope(const std::map<std::string,std::string> &);
   bool logical(const std::string &,const std::string &);
-  bool assertion(const std::string &,const std::string &);
 };
 bool verifyCommonDeclarations(SourceModel &,SourceBodies &,std::map<std::string,SourceSyntax> &,
   std::map<std::string,std::vector<Json>> &);

@@ -93,12 +93,22 @@ bool SourceBodies::function(const Json &fn){
     if(!model.spend()||!model.need(string(field(b,"kind"))=="parameter","original parameter kind differs"))return false;
     scope[string(field(b,"name"))]=string(field(b,"id"));initialized.insert(string(field(b,"id")));declared.insert(string(field(b,"id")));
   }
-  size_t a,b;if(!source->span(field(fn,"declarationRange"),a,b)||!source->name(field(fn,"nameRange"),string(field(fn,"name"))))return false;
+  size_t a,b;if(!source->span(field(fn,"declarationRange"),a,b))return false;
   std::vector<Json> header;size_t cursor=a;
   while(cursor<b&&(source->tokens[cursor].text=="export"||source->tokens[cursor].text=="default"||
     source->tokens[cursor].text=="public"||source->tokens[cursor].text=="private"||source->tokens[cursor].text=="protected"))header.push_back(source->tokens[cursor++].text);
+  Json actualName=field(fn,"nameRange");const auto owner=string(field(fn,"ownerType"));
+  const bool constructor=model.types.count(owner)&&string(field(field(*model.types.at(owner),"constructor"),"id"))==id;
+  if(constructor){
+    // The official constructor DTO anchors nameRange to its entire original
+    // declaration. Recover only the keyword token for grammar checking; retain
+    // that original DTO span in all protocol/owned provenance.
+    if(!model.need(same(field(fn,"nameRange"),field(fn,"declarationRange"))&&cursor<b&&source->tokens[cursor].text=="constructor","original constructor keyword/span differs"))return false;
+    actualName=range(source->tokens[cursor],source->tokens[cursor]);
+  }
+  if(!source->name(actualName,string(field(fn,"name"))))return false;
   if(field(fn,"ownerType").getAsNull())header.push_back("function");
-  header.push_back(field(fn,"nameRange"));header.push_back("(");size_t index=0;
+  header.push_back(std::move(actualName));header.push_back("(");size_t index=0;
   for(const auto &p:items(field(fn,"parameters"))){
     if(!model.spend())return false;if(index++)header.push_back(",");
     std::vector<Json> pieces{field(p,"nameRange")};

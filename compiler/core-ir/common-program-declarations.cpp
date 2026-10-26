@@ -1,5 +1,6 @@
 // SPDX-License-Identifier: MIT
 #include "common-program-syntax.h"
+#include "common-program-relations.h"
 #include "llvm/ADT/STLExtras.h"
 namespace tsfg::commonProgram {
 namespace {
@@ -19,7 +20,7 @@ bool primitive(SourceModel &m,const Json &t){
   }
   return false;
 }
-bool construction(SourceModel &m,const Json &t){
+bool construction(SourceModel &m,SourceBodies &b,const Json &t){
   const auto id=string(field(t,"id")),base=string(field(t,"base"));const auto &c=field(t,"construction"),&ctor=field(t,"constructor");
   const bool explicitBody=!ctor.getAsNull();const auto &originOwner=explicitBody?ctor:t;
   const Json origin=Object{{"source",field(originOwner,"sourcePath")},{"start",field(field(originOwner,"declarationRange"),"start")},{"end",field(field(originOwner,"declarationRange"),"end")}};
@@ -49,9 +50,7 @@ bool construction(SourceModel &m,const Json &t){
   const auto &signatureOwner=field(*declaration,"constructor").getAsNull()?*declaration:field(*declaration,"constructor");
   if(!m.need(same(field(sig,"sourcePath"),field(signatureOwner,"sourcePath"))&&same(field(sig,"declarationRange"),field(signatureOwner,"declarationRange")),"construction signature does not join original declaration"))return false;
   if(!explicitBody&&!base.empty()){
-    // Forwarding carries M12 member mappings. It needs that business verifier,
-    // rather than trusting the producer's compatibility flags as a proof.
-    return m.need(false,"implicit-derived construction witness is not supported by this common Source consumer");
+    return m.need(b.relations&&same(field(c,"access"),field(field(*m.types.at(base),"construction"),"access")),"implicit forwarding effective access differs")&&b.relations->forward(t);
   }
   if(!m.need(field(c,"implicitForward").getAsNull()&&params.size()==items(field(ctor,"parameters")).size()&&
     (explicitBody||string(field(c,"access"))=="public"),"base construction parameters/access/forwarding differs"))return false;
@@ -64,7 +63,10 @@ bool construction(SourceModel &m,const Json &t){
 }
 bool nominal(SourceModel &m,SourceBodies &b,SourceSyntax &s,const Json &t){
   const auto id=string(field(t,"id")),kind=string(field(t,"kind")),path=string(field(t,"sourcePath"));const auto &key=field(t,"nominalKey");
-  if(!construction(m,t))return false;
+  if(!construction(m,b,t)){
+    if(m.error.code=="core-ir-common-source"){const auto &o=field(field(t,"construction"),"origin");m.error.path=string(field(o,"source"));
+      m.error.range={uint32_t(field(o,"start").getAsInteger().value_or(0)),uint32_t(field(o,"end").getAsInteger().value_or(0))};}return false;
+  }
   if(!m.need((kind=="value"||kind=="reference")&&id=="nominal:"+digest(std::string("tsfg.array-facts.nominal.v8")+std::string(1,'\0')+canonical(key)).substr(7)&&
     string(field(key,"sourcePath"))==path&&items(field(key,"declarationPath")).size()==1&&string(items(field(key,"declarationPath"))[0])==string(field(t,"name")),"nominal declaration identity differs"))return false;
   Array files;for(const auto &f:items(field(m.payload,"files"))){if(!m.spend())return false;files.push_back(Object{{"path",field(f,"path")},{"sha256",field(f,"sha256")}});}
@@ -107,7 +109,7 @@ bool nominal(SourceModel &m,SourceBodies &b,SourceSyntax &s,const Json &t){
     size_t annotationEnd=fb;if(s.tokens[annotationEnd-1].text==";")--annotationEnd;
     if(!field(f,"initializer").getAsNull()){
       size_t ia,ib;if(!s.span(field(field(f,"initializer"),"range"),ia,ib)||!m.need(ia>cursor&&s.tokens[ia-1].text=="=","field initializer punctuation differs"))return false;
-      annotationEnd=ia-1;if(!b.expression(field(f,"initializer"))||!m.need(b.logical(string(field(field(f,"initializer"),"flowType")),string(field(f,"type"))),"field initializer slot differs"))return false;
+      annotationEnd=ia-1;if(!b.expression(field(f,"initializer"),false,string(field(f,"type"))))return false;
     }
     if(!m.need(cursor<annotationEnd,"original field type missing"))return false;
     Json annotation=Object{{"start",int64_t(s.tokens[cursor].start)},{"end",int64_t(s.tokens[annotationEnd-1].end)}};

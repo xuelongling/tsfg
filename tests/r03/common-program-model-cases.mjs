@@ -17,7 +17,7 @@ export function commonFactoryModel(kind='reference',callInLoop=false) {
   for(const type of rows)for(const f of type.fields??[]){fields.set(f.id,f);bindings.set(f.sourceBinding,{id:f.sourceBinding,type:f.type,role:'field'});}
   const model={types:new Map(rows.map(t=>[t.id,t])),spend:commonMeter(1000000),payload:'payload:unit',fields,bindings,globals:new Map(),
     limits:{registersPerFunction:4096,blocksPerFunction:256,instructionsPerFunction:8192},
-    hir:{types:rows,globals:[],snapshot:{payload:{compatibilityWitnesses:[]}},closure:{roots:[{kind:'application',target:'entry'}]}}};
+    hir:{types:rows,functions:[],globals:[],snapshot:{payload:{compatibilityWitnesses:[],entryCompatibilityRoots:[]}},closure:{roots:[{kind:'application',target:'entry'}]}}};
   const plans=[],owners=new Map();
   function plan(id,returnType,parameterTypes=[]) {
     const parameters=parameterTypes.map((type,i)=>({id:id+'/p'+i,type}));for(const p of parameters)bindings.set(p.id,{...p,role:'parameter'});
@@ -47,7 +47,8 @@ export function commonFactoryModel(kind='reference',callInLoop=false) {
   const loaded=emit(entry,block,'field_load',[old],i32TypeId,{field:leaf.id}),result=emit(entry,block,'binary',[loaded,one],i32TypeId,{operator:'+'});
   if(loop)entry.graph.branch(block,loop,[],range);
   else ret(entry,block,result);
-  model.functions=owners;return {program:{model,plans},entryId:entry.owner.id,loaded:loaded.name};
+  model.functions=owners;model.hir.functions=[...owners.values()].map(fn=>({...fn,sourceBinding:fn.id}));
+  return {program:{model,plans},entryId:entry.owner.id,loaded:loaded.name};
 }
 export function commonReferenceBodyModel(count,scalar=false) {
   const root=sha256('unit:Leaf'),base=sha256('unit:Base'),wide=sha256('unit:Wide'),union=sha256('unit:Leaf/U'),fieldType=scalar?scalarTypeIds.i64:union;
@@ -59,4 +60,28 @@ export function commonReferenceBodyModel(count,scalar=false) {
     spend:commonMeter(1000000),payload:'payload:unit',hir:{types}},a=commonAbstract(model),seeds=new Map();
   for(const f of fields){const v=a.empty();for(const id of scalar?[fieldType]:[root,u])v.tags.add(id);seeds.set(f.sourceBinding,v);}
   return {program:{model,plans:[]},values:{abstract:a,fieldSeeds:seeds,globalSeeds:new Map(),elementSeeds:new Map(),capacity:{observed:new Map(),contexts:new Map()}},wide};
+}
+export function commonMethodModel(mode='override') {
+  const base=sha256('unit:MethodBase'),middle=sha256('unit:MethodMiddle'),derived=sha256('unit:MethodDerived');
+  const rows=[{id:i32TypeId,kind:'scalar',name:'i32'},
+    {id:base,kind:'reference',fields:[],methods:['base.m']},
+    {id:middle,kind:'reference',base,fields:[],methods:mode==='override'?['middle.m']:[]},
+    {id:derived,kind:'reference',...(mode==='structural'?{}:{base:middle}),fields:[],methods:mode==='inherited'?[]:['derived.m']}];
+  const bindings=new Map(),functions=new Map(),plans=[],model={types:new Map(rows.map(t=>[t.id,t])),bindings,functions,fields:new Map(),globals:new Map(),
+    spend:commonMeter(1000000),payload:'payload:unit',hir:{types:rows,functions:[],globals:[],snapshot:{payload:{compatibilityWitnesses:[],entryCompatibilityRoots:[]}},closure:{roots:[{kind:'application',target:'entry'}]}}};
+  function plan(id,ownerType=null,overrideTarget=null) {
+    const owner={id,name:ownerType?'m':'entry',kind:ownerType?'method':'source',ownerType,overrideTarget,returnType:i32TypeId,sourcePath:'/unit-model.ts'},
+      parameters=ownerType?[{id:id+'/this',type:ownerType}]:[],graph=createCommonGraph(model,owner),entry=graph.newBlock(parameters.map(p=>p.type)),result={owner,graph,entry,parameters};
+    for(const p of parameters)bindings.set(p.id,{...p,role:'receiver'});functions.set(id,owner);plans.push(result);return result;
+  }
+  for(const [id,type,target]of /** @type {[string,string,string|null][]} */([['base.m',base,null],...(mode==='override'?[['middle.m',middle,'base.m']]:[]),
+    ...(mode==='inherited'?[]:[['derived.m',derived,mode==='override'?'middle.m':null]])])) {
+    const p=plan(id,type,target),one=p.graph.emit(p.entry,'constant',[],i32TypeId,{decimal:'1',token:'1'},range);p.graph.terminal(p.entry,'func.return',[one],[],{},range);
+  }
+  const entry=plan('entry'),receiver=entry.graph.emit(entry.entry,'allocate_reference',[],derived,{type:derived,construction:'unit'},range),
+    normal=entry.graph.newBlock([i32TypeId]),thrown=entry.graph.newBlock([model.payload]);
+  entry.graph.terminal(entry.entry,'invoke',[receiver],[normal,thrown],{function_id:'base.m',signature_hash:'unit'},range);
+  entry.graph.terminal(normal,'func.return',[{...normal.parameters[0]}],[],{},range);
+  entry.graph.terminal(thrown,'return_throw',[{...thrown.parameters[0]}],[],{},range);
+  model.hir.functions=[...functions.values()].map(fn=>({...fn,sourceBinding:fn.id}));return {model,plans};
 }

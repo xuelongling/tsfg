@@ -3,12 +3,12 @@
 // parameter or ordinary function cannot disappear behind a retained class span.
 import {canonical,sha256} from './identity.mjs';
 import {commonCheck as check} from './common-program-common.mjs';
-import {commonTypeSyntax} from './common-program-source.mjs';
+import {commonTypeSyntax,commonCallableNameRange} from './common-program-source.mjs';
 
 export function validateCommonDeclarations(payload,grammars,types,spend) {
   const functions=new Map([...payload.functions,...payload.types.flatMap(row=>row.constructor?[row.constructor]:[])].map(fn=>[fn.id,fn]));
   for(const fn of functions.values()) {
-    spend();const g=grammars.get(fn.sourcePath),all=g.tokens,bounds=g.indices(fn.declarationRange),name=g.indices(fn.nameRange);
+    spend();const g=grammars.get(fn.sourcePath),all=g.tokens,bounds=g.indices(fn.declarationRange),nameRange=commonCallableNameRange(g,fn,types),name=g.indices(nameRange);
     const prefix=all.slice(bounds.first,name.first).map(token=>token.text);
     if(fn.ownerType)check(prefix.every(t=>['public','private','protected','override'].includes(t)),'capability');
     else check(prefix.join(' ')==='function'||prefix.join(' ')==='export function'||prefix.join(' ')==='export default function','capability');
@@ -27,7 +27,7 @@ export function validateCommonDeclarations(payload,grammars,types,spend) {
     let start=fn.returnAnnotationRange?g.indices(fn.returnAnnotationRange).end:name.end;
     while(start<bounds.end&&all[start].text!=='{'){spend();start++;}
     check(start<bounds.end&&all[bounds.end-1].text==='}','source');const body={start:all[start].start,end:all[bounds.end-1].end};
-    g.sequence(fn.declarationRange,[...prefix,fn.nameRange,'(',...parameters,')',...(fn.returnAnnotationRange?[':',fn.returnAnnotationRange]:[]),body]);
+    g.sequence(fn.declarationRange,[...prefix,nameRange,'(',...parameters,')',...(fn.returnAnnotationRange?[':',fn.returnAnnotationRange]:[]),body]);
   }
   for(const type of types.values())if(['value','reference'].includes(type.kind)) {
     spend();const g=grammars.get(type.sourcePath),bounds=g.indices(type.declarationRange),name=g.indices(type.nameRange),all=g.tokens;

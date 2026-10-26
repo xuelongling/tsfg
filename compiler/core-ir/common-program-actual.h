@@ -40,6 +40,8 @@ struct ActualCheck {
   ActualState copyState(const ActualState &);
   bool join(ActualState &,const ActualState &);
   ActualValue declared(const std::string &,ActualHeap &,const std::string &,std::set<std::string> = {});
+  ActualValue entryDeclared(const std::string &,const std::string &,ActualHeap &,const std::string &,std::set<std::string>,const Program::EntryRole &,bool,bool &);
+  ActualValue entryValue(const Function &,size_t,ActualHeap &,bool,bool &);
   std::vector<const Json *> allFields(const std::string &);
   std::string key(const ActualValue &)const;
   std::string carrier(const ActualValue &);

@@ -2,6 +2,7 @@
 #include "finite-module.h"
 #include "finite-domain.h"
 #include "finite-constructor-writes.h"
+#include "reference-contracts.h"
 #include "dialect.h"
 #include <algorithm>
 #include <tuple>
@@ -17,6 +18,7 @@ struct MemberProof {
   std::map<std::string,const Object *> declarations;
   std::map<std::string,std::string> fieldOwners;
   std::set<Pair> relations;
+  referenceContracts::Types logicalTypes;
   std::map<std::string,std::set<mlir::Operation *>> constructorStores;
   std::vector<std::string> lineage(std::string type) {
     std::vector<std::string> result; std::set<std::string> seen;
@@ -60,66 +62,30 @@ struct MemberProof {
     }
     return selected;
   }
-  bool logical(const std::string &from, const std::string &to, const std::set<Pair> &available, std::set<Pair> &used, bool allowNominal=false) {
-    struct Frame {
-      Pair pair; bool any=false; size_t next=0;
-      std::vector<Pair> children; std::set<Pair> checkpoint;
-    };
-    if (!proof.charge(1+used.size())) return false;
-    auto selected=used;
-    std::vector<Frame> frames{{{from,to}}}; std::set<Pair> active;
-    std::optional<bool> completed;
-    const auto finish=[&](bool success) {
-      active.erase(frames.back().pair); frames.pop_back(); completed=success;
-    };
-    // Explicit continuations preserve source-union ALL / target-union ANY
-    // semantics. A failed candidate restores its ledger before the next one;
-    // only a successful entire relation publishes selected dependencies.
-    while (true) {
-      if (!proof.charge()) return false;
-      if (completed) {
-        if (frames.empty()) { if (*completed) used=std::move(selected); return *completed; }
-        auto &parent=frames.back(); const bool success=*completed; completed.reset();
-        if (parent.any ? success : !success) { finish(success); continue; }
-        if (parent.any) {
-          if (!proof.charge(parent.checkpoint.size())) return false;
-          selected=parent.checkpoint;
-        }
-        if (parent.next==parent.children.size()) { finish(!parent.any); continue; }
-        const auto child=parent.children[parent.next++]; frames.push_back({child}); continue;
-      }
-      auto &frame=frames.back(); const auto [sourceId,targetId]=frame.pair;
-      if (!proof.catalog.count(sourceId) || !proof.catalog.count(targetId)) {
-        finish(false); continue;
-      }
-      if (!active.insert(frame.pair).second) return proof.reject("recursive logical container/union pair");
-      if (sourceId==targetId) { finish(true); continue; }
-      const auto &source=*proof.catalog.at(sourceId),&target=*proof.catalog.at(targetId);
-      const auto a=string(source,"kind"),b=string(target,"kind");
-      if (a=="union" || b=="union") {
-        frame.any=a!="union";
-        const auto *members=(frame.any?target:source).getArray("members");
-        if (!members || !proof.charge(members->size())) return false;
-        for (const auto &member:*members) {
-          const auto id=member.getAsString(); if (!id) return false;
-          frame.children.emplace_back(frame.any?sourceId:id->str(),frame.any?id->str():targetId);
-        }
-      } else if ((a=="array" || a=="readSpan") && a==b)
-        frame.children.emplace_back(string(source,"elementType"),string(target,"elementType"));
-      else {
-        bool match=a=="reference" && b=="reference" && available.count(frame.pair);
-        if (!match && allowNominal && a=="reference" && b=="reference") {
-          const auto path=lineage(sourceId); if (proof.failed) return false;
-          match=std::find(path.begin(),path.end(),targetId)!=path.end();
-        }
-        if (match) selected.insert(frame.pair);
-        // Numeric representations and value identities never gain conversions.
-        finish(match); continue;
-      }
-      if (frame.children.empty()) { finish(false); continue; }
-      if (frame.any) { if (!proof.charge(selected.size())) return false; frame.checkpoint=selected; }
-      const auto child=frame.children[frame.next++]; frames.push_back({child});
-    }
+  bool logicalCatalogue() {
+    if(!logicalTypes.empty())return true;
+    for(const auto &[id,row]:proof.catalog) {
+      if(!proof.charge())return false;referenceContracts::Type type;
+      type.kind=string(*row,"kind");type.element=string(*row,"elementType");type.base=string(*row,"base");
+      if(const auto *members=row->getArray("members"))for(const auto &m:*members){if(!proof.charge()||!m.getAsString())return false;type.members.push_back(m.getAsString()->str());}
+      logicalTypes.emplace(id,std::move(type));
+    }return true;
+  }
+  bool logical(const std::string &from,const std::string &to,const std::set<Pair> &available,std::set<Pair> &used,bool allowNominal=false) {
+    if(!logicalCatalogue())return false;std::string error;
+    const bool result=referenceContracts::logical(logicalTypes,from,to,available,used,
+      [&](size_t n){return proof.charge(n);},error,{false,false,allowNominal});
+    if(!error.empty())return proof.reject(error);return result;
+  }
+  referenceContracts::Members memberModel(const Members &members) {
+    referenceContracts::Members result;
+    for(const auto &[id,f]:members.fields){if(!proof.charge(f->getString("name").value_or("").size()/8+1))return {};result.emplace(id,referenceContracts::Member{"field",string(*f,"name"),string(*f,"type")});}
+    for(const auto &[id,f]:members.methods){
+      if(!proof.charge(f->getString("name").value_or("").size()/8+1))return {};referenceContracts::Member method;method.kind="method";method.name=string(*f,"name");method.result=string(*f,"returnType");
+      const auto &parameters=*f->getArray("parameters");
+      for(size_t i=1;i<parameters.size();++i){if(!proof.charge())return {};method.parameters.push_back(string(*parameters[i].getAsObject(),"type"));}
+      result.emplace(id,std::move(method));
+    }return result;
   }
   bool declarationTypes() {
     bool presence=false;for(const auto &[id,row]:proof.catalog)if(const auto *fields=row->getArray("fields"))for(const auto &value:*fields) {
@@ -168,34 +134,19 @@ struct MemberProof {
     const auto source=string(compatibility,"sourceType"),target=string(compatibility,"targetType");
     if (!members(source) || !members(target) || compatibility.getBoolean("assignable") != true) return proof.reject("member proof pair/assignability");
     const auto *pairs=compatibility.getArray("members"); if (!pairs || pairs->size()>512) return proof.reject("member proof count");
-    std::set<Pair> used; std::set<std::string> targets;
-    std::string previous;
-    for (const auto &value : *pairs) {
-      const auto *pair=value.getAsObject(); if (!proof.charge() || !pair || pair->size()!=2) return proof.reject("member proof fields");
-      const auto a=string(*pair,"source"),b=string(*pair,"target");
-      if ((!previous.empty()&&b<=previous)||!targets.insert(b).second) return proof.reject("duplicate or unordered target member");previous=b;
-      if (cache.at(source).fields.count(a)) {
-        if (!cache.at(target).fields.count(b) || string(*cache.at(source).fields.at(a),"name")!=string(*cache.at(target).fields.at(b),"name") ||
-            !logical(string(*cache.at(source).fields.at(a),"type"),
-            string(*cache.at(target).fields.at(b),"type"),dependencies,used)) return proof.reject("field proof logical representation");
-      } else {
-        if (!cache.at(source).methods.count(a) || !cache.at(target).methods.count(b)) return proof.reject("method proof identity");
-        const auto &s=*cache.at(source).methods.at(a), &t=*cache.at(target).methods.at(b);
-        const auto &sp=*s.getArray("parameters"), &tp=*t.getArray("parameters");
-        if (string(s,"name")!=string(t,"name") || (string(*proof.catalog.at(string(t,"returnType")),"kind")!="void"&&
-            !logical(string(s,"returnType"),string(t,"returnType"),dependencies,used))) return proof.reject("method proof name/return");
-        for (size_t i=1;i<std::min(sp.size(),tp.size());++i) if (!logical(string(*tp[i].getAsObject(),"type"),string(*sp[i].getAsObject(),"type"),dependencies,used))
-          return proof.reject("method proof parameter direction/representation");
-      }
-    }
+    if(!logicalCatalogue())return false;std::vector<Pair> mapping;std::set<std::string> targets;std::string previous;
+    for(const auto &value:*pairs){if(!proof.charge())return false;const auto *pair=value.getAsObject();
+      if(!pair||pair->size()!=2)return proof.reject("member proof fields");mapping.emplace_back(string(*pair,"source"),string(*pair,"target"));}
     previous.clear();if(missing)for(const auto &value:*missing) {
       if(!proof.charge()||!value.getAsString())return proof.reject("missing optional member identity");const auto id=value.getAsString()->str();
       if((!previous.empty()&&id<=previous)||!targets.insert(id).second||!cache.at(target).fields.count(id))return proof.reject("missing member coverage/order");previous=id;
       const auto &field=*cache.at(target).fields.at(id);const auto *p=field.getObject("propertyPresence");
       if(!p||p->getBoolean("optional")!=true||!namedField(source,string(field,"name")).empty())return proof.reject("missing member is not independently absent optional");
     }
-    return (used==dependencies && targets.size()==cache.at(target).fields.size()+cache.at(target).methods.size()) ||
-      proof.reject("unselected dependency or incomplete target member projection");
+    auto sourceModel=memberModel(cache.at(source)),targetModel=memberModel(cache.at(target));if(proof.failed)return false;
+    std::string error;const bool result=referenceContracts::verifyMembers(logicalTypes,sourceModel,targetModel,mapping,dependencies,targets,
+      [&](size_t n){return proof.charge(n);},error);
+    return result?true:proof.failed?false:proof.reject(error);
   }
   bool project(const Object &compatibility,const llvm::json::Array *missing) {
     const auto source=string(compatibility,"sourceType"),target=string(compatibility,"targetType");
@@ -444,7 +395,9 @@ bool verifyMemberContracts(ModuleProof &proof) {
     if(!members.relation(*c,selected,row->getArray("missingOptionalProperties")))return false;
     members.relations.emplace(string(*c,"sourceType"),string(*c,"targetType"));directory.emplace(key,std::move(selected));
   }
-  for(const auto &[key,deps]:directory)for(const auto &[source,target]:deps){if(!proof.charge()||!directory.count({std::get<0>(key),std::get<1>(key),std::get<2>(key),source,target}))return proof.reject("member proof closure edge");}
+  std::string closureError;
+  if(!referenceContracts::closeDirectory(directory,[&](size_t n){return proof.charge(n);},closureError))
+    return proof.failed?false:proof.reject(closureError);
   for(const auto &value:*rows)if(!members.project(*value.getAsObject()->getObject("compatibility"),value.getAsObject()->getArray("missingOptionalProperties")))return false;
   llvm::json::Array methods,views;
   for(const auto &[id,fn]:proof.callable) {

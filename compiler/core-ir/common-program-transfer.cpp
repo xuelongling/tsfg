@@ -60,10 +60,16 @@ bool ActualCheck::instruction(ActualContext &context,const Operation &op,size_t 
     for(const auto &ref:args[0].objects){
       if(!step()||!need(objects.count(ref),"field receiver object missing"))return false;const auto &object=objects.at(ref);bool owned=false;
       for(const auto *f:allFields(object.type)){if(!step())return false;if(string(field(*f,"id"))==fieldId){owned=true;break;}}
-      if(!need(owned&&fields.count(fieldId),"actual field lacks an independently verified nominal member mapping"))return false;
-      const auto slot=ref+"/field/"+fieldId;auto stored=state.heap.find(slot);
+      auto selected=fieldId;
+      if(!owned){
+        const auto view=views.find(fn.id+"/"+std::to_string(op.operands[0]));
+        auto projection=view==views.end()?p.referenceFields.end():p.referenceFields.find({object.type,view->second});
+        if(projection!=p.referenceFields.end()){auto member=projection->second.find(fieldId);if(member!=projection->second.end()){selected=member->second;owned=true;}}
+      }
+      if(!need(owned&&fields.count(selected),"actual field lacks an independently verified nominal member mapping")){e.path=fn.path;e.range=op.range;return false;}
+      const auto slot=ref+"/field/"+selected;auto stored=state.heap.find(slot);
       if(name=="field_load"){if(stored!=state.heap.end())merge(value,stored->second);}
-      else{put(slot,args[1],!object.weak&&args[0].objects.size()==1);const auto raw=string(field(*fields.at(fieldId),"sourceBinding"));observe(raw,args[1]);seed(fieldSeeds,raw,args[1]);}
+      else{put(slot,args[1],!object.weak&&args[0].objects.size()==1);const auto raw=string(field(*fields.at(selected),"sourceBinding"));observe(raw,args[1]);seed(fieldSeeds,raw,args[1]);}
     }if(args[0].unknown)value.unknown=true;
   }else if(name=="readspan"){
     value=literal(op.view);const auto ref=fn.id+"/span/"+std::to_string(op.result);value.objects.insert(ref);objects[ref]={op.view,weak};
@@ -110,7 +116,25 @@ bool ActualCheck::instruction(ActualContext &context,const Operation &op,size_t 
     }
     if(conditional||reaches)value=literal(op.view,op.view==typeId("bool")?3:0);if(!conditional&&!reaches)continues=false;
   }else if(name=="invoke"){
-    auto *call=this->context(string(field(props,"function_id")),args,state.heap,false,changed);if(!call)return false;
+    const auto target=string(field(props,"function_id"));auto original=sourceFunctions.find(target);
+    if(original!=sourceFunctions.end()&&string(field(*original->second,"kind"))=="method"&&!args.empty()){
+      if(!need(!args[0].unknown,"unknown method receiver requires dispatch proof")){e.path=fn.path;e.range=op.range;return false;}
+      for(const auto &tag:args[0].tags){auto current=tag;std::set<std::string> seen;std::string selected;
+        while(!current.empty()&&selected.empty()){
+          if(!step()||!need(types.count(current)&&seen.insert(current).second,"method receiver base graph differs"))return false;
+          for(const auto &method:items(field(*types.at(current),"methods"))){
+            if(!step())return false;auto candidate=string(method);const auto implementation=candidate;std::set<std::string> chain;
+            while(!candidate.empty()){
+              if(!step()||!need(sourceFunctions.count(candidate)&&chain.insert(candidate).second,"method override graph differs"))return false;
+              if(candidate==target){if(!need(selected.empty(),"ambiguous actual method implementation"))return false;selected=implementation;break;}
+              candidate=string(field(*sourceFunctions.at(candidate),"overrideTarget"));
+            }
+          }current=string(field(*types.at(current),"base"));
+        }
+        if(!need(selected==target,"M12 actual method dispatch requires an independently proved implementation")){e.path=fn.path;e.range=op.range;return false;}
+      }
+    }
+    auto *call=this->context(target,args,state.heap,false,changed);if(!call)return false;
     const auto complete=[&](uint16_t target,const ActualValue &v,const ActualHeap &heap){
       auto after=copyState(state);if(!e.message.empty()||!step(heap.size()))return false;
       for(const auto &[slot,value]:heap){
