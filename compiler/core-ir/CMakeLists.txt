@@ -90,9 +90,9 @@ add_library(tsfg-core-common OBJECT
   module-plan.cpp core-verify.cpp finite-domain.cpp finite-fields.cpp
   common-program.cpp common-program-read.cpp common-program-relations.cpp common-program-shape.cpp common-program-json.cpp
   common-program-identities.cpp common-program-projection.cpp common-program-syntax.cpp
-  common-program-source.cpp common-program-declarations.cpp common-program-modules.cpp
+  common-program-source.cpp common-program-callable-source.cpp common-program-callable-targets.cpp common-program-callable-ops.cpp common-program-declarations.cpp common-program-modules.cpp
   common-program-bodies.cpp common-program-statements.cpp common-program-expressions.cpp
-  common-program-effects.cpp common-program-publication.cpp common-program-kernel.cpp
+  common-program-effects.cpp common-program-environments.cpp common-program-environment-ops.cpp common-program-publication.cpp common-program-kernel.cpp
   common-program-types.cpp common-program-graph.cpp common-program-abstract.cpp
   common-program-plan.cpp common-program-leaves.cpp common-program-control.cpp
   common-program-match.cpp common-program-memory.cpp common-program-methods.cpp common-program-transfer.cpp
@@ -110,7 +110,7 @@ add_library(tsfg-core-common OBJECT
   exception-provenance.cpp exception-hir.cpp exception-cfg.cpp exception-verify.cpp
   exception-command.cpp managed-cfg.cpp managed-liveness.cpp closure.cpp
   closure-metadata.cpp closure-identities.cpp closure-verify.cpp closure-cfg.cpp
-  closure-roots.cpp closure-initialization.cpp closure-init-flow.cpp core-command.cpp
+  closure-roots.cpp closure-initialization.cpp closure-init-flow.cpp environment-contracts.cpp core-command.cpp
   formal-closure.cpp formal-closure-source.cpp formal-closure-targets.cpp
   formal-exception.cpp formal-exception-control.cpp formal-exception-values.cpp
   formal-exception-source.cpp formal-exception-hir.cpp formal-exception-text.cpp

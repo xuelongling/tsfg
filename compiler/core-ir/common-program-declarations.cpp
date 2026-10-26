@@ -13,6 +13,10 @@ bool primitive(SourceModel &m,const Json &t){
     string(field(t,"sourcePath"))==string(field(m.payload,"sourceRoot"))+"/minimal-arrays-v8.d.ts"&&field(t,"constructor").getAsNull(),"fixed primitive raw type differs");
   if(kind=="array"||kind=="readSpan")return m.need(m.types.count(string(field(t,"elementType")))&&id==kind+"<"+string(field(t,"elementType"))+">"&&field(t,"constructor").getAsNull()&&
     string(field(t,"sourcePath"))==string(field(m.payload,"sourceRoot"))+"/minimal-arrays-v8.d.ts","container raw type identity differs");
+  if(kind=="function"){
+    for(const auto &p:items(field(t,"parameters")))if(!m.spend()||!m.need(m.types.count(string(p)),"function parameter raw type missing"))return false;
+    return m.need(m.types.count(string(field(t,"returnType")))&&field(t,"constructor").getAsNull()&&id==digest(std::string("tsfg.program.function-type.v2")+std::string(1,'\0')+canonical(Object{{"parameters",field(t,"parameters")},{"returnType",field(t,"returnType")}})),"raw function type identity differs");
+  }
   if(kind=="union"){
     std::string expected="union<",previous;const auto &members=items(field(t,"members"));if(!m.need(members.size()>=2&&field(t,"constructor").getAsNull(),"raw union bound differs"))return false;
     for(const auto &v:members){const auto id=string(v);if(!m.spend()||!m.need(m.types.count(id)&&string(field(*m.types.at(id),"kind"))!="union"&&(previous.empty()||previous<id),"raw union membership/order differs"))return false;

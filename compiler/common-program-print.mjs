@@ -22,8 +22,8 @@ export function printCommonFunction(plan,model,carriers,publication=null) {
   };
   const adapt=(value,type,range,view)=>value.type===type?value:emit('tsfg_program.carrier_cast',[value],type,{carrier:type},view,range);
   for(const block of graph.blocks){spend(block.parameters.length);blockTypes.set(block.name,block.parameters.map(p=>selected.get(p.name)));}
-  for(const block of graph.blocks)for(const op of block.instructions)if(['tsfg_program.invoke','tsfg_program.invoke_method'].includes(op.name)){
-    const called=op.name==='tsfg_program.invoke_method'?carriers.methods.get(op):carriers.functions.get(op.properties.function_id),target=blocks.get(op.successors[0]);check(called,'identity');
+  for(const block of graph.blocks)for(const op of block.instructions)if(['tsfg_program.invoke','tsfg_program.invoke_method','tsfg_program.invoke_indirect'].includes(op.name)){
+    const called=op.name!=='tsfg_program.invoke'?carriers.methods.get(op):carriers.functions.get(op.properties.function_id),target=blocks.get(op.successors[0]);check(called,'identity');
     blockTypes.set(target.name,called.result==='void'?[]:[called.result]);incomingRanges.set(target.name,op.range);
   }
   blockTypes.set(entry.name,abi.parameters);
@@ -67,16 +67,16 @@ export function printCommonFunction(plan,model,carriers,publication=null) {
         line('    cf.cond_br '+args[0].name+', ^'+op.successors[0]+', ^'+op.successors[1]+' {'+anchor(op.range)+'}');continue;}
       if(name==='tsfg_program.route'){branch(op,args,true);continue;}
       if(name==='func.return'){if(args.length)args[0]=adapt(args[0],abi.result,op.range,plan.returnType);emit(name,args,null,{},'void',op.range);continue;}
-      if(name==='tsfg_program.invoke'||name==='tsfg_program.invoke_method') {
-        const called=name==='tsfg_program.invoke_method'?carriers.methods.get(op):carriers.functions.get(p.function_id);check(called&&called.parameters.length===args.length,'ssa');
+      if(['tsfg_program.invoke','tsfg_program.invoke_method','tsfg_program.invoke_indirect'].includes(name)) {
+        const called=name!=='tsfg_program.invoke'?carriers.methods.get(op):carriers.functions.get(p.function_id);check(called&&called.parameters.length===args.length,'ssa');
         for(const [i,carrier]of called.parameters.entries())args[i]=adapt(args[i],carrier,op.range,graph.registers.get(op.operands[i]).view);
         emit(name,args,null,p,'void',op.range,null,op.successors);continue;
       }
       if(name==='tsfg_program.binary'||name==='tsfg_program.unary')result=scalar(op,args);
-      else if(['tsfg_program.load','tsfg_program.global_load','tsfg_program.field_load'].includes(name)) {
+      else if(['tsfg_program.load','tsfg_program.env_load','tsfg_program.global_load','tsfg_program.field_load'].includes(name)) {
         const carrier=carriers.bindings.get(name.endsWith('field_load')?model.fields.get(p.field).sourceBinding:name.endsWith('global_load')?model.globals.get(p.global).sourceBinding:p.binding);
         result=emit(name,args,carrier,p,view,op.range,type===carrier?op.result:null);result=adapt(result,type,op.range,view);
-      }else if(['tsfg_program.store','tsfg_program.global_store','tsfg_program.field_store','tsfg_program.array_store'].includes(name)) {
+      }else if(['tsfg_program.store','tsfg_program.env_init','tsfg_program.env_store','tsfg_program.global_store','tsfg_program.field_store','tsfg_program.array_store'].includes(name)) {
         const index=name.endsWith('global_store')?0:name.endsWith('array_store')?2:1;
         const carrier=name.endsWith('array_store')?elementCarrier(op.operands[0]):carriers.bindings.get(name.endsWith('field_store')?model.fields.get(p.field).sourceBinding
           :name.endsWith('global_store')?model.globals.get(p.global).sourceBinding:p.binding);

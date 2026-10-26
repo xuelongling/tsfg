@@ -56,18 +56,18 @@ bool closure(SourceModel &m){
   };
   if(!read("roots",roots)||!read("requiredRoots",required))return false;
   Array sourceFiles;for(const auto &s:items(field(m.payload,"files"))){if(!m.spend())return false;sourceFiles.push_back(Object{{"path",field(s,"path")},{"content",field(s,"content")},{"sha256",field(s,"sha256")}});}
-  Json request=Object{{"family","tsfg.program-facts-request-candidate"},{"version",1},{"schemaHash",sourceSchema},
+  Json request=Object{{"family","tsfg.program-facts-request-candidate"},{"version",2},{"schemaHash",sourceSchema},
     {"input",Object{{"sourceRoot",field(m.payload,"sourceRoot")},{"rootFile",field(m.payload,"rootFile")},{"files",std::move(sourceFiles)},
       {"declarations",field(m.payload,"declarations")},{"config",field(m.payload,"config")},{"target",field(m.payload,"target")},
       {"compilationClosure",Object{{"roots",std::move(roots)},{"requiredRoots",std::move(required)}}}}}};
-  return m.need(string(field(m.facts,"requestId"))==digest(std::string("tsfg.program-facts.request.v1")+std::string(1,'\0')+canonical(request)+"\n"),"whole request identity differs");
+  return m.need(string(field(m.facts,"requestId"))==digest(std::string("tsfg.program-facts.request.v2")+std::string(1,'\0')+canonical(request)+"\n"),"whole request identity differs");
 }
 }
 bool SourceModel::sourceText(){
   std::map<std::string,SourceSyntax> syntax;
   if(!files(*this,syntax)||!closure(*this))return false;
   SourceRelations relations{*this};if(!relations.read())return false;
-  SourceBodies bodies{*this,syntax};bodies.relations=&relations;if(!bodies.inventory())return false;
+  SourceBodies bodies{*this,syntax};bodies.relations=&relations;if(!bodies.inventory()||!bodies.annotations())return false;
   std::set<std::pair<std::string,std::string>> entryParameters,expectedEntries;std::set<std::string> exported;Array expectedExports;
   for(const auto &e:items(field(*modules.at(string(field(payload,"rootFile"))),"exports")))if(string(field(e,"kind"))=="function"){
     if(!spend()||!need(functions.count(string(field(e,"target"))),"root export function missing"))return false;
@@ -91,7 +91,7 @@ bool SourceModel::sourceText(){
   // The source and declaration envelopes must cover every ordinary token.
   std::map<std::string,std::vector<Json>> coverage;
   for(const auto &[id,fn]:functions){
-    if(!bodies.function(*fn))return false;if(field(*fn,"ownerType").getAsNull())coverage[string(field(*fn,"sourcePath"))].push_back(field(*fn,"declarationRange"));
+    if(!bodies.function(*fn))return false;if(field(*fn,"ownerType").getAsNull()&&field(*fn,"lexicalParent").getAsNull())coverage[string(field(*fn,"sourcePath"))].push_back(field(*fn,"declarationRange"));
   }
   for(const auto &[path,module]:modules){
     if(!bodies.module(*module))return false;
@@ -105,6 +105,7 @@ bool SourceModel::sourceText(){
       }coverage[path].push_back(std::move(r2));
     }
   }
+  if(!bodies.aliases(coverage))return false;
   if(!verifyCommonDeclarations(*this,bodies,syntax,coverage)||!verifyCommonModules(*this,syntax))return false;
   for(auto &[path,text]:syntax){
     std::vector<std::pair<size_t,size_t>> spans;

@@ -45,10 +45,12 @@ struct Derive {
   const Effects *consume(const std::string &id,const std::vector<Origins> &args){
     if(!step()||!ok(functions.count(id)&&upper.count(id),"complete fixed callee bound missing"))return nullptr;
     const auto &u=upper.at(id);out.calls.insert(id);
-    if(!step(u.reads.size()+u.writes.size()+u.parameters.size()))return nullptr;
+    if(!step(u.reads.size()+u.writes.size()+u.parameters.size()+u.captures.size()))return nullptr;
     out.reads.insert(u.reads.begin(),u.reads.end());out.writes.insert(u.writes.begin(),u.writes.end());
     out.allocation|=u.allocation;out.managedReference|=u.managedReference;out.ehControl|=u.ehControl;
     out.await|=u.await;out.lock|=u.lock;out.escape|=u.escape;out.unknownHost|=u.unknownHost;
+    for(const auto &[slot,access]:u.captures){auto &captured=out.captures[slot];
+      captured.read|=access.read;captured.write|=access.write;captured.structural|=access.structural;}
     for(size_t i=0;i<u.parameters.size();++i){if(!ok(i<args.size(),"call owner arity differs"))return nullptr;
       if(u.parameters[i].read)mark(args[i],0);if(u.parameters[i].write)mark(args[i],1);if(u.parameters[i].structural)mark(args[i],2);}
     return &u;
@@ -82,6 +84,20 @@ struct Derive {
       const auto fid=string(field(field(t,"construction"),"functionId"));if(!fid.empty()){
         args.insert(args.begin(),ownerCopy(result.owners));if(auto *u=consume(fid,args))result.throwing|=u->mayThrow;
       }
+    }else if(kind=="indirectCall"){
+      // Resolve the saved callee before its arguments. Permission comes from
+      // the independently rebuilt complete fixed code-target upper, not SSA
+      // arms, physical capacity or this call's narrower actual instances.
+      visit(field(v,"expression"));std::vector<Origins> args;
+      for(const auto &a:items(field(v,"arguments")))args.push_back(visit(a));
+      const auto key=string(field(fn,"id"))+"/"+std::to_string(*field(field(v,"range"),"start").getAsInteger())+":"+
+        std::to_string(*field(field(v,"range"),"end").getAsInteger());
+      const auto site=p.callableSites.find(key);
+      if(!ok(site!=p.callableSites.end(),"independent fixed callable site is missing"))return result;
+      if(site->second.top||site->second.functions.empty()){out.unknownHost=true;result.throwing=true;if(reference(type))result.owners.insert("unknown:indirect");}
+      for(const auto &target:site->second.functions){if(!step())return result;
+        if(auto *u=consume(target,args)){result.throwing|=u->mayThrow;if(reference(type))result.owners.insert("unknown:"+target);}
+      }
     }else if(kind=="call"){
       std::vector<Origins> args;if(v.getAsObject()->get("receiver"))args.push_back(visit(field(v,"receiver")));
       for(const auto &a:items(field(v,"arguments")))args.push_back(visit(a));const auto fid=string(field(v,"callee"));
@@ -104,7 +120,9 @@ struct Derive {
       if(!step())return 0;if(!(completions&Normal))break;completions&=~Normal;unsigned current=Normal;
       const auto inspect=[&](const Json &v){auto result=expression(v,env);if(result.throwing)current|=Thrown;return result.owners;};
       const auto kind=string(field(row,"kind"));
-      if(kind=="constDeclaration"||kind=="letDeclaration"||kind=="initialize"){
+      if(kind=="functionDeclaration"){
+        // Hoisted lexical identity is not an observation of its environment.
+      }else if(kind=="constDeclaration"||kind=="letDeclaration"||kind=="initialize"){
         env[string(field(row,"binding"))]=inspect(field(row,"initializer"));if(row.getAsObject()->get("global"))out.writes.insert(string(field(row,"global")));
       }else if(kind=="expression")inspect(field(row,"value"));
       else if(kind=="return"){
@@ -138,6 +156,19 @@ struct Derive {
     if(!step(items(field(p.hir,"types")).size()+items(field(p.hir,"functions")).size()))return false;
     for(const auto &t:items(field(p.hir,"types")))types.emplace(string(field(t,"id")),&t);
     for(const auto &f:items(field(p.hir,"functions")))functions.emplace(string(field(f,"id")),&f);
+    if(!field(fn,"activationEnvironment").getAsNull())out.allocation=out.managedReference=true;
+    if(!field(fn,"lexicalEnvironment").getAsNull())out.managedReference=true;
+    if(!items(field(fn,"captures")).empty()){
+      std::map<std::string,std::string> slots;
+      for(const auto &env:items(field(p.hir,"environments")))for(const auto &slot:items(field(env,"slots"))){
+        if(!step())return false;slots.emplace(string(field(slot,"binding")),string(field(slot,"key")));
+      }
+      for(const auto &capture:items(field(fn,"captures"))){if(!step())return false;const auto binding=string(field(capture,"binding"));
+        if(!ok(slots.count(binding),"captured binding has no owned environment slot"))return false;
+        auto &access=out.captures[slots.at(binding)];access.read|=field(capture,"read").getAsBoolean()==true;
+        access.write|=field(capture,"write").getAsBoolean()==true;
+      }
+    }
     std::vector<std::pair<std::string,std::string>> parameters;
     if(!field(fn,"ownerType").getAsNull())parameters.emplace_back(string(field(fn,"receiverBinding")),string(field(fn,"ownerType")));
     for(const auto &b:items(field(fn,"parameters")))parameters.emplace_back(string(field(b,"id")),string(field(b,"type")));
@@ -152,9 +183,10 @@ bool deriveEffects(Program &p,const Json &fn,const std::map<std::string,Effects>
   Derive derive{p,fn,upper,out,e};return derive.run();
 }
 Json writeEffects(const Effects &e){
-  Array reads,writes,parameters;for(const auto &id:e.reads)reads.push_back(id);for(const auto &id:e.writes)writes.push_back(id);
+  Array reads,writes,parameters,captures;for(const auto &id:e.reads)reads.push_back(id);for(const auto &id:e.writes)writes.push_back(id);
+  for(const auto &[slot,access]:e.captures)captures.push_back(Object{{"slot",slot},{"read",access.read},{"write",access.write},{"structural",access.structural}});
   for(size_t i=0;i<e.parameters.size();++i){const auto &p=e.parameters[i];parameters.push_back(Object{{"index",int64_t(i)},{"read",p.read},{"write",p.write},{"structural",p.structural}});}
-  return Object{{"globals",Object{{"reads",std::move(reads)},{"writes",std::move(writes)}}},{"parameters",std::move(parameters)},
+  return Object{{"globals",Object{{"reads",std::move(reads)},{"writes",std::move(writes)}}},{"parameters",std::move(parameters)},{"captures",std::move(captures)},
     {"facets",Object{{"allocation",e.allocation},{"managedReference",e.managedReference},{"ehControl",e.ehControl},{"mayThrow",e.mayThrow},
       {"await",e.await},{"lock",e.lock},{"escape",e.escape},{"unknownHost",e.unknownHost}}}};
 }

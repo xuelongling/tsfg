@@ -18,12 +18,12 @@ import {commonReferenceBodyModel} from './common-program-model-cases.mjs';
 const limit=/** @param {any} e */e=>e.code==='r03-common-program-limit';
 async function program(name){
   const bytes=await fs.readFile(new URL('./common-program-'+name+'.json',import.meta.url)),facts=readCommonProgramFacts(bytes);
-  return buildCommonProgramHir(facts,{family:'tsfg.common-program-context-candidate',version:1,factsBytes:bytes,expectedPackageId:facts.packageId});
+  return buildCommonProgramHir(facts,{family:'tsfg.common-program-context-candidate',version:2,factsBytes:bytes,expectedPackageId:facts.packageId});
 }
 test('abstract key charges before reading a nontrivial actual set',()=>{
   let iterated=false;const tags=new Set(['a','b','c']),original=tags[Symbol.iterator].bind(tags);
   tags[Symbol.iterator]=()=>{iterated=true;return original();};
-  const a=commonAbstract({types:new Map(),spend:commonMeter(2)}),value={tags,refs:new Set(),cells:new Set(),truth:0,unknown:false,number:null};
+  const a=commonAbstract({types:new Map(),spend:commonMeter(2)}),value={tags,refs:new Set(),cells:new Set(),pairs:new Map(),truth:0,unknown:false,number:null};
   assert.throws(()=>a.key(value),limit);assert.equal(iterated,false);
 });
 test('inherited field collection pays for members before copying them',()=>{
@@ -33,7 +33,7 @@ test('inherited field collection pays for members before copying them',()=>{
 });
 test('stable publication scope pays for its input catalogue before copying',()=>{
   let read=false;const types=new Proxy(Array.from({length:8},(_,i)=>({id:'t'+i,kind:'scalar'})),{get(target,key,receiver){if(key==='0')read=true;return Reflect.get(target,key,receiver);}});
-  const model={types,globals:[],functions:[],modules:[],closure:{roots:[],requiredRoots:[]}};
+  const model={types,environments:[],globals:[],functions:[],modules:[],closure:{roots:[],requiredRoots:[]}};
   assert.throws(()=>commonProgramPublicationScope(model,commonMeter(2)),limit);assert.equal(read,false);
 });
 test('carrier alternative bound is checked before a tags snapshot',()=>{

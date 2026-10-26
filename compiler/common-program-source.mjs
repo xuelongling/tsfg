@@ -60,12 +60,17 @@ export function commonSourceGrammar(source,spend) {
     slice:range=>text.slice(range.start,range.end)};
 }
 
-export function commonTypeSyntax(grammar,range,typeId,types,spend) {
-  const tokens=grammar.spelling(range);let cursor=0;
+export function commonTypeSyntax(grammar,range,typeId,types,spend,aliases=[]) {
+  const tokens=grammar.spelling(range),bounds=grammar.indices(range),origins=[];let cursor=0;
   const take=text=>check(tokens[cursor++]===text,'source','concrete type annotation differs');
   function parse(depth=0) {
-    spend();check(depth<=32,'limit');let result;
-    if(tokens[cursor]==='('){cursor++;result=union(depth+1);take(')');}
+    spend();check(depth<=32,'limit');let result;const first=cursor;
+    if(tokens[cursor]==='('){
+      cursor++;const saved=cursor;let functionType=tokens[cursor]===')'||tokens[cursor+1]===':';
+      if(functionType){const parameters=[];while(tokens[cursor]!==')'){spend();identifierName(tokens[cursor++]);take(':');parameters.push(union(depth+1));if(tokens[cursor]!==',')break;cursor++;}take(')');take('=>');result={kind:'function',parameters,returnType:union(depth+1),
+        range:{start:grammar.tokens[bounds.first+first].start,end:grammar.tokens[bounds.first+cursor-1].end}};}
+      else {cursor=saved;result=union(depth+1);take(')');}
+    }
     else {
       const name=tokens[cursor++];check(typeof name==='string','source');
       if(['Array','ReadSpan'].includes(name)&&tokens[cursor]==='<') {
@@ -77,7 +82,15 @@ export function commonTypeSyntax(grammar,range,typeId,types,spend) {
   function union(depth) {const members=[parse(depth)];while(tokens[cursor]==='|'){cursor++;members.push(parse(depth));}
     return members.length===1?members[0]:{kind:'union',members};}
   function matches(node,id) {
+    const before=origins.length,result=matchesShape(node,id);if(!result)origins.length=before;return result;
+  }
+  function matchesShape(node,id) {
     spend();const type=types.get(id);check(type,'type');
+    if(node.name){for(const alias of aliases){spend();if(alias.sourcePath===grammar.source.path&&alias.name===node.name&&alias.type===id)return true;}}
+    if(type.kind==='function'){
+      const matched=node.kind==='function'&&node.parameters.length===type.parameters.length&&node.parameters.every((p,i)=>matches(p,type.parameters[i]))&&matches(node.returnType,type.returnType);
+      if(matched){spend();origins.push({range:node.range,type:id});}return matched;
+    }
     if(type.kind==='union')return node.kind==='union'&&node.members.length===type.members.length
       &&type.members.every(member=>node.members.some(child=>matches(child,member)));
     if(['array','readSpan'].includes(type.kind))return node.kind===type.kind&&matches(node.element,type.elementType);
@@ -85,6 +98,7 @@ export function commonTypeSyntax(grammar,range,typeId,types,spend) {
     return node.name===name;
   }
   check(matches(union(0),typeId)&&cursor===tokens.length,'source','annotation does not name its concrete type');
+  return origins;
 }
 
 export function commonSourceAccess(grammar,range,nameRange,access) {

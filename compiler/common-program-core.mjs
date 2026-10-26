@@ -8,7 +8,7 @@ import {commonTextBudget} from './common-program-budget.mjs';
 // The static development module carries the complete owned artifact and one
 // actual SSA graph. It has no bytecode, Runtime or wire execution qualification.
 export function commonProgramCore(input,publication,request) {
-  const proof=verifyCommonKernelGroup(input,publication,request),program=commonProgramPhysical(input),{model,plans,carriers}=program;
+  const proof=verifyCommonKernelGroup(input,publication,request),program=commonProgramPhysical(input,new Map(publication.contracts.map(row=>[row.functionId,row]))),{model,plans,carriers}=program;
   const representationRecord=carriers.record();commonBudget(representationRecord);
   const hir=canonical(model.hir),representation=canonical(representationRecord),text=commonTextBudget(model.spend,model.limits.bytes);
   const source=model.hir.sources.find(row=>row.path===model.hir.rootFile);check(source,'source');
@@ -18,7 +18,7 @@ export function commonProgramCore(input,publication,request) {
     'tsfg_core.bytecode_schema':coreExchangeFormat.bytecodeSchema};
   text.append('module attributes {');let first=true;
   for(const [key,value]of Object.entries(ordinary)){text.append(first?'':', ',key,' = ');first=false;text.append(typeof value==='number'?value+' : i64':text.quote(value));}
-  text.append(', tsfg_program.program = {family = ',text.quote('tsfg.core-program-development'),', version = 2 : i32');
+  text.append(', tsfg_program.program = {family = ',text.quote('tsfg.core-program-development'),', version = 3 : i32');
   const marker={schema:model.schema,hir,hir_hash:sha256(hir+'\n'),representation,representation_hash:sha256(representation+'\n')};
   for(const [key,value]of Object.entries(marker)){text.append(', ',key,' = ');text.append(text.quote(value));}
   for(const [key,value]of Object.entries({publication,request,proof})){text.append(', ',key,' = ');text.append(text.quote(canonical(value)));}

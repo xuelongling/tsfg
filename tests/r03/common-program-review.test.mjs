@@ -35,19 +35,19 @@ test('private layout model rejects inherited reference body root and byte overfl
 test('common unknown catalogue has exactly the builtin ID and a null constructor',async()=>{
   const value=readCommonProgramFacts(await fs.readFile(new URL('./common-program-positive.json',import.meta.url))),mutant=structuredClone(value);
   mutant.payload.types.find(t=>t.kind==='unknown').constructor=structuredClone(mutant.payload.functions[0]);
-  mutant.packageId=sha256('tsfg.program-facts.package.v1\0'+mutant.schemaHash+'\0'+canonical(mutant.payload));
+  mutant.packageId=sha256('tsfg.program-facts.package.v2\0'+mutant.schemaHash+'\0'+canonical(mutant.payload));
   assert.throws(()=>verifyCommonProgramFacts(mutant),/** @param {any} e */e=>e.code==='r03-common-program-unknown-type');
 });
 test('common cold boundary rejects noncanonical unknown IDs without changing Source or request',async()=>{
   const value=readCommonProgramFacts(await fs.readFile(new URL('./common-program-positive.json',import.meta.url))),mutant=structuredClone(value);
   mutant.payload.types.push({id:'unknownz',kind:'unknown',constructor:null});mutant.payload.types.sort((a,b)=>a.id<b.id?-1:1);
-  mutant.packageId=sha256('tsfg.program-facts.package.v1\0'+mutant.schemaHash+'\0'+canonical(mutant.payload));
+  mutant.packageId=sha256('tsfg.program-facts.package.v2\0'+mutant.schemaHash+'\0'+canonical(mutant.payload));
   assert.equal(mutant.requestId,value.requestId);assert.deepEqual(mutant.payload.files,value.payload.files);
   assert.throws(()=>verifyCommonProgramFacts(mutant),/** @param {any} e */e=>e.code==='r03-common-program-unknown-type');
 });
 test('real hidden-value whole package accepts the common unknown assertion boundary',async()=>{
   const bytes=await fs.readFile(new URL('./common-program-hidden-value-copy.json',import.meta.url));
-  const facts=readCommonProgramFacts(bytes),hir=buildCommonProgramHir(facts,{family:'tsfg.common-program-context-candidate',version:1,factsBytes:bytes,expectedPackageId:facts.packageId});
+  const facts=readCommonProgramFacts(bytes),hir=buildCommonProgramHir(facts,{family:'tsfg.common-program-context-candidate',version:2,factsBytes:bytes,expectedPackageId:facts.packageId});
   assert.equal(hir.functions.length,7);assert.ok(hir.types.some(type=>type.name==='Carrier'));
   const physical=commonProgramPhysical(hir),relay=hir.functions.find(fn=>fn.name==='relayHidden'),id=hir.functions.find(fn=>fn.name==='id'),carrier=hir.types.find(t=>t.name==='Carrier');
   const contexts=[...physical.values.actual.contexts.values()].filter(c=>c.plan.owner.id===relay.id);assert.ok(contexts.length);

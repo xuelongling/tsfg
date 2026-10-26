@@ -1,21 +1,14 @@
 // SPDX-License-Identifier: MIT
 // Two runs of this real module value-flow solver keep current bodies and fixed transfer separate.
 import {canonical,compare,same} from './module-callable-common.mjs';
+import {callableTargetDomain,fixedCallableTransfer} from './callable-target-domain.mjs';
 export function solveModuleTargets(hir,records,fail){
   const functions=new Map(hir.functions.map(f=>[f.id,f])),types=new Map(hir.types.map(t=>[t.id,t]));
   const callable=t=>types.get(t)?.kind==='function';
   const summaries=new Map(),sites=new Map(),observations=new Map(),forced=new Set();let work=0,growth=0,dirty=false;
-  const step=()=>{if(++work>1000000)fail('limit');};
+  const step=(amount=1)=>{work+=amount;if(work>1000000)fail('limit');};
   const grew=()=>{if(++growth>200000)fail('limit');dirty=true;};
-  // Keep this small algebra local: the module solver uses module FunctionIds,
-  // parameter-index state and private call-effects failures/budgets. The closure
-  // domain owns lexical-binding state and a different diagnostic family. Share
-  // only when both can retain those identity and failure contracts unchanged.
-  const bottom=()=>({top:false,ids:new Set()}),top=()=>({top:true,ids:new Set()}),copy=t=>({top:t.top,ids:new Set(t.ids)});
-  const wire=t=>({top:t.top,functions:[...t.ids].sort(compare)});
-  const from=t=>({top:t.top,ids:new Set(t.functions)});
-  function join(a,b){step();return {top:a.top||b.top,ids:new Set([...a.ids,...b.ids])};}
-  const equal=(a,b)=>a.top===b.top&&a.ids.size===b.ids.size&&[...a.ids].every(x=>b.ids.has(x));
+  const domain=callableTargetDomain(functions,step,fail,compare),{bottom,top,copy,wire,from,join,equal}=domain;
   function merge(map,key,t){const old=map.get(key)??bottom(),n=join(old,t);if(!map.has(key)||!equal(n,old)){map.set(key,n);grew();}}
   for(const fn of functions.values())summaries.set(fn.id,{fn,reached:false,parameters:new Map(fn.parameters.flatMap((p,i)=>callable(p.type)?[[i,records?from(records.get(fn.id).parameters.find(x=>x.index===i).allowed):bottom()]]:[])),returns:callable(fn.returnType)?bottom():null,unknownEffects:false,reads:new Set(),writes:new Set()});
   function reach(id){const s=summaries.get(id);if(!s)fail('identity');if(!s.reached){s.reached=true;grew();}return s;}
@@ -47,8 +40,10 @@ export function solveModuleTargets(hir,records,fail){
       let result=callable(v.type)?bottom():null;
       for(const id of [...saved.ids].sort(compare)){
         const callee=reach(id);if(callee.fn.signature!==v.signature)fail('identity');
-        callee.fn.parameters.forEach((p,i)=>{if(callable(p.type)){if(!args[i])fail('identity');if(records)observe(id,i,args[i],s.fn.id,path,v.arguments[i].range);else merge(callee.parameters,i,args[i]);}});
-        if(result)result=join(result,records?from(records.get(id).returns):callee.returns);
+        let returned=callee.returns;
+        if(records)returned=fixedCallableTransfer(records.get(id),args,domain,(i,value)=>observe(id,i,value,s.fn.id,path,v.arguments[i].range),step,fail);
+        else callee.fn.parameters.forEach((p,i)=>{if(callable(p.type)){if(!args[i])fail('identity');merge(callee.parameters,i,args[i]);}});
+        if(result)result=join(result,returned);
         if(records&&records.get(id).upper.unknown)unknownCall(s,args,v,path);
       }
       if(saved.top){unknownCall(s,args,v,path);if(result)result=join(result,top());}

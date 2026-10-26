@@ -11,9 +11,10 @@ bool ActualCheck::representation(){
   for(const auto &[id,fn]:functions){
     const auto &abi=*physicalFunctions.at(id);const auto &parameters=items(field(abi,"parameters"));std::vector<std::string> sourceBindings;
     if(sourceFunctions.count(id)){
-      const auto &source=*sourceFunctions.at(id);if(!field(source,"ownerType").getAsNull())sourceBindings.push_back(string(field(source,"receiverBinding")));
+      const auto &source=*sourceFunctions.at(id);const size_t hidden=!field(source,"lexicalEnvironment").getAsNull();
+      if(hidden&&!need(!parameters.empty()&&string(parameters[0])=="env:"+string(field(source,"lexicalEnvironment")),"conditional hidden environment ABI differs"))return false;if(!field(source,"ownerType").getAsNull())sourceBindings.push_back(string(field(source,"receiverBinding")));
       for(const auto &parameter:items(field(source,"parameters")))sourceBindings.push_back(string(field(parameter,"id")));
-      for(size_t i=0;i<sourceBindings.size();++i)if(!step()||!selected(string(parameters[i]),storageCapacity[sourceBindings[i]]))return false;
+      for(size_t i=0;i<sourceBindings.size();++i)if(!step()||!selected(string(parameters[i+hidden]),storageCapacity[sourceBindings[i]]))return false;
       const auto result=string(field(source,"returnType"));const bool empty=result=="void"||types.count(result)&&string(field(*types.at(result),"kind"))=="void";
       if(empty){if(!need(string(field(abi,"result"))=="void","Source void ABI differs"))return false;}
       else if(!selected(string(field(abi,"result")),resultCapacity[id]))return false;
@@ -22,7 +23,12 @@ bool ActualCheck::representation(){
     for(size_t n=0;n<fn->blocks[0].parameters.size();++n)forced.emplace(fn->blocks[0].parameters[n],string(parameters[n]));
     for(const auto &block:fn->blocks)for(const auto &op:block.operations){
       if(!step())return false;const auto &name=op.name;
-      if(name=="invoke_method"){
+      if(name=="invoke_indirect"){
+        std::vector<std::string> args;std::string result;if(!indirectAbi(*fn,op,args,result))return false;
+        for(size_t i=0;i<op.operands.size();++i)adapters[op.operands[i]]=args[i];
+        if(!fn->blocks[op.successors[0]].parameters.empty())forced[fn->blocks[op.successors[0]].parameters[0]]=result;
+        forced[fn->blocks[op.successors[1]].parameters[0]]="payload:"+schema.str();
+      }else if(name=="invoke_method"){
         std::vector<std::string> args;std::string result;if(!methodAbi(*fn,op,args,result))return false;
         for(size_t i=0;i<op.operands.size();++i)adapters[op.operands[i]]=args[i];
         if(!fn->blocks[op.successors[0]].parameters.empty())forced[fn->blocks[op.successors[0]].parameters[0]]=result;
@@ -37,9 +43,9 @@ bool ActualCheck::representation(){
       else if(name=="cf.br"||name=="route"){
         const auto &target=fn->blocks[op.successors[0]].parameters;for(size_t i=0;i<target.size();++i)adapters[op.operands[i]]=fn->carriers[target[i]];
       }
-      if(name=="store"||name=="global_store"||name=="field_store"||name=="array_store"){
+      if(name=="store"||name=="env_init"||name=="env_store"||name=="global_store"||name=="field_store"||name=="array_store"){
         std::string storage;size_t index=1;
-        if(name=="store")storage=string(field(op.properties,"binding"));
+        if(name=="store"||name=="env_init"||name=="env_store")storage=string(field(op.properties,"binding"));
         else if(name=="global_store"){storage=string(field(*globals.at(string(field(op.properties,"global"))),"sourceBinding"));index=0;}
         else if(name=="field_store")storage=string(field(*fields.at(string(field(op.properties,"field"))),"sourceBinding"));
         else{
@@ -52,9 +58,10 @@ bool ActualCheck::representation(){
       if(op.result==noRegister)continue;
       if(name=="cell"||name=="catch_bind")forced[op.result]="cell:"+string(field(op.properties,"binding"));
       else if(name=="constant"||name=="floating"||name=="boolean"||name=="construct_value"||name=="allocate_reference"||name=="array_create"||name=="readspan")forced[op.result]=op.view;
+      else if(name=="env_alloc"||name=="env_parent"||name=="make_closure")forced[op.result]=op.view;
       else if(name=="pack")forced[op.result]="payload:"+schema.str();
-      else if(name=="load"||name=="global_load"||name=="field_load"){
-        const auto storage=name=="load"?string(field(op.properties,"binding")):name=="global_load"?
+      else if(name=="load"||name=="env_load"||name=="global_load"||name=="field_load"){
+        const auto storage=(name=="load"||name=="env_load")?string(field(op.properties,"binding")):name=="global_load"?
           string(field(*globals.at(string(field(op.properties,"global"))),"sourceBinding")):string(field(*fields.at(string(field(op.properties,"field"))),"sourceBinding"));
         forced[op.result]=string(field(*physicalBindings.at(storage),"carrier"));
       }
@@ -74,7 +81,12 @@ bool ActualCheck::representation(){
 }
 bool ActualCheck::effects(){
   const auto managed=[&](const ActualValue &value){
-    if(value.unknown)return true;for(const auto &tag:value.tags){if(!step())return false;
+    if(value.unknown||value.callableTop)return true;
+    for(const auto &[code,environment]:value.callables){if(!step())return false;if(!environment.empty())return true;}
+    for(const auto &tag:value.tags){if(!step())return false;
+      // Callable ABI always reserves an environment root. Only an actual
+      // environment pair (or unknown/TOP), not that capacity, requires GC.
+      if(types.count(tag)&&string(field(*types.at(tag),"kind"))=="function")continue;
       if(!need(p.layouts.count(tag),"actual managed layout missing"))return false;if(p.layouts.at(tag).referenceCount)return true;
     }return false;
   };

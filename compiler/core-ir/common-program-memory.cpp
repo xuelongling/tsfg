@@ -9,7 +9,9 @@ ActualHeap ActualCheck::reachable(const std::vector<ActualValue> &values,const A
     // Discovering a child may grow the work vector. Keep the current roots in
     // an owned local value so vector reallocation cannot invalidate this walk.
     const auto current=copy(pending[index]);
-    for(const auto &ref:current.objects){
+    std::set<std::string> roots;if(!step(current.objects.size()+current.callables.size()))return {};
+    roots.insert(current.objects.begin(),current.objects.end());for(const auto &[code,environment]:current.callables)if(!environment.empty())roots.insert(environment);
+    for(const auto &ref:roots){
     if(!step()||!e.message.empty())return {};if(!visited.insert(ref).second)continue;
     for(const auto &[id,v]:heap){if(!step())return {};if(llvm::StringRef(id).starts_with(ref+"/")){
       auto inserted=out.emplace(id,copy(v));if(inserted.second)pending.push_back(copy(v));
@@ -25,13 +27,13 @@ ActualValue ActualCheck::valueCopy(const ActualValue &source,ActualState &state,
   if(!step(source.objects.size()))return {};std::map<std::string,size_t> alternatives;
   for(const auto &ref:source.objects){
     if(!step()||!need(objects.count(ref),"copy source object is not independently owned"))return {};
-    const auto &object=objects.at(ref);if(!need(types.count(object.type),"copy source type is not independently owned"))return {};
+    const auto &object=objects.at(ref);if(llvm::StringRef(object.type).starts_with("env:"))continue;if(!need(types.count(object.type),"copy source type is not independently owned"))return {};
     if(string(field(*types.at(object.type),"kind"))=="value")++alternatives[object.type];
   }
   for(const auto &ref:source.objects){
     if(!step()||!need(objects.count(ref),"copy source object is not independently owned"))return {};
     const auto &object=objects.at(ref);
-    if(string(field(*types.at(object.type),"kind"))!="value"){value.objects.insert(ref);continue;}
+    if(llvm::StringRef(object.type).starts_with("env:")||string(field(*types.at(object.type),"kind"))!="value"){value.objects.insert(ref);continue;}
     const auto found=active.find(ref);const auto target=found==active.end()?origin+"/"+object.type:found->second;value.objects.insert(target);
     if(found!=active.end())continue;const auto old=objects.find(target);
     const bool summarized=weak||object.weak||alternatives.at(object.type)>1||(old!=objects.end()&&old->second.weak);
@@ -47,12 +49,12 @@ ActualValue ActualCheck::valueCopy(const ActualValue &source,ActualState &state,
     }
   }return value;
 }
-ActualContext *ActualCheck::context(const std::string &target,const std::vector<ActualValue> &args,const ActualHeap &heap,bool root,bool &changed){
+ActualContext *ActualCheck::context(const std::string &target,const std::vector<ActualValue> &args,const ActualHeap &heap,bool root,bool &changed,const std::string &activation){
   if(!step(args.size()+1)||!need(functions.count(target)&&functions.at(target)->blocks[0].parameters.size()==args.size(),"actual call context arity differs"))return nullptr;
   auto entry=reachable(args,heap);Array arguments,memory;
   for(const auto &v:args){if(!step())return nullptr;arguments.push_back(key(v));}
   for(const auto &[id,v]:entry){if(!step())return nullptr;memory.push_back(Array{id,key(v)});}
-  const auto id=target+"/"+digest(canonical(Object{{"args",std::move(arguments)},{"memory",std::move(memory)}}));
+  const auto id=target+"/"+digest(canonical(Object{{"activation",activation},{"args",std::move(arguments)},{"memory",std::move(memory)}}));
   auto found=contexts.find(id);if(found!=contexts.end()){found->second.called|=!root;return &found->second;}
   if(!need(contexts.size()<4096,"actual call-context bound exceeded"))return nullptr;
   ActualContext c;c.id=id;c.function=functions.at(target);c.root=root;c.called=!root;c.entry=std::move(entry);
@@ -104,6 +106,7 @@ bool ActualCheck::solve(bool conditional){
   }
   bool changed=false;
   for(const auto &[id,fn]:functions){
+    if(sourceFunctions.count(id)&&!field(*sourceFunctions.at(id),"lexicalParent").getAsNull())continue;
     ActualHeap heap;
     for(const auto &[gid,g]:globals){auto value=declared(string(field(*g,"type")),heap,"global-entry/"+gid);heap.emplace("global:"+gid,std::move(value));}
     std::vector<ActualValue> args;for(size_t i=0;i<fn->blocks[0].parameters.size();++i)args.push_back(entryValue(*fn,i,heap,conditional,changed));

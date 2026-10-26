@@ -20,9 +20,9 @@ export function validateCommonDeclarations(payload,grammars,types,spend) {
       check(modifiers.every(token=>['public','private','protected','readonly'].includes(token)),'capability');
       check(p.annotationRange,'capability','complete concrete parameter annotation required');
       g.sequence(p.declarationRange,[...modifiers,p.nameRange,':',p.annotationRange]);
-      commonTypeSyntax(g,p.annotationRange,p.declaredType,types,spend);
+      commonTypeSyntax(g,p.annotationRange,p.declaredType,types,spend,payload.typeAliases);
     }
-    if(fn.returnAnnotationRange)commonTypeSyntax(g,fn.returnAnnotationRange,fn.returnType,types,spend);
+    if(fn.returnAnnotationRange)commonTypeSyntax(g,fn.returnAnnotationRange,fn.returnType,types,spend,payload.typeAliases);
     else check(fn.name==='constructor'||fn.returnType==='void','source');
     let start=fn.returnAnnotationRange?g.indices(fn.returnAnnotationRange).end:name.end;
     while(start<bounds.end&&all[start].text!=='{'){spend();start++;}

@@ -17,7 +17,7 @@ struct SourcePlan {
   std::vector<size_t> incoming;std::map<std::string,Reg> cells;
   std::vector<std::function<void()>> deferred;
   Completion handlers;size_t current=0,clones=0;
-  Reg currentReceiver=noRegister;
+  Reg currentReceiver=noRegister,lexicalEnvironment=noRegister,activationEnvironment=noRegister;
   std::map<std::pair<size_t,size_t>,std::string> paths;
   std::string sourcePath;
   SourcePlan(ActualCheck &,const Json &);
@@ -26,8 +26,11 @@ struct SourcePlan {
   size_t block(const std::vector<std::string> & = {});
   bool ended()const;void branch(size_t,std::vector<Reg>,SourceAnchor);
   Reg copy(Reg,const std::string &,SourceAnchor);Reg view(Reg,const std::string &,SourceAnchor);
+  Reg environment(const std::string &,SourceAnchor);
+  Location bindingLocation(const std::string &,const std::string &,SourceAnchor);
   Reg receiver(SourceAnchor);Reg expression(const Json &);
   Reg invoke(const Json &,std::vector<Reg>,const Json &);
+  Reg indirect(const Json &,Reg,std::vector<Reg>);
   Reg scalar(const std::string &,const std::string &,std::vector<Reg>,const std::string &,SourceAnchor);
   Location location(const Json &);Reg load(const Location &,SourceAnchor);
   void store(const Location &,Reg,SourceAnchor,bool=false,bool=true);

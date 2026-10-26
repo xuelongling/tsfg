@@ -2,6 +2,7 @@
 import { canonical, sha256 } from './identity.mjs';
 import { limits } from './closure-common.mjs';
 import { checkGenericJsonValueBudget } from './generic-json.mjs';
+import { lexicalEnvironmentLayouts } from './lexical-environment-layouts.mjs';
 export { limits };
 
 /** @returns {never} */
@@ -24,7 +25,7 @@ const compare = (a, b) => Buffer.from(a).compare(Buffer.from(b));
  */
 export function lowerEnvironmentGraph(hir, hirHash) {
   let work = 0;
-  const step = () => { if (++work > 1000000) environmentFailure('limit', 'environment lowering work budget exceeded'); };
+  const step = (amount = 1) => { work += amount; if (work > 1000000) environmentFailure('limit', 'environment lowering work budget exceeded'); };
   const functions = new Map(hir.functions.map(fn => [fn.id, fn]));
   const bindings = new Map(), functionBodyLocals = new Set(), captured = new Set(), ownedSlots = new Map();
   function collect(body, direct) {
@@ -58,25 +59,9 @@ export function lowerEnvironmentGraph(hir, hirHash) {
     if (!ownedSlots.has(binding.owner)) ownedSlots.set(binding.owner, []);
     ownedSlots.get(binding.owner).push({ binding: id, type: binding.type, writable: binding.writable });
   }
-  const layouts = new Map(), layoutIds = new Map();
-  function nearestLayout(id) {
-    while (id !== null) {
-      step();
-      if (ownedSlots.has(id)) return layout(id);
-      id = functions.get(id).lexicalParent;
-    }
-    return null;
-  }
-  function layout(id) {
-    if (layouts.has(id)) return layouts.get(id);
-    step();
-    const parent = nearestLayout(functions.get(id).lexicalParent);
-    const slots = [...ownedSlots.get(id)].sort((a, b) => compare(a.binding, b.binding));
-    const payload = { owner: id, parent: parent?.id ?? null, slots };
-    const result = { id: sha256('tsfg.closure-environment-layout.v1\0' + canonical(payload)), ...payload };
-    layouts.set(id, result); layoutIds.set(result.id, result); return result;
-  }
-  for (const id of ownedSlots.keys()) layout(id);
+  const {layouts,layoutIds,nearestLayout}=lexicalEnvironmentLayouts(functions,ownedSlots,step,
+    message=>environmentFailure('program',message),payload=>sha256('tsfg.closure-environment-layout.v1\0'+canonical(payload)),
+    (left,right)=>compare(left.binding,right.binding));
   function environment(fn, expected) {
     if (expected === null) return null;
     step();

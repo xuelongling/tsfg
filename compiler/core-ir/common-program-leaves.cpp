@@ -14,8 +14,14 @@ SourcePlan::Reg SourcePlan::expression(const Json &e){
   if(kind=="nonNull"){const auto value=expression(field(e,"expression"));return emit("view",{value},type,Object{{"target",type}},r);}
   if(kind=="thisReference")return currentReceiver==noRegister?receiver(r):view(currentReceiver,type,r);
   if(kind=="bindingReference"){
-    const auto id=string(field(e,"binding"));if(!check.need(cells.count(id)&&check.bindings.count(id),"Source reference Cell missing"))return noRegister;
-    const auto value=emit("load",{cells.at(id)},string(field(*check.bindings.at(id),"type")),Object{{"binding",id}},r);return view(value,type,r);
+    const auto id=string(field(e,"binding"));if(!check.need(check.bindings.count(id),"Source binding reference missing"))return noRegister;
+    const auto value=load(bindingLocation(id,string(field(*check.bindings.at(id),"type")),r),r);return view(value,type,r);
+  }
+  if(kind=="functionReference"){
+    const auto id=string(field(e,"functionId"));if(!check.need(check.sourceFunctions.count(id),"Source function reference missing"))return noRegister;
+    const auto &fn=*check.sourceFunctions.at(id);const auto layout=string(field(fn,"lexicalEnvironment"));std::vector<Reg> args;
+    if(!layout.empty())args.push_back(environment(layout,r));
+    return emit("make_closure",std::move(args),type,Object{{"function_id",id},{"signature_hash",field(fn,"signatureHash")},{"environment_layout",field(fn,"lexicalEnvironment")}},r);
   }
   if(kind=="globalReference"){
     const auto id=string(field(e,"global"));if(!check.need(check.globals.count(id),"Source global missing"))return noRegister;
@@ -60,6 +66,14 @@ SourcePlan::Reg SourcePlan::expression(const Json &e){
   }
   if(kind=="fieldAccess"){
     const auto object=expression(field(e,"receiver"));return emit("field_load",{object},type,Object{{"field",field(e,"property")}},r);
+  }
+  if(kind=="indirectCall"){
+    const auto callee=expression(field(e,"expression"));std::vector<Reg> args;size_t index=0;const auto &parameters=items(field(field(e,"signature"),"parameters"));
+    for(const auto &argument:items(field(e,"arguments"))){
+      if(!check.need(index<parameters.size(),"indirect Source argument index missing"))return noRegister;
+      const auto value=expression(argument);args.push_back(copy(value,string(parameters[index++]),sourceAnchor(argument)));
+    }
+    const auto value=indirect(e,callee,std::move(args));return value==noRegister?emit("undefined",{},digest(std::string("tsfg.type")+std::string(1,'\0')+"undefined"),Object{},r):value;
   }
   if(kind=="call"||kind=="new"||kind=="superConstruct"){
     std::vector<Reg> args;const auto &parameters=items(field(field(e,"signature"),"parameters"));size_t index=0;

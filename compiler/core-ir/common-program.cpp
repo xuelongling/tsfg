@@ -17,7 +17,7 @@ public:
       GlobalLoadOp,GlobalStoreOp,AssertOp,ViewOp,ValueCopyOp,CarrierCastOp,UnaryOp,BinaryOp,EqualOp,
       NumericUseOp,FieldLoadOp,FieldStoreOp,ConstructValueOp,AllocateReferenceOp,ArrayCreateOp,
       ArrayReadOp,ArrayStoreOp,ArrayResizeOp,ArrayLengthOp,ReadSpanOp,ReadSpanLengthOp,PackOp,
-      InvokeOp,InvokeMethodOp,EnterHandlerOp,CatchBindOp,FinallyEnterOp,RouteOp,ReturnThrowOp,UnreachableOp,FuelOp>();
+      EnvAllocOp,EnvParentOp,EnvInitOp,EnvLoadOp,EnvStoreOp,MakeClosureOp,InvokeIndirectOp,InvokeOp,InvokeMethodOp,EnterHandlerOp,CatchBindOp,FinallyEnterOp,RouteOp,ReturnThrowOp,UnreachableOp,FuelOp>();
   }
   mlir::Type parseType(mlir::DialectAsmParser &parser)const override {
     llvm::StringRef name;std::string key;
@@ -49,7 +49,7 @@ bool metadata(mlir::ModuleOp module,Program &p,Error &error){
   const auto text=[&](llvm::StringRef key){auto value=attr.getAs<mlir::StringAttr>(key);return value?value.getValue():llvm::StringRef();};
   const auto version=attr.getAs<mlir::IntegerAttr>("version");
   if(text("family")!="tsfg.core-program-development"||text("schema")!=schema||!version||
-    !version.getType().isSignlessInteger(32)||version.getInt()!=2)return reject(error,"core-ir-common-identity","common manifest identity differs");
+    !version.getType().isSignlessInteger(32)||version.getInt()!=3)return reject(error,"core-ir-common-identity","common manifest identity differs");
   if(!readJson(text("hir"),p.hir,p,error)||!readJson(text("representation"),p.representation,p,error)||
     !readJson(text("publication"),p.publication,p,error)||!readJson(text("request"),p.request,p,error)||
     !readJson(text("proof"),p.proof,p,error))return false;

@@ -11,15 +11,15 @@ import {canonical,sha256,i32TypeId} from '../../compiler/identity.mjs';
 import {commonEntryReferences} from '../../compiler/common-program-entry.mjs';
 import {commonMeter} from '../../compiler/common-program-common.mjs';
 const bytes=await fs.readFile(new URL('./common-program-m12-witness-forward.json',import.meta.url));
-assert.equal(sha256(bytes),'sha256:f90d7b2f9566f2a8bd3a9c43ac5fa6cb5d14abbf36a033302a5dd18e3202667d');
-const facts=readCommonProgramFacts(bytes),context={family:'tsfg.common-program-context-candidate',version:1,factsBytes:bytes,expectedPackageId:facts.packageId};
+assert.equal(sha256(bytes),'sha256:d1d7849aa254d478a0b820e12780d91ead62cf79a3dc07d2d368e9f7955a2d27');
+const facts=readCommonProgramFacts(bytes),context={family:'tsfg.common-program-context-candidate',version:2,factsBytes:bytes,expectedPackageId:facts.packageId};
 const built=buildHir(facts,context);assert.equal(built.status,'ok',JSON.stringify(built));const hir=built.hir;
 const fn=name=>hir.functions.find(f=>f.name===name),type=name=>hir.types.find(t=>t.name===name);
 let physical;const program=()=>physical??=commonProgramPhysical(hir);
 const rootsFor=name=>[...program().values.actual.contexts.values()].filter(c=>c.root&&c.plan.owner.id===fn(name).id);
 const parameterRow=(payload,name)=>payload.entryCompatibilityRoots.find(row=>row.functionId===payload.functions.find(f=>f.name===name).id);
 const repaired=mutate=>{const changed=structuredClone(facts);mutate(changed.payload);
-  changed.packageId=sha256('tsfg.program-facts.package.v1\0'+changed.schemaHash+'\0'+canonical(changed.payload));return Buffer.from(canonical(changed)+'\n');};
+  changed.packageId=sha256('tsfg.program-facts.package.v2\0'+changed.schemaHash+'\0'+canonical(changed.payload));return Buffer.from(canonical(changed)+'\n');};
 
 test('real M12 package keeps all ordinary functions, constructor, roots and closed relation occurrences',()=>{
   assert.equal(hir.functions.length,9);assert.equal(hir.modules.length,1);assert.equal(hir.globals.length,2);assert.equal(hir.closure.roots.length,7);

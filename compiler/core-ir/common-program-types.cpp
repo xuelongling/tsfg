@@ -8,9 +8,10 @@ struct Types {
   std::map<std::string,Json> builtins;
   std::map<std::string,const Json *> types,domains,bindings,functions;
   std::set<std::string> active;
+  std::map<std::string,const Json *> environments;
   bool need(bool c,llvm::StringRef message){return c||reject(e,"core-ir-common-representation",message);}
   bool step(size_t n=1){return p.charge(n)||reject(e,"core-ir-common-budget","physical type/capacity directory work exceeded");}
-  bool valid(const std::string &id)const{return id=="void"||id=="payload:"+schema.str()||types.count(id)||domains.count(id);}
+  bool valid(const std::string &id)const{return id=="void"||id=="payload:"+schema.str()||types.count(id)||domains.count(id)||environments.count(id);}
   std::vector<const Json *> fields(const std::string &id){
     std::vector<const Json *> result;std::set<std::string> visited;std::vector<const Json *> chain;auto current=id;
     while(!current.empty()){
@@ -27,7 +28,9 @@ struct Types {
     if(!step()||!need(valid(id)&&active.insert(id).second,"cyclic/unowned inline physical layout"))return failed;
     const auto align=[](uint32_t bytes,uint32_t a){return (bytes+a-1)/a*a;};
     const auto *t=types.count(id)?types.at(id):nullptr;const auto kind=t?string(field(*t,"kind")):std::string();
-    if(id=="payload:"+schema.str()||kind=="unknown")out={16,8,1,{}};
+    if(environments.count(id))out={8,8,1,{}};
+    else if(kind=="function")out={40,8,1,{}};
+    else if(id=="payload:"+schema.str()||kind=="unknown")out={16,8,1,{}};
     else if(kind=="scalar"){
       static const std::map<std::string,uint32_t> widths={{"bool",1},{"i8",1},{"u8",1},{"i16",2},{"u16",2},
         {"i32",4},{"u32",4},{"f32",4},{"i64",8},{"u64",8},{"isize",8},{"usize",8},{"f64",8}};
@@ -66,6 +69,9 @@ struct Types {
       const auto id=digest(std::string("tsfg.type")+std::string(1,'\0')+kind);
       if(!types.count(id)){builtins.emplace(id,Object{{"id",id},{"kind",llvm::StringRef(kind)=="bool"?"scalar":kind},{"name",kind}});types.emplace(id,&builtins.at(id));}
     }
+    for(const auto &environment:items(field(p.hir,"environments"))){
+      if(!step()||!need(environments.emplace("env:"+string(field(environment,"id")),&environment).second,"duplicate environment carrier"))return false;
+    }
     std::set<std::string> storage;
     const auto add=[&](const std::string &id){return step()&&need(!id.empty()&&storage.insert(id).second,"duplicate original physical storage identity");};
     for(const auto &fn:items(field(p.hir,"functions"))){
@@ -97,11 +103,13 @@ struct Types {
       if(!step()||!need(exact(f,{"id","parameters","result"})&&expected.count(id)&&field(f,"parameters").getAsArray()&&
         (previous.empty()||previous<id)&&valid(string(field(f,"result")))&&functions.emplace(id,&f).second,"complete physical function ABI identity/order differs"))return false;previous=id;
       const auto &owner=*expected.at(id);const bool init=owner.getAsObject()->get("initializer");
-      const auto count=init?0:items(field(owner,"parameters")).size()+(!field(owner,"ownerType").getAsNull());
+      const auto count=init?0:items(field(owner,"parameters")).size()+(!field(owner,"ownerType").getAsNull())+(!field(owner,"lexicalEnvironment").getAsNull());
       if(!need(items(field(f,"parameters")).size()==count&&(!init||string(field(f,"result"))=="void"),"physical function ABI arity/result differs"))return false;
+      if(!init&&!field(owner,"lexicalEnvironment").getAsNull()&&!need(!items(field(f,"parameters")).empty()&&string(items(field(f,"parameters"))[0])=="env:"+string(field(owner,"lexicalEnvironment")),"hidden lexical environment ABI differs"))return false;
       for(const auto &a:items(field(f,"parameters")))if(!step()||!need(valid(string(a))&&string(a)!="void","physical parameter carrier differs"))return false;
     }
     if(!need(functions.size()==expected.size()&&p.functions.size()==expected.size(),"complete Core function/init inventory omitted"))return false;
+    for(const auto &[id,environment]:environments){layout(id);if(!e.message.empty())return false;}
     layout("payload:"+schema.str());if(!e.message.empty())return false;
     for(const auto &[id,d]:domains){layout(id);if(!e.message.empty())return false;}
     for(const auto &[id,t]:types)if(string(field(*t,"kind"))!="union"){layout(id);if(!e.message.empty())return false;}
@@ -114,6 +122,15 @@ struct Types {
         if(!need(bytes<=65536&&roots<=256,"heap object field bytes/GC roots exceeded"))return false;
       }
       if(!e.message.empty()||!need((bytes+alignment-1)/alignment*alignment<=65536,"aligned heap object bytes exceeded"))return false;
+    }
+    for(const auto &[id,environment]:environments){
+      uint32_t bytes=field(*environment,"parent").getAsNull()?0:8,alignment=field(*environment,"parent").getAsNull()?1:8,roots=field(*environment,"parent").getAsNull()?0:1;
+      for(const auto &slot:items(field(*environment,"slots"))){
+        if(!step())return false;const auto raw=string(field(slot,"binding"));if(!need(bindings.count(raw),"environment cell storage missing"))return false;
+        const auto &child=layout(string(field(*bindings.at(raw),"carrier")));bytes=(bytes+child.alignment-1)/child.alignment*child.alignment+child.byteSize;alignment=std::max(alignment,child.alignment);roots+=child.referenceCount;
+        if(!need(bytes<=65536&&roots<=256,"environment body bytes/GC roots exceeded"))return false;
+      }
+      if(!need((bytes+alignment-1)/alignment*alignment<=65536,"aligned environment body bytes exceeded"))return false;
     }
     return true;
   }

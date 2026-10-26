@@ -1,13 +1,13 @@
 // SPDX-License-Identifier: MIT
-import sourceDescriptor from '../contracts/common-program-source-v1.schema.json' with {type:'json'};
-import hirDescriptor from '../contracts/common-program-hir-v1.schema.json' with {type:'json'};
+import sourceDescriptor from '../contracts/common-program-source-v2.schema.json' with {type:'json'};
+import hirDescriptor from '../contracts/common-program-hir-v2.schema.json' with {type:'json'};
 import {canonical,own,sha256} from './identity.mjs';
 import {readGenericJson,copyGenericJsonBytes,checkGenericJsonValueBudget} from './generic-json.mjs';
 export {canonical,own,sha256};
 export const commonSourceDescriptor=own(sourceDescriptor);
-export const commonSourceFormat=own({family:'tsfg.program-facts-package-candidate',version:1,
+export const commonSourceFormat=own({family:'tsfg.program-facts-package-candidate',version:2,
   schemaHash:sha256(canonical(sourceDescriptor)+'\n')});
-export const commonHirFormat=own({family:'tsfg.program-hir-candidate',version:1,
+export const commonHirFormat=own({family:'tsfg.program-hir-candidate',version:2,
   schemaHash:sha256(canonical(hirDescriptor)+'\n')});
 export const commonJsonPolicy=Object.freeze({bytes:8388608,depth:128,jsonTokens:1000000,
   stringBytes:2097152,safeNonnegativeIntegers:true,allowNul:true,rejectPrototypeKeys:false});

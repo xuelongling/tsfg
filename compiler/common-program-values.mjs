@@ -5,7 +5,7 @@ import {sha256,i32TypeId,boolTypeId} from './identity.mjs';
 import {commonCheck as check} from './common-program-common.mjs';
 import {commonCollections} from './common-program-budget.mjs';
 const undefinedId=sha256('tsfg.type\0undefined'),nullId=sha256('tsfg.type\0null');
-export function commonProgramValues(model,graph,state,invoke) {
+export function commonProgramValues(model,graph,state,invoke,indirect) {
   const {types,bindings}=model,collections=commonCollections(model.spend);let currentReceiver=null;
   const op=(name,args,type,properties,range)=>graph.emit(state.current,name,args,type,properties,range);
   const terminal=(name,args,targets,properties,range)=>graph.terminal(state.current,name,args,targets,properties,range);
@@ -13,8 +13,13 @@ export function commonProgramValues(model,graph,state,invoke) {
   const view=(value,type,range)=>value.type===type?value:op('view',[value],type,{target:type},range);
   const pack=(value,range)=>op('pack',[value],model.payload,{type:value.type},range);
   const receiver=(owner,range)=>{check(state.cells.has(owner.receiverBinding),'scope');return op('load',[state.cells.get(owner.receiverBinding)],owner.ownerType,{binding:owner.receiverBinding},range);};
+  function environment(layout,range){
+    model.spend(state.environments.size);for(const [id,value]of state.environments){let current=id,selected=value;const seen=new Set();while(current){model.spend();check(!seen.has(current),'environment');seen.add(current);if(current===layout)return selected;const parent=model.environments.get(current)?.parent;if(!parent)break;selected=op('env_parent',[selected],'env:'+parent,{layout:parent},range);current=parent;}}
+    check(false,'environment','lexical environment not in current activation');
+  }
   function location(target) {
     model.spend();if(target.kind==='parentheses')return location(target.expression);
+    if(target.kind==='bindingTarget'&&model.slots.has(target.binding)){const slot=model.slots.get(target.binding);return {kind:'environment',environment:environment(slot.layout,target.range),slot,type:target.type};}
     if(target.kind==='bindingTarget') {const cell=state.cells.get(target.binding);check(cell,'scope');return {kind:'binding',cell,binding:target.binding,type:target.type};}
     if(target.kind==='globalTarget')return {kind:'global',global:target.global,binding:target.binding,type:target.type};
     if(target.kind==='fieldTarget')return {kind:'field',receiver:expression(target.receiver),field:target.property,type:target.type};
@@ -23,6 +28,7 @@ export function commonProgramValues(model,graph,state,invoke) {
     check(false,'capability','unsupported owned location '+target.kind);
   }
   function load(target,range) {
+    if(target.kind==='environment')return op('env_load',[target.environment],target.type,{layout:target.slot.layout,binding:target.slot.binding,key:target.slot.key},range);
     if(target.kind==='binding')return op('load',[target.cell],bindings.get(target.binding).type,{binding:target.binding},range);
     if(target.kind==='global')return op('global_load',[],target.type,{global:target.global},range);
     if(target.kind==='field')return op('field_load',[target.receiver],target.type,{field:target.field},range);
@@ -31,7 +37,8 @@ export function commonProgramValues(model,graph,state,invoke) {
   }
   function write(target,value,range,initialize=false,shouldCopy=true) {
     const selected=shouldCopy?copy(value,target.type,range):value;
-    if(target.kind==='binding')op('store',[target.cell,selected],null,{binding:target.binding,initialize},range);
+    if(target.kind==='environment')op(initialize?'env_init':'env_store',[target.environment,selected],null,{layout:target.slot.layout,binding:target.slot.binding,key:target.slot.key},range);
+    else if(target.kind==='binding')op('store',[target.cell,selected],null,{binding:target.binding,initialize},range);
     else if(target.kind==='global')op('global_store',[selected],null,{global:target.global,initialize},range);
     else if(target.kind==='field')op('field_store',[target.receiver,selected],null,{field:target.field,initialize},range);
     else if(target.kind==='element')op('array_store',[target.receiver,target.index,selected],null,{element:target.type},range);
@@ -80,6 +87,9 @@ export function commonProgramValues(model,graph,state,invoke) {
     if(e.kind==='as')return op('assert',[expression(e.expression)],e.type,{operator:'as',annotationRange:e.annotationRange,operatorRange:e.operatorRange},e.range);
     if(e.kind==='nonNull')return op('view',[expression(e.expression)],e.type,{target:e.type},e.range);
     if(e.kind==='thisReference')return currentReceiver?view(currentReceiver,e.type,e.range):receiver(graph.owner,e.range);
+    if(e.kind==='functionReference'){const fn=model.functions.get(e.functionId);check(fn,'identity');const env=fn.lexicalEnvironment?environment(fn.lexicalEnvironment,e.range):null;return op('make_closure',env?[env]:[],e.type,{function_id:fn.id,signature_hash:fn.signatureHash,environment_layout:fn.lexicalEnvironment},e.range);}
+    if(e.kind==='indirectCall'){const callee=expression(e.expression),args=[];for(const [i,arg]of e.arguments.entries())args.push(copy(expression(arg),e.signature.parameters[i],arg.range));return indirect(e,callee,args)??op('undefined',[],undefinedId,{},e.range);}
+    if(e.kind==='bindingReference'&&model.slots.has(e.binding))return view(load(location({...e,kind:'bindingTarget'}),e.range),e.type,e.range);
     if(e.kind==='bindingReference'){const cell=state.cells.get(e.binding);check(cell,'scope');return view(op('load',[cell],bindings.get(e.binding).type,{binding:e.binding},e.range),e.type,e.range);}
     if(e.kind==='globalReference')return view(op('global_load',[],model.globals.get(e.global).type,{global:e.global},e.range),e.type,e.range);
     if(e.kind==='numericLiteral')return op(e.bits?'floating':'constant',[],e.type,e.bits?{token:e.token,bits:e.bits}:{token:e.token,decimal:e.decimal},e.range);
@@ -123,5 +133,5 @@ export function commonProgramValues(model,graph,state,invoke) {
     }
     check(false,'capability','common expression has no complete SSA lowering: '+e.kind);
   }
-  return {expression,op,copy,view,pack,receiver,store,location,load,write};
+  return {expression,environment,op,copy,view,pack,receiver,store,location,load,write};
 }

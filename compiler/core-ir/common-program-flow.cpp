@@ -3,7 +3,8 @@
 #include "common-program-methods.h"
 namespace tsfg::commonProgram {
 bool ActualCheck::run(){
-  if(!catalogs()||!graph()||!source())return false;
+  if(!verifyCallableTargets(p,e)||!catalogs()||!graph()||!source())return false;
+  for(const auto &[id,fn]:functions)if(!environmentGraph(*fn))return false;
   std::map<std::string,std::set<std::string>> calls;std::map<std::string,size_t> incoming;
   for(const auto &[id,fn]:functions){
     std::vector<std::set<uint16_t>> reachable(fn->blocks.size());
@@ -14,9 +15,13 @@ bool ActualCheck::run(){
     }
     for(size_t b=0;b<fn->blocks.size();++b){
       const bool cyclic=reachable[b].count(uint16_t(b));if(cyclic)repeatingBlocks.insert(id+"/"+std::to_string(b));
-      for(const auto &op:fn->blocks[b].operations)if(op.name=="invoke"||op.name=="invoke_method"){
+      for(const auto &op:fn->blocks[b].operations)if(op.name=="invoke"||op.name=="invoke_method"||op.name=="invoke_indirect"){
         std::vector<std::string> targets;if(op.name=="invoke")targets.push_back(string(field(op.properties,"function_id")));
-        else if(!methodTargets(p,field(op.properties,"dispatch"),targets,e))return false;
+        else if(op.name=="invoke_indirect"){
+          const auto key=id+"/"+std::to_string(op.range.start)+":"+std::to_string(op.range.end);auto site=p.callableSites.find(key);
+          if(!need(site!=p.callableSites.end(),"indirect fixed target graph is unresolved"))return false;
+          if(!step(site->second.functions.size()))return false;targets.assign(site->second.functions.begin(),site->second.functions.end());
+        }else if(!methodTargets(p,field(op.properties,"dispatch"),targets,e))return false;
         for(const auto &target:targets){if(!step())return false;calls[id].insert(target);++incoming[target];if(cyclic)repeatingFunctions.insert(target);}
       }
     }
@@ -27,7 +32,9 @@ bool ActualCheck::run(){
     std::vector<std::string> pending;std::set<std::string> visited;
     for(const auto &to:calls[start])pending.push_back(to);
     while(!pending.empty()){
-      if(!step())return false;const auto id=pending.back();pending.pop_back();if(id==start)repeatingFunctions.insert(start);
+      if(!step())return false;const auto id=pending.back();pending.pop_back();if(id==start){
+        if(!step())return false;repeatingFunctions.insert(start);cyclicFunctions.insert(start);
+      }
       if(!visited.insert(id).second)continue;for(const auto &to:calls[id]){if(!step())return false;pending.push_back(to);}
     }
   }

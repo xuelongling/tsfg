@@ -50,7 +50,7 @@ SourcePlan::Location SourcePlan::location(const Json &v){
   if(kind=="parentheses")return location(field(v,"expression"));
   Location out;out.type=string(field(v,"type"));
   if(kind=="bindingTarget"){
-    out.kind="binding";out.id=string(field(v,"binding"));if(check.need(cells.count(out.id),"Source local target lacks Cell"))out.receiver=cells.at(out.id);
+    return bindingLocation(string(field(v,"binding")),out.type,sourceAnchor(v));
   }else if(kind=="globalTarget"){out.kind="global";out.id=string(field(v,"global"));}
   else if(kind=="fieldTarget"){out.kind="field";out.receiver=expression(field(v,"receiver"));out.id=string(field(v,"property"));}
   else if(kind=="elementTarget"){out.kind="element";out.receiver=expression(field(v,"receiver"));out.index=expression(field(v,"index"));}
@@ -58,6 +58,7 @@ SourcePlan::Location SourcePlan::location(const Json &v){
   else check.need(false,"Source location has no complete independent lowering");return out;
 }
 SourcePlan::Reg SourcePlan::load(const Location &v,SourceAnchor r){
+  if(v.kind=="environment"){const auto &slot=*check.environmentSlots.at(v.id);return emit("env_load",{v.receiver},v.type,Object{{"layout",check.slotLayouts.at(v.id)},{"binding",v.id},{"key",field(slot,"key")}},r);}
   if(v.kind=="binding")return emit("load",{v.receiver},string(field(*check.bindings.at(v.id),"type")),Object{{"binding",v.id}},r);
   if(v.kind=="global")return emit("global_load",{},v.type,Object{{"global",v.id}},r);
   if(v.kind=="field")return emit("field_load",{v.receiver},v.type,Object{{"field",v.id}},r);
@@ -66,7 +67,8 @@ SourcePlan::Reg SourcePlan::load(const Location &v,SourceAnchor r){
 }
 void SourcePlan::store(const Location &v,Reg value,SourceAnchor r,bool initial,bool copying){
   if(!ok())return;const auto selected=copying?copy(value,v.type,r):value;
-  if(v.kind=="binding")emit("store",{v.receiver,selected},"",Object{{"binding",v.id},{"initialize",initial}},r);
+  if(v.kind=="environment"){const auto &slot=*check.environmentSlots.at(v.id);emit(initial?"env_init":"env_store",{v.receiver,selected},"",Object{{"layout",check.slotLayouts.at(v.id)},{"binding",v.id},{"key",field(slot,"key")}},r);}
+  else if(v.kind=="binding")emit("store",{v.receiver,selected},"",Object{{"binding",v.id},{"initialize",initial}},r);
   else if(v.kind=="global")emit("global_store",{selected},"",Object{{"global",v.id},{"initialize",initial}},r);
   else if(v.kind=="field")emit("field_store",{v.receiver,selected},"",Object{{"field",v.id},{"initialize",initial}},r);
   else if(v.kind=="element")emit("array_store",{v.receiver,v.index,selected},"",Object{{"element",v.type}},r);

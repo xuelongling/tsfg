@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: MIT
 // The sole complete Source-to-owned transform. Verification reconstructs every
 // node, including ordinary functions outside selected kernel reachability.
+import {commonEnvironments} from './common-program-environments.mjs';
 import {isProxy} from 'node:util/types';
 import {copyGenericJsonBytes} from './generic-json.mjs';
 import {readCommonProgramFacts,verifyCommonProgramFacts,writeCommonProgramFacts} from './common-program-facts.mjs';
@@ -15,7 +16,7 @@ export function isCommonProgramContext(value) {
 export function commonProgramContext(value) {
   check(isCommonProgramContext(value),'context');const fields=Object.getOwnPropertyDescriptors(value),keys=['family','version','factsBytes','expectedPackageId'];
   check(Reflect.ownKeys(value).length===keys.length&&keys.every(key=>fields[key]?.enumerable&&Object.hasOwn(fields[key],'value')),'context');
-  check(fields.version.value===1,'context');const bytes=copyGenericJsonBytes(fields.factsBytes.value,commonJsonPolicy),facts=readCommonProgramFacts(bytes);
+  check(fields.version.value===2,'context');const bytes=copyGenericJsonBytes(fields.factsBytes.value,commonJsonPolicy),facts=readCommonProgramFacts(bytes);
   check(facts.packageId===fields.expectedPackageId.value,'context');return {bytes,facts};
 }
 
@@ -27,16 +28,18 @@ export function projectCommonProgram(facts) {
   const type=id=>{check(ids.typeIds.has(id),'type');return ids.typeIds.get(id);};
   const modulePaths=new Set(p.modules.map(row=>row.sourcePath));
   const target=id=>ids.functionIds.get(id)??ids.globals.get(id)??ids.typeIds.get(id)??(modulePaths.has(id)?ids.moduleId(id):undefined);
-  const binding=row=>({id:row.id,sourceBinding:row.id,name:row.name,kind:row.kind,type:type(row.declaredType),writable:row.writable,
+  const binding=row=>({id:row.id,sourceBinding:row.id,name:row.name,kind:row.kind,type:type(row.declaredType),writable:row.writable,lexicalOwner:row.lexicalOwner===null?null:ids.functionIds.get(row.lexicalOwner),
     range:{...row.declarationRange},nameRange:{...row.nameRange},annotationRange:structuredClone(row.annotationRange),elementAnnotationRange:structuredClone(row.elementAnnotationRange)});
   function expression(value) {
     spend();const result={kind:value.kind,type:type(value.flowType??value.type),declaredType:type(value.type),range:{...value.range}};
     for(const key of ['token','decimal','bits','codeUnits','binding','allocationSite','operator','prefix'])if(Object.hasOwn(value,key))result[key]=structuredClone(value[key]);
+    if(value.functionId)result.functionId=ids.functionIds.get(value.functionId);
     if(value.binding&&ids.globals.has(value.binding)){result.global=ids.globals.get(value.binding);result.kind=value.kind==='bindingReference'?'globalReference':'globalTarget';}
     if(value.property)result.property=fields.get(value.property)??value.property;
     for(const key of ['operatorRange','annotationRange','calleeRange','nameRange'])if(value[key])result[key]={...value[key]};
     for(const key of ['receiver','index','expression','value','left','right','target'])if(value[key])result[key]=expression(value[key]);
     for(const key of ['elements','arguments'])if(value[key])result[key]=value[key].map(expression);
+    if(value.signature){result.signature={parameters:value.signature.parameters.map(type),returnType:type(value.signature.returnType)};result.sourceSignature=structuredClone(value.signature);}
     if(value.callee) {
       result.callee=value.callee===p.readSpanIntrinsic.id?'intrinsic:readSpan':target(value.callee);check(result.callee,'identity');
       result.signature={parameters:value.signature.parameters.map(type),returnType:type(value.signature.returnType)};
@@ -49,6 +52,7 @@ export function projectCommonProgram(facts) {
   }
   function statements(rows) {return rows.map(row=>{
     spend();const result={kind:row.kind,range:{...row.range}};
+    if(row.functionId)result.functionId=ids.functionIds.get(row.functionId);
     if(row.binding){result.binding=row.binding;if(ids.globals.has(row.binding))result.global=ids.globals.get(row.binding);}
     for(const key of ['value','initializer','condition'])if(row[key])result[key]=expression(row[key]);
     for(const key of ['then','else','body'])if(row[key])result[key]=statements(row[key]);
@@ -61,6 +65,7 @@ export function projectCommonProgram(facts) {
   });}
   const functions=[...ids.functions.values()].map(fn=>({id:ids.functionIds.get(fn.id),declKey:ids.declKeys.get(fn.id),sourceBinding:fn.id,
     sourcePath:fn.sourcePath,name:fn.name,kind:fn.ownerType?'construction-body'===fn.name?'construction-body':ids.types.get(fn.ownerType).constructor?.id===fn.id?'construction-body':'method':'source',
+    lexicalParent:fn.lexicalParent===null?null:ids.functionIds.get(fn.lexicalParent),declarationScope:{...fn.declarationScope},captures:structuredClone(fn.captures),
     access:fn.access,signatureHash:ids.signatures.get(fn.id),returnType:type(fn.returnType),
     parameters:fn.parameters.map(binding),bindings:fn.bindings.map(binding),body:statements(fn.body),range:{...fn.declarationRange},nameRange:{...fn.nameRange},
     returnAnnotationRange:structuredClone(fn.returnAnnotationRange),...(fn.ownerType?{ownerType:type(fn.ownerType),receiverBinding:'this@'+fn.id}:{}),
@@ -70,6 +75,7 @@ export function projectCommonProgram(facts) {
       semanticLabel:ids.labels.get(row.id),semanticShape:ids.shapes.get(row.id)};
     for(const key of ['nominalKey','runtimeKey','markerOrigin'])if(row[key])result[key]=structuredClone(row[key]);
     if(row.sourcePath)result.origin={sourcePath:row.sourcePath,range:{...row.declarationRange},nameRange:{...row.nameRange}};
+    if(row.kind==='function'){result.parameters=row.parameters.map(type);result.returnType=type(row.returnType);}
     if(row.base)result.base=type(row.base);if(row.elementType)result.elementType=type(row.elementType);
     if(row.members)result.members=row.members.map(type).sort();
     if(row.fields)result.fields=row.fields.map((field,index)=>({id:fields.get(field.id),sourceBinding:field.id,name:field.name,index,type:type(field.type),
@@ -85,6 +91,8 @@ export function projectCommonProgram(facts) {
       implicitForward:row.construction.implicitForward?structuredClone(row.construction.implicitForward):null};
     return result;
   }).sort((a,b)=>a.id<b.id?-1:1);
+  const environment=commonEnvironments(functions,new Map(types.map(row=>[row.id,row])),spend);
+  for(const fn of functions)Object.assign(fn,environment.metadata(fn));
   const globals=p.globals.map(row=>({id:ids.globals.get(row.binding.id),sourceBinding:row.binding.id,sourcePath:row.sourcePath,name:row.binding.name,
     declKey:commonDeclKey(row.sourcePath,[],'global',row.bindingKind==='default-export'?'$default':row.binding.name),type:type(row.binding.declaredType),
     bindingKind:row.bindingKind,writable:row.binding.writable,range:{...row.binding.declarationRange},nameRange:{...row.binding.nameRange}})).sort((a,b)=>a.id<b.id?-1:1);
@@ -99,7 +107,7 @@ export function projectCommonProgram(facts) {
   const closure={roots:p.closure.roots.map(root),requiredRoots:p.closure.requiredRoots.map(root),modules:modules.map(row=>row.id),
     functions:functions.map(row=>row.id),initialization};
   const hir={format:commonHirFormat,snapshot,inputIdentity:snapshot.packageId,rootFile:p.rootFile,
-    sources:p.files.map(row=>({path:row.path,content:row.content,hash:'sha256:'+row.sha256})),target:structuredClone(p.target),types,functions,modules,globals,closure};
+    sources:p.files.map(row=>({path:row.path,content:row.content,hash:'sha256:'+row.sha256})),target:structuredClone(p.target),types,functions,modules,globals,closure,environments:environment.environments};
   commonBudget(hir);return own(hir);
 }
 

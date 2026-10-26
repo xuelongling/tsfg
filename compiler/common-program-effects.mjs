@@ -3,13 +3,15 @@
 // Program. Language throws are routed structurally; request traps never enter EH.
 import {commonCheck as check,commonSame as same} from './common-program-common.mjs';
 import {commonCollections} from './common-program-budget.mjs';
+import {commonTargets} from './common-program-targets.mjs';
 import {commonMethods} from './common-program-methods.mjs';
 export const commonFacets=Object.freeze(['allocation','managedReference','ehControl','mayThrow','await','lock','escape','unknownHost']);
 export function commonEffects(hir,spend,physical=null) {
   const collections=commonCollections(spend);
   spend(hir.types.length+hir.functions.length+hir.globals.length);
   const types=new Map(hir.types.map(row=>[row.id,row])),functions=new Map(hir.functions.map(row=>[row.id,row]));
-  const globals=new Map(hir.globals.map(row=>[row.id,row])),referenceMemo=new Map(),methods=commonMethods(hir,spend);
+  const globals=new Map(hir.globals.map(row=>[row.id,row])),referenceMemo=new Map(),methods=commonMethods(hir,spend),callables=physical?.model.callables??commonTargets(hir,spend),slots=new Map();
+  for(const env of hir.environments)for(const slot of env.slots){spend();slots.set(slot.binding,slot);}
   function reference(id,active=new Set()) {
     if(id===null||id==='void')return false;
     spend();if(referenceMemo.has(id))return referenceMemo.get(id);check(!active.has(id),'type');active.add(id);
@@ -19,11 +21,15 @@ export function commonEffects(hir,spend,physical=null) {
     referenceMemo.set(id,result);return result;
   }
   const ownerParameters=fn=>{spend(fn.parameters.length+1);return [...(fn.ownerType?[{id:fn.receiverBinding,type:fn.ownerType}]:[]),...fn.parameters];};
-  const blank=fn=>({globals:{reads:[],writes:[]},parameters:ownerParameters(fn).map((_,index)=>({index,read:false,write:false,structural:false})),
+  const blank=fn=>({captures:[],globals:{reads:[],writes:[]},parameters:ownerParameters(fn).map((_,index)=>({index,read:false,write:false,structural:false})),
     facets:Object.fromEntries(commonFacets.map(flag=>[flag,false]))});
   function derive(fn,records) {
-    const result=blank(fn),read=new Set(),write=new Set(),params=ownerParameters(fn),origins=new Map(),calls=[];
-    result.facets.managedReference=physical?.references.get(fn.id)??false;result.facets.escape=physical?.escaping.get(fn.id)??false;
+    const result=blank(fn),read=new Set(),write=new Set(),params=ownerParameters(fn),origins=new Map(),calls=[],captures=new Map();
+    const capture=(slot,flags)=>{const before=captures.get(slot)??{slot,read:false,write:false,structural:false};for(const flag of ['read','write','structural'])before[flag] ||= flags[flag];captures.set(slot,before);};
+    for(const row of fn.captures??[]){spend();capture(slots.get(row.binding).key,{read:row.read,write:row.write,structural:false});}
+    if(fn.activationEnvironment){result.facets.allocation=true;result.facets.managedReference=true;}
+    if(fn.lexicalEnvironment)result.facets.managedReference=true;
+    result.facets.managedReference ||= physical?.references.get(fn.id)??false;result.facets.escape=physical?.escaping.get(fn.id)??false;
     params.forEach((p,index)=>{spend();origins.set(p.id,reference(p.type)?new Set(['p:'+index]):new Set());});
     if(reference(fn.returnType)||params.some(p=>reference(p.type)))result.facets.managedReference=true;
     const mergeFacets=facets=>{for(const key of commonFacets)if(key!=='mayThrow')result.facets[key] ||= facets[key];};
@@ -55,6 +61,11 @@ export function commonEffects(hir,spend,physical=null) {
         owner=new Set(['local:'+(value.allocationSite??value.construction)]);
         for(const field of type.fields??[])if(field.initializer)visit(field.initializer);
         if(type.construction.functionId){const called=consume(type.construction.functionId,[owner,...arguments_],value);throwing ||= called.facets.mayThrow;}
+      }else if(value.kind==='indirectCall'){
+        visit(value.expression);const arguments_=value.arguments.map(visit),targets=callables.site(fn.id,value.range);
+        if(targets.top||!targets.functions.length){result.facets.unknownHost=true;throwing=true;}
+        for(const target of targets.functions){spend();const record=consume(target,arguments_,value);throwing ||= record.facets.mayThrow;}
+        if(reference(value.type)){for(const target of targets.functions){spend();owner.add('unknown:'+target);}if(targets.top||!targets.functions.length)owner.add('unknown:indirect');}
       }else if(value.kind==='call') {
         const arguments_=[...(value.receiver?[visit(value.receiver)]:[]),...value.arguments.map(visit)];
         if(value.callee==='intrinsic:readSpan')owner=arguments_[0];
@@ -70,7 +81,7 @@ export function commonEffects(hir,spend,physical=null) {
     }
     function consume(id,args,value) {
       spend();const callee=functions.get(id),upper=records.get(id);check(callee&&upper,'publication','missing complete function contract');
-      calls.push({functionId:fn.id,target:id,range:value.range});mergeFacets(upper.facets);
+      calls.push({functionId:fn.id,target:id,range:value.range});mergeFacets(upper.facets);for(const row of upper.captures){spend();capture(row.slot,row);}
       upper.globals.reads.forEach(id=>{spend();read.add(id);});upper.globals.writes.forEach(id=>{spend();write.add(id);});
       for(const p of upper.parameters)for(const flag of ['read','write','structural'])if(p[flag])mark(args[p.index]??new Set(),flag);
       return upper;
@@ -112,6 +123,7 @@ export function commonEffects(hir,spend,physical=null) {
       return completions;
     }
     const completions=body(fn.body);result.facets.mayThrow=completions.has('throw');
+    result.captures=collections.sorted(captures.values(),(a,b)=>a.slot<b.slot?-1:a.slot>b.slot?1:0);
     result.globals={reads:collections.sorted(read),writes:collections.sorted(write)};return {upper:result,calls,completions:collections.sorted(completions)};
   }
   function derived() {

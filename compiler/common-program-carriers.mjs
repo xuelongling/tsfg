@@ -17,7 +17,7 @@ export function selectCommonCarriers({model,plans},values) {
   for(const plan of plans)results.set(plan.owner.id,a.empty());
   for(const context of values.capacity.contexts.values())merge(results.get(context.plan.owner.id),context.returned);
   function domain(value) {
-    spend();if(value?.unknown)return payload;check((value?.tags.size??0)<=256,'limit');const alternatives=collections.sorted(value?.tags??[]);
+    spend();if(value?.tags.size===1){const id=value.tags.values().next().value;if(types.get(id)?.kind==='function')return id;}if(value?.unknown)return payload;check((value?.tags.size??0)<=256,'limit');const alternatives=collections.sorted(value?.tags??[]);
     if(alternatives.length===1&&!['undefined','null','void'].includes(types.get(alternatives[0])?.kind))return alternatives[0];
     const id=sha256('tsfg.actual-domain.v1\0'+canonical(alternatives));
     if(!domains.has(id)){check(domains.size<4096,'limit');domains.set(id,{id,actualTypes:alternatives});}return id;
@@ -26,10 +26,10 @@ export function selectCommonCarriers({model,plans},values) {
   const bound=(fn,name)=>values.capacity.observed.get(fn+'/'+name);
   for(const plan of plans) {
     const fn=plan.owner.id,rows=new Map();registers.set(fn,rows);
-    const parameters=plan.parameters.map(p=>bindings.get(p.id));
+    const parameters=plan.parameters.map(p=>p.hidden?p.type:bindings.get(p.id));
     functions.set(fn,{id:fn,parameters,result:plan.returnType==='void'||types.get(plan.returnType)?.kind==='void'?'void':domain(results.get(fn))});
     for(const [name,row]of plan.graph.registers){spend();const op=row.operation?.name;
-      const carrier=row.view.startsWith('cell:')?row.view:row.view===payload?payload
+      const carrier=row.view.startsWith('cell:')||row.view.startsWith('env:')?row.view:row.view===payload?payload
         :['tsfg_program.constant','tsfg_program.floating','tsfg_program.boolean','tsfg_program.construct_value','tsfg_program.allocate_reference','tsfg_program.array_create','tsfg_program.readspan'].includes(op)?row.view
           :domain(bound(fn,name));rows.set(name,carrier);}
   }
@@ -38,17 +38,19 @@ export function selectCommonCarriers({model,plans},values) {
       else if(domains.has(id))for(const tag of domains.get(id).actualTypes){spend();value.tags.add(tag);}else{check(types.has(id),'type');value.tags.add(id);}}
     return domain(value);
   };
-  for(const plan of plans)for(const block of plan.graph.blocks)for(const op of block.instructions)if(op.name==='tsfg_program.invoke_method'){
-    const targets=[];for(const row of op.properties.dispatch){spend();const abi=functions.get(row.target);check(abi,'ssa');targets.push(abi);}
-    spend(op.operands.length);const parameters=op.operands.map((_,i)=>{spend(2*targets.length);const choices=targets.filter(target=>target.parameters.length>i).map(target=>target.parameters[i]);
+  for(const plan of plans)for(const block of plan.graph.blocks)for(const op of block.instructions)if(['tsfg_program.invoke_method','tsfg_program.invoke_indirect'].includes(op.name)){
+    const indirect=op.name==='tsfg_program.invoke_indirect',targets=[];for(const row of indirect?op.properties.targets.functions:op.properties.dispatch){spend();const id=indirect?row.function_id:row.target,abi=functions.get(id);check(abi,'ssa');targets.push(indirect&&model.functions.get(id).lexicalEnvironment?{...abi,parameters:abi.parameters.slice(1)}:abi);}
+    spend(op.operands.length);const parameters=op.operands.map((_,index)=>{if(indirect&&index===0)return registers.get(plan.owner.id).get(op.operands[0]);const i=indirect?index-1:index;spend(2*targets.length);const choices=targets.filter(target=>target.parameters.length>i).map(target=>target.parameters[i]);
       return choices.length?joined(choices):registers.get(plan.owner.id).get(op.operands[i]);});
     spend(plan.graph.blocks.length+targets.length);const normal=plan.graph.blocks.find(block=>block.name===op.successors[0]);
-    methods.set(op,{parameters,result:normal.parameters.length?joined(targets.map(target=>target.result)):'void'});
+    methods.set(op,{parameters,result:normal.parameters.length?targets.length?joined(targets.map(target=>target.result)):payload:'void'});
   }
   function layout(id) {
     spend();if(layouts.has(id))return layouts.get(id);check(!active.has(id),'type','cyclic physical inline layout');active.add(id);
     let bytes=0,alignment=1,roots=0;const t=types.get(id),d=domains.get(id);
-    if(id===payload||t?.kind==='unknown'){bytes=16;alignment=8;roots=1;}
+    if(id.startsWith('env:')){check(model.environments.has(id.slice(4)),'environment');bytes=alignment=8;roots=1;}
+    else if(t?.kind==='function'){bytes=40;alignment=8;roots=1;}
+    else if(id===payload||t?.kind==='unknown'){bytes=16;alignment=8;roots=1;}
     else if(t?.kind==='scalar'){const width={bool:1,i8:1,u8:1,i16:2,u16:2,i32:4,u32:4,f32:4,i64:8,u64:8,isize:8,usize:8,f64:8}[scalarName(id)];check(width,'type');bytes=alignment=width;}
     else if(['reference','array','string'].includes(t?.kind)){bytes=alignment=8;roots=1;}
     else if(t?.kind==='readSpan'){bytes=16;alignment=8;roots=1;}
@@ -79,7 +81,7 @@ export function selectCommonCarriers({model,plans},values) {
   const coreType=id=>{
     if(id==='void')return '()';if(id.startsWith('cell:'))return '!tsfg_program.cell<'+JSON.stringify(id.slice(5))+'>';
     const name=scalarName(id);if(name)return name==='bool'?'i1':['i32','f32','f64'].includes(name)?name:'!tsfg_core.integer<'+JSON.stringify(name)+'>';
-    check(id===payload||types.has(id)||domains.has(id),'type');return '!tsfg_program.carrier<'+JSON.stringify(id)+'>';
+    check(id.startsWith('env:')&&model.environments.has(id.slice(4))||id===payload||types.has(id)||domains.has(id),'type');return '!tsfg_program.carrier<'+JSON.stringify(id)+'>';
   };
   const entries=rows=>collections.sorted(rows,([a],[b])=>a<b?-1:a>b?1:0);
   const record=()=>{spend(domains.size+bindings.size+functions.size);return {domains:entries(domains).map(([,row])=>row),

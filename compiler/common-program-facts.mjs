@@ -7,6 +7,7 @@ import {normalizeClosure} from './modules.mjs';
 import {commonSourceGrammar,commonSourceAccess,commonTypeSyntax} from './common-program-source.mjs';
 import {validateCommonBodies} from './common-program-body.mjs';
 import {validateCommonDeclarations} from './common-program-declarations.mjs';
+import {validateCommonLexical} from './common-program-lexical.mjs';
 import {commonSemanticIdentities} from './common-program-identities.mjs';
 import {commonSourceDescriptor as descriptor,commonSourceFormat as format,canonical,sha256,own,
   commonBudget,commonJson,commonCheck as check,commonSame as same,commonMeter} from './common-program-common.mjs';
@@ -45,6 +46,9 @@ export function verifyCommonProgramFacts(value) {
   check(p.target.target===bytecode.target.target&&p.target.triple===bytecode.target.triple&&p.target.pointerBits==='64'
     &&p.target.llvmDataLayout===bytecode.target.llvmDataLayout,'target');
   for(const type of p.types)if(type.kind==='unknown'){spend();check(type.id==='unknown'&&type.constructor===null,'unknown-type');}
+  spend(p.types.length);const sourceTypeIds=new Set(p.types.map(type=>type.id));
+  for(const type of p.types)if(type.kind==='function'){spend(type.parameters.length+1);check(type.parameters.length<=64&&type.constructor===null&&type.parameters.every(id=>sourceTypeIds.has(id))&&sourceTypeIds.has(type.returnType),'function-type');
+    check(type.id===sha256('tsfg.program.function-type.v2\0'+canonical({parameters:type.parameters,returnType:type.returnType})),'function-type');}
   const types=validateTypedArrayTypes(p,sources);validateTypedArrayDeclarations(p,sources);
   const grammars=new Map([...sources].filter(([path])=>!path.endsWith('.d.ts')).map(([path,row])=>[path,commonSourceGrammar(row,spend)]));
   const functions=new Map(p.functions.map(fn=>[fn.id,fn])),globals=new Map(p.globals.map(row=>[row.binding.id,row]));
@@ -52,7 +56,7 @@ export function verifyCommonProgramFacts(value) {
   const modules=new Map(),visible=new Map(),coverage=new Map([...grammars.keys()].map(path=>[path,[]]));
   check(p.modules.length===grammars.size&&p.modules.length<=64,'module');
   for(const row of p.modules){spend();check(grammars.has(row.sourcePath)&&!modules.has(row.sourcePath)&&row.external===true,'module');modules.set(row.sourcePath,row);
-    const scope=new Map();for(const fn of p.functions.filter(fn=>fn.sourcePath===row.sourcePath&&!fn.ownerType)){check(!scope.has(fn.name),'scope');scope.set(fn.name,fn.id);}
+    const scope=new Map();for(const fn of p.functions.filter(fn=>fn.sourcePath===row.sourcePath&&!fn.ownerType&&fn.lexicalParent===null)){check(!scope.has(fn.name),'scope');scope.set(fn.name,fn.id);}
     for(const global of p.globals.filter(global=>global.sourcePath===row.sourcePath)){check(!scope.has(global.binding.name),'scope');scope.set(global.binding.name,global.binding.id);}
     visible.set(row.sourcePath,scope);}
   const target=id=>functions.get(id)??globals.get(id)??types.get(id)??modules.get(id);
@@ -88,7 +92,7 @@ export function verifyCommonProgramFacts(value) {
       return {start:g.tokens[start].start,end:g.tokens[at.end]?.text===';'?g.tokens[at.end].end:row.range.end};
     }));
   }
-  for(const fn of p.functions)if(!fn.ownerType){check(coverage.has(fn.sourcePath),'source');coverage.get(fn.sourcePath).push(fn.declarationRange);}
+  for(const fn of p.functions)if(!fn.ownerType&&fn.lexicalParent===null){check(coverage.has(fn.sourcePath),'source');coverage.get(fn.sourcePath).push(fn.declarationRange);}
   for(const row of types.values())if(['value','reference'].includes(row.kind)) {
     const g=grammars.get(row.sourcePath);check(g&&row.nominalKey.sourcePath===row.sourcePath&&row.nominalKey.declarationPath.length===1,'type');
     g.name(row.nameRange,row.nominalKey.declarationPath[0]);coverage.get(row.sourcePath).push(row.declarationRange);
@@ -101,10 +105,11 @@ export function verifyCommonProgramFacts(value) {
       check(field.readonly===prefix.includes('readonly'),'permission');
       const colon=bounds.first+next+1;check(all[colon]?.text===':','source');const end=field.initializer?g.indices(field.initializer.range).first-1:bounds.end-(all[bounds.end-1].text===';'?1:0);
       if(field.initializer)check(all[end].text==='=','source');const annotationRange={start:all[colon+1].start,end:all[end-1].end};
-      commonTypeSyntax(g,annotationRange,field.type,types,spend);
+      commonTypeSyntax(g,annotationRange,field.type,types,spend,p.typeAliases);
       check(index===0||row.fields[index-1].origin.start<field.origin.start,'source');
     }
   }
+  validateCommonLexical(p,grammars,types,coverage,spend);
   validateCommonDeclarations(p,grammars,types,spend);validateCommonBodies(p,sources,types,grammars,visible,spend);
   for(const [path,segments]of coverage)grammars.get(path).complete(segments);
   const tuples=roots=>roots.map(({kind,sourcePath,name})=>({kind,sourcePath,name}));
@@ -114,10 +119,10 @@ export function verifyCommonProgramFacts(value) {
     if(root.kind==='module-initialization')check(root.name==='$moduleInit'&&root.target===root.sourcePath&&same(root.range,{start:0,end:sources.get(root.sourcePath).content.length}),'closure');
     else {const fn=functions.get(root.target);check(fn&&fn.sourcePath===root.sourcePath&&fn.name===root.name&&same(root.range,fn.declarationRange),'closure');}}
   check(p.closure.requiredRoots.every(root=>p.closure.roots.some(candidate=>same(candidate,root))),'closure');
-  const request={family:'tsfg.program-facts-request-candidate',version:1,schemaHash:format.schemaHash,input:{sourceRoot:p.sourceRoot,rootFile:p.rootFile,
+  const request={family:'tsfg.program-facts-request-candidate',version:2,schemaHash:format.schemaHash,input:{sourceRoot:p.sourceRoot,rootFile:p.rootFile,
     files:p.files.map(({path,content,sha256})=>({path,content,sha256})),declarations:p.declarations,config:p.config,target:p.target,compilationClosure:closure}};
-  check(value.requestId===sha256('tsfg.program-facts.request.v1\0'+canonical(request)+'\n')
-    &&value.packageId===sha256('tsfg.program-facts.package.v1\0'+format.schemaHash+'\0'+canonical(p)),'identity');
+  check(value.requestId===sha256('tsfg.program-facts.request.v2\0'+canonical(request)+'\n')
+    &&value.packageId===sha256('tsfg.program-facts.package.v2\0'+format.schemaHash+'\0'+canonical(p)),'identity');
   const semantic=commonSemanticIdentities(p,spend);check(new Set(semantic.typeIds.values()).size===p.types.length,'identity','duplicate owned semantic TypeId');
   return own(value);
 }

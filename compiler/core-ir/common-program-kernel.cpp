@@ -27,10 +27,11 @@ bool verifyKernelProof(Program &p,Error &e){
     if(!step(p,e))return false;const auto id=string(target);
     if(!need(kernelRoots.count(id)&&contracts.count(id)&&p.fixedEffects.count(id)&&declarations.count(id)&&(previous.empty()||previous<id),e,"selected target is not an ordered unique declared kernel root"))return false;
     const auto &upper=p.fixedEffects.at(id);
-    if(!need(!upper.allocation&&!upper.managedReference&&!upper.ehControl&&!upper.mayThrow&&!upper.await&&!upper.lock&&!upper.escape&&!upper.unknownHost,e,"fixed Published kernel capability is not proved")){locate(id);return false;}
+    bool captureAccess=false;for(const auto &[slot,access]:upper.captures){if(!step(p,e))return false;captureAccess|=access.read||access.write||access.structural;}
+    if(!need(!captureAccess&&!upper.allocation&&!upper.managedReference&&!upper.ehControl&&!upper.mayThrow&&!upper.await&&!upper.lock&&!upper.escape&&!upper.unknownHost,e,"fixed Published kernel capability is not proved")){locate(id);return false;}
     const auto effect=writeEffects(upper);accesses.push_back(Object{{"functionId",id},{"publishedContractDigest",field(*contracts.at(id),"digest")},
       {"reads",field(field(effect,"globals"),"reads")},{"writes",field(field(effect,"globals"),"writes")},
-      {"parameters",field(effect,"parameters")},{"facets",field(effect,"facets")}});
+      {"parameters",field(effect,"parameters")},{"captures",field(effect,"captures")},{"facets",field(effect,"facets")}});
     previous=id;ids.push_back(id);
   }
   for(size_t i=0;i<ids.size();++i)for(size_t j=i+1;j<ids.size();++j){

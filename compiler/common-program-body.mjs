@@ -15,7 +15,16 @@ import {validateCommonEntryRoots} from './common-program-entry.mjs';
 
 export function validateCommonBodies(payload,sources,types,grammars,visibility,spend) {
   const collections=commonCollections(spend);
-  const functions=new Map(),bindings=new Map(),globals=new Map(payload.globals.map(row=>[row.binding.id,row]));
+  const functions=new Map(),bindings=new Map(),globals=new Map(payload.globals.map(row=>[row.binding.id,row])),signatureOrigins=new Map();
+  function registerOrigin(path,range,type) {
+    spend();const key=signatureId(path,range),previous=signatureOrigins.get(key);
+    check(previous===undefined||previous===type,'signature','original signature has inconsistent concrete type');signatureOrigins.set(key,type);
+  }
+  function typeAnnotation(path,range,type) {
+    const g=grammars.get(path);check(g,'source');
+    for(const origin of commonTypeSyntax(g,range,type,types,spend,payload.typeAliases))registerOrigin(path,origin.range,origin.type);
+  }
+  for(const alias of payload.typeAliases){spend();typeAnnotation(alias.sourcePath,alias.annotationRange,alias.type);}
   for(const fn of [...payload.functions,...payload.types.flatMap(row=>row.constructor?[row.constructor]:[])]) {
     spend();check(!functions.has(fn.id)&&types.has(fn.returnType),'function');functions.set(fn.id,fn);
     const source=sources.get(fn.sourcePath),g=grammars.get(fn.sourcePath);check(source&&g,'source');
@@ -25,6 +34,9 @@ export function validateCommonBodies(payload,sources,types,grammars,visibility,s
     commonSourceAccess(g,fn.declarationRange,nameRange,fn.access);
     if(!fn.ownerType)check(fn.access==='public','permission');
     if(fn.ownerType)check(['value','reference'].includes(types.get(fn.ownerType)?.kind),'function');
+    if(fn.returnAnnotationRange)typeAnnotation(fn.sourcePath,fn.returnAnnotationRange,fn.returnType);
+    if(!fn.ownerType){spend(fn.parameters.length);registerOrigin(fn.sourcePath,fn.declarationRange,
+      sha256('tsfg.program.function-type.v2\0'+canonical({parameters:fn.parameters.map(p=>p.declaredType),returnType:fn.returnType})));}
     for(const row of [...fn.parameters,...fn.bindings])binding(row,fn.sourcePath,fn.declarationRange);
   }
   function binding(row,path,parent) {
@@ -32,10 +44,16 @@ export function validateCommonBodies(payload,sources,types,grammars,visibility,s
     sourceRange(row.declarationRange,source.content,parent);sourceRange(row.nameRange,source.content,row.declarationRange);
     g.name(row.nameRange,row.name);check(row.id===originId(path,row.nameRange),'identity');
     check(!bindings.has(row.id),'binding');bindings.set(row.id,{row,path});
-    if(row.annotationRange)commonTypeSyntax(g,row.annotationRange,row.declaredType,types,spend);
+    if(row.annotationRange)typeAnnotation(path,row.annotationRange,row.declaredType);
     if(row.elementAnnotationRange)sourceRange(row.elementAnnotationRange,source.content,row.annotationRange??row.declarationRange);
   }
   for(const row of payload.globals)binding(row.binding,row.sourcePath,{start:0,end:sources.get(row.sourcePath)?.content.length});
+  for(const owner of types.values()){spend();for(const field of owner.fields??[]){
+    spend();const g=grammars.get(owner.sourcePath),at=g.indices(field.origin);let colon=at.first;
+    while(['public','private','protected','readonly','declare'].includes(g.tokens[colon].text)){spend();colon++;}colon++;
+    check(g.tokens[colon]?.text===':','source');const end=field.initializer?g.indices(field.initializer.range).first-1:at.end-(g.tokens[at.end-1].text===';'?1:0);
+    typeAnnotation(owner.sourcePath,{start:g.tokens[colon+1].start,end:g.tokens[end-1].end},field.type);
+  }}
   const relations=typedArrayRelations(types,functions,payload.compatibilityWitnesses);
   validateTypedArrayConstruction(payload,types,sources);
   const descendants=(actual,expected)=>{const seen=new Set();while(actual){spend();check(!seen.has(actual),'type');seen.add(actual);
@@ -53,14 +71,18 @@ export function validateCommonBodies(payload,sources,types,grammars,visibility,s
     const g=grammars.get(fn.sourcePath),inventory=new Map(),declared=new Set();spend(fn.parameters.length+fn.bindings.length);
     for(const group of [fn.parameters,fn.bindings])for(const row of group)inventory.set(row.id,row);
     spend(fn.parameters.length);for(const row of fn.parameters)declared.add(row.id);const seenDeclarations=collections.set(declared);
-    const scope=collections.map(initialScope??visibility.get(fn.sourcePath));
+    const scope=collections.map(initialScope??visibility.get(fn.sourcePath)),captureObserved=new Map();
+    let ancestor=functions.get(fn.lexicalParent);const ancestors=[];while(ancestor){spend();ancestors.push(ancestor);ancestor=functions.get(ancestor.lexicalParent);}
+    for(let i=ancestors.length-1;i>=0;i--){const owner=ancestors[i];for(const b of owner.parameters){spend();scope.set(b.name,b.id);}
+      for(const row of owner.body){spend();if(['constDeclaration','letDeclaration'].includes(row.kind)){const b=bindings.get(row.binding)?.row;check(b,'binding');scope.set(b.name,b.id);}else if(row.kind==='functionDeclaration'){const child=functions.get(row.functionId);check(child,'lexical');scope.set(child.name,child.id);}}}
+    for(const candidate of functions.values()){spend();if(candidate.lexicalParent===fn.id)scope.set(candidate.name,candidate.id);}
     for(const p of fn.parameters){check(p.kind==='parameter'&&!scope.has(p.name)||p.kind==='parameter','binding');scope.set(p.name,p.id);}
     const text=range=>g.slice(range),type=id=>{check(types.has(id),'type');return types.get(id);};
     const annotation=(row,init=null)=>{
       const pieces=[row.nameRange,...(row.annotationRange?[':',row.annotationRange]:[]),...(init?['=',init.range]:[])];
       g.sequence(row.declarationRange,pieces);
     };
-    function expr(value,parent=fn.declarationRange,target=false,expected=undefined,local=scope) {
+    function expr(value,parent=fn.declarationRange,target=false,expected=undefined,local=scope,readTarget=false) {
       spend();sourceRange(value.range,g.text,parent);type(value.type);if(!target)type(value.flowType);
       if(!target){
         // Common Source has an explicit unknown view. The assertion remains a
@@ -71,14 +93,27 @@ export function validateCommonBodies(payload,sources,types,grammars,visibility,s
         }else relations.expression(value,expected,{source:fn.sourcePath,...value.range});
       }
       const sequence=pieces=>g.sequence(value.range,pieces);
-      const child=(v,write=false,wanted=undefined)=>expr(v,value.range,write,wanted,local);
+      const child=(v,write=false,wanted=undefined,read=false)=>expr(v,value.range,write,wanted,local,read);
       const scalar=type(value.type).kind==='scalar';
       if(!target&&['scalar','string','undefined','null','void'].includes(type(value.type).kind))check(value.flowType===value.type,'flow');
       if(['bindingReference','bindingTarget'].includes(value.kind)) {
-        const entry=inventory.get(value.binding)??globals.get(value.binding)?.binding;
+        const entry=inventory.get(value.binding)??globals.get(value.binding)?.binding??bindings.get(value.binding)?.row;
         const spelling=staticBindingName(text(value.range));check(entry&&local.get(spelling)===value.binding&&entry.declaredType===value.type,'binding');
-        if(!globals.has(value.binding))check(declared.has(value.binding),'binding');if(target)check(entry.writable,'permission');return;
+        if(!globals.has(value.binding)&&!inventory.has(value.binding)){
+          check(ancestors.some(owner=>{spend();return owner.id===entry.lexicalOwner;})&&entry.kind==='local'&&type(entry.declaredType).kind==='scalar'&&functions.get(entry.lexicalOwner).body.some(row=>{spend();return ['constDeclaration','letDeclaration'].includes(row.kind)&&row.binding===entry.id&&row.initializer;}),'capture');
+          if(!captureObserved.has(entry.id))captureObserved.set(entry.id,[]);captureObserved.get(entry.id).push({range:{...value.range},read:!target||readTarget,write:target});
+        }else if(!globals.has(value.binding))check(declared.has(value.binding),'binding');if(target)check(entry.writable,'permission');return;
       }
+      if(value.kind==='functionReference'){const callee=functions.get(value.functionId),shape=type(value.type);
+        check(callee&&!callee.ownerType&&shape.kind==='function'&&same(shape.parameters,callee.parameters.map(p=>p.declaredType))&&shape.returnType===callee.returnType&&value.flowType===value.type,'function-reference');
+        check(local.get(staticBindingName(text(value.range)))===callee.id,'scope');return;}
+      if(value.kind==='indirectCall'){const callee=type(value.expression.flowType),signature=value.signature;check(callee.kind==='function'&&same(value.calleeRange,value.expression.range),'indirect-call');
+        check(signature&&signature.id===signatureId(signature.sourcePath,signature.declarationRange)&&same(signature.parameters,callee.parameters)&&signature.returnType===callee.returnType&&value.arguments.length===callee.parameters.length&&value.type===callee.returnType,'signature');
+        child(value.expression);
+        // Structural equality alone cannot supply a Source declaration. Only
+        // exact token-checked type nodes and original named headers are origins.
+        check(signatureOrigins.get(signature.id)===callee.id,'signature','indirect signature has no exact original declaration');
+        for(const [i,arg]of value.arguments.entries())child(arg,false,callee.parameters[i]);sequence([value.calleeRange,'(',...value.arguments.flatMap((arg,i)=>[...(i?[',']:[]),arg.range]),')']);return;}
       if(value.kind==='thisReference'){check(fn.ownerType===value.type&&text(value.range)==='this','binding');return;}
       if(['numericLiteral','booleanLiteral','stringLiteral','undefinedLiteral','nullLiteral'].includes(value.kind)) {
         if(value.kind==='numericLiteral') {
@@ -92,7 +127,7 @@ export function validateCommonBodies(payload,sources,types,grammars,visibility,s
       }
       if(['parentheses','as','nonNull','unary'].includes(value.kind)) {
         child(value.expression);if(value.kind==='parentheses')sequence(['(',value.expression.range,')']);
-        if(value.kind==='as'){commonTypeSyntax(g,value.annotationRange,value.type,types,spend);g.sequence(value.operatorRange,['as']);sequence([value.expression.range,'as',value.annotationRange]);}
+        if(value.kind==='as'){typeAnnotation(fn.sourcePath,value.annotationRange,value.type);g.sequence(value.operatorRange,['as']);sequence([value.expression.range,'as',value.annotationRange]);}
         if(value.kind==='nonNull'){g.sequence(value.operatorRange,['!']);sequence([value.expression.range,'!']);}
         if(value.kind==='unary'){g.sequence(value.operatorRange,[value.operator]);sequence([value.operator,value.expression.range]);check(['+','-','!','~'].includes(value.operator)&&scalar,'operator');}
         return;
@@ -120,12 +155,12 @@ export function validateCommonBodies(payload,sources,types,grammars,visibility,s
         sequence([value.receiver.range,'.',value.nameRange]);return;
       }
       if(['bindingAssignment','elementAssignment','elementCompoundAssignment','lengthAssignment','fieldAssignment'].includes(value.kind)) {
-        child(value.target,true);child(value.value,false,value.target.type);check(value.type===value.target.type,'type');
+        child(value.target,true,undefined,value.operator!=='=');child(value.value,false,value.target.type);check(value.type===value.target.type,'type');
         check(['=','+=','-=','*=','/=','%=','<<=','>>=','>>>=','&=','|=','^=','&&=','||=','??='].includes(value.operator),'operator');
         sequence([value.target.range,value.operator,value.value.range]);return;
       }
       if(['bindingUpdate','elementUpdate','fieldUpdate'].includes(value.kind)) {
-        child(value.target,true);check(value.type===value.target.type&&['++','--'].includes(value.operator),'operator');
+        child(value.target,true,undefined,true);check(value.type===value.target.type&&['++','--'].includes(value.operator),'operator');
         sequence(value.prefix?[value.operator,value.target.range]:[value.target.range,value.operator]);return;
       }
       if(['call','new','superConstruct'].includes(value.kind)) {
@@ -162,6 +197,7 @@ export function validateCommonBodies(payload,sources,types,grammars,visibility,s
           const b=inventory.get(row.binding);check(b&&b.kind==='local'&&!seenDeclarations.has(b.id)&&b.writable===(row.kind==='letDeclaration'),'binding');
           expression(row.initializer,b.declaredType);annotation(b,row.initializer);check(same(row.range,b.declarationRange),'source');
           inner.set(b.name,b.id);declared.add(b.id);seenDeclarations.add(b.id);
+        }else if(row.kind==='functionDeclaration'){const child=functions.get(row.functionId);check(child&&child.lexicalParent===fn.id&&same(child.declarationRange,row.range)&&same(parent,bodyRange),'lexical');
         }else if(row.kind==='initialize') {
           const global=globals.get(row.binding);check(global&&global.sourcePath===fn.sourcePath&&initialScope!==undefined,'global');
           expression(row.initializer,global.binding.declaredType);annotation(global.binding,row.initializer);
@@ -205,6 +241,8 @@ export function validateCommonBodies(payload,sources,types,grammars,visibility,s
     for(const {value,type:expected} of initial)expr(value,fn.declarationRange,false,expected,scope);
     if(bodyRange){const bounds=g.indices(bodyRange);rows(fn.body,bounds.first+1,bounds.end-1,bodyRange,scope);}
     check(fn.bindings.every(row=>seenDeclarations.has(row.id)),'binding','unused or omitted binding declaration');
+    if(functions.has(fn.id)){spend(captureObserved.size);const captures=[...captureObserved].sort(([,a],[,b])=>{spend();return a[0].range.start-b[0].range.start;}).map(([binding,occurrences])=>{spend(occurrences.length);occurrences.sort((a,b)=>{spend();return a.range.start-b.range.start;});return {binding,read:occurrences.some(row=>row.read),write:occurrences.some(row=>row.write),occurrences};});
+      check(same(fn.captures,captures),'capture','capture occurrences differ from lexical body');}
     return {expression:expr,rows};
   }
   for(const fn of functions.values()) {

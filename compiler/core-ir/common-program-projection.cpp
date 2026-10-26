@@ -24,7 +24,7 @@ std::string difference(SourceModel &m,const Json &a,const Json &b,const std::str
 Json SourceModel::binding(const Json &row){
   if(!spend())return nullptr;
   return Object{{"id",field(row,"id")},{"sourceBinding",field(row,"id")},{"name",field(row,"name")},
-    {"kind",field(row,"kind")},{"type",type(field(row,"declaredType"))},{"writable",field(row,"writable")},
+    {"kind",field(row,"kind")},{"lexicalOwner",field(row,"lexicalOwner").getAsNull()?Json(nullptr):Json(functionIds.at(string(field(row,"lexicalOwner"))))},{"type",type(field(row,"declaredType"))},{"writable",field(row,"writable")},
     {"range",field(row,"declarationRange")},{"nameRange",field(row,"nameRange")},
     {"annotationRange",field(row,"annotationRange")},{"elementAnnotationRange",field(row,"elementAnnotationRange")}};
 }
@@ -33,6 +33,7 @@ Json SourceModel::expression(const Json &v){
   Object out{{"kind",field(v,"kind")},{"type",type(v.getAsObject()->get("flowType")?field(v,"flowType"):field(v,"type"))},
     {"declaredType",type(field(v,"type"))},{"range",field(v,"range")}};
   copy(out,v,{"token","decimal","bits","codeUnits","binding","allocationSite","operator","prefix"});
+  if(v.getAsObject()->get("functionId"))out["functionId"]=functionIds.at(string(field(v,"functionId")));
   const auto rawBinding=string(field(v,"binding"));
   if(globalIds.count(rawBinding)){
     out["global"]=globalIds.at(rawBinding);out["kind"]=string(field(v,"kind"))=="bindingReference"?"globalReference":"globalTarget";
@@ -43,6 +44,10 @@ Json SourceModel::expression(const Json &v){
     if(v.getAsObject()->get(key))out[key]=expression(field(v,key));
   for(auto key:{"elements","arguments"})if(v.getAsObject()->get(key)){
     Array children;for(const auto &c:items(field(v,key))){if(!spend())return nullptr;children.push_back(expression(c));}out[key]=std::move(children);
+  }
+  if(v.getAsObject()->get("signature")){
+    Array parameters;for(const auto &a:items(field(field(v,"signature"),"parameters"))){if(!spend())return nullptr;parameters.push_back(type(a));}
+    out["signature"]=Object{{"parameters",std::move(parameters)},{"returnType",type(field(field(v,"signature"),"returnType"))}};out["sourceSignature"]=field(v,"signature");
   }
   if(v.getAsObject()->get("callee")){
     const auto callee=string(field(v,"callee"));
@@ -68,6 +73,7 @@ Json SourceModel::statements(const Json &rows){
   for(const auto &r:items(rows)){
     if(!spend()||!need(r.getAsObject(),"statement object required"))return nullptr;
     Object row{{"kind",field(r,"kind")},{"range",field(r,"range")}};
+    if(r.getAsObject()->get("functionId"))row["functionId"]=functionIds.at(string(field(r,"functionId")));
     if(r.getAsObject()->get("binding")){row["binding"]=field(r,"binding");const auto id=string(field(r,"binding"));if(globalIds.count(id))row["global"]=globalIds.at(id);}
     for(auto key:{"value","initializer","condition"})if(r.getAsObject()->get(key))row[key]=expression(field(r,key));
     for(auto key:{"then","else","body"})if(r.getAsObject()->get(key))row[key]=statements(field(r,key));
@@ -89,6 +95,7 @@ Json SourceModel::projectFunction(const Json &fn){
   for(const auto &r:items(field(fn,"bindings"))){if(!spend())return nullptr;bindings.push_back(binding(r));}
   const auto kind=owner.empty()?"source":string(field(field(*types.at(owner),"constructor"),"id"))==id?"construction-body":"method";
   Object out{{"id",functionIds.at(id)},{"declKey",declKeys.at(id)},{"sourceBinding",id},{"sourcePath",field(fn,"sourcePath")},
+{"lexicalParent",field(fn,"lexicalParent").getAsNull()?Json(nullptr):Json(functionIds.at(string(field(fn,"lexicalParent"))))},{"declarationScope",field(fn,"declarationScope")},{"captures",field(fn,"captures")},
     {"name",field(fn,"name")},{"kind",kind},{"access",field(fn,"access")},{"signatureHash",signatures.at(id)},
     {"returnType",type(field(fn,"returnType"))},{"parameters",std::move(parameters)},{"bindings",std::move(bindings)},
     {"body",statements(field(fn,"body"))},{"range",field(fn,"declarationRange")},{"nameRange",field(fn,"nameRange")},
@@ -108,6 +115,7 @@ Json SourceModel::projectType(const Json &t){
     {"semanticLabel",labels.at(id)},{"semanticShape",shapes.at(id)}};
   copy(out,t,{"nominalKey","runtimeKey","markerOrigin"});
   if(!string(field(t,"sourcePath")).empty())out["origin"]=Object{{"sourcePath",field(t,"sourcePath")},{"range",field(t,"declarationRange")},{"nameRange",field(t,"nameRange")}};
+  if(kind=="function"){Array parameters;for(const auto &p:items(field(t,"parameters"))){if(!spend())return nullptr;parameters.push_back(type(p));}out["parameters"]=std::move(parameters);out["returnType"]=type(field(t,"returnType"));}
   if(t.getAsObject()->get("base"))out["base"]=type(field(t,"base"));
   if(t.getAsObject()->get("elementType"))out["elementType"]=type(field(t,"elementType"));
   if(t.getAsObject()->get("members")){std::set<std::string> sorted;for(const auto &m:items(field(t,"members"))){if(!spend())return nullptr;sorted.insert(type(m));}
@@ -167,10 +175,11 @@ bool SourceModel::projection(){
   };
   for(const auto &m:items(field(payload,"modules")))if(!enter(string(field(m,"sourcePath"))))return false;
   for(const auto &s:items(field(payload,"files"))){if(!spend())return false;projectedSources.push_back(Object{{"path",field(s,"path")},{"content",field(s,"content")},{"hash","sha256:"+string(field(s,"sha256"))}});}
-  Json rebuilt=Object{{"format",Object{{"family","tsfg.program-hir-candidate"},{"version",1},{"schemaHash",hirSchema}}},{"snapshot",facts},
+  auto projectedEnvironments=environments(projectedFunctions);if(!error.message.empty())return false;
+  Json rebuilt=Object{{"format",Object{{"family","tsfg.program-hir-candidate"},{"version",2},{"schemaHash",hirSchema}}},{"snapshot",facts},
     {"inputIdentity",field(facts,"packageId")},{"rootFile",field(payload,"rootFile")},{"sources",std::move(projectedSources)},{"target",field(payload,"target")},
     {"types",ordered(std::move(projectedTypes))},{"functions",ordered(std::move(projectedFunctions))},{"modules",std::move(projectedModules)},
-    {"globals",ordered(std::move(projectedGlobals))},{"closure",Object{{"roots",std::move(roots)},{"requiredRoots",std::move(requiredRoots)},
+    {"globals",ordered(std::move(projectedGlobals))},{"environments",std::move(projectedEnvironments)},{"closure",Object{{"roots",std::move(roots)},{"requiredRoots",std::move(requiredRoots)},
       {"modules",std::move(moduleIds)},{"functions",std::move(functionInventory)},{"initialization",std::move(initialization)}}}};
   if(!error.message.empty())return false;const auto mismatch=difference(*this,p.hir,rebuilt,"$");
   return error.message.empty()&&need(mismatch.empty(),"complete owned HIR differs from independent Source transformation at "+mismatch);

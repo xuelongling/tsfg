@@ -9,7 +9,7 @@ import {canonical,sha256} from '../../compiler/identity.mjs';
 const names=['positive','reachable-managed','reference-value','mixed'];
 const bytes=new Map(await Promise.all(names.map(async name=>/** @type {[string,Buffer]} */([name,await fs.readFile(new URL('./common-program-'+name+'.json',import.meta.url))]))));
 const facts=new Map([...bytes].map(([name,raw])=>[name,readCommonProgramFacts(raw)]));
-const context=name=>({family:'tsfg.common-program-context-candidate',version:1,factsBytes:bytes.get(name),expectedPackageId:facts.get(name).packageId});
+const context=name=>({family:'tsfg.common-program-context-candidate',version:2,factsBytes:bytes.get(name),expectedPackageId:facts.get(name).packageId});
 const hirs=new Map([...facts].map(([name,value])=>[name,buildCommonProgramHir(value,context(name))]));
 
 for(const name of names)test('complete real common Source to cold owned HIR: '+name,()=>{
@@ -52,16 +52,16 @@ test('semantic HIR is reconstructed independently of retained raw snapshot',()=>
 function mutated(change) {
   const value=structuredClone(facts.get('positive'));change(value.payload);
   const p=value.payload,tuples=rows=>rows.map(({kind,sourcePath,name})=>({kind,sourcePath,name}));
-  const request={family:'tsfg.program-facts-request-candidate',version:1,schemaHash:value.schemaHash,input:{sourceRoot:p.sourceRoot,rootFile:p.rootFile,
+  const request={family:'tsfg.program-facts-request-candidate',version:2,schemaHash:value.schemaHash,input:{sourceRoot:p.sourceRoot,rootFile:p.rootFile,
     files:p.files.map(({path,content,sha256})=>({path,content,sha256})),declarations:p.declarations,config:p.config,target:p.target,
     compilationClosure:{roots:tuples(p.closure.roots),requiredRoots:tuples(p.closure.requiredRoots)}}};
-  value.requestId=sha256('tsfg.program-facts.request.v1\0'+canonical(request)+'\n');
-  value.packageId=sha256('tsfg.program-facts.package.v1\0'+value.schemaHash+'\0'+canonical(p));return value;
+  value.requestId=sha256('tsfg.program-facts.request.v2\0'+canonical(request)+'\n');
+  value.packageId=sha256('tsfg.program-facts.package.v2\0'+value.schemaHash+'\0'+canonical(p));return value;
 }
 test('cold verifier rejects ordinary function omission even after matching package hashes',()=>{
   const value=mutated(p=>{const removed=p.functions.find(fn=>fn.name==='ordinary');p.functions=p.functions.filter(fn=>fn!==removed);
     p.exports=p.exports.filter(row=>row.functionId!==removed.id);p.modules[0].exports=p.modules[0].exports.filter(row=>row.target!==removed.id);
-    p.closure.roots=p.closure.roots.filter(row=>row.target!==removed.id);});
+    p.closure.roots=p.closure.roots.filter(row=>row.target!==removed.id);p.entryCompatibilityRoots=p.entryCompatibilityRoots.filter(row=>row.functionId!==removed.id);});
   assert.throws(()=>verifyCommonProgramFacts(value),/** @param {any} error */ error=>error.code==='r03-common-program-source');
 });
 test('cold verifier checks actual class permissions rather than trusting changed metadata',()=>{

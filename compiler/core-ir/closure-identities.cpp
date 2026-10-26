@@ -1,5 +1,6 @@
 // SPDX-License-Identifier: MIT
 #include "closure-metadata.h"
+#include "environment-contracts.h"
 #include "dialect.h"
 #include <algorithm>
 #include <functional>
@@ -66,6 +67,17 @@ bool Index::validate() {
   if (types.size() != metadata.types.size() || environments.size() != metadata.environments.size()
       || owners.size() != environments.size() || functions.size() != metadata.functions.size()) return false;
   size_t work = 0, bytes = 0;
+  environmentContracts::Catalogue environments;
+  for(const auto &fn:metadata.functions){
+    if(fn.parameters.size()+1>1000000-work)return false;work+=fn.parameters.size()+1;
+    environmentContracts::Function row{fn.parent,fn.lexicalEnvironment,fn.activationEnvironment,metadata.sourcePath,fn.start,fn.end,{}};
+    for(const auto &p:fn.parameters)row.parameters.push_back({p.binding,p.type});environments.functions.emplace(fn.id,std::move(row));
+  }
+  for(const auto &env:metadata.environments){
+    if(env.slots.size()+1>1000000-work)return false;work+=env.slots.size()+1;
+    environmentContracts::Environment row{env.owner,env.parent,{}};
+    for(const auto &s:env.slots)row.slots.push_back({s.binding,s.type,s.role,s.declarationIndex,s.writable});environments.environments.emplace(env.id,std::move(row));
+  }
   std::map<std::string,std::string> descriptions;
   std::set<std::string> active;
   std::function<bool(const std::string &,unsigned)> describe = [&](const std::string &id,unsigned depth) {
@@ -113,20 +125,6 @@ bool Index::validate() {
           fn.id + '\0' + "parameter" + '\0' + "0:" + std::to_string(i));
       if (parameter.type != type.parameters[i] || parameter.binding != expected || !bindings.insert(parameter.binding).second) return false;
     }
-    std::set<std::string> ancestors{fn.id}; std::string parent = fn.parent;
-    while (!parent.empty()) {
-      if (++work > 1000000 || !functions.count(parent) || !ancestors.insert(parent).second) return false;
-      auto ancestor = functions.at(parent);
-      if (fn.start < ancestor->start || fn.end > ancestor->end) return false;
-      parent = ancestor->parent;
-    }
-    std::string nearest, ancestor = fn.parent;
-    while (!ancestor.empty()) {
-      if (++work > 1000000) return false;
-      if (owners.count(ancestor)) { nearest = owners.at(ancestor)->id; break; }
-      ancestor = functions.at(ancestor)->parent;
-    }
-    if (fn.lexicalEnvironment != nearest || fn.activationEnvironment != (owners.count(fn.id) ? owners.at(fn.id)->id : "")) return false;
   }
   for (const auto &env : metadata.environments) {
     if (!functions.count(env.owner)) return false;
@@ -155,6 +153,7 @@ bool Index::validate() {
     auto preimage = "{\"owner\":" + quoted(env.owner) + ",\"parent\":" + (env.parent.empty() ? "null" : quoted(env.parent)) + ",\"slots\":" + slots + '}';
     if (env.id != domainHash("tsfg.closure-environment-layout.v1",preimage)) return false;
   }
-  return true;
+  std::string error;
+  return environmentContracts::validate(environments,[&](size_t n){if(n>1000000-work)return false;work+=n;return true;},error);
 }
 } // namespace tsfg::closure

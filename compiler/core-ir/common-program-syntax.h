@@ -19,13 +19,22 @@ struct SourceBodies {
   const Json *current=nullptr;SourceSyntax *source=nullptr;
   std::map<std::string,std::string> scope;std::set<std::string> initialized,declared;
   SourceRelations *relations=nullptr;
+  std::map<std::string,Array> captureOccurrences;
+  std::set<std::string> nestedDeclarations;
+  using AnnotationKey=std::pair<std::string,std::pair<uint32_t,uint32_t>>;
+  std::map<AnnotationKey,std::string> annotationTypes;
+  std::map<std::string,std::string> callableOrigins;
   bool inventory();bool function(const Json &);bool module(const Json &);
+  bool annotations();
   std::string resolve(const Json &);
-  bool expression(const Json &,bool target=false,const std::string &expected={});
+  bool expression(const Json &,bool target=false,const std::string &expected={},bool readTarget=false);
   bool statements(const Json &,size_t,size_t);
   bool annotation(const Json &,const std::string &);
   bool setScope(const std::map<std::string,std::string> &);
   bool logical(const std::string &,const std::string &);
+  bool callableExpression(const Json &);
+  bool aliases(std::map<std::string,std::vector<Json>> &);
+  bool lexicalScope(const Json &);bool capture(const Json &,bool,bool);bool captures();
 };
 bool verifyCommonDeclarations(SourceModel &,SourceBodies &,std::map<std::string,SourceSyntax> &,
   std::map<std::string,std::vector<Json>> &);

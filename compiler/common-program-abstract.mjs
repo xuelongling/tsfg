@@ -7,14 +7,15 @@ import {commonCollections} from './common-program-budget.mjs';
 export function commonAbstract(model) {
   const {spend,types}=model,collections=commonCollections(spend),arrays=new Map();
   for(const type of types.values()){spend();if(type.kind==='array')arrays.set(type.elementType,type);}
-  const empty=()=>({tags:new Set(),refs:new Set(),cells:new Set(),truth:0,unknown:false,number:null});
-  const weight=v=>v.tags.size+v.refs.size+v.cells.size+1;
-  const key=v=>{check(v.tags.size<=256&&v.refs.size<=256&&v.cells.size<=256,'limit');return canonical({tags:collections.sorted(v.tags),refs:collections.sorted(v.refs),cells:collections.sorted(v.cells),truth:v.truth,unknown:v.unknown,number:v.number});};
-  const copy=v=>{spend(weight(v));return {...v,tags:new Set(v.tags),refs:new Set(v.refs),cells:new Set(v.cells)};};
+  const empty=()=>({tags:new Set(),refs:new Set(),cells:new Set(),pairs:new Map(),truth:0,unknown:false,number:null});
+  const weight=v=>v.tags.size+v.refs.size+v.cells.size+v.pairs.size+1;
+  const key=v=>{check(v.tags.size<=256&&v.refs.size<=256&&v.cells.size<=256&&v.pairs.size<=256,'limit');return canonical({tags:collections.sorted(v.tags),refs:collections.sorted(v.refs),cells:collections.sorted(v.cells),pairs:collections.sorted(v.pairs,([a],[b])=>a<b?-1:a>b?1:0),truth:v.truth,unknown:v.unknown,number:v.number});};
+  const copy=v=>{spend(weight(v));return {...v,tags:new Set(v.tags),refs:new Set(v.refs),cells:new Set(v.cells),pairs:new Map(v.pairs)};};
   function merge(to,from) {
     spend(weight(to)+weight(from));const before=key(to),blank=to.tags.size===0&&!to.unknown;
+    for(const [key,pair]of from.pairs)to.pairs.set(key,pair);
     for(const name of ['tags','refs','cells'])for(const id of from[name])to[name].add(id);
-    check(to.tags.size<=256&&to.refs.size<=256&&to.cells.size<=256,'limit');
+    check(to.tags.size<=256&&to.refs.size<=256&&to.cells.size<=256&&to.pairs.size<=256,'limit');
     to.truth|=from.truth;to.unknown ||= from.unknown;to.number=blank?from.number:to.number===from.number?to.number:null;return key(to)!==before;
   }
   const literal=(id,truth=0,number=null)=>{const v=empty();v.tags.add(id);v.truth=truth;v.number=number;return v;};
@@ -41,6 +42,7 @@ export function commonAbstract(model) {
   function declared(id,heap,origin,fieldSeeds,objects,active=new Set(),entry=undefined,selected=false,view=id) {
     spend();const type=types.get(id);check(type,'type');const value=empty();
     if(type.kind==='unknown'){value.unknown=true;return value;}
+    if(type.kind==='function'){value.tags.add(id);value.unknown=true;return value;}
     if(type.kind==='union'){for(const member of type.members)merge(value,declared(member,heap,origin,fieldSeeds,objects,collections.set(active),entry));return value;}
     if(type.kind==='reference'&&entry&&!selected){
       for(const actual of entry.sources(view))merge(value,declared(actual,heap,origin,fieldSeeds,objects,collections.set(active),entry,true,view));return value;

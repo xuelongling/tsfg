@@ -67,7 +67,7 @@ bool literal(SourceBodies &b,const Json &v){
   return m.need(same(Json(std::move(units)),field(v,"codeUnits")),"original UTF16 String payload differs");
 }
 }
-bool SourceBodies::expression(const Json &v,bool target,const std::string &expected){
+bool SourceBodies::expression(const Json &v,bool target,const std::string &expected,bool readTarget){
   if(!model.spend())return false;size_t a,b;if(!source->span(field(v,"range"),a,b))return false;
   const auto kind=string(field(v,"kind")),type=string(field(v,"type")),actual=flow(v);
   if(!model.need(model.types.count(type)&&(target||model.types.count(actual)),"expression type catalogue membership differs"))return false;
@@ -82,9 +82,10 @@ bool SourceBodies::expression(const Json &v,bool target,const std::string &expec
   if(kind=="bindingReference"||kind=="bindingTarget"){
     const auto id=string(field(v,"binding"));if(!model.need(bindings.count(id)&&resolve(field(v,"range"))==id,"original binding reference resolves to another symbol"))return false;
     const auto &binding=*bindings.at(id);
-    return model.need(type==string(field(binding,"declaredType"))&&(!target||field(binding,"writable").getAsBoolean()==true)&&
+    return capture(v,!target||readTarget,target)&&model.need(type==string(field(binding,"declaredType"))&&(!target||field(binding,"writable").getAsBoolean()==true)&&
       (model.globals.count(id)||initialized.count(id)),"binding view/mutability/initialization differs");
   }
+  if(kind=="functionReference"||kind=="indirectCall")return callableExpression(v);
   if(kind=="thisReference")return model.need(string(field(*current,"ownerType"))==type,"this nominal owner differs")&&sequence({Json("this")});
   if(llvm::StringRef(kind).ends_with("Literal")&&kind!="arrayLiteral")return model.need(actual==type,"literal flow type differs")&&literal(*this,v);
   if(kind=="parentheses")return child("expression")&&model.need(type==string(field(field(v,"expression"),"type"))&&actual==flow(field(v,"expression")),"parenthesized type/flow differs")&&sequence({Json("("),field(field(v,"expression"),"range"),Json(")")});
@@ -133,10 +134,10 @@ bool SourceBodies::expression(const Json &v,bool target,const std::string &expec
     return sequence({field(field(v,"receiver"),"range"),Json("."),field(v,"nameRange")});
   }
   if(llvm::StringRef(kind).ends_with("Assignment")){
-    if(!child("target",true)||!child("value",false,type)||!model.need(type==string(field(field(v,"target"),"type"))&&actual==flow(field(v,"value")),"assignment result/value type differs"))return false;
+    if(!expression(field(v,"target"),true,{},op!="=")||!child("value",false,type)||!model.need(type==string(field(field(v,"target"),"type"))&&actual==flow(field(v,"value")),"assignment result/value type differs"))return false;
     return sequence({field(field(v,"target"),"range"),Json(op),field(field(v,"value"),"range")});
   }
-  if(llvm::StringRef(kind).ends_with("Update"))return child("target",true)&&model.need(type==string(field(field(v,"target"),"type"))&&(op=="++"||op=="--"),"update type/operator differs")&&
+  if(llvm::StringRef(kind).ends_with("Update"))return expression(field(v,"target"),true,{},true)&&model.need(type==string(field(field(v,"target"),"type"))&&(op=="++"||op=="--"),"update type/operator differs")&&
     sequence(field(v,"prefix").getAsBoolean()==true?std::vector<Json>{Json(op),field(field(v,"target"),"range")}:std::vector<Json>{field(field(v,"target"),"range"),Json(op)});
   if(kind=="call"||kind=="new"||kind=="superConstruct"){
     if(v.getAsObject()->get("receiver")&&!child("receiver"))return false;

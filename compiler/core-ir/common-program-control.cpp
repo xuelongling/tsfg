@@ -4,6 +4,7 @@
 #include <memory>
 namespace tsfg::commonProgram {
 SourcePlan::Reg SourcePlan::invoke(const Json &e,std::vector<Reg> args,const Json &callee){
+  if(!field(callee,"lexicalEnvironment").getAsNull())args.insert(args.begin(),environment(string(field(callee,"lexicalEnvironment")),sourceAnchor(e)));
   const auto result=string(field(callee,"returnType"));const bool empty=result=="void"||check.types.count(result)&&string(field(*check.types.at(result),"kind"))=="void";
   const auto normal=block(empty?std::vector<std::string>{}:std::vector<std::string>{string(field(e,"type"))});
   const auto exceptional=block({"payload:"+schema.str()});if(!check.step(cells.size()+1))return noRegister;
@@ -28,8 +29,10 @@ void SourcePlan::region(const Array &rows,const Completion &active,const std::fu
     if(!check.step())return;const auto &s=rows[index];const auto kind=string(field(s,"kind")),at=path+"/"+std::to_string(index);const auto r=sourceAnchor(s);
     if(kind=="constDeclaration"||kind=="letDeclaration"){
       const auto id=string(field(s,"binding"));if(!check.need(check.bindings.count(id),"Source declaration binding missing"))return;
-      const auto value=expression(field(s,"initializer")),cell=emit("cell",{},"cell:"+id,Object{{"binding",id}},r);cells[id]=cell;
-      store({"binding",id,string(field(*check.bindings.at(id),"type")),cell},value,r,true);
+      const auto value=expression(field(s,"initializer"));if(!check.environmentSlots.count(id))cells[id]=emit("cell",{},"cell:"+id,Object{{"binding",id}},r);
+      store(bindingLocation(id,string(field(*check.bindings.at(id),"type")),r),value,r,true);
+    }else if(kind=="functionDeclaration"){
+      // Hoisted declaration; reading its value creates a code/environment pair.
     }else if(kind=="initialize"){
       const auto id=string(field(s,"binding")),global=string(field(s,"global"));if(!check.need(check.bindings.count(id),"Source global initializer binding missing"))return;
       const auto value=expression(field(s,"initializer"));store({"global",global,string(field(*check.bindings.at(id),"type"))},value,r,true);
@@ -98,9 +101,13 @@ void SourcePlan::attempt(const Json &s,const Completion &active,const std::strin
 }
 bool SourcePlan::run(){
   std::vector<std::pair<std::string,Reg>> initial;std::vector<std::string> parameters;
+  const auto lexical=string(field(owner,"lexicalEnvironment")),activation=string(field(owner,"activationEnvironment"));
+  if(!lexical.empty())parameters.push_back("env:"+lexical);
   const auto receiverId=string(field(owner,"receiverBinding"));if(!receiverId.empty())parameters.push_back(string(field(owner,"ownerType")));
   for(const auto &p:items(field(owner,"parameters")))parameters.push_back(string(field(p,"type")));
-  block(parameters);size_t index=0;if(!receiverId.empty())initial.emplace_back(receiverId,function.blocks[0].parameters[index++]);
+  block(parameters);size_t index=0;if(!lexical.empty())lexicalEnvironment=function.blocks[0].parameters[index++];
+  if(!activation.empty()){const auto parent=string(field(*check.environments.at(activation),"parent"));std::vector<Reg> args;if(!parent.empty())args.push_back(environment(parent,sourceAnchor(owner)));activationEnvironment=emit("env_alloc",std::move(args),"env:"+activation,Object{{"layout",activation}},sourceAnchor(owner));}
+  if(!receiverId.empty())initial.emplace_back(receiverId,function.blocks[0].parameters[index++]);
   for(const auto &p:items(field(owner,"parameters")))initial.emplace_back(string(field(p,"id")),function.blocks[0].parameters[index++]);
   Completion outer{[this](Reg value,SourceAnchor r){emit("func.return",value==noRegister?std::vector<Reg>{}:std::vector<Reg>{value},"",Object{},r);},
     [this](Reg value,SourceAnchor r){emit("return_throw",{value},"",Object{},r);}};handlers=outer;

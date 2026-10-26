@@ -8,9 +8,9 @@ bool summarizedSlot(ActualCheck &check,const std::string &slot){
   // Object paths are independently allocated identities. Globals and Cells do
   // not use these member suffixes and retain their normal strong assignment.
   if(!check.step((slot.size()/64+1)*6))return false;
-  for(llvm::StringRef marker:{"/field/","/element/","/length","/owner","/start"}){
+  for(llvm::StringRef marker:{"/field/","/element/","/slot/","/length","/owner","/start","/parent"}){
     const auto at=slot.rfind(marker.str());if(at==std::string::npos)continue;
-    if((marker=="/length"||marker=="/owner"||marker=="/start")&&at+marker.size()!=slot.size())continue;
+    if((marker=="/length"||marker=="/owner"||marker=="/start"||marker=="/parent")&&at+marker.size()!=slot.size())continue;
     const auto object=check.objects.find(slot.substr(0,at));
     if(object!=check.objects.end())return object->second.weak;
   }return false;
@@ -31,7 +31,35 @@ bool ActualCheck::instruction(ActualContext &context,const Operation &op,size_t 
     changed=merge(seeds[id],tags)||changed;
   };
   const bool weak=repeatingFunctions.count(fn.id)||repeatingBlocks.count(fn.id+"/"+std::to_string(block));
-  if(name=="constant"){
+  if(name=="env_alloc"){
+    const auto layout=string(field(props,"layout")),ref=context.id+"/environment/"+std::to_string(op.result);
+    if(!need(environments.count(layout),"actual activation layout missing"))return false;
+    value=literal("env:"+layout);value.objects.insert(ref);objects[ref]={"env:"+layout,weak};
+    if(!args.empty()&&!put(ref+"/parent",args[0],!weak))return false;
+  }else if(name=="env_parent"){
+    for(const auto &ref:args[0].objects){
+      if(!step()||!need(objects.count(ref),"actual environment parent owner missing"))return false;
+      auto stored=state.heap.find(ref+"/parent");if(!need(stored!=state.heap.end(),"actual environment parent is uninitialized"))return false;
+      merge(value,stored->second);
+    }
+  }else if(name=="env_init"||name=="env_load"||name=="env_store"){
+    const auto layout=string(field(props,"layout")),key=string(field(props,"key"));
+    for(const auto &ref:args[0].objects){
+      if(!step()||!need(objects.count(ref)&&objects.at(ref).type=="env:"+layout,"actual environment cell owner differs"))return false;
+      const auto slot=ref+"/slot/"+key;auto stored=state.heap.find(slot);
+      if(name=="env_load"){
+        if(!need(stored!=state.heap.end(),"actual environment cell is uninitialized"))return false;merge(value,stored->second);
+      }else if(!put(slot,args[1],!objects.at(ref).weak&&args[0].objects.size()==1))return false;
+    }
+    if(name!="env_load")observe(string(field(props,"binding")),args[1]);
+  }else if(name=="make_closure"){
+    value=literal(op.view);const auto code=string(field(props,"function_id")),layout=string(field(props,"environment_layout"));
+    if(layout.empty())value.callables.emplace(code,"");
+    else for(const auto &ref:args[0].objects){
+      if(!step()||!need(objects.count(ref)&&objects.at(ref).type=="env:"+layout,"actual closure activation differs"))return false;
+      value.callables.emplace(code,ref);
+    }
+  }else if(name=="constant"){
     value=literal(op.view);const auto decimal=string(field(props,"decimal"));char *end=nullptr;errno=0;const auto number=std::strtoll(decimal.c_str(),&end,10);
     if(!errno&&end==decimal.c_str()+decimal.size())value.number=number;
   }else if(name=="floating"||name=="undefined"||name=="null"||name=="string")value=literal(op.view);
@@ -115,7 +143,7 @@ bool ActualCheck::instruction(ActualContext &context,const Operation &op,size_t 
       reaches&=!args[i].tags.empty();
     }
     if(conditional||reaches)value=literal(op.view,op.view==typeId("bool")?3:0);if(!conditional&&!reaches)continues=false;
-  }else if(name=="invoke"||name=="invoke_method"){
+  }else if(name=="invoke"||name=="invoke_method"||name=="invoke_indirect"){
     const auto complete=[&](uint16_t target,const ActualValue &v,const ActualHeap &heap){
       auto after=copyState(state);if(!e.message.empty()||!step(heap.size()))return false;
       for(const auto &[slot,value]:heap){
@@ -130,12 +158,39 @@ bool ActualCheck::instruction(ActualContext &context,const Operation &op,size_t 
     };
 
     const auto invoke=[&](const std::string &target,std::vector<ActualValue> actual){
-      auto *call=this->context(target,actual,state.heap,false,changed);if(!call)return false;
+      const auto &source=*sourceFunctions.at(target);std::string activation;
+      if(!field(source,"activationEnvironment").getAsNull()||!field(source,"lexicalEnvironment").getAsNull())
+        // Recursive SCCs need a finite activation summary even with unchanged
+        // arguments and heap. Multiple incoming/loop calls alone do not merge
+        // activation identities; actual pair environments remain in the key.
+        activation=cyclicFunctions.count(target)?"recursive/"+target:
+          context.id+"/call/"+std::to_string(block)+"/"+std::to_string(op.range.start)+":"+std::to_string(op.range.end);
+      auto *call=this->context(target,actual,state.heap,false,changed,activation);if(!call)return false;
       if(call->normal&&!complete(op.successors[0],call->returned,call->normalHeap))return false;
       if(call->language&&!complete(op.successors[1],call->thrown,call->languageHeap))return false;return true;
     };
     if(name=="invoke"){if(!invoke(string(field(props,"function_id")),std::move(args)))return false;}
-    else{
+    else if(name=="invoke_indirect"){
+      const auto site=fn.id+"/"+std::to_string(op.range.start)+":"+std::to_string(op.range.end);
+      if(!need(!args.empty()&&p.callableSites.count(site),"indirect actual site has no fixed authority"))return false;
+      const auto &upper=p.callableSites.at(site);
+      if(!need((!args[0].unknown&&!args[0].callableTop)||upper.top,"actual unknown callee exceeds finite target upper"))return false;
+      for(const auto &tag:args[0].tags)if(!step()||!need(types.count(tag)&&string(field(*types.at(tag),"kind"))=="function","actual indirect operand is not callable"))return false;
+      if(upper.top){
+        ActualValue unknown;unknown.unknown=true;if(!complete(op.successors[0],unknown,{})||!complete(op.successors[1],unknown,{}))return false;
+      }
+      for(const auto &[code,environment]:args[0].callables){
+        if(!step()||!need(sourceFunctions.count(code)&&(upper.top||upper.functions.count(code)),"indirect pair target exceeds fixed authority"))return false;
+        if(!need(same(field(*sourceFunctions.at(code),"signatureHash"),field(props,"signature_hash")),"actual indirect code signature differs"))return false;
+        const auto &source=*sourceFunctions.at(code);const auto layout=string(field(source,"lexicalEnvironment"));std::vector<ActualValue> selected;
+        if(!layout.empty()){
+          if(!need(!environment.empty()&&objects.count(environment)&&objects.at(environment).type=="env:"+layout,"indirect pair carries a foreign/missing activation"))return false;
+          ActualValue env;env.tags.insert("env:"+layout);env.objects.insert(environment);selected.push_back(std::move(env));
+        }else if(!need(environment.empty(),"environment-free code acquired an activation"))return false;
+        for(size_t i=1;i<args.size();++i){if(!step())return false;selected.push_back(copy(args[i]));}
+        if(!invoke(code,std::move(selected)))return false;
+      }
+    }else{
       if(!need(!args.empty()&&!args[0].unknown,"method receiver has no finite actual nominal type")){e.path=fn.path;e.range=op.range;return false;}
       for(const auto &tag:args[0].tags){
         const Json *arm=nullptr;for(const auto &row:items(field(props,"dispatch"))){if(!step())return false;if(string(field(row,"receiver_type"))==tag){arm=&row;break;}}

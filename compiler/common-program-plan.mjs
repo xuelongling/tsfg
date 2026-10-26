@@ -4,6 +4,7 @@ import descriptor from '../contracts/common-program-core-development.json' with 
 import {verifyCommonProgramHir} from './common-program-hir.mjs';
 import {planCommonFunction} from './common-program-control.mjs';
 import {commonCheck as check,commonMeter,canonical,sha256} from './common-program-common.mjs';
+import {commonTargets} from './common-program-targets.mjs';
 import {commonMethods} from './common-program-methods.mjs';
 export const commonCoreSchema=sha256(canonical(descriptor));
 export function createCommonGraph(model,owner) {
@@ -24,7 +25,7 @@ export function createCommonGraph(model,owner) {
     branch(from,to,args,range){terminal(from,'cf.br',args,[to],{},range);},
     conditional(from,value,left,right,range){terminal(from,'cf.cond_br',[value],[left,right],{},range);}};
 }
-export function commonProgramPlan(input) {
+export function commonProgramPlan(input,records=null) {
   const hir=verifyCommonProgramHir(input),spend=commonMeter(descriptor.limits.work),types=new Map(hir.types.map(row=>[row.id,row]));
   for(const name of ['undefined','null','bool']){const id=sha256('tsfg.type\0'+name);if(!types.has(id))types.set(id,{id,kind:name==='bool'?'scalar':name,name});}
   const functions=new Map(hir.functions.map(fn=>[fn.id,fn])),bindings=new Map(),fields=new Map(),globals=new Map(hir.globals.map(row=>[row.id,row]));
@@ -36,7 +37,10 @@ export function commonProgramPlan(input) {
     writable:!field.readonly,range:field.origin},'field',type.id);}
   const modules=hir.modules.map(module=>({id:module.initializer,name:'$moduleInit',kind:'module-initializer',sourcePath:module.sourcePath,returnType:'void',parameters:[],bindings:[],
     signatureHash:sha256('tsfg.common-program.initializer-signature.v1\0void'),range:{start:0,end:hir.sources.find(source=>source.path===module.sourcePath).content.length},body:module.initialization}));
-  const model={hir,types,functions,bindings,fields,globals,spend,methods:commonMethods(hir,spend),schema:commonCoreSchema,payload:'payload:'+commonCoreSchema,limits:descriptor.limits,
+  spend(hir.environments.length);const environments=new Map(hir.environments.map(row=>[row.id,row])),slots=new Map();
+  for(const env of hir.environments){spend(env.slots.length);for(const slot of env.slots)slots.set(slot.binding,{...slot,layout:env.id});}
+  const callables=commonTargets(hir,spend,records);
+  const model={hir,types,functions,bindings,fields,globals,spend,environments,slots,callables,methods:commonMethods(hir,spend),schema:commonCoreSchema,payload:'payload:'+commonCoreSchema,limits:descriptor.limits,
     cell:id=>'cell:'+id};
   const plans=[...hir.functions,...modules].map(owner=>planCommonFunction(model,owner));return {model,plans};
 }

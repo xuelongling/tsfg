@@ -93,6 +93,10 @@ bool SourceRelations::payloadReferences(const std::string &root,std::set<std::st
   while(!todo.empty()){
     auto id=std::move(todo.back());todo.pop_back();if(!m.spend()||!m.need(types.count(id),"entry role type missing"))return false;if(!seen.insert(id).second)continue;
     const auto &t=types.at(id);if(t.kind=="reference")out.insert(id);
+    if(t.kind=="function"){
+      const auto &callable=*m.types.at(id);todo.push_back(string(field(callable,"returnType")));
+      for(const auto &parameter:items(field(callable,"parameters"))){if(!m.spend())return false;todo.push_back(string(parameter));}
+    }
     if(t.kind=="union")for(const auto &v:t.members){if(!m.spend())return false;todo.push_back(v);}
     if(container(t.kind))todo.push_back(t.element);
     if(t.kind=="reference"||t.kind=="value"){

@@ -10,7 +10,7 @@ import {createCommonProgramPublication,analyzeCommonProgram,commonProgramPublica
 const programs=new Map();
 for(const name of ['positive','reachable-managed','reference-value','mixed']) {
   const raw=await fs.readFile(new URL('./common-program-'+name+'.json',import.meta.url)),facts=readCommonProgramFacts(raw);
-  const hir=buildCommonProgramHir(facts,{family:'tsfg.common-program-context-candidate',version:1,factsBytes:raw,expectedPackageId:facts.packageId});
+  const hir=buildCommonProgramHir(facts,{family:'tsfg.common-program-context-candidate',version:2,factsBytes:raw,expectedPackageId:facts.packageId});
   const publication=createCommonProgramPublication(hir),request={targets:hir.closure.roots.filter(row=>row.kind==='kernel').map(row=>row.target).sort()};
   programs.set(name,{hir,publication,request});
 }

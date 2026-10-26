@@ -24,6 +24,11 @@ bool ActualCheck::catalogs(){
       const auto id="element:"+string(field(t,"id"));auto row=builtins.emplace("binding:"+id,Object{{"id",id},{"type",field(t,"elementType")},{"kind","element"}});bindings.emplace(id,&row.first->second);
     }
   }
+  for(const auto &environment:items(field(p.hir,"environments"))){
+    const auto id=string(field(environment,"id"));if(!step()||!need(environments.emplace(id,&environment).second,"duplicate environment identity"))return false;
+    for(const auto &slot:items(field(environment,"slots"))){const auto binding=string(field(slot,"binding"));
+      if(!step()||!need(environmentSlots.emplace(binding,&slot).second&&slotLayouts.emplace(binding,id).second,"duplicate environment cell owner"))return false;}
+  }
   for(const auto &row:items(field(p.representation,"domains"))){if(!step())return false;domains.emplace(string(field(row,"id")),&row);}
   for(const auto &row:items(field(p.representation,"bindings"))){if(!step())return false;physicalBindings.emplace(string(field(row,"id")),&row);}
   for(const auto &row:items(field(p.representation,"functions"))){if(!step())return false;physicalFunctions.emplace(string(field(row,"id")),&row);}
@@ -97,6 +102,12 @@ bool ActualCheck::graph(){
       }else if(op.name=="numeric_use"){
         if(!need(noResult&&op.operands.size()==1&&op.successors.size()==1&&fn->blocks[op.successors[0]].parameters.size()==1&&
           fn->carriers[fn->blocks[op.successors[0]].parameters[0]]==i32Id,"numeric request-trap/normal shape differs"))return false;
+      }else if(op.name=="invoke_indirect"){
+        std::vector<std::string> args;std::string result;
+        if(!need(noResult&&op.successors.size()==2,"indirect invocation control differs")||!indirectAbi(*fn,op,args,result)||!need(args.size()==op.operands.size(),"indirect invocation joined arity differs"))return false;
+        for(size_t n=0;n<args.size();++n)if(!need(fn->carriers[op.operands[n]]==args[n],"indirect argument joined ABI differs"))return false;
+        const auto &normal=fn->blocks[op.successors[0]].parameters,&language=fn->blocks[op.successors[1]].parameters;
+        if(!need(normal.size()==(result=="void"?0:1)&&(normal.empty()||fn->carriers[normal[0]]==result)&&language.size()==1&&fn->carriers[language[0]]==payload,"indirect normal/language joined ABI differs"))return false;
       }else if(op.name=="invoke_method"){
         const auto valid=[&](){
         std::vector<std::string> args;std::string result;if(!need(noResult&&op.successors.size()==2,"method invocation control differs")||!methodAbi(*fn,op,args,result))return false;

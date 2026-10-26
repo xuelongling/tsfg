@@ -15,7 +15,7 @@ struct SourceAnchor {uint32_t start=0,end=0;};
 inline constexpr uint16_t noRegister=UINT16_MAX;
 using Json=llvm::json::Value;using Object=llvm::json::Object;using Array=llvm::json::Array;
 inline constexpr llvm::StringLiteral marker="tsfg_program.program";
-inline constexpr llvm::StringLiteral schema="sha256:c69f3a88fa4720b56755ecbb662c39e38c8b541e3d5e76788a2c5c8220663ef7";
+inline constexpr llvm::StringLiteral schema="sha256:66140b094883d9666c56bfb1984ff54799a70960e7567741db30faf0994f1e53";
 struct CarrierStorage:mlir::TypeStorage {
   using KeyTy=mlir::StringAttr;KeyTy key;
   explicit CarrierStorage(KeyTy key):key(key){}
@@ -73,6 +73,13 @@ TSFG_PROGRAM_OP(ArrayLengthOp,"array_length",mlir::OpTrait::ZeroSuccessors,Whole
 TSFG_PROGRAM_OP(ReadSpanOp,"readspan",mlir::OpTrait::ZeroSuccessors,WholeProgramOnly)
 TSFG_PROGRAM_OP(ReadSpanLengthOp,"readspan_length",mlir::OpTrait::ZeroSuccessors,WholeProgramOnly)
 TSFG_PROGRAM_OP(PackOp,"pack",mlir::OpTrait::ZeroSuccessors,WholeProgramOnly)
+TSFG_PROGRAM_OP(EnvAllocOp,"env_alloc",mlir::OpTrait::ZeroSuccessors,WholeProgramOnly)
+TSFG_PROGRAM_OP(EnvParentOp,"env_parent",mlir::OpTrait::ZeroSuccessors,WholeProgramOnly)
+TSFG_PROGRAM_OP(EnvInitOp,"env_init",mlir::OpTrait::ZeroSuccessors,WholeProgramOnly)
+TSFG_PROGRAM_OP(EnvLoadOp,"env_load",mlir::OpTrait::ZeroSuccessors,WholeProgramOnly)
+TSFG_PROGRAM_OP(EnvStoreOp,"env_store",mlir::OpTrait::ZeroSuccessors,WholeProgramOnly)
+TSFG_PROGRAM_OP(MakeClosureOp,"make_closure",mlir::OpTrait::ZeroSuccessors,WholeProgramOnly)
+TSFG_PROGRAM_OP(InvokeIndirectOp,"invoke_indirect",mlir::OpTrait::NSuccessors<2>::Impl,mlir::OpTrait::IsTerminator)
 TSFG_PROGRAM_OP(InvokeOp,"invoke",mlir::OpTrait::NSuccessors<2>::Impl,mlir::OpTrait::IsTerminator)
 TSFG_PROGRAM_OP(InvokeMethodOp,"invoke_method",mlir::OpTrait::NSuccessors<2>::Impl,mlir::OpTrait::IsTerminator)
 TSFG_PROGRAM_OP(EnterHandlerOp,"enter_handler",mlir::OpTrait::ZeroSuccessors,WholeProgramOnly)
@@ -102,9 +109,11 @@ struct Layout {
   std::vector<uint32_t> fieldOffsets;
 };
 struct Access {bool read=false,write=false,structural=false;};
+struct CallableTargets {bool top=false;std::set<std::string> functions;};
 struct Effects {
   std::set<std::string> reads,writes,calls;
   std::vector<Access> parameters;
+  std::map<std::string,Access> captures;
   bool allocation=false,managedReference=false,ehControl=false,mayThrow=false;
   bool await=false,lock=false,escape=false,unknownHost=false;
 };
@@ -117,6 +126,9 @@ struct Program {
   std::map<std::string,Layout> layouts;
   std::map<std::string,Effects> effects;
   std::map<std::string,Effects> fixedEffects;
+  // Independently reconstructed fixed flow; never copied from Core arm rows.
+  std::map<std::string,CallableTargets> callableSites,callableReturns;
+  std::map<std::string,std::vector<CallableTargets>> callableParameters;
   // Independent M12 outputs: eligibility is an entry role, never an observed
   // allocation. Member projections preserve the actual object's payload/GC ID.
   using ReferenceCandidates=std::map<std::string,std::set<std::string>>;
@@ -141,6 +153,8 @@ bool verifySource(Program &,Error &);
 bool verifyTypes(Program &,Error &);
 bool verifyOperations(Program &,Error &);
 bool verifyPublication(Program &,Error &);
+bool validateCallableBounds(Program &,const Json &,const Json &,Error &);
+bool verifyCallableTargets(Program &,Error &);
 bool verifyKernelProof(Program &,Error &);
 bool deriveEffects(Program &,const Json &,const std::map<std::string,Effects> &,Effects &,Error &);
 bool readEffects(Program &,const Json &,const Json &,Effects &,Error &);

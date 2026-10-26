@@ -9,8 +9,9 @@ import {commonCollections} from './common-program-budget.mjs';
 export function planCommonFunction(model,owner) {
   const collections=commonCollections(model.spend);
   const graph=createCommonGraph(model,owner),params=[...(owner.ownerType?[{id:owner.receiverBinding,type:owner.ownerType}]:[]),...owner.parameters];
+  if(owner.lexicalEnvironment)params.unshift({id:'lexical:'+owner.id,type:'env:'+owner.lexicalEnvironment,hidden:true});
   check(params.length<=model.limits.parameters,'limit');const entry=graph.newBlock(params.map(p=>p.type));
-  const state={current:entry,cells:new Map()},tasks=[];let clones=0;
+  const state={current:entry,cells:new Map(),environments:new Map()},tasks=[];let clones=0;
   const terminator=(name,args,targets,properties,range)=>graph.terminal(state.current,name,args,targets,properties,range);
   const route=(target,args,completion,handler,range)=>terminator('route',args,[target],{completion,handler},range);
   const outer={returned:(value,range)=>terminator('func.return',value?[value]:[],[],{},range),
@@ -19,6 +20,7 @@ export function planCommonFunction(model,owner) {
   const isVoid=id=>id==='void'||model.types.get(id)?.kind==='void';
   const invoke=(expression,args,callee)=>{
     check(callee,'identity','complete actual callee missing');
+    if(callee.lexicalEnvironment)args.unshift(values.environment(callee.lexicalEnvironment,expression.range));
     const normal=graph.newBlock(isVoid(callee.returnType)?[]:[expression.type]),exceptional=graph.newBlock([model.payload]);
     const saved=collections.map(state.cells),active=handlers;
     const method=callee.kind==='method',properties={function_id:callee.id,signature_hash:callee.signatureHash};
@@ -27,10 +29,21 @@ export function planCommonFunction(model,owner) {
     tasks.push(()=>{state.current=exceptional;state.cells=collections.map(saved);handlers=active;active.thrown({...exceptional.parameters[0]},expression.range);});
     state.current=normal;return normal.parameters[0]?{...normal.parameters[0]}:null;
   };
-  const values=commonProgramValues(model,graph,state,invoke);
+  const indirect=(expression,callee,args)=>{
+    const normal=graph.newBlock(isVoid(expression.type)?[]:[expression.type]),exceptional=graph.newBlock([model.payload]),saved=collections.map(state.cells),active=handlers;
+    const targets=model.callables.site(owner.id,expression.range),signature_hash=model.callables.signature(expression.signature);
+    const properties={signature_hash,targets:{top:targets.top,functions:targets.functions.map(id=>({function_id:id,signature_hash:model.functions.get(id).signatureHash}))}};
+    terminator('invoke_indirect',[callee,...args],[normal,exceptional],properties,expression.range);
+    tasks.push(()=>{state.current=exceptional;state.cells=collections.map(saved);handlers=active;active.thrown({...exceptional.parameters[0]},expression.range);});state.current=normal;return normal.parameters[0]?{...normal.parameters[0]}:null;
+  };
+  const values=commonProgramValues(model,graph,state,invoke,indirect);
+  if(owner.lexicalEnvironment)state.environments.set(owner.lexicalEnvironment,{...entry.parameters[0]});
+  if(owner.activationEnvironment){const layout=model.environments.get(owner.activationEnvironment),parent=layout.parent?values.environment(layout.parent,owner.range):null;
+    const env=values.op('env_alloc',parent?[parent]:[],'env:'+layout.id,{layout:layout.id},owner.range);state.environments.set(layout.id,env);}
   function region(rows,active,onNormal,path,initial=[]) {
     model.spend();const inherited=collections.map(state.cells),previous=handlers;handlers=active;
     for(const [binding,value]of initial) {
+      if(binding.startsWith('lexical:'))continue;
       const b=model.bindings.get(binding);check(b,'identity');const cell=values.op('cell',[],model.cell(binding),{binding},b.range);state.cells.set(binding,cell);
       values.store({kind:'bindingTarget',binding,type:b.type},value,b.range,true,false);
     }
@@ -38,8 +51,10 @@ export function planCommonFunction(model,owner) {
       model.spend();if(state.current.terminated)break;const at=[...path,index];
       if(['constDeclaration','letDeclaration'].includes(statement.kind)) {
         const b=model.bindings.get(statement.binding),value=values.expression(statement.initializer);
-        const cell=values.op('cell',[],model.cell(b.id),{binding:b.id},statement.range);state.cells.set(b.id,cell);
+        if(!model.slots.has(b.id)){const cell=values.op('cell',[],model.cell(b.id),{binding:b.id},statement.range);state.cells.set(b.id,cell);}
         values.store({kind:'bindingTarget',binding:b.id,type:b.type},value,statement.range,true);
+      }else if(statement.kind==='functionDeclaration'){
+        // Hoisted declaration: make_closure occurs when the original value is read.
       }else if(statement.kind==='initialize') {
         values.store({kind:'globalTarget',global:statement.global,binding:statement.binding,type:model.bindings.get(statement.binding).type},
           values.expression(statement.initializer),statement.range,true);

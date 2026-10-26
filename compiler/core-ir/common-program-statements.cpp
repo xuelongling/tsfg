@@ -23,13 +23,20 @@ bool SourceBodies::statements(const Json &rows,size_t first,size_t end){
   for(const auto &row:items(rows)){
     if(!model.spend())return false;size_t a,b;if(!source->span(field(row,"range"),a,b))return false;
     const auto kind=string(field(row,"kind"));const auto bindingId=string(field(row,"binding"));
-    if(kind=="constDeclaration"||kind=="letDeclaration"||kind=="initialize"){
+    if(kind=="functionDeclaration"){
+      const auto id=string(field(row,"functionId"));bool direct=false;
+      for(const auto &original:items(field(*current,"body"))){if(!model.spend())return false;direct|=same(original,row);}
+      if(!model.need(direct&&model.functions.count(id)&&same(field(*model.functions.at(id),"lexicalParent"),field(*current,"id"))&&
+        same(field(*model.functions.at(id),"declarationRange"),field(row,"range"))&&nestedDeclarations.insert(id).second,"nested declaration parent, identity or original range differs"))return false;
+    }else if(kind=="constDeclaration"||kind=="letDeclaration"||kind=="initialize"){
       const auto keyword=kind=="constDeclaration"?"const":kind=="letDeclaration"?"let":
         model.globals.count(bindingId)?string(field(*model.globals.at(bindingId),"bindingKind")):std::string();
       if(!model.need(at<end&&(source->tokens[at].text==keyword||source->tokens[at].text==","),"original declaration prefix differs"))return false;++at;
     }
     if(!model.need(a==at&&b<=end,"missing/reordered original statement"))return false;
-    if(kind=="constDeclaration"||kind=="letDeclaration"||kind=="initialize"){
+    if(kind=="functionDeclaration"){
+      // Its complete original body is checked through the function directory.
+    }else if(kind=="constDeclaration"||kind=="letDeclaration"||kind=="initialize"){
       if(!model.need(bindings.count(bindingId),"declaration storage absent from complete inventory"))return false;const auto &binding=*bindings.at(bindingId);
       const bool global=kind=="initialize";
       if(!model.need(global?model.globals.count(bindingId)&&string(field(*model.globals.at(bindingId),"sourcePath"))==source->path:

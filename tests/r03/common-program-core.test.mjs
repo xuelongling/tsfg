@@ -10,7 +10,7 @@ import {createCommonProgramPublication} from '../../compiler/common-program-anal
 import {i32TypeId,boolTypeId,sha256} from '../../compiler/identity.mjs';
 const programs=new Map(),undefinedId=sha256('tsfg.type\0undefined');
 for(const name of ['positive','reachable-managed','reference-value','mixed','actual-storage']){
-  const bytes=await fs.readFile(new URL('./common-program-'+name+'.json',import.meta.url)),facts=readCommonProgramFacts(bytes),context={family:'tsfg.common-program-context-candidate',version:1,factsBytes:bytes,expectedPackageId:facts.packageId};
+  const bytes=await fs.readFile(new URL('./common-program-'+name+'.json',import.meta.url)),facts=readCommonProgramFacts(bytes),context={family:'tsfg.common-program-context-candidate',version:2,factsBytes:bytes,expectedPackageId:facts.packageId};
   const result=buildHir(facts,context);assert.equal(result.status,'ok');const hir=result.hir,physical=commonProgramPhysical(hir);
   programs.set(name,{facts,context,hir,physical});
 }
@@ -78,7 +78,7 @@ test('real U numeric consumption follows the RHS side call and has only a normal
   assert.equal((body.match(/func\.func/g)??[]).length,1);assert.equal((text.match(/func\.func @/g)??[]).length,8);
 });
 test('real Bool numeric negative reaches actual-domain diagnosis after complete cold owned validation',async()=>{
-  const bytes=await fs.readFile(new URL('./common-program-actual-storage-bool-consume.json',import.meta.url)),facts=readCommonProgramFacts(bytes),context={family:'tsfg.common-program-context-candidate',version:1,factsBytes:bytes,expectedPackageId:facts.packageId};
+  const bytes=await fs.readFile(new URL('./common-program-actual-storage-bool-consume.json',import.meta.url)),facts=readCommonProgramFacts(bytes),context={family:'tsfg.common-program-context-candidate',version:2,factsBytes:bytes,expectedPackageId:facts.packageId};
   const result=buildHir(facts,context);assert.equal(result.status,'ok');assert.equal(result.hir.functions.length,7);assert.equal(result.hir.closure.roots.length,6);
   assert.deepEqual(verifyHir(result.hir),result.hir);const transport=fn(result.hir,'transportBool');
   assert.throws(()=>commonProgramPhysical(result.hir),/** @param {any} error */error=>error.code==='r03-common-program-capability'&&error.functionId===transport.id
