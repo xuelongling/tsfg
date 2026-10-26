@@ -22,7 +22,12 @@ bool ActualCheck::representation(){
     for(size_t n=0;n<fn->blocks[0].parameters.size();++n)forced.emplace(fn->blocks[0].parameters[n],string(parameters[n]));
     for(const auto &block:fn->blocks)for(const auto &op:block.operations){
       if(!step())return false;const auto &name=op.name;
-      if(name=="invoke"){
+      if(name=="invoke_method"){
+        std::vector<std::string> args;std::string result;if(!methodAbi(*fn,op,args,result))return false;
+        for(size_t i=0;i<op.operands.size();++i)adapters[op.operands[i]]=args[i];
+        if(!fn->blocks[op.successors[0]].parameters.empty())forced[fn->blocks[op.successors[0]].parameters[0]]=result;
+        forced[fn->blocks[op.successors[1]].parameters[0]]="payload:"+schema.str();
+      }else if(name=="invoke"){
         const auto &callee=*physicalFunctions.at(string(field(op.properties,"function_id")));const auto &args=items(field(callee,"parameters"));
         for(size_t i=0;i<op.operands.size();++i)adapters[op.operands[i]]=string(args[i]);
         if(!fn->blocks[op.successors[0]].parameters.empty())forced[fn->blocks[op.successors[0]].parameters[0]]=string(field(callee,"result"));

@@ -20,6 +20,13 @@ struct Member {
   std::string kind,name,type,result;std::vector<std::string> parameters;
 };
 using Members=std::map<std::string,Member>;
+struct MethodClass {std::string base;std::vector<std::string> methods;};
+struct Method {std::string owner,name,overrideTarget;};
+struct MethodCatalogue {std::map<std::string,MethodClass> classes;std::map<std::string,Method> methods;};
+using MethodMaps=std::map<Pair,std::map<std::string,std::string>>;
+bool validateMethods(const MethodCatalogue &,const Charge &,std::string &);
+bool selectMethod(const MethodCatalogue &,const MethodMaps &,const std::string &actual,const std::string &view,
+  const std::string &member,std::string &selected,const Charge &,std::string &);
 bool logical(const Types &,const std::string &,const std::string &,const std::set<Pair> &,
   std::set<Pair> &,const Charge &,std::string &,Policy={});
 bool verifyMembers(const Types &,const Members &,const Members &,const std::vector<Pair> &,

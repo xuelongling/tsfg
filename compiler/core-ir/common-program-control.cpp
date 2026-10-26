@@ -1,5 +1,6 @@
 // SPDX-License-Identifier: MIT
 #include "common-program-plan.h"
+#include "common-program-methods.h"
 #include <memory>
 namespace tsfg::commonProgram {
 SourcePlan::Reg SourcePlan::invoke(const Json &e,std::vector<Reg> args,const Json &callee){
@@ -7,7 +8,9 @@ SourcePlan::Reg SourcePlan::invoke(const Json &e,std::vector<Reg> args,const Jso
   const auto normal=block(empty?std::vector<std::string>{}:std::vector<std::string>{string(field(e,"type"))});
   const auto exceptional=block({"payload:"+schema.str()});if(!check.step(cells.size()+1))return noRegister;
   const auto saved=std::make_shared<const std::map<std::string,Reg>>(cells);const auto active=std::make_shared<const Completion>(handlers);const auto range=sourceAnchor(e);const auto path=sourcePath;
-  emit("invoke",std::move(args),"",Object{{"function_id",field(callee,"id")},{"signature_hash",field(callee,"signatureHash")}},range,{uint16_t(normal),uint16_t(exceptional)});
+  Object properties{{"function_id",field(callee,"id")},{"signature_hash",field(callee,"signatureHash")}};const bool method=string(field(callee,"kind"))=="method";
+  if(method){Json table=nullptr;if(!methodDispatch(check.p,string(field(field(e,"receiver"),"type")),string(field(callee,"id")),table,check.e))return noRegister;properties["dispatch"]=std::move(table);}
+  emit(method?"invoke_method":"invoke",std::move(args),"",std::move(properties),range,{uint16_t(normal),uint16_t(exceptional)});
   deferred.push_back([this,exceptional,saved,active,range,path]{
     if(!check.step(saved->size()+1))return;current=exceptional;cells=*saved;handlers=*active;sourcePath=path;
     active->thrown(function.blocks[exceptional].parameters[0],range);

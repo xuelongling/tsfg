@@ -15,7 +15,7 @@ struct SourceAnchor {uint32_t start=0,end=0;};
 inline constexpr uint16_t noRegister=UINT16_MAX;
 using Json=llvm::json::Value;using Object=llvm::json::Object;using Array=llvm::json::Array;
 inline constexpr llvm::StringLiteral marker="tsfg_program.program";
-inline constexpr llvm::StringLiteral schema="sha256:0e85b9e4d5d4a9a7ae8b92309bfffe5ac5d7a2e2a7085c2a7e17d1bfa5f4571c";
+inline constexpr llvm::StringLiteral schema="sha256:c69f3a88fa4720b56755ecbb662c39e38c8b541e3d5e76788a2c5c8220663ef7";
 struct CarrierStorage:mlir::TypeStorage {
   using KeyTy=mlir::StringAttr;KeyTy key;
   explicit CarrierStorage(KeyTy key):key(key){}
@@ -74,6 +74,7 @@ TSFG_PROGRAM_OP(ReadSpanOp,"readspan",mlir::OpTrait::ZeroSuccessors,WholeProgram
 TSFG_PROGRAM_OP(ReadSpanLengthOp,"readspan_length",mlir::OpTrait::ZeroSuccessors,WholeProgramOnly)
 TSFG_PROGRAM_OP(PackOp,"pack",mlir::OpTrait::ZeroSuccessors,WholeProgramOnly)
 TSFG_PROGRAM_OP(InvokeOp,"invoke",mlir::OpTrait::NSuccessors<2>::Impl,mlir::OpTrait::IsTerminator)
+TSFG_PROGRAM_OP(InvokeMethodOp,"invoke_method",mlir::OpTrait::NSuccessors<2>::Impl,mlir::OpTrait::IsTerminator)
 TSFG_PROGRAM_OP(EnterHandlerOp,"enter_handler",mlir::OpTrait::ZeroSuccessors,WholeProgramOnly)
 TSFG_PROGRAM_OP(CatchBindOp,"catch_bind",mlir::OpTrait::ZeroSuccessors,WholeProgramOnly)
 TSFG_PROGRAM_OP(FinallyEnterOp,"finally_enter",mlir::OpTrait::ZeroSuccessors,WholeProgramOnly)
@@ -121,7 +122,7 @@ struct Program {
   using ReferenceCandidates=std::map<std::string,std::set<std::string>>;
   using ReferenceFields=std::map<std::pair<std::string,std::string>,std::map<std::string,std::string>>;
   struct EntryRole {ReferenceCandidates candidates;ReferenceFields fields;};
-  ReferenceFields referenceFields;
+  ReferenceFields referenceFields,referenceMethods;
   std::map<std::string,EntryRole> entryCandidates;
   size_t remaining=1000000;
   bool charge(size_t n=1){if(n>remaining){remaining=0;return false;}remaining-=n;return true;}

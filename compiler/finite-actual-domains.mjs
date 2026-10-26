@@ -11,6 +11,7 @@ import {canonical,own,sha256,i32TypeId} from './identity.mjs';
 import {finiteNumericUse,finiteNormalFlow,finiteNormalBody} from './finite-numeric-use.mjs';
 import {isFiniteAbsence} from './finite-presence.mjs';
 import {actualFieldResolver} from './member-presence.mjs';
+import {selectReferenceMethod} from './reference-methods.mjs';
 
 function fail(message) {throw Object.assign(new TypeError('r03-finite-domain: '+message),
   {code:'r03-finite-domain',ruleId:'r01-input-boundary',phase:'lowering'});}
@@ -352,22 +353,7 @@ function solveFiniteActualDomains(input,context,charge,fieldReaching,mode,arrayR
   const fieldNode=(actual,field)=>node('field/'+actual+'/'+field.id,field.type).id;
   const actualField=actualFieldResolver(types,fieldViews,fieldOwners,charge);
   function actualMethod(actual,call) {
-    const lineage=[];let type=types.get(actual);
-    while(type){charge();if(lineage.includes(type.id))fail('inheritance cycle');lineage.unshift(type.id);type=types.get(type.base);}
-    const effective=new Map();
-    for(const owner of lineage)for(const id of types.get(owner).methods??[]) {
-      charge();const fn=functions.get(id);if(fn.overrideTarget)effective.delete(fn.overrideTarget);effective.set(id,fn);
-    }
-    // Exact member/override identities can resolve inherited implementations;
-    // unrelated structural views must use the selected M12 member mapping.
-    let selected;
-    for(const fn of effective.values()) {
-      let current=fn;const seen=new Set();
-      while(current){charge();if(seen.has(current.id))fail('override cycle');seen.add(current.id);
-        if(current.id===call.member){if(selected)fail('ambiguous actual method');selected=fn;break;}
-        current=functions.get(current.overrideTarget);}
-    }
-    return selected??functions.get(methodViews.get(actual+'\0'+call.viewType+'\0'+call.member));
+    return selectReferenceMethod(types,functions,actual,call.member,methodViews.get(actual+'\0'+call.viewType+'\0'+call.member),charge,fail);
   }
   // These are storage representation alternatives, not definedness events.
   // Only actual phase events publish defined-native-undefined. A quantified

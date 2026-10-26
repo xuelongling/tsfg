@@ -5,6 +5,7 @@ import {i32TypeId,scalarTypeIds,sha256} from '../../compiler/identity.mjs';
 import {commonMeter} from '../../compiler/common-program-common.mjs';
 import {createCommonGraph} from '../../compiler/common-program-plan.mjs';
 import {commonAbstract} from '../../compiler/common-program-abstract.mjs';
+import {commonMethods} from '../../compiler/common-program-methods.mjs';
 const u=sha256('tsfg.type\0undefined'),box=sha256('unit:Box'),value=sha256('unit:Value'),nested=sha256('unit:Nested');
 const range={start:0,end:1};
 const field=(owner,name,type)=>({id:owner+'/'+name,sourceBinding:owner+'/'+name,type,name,owner});
@@ -70,18 +71,23 @@ export function commonMethodModel(mode='override') {
   const bindings=new Map(),functions=new Map(),plans=[],model={types:new Map(rows.map(t=>[t.id,t])),bindings,functions,fields:new Map(),globals:new Map(),
     spend:commonMeter(1000000),payload:'payload:unit',hir:{types:rows,functions:[],globals:[],snapshot:{payload:{compatibilityWitnesses:[],entryCompatibilityRoots:[]}},closure:{roots:[{kind:'application',target:'entry'}]}}};
   function plan(id,ownerType=null,overrideTarget=null) {
-    const owner={id,name:ownerType?'m':'entry',kind:ownerType?'method':'source',ownerType,overrideTarget,returnType:i32TypeId,sourcePath:'/unit-model.ts'},
-      parameters=ownerType?[{id:id+'/this',type:ownerType}]:[],graph=createCommonGraph(model,owner),entry=graph.newBlock(parameters.map(p=>p.type)),result={owner,graph,entry,parameters};
+    const owner={id,name:ownerType?'m':'entry',kind:ownerType?'method':'source',ownerType,overrideTarget,signatureHash:'unit:'+id,returnType:i32TypeId,sourcePath:'/unit-model.ts'},
+      parameters=ownerType?[{id:id+'/this',type:ownerType}]:[],graph=createCommonGraph(model,owner),entry=graph.newBlock(parameters.map(p=>p.type)),result={owner,graph,entry,parameters,returnType:i32TypeId};
     for(const p of parameters)bindings.set(p.id,{...p,role:'receiver'});functions.set(id,owner);plans.push(result);return result;
   }
   for(const [id,type,target]of /** @type {[string,string,string|null][]} */([['base.m',base,null],...(mode==='override'?[['middle.m',middle,'base.m']]:[]),
     ...(mode==='inherited'?[]:[['derived.m',derived,mode==='override'?'middle.m':null]])])) {
-    const p=plan(id,type,target),one=p.graph.emit(p.entry,'constant',[],i32TypeId,{decimal:'1',token:'1'},range);p.graph.terminal(p.entry,'func.return',[one],[],{},range);
+    const p=plan(id,type,target),decimal=id==='base.m'?'1':id==='middle.m'?'2':'3',one=p.graph.emit(p.entry,'constant',[],i32TypeId,{decimal,token:decimal},range);p.graph.terminal(p.entry,'func.return',[one],[],{},range);
   }
   const entry=plan('entry'),receiver=entry.graph.emit(entry.entry,'allocate_reference',[],derived,{type:derived,construction:'unit'},range),
     normal=entry.graph.newBlock([i32TypeId]),thrown=entry.graph.newBlock([model.payload]);
-  entry.graph.terminal(entry.entry,'invoke',[receiver],[normal,thrown],{function_id:'base.m',signature_hash:'unit'},range);
+  const view=entry.graph.emit(entry.entry,'view',[receiver],base,{target:base},range);
   entry.graph.terminal(normal,'func.return',[{...normal.parameters[0]}],[],{},range);
   entry.graph.terminal(thrown,'return_throw',[{...thrown.parameters[0]}],[],{},range);
-  model.hir.functions=[...functions.values()].map(fn=>({...fn,sourceBinding:fn.id}));return {model,plans};
+  model.hir.functions=[...functions.values()].map(fn=>({...fn,sourceBinding:fn.id,parameters:[]}));
+  for(const row of rows)Object.assign(row,{sourceType:row.id});
+  if(mode==='structural')model.hir.snapshot.payload.compatibilityWitnesses.push({compatibility:{sourceType:derived,targetType:base,origin:{source:'/unit-model.ts',...range},members:[{source:'derived.m',target:'base.m'}]}});
+  const dispatch=commonMethods(model.hir,model.spend).dispatch('base.m',base);
+  entry.graph.terminal(entry.entry,'invoke_method',[view],[normal,thrown],{function_id:'base.m',signature_hash:'unit:base.m',dispatch},range);
+  return {model,plans};
 }

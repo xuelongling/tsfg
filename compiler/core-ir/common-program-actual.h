@@ -45,6 +45,8 @@ struct ActualCheck {
   std::vector<const Json *> allFields(const std::string &);
   std::string key(const ActualValue &)const;
   std::string carrier(const ActualValue &);
+  std::string joinCarriers(const std::vector<std::string> &);
+  bool methodAbi(const Function &,const Operation &,std::vector<std::string> &,std::string &);
   ActualHeap reachable(const std::vector<ActualValue> &,const ActualHeap &);
   ActualValue valueCopy(const ActualValue &,ActualState &,const std::string &,bool,std::map<std::string,std::string> = {});
   ActualContext *context(const std::string &,const std::vector<ActualValue> &,const ActualHeap &,bool,bool &);

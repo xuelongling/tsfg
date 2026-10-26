@@ -155,7 +155,14 @@ bool SourceBodies::expression(const Json &v,bool target,const std::string &expec
         if(!model.need(same(Json(std::move(expected)),field(sig,"parameters"))&&same(field(fn,"returnType"),field(sig,"returnType"))&&
           same(field(fn,"declarationRange"),field(sig,"declarationRange"))&&string(field(fn,"sourcePath"))==path,
           "call signature does not join original declaration"))return false;
-        if(field(fn,"ownerType").getAsNull()&&!model.need(resolve(field(v,"calleeRange"))==callee,"direct call spelling resolves to another symbol"))return false;
+        if(field(fn,"ownerType").getAsNull()){
+          if(!model.need(resolve(field(v,"calleeRange"))==callee,"direct call spelling resolves to another symbol"))return false;
+        }else{
+          const auto view=flow(field(v,"receiver")),owner=string(field(fn,"ownerType")),access=string(field(fn,"access")),currentOwner=string(field(*current,"ownerType"));
+          if(!model.need(relations,"method relation directory missing")||!relations->method(view,callee)||
+            !model.need(access=="public"||access=="private"&&owner==currentOwner||access=="protected"&&assignment(model,currentOwner,owner),"method access differs")||
+            !source->sequence(field(v,"calleeRange"),{field(field(v,"receiver"),"range"),Json("."),field(fn,"name")}))return false;
+        }
       }
       if(!model.need(type==string(field(sig,"returnType")),"call result differs from original signature"))return false;
     }else if(!model.need(model.types.count(callee)&&same(field(field(*model.types.at(callee),"construction"),"signature"),sig)&&

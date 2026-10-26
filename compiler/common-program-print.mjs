@@ -22,8 +22,8 @@ export function printCommonFunction(plan,model,carriers,publication=null) {
   };
   const adapt=(value,type,range,view)=>value.type===type?value:emit('tsfg_program.carrier_cast',[value],type,{carrier:type},view,range);
   for(const block of graph.blocks){spend(block.parameters.length);blockTypes.set(block.name,block.parameters.map(p=>selected.get(p.name)));}
-  for(const block of graph.blocks)for(const op of block.instructions)if(op.name==='tsfg_program.invoke'){
-    const called=carriers.functions.get(op.properties.function_id),target=blocks.get(op.successors[0]);check(called,'identity');
+  for(const block of graph.blocks)for(const op of block.instructions)if(['tsfg_program.invoke','tsfg_program.invoke_method'].includes(op.name)){
+    const called=op.name==='tsfg_program.invoke_method'?carriers.methods.get(op):carriers.functions.get(op.properties.function_id),target=blocks.get(op.successors[0]);check(called,'identity');
     blockTypes.set(target.name,called.result==='void'?[]:[called.result]);incomingRanges.set(target.name,op.range);
   }
   blockTypes.set(entry.name,abi.parameters);
@@ -67,8 +67,8 @@ export function printCommonFunction(plan,model,carriers,publication=null) {
         line('    cf.cond_br '+args[0].name+', ^'+op.successors[0]+', ^'+op.successors[1]+' {'+anchor(op.range)+'}');continue;}
       if(name==='tsfg_program.route'){branch(op,args,true);continue;}
       if(name==='func.return'){if(args.length)args[0]=adapt(args[0],abi.result,op.range,plan.returnType);emit(name,args,null,{},'void',op.range);continue;}
-      if(name==='tsfg_program.invoke') {
-        const called=carriers.functions.get(p.function_id);check(called&&called.parameters.length===args.length,'ssa');
+      if(name==='tsfg_program.invoke'||name==='tsfg_program.invoke_method') {
+        const called=name==='tsfg_program.invoke_method'?carriers.methods.get(op):carriers.functions.get(p.function_id);check(called&&called.parameters.length===args.length,'ssa');
         for(const [i,carrier]of called.parameters.entries())args[i]=adapt(args[i],carrier,op.range,graph.registers.get(op.operands[i]).view);
         emit(name,args,null,p,'void',op.range,null,op.successors);continue;
       }

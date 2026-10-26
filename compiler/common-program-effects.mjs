@@ -3,12 +3,13 @@
 // Program. Language throws are routed structurally; request traps never enter EH.
 import {commonCheck as check,commonSame as same} from './common-program-common.mjs';
 import {commonCollections} from './common-program-budget.mjs';
+import {commonMethods} from './common-program-methods.mjs';
 export const commonFacets=Object.freeze(['allocation','managedReference','ehControl','mayThrow','await','lock','escape','unknownHost']);
 export function commonEffects(hir,spend,physical=null) {
   const collections=commonCollections(spend);
   spend(hir.types.length+hir.functions.length+hir.globals.length);
   const types=new Map(hir.types.map(row=>[row.id,row])),functions=new Map(hir.functions.map(row=>[row.id,row]));
-  const globals=new Map(hir.globals.map(row=>[row.id,row])),referenceMemo=new Map();
+  const globals=new Map(hir.globals.map(row=>[row.id,row])),referenceMemo=new Map(),methods=commonMethods(hir,spend);
   function reference(id,active=new Set()) {
     if(id===null||id==='void')return false;
     spend();if(referenceMemo.has(id))return referenceMemo.get(id);check(!active.has(id),'type');active.add(id);
@@ -57,7 +58,9 @@ export function commonEffects(hir,spend,physical=null) {
       }else if(value.kind==='call') {
         const arguments_=[...(value.receiver?[visit(value.receiver)]:[]),...value.arguments.map(visit)];
         if(value.callee==='intrinsic:readSpan')owner=arguments_[0];
-        else {const record=consume(value.callee,arguments_,value);throwing ||= record.facets.mayThrow;
+        else {const callee=functions.get(value.callee),targets=callee?.kind==='method'?methods.dispatch(callee.id,value.receiver.type):[{target:value.callee}];
+          const consumed=new Set();for(const {target}of targets){spend();if(consumed.has(target))continue;consumed.add(target);
+            const record=consume(target,arguments_,value);throwing ||= record.facets.mayThrow;}
           if(reference(value.type))owner=new Set(['unknown:'+value.callee]);}
       }else {
         for(const key of ['expression','left','right','receiver','index','value'])if(value[key])visit(value[key]);

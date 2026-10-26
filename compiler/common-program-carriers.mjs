@@ -7,7 +7,7 @@ import {commonCollections} from './common-program-budget.mjs';
 export function selectCommonCarriers({model,plans},values) {
   const {types,spend,payload}=model,collections=commonCollections(spend),domains=new Map(),layouts=new Map(),active=new Set(),a=values.abstract;
   const align=(n,boundary)=>Math.ceil(n/boundary)*boundary;
-  const bindingValues=new Map(),results=new Map(),registers=new Map(),bindings=new Map(),functions=new Map();
+  const bindingValues=new Map(),results=new Map(),registers=new Map(),bindings=new Map(),functions=new Map(),methods=new Map();
   const merge=(into,from)=>{if(from)a.merge(into,from);};
   for(const id of model.bindings.keys())bindingValues.set(id,a.empty());
   for(const [id,v]of values.fieldSeeds)merge(bindingValues.get(id),v);
@@ -32,6 +32,18 @@ export function selectCommonCarriers({model,plans},values) {
       const carrier=row.view.startsWith('cell:')?row.view:row.view===payload?payload
         :['tsfg_program.constant','tsfg_program.floating','tsfg_program.boolean','tsfg_program.construct_value','tsfg_program.allocate_reference','tsfg_program.array_create','tsfg_program.readspan'].includes(op)?row.view
           :domain(bound(fn,name));rows.set(name,carrier);}
+  }
+  const joined=ids=>{
+    const value=a.empty();for(const id of ids){spend();check(id!=='void','ssa');if(id===payload)value.unknown=true;
+      else if(domains.has(id))for(const tag of domains.get(id).actualTypes){spend();value.tags.add(tag);}else{check(types.has(id),'type');value.tags.add(id);}}
+    return domain(value);
+  };
+  for(const plan of plans)for(const block of plan.graph.blocks)for(const op of block.instructions)if(op.name==='tsfg_program.invoke_method'){
+    const targets=[];for(const row of op.properties.dispatch){spend();const abi=functions.get(row.target);check(abi,'ssa');targets.push(abi);}
+    spend(op.operands.length);const parameters=op.operands.map((_,i)=>{spend(2*targets.length);const choices=targets.filter(target=>target.parameters.length>i).map(target=>target.parameters[i]);
+      return choices.length?joined(choices):registers.get(plan.owner.id).get(op.operands[i]);});
+    spend(plan.graph.blocks.length+targets.length);const normal=plan.graph.blocks.find(block=>block.name===op.successors[0]);
+    methods.set(op,{parameters,result:normal.parameters.length?joined(targets.map(target=>target.result)):'void'});
   }
   function layout(id) {
     spend();if(layouts.has(id))return layouts.get(id);check(!active.has(id),'type','cyclic physical inline layout');active.add(id);
@@ -72,5 +84,5 @@ export function selectCommonCarriers({model,plans},values) {
   const entries=rows=>collections.sorted(rows,([a],[b])=>a<b?-1:a>b?1:0);
   const record=()=>{spend(domains.size+bindings.size+functions.size);return {domains:entries(domains).map(([,row])=>row),
     bindings:entries(bindings).map(([id,carrier])=>({id,carrier})),functions:entries(functions).map(([,row])=>row)};};
-  return {domains,bindings,functions,registers,bindingValues,layouts,bodies,layout,coreType,record,arrayType:a.arrayType,select:domain};
+  return {domains,bindings,functions,methods,registers,bindingValues,layouts,bodies,layout,coreType,record,arrayType:a.arrayType,select:domain};
 }

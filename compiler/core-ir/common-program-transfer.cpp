@@ -115,26 +115,7 @@ bool ActualCheck::instruction(ActualContext &context,const Operation &op,size_t 
       reaches&=!args[i].tags.empty();
     }
     if(conditional||reaches)value=literal(op.view,op.view==typeId("bool")?3:0);if(!conditional&&!reaches)continues=false;
-  }else if(name=="invoke"){
-    const auto target=string(field(props,"function_id"));auto original=sourceFunctions.find(target);
-    if(original!=sourceFunctions.end()&&string(field(*original->second,"kind"))=="method"&&!args.empty()){
-      if(!need(!args[0].unknown,"unknown method receiver requires dispatch proof")){e.path=fn.path;e.range=op.range;return false;}
-      for(const auto &tag:args[0].tags){auto current=tag;std::set<std::string> seen;std::string selected;
-        while(!current.empty()&&selected.empty()){
-          if(!step()||!need(types.count(current)&&seen.insert(current).second,"method receiver base graph differs"))return false;
-          for(const auto &method:items(field(*types.at(current),"methods"))){
-            if(!step())return false;auto candidate=string(method);const auto implementation=candidate;std::set<std::string> chain;
-            while(!candidate.empty()){
-              if(!step()||!need(sourceFunctions.count(candidate)&&chain.insert(candidate).second,"method override graph differs"))return false;
-              if(candidate==target){if(!need(selected.empty(),"ambiguous actual method implementation"))return false;selected=implementation;break;}
-              candidate=string(field(*sourceFunctions.at(candidate),"overrideTarget"));
-            }
-          }current=string(field(*types.at(current),"base"));
-        }
-        if(!need(selected==target,"M12 actual method dispatch requires an independently proved implementation")){e.path=fn.path;e.range=op.range;return false;}
-      }
-    }
-    auto *call=this->context(target,args,state.heap,false,changed);if(!call)return false;
+  }else if(name=="invoke"||name=="invoke_method"){
     const auto complete=[&](uint16_t target,const ActualValue &v,const ActualHeap &heap){
       auto after=copyState(state);if(!e.message.empty()||!step(heap.size()))return false;
       for(const auto &[slot,value]:heap){
@@ -147,8 +128,27 @@ bool ActualCheck::instruction(ActualContext &context,const Operation &op,size_t 
       }
       return edge(target,after,fn.blocks[target].parameters.empty()?std::vector<ActualValue>{}:std::vector<ActualValue>{copy(v)});
     };
-    if(call->normal&&!complete(op.successors[0],call->returned,call->normalHeap))return false;
-    if(call->language&&!complete(op.successors[1],call->thrown,call->languageHeap))return false;continues=false;
+
+    const auto invoke=[&](const std::string &target,std::vector<ActualValue> actual){
+      auto *call=this->context(target,actual,state.heap,false,changed);if(!call)return false;
+      if(call->normal&&!complete(op.successors[0],call->returned,call->normalHeap))return false;
+      if(call->language&&!complete(op.successors[1],call->thrown,call->languageHeap))return false;return true;
+    };
+    if(name=="invoke"){if(!invoke(string(field(props,"function_id")),std::move(args)))return false;}
+    else{
+      if(!need(!args.empty()&&!args[0].unknown,"method receiver has no finite actual nominal type")){e.path=fn.path;e.range=op.range;return false;}
+      for(const auto &tag:args[0].tags){
+        const Json *arm=nullptr;for(const auto &row:items(field(props,"dispatch"))){if(!step())return false;if(string(field(row,"receiver_type"))==tag){arm=&row;break;}}
+        if(!need(arm,"actual method receiver has no independently verified dispatch arm")){e.path=fn.path;e.range=op.range;return false;}
+        const auto target=string(field(*arm,"target"));if(!need(functions.count(target),"actual method implementation missing"))return false;
+        const auto count=functions.at(target)->blocks[0].parameters.size();if(!need(count>0&&count<=args.size(),"method target requires missing actual arguments"))return false;
+        if(!step(count))return false;std::vector<ActualValue> selected;for(size_t i=0;i<count;++i)selected.push_back(copy(args[i]));
+        selected[0].tags={tag};selected[0].objects.clear();selected[0].cells.clear();
+        for(const auto &ref:args[0].objects){if(!step(ref.size()/64+1)||!need(objects.count(ref),"method receiver object missing"))return false;if(objects.at(ref).type==tag)selected[0].objects.insert(ref);}
+        if(!need(!selected[0].objects.empty(),"method receiver tag has no matching actual object"))return false;
+        if(!invoke(target,std::move(selected)))return false;
+      }
+    }continues=false;
   }else if(name=="cf.br"||name=="route"){
     if(!edge(op.successors[0],state,args))return false;continues=false;
   }else if(name=="cf.cond_br"){

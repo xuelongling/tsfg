@@ -21,7 +21,9 @@ export function planCommonFunction(model,owner) {
     check(callee,'identity','complete actual callee missing');
     const normal=graph.newBlock(isVoid(callee.returnType)?[]:[expression.type]),exceptional=graph.newBlock([model.payload]);
     const saved=collections.map(state.cells),active=handlers;
-    terminator('invoke',args,[normal,exceptional],{function_id:callee.id,signature_hash:callee.signatureHash},expression.range);
+    const method=callee.kind==='method',properties={function_id:callee.id,signature_hash:callee.signatureHash};
+    if(method)properties.dispatch=model.methods.dispatch(callee.id,expression.receiver.type);
+    terminator(method?'invoke_method':'invoke',args,[normal,exceptional],properties,expression.range);
     tasks.push(()=>{state.current=exceptional;state.cells=collections.map(saved);handlers=active;active.thrown({...exceptional.parameters[0]},expression.range);});
     state.current=normal;return normal.parameters[0]?{...normal.parameters[0]}:null;
   };

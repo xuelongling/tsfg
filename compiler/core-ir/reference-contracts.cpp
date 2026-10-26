@@ -88,4 +88,59 @@ bool closeDirectory(const std::map<OriginKey,std::set<Pair>> &directory,const Ch
     if(!directory.count({std::get<0>(key),std::get<1>(key),std::get<2>(key),source,target}))return fail(error,"member proof same-origin closure edge missing");
   }return true;
 }
+namespace {
+bool implementation(const MethodCatalogue &c,std::string actual,const std::string &member,std::string &selected,const Charge &charge,std::string &error){
+  std::set<std::string> bases;
+  while(!actual.empty()&&selected.empty()){
+    if(!charge(1))return false;if(!c.classes.count(actual)||!bases.insert(actual).second)return fail(error,"method class inheritance cycle/type");
+    for(const auto &id:c.classes.at(actual).methods){
+      if(!charge(1))return false;auto current=id;std::set<std::string> seen;
+      while(!current.empty()){
+        if(!charge(1))return false;if(!c.methods.count(current)||!seen.insert(current).second)return fail(error,"method override cycle/target");
+        if(current==member){if(!selected.empty())return fail(error,"ambiguous effective method");selected=id;break;}current=c.methods.at(current).overrideTarget;
+      }
+    }actual=c.classes.at(actual).base;
+  }return true;
+}
+}
+bool validateMethods(const MethodCatalogue &c,const Charge &charge,std::string &error){
+  std::set<std::string> listed;
+  for(const auto &[id,row]:c.classes){
+    if(!charge(row.methods.size()+1))return false;std::set<std::string> ancestors;auto base=row.base;
+    while(!base.empty()){if(!charge(1))return false;if(!c.classes.count(base)||!ancestors.insert(base).second||base==id)return fail(error,"method class inheritance cycle/type");base=c.classes.at(base).base;}
+    std::set<std::string> names;
+    for(const auto &fid:row.methods){
+      if(!c.methods.count(fid)||!listed.insert(fid).second||c.methods.at(fid).owner!=id)return fail(error,"method declaration owner/directory differs");
+      const auto &fn=c.methods.at(fid);if(!charge(fn.name.size()/8+1))return false;
+      if(!names.insert(fn.name).second)return fail(error,"overloaded method declaration is unsupported");
+      std::string nearest;auto parent=row.base;
+      while(!parent.empty()&&nearest.empty()){
+        if(!charge(1))return false;for(const auto &mid:c.classes.at(parent).methods){
+          if(!c.methods.count(mid))return fail(error,"method base declaration missing");const auto &baseMethod=c.methods.at(mid);
+          if(!charge((fn.name.size()+baseMethod.name.size())/8+1))return false;
+          if(fn.name==baseMethod.name){if(!nearest.empty())return fail(error,"ambiguous nearest method declaration");nearest=mid;}
+        }parent=c.classes.at(parent).base;
+      }
+      if(nearest!=fn.overrideTarget)return fail(error,"method override does not select nearest effective declaration");
+      if(fn.overrideTarget.empty())continue;
+      if(!c.methods.count(fn.overrideTarget))return fail(error,"method override target missing");const auto &target=c.methods.at(fn.overrideTarget);
+      if(!charge((fn.name.size()+target.name.size())/8+1))return false;
+      if(!ancestors.count(target.owner)||fn.name!=target.name)return fail(error,"method override is not the same inherited member");
+      std::string effective;if(!implementation(c,row.base,fn.overrideTarget,effective,charge,error))return false;
+      if(effective!=fn.overrideTarget)return fail(error,"method override skips effective base implementation");
+    }
+  }
+  if(!charge(listed.size()+c.methods.size()))return false;
+  return listed.size()==c.methods.size()||fail(error,"unlisted method declaration");
+}
+bool selectMethod(const MethodCatalogue &c,const MethodMaps &maps,const std::string &actual,const std::string &view,
+    const std::string &member,std::string &selected,const Charge &charge,std::string &error){
+  selected.clear();if(!charge(1))return false;
+  if(!c.classes.count(actual)||!c.classes.count(view)||!c.methods.count(member))return fail(error,"method selection type/member missing");
+  if(!implementation(c,actual,member,selected,charge,error))return false;if(!selected.empty())return true;
+  const auto projection=maps.find({actual,view});if(projection==maps.end())return true;
+  const auto mapped=projection->second.find(member);if(mapped==projection->second.end())return true;
+  if(!c.methods.count(mapped->second))return fail(error,"M12 mapped method missing");
+  return implementation(c,actual,mapped->second,selected,charge,error);
+}
 } // namespace tsfg::referenceContracts

@@ -7,14 +7,17 @@ import {classifyArrayCallGraph} from './array-call-graph.mjs';
 import {commonAbstract} from './common-program-abstract.mjs';
 import {commonCheck as check} from './common-program-common.mjs';
 import {commonEntryReferences} from './common-program-entry.mjs';
+import {commonMethods} from './common-program-methods.mjs';
 const undefinedId=sha256('tsfg.type\0undefined');
 export function analyzeCommonGraphs({model,plans}) {
-  const {spend,types}=model,elementSeeds=new Map(),a=commonAbstract({...model,elementSeeds}),byId=new Map(plans.map(plan=>[plan.owner.id,plan])),entryReferences=commonEntryReferences(model.hir,spend);
+  const {spend,types}=model,elementSeeds=new Map(),a=commonAbstract({...model,elementSeeds}),byId=new Map(plans.map(plan=>[plan.owner.id,plan])),entryReferences=commonEntryReferences(model.hir,spend),methods=commonMethods(model.hir,spend);
   const edges=[],callSites=[],incoming=new Map(),cyclicBlocks=new Set();
   for(const plan of plans) {
     const blockEdges=[];
     for(const block of plan.graph.blocks)for(const op of block.instructions){spend();for(const target of op.successors)blockEdges.push({caller:block.name,target});
-      if(op.name==='tsfg_program.invoke'){edges.push({caller:plan.owner.id,target:op.properties.function_id});callSites.push({caller:plan.owner.id,target:op.properties.function_id,block:block.name});incoming.set(op.properties.function_id,(incoming.get(op.properties.function_id)??0)+1);}}
+      if(['tsfg_program.invoke','tsfg_program.invoke_method'].includes(op.name)){
+        const rows=op.name==='tsfg_program.invoke_method'?methods.verify(op.properties,plan.graph.registers.get(op.operands[0]).view):[{target:op.properties.function_id}],targets=new Set();
+        for(const {target}of rows){spend();if(targets.has(target))continue;targets.add(target);edges.push({caller:plan.owner.id,target});callSites.push({caller:plan.owner.id,target,block:block.name});incoming.set(target,(incoming.get(target)??0)+1);}}}
     spend(plan.graph.blocks.length+blockEdges.length);
     for(const c of classifyArrayCallGraph(plan.graph.blocks.map(block=>block.name),blockEdges).components)if(c.cyclic)
       for(const name of c.members)cyclicBlocks.add(plan.owner.id+'/'+name);
@@ -42,25 +45,6 @@ export function analyzeCommonGraphs({model,plans}) {
   const fieldFor=(actual,view,field)=>{
     if(a.fields(actual).some(row=>row.id===field))return field;
     const mapped=fieldAliases.get(actual+'/'+view)?.get(field);check(mapped,'capability','actual field has no original verified member mapping');return mapped;
-  };
-  const methodReceiver=(callee,receiver,caller,range)=>{
-    if(callee?.kind!=='method')return;
-    const details={functionId:caller.id,primary:{sourceId:caller.sourcePath,...range},staticCallee:callee.id};
-    check(receiver&&!receiver.unknown,'capability','method receiver has no proved actual nominal type',details);
-    for(const actualType of receiver.tags){
-      spend();let type=types.get(actualType),selected;
-      while(type&&!selected){
-        spend();for(const id of type.methods??[]){
-          spend();let candidate=model.functions.get(id);
-          while(candidate){spend();if(candidate.id===callee.id){selected=id;break;}candidate=model.functions.get(candidate.overrideTarget);}
-          if(selected)break;
-        }
-        type=types.get(type.base);
-      }
-      // The fixed callee may be inherited unchanged. Resolving an override or
-      // a structural method would require dynamic dispatch, which is not granted.
-      check(selected===callee.id,'capability','actual method dispatch is unsupported',{...details,actualType,effectiveCallee:selected??null});
-    }
   };
   const dummyHeap=new Map(),dummyObjects=new Map();
   for(const [id,binding]of model.bindings)if(binding.role==='field')seed(fieldSeeds,id,a.declared(binding.type,dummyHeap,'conditional',new Map(),dummyObjects));
@@ -185,11 +169,19 @@ export function analyzeCommonGraphs({model,plans}) {
               if(bounded||reaches)value=literal(op.view,op.view===boolTypeId?3:0);
               const key=fn+'/'+op.result;if(!operations.has(key))operations.set(key,{normal:false,requestTrap:false,approved});const record=operations.get(key);record.normal ||= reaches;record.requestTrap ||= trap;
               if(!bounded&&!reaches)continues=false;
-            }else if(name==='invoke') {
-              methodReceiver(model.functions.get(p.function_id),args[0],plan.owner,op.range);
-              const call=context(p.function_id,args,state.heap);const targets=callTargets.get(fn+'/'+op.range.start+':'+op.range.end)??new Set();targets.add(p.function_id);callTargets.set(fn+'/'+op.range.start+':'+op.range.end,targets);
+            }else if(name==='invoke'||name==='invoke_method') {
+              const method=name==='invoke_method',details={functionId:fn,primary:{sourceId:plan.owner.sourcePath,...op.range}};
+              check(method||model.functions.get(p.function_id)?.kind!=='method','capability','method call requires explicit finite dispatch',details);
+              if(method){check(!args[0].unknown,'capability','method receiver has no proved actual nominal type',details);
+                for(const tag of args[0].tags){spend();check(p.dispatch.some(row=>{spend();return row.receiver_type===tag;}),'capability','actual receiver has no verified method target',{...details,actualType:tag});}}
               const complete=(target,value,heap)=>{const after=a.clone(state);for(const [slot,v]of heap)update(after.heap,slot,v);edge(target,after,blocks.get(target).parameters.length?[value]:[]);};
-              if(call.normal)complete(op.successors[0],call.returned,call.normalHeap);if(call.language)complete(op.successors[1],call.thrown,call.languageHeap);continues=false;
+              for(const row of method?p.dispatch:[{target:p.function_id}]){
+                spend();if(method&&!args[0].tags.has(row.receiver_type))continue;let passed=args;
+                if(method){spend(args.length);passed=args.slice(0,byId.get(row.target).parameters.length);const receiver=a.copy(args[0]);receiver.tags.clear();receiver.tags.add(row.receiver_type);
+                  for(const ref of receiver.refs){spend();if(objects.get(ref)?.type!==row.receiver_type)receiver.refs.delete(ref);}passed[0]=receiver;}
+                const call=context(row.target,passed,state.heap),key=fn+'/'+op.range.start+':'+op.range.end,targets=callTargets.get(key)??new Set();targets.add(row.target);callTargets.set(key,targets);
+                if(call.normal)complete(op.successors[0],call.returned,call.normalHeap);if(call.language)complete(op.successors[1],call.thrown,call.languageHeap);
+              }continues=false;
             }else if(name==='cf.br'||name==='route'){edge(op.successors[0],state,args);continues=false;}
             else if(name==='cf.cond_br') {
               check(!args[0].unknown&&[...args[0].tags].every(tag=>tag===boolTypeId),'capability','condition has no proved boolean actual value');

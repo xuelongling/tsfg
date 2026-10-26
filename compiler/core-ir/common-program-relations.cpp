@@ -122,6 +122,9 @@ bool SourceRelations::entry(const Json &entry){
       for(const auto &[x,y]:dependencies.at(current)){if(!m.spend())return false;todo.push_back({std::get<0>(current),std::get<1>(current),std::get<2>(current),x,y});}}
   }return true;
 }
+bool SourceRelations::method(const std::string &view,const std::string &member){
+  return members(view)&&m.need(memberCache.at(view).count(member)&&memberCache.at(view).at(member).kind=="method","call target is not the original effective static method");
+}
 bool SourceRelations::forward(const Json &t){
   const auto &c=field(t,"construction"),&f=field(c,"implicitForward"),&o=field(c,"origin");const auto base=string(field(t,"base"));
   if(!m.need(m.types.count(base),"implicit forwarding base missing"))return false;const auto &bc=field(*m.types.at(base),"construction");
@@ -143,8 +146,16 @@ bool SourceRelations::forward(const Json &t){
 }
 bool SourceRelations::finish(){
   if(!m.need(reached.size()==records.size(),"M12 directory contains unreachable occurrence records"))return false;
-  decltype(m.p.referenceFields) fields;decltype(m.p.entryCandidates) entries;
-  const auto project=[&](const Key &k,Program::ReferenceFields &fields){
+  decltype(m.p.referenceFields) fields,methods;decltype(m.p.entryCandidates) entries;
+  referenceContracts::MethodCatalogue catalogue;
+  for(const auto &[id,t]:m.types){if(!m.spend())return false;const auto kind=string(field(*t,"kind"));if(kind!="reference"&&kind!="value")continue;
+    referenceContracts::MethodClass row;row.base=string(field(*t,"base"));for(const auto &fid:items(field(*t,"methods"))){if(!m.spend())return false;row.methods.push_back(string(fid));}catalogue.classes.emplace(id,std::move(row));}
+  for(const auto &[owner,row]:catalogue.classes)for(const auto &id:row.methods){
+    if(!m.spend()||!m.need(m.functions.count(id),"M12 method declaration missing"))return false;const auto &f=*m.functions.at(id);
+    const auto name=string(field(f,"name"));if(!m.spend(name.size()/8+1))return false;catalogue.methods.emplace(id,referenceContracts::Method{string(field(f,"ownerType")),name,string(field(f,"overrideTarget"))});}
+  const auto charge=[&](size_t n){return m.spend(n);};std::string methodError;
+  if(!referenceContracts::validateMethods(catalogue,charge,methodError))return m.error.message.empty()?m.need(false,methodError):false;
+  const auto project=[&](const Key &k,Program::ReferenceFields &fields,Program::ReferenceFields *methods){
     const auto &c=field(*records.at(k),"compatibility");const auto source=std::get<3>(k),target=std::get<4>(k);
     for(const auto &[actual,type]:m.types){
       if(!m.spend())return false;if(string(field(*type,"kind"))!="reference")continue;auto current=actual;std::set<std::string> seen;bool descends=false;
@@ -158,16 +169,22 @@ bool SourceRelations::finish(){
         if(m.fieldIds.count(a)){
           if(!m.need(m.fieldIds.count(b),"M12 semantic field map kind differs"))return false;const auto from=m.fieldIds.at(a),to=m.fieldIds.at(b);
           auto old=projection.find(to);if(!m.need(old==projection.end()||old->second==from,"ambiguous actual/static M12 field map"))return false;projection[to]=from;
+        }else if(methods&&m.functionIds.count(a)){
+          if(!m.need(m.functionIds.count(b),"M12 semantic method map kind differs"))return false;auto &selected=(*methods)[{m.typeIds.at(actual),m.typeIds.at(target)}];
+          std::string effective;methodError.clear();if(!referenceContracts::selectMethod(catalogue,{},actual,actual,a,effective,charge,methodError))return m.error.message.empty()?m.need(false,methodError):false;
+          if(!m.need(!effective.empty(),"M12 source method has no actual effective implementation"))return false;
+          const auto from=m.functionIds.at(effective),to=m.functionIds.at(b);auto old=selected.find(to);
+          if(!m.need(old==selected.end()||old->second==from,"ambiguous actual/static M12 method map"))return false;selected[to]=from;
         }
       }
     }return true;
   };
-  for(const auto &k:verified)if(!project(k,fields))return false;
+  for(const auto &k:verified)if(!project(k,fields,&methods))return false;
   for(const auto &[binding,views]:entryTypes){entries.try_emplace(binding);for(const auto &[view,candidates]:views)for(const auto &candidate:candidates){
     if(!m.spend())return false;entries[binding].candidates[m.typeIds.at(view)].insert(m.typeIds.at(candidate));
   }}
-  for(const auto &[binding,closure]:entryRecords)for(const auto &k:closure)if(!project(k,entries[binding].fields))return false;
-  m.p.referenceFields=std::move(fields);m.p.entryCandidates=std::move(entries);return true;
+  for(const auto &[binding,closure]:entryRecords)for(const auto &k:closure)if(!project(k,entries[binding].fields,nullptr))return false;
+  m.p.referenceFields=std::move(fields);m.p.referenceMethods=std::move(methods);m.p.entryCandidates=std::move(entries);return true;
 }
 bool SourceRelations::assertion(const std::string &from,const std::string &to,const std::set<Pair> &available,std::set<Pair> &used){
   if(!m.types.count(from)||!m.types.count(to))return false;

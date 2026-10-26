@@ -39,7 +39,7 @@ const std::map<std::string,std::vector<llvm::StringRef>> properties={
   {"allocate_reference",{"type","construction"}},{"array_create",{"allocation"}},
   {"array_read",{"element"}},{"array_store",{"element"}},{"array_resize",{}},
   {"array_length",{}},{"readspan",{}},{"readspan_length",{}},{"pack",{"type"}},
-  {"invoke",{"function_id","signature_hash"}},{"enter_handler",{"handler","hasCatch","hasFinally"}},
+  {"invoke",{"function_id","signature_hash"}},{"invoke_method",{"function_id","signature_hash","dispatch"}},{"enter_handler",{"handler","hasCatch","hasFinally"}},
   {"catch_bind",{"binding"}},{"finally_enter",{"handler","completion"}},
   {"route",{"completion","handler"}},{"return_throw",{}},{"unreachable",{}},{"fuel",{"event"}}
 };

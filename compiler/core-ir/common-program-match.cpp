@@ -32,7 +32,7 @@ bool matchSourcePlan(ActualCheck &c,const SourcePlan &source,const Function &act
   std::map<uint16_t,uint16_t> values;std::map<uint16_t,SourceAnchor> origins;std::set<uint16_t> seenActual;
   for(const auto &block:expected.blocks)for(const auto &op:block.operations){
     if(!c.step())return false;if(op.result!=noRegister)origins.emplace(op.result,op.range);
-    if(op.name=="invoke")for(auto r:expected.blocks[op.successors[0]].parameters)origins.emplace(r,op.range);
+    if(op.name=="invoke"||op.name=="invoke_method")for(auto r:expected.blocks[op.successors[0]].parameters)origins.emplace(r,op.range);
   }
   const auto bind=[&](uint16_t raw,uint16_t semantic){
     auto found=values.find(raw);if(found!=values.end())return c.need(found->second==semantic,"SSA value changed its Source origin");

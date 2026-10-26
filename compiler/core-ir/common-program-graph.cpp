@@ -97,8 +97,18 @@ bool ActualCheck::graph(){
       }else if(op.name=="numeric_use"){
         if(!need(noResult&&op.operands.size()==1&&op.successors.size()==1&&fn->blocks[op.successors[0]].parameters.size()==1&&
           fn->carriers[fn->blocks[op.successors[0]].parameters[0]]==i32Id,"numeric request-trap/normal shape differs"))return false;
+      }else if(op.name=="invoke_method"){
+        const auto valid=[&](){
+        std::vector<std::string> args;std::string result;if(!need(noResult&&op.successors.size()==2,"method invocation control differs")||!methodAbi(*fn,op,args,result))return false;
+        for(size_t n=0;n<args.size();++n)if(!need(fn->carriers[op.operands[n]]==args[n],"method invocation joined argument ABI differs"))return false;
+        const auto &normal=fn->blocks[op.successors[0]].parameters,&language=fn->blocks[op.successors[1]].parameters;
+        return need(normal.size()==(result=="void"?0:1)&&(normal.empty()||fn->carriers[normal[0]]==result)&&language.size()==1&&fn->carriers[language[0]]==payload,"method normal/language joined ABI differs");};
+        if(!valid()){if(e.code!="core-ir-common-budget"){e.path=fn->path;e.range=op.range;}return false;}
       }else if(op.name=="invoke"){
         const auto target=string(field(op.properties,"function_id"));if(!need(noResult&&op.successors.size()==2&&functions.count(target)&&physicalFunctions.count(target),"direct invocation target differs"))return false;
+        if(sourceFunctions.count(target)&&string(field(*sourceFunctions.at(target),"kind"))=="method"){
+          e.path=fn->path;e.range=op.range;return need(false,"virtual method requires explicit dispatch");
+        }
         const auto &called=*physicalFunctions.at(target);const auto &args=items(field(called,"parameters"));
         if(!need(args.size()==op.operands.size()&&functions.at(target)->signature==string(field(op.properties,"signature_hash")),"direct invocation signature/arity differs"))return false;
         for(size_t n=0;n<args.size();++n)if(!need(fn->carriers[op.operands[n]]==string(args[n]),"invocation ABI argument differs"))return false;

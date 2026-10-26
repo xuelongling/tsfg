@@ -28,6 +28,7 @@ public:
   bool expression(const Json &,const std::string &,const std::string &);
   bool entry(const Json &);
   bool forward(const Json &);
+  bool method(const std::string &view,const std::string &member);
   bool finish();
 };
 } // namespace tsfg::commonProgram

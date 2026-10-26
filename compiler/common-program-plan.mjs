@@ -4,6 +4,7 @@ import descriptor from '../contracts/common-program-core-development.json' with 
 import {verifyCommonProgramHir} from './common-program-hir.mjs';
 import {planCommonFunction} from './common-program-control.mjs';
 import {commonCheck as check,commonMeter,canonical,sha256} from './common-program-common.mjs';
+import {commonMethods} from './common-program-methods.mjs';
 export const commonCoreSchema=sha256(canonical(descriptor));
 export function createCommonGraph(model,owner) {
   const blocks=[],registers=new Map();let next=0,nextBlock=0,operations=0,edges=0;
@@ -35,7 +36,7 @@ export function commonProgramPlan(input) {
     writable:!field.readonly,range:field.origin},'field',type.id);}
   const modules=hir.modules.map(module=>({id:module.initializer,name:'$moduleInit',kind:'module-initializer',sourcePath:module.sourcePath,returnType:'void',parameters:[],bindings:[],
     signatureHash:sha256('tsfg.common-program.initializer-signature.v1\0void'),range:{start:0,end:hir.sources.find(source=>source.path===module.sourcePath).content.length},body:module.initialization}));
-  const model={hir,types,functions,bindings,fields,globals,spend,schema:commonCoreSchema,payload:'payload:'+commonCoreSchema,limits:descriptor.limits,
+  const model={hir,types,functions,bindings,fields,globals,spend,methods:commonMethods(hir,spend),schema:commonCoreSchema,payload:'payload:'+commonCoreSchema,limits:descriptor.limits,
     cell:id=>'cell:'+id};
   const plans=[...hir.functions,...modules].map(owner=>planCommonFunction(model,owner));return {model,plans};
 }

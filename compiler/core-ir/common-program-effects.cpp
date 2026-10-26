@@ -1,5 +1,6 @@
 // SPDX-License-Identifier: MIT
 #include "common-program-source.h"
+#include "common-program-methods.h"
 #include "llvm/ADT/STLExtras.h"
 namespace tsfg::commonProgram {
 namespace {
@@ -85,7 +86,11 @@ struct Derive {
       std::vector<Origins> args;if(v.getAsObject()->get("receiver"))args.push_back(visit(field(v,"receiver")));
       for(const auto &a:items(field(v,"arguments")))args.push_back(visit(a));const auto fid=string(field(v,"callee"));
       if(fid=="intrinsic:readSpan"){if(ok(!args.empty(),"ReadSpan actual owner missing"))result.owners=ownerCopy(args[0]);}
-      else if(auto *u=consume(fid,args)){result.throwing|=u->mayThrow;if(reference(type))result.owners.insert("unknown:"+fid);}
+      else if(functions.count(fid)&&string(field(*functions.at(fid),"kind"))=="method"){
+        Json rows=nullptr;if(!methodDispatch(p,string(field(field(v,"receiver"),"type")),fid,rows,e))return result;std::vector<std::string> targets;
+        if(!methodTargets(p,rows,targets,e))return result;
+        for(const auto &target:targets)if(auto *u=consume(target,args)){result.throwing|=u->mayThrow;if(reference(type))result.owners.insert("unknown:"+target);}
+      }else if(auto *u=consume(fid,args)){result.throwing|=u->mayThrow;if(reference(type))result.owners.insert("unknown:"+fid);}
     }else{
       for(auto key:{"expression","left","right","receiver","index","value"})if(v.getAsObject()->get(key))visit(field(v,key));
       if(kind=="stringConcat"){out.allocation=true;out.managedReference=true;}

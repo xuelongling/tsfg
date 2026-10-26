@@ -19,6 +19,7 @@ struct MemberProof {
   std::map<std::string,std::string> fieldOwners;
   std::set<Pair> relations;
   referenceContracts::Types logicalTypes;
+  referenceContracts::MethodCatalogue methodTypes;bool methodTypesReady=false;
   std::map<std::string,std::set<mlir::Operation *>> constructorStores;
   std::vector<std::string> lineage(std::string type) {
     std::vector<std::string> result; std::set<std::string> seen;
@@ -49,18 +50,25 @@ struct MemberProof {
     }
     cache.emplace(id,std::move(result)); return true;
   }
-  std::string implementation(const std::string &actual, const std::string &member) {
-    if (!members(actual)) return {};
-    std::string selected;
-    for (const auto &[id,fn] : cache.at(actual).methods) {
-      const Object *current = fn; std::set<std::string> visited;
-      while (current) {
-        if (!proof.charge() || !visited.insert(string(*current,"id")).second) return {};
-        if (string(*current,"id") == member) { if (!selected.empty()) return {}; selected=id; break; }
-        const auto next = proof.callable.find(string(*current,"overrideTarget")); current = next == proof.callable.end() ? nullptr : next->second;
-      }
+  bool methodCatalogue(){
+    if(methodTypesReady)return true;
+    for(const auto &[id,t]:proof.catalog){
+      if(!proof.charge())return false;const auto kind=string(*t,"kind");if(kind!="value"&&kind!="reference")continue;
+      referenceContracts::MethodClass row;row.base=string(*t,"base");
+      if(const auto *methods=t->getArray("methods"))for(const auto &m:*methods){
+        if(!proof.charge()||!m.getAsString()||!proof.callable.count(m.getAsString()->str()))return proof.reject("owned method function missing");
+        const auto fid=m.getAsString()->str();const auto &fn=*proof.callable.at(fid);if(!proof.charge(fn.getString("name").value_or("").size()/8+1))return false;
+        row.methods.push_back(fid);methodTypes.methods.emplace(fid,referenceContracts::Method{string(fn,"ownerType"),string(fn,"name"),string(fn,"overrideTarget")});
+      }methodTypes.classes.emplace(id,std::move(row));
     }
-    return selected;
+    std::string error;if(!referenceContracts::validateMethods(methodTypes,[&](size_t n){return proof.charge(n);},error))return proof.failed?false:proof.reject(error);
+    methodTypesReady=true;return true;
+  }
+  std::string implementation(const std::string &actual,const std::string &member){
+    if(!methodCatalogue())return {};std::string selected,error;
+    if(!referenceContracts::selectMethod(methodTypes,{},actual,actual,member,selected,[&](size_t n){return proof.charge(n);},error)){
+      if(!proof.failed)proof.reject(error);return {};
+    }return selected;
   }
   bool logicalCatalogue() {
     if(!logicalTypes.empty())return true;
@@ -181,13 +189,19 @@ struct MemberProof {
     }
     return true;
   }
-  std::string selectedMember(const std::string &actual, const std::string &view, const std::string &member, bool method) {
-    if (!members(actual)) return {};
-    if (method) { const auto direct=implementation(actual,member); if (!direct.empty()) return direct; }
-    else if (cache.at(actual).fields.count(member)) return member;
-    const auto found=views.find({actual,view}); if(found==views.end())return {};
-    const auto *pairs=found->second.getAsObject()->getArray(method?"methods":"fields");
-    for(const auto &value:*pairs) {if(!proof.charge())return {};const auto &pair=*value.getAsObject();if(string(pair,"target")==member)return string(pair,"source");}
+  std::string selectedMember(const std::string &actual,const std::string &view,const std::string &member,bool method){
+    if(!members(actual))return {};const auto found=views.find({actual,view});
+    if(method){
+      if(!methodCatalogue())return {};referenceContracts::MethodMaps maps;
+      if(found!=views.end())for(const auto &v:*found->second.getAsObject()->getArray("methods")){
+        if(!proof.charge())return {};const auto &row=*v.getAsObject();maps[{actual,view}].emplace(string(row,"target"),string(row,"source"));
+      }
+      std::string selected,error;if(!referenceContracts::selectMethod(methodTypes,maps,actual,view,member,selected,[&](size_t n){return proof.charge(n);},error)){
+        if(!proof.failed)proof.reject(error);return {};
+      }return selected;
+    }
+    if(cache.at(actual).fields.count(member))return member;if(found==views.end())return {};
+    for(const auto &v:*found->second.getAsObject()->getArray("fields")){if(!proof.charge())return {};const auto &row=*v.getAsObject();if(string(row,"target")==member)return string(row,"source");}
     return {};
   }
   bool missingMember(const std::string &actual,const std::string &view,const std::string &member) {

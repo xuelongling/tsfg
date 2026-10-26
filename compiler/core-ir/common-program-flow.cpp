@@ -1,5 +1,6 @@
 // SPDX-License-Identifier: MIT
 #include "common-program-actual.h"
+#include "common-program-methods.h"
 namespace tsfg::commonProgram {
 bool ActualCheck::run(){
   if(!catalogs()||!graph()||!source())return false;
@@ -13,8 +14,10 @@ bool ActualCheck::run(){
     }
     for(size_t b=0;b<fn->blocks.size();++b){
       const bool cyclic=reachable[b].count(uint16_t(b));if(cyclic)repeatingBlocks.insert(id+"/"+std::to_string(b));
-      for(const auto &op:fn->blocks[b].operations)if(op.name=="invoke"){
-        if(!step())return false;const auto target=string(field(op.properties,"function_id"));calls[id].insert(target);++incoming[target];if(cyclic)repeatingFunctions.insert(target);
+      for(const auto &op:fn->blocks[b].operations)if(op.name=="invoke"||op.name=="invoke_method"){
+        std::vector<std::string> targets;if(op.name=="invoke")targets.push_back(string(field(op.properties,"function_id")));
+        else if(!methodTargets(p,field(op.properties,"dispatch"),targets,e))return false;
+        for(const auto &target:targets){if(!step())return false;calls[id].insert(target);++incoming[target];if(cyclic)repeatingFunctions.insert(target);}
       }
     }
   }

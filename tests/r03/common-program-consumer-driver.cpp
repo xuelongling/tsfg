@@ -20,6 +20,10 @@ bool runCommonEntryRoleModels();
 bool runCommonM12ActualModels(tsfg::commonProgram::ActualCheck &);
 bool runCommonBoundaryModels(const tsfg::commonProgram::Program &,size_t,bool);
 bool runCommonKernelModels(const tsfg::commonProgram::Program &);
+bool runReferenceMethodModels();
+bool runCommonMethodActualModels(tsfg::commonProgram::ActualCheck &);
+bool runCommonMethodProgramModels(const tsfg::commonProgram::Program &);
+bool runCommonMethodColdModels(const tsfg::commonProgram::Program &);
 #ifdef _WIN32
 #include <crtdbg.h>
 #endif
@@ -83,15 +87,17 @@ int main(int argc,char **argv){
     const bool passed=identityControls();llvm::outs()<<"synthetic identity-order/budget "<<(passed?"3/3":"FAIL")<<"\n";return passed?0:1;
   }
   if(argc==2&&std::string(argv[1])=="--entry-roles")return runCommonEntryRoleModels()?0:1;
+  if(argc==2&&std::string(argv[1])=="--method-selectors")return runReferenceMethodModels()?0:1;
   if(argc==2&&(std::string(argv[1])=="--entry-budget"||std::string(argv[1])=="--entry-budget-probe"))return runCommonEntryBudgetModels(std::string(argv[1])=="--entry-budget-probe")?0:1;
   if(argc==2&&std::string(argv[1])=="--relations")return runReferenceContractModels()?0:1;
   if(argc==3&&std::string(argv[1])=="--m12-source")return runCommonM12SourceModels(argv[2])?0:1;
   if(argc==2&&std::string(argv[1])=="--weak")return runCommonWeakModels()?0:1;
   const bool boundary=std::string(argv[1])=="--boundaries"||std::string(argv[1])=="--budget-probe";
   const bool kernel=std::string(argv[1])=="--kernel-models";
+  const bool methods=std::string(argv[1])=="--method-programs";
   mlir::DialectRegistry registry;tsfg::registerCoreDialect(registry);registerDialect(registry);
   registry.insert<mlir::func::FuncDialect,mlir::cf::ControlFlowDialect>();mlir::MLIRContext context(registry);
-  for(int i=boundary||kernel?2:1;i<argc;++i){
+  for(int i=boundary||kernel||methods?2:1;i<argc;++i){
     auto bytes=llvm::MemoryBuffer::getFile(argv[i]);if(!bytes||(*bytes)->getBufferSize()>4*1024*1024)return 3;
     const auto trace=[&](llvm::StringRef stage){llvm::errs()<<"common-model "<<i<<" "<<stage<<"\n";llvm::errs().flush();};trace("parse");
     auto module=mlir::parseSourceString<mlir::ModuleOp>((*bytes)->getBuffer(),&context);if(!module)return 4;
@@ -102,10 +108,11 @@ int main(int argc,char **argv){
     if(passed){stage="source";trace(stage);passed=verifySource(p,e);}
     if(passed){stage="types";trace(stage);passed=verifyTypes(p,e);}
     if(passed){stage="actual";trace(stage);ActualCheck actual{p,e};passed=actual.run();
-      if(passed&&(!actualExpectations(actual)||!runCommonM12ActualModels(actual))){passed=false;reject(e,"test-actual-expectations","independent actual contexts differ from original Source expectations");}}
+      if(passed&&(!actualExpectations(actual)||!runCommonM12ActualModels(actual)||methods&&!runCommonMethodActualModels(actual))){passed=false;reject(e,"test-actual-expectations","independent actual contexts differ from original Source expectations");}}
     if(passed){stage="publication";trace(stage);passed=verifyPublication(p,e);}
     if(passed){stage="kernel";trace(stage);passed=verifyKernelProof(p,e);}
     if(passed&&kernel){stage="kernel-contract-models";passed=runCommonKernelModels(p);}
+    if(passed&&methods){stage="method-contract-models";passed=runCommonMethodProgramModels(p)&&runCommonMethodColdModels(p);}
     if(passed){stage="normalized-negative-controls";trace(stage);passed=rejectsMutations(p);
       if(!passed)reject(e,"test-normalized-controls","complete normalized mutation was not rejected at its independent boundary");}
     llvm::outs()<<canonical(Object{{"input",std::string(argv[i])},{"passed",passed},{"stage",stage},

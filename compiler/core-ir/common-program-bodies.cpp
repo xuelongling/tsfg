@@ -94,9 +94,13 @@ bool SourceBodies::function(const Json &fn){
     scope[string(field(b,"name"))]=string(field(b,"id"));initialized.insert(string(field(b,"id")));declared.insert(string(field(b,"id")));
   }
   size_t a,b;if(!source->span(field(fn,"declarationRange"),a,b))return false;
-  std::vector<Json> header;size_t cursor=a;
+  std::vector<Json> header;size_t cursor=a;bool overrideToken=false;
   while(cursor<b&&(source->tokens[cursor].text=="export"||source->tokens[cursor].text=="default"||
-    source->tokens[cursor].text=="public"||source->tokens[cursor].text=="private"||source->tokens[cursor].text=="protected"))header.push_back(source->tokens[cursor++].text);
+    source->tokens[cursor].text=="public"||source->tokens[cursor].text=="private"||source->tokens[cursor].text=="protected"||source->tokens[cursor].text=="override")){
+    if(source->tokens[cursor].text=="override"){
+      if(!model.need(!overrideToken&&!string(field(fn,"overrideTarget")).empty(),"original override modifier lacks inherited member"))return false;overrideToken=true;
+    }header.push_back(source->tokens[cursor++].text);
+  }
   Json actualName=field(fn,"nameRange");const auto owner=string(field(fn,"ownerType"));
   const bool constructor=model.types.count(owner)&&string(field(field(*model.types.at(owner),"constructor"),"id"))==id;
   if(constructor){

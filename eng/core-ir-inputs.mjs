@@ -72,6 +72,8 @@ export const coreIrInputs = Object.freeze([
   "compiler/core-ir/common-program-leaves.cpp",
   "compiler/core-ir/common-program-match.cpp",
   "compiler/core-ir/common-program-memory.cpp",
+  "compiler/core-ir/common-program-methods.cpp",
+  "compiler/core-ir/common-program-methods.h",
   "compiler/core-ir/common-program-modules.cpp",
   "compiler/core-ir/common-program-plan.cpp",
   "compiler/core-ir/common-program-plan.h",

@@ -18,7 +18,7 @@ export function commonProgramCore(input,publication,request) {
     'tsfg_core.bytecode_schema':coreExchangeFormat.bytecodeSchema};
   text.append('module attributes {');let first=true;
   for(const [key,value]of Object.entries(ordinary)){text.append(first?'':', ',key,' = ');first=false;text.append(typeof value==='number'?value+' : i64':text.quote(value));}
-  text.append(', tsfg_program.program = {family = ',text.quote('tsfg.core-program-development'),', version = 1 : i32');
+  text.append(', tsfg_program.program = {family = ',text.quote('tsfg.core-program-development'),', version = 2 : i32');
   const marker={schema:model.schema,hir,hir_hash:sha256(hir+'\n'),representation,representation_hash:sha256(representation+'\n')};
   for(const [key,value]of Object.entries(marker)){text.append(', ',key,' = ');text.append(text.quote(value));}
   for(const [key,value]of Object.entries({publication,request,proof})){text.append(', ',key,' = ');text.append(text.quote(canonical(value)));}

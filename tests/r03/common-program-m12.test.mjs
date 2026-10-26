@@ -10,8 +10,6 @@ import {createCommonProgramPublication} from '../../compiler/common-program-anal
 import {canonical,sha256,i32TypeId} from '../../compiler/identity.mjs';
 import {commonEntryReferences} from '../../compiler/common-program-entry.mjs';
 import {commonMeter} from '../../compiler/common-program-common.mjs';
-import {analyzeCommonGraphs} from '../../compiler/common-program-actual.mjs';
-import {commonMethodModel} from './common-program-model-cases.mjs';
 const bytes=await fs.readFile(new URL('./common-program-m12-witness-forward.json',import.meta.url));
 assert.equal(sha256(bytes),'sha256:f90d7b2f9566f2a8bd3a9c43ac5fa6cb5d14abbf36a033302a5dd18e3202667d');
 const facts=readCommonProgramFacts(bytes),context={family:'tsfg.common-program-context-candidate',version:1,factsBytes:bytes,expectedPackageId:facts.packageId};
@@ -95,12 +93,4 @@ test('one complete fixed-publication Core retains the relation consumers and ord
   const text=lowerHir(hir,context,{publication,request});assert.equal((text.match(/func\.func @/g)??[]).length,10);
   assert.ok(text.includes('tsfg_program.catch_bind'));assert.ok(text.includes('tsfg_program.allocate_reference'));
   assert.ok(text.includes(fn('convert').id));assert.ok(text.includes(fn('ordinary').id));
-});
-for(const mode of ['override','structural'])test('synthetic actual graph refuses an unimplemented method dispatch: '+mode,()=>{
-  assert.throws(()=>analyzeCommonGraphs(commonMethodModel(mode)),/** @param {any} e */e=>
-    e.code==='r03-common-program-capability'&&e.functionId==='entry'&&e.primary.sourceId==='/unit-model.ts'&&e.primary.start===0&&e.primary.end===1);
-});
-test('synthetic actual graph permits inherited methods with the same effective callee',()=>{
-  const values=analyzeCommonGraphs(commonMethodModel('inherited'));
-  assert.ok([...values.actual.contexts.values()].filter(c=>c.plan.owner.id==='entry').every(c=>c.normal));
 });

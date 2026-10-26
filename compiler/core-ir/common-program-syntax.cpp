@@ -90,7 +90,8 @@ bool SourceSyntax::sequence(const Json &r,const std::vector<Json> &parts,bool se
         joined+=tokens[a].text;prior=tokens[a++].end;
       }
       if(!model.need(joined==*token,"original Source punctuation/operator order differs"))return false;
-    }else{size_t child,end;if(!span(part,child,end)||!model.need(child==a&&end<=b,"original Source child order differs"))return false;a=end;}
+    }else{size_t child,end;if(!span(part,child,end)||!model.need(child==a&&end<=b,"original Source child order differs")){
+      model.error.path=path;model.error.range={uint32_t(field(r,"start").getAsInteger().value_or(0)),uint32_t(field(r,"end").getAsInteger().value_or(0))};return false;}a=end;}
   }
   if(semicolon&&a<b&&tokens[a].text==";")++a;
   return model.need(a==b,"unrepresented original Source syntax");
