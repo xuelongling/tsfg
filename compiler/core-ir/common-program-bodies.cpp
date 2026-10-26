@@ -187,7 +187,29 @@ bool SourceBodies::function(const Json &fn){
   header.push_back(std::move(actualName));header.push_back("(");size_t index=0;
   for(const auto &p:items(field(fn,"parameters"))){
     if(!model.spend())return false;if(index++)header.push_back(",");
-    std::vector<Json> pieces{field(p,"nameRange")};
+    size_t pa,pb,na,nb;if(!source->span(field(p,"declarationRange"),pa,pb)||!source->span(field(p,"nameRange"),na,nb))return false;
+    std::vector<Json> pieces;bool readonly=false;std::string access;
+    for(auto token=pa;token<na;++token){
+      if(!model.spend())return false;const auto &word=source->tokens[token].text;
+      if(word=="readonly"){if(!model.need(!readonly,"duplicate parameter property readonly modifier"))return false;readonly=true;}
+      else if(!model.need(access.empty()&&(word=="public"||word=="private"||word=="protected"),"original parameter property modifier differs"))return false;
+      else access=word;pieces.push_back(word);
+    }
+    const bool property=readonly||!access.empty();const Json *propertyField=nullptr;
+    if(constructor)for(const auto &f:items(field(*model.types.at(owner),"fields"))){
+      if(!model.spend())return false;if(same(field(f,"parameterBinding"),field(p,"id"))){
+        if(!model.need(!propertyField,"duplicate constructor parameter property"))return false;propertyField=&f;
+      }
+    }
+    if(!model.need(property==bool(propertyField)&&(!property||constructor),"parameter property does not join original constructor field"))return false;
+    if(propertyField&&!model.need(string(field(*propertyField,"name"))==string(field(p,"name"))&&
+      same(field(*propertyField,"type"),field(p,"declaredType"))&&field(*propertyField,"readonly").getAsBoolean()==readonly&&
+      string(field(*propertyField,"access"))==(access.empty()?"public":access)&&
+      string(field(*propertyField,"id"))==digest(std::string("tsfg.array-facts.field.v8")+std::string(1,'\0')+
+        canonical(Object{{"sourcePath",path},{"nameRange",field(p,"nameRange")}}))&&
+      same(field(*propertyField,"origin"),Object{{"source",path},{"start",field(field(p,"declarationRange"),"start")},{"end",field(field(p,"declarationRange"),"end")}}),
+      "constructor parameter property source, type or modifiers differ"))return false;
+    pieces.push_back(field(p,"nameRange"));
     if(!field(p,"annotationRange").getAsNull()){
       if(!annotation(field(p,"annotationRange"),string(field(p,"declaredType"))))return false;
       pieces.push_back(":");pieces.push_back(field(p,"annotationRange"));
