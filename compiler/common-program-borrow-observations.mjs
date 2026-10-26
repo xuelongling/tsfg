@@ -64,14 +64,18 @@ export function commonBorrowObservations({model,records,objects,readEnvironmentS
     spend(value.refs.size);const pending=[...value.refs],nodes=new Map(),cached=new Map();
     function group(stored){
       spend();if(!stored||stored.unknown)return null;
-      for(const tag of stored.tags){spend();if(!['reference','value','array','readSpan'].includes(types.get(tag)?.kind)
+      for(const tag of stored.tags){spend();if(!['reference','value','array','readSpan','function'].includes(types.get(tag)?.kind)
           &&!(tag.startsWith('env:')&&model.environments.has(tag.slice(4))))return null;}
-      check(pending.length+stored.refs.size<=65536,'limit');spend(stored.refs.size);
-      const refs=[...stored.refs];pending.push(...refs);return refs;
+      check(pending.length+stored.refs.size<=65536,'limit');spend(stored.refs.size+stored.pairs.size);
+      const refs=[...stored.refs];pending.push(...refs);
+      // Pure callable alternatives have no environment ref and hold no owner.
+      // Keep their empty branch in must joins while projecting known closures.
+      for(const pair of stored.pairs.values())if(pair.environment===null){refs.push(null);break;}
+      return refs;
     }
     for(let i=0;i<pending.length;i++){
       spend();const ref=pending[i];if(nodes.has(ref))continue;
-      const type=kind(ref),layout=environment(ref),weak=objects.get(ref)?.weak,node={type,layout:layout?.id,groups:[]};nodes.set(ref,node);
+      const type=kind(ref),layout=environment(ref),weak=objects.get(ref)?.weak,node={type,layout:layout?.id,weak,groups:[]};nodes.set(ref,node);
       if(weak)continue;
       if(layout){
         for(const slot of layout.slots){spend();node.groups.push(group(heap.get(ref+'/slot/'+slot.key)));}
@@ -85,9 +89,10 @@ export function commonBorrowObservations({model,records,objects,readEnvironmentS
       }
       // ReadSpan.owner is deliberately absent from this owning graph.
     }
-    return (root,context)=>{
+    return (storage,context)=>{
       if(!cached.has(context)){
-        const owned=new Map();for(const ref of nodes.keys()){spend();owned.set(ref,new Set());}
+        const owned=new Map(),permitted=new Set();for(const [ref,node]of nodes){spend();owned.set(ref,new Set());
+          if(!node.weak&&(!node.layout||unique(allocations,ref,context)?.kind==='environment'))permitted.add(ref);}
         let changed;do{changed=false;for(const [ref,node]of nodes){
           spend();const next=new Set(),allowed=!node.layout||unique(allocations,ref,context)?.kind==='environment';
           if(node.type==='array'){spend();next.add(ref);}
@@ -100,9 +105,14 @@ export function commonBorrowObservations({model,records,objects,readEnvironmentS
           }
           const prior=owned.get(ref);spend(prior.size+next.size);
           if(prior.size!==next.size||[...prior].some(id=>{spend();return !next.has(id);})){owned.set(ref,next);changed=true;}
-        }}while(changed);cached.set(context,owned);
+        }}while(changed);cached.set(context,{owned,permitted});
       }
-      return cached.get(context).get(root)??new Set();
+      const {owned,permitted}=cached.get(context),result=new Set();
+      // Each selected prefix exists whenever this descriptor path exists.
+      // Sibling alternatives never contribute a conditional owner proof.
+      for(const ref of storage){spend();if(!permitted.has(ref))break;
+        const held=owned.get(ref);spend(held.size);for(const id of held)result.add(id);}
+      return result;
     };
   }
   // Capture only paths from this returned value to its selected Span slots.
@@ -111,16 +121,16 @@ export function commonBorrowObservations({model,records,objects,readEnvironmentS
   function returnPaths(value,heap){
     const paths=[],work=[],ownership=owningStorage(value,heap);
     for(const root of value.refs){spend(2);
-      work.push({ref:root,storage:[],active:new Set(),known:!value.unknown,owningKnown:!value.unknown,owning:context=>ownership(root,context)});}
+      work.push({ref:root,storage:[],active:new Set(),known:!value.unknown,owningKnown:!value.unknown});}
     for(let i=0;i<work.length;i++){
       spend();const item=work[i],ref=item.ref;if(item.active.has(ref))continue;
-      if(kind(ref)==='readSpan'){check(paths.length<4096,'limit');paths.push({...item,span:ref});continue;}
+      if(kind(ref)==='readSpan'){check(paths.length<4096,'limit');paths.push({...item,span:ref,owning:context=>ownership(item.storage,context)});continue;}
       check(item.storage.length<128,'limit');spend(item.active.size+item.storage.length+1);
       const active=new Set(item.active),storage=[...item.storage,ref];active.add(ref);
       const known=item.known&&['reference','value','array'].includes(kind(ref));
       const owningKnown=item.owningKnown&&(['reference','value','array'].includes(kind(ref))||Boolean(environment(ref)));
       for(const [slot,stored]of heap){spend();if(!slot.startsWith(ref+'/field/')&&!slot.startsWith(ref+'/element/')&&!environmentSlot(ref,slot))continue;
-        for(const child of stored.refs){spend();check(work.length<65536,'limit');work.push({ref:child,storage,active,known:known&&!stored.unknown,owningKnown:owningKnown&&!stored.unknown,owning:item.owning});}}
+        for(const child of stored.refs){spend();check(work.length<65536,'limit');work.push({ref:child,storage,active,known:known&&!stored.unknown,owningKnown:owningKnown&&!stored.unknown});}}
     }return paths;
   }
   function retained(path,owner,context){
@@ -227,8 +237,8 @@ export function commonBorrowObservations({model,records,objects,readEnvironmentS
             for(const ref of escapingSpans(input,c.entryHeap))for(const id of owners(ref,c.entryHeap).ids){spend();surviving.add(id);}}
           for(const ref of ids){spend();held.set(ref,owners(ref,state.heap));}
           const allowed=()=>{
-            let valid=true;for(const path of paths){spend();const owner=held.get(path.span);valid &&= !owner.pending&&owner.ids.size>0;
-              for(const id of owner.ids){spend();valid &&= surviving.has(id)||path.owningKnown&&path.owning(c.id).has(id)&&Boolean(unique(allocations,id,c.id))||retained(path,id,c.id);}}
+            let valid=true;for(const path of paths){spend();const owner=held.get(path.span),owning=path.owningKnown?path.owning(c.id):new Set();valid &&= !owner.pending&&owner.ids.size>0;
+              for(const id of owner.ids){spend();valid &&= surviving.has(id)||owning.has(id)&&Boolean(unique(allocations,id,c.id))||retained(path,id,c.id);}}
             return valid&&paths.length>0;
           };
           graph.escape(at,ids,allowed,where);

@@ -8,9 +8,11 @@ namespace tsfg::commonProgram {
 class ReturnOwnership {
 public:
   ReturnOwnership(ActualCheck &,const ActualValue &,const ActualHeap &);
-  std::set<std::string> solve(const std::function<bool(const std::string &)> &);
+  // With a descriptor, ownership is conditional on that descriptor escaping
+  // through this graph. Alternative paths meet; simultaneous fields coexist.
+  std::set<std::string> solve(const std::function<bool(const std::string &)> &,const std::string &descriptor={});
 private:
-  struct Value {std::set<std::string> alternatives;bool complete=true,empty=false;};
+  struct Value {std::set<std::string> alternatives;bool complete=true,empty=false,opaque=false;};
   struct Node {std::string kind;bool weak=false;std::vector<Value> fields;};
   ActualCheck &check;Value root;std::map<std::string,Node> nodes;
   Value value(const ActualValue &);

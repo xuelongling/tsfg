@@ -184,8 +184,8 @@ struct BorrowTrace::Impl {
     };
     // Runtime return alternatives do not coexist. Each code/environment pair
     // must retain only its own descriptors; an unrelated pure function carries
-    // no such obligation. Alternatives inside one storage slot still meet the
-    // must-owning intersection, never borrow an owner from another alternative.
+    // no such obligation. The projected graph below also keeps descriptor-path
+    // correlation within storage; a sibling alternative supplies no authority.
     for(const auto &pair:value.callables){
       if(!step(value.tags.size()+1))return;ActualValue selected;
       selected.unknown=value.unknown;selected.callableTop=value.callableTop;selected.callables.insert(pair);
@@ -399,7 +399,7 @@ bool BorrowTrace::solve(){
   for(const auto &result:b.returns){
     if(!b.step())return false;const auto &incoming=b.incomingOwners.at(result.context);
     if(result.owner.pending)return b.fail("ReadSpan owner or escaping storage lifetime is unproved",b.locations.at(result.point));
-    const auto owning=result.ownership->solve([&](const std::string &ref){return b.uniqueOrigin(ref,result.context,b.environmentOrigins)!=nullptr;});
+    const auto owning=result.ownership->solve([&](const std::string &ref){return b.uniqueOrigin(ref,result.context,b.environmentOrigins)!=nullptr;},result.span);
     for(const auto &owner:result.owner.alternatives){if(!b.step())return false;
       if(!incoming.count(owner)&&!owning.count(owner)&&!b.retained(result,owner))return b.fail("ReadSpan owner or escaping storage lifetime is unproved",b.locations.at(result.point));
     }

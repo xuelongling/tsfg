@@ -107,9 +107,19 @@ Each top-level return alternative keeps its own descriptor/holding evidence;
 another alternative cannot supply its owner. Environment instance identities
 include the actual callee function, since one indirect call can enter distinct
 functions at the same source anchor with identical local register numbers.
-Callable alternatives inside one aggregate field remain conservative until that
-field's descriptor/holding correlation is proved. This remaining parent R03-26
-work cannot be inferred from the top-level closure return checks.
+Callable alternatives inside one aggregate field keep their descriptor/holding
+correlation along each actual storage path. Each escaped descriptor path
+can use the independent must ownership of its actually selected storage prefix.
+A weak, unknown or unclosed prefix blocks proof from its descendants. Another
+alternative in that same field cannot lend an owner to the selected path. Every
+descriptor path retains its own obligation, including a different simultaneously
+present field. This extends the top-level closure rule without keeping point
+heaps or treating a descriptor's owner link as independent owning storage.
+
+Repeated factory allocation sites still need an independent uniqueness proof;
+field correlation alone does not make weak storage strong. A language-positive
+case rejected for that missing proof remains an open analysis capability rather
+than a new language error.
 
 An immutable Array binding can still refer to mutable Array contents. Original
 capture occurrences retain their binding read/write meaning, while the fixed

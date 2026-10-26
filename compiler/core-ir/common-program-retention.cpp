@@ -2,11 +2,11 @@
 #include "common-program-retention.h"
 namespace tsfg::commonProgram {
 ReturnOwnership::Value ReturnOwnership::value(const ActualValue &v){
-  Value out;out.complete=!v.unknown&&!v.callableTop;
+  Value out;out.opaque=v.unknown||v.callableTop;out.complete=!out.opaque;
   if(!check.step(v.tags.size()+v.objects.size()+v.callables.size()))return {};
   for(const auto &tag:v.tags){
     if(llvm::StringRef(tag).starts_with("env:"))continue;
-    if(!check.types.count(tag)){out.complete=false;continue;}
+    if(!check.types.count(tag)){out.opaque=true;out.complete=false;continue;}
     const auto k=string(field(*check.types.at(tag),"kind"));
     if(k!="array"&&k!="reference"&&k!="value"&&k!="function")out.complete=false;
   }
@@ -38,18 +38,22 @@ ReturnOwnership::ReturnOwnership(ActualCheck &c,const ActualValue &v,const Actua
     }
   }
 }
-std::set<std::string> ReturnOwnership::solve(const std::function<bool(const std::string &)> &closedEnvironment){
+std::set<std::string> ReturnOwnership::solve(const std::function<bool(const std::string &)> &closedEnvironment,const std::string &descriptor){
   std::map<std::string,std::set<std::string>> owned;std::set<std::string> permitted;
   for(const auto &[ref,node]:nodes){
     if(!check.step())return {};owned.emplace(ref,std::set<std::string>{});
     if(!node.weak&&(node.kind=="array"||node.kind=="reference"||node.kind=="value"||node.kind=="environment"&&closedEnvironment(ref)))permitted.insert(ref);
   }
+  const auto meet=[&](std::set<std::string> &result,bool &first,const std::set<std::string> &next){
+    if(first){if(!check.step(next.size()))return false;result=next;first=false;}
+    else{if(!check.step(result.size()))return false;for(auto it=result.begin();it!=result.end();)if(!next.count(*it))it=result.erase(it);else ++it;}
+    return true;
+  };
   const auto must=[&](const Value &v){
     std::set<std::string> result;if(!v.complete||v.empty)return result;bool first=true;
     for(const auto &ref:v.alternatives){
       if(!check.step())return std::set<std::string>{};auto found=owned.find(ref);if(found==owned.end())return std::set<std::string>{};
-      if(first){if(!check.step(found->second.size()))return std::set<std::string>{};result=found->second;first=false;}
-      else{if(!check.step(result.size()))return std::set<std::string>{};for(auto it=result.begin();it!=result.end();)if(!found->second.count(*it))it=result.erase(it);else ++it;}
+      if(!meet(result,first,found->second))return std::set<std::string>{};
     }return result;
   };
   bool changed;
@@ -62,6 +66,48 @@ std::set<std::string> ReturnOwnership::solve(const std::function<bool(const std:
       auto &prior=owned.at(ref);if(!check.step(prior.size()+next.size()))return {};if(prior!=next){prior=std::move(next);changed=true;}
     }
   }while(changed&&check.e.message.empty());
-  return must(root);
+  if(!check.e.message.empty())return {};
+  if(descriptor.empty())return must(root);
+  // Separate may-reachability from must-holding. A pure alternative that
+  // cannot contain this descriptor creates no escape obligation; an opaque
+  // alternative may contain it and therefore contributes no holding proof.
+  std::set<std::string> reaches;
+  if(nodes.count(descriptor)){if(!check.step())return {};reaches.insert(descriptor);}
+  const auto relevant=[&](const Value &v){
+    if(v.opaque)return true;for(const auto &ref:v.alternatives){if(!check.step())return false;if(reaches.count(ref))return true;}return false;
+  };
+  do{
+    changed=false;for(const auto &[ref,node]:nodes){
+      if(!check.step())return {};for(const auto &edge:node.fields){
+        if(!check.step())return {};if(relevant(edge)&&reaches.insert(ref).second)changed=true;
+      }
+    }
+  }while(changed&&check.e.message.empty());
+  std::map<std::string,std::set<std::string>> conditional;
+  for(const auto &[ref,node]:nodes){if(!check.step())return {};conditional.emplace(ref,std::set<std::string>{});}
+  const auto selected=[&](const Value &v){
+    std::set<std::string> result;bool first=!v.opaque;
+    for(const auto &ref:v.alternatives){
+      if(!check.step())return std::set<std::string>{};if(!reaches.count(ref))continue;
+      if(!meet(result,first,conditional.at(ref)))return std::set<std::string>{};
+    }return result;
+  };
+  // The least fixed point cannot justify a cyclic holding path by itself.
+  // Weak/unclosed prefixes grant no selected-path authority. Each coexisting
+  // field's unconditional owners still accompany every selected child path.
+  do{
+    changed=false;for(const auto &[ref,node]:nodes){
+      if(!check.step())return {};if(!permitted.count(ref)||!reaches.count(ref))continue;
+      std::set<std::string> next;bool first=true;
+      for(const auto &edge:node.fields){
+        if(!check.step())return {};if(!relevant(edge))continue;const auto child=selected(edge);
+        if(!meet(next,first,child))return {};
+      }
+      const auto &common=owned.at(ref);if(!check.step(common.size()))return {};next.insert(common.begin(),common.end());
+      auto &prior=conditional.at(ref);if(!check.step(prior.size()+next.size()))return {};if(prior!=next){prior=std::move(next);changed=true;}
+    }
+  }while(changed&&check.e.message.empty());
+  if(!check.e.message.empty())return {};auto result=selected(root);const auto common=must(root);
+  if(!check.e.message.empty()||!check.step(common.size()))return {};result.insert(common.begin(),common.end());return result;
 }
 } // namespace tsfg::commonProgram
