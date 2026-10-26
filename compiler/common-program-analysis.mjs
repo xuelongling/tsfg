@@ -58,7 +58,7 @@ function prepare(input,publication) {
   check(same(publication.format,format)&&publication.mode==='fixed'&&hash(publication.scopeDigest)&&hash(publication.expectedDigest),'publication');
   check(Array.isArray(publication.contracts)&&publication.contracts.length===hir.functions.length,'publication');spend(publication.contracts.length);
   check(sorted(publication.contracts.map(row=>row.functionId)),'publication');
-  spend(hir.globals.length);const records=new Map(),globals=new Map(hir.globals.map(row=>[row.id,row])),slotByKey=new Map();
+  spend(hir.globals.length+hir.types.length);const records=new Map(),globals=new Map(hir.globals.map(row=>[row.id,row])),types=new Map(hir.types.map(row=>[row.id,row])),slotByKey=new Map();
   spend(hir.environments.length);for(const env of hir.environments){spend(env.slots.length);for(const slot of env.slots)slotByKey.set(slot.key,slot);}
   for(const [i,row]of publication.contracts.entries()) {
     spend();record(row,['functionId','signatureHash','upper','callables','digest']);const fn=hir.functions[i];
@@ -70,10 +70,14 @@ function prepare(input,publication) {
       check(set.every(id=>globals.has(id)&&(key!=='writes'||globals.get(id).writable)),'publication-identity');}
     const parameters=[...(fn.ownerType?[{type:fn.ownerType}]:[]),...fn.parameters];check(Array.isArray(row.upper.parameters)&&row.upper.parameters.length===parameters.length,'publication');
     for(const [index,p]of row.upper.parameters.entries()){spend();record(p,['index',...flags]);check(p.index===index&&flags.every(flag=>typeof p[flag]==='boolean'),'publication');
-      const type=hir.types.find(type=>type.id===parameters[index].type);if(type.kind==='readSpan')check(!p.write&&!p.structural,'publication');}
+      const type=types.get(parameters[index].type);if(type.kind==='readSpan')check(!p.write&&!p.structural,'publication');}
     validateCommonCallableBounds(hir,fn,row.callables,spend);
     check(Array.isArray(row.upper.captures),'publication');let previous;
-    for(const c of row.upper.captures){spend();record(c,['slot',...flags]);const slot=slotByKey.get(c.slot);check(slot&&(!previous||previous<c.slot)&&flags.every(flag=>typeof c[flag]==='boolean')&&(!c.write||slot.writable),'publication');previous=c.slot;}
+    for(const c of row.upper.captures){spend();record(c,['slot',...flags]);const slot=slotByKey.get(c.slot);
+      // Binding assignments are checked at Source/HIR. This upper also covers
+      // writes through an Array held by an immutable lexical binding.
+      const array=slot&&types.get(slot.type)?.kind==='array';
+      check(slot&&(!previous||previous<c.slot)&&flags.every(flag=>typeof c[flag]==='boolean')&&(!c.write||slot.writable||array),'publication');previous=c.slot;}
     const {digest,...body}=row;check(digest===contractDigest(body),'publication-identity');records.set(row.functionId,row);
   }
   const scope=scopeDigest(hir,spend);check(publication.scopeDigest===scope&&publication.expectedDigest===publicationDigest(scope,publication.contracts),'publication-identity');

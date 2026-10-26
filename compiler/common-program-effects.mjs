@@ -25,8 +25,9 @@ export function commonEffects(hir,spend,physical=null) {
     facets:Object.fromEntries(commonFacets.map(flag=>[flag,false]))});
   function derive(fn,records) {
     const result=blank(fn),read=new Set(),write=new Set(),params=ownerParameters(fn),origins=new Map(),calls=[],captures=new Map();
-    const capture=(slot,flags)=>{const before=captures.get(slot)??{slot,read:false,write:false,structural:false};for(const flag of ['read','write','structural'])before[flag] ||= flags[flag];captures.set(slot,before);};
-    for(const row of fn.captures??[]){spend();capture(slots.get(row.binding).key,{read:row.read,write:row.write,structural:false});}
+    const capture=(slot,flags)=>{const before=captures.get(slot)??{slot,read:false,write:false,structural:false};for(const flag of ['read','write','structural'])before[flag] ||= flags[flag]===true;captures.set(slot,before);};
+    for(const row of fn.captures??[]){spend();const slot=slots.get(row.binding);capture(slot.key,{read:row.read,write:row.write,structural:false});
+      if(reference(slot.type))origins.set(row.binding,new Set(['c:'+slot.key]));}
     if(fn.activationEnvironment){result.facets.allocation=true;result.facets.managedReference=true;}
     if(fn.lexicalEnvironment)result.facets.managedReference=true;
     result.facets.managedReference ||= physical?.references.get(fn.id)??false;result.facets.escape=physical?.escaping.get(fn.id)??false;
@@ -34,7 +35,8 @@ export function commonEffects(hir,spend,physical=null) {
     if(reference(fn.returnType)||params.some(p=>reference(p.type)))result.facets.managedReference=true;
     const mergeFacets=facets=>{for(const key of commonFacets)if(key!=='mayThrow')result.facets[key] ||= facets[key];};
     const mark=(set,flag)=>{for(const origin of set){spend();if(origin.startsWith('g:'))(flag==='read'?read:write).add(origin.slice(2));
-      if(origin.startsWith('p:'))result.parameters[Number(origin.slice(2))][flag]=true;}};
+      if(origin.startsWith('p:'))result.parameters[Number(origin.slice(2))][flag]=true;
+      if(origin.startsWith('c:'))capture(origin.slice(2),{[flag]:true});}};
     const union=sets=>{const result=new Set();for(const values of sets)for(const value of values){spend();result.add(value);}return result;};
     const mergeOrigins=(a,b)=>{for(const [id,values]of b){spend();a.set(id,union([a.get(id)??new Set(),values]));}};
     function expression(value,environment=origins) {

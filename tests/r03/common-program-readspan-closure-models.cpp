@@ -126,7 +126,7 @@ bool captureGate(const std::string &kind,bool parameterRole,bool initialized=tru
   Json child=Object{{"id","C"},{"sourcePath","/scope.ts"},{"lexicalParent","P"},{"body",Array{}},{"captures",Array{Object{{"binding","s"}}}}};
   model.types.emplace("T",&type);model.functions.emplace("P",&parent);model.functions.emplace("C",&child);std::map<std::string,SourceSyntax> syntax;
   SourceBodies bodies{model,syntax};bodies.bindings.emplace("s",&binding);const bool accepted=bodies.lexicalScope(child);
-  const bool supported=parameterRole?kind=="readSpan":initialized&&(kind=="readSpan"||kind=="scalar");
+  const bool supported=parameterRole?(kind=="readSpan"||kind=="array"):initialized&&(kind=="readSpan"||kind=="scalar"||kind=="array");
   return supported?accepted:!accepted&&error.code=="core-ir-common-source";
 }
 bool parameterPosition(){

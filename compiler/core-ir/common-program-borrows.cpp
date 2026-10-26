@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: MIT
 #include "common-program-borrows.h"
 #include "common-program-methods.h"
+#include "common-program-retention.h"
 #include "finite-borrow-flow.h"
 namespace tsfg::commonProgram {
 namespace {
@@ -14,7 +15,7 @@ struct BorrowTrace::Impl {
   struct Call {Id point;std::string caller,callee;const Operation *op;};
   struct Boundary {Evidence owner;std::set<std::string> targets,existing,arguments;bool conservative=false,escaping=false;};
   struct Barrier {Id point;Evidence owner;std::set<std::string> eligible;};
-  struct Return {Id point;std::string context,span;Evidence owner;bool managed;std::set<std::string> owning,storage;};
+  struct Return {Id point;std::string context,span;Evidence owner;bool managed;std::shared_ptr<ReturnOwnership> ownership;std::set<std::string> storage;};
   using Origin=std::pair<std::string,std::string>;
   std::map<std::tuple<std::string,size_t,size_t>,Id> points;
   std::map<std::string,Id> entries;
@@ -26,7 +27,7 @@ struct BorrowTrace::Impl {
   std::map<std::string,std::set<Id>> normal,language;
   std::map<std::string,std::set<std::string>> incomingOwners;
   std::set<std::string> fresh,external;
-  std::map<std::string,std::set<Origin>> arrayOrigins,spanOrigins,objectOrigins;
+  std::map<std::string,std::set<Origin>> arrayOrigins,spanOrigins,objectOrigins,environmentOrigins;
   std::vector<Return> returns;
   std::vector<Call> calls;
   std::map<Id,Boundary> boundaries;std::map<Id,std::set<std::string>> connectedTargets;
@@ -122,50 +123,6 @@ struct BorrowTrace::Impl {
       }else if(!step())return {};
     }return out;
   }
-  std::set<std::string> retainingArrays(const ActualValue &value,const ActualHeap &heap){
-    // Storage fields coexist, but alternative references do not. Solve their
-    // must-owned Arrays from the current heap; a may-owner cannot discharge a
-    // Span's lifetime obligation. The least fixed point handles object cycles
-    // without recursive C++ stack growth or self-supporting ownership claims.
-    std::map<std::string,std::set<std::string>> owned;std::vector<std::string> queue;
-    if(!step(value.objects.size()))return {};queue.assign(value.objects.begin(),value.objects.end());
-    for(size_t i=0;i<queue.size();++i){
-      if(!step())return {};const auto ref=queue[i];if(owned.count(ref))continue;owned.emplace(ref,std::set<std::string>{});
-      const auto k=kind(ref);if(!c.e.message.empty())return {};if(k=="readSpan")continue;
-      for(const auto &[slot,child]:heap){if(!step())return {};if(!llvm::StringRef(slot).starts_with(ref+"/"))continue;
-        if(!step(child.objects.size()))return {};queue.insert(queue.end(),child.objects.begin(),child.objects.end());
-      }
-    }
-    const auto must=[&](const ActualValue &v){
-      std::set<std::string> result;if(v.unknown||v.objects.empty())return result;
-      for(const auto &tag:v.tags){if(!step())return std::set<std::string>{};
-        if(!c.types.count(tag))return std::set<std::string>{};const auto k=string(field(*c.types.at(tag),"kind"));
-        if(k!="reference"&&k!="value"&&k!="array")return std::set<std::string>{};
-      }
-      bool first=true;for(const auto &ref:v.objects){
-        if(!step())return std::set<std::string>{};auto found=owned.find(ref);if(found==owned.end())return std::set<std::string>{};
-        if(first){if(!step(found->second.size()))return std::set<std::string>{};result=found->second;first=false;}
-        else{if(!step(result.size()))return std::set<std::string>{};for(auto it=result.begin();it!=result.end();)if(!found->second.count(*it))it=result.erase(it);else ++it;}
-      }return result;
-    };
-    bool changed;do{
-      changed=false;for(auto &[ref,prior]:owned){
-        if(!step())return {};const auto &object=c.objects.at(ref);const auto k=kind(ref);std::set<std::string> next;
-        if(object.weak||k!="array"&&k!="reference"&&k!="value")continue;
-        if(k=="array"){if(!step())return {};next.insert(ref);}
-        for(const auto &[slot,child]:heap){
-          if(!step())return {};bool live=llvm::StringRef(slot).starts_with(ref+"/field/");
-          if(k=="array"&&llvm::StringRef(slot).starts_with(ref+"/element/")){
-            auto length=heap.find(ref+"/length");uint64_t index=0;const auto suffix=llvm::StringRef(slot).drop_front(ref.size()+9);
-            live=length!=heap.end()&&!length->second.unknown&&length->second.number&&*length->second.number>=0&&
-              !suffix.getAsInteger(10,index)&&index<uint64_t(*length->second.number);
-          }
-          if(!live)continue;const auto childOwned=must(child);if(!step(childOwned.size()))return {};next.insert(childOwned.begin(),childOwned.end());
-        }
-        if(!step(prior.size()+next.size()))return {};if(prior!=next){prior=std::move(next);changed=true;}
-      }
-    }while(changed&&c.e.message.empty());return must(value);
-  }
   Id entry(const ActualContext &context){
     auto old=entries.find(context.id);if(old!=entries.end())return old->second;
     if(!step(3))return Flow::none;const auto point=flow.point();if(point==Flow::none){outcome(false);return point;}
@@ -210,25 +167,38 @@ struct BorrowTrace::Impl {
     // Incoming owner authority establishes lifetime, not structural stability.
     for(const auto &[span,owner]:captured){if(!step())return;uses[at].insert(span);}
     if(normal&&context.function->role=="construction-body")return;
-    if(!captured.empty()){
-      const auto owning=retainingArrays(value,heap);
-      for(const auto &[span,owner]:captured){
-        if(!step(owner.alternatives.size()+owning.size()+1))return;
-        returns.push_back({at,context.id,span,owner,false,owning,{}});
+    const auto captureReturns=[&](const ActualValue &selected){
+      const auto containedSpans=contained(selected,heap,true,Scan::Closure);
+      if(containedSpans.empty()||!step())return;
+      auto ownership=std::make_shared<ReturnOwnership>(c,selected,heap);
+      for(const auto &[span,owner]:containedSpans){
+        if(!step(owner.alternatives.size()+1))return;
+        returns.push_back({at,context.id,span,owner,false,ownership,{}});
       }
+    };
+    // Runtime return alternatives do not coexist. Each code/environment pair
+    // must retain only its own descriptors; an unrelated pure function carries
+    // no such obligation. Alternatives inside one storage slot still meet the
+    // must-owning intersection, never borrow an owner from another alternative.
+    for(const auto &pair:value.callables){
+      if(!step(value.tags.size()+1))return;ActualValue selected;
+      selected.unknown=value.unknown;selected.callableTop=value.callableTop;selected.callables.insert(pair);
+      for(const auto &tag:value.tags)if(c.types.count(tag)&&string(field(*c.types.at(tag),"kind"))=="function")selected.tags.insert(tag);
+      captureReturns(selected);
     }
     // Alternatives represent different runtime values. An owning Array in one
     // alternative cannot establish the lifetime of a direct Span in another.
     for(const auto &root:value.objects){
-      if(!step())return;ActualValue selected;selected.objects.insert(root);const auto owning=retainingArrays(selected,heap);
+      if(!step())return;ActualValue selected;selected.unknown=value.unknown;selected.objects.insert(root);
+      captureReturns(selected);auto ownership=std::make_shared<ReturnOwnership>(c,selected,heap);
       std::vector<std::pair<std::string,uint8_t>> pending{{root,value.unknown?2:0}};std::set<std::pair<std::string,uint8_t>> seen;
       std::map<std::string,std::set<std::string>> parents;const auto first=returns.size();
       while(!pending.empty()){
         if(!step())return;auto [ref,mode]=std::move(pending.back());pending.pop_back();if(!seen.emplace(ref,mode).second)continue;
         if(!c.objects.count(ref)){lifetime=locations.at(at);return;}const auto &object=c.objects.at(ref);const auto k=kind(ref);
         if(k=="readSpan"){
-          auto owner=owners(ref,heap);if(!step(owner.alternatives.size()+owning.size()+1))return;
-          returns.push_back({at,context.id,ref,std::move(owner),mode==1,owning,{}});continue;
+          auto owner=owners(ref,heap);if(!step(owner.alternatives.size()+1))return;
+          returns.push_back({at,context.id,ref,std::move(owner),mode==1,ownership,{}});continue;
         }
         const bool aggregate=k=="reference"||k=="value"||k=="array";
         if(mode==2||!aggregate||object.weak||external.count(ref))mode=2;
@@ -388,6 +358,7 @@ bool BorrowTrace::after(const ActualContext &context,const Operation &op,size_t 
       }
     }
   }
+  if(op.name=="env_alloc"&&op.result!=noRegister){auto value=state.values.find(op.result);if(value!=state.values.end())for(const auto &ref:value->second.objects){if(!b.step())return false;b.origin(context,ref,b.environmentOrigins);}}
   if(op.name=="array_create"&&op.result!=noRegister){auto value=state.values.find(op.result);if(value!=state.values.end())for(const auto &ref:value->second.objects){if(!b.step())return false;b.fresh.insert(ref);b.origin(context,ref,b.arrayOrigins);}}
   if(op.name=="readspan"&&op.result!=noRegister){auto value=state.values.find(op.result);if(value!=state.values.end())for(const auto &[span,owner]:b.contained(value->second,state.heap,false)){
     b.origin(context,span,b.spanOrigins);const auto object=b.c.objects.find(span);b.define(object!=b.c.objects.end()&&object->second.weak?b.entry(context):at,span,owner);
@@ -412,8 +383,9 @@ bool BorrowTrace::solve(){
   for(const auto &result:b.returns){
     if(!b.step())return false;const auto &incoming=b.incomingOwners.at(result.context);
     if(result.owner.pending)return b.fail("ReadSpan owner or escaping storage lifetime is unproved",b.locations.at(result.point));
+    const auto owning=result.ownership->solve([&](const std::string &ref){return b.uniqueOrigin(ref,result.context,b.environmentOrigins)!=nullptr;});
     for(const auto &owner:result.owner.alternatives){if(!b.step())return false;
-      if(!incoming.count(owner)&&!result.owning.count(owner)&&!b.retained(result,owner))return b.fail("ReadSpan owner or escaping storage lifetime is unproved",b.locations.at(result.point));
+      if(!incoming.count(owner)&&!owning.count(owner)&&!b.retained(result,owner))return b.fail("ReadSpan owner or escaping storage lifetime is unproved",b.locations.at(result.point));
     }
   }
   for(const auto &call:b.calls){

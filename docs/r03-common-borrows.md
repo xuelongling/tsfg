@@ -83,6 +83,27 @@ non-reference tags. Concurrent fields combine guarantees; alternative refs
 intersect them. A may-set containing an owner does not guarantee its survival.
 The bounded least fixed point starts empty, so a cycle cannot prove itself.
 
+A closure can independently hold an Array through its actual selected capture
+slot or parent environment. This proof projects compact owning storage edges at
+the return, then validates unique non-repeating environment allocation origins
+after all actual contexts are known. It does not keep a heap per observation.
+ReadSpan.owner remains absent from this owning graph; a descriptor-only closure
+does not gain the managed-aggregate retention exemption. Replacing the owner slot
+or joining unrelated owner alternatives loses the independent holding proof.
+Each top-level return alternative keeps its own descriptor/holding evidence;
+another alternative cannot supply its owner. Environment instance identities
+include the actual callee function, since one indirect call can enter distinct
+functions at the same source anchor with identical local register numbers.
+Callable alternatives inside one aggregate field remain conservative until that
+field's descriptor/holding correlation is proved. This remaining parent R03-26
+work cannot be inferred from the top-level closure return checks.
+
+An immutable Array binding can still refer to mutable Array contents. Original
+capture occurrences retain their binding read/write meaning, while the fixed
+capture upper also includes writes and conservative structural effects through
+that Array. Source/HIR still validates binding assignments separately. Neither
+generic Array capture storage nor a function type grants finite code targets.
+
 A typed Span consumption with unknown value/owner evidence must remain pending,
 including a discarded length result. Unknown non-Span transport does not become
 a blanket rejection. Work is charged for copied evidence and every traversed

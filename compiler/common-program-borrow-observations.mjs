@@ -8,6 +8,7 @@ export function commonBorrowObservations({model,records,objects}) {
   const entry=c=>c.id+'/entry',block=(c,name)=>c.id+'/block/'+name;
   const origin=(c,op)=>({functionId:c.plan.owner.id,primary:{sourceId:c.plan.owner.sourcePath,...op.range}});
   const kind=ref=>types.get(objects.get(ref)?.type)?.kind;
+  const environment=ref=>{const tag=objects.get(ref)?.type;return typeof tag==='string'&&tag.startsWith('env:')?model.environments.get(tag.slice(4)):undefined;};
   const environmentSlot=(ref,slot)=>objects.get(ref)?.type.startsWith('env:')&&(slot.startsWith(ref+'/slot/')||slot===ref+'/parent');
   function collect(value,heap,mode) {
     const ids=new Set(),seen=new Set(),pending=[value];let unknown=false;
@@ -55,43 +56,69 @@ export function commonBorrowObservations({model,records,objects}) {
     for(const [id,row]of map.get(ref)??[]){spend();if(components.get(id)!==components.get(context))continue;if(selected||row.weak)return null;selected=row;}
     return selected;
   }
-  function mustOwning(value,heap,active=new Set()){
-    spend();if(value.unknown)return new Set();
-    for(const tag of value.tags){spend();if(!['reference','value','array','readSpan'].includes(types.get(tag)?.kind))return new Set();}
-    let common=null;
-    for(const ref of value.refs){spend();const owned=new Set(),type=kind(ref);
-      if(type==='array')owned.add(ref);
-      if(['reference','value','array'].includes(type)&&!objects.get(ref).weak&&!active.has(ref)){
-        check(active.size<128,'limit');spend(active.size);const nested=new Set(active);nested.add(ref);
+  function owningStorage(value,heap){
+    // Keep compact selected storage edges, not a return-point heap. Allocation
+    // uniqueness is checked after every actual context has supplied its origin.
+    spend(value.refs.size);const pending=[...value.refs],nodes=new Map(),cached=new Map();
+    function group(stored){
+      spend();if(!stored||stored.unknown)return null;
+      for(const tag of stored.tags){spend();if(!['reference','value','array','readSpan'].includes(types.get(tag)?.kind)
+          &&!(tag.startsWith('env:')&&model.environments.has(tag.slice(4))))return null;}
+      check(pending.length+stored.refs.size<=65536,'limit');spend(stored.refs.size);
+      const refs=[...stored.refs];pending.push(...refs);return refs;
+    }
+    for(let i=0;i<pending.length;i++){
+      spend();const ref=pending[i];if(nodes.has(ref))continue;
+      const type=kind(ref),layout=environment(ref),weak=objects.get(ref)?.weak,node={type,layout:layout?.id,groups:[]};nodes.set(ref,node);
+      if(weak)continue;
+      if(layout){
+        for(const slot of layout.slots){spend();node.groups.push(group(heap.get(ref+'/slot/'+slot.key)));}
+        if(layout.parent){spend();node.groups.push(group(heap.get(ref+'/parent')));}
+      }else if(['reference','value','array'].includes(type)){
         const length=heap.get(ref+'/length')?.number,elements=Number.isSafeInteger(length)&&length>=0&&!heap.has(ref+'/element/*');
         for(const [slot,stored]of heap){spend();let selected=slot.startsWith(ref+'/field/');
           if(type==='array'){const index=slot.startsWith(ref+'/element/')?slot.slice((ref+'/element/').length):'';
             selected=elements&&/^(0|[1-9]\d*)$/.test(index)&&Number(index)<length;}
-          if(!selected)continue;
-          for(const id of mustOwning(stored,heap,nested)){spend();owned.add(id);}}
+          if(selected)node.groups.push(group(stored));}
       }
-      // Object alternatives are mutually exclusive. Fields of a particular
-      // object coexist, so their guarantees union; alternatives intersect.
-      if(common===null)common=owned;
-      else for(const id of common){spend();if(!owned.has(id))common.delete(id);}
+      // ReadSpan.owner is deliberately absent from this owning graph.
     }
-    return common??new Set();
+    return (root,context)=>{
+      if(!cached.has(context)){
+        const owned=new Map();for(const ref of nodes.keys()){spend();owned.set(ref,new Set());}
+        let changed;do{changed=false;for(const [ref,node]of nodes){
+          spend();const next=new Set(),allowed=!node.layout||unique(allocations,ref,context)?.kind==='environment';
+          if(node.type==='array'){spend();next.add(ref);}
+          if(allowed)for(const refs of node.groups){
+            spend();if(!refs?.length)continue;let common=null;
+            for(const child of refs){spend();const childOwned=owned.get(child)??new Set();
+              if(common===null){spend(childOwned.size);common=new Set(childOwned);}
+              else for(const id of common){spend();if(!childOwned.has(id))common.delete(id);}}
+            for(const id of common){spend();next.add(id);}
+          }
+          const prior=owned.get(ref);spend(prior.size+next.size);
+          if(prior.size!==next.size||[...prior].some(id=>{spend();return !next.has(id);})){owned.set(ref,next);changed=true;}
+        }}while(changed);cached.set(context,owned);
+      }
+      return cached.get(context).get(root)??new Set();
+    };
   }
   // Capture only paths from this returned value to its selected Span slots.
   // Each alternative keeps its own owning arrays; another return alternative
   // cannot make a direct Span root retain its backing allocation.
   function returnPaths(value,heap){
-    const paths=[],work=[];
-    for(const root of value.refs){spend(2);const owning=mustOwning({...value,refs:new Set([root]),tags:new Set([objects.get(root).type])},heap);
-      work.push({ref:root,storage:[],active:new Set(),known:!value.unknown,owning});}
+    const paths=[],work=[],ownership=owningStorage(value,heap);
+    for(const root of value.refs){spend(2);
+      work.push({ref:root,storage:[],active:new Set(),known:!value.unknown,owningKnown:!value.unknown,owning:context=>ownership(root,context)});}
     for(let i=0;i<work.length;i++){
       spend();const item=work[i],ref=item.ref;if(item.active.has(ref))continue;
       if(kind(ref)==='readSpan'){check(paths.length<4096,'limit');paths.push({...item,span:ref});continue;}
       check(item.storage.length<128,'limit');spend(item.active.size+item.storage.length+1);
       const active=new Set(item.active),storage=[...item.storage,ref];active.add(ref);
       const known=item.known&&['reference','value','array'].includes(kind(ref));
+      const owningKnown=item.owningKnown&&(['reference','value','array'].includes(kind(ref))||Boolean(environment(ref)));
       for(const [slot,stored]of heap){spend();if(!slot.startsWith(ref+'/field/')&&!slot.startsWith(ref+'/element/')&&!environmentSlot(ref,slot))continue;
-        for(const child of stored.refs){spend();check(work.length<65536,'limit');work.push({ref:child,storage,active,known:known&&!stored.unknown,owning:item.owning});}}
+        for(const child of stored.refs){spend();check(work.length<65536,'limit');work.push({ref:child,storage,active,known:known&&!stored.unknown,owningKnown:owningKnown&&!stored.unknown,owning:item.owning});}}
     }return paths;
   }
   function retained(path,owner,context){
@@ -186,7 +213,7 @@ export function commonBorrowObservations({model,records,objects}) {
           for(const ref of ids){spend();held.set(ref,owners(ref,state.heap));}
           const allowed=()=>{
             let valid=true;for(const path of paths){spend();const owner=held.get(path.span);valid &&= !owner.pending&&owner.ids.size>0;
-              for(const id of owner.ids){spend();valid &&= surviving.has(id)||path.known&&path.owning.has(id)&&Boolean(unique(allocations,id,c.id))||retained(path,id,c.id);}}
+              for(const id of owner.ids){spend();valid &&= surviving.has(id)||path.owningKnown&&path.owning(c.id).has(id)&&Boolean(unique(allocations,id,c.id))||retained(path,id,c.id);}}
             return valid&&paths.length>0;
           };
           graph.escape(at,ids,allowed,where);
@@ -196,7 +223,7 @@ export function commonBorrowObservations({model,records,objects}) {
   }
   function after(c,op,state,value,at){
     const name=op.name.replace('tsfg_program.','');
-    if(name==='env_alloc')for(const ref of value.refs){spend();graph.fresh.add(ref);}
+    if(name==='env_alloc')for(const ref of value.refs){spend();graph.fresh.add(ref);remember(allocations,ref,c,{kind:'environment',weak:objects.get(ref).weak});}
     if(['array_create','allocate_reference','construct_value','value_copy'].includes(name))for(const ref of value.refs){spend();if(name==='value_copy'&&kind(ref)!=='value')continue;
       graph.fresh.add(ref);remember(allocations,ref,c,{kind:kind(ref),element:types.get(objects.get(ref).type)?.elementType,weak:objects.get(ref).weak});}
     if(name==='readspan')for(const ref of value.refs){spend();define(at,ref,state.heap,objects.get(ref)?.weak);

@@ -36,6 +36,7 @@ struct Derive {
   void mark(const Origins &owners,unsigned flag){
     for(const auto &owner:owners){if(!step())return;
       if(llvm::StringRef(owner).starts_with("g:")){if(flag==0)out.reads.insert(owner.substr(2));else out.writes.insert(owner.substr(2));}
+      if(llvm::StringRef(owner).starts_with("c:")){auto &access=out.captures[owner.substr(2)];if(flag==0)access.read=true;else if(flag==1)access.write=true;else access.structural=true;}
       if(llvm::StringRef(owner).starts_with("p:")){
         unsigned index=0;if(!ok(!llvm::StringRef(owner).drop_front(2).getAsInteger(10,index)&&index<out.parameters.size(),"parameter owner index differs"))return;
         auto &p=out.parameters[index];if(flag==0)p.read=true;else if(flag==1)p.write=true;else p.structural=true;
@@ -159,13 +160,14 @@ struct Derive {
     if(!field(fn,"activationEnvironment").getAsNull())out.allocation=out.managedReference=true;
     if(!field(fn,"lexicalEnvironment").getAsNull())out.managedReference=true;
     if(!items(field(fn,"captures")).empty()){
-      std::map<std::string,std::string> slots;
+      std::map<std::string,std::pair<std::string,std::string>> slots;
       for(const auto &env:items(field(p.hir,"environments")))for(const auto &slot:items(field(env,"slots"))){
-        if(!step())return false;slots.emplace(string(field(slot,"binding")),string(field(slot,"key")));
+        if(!step())return false;slots.emplace(string(field(slot,"binding")),std::pair{string(field(slot,"key")),string(field(slot,"type"))});
       }
       for(const auto &capture:items(field(fn,"captures"))){if(!step())return false;const auto binding=string(field(capture,"binding"));
         if(!ok(slots.count(binding),"captured binding has no owned environment slot"))return false;
-        auto &access=out.captures[slots.at(binding)];access.read|=field(capture,"read").getAsBoolean()==true;
+        const auto &[key,type]=slots.at(binding);auto &access=out.captures[key];
+        if(types.count(type)&&string(field(*types.at(type),"kind"))=="array")environment[binding]={"c:"+key};access.read|=field(capture,"read").getAsBoolean()==true;
         access.write|=field(capture,"write").getAsBoolean()==true;
       }
     }

@@ -141,9 +141,10 @@ bool readEffects(Program &p,const Json &raw,const Json &fn,Effects &out,Error &e
   if(!need(bool(captures.getAsArray()),e,"fixed captures must be a sparse array"))return false;
   // Build only for a nonempty capture obligation; unrelated layouts cannot
   // turn every empty function contract into a full slot-directory scan.
-  std::map<std::string,bool> slots;
+  std::map<std::string,bool> slots;std::set<std::string> arrays;
+  if(!items(captures).empty())for(const auto &type:items(field(p.hir,"types"))){if(!work(p,e))return false;if(string(field(type,"kind"))=="array")arrays.insert(string(field(type,"id")));}
   if(!items(captures).empty())for(const auto &env:items(field(p.hir,"environments")))for(const auto &slot:items(field(env,"slots"))){
-    if(!work(p,e))return false;slots.emplace(string(field(slot,"key")),field(slot,"writable").getAsBoolean()==true);
+    if(!work(p,e))return false;slots.emplace(string(field(slot,"key")),field(slot,"writable").getAsBoolean()==true||arrays.count(string(field(slot,"type"))));
   }
   std::string previous;
   for(const auto &row:items(captures)){

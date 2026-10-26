@@ -114,7 +114,7 @@ export function analyzeCommonGraphs({model,plans},records=null) {
             const update=(heap,key,value,strong=!weakSlot(key))=>{if(strong||!heap.has(key))heap.set(key,a.copy(value));else a.merge(heap.get(key),value);};
             const put=(key,value,strong=undefined)=>update(state.heap,key,value,strong);
             const mergeSlots=keys=>{const result=a.empty();for(const key of keys){spend();a.merge(result,state.heap.get(key)??a.empty());}return result;};
-            if(name==='env_alloc'){const ref=c.activation+'/environment/'+op.result;value=literal('env:'+p.layout);value.refs.add(ref);objects.set(ref,{type:'env:'+p.layout,weak:repeated.has(fn)||cyclicBlocks.has(fn+'/'+block.name)});if(args.length)put(ref+'/parent',args[0]);}
+            if(name==='env_alloc'){const ref=c.activation+'/'+fn+'/environment/'+op.result;value=literal('env:'+p.layout);value.refs.add(ref);objects.set(ref,{type:'env:'+p.layout,weak:repeated.has(fn)||cyclicBlocks.has(fn+'/'+block.name)});if(args.length)put(ref+'/parent',args[0]);}
             else if(name==='env_parent'){for(const ref of args[0].refs){spend();a.merge(value,state.heap.get(ref+'/parent')??a.empty());}}
             else if(name==='env_load'||name==='env_init'||name==='env_store'){for(const ref of args[0].refs){spend();const key=ref+'/slot/'+p.key;check(objects.get(ref)?.type==='env:'+p.layout,'environment');
               if(name==='env_load'){check(state.heap.has(key),'environment-initialization');a.merge(value,state.heap.get(key));}else {put(key,args[1],args[0].refs.size===1&&!objects.get(ref).weak);observe('binding/'+p.binding,args[1]);}}}
