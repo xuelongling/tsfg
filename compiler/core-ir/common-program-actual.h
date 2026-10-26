@@ -3,6 +3,7 @@
 #include "common-program-source.h"
 #include <optional>
 namespace tsfg::commonProgram {
+class BorrowTrace;
 // Actual values never inherit tags from a view or a carrier capacity. Separate
 // roots identify language values, mutable local cells and abstract heap objects.
 struct ActualValue {
@@ -36,6 +37,7 @@ struct ActualCheck {
   std::map<std::string,ActualContext> contexts;
   std::set<std::string> repeatingFunctions,repeatingBlocks;
   std::set<std::string> cyclicFunctions;
+  BorrowTrace *borrowTrace=nullptr;
   bool need(bool c,llvm::StringRef message){return c||reject(e,"core-ir-common-actual",message);}
   bool step(size_t n=1){return p.charge(n)||reject(e,"core-ir-common-budget","independent actual SSA work exceeded");}
   bool catalogs();bool graph();bool source();bool solve(bool conditional);bool representation();bool effects();

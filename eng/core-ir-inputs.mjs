@@ -59,6 +59,8 @@ export const coreIrInputs = Object.freeze([
   "compiler/core-ir/common-program-abstract.cpp",
   "compiler/core-ir/common-program-actual.h",
   "compiler/core-ir/common-program-bodies.cpp",
+  "compiler/core-ir/common-program-borrows.cpp",
+  "compiler/core-ir/common-program-borrows.h",
   "compiler/core-ir/common-program-callable-ops.cpp",
   "compiler/core-ir/common-program-callable-source.cpp",
   "compiler/core-ir/common-program-callable-targets.cpp",

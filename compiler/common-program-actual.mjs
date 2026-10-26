@@ -8,8 +8,9 @@ import {commonAbstract} from './common-program-abstract.mjs';
 import {commonCheck as check} from './common-program-common.mjs';
 import {commonEntryReferences} from './common-program-entry.mjs';
 import {commonMethods} from './common-program-methods.mjs';
+import {commonBorrowObservations} from './common-program-borrow-observations.mjs';
 const undefinedId=sha256('tsfg.type\0undefined');
-export function analyzeCommonGraphs({model,plans}) {
+export function analyzeCommonGraphs({model,plans},records=null) {
   const {spend,types}=model,elementSeeds=new Map(),a=commonAbstract({...model,elementSeeds}),byId=new Map(plans.map(plan=>[plan.owner.id,plan])),entryReferences=commonEntryReferences(model.hir,spend),methods=commonMethods(model.hir,spend);
   const edges=[],callSites=[],incoming=new Map(),cyclicBlocks=new Set();
   for(const plan of plans) {
@@ -85,15 +86,15 @@ export function analyzeCommonGraphs({model,plans}) {
       const heap=new Map();currentGlobals(heap);const args=plan.parameters.map(parameter=>entryValue(plan,parameter,heap));
       context(plan.owner.id,args,heap,true);
     }
-    do {
-      changed=false;
-      for(const c of contexts.values()) {
+    function execute(c,observer=null) {
         spend();const plan=c.plan,fn=plan.owner.id,entry=a.state();entry.heap=a.snapshot(c.entryHeap);
         if(c.root){entry.heap=new Map();currentGlobals(entry.heap);
           c.args=plan.parameters.map(parameter=>entryValue(plan,parameter,entry.heap));c.entryHeap=a.snapshot(entry.heap);}
         for(const [index,p]of plan.entry.parameters.entries())entry.values.set(p.name,a.copy(c.args[index]));
+        observer?.begin(c,entry.heap);let point=null;
         const blocks=new Map(plan.graph.blocks.map(block=>[block.name,block])),states=new Map([[plan.entry.name,entry]]),queue=[plan.entry.name],queued=new Set(queue);
-        const edge=(name,from,args=[])=>{
+        const edge=(name,from,args=[],callReturn=false)=>{
+          if(observer&&!callReturn)observer.edge(point,observer.block(c,name));
           spend(args.length+1);const block=blocks.get(name);check(block&&block.parameters.length===args.length,'ssa');const next=a.clone(from);
           for(const [i,p]of block.parameters.entries())next.values.set(p.name,a.copy(args[i]));
           if(!states.has(name)){states.set(name,next);if(!queued.has(name)){queue.push(name);queued.add(name);}}
@@ -101,9 +102,11 @@ export function analyzeCommonGraphs({model,plans}) {
         };
         for(let index=0;index<queue.length;index++) {
           spend();const block=blocks.get(queue[index]),state=a.clone(states.get(block.name));queued.delete(block.name);
+          let previous=observer?.block(c,block.name);
           for(const p of block.parameters)observe(fn+'/'+p.name,read(state,p.name));
-          for(const op of block.instructions) {
+          for(const [instruction,op]of block.instructions.entries()) {
             spend(op.operands.length+1);const args=op.operands.map(name=>read(state,name)),p=op.properties,name=op.name.replace('tsfg_program.','');let value=a.empty(),continues=true;
+            if(observer){point=c.id+'/'+block.name+'/'+instruction;observer.edge(previous,point);observer.before(c,op,state,args,point);previous=point;}
             const weakSlot=key=>{
               for(const marker of ['/field/','/element/','/length','/owner','/start','/slot/','/parent']){spend();const at=key.lastIndexOf(marker);if(at>=0&&objects.has(key.slice(0,at)))return objects.get(key.slice(0,at)).weak;}
               return false;
@@ -153,7 +156,9 @@ export function analyzeCommonGraphs({model,plans}) {
               if(args[0].unknown)value.unknown=true;
             }else if(name==='array_length'||name==='readspan_length')value=literal(op.view);
             else if(name==='readspan') {
-              value=literal(op.view);const ref=fn+'/span/'+op.result;objects.set(ref,{type:op.view,weak:repeated.has(fn)||cyclicBlocks.has(fn+'/'+block.name)});value.refs.add(ref);put(ref+'/owner',args[0]);put(ref+'/start',args[1]);put(ref+'/length',args[2]);
+              // Distinct activations retain distinct descriptors. Recursive
+              // summaries use the stable SCC activation to keep keys finite.
+              value=literal(op.view);const ref=(cyclicFunctions.has(fn)?c.activation:c.id)+'/span/'+op.result;objects.set(ref,{type:op.view,weak:repeated.has(fn)||cyclicBlocks.has(fn+'/'+block.name)});value.refs.add(ref);put(ref+'/owner',args[0]);put(ref+'/start',args[1]);put(ref+'/length',args[2]);
             }else if(name==='array_read'||name==='array_store'||name==='array_resize') {
               const owners=a.empty();for(const ref of args[0].refs){spend();const object=objects.get(ref);check(object,'ssa');
                 if(types.get(object.type)?.kind==='readSpan')a.merge(owners,state.heap.get(ref+'/owner')??a.empty());else owners.refs.add(ref);}
@@ -187,7 +192,7 @@ export function analyzeCommonGraphs({model,plans}) {
               check(indirect||method||model.functions.get(p.function_id)?.kind!=='method','capability','method call requires explicit finite dispatch',details);
               if(method){check(!args[0].unknown,'capability','method receiver has no proved actual nominal type',details);
                 for(const tag of args[0].tags){spend();check(p.dispatch.some(row=>{spend();return row.receiver_type===tag;}),'capability','actual receiver has no verified method target',{...details,actualType:tag});}}
-              const complete=(target,value,heap)=>{const after=a.clone(state);for(const [slot,v]of heap)update(after.heap,slot,v);edge(target,after,blocks.get(target).parameters.length?[value]:[]);};
+              const complete=(target,value,heap)=>{const after=a.clone(state);for(const [slot,v]of heap)update(after.heap,slot,v);edge(target,after,blocks.get(target).parameters.length?[value]:[],true);};
               if(indirect)spend(args[0].pairs.size);const alternatives=indirect?[...args[0].pairs.values()].map(pair=>({target:pair.functionId,environment:pair.environment})):method?p.dispatch:[{target:p.function_id}];
               if(indirect){for(const tag of args[0].tags){spend();check(types.get(tag)?.kind==='function','capability','actual indirect operand is not callable',details);}
                 check(!args[0].unknown||p.targets.top,'callable-contract','actual unknown callee exceeds finite upper',details);
@@ -200,6 +205,7 @@ export function analyzeCommonGraphs({model,plans}) {
                   for(const ref of receiver.refs){spend();if(objects.get(ref)?.type!==row.receiver_type)receiver.refs.delete(ref);}passed[0]=receiver;}
                 const activation=cyclicFunctions.has(row.target)?'recursive/'+row.target:c.activation+'/'+fn+':'+op.range.start+':'+op.range.end;check(activation.length<=32768,'limit');
                 const call=context(row.target,passed,state.heap,false,activation),key=fn+'/'+op.range.start+':'+op.range.end,targets=callTargets.get(key)??new Set();targets.add(row.target);callTargets.set(key,targets);
+                observer?.call(point,call,c,op.successors);
                 if(call.normal)complete(op.successors[0],call.returned,call.normalHeap);if(call.language)complete(op.successors[1],call.thrown,call.languageHeap);
               }continues=false;
             }else if(name==='cf.br'||name==='route'){edge(op.successors[0],state,args);continues=false;}
@@ -212,12 +218,15 @@ export function analyzeCommonGraphs({model,plans}) {
               changed=a.joinHeap(c[heap],a.reachable([...c.args,...(args.length?[args[0]]:[])],state.heap))||changed;continues=false;
             }else if(name==='unreachable')continues=false;
             else check(['fuel','enter_handler','finally_enter'].includes(name),'ssa','unmodelled common logical operation '+name);
-            if(op.result){state.values.set(op.result,value);observe(fn+'/'+op.result,value);}if(!continues)break;
+            if(op.result){state.values.set(op.result,value);observe(fn+'/'+op.result,value);}observer?.after(c,op,state,value,point);if(!continues)break;
           }
         }
-      }
-    }while(changed);
-    return {contexts,observed,objects,operations,callTargets};
+    }
+    do{changed=false;for(const c of contexts.values())execute(c);}while(changed);
+    let borrows=null;
+    if(!bounded&&records){const observer=commonBorrowObservations({model,records,objects});
+      for(const c of contexts.values())execute(c,observer);check(!changed,'ssa','final actual observation changed the fixed point');borrows=observer.finish();}
+    return {contexts,observed,objects,operations,callTargets,borrows};
   }
   const capacity=solve(true),actual=solve(false);
   return {capacity,actual,fieldSeeds,globalSeeds,elementSeeds,abstract:a};

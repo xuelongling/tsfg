@@ -1,5 +1,6 @@
 // SPDX-License-Identifier: MIT
 #include "common-program-actual.h"
+#include "common-program-borrows.h"
 namespace tsfg::commonProgram {
 ActualHeap ActualCheck::reachable(const std::vector<ActualValue> &values,const ActualHeap &heap){
   ActualHeap out;std::vector<ActualValue> pending;std::set<std::string> visited;
@@ -75,9 +76,12 @@ bool ActualCheck::execute(ActualContext &context,bool conditional,bool &changed)
     context.entry=copyHeap(entry.heap);
   }
   for(size_t i=0;i<context.arguments.size();++i)entry.values.emplace(fn.blocks[0].parameters[i],copy(context.arguments[i]));
+  if(borrowTrace&&!borrowTrace->begin(context,entry))return false;
   std::map<uint16_t,ActualState> states;states.emplace(0,std::move(entry));std::vector<uint16_t> queue{0};std::set<uint16_t> queued{0};
+  const Operation *observed=nullptr;size_t observedBlock=0;
   const auto edge=[&](uint16_t to,const ActualState &state,const std::vector<ActualValue> &args){
     if(!step(args.size()+1)||!need(to<fn.blocks.size()&&args.size()==fn.blocks[to].parameters.size(),"actual edge arity differs"))return false;
+    if(borrowTrace&&(!observed||!borrowTrace->edge(context,*observed,observedBlock,to)))return false;
     auto next=copyState(state);for(size_t i=0;i<args.size();++i)next.values.insert_or_assign(fn.blocks[to].parameters[i],copy(args[i]));
     auto old=states.find(to);bool update=false;
     if(old==states.end()){states.emplace(to,std::move(next));update=true;}else update=join(old->second,next);
@@ -87,7 +91,10 @@ bool ActualCheck::execute(ActualContext &context,bool conditional,bool &changed)
     if(!step())return false;const auto block=queue[index];queued.erase(block);auto state=copyState(states.at(block));
     if(conditional)for(auto reg:fn.blocks[block].parameters)merge(registerCapacity[fn.id+"/"+std::to_string(reg)],state.values[reg]);
     for(const auto &op:fn.blocks[block].operations){
+      observed=&op;observedBlock=block;
+      if(borrowTrace&&!borrowTrace->before(context,op,block,state))return false;
       bool continues=true;if(!instruction(context,op,block,state,conditional,changed,edge,continues))return false;
+      if(borrowTrace&&!borrowTrace->after(context,op,block,state,continues))return false;
       if(!continues)break;
     }
   }return e.message.empty();

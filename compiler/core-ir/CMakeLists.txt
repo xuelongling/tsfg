@@ -97,6 +97,7 @@ add_library(tsfg-core-common OBJECT
   common-program-plan.cpp common-program-leaves.cpp common-program-control.cpp
   common-program-match.cpp common-program-memory.cpp common-program-methods.cpp common-program-transfer.cpp
   common-program-capacity.cpp common-program-flow.cpp
+  common-program-borrows.cpp
   finite-module.cpp finite-catalog.cpp finite-constructor-writes.cpp finite-control-paths.cpp finite-domains.cpp finite-dense-length.cpp finite-abi.cpp finite-entry.cpp finite-entry-arrays.cpp finite-entry-cells.cpp finite-values.cpp finite-members.cpp finite-flow.cpp finite-return-alias.cpp finite-memory.cpp finite-memory-entries.cpp finite-memory-flow.cpp finite-memory-frames.cpp finite-memory-indices.cpp finite-memory-sources.cpp finite-memory-span-sources.cpp finite-memory-lifetime.cpp finite-actual-flow.cpp finite-array-call-effects.cpp finite-array-call-flow.cpp finite-array-flow.cpp finite-array-memory.cpp finite-array-memory-query.cpp finite-array-length.cpp finite-borrow-flow.cpp finite-borrow-storage.cpp finite-borrows.cpp finite-payload-flow.cpp
   kernel-access.cpp kernel-access-metadata.cpp
   nullable.cpp nullable-cfg.cpp nullable-metadata.cpp nullable-wire.cpp

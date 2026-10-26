@@ -1,5 +1,6 @@
 // SPDX-License-Identifier: MIT
 #include "common-program-actual.h"
+#include "common-program-borrows.h"
 #include <cstdlib>
 #include <cerrno>
 namespace tsfg::commonProgram {
@@ -100,7 +101,8 @@ bool ActualCheck::instruction(ActualContext &context,const Operation &op,size_t 
       else{put(slot,args[1],!object.weak&&args[0].objects.size()==1);const auto raw=string(field(*fields.at(selected),"sourceBinding"));observe(raw,args[1]);seed(fieldSeeds,raw,args[1]);}
     }if(args[0].unknown)value.unknown=true;
   }else if(name=="readspan"){
-    value=literal(op.view);const auto ref=fn.id+"/span/"+std::to_string(op.result);value.objects.insert(ref);objects[ref]={op.view,weak};
+    value=literal(op.view);const auto activation=cyclicFunctions.count(fn.id)?"recursive/"+fn.id:context.id;
+    const auto ref=activation+"/span/"+std::to_string(op.result);value.objects.insert(ref);objects[ref]={op.view,weak};
     put(ref+"/owner",args[0],!weak);put(ref+"/start",args[1],!weak);put(ref+"/length",args[2],!weak);
   }else if(name=="array_length"||name=="readspan_length")value=literal(op.view);
   else if(name=="array_read"||name=="array_store"||name=="array_resize"){
@@ -166,6 +168,7 @@ bool ActualCheck::instruction(ActualContext &context,const Operation &op,size_t 
         activation=cyclicFunctions.count(target)?"recursive/"+target:
           context.id+"/call/"+std::to_string(block)+"/"+std::to_string(op.range.start)+":"+std::to_string(op.range.end);
       auto *call=this->context(target,actual,state.heap,false,changed,activation);if(!call)return false;
+      if(borrowTrace&&!borrowTrace->call(context,op,block,*call))return false;
       if(call->normal&&!complete(op.successors[0],call->returned,call->normalHeap))return false;
       if(call->language&&!complete(op.successors[1],call->thrown,call->languageHeap))return false;return true;
     };

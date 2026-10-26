@@ -1,5 +1,6 @@
 // SPDX-License-Identifier: MIT
 #include "common-program.h"
+#include "common-program-borrows.h"
 #include "bytecode.h"
 #include "mlir/IR/Dialect.h"
 #include "mlir/IR/DialectImplementation.h"
@@ -78,7 +79,9 @@ bool readCore(mlir::ModuleOp module,Program &out,Error &error){
 }
 bool verifyProgram(Program &p,Error &error){
   p.remaining=std::min(p.remaining,size_t(1000000));p.layouts.clear();p.effects.clear();p.fixedEffects.clear();
-  return verifySource(p,error)&&verifyTypes(p,error)&&verifyOperations(p,error)&&verifyPublication(p,error)&&verifyKernelProof(p,error);
+  if(!verifySource(p,error)||!verifyTypes(p,error))return false;
+  ActualCheck check{p,error};
+  return check.run()&&verifyPublication(p,error)&&verifyCommonBorrows(check)&&verifyKernelProof(p,error);
 }
 mlir::LogicalResult verify(mlir::ModuleOp module){
   Program p;Error error;
