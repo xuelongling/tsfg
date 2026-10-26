@@ -31,6 +31,7 @@ struct FirstWrites {
   llvm::DenseMap<mlir::Value,size_t> values;
   std::map<std::pair<const void *,size_t>,std::pair<size_t,mlir::Value>> identities;
   std::map<std::pair<const void *,size_t>,size_t> normalizedIdentities;
+  std::set<std::pair<const void *,size_t>> resolvingIdentities;
   bool identityCacheable=true;
   size_t activeFrame=MemoryFrames::none;
   size_t nextIdentity=0;
@@ -133,6 +134,8 @@ struct FirstWrites {
     if(!valid||!sources.good()||!proof.charge()){valid=false;return SIZE_MAX;}
     const auto key=std::make_pair(value.getAsOpaquePointer(),activeFrame);
     const auto found=normalizedIdentities.find(key);if(found!=normalizedIdentities.end())return found->second;
+    if(!resolvingIdentities.insert(key).second){identityCacheable=false;return identityAt(value,activeFrame);}
+    struct Exit {decltype(resolvingIdentities) &set;decltype(key) value;~Exit(){set.erase(value);}} exit{resolvingIdentities,key};
     // Proof inputs and frame bindings are immutable during this one query.
     // Never reuse across read publication, actual/field queries or activations.
     const bool prior=identityCacheable;identityCacheable=true;
@@ -143,6 +146,29 @@ struct FirstWrites {
   size_t resolveIdentity(mlir::Value value) {
     value=strip(value);if(!value){valid=false;return SIZE_MAX;}
     if(!inlineStorage())if(auto *op=value.getDefiningOp()){
+      if(op->getName().getStringRef()=="tsfg_core.domain.array_read"){
+        // Resolve the original checked slot at its actual read point. A
+        // carrier's possible Holder types alone never establish an alias.
+        const auto sourcesAtRead=sources.arrayRead(activeFrame,op);
+        if(sourcesAtRead.status==MemorySelection::Status::Invalid){valid=false;return SIZE_MAX;}
+        size_t selected=SIZE_MAX;bool complete=sourcesAtRead.status==MemorySelection::Status::Proven;
+        for(const auto &origin:sourcesAtRead.sources){
+          if(!proof.charge()){valid=false;return SIZE_MAX;}bool productive=false;
+          const auto append=[&](size_t id){
+            if(id==SIZE_MAX){complete=false;return;}productive=true;
+            if(selected==SIZE_MAX)selected=id;else complete&=selected==id;
+          };
+          complete&=!origin.pending;
+          for(auto input:origin.values){if(!proof.charge()){valid=false;return SIZE_MAX;}append(identity(input));}
+          for(const auto &receiver:origin.receivers){
+            if(!proof.charge()){valid=false;return SIZE_MAX;}if(receiver.query!=activeFrame){complete=false;continue;}
+            append(identityAt(receiver.value,receiver.activation));
+          }
+          complete&=productive;
+        }
+        if(complete&&selected!=SIZE_MAX)return selected;
+        identityCacheable=false;
+      }
       const auto found=origins.find(op);size_t selected=SIZE_MAX;bool ambiguous=false;
       if(found!=origins.end())for(const auto &origin:found->second){
         if(origin.pending)identityCacheable=false;
@@ -232,6 +258,25 @@ struct FirstWrites {
       if(!valid)return false;
       snapshots.push_back({source,op,sourceEntry,after});return true;
     }
+    if(inlineStorage()&&op->getName().getStringRef()=="tsfg_core.domain.array_read"&&matches(current,op->getResult(0))){
+      // Reading an inline element copies the selected stored plane. Resolve
+      // the real slot first, then reuse copy's snapshot equations; the result
+      // must never alias the original Holder or the stored value plane.
+      const auto selected=sources.arrayRead(current.activation,op);
+      if(selected.status==MemorySelection::Status::Invalid)return false;
+      if(selected.status!=MemorySelection::Status::Proven||selected.sources.empty())return flow.unknown(after);
+      for(const auto &origin:selected.sources){
+        if(!proof.charge())return false;
+        if(origin.pending||origin.values.empty()||!origin.introduced.empty()||!origin.receivers.empty())return flow.unknown(after);
+        for(auto value:origin.values){
+          if(!proof.charge())return false;
+          if(value.getParentBlock()->getParentOp()!=op->getParentOp())return flow.unknown(after);
+          const auto source=context(current.function,{identity(value)},current.activation),entry=entryNode(source);
+          if(!valid)return false;snapshots.push_back({source,op,entry,after});
+        }
+      }
+      return true;
+    }
     if(op->getNumResults()==1&&matches(current,op->getResult(0))&&
         (op->getName().getStringRef()=="func.call"||op->getName().getStringRef()=="tsfg_core.domain.method_call")) {
       std::set<std::string> targets;if(!selected(op,current,targets))return flow.unknown(after);
@@ -271,6 +316,7 @@ struct FirstWrites {
   bool separatesMemory(mlir::Operation *op) const {
     const auto name=op->getName().getStringRef();
     return writes.count(op)||name=="tsfg_core.domain.copy"||name=="func.call"||
+      (inlineStorage()&&name=="tsfg_core.domain.array_read")||
       name=="tsfg_core.domain.method_call"||name=="tsfg_core.domain.construct"||
       name=="tsfg_core.domain.initialize_fields"||proof.selectedCallees.count(op)||
       (proof.fieldEffects.count(op)&&proof.fieldEffects.at(op));

@@ -10,7 +10,9 @@ struct Storage {
     const auto value=op->getAttrOfType<mlir::StringAttr>(key);return value?value.getValue().str():std::string();
   }
   bool selectedRead(mlir::Operation *op)const{
-    return (proof.provedArrayReads.count(op)||proof.checkedArrayReadSources.count(op))&&proof.arrayReadSources.count(op);
+    // Ordinary proved reads can omit the optional Span capture-source map.
+    // Their selected aggregate result still needs its complete use closure.
+    return proof.provedArrayReads.count(op)||(proof.checkedArrayReadSources.count(op)&&proof.arrayReadSources.count(op));
   }
   bool storage(mlir::Value value){
     const auto *domain=valueDomain(proof,value.getType());if(!domain){valid=false;return false;}
@@ -61,6 +63,12 @@ struct Storage {
           if(!proof.aggregateReturnSources.count(op)||proof.unprovedStoredReturns.count(op))return false;
         }else if(use.getOperandNumber()==1&&(name=="tsfg_core.domain.field_store"||name=="tsfg_core.domain.field_initialize")){
           if(!proof.charge())return false;storageRoots.push_back(op->getOperand(0));
+        }else if(name=="tsfg_core.domain.array_create"){
+          // An element retains the aggregate, not only the directly stored Span.
+          // Independently close the actual outer destination and all its uses.
+          if(!proof.charge())return false;storageRoots.push_back(op->getResult(0));
+        }else if(use.getOperandNumber()==2&&name=="tsfg_core.domain.array_store"){
+          if(!proof.charge())return false;storageRoots.push_back(op->getOperand(0));
         }else if(use.getOperandNumber()==0&&(name=="tsfg_core.domain.field_store"||name=="tsfg_core.domain.field_read"||
             name=="tsfg_core.domain.field_initialize"||name=="tsfg_core.domain.field_define"||
             name=="tsfg_core.domain.initialize_fields"||name=="tsfg_core.domain.member_present")){
@@ -75,6 +83,10 @@ struct Storage {
           // Real structural effects still run through Borrow liveness below.
         }else if(use.getOperandNumber()==0&&name=="tsfg_core.domain.array_read"){
           if(!selectedRead(op))return false;
+          // A proved read selects a real element source; its aggregate result
+          // may itself escape or retain the original view through another slot.
+          if(storage(op->getResult(0)))work.push_back(op->getResult(0));
+          if(!valid)return false;
         }else return false; // The actual escaping/call/CFG continuation is still unproved.
       }
     }

@@ -489,3 +489,7 @@ component contract described in `r03-typed-reference-views.md`. New traversals
 share the existing bounded work/first-failure transaction. These component checks
 do not establish formal Source012, Core semantic command execution, ordinary
 wire, VM, or whole Runtime/GC/ABI qualification.
+
+Aggregate elements continue through the same storage and selected-source graph;
+see [aggregate Array storage](r03-aggregate-array-storage.md) for the independent
+receiver-identity, value-copy and lifetime boundaries.

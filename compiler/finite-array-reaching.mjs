@@ -268,7 +268,10 @@ export function buildFiniteArrayReaching(hir,plan,charge) {
       if(value.target)for(const name of ['receiver','index'])if(value.target[name])expression(value.target[name],path+'/target/'+name,state,bindings);
       for(const name of ['receiver','operand','left','right','index','value'])if(value[name])child(name);
       for(const [index,item] of (value.arguments??[]).entries())expression(item,path+'/arguments/'+index,state,bindings);
-      if(['construct','superConstruct','fieldAssignment','fieldUpdate','update'].includes(value.kind))invalidate(state);
+      // A checked nominal data-field store replaces that property, not an
+      // independently tracked Array slot/length. Its receiver/RHS effects were
+      // visited above; fieldAccess never supplies an owner alias in this pass.
+      if(['construct','superConstruct','update'].includes(value.kind))invalidate(state);
       return {symbol:path};
     }
     // A representation-changing adaptation emits domain.view, which is not

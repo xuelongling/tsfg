@@ -38,7 +38,7 @@ function buildPlans(input,context,options,definitions) {
     // Field short-circuit control also must not consume capacity-based Array
     // reads. This is the same conservative solver role as the ordered start.
     const controlInitial=solve(null,{reads:[]});
-    const fieldReaching=buildFiniteFieldReaching(verifyHir(input,context,options.publicationContext),controlInitial,charge);
+    let fieldReaching=buildFiniteFieldReaching(verifyHir(input,context,options.publicationContext),controlInitial,charge);
     const result=fieldReaching.reads.some(row=>row.reaching.length)
       ?solve(fieldReaching):initial;
     const hir=verifyHir(input,context,options.publicationContext);
@@ -52,9 +52,19 @@ function buildPlans(input,context,options,definitions) {
     for(;;) {
       arrayReaching=buildFiniteArrayReaching(hir,{...ordered,carrierNodes:result.nodes,fieldReaching},charge);
       if(!arrayReaching.reads.length)break;
+      fieldReaching=buildFiniteFieldReaching(hir,{...ordered,arrayReaching},charge);
       const rows=[];for(const read of arrayReaching.reads){charge();const versions=[];
         for(const id of read.versions){charge();versions.push(id);}rows.push([read.node,read.status,versions]);}
-      const current=canonical(rows);if(current===previous)break;previous=current;
+      const fields=[];for(const read of fieldReaching.reads){charge();const targets=[];
+        for(const target of read.reaching){charge();const versions=[],sources=[],intrinsics=[];
+          for(const id of target.versions){charge();versions.push(id);}for(const id of target.sources){charge();sources.push(id);}
+          for(const id of target.intrinsics??[]){charge();intrinsics.push(id);}targets.push([target.actualType,target.field,versions,sources,intrinsics]);}
+        fields.push([read.node,targets]);}
+      const aliases=[];for(const row of fieldReaching.returnAliases){charge();aliases.push([row.functionId,row.parameter]);}
+      // Field identities selected from Array versions can in turn refine a
+      // later Array owner. Close both existing constraints with one budget;
+      // neither carrier maxima nor successful bounds become alias witnesses.
+      const current=canonical([rows,fields,aliases]);if(current===previous)break;previous=current;
       ordered=arrayReaching.reads.length?solve(fieldReaching,arrayReaching):result;
     }
     // Refined payloads do not silently republish a narrower ABI. Representation

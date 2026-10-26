@@ -22,6 +22,7 @@ export function copyFieldReachingAliases(env,charge) {
 }
 
 export function buildFiniteFieldReaching(hir,plan,charge) {
+  const arrayReads=new Map();for(const row of plan.arrayReaching?.reads??[]){charge();if(row.status==='proven')arrayReads.set(row.node,row.sources);}
   const selections=new Map(plan.fields.map(row=>[row.id,row]));
   const calls=new Map(plan.calls.map(row=>[row.id,row]));
   const types=new Map(hir.types.map(type=>[type.id,type])),valueDomains=new Map();
@@ -90,7 +91,7 @@ export function buildFiniteFieldReaching(hir,plan,charge) {
     // reference branch's identity independently from their copied value plane.
     const aliases=new Map(fn.parameters.map(parameter=>[parameter.id,fn.id+'/parameter/'+parameter.id]));
     const referenceOrigins=new Map(),copyOrigins=new Map(),returnStates=[],returnValueRoots=[],referenceProjections=new Map();
-    const freshTokens=new Set(),fieldChildren=new Map(),referenceReturns=[];
+    const freshTokens=new Set(),fieldChildren=new Map(),referenceReturns=[],arraySources=new Map();
     const originOf=(origins,token)=>origins.has(token)?origins.get(token):token;
     const physicalToken=(token,actual)=>types.get(actual)?.kind==='value'?token:referenceOrigins.has(token)?referenceOrigins.get(token):token;
     const key=(token,target)=>{const physical=physicalToken(token,target.actualType);return physical?physical+'\0'+target.actualType+'\0'+target.fieldId:null;};
@@ -251,6 +252,23 @@ export function buildFiniteFieldReaching(hir,plan,charge) {
       if(value.kind==='assignment') {
         const token=child('value'),alias=copiesValue(value.target.type)?copyToken(token,path+'/copy',state):token;
         env.set(value.target.binding,alias);return alias;
+      }
+      if(value.kind==='arrayCreate'){
+        for(const [index,item]of value.elements.entries()){
+          const source=path+'/elements/'+index,token=expression(item,source,state,env);
+          if(arrayReads.size){charge();arraySources.set(source,token&&copiesValue(item.type)?copyToken(token,source+'/array-copy',state):token);}
+        }return null;
+      }
+      if(value.kind==='arrayStoreDenseChecked'){
+        expression(value.target.receiver,path+'/target/receiver',state,env);expression(value.target.index,path+'/target/index',state,env);
+        const token=child('value');if(arrayReads.size){charge();arraySources.set(path+'/value',token&&copiesValue(value.value.type)?copyToken(token,path+'/stored-copy',state):token);}return token;
+      }
+      if(value.kind==='arrayReadChecked'){
+        child('receiver');child('index');const sources=arrayReads.get(path);let selected;
+        // Bounds are not an origin. Every ordered successful source must have
+        // retained the same actual alias at its own storage boundary.
+        for(const source of sources??[]){charge();const token=arraySources.get(source);if(!token||selected!==undefined&&selected!==token)return null;selected=token;}
+        return selected&&copiesValue(value.type)?copyToken(selected,path+'/copy',state):selected??null;
       }
       if(value.kind==='fieldAccess') {
         const token=child('receiver'),payload=access(value,path,state,token,'read');
