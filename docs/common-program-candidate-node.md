@@ -1,5 +1,22 @@
 # Complete Common Program candidate Node pipeline
 
+Kernel capability rejections retain their existing code, rule and primary
+anchor, and add a readonly `error.callChain`. Its version-1 result identifies
+the root, a prohibited facet/capture/Host resource, real Source call edges, and
+an origin. Operation origins name a validated Source operation; function origins
+identify signature, capture or derived function properties. A `fixed-upper`
+origin carries the unchanged contract digest and does not assert that the
+current body performs that operation. Unknown provenance stays unknown.
+
+The chain search is bounded and deterministic over existing direct, method,
+constructor and finite indirect calls. Source ranges use UTF-16 offsets.
+Ambient Host calls are operation endpoints rather than invented owned
+functions. The real compiler CLI and independent C++ static verifier append
+`; callChain=` followed by canonical JSON to their existing stderr diagnostic.
+The C++ primary anchor remains its original diagnostic anchor, which can name a
+different genuine Host occurrence when more than one path exists. Diagnostic
+provenance does not narrow fixed Published bounds or grant kernel permission.
+
 The static borrow-proof output uses the same complete HIR, fixed publication and
 kernel request. `createCommonBorrowProof(hir, publication, request)` exports a
 version-1 `tsfg.common-borrow-proof-candidate`; `readCommonBorrowProof(bytes, hir,

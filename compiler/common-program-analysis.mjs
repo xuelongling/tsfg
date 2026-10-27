@@ -5,6 +5,7 @@ import {verifyCommonProgramHir} from './common-program-hir.mjs';
 import {commonEffects,commonFacets} from './common-program-effects.mjs';
 import {validateCommonCallableBounds} from './common-program-targets.mjs';
 import {commonHostResources} from './common-program-hosts.mjs';
+import {commonKernelCallChain} from './common-program-diagnostics.mjs';
 import {commonIdentity} from './common-program-identities.mjs';
 import {commonProgramPhysical} from './common-program-physical.mjs';
 import {commonSortedSubset,commonCollections} from './common-program-budget.mjs';
@@ -86,7 +87,7 @@ function prepare(input,publication) {
     const {digest,...body}=row;check(digest===contractDigest(body),'publication-identity');records.set(row.functionId,row);
   }
   const scope=scopeDigest(hir,spend);check(publication.scopeDigest===scope&&publication.expectedDigest===publicationDigest(scope,publication.contracts),'publication-identity');
-  const physical=commonProgramPhysical(hir,records),effects=commonEffects(hir,spend,physical);return {hir,spend,effects,records,scope};
+  const physical=commonProgramPhysical(hir,records),effects=commonEffects(hir,spend,physical);return {hir,spend,effects,records,scope,physical};
 }
 function covers(upper,body,spend) {
   spend(commonFacets.length+body.parameters.length*flags.length);
@@ -96,7 +97,7 @@ function covers(upper,body,spend) {
     &&commonFacets.every(flag=>!body.facets[flag]||upper.facets[flag])
     &&body.parameters.every((row,index)=>flags.every(flag=>!row[flag]||upper.parameters[index][flag]));
 }
-export function analyzeCommonProgram(input,publication) {
+function analyze(input,publication) {
   const prepared=prepare(input,publication),{hir,effects,spend,records}=prepared,derived=effects.derived();
   const collections=commonCollections(spend),dependencies=calls=>{spend(calls.length);const selected=collections.sorted(collections.set(calls.map(call=>call.target)));
     spend(selected.length);return selected.map(functionId=>({functionId,digest:records.get(functionId).digest}));};
@@ -112,13 +113,14 @@ export function analyzeCommonProgram(input,publication) {
     const current=effects.derive(fn,uppers);return {functionId:module.initializer,effective:current.upper,dependencies:dependencies(current.calls),hostCalls:current.hostCalls};
   });
   const report={inputIdentity:hir.inputIdentity,hirDigest:sha256(canonical(hir)+'\n'),scopeDigest:prepared.scope,publishedDigest:publication.expectedDigest,
-    contracts:publication.contracts,functions,initializers,initializationOrder:hir.closure.initialization};commonBudget(report);return own(report);
+    contracts:publication.contracts,functions,initializers,initializationOrder:hir.closure.initialization};commonBudget(report);return {report:own(report),prepared};
 }
+export const analyzeCommonProgram=(input,publication)=>analyze(input,publication).report;
 
 export function verifyCommonKernelGroup(input,publication,request) {
   const spend=commonMeter();commonBudget(request);record(request,['targets']);check(Array.isArray(request.targets)&&request.targets.length!==1&&request.targets.length<=32,'kernel');
   spend(request.targets.length);check(request.targets.every(hash)&&sorted(request.targets),'kernel');
-  const analysis=analyzeCommonProgram(input,publication),hir=verifyCommonProgramHir(input);
+  const {report:analysis,prepared}=analyze(input,publication),{hir}=prepared;
   const roots=new Set();spend(hir.closure.roots.length);for(const root of hir.closure.roots)if(root.kind==='kernel')roots.add(root.target);
   spend(request.targets.length);check(request.targets.every(id=>roots.has(id)),'kernel-identity');
   spend(analysis.contracts.length+hir.functions.length);
@@ -127,9 +129,16 @@ export function verifyCommonKernelGroup(input,publication,request) {
   function hostOrigin(id,seen=new Set()){spend();if(seen.has(id))return null;seen.add(id);const current=analyzed.get(id);
     if(current.hostCalls.length)return current.hostCalls[0];for(const edge of current.dependencies){spend();const origin=hostOrigin(edge.functionId,seen);if(origin)return origin;}return null;}
   const accesses=request.targets.map(functionId=>{spend();const row=contracts.get(functionId),fn=functions.get(functionId);
-    const host=hostOrigin(functionId);check(!row.upper.hostResources.reads.length&&!row.upper.hostResources.writes.length,'kernel-host','fixed Published Host resource access is not kernel-admissible',{functionId,primary:host?{sourceId:host.sourcePath,...host.range}:{sourceId:fn.sourcePath,...fn.range},hostResources:row.upper.hostResources});
-    check(!commonFacets.some(flag=>row.upper.facets[flag])&&!row.upper.captures.some(c=>c.read||c.write||c.structural),'kernel-capability','fixed Published kernel capability is not proved',
-      {functionId,primary:{sourceId:fn.sourcePath,...fn.range},facets:commonFacets.filter(flag=>row.upper.facets[flag])});
+    if(row.upper.hostResources.reads.length||row.upper.hostResources.writes.length){
+      const host=hostOrigin(functionId),access=row.upper.hostResources.reads.length?'read':'write',resource=row.upper.hostResources[access==='read'?'reads':'writes'][0];
+      check(false,'kernel-host','fixed Published Host resource access is not kernel-admissible',{functionId,primary:host?{sourceId:host.sourcePath,...host.range}:{sourceId:fn.sourcePath,...fn.range},hostResources:row.upper.hostResources,
+        callChain:commonKernelCallChain(prepared,analysis,functionId,{kind:'host-resource',resource,access})});
+    }
+    const facets=commonFacets.filter(flag=>row.upper.facets[flag]),capture=row.upper.captures.find(c=>c.read||c.write||c.structural);
+    if(facets.length||capture){
+      const reason=capture?{kind:/** @type {'capture'} */('capture'),slot:capture.slot,access:/** @type {'read'|'write'|'structural'} */(capture.read?'read':capture.write?'write':'structural')}:{kind:/** @type {'facet'} */('facet'),facet:facets[0]};
+      check(false,'kernel-capability','fixed Published kernel capability is not proved',{functionId,primary:{sourceId:fn.sourcePath,...fn.range},facets,callChain:commonKernelCallChain(prepared,analysis,functionId,reason)});
+    }
     return {functionId,publishedContractDigest:row.digest,reads:row.upper.globals.reads,writes:row.upper.globals.writes,parameters:row.upper.parameters,captures:row.upper.captures,facets:row.upper.facets,hostResources:row.upper.hostResources};});
   const pairs=[],intersection=(a,b)=>{const out=[];let i=0,j=0;while(i<a.length&&j<b.length){spend();if(a[i]<b[j])i++;else if(a[i]>b[j])j++;else{out.push(a[i]);i++;j++;}}return out;};
   for(let i=0;i<accesses.length;i++)for(let j=i+1;j<accesses.length;j++) {

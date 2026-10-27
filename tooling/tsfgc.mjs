@@ -55,6 +55,7 @@ try {
   }
   }
 } catch (error) {
-  process.stderr.write(`${error.message}\n`);
+  const chain=error instanceof Error&&'callChain' in error?'; callChain='+canonical(error.callChain):'';
+  process.stderr.write(`${error.message}${chain}\n`);
   process.exitCode = 2;
 }

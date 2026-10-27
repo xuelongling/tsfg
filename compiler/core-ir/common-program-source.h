@@ -34,6 +34,10 @@ bool verifySourceShape(SourceModel &);
 // Same pinned shared DTO boundary for independent source families. This does
 // not admit a different package as a common Program or invoke its directory.
 bool verifySourceShapeValue(SourceModel &,const Json &,llvm::StringRef);
+// Diagnostic provenance is observed by the same owned effects derivation.
+// It is not a second effect bound or permission table.
+struct EffectDiagnostics {std::map<std::string,Json> local;Array calls;};
+bool deriveEffectDiagnostics(Program &,const Json &,const std::map<std::string,Effects> &,Effects &,Error &,EffectDiagnostics &);
 inline std::string moduleId(llvm::StringRef path){return digest(std::string("tsfg.module")+std::string(1,'\0')+path.str());}
 inline std::string initializerId(llvm::StringRef path){return identity("initializer",Object{{"module",moduleId(path)}});}
 inline Json declKey(const Json &path,const Json &scope,llvm::StringRef kind,const Json &name){
