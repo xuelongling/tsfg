@@ -31,6 +31,7 @@ struct Model {
   std::string selectionId(const Json &)const;
 };
 bool verifyOperations(mlir::ModuleOp,Model &);
+bool collectEffects(mlir::ModuleOp,Model &,Json &);
 inline int64_t number(const Json &value){return value.getAsInteger().value_or(-1);}
 inline std::string originId(llvm::StringRef path,const Json &nameRange){
   return digest(std::string("tsfg.array-facts.binding.v1")+std::string(1,'\0')+canonical(Object{{"sourcePath",path.str()},{"nameRange",nameRange}}));

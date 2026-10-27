@@ -425,7 +425,7 @@ int main(int argc, char **argv) {
   const bool query = argc == 3 && llvm::StringRef(argv[1]) == "--system-query";
   const auto command = argc == 2 || common || query ? llvm::StringRef(argv[common || query ? 2 : 1]) : llvm::StringRef();
   if ((argc != 2 && !common && !query) || (command != "--canonicalize" &&
-      command != "--optimize" && !(common && command == "--component-layouts") && (common || query || command != "--emit-bytecode"))) {
+      command != "--optimize" && !(common && command == "--component-layouts") && !(query && command == "--effects") && (common || query || command != "--emit-bytecode"))) {
     llvm::errs() << "[core-ir-command] expected --canonicalize with IR on stdin\n";
     return 2;
   }
@@ -453,7 +453,13 @@ int main(int argc, char **argv) {
     return 3;
   }
   if (common) return tsfg::commonProgram::runCoreModule(*module, command);
-  if (query) return mlir::succeeded(tsfg::systemQuery::verifyAndBind(*module)) ? tsfg::commonProgram::printCoreModule(*module) : 3;
+  if (query) {
+    if(command=="--effects"){
+      tsfg::commonProgram::Json effects=nullptr;
+      return mlir::succeeded(tsfg::systemQuery::analyzeEffects(*module,effects))?tsfg::commonProgram::printCoreJson(effects):3;
+    }
+    return mlir::succeeded(tsfg::systemQuery::verifyAndBind(*module)) ? tsfg::commonProgram::printCoreModule(*module) : 3;
+  }
   auto version = module->getOperation()->getAttrOfType<mlir::StringAttr>("tsfg_core.version");
   if (!version || version.getValue() != "0.10.0") {
     llvm::errs() << "[core-ir-identity] expected Core IR 0.10.0\n";

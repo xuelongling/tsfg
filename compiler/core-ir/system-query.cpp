@@ -47,12 +47,15 @@ public:
 };
 }
 void registerDialect(mlir::DialectRegistry &registry){registry.insert<QueryDialect>();}
-mlir::LogicalResult verifyAndBind(mlir::ModuleOp module){
+static mlir::LogicalResult verify(mlir::ModuleOp module,Json *effects){
   Model m;
   if(m.metadata(module)&&m.files()&&m.ast()&&m.types()&&m.declarations()&&m.bodies()&&
-    verifyOperations(module,m)&&mlir::succeeded(mlir::verify(module)))return mlir::success();
+    verifyOperations(module,m)&&mlir::succeeded(mlir::verify(module))&&
+    (!effects||collectEffects(module,m,*effects)))return mlir::success();
   auto d=module.emitError();d<<"["<<m.error.code<<"] "<<m.error.message;
   if(!m.error.path.empty())d<<" ("<<m.error.path<<":"<<m.error.range.start<<":"<<m.error.range.end<<")";
   return mlir::failure();
 }
+mlir::LogicalResult verifyAndBind(mlir::ModuleOp module){return verify(module,nullptr);}
+mlir::LogicalResult analyzeEffects(mlir::ModuleOp module,Json &effects){return verify(module,&effects);}
 } // namespace tsfg::systemQuery

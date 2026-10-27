@@ -4,6 +4,8 @@ import {printSystemQueryFacts} from './system-query-facts.mjs';
 import {commonTextBudget} from './common-program-budget.mjs';
 import {functionId,signatureId} from './module-callable-common.mjs';
 import {canonical,sha256,scalarTypeIds} from './identity.mjs';
+/** @param {import('./system-query-facts.mjs').SystemQuerySelection} query */
+export const systemQueryTypeId=query=>sha256('tsfg.query.type.v1\0'+canonical(query.items.map(item=>({componentType:item.componentType,mode:item.mode}))));
 
 /** @param {import('./system-query-facts.mjs').SystemQueryFacts} facts @param {unknown} context */
 export function emitSystemQueryCore(facts,context){
@@ -18,7 +20,7 @@ export function emitSystemQueryCore(facts,context){
   const anchor=range=>'tsfg_source.start = '+range.start+' : i64, tsfg_source.end = '+range.end+' : i64';
   const fail=(system,range,detail)=>{throw Object.assign(new TypeError('r10-query-core-capability: '+detail),
     {code:'r10-query-core-capability',phase:'lowering',sourcePath:system.declaration.sourcePath,range});};
-  const queryType=query=>sha256('tsfg.query.type.v1\0'+canonical(query.items.map(item=>({componentType:item.componentType,mode:item.mode}))));
+  const queryType=systemQueryTypeId;
   const scalar=new Map(Object.entries(scalarTypeIds).map(([name,id])=>[id,
     name==='i32'?'i32':name==='bool'?'i1':['f32','f64'].includes(name)?name:'!tsfg_core.integer<'+quote(name)+'>']));
   const query=id=>'!tsfg.query<'+quote(id)+'>',chunk=id=>'!tsfg.chunk<'+quote(id)+'>',view=(id,mode)=>'!tsfg.view<'+quote(id+'#'+mode)+'>';

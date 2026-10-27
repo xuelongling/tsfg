@@ -1,0 +1,159 @@
+{
+  "kind": "independent-unexecuted-source-reasoned-oracle",
+  "sourceSHA256": "b01217c6155b8790171873ead905335605e32ee377f92f90e4352de83507712c",
+  "qualification": "Declared capabilities and actual body effects are distinct; no numerical/scheduler/parallel/Guest claim. Not supplied to producer.",
+  "systems": [
+    {
+      "name": "readPosition",
+      "declaredRead": [
+        "Position"
+      ],
+      "declaredWrite": [],
+      "bodyLoads": [],
+      "bodyStores": [],
+      "loops": 0
+    },
+    {
+      "name": "readPosition2",
+      "declaredRead": [
+        "Position"
+      ],
+      "declaredWrite": [],
+      "bodyLoads": [],
+      "bodyStores": [],
+      "loops": 0
+    },
+    {
+      "name": "writePositionX",
+      "declaredRead": [],
+      "declaredWrite": [
+        "Position"
+      ],
+      "bodyLoads": [
+        "Position.x"
+      ],
+      "bodyStores": [
+        "Position.x"
+      ],
+      "loops": 1
+    },
+    {
+      "name": "writePositionY",
+      "declaredRead": [],
+      "declaredWrite": [
+        "Position"
+      ],
+      "bodyLoads": [
+        "Position.y"
+      ],
+      "bodyStores": [
+        "Position.y"
+      ],
+      "loops": 1
+    },
+    {
+      "name": "writeVelocity",
+      "declaredRead": [],
+      "declaredWrite": [
+        "Velocity"
+      ],
+      "bodyLoads": [
+        "Velocity.x"
+      ],
+      "bodyStores": [
+        "Velocity.x"
+      ],
+      "loops": 1
+    },
+    {
+      "name": "copyPositionToVelocity",
+      "declaredRead": [
+        "Position"
+      ],
+      "declaredWrite": [
+        "Velocity"
+      ],
+      "bodyLoads": [
+        "Position.x"
+      ],
+      "bodyStores": [
+        "Velocity.x"
+      ],
+      "loops": 1
+    },
+    {
+      "name": "aliasPosition",
+      "declaredRead": [
+        "Position"
+      ],
+      "declaredWrite": [
+        "Position"
+      ],
+      "bodyLoads": [
+        "Position.x",
+        "Position.y"
+      ],
+      "bodyStores": [
+        "Position.x"
+      ],
+      "loops": 1
+    }
+  ],
+  "conflictPairs": [
+    [
+      "aliasPosition",
+      "copyPositionToVelocity"
+    ],
+    [
+      "aliasPosition",
+      "readPosition"
+    ],
+    [
+      "aliasPosition",
+      "readPosition2"
+    ],
+    [
+      "aliasPosition",
+      "writePositionX"
+    ],
+    [
+      "aliasPosition",
+      "writePositionY"
+    ],
+    [
+      "copyPositionToVelocity",
+      "writePositionX"
+    ],
+    [
+      "copyPositionToVelocity",
+      "writePositionY"
+    ],
+    [
+      "copyPositionToVelocity",
+      "writeVelocity"
+    ],
+    [
+      "readPosition2",
+      "writePositionX"
+    ],
+    [
+      "readPosition2",
+      "writePositionY"
+    ],
+    [
+      "readPosition",
+      "writePositionX"
+    ],
+    [
+      "readPosition",
+      "writePositionY"
+    ],
+    [
+      "writePositionX",
+      "writePositionY"
+    ]
+  ],
+  "noConflictPairsCount": 8,
+  "conflictPairsCount": 13,
+  "note": "7 systems /21 unordered pairs; WritePositionX vsWritePositionY conflict on whole Position despite differing fields; ReadPosition vsReadPosition2 independent; Position-only vsVelocity-only independent; empty read bodies have no executed field effects."
+}

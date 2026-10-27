@@ -53,6 +53,7 @@
     "reference-contracts.cpp",
     "system-query-bodies.cpp",
     "system-query-declarations.cpp",
+    "system-query-effects.cpp",
     "system-query-ops.cpp",
     "system-query-source.cpp",
     "system-query-types.cpp",

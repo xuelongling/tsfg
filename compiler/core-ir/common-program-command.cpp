@@ -34,6 +34,7 @@ int finish(Output &output){
 int printCoreModule(mlir::ModuleOp module){
   Output output;module->print(output,mlir::OpPrintingFlags().printGenericOpForm());output<<'\n';return finish(output);
 }
+int printCoreJson(const Json &value){Output output;output<<canonical(value)<<'\n';return finish(output);}
 int readCoreInput(std::string &bytes) {
   if (llvm::sys::ChangeStdinToBinary()) return 2;
   constexpr size_t limit = 8388608;

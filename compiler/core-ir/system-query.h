@@ -19,4 +19,6 @@ void registerDialect(mlir::DialectRegistry &);
 // Independently verifies Source and typed operations; binds logical operations
 // using the existing fixed component DataLayout before canonical output.
 mlir::LogicalResult verifyAndBind(mlir::ModuleOp);
+// Effects are derived only after the same independent Source/SSA verification.
+mlir::LogicalResult analyzeEffects(mlir::ModuleOp,commonProgram::Json &);
 } // namespace tsfg::systemQuery

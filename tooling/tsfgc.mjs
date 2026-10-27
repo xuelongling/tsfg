@@ -2,6 +2,7 @@
 import { readFile } from "node:fs/promises";
 import { compileHir, compileProgram, compileSystemQuery, runBytecode } from "../compiler/pipeline.mjs";
 import { printHir } from "../compiler/hir.mjs";
+import {canonical} from '../compiler/identity.mjs';
 
 try {
   const options = new Map();
@@ -12,15 +13,17 @@ try {
     options.set(args[i], args[i + 1]);
   }
   const emit = options.get("--emit") ?? "run";
-  if (!["hir", "core", "bytecode", "run"].includes(emit) || !options.has("--input"))
+  if (!["hir", "core", "bytecode", "run", "query-effects"].includes(emit) || !options.has("--input"))
     throw new TypeError("r03-cli-options: --input <owned-input.json> and --emit hir|core|bytecode|run are required");
   if(options.has('--query-request')){
-    if(emit!=='core'||['--frontend','--vm','--requests'].some(key=>options.has(key)))
-      throw new TypeError('r03-cli-options: owned Query request requires --emit core');
+    if(!['core','query-effects'].includes(emit)||['--frontend','--vm','--requests'].some(key=>options.has(key)))
+      throw new TypeError('r03-cli-options: owned Query request requires --emit core|query-effects');
     const bytes=await readFile(options.get('--input')),requestBytes=await readFile(options.get('--query-request'));
     const context={family:'tsfg.system-query-context-candidate',version:2,requestBytes,expectedPackageId:JSON.parse(bytes.toString('utf8')).packageId};
-    const result=await compileSystemQuery(bytes,context,{core:options.get('--core')});process.stdout.write(result.core);
+    const result=await compileSystemQuery(bytes,context,{core:options.get('--core'),effects:emit==='query-effects'});
+    process.stdout.write(emit==='query-effects'?canonical(result.effects)+'\n':result.core);
   }else{
+  if(emit==='query-effects')throw new TypeError('r03-cli-options: query-effects requires --query-request');
   const input = JSON.parse(await readFile(options.get("--input"), "utf8"));
   const requests = emit === "run" ? JSON.parse(options.get("--requests") ?? "[{}]") : undefined;
   const compile = emit === "hir" ? compileHir : compileProgram;
