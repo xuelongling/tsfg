@@ -77,12 +77,30 @@ bool readCore(mlir::ModuleOp module,Program &out,Error &error){
   Program p;if(!metadata(module,p,error)||!readFunctions(module,p,error))return false;
   out=std::move(p);return true;
 }
-bool verifyProgram(Program &p,Error &error){
+static bool verifyProgramImpl(Program &p,Error &error,Json *borrowProof){
   p.remaining=std::min(p.remaining,size_t(1000000));p.hosts.clear();p.hostResources.clear();p.hostOrigins.clear();p.hostContractHash.clear();p.layouts.clear();p.effects.clear();p.fixedEffects.clear();
   if(!verifySource(p,error)||!verifyTypes(p,error))return false;
   ActualCheck check{p,error};
-  return check.run()&&verifyCommonBorrows(check)&&verifyKernelProof(p,error);
+  Json events=nullptr;
+  if(!check.run()||!verifyCommonBorrows(check,borrowProof?&events:nullptr)||!verifyKernelProof(p,error))return false;
+  if(borrowProof){
+    Array functions,sources;std::map<std::string,const Function *> ordered;
+    for(const auto &fn:p.functions)ordered.emplace(fn.id,&fn);
+    for(const auto &[id,fn]:ordered){
+      if(!check.step())return false;auto source=check.sourceFunctions.find(id);
+      functions.push_back(Object{{"functionId",id},{"sourceBinding",source==check.sourceFunctions.end()?Json(nullptr):field(*source->second,"sourceBinding")},
+        {"signatureHash",fn->signature},{"source",Object{{"path",fn->path},{"start",fn->range.start},{"end",fn->range.end}}}});
+    }
+    for(const auto &source:items(field(p.hir,"sources"))){if(!check.step())return false;sources.push_back(Object{{"path",field(source,"path")},{"hash",field(source,"hash")}});}
+    *borrowProof=Object{{"family","tsfg.common-borrow-proof-candidate"},{"version",1},{"inputIdentity",p.inputIdentity},{"hirDigest",p.hirHash},
+      {"scopeDigest",field(p.publication,"scopeDigest")},{"publishedDigest",field(p.publication,"expectedDigest")},
+      {"request",Object{{"targets",field(p.request,"targets")}}},{"target",field(p.hir,"target")},{"sources",std::move(sources)},
+      {"functions",std::move(functions)},{"events",std::move(events)}};
+  }
+  return true;
 }
+bool verifyProgram(Program &p,Error &error){return verifyProgramImpl(p,error,nullptr);}
+bool analyzeCommonBorrowProof(Program &p,Error &error,Json &proof){return verifyProgramImpl(p,error,&proof);}
 mlir::LogicalResult verify(mlir::ModuleOp module){
   Program p;Error error;
   if(readCore(module,p,error)&&verifyProgram(p,error))return mlir::success();

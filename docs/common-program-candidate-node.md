@@ -1,5 +1,25 @@
 # Complete Common Program candidate Node pipeline
 
+The static borrow-proof output uses the same complete HIR, fixed publication and
+kernel request. `createCommonBorrowProof(hir, publication, request)` exports a
+version-1 `tsfg.common-borrow-proof-candidate`; `readCommonBorrowProof(bytes, hir,
+publication, request)` reconstructs it from those inputs and returns immutable,
+typed data only after exact canonical comparison. Source/function identities,
+physical Core operation positions, descriptor and owner origins, uses,
+structural effects, and normal/language call completions remain distinct.
+Control edges project the verified graph between borrow, call and completion
+points; unrelated scalar adapters do not create additional borrow authority.
+
+`compileCommonBorrowProof(hir, publication, request, {core})` requires the current
+verified static consumer manifest. It canonicalizes the actual Core, obtains
+the independently reconstructed C++ proof through `--common-program
+--borrow-proof`, and passes that output through the owning Node reader. The
+corresponding `tsfgc` mode is `--emit borrow-proof` with `--input`,
+`--publication`, `--kernel-request`, and `--core`. No publication is refreshed or
+narrowed by either interface. A later view use across an owner resize still
+rejects before a successful proof can be published. This output grants no
+execution, scheduling or Runtime qualification.
+
 The candidate entry points consume one complete Source package, own its HIR, verify fixed Published bounds and emit static Core. They preserve ordinary functions, initializers, globals, nominal types and original capture bindings even when a kernel selects only part of the Program.
 
 ```js

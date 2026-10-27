@@ -1,6 +1,8 @@
 // SPDX-License-Identifier: MIT
 import { readFile } from "node:fs/promises";
-import { compileHir, compileProgram, compileSystemQuery, runBytecode } from "../compiler/pipeline.mjs";
+import { compileHir, compileProgram, compileSystemQuery, compileCommonBorrowProof, runBytecode } from "../compiler/pipeline.mjs";
+import {readCommonProgramHir} from '../compiler/common-program-hir.mjs';
+import {commonJson} from '../compiler/common-program-common.mjs';
 import { printHir } from "../compiler/hir.mjs";
 import {canonical} from '../compiler/identity.mjs';
 
@@ -8,14 +10,20 @@ try {
   const options = new Map();
   const args = process.argv.slice(2);
   for (let i = 0; i < args.length; i += 2) {
-    if (!["--input", "--frontend", "--core", "--vm", "--emit", "--requests", "--query-request"].includes(args[i])
+    if (!["--input", "--frontend", "--core", "--vm", "--emit", "--requests", "--query-request", "--publication", "--kernel-request"].includes(args[i])
         || options.has(args[i]) || !args[i + 1]) throw new TypeError("r03-cli-options: invalid or duplicate option");
     options.set(args[i], args[i + 1]);
   }
   const emit = options.get("--emit") ?? "run";
-  if (!["hir", "core", "bytecode", "run", "query-effects"].includes(emit) || !options.has("--input"))
+  if (!["hir", "core", "bytecode", "run", "query-effects", "borrow-proof"].includes(emit) || !options.has("--input"))
     throw new TypeError("r03-cli-options: --input <owned-input.json> and --emit hir|core|bytecode|run are required");
-  if(options.has('--query-request')){
+  if(emit==='borrow-proof'){
+    if(!options.has('--publication')||!options.has('--kernel-request')||!options.has('--core')||['--frontend','--vm','--requests','--query-request'].some(key=>options.has(key)))
+      throw new TypeError('r03-cli-options: borrow-proof requires complete Common HIR, fixed --publication, --kernel-request and --core');
+    const hir=readCommonProgramHir(await readFile(options.get('--input'))),publication=commonJson(await readFile(options.get('--publication'))),request=commonJson(await readFile(options.get('--kernel-request')));
+    const result=await compileCommonBorrowProof(hir,publication,request,{core:options.get('--core')});process.stdout.write(canonical(result.proof)+'\n');
+  }else if(options.has('--publication')||options.has('--kernel-request'))throw new TypeError('r03-cli-options: fixed Common publication/request require --emit borrow-proof');
+  else if(options.has('--query-request')){
     if(!['core','query-effects'].includes(emit)||['--frontend','--vm','--requests'].some(key=>options.has(key)))
       throw new TypeError('r03-cli-options: owned Query request requires --emit core|query-effects');
     const bytes=await readFile(options.get('--input')),requestBytes=await readFile(options.get('--query-request'));

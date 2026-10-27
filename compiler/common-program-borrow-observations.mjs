@@ -2,6 +2,7 @@
 // A final replay supplies selected values; no point heaps are retained.
 import {commonBorrowGraph} from './common-program-borrows.mjs';
 import {commonCheck as check} from './common-program-common.mjs';
+import {commonBorrowEvents} from './common-program-borrow-events.mjs';
 // Code permission and current graph holding are separate. A scalar capture
 // write may change a number, but it cannot replace an owning reference edge.
 export function commonClosureHolding({model,objects,records,closedTarget}){
@@ -48,8 +49,10 @@ export function commonClosureHolding({model,objects,records,closedTarget}){
   }
   return {permitsCode,wholeValue};
 }
-export function commonBorrowObservations({model,records,objects,regions=null,readEnvironmentSlot=null,holdingPolicy=null}) {
+export function commonBorrowObservations({model,records,objects,regions=null,readEnvironmentSlot=null,holdingPolicy=null,borrowProof=false,cyclicFunctions=new Set()}) {
   const {spend,types}=model,graph=commonBorrowGraph(spend),returns=new Map(),calls=[],callReturns=new Map(),contexts=new Set(),components=new Map(),allocations=new Map(),creations=new Map();
+  const proof=borrowProof?commonBorrowEvents({model,objects,cyclicFunctions}):null;
+  if(proof)for(const key of ['define','use','effect','edge']){const verify=graph[key];graph[key]=(...args)=>{verify(...args);proof[key](...args);};}
   const slotLayouts=new Map();spend(model.environments?.size??0);
   for(const env of model.environments?.values()??[]){spend(env.slots.length);for(const slot of env.slots){check(!slotLayouts.has(slot.key)||slotLayouts.get(slot.key)===env.id,'environment');slotLayouts.set(slot.key,env.id);}}
   const entry=c=>c.id+'/entry',block=(c,name)=>c.id+'/block/'+name;
@@ -244,11 +247,13 @@ export function commonBorrowObservations({model,records,objects,regions=null,rea
     callReturns.set(at,routes);
   }
   function begin(c,heap) {
+    proof?.begin(c,heap);
     spend();contexts.add(c.id);
     graph.point(entry(c));graph.edge(entry(c),block(c,c.plan.entry.name));
     if(c.root)for(const value of c.args)for(const ref of escapingSpans(value,heap)){spend();define(entry(c),ref,heap);}
   }
   function before(c,op,state,args,at) {
+    proof?.before(c,op,at);
     const name=op.name.replace('tsfg_program.',''),where=origin(c,op);graph.point(at).origin=where;
     if(name==='array_read'||name==='readspan_length')use(at,args[0],state.heap,c.plan.graph.registers.get(op.operands[0]).view,where);
     if(name==='array_resize'){
@@ -302,6 +307,7 @@ export function commonBorrowObservations({model,records,objects,regions=null,rea
     }
   }
   function after(c,op,state,value,at){
+    proof?.after(c,op,value,at);
     const name=op.name.replace('tsfg_program.','');
     if(name==='env_alloc')for(const ref of value.refs){spend();graph.fresh.add(ref);remember(allocations,ref,c,{kind:'environment',weak:objects.get(ref).weak});}
     if(['array_create','allocate_reference','construct_value','value_copy'].includes(name))for(const ref of value.refs){spend();if(name==='value_copy'&&kind(ref)!=='value')continue;
@@ -309,14 +315,14 @@ export function commonBorrowObservations({model,records,objects,regions=null,rea
     if(name==='readspan')for(const ref of value.refs){spend();define(at,ref,state.heap,objects.get(ref)?.weak);
       remember(creations,ref,c,{element:types.get(op.view).elementType,weak:objects.get(ref).weak,owner:owners(ref,state.heap)});}
   }
-  function call(at,callee,caller,successors){spend();graph.edge(at,entry(callee));const routes=callReturns.get(at);
+  function call(at,callee,caller,successors){spend();proof?.call(at,callee,caller,successors);graph.edge(at,entry(callee));const routes=callReturns.get(at);
     calls.push({caller:caller.id,callee:callee.id,normal:routes?.normal??block(caller,successors[0]),language:routes?.language??block(caller,successors[1]),
       normalSuccessor:routes?block(caller,successors[0]):null,languageSuccessor:routes?block(caller,successors[1]):null});}
   function finish(){
     connectContexts();
     for(const row of calls){spend();const exits=returns.get(row.callee);if(exits)for(const completion of ['normal','language'])for(const at of exits[completion]){
       graph.edge(at,row[completion]);if(row[completion+'Successor'])graph.edge(row[completion],row[completion+'Successor']);}}
-    return graph.verify();
+    const verified=graph.verify();return proof?{...verified,projection:proof}:verified;
   }
   return {begin,block,entry,before,after,prepareCall,call,edge:graph.edge,finish,hardEscape};
 }

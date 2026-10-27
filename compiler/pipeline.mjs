@@ -10,6 +10,8 @@ import { canonical, sha256 } from "./identity.mjs";
 import {readSystemQueryFacts} from './system-query-facts.mjs';
 import {emitSystemQueryCore} from './system-query-core.mjs';
 import {readSystemQueryEffects} from './system-query-effects.mjs';
+import {commonProgramCore} from './common-program-core.mjs';
+import {readCommonBorrowProof} from './common-program-borrow-proof.mjs';
 import registry from "../contracts/registry.json" with { type: "json" };
 import bytecodeSchema from "../contracts/bytecode.schema.json" with { type: "json" };
 
@@ -53,6 +55,16 @@ export async function compileSystemQuery(bytes,context,options){
   const core=consume(executable,['--system-query',options.optimize?'--optimize':'--canonicalize'],emitSystemQueryCore(facts,context)).toString('utf8');
   const effects=options.effects?readSystemQueryEffects(consume(executable,['--system-query','--effects'],core),facts,context):undefined;
   return {status:'ok',facts,core,effects};
+}
+
+/** Existing complete Common HIR/fixed bounds to the independent static proof.
+ * @param {{core:string}} options
+ */
+export async function compileCommonBorrowProof(hir,publication,request,options){
+  const product=commonProgramCore(hir,publication,request,{borrowProof:true}),executable=await verifiedConsumer(options.core,'core');
+  const core=consume(executable,['--common-program','--canonicalize'],product.text).toString('utf8');
+  const proof=readCommonBorrowProof(consume(executable,['--common-program','--borrow-proof'],core),product.hir,publication,request);
+  return {status:'ok',hir:product.hir,core,proof};
 }
 
 /** Officially checked source to owned HIR; no native execution is needed to view it. */

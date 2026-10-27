@@ -425,7 +425,7 @@ int main(int argc, char **argv) {
   const bool query = argc == 3 && llvm::StringRef(argv[1]) == "--system-query";
   const auto command = argc == 2 || common || query ? llvm::StringRef(argv[common || query ? 2 : 1]) : llvm::StringRef();
   if ((argc != 2 && !common && !query) || (command != "--canonicalize" &&
-      command != "--optimize" && !(common && command == "--component-layouts") && !(query && command == "--effects") && (common || query || command != "--emit-bytecode"))) {
+      command != "--optimize" && !(common && (command == "--component-layouts" || command == "--borrow-proof")) && !(query && command == "--effects") && (common || query || command != "--emit-bytecode"))) {
     llvm::errs() << "[core-ir-command] expected --canonicalize with IR on stdin\n";
     return 2;
   }

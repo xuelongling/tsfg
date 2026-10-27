@@ -5,14 +5,22 @@ import {i32TypeId,boolTypeId} from './identity.mjs';
 import {finiteNumericUse} from './finite-numeric-use.mjs';
 import {commonCheck as check,canonical} from './common-program-common.mjs';
 import {commonTextBudget} from './common-program-budget.mjs';
-export function printCommonFunction(plan,model,carriers,publication=null) {
+export function printCommonFunction(plan,model,carriers,publication=null,projection=null) {
   const {owner,graph,entry}=plan,{spend}=model,selected=carriers.registers.get(owner.id),abi=carriers.functions.get(owner.id),coreType=carriers.coreType;
   spend(graph.blocks.length);const text=publication??commonTextBudget(spend,model.limits.bytes),physical=new Map(),blocks=new Map(graph.blocks.map(b=>[b.name,b])),blockTypes=new Map(),incomingRanges=new Map();let serial=0,extraBlocks=0;
   const quote=text.quote,join=(parts,separator=', ')=>text.combine(parts,separator),anchor=r=>'tsfg_source.start = '+r.start+' : i64, tsfg_source.end = '+r.end+' : i64';
   const line=(...parts)=>text.line(...parts);
+  let physicalBlock=-1,physicalIndex=0,logicalBlock=null,logicalOperation=null;
+  const record=(name,range)=>{
+    if(!projection)return;
+    const site={functionId:owner.id,block:physicalBlock,index:physicalIndex++,name:name.replace('tsfg_program.',''),source:{path:owner.sourcePath,...range}};
+    projection.blockSite(owner.id,logicalBlock.name,site);
+    if(logicalOperation?.name===name)projection.operationSite(logicalOperation,site);
+  };
   const variable=()=>{check(graph.registers.size+ ++serial<=model.limits.registersPerFunction,'limit');return '%a'+serial;};
   const resolve=name=>{const value=physical.get(name);check(value,'ssa','physical SSA use before definition');return value;};
   const emit=(name,args,type,properties,view,range,result=null,successors=[])=>{
+    record(name,range);
     spend(args.length+successors.length+1);const output=type===null?null:result??variable();
     line('    ',output?output+' = ':'',quote(name),'(',join(args.map(v=>v.name)),')',
       successors.length?' ['+join(successors.map(n=>'^'+n))+']':'',' {',
@@ -36,7 +44,7 @@ export function printCommonFunction(plan,model,carriers,publication=null) {
     const target=blocks.get(op.successors[0]),types=blockTypes.get(target.name);check(types.length===args.length,'ssa');
     spend(args.length);const passed=args.map((v,i)=>adapt(v,types[i],op.range,target.parameters[i].type));
     if(custom)emit(op.name,passed,null,op.properties,'void',op.range,null,op.successors);
-    else line('    cf.br ^',target.name,passed.length?'('+join(passed.map(v=>v.name))+' : '+join(types.map(coreType))+')':'',' {',anchor(op.range),'}');
+    else {record(op.name,op.range);line('    cf.br ^',target.name,passed.length?'('+join(passed.map(v=>v.name))+' : '+join(types.map(coreType))+')':'',' {',anchor(op.range),'}');}
   };
   function scalar(op,args) {
     const views=op.operands.map(name=>graph.registers.get(name).view),shape=op.name==='tsfg_program.unary'
@@ -46,6 +54,7 @@ export function printCommonFunction(plan,model,carriers,publication=null) {
       // Both original operand expressions already dominate this instruction.
       check(++extraBlocks+graph.blocks.length<=model.limits.blocksPerFunction,'limit');const label='numeric'+extraBlocks,normal={name:variable(),type:i32TypeId};
       emit('tsfg_program.numeric_use',[value],null,{operator:op.properties.operator,index,operand_view:views[index]},i32TypeId,op.range,null,[label]);
+      ++physicalBlock;physicalIndex=0;
       line('  ^'+label+'('+normal.name+': i32):');args[index]=normal;
     }
     return emit(op.name,args,op.view,op.properties,op.view,op.range,op.result);
@@ -55,15 +64,18 @@ export function printCommonFunction(plan,model,carriers,publication=null) {
   const parameters=entry.parameters.map((p,i)=>p.name+': '+coreType(abi.parameters[i]));
   line('  func.func @',quote('program_'+owner.id.slice(7)),'(',join(parameters),')',abi.result==='void'?'':' -> '+coreType(abi.result),' attributes {',join(attrs),'} {');
   for(const [index,block]of graph.blocks.entries()) {
+    ++physicalBlock;physicalIndex=0;logicalBlock=block;logicalOperation=null;
     spend();const types=blockTypes.get(block.name);
     if(index){spend(block.parameters.length);line('  ^',block.name,block.parameters.length?'('+join(block.parameters.map((p,i)=>p.name+': '+coreType(types[i])))+')':'',':');}
     for(const [i,p]of block.parameters.entries())physical.set(p.name,{name:p.name,type:types[i]});
     for(const [i,p]of block.parameters.entries())if(types[i]!==selected.get(p.name))physical.set(p.name,adapt(resolve(p.name),selected.get(p.name),incomingRanges.get(block.name)??owner.range,p.type));
     for(const op of block.instructions) {
+      logicalOperation=op;
       spend(op.operands.length+1);const args=op.operands.map(resolve),p=op.properties,type=op.result?selected.get(op.result):null,name=op.name;let result;
       const view=op.view?.startsWith('cell:')?model.bindings.get(p.binding).type:op.view===model.payload?p.type:op.view??'void';
       if(name==='cf.br'){branch(op,args);continue;}
       if(name==='cf.cond_br'){check(args[0].type===boolTypeId,'capability','condition is not a native boolean carrier');
+        record(name,op.range);
         line('    cf.cond_br '+args[0].name+', ^'+op.successors[0]+', ^'+op.successors[1]+' {'+anchor(op.range)+'}');continue;}
       if(name==='tsfg_program.route'){branch(op,args,true);continue;}
       if(name==='func.return'){if(args.length)args[0]=adapt(args[0],abi.result,op.range,plan.returnType);emit(name,args,null,{},'void',op.range);continue;}

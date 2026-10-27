@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: MIT
 #include "common-program-command.h"
 #include "common-program.h"
+#include "common-program-borrows.h"
 #include "component-layout.h"
 #include "mlir/IR/Verifier.h"
 #include "llvm/Support/Program.h"
@@ -55,15 +56,16 @@ int readCoreInput(std::string &bytes) {
 }
 int runCoreModule(mlir::ModuleOp module, llvm::StringRef command) {
   if (mlir::failed(mlir::verify(module))) return 3;
-  if (command != "--component-layouts" && mlir::failed(verify(module))) return 3;
+  if (command != "--component-layouts" && command != "--borrow-proof" && mlir::failed(verify(module))) return 3;
   if (command == "--emit-bytecode") {
     llvm::errs() << "[r04-core-program-unsupported] complete common development Core has no selected wire/native encoding\n";
     return 3;
   }
   Output output;
-  if (command == "--component-layouts") {
+  if (command == "--component-layouts" || command == "--borrow-proof") {
     Program program; Error error; Json layouts = nullptr;
-    if (!readCore(module, program, error) || !verifyProgram(program, error) || !componentLayouts(program, layouts, error)) {
+    if (!readCore(module, program, error) || !(command=="--borrow-proof"?analyzeCommonBorrowProof(program,error,layouts):verifyProgram(program, error)) ||
+        (command=="--component-layouts" && !componentLayouts(program, layouts, error))) {
       llvm::errs() << "[" << error.code << "] " << error.message;
       if (!error.path.empty()) llvm::errs() << " (" << error.path << ":" << error.range.start << ":" << error.range.end << ")";
       llvm::errs() << "\n"; return 3;

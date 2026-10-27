@@ -34,7 +34,14 @@ struct BorrowTrace::Impl {
   std::map<std::string,std::string> captureLayouts;
   std::set<Id> orderedCalls;std::vector<Barrier> barriers;
   std::optional<Location> lifetime;
-  explicit Impl(ActualCheck &check):c(check),flow(check.p.remaining){
+  // Proof identities are projected from observed Source/operation provenance.
+  // Internal context, heap and Flow IDs remain private solver keys.
+  struct ProofPoint {std::string context;const Function *fn;size_t block=0,index=0;std::string kind="operation",completion;};
+  struct ProofOrigin {Json value;std::string context;};
+  bool project;
+  std::map<Id,ProofPoint> proofPoints;
+  std::map<std::string,std::vector<ProofOrigin>> proofOrigins;
+  explicit Impl(ActualCheck &check,bool project):c(check),flow(check.p.remaining),project(project){
     // Only universal-entry arguments/globals are external authority. A local
     // allocation is never classified by a spelling prefix of its identity.
     for(const auto &[id,context]:c.contexts){
@@ -53,6 +60,158 @@ struct BorrowTrace::Impl {
     external.insert(value.objects.begin(),value.objects.end());for(const auto &[code,env]:value.callables)if(!env.empty())external.insert(env);
   }
   bool step(size_t n=1){return c.step(n);}
+  bool proofNeed(bool ok,llvm::StringRef message){return ok||reject(c.e,"core-ir-common-borrow-proof",message);}
+  Json source(const Function &fn,const SourceAnchor &range){return Object{{"path",fn.path},{"start",range.start},{"end",range.end}};}
+  Json site(const ProofPoint &point){
+    if(point.kind=="entry")return Object{{"functionId",point.fn->id},{"block",nullptr},{"index",nullptr},{"name","entry"},{"source",source(*point.fn,point.fn->range)}};
+    const auto &op=point.fn->blocks[point.block].operations[point.index];
+    return Object{{"functionId",point.fn->id},{"block",int64_t(point.block)},{"index",int64_t(point.index)},{"name",op.name},{"source",source(*point.fn,op.range)}};
+  }
+  Array sorted(const Array &rows){
+    std::map<std::string,Json> table;for(const auto &row:rows){if(!step())return {};table.emplace(canonical(row),row);}
+    if(!step(table.size()))return {};Array out;for(auto &[key,row]:table)out.push_back(std::move(row));return out;
+  }
+  void proofOrigin(const std::string &ref,Json value,const std::string &context={}){
+    if(!step()||!proofNeed(c.objects.count(ref),"proof reference lacks an actual object"))return;
+    auto &rows=proofOrigins[ref];if(!proofNeed(rows.size()<4096,"proof reference provenance exceeds bound"))return;
+    rows.push_back({std::move(value),context});
+  }
+  void seed(const ActualValue &value,const ActualHeap &heap,const Json &base){
+    struct Pending {ActualValue value;Array path;};std::vector<Pending> pending{{value,{}}};std::set<std::string> seen;
+    for(size_t i=0;i<pending.size();++i){
+      if(!step())return;const auto row=pending[i];auto roots=row.value.objects;
+      for(const auto &[code,env]:row.value.callables)if(!env.empty())roots.insert(env);
+      for(const auto &ref:roots){
+        if(!step())return;if(!seen.insert(ref).second)continue;
+        Json origin=base;(*origin.getAsObject())["path"]=Array(row.path);proofOrigin(ref,std::move(origin));
+        for(const auto &[slot,child]:heap){if(!step())return;if(!llvm::StringRef(slot).starts_with(ref+"/"))continue;
+          auto path=row.path;path.push_back(slot.substr(ref.size()+1));pending.push_back({child,std::move(path)});
+        }
+      }
+      for(const auto &cell:row.value.cells){
+        if(!step())return;if(!seen.insert(cell).second)continue;auto child=heap.find(cell);if(child==heap.end())continue;
+        auto path=row.path;path.push_back("cell");pending.push_back({child->second,std::move(path)});
+      }
+      if(!proofNeed(pending.size()<=65536,"proof entry traversal exceeds bound"))return;
+    }
+  }
+  void proofEntry(const ActualContext &context,const ActualHeap &heap){
+    if(!context.root)return;std::vector<std::string> bindings;
+    auto fn=c.sourceFunctions.find(context.function->id);
+    if(fn!=c.sourceFunctions.end()){
+      if(!field(*fn->second,"lexicalEnvironment").getAsNull())bindings.push_back("lexical:"+context.function->id);
+      if(!field(*fn->second,"ownerType").getAsNull())bindings.push_back(string(field(*fn->second,"receiverBinding")));
+      for(const auto &parameter:items(field(*fn->second,"parameters")))bindings.push_back(string(field(parameter,"id")));
+    }
+    if(!proofNeed(bindings.size()==context.arguments.size(),"root argument lacks an original parameter binding"))return;
+    for(size_t i=0;i<context.arguments.size();++i)seed(context.arguments[i],heap,Object{{"kind","parameter"},{"functionId",context.function->id},
+      {"binding",bindings[i]},{"index",int64_t(i)},{"site",nullptr},{"activation",nullptr}});
+    for(const auto &[slot,value]:heap)if(llvm::StringRef(slot).starts_with("global:"))seed(value,heap,Object{{"kind","global"},{"functionId",nullptr},
+      {"binding",slot.substr(7)},{"index",nullptr},{"site",nullptr},{"activation",nullptr}});
+  }
+  bool projectEvents(Json &out){
+    std::map<std::string,Array> paths;
+    for(const auto &[id,context]:c.contexts)if(context.root)paths[id].push_back(Object{{"root",context.function->id},{"recursive",false},{"steps",Array{}}});
+    bool changed=true;
+    while(changed){changed=false;for(const auto &call:calls){
+      if(!step())return false;const auto &target=c.contexts.at(call.callee).function->id;const auto &location=proofPoints.at(call.point);
+      Array merged=paths[call.callee];
+      if(c.cyclicFunctions.count(target))merged.push_back(Object{{"root",target},{"recursive",true},{"steps",Array{}}});
+      else for(const auto &path:paths[call.caller]){
+        if(!step())return false;Json next=path;Array steps=items(field(path,"steps"));
+        steps.push_back(Object{{"functionId",location.fn->id},{"block",int64_t(location.block)},{"index",int64_t(location.index)},{"target",target}});
+        if(!proofNeed(steps.size()<=4096,"proof activation depth exceeds bound"))return false;
+        (*next.getAsObject())["steps"]=std::move(steps);merged.push_back(std::move(next));
+      }
+      merged=sorted(merged);if(!proofNeed(merged.size()<=4096,"proof activation alternatives exceed bound"))return false;
+      if(canonical(Json(Array(merged)))!=canonical(Json(Array(paths[call.callee])))){paths[call.callee]=std::move(merged);changed=true;}
+    }}
+    const auto reference=[&](const std::string &ref)->Json{
+      if(!step())return nullptr;auto object=c.objects.find(ref);auto rows=proofOrigins.find(ref);
+      if(!proofNeed(object!=c.objects.end()&&rows!=proofOrigins.end()&&!rows->second.empty(),"proof reference has no observed entry/allocation provenance"))return nullptr;
+      Array origins;
+      for(const auto &row:rows->second){
+        if(!step())return nullptr;if(row.context.empty())origins.push_back(row.value);
+        else for(const auto &activation:paths[row.context]){if(!step())return nullptr;Json origin=row.value;(*origin.getAsObject())["activation"]=activation;origins.push_back(std::move(origin));}
+      }
+      if(!proofNeed(!origins.empty(),"allocation has no actual invocation provenance"))return nullptr;
+      return Object{{"type",object->second.type},{"weak",object->second.weak},{"origins",sorted(origins)}};
+    };
+    const auto references=[&](const std::set<std::string> &refs){Array rows;for(const auto &ref:refs)rows.push_back(reference(ref));return sorted(rows);};
+    const auto projectedPoints=[&](Id at){
+      Array rows;auto found=proofPoints.find(at);
+      if(!proofNeed(found!=proofPoints.end(),"borrow point lacks an original operation"))return rows;const auto &point=found->second;
+      for(const auto &activation:paths[point.context]){
+        if(!step())return Array{};Json row=site(point);auto &object=*row.getAsObject();object["kind"]=point.kind;
+        object["completion"]=point.completion.empty()?Json(nullptr):Json(point.completion);object["activation"]=activation;rows.push_back(std::move(row));
+      }return rows;
+    };
+    Array definitionsOut,callsOut,flowsOut;std::map<std::string,Json> usesOut,effectsOut;std::set<Id> interesting;
+    for(const auto &[context,at]:entries)interesting.insert(at);
+    for(const auto &[context,exits]:normal)interesting.insert(exits.begin(),exits.end());
+    for(const auto &[context,exits]:language)interesting.insert(exits.begin(),exits.end());
+    for(const auto &[key,definition]:definitions)interesting.insert(definition.point);
+    for(const auto &[at,descriptors]:uses)if(!descriptors.empty())interesting.insert(at);
+    for(const auto &[at,owner]:effects)if(owner.pending||!owner.alternatives.empty())interesting.insert(at);
+    for(const auto &barrier:barriers)interesting.insert(barrier.point);
+    for(const auto &[key,definition]:definitions)for(const auto &at:projectedPoints(definition.point)){
+      if(!step())return false;definitionsOut.push_back(Object{{"at",at},{"descriptor",reference(definition.span)},
+        {"owners",references(definition.owner.alternatives)},{"pending",definition.owner.pending}});
+    }
+    for(const auto &[point,descriptors]:uses)for(const auto &at:projectedPoints(point)){
+      if(!step())return false;const auto key=canonical(at);auto old=usesOut.find(key);Array merged=references(descriptors);
+      if(old!=usesOut.end())for(const auto &ref:items(field(old->second,"descriptors")))merged.push_back(ref);
+      usesOut.insert_or_assign(key,Json(Object{{"at",at},{"descriptors",sorted(merged)}}));
+    }
+    const auto addEffect=[&](Id point,const Evidence &owner,const std::set<std::string> *eligible){
+      for(const auto &at:projectedPoints(point)){
+        if(!step())return;Json selected=eligible?Json(references(*eligible)):Json(nullptr);
+        const auto key=canonical(Json(Object{{"at",at},{"eligible",selected}}));auto old=effectsOut.find(key);
+        Array merged=references(owner.alternatives);bool pending=owner.pending;
+        if(old!=effectsOut.end()){
+          for(const auto &ref:items(field(old->second,"owners")))merged.push_back(ref);
+          pending|=field(old->second,"pending").getAsBoolean()==true;
+        }
+        effectsOut.insert_or_assign(key,Json(Object{{"at",at},{"owners",sorted(merged)},{"pending",pending},{"eligible",std::move(selected)}}));
+      }
+    };
+    for(const auto &[at,owner]:effects)addEffect(at,owner,nullptr);
+    for(const auto &barrier:barriers)addEffect(barrier.point,barrier.owner,&barrier.eligible);
+    for(const auto &call:calls){
+      const auto &context=c.contexts.at(call.caller);
+      interesting.insert(call.point);
+      for(size_t index=0;index<2;++index){
+        const auto &exits=index==0?normal.at(call.callee):language.at(call.callee);
+        if(exits.empty())continue;
+        const auto successor=point(context,call.op->successors[index],0);
+        if(successor==Flow::none)return false;
+        interesting.insert(successor);
+        for(auto exit:exits)for(const auto &at:projectedPoints(call.point))for(const auto &end:projectedPoints(exit))for(const auto &next:projectedPoints(successor)){
+          if(!step())return false;callsOut.push_back(Object{{"at",at},{"target",c.contexts.at(call.callee).function->id},
+            {"completion",index==0?"normal":"language"},{"exit",end},{"successor",next}});
+        }
+      }
+    }
+    // Retain order between borrow/call/completion observations. Numeric guards,
+    // carrier adapters and unrelated scalar instructions are transparent here;
+    // their independently verified physical operation positions stay intact.
+    std::map<Id,std::set<Id>> outgoing;
+    for(const auto &[from,to]:edges){if(!step())return false;outgoing[from].insert(to);}
+    for(auto from:interesting){
+      std::vector<Id> pending(outgoing[from].begin(),outgoing[from].end());std::set<Id> seen;
+      for(size_t i=0;i<pending.size();++i){
+        if(!step())return false;const auto to=pending[i];if(!seen.insert(to).second)continue;
+        if(interesting.count(to)){
+          for(const auto &start:projectedPoints(from))for(const auto &end:projectedPoints(to)){
+            if(!step())return false;flowsOut.push_back(Object{{"from",start},{"to",end}});
+          }
+        }else{if(!step(outgoing[to].size()))return false;pending.insert(pending.end(),outgoing[to].begin(),outgoing[to].end());}
+      }
+    }
+    Array used,effected;for(auto &[key,row]:usesOut)used.push_back(std::move(row));for(auto &[key,row]:effectsOut)effected.push_back(std::move(row));
+    out=Object{{"definitions",sorted(definitionsOut)},{"uses",sorted(used)},{"effects",sorted(effected)},{"calls",sorted(callsOut)},{"flows",sorted(flowsOut)}};
+    return c.e.message.empty();
+  }
   bool fail(llvm::StringRef message,const Location &at){
     c.e.path=at.fn->path;c.e.range=at.range;return reject(c.e,"core-ir-common-borrow",message);
   }
@@ -133,12 +292,14 @@ struct BorrowTrace::Impl {
     auto old=entries.find(context.id);if(old!=entries.end())return old->second;
     if(!step(3))return Flow::none;const auto point=flow.point();if(point==Flow::none){outcome(false);return point;}
     entries.emplace(context.id,point);normal.try_emplace(context.id);language.try_emplace(context.id);
+    if(project)proofPoints.emplace(point,ProofPoint{context.id,context.function,0,0,"entry",{}});
     locations.emplace(point,Location{context.function,context.function->range});return point;
   }
   Id point(const ActualContext &context,size_t block,size_t index){
     const auto key=std::make_tuple(context.id,block,index);auto old=points.find(key);if(old!=points.end())return old->second;
     if(!step())return Flow::none;const auto id=flow.point();if(id==Flow::none){outcome(false);return id;}
-    points.emplace(key,id);locations.emplace(id,Location{context.function,context.function->blocks[block].operations[index].range});return id;
+    points.emplace(key,id);locations.emplace(id,Location{context.function,context.function->blocks[block].operations[index].range});
+    if(project)proofPoints.emplace(id,ProofPoint{context.id,context.function,block,index,"operation",{}});return id;
   }
   Id point(const ActualContext &context,const Operation &op,size_t block){return point(context,block,size_t(&op-context.function->blocks[block].operations.data()));}
   bool addEdge(Id from,Id to){return from!=Flow::none&&to!=Flow::none&&step()&&(edges.emplace(from,to),true);}
@@ -335,10 +496,11 @@ struct BorrowTrace::Impl {
     }return c.e.message.empty();
   }
 };
-BorrowTrace::BorrowTrace(ActualCheck &c):impl(std::make_unique<Impl>(c)){}
+BorrowTrace::BorrowTrace(ActualCheck &c,bool project):impl(std::make_unique<Impl>(c,project)){}
 BorrowTrace::~BorrowTrace()=default;
 bool BorrowTrace::begin(const ActualContext &context,const ActualState &state){
   auto &b=*impl;const auto at=b.entry(context);if(at==Flow::none)return false;
+  if(b.project)b.proofEntry(context,state.heap);
   auto &incoming=b.incomingOwners[context.id];
   for(const auto &value:context.arguments){
     const auto owned=b.owningArrays(value,state.heap);if(!b.step(owned.size()))return false;incoming.insert(owned.begin(),owned.end());
@@ -389,6 +551,12 @@ bool BorrowTrace::before(const ActualContext &context,const Operation &op,size_t
 }
 bool BorrowTrace::after(const ActualContext &context,const Operation &op,size_t block,const ActualState &state,bool continues){
   auto &b=*impl;const auto at=b.point(context,op,block);const auto index=size_t(&op-context.function->blocks[block].operations.data());
+  if(at==Flow::none)return false;
+  if(b.project&&(op.name=="array_create"||op.name=="readspan")&&op.result!=noRegister){
+    auto value=state.values.find(op.result);if(value!=state.values.end())for(const auto &ref:value->second.objects)
+      b.proofOrigin(ref,Object{{"kind","allocation"},{"functionId",context.function->id},{"binding",nullptr},{"index",nullptr},
+        {"path",Array{}},{"site",b.site(b.proofPoints.at(at))}},context.id);
+  }
   if((op.name=="array_create"||op.name=="allocate_reference"||op.name=="construct_value"||op.name=="value_copy")&&op.result!=noRegister){
     auto value=state.values.find(op.result);if(value!=state.values.end()){
       std::vector<std::string> pending;std::set<std::string> seen;if(!b.step(value->second.objects.size()))return false;
@@ -422,7 +590,7 @@ bool BorrowTrace::call(const ActualContext &context,const Operation &op,size_t b
   else b.boundaries[at].unconfined=true;
   b.calls.push_back({at,context.id,callee.id,&op});return b.addEdge(at,b.entry(callee));
 }
-bool BorrowTrace::solve(){
+bool BorrowTrace::solve(Json *events){
   auto &b=*impl;if(!b.c.e.message.empty())return false;
   if(!b.orderCalls())return false;
   if(b.lifetime)return b.fail("ReadSpan owner or escaping storage lifetime is unproved",*b.lifetime);
@@ -445,6 +613,8 @@ bool BorrowTrace::solve(){
         // A callee's later Span definition must not meet an earlier effect.
         if(!b.step(bound.owner.alternatives.size()+bound.existing.size()+3))return false;
         const auto barrier=b.flow.point();if(barrier==Flow::none)return b.outcome(false);
+        if(b.project){auto location=b.proofPoints.at(call.point);location.kind="fixed";
+          location.completion=exits==&b.normal.at(call.callee)?"normal":"language";b.proofPoints.emplace(barrier,std::move(location));}
         b.locations.emplace(barrier,b.locations.at(call.point));b.barriers.push_back({barrier,bound.owner,bound.existing});
         if(!b.addEdge(exit,barrier)||!b.addEdge(barrier,b.point(context,target,0)))return false;
       }
@@ -474,12 +644,12 @@ bool BorrowTrace::solve(){
   }
   if(!b.outcome(b.flow.solve()))return false;const auto *result=b.flow.result();if(!result)return b.outcome(false);
   if(result->status!=Flow::Status::Safe)return b.fail(result->status==Flow::Status::Conflict?"active ReadSpan may overlap a structural Array effect":"ReadSpan structural owner or alias authority is unproved",b.locations.at(result->point));
-  return true;
+  return !events||b.projectEvents(*events);
 }
-bool verifyCommonBorrows(ActualCheck &check){
-  BorrowTrace trace(check);check.borrowTrace=&trace;bool changed=false,ok=true;const auto size=check.contexts.size();
+bool verifyCommonBorrows(ActualCheck &check,Json *events){
+  BorrowTrace trace(check,events!=nullptr);check.borrowTrace=&trace;bool changed=false,ok=true;const auto size=check.contexts.size();
   for(auto it=check.contexts.begin();it!=check.contexts.end();++it)if(!check.step()||!check.execute(it->second,false,changed)){ok=false;break;}
   check.borrowTrace=nullptr;if(!ok||!check.need(!changed&&!check.weakChanged&&!check.scheduling&&size==check.contexts.size(),"borrow observation changed the solved actual contexts"))return false;
-  return trace.solve();
+  return trace.solve(events);
 }
 } // namespace tsfg::commonProgram

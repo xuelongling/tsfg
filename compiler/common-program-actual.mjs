@@ -11,7 +11,7 @@ import {commonMethods} from './common-program-methods.mjs';
 import {commonBorrowObservations,commonClosureHolding} from './common-program-borrow-observations.mjs';
 import {commonRegions,emptyRegionValue} from './common-program-regions.mjs';
 const undefinedId=sha256('tsfg.type\0undefined');
-export function analyzeCommonGraphs({model,plans},records=null) {
+export function analyzeCommonGraphs({model,plans},records=null,options={borrowProof:false}) {
   const {spend,types}=model,elementSeeds=new Map(),a=commonAbstract({...model,elementSeeds}),byId=new Map(plans.map(plan=>[plan.owner.id,plan])),entryReferences=commonEntryReferences(model.hir,spend),methods=commonMethods(model.hir,spend);
   const edges=[],cyclicBlocks=new Set(),uncertainFunctions=new Set();
   for(const plan of plans) {
@@ -323,7 +323,7 @@ export function analyzeCommonGraphs({model,plans},records=null) {
     }
     changed=false;invalidateWeak=false;
     let borrows=null;
-    if(!bounded&&records){const observer=commonBorrowObservations({model,records,objects,regions,holdingPolicy,readEnvironmentSlot:(selected,start,target,key,heap)=>a.environmentSlot(selected,start,target,key,heap,objects)});
+    if(!bounded&&records){const observer=commonBorrowObservations({model,records,objects,regions,holdingPolicy,borrowProof:options.borrowProof,cyclicFunctions,readEnvironmentSlot:(selected,start,target,key,heap)=>a.environmentSlot(selected,start,target,key,heap,objects)});
       for(const c of contexts.values())execute(c,observer);check(!changed&&!invalidateWeak,'ssa','final actual observation changed the fixed point');borrows=observer.finish();}
     return {contexts,observed,objects,operations,callTargets,borrows,regions};
   }
