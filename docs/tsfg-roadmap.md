@@ -139,11 +139,13 @@
 - `.tbc`、`.tmeta`、`.tsfgabi`、Core IR exchange form 的规范、版本、校验和前后兼容规则。
 - FunctionId、TypeId、资源句柄、签名/效果/schema hash 的规范化算法。
 - 原生补丁包、模块重载事务和 compiler-service 请求/响应的版本化协议。
-- DataLayout 驱动的 size、align、offset、调用约定、符号性和枚举底层类型模型。
+- DataLayout 驱动的 size、align、offset；目标 C ABI 的参数／返回分类、调用约定、整数扩展和枚举底层类型模型。
 - tsfg 声明与 Zig `extern` 类型/绑定生成器；两端静态断言与运行时握手。
 - 独立 contract test kit、二进制 fixtures、fuzzer seed corpus 与旧版本 fixtures。
 
 **阶段验收**：当前格式由真实 writer/reader 通过 fixtures、round-trip、损坏和版本不匹配负例；Windows ABI 与 Zig/C 探针逐字段一致，禁止手写重复布局。Reflection 实现后执行 RF-01；未产生的格式标记待实现。历史兼容仅覆盖已明确支持的版本，多目标探针归 R13。
+
+**联合验收**：调用／根／补丁契约按[执行边界验收](execution-boundary-acceptance.md)的阶段归属定义；ABI 除布局外还验证参数／返回规则与 Zig/C 双向调用。
 
 **依赖**：对应 R01 语义与实际消费者需求；基础格式供 W1，Windows ABI 供 W2，热更协议供 W4，GPU 元数据供 W5，逐项落地。
 
@@ -161,6 +163,8 @@
 
 **阶段验收**：未经验证模块不能执行；当前子集的实际源码通过正式入口执行并满足 oracle；损坏字节码、越界和资源限额失败可重放。引用/异常一旦支持，其根图、回收与传播测试同时通过。预解码后的进一步缓存和 superinstruction 作为性能任务，不阻挡基础执行正确性。
 
+**联合验收**：当前 VM 能力同时满足[跨 Tier 调用](execution-boundary-acceptance.md#tier-calls)与[根生命周期](execution-boundary-acceptance.md#gc-lifetime)的适用项，覆盖临时根、控制流传参和异常清理。
+
 **依赖**：对应 Core IR、字节码格式及 R06 当前需要的内存/宿主接口；不等待完整 GC/AOT/模块管理阶段关闭。
 
 ### R06：Zig Runtime、GC、句柄与宿主能力
@@ -176,6 +180,8 @@
 - 泄漏、悬垂句柄、移动对象、并发 safepoint、OOM 和长帧暂停测试。
 
 **阶段验收**：每个启用的值/引用/句柄/异常能力具备生命周期、OOM、非法访问和根保活测试；Zig 不持有受管裸指针，异常不越过 ABI。移动 GC 加入时必须验证移动后的根与句柄。AOT 根支持与 R07 联合验收，不作为 R07 启动前置；最终补齐架构规定的 GC 和 runtime 能力。
+
+**联合验收**：按[GC、根与补丁生命周期](execution-boundary-acceptance.md#gc-lifetime)验证地址稳定／重定位、根保留量，以及代码和元数据的共同寿命。
 
 **依赖**：对应 R01 语义与 R04 当前接口；R06 基础接口先供 R05/R07，再联调 AOT GC，消除整阶段循环依赖。
 
@@ -193,6 +199,8 @@
 
 **阶段验收**：Windows 当前能力切片能生成、链接、加载并调用原生代码，布局符合 R04，lowering/verifier 和 VM/AOT 差分通过。使用引用的 AOT 功能与 R06 一同证明 GC 根正确；runtime 无编译器依赖。其他 OS/CPU 在 R13 扩展；GPU 由 R11 完成。
 
+**联合验收**：与 R06 验证[真实 AOT GC 链路](execution-boundary-acceptance.md#gc-lifetime)，并落实[调用桥接](execution-boundary-acceptance.md#tier-calls)及[目标 ABI](execution-boundary-acceptance.md#target-abi)的当前适用项。
+
 **依赖**：对应 Core IR、Windows ABI、R02a MLIR/LLVM intake、R06 基础接口；不等待 R06 的 AOT 压力验收。
 
 ### R08：双后端执行等价与差分验证平台
@@ -208,6 +216,8 @@
 - 每个失败样例自动最小化并沉淀为永久回归测试。
 
 **阶段验收**：从首个 AOT 功能起，本轮支持范围的 conformance 在同目标 VM/AOT debug/release 一致；所有差异必须归类或修复。新增双后端 op 必须附差分用例。生成预算、reducer、随机压力逐步加入；跨平台全矩阵在 R13，GPU/并行采用各自关系。
+
+**联合验收**：将[三组执行边界场景](execution-boundary-acceptance.md)纳入当前能力的 oracle／差分覆盖；复用适用结果，不重复要求已通过且输入未变的检查。
 
 **依赖**：对应 R05/R07 可运行能力；测试框架和 oracle 随实现进入，W2 初始通过后可启动热更及 CPU 计算，不等待全语言/全目标认证。
 
@@ -225,6 +235,8 @@
 - 并发调用、递归、异常、补丁失败、服务崩溃、重复更新和高频更新测试。
 
 **阶段验收**：Windows 真实代码完成旧 native→bytecode→新 native；旧帧完成后才回收，签名/捕获/状态不匹配明确拒绝；并发、失败、超时、乱序、服务崩溃保留上一可用版本。模块迁移单独实现并有回滚测试，完成前只能拒绝；最终功能验收包含迁移能力，runtime 无编译器依赖。
+
+**联合验收**：三阶段切换满足[跨 Tier 调用](execution-boundary-acceptance.md#tier-calls)和[GC／补丁生命周期](execution-boundary-acceptance.md#gc-lifetime)，包含取得旧入口后延迟执行、并发扫描和发布失败。
 
 **依赖**：FunctionId/补丁格式、当前执行接口、Windows 加载器、对应差分测试；不依赖全部 R08 平台矩阵或完整生态服务。
 

@@ -100,6 +100,8 @@ tsfg 将内存分为两个平面：
 
 Zig 与 tsfg 之间只暴露 ABI 安全类型：定宽标量、`extern struct`、显式标签联合、Span、StringView、资源句柄和固定签名函数指针。引用对象通过 `Handle<T> { index: u32, generation: u32 }` 传递；Zig 不持有受管裸指针。
 
+根的活动状态、跨 safepoint 地址保障及动态补丁元数据的注册／回收，按 [GC、根与补丁生命周期联合验收](execution-boundary-acceptance.md#gc-lifetime)随对应能力验证。
+
 ### ABI 单一事实源
 
 tsfg 源码中的 `@abi` 声明生成规范化 `.tsfgabi`；既有 Zig API 由 Zig comptime 导出同一格式。绑定生成器分别生成 tsfg 声明和 Zig `extern` 类型，并在两端生成：
@@ -109,6 +111,8 @@ tsfg 源码中的 `@abi` 声明生成规范化 `.tsfgabi`；既有 Zig API 由 Z
 - ABI 哈希与目标三元组校验。
 
 原生边界采用目标平台 C ABI。非热更函数生成直接调用；热更函数经过稳定函数槽，多一次间接分支。这里的“零损耗”严格指 AOT 边界无序列化、无布局转换、无复制；解释器调用原生函数仍包含 VM 到 Native 的必要切换。
+
+DataLayout 的布局规则与目标调用约定分别定义；参数／返回值分类、间接传递语义及 Zig/C 双向调用按 [目标平台 ABI 联合验收](execution-boundary-acceptance.md#target-abi)验证。
 
 ## 统一 IR 与后端
 
@@ -164,11 +168,13 @@ FunctionCell = {
 切换协议固定为：
 
 1. 编译器生成新字节码，并验证函数签名、闭包捕获布局和效果集合。
-2. Runtime 原子地把 `FunctionCell.entry` 指向字节码入口。
+2. Runtime 原子发布字节码版本；面向原生调用方的入口保持既定调用约定，并通过适配进入解释器。
 3. 旧原生栈帧继续执行；新调用进入解释器。
 4. 编译服务从同一 Core IR 生成并链接新原生补丁库。
 5. Runtime 装入补丁库，解析入口并原子地更新函数槽。
-6. epoch 回收器在旧代码无活动栈帧后卸载旧补丁库。
+6. epoch 回收器在旧入口调用、活动帧及相关元数据使用均结束后，注销元数据并卸载旧补丁库。
+
+入口所需的函数身份、闭包环境、执行上下文与版本可见性，以及四种 VM/Native 调用方向，按 [跨 Tier 调用联合验收](execution-boundary-acceptance.md#tier-calls)验证；FunctionCell 的具体槽结构由实现选择。
 
 闭包保存 `FunctionId`，不保存代码地址。静态状态保存于独立、带 schema hash 的状态块。函数签名、捕获布局或状态 schema 变化时，函数级补丁直接拒绝；数据迁移属于模块重载，不伪装成函数热更。
 
