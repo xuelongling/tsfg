@@ -103,7 +103,7 @@ export function validateCommonBodies(payload,sources,types,grammars,visibility,s
           const owner=functions.get(entry.lexicalOwner),kind=type(entry.declaredType).kind;
           check(ancestors.some(owner=>{spend();return owner.id===entry.lexicalOwner;}),'capture');
           const initialized=entry.kind==='local'&&['scalar','readSpan','array'].includes(kind)&&owner.body.some(row=>{spend();return ['constDeclaration','letDeclaration'].includes(row.kind)&&row.binding===entry.id&&row.initializer;});
-          const parameter=entry.kind==='parameter'&&['readSpan','array'].includes(kind)&&owner.parameters.some(row=>{spend();return row.id===entry.id;});
+          const parameter=entry.kind==='parameter'&&['scalar','readSpan','array'].includes(kind)&&owner.parameters.some(row=>{spend();return row.id===entry.id;});
           check(initialized||parameter,'capture');
           if(!captureObserved.has(entry.id))captureObserved.set(entry.id,[]);captureObserved.get(entry.id).push({range:{...value.range},read:!target||readTarget,write:target});
         }else if(!globals.has(value.binding))check(declared.has(value.binding),'binding');if(target)check(entry.writable,'permission');return;
