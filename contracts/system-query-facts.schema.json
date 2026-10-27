@@ -1,0 +1,36 @@
+{
+  "family": "tsfg.system-query-facts-package-candidate",
+  "version": 1,
+  "status": "private original Source data; no HIR or execution admission",
+  "requestFamily": "tsfg.system-query-facts-request-candidate",
+  "sourceTypeSchemaHash": "sha256:6f6af231a779d6c8e55a4d0acde8fa6e5af5d7c7c2f5b54e6aa5487b34bedb78",
+  "profile": {
+    "path": "/src/system-query-context.d.ts",
+    "sha256": "3babff499e4b8760289c2c94eaf002e48a5148abb4dfb38d09751461d3e191c7",
+    "standardPath": "/src/minimal-arrays-v8.d.ts",
+    "standardSha256": "0d30a2f626bb7455decf36f5a7a8d3308d4254100d2cb10e7c0d2353d28b141e"
+  },
+  "builtins": ["component", "system", "Query", "Read", "Write"],
+  "target": {
+    "target": "windows-x86_64-msvc",
+    "triple": "x86_64-pc-windows-msvc",
+    "llvmDataLayout": "e-m:w-p270:32:32-p271:32:32-p272:64:64-i64:64-i128:128-f80:128-n8:16:32:64-S128",
+    "pointerBits": "64"
+  },
+  "limits": {"bytes": 8388608, "depth": 128, "jsonTokens": 1000000, "stringBytes": 2097152, "work": 1000000},
+  "objects": {
+    "package": ["family", "version", "schemaHash", "requestId", "packageId", "payload"],
+    "request": ["family", "version", "schemaHash", "input"],
+    "input": ["sourceRoot", "rootFile", "files", "declarations", "config", "target"],
+    "payload": ["program", "profilePath", "profileSHA256", "builtins", "nodes", "types", "functions", "markerAliases", "systems"],
+    "program": ["sourceRoot", "rootFile", "positionUnit", "config", "declarations", "target", "files", "diagnostics"],
+    "origin": ["id", "sourcePath", "kind", "name", "range", "nameRange"],
+    "node": ["id", "parent", "sourcePath", "kind", "range", "name", "nameRange"],
+    "markerAlias": ["useSourcePath", "useRange", "declaration", "target"],
+    "system": ["declaration", "markerRange", "marker", "signature", "parameters", "returnType"],
+    "parameter": ["index", "binding", "annotationRange", "logicalType", "query"],
+    "query": ["declaration", "tupleSourcePath", "tupleRange", "aliases", "items"],
+    "alias": ["useSourcePath", "useRange", "declaration", "target"],
+    "access": ["index", "mode", "range", "wrapper", "componentType", "component", "componentSourcePath", "componentRange"]
+  }
+}
