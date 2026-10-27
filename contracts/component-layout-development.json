@@ -1,0 +1,80 @@
+{
+  "family": "tsfg.component-layout-candidate",
+  "version": 1,
+  "format": "JCS envelope plus one LF; payload is a JCS JSON string",
+  "envelope": [
+    "family",
+    "payload",
+    "payloadHash",
+    "schemaHash",
+    "version"
+  ],
+  "payload": [
+    "components",
+    "hirDigest",
+    "inputIdentity",
+    "target",
+    "types"
+  ],
+  "typeRecord": [
+    "alignment",
+    "byteSize",
+    "fields",
+    "id",
+    "kind",
+    "name",
+    "range",
+    "scalar",
+    "sourcePath",
+    "stride"
+  ],
+  "fieldRecord": [
+    "id",
+    "name",
+    "offset",
+    "range",
+    "readonly",
+    "sourcePath",
+    "type"
+  ],
+  "kinds": [
+    "scalar",
+    "value",
+    "component"
+  ],
+  "layout": "Unpacked LLVM StructType of original declared fixed fields; base fields precede own fields. bool is ABI u8. LLVM target DataLayout produces sizes/alignments/offsets/stride; flow carriers never supply ABI.",
+  "numbers": "All byte sizes, alignments, strides, offsets, version and UTF16 range coordinates are JSON integers. target.pointerBits remains the original Common target string, e.g. \"64\".",
+  "scalarNames": [
+    "bool",
+    "i8",
+    "u8",
+    "i16",
+    "u16",
+    "i32",
+    "u32",
+    "f32",
+    "i64",
+    "u64",
+    "isize",
+    "usize",
+    "f64"
+  ],
+  "identity": {
+    "schemaHash": "sha256(JCS(this descriptor), without LF)",
+    "payloadHash": "sha256(\"tsfg.component-layout.v1\\0\" + exact payload UTF8 bytes, without LF)",
+    "hirDigest": "existing sha256(JCS(complete owned HIR) + LF)",
+    "inputIdentity": "existing complete owned HIR inputIdentity",
+    "typeIds": "existing semantic TypeIds; type rows and component IDs strict ascending order; every required fixed field/type is retained"
+  },
+  "ranges": "Original UTF16 declaration ranges. Scalars use empty sourcePath and {start:0,end:0}. Fields retain original declaration sourcePath/range, including inherited fields.",
+  "fields": "Original declared fields in base-before-own order; scalar has fields=[] and scalar=name; value/component has scalar=\"\". An actual component is the original nominalKey.category=component marker, even when Source kind=reference.",
+  "limits": {
+    "bytes": 2097152,
+    "types": 4096,
+    "fields": 256,
+    "byteSize": 65536,
+    "depth": 32,
+    "work": 1000000
+  },
+  "qualification": "Data only, checksum is integrity not authenticity or permission. No SourceTrap/Host/kernel/VM/GPU execution credit. CPU target layout is not a GPU ABI promise."
+}
