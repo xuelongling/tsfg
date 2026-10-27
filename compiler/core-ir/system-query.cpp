@@ -16,6 +16,7 @@ QUERY_OP(QueryOp,"query",mlir::OpTrait::ZeroRegions,SourceOwned)
 QUERY_OP(ChunkOp,"chunk",mlir::OpTrait::OneRegion,SourceOwned)
 QUERY_OP(ParallelForOp,"parallel_for",mlir::OpTrait::OneRegion,SourceOwned)
 QUERY_OP(ColumnOp,"column",mlir::OpTrait::ZeroRegions,SourceOwned)
+QUERY_OP(ViewBorrowOp,"view_borrow",mlir::OpTrait::ZeroRegions,SourceOwned)
 QUERY_OP(FieldLoadOp,"field_load",mlir::OpTrait::ZeroRegions,SourceOwned)
 QUERY_OP(FieldStoreOp,"field_store",mlir::OpTrait::ZeroRegions,SourceOwned)
 QUERY_OP(YieldOp,"yield",mlir::OpTrait::ZeroRegions,mlir::OpTrait::IsTerminator)
@@ -26,7 +27,7 @@ public:
   static llvm::StringRef getDialectNamespace(){return "tsfg";}
   explicit QueryDialect(mlir::MLIRContext *c):Dialect("tsfg",c,mlir::TypeID::get<QueryDialect>()){
     addTypes<QueryType,ChunkType,ViewType>();
-    addOperations<QueryOp,ChunkOp,ParallelForOp,ColumnOp,FieldLoadOp,FieldStoreOp,YieldOp>();
+    addOperations<QueryOp,ChunkOp,ParallelForOp,ColumnOp,ViewBorrowOp,FieldLoadOp,FieldStoreOp,YieldOp>();
   }
   mlir::Type parseType(mlir::DialectAsmParser &parser)const override{
     llvm::StringRef name;std::string key;

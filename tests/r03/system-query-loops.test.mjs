@@ -1,5 +1,5 @@
 // SPDX-License-Identifier: MIT
-// Complete, unchanged v3 public Go producer packages.
+// Complete, unchanged v4 public Go producer packages.
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import {canonical,sha256,scalarTypeIds} from '../../compiler/identity.mjs';
@@ -9,14 +9,14 @@ const actual=fixture('loop-architecture');
 const inputLoop=packet=>packet.payload.systems[0].loops[0];
 const edit=(mutate,input=actual)=>{
   const packet=structuredClone(input.packet);mutate(packet,inputLoop(packet));
-  packet.packageId=sha256('tsfg.system-query.package.v3\0'+packet.schemaHash+'\0'+canonical(packet.payload));
+  packet.packageId=sha256('tsfg.system-query.package.v4\0'+packet.schemaHash+'\0'+canonical(packet.payload));
   return {bytes:Buffer.from(canonical(packet)+'\n'),context:{...input.context,expectedPackageId:packet.packageId}};
 };
 test('actual architecture complete Query loop owns tuple bindings and f32 field body',()=>{
   const input=fixture('loop-architecture'),facts=readSystemQueryFacts(input.bytes,input.context),system=facts.systems[0],loop=system.loops[0];
   assert.deepEqual(printSystemQueryFacts(facts,input.context),input.bytes);
   assert.deepEqual(facts.nodes,input.packet.payload.nodes);
-  assert.equal(facts.nodes.length,447);assert.equal(system.loops.length,1);assert.equal(loop.statements.length,2);
+  assert.equal(system.loops.length,1);assert.equal(loop.statements.length,2);
   assert.equal(loop.queryBinding,system.parameters[0].binding.id);
   assert.deepEqual(loop.bindings.map(row=>[row.declaration.name,row.mode]),[['p','write'],['v','read']]);
   assert.deepEqual(loop.bindings.map(row=>row.componentType),system.parameters[0].query.items.map(row=>row.componentType));

@@ -114,7 +114,7 @@ export function querySourceProof(ast,grammars,sources,aliases,spend,fail){
     }
     if(node.kind!=='KindTypeReference')return {node,env};
     const declaration=binding(node),actual=origin(declaration),substitution=declaration.kind==='KindTypeParameter'?env.get(actual.id):null;
-    if(!substitution&&declaration.kind!=='KindTypeAliasDeclaration'){
+    if(!substitution&&(declaration.kind!=='KindTypeAliasDeclaration'||declaration.sourcePath===descriptor.profile.path&&['Read','Write'].includes(declaration.name))){
       const unexpected=aliases[cursor];
       if(unexpected?.useSourcePath===node.sourcePath&&canonical(unexpected.useRange)===canonical(node.range))fail('alias proof attached to an original builtin/component reference','source');
       return {node,env};

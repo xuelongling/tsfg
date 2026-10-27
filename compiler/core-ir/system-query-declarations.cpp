@@ -87,7 +87,7 @@ bool Model::declarations(){
   constexpr llvm::StringLiteral names[]={"component","system","Query","Read","Write"};
   const auto &rows=items(field(payload(),"builtins"));if(!need(field(payload(),"builtins").getAsArray()&&rows.size()==5,"complete builtin inventory differs"))return false;
   for(size_t i=0;i<5;++i){const auto &row=rows[i];if(!original(row)||!need(string(field(row,"name"))==names[i]&&string(field(row,"sourcePath"))=="/src/system-query-context.d.ts"&&
-    string(field(row,"kind"))==(i==0?"KindVariableDeclaration":i==1?"KindFunctionDeclaration":"KindInterfaceDeclaration"),"owned builtin declaration differs"))return false;builtins.emplace(names[i].str(),&row);}
+    string(field(row,"kind"))==(i==0?"KindVariableDeclaration":i==1?"KindFunctionDeclaration":i>=3?"KindTypeAliasDeclaration":"KindInterfaceDeclaration"),"owned builtin declaration differs"))return false;builtins.emplace(names[i].str(),&row);}
   std::set<const Json *> used;std::string previous;
   for(const auto &t:items(field(payload(),"types"))){const auto id=string(field(t,"id")),kind=string(field(t,"kind"));
     if(!spend()||!need(previous.empty()||previous<id,"original type order differs"))return false;previous=id;
@@ -121,7 +121,7 @@ bool Model::bodies(){
     System system;system.raw=&raw;Array signatureTypes;bool hasQuery=false;
     for(size_t i=0;i<parameters.size();++i){const auto &parameter=items(field(raw,"parameters"))[i],&binding=field(parameter,"binding"),&query=field(parameter,"query");
       auto *originalParameter=original(binding);
-      if(!need(exact(parameter,{"index","binding","annotationRange","logicalType","query"})&&number(field(parameter,"index"))==int64_t(i)&&originalParameter==parameters[i],"original system parameter order differs")||
+      if(!need(exact(parameter,{"index","binding","annotationRange","logicalType","query","view"})&&field(parameter,"view").getAsNull()&&number(field(parameter,"index"))==int64_t(i)&&originalParameter==parameters[i],"original system parameter order differs")||
         !g.sequence(field(binding,"range"),{field(binding,"nameRange"),Json(":"),field(parameter,"annotationRange")}))return false;
       Parameter checked;checked.raw=&parameter;const auto logical=string(field(parameter,"logicalType"));
       if(query.getAsNull()){

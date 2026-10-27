@@ -1,12 +1,12 @@
 {
   "family": "tsfg.system-query-facts-package-candidate",
-  "version": 3,
-  "status": "private original Source declarations, typed Query loops and reachable direct scalar helpers; no execution admission",
+  "version": 4,
+  "status": "private original Source declarations, typed Query loops and reachable direct f32-result scalar/view helpers; no execution admission",
   "requestFamily": "tsfg.system-query-facts-request-candidate",
   "sourceTypeSchemaHash": "sha256:6f6af231a779d6c8e55a4d0acde8fa6e5af5d7c7c2f5b54e6aa5487b34bedb78",
   "profile": {
     "path": "/src/system-query-context.d.ts",
-    "sha256": "df6ef3e8e1b2bde98646ced6c4921ccdc4dca750681775b6a980304598095304",
+    "sha256": "7fefda1fbc86170ff7c6479a4f3646ff8194b8dc5f7476107763c3c11fab604b",
     "standardPath": "/src/minimal-arrays-v8.d.ts",
     "standardSha256": "0d30a2f626bb7455decf36f5a7a8d3308d4254100d2cb10e7c0d2353d28b141e"
   },
@@ -30,7 +30,8 @@
     "system": ["declaration", "markerRange", "marker", "signature", "parameters", "returnType", "bodyRange", "loops"],
     "loop": ["range", "queryBinding", "queryRange", "bindingRange", "bodyRange", "bindings", "statements"],
     "loopBinding": ["index", "declaration", "componentType", "mode"],
-    "parameter": ["index", "binding", "annotationRange", "logicalType", "query"],
+    "parameter": ["index", "binding", "annotationRange", "logicalType", "query", "view"],
+    "view": ["aliases", "access"],
     "query": ["declaration", "tupleSourcePath", "tupleRange", "aliases", "items"],
     "alias": ["useSourcePath", "useRange", "declaration", "target"],
     "access": ["index", "mode", "range", "wrapper", "componentType", "component", "componentSourcePath", "componentRange"],

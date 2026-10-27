@@ -2,7 +2,7 @@
 
 # Owned Query Core consumer
 
-The private owned v3 Source package enters typed Core through
+The private owned v4 Source package enters typed Core through
 `readSystemQueryFacts` and `emitSystemQueryCore`. The complete original package
 and request remain in the module. Original Source FunctionIds and BindingIds
 are kept separately from lowered function, selection, component and FieldIds.
@@ -23,7 +23,7 @@ The existing native f32 Core arithmetic operations implement `+`, `-`, `*` and
 then adds and stores. Source statement and operand order remain explicit SSA
 dependencies. No component objects or boxed field values are constructed.
 
-Reachable scalar helpers become real native-f32 func.func definitions, parameters and func.return operations. Direct calls become typed func.call SSA operations with semantic callable IDs and separate original Source helper identities. Call arguments evaluate left to right, and an enclosing compound assignment still reads its target before evaluating those arguments. The private Query Core version is 2; the Core/common wire contract remains unchanged.
+Reachable f32-result helpers become real func.func definitions with native-f32 or component-view parameters and typed func.return operations. Direct calls become typed func.call SSA operations with semantic callable IDs and separate original Source helper identities. Call arguments evaluate left to right, and an enclosing compound assignment still reads its target before evaluating those arguments. The private Query Core version is 3; the Core/common wire contract remains unchanged.
 
 The independent C++ consumer reconstructs identities from the retained Source
 data, checks the complete original request and pinned declaration contexts,
@@ -73,3 +73,12 @@ The driver form is `tsfgc --input facts.json --query-request request.json
 uses the owning reader, and rejects frontend/VM/runtime request options. Static
 Core generation and validation grant no Guest, VM, native execution or parallel
 execution qualification.
+
+Direct component-view helpers lower to actual `func.func` view parameters and
+`func.call` operands, with distinct original Source and lowered identities.
+A `tsfg.view_borrow` result may narrow a Write view to Read for that same
+component and SSA backing. The original operand remains writable; the borrow
+cannot upgrade a Read value or change its component. C++ independently checks
+that operation against the original formal annotation and actual caller view,
+then checks callee field loads/stores and their physical layouts. Helpers still
+have one f32 return expression; returning a view is outside this boundary.

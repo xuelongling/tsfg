@@ -167,7 +167,7 @@ struct Proof {
     if(kind!="KindTypeReference")return {node,std::move(env)};
     auto *decl=binding(*node);if(!decl)return {};const auto actual=origin(*decl);const auto id=string(field(actual,"id"));
     const auto *substitution=string(field(*decl,"kind"))=="KindTypeParameter"&&env.count(id)?env.at(id):nullptr;
-    if(!substitution&&string(field(*decl,"kind"))!="KindTypeAliasDeclaration")return {node,std::move(env)};
+    if(!substitution&&(string(field(*decl,"kind"))!="KindTypeAliasDeclaration"||(string(field(*decl,"sourcePath"))=="/src/system-query-context.d.ts"&&(string(field(*decl,"name"))=="Read"||string(field(*decl,"name"))=="Write"))))return {node,std::move(env)};
     if(!m.need(cursor<items(traces).size(),"missing original alias trace"))return {};const auto &trace=items(traces)[cursor++];
     if(!m.need(exact(trace,{"useSourcePath","useRange","declaration","target"})&&same(field(trace,"useSourcePath"),field(*node,"sourcePath"))&&same(field(trace,"useRange"),field(*node,"range"))&&same(field(trace,"declaration"),actual),"original alias occurrence/order differs"))return {};
     Resolved result;
@@ -324,6 +324,23 @@ bool Model::annotation(const std::string &path,const Json &range,const std::stri
     return need(false,"original logical declaration target differs");
   }
   const auto kind=string(field(type,"kind"));return need(kind=="void"||kind=="undefined"||kind=="unknown","ordinary source annotation capability differs")&&grammar(path).sequence(range,{Json(kind)});
+}
+bool Model::view(const Json &view,const std::string &path,const Json &annotation,const std::string &logical){
+  if(!need(exact(view,{"aliases","access"})&&field(view,"aliases").getAsArray(),"owned helper view boundary differs"))return false;
+  const auto &access=field(view,"access");const auto mode=string(field(access,"mode"));
+  if(!need(exact(access,{"index","mode","range","wrapper","componentType","component","componentSourcePath","componentRange"})&&
+    number(field(access,"index"))==0&&(mode=="read"||mode=="write")&&source->types.count(logical)&&
+    string(field(field(*source->types.at(logical),"nominalKey"),"category"))=="component"&&string(field(access,"componentType"))==logical&&
+    same(field(access,"range"),annotation)&&same(field(access,"wrapper"),*builtins.at(mode=="read"?"Read":"Write")),"helper view access/component differs"))return false;
+  Proof proof{*this,field(view,"aliases")};auto wrapper=proof.resolve(proof.at(path,annotation));
+  if(!wrapper.node||!need(string(field(*wrapper.node,"kind"))=="KindTypeReference"&&same(proof.target(*wrapper.node),field(access,"wrapper")),"helper view original wrapper differs"))return false;
+  const auto args=proof.arguments(*wrapper.node);if(!need(args.size()==1,"helper view wrapper arity differs"))return false;
+  auto component=proof.resolve(args[0],wrapper.env);const auto &origin=field(access,"component"),&t=*source->types.at(logical);
+  return component.node&&original(origin)&&need(string(field(*component.node,"kind"))=="KindTypeReference"&&
+    same(proof.target(*component.node),origin)&&same(field(*component.node,"sourcePath"),field(access,"componentSourcePath"))&&
+    same(field(*component.node,"range"),field(access,"componentRange"))&&same(field(t,"sourcePath"),field(origin,"sourcePath"))&&
+    same(field(t,"declarationRange"),field(origin,"range"))&&same(field(t,"nameRange"),field(origin,"nameRange"))&&same(field(t,"name"),field(origin,"name"))&&
+    proof.cursor==items(field(view,"aliases")).size(),"helper view original component/alias proof differs");
 }
 bool Model::selection(const Json &query,const std::string &path,const Json &annotation){
   if(!need(exact(query,{"declaration","tupleSourcePath","tupleRange","aliases","items"})&&field(query,"aliases").getAsArray()&&field(query,"items").getAsArray()&&

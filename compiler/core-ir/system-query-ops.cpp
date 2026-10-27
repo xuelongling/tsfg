@@ -30,7 +30,8 @@ struct Check {
     physical.push_back({op,&component,field});return true;
   }
   bool fieldOp(mlir::Operation *op,const Json &value,const Binding &receiver,const Json &r){
-    const auto componentId=m.source->typeIds.at(string(field(*receiver.raw,"componentType"))),rawField=string(field(value,"property")),semantic=m.source->fieldIds.at(rawField);
+    const auto &access=field(*receiver.raw,"componentType").getAsString()?*receiver.raw:field(field(*receiver.raw,"view"),"access");
+    const auto componentId=m.source->typeIds.at(string(field(access,"componentType"))),rawField=string(field(value,"property")),semantic=m.source->fieldIds.at(rawField);
     const auto *row=component(componentId);if(!row)return false;const Json *selected=nullptr;
     for(const auto &f:items(field(*row,"fields")))if(string(field(f,"id"))==semantic){selected=&f;break;}
     if(!need(selected,"original selected Field ID missing from physical component"))return false;
@@ -49,14 +50,26 @@ struct Check {
     if(kind=="parentheses")return expression(it,block,field(value,"expression"),bindings,depth+1);
     if(kind=="call"){
       const auto &helper=m.scalarHelpers[m.helperIndex.at(string(field(value,"callee")))];std::vector<mlir::Value> args;
-      for(const auto &arg:items(field(value,"arguments"))){auto result=expression(it,block,arg,bindings,depth+1);if(!result)return {};args.push_back(result);}
+      size_t index=0;
+      for(const auto &arg:items(field(value,"arguments"))){
+        auto result=expression(it,block,arg,bindings,depth+1);if(!result)return {};const auto &formal=helper.parameters[index++];
+        if(!field(*formal.raw,"view").getAsNull()){
+          const auto mode=string(field(field(field(*formal.raw,"view"),"access"),"mode"));const auto expected=ViewType::get(context,formal.type+"#"+mode);
+          if(result.getType()!=expected){
+            if(!need(mode=="read"&&result.getType()==ViewType::get(context,formal.type+"#write"),"view argument cannot change component or widen permission"))return {};
+            auto *borrow=take(it,block,"tsfg.view_borrow",{result},1);
+            if(!borrow||!attrs(borrow,{"component_type","mode","tsfg_source.start","tsfg_source.end"})||!text(borrow,"component_type",formal.type)||!text(borrow,"mode",mode)||!anchor(borrow,field(arg,"range"))||!need(borrow->getResult(0).getType()==expected,"borrowed view type differs"))return {};result=borrow->getResult(0);
+          }
+        }else if(!need(result.getType().isF32(),"ordinary helper argument must be f32"))return {};
+        args.push_back(result);
+      }
       auto *op=take(it,block,"func.call",args,1);if(!op)return {};
       auto symbol=op->getAttrOfType<mlir::FlatSymbolRefAttr>("callee");const auto &range=field(value,"calleeRange");
       if(!attrs(op,{"callee","tsfg_core.function_id","tsfg_core.signature_hash","tsfg.query_source_callee","callee_start","callee_end","tsfg_source.start","tsfg_source.end"})||
         !need(symbol&&symbol.getValue()=="query_helper_"+helper.id.substr(7)&&op->getResult(0).getType().isF32(),"scalar call symbol/result differs")||
         !text(op,"tsfg_core.function_id",helper.id)||!text(op,"tsfg_core.signature_hash",helper.signature)||!text(op,"tsfg.query_source_callee",string(field(value,"callee")))||
         !integer(op,"callee_start",number(field(range,"start")))||!integer(op,"callee_end",number(field(range,"end")))||!anchor(op,field(value,"range")))return {};
-      for(auto arg:args)if(!need(arg.getType().isF32(),"scalar call argument must be f32"))return {};return op->getResult(0);
+      return op->getResult(0);
     }
     if(kind=="fieldAccess"){
       const auto &receiver=bindings.at(string(field(field(value,"receiver"),"binding")));auto *op=take(it,block,"tsfg.field_load",{receiver.value},1);
@@ -116,7 +129,9 @@ struct Check {
       !text(fn,"tsfg_core.function_id",helper.id)||!text(fn,"tsfg_core.signature_hash",helper.signature)||!text(fn,"tsfg.query_source_function",string(field(decl,"id")))||!text(fn,"tsfg.query_source_helper",string(field(raw,"id")))||
       !text(fn,"tsfg_source.path",string(field(decl,"sourcePath")))||!anchor(fn,field(decl,"range"))||
       !need(fn.getSymName()=="query_helper_"+helper.id.substr(7)&&!fn.isExternal()&&fn.getBody().hasOneBlock()&&fn.getNumArguments()==helper.parameters.size()&&fn.getFunctionType().getNumResults()==1&&fn.getFunctionType().getResult(0).isF32(),"scalar helper function shape differs"))return false;
-    std::map<std::string,Binding> bindings;for(size_t i=0;i<helper.parameters.size();++i){if(!need(fn.getArgument(i).getType().isF32(),"scalar helper argument type differs"))return false;bindings.emplace(string(field(field(*helper.parameters[i].raw,"binding"),"id")),Binding{fn.getArgument(i),helper.parameters[i].raw});}
+    std::map<std::string,Binding> bindings;for(size_t i=0;i<helper.parameters.size();++i){const auto &p=helper.parameters[i];
+      const auto &view=field(*p.raw,"view");const auto expected=view.getAsNull()?mlir::Type(mlir::Float32Type::get(context)):mlir::Type(ViewType::get(context,p.type+"#"+string(field(field(view,"access"),"mode"))));
+      if(!need(fn.getArgument(i).getType()==expected,"helper argument component/permission type differs"))return false;bindings.emplace(string(field(field(*p.raw,"binding"),"id")),Binding{fn.getArgument(i),p.raw});}
     auto &body=fn.getBody().front();auto it=body.begin();auto value=expression(it,body,field(raw,"value"),bindings);if(!value)return false;
     auto *returned=take(it,body,"func.return",{value},0);
     return returned&&attrs(returned,{"tsfg_source.start","tsfg_source.end"})&&anchor(returned,field(raw,"returnRange"))&&need(it==body.end(),"extra scalar helper body operation");

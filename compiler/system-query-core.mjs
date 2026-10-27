@@ -10,7 +10,7 @@ export const systemQueryTypeId=query=>sha256('tsfg.query.type.v1\0'+canonical(qu
 /** @param {import('./system-query-facts.mjs').SystemQueryFacts} facts @param {unknown} context */
 export function emitSystemQueryCore(facts,context){
   const original=printSystemQueryFacts(facts,context),packet=JSON.parse(original.toString('utf8'));
-  const request={family:'tsfg.system-query-facts-request-candidate',version:3,schemaHash:facts.format.schemaHash,
+  const request={family:'tsfg.system-query-facts-request-candidate',version:4,schemaHash:facts.format.schemaHash,
     input:{sourceRoot:facts.program.sourceRoot,rootFile:facts.program.rootFile,files:facts.program.files.map(({path,content,sha256})=>({path,content,sha256})),declarations:facts.program.declarations,config:facts.program.config,target:facts.program.target}};
   let remaining=1000000,serial=0;
   const spend=(n=1)=>{remaining-=n;if(remaining<0)throw new TypeError('r10-query-core-budget: lowering work exceeded');};
@@ -23,7 +23,7 @@ export function emitSystemQueryCore(facts,context){
   const attrs={'tsfg_core.version':'0.12.0','tsfg_core.bytecode_schema':'sha256:fec456a47f509480d96f65e5c03d465c7c204d60f09630e71b19c714d4aaafa7',
     'tsfg_core.input_identity':facts.inputIdentity,'tsfg_core.source_path':source.path,'tsfg_core.source_hash':'sha256:'+source.sha256,
     'tsfg_core.source_length':source.utf16Length,'tsfg_core.target':facts.program.target.target,'tsfg_core.triple':facts.program.target.triple,'tsfg_core.data_layout':facts.program.target.llvmDataLayout,
-    'tsfg.query_version':2,'tsfg.query_stage':'logical','tsfg.query_facts':canonical(packet),'tsfg.query_request':canonical(request)};
+    'tsfg.query_version':3,'tsfg.query_stage':'logical','tsfg.query_facts':canonical(packet),'tsfg.query_request':canonical(request)};
   line('module attributes {',Object.entries(attrs).map(([key,value])=>key+' = '+(typeof value==='number'?value+(key==='tsfg.query_version'?' : i32':' : i64'):quote(value))).join(', '),'} {');
   /** @param {import('./system-query-facts.mjs').SystemQueryLoopExpression} value */
   function expression(value,bindings,owner,indent){
@@ -36,7 +36,15 @@ export function emitSystemQueryCore(facts,context){
     if(value.kind==='bindingReference')return bindings.get(value.binding);
     if(value.kind==='parentheses')return expression(value.expression,bindings,owner,indent);
     if(value.kind==='call'){
-      const args=value.arguments.map(value=>expression(value,bindings,owner,indent));
+      const helper=facts.scalarHelpers.find(helper=>helper.id===value.callee);
+      const args=value.arguments.map((value,index)=>{
+        const actual=expression(value,bindings,owner,indent),formal=helper.parameters[index];
+        if(formal.view&&actual.mode!==formal.view.access.mode){
+          const borrowed=emit('tsfg.view_borrow',[actual],view(formal.type,formal.view.access.mode),'component_type = '+quote(formal.type)+', mode = '+quote(formal.view.access.mode),value.range);
+          return {...borrowed,semantic:formal.type,mode:formal.view.access.mode};
+        }
+        return actual;
+      });
       return emit('func.call',args,'f32','callee = @'+quote('query_helper_'+value.callee.slice(7))+', tsfg_core.function_id = '+quote(value.callee)+', tsfg_core.signature_hash = '+quote(value.signatureHash)+
         ', tsfg.query_source_callee = '+quote(value.sourceCallee)+', callee_start = '+value.calleeRange.start+' : i64, callee_end = '+value.calleeRange.end+' : i64',value.range);
     }
@@ -59,7 +67,7 @@ export function emitSystemQueryCore(facts,context){
   for(const system of facts.systems){
     spend();if(system.sourceReturnType!=='void')fail(system,system.bodyRange,'system return must be void');
     const parameters=system.parameters.map(parameter=>{const semantic=parameter.query?systemQueryTypeId(parameter.query):parameter.type,type=parameter.query?query(semantic):scalar.get(semantic);
-      if(!type)fail(system,parameter.binding.range,'ordinary system parameter has no selected scalar Core type');return {name:'%arg'+parameter.index,type,semantic,binding:parameter.binding.id};});
+      if(!type)fail(system,parameter.binding.range,'ordinary system parameter has no selected scalar Core type');return {name:'%arg'+parameter.index,type,semantic,binding:parameter.binding.id,mode:null};});
     const signature={parameters:parameters.map(row=>row.semantic),returns:system.returnType},id=functionId(system.declaration.sourcePath,canonical({path:[],kind:'function',name:system.declaration.name}),signature);
     line('  func.func @',quote('query_'+id.slice(7)),'(',parameters.map(row=>row.name+': '+row.type).join(', '),') attributes {tsfg_core.function_id = ',quote(id),', tsfg_core.signature_hash = ',quote(signatureId(signature)),', tsfg.query_source_function = ',quote(system.declaration.id),', tsfg_source.path = ',quote(system.declaration.sourcePath),', ',anchor(system.declaration.range),'} {');
     for(const loop of system.loops){
@@ -68,7 +76,7 @@ export function emitSystemQueryCore(facts,context){
       line('    "tsfg.chunk"(',queryName,') ({');line('    ^bb0(',chunkName,': ',chunk(selectionId),', ',countName,': index):');
       line('      "tsfg.parallel_for"(',chunkName,', ',countName,') ({');line('      ^bb0(',rowName,': index):');
       const bindings=new Map(parameters.map(row=>[row.binding,row]));
-      for(const binding of loop.bindings){const name='%column'+serial++,type=view(binding.componentType,binding.mode);bindings.set(binding.declaration.id,{name,type,semantic:binding.componentType,binding:binding.declaration.id});
+      for(const binding of loop.bindings){const name='%column'+serial++,type=view(binding.componentType,binding.mode);bindings.set(binding.declaration.id,{name,type,semantic:binding.componentType,binding:binding.declaration.id,mode:binding.mode});
         line('        ',name,' = "tsfg.column"(',chunkName,', ',rowName,') {component_type = ',quote(binding.componentType),', mode = ',quote(binding.mode),', source_binding = ',quote(binding.declaration.id),', tuple_index = ',String(binding.index),' : i64, ',anchor(binding.declaration.range),'} : (',chunk(selectionId),', index) -> ',type);}
       for(const statement of loop.statements)expression(statement.value,bindings,system,'        ');
       line('        "tsfg.yield"() : () -> ()');line('      }) {',anchor(loop.range),'} : (',chunk(selectionId),', index) -> ()');line('      "tsfg.yield"() : () -> ()');line('    }) {',anchor(loop.range),'} : (',query(selectionId),') -> ()');
@@ -76,8 +84,8 @@ export function emitSystemQueryCore(facts,context){
     line('    func.return');line('  }');
   }
   for(const helper of facts.scalarHelpers){
-    const parameters=helper.parameters.map(parameter=>({name:'%harg'+parameter.index,type:'f32',semantic:scalarTypeIds.f32,binding:parameter.binding.id}));
-    line('  func.func @',quote('query_helper_'+helper.id.slice(7)),'(',parameters.map(row=>row.name+': f32').join(', '),') -> f32 attributes {tsfg_core.function_id = ',quote(helper.id),', tsfg_core.signature_hash = ',quote(helper.signatureHash),', tsfg.query_source_function = ',quote(helper.declaration.id),', tsfg.query_source_helper = ',quote(helper.sourceId),', tsfg_source.path = ',quote(helper.declaration.sourcePath),', ',anchor(helper.declaration.range),'} {');
+    const parameters=helper.parameters.map(parameter=>({name:'%harg'+parameter.index,type:parameter.view?view(parameter.type,parameter.view.access.mode):'f32',semantic:parameter.type,binding:parameter.binding.id,mode:parameter.view?.access.mode??null}));
+    line('  func.func @',quote('query_helper_'+helper.id.slice(7)),'(',parameters.map(row=>row.name+': '+row.type).join(', '),') -> f32 attributes {tsfg_core.function_id = ',quote(helper.id),', tsfg_core.signature_hash = ',quote(helper.signatureHash),', tsfg.query_source_function = ',quote(helper.declaration.id),', tsfg.query_source_helper = ',quote(helper.sourceId),', tsfg_source.path = ',quote(helper.declaration.sourcePath),', ',anchor(helper.declaration.range),'} {');
     const result=expression(helper.value,new Map(parameters.map(row=>[row.binding,row])),helper,'    ');
     line('    "func.return"(',result.name,') {',anchor(helper.returnRange),'} : (f32) -> ()');line('  }');
   }

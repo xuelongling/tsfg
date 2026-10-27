@@ -9,7 +9,7 @@ then walks the verified query/chunk/row regions. A field operation's actual SSA
 receiver selects its column; its Source and semantic FieldIds remain distinct.
 No Node-supplied effect summary is accepted as authority.
 
-The private `tsfg.system-query-effects-candidate` version2 output retains the
+The private `tsfg.system-query-effects-candidate` version3 output retains the
 input/package identity, Core/query versions, target, original source identity,
 lowered function/signature and original Source function identities. Each system
 contains declared capabilities, actual field effects and ordered loops. Each
@@ -42,10 +42,10 @@ reads analysis through `readSystemQueryEffects`. The owning versioned reader
 checks the original receipt, exact identity/schema, permissions, normalized
 counts and graph relationships, and returns immutable data. The CLI form is
 `tsfgc --input facts.json --query-request request.json --core <tool> --emit
-query-effects`. Existing `--emit core` and canonical Core bytes are unchanged.
+query-effects`. The versioned Core and effects contracts evolve together; unrelated Common and formal Core contracts retain their meanings.
 
 The supported effect bodies are the existing Source-bound direct f32 field
-operations and direct pure f32 helper calls. Scalar helper summaries retain original and lowered identities, ordered direct calls and independently derived transitive callees. Actual verified helper bodies admit only scalar parameters, arithmetic and direct scalar calls, so they contribute no component memory effects. Caller argument field loads remain in their original evaluation order. The owning reader compares calls and memory accesses with the typed original expressions, rather than trusting aggregate counts or a claimed purity bit. Indirect/reference calls, scheduling, JobSystem execution,
+operations and direct f32-result helper calls with scalar or component-view parameters. Scalar helper summaries retain original and lowered identities, ordered direct calls, actual transitive field effects and independently derived transitive callees. The C++ walker maps actual callee block arguments and view-borrow results back to caller column SSA operands. Each field operation retains its real callee Source anchor and an ordered `callPath`; its tuple index and binding retain the caller column identity. The owning Node reader independently expands only typed expression access descriptors with the same formal-to-actual mapping. Caller arguments are visited left to right before the callee body; compound target loads remain before RHS calls and stores. The owning reader compares calls and memory accesses with the typed original expressions, rather than trusting aggregate counts or a claimed purity bit. Indirect/reference calls, scheduling, JobSystem execution,
 parallel or serial numerical results, Guest/VM execution and ResourceProof
 remain outside this compiler slice. A conflict-free pair is a static borrowing
 result, not an execution qualification.

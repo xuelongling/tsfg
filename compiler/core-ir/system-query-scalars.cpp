@@ -23,10 +23,18 @@ bool Model::scalars(){
     Array argumentTypes,semanticTypes;
     for(size_t i=0;i<parameters.size();++i){
       const auto &p=items(field(raw,"parameters"))[i];const auto &binding=field(p,"binding");
-      if(!need(exact(p,{"index","binding","annotationRange","logicalType","query"})&&number(field(p,"index"))==int64_t(i)&&string(field(p,"logicalType"))=="f32"&&field(p,"query").getAsNull()&&
-        string(field(binding,"kind"))=="KindParameter"&&original(binding)==parameters[i],"scalar helper original f32 parameter differs")||!annotation(path,field(p,"annotationRange"),"f32")||
+      if(!need(exact(p,{"index","binding","annotationRange","logicalType","query","view"})&&number(field(p,"index"))==int64_t(i)&&field(p,"query").getAsNull()&&
+        string(field(binding,"kind"))=="KindParameter"&&original(binding)==parameters[i],"helper original parameter differs")||
         !grammar(path).sequence(field(binding,"range"),{field(binding,"nameRange"),Json(":"),field(p,"annotationRange")}))return false;
-      helper.parameters.push_back(Parameter{&p,source->typeIds.at("f32"),""});argumentTypes.push_back("f32");semanticTypes.push_back(source->typeIds.at("f32"));
+      const auto logical=string(field(p,"logicalType"));std::string semantic;
+      if(field(p,"view").getAsNull()){
+        if(!need(logical=="f32","ordinary helper parameter must be f32")||!annotation(path,field(p,"annotationRange"),logical))return false;
+        semantic=source->typeIds.at(logical);
+      }else{
+        if(!view(field(p,"view"),path,field(p,"annotationRange"),logical))return false;
+        semantic=digest(std::string("tsfg.query.view.v1")+std::string(1,'\0')+canonical(Object{{"componentType",source->typeIds.at(logical)},{"mode",field(field(field(p,"view"),"access"),"mode")}}));
+      }
+      helper.parameters.push_back(Parameter{&p,source->typeIds.at(logical),""});argumentTypes.push_back(logical);semanticTypes.push_back(semantic);
     }
     const Json signature=Object{{"id",sourceId("signature",decl)},{"sourcePath",path},{"declarationRange",field(decl,"range")},{"parameters",std::move(argumentTypes)},{"returnType","f32"}};
     if(!need(same(field(raw,"signature"),signature),"scalar helper original signature differs")||!annotation(path,field(raw,"returnAnnotationRange"),"f32"))return false;
@@ -48,7 +56,7 @@ bool Model::scalars(){
   }
   for(const auto &helper:scalarHelpers){
     std::map<std::string,const Json *> scope;for(const auto &p:helper.parameters)scope.emplace(string(field(field(*p.raw,"binding"),"id")),p.raw);
-    if(!verifySourceShapeValue(*source,field(*helper.raw,"value"),"arrayGenericExpression")||!expression(field(*helper.raw,"value"),field(*helper.raw,"bodyRange"),scope,string(field(field(*helper.raw,"declaration"),"sourcePath")),0,true))return false;
+    if(!verifySourceShapeValue(*source,field(*helper.raw,"value"),"arrayGenericExpression")||!expression(field(*helper.raw,"value"),field(*helper.raw,"bodyRange"),scope,string(field(field(*helper.raw,"declaration"),"sourcePath")),0))return false;
   }
   return true;
 }

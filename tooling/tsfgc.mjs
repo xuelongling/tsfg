@@ -27,7 +27,7 @@ try {
     if(!['core','query-effects'].includes(emit)||['--frontend','--vm','--requests'].some(key=>options.has(key)))
       throw new TypeError('r03-cli-options: owned Query request requires --emit core|query-effects');
     const bytes=await readFile(options.get('--input')),requestBytes=await readFile(options.get('--query-request'));
-    const context={family:'tsfg.system-query-context-candidate',version:3,requestBytes,expectedPackageId:JSON.parse(bytes.toString('utf8')).packageId};
+    const context={family:'tsfg.system-query-context-candidate',version:4,requestBytes,expectedPackageId:JSON.parse(bytes.toString('utf8')).packageId};
     const result=await compileSystemQuery(bytes,context,{core:options.get('--core'),effects:emit==='query-effects'});
     process.stdout.write(emit==='query-effects'?canonical(result.effects)+'\n':result.core);
   }else{

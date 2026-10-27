@@ -25,12 +25,13 @@ struct Model {
   const Json *original(const Json &);
   bool metadata(mlir::ModuleOp);bool files();bool ast();bool types();bool declarations();bool bodies();bool inventory();
   bool selection(const Json &,const std::string &,const Json &);
+  bool view(const Json &,const std::string &,const Json &,const std::string &);
   bool annotation(const std::string &,const Json &,const std::string &,unsigned=0);
   bool ownedMarker(const std::string &,const Json &,const Json &);
   bool scalarTarget(const std::string &,const Json &,const Json &);
   bool scalars();bool scalarClosure();
   bool sourceName(const Json &,std::string &);
-  bool expression(const Json &,const Json &,const std::map<std::string,const Json *> &,const std::string &,unsigned=0,bool=false);
+  bool expression(const Json &,const Json &,const std::map<std::string,const Json *> &,const std::string &,unsigned=0);
   bool loop(const Json &,const Json &,const Json &,const std::vector<Parameter> &);
   std::string selectionId(const Json &)const;
 };

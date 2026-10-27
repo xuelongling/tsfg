@@ -5,9 +5,9 @@
 #include "llvm/ADT/STLExtras.h"
 namespace tsfg::systemQuery {
 namespace {
-constexpr llvm::StringLiteral schema="sha256:f7a827d0d8a3383ab62babb6ef5f0b293462215a30f0f3834839a56db1a114b2";
+constexpr llvm::StringLiteral schema="sha256:7b47b293ae3feb815e10b651ea9e2b0994bb894e96544379dcf2ba3f15eb2e88";
 constexpr llvm::StringLiteral profile="/src/system-query-context.d.ts";
-constexpr llvm::StringLiteral profileHash="df6ef3e8e1b2bde98646ced6c4921ccdc4dca750681775b6a980304598095304";
+constexpr llvm::StringLiteral profileHash="7fefda1fbc86170ff7c6479a4f3646ff8194b8dc5f7476107763c3c11fab604b";
 constexpr llvm::StringLiteral standard="/src/minimal-arrays-v8.d.ts";
 constexpr llvm::StringLiteral standardHash="0d30a2f626bb7455decf36f5a7a8d3308d4254100d2cb10e7c0d2353d28b141e";
 std::string hashed(llvm::StringRef domain,const std::string &body){return digest(domain.str()+std::string(1,'\0')+body);}
@@ -23,7 +23,7 @@ bool Model::metadata(mlir::ModuleOp module){
   const auto text=[&](llvm::StringRef key){auto value=module->getAttrOfType<mlir::StringAttr>(key);return value?value.getValue():llvm::StringRef();};
   const auto version=module->getAttrOfType<mlir::IntegerAttr>("tsfg.query_version");
   bound=text("tsfg.query_stage")=="bound";
-  if(!need(version&&version.getType().isSignlessInteger(32)&&version.getInt()==2&&
+  if(!need(version&&version.getType().isSignlessInteger(32)&&version.getInt()==3&&
     (bound||text("tsfg.query_stage")=="logical"),"owned Query stage/version differs"))return false;
   std::set<std::string> attrs={"tsfg_core.version","tsfg_core.bytecode_schema","tsfg_core.input_identity","tsfg_core.source_path",
     "tsfg_core.source_hash","tsfg_core.source_length","tsfg_core.target","tsfg_core.triple","tsfg_core.data_layout",
@@ -34,12 +34,12 @@ bool Model::metadata(mlir::ModuleOp module){
   Json packet=nullptr;
   if(!readJson(text("tsfg.query_facts"),packet,p,error)||!readJson(text("tsfg.query_request"),request,p,error)||
     !need(exact(packet,{"family","version","schemaHash","requestId","packageId","payload"})&&
-      string(field(packet,"family"))=="tsfg.system-query-facts-package-candidate"&&number(field(packet,"version"))==3&&
+      string(field(packet,"family"))=="tsfg.system-query-facts-package-candidate"&&number(field(packet,"version"))==4&&
       string(field(packet,"schemaHash"))==schema,"owned Source package boundary differs"))return false;
   const auto &payload=field(packet,"payload");
   if(!need(exact(payload,{"program","profilePath","profileSHA256","nodes","builtins","types","functions","markerAliases","systems","scalarHelpers"})&&
-    string(field(packet,"packageId"))==hashed("tsfg.system-query.package.v3",schema.str()+std::string(1,'\0')+canonical(payload))&&
-    string(field(packet,"requestId"))==hashed("tsfg.system-query.request.v3",canonical(request)+"\n"),"original Source package/request identity differs"))return false;
+    string(field(packet,"packageId"))==hashed("tsfg.system-query.package.v4",schema.str()+std::string(1,'\0')+canonical(payload))&&
+    string(field(packet,"requestId"))==hashed("tsfg.system-query.request.v4",canonical(request)+"\n"),"original Source package/request identity differs"))return false;
   p.hir=Object{{"snapshot",std::move(packet)}};p.sourcePath=header.sourcePath.str();p.sourceLength=header.sourceLength;
   p.inputIdentity="sha256:"+bytecode::hex(header.input);p.sourceHash="sha256:"+bytecode::hex(header.source);
   source=std::make_unique<SourceModel>(p,error);
@@ -68,7 +68,7 @@ bool Model::files(){
     source->sources.emplace(name,&file);syntax.emplace(name,std::move(grammar));
     requested.push_back(Object{{"path",name},{"content",content},{"sha256",field(file,"sha256")}});
   }
-  const Json expected=Object{{"family","tsfg.system-query-facts-request-candidate"},{"version",3},{"schemaHash",schema},
+  const Json expected=Object{{"family","tsfg.system-query-facts-request-candidate"},{"version",4},{"schemaHash",schema},
     {"input",Object{{"sourceRoot",root},{"rootFile",primary},{"files",std::move(requested)},
       {"declarations",field(program,"declarations")},{"config",field(program,"config")},{"target",field(program,"target")}}}};
   return need(source->sources.count(primary)&&source->sources.count(profile.str())&&source->sources.count(standard.str())&&
