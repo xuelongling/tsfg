@@ -67,6 +67,44 @@ bool gate(bool parameter){
   Json child=Object{{"id","C"},{"sourcePath","/gate.ts"},{"lexicalParent","P"},{"body",Array{}},{"captures",Array{Object{{"binding","a"}}}}};
   m.types.emplace("A",&t);m.functions={{"P",&parent},{"C",&child}};std::map<std::string,SourceSyntax> syntax;SourceBodies bodies{m,syntax};bodies.bindings.emplace("a",&b);return bodies.lexicalScope(child);
 }
+bool capturedTargets(const std::string &mode){
+  // Normalized code-target boundary only: no official Source, GC or Env pair
+  // is fabricated by this five-function table.
+  Program p;Error e;const bool write=mode=="captured-all-writers"||mode=="captured-fixed-new-writer",external=mode=="captured-external-top";
+  const auto reference=[](const std::string &id){return Json(Object{{"kind","functionReference"},{"functionId",id},{"type","F"}});};
+  const auto function=[](const std::string &id,const std::string &result,Array parameters,Array captures,Array body){
+    Array types;for(const auto &parameter:parameters)types.push_back(field(parameter,"type"));
+    const auto signature=digest(std::string("tsfg.module-callable-signature.candidate.v1")+std::string(1,'\0')+canonical(Object{{"parameters",std::move(types)},{"returns",result}}));
+    return Json(Object{{"id",id},{"kind","source"},{"ownerType",nullptr},{"parameters",std::move(parameters)},{"bindings",Array{}},{"captures",std::move(captures)},
+      {"returnType",result},{"signatureHash",signature},{"body",std::move(body)}});
+  };
+  Array reader;if(write)reader.push_back(Object{{"kind","expression"},{"value",Object{{"kind","bindingAssignment"},{"type","F"},
+    {"target",Object{{"kind","bindingTarget"},{"binding","original"},{"type","F"}}},{"value",reference("right")}}}});
+  reader.push_back(Object{{"kind","return"},{"value",Object{{"kind","indirectCall"},{"type","I"},{"range",Object{{"start",20},{"end",30}}},
+    {"expression",Object{{"kind","bindingReference"},{"binding","original"},{"type","F"}}},{"arguments",Array{}},{"signature",Object{{"parameters",Array{}},{"returnType","I"}}}}}});
+  Array functions{function("left","I",{},{},{}),function("right","I",{},{},{}),
+    function("factory","F",Array{Object{{"id","original"},{"type","F"}}},{},Array{Object{{"kind","return"},{"value",reference("reader")}}}),
+    function("reader","I",{},Array{Object{{"binding","original"}}},std::move(reader)),
+    function("root","F",{},{},Array{Object{{"kind","return"},{"value",Object{{"kind","call"},{"callee","factory"},{"type","F"},{"arguments",Array{reference("left")}}}}}})};
+  Array allowed{"left"};if(mode=="captured-all-writers"||mode=="captured-fixed-broader")allowed.push_back("right");
+  Array contracts;for(const auto &fn:functions){const auto id=string(field(fn,"id"));
+    Json returned=string(field(fn,"returnType"))=="F"?Json(Object{{"top",false},{"functions",Array{"reader"}}}):Json(nullptr);
+    Array parameters;if(id=="factory")parameters.push_back(Object{{"index",0},{"allowed",Object{{"top",external},{"functions",std::move(allowed)}}}});
+    Json body=Object{{"functionId",id},{"signatureHash",field(fn,"signatureHash")},{"upper",Object{{"facets",Object{{"unknownHost",false}}}}},
+      {"callables",Object{{"parameters",std::move(parameters)},{"returns",std::move(returned)},{"slotWrites",Array{}}}}};
+    auto record=*body.getAsObject();record["digest"]=identity("published-contract",body);contracts.push_back(std::move(record));
+  }
+  Array roots{Object{{"kind","application"},{"target","root"}}};if(external)roots.push_back(Object{{"kind","application"},{"target","factory"}});
+  p.hir=Object{{"types",Array{Object{{"id","I"},{"kind","scalar"}},Object{{"id","F"},{"kind","function"},{"parameters",Array{}},{"returnType","I"}}}},
+    {"functions",std::move(functions)},{"globals",Array{}},{"modules",Array{}},{"closure",Object{{"roots",std::move(roots)}}},
+    {"snapshot",Object{{"payload",Object{{"compatibilityWitnesses",Array{}}}}}}};p.publication=Object{{"contracts",std::move(contracts)}};
+  const bool accepted=verifyCallableTargets(p,e);
+  if(mode=="captured-fixed-new-writer")return !accepted&&e.code=="core-ir-common-callable"&&e.message=="argument exceeds fixed callable upper"&&p.callableSites.empty();
+  auto site=p.callableSites.find("reader/20:30");if(!accepted||!e.message.empty()||site==p.callableSites.end())return false;
+  if(external)return site->second.top;
+  const std::set<std::string> expected=mode=="captured-all-writers"||mode=="captured-fixed-broader"?std::set<std::string>{"left","right"}:std::set<std::string>{"left"};
+  return !site->second.top&&site->second.functions==expected;
+}
 bool effects(){
   Program p;Error e;Effects out;Json fn=Object{{"id","reader"},{"ownerType",nullptr},{"parameters",Array{}},{"returnType","I"},
     {"lexicalEnvironment","L"},{"activationEnvironment",nullptr},{"captures",Array{Object{{"binding","a"},{"read",true},{"write",false}}}},
@@ -143,7 +181,8 @@ int main(int argc,char **argv){
   const std::vector<std::string> boundaries={"weak-environment","alternative-environments","same-owner-environments","owner-or-undefined","unclosed-environment","zero-work"};
   std::vector<std::string> all={"held","restored","throw-held","parent","descriptor","replaced","throw-replaced","may-owner","resized","local-gate","parameter-gate","capture-effects"};all.insert(all.end(),boundaries.begin(),boundaries.end());
   for(const auto *name:{"alternative-held","alternative-pure","alternative-throw","alternative-bad","alternative-throw-bad"})all.push_back(name);
+  for(const auto *name:{"captured-readonly","captured-all-writers","captured-fixed-new-writer","captured-fixed-broader","captured-external-top"})all.push_back(name);
   std::vector<std::string> selected=argc>1?std::vector<std::string>(argv+1,argv+argc):all;size_t failed=0;
-  for(const auto &name:selected){const bool boundary=std::find(boundaries.begin(),boundaries.end(),name)!=boundaries.end();const bool ok=llvm::StringRef(name).starts_with("alternative-")&&name!="alternative-environments"?returnedAlternatives(name):boundary?owningBoundary(name):name=="local-gate"?gate(false):name=="parameter-gate"?gate(true):name=="capture-effects"?effects():returned(name);llvm::outs()<<name<<" "<<(ok?"PASS":"FAIL")<<"\n";failed+=!ok;}
+  for(const auto &name:selected){const bool boundary=std::find(boundaries.begin(),boundaries.end(),name)!=boundaries.end();const bool ok=llvm::StringRef(name).starts_with("captured-")?capturedTargets(name):llvm::StringRef(name).starts_with("alternative-")&&name!="alternative-environments"?returnedAlternatives(name):boundary?owningBoundary(name):name=="local-gate"?gate(false):name=="parameter-gate"?gate(true):name=="capture-effects"?effects():returned(name);llvm::outs()<<name<<" "<<(ok?"PASS":"FAIL")<<"\n";failed+=!ok;}
   return failed?1:0;
 }

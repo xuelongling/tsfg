@@ -20,6 +20,11 @@ export function commonTargets(hir,spend,records=null) {
   // storage graph; equal callable signatures never create an edge.
   const fields=new Map(),rawFields=new Map(),parents=new Map(),fieldValues=new Map(),fieldCaptures=new Map(),exposed=new Set(),exposedFields=new Set(),callableSlots=new Set(),bindingTypes=new Map(),arrayFieldAliases=[];
   for(const fn of functions.values())for(const group of [fn.parameters,fn.bindings??[]])for(const binding of group){spend();bindingTypes.set(binding.id,binding.type);}
+  // A captured incoming callable shares the original parameter's code upper.
+  // It is not a child parameter, a new local, or an environment-instance proof.
+  const parameterOwners=new Map(),capturedParameters=new Map();
+  for(const fn of functions.values()){spend();for(const [index,binding]of fn.parameters.entries()){spend();if(callable(binding.type))parameterOwners.set(binding.id,{owner:fn.id,index});}}
+  for(const fn of functions.values()){spend();for(const capture of fn.captures??[]){spend();const parameter=parameterOwners.get(capture.binding);if(parameter)capturedParameters.set(capture.binding,parameter);}}
   for(const global of hir.globals??[]){spend();bindingTypes.set(global.sourceBinding,global.type);}
   for(const type of types.values())for(const field of type.fields??[]){spend();fields.set(field.id,field);rawFields.set(field.sourceBinding,field.id);parents.set(field.id,field.id);}
   const slot=id=>{spend();const parent=parents.get(id);check(parent,'callable');return parent===id?id:slot(parent);};
@@ -102,10 +107,15 @@ export function commonTargets(hir,spend,records=null) {
   const siteKey=(fn,range)=>fn+'/'+range.start+':'+range.end;
   function expression(summary,state,value) {
     spend();if(value.kind==='functionReference')return domain.single(value.functionId);
-    if(value.kind==='bindingReference')return callable(value.type)?domain.copy(state.get(value.binding)??domain.bottom()):null;
+    if(value.kind==='bindingReference'){
+      if(!callable(value.type))return null;const captured=capturedParameters.get(value.binding);
+      return domain.copy(captured?summaries.get(captured.owner).parameters.get(captured.index):state.get(value.binding)??domain.bottom());
+    }
     if(['parentheses','as','nonNull'].includes(value.kind)){const actual=expression(summary,state,value.expression);if(value.kind==='as'){erase(value.type,value.expression.type,actual);if(!verifiedView(value.expression.type,value.type,value.compatibilityRoots??[])){expose(value.expression.type);expose(value.type);exposeClosures(actual);}else linkArrays(value.expression.type,value.type);}return actual??(callable(value.type)?domain.top():null);}
     if(value.kind==='bindingAssignment') {const result=expression(summary,state,value.value);erase(value.target.type??bindingTypes.get(value.target.binding),value.value.type,result);
-      if(value.target.kind==='globalTarget'){expose(value.value.type);exposeClosures(result);}else if(result)state.set(value.target.binding,domain.copy(result));return result;}
+      if(value.target.kind==='globalTarget'){expose(value.value.type);exposeClosures(result);}else if(result){state.set(value.target.binding,domain.copy(result));const captured=capturedParameters.get(value.target.binding);
+        if(captured){if(records)observe(captured.owner,captured.index,result);else merge(summaries.get(captured.owner).parameters,captured.index,result);}}
+      return result;}
     if(value.kind==='fieldAccess'){expression(summary,state,value.receiver);return callable(value.type)?domain.copy(fieldValues.get(slot(value.property))??domain.bottom()):null;}
     if(value.kind==='fieldAssignment'){
       let target=value.target;while(target.kind==='parentheses'){spend();target=target.expression;}

@@ -18,6 +18,8 @@ struct TargetFlow {
   std::map<std::string,const Json *> fields;std::map<std::string,std::string> slots;
   std::map<std::string,Targets> fieldValues,fieldCaptures;std::set<std::string> exposed,exposedFields,callableSlots;
   std::map<std::string,std::string> bindingTypes;
+  // Original shared parameter code bounds, never a runtime code/Env pair.
+  std::map<std::string,std::pair<std::string,size_t>> capturedParameters;
   std::set<std::string> externalFunctions,globalIds;
   std::vector<const Json *> defaultLiterals;
   ArrayTargets arrays{p,e,types,dirty,[this](const Targets &a,const Targets &b){return join(a,b);},[this](const Targets &value){exposeClosures(value);}};
@@ -103,6 +105,18 @@ struct TargetFlow {
     if(!arrays.build())return false;
     for(const auto &fn:items(field(p.hir,"functions"))){if(!step())return false;functions.emplace(string(field(fn,"id")),&fn);
       for(auto key:{"parameters","bindings"})for(const auto &binding:items(field(fn,key))){if(!step())return false;bindingTypes[string(field(binding,"id"))]=string(field(binding,"type"));}}
+    std::set<std::string> captured;
+    for(const auto &[id,fn]:functions){if(!step())return false;
+      for(const auto &row:items(field(*fn,"captures"))){
+        const auto key=field(row,"binding").getAsString().value_or("");if(!step(key.size()/64+2))return false;captured.insert(key.str());
+      }
+    }
+    for(const auto &[id,fn]:functions){if(!step())return false;const auto &parameters=items(field(*fn,"parameters"));
+      for(size_t index=0;index<parameters.size();++index){const auto key=field(parameters[index],"id").getAsString().value_or("");
+        if(!step((key.size()+id.size())/64+3))return false;auto binding=key.str();
+        if(captured.count(binding)&&callable(bindingTypes.at(binding)))capturedParameters.emplace(std::move(binding),std::pair{id,index});
+      }
+    }
     for(const auto &global:items(field(p.hir,"globals"))){if(!step())return false;bindingTypes[string(field(global,"sourceBinding"))]=string(field(global,"type"));globalIds.insert(string(field(global,"id")));}
     // The complete verified field directory and original compatibility pairs
     // supply storage identity. Callable type equality supplies no alias edge.
@@ -165,7 +179,10 @@ struct TargetFlow {
       Targets result;result.functions.insert(id);return result;
     }
     if(kind=="bindingReference"){
-      if(!callable(type))return {};auto found=state.find(string(field(value,"binding")));return found==state.end()?Targets{}:copy(found->second);
+      if(!callable(type))return {};const auto key=field(value,"binding").getAsString().value_or("");if(!step(key.size()/64+1))return {};
+      const auto binding=key.str();auto owner=capturedParameters.find(binding);
+      if(owner!=capturedParameters.end())return copy(summaries.at(owner->second.first).parameters.at(owner->second.second));
+      auto found=state.find(binding);return found==state.end()?Targets{}:copy(found->second);
     }
     if(kind=="parentheses"||kind=="as"||kind=="nonNull"){
       auto result=expression(s,state,field(value,"expression"));const auto from=string(field(field(value,"expression"),"type"));
@@ -175,7 +192,10 @@ struct TargetFlow {
     if(kind=="bindingAssignment"){
       auto result=expression(s,state,field(value,"value"));const auto &target=field(value,"target");erase(string(field(target,"type")),string(field(field(value,"value"),"type")),result);
       if(string(field(target,"kind"))=="globalTarget"){expose(string(field(field(value,"value"),"type")));exposeClosures(result);}
-      else if(result)state[string(field(target,"binding"))]=copy(*result);return result;
+      else if(result){const auto key=field(target,"binding").getAsString().value_or("");if(!step(key.size()/64+2))return {};const auto binding=key.str();
+        state[binding]=copy(*result);auto owner=capturedParameters.find(binding);
+        if(owner!=capturedParameters.end())observe(summaries.at(owner->second.first),owner->second.second,*result);
+      }return result;
     }
     if(kind=="fieldAccess"){
       expression(s,state,field(value,"receiver"));return callable(type)?std::optional<Targets>(copy(fieldValues[slot(string(field(value,"property")))])):std::nullopt;

@@ -195,14 +195,22 @@ a blanket rejection. Work is charged for copied evidence and every traversed
 member/edge, including killed liveness entries and empty successors. Exhaustion
 or cancellation produces no partial successful proof.
 
-An original direct scalar parameter is initialized by its call and may be captured
+An original direct scalar or function parameter is initialized by its call and may be captured
 through the same original binding. It uses the owner activation's existing writable
 environment slot, so later reads and writes observe that activation's shared value.
 Lexical forwarding preserves the original owner; a same-name child local remains
-a different binding. Only direct scalar joins the existing Array/ReadSpan parameter
-capability. Reference, union, function and other aggregate parameter captures stay
+a different binding. Direct scalar and function types join the existing Array/ReadSpan parameter
+capability. Reference, union and other aggregate parameter captures stay
 unsupported. Incoming initialization does not create a copied local, new slot
 identity, wire format or public API.
+
+A captured callable parameter uses its original owner and parameter index for
+code bounds. Derivation joins its incoming arguments and every verified shared
+write across lexical readers. A fixed publication keeps that original parameter
+upper: current writes are checked as observations against it, and current selected
+arguments do not narrow it. This reuses the parameter contract without creating
+a new slot transfer or environment-instance authority. Unknown external inputs
+remain TOP; equal signatures do not create code targets.
 
 ## Verification boundary
 
