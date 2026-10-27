@@ -6,7 +6,7 @@ import {spawnSync} from 'node:child_process';
 import {fileURLToPath} from 'node:url';
 import {readCommonProgramFacts} from '../../compiler/common-program-facts.mjs';
 import {buildCommonProgramHir} from '../../compiler/common-program-hir.mjs';
-import {createCommonProgramPublication,verifyCommonKernelGroup} from '../../compiler/common-program-analysis.mjs';
+import {createCommonProgramPublication,analyzeCommonProgram,verifyCommonKernelGroup} from '../../compiler/common-program-analysis.mjs';
 import {commonIdentity} from '../../compiler/common-program-identities.mjs';
 import {commonProgramCore} from '../../compiler/common-program-core.mjs';
 import {canonical} from '../../compiler/identity.mjs';
@@ -78,6 +78,47 @@ test('unknown incoming callable preserves uncertainty without inventing a concre
   assert.deepEqual(chain.origin,{kind:'function',functionId:fn.id,source:{sourceId:fn.sourcePath,...fn.range},operation:'derivedManagedReference'});
 });
 const tool=process.env.TSFG_COMMON_DIAGNOSTIC_CORE,output=process.env.TSFG_COMMON_DIAGNOSTIC_OUTPUT,children=[];
+const controlledBytes=readFileSync(new URL('./testdata/common-callable-parameters/callable-readonly.json',import.meta.url)),controlledFacts=readCommonProgramFacts(controlledBytes),
+  controlledHir=buildCommonProgramHir(controlledFacts,{family:'tsfg.common-program-context-candidate',version:2,factsBytes:controlledBytes,expectedPackageId:controlledFacts.packageId}),
+  controlledPublication=createCommonProgramPublication(controlledHir),controlledAnalysis=analyzeCommonProgram(controlledHir,controlledPublication),controlledByName=new Map(controlledHir.functions.map(fn=>[fn.name,fn])),
+  controlledRequest={targets:['left','right'].map(name=>controlledByName.get(name).id).sort()};
+const fixedFacetCases=['await','lock'].map(facet=>{
+  const caller=controlledByName.get('left'),callee=controlledByName.get('leafLeft'),original=controlledPublication.contracts.find(row=>row.functionId===callee.id),fixed=structuredClone(controlledPublication),contract=fixed.contracts.find(row=>row.functionId===callee.id);
+  const widened=new Set([callee.id]);let changed=true;
+  while(changed){changed=false;for(const row of controlledAnalysis.functions)if(!widened.has(row.functionId)&&row.dependencies.some(edge=>widened.has(edge.functionId))){widened.add(row.functionId);changed=true;}}
+  for(const id of widened){const row=fixed.contracts.find(row=>row.functionId===id);row.upper.facets[facet]=true;const {digest,...body}=row;row.digest=commonIdentity('published-contract',body);}
+  fixed.expectedDigest=commonIdentity('publication',{scopeDigest:fixed.scopeDigest,contracts:fixed.contracts});
+  return {facet,caller,callee,original,fixed,contract,widened:[...widened].sort(),request:controlledRequest,
+    expected:{version:/** @type {1} */(1),root:{functionId:caller.id,source:{sourceId:caller.sourcePath,...caller.range}},reason:{kind:/** @type {'facet'} */('facet'),facet},
+      edges:[{caller:caller.id,callee:callee.id,kind:'indirectCall',source:{sourceId:caller.sourcePath,...caller.body[1].value.range}}],
+      origin:{kind:/** @type {'fixed-upper'} */('fixed-upper'),functionId:callee.id,source:{sourceId:callee.sourcePath,...callee.range},contractDigest:contract.digest}}};
+});
+for(const row of fixedFacetCases)test('pure complete program rejects its fixed '+row.facet+' upper',()=>{
+  const originalDigest=row.original.digest,analysis=analyzeCommonProgram(controlledHir,row.fixed),current=analysis.functions.find(fn=>fn.functionId===row.callee.id);
+  assert.equal(current.derived.facets[row.facet],false);assert.equal(row.original.upper.facets[row.facet],false);assert.equal(row.original.digest,originalDigest);
+  assert.equal(analysis.functions.find(fn=>fn.functionId===row.caller.id).derived.facets[row.facet],false);
+  assert.equal(analysis.contracts.find(contract=>contract.functionId===row.callee.id).digest,row.contract.digest);assert.notEqual(row.contract.digest,originalDigest);
+  assert.throws(()=>verifyCommonKernelGroup(controlledHir,row.fixed,row.request),error=>{
+    assert.ok(error instanceof Error&&'code' in error&&'ruleId' in error&&'phase' in error&&'primary' in error&&'callChain' in error);
+    assert.equal(error.code,'r03-common-program-kernel-capability');assert.equal(error.ruleId,'r01-input-boundary');assert.equal(error.phase,'hir');
+    assert.deepEqual(error.primary,{sourceId:row.caller.sourcePath,...row.caller.range});assert.deepEqual(error.callChain,row.expected);return true;
+  });
+  if(output){mkdirSync(output,{recursive:true});writeFileSync(output+'/fixed-'+row.facet+'-node-control.json',canonical({facet:row.facet,originalContract:row.original,currentDerived:current.derived,
+    currentCallerDerived:analysis.functions.find(fn=>fn.functionId===row.caller.id).derived,widened:row.widened,originalPublication:controlledPublication,
+    fixedPublication:row.fixed,fixedContract:row.contract,expectedDigest:row.fixed.expectedDigest,callChain:row.expected})+'\n');}
+});
+test('unwidened complete callable program accepts the identical kernel request',()=>{
+  const proof=verifyCommonKernelGroup(controlledHir,controlledPublication,controlledRequest);assert.deepEqual(proof.targets,controlledRequest.targets);
+  assert.equal(proof.publishedDigest,controlledPublication.expectedDigest);assert.equal(proof.accesses.length,2);
+  for(const facet of ['await','lock'])for(const name of ['left','leafLeft'])assert.equal(controlledAnalysis.functions.find(fn=>fn.functionId===controlledByName.get(name).id).derived.facets[facet],false);
+});
+test('independent unwidened complete callable program accepts the identical kernel request',{skip:!tool||!output},()=>{
+  const input=commonProgramCore(controlledHir,controlledPublication,controlledRequest).text,child=spawnSync(tool,['--common-program','--canonicalize'],{input,windowsHide:true,maxBuffer:8388608,timeout:60000});
+  mkdirSync(output,{recursive:true});const prefix=output+'/unwidened';writeFileSync(prefix+'-input.mlir',input);writeFileSync(prefix+'-stdout.raw',child.stdout??Buffer.alloc(0));writeFileSync(prefix+'-stderr.raw',child.stderr??Buffer.alloc(0));
+  for(const [name,value]of Object.entries({hir:controlledHir,publication:controlledPublication,request:controlledRequest}))writeFileSync(prefix+'-'+name+'.json',canonical(value)+'\n');
+  children.push({name:'unwidened',pid:child.pid,status:child.status,error:child.error?.message??null});writeFileSync(output+'/children.json',JSON.stringify(children,null,2)+'\n');
+  assert.ifError(child.error);assert.equal(child.status,0);assert.ok(child.stdout.length>0);assert.equal(child.stderr.length,0);
+});
 /** @type {{name:string,hir:typeof hir,fixed:typeof publication,request:{targets:string[]},expected:()=>import('../../compiler/common-program-diagnostics.mjs').KernelCallChain}[]} */
 const staticCases=['direct','cross','finiteIndirect'].map(name=>({name,hir,fixed:publication,request:{targets:targets([name,'right'])},expected:()=>diagnostic(name)}));
 for(const kind of ['host-resource','facet']){
@@ -87,6 +128,7 @@ for(const kind of ['host-resource','facet']){
 }
 for(const name of ['entry','managed','cycleA','unknownIncoming'])staticCases.push({name,hir:expandedHir,fixed:expandedPublication,
   request:{targets:[expandedByName.get(name).id,expandedByName.get('right').id].sort()},expected:()=>expandedDiagnostic(name)});
+for(const row of fixedFacetCases)staticCases.push({name:'fixed-'+row.facet,hir:controlledHir,fixed:row.fixed,request:row.request,expected:()=>row.expected});
 for(const row of staticCases)test('independent actual Core rejection carries the same chain: '+row.name,{skip:!tool||!output},()=>{
   const model=row.hir??hir,ordinary=commonProgramCore(model,row.fixed,{targets:[]}).text,needle='request = '+coreQuote(canonical({targets:[]})),input=ordinary.replace(needle,'request = '+coreQuote(canonical(row.request)));assert.notEqual(input,ordinary);
   const child=spawnSync(tool,['--common-program','--canonicalize'],{input,windowsHide:true,maxBuffer:8388608,timeout:60000});
@@ -94,6 +136,10 @@ for(const row of staticCases)test('independent actual Core rejection carries the
   children.push({name:row.name,pid:child.pid,status:child.status,error:child.error?.message??null});writeFileSync(output+'/children.json',JSON.stringify(children,null,2)+'\n');
   assert.ifError(child.error);assert.equal(child.status,3);assert.equal(child.stdout.length,0);
   const match=child.stderr.toString('utf8').match(/; callChain=(\{[^\n]*\}) \(/);assert.ok(match,'independent real reject must carry its call chain');
+  if(row.name==='fixed-await'||row.name==='fixed-lock'){
+    assert.ok(child.stderr.toString('utf8').includes('[core-ir-common-kernel]'));
+    const root=row.expected().root;assert.ok(child.stderr.toString('utf8').includes('('+root.source.sourceId+':'+root.source.start+':'+root.source.end+')'));
+  }
   assert.deepEqual(JSON.parse(match[1]),row.expected());
 });
 function widen(mutate){
