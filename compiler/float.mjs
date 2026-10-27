@@ -2,15 +2,23 @@
 // Product literal verification: exact decimal/radix rational, one RNE rounding.
 // The conformance oracle is separately frozen and does not import this module.
 export const floatNames = ["f32", "f64"];
+// Shared lexical analysis only: no source representation, finite check or rounding.
+export function numericTokenSyntax(token) {
+  if (typeof token !== 'string') throw new TypeError('invalid numeric literal token');
+  const negative = token.startsWith("-"), text = token.replace(/^[+-]/, "");
+  const digits = "[0-9](?:_?[0-9])*";
+  const decimal = new RegExp(`^(?:(${digits})(?:\\.(${digits})?)?|\\.(${digits}))(?:[eE]([+-]?${digits}))?$`).exec(text);
+  const radix = /^0(?:[xX][0-9a-fA-F](?:_?[0-9a-fA-F])*|[bB][01](?:_?[01])*|[oO][0-7](?:_?[0-7])*)$/.test(text);
+  if (!radix && !decimal) throw new TypeError('invalid exact float token');
+  return { negative, text, decimal, radix };
+}
 export function floatBits(token, type) {
   if (!floatNames.includes(type) || typeof token !== "string") throw new TypeError("invalid float literal");
   const precision = type === "f32" ? 24 : 53, emin = type === "f32" ? -126 : -1022,
     emax = type === "f32" ? 127 : 1023, width = type === "f32" ? 32 : 64;
-  const negative = token.startsWith("-"), text = token.replace(/^[+-]/, "");
-  const digits = "[0-9](?:_?[0-9])*";
-  const decimal = new RegExp(`^(?:(${digits})(?:\\.(${digits})?)?|\\.(${digits}))(?:[eE]([+-]?${digits}))?$`).exec(text);
+  const { negative, text, decimal, radix } = numericTokenSyntax(token);
   let numerator, denominator = 1n;
-  if (/^0(?:[xX][0-9a-fA-F](?:_?[0-9a-fA-F])*|[bB][01](?:_?[01])*|[oO][0-7](?:_?[0-7])*)$/.test(text)) {
+  if (radix) {
     numerator = BigInt(text.replaceAll("_", ""));
   } else {
     if (!decimal) throw new TypeError("invalid exact float token");

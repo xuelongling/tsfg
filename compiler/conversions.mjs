@@ -110,6 +110,16 @@ const namedToken = (token,value) => token?.kind==='name'&&token.value===value;
 // augments the admitted global symbols. References and member/module names
 // remain legal. Comments, quoted text and escaped identifiers are lexical data.
 function declarationTokens(source) {
+  try { return scanDeclarationTokens(source); } catch { return undefined; }
+}
+
+// Shared lexical provenance for the independent cold module-source boundary.
+// Original UTF16 offsets do not confer parser, name-resolution or type authority.
+export function sourceLexicalTokens(source) {
+  return declarationTokens(source)?.tokens??null;
+}
+
+function scanDeclarationTokens(source) {
   const tokens = [],references=[],types=[];
   for (let index=0;index<source.length;) {
     if (/\s/u.test(source[index])) {index++;continue;}
@@ -124,11 +134,11 @@ function declarationTokens(source) {
       while(index<source.length){const character=source[index++];if(character==='\\'){index++;continue;}if(character===quote){closed=true;break;}}
       if(!closed)return undefined;
       const text=source.slice(start,index-1).replace(/\\(?:u\{([0-9a-fA-F]{1,6})\}|u([0-9a-fA-F]{4})|x([0-9a-fA-F]{2})|([^\r\n]))/g,(_,point,unit,byte,character)=>point||unit||byte?String.fromCodePoint(Number.parseInt(point??unit??byte,16)):character);
-      tokens.push({kind:'text',value:text});continue;
+      tokens.push({kind:'text',value:text,start:start-1,end:index});continue;
     }
     const identifier=source.slice(index).match(/^(?:[$_\p{ID_Start}]|\\u(?:\{[0-9a-fA-F]{1,6}\}|[0-9a-fA-F]{4}))(?:[$\u200c\u200d\p{ID_Continue}]|\\u(?:\{[0-9a-fA-F]{1,6}\}|[0-9a-fA-F]{4}))*/u)?.[0];
-    if(identifier){tokens.push({kind:'name',value:identifier.replace(/\\u(?:\{([0-9a-fA-F]{1,6})\}|([0-9a-fA-F]{4}))/g,(_,point,unit)=>String.fromCodePoint(Number.parseInt(point??unit,16)))});index+=identifier.length;}
-    else tokens.push({kind:'punctuation',value:source[index++]});
+    if(identifier){tokens.push({kind:'name',value:identifier.replace(/\\u(?:\{([0-9a-fA-F]{1,6})\}|([0-9a-fA-F]{4}))/g,(_,point,unit)=>String.fromCodePoint(Number.parseInt(point??unit,16))),start:index,end:index+identifier.length});index+=identifier.length;}
+    else {tokens.push({kind:'punctuation',value:source[index],start:index,end:index+1});index++;}
   }
   return {tokens,references,types};
 }
@@ -203,6 +213,14 @@ function externalDeclarationFile(tokens) {
     if(punctuation(token,'{'))depth++;if(punctuation(token,'}'))depth--;
   }
   return external;
+}
+
+// Bounded lexical classification for already checked ordinary sources. Dynamic
+// import() is not an external-module indicator; this is not a syntax checker.
+export function sourceIsExternal(source) {
+  if (typeof source !== 'string' || !source.isWellFormed()) return null;
+  const lexical=declarationTokens(source);
+  return lexical ? externalDeclarationFile(lexical.tokens) : null;
 }
 
 function exclusiveConversionDeclarations(tokens) {

@@ -309,9 +309,22 @@ export async function executeMlirTarget({ options, runtime, tools, productRoot, 
   await validateOutputAncestor(outputParent);
   await mkdir(outputParent, { recursive: true });
   await validateOutputAncestor(outputParent);
+  const manifestPath = "compiler/core-ir/sources.json";
+  const coreManifest = JSON.parse(await readFile(path.join(productRoot, manifestPath), "utf8"));
+  if (Object.keys(coreManifest).sort().join(",") !== "headers,sources" ||
+      !Array.isArray(coreManifest.sources) || !coreManifest.sources.length || !Array.isArray(coreManifest.headers) ||
+      coreManifest.sources.some(name => typeof name !== "string" || !/^[a-z0-9_-]+\.cpp$/.test(name)) ||
+      coreManifest.headers.some(name => typeof name !== "string" || !/^[a-z0-9_-]+\.h$/.test(name)))
+    throw new MlirBuildError("Core product source directory differs", "mlir-source-integrity");
+  const coreNames = [...coreManifest.sources, ...coreManifest.headers];
+  if (new Set(coreNames).size !== coreNames.length || !coreManifest.sources.includes("main.cpp"))
+    throw new MlirBuildError("Core product source membership differs", "mlir-source-integrity");
+  const coreProductInputs = ["compiler/core-ir/CMakeLists.txt", manifestPath,
+    ...coreNames.map(name => `compiler/core-ir/${name}`)];
+  const stagedProductInputs = [...coreProductInputs, "eng/mlir-python-policy.cmake", "eng/mlir-compiler-launcher.mjs"];
   // Require immutable product approval/configuration bytes before source execution.
   for (const name of ["eng/mlir-source-legal.lock.json", "eng/mlir-source-build-legal.lock.json", "eng/mlir-source-notices.lock.json", "eng/mlir-python.lock.json", "eng/mlir-source.lock.json",
-    "eng/mlir-build.mjs", "eng/mlir-compiler-launcher.mjs", "eng/mlir-python-policy.cmake", "compiler/core-ir/main.cpp", "compiler/core-ir/CMakeLists.txt"]) {
+    "eng/mlir-build.mjs", "eng/mlir-compiler-launcher.mjs", "eng/mlir-python-policy.cmake", ...coreProductInputs]) {
     const raw = await readFile(path.join(productRoot, name));
     const committed = gitBytes(git, productRoot, ["show", `HEAD:${name}`]);
     if (!raw.equals(committed)) throw new MlirBuildError(`Intake input must match committed product bytes: ${name}`, "mlir-source-integrity");
@@ -327,7 +340,7 @@ export async function executeMlirTarget({ options, runtime, tools, productRoot, 
     const { entries: sourceEntries, unmaterialized, checkoutDifferences } = await materializeSource(identity, git, source);
     await writeFile(path.join(stage, "source-snapshot.json"), serialize({ sourceCommit: identity.sourceCommit,
       sourceTree: identity.sourceTree, entries: sourceEntries, unmaterialized, checkoutDifferences }));
-    for (const name of ["compiler/core-ir/main.cpp", "compiler/core-ir/CMakeLists.txt", "eng/mlir-python-policy.cmake", "eng/mlir-compiler-launcher.mjs"]) {
+    for (const name of stagedProductInputs) {
       await mkdir(path.dirname(path.join(product, name)), { recursive: true });
       await copyFile(path.join(productRoot, name), path.join(product, name));
     }
@@ -339,7 +352,7 @@ export async function executeMlirTarget({ options, runtime, tools, productRoot, 
       INCLUDE: tools.include.join(";"), LIB: tools.lib.join(";"), LIBPATH: tools.lib.join(";") };
     const scopedRuntime = { ...runtime, lockDigest: scopedToolchainDigest(runtime, python) };
     const productIdentity = await createIdentity(scopedRuntime, productRoot);
-    const requiredProductInputs = ["compiler/core-ir/main.cpp", "compiler/core-ir/CMakeLists.txt", "eng/mlir-build.mjs",
+    const requiredProductInputs = [...coreProductInputs, "eng/mlir-build.mjs",
       "eng/mlir-python-policy.cmake", "eng/mlir-source.mjs", "eng/mlir-source.lock.json", "eng/mlir-python.mjs",
       "eng/mlir-python.lock.json", "eng/mlir-source-legal.mjs", "eng/mlir-source-legal.lock.json"];
     requiredProductInputs.push("eng/mlir-compiler-launcher.mjs", "eng/mlir-source-notices.lock.json");
@@ -349,7 +362,7 @@ export async function executeMlirTarget({ options, runtime, tools, productRoot, 
       if (!entry || entry.sha256 !== digest(await readFile(path.join(productRoot, name))))
         throw new MlirBuildError(`Actual product input is absent or changed in Build Input Set: ${name}`, "mlir-source-integrity");
     }
-    for (const name of ["compiler/core-ir/main.cpp", "compiler/core-ir/CMakeLists.txt", "eng/mlir-python-policy.cmake", "eng/mlir-compiler-launcher.mjs"]) {
+    for (const name of stagedProductInputs) {
       const entry = productIdentity.buildInputSet.entries.find(entry => entry.projectId === "tsfg" && entry.repositoryRelativePath === name);
       if (digest(await readFile(path.join(product, name))) !== entry.sha256)
         throw new MlirBuildError(`Staged product input differs from declared identity: ${name}`, "mlir-source-integrity");
@@ -488,7 +501,7 @@ export async function executeMlirTarget({ options, runtime, tools, productRoot, 
     outputs.sort((a, b) => Buffer.from(a.path).compare(Buffer.from(b.path)));
     const manifest = { schemaVersion: "1", buildIdentity, buildInputSet, contractSetId: productIdentity.contractSetId,
       productVersion: productIdentity.productVersion, toolchainClosureDigest: buildIdentity.toolchainClosureDigest,
-      outputs, capability: "typed i32/bool CFG and SSA verification with R04 v4 control flow and Semantic Fuel producer" };
+      outputs, capability: "formal Core0.10/wire10 and explicit complete Common Program static verification; no private wire/native/VM encoding" };
     await writeFile(path.join(publish, "artifact-manifest.json"), serialize(manifest));
     await writeFile(path.join(stage, "input-trace.json"), serialize(trace));
     await readMlirSourceIdentity({ sourceRoot, git });
