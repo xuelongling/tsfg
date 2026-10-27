@@ -45,7 +45,7 @@ bool ActualCheck::callGraph(){
   }
   // Multiple acyclic incoming sites are different invocations, not a repeated
   // allocation. CFG/SCC multiplicity is inherited by each actual call path.
-  return true;
+  return prepareRegions(*this);
 }
 bool ActualCheck::run(){
   // Invocation multiplicity consumes only the complete validated fixed table.

@@ -3,7 +3,7 @@
 namespace tsfg::commonProgram {
 namespace {
 size_t weight(const ActualValue &v){
-  size_t cost=v.tags.size()+v.objects.size()+v.cells.size()+v.callables.size()+1;
+  size_t cost=v.tags.size()+v.objects.size()+v.cells.size()+v.callables.size()+regionWeight(v.region)+1;
   for(const auto *set:{&v.tags,&v.objects,&v.cells})for(const auto &id:*set)cost+=id.size()/64;
   for(const auto &[code,environment]:v.callables)cost+=(code.size()+environment.size())/64+1;
   return cost;
@@ -12,15 +12,20 @@ size_t weight(const ActualValue &v){
 std::string ActualCheck::key(const ActualValue &v)const{
   Array tags,refs,cells,pairs;for(const auto &[code,environment]:v.callables)pairs.push_back(Array{code,environment});for(const auto &id:v.tags)tags.push_back(id);for(const auto &id:v.objects)refs.push_back(id);for(const auto &id:v.cells)cells.push_back(id);
   return canonical(Object{{"tags",std::move(tags)},{"refs",std::move(refs)},{"cells",std::move(cells)},
-    {"callableTop",v.callableTop},{"callables",std::move(pairs)},{"truth",int64_t(v.truth)},{"unknown",v.unknown},{"number",v.number?Json(*v.number):Json(nullptr)}});
+    {"callableTop",v.callableTop},{"callables",std::move(pairs)},{"truth",int64_t(v.truth)},{"unknown",v.unknown},{"number",v.number?Json(*v.number):Json(nullptr)},{"region",regionKey(v.region)}});
 }
 ActualValue ActualCheck::copy(const ActualValue &v){if(!step(weight(v)))return {};return v;}
 bool ActualCheck::merge(ActualValue &to,const ActualValue &from){
   if(!step(weight(to)+weight(from)))return false;const auto before=key(to);
+  // An absent relation is lazily unproved, not a runtime allocation fact.
+  // Capacity/tag-only values need no relation plane or spurious state change.
+  const bool tracked=to.region.known||from.region.known;RegionValue provenance;
+  if(tracked){provenance=regionValue(*this,to);regionMerge(*this,provenance,regionValue(*this,from));}
   const bool bottom=to.tags.empty()&&to.objects.empty()&&to.cells.empty()&&to.callables.empty()&&!to.unknown&&!to.callableTop;
   to.tags.insert(from.tags.begin(),from.tags.end());to.objects.insert(from.objects.begin(),from.objects.end());to.cells.insert(from.cells.begin(),from.cells.end());
   to.callables.insert(from.callables.begin(),from.callables.end());
   to.callableTop|=from.callableTop;to.truth|=from.truth;to.unknown|=from.unknown;to.number=bottom?from.number:to.number==from.number?to.number:std::nullopt;
+  if(tracked)to.region=std::move(provenance);
   if(!need(to.tags.size()<=256&&to.objects.size()<=256&&to.cells.size()<=256&&to.callables.size()<=256,"actual alternative/object/Cell set limit exceeded"))return false;
   return key(to)!=before;
 }
@@ -39,11 +44,12 @@ bool ActualCheck::mergeHeap(ActualHeap &into,const ActualHeap &from){
 }
 ActualState ActualCheck::copyState(const ActualState &s){
   ActualState out;if(!step(s.values.size()))return out;out.heap=copyHeap(s.heap);
+  out.regions=regionCopy(*this,s.regions);
   for(const auto &[id,v]:s.values){out.values.emplace(id,copy(v));if(!e.message.empty())return {};}
   return out;
 }
 bool ActualCheck::join(ActualState &to,const ActualState &from){
-  bool changed=mergeHeap(to.heap,from.heap);if(!step(from.values.size()))return false;
+  bool changed=mergeHeap(to.heap,from.heap);changed=regionJoin(*this,to.regions,from.regions)||changed;if(!step(from.values.size()))return false;
   for(const auto &[id,v]:from.values){auto found=to.values.find(id);
     if(found==to.values.end()){to.values.emplace(id,copy(v));changed=true;}else changed=merge(found->second,v)||changed;
     if(!e.message.empty())return false;

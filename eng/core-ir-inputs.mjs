@@ -87,6 +87,8 @@ export const coreIrInputs = Object.freeze([
   "compiler/core-ir/common-program-projection.cpp",
   "compiler/core-ir/common-program-publication.cpp",
   "compiler/core-ir/common-program-read.cpp",
+  "compiler/core-ir/common-program-regions.cpp",
+  "compiler/core-ir/common-program-regions.h",
   "compiler/core-ir/common-program-relations.cpp",
   "compiler/core-ir/common-program-relations.h",
   "compiler/core-ir/common-program-retention.cpp",

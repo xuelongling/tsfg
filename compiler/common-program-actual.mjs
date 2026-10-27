@@ -9,6 +9,7 @@ import {commonCheck as check} from './common-program-common.mjs';
 import {commonEntryReferences} from './common-program-entry.mjs';
 import {commonMethods} from './common-program-methods.mjs';
 import {commonBorrowObservations} from './common-program-borrow-observations.mjs';
+import {commonRegions,emptyRegionValue} from './common-program-regions.mjs';
 const undefinedId=sha256('tsfg.type\0undefined');
 export function analyzeCommonGraphs({model,plans},records=null) {
   const {spend,types}=model,elementSeeds=new Map(),a=commonAbstract({...model,elementSeeds}),byId=new Map(plans.map(plan=>[plan.owner.id,plan])),entryReferences=commonEntryReferences(model.hir,spend),methods=commonMethods(model.hir,spend);
@@ -51,11 +52,14 @@ export function analyzeCommonGraphs({model,plans},records=null) {
   for(const type of types.values())if(type.kind==='array')seed(elementSeeds,'element:'+type.id,a.declared(type.elementType,dummyHeap,'conditional',fieldSeeds,dummyObjects));
   for(const global of model.hir.globals)seed(globalSeeds,global.sourceBinding,a.declared(global.type,dummyHeap,'conditional',fieldSeeds,dummyObjects));
   function solve(bounded) {
-    const contexts=new Map(),observed=new Map(),objects=new Map(),operations=new Map(),callTargets=new Map();let changed=false;
+    const contexts=new Map(),observed=new Map(),objects=new Map(),operations=new Map(),callTargets=new Map(),regions=commonRegions(spend),pending=[],queued=new Set();
+    let changed=false,invalidateCapacity=false,invalidateWeak=false;
+    const schedule=id=>{spend();if(!queued.has(id)){queued.add(id);pending.push(id);}};
+    if(!bounded)regions.prepare(plans);
     const entryValue=(plan,parameter,heap)=>{
       const authority=entryReferences(plan.owner.id,parameter.id),entry=authority?{...authority,observe(kind,id,value){
         if(!bounded)return;const seeds=kind==='field'?fieldSeeds:elementSeeds,before=a.key(seeds.get(id)??a.empty());
-        seed(seeds,id,value);changed ||= before!==a.key(seeds.get(id));
+        seed(seeds,id,value);invalidateCapacity ||= before!==a.key(seeds.get(id));
       }}:undefined;
       if(parameter.hidden)return environmentEntry(parameter.type.slice(4),heap,'entry/'+plan.owner.id);
       if(types.get(parameter.type)?.kind==='function'){const result=a.literal(parameter.type),index=plan.owner.parameters.findIndex(p=>p.id===parameter.id),upper=model.callables.summaries.get(plan.owner.id).parameters.get(index);result.unknown=upper.top;
@@ -71,13 +75,16 @@ export function analyzeCommonGraphs({model,plans},records=null) {
     };
     function environmentEntry(layoutId,heap,origin){const layout=model.environments.get(layoutId);check(layout,'environment');const value=a.literal('env:'+layoutId),ref=origin+'/environment/'+layoutId;value.refs.add(ref);objects.set(ref,{type:'env:'+layoutId,weak:true});
       for(const slot of layout.slots){spend();heap.set(ref+'/slot/'+slot.key,a.declared(slot.type,heap,origin,fieldSeeds,objects));}if(layout.parent)heap.set(ref+'/parent',environmentEntry(layout.parent,heap,origin));return value;}
-    function context(target,args,heap=new Map(),root=false,activation='entry/'+target,repeated=false,activationSize=activation.length) {
+    function context(target,args,heap=new Map(),root=false,activation='entry/'+target,repeated=false,activationSize=activation.length,regionScope='',regionHeap=new Map()) {
       const plan=byId.get(target);check(plan&&args.length===plan.parameters.length,'ssa');
       repeated ||= !activation||cyclicFunctions.has(target)||uncertainFunctions.has(target);
-      const entryHeap=a.reachable(args,heap);spend(entryHeap.size+args.length);const memory=[...entryHeap].sort(([a],[b])=>{spend();return a<b?-1:a>b?1:0;}).map(([id,v])=>[id,a.key(v)]);
-      const key=target+'/'+sha256(canonical({args:args.map(a.key),memory,activation,repeated}));
-      if(!contexts.has(key)){spend();check(contexts.size<4096,'limit');contexts.set(key,{id:key,activation,activationSize,repeated,plan,args:args.map(a.copy),entryHeap,root,
-        returned:a.empty(),thrown:a.empty(),normal:false,language:false,normalHeap:new Map(),languageHeap:new Map()});changed=true;}
+      const entryHeap=a.reachable(args,heap);spend(entryHeap.size);const memory=[...entryHeap].sort(([a],[b])=>{spend();return a<b?-1:a>b?1:0;}).map(([id,v])=>[id,a.key(v)]);
+      spend(3*args.length);const argumentKeys=[],regionValues=[],regionArgs=[];
+      for(const value of args){argumentKeys.push(a.key(value));regionValues.push(value.region);regionArgs.push(value.region.roots.size||value.region.opaque?regions.key(value.region):'');}
+      const entryRegions=regions.reachable(regionValues,regionHeap);
+      const key=target+'/'+sha256(canonical({args:argumentKeys,memory,activation,repeated,regionScope,regionArgs,regionHeap:regions.heapKey(entryRegions)}));
+      if(!contexts.has(key)){spend(args.length+1);check(contexts.size<4096,'limit');contexts.set(key,{id:key,activation,activationSize,repeated,regionScope,entryRegions,createdRegions:new Set(),callers:new Set(),plan,args:args.map(a.copy),entryHeap,root,
+        returned:a.empty(),thrown:a.empty(),normal:false,language:false,normalHeap:new Map(),languageHeap:new Map(),normalRegions:new Map(),languageRegions:new Map()});changed=true;schedule(key);}
       return contexts.get(key);
     }
     for(const plan of plans) {
@@ -85,29 +92,43 @@ export function analyzeCommonGraphs({model,plans},records=null) {
       const heap=new Map();currentGlobals(heap);const args=plan.parameters.map(parameter=>entryValue(plan,parameter,heap));
       context(plan.owner.id,args,heap,true);
     }
+    function callRegion(c,block,activation,target,passed,targets,selected){
+      if(bounded||!regions.layouts.get(target)?.acyclic||cyclicFunctions.has(target)||uncertainFunctions.has(target)||uncertainFunctions.has(c.plan.owner.id))return '';
+      spend(selected.length);const actual=new Set(selected);for(const id of targets){spend();if(!actual.has(id)||!records?.has(id)||records.get(id).upper.facets.unknownHost)return '';}
+      if(c.regionScope)return c.regionScope;
+      const incoming=new Set();let opaque=false,unprovedRaw=false;for(const value of passed){spend();opaque ||= value.region.opaque;unprovedRaw ||= value.unknown||value.refs.size>0||value.cells.size>0;
+        for(const id of value.region.roots){spend();const scope=regions.nodes.get(id)?.scope;if(scope)incoming.add(scope);else opaque=true;}}
+      if(incoming.size)return !opaque&&incoming.size===1?incoming.values().next().value:'';
+      if(opaque||unprovedRaw)return '';
+      const loop=regions.loopAt(c.plan.owner.id,block);if(!loop)return '';
+      spend(Math.ceil((c.id.length+loop.header.length+1)/64));return regions.scope(c.id+'/'+loop.header,activation);
+    }
     function execute(c,observer=null) {
-        spend();const plan=c.plan,fn=plan.owner.id,entry=a.state();entry.heap=a.snapshot(c.entryHeap);
+        spend();const plan=c.plan,fn=plan.owner.id,entry=a.state();entry.heap=a.snapshot(c.entryHeap);entry.regions=regions.heapCopy(c.entryRegions);
         spend(Math.ceil((c.activation.length+fn.length+1)/64));const scope=c.activation+'/'+fn;
         const site=(kind,...parts)=>{spend(parts.length+1);let bytes=scope.length+kind.length+2;
           for(const part of parts)bytes+=part.length+1;spend(Math.ceil(bytes/64));return scope+'/'+kind+'/'+parts.join('/');};
         if(c.root){entry.heap=new Map();currentGlobals(entry.heap);
           c.args=plan.parameters.map(parameter=>entryValue(plan,parameter,entry.heap));c.entryHeap=a.snapshot(entry.heap);}
         for(const [index,p]of plan.entry.parameters.entries())entry.values.set(p.name,a.copy(c.args[index]));
-        observer?.begin(c,entry.heap);let point=null;
+        observer?.begin(c,entry.heap);let point=null,currentBlock=plan.entry.name;
         const blocks=new Map(plan.graph.blocks.map(block=>[block.name,block])),states=new Map([[plan.entry.name,entry]]),queue=[plan.entry.name],queued=new Set(queue);
         const edge=(name,from,args=[],callReturn=false)=>{
           if(observer&&!callReturn)observer.edge(point,observer.block(c,name));
           spend(args.length+1);const block=blocks.get(name);check(block&&block.parameters.length===args.length,'ssa');const next=a.clone(from);
           for(const [i,p]of block.parameters.entries())next.values.set(p.name,a.copy(args[i]));
+          if(!bounded)regions.feedback(c,currentBlock,name,next,Boolean(observer));
           if(!states.has(name)){states.set(name,next);if(!queued.has(name)){queue.push(name);queued.add(name);}}
           else if(a.join(states.get(name),next)&&!queued.has(name)){queue.push(name);queued.add(name);}
         };
         for(let index=0;index<queue.length;index++) {
-          spend();const block=blocks.get(queue[index]),state=a.clone(states.get(block.name));queued.delete(block.name);
+          spend();const block=blocks.get(queue[index]),state=a.clone(states.get(block.name));currentBlock=block.name;queued.delete(block.name);
           let previous=observer?.block(c,block.name);
           for(const p of block.parameters)observe(fn+'/'+p.name,read(state,p.name));
           for(const [instruction,op]of block.instructions.entries()) {
             spend(op.operands.length+1);const args=op.operands.map(name=>read(state,name)),p=op.properties,name=op.name.replace('tsfg_program.','');let value=a.empty(),continues=true;
+            if(observer){if(name!=='cf.br'&&name!=='route')for(const arg of args){if(arg.unknown)regions.escape(arg.region,state.regions);else regions.observe(arg.region,state.regions);}
+              if((name==='func.return'&&!c.regionScope||name==='return_throw')&&args.length)regions.escape(args[0].region,state.regions);}
             if(observer){point=c.id+'/'+block.name+'/'+instruction;observer.edge(previous,point);observer.before(c,op,state,args,point);previous=point;}
             const weakSlot=key=>{
               for(const marker of ['/field/','/element/','/length','/owner','/start','/slot/','/parent']){spend();const at=key.lastIndexOf(marker);if(at>=0&&objects.has(key.slice(0,at)))return objects.get(key.slice(0,at)).weak;}
@@ -116,14 +137,18 @@ export function analyzeCommonGraphs({model,plans},records=null) {
             const update=(heap,key,value,strong=!weakSlot(key))=>{if(strong||!heap.has(key))heap.set(key,a.copy(value));else a.merge(heap.get(key),value);};
             const put=(key,value,strong=undefined)=>update(state.heap,key,value,strong);
             const mergeSlots=keys=>{const result=a.empty();for(const key of keys){spend();a.merge(result,state.heap.get(key)??a.empty());}return result;};
-            const allocation=(ref,type,weak=false)=>{weak ||= objects.get(ref)?.weak||c.repeated||cyclicBlocks.has(fn+'/'+block.name);objects.set(ref,{type,weak});return weak;};
-            if(name==='env_alloc'){const ref=site('environment',op.result);value=literal('env:'+p.layout);value.refs.add(ref);allocation(ref,'env:'+p.layout);if(args.length)put(ref+'/parent',args[0]);}
-            else if(name==='env_parent'){for(const ref of args[0].refs){spend();a.merge(value,state.heap.get(ref+'/parent')??a.empty());}}
+            const allocation=(ref,type,weak=false)=>{const before=objects.get(ref)?.weak;weak ||= before||c.repeated||cyclicBlocks.has(fn+'/'+block.name);
+              if(before===false&&weak)invalidateWeak=true;objects.set(ref,{type,weak});return weak;};
+            const version=(ref,type,alternative='')=>{const selected=regions.allocate(c.regionScope,c.activation,ref,type,state.regions,alternative);for(const id of selected.roots)c.createdRegions.add(id);return selected;};
+            if(name==='env_alloc'){const ref=site('environment',op.result);value=literal('env:'+p.layout);value.refs.add(ref);allocation(ref,'env:'+p.layout);value.region=version(ref,'env:'+p.layout);
+              if(args.length){put(ref+'/parent',args[0]);regions.store(value.region,'parent',args[0].region,state.regions,Boolean(observer));}}
+            else if(name==='env_parent'){for(const ref of args[0].refs){spend();a.merge(value,state.heap.get(ref+'/parent')??a.empty());}value.region=regions.load(args[0].region,'parent',state.regions);}
             else if(name==='env_load'){const selected=a.environmentSlot(args[0],p.layout,p.layout,p.key,state.heap,objects);
-              check(selected.valid,'environment');check(selected.complete,'environment-initialization');value=selected.value;}
+              check(selected.valid,'environment');check(selected.complete,'environment-initialization');value=selected.value;value.region=regions.load(args[0].region,'slot/'+p.key,state.regions);}
             else if(name==='env_init'||name==='env_store'){for(const ref of args[0].refs){spend();const key=ref+'/slot/'+p.key;check(objects.get(ref)?.type==='env:'+p.layout,'environment');
-              put(key,args[1],args[0].refs.size===1&&!objects.get(ref).weak);observe('binding/'+p.binding,args[1]);}}
-            else if(name==='make_closure'){value=literal(op.view);const environments=p.environment_layout?args[0].refs:new Set([null]);for(const ref of environments){spend();if(ref){check(objects.get(ref)?.type==='env:'+p.environment_layout,'environment');for(const slot of model.environments.get(p.environment_layout).slots){spend();check(state.heap.has(ref+'/slot/'+slot.key),'environment-initialization');}value.refs.add(ref);}value.pairs.set(p.function_id+'\0'+(ref??''),{functionId:p.function_id,environment:ref});}}
+              put(key,args[1],args[0].refs.size===1&&!objects.get(ref).weak);observe('binding/'+p.binding,args[1]);}regions.store(args[0].region,'slot/'+p.key,args[1].region,state.regions,Boolean(observer));}
+            else if(name==='make_closure'){value=literal(op.view);const environments=p.environment_layout?args[0].refs:new Set([null]);if(p.environment_layout)value.region=regions.copy(args[0].region);
+              for(const ref of environments){spend();if(ref){check(objects.get(ref)?.type==='env:'+p.environment_layout,'environment');for(const slot of model.environments.get(p.environment_layout).slots){spend();check(state.heap.has(ref+'/slot/'+slot.key),'environment-initialization');}value.refs.add(ref);}value.pairs.set(p.function_id+'\0'+(ref??''),{functionId:p.function_id,environment:ref});}}
             else if(name==='constant')value=literal(op.view,0,Number(p.decimal));
             else if(name==='floating')value=literal(op.view);
             else if(name==='boolean')value=literal(boolTypeId,p.value?2:1);
@@ -139,40 +164,56 @@ export function analyzeCommonGraphs({model,plans},records=null) {
             }else if(name==='global_load')value=a.copy(state.heap.get('global:'+p.global)??a.empty());
             else if(name==='global_store') {
               put('global:'+p.global,args[0]);const raw=model.globals.get(p.global).sourceBinding;observe('binding/'+raw,args[0]);
-              if(bounded){const before=a.key(globalSeeds.get(raw));seed(globalSeeds,raw,args[0]);changed ||= before!==a.key(globalSeeds.get(raw));}
+              if(observer)regions.escape(args[0].region,state.regions);
+              if(bounded){const before=a.key(globalSeeds.get(raw));seed(globalSeeds,raw,args[0]);invalidateCapacity ||= before!==a.key(globalSeeds.get(raw));}
             }else if(['view','assert','pack','carrier_cast'].includes(name))value=a.copy(args[0]);
             else if(name==='value_copy') {
               const copyValue=(source,path,active=new Map())=>{
-                spend();const result=a.copy(source);result.refs.clear();
+                spend();const result=a.copy(source);result.refs.clear();result.region=emptyRegionValue();
+                result.region.opaque=source.region.opaque||source.unknown;result.region.empty=source.region.empty;result.region.number=source.region.number;
                 for(const ref of source.refs){spend();const object=objects.get(ref);check(object,'ssa');
-                  if(types.get(object.type)?.kind!=='value'){result.refs.add(ref);continue;}
-                  const copied=active.get(ref)??site('copy',op.result,path,object.type);result.refs.add(copied);if(active.has(ref))continue;
-                  spend(active.size);const nested=new Map(active);nested.set(ref,copied);const weak=allocation(copied,object.type,object.weak||source.refs.size>1);
-                  for(const field of a.fields(object.type)){spend();const stored=state.heap.get(ref+'/field/'+field.id);if(stored)put(copied+'/field/'+field.id,copyValue(stored,path+'/'+field.id,nested),!weak);}
+                  const selected=regions.select(source.region,ref);
+                  if(types.get(object.type)?.kind!=='value'){result.refs.add(ref);regions.merge(result.region,selected);continue;}
+                  const prior=active.get(ref),copied=prior?.reference??site('copy',op.result,path,object.type);result.refs.add(copied);
+                  if(prior){regions.merge(result.region,prior.region);continue;}
+                  // Alternatives of one physical copy keep their own field
+                  // relations. The raw allocation identity/weakness is unchanged.
+                  const current=version(copied,object.type,ref);regions.merge(result.region,current);
+                  spend(active.size);const nested=new Map(active);nested.set(ref,{reference:copied,region:current});const weak=allocation(copied,object.type,object.weak||source.refs.size>1);
+                  for(const field of a.fields(object.type)){spend();const stored=state.heap.get(ref+'/field/'+field.id);if(stored){const input=a.copy(stored);input.region=regions.load(selected,'field/'+field.id,state.regions);
+                    const fieldValue=copyValue(input,path+'/'+field.id,nested);put(copied+'/field/'+field.id,fieldValue,!weak);regions.store(current,'field/'+field.id,fieldValue.region,state.regions,Boolean(observer));}}
                 }return result;
               };value=copyValue(args[0],'root');
             }else if(name==='construct_value'||name==='allocate_reference'||name==='array_create') {
-              value=literal(op.view);const ref=site('object',op.result);value.refs.add(ref);allocation(ref,op.view);
-              if(name==='array_create'){args.forEach((v,i)=>{put(ref+'/element/'+i,v);if(bounded){const key='element:'+op.view,before=a.key(elementSeeds.get(key));seed(elementSeeds,key,v);changed ||= before!==a.key(elementSeeds.get(key));}});put(ref+'/length',literal(sha256('tsfg.type\0u32'),0,args.length));}
+              value=literal(op.view);const ref=site('object',op.result);value.refs.add(ref);allocation(ref,op.view);value.region=version(ref,op.view);
+              if(name==='array_create'){args.forEach((v,i)=>{put(ref+'/element/'+i,v);regions.store(value.region,'element/'+i,v.region,state.regions,Boolean(observer));if(bounded){const key='element:'+op.view,before=a.key(elementSeeds.get(key));seed(elementSeeds,key,v);invalidateCapacity ||= before!==a.key(elementSeeds.get(key));}});
+                const length=literal(sha256('tsfg.type\0u32'),0,args.length);put(ref+'/length',length);regions.store(value.region,'length',regions.number(args.length),state.regions,Boolean(observer));}
             }else if(name==='field_load'||name==='field_store') {
+              const fieldRegion=emptyRegionValue();
               for(const ref of args[0].refs){spend();const object=objects.get(ref);check(object,'ssa');const field=fieldFor(object.type,plan.graph.registers.get(op.operands[0]).view,p.field),row=model.fields.get(field),slot=ref+'/field/'+field;
-                if(name==='field_load')a.merge(value,state.heap.get(slot)??a.empty());else {put(slot,args[1],!object.weak&&args[0].refs.size===1);observe('binding/'+row.sourceBinding,args[1]);
-                  if(bounded){const before=a.key(fieldSeeds.get(row.sourceBinding));seed(fieldSeeds,row.sourceBinding,args[1]);changed ||= before!==a.key(fieldSeeds.get(row.sourceBinding));}}}
+                const receiver=regions.select(args[0].region,ref);receiver.opaque ||= args[0].unknown;
+                if(name==='field_load'){a.merge(value,state.heap.get(slot)??a.empty());regions.merge(fieldRegion,regions.load(receiver,'field/'+field,state.regions));}else {put(slot,args[1],!object.weak&&args[0].refs.size===1);regions.store(receiver,'field/'+field,args[1].region,state.regions,Boolean(observer),args[0].refs.size===1&&!args[0].unknown);observe('binding/'+row.sourceBinding,args[1]);
+                  if(bounded){const before=a.key(fieldSeeds.get(row.sourceBinding));seed(fieldSeeds,row.sourceBinding,args[1]);invalidateCapacity ||= before!==a.key(fieldSeeds.get(row.sourceBinding));}}}
+              if(name==='field_load')value.region=fieldRegion;
               if(args[0].unknown)value.unknown=true;
             }else if(name==='array_length'||name==='readspan_length')value=literal(op.view);
             else if(name==='readspan') {
               // Distinct activations retain distinct descriptors. Recursive
               // summaries use the stable SCC activation to keep keys finite.
-              value=literal(op.view);const ref=site('span',op.result);allocation(ref,op.view);value.refs.add(ref);put(ref+'/owner',args[0]);put(ref+'/start',args[1]);put(ref+'/length',args[2]);
+              value=literal(op.view);const ref=site('span',op.result);allocation(ref,op.view);value.refs.add(ref);value.region=version(ref,op.view);put(ref+'/owner',args[0]);put(ref+'/start',args[1]);put(ref+'/length',args[2]);
+              for(const [index,slot]of ['owner','start','length'].entries())regions.store(value.region,slot,args[index].region,state.regions,Boolean(observer));
             }else if(name==='array_read'||name==='array_store'||name==='array_resize') {
-              const owners=a.empty();for(const ref of args[0].refs){spend();const object=objects.get(ref);check(object,'ssa');
-                if(types.get(object.type)?.kind==='readSpan')a.merge(owners,state.heap.get(ref+'/owner')??a.empty());else owners.refs.add(ref);}
-              for(const ref of owners.refs){spend();const object=objects.get(ref),index=args[1]?.number;
-                if(name==='array_resize'){put(ref+'/length',args[1],!object.weak);continue;}
-                if(name==='array_store'){put(ref+'/element/'+(index===null?'*':index),args[2],!object.weak&&index!==null);if(bounded){const key='element:'+object.type,before=a.key(elementSeeds.get(key));seed(elementSeeds,key,args[2]);changed ||= before!==a.key(elementSeeds.get(key));}continue;}
+              const owners=a.empty();let spanOwner=false;for(const ref of args[0].refs){spend();const object=objects.get(ref);check(object,'ssa');
+                if(types.get(object.type)?.kind==='readSpan'){spanOwner=true;a.merge(owners,state.heap.get(ref+'/owner')??a.empty());}else owners.refs.add(ref);}
+              const ownerRegion=spanOwner?regions.load(args[0].region,'owner',state.regions):args[0].region;
+              for(const ref of owners.refs){spend();const object=objects.get(ref),index=args[1]?.number,selected=regions.select(ownerRegion,ref);
+                selected.opaque ||= args[0].unknown||owners.unknown;const definite=owners.refs.size===1&&!selected.opaque;
+                if(name==='array_resize'){put(ref+'/length',args[1],!object.weak);regions.store(selected,'length',regions.number(args[1].number),state.regions,Boolean(observer),definite);continue;}
+                if(name==='array_store'){put(ref+'/element/'+(index===null?'*':index),args[2],!object.weak&&index!==null);regions.store(selected,'element/'+(index===null?'*':index),args[2].region,state.regions,Boolean(observer),definite);if(bounded){const key='element:'+object.type,before=a.key(elementSeeds.get(key));seed(elementSeeds,key,args[2]);invalidateCapacity ||= before!==a.key(elementSeeds.get(key));}continue;}
                 for(const [slot,stored]of state.heap){spend();if(slot.startsWith(ref+'/element/'))a.merge(value,stored);}
                 value.tags.add(undefinedId);
               }
+              if(name==='array_read')value.region=regions.elements(ownerRegion,args[1].number,state.regions);
               if(args[0].unknown)value.unknown=true;
             }else if(name==='strict_equal') {
               value=literal(boolTypeId,3);if(!args.some(v=>v.unknown)) {
@@ -197,7 +238,7 @@ export function analyzeCommonGraphs({model,plans},records=null) {
               check(indirect||method||model.functions.get(p.function_id)?.kind!=='method','capability','method call requires explicit finite dispatch',details);
               if(method){check(!args[0].unknown,'capability','method receiver has no proved actual nominal type',details);
                 for(const tag of args[0].tags){spend();check(p.dispatch.some(row=>{spend();return row.receiver_type===tag;}),'capability','actual receiver has no verified method target',{...details,actualType:tag});}}
-              const complete=(target,value,heap)=>{const after=a.clone(state);for(const [slot,v]of heap)update(after.heap,slot,v);edge(target,after,blocks.get(target).parameters.length?[value]:[],true);};
+              const complete=(target,value,heap,versionHeap,created)=>{const after=a.clone(state);for(const [slot,v]of heap)update(after.heap,slot,v);regions.heapJoin(after.regions,versionHeap,created);edge(target,after,blocks.get(target).parameters.length?[value]:[],true);};
               if(indirect)spend(args[0].pairs.size);const alternatives=indirect?[...args[0].pairs.values()].map(pair=>({target:pair.functionId,environment:pair.environment})):method?p.dispatch:[{target:p.function_id}];
               if(indirect){for(const tag of args[0].tags){spend();check(types.get(tag)?.kind==='function','capability','actual indirect operand is not callable',details);}
                 check(!args[0].unknown||p.targets.top,'callable-contract','actual unknown callee exceeds finite upper',details);
@@ -207,16 +248,23 @@ export function analyzeCommonGraphs({model,plans},records=null) {
               if(observer){spend(selected.length);observer.prepareCall(point,c,op,args,state,selected.map(row=>{spend();return row.target;}));}
               for(const row of selected){
                 spend();let passed=args;if(indirect){spend(args.length);passed=args.slice(1);}
-                if(indirect&&model.functions.get(row.target).lexicalEnvironment){const env=a.literal('env:'+model.functions.get(row.target).lexicalEnvironment);check(row.environment,'environment');env.refs.add(row.environment);passed.unshift(env);}
+                if(indirect&&model.functions.get(row.target).lexicalEnvironment){const env=a.literal('env:'+model.functions.get(row.target).lexicalEnvironment);check(row.environment,'environment');env.refs.add(row.environment);env.region=regions.select(args[0].region,row.environment);passed.unshift(env);}
                 if(method){spend(args.length);passed=args.slice(0,byId.get(row.target).parameters.length);const receiver=a.copy(args[0]);receiver.tags.clear();receiver.tags.add(row.receiver_type);
                   for(const ref of receiver.refs){spend();if(objects.get(ref)?.type!==row.receiver_type)receiver.refs.delete(ref);}passed[0]=receiver;}
                 const recursive=cyclicFunctions.has(row.target),activationSize=recursive?row.target.length+10:c.activationSize+fn.length+block.name.length+row.target.length+String(instruction).length+String(op.range.start).length+String(op.range.end).length+6;
                 check(activationSize<=32768,'limit');spend(Math.ceil((c.activation.length+fn.length+block.name.length+row.target.length+64)/64));
                 const activation=recursive?'recursive/'+row.target:'activation/'+sha256(canonical({parent:c.activation,caller:fn,block:block.name,instruction,range:op.range,target:row.target}));
                 const repeated=c.repeated||cyclicBlocks.has(fn+'/'+block.name)||cyclicFunctions.has(row.target)||uncertainFunctions.has(row.target);
-                const call=context(row.target,passed,state.heap,false,activation,repeated,activationSize),key=fn+'/'+op.range.start+':'+op.range.end,targets=callTargets.get(key)??new Set();targets.add(row.target);callTargets.set(key,targets);
+                spend(selected.length+(indirect?p.targets.functions.length:method?p.dispatch.length:1));
+                const fixed=indirect?p.targets.functions.map(x=>x.function_id):method?p.dispatch.map(x=>x.target):[p.function_id],regionScope=callRegion(c,block.name,activation,row.target,passed,fixed,selected.map(x=>x.target));
+                let entryVersions=state.regions;
+                if(!regionScope){spend(passed.length);let carried=false;for(const input of passed)carried ||= input.region.roots.size>0;
+                  if(carried){passed=passed.map(a.copy);for(const input of passed){spend();if(input.region.roots.size){if(observer)regions.escape(input.region,state.regions);input.region.opaque=true;}}entryVersions=new Map();}}
+                const call=context(row.target,passed,state.heap,false,activation,repeated,activationSize,regionScope,entryVersions),key=fn+'/'+op.range.start+':'+op.range.end,targets=callTargets.get(key)??new Set();targets.add(row.target);callTargets.set(key,targets);
+                spend();call.callers.add(c.id);
+                spend(call.createdRegions.size);for(const id of call.createdRegions)c.createdRegions.add(id);
                 observer?.call(point,call,c,op.successors);
-                if(call.normal)complete(op.successors[0],call.returned,call.normalHeap);if(call.language)complete(op.successors[1],call.thrown,call.languageHeap);
+                if(call.normal)complete(op.successors[0],call.returned,call.normalHeap,call.normalRegions,call.createdRegions);if(call.language)complete(op.successors[1],call.thrown,call.languageHeap,call.languageRegions,call.createdRegions);
               }continues=false;
             }else if(name==='cf.br'||name==='route'){edge(op.successors[0],state,args);continues=false;}
             else if(name==='cf.cond_br') {
@@ -225,18 +273,29 @@ export function analyzeCommonGraphs({model,plans},records=null) {
             }else if(name==='func.return'||name==='return_throw') {
               const normal=name==='func.return',field=normal?'returned':'thrown',heap=normal?'normalHeap':'languageHeap';
               if(!c[normal?'normal':'language']){c[normal?'normal':'language']=true;changed=true;}if(args.length)changed=a.merge(c[field],args[0])||changed;
-              changed=a.joinHeap(c[heap],a.reachable([...c.args,...(args.length?[args[0]]:[])],state.heap))||changed;continues=false;
+              spend(c.args.length+(args.length?1:0));const returnRoots=[...c.args,...(args.length?[args[0]]:[])];
+              changed=a.joinHeap(c[heap],a.reachable(returnRoots,state.heap))||changed;continues=false;
+              spend(returnRoots.length);const returnRegions=returnRoots.map(v=>v.region);
+              changed=regions.heapJoin(c[normal?'normalRegions':'languageRegions'],regions.reachable(returnRegions,state.regions))||changed;
             }else if(name==='unreachable')continues=false;
             else check(['fuel','enter_handler','finally_enter'].includes(name),'ssa','unmodelled common logical operation '+name);
             if(op.result){state.values.set(op.result,value);observe(fn+'/'+op.result,value);}observer?.after(c,op,state,value,point);if(!continues)break;
           }
         }
     }
-    do{changed=false;for(const c of contexts.values())execute(c);}while(changed);
+    // A changed callee invalidates its actual callers. Only capacity seeds
+    // and monotone physical weakness are shared across declarations and
+    // therefore invalidate every context when either grows.
+    for(let index=0;index<pending.length;index++){
+      spend();const c=contexts.get(pending[index]);queued.delete(c.id);changed=false;invalidateCapacity=false;invalidateWeak=false;execute(c);
+      if(invalidateCapacity||invalidateWeak){spend(contexts.size);for(const id of contexts.keys())schedule(id);}
+      else if(changed){spend(c.callers.size);for(const id of c.callers)schedule(id);}
+    }
+    changed=false;invalidateWeak=false;
     let borrows=null;
-    if(!bounded&&records){const observer=commonBorrowObservations({model,records,objects,readEnvironmentSlot:(selected,start,target,key,heap)=>a.environmentSlot(selected,start,target,key,heap,objects)});
-      for(const c of contexts.values())execute(c,observer);check(!changed,'ssa','final actual observation changed the fixed point');borrows=observer.finish();}
-    return {contexts,observed,objects,operations,callTargets,borrows};
+    if(!bounded&&records){const observer=commonBorrowObservations({model,records,objects,regions,readEnvironmentSlot:(selected,start,target,key,heap)=>a.environmentSlot(selected,start,target,key,heap,objects)});
+      for(const c of contexts.values())execute(c,observer);check(!changed&&!invalidateWeak,'ssa','final actual observation changed the fixed point');borrows=observer.finish();}
+    return {contexts,observed,objects,operations,callTargets,borrows,regions};
   }
   const capacity=solve(true),actual=solve(false);
   return {capacity,actual,fieldSeeds,globalSeeds,elementSeeds,abstract:a};

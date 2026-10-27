@@ -3,7 +3,7 @@
 // Only compact identities/events leave that replay; point heaps are not kept.
 import {commonBorrowGraph} from './common-program-borrows.mjs';
 import {commonCheck as check} from './common-program-common.mjs';
-export function commonBorrowObservations({model,records,objects,readEnvironmentSlot=null}) {
+export function commonBorrowObservations({model,records,objects,regions=null,readEnvironmentSlot=null}) {
   const {spend,types}=model,graph=commonBorrowGraph(spend),returns=new Map(),calls=[],callReturns=new Map(),contexts=new Set(),components=new Map(),allocations=new Map(),creations=new Map();
   const slotLayouts=new Map();spend(model.environments?.size??0);
   for(const env of model.environments?.values()??[]){spend(env.slots.length);for(const slot of env.slots){check(!slotLayouts.has(slot.key)||slotLayouts.get(slot.key)===env.id,'environment');slotLayouts.set(slot.key,env.id);}}
@@ -232,13 +232,14 @@ export function commonBorrowObservations({model,records,objects,readEnvironmentS
         // The verified construction receiver survives its normal return;
         // an exceptional payload has no such receiver guarantee.
         if(ids.size&&!(name==='func.return'&&c.plan.owner.kind==='construction-body')){
-          const surviving=new Set(),paths=returnPaths(value,state.heap),held=new Map();
+          const surviving=new Set(),paths=returnPaths(value,state.heap),held=new Map(),regionValue=regions?.copy(value.region),regionHeap=regions?.reachable([value.region],state.regions);
           for(const input of c.args){for(const id of collect(input,c.entryHeap,'owning').ids){spend();surviving.add(id);}
             for(const ref of escapingSpans(input,c.entryHeap))for(const id of owners(ref,c.entryHeap).ids){spend();surviving.add(id);}}
           for(const ref of ids){spend();held.set(ref,owners(ref,state.heap));}
           const allowed=()=>{
             let valid=true;for(const path of paths){spend();const owner=held.get(path.span),owning=path.owningKnown?path.owning(c.id):new Set();valid &&= !owner.pending&&owner.ids.size>0;
-              for(const id of owner.ids){spend();valid &&= surviving.has(id)||owning.has(id)&&Boolean(unique(allocations,id,c.id))||retained(path,id,c.id);}}
+              for(const id of owner.ids){spend();valid &&= surviving.has(id)||owning.has(id)&&Boolean(unique(allocations,id,c.id))||retained(path,id,c.id)||
+                Boolean(regions?.holds(regionValue,regionHeap,path.span,id,c.regionScope,types));}}
             return valid&&paths.length>0;
           };
           graph.escape(at,ids,allowed,where);

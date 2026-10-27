@@ -80,23 +80,28 @@ std::string ActualCheck::callActivation(const ActualContext &context,const Opera
   if(!step((context.activation.size()+location->size()+target.size())/64+4))return {};
   return "activation/"+digest(canonical(Object{{"parent",context.activation},{"site",*location},{"target",target}}));
 }
-ActualContext *ActualCheck::context(const std::string &target,const std::vector<ActualValue> &args,const ActualHeap &heap,bool root,bool &changed,const std::string &activation,bool repeated){
+ActualContext *ActualCheck::context(const std::string &target,const std::vector<ActualValue> &args,const ActualHeap &heap,bool root,bool &changed,const std::string &activation,bool repeated,const RegionHeap *versions,const std::string &region){
   if(!step(args.size()+1)||!need(functions.count(target)&&functions.at(target)->blocks[0].parameters.size()==args.size(),"actual call context arity differs"))return nullptr;
   auto entry=reachable(args,heap);Array arguments,memory;
-  for(const auto &v:args){if(!step())return nullptr;arguments.push_back(key(v));}
+  auto current=versions?regionReachable(*this,args,*versions):RegionHeap{};
+  for(const auto &v:args){if(!step(regionWeight(v.region)+1))return nullptr;arguments.push_back(key(v));}
   for(const auto &[id,v]:entry){if(!step())return nullptr;memory.push_back(Array{id,key(v)});}
   if(!step((activation.size()+target.size())/64+1))return nullptr;const auto physical=root?"entry/"+target:activation;
   auto upper=p.fixedEffects.find(target);repeated|=physical.empty()||cyclicFunctions.count(target)||upper==p.fixedEffects.end()||upper->second.unknownHost;
   if(root)repeated=cyclicFunctions.count(target)||upper==p.fixedEffects.end()||upper->second.unknownHost;
-  const auto id=target+"/"+digest(canonical(Object{{"activation",physical},{"repeated",repeated},{"args",std::move(arguments)},{"memory",std::move(memory)}}));
+  for(const auto &[id,slots]:current){if(!step(id.size()/64+1))return nullptr;for(const auto &[slot,v]:slots)if(!step(slot.size()/64+regionWeight(v)+1))return nullptr;}
+  const auto relation=regionKey(current);if(!step(region.size()/64+1))return nullptr;
+  const auto id=target+"/"+digest(canonical(Object{{"activation",physical},{"repeated",repeated},{"args",std::move(arguments)},{"memory",std::move(memory)},{"region",region},{"versions",relation}}));
   auto found=contexts.find(id);if(found!=contexts.end()){found->second.called|=!root;return &found->second;}
   if(!need(contexts.size()<4096,"actual call-context bound exceeded"))return nullptr;
   ActualContext c;c.id=id;c.function=functions.at(target);c.root=root;c.called=!root;c.entry=std::move(entry);c.activation=physical;c.repeated=repeated;
+  c.region=region;c.entryRegions=std::move(current);
   for(const auto &v:args)c.arguments.push_back(copy(v));auto inserted=contexts.emplace(id,std::move(c));changed=true;return &inserted.first->second;
 }
 bool ActualCheck::execute(ActualContext &context,bool conditional,bool &changed){
   const auto &fn=*context.function;ActualState entry;
   entry.heap=copyHeap(context.entry);
+  entry.regions=regionCopy(*this,context.entryRegions);
   if(context.root){
     entry.heap.clear();context.arguments.clear();
     for(const auto &[id,g]:globals){
@@ -116,6 +121,7 @@ bool ActualCheck::execute(ActualContext &context,bool conditional,bool &changed)
     if(!step(args.size()+1)||!need(to<fn.blocks.size()&&args.size()==fn.blocks[to].parameters.size(),"actual edge arity differs"))return false;
     if(borrowTrace&&(!observed||!borrowTrace->edge(context,*observed,observedBlock,to)))return false;
     auto next=copyState(state);for(size_t i=0;i<args.size();++i)next.values.insert_or_assign(fn.blocks[to].parameters[i],copy(args[i]));
+    if(!regionEdge(*this,context,uint16_t(observedBlock),to,next))return false;
     auto old=states.find(to);bool update=false;
     if(old==states.end()){states.emplace(to,std::move(next));update=true;}else update=join(old->second,next);
     if(update&&queued.insert(to).second)queue.push_back(to);return e.message.empty();
@@ -134,6 +140,7 @@ bool ActualCheck::execute(ActualContext &context,bool conditional,bool &changed)
 }
 bool ActualCheck::solve(bool conditional){
   contexts.clear();objects.clear();
+  regions.nodes.clear();regions.scopes.clear();
   if(conditional){
     registerCapacity.clear();resultCapacity.clear();storageCapacity.clear();
     ActualHeap heap;

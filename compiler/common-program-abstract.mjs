@@ -4,21 +4,35 @@
 import {canonical,sha256} from './identity.mjs';
 import {commonCheck as check} from './common-program-common.mjs';
 import {commonCollections} from './common-program-budget.mjs';
+import {commonRegions,emptyRegionValue} from './common-program-regions.mjs';
 export function commonAbstract(model) {
-  const {spend,types}=model,collections=commonCollections(spend),arrays=new Map();
+  const {spend,types}=model,collections=commonCollections(spend),regions=commonRegions(spend),arrays=new Map();
+  const noOrigin=Object.freeze(emptyRegionValue()),emptyOrigin=Object.freeze({...emptyRegionValue(),empty:true});
   for(const type of types.values()){spend();if(type.kind==='array')arrays.set(type.elementType,type);}
-  const empty=()=>({tags:new Set(),refs:new Set(),cells:new Set(),pairs:new Map(),truth:0,unknown:false,number:null});
+  const empty=()=>({tags:new Set(),refs:new Set(),cells:new Set(),pairs:new Map(),truth:0,unknown:false,number:null,region:noOrigin});
+  // Relation operations pay for their own copies/joins; do not charge that
+  // work twice as part of the independent payload collections.
   const weight=v=>v.tags.size+v.refs.size+v.cells.size+v.pairs.size+1;
   const key=v=>{check(v.tags.size<=256&&v.refs.size<=256&&v.cells.size<=256&&v.pairs.size<=256,'limit');return canonical({tags:collections.sorted(v.tags),refs:collections.sorted(v.refs),cells:collections.sorted(v.cells),pairs:collections.sorted(v.pairs,([a],[b])=>a<b?-1:a>b?1:0),truth:v.truth,unknown:v.unknown,number:v.number});};
-  const copy=v=>{spend(weight(v));return {...v,tags:new Set(v.tags),refs:new Set(v.refs),cells:new Set(v.cells),pairs:new Map(v.pairs)};};
+  // Absence is an immutable facet; only actual origin sets need snapshots.
+  const copy=v=>{spend(weight(v));return {...v,tags:new Set(v.tags),refs:new Set(v.refs),cells:new Set(v.cells),pairs:new Map(v.pairs),
+    region:!v.region.roots.size&&!v.region.opaque?v.region.empty?emptyOrigin:noOrigin:regions.copy(v.region)};};
   function merge(to,from) {
-    spend(weight(to)+weight(from));const before=key(to),blank=to.tags.size===0&&!to.unknown;
-    for(const [key,pair]of from.pairs)to.pairs.set(key,pair);
-    for(const name of ['tags','refs','cells'])for(const id of from[name])to[name].add(id);
+    spend(weight(to)+weight(from));let changed=false;const blank=to.tags.size===0&&!to.unknown;
+    // Detect the finite lattice delta while visiting its collections once;
+    // serializing and sorting the entire value twice is unnecessary here.
+    for(const [key,pair]of from.pairs){const prior=to.pairs.get(key);if(!prior||prior.functionId!==pair.functionId||prior.environment!==pair.environment){to.pairs.set(key,pair);changed=true;}}
+    for(const name of ['tags','refs','cells'])for(const id of from[name])if(!to[name].has(id)){to[name].add(id);changed=true;}
     check(to.tags.size<=256&&to.refs.size<=256&&to.cells.size<=256&&to.pairs.size<=256,'limit');
-    to.truth|=from.truth;to.unknown ||= from.unknown;to.number=blank?from.number:to.number===from.number?to.number:null;return key(to)!==before;
+    const truth=to.truth|from.truth,unknown=to.unknown||from.unknown,number=blank?from.number:to.number===from.number?to.number:null;
+    changed ||= truth!==to.truth||unknown!==to.unknown||number!==to.number;to.truth=truth;to.unknown=unknown;to.number=number;
+    let relationChanged=false;
+    if(!to.region.roots.size&&!to.region.opaque&&!from.region.roots.size&&!from.region.opaque){
+      const next=to.region.empty||from.region.empty?emptyOrigin:noOrigin;relationChanged=next.empty!==to.region.empty;to.region=next;
+    }else{if(to.region===noOrigin||to.region===emptyOrigin)to.region=regions.copy(to.region);relationChanged=regions.merge(to.region,from.region);}
+    return changed||relationChanged;
   }
-  const literal=(id,truth=0,number=null)=>{const v=empty();v.tags.add(id);v.truth=truth;v.number=number;return v;};
+  const literal=(id,truth=0,number=null)=>{const v=empty();v.tags.add(id);v.truth=truth;v.number=number;v.region=emptyOrigin;return v;};
   const snapshot=heap=>collections.map(heap,copy);
   function joinHeap(into,from) {let changed=false;spend(from.size);for(const [id,v]of from){if(!into.has(id)){into.set(id,copy(v));changed=true;}else changed=merge(into.get(id),v)||changed;}return changed;}
   const fields=id=>{const result=[],layers=[],seen=new Set();let type=types.get(id);
@@ -108,9 +122,9 @@ export function commonAbstract(model) {
     }
     return {value,complete,valid};
   }
-  const state=()=>({values:new Map(),heap:new Map()});
-  const clone=s=>({values:snapshot(s.values),heap:snapshot(s.heap)});
-  const join=(to,from)=>{const a=joinHeap(to.values,from.values),b=joinHeap(to.heap,from.heap);return a||b;};
+  const state=()=>({values:new Map(),heap:new Map(),regions:new Map()});
+  const clone=s=>({values:snapshot(s.values),heap:snapshot(s.heap),regions:regions.heapCopy(s.regions)});
+  const join=(to,from)=>{const a=joinHeap(to.values,from.values),b=joinHeap(to.heap,from.heap),c=regions.heapJoin(to.regions,from.regions);return a||b||c;};
   return {empty,key,copy,merge,literal,snapshot,joinHeap,fields,declared,reachable,environmentSlot,state,clone,join,
     arrayType:element=>arrays.get(element),id:value=>sha256(canonical(value))};
 }

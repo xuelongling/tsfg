@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: MIT
 #pragma once
 #include "common-program-source.h"
+#include "common-program-regions.h"
 #include <optional>
 namespace tsfg::commonProgram {
 class BorrowTrace;
@@ -11,9 +12,10 @@ struct ActualValue {
   // A callable is a concrete code/environment pair, never a code-only target.
   std::set<std::pair<std::string,std::string>> callables;
   uint8_t truth=0;bool unknown=false,callableTop=false;std::optional<int64_t> number;
+  RegionValue region;
 };
 using ActualHeap=std::map<std::string,ActualValue>;
-struct ActualState {std::map<uint16_t,ActualValue> values;ActualHeap heap;};
+struct ActualState {std::map<uint16_t,ActualValue> values;ActualHeap heap;RegionHeap regions;};
 struct ActualObject {std::string type;bool weak=false;};
 struct ActualContext {
   std::string id;const Function *function=nullptr;std::vector<ActualValue> arguments;
@@ -21,6 +23,7 @@ struct ActualContext {
   bool normal=false,language=false,root=false,called=false,requestTrap=false;
   // Physical invocation provenance excludes arguments and abstract heap state.
   std::string activation;bool repeated=true;
+  std::string region;RegionHeap entryRegions,normalRegions,languageRegions;
 };
 // This state is rebuilt from the normalized instructions. No Node context,
 // allocation summary, representation row or asserted proof fills these maps.
@@ -41,6 +44,7 @@ struct ActualCheck {
   std::set<std::string> cyclicFunctions;
   std::map<const Operation *,std::string> callSites;
   std::set<const Operation *> unresolvedCalls;
+  RegionDomain regions;
   BorrowTrace *borrowTrace=nullptr;
   bool need(bool c,llvm::StringRef message){return c||reject(e,"core-ir-common-actual",message);}
   bool step(size_t n=1){return p.charge(n)||reject(e,"core-ir-common-budget","independent actual SSA work exceeded");}
@@ -71,7 +75,7 @@ struct ActualCheck {
   std::string allocationSite(const ActualContext &,llvm::StringRef,uint16_t);
   std::string allocate(const ActualContext &,const Operation &,size_t,llvm::StringRef,const std::string &);
   std::string callActivation(const ActualContext &,const Operation &,size_t,const std::string &,bool &);
-  ActualContext *context(const std::string &,const std::vector<ActualValue> &,const ActualHeap &,bool,bool &,const std::string &activation={},bool repeated=true);
+  ActualContext *context(const std::string &,const std::vector<ActualValue> &,const ActualHeap &,bool,bool &,const std::string &activation={},bool repeated=true,const RegionHeap *versions=nullptr,const std::string &region={});
   bool execute(ActualContext &,bool,bool &);
   bool instruction(ActualContext &,const Operation &,size_t,ActualState &,bool,bool &,
     const std::function<bool(uint16_t,const ActualState &,const std::vector<ActualValue> &)> &,bool &);

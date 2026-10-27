@@ -38,6 +38,52 @@ ReturnOwnership::ReturnOwnership(ActualCheck &c,const ActualValue &v,const Actua
     }
   }
 }
+ReturnOwnership::ReturnOwnership(ActualCheck &c,const RegionValue &v,const RegionHeap &heap):check(c){
+  const auto project=[](const RegionValue &v){Value out;out.alternatives=v.roots;out.opaque=v.opaque;out.complete=!v.opaque;out.empty=v.empty||v.roots.empty();return out;};
+  std::vector<std::string> pending;if(!check.step(regionWeight(v)))return;root=project(v);pending.assign(v.roots.begin(),v.roots.end());
+  for(size_t i=0;i<pending.size();++i){if(!check.step())return;const auto ref=pending[i];if(nodes.count(ref))continue;
+    if(!check.need(check.regions.nodes.count(ref),"current return origin missing"))return;const auto &origin=check.regions.nodes.at(ref);const bool env=llvm::StringRef(origin.type).starts_with("env:");
+    const auto kind=env?"environment":check.types.count(origin.type)?string(field(*check.types.at(origin.type),"kind")):std::string();
+    // These nodes are allocation versions, not reclassified raw weak objects.
+    auto &node=nodes[ref];node.kind=kind;auto stored=heap.find(ref);if(stored==heap.end())continue;
+    for(const auto &[slot,edge]:stored->second){if(!check.step(regionWeight(edge)))return;
+      bool selected=env?(llvm::StringRef(slot).starts_with("/slot/")||slot=="/parent"):llvm::StringRef(slot).starts_with("/field/");
+      if(kind=="array"&&llvm::StringRef(slot).starts_with("/element/")){
+        auto length=stored->second.find("/length");uint64_t index=0;const auto suffix=llvm::StringRef(slot).drop_front(9);
+        selected=!stored->second.count("/element/*")&&length!=stored->second.end()&&!length->second.opaque&&length->second.number&&*length->second.number>=0&&!suffix.getAsInteger(10,index)&&index<uint64_t(*length->second.number);
+      }
+      if(selected){pending.insert(pending.end(),edge.roots.begin(),edge.roots.end());node.fields.push_back(project(edge));}
+    }
+  }
+}
+RegionHolding::RegionHolding(ActualCheck &c,const std::string &id,const RegionValue &v,const RegionHeap &heap):check(c){
+  if(!check.step(id.size()/64+1))return;region=id;
+  if(region.empty()||v.opaque||v.roots.empty()){complete=false;return;}std::vector<std::string> pending;if(!check.step(regionWeight(v)))return;
+  pending.assign(v.roots.begin(),v.roots.end());std::set<std::string> seen;
+  for(size_t i=0;i<pending.size();++i){if(!check.step())return;const auto ref=pending[i];if(!seen.insert(ref).second)continue;
+    auto origin=check.regions.nodes.find(ref);auto stored=heap.find(ref);
+    if(origin==check.regions.nodes.end()||origin->second.region!=region||stored==heap.end()){complete=false;continue;}
+    const auto &type=origin->second.type;const bool env=llvm::StringRef(type).starts_with("env:");
+    if(env){auto layout=check.environments.find(type.substr(4));if(layout==check.environments.end()){complete=false;continue;}
+      for(const auto &slot:items(field(*layout->second,"slots"))){if(!check.step())return;if(!stored->second.count("/slot/"+string(field(slot,"key"))))complete=false;}
+      if(!field(*layout->second,"parent").getAsNull()&&!stored->second.count("/parent"))complete=false;
+    }else if(!check.types.count(type)){complete=false;continue;}
+    if(!env&&string(field(*check.types.at(type),"kind"))=="readSpan"){
+      auto owner=stored->second.find("/owner");if(owner==stored->second.end()){complete=false;continue;}if(!check.step(regionWeight(owner->second)))return;owners.emplace(ref,owner->second);
+    }
+    for(const auto &[slot,edge]:stored->second){if(!check.step(regionWeight(edge)))return;if(edge.opaque)complete=false;pending.insert(pending.end(),edge.roots.begin(),edge.roots.end());}
+  }
+  if(!check.e.message.empty())return;ownership=std::make_shared<ReturnOwnership>(check,v,heap);
+}
+bool RegionHolding::holds(){
+  if(result)return *result;if(!complete||!ownership||!check.regions.scopes.count(region)||check.regions.scopes.at(region).blocked)return false;
+  for(const auto &[span,owner]:owners){if(!check.step(regionWeight(owner)))return false;if(owner.opaque||owner.empty||owner.roots.empty())return false;
+    const auto &spanType=*check.types.at(check.regions.nodes.at(span).type);const auto owning=ownership->solve([](const std::string &){return true;},span);
+    for(const auto &array:owner.roots){if(!check.step())return false;const auto &type=check.regions.nodes.at(array).type;
+      if(!check.types.count(type)||string(field(*check.types.at(type),"kind"))!="array"||!same(field(*check.types.at(type),"elementType"),field(spanType,"elementType"))||!owning.count(array))return false;
+    }
+  }result=!owners.empty()&&check.e.message.empty();return *result;
+}
 std::set<std::string> ReturnOwnership::solve(const std::function<bool(const std::string &)> &closedEnvironment,const std::string &descriptor){
   std::map<std::string,std::set<std::string>> owned;std::set<std::string> permitted;
   for(const auto &[ref,node]:nodes){
