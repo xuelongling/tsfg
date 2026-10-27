@@ -1,5 +1,6 @@
 // SPDX-License-Identifier: MIT
 import { spawnSync } from "node:child_process";
+import { verifyCoreIrInputs } from "../eng/core-ir-inputs.mjs";
 import { readFile } from "node:fs/promises";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
@@ -20,7 +21,8 @@ async function verifiedConsumer(executable, role) {
   if (manifest.buildIdentity?.target !== "windows-x86_64-msvc"
       || manifest.buildIdentity?.profile !== "debug")
     throw new TypeError(`r03-tool-${role}: unsupported target/profile identity`);
-  const required = role === "core" ? ["compiler/core-ir/main.cpp", "compiler/core-ir/CMakeLists.txt"]
+  if (role === "core") await verifyCoreIrInputs(manifest, productRoot);
+  const required = role === "core" ? []
     : ["runtime/root.zig", "runtime/bytecode.zig", "runtime/vm.zig", "runtime/runtime.zig", "runtime/main.zig", "runtime/contract.zig", "runtime/conversions.zig"];
   required.push("contracts/registry.json", "contracts/bytecode.schema.json");
   for (const name of required) {
