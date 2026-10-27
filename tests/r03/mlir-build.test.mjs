@@ -4,6 +4,7 @@ import { spawnSync } from "node:child_process";
 import { cp, mkdir, readFile, readdir, symlink, writeFile } from "node:fs/promises";
 import path from "node:path";
 import test from "node:test";
+import { Readable } from "node:stream";
 import { fileURLToPath } from "node:url";
 import { createMlirFixture } from "./mlir-fixtures.mjs";
 import { MlirBuildError, readMlirBuildTrace } from "../../eng/mlir-build.mjs";
@@ -21,22 +22,22 @@ test("MLIR trace reader requires a physical EVAL CODE command, not a CALL, comme
     { file, line, cmd: "cmake_language", args: ["EVAL", "CODE", "set(result value)"] },
     { file: `${file}:${line}:EVAL`, line: 1, cmd: "set", args: ["result", "value"] }
   ].map(record => JSON.stringify(record)).join("\n");
-  const result = await readMlirBuildTrace({ cmakeTrace: trace(485), build: root, inputRoots: [root] });
+  const result = await readMlirBuildTrace({ cmakeTrace: Readable.from([Buffer.from(trace(485))]), build: root, inputRoots: [root] });
   assert.deepEqual(result.files, [file]);
   assert.equal(result.evaluationFrames[0].physicalFile, file);
   assert.deepEqual(result.evaluationFrames[0].evaluationLines, ["485"]);
   for (const line of [290, 484]) await assert.rejects(
-    readMlirBuildTrace({ cmakeTrace: trace(line), build: root, inputRoots: [root] }),
+    readMlirBuildTrace({ cmakeTrace: Readable.from([Buffer.from(trace(line))]), build: root, inputRoots: [root] }),
     error => error instanceof MlirBuildError && error.issueCode === "mlir-source-integrity");
   for (const text of ['set(text "\ncmake_language(EVAL CODE fake)\n")',
     'set(text [=[\ncmake_language(EVAL CODE fake)\n]=])',
     '#[=[\ncmake_language(EVAL CODE fake)\n]=]',
     'set(text\ncmake_language(EVAL CODE fake)\n)']) {
     await writeFile(file, text);
-    await assert.rejects(readMlirBuildTrace({ cmakeTrace: trace(2), build: root, inputRoots: [root] }),
+    await assert.rejects(readMlirBuildTrace({ cmakeTrace: Readable.from([Buffer.from(trace(2))]), build: root, inputRoots: [root] }),
       error => error instanceof MlirBuildError && error.issueCode === "mlir-source-integrity");
   }
-  await assert.rejects(readMlirBuildTrace({ cmakeTrace: trace(485), build: root, inputRoots: [] }),
+  await assert.rejects(readMlirBuildTrace({ cmakeTrace: Readable.from([Buffer.from(trace(485))]), build: root, inputRoots: [] }),
     error => error instanceof MlirBuildError && error.issueCode === "mlir-source-integrity");
 });
 

@@ -47,6 +47,7 @@ import { prefetchGoDependencies, readGoDependencyLock, verifyGoDependencies } fr
 import { executeFrontendTarget, FrontendBuildError } from "./frontend-build.mjs";
 import { verifiedContractSet } from "./contract-set.mjs";
 import { executeMlirTarget, MlirBuildError } from "./mlir-build.mjs";
+import { selectMlirCommandRole, selectMlirBuildPhase } from "./mlir-command.mjs";
 import { MlirPythonError } from "./mlir-python.mjs";
 import { executeVmTarget, VmBuildError } from "./vm-build.mjs";
 
@@ -375,11 +376,15 @@ function parseOptions(arguments_, allowed, flags = new Set()) {
 
 function parseBuildOptions(arguments_) {
   return parseOptions(arguments_, new Set([
-    "--dev", "--target", "--profile", "--simd-dispatch", "--workspace", "--out", "--report", "--source-target", "--intake-plan", "--intake-consumption", "--upgrade-plan", "--generation",
+    "--dev", "--target", "--profile", "--simd-dispatch", "--workspace", "--out", "--report", "--source-target", "--intake-plan", "--intake-consumption", "--upgrade-plan", "--generation", "--core-command-role", "--mlir-build-phase",
   ]), new Set(["--dev"]));
 }
 
 function validateMlirConfiguration(options) {
+  try {
+    selectMlirBuildPhase(options, selectMlirCommandRole(options),
+      !!(process.env.TSFG_MLIR_SDK_ROOT || process.env.TSFG_MLIR_SDK_ARTIFACT_ROOT));
+  } catch (error) { throw new ConfigurationError(error.message, "mlir-configuration"); }
   if (!options.has("--dev") || process.platform !== "win32" || options.get("--target") !== "windows-x86_64-msvc" ||
       options.get("--profile") !== "debug") {
     throw new ConfigurationError("MLIR intake requires explicit local-development Windows debug configuration", "mlir-configuration");
@@ -410,6 +415,8 @@ function validateSmokeOptions(options, command, requireInput = false) {
       `R00 ${command} supports only declared Linux and Windows debug/release targets`,
     );
   }
+  if ((options.has("--core-command-role") || options.has("--mlir-build-phase")) && options.get("--source-target") !== "mlir-core")
+    throw new ConfigurationError("Core role/phase require --source-target mlir-core", "mlir-configuration");
   if (command === "build" && options.get("--source-target") === "mlir-core") validateMlirConfiguration(options);
   if (command === "build" && options.get("--source-target") === "tsfg-vm") validateVmConfiguration(options);
   payloadOptions(options);
@@ -7634,7 +7641,7 @@ async function runCommandLine() {
               throw new MlirBuildError("Native tool closure changed during MLIR source build", "mlir-tool-integrity");
           },
           createIdentity: (runtime, root) => createBuildIdentity(runtime, "windows-x86_64-msvc", "debug", root,
-            { sourceTarget: "mlir-core", simdDispatch: "runtime-detected" }),
+            { sourceTarget: "mlir-core", simdDispatch: "runtime-detected", ...(options.get("--core-command-role") === "static" ? {coreCommandRole:"static"} : {}) }),
           scopedToolchainDigest: (runtime, python) => toolchainClosureDigest({ ...runtime.lock,
             dependencyLocks: [...runtime.lock.dependencyLocks, { projectId: "tsfg", path: "eng/mlir-python.lock.json", sha256: python.lockSha256 }] },
             [...runtime.selections, { id: "cpython-mlir-build-only", tool: { version: python.version }, artifact: {
