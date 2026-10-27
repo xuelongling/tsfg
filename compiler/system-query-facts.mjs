@@ -6,7 +6,7 @@ import {copyGenericJsonBytes,readGenericJson} from './generic-json.mjs';
 import {checkTypedArrayShape,sourceRange,originId,logicalPath,byteOrder} from './typed-array-schema.mjs';
 import {validateTypedArrayTypes} from './typed-array-types.mjs';
 import {commonSourceDescriptor} from './common-program-common.mjs';
-import {commonSemanticIdentities} from './common-program-identities.mjs';
+import {commonSemanticIdentities,commonFieldId} from './common-program-identities.mjs';
 import {commonSourceGrammar,commonTypeSyntax,commonSourceAccess} from './common-program-source.mjs';
 import {sourceLexicalTokens} from './conversions.mjs';
 import {relativeModuleSource} from './module-hir-source.mjs';
@@ -22,7 +22,13 @@ const receipts=new WeakMap();
 /** @typedef {Readonly<{index:number,mode:'read'|'write',range:SystemQueryRange,wrapper:SystemQueryOrigin,sourceComponentType:string,componentType:string,component:SystemQueryOrigin,componentSourcePath:string,componentRange:SystemQueryRange}>} SystemQueryAccess */
 /** @typedef {Readonly<{declaration:SystemQueryOrigin,tupleSourcePath:string,tupleRange:SystemQueryRange,aliases:readonly SystemQueryAlias[],items:readonly SystemQueryAccess[]}>} SystemQuerySelection */
 /** @typedef {Readonly<{index:number,binding:SystemQueryOrigin,annotationRange:SystemQueryRange,logicalType:string,type:string|null,query:SystemQuerySelection|null}>} SystemQueryParameter */
-/** @typedef {Readonly<{declaration:SystemQueryOrigin,declKey:Readonly<{sourcePath:string,path:readonly string[],kind:'function',name:string}>,markerRange:SystemQueryRange,marker:SystemQueryOrigin,signature:SystemQueryOrigin,parameters:readonly SystemQueryParameter[],sourceReturnType:string,returnType:string}>} SystemQuerySystem */
+/** A checked view of the existing shared arrayGenericExpression/Target DTO.
+ * @typedef {{kind:string,type:string,flowType?:string,range:SystemQueryRange,binding?:string,property?:string,nameRange?:SystemQueryRange,receiver?:CheckedArrayExpression,left?:CheckedArrayExpression,right?:CheckedArrayExpression,target?:CheckedArrayExpression,value?:CheckedArrayExpression,operator?:string,operatorRange?:SystemQueryRange}} CheckedArrayExpression
+ */
+/** @typedef {Readonly<{kind:'bindingReference'|'fieldAccess'|'fieldTarget'|'binary'|'fieldAssignment',type:string,sourceType:string,range:SystemQueryRange,binding?:string,property?:string,sourceField?:string,nameRange?:SystemQueryRange,receiver?:SystemQueryLoopExpression,left?:SystemQueryLoopExpression,right?:SystemQueryLoopExpression,target?:SystemQueryLoopExpression,value?:SystemQueryLoopExpression,operator?:string,operatorRange?:SystemQueryRange,access?:'read'|'write'|'readwrite'}>} SystemQueryLoopExpression */
+/** @typedef {Readonly<{index:number,declaration:SystemQueryOrigin,sourceComponentType:string,componentType:string,mode:'read'|'write'}>} SystemQueryLoopBinding */
+/** @typedef {Readonly<{range:SystemQueryRange,queryBinding:string,queryRange:SystemQueryRange,bindingRange:SystemQueryRange,bodyRange:SystemQueryRange,bindings:readonly SystemQueryLoopBinding[],statements:readonly Readonly<{kind:'expression',range:SystemQueryRange,value:SystemQueryLoopExpression}>[]}>} SystemQueryLoop */
+/** @typedef {Readonly<{declaration:SystemQueryOrigin,declKey:Readonly<{sourcePath:string,path:readonly string[],kind:'function',name:string}>,markerRange:SystemQueryRange,marker:SystemQueryOrigin,signature:SystemQueryOrigin,parameters:readonly SystemQueryParameter[],sourceReturnType:string,returnType:string,bodyRange:SystemQueryRange,loops:readonly SystemQueryLoop[]}>} SystemQuerySystem */
 /** @typedef {Readonly<{format:Readonly<{family:string,version:number,schemaHash:string}>,inputIdentity:string,packageId:string,program:ReturnType<typeof decodeProgram>['program'],nodes:ReturnType<typeof decodeNodes>['nodes'],builtins:readonly SystemQueryOrigin[],components:readonly Readonly<{typeId:string,sourceType:string,declaration:SystemQueryOrigin}>[],markerAliases:readonly SystemQueryAlias[],systems:readonly SystemQuerySystem[]}>} SystemQueryFacts */
 
 /** @returns {never} */
@@ -132,8 +138,9 @@ function componentIdentities(payload,functions,sources,spend){
   return {types,semantic,components};
 }
 
-function verifyComponentSource(types,functions,grammars,spend){
+function verifyComponentSource(types,functions,grammars,semantic,spend){
   const callables=new Map([...functions,...[...types.values()].flatMap(type=>type.constructor?[type.constructor]:[])].map(row=>[row.id,row]));
+  const fields=new Map();
   for(const type of types.values())if(type.nominalKey){
     const grammar=grammars.get(type.sourcePath),bounds=grammar.indices(type.declarationRange),name=grammar.indices(type.nameRange),header=grammar.tokens.slice(bounds.first,name.first).map(token=>token.text);
     grammar.name(type.nameRange,type.name);
@@ -147,12 +154,14 @@ function verifyComponentSource(types,functions,grammars,spend){
       const end=field.initializer?fieldGrammar.indices(field.initializer.range).first-1:bounds.end-(all[bounds.end-1].text===';'?1:0);
       if(field.initializer&&all[end].text!=='=')fail('component field initializer anchor differs','source');
       commonTypeSyntax(fieldGrammar,{start:all[cursor+1].start,end:all[end-1].end},field.type,types,spend);
+      fields.set(field.id,{sourceField:field.id,fieldId:commonFieldId(semantic.typeIds.get(type.id),field.name,index),ownerSourceType:type.id,ownerType:semantic.typeIds.get(type.id),sourceType:field.type,type:semantic.typeIds.get(field.type),name:field.name,readonly:field.readonly,sourcePath:field.origin.source,range:{start:field.origin.start,end:field.origin.end},nameRange});
     }
     const members=[...type.fields.filter(field=>!field.parameterBinding).map(field=>field.origin),...(type.methods??[]).map(id=>callables.get(id)?.declarationRange),...(type.constructor?[type.constructor.declarationRange]:[])];
     if(members.some(row=>!row))fail('complete component callable declarations differ','source');members.sort((a,b)=>a.start-b.start);
     const base=type.base?types.get(type.base):null;
     grammar.sequence(type.declarationRange,[...header,type.nameRange,...(base?['extends',base.name]:[]),'{',...members,'}']);
   }
+  return fields;
 }
 
 // Replay only the original type-reference/alias syntax and its recorded
@@ -249,11 +258,97 @@ function querySourceProof(ast,grammars,sources,aliases,spend){
   return {at,resolve,target,argumentsOf,verifyLogical,complete:()=>{if(cursor!==aliases.length)fail('unconsumed alias proof differs','source');}};
 }
 
+/** @returns {SystemQueryLoop[]} */
+function decodeLoops(value,body,sourcePath,parameters,ast,grammar,component,fields,spend){
+  const originalLoops=ast.children.get(body.id)??[];
+  const loops=array(value).map((value,index)=>{
+    spend();const row=record(value,descriptor.objects.loop),loopRange=range(row.range),queryRange=range(row.queryRange),bindingRange=range(row.bindingRange),bodyRange=range(row.bodyRange),queryBinding=hash(row.queryBinding);
+    const original=originalLoops[index],query=parameters.find(row=>row.binding.id===queryBinding);
+    if(!original||original.kind!=='KindForOfStatement'||canonical(original.range)!==canonical(loopRange)||!query?.query)fail('original loop/query parameter differs','source');
+    sourceRange(loopRange,grammar.text,body.range);sourceRange(queryRange,grammar.text,loopRange);sourceRange(bindingRange,grammar.text,loopRange);sourceRange(bodyRange,grammar.text,loopRange);
+    const loopChildren=ast.children.get(original.id)??[],originalBody=loopChildren.find(node=>node.kind==='KindBlock'),initializer=loopChildren.find(node=>node.kind==='KindVariableDeclarationList');
+    const pattern=ast.nodes.find(node=>node.sourcePath===sourcePath&&node.kind==='KindArrayBindingPattern'&&canonical(node.range)===canonical(bindingRange));
+    if(!originalBody||canonical(originalBody.range)!==canonical(bodyRange)||!initializer||!pattern||!loopChildren.some(node=>node.kind==='KindIdentifier'&&canonical(node.range)===canonical(queryRange)))fail('original loop header/body differs','source');
+    const declaration=ast.directory.get(pattern.parent);
+    if(declaration?.kind!=='KindVariableDeclaration'||declaration.parent!==initializer.id||canonical(declaration.range)!==canonical(bindingRange))fail('original inferred tuple declaration differs','source');
+    grammar.name(queryRange,query.binding.name);
+    const originalBindings=ast.children.get(pattern.id)??[],scope=new Map(parameters.filter(row=>!row.query).map(row=>[row.binding.id,{declaration:row.binding,sourceType:row.logicalType,mode:null}]));
+    const bindings=array(row.bindings).map((value,index)=>{
+      const row=record(value,descriptor.objects.loopBinding),declaration=ast.original(row.declaration),sourceComponentType=text(row.componentType),mode=text(row.mode),selected=query.query.items[index];
+      if(integer(row.index)!==index||!selected||sourceComponentType!==selected.sourceComponentType||mode!==selected.mode||declaration.kind!=='KindBindingElement'||declaration.sourcePath!==sourcePath||!originalBindings[index]||canonical(originalBindings[index].range)!==canonical(declaration.range)||scope.has(declaration.id))fail('original loop tuple binding/order/access differs','source');
+      if(mode!=='read'&&mode!=='write')fail('owned loop access mode required','type');
+      grammar.sequence(declaration.range,[declaration.nameRange]);scope.set(declaration.id,{declaration,sourceType:sourceComponentType,mode});
+      /** @type {SystemQueryLoopBinding} */
+      const result={index,declaration,sourceComponentType,componentType:selected.componentType,mode};return result;
+    });
+    if(bindings.length!==query.query.items.length||bindings.length!==originalBindings.length)fail('complete loop tuple binding inventory differs','source');
+    grammar.sequence(bindingRange,['[',...bindings.flatMap((row,index)=>index?[',',row.declaration.range]:[row.declaration.range]),']']);
+    grammar.sequence(initializer.range,['const',bindingRange]);grammar.sequence(loopRange,['for','(',initializer.range,'of',queryRange,')',bodyRange]);
+    /** @param {CheckedArrayExpression} value @param {'read'|'write'|'readwrite'} [access] @returns {SystemQueryLoopExpression} */
+    function expression(value,access='read',depth=0){
+      spend();if(depth>=32)fail('Query expression path exceeds 32 nodes','capability');
+      sourceRange(value.range,grammar.text,bodyRange);
+      const target=value.kind==='fieldTarget';
+      if(!component.types.has(value.type)||!target&&value.flowType!==value.type)fail('original loop expression logical type differs','type');
+      const type=component.semantic.typeIds.get(value.type),base={type,sourceType:value.type,range:{...value.range}};
+      const originalKind=value.kind==='bindingReference'?'KindIdentifier':value.kind==='fieldAccess'||target?'KindPropertyAccessExpression':'KindBinaryExpression';
+      if(!ast.nodes.some(node=>node.sourcePath===sourcePath&&node.kind===originalKind&&canonical(node.range)===canonical(value.range)))fail('original loop expression AST differs','source');
+      if(value.kind==='bindingReference'){
+        const binding=scope.get(value.binding);
+        if(!binding||binding.sourceType!==value.type||binding.mode===null&&value.type!=='f32')fail('original loop expression binding differs','source');
+        grammar.name(value.range,binding.declaration.name);return {...base,kind:'bindingReference',binding:value.binding,access:'read'};
+      }
+      if(value.kind==='fieldAccess'||target){
+        if(value.receiver.kind!=='bindingReference')fail('direct original Query field receiver required','capability');
+        const receiver=expression(value.receiver,'read',depth+1),binding=scope.get(receiver.binding),field=fields.get(value.property);
+        let owner=binding?.sourceType;
+        while(owner){
+          spend();const type=component.types.get(owner),selected=type.fields?.find(row=>row.name===field?.name);
+          if(selected){if(selected.id!==value.property)fail('original selected field declaration differs','source');break;}
+          owner=type.base;
+        }
+        if(!binding?.mode||!field||!owner||value.type!=='f32'||field.sourceType!==value.type)fail('original component field ownership/type differs','type');
+        if(target&&(access==='read'||binding.mode!=='write'||field.readonly))fail('Read borrow or declared readonly field cannot be written','permission');
+        grammar.name(value.nameRange,field.name);grammar.sequence(value.range,[value.receiver.range,'.',value.nameRange]);
+        return {...base,kind:target?'fieldTarget':'fieldAccess',receiver,property:field.fieldId,sourceField:field.sourceField,nameRange:{...value.nameRange},access:target?access:'read'};
+      }
+      if(value.kind==='binary'){
+        if(!['+','-','*','/'].includes(value.operator)||value.type!=='f32')fail('owned f32 binary operator required','capability');
+        const left=expression(value.left,'read',depth+1),right=expression(value.right,'read',depth+1);
+        if(left.sourceType!=='f32'||right.sourceType!=='f32')fail('original f32 operand types differ','type');
+        grammar.sequence(value.operatorRange,[value.operator]);grammar.sequence(value.range,[value.left.range,value.operatorRange,value.right.range]);
+        return {...base,kind:'binary',operator:value.operator,operatorRange:{...value.operatorRange},left,right};
+      }
+      if(value.kind==='fieldAssignment'){
+        if(!['=','+='].includes(value.operator)||value.type!=='f32'||value.target.kind!=='fieldTarget')fail('owned f32 field assignment required','capability');
+        const target=expression(value.target,value.operator==='='?'write':'readwrite',depth+1),assigned=expression(value.value,'read',depth+1);
+        if(target.sourceType!=='f32'||assigned.sourceType!=='f32')fail('original f32 assignment types differ','type');
+        grammar.sequence(value.operatorRange,[value.operator]);grammar.sequence(value.range,[value.target.range,value.operatorRange,value.value.range]);
+        return {...base,kind:'fieldAssignment',operator:value.operator,operatorRange:{...value.operatorRange},target,value:assigned};
+      }
+      fail('Query expression has no owned typed representation','capability');
+    }
+    const originalStatements=ast.children.get(originalBody.id)??[];
+    const statements=array(row.statements).map((value,index)=>{
+      checkTypedArrayShape(value,'arrayGenericStatement',false,commonSourceDescriptor);
+      const statement=/** @type {{kind:string,range:SystemQueryRange,value:CheckedArrayExpression}} */(value);
+      if(statement.kind!=='expression'||statement.value.kind!=='fieldAssignment'||originalStatements[index]?.kind!=='KindExpressionStatement'||canonical(statement.range)!==canonical(originalStatements[index].range))fail('original Query statement differs','source');
+      const result=expression(statement.value);grammar.sequence(statement.range,[statement.value.range],true);
+      return {kind:/** @type {'expression'} */('expression'),range:{...statement.range},value:result};
+    });
+    if(statements.length!==originalStatements.length)fail('complete original loop statements differ','source');
+    grammar.body(bodyRange,statements);
+    return {range:loopRange,queryBinding,queryRange,bindingRange,bodyRange,bindings,statements};
+  });
+  if(loops.length!==originalLoops.length)fail('complete original system body differs','source');grammar.body(body.range,loops);
+  return loops;
+}
+
 /** @returns {SystemQuerySystem[]} */
-function decodeSystems(value,program,sources,ast,builtins,component,grammars,spend){
+function decodeSystems(value,program,sources,ast,builtins,component,fields,grammars,spend){
   const seen=new Set(),sourceTypes=querySourceProof(ast,grammars,sources,[],spend);
   return array(value).map(value=>{
-    spend();const row=record(value,['declaration','markerRange','marker','signature','parameters','returnType']);
+    spend();const row=record(value,descriptor.objects.system);
     const declaration=ast.original(row.declaration),marker=ast.original(row.marker),signature=ast.original(row.signature),markerRange=range(row.markerRange),returnType=text(row.returnType);
     if(declaration.kind!=='KindFunctionDeclaration'||declaration.sourcePath.endsWith('.d.ts')||seen.has(declaration.id)||canonical(signature)!==canonical(declaration)||canonical(marker)!==canonical(builtins.get('system')))fail('original system declaration/signature differs','source');
     seen.add(declaration.id);const grammar=grammars.get(declaration.sourcePath);sourceRange(markerRange,grammar.text,declaration.range);grammar.sequence(markerRange,['@','system']);
@@ -304,10 +399,12 @@ function decodeSystems(value,program,sources,ast,builtins,component,grammars,spe
     if(parameters.length!==originalParameters.length||!parameters.some(row=>row.query)||!component.types.has(returnType))fail('system Query/return type missing','type');
     const functionChildren=ast.children.get(functionNode.id)??[],body=functionChildren.find(node=>node.kind==='KindBlock'),returnSyntax=functionChildren.filter(node=>node.kind!=='KindParameter'&&node.range.start>=(originalParameters.at(-1)?.range.end??declaration.nameRange.end)&&node.range.end<=(body?.range.start??0)).at(-1);
     if(!body||!returnSyntax)fail('original return annotation/body missing','source');
+    const bodyRange=range(row.bodyRange);if(canonical(bodyRange)!==canonical(body.range))fail('original complete system body range differs','source');
     sourceTypes.verifyLogical(declaration.sourcePath,returnSyntax.range,returnType,component.types);
     const bounds=grammar.indices(declaration.range),name=grammar.indices(declaration.nameRange),prefix=grammar.tokens.slice(bounds.first,name.first).map(token=>token.text);
     grammar.sequence(declaration.range,[...prefix,declaration.nameRange,'(',...parameters.flatMap((row,index)=>index?[',',row.binding.range]:[row.binding.range]),')',':',returnSyntax.range,body.range]);
-    return {declaration,declKey:{sourcePath:declaration.sourcePath,path:[],kind:/** @type {'function'} */('function'),name:declaration.name},markerRange,marker,signature,parameters,sourceReturnType:returnType,returnType:text(component.semantic.typeIds.get(returnType))};
+    const loops=decodeLoops(row.loops,body,declaration.sourcePath,parameters,ast,grammar,component,fields,spend);
+    return {declaration,declKey:{sourcePath:declaration.sourcePath,path:[],kind:/** @type {'function'} */('function'),name:declaration.name},markerRange,marker,signature,parameters,sourceReturnType:returnType,returnType:text(component.semantic.typeIds.get(returnType)),bodyRange,loops};
   });
 }
 
@@ -318,11 +415,11 @@ function decodeSystems(value,program,sources,ast,builtins,component,grammars,spe
  */
 export function readSystemQueryFacts(bytes,context){
   const expected=record(context,['family','version','requestBytes','expectedPackageId']);
-  if(expected.family!=='tsfg.system-query-context-candidate'||expected.version!==1)fail('source context family differs','identity');
+  if(expected.family!=='tsfg.system-query-context-candidate'||expected.version!==descriptor.version)fail('source context family differs','identity');
   const expectedPackageId=hash(expected.expectedPackageId),transport=readGenericJson(copyGenericJsonBytes(bytes,policy),policy),packet=record(transport.value,descriptor.objects.package);
   if(transport.text!==canonical(packet)+'\n'||packet.family!==systemQueryFactsFormat.family||packet.version!==systemQueryFactsFormat.version||packet.schemaHash!==systemQueryFactsFormat.schemaHash)fail('candidate identity/canonical bytes differ','identity');
   const payload=record(packet.payload,descriptor.objects.payload);
-  if(hash(packet.packageId)!==expectedPackageId||packet.packageId!==sha256('tsfg.system-query.package.v1\0'+systemQueryFactsFormat.schemaHash+'\0'+canonical(payload)))fail('whole Source package identity differs','identity');
+  if(hash(packet.packageId)!==expectedPackageId||packet.packageId!==sha256('tsfg.system-query.package.v2\0'+systemQueryFactsFormat.schemaHash+'\0'+canonical(payload)))fail('whole Source package identity differs','identity');
   const {sources,program}=decodeProgram(payload.program);
   if(descriptor.sourceTypeSchemaHash!==sha256(canonical(commonSourceDescriptor)+'\n'))fail('shared Source type schema differs','identity');
   if(canonical(program.target)!==canonical(descriptor.target)||payload.profilePath!==descriptor.profile.path||payload.profileSHA256!==descriptor.profile.sha256
@@ -330,7 +427,7 @@ export function readSystemQueryFacts(bytes,context){
     ||canonical(program.declarations.paths)!==canonical([descriptor.profile.standardPath,descriptor.profile.path]))fail('owned declaration/target context differs','identity');
   const request={family:descriptor.requestFamily,version:descriptor.version,schemaHash:systemQueryFactsFormat.schemaHash,input:{sourceRoot:program.sourceRoot,rootFile:program.rootFile,files:program.files.map(({path,content,sha256})=>({path,content,sha256})),declarations:program.declarations,config:program.config,target:program.target}};
   const requestTransport=readGenericJson(copyGenericJsonBytes(expected.requestBytes,policy),policy),requestText=canonical(request)+'\n';
-  if(requestTransport.text!==requestText||canonical(requestTransport.value)+'\n'!==requestText||hash(packet.requestId)!==sha256('tsfg.system-query.request.v1\0'+requestText))fail('complete original request differs','identity');
+  if(requestTransport.text!==requestText||canonical(requestTransport.value)+'\n'!==requestText||hash(packet.requestId)!==sha256('tsfg.system-query.request.v2\0'+requestText))fail('complete original request differs','identity');
   let work=0;const spend=(amount=1)=>{work+=amount;if(work>descriptor.limits.work)fail('source work exceeded','limit');};
   const ast=decodeNodes(payload.nodes,sources,spend),builtins=new Map();
   const builtinRows=array(payload.builtins).map((value,index)=>{const row=ast.original(value);
@@ -341,7 +438,7 @@ export function readSystemQueryFacts(bytes,context){
   const types=array(payload.types),functions=array(payload.functions);
   if(types.length>4096||functions.length>4096)fail('source type/function directory exceeded','limit');
   const component=componentIdentities({...program,types},functions,sources,spend);
-  verifyComponentSource(component.types,functions,grammars,spend);
+  const fields=verifyComponentSource(component.types,functions,grammars,component.semantic,spend);
   const markerAliases=array(payload.markerAliases).map(value=>{
     const row=record(value,descriptor.objects.markerAlias),useSourcePath=text(row.useSourcePath),useRange=range(row.useRange),declaration=ast.original(row.declaration),target=ast.original(row.target),grammar=grammars.get(useSourcePath);
     if(!grammar||canonical(declaration)!==canonical(builtins.get('component'))||target.sourcePath!==descriptor.profile.standardPath||target.name!=='tsfgComponent'||target.kind!=='KindFunctionDeclaration')fail('owned component marker alias differs','source');
@@ -358,7 +455,7 @@ export function readSystemQueryFacts(bytes,context){
     return {typeId:text(component.semantic.typeIds.get(type.id)),sourceType:text(type.id),declaration};
   });
   if(usedAliases.size!==markerAliases.length)fail('unbound component marker alias','source');
-  const systems=decodeSystems(payload.systems,program,sources,ast,builtins,component,grammars,spend);
+  const systems=decodeSystems(payload.systems,program,sources,ast,builtins,component,fields,grammars,spend);
   if(!systems.length||systems.length>4096)fail('complete system directory required','source');
   const result=own({format:systemQueryFactsFormat,inputIdentity:text(packet.requestId),packageId:expectedPackageId,program,nodes:ast.nodes,builtins:builtinRows,components,markerAliases,systems});
   receipts.set(result,{bytes:Buffer.from(transport.text),requestText,packageId:expectedPackageId});return result;
@@ -370,7 +467,7 @@ export function readSystemQueryFacts(bytes,context){
  */
 export function printSystemQueryFacts(facts,context){
   const receipt=receipts.get(facts),expected=record(context,['family','version','requestBytes','expectedPackageId']);
-  if(!receipt||expected.family!=='tsfg.system-query-context-candidate'||expected.version!==1||expected.expectedPackageId!==receipt.packageId)fail('owned Source receipt differs','identity');
+  if(!receipt||expected.family!=='tsfg.system-query-context-candidate'||expected.version!==descriptor.version||expected.expectedPackageId!==receipt.packageId)fail('owned Source receipt differs','identity');
   const request=readGenericJson(copyGenericJsonBytes(expected.requestBytes,policy),policy);
   if(request.text!==receipt.requestText||canonical(request.value)+'\n'!==receipt.requestText)fail('owned Source request differs','identity');
   return Buffer.from(receipt.bytes);

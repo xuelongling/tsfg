@@ -2,23 +2,17 @@
 // Positive packets/requests are complete, unmodified actual Go producer bytes.
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import {readFileSync} from 'node:fs';
 import {canonical,sha256} from '../../compiler/identity.mjs';
 import {originId} from '../../compiler/typed-array-schema.mjs';
 import {readSystemQueryFacts,printSystemQueryFacts,systemQueryFactsFormat} from '../../compiler/system-query-facts.mjs';
+import {systemQueryFixture as fixture} from './system-query-fixtures.mjs';
 
-const fixture=name=>{
-  const bytes=readFileSync(new URL('./testdata/system-query/'+name+'-facts.json',import.meta.url));
-  const requestBytes=readFileSync(new URL('./testdata/system-query/'+name+'-request.json',import.meta.url));
-  const packet=JSON.parse(bytes.toString());
-  return {bytes,packet,context:{family:'tsfg.system-query-context-candidate',version:1,requestBytes,expectedPackageId:packet.packageId}};
-};
 const actual=fixture('architecture');
 const query=facts=>facts.systems[0].parameters[0].query;
 const inputQuery=packet=>packet.payload.systems[0].parameters[0].query;
 const edit=mutate=>{
   const packet=structuredClone(actual.packet);mutate(packet,packet.payload);
-  packet.packageId=sha256('tsfg.system-query.package.v1\0'+packet.schemaHash+'\0'+canonical(packet.payload));
+  packet.packageId=sha256('tsfg.system-query.package.v2\0'+packet.schemaHash+'\0'+canonical(packet.payload));
   return {bytes:Buffer.from(canonical(packet)+'\n'),context:{...actual.context,expectedPackageId:packet.packageId}};
 };
 
@@ -83,7 +77,7 @@ test('actual complete Program preserves unused class and unrelated ordinary func
 
 const cases=[
   ['wrong family',packet=>{packet.family='foreign';}],
-  ['wrong version',packet=>{packet.version=2;}],
+  ['wrong version',packet=>{packet.version=1;}],
   ['wrong schema',packet=>{packet.schemaHash='sha256:'+'0'.repeat(64);}],
   ['wrong request identity',packet=>{packet.requestId='sha256:'+'0'.repeat(64);}],
   ['ordinary scalar parameter logical type',(_packet,payload)=>{payload.systems[0].parameters[1].logicalType='u32';}],
@@ -129,7 +123,7 @@ test('cold alias proof rejects rehashed foreign generic substitution target',()=
   const input=fixture('aliases'),packet=structuredClone(input.packet),access=inputQuery(packet);
   const substitution=access.aliases.find(row=>row.declaration.kind==='KindTypeParameter'&&row.useRange.start===121);
   substitution.target=access.items[1].component;
-  packet.packageId=sha256('tsfg.system-query.package.v1\0'+packet.schemaHash+'\0'+canonical(packet.payload));
+  packet.packageId=sha256('tsfg.system-query.package.v2\0'+packet.schemaHash+'\0'+canonical(packet.payload));
   assert.throws(()=>readSystemQueryFacts(Buffer.from(canonical(packet)+'\n'),{...input.context,expectedPackageId:packet.packageId}));
 });
 
