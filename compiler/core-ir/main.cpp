@@ -423,7 +423,7 @@ int main(int argc, char **argv) {
   const bool common = argc == 3 && llvm::StringRef(argv[1]) == "--common-program";
   const auto command = argc == 2 || common ? llvm::StringRef(argv[common ? 2 : 1]) : llvm::StringRef();
   if ((argc != 2 && !common) || (command != "--canonicalize" &&
-      command != "--optimize" && (common || command != "--emit-bytecode"))) {
+      command != "--optimize" && !(common && command == "--component-layouts") && (common || command != "--emit-bytecode"))) {
     llvm::errs() << "[core-ir-command] expected --canonicalize with IR on stdin\n";
     return 2;
   }

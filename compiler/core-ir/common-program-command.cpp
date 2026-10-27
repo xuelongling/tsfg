@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: MIT
 #include "common-program-command.h"
 #include "common-program.h"
+#include "component-layout.h"
 #include "mlir/IR/Verifier.h"
 #include "llvm/Support/Program.h"
 #include "llvm/Support/raw_ostream.h"
@@ -43,13 +44,22 @@ int readCoreInput(std::string &bytes) {
   }
 }
 int runCoreModule(mlir::ModuleOp module, llvm::StringRef command) {
-  if (mlir::failed(mlir::verify(module)) || mlir::failed(verify(module))) return 3;
+  if (mlir::failed(mlir::verify(module))) return 3;
+  if (command != "--component-layouts" && mlir::failed(verify(module))) return 3;
   if (command == "--emit-bytecode") {
     llvm::errs() << "[r04-core-program-unsupported] complete common development Core has no selected wire/native encoding\n";
     return 3;
   }
   Output output;
-  module->print(output, mlir::OpPrintingFlags().printGenericOpForm());
+  if (command == "--component-layouts") {
+    Program program; Error error; Json layouts = nullptr;
+    if (!readCore(module, program, error) || !verifyProgram(program, error) || !componentLayouts(program, layouts, error)) {
+      llvm::errs() << "[" << error.code << "] " << error.message;
+      if (!error.path.empty()) llvm::errs() << " (" << error.path << ":" << error.range.start << ":" << error.range.end << ")";
+      llvm::errs() << "\n"; return 3;
+    }
+    output << canonical(layouts);
+  } else module->print(output, mlir::OpPrintingFlags().printGenericOpForm());
   output << '\n';
   if (output.exceeded()) {
     llvm::errs() << "[core-ir-program-budget] output exceeds candidate byte budget\n";
