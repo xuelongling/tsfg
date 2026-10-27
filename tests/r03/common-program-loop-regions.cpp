@@ -23,8 +23,13 @@ struct Model {
       {"activationEnvironment",id=="make"?Json("L"):Json(nullptr)},{"signatureHash","sig"},{"parameters",parameter?Json(Array{Object{{"id","flag"},{"type",boolean}}}):Json(Array{})}});
   }
   bool run(const std::string &mode){
-    const bool descriptor=mode=="descriptor",replaced=mode=="replaced",escaped=mode=="outer-cell",fieldEscape=mode=="outer-field",throwing=mode=="throw"||mode=="caught",host=mode=="host",missing=mode=="missing-target";
+    const bool carried=mode=="readonly-local-cell"||mode=="writable-local-cell"||mode=="readonly-old-saved"||mode=="readonly-missing-return"||mode=="readonly-extra-return"||mode=="readonly-host"||mode=="readonly-structural"||mode=="readonly-cyclic-reader",
+      closed=llvm::StringRef(mode).starts_with("readonly-")||mode=="writable-local-cell"||mode=="writable-exit-phi",
+      descriptor=mode=="descriptor",replaced=mode=="replaced",escaped=mode=="outer-cell",fieldEscape=mode=="outer-field"||mode=="readonly-outward",throwing=mode=="throw"||mode=="caught",host=mode=="host"||mode=="readonly-host",missing=mode=="missing-target";
     layout=Object{{"id","L"},{"parent",nullptr},{"slots",descriptor?Json(Array{Object{{"key","r"},{"binding","r"},{"type",s}}}):Json(Array{Object{{"key","a"},{"binding","a"},{"type",a}},Object{{"key","r"},{"binding","r"},{"type",s}}})}};
+    if(closed){for(auto &slot:*(*layout.getAsObject())["slots"].getAsArray())(*slot.getAsObject())["writable"]=!llvm::StringRef(mode).starts_with("readonly-");
+      if(mode!="readonly-missing-return")p.callableReturns["make"].functions.insert("reader");
+      if(mode=="readonly-extra-return")p.callableReturns["make"].functions.insert("unconnected");}
     auto make=function("make");make.blocks={{{},{op("constant",0,i32,{},Object{{"decimal","1"}}),op("constant",1,u32,{},Object{{"decimal","0"}}),op("constant",2,u32,{},Object{{"decimal","1"}}),
       op("array_create",3,a,{0}),op("readspan",4,s,{3,1,2}),op("env_alloc",5,"env:L",{},Object{{"layout","L"}})}}};
     auto &body=make.blocks[0].operations;
@@ -46,7 +51,7 @@ struct Model {
     const bool factoryMissing=mode=="factory-missing"||mode=="factory-full-host";
     if(mode=="caught")root.blocks[6].operations={op("invoke_indirect",noRegister,"",{20},Object{{"signature_hash","sig"},{"targets",Object{{"top",false}}}},{4,5})};
     if(mode=="recursive")root.blocks[2].operations[0].operands={0};
-    if(mode=="exit-phi"){
+    if(mode=="exit-phi"||mode=="readonly-exit-phi"||mode=="writable-exit-phi"){
       root.blocks[3].operations={op("cf.cond_br",noRegister,"",{0},{},{8,9})};
       root.blocks.push_back({{},{op("invoke_indirect",noRegister,"",{10},Object{{"signature_hash","sig"},{"targets",Object{{"top",false}}}},{4,6})}});
       root.blocks.push_back({{},{op("cf.br",noRegister,"",{10},{},{10})}});
@@ -72,22 +77,45 @@ struct Model {
     if(escaped||fieldEscape){root.blocks[0].operations.insert(root.blocks[0].operations.begin(),op(escaped?"cell":"allocate_reference",2,escaped?"cell:f":holder));
       root.blocks[3].operations.insert(root.blocks[3].operations.begin(),op(escaped?"store":"field_store",noRegister,"",{2,10},Object{{escaped?"binding":"field",escaped?"f":"reader"}}));
       root.blocks[7].operations={op(escaped?"load":"field_load",22,f,{2},Object{{escaped?"binding":"field",escaped?"f":"reader"}}),op("func.return",noRegister,"",{22})};}
+    if(carried){
+      root.blocks={{{0},{op("constant",1,u32,{},Object{{"decimal","0"}}),op("cell",2,"cell:f"),op("invoke",noRegister,"",{},Object{{"function_id","make"}},{1,7})}},
+        {{10},{op("store",noRegister,"",{2,10},Object{{"binding","saved"}}),op("cf.br",noRegister,"",{},{},{2})}},
+        {{},{op("cf.cond_br",noRegister,"",{0},{},{3,6})}},{{},{op("invoke",noRegister,"",{},Object{{"function_id","make"}},{4,7})}},
+        {{11},{op("store",noRegister,"",{2,11},Object{{"binding","saved"}}),op("cf.br",noRegister,"",{},{},{2})}},{{},{op("unreachable")}},
+        {{},{op("load",20,f,{2}),op("invoke_indirect",noRegister,"",{20},Object{{"signature_hash","sig"},{"targets",Object{{"top",false}}}},{8,7})}},
+        {{30},{op("unreachable")}},{{21},{op("func.return",noRegister,"",{21})}}};
+      if(mode=="readonly-old-saved"){
+        root.blocks[4].operations={op("load",22,f,{2}),op("invoke_indirect",noRegister,"",{22},Object{{"signature_hash","sig"},{"targets",Object{{"top",false}}}},{9,7})};
+        root.blocks.push_back({{23},{op("store",noRegister,"",{2,11},Object{{"binding","saved"}}),op("cf.br",noRegister,"",{},{},{2})}});
+      }
+    }
+    if(mode=="readonly-structural")reader.blocks[0].operations.insert(reader.blocks[0].operations.begin()+1,
+      {op("env_load",3,a,{0},Object{{"layout","L"},{"binding","a"},{"key","a"}}),op("constant",4,u32,{},Object{{"decimal","0"}}),op("array_resize",noRegister,"",{3,4})});
+    if(mode=="readonly-cyclic-reader"){
+      reader.blocks[0].operations.pop_back();auto &ops=reader.blocks[0].operations;
+      ops.push_back(op("constant",3,u32,{},Object{{"decimal","0"}}));ops.push_back(op("strict_equal",4,boolean,{2,3},Object{{"operator","==="}}));ops.push_back(op("cf.cond_br",noRegister,"",{4},{},{1,2}));
+      reader.blocks.push_back({{},{op("cf.br",noRegister,"",{},{},{1})}});reader.blocks.push_back({{},{op("func.return",noRegister,"",{2})}});
+    }
     p.functions={std::move(make),std::move(reader),std::move(root)};source("make");source("reader",true);source("root",false,true);
     if(mode=="recursive")(*sources.at("make").getAsObject())["parameters"]=Array{Object{{"id","flag"},{"type",boolean}}};
     if(missing){auto other=function("other");other.blocks={{{0},{op("func.return")}}};p.functions.push_back(std::move(other));source("other",true);}
     if(factoryMissing){auto other=function("otherFactory");other.blocks={{{},{op("make_closure",0,f,{},Object{{"function_id","pure"},{"signature_hash","sig"},{"environment_layout",nullptr}}),op("func.return",noRegister,"",{0})}}};
       auto pure=function("pure");pure.blocks={{{},{op("constant",0,u32,{},Object{{"decimal","0"}}),op("func.return",noRegister,"",{0})}}};
       p.functions.push_back(std::move(other));p.functions.push_back(std::move(pure));source("otherFactory");source("pure");}
+    if(mode=="readonly-extra-return"){auto pure=function("unconnected");pure.blocks={{{},{op("constant",0,u32,{},Object{{"decimal","0"}}),op("func.return",noRegister,"",{0})}}};p.functions.push_back(std::move(pure));source("unconnected");}
     for(const auto &[id,type]:types){c.types.emplace(id,&type);for(const auto &member:items(field(type,"fields")))c.fields.emplace(string(field(member,"id")),&member);}
     c.environments.emplace("L",&layout);for(const auto &fn:p.functions){c.functions.emplace(fn.id,&fn);c.sourceFunctions.emplace(fn.id,&sources.at(fn.id));p.fixedEffects[fn.id].parameters.resize(fn.id=="root"?1:0);}
     if(mode=="recursive"){p.fixedEffects["make"].parameters.resize(1);c.views["make/30"]=boolean;}
     c.views["root/0"]=boolean;c.views["reader/1"]=s;p.callableSites["root/40:50"].functions.insert("reader");if(missing)p.callableSites["root/40:50"].functions.insert("other");if(host)p.fixedEffects["reader"].unknownHost=true;
     if(mode=="factory-full-host")p.fixedEffects["otherFactory"].unknownHost=true;
+    if(mode=="readonly-structural")p.fixedEffects["reader"].captures["a"]={true,false,true};
     if(!c.callGraph()||!c.solve(false)){llvm::errs()<<mode<<": setup "<<e.code<<" "<<e.message<<"\n";return false;}
     if(mode=="recursive"&&(!c.cyclicFunctions.count("make")||c.contexts.size()>16))return false;
     bool weak=false;for(const auto &[ref,obj]:c.objects)if(obj.weak)weak=true;if(!weak)return false;
-    const bool accepted=verifyCommonBorrows(c),expected=mode=="held"||mode=="exit-dead"||mode=="caught"||mode=="exit-dead-phi"||mode=="exit-dead-route";
+    if(closed)for(const auto &[id,node]:c.regions.nodes)if(!c.objects.at(node.reference).weak)return false;
+    const bool accepted=verifyCommonBorrows(c),expected=mode=="held"||mode=="exit-dead"||mode=="caught"||mode=="exit-dead-phi"||mode=="exit-dead-route"||mode=="readonly-local-cell"||mode=="readonly-old-saved"||mode=="readonly-exit-phi";
     const bool correct=accepted==expected&&(accepted||e.code=="core-ir-common-borrow");
+    if(mode=="readonly-outward"){bool hard=false;for(const auto &[id,scope]:c.regions.scopes)hard|=scope.hard;if(!hard)return false;}
     if(!correct)llvm::errs()<<mode<<": "<<e.code<<" "<<e.message<<" contexts="<<c.contexts.size()<<"\n";return correct;
   }
 };
@@ -133,7 +161,7 @@ bool aging(){
   ActualValue cell;cell.cells.insert("outer");state.values.emplace(9,cell);state.heap.emplace("outer",closure);
   if(!regionEdge(m.c,context,0,1,state))return false;
   const auto again=regionAllocate(m.c,context,"env/E","env:L",state.regions);const auto old=regionValue(m.c,state.heap.at("outer"));
-  return first.roots==again.roots&&!old.roots.size()&&old.opaque&&m.c.regions.scopes.at("R").blocked;
+  return first.roots==again.roots&&!old.roots.size()&&old.opaque&&m.c.regions.scopes.at("R").blocked&&!m.c.regions.scopes.at("R").hard;
 }
 bool unclosed(){
   Model m;auto caller=m.function("caller"),callee=m.function("recur");caller.blocks={{{},{op("invoke",noRegister,"",{0},Object{{"function_id","recur"}},{1,2})}},{{1},{op("func.return")}},{{2},{op("unreachable")}}};callee.blocks={{{0},{op("func.return",noRegister,"",{0})}}};
@@ -176,6 +204,28 @@ bool untracked(){
   to.region.known=true;to.region.roots.insert("current/A");m.c.merge(to,old);
   return m.e.message.empty()&&to.region.opaque&&to.region.roots.count("current/A")&&to.objects==old.objects;
 }
+bool declaredWeakPromotion(){
+  // Existing normalized IDs may share a raw ref across entry/allocation roles.
+  // This checks invalidation, not a new Source identity or freshness rule.
+  Model m;const std::string type="array/1";m.types.emplace(type,Object{{"kind","array"},{"elementType",m.i32}});
+  for(const auto &[id,t]:m.types)m.c.types.emplace(id,&t);auto fn=m.function("0");ActualContext context;
+  context.function=&fn;context.activation="entry/0";context.repeated=false;
+  const auto ref=m.c.allocate(context,op("array_create",1,type),0,"array",type);
+  if(!m.e.message.empty()||ref!="entry/0/0/array/1"||m.c.objects.at(ref).weak||m.c.weakChanged)return false;
+  ActualHeap heap;auto value=m.c.declared(type,heap,"entry/0/0");
+  if(!m.e.message.empty()||!value.objects.count(ref)||!m.c.objects.at(ref).weak||!m.c.weakChanged)return false;
+  m.c.weakChanged=false;m.c.declared(type,heap,"entry/0/0");return m.e.message.empty()&&!m.c.weakChanged;
+}
+bool trapFactGrowth(){
+  // Final borrow replay must reject any newly discovered numeric trap fact.
+  Model m;auto fn=m.function("trap");ActualContext context;context.function=&fn;ActualState state;
+  const auto undefined=digest(std::string("tsfg.type")+std::string(1,'\0')+"undefined");state.values[0].tags.insert(undefined);
+  bool changed=false,continues=true;const auto edge=[](uint16_t,const ActualState &,const std::vector<ActualValue> &){return true;};
+  auto checked=op("numeric_use",1,m.i32,{0});
+  if(!m.c.instruction(context,checked,0,state,false,changed,edge,continues)||!changed||!context.requestTrap||continues)return false;
+  changed=false;continues=true;
+  return m.c.instruction(context,checked,0,state,false,changed,edge,continues)&&!changed&&context.requestTrap&&!continues;
+}
 bool quota(const std::string &mode){
   Model m;auto fn=m.function("quota");
   if(mode=="parameter-quota"){
@@ -194,7 +244,7 @@ bool quota(const std::string &mode){
 }
 }
 int main(int argc,char **argv){
-  const std::vector<std::string> all={"held","descriptor","replaced","outer-cell","outer-field","throw","caught","host","missing-target","factory-missing","factory-full-host","exit-phi","exit-dead","recursive","selected","older","may","quota","pair-held","pair-onebad","pair-pure","parent-held","parent-older","old-after-new","unclosed-age","element-held","element-wildcard","element-regrow","element-join-left","element-join-right","irreducible","untracked","pair-outward","pair-cross-region","parameter-quota","edge-copy-quota","aging-quota","exit-dead-phi","exit-live-phi","exit-dead-route"};
-  std::vector<std::string> selected;if(argc>1)for(int i=1;i<argc;++i)selected.push_back(argv[i]);else selected=all;bool ok=true;
-  for(const auto &name:selected){bool passed;if(llvm::StringRef(name).starts_with("element-"))passed=elementHolding(name);else if(llvm::StringRef(name).starts_with("pair-")||llvm::StringRef(name).starts_with("parent-"))passed=holding(name);else if(name=="old-after-new")passed=aging();else if(name=="unclosed-age")passed=unclosed();else if(name=="irreducible")passed=irreducible();else if(name=="untracked")passed=untracked();else if(name=="parameter-quota"||name=="edge-copy-quota"||name=="aging-quota")passed=quota(name);else if(name=="selected"||name=="older"||name=="may"||name=="quota")passed=relation(name);else{Model m;passed=m.run(name);}llvm::outs()<<name<<": "<<(passed?"PASS":"FAIL")<<"\n";ok&=passed;}return ok?0:1;
+  const std::vector<std::string> all={"held","descriptor","replaced","outer-cell","outer-field","throw","caught","host","missing-target","factory-missing","factory-full-host","exit-phi","exit-dead","recursive","selected","older","may","quota","pair-held","pair-onebad","pair-pure","parent-held","parent-older","old-after-new","unclosed-age","element-held","element-wildcard","element-regrow","element-join-left","element-join-right","irreducible","untracked","pair-outward","pair-cross-region","parameter-quota","edge-copy-quota","aging-quota","exit-dead-phi","exit-live-phi","exit-dead-route","readonly-local-cell","readonly-old-saved","readonly-exit-phi","writable-local-cell","writable-exit-phi","readonly-missing-return","readonly-extra-return","readonly-host","readonly-structural","readonly-outward","readonly-cyclic-reader"};
+  std::vector<std::string> selected;if(argc>1)for(int i=1;i<argc;++i)selected.push_back(argv[i]);else{selected=all;selected.push_back("declared-weak-promotion");selected.push_back("trap-fact-growth");}bool ok=true;
+  for(const auto &name:selected){bool passed;if(llvm::StringRef(name).starts_with("element-"))passed=elementHolding(name);else if(llvm::StringRef(name).starts_with("pair-")||llvm::StringRef(name).starts_with("parent-"))passed=holding(name);else if(name=="old-after-new")passed=aging();else if(name=="unclosed-age")passed=unclosed();else if(name=="irreducible")passed=irreducible();else if(name=="untracked")passed=untracked();else if(name=="declared-weak-promotion")passed=declaredWeakPromotion();else if(name=="trap-fact-growth")passed=trapFactGrowth();else if(name=="parameter-quota"||name=="edge-copy-quota"||name=="aging-quota")passed=quota(name);else if(name=="selected"||name=="older"||name=="may"||name=="quota")passed=relation(name);else{Model m;passed=m.run(name);}llvm::outs()<<name<<": "<<(passed?"PASS":"FAIL")<<"\n";ok&=passed;}return ok?0:1;
 }

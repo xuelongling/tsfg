@@ -50,7 +50,7 @@ export function commonRegions(spend){
   }
   function scope(region,invocation){
     chargeString(region);chargeString(invocation);const id=sha256(canonical({region,invocation}));
-    if(!scopes.has(id)){spend();check(scopes.size<4096,'limit');scopes.set(id,{region,invocation,blocked:false});}return id;
+    if(!scopes.has(id)){spend();check(scopes.size<4096,'limit');scopes.set(id,{region,invocation,blocked:false,hardBlocked:false,transportBlocked:false});}return id;
   }
   function allocate(selected,activation,reference,type,heap,alternative=''){
     const value=emptyRegionValue();if(!selected)return value;
@@ -94,10 +94,11 @@ export function commonRegions(spend){
       result.set(id,next);check(queue.length<=65536,'limit');
     }return result;
   }
-  function escape(value,heap){
+  function escape(value,heap,coveredTransport=false){
     const selected=reachable([value],heap);spend(weight(value)+selected.size);const all=new Set(value.roots);
     for(const id of selected.keys())all.add(id);
-    for(const id of all){spend();const node=nodes.get(id);if(node)scopes.get(node.scope).blocked=true;}
+    for(const id of all){spend();const node=nodes.get(id);if(node){const scope=scopes.get(node.scope);scope.blocked=true;
+      scope.hardBlocked ||= !coveredTransport;scope.transportBlocked ||= coveredTransport;}}
   }
   function age(value,selected){
     spend(weight(value));let old=false;for(const id of value.roots){spend();if(nodes.get(id)?.scope===selected)old=true;}
@@ -119,8 +120,9 @@ export function commonRegions(spend){
       if(!found)result.opaque=true;
     }return result;
   }
-  function holds(value,heap,span,owner,selected,types){
-    if(!selected||scopes.get(selected)?.blocked!==false||value.opaque)return false;
+  function holds(value,heap,span,owner,selected,types,coveredTransport=false){
+    const scope=scopes.get(selected),allowed=scope&&(scope.blocked===false||coveredTransport&&scope.hardBlocked===false&&scope.transportBlocked===true);
+    if(!selected||!allowed||value.opaque)return false;
     const graph=reachable([value],heap),owned=new Map(),groups=new Map();
     for(const [id,slots]of graph){
       spend();const node=nodes.get(id),kind=types.get(node?.type)?.kind,isEnv=node?.type.startsWith('env:'),fields=[];
@@ -158,6 +160,25 @@ export function commonRegions(spend){
         for(const child of field.roots){spend(active.size+storage.length+1);check(pending.length<65536&&storage.length<128,'limit');pending.push({id:child,storage,active});}}
     }
     return found;
+  }
+  function readonlyHolds(value,heap,span,owner,selected,types,environments){
+    // This is a return-point owning fact, not an older payload heap. It cannot
+    // repair any opaque/missing field or identify two instances of a family.
+    if(value.opaque||value.empty||!value.roots.size)return false;
+    const graph=reachable([value],heap);
+    for(const [id,slots]of graph){
+      spend();const node=nodes.get(id);if(!node||node.scope!==selected)return false;
+      if(node.type.startsWith('env:')){
+        const layout=environments.get(node.type.slice(4));if(!layout)return false;
+        for(const slot of layout.slots){spend();if(slot.writable!==false||!slots.has('slot/'+slot.key))return false;}
+        if(layout.parent&&!slots.has('parent'))return false;
+      }else if(types.get(node.type)?.kind==='array'){
+        if(types.get(types.get(node.type).elementType)?.kind!=='scalar')return false;
+        for(const stored of slots.values()){spend(weight(stored));if(stored.opaque||stored.roots.size)return false;}
+      }else if(types.get(node.type)?.kind!=='readSpan')return false;
+      for(const stored of slots.values()){spend();if(stored.opaque)return false;}
+    }
+    return holds(value,heap,span,owner,selected,types,true);
   }
   function prepare(plans){
     for(const plan of plans){
@@ -215,14 +236,14 @@ export function commonRegions(spend){
     let selected=null;for(const loop of layouts.get(fn)?.loops.values()??[]){spend();if(loop.members.has(block)&&(!selected||loop.members.size<selected.members.size))selected=loop;}
     return selected;
   }
-  function observe(value,heap){if(value.opaque&&value.roots.size)escape(value,heap);}
+  function observe(value,heap){if(value.opaque&&value.roots.size)escape(value,heap,true);}
   function feedback(context,from,to,state,witness=false){
     const layout=layouts.get(context.plan.owner.id),headers=layout?.cuts.get(from)?.get(to);if(!headers)return;
     const selected=[];for(const [id,row]of scopes){spend();for(const header of headers){spend();if(row.region===context.id+'/'+header)selected.push(id);}}
     for(const selectedScope of selected){
       for(const name of layout.demand.get(to)){spend();const value=state.values.get(name);if(!value)continue;
-        if(age(value.region,selectedScope)&&witness)escape(value.region,state.regions);
-        for(const cell of value.cells){spend();const stored=state.heap.get(cell)?.region;if(stored&&age(stored,selectedScope)&&witness)escape(stored,state.regions);}}
+        if(age(value.region,selectedScope)&&witness)escape(value.region,state.regions,true);
+        for(const cell of value.cells){spend();const stored=state.heap.get(cell)?.region;if(stored&&age(stored,selectedScope)&&witness)escape(stored,state.regions,true);}}
       for(const value of state.values.values())age(value.region,selectedScope);
       for(const value of state.heap.values())age(value.region,selectedScope);
       spend(state.regions.size);
@@ -230,5 +251,5 @@ export function commonRegions(spend){
     }
   }
   return {nodes,scopes,layouts,weight,copy,merge,key,heapCopy,heapJoin,heapKey,scope,allocate,load,store,reachable,escape,age,closed,number,
-    prepare,loopAt,observe,feedback,select,elements,holds};
+    prepare,loopAt,observe,feedback,select,elements,holds,readonlyHolds};
 }

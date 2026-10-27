@@ -13,9 +13,9 @@ struct BorrowTrace::Impl {
   struct Location {const Function *fn;SourceAnchor range;};
   struct Definition {Id point;std::string span;Evidence owner;};
   struct Call {Id point;std::string caller,callee;const Operation *op;};
-  struct Boundary {Evidence owner;std::set<std::string> targets,existing,arguments,regions;bool conservative=false,escaping=false,unconfined=false;};
+  struct Boundary {Evidence owner;std::set<std::string> targets,existing,arguments,regions;bool conservative=false,escaping=false,unconfined=false,hard=false;};
   struct Barrier {Id point;Evidence owner;std::set<std::string> eligible;};
-  struct Return {Id point;std::string context,span;Evidence owner;bool managed;std::shared_ptr<ReturnOwnership> ownership;std::set<std::string> storage;std::shared_ptr<RegionHolding> region;};
+  struct Return {Id point;std::string context,span;Evidence owner;bool managed;std::shared_ptr<ReturnOwnership> ownership;std::set<std::string> storage;std::shared_ptr<RegionHolding> region;bool closed=false;};
   using Origin=std::pair<std::string,std::string>;
   std::map<std::tuple<std::string,size_t,size_t>,Id> points;
   std::map<std::string,Id> entries;
@@ -226,7 +226,8 @@ struct BorrowTrace::Impl {
     }
     if(!context.region.empty()){
       auto holding=std::make_shared<RegionHolding>(c,context.region,regionValue(c,value),state.regions);
-      for(size_t i=firstReturn;i<returns.size();++i){if(!step())return;returns[i].region=holding;}
+      const bool closed=normal&&!context.root&&readonlyReturnTargets(c,context,value);
+      for(size_t i=firstReturn;i<returns.size();++i){if(!step())return;returns[i].region=holding;returns[i].closed=closed;}
     }
   }
   void origin(const ActualContext &context,const std::string &ref,std::map<std::string,std::set<Origin>> &out){
@@ -271,6 +272,7 @@ struct BorrowTrace::Impl {
     for(const auto &id:targets){
       if(!step()||!c.need(c.p.fixedEffects.count(id)&&c.sourceFunctions.count(id),"borrow call fixed effects missing"))return;
       boundary.targets.insert(id);
+      boundary.hard|=!readonlyCall(c,id);
       const auto &upper=c.p.fixedEffects.at(id);const auto hidden=op.name=="invoke"&&!field(*c.sourceFunctions.at(id),"lexicalEnvironment").getAsNull();
       for(size_t i=0;i<upper.parameters.size();++i){if(!step())return;if(!upper.parameters[i].structural)continue;
         if(i+offset+hidden<args.size())merge(boundary.owner,arrays(args[i+offset+hidden],heap));else boundary.owner.pending=true;
@@ -301,6 +303,7 @@ struct BorrowTrace::Impl {
       if(!step(node->second.region.size()/64+1))return;bound.regions.insert(node->second.region);
     }
     for(const auto &arg:args){
+      bound.hard|=arg.unknown||arg.callableTop;
       for(const auto &[span,owner]:contained(arg,state.heap)){if(!step())return;bound.arguments.insert(span);}
       bound.escaping|=!contained(arg,state.heap,true,Scan::Escape).empty();
     }
@@ -312,20 +315,23 @@ struct BorrowTrace::Impl {
       if(!step()||!existing(value))return;if(!llvm::StringRef(slot).ends_with("/owner"))continue;
       const auto ref=slot.substr(0,slot.size()-6);if(c.objects.count(ref)&&kind(ref)=="readSpan")bound.existing.insert(ref);
     }
+    if(bound.hard||bound.conservative){for(const auto &[reg,value]:state.values)regionHardEscape(c,value,state.heap);for(const auto &arg:args)regionHardEscape(c,arg,state.heap);}
   }
   bool orderCalls(){
     for(const auto &[at,bound]:boundaries){
       if(!step())return false;bool complete=!bound.conservative&&!bound.targets.empty();auto actual=connectedTargets.find(at);
       for(const auto &target:bound.targets){if(!step())return false;complete&=actual!=connectedTargets.end()&&actual->second.count(target);}
+      const bool hard=bound.hard||!complete;
+      if(hard)for(const auto &id:bound.regions){if(!step())return false;auto scope=c.regions.scopes.find(id);if(scope!=c.regions.scopes.end()){scope->second.blocked=true;scope->second.hard=true;}}
       if(!bound.regions.empty()&&bound.unconfined)complete=false;
       if(complete){orderedCalls.insert(at);continue;}
       // Region lifetime is conditional on the complete fixed implementation
       // set, including creator calls with no incoming borrowed argument.
-      for(const auto &id:bound.regions){if(!step())return false;auto scope=c.regions.scopes.find(id);if(scope!=c.regions.scopes.end())scope->second.blocked=true;}
+      for(const auto &id:bound.regions){if(!step())return false;auto scope=c.regions.scopes.find(id);if(scope!=c.regions.scopes.end()){scope->second.blocked=true;scope->second.hard|=hard;}}
       // A missing allowed implementation is never permission to narrow the
       // fixed table. Unknown/incomplete calls retain entry use/effect/escape.
       effect(at,bound.owner);if(!step(bound.arguments.size()))return false;uses[at].insert(bound.arguments.begin(),bound.arguments.end());
-      if(bound.escaping)lifetime=locations.at(at);
+      if(bound.escaping&&hard)lifetime=locations.at(at);
     }return c.e.message.empty();
   }
 };
@@ -360,8 +366,13 @@ bool BorrowTrace::before(const ActualContext &context,const Operation &op,size_t
   if(invocation(op))b.boundary(context,op,at,args,state);
   if(op.name=="func.return"||op.name=="return_throw")for(const auto &arg:args){b.observe(at,arg,state.heap);b.returned(context,at,arg,state,op.name=="func.return");}
   if(op.name=="global_store"&&!args.empty())b.store(context,at,{},args[0],state.heap,true);
+  if(op.name=="global_store"&&!args.empty())regionHardEscape(b.c,args[0],state.heap);
   if((op.name=="field_store"||op.name=="env_store"||op.name=="env_init")&&args.size()>1)b.store(context,at,args[0],args[1],state.heap);
   if(op.name=="array_store"&&args.size()>2)b.store(context,at,args[0],args[2],state.heap);
+  if((op.name=="field_store"||op.name=="env_store"||op.name=="env_init"||op.name=="array_store")&&args.size()>1){
+    const auto receiver=regionValue(b.c,args[0]),value=regionValue(b.c,args.back());
+    if(receiver.opaque||receiver.empty||receiver.roots.empty()||value.opaque)regionHardEscape(b.c,args.back(),state.heap);
+  }
   if((op.name=="array_resize"||op.name=="array_store")&&args.size()>1){
     for(const auto &ref:args[0].objects){
       if(!b.step())return false;auto length=state.heap.find(ref+"/length");bool unchanged=false;
@@ -418,7 +429,7 @@ bool BorrowTrace::solve(){
     if(result.owner.pending)return b.fail("ReadSpan owner or escaping storage lifetime is unproved",b.locations.at(result.point));
     const auto owning=result.ownership->solve([&](const std::string &ref){return b.uniqueOrigin(ref,result.context,b.environmentOrigins)!=nullptr;},result.span);
     for(const auto &owner:result.owner.alternatives){if(!b.step())return false;
-      if(!incoming.count(owner)&&!owning.count(owner)&&!b.retained(result,owner)&&!(result.region&&result.region->holds()))return b.fail("ReadSpan owner or escaping storage lifetime is unproved",b.locations.at(result.point));
+      if(!incoming.count(owner)&&!owning.count(owner)&&!b.retained(result,owner)&&!(result.region&&(result.region->holds()||result.closed&&result.region->readonlyReturn())))return b.fail("ReadSpan owner or escaping storage lifetime is unproved",b.locations.at(result.point));
     }
   }
   for(const auto &call:b.calls){
@@ -466,7 +477,7 @@ bool BorrowTrace::solve(){
 bool verifyCommonBorrows(ActualCheck &check){
   BorrowTrace trace(check);check.borrowTrace=&trace;bool changed=false,ok=true;const auto size=check.contexts.size();
   for(auto it=check.contexts.begin();it!=check.contexts.end();++it)if(!check.step()||!check.execute(it->second,false,changed)){ok=false;break;}
-  check.borrowTrace=nullptr;if(!ok||!check.need(!changed&&size==check.contexts.size(),"borrow observation changed the solved actual contexts"))return false;
+  check.borrowTrace=nullptr;if(!ok||!check.need(!changed&&!check.weakChanged&&!check.scheduling&&size==check.contexts.size(),"borrow observation changed the solved actual contexts"))return false;
   return trace.solve();
 }
 } // namespace tsfg::commonProgram

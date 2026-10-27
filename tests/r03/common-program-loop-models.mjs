@@ -4,7 +4,7 @@ import {boolTypeId,i32TypeId,scalarTypeIds,sha256} from '../../compiler/identity
 import {createCommonGraph} from '../../compiler/common-program-plan.mjs';
 import {ownedEnvironmentModel} from './common-program-owned-environment-models.mjs';
 
-const modes=new Set(['held','two','replaced','descriptor-only','old-cell','old-field',
+const modes=new Set(['held','two','replaced','descriptor-only','old-cell','old-cell-after-new','old-field',
   'live-break','dead-break','unconnected-pure','unconnected-host','recursive','host']);
 export function loopFactoryModel(mode='held'){
   if(!modes.has(mode))throw new TypeError('unknown loop model');
@@ -78,7 +78,7 @@ export function loopFactoryModel(mode='held'){
   };
   let initial=null,outer=null,field=null,current=root.entry;
   if(mode.startsWith('old-')||breaking){const created=create(current);initial=created.value;current=created.block;}
-  if(mode==='old-cell'){
+  if(mode==='old-cell'||mode==='old-cell-after-new'){
     const binding='loopConsumer/saved';model.bindings.set(binding,{id:binding,type:callable,role:'local'});
     outer=emit(root,current,'cell',[],'cell:'+callable,{binding});
     emit(root,current,'store',[outer,initial],null,{binding});
@@ -97,9 +97,10 @@ export function loopFactoryModel(mode='held'){
   current=body;
   if(outer){
     oldLoad=emit(root,current,field?'field_load':'load',[outer],callable,field?{field:field.id}:{});
-    current=consume(current,oldLoad).block;
+    if(mode!=='old-cell-after-new')current=consume(current,oldLoad).block;
   }
   const first=create(current);current=first.block;
+  if(mode==='old-cell-after-new')current=consume(current,oldLoad).block;
   let second=null;if(mode==='two'){second=create(current);current=second.block;}
   if(outer)emit(root,current,field?'field_store':'store',[outer,first.value],null,field?{field:field.id,initialize:false}:{binding:'loopConsumer/saved'});
   current=consume(current,first.value).block;

@@ -70,7 +70,8 @@ ActualValue ActualCheck::declared(const std::string &id,ActualHeap &heap,const s
   if(llvm::StringRef(id).starts_with("env:")){
     const auto layout=id.substr(4);if(!need(environments.count(layout),"entry environment layout not owned"))return {};
     out.tags.insert(id);const auto ref=origin+"/"+id;out.objects.insert(ref);if(active.count(ref))return out;
-    if(!step(active.size()+1))return {};active.insert(ref);objects[ref]={id,true};const auto &environment=*environments.at(layout);
+    if(!step(active.size()+1))return {};active.insert(ref);if(objects.count(ref)&&!objects.at(ref).weak)weakChanged=true;
+    objects[ref]={id,true};const auto &environment=*environments.at(layout);
     const auto parent=string(field(environment,"parent"));if(!parent.empty()){
       if(!step(active.size()+1))return {};heap[ref+"/parent"]=declared("env:"+parent,heap,origin,active);
     }
@@ -87,7 +88,8 @@ ActualValue ActualCheck::declared(const std::string &id,ActualHeap &heap,const s
   out.tags.insert(id);if(kind=="function"){out.callableTop=true;return out;}if(kind=="scalar"&&string(field(t,"name"))=="bool")out.truth=3;
   if(kind!="reference"&&kind!="value"&&kind!="array"&&kind!="readSpan")return out;
   const auto ref=origin+"/"+id;out.objects.insert(ref);
-  if(active.count(ref))return out;if(!step(active.size()+1))return {};active.insert(ref);objects[ref]={id,true};
+  if(active.count(ref))return out;if(!step(active.size()+1))return {};active.insert(ref);
+  if(objects.count(ref)&&!objects.at(ref).weak)weakChanged=true;objects[ref]={id,true};
   if(kind=="reference"||kind=="value")for(const auto *f:allFields(id)){
     const auto slot=ref+"/field/"+string(field(*f,"id"));if(heap.count(slot))continue;
     if(!step(active.size()+1))return {};auto child=declared(string(field(*f,"type")),heap,origin,active);

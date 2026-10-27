@@ -2,6 +2,7 @@
 #pragma once
 #include "common-program-source.h"
 #include "common-program-regions.h"
+#include <deque>
 #include <optional>
 namespace tsfg::commonProgram {
 class BorrowTrace;
@@ -24,6 +25,7 @@ struct ActualContext {
   // Physical invocation provenance excludes arguments and abstract heap state.
   std::string activation;bool repeated=true;
   std::string region;RegionHeap entryRegions,normalRegions,languageRegions;
+  std::set<std::string> callers;
 };
 // This state is rebuilt from the normalized instructions. No Node context,
 // allocation summary, representation row or asserted proof fills these maps.
@@ -40,6 +42,8 @@ struct ActualCheck {
   std::map<std::string,ActualValue> fieldSeeds,elementSeeds,globalSeeds,storageCapacity,registerCapacity,resultCapacity;
   std::map<std::string,std::string> views;
   std::map<std::string,ActualContext> contexts;
+  std::deque<std::string> pendingContexts;std::set<std::string> queuedContexts;
+  bool scheduling=false,weakChanged=false;
   std::set<std::string> repeatingFunctions,repeatingBlocks;
   std::set<std::string> cyclicFunctions;
   std::map<const Operation *,std::string> callSites;
@@ -77,6 +81,7 @@ struct ActualCheck {
   std::string callActivation(const ActualContext &,const Operation &,size_t,const std::string &,bool &);
   ActualContext *context(const std::string &,const std::vector<ActualValue> &,const ActualHeap &,bool,bool &,const std::string &activation={},bool repeated=true,const RegionHeap *versions=nullptr,const std::string &region={});
   bool execute(ActualContext &,bool,bool &);
+  bool schedule(const std::string &);
   bool instruction(ActualContext &,const Operation &,size_t,ActualState &,bool,bool &,
     const std::function<bool(uint16_t,const ActualState &,const std::vector<ActualValue> &)> &,bool &);
 };

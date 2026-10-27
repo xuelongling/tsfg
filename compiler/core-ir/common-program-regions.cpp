@@ -173,11 +173,25 @@ RegionHeap regionReachable(ActualCheck &c,const std::vector<ActualValue> &args,c
     auto &slots=out[root];for(const auto &[slot,v]:node->second){if(!c.step(slot.size()/64+regionWeight(v)))return {};slots.emplace(slot,v);pending.insert(pending.end(),v.roots.begin(),v.roots.end());}
   }return out;
 }
-void regionEscape(ActualCheck &c,const RegionValue &value,const RegionHeap &heap){
+void regionEscape(ActualCheck &c,const RegionValue &value,const RegionHeap &heap,bool hard){
   std::vector<std::string> pending;if(!c.step(regionWeight(value)))return;pending.assign(value.roots.begin(),value.roots.end());std::set<std::string> seen;
   for(size_t i=0;i<pending.size();++i){if(!c.step())return;const auto &root=pending[i];if(!seen.insert(root).second)continue;auto node=c.regions.nodes.find(root);
-    if(node==c.regions.nodes.end())continue;auto scope=c.regions.scopes.find(node->second.region);if(scope!=c.regions.scopes.end())scope->second.blocked=true;
+    if(node==c.regions.nodes.end())continue;auto scope=c.regions.scopes.find(node->second.region);if(scope!=c.regions.scopes.end()){scope->second.blocked=true;scope->second.hard|=hard;}
     auto slots=heap.find(root);if(slots!=heap.end())for(const auto &[slot,v]:slots->second){if(!c.step(regionWeight(v)))return;pending.insert(pending.end(),v.roots.begin(),v.roots.end());}
+  }
+}
+void regionHardEscape(ActualCheck &c,const ActualValue &value,const ActualHeap &heap){
+  // An aged raw alias still identifies an affected birth family. This scan
+  // invalidates return obligations only; it restores no current roots/heap.
+  if(!c.step())return;std::vector<const ActualValue *> pending{&value};std::set<std::string> seen;
+  for(size_t i=0;i<pending.size();++i){const auto &v=*pending[i];if(!c.step(v.objects.size()+v.cells.size()+v.callables.size()+1))return;
+    for(const auto *refs:{&v.objects,&v.cells})for(const auto &ref:*refs)if(!c.step(ref.size()/64+1))return;
+    for(const auto &[code,env]:v.callables)if(!c.step(env.size()/64+1))return;
+    std::set<std::string> refs=v.objects;refs.insert(v.cells.begin(),v.cells.end());for(const auto &[code,env]:v.callables)if(!env.empty())refs.insert(env);
+    for(const auto &ref:refs){if(!c.step(2*(ref.size()/64+1)))return;if(!seen.insert(ref).second)continue;const auto prefix=ref+"/";
+      for(const auto &[id,node]:c.regions.nodes){if(!c.step((node.reference.size()+ref.size())/64+1))return;if(node.reference==ref){auto scope=c.regions.scopes.find(node.region);if(scope!=c.regions.scopes.end()){scope->second.blocked=true;scope->second.hard=true;}}}
+      for(const auto &[slot,child]:heap){if(!c.step((slot.size()+prefix.size())/64+1))return;if(slot==ref||llvm::StringRef(slot).starts_with(prefix))pending.push_back(&child);}
+    }
   }
 }
 bool regionEdge(ActualCheck &c,const ActualContext &context,uint16_t from,uint16_t to,ActualState &state){
@@ -187,11 +201,11 @@ bool regionEdge(ActualCheck &c,const ActualContext &context,uint16_t from,uint16
   // demanded by the continuation can export a current value through this cut.
   const auto &live=c.regions.live.at(context.function->id)[to];if(!c.step(live.size()))return false;
   for(auto reg:live){if(!c.step())return false;auto value=state.values.find(reg);if(value==state.values.end())continue;
-    regionEscape(c,regionValue(c,value->second),state.regions);
+    regionEscape(c,regionValue(c,value->second),state.regions,false);
     auto root=c.copy(value->second);if(!c.e.message.empty())return false;
     std::vector<ActualValue> roots;roots.push_back(std::move(root));
-    auto reached=c.reachable(roots,state.heap);for(const auto &[slot,child]:reached){if(!c.step())return false;regionEscape(c,regionValue(c,child),state.regions);}
-    for(const auto &cell:value->second.cells){if(!c.step())return false;auto stored=state.heap.find(cell);if(stored!=state.heap.end())regionEscape(c,regionValue(c,stored->second),state.regions);}
+    auto reached=c.reachable(roots,state.heap);for(const auto &[slot,child]:reached){if(!c.step())return false;regionEscape(c,regionValue(c,child),state.regions,false);}
+    for(const auto &cell:value->second.cells){if(!c.step())return false;auto stored=state.heap.find(cell);if(stored!=state.heap.end())regionEscape(c,regionValue(c,stored->second),state.regions,false);}
   }
   for(const auto &[slot,v]:state.heap){if(!c.step())return false;if(llvm::StringRef(slot).starts_with("global:"))regionEscape(c,regionValue(c,v),state.regions);}
   // Feedback and natural-loop exit cuts age only the finite relation facet.
@@ -206,7 +220,7 @@ bool regionEdge(ActualCheck &c,const ActualContext &context,uint16_t from,uint16
 }
 bool regionObserveReturn(ActualCheck &c,const ActualContext &context,const ActualValue &value,const RegionHeap &heap){
   const auto v=regionValue(c,value);for(const auto &root:v.roots){if(!c.step())return false;auto node=c.regions.nodes.find(root);
-    if(node!=c.regions.nodes.end()&&context.region!=node->second.region)regionEscape(c,v,heap);
+    if(node!=c.regions.nodes.end()&&context.region!=node->second.region)regionEscape(c,v,heap,context.root);
   }return c.e.message.empty();
 }
 } // namespace tsfg::commonProgram

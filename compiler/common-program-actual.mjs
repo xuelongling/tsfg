@@ -8,7 +8,7 @@ import {commonAbstract} from './common-program-abstract.mjs';
 import {commonCheck as check} from './common-program-common.mjs';
 import {commonEntryReferences} from './common-program-entry.mjs';
 import {commonMethods} from './common-program-methods.mjs';
-import {commonBorrowObservations} from './common-program-borrow-observations.mjs';
+import {commonBorrowObservations,commonReadonlyReader} from './common-program-borrow-observations.mjs';
 import {commonRegions,emptyRegionValue} from './common-program-regions.mjs';
 const undefinedId=sha256('tsfg.type\0undefined');
 export function analyzeCommonGraphs({model,plans},records=null) {
@@ -91,6 +91,15 @@ export function analyzeCommonGraphs({model,plans},records=null) {
       if(plan.owner.lexicalParent)continue;
       const heap=new Map();currentGlobals(heap);const args=plan.parameters.map(parameter=>entryValue(plan,parameter,heap));
       context(plan.owner.id,args,heap,true);
+    }
+    function readonlyTarget(target){
+      spend();return !bounded&&regions.layouts.get(target)?.acyclic===true&&!cyclicFunctions.has(target)&&!uncertainFunctions.has(target);
+    }
+    function readonlyTransport(c,target,targets,selected){
+      if(!readonlyTarget(target)||uncertainFunctions.has(c.plan.owner.id))return false;
+      spend(selected.length);const actual=new Set(selected);
+      for(const id of targets){spend();if(!actual.has(id)||!readonlyTarget(id)||!commonReadonlyReader(records?.get(id)?.upper,spend))return false;}
+      return true;
     }
     function callRegion(c,block,activation,target,passed,targets,selected){
       if(bounded||!regions.layouts.get(target)?.acyclic||cyclicFunctions.has(target)||uncertainFunctions.has(target)||uncertainFunctions.has(c.plan.owner.id))return '';
@@ -259,7 +268,8 @@ export function analyzeCommonGraphs({model,plans},records=null) {
                 const fixed=indirect?p.targets.functions.map(x=>x.function_id):method?p.dispatch.map(x=>x.target):[p.function_id],regionScope=callRegion(c,block.name,activation,row.target,passed,fixed,selected.map(x=>x.target));
                 let entryVersions=state.regions;
                 if(!regionScope){spend(passed.length);let carried=false;for(const input of passed)carried ||= input.region.roots.size>0;
-                  if(carried){passed=passed.map(a.copy);for(const input of passed){spend();if(input.region.roots.size){if(observer)regions.escape(input.region,state.regions);input.region.opaque=true;}}entryVersions=new Map();}}
+                  if(carried){spend(selected.length);const covered=readonlyTransport(c,row.target,fixed,selected.map(x=>x.target));
+                    passed=passed.map(a.copy);for(const input of passed){spend();if(input.region.roots.size){if(observer)regions.escape(input.region,state.regions,covered);input.region.opaque=true;}}entryVersions=new Map();}}
                 const call=context(row.target,passed,state.heap,false,activation,repeated,activationSize,regionScope,entryVersions),key=fn+'/'+op.range.start+':'+op.range.end,targets=callTargets.get(key)??new Set();targets.add(row.target);callTargets.set(key,targets);
                 spend();call.callers.add(c.id);
                 spend(call.createdRegions.size);for(const id of call.createdRegions)c.createdRegions.add(id);
@@ -293,7 +303,7 @@ export function analyzeCommonGraphs({model,plans},records=null) {
     }
     changed=false;invalidateWeak=false;
     let borrows=null;
-    if(!bounded&&records){const observer=commonBorrowObservations({model,records,objects,regions,readEnvironmentSlot:(selected,start,target,key,heap)=>a.environmentSlot(selected,start,target,key,heap,objects)});
+    if(!bounded&&records){const observer=commonBorrowObservations({model,records,objects,regions,readonlyTarget,readEnvironmentSlot:(selected,start,target,key,heap)=>a.environmentSlot(selected,start,target,key,heap,objects)});
       for(const c of contexts.values())execute(c,observer);check(!changed&&!invalidateWeak,'ssa','final actual observation changed the fixed point');borrows=observer.finish();}
     return {contexts,observed,objects,operations,callTargets,borrows,regions};
   }

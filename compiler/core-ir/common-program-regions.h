@@ -17,7 +17,7 @@ struct RegionValue {
 };
 using RegionHeap=std::map<std::string,std::map<std::string,RegionValue>>;
 struct RegionNode {std::string region,reference,type;};
-struct RegionScope {std::string function,activation;bool blocked=false;};
+struct RegionScope {std::string function,activation;bool blocked=false,hard=false;};
 struct RegionDomain {
   std::map<std::string,RegionNode> nodes;
   std::map<std::string,RegionScope> scopes;
@@ -40,6 +40,7 @@ RegionValue regionLoad(ActualCheck &,const RegionValue &,const std::string &,con
 bool regionStore(ActualCheck &,const RegionValue &,const std::string &,const RegionValue &,RegionHeap &);
 RegionHeap regionReachable(ActualCheck &,const std::vector<ActualValue> &,const RegionHeap &);
 bool regionEdge(ActualCheck &,const ActualContext &,uint16_t,uint16_t,ActualState &);
-void regionEscape(ActualCheck &,const RegionValue &,const RegionHeap &);
+void regionEscape(ActualCheck &,const RegionValue &,const RegionHeap &,bool hard=true);
+void regionHardEscape(ActualCheck &,const ActualValue &,const std::map<std::string,ActualValue> &);
 bool regionObserveReturn(ActualCheck &,const ActualContext &,const ActualValue &,const RegionHeap &);
 } // namespace tsfg::commonProgram

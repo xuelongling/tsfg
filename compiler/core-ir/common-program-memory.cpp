@@ -38,6 +38,7 @@ ActualValue ActualCheck::valueCopy(const ActualValue &source,ActualState &state,
     const auto found=active.find(ref);const auto target=found==active.end()?origin+"/"+object.type:found->second;value.objects.insert(target);
     if(found!=active.end())continue;const auto old=objects.find(target);
     const bool summarized=weak||object.weak||alternatives.at(object.type)>1||(old!=objects.end()&&old->second.weak);
+    if(old!=objects.end()&&!old->second.weak&&summarized)weakChanged=true;
     if(!step(active.size()+1))return {};auto nested=active;nested.emplace(ref,target);objects[target]={object.type,summarized};
     for(const auto *f:allFields(object.type)){
       if(!step())return {};const auto id=string(field(*f,"id"));auto stored=state.heap.find(ref+"/field/"+id);
@@ -63,7 +64,8 @@ std::string ActualCheck::allocate(const ActualContext &context,const Operation &
   auto ref=allocationSite(context,kind,op.result);if(!e.message.empty()||!step())return {};
   auto found=objects.find(ref);const bool weak=repeatedAllocation(context,block);
   if(found==objects.end())objects.emplace(ref,ActualObject{type,weak});
-  else{if(!need(found->second.type==type,"allocation site changed its actual type"))return {};found->second.weak|=weak;}
+  else{if(!need(found->second.type==type,"allocation site changed its actual type"))return {};
+    if(!found->second.weak&&weak)weakChanged=true;found->second.weak|=weak;}
   return ref;
 }
 std::string ActualCheck::callActivation(const ActualContext &context,const Operation &op,size_t block,const std::string &target,bool &repeated){
@@ -96,7 +98,14 @@ ActualContext *ActualCheck::context(const std::string &target,const std::vector<
   if(!need(contexts.size()<4096,"actual call-context bound exceeded"))return nullptr;
   ActualContext c;c.id=id;c.function=functions.at(target);c.root=root;c.called=!root;c.entry=std::move(entry);c.activation=physical;c.repeated=repeated;
   c.region=region;c.entryRegions=std::move(current);
-  for(const auto &v:args)c.arguments.push_back(copy(v));auto inserted=contexts.emplace(id,std::move(c));changed=true;return &inserted.first->second;
+  for(const auto &v:args)c.arguments.push_back(copy(v));auto inserted=contexts.emplace(id,std::move(c));changed=true;
+  if(!schedule(id))return nullptr;return &inserted.first->second;
+}
+bool ActualCheck::schedule(const std::string &id){
+  if(!scheduling)return true;if(!step(id.size()/64+1))return false;
+  if(queuedContexts.count(id))return true;
+  if(!need(pendingContexts.size()<4096,"actual worklist bound exceeded")||!step(2*(id.size()/64+1)))return false;
+  queuedContexts.insert(id);pendingContexts.push_back(id);return true;
 }
 bool ActualCheck::execute(ActualContext &context,bool conditional,bool &changed){
   const auto &fn=*context.function;ActualState entry;
@@ -139,6 +148,9 @@ bool ActualCheck::execute(ActualContext &context,bool conditional,bool &changed)
   }return e.message.empty();
 }
 bool ActualCheck::solve(bool conditional){
+  if(!step(pendingContexts.size()+queuedContexts.size()))return false;
+  scheduling=!conditional;weakChanged=false;pendingContexts.clear();queuedContexts.clear();
+  struct SchedulingGuard{ActualCheck &c;~SchedulingGuard(){c.scheduling=false;}} schedulingGuard{*this};
   contexts.clear();objects.clear();
   regions.nodes.clear();regions.scopes.clear();
   if(conditional){
@@ -159,13 +171,26 @@ bool ActualCheck::solve(bool conditional){
     std::vector<ActualValue> args;for(size_t i=0;i<fn->blocks[0].parameters.size();++i)args.push_back(entryValue(*fn,i,heap,conditional,changed));
     if(!context(id,args,heap,true,changed))return false;
   }
-  do{
-    changed=false;
-    for(auto it=contexts.begin();it!=contexts.end();++it)if(!step()||!execute(it->second,conditional,changed))return false;
-  }while(changed);
+  if(conditional){
+    do{
+      changed=false;
+      for(auto it=contexts.begin();it!=contexts.end();++it)if(!step()||!execute(it->second,true,changed))return false;
+    }while(changed);
+  }else while(!pendingContexts.empty()){
+    if(!step())return false;auto id=std::move(pendingContexts.front());pendingContexts.pop_front();queuedContexts.erase(id);
+    auto &current=contexts.at(id);const bool trapped=current.requestTrap;changed=false;weakChanged=false;
+    if(!execute(current,false,changed))return false;
+    if(weakChanged){
+      // Physical weak promotion is shared across otherwise separate contexts.
+      // Revisit all strong puts; callee summaries alone cannot identify them.
+      for(const auto &[next,c]:contexts)if(!step()||!schedule(next))return false;
+    }else if(changed||current.requestTrap!=trapped){
+      for(const auto &caller:current.callers)if(!step()||!schedule(caller))return false;
+    }
+  }
   if(conditional){
     for(const auto &[id,c]:contexts)merge(resultCapacity[c.function->id],c.returned);
     for(const auto *seeds:{&fieldSeeds,&globalSeeds,&elementSeeds})for(const auto &[id,v]:*seeds)merge(storageCapacity[id],v);
-  }return e.message.empty();
+  }weakChanged=false;return e.message.empty();
 }
 } // namespace tsfg::commonProgram

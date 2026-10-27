@@ -163,7 +163,7 @@ bool ActualCheck::instruction(ActualContext &context,const Operation &op,size_t 
     const auto i32=typeId("i32"),undefined=typeId("undefined");
     if(!need(!args[0].unknown,"unknown actual numeric consumption is unsupported"))return false;
     for(const auto &tag:args[0].tags)if(!step()||!need(tag==i32||tag==undefined,"unsupported actual numeric consumption"))return false;
-    if(!conditional&&args[0].tags.count(undefined))context.requestTrap=true;
+    if(!conditional&&args[0].tags.count(undefined)&&!context.requestTrap){context.requestTrap=true;changed=true;}
     if(conditional||args[0].tags.count(i32)){
       auto selected=literal(i32);if(args[0].tags.size()==1)selected.number=args[0].number;if(!edge(op.successors[0],state,{selected}))return false;
     }continues=false;
@@ -196,6 +196,7 @@ bool ActualCheck::instruction(ActualContext &context,const Operation &op,size_t 
       if(!conditional&&active.empty())for(auto &arg:actual){if(!step(regionWeight(arg.region)))return false;
         if(!arg.region.roots.empty()){arg.region.roots.clear();arg.region.known=true;arg.region.opaque=true;}}
       auto *call=this->context(target,actual,state.heap,false,changed,activation,repeated,conditional||active.empty()?nullptr:&state.regions,active);if(!call)return false;
+      if(scheduling){if(!step(context.id.size()/64+1))return false;call->callers.insert(context.id);}
       if(borrowTrace&&!borrowTrace->call(context,op,block,*call))return false;
       if(call->normal&&!complete(op.successors[0],call->returned,call->normalHeap,call->normalRegions))return false;
       if(call->language&&!complete(op.successors[1],call->thrown,call->languageHeap,call->languageRegions))return false;return true;
