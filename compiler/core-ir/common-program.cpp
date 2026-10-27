@@ -14,7 +14,7 @@ public:
   static llvm::StringRef getDialectNamespace(){return "tsfg_program";}
   explicit ProgramDialect(mlir::MLIRContext *c):Dialect(getDialectNamespace(),c,mlir::TypeID::get<ProgramDialect>()){
     addTypes<CarrierType,CellType>();
-    addOperations<ConstantOp,FloatingOp,BooleanOp,StringOp,UndefinedOp,NullOp,CellOp,LoadOp,StoreOp,
+    addOperations<HostCallOp,ConstantOp,FloatingOp,BooleanOp,StringOp,UndefinedOp,NullOp,CellOp,LoadOp,StoreOp,
       GlobalLoadOp,GlobalStoreOp,AssertOp,ViewOp,ValueCopyOp,CarrierCastOp,UnaryOp,BinaryOp,EqualOp,
       NumericUseOp,FieldLoadOp,FieldStoreOp,ConstructValueOp,AllocateReferenceOp,ArrayCreateOp,
       ArrayReadOp,ArrayStoreOp,ArrayResizeOp,ArrayLengthOp,ReadSpanOp,ReadSpanLengthOp,PackOp,
@@ -78,7 +78,7 @@ bool readCore(mlir::ModuleOp module,Program &out,Error &error){
   out=std::move(p);return true;
 }
 bool verifyProgram(Program &p,Error &error){
-  p.remaining=std::min(p.remaining,size_t(1000000));p.layouts.clear();p.effects.clear();p.fixedEffects.clear();
+  p.remaining=std::min(p.remaining,size_t(1000000));p.hosts.clear();p.hostResources.clear();p.hostOrigins.clear();p.hostContractHash.clear();p.layouts.clear();p.effects.clear();p.fixedEffects.clear();
   if(!verifySource(p,error)||!verifyTypes(p,error))return false;
   ActualCheck check{p,error};
   return check.run()&&verifyCommonBorrows(check)&&verifyKernelProof(p,error);

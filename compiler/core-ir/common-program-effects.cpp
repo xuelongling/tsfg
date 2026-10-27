@@ -46,7 +46,8 @@ struct Derive {
   const Effects *consume(const std::string &id,const std::vector<Origins> &args){
     if(!step()||!ok(functions.count(id)&&upper.count(id),"complete fixed callee bound missing"))return nullptr;
     const auto &u=upper.at(id);out.calls.insert(id);
-    if(!step(u.reads.size()+u.writes.size()+u.parameters.size()+u.captures.size()))return nullptr;
+    if(!step(u.reads.size()+u.writes.size()+u.hostReads.size()+u.hostWrites.size()+u.parameters.size()+u.captures.size()))return nullptr;
+    out.hostReads.insert(u.hostReads.begin(),u.hostReads.end());out.hostWrites.insert(u.hostWrites.begin(),u.hostWrites.end());
     out.reads.insert(u.reads.begin(),u.reads.end());out.writes.insert(u.writes.begin(),u.writes.end());
     out.allocation|=u.allocation;out.managedReference|=u.managedReference;out.ehControl|=u.ehControl;
     out.await|=u.await;out.lock|=u.lock;out.escape|=u.escape;out.unknownHost|=u.unknownHost;
@@ -99,6 +100,10 @@ struct Derive {
       for(const auto &target:site->second.functions){if(!step())return result;
         if(auto *u=consume(target,args)){result.throwing|=u->mayThrow;if(reference(type))result.owners.insert("unknown:"+target);}
       }
+    }else if(kind=="hostCall"){
+      for(const auto &arg:items(field(v,"arguments")))visit(arg);if(!ok(p.hosts.count(string(field(v,"callee")))&&!p.hostContractHash.empty(),"verified Host context missing"))return result;
+      for(const auto &resource:p.hostResources){if(!step())return result;out.hostReads.insert(resource);out.hostWrites.insert(resource);}
+      const auto &range=field(v,"range");p.hostOrigins.try_emplace(string(field(fn,"id")),HostOrigin{string(field(fn,"sourcePath")),{uint32_t(field(range,"start").getAsInteger().value()),uint32_t(field(range,"end").getAsInteger().value())}});
     }else if(kind=="call"){
       std::vector<Origins> args;if(v.getAsObject()->get("receiver"))args.push_back(visit(field(v,"receiver")));
       for(const auto &a:items(field(v,"arguments")))args.push_back(visit(a));const auto fid=string(field(v,"callee"));
@@ -185,10 +190,11 @@ bool deriveEffects(Program &p,const Json &fn,const std::map<std::string,Effects>
   Derive derive{p,fn,upper,out,e};return derive.run();
 }
 Json writeEffects(const Effects &e){
+  Array hostReads,hostWrites;for(const auto &id:e.hostReads)hostReads.push_back(id);for(const auto &id:e.hostWrites)hostWrites.push_back(id);
   Array reads,writes,parameters,captures;for(const auto &id:e.reads)reads.push_back(id);for(const auto &id:e.writes)writes.push_back(id);
   for(const auto &[slot,access]:e.captures)captures.push_back(Object{{"slot",slot},{"read",access.read},{"write",access.write},{"structural",access.structural}});
   for(size_t i=0;i<e.parameters.size();++i){const auto &p=e.parameters[i];parameters.push_back(Object{{"index",int64_t(i)},{"read",p.read},{"write",p.write},{"structural",p.structural}});}
-  return Object{{"globals",Object{{"reads",std::move(reads)},{"writes",std::move(writes)}}},{"parameters",std::move(parameters)},{"captures",std::move(captures)},
+  return Object{{"hostResources",Object{{"reads",std::move(hostReads)},{"writes",std::move(hostWrites)}}},{"globals",Object{{"reads",std::move(reads)},{"writes",std::move(writes)}}},{"parameters",std::move(parameters)},{"captures",std::move(captures)},
     {"facets",Object{{"allocation",e.allocation},{"managedReference",e.managedReference},{"ehControl",e.ehControl},{"mayThrow",e.mayThrow},
       {"await",e.await},{"lock",e.lock},{"escape",e.escape},{"unknownHost",e.unknownHost}}}};
 }

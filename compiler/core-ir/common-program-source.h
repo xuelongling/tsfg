@@ -4,14 +4,15 @@
 #include <functional>
 namespace tsfg::commonProgram {
 using exception::field;using exception::items;using exception::string;
-inline constexpr llvm::StringLiteral sourceSchema="sha256:a8f649d600a0f57be48c60415e856b4849898f96f07ecdf443926c555d0642cf";
-inline constexpr llvm::StringLiteral hirSchema="sha256:9d8a0772f2111516b02a87bac1cff44b95b40ac6768bab4fb690e2b7275e91ee";
+inline constexpr llvm::StringLiteral sourceSchema="sha256:6f6af231a779d6c8e55a4d0acde8fa6e5af5d7c7c2f5b54e6aa5487b34bedb78";
+inline constexpr llvm::StringLiteral hirSchema="sha256:c669863a42e3a1e77962dfc58f46d7fca68c5fce09ef85c0678a51191d0d378c";
 // Private conversion state. Protocol IDs and semantic IDs never share a map.
 struct SourceModel {
   Program &p;Error &error;const Json &facts,&payload;
-  std::map<std::string,const Json *> types,functions,globals,sources,modules,aliases;
+  std::map<std::string,const Json *> types,functions,globals,sources,modules,aliases,hosts;
   std::map<std::string,std::string> labels,typeIds,functionIds,signatures,globalIds,fieldIds,constructionIds;
-  std::map<std::string,Json> shapes,declKeys;
+  std::map<std::string,Json> shapes,declKeys,ownedHosts;
+  std::map<std::string,std::string> hostIds,hostSignatures;
   std::set<std::string> active;
   explicit SourceModel(Program &p,Error &e):p(p),error(e),facts(field(p.hir,"snapshot")),payload(field(facts,"payload")){}
   bool need(bool condition,llvm::StringRef message){return condition||reject(error,"core-ir-common-source",message);}

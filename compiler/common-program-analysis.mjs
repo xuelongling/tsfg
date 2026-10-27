@@ -4,6 +4,7 @@
 import {verifyCommonProgramHir} from './common-program-hir.mjs';
 import {commonEffects,commonFacets} from './common-program-effects.mjs';
 import {validateCommonCallableBounds} from './common-program-targets.mjs';
+import {commonHostResources} from './common-program-hosts.mjs';
 import {commonIdentity} from './common-program-identities.mjs';
 import {commonProgramPhysical} from './common-program-physical.mjs';
 import {commonSortedSubset,commonCollections} from './common-program-budget.mjs';
@@ -28,6 +29,8 @@ export function commonProgramPublicationScope(hir,spend=commonMeter()) {
   const scopedTypes=[];spend(hir.types.length+hir.functions.length+hir.globals.length+hir.modules.length+hir.closure.roots.length+hir.closure.requiredRoots.length);
   for(const row of hir.types)if(seen.has(row.id))scopedTypes.push({id:row.id,label:row.semanticLabel,shape:row.semanticShape});
   return {profile:'common-program-fixed-v2',rootFile:hir.rootFile,
+    hostImports:hir.hostImports.map(({id,sourcePath,name,capabilityId,signatureHash,parameterTypes,returnType})=>{spend(parameterTypes.length+1);return {id,sourcePath,name,capabilityId,signatureHash,parameterTypes,returnType};}),
+    hostContext:hir.hostContext?{contractDigest:hir.hostContext.contract.digest,buildIdentityDigest:hir.hostContext.identity.buildIdentity.digest}:null,
     types:scopedTypes,
     functions:hir.functions.map(fn=>{spend(fn.parameters.length+1);const parameterTypes=fn.ownerType?[fn.ownerType]:[];for(const p of fn.parameters)parameterTypes.push(p.type);
       spend(fn.captures.length);const captures=fn.captures.map(row=>captureKeys.get(row.binding));captures.sort((a,b)=>{spend();return a<b?-1:a>b?1:0;});
@@ -62,7 +65,9 @@ function prepare(input,publication) {
   spend(hir.environments.length);for(const env of hir.environments){spend(env.slots.length);for(const slot of env.slots)slotByKey.set(slot.key,slot);}
   for(const [i,row]of publication.contracts.entries()) {
     spend();record(row,['functionId','signatureHash','upper','callables','digest']);const fn=hir.functions[i];
-    check(row.functionId===fn.id&&row.signatureHash===fn.signatureHash,'publication-identity');record(row.upper,['globals','parameters','facets','captures']);
+    check(row.functionId===fn.id&&row.signatureHash===fn.signatureHash,'publication-identity');record(row.upper,['globals','hostResources','parameters','facets','captures']);
+    record(row.upper.hostResources,['reads','writes']);
+    for(const key of ['reads','writes']){const selected=row.upper.hostResources[key],allowed=commonHostResources(hir.hostContext);check(Array.isArray(selected)&&selected.length<=allowed.length,'publication');spend(selected.length+allowed.length);check(sorted(selected)&&selected.every(id=>allowed.includes(id)),'publication-identity');}
     record(row.upper.globals,['reads','writes']);record(row.upper.facets,commonFacets);
     check(commonFacets.every(flag=>typeof row.upper.facets[flag]==='boolean'),'publication');
     for(const key of ['reads','writes']){const set=row.upper.globals[key];check(Array.isArray(set)&&set.length<=4096,'publication');spend(set.length);
@@ -87,6 +92,7 @@ function covers(upper,body,spend) {
   spend(commonFacets.length+body.parameters.length*flags.length);
   spend(upper.captures.length+body.captures.length*flags.length);const captures=new Map(upper.captures.map(row=>[row.slot,row]));
   return body.captures.every(row=>captures.has(row.slot)&&flags.every(flag=>!row[flag]||captures.get(row.slot)[flag]))&&commonSortedSubset(body.globals.reads,upper.globals.reads,spend)&&commonSortedSubset(body.globals.writes,upper.globals.writes,spend)
+    &&commonSortedSubset(body.hostResources.reads,upper.hostResources.reads,spend)&&commonSortedSubset(body.hostResources.writes,upper.hostResources.writes,spend)
     &&commonFacets.every(flag=>!body.facets[flag]||upper.facets[flag])
     &&body.parameters.every((row,index)=>flags.every(flag=>!row[flag]||upper.parameters[index][flag]));
 }
@@ -99,28 +105,32 @@ export function analyzeCommonProgram(input,publication) {
     spend();const current=effects.derive(fn,uppers),record=records.get(fn.id);
     check(covers(record.upper,current.upper,spend),'contract','current implementation exceeds fixed Published upper',
       {functionId:fn.id,primary:{sourceId:fn.sourcePath,...fn.range}});
-    functions.push({functionId:fn.id,derived:derived.get(fn.id),effective:current.upper,dependencies:dependencies(current.calls)});
+    functions.push({functionId:fn.id,derived:derived.get(fn.id),effective:current.upper,dependencies:dependencies(current.calls),hostCalls:current.hostCalls});
   }
   spend(hir.modules.length);const initializers=hir.modules.map(module=>{
     const fn={id:module.initializer,sourcePath:module.sourcePath,returnType:'void',parameters:[],bindings:[],body:module.initialization};
-    const current=effects.derive(fn,uppers);return {functionId:module.initializer,effective:current.upper,dependencies:dependencies(current.calls)};
+    const current=effects.derive(fn,uppers);return {functionId:module.initializer,effective:current.upper,dependencies:dependencies(current.calls),hostCalls:current.hostCalls};
   });
   const report={inputIdentity:hir.inputIdentity,hirDigest:sha256(canonical(hir)+'\n'),scopeDigest:prepared.scope,publishedDigest:publication.expectedDigest,
     contracts:publication.contracts,functions,initializers,initializationOrder:hir.closure.initialization};commonBudget(report);return own(report);
 }
 
 export function verifyCommonKernelGroup(input,publication,request) {
-  const spend=commonMeter();commonBudget(request);record(request,['targets']);check(Array.isArray(request.targets)&&request.targets.length>=2&&request.targets.length<=32,'kernel');
+  const spend=commonMeter();commonBudget(request);record(request,['targets']);check(Array.isArray(request.targets)&&request.targets.length!==1&&request.targets.length<=32,'kernel');
   spend(request.targets.length);check(request.targets.every(hash)&&sorted(request.targets),'kernel');
   const analysis=analyzeCommonProgram(input,publication),hir=verifyCommonProgramHir(input);
   const roots=new Set();spend(hir.closure.roots.length);for(const root of hir.closure.roots)if(root.kind==='kernel')roots.add(root.target);
   spend(request.targets.length);check(request.targets.every(id=>roots.has(id)),'kernel-identity');
   spend(analysis.contracts.length+hir.functions.length);
   const contracts=new Map(analysis.contracts.map(row=>[row.functionId,row])),functions=new Map(hir.functions.map(fn=>[fn.id,fn]));
+  const analyzed=new Map(analysis.functions.map(row=>[row.functionId,row]));
+  function hostOrigin(id,seen=new Set()){spend();if(seen.has(id))return null;seen.add(id);const current=analyzed.get(id);
+    if(current.hostCalls.length)return current.hostCalls[0];for(const edge of current.dependencies){spend();const origin=hostOrigin(edge.functionId,seen);if(origin)return origin;}return null;}
   const accesses=request.targets.map(functionId=>{spend();const row=contracts.get(functionId),fn=functions.get(functionId);
+    const host=hostOrigin(functionId);check(!row.upper.hostResources.reads.length&&!row.upper.hostResources.writes.length,'kernel-host','fixed Published Host resource access is not kernel-admissible',{functionId,primary:host?{sourceId:host.sourcePath,...host.range}:{sourceId:fn.sourcePath,...fn.range},hostResources:row.upper.hostResources});
     check(!commonFacets.some(flag=>row.upper.facets[flag])&&!row.upper.captures.some(c=>c.read||c.write||c.structural),'kernel-capability','fixed Published kernel capability is not proved',
       {functionId,primary:{sourceId:fn.sourcePath,...fn.range},facets:commonFacets.filter(flag=>row.upper.facets[flag])});
-    return {functionId,publishedContractDigest:row.digest,reads:row.upper.globals.reads,writes:row.upper.globals.writes,parameters:row.upper.parameters,captures:row.upper.captures,facets:row.upper.facets};});
+    return {functionId,publishedContractDigest:row.digest,reads:row.upper.globals.reads,writes:row.upper.globals.writes,parameters:row.upper.parameters,captures:row.upper.captures,facets:row.upper.facets,hostResources:row.upper.hostResources};});
   const pairs=[],intersection=(a,b)=>{const out=[];let i=0,j=0;while(i<a.length&&j<b.length){spend();if(a[i]<b[j])i++;else if(a[i]>b[j])j++;else{out.push(a[i]);i++;j++;}}return out;};
   for(let i=0;i<accesses.length;i++)for(let j=i+1;j<accesses.length;j++) {
     spend();const a=accesses[i],b=accesses[j],pair={left:a.functionId,right:b.functionId,readRead:intersection(a.reads,b.reads),

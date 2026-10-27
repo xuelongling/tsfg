@@ -1,0 +1,4128 @@
+{
+  "contract": {
+    "abi": {
+      "callingConvention": "c-win64",
+      "context": {
+        "alignment": 8,
+        "bytes": 16,
+        "fields": [
+          {
+            "name": "storage",
+            "offset": 0,
+            "type": "u32"
+          },
+          {
+            "name": "reserved",
+            "offset": 4,
+            "type": "u32"
+          },
+          {
+            "name": "events",
+            "offset": 8,
+            "type": "u64"
+          }
+        ]
+      },
+      "guest": {
+        "parameters": [
+          "i32"
+        ],
+        "returns": "i32"
+      },
+      "native": {
+        "parameters": [
+          "runtime-owned-counter-pointer",
+          "u32"
+        ],
+        "returns": "u32"
+      },
+      "target": "windows-x86_64-msvc"
+    },
+    "binding": {
+      "adapter": "counter",
+      "id": 31,
+      "signatureHash": "sha256:76a2b373b39865c4ebbc583bf6084f46f2cc9d396cb7d36953e67d586f472af4",
+      "symbol": "tsfg_host_counter_bridge"
+    },
+    "family": "tsfg.host-semantic-contract",
+    "implementation": [
+      {
+        "path": "runtime/host_counter.c",
+        "sha256": "sha256:03da2e65ee50df094e34501ed8aa286b564b19356a437b20479257f458ab2b5e"
+      },
+      {
+        "path": "runtime/host_counter_bridge.c",
+        "sha256": "sha256:8918919374d087a9c5ab0fed04c6f33e35d5c30dee7c64684c3f017679fdcad4"
+      }
+    ],
+    "semantics": {
+      "borrowedParameters": [],
+      "callbacks": [],
+      "callerResources": "scalar-values-only",
+      "effects": [
+        {
+          "access": "read-write",
+          "operation": "add-modulo-u32",
+          "resource": "runtime.counter.storage"
+        },
+        {
+          "access": "read-write",
+          "operation": "increment-modulo-u64",
+          "resource": "runtime.counter.events"
+        }
+      ],
+      "profile": "runtime-owned-counter-wrapping-v1",
+      "retainedParameters": [],
+      "return": "post-write-storage-bits"
+    },
+    "version": 1,
+    "buildIdentityDigest": "sha256:87769f91436380e31fc258a51bbb2361cbe3c90c4d56e330a975195a57808ae6",
+    "digest": "sha256:bfefc59d18d2330c08038dcaa375d6bdb4fe2d03ea9c99898e3f3b141766320a"
+  },
+  "identity": {
+    "buildIdentity": {
+      "buildInputSetDigest": "sha256:9a0e53a800935caf4f6f8b07be9e129e01685a9c9e801ef7653a4b63fcba1d09",
+      "options": {
+        "sourceTarget": "tsfg-vm",
+        "simdDispatch": "runtime-detected"
+      },
+      "profile": "debug",
+      "source_date_epoch": "1793094963",
+      "target": "windows-x86_64-msvc",
+      "toolchainClosureDigest": "sha256:a39365994497d56ea791866f5d30580f4793a15f4ba2eb2c7fd861aa3fc1dc85",
+      "digest": "sha256:87769f91436380e31fc258a51bbb2361cbe3c90c4d56e330a975195a57808ae6"
+    },
+    "buildInputSet": {
+      "digest": "sha256:9a0e53a800935caf4f6f8b07be9e129e01685a9c9e801ef7653a4b63fcba1d09",
+      "entries": [
+        {
+          "projectId": "tsfg",
+          "repositoryRelativePath": "compiler/array-analysis-types.mjs",
+          "normalizedMode": "100644",
+          "sha256": "sha256:3fc3a95f47b24902d2bf7c2588b8f2436f6c3f401cb2db0817951c7cb65a4074"
+        },
+        {
+          "projectId": "tsfg",
+          "repositoryRelativePath": "compiler/array-call-context.mjs",
+          "normalizedMode": "100644",
+          "sha256": "sha256:2dd719c01750c4b6b5e0aff17f4133e30fbe6a91c1c7d2bc99502082229e682b"
+        },
+        {
+          "projectId": "tsfg",
+          "repositoryRelativePath": "compiler/array-call-graph.mjs",
+          "normalizedMode": "100644",
+          "sha256": "sha256:93c5a62416dc76fa19114f39b21fe72240e49975baba8662dfced5522c2160c0"
+        },
+        {
+          "projectId": "tsfg",
+          "repositoryRelativePath": "compiler/array-call-model.mjs",
+          "normalizedMode": "100644",
+          "sha256": "sha256:89da7cabaca133b043272584335248732c01db706652ec6c536e2f3f1be9e7f0"
+        },
+        {
+          "projectId": "tsfg",
+          "repositoryRelativePath": "compiler/array-call-publication.mjs",
+          "normalizedMode": "100644",
+          "sha256": "sha256:8a0258dbf1b5de4a9e88b1b3abd0056242b37f8c074d4125f19f895fac6f38a7"
+        },
+        {
+          "projectId": "tsfg",
+          "repositoryRelativePath": "compiler/array-owner-trace.mjs",
+          "normalizedMode": "100644",
+          "sha256": "sha256:5da60f6c4128692712f3a6d72c199747d4d959289967a89abe0a7d8b08cef899"
+        },
+        {
+          "projectId": "tsfg",
+          "repositoryRelativePath": "compiler/array-parallel.mjs",
+          "normalizedMode": "100644",
+          "sha256": "sha256:f07a8cdfa2b158578dd7a1d5342ec115420902d4fbba25fd769232dcb5fcbdfd"
+        },
+        {
+          "projectId": "tsfg",
+          "repositoryRelativePath": "compiler/array-readspan-model.mjs",
+          "normalizedMode": "100644",
+          "sha256": "sha256:a096b1cf920e1e18757e7f1a79582ad982dc5943fe22f9d574ed86419d51f8f5"
+        },
+        {
+          "projectId": "tsfg",
+          "repositoryRelativePath": "compiler/array-span-contexts.mjs",
+          "normalizedMode": "100644",
+          "sha256": "sha256:a9cfe9ea7b94c7dad69e72c73a6a9f42a9361340ecb8822428cc5df63952b0f1"
+        },
+        {
+          "projectId": "tsfg",
+          "repositoryRelativePath": "compiler/array-span-planes.mjs",
+          "normalizedMode": "100644",
+          "sha256": "sha256:046293ef509efcd358ab980d69588aa971bac7c45e55c1507f9b936cb716deb0"
+        },
+        {
+          "projectId": "tsfg",
+          "repositoryRelativePath": "compiler/array-span-storage.mjs",
+          "normalizedMode": "100644",
+          "sha256": "sha256:b5689b58e182a1c8e7e97ad6de9e83807fc76c20b064aff1069034942c94b59e"
+        },
+        {
+          "projectId": "tsfg",
+          "repositoryRelativePath": "compiler/call-effects.mjs",
+          "normalizedMode": "100644",
+          "sha256": "sha256:1ce498e2c756fe265182b018e0dd591c075a603d9e861138fd1a731a469243f9"
+        },
+        {
+          "projectId": "tsfg",
+          "repositoryRelativePath": "compiler/callable-target-domain.mjs",
+          "normalizedMode": "100644",
+          "sha256": "sha256:e6d70ea3cef14af44fda3bdaac8958850bb14550c9f423a35ca4da5c9558bace"
+        },
+        {
+          "projectId": "tsfg",
+          "repositoryRelativePath": "compiler/closure-call-effects.mjs",
+          "normalizedMode": "100644",
+          "sha256": "sha256:0cc064ef8dca9d1d5dbe6a389f32557957b3a0382ce57ec5418fc2dd04dc3776"
+        },
+        {
+          "projectId": "tsfg",
+          "repositoryRelativePath": "compiler/closure-common.mjs",
+          "normalizedMode": "100644",
+          "sha256": "sha256:0dd0575ae2e55e06965d229cf0ebd61ce8f435af2a96c1ab20d9211bfca68464"
+        },
+        {
+          "projectId": "tsfg",
+          "repositoryRelativePath": "compiler/closure-core-emitter.mjs",
+          "normalizedMode": "100644",
+          "sha256": "sha256:876571a54a083d604352a29a156aca48a610b9a5b143c93b55f1b1a0f8f1f2b9"
+        },
+        {
+          "projectId": "tsfg",
+          "repositoryRelativePath": "compiler/closure-core-initialization.mjs",
+          "normalizedMode": "100644",
+          "sha256": "sha256:12ae3a571ff8cdc4c9ce64b21a3b0648ac154ca183f8308ad2e5ee3c0d4e256d"
+        },
+        {
+          "projectId": "tsfg",
+          "repositoryRelativePath": "compiler/closure-core-model.mjs",
+          "normalizedMode": "100644",
+          "sha256": "sha256:75387befaedafc4171e2e3754a324b37236022a8a07dfcccabe12565c66d25f7"
+        },
+        {
+          "projectId": "tsfg",
+          "repositoryRelativePath": "compiler/closure-environment-lowering.mjs",
+          "normalizedMode": "100644",
+          "sha256": "sha256:6b4081cfcf3d5128e6bffe593e2343f334c8c75aba0e820d0edb1f4ccb9f03ac"
+        },
+        {
+          "projectId": "tsfg",
+          "repositoryRelativePath": "compiler/closure-environments.mjs",
+          "normalizedMode": "100644",
+          "sha256": "sha256:22d92e2b09d847b628f2dcc220ef6311b7d6e1afd025ec0442af1e12552a9276"
+        },
+        {
+          "projectId": "tsfg",
+          "repositoryRelativePath": "compiler/closure-facts.mjs",
+          "normalizedMode": "100644",
+          "sha256": "sha256:ba91ff377f457fc5e146706b4f25db8f6090447ca7c654b6fd0f0b8cb00dd73a"
+        },
+        {
+          "projectId": "tsfg",
+          "repositoryRelativePath": "compiler/closure-frontend.mjs",
+          "normalizedMode": "100644",
+          "sha256": "sha256:73b97e6c987a4d6172d7cdb99f2f128009ab415c744f9993d7d421e9fa28c242"
+        },
+        {
+          "projectId": "tsfg",
+          "repositoryRelativePath": "compiler/closure-hir.mjs",
+          "normalizedMode": "100644",
+          "sha256": "sha256:db332937d240d8fab1e93bd2691a24a87488201cef3246aff1240a3a7c18b8ed"
+        },
+        {
+          "projectId": "tsfg",
+          "repositoryRelativePath": "compiler/closure-source-grammar.mjs",
+          "normalizedMode": "100644",
+          "sha256": "sha256:e30188c1d4348c954a8a0a5b55255f86659f2a3aa0ae1c8fad3e5e2f64ba613d"
+        },
+        {
+          "projectId": "tsfg",
+          "repositoryRelativePath": "compiler/closure-target-domain.mjs",
+          "normalizedMode": "100644",
+          "sha256": "sha256:888bff97da2434c015fa45c2ace6cc44b426d84e8a151f31221f6417e3649a71"
+        },
+        {
+          "projectId": "tsfg",
+          "repositoryRelativePath": "compiler/closure-target-solver.mjs",
+          "normalizedMode": "100644",
+          "sha256": "sha256:9bc5a0874c107716e4b6c504507769dcb633841857befa5ad29f8695775a55ee"
+        },
+        {
+          "projectId": "tsfg",
+          "repositoryRelativePath": "compiler/closure-targets.mjs",
+          "normalizedMode": "100644",
+          "sha256": "sha256:eb302813431205bb8eb71f0be33f56837c54eccb0b55bb65be701f61c06dc329"
+        },
+        {
+          "projectId": "tsfg",
+          "repositoryRelativePath": "compiler/common-program-abstract.mjs",
+          "normalizedMode": "100644",
+          "sha256": "sha256:3e8307db8a4e60ebc76666c3430368cddbce25ea6b29581bd263c916549a346b"
+        },
+        {
+          "projectId": "tsfg",
+          "repositoryRelativePath": "compiler/common-program-actual.mjs",
+          "normalizedMode": "100644",
+          "sha256": "sha256:fcf46fb4002dd65cd61408fb049dd56f09954f99f909b1555644622be1431734"
+        },
+        {
+          "projectId": "tsfg",
+          "repositoryRelativePath": "compiler/common-program-analysis.mjs",
+          "normalizedMode": "100644",
+          "sha256": "sha256:f5995304181accd7c5cb6b685e641bfa83c97f64d63b5221047d6acaad1dec73"
+        },
+        {
+          "projectId": "tsfg",
+          "repositoryRelativePath": "compiler/common-program-body.mjs",
+          "normalizedMode": "100644",
+          "sha256": "sha256:61eb69c2d4c69cf48c42ec06e3fa75292eea3446f7c4e29a05a80d94d21eff73"
+        },
+        {
+          "projectId": "tsfg",
+          "repositoryRelativePath": "compiler/common-program-borrow-observations.mjs",
+          "normalizedMode": "100644",
+          "sha256": "sha256:94e579312c47b90e9617c4be4e67c1b5ec0684c5d7eae55ea24572b0f60f1fde"
+        },
+        {
+          "projectId": "tsfg",
+          "repositoryRelativePath": "compiler/common-program-borrows.mjs",
+          "normalizedMode": "100644",
+          "sha256": "sha256:065f649580e853336e731f03c1d61c78bee3acd4fdd443ed5e6de34005a27f41"
+        },
+        {
+          "projectId": "tsfg",
+          "repositoryRelativePath": "compiler/common-program-budget.mjs",
+          "normalizedMode": "100644",
+          "sha256": "sha256:4f39fd55f8342aca05835b4ec3dbdd6dd26299fdadbc986e3664a38689ffafe4"
+        },
+        {
+          "projectId": "tsfg",
+          "repositoryRelativePath": "compiler/common-program-carriers.mjs",
+          "normalizedMode": "100644",
+          "sha256": "sha256:38c97d4632366f768f575a278d7db05247b482ca2a71384a1e9c179ecebbb7e5"
+        },
+        {
+          "projectId": "tsfg",
+          "repositoryRelativePath": "compiler/common-program-common.mjs",
+          "normalizedMode": "100644",
+          "sha256": "sha256:a97f323a7bf24dd5c57e73cd59e8b968192216b6f8a366b9ec9b18de631ca1d5"
+        },
+        {
+          "projectId": "tsfg",
+          "repositoryRelativePath": "compiler/common-program-control.mjs",
+          "normalizedMode": "100644",
+          "sha256": "sha256:89c89894870382b271dc07284cacb86f4c21798910d0a5eea5bec3f7967d8880"
+        },
+        {
+          "projectId": "tsfg",
+          "repositoryRelativePath": "compiler/common-program-core.mjs",
+          "normalizedMode": "100644",
+          "sha256": "sha256:5bf7ae6610d3062136974bf17194e8e42eff47abb640191956ca7e6af8cb5e72"
+        },
+        {
+          "projectId": "tsfg",
+          "repositoryRelativePath": "compiler/common-program-declarations.mjs",
+          "normalizedMode": "100644",
+          "sha256": "sha256:cdd9151bba3f686bc6692b3354bc06aef65e12d3d689ce0994bcda56a8dcdc52"
+        },
+        {
+          "projectId": "tsfg",
+          "repositoryRelativePath": "compiler/common-program-effects.mjs",
+          "normalizedMode": "100644",
+          "sha256": "sha256:addf4d41859557f4215287b22e09bfc32c0fe0cf3bea9b86b85d38074b7fe13d"
+        },
+        {
+          "projectId": "tsfg",
+          "repositoryRelativePath": "compiler/common-program-entry.mjs",
+          "normalizedMode": "100644",
+          "sha256": "sha256:b3341e4c641be2221c5dfbd958db2671a767e7afc6e554a43b9617fb63319a8a"
+        },
+        {
+          "projectId": "tsfg",
+          "repositoryRelativePath": "compiler/common-program-environments.mjs",
+          "normalizedMode": "100644",
+          "sha256": "sha256:e099d1d03b2f97ab36705e85040aacae9e7067b454d172a585f7697c44e037b4"
+        },
+        {
+          "projectId": "tsfg",
+          "repositoryRelativePath": "compiler/common-program-facts.mjs",
+          "normalizedMode": "100644",
+          "sha256": "sha256:614cd4e1ce79c5db8322398f4152780b5cd39b58f850bf01af1f905b9388bc02"
+        },
+        {
+          "projectId": "tsfg",
+          "repositoryRelativePath": "compiler/common-program-hir.mjs",
+          "normalizedMode": "100644",
+          "sha256": "sha256:c3814b68bd6af285c4a143ef1e585b76ecbf707dfc7b7a9a7433b1ac9e2cb102"
+        },
+        {
+          "projectId": "tsfg",
+          "repositoryRelativePath": "compiler/common-program-identities.mjs",
+          "normalizedMode": "100644",
+          "sha256": "sha256:ad6b4289f9374e9b154102d327af18f4cbaf77b1bdbce5984136c7423a648e97"
+        },
+        {
+          "projectId": "tsfg",
+          "repositoryRelativePath": "compiler/common-program-lexical.mjs",
+          "normalizedMode": "100644",
+          "sha256": "sha256:857d2c919cff9209e1b57e23df1ef1f3799f917dba38187487e29a85adbae054"
+        },
+        {
+          "projectId": "tsfg",
+          "repositoryRelativePath": "compiler/common-program-methods.mjs",
+          "normalizedMode": "100644",
+          "sha256": "sha256:660c91154d6057479629dd9e6ec051ac42501103160011047dd7d6a5c822a222"
+        },
+        {
+          "projectId": "tsfg",
+          "repositoryRelativePath": "compiler/common-program-physical.mjs",
+          "normalizedMode": "100644",
+          "sha256": "sha256:225693a98352ea0703ecac30b7732f3fba61039701132f9954df95d915559933"
+        },
+        {
+          "projectId": "tsfg",
+          "repositoryRelativePath": "compiler/common-program-plan.mjs",
+          "normalizedMode": "100644",
+          "sha256": "sha256:c46e8fb4a3b94c9e35ff5079e3b0deeae0cedf781d04fdd5e66644316c0161a6"
+        },
+        {
+          "projectId": "tsfg",
+          "repositoryRelativePath": "compiler/common-program-print.mjs",
+          "normalizedMode": "100644",
+          "sha256": "sha256:1b6a14e2daf66a300ede9557b36388ea74d72d1f38cc90934c4c0cde81bdfa9e"
+        },
+        {
+          "projectId": "tsfg",
+          "repositoryRelativePath": "compiler/common-program-regions.mjs",
+          "normalizedMode": "100644",
+          "sha256": "sha256:158c733f3c080f398eb276923ac940738cd8453055bd7ef39b35f2edf6d05afc"
+        },
+        {
+          "projectId": "tsfg",
+          "repositoryRelativePath": "compiler/common-program-source.mjs",
+          "normalizedMode": "100644",
+          "sha256": "sha256:523d5318c3b66dfadabf07405639337a2d32ed6e1b413a82c4dc1d9dad6beb83"
+        },
+        {
+          "projectId": "tsfg",
+          "repositoryRelativePath": "compiler/common-program-targets.mjs",
+          "normalizedMode": "100644",
+          "sha256": "sha256:eb5312ec6c74261bd69b84e951a55c71453ae65ad0ea56b0b022569f6d803928"
+        },
+        {
+          "projectId": "tsfg",
+          "repositoryRelativePath": "compiler/common-program-values.mjs",
+          "normalizedMode": "100644",
+          "sha256": "sha256:fe615d57bdbf82eddd0ffe0f9afb58e1e58c4c6983cf5d86d89b106c9f37e1be"
+        },
+        {
+          "projectId": "tsfg",
+          "repositoryRelativePath": "compiler/conversions.mjs",
+          "normalizedMode": "100644",
+          "sha256": "sha256:89de22fa9d366b99230e7c18f1fb53c762576049603acd718a1fa55e9dad0eab"
+        },
+        {
+          "projectId": "tsfg",
+          "repositoryRelativePath": "compiler/core-ir/CMakeLists.txt",
+          "normalizedMode": "100644",
+          "sha256": "sha256:d184bf362a22e9c701b09c2a90f6e1916969ffbf8ae73cc7be764f0a47e5d2bb"
+        },
+        {
+          "projectId": "tsfg",
+          "repositoryRelativePath": "compiler/core-ir/aot-capability.cpp",
+          "normalizedMode": "100644",
+          "sha256": "sha256:761aeb7ca0d197b0678cc10a18167cc36085b9902e70b3e04905a559cd6e4c03"
+        },
+        {
+          "projectId": "tsfg",
+          "repositoryRelativePath": "compiler/core-ir/aot-capability.h",
+          "normalizedMode": "100644",
+          "sha256": "sha256:08c9e418bd1d6dc1a557f09bdae725d506c42011ded6658b25c295e972f5ca45"
+        },
+        {
+          "projectId": "tsfg",
+          "repositoryRelativePath": "compiler/core-ir/aot-conversions.cpp",
+          "normalizedMode": "100644",
+          "sha256": "sha256:c02d2997486e782676f9306b2842db344b66bfc5fe5a3ffb3547b967b4f9f5fb"
+        },
+        {
+          "projectId": "tsfg",
+          "repositoryRelativePath": "compiler/core-ir/aot-conversions.h",
+          "normalizedMode": "100644",
+          "sha256": "sha256:2fa8ff8ff74d88cf8a6c30a2334f97f51d72fe1fde3ccdd190de99aef5ca9258"
+        },
+        {
+          "projectId": "tsfg",
+          "repositoryRelativePath": "compiler/core-ir/aot-fenv.cpp",
+          "normalizedMode": "100644",
+          "sha256": "sha256:e2fd3f9101526faf734bdff3cddff5546950a812d1c1de10d063bb267f280217"
+        },
+        {
+          "projectId": "tsfg",
+          "repositoryRelativePath": "compiler/core-ir/aot-float.cpp",
+          "normalizedMode": "100644",
+          "sha256": "sha256:774a8734797c31c977c694550fce5506abca143a310d0aceff3e6a8951baaf14"
+        },
+        {
+          "projectId": "tsfg",
+          "repositoryRelativePath": "compiler/core-ir/aot-float.h",
+          "normalizedMode": "100644",
+          "sha256": "sha256:d0cf103fad108473a965da693f2a65ee32a54c0d12cf6b376053a44ce86388ef"
+        },
+        {
+          "projectId": "tsfg",
+          "repositoryRelativePath": "compiler/core-ir/aot-fmod.cpp",
+          "normalizedMode": "100644",
+          "sha256": "sha256:397fac839c13753a23d73ae0560d21128bbde250b9853907cbfa80e2dbb4b2d1"
+        },
+        {
+          "projectId": "tsfg",
+          "repositoryRelativePath": "compiler/core-ir/aot-lowering.cpp",
+          "normalizedMode": "100644",
+          "sha256": "sha256:532c5b36edf2db176a74858d45860260b726967cc2330f4ee5198eeb7c35eb43"
+        },
+        {
+          "projectId": "tsfg",
+          "repositoryRelativePath": "compiler/core-ir/aot-lowering.h",
+          "normalizedMode": "100644",
+          "sha256": "sha256:56874e8379a94cf64b972a5819d3b33044809f1905fabaf8db206a18e0ec9140"
+        },
+        {
+          "projectId": "tsfg",
+          "repositoryRelativePath": "compiler/core-ir/aot-module-codec.cpp",
+          "normalizedMode": "100644",
+          "sha256": "sha256:e08e3fee13e590e3b98bbb383575296fc394aec7d54fb28e5d10d698e419b102"
+        },
+        {
+          "projectId": "tsfg",
+          "repositoryRelativePath": "compiler/core-ir/aot-module-codec.h",
+          "normalizedMode": "100644",
+          "sha256": "sha256:ff2c0aaf234d244974497cce650f87d5ce5e76bdaf6d8049c4b02401f147952c"
+        },
+        {
+          "projectId": "tsfg",
+          "repositoryRelativePath": "compiler/core-ir/aot-module-entry.cpp",
+          "normalizedMode": "100644",
+          "sha256": "sha256:fee017e9e152e1aa9dbdb0eff11d16e25e4d004703fc1b002634a333788fdd45"
+        },
+        {
+          "projectId": "tsfg",
+          "repositoryRelativePath": "compiler/core-ir/aot-module-ops.h",
+          "normalizedMode": "100644",
+          "sha256": "sha256:2bf51e0cc893052ceed662f070230fbc461d561511fff0a7f9adffb0829f5909"
+        },
+        {
+          "projectId": "tsfg",
+          "repositoryRelativePath": "compiler/core-ir/aot-module-services.cpp",
+          "normalizedMode": "100644",
+          "sha256": "sha256:0ef903d914b8081f5af8debbcb9ce32c7d825e51ec48181f394a2c400bc5530a"
+        },
+        {
+          "projectId": "tsfg",
+          "repositoryRelativePath": "compiler/core-ir/aot-module.cpp",
+          "normalizedMode": "100644",
+          "sha256": "sha256:7a83851273f0cf7efc48dedfc4231ed28a6d3ea986e10267d623de4f936afc53"
+        },
+        {
+          "projectId": "tsfg",
+          "repositoryRelativePath": "compiler/core-ir/aot-module.h",
+          "normalizedMode": "100644",
+          "sha256": "sha256:0511a7eb472dda52f8e0ba29518af25a6881c39a05829fa5502b6cbe22e40db8"
+        },
+        {
+          "projectId": "tsfg",
+          "repositoryRelativePath": "compiler/core-ir/aot-program.cpp",
+          "normalizedMode": "100644",
+          "sha256": "sha256:cafbc21e3f8118ce05cd05d3ea07e70fe4105f75373f6f0fd64948f671306aa0"
+        },
+        {
+          "projectId": "tsfg",
+          "repositoryRelativePath": "compiler/core-ir/aot-slot-codec.h",
+          "normalizedMode": "100644",
+          "sha256": "sha256:6256315212bb483152b7e7707a32a527a575027bc2f37192ec8d710a13534c81"
+        },
+        {
+          "projectId": "tsfg",
+          "repositoryRelativePath": "compiler/core-ir/aot.cpp",
+          "normalizedMode": "100644",
+          "sha256": "sha256:e2309676f0e615074a2d6d8e0c37179462895469f2ae1c31d9cf8dde10904f2f"
+        },
+        {
+          "projectId": "tsfg",
+          "repositoryRelativePath": "compiler/core-ir/aot.h",
+          "normalizedMode": "100644",
+          "sha256": "sha256:d28232bb6f3f1c04d96ae4ffdafb0f0528368b2604a8e26313b886642cdd8ba5"
+        },
+        {
+          "projectId": "tsfg",
+          "repositoryRelativePath": "compiler/core-ir/array-core.h",
+          "normalizedMode": "100644",
+          "sha256": "sha256:0ef57ac62be77094a20747925b196f420bc69d6516bf5b5362ad9cc40f71e948"
+        },
+        {
+          "projectId": "tsfg",
+          "repositoryRelativePath": "compiler/core-ir/array-metadata.cpp",
+          "normalizedMode": "100644",
+          "sha256": "sha256:a8d5abc36b6576f467b8853c27ef9ec39dc9b11adebeee03b0a53719cf7f54d3"
+        },
+        {
+          "projectId": "tsfg",
+          "repositoryRelativePath": "compiler/core-ir/array-owner-analysis.cpp",
+          "normalizedMode": "100644",
+          "sha256": "sha256:1d3dfc2cf5e57c8f695ee12d6bb55ff2d4da903965fab0ffda5d8ff6a0f31d9a"
+        },
+        {
+          "projectId": "tsfg",
+          "repositoryRelativePath": "compiler/core-ir/array-owner-canonical.cpp",
+          "normalizedMode": "100644",
+          "sha256": "sha256:8023775f2c0e0d6260001ffeab43df63f05c07c9eb4ab34baf9f61af5c3841e4"
+        },
+        {
+          "projectId": "tsfg",
+          "repositoryRelativePath": "compiler/core-ir/array-owner-command.cpp",
+          "normalizedMode": "100644",
+          "sha256": "sha256:e8e002efa4e2e352417f85870cfbf029a8d7b74142e9d2ad3af64feace16622c"
+        },
+        {
+          "projectId": "tsfg",
+          "repositoryRelativePath": "compiler/core-ir/array-owner-json.cpp",
+          "normalizedMode": "100644",
+          "sha256": "sha256:ade98d612072debc8631ec31f259b71b1b3cd0f399642129148d49cc1f4575f5"
+        },
+        {
+          "projectId": "tsfg",
+          "repositoryRelativePath": "compiler/core-ir/array-owner-json.h",
+          "normalizedMode": "100644",
+          "sha256": "sha256:affe9337179491e1eba2718ffb199bb632c16c423971bd5ca8389f9499aeff6b"
+        },
+        {
+          "projectId": "tsfg",
+          "repositoryRelativePath": "compiler/core-ir/array-owner-pairs.cpp",
+          "normalizedMode": "100644",
+          "sha256": "sha256:a1ed94c86c4c27fdd880e7c43f1cd2620aafdf08413a927629d93e4c33b56171"
+        },
+        {
+          "projectId": "tsfg",
+          "repositoryRelativePath": "compiler/core-ir/array-owner-proof.h",
+          "normalizedMode": "100644",
+          "sha256": "sha256:82c823be14fe7f83b6810d700bc1d1d0ba3d658641eb97358caddb68f9dd610d"
+        },
+        {
+          "projectId": "tsfg",
+          "repositoryRelativePath": "compiler/core-ir/array-owner-schema.cpp",
+          "normalizedMode": "100644",
+          "sha256": "sha256:4b963de81869304739d0179c89bb7ef89c12324a9c2b7a4915183e169a738090"
+        },
+        {
+          "projectId": "tsfg",
+          "repositoryRelativePath": "compiler/core-ir/array-publication.cpp",
+          "normalizedMode": "100644",
+          "sha256": "sha256:020ad7869f49d290fdf18fa76dc9e4a7cacdca05c33d7b3be720ef1a00be9c48"
+        },
+        {
+          "projectId": "tsfg",
+          "repositoryRelativePath": "compiler/core-ir/array-roots.cpp",
+          "normalizedMode": "100644",
+          "sha256": "sha256:d603c00843af799516259a51b24ac3c6b167cc7a700002a3df576f949092b6c8"
+        },
+        {
+          "projectId": "tsfg",
+          "repositoryRelativePath": "compiler/core-ir/array-verify.cpp",
+          "normalizedMode": "100644",
+          "sha256": "sha256:5cf642d4e2da814b4a9c95d8fee240bc0a4bf587ad73b4051b7330e06cae8443"
+        },
+        {
+          "projectId": "tsfg",
+          "repositoryRelativePath": "compiler/core-ir/array-view.cpp",
+          "normalizedMode": "100644",
+          "sha256": "sha256:e99b24e5c6d5267a750d6e1483a1dfd9ea36543a20a2593ebfdf55a3e4cb9f66"
+        },
+        {
+          "projectId": "tsfg",
+          "repositoryRelativePath": "compiler/core-ir/array-wire.cpp",
+          "normalizedMode": "100644",
+          "sha256": "sha256:eb1e920c04118df6bbfc8657d38fa13a5dfd9cfeabc30f355bb90b2476627071"
+        },
+        {
+          "projectId": "tsfg",
+          "repositoryRelativePath": "compiler/core-ir/array-wire.h",
+          "normalizedMode": "100644",
+          "sha256": "sha256:378e4c555d76eb17dd6f74dce7c795d97419264426b198d6fb8d3d319fa252ca"
+        },
+        {
+          "projectId": "tsfg",
+          "repositoryRelativePath": "compiler/core-ir/array.cpp",
+          "normalizedMode": "100644",
+          "sha256": "sha256:8ee1d1371a05e4df0801f4e56ed58c58aad3213155b37cd4e00151c7a5e6cbf5"
+        },
+        {
+          "projectId": "tsfg",
+          "repositoryRelativePath": "compiler/core-ir/bytecode.cpp",
+          "normalizedMode": "100644",
+          "sha256": "sha256:cc94b33ee82a2baa165718973252b8c446739b162a5c3778c5deebf011a3d5dd"
+        },
+        {
+          "projectId": "tsfg",
+          "repositoryRelativePath": "compiler/core-ir/bytecode.h",
+          "normalizedMode": "100644",
+          "sha256": "sha256:4b2223013fbd9af86513b9ebcb5393f9e885f169b2617e677e266a585de4ed6c"
+        },
+        {
+          "projectId": "tsfg",
+          "repositoryRelativePath": "compiler/core-ir/bytecode_encoding.cpp",
+          "normalizedMode": "100644",
+          "sha256": "sha256:35296b4f702c452839529c1767c41b5494e32cf0f6a4ad2f1540eb5626f7dec2"
+        },
+        {
+          "projectId": "tsfg",
+          "repositoryRelativePath": "compiler/core-ir/bytecode_encoding.h",
+          "normalizedMode": "100644",
+          "sha256": "sha256:e304d8a9f8d7c1090b0584b2b75b67024ca1da55d212be00342757ce4b0af34a"
+        },
+        {
+          "projectId": "tsfg",
+          "repositoryRelativePath": "compiler/core-ir/closure-cfg.cpp",
+          "normalizedMode": "100644",
+          "sha256": "sha256:65da9b431a19e0baa26d9b0fbde22175ef3c1f7ebfc3257dd0acdfd490fbe697"
+        },
+        {
+          "projectId": "tsfg",
+          "repositoryRelativePath": "compiler/core-ir/closure-identities.cpp",
+          "normalizedMode": "100644",
+          "sha256": "sha256:2902d06f60c2f31c91ba31d30d1df6c7cf431c4410bbd6e83ec71dd259466171"
+        },
+        {
+          "projectId": "tsfg",
+          "repositoryRelativePath": "compiler/core-ir/closure-init-flow.cpp",
+          "normalizedMode": "100644",
+          "sha256": "sha256:0a81a503e36cc0c84a574fe3b139a1f3bb57cd2f3ba5273080d2eaa9a3b9dc5f"
+        },
+        {
+          "projectId": "tsfg",
+          "repositoryRelativePath": "compiler/core-ir/closure-initialization.cpp",
+          "normalizedMode": "100644",
+          "sha256": "sha256:24e346b364129fded706ffbfc240e4ae36e128610b56df71cd304d6ed0f3e815"
+        },
+        {
+          "projectId": "tsfg",
+          "repositoryRelativePath": "compiler/core-ir/closure-initialization.h",
+          "normalizedMode": "100644",
+          "sha256": "sha256:11748cbf14e83e740b503c29b1b9981dfe09225a60066655799de2a297c05842"
+        },
+        {
+          "projectId": "tsfg",
+          "repositoryRelativePath": "compiler/core-ir/closure-metadata.cpp",
+          "normalizedMode": "100644",
+          "sha256": "sha256:c40f8aaf6eedbcefd845f91c8bc71a35b9f4249eecb408f26eb6115d96629743"
+        },
+        {
+          "projectId": "tsfg",
+          "repositoryRelativePath": "compiler/core-ir/closure-metadata.h",
+          "normalizedMode": "100644",
+          "sha256": "sha256:d24c555a540109b38d2e30debd79afeb2c4e62b47ddb815ad70ef9d0555f5087"
+        },
+        {
+          "projectId": "tsfg",
+          "repositoryRelativePath": "compiler/core-ir/closure-roots.cpp",
+          "normalizedMode": "100644",
+          "sha256": "sha256:5189f0c242b6807c7a6abdba051405ae6d6c359fe612fa09662608b97ccca618"
+        },
+        {
+          "projectId": "tsfg",
+          "repositoryRelativePath": "compiler/core-ir/closure-verify.cpp",
+          "normalizedMode": "100644",
+          "sha256": "sha256:0bcb1de2ac9d8cb3dfe4fc2e7125ef64c2061eed3a79d09444f7d546ab78a326"
+        },
+        {
+          "projectId": "tsfg",
+          "repositoryRelativePath": "compiler/core-ir/closure.cpp",
+          "normalizedMode": "100644",
+          "sha256": "sha256:9978fd2b468be1657eee0c343d793f5d97c354ff6eec2c701274136c744d8e51"
+        },
+        {
+          "projectId": "tsfg",
+          "repositoryRelativePath": "compiler/core-ir/closure.h",
+          "normalizedMode": "100644",
+          "sha256": "sha256:d5571c1ce8d40cdb11b01afed7694ad5cf9d15dd8975de4146236a4d75e90bf6"
+        },
+        {
+          "projectId": "tsfg",
+          "repositoryRelativePath": "compiler/core-ir/common-program-abstract.cpp",
+          "normalizedMode": "100644",
+          "sha256": "sha256:0d0a8928178d5666fca3d3f87c0c8811722e36f8715b0efb0f3544359a49e4e1"
+        },
+        {
+          "projectId": "tsfg",
+          "repositoryRelativePath": "compiler/core-ir/common-program-actual.h",
+          "normalizedMode": "100644",
+          "sha256": "sha256:6eef0996404f9068f62694339887a683532dfb25cad4c00ce13209dcfeba3c02"
+        },
+        {
+          "projectId": "tsfg",
+          "repositoryRelativePath": "compiler/core-ir/common-program-array-targets.cpp",
+          "normalizedMode": "100644",
+          "sha256": "sha256:f07697fb7b1147791ea7ff577ac46ecc013dd9e4f0314af70644b03f24370aea"
+        },
+        {
+          "projectId": "tsfg",
+          "repositoryRelativePath": "compiler/core-ir/common-program-array-targets.h",
+          "normalizedMode": "100644",
+          "sha256": "sha256:6ab60564d0a501c51fd6d4cd2df23a6dd7ada3d84a13316adc4c0096966acee1"
+        },
+        {
+          "projectId": "tsfg",
+          "repositoryRelativePath": "compiler/core-ir/common-program-bodies.cpp",
+          "normalizedMode": "100644",
+          "sha256": "sha256:f681aebf83bc7c0615f803a9308cfe7e65d82ae2eff9d730a65493ab6bba2162"
+        },
+        {
+          "projectId": "tsfg",
+          "repositoryRelativePath": "compiler/core-ir/common-program-borrows.cpp",
+          "normalizedMode": "100644",
+          "sha256": "sha256:6939af182f5a9f1d255c36711de915e8c4de5053346a9e40eb2ca6da5e19dcba"
+        },
+        {
+          "projectId": "tsfg",
+          "repositoryRelativePath": "compiler/core-ir/common-program-borrows.h",
+          "normalizedMode": "100644",
+          "sha256": "sha256:ead1e5107a72b1bebcd440b2f526abd4f1cb84d924ca32ebe1a9955645515e79"
+        },
+        {
+          "projectId": "tsfg",
+          "repositoryRelativePath": "compiler/core-ir/common-program-callable-ops.cpp",
+          "normalizedMode": "100644",
+          "sha256": "sha256:71460619a644fc63f5c6a3dde3573fe125291547d6d4c081365480d2c1cf3299"
+        },
+        {
+          "projectId": "tsfg",
+          "repositoryRelativePath": "compiler/core-ir/common-program-callable-source.cpp",
+          "normalizedMode": "100644",
+          "sha256": "sha256:c787d1cb35eac4fba8e61b0e8eccce12283a45743e00eae059621052ccb9e14a"
+        },
+        {
+          "projectId": "tsfg",
+          "repositoryRelativePath": "compiler/core-ir/common-program-callable-targets.cpp",
+          "normalizedMode": "100644",
+          "sha256": "sha256:cb0eb72801d4eb4d747f92b1f555ce791895400d4d65a7a3a0b779d3518ed474"
+        },
+        {
+          "projectId": "tsfg",
+          "repositoryRelativePath": "compiler/core-ir/common-program-capacity.cpp",
+          "normalizedMode": "100644",
+          "sha256": "sha256:9463d7f0ab8acc7cf4ab6f704ce017b1b3b9e1671e8cc542648eafdd3584b8a5"
+        },
+        {
+          "projectId": "tsfg",
+          "repositoryRelativePath": "compiler/core-ir/common-program-control.cpp",
+          "normalizedMode": "100644",
+          "sha256": "sha256:49a05eec51aed1498ccfe0bccd34b9ad882469abd1322e83fdab763348d44a35"
+        },
+        {
+          "projectId": "tsfg",
+          "repositoryRelativePath": "compiler/core-ir/common-program-declarations.cpp",
+          "normalizedMode": "100644",
+          "sha256": "sha256:bdd247b43056cbf2fd7eb7603a0969f277e9b4aec71ba52482b05848c2340c44"
+        },
+        {
+          "projectId": "tsfg",
+          "repositoryRelativePath": "compiler/core-ir/common-program-effects.cpp",
+          "normalizedMode": "100644",
+          "sha256": "sha256:ab85a2f3cb5694a5cf5c8c5e5b82609819aef9363433d3c266b941add09f5b0b"
+        },
+        {
+          "projectId": "tsfg",
+          "repositoryRelativePath": "compiler/core-ir/common-program-environment-ops.cpp",
+          "normalizedMode": "100644",
+          "sha256": "sha256:abf18e0283ba7a8d7e9cd666827f3c2badb264893394983e91a3a34ce0fc06d8"
+        },
+        {
+          "projectId": "tsfg",
+          "repositoryRelativePath": "compiler/core-ir/common-program-environments.cpp",
+          "normalizedMode": "100644",
+          "sha256": "sha256:e9e4ff346de913a9453403db000222d92b6679320753653fbce13bf96a5a2a60"
+        },
+        {
+          "projectId": "tsfg",
+          "repositoryRelativePath": "compiler/core-ir/common-program-expressions.cpp",
+          "normalizedMode": "100644",
+          "sha256": "sha256:11e5f57fe61e40caf2b0272366c4e56ef1f69bf89e67a8d89d5943b0259e9b0f"
+        },
+        {
+          "projectId": "tsfg",
+          "repositoryRelativePath": "compiler/core-ir/common-program-flow.cpp",
+          "normalizedMode": "100644",
+          "sha256": "sha256:f1a7fc0b1d7c947eaa38852fc92ec8e44219f5cba4cb4ab0d5c5610352542192"
+        },
+        {
+          "projectId": "tsfg",
+          "repositoryRelativePath": "compiler/core-ir/common-program-graph.cpp",
+          "normalizedMode": "100644",
+          "sha256": "sha256:a97fb49f6e8dec0a1f94a3ddd7009d0c32d4ecc25f7e4750b4cf7befecfb60c6"
+        },
+        {
+          "projectId": "tsfg",
+          "repositoryRelativePath": "compiler/core-ir/common-program-identities.cpp",
+          "normalizedMode": "100644",
+          "sha256": "sha256:0e386945abc81999f21bb2f3340039949ea33b84e2fe41d2bcd2c0a5ba0ee843"
+        },
+        {
+          "projectId": "tsfg",
+          "repositoryRelativePath": "compiler/core-ir/common-program-json.cpp",
+          "normalizedMode": "100644",
+          "sha256": "sha256:ff32c09dcd71185fcd13d1aded23d1cec2eec8c28e97a2d1ab9229f19dc315fd"
+        },
+        {
+          "projectId": "tsfg",
+          "repositoryRelativePath": "compiler/core-ir/common-program-kernel.cpp",
+          "normalizedMode": "100644",
+          "sha256": "sha256:9c0c721433870dc3d12d158bfeb73c7b87c26b9c556fda7ddf1bc6219732c0dc"
+        },
+        {
+          "projectId": "tsfg",
+          "repositoryRelativePath": "compiler/core-ir/common-program-leaves.cpp",
+          "normalizedMode": "100644",
+          "sha256": "sha256:891832960b180037585953e34ad19da47312325db60acbe9810d7c1365818d54"
+        },
+        {
+          "projectId": "tsfg",
+          "repositoryRelativePath": "compiler/core-ir/common-program-match.cpp",
+          "normalizedMode": "100644",
+          "sha256": "sha256:591c56a1cb0294d5ea681fb51ee032d3d922f0284d20624dc152ecd4fd055c9e"
+        },
+        {
+          "projectId": "tsfg",
+          "repositoryRelativePath": "compiler/core-ir/common-program-memory.cpp",
+          "normalizedMode": "100644",
+          "sha256": "sha256:134fd4f8bdd6fb88e6f9253d6903dada98cb551f258b194de2edf55b4ffae77b"
+        },
+        {
+          "projectId": "tsfg",
+          "repositoryRelativePath": "compiler/core-ir/common-program-methods.cpp",
+          "normalizedMode": "100644",
+          "sha256": "sha256:83c07f96119560152b1d7613609094d1aa2d5e5ac708ad99e021be74e3ccee9f"
+        },
+        {
+          "projectId": "tsfg",
+          "repositoryRelativePath": "compiler/core-ir/common-program-methods.h",
+          "normalizedMode": "100644",
+          "sha256": "sha256:a8250f4083cf599187612464d91dff589e3b889eb969a686960f20c2b61d936c"
+        },
+        {
+          "projectId": "tsfg",
+          "repositoryRelativePath": "compiler/core-ir/common-program-modules.cpp",
+          "normalizedMode": "100644",
+          "sha256": "sha256:c0152daab8a0614800ff42b92be48380b8b8b4e3bfc502b9b23879950fd64a3e"
+        },
+        {
+          "projectId": "tsfg",
+          "repositoryRelativePath": "compiler/core-ir/common-program-plan.cpp",
+          "normalizedMode": "100644",
+          "sha256": "sha256:0cddab3f4faa3c1d14d33a4117dfec523cc3dc4e0393fcffb69069e8dd1ffcf3"
+        },
+        {
+          "projectId": "tsfg",
+          "repositoryRelativePath": "compiler/core-ir/common-program-plan.h",
+          "normalizedMode": "100644",
+          "sha256": "sha256:13a7e91b60a5e7a42f4ca35d82fe673f645c8da5d1f3c32df68fd09c2b7f8fff"
+        },
+        {
+          "projectId": "tsfg",
+          "repositoryRelativePath": "compiler/core-ir/common-program-projection.cpp",
+          "normalizedMode": "100644",
+          "sha256": "sha256:6d0ea542b07b19105c98931eaf397e2e28b1a45f0bee47c32429b4e1f8adf3ae"
+        },
+        {
+          "projectId": "tsfg",
+          "repositoryRelativePath": "compiler/core-ir/common-program-publication.cpp",
+          "normalizedMode": "100644",
+          "sha256": "sha256:8365b3e60904024053a4e9136e2163ebb5119ba11a7cc86303da131c14357e28"
+        },
+        {
+          "projectId": "tsfg",
+          "repositoryRelativePath": "compiler/core-ir/common-program-read.cpp",
+          "normalizedMode": "100644",
+          "sha256": "sha256:d72ad00c12b9d684ba9fad372b64079f8ee1881626954857735ad03a480ccad4"
+        },
+        {
+          "projectId": "tsfg",
+          "repositoryRelativePath": "compiler/core-ir/common-program-regions.cpp",
+          "normalizedMode": "100644",
+          "sha256": "sha256:e17536cd34ce1bad7652e2e6ff4cb68456b5d52662d02f2c77f96ce6ae1cdba9"
+        },
+        {
+          "projectId": "tsfg",
+          "repositoryRelativePath": "compiler/core-ir/common-program-regions.h",
+          "normalizedMode": "100644",
+          "sha256": "sha256:809e0e3b699d911e1a2c608cd8a0c80a68b61faf50af0cc526b872eef79b82d1"
+        },
+        {
+          "projectId": "tsfg",
+          "repositoryRelativePath": "compiler/core-ir/common-program-relations.cpp",
+          "normalizedMode": "100644",
+          "sha256": "sha256:44e4cf8d843d84017c5130e580b1f1ff362a349051c1895ec55229f51519e594"
+        },
+        {
+          "projectId": "tsfg",
+          "repositoryRelativePath": "compiler/core-ir/common-program-relations.h",
+          "normalizedMode": "100644",
+          "sha256": "sha256:c069c6755abf63b303aabf38250a0a1fb8be4fb66f15ba7a184d42bc285e4733"
+        },
+        {
+          "projectId": "tsfg",
+          "repositoryRelativePath": "compiler/core-ir/common-program-retention.cpp",
+          "normalizedMode": "100644",
+          "sha256": "sha256:315c9dd4d16039d6ffe6cc3be21cb3387d69a148af19a2bc1e5d2ea805e5ec8e"
+        },
+        {
+          "projectId": "tsfg",
+          "repositoryRelativePath": "compiler/core-ir/common-program-retention.h",
+          "normalizedMode": "100644",
+          "sha256": "sha256:b4c4fbc1954f094ad61ea386e3b608a6afaa97b6157a33098e5485afb3f770eb"
+        },
+        {
+          "projectId": "tsfg",
+          "repositoryRelativePath": "compiler/core-ir/common-program-shape.cpp",
+          "normalizedMode": "100644",
+          "sha256": "sha256:fb6381cf45deb132e1367f1df27320364f52bb865d778dd707810940dd953112"
+        },
+        {
+          "projectId": "tsfg",
+          "repositoryRelativePath": "compiler/core-ir/common-program-source.cpp",
+          "normalizedMode": "100644",
+          "sha256": "sha256:84e415b9528e3dbb4d0e3f1fcff8e068474a94ddc7d926e82ed649c7612947f4"
+        },
+        {
+          "projectId": "tsfg",
+          "repositoryRelativePath": "compiler/core-ir/common-program-source.h",
+          "normalizedMode": "100644",
+          "sha256": "sha256:fcc7320ef455011866c30cf7fd4829790fcb1ae7f8c3cc83c3961f79384af4b7"
+        },
+        {
+          "projectId": "tsfg",
+          "repositoryRelativePath": "compiler/core-ir/common-program-statements.cpp",
+          "normalizedMode": "100644",
+          "sha256": "sha256:034b8bb8e848ec5df85d9dea4fd3f51b9e438446c32469e96c266a5f1a5698ce"
+        },
+        {
+          "projectId": "tsfg",
+          "repositoryRelativePath": "compiler/core-ir/common-program-syntax.cpp",
+          "normalizedMode": "100644",
+          "sha256": "sha256:2d1b43a9a30c913eea3ce9b8d64c81744267c9622f0b33bb74f4c1a93cc3f3e0"
+        },
+        {
+          "projectId": "tsfg",
+          "repositoryRelativePath": "compiler/core-ir/common-program-syntax.h",
+          "normalizedMode": "100644",
+          "sha256": "sha256:cc4a268164eea90bd2f4df75b59adcdc620e5094dd3f0cbe5487c72a204741b7"
+        },
+        {
+          "projectId": "tsfg",
+          "repositoryRelativePath": "compiler/core-ir/common-program-transfer.cpp",
+          "normalizedMode": "100644",
+          "sha256": "sha256:3d4822b41f7d72c2ff6667ef4824c347e15eac43f070b6a2f2d1165be03557d8"
+        },
+        {
+          "projectId": "tsfg",
+          "repositoryRelativePath": "compiler/core-ir/common-program-types.cpp",
+          "normalizedMode": "100644",
+          "sha256": "sha256:9f6a6152085983ceca438d452489ab4f5728ec741b41397a6c778df0af5b1ecd"
+        },
+        {
+          "projectId": "tsfg",
+          "repositoryRelativePath": "compiler/core-ir/common-program.cpp",
+          "normalizedMode": "100644",
+          "sha256": "sha256:323cbaef971a0bb8b126d3ff609dc5df164acbf525a9a3a754391d5514011c57"
+        },
+        {
+          "projectId": "tsfg",
+          "repositoryRelativePath": "compiler/core-ir/common-program.h",
+          "normalizedMode": "100644",
+          "sha256": "sha256:136c62801aaeacdb42509fe80e5f37e12b539097ed59d6c66fc9be2fbf5d4df4"
+        },
+        {
+          "projectId": "tsfg",
+          "repositoryRelativePath": "compiler/core-ir/core-command.cpp",
+          "normalizedMode": "100644",
+          "sha256": "sha256:8fa239cdc973c2aef5b919598d68001b46054f94ff67c2f705d1090d01e45e03"
+        },
+        {
+          "projectId": "tsfg",
+          "repositoryRelativePath": "compiler/core-ir/core-command.h",
+          "normalizedMode": "100644",
+          "sha256": "sha256:cc1d647a0fd1a33dac736fc0eaf5684e04df8b614453aa16eb50a1e5ffb1e3a8"
+        },
+        {
+          "projectId": "tsfg",
+          "repositoryRelativePath": "compiler/core-ir/core-verify.cpp",
+          "normalizedMode": "100644",
+          "sha256": "sha256:3624b112523a86b63944e045230ac21089e2762a382782e8945983318cbdbcc4"
+        },
+        {
+          "projectId": "tsfg",
+          "repositoryRelativePath": "compiler/core-ir/core-verify.h",
+          "normalizedMode": "100644",
+          "sha256": "sha256:de6d001253104752f17393e1547d0807102aeb26f6912b608260207ca17bc21d"
+        },
+        {
+          "projectId": "tsfg",
+          "repositoryRelativePath": "compiler/core-ir/dialect.cpp",
+          "normalizedMode": "100644",
+          "sha256": "sha256:af766fef23b9fe2b7a89abed3b309b4cd11ee26a9f987c27e714523495c41947"
+        },
+        {
+          "projectId": "tsfg",
+          "repositoryRelativePath": "compiler/core-ir/dialect.h",
+          "normalizedMode": "100644",
+          "sha256": "sha256:a776e65abf366e851470341f5ed504ed4300f30c46fd092ea839a96ed0354e5b"
+        },
+        {
+          "projectId": "tsfg",
+          "repositoryRelativePath": "compiler/core-ir/empty-reference.h",
+          "normalizedMode": "100644",
+          "sha256": "sha256:e9c4656d53df6d8dede40bf8b5a214d7df6646da419f5226b967ee9a2cc0c07a"
+        },
+        {
+          "projectId": "tsfg",
+          "repositoryRelativePath": "compiler/core-ir/environment-contracts.cpp",
+          "normalizedMode": "100644",
+          "sha256": "sha256:e363eb934f768dd231b8585e527eb63408ea5b8142fba550be37333271c2d4f0"
+        },
+        {
+          "projectId": "tsfg",
+          "repositoryRelativePath": "compiler/core-ir/environment-contracts.h",
+          "normalizedMode": "100644",
+          "sha256": "sha256:e22f17eac3fe0237a7c44a72d2137523d68c36138243c026081ff2e68fd5aff8"
+        },
+        {
+          "projectId": "tsfg",
+          "repositoryRelativePath": "compiler/core-ir/exception-cfg.cpp",
+          "normalizedMode": "100644",
+          "sha256": "sha256:790fa573de2d7ec44c71731ab0139896d96d6d6cc500fbed752d5dee0e00ce7e"
+        },
+        {
+          "projectId": "tsfg",
+          "repositoryRelativePath": "compiler/core-ir/exception-cfg.h",
+          "normalizedMode": "100644",
+          "sha256": "sha256:44bf8872efeb956bb8ad9435f43ec5289452e2305a30e3a5cb36fff757cabe2e"
+        },
+        {
+          "projectId": "tsfg",
+          "repositoryRelativePath": "compiler/core-ir/exception-command.cpp",
+          "normalizedMode": "100644",
+          "sha256": "sha256:a6a0aeda86d395e0ed48a05b3b556ab4586f235c9ab55449670693a21056d5da"
+        },
+        {
+          "projectId": "tsfg",
+          "repositoryRelativePath": "compiler/core-ir/exception-hir.cpp",
+          "normalizedMode": "100644",
+          "sha256": "sha256:6fa17306f6bb38e621352f4407d99a111f860b72efe55a35cf3b9f44d5c08ad7"
+        },
+        {
+          "projectId": "tsfg",
+          "repositoryRelativePath": "compiler/core-ir/exception-json.cpp",
+          "normalizedMode": "100644",
+          "sha256": "sha256:850dcf43bf44c09f128c878e8f6d7a8867c291fd18e80acb96244f34b8369d83"
+        },
+        {
+          "projectId": "tsfg",
+          "repositoryRelativePath": "compiler/core-ir/exception-json.h",
+          "normalizedMode": "100644",
+          "sha256": "sha256:8bb7f60ad0ac22d4c48450cee22fdfefa9d236de2d4d9ea5c1c67b2840c87d08"
+        },
+        {
+          "projectId": "tsfg",
+          "repositoryRelativePath": "compiler/core-ir/exception-provenance.cpp",
+          "normalizedMode": "100644",
+          "sha256": "sha256:b238d434ce0b6337b69eeb9870f664bbbe633508e5411d50f781dbcb5f84a02a"
+        },
+        {
+          "projectId": "tsfg",
+          "repositoryRelativePath": "compiler/core-ir/exception-source.cpp",
+          "normalizedMode": "100644",
+          "sha256": "sha256:99b05cc3fb4a287e90259f4ee2a0b9dd4a11c49fdb7ca799e5b61eee86e57351"
+        },
+        {
+          "projectId": "tsfg",
+          "repositoryRelativePath": "compiler/core-ir/exception-source.h",
+          "normalizedMode": "100644",
+          "sha256": "sha256:354f5e062d553a57bed0c4bca3a3bd3f196e3c8834410be6837f3c4ad9b1a999"
+        },
+        {
+          "projectId": "tsfg",
+          "repositoryRelativePath": "compiler/core-ir/exception-verify.cpp",
+          "normalizedMode": "100644",
+          "sha256": "sha256:df52a7cd8b39b0dbcef6ac154cf24bcfc3872a04c36517f6f583b835c67e1091"
+        },
+        {
+          "projectId": "tsfg",
+          "repositoryRelativePath": "compiler/core-ir/exception.cpp",
+          "normalizedMode": "100644",
+          "sha256": "sha256:e32d6e92e559b710e6900c5c16ab7d40a9b72ae53f41cd0a145728d3a0a4056f"
+        },
+        {
+          "projectId": "tsfg",
+          "repositoryRelativePath": "compiler/core-ir/exception.h",
+          "normalizedMode": "100644",
+          "sha256": "sha256:82385313c95ce426a74b53f68a4c9673fc6095d8d5050b1a9a76de20a113e6ea"
+        },
+        {
+          "projectId": "tsfg",
+          "repositoryRelativePath": "compiler/core-ir/finite-abi.cpp",
+          "normalizedMode": "100644",
+          "sha256": "sha256:d541ce0eb9a7cc8a083197c1171e87324104c22ca161bab9fd89c4d293fc1161"
+        },
+        {
+          "projectId": "tsfg",
+          "repositoryRelativePath": "compiler/core-ir/finite-actual-flow.cpp",
+          "normalizedMode": "100644",
+          "sha256": "sha256:61d7705d1710fc91ea8b88dc461b898e8f13a67d8110acd3a95d20cdff361c85"
+        },
+        {
+          "projectId": "tsfg",
+          "repositoryRelativePath": "compiler/core-ir/finite-array-call-effects.cpp",
+          "normalizedMode": "100644",
+          "sha256": "sha256:045034100eb850a7d0016a031255917ac80a9b503380fa84161d36314fd0c6dd"
+        },
+        {
+          "projectId": "tsfg",
+          "repositoryRelativePath": "compiler/core-ir/finite-array-call-flow.cpp",
+          "normalizedMode": "100644",
+          "sha256": "sha256:6a89d52bdf114d6fe6d3548c55074b518eb941ba67befba9a73120e88029c9ef"
+        },
+        {
+          "projectId": "tsfg",
+          "repositoryRelativePath": "compiler/core-ir/finite-array-call-flow.h",
+          "normalizedMode": "100644",
+          "sha256": "sha256:40646790007a147535710c001deeea351fe083b435026cba57078565eff5121e"
+        },
+        {
+          "projectId": "tsfg",
+          "repositoryRelativePath": "compiler/core-ir/finite-array-flow.cpp",
+          "normalizedMode": "100644",
+          "sha256": "sha256:d8a5db39fb89c2edd5d439b966dc4aa50f64325d7d998066912d7f425c53d550"
+        },
+        {
+          "projectId": "tsfg",
+          "repositoryRelativePath": "compiler/core-ir/finite-array-flow.h",
+          "normalizedMode": "100644",
+          "sha256": "sha256:0a1f1081bedfe94c1f4fbdc16daa9cec2a7e6b9fc98173bfd833301ae4e19bdd"
+        },
+        {
+          "projectId": "tsfg",
+          "repositoryRelativePath": "compiler/core-ir/finite-array-length.cpp",
+          "normalizedMode": "100644",
+          "sha256": "sha256:fb31a6f1261f3e964f6a07ca32f3517586a2c2e993c7f2a1671d42f68b79cd73"
+        },
+        {
+          "projectId": "tsfg",
+          "repositoryRelativePath": "compiler/core-ir/finite-array-length.h",
+          "normalizedMode": "100644",
+          "sha256": "sha256:b5ab00aa349149595c3128a5bd489630dcc7d819adedc31185f9a8c0502dd256"
+        },
+        {
+          "projectId": "tsfg",
+          "repositoryRelativePath": "compiler/core-ir/finite-array-memory-internal.h",
+          "normalizedMode": "100644",
+          "sha256": "sha256:256e872546ba9649c0d821972952d54f6490cc5cd714af3cb661189253dde93b"
+        },
+        {
+          "projectId": "tsfg",
+          "repositoryRelativePath": "compiler/core-ir/finite-array-memory-query.cpp",
+          "normalizedMode": "100644",
+          "sha256": "sha256:0540b81534a3002584c71407be81d93f2e789d57eb73b3c9f5229fde9a2123c9"
+        },
+        {
+          "projectId": "tsfg",
+          "repositoryRelativePath": "compiler/core-ir/finite-array-memory.cpp",
+          "normalizedMode": "100644",
+          "sha256": "sha256:c1120751905e7ce28c3b3c3dda7812a611255b8dc574038232ba6326fbbee2d0"
+        },
+        {
+          "projectId": "tsfg",
+          "repositoryRelativePath": "compiler/core-ir/finite-array-memory.h",
+          "normalizedMode": "100644",
+          "sha256": "sha256:49f124add0162e9832aa321bde25fdade419ebfc9cd457a9d3d6692381fe552a"
+        },
+        {
+          "projectId": "tsfg",
+          "repositoryRelativePath": "compiler/core-ir/finite-borrow-flow.cpp",
+          "normalizedMode": "100644",
+          "sha256": "sha256:e3a42467f1056c4a98d36a73ab1d0750ac58e6bc3b72f55651442cb2e1b75d43"
+        },
+        {
+          "projectId": "tsfg",
+          "repositoryRelativePath": "compiler/core-ir/finite-borrow-flow.h",
+          "normalizedMode": "100644",
+          "sha256": "sha256:30fb217c2ca725c89c6bb85e788dd0fd30ea71f0574f72d268a7a1fff01301f0"
+        },
+        {
+          "projectId": "tsfg",
+          "repositoryRelativePath": "compiler/core-ir/finite-borrow-storage.cpp",
+          "normalizedMode": "100644",
+          "sha256": "sha256:baf128c2021d31fc1dfee032098f76ea6d88fdf1e7558a37752e9cccc7c728ad"
+        },
+        {
+          "projectId": "tsfg",
+          "repositoryRelativePath": "compiler/core-ir/finite-borrow-storage.h",
+          "normalizedMode": "100644",
+          "sha256": "sha256:48838e98c44c6febc835b77b65672602e5c3b04c5a45be2f43d51a3f3d7d9f26"
+        },
+        {
+          "projectId": "tsfg",
+          "repositoryRelativePath": "compiler/core-ir/finite-borrows.cpp",
+          "normalizedMode": "100644",
+          "sha256": "sha256:9ca61769ec817fa5313f73c350667e8a1a28c62572cc30a5420d8a24201a5888"
+        },
+        {
+          "projectId": "tsfg",
+          "repositoryRelativePath": "compiler/core-ir/finite-catalog.cpp",
+          "normalizedMode": "100644",
+          "sha256": "sha256:bbdfe4a86297bc53f964589d6328a48675858d3ee1f3c6df7a7e3f1294e09f04"
+        },
+        {
+          "projectId": "tsfg",
+          "repositoryRelativePath": "compiler/core-ir/finite-constructor-writes.cpp",
+          "normalizedMode": "100644",
+          "sha256": "sha256:63f0f24f65d1878d02531e709ee3fe83f5441ba1ffb5376385b2af12219df67f"
+        },
+        {
+          "projectId": "tsfg",
+          "repositoryRelativePath": "compiler/core-ir/finite-constructor-writes.h",
+          "normalizedMode": "100644",
+          "sha256": "sha256:69b347e2183e54dfe518fc28fd362bba0a0ba7c550e6974069610f8323244ba1"
+        },
+        {
+          "projectId": "tsfg",
+          "repositoryRelativePath": "compiler/core-ir/finite-control-paths.cpp",
+          "normalizedMode": "100644",
+          "sha256": "sha256:0eadf7382219993a5b22b7157bb507701868a78f3b9f9a9ae3a79f48dc9b7bf3"
+        },
+        {
+          "projectId": "tsfg",
+          "repositoryRelativePath": "compiler/core-ir/finite-control-paths.h",
+          "normalizedMode": "100644",
+          "sha256": "sha256:465a34ed9da8c7e2590aa48d5d0eb83ca6cf12c32e75a06d1601f02c248a88f5"
+        },
+        {
+          "projectId": "tsfg",
+          "repositoryRelativePath": "compiler/core-ir/finite-dense-length.cpp",
+          "normalizedMode": "100644",
+          "sha256": "sha256:9c74f91bfd0a1d5cd5a2cb6b2c0d872ff9a15f908ee4b0d72f214e7f1490ca87"
+        },
+        {
+          "projectId": "tsfg",
+          "repositoryRelativePath": "compiler/core-ir/finite-dense-length.h",
+          "normalizedMode": "100644",
+          "sha256": "sha256:c2cec090211c0557cfa20981369f48ed03faf5f35b21e85bddaa8b304204ab3e"
+        },
+        {
+          "projectId": "tsfg",
+          "repositoryRelativePath": "compiler/core-ir/finite-domain.cpp",
+          "normalizedMode": "100644",
+          "sha256": "sha256:58ee9fb1f798377ef4a1659de887a1018a4afa247781e072d43c0b7f618300d0"
+        },
+        {
+          "projectId": "tsfg",
+          "repositoryRelativePath": "compiler/core-ir/finite-domain.h",
+          "normalizedMode": "100644",
+          "sha256": "sha256:3c779bcd9b6e5ae3762fe7c9982ec9006de4a5f610d3a6f82b17b5484775407b"
+        },
+        {
+          "projectId": "tsfg",
+          "repositoryRelativePath": "compiler/core-ir/finite-domains.cpp",
+          "normalizedMode": "100644",
+          "sha256": "sha256:cba0f1e18d309d1e44cbdc252585a5dc95447f1321e52967ae996dd364741c49"
+        },
+        {
+          "projectId": "tsfg",
+          "repositoryRelativePath": "compiler/core-ir/finite-entry-arrays.cpp",
+          "normalizedMode": "100644",
+          "sha256": "sha256:d5b86b4bb88bbf9dca08f736eef4a5ab5603ad391d2e5544d8159629bccbd7c7"
+        },
+        {
+          "projectId": "tsfg",
+          "repositoryRelativePath": "compiler/core-ir/finite-entry-arrays.h",
+          "normalizedMode": "100644",
+          "sha256": "sha256:c8e1df752222693250bae44614c6ca2c379af93b77d36d224ec010f131de987c"
+        },
+        {
+          "projectId": "tsfg",
+          "repositoryRelativePath": "compiler/core-ir/finite-entry-cells.cpp",
+          "normalizedMode": "100644",
+          "sha256": "sha256:233487a39db94f25428a531b06ebbcac78bc598e568ae2a08ef3d4b336ba6987"
+        },
+        {
+          "projectId": "tsfg",
+          "repositoryRelativePath": "compiler/core-ir/finite-entry-cells.h",
+          "normalizedMode": "100644",
+          "sha256": "sha256:85e521b946987e3221708c8bad5f188f7edf9caa431b5c63ed85471371584ca8"
+        },
+        {
+          "projectId": "tsfg",
+          "repositoryRelativePath": "compiler/core-ir/finite-entry.cpp",
+          "normalizedMode": "100644",
+          "sha256": "sha256:8ec8286e2b5b6db360d41ab3b4df48ba028faf2c169ded3ca025413dd82162fe"
+        },
+        {
+          "projectId": "tsfg",
+          "repositoryRelativePath": "compiler/core-ir/finite-fields.cpp",
+          "normalizedMode": "100644",
+          "sha256": "sha256:7f66a95eb0ee1c1226d45ecc18e06b83482bb296bff9f34ea18097abddaa2f77"
+        },
+        {
+          "projectId": "tsfg",
+          "repositoryRelativePath": "compiler/core-ir/finite-flow.cpp",
+          "normalizedMode": "100644",
+          "sha256": "sha256:d9e9ebe0cce2200ef4127acb11c0c13f7f1078d5e7a30e8d936914bfaf493436"
+        },
+        {
+          "projectId": "tsfg",
+          "repositoryRelativePath": "compiler/core-ir/finite-members.cpp",
+          "normalizedMode": "100644",
+          "sha256": "sha256:f59361c7e92cb98895483666ab0dd045678570693635f136ae480c249cf06e5d"
+        },
+        {
+          "projectId": "tsfg",
+          "repositoryRelativePath": "compiler/core-ir/finite-memory-entries.cpp",
+          "normalizedMode": "100644",
+          "sha256": "sha256:e9bfac5548d426fb400aa830dc458f439cacba53371dc98d1f2be43540824d06"
+        },
+        {
+          "projectId": "tsfg",
+          "repositoryRelativePath": "compiler/core-ir/finite-memory-flow.cpp",
+          "normalizedMode": "100644",
+          "sha256": "sha256:37936b8cb73335d7e59c9c5375b239d5e2d5a424eb95371645bc8f859644df8b"
+        },
+        {
+          "projectId": "tsfg",
+          "repositoryRelativePath": "compiler/core-ir/finite-memory-flow.h",
+          "normalizedMode": "100644",
+          "sha256": "sha256:1cb99ee5370580b287058d3d625243913500e65eff2e4cdfeedbddb298b82522"
+        },
+        {
+          "projectId": "tsfg",
+          "repositoryRelativePath": "compiler/core-ir/finite-memory-frames.cpp",
+          "normalizedMode": "100644",
+          "sha256": "sha256:ffdd5bca972e57b17d5a0a1ef9141e39ec6e874578d4756d4e83c87bcd9e895c"
+        },
+        {
+          "projectId": "tsfg",
+          "repositoryRelativePath": "compiler/core-ir/finite-memory-frames.h",
+          "normalizedMode": "100644",
+          "sha256": "sha256:ec2c7fc5e93225315c9b924bd9498b01609c28f52a51255e30b1d4f26e83aef3"
+        },
+        {
+          "projectId": "tsfg",
+          "repositoryRelativePath": "compiler/core-ir/finite-memory-indices.cpp",
+          "normalizedMode": "100644",
+          "sha256": "sha256:88f372434bdcf6a0ef8923565f633e61afef37fb68324fb39e73b76992d829aa"
+        },
+        {
+          "projectId": "tsfg",
+          "repositoryRelativePath": "compiler/core-ir/finite-memory-lifetime.cpp",
+          "normalizedMode": "100644",
+          "sha256": "sha256:27b5de1df363b9f36aa4f7dc76db3ef439c82add4fe050b131c05e8aaeef4119"
+        },
+        {
+          "projectId": "tsfg",
+          "repositoryRelativePath": "compiler/core-ir/finite-memory-lifetime.h",
+          "normalizedMode": "100644",
+          "sha256": "sha256:cd024a01cf03c2588d3a4663ef241a82634a0576a2668f816b3ddbdb30ee0fc8"
+        },
+        {
+          "projectId": "tsfg",
+          "repositoryRelativePath": "compiler/core-ir/finite-memory-sources.cpp",
+          "normalizedMode": "100644",
+          "sha256": "sha256:e859c4aabf70fd4b7b707ab9749905d01782c651d9bca462c29afbc1591bbf37"
+        },
+        {
+          "projectId": "tsfg",
+          "repositoryRelativePath": "compiler/core-ir/finite-memory-sources.h",
+          "normalizedMode": "100644",
+          "sha256": "sha256:1caff5bb64207ef115f31c5300e4b9fe982eb9a2e1793d271dab3f90c4010101"
+        },
+        {
+          "projectId": "tsfg",
+          "repositoryRelativePath": "compiler/core-ir/finite-memory-span-sources.cpp",
+          "normalizedMode": "100644",
+          "sha256": "sha256:1e8886dcc52b6cda5d21b7257533449ef81642e0466f8d1c96d2665f1648a130"
+        },
+        {
+          "projectId": "tsfg",
+          "repositoryRelativePath": "compiler/core-ir/finite-memory.cpp",
+          "normalizedMode": "100644",
+          "sha256": "sha256:88d81a5c1a4c698752e132613a75567cb90a4fbd427a66c3deb81a0516aeb89b"
+        },
+        {
+          "projectId": "tsfg",
+          "repositoryRelativePath": "compiler/core-ir/finite-module.cpp",
+          "normalizedMode": "100644",
+          "sha256": "sha256:2b5c2b4def50b4f703e42537ae10b08eaade8784248423acc84bbaf8182551cc"
+        },
+        {
+          "projectId": "tsfg",
+          "repositoryRelativePath": "compiler/core-ir/finite-module.h",
+          "normalizedMode": "100644",
+          "sha256": "sha256:0321e7bdb7be5436641c4846d6048b655ace94e9d4a58c737471ba2e06136169"
+        },
+        {
+          "projectId": "tsfg",
+          "repositoryRelativePath": "compiler/core-ir/finite-payload-flow.cpp",
+          "normalizedMode": "100644",
+          "sha256": "sha256:95d0e328bff4ce256038e977deea26e20f5352f2fc8235fed9ba44e4ac6f9710"
+        },
+        {
+          "projectId": "tsfg",
+          "repositoryRelativePath": "compiler/core-ir/finite-payload-flow.h",
+          "normalizedMode": "100644",
+          "sha256": "sha256:526b02d87f31a11e0ea53290234fdab5eb0106e8d6328a5a133025427bd0cd7b"
+        },
+        {
+          "projectId": "tsfg",
+          "repositoryRelativePath": "compiler/core-ir/finite-return-alias.cpp",
+          "normalizedMode": "100644",
+          "sha256": "sha256:dbd315c523b309744146f7e9dd0eb8dc0b50b5f878333b31dd2b07451d81f188"
+        },
+        {
+          "projectId": "tsfg",
+          "repositoryRelativePath": "compiler/core-ir/finite-values.cpp",
+          "normalizedMode": "100644",
+          "sha256": "sha256:682ea04f286fe5b7ff72ea906cc1a2311281289287873b4928d2dba61960112c"
+        },
+        {
+          "projectId": "tsfg",
+          "repositoryRelativePath": "compiler/core-ir/formal-closure-source.cpp",
+          "normalizedMode": "100644",
+          "sha256": "sha256:213190ca9d9cd10a825c64438a23c363b7bc4ac90b2b71ad70ea01a5b1f23c29"
+        },
+        {
+          "projectId": "tsfg",
+          "repositoryRelativePath": "compiler/core-ir/formal-closure-targets.cpp",
+          "normalizedMode": "100644",
+          "sha256": "sha256:108003f0ed1b657bf6fa2afc2bdb96923d4ffaf941f50893e1c74fd6a178d063"
+        },
+        {
+          "projectId": "tsfg",
+          "repositoryRelativePath": "compiler/core-ir/formal-closure.cpp",
+          "normalizedMode": "100644",
+          "sha256": "sha256:22cedacef70c8aaf736e9ccb345a049e6fd2c0adccade0d59a9f8678ff869029"
+        },
+        {
+          "projectId": "tsfg",
+          "repositoryRelativePath": "compiler/core-ir/formal-closure.h",
+          "normalizedMode": "100644",
+          "sha256": "sha256:8619f89a51f018f3edfa8fff08ccf59b18bad1cd7de9a9ab9624d459819b1157"
+        },
+        {
+          "projectId": "tsfg",
+          "repositoryRelativePath": "compiler/core-ir/formal-exception-control.cpp",
+          "normalizedMode": "100644",
+          "sha256": "sha256:df98f39472f7ddf26d9f07411b67e253f3dbe4af4851c40f7dc2feb511ff7046"
+        },
+        {
+          "projectId": "tsfg",
+          "repositoryRelativePath": "compiler/core-ir/formal-exception-expressions.cpp",
+          "normalizedMode": "100644",
+          "sha256": "sha256:1f8858eafa9f8bb57126be27d85a91bc192619710d12b4d6840300ca756c8418"
+        },
+        {
+          "projectId": "tsfg",
+          "repositoryRelativePath": "compiler/core-ir/formal-exception-hir.cpp",
+          "normalizedMode": "100644",
+          "sha256": "sha256:786562f57b8a700a4452ecc74cc53236dfba0c828ab21f7d378c1732b2dcb9ca"
+        },
+        {
+          "projectId": "tsfg",
+          "repositoryRelativePath": "compiler/core-ir/formal-exception-identifiers.h",
+          "normalizedMode": "100644",
+          "sha256": "sha256:a5a33abe6ed82045a6a5da262e0b070b5fc9a835dae301da7744cfc25c91c9f9"
+        },
+        {
+          "projectId": "tsfg",
+          "repositoryRelativePath": "compiler/core-ir/formal-exception-proof.h",
+          "normalizedMode": "100644",
+          "sha256": "sha256:939b1219e1649ecc2c5d7a44595e3bd5feb8eb0b85b0dbaf32118a86a52b6510"
+        },
+        {
+          "projectId": "tsfg",
+          "repositoryRelativePath": "compiler/core-ir/formal-exception-regions.cpp",
+          "normalizedMode": "100644",
+          "sha256": "sha256:7bd3db2037c9b7361c5be10a7b3347daa96c297bc9ed2dba4dbe568421ad697b"
+        },
+        {
+          "projectId": "tsfg",
+          "repositoryRelativePath": "compiler/core-ir/formal-exception-source.cpp",
+          "normalizedMode": "100644",
+          "sha256": "sha256:34a855010d46267c94e7fb0bf0ba343e32592acf87a1ab6f3bc04c12cd1690d9"
+        },
+        {
+          "projectId": "tsfg",
+          "repositoryRelativePath": "compiler/core-ir/formal-exception-source.h",
+          "normalizedMode": "100644",
+          "sha256": "sha256:ea921273f6d86270238179da08c561ee865d90581f1f586011a2ecc6fe3ebe27"
+        },
+        {
+          "projectId": "tsfg",
+          "repositoryRelativePath": "compiler/core-ir/formal-exception-text.cpp",
+          "normalizedMode": "100644",
+          "sha256": "sha256:dcb617654dc7a4382a88adc8eedf1cd7601a843e39c6243abb7d056d981aaf9a"
+        },
+        {
+          "projectId": "tsfg",
+          "repositoryRelativePath": "compiler/core-ir/formal-exception-values.cpp",
+          "normalizedMode": "100644",
+          "sha256": "sha256:da4e985474b2f94eee5f9185e3fcb19f84ffffd8a7340e0c61536b419b7b25e9"
+        },
+        {
+          "projectId": "tsfg",
+          "repositoryRelativePath": "compiler/core-ir/formal-exception.cpp",
+          "normalizedMode": "100644",
+          "sha256": "sha256:21c03b6ca3da95ac4b5557e4e99079b9acbf4fc3ad0df2c2dfde8f070274763d"
+        },
+        {
+          "projectId": "tsfg",
+          "repositoryRelativePath": "compiler/core-ir/formal-exception.h",
+          "normalizedMode": "100644",
+          "sha256": "sha256:d13976b53f36af2b1a2af68c6fcd442e93c21af77f2a31e781775aac778907a2"
+        },
+        {
+          "projectId": "tsfg",
+          "repositoryRelativePath": "compiler/core-ir/kernel-access-metadata.cpp",
+          "normalizedMode": "100644",
+          "sha256": "sha256:fee8c56969edc909a2f0aea69c970fba20b75a9af6b98233b2d37e2ff742f9c4"
+        },
+        {
+          "projectId": "tsfg",
+          "repositoryRelativePath": "compiler/core-ir/kernel-access.cpp",
+          "normalizedMode": "100644",
+          "sha256": "sha256:1d221dd64bdff5bab983739650dfaccef77f61ab485b2e73bda2f15bc26bb513"
+        },
+        {
+          "projectId": "tsfg",
+          "repositoryRelativePath": "compiler/core-ir/kernel-access.h",
+          "normalizedMode": "100644",
+          "sha256": "sha256:00a74410902a93e138385146bd7b0cdcfc18ed359cd2367959849f0c3405f035"
+        },
+        {
+          "projectId": "tsfg",
+          "repositoryRelativePath": "compiler/core-ir/main.cpp",
+          "normalizedMode": "100644",
+          "sha256": "sha256:7daa1b1a10ec7f17c5425502ec822bbcf1d3a47bac94cb2cd15941fec2172ef3"
+        },
+        {
+          "projectId": "tsfg",
+          "repositoryRelativePath": "compiler/core-ir/managed-cfg.cpp",
+          "normalizedMode": "100644",
+          "sha256": "sha256:fecacf3e9487110ff48cf815944dc8417913062fcce4135f05f369d7b7aec720"
+        },
+        {
+          "projectId": "tsfg",
+          "repositoryRelativePath": "compiler/core-ir/managed-cfg.h",
+          "normalizedMode": "100644",
+          "sha256": "sha256:4872ff384d1b789f8dd3a1f7bb132fa671fe5b5674a1aa5286c293647ad711c2"
+        },
+        {
+          "projectId": "tsfg",
+          "repositoryRelativePath": "compiler/core-ir/managed-liveness.cpp",
+          "normalizedMode": "100644",
+          "sha256": "sha256:36f9e49097e31a0373c04d4cb49d8d2fa8a51258e1595690168828cece43729b"
+        },
+        {
+          "projectId": "tsfg",
+          "repositoryRelativePath": "compiler/core-ir/managed-liveness.h",
+          "normalizedMode": "100644",
+          "sha256": "sha256:a31fc7e20b5735ab90d1b133f895f6e0a56df33090c6cfd96ce4807cd5d0aef1"
+        },
+        {
+          "projectId": "tsfg",
+          "repositoryRelativePath": "compiler/core-ir/module-plan.cpp",
+          "normalizedMode": "100644",
+          "sha256": "sha256:54ee366f4889ca4779e3a958c25c3be2b37f2c1f656752c7d82b282234c7e31d"
+        },
+        {
+          "projectId": "tsfg",
+          "repositoryRelativePath": "compiler/core-ir/module.cpp",
+          "normalizedMode": "100644",
+          "sha256": "sha256:3d0ad9582f86ba0b82864897b9fb45ea34779d996b59ddc2709152e9921b73ee"
+        },
+        {
+          "projectId": "tsfg",
+          "repositoryRelativePath": "compiler/core-ir/module.h",
+          "normalizedMode": "100644",
+          "sha256": "sha256:c91ada54c3004e5bf2492a89e70d3a14408cb21df8d054ef886fb2f75297f0bf"
+        },
+        {
+          "projectId": "tsfg",
+          "repositoryRelativePath": "compiler/core-ir/native_cost.cpp",
+          "normalizedMode": "100644",
+          "sha256": "sha256:7ed50c91d7e96308f601791657b480acd498a4a04538bd19039e23a9ae7a01da"
+        },
+        {
+          "projectId": "tsfg",
+          "repositoryRelativePath": "compiler/core-ir/native_cost.h",
+          "normalizedMode": "100644",
+          "sha256": "sha256:ee503baebd9bd45d9a4126344c5584b9d280d1f3fbc136e7784fd77d91efa713"
+        },
+        {
+          "projectId": "tsfg",
+          "repositoryRelativePath": "compiler/core-ir/nullable-cfg.cpp",
+          "normalizedMode": "100644",
+          "sha256": "sha256:0f97ba5f4225eb0220234765512e1da9a1b21dabd48555ac1b5eba13da181434"
+        },
+        {
+          "projectId": "tsfg",
+          "repositoryRelativePath": "compiler/core-ir/nullable-metadata.cpp",
+          "normalizedMode": "100644",
+          "sha256": "sha256:22575d10f69f3ab716487569742940db7d9a060be2144e17a9fdf598c21b4681"
+        },
+        {
+          "projectId": "tsfg",
+          "repositoryRelativePath": "compiler/core-ir/nullable-wire.cpp",
+          "normalizedMode": "100644",
+          "sha256": "sha256:3995b70d1e1f26b2098a3adcd2e69740fe64d86e0a1787b3e5e13b3270ccdf32"
+        },
+        {
+          "projectId": "tsfg",
+          "repositoryRelativePath": "compiler/core-ir/nullable-wire.h",
+          "normalizedMode": "100644",
+          "sha256": "sha256:6a987e149dcecebcdd3482871909dfee9fad8dd6ef702208bc52d8bee65bc703"
+        },
+        {
+          "projectId": "tsfg",
+          "repositoryRelativePath": "compiler/core-ir/nullable.cpp",
+          "normalizedMode": "100644",
+          "sha256": "sha256:e5db1c31de5c81f9d3b415ea7a3f8d3e235aed9afa0a2e481beec54de33f3618"
+        },
+        {
+          "projectId": "tsfg",
+          "repositoryRelativePath": "compiler/core-ir/nullable.h",
+          "normalizedMode": "100644",
+          "sha256": "sha256:3c54b867cb96c6ca47bc9fa25e57c21750ab13efae39ba8cd850456468447b64"
+        },
+        {
+          "projectId": "tsfg",
+          "repositoryRelativePath": "compiler/core-ir/reference-cfg.cpp",
+          "normalizedMode": "100644",
+          "sha256": "sha256:b2d2cfbe0d26eb6ad43a5e41479c7229c43938d2973dd1e30ba3d81eddb3d93f"
+        },
+        {
+          "projectId": "tsfg",
+          "repositoryRelativePath": "compiler/core-ir/reference-construction.cpp",
+          "normalizedMode": "100644",
+          "sha256": "sha256:70ca60c23629a25a4cf862fb0d8bd85d62e21f3e213956c078342cb06349bdc2"
+        },
+        {
+          "projectId": "tsfg",
+          "repositoryRelativePath": "compiler/core-ir/reference-contracts.cpp",
+          "normalizedMode": "100644",
+          "sha256": "sha256:e950a25efa8dc20c57ca7f1935188b23e8ed933de8291fe0bdc1ab6f20ecc5da"
+        },
+        {
+          "projectId": "tsfg",
+          "repositoryRelativePath": "compiler/core-ir/reference-contracts.h",
+          "normalizedMode": "100644",
+          "sha256": "sha256:bb3542a1ec088f486f07f0f20c7da07ae2a54f451e7b7efe4ce7e46ca43a743b"
+        },
+        {
+          "projectId": "tsfg",
+          "repositoryRelativePath": "compiler/core-ir/reference-index.cpp",
+          "normalizedMode": "100644",
+          "sha256": "sha256:ee31fed8f79923aec1bd25c098c7a98dc92f2b475b6dbb97eb68174dade60ec8"
+        },
+        {
+          "projectId": "tsfg",
+          "repositoryRelativePath": "compiler/core-ir/reference-metadata.cpp",
+          "normalizedMode": "100644",
+          "sha256": "sha256:dfb25f7a1087ad566e2982ca398e5b8f4083cbba1e4c3bab040f51743bdc9772"
+        },
+        {
+          "projectId": "tsfg",
+          "repositoryRelativePath": "compiler/core-ir/reference-metadata.h",
+          "normalizedMode": "100644",
+          "sha256": "sha256:885e79bc990725690fec780da7dd8a1f605a7be6f794959d7e970c1ffccb0fec"
+        },
+        {
+          "projectId": "tsfg",
+          "repositoryRelativePath": "compiler/core-ir/reference-provenance.cpp",
+          "normalizedMode": "100644",
+          "sha256": "sha256:c10bdf69ad4d1ccd4a9c23b1a7e82c11cf052f671d79f1d7b62c60b9e7ff447f"
+        },
+        {
+          "projectId": "tsfg",
+          "repositoryRelativePath": "compiler/core-ir/reference-roots.cpp",
+          "normalizedMode": "100644",
+          "sha256": "sha256:c387b580b81c33c67d2053e47e794f543122f53c16fbee68fe80fa739b09efd6"
+        },
+        {
+          "projectId": "tsfg",
+          "repositoryRelativePath": "compiler/core-ir/reference-verify.cpp",
+          "normalizedMode": "100644",
+          "sha256": "sha256:36df8a8449973bba494bc13e88a91c9a780d83820b83a5efb7b6fe6419a79822"
+        },
+        {
+          "projectId": "tsfg",
+          "repositoryRelativePath": "compiler/core-ir/reference-verify.h",
+          "normalizedMode": "100644",
+          "sha256": "sha256:542811d8b8df926d6a834ca08a2520ae72db2dd02ee5313723b114a6451071e6"
+        },
+        {
+          "projectId": "tsfg",
+          "repositoryRelativePath": "compiler/core-ir/reference.cpp",
+          "normalizedMode": "100644",
+          "sha256": "sha256:a86d7452b505a22b5d82b2b817e793a6f9c51ea7af691c9af1b5431264deed69"
+        },
+        {
+          "projectId": "tsfg",
+          "repositoryRelativePath": "compiler/core-ir/reference.h",
+          "normalizedMode": "100644",
+          "sha256": "sha256:0d8d487dee1a97e88b50ab91bb6c5305475efb835f14669a305e07e99a789699"
+        },
+        {
+          "projectId": "tsfg",
+          "repositoryRelativePath": "compiler/core-ir/scalar-presence.h",
+          "normalizedMode": "100644",
+          "sha256": "sha256:229583ada61b272e2d356ac27a8c2f2c3e9021bf167ad5079c88d83f7ea02536"
+        },
+        {
+          "projectId": "tsfg",
+          "repositoryRelativePath": "compiler/core-ir/scalar_ops.h",
+          "normalizedMode": "100644",
+          "sha256": "sha256:9fac8ec4e60f7c4768ccf15dfcbd3712334c6d3cea090ba50198ade8ab459bf8"
+        },
+        {
+          "projectId": "tsfg",
+          "repositoryRelativePath": "compiler/core-ir/static-main.cpp",
+          "normalizedMode": "100644",
+          "sha256": "sha256:5d545a1e29bcfcc927e6996c926145153e69c2fce4f6f9292c0d54c6b725483a"
+        },
+        {
+          "projectId": "tsfg",
+          "repositoryRelativePath": "compiler/core-ir/string-core.h",
+          "normalizedMode": "100644",
+          "sha256": "sha256:b4222f05632fa9443608882856f71cff55a69d7a12368c2651ced010e2903f12"
+        },
+        {
+          "projectId": "tsfg",
+          "repositoryRelativePath": "compiler/core-ir/string-formal.cpp",
+          "normalizedMode": "100644",
+          "sha256": "sha256:312e1ec03ebfff739326f7675130e5f900b71c00122418053842621598a201d1"
+        },
+        {
+          "projectId": "tsfg",
+          "repositoryRelativePath": "compiler/core-ir/string-formal.h",
+          "normalizedMode": "100644",
+          "sha256": "sha256:55228a2d607e74b9ee8b661fba957e7aec600bf5138b281070d57607d8a5ef22"
+        },
+        {
+          "projectId": "tsfg",
+          "repositoryRelativePath": "compiler/core-ir/string-verify.cpp",
+          "normalizedMode": "100644",
+          "sha256": "sha256:5e8a274c54455361c23605fb27a470d00cba0e32a9e14de45ed986e633da473b"
+        },
+        {
+          "projectId": "tsfg",
+          "repositoryRelativePath": "compiler/core-ir/string-wire.cpp",
+          "normalizedMode": "100644",
+          "sha256": "sha256:e3ca56d45442d705531782c5b4746a4f18ac6b62be624af0c2c827037c4cd819"
+        },
+        {
+          "projectId": "tsfg",
+          "repositoryRelativePath": "compiler/core-ir/string-wire.h",
+          "normalizedMode": "100644",
+          "sha256": "sha256:5cbe20d1bc48140d2b7da7a8132958ae662070e4e74a54cf5a7b5a23333e924d"
+        },
+        {
+          "projectId": "tsfg",
+          "repositoryRelativePath": "compiler/core-ir/string.cpp",
+          "normalizedMode": "100644",
+          "sha256": "sha256:662aa001e9f4013d3838e7d83aeeb0ce7e78762ef911967cecafb9e4d3546f14"
+        },
+        {
+          "projectId": "tsfg",
+          "repositoryRelativePath": "compiler/core-ssa-emitter.mjs",
+          "normalizedMode": "100644",
+          "sha256": "sha256:fcb96f0a82ac29e53071e07eb8ef7cfe1d480b02c11caeaf57f3524cfb913ac5"
+        },
+        {
+          "projectId": "tsfg",
+          "repositoryRelativePath": "compiler/core-ssa-graph.mjs",
+          "normalizedMode": "100644",
+          "sha256": "sha256:3aff568fa2f0bb73058cf9fb2a043bd8eb57b961afb7ec8f43ca48a73d47dcc2"
+        },
+        {
+          "projectId": "tsfg",
+          "repositoryRelativePath": "compiler/exception-aggregate-expressions.mjs",
+          "normalizedMode": "100644",
+          "sha256": "sha256:9f6110535add2fdf1baeaa21228ff794e71360235d0b8524b65d60e3aed3d85f"
+        },
+        {
+          "projectId": "tsfg",
+          "repositoryRelativePath": "compiler/exception-aggregate-facts.mjs",
+          "normalizedMode": "100644",
+          "sha256": "sha256:9440188ecadcaad0ddb5219e414eb81ea0a5c0b14ab573260b6b543dd734f368"
+        },
+        {
+          "projectId": "tsfg",
+          "repositoryRelativePath": "compiler/exception-aggregate-input.mjs",
+          "normalizedMode": "100644",
+          "sha256": "sha256:1c103595fea5b5993b734932d0dd33fde70d36b22547cd930eb99b98d7b95a7f"
+        },
+        {
+          "projectId": "tsfg",
+          "repositoryRelativePath": "compiler/exception-callable.mjs",
+          "normalizedMode": "100644",
+          "sha256": "sha256:4e9bd7ff46908d0430a3d6c3fa0fa38f95d75713712c8723535356a6fec27a3d"
+        },
+        {
+          "projectId": "tsfg",
+          "repositoryRelativePath": "compiler/exception-closures.mjs",
+          "normalizedMode": "100644",
+          "sha256": "sha256:b57f32d590d69afb61cde3af9f6d3940b8a83dfcb039a4910adb82e25f7bd26b"
+        },
+        {
+          "projectId": "tsfg",
+          "repositoryRelativePath": "compiler/exception-common.mjs",
+          "normalizedMode": "100644",
+          "sha256": "sha256:20ba38afe7c06ba88e28948e919f8e5fb355a28b44d38685f4bc69d4d78d47a2"
+        },
+        {
+          "projectId": "tsfg",
+          "repositoryRelativePath": "compiler/exception-core-common.mjs",
+          "normalizedMode": "100644",
+          "sha256": "sha256:d965f9ec46a2ac10f6378138770ab93079937e799b8eabd12c40ed1cd2596c43"
+        },
+        {
+          "projectId": "tsfg",
+          "repositoryRelativePath": "compiler/exception-expressions.mjs",
+          "normalizedMode": "100644",
+          "sha256": "sha256:7fcf5a13c924014da580175e1b3f6ebc904917698df91131b946eef1c4b3c8a0"
+        },
+        {
+          "projectId": "tsfg",
+          "repositoryRelativePath": "compiler/exception-facts.mjs",
+          "normalizedMode": "100644",
+          "sha256": "sha256:5ccea8eb4f455ac0c8f1057e6b1b0dcaec348f0893fb173fd3f6c3f4ea569f73"
+        },
+        {
+          "projectId": "tsfg",
+          "repositoryRelativePath": "compiler/exception-frontend.mjs",
+          "normalizedMode": "100644",
+          "sha256": "sha256:1f7498326381943c1480a4e03d7ad99e90836ff326fbca58a5ed590ebfefd76d"
+        },
+        {
+          "projectId": "tsfg",
+          "repositoryRelativePath": "compiler/exception-function-values.mjs",
+          "normalizedMode": "100644",
+          "sha256": "sha256:7fb7ad0f8d4103fe9204dd6f81338f1f794b7d24c2792c74ed1b164c5a24ef75"
+        },
+        {
+          "projectId": "tsfg",
+          "repositoryRelativePath": "compiler/exception-hir-aggregates.mjs",
+          "normalizedMode": "100644",
+          "sha256": "sha256:ac36b211e5b09c6e40394063f05c723ea13b5425367531ae7dbc97bc2c3ed7bb"
+        },
+        {
+          "projectId": "tsfg",
+          "repositoryRelativePath": "compiler/exception-hir-common.mjs",
+          "normalizedMode": "100644",
+          "sha256": "sha256:dc6979a1f9350503041d67644045665428793a5ced0e4dfc26f6355f9712fea3"
+        },
+        {
+          "projectId": "tsfg",
+          "repositoryRelativePath": "compiler/exception-hir-functions.mjs",
+          "normalizedMode": "100644",
+          "sha256": "sha256:be645fabf4d049d3db9f5abb7a73af92b157bd8e38883b44cbb9abd6460da5cb"
+        },
+        {
+          "projectId": "tsfg",
+          "repositoryRelativePath": "compiler/exception-hir-identity.mjs",
+          "normalizedMode": "100644",
+          "sha256": "sha256:3e6dafd1f8df62544ddae38a0176420c936911be679f7ef384f8b50ce1360b03"
+        },
+        {
+          "projectId": "tsfg",
+          "repositoryRelativePath": "compiler/exception-hir-model.mjs",
+          "normalizedMode": "100644",
+          "sha256": "sha256:07a71869414cc75f79c48235586a0b29d7999799943d374689687a6004c64f00"
+        },
+        {
+          "projectId": "tsfg",
+          "repositoryRelativePath": "compiler/exception-hir-modules.mjs",
+          "normalizedMode": "100644",
+          "sha256": "sha256:c6ed464d6a1005bacdf349b4a8b506db35901c4754534e98ca18b90346e77732"
+        },
+        {
+          "projectId": "tsfg",
+          "repositoryRelativePath": "compiler/exception-hir-regions.mjs",
+          "normalizedMode": "100644",
+          "sha256": "sha256:6a25af44378f82dde89510fdd0dff783742409fcf57a4140eab692fb6c62036d"
+        },
+        {
+          "projectId": "tsfg",
+          "repositoryRelativePath": "compiler/exception-hir.mjs",
+          "normalizedMode": "100644",
+          "sha256": "sha256:11e2ba39430a5dad222c335e435a9ebe6cfb05ba732ddc33abf7dd39362e0494"
+        },
+        {
+          "projectId": "tsfg",
+          "repositoryRelativePath": "compiler/exception-identifiers.mjs",
+          "normalizedMode": "100644",
+          "sha256": "sha256:5d0d5481e77446483dd3cb2b6394ea9097f11951e55035af37595058869a7509"
+        },
+        {
+          "projectId": "tsfg",
+          "repositoryRelativePath": "compiler/exception-input.mjs",
+          "normalizedMode": "100644",
+          "sha256": "sha256:49fd4c565103e8674d05a63717ff5d8b2b1444067db6a95a2d64d24aa592f412"
+        },
+        {
+          "projectId": "tsfg",
+          "repositoryRelativePath": "compiler/exception-module-expressions.mjs",
+          "normalizedMode": "100644",
+          "sha256": "sha256:d0233985fe8b42fe80e53eb465754bcebcc75211f7fddfd7bda9e2ca25563ff3"
+        },
+        {
+          "projectId": "tsfg",
+          "repositoryRelativePath": "compiler/exception-module-facts.mjs",
+          "normalizedMode": "100644",
+          "sha256": "sha256:a4aa3eb8dc7779df1a9ec89935a93a877c733b4ab9fcbeb96c7dd70a04b8529c"
+        },
+        {
+          "projectId": "tsfg",
+          "repositoryRelativePath": "compiler/exception-module-input.mjs",
+          "normalizedMode": "100644",
+          "sha256": "sha256:242916dc1b4573ad626b78d86bdab1b7ce5ccce215bf4dc4c5817614686a7688"
+        },
+        {
+          "projectId": "tsfg",
+          "repositoryRelativePath": "compiler/exception-presence.mjs",
+          "normalizedMode": "100644",
+          "sha256": "sha256:205d1255848d4563e17f4beb0c4b30e8cb27e9f16d5813641bb59a97602ea4ea"
+        },
+        {
+          "projectId": "tsfg",
+          "repositoryRelativePath": "compiler/exception-scope.mjs",
+          "normalizedMode": "100644",
+          "sha256": "sha256:25651b3c3778b8d7d6aed074487326c2d7f47383ef3099738a8fefad9e87dcc9"
+        },
+        {
+          "projectId": "tsfg",
+          "repositoryRelativePath": "compiler/exception-source-grammar.mjs",
+          "normalizedMode": "100644",
+          "sha256": "sha256:50e04cc3d3875cd1e649823c37b55cf37066d821cb55e0aeb5ea0cecc578b15c"
+        },
+        {
+          "projectId": "tsfg",
+          "repositoryRelativePath": "compiler/exception-statements.mjs",
+          "normalizedMode": "100644",
+          "sha256": "sha256:ebf32b5176454d5b6bb484f192d05788c8f972c7da8729805aeaa440e58e0eca"
+        },
+        {
+          "projectId": "tsfg",
+          "repositoryRelativePath": "compiler/exception-types.mjs",
+          "normalizedMode": "100644",
+          "sha256": "sha256:904b68fb163defcabd8d388cf825ad97b28140e276e7ad6240d4555bf7488f49"
+        },
+        {
+          "projectId": "tsfg",
+          "repositoryRelativePath": "compiler/finite-actual-domains.mjs",
+          "normalizedMode": "100644",
+          "sha256": "sha256:b15cfcec6f3bbf847d853fe2b0219633f4a3d8fde7b8e2ed52bc7b6279676cb2"
+        },
+        {
+          "projectId": "tsfg",
+          "repositoryRelativePath": "compiler/finite-array-call-contexts.mjs",
+          "normalizedMode": "100644",
+          "sha256": "sha256:c666c3dfcfacfdd0c22c533af23eb232a9b8e16d244953c464ea8319ab351ab4"
+        },
+        {
+          "projectId": "tsfg",
+          "repositoryRelativePath": "compiler/finite-array-reaching.mjs",
+          "normalizedMode": "100644",
+          "sha256": "sha256:db01d9013f9247ad38dafe0dfc390e5e94e6dec912c8de9bb3d998fdb66208fb"
+        },
+        {
+          "projectId": "tsfg",
+          "repositoryRelativePath": "compiler/finite-callables.mjs",
+          "normalizedMode": "100644",
+          "sha256": "sha256:759df06c3118cf67ec9c52fc8a79bf4f8c5bdbe4e918b5258bb29480c40b56c3"
+        },
+        {
+          "projectId": "tsfg",
+          "repositoryRelativePath": "compiler/finite-core-emitter.mjs",
+          "normalizedMode": "100644",
+          "sha256": "sha256:eed243abcb40968e22d18985df058217618c8768e56809ee2f498ece2953d5bd"
+        },
+        {
+          "projectId": "tsfg",
+          "repositoryRelativePath": "compiler/finite-field-effects.mjs",
+          "normalizedMode": "100644",
+          "sha256": "sha256:56d34336202277d9f6a8e959e589136d5432177ce1d678498a0d980a9cbd0ea2"
+        },
+        {
+          "projectId": "tsfg",
+          "repositoryRelativePath": "compiler/finite-field-phases.mjs",
+          "normalizedMode": "100644",
+          "sha256": "sha256:1f3a552409b34f43ff6988c354b209efef2197c04a124ae83fe0133dc0027e4d"
+        },
+        {
+          "projectId": "tsfg",
+          "repositoryRelativePath": "compiler/finite-field-reaching.mjs",
+          "normalizedMode": "100644",
+          "sha256": "sha256:f50e99e4488bfd1d5a5fbd611f5583e7d7fb2cb26613b26e6a6d9830d0f47227"
+        },
+        {
+          "projectId": "tsfg",
+          "repositoryRelativePath": "compiler/finite-field-return-graphs.mjs",
+          "normalizedMode": "100644",
+          "sha256": "sha256:f48782c050b5fbc7da991e3382be0bdff641f64b1a69964fd343222e4f6eb831"
+        },
+        {
+          "projectId": "tsfg",
+          "repositoryRelativePath": "compiler/finite-numeric-use.mjs",
+          "normalizedMode": "100644",
+          "sha256": "sha256:8290c1f78afd06a5cc60a87f1a61c4e0a7d4b93de4ee567f8d6038490f65b37e"
+        },
+        {
+          "projectId": "tsfg",
+          "repositoryRelativePath": "compiler/finite-presence.mjs",
+          "normalizedMode": "100644",
+          "sha256": "sha256:b49e2e5ed8952df594a271bc0c427c74fee54967daa940b3178808fecf667ddc"
+        },
+        {
+          "projectId": "tsfg",
+          "repositoryRelativePath": "compiler/float.mjs",
+          "normalizedMode": "100644",
+          "sha256": "sha256:55b7dd18e430fc987f47b51301d1b371856da9b3c62bbc5bebb19db74299fa75"
+        },
+        {
+          "projectId": "tsfg",
+          "repositoryRelativePath": "compiler/formal-closure-core.mjs",
+          "normalizedMode": "100644",
+          "sha256": "sha256:a8c0ffb12674f2991135bd6008fde222725d5d2df0af6726f495026f7a76c36a"
+        },
+        {
+          "projectId": "tsfg",
+          "repositoryRelativePath": "compiler/formal-exception-control.mjs",
+          "normalizedMode": "100644",
+          "sha256": "sha256:f402cc2f518efc653bab71c1bcd2f8842d0453bbaf7337914753995ba046da56"
+        },
+        {
+          "projectId": "tsfg",
+          "repositoryRelativePath": "compiler/formal-exception-core.mjs",
+          "normalizedMode": "100644",
+          "sha256": "sha256:0f299297ecfcf4411a247007d7f618ea9a9befea8a4e37116c74eb48205f1574"
+        },
+        {
+          "projectId": "tsfg",
+          "repositoryRelativePath": "compiler/formal-exception-model.mjs",
+          "normalizedMode": "100644",
+          "sha256": "sha256:d82be6a0f82f90f636775362adc9851d2867bf530bb66f5f373ebd2e9de8c78f"
+        },
+        {
+          "projectId": "tsfg",
+          "repositoryRelativePath": "compiler/formal-exception-values.mjs",
+          "normalizedMode": "100644",
+          "sha256": "sha256:8f5eb2e6d91700121adfdc8b64a20bdec9b93caf79d27829fdc6b6a758f94d36"
+        },
+        {
+          "projectId": "tsfg",
+          "repositoryRelativePath": "compiler/frontend-execution.mjs",
+          "normalizedMode": "100644",
+          "sha256": "sha256:57e4d5c856f8f7f2aa2d8cd71c9599ddb3c925034e9b3ab7d3c8142bff561a2d"
+        },
+        {
+          "projectId": "tsfg",
+          "repositoryRelativePath": "compiler/frontend-response.mjs",
+          "normalizedMode": "100644",
+          "sha256": "sha256:21b57795732a0cc8d9684288c5f0dfd2d0b386398616cb0fceb8214eb51f2736"
+        },
+        {
+          "projectId": "tsfg",
+          "repositoryRelativePath": "compiler/frontend.mjs",
+          "normalizedMode": "100644",
+          "sha256": "sha256:2b80600f837c927a5deb53fb202b0d9d3f0b28c981cc4fded55f5139b65c94ed"
+        },
+        {
+          "projectId": "tsfg",
+          "repositoryRelativePath": "compiler/generic-hir.mjs",
+          "normalizedMode": "100644",
+          "sha256": "sha256:aa44736e88afd9b2f985b678e3436eaff7c62b37e1cb8753c90b3be47ffd65d5"
+        },
+        {
+          "projectId": "tsfg",
+          "repositoryRelativePath": "compiler/generic-instance.mjs",
+          "normalizedMode": "100644",
+          "sha256": "sha256:ec5e15669e4e7051476715963f586c4c69023aa7d621d783b95df75584b74a8a"
+        },
+        {
+          "projectId": "tsfg",
+          "repositoryRelativePath": "compiler/generic-json-budget.mjs",
+          "normalizedMode": "100644",
+          "sha256": "sha256:43d5d707320dabc5c7c44191f558477f84d574c39e52d02378ebdeb2725c1208"
+        },
+        {
+          "projectId": "tsfg",
+          "repositoryRelativePath": "compiler/generic-json.mjs",
+          "normalizedMode": "100644",
+          "sha256": "sha256:5eec34b078c856fe5ca75e491996e3d0816d31544adbc0ece8d5aeb18a99de4a"
+        },
+        {
+          "projectId": "tsfg",
+          "repositoryRelativePath": "compiler/generic-package-frontend.mjs",
+          "normalizedMode": "100644",
+          "sha256": "sha256:ee2140d1bf141bc6379570acc973e9f03fc1f9855a8b453f78d95959e42b3181"
+        },
+        {
+          "projectId": "tsfg",
+          "repositoryRelativePath": "compiler/generic-package-io-shape.mjs",
+          "normalizedMode": "100644",
+          "sha256": "sha256:efc824e1b3ffa511d1c87423122be74d33c164ff6cf7d6b90e8c18a93aeed4be"
+        },
+        {
+          "projectId": "tsfg",
+          "repositoryRelativePath": "compiler/generic-package-io.mjs",
+          "normalizedMode": "100644",
+          "sha256": "sha256:20dc6a91b2c76724e6442b7dbfb85cd0cc601676b57e21232bbc14de55dffd0e"
+        },
+        {
+          "projectId": "tsfg",
+          "repositoryRelativePath": "compiler/generic-package-shape.mjs",
+          "normalizedMode": "100644",
+          "sha256": "sha256:433f2791e752d3d104939564503d21071380fd17dfcdee11ee4c42e6449f6ef4"
+        },
+        {
+          "projectId": "tsfg",
+          "repositoryRelativePath": "compiler/generic-package.mjs",
+          "normalizedMode": "100644",
+          "sha256": "sha256:55e15b8a5738db1b835ab561a7bd2d5bb4756ce70e9997e81c9a94815039b7a4"
+        },
+        {
+          "projectId": "tsfg",
+          "repositoryRelativePath": "compiler/hir-wire.mjs",
+          "normalizedMode": "100644",
+          "sha256": "sha256:5f17afee4fe30c613ebc10f60b634831348dbff32ce9831251abd9116d1f589f"
+        },
+        {
+          "projectId": "tsfg",
+          "repositoryRelativePath": "compiler/hir.mjs",
+          "normalizedMode": "100644",
+          "sha256": "sha256:8d1699bc1aa566913dedfe848ce936eb2d13bdc6d8acc9b7702739162b3c5789"
+        },
+        {
+          "projectId": "tsfg",
+          "repositoryRelativePath": "compiler/identity.mjs",
+          "normalizedMode": "100644",
+          "sha256": "sha256:a7431d9e8427629926e53e9a4c43f1603492429840b93b0f792e45af028b9329"
+        },
+        {
+          "projectId": "tsfg",
+          "repositoryRelativePath": "compiler/kernel-access.mjs",
+          "normalizedMode": "100644",
+          "sha256": "sha256:b70d78cd866a5e6b5ffbea5774847efc452226c5670a061293f9b4c9047d3011"
+        },
+        {
+          "projectId": "tsfg",
+          "repositoryRelativePath": "compiler/kernel-core-emitter.mjs",
+          "normalizedMode": "100644",
+          "sha256": "sha256:14a36b73b1be050c7a7981db31c85b766bfb30fd2f423f779322bfe26f68d808"
+        },
+        {
+          "projectId": "tsfg",
+          "repositoryRelativePath": "compiler/lexical-environment-layouts.mjs",
+          "normalizedMode": "100644",
+          "sha256": "sha256:4edb545b002f7bb408def56a1fb50f7eae4f9c4ae1802f1a691a6cf6e25826a5"
+        },
+        {
+          "projectId": "tsfg",
+          "repositoryRelativePath": "compiler/member-presence.mjs",
+          "normalizedMode": "100644",
+          "sha256": "sha256:a77d852f302b40a5a64d845306d9760dc0ed1542d3290f20532eb12c11186025"
+        },
+        {
+          "projectId": "tsfg",
+          "repositoryRelativePath": "compiler/minimal-arrays-v1.d.ts",
+          "normalizedMode": "100644",
+          "sha256": "sha256:04a97584458d9212250e94d4fc517264c277a9ce635fbb14de11452194fd76b2"
+        },
+        {
+          "projectId": "tsfg",
+          "repositoryRelativePath": "compiler/minimal-arrays-v2.d.ts",
+          "normalizedMode": "100644",
+          "sha256": "sha256:6420493372913f019f64b094e181d1346afcca79e720ea85dc5e5026e03ba01e"
+        },
+        {
+          "projectId": "tsfg",
+          "repositoryRelativePath": "compiler/minimal-arrays-v3.d.ts",
+          "normalizedMode": "100644",
+          "sha256": "sha256:282b335a6e0e0493fa74a3c1dd56f234f8c679079acdaf0600cefb8306c26415"
+        },
+        {
+          "projectId": "tsfg",
+          "repositoryRelativePath": "compiler/minimal-arrays-v8.d.ts",
+          "normalizedMode": "100644",
+          "sha256": "sha256:0d30a2f626bb7455decf36f5a7a8d3308d4254100d2cb10e7c0d2353d28b141e"
+        },
+        {
+          "projectId": "tsfg",
+          "repositoryRelativePath": "compiler/minimal-bool-v1.d.ts",
+          "normalizedMode": "100644",
+          "sha256": "sha256:42dcdf2fb167745b06fbc4342618855cacb2a0d67eb19651d06ea1960cb149cf"
+        },
+        {
+          "projectId": "tsfg",
+          "repositoryRelativePath": "compiler/minimal-conversions-v5.d.ts",
+          "normalizedMode": "100644",
+          "sha256": "sha256:60974c1fa82cc549da3a9268f5d82ab10b58f52e2612a377ee4577f05af52c86"
+        },
+        {
+          "projectId": "tsfg",
+          "repositoryRelativePath": "compiler/minimal-floats-v4.d.ts",
+          "normalizedMode": "100644",
+          "sha256": "sha256:c148c5256d1a6c2ed5f4150df4d1527041cc040a03b2b3f12fc7eb2ec212ff33"
+        },
+        {
+          "projectId": "tsfg",
+          "repositoryRelativePath": "compiler/minimal-integers-v3.d.ts",
+          "normalizedMode": "100644",
+          "sha256": "sha256:1106efa6dd658c6b1dc74c6edb218e2017c6a803f4ea8b84dfc6388f4051335a"
+        },
+        {
+          "projectId": "tsfg",
+          "repositoryRelativePath": "compiler/minimal-scalars-v2.d.ts",
+          "normalizedMode": "100644",
+          "sha256": "sha256:aec5cf8c55a05d76b35e42df70ac0511063e296bb21ce843a41c49897f77f969"
+        },
+        {
+          "projectId": "tsfg",
+          "repositoryRelativePath": "compiler/module-callable-common.mjs",
+          "normalizedMode": "100644",
+          "sha256": "sha256:feb5ada342749e3ac4a982e4e79e518da106beb719492529d4b3922704bf3638"
+        },
+        {
+          "projectId": "tsfg",
+          "repositoryRelativePath": "compiler/module-callable-core.mjs",
+          "normalizedMode": "100644",
+          "sha256": "sha256:41335186ebb9a45d072785205339c0f47269b34b40388fa1f6b2a22e4c9e0931"
+        },
+        {
+          "projectId": "tsfg",
+          "repositoryRelativePath": "compiler/module-callable-facts.mjs",
+          "normalizedMode": "100644",
+          "sha256": "sha256:e47038f459524dd3df0f34d64ed9390dabd119fe438de8d6859724bd6dfb0b89"
+        },
+        {
+          "projectId": "tsfg",
+          "repositoryRelativePath": "compiler/module-callable-hir.mjs",
+          "normalizedMode": "100644",
+          "sha256": "sha256:3bd5348eae06be30f252cac9d487afafeffe504ea06ed7f0d0d1d855ca190370"
+        },
+        {
+          "projectId": "tsfg",
+          "repositoryRelativePath": "compiler/module-callable-model.mjs",
+          "normalizedMode": "100644",
+          "sha256": "sha256:4e915f4b50f64a9d3570791bd2856d8f85d115cf8da1ee94068bf399c6d6c057"
+        },
+        {
+          "projectId": "tsfg",
+          "repositoryRelativePath": "compiler/module-callable-publication.mjs",
+          "normalizedMode": "100644",
+          "sha256": "sha256:825b458546c675bc9a32c6d96324e54f4924bee16cf7cc93e0c1d5049a253a6a"
+        },
+        {
+          "projectId": "tsfg",
+          "repositoryRelativePath": "compiler/module-callable-source.mjs",
+          "normalizedMode": "100644",
+          "sha256": "sha256:04b5cd6953cdd48d7bea921ef1134c065b98054bff70da6a4f5d831eecc79924"
+        },
+        {
+          "projectId": "tsfg",
+          "repositoryRelativePath": "compiler/module-callable-targets.mjs",
+          "normalizedMode": "100644",
+          "sha256": "sha256:fee2cbf5298ffb00301d767fe0f931a6ad0d9ce524265b8e4771803024d0d197"
+        },
+        {
+          "projectId": "tsfg",
+          "repositoryRelativePath": "compiler/module-facts.mjs",
+          "normalizedMode": "100644",
+          "sha256": "sha256:984172a2c737e426add4065ae9bcd4c24d63933e0208f42c246b1aac8e3fdb13"
+        },
+        {
+          "projectId": "tsfg",
+          "repositoryRelativePath": "compiler/module-hir-source.mjs",
+          "normalizedMode": "100644",
+          "sha256": "sha256:8eb0151ca82c3ca8d9911129ac17651f400867f3fba8710c4be26738a80b315a"
+        },
+        {
+          "projectId": "tsfg",
+          "repositoryRelativePath": "compiler/module-hir.mjs",
+          "normalizedMode": "100644",
+          "sha256": "sha256:74aec40be4b886f768b03614cc9e0fe952259f2ae0b910b99c13f166d4302b7a"
+        },
+        {
+          "projectId": "tsfg",
+          "repositoryRelativePath": "compiler/modules.mjs",
+          "normalizedMode": "100644",
+          "sha256": "sha256:b7475eac221da4228978d335995920aeddd80c1a4f9806b7ae81067d7a1eac6f"
+        },
+        {
+          "projectId": "tsfg",
+          "repositoryRelativePath": "compiler/nullable-common.mjs",
+          "normalizedMode": "100644",
+          "sha256": "sha256:a40a7b5edf37eaaca2524ba250a395ab92bb394ff021b82d8bdc7301373d0fc5"
+        },
+        {
+          "projectId": "tsfg",
+          "repositoryRelativePath": "compiler/nullable-core-emitter.mjs",
+          "normalizedMode": "100644",
+          "sha256": "sha256:90bda29b4ce1874f9c8d51a07d6af100eba4c425f9e6a2b38d7ba8755302fcc9"
+        },
+        {
+          "projectId": "tsfg",
+          "repositoryRelativePath": "compiler/nullable-facts.mjs",
+          "normalizedMode": "100644",
+          "sha256": "sha256:dd402881ad9cf033ad666bb00c5c259663b1a9406fedf855807ab15dc3295aa8"
+        },
+        {
+          "projectId": "tsfg",
+          "repositoryRelativePath": "compiler/nullable-frontend.mjs",
+          "normalizedMode": "100644",
+          "sha256": "sha256:714d77daec427b7a5b0fd134aaa30f0ef0efe0b28a00037d1cd755742449169c"
+        },
+        {
+          "projectId": "tsfg",
+          "repositoryRelativePath": "compiler/nullable-hir.mjs",
+          "normalizedMode": "100644",
+          "sha256": "sha256:e3e9a9b196168626782f620d2b403a49db4ce83cb2c320944cfdbe2bf653a361"
+        },
+        {
+          "projectId": "tsfg",
+          "repositoryRelativePath": "compiler/nullable-typeof.mjs",
+          "normalizedMode": "100644",
+          "sha256": "sha256:42452703276f16f474d4ea696e6c5b96e99e65051bb070e9364c268dac6ae2f1"
+        },
+        {
+          "projectId": "tsfg",
+          "repositoryRelativePath": "compiler/optional-property-hir.mjs",
+          "normalizedMode": "100644",
+          "sha256": "sha256:df79beb8a59808233bdec011118ea8ab684c7c9d2472c5a966a670d2fd13f923"
+        },
+        {
+          "projectId": "tsfg",
+          "repositoryRelativePath": "compiler/optional-property-profile.mjs",
+          "normalizedMode": "100644",
+          "sha256": "sha256:4d00baec56b73d0209c0ef7b001577947f5af822a2fc0693e36ae2724f23b3c6"
+        },
+        {
+          "projectId": "tsfg",
+          "repositoryRelativePath": "compiler/pipeline.mjs",
+          "normalizedMode": "100644",
+          "sha256": "sha256:890614ad9e5b3510ac01ec85f81c5809e389a457127eb5c0901b8da9919ac453"
+        },
+        {
+          "projectId": "tsfg",
+          "repositoryRelativePath": "compiler/presence.mjs",
+          "normalizedMode": "100644",
+          "sha256": "sha256:bcbc6968635df718be89af6ed4d458e943228dfefc75c2501570470528011f9a"
+        },
+        {
+          "projectId": "tsfg",
+          "repositoryRelativePath": "compiler/producer-packet.mjs",
+          "normalizedMode": "100644",
+          "sha256": "sha256:c6cf939f912a140bbc287e0f0e8582e4aed80c8cb6b731c63075211e1948823b"
+        },
+        {
+          "projectId": "tsfg",
+          "repositoryRelativePath": "compiler/reference-callable.mjs",
+          "normalizedMode": "100644",
+          "sha256": "sha256:cfc9b8bb0fa17f80ca0acf4d167e1809ab36ffdacb984906f035ae8cb636e89b"
+        },
+        {
+          "projectId": "tsfg",
+          "repositoryRelativePath": "compiler/reference-common.mjs",
+          "normalizedMode": "100644",
+          "sha256": "sha256:0d8399d35cd47d2c9fdcab6aba091d27f9e0adf9e15a7ba4b483f0651a9efc15"
+        },
+        {
+          "projectId": "tsfg",
+          "repositoryRelativePath": "compiler/reference-core-emitter.mjs",
+          "normalizedMode": "100644",
+          "sha256": "sha256:bc8d747964de572c5f9809348376ea658f9d360ab5f1375596db514548e7173d"
+        },
+        {
+          "projectId": "tsfg",
+          "repositoryRelativePath": "compiler/reference-core-model.mjs",
+          "normalizedMode": "100644",
+          "sha256": "sha256:d7e00a644c60f009a76fb9e9de9b014093b2bf4e6282c432f4b7f1588002768a"
+        },
+        {
+          "projectId": "tsfg",
+          "repositoryRelativePath": "compiler/reference-facts-body.mjs",
+          "normalizedMode": "100644",
+          "sha256": "sha256:3f77c6feb7875c16dbbe3fb10d60e1e048af0f416c6716cb7c0c43701bd67135"
+        },
+        {
+          "projectId": "tsfg",
+          "repositoryRelativePath": "compiler/reference-facts-shape.mjs",
+          "normalizedMode": "100644",
+          "sha256": "sha256:102264521bfc5b350835a45b696fcf137f38b50bd26fa4db2b1d82afb14a81b7"
+        },
+        {
+          "projectId": "tsfg",
+          "repositoryRelativePath": "compiler/reference-facts.mjs",
+          "normalizedMode": "100644",
+          "sha256": "sha256:2483b1967fbe81ebcb70c040e444b296b202941ee7c5d127ce9f1b8c04997bc3"
+        },
+        {
+          "projectId": "tsfg",
+          "repositoryRelativePath": "compiler/reference-forwarding.mjs",
+          "normalizedMode": "100644",
+          "sha256": "sha256:8d1abd91e77478e936fe38f0fc44604a80d91e29111509aa0d74d51f3ed47c0e"
+        },
+        {
+          "projectId": "tsfg",
+          "repositoryRelativePath": "compiler/reference-hierarchy.mjs",
+          "normalizedMode": "100644",
+          "sha256": "sha256:3f561335cd87bb7a644d767d0bb591d012c0d390ef097bc722bc234d1c5b1c6d"
+        },
+        {
+          "projectId": "tsfg",
+          "repositoryRelativePath": "compiler/reference-hir.mjs",
+          "normalizedMode": "100644",
+          "sha256": "sha256:b5a7a5d52eb79a8c2dc3a1bb1a04a8d2937f5d05a3ef7dbb58dd5bbc0028c0ce"
+        },
+        {
+          "projectId": "tsfg",
+          "repositoryRelativePath": "compiler/reference-methods.mjs",
+          "normalizedMode": "100644",
+          "sha256": "sha256:9d9d971da113f31727393cb2f615447b8d27e2dd52592798ca2da1b7ae176c17"
+        },
+        {
+          "projectId": "tsfg",
+          "repositoryRelativePath": "compiler/reference-provenance.mjs",
+          "normalizedMode": "100644",
+          "sha256": "sha256:bf9a5ce2ecebbfec50ac1980c773bd160f9e1a840a36686019291bb7245a7e0b"
+        },
+        {
+          "projectId": "tsfg",
+          "repositoryRelativePath": "compiler/reference-relations.mjs",
+          "normalizedMode": "100644",
+          "sha256": "sha256:d7c5cae288744622e1419220e2bc2bc4bd9cf0757ba12f5c0b0e96d686be4c37"
+        },
+        {
+          "projectId": "tsfg",
+          "repositoryRelativePath": "compiler/reference-scalar-policy.mjs",
+          "normalizedMode": "100644",
+          "sha256": "sha256:3034e0ba5e818c1583ae7384d0367208a4b6b13cb611bda42d4f697a92d34beb"
+        },
+        {
+          "projectId": "tsfg",
+          "repositoryRelativePath": "compiler/reference-types.mjs",
+          "normalizedMode": "100644",
+          "sha256": "sha256:a22d9d328c283ff25240f6c0bbf0f0a5e69deb424bbb635587cc19908ac2dce6"
+        },
+        {
+          "projectId": "tsfg",
+          "repositoryRelativePath": "compiler/scalar-core-emitter.mjs",
+          "normalizedMode": "100644",
+          "sha256": "sha256:6d0964587ad22fec6c75d770bc24f64b569478bc96506796b055a7c7d9a67c0d"
+        },
+        {
+          "projectId": "tsfg",
+          "repositoryRelativePath": "compiler/scalar-hir-body.mjs",
+          "normalizedMode": "100644",
+          "sha256": "sha256:adc3bee5c9cc7445c7988b4daad3797f582deaf0d1eee1b33653d54ea228a9a4"
+        },
+        {
+          "projectId": "tsfg",
+          "repositoryRelativePath": "compiler/scalar-hir-expression.mjs",
+          "normalizedMode": "100644",
+          "sha256": "sha256:b966d0badc66db1cfad666bbfc3d3e636dd3db440789424dfba3957e67680173"
+        },
+        {
+          "projectId": "tsfg",
+          "repositoryRelativePath": "compiler/scalar-hir-module.mjs",
+          "normalizedMode": "100644",
+          "sha256": "sha256:1a85ceace26867c3b6d25e785914416dae28c1e8174028d620d8313fa4271790"
+        },
+        {
+          "projectId": "tsfg",
+          "repositoryRelativePath": "compiler/scalar-hir-state.mjs",
+          "normalizedMode": "100644",
+          "sha256": "sha256:034b3a1a87b2d7104f6511f3156635de91376ca5b3b14d29ef643ea003499a73"
+        },
+        {
+          "projectId": "tsfg",
+          "repositoryRelativePath": "compiler/scalar-operators.mjs",
+          "normalizedMode": "100644",
+          "sha256": "sha256:238d3c93bd5ac1728ef13797d97e5e90ef0587c6602e2687eac88cce9681d037"
+        },
+        {
+          "projectId": "tsfg",
+          "repositoryRelativePath": "compiler/scalar-source.mjs",
+          "normalizedMode": "100644",
+          "sha256": "sha256:726cf27ce7a76942cb72263cb9e69e3a9665568c428dd9f84debf73dd59cdf86"
+        },
+        {
+          "projectId": "tsfg",
+          "repositoryRelativePath": "compiler/scalar-state-emitter.mjs",
+          "normalizedMode": "100644",
+          "sha256": "sha256:2658194a5103e429b469a256f3a74ddae9e79dc67975826c2807b54ee02cec24"
+        },
+        {
+          "projectId": "tsfg",
+          "repositoryRelativePath": "compiler/string-core-emitter.mjs",
+          "normalizedMode": "100644",
+          "sha256": "sha256:aa8ab3ae1e5161c6117c2669be7b873e7da7a80ebdc05d85ff5bdc6d675e436f"
+        },
+        {
+          "projectId": "tsfg",
+          "repositoryRelativePath": "compiler/string-facts-model.mjs",
+          "normalizedMode": "100644",
+          "sha256": "sha256:b22c939409a362cc89ac0bee2c980556e9d34650fbf006bf91bfc6da9a1f55ab"
+        },
+        {
+          "projectId": "tsfg",
+          "repositoryRelativePath": "compiler/string-facts-v2-model.mjs",
+          "normalizedMode": "100644",
+          "sha256": "sha256:fd56c81914daca82d352bbf8e96567645f5534efaea2da36119c96068bbb955f"
+        },
+        {
+          "projectId": "tsfg",
+          "repositoryRelativePath": "compiler/string-facts-v2.mjs",
+          "normalizedMode": "100644",
+          "sha256": "sha256:bb5caac553aea0b7f20eb0c231d8579e177012a3bc40b17606bde475811121ce"
+        },
+        {
+          "projectId": "tsfg",
+          "repositoryRelativePath": "compiler/string-facts.mjs",
+          "normalizedMode": "100644",
+          "sha256": "sha256:7264cd4f8f94ec95b0d150c6205539363bd76fd1bc3e0ddbbce43997d62f1177"
+        },
+        {
+          "projectId": "tsfg",
+          "repositoryRelativePath": "compiler/string-formal-emitter.mjs",
+          "normalizedMode": "100644",
+          "sha256": "sha256:e33c3149f27b9a89ebcfee7c2143c5364a8f95f5c70649b63db1ebe8d052931d"
+        },
+        {
+          "projectId": "tsfg",
+          "repositoryRelativePath": "compiler/string-hir-model.mjs",
+          "normalizedMode": "100644",
+          "sha256": "sha256:f1a760f53563c181fafedefb98ffa6a7b2062f7cb841915c4720fda51dd52671"
+        },
+        {
+          "projectId": "tsfg",
+          "repositoryRelativePath": "compiler/string-hir.mjs",
+          "normalizedMode": "100644",
+          "sha256": "sha256:85778818f32009267d28d53fda0694ed8dd74af0f9e5ab3160267dd25a632adb"
+        },
+        {
+          "projectId": "tsfg",
+          "repositoryRelativePath": "compiler/typed-array-backing.mjs",
+          "normalizedMode": "100644",
+          "sha256": "sha256:cd8faff508083315ebbdf099114d0491da2aa0629a6b3b73becd42e2daac19ec"
+        },
+        {
+          "projectId": "tsfg",
+          "repositoryRelativePath": "compiler/typed-array-body.mjs",
+          "normalizedMode": "100644",
+          "sha256": "sha256:0df1477ee93199b79ac50eb17d2c1050f36fa841cdd5ddef38c0728ed74fc208"
+        },
+        {
+          "projectId": "tsfg",
+          "repositoryRelativePath": "compiler/typed-array-construction.mjs",
+          "normalizedMode": "100644",
+          "sha256": "sha256:5e0a65282988ba0ac99c6d54405e7a5280338b50a8f47cfa8152790da779ccb5"
+        },
+        {
+          "projectId": "tsfg",
+          "repositoryRelativePath": "compiler/typed-array-density.mjs",
+          "normalizedMode": "100644",
+          "sha256": "sha256:aa2375203fef3a11cbbe7937ff6baa24aad5be937705a07f067ed707a74d1c90"
+        },
+        {
+          "projectId": "tsfg",
+          "repositoryRelativePath": "compiler/typed-array-facts.mjs",
+          "normalizedMode": "100644",
+          "sha256": "sha256:0c860ed744f547f0f0f893e8fcd6b6d1b9b99210340bada42fae689aa49f5cd8"
+        },
+        {
+          "projectId": "tsfg",
+          "repositoryRelativePath": "compiler/typed-array-hir.mjs",
+          "normalizedMode": "100644",
+          "sha256": "sha256:dce5c468ced1d3d9201446860ceaad109fd68a063c3b34ffcbb7bfd85153e878"
+        },
+        {
+          "projectId": "tsfg",
+          "repositoryRelativePath": "compiler/typed-array-literals.mjs",
+          "normalizedMode": "100644",
+          "sha256": "sha256:634360abd3ef288280f54967866c8fe5e1ec76add7ed9372f9bb9363ab08384d"
+        },
+        {
+          "projectId": "tsfg",
+          "repositoryRelativePath": "compiler/typed-array-project.mjs",
+          "normalizedMode": "100644",
+          "sha256": "sha256:3d38cddecc63314678bcba6bbf3fccfadc9220c9f5d5fe1c9006f764d6d42641"
+        },
+        {
+          "projectId": "tsfg",
+          "repositoryRelativePath": "compiler/typed-array-relations.mjs",
+          "normalizedMode": "100644",
+          "sha256": "sha256:3c1f583f1aad1b8063063b9aabfa525378e4430419c39ccacefc1363ce27f6d4"
+        },
+        {
+          "projectId": "tsfg",
+          "repositoryRelativePath": "compiler/typed-array-representation.mjs",
+          "normalizedMode": "100644",
+          "sha256": "sha256:3740fff004b7397bb242cbd5b955aebc1714adfee008f49d5ff1f0b08ccebb67"
+        },
+        {
+          "projectId": "tsfg",
+          "repositoryRelativePath": "compiler/typed-array-schema.mjs",
+          "normalizedMode": "100644",
+          "sha256": "sha256:42a503b72086d2d0c4bdfb78ac301b6b63e596944addd69bb15e74c5e66513c7"
+        },
+        {
+          "projectId": "tsfg",
+          "repositoryRelativePath": "compiler/typed-array-type-graphs.mjs",
+          "normalizedMode": "100644",
+          "sha256": "sha256:ef4d4a36268b42c3a75a982cda6d15659d4cfd501159a3caa02716bb49962e99"
+        },
+        {
+          "projectId": "tsfg",
+          "repositoryRelativePath": "compiler/typed-array-types.mjs",
+          "normalizedMode": "100644",
+          "sha256": "sha256:8d860e0ca48b9713ba156da0b45f4e5f91796b89d0e8ac71ce9120c44eb67bb0"
+        },
+        {
+          "projectId": "tsfg",
+          "repositoryRelativePath": "compiler/typed-array-witnesses.mjs",
+          "normalizedMode": "100644",
+          "sha256": "sha256:ddb63723733df29c73445b45216c39f07728174eca33ffed0171bc4e255c015a"
+        },
+        {
+          "projectId": "tsfg",
+          "repositoryRelativePath": "compiler/typed-field-backing.mjs",
+          "normalizedMode": "100644",
+          "sha256": "sha256:d4070fc6d3e50894510bb3a4b686b8717a0580c0e7b7340e1f541758b4d13df4"
+        },
+        {
+          "projectId": "tsfg",
+          "repositoryRelativePath": "compiler/typed-layouts.mjs",
+          "normalizedMode": "100644",
+          "sha256": "sha256:626866afccf0ad9b7fac30a6cf226ce666eef7fbb60f69a24576993fcc7890fd"
+        },
+        {
+          "projectId": "tsfg",
+          "repositoryRelativePath": "compiler/typed-reference-authority.mjs",
+          "normalizedMode": "100644",
+          "sha256": "sha256:b7d4b712a8932054cb2be9b2bd772dc843fc9fe51b63ee98c87829619154a3e3"
+        },
+        {
+          "projectId": "tsfg",
+          "repositoryRelativePath": "compiler/typed-reference-domains.mjs",
+          "normalizedMode": "100644",
+          "sha256": "sha256:a7855a8751535b8e3a206ce3c676105799431d06990b2822f8fce5c542c97884"
+        },
+        {
+          "projectId": "tsfg",
+          "repositoryRelativePath": "compiler/typed-reference-views.mjs",
+          "normalizedMode": "100644",
+          "sha256": "sha256:416770249836b5c6bf41e332e888a8eaee1a90bd996d597d41a6bba2421d92a0"
+        },
+        {
+          "projectId": "tsfg",
+          "repositoryRelativePath": "contracts/array-calls-candidate.schema.json",
+          "normalizedMode": "100644",
+          "sha256": "sha256:052f2c2e9ce201ee74bb0ad5735c62b7ab193c9abd3cf1ea17ee602a944aab14"
+        },
+        {
+          "projectId": "tsfg",
+          "repositoryRelativePath": "contracts/array-facts-candidate.schema.json",
+          "normalizedMode": "100644",
+          "sha256": "sha256:d2ee930b76b8fd5c2270ad69579c9c61377831a97034d3a8890d8aa770ebabc2"
+        },
+        {
+          "projectId": "tsfg",
+          "repositoryRelativePath": "contracts/array-generic-facts.schema.json",
+          "normalizedMode": "100644",
+          "sha256": "sha256:72dbf45fe1bc910892fef065af517787aed1819f43901f123f42ebaf6aef52ba"
+        },
+        {
+          "projectId": "tsfg",
+          "repositoryRelativePath": "contracts/array-hir-candidate.schema.json",
+          "normalizedMode": "100644",
+          "sha256": "sha256:073fac908486f522ecd8beaa1f684bdbb102f60c97ff49e215a53d58f0ee7a0d"
+        },
+        {
+          "projectId": "tsfg",
+          "repositoryRelativePath": "contracts/bytecode-array-candidate.schema.json",
+          "normalizedMode": "100644",
+          "sha256": "sha256:99e653478cc09b35a04c7311d09990426292ab399c498f866c9aa265d222cd67"
+        },
+        {
+          "projectId": "tsfg",
+          "repositoryRelativePath": "contracts/bytecode-nullable-candidate.schema.json",
+          "normalizedMode": "100644",
+          "sha256": "sha256:c5ee0e22b58fb63a1a18d6de88c5f0346126ed6833e8f2771d129898ec76db54"
+        },
+        {
+          "projectId": "tsfg",
+          "repositoryRelativePath": "contracts/bytecode-string-candidate.schema.json",
+          "normalizedMode": "100644",
+          "sha256": "sha256:4a332d8797528135da880c358b2d146651fde3a78028820424e7aecc9f8b19b4"
+        },
+        {
+          "projectId": "tsfg",
+          "repositoryRelativePath": "contracts/bytecode.schema.json",
+          "normalizedMode": "100644",
+          "sha256": "sha256:cf1483994a6acbba68704121944ee3553b6900655adc33b1390afdb1bb6b36fd"
+        },
+        {
+          "projectId": "tsfg",
+          "repositoryRelativePath": "contracts/common-program-core-development.json",
+          "normalizedMode": "100644",
+          "sha256": "sha256:93d16c5c092dc3e0b01764284d827f2c7d433a0908d40af31ac4967637abbcce"
+        },
+        {
+          "projectId": "tsfg",
+          "repositoryRelativePath": "contracts/common-program-hir-v2.schema.json",
+          "normalizedMode": "100644",
+          "sha256": "sha256:9d8a0772f2111516b02a87bac1cff44b95b40ac6768bab4fb690e2b7275e91ee"
+        },
+        {
+          "projectId": "tsfg",
+          "repositoryRelativePath": "contracts/common-program-source-v2.schema.json",
+          "normalizedMode": "100644",
+          "sha256": "sha256:a8f649d600a0f57be48c60415e856b4849898f96f07ecdf443926c555d0642cf"
+        },
+        {
+          "projectId": "tsfg",
+          "repositoryRelativePath": "contracts/conversion-entries.json",
+          "normalizedMode": "100644",
+          "sha256": "sha256:7083acd63351dbc9b808e24500d2a66e6b5b2e78390fef1c0d8fff53c259d89e"
+        },
+        {
+          "projectId": "tsfg",
+          "repositoryRelativePath": "contracts/core-array-candidate.schema.json",
+          "normalizedMode": "100644",
+          "sha256": "sha256:7566830375141eea3d0114244ef231216797543a2db9e9dda3595a08fb8135ca"
+        },
+        {
+          "projectId": "tsfg",
+          "repositoryRelativePath": "contracts/core-closure-candidate.schema.json",
+          "normalizedMode": "100644",
+          "sha256": "sha256:b06e1699ca93ebe2215668970e4c00bd00f000d3d65b754afe4498d52190b10b"
+        },
+        {
+          "projectId": "tsfg",
+          "repositoryRelativePath": "contracts/core-closure-publication-candidate.schema.json",
+          "normalizedMode": "100644",
+          "sha256": "sha256:6cfa558c84ac7af7ad7eef966912971968a719a52efe23268b068270af2542f7"
+        },
+        {
+          "projectId": "tsfg",
+          "repositoryRelativePath": "contracts/core-kernel-global-candidate.schema.json",
+          "normalizedMode": "100644",
+          "sha256": "sha256:034b04b81feb0a81b35df2150289828e25eacadd4c651e62c26bd5c86f203edb"
+        },
+        {
+          "projectId": "tsfg",
+          "repositoryRelativePath": "contracts/core-nullable-candidate.schema.json",
+          "normalizedMode": "100644",
+          "sha256": "sha256:f5781163c46aceb6ed913396005b9379a1834ce00b73f7f9260499b560dff514"
+        },
+        {
+          "projectId": "tsfg",
+          "repositoryRelativePath": "contracts/core-reference-candidate.schema.json",
+          "normalizedMode": "100644",
+          "sha256": "sha256:e205a6d8708b324749399a943e05f891524b86cfa6e7fdcff6f36a1d86837cce"
+        },
+        {
+          "projectId": "tsfg",
+          "repositoryRelativePath": "contracts/core-string-candidate.schema.json",
+          "normalizedMode": "100644",
+          "sha256": "sha256:068d460a7fe8af3f37e3f89e2a415eedada04b85f800c65b650a87b476a62e77"
+        },
+        {
+          "projectId": "tsfg",
+          "repositoryRelativePath": "contracts/exception-core-candidate-v1.schema.json",
+          "normalizedMode": "100644",
+          "sha256": "sha256:62e69eda2f22f85d55d132bff04f0b60229db69031ca51113c746d6e9424b359"
+        },
+        {
+          "projectId": "tsfg",
+          "repositoryRelativePath": "contracts/exception-hir-candidate-v1.schema.json",
+          "normalizedMode": "100644",
+          "sha256": "sha256:af8317d8403ea2817e1eba2c47e1d4ef38090f7127897204b05e369ec545ddfd"
+        },
+        {
+          "projectId": "tsfg",
+          "repositoryRelativePath": "contracts/exception-hir-v2.schema.json",
+          "normalizedMode": "100644",
+          "sha256": "sha256:aa92878cc6e89690cab6c38848c18e78d437f7a07a4f120ce9b246f8ca2fb80a"
+        },
+        {
+          "projectId": "tsfg",
+          "repositoryRelativePath": "contracts/exception-owned-bridge-candidate.schema.json",
+          "normalizedMode": "100644",
+          "sha256": "sha256:5221b50822965c633418462b28a9b58bfbc41b01e0fa4b6d31c50ab83805424d"
+        },
+        {
+          "projectId": "tsfg",
+          "repositoryRelativePath": "contracts/finite-core-development.json",
+          "normalizedMode": "100644",
+          "sha256": "sha256:2f96b85766950b7e39a2a9192672d97a5d12e7c663cde144d203c3420b96b259"
+        },
+        {
+          "projectId": "tsfg",
+          "repositoryRelativePath": "contracts/formal-closure-core-development.json",
+          "normalizedMode": "100644",
+          "sha256": "sha256:c33bfad1810292de2ca31cd04d282c5b2e7419d454c3cd6f6599ad7fdab68219"
+        },
+        {
+          "projectId": "tsfg",
+          "repositoryRelativePath": "contracts/formal-exception-core-development.json",
+          "normalizedMode": "100644",
+          "sha256": "sha256:45b738cb8f93412662a9302b2c030151267302f018a50bc6d269607bb3606dff"
+        },
+        {
+          "projectId": "tsfg",
+          "repositoryRelativePath": "contracts/frontend-snapshot.schema.json",
+          "normalizedMode": "100644",
+          "sha256": "sha256:0e5819b86ee626ba5db780d814473d4b9c269192733b2675894874795db58b07"
+        },
+        {
+          "projectId": "tsfg",
+          "repositoryRelativePath": "contracts/hir.schema.json",
+          "normalizedMode": "100644",
+          "sha256": "sha256:490098308091efaf26ec0074c81e2e8d35923859659f449c903692f946f3dded"
+        },
+        {
+          "projectId": "tsfg",
+          "repositoryRelativePath": "contracts/host-counter-semantic-v1.json",
+          "normalizedMode": "100644",
+          "sha256": "sha256:741903326ce680859fe7807d34ddc72d32e8b39a129b3097312798f39663358c"
+        },
+        {
+          "projectId": "tsfg",
+          "repositoryRelativePath": "contracts/module-callable-candidate.schema.json",
+          "normalizedMode": "100644",
+          "sha256": "sha256:8d66ba7464ea05c317fc413cf61dbc906c34c1ef38f4c7fcc916038e7dbe388e"
+        },
+        {
+          "projectId": "tsfg",
+          "repositoryRelativePath": "contracts/nullable-groups-candidate.schema.json",
+          "normalizedMode": "100644",
+          "sha256": "sha256:16278abcc5c2c3639856a350e32bdb94d0d5e3ff669a91124032f674136924af"
+        },
+        {
+          "projectId": "tsfg",
+          "repositoryRelativePath": "contracts/nullable-owned-bridge-candidate.schema.json",
+          "normalizedMode": "100644",
+          "sha256": "sha256:24a04b0b595cae59ccf52a939f4671cea0369c46bd705f56726d028ab1df5a71"
+        },
+        {
+          "projectId": "tsfg",
+          "repositoryRelativePath": "contracts/nullable-presence-capture-candidate.schema.json",
+          "normalizedMode": "100644",
+          "sha256": "sha256:1c1e5c0e7b43a0a70fce4f73173033ad8a60554d8557533f6343b29c8c4cf5ce"
+        },
+        {
+          "projectId": "tsfg",
+          "repositoryRelativePath": "contracts/nullable-presence-hir-candidate.schema.json",
+          "normalizedMode": "100644",
+          "sha256": "sha256:9892edc555999b98f964ae409e10d6ba576e8a819b2c4ed68783f626f2665eed"
+        },
+        {
+          "projectId": "tsfg",
+          "repositoryRelativePath": "contracts/nullable-typeof-undefined-candidate.schema.json",
+          "normalizedMode": "100644",
+          "sha256": "sha256:cad90ff57a58a4094cc7315c6b41d199a13f5c38302acc573d311ae98f652822"
+        },
+        {
+          "projectId": "tsfg",
+          "repositoryRelativePath": "contracts/optional-property-facts-v1.schema.json",
+          "normalizedMode": "100644",
+          "sha256": "sha256:9d66a69dbce62ecf2ee47968b4b2b3a310314610c1a52b87ccb9ff368bbe020e"
+        },
+        {
+          "projectId": "tsfg",
+          "repositoryRelativePath": "contracts/optional-property-hir.schema.json",
+          "normalizedMode": "100644",
+          "sha256": "sha256:8b6ed3e4521e79e659f18bac4824518e284d4e17924062a1ea0ecba2ab46e7bc"
+        },
+        {
+          "projectId": "tsfg",
+          "repositoryRelativePath": "contracts/registry.json",
+          "normalizedMode": "100644",
+          "sha256": "sha256:5dc5f09e3a6229ae799b5be83e0536220a4387390c46a19dffe084e85bb54914"
+        },
+        {
+          "projectId": "tsfg",
+          "repositoryRelativePath": "contracts/string-facts-candidate.schema.json",
+          "normalizedMode": "100644",
+          "sha256": "sha256:6dfed46326c15a81aeb6a1ea9b5ed2fc10db7bb1bf27733ac3df530d78d5cc62"
+        },
+        {
+          "projectId": "tsfg",
+          "repositoryRelativePath": "contracts/string-facts-v2-candidate.schema.json",
+          "normalizedMode": "100644",
+          "sha256": "sha256:79d8f807552e301b606aacdee7b81fcee83d8996ff2043e58c435e5f2b7b519c"
+        },
+        {
+          "projectId": "tsfg",
+          "repositoryRelativePath": "contracts/typed-array-hir.schema.json",
+          "normalizedMode": "100644",
+          "sha256": "sha256:72c6c7a2a352c526cf736ce99794acc01de7e66dbd96ed3d25334deccc7412f9"
+        },
+        {
+          "projectId": "tsfg",
+          "repositoryRelativePath": "eng/aot-build.mjs",
+          "normalizedMode": "100644",
+          "sha256": "sha256:b6913564e3471d0a37f7095769188063ac201ac50eadf90eadd794e163934f4e"
+        },
+        {
+          "projectId": "tsfg",
+          "repositoryRelativePath": "eng/build-agent-policy.mjs",
+          "normalizedMode": "100644",
+          "sha256": "sha256:9f7fca2349bb5331b44acc8950b826cf126d4ab1bef28cba5f1a936b79f724db"
+        },
+        {
+          "projectId": "tsfg",
+          "repositoryRelativePath": "eng/build-archive-extract.mjs",
+          "normalizedMode": "100644",
+          "sha256": "sha256:e9c3edefa37d8815b19c895e3db4a3f360fcb2e5e2dd179eeef23a5840485abb"
+        },
+        {
+          "projectId": "tsfg",
+          "repositoryRelativePath": "eng/build-archive-readers.mjs",
+          "normalizedMode": "100644",
+          "sha256": "sha256:6dcb0fa2f8040524edc67988a8366d3c7aeb9dbe0ce839708e40323d1c5ce47c"
+        },
+        {
+          "projectId": "tsfg",
+          "repositoryRelativePath": "eng/build-archive-writers.mjs",
+          "normalizedMode": "100644",
+          "sha256": "sha256:fe59299d9456dc41e45f80bbb66004aaa249aa34efa1eb553a30e3fdeb2a2723"
+        },
+        {
+          "projectId": "tsfg",
+          "repositoryRelativePath": "eng/build-command.mjs",
+          "normalizedMode": "100644",
+          "sha256": "sha256:7e8d198f71246a69bdb56ce55034f6fd52a6b551987b9527987ac29a80d2a530"
+        },
+        {
+          "projectId": "tsfg",
+          "repositoryRelativePath": "eng/build-compatibility.mjs",
+          "normalizedMode": "100644",
+          "sha256": "sha256:6b547e4f838a82951402894b3cb5acbdb1c7154f4a024859c61939b6fb5ef3f3"
+        },
+        {
+          "projectId": "tsfg",
+          "repositoryRelativePath": "eng/build-data.mjs",
+          "normalizedMode": "100644",
+          "sha256": "sha256:78efaee009620c718278fedf76e8ca41c25cea407844adf23d6864d769d276b4"
+        },
+        {
+          "projectId": "tsfg",
+          "repositoryRelativePath": "eng/build-delivery-commands.mjs",
+          "normalizedMode": "100644",
+          "sha256": "sha256:c581cc874ed3d686776387f5dd6270284aa6cd8b964bc43f2b3bee26112b53ae"
+        },
+        {
+          "projectId": "tsfg",
+          "repositoryRelativePath": "eng/build-dependency-policy.mjs",
+          "normalizedMode": "100644",
+          "sha256": "sha256:e8f7fdccdca27548d5640aed17b34f20ff0fa50eba0077d0248125c3d8f55f5f"
+        },
+        {
+          "projectId": "tsfg",
+          "repositoryRelativePath": "eng/build-errors.mjs",
+          "normalizedMode": "100644",
+          "sha256": "sha256:f61d7d4b3fb73e57cf79b0ddd5d5c53b891fa4a58c8febd57d341a17c81d39fb"
+        },
+        {
+          "projectId": "tsfg",
+          "repositoryRelativePath": "eng/build-git.mjs",
+          "normalizedMode": "100644",
+          "sha256": "sha256:8cf7c138873df66429c4d7bccd186a5cc3569ef76a2772caa842c2a0faae3c65"
+        },
+        {
+          "projectId": "tsfg",
+          "repositoryRelativePath": "eng/build-go-execution.mjs",
+          "normalizedMode": "100644",
+          "sha256": "sha256:6b5659758ac6a3d6a3abc16498fe05b9c56f98b808cda8c46856e64483a58a3a"
+        },
+        {
+          "projectId": "tsfg",
+          "repositoryRelativePath": "eng/build-identity.mjs",
+          "normalizedMode": "100644",
+          "sha256": "sha256:44504d928eadbf8b42e48b09ec830776644cdde75808fae7e97aea8ecc0e61eb"
+        },
+        {
+          "projectId": "tsfg",
+          "repositoryRelativePath": "eng/build-inputs.json",
+          "normalizedMode": "100644",
+          "sha256": "sha256:dbd3d126affa00e32b2aba5b45afd4559f236bbbc6bbc6b0502849d074736bf0"
+        },
+        {
+          "projectId": "tsfg",
+          "repositoryRelativePath": "eng/build-linux-sandbox.mjs",
+          "normalizedMode": "100644",
+          "sha256": "sha256:e60fb2638c2c6f3bda032a74bf8c5ea90269d9c8344c84d74c83ced2ee7850e3"
+        },
+        {
+          "projectId": "tsfg",
+          "repositoryRelativePath": "eng/build-linux.mjs",
+          "normalizedMode": "100644",
+          "sha256": "sha256:2f8467d4a654aa564d623c628d3fd218bae1665c504d94d8c174a3f76cc23ede"
+        },
+        {
+          "projectId": "tsfg",
+          "repositoryRelativePath": "eng/build-normalization.mjs",
+          "normalizedMode": "100644",
+          "sha256": "sha256:ade4ae9487b8fd21db1f502c4a56e8c9fb4f3914dfeaa8fcdb551785dbe7c0bb"
+        },
+        {
+          "projectId": "tsfg",
+          "repositoryRelativePath": "eng/build-offline-boundary.mjs",
+          "normalizedMode": "100644",
+          "sha256": "sha256:2bf8abc669e84e60b46f74df96e65f7c8d67ba3cb876a958450c843e1d9a2cb9"
+        },
+        {
+          "projectId": "tsfg",
+          "repositoryRelativePath": "eng/build-options.mjs",
+          "normalizedMode": "100644",
+          "sha256": "sha256:be92a07618af9e486246727ceb1c949b3bbcc221cb6ccafb91682d636f744ba6"
+        },
+        {
+          "projectId": "tsfg",
+          "repositoryRelativePath": "eng/build-package.mjs",
+          "normalizedMode": "100644",
+          "sha256": "sha256:b2c00cd3f0024de8453402bc83cc069f65d58b0f3dd94b5aed5d02ecdd39b2c8"
+        },
+        {
+          "projectId": "tsfg",
+          "repositoryRelativePath": "eng/build-policy.mjs",
+          "normalizedMode": "100644",
+          "sha256": "sha256:8fc5afeceb1e7a5b001a82d7a9bf941e37c329d07fcf746dfafaf4675e01eae7"
+        },
+        {
+          "projectId": "tsfg",
+          "repositoryRelativePath": "eng/build-process.mjs",
+          "normalizedMode": "100644",
+          "sha256": "sha256:cab39d9dc5b4edb2152637a639bd8c20f57c09a3e0e97912f369774c67e86612"
+        },
+        {
+          "projectId": "tsfg",
+          "repositoryRelativePath": "eng/build-product.mjs",
+          "normalizedMode": "100644",
+          "sha256": "sha256:43d6f71d346a4d6e16901d39193086420e014cee3564d6f68a6fe1341c078d2b"
+        },
+        {
+          "projectId": "tsfg",
+          "repositoryRelativePath": "eng/build-publication.mjs",
+          "normalizedMode": "100644",
+          "sha256": "sha256:934ee66f54682ecf70b30e6e5c68d64ea3e7a8bca4c4c3e13978ebfb0085d070"
+        },
+        {
+          "projectId": "tsfg",
+          "repositoryRelativePath": "eng/build-report.mjs",
+          "normalizedMode": "100644",
+          "sha256": "sha256:9bd2f118bbca9e5009b53946710c171416a44146ecc9778ca2cb41ed897899e6"
+        },
+        {
+          "projectId": "tsfg",
+          "repositoryRelativePath": "eng/build-repro-producer.mjs",
+          "normalizedMode": "100644",
+          "sha256": "sha256:2f4f54526e26b1b79a46e9ec0077b68af727bf86e083d3960e23a33933e2898c"
+        },
+        {
+          "projectId": "tsfg",
+          "repositoryRelativePath": "eng/build-repro.mjs",
+          "normalizedMode": "100644",
+          "sha256": "sha256:447837714a724e66de9d6d6e5cbaee7448623d8767c21a205f383a395b681c52"
+        },
+        {
+          "projectId": "tsfg",
+          "repositoryRelativePath": "eng/build-runtime-execution.mjs",
+          "normalizedMode": "100644",
+          "sha256": "sha256:c2944442aa8cc168324facf9da57ee5d3d1e1b7cd0c0bf9884d2f5a9b6789d5b"
+        },
+        {
+          "projectId": "tsfg",
+          "repositoryRelativePath": "eng/build-smoke.mjs",
+          "normalizedMode": "100644",
+          "sha256": "sha256:235148f75de97c8db68358d80e405edc7e438ebd85090faa8ff2e171921a7287"
+        },
+        {
+          "projectId": "tsfg",
+          "repositoryRelativePath": "eng/build-source-control.mjs",
+          "normalizedMode": "100644",
+          "sha256": "sha256:beba5f571123c391a0b7eb7707db81e7ae9e20bbf79d08d8835a5d71870f8135"
+        },
+        {
+          "projectId": "tsfg",
+          "repositoryRelativePath": "eng/build-source-policy.mjs",
+          "normalizedMode": "100644",
+          "sha256": "sha256:2e88d340ab8aca0536ba0a128daf1e880c475ae8371ac963165cf59c57848dca"
+        },
+        {
+          "projectId": "tsfg",
+          "repositoryRelativePath": "eng/build-tool-closure.mjs",
+          "normalizedMode": "100644",
+          "sha256": "sha256:d45d17eddb143451fe317e30d8ae3efe21fbfac2df44e58ff9b3095c714936af"
+        },
+        {
+          "projectId": "tsfg",
+          "repositoryRelativePath": "eng/build-toolchain.mjs",
+          "normalizedMode": "100644",
+          "sha256": "sha256:a0bbb3b43b14e3c2b7f155e50874e465454b259b3326535e5203ff248e0d9940"
+        },
+        {
+          "projectId": "tsfg",
+          "repositoryRelativePath": "eng/build-windows-sandbox.mjs",
+          "normalizedMode": "100644",
+          "sha256": "sha256:9a2834c30b4b4b272a2b26b67b8e23a147f5ba0e2928461626ca16aaf31c80fc"
+        },
+        {
+          "projectId": "tsfg",
+          "repositoryRelativePath": "eng/build-windows.mjs",
+          "normalizedMode": "100644",
+          "sha256": "sha256:27dcd2b59131b95961c4b0d727f547a257c97657a6979cc809b998fb77348d01"
+        },
+        {
+          "projectId": "tsfg",
+          "repositoryRelativePath": "eng/build-workspace-policy.mjs",
+          "normalizedMode": "100644",
+          "sha256": "sha256:c1617207b7b84d0a003bce69e7f5b534da397e8983c094a98714c08ff2f43bcf"
+        },
+        {
+          "projectId": "tsfg",
+          "repositoryRelativePath": "eng/build-workspace.mjs",
+          "normalizedMode": "100644",
+          "sha256": "sha256:9b6c7cd2edfc7904d6ff5c2b8056e9ba904098f9085957087675a812d992193e"
+        },
+        {
+          "projectId": "tsfg",
+          "repositoryRelativePath": "eng/contract-set.mjs",
+          "normalizedMode": "100644",
+          "sha256": "sha256:1d36a35ddd90a6e6c6b279cc7491d58e948639c0ba0b15cd469a69e051bddab0"
+        },
+        {
+          "projectId": "tsfg",
+          "repositoryRelativePath": "eng/core-ir-inputs.mjs",
+          "normalizedMode": "100644",
+          "sha256": "sha256:6c1628cab7054e8c52d08adbcde217d688c4e00ea024788ebbd0850eb90fe458"
+        },
+        {
+          "projectId": "tsfg",
+          "repositoryRelativePath": "eng/dependency-sources.json",
+          "normalizedMode": "100644",
+          "sha256": "sha256:63a10bc078be2317d3bb470d7a546b1d3d0285901916e87eee61f137896cf7b7"
+        },
+        {
+          "projectId": "tsfg",
+          "repositoryRelativePath": "eng/frontend-build.mjs",
+          "normalizedMode": "100644",
+          "sha256": "sha256:f9fc84dab8872fe17c17a34fcef075456b85147d5740cc47e1f99a6b29f6e87b"
+        },
+        {
+          "projectId": "tsfg",
+          "repositoryRelativePath": "eng/frontend-source-admission.json",
+          "normalizedMode": "100644",
+          "sha256": "sha256:7a8d8dbd09b657c1f3252fd2eecfc498073cc72d0846e824eaeed097ee0a2ed4"
+        },
+        {
+          "projectId": "tsfg",
+          "repositoryRelativePath": "eng/frontend-source.lock.json",
+          "normalizedMode": "100644",
+          "sha256": "sha256:00f872641dc74b531d3dc96fd2ef52f136d787765e64910c3439151fec0af73e"
+        },
+        {
+          "projectId": "tsfg",
+          "repositoryRelativePath": "eng/frontend-toolchains.lock.json",
+          "normalizedMode": "100644",
+          "sha256": "sha256:bd612265c4a357177a1405705d8d185c3a91aee21c8031bb85501eec26f9b90c"
+        },
+        {
+          "projectId": "tsfg",
+          "repositoryRelativePath": "eng/go-closure.mjs",
+          "normalizedMode": "100644",
+          "sha256": "sha256:939437927d6d7de4fbb6d3949679e559847d6b0b876ac3c14855f305ce3f89f1"
+        },
+        {
+          "projectId": "tsfg",
+          "repositoryRelativePath": "eng/go-network-probe.mjs",
+          "normalizedMode": "100644",
+          "sha256": "sha256:c3195c869cdfe209db63d215a560b83d22c4fddb4e706b96a60414c77ca27d9a"
+        },
+        {
+          "projectId": "tsfg",
+          "repositoryRelativePath": "eng/go-source-result.mjs",
+          "normalizedMode": "100644",
+          "sha256": "sha256:93ce56da6377523b78b5f012a367b27f4c1422302300d5752870487e52b17bca"
+        },
+        {
+          "projectId": "tsfg",
+          "repositoryRelativePath": "eng/go-source-worker.mjs",
+          "normalizedMode": "100644",
+          "sha256": "sha256:4c8b7ebe6774e31309bfb5b582cc2905310ea53ae9422d9b89d21f07f373881f"
+        },
+        {
+          "projectId": "tsfg",
+          "repositoryRelativePath": "eng/go-work-access.mjs",
+          "normalizedMode": "100644",
+          "sha256": "sha256:4b5d6e2347abab432d85e92d6f155434c53540661840f7a06e835137eea05670"
+        },
+        {
+          "projectId": "tsfg",
+          "repositoryRelativePath": "eng/host-cost-source.lock.json",
+          "normalizedMode": "100644",
+          "sha256": "sha256:a3b6c26835d49512f34a482285d0eaa4e67cc0da75acfbd2ae3aa079250f6bd8"
+        },
+        {
+          "projectId": "tsfg",
+          "repositoryRelativePath": "eng/host-counter-binary.mjs",
+          "normalizedMode": "100644",
+          "sha256": "sha256:0dab241b8045fc478f4d2ccfdcc996191e9d30baf1915a2218a45cd67649c13c"
+        },
+        {
+          "projectId": "tsfg",
+          "repositoryRelativePath": "eng/host-counter-objects.mjs",
+          "normalizedMode": "100644",
+          "sha256": "sha256:4eeab0ac32a23c43ec7cd8042df7bc985f556d27b76307ad7996f1b4c36f9db9"
+        },
+        {
+          "projectId": "tsfg",
+          "repositoryRelativePath": "eng/host-counter.mjs",
+          "normalizedMode": "100644",
+          "sha256": "sha256:6efd96af5391d0489bb16b5d86a264ddf31dae466576095b5dddbde9bfbaeee4"
+        },
+        {
+          "projectId": "tsfg",
+          "repositoryRelativePath": "eng/host-semantic-contract.mjs",
+          "normalizedMode": "100644",
+          "sha256": "sha256:15bdbf3389cc33370c4e34225b1199c97fdb2732a295765a65727bce06e62a0c"
+        },
+        {
+          "projectId": "tsfg",
+          "repositoryRelativePath": "eng/intake-ledger.mjs",
+          "normalizedMode": "100644",
+          "sha256": "sha256:66fa6a253d60ef9c9d88d7a7f5c6f18dcb82ae262988a0ee72751dbefe50954b"
+        },
+        {
+          "projectId": "tsfg",
+          "repositoryRelativePath": "eng/mlir-build-inputs.mjs",
+          "normalizedMode": "100644",
+          "sha256": "sha256:41d67b24153ced85e346fb2cadea9e6ca6793ddb0cb691c2c05ece6a8a16c6b2"
+        },
+        {
+          "projectId": "tsfg",
+          "repositoryRelativePath": "eng/mlir-build.mjs",
+          "normalizedMode": "100644",
+          "sha256": "sha256:04baaed32769f31f1745135073a55c55c6b424bab943b03885c1f345c1f2584f"
+        },
+        {
+          "projectId": "tsfg",
+          "repositoryRelativePath": "eng/mlir-cmake-evaluation.mjs",
+          "normalizedMode": "100644",
+          "sha256": "sha256:26a156cffd5fd204d4ba58cef0f4c2c9b8556dca3ead6b1525fb59d81d7e1fa3"
+        },
+        {
+          "projectId": "tsfg",
+          "repositoryRelativePath": "eng/mlir-command.mjs",
+          "normalizedMode": "100644",
+          "sha256": "sha256:2e8effd2728be3f86738279eb02b6b0e9c7adf2ad4299838b01d5eca62b2780a"
+        },
+        {
+          "projectId": "tsfg",
+          "repositoryRelativePath": "eng/mlir-compiler-launcher.mjs",
+          "normalizedMode": "100644",
+          "sha256": "sha256:55c4f58f757ec29e79eccd55da2b3a8681cbef9c66912622acffa1405b565b85"
+        },
+        {
+          "projectId": "tsfg",
+          "repositoryRelativePath": "eng/mlir-configuration-sources.cmake",
+          "normalizedMode": "100644",
+          "sha256": "sha256:a594cef8887f3cc48b0a4d04fbe9f37436b575784efdae9e6eaaf4a054af51b5"
+        },
+        {
+          "projectId": "tsfg",
+          "repositoryRelativePath": "eng/mlir-python-policy.cmake",
+          "normalizedMode": "100644",
+          "sha256": "sha256:a6a3e355bccde09d68cdef2090d5e4ff4e5d3a92e2eb83a462957668e65b4963"
+        },
+        {
+          "projectId": "tsfg",
+          "repositoryRelativePath": "eng/mlir-python.lock.json",
+          "normalizedMode": "100644",
+          "sha256": "sha256:e8d3950c8e9afd037f767314689c13b48d9efba111a40b6b930650759011f359"
+        },
+        {
+          "projectId": "tsfg",
+          "repositoryRelativePath": "eng/mlir-python.mjs",
+          "normalizedMode": "100644",
+          "sha256": "sha256:f348ec1585f90263b79ba032d5e176000a2a79c1a7fc7d3bbb617cd18ad0e44c"
+        },
+        {
+          "projectId": "tsfg",
+          "repositoryRelativePath": "eng/mlir-sdk-admission.mjs",
+          "normalizedMode": "100644",
+          "sha256": "sha256:3b70f54bf2f34f59350e625bdb11b9ad3f6e607fb43b63d5fb88ad7d4d4feed0"
+        },
+        {
+          "projectId": "tsfg",
+          "repositoryRelativePath": "eng/mlir-sdk-paths.mjs",
+          "normalizedMode": "100644",
+          "sha256": "sha256:5ff6395c9176a805a8c13489fe91ba3a9883225db943a7aa8233f7df1c1fc96f"
+        },
+        {
+          "projectId": "tsfg",
+          "repositoryRelativePath": "eng/mlir-sdk.lock.json",
+          "normalizedMode": "100644",
+          "sha256": "sha256:ee1a5c1a452b35b6f4efbd819456cab2d4edf018f312525753898a17d7401210"
+        },
+        {
+          "projectId": "tsfg",
+          "repositoryRelativePath": "eng/mlir-sdk.mjs",
+          "normalizedMode": "100644",
+          "sha256": "sha256:4552e9d8ee2dd5ea741fb3978129a52c218928545e5d10ee94e2343afc79076f"
+        },
+        {
+          "projectId": "tsfg",
+          "repositoryRelativePath": "eng/mlir-source-build-legal.lock.json",
+          "normalizedMode": "100644",
+          "sha256": "sha256:ef70ecfe8c01721abba0a59971af760c8779db57128ca0e66303ea1826689959"
+        },
+        {
+          "projectId": "tsfg",
+          "repositoryRelativePath": "eng/mlir-source-legal.lock.json",
+          "normalizedMode": "100644",
+          "sha256": "sha256:30024bdeb99966ec45d01961b675bcc5e8f8fa94c7cab3208a205b68a325f04c"
+        },
+        {
+          "projectId": "tsfg",
+          "repositoryRelativePath": "eng/mlir-source-legal.mjs",
+          "normalizedMode": "100644",
+          "sha256": "sha256:8417b12e03b830fb153f972ef86a3cb320bc883a1dc231c5eddb176f13b932c4"
+        },
+        {
+          "projectId": "tsfg",
+          "repositoryRelativePath": "eng/mlir-source-notices.lock.json",
+          "normalizedMode": "100644",
+          "sha256": "sha256:7dc0478980ebfb3817acc1f344fc24a51c9c2ebef3705a1c7473b505c334ff7e"
+        },
+        {
+          "projectId": "tsfg",
+          "repositoryRelativePath": "eng/mlir-source-registration.mjs",
+          "normalizedMode": "100644",
+          "sha256": "sha256:a9ca50a6654fcc9719d9a8330d44e07f953820e8c0bc2c048f6e17527878cfe2"
+        },
+        {
+          "projectId": "tsfg",
+          "repositoryRelativePath": "eng/mlir-source.lock.json",
+          "normalizedMode": "100644",
+          "sha256": "sha256:05ba95f4c29ec224b1008381bd6fec559a038e72e46abd5121c971bc1db48a3a"
+        },
+        {
+          "projectId": "tsfg",
+          "repositoryRelativePath": "eng/mlir-source.mjs",
+          "normalizedMode": "100644",
+          "sha256": "sha256:2527f33c341167ade26cafc23be9ddb2f5b450a9a37fcee3e56468fccdd35231"
+        },
+        {
+          "projectId": "tsfg",
+          "repositoryRelativePath": "eng/mlir-static-closure.mjs",
+          "normalizedMode": "100644",
+          "sha256": "sha256:d524010d6cfe311972e50a630ffd587af3719189a1c377fd0f295e52070c9dd2"
+        },
+        {
+          "projectId": "tsfg",
+          "repositoryRelativePath": "eng/output-storage.mjs",
+          "normalizedMode": "100644",
+          "sha256": "sha256:c1e6aaa57ebdabd3b9550fc7c04ab8d965c356974349a6e1ff831b3f6f62a6f4"
+        },
+        {
+          "projectId": "tsfg",
+          "repositoryRelativePath": "eng/runtime-entry.mjs",
+          "normalizedMode": "100644",
+          "sha256": "sha256:530e650ed56e483d362bdc98677601bff6a3d8a2928604c97f5728cdc5a3210c"
+        },
+        {
+          "projectId": "tsfg",
+          "repositoryRelativePath": "eng/sandbox-run.c",
+          "normalizedMode": "100644",
+          "sha256": "sha256:b94ee7a410899eaa7ad465a0350fe7279e86c99f94aaf8bff2068faed9fcd1d1"
+        },
+        {
+          "projectId": "tsfg",
+          "repositoryRelativePath": "eng/source-admission.mjs",
+          "normalizedMode": "100644",
+          "sha256": "sha256:47e59708234abf226257683be2eab0412949568024998f98d5b941a559b244db"
+        },
+        {
+          "projectId": "tsfg",
+          "repositoryRelativePath": "eng/toolchains.lock.json",
+          "normalizedMode": "100644",
+          "sha256": "sha256:874ddca287fdbfc0013f052586bdb69d4beae52d78cbb5f277ab7d5b9dd32943"
+        },
+        {
+          "projectId": "tsfg",
+          "repositoryRelativePath": "eng/tsfg-build",
+          "normalizedMode": "100755",
+          "sha256": "sha256:0b60ecc0997e011211a5d23cea20d67445d7e3f5cf37d0bdb61dd75e765b96cd"
+        },
+        {
+          "projectId": "tsfg",
+          "repositoryRelativePath": "eng/tsfg-build.cmd",
+          "normalizedMode": "100644",
+          "sha256": "sha256:60036bc03d46fa059f97e77045b04dcf56d093adde1d40e70d0b7e106b2e1024"
+        },
+        {
+          "projectId": "tsfg",
+          "repositoryRelativePath": "eng/tsfg-build.mjs",
+          "normalizedMode": "100644",
+          "sha256": "sha256:4ffd8ef17382f73146af11f4c92bc1c1ad4ed29ad85b23640a8bebef00c25c92"
+        },
+        {
+          "projectId": "tsfg",
+          "repositoryRelativePath": "eng/typescript-ast-inputs.mjs",
+          "normalizedMode": "100644",
+          "sha256": "sha256:6a652ba3a5f03d6ec64195548e6e1fb1eb63a07f58e4e532cb69812a9bfcafdc"
+        },
+        {
+          "projectId": "tsfg",
+          "repositoryRelativePath": "eng/typescript-ast.mjs",
+          "normalizedMode": "100644",
+          "sha256": "sha256:ca074d275f857692f372b52c673e63f0d0737ab07a0e2d2b2b27f3fd0212ee51"
+        },
+        {
+          "projectId": "tsfg",
+          "repositoryRelativePath": "eng/typescript-generation.mjs",
+          "normalizedMode": "100644",
+          "sha256": "sha256:1af2a8608a656fdef76e6c8fa6c87044ce2d57d7f06b317fe4b9919b8e93b7f1"
+        },
+        {
+          "projectId": "tsfg",
+          "repositoryRelativePath": "eng/typescript-probes.mjs",
+          "normalizedMode": "100644",
+          "sha256": "sha256:94c6e08adc93a25d160d49977c5f0b74abebaf3ee911b5a9b1a0e9bacab2ffce"
+        },
+        {
+          "projectId": "tsfg",
+          "repositoryRelativePath": "eng/typescript-repro.mjs",
+          "normalizedMode": "100644",
+          "sha256": "sha256:5aa726d2eb78d96799255ceac4a1d1ddf2943f8463ddd78e21f9f86454db1279"
+        },
+        {
+          "projectId": "tsfg",
+          "repositoryRelativePath": "eng/typescript-required-tests.mjs",
+          "normalizedMode": "100644",
+          "sha256": "sha256:5af582abc596ed4db05bfe6f03575e9fcff945b02bc75634f1a7a4f13a92c847"
+        },
+        {
+          "projectId": "tsfg",
+          "repositoryRelativePath": "eng/upgrade-review.mjs",
+          "normalizedMode": "100644",
+          "sha256": "sha256:6ab2b8ea1a006b3d3c5cd1f48e772a502b642b860813e8794bb0d799bcd51a24"
+        },
+        {
+          "projectId": "tsfg",
+          "repositoryRelativePath": "eng/vm-bootstrap.mjs",
+          "normalizedMode": "100644",
+          "sha256": "sha256:765f5fef2c31a228e9311ed138dba79b01dca5d5ae0e9b23c358865785e9bb7b"
+        },
+        {
+          "projectId": "tsfg",
+          "repositoryRelativePath": "eng/vm-build.mjs",
+          "normalizedMode": "100644",
+          "sha256": "sha256:14ee6f39fc282fd40688e1746958c285319e88b19e36ce81eb59136bc0632afc"
+        },
+        {
+          "projectId": "tsfg",
+          "repositoryRelativePath": "eng/vulnerability-admission.mjs",
+          "normalizedMode": "100644",
+          "sha256": "sha256:037eec78a2ed7ad17f350db28dbf8e189a671eb499ebe8b5d63c52c81462d6c8"
+        },
+        {
+          "projectId": "tsfg",
+          "repositoryRelativePath": "eng/windows-publish.c",
+          "normalizedMode": "100644",
+          "sha256": "sha256:df540570978f60556352d5b6528e511b0b3ec8c1dcdbeb5924b5e67769fc6d6d"
+        },
+        {
+          "projectId": "tsfg",
+          "repositoryRelativePath": "eng/windows-sandbox-run.c",
+          "normalizedMode": "100644",
+          "sha256": "sha256:9eb121894125c226df4fd8019ee9f66998b66eb51cf453e49e938da0cc57a19e"
+        },
+        {
+          "projectId": "tsfg",
+          "repositoryRelativePath": "eng/workspace-policy.json",
+          "normalizedMode": "100644",
+          "sha256": "sha256:6414b63aeba9599497952ee6a05ac540c4b0f7ed8a371e644b96a09f7d9282f5"
+        },
+        {
+          "projectId": "tsfg",
+          "repositoryRelativePath": "pnpm-lock.yaml",
+          "normalizedMode": "100644",
+          "sha256": "sha256:e110b44300bc75e28489500b7d2165b27414e2c6283853d7e4220b5fc27e06db"
+        },
+        {
+          "projectId": "tsfg",
+          "repositoryRelativePath": "runtime/admitted-entry.c",
+          "normalizedMode": "100644",
+          "sha256": "sha256:65060d33a43e4d69d7dd657937b8f8dd493987cb90148b1df591098a2388b84c"
+        },
+        {
+          "projectId": "tsfg",
+          "repositoryRelativePath": "runtime/aot-events.zig",
+          "normalizedMode": "100644",
+          "sha256": "sha256:a390132cb849ad4cc28fbb7fda57896dc511f5a32ece0207bcc19aef049a1fda"
+        },
+        {
+          "projectId": "tsfg",
+          "repositoryRelativePath": "runtime/aot-instance.h",
+          "normalizedMode": "100644",
+          "sha256": "sha256:6ec5584abf083e9796123ff04d3d6c8e7548c1a146e064f514d9f92a851508ba"
+        },
+        {
+          "projectId": "tsfg",
+          "repositoryRelativePath": "runtime/aot-instance.zig",
+          "normalizedMode": "100644",
+          "sha256": "sha256:d934b06c39304e1da75d76714c348239a9339250eb9b0297c4ed662ba9da5c77"
+        },
+        {
+          "projectId": "tsfg",
+          "repositoryRelativePath": "runtime/aot-main.zig",
+          "normalizedMode": "100644",
+          "sha256": "sha256:3109fe19328bcb149e3778db2f96e9be99001b8fb1677dc24b87768352c345fc"
+        },
+        {
+          "projectId": "tsfg",
+          "repositoryRelativePath": "runtime/aot-program.h",
+          "normalizedMode": "100644",
+          "sha256": "sha256:e9b5e43c034adc5460f225d7fbdc483c9078ef34240c50d395d59607d63121c4"
+        },
+        {
+          "projectId": "tsfg",
+          "repositoryRelativePath": "runtime/aot-program.zig",
+          "normalizedMode": "100644",
+          "sha256": "sha256:aff54b3e8971c5fa9225c971fd89e39b1af0158cef1be91205491e745cffbaf6"
+        },
+        {
+          "projectId": "tsfg",
+          "repositoryRelativePath": "runtime/aot-request.zig",
+          "normalizedMode": "100644",
+          "sha256": "sha256:271b64ae2777df548d04ec18d44baca84b4141d082d74042c5dad8ca69779df8"
+        },
+        {
+          "projectId": "tsfg",
+          "repositoryRelativePath": "runtime/array-candidate-body.zig",
+          "normalizedMode": "100644",
+          "sha256": "sha256:758e02119f2f9228a21162667b9f4317f459326e343bda0f895198ef01ce5714"
+        },
+        {
+          "projectId": "tsfg",
+          "repositoryRelativePath": "runtime/array-candidate-decode.zig",
+          "normalizedMode": "100644",
+          "sha256": "sha256:b3eacd377b640718d8a12f2c68d023d76091743910c102cdda66980269087c61"
+        },
+        {
+          "projectId": "tsfg",
+          "repositoryRelativePath": "runtime/array-candidate-graph.zig",
+          "normalizedMode": "100644",
+          "sha256": "sha256:14adfcf21c468bf2f0d180e288c0beaa6f14313839cae354e4da629b8a4f0bea"
+        },
+        {
+          "projectId": "tsfg",
+          "repositoryRelativePath": "runtime/array-candidate-metadata.zig",
+          "normalizedMode": "100644",
+          "sha256": "sha256:8e62aec8969271586ca6c2217ed46935851db694f267e9eeae663b30499f7241"
+        },
+        {
+          "projectId": "tsfg",
+          "repositoryRelativePath": "runtime/array-candidate-model.zig",
+          "normalizedMode": "100644",
+          "sha256": "sha256:fe709aa65e7475cdc121ccbd5884f40651431925494bec4b1c2b3ca8ee02edc2"
+        },
+        {
+          "projectId": "tsfg",
+          "repositoryRelativePath": "runtime/array-candidate-owner.zig",
+          "normalizedMode": "100644",
+          "sha256": "sha256:0487e1cadfd9a24111d00f879f4014a702c8857466ee7eb4e329bf904a131064"
+        },
+        {
+          "projectId": "tsfg",
+          "repositoryRelativePath": "runtime/array-candidate-publication.zig",
+          "normalizedMode": "100644",
+          "sha256": "sha256:2b39192e0e30abe4943614d589140e6db0014d15bd118bd7f17ae0ee892d3d71"
+        },
+        {
+          "projectId": "tsfg",
+          "repositoryRelativePath": "runtime/array-candidate-roots.zig",
+          "normalizedMode": "100644",
+          "sha256": "sha256:7abf1cfeb54c2beb06040051b5edb386cabe54a850938028dd2f02a8840e69da"
+        },
+        {
+          "projectId": "tsfg",
+          "repositoryRelativePath": "runtime/array-candidate.zig",
+          "normalizedMode": "100644",
+          "sha256": "sha256:2cbd8ad71e99e3e8c30f15939baf2908eed2635c56165b730538244b594b1adb"
+        },
+        {
+          "projectId": "tsfg",
+          "repositoryRelativePath": "runtime/array-element.zig",
+          "normalizedMode": "100644",
+          "sha256": "sha256:c29d34325115d43294fbaa6fe773ec3d9f0e0f93483b93677c352f948fd182f9"
+        },
+        {
+          "projectId": "tsfg",
+          "repositoryRelativePath": "runtime/bytecode.zig",
+          "normalizedMode": "100644",
+          "sha256": "sha256:37edb1257d8ee8631c945030eaf66f98e4120d2c793b41d359f203082dafd36e"
+        },
+        {
+          "projectId": "tsfg",
+          "repositoryRelativePath": "runtime/bytecode_decode.zig",
+          "normalizedMode": "100644",
+          "sha256": "sha256:39a0dee53c7b320aab41e85ccca5ee136e49d09e41c07cd490384f67fd3dbda1"
+        },
+        {
+          "projectId": "tsfg",
+          "repositoryRelativePath": "runtime/bytecode_model.zig",
+          "normalizedMode": "100644",
+          "sha256": "sha256:731ff59a56637871511dfc6d579bc2d0dfef8d1d5ac6f64b9b5eb209c2bda3d6"
+        },
+        {
+          "projectId": "tsfg",
+          "repositoryRelativePath": "runtime/bytecode_view.zig",
+          "normalizedMode": "100644",
+          "sha256": "sha256:4723ef905e12fdf73118447cc626e030c4d2947b34c9b157741aa0db2a4afc9f"
+        },
+        {
+          "projectId": "tsfg",
+          "repositoryRelativePath": "runtime/clock.zig",
+          "normalizedMode": "100644",
+          "sha256": "sha256:aa8c0de219f25ad8875adb4df929b746977ed0a8b3cb6e431bcdc6cd8952a447"
+        },
+        {
+          "projectId": "tsfg",
+          "repositoryRelativePath": "runtime/contract.zig",
+          "normalizedMode": "100644",
+          "sha256": "sha256:71b5209b0cc078a61d3abf870b56a0cf173e74079de85f857cdbd441f5c546f2"
+        },
+        {
+          "projectId": "tsfg",
+          "repositoryRelativePath": "runtime/conversions.zig",
+          "normalizedMode": "100644",
+          "sha256": "sha256:e07cb1d1a414f5ab1d8899e3ef2e9aa1531477f44fca461c0383c47ca1fc3abe"
+        },
+        {
+          "projectId": "tsfg",
+          "repositoryRelativePath": "runtime/execution_frame.zig",
+          "normalizedMode": "100644",
+          "sha256": "sha256:b2fb2fca031ba00d01fc1dc3826431da7eb25fcde04568d08ce5013477dba316"
+        },
+        {
+          "projectId": "tsfg",
+          "repositoryRelativePath": "runtime/finite-backing-domain.zig",
+          "normalizedMode": "100644",
+          "sha256": "sha256:b55727007e8b097de9016858974c2e35c5741e1840a4eab5e25a85eb0d26beab"
+        },
+        {
+          "projectId": "tsfg",
+          "repositoryRelativePath": "runtime/floating-environment.zig",
+          "normalizedMode": "100644",
+          "sha256": "sha256:77deaf27be901e050f66ff2578b26195acacc6c149e0641ae4fe57f2e66c8f2d"
+        },
+        {
+          "projectId": "tsfg",
+          "repositoryRelativePath": "runtime/host-bindings.zig",
+          "normalizedMode": "100644",
+          "sha256": "sha256:c6065503a92a6190b3f0b32f137bcd86b09a4d91315180f5755fb516439090bf"
+        },
+        {
+          "projectId": "tsfg",
+          "repositoryRelativePath": "runtime/host-semantic-contract.zig",
+          "normalizedMode": "100644",
+          "sha256": "sha256:cc8ebddfe397372c91b68b0382f27d52001cf7ba95c5bb5979f4058d240ca0a0"
+        },
+        {
+          "projectId": "tsfg",
+          "repositoryRelativePath": "runtime/host_counter.c",
+          "normalizedMode": "100644",
+          "sha256": "sha256:03da2e65ee50df094e34501ed8aa286b564b19356a437b20479257f458ab2b5e"
+        },
+        {
+          "projectId": "tsfg",
+          "repositoryRelativePath": "runtime/host_counter.zig",
+          "normalizedMode": "100644",
+          "sha256": "sha256:67547697552ccc8b5a92d68150693887e29ff328d79fc7f7ed2b45188c726502"
+        },
+        {
+          "projectId": "tsfg",
+          "repositoryRelativePath": "runtime/host_counter_bridge.c",
+          "normalizedMode": "100644",
+          "sha256": "sha256:8918919374d087a9c5ab0fed04c6f33e35d5c30dee7c64684c3f017679fdcad4"
+        },
+        {
+          "projectId": "tsfg",
+          "repositoryRelativePath": "runtime/main.zig",
+          "normalizedMode": "100644",
+          "sha256": "sha256:a12956d588336a10b37895647114395e0127d17f28fe88a23c9659721e5570e2"
+        },
+        {
+          "projectId": "tsfg",
+          "repositoryRelativePath": "runtime/managed-array.zig",
+          "normalizedMode": "100644",
+          "sha256": "sha256:b45048282ee1bf7d2ca4ad364c996aaec76c5f8a2662cd6fe7a98fafb70857e1"
+        },
+        {
+          "projectId": "tsfg",
+          "repositoryRelativePath": "runtime/managed-cell.zig",
+          "normalizedMode": "100644",
+          "sha256": "sha256:faa909ba7d8234d0136b82c0c3b72d00c096ed4ceb7e64ae5a0e9dfc6bfe0369"
+        },
+        {
+          "projectId": "tsfg",
+          "repositoryRelativePath": "runtime/managed-handles.zig",
+          "normalizedMode": "100644",
+          "sha256": "sha256:5e698a32d153e7c305c808e2d7ec6061cb12524985bc2885d376a1a9aafc2fe2"
+        },
+        {
+          "projectId": "tsfg",
+          "repositoryRelativePath": "runtime/managed-heap-arrays.zig",
+          "normalizedMode": "100644",
+          "sha256": "sha256:aebca0f0d9b40aeda09726995c819db6f6980830bf22ab3b018daef16db4292a"
+        },
+        {
+          "projectId": "tsfg",
+          "repositoryRelativePath": "runtime/managed-heap-cells.zig",
+          "normalizedMode": "100644",
+          "sha256": "sha256:4d0509d18abc3d27bf7e580922794f6361f2962597261dd8b46cb7b568b496c7"
+        },
+        {
+          "projectId": "tsfg",
+          "repositoryRelativePath": "runtime/managed-heap-collector.zig",
+          "normalizedMode": "100644",
+          "sha256": "sha256:512c671f5daf094ee906ec4bed6b54ed6eaaedcefece36b64507290d3e687e91"
+        },
+        {
+          "projectId": "tsfg",
+          "repositoryRelativePath": "runtime/managed-heap-model.zig",
+          "normalizedMode": "100644",
+          "sha256": "sha256:bcb01829be7f50fcdf702b7d47893d261e34f8f987c865142f42c11475c1c216"
+        },
+        {
+          "projectId": "tsfg",
+          "repositoryRelativePath": "runtime/managed-heap-roots.zig",
+          "normalizedMode": "100644",
+          "sha256": "sha256:0c160ae79b31f266c326268fc8fbd3f3a9e44ea3589029e253703bb891d39b5e"
+        },
+        {
+          "projectId": "tsfg",
+          "repositoryRelativePath": "runtime/managed-heap.zig",
+          "normalizedMode": "100644",
+          "sha256": "sha256:626dd986edbece677ad88103e81546d355a3df27c4e84deecf108ce897476dea"
+        },
+        {
+          "projectId": "tsfg",
+          "repositoryRelativePath": "runtime/managed-payload.zig",
+          "normalizedMode": "100644",
+          "sha256": "sha256:2e94ee4bae16ca1abd059a32c4833489227a65e34eb61c592b304b8913c1f711"
+        },
+        {
+          "projectId": "tsfg",
+          "repositoryRelativePath": "runtime/managed-reference-domain.zig",
+          "normalizedMode": "100644",
+          "sha256": "sha256:5415637a9530ce4d0dbe19d8ee5d4c42adcc926e378cc92a0dd5860d43356943"
+        },
+        {
+          "projectId": "tsfg",
+          "repositoryRelativePath": "runtime/managed-reference-view.zig",
+          "normalizedMode": "100644",
+          "sha256": "sha256:22dd0ef9201bf2ad5d205e948e25844d6e42436c2ecade91849e1eeedde2ca6b"
+        },
+        {
+          "projectId": "tsfg",
+          "repositoryRelativePath": "runtime/module-outcome-writer.zig",
+          "normalizedMode": "100644",
+          "sha256": "sha256:b1489198ae4f726e85834a2f781f78062904373e975d0f8d9e8d7c8567163d67"
+        },
+        {
+          "projectId": "tsfg",
+          "repositoryRelativePath": "runtime/module-plan.zig",
+          "normalizedMode": "100644",
+          "sha256": "sha256:fe8481b3c9821dfc429d29fb9375d3d9577ea4b167649998ec39810e2a64b925"
+        },
+        {
+          "projectId": "tsfg",
+          "repositoryRelativePath": "runtime/module.zig",
+          "normalizedMode": "100644",
+          "sha256": "sha256:96fa99bd1746e0812cc4c8c39080f3a5ab0a2ef96f7b83d56f75644ada9f7b15"
+        },
+        {
+          "projectId": "tsfg",
+          "repositoryRelativePath": "runtime/module_format.zig",
+          "normalizedMode": "100644",
+          "sha256": "sha256:6803f2c838271ae812094493fc58587d57a6e2b7064fa0768f70f62fa67797a6"
+        },
+        {
+          "projectId": "tsfg",
+          "repositoryRelativePath": "runtime/nullable-bytecode.zig",
+          "normalizedMode": "100644",
+          "sha256": "sha256:d74d286e981e27494f64d20e8e42ce30fff3dd34ff3edf95eeab95ad1cf778c5"
+        },
+        {
+          "projectId": "tsfg",
+          "repositoryRelativePath": "runtime/nullable-cfg.zig",
+          "normalizedMode": "100644",
+          "sha256": "sha256:e06318b6185450015dbc02539d5be1f6572796863c9e991c5455efe00e088253"
+        },
+        {
+          "projectId": "tsfg",
+          "repositoryRelativePath": "runtime/nullable-decode.zig",
+          "normalizedMode": "100644",
+          "sha256": "sha256:cae479f9ab99f86ede2525faad2bbf62232df4dbc2baaeafd94af96b717e579c"
+        },
+        {
+          "projectId": "tsfg",
+          "repositoryRelativePath": "runtime/nullable-model.zig",
+          "normalizedMode": "100644",
+          "sha256": "sha256:7d7c7ff0f102648282a5feb54026854c63cc5df66da3353c45e07efb45c46a54"
+        },
+        {
+          "projectId": "tsfg",
+          "repositoryRelativePath": "runtime/nullable-tags.zig",
+          "normalizedMode": "100644",
+          "sha256": "sha256:031e5466117a2e45fd7afe734cad66b27559d54fc57c0b092bdbe02cb4668571"
+        },
+        {
+          "projectId": "tsfg",
+          "repositoryRelativePath": "runtime/outcome-writer.zig",
+          "normalizedMode": "100644",
+          "sha256": "sha256:a905952e4bf26a2f06e1f8679aa0f88ef9d23b3a0a033791af8bc81dcfd31ba1"
+        },
+        {
+          "projectId": "tsfg",
+          "repositoryRelativePath": "runtime/request-json.zig",
+          "normalizedMode": "100644",
+          "sha256": "sha256:fc8e829e37eeb1c7751316bc01721e60d2bb298c704389a9c1ab5527aac8037b"
+        },
+        {
+          "projectId": "tsfg",
+          "repositoryRelativePath": "runtime/request-values.zig",
+          "normalizedMode": "100644",
+          "sha256": "sha256:adcd46610370914fc8d1a6a73304c890e3079d29c1bf24aa6c56b8fd2090279c"
+        },
+        {
+          "projectId": "tsfg",
+          "repositoryRelativePath": "runtime/request.zig",
+          "normalizedMode": "100644",
+          "sha256": "sha256:98d01f01915a6dc66ede5b12b613016ac16c2edc2e9f0bf47c074bc7bd2f874b"
+        },
+        {
+          "projectId": "tsfg",
+          "repositoryRelativePath": "runtime/root.zig",
+          "normalizedMode": "100644",
+          "sha256": "sha256:86570e020bb550ae679300e20df8446a398e4a4d4b1b62079c5466317373e757"
+        },
+        {
+          "projectId": "tsfg",
+          "repositoryRelativePath": "runtime/runtime-state.zig",
+          "normalizedMode": "100644",
+          "sha256": "sha256:938a86014c258643146c91e3459b234fcd8f5ff3b5e9eeacb630005ac0b45c44"
+        },
+        {
+          "projectId": "tsfg",
+          "repositoryRelativePath": "runtime/runtime.zig",
+          "normalizedMode": "100644",
+          "sha256": "sha256:bcc0db214eeb1da4c0a78021d0ee4c6b606a4d11f6f05e8619ef352ae072b52a"
+        },
+        {
+          "projectId": "tsfg",
+          "repositoryRelativePath": "runtime/scalar.zig",
+          "normalizedMode": "100644",
+          "sha256": "sha256:4dee25a605570ae8ae46664ac178d7d5a2c8c7d19dc8629298325a6aa1cdf541"
+        },
+        {
+          "projectId": "tsfg",
+          "repositoryRelativePath": "runtime/string-arguments.zig",
+          "normalizedMode": "100644",
+          "sha256": "sha256:d20bf1df0088b9e2683fdac408cfec1cf703680f99a473fb025fc020a8ff3275"
+        },
+        {
+          "projectId": "tsfg",
+          "repositoryRelativePath": "runtime/string-budget.zig",
+          "normalizedMode": "100644",
+          "sha256": "sha256:11c6f58fb25b9b4588310343d38a0e95a324a03907331e7af131d6ccd93afd52"
+        },
+        {
+          "projectId": "tsfg",
+          "repositoryRelativePath": "runtime/string-candidate-decode.zig",
+          "normalizedMode": "100644",
+          "sha256": "sha256:c5c4fb291d84b1918cca10f1ae66b6302df7bf5efe0e32608511b1a021bb4a1c"
+        },
+        {
+          "projectId": "tsfg",
+          "repositoryRelativePath": "runtime/string-candidate-model.zig",
+          "normalizedMode": "100644",
+          "sha256": "sha256:62ec9b08274de6c7c4304af21dcf0a6978917590bc70e6978c7cfcc06f9566b4"
+        },
+        {
+          "projectId": "tsfg",
+          "repositoryRelativePath": "runtime/string-candidate-verify.zig",
+          "normalizedMode": "100644",
+          "sha256": "sha256:b8092d38b6045ec4516b982f2f533259b8b9944a84fbaecf26358c14d0d7ae98"
+        },
+        {
+          "projectId": "tsfg",
+          "repositoryRelativePath": "runtime/string-candidate.zig",
+          "normalizedMode": "100644",
+          "sha256": "sha256:650d88ad20789cc8684f3b4df993450437c7eec4b5eb518279b27b5bab1ed6ae"
+        },
+        {
+          "projectId": "tsfg",
+          "repositoryRelativePath": "runtime/string-codec.zig",
+          "normalizedMode": "100644",
+          "sha256": "sha256:503da61764461dee67a4b19821fffa154f780de278286827fbee60356f13992b"
+        },
+        {
+          "projectId": "tsfg",
+          "repositoryRelativePath": "runtime/string-frame.zig",
+          "normalizedMode": "100644",
+          "sha256": "sha256:7557ab6f4c3cebbd55983560f780be4f0c538cb86238df1bb83b10cf42e5ad84"
+        },
+        {
+          "projectId": "tsfg",
+          "repositoryRelativePath": "runtime/string-instructions.zig",
+          "normalizedMode": "100644",
+          "sha256": "sha256:94ab30484d4a153a7750c34c9f0021b909209b6a80c890ad47af943be8d36c0b"
+        },
+        {
+          "projectId": "tsfg",
+          "repositoryRelativePath": "runtime/string-output.zig",
+          "normalizedMode": "100644",
+          "sha256": "sha256:a2bd4239ad0ef5b81974903fba04cabe9716205a0bd1aabbf68b6465da4c52d7"
+        },
+        {
+          "projectId": "tsfg",
+          "repositoryRelativePath": "runtime/string-value.zig",
+          "normalizedMode": "100644",
+          "sha256": "sha256:a719d6132791a1ca95aa65962c2f57111f422764baf1c6cedb034c0537b704ef"
+        },
+        {
+          "projectId": "tsfg",
+          "repositoryRelativePath": "runtime/typed-array-backing.zig",
+          "normalizedMode": "100644",
+          "sha256": "sha256:06f5c6c6908b761080dc1f538eb31c9a77998b644d8cdcf4f4ce3c517b674b57"
+        },
+        {
+          "projectId": "tsfg",
+          "repositoryRelativePath": "runtime/typed-backing-value.zig",
+          "normalizedMode": "100644",
+          "sha256": "sha256:953c08f3b94b48cef76836c314327034d50b7da4ad3a53a555e5ce8f0d94e72b"
+        },
+        {
+          "projectId": "tsfg",
+          "repositoryRelativePath": "runtime/typed-field-backing.zig",
+          "normalizedMode": "100644",
+          "sha256": "sha256:1e213068522fd2d0cd0abc6d0d44dec028b86d92c6b03323432731db844dce04"
+        },
+        {
+          "projectId": "tsfg",
+          "repositoryRelativePath": "runtime/typed-layout-canonical.zig",
+          "normalizedMode": "100644",
+          "sha256": "sha256:1ffb710db8b135df5a6cd4949fdb1f29292a463a135007155ff9e97f8563741a"
+        },
+        {
+          "projectId": "tsfg",
+          "repositoryRelativePath": "runtime/typed-layout-input.zig",
+          "normalizedMode": "100644",
+          "sha256": "sha256:2e237fa89765b9ead5bc233016d7ef8114bc0f5f7be59617d6339b8eb4ac6d31"
+        },
+        {
+          "projectId": "tsfg",
+          "repositoryRelativePath": "runtime/typed-layout-registry.zig",
+          "normalizedMode": "100644",
+          "sha256": "sha256:9ec539235de4144cc9d6e5f5ddd316a1a993d7eb2eaa16c99c393a8015d0c509"
+        },
+        {
+          "projectId": "tsfg",
+          "repositoryRelativePath": "runtime/typed-reference-domains.zig",
+          "normalizedMode": "100644",
+          "sha256": "sha256:855408c9d25c031d0d91a6853291439e3a5dbd8156a325069d309c240542753f"
+        },
+        {
+          "projectId": "tsfg",
+          "repositoryRelativePath": "runtime/typed-reference-views.zig",
+          "normalizedMode": "100644",
+          "sha256": "sha256:b73632d0d4c4bce546af9d0470e7fc89c0b416d0f7986b9d898f47baf181cfbe"
+        },
+        {
+          "projectId": "tsfg",
+          "repositoryRelativePath": "runtime/vm-execution.zig",
+          "normalizedMode": "100644",
+          "sha256": "sha256:773f316ec8ef64cfed7282e596ade92aa4f56485f516d0881a7566608cbaa788"
+        },
+        {
+          "projectId": "tsfg",
+          "repositoryRelativePath": "runtime/vm-instance.zig",
+          "normalizedMode": "100644",
+          "sha256": "sha256:f578f49921d25649de718b8bdae3e0885b39d4aa1707f5972ad8b89fd9aedc45"
+        },
+        {
+          "projectId": "tsfg",
+          "repositoryRelativePath": "runtime/vm.zig",
+          "normalizedMode": "100644",
+          "sha256": "sha256:80170d6f46025ce997104613110b8a8923ec8d6316f3782145825ac1b7cbee02"
+        },
+        {
+          "projectId": "tsfg",
+          "repositoryRelativePath": "tests/r00/smoke/cpp/CMakeLists.txt",
+          "normalizedMode": "100644",
+          "sha256": "sha256:d9a4a2d01f63f2a0d1254a83d672d37b31fabe4ec531d58c55a20ea7c0c39825"
+        },
+        {
+          "projectId": "tsfg",
+          "repositoryRelativePath": "tests/r00/smoke/cpp/main.cpp",
+          "normalizedMode": "100644",
+          "sha256": "sha256:a79200e3211462113c8386c422f81379210ff407671064cb895ed71d9a248976"
+        },
+        {
+          "projectId": "tsfg",
+          "repositoryRelativePath": "tests/r00/smoke/zig/build.zig",
+          "normalizedMode": "100644",
+          "sha256": "sha256:6e3eb58d6942996106f3da40b9dd100acb6e7561b5bc379b6a8cb6ef5811678b"
+        },
+        {
+          "projectId": "tsfg",
+          "repositoryRelativePath": "tests/r00/smoke/zig/main.zig",
+          "normalizedMode": "100644",
+          "sha256": "sha256:ddf8cf9eccb576c9014a29613cbe35144fe2a84f7f9beda64fe6ed07bcee6bc0"
+        },
+        {
+          "projectId": "tsfg",
+          "repositoryRelativePath": "tooling/tsfgc.mjs",
+          "normalizedMode": "100644",
+          "sha256": "sha256:bf4663032f0cd6ca87f8241ea47a75c7e5bf0c37c7dbc67b668d5164dfa48377"
+        },
+        {
+          "projectId": "tsfg",
+          "repositoryRelativePath": "version.json",
+          "normalizedMode": "100644",
+          "sha256": "sha256:f5e939e6dc1422375366b71e3257a5d6e51a2ccdcfda84cb466aca70845e714e"
+        }
+      ],
+      "schemaVersion": "1"
+    }
+  }
+}

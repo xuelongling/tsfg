@@ -6,17 +6,17 @@ import assert from 'node:assert/strict';
 import {readFileSync} from 'node:fs';
 import {readCommonProgramFacts} from '../../compiler/common-program-facts.mjs';
 import {buildCommonProgramHir} from '../../compiler/common-program-hir.mjs';
-import {sha256} from '../../compiler/identity.mjs';
+import {canonical,sha256} from '../../compiler/identity.mjs';
 import {createCommonProgramPublication} from '../../compiler/common-program-analysis.mjs';
 import {emitCommonProgramCore} from '../../compiler/common-program-core.mjs';
 import {commonTargets} from '../../compiler/common-program-targets.mjs';
 import {commonMeter} from '../../compiler/common-program-common.mjs';
 import {signatureId} from '../../compiler/module-callable-common.mjs';
-const expectedCoreHashes={
-  "callable-readonly": "sha256:9bf976d37e7908dabb9bc2b503aead2267ea02861b40f609a6616957bc037763",
-  "callable-reassignment": "sha256:a7c766c7768dbf8b392c5c58aa6c09256d3499fefbb2cbc5275d387c36d7612d",
-  "callable-ancestor-forward": "sha256:905dca52d0d06e92a6ba61f86b12ff26984674be68246458fe7b7e70d3964e97",
-  "callable-shadow-local": "sha256:4ce486d7dabf14654587a39305e631b912fb4a7208d82e7643951eee79f2e9cd"
+const expectedSourcePayloadHashes={
+  "callable-readonly": "sha256:245207e393f35246f95d2f7ce09771101f71cc75225db800e90483844ff8f6fa",
+  "callable-reassignment": "sha256:1b83320df3d6d7440d664fb0e8b8ab6da47af4126c64c88b678e0243af7d0201",
+  "callable-ancestor-forward": "sha256:b2982f6c4b1453882c5b3487eb2489ac642f47e83b5085e1a319951261719c7f",
+  "callable-shadow-local": "sha256:7194214fb64f248defaa27f4f5699c45daddd639f47625e5c97f5fcdc72fc4d1"
 };
 for(const name of ['callable-readonly','callable-reassignment','callable-ancestor-forward','callable-shadow-local'])test('complete Source incoming callable capture: '+name,()=>{
   const bytes=readFileSync(new URL('./testdata/common-callable-parameters/'+name+'.json',import.meta.url)),facts=readCommonProgramFacts(bytes),
@@ -27,8 +27,9 @@ for(const name of ['callable-readonly','callable-reassignment','callable-ancesto
   const captured=hir.functions.flatMap(f=>f.captures).filter(c=>c.binding===parameter.id),slots=hir.environments.flatMap(e=>e.slots).filter(s=>s.binding===parameter.id);
   if(name==='callable-shadow-local'){assert.equal(captured.length,0);assert.equal(slots.length,0);}
   else{assert.equal(captured.length,1);assert.equal(captured[0].write,name==='callable-reassignment');assert.equal(slots.length,1);assert.equal(slots[0].kind,'parameter');assert.equal(slots[0].type,parameter.type);}
+  const {hostImports,...originalPayload}=facts.payload;assert.deepEqual(hostImports,[]);assert.equal(sha256(canonical(originalPayload)),expectedSourcePayloadHashes[name]);
   const publication=createCommonProgramPublication(hir),request={targets:hir.closure.requiredRoots.filter(r=>r.kind==='kernel').map(r=>r.target).sort()},
-    core=emitCommonProgramCore(hir,publication,request);assert.equal(sha256(core),expectedCoreHashes[name]);assert.match(core,/tsfg_program.invoke_indirect/);assert.match(core,/tsfg_program.env_load/);
+    core=emitCommonProgramCore(hir,publication,request);assert.equal(hir.hostContext,null);assert.deepEqual(publication.contracts.map(row=>row.upper.hostResources),hir.functions.map(()=>({reads:[],writes:[]})));assert.match(core,/tsfg_program.invoke_indirect/);assert.match(core,/tsfg_program.env_load/);
 });
 function capturedParameterModel(write=false){
   const scalar='scalar',callable='callable',range={start:0,end:1},signature={parameters:[],returnType:scalar},

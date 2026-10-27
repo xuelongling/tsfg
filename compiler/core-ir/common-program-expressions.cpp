@@ -139,7 +139,7 @@ bool SourceBodies::expression(const Json &v,bool target,const std::string &expec
   }
   if(llvm::StringRef(kind).ends_with("Update"))return expression(field(v,"target"),true,{},true)&&model.need(type==string(field(field(v,"target"),"type"))&&(op=="++"||op=="--"),"update type/operator differs")&&
     sequence(field(v,"prefix").getAsBoolean()==true?std::vector<Json>{Json(op),field(field(v,"target"),"range")}:std::vector<Json>{field(field(v,"target"),"range"),Json(op)});
-  if(kind=="call"||kind=="new"||kind=="superConstruct"){
+  if(kind=="call"||kind=="hostCall"||kind=="new"||kind=="superConstruct"){
     if(v.getAsObject()->get("receiver")&&!child("receiver"))return false;
     const auto &sig=field(v,"signature");const auto callee=string(field(v,"callee")),path=string(field(sig,"sourcePath"));
     if(!model.need(string(field(sig,"id"))==digest(std::string("tsfg.array-facts.signature.v8")+std::string(1,'\0')+
@@ -147,7 +147,10 @@ bool SourceBodies::expression(const Json &v,bool target,const std::string &expec
     std::vector<Json> pieces;if(kind=="new")pieces.push_back("new");pieces.push_back(field(v,"calleeRange"));pieces.push_back("(");size_t i=0;
     for(const auto &arg:items(field(v,"arguments"))){if(!expression(arg,false,string(items(field(sig,"parameters"))[i])))return false;
       if(i++)pieces.push_back(",");pieces.push_back(field(arg,"range"));}pieces.push_back(")");
-    if(kind=="call"){
+    if(kind=="hostCall"){
+      if(!model.need(model.hosts.count(callee)&&same(sig,field(*model.hosts.at(callee),"signature"))&&type=="i32"&&actual=="i32"&&
+        !v.getAsObject()->get("receiver")&&resolve(field(v,"calleeRange"))==callee,"Host call does not join its original ambient symbol/signature"))return false;
+    }else if(kind=="call"){
       if(callee==string(field(field(model.payload,"readSpanIntrinsic"),"id"))){
         if(!model.need(items(field(sig,"parameters")).size()==3&&string(items(field(sig,"parameters"))[1])=="u32"&&string(items(field(sig,"parameters"))[2])=="u32","ReadSpan original three-argument signature differs"))return false;
       }else{

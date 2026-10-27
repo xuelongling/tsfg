@@ -1,5 +1,6 @@
 // SPDX-License-Identifier: MIT
 #include "common-program-syntax.h"
+#include "common-program-hosts.h"
 #include "common-program-relations.h"
 #include "common-program-header.h"
 #include "llvm/ADT/STLExtras.h"
@@ -55,17 +56,18 @@ bool closure(SourceModel &m){
     }return true;
   };
   if(!read("roots",roots)||!read("requiredRoots",required))return false;
+  Array hostInputs;for(const auto &host:items(field(m.payload,"hostImports"))){if(!m.spend())return false;hostInputs.push_back(Object{{"sourcePath",field(host,"sourcePath")},{"name",field(host,"name")},{"capabilityId",field(host,"capabilityId")},{"parameterTypes",field(host,"parameterTypes")},{"returnType",field(host,"returnType")}});}
   Array sourceFiles;for(const auto &s:items(field(m.payload,"files"))){if(!m.spend())return false;sourceFiles.push_back(Object{{"path",field(s,"path")},{"content",field(s,"content")},{"sha256",field(s,"sha256")}});}
   Json request=Object{{"family","tsfg.program-facts-request-candidate"},{"version",2},{"schemaHash",sourceSchema},
     {"input",Object{{"sourceRoot",field(m.payload,"sourceRoot")},{"rootFile",field(m.payload,"rootFile")},{"files",std::move(sourceFiles)},
-      {"declarations",field(m.payload,"declarations")},{"config",field(m.payload,"config")},{"target",field(m.payload,"target")},
+      {"hostImports",std::move(hostInputs)},{"declarations",field(m.payload,"declarations")},{"config",field(m.payload,"config")},{"target",field(m.payload,"target")},
       {"compilationClosure",Object{{"roots",std::move(roots)},{"requiredRoots",std::move(required)}}}}}};
   return m.need(string(field(m.facts,"requestId"))==digest(std::string("tsfg.program-facts.request.v2")+std::string(1,'\0')+canonical(request)+"\n"),"whole request identity differs");
 }
 }
 bool SourceModel::sourceText(){
   std::map<std::string,SourceSyntax> syntax;
-  if(!files(*this,syntax)||!closure(*this))return false;
+  if(!files(*this,syntax)||!verifyCommonHostDeclarations(*this)||!closure(*this))return false;
   SourceRelations relations{*this};if(!relations.read())return false;
   SourceBodies bodies{*this,syntax};bodies.relations=&relations;if(!bodies.inventory()||!bodies.annotations())return false;
   std::set<std::pair<std::string,std::string>> entryParameters,expectedEntries;std::set<std::string> exported;Array expectedExports;

@@ -21,7 +21,7 @@ export function commonClosureHolding({model,objects,records,closedTarget}){
   function staticBound(id){
     spend();const upper=records?.get(id)?.upper;
     if(!upper||upper.facets.unknownHost!==false||upper.facets.escape!==false||upper.facets.await!==false||upper.facets.lock!==false)return false;
-    if(upper.globals.reads.length||upper.globals.writes.length)return false;
+    if(upper.globals.reads.length||upper.globals.writes.length||upper.hostResources.reads.length||upper.hostResources.writes.length)return false;
     for(const row of upper.parameters){spend();if(row.write!==false||row.structural!==false)return false;}
     for(const row of upper.captures){spend();if(row.structural!==false||row.write!==false&&!scalarWrite(id,row.slot))return false;}
     return true;

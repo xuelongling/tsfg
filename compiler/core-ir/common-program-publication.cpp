@@ -43,7 +43,9 @@ bool callableBounds(Program &p,const Json &fn,const Json &value,Error &e){
   return need(bool(field(value,"returns").getAsNull()),e,"noncallable result has a callable return transfer");
 }
 bool covers(Program &p,const Effects &upper,const Effects &body,Error &e){
-  if(!work(p,e,body.reads.size()+body.writes.size()+body.parameters.size()))return false;
+  if(!work(p,e,body.reads.size()+body.writes.size()+body.hostReads.size()+body.hostWrites.size()+body.parameters.size()))return false;
+  for(const auto &id:body.hostReads)if(!upper.hostReads.count(id))return need(false,e,"body Host read exceeds fixed upper");
+  for(const auto &id:body.hostWrites)if(!upper.hostWrites.count(id))return need(false,e,"body Host write exceeds fixed upper");
   for(const auto &id:body.reads)if(!upper.reads.count(id))return need(false,e,"body read exceeds fixed upper");
   for(const auto &id:body.writes)if(!upper.writes.count(id))return need(false,e,"body write exceeds fixed upper");
   if(!need((!body.allocation||upper.allocation)&&(!body.managedReference||upper.managedReference)&&
@@ -110,15 +112,21 @@ bool scope(Program &p,Json &out,Error &e){
   }
   for(const auto &r:items(field(field(p.hir,"closure"),"roots"))){if(!work(p,e))return false;roots.push_back(select(r,{"kind","sourcePath","name","target"}));}
   for(const auto &r:items(field(field(p.hir,"closure"),"requiredRoots"))){if(!work(p,e))return false;required.push_back(select(r,{"kind","sourcePath","name","target"}));}
-  out=Object{{"profile","common-program-fixed-v2"},{"rootFile",field(p.hir,"rootFile")},{"types",std::move(typeRows)},
+  Array hosts;for(const auto &host:items(field(p.hir,"hostImports"))){if(!work(p,e))return false;hosts.push_back(select(host,{"id","sourcePath","name","capabilityId","signatureHash","parameterTypes","returnType"}));}
+  Json hostContext=nullptr;if(!p.hosts.empty())hostContext=Object{{"contractDigest",p.hostContractHash},{"buildIdentityDigest",field(field(field(field(p.hir,"hostContext"),"identity"),"buildIdentity"),"digest")}};
+  out=Object{{"hostImports",std::move(hosts)},{"hostContext",std::move(hostContext)},{"profile","common-program-fixed-v2"},{"rootFile",field(p.hir,"rootFile")},{"types",std::move(typeRows)},
     {"functions",std::move(functions)},{"environments",std::move(environments)},{"globals",std::move(globals)},{"modules",std::move(modules)},
     {"roots",Object{{"roots",std::move(roots)},{"requiredRoots",std::move(required)}}}};return true;
 }
 }
 bool validateCallableBounds(Program &p,const Json &fn,const Json &value,Error &e){return callableBounds(p,fn,value,e);}
 bool readEffects(Program &p,const Json &raw,const Json &fn,Effects &out,Error &e){
-  if(!need(exact(raw,{"globals","parameters","facets","captures"})&&exact(field(raw,"globals"),{"reads","writes"})&&
+  if(!need(exact(raw,{"globals","hostResources","parameters","facets","captures"})&&exact(field(raw,"globals"),{"reads","writes"})&&
     exact(field(raw,"facets"),{"allocation","managedReference","ehControl","mayThrow","await","lock","escape","unknownHost"})&&field(raw,"parameters").getAsArray(),e,"fixed effect shape differs"))return false;
+  if(!need(exact(field(raw,"hostResources"),{"reads","writes"}),e,"fixed Host resource shape differs"))return false;
+  for(auto key:{"reads","writes"}){const auto &values=field(field(raw,"hostResources"),key);auto &to=llvm::StringRef(key)=="reads"?out.hostReads:out.hostWrites;
+    if(!need(values.getAsArray()&&items(values).size()<=p.hostResources.size(),e,"fixed Host resource bound differs"))return false;std::string previous;
+    for(const auto &value:items(values)){if(!work(p,e))return false;const auto id=string(value);if(!need(p.hostResources.count(id)&&(previous.empty()||previous<id),e,"fixed Host resource identity/order differs"))return false;previous=id;to.insert(id);}}
   const auto &facets=field(raw,"facets");
   const std::pair<llvm::StringRef,bool *> flags[]={{"allocation",&out.allocation},{"managedReference",&out.managedReference},{"ehControl",&out.ehControl},{"mayThrow",&out.mayThrow},
     {"await",&out.await},{"lock",&out.lock},{"escape",&out.escape},{"unknownHost",&out.unknownHost}};

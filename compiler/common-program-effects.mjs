@@ -4,6 +4,7 @@
 import {commonCheck as check,commonSame as same} from './common-program-common.mjs';
 import {commonCollections} from './common-program-budget.mjs';
 import {commonTargets} from './common-program-targets.mjs';
+import {commonHostResources} from './common-program-hosts.mjs';
 import {commonMethods} from './common-program-methods.mjs';
 export const commonFacets=Object.freeze(['allocation','managedReference','ehControl','mayThrow','await','lock','escape','unknownHost']);
 export function commonEffects(hir,spend,physical=null) {
@@ -21,10 +22,11 @@ export function commonEffects(hir,spend,physical=null) {
     referenceMemo.set(id,result);return result;
   }
   const ownerParameters=fn=>{spend(fn.parameters.length+1);return [...(fn.ownerType?[{id:fn.receiverBinding,type:fn.ownerType}]:[]),...fn.parameters];};
-  const blank=fn=>({captures:[],globals:{reads:[],writes:[]},parameters:ownerParameters(fn).map((_,index)=>({index,read:false,write:false,structural:false})),
+  const hostResources=commonHostResources(hir.hostContext),hosts=new Map(hir.hostImports.map(row=>[row.id,row]));
+  const blank=fn=>({captures:[],globals:{reads:[],writes:[]},hostResources:{reads:[],writes:[]},parameters:ownerParameters(fn).map((_,index)=>({index,read:false,write:false,structural:false})),
     facets:Object.fromEntries(commonFacets.map(flag=>[flag,false]))});
   function derive(fn,records) {
-    const result=blank(fn),read=new Set(),write=new Set(),params=ownerParameters(fn),origins=new Map(),calls=[],captures=new Map();
+    const result=blank(fn),read=new Set(),write=new Set(),hostRead=new Set(),hostWrite=new Set(),hostCalls=[],params=ownerParameters(fn),origins=new Map(),calls=[],captures=new Map();
     const capture=(slot,flags)=>{const before=captures.get(slot)??{slot,read:false,write:false,structural:false};for(const flag of ['read','write','structural'])before[flag] ||= flags[flag]===true;captures.set(slot,before);};
     for(const row of fn.captures??[]){spend();const slot=slots.get(row.binding);capture(slot.key,{read:row.read,write:row.write,structural:false});
       if(reference(slot.type))origins.set(row.binding,new Set(['c:'+slot.key]));}
@@ -68,6 +70,10 @@ export function commonEffects(hir,spend,physical=null) {
         if(targets.top||!targets.functions.length){result.facets.unknownHost=true;throwing=true;}
         for(const target of targets.functions){spend();const record=consume(target,arguments_,value);throwing ||= record.facets.mayThrow;}
         if(reference(value.type)){for(const target of targets.functions){spend();owner.add('unknown:'+target);}if(targets.top||!targets.functions.length)owner.add('unknown:indirect');}
+      }else if(value.kind==='hostCall'){
+        value.arguments.forEach(visit);check(hosts.has(value.callee)&&hir.hostContext,'host-context');
+        for(const resource of hostResources){spend();hostRead.add(resource);hostWrite.add(resource);}
+        hostCalls.push({functionId:fn.id,hostId:value.callee,sourcePath:fn.sourcePath,range:value.range});
       }else if(value.kind==='call') {
         const arguments_=[...(value.receiver?[visit(value.receiver)]:[]),...value.arguments.map(visit)];
         if(value.callee==='intrinsic:readSpan')owner=arguments_[0];
@@ -84,6 +90,7 @@ export function commonEffects(hir,spend,physical=null) {
     function consume(id,args,value) {
       spend();const callee=functions.get(id),upper=records.get(id);check(callee&&upper,'publication','missing complete function contract');
       calls.push({functionId:fn.id,target:id,range:value.range});mergeFacets(upper.facets);for(const row of upper.captures){spend();capture(row.slot,row);}
+      upper.hostResources.reads.forEach(id=>{spend();hostRead.add(id);});upper.hostResources.writes.forEach(id=>{spend();hostWrite.add(id);});
       upper.globals.reads.forEach(id=>{spend();read.add(id);});upper.globals.writes.forEach(id=>{spend();write.add(id);});
       for(const p of upper.parameters)for(const flag of ['read','write','structural'])if(p[flag])mark(args[p.index]??new Set(),flag);
       return upper;
@@ -126,7 +133,7 @@ export function commonEffects(hir,spend,physical=null) {
     }
     const completions=body(fn.body);result.facets.mayThrow=completions.has('throw');
     result.captures=collections.sorted(captures.values(),(a,b)=>a.slot<b.slot?-1:a.slot>b.slot?1:0);
-    result.globals={reads:collections.sorted(read),writes:collections.sorted(write)};return {upper:result,calls,completions:collections.sorted(completions)};
+    result.globals={reads:collections.sorted(read),writes:collections.sorted(write)};result.hostResources={reads:collections.sorted(hostRead),writes:collections.sorted(hostWrite)};return {upper:result,calls,hostCalls,completions:collections.sorted(completions)};
   }
   function derived() {
     const rows=new Map(hir.functions.map(fn=>[fn.id,blank(fn)]));let changed=true;

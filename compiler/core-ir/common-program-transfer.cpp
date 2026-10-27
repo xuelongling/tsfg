@@ -72,7 +72,12 @@ bool ActualCheck::instruction(ActualContext &context,const Operation &op,size_t 
     value=literal(op.view);const auto decimal=string(field(props,"decimal"));char *end=nullptr;errno=0;const auto number=std::strtoll(decimal.c_str(),&end,10);
     if(!errno&&end==decimal.c_str()+decimal.size())value.number=number;
   }else if(name=="floating"||name=="undefined"||name=="null"||name=="string")value=literal(op.view);
-  else if(name=="boolean")value=literal(typeId("bool"),field(props,"value").getAsBoolean()==true?2:1);
+  else if(name=="host_call"){
+    auto host=p.hosts.find(string(field(props,"host_id")));if(!need(host!=p.hosts.end()&&args.size()==host->second.parameters.size()&&
+      string(field(props,"contract_hash"))==p.hostContractHash&&string(field(props,"signature_hash"))==host->second.signature&&op.view==host->second.returnType,"actual Host binding differs"))return false;
+    for(size_t i=0;i<args.size();++i){const auto &arg=args[i];if(!step(arg.tags.size()+1)||!need(!arg.unknown&&arg.objects.empty()&&arg.cells.empty()&&arg.callables.empty()&&!arg.callableTop&&arg.tags.size()==1&&arg.tags.count(host->second.parameters[i]),"actual Host argument lacks its native scalar tag"))return false;}
+    value=literal(op.view);
+  }else if(name=="boolean")value=literal(typeId("bool"),field(props,"value").getAsBoolean()==true?2:1);
   else if(name=="cell"||name=="catch_bind"){
     const auto id=allocationSite(context,"cell",op.result);if(!e.message.empty()||!step())return false;
     // Source Cells are private local storage, never escaped addresses. Captures

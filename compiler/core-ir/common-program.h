@@ -15,7 +15,7 @@ struct SourceAnchor {uint32_t start=0,end=0;};
 inline constexpr uint16_t noRegister=UINT16_MAX;
 using Json=llvm::json::Value;using Object=llvm::json::Object;using Array=llvm::json::Array;
 inline constexpr llvm::StringLiteral marker="tsfg_program.program";
-inline constexpr llvm::StringLiteral schema="sha256:66140b094883d9666c56bfb1984ff54799a70960e7567741db30faf0994f1e53";
+inline constexpr llvm::StringLiteral schema="sha256:1f721a2d436376053779d62be603a21444d89183e10cbfebac7a5a76a996c369";
 struct CarrierStorage:mlir::TypeStorage {
   using KeyTy=mlir::StringAttr;KeyTy key;
   explicit CarrierStorage(KeyTy key):key(key){}
@@ -51,6 +51,7 @@ TSFG_PROGRAM_OP(NullOp,"null",mlir::OpTrait::ZeroSuccessors,WholeProgramOnly)
 TSFG_PROGRAM_OP(CellOp,"cell",mlir::OpTrait::ZeroSuccessors,WholeProgramOnly)
 TSFG_PROGRAM_OP(LoadOp,"load",mlir::OpTrait::ZeroSuccessors,WholeProgramOnly)
 TSFG_PROGRAM_OP(StoreOp,"store",mlir::OpTrait::ZeroSuccessors,WholeProgramOnly)
+TSFG_PROGRAM_OP(HostCallOp,"host_call",mlir::OpTrait::ZeroSuccessors,WholeProgramOnly)
 TSFG_PROGRAM_OP(GlobalLoadOp,"global_load",mlir::OpTrait::ZeroSuccessors,WholeProgramOnly)
 TSFG_PROGRAM_OP(GlobalStoreOp,"global_store",mlir::OpTrait::ZeroSuccessors,WholeProgramOnly)
 TSFG_PROGRAM_OP(AssertOp,"assert",mlir::OpTrait::ZeroSuccessors,WholeProgramOnly)
@@ -111,17 +112,23 @@ struct Layout {
 struct Access {bool read=false,write=false,structural=false;};
 struct CallableTargets {bool top=false;std::set<std::string> functions;};
 struct Effects {
-  std::set<std::string> reads,writes,calls;
+  std::set<std::string> reads,writes,calls,hostReads,hostWrites;
   std::vector<Access> parameters;
   std::map<std::string,Access> captures;
   bool allocation=false,managedReference=false,ehControl=false,mayThrow=false;
   bool await=false,lock=false,escape=false,unknownHost=false;
 };
+struct HostBinding {std::string id,sourceBinding,path,name,signature,returnType;std::vector<std::string> parameters;};
+struct HostOrigin {std::string path;SourceAnchor range;};
 struct Program {
   Json hir=nullptr,representation=nullptr,publication=nullptr,request=nullptr,proof=nullptr;
   std::string hirHash,representationHash,inputIdentity,sourcePath,sourceHash;
   uint32_t sourceLength=0;
   std::vector<Function> functions;
+  std::map<std::string,HostBinding> hosts;
+  std::set<std::string> hostResources;
+  std::map<std::string,HostOrigin> hostOrigins;
+  std::string hostContractHash;
   // Independently derived facts, never filled from the publication/proof table.
   std::map<std::string,Layout> layouts;
   std::map<std::string,Effects> effects;

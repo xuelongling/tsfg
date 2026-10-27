@@ -27,6 +27,7 @@ bool SourceBodies::inventory(){
       if(!model.spend())return false;
       if(!field(alias,"localBinding").getAsNull()&&!model.need(scope.emplace(string(field(alias,"name")),string(field(alias,"target"))).second,"duplicate original imported symbol"))return false;
     }
+    for(const auto &[id,host]:model.hosts){if(!model.spend())return false;scope.try_emplace(string(field(*host,"name")),id);}
   }
   const auto add=[&](const Json &b,const std::string &path,const std::string &owner){
     if(!model.spend()||!model.need(syntax.count(path)&&model.types.count(string(field(b,"declaredType"))),"binding source/type missing"))return false;
