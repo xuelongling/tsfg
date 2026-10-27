@@ -45,6 +45,43 @@ struct Proof {
     }
     return false;
   }
+  const Json *exportedBinding(const Json &root,const std::string &name,bool values){
+    auto &g=m.grammar(string(field(root,"sourcePath")));const auto declared=declarations(root,values);if(!m.error.message.empty())return nullptr;
+    std::vector<const Json *> found;
+    for(auto *decl:declared){
+      if(!m.spend())return nullptr;auto *statement=decl;
+      while(string(field(*statement,"parent"))!=string(field(root,"id"))){if(!m.spend())return nullptr;statement=m.nodes.at(string(field(*statement,"parent")));}
+      size_t a,b;if(!g.span(field(*statement,"range"),a,b))return nullptr;while(a<b&&g.tokens[a].text=="@")a+=2;
+      if(m.declarationNames.at(string(field(*decl,"id")))==name&&a+1<b&&g.tokens[a].text=="export"&&g.tokens[a+1].text!="default")found.push_back(decl);
+    }
+    for(auto *statement:child(root)){
+      if(!m.spend())return nullptr;const auto kind=string(field(*statement,"kind"));if(kind=="KindEndOfFile"||kind=="KindEndOfFileToken")continue;
+      size_t a,b;if(!g.span(field(*statement,"range"),a,b))return nullptr;if(g.tokens[a].text!="export")continue;++a;bool typeOnly=false;
+      if(a+1<b&&g.tokens[a].text=="type"&&(g.tokens[a+1].text=="{"||g.tokens[a+1].text=="*")){typeOnly=true;++a;}
+      if(a<b&&(g.tokens[a].text=="*"||g.tokens[a].text=="=")){reject(m.error,"core-ir-query-capability","re-export or dynamic module export has no selected binding proof");return nullptr;}
+      if(a==b||g.tokens[a].text!="{")continue;++a;
+      const auto identifier=[&](std::string &out){
+        if(!m.need(a<b,"original export identifier missing"))return false;const auto &token=g.tokens[a++];out=token.text;
+        return g.name(Object{{"start",int64_t(token.start)},{"end",int64_t(token.end)}},out);
+      };
+      std::vector<std::string> locals;
+      while(a<b&&g.tokens[a].text!="}"){
+        if(!m.spend())return nullptr;bool type=typeOnly;
+        if(a+1<b&&g.tokens[a].text=="type"&&g.tokens[a+1].text!="as"&&g.tokens[a+1].text!=","&&g.tokens[a+1].text!="}"){type=true;++a;}
+        std::string local,exported;if(!identifier(local))return nullptr;exported=local;
+        if(a<b&&g.tokens[a].text=="as"){++a;if(!identifier(exported))return nullptr;}
+        if(exported==name&&(!values||!type))locals.push_back(local);if(a==b||g.tokens[a].text!=",")break;++a;
+      }
+      if(!m.need(a<b&&g.tokens[a++].text=="}","original named export list differs"))return nullptr;
+      if(a<b&&g.tokens[a].text=="from"){reject(m.error,"core-ir-query-capability","module re-export has no selected binding proof");return nullptr;}
+      if(a<b&&g.tokens[a].text==";")++a;if(!m.need(a==b,"original named export statement differs"))return nullptr;
+      for(const auto &local:locals){
+        std::vector<const Json *> selected;for(auto *decl:declared)if(m.declarationNames.at(string(field(*decl,"id")))==local)selected.push_back(decl);
+        if(selected.size()!=1){reject(m.error,"core-ir-query-capability","local named export must select one original module declaration");return nullptr;}found.push_back(selected[0]);
+      }
+    }
+    if(!m.need(found.size()==1,"original named import has no unique module export"))return nullptr;return found[0];
+  }
   const Json *at(const std::string &path,const Json &range){
     for(auto kind:{"KindTypeReference","KindTupleType","KindParenthesizedType"}){
       for(const auto &[id,n]:m.nodes){if(!m.spend())return nullptr;if(string(field(*n,"sourcePath"))==path&&string(field(*n,"kind"))==kind&&same(field(*n,"range"),range))return n;}}
@@ -70,6 +107,7 @@ struct Proof {
     }
     std::vector<const Json *> found;
     if(root)for(auto *import:child(*root))if(string(field(*import,"kind"))=="KindImportDeclaration"){
+      size_t importStart,importEnd;if(!g.span(field(*import,"range"),importStart,importEnd))return nullptr;
       if(values)for(const auto &[id,n]:m.nodes){if(!m.spend())return nullptr;const auto kind=string(field(*n,"kind"));
         if((kind=="KindNamespaceImport"||kind=="KindImportClause")&&string(field(*n,"sourcePath"))==string(field(node,"sourcePath"))&&
           number(field(field(*n,"range"),"start"))>=number(field(field(*import,"range"),"start"))&&number(field(field(*n,"range"),"end"))<=number(field(field(*import,"range"),"end"))){
@@ -98,10 +136,10 @@ struct Proof {
         if(!g.span(field(*n,"range"),a,b))return nullptr;std::vector<std::string> names;
         for(auto i=a;i<b;++i)if(g.tokens[i].text!="type")names.push_back(g.tokens[i].text);
         if(names.empty()||names.back()!=name)continue;
+        if(values&&!m.need(g.tokens[a].text!="type"&&!(importStart+1<importEnd&&g.tokens[importStart+1].text=="type"),"type-only import cannot supply a scalar value callee"))return nullptr;
         if(!m.need(names.size()==1||(names.size()==3&&names[1]=="as"),"original named import syntax differs"))return nullptr;
         for(const auto &[foreignId,foreign]:m.nodes)if(string(field(*foreign,"sourcePath"))==target&&string(field(*foreign,"kind"))=="KindSourceFile"){
-          const auto declared=declarations(*foreign,values);if(!m.error.message.empty())return nullptr;
-          for(auto *c:declared)if(m.declarationNames.at(string(field(*c,"id")))==names.front())found.push_back(c);}
+          auto *selected=exportedBinding(*foreign,names.front(),values);if(!selected)return nullptr;found.push_back(selected);}
         if(values&&!m.need(!found.empty(),"imported decorator has no selected value declaration"))return nullptr;
       }
     }
@@ -266,6 +304,11 @@ bool Model::ownedMarker(const std::string &path,const Json &range,const Json &ex
   if(!need(nodes.count(parent)&&string(field(*nodes.at(parent),"kind"))=="KindSourceFile","decorator lexical scope is outside selected top-level Source syntax"))return false;
   Json traces=Array{};Proof proof{*this,traces};auto *binding=proof.binding(*use,true,nodes.at(parent));
   return binding&&need(same(proof.origin(*binding),expected),"decorator value binding is not the owned declaration");
+}
+bool Model::scalarTarget(const std::string &path,const Json &range,const Json &expected){
+  auto *identifier=at(path,range,"KindIdentifier");if(!identifier)return false;
+  Json traces=Array{};Proof proof{*this,traces};auto *binding=proof.binding(*identifier,true);
+  return binding&&need(same(proof.origin(*binding),expected),"scalar call does not bind the original helper declaration");
 }
 bool Model::annotation(const std::string &path,const Json &range,const std::string &id,unsigned depth){
   if(!spend()||!need(depth<=64&&source->types.count(id),"original logical annotation graph differs"))return false;

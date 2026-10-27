@@ -46,6 +46,18 @@ struct Check {
     if(!m.spend()||!need(depth<32,"typed expression path exceeds32"))return {};
     const auto kind=string(field(value,"kind"));
     if(kind=="bindingReference")return bindings.at(string(field(value,"binding"))).value;
+    if(kind=="parentheses")return expression(it,block,field(value,"expression"),bindings,depth+1);
+    if(kind=="call"){
+      const auto &helper=m.scalarHelpers[m.helperIndex.at(string(field(value,"callee")))];std::vector<mlir::Value> args;
+      for(const auto &arg:items(field(value,"arguments"))){auto result=expression(it,block,arg,bindings,depth+1);if(!result)return {};args.push_back(result);}
+      auto *op=take(it,block,"func.call",args,1);if(!op)return {};
+      auto symbol=op->getAttrOfType<mlir::FlatSymbolRefAttr>("callee");const auto &range=field(value,"calleeRange");
+      if(!attrs(op,{"callee","tsfg_core.function_id","tsfg_core.signature_hash","tsfg.query_source_callee","callee_start","callee_end","tsfg_source.start","tsfg_source.end"})||
+        !need(symbol&&symbol.getValue()=="query_helper_"+helper.id.substr(7)&&op->getResult(0).getType().isF32(),"scalar call symbol/result differs")||
+        !text(op,"tsfg_core.function_id",helper.id)||!text(op,"tsfg_core.signature_hash",helper.signature)||!text(op,"tsfg.query_source_callee",string(field(value,"callee")))||
+        !integer(op,"callee_start",number(field(range,"start")))||!integer(op,"callee_end",number(field(range,"end")))||!anchor(op,field(value,"range")))return {};
+      for(auto arg:args)if(!need(arg.getType().isF32(),"scalar call argument must be f32"))return {};return op->getResult(0);
+    }
     if(kind=="fieldAccess"){
       const auto &receiver=bindings.at(string(field(field(value,"receiver"),"binding")));auto *op=take(it,block,"tsfg.field_load",{receiver.value},1);
       if(!op||!need(op->getResult(0).getType().isF32(),"field load is not typed f32")||!fieldOp(op,value,receiver,field(value,"range")))return {};return op->getResult(0);
@@ -98,12 +110,25 @@ struct Check {
     }
     auto &body=fn.getBody().front();auto it=body.begin();for(const auto &l:items(field(*system.raw,"loops")))if(!loop(it,body,l,system,fn))return false;return terminator(it,body,"func.return");
   }
+  bool helper(mlir::func::FuncOp fn,const ScalarHelper &helper){
+    const auto &raw=*helper.raw,&decl=field(raw,"declaration");
+    if(!attrs(fn,{"function_type","sym_name","tsfg_core.function_id","tsfg_core.signature_hash","tsfg.query_source_function","tsfg.query_source_helper","tsfg_source.path","tsfg_source.start","tsfg_source.end"})||
+      !text(fn,"tsfg_core.function_id",helper.id)||!text(fn,"tsfg_core.signature_hash",helper.signature)||!text(fn,"tsfg.query_source_function",string(field(decl,"id")))||!text(fn,"tsfg.query_source_helper",string(field(raw,"id")))||
+      !text(fn,"tsfg_source.path",string(field(decl,"sourcePath")))||!anchor(fn,field(decl,"range"))||
+      !need(fn.getSymName()=="query_helper_"+helper.id.substr(7)&&!fn.isExternal()&&fn.getBody().hasOneBlock()&&fn.getNumArguments()==helper.parameters.size()&&fn.getFunctionType().getNumResults()==1&&fn.getFunctionType().getResult(0).isF32(),"scalar helper function shape differs"))return false;
+    std::map<std::string,Binding> bindings;for(size_t i=0;i<helper.parameters.size();++i){if(!need(fn.getArgument(i).getType().isF32(),"scalar helper argument type differs"))return false;bindings.emplace(string(field(field(*helper.parameters[i].raw,"binding"),"id")),Binding{fn.getArgument(i),helper.parameters[i].raw});}
+    auto &body=fn.getBody().front();auto it=body.begin();auto value=expression(it,body,field(raw,"value"),bindings);if(!value)return false;
+    auto *returned=take(it,body,"func.return",{value},0);
+    return returned&&attrs(returned,{"tsfg_source.start","tsfg_source.end"})&&anchor(returned,field(raw,"returnRange"))&&need(it==body.end(),"extra scalar helper body operation");
+  }
 };
 }
 bool verifyOperations(mlir::ModuleOp module,Model &m){
   Check check{m,module.getContext()};auto it=module.getBody()->begin();
   for(const auto &system:m.systems){if(!m.spend()||!check.need(it!=module.getBody()->end(),"missing complete system function"))return false;
     auto fn=llvm::dyn_cast<mlir::func::FuncOp>(&*it++);if(!check.need(bool(fn),"non-system operation in Query module")||!check.function(fn,system))return false;}
+  for(const auto &helper:m.scalarHelpers){if(!m.spend()||!check.need(it!=module.getBody()->end(),"missing reachable scalar helper"))return false;
+    auto fn=llvm::dyn_cast<mlir::func::FuncOp>(&*it++);if(!check.need(bool(fn),"non-function helper operation")||!check.helper(fn,helper))return false;}
   if(!check.need(it==module.getBody()->end(),"extra system function or mixed module operation"))return false;
   const auto encoded=canonical(m.layouts);
   if(m.bound){auto attr=module->getAttrOfType<mlir::StringAttr>("tsfg.query_layouts");return check.need(attr&&attr.getValue()==encoded,"independent bound component catalog differs");}

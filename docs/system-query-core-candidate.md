@@ -2,7 +2,7 @@
 
 # Owned Query Core consumer
 
-The private owned v2 Source package enters typed Core through
+The private owned v3 Source package enters typed Core through
 `readSystemQueryFacts` and `emitSystemQueryCore`. The complete original package
 and request remain in the module. Original Source FunctionIds and BindingIds
 are kept separately from lowered function, selection, component and FieldIds.
@@ -23,11 +23,13 @@ The existing native f32 Core arithmetic operations implement `+`, `-`, `*` and
 then adds and stores. Source statement and operand order remain explicit SSA
 dependencies. No component objects or boxed field values are constructed.
 
+Reachable scalar helpers become real native-f32 func.func definitions, parameters and func.return operations. Direct calls become typed func.call SSA operations with semantic callable IDs and separate original Source helper identities. Call arguments evaluate left to right, and an enclosing compound assignment still reads its target before evaluating those arguments. The private Query Core version is 2; the Core/common wire contract remains unchanged.
+
 The independent C++ consumer reconstructs identities from the retained Source
 data, checks the complete original request and pinned declaration contexts,
 replays lexical/import alias resolution and generic substitutions, and checks
 each system, tuple, loop and expression against its original AST and UTF16
-source tokens. It compares actual operations and operands in Source order.
+source tokens, including helper signatures, returns, arithmetic and resolved direct calls. It compares actual operations and operands in Source order.
 Node-supplied identities, arithmetic names, permission attributes and source
 anchors cannot substitute for that comparison. Field lookup selects the first
 same-name declaration from the receiver's actual class and then its bases;

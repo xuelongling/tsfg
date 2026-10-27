@@ -6,11 +6,13 @@ import {copyGenericJsonBytes,readGenericJson} from './generic-json.mjs';
 import {checkTypedArrayShape,sourceRange,originId,logicalPath,byteOrder} from './typed-array-schema.mjs';
 import {validateTypedArrayTypes} from './typed-array-types.mjs';
 import {commonSourceDescriptor} from './common-program-common.mjs';
+import {querySourceProof} from './system-query-source-bindings.mjs';
+import {decodeScalarHelpers} from './system-query-scalars.mjs';
 import {commonSemanticIdentities,commonFieldId} from './common-program-identities.mjs';
 import {commonSourceGrammar,commonTypeSyntax,commonSourceAccess} from './common-program-source.mjs';
-import {sourceLexicalTokens} from './conversions.mjs';
-import {relativeModuleSource} from './module-hir-source.mjs';
-import {identifierName} from './module-facts.mjs';
+
+
+
 
 export const systemQueryFactsFormat=own({family:descriptor.family,version:descriptor.version,schemaHash:sha256(canonical(descriptor)+'\n')});
 const policy={...descriptor.limits,safeNonnegativeIntegers:true,allowNul:true,rejectPrototypeKeys:false};
@@ -23,13 +25,13 @@ const receipts=new WeakMap();
 /** @typedef {Readonly<{declaration:SystemQueryOrigin,tupleSourcePath:string,tupleRange:SystemQueryRange,aliases:readonly SystemQueryAlias[],items:readonly SystemQueryAccess[]}>} SystemQuerySelection */
 /** @typedef {Readonly<{index:number,binding:SystemQueryOrigin,annotationRange:SystemQueryRange,logicalType:string,type:string|null,query:SystemQuerySelection|null}>} SystemQueryParameter */
 /** A checked view of the existing shared arrayGenericExpression/Target DTO.
- * @typedef {{kind:string,type:string,flowType?:string,range:SystemQueryRange,binding?:string,property?:string,nameRange?:SystemQueryRange,receiver?:CheckedArrayExpression,left?:CheckedArrayExpression,right?:CheckedArrayExpression,target?:CheckedArrayExpression,value?:CheckedArrayExpression,operator?:string,operatorRange?:SystemQueryRange}} CheckedArrayExpression
+ * @typedef {{kind:string,type:string,flowType?:string,range:SystemQueryRange,binding?:string,property?:string,nameRange?:SystemQueryRange,receiver?:CheckedArrayExpression,left?:CheckedArrayExpression,right?:CheckedArrayExpression,target?:CheckedArrayExpression,value?:CheckedArrayExpression,expression?:CheckedArrayExpression,operator?:string,operatorRange?:SystemQueryRange,callee?:string,calleeRange?:SystemQueryRange,signature?:import('./system-query-scalars.mjs').SystemQueryScalarHelper['sourceSignature'],arguments?:CheckedArrayExpression[]}} CheckedArrayExpression
  */
-/** @typedef {Readonly<{kind:'bindingReference'|'fieldAccess'|'fieldTarget'|'binary'|'fieldAssignment',type:string,sourceType:string,range:SystemQueryRange,binding?:string,property?:string,sourceField?:string,nameRange?:SystemQueryRange,receiver?:SystemQueryLoopExpression,left?:SystemQueryLoopExpression,right?:SystemQueryLoopExpression,target?:SystemQueryLoopExpression,value?:SystemQueryLoopExpression,operator?:string,operatorRange?:SystemQueryRange,access?:'read'|'write'|'readwrite'}>} SystemQueryLoopExpression */
+/** @typedef {Readonly<{kind:'bindingReference'|'fieldAccess'|'fieldTarget'|'binary'|'fieldAssignment'|'call'|'parentheses',type:string,sourceType:string,range:SystemQueryRange,binding?:string,property?:string,sourceField?:string,nameRange?:SystemQueryRange,receiver?:SystemQueryLoopExpression,left?:SystemQueryLoopExpression,right?:SystemQueryLoopExpression,target?:SystemQueryLoopExpression,value?:SystemQueryLoopExpression,expression?:SystemQueryLoopExpression,operator?:string,operatorRange?:SystemQueryRange,access?:'read'|'write'|'readwrite',callee?:string,sourceCallee?:string,calleeRange?:SystemQueryRange,signatureHash?:string,arguments?:readonly SystemQueryLoopExpression[]}>} SystemQueryLoopExpression */
 /** @typedef {Readonly<{index:number,declaration:SystemQueryOrigin,sourceComponentType:string,componentType:string,mode:'read'|'write'}>} SystemQueryLoopBinding */
 /** @typedef {Readonly<{range:SystemQueryRange,queryBinding:string,queryRange:SystemQueryRange,bindingRange:SystemQueryRange,bodyRange:SystemQueryRange,bindings:readonly SystemQueryLoopBinding[],statements:readonly Readonly<{kind:'expression',range:SystemQueryRange,value:SystemQueryLoopExpression}>[]}>} SystemQueryLoop */
 /** @typedef {Readonly<{declaration:SystemQueryOrigin,declKey:Readonly<{sourcePath:string,path:readonly string[],kind:'function',name:string}>,markerRange:SystemQueryRange,marker:SystemQueryOrigin,signature:SystemQueryOrigin,parameters:readonly SystemQueryParameter[],sourceReturnType:string,returnType:string,bodyRange:SystemQueryRange,loops:readonly SystemQueryLoop[]}>} SystemQuerySystem */
-/** @typedef {Readonly<{format:Readonly<{family:string,version:number,schemaHash:string}>,inputIdentity:string,packageId:string,program:ReturnType<typeof decodeProgram>['program'],nodes:ReturnType<typeof decodeNodes>['nodes'],builtins:readonly SystemQueryOrigin[],components:readonly Readonly<{typeId:string,sourceType:string,declaration:SystemQueryOrigin}>[],markerAliases:readonly SystemQueryAlias[],systems:readonly SystemQuerySystem[]}>} SystemQueryFacts */
+/** @typedef {Readonly<{format:Readonly<{family:string,version:number,schemaHash:string}>,inputIdentity:string,packageId:string,program:ReturnType<typeof decodeProgram>['program'],nodes:ReturnType<typeof decodeNodes>['nodes'],builtins:readonly SystemQueryOrigin[],components:readonly Readonly<{typeId:string,sourceType:string,declaration:SystemQueryOrigin}>[],markerAliases:readonly SystemQueryAlias[],systems:readonly SystemQuerySystem[],scalarHelpers:readonly import('./system-query-scalars.mjs').SystemQueryScalarHelper[]}>} SystemQueryFacts */
 
 /** @returns {never} */
 function fail(detail,kind='input'){
@@ -164,102 +166,8 @@ function verifyComponentSource(types,functions,grammars,semantic,spend){
   return fields;
 }
 
-// Replay only the original type-reference/alias syntax and its recorded
-// substitutions. The facts never supply a spelling-to-target shortcut.
-function querySourceProof(ast,grammars,sources,aliases,spend){
-  let cursor=0;
-  const declarationKinds=['KindTypeParameter','KindTypeAliasDeclaration','KindClassDeclaration','KindInterfaceDeclaration'];
-  const children=node=>ast.children.get(node.id)??[];
-  const origin=node=>({id:originId(node.sourcePath,node.nameRange??node.range),sourcePath:node.sourcePath,kind:node.kind,name:node.name,range:node.range,nameRange:node.nameRange??node.range});
-  const at=(path,span)=>{
-    const node=ast.nodes.find(node=>node.sourcePath===path&&canonical(node.range)===canonical(span)&&['KindTypeReference','KindTupleType','KindParenthesizedType'].includes(node.kind));
-    if(!node)fail('original type syntax node missing','source');return node;
-  };
-  const argumentsOf=node=>children(node).filter(child=>!['KindIdentifier','KindQualifiedName'].includes(child.kind));
-  function binding(node){
-    spend();const nameNode=children(node).find(child=>child.kind==='KindIdentifier'||child.kind==='KindQualifiedName');
-    if(!nameNode||nameNode.kind!=='KindIdentifier')fail('original named type reference required','source');
-    const name=identifierName(grammars.get(node.sourcePath).slice(nameNode.range));
-    let parent=ast.directory.get(node.parent);
-    while(parent){
-      spend();const local=children(parent).filter(child=>declarationKinds.includes(child.kind)&&child.name===name);
-      if(local.length){if(local.length!==1)fail('ambiguous original type binding','source');return local[0];}
-      parent=ast.directory.get(parent.parent);
-    }
-    const root=ast.directory.get(ast.roots.get(node.sourcePath));
-    const imported=[];
-    for(const declaration of children(root).filter(row=>row.kind==='KindImportDeclaration')){
-      spend();const literal=children(declaration).find(row=>row.kind==='KindStringLiteral');
-      const tokens=sourceLexicalTokens(grammars.get(node.sourcePath).slice(declaration.range));
-      const specifier=tokens?.find(token=>token.kind==='text')?.value;
-      if(!literal||!specifier)fail('original import source required','source');
-      const sourcePath=relativeModuleSource(node.sourcePath,specifier,sources);
-      if(!sourcePath)fail('original import closure differs','source');
-      const specifiers=ast.nodes.filter(row=>row.sourcePath===node.sourcePath&&row.kind==='KindImportSpecifier'&&row.range.start>=declaration.range.start&&row.range.end<=declaration.range.end);
-      for(const specifier of specifiers){
-        const names=grammars.get(node.sourcePath).spelling(specifier.range).filter(value=>value!=='type');
-        const local=identifierName(names.at(-1)),exported=identifierName(names[0]);
-        if(local!==name)continue;
-        const foreignRoot=ast.directory.get(ast.roots.get(sourcePath));
-        imported.push(...children(foreignRoot).filter(row=>declarationKinds.includes(row.kind)&&row.name===exported));
-      }
-    }
-    if(imported.length){if(imported.length!==1)fail('ambiguous original import binding','source');return imported[0];}
-    const globals=ast.nodes.filter(row=>[descriptor.profile.path,descriptor.profile.standardPath].includes(row.sourcePath)&&row.parent===ast.roots.get(row.sourcePath)&&declarationKinds.includes(row.kind)&&row.name===name);
-    if(globals.length!==1)fail('original type declaration is outside owned scope','source');return globals[0];
-  }
-  const target=node=>node.kind==='KindTypeReference'?origin(binding(node)):origin(node);
-  function definition(declaration){
-    const members=children(declaration),parameters=members.filter(row=>row.kind==='KindTypeParameter'),rhs=members.at(-1);
-    if(!rhs)fail('original alias definition missing','source');
-    const grammar=grammars.get(declaration.sourcePath),bounds=grammar.indices(declaration.range),name=grammar.indices(declaration.nameRange),prefix=grammar.tokens.slice(bounds.first,name.first).map(token=>token.text);
-    if(!['type','export type'].includes(prefix.join(' ')))fail('original alias declaration prefix differs','source');
-    grammar.sequence(declaration.range,[...prefix,declaration.nameRange,...(parameters.length?['<',...parameters.flatMap((row,index)=>index?[',',row.range]:[row.range]),'>']:[]),'=',rhs.range],true);
-    return {parameters,rhs};
-  }
-  function verifyLogical(path,span,id,types,depth=0){
-    spend();if(depth>64)fail('original annotation alias graph exceeded','limit');
-    const reference=ast.nodes.find(node=>node.sourcePath===path&&node.kind==='KindTypeReference'&&canonical(node.range)===canonical(span));
-    if(reference){
-      const declaration=binding(reference),type=types.get(id);
-      if(declaration.kind==='KindTypeAliasDeclaration'&&(declaration.sourcePath!==type.sourcePath||canonical(declaration.nameRange)!==canonical(type.nameRange))){
-        const {parameters,rhs}=definition(declaration);
-        if(parameters.length||argumentsOf(reference).length)fail('ordinary annotation requires concrete original alias','source');
-        return verifyLogical(rhs.sourcePath,rhs.range,id,types,depth+1);
-      }
-    }
-    commonTypeSyntax(grammars.get(path),span,id,types,spend);
-  }
-  function resolve(node,env=new Map(),depth=0){
-    spend();if(depth>64)fail('original alias graph exceeded','limit');
-    if(node.kind==='KindParenthesizedType'){
-      const nested=children(node);if(nested.length!==1)fail('parenthesized original type differs','source');return resolve(nested[0],env,depth+1);
-    }
-    if(node.kind!=='KindTypeReference')return {node,env};
-    const declaration=binding(node),actual=origin(declaration),substitution=declaration.kind==='KindTypeParameter'?env.get(actual.id):null;
-    if(!substitution&&declaration.kind!=='KindTypeAliasDeclaration'){
-      const unexpected=aliases[cursor];
-      if(unexpected?.useSourcePath===node.sourcePath&&canonical(unexpected.useRange)===canonical(node.range))fail('alias proof attached to an original builtin/component reference','source');
-      return {node,env};
-    }
-    const trace=aliases[cursor++];
-    if(!trace||trace.useSourcePath!==node.sourcePath||canonical(trace.useRange)!==canonical(node.range)||canonical(trace.declaration)!==canonical(actual))fail('original alias occurrence/declaration order differs','source');
-    let result;
-    if(substitution)result=resolve(substitution,env,depth+1);
-    else {
-      const {parameters,rhs}=definition(declaration),arguments_=argumentsOf(node),next=new Map(env);
-      if(parameters.length!==arguments_.length||!rhs||!['KindTypeReference','KindTupleType','KindParenthesizedType'].includes(rhs.kind))fail('original alias definition/arguments differ','source');
-      parameters.forEach((parameter,index)=>next.set(origin(parameter).id,arguments_[index]));
-      result=resolve(rhs,next,depth+1);
-    }
-    if(canonical(trace.target)!==canonical(target(result.node)))fail('original alias definition/substitution target differs','source');
-    return result;
-  }
-  return {at,resolve,target,argumentsOf,verifyLogical,complete:()=>{if(cursor!==aliases.length)fail('unconsumed alias proof differs','source');}};
-}
-
 /** @returns {SystemQueryLoop[]} */
-function decodeLoops(value,body,sourcePath,parameters,ast,grammar,component,fields,spend){
+function decodeLoops(value,body,sourcePath,parameters,ast,grammar,component,fields,scalars,spend){
   const originalLoops=ast.children.get(body.id)??[];
   const loops=array(value).map((value,index)=>{
     spend();const row=record(value,descriptor.objects.loop),loopRange=range(row.range),queryRange=range(row.queryRange),bindingRange=range(row.bindingRange),bodyRange=range(row.bodyRange),queryBinding=hash(row.queryBinding);
@@ -291,13 +199,15 @@ function decodeLoops(value,body,sourcePath,parameters,ast,grammar,component,fiel
       const target=value.kind==='fieldTarget';
       if(!component.types.has(value.type)||!target&&value.flowType!==value.type)fail('original loop expression logical type differs','type');
       const type=component.semantic.typeIds.get(value.type),base={type,sourceType:value.type,range:{...value.range}};
-      const originalKind=value.kind==='bindingReference'?'KindIdentifier':value.kind==='fieldAccess'||target?'KindPropertyAccessExpression':'KindBinaryExpression';
+      const originalKind=value.kind==='bindingReference'?'KindIdentifier':value.kind==='fieldAccess'||target?'KindPropertyAccessExpression':value.kind==='call'?'KindCallExpression':value.kind==='parentheses'?'KindParenthesizedExpression':'KindBinaryExpression';
       if(!ast.nodes.some(node=>node.sourcePath===sourcePath&&node.kind===originalKind&&canonical(node.range)===canonical(value.range)))fail('original loop expression AST differs','source');
       if(value.kind==='bindingReference'){
         const binding=scope.get(value.binding);
         if(!binding||binding.sourceType!==value.type||binding.mode===null&&value.type!=='f32')fail('original loop expression binding differs','source');
         grammar.name(value.range,binding.declaration.name);return {...base,kind:'bindingReference',binding:value.binding,access:'read'};
       }
+      if(value.kind==='call')return scalars.call(value,sourcePath,scope,value=>expression(value,'read',depth+1));
+      if(value.kind==='parentheses'){const inner=expression(value.expression,'read',depth+1);grammar.sequence(value.range,['(',value.expression.range,')']);return {...base,kind:'parentheses',expression:inner};}
       if(value.kind==='fieldAccess'||target){
         if(value.receiver.kind!=='bindingReference')fail('direct original Query field receiver required','capability');
         const receiver=expression(value.receiver,'read',depth+1),binding=scope.get(receiver.binding),field=fields.get(value.property);
@@ -345,8 +255,8 @@ function decodeLoops(value,body,sourcePath,parameters,ast,grammar,component,fiel
 }
 
 /** @returns {SystemQuerySystem[]} */
-function decodeSystems(value,program,sources,ast,builtins,component,fields,grammars,spend){
-  const seen=new Set(),sourceTypes=querySourceProof(ast,grammars,sources,[],spend);
+function decodeSystems(value,program,sources,ast,builtins,component,fields,grammars,scalars,spend){
+  const seen=new Set(),sourceTypes=querySourceProof(ast,grammars,sources,[],spend,fail);
   return array(value).map(value=>{
     spend();const row=record(value,descriptor.objects.system);
     const declaration=ast.original(row.declaration),marker=ast.original(row.marker),signature=ast.original(row.signature),markerRange=range(row.markerRange),returnType=text(row.returnType);
@@ -370,7 +280,7 @@ function decodeSystems(value,program,sources,ast,builtins,component,fields,gramm
         if(!ast.nodes.some(node=>node.sourcePath===useSourcePath&&node.kind==='KindTypeReference'&&canonical(node.range)===canonical(useRange)))fail('original alias occurrence differs','source');
         return {useSourcePath,useRange,declaration,target};
       });
-      const proof=querySourceProof(ast,grammars,sources,aliases,spend),querySyntax=proof.resolve(proof.at(declaration.sourcePath,annotationRange));
+      const proof=querySourceProof(ast,grammars,sources,aliases,spend,fail),querySyntax=proof.resolve(proof.at(declaration.sourcePath,annotationRange));
       if(querySyntax.node.kind!=='KindTypeReference'||canonical(proof.target(querySyntax.node))!==canonical(queryDeclaration)||proof.argumentsOf(querySyntax.node).length!==1)fail('original Query annotation target differs','source');
       const tupleSyntax=proof.resolve(proof.argumentsOf(querySyntax.node)[0],querySyntax.env);
       if(tupleSyntax.node.kind!=='KindTupleType'||tupleSyntax.node.sourcePath!==tupleSourcePath||canonical(tupleSyntax.node.range)!==canonical(tupleRange))fail('original Query tuple definition differs','source');
@@ -403,7 +313,7 @@ function decodeSystems(value,program,sources,ast,builtins,component,fields,gramm
     sourceTypes.verifyLogical(declaration.sourcePath,returnSyntax.range,returnType,component.types);
     const bounds=grammar.indices(declaration.range),name=grammar.indices(declaration.nameRange),prefix=grammar.tokens.slice(bounds.first,name.first).map(token=>token.text);
     grammar.sequence(declaration.range,[...prefix,declaration.nameRange,'(',...parameters.flatMap((row,index)=>index?[',',row.binding.range]:[row.binding.range]),')',':',returnSyntax.range,body.range]);
-    const loops=decodeLoops(row.loops,body,declaration.sourcePath,parameters,ast,grammar,component,fields,spend);
+    const loops=decodeLoops(row.loops,body,declaration.sourcePath,parameters,ast,grammar,component,fields,scalars,spend);
     return {declaration,declKey:{sourcePath:declaration.sourcePath,path:[],kind:/** @type {'function'} */('function'),name:declaration.name},markerRange,marker,signature,parameters,sourceReturnType:returnType,returnType:text(component.semantic.typeIds.get(returnType)),bodyRange,loops};
   });
 }
@@ -419,7 +329,7 @@ export function readSystemQueryFacts(bytes,context){
   const expectedPackageId=hash(expected.expectedPackageId),transport=readGenericJson(copyGenericJsonBytes(bytes,policy),policy),packet=record(transport.value,descriptor.objects.package);
   if(transport.text!==canonical(packet)+'\n'||packet.family!==systemQueryFactsFormat.family||packet.version!==systemQueryFactsFormat.version||packet.schemaHash!==systemQueryFactsFormat.schemaHash)fail('candidate identity/canonical bytes differ','identity');
   const payload=record(packet.payload,descriptor.objects.payload);
-  if(hash(packet.packageId)!==expectedPackageId||packet.packageId!==sha256('tsfg.system-query.package.v2\0'+systemQueryFactsFormat.schemaHash+'\0'+canonical(payload)))fail('whole Source package identity differs','identity');
+  if(hash(packet.packageId)!==expectedPackageId||packet.packageId!==sha256('tsfg.system-query.package.v3\0'+systemQueryFactsFormat.schemaHash+'\0'+canonical(payload)))fail('whole Source package identity differs','identity');
   const {sources,program}=decodeProgram(payload.program);
   if(descriptor.sourceTypeSchemaHash!==sha256(canonical(commonSourceDescriptor)+'\n'))fail('shared Source type schema differs','identity');
   if(canonical(program.target)!==canonical(descriptor.target)||payload.profilePath!==descriptor.profile.path||payload.profileSHA256!==descriptor.profile.sha256
@@ -427,7 +337,7 @@ export function readSystemQueryFacts(bytes,context){
     ||canonical(program.declarations.paths)!==canonical([descriptor.profile.standardPath,descriptor.profile.path]))fail('owned declaration/target context differs','identity');
   const request={family:descriptor.requestFamily,version:descriptor.version,schemaHash:systemQueryFactsFormat.schemaHash,input:{sourceRoot:program.sourceRoot,rootFile:program.rootFile,files:program.files.map(({path,content,sha256})=>({path,content,sha256})),declarations:program.declarations,config:program.config,target:program.target}};
   const requestTransport=readGenericJson(copyGenericJsonBytes(expected.requestBytes,policy),policy),requestText=canonical(request)+'\n';
-  if(requestTransport.text!==requestText||canonical(requestTransport.value)+'\n'!==requestText||hash(packet.requestId)!==sha256('tsfg.system-query.request.v2\0'+requestText))fail('complete original request differs','identity');
+  if(requestTransport.text!==requestText||canonical(requestTransport.value)+'\n'!==requestText||hash(packet.requestId)!==sha256('tsfg.system-query.request.v3\0'+requestText))fail('complete original request differs','identity');
   let work=0;const spend=(amount=1)=>{work+=amount;if(work>descriptor.limits.work)fail('source work exceeded','limit');};
   const ast=decodeNodes(payload.nodes,sources,spend),builtins=new Map();
   const builtinRows=array(payload.builtins).map((value,index)=>{const row=ast.original(value);
@@ -455,9 +365,10 @@ export function readSystemQueryFacts(bytes,context){
     return {typeId:text(component.semantic.typeIds.get(type.id)),sourceType:text(type.id),declaration};
   });
   if(usedAliases.size!==markerAliases.length)fail('unbound component marker alias','source');
-  const systems=decodeSystems(payload.systems,program,sources,ast,builtins,component,fields,grammars,spend);
+  const scalars=decodeScalarHelpers(payload.scalarHelpers,{ast,grammars,sources,component,spend,fail});
+  const systems=decodeSystems(payload.systems,program,sources,ast,builtins,component,fields,grammars,scalars,spend);scalars.complete(systems);
   if(!systems.length||systems.length>4096)fail('complete system directory required','source');
-  const result=own({format:systemQueryFactsFormat,inputIdentity:text(packet.requestId),packageId:expectedPackageId,program,nodes:ast.nodes,builtins:builtinRows,components,markerAliases,systems});
+  const result=own({format:systemQueryFactsFormat,inputIdentity:text(packet.requestId),packageId:expectedPackageId,program,nodes:ast.nodes,builtins:builtinRows,components,markerAliases,systems,scalarHelpers:scalars.helpers});
   receipts.set(result,{bytes:Buffer.from(transport.text),requestText,packageId:expectedPackageId});return result;
 }
 

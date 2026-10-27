@@ -9,7 +9,7 @@ then walks the verified query/chunk/row regions. A field operation's actual SSA
 receiver selects its column; its Source and semantic FieldIds remain distinct.
 No Node-supplied effect summary is accepted as authority.
 
-The private `tsfg.system-query-effects-candidate` version1 output retains the
+The private `tsfg.system-query-effects-candidate` version2 output retains the
 input/package identity, Core/query versions, target, original source identity,
 lowered function/signature and original Source function identities. Each system
 contains declared capabilities, actual field effects and ordered loops. Each
@@ -45,7 +45,7 @@ counts and graph relationships, and returns immutable data. The CLI form is
 query-effects`. Existing `--emit core` and canonical Core bytes are unchanged.
 
 The supported effect bodies are the existing Source-bound direct f32 field
-operations. Cross-call and indirect effects, scheduling, JobSystem execution,
+operations and direct pure f32 helper calls. Scalar helper summaries retain original and lowered identities, ordered direct calls and independently derived transitive callees. Actual verified helper bodies admit only scalar parameters, arithmetic and direct scalar calls, so they contribute no component memory effects. Caller argument field loads remain in their original evaluation order. The owning reader compares calls and memory accesses with the typed original expressions, rather than trusting aggregate counts or a claimed purity bit. Indirect/reference calls, scheduling, JobSystem execution,
 parallel or serial numerical results, Guest/VM execution and ResourceProof
 remain outside this compiler slice. A conflict-free pair is a static borrowing
 result, not an execution qualification.

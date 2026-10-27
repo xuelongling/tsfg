@@ -5,7 +5,7 @@
 The subsequent static consumer is documented in
 [Owned Query Core consumer](system-query-core-candidate.md).
 
-This private v2 candidate describes the complete source system:
+This private v3 candidate describes the complete source system:
 
 ```ts
 @system
@@ -48,7 +48,7 @@ can be printed back as the original canonical packet. Candidate data grants no
 Host, kernel or Guest execution permission. It does not implement foreach
 lowering, numerical execution or component ABI layout.
 
-The Go entry point is `--system-query-facts-io-v2`. Both request and package use
+The Go entry point is `--system-query-facts-io-v3`. Both request and package use
 the exact descriptor in `contracts/system-query-facts.schema.json`; the shared
 component type DTO table has its own pinned schema digest. A package is not a
 relabelled common-v2 package. The Node entry points are:
@@ -56,7 +56,7 @@ relabelled common-v2 package. The Node entry points are:
 ```js
 import {readSystemQueryFacts, printSystemQueryFacts} from '../compiler/system-query-facts.mjs';
 const context = {
-  family: 'tsfg.system-query-context-candidate', version: 2,
+  family: 'tsfg.system-query-context-candidate', version: 3,
   requestBytes: actualOriginalRequestBytes,
   expectedPackageId: selectedActualSourcePackageId
 };
@@ -102,14 +102,16 @@ FieldIds together
 with `sourceType`, `sourceComponentType` and `sourceField` identities. Printing
 returns the owned original packet bytes rather than serializing that projection.
 
-The ten checked fixtures are complete, unchanged public Go v2 outputs: five
+The thirteen checked fixtures are complete public Go v3 outputs: five
 declaration/alias regressions regenerated with the new profile, plus complete
 architecture, alias, multiple-component, shared-component and inherited-component
-loops. Negative Node mutations are malformed input tests, not additional Source
+loops, the multi-system effect case, and same-file/imported scalar helpers. Negative Node mutations are malformed input tests, not additional Source
 producer examples.
 The Go producer separately checks real readonly writes, foreign iterators and
 wrappers, invalid bindings, noncomponent/GC content and changed contexts before
-writing a package. Private v1 exchange entry points are removed.
+writing a package. Earlier private exchange entry points are removed.
+
+The scalar helper directory retains the existing Source function.v8 and signature.v8 identities, original parameter bindings, f32 annotations, one return statement and its actual expression. Only reachable module-level helpers are selected; complete unrelated Source remains in the packet. Direct identifier calls retain the actual callee range, resolved original declaration and ordered arguments. Named-import aliases resolve through the complete original module sources. The owning consumers check those original bindings independently. The bounded subset is native f32 parameters/returns and pure arithmetic or nested direct calls, with at most 64 helpers, 32 arguments and call depth 32. Capture, allocation, reference parameters, indirect calls and recursive graphs remain capability errors.
 
 Run the cold regressions with `node --test tests/r03/system-query-facts.test.mjs tests/r03/system-query-loops.test.mjs`.
 

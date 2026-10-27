@@ -12,6 +12,10 @@ int64_t integer(mlir::Operation *op,llvm::StringRef key){return op->getAttrOfTyp
 Json anchor(mlir::Operation *op,const std::string &path){
   return Object{{"path",path},{"start",integer(op,"tsfg_source.start")},{"end",integer(op,"tsfg_source.end")}};
 }
+Json call(mlir::Operation *op,const std::string &path){
+  return Object{{"functionId",text(op,"tsfg_core.function_id")},{"sourceHelperId",text(op,"tsfg.query_source_callee")},{"signatureHash",text(op,"tsfg_core.signature_hash")},
+    {"source",anchor(op,path)},{"calleeSource",Object{{"path",path},{"start",integer(op,"callee_start")},{"end",integer(op,"callee_end")}}}};
+}
 void access(Capabilities &caps,const std::string &component,const std::string &source,const std::string &mode){
   auto [it,added]=caps.emplace(component,std::make_pair(source,mode));
   if(!added&&mode=="write")it->second.second="write";
@@ -43,11 +47,11 @@ bool collectEffects(mlir::ModuleOp module,Model &m,Json &result){
         if(!m.spend())return false;const auto source=string(field(item,"componentType"));
         access(declared,m.source->typeIds.at(source),source,string(field(item,"mode")));
       }
-    Array loops;Counts systemCounts;auto &body=fn.getBody().front();size_t ordinal=0;
+    Array loops,systemCalls;Counts systemCounts;auto &body=fn.getBody().front();size_t ordinal=0;
     for(auto &operation:body){
       if(!m.spend())return false;if(operation.getName().getStringRef()!="tsfg.chunk")continue;
       auto *query=operation.getOperand(0).getDefiningOp();auto &parallel=operation.getRegion(0).front().front();
-      auto &rows=parallel.getRegion(0).front();Capabilities loopCaps;Array columns,operations;Counts loopCounts;
+      auto &rows=parallel.getRegion(0).front();Capabilities loopCaps;Array columns,operations,calls;Counts loopCounts;
       std::map<mlir::Operation *,std::pair<int64_t,std::string>> columnOrigins;
       for(auto &op:rows){
         if(!m.spend())return false;const auto name=op.getName().getStringRef();
@@ -57,6 +61,8 @@ bool collectEffects(mlir::ModuleOp module,Model &m,Json &result){
           columnOrigins.emplace(&op,std::make_pair(index,binding));
           columns.push_back(Object{{"tupleIndex",index},{"sourceBinding",binding},{"componentType",component},
             {"sourceComponentType",sourceTypes.at(component)},{"mode",mode},{"source",anchor(&op,path)}});
+        }else if(name=="func.call"){
+          calls.push_back(call(&op,path));systemCalls.push_back(call(&op,path));
         }else if(name=="tsfg.field_load"||name=="tsfg.field_store"){
           auto *receiver=op.getOperand(0).getDefiningOp();const auto &column=columnOrigins.at(receiver);
           const auto component=text(receiver,"component_type"),semantic=text(&op,"field"),original=text(&op,"source_field");
@@ -69,11 +75,11 @@ bool collectEffects(mlir::ModuleOp module,Model &m,Json &result){
       }
       loops.push_back(Object{{"index",int64_t(ordinal++)},{"selectionId",llvm::cast<QueryType>(query->getResult(0).getType()).key().str()},
         {"queryBinding",text(query,"source_binding")},{"source",anchor(&parallel,path)},{"columns",std::move(columns)},
-        {"capabilities",capabilities(loopCaps)},{"fieldEffects",fields(loopCounts)},{"operations",std::move(operations)}});
+        {"capabilities",capabilities(loopCaps)},{"fieldEffects",fields(loopCounts)},{"operations",std::move(operations)},{"calls",std::move(calls)}});
     }
     Json row=Object{{"functionId",id},{"sourceFunctionId",text(fn,"tsfg.query_source_function")},
       {"signatureHash",text(fn,"tsfg_core.signature_hash")},{"source",anchor(fn,path)},
-      {"capabilities",capabilities(declared)},{"fieldEffects",fields(systemCounts)},{"loops",std::move(loops)}};
+      {"capabilities",capabilities(declared)},{"fieldEffects",fields(systemCounts)},{"loops",std::move(loops)},{"calls",std::move(systemCalls)}};
     summaries.emplace(id,Summary{std::move(row),std::move(declared)});
   }
   Array conflicts;
@@ -88,11 +94,26 @@ bool collectEffects(mlir::ModuleOp module,Model &m,Json &result){
     if(!overlap.empty())conflicts.push_back(Object{{"left",left->first},{"right",right->first},{"components",std::move(overlap)}});
   }
   Array systems;for(auto &[id,summary]:summaries)systems.push_back(std::move(summary.row));
-  result=Object{{"family","tsfg.system-query-effects-candidate"},{"version",1},{"queryVersion",1},
+  struct ScalarSummary {mlir::func::FuncOp fn;std::set<std::string> direct;Array calls;};std::map<std::string,ScalarSummary> scalarSummaries;
+  for(const auto &helper:m.scalarHelpers){
+    auto fn=llvm::cast<mlir::func::FuncOp>(&*function++);ScalarSummary summary{fn,{},{}};const auto path=text(fn,"tsfg_source.path");
+    for(auto &op:fn.getBody().front()){if(!m.spend())return false;if(op.getName().getStringRef()=="func.call"){summary.direct.insert(text(&op,"tsfg_core.function_id"));summary.calls.push_back(call(&op,path));}}
+    scalarSummaries.emplace(helper.id,std::move(summary));
+  }
+  Array scalarHelpers;
+  for(auto &[id,summary]:scalarSummaries){
+    std::set<std::string> transitive;std::vector<std::string> pending(summary.direct.begin(),summary.direct.end());
+    for(size_t i=0;i<pending.size();++i){if(!m.spend())return false;const auto next=pending[i];if(!transitive.insert(next).second)continue;const auto &nested=scalarSummaries.at(next).direct;pending.insert(pending.end(),nested.begin(),nested.end());}
+    Array direct,all;for(const auto &callee:summary.direct)direct.push_back(callee);for(const auto &callee:transitive)all.push_back(callee);
+    auto fn=summary.fn;scalarHelpers.push_back(Object{{"functionId",id},{"sourceFunctionId",text(fn,"tsfg.query_source_function")},{"sourceHelperId",text(fn,"tsfg.query_source_helper")},
+      {"signatureHash",text(fn,"tsfg_core.signature_hash")},{"source",anchor(fn,text(fn,"tsfg_source.path"))},{"fieldEffects",Array{}},
+      {"calls",std::move(summary.calls)},{"directCallees",std::move(direct)},{"transitiveCallees",std::move(all)}});
+  }
+  result=Object{{"family","tsfg.system-query-effects-candidate"},{"version",2},{"queryVersion",2},
     {"coreVersion",text(module,"tsfg_core.version")},{"inputIdentity",m.p.inputIdentity},{"packageId",field(m.source->facts,"packageId")},
     {"target",field(field(m.payload(),"program"),"target")},
     {"source",Object{{"path",m.p.sourcePath},{"sha256",m.p.sourceHash},{"utf16Length",int64_t(m.p.sourceLength)}}},
-    {"systems",std::move(systems)},{"conflicts",std::move(conflicts)}};
+    {"systems",std::move(systems)},{"conflicts",std::move(conflicts)},{"scalarHelpers",std::move(scalarHelpers)}};
   return true;
 }
 } // namespace tsfg::systemQuery

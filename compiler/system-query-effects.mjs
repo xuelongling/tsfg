@@ -11,10 +11,12 @@ import {systemQueryTypeId} from './system-query-core.mjs';
 /** @typedef {Readonly<{componentType:string,field:string,sourceField:string,readCount:number,writeCount:number}>} QueryFieldEffects */
 /** @typedef {Readonly<{kind:'read'|'write',componentType:string,field:string,sourceField:string,tupleIndex:number,sourceBinding:string,source:QueryEffectSource}>} QueryFieldOperation */
 /** @typedef {Readonly<{tupleIndex:number,sourceBinding:string,componentType:string,sourceComponentType:string,mode:'read'|'write',source:QueryEffectSource}>} QueryEffectColumn */
-/** @typedef {Readonly<{index:number,selectionId:string,queryBinding:string,source:QueryEffectSource,columns:readonly QueryEffectColumn[],capabilities:readonly QueryCapability[],fieldEffects:readonly QueryFieldEffects[],operations:readonly QueryFieldOperation[]}>} QueryLoopEffects */
-/** @typedef {Readonly<{functionId:string,sourceFunctionId:string,signatureHash:string,source:QueryEffectSource,capabilities:readonly QueryCapability[],fieldEffects:readonly QueryFieldEffects[],loops:readonly QueryLoopEffects[]}>} QuerySystemEffects */
+/** @typedef {Readonly<{functionId:string,sourceHelperId:string,signatureHash:string,source:QueryEffectSource,calleeSource:QueryEffectSource}>} QueryScalarCall */
+/** @typedef {Readonly<{index:number,selectionId:string,queryBinding:string,source:QueryEffectSource,columns:readonly QueryEffectColumn[],capabilities:readonly QueryCapability[],fieldEffects:readonly QueryFieldEffects[],operations:readonly QueryFieldOperation[],calls:readonly QueryScalarCall[]}>} QueryLoopEffects */
+/** @typedef {Readonly<{functionId:string,sourceFunctionId:string,signatureHash:string,source:QueryEffectSource,capabilities:readonly QueryCapability[],fieldEffects:readonly QueryFieldEffects[],loops:readonly QueryLoopEffects[],calls:readonly QueryScalarCall[]}>} QuerySystemEffects */
+/** @typedef {Readonly<{functionId:string,sourceFunctionId:string,sourceHelperId:string,signatureHash:string,source:QueryEffectSource,fieldEffects:readonly QueryFieldEffects[],calls:readonly QueryScalarCall[],directCallees:readonly string[],transitiveCallees:readonly string[]}>} QueryScalarEffects */
 /** @typedef {Readonly<{left:string,right:string,components:readonly string[]}>} QueryConflict */
-/** @typedef {Readonly<{family:'tsfg.system-query-effects-candidate',version:1,queryVersion:1,coreVersion:'0.12.0',inputIdentity:string,packageId:string,target:Readonly<{target:string,triple:string,llvmDataLayout:string,pointerBits:string}>,source:Readonly<{path:string,sha256:string,utf16Length:number}>,systems:readonly QuerySystemEffects[],conflicts:readonly QueryConflict[]}>} SystemQueryEffects */
+/** @typedef {Readonly<{family:'tsfg.system-query-effects-candidate',version:2,queryVersion:2,coreVersion:'0.12.0',inputIdentity:string,packageId:string,target:Readonly<{target:string,triple:string,llvmDataLayout:string,pointerBits:string}>,source:Readonly<{path:string,sha256:string,utf16Length:number}>,systems:readonly QuerySystemEffects[],conflicts:readonly QueryConflict[],scalarHelpers:readonly QueryScalarEffects[]}>} SystemQueryEffects */
 
 /** @returns {never} */
 function fail(detail){throw new TypeError('r10-query-effects-input: '+detail);}
@@ -41,8 +43,8 @@ function equal(left,right){if(canonical(left)!==canonical(right))fail('identity 
 export function readSystemQueryEffects(bytes,facts,context){
   printSystemQueryFacts(facts,context);
   const transport=readGenericJson(copyGenericJsonBytes(bytes,genericPackageJsonPolicy),genericPackageJsonPolicy);
-  const root=record(transport.value,['family','version','queryVersion','coreVersion','inputIdentity','packageId','target','source','systems','conflicts']);
-  if(root.family!=='tsfg.system-query-effects-candidate'||root.version!==1||root.queryVersion!==1||root.coreVersion!=='0.12.0')fail('analysis format differs');
+  const root=record(transport.value,['family','version','queryVersion','coreVersion','inputIdentity','packageId','target','source','systems','conflicts','scalarHelpers']);
+  if(root.family!=='tsfg.system-query-effects-candidate'||root.version!==2||root.queryVersion!==2||root.coreVersion!=='0.12.0')fail('analysis format differs');
   equal([root.inputIdentity,root.packageId,root.target],[facts.inputIdentity,facts.packageId,facts.program.target]);
   const primary=facts.program.files.find(row=>row.path===facts.program.rootFile);
   const sourceIdentity={path:primary.path,sha256:'sha256:'+primary.sha256,utf16Length:primary.utf16Length};equal(root.source,sourceIdentity);
@@ -89,16 +91,36 @@ export function readSystemQueryEffects(bytes,facts,context){
     const signature={parameters:system.parameters.map(parameter=>parameter.query?systemQueryTypeId(parameter.query):parameter.type),returns:system.returnType};
     return [functionId(system.declaration.sourcePath,canonical({path:[],kind:'function',name:system.declaration.name}),signature),{system,signature}];
   }));
+  /** @param {unknown} value @param {QueryEffectSource} owner @returns {QueryScalarCall[]} */
+  const readCalls=(value,owner)=>array(value).map(value=>{spend();const row=record(value,['functionId','sourceHelperId','signatureHash','source','calleeSource']);return {functionId:hash(row.functionId),sourceHelperId:hash(row.sourceHelperId),signatureHash:hash(row.signatureHash),source:source(row.source,owner),calleeSource:source(row.calleeSource,owner)};});
+  /** @param {import('./system-query-facts.mjs').SystemQueryLoopExpression} expression @param {string} path @param {readonly import('./system-query-facts.mjs').SystemQueryLoopBinding[]} bindings */
+  const descriptors=(expression,path,bindings)=>{
+    /** @type {QueryFieldOperation[]} */
+    const operations=[];
+    /** @type {QueryScalarCall[]} */
+    const calls=[];
+    /** @param {'read'|'write'} kind @param {import('./system-query-facts.mjs').SystemQueryLoopExpression} value @param {import('./system-query-facts.mjs').SystemQueryRange} range */
+    const memory=(kind,value,range)=>{spend();const binding=bindings.find(binding=>binding.declaration.id===value.receiver.binding);operations.push({kind,componentType:binding.componentType,field:value.property,sourceField:value.sourceField,tupleIndex:binding.index,sourceBinding:binding.declaration.id,source:{path,...range}});};
+    /** @param {import('./system-query-facts.mjs').SystemQueryLoopExpression} value */
+    const visit=value=>{
+      spend();if(value.kind==='fieldAccess')memory('read',value,value.range);
+      else if(value.kind==='binary'){visit(value.left);visit(value.right);}
+      else if(value.kind==='fieldAssignment'){if(value.operator==='+=')memory('read',value.target,value.target.range);visit(value.value);memory('write',value.target,value.range);}
+      else if(value.kind==='parentheses')visit(value.expression);
+      else if(value.kind==='call'){for(const arg of value.arguments)visit(arg);calls.push({functionId:value.callee,sourceHelperId:value.sourceCallee,signatureHash:value.signatureHash,source:{path,...value.range},calleeSource:{path,...value.calleeRange}});}
+    };
+    visit(expression);return {operations,calls};
+  };
   let previousSystem='';
   const systems=array(root.systems).map(value=>{
-    spend();const row=record(value,['functionId','sourceFunctionId','signatureHash','source','capabilities','fieldEffects','loops']),id=hash(row.functionId),original=originalSystems.get(id);
+    spend();const row=record(value,['functionId','sourceFunctionId','signatureHash','source','capabilities','fieldEffects','loops','calls']),id=hash(row.functionId),original=originalSystems.get(id);
     if(id<=previousSystem||!original)fail('system inventory differs');previousSystem=id;
     const {system,signature}=original,owner=source(row.source);
     equal([row.sourceFunctionId,row.signatureHash,owner],[system.declaration.id,signatureId(signature),{path:system.declaration.sourcePath,...system.declaration.range}]);
     const capabilities=caps(row.capabilities);
     equal(capabilities,normalize(system.parameters.flatMap(parameter=>parameter.query?.items.map(item=>({componentType:item.componentType,sourceComponentType:item.sourceComponentType,mode:item.mode}))??[])));
     const loops=array(row.loops).map((value,index)=>{
-      spend();const loop=record(value,['index','selectionId','queryBinding','source','columns','capabilities','fieldEffects','operations']),originalLoop=system.loops[index];
+      spend();const loop=record(value,['index','selectionId','queryBinding','source','columns','capabilities','fieldEffects','operations','calls']),originalLoop=system.loops[index];
       if(loop.index!==index||!originalLoop)fail('loop inventory differs');const owner=source(loop.source);
       const parameter=system.parameters.find(parameter=>parameter.binding.id===originalLoop.queryBinding);
       equal([loop.selectionId,loop.queryBinding,owner],[systemQueryTypeId(parameter.query),originalLoop.queryBinding,{path:system.declaration.sourcePath,...originalLoop.range}]);
@@ -108,25 +130,7 @@ export function readSystemQueryEffects(bytes,facts,context){
         const expected={tupleIndex:binding.index,sourceBinding:binding.declaration.id,componentType:binding.componentType,sourceComponentType:binding.sourceComponentType,mode:binding.mode,source:{path:system.declaration.sourcePath,...binding.declaration.range}};equal(result,expected);return expected;
       });
       if(columns.length!==originalLoop.bindings.length)fail('missing columns');const capabilities=caps(loop.capabilities);equal(capabilities,normalize(columns.map(({componentType,sourceComponentType,mode})=>({componentType,sourceComponentType,mode}))));
-      /** @type {QueryFieldOperation[]} */
-      const expectedOperations=[];
-      /** @param {'read'|'write'} kind @param {import('./system-query-facts.mjs').SystemQueryLoopExpression} value @param {import('./system-query-facts.mjs').SystemQueryRange} range */
-      const memory=(kind,value,range)=>{
-        spend();const binding=originalLoop.bindings.find(binding=>binding.declaration.id===value.receiver.binding);
-        expectedOperations.push({kind,componentType:binding.componentType,field:value.property,sourceField:value.sourceField,tupleIndex:binding.index,sourceBinding:binding.declaration.id,source:{path:system.declaration.sourcePath,...range}});
-      };
-      // Project memory descriptors from the already typed expression tree.
-      // This does not evaluate values or repeat Source type/binding checking.
-      /** @param {import('./system-query-facts.mjs').SystemQueryLoopExpression} value */
-      const accesses=value=>{
-        spend();if(value.kind==='fieldAccess')memory('read',value,value.range);
-        else if(value.kind==='binary'){accesses(value.left);accesses(value.right);}
-        else if(value.kind==='fieldAssignment'){
-          if(value.operator==='+=')memory('read',value.target,value.target.range);
-          accesses(value.value);memory('write',value.target,value.range);
-        }
-      };
-      for(const statement of originalLoop.statements)accesses(statement.value);
+      const expected=originalLoop.statements.map(statement=>descriptors(statement.value,system.declaration.sourcePath,originalLoop.bindings));
       /** @type {QueryFieldOperation[]} */
       const operations=array(loop.operations).map(value=>{
         spend();const op=record(value,['kind','componentType','field','sourceField','tupleIndex','sourceBinding','source']),index=integer(op.tupleIndex),column=columns[index];
@@ -135,12 +139,13 @@ export function readSystemQueryEffects(bytes,facts,context){
           (op.kind!=='read'&&op.kind!=='write')||(op.kind==='write'&&column.mode!=='write'))fail('field operation receiver/permission differs');
         return {kind:op.kind,componentType,field,sourceField,tupleIndex:index,sourceBinding,source:source(op.source,owner)};
       });
-      equal(operations,expectedOperations);
+      equal(operations,expected.flatMap(row=>row.operations));const calls=readCalls(loop.calls,owner);equal(calls,expected.flatMap(row=>row.calls));
       const fieldEffects=fieldRows(loop.fieldEffects);equal(fieldEffects,countFields(operations));
-      return {index,selectionId:hash(loop.selectionId),queryBinding:hash(loop.queryBinding),source:owner,columns,capabilities,fieldEffects,operations};
+      return {index,selectionId:hash(loop.selectionId),queryBinding:hash(loop.queryBinding),source:owner,columns,capabilities,fieldEffects,operations,calls};
     });
     if(loops.length!==system.loops.length)fail('missing loops');const fieldEffects=fieldRows(row.fieldEffects);equal(fieldEffects,countFields(loops.flatMap(loop=>loop.operations)));
-    return {functionId:id,sourceFunctionId:hash(row.sourceFunctionId),signatureHash:hash(row.signatureHash),source:owner,capabilities,fieldEffects,loops};
+    const calls=readCalls(row.calls,owner);equal(calls,loops.flatMap(loop=>loop.calls));
+    return {functionId:id,sourceFunctionId:hash(row.sourceFunctionId),signatureHash:hash(row.signatureHash),source:owner,capabilities,fieldEffects,loops,calls};
   });
   if(systems.length!==originalSystems.size)fail('missing systems');
   /** @type {QueryConflict[]} */
@@ -151,7 +156,19 @@ export function readSystemQueryEffects(bytes,facts,context){
     if(components.length)conflicts.push({left:left.functionId,right:right.functionId,components});
   }
   equal(root.conflicts,conflicts);
+  const scalarOriginal=new Map(facts.scalarHelpers.map(helper=>[helper.id,helper])),helperDescriptors=new Map(facts.scalarHelpers.map(helper=>[helper.id,descriptors(helper.value,helper.declaration.sourcePath,[])]));let previousHelper='';
+  const scalarHelpers=array(root.scalarHelpers).map(value=>{
+    spend();const row=record(value,['functionId','sourceFunctionId','sourceHelperId','signatureHash','source','fieldEffects','calls','directCallees','transitiveCallees']),id=hash(row.functionId),helper=scalarOriginal.get(id);
+    if(!helper||id<=previousHelper)fail('scalar effects inventory differs');previousHelper=id;const owner=source(row.source);
+    equal([row.sourceFunctionId,row.sourceHelperId,row.signatureHash,owner],[helper.declaration.id,helper.sourceId,helper.signatureHash,{path:helper.declaration.sourcePath,...helper.declaration.range}]);
+    const expected=helperDescriptors.get(id),calls=readCalls(row.calls,owner);equal(calls,expected.calls);const fieldEffects=fieldRows(row.fieldEffects);equal(fieldEffects,countFields(expected.operations));
+    const directCallees=[...new Set(expected.calls.map(row=>row.functionId))].sort(),transitive=new Set(),pending=[...directCallees];
+    for(let i=0;i<pending.length;i++){spend();const next=pending[i];if(transitive.has(next))continue;transitive.add(next);pending.push(...helperDescriptors.get(next).calls.map(row=>row.functionId));}
+    const transitiveCallees=[...transitive].sort();equal(row.directCallees,directCallees);equal(row.transitiveCallees,transitiveCallees);
+    return {functionId:id,sourceFunctionId:helper.declaration.id,sourceHelperId:helper.sourceId,signatureHash:helper.signatureHash,source:owner,fieldEffects,calls,directCallees,transitiveCallees};
+  });
+  if(scalarHelpers.length!==facts.scalarHelpers.length)fail('missing scalar effects helpers');
   /** @type {SystemQueryEffects} */
-  const result={family:'tsfg.system-query-effects-candidate',version:1,queryVersion:1,coreVersion:'0.12.0',inputIdentity:facts.inputIdentity,packageId:facts.packageId,target:facts.program.target,source:sourceIdentity,systems,conflicts};
+  const result={family:'tsfg.system-query-effects-candidate',version:2,queryVersion:2,coreVersion:'0.12.0',inputIdentity:facts.inputIdentity,packageId:facts.packageId,target:facts.program.target,source:sourceIdentity,systems,conflicts,scalarHelpers};
   return own(result);
 }

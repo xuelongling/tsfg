@@ -1,7 +1,7 @@
 {
   "family": "tsfg.system-query-facts-package-candidate",
-  "version": 2,
-  "status": "private original Source declarations and typed Query loops; no HIR or execution admission",
+  "version": 3,
+  "status": "private original Source declarations, typed Query loops and reachable direct scalar helpers; no execution admission",
   "requestFamily": "tsfg.system-query-facts-request-candidate",
   "sourceTypeSchemaHash": "sha256:6f6af231a779d6c8e55a4d0acde8fa6e5af5d7c7c2f5b54e6aa5487b34bedb78",
   "profile": {
@@ -17,12 +17,12 @@
     "llvmDataLayout": "e-m:w-p270:32:32-p271:32:32-p272:64:64-i64:64-i128:128-f80:128-n8:16:32:64-S128",
     "pointerBits": "64"
   },
-  "limits": {"bytes": 8388608, "depth": 128, "jsonTokens": 1000000, "stringBytes": 2097152, "work": 1000000},
+  "limits": {"bytes": 8388608, "depth": 128, "jsonTokens": 1000000, "stringBytes": 2097152, "work": 1000000, "scalarHelpers": 64, "scalarCallDepth": 32, "scalarArguments": 32},
   "objects": {
     "package": ["family", "version", "schemaHash", "requestId", "packageId", "payload"],
     "request": ["family", "version", "schemaHash", "input"],
     "input": ["sourceRoot", "rootFile", "files", "declarations", "config", "target"],
-    "payload": ["program", "profilePath", "profileSHA256", "builtins", "nodes", "types", "functions", "markerAliases", "systems"],
+    "payload": ["program", "profilePath", "profileSHA256", "builtins", "nodes", "types", "functions", "markerAliases", "systems", "scalarHelpers"],
     "program": ["sourceRoot", "rootFile", "positionUnit", "config", "declarations", "target", "files", "diagnostics"],
     "origin": ["id", "sourcePath", "kind", "name", "range", "nameRange"],
     "node": ["id", "parent", "sourcePath", "kind", "range", "name", "nameRange"],
@@ -33,6 +33,8 @@
     "parameter": ["index", "binding", "annotationRange", "logicalType", "query"],
     "query": ["declaration", "tupleSourcePath", "tupleRange", "aliases", "items"],
     "alias": ["useSourcePath", "useRange", "declaration", "target"],
-    "access": ["index", "mode", "range", "wrapper", "componentType", "component", "componentSourcePath", "componentRange"]
+    "access": ["index", "mode", "range", "wrapper", "componentType", "component", "componentSourcePath", "componentRange"],
+    "scalarHelper": ["id", "declaration", "signature", "parameters", "returnType", "returnAnnotationRange", "bodyRange", "returnRange", "value"],
+    "scalarSignature": ["id", "sourcePath", "declarationRange", "parameters", "returnType"]
   }
 }

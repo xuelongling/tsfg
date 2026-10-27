@@ -7,6 +7,7 @@ namespace tsfg::systemQuery {
 using namespace commonProgram;
 struct Parameter {const Json *raw=nullptr;std::string type,selection;};
 struct System {const Json *raw=nullptr;std::string id,signature;std::vector<Parameter> parameters;};
+struct ScalarHelper {const Json *raw=nullptr;std::string id,signature;std::vector<Parameter> parameters;};
 struct Model {
   Program p;Error error;Json request=nullptr,layouts=nullptr;
   std::unique_ptr<SourceModel> source;
@@ -15,6 +16,7 @@ struct Model {
   std::map<std::string,std::string> declarationNames;
   std::map<std::string,std::vector<const Json *>> children;
   std::vector<System> systems;bool bound=false;
+  std::vector<ScalarHelper> scalarHelpers;std::map<std::string,size_t> helperIndex;
   bool need(bool condition,llvm::StringRef message){return condition||reject(error,"core-ir-query-source",message);}
   bool spend(size_t n=1){return p.charge(n)||reject(error,"core-ir-query-budget","owned Query work exceeded");}
   const Json &payload()const{return source->payload;}
@@ -25,8 +27,10 @@ struct Model {
   bool selection(const Json &,const std::string &,const Json &);
   bool annotation(const std::string &,const Json &,const std::string &,unsigned=0);
   bool ownedMarker(const std::string &,const Json &,const Json &);
+  bool scalarTarget(const std::string &,const Json &,const Json &);
+  bool scalars();bool scalarClosure();
   bool sourceName(const Json &,std::string &);
-  bool expression(const Json &,const Json &,const std::map<std::string,const Json *> &,const std::string &,unsigned=0);
+  bool expression(const Json &,const Json &,const std::map<std::string,const Json *> &,const std::string &,unsigned=0,bool=false);
   bool loop(const Json &,const Json &,const Json &,const std::vector<Parameter> &);
   std::string selectionId(const Json &)const;
 };

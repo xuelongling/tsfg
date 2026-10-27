@@ -49,7 +49,7 @@ public:
 void registerDialect(mlir::DialectRegistry &registry){registry.insert<QueryDialect>();}
 static mlir::LogicalResult verify(mlir::ModuleOp module,Json *effects){
   Model m;
-  if(m.metadata(module)&&m.files()&&m.ast()&&m.types()&&m.declarations()&&m.bodies()&&
+  if(m.metadata(module)&&m.files()&&m.ast()&&m.types()&&m.declarations()&&m.scalars()&&m.bodies()&&m.scalarClosure()&&
     verifyOperations(module,m)&&mlir::succeeded(mlir::verify(module))&&
     (!effects||collectEffects(module,m,*effects)))return mlir::success();
   auto d=module.emitError();d<<"["<<m.error.code<<"] "<<m.error.message;

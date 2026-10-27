@@ -14,7 +14,7 @@ const reports=process.env.TSFG_QUERY_EFFECTS_REPORTS;
 const names=['architecture','aliases','duplicate','complete','wrapper-alias','loop-architecture','loop-aliases','loop-multiple','loop-shared-component','loop-inheritance'];
 const programs=names.map(name=>({name,...systemQueryFixture(name)}));
 const bytes=readFileSync(new URL('./testdata/system-query-effects/multi-facts.json',import.meta.url)),packet=JSON.parse(bytes.toString('utf8'));
-const multi={name:'multi',bytes,packet,context:{family:'tsfg.system-query-context-candidate',version:2,requestBytes:readFileSync(new URL('./testdata/system-query-effects/multi-request.json',import.meta.url)),expectedPackageId:packet.packageId}};
+const multi={name:'multi',bytes,packet,context:{family:'tsfg.system-query-context-candidate',version:3,requestBytes:readFileSync(new URL('./testdata/system-query-effects/multi-request.json',import.meta.url)),expectedPackageId:packet.packageId}};
 const oracle=JSON.parse(readFileSync(new URL('./testdata/system-query-effects/expected.json',import.meta.url),'utf8'));
 const retained=reports?JSON.parse(readFileSync(reports+'/children.json','utf8')):[];
 const report=name=>{
@@ -106,7 +106,7 @@ test('checked reader accepts retained actual C++ reports without running C++',{s
 test('versioned owning output reader rejects identity, effect and conflict mutations',{skip:!enabled&&!reports},()=>{
   const facts=readSystemQueryFacts(multi.bytes,multi.context),ir=emitSystemQueryCore(facts,multi.context),raw=reports?report('reader'):run('reader','--effects',ir),base=JSON.parse(raw.toString('utf8'));
   const named=(value,name)=>value.systems.find(row=>row.sourceFunctionId===facts.systems.find(row=>row.declaration.name===name).declaration.id);
-  const mutations=[value=>{value.version=2;},value=>{value.inputIdentity='sha256:'+'0'.repeat(64);},value=>{value.systems[0].sourceFunctionId=value.systems[0].functionId;},
+  const mutations=[value=>{value.version=3;},value=>{value.inputIdentity='sha256:'+'0'.repeat(64);},value=>{value.systems[0].sourceFunctionId=value.systems[0].functionId;},
     value=>{value.conflicts.pop();},value=>{value.conflicts.reverse();},value=>{value.systems.reverse();},
     value=>{value.systems.find(row=>row.loops.length).loops[0].operations[0].kind='write';},
     value=>{value.systems.find(row=>row.fieldEffects.length).fieldEffects[0].readCount+=1;},

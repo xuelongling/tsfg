@@ -12,7 +12,7 @@ const query=facts=>facts.systems[0].parameters[0].query;
 const inputQuery=packet=>packet.payload.systems[0].parameters[0].query;
 const edit=mutate=>{
   const packet=structuredClone(actual.packet);mutate(packet,packet.payload);
-  packet.packageId=sha256('tsfg.system-query.package.v2\0'+packet.schemaHash+'\0'+canonical(packet.payload));
+  packet.packageId=sha256('tsfg.system-query.package.v3\0'+packet.schemaHash+'\0'+canonical(packet.payload));
   return {bytes:Buffer.from(canonical(packet)+'\n'),context:{...actual.context,expectedPackageId:packet.packageId}};
 };
 
@@ -123,7 +123,7 @@ test('cold alias proof rejects rehashed foreign generic substitution target',()=
   const input=fixture('aliases'),packet=structuredClone(input.packet),access=inputQuery(packet);
   const substitution=access.aliases.find(row=>row.declaration.kind==='KindTypeParameter'&&row.useRange.start===121);
   substitution.target=access.items[1].component;
-  packet.packageId=sha256('tsfg.system-query.package.v2\0'+packet.schemaHash+'\0'+canonical(packet.payload));
+  packet.packageId=sha256('tsfg.system-query.package.v3\0'+packet.schemaHash+'\0'+canonical(packet.payload));
   assert.throws(()=>readSystemQueryFacts(Buffer.from(canonical(packet)+'\n'),{...input.context,expectedPackageId:packet.packageId}));
 });
 

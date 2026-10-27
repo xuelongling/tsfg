@@ -2,19 +2,31 @@
 #include "system-query-source.h"
 #include "llvm/ADT/STLExtras.h"
 namespace tsfg::systemQuery {
-bool Model::expression(const Json &value,const Json &body,const std::map<std::string,const Json *> &scope,const std::string &path,unsigned depth){
+bool Model::expression(const Json &value,const Json &body,const std::map<std::string,const Json *> &scope,const std::string &path,unsigned depth,bool scalar){
   if(!spend()||!need(depth<32,"Query expression path exceeds32"))return false;
   const auto kind=string(field(value,"kind")),type=string(field(value,"type"));const auto &r=field(value,"range");
   error.range={uint32_t(number(field(r,"start"))),uint32_t(number(field(r,"end")))};
   if(!need(source->types.count(type)&&number(field(r,"start"))>=number(field(body,"start"))&&number(field(r,"end"))<=number(field(body,"end"))&&
     (kind=="fieldTarget"||string(field(value,"flowType"))==type),"original expression range/logical type differs"))return false;
-  auto &g=grammar(path);const auto astKind=kind=="bindingReference"?"KindIdentifier":kind=="fieldAccess"||kind=="fieldTarget"?"KindPropertyAccessExpression":"KindBinaryExpression";
+  if(scalar&&!llvm::is_contained(llvm::ArrayRef<llvm::StringRef>{"bindingReference","binary","call","parentheses"},kind))return reject(error,"core-ir-query-capability","scalar helper body has no selected pure scalar syntax");
+  auto &g=grammar(path);const auto astKind=kind=="bindingReference"?"KindIdentifier":kind=="fieldAccess"||kind=="fieldTarget"?"KindPropertyAccessExpression":kind=="call"?"KindCallExpression":kind=="parentheses"?"KindParenthesizedExpression":"KindBinaryExpression";
   if(!at(path,r,astKind))return false;
   if(kind=="bindingReference"){
     const auto id=string(field(value,"binding"));if(!need(scope.count(id),"original lexical binding missing"))return false;
     const auto &binding=*scope.at(id),&decl=field(binding,field(binding,"componentType").getAsString()?"declaration":"binding");
     const auto selected=string(field(binding,field(binding,"componentType").getAsString()?"componentType":"logicalType"));
     return need(type==selected&&(field(binding,"componentType").getAsString()||type=="f32"),"original expression binding type differs")&&g.name(r,string(field(decl,"name")));
+  }
+  if(kind=="parentheses")return need(type=="f32"&&string(field(field(value,"expression"),"type"))=="f32","scalar grouping type differs")&&expression(field(value,"expression"),body,scope,path,depth+1,scalar)&&g.sequence(r,{Json("("),field(field(value,"expression"),"range"),Json(")")});
+  if(kind=="call"){
+    const auto id=string(field(value,"callee"));if(!need(type=="f32"&&helperIndex.count(id)&&field(value,"arguments").getAsArray()&&field(value,"receiver").getAsNull(),"direct native f32 helper target required"))return false;
+    const auto &helper=scalarHelpers[helperIndex.at(id)];const auto &raw=*helper.raw;
+    size_t a,b;if(!g.span(field(value,"calleeRange"),a,b)||!need(a+1==b,"direct scalar callee identifier required"))return false;
+    for(const auto &[id,binding]:scope){const auto &decl=field(*binding,field(*binding,"componentType").getAsString()?"declaration":"binding");if(!need(string(field(decl,"name"))!=g.tokens[a].text,"scalar call is shadowed by original local binding"))return false;}
+    if(!scalarTarget(path,field(value,"calleeRange"),field(raw,"declaration"))||!need(same(field(value,"signature"),field(raw,"signature"))&&items(field(value,"arguments")).size()==helper.parameters.size(),"scalar helper call signature/arity differs"))return false;
+    std::vector<Json> pieces{field(value,"calleeRange"),Json("(")};size_t index=0;
+    for(const auto &arg:items(field(value,"arguments"))){if(index++)pieces.push_back(",");pieces.push_back(field(arg,"range"));if(!need(string(field(arg,"type"))=="f32","scalar helper argument must be native f32")||!expression(arg,body,scope,path,depth+1,scalar))return false;}
+    pieces.push_back(")");return g.sequence(r,pieces);
   }
   if(kind=="fieldAccess"||kind=="fieldTarget"){
     const auto &receiver=field(value,"receiver");const auto binding=string(field(receiver,"binding")),property=string(field(value,"property"));
@@ -33,7 +45,7 @@ bool Model::expression(const Json &value,const Json &body,const std::map<std::st
   if(kind=="binary"){
     const auto op=string(field(value,"operator"));const auto &left=field(value,"left"),&right=field(value,"right");
     return need(type=="f32"&&llvm::is_contained(llvm::ArrayRef<llvm::StringRef>{"+","-","*","/"},op)&&string(field(left,"type"))=="f32"&&string(field(right,"type"))=="f32","owned f32 arithmetic required")&&
-      expression(left,body,scope,path,depth+1)&&expression(right,body,scope,path,depth+1)&&g.sequence(field(value,"operatorRange"),{Json(op)})&&g.sequence(r,{field(left,"range"),field(value,"operatorRange"),field(right,"range")});
+      expression(left,body,scope,path,depth+1,scalar)&&expression(right,body,scope,path,depth+1,scalar)&&g.sequence(field(value,"operatorRange"),{Json(op)})&&g.sequence(r,{field(left,"range"),field(value,"operatorRange"),field(right,"range")});
   }
   if(kind=="fieldAssignment"){
     const auto op=string(field(value,"operator"));const auto &target=field(value,"target"),&rhs=field(value,"value");
