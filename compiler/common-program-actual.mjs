@@ -8,7 +8,7 @@ import {commonAbstract} from './common-program-abstract.mjs';
 import {commonCheck as check} from './common-program-common.mjs';
 import {commonEntryReferences} from './common-program-entry.mjs';
 import {commonMethods} from './common-program-methods.mjs';
-import {commonBorrowObservations,commonReadonlyReader} from './common-program-borrow-observations.mjs';
+import {commonBorrowObservations,commonReadonlyReader,commonReadonlyClosure} from './common-program-borrow-observations.mjs';
 import {commonRegions,emptyRegionValue} from './common-program-regions.mjs';
 const undefinedId=sha256('tsfg.type\0undefined');
 export function analyzeCommonGraphs({model,plans},records=null) {
@@ -136,8 +136,9 @@ export function analyzeCommonGraphs({model,plans},records=null) {
           for(const p of block.parameters)observe(fn+'/'+p.name,read(state,p.name));
           for(const [instruction,op]of block.instructions.entries()) {
             spend(op.operands.length+1);const args=op.operands.map(name=>read(state,name)),p=op.properties,name=op.name.replace('tsfg_program.','');let value=a.empty(),continues=true;
-            if(observer){if(name!=='cf.br'&&name!=='route')for(const arg of args){if(arg.unknown)regions.escape(arg.region,state.regions);else regions.observe(arg.region,state.regions);}
-              if((name==='func.return'&&!c.regionScope||name==='return_throw')&&args.length)regions.escape(args[0].region,state.regions);}
+            const hardEscape=input=>{regions.escape(input.region,state.regions);observer?.hardEscape(input,state.heap);};
+            if(observer){if(name!=='cf.br'&&name!=='route')for(const arg of args){if(arg.unknown)hardEscape(arg);else regions.observe(arg.region,state.regions);}
+              if((name==='func.return'&&!c.regionScope||name==='return_throw')&&args.length)hardEscape(args[0]);}
             if(observer){point=c.id+'/'+block.name+'/'+instruction;observer.edge(previous,point);observer.before(c,op,state,args,point);previous=point;}
             const weakSlot=key=>{
               for(const marker of ['/field/','/element/','/length','/owner','/start','/slot/','/parent']){spend();const at=key.lastIndexOf(marker);if(at>=0&&objects.has(key.slice(0,at)))return objects.get(key.slice(0,at)).weak;}
@@ -145,17 +146,21 @@ export function analyzeCommonGraphs({model,plans},records=null) {
             };
             const update=(heap,key,value,strong=!weakSlot(key))=>{if(strong||!heap.has(key))heap.set(key,a.copy(value));else a.merge(heap.get(key),value);};
             const put=(key,value,strong=undefined)=>update(state.heap,key,value,strong);
+            const putRegion=(receiver,slot,input,definite=true,covered=false,relation=input.region)=>{
+              const outward=regions.store(receiver,slot,relation,state.regions,Boolean(observer),definite,covered);
+              if(observer&&outward&&!covered)observer.hardEscape(input,state.heap);
+            };
             const mergeSlots=keys=>{const result=a.empty();for(const key of keys){spend();a.merge(result,state.heap.get(key)??a.empty());}return result;};
             const allocation=(ref,type,weak=false)=>{const before=objects.get(ref)?.weak;weak ||= before||c.repeated||cyclicBlocks.has(fn+'/'+block.name);
               if(before===false&&weak)invalidateWeak=true;objects.set(ref,{type,weak});return weak;};
             const version=(ref,type,alternative='')=>{const selected=regions.allocate(c.regionScope,c.activation,ref,type,state.regions,alternative);for(const id of selected.roots)c.createdRegions.add(id);return selected;};
             if(name==='env_alloc'){const ref=site('environment',op.result);value=literal('env:'+p.layout);value.refs.add(ref);allocation(ref,'env:'+p.layout);value.region=version(ref,'env:'+p.layout);
-              if(args.length){put(ref+'/parent',args[0]);regions.store(value.region,'parent',args[0].region,state.regions,Boolean(observer));}}
+              if(args.length){put(ref+'/parent',args[0]);putRegion(value.region,'parent',args[0]);}}
             else if(name==='env_parent'){for(const ref of args[0].refs){spend();a.merge(value,state.heap.get(ref+'/parent')??a.empty());}value.region=regions.load(args[0].region,'parent',state.regions);}
             else if(name==='env_load'){const selected=a.environmentSlot(args[0],p.layout,p.layout,p.key,state.heap,objects);
               check(selected.valid,'environment');check(selected.complete,'environment-initialization');value=selected.value;value.region=regions.load(args[0].region,'slot/'+p.key,state.regions);}
             else if(name==='env_init'||name==='env_store'){for(const ref of args[0].refs){spend();const key=ref+'/slot/'+p.key;check(objects.get(ref)?.type==='env:'+p.layout,'environment');
-              put(key,args[1],args[0].refs.size===1&&!objects.get(ref).weak);observe('binding/'+p.binding,args[1]);}regions.store(args[0].region,'slot/'+p.key,args[1].region,state.regions,Boolean(observer));}
+              put(key,args[1],args[0].refs.size===1&&!objects.get(ref).weak);observe('binding/'+p.binding,args[1]);}putRegion(args[0].region,'slot/'+p.key,args[1]);}
             else if(name==='make_closure'){value=literal(op.view);const environments=p.environment_layout?args[0].refs:new Set([null]);if(p.environment_layout)value.region=regions.copy(args[0].region);
               for(const ref of environments){spend();if(ref){check(objects.get(ref)?.type==='env:'+p.environment_layout,'environment');for(const slot of model.environments.get(p.environment_layout).slots){spend();check(state.heap.has(ref+'/slot/'+slot.key),'environment-initialization');}value.refs.add(ref);}value.pairs.set(p.function_id+'\0'+(ref??''),{functionId:p.function_id,environment:ref});}}
             else if(name==='constant')value=literal(op.view,0,Number(p.decimal));
@@ -173,7 +178,7 @@ export function analyzeCommonGraphs({model,plans},records=null) {
             }else if(name==='global_load')value=a.copy(state.heap.get('global:'+p.global)??a.empty());
             else if(name==='global_store') {
               put('global:'+p.global,args[0]);const raw=model.globals.get(p.global).sourceBinding;observe('binding/'+raw,args[0]);
-              if(observer)regions.escape(args[0].region,state.regions);
+              if(observer)hardEscape(args[0]);
               if(bounded){const before=a.key(globalSeeds.get(raw));seed(globalSeeds,raw,args[0]);invalidateCapacity ||= before!==a.key(globalSeeds.get(raw));}
             }else if(['view','assert','pack','carrier_cast'].includes(name))value=a.copy(args[0]);
             else if(name==='value_copy') {
@@ -190,18 +195,19 @@ export function analyzeCommonGraphs({model,plans},records=null) {
                   const current=version(copied,object.type,ref);regions.merge(result.region,current);
                   spend(active.size);const nested=new Map(active);nested.set(ref,{reference:copied,region:current});const weak=allocation(copied,object.type,object.weak||source.refs.size>1);
                   for(const field of a.fields(object.type)){spend();const stored=state.heap.get(ref+'/field/'+field.id);if(stored){const input=a.copy(stored);input.region=regions.load(selected,'field/'+field.id,state.regions);
-                    const fieldValue=copyValue(input,path+'/'+field.id,nested);put(copied+'/field/'+field.id,fieldValue,!weak);regions.store(current,'field/'+field.id,fieldValue.region,state.regions,Boolean(observer));}}
+                    const fieldValue=copyValue(input,path+'/'+field.id,nested);put(copied+'/field/'+field.id,fieldValue,!weak);putRegion(current,'field/'+field.id,fieldValue);}}
                 }return result;
               };value=copyValue(args[0],'root');
             }else if(name==='construct_value'||name==='allocate_reference'||name==='array_create') {
               value=literal(op.view);const ref=site('object',op.result);value.refs.add(ref);allocation(ref,op.view);value.region=version(ref,op.view);
-              if(name==='array_create'){args.forEach((v,i)=>{put(ref+'/element/'+i,v);regions.store(value.region,'element/'+i,v.region,state.regions,Boolean(observer));if(bounded){const key='element:'+op.view,before=a.key(elementSeeds.get(key));seed(elementSeeds,key,v);invalidateCapacity ||= before!==a.key(elementSeeds.get(key));}});
-                const length=literal(sha256('tsfg.type\0u32'),0,args.length);put(ref+'/length',length);regions.store(value.region,'length',regions.number(args.length),state.regions,Boolean(observer));}
+              if(name==='array_create'){args.forEach((v,i)=>{put(ref+'/element/'+i,v);putRegion(value.region,'element/'+i,v);if(bounded){const key='element:'+op.view,before=a.key(elementSeeds.get(key));seed(elementSeeds,key,v);invalidateCapacity ||= before!==a.key(elementSeeds.get(key));}});
+                const length=literal(sha256('tsfg.type\0u32'),0,args.length);put(ref+'/length',length);putRegion(value.region,'length',length,true,false,regions.number(args.length));}
             }else if(name==='field_load'||name==='field_store') {
-              const fieldRegion=emptyRegionValue();
+              const fieldRegion=emptyRegionValue(),covered=name==='field_store'&&Boolean(observer)&&commonReadonlyClosure(args[1],model,objects,records,readonlyTarget);
+              if(observer&&name==='field_store'&&(args[0].unknown||!args[0].refs.size))hardEscape(args[1]);
               for(const ref of args[0].refs){spend();const object=objects.get(ref);check(object,'ssa');const field=fieldFor(object.type,plan.graph.registers.get(op.operands[0]).view,p.field),row=model.fields.get(field),slot=ref+'/field/'+field;
                 const receiver=regions.select(args[0].region,ref);receiver.opaque ||= args[0].unknown;
-                if(name==='field_load'){a.merge(value,state.heap.get(slot)??a.empty());regions.merge(fieldRegion,regions.load(receiver,'field/'+field,state.regions));}else {put(slot,args[1],!object.weak&&args[0].refs.size===1);regions.store(receiver,'field/'+field,args[1].region,state.regions,Boolean(observer),args[0].refs.size===1&&!args[0].unknown);observe('binding/'+row.sourceBinding,args[1]);
+                if(name==='field_load'){a.merge(value,state.heap.get(slot)??a.empty());regions.merge(fieldRegion,regions.load(receiver,'field/'+field,state.regions));}else {put(slot,args[1],!object.weak&&args[0].refs.size===1);putRegion(receiver,'field/'+field,args[1],args[0].refs.size===1&&!args[0].unknown,covered);observe('binding/'+row.sourceBinding,args[1]);
                   if(bounded){const before=a.key(fieldSeeds.get(row.sourceBinding));seed(fieldSeeds,row.sourceBinding,args[1]);invalidateCapacity ||= before!==a.key(fieldSeeds.get(row.sourceBinding));}}}
               if(name==='field_load')value.region=fieldRegion;
               if(args[0].unknown)value.unknown=true;
@@ -210,15 +216,15 @@ export function analyzeCommonGraphs({model,plans},records=null) {
               // Distinct activations retain distinct descriptors. Recursive
               // summaries use the stable SCC activation to keep keys finite.
               value=literal(op.view);const ref=site('span',op.result);allocation(ref,op.view);value.refs.add(ref);value.region=version(ref,op.view);put(ref+'/owner',args[0]);put(ref+'/start',args[1]);put(ref+'/length',args[2]);
-              for(const [index,slot]of ['owner','start','length'].entries())regions.store(value.region,slot,args[index].region,state.regions,Boolean(observer));
+              for(const [index,slot]of ['owner','start','length'].entries())putRegion(value.region,slot,args[index]);
             }else if(name==='array_read'||name==='array_store'||name==='array_resize') {
               const owners=a.empty();let spanOwner=false;for(const ref of args[0].refs){spend();const object=objects.get(ref);check(object,'ssa');
                 if(types.get(object.type)?.kind==='readSpan'){spanOwner=true;a.merge(owners,state.heap.get(ref+'/owner')??a.empty());}else owners.refs.add(ref);}
               const ownerRegion=spanOwner?regions.load(args[0].region,'owner',state.regions):args[0].region;
               for(const ref of owners.refs){spend();const object=objects.get(ref),index=args[1]?.number,selected=regions.select(ownerRegion,ref);
                 selected.opaque ||= args[0].unknown||owners.unknown;const definite=owners.refs.size===1&&!selected.opaque;
-                if(name==='array_resize'){put(ref+'/length',args[1],!object.weak);regions.store(selected,'length',regions.number(args[1].number),state.regions,Boolean(observer),definite);continue;}
-                if(name==='array_store'){put(ref+'/element/'+(index===null?'*':index),args[2],!object.weak&&index!==null);regions.store(selected,'element/'+(index===null?'*':index),args[2].region,state.regions,Boolean(observer),definite);if(bounded){const key='element:'+object.type,before=a.key(elementSeeds.get(key));seed(elementSeeds,key,args[2]);invalidateCapacity ||= before!==a.key(elementSeeds.get(key));}continue;}
+                if(name==='array_resize'){put(ref+'/length',args[1],!object.weak);putRegion(selected,'length',args[1],definite,false,regions.number(args[1].number));continue;}
+                if(name==='array_store'){put(ref+'/element/'+(index===null?'*':index),args[2],!object.weak&&index!==null);putRegion(selected,'element/'+(index===null?'*':index),args[2],definite);if(bounded){const key='element:'+object.type,before=a.key(elementSeeds.get(key));seed(elementSeeds,key,args[2]);invalidateCapacity ||= before!==a.key(elementSeeds.get(key));}continue;}
                 for(const [slot,stored]of state.heap){spend();if(slot.startsWith(ref+'/element/'))a.merge(value,stored);}
                 value.tags.add(undefinedId);
               }
@@ -268,8 +274,9 @@ export function analyzeCommonGraphs({model,plans},records=null) {
                 const fixed=indirect?p.targets.functions.map(x=>x.function_id):method?p.dispatch.map(x=>x.target):[p.function_id],regionScope=callRegion(c,block.name,activation,row.target,passed,fixed,selected.map(x=>x.target));
                 let entryVersions=state.regions;
                 if(!regionScope){spend(passed.length);let carried=false;for(const input of passed)carried ||= input.region.roots.size>0;
-                  if(carried){spend(selected.length);const covered=readonlyTransport(c,row.target,fixed,selected.map(x=>x.target));
-                    passed=passed.map(a.copy);for(const input of passed){spend();if(input.region.roots.size){if(observer)regions.escape(input.region,state.regions,covered);input.region.opaque=true;}}entryVersions=new Map();}}
+                  if(carried||observer){spend(selected.length);const covered=readonlyTransport(c,row.target,fixed,selected.map(x=>x.target));
+                    if(observer&&!covered)for(const input of passed){spend();observer.hardEscape(input,state.heap);}
+                    if(carried){passed=passed.map(a.copy);for(const input of passed){spend();if(input.region.roots.size){if(observer)regions.escape(input.region,state.regions,covered);input.region.opaque=true;}}entryVersions=new Map();}}}
                 const call=context(row.target,passed,state.heap,false,activation,repeated,activationSize,regionScope,entryVersions),key=fn+'/'+op.range.start+':'+op.range.end,targets=callTargets.get(key)??new Set();targets.add(row.target);callTargets.set(key,targets);
                 spend();call.callers.add(c.id);
                 spend(call.createdRegions.size);for(const id of call.createdRegions)c.createdRegions.add(id);

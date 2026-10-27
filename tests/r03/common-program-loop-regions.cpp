@@ -23,12 +23,13 @@ struct Model {
       {"activationEnvironment",id=="make"?Json("L"):Json(nullptr)},{"signatureHash","sig"},{"parameters",parameter?Json(Array{Object{{"id","flag"},{"type",boolean}}}):Json(Array{})}});
   }
   bool run(const std::string &mode){
-    const bool carried=mode=="readonly-local-cell"||mode=="writable-local-cell"||mode=="readonly-old-saved"||mode=="readonly-missing-return"||mode=="readonly-extra-return"||mode=="readonly-host"||mode=="readonly-structural"||mode=="readonly-cyclic-reader",
-      closed=llvm::StringRef(mode).starts_with("readonly-")||mode=="writable-local-cell"||mode=="writable-exit-phi",
-      descriptor=mode=="descriptor",replaced=mode=="replaced",escaped=mode=="outer-cell",fieldEscape=mode=="outer-field"||mode=="readonly-outward",throwing=mode=="throw"||mode=="caught",host=mode=="host"||mode=="readonly-host",missing=mode=="missing-target";
+    const bool fieldTransport=llvm::StringRef(mode).starts_with("field-");
+    const bool carried=fieldTransport||mode=="readonly-local-cell"||mode=="writable-local-cell"||mode=="readonly-old-saved"||mode=="readonly-missing-return"||mode=="readonly-extra-return"||mode=="readonly-host"||mode=="readonly-structural"||mode=="readonly-cyclic-reader",
+      closed=fieldTransport||llvm::StringRef(mode).starts_with("readonly-")||mode=="writable-local-cell"||mode=="writable-exit-phi",
+      descriptor=mode=="descriptor"||mode=="field-descriptor",replaced=mode=="replaced"||mode=="field-replaced",escaped=mode=="outer-cell",fieldEscape=mode=="outer-field"||mode=="readonly-outward",throwing=mode=="throw"||mode=="caught",host=mode=="host"||mode=="readonly-host"||mode=="field-host",missing=mode=="missing-target";
     layout=Object{{"id","L"},{"parent",nullptr},{"slots",descriptor?Json(Array{Object{{"key","r"},{"binding","r"},{"type",s}}}):Json(Array{Object{{"key","a"},{"binding","a"},{"type",a}},Object{{"key","r"},{"binding","r"},{"type",s}}})}};
-    if(closed){for(auto &slot:*(*layout.getAsObject())["slots"].getAsArray())(*slot.getAsObject())["writable"]=!llvm::StringRef(mode).starts_with("readonly-");
-      if(mode!="readonly-missing-return")p.callableReturns["make"].functions.insert("reader");
+    if(closed){for(auto &slot:*(*layout.getAsObject())["slots"].getAsArray())(*slot.getAsObject())["writable"]=!(llvm::StringRef(mode).starts_with("readonly-")||fieldTransport&&mode!="field-writable");
+      if(mode!="readonly-missing-return"&&mode!="field-missing-return")p.callableReturns["make"].functions.insert("reader");
       if(mode=="readonly-extra-return")p.callableReturns["make"].functions.insert("unconnected");}
     auto make=function("make");make.blocks={{{},{op("constant",0,i32,{},Object{{"decimal","1"}}),op("constant",1,u32,{},Object{{"decimal","0"}}),op("constant",2,u32,{},Object{{"decimal","1"}}),
       op("array_create",3,a,{0}),op("readspan",4,s,{3,1,2}),op("env_alloc",5,"env:L",{},Object{{"layout","L"}})}}};
@@ -89,7 +90,18 @@ struct Model {
         root.blocks.push_back({{23},{op("store",noRegister,"",{2,11},Object{{"binding","saved"}}),op("cf.br",noRegister,"",{},{},{2})}});
       }
     }
-    if(mode=="readonly-structural")reader.blocks[0].operations.insert(reader.blocks[0].operations.begin()+1,
+    if(fieldTransport){
+      root.blocks[0].operations[1]=op("allocate_reference",2,holder);
+      for(const auto index:{1,4})root.blocks[index].operations[0]=op("field_store",noRegister,"",{2,uint16_t(index==1?10:11)},Object{{"field","reader"}});
+      root.blocks[6].operations[0]=op("field_load",20,f,{2},Object{{"field","reader"}});
+      if(mode=="field-old-saved"){
+        root.blocks[3].operations.insert(root.blocks[3].operations.begin(),op("field_load",22,f,{2},Object{{"field","reader"}}));
+        root.blocks[4].operations={op("invoke_indirect",noRegister,"",{22},Object{{"signature_hash","sig"},{"targets",Object{{"top",false}}}},{9,7})};
+        root.blocks.push_back({{23},{op("field_store",noRegister,"",{2,11},Object{{"field","reader"}}),op("cf.br",noRegister,"",{},{},{2})}});
+      }
+      p.fixedEffects["make"].escape=true;
+    }
+    if(mode=="readonly-structural"||mode=="field-structural")reader.blocks[0].operations.insert(reader.blocks[0].operations.begin()+1,
       {op("env_load",3,a,{0},Object{{"layout","L"},{"binding","a"},{"key","a"}}),op("constant",4,u32,{},Object{{"decimal","0"}}),op("array_resize",noRegister,"",{3,4})});
     if(mode=="readonly-cyclic-reader"){
       reader.blocks[0].operations.pop_back();auto &ops=reader.blocks[0].operations;
@@ -103,19 +115,29 @@ struct Model {
       auto pure=function("pure");pure.blocks={{{},{op("constant",0,u32,{},Object{{"decimal","0"}}),op("func.return",noRegister,"",{0})}}};
       p.functions.push_back(std::move(other));p.functions.push_back(std::move(pure));source("otherFactory");source("pure");}
     if(mode=="readonly-extra-return"){auto pure=function("unconnected");pure.blocks={{{},{op("constant",0,u32,{},Object{{"decimal","0"}}),op("func.return",noRegister,"",{0})}}};p.functions.push_back(std::move(pure));source("unconnected");}
+    Json global=nullptr;if(mode=="field-full-global"){
+      auto other=function("readerB");other.blocks={{{0},{op("global_load",1,u32,{},Object{{"global","g"}}),op("func.return",noRegister,"",{1})}}};
+      p.functions.push_back(std::move(other));source("readerB",true);p.fixedEffects["readerB"].reads.insert("g");
+      global=Object{{"type",u32},{"sourceBinding","g"}};c.globals.emplace("g",&global);p.callableSites["root/40:50"].functions.insert("readerB");
+    }
     for(const auto &[id,type]:types){c.types.emplace(id,&type);for(const auto &member:items(field(type,"fields")))c.fields.emplace(string(field(member,"id")),&member);}
     c.environments.emplace("L",&layout);for(const auto &fn:p.functions){c.functions.emplace(fn.id,&fn);c.sourceFunctions.emplace(fn.id,&sources.at(fn.id));p.fixedEffects[fn.id].parameters.resize(fn.id=="root"?1:0);}
     if(mode=="recursive"){p.fixedEffects["make"].parameters.resize(1);c.views["make/30"]=boolean;}
     c.views["root/0"]=boolean;c.views["reader/1"]=s;p.callableSites["root/40:50"].functions.insert("reader");if(missing)p.callableSites["root/40:50"].functions.insert("other");if(host)p.fixedEffects["reader"].unknownHost=true;
     if(mode=="factory-full-host")p.fixedEffects["otherFactory"].unknownHost=true;
-    if(mode=="readonly-structural")p.fixedEffects["reader"].captures["a"]={true,false,true};
+    if(mode=="readonly-structural"||mode=="field-structural")p.fixedEffects["reader"].captures["a"]={true,false,true};
     if(!c.callGraph()||!c.solve(false)){llvm::errs()<<mode<<": setup "<<e.code<<" "<<e.message<<"\n";return false;}
     if(mode=="recursive"&&(!c.cyclicFunctions.count("make")||c.contexts.size()>16))return false;
     bool weak=false;for(const auto &[ref,obj]:c.objects)if(obj.weak)weak=true;if(!weak)return false;
     if(closed)for(const auto &[id,node]:c.regions.nodes)if(!c.objects.at(node.reference).weak)return false;
-    const bool accepted=verifyCommonBorrows(c),expected=mode=="held"||mode=="exit-dead"||mode=="caught"||mode=="exit-dead-phi"||mode=="exit-dead-route"||mode=="readonly-local-cell"||mode=="readonly-old-saved"||mode=="readonly-exit-phi";
+    if(mode=="field-full-global"){
+      bool erased=false;for(const auto &[id,ctx]:c.contexts)if(ctx.function->id=="reader"&&ctx.called&&!ctx.arguments.empty())erased|=ctx.arguments[0].region.roots.empty()&&ctx.arguments[0].region.opaque;
+      if(!erased)return false;for(const auto &[id,scope]:c.regions.scopes)if(scope.hard)return false;
+    }
+    const bool accepted=verifyCommonBorrows(c),expected=mode=="field-held"||mode=="field-old-saved"||mode=="held"||mode=="exit-dead"||mode=="caught"||mode=="exit-dead-phi"||mode=="exit-dead-route"||mode=="readonly-local-cell"||mode=="readonly-old-saved"||mode=="readonly-exit-phi";
     const bool correct=accepted==expected&&(accepted||e.code=="core-ir-common-borrow");
     if(mode=="readonly-outward"){bool hard=false;for(const auto &[id,scope]:c.regions.scopes)hard|=scope.hard;if(!hard)return false;}
+    if(mode=="field-full-global"){bool hard=false;for(const auto &[id,scope]:c.regions.scopes)hard|=scope.hard;if(!hard)return false;}
     if(!correct)llvm::errs()<<mode<<": "<<e.code<<" "<<e.message<<" contexts="<<c.contexts.size()<<"\n";return correct;
   }
 };
@@ -226,6 +248,55 @@ bool trapFactGrowth(){
   changed=false;continues=true;
   return m.c.instruction(context,checked,0,state,false,changed,edge,continues)&&!changed&&context.requestTrap&&!continues;
 }
+bool fieldValueShape(){
+  Model m;auto make=m.function("make"),reader=m.function("reader"),bad=m.function("bad"),pure=m.function("pure");
+  make.blocks={{{},{op("func.return")}}};reader.blocks={{{0},{op("constant",1,m.u32,{},Object{{"decimal","0"}}),op("func.return",noRegister,"",{1})}}};
+  bad.blocks={{{0},{op("global_load",1,m.u32,{},Object{{"global","g"}}),op("func.return",noRegister,"",{1})}}};pure.blocks={{{},{op("func.return")}}};
+  m.p.functions={std::move(make),std::move(reader),std::move(bad),std::move(pure)};m.source("make");m.source("reader",true);m.source("bad",true);m.source("pure");
+  for(const auto &[id,t]:m.types)m.c.types.emplace(id,&t);
+  for(const auto &fn:m.p.functions){m.c.functions.emplace(fn.id,&fn);m.c.sourceFunctions.emplace(fn.id,&m.sources.at(fn.id));m.p.fixedEffects[fn.id];}
+  Json global=Object{{"type",m.u32},{"sourceBinding","g"}};m.c.globals.emplace("g",&global);
+  m.layout=Object{{"id","L"},{"parent",nullptr},{"slots",Array{}}};m.c.environments.emplace("L",&m.layout);
+  m.p.fixedEffects["bad"].reads.insert("g");m.p.callableReturns["make"].functions.insert("reader");if(!m.c.callGraph())return false;
+  m.c.objects.emplace("Box",ActualObject{m.holder,false});m.c.objects.emplace("E",ActualObject{"env:L",true});
+  ActualValue receiver;receiver.tags.insert(m.holder);receiver.objects.insert("Box");ActualValue value;value.tags.insert(m.f);value.callables.emplace("reader","E");
+  if(!readonlyFieldTransport(m.c,receiver,value))return false;
+  for(size_t alternative=0;alternative<7;++alternative){auto changed=m.c.copy(value);
+    if(alternative==0)changed.unknown=true;else if(alternative==1)changed.callableTop=true;else if(alternative==2)changed.cells.insert("cell");
+    else if(alternative==3)changed.objects.insert("E");else if(alternative==4)changed.tags.insert(m.u32);
+    else if(alternative==5)changed.callables.emplace("pure","");else changed.callables.emplace("reader","");
+    if(readonlyFieldTransport(m.c,receiver,changed))return false;
+  }
+  value.callables={{"bad","E"}};if(readonlyFieldTransport(m.c,receiver,value))return false;
+  // A nonreturned sibling cannot borrow the factory's allowed reader proof.
+  m.c.regions.scopes.emplace("R",RegionScope{"make","activation",false});m.c.regions.nodes.emplace("env",RegionNode{"R","E","env:L"});
+  RegionValue current;current.known=true;current.roots.insert("env");RegionValue outside;outside.known=true;outside.opaque=true;RegionHeap heap;
+  if(!regionStore(m.c,outside,"/field/reader",current,heap,!readonlyFieldTransport(m.c,receiver,value)))return false;
+  return m.e.message.empty()&&m.c.regions.scopes.at("R").blocked&&m.c.regions.scopes.at("R").hard;
+}
+bool rawHardProjection(const std::string &mode){
+  // Isolate the real negative query boundary after an actual field projection;
+  // no claim that this seeded prestate is a new complete Source exploit.
+  Model m;const std::string box="owner:Box";m.types.emplace(box,Object{{"kind","reference"},{"base",nullptr},{"fields",Array{Object{{"id","owner"},{"sourceBinding","owner"},{"type",m.a}}}}});
+  for(const auto &[id,t]:m.types){m.c.types.emplace(id,&t);for(const auto &f:items(field(t,"fields")))m.c.fields.emplace(string(field(f,"id")),&f);}
+  auto fn=m.function("raw");auto event=mode=="raw-hard-projection"?op("global_store",noRegister,"",{1},Object{{"global","published"}}):op("field_store",noRegister,"",{2,1},Object{{"field","owner"}});
+  fn.blocks={{{},{op("field_load",1,m.a,{0},Object{{"field","owner"}}),std::move(event)}}};m.p.functions.push_back(std::move(fn));
+  ActualContext context;context.id="raw";context.function=&m.p.functions[0];ActualState state;state.values[0].tags.insert(box);state.values[0].objects.insert("Box");
+  m.c.objects.emplace("Box",ActualObject{box,false});m.c.objects.emplace("A",ActualObject{m.a,true});ActualValue owner;owner.tags.insert(m.a);owner.objects.insert("A");state.heap.emplace("Box/field/owner",owner);
+  for(const auto &scope:{"old","other-context","unrelated"})m.c.regions.scopes.emplace(scope,RegionScope{"make",scope,false});
+  m.c.regions.nodes.emplace("a-old",RegionNode{"old","A",m.a});m.c.regions.nodes.emplace("a-other",RegionNode{"other-context","A",m.a});m.c.regions.nodes.emplace("other",RegionNode{"unrelated","B",m.a});
+  bool changed=false,continues=true;const auto edge=[](uint16_t,const ActualState &,const std::vector<ActualValue> &){return true;};
+  if(!m.c.instruction(context,context.function->blocks[0].operations[0],0,state,false,changed,edge,continues))return false;
+  if(!state.values.at(1).region.roots.empty()||!state.values.at(1).region.opaque)return false;
+  if(mode=="raw-unknown-field")state.values[2].unknown=true;
+  if(mode=="raw-opaque-field"){
+    m.c.objects.emplace("CurrentBox",ActualObject{box,false});state.values[2].tags.insert(box);state.values[2].objects.insert("CurrentBox");
+    state.values[2].region.known=true;state.values[2].region.roots.insert("box-current");m.c.regions.nodes.emplace("box-current",RegionNode{"unrelated","CurrentBox",box});
+  }
+  for(const auto &[id,scope]:m.c.regions.scopes)if(scope.hard)return false;
+  BorrowTrace trace(m.c);if(!trace.before(context,context.function->blocks[0].operations[1],0,state))return false;
+  return m.e.message.empty()&&m.c.regions.scopes.at("old").hard&&m.c.regions.scopes.at("other-context").hard&&!m.c.regions.scopes.at("unrelated").hard&&state.values.at(1).region.roots.empty();
+}
 bool quota(const std::string &mode){
   Model m;auto fn=m.function("quota");
   if(mode=="parameter-quota"){
@@ -245,6 +316,6 @@ bool quota(const std::string &mode){
 }
 int main(int argc,char **argv){
   const std::vector<std::string> all={"held","descriptor","replaced","outer-cell","outer-field","throw","caught","host","missing-target","factory-missing","factory-full-host","exit-phi","exit-dead","recursive","selected","older","may","quota","pair-held","pair-onebad","pair-pure","parent-held","parent-older","old-after-new","unclosed-age","element-held","element-wildcard","element-regrow","element-join-left","element-join-right","irreducible","untracked","pair-outward","pair-cross-region","parameter-quota","edge-copy-quota","aging-quota","exit-dead-phi","exit-live-phi","exit-dead-route","readonly-local-cell","readonly-old-saved","readonly-exit-phi","writable-local-cell","writable-exit-phi","readonly-missing-return","readonly-extra-return","readonly-host","readonly-structural","readonly-outward","readonly-cyclic-reader"};
-  std::vector<std::string> selected;if(argc>1)for(int i=1;i<argc;++i)selected.push_back(argv[i]);else{selected=all;selected.push_back("declared-weak-promotion");selected.push_back("trap-fact-growth");}bool ok=true;
-  for(const auto &name:selected){bool passed;if(llvm::StringRef(name).starts_with("element-"))passed=elementHolding(name);else if(llvm::StringRef(name).starts_with("pair-")||llvm::StringRef(name).starts_with("parent-"))passed=holding(name);else if(name=="old-after-new")passed=aging();else if(name=="unclosed-age")passed=unclosed();else if(name=="irreducible")passed=irreducible();else if(name=="untracked")passed=untracked();else if(name=="declared-weak-promotion")passed=declaredWeakPromotion();else if(name=="trap-fact-growth")passed=trapFactGrowth();else if(name=="parameter-quota"||name=="edge-copy-quota"||name=="aging-quota")passed=quota(name);else if(name=="selected"||name=="older"||name=="may"||name=="quota")passed=relation(name);else{Model m;passed=m.run(name);}llvm::outs()<<name<<": "<<(passed?"PASS":"FAIL")<<"\n";ok&=passed;}return ok?0:1;
+  std::vector<std::string> selected;if(argc>1)for(int i=1;i<argc;++i)selected.push_back(argv[i]);else{selected=all;for(const auto *name:{"declared-weak-promotion","trap-fact-growth","field-held","field-old-saved","field-writable","field-descriptor","field-replaced","field-host","field-structural","field-missing-return","field-full-global","field-value-shape","raw-hard-projection","raw-unknown-field","raw-opaque-field"})selected.push_back(name);}bool ok=true;
+  for(const auto &name:selected){bool passed;if(llvm::StringRef(name).starts_with("element-"))passed=elementHolding(name);else if(llvm::StringRef(name).starts_with("pair-")||llvm::StringRef(name).starts_with("parent-"))passed=holding(name);else if(name=="old-after-new")passed=aging();else if(name=="unclosed-age")passed=unclosed();else if(name=="irreducible")passed=irreducible();else if(name=="untracked")passed=untracked();else if(name=="declared-weak-promotion")passed=declaredWeakPromotion();else if(name=="trap-fact-growth")passed=trapFactGrowth();else if(name=="field-value-shape")passed=fieldValueShape();else if(name=="raw-hard-projection"||name=="raw-unknown-field"||name=="raw-opaque-field")passed=rawHardProjection(name);else if(name=="parameter-quota"||name=="edge-copy-quota"||name=="aging-quota")passed=quota(name);else if(name=="selected"||name=="older"||name=="may"||name=="quota")passed=relation(name);else{Model m;passed=m.run(name);}llvm::outs()<<name<<": "<<(passed?"PASS":"FAIL")<<"\n";ok&=passed;}return ok?0:1;
 }

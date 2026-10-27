@@ -24,6 +24,23 @@ bool readonlyReturnTargets(ActualCheck &c,const ActualContext &context,const Act
   if(!c.step(actual.size()+bound->second.functions.size()))return false;
   return actual==bound->second.functions&&!actual.empty()&&c.e.message.empty();
 }
+bool readonlyFieldTransport(ActualCheck &c,const ActualValue &receiver,const ActualValue &value){
+  // This classifies one verified ordinary member store. It grants no holding
+  // proof and invents no field target upper; call/return tables remain whole.
+  if(receiver.unknown||receiver.callableTop||!receiver.cells.empty()||!receiver.callables.empty()||receiver.objects.empty()||receiver.tags.empty()||
+    value.unknown||value.callableTop||!value.objects.empty()||!value.cells.empty()||value.callables.empty()||value.tags.empty())return false;
+  for(const auto &tag:receiver.tags){if(!c.step(tag.size()/64+1)||!c.types.count(tag))return false;
+    const auto kind=string(field(*c.types.at(tag),"kind"));if(kind!="reference"&&kind!="value")return false;}
+  for(const auto &ref:receiver.objects){if(!c.step(ref.size()/64+1)||!c.objects.count(ref))return false;
+    if(!receiver.tags.count(c.objects.at(ref).type))return false;}
+  for(const auto &tag:value.tags)if(!c.step(tag.size()/64+1)||!c.types.count(tag)||string(field(*c.types.at(tag),"kind"))!="function")return false;
+  for(const auto &[code,env]:value.callables){
+    if(!c.step((code.size()+env.size())/64+1)||!readonlyCall(c,code,true)||env.empty()||!c.objects.count(env))return false;
+    auto layout=field(*c.sourceFunctions.at(code),"lexicalEnvironment").getAsString();
+    if(!layout||layout->empty()||!c.step(layout->size()/64+1))return false;
+    auto type=llvm::StringRef(c.objects.at(env).type);if(!type.consume_front("env:")||type!=*layout)return false;
+  }return c.e.message.empty();
+}
 ReturnOwnership::Value ReturnOwnership::value(const ActualValue &v){
   Value out;out.opaque=v.unknown||v.callableTop;out.complete=!out.opaque;
   if(!check.step(v.tags.size()+v.objects.size()+v.callables.size()))return {};

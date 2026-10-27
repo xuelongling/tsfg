@@ -4,6 +4,7 @@
 namespace tsfg::commonProgram {
 bool readonlyCall(ActualCheck &,const std::string &,bool privateReader=false);
 bool readonlyReturnTargets(ActualCheck &,const ActualContext &,const ActualValue &);
+bool readonlyFieldTransport(ActualCheck &,const ActualValue &receiver,const ActualValue &value);
 // A return-point projection of owning storage edges only. It keeps neither an
 // ActualHeap nor Span.owner edges. Environment origins are validated after all
 // actual contexts have been observed, independently of this selected version.

@@ -37,7 +37,7 @@ std::string regionCall(ActualCheck &,const ActualContext &,const Operation &,siz
 RegionValue regionAllocate(ActualCheck &,const ActualContext &,const std::string &,const std::string &,RegionHeap &);
 RegionValue regionCopyValue(ActualCheck &,const RegionValue &,const std::string &,RegionHeap &);
 RegionValue regionLoad(ActualCheck &,const RegionValue &,const std::string &,const RegionHeap &);
-bool regionStore(ActualCheck &,const RegionValue &,const std::string &,const RegionValue &,RegionHeap &);
+bool regionStore(ActualCheck &,const RegionValue &,const std::string &,const RegionValue &,RegionHeap &,bool hard=true);
 RegionHeap regionReachable(ActualCheck &,const std::vector<ActualValue> &,const RegionHeap &);
 bool regionEdge(ActualCheck &,const ActualContext &,uint16_t,uint16_t,ActualState &);
 void regionEscape(ActualCheck &,const RegionValue &,const RegionHeap &,bool hard=true);

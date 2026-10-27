@@ -116,6 +116,35 @@ descriptor path retains its own obligation, including a different simultaneously
 present field. This extends the top-level closure rule without keeping point
 heaps or treating a descriptor's owner link as independent owning storage.
 
+A separate normal-return rule handles a complete immutable environment containing
+an independently owning scalar Array and its original ReadSpan. Its compact
+current return graph must prove that the selected capture keeps each descriptor's
+original owner; opaque, absent or cross-scope facts cannot be repaired. All slots
+and parent environments must be closed and readonly. The complete permitted
+returned-code table must match the actual code/environment pairs, and every code
+must independently satisfy the private, acyclic, readonly Published boundary.
+The ordinary weak allocation and older payload remain weak and opaque. This rule
+proves owner survival, not Array structural stability or old scalar contents.
+
+Local feedback and storage of a complete readonly callable in an ordinary field
+are transport events. They still mark the invocation scope blocked for the
+ordinary current-version proof. The separate readonly return rule may discharge
+that transport blocker, but only after all actual hard boundary events are known.
+The stored value itself must have complete code/environment pairs, matching raw
+environment refs and qualified readonly reader code. A field type supplies no
+new target permission; the return table and every complete call table retain
+their independent checks.
+
+Field loading can lose region roots while retaining a known raw environment.
+When current-region transport is unavailable, true escape and non-readonly,
+incomplete or unknown call boundaries therefore
+also walk the actual selected raw storage, including environment slots/parents,
+Span owners and Cells. Every represented birth scope with a matching raw
+reference is invalidated. This walk only adds hard blockers and cannot restore
+roots, heap fields, owner identity or a holding proof. Publishing the Array or
+descriptor itself, or retaining a writable/unknown captured graph, does not gain
+the whole-callable field transport exemption.
+
 Distinct verified acyclic invocations of the same factory retain distinct
 physical allocations, including calls through a shared wrapper. Allocation
 scope follows the verified caller activation, operation and target; actual
@@ -150,3 +179,12 @@ Node and C++ Core checks, and normalized actual-flow models for specific alias,
 call, survival and budget boundaries. Normalized models have no Source or guest
 execution credit. Preserve causal failures and compare unchanged complete Core
 outputs exactly; rerun only checks affected by a real change.
+
+The C++ actual fixed point schedules changed callees and their registered actual
+callers rather than rescanning unrelated contexts after every delta. Capacity
+seed solving keeps its existing iteration. Normal/language completion, returned
+values, heaps, region summaries and request traps all participate in invalidation.
+Any raw weak promotion, including a colliding declared entry identity, invalidates
+all contexts. Final borrow replay does not schedule further solving and rejects
+new summary, trap, weak or context facts. The original work/context limits and
+physical allocation provenance remain unchanged.

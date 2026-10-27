@@ -11,6 +11,24 @@ export function commonReadonlyReader(upper,spend){
   for(const rows of [upper.parameters,upper.captures])for(const row of rows){spend();if(row.write!==false||row.structural!==false)return false;}
   return true;
 }
+// A field event has actual code/environment pairs, not a separate field upper.
+// Only the return caller supplies an allowed table; the field event grants none.
+export function commonReadonlyClosure(value,model,objects,records,readonlyTarget,allowed=null){
+  const {spend,types}=model;spend();
+  if(value.unknown||value.cells.size||!value.pairs.size||allowed&&(allowed.top||!allowed.functions.length))return false;
+  spend(value.tags.size+value.pairs.size+value.refs.size+(allowed?.functions.length??0));
+  for(const tag of value.tags)if(types.get(tag)?.kind!=='function')return false;
+  const codes=new Set(),environments=new Set(),permitted=allowed?new Set(allowed.functions):null;
+  for(const pair of value.pairs.values()){
+    spend();const fn=model.functions.get(pair.functionId);
+    if(permitted&&!permitted.has(pair.functionId)||!fn?.lexicalEnvironment||!pair.environment||objects.get(pair.environment)?.type!=='env:'+fn.lexicalEnvironment)return false;
+    if(!readonlyTarget?.(pair.functionId)||!commonReadonlyReader(records?.get(pair.functionId)?.upper,spend))return false;
+    codes.add(pair.functionId);environments.add(pair.environment);
+  }
+  for(const target of permitted??[]){spend();if(!codes.has(target))return false;}
+  for(const ref of value.refs){spend();if(!environments.has(ref))return false;}
+  return environments.size===value.refs.size;
+}
 export function commonBorrowObservations({model,records,objects,regions=null,readEnvironmentSlot=null,readonlyTarget=null}) {
   const {spend,types}=model,graph=commonBorrowGraph(spend),returns=new Map(),calls=[],callReturns=new Map(),contexts=new Set(),components=new Map(),allocations=new Map(),creations=new Map();
   const slotLayouts=new Map();spend(model.environments?.size??0);
@@ -21,21 +39,25 @@ export function commonBorrowObservations({model,records,objects,regions=null,rea
   const environment=ref=>{const tag=objects.get(ref)?.type;return typeof tag==='string'&&tag.startsWith('env:')?model.environments.get(tag.slice(4)):undefined;};
   const environmentSlot=(ref,slot)=>objects.get(ref)?.type.startsWith('env:')&&(slot.startsWith(ref+'/slot/')||slot===ref+'/parent');
   function collect(value,heap,mode) {
-    const ids=new Set(),seen=new Set(),pending=[value];let unknown=false;
+    const ids=new Set(),seen=new Set(),cells=new Set(),pending=[value],hard=mode==='hard';let unknown=false;
     for(let i=0;i<pending.length;i++){
       spend();const v=pending[i];unknown ||= v.unknown;
-      for(const ref of v.refs){spend();if(seen.has(ref))continue;seen.add(ref);const type=kind(ref);
+      let selected=v.refs;if(hard){spend(v.refs.size+v.cells.size+v.pairs.size);selected=new Set(v.refs);
+        for(const pair of v.pairs.values())if(pair.environment)selected.add(pair.environment);
+        for(const cell of v.cells){spend(Math.ceil(cell.length/64)+1);if(cells.has(cell))continue;cells.add(cell);const stored=heap.get(cell);if(stored)pending.push(stored);else unknown=true;}}
+      for(const ref of selected){spend(hard?Math.ceil(ref.length/64)+1:1);if(seen.has(ref))continue;seen.add(ref);const type=kind(ref);if(hard)ids.add(ref);
         if(type==='readSpan'){
           if(mode==='spans'||mode==='escape')ids.add(ref);
-          if(mode==='structural'){const owner=heap.get(ref+'/owner');if(owner)pending.push(owner);else unknown=true;}
+          if(mode==='structural'||hard){const owner=heap.get(ref+'/owner');if(owner)pending.push(owner);else unknown=true;}
           continue;
         }
         if(type==='array'&&(mode==='structural'||mode==='owning'))ids.add(ref);
-        for(const [slot,stored]of heap){spend();if(slot.startsWith(ref+'/field/')||slot.startsWith(ref+'/element/')||mode==='escape'&&environmentSlot(ref,slot))pending.push(stored);}
+        for(const [slot,stored]of heap){spend(hard?Math.ceil((ref.length+slot.length)/64)+1:1);if(slot.startsWith(ref+'/field/')||slot.startsWith(ref+'/element/')||(mode==='escape'||hard)&&environmentSlot(ref,slot))pending.push(stored);}
       }
     }
     check(ids.size<=4096,'limit');return {ids,pending:unknown};
   }
+  function hardEscape(value,heap){regions?.hardRaw(collect(value,heap,'hard').ids);}
   // Environment storage is transport, not consumption. Only escape checks walk
   // the actual closure's selected slots/parent; never-called captures stay dead.
   const escapingSpans=(value,heap)=>collect(value,heap,'escape').ids;
@@ -143,18 +165,7 @@ export function commonBorrowObservations({model,records,objects,regions=null,rea
   }
   function readonlyReturn(value,c){
     spend();const allowed=records?.get(c.plan.owner.id)?.callables?.returns;
-    if(value.unknown||value.cells.size||!value.pairs.size||!allowed||allowed.top||!allowed.functions.length)return false;
-    spend(value.tags.size+value.pairs.size+value.refs.size+allowed.functions.length);
-    for(const tag of value.tags)if(types.get(tag)?.kind!=='function')return false;
-    const codes=new Set(),environments=new Set(),permitted=new Set(allowed.functions);
-    for(const pair of value.pairs.values()){
-      spend();const fn=model.functions.get(pair.functionId);
-      if(!permitted.has(pair.functionId)||!fn?.lexicalEnvironment||!pair.environment||objects.get(pair.environment)?.type!=='env:'+fn.lexicalEnvironment)return false;
-      codes.add(pair.functionId);environments.add(pair.environment);
-    }
-    for(const target of permitted){spend();if(!codes.has(target)||!readonlyTarget?.(target)||!commonReadonlyReader(records?.get(target)?.upper,spend))return false;}
-    for(const ref of value.refs){spend();if(!environments.has(ref))return false;}
-    return environments.size===value.refs.size;
+    return Boolean(allowed)&&commonReadonlyClosure(value,model,objects,records,readonlyTarget,allowed);
   }
   function retained(path,owner,context){
     if(!path.known)return false;let managed=false;
@@ -288,5 +299,5 @@ export function commonBorrowObservations({model,records,objects,regions=null,rea
       graph.edge(at,row[completion]);if(row[completion+'Successor'])graph.edge(row[completion],row[completion+'Successor']);}}
     return graph.verify();
   }
-  return {begin,block,entry,before,after,prepareCall,call,edge:graph.edge,finish};
+  return {begin,block,entry,before,after,prepareCall,call,edge:graph.edge,finish,hardEscape};
 }

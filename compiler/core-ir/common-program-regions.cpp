@@ -139,7 +139,7 @@ RegionValue regionLoad(ActualCheck &c,const RegionValue &receiver,const std::str
     if(node==heap.end()||!node->second.count(slot)){out.opaque=true;continue;}regionMerge(c,out,node->second.at(slot));
   }return out;
 }
-bool regionStore(ActualCheck &c,const RegionValue &receiver,const std::string &slot,const RegionValue &value,RegionHeap &heap){
+bool regionStore(ActualCheck &c,const RegionValue &receiver,const std::string &slot,const RegionValue &value,RegionHeap &heap,bool hard){
   // Storing a current reference outside its proven receiver region exports an
   // alias even when that receiver is no longer SSA-live in this callee.
   bool closed=!receiver.opaque&&!receiver.empty&&!receiver.roots.empty();
@@ -148,7 +148,7 @@ bool regionStore(ActualCheck &c,const RegionValue &receiver,const std::string &s
       closed&=node!=c.regions.nodes.end()&&heap.count(root)&&node->second.region==c.regions.nodes.at(referent).region;
     }
   }
-  if(!closed&&!value.roots.empty()){regionEscape(c,value,heap);if(!c.e.message.empty())return false;}
+  if(!closed&&!value.roots.empty()){regionEscape(c,value,heap,hard);if(!c.e.message.empty())return false;}
   const bool strong=!receiver.opaque&&!receiver.empty&&receiver.roots.size()==1;
   for(const auto &root:receiver.roots){if(!c.step(root.size()/64+slot.size()/64+regionWeight(value)))return false;auto node=heap.find(root);
     if(node==heap.end())continue;

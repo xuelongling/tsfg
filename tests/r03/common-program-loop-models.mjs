@@ -4,7 +4,7 @@ import {boolTypeId,i32TypeId,scalarTypeIds,sha256} from '../../compiler/identity
 import {createCommonGraph} from '../../compiler/common-program-plan.mjs';
 import {ownedEnvironmentModel} from './common-program-owned-environment-models.mjs';
 
-const modes=new Set(['held','two','replaced','descriptor-only','old-cell','old-cell-after-new','old-field',
+const modes=new Set(['held','two','replaced','descriptor-only','old-cell','old-cell-after-new','old-field','old-field-after-new',
   'live-break','dead-break','unconnected-pure','unconnected-host','recursive','host']);
 export function loopFactoryModel(mode='held'){
   if(!modes.has(mode))throw new TypeError('unknown loop model');
@@ -82,7 +82,7 @@ export function loopFactoryModel(mode='held'){
     const binding='loopConsumer/saved';model.bindings.set(binding,{id:binding,type:callable,role:'local'});
     outer=emit(root,current,'cell',[],'cell:'+callable,{binding});
     emit(root,current,'store',[outer,initial],null,{binding});
-  }else if(mode==='old-field'){
+  }else if(mode==='old-field'||mode==='old-field-after-new'){
     field={id:'LoopHolder/reader',sourceBinding:'LoopHolder/reader',name:'reader',type:callable};
     const type={id:'unit:LoopHolder',kind:'reference',fields:[field],methods:[]};model.types.set(type.id,type);model.hir.types.push(type);
     model.fields.set(field.id,field);model.bindings.set(field.sourceBinding,{id:field.sourceBinding,type:callable,role:'field'});
@@ -97,10 +97,10 @@ export function loopFactoryModel(mode='held'){
   current=body;
   if(outer){
     oldLoad=emit(root,current,field?'field_load':'load',[outer],callable,field?{field:field.id}:{});
-    if(mode!=='old-cell-after-new')current=consume(current,oldLoad).block;
+    if(!mode.endsWith('-after-new'))current=consume(current,oldLoad).block;
   }
   const first=create(current);current=first.block;
-  if(mode==='old-cell-after-new')current=consume(current,oldLoad).block;
+  if(mode.endsWith('-after-new'))current=consume(current,oldLoad).block;
   let second=null;if(mode==='two'){second=create(current);current=second.block;}
   if(outer)emit(root,current,field?'field_store':'store',[outer,first.value],null,field?{field:field.id,initialize:false}:{binding:'loopConsumer/saved'});
   current=consume(current,first.value).block;
@@ -118,6 +118,18 @@ export function loopFactoryModel(mode='held'){
   return {...result,mode,root:root.owner.id,factory:factory.owner.id,reader:reader.owner.id,header:header.name,body:body.name,
     backedge:backedge.name,done:done.name,factoryCalls,readerCalls,oldLoad,outer,field,
     ownerSlot:'unit:owner-slot',spanSlot:'unit:slot',pureCreator:pureCreator?.owner.id,pureReader:pureReader?.owner.id};
+}
+// These normalized fixtures declare the complete readonly return permission;
+// they do not inject a lifetime proof or any official Source/checker result.
+export function closedLoopFactoryModel(mode,writable=false){
+  const result=loopFactoryModel(mode);
+  for(const layout of result.program.model.environments.values())for(const slot of layout.slots){
+    slot.writable=writable;result.program.model.slots.get(slot.binding).writable=writable;
+  }
+  result.records.get(result.factory).callables={parameters:[],returns:{top:false,functions:[result.reader]},slotWrites:[]};
+  const reader=result.records.get(result.reader);
+  reader.upper.facets={escape:false,await:false,lock:false,...reader.upper.facets};
+  return result;
 }
 // A may receiver/copy cannot make its unselected empty alternative own A.
 // These are normalized actual models, with no official Source-fact authority.

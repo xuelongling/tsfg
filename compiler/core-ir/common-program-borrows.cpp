@@ -364,14 +364,15 @@ bool BorrowTrace::before(const ActualContext &context,const Operation &op,size_t
     }
   }
   if(invocation(op))b.boundary(context,op,at,args,state);
-  if(op.name=="func.return"||op.name=="return_throw")for(const auto &arg:args){b.observe(at,arg,state.heap);b.returned(context,at,arg,state,op.name=="func.return");}
+  if(op.name=="func.return"||op.name=="return_throw")for(const auto &arg:args){if(context.root)regionHardEscape(b.c,arg,state.heap);b.observe(at,arg,state.heap);b.returned(context,at,arg,state,op.name=="func.return");}
   if(op.name=="global_store"&&!args.empty())b.store(context,at,{},args[0],state.heap,true);
   if(op.name=="global_store"&&!args.empty())regionHardEscape(b.c,args[0],state.heap);
   if((op.name=="field_store"||op.name=="env_store"||op.name=="env_init")&&args.size()>1)b.store(context,at,args[0],args[1],state.heap);
   if(op.name=="array_store"&&args.size()>2)b.store(context,at,args[0],args[2],state.heap);
   if((op.name=="field_store"||op.name=="env_store"||op.name=="env_init"||op.name=="array_store")&&args.size()>1){
     const auto receiver=regionValue(b.c,args[0]),value=regionValue(b.c,args.back());
-    if(receiver.opaque||receiver.empty||receiver.roots.empty()||value.opaque)regionHardEscape(b.c,args.back(),state.heap);
+    const bool transport=op.name=="field_store"&&readonlyFieldTransport(b.c,args[0],args.back());
+    if(!transport&&(receiver.opaque||receiver.empty||receiver.roots.empty()||value.opaque))regionHardEscape(b.c,args.back(),state.heap);
   }
   if((op.name=="array_resize"||op.name=="array_store")&&args.size()>1){
     for(const auto &ref:args[0].objects){

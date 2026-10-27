@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: MIT
 #include "common-program-actual.h"
 #include "common-program-borrows.h"
+#include "common-program-retention.h"
 #include <cstdlib>
 #include <cerrno>
 namespace tsfg::commonProgram {
@@ -102,6 +103,7 @@ bool ActualCheck::instruction(ActualContext &context,const Operation &op,size_t 
     }
   }else if(name=="field_load"||name=="field_store"){
     const auto fieldId=string(field(props,"field"));
+    const bool transport=!conditional&&name=="field_store"&&readonlyFieldTransport(*this,args[0],args[1]);if(!e.message.empty())return false;
     RegionValue projected;projected.known=true;
     for(const auto &ref:args[0].objects){
       if(!step()||!need(objects.count(ref),"field receiver object missing"))return false;const auto &object=objects.at(ref);bool owned=false;
@@ -118,10 +120,10 @@ bool ActualCheck::instruction(ActualContext &context,const Operation &op,size_t 
         if(!conditional){auto receiver=regionValue(*this,args[0]);for(auto it=receiver.roots.begin();it!=receiver.roots.end();)if(regions.nodes.at(*it).reference!=ref)it=receiver.roots.erase(it);else ++it;
           regionMerge(*this,projected,regionLoad(*this,receiver,"/field/"+selected,state.regions));}}
       else{put(slot,args[1],!object.weak&&args[0].objects.size()==1);const auto raw=string(field(*fields.at(selected),"sourceBinding"));observe(raw,args[1]);seed(fieldSeeds,raw,args[1]);
-        if(!conditional&&!regionStore(*this,regionValue(*this,args[0]),"/field/"+selected,regionValue(*this,args[1]),state.regions))return false;}
+        if(!conditional&&!regionStore(*this,regionValue(*this,args[0]),"/field/"+selected,regionValue(*this,args[1]),state.regions,!transport))return false;}
     }if(args[0].unknown)value.unknown=true;
     if(!conditional&&name=="field_load")value.region=std::move(projected);
-    if(!conditional&&name=="field_store"&&regionValue(*this,args[0]).opaque)regionEscape(*this,regionValue(*this,args[1]),state.regions);
+    if(!conditional&&name=="field_store"&&regionValue(*this,args[0]).opaque)regionEscape(*this,regionValue(*this,args[1]),state.regions,!transport);
   }else if(name=="readspan"){
     value=literal(op.view);const auto ref=allocate(context,op,block,"span",op.view);if(!e.message.empty())return false;value.objects.insert(ref);
     if(!conditional)value.region=regionAllocate(*this,context,ref,op.view,state.regions);

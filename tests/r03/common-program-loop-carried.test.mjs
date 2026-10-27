@@ -8,20 +8,10 @@ import {projectCommonProgram} from '../../compiler/common-program-hir.mjs';
 import {createCommonProgramPublication} from '../../compiler/common-program-analysis.mjs';
 import {emitCommonProgramCore} from '../../compiler/common-program-core.mjs';
 import {analyzeCommonGraphs} from '../../compiler/common-program-actual.mjs';
-import {loopFactoryModel} from './common-program-loop-models.mjs';
+import {closedLoopFactoryModel as closed} from './common-program-loop-models.mjs';
 import {i32TypeId} from '../../compiler/identity.mjs';
 
 const pending=/** @param {any} error */error=>error.code==='r03-common-program-borrow-pending';
-function closed(mode,writable=false){
-  const model=loopFactoryModel(mode);
-  for(const layout of model.program.model.environments.values())for(const slot of layout.slots){
-    slot.writable=writable;model.program.model.slots.get(slot.binding).writable=writable;
-  }
-  const creator=model.records.get(model.factory),reader=model.records.get(model.reader);
-  creator.callables={parameters:[],returns:{top:false,functions:[model.reader]},slotWrites:[]};
-  reader.upper.facets={escape:false,await:false,lock:false,...reader.upper.facets};
-  return model;
-}
 test('whole official Source consumes its self-held readonly closure after feedback and exit',()=>{
   const source=readFileSync(new URL('./testdata/common-loop-local-factory/loop-carried-held-safe.json',import.meta.url)),
     hir=projectCommonProgram(readCommonProgramFacts(source)),publication=createCommonProgramPublication(hir),

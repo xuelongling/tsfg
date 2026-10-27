@@ -67,7 +67,7 @@ export function commonRegions(spend){
     for(const id of receiver.roots){spend();const stored=heap.get(id)?.get(slot);if(stored)merge(result,stored);else result.opaque=true;}
     return result;
   }
-  function store(receiver,slot,value,heap,witness=false,definite=true){
+  function store(receiver,slot,value,heap,witness=false,definite=true,coveredTransport=false){
     chargeString(slot);spend(weight(receiver)+weight(value));const single=definite&&!receiver.opaque&&!receiver.empty&&receiver.roots.size===1;
     for(const id of receiver.roots){spend();if(!nodes.has(id))continue;let slots=heap.get(id);if(!slots){slots=new Map();heap.set(id,slots);}
       // A discarded Array element cannot become an owning witness again when
@@ -79,11 +79,11 @@ export function commonRegions(spend){
       else if(!slots.has(slot)){const next=copy(value);next.opaque=true;slots.set(slot,next);}
       else merge(slots.get(slot),value);
     }
-    if(witness){let outward=receiver.opaque||receiver.empty||receiver.roots.size===0;
+    let outward=false;if(witness){outward=receiver.opaque||receiver.empty||receiver.roots.size===0||value.opaque;
       for(const id of receiver.roots){spend(value.roots.size+1);const scope=nodes.get(id)?.scope;
         for(const ref of value.roots)outward ||= !scope||nodes.get(ref)?.scope!==scope;}
-      if(outward)escape(value,heap);
-    }
+      if(outward)escape(value,heap,coveredTransport);
+    }return outward;
   }
   function reachable(values,heap){
     spend(values.length);const result=new Map(),queue=[],seen=new Set();
@@ -99,6 +99,13 @@ export function commonRegions(spend){
     for(const id of selected.keys())all.add(id);
     for(const id of all){spend();const node=nodes.get(id);if(node){const scope=scopes.get(node.scope);scope.blocked=true;
       scope.hardBlocked ||= !coveredTransport;scope.transportBlocked ||= coveredTransport;}}
+  }
+  function hardRaw(references){
+    spend(references.size+1);if(!references.size)return;
+    spend(nodes.size);for(const node of nodes.values()){
+      chargeString(node.reference);if(!references.has(node.reference))continue;
+      const selected=scopes.get(node.scope);selected.blocked=true;selected.hardBlocked=true;
+    }
   }
   function age(value,selected){
     spend(weight(value));let old=false;for(const id of value.roots){spend();if(nodes.get(id)?.scope===selected)old=true;}
@@ -250,6 +257,6 @@ export function commonRegions(spend){
       for(const slots of state.regions.values())for(const value of slots.values())age(value,selectedScope);
     }
   }
-  return {nodes,scopes,layouts,weight,copy,merge,key,heapCopy,heapJoin,heapKey,scope,allocate,load,store,reachable,escape,age,closed,number,
+  return {nodes,scopes,layouts,weight,copy,merge,key,heapCopy,heapJoin,heapKey,scope,allocate,load,store,reachable,escape,hardRaw,age,closed,number,
     prepare,loopAt,observe,feedback,select,elements,holds,readonlyHolds};
 }
