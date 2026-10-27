@@ -5,6 +5,15 @@ import {canonical,sha256} from './identity.mjs';
 import {commonCheck as check} from './common-program-common.mjs';
 import {commonCollections} from './common-program-budget.mjs';
 import {commonRegions,emptyRegionValue} from './common-program-regions.mjs';
+// A source view alone is not an actual managed Array receiver. All finite tags
+// and references must describe the same complete set of known Array objects.
+export function commonActualArrayReceiver(value,types,objects,spend){
+  spend(value.tags.size+value.refs.size+1);
+  if(value.unknown||value.cells.size||value.pairs.size||!value.tags.size||!value.refs.size)return false;
+  const actual=new Set();for(const ref of value.refs){spend();const type=objects.get(ref)?.type;if(types.get(type)?.kind!=='array')return false;actual.add(type);}
+  for(const tag of value.tags){spend();if(!actual.has(tag))return false;}
+  return actual.size===value.tags.size;
+}
 export function commonAbstract(model) {
   const {spend,types}=model,collections=commonCollections(spend),regions=commonRegions(spend),arrays=new Map();
   const noOrigin=Object.freeze(emptyRegionValue()),emptyOrigin=Object.freeze({...emptyRegionValue(),empty:true});

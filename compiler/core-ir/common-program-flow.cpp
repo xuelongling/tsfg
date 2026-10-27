@@ -52,7 +52,7 @@ bool ActualCheck::run(){
   // Actual storage/ABI obligations are discharged later by effects(), after
   // their independent calculation; no tentative physical permission is read.
   p.fixedEffects.clear();p.effects.clear();
-  if(!verifyCallableTargets(p,e)||!verifyPublication(p,e)||!catalogs()||!graph()||!source())return false;
+  if(!verifyCallableTargets(p,e,initializedArrays)||!verifyPublication(p,e)||!catalogs()||!graph()||!source())return false;
   for(const auto &[id,fn]:functions)if(!environmentGraph(*fn))return false;
   return callGraph()&&solve(true)&&representation()&&effects()&&solve(false);
 }

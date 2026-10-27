@@ -371,7 +371,8 @@ bool BorrowTrace::before(const ActualContext &context,const Operation &op,size_t
   if(op.name=="array_store"&&args.size()>2)b.store(context,at,args[0],args[2],state.heap);
   if((op.name=="field_store"||op.name=="env_store"||op.name=="env_init"||op.name=="array_store")&&args.size()>1){
     const auto receiver=regionValue(b.c,args[0]),value=regionValue(b.c,args.back());
-    const bool transport=op.name=="field_store"&&readonlyFieldTransport(b.c,args[0],args.back());
+    const bool transport=(op.name=="field_store"&&readonlyFieldTransport(b.c,args[0],args.back()))||
+      (op.name=="array_store"&&readonlyArrayTransport(b.c,args[0],args.back()));
     if(!transport&&(receiver.opaque||receiver.empty||receiver.roots.empty()||value.opaque))regionHardEscape(b.c,args.back(),state.heap);
   }
   if((op.name=="array_resize"||op.name=="array_store")&&args.size()>1){

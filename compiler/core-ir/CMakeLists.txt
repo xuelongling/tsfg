@@ -90,7 +90,7 @@ add_library(tsfg-core-common OBJECT
   module-plan.cpp core-verify.cpp finite-domain.cpp finite-fields.cpp
   common-program.cpp common-program-read.cpp common-program-relations.cpp common-program-shape.cpp common-program-json.cpp
   common-program-identities.cpp common-program-projection.cpp common-program-syntax.cpp
-  common-program-source.cpp common-program-callable-source.cpp common-program-callable-targets.cpp common-program-callable-ops.cpp common-program-declarations.cpp common-program-modules.cpp
+  common-program-source.cpp common-program-callable-source.cpp common-program-callable-targets.cpp common-program-array-targets.cpp common-program-callable-ops.cpp common-program-declarations.cpp common-program-modules.cpp
   common-program-bodies.cpp common-program-statements.cpp common-program-expressions.cpp
   common-program-effects.cpp common-program-environments.cpp common-program-environment-ops.cpp common-program-publication.cpp common-program-kernel.cpp
   common-program-types.cpp common-program-graph.cpp common-program-abstract.cpp

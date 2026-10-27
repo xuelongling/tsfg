@@ -76,9 +76,10 @@ bool sourceGraph(ActualCheck &check){
 }
 bool run(const std::string &prefix,llvm::StringRef expected){
   Program p;Error e;bool passed=read(prefix+"-hir.json",p.hir,p,e)&&read(prefix+"-publication.json",p.publication,p,e)&&read(prefix+"-request.json",p.request,p,e);
-  if(passed){header(p);passed=verifySource(p,e)&&verifyCallableTargets(p,e)&&verifyPublication(p,e);}
+  std::map<std::string,size_t> initialized;
+  if(passed){header(p);passed=verifySource(p,e)&&verifyCallableTargets(p,e,initialized)&&verifyPublication(p,e);}
   if(!passed){llvm::errs()<<"complete Source/publication setup: "<<e.code<<": "<<e.message<<"\n";return false;}
-  ActualCheck actual{p,e};std::map<std::string,Json> semanticSlots;
+  ActualCheck actual{p,e};actual.initializedArrays=std::move(initialized);std::map<std::string,Json> semanticSlots;
   // environmentGraph also checks each original cell's initialization flow.
   // This SourcePlan adapter supplies its declared logical slot types, not a
   // producer physical table. Physical carrier/layout qualification is absent.

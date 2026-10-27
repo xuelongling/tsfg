@@ -6,6 +6,10 @@
 #include <optional>
 namespace tsfg::commonProgram {
 class BorrowTrace;
+// Source/fixed verifier-only clients request no initializer certificate.
+// Actual consumers obtain that independent output in the same target-flow
+// run, rather than rerunning the solver or trusting a producer row.
+bool verifyCallableTargets(Program &,Error &,std::map<std::string,size_t> &initializedArrays);
 // Actual values never inherit tags from a view or a carrier capacity. Separate
 // roots identify language values, mutable local cells and abstract heap objects.
 struct ActualValue {
@@ -40,6 +44,7 @@ struct ActualCheck {
   bool environmentNeedsReady=false;
   std::map<std::string,ActualObject> objects;
   std::map<std::string,ActualValue> fieldSeeds,elementSeeds,globalSeeds,storageCapacity,registerCapacity,resultCapacity;
+  std::map<std::string,size_t> initializedArrays;
   std::map<std::string,std::string> views;
   std::map<std::string,ActualContext> contexts;
   std::deque<std::string> pendingContexts;std::set<std::string> queuedContexts;
@@ -57,6 +62,7 @@ struct ActualCheck {
   bool merge(ActualValue &,const ActualValue &);
   bool mergeHeap(ActualHeap &,const ActualHeap &);
   ActualValue copy(const ActualValue &);
+  bool arrayReceiver(const ActualValue &);
   ActualHeap copyHeap(const ActualHeap &);
   ActualState copyState(const ActualState &);
   bool join(ActualState &,const ActualState &);

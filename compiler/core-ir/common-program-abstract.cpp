@@ -15,6 +15,14 @@ std::string ActualCheck::key(const ActualValue &v)const{
     {"callableTop",v.callableTop},{"callables",std::move(pairs)},{"truth",int64_t(v.truth)},{"unknown",v.unknown},{"number",v.number?Json(*v.number):Json(nullptr)},{"region",regionKey(v.region)}});
 }
 ActualValue ActualCheck::copy(const ActualValue &v){if(!step(weight(v)))return {};return v;}
+bool ActualCheck::arrayReceiver(const ActualValue &value){
+  if(!step()||value.unknown||value.callableTop||!value.cells.empty()||!value.callables.empty()||value.objects.empty()||value.tags.empty())return false;
+  std::set<std::string> actual;
+  for(const auto &tag:value.tags){if(!step(tag.size()/64+1)||!types.count(tag)||string(field(*types.at(tag),"kind"))!="array")return false;}
+  for(const auto &ref:value.objects){if(!step(ref.size()/64+1))return false;auto found=objects.find(ref);
+    if(found==objects.end()||!value.tags.count(found->second.type)||!step(found->second.type.size()/64+1))return false;actual.insert(found->second.type);}
+  return step(actual.size()+value.tags.size())&&actual==value.tags&&e.message.empty();
+}
 bool ActualCheck::merge(ActualValue &to,const ActualValue &from){
   if(!step(weight(to)+weight(from)))return false;const auto before=key(to);
   // An absent relation is lazily unproved, not a runtime allocation fact.

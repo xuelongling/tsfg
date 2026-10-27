@@ -58,6 +58,8 @@ export const coreIrInputs = Object.freeze([
   "compiler/core-ir/closure.h",
   "compiler/core-ir/common-program-abstract.cpp",
   "compiler/core-ir/common-program-actual.h",
+  "compiler/core-ir/common-program-array-targets.cpp",
+  "compiler/core-ir/common-program-array-targets.h",
   "compiler/core-ir/common-program-bodies.cpp",
   "compiler/core-ir/common-program-borrows.cpp",
   "compiler/core-ir/common-program-borrows.h",

@@ -11,8 +11,8 @@ export function commonReadonlyReader(upper,spend){
   for(const rows of [upper.parameters,upper.captures])for(const row of rows){spend();if(row.write!==false||row.structural!==false)return false;}
   return true;
 }
-// A field event has actual code/environment pairs, not a separate field upper.
-// Only the return caller supplies an allowed table; the field event grants none.
+// A storage event has actual code/environment pairs, not a separate code upper.
+// Only the return caller supplies an allowed table; storage itself grants none.
 export function commonReadonlyClosure(value,model,objects,records,readonlyTarget,allowed=null){
   const {spend,types}=model;spend();
   if(value.unknown||value.cells.size||!value.pairs.size||allowed&&(allowed.top||!allowed.functions.length))return false;

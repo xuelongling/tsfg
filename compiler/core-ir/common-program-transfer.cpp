@@ -98,7 +98,7 @@ bool ActualCheck::instruction(ActualContext &context,const Operation &op,size_t 
     if(name=="array_create"){
       for(size_t i=0;i<args.size();++i){put(ref+"/element/"+std::to_string(i),args[i],!objects.at(ref).weak);seed(elementSeeds,"element:"+op.view,args[i]);}
       auto length=literal(typeId("u32"));length.number=args.size();put(ref+"/length",length,!objects.at(ref).weak);
-      if(!conditional){for(size_t i=0;i<args.size();++i)if(!regionStore(*this,regionValue(*this,value),"/element/"+std::to_string(i),regionValue(*this,args[i]),state.regions))return false;
+      if(!conditional){for(size_t i=0;i<args.size();++i)if(!regionStore(*this,regionValue(*this,value),"/element/"+std::to_string(i),regionValue(*this,args[i]),state.regions,!readonlyArrayTransport(*this,value,args[i])))return false;
         if(!regionStore(*this,regionValue(*this,value),"/length",regionValue(*this,length),state.regions))return false;}
     }
   }else if(name=="field_load"||name=="field_store"){
@@ -131,11 +131,14 @@ bool ActualCheck::instruction(ActualContext &context,const Operation &op,size_t 
     if(!conditional&&!regionStore(*this,regionValue(*this,value),"/owner",regionValue(*this,args[0]),state.regions))return false;
   }else if(name=="array_length"||name=="readspan_length")value=literal(op.view);
   else if(name=="array_read"||name=="array_store"||name=="array_resize"){
+    const bool actualArray=name=="array_read"&&types.count(op.view)&&string(field(*types.at(op.view),"kind"))=="function"&&arrayReceiver(args[0]);
+    const bool transport=!conditional&&name=="array_store"&&readonlyArrayTransport(*this,args[0],args[2]);
+    if(!e.message.empty())return false;
     RegionValue projected;
     if(!conditional){auto receiver=regionValue(*this,args[0]);
       if(!receiver.roots.empty()&&regions.nodes.count(*receiver.roots.begin())&&types.count(regions.nodes.at(*receiver.roots.begin()).type)&&string(field(*types.at(regions.nodes.at(*receiver.roots.begin()).type),"kind"))=="readSpan")receiver=regionLoad(*this,receiver,"/owner",state.regions);
       if(name=="array_resize"){if(!regionStore(*this,receiver,"/length",regionValue(*this,args[1]),state.regions))return false;}
-      else if(name=="array_store"){if(!regionStore(*this,receiver,args[1].number?"/element/"+std::to_string(*args[1].number):"/element/*",regionValue(*this,args[2]),state.regions))return false;if(receiver.opaque)regionEscape(*this,regionValue(*this,args[2]),state.regions);}
+      else if(name=="array_store"){if(!regionStore(*this,receiver,args[1].number?"/element/"+std::to_string(*args[1].number):"/element/*",regionValue(*this,args[2]),state.regions,!transport))return false;if(receiver.opaque)regionEscape(*this,regionValue(*this,args[2]),state.regions,!transport);}
       else{projected=args[1].number?regionLoad(*this,receiver,"/element/"+std::to_string(*args[1].number),state.regions):RegionValue{};projected.known=true;projected.empty=true;if(!args[1].number)projected.opaque=true;}
     }
     ActualValue owners;
@@ -152,7 +155,9 @@ bool ActualCheck::instruction(ActualContext &context,const Operation &op,size_t 
         put(ref+"/element/"+(index?std::to_string(*index):"*"),args[2],!object.weak&&owners.objects.size()==1&&index.has_value());seed(elementSeeds,"element:"+object.type,args[2]);continue;
       }
       for(const auto &[slot,stored]:state.heap){if(!step())return false;if(llvm::StringRef(slot).starts_with(ref+"/element/"))merge(value,stored);}
-      value.tags.insert(typeId("undefined"));
+      const auto bound=initializedArrays.find(object.type);
+      const bool initialized=actualArray&&!args[1].unknown&&index&&*index>=0&&bound!=initializedArrays.end()&&uint64_t(*index)<bound->second;
+      if(!step())return false;if(!initialized)value.tags.insert(typeId("undefined"));
     }if(args[0].unknown)value.unknown=true;if(!conditional&&name=="array_read")value.region=std::move(projected);
   }else if(name=="strict_equal"){
     value=literal(typeId("bool"),3);if(!args[0].unknown&&!args[1].unknown){

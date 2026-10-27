@@ -126,12 +126,12 @@ must independently satisfy the private, acyclic, readonly Published boundary.
 The ordinary weak allocation and older payload remain weak and opaque. This rule
 proves owner survival, not Array structural stability or old scalar contents.
 
-Local feedback and storage of a complete readonly callable in an ordinary field
-are transport events. They still mark the invocation scope blocked for the
+Local feedback and storage of a complete readonly callable in an ordinary known
+field or managed Array element are transport events. They still mark the invocation scope blocked for the
 ordinary current-version proof. The separate readonly return rule may discharge
 that transport blocker, but only after all actual hard boundary events are known.
 The stored value itself must have complete code/environment pairs, matching raw
-environment refs and qualified readonly reader code. A field type supplies no
+environment refs and qualified readonly reader code. A storage type supplies no
 new target permission; the return table and every complete call table retain
 their independent checks.
 
@@ -143,7 +143,23 @@ Span owners and Cells. Every represented birth scope with a matching raw
 reference is invalidated. This walk only adds hard blockers and cannot restore
 roots, heap fields, owner identity or a holding proof. Publishing the Array or
 descriptor itself, or retaining a writable/unknown captured graph, does not gain
-the whole-callable field transport exemption.
+the whole-callable storage transport exemption.
+
+Callable Array access has three separate obligations. The independent target
+flow joins every verified element writer and poisons exposed storage families;
+the actually selected code cannot narrow its complete permitted table. A dense
+initialization guarantee covers every overlapping Array/view family birth and
+the minimum literal length. Empty, short, unsupported or external births, resize,
+unknown erasure and nested capture exposure cancel that guarantee. Storage
+exposure remains sticky as later writers and aliases
+join the fixed point, including nullable callable elements and fields. Actual
+closure-writer captures stay separate from TOP introduced by boundary poisoning;
+a scalar element cannot become an unknown closure writer. It is not a
+GC holding fact. Only a known direct Array receiver and a covered constant index
+may omit the extra missing-element undefined alternative; a ReadSpan has its own
+start/length and receives no such permission. Actual payload undefined remains
+present, including after a verified union view. The original return-point owning
+graph and readonly bounds independently establish whole-callable owner survival.
 
 Distinct verified acyclic invocations of the same factory retain distinct
 physical allocations, including calls through a shared wrapper. Allocation

@@ -4,7 +4,7 @@
 import {i32TypeId,boolTypeId,sha256,canonical} from './identity.mjs';
 import {finiteNumericUse} from './finite-numeric-use.mjs';
 import {classifyArrayCallGraph} from './array-call-graph.mjs';
-import {commonAbstract} from './common-program-abstract.mjs';
+import {commonAbstract,commonActualArrayReceiver} from './common-program-abstract.mjs';
 import {commonCheck as check} from './common-program-common.mjs';
 import {commonEntryReferences} from './common-program-entry.mjs';
 import {commonMethods} from './common-program-methods.mjs';
@@ -200,7 +200,8 @@ export function analyzeCommonGraphs({model,plans},records=null) {
               };value=copyValue(args[0],'root');
             }else if(name==='construct_value'||name==='allocate_reference'||name==='array_create') {
               value=literal(op.view);const ref=site('object',op.result);value.refs.add(ref);allocation(ref,op.view);value.region=version(ref,op.view);
-              if(name==='array_create'){args.forEach((v,i)=>{put(ref+'/element/'+i,v);putRegion(value.region,'element/'+i,v);if(bounded){const key='element:'+op.view,before=a.key(elementSeeds.get(key));seed(elementSeeds,key,v);invalidateCapacity ||= before!==a.key(elementSeeds.get(key));}});
+              if(name==='array_create'){args.forEach((v,i)=>{const covered=Boolean(observer)&&commonReadonlyClosure(v,model,objects,records,readonlyTarget)&&commonActualArrayReceiver(value,types,objects,spend);
+                  put(ref+'/element/'+i,v);putRegion(value.region,'element/'+i,v,true,covered);if(bounded){const key='element:'+op.view,before=a.key(elementSeeds.get(key));seed(elementSeeds,key,v);invalidateCapacity ||= before!==a.key(elementSeeds.get(key));}});
                 const length=literal(sha256('tsfg.type\0u32'),0,args.length);put(ref+'/length',length);putRegion(value.region,'length',length,true,false,regions.number(args.length));}
             }else if(name==='field_load'||name==='field_store') {
               const fieldRegion=emptyRegionValue(),covered=name==='field_store'&&Boolean(observer)&&commonReadonlyClosure(args[1],model,objects,records,readonlyTarget);
@@ -221,12 +222,18 @@ export function analyzeCommonGraphs({model,plans},records=null) {
               const owners=a.empty();let spanOwner=false;for(const ref of args[0].refs){spend();const object=objects.get(ref);check(object,'ssa');
                 if(types.get(object.type)?.kind==='readSpan'){spanOwner=true;a.merge(owners,state.heap.get(ref+'/owner')??a.empty());}else owners.refs.add(ref);}
               const ownerRegion=spanOwner?regions.load(args[0].region,'owner',state.regions):args[0].region;
+              const needsArray=name==='array_read'&&types.get(op.view)?.kind==='function'||name==='array_store'&&Boolean(observer)&&args[2].pairs.size>0,
+                actualArray=needsArray&&commonActualArrayReceiver(args[0],types,objects,spend),covered=name==='array_store'&&Boolean(observer)&&actualArray&&commonReadonlyClosure(args[2],model,objects,records,readonlyTarget);
+              if(observer&&name==='array_store'&&(args[0].unknown||!args[0].refs.size))hardEscape(args[2]);
               for(const ref of owners.refs){spend();const object=objects.get(ref),index=args[1]?.number,selected=regions.select(ownerRegion,ref);
                 selected.opaque ||= args[0].unknown||owners.unknown;const definite=owners.refs.size===1&&!selected.opaque;
                 if(name==='array_resize'){put(ref+'/length',args[1],!object.weak);putRegion(selected,'length',args[1],definite,false,regions.number(args[1].number));continue;}
-                if(name==='array_store'){put(ref+'/element/'+(index===null?'*':index),args[2],!object.weak&&index!==null);putRegion(selected,'element/'+(index===null?'*':index),args[2],definite);if(bounded){const key='element:'+object.type,before=a.key(elementSeeds.get(key));seed(elementSeeds,key,args[2]);invalidateCapacity ||= before!==a.key(elementSeeds.get(key));}continue;}
+                if(name==='array_store'){put(ref+'/element/'+(index===null?'*':index),args[2],!object.weak&&index!==null);putRegion(selected,'element/'+(index===null?'*':index),args[2],definite,covered);if(bounded){const key='element:'+object.type,before=a.key(elementSeeds.get(key));seed(elementSeeds,key,args[2]);invalidateCapacity ||= before!==a.key(elementSeeds.get(key));}continue;}
                 for(const [slot,stored]of state.heap){spend();if(slot.startsWith(ref+'/element/'))a.merge(value,stored);}
-                value.tags.add(undefinedId);
+                // Presence is a separate whole-family Source proof. It cannot
+                // remove undefined already present in the actual stored value.
+                const initialized=actualArray&&!spanOwner&&Number.isSafeInteger(index)&&index>=0&&types.get(op.view)?.kind==='function'&&model.callables.arrayElementInitialized(object.type,index);
+                if(!initialized)value.tags.add(undefinedId);
               }
               if(name==='array_read')value.region=regions.elements(ownerRegion,args[1].number,state.regions);
               if(args[0].unknown)value.unknown=true;
