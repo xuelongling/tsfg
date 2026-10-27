@@ -40,7 +40,8 @@ export function commonProgramPlan(input,records=null) {
   spend(hir.environments.length);const environments=new Map(hir.environments.map(row=>[row.id,row])),slots=new Map();
   for(const env of hir.environments){spend(env.slots.length);for(const slot of env.slots)slots.set(slot.binding,{...slot,layout:env.id});}
   const callables=commonTargets(hir,spend,records);
-  const model={hir,types,functions,bindings,fields,globals,spend,environments,slots,callables,methods:commonMethods(hir,spend),schema:commonCoreSchema,payload:'payload:'+commonCoreSchema,limits:descriptor.limits,
+  const hosts=new Map(hir.hostImports.map(row=>[row.id,row]));
+  const model={hir,types,functions,bindings,fields,globals,hosts,spend,environments,slots,callables,methods:commonMethods(hir,spend),schema:commonCoreSchema,payload:'payload:'+commonCoreSchema,limits:descriptor.limits,
     cell:id=>'cell:'+id};
   const plans=[...hir.functions,...modules].map(owner=>planCommonFunction(model,owner));return {model,plans};
 }

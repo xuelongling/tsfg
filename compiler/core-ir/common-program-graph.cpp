@@ -102,6 +102,11 @@ bool ActualCheck::graph(){
       }else if(op.name=="numeric_use"){
         if(!need(noResult&&op.operands.size()==1&&op.successors.size()==1&&fn->blocks[op.successors[0]].parameters.size()==1&&
           fn->carriers[fn->blocks[op.successors[0]].parameters[0]]==i32Id,"numeric request-trap/normal shape differs"))return false;
+      }else if(op.name=="host_call"){
+        auto host=p.hosts.find(string(field(op.properties,"host_id")));
+        if(!need(host!=p.hosts.end()&&!noResult&&op.successors.empty()&&op.operands.size()==host->second.parameters.size()&&
+          op.view==host->second.returnType&&string(field(op.properties,"signature_hash"))==host->second.signature&&
+          string(field(op.properties,"contract_hash"))==p.hostContractHash,"Host operation binding/signature/control differs"))return false;
       }else if(op.name=="invoke_indirect"){
         std::vector<std::string> args;std::string result;
         if(!need(noResult&&op.successors.size()==2,"indirect invocation control differs")||!indirectAbi(*fn,op,args,result)||!need(args.size()==op.operands.size(),"indirect invocation joined arity differs"))return false;

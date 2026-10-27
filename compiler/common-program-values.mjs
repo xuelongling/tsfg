@@ -114,6 +114,8 @@ export function commonProgramValues(model,graph,state,invoke,indirect) {
     if(e.kind==='checkedElementAccess')return op('array_read',[expression(e.receiver),expression(e.index)],e.type,{element:e.type},e.range);
     if(e.kind==='arrayLength'||e.kind==='readSpanLength')return op(e.kind==='arrayLength'?'array_length':'readspan_length',[expression(e.receiver)],e.type,{},e.range);
     if(e.kind==='fieldAccess')return op('field_load',[expression(e.receiver)],e.type,{field:e.property},e.range);
+    if(e.kind==='hostCall'){const host=model.hosts.get(e.callee);check(host,'host');
+      const args=e.arguments.map(arg=>expression(arg));return op('host_call',args,e.type,{host_id:host.id,signature_hash:host.signatureHash,contract_hash:model.hir.hostContext.contract.digest},e.range);}
     if(e.kind==='call') {
       const args=[];if(e.receiver)args.push(expression(e.receiver));
       for(const [index,arg]of e.arguments.entries())args.push(copy(expression(arg),e.signature.parameters[index],arg.range));

@@ -27,7 +27,7 @@ std::string carrier(mlir::Type t){
   return digest(std::string("tsfg.type")+std::string(1,'\0')+scalarName(code).str());
 }
 const std::map<std::string,std::vector<llvm::StringRef>> properties={
-  {"constant",{"token","decimal"}},{"floating",{"token","bits"}},{"boolean",{"value"}},
+  {"host_call",{"host_id","signature_hash","contract_hash"}},{"constant",{"token","decimal"}},{"floating",{"token","bits"}},{"boolean",{"value"}},
   {"string",{"codeUnits"}},{"undefined",{}},{"null",{}},{"cell",{"binding"}},
   {"load",{"binding"}},{"store",{"binding","initialize"}},
   {"global_load",{"global"}},{"global_store",{"global","initialize"}},

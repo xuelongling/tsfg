@@ -12,7 +12,7 @@ Json intersection(Program &p,const std::set<std::string> &a,const std::set<std::
 }
 bool verifyKernelProof(Program &p,Error &e){
   const auto &targets=items(field(p.request,"targets"));
-  if(!need(exact(p.request,{"targets"})&&field(p.request,"targets").getAsArray()&&targets.size()>=2&&targets.size()<=32,e,"bounded explicit kernel group required"))return false;
+  if(!need(exact(p.request,{"targets"})&&field(p.request,"targets").getAsArray()&&targets.size()!=1&&targets.size()<=32,e,"bounded explicit kernel group required"))return false;
   if(!step(p,e,p.functions.size()))return false;
   std::map<std::string,const Function *> declarations;
   for(const auto &fn:p.functions)declarations.emplace(fn.id,&fn);
@@ -27,11 +27,18 @@ bool verifyKernelProof(Program &p,Error &e){
     if(!step(p,e))return false;const auto id=string(target);
     if(!need(kernelRoots.count(id)&&contracts.count(id)&&p.fixedEffects.count(id)&&declarations.count(id)&&(previous.empty()||previous<id),e,"selected target is not an ordered unique declared kernel root"))return false;
     const auto &upper=p.fixedEffects.at(id);
+    if(!upper.hostReads.empty()||!upper.hostWrites.empty()){
+      std::set<std::string> seen;std::vector<std::string> pending{id};
+      while(!pending.empty()){if(!step(p,e))return false;const auto next=pending.back();pending.pop_back();if(!seen.insert(next).second)continue;
+        auto host=p.hostOrigins.find(next);if(host!=p.hostOrigins.end()){e.path=host->second.path;e.range=host->second.range;return reject(e,"core-ir-common-kernel-host","fixed Published Host resource access is not kernel-admissible");}
+        auto body=p.effects.find(next);if(body!=p.effects.end())for(const auto &target:body->second.calls){if(!step(p,e))return false;pending.push_back(target);}}
+      locate(id);return reject(e,"core-ir-common-kernel-host","fixed Published Host resource access is not kernel-admissible");
+    }
     bool captureAccess=false;for(const auto &[slot,access]:upper.captures){if(!step(p,e))return false;captureAccess|=access.read||access.write||access.structural;}
     if(!need(!captureAccess&&!upper.allocation&&!upper.managedReference&&!upper.ehControl&&!upper.mayThrow&&!upper.await&&!upper.lock&&!upper.escape&&!upper.unknownHost,e,"fixed Published kernel capability is not proved")){locate(id);return false;}
     const auto effect=writeEffects(upper);accesses.push_back(Object{{"functionId",id},{"publishedContractDigest",field(*contracts.at(id),"digest")},
       {"reads",field(field(effect,"globals"),"reads")},{"writes",field(field(effect,"globals"),"writes")},
-      {"parameters",field(effect,"parameters")},{"captures",field(effect,"captures")},{"facets",field(effect,"facets")}});
+      {"hostResources",field(effect,"hostResources")},{"parameters",field(effect,"parameters")},{"captures",field(effect,"captures")},{"facets",field(effect,"facets")}});
     previous=id;ids.push_back(id);
   }
   for(size_t i=0;i<ids.size();++i)for(size_t j=i+1;j<ids.size();++j){

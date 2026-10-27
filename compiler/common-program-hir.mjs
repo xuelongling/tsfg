@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: MIT
 // The sole complete Source-to-owned transform. Verification reconstructs every
 // node, including ordinary functions outside selected kernel reachability.
+import {commonOwnedHostImports,commonHostContext} from './common-program-hosts.mjs';
 import {commonEnvironments} from './common-program-environments.mjs';
 import {isProxy} from 'node:util/types';
 import {copyGenericJsonBytes} from './generic-json.mjs';
@@ -20,14 +21,16 @@ export function commonProgramContext(value) {
   check(facts.packageId===fields.expectedPackageId.value,'context');return {bytes,facts};
 }
 
-export function projectCommonProgram(facts) {
+export function projectCommonProgram(facts,hostContext=null) {
   const snapshot=verifyCommonProgramFacts(facts),p=snapshot.payload,spend=commonMeter();
   const ids=commonSemanticIdentities(p,spend),fields=new Map(),constructionIds=new Map();
   for(const row of p.types){spend();if(row.fields)for(const [index,field]of row.fields.entries())fields.set(field.id,commonFieldId(ids.typeIds.get(row.id),field.name,index));
     if(row.construction)constructionIds.set(row.construction.id,commonIdentity('construction',{type:ids.typeIds.get(row.id)}));}
   const type=id=>{check(ids.typeIds.has(id),'type');return ids.typeIds.get(id);};
+  const hostImports=commonOwnedHostImports(p,type,spend),hosts=new Map(hostImports.map(row=>[row.sourceBinding,row]));
+  const ownedHostContext=commonHostContext(hostContext,hostImports,spend);
   const modulePaths=new Set(p.modules.map(row=>row.sourcePath));
-  const target=id=>ids.functionIds.get(id)??ids.globals.get(id)??ids.typeIds.get(id)??(modulePaths.has(id)?ids.moduleId(id):undefined);
+  const target=id=>hosts.get(id)?.id??ids.functionIds.get(id)??ids.globals.get(id)??ids.typeIds.get(id)??(modulePaths.has(id)?ids.moduleId(id):undefined);
   const binding=row=>({id:row.id,sourceBinding:row.id,name:row.name,kind:row.kind,type:type(row.declaredType),writable:row.writable,lexicalOwner:row.lexicalOwner===null?null:ids.functionIds.get(row.lexicalOwner),
     range:{...row.declarationRange},nameRange:{...row.nameRange},annotationRange:structuredClone(row.annotationRange),elementAnnotationRange:structuredClone(row.elementAnnotationRange)});
   function expression(value) {
@@ -45,6 +48,7 @@ export function projectCommonProgram(facts) {
       result.signature={parameters:value.signature.parameters.map(type),returnType:type(value.signature.returnType)};
       result.sourceSignature=structuredClone(value.signature);
       if(ids.signatures.has(value.callee))result.signatureHash=ids.signatures.get(value.callee);
+      if(hosts.has(value.callee))result.signatureHash=hosts.get(value.callee).signatureHash;
       if(['new','superConstruct'].includes(value.kind))result.construction=constructionIds.get(ids.types.get(value.callee)?.construction.id);
     }
     if(value.compatibilityRoots)result.compatibilityRoots=value.compatibilityRoots.map(row=>({sourceType:type(row.sourceType),targetType:type(row.targetType)}));
@@ -107,15 +111,15 @@ export function projectCommonProgram(facts) {
   const closure={roots:p.closure.roots.map(root),requiredRoots:p.closure.requiredRoots.map(root),modules:modules.map(row=>row.id),
     functions:functions.map(row=>row.id),initialization};
   const hir={format:commonHirFormat,snapshot,inputIdentity:snapshot.packageId,rootFile:p.rootFile,
-    sources:p.files.map(row=>({path:row.path,content:row.content,hash:'sha256:'+row.sha256})),target:structuredClone(p.target),types,functions,modules,globals,closure,environments:environment.environments};
+    hostImports,hostContext:ownedHostContext,sources:p.files.map(row=>({path:row.path,content:row.content,hash:'sha256:'+row.sha256})),target:structuredClone(p.target),types,functions,modules,globals,closure,environments:environment.environments};
   commonBudget(hir);return own(hir);
 }
 
-export function buildCommonProgramHir(input,context) {
-  const selected=commonProgramContext(context);check(writeCommonProgramFacts(input).equals(selected.bytes),'context');return projectCommonProgram(selected.facts);
+export function buildCommonProgramHir(input,context,hostContext=null) {
+  const selected=commonProgramContext(context);check(writeCommonProgramFacts(input).equals(selected.bytes),'context');return projectCommonProgram(selected.facts,hostContext);
 }
 export function verifyCommonProgramHir(hir) {
-  commonBudget(hir);check(same(hir?.format,commonHirFormat),'identity');const rebuilt=projectCommonProgram(hir.snapshot);
+  commonBudget(hir);check(same(hir?.format,commonHirFormat),'identity');const rebuilt=projectCommonProgram(hir.snapshot,hir.hostContext);
   check(same(hir,rebuilt),'reconstruct');return rebuilt;
 }
 export const printCommonProgramHir=hir=>canonical(verifyCommonProgramHir(hir))+'\n';

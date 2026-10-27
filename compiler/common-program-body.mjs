@@ -15,6 +15,7 @@ import {validateCommonEntryRoots} from './common-program-entry.mjs';
 
 export function validateCommonBodies(payload,sources,types,grammars,visibility,spend) {
   const collections=commonCollections(spend);
+  const hosts=new Map(payload.hostImports.map(row=>[row.id,row]));
   const functions=new Map(),bindings=new Map(),globals=new Map(payload.globals.map(row=>[row.binding.id,row])),signatureOrigins=new Map();
   function registerOrigin(path,range,type) {
     spend();const key=signatureId(path,range),previous=signatureOrigins.get(key);
@@ -167,7 +168,7 @@ export function validateCommonBodies(payload,sources,types,grammars,visibility,s
         child(value.target,true,undefined,true);check(value.type===value.target.type&&['++','--'].includes(value.operator),'operator');
         sequence(value.prefix?[value.operator,value.target.range]:[value.target.range,value.operator]);return;
       }
-      if(['call','new','superConstruct'].includes(value.kind)) {
+      if(['call','hostCall','new','superConstruct'].includes(value.kind)) {
         const signature=value.signature;check(signature&&signature.id===signatureId(signature.sourcePath,signature.declarationRange),'signature');
         check(signature.parameters.length===value.arguments.length&&signature.parameters.every(id=>types.has(id))&&types.has(signature.returnType),'signature');
         if(value.receiver)child(value.receiver);
@@ -176,6 +177,9 @@ export function validateCommonBodies(payload,sources,types,grammars,visibility,s
           const owner=types.get(value.kind==='new'?value.type:value.callee);check(owner&&same(signature,owner.construction.signature)&&value.callee===owner.id,'construction');
           if(value.kind==='new')check(value.flowType===owner.id&&identifierName(text(value.calleeRange))===owner.nominalKey.declarationPath.at(-1),'construction');
           else check(fn.ownerType&&types.get(fn.ownerType).base===owner.id&&text(value.calleeRange)==='super','construction');
+        }else if(value.kind==='hostCall'){
+          const host=hosts.get(value.callee);check(host&&same(signature,host.signature)&&value.type===host.returnType
+            &&value.flowType===host.returnType&&!value.receiver&&local.get(staticBindingName(text(value.calleeRange)))===host.id,'host');
         }else if(value.callee===payload.readSpanIntrinsic.id)check(signature.parameters.length===3&&types.get(value.arguments[0].flowType)?.kind==='array'
           &&signature.parameters[1]==='u32'&&signature.parameters[2]==='u32'&&types.get(value.flowType)?.kind==='readSpan','signature');
         else {

@@ -36,7 +36,7 @@ bool SourceModel::directory(){
     string(field(facts,"schemaHash"))==sourceSchema&&string(field(facts,"packageId"))==p.inputIdentity,
     "selected whole Source package identity differs"))return false;
   if(!need(exact(payload,{"arrayLength","closure","compatibilityWitnesses","config","declarations","diagnostics",
-    "entryCompatibilityRoots","exports","files","functions","globals","modules","positionUnit","readSpanIntrinsic",
+    "entryCompatibilityRoots","exports","files","functions","globals","hostImports","modules","positionUnit","readSpanIntrinsic",
     "readSpanLength","rootFile","sourceRoot","target","typeAliases","types"}),"complete common Source payload shape differs"))return false;
   if(!need(string(field(facts,"packageId"))==digest(std::string("tsfg.program-facts.package.v2")+std::string(1,'\0')+sourceSchema.str()+
     std::string(1,'\0')+canonical(payload)),"whole Source package hash differs"))return false;
@@ -45,7 +45,7 @@ bool SourceModel::directory(){
     for(const auto &row:items(raw)){if(!spend())return false;const auto id=string(field(row,key));
       if(!need(!id.empty()&&to.emplace(id,&row).second,"duplicate or missing protocol directory ID"))return false;}return true;};
   if(!table("types",types,"id",4096)||!table("functions",functions,"id",4096)||!table("files",sources,"path",128)||
-    !table("modules",modules,"sourcePath",128)||!table("typeAliases",aliases,"id",4096))return false;
+    !table("hostImports",hosts,"id",1)||!table("modules",modules,"sourcePath",128)||!table("typeAliases",aliases,"id",4096))return false;
   for(const auto &[id,t]:types){const auto &ctor=field(*t,"constructor");if(!ctor.getAsNull()){
     const auto fid=string(field(ctor,"id"));if(!spend()||!need(!fid.empty()&&functions.emplace(fid,&ctor).second,"constructor protocol ID differs"))return false;}}
   if(!need(field(payload,"globals").getAsArray()&&items(field(payload,"globals")).size()<=4096,"global directory bound"))return false;
@@ -159,7 +159,7 @@ bool SourceModel::identities(){
 }
 std::string SourceModel::type(const Json &v)const {auto it=typeIds.find(string(v));return it==typeIds.end()?std::string():it->second;}
 std::string SourceModel::target(const Json &v)const {
-  const auto id=string(v);for(const auto *map:{&functionIds,&globalIds,&typeIds}){auto it=map->find(id);if(it!=map->end())return it->second;}
+  const auto id=string(v);for(const auto *map:{&functionIds,&globalIds,&typeIds,&hostIds}){auto it=map->find(id);if(it!=map->end())return it->second;}
   return modules.count(id)?moduleId(id):std::string();
 }
 } // namespace tsfg::commonProgram

@@ -75,6 +75,11 @@ SourcePlan::Reg SourcePlan::expression(const Json &e){
     }
     const auto value=indirect(e,callee,std::move(args));return value==noRegister?emit("undefined",{},digest(std::string("tsfg.type")+std::string(1,'\0')+"undefined"),Object{},r):value;
   }
+  if(kind=="hostCall"){
+    const auto host=check.p.hosts.find(string(field(e,"callee")));if(!check.need(host!=check.p.hosts.end(),"Source Host import missing"))return noRegister;
+    std::vector<Reg> args;for(const auto &arg:items(field(e,"arguments"))){if(!check.step())return noRegister;args.push_back(expression(arg));}
+    return emit("host_call",std::move(args),type,Object{{"host_id",host->second.id},{"signature_hash",host->second.signature},{"contract_hash",check.p.hostContractHash}},r);
+  }
   if(kind=="call"||kind=="new"||kind=="superConstruct"){
     std::vector<Reg> args;const auto &parameters=items(field(field(e,"signature"),"parameters"));size_t index=0;
     if(kind=="call"&&!field(e,"receiver").getAsNull())args.push_back(expression(field(e,"receiver")));

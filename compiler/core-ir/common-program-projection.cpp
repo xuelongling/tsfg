@@ -1,5 +1,6 @@
 // SPDX-License-Identifier: MIT
 #include "common-program-source.h"
+#include "common-program-hosts.h"
 #include <algorithm>
 namespace tsfg::commonProgram {
 namespace {
@@ -57,6 +58,7 @@ Json SourceModel::expression(const Json &v){
     out["signature"]=Object{{"parameters",std::move(parameters)},{"returnType",type(field(field(v,"signature"),"returnType"))}};
     out["sourceSignature"]=field(v,"signature");
     if(signatures.count(callee))out["signatureHash"]=signatures.at(callee);
+    if(hostSignatures.count(callee))out["signatureHash"]=hostSignatures.at(callee);
     const auto kind=string(field(v,"kind"));if(kind=="new"||kind=="superConstruct"){
       if(!need(types.count(callee),"construction nominal target missing"))return nullptr;
       const auto cid=string(field(field(*types.at(callee),"construction"),"id"));
@@ -176,7 +178,8 @@ bool SourceModel::projection(){
   for(const auto &m:items(field(payload,"modules")))if(!enter(string(field(m,"sourcePath"))))return false;
   for(const auto &s:items(field(payload,"files"))){if(!spend())return false;projectedSources.push_back(Object{{"path",field(s,"path")},{"content",field(s,"content")},{"hash","sha256:"+string(field(s,"sha256"))}});}
   auto projectedEnvironments=environments(projectedFunctions);if(!error.message.empty())return false;
-  Json rebuilt=Object{{"format",Object{{"family","tsfg.program-hir-candidate"},{"version",2},{"schemaHash",hirSchema}}},{"snapshot",facts},
+  Array projectedHosts;for(const auto &host:items(field(payload,"hostImports"))){if(!spend())return false;projectedHosts.push_back(ownedHosts.at(string(field(host,"id"))));}
+  Json rebuilt=Object{{"hostImports",std::move(projectedHosts)},{"hostContext",field(p.hir,"hostContext")},{"format",Object{{"family","tsfg.program-hir-candidate"},{"version",2},{"schemaHash",hirSchema}}},{"snapshot",facts},
     {"inputIdentity",field(facts,"packageId")},{"rootFile",field(payload,"rootFile")},{"sources",std::move(projectedSources)},{"target",field(payload,"target")},
     {"types",ordered(std::move(projectedTypes))},{"functions",ordered(std::move(projectedFunctions))},{"modules",std::move(projectedModules)},
     {"globals",ordered(std::move(projectedGlobals))},{"environments",std::move(projectedEnvironments)},{"closure",Object{{"roots",std::move(roots)},{"requiredRoots",std::move(requiredRoots)},
@@ -185,6 +188,6 @@ bool SourceModel::projection(){
   return error.message.empty()&&need(mismatch.empty(),"complete owned HIR differs from independent Source transformation at "+mismatch);
 }
 bool verifySource(Program &p,Error &e){
-  SourceModel source(p,e);return source.directory()&&source.identities()&&source.sourceText()&&source.projection();
+  SourceModel source(p,e);return source.directory()&&source.identities()&&source.sourceText()&&verifyCommonHostContext(p,e)&&source.projection();
 }
 } // namespace tsfg::commonProgram

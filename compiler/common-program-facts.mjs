@@ -8,6 +8,7 @@ import {commonSourceGrammar,commonSourceAccess,commonTypeSyntax} from './common-
 import {validateCommonBodies} from './common-program-body.mjs';
 import {validateCommonDeclarations} from './common-program-declarations.mjs';
 import {validateCommonLexical} from './common-program-lexical.mjs';
+import {validateCommonHostDeclarations} from './common-program-hosts.mjs';
 import {commonSemanticIdentities} from './common-program-identities.mjs';
 import {commonSourceDescriptor as descriptor,commonSourceFormat as format,canonical,sha256,own,
   commonBudget,commonJson,commonCheck as check,commonSame as same,commonMeter} from './common-program-common.mjs';
@@ -49,7 +50,7 @@ export function verifyCommonProgramFacts(value) {
   spend(p.types.length);const sourceTypeIds=new Set(p.types.map(type=>type.id));
   for(const type of p.types)if(type.kind==='function'){spend(type.parameters.length+1);check(type.parameters.length<=64&&type.constructor===null&&type.parameters.every(id=>sourceTypeIds.has(id))&&sourceTypeIds.has(type.returnType),'function-type');
     check(type.id===sha256('tsfg.program.function-type.v2\0'+canonical({parameters:type.parameters,returnType:type.returnType})),'function-type');}
-  const types=validateTypedArrayTypes(p,sources);validateTypedArrayDeclarations(p,sources);
+  const types=validateTypedArrayTypes(p,sources);validateTypedArrayDeclarations(p,sources);validateCommonHostDeclarations(p,sources,types,spend);
   const grammars=new Map([...sources].filter(([path])=>!path.endsWith('.d.ts')).map(([path,row])=>[path,commonSourceGrammar(row,spend)]));
   const functions=new Map(p.functions.map(fn=>[fn.id,fn])),globals=new Map(p.globals.map(row=>[row.binding.id,row]));
   check(functions.size===p.functions.length&&globals.size===p.globals.length,'identity');
@@ -75,6 +76,7 @@ export function verifyCommonProgramFacts(value) {
           check(!scope.has(alias.name),'scope');scope.set(alias.name,alias.target);
           if(alias.kind==='namespace')for(const exported of modules.get(edge.sourcePath).exports){spend();scope.set(alias.name+'.'+exported.name,exported.target);}}
       }}
+    for(const host of p.hostImports){spend();if(!scope.has(host.name))scope.set(host.name,host.id);}
     let previous;
     for(const e of module.exports){spend();const definition=target(e.target);check(definition&&targetPath(definition)===e.targetSourcePath
       &&(!previous||byteOrder(previous,e.name)<0),'export');previous=e.name;sourceRange(e.range,g.text);
@@ -120,7 +122,7 @@ export function verifyCommonProgramFacts(value) {
     else {const fn=functions.get(root.target);check(fn&&fn.sourcePath===root.sourcePath&&fn.name===root.name&&same(root.range,fn.declarationRange),'closure');}}
   check(p.closure.requiredRoots.every(root=>p.closure.roots.some(candidate=>same(candidate,root))),'closure');
   const request={family:'tsfg.program-facts-request-candidate',version:2,schemaHash:format.schemaHash,input:{sourceRoot:p.sourceRoot,rootFile:p.rootFile,
-    files:p.files.map(({path,content,sha256})=>({path,content,sha256})),declarations:p.declarations,config:p.config,target:p.target,compilationClosure:closure}};
+    files:p.files.map(({path,content,sha256})=>({path,content,sha256})),declarations:p.declarations,config:p.config,target:p.target,compilationClosure:closure,hostImports:p.hostImports.map(({sourcePath,name,capabilityId,parameterTypes,returnType})=>({sourcePath,name,capabilityId,parameterTypes,returnType}))}};
   check(value.requestId===sha256('tsfg.program-facts.request.v2\0'+canonical(request)+'\n')
     &&value.packageId===sha256('tsfg.program-facts.package.v2\0'+format.schemaHash+'\0'+canonical(p)),'identity');
   const semantic=commonSemanticIdentities(p,spend);check(new Set(semantic.typeIds.values()).size===p.types.length,'identity','duplicate owned semantic TypeId');

@@ -24,7 +24,7 @@ bool holdingCall(ActualCheck &c,const std::string &id,bool privateReader){
   const auto &source=*c.sourceFunctions.at(id);const auto &upper=c.p.fixedEffects.at(id);
   const auto parent=string(field(source,"lexicalParent"));if(privateReader&&(parent.empty()||!c.sourceFunctions.count(parent)))return false;
   if(privateReader&&upper.escape)return false;
-  if(upper.unknownHost||upper.await||upper.lock||!upper.reads.empty()||!upper.writes.empty())return false;
+  if(upper.unknownHost||upper.await||upper.lock||!upper.reads.empty()||!upper.writes.empty()||!upper.hostReads.empty()||!upper.hostWrites.empty())return false;
   for(const auto &access:upper.parameters){if(!c.step())return false;if(access.write||access.structural)return false;}
   for(const auto &[slot,access]:upper.captures){if(!c.step(slot.size()/64+1))return false;if(access.structural||access.write&&!scalarCapture(c,source,slot))return false;}
   auto fn=c.functions.find(id);if(fn==c.functions.end())return false;
