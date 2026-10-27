@@ -335,6 +335,7 @@ test("product PR workflow composes every gate, producer, compatibility lane, and
   const workflow = await readFile(workflowPath, "utf8");
   const repositoryGates = workflowJob(workflow, "repository-gates");
   assert.match(repositoryGates, /git diff --check/);
+  assert.doesNotMatch(repositoryGates, /ecp-gate\.mjs|ecp-report\.json/);
   assert.match(repositoryGates, /workspace-policy-cli\.test\.mjs/);
   assert.match(repositoryGates, /toolchain-lock\.test\.mjs/);
   assert.match(repositoryGates, /contract-compatibility-cli\.test\.mjs/);

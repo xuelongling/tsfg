@@ -221,3 +221,21 @@ for lock/cache integrity failure, 12 for offline or sandbox input-boundary
 failure, 20 for build failure, 21 for test/compatibility failure, and 22 for
 package failure.
 It uses 23 for a reproducibility mismatch. It emits no telemetry.
+
+## Engineering Change Proposals
+
+Changes to an engineering boundary use the two-stage ECP process documented in
+[`docs/proposals/README.md`](docs/proposals/README.md). Submit and merge the
+proposal first. After it is accepted, implementation pull requests identify the
+base-commit proposal with an exact line in the pull request body:
+
+```text
+ECP: docs/proposals/2026-0001-example.md
+```
+
+The independent `ECP Governance / trusted base ECP gate` required check
+classifies governed changes with the gate from the pull request base commit,
+validates the preceding accepted proposal in both base and head, and archives
+`ecp-report.json` for 90 days. It never checks out or executes candidate code.
+Ordinary implementation changes and patch-level tool updates do not need a
+proposal; use `ECP: none` in their pull request body.
