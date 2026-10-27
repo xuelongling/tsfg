@@ -23,10 +23,10 @@ bool assignment(SourceModel &m,const std::string &from,const std::string &to){
   while(m.types.count(current)&&seen.insert(current).second){if(!m.spend())return false;current=string(field(*m.types.at(current),"base"));if(current==to)return true;}
   return false;
 }
-bool literal(SourceBodies &b,const Json &v){
-  auto &m=b.model;const auto kind=string(field(v,"kind")),type=string(field(v,"type"));
+bool literal(SourceSyntax &source,const Json &v){
+  auto &m=source.model;const auto kind=string(field(v,"kind")),type=string(field(v,"type"));
   if(kind=="numericLiteral"){
-    const auto token=string(field(v,"token"));if(!b.source->sequence(field(v,"range"),{Json(token)}))return false;
+    const auto token=string(field(v,"token"));if(!source.sequence(field(v,"range"),{Json(token)}))return false;
     std::string digits;for(char c:token)if(c!='_')digits+=c;
     if(type=="f32"||type=="f64"){
       llvm::APFloat number(type=="f32"?llvm::APFloat::IEEEsingle():llvm::APFloat::IEEEdouble());
@@ -40,11 +40,11 @@ bool literal(SourceBodies &b,const Json &v){
     llvm::SmallString<80> out;number.toString(out,10,false,false);
     return m.need(out==string(field(v,"decimal"))&&number.getActiveBits()<=(type.front()=='i'?width-1:width),"original integer decimal/range differs");
   }
-  if(kind=="booleanLiteral")return m.need(type=="bool"&&(string(field(v,"token"))=="true"||string(field(v,"token"))=="false"),"original boolean type differs")&&b.source->sequence(field(v,"range"),{field(v,"token")});
-  if(kind=="undefinedLiteral"||kind=="nullLiteral")return m.need(type==(kind=="undefinedLiteral"?"undefined":"null"),"absence literal type differs")&&b.source->sequence(field(v,"range"),{Json(type)});
+  if(kind=="booleanLiteral")return m.need(type=="bool"&&(string(field(v,"token"))=="true"||string(field(v,"token"))=="false"),"original boolean type differs")&&source.sequence(field(v,"range"),{field(v,"token")});
+  if(kind=="undefinedLiteral"||kind=="nullLiteral")return m.need(type==(kind=="undefinedLiteral"?"undefined":"null"),"absence literal type differs")&&source.sequence(field(v,"range"),{Json(type)});
   if(kind!="stringLiteral")return false;
-  size_t a,z;if(!b.source->span(field(v,"range"),a,z)||!m.need(z==a+1&&type=="string","original String token/type differs"))return false;
-  const auto &token=b.source->tokens[a];const auto raw=std::u16string_view(b.source->content).substr(token.start,token.end-token.start);
+  size_t a,z;if(!source.span(field(v,"range"),a,z)||!m.need(z==a+1&&type=="string","original String token/type differs"))return false;
+  const auto &token=source.tokens[a];const auto raw=std::u16string_view(source.content).substr(token.start,token.end-token.start);
   if(!m.need(raw.size()>=2&&(raw.front()=='\''||raw.front()=='"')&&raw.back()==raw.front(),"original String quoting differs"))return false;
   Array units;const auto digit=[](char16_t c){return c>='0'&&c<='9'?c-'0':c>='a'&&c<='f'?c-'a'+10:c>='A'&&c<='F'?c-'A'+10:-1;};
   for(size_t n=1;n+1<raw.size();++n){if(!m.spend())return false;uint32_t c=raw[n];
@@ -67,6 +67,7 @@ bool literal(SourceBodies &b,const Json &v){
   return m.need(same(Json(std::move(units)),field(v,"codeUnits")),"original UTF16 String payload differs");
 }
 }
+bool verifySourceLiteral(SourceSyntax &source,const Json &value){return literal(source,value);}
 bool SourceBodies::expression(const Json &v,bool target,const std::string &expected,bool readTarget){
   if(!model.spend())return false;size_t a,b;if(!source->span(field(v,"range"),a,b))return false;
   const auto kind=string(field(v,"kind")),type=string(field(v,"type")),actual=flow(v);
@@ -87,7 +88,7 @@ bool SourceBodies::expression(const Json &v,bool target,const std::string &expec
   }
   if(kind=="functionReference"||kind=="indirectCall")return callableExpression(v);
   if(kind=="thisReference")return model.need(string(field(*current,"ownerType"))==type,"this nominal owner differs")&&sequence({Json("this")});
-  if(llvm::StringRef(kind).ends_with("Literal")&&kind!="arrayLiteral")return model.need(actual==type,"literal flow type differs")&&literal(*this,v);
+  if(llvm::StringRef(kind).ends_with("Literal")&&kind!="arrayLiteral")return model.need(actual==type,"literal flow type differs")&&verifySourceLiteral(*source,v);
   if(kind=="parentheses")return child("expression")&&model.need(type==string(field(field(v,"expression"),"type"))&&actual==flow(field(v,"expression")),"parenthesized type/flow differs")&&sequence({Json("("),field(field(v,"expression"),"range"),Json(")")});
   if(kind=="as")return child("expression")&&annotation(field(v,"annotationRange"),type)&&source->sequence(field(v,"operatorRange"),{Json("as")})&&
     sequence({field(field(v,"expression"),"range"),Json("as"),field(v,"annotationRange")});

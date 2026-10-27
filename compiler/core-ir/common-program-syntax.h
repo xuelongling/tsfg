@@ -12,6 +12,9 @@ struct SourceSyntax {
   bool sequence(const Json &,const std::vector<Json> &,bool semicolon=false)const;
   bool range(const Json &,SourceAnchor &)const;
 };
+// Scalar/string token payload validation is independent of a Program relation
+// ledger; a caller checks its contextual type before entering this boundary.
+bool verifySourceLiteral(SourceSyntax &,const Json &);
 struct SourceBodies {
   SourceModel &model;std::map<std::string,SourceSyntax> &syntax;
   std::map<std::string,const Json *> bindings;

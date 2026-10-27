@@ -2,6 +2,9 @@
 
 # Owned system Query source facts
 
+The subsequent static consumer is documented in
+[Owned Query Core consumer](system-query-core-candidate.md).
+
 This private v2 candidate describes the complete source system:
 
 ```ts

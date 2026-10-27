@@ -84,12 +84,16 @@ struct Components {
     if(!need(!encoded.empty()&&encoded.size()<=2097152-retained,"component layout byte budget exceeded"))return nullptr;
     retained+=encoded.size();records.emplace(id,std::move(row));active.erase(id);native.emplace(id,type);heights.emplace(id,height);return type;
   }
-  bool run(Json &out){
+  bool catalog(Json &out){
     Array roots;
     for(const auto &t:items(field(p.hir,"types"))){if(!step())return false;types.emplace(string(field(t,"id")),&t);}
     for(const auto &[id,t]:types)if(component(*t)){if(!build(id))return false;roots.push_back(id);}
     Array rows;for(const auto &[id,row]:records){if(!step())return false;rows.push_back(row);}
-    Json payload=Object{{"components",std::move(roots)},{"types",std::move(rows)},
+    out=Object{{"components",std::move(roots)},{"types",std::move(rows)}};return true;
+  }
+  bool run(Json &out){
+    Json catalogRows=nullptr;if(!catalog(catalogRows))return false;
+    Json payload=Object{{"components",field(catalogRows,"components")},{"types",field(catalogRows,"types")},
       {"inputIdentity",p.inputIdentity},{"hirDigest",p.hirHash},{"target",field(p.hir,"target")}};
     const auto text=canonical(payload);
     if(!need(!text.empty()&&text.size()<=2097152,"component layout packet exceeded"))return false;
@@ -101,4 +105,5 @@ struct Components {
 };
 }
 bool componentLayouts(Program &p,Json &out,Error &e){Components builder(p,e);return builder.run(out);}
+bool componentLayoutCatalog(Program &p,Json &out,Error &e){Components builder(p,e);return builder.catalog(out);}
 } // namespace tsfg::commonProgram

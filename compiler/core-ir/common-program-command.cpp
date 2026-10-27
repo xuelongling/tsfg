@@ -24,6 +24,15 @@ public:
   bool exceeded() const { return overflow; }
   llvm::StringRef value() const { return bytes; }
 };
+int finish(Output &output){
+  if(output.exceeded()){llvm::errs()<<"[core-ir-program-budget] output exceeds candidate byte budget\n";return 3;}
+  if(llvm::sys::ChangeStdoutToBinary())return 2;
+  llvm::outs()<<output.value();llvm::outs().flush();
+  if(llvm::outs().has_error()){llvm::outs().clear_error();return 2;}return 0;
+}
+}
+int printCoreModule(mlir::ModuleOp module){
+  Output output;module->print(output,mlir::OpPrintingFlags().printGenericOpForm());output<<'\n';return finish(output);
 }
 int readCoreInput(std::string &bytes) {
   if (llvm::sys::ChangeStdinToBinary()) return 2;
@@ -59,16 +68,8 @@ int runCoreModule(mlir::ModuleOp module, llvm::StringRef command) {
       llvm::errs() << "\n"; return 3;
     }
     output << canonical(layouts);
-  } else module->print(output, mlir::OpPrintingFlags().printGenericOpForm());
+  } else return printCoreModule(module);
   output << '\n';
-  if (output.exceeded()) {
-    llvm::errs() << "[core-ir-program-budget] output exceeds candidate byte budget\n";
-    return 3;
-  }
-  if (llvm::sys::ChangeStdoutToBinary()) return 2;
-  llvm::outs() << output.value();
-  llvm::outs().flush();
-  if (llvm::outs().has_error()) { llvm::outs().clear_error(); return 2; }
-  return 0;
+  return finish(output);
 }
 }

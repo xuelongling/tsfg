@@ -1,0 +1,22 @@
+// SPDX-License-Identifier: MIT
+#pragma once
+#include "common-program.h"
+#include "mlir/IR/DialectRegistry.h"
+namespace tsfg::systemQuery {
+using Storage=commonProgram::CarrierStorage;
+#define TSFG_QUERY_TYPE(Class,Name) \
+class Class:public mlir::Type::TypeBase<Class,mlir::Type,Storage>{ \
+public:using Base::Base;MLIR_DEFINE_EXPLICIT_INTERNAL_INLINE_TYPE_ID(Class) \
+  static constexpr llvm::StringLiteral name="tsfg." Name; \
+  static Class get(mlir::MLIRContext *c,llvm::StringRef key){return Base::get(c,mlir::StringAttr::get(c,key));} \
+  llvm::StringRef key()const{return getImpl()->key.getValue();} \
+};
+TSFG_QUERY_TYPE(QueryType,"query")
+TSFG_QUERY_TYPE(ChunkType,"chunk")
+TSFG_QUERY_TYPE(ViewType,"view")
+#undef TSFG_QUERY_TYPE
+void registerDialect(mlir::DialectRegistry &);
+// Independently verifies Source and typed operations; binds logical operations
+// using the existing fixed component DataLayout before canonical output.
+mlir::LogicalResult verifyAndBind(mlir::ModuleOp);
+} // namespace tsfg::systemQuery

@@ -4,6 +4,7 @@
 #include "core-source.h"
 #include "common-program.h"
 #include "common-program-command.h"
+#include "system-query.h"
 #include "mlir/Dialect/Func/IR/FuncOps.h"
 #include "mlir/Dialect/ControlFlow/IR/ControlFlowOps.h"
 #include "mlir/IR/BuiltinOps.h"
@@ -421,15 +422,16 @@ mlir::LogicalResult verifiedBytecode(mlir::ModuleOp module, Bytes &packet) {
 
 int main(int argc, char **argv) {
   const bool common = argc == 3 && llvm::StringRef(argv[1]) == "--common-program";
-  const auto command = argc == 2 || common ? llvm::StringRef(argv[common ? 2 : 1]) : llvm::StringRef();
-  if ((argc != 2 && !common) || (command != "--canonicalize" &&
-      command != "--optimize" && !(common && command == "--component-layouts") && (common || command != "--emit-bytecode"))) {
+  const bool query = argc == 3 && llvm::StringRef(argv[1]) == "--system-query";
+  const auto command = argc == 2 || common || query ? llvm::StringRef(argv[common || query ? 2 : 1]) : llvm::StringRef();
+  if ((argc != 2 && !common && !query) || (command != "--canonicalize" &&
+      command != "--optimize" && !(common && command == "--component-layouts") && (common || query || command != "--emit-bytecode"))) {
     llvm::errs() << "[core-ir-command] expected --canonicalize with IR on stdin\n";
     return 2;
   }
   std::string commonInput;
   std::unique_ptr<llvm::MemoryBuffer> input;
-  if (common) {
+  if (common || query) {
     const int status = tsfg::commonProgram::readCoreInput(commonInput);
     if (status) return status;
     input = llvm::MemoryBuffer::getMemBuffer(commonInput, "<stdin>", false);
@@ -441,6 +443,7 @@ int main(int argc, char **argv) {
   mlir::DialectRegistry registry;
   tsfg::registerCoreDialect(registry);
   if (common) tsfg::commonProgram::registerDialect(registry);
+  if (query) tsfg::systemQuery::registerDialect(registry);
   registry.insert<mlir::func::FuncDialect, mlir::cf::ControlFlowDialect>();
   mlir::MLIRContext context(registry);
   context.disableMultithreading();
@@ -450,6 +453,7 @@ int main(int argc, char **argv) {
     return 3;
   }
   if (common) return tsfg::commonProgram::runCoreModule(*module, command);
+  if (query) return mlir::succeeded(tsfg::systemQuery::verifyAndBind(*module)) ? tsfg::commonProgram::printCoreModule(*module) : 3;
   auto version = module->getOperation()->getAttrOfType<mlir::StringAttr>("tsfg_core.version");
   if (!version || version.getValue() != "0.10.0") {
     llvm::errs() << "[core-ir-identity] expected Core IR 0.10.0\n";

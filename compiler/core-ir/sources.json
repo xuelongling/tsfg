@@ -50,7 +50,13 @@
     "exception-json.cpp",
     "finite-borrow-flow.cpp",
     "main.cpp",
-    "reference-contracts.cpp"
+    "reference-contracts.cpp",
+    "system-query-bodies.cpp",
+    "system-query-declarations.cpp",
+    "system-query-ops.cpp",
+    "system-query-source.cpp",
+    "system-query-types.cpp",
+    "system-query.cpp"
   ],
   "headers": [
     "array-owner-json.h",
@@ -77,6 +83,8 @@
     "finite-borrow-flow.h",
     "finite-payload-flow.h",
     "formal-exception-identifiers.h",
-    "reference-contracts.h"
+    "reference-contracts.h",
+    "system-query-source.h",
+    "system-query.h"
   ]
 }

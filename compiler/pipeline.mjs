@@ -7,6 +7,8 @@ import { fileURLToPath } from "node:url";
 import { analyzeFrontend } from "./frontend.mjs";
 import { buildHir, lowerHir } from "./hir.mjs";
 import { canonical, sha256 } from "./identity.mjs";
+import {readSystemQueryFacts} from './system-query-facts.mjs';
+import {emitSystemQueryCore} from './system-query-core.mjs';
 import registry from "../contracts/registry.json" with { type: "json" };
 import bytecodeSchema from "../contracts/bytecode.schema.json" with { type: "json" };
 
@@ -38,6 +40,17 @@ function consume(executable, args, input) {
   if (child.error) throw child.error;
   if (child.status !== 0) throw new TypeError(child.stderr.toString("utf8").trim() || `consumer exited ${child.status}`);
   return child.stdout;
+}
+
+/** Compile complete owned Query input through the independent static consumer.
+ * @param {Uint8Array} bytes @param {unknown} context
+ * @param {{core:string,optimize?:boolean}} options
+ */
+export async function compileSystemQuery(bytes,context,options){
+  const facts=readSystemQueryFacts(bytes,context);
+  const executable=await verifiedConsumer(options.core,'core');
+  const core=consume(executable,['--system-query',options.optimize?'--optimize':'--canonicalize'],emitSystemQueryCore(facts,context)).toString('utf8');
+  return {status:'ok',facts,core};
 }
 
 /** Officially checked source to owned HIR; no native execution is needed to view it. */

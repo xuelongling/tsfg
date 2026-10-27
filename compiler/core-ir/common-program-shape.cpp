@@ -48,8 +48,9 @@ struct Shape {
   }
 };
 }
-bool verifySourceShape(SourceModel &m){
+bool verifySourceShapeValue(SourceModel &m,const Json &value,llvm::StringRef kind){
   if(!m.need(digest(descriptor.str()+"\n")==sourceSchema,"embedded Source boundary identity differs"))return false;
-  Shape shape{m};return readJson(descriptor,shape.schema,m.p,m.error)&&shape.check(m.facts,"commonProgramPackage");
+  Shape shape{m};return readJson(descriptor,shape.schema,m.p,m.error)&&shape.check(value,kind.str());
 }
+bool verifySourceShape(SourceModel &m){return verifySourceShapeValue(m,m.facts,"commonProgramPackage");}
 } // namespace tsfg::commonProgram
