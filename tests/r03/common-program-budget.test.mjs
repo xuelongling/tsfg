@@ -73,3 +73,24 @@ for(const name of ['positive','mixed'])test('common module carries the ordinary 
   for(const [key,value]of Object.entries(strings))assert.ok(text.includes('tsfg_core.'+key+' = '+JSON.stringify(value)),key);
   assert.ok(text.includes('tsfg_core.source_length = '+source.content.length+' : i64'));
 });
+
+test('repeated real TypeId quoting reuses escaped output within the original work cap',()=>{
+  const id='sha256:'+'a'.repeat(64),writer=commonTextBudget(commonMeter(9000),50000),quoted=JSON.stringify(id);
+  for(let i=0;i<100;i++)writer.line(writer.quote(id));
+  assert.equal(writer.finish(),Array(100).fill(quoted+'\n').join(''));
+});
+test('quote cache keeps every lookup paid, including repeated empty strings',()=>{
+  const writer=commonTextBudget(commonMeter(5));let completed=0;
+  assert.throws(()=>{for(let i=0;i<20;i++){writer.quote('');completed++;}},limit);
+  assert.ok(completed>0&&completed<20);assert.throws(()=>writer.finish(),limit);
+});
+test('first quote prepays input and escape expansion and each writer owns its cache',()=>{
+  let charged=0;const text='x\n',writer=commonTextBudget(n=>{charged+=n;});writer.quote(text);
+  assert.ok(charged>=text.length+Buffer.byteLength(JSON.stringify(text)));
+  assert.throws(()=>commonTextBudget(commonMeter(1)).quote(text),limit);
+});
+test('cached escaped text still checks remaining bytes and terminal state',()=>{
+  const writer=commonTextBudget(commonMeter(1000),12),q=writer.quote('😀\r\0');assert.equal(writer.quote('😀\r\0'),q);writer.append(q);
+  assert.throws(()=>writer.quote('😀\r\0'),limit);assert.throws(()=>writer.finish(),limit);
+  const done=commonTextBudget(commonMeter(1000));done.append(done.quote('x'));assert.equal(done.finish(),'"x"');assert.throws(()=>done.quote('x'),limit);
+});

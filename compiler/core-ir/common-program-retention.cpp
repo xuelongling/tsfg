@@ -1,50 +1,68 @@
 // SPDX-License-Identifier: MIT
 #include "common-program-retention.h"
 namespace tsfg::commonProgram {
-bool readonlyCall(ActualCheck &c,const std::string &id,bool privateReader){
+static bool scalarCapture(ActualCheck &c,const Json &reader,const std::string &key){
+  if(!c.holdingSlotsReady){
+    std::map<std::string,std::pair<std::string,const Json *>> slots;
+    for(const auto &[id,layout]:c.environments)for(const auto &slot:items(field(*layout,"slots"))){
+      const auto name=field(slot,"key").getAsString();if(!name||!c.step((id.size()+name->size())/64+2))return false;if(name->empty())continue;
+      auto added=slots.emplace(name->str(),std::pair{id,&slot});if(!added.second)added.first->second.second=nullptr;
+    }
+    c.holdingSlots=std::move(slots);c.holdingSlotsReady=true;
+  }
+  auto found=c.holdingSlots.find(key);if(found==c.holdingSlots.end()||!found->second.second)return false;
+  const auto &slot=*found->second.second;const auto typeId=field(slot,"type").getAsString();if(!typeId||!c.step(typeId->size()/64+1))return false;const auto type=c.types.find(typeId->str());
+  if(type==c.types.end()||string(field(*type->second,"kind"))!="scalar"||field(slot,"writable").getAsBoolean()!=true)return false;
+  auto layout=field(reader,"lexicalEnvironment").getAsString();std::set<std::string> seen;
+  while(layout&&!layout->empty()){
+    if(!c.step(layout->size()/64+2))return false;const auto id=layout->str();if(!seen.insert(id).second)return false;auto current=c.environments.find(id);if(current==c.environments.end())return false;
+    if(*layout==found->second.first)return true;layout=field(*current->second,"parent").getAsString();
+  }return false;
+}
+bool holdingCall(ActualCheck &c,const std::string &id,bool privateReader){
   if(!c.step()||!c.p.fixedEffects.count(id)||!c.sourceFunctions.count(id)||!c.regions.acyclic.count(id)||c.cyclicFunctions.count(id))return false;
   const auto &source=*c.sourceFunctions.at(id);const auto &upper=c.p.fixedEffects.at(id);
   const auto parent=string(field(source,"lexicalParent"));if(privateReader&&(parent.empty()||!c.sourceFunctions.count(parent)))return false;
   if(privateReader&&upper.escape)return false;
   if(upper.unknownHost||upper.await||upper.lock||!upper.reads.empty()||!upper.writes.empty())return false;
   for(const auto &access:upper.parameters){if(!c.step())return false;if(access.write||access.structural)return false;}
-  for(const auto &[slot,access]:upper.captures){if(!c.step())return false;if(access.write||access.structural)return false;}
+  for(const auto &[slot,access]:upper.captures){if(!c.step(slot.size()/64+1))return false;if(access.structural||access.write&&!scalarCapture(c,source,slot))return false;}
   auto fn=c.functions.find(id);if(fn==c.functions.end())return false;
   for(const auto &block:fn->second->blocks)for(const auto &op:block.operations){if(!c.step())return false;if(c.unresolvedCalls.count(&op))return false;}
   return c.e.message.empty();
 }
-bool readonlyReturnTargets(ActualCheck &c,const ActualContext &context,const ActualValue &value){
+bool holdingReturnTargets(ActualCheck &c,const ActualContext &context,const ActualValue &value){
   auto bound=c.p.callableReturns.find(context.function->id);
   if(value.unknown||value.callableTop||!value.objects.empty()||!value.cells.empty()||bound==c.p.callableReturns.end()||bound->second.top||bound->second.functions.empty())return false;
   std::set<std::string> actual;
-  for(const auto &[code,env]:value.callables){if(!c.step(code.size()/64+1)||!readonlyCall(c,code,true))return false;
+  for(const auto &[code,env]:value.callables){if(!c.step(code.size()/64+1)||!holdingCall(c,code,true))return false;
     const auto layout=string(field(*c.sourceFunctions.at(code),"lexicalEnvironment"));
     if(layout.empty()||env.empty()||!c.objects.count(env)||c.objects.at(env).type!="env:"+layout)return false;actual.insert(code);
   }
   if(!c.step(actual.size()+bound->second.functions.size()))return false;
   return actual==bound->second.functions&&!actual.empty()&&c.e.message.empty();
 }
-static bool readonlyStoredClosure(ActualCheck &c,const ActualValue &value){
+static bool holdingStoredClosure(ActualCheck &c,const ActualValue &value){
   if(value.unknown||value.callableTop||!value.objects.empty()||!value.cells.empty()||value.callables.empty()||value.tags.empty())return false;
   for(const auto &tag:value.tags)if(!c.step(tag.size()/64+1)||!c.types.count(tag)||string(field(*c.types.at(tag),"kind"))!="function")return false;
   for(const auto &[code,env]:value.callables){
-    if(!c.step((code.size()+env.size())/64+1)||!readonlyCall(c,code,true)||env.empty()||!c.objects.count(env))return false;
+    if(!c.step((code.size()+env.size())/64+1)||!holdingCall(c,code,true)||env.empty()||!c.objects.count(env))return false;
     auto layout=field(*c.sourceFunctions.at(code),"lexicalEnvironment").getAsString();
     if(!layout||layout->empty()||!c.step(layout->size()/64+1))return false;
     auto type=llvm::StringRef(c.objects.at(env).type);if(!type.consume_front("env:")||type!=*layout)return false;
   }return c.e.message.empty();
 }
-bool readonlyFieldTransport(ActualCheck &c,const ActualValue &receiver,const ActualValue &value){
+bool holdingFieldTransport(ActualCheck &c,const ActualValue &receiver,const ActualValue &value){
   // Classify one verified ordinary store, independently of holding and full
   // call/return bounds. An unknown sink never qualifies as local transport.
   if(receiver.unknown||receiver.callableTop||!receiver.cells.empty()||!receiver.callables.empty()||receiver.objects.empty()||receiver.tags.empty())return false;
   for(const auto &tag:receiver.tags){if(!c.step(tag.size()/64+1)||!c.types.count(tag))return false;
     const auto kind=string(field(*c.types.at(tag),"kind"));if(kind!="reference"&&kind!="value")return false;}
   for(const auto &ref:receiver.objects){if(!c.step(ref.size()/64+1)||!c.objects.count(ref)||!receiver.tags.count(c.objects.at(ref).type))return false;}
-  return readonlyStoredClosure(c,value);
+  return holdingStoredClosure(c,value);
 }
-bool readonlyArrayTransport(ActualCheck &c,const ActualValue &receiver,const ActualValue &value){
-  return c.arrayReceiver(receiver)&&readonlyStoredClosure(c,value);
+bool holdingArrayTransport(ActualCheck &c,const ActualValue &receiver,const ActualValue &value){
+  return c.arrayReceiver(receiver)&&holdingStoredClosure(c,value);
 }
 ReturnOwnership::Value ReturnOwnership::value(const ActualValue &v){
   Value out;out.opaque=v.unknown||v.callableTop;out.complete=!out.opaque;
@@ -103,7 +121,7 @@ ReturnOwnership::ReturnOwnership(ActualCheck &c,const RegionValue &v,const Regio
 }
 RegionHolding::RegionHolding(ActualCheck &c,const std::string &id,const RegionValue &v,const RegionHeap &heap):check(c){
   if(!check.step(id.size()/64+1))return;region=id;
-  readonlyComplete=!v.empty;
+  stableComplete=!v.empty;
   if(region.empty()||v.opaque||v.roots.empty()){complete=false;return;}std::vector<std::string> pending;if(!check.step(regionWeight(v)))return;
   pending.assign(v.roots.begin(),v.roots.end());std::set<std::string> seen;
   for(size_t i=0;i<pending.size();++i){if(!check.step())return;const auto ref=pending[i];if(!seen.insert(ref).second)continue;
@@ -113,21 +131,23 @@ RegionHolding::RegionHolding(ActualCheck &c,const std::string &id,const RegionVa
     if(env){auto layout=check.environments.find(type.substr(4));if(layout==check.environments.end()){complete=false;continue;}
       for(const auto &slot:items(field(*layout->second,"slots"))){if(!check.step())return;const auto key="/slot/"+string(field(slot,"key"));
         if(!stored->second.count(key))complete=false;
-        if(field(slot,"writable").getAsBoolean()!=false)readonlyComplete=false;
         const auto type=string(field(slot,"type"));auto edge=stored->second.find(key);
-        if(!check.types.count(type))readonlyComplete=false;
-        else if(string(field(*check.types.at(type),"kind"))!="scalar"&&(edge==stored->second.end()||edge->second.empty||edge->second.roots.empty()))readonlyComplete=false;
+        const bool scalar=check.types.count(type)&&string(field(*check.types.at(type),"kind"))=="scalar";
+        if(field(slot,"writable").getAsBoolean()!=false&&
+          !(field(slot,"writable").getAsBoolean()==true&&scalar&&edge!=stored->second.end()&&edge->second.known&&edge->second.empty&&!edge->second.opaque&&edge->second.roots.empty()))stableComplete=false;
+        if(!check.types.count(type))stableComplete=false;
+        else if(string(field(*check.types.at(type),"kind"))!="scalar"&&(edge==stored->second.end()||edge->second.empty||edge->second.roots.empty()))stableComplete=false;
       }
       if(!field(*layout->second,"parent").getAsNull()&&!stored->second.count("/parent"))complete=false;
     }else if(!check.types.count(type)){complete=false;continue;}
     if(!env){const auto &shape=*check.types.at(type);const auto kind=string(field(shape,"kind")),element=string(field(shape,"elementType"));
-      if((kind!="array"&&kind!="readSpan")||!check.types.count(element)||string(field(*check.types.at(element),"kind"))!="scalar")readonlyComplete=false;
+      if((kind!="array"&&kind!="readSpan")||!check.types.count(element)||string(field(*check.types.at(element),"kind"))!="scalar")stableComplete=false;
     }
     if(!env&&string(field(*check.types.at(type),"kind"))=="readSpan"){
       auto owner=stored->second.find("/owner");if(owner==stored->second.end()){complete=false;continue;}if(!check.step(regionWeight(owner->second)))return;owners.emplace(ref,owner->second);
     }
     for(const auto &[slot,edge]:stored->second){if(!check.step(regionWeight(edge)))return;if(edge.opaque)complete=false;
-      if(!env&&(!check.types.count(type)||string(field(*check.types.at(type),"kind"))!="readSpan"||slot!="/owner")&&!edge.roots.empty())readonlyComplete=false;
+      if(!env&&(!check.types.count(type)||string(field(*check.types.at(type),"kind"))!="readSpan"||slot!="/owner")&&!edge.roots.empty())stableComplete=false;
       pending.insert(pending.end(),edge.roots.begin(),edge.roots.end());}
   }
   if(!check.e.message.empty())return;ownership=std::make_shared<ReturnOwnership>(check,v,heap);
@@ -135,8 +155,8 @@ RegionHolding::RegionHolding(ActualCheck &c,const std::string &id,const RegionVa
 bool RegionHolding::holds(){
   if(!complete||!ownership||!check.regions.scopes.count(region)||check.regions.scopes.at(region).blocked)return false;return prove();
 }
-bool RegionHolding::readonlyReturn(){
-  if(!readonlyComplete||!complete||!ownership||!check.regions.scopes.count(region)||check.regions.scopes.at(region).hard)return false;
+bool RegionHolding::stableReturn(){
+  if(!stableComplete||!complete||!ownership||!check.regions.scopes.count(region)||check.regions.scopes.at(region).hard)return false;
   return prove();
 }
 bool RegionHolding::prove(){

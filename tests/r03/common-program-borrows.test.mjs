@@ -86,9 +86,12 @@ test('review direct lexical call accounts for its hidden environment before Sour
   value=commonBorrowModel('hidden',true);assert.throws(()=>analyzeCommonGraphs(value.program,value.records),/** @param {any} e */e=>e.code==='r03-common-program-borrow-conflict');
 });
 test('review budget charges live values killed by a definition',()=>{
-  let active=false,remaining=84;const spend=(n=1)=>{if(active){remaining-=n;if(remaining<0)throw Object.assign(new Error('limit'),{code:'r03-common-program-limit'});}},graph=commonBorrowGraph(spend);
-  graph.point('define');graph.point('use');graph.edge('define','use');for(let i=0;i<16;i++){const id='s'+i;graph.define('define',id,{ids:new Set(['a']),pending:false});graph.use('use',new Set([id]));}
-  active=true;assert.throws(()=>graph.verify(),/** @param {any} e */e=>e.code==='r03-common-program-limit');
+  let active=false,checked=0;const spend=(n=1)=>{if(active&&n>0)throw Object.assign(new Error('limit'),{code:'r03-common-program-limit'});},graph=commonBorrowGraph(spend);
+  const definition=graph.point('define');graph.point('use');graph.edge('define','use');for(let i=0;i<16;i++){const id='s'+i;graph.define('define',id,{ids:new Set(['a']),pending:false});graph.use('use',new Set([id]));}
+  // Stop funding at the first kill lookup. Every following visited live value
+  // must pay before its lookup, even when no value is added to the live set.
+  const has=definition.defines.has.bind(definition.defines);definition.defines.has=id=>{checked++;active=true;return has(id);};
+  assert.throws(()=>graph.verify(),/** @param {any} e */e=>e.code==='r03-common-program-limit');assert.equal(checked,1);
 });
 test('review budget charges every effect edge even when successor liveness is empty',()=>{
   let active=false,remaining=256;const spend=(n=1)=>{if(active){remaining-=n;if(remaining<0)throw Object.assign(new Error('limit'),{code:'r03-common-program-limit'});}},graph=commonBorrowGraph(spend);
@@ -109,4 +112,38 @@ test('review must backing includes absence tags independent of object references
   const value=commonBorrowAlternativeModel(false,true),solved=analyzeCommonGraphs(value.program),actual=solved.actual.observed.get(value.entryId+'/'+value.backingRead);
   assert.equal(actual.refs.size,1);assert.ok(actual.tags.has(sha256('tsfg.type\0undefined')));
   assert.throws(()=>analyzeCommonGraphs(value.program,value.records),/** @param {any} e */e=>e.code==='r03-common-program-borrow-pending');
+});
+
+test('borrow liveness propagates a long suffix within its unchanged work cap',()=>{
+  const graph=commonBorrowGraph(commonMeter(6000));for(let i=0;i<64;i++)graph.point('p'+i);
+  for(let i=0;i<63;i++)graph.edge('p'+i,'p'+(i+1));
+  graph.fresh.add('a');graph.fresh.add('b');graph.define('p0','span',{ids:new Set(['a']),pending:false});
+  graph.use('p63',new Set(['span']));graph.effect('p31',{ids:new Set(['b']),pending:false},{});
+  assert.deepEqual(graph.verify(),{points:64,borrows:1});
+});
+test('borrow liveness keeps unused bad edges, no-use cycles and weak kills distinct',()=>{
+  let graph=commonBorrowGraph(commonMeter());graph.point('unused');graph.edge('unused','missing');assert.throws(()=>graph.verify(),e=>e instanceof Error&&'code' in e&&e.code==='r03-common-program-ssa');
+  graph=commonBorrowGraph(commonMeter());graph.edge('a','b');graph.edge('b','a');assert.doesNotThrow(()=>graph.verify());
+  graph=commonBorrowGraph(commonMeter());for(const p of ['define','update','use'])graph.point(p);graph.edge('define','update');graph.edge('update','use');graph.edge('use','update');
+  graph.define('define','span',{ids:new Set(['a']),pending:false});graph.define('update','span',{ids:new Set(['a']),pending:false},true);
+  graph.use('use',new Set(['span']));graph.effect('update',{ids:new Set(['a']),pending:false},{});
+  assert.throws(()=>graph.verify(),e=>e instanceof Error&&'code' in e&&e.code==='r03-common-program-borrow-conflict');
+});
+test('same-point definition does not remove the effect live-out obligation',()=>{
+  const graph=commonBorrowGraph(commonMeter());graph.point('both');graph.point('use');graph.edge('both','use');
+  graph.define('both','span',{ids:new Set(['a']),pending:false});graph.use('use',new Set(['span']));graph.effect('both',{ids:new Set(['a']),pending:false},{});
+  assert.throws(()=>graph.verify(),e=>e instanceof Error&&'code' in e&&e.code==='r03-common-program-borrow-conflict');
+});
+test('borrow predecessor fan-in is bounded by points rather than the borrow count',()=>{
+  const graph=commonBorrowGraph(commonMeter(1000000));graph.define('define','span',{ids:new Set(['a']),pending:false});graph.point('use');graph.use('use',new Set(['span']));
+  for(let i=0;i<4097;i++){graph.point('p'+i);graph.edge('p'+i,'use');}assert.doesNotThrow(()=>graph.verify());
+});
+test('mixed pending and conflict keeps the original successor and effect order',()=>{
+  for(const pendingFirst of [true,false]){const graph=commonBorrowGraph(commonMeter());for(const p of ['effect','unknownUse','overlapUse'])graph.point(p);
+    graph.define('effect','unknown',{ids:new Set(['external']),pending:false});graph.define('effect','overlap',{ids:new Set(['a']),pending:false});
+    graph.use('unknownUse',new Set(['unknown']));graph.use('overlapUse',new Set(['overlap']));
+    for(const target of pendingFirst?['unknownUse','overlapUse']:['overlapUse','unknownUse'])graph.edge('effect',target);
+    const primary={sourceId:'/original.ts',start:7,end:9};graph.effect('effect',{ids:new Set(['a']),pending:false},{primary});
+    assert.throws(()=>graph.verify(),e=>e instanceof Error&&'code' in e&&'primary' in e&&e.code==='r03-common-program-borrow-'+(pendingFirst?'pending':'conflict')&&e.primary===primary);
+  }
 });

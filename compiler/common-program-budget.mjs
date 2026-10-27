@@ -20,7 +20,7 @@ export function commonSortedSubset(wanted,allowed,spend) {
 }
 export function commonTextBudget(spend,byteLimit=8388608,lineLimit=1048576) {
   check(Number.isSafeInteger(byteLimit)&&byteLimit>=0&&byteLimit<=8388608,'limit');
-  const chunks=[];let bytes=0,failed=false,finished=false;
+  const chunks=[],quotes=new Map();let bytes=0,failed=false,finished=false;
   const guard=action=>{check(!failed&&!finished,'limit');try{return action();}catch(error){failed=true;throw error;}};
   const width=parts=>{spend(parts.length);let total=0;for(const part of parts){check(typeof part==='string','input');total+=Buffer.byteLength(part);}return total;};
   const reserve=count=>{check(Number.isSafeInteger(count)&&count>=0&&count<=byteLimit-bytes,'limit','Core text byte budget exceeded');bytes+=count;};
@@ -29,10 +29,13 @@ export function commonTextBudget(spend,byteLimit=8388608,lineLimit=1048576) {
   const write=(parts,newline)=>guard(()=>{const count=width(parts)+(newline?1:0);if(newline)check(count<=lineLimit,'limit');reserve(count);
     for(const part of parts)chunks.push(part);if(newline)chunks.push('\n');});
   const quote=text=>guard(()=>{
-    check(typeof text==='string','input');spend(text.length);let count=2;
+    check(typeof text==='string','input');spend(text.length+1);
+    const cached=quotes.get(text);if(cached){check(cached.bytes<=byteLimit-bytes,'limit','Core escaped text byte budget exceeded');return cached.text;}
+    let count=2;
     for(const character of text){const code=character.codePointAt(0);count+=character==='"'||character==='\\'||character==='\n'||character==='\t'?2:code<32?3:Buffer.byteLength(character);}
-    check(count<=byteLimit-bytes,'limit','Core escaped text byte budget exceeded');spend(count);return coreQuote(text);
+    check(count<=byteLimit-bytes,'limit','Core escaped text byte budget exceeded');spend(count);
+    const escaped=coreQuote(text);quotes.set(text,{text:escaped,bytes:count});return escaped;
   });
   return {append:(...parts)=>write(parts,false),line:(...parts)=>write(parts,true),quote,combine,
-    finish:()=>guard(()=>{spend(chunks.length);finished=true;return chunks.join('');})};
+    finish:()=>guard(()=>{spend(chunks.length);finished=true;quotes.clear();return chunks.join('');})};
 }

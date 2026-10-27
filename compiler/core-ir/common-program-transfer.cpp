@@ -30,7 +30,7 @@ bool ActualCheck::instruction(ActualContext &context,const Operation &op,size_t 
   const auto observe=[&](const std::string &id,const ActualValue &v){if(conditional)merge(storageCapacity[id],v);};
   const auto seed=[&](std::map<std::string,ActualValue> &seeds,const std::string &id,const ActualValue &v){
     if(!conditional)return;ActualValue tags;tags.tags=v.tags;tags.unknown=v.unknown;tags.truth=v.truth;
-    changed=merge(seeds[id],tags)||changed;
+    const bool grew=merge(seeds[id],tags);seedChanged|=grew;changed|=grew;
   };
   const bool weak=repeatedAllocation(context,block);
   if(name=="env_alloc"){
@@ -98,12 +98,12 @@ bool ActualCheck::instruction(ActualContext &context,const Operation &op,size_t 
     if(name=="array_create"){
       for(size_t i=0;i<args.size();++i){put(ref+"/element/"+std::to_string(i),args[i],!objects.at(ref).weak);seed(elementSeeds,"element:"+op.view,args[i]);}
       auto length=literal(typeId("u32"));length.number=args.size();put(ref+"/length",length,!objects.at(ref).weak);
-      if(!conditional){for(size_t i=0;i<args.size();++i)if(!regionStore(*this,regionValue(*this,value),"/element/"+std::to_string(i),regionValue(*this,args[i]),state.regions,!readonlyArrayTransport(*this,value,args[i])))return false;
+      if(!conditional){for(size_t i=0;i<args.size();++i)if(!regionStore(*this,regionValue(*this,value),"/element/"+std::to_string(i),regionValue(*this,args[i]),state.regions,!holdingArrayTransport(*this,value,args[i])))return false;
         if(!regionStore(*this,regionValue(*this,value),"/length",regionValue(*this,length),state.regions))return false;}
     }
   }else if(name=="field_load"||name=="field_store"){
     const auto fieldId=string(field(props,"field"));
-    const bool transport=!conditional&&name=="field_store"&&readonlyFieldTransport(*this,args[0],args[1]);if(!e.message.empty())return false;
+    const bool transport=!conditional&&name=="field_store"&&holdingFieldTransport(*this,args[0],args[1]);if(!e.message.empty())return false;
     RegionValue projected;projected.known=true;
     for(const auto &ref:args[0].objects){
       if(!step()||!need(objects.count(ref),"field receiver object missing"))return false;const auto &object=objects.at(ref);bool owned=false;
@@ -132,7 +132,7 @@ bool ActualCheck::instruction(ActualContext &context,const Operation &op,size_t 
   }else if(name=="array_length"||name=="readspan_length")value=literal(op.view);
   else if(name=="array_read"||name=="array_store"||name=="array_resize"){
     const bool actualArray=name=="array_read"&&types.count(op.view)&&string(field(*types.at(op.view),"kind"))=="function"&&arrayReceiver(args[0]);
-    const bool transport=!conditional&&name=="array_store"&&readonlyArrayTransport(*this,args[0],args[2]);
+    const bool transport=!conditional&&name=="array_store"&&holdingArrayTransport(*this,args[0],args[2]);
     if(!e.message.empty())return false;
     RegionValue projected;
     if(!conditional){auto receiver=regionValue(*this,args[0]);

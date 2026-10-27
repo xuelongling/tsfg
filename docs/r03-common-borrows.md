@@ -116,33 +116,40 @@ descriptor path retains its own obligation, including a different simultaneously
 present field. This extends the top-level closure rule without keeping point
 heaps or treating a descriptor's owner link as independent owning storage.
 
-A separate normal-return rule handles a complete immutable environment containing
+A separate normal-return rule handles a complete owning environment containing
 an independently owning scalar Array and its original ReadSpan. Its compact
 current return graph must prove that the selected capture keeps each descriptor's
 original owner; opaque, absent or cross-scope facts cannot be repaired. All slots
-and parent environments must be closed and readonly. The complete permitted
-returned-code table must match the actual code/environment pairs, and every code
-must independently satisfy the private, acyclic, readonly Published boundary.
+and parent environments must be closed. Reference-bearing capture slots remain
+readonly. A writable direct scalar slot is permitted only when its actual current
+edge exists and proves a nonowning value: nonopaque, empty, and without roots. A
+bottom or absent edge is not that proof; C++ also requires its known flag.
+Published scalar capture writes must resolve through a unique canonical slot and
+the reader's verified lexical-parent chain. Foreign, ambiguous, missing and
+reference-bearing write slots remain excluded. The complete permitted returned
+code table must match every actual code/environment pair. Every code retains the
+private acyclic, nonstructural, no-global/Host/escape/await/lock boundary; scalar
+StateWrite remains a real effect and never grants purity or kernel permission.
 The ordinary weak allocation and older payload remain weak and opaque. This rule
 proves owner survival, not Array structural stability or old scalar contents.
 
-Local feedback and storage of a complete readonly callable in an ordinary known
+Local feedback and storage of a qualified whole callable in an ordinary known
 field or managed Array element are transport events. They still mark the invocation scope blocked for the
-ordinary current-version proof. The separate readonly return rule may discharge
+ordinary current-version proof. The separate owning return rule may discharge
 that transport blocker, but only after all actual hard boundary events are known.
 The stored value itself must have complete code/environment pairs, matching raw
-environment refs and qualified readonly reader code. A storage type supplies no
+environment refs and qualified owner-preserving reader code. A storage type supplies no
 new target permission; the return table and every complete call table retain
 their independent checks.
 
 Field loading can lose region roots while retaining a known raw environment.
-When current-region transport is unavailable, true escape and non-readonly,
+When current-region transport is unavailable, true escape and unqualified,
 incomplete or unknown call boundaries therefore
 also walk the actual selected raw storage, including environment slots/parents,
 Span owners and Cells. Every represented birth scope with a matching raw
 reference is invalidated. This walk only adds hard blockers and cannot restore
 roots, heap fields, owner identity or a holding proof. Publishing the Array or
-descriptor itself, or retaining a writable/unknown captured graph, does not gain
+descriptor itself, or retaining a reference-bearing writable/unknown captured graph, does not gain
 the whole-callable storage transport exemption.
 
 Callable Array access has three separate obligations. The independent target
@@ -196,11 +203,28 @@ call, survival and budget boundaries. Normalized models have no Source or guest
 execution credit. Preserve causal failures and compare unchanged complete Core
 outputs exactly; rerun only checks affected by a real change.
 
-The C++ actual fixed point schedules changed callees and their registered actual
-callers rather than rescanning unrelated contexts after every delta. Capacity
-seed solving keeps its existing iteration. Normal/language completion, returned
+The C++ conditional and actual fixed points schedule changed callees and their
+registered callers rather than rescanning unrelated contexts after every delta.
+Each mode rebuilds its initial contexts and scheduling dependencies. Field, global
+and element seed changes invalidate all contexts, including changes discovered
+during entry preparation. Node capacity seed solving keeps its existing iteration.
+The per-Core work cap remains shared across C++ modes and is never reset by
+scheduling. Normal/language completion, returned
 values, heaps, region summaries and request traps all participate in invalidation.
 Any raw weak promotion, including a colliding declared entry identity, invalidates
 all contexts. Final borrow replay does not schedule further solving and rejects
 new summary, trap, weak or context facts. The original work/context limits and
 physical allocation provenance remain unchanged.
+
+Node borrow liveness uses dirty rounds in the original point order. A changed
+successor schedules only its predecessors, with earlier/self predecessors in the
+next round. This computes the same least fixed point and preserves live-set and
+effect diagnostic order while avoiding unchanged whole-graph sweeps. All edges,
+including unused components, are validated. Point queues retain the point bound;
+borrows retain their independent bound. The actual interpreter worklist is unchanged.
+
+Core text quoting reuses immutable escaped fragments only inside one writer.
+Every lookup pays for input length and a nonzero lookup fee; a first conversion
+also prepays the complete escaped expansion. A hit still checks remaining bytes.
+Append, line, terminal failure and finish keep their original limits. This avoids
+repeated conversion without increasing the aggregate work or output caps.

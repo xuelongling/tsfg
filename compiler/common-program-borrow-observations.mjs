@@ -1,35 +1,54 @@
 // SPDX-License-Identifier: MIT
-// A final replay of the actual solver supplies selected values at each point.
-// Only compact identities/events leave that replay; point heaps are not kept.
+// A final replay supplies selected values; no point heaps are retained.
 import {commonBorrowGraph} from './common-program-borrows.mjs';
 import {commonCheck as check} from './common-program-common.mjs';
-// Closed return holding needs the complete reader bound, including unused code.
-// Region construction itself still admits other fully checked private effects.
-export function commonReadonlyReader(upper,spend){
-  spend();if(!upper||upper.facets.unknownHost!==false||upper.facets.escape!==false||upper.facets.await!==false||upper.facets.lock!==false)return false;
-  if(upper.globals.reads.length||upper.globals.writes.length)return false;
-  for(const rows of [upper.parameters,upper.captures])for(const row of rows){spend();if(row.write!==false||row.structural!==false)return false;}
-  return true;
-}
-// A storage event has actual code/environment pairs, not a separate code upper.
-// Only the return caller supplies an allowed table; storage itself grants none.
-export function commonReadonlyClosure(value,model,objects,records,readonlyTarget,allowed=null){
-  const {spend,types}=model;spend();
-  if(value.unknown||value.cells.size||!value.pairs.size||allowed&&(allowed.top||!allowed.functions.length))return false;
-  spend(value.tags.size+value.pairs.size+value.refs.size+(allowed?.functions.length??0));
-  for(const tag of value.tags)if(types.get(tag)?.kind!=='function')return false;
-  const codes=new Set(),environments=new Set(),permitted=allowed?new Set(allowed.functions):null;
-  for(const pair of value.pairs.values()){
-    spend();const fn=model.functions.get(pair.functionId);
-    if(permitted&&!permitted.has(pair.functionId)||!fn?.lexicalEnvironment||!pair.environment||objects.get(pair.environment)?.type!=='env:'+fn.lexicalEnvironment)return false;
-    if(!readonlyTarget?.(pair.functionId)||!commonReadonlyReader(records?.get(pair.functionId)?.upper,spend))return false;
-    codes.add(pair.functionId);environments.add(pair.environment);
+// Code permission and current graph holding are separate. A scalar capture
+// write may change a number, but it cannot replace an owning reference edge.
+export function commonClosureHolding({model,objects,records,closedTarget}){
+  const {spend,types}=model,parents=new Map(),bounds=new Map();let slots=null;
+  function scalarWrite(id,key){
+    if(slots===null){slots=new Map();for(const layout of model.environments.values()){
+      spend(layout.slots.length+1);for(const slot of layout.slots)slots.set(slot.key,slots.has(slot.key)?null:{layout:layout.id,slot});}}
+    spend();const row=slots.get(key);if(!row||row.slot.writable!==true||types.get(row.slot.type)?.kind!=='scalar')return false;
+    if(!parents.has(id)){
+      const reachable=new Set();let layout=model.functions.get(id)?.lexicalEnvironment,valid=true;
+      while(layout){spend();if(reachable.has(layout)||!model.environments.has(layout)){valid=false;break;}
+        reachable.add(layout);layout=model.environments.get(layout).parent;}
+      parents.set(id,valid?reachable:null);
+    }
+    return parents.get(id)?.has(row.layout)??false;
   }
-  for(const target of permitted??[]){spend();if(!codes.has(target))return false;}
-  for(const ref of value.refs){spend();if(!environments.has(ref))return false;}
-  return environments.size===value.refs.size;
+  function staticBound(id){
+    spend();const upper=records?.get(id)?.upper;
+    if(!upper||upper.facets.unknownHost!==false||upper.facets.escape!==false||upper.facets.await!==false||upper.facets.lock!==false)return false;
+    if(upper.globals.reads.length||upper.globals.writes.length)return false;
+    for(const row of upper.parameters){spend();if(row.write!==false||row.structural!==false)return false;}
+    for(const row of upper.captures){spend();if(row.structural!==false||row.write!==false&&!scalarWrite(id,row.slot))return false;}
+    return true;
+  }
+  function permitsCode(id){
+    // Fixed Published permissions and layouts cannot change during this solve.
+    // Current target closure remains a separate gate on every lookup.
+    spend();if(!closedTarget?.(id))return false;
+    if(!bounds.has(id))bounds.set(id,staticBound(id));return bounds.get(id);
+  }
+  function wholeValue(value,allowed=null){
+    spend();if(value.unknown||value.cells.size||!value.pairs.size||allowed&&(allowed.top||!allowed.functions.length))return false;
+    spend(value.tags.size+value.pairs.size+value.refs.size+(allowed?.functions.length??0));
+    for(const tag of value.tags)if(types.get(tag)?.kind!=='function')return false;
+    const codes=new Set(),environments=new Set(),permitted=allowed?new Set(allowed.functions):null;
+    for(const pair of value.pairs.values()){
+      spend();const fn=model.functions.get(pair.functionId);
+      if(permitted&&!permitted.has(pair.functionId)||!fn?.lexicalEnvironment||!pair.environment||objects.get(pair.environment)?.type!=='env:'+fn.lexicalEnvironment||!permitsCode(pair.functionId))return false;
+      codes.add(pair.functionId);environments.add(pair.environment);
+    }
+    for(const target of permitted??[]){spend();if(!codes.has(target))return false;}
+    for(const ref of value.refs){spend();if(!environments.has(ref))return false;}
+    return environments.size===value.refs.size;
+  }
+  return {permitsCode,wholeValue};
 }
-export function commonBorrowObservations({model,records,objects,regions=null,readEnvironmentSlot=null,readonlyTarget=null}) {
+export function commonBorrowObservations({model,records,objects,regions=null,readEnvironmentSlot=null,holdingPolicy=null}) {
   const {spend,types}=model,graph=commonBorrowGraph(spend),returns=new Map(),calls=[],callReturns=new Map(),contexts=new Set(),components=new Map(),allocations=new Map(),creations=new Map();
   const slotLayouts=new Map();spend(model.environments?.size??0);
   for(const env of model.environments?.values()??[]){spend(env.slots.length);for(const slot of env.slots){check(!slotLayouts.has(slot.key)||slotLayouts.get(slot.key)===env.id,'environment');slotLayouts.set(slot.key,env.id);}}
@@ -163,9 +182,9 @@ export function commonBorrowObservations({model,records,objects,regions=null,rea
         for(const child of stored.refs){spend();check(work.length<65536,'limit');work.push({ref:child,storage,active,known:known&&!stored.unknown,owningKnown:owningKnown&&!stored.unknown});}}
     }return paths;
   }
-  function readonlyReturn(value,c){
+  function owningReturn(value,c){
     spend();const allowed=records?.get(c.plan.owner.id)?.callables?.returns;
-    return Boolean(allowed)&&commonReadonlyClosure(value,model,objects,records,readonlyTarget,allowed);
+    return Boolean(allowed)&&holdingPolicy?.wholeValue(value,allowed);
   }
   function retained(path,owner,context){
     if(!path.known)return false;let managed=false;
@@ -266,7 +285,7 @@ export function commonBorrowObservations({model,records,objects,regions=null,rea
         // The verified construction receiver survives its normal return;
         // an exceptional payload has no such receiver guarantee.
         if(ids.size&&!(name==='func.return'&&c.plan.owner.kind==='construction-body')){
-          const surviving=new Set(),paths=returnPaths(value,state.heap),held=new Map(),regionValue=regions?.copy(value.region),regionHeap=regions?.reachable([value.region],state.regions),closedReader=name==='func.return'&&readonlyReturn(value,c);
+          const surviving=new Set(),paths=returnPaths(value,state.heap),held=new Map(),regionValue=regions?.copy(value.region),regionHeap=regions?.reachable([value.region],state.regions),closedReader=name==='func.return'&&owningReturn(value,c);
           for(const input of c.args){for(const id of collect(input,c.entryHeap,'owning').ids){spend();surviving.add(id);}
             for(const ref of escapingSpans(input,c.entryHeap))for(const id of owners(ref,c.entryHeap).ids){spend();surviving.add(id);}}
           for(const ref of ids){spend();held.set(ref,owners(ref,state.heap));}
@@ -274,7 +293,7 @@ export function commonBorrowObservations({model,records,objects,regions=null,rea
             let valid=true;for(const path of paths){spend();const owner=held.get(path.span),owning=path.owningKnown?path.owning(c.id):new Set();valid &&= !owner.pending&&owner.ids.size>0;
               for(const id of owner.ids){spend();valid &&= surviving.has(id)||owning.has(id)&&Boolean(unique(allocations,id,c.id))||retained(path,id,c.id)||
                 Boolean(regions?.holds(regionValue,regionHeap,path.span,id,c.regionScope,types))||
-                closedReader&&Boolean(regions?.readonlyHolds(regionValue,regionHeap,path.span,id,c.regionScope,types,model.environments));}}
+                closedReader&&Boolean(regions?.ownedReturnHolds(regionValue,regionHeap,path.span,id,c.regionScope,types,model.environments));}}
             return valid&&paths.length>0;
           };
           graph.escape(at,ids,allowed,where);

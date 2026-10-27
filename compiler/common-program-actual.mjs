@@ -8,7 +8,7 @@ import {commonAbstract,commonActualArrayReceiver} from './common-program-abstrac
 import {commonCheck as check} from './common-program-common.mjs';
 import {commonEntryReferences} from './common-program-entry.mjs';
 import {commonMethods} from './common-program-methods.mjs';
-import {commonBorrowObservations,commonReadonlyReader,commonReadonlyClosure} from './common-program-borrow-observations.mjs';
+import {commonBorrowObservations,commonClosureHolding} from './common-program-borrow-observations.mjs';
 import {commonRegions,emptyRegionValue} from './common-program-regions.mjs';
 const undefinedId=sha256('tsfg.type\0undefined');
 export function analyzeCommonGraphs({model,plans},records=null) {
@@ -92,13 +92,14 @@ export function analyzeCommonGraphs({model,plans},records=null) {
       const heap=new Map();currentGlobals(heap);const args=plan.parameters.map(parameter=>entryValue(plan,parameter,heap));
       context(plan.owner.id,args,heap,true);
     }
-    function readonlyTarget(target){
+    function closedTarget(target){
       spend();return !bounded&&regions.layouts.get(target)?.acyclic===true&&!cyclicFunctions.has(target)&&!uncertainFunctions.has(target);
     }
-    function readonlyTransport(c,target,targets,selected){
-      if(!readonlyTarget(target)||uncertainFunctions.has(c.plan.owner.id))return false;
+    const holdingPolicy=commonClosureHolding({model,objects,records,closedTarget});
+    function holdingTransport(c,target,targets,selected){
+      if(!closedTarget(target)||uncertainFunctions.has(c.plan.owner.id))return false;
       spend(selected.length);const actual=new Set(selected);
-      for(const id of targets){spend();if(!actual.has(id)||!readonlyTarget(id)||!commonReadonlyReader(records?.get(id)?.upper,spend))return false;}
+      for(const id of targets){spend();if(!actual.has(id)||!holdingPolicy.permitsCode(id))return false;}
       return true;
     }
     function callRegion(c,block,activation,target,passed,targets,selected){
@@ -200,11 +201,11 @@ export function analyzeCommonGraphs({model,plans},records=null) {
               };value=copyValue(args[0],'root');
             }else if(name==='construct_value'||name==='allocate_reference'||name==='array_create') {
               value=literal(op.view);const ref=site('object',op.result);value.refs.add(ref);allocation(ref,op.view);value.region=version(ref,op.view);
-              if(name==='array_create'){args.forEach((v,i)=>{const covered=Boolean(observer)&&commonReadonlyClosure(v,model,objects,records,readonlyTarget)&&commonActualArrayReceiver(value,types,objects,spend);
+              if(name==='array_create'){args.forEach((v,i)=>{const covered=Boolean(observer)&&holdingPolicy.wholeValue(v)&&commonActualArrayReceiver(value,types,objects,spend);
                   put(ref+'/element/'+i,v);putRegion(value.region,'element/'+i,v,true,covered);if(bounded){const key='element:'+op.view,before=a.key(elementSeeds.get(key));seed(elementSeeds,key,v);invalidateCapacity ||= before!==a.key(elementSeeds.get(key));}});
                 const length=literal(sha256('tsfg.type\0u32'),0,args.length);put(ref+'/length',length);putRegion(value.region,'length',length,true,false,regions.number(args.length));}
             }else if(name==='field_load'||name==='field_store') {
-              const fieldRegion=emptyRegionValue(),covered=name==='field_store'&&Boolean(observer)&&commonReadonlyClosure(args[1],model,objects,records,readonlyTarget);
+              const fieldRegion=emptyRegionValue(),covered=name==='field_store'&&Boolean(observer)&&holdingPolicy.wholeValue(args[1]);
               if(observer&&name==='field_store'&&(args[0].unknown||!args[0].refs.size))hardEscape(args[1]);
               for(const ref of args[0].refs){spend();const object=objects.get(ref);check(object,'ssa');const field=fieldFor(object.type,plan.graph.registers.get(op.operands[0]).view,p.field),row=model.fields.get(field),slot=ref+'/field/'+field;
                 const receiver=regions.select(args[0].region,ref);receiver.opaque ||= args[0].unknown;
@@ -223,7 +224,7 @@ export function analyzeCommonGraphs({model,plans},records=null) {
                 if(types.get(object.type)?.kind==='readSpan'){spanOwner=true;a.merge(owners,state.heap.get(ref+'/owner')??a.empty());}else owners.refs.add(ref);}
               const ownerRegion=spanOwner?regions.load(args[0].region,'owner',state.regions):args[0].region;
               const needsArray=name==='array_read'&&types.get(op.view)?.kind==='function'||name==='array_store'&&Boolean(observer)&&args[2].pairs.size>0,
-                actualArray=needsArray&&commonActualArrayReceiver(args[0],types,objects,spend),covered=name==='array_store'&&Boolean(observer)&&actualArray&&commonReadonlyClosure(args[2],model,objects,records,readonlyTarget);
+                actualArray=needsArray&&commonActualArrayReceiver(args[0],types,objects,spend),covered=name==='array_store'&&Boolean(observer)&&actualArray&&holdingPolicy.wholeValue(args[2]);
               if(observer&&name==='array_store'&&(args[0].unknown||!args[0].refs.size))hardEscape(args[2]);
               for(const ref of owners.refs){spend();const object=objects.get(ref),index=args[1]?.number,selected=regions.select(ownerRegion,ref);
                 selected.opaque ||= args[0].unknown||owners.unknown;const definite=owners.refs.size===1&&!selected.opaque;
@@ -281,7 +282,7 @@ export function analyzeCommonGraphs({model,plans},records=null) {
                 const fixed=indirect?p.targets.functions.map(x=>x.function_id):method?p.dispatch.map(x=>x.target):[p.function_id],regionScope=callRegion(c,block.name,activation,row.target,passed,fixed,selected.map(x=>x.target));
                 let entryVersions=state.regions;
                 if(!regionScope){spend(passed.length);let carried=false;for(const input of passed)carried ||= input.region.roots.size>0;
-                  if(carried||observer){spend(selected.length);const covered=readonlyTransport(c,row.target,fixed,selected.map(x=>x.target));
+                  if(carried||observer){spend(selected.length);const covered=holdingTransport(c,row.target,fixed,selected.map(x=>x.target));
                     if(observer&&!covered)for(const input of passed){spend();observer.hardEscape(input,state.heap);}
                     if(carried){passed=passed.map(a.copy);for(const input of passed){spend();if(input.region.roots.size){if(observer)regions.escape(input.region,state.regions,covered);input.region.opaque=true;}}entryVersions=new Map();}}}
                 const call=context(row.target,passed,state.heap,false,activation,repeated,activationSize,regionScope,entryVersions),key=fn+'/'+op.range.start+':'+op.range.end,targets=callTargets.get(key)??new Set();targets.add(row.target);callTargets.set(key,targets);
@@ -317,7 +318,7 @@ export function analyzeCommonGraphs({model,plans},records=null) {
     }
     changed=false;invalidateWeak=false;
     let borrows=null;
-    if(!bounded&&records){const observer=commonBorrowObservations({model,records,objects,regions,readonlyTarget,readEnvironmentSlot:(selected,start,target,key,heap)=>a.environmentSlot(selected,start,target,key,heap,objects)});
+    if(!bounded&&records){const observer=commonBorrowObservations({model,records,objects,regions,holdingPolicy,readEnvironmentSlot:(selected,start,target,key,heap)=>a.environmentSlot(selected,start,target,key,heap,objects)});
       for(const c of contexts.values())execute(c,observer);check(!changed&&!invalidateWeak,'ssa','final actual observation changed the fixed point');borrows=observer.finish();}
     return {contexts,observed,objects,operations,callTargets,borrows,regions};
   }

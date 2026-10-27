@@ -149,7 +149,7 @@ bool ActualCheck::execute(ActualContext &context,bool conditional,bool &changed)
 }
 bool ActualCheck::solve(bool conditional){
   if(!step(pendingContexts.size()+queuedContexts.size()))return false;
-  scheduling=!conditional;weakChanged=false;pendingContexts.clear();queuedContexts.clear();
+  scheduling=true;weakChanged=false;seedChanged=false;pendingContexts.clear();queuedContexts.clear();
   struct SchedulingGuard{ActualCheck &c;~SchedulingGuard(){c.scheduling=false;}} schedulingGuard{*this};
   contexts.clear();objects.clear();
   regions.nodes.clear();regions.scopes.clear();
@@ -172,10 +172,19 @@ bool ActualCheck::solve(bool conditional){
     if(!context(id,args,heap,true,changed))return false;
   }
   if(conditional){
-    do{
-      changed=false;
-      for(auto it=contexts.begin();it!=contexts.end();++it)if(!step()||!execute(it->second,true,changed))return false;
-    }while(changed);
+    // Every initial root is queued after rebuilding this mode's contexts.
+    // Shared entry seeds and weak promotion invalidate every conditional
+    // context; other return/heap/completion changes affect actual callers.
+    while(!pendingContexts.empty()){
+      if(!step())return false;auto id=std::move(pendingContexts.front());pendingContexts.pop_front();queuedContexts.erase(id);
+      auto &current=contexts.at(id);const bool trapped=current.requestTrap;changed=false;weakChanged=false;seedChanged=false;
+      if(!execute(current,true,changed))return false;
+      if(weakChanged||seedChanged){
+        for(const auto &[next,c]:contexts)if(!step()||!schedule(next))return false;
+      }else if(changed||current.requestTrap!=trapped){
+        for(const auto &caller:current.callers)if(!step()||!schedule(caller))return false;
+      }
+    }
   }else while(!pendingContexts.empty()){
     if(!step())return false;auto id=std::move(pendingContexts.front());pendingContexts.pop_front();queuedContexts.erase(id);
     auto &current=contexts.at(id);const bool trapped=current.requestTrap;changed=false;weakChanged=false;
@@ -191,6 +200,6 @@ bool ActualCheck::solve(bool conditional){
   if(conditional){
     for(const auto &[id,c]:contexts)merge(resultCapacity[c.function->id],c.returned);
     for(const auto *seeds:{&fieldSeeds,&globalSeeds,&elementSeeds})for(const auto &[id,v]:*seeds)merge(storageCapacity[id],v);
-  }weakChanged=false;return e.message.empty();
+  }weakChanged=false;seedChanged=false;return e.message.empty();
 }
 } // namespace tsfg::commonProgram

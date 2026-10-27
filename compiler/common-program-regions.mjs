@@ -168,7 +168,7 @@ export function commonRegions(spend){
     }
     return found;
   }
-  function readonlyHolds(value,heap,span,owner,selected,types,environments){
+  function ownedReturnHolds(value,heap,span,owner,selected,types,environments){
     // This is a return-point owning fact, not an older payload heap. It cannot
     // repair any opaque/missing field or identify two instances of a family.
     if(value.opaque||value.empty||!value.roots.size)return false;
@@ -177,7 +177,8 @@ export function commonRegions(spend){
       spend();const node=nodes.get(id);if(!node||node.scope!==selected)return false;
       if(node.type.startsWith('env:')){
         const layout=environments.get(node.type.slice(4));if(!layout)return false;
-        for(const slot of layout.slots){spend();if(slot.writable!==false||!slots.has('slot/'+slot.key))return false;}
+        for(const slot of layout.slots){spend();const current=slots.get('slot/'+slot.key);if(!current)return false;
+          if(slot.writable!==false&&(slot.writable!==true||types.get(slot.type)?.kind!=='scalar'||current.opaque||current.roots.size||current.empty!==true))return false;}
         if(layout.parent&&!slots.has('parent'))return false;
       }else if(types.get(node.type)?.kind==='array'){
         if(types.get(types.get(node.type).elementType)?.kind!=='scalar')return false;
@@ -258,5 +259,5 @@ export function commonRegions(spend){
     }
   }
   return {nodes,scopes,layouts,weight,copy,merge,key,heapCopy,heapJoin,heapKey,scope,allocate,load,store,reachable,escape,hardRaw,age,closed,number,
-    prepare,loopAt,observe,feedback,select,elements,holds,readonlyHolds};
+    prepare,loopAt,observe,feedback,select,elements,holds,ownedReturnHolds};
 }

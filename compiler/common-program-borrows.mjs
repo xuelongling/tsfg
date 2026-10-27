@@ -23,15 +23,34 @@ export function commonBorrowGraph(spend) {
     for(const row of escapes){spend();check(typeof row.allowed==='function'?row.allowed():row.allowed,'borrow-pending','borrow escapes unproved storage lifetime',row.origin);}
     for(const p of points.values()){spend();for(const id of p.uses){spend();const row=borrows.get(id);
       check(row&&row.owners.size>0&&!row.pending,'borrow-pending','ReadSpan use has no proved actual owner',p.origin??{});}}
-    const live=new Map();for(const id of points.keys()){spend();live.set(id,new Set());}
-    let changed;
-    do{changed=false;for(const p of points.values()){
-      spend();const next=new Set();
-      for(const to of p.edges){spend();check(live.has(to),'ssa');for(const id of live.get(to)){spend();if(!p.defines.has(id))add(next,id);}}
-      for(const id of p.uses)add(next,id);
-      const previous=live.get(p.id);if(next.size!==previous.size){live.set(p.id,next);changed=true;}
-      else for(const id of next){spend();if(!previous.has(id)){live.set(p.id,next);changed=true;break;}}
-    }}while(changed);
+    const live=new Map(),predecessors=new Map(),ordinals=new Map(),ordered=[];let dirty=new Set();
+    spend(points.size);for(const p of points.values()){
+      spend();ordinals.set(p.id,ordered.length);ordered.push(p);live.set(p.id,new Set());predecessors.set(p.id,new Set());
+      if(p.uses.size){spend();dirty.add(ordinals.get(p.id));}
+    }
+    // Validate even components without uses. Predecessors are points, not
+    // borrows: a legal fan-in can exceed the 4096 descriptor/edge bound.
+    for(const p of points.values()){spend();for(const to of p.edges){spend();check(live.has(to),'ssa');predecessors.get(to).add(ordinals.get(p.id));}}
+    while(dirty.size){
+      spend(dirty.size);const ready=[...dirty].sort((a,b)=>{spend();return a-b;}),queued=dirty,later=new Set();
+      // Match the old sweep's ordinal order, including each live Set's order.
+      // A changed earlier successor reaches a later predecessor this round;
+      // earlier/self predecessors are deferred to the next ordered round.
+      for(let head=0;head<ready.length;head++){
+        spend();const index=ready[head],p=ordered[index];queued.delete(index);const next=new Set();
+        for(const to of p.edges){spend();for(const id of live.get(to)){spend();if(!p.defines.has(id))add(next,id);}}
+        for(const id of p.uses)add(next,id);
+        const previous=live.get(p.id);let changed=next.size!==previous.size;
+        if(!changed)for(const id of next){spend();if(!previous.has(id)){changed=true;break;}}
+        if(!changed)continue;live.set(p.id,next);
+        for(const parent of predecessors.get(p.id)){
+          spend();if(parent<=index){later.add(parent);continue;}if(queued.has(parent))continue;
+          let low=head+1,high=ready.length;while(low<high){spend();const middle=(low+high)>>>1;if(ready[middle]<parent)low=middle+1;else high=middle;}
+          check(ready.length<points.size,'limit');spend(ready.length-low+1);ready.splice(low,0,parent);queued.add(parent);
+        }
+      }
+      dirty=later;
+    }
     for(const p of points.values()){spend();for(const effect of p.effects){spend();
       const active=new Set();for(const id of p.uses)add(active,id);
       for(const to of p.edges){spend();for(const id of live.get(to))add(active,id);}

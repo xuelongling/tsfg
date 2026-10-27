@@ -40,6 +40,9 @@ struct ActualCheck {
   std::map<std::string,const Function *> functions;
   std::map<std::string,const Json *> environments,environmentSlots;
   std::map<std::string,std::string> slotLayouts;
+  // Immutable verified slot ownership, separate from current runtime payloads.
+  std::map<std::string,std::pair<std::string,const Json *>> holdingSlots;
+  bool holdingSlotsReady=false;
   std::map<std::string,std::set<std::string>> environmentNeeds;
   bool environmentNeedsReady=false;
   std::map<std::string,ActualObject> objects;
@@ -48,7 +51,7 @@ struct ActualCheck {
   std::map<std::string,std::string> views;
   std::map<std::string,ActualContext> contexts;
   std::deque<std::string> pendingContexts;std::set<std::string> queuedContexts;
-  bool scheduling=false,weakChanged=false;
+  bool scheduling=false,weakChanged=false,seedChanged=false;
   std::set<std::string> repeatingFunctions,repeatingBlocks;
   std::set<std::string> cyclicFunctions;
   std::map<const Operation *,std::string> callSites;

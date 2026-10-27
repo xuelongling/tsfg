@@ -4,6 +4,7 @@
 #include "common-program-retention.h"
 #include "common-program-array-targets.h"
 #include "llvm/Support/raw_ostream.h"
+#include <algorithm>
 using namespace tsfg::commonProgram;
 namespace {
 Operation op(std::string name,uint16_t result=noRegister,std::string type={},std::vector<uint16_t> operands={},Object properties={},std::vector<uint16_t> successors={}){
@@ -24,7 +25,7 @@ struct Model {
       {"activationEnvironment",id=="make"?Json("L"):Json(nullptr)},{"signatureHash","sig"},{"parameters",parameter?Json(Array{Object{{"id","flag"},{"type",boolean}}}):Json(Array{})}});
   }
   bool run(const std::string &mode){
-    const bool fieldTransport=llvm::StringRef(mode).starts_with("field-"),arrayTransport=llvm::StringRef(mode).starts_with("array-");
+    const bool scalarState=llvm::StringRef(mode).starts_with("scalar-"),fieldTransport=llvm::StringRef(mode).starts_with("field-"),arrayTransport=scalarState||llvm::StringRef(mode).starts_with("array-");
     const bool carried=fieldTransport||arrayTransport||mode=="readonly-local-cell"||mode=="writable-local-cell"||mode=="readonly-old-saved"||mode=="readonly-missing-return"||mode=="readonly-extra-return"||mode=="readonly-host"||mode=="readonly-structural"||mode=="readonly-cyclic-reader",
       closed=fieldTransport||arrayTransport||llvm::StringRef(mode).starts_with("readonly-")||mode=="writable-local-cell"||mode=="writable-exit-phi",
       descriptor=mode=="descriptor"||mode=="field-descriptor"||mode=="array-descriptor",replaced=mode=="replaced"||mode=="field-replaced"||mode=="array-replaced",escaped=mode=="outer-cell",fieldEscape=mode=="outer-field"||mode=="readonly-outward",throwing=mode=="throw"||mode=="caught",host=mode=="host"||mode=="readonly-host"||mode=="field-host"||mode=="array-host",missing=mode=="missing-target";
@@ -32,12 +33,14 @@ struct Model {
     if(closed){for(auto &slot:*(*layout.getAsObject())["slots"].getAsArray())(*slot.getAsObject())["writable"]=!(llvm::StringRef(mode).starts_with("readonly-")||fieldTransport&&mode!="field-writable"||arrayTransport&&mode!="array-writable");
       if(mode!="readonly-missing-return"&&mode!="field-missing-return"&&mode!="array-missing-return")p.callableReturns["make"].functions.insert("reader");
       if(mode=="readonly-extra-return")p.callableReturns["make"].functions.insert("unconnected");}
+    if(scalarState)(*layout.getAsObject())["slots"].getAsArray()->push_back(Object{{"key","seen"},{"binding","seen"},{"type",i32},{"writable",true}});
     auto make=function("make");make.blocks={{{},{op("constant",0,i32,{},Object{{"decimal","1"}}),op("constant",1,u32,{},Object{{"decimal","0"}}),op("constant",2,u32,{},Object{{"decimal","1"}}),
       op("array_create",3,a,{0}),op("readspan",4,s,{3,1,2}),op("env_alloc",5,"env:L",{},Object{{"layout","L"}})}}};
     auto &body=make.blocks[0].operations;
     if(replaced)body.push_back(op("array_create",7,a,{0}));
     if(!descriptor)body.push_back(op("env_init",noRegister,"",{5,uint16_t(replaced?7:3)},Object{{"layout","L"},{"binding","a"},{"key","a"}}));
     body.push_back(op("env_init",noRegister,"",{5,4},Object{{"layout","L"},{"binding","r"},{"key","r"}}));
+    if(scalarState){body.push_back(op("constant",8,i32,{},Object{{"decimal","0"}}));body.push_back(op("env_init",noRegister,"",{5,8},Object{{"layout","L"},{"binding","seen"},{"key","seen"}}));}
     body.push_back(op("make_closure",6,f,{5},Object{{"function_id","reader"},{"signature_hash","sig"},{"environment_layout","L"}}));body.push_back(op(throwing?"return_throw":"func.return",noRegister,"",{6}));
     if(mode=="recursive"){
       make.blocks[0].parameters={30};body.pop_back();body.push_back(op("cf.cond_br",noRegister,"",{30},{},{1,2}));
@@ -46,6 +49,8 @@ struct Model {
       make.blocks.push_back({{8},{op("func.return",noRegister,"",{6})}});make.blocks.push_back({{9},{op("return_throw",noRegister,"",{9})}});
     }
     auto reader=function("reader");reader.blocks={{{0},{op("env_load",1,s,{0},Object{{"layout","L"},{"binding","r"},{"key","r"}}),op("readspan_length",2,u32,{1}),op("func.return",noRegister,"",{2})}}};
+    if(scalarState){auto &ops=reader.blocks[0].operations;ops.insert(ops.end()-1,{op("env_load",9,i32,{0},Object{{"layout","L"},{"binding","seen"},{"key","seen"}}),op("constant",10,i32,{},Object{{"decimal","1"}}),
+      op("binary",11,i32,{9,10},Object{{"operator","+"}}),op("env_store",noRegister,"",{0,11},Object{{"layout","L"},{"binding","seen"},{"key","seen"}})});p.fixedEffects["reader"].captures["seen"]={true,true,false};}
     auto root=function("root");root.blocks={{{0},{op("constant",1,u32,{},Object{{"decimal","0"}}),op("cf.br",noRegister,"",{},{},{1})}},
       {{},{op("cf.cond_br",noRegister,"",{0},{},{2,7})}},{{},{op("invoke",noRegister,"",{},Object{{"function_id","make"}},{3,6})}},
       {{10},{op("invoke_indirect",noRegister,"",{10},Object{{"signature_hash","sig"},{"targets",Object{{"top",false}}}},{4,6})}},
@@ -108,7 +113,7 @@ struct Model {
       root.blocks[1].operations[0]=op("array_create",2,readers,{10});
       root.blocks[4].operations[0]=op("array_store",noRegister,"",{2,1,11});
       root.blocks[6].operations[0]=op("array_read",20,f,{2,1});
-      if(mode=="array-old-saved"){
+      if(mode=="array-old-saved"||mode=="scalar-old-saved"){
         root.blocks[3].operations.insert(root.blocks[3].operations.begin(),op("array_read",22,f,{2,1}));
         root.blocks[4].operations={op("invoke_indirect",noRegister,"",{22},Object{{"signature_hash","sig"},{"targets",Object{{"top",false}}}},{9,7})};
         root.blocks.push_back({{23},{op("array_store",noRegister,"",{2,1,11}),op("cf.br",noRegister,"",{},{},{2})}});
@@ -133,6 +138,10 @@ struct Model {
       p.functions.push_back(std::move(other));source("readerB",true);p.fixedEffects["readerB"].reads.insert("g");
       global=Object{{"type",u32},{"sourceBinding","g"}};c.globals.emplace("g",&global);p.callableSites["root/40:50"].functions.insert("readerB");
     }
+    if(mode=="scalar-full-reference"||mode=="scalar-full-host"){
+      auto other=function("readerB");other.blocks={{{0},{op("env_load",1,a,{0},Object{{"layout","L"},{"binding","a"},{"key","a"}}),op("constant",2,u32,{},Object{{"decimal","0"}}),op("constant",3,i32,{},Object{{"decimal","1"}}),op("array_store",noRegister,"",{1,2,3}),op("func.return",noRegister,"",{2})}}};
+      p.functions.push_back(std::move(other));source("readerB",true);p.fixedEffects["readerB"].captures["a"]={true,true,false};p.fixedEffects["readerB"].unknownHost=mode=="scalar-full-host";p.callableSites["root/40:50"].functions.insert("readerB");
+    }
     for(const auto &[id,type]:types){c.types.emplace(id,&type);for(const auto &member:items(field(type,"fields")))c.fields.emplace(string(field(member,"id")),&member);}
     if(arrayTransport){
       // Isolated GC control precondition: a separate normalized family has
@@ -144,6 +153,7 @@ struct Model {
     c.environments.emplace("L",&layout);for(const auto &fn:p.functions){c.functions.emplace(fn.id,&fn);c.sourceFunctions.emplace(fn.id,&sources.at(fn.id));p.fixedEffects[fn.id].parameters.resize(fn.id=="root"?1:0);}
     if(mode=="recursive"){p.fixedEffects["make"].parameters.resize(1);c.views["make/30"]=boolean;}
     c.views["root/0"]=boolean;c.views["reader/1"]=s;p.callableSites["root/40:50"].functions.insert("reader");if(missing)p.callableSites["root/40:50"].functions.insert("other");if(host)p.fixedEffects["reader"].unknownHost=true;
+    if(scalarState){c.views["reader/9"]=i32;c.views["reader/10"]=i32;}
     if(mode=="factory-full-host")p.fixedEffects["otherFactory"].unknownHost=true;
     if(mode=="readonly-structural"||mode=="field-structural"||mode=="array-structural")p.fixedEffects["reader"].captures["a"]={true,false,true};
     if(!c.callGraph()||!c.solve(false)){llvm::errs()<<mode<<": setup "<<e.code<<" "<<e.message<<"\n";return false;}
@@ -154,7 +164,8 @@ struct Model {
       bool erased=false;for(const auto &[id,ctx]:c.contexts)if(ctx.function->id=="reader"&&ctx.called&&!ctx.arguments.empty())erased|=ctx.arguments[0].region.roots.empty()&&ctx.arguments[0].region.opaque;
       if(!erased)return false;for(const auto &[id,scope]:c.regions.scopes)if(scope.hard)return false;
     }
-    const bool accepted=verifyCommonBorrows(c),expected=mode=="array-held"||mode=="array-old-saved"||mode=="field-held"||mode=="field-old-saved"||mode=="held"||mode=="exit-dead"||mode=="caught"||mode=="exit-dead-phi"||mode=="exit-dead-route"||mode=="readonly-local-cell"||mode=="readonly-old-saved"||mode=="readonly-exit-phi";
+    const bool accepted=verifyCommonBorrows(c),expected=mode=="scalar-array"||mode=="scalar-old-saved"||mode=="array-held"||mode=="array-old-saved"||mode=="field-held"||mode=="field-old-saved"||mode=="held"||mode=="exit-dead"||mode=="caught"||mode=="exit-dead-phi"||mode=="exit-dead-route"||mode=="readonly-local-cell"||mode=="readonly-old-saved"||mode=="readonly-exit-phi";
+    if(scalarState&&!p.fixedEffects.at("reader").captures.at("seen").write)return false;
     const bool correct=accepted==expected&&(accepted||e.code=="core-ir-common-borrow");
     if(mode=="readonly-outward"){bool hard=false;for(const auto &[id,scope]:c.regions.scopes)hard|=scope.hard;if(!hard)return false;}
     if(mode=="field-full-global"||mode=="array-full-global"){bool hard=false;for(const auto &[id,scope]:c.regions.scopes)hard|=scope.hard;if(!hard)return false;}
@@ -281,7 +292,7 @@ bool fieldValueShape(bool array=false){
   m.p.fixedEffects["bad"].reads.insert("g");m.p.callableReturns["make"].functions.insert("reader");if(!m.c.callGraph())return false;
   m.c.objects.emplace("Box",ActualObject{receivers,false});m.c.objects.emplace("E",ActualObject{"env:L",true});
   ActualValue receiver;receiver.tags.insert(receivers);receiver.objects.insert("Box");ActualValue value;value.tags.insert(m.f);value.callables.emplace("reader","E");
-  const auto transport=[&](const ActualValue &r,const ActualValue &v){return array?readonlyArrayTransport(m.c,r,v):readonlyFieldTransport(m.c,r,v);};
+  const auto transport=[&](const ActualValue &r,const ActualValue &v){return array?holdingArrayTransport(m.c,r,v):holdingFieldTransport(m.c,r,v);};
   if(!transport(receiver,value))return false;
   if(array)for(size_t alternative=0;alternative<5;++alternative){auto changed=m.c.copy(receiver);
     if(alternative==0)changed.unknown=true;else if(alternative==1)changed.objects.clear();else if(alternative==2)changed.tags.insert(m.s);
@@ -372,6 +383,74 @@ bool nestedArrayExposure(const std::string &mode){
   const bool ok=verifyCallableTargets(m.p,m.e,initialized)&&(bool(initialized.count(inner))==(mode=="array-target-closed"||numeric));
   if(!ok)llvm::errs()<<mode<<": "<<m.e.code<<" "<<m.e.message<<" inner="<<initialized.count(inner)<<"\n";return ok;
 }
+bool scalarEligibility(const std::string &mode){
+  // Private normalized qualification only, separate from complete Source facts.
+  Model m;auto make=m.function("make"),reader=m.function("reader"),other=m.function("other");
+  for(auto *fn:{&make,&reader,&other})fn->blocks={{{},{op("func.return")}}};m.p.functions={std::move(make),std::move(reader),std::move(other)};
+  m.source("make");m.source("reader",true);m.source("other",true);m.types.emplace("union",Object{{"kind","union"},{"members",Array{m.i32,m.u32}}});m.types.emplace("unknown",Object{{"kind","unknown"}});
+  std::string type=m.i32;for(const auto &[suffix,id]:std::vector<std::pair<std::string,std::string>>{{"array",m.a},{"reference",m.holder},{"span",m.s},{"function",m.f},{"union","union"},{"unknown","unknown"}})if(mode=="scalar-upper-"+suffix)type=id;
+  m.layout=Object{{"id","L"},{"parent",nullptr},{"slots",Array{Object{{"key","seen"},{"type",type},{"writable",true}},Object{{"key","a"},{"type",m.a},{"writable",false}}}}};m.c.environments.emplace("L",&m.layout);
+  Json alternate=Object{{"id","M"},{"parent",mode=="scalar-upper-parent"?Json("L"):Json(nullptr)},{"slots",Array{}}};
+  if(mode=="scalar-upper-ambiguous")(*alternate.getAsObject())["slots"]=Array{Object{{"key","seen"},{"type",m.i32},{"writable",true}}};
+  m.c.environments.emplace("M",&alternate);if(mode=="scalar-upper-parent"||mode=="scalar-upper-foreign")(*m.sources.at("reader").getAsObject())["lexicalEnvironment"]="M";
+  if(mode=="scalar-upper-activation"){(*m.sources.at("reader").getAsObject())["lexicalEnvironment"]=nullptr;(*m.sources.at("reader").getAsObject())["activationEnvironment"]="L";}
+  for(const auto &[id,t]:m.types)m.c.types.emplace(id,&t);for(const auto &fn:m.p.functions){m.c.functions.emplace(fn.id,&fn);m.c.sourceFunctions.emplace(fn.id,&m.sources.at(fn.id));m.p.fixedEffects[fn.id];}
+  const auto key=mode=="scalar-upper-missing"?"missing":"seen";m.p.fixedEffects["reader"].captures[key]={true,true,false};if(!m.c.callGraph())return false;
+  bool accepted=holdingCall(m.c,"reader",true);
+  if(mode=="scalar-upper-full-reference"||mode=="scalar-upper-full-host"){
+    m.p.fixedEffects["other"].unknownHost=mode=="scalar-upper-full-host";if(mode=="scalar-upper-full-reference")m.p.fixedEffects["other"].captures["a"]={true,true,false};
+    m.p.callableReturns["make"].functions={"reader","other"};m.c.objects.emplace("E",ActualObject{"env:L",true});ActualValue result;result.tags.insert(m.f);result.callables={{"reader","E"},{"other","E"}};
+    ActualContext context;context.function=&m.p.functions[0];accepted=holdingReturnTargets(m.c,context,result);
+  }
+  return m.e.message.empty()&&m.p.fixedEffects.at("reader").captures.at(key).write&&accepted==(mode=="scalar-upper-good"||mode=="scalar-upper-parent");
+}
+bool scalarCurrent(const std::string &mode){
+  // Seed a current relation query, never an official Program or runtime value.
+  Model m;for(const auto &[id,t]:m.types)m.c.types.emplace(id,&t);
+  m.layout=Object{{"id","L"},{"parent",nullptr},{"slots",Array{Object{{"key","a"},{"type",m.a},{"writable",false}},Object{{"key","r"},{"type",m.s},{"writable",false}},Object{{"key","seen"},{"type",m.i32},{"writable",true}}}}};m.c.environments.emplace("L",&m.layout);
+  m.c.regions.acyclic.insert("make");m.c.regions.scopes.emplace("R",RegionScope{"make","activation",false});auto fn=m.function("make");ActualContext context;context.function=&fn;context.region="R";context.activation="activation";RegionHeap heap;
+  const auto fresh=[&](const std::string &ref,const std::string &type){m.c.objects.emplace(ref,ActualObject{type,true});return regionAllocate(m.c,context,ref,type,heap);};
+  const auto a=fresh("A",m.a),span=fresh("S",m.s),env=fresh("E","env:L");regionStore(m.c,span,"/owner",a,heap);regionStore(m.c,env,"/slot/a",a,heap);regionStore(m.c,env,"/slot/r",span,heap);
+  RegionValue scalar;scalar.known=true;scalar.empty=true;regionStore(m.c,env,"/slot/seen",scalar,heap);auto &slot=heap.at(*env.roots.begin()).at("/slot/seen");
+  if(mode=="scalar-edge-reference"){slot=a;slot.empty=true;}else if(mode=="scalar-edge-opaque")slot.opaque=true;else if(mode=="scalar-edge-bottom")slot=RegionValue{};
+  else if(mode=="scalar-edge-noorigin")slot.known=false;else if(mode=="scalar-edge-unproven")slot.empty=false;else if(mode=="scalar-edge-missing")heap.at(*env.roots.begin()).erase("/slot/seen");
+  auto root=env;Json child=nullptr;if(mode=="scalar-edge-parent"||mode=="scalar-edge-foreign-parent"){
+    child=Object{{"id","M"},{"parent","L"},{"slots",Array{Object{{"key","marker"},{"type",m.u32},{"writable",false}}}}};m.c.environments.emplace("M",&child);
+    root=fresh("child","env:M");regionStore(m.c,root,"/slot/marker",scalar,heap);regionStore(m.c,root,"/parent",env,heap);
+    if(mode=="scalar-edge-foreign-parent")m.c.regions.nodes.at(*env.roots.begin()).region="foreign";
+  }
+  m.c.regions.scopes.at("R").blocked=true;if(m.c.regions.scopes.at("R").hard)return false;RegionHolding proof(m.c,"R",root,heap);
+  const bool accepted=proof.stableReturn();return m.e.message.empty()&&accepted==(mode=="scalar-edge-good"||mode=="scalar-edge-parent");
+}
+bool conditionalChain(){
+  // The existing conditional interpreter must close this one real call chain
+  // within a bounded budget; no Source/runtime execution is claimed here.
+  Model m;
+  for(size_t i=0;i<64;++i){
+    const auto id="chain-"+std::to_string(i);auto fn=m.function(id);m.source(id);
+    if(i)(*m.sources.at(id).getAsObject())["lexicalParent"]="chain-0";
+    if(i==63)fn.blocks={{{},{op("func.return")}}};
+    else fn.blocks={{{},{op("invoke",noRegister,"",{},Object{{"function_id","chain-"+std::to_string(i+1)}},{1,2})}},{{},{op("func.return")}},{{},{op("return_throw")}}};
+    m.p.functions.push_back(std::move(fn));
+  }
+  for(const auto &fn:m.p.functions){m.c.functions.emplace(fn.id,&fn);m.c.sourceFunctions.emplace(fn.id,&m.sources.at(fn.id));m.p.fixedEffects[fn.id];}
+  if(!m.c.callGraph())return false;m.p.remaining=12000;
+  const bool accepted=m.c.solve(true);llvm::outs()<<"conditional-chain remaining="<<m.p.remaining<<" contexts="<<m.c.contexts.size()<<"\n";
+  return accepted&&m.e.message.empty()&&m.c.contexts.size()==64&&std::all_of(m.c.contexts.begin(),m.c.contexts.end(),[](const auto &row){return row.second.normal;});
+}
+bool conditionalSharedSeed(){
+  Model m;m.types.emplace("unknown",Object{{"kind","unknown"}});
+  Json global=Object{{"id","G"},{"sourceBinding","rawG"},{"type","unknown"}};m.c.globals.emplace("G",&global);
+  auto reader=m.function("A-reader"),writer=m.function("Z-writer");
+  reader.blocks={{{},{op("global_load",0,"unknown",{},Object{{"global","G"}}),op("func.return",noRegister,"",{0})}}};
+  writer.blocks={{{},{op("constant",0,m.i32,{},Object{{"decimal","1"}}),op("global_store",noRegister,"",{0},Object{{"global","G"}}),op("func.return")}}};
+  m.p.functions={std::move(reader),std::move(writer)};
+  for(const auto &[id,type]:m.types)m.c.types.emplace(id,&type);
+  for(const auto &fn:m.p.functions){m.source(fn.id);m.c.functions.emplace(fn.id,&fn);m.c.sourceFunctions.emplace(fn.id,&m.sources.at(fn.id));m.p.fixedEffects[fn.id];}
+  if(!m.c.callGraph()||!m.c.solve(true))return false;
+  const auto returned=std::find_if(m.c.contexts.begin(),m.c.contexts.end(),[](const auto &row){return row.second.function->id=="A-reader";});
+  return m.e.message.empty()&&returned!=m.c.contexts.end()&&returned->second.returned.tags.count(m.i32)&&!m.c.scheduling&&m.c.pendingContexts.empty();
+}
 bool quota(const std::string &mode){
   Model m;auto fn=m.function("quota");
   if(mode=="parameter-quota"){
@@ -391,6 +470,6 @@ bool quota(const std::string &mode){
 }
 int main(int argc,char **argv){
   const std::vector<std::string> all={"held","descriptor","replaced","outer-cell","outer-field","throw","caught","host","missing-target","factory-missing","factory-full-host","exit-phi","exit-dead","recursive","selected","older","may","quota","pair-held","pair-onebad","pair-pure","parent-held","parent-older","old-after-new","unclosed-age","element-held","element-wildcard","element-regrow","element-join-left","element-join-right","irreducible","untracked","pair-outward","pair-cross-region","parameter-quota","edge-copy-quota","aging-quota","exit-dead-phi","exit-live-phi","exit-dead-route","readonly-local-cell","readonly-old-saved","readonly-exit-phi","writable-local-cell","writable-exit-phi","readonly-missing-return","readonly-extra-return","readonly-host","readonly-structural","readonly-outward","readonly-cyclic-reader"};
-  std::vector<std::string> selected;if(argc>1)for(int i=1;i<argc;++i)selected.push_back(argv[i]);else{selected=all;for(const auto *name:{"declared-weak-promotion","trap-fact-growth","field-held","field-old-saved","field-writable","field-descriptor","field-replaced","field-host","field-structural","field-missing-return","field-full-global","field-value-shape","raw-hard-projection","raw-unknown-field","raw-opaque-field","array-held","array-old-saved","array-writable","array-descriptor","array-replaced","array-host","array-structural","array-missing-return","array-full-global","array-value-shape","array-target-closed","array-target-early","array-target-late","array-target-alias","array-target-field","array-target-nullable","array-target-nullable-field","array-target-numeric"})selected.push_back(name);}bool ok=true;
-  for(const auto &name:selected){bool passed;if(llvm::StringRef(name).starts_with("array-target-"))passed=nestedArrayExposure(name);else if(name=="array-value-shape")passed=fieldValueShape(true);else if(llvm::StringRef(name).starts_with("element-"))passed=elementHolding(name);else if(llvm::StringRef(name).starts_with("pair-")||llvm::StringRef(name).starts_with("parent-"))passed=holding(name);else if(name=="old-after-new")passed=aging();else if(name=="unclosed-age")passed=unclosed();else if(name=="irreducible")passed=irreducible();else if(name=="untracked")passed=untracked();else if(name=="declared-weak-promotion")passed=declaredWeakPromotion();else if(name=="trap-fact-growth")passed=trapFactGrowth();else if(name=="field-value-shape")passed=fieldValueShape();else if(name=="raw-hard-projection"||name=="raw-unknown-field"||name=="raw-opaque-field")passed=rawHardProjection(name);else if(name=="parameter-quota"||name=="edge-copy-quota"||name=="aging-quota")passed=quota(name);else if(name=="selected"||name=="older"||name=="may"||name=="quota")passed=relation(name);else{Model m;passed=m.run(name);}llvm::outs()<<name<<": "<<(passed?"PASS":"FAIL")<<"\n";ok&=passed;}return ok?0:1;
+  std::vector<std::string> selected;if(argc>1)for(int i=1;i<argc;++i)selected.push_back(argv[i]);else{selected=all;for(const auto *name:{"conditional-worklist-chain","conditional-shared-seed","declared-weak-promotion","trap-fact-growth","field-held","field-old-saved","field-writable","field-descriptor","field-replaced","field-host","field-structural","field-missing-return","field-full-global","field-value-shape","raw-hard-projection","raw-unknown-field","raw-opaque-field","array-held","array-old-saved","array-writable","array-descriptor","array-replaced","array-host","array-structural","array-missing-return","array-full-global","array-value-shape","array-target-closed","array-target-early","array-target-late","array-target-alias","array-target-field","array-target-nullable","array-target-nullable-field","array-target-numeric","scalar-array","scalar-old-saved","scalar-full-reference","scalar-full-host","scalar-upper-good","scalar-upper-parent","scalar-upper-foreign","scalar-upper-missing","scalar-upper-ambiguous","scalar-upper-activation","scalar-upper-array","scalar-upper-reference","scalar-upper-span","scalar-upper-function","scalar-upper-union","scalar-upper-unknown","scalar-upper-full-reference","scalar-upper-full-host","scalar-edge-good","scalar-edge-parent","scalar-edge-foreign-parent","scalar-edge-reference","scalar-edge-opaque","scalar-edge-missing","scalar-edge-bottom","scalar-edge-noorigin","scalar-edge-unproven"})selected.push_back(name);}bool ok=true;
+  for(const auto &name:selected){bool passed;if(name=="conditional-worklist-chain")passed=conditionalChain();else if(name=="conditional-shared-seed")passed=conditionalSharedSeed();else if(llvm::StringRef(name).starts_with("scalar-upper-"))passed=scalarEligibility(name);else if(llvm::StringRef(name).starts_with("scalar-edge-"))passed=scalarCurrent(name);else if(llvm::StringRef(name).starts_with("array-target-"))passed=nestedArrayExposure(name);else if(name=="array-value-shape")passed=fieldValueShape(true);else if(llvm::StringRef(name).starts_with("element-"))passed=elementHolding(name);else if(llvm::StringRef(name).starts_with("pair-")||llvm::StringRef(name).starts_with("parent-"))passed=holding(name);else if(name=="old-after-new")passed=aging();else if(name=="unclosed-age")passed=unclosed();else if(name=="irreducible")passed=irreducible();else if(name=="untracked")passed=untracked();else if(name=="declared-weak-promotion")passed=declaredWeakPromotion();else if(name=="trap-fact-growth")passed=trapFactGrowth();else if(name=="field-value-shape")passed=fieldValueShape();else if(name=="raw-hard-projection"||name=="raw-unknown-field"||name=="raw-opaque-field")passed=rawHardProjection(name);else if(name=="parameter-quota"||name=="edge-copy-quota"||name=="aging-quota")passed=quota(name);else if(name=="selected"||name=="older"||name=="may"||name=="quota")passed=relation(name);else{Model m;passed=m.run(name);}llvm::outs()<<name<<": "<<(passed?"PASS":"FAIL")<<"\n";ok&=passed;}return ok?0:1;
 }

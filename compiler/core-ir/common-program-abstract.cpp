@@ -157,7 +157,7 @@ ActualValue ActualCheck::entryDeclared(const std::string &id,const std::string &
         if(!need(fields.count(selected),"entry role actual field missing"))return {};
         if(!step(next.size()+1))return {};auto child=entryDeclared(string(field(*fields.at(selected),"type")),string(field(*fieldView,"type")),heap,origin,next,role,upper,changed);
         merge(heap[ref+"/field/"+selected],child);
-        if(upper)changed=merge(fieldSeeds[string(field(*fields.at(selected),"sourceBinding"))],child)||changed;
+        if(upper){const bool grew=merge(fieldSeeds[string(field(*fields.at(selected),"sourceBinding"))],child);seedChanged|=grew;changed|=grew;}
       }
     }return out;
   }
@@ -170,7 +170,7 @@ ActualValue ActualCheck::entryDeclared(const std::string &id,const std::string &
   }
   if(kind=="array"&&(vk=="array"||vk=="readSpan")){
     if(!step(active.size()+1))return {};auto child=entryDeclared(string(field(t,"elementType")),string(field(v,"elementType")),heap,origin,active,role,upper,changed);merge(heap[ref+"/element/*"],child);
-    if(upper)changed=merge(elementSeeds["element:"+id],child)||changed;
+    if(upper){const bool grew=merge(elementSeeds["element:"+id],child);seedChanged|=grew;changed|=grew;}
   }
   if(kind=="readSpan"&&(vk=="array"||vk=="readSpan")){
     const Json *array=nullptr;for(const auto &[type,row]:types){if(!step())return {};if(string(field(*row,"kind"))=="array"&&same(field(*row,"elementType"),field(t,"elementType"))){array=row;break;}}
