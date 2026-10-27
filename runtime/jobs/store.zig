@@ -4,12 +4,16 @@ const layout = @import("layout.zig");
 pub const Error = error{ InvalidEntity, InvalidArchetype, ComponentMissing, InvalidLease, BorrowConflict, SizeMismatch, StorageLimit };
 pub const Entity = struct { index: u32, generation: u32 };
 pub const ComponentValue = struct { component: []const u8, bytes: []const u8 };
+pub const Access = enum { read, write };
+pub const Selection = struct { component: []const u8, access: Access };
+const Resolved = struct { component: u32, access: Access };
 const Component = struct { id: []const u8, size: usize, stride: usize, alignment: std.mem.Alignment };
 const Column = struct { component: u32, allocation: []u8, readers: u32 = 0, writer: bool = false };
 const Chunk = struct { columns: []Column, entities: []u32, len: usize = 0, active: usize = 0 };
 const Archetype = struct { components: []u32, chunks: std.ArrayListUnmanaged(*Chunk) = .empty };
 const Slot = struct { generation: u32 = 1, live: bool = false, archetype: u32 = 0, chunk: u32 = 0, row: u32 = 0 };
-const Lease = struct { token: u64, chunk: *Chunk, column: usize, writable: bool };
+const Lease = struct { token: u64, chunk: *Chunk, column: usize, writable: bool, query: bool = false };
+const QueryState = struct { token: u64, selection: []Resolved, chunks: []*Chunk };
 
 /// A Store owns component metadata and columns. Its address must remain stable while views live.
 /// Raw slices obtained from a view remain borrowed only until that view is released.
@@ -21,6 +25,7 @@ pub const Store = struct {
     archetypes: std.ArrayListUnmanaged(Archetype) = .empty,
     slots: std.ArrayListUnmanaged(Slot) = .empty,
     leases: std.ArrayListUnmanaged(Lease) = .empty,
+    queries: std.ArrayListUnmanaged(QueryState) = .empty,
     next_token: u64 = 1,
     mutex: std.atomic.Mutex = .unlocked,
 
@@ -42,7 +47,7 @@ pub const Store = struct {
 
     pub fn deinit(self: *Store) Error!void {
         self.lock();
-        if (self.leases.items.len != 0) {
+        if (self.leases.items.len != 0 or self.queries.items.len != 0) {
             self.mutex.unlock();
             return error.BorrowConflict;
         }
@@ -54,6 +59,7 @@ pub const Store = struct {
         self.archetypes.deinit(self.allocator);
         self.slots.deinit(self.allocator);
         self.leases.deinit(self.allocator);
+        self.queries.deinit(self.allocator);
         self.metadata.deinit();
         self.mutex.unlock();
         self.* = undefined;
@@ -218,7 +224,7 @@ pub const Store = struct {
         self.lock();
         defer self.mutex.unlock();
         for (self.leases.items) |lease| if (lease.token == token) {
-            if (writable and !lease.writable) return error.InvalidLease;
+            if (lease.query or (writable and !lease.writable)) return error.InvalidLease;
             const column = lease.chunk.columns[lease.column];
             return column.allocation[0 .. lease.chunk.len * self.components[column.component].stride];
         };
@@ -228,10 +234,163 @@ pub const Store = struct {
         self.lock();
         defer self.mutex.unlock();
         for (self.leases.items, 0..) |lease, index| if (lease.token == token) {
-            const column = &lease.chunk.columns[lease.column];
-            if (lease.writable) column.writer = false else column.readers -= 1;
-            lease.chunk.active -= 1;
+            if (lease.query) return error.InvalidLease;
+            endLease(lease);
             _ = self.leases.swapRemove(index);
+            return;
+        };
+        return error.InvalidLease;
+    }
+    fn endLease(lease: Lease) void {
+        const column = &lease.chunk.columns[lease.column];
+        if (lease.writable) column.writer = false else column.readers -= 1;
+        lease.chunk.active -= 1;
+    }
+
+    /// Query and Batch are aliases of one complete borrow session. Releasing either
+    /// releases the entire set; component slices are valid only while that session lives.
+    pub const Query = struct {
+        store: *Store,
+        token: u64,
+        pub fn batchCount(self: Query) !usize {
+            self.store.lock();
+            defer self.store.mutex.unlock();
+            return (try self.store.queryAt(self.token)).chunks.len;
+        }
+        pub fn batch(self: Query, index: usize) !Batch {
+            self.store.lock();
+            defer self.store.mutex.unlock();
+            _ = try self.store.queryBatch(self.token, index);
+            return .{ .store = self.store, .token = self.token, .index = index };
+        }
+        pub fn release(self: Query) !void {
+            try self.store.releaseQuery(self.token);
+        }
+    };
+    pub const Batch = struct {
+        store: *Store,
+        token: u64,
+        index: usize,
+        pub fn rowCount(self: Batch) !usize {
+            self.store.lock();
+            defer self.store.mutex.unlock();
+            return (try self.store.queryBatch(self.token, self.index)).chunk.len;
+        }
+        pub fn column(self: Batch, index: usize) !struct { component: []const u8, stride: usize, access: Access } {
+            self.store.lock();
+            defer self.store.mutex.unlock();
+            const state = (try self.store.queryBatch(self.token, self.index)).state;
+            if (index >= state.selection.len) return error.ComponentMissing;
+            const item = state.selection[index];
+            const component = self.store.components[item.component];
+            return .{ .component = component.id, .stride = component.stride, .access = item.access };
+        }
+        pub fn read(self: Batch, column_index: usize) ![]const u8 {
+            return self.store.queryBytes(self.token, self.index, column_index, false);
+        }
+        pub fn write(self: Batch, column_index: usize) ![]u8 {
+            return self.store.queryBytes(self.token, self.index, column_index, true);
+        }
+        pub fn entity(self: Batch, row: usize) !Entity {
+            self.store.lock();
+            defer self.store.mutex.unlock();
+            const chunk = (try self.store.queryBatch(self.token, self.index)).chunk;
+            if (row >= chunk.len) return error.InvalidEntity;
+            const index = chunk.entities[row];
+            return .{ .index = index, .generation = self.store.slots.items[index].generation };
+        }
+        pub fn release(self: Batch) !void {
+            try self.store.releaseQuery(self.token);
+        }
+    };
+
+    pub fn query(self: *Store, selection: []const Selection) !Query {
+        self.lock();
+        defer self.mutex.unlock();
+        if (selection.len == 0 or selection.len > self.components.len) return error.ComponentMissing;
+        const resolved = try self.allocator.alloc(Resolved, selection.len);
+        errdefer self.allocator.free(resolved);
+        for (selection, 0..) |item, index| {
+            const component = self.componentIndex(item.component) orelse return error.ComponentMissing;
+            if (index > 0 and resolved[index - 1].component >= component) return error.ComponentMissing;
+            resolved[index] = .{ .component = component, .access = item.access };
+        }
+        if (self.next_token == std.math.maxInt(u64)) return error.StorageLimit;
+        var matches: std.ArrayListUnmanaged(*Chunk) = .empty;
+        errdefer matches.deinit(self.allocator);
+        for (self.archetypes.items) |archetype| {
+            var included = true;
+            for (resolved) |item| if (std.mem.indexOfScalar(u32, archetype.components, item.component) == null) {
+                included = false;
+                break;
+            };
+            if (!included) continue;
+            for (archetype.chunks.items) |chunk| {
+                if (chunk.len == 0) continue;
+                _ = std.math.add(usize, chunk.active, resolved.len) catch return error.StorageLimit;
+                for (resolved) |item| {
+                    const column = chunk.columns[std.mem.indexOfScalar(u32, archetype.components, item.component).?];
+                    if (column.writer or (item.access == .write and column.readers != 0)) return error.BorrowConflict;
+                    if (item.access == .read and column.readers == std.math.maxInt(u32)) return error.StorageLimit;
+                }
+                try matches.append(self.allocator, chunk);
+            }
+        }
+        const count = std.math.mul(usize, matches.items.len, resolved.len) catch return error.StorageLimit;
+        try self.leases.ensureUnusedCapacity(self.allocator, count);
+        try self.queries.ensureUnusedCapacity(self.allocator, 1);
+        const chunks = try matches.toOwnedSlice(self.allocator);
+        const token = self.next_token;
+        for (chunks) |chunk| for (resolved) |item| {
+            for (chunk.columns, 0..) |*column, column_index| if (column.component == item.component) {
+                if (item.access == .write) column.writer = true else column.readers += 1;
+                chunk.active += 1;
+                self.leases.appendAssumeCapacity(.{ .token = token, .chunk = chunk, .column = column_index, .writable = item.access == .write, .query = true });
+                break;
+            };
+        };
+        self.queries.appendAssumeCapacity(.{ .token = token, .selection = resolved, .chunks = chunks });
+        self.next_token += 1;
+        return .{ .store = self, .token = token };
+    }
+    fn queryAt(self: *Store, token: u64) Error!*QueryState {
+        for (self.queries.items) |*state| if (state.token == token) return state;
+        return error.InvalidLease;
+    }
+    fn queryBatch(self: *Store, token: u64, batch_index: usize) Error!struct { state: *QueryState, chunk: *Chunk } {
+        const state = try self.queryAt(token);
+        if (batch_index >= state.chunks.len) return error.InvalidLease;
+        return .{ .state = state, .chunk = state.chunks[batch_index] };
+    }
+    fn queryBytes(self: *Store, token: u64, batch_index: usize, column_index: usize, writable: bool) ![]u8 {
+        self.lock();
+        defer self.mutex.unlock();
+        const bound = try self.queryBatch(token, batch_index);
+        const chunk = bound.chunk;
+        const state = bound.state;
+        if (column_index >= state.selection.len) return error.ComponentMissing;
+        const item = state.selection[column_index];
+        if (writable and item.access != .write) return error.InvalidLease;
+        for (chunk.columns) |column| if (column.component == item.component) return column.allocation[0 .. chunk.len * self.components[item.component].stride];
+        unreachable;
+    }
+    fn releaseQuery(self: *Store, token: u64) !void {
+        self.lock();
+        defer self.mutex.unlock();
+        for (self.queries.items, 0..) |state, state_index| if (state.token == token) {
+            var index: usize = 0;
+            while (index < self.leases.items.len) {
+                const lease = self.leases.items[index];
+                if (lease.token != token) {
+                    index += 1;
+                    continue;
+                }
+                endLease(lease);
+                _ = self.leases.swapRemove(index);
+            }
+            self.allocator.free(state.selection);
+            self.allocator.free(state.chunks);
+            _ = self.queries.swapRemove(state_index);
             return;
         };
         return error.InvalidLease;
