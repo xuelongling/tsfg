@@ -15,6 +15,7 @@ try {
   if (!["hir", "core", "bytecode", "run"].includes(emit) || !options.has("--input"))
     throw new TypeError("r03-cli-options: --input <owned-input.json> and --emit hir|core|bytecode|run are required");
   const input = JSON.parse(await readFile(options.get("--input"), "utf8"));
+  const requests = emit === "run" ? JSON.parse(options.get("--requests") ?? "[{}]") : undefined;
   const compile = emit === "hir" ? compileHir : compileProgram;
   const result = await compile(input, { frontend: options.get("--frontend"), core: options.get("--core") });
   if (result.status !== "ok") {
@@ -24,7 +25,6 @@ try {
   else if (emit === "core") process.stdout.write(result.core);
   else if (emit === "bytecode") process.stdout.write(result.bytecode);
   else {
-    const requests = JSON.parse(options.get("--requests") ?? "[{}]");
     try {
       process.stdout.write(`${JSON.stringify(await runBytecode(result.bytecode, {
         vm: options.get("--vm"), requests }))}\n`);
