@@ -110,7 +110,7 @@ export function readSystemQueryEffects(bytes,facts,context){
       };
       if(value.kind==='fieldAccess')memory('read',value,value.range);
       else if(value.kind==='binary'){visit(value.left,path,environment,callPath);visit(value.right,path,environment,callPath);}
-      else if(value.kind==='fieldAssignment'){if(value.operator==='+=')memory('read',value.target,value.target.range);visit(value.value,path,environment,callPath);memory('write',value.target,value.range);}
+      else if(value.kind==='fieldAssignment'){if(value.operator!=='=')memory('read',value.target,value.target.range);visit(value.value,path,environment,callPath);memory('write',value.target,value.range);}
       else if(value.kind==='parentheses')visit(value.expression,path,environment,callPath);
       else if(value.kind==='call'){
         for(const arg of value.arguments)visit(arg,path,environment,callPath);

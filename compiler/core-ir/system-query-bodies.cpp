@@ -57,7 +57,7 @@ bool Model::expression(const Json &value,const Json &body,const std::map<std::st
   }
   if(kind=="fieldAssignment"){
     const auto op=string(field(value,"operator"));const auto &target=field(value,"target"),&rhs=field(value,"value");
-    return need(type=="f32"&&(op=="="||op=="+=")&&string(field(target,"kind"))=="fieldTarget"&&string(field(rhs,"type"))=="f32","owned f32 field assignment required")&&
+    return need(type=="f32"&&llvm::is_contained(llvm::ArrayRef<llvm::StringRef>{"=","+=","-=","*=","/="},op)&&string(field(target,"kind"))=="fieldTarget"&&string(field(rhs,"type"))=="f32","owned f32 field assignment required")&&
       expression(target,body,scope,path,depth+1)&&expression(rhs,body,scope,path,depth+1)&&g.sequence(field(value,"operatorRange"),{Json(op)})&&g.sequence(r,{field(target,"range"),field(value,"operatorRange"),field(rhs,"range")});
   }
   return need(false,"Query expression has no selected typed representation");
