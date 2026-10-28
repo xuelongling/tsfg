@@ -79,12 +79,13 @@ struct Check {
       auto left=expression(it,block,field(value,"left"),bindings,depth+1);if(!left)return {};auto right=expression(it,block,field(value,"right"),bindings,depth+1);if(!right)return {};
       const auto op=string(field(value,"operator"));const auto name=op=="+"?"add":op=="-"?"sub":op=="*"?"mul":"div";return arithmetic(it,block,std::string("tsfg_core.")+name,left,right,value);
     }
-    const auto &target=field(value,"target");const auto &receiver=bindings.at(string(field(field(target,"receiver"),"binding")));mlir::Value previous;
-    if(string(field(value,"operator"))=="+="){
+    const auto &target=field(value,"target");const auto &receiver=bindings.at(string(field(field(target,"receiver"),"binding")));const auto op=string(field(value,"operator"));mlir::Value previous;
+    if(op!="="){
       auto *load=take(it,block,"tsfg.field_load",{receiver.value},1);if(!load||!need(load->getResult(0).getType().isF32(),"compound target load is not f32")||!fieldOp(load,target,receiver,field(target,"range")))return {};previous=load->getResult(0);
     }
     auto rhs=expression(it,block,field(value,"value"),bindings,depth+1);if(!rhs)return {};
-    auto result=previous?arithmetic(it,block,"tsfg_core.add",previous,rhs,value):rhs;if(!result)return {};
+    const auto name=op=="+="?"add":op=="-="?"sub":op=="*="?"mul":"div";
+    auto result=previous?arithmetic(it,block,std::string("tsfg_core.")+name,previous,rhs,value):rhs;if(!result)return {};
     auto *store=take(it,block,"tsfg.field_store",{receiver.value,result},0);return store&&fieldOp(store,target,receiver,field(value,"range"))?result:mlir::Value();
   }
   bool terminator(mlir::Block::iterator &it,mlir::Block &block,llvm::StringRef name){auto *op=take(it,block,name,{},0);return op&&attrs(op,{})&&need(it==block.end(),"unexpected trailing operation in source-owned region");}

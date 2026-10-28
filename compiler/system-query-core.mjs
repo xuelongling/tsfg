@@ -58,8 +58,9 @@ export function emitSystemQueryCore(facts,context){
       if(!op)fail(owner,value.operatorRange,'unsupported f32 operator');return emit('tsfg_core.'+op,[left,right],'f32','operator_start = '+value.operatorRange.start+' : i64, operator_end = '+value.operatorRange.end+' : i64',value.range);
     }
     if(value.kind==='fieldAssignment'){
-      const selected=field(value.target),previous=value.operator==='+='?emit('tsfg.field_load',[selected.receiver],'f32',selected.properties,value.target.range):null;
-      const rhs=expression(value.value,bindings,owner,indent),result=previous?emit('tsfg_core.add',[previous,rhs],'f32','operator_start = '+value.operatorRange.start+' : i64, operator_end = '+value.operatorRange.end+' : i64',value.range):rhs;
+      const selected=field(value.target),op={'+=':'add','-=':'sub','*=':'mul','/=':'div'}[value.operator];
+      const previous=op?emit('tsfg.field_load',[selected.receiver],'f32',selected.properties,value.target.range):null;
+      const rhs=expression(value.value,bindings,owner,indent),result=previous?emit('tsfg_core.'+op,[previous,rhs],'f32','operator_start = '+value.operatorRange.start+' : i64, operator_end = '+value.operatorRange.end+' : i64',value.range):rhs;
       emit('tsfg.field_store',[selected.receiver,result],null,selected.properties,value.range);return result;
     }
     fail(owner,value.range,'unsupported owned Query expression');

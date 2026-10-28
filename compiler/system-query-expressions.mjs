@@ -57,7 +57,7 @@ export function queryExpressionDecoder({ast,grammar,bodyRange,scope,component,fi
       return {...base,kind:'binary',operator:value.operator,operatorRange:{...value.operatorRange},left,right};
     }
     if(value.kind==='fieldAssignment'){
-      if(!['=','+='].includes(value.operator)||value.type!=='f32'||value.target.kind!=='fieldTarget')fail('owned f32 field assignment required','capability');
+      if(!['=','+=','-=','*=','/='].includes(value.operator)||value.type!=='f32'||value.target.kind!=='fieldTarget')fail('owned f32 field assignment required','capability');
       const target=expression(value.target,value.operator==='='?'write':'readwrite',depth+1),assigned=expression(value.value,'read',depth+1);
       if(target.sourceType!=='f32'||assigned.sourceType!=='f32')fail('original f32 assignment types differ','type');
       grammar.sequence(value.operatorRange,[value.operator]);grammar.sequence(value.range,[value.target.range,value.operatorRange,value.value.range]);
