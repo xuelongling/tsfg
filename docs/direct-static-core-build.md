@@ -1,7 +1,7 @@
 <!-- SPDX-License-Identifier: MIT -->
 # Direct-source static Core factory
 
-The existing MLIR factory now has an explicit `--core-command-role static` responsibility. It builds the complete current [source manifest](../compiler/core-ir/sources.json), including both formal0.10 and the private Common Program selector, from the qualified upstream source tree. It does not consume an SDK compiler, prebuilt SDK libraries or a replacement parser.
+The existing MLIR factory now has an explicit `--core-command-role static` responsibility. It builds the complete current [source manifest](../compiler/core-ir/sources.json), including formal Core0.12/wire12 with retained Snapshot0.10 admission and the private Common Program selector, from the qualified upstream source tree. It does not consume an SDK compiler, prebuilt SDK libraries or a replacement parser.
 
 ```text
 node eng/tsfg-build.mjs build --dev --source-target mlir-core --core-command-role static --target windows-x86_64-msvc --profile debug --out E:/owned/output --report E:/owned/report.json
