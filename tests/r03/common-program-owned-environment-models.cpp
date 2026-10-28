@@ -105,6 +105,40 @@ bool capturedTargets(const std::string &mode){
   const std::set<std::string> expected=mode=="captured-all-writers"||mode=="captured-fixed-broader"?std::set<std::string>{"left","right"}:std::set<std::string>{"left"};
   return !site->second.top&&site->second.functions==expected;
 }
+bool localTargets(const std::string &mode){
+  Program p;Error e;const bool writer=mode!="local-readonly",fixedReturn=mode=="local-fixed-new-writer";
+  const auto reference=[](const std::string &id,const std::string &type="F"){return Json(Object{{"kind","functionReference"},{"functionId",id},{"type",type}});};
+  const auto function=[](const std::string &id,const std::string &result,Array bindings,Array captures,Array body){
+    const auto signature=digest(std::string("tsfg.module-callable-signature.candidate.v1")+std::string(1,'\0')+canonical(Object{{"parameters",Array{}},{"returns",result}}));
+    return Json(Object{{"id",id},{"kind","source"},{"ownerType",nullptr},{"parameters",Array{}},{"bindings",std::move(bindings)},{"captures",std::move(captures)},
+      {"returnType",result},{"signatureHash",signature},{"body",std::move(body)}});
+  };
+  const Json binding=Object{{"kind","bindingReference"},{"binding","original"},{"type","F"}};
+  const Json assignment=Object{{"kind","expression"},{"value",Object{{"kind","bindingAssignment"},{"type","F"},
+    {"target",Object{{"kind","bindingTarget"},{"binding","original"},{"type","F"}}},{"value",reference("right")}}}};
+  Array factoryBody{Object{{"kind","constDeclaration"},{"binding","original"},{"initializer",reference("left")}}};
+  if(mode=="local-owner")factoryBody.push_back(assignment);
+  factoryBody.push_back(Object{{"kind","return"},{"value",reference("reader",fixedReturn?"R":"F")}});
+  const Json returned=fixedReturn?binding:Json(Object{{"kind","indirectCall"},{"type","I"},{"range",Object{{"start",20},{"end",30}}},
+    {"expression",binding},{"arguments",Array{}},{"signature",Object{{"parameters",Array{}},{"returnType","I"}}}});
+  Array functions{function("left","I",{},{},{}),function("right","I",{},{},{}),
+    function("factory",fixedReturn?"R":"F",Array{Object{{"id","original"},{"type","F"}}},{},std::move(factoryBody)),
+    function("reader",fixedReturn?"F":"I",{},Array{Object{{"binding","original"}}},Array{Object{{"kind","return"},{"value",returned}}})};
+  if(writer&&mode!="local-owner")functions.push_back(function("writer","I",{},Array{Object{{"binding","original"}}},Array{assignment}));
+  Array contracts;for(const auto &fn:functions){const auto id=string(field(fn,"id"));Json result=nullptr;
+    if(id=="factory")result=Object{{"top",false},{"functions",Array{"reader"}}};
+    if(fixedReturn&&id=="reader")result=Object{{"top",false},{"functions",Array{"left"}}};
+    Json body=Object{{"functionId",id},{"signatureHash",field(fn,"signatureHash")},{"upper",Object{{"facets",Object{{"unknownHost",false}}}}},
+      {"callables",Object{{"parameters",Array{}},{"returns",std::move(result)},{"slotWrites",Array{}}}}};
+    auto record=*body.getAsObject();record["digest"]=identity("published-contract",body);contracts.push_back(std::move(record));
+  }
+  p.hir=Object{{"types",Array{Object{{"id","I"},{"kind","scalar"}},Object{{"id","F"},{"kind","function"},{"parameters",Array{}},{"returnType","I"}},Object{{"id","R"},{"kind","function"},{"parameters",Array{}},{"returnType","F"}}}},
+    {"functions",std::move(functions)},{"globals",Array{}},{"modules",Array{}},{"closure",Object{{"roots",Array{}}}},
+    {"snapshot",Object{{"payload",Object{{"compatibilityWitnesses",Array{}}}}}}};p.publication=Object{{"contracts",std::move(contracts)}};
+  const bool accepted=verifyCallableTargets(p,e);
+  if(fixedReturn)return !accepted&&e.message=="return exceeds fixed callable upper"&&p.callableSites.empty();
+  const auto site=p.callableSites.find("reader/20:30");return accepted&&site!=p.callableSites.end()&&!site->second.top&&site->second.functions==(writer?std::set<std::string>{"left","right"}:std::set<std::string>{"left"});
+}
 bool effects(){
   Program p;Error e;Effects out;Json fn=Object{{"id","reader"},{"ownerType",nullptr},{"parameters",Array{}},{"returnType","I"},
     {"lexicalEnvironment","L"},{"activationEnvironment",nullptr},{"captures",Array{Object{{"binding","a"},{"read",true},{"write",false}}}},
@@ -182,7 +216,8 @@ int main(int argc,char **argv){
   std::vector<std::string> all={"held","restored","throw-held","parent","descriptor","replaced","throw-replaced","may-owner","resized","local-gate","parameter-gate","capture-effects"};all.insert(all.end(),boundaries.begin(),boundaries.end());
   for(const auto *name:{"alternative-held","alternative-pure","alternative-throw","alternative-bad","alternative-throw-bad"})all.push_back(name);
   for(const auto *name:{"captured-readonly","captured-all-writers","captured-fixed-new-writer","captured-fixed-broader","captured-external-top"})all.push_back(name);
+  for(const auto *name:{"local-readonly","local-owner","local-sibling","local-fixed-new-writer"})all.push_back(name);
   std::vector<std::string> selected=argc>1?std::vector<std::string>(argv+1,argv+argc):all;size_t failed=0;
-  for(const auto &name:selected){const bool boundary=std::find(boundaries.begin(),boundaries.end(),name)!=boundaries.end();const bool ok=llvm::StringRef(name).starts_with("captured-")?capturedTargets(name):llvm::StringRef(name).starts_with("alternative-")&&name!="alternative-environments"?returnedAlternatives(name):boundary?owningBoundary(name):name=="local-gate"?gate(false):name=="parameter-gate"?gate(true):name=="capture-effects"?effects():returned(name);llvm::outs()<<name<<" "<<(ok?"PASS":"FAIL")<<"\n";failed+=!ok;}
+  for(const auto &name:selected){const bool boundary=std::find(boundaries.begin(),boundaries.end(),name)!=boundaries.end();const bool ok=llvm::StringRef(name).starts_with("local-")&&name!="local-gate"?localTargets(name):llvm::StringRef(name).starts_with("captured-")?capturedTargets(name):llvm::StringRef(name).starts_with("alternative-")&&name!="alternative-environments"?returnedAlternatives(name):boundary?owningBoundary(name):name=="local-gate"?gate(false):name=="parameter-gate"?gate(true):name=="capture-effects"?effects():returned(name);llvm::outs()<<name<<" "<<(ok?"PASS":"FAIL")<<"\n";failed+=!ok;}
   return failed?1:0;
 }

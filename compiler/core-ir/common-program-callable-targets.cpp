@@ -20,6 +20,7 @@ struct TargetFlow {
   std::map<std::string,std::string> bindingTypes;
   // Original shared parameter code bounds, never a runtime code/Env pair.
   std::map<std::string,std::pair<std::string,size_t>> capturedParameters;
+  std::map<std::string,Targets> capturedLocals;
   std::set<std::string> externalFunctions,globalIds;
   std::vector<const Json *> defaultLiterals;
   ArrayTargets arrays{p,e,types,dirty,[this](const Targets &a,const Targets &b){return join(a,b);},[this](const Targets &value){exposeClosures(value);}};
@@ -116,6 +117,8 @@ struct TargetFlow {
         if(!step((key.size()+id.size())/64+3))return false;auto binding=key.str();
         if(captured.count(binding)&&callable(bindingTypes.at(binding)))capturedParameters.emplace(std::move(binding),std::pair{id,index});
       }
+      for(const auto &binding:items(field(*fn,"bindings"))){if(!step())return false;const auto key=string(field(binding,"id"));
+        if(captured.count(key)&&callable(bindingTypes.at(key)))capturedLocals.emplace(key,Targets{});}
     }
     for(const auto &global:items(field(p.hir,"globals"))){if(!step())return false;bindingTypes[string(field(global,"sourceBinding"))]=string(field(global,"type"));globalIds.insert(string(field(global,"id")));}
     // The complete verified field directory and original compatibility pairs
@@ -182,6 +185,7 @@ struct TargetFlow {
       if(!callable(type))return {};const auto key=field(value,"binding").getAsString().value_or("");if(!step(key.size()/64+1))return {};
       const auto binding=key.str();auto owner=capturedParameters.find(binding);
       if(owner!=capturedParameters.end())return copy(summaries.at(owner->second.first).parameters.at(owner->second.second));
+      auto local=capturedLocals.find(binding);if(local!=capturedLocals.end())return copy(local->second);
       auto found=state.find(binding);return found==state.end()?Targets{}:copy(found->second);
     }
     if(kind=="parentheses"||kind=="as"||kind=="nonNull"){
@@ -195,6 +199,7 @@ struct TargetFlow {
       else if(result){const auto key=field(target,"binding").getAsString().value_or("");if(!step(key.size()/64+2))return {};const auto binding=key.str();
         state[binding]=copy(*result);auto owner=capturedParameters.find(binding);
         if(owner!=capturedParameters.end())observe(summaries.at(owner->second.first),owner->second.second,*result);
+        else if(capturedLocals.count(binding))merge(capturedLocals.at(binding),*result);
       }return result;
     }
     if(kind=="fieldAccess"){
@@ -267,7 +272,7 @@ struct TargetFlow {
       if(!step()||!e.message.empty())return false;if(!live)break;const auto kind=string(field(row,"kind"));
       if(kind=="constDeclaration"||kind=="letDeclaration"||kind=="initialize"){
         auto value=expression(s,state,field(row,"initializer"));const auto id=string(field(row,"binding"));
-        if(globalIds.count(id)){expose(string(field(field(row,"initializer"),"type")));exposeClosures(value);}else if(value)state[id]=copy(*value);
+        if(globalIds.count(id)){expose(string(field(field(row,"initializer"),"type")));exposeClosures(value);}else if(value){state[id]=copy(*value);if(capturedLocals.count(id))merge(capturedLocals.at(id),*value);}
         auto binding=bindingTypes.find(id);if(binding!=bindingTypes.end())erase(binding->second,string(field(field(row,"initializer"),"type")),value);
       }else if(kind=="expression"||kind=="throw"||kind=="return"){
         auto value=field(row,"value").getAsNull()?std::optional<Targets>{}:expression(s,state,field(row,"value"));
@@ -314,6 +319,7 @@ struct TargetFlow {
   }
   bool run(bool withFixed){
     fixed=withFixed;summaries.clear();sites.clear();fieldValues.clear();fieldCaptures.clear();exposed.clear();exposedFields.clear();externalFunctions.clear();defaultLiterals.clear();arrays.reset();dirty=false;
+    for(auto &[id,value]:capturedLocals){if(!step())return false;value=Targets{};}
     for(const auto &[id,fn]:functions){
       const auto &params=items(field(*fn,"parameters"));if(!step(params.size()*2+1))return false;Summary s;s.fn=fn;s.reached=true;s.parameters.resize(params.size());s.observations.resize(params.size());
       if(fixed){if(!step(params.size()))return false;for(const auto &value:bounds.at(id).parameters)if(!step(value.functions.size()))return false;s.parameters=bounds.at(id).parameters;}

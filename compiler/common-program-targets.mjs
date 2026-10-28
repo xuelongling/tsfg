@@ -22,9 +22,11 @@ export function commonTargets(hir,spend,records=null) {
   for(const fn of functions.values())for(const group of [fn.parameters,fn.bindings??[]])for(const binding of group){spend();bindingTypes.set(binding.id,binding.type);}
   // A captured incoming callable shares the original parameter's code upper.
   // It is not a child parameter, a new local, or an environment-instance proof.
-  const parameterOwners=new Map(),capturedParameters=new Map();
+  const parameterOwners=new Map(),capturedParameters=new Map(),localBindings=new Set(),capturedLocals=new Map();
   for(const fn of functions.values()){spend();for(const [index,binding]of fn.parameters.entries()){spend();if(callable(binding.type))parameterOwners.set(binding.id,{owner:fn.id,index});}}
-  for(const fn of functions.values()){spend();for(const capture of fn.captures??[]){spend();const parameter=parameterOwners.get(capture.binding);if(parameter)capturedParameters.set(capture.binding,parameter);}}
+  for(const fn of functions.values())for(const binding of fn.bindings??[]){spend();if(callable(binding.type))localBindings.add(binding.id);}
+  for(const fn of functions.values()){spend();for(const capture of fn.captures??[]){spend();const parameter=parameterOwners.get(capture.binding);if(parameter)capturedParameters.set(capture.binding,parameter);
+      else if(localBindings.has(capture.binding))capturedLocals.set(capture.binding,domain.bottom());}}
   for(const global of hir.globals??[]){spend();bindingTypes.set(global.sourceBinding,global.type);}
   for(const type of types.values())for(const field of type.fields??[]){spend();fields.set(field.id,field);rawFields.set(field.sourceBinding,field.id);parents.set(field.id,field.id);}
   const slot=id=>{spend();const parent=parents.get(id);check(parent,'callable');return parent===id?id:slot(parent);};
@@ -109,12 +111,13 @@ export function commonTargets(hir,spend,records=null) {
     spend();if(value.kind==='functionReference')return domain.single(value.functionId);
     if(value.kind==='bindingReference'){
       if(!callable(value.type))return null;const captured=capturedParameters.get(value.binding);
-      return domain.copy(captured?summaries.get(captured.owner).parameters.get(captured.index):state.get(value.binding)??domain.bottom());
+      return domain.copy(captured?summaries.get(captured.owner).parameters.get(captured.index):capturedLocals.get(value.binding)??state.get(value.binding)??domain.bottom());
     }
     if(['parentheses','as','nonNull'].includes(value.kind)){const actual=expression(summary,state,value.expression);if(value.kind==='as'){erase(value.type,value.expression.type,actual);if(!verifiedView(value.expression.type,value.type,value.compatibilityRoots??[])){expose(value.expression.type);expose(value.type);exposeClosures(actual);}else linkArrays(value.expression.type,value.type);}return actual??(callable(value.type)?domain.top():null);}
     if(value.kind==='bindingAssignment') {const result=expression(summary,state,value.value);erase(value.target.type??bindingTypes.get(value.target.binding),value.value.type,result);
       if(value.target.kind==='globalTarget'){expose(value.value.type);exposeClosures(result);}else if(result){state.set(value.target.binding,domain.copy(result));const captured=capturedParameters.get(value.target.binding);
-        if(captured){if(records)observe(captured.owner,captured.index,result);else merge(summaries.get(captured.owner).parameters,captured.index,result);}}
+        if(captured){if(records)observe(captured.owner,captured.index,result);else merge(summaries.get(captured.owner).parameters,captured.index,result);}
+        else if(capturedLocals.has(value.target.binding))merge(capturedLocals,value.target.binding,result);}
       return result;}
     if(value.kind==='fieldAccess'){expression(summary,state,value.receiver);return callable(value.type)?domain.copy(fieldValues.get(slot(value.property))??domain.bottom()):null;}
     if(value.kind==='fieldAssignment'){
@@ -161,7 +164,7 @@ export function commonTargets(hir,spend,records=null) {
   const join=(into,from)=>{for(const [id,value]of from){spend();into.set(id,domain.join(into.get(id)??domain.bottom(),value));}return into;};
   const externalFunctions=new Set(),globalIds=new Set();for(const global of hir.globals??[]){spend();globalIds.add(global.id);}
   function body(summary,state,rows){let live=true;for(const row of rows){spend();if(!live)break;
-    if(['constDeclaration','letDeclaration','initialize'].includes(row.kind)){const value=expression(summary,state,row.initializer);erase(bindingTypes.get(row.binding),row.initializer.type,value);if(globalIds.has(row.binding)){expose(row.initializer.type);exposeClosures(value);}else if(value)state.set(row.binding,domain.copy(value));}
+    if(['constDeclaration','letDeclaration','initialize'].includes(row.kind)){const value=expression(summary,state,row.initializer);erase(bindingTypes.get(row.binding),row.initializer.type,value);if(globalIds.has(row.binding)){expose(row.initializer.type);exposeClosures(value);}else if(value){state.set(row.binding,domain.copy(value));if(capturedLocals.has(row.binding))merge(capturedLocals,row.binding,value);}}
     else if(['expression','throw','return'].includes(row.kind)){const value=row.value?expression(summary,state,row.value):null;if(row.kind==='throw'&&row.value){expose(row.value.type);exposeClosures(value);}if(row.kind==='return'){if(row.value)erase(summary.fn.returnType,row.value.type,value);if(externalFunctions.has(summary.fn.id))exposeClosures(value);if(summary.returns){check(value,'callable');const next=domain.join(summary.returns,value);if(!domain.equal(next,summary.returns)){summary.returns=next;changed=true;}}}if(row.kind!=='expression')live=false;}
     else if(row.kind==='block')live=body(summary,state,row.body);
     else if(row.kind==='if'){expression(summary,state,row.condition);const yes=clone(state),no=clone(state),a=body(summary,yes,row.then),b=body(summary,no,row.else);state.clear();if(a)join(state,yes);if(b)join(state,no);live=a||b;}
