@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: MIT
 import path from "node:path";
 import {canonical,sha256} from "./identity.mjs";
+import {normalizeClosure} from "./modules.mjs";
 import entries from "../contracts/conversion-entries.json" with { type: "json" };
 import bytecodeSchema from "../contracts/bytecode.schema.json" with { type: "json" };
 
@@ -69,7 +70,10 @@ const logicalPath = value => typeof value === "string" && value.isWellFormed() &
 export function admittedInputScope(scope, inputIdentity) {
   try {
     const version = scope?.declarations?.version, numeric = ["minimal-integers-v3", "minimal-floats-v4", entries.version].includes(version);
-    if (!declarationFiles[version] || !exactKeys(scope, numeric ? "config,declarations,files,rootFile,sourceRoot,target" : "config,declarations,files,rootFile,sourceRoot")
+    const moduleInput = scope?.compilationClosure !== undefined;
+    const keys = ['config','declarations','files','rootFile','sourceRoot',...(numeric ? ['target'] : []),
+      ...(moduleInput ? ['compilationClosure',...(scope.hostImports !== undefined ? ['hostImports'] : [])] : [])].sort().join(',');
+    if (!declarationFiles[version] || !exactKeys(scope, keys)
         || !exactKeys(scope.config, "allowJs,noEmit,strict") || scope.config.allowJs !== false || scope.config.noEmit !== true || scope.config.strict !== true
         || !exactKeys(scope.declarations, "paths,version") || !logicalPath(scope.sourceRoot) || !logicalPath(scope.rootFile)
         || !scope.rootFile.endsWith(".ts") || scope.rootFile.endsWith(".d.ts")
@@ -82,13 +86,34 @@ export function admittedInputScope(scope, inputIdentity) {
     for (const file of scope.files) {
       if (!exactKeys(file, "content,path") || !logicalPath(file.path) || !file.path.startsWith(`${scope.sourceRoot}/`)
           || typeof file.content !== "string" || !file.content.isWellFormed() || file.content.length > 0xffffffff
-          || (file.path !== scope.rootFile && !file.path.endsWith(".d.ts")) || files.has(file.path)
+          || (file.path !== scope.rootFile && !file.path.endsWith(".d.ts") && !(moduleInput && file.path.endsWith('.ts'))) || files.has(file.path)
           || (previous !== undefined && Buffer.from(previous).compare(Buffer.from(file.path)) >= 0)) return false;
       files.set(file.path, file.content); previous = file.path;
     }
     return files.has(scope.rootFile) && scope.declarations.paths.every(name => typeof name === "string" && name.endsWith(".d.ts") && files.has(name))
+      && (!moduleInput || admittedModuleScope(scope, files))
       && sha256(canonical(scope)) === inputIdentity;
   } catch { return false; }
+}
+
+function admittedModuleScope(scope, files) {
+  if (canonical(normalizeClosure(scope.compilationClosure)) !== canonical(scope.compilationClosure)
+      || [...scope.compilationClosure.roots,...scope.compilationClosure.requiredRoots]
+        .some(root=>!logicalPath(root.sourcePath) || !root.name.isWellFormed() || !files.has(root.sourcePath))) return false;
+  if (scope.hostImports === undefined) return true;
+  if (!Array.isArray(scope.hostImports)) return false;
+  const names = new Set(); let previous;
+  for (const host of scope.hostImports) {
+    if (!exactKeys(host, 'capabilityId,name,parameterTypes,returnType,sourcePath')
+        || typeof host.name !== 'string' || !host.name || !host.name.isWellFormed() || host.name.includes('\0')
+        || !logicalPath(host.sourcePath) || !host.sourcePath.endsWith('.d.ts') || !files.has(host.sourcePath)
+        || host.capabilityId !== 31 || host.returnType !== 'i32' || canonical(host.parameterTypes) !== '["i32"]'
+        || names.has(host.name)) return false;
+    const key = `${host.sourcePath}\0${host.name}`;
+    if (previous !== undefined && Buffer.from(previous).compare(Buffer.from(key)) >= 0) return false;
+    names.add(host.name); previous = key;
+  }
+  return true;
 }
 
 export function admittedConversionScope(scope, inputIdentity) {
@@ -144,13 +169,17 @@ function scanDeclarationTokens(source) {
 }
 
 function exclusiveConversionScope(scope,officialPath) {
-  const files=new Map(scope.files.map(file=>[file.path,file])),loaded=new Set(),pending=[scope.rootFile,...scope.declarations.paths],ambient=new Set();
+  const moduleInput=scope.compilationClosure!==undefined;
+  // Complete module inputs include unselected scripts and global augmentations.
+  // External module-local names are checked at their actual use by the consumer.
+  const files=new Map(scope.files.map(file=>[file.path,file])),loaded=new Set(),
+    pending=moduleInput?[...files.keys()]:[scope.rootFile,...scope.declarations.paths],ambient=new Set();
   let required=[];
   while(pending.length||required.length){
    while(pending.length){
     const name=pending.pop();if(loaded.has(name))continue;loaded.add(name);
     const lexical=declarationTokens(files.get(name)?.content??'');if(!lexical)return false;
-    if(name!==scope.rootFile&&name!==officialPath&&!exclusiveConversionDeclarations(lexical.tokens))return false;
+    if(name!==officialPath&&(moduleInput||name!==scope.rootFile)&&!exclusiveConversionDeclarations(lexical.tokens))return false;
     if(!externalDeclarationFile(lexical.tokens)){
       let depth=0;
       for(let index=0;index<lexical.tokens.length;index++){
@@ -169,6 +198,8 @@ function exclusiveConversionScope(scope,officialPath) {
       }
       if(!resolved){const target=declarationModuleFile(files,name,type);if(!target)return false;pending.push(target);}
     }
+    // Official module resolution is outside this declaration-name guard.
+    if(moduleInput&&!name.endsWith('.d.ts'))continue;
     for(let index=0;index<lexical.tokens.length;index++){
       const token=lexical.tokens[index],next=lexical.tokens[index+1];let specifier;
       if(token.kind==='name'&&token.value==='from'&&next?.kind==='text')specifier=next.value;
@@ -257,17 +288,24 @@ function exclusiveConversionDeclarations(tokens) {
     if(!scopes.at(-1)||token.kind!=='name')continue;
     if(declarationKinds.has(token.value)&&next?.kind==='name'&&conversionNames.has(next.value))return false;
     if(['const','let','var'].includes(token.value)){
-      // A declaration list may have commas inside types. Only commas at the
-      // list's own nesting level introduce another global binding.
-      let nesting=0,binding=true;
+      // Angle brackets nest annotations, while `<` in an initializer compares.
+      // This name guard does not parse generic initializer expressions.
+      let nesting=0,binding=true,initializer=false;
       for(let cursor=index+1;cursor<tokens.length;cursor++){
         const item=tokens[cursor];
         if(nesting===0&&(punctuation(item,';')||punctuation(item,'}')))break;
-        if(binding){if(bindingCollision(cursor).collision)return false;binding=false;}
+        if(binding){
+          const declared=bindingCollision(cursor);
+          if(declared.collision)return false;
+          // Pattern defaults were consumed by the binding walk, not a type annotation.
+          cursor=declared.end-1;binding=false;
+          continue;
+        }
         if(item.kind==='punctuation'){
-          if(['(','[','{','<'].includes(item.value))nesting++;
-          if([')',']','}','>'].includes(item.value)&&nesting>0)nesting--;
-          if(nesting===0&&item.value===',')binding=true;
+          if(nesting===0&&item.value==='=')initializer=true;
+          if(['(','[','{'].includes(item.value)||!initializer&&item.value==='<')nesting++;
+          if(([')',']','}'].includes(item.value)||!initializer&&item.value==='>')&&nesting>0)nesting--;
+          if(nesting===0&&item.value===','){binding=true;initializer=false;}
         }
       }
     }
