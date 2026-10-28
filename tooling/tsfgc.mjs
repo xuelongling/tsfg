@@ -1,20 +1,24 @@
 // SPDX-License-Identifier: MIT
 import { readFile } from "node:fs/promises";
-import { compileHir, compileProgram, compileSystemQuery, compileCommonBorrowProof, runBytecode } from "../compiler/pipeline.mjs";
+import { compileHir, compileProgram, compileOwnedHir, compileSystemQuery, compileCommonBorrowProof, runBytecode } from "../compiler/pipeline.mjs";
 import {readCommonProgramHir} from '../compiler/common-program-hir.mjs';
 import {commonJson} from '../compiler/common-program-common.mjs';
-import { printHir } from "../compiler/hir.mjs";
+import { printHir, readHir } from "../compiler/hir.mjs";
 import {canonical} from '../compiler/identity.mjs';
 
 try {
   const options = new Map();
   const args = process.argv.slice(2);
   for (let i = 0; i < args.length; i += 2) {
-    if (!["--input", "--frontend", "--core", "--vm", "--emit", "--requests", "--query-request", "--publication", "--kernel-request"].includes(args[i])
+    if (!["--input", "--input-kind", "--frontend", "--core", "--vm", "--emit", "--requests", "--query-request", "--publication", "--kernel-request"].includes(args[i])
         || options.has(args[i]) || !args[i + 1]) throw new TypeError("r03-cli-options: invalid or duplicate option");
     options.set(args[i], args[i + 1]);
   }
   const emit = options.get("--emit") ?? "run";
+  const inputKind = options.get("--input-kind") ?? "source";
+  if (!["source", "hir"].includes(inputKind) || inputKind === "hir" &&
+      (!["hir", "core", "bytecode", "run"].includes(emit) || ["--frontend", "--query-request", "--publication", "--kernel-request"].some(key => options.has(key))))
+    throw new TypeError("r03-cli-options: --input-kind source|hir; HIR requires --emit hir|core|bytecode|run without Source, Query or borrow inputs");
   if (!["hir", "core", "bytecode", "run", "query-effects", "query-batch", "query-llvm", "query-llvm-ir", "query-tmeta", "borrow-proof"].includes(emit) || !options.has("--input"))
     throw new TypeError("r03-cli-options: --input <owned-input.json> and --emit hir|core|bytecode|run are required");
   if(emit==='borrow-proof'){
@@ -32,10 +36,12 @@ try {
     process.stdout.write(emit==='query-tmeta'?canonical(result.tmeta.envelope)+'\n':emit==='query-effects'?canonical(result.effects)+'\n':emit==='query-batch'?result.cpuBatch:emit==='query-llvm'||emit==='query-llvm-ir'?result.cpuLLVM:result.core);
   }else{
   if(['query-effects','query-batch','query-llvm','query-llvm-ir','query-tmeta'].includes(emit))throw new TypeError('r03-cli-options: Query output requires --query-request');
-  const input = JSON.parse(await readFile(options.get("--input"), "utf8"));
+  const bytes = await readFile(options.get("--input"));
+  const input = inputKind === "hir" ? readHir(bytes) : JSON.parse(bytes.toString("utf8"));
   const requests = emit === "run" ? JSON.parse(options.get("--requests") ?? "[{}]") : undefined;
-  const compile = emit === "hir" ? compileHir : compileProgram;
-  const result = await compile(input, { frontend: options.get("--frontend"), core: options.get("--core") });
+  const compile = inputKind === "hir" ? compileOwnedHir : emit === "hir" ? compileHir : compileProgram;
+  const result = inputKind === "hir" && emit === "hir" ? { status: "ok", hir: input }
+    : await compile(input, { frontend: options.get("--frontend"), core: options.get("--core") });
   if (result.status !== "ok") {
     process.stdout.write(`${JSON.stringify(result)}\n`);
     process.exitCode = result.status === "tool-error" ? 11 : 3;

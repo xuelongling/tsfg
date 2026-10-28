@@ -85,6 +85,11 @@ export async function compileProgram(input, options) {
   return highLevel.status === "ok" ? produceBytecode(highLevel.hir, options) : highLevel;
 }
 
+/** Persisted owned HIR enters the same formal producer without Source checking. */
+export async function compileOwnedHir(hir, options) {
+  return produceBytecode(hir, options);
+}
+
 async function compileSnapshot(snapshot, options) {
   const highLevel = buildHir(snapshot);
   if (highLevel.status !== "ok") return highLevel;
