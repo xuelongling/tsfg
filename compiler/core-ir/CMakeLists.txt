@@ -63,16 +63,18 @@ foreach(_tsfg_index RANGE ${_tsfg_core_last})
   list(APPEND _tsfg_core_sources "${_tsfg_source}")
 endforeach()
 if(TSFG_CORE_BUILD_ROLE STREQUAL "static")
-  # This dev directory contains the complete generic49 source implementation;
+  # This dev directory contains the complete manifest-owned generic implementation;
   # no native adapter or target backend is selected by the static role.
   function(add_tsfg_static_core_tool)
     set(USE_SHARED "")
     set(LLVM_LINK_COMPONENTS Support)
     add_llvm_executable(tsfg-core-static DISABLE_LLVM_LINK_LLVM_DYLIB ${_tsfg_core_sources})
-    target_link_libraries(tsfg-core-static PRIVATE MLIRIR MLIRParser MLIRFuncDialect MLIRControlFlowDialect LLVMCore)
+    target_link_libraries(tsfg-core-static PRIVATE MLIRIR MLIRParser MLIRFuncDialect MLIRControlFlowDialect
+      MLIRArithDialect MLIRSCFDialect MLIRMemRefDialect LLVMCore)
   endfunction()
   add_tsfg_static_core_tool()
 else()
   add_llvm_executable(tsfg-core-ir ${_tsfg_core_sources})
-  target_link_libraries(tsfg-core-ir PRIVATE MLIRIR MLIRParser MLIRFuncDialect MLIRControlFlowDialect LLVMCore)
+  target_link_libraries(tsfg-core-ir PRIVATE MLIRIR MLIRParser MLIRFuncDialect MLIRControlFlowDialect
+    MLIRArithDialect MLIRSCFDialect MLIRMemRefDialect LLVMCore)
 endif()

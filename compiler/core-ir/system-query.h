@@ -21,4 +21,9 @@ void registerDialect(mlir::DialectRegistry &);
 mlir::LogicalResult verifyAndBind(mlir::ModuleOp);
 // Effects are derived only after the same independent Source/SSA verification.
 mlir::LogicalResult analyzeEffects(mlir::ModuleOp,commonProgram::Json &);
+// A standard-dialect chunk work function, never a scheduling/entry authority.
+void registerBatchDialects(mlir::DialectRegistry &);
+bool isCpuBatch(mlir::ModuleOp);
+mlir::LogicalResult lowerCpuBatch(mlir::ModuleOp);
+mlir::LogicalResult verifyCpuBatch(mlir::ModuleOp,commonProgram::Json *effects=nullptr);
 } // namespace tsfg::systemQuery

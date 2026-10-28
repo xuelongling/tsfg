@@ -24,6 +24,8 @@ struct Model {
   const Json *at(llvm::StringRef path,const Json &range,llvm::StringRef kind={});
   const Json *original(const Json &);
   bool metadata(mlir::ModuleOp);bool files();bool ast();bool types();bool declarations();bool bodies();bool inventory();
+  bool verify(mlir::ModuleOp);
+  mlir::LogicalResult diagnose(mlir::ModuleOp);
   bool selection(const Json &,const std::string &,const Json &);
   bool view(const Json &,const std::string &,const Json &,const std::string &);
   bool annotation(const std::string &,const Json &,const std::string &,unsigned=0);

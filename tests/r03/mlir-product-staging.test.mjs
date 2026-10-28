@@ -19,10 +19,11 @@ async function sourceIdentity(){
   const entries=await Promise.all(names.map(async name=>({projectId:'tsfg',repositoryRelativePath:name,sha256:sha256(await readFile(path.join(root,name)))})));
   return{names,identity:{buildInputSet:{entries}}};
 }
-test('actual manifest49CPP23H and policy controls stage byte-exactly via production function',async()=>{
+test('actual Core source manifest and policy controls stage byte-exactly via production function',async()=>{
   const {names,identity}=await sourceIdentity(),product=path.join(storage,'current-product');
   await stageMlirProductSources({productRoot:root,product,identity,command});
-  assert.equal(names.length,78);
+  const manifest=JSON.parse(await readFile(path.join(root,'compiler/core-ir/sources.json'),'utf8'));
+  assert.equal(names.length,manifest.sources.length+manifest.headers.length+6);
   for(const name of names)assert.deepEqual(await readFile(path.join(product,name)),await readFile(path.join(root,name)));
 });
 for(const missing of ['compiler/core-ir/common-program-header.h','eng/mlir-configuration-sources.cmake'])

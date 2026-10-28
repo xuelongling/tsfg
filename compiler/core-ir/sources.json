@@ -51,6 +51,7 @@
     "finite-borrow-flow.cpp",
     "main.cpp",
     "reference-contracts.cpp",
+    "system-query-batch.cpp",
     "system-query-bodies.cpp",
     "system-query-declarations.cpp",
     "system-query-effects.cpp",

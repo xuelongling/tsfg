@@ -47,14 +47,15 @@ function consume(executable, args, input) {
 
 /** Compile complete owned Query input through the independent static consumer.
  * @param {Uint8Array} bytes @param {unknown} context
- * @param {{core:string,optimize?:boolean,effects?:boolean}} options
+ * @param {{core:string,optimize?:boolean,effects?:boolean,cpuBatch?:boolean}} options
  */
 export async function compileSystemQuery(bytes,context,options){
   const facts=readSystemQueryFacts(bytes,context);
   const executable=await verifiedConsumer(options.core,'core');
   const core=consume(executable,['--system-query',options.optimize?'--optimize':'--canonicalize'],emitSystemQueryCore(facts,context)).toString('utf8');
   const effects=options.effects?readSystemQueryEffects(consume(executable,['--system-query','--effects'],core),facts,context):undefined;
-  return {status:'ok',facts,core,effects};
+  const cpuBatch=options.cpuBatch?consume(executable,['--system-query','--cpu-batch'],core).toString('utf8'):undefined;
+  return {status:'ok',facts,core,effects,...(cpuBatch===undefined?{}:{cpuBatch})};
 }
 
 /** Existing complete Common HIR/fixed bounds to the independent static proof.

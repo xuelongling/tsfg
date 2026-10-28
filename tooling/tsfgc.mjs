@@ -15,7 +15,7 @@ try {
     options.set(args[i], args[i + 1]);
   }
   const emit = options.get("--emit") ?? "run";
-  if (!["hir", "core", "bytecode", "run", "query-effects", "borrow-proof"].includes(emit) || !options.has("--input"))
+  if (!["hir", "core", "bytecode", "run", "query-effects", "query-batch", "borrow-proof"].includes(emit) || !options.has("--input"))
     throw new TypeError("r03-cli-options: --input <owned-input.json> and --emit hir|core|bytecode|run are required");
   if(emit==='borrow-proof'){
     if(!options.has('--publication')||!options.has('--kernel-request')||!options.has('--core')||['--frontend','--vm','--requests','--query-request'].some(key=>options.has(key)))
@@ -24,14 +24,14 @@ try {
     const result=await compileCommonBorrowProof(hir,publication,request,{core:options.get('--core')});process.stdout.write(canonical(result.proof)+'\n');
   }else if(options.has('--publication')||options.has('--kernel-request'))throw new TypeError('r03-cli-options: fixed Common publication/request require --emit borrow-proof');
   else if(options.has('--query-request')){
-    if(!['core','query-effects'].includes(emit)||['--frontend','--vm','--requests'].some(key=>options.has(key)))
-      throw new TypeError('r03-cli-options: owned Query request requires --emit core|query-effects');
+    if(!['core','query-effects','query-batch'].includes(emit)||['--frontend','--vm','--requests'].some(key=>options.has(key)))
+      throw new TypeError('r03-cli-options: owned Query request requires --emit core|query-effects|query-batch');
     const bytes=await readFile(options.get('--input')),requestBytes=await readFile(options.get('--query-request'));
     const context={family:'tsfg.system-query-context-candidate',version:4,requestBytes,expectedPackageId:JSON.parse(bytes.toString('utf8')).packageId};
-    const result=await compileSystemQuery(bytes,context,{core:options.get('--core'),effects:emit==='query-effects'});
-    process.stdout.write(emit==='query-effects'?canonical(result.effects)+'\n':result.core);
+    const result=await compileSystemQuery(bytes,context,{core:options.get('--core'),effects:emit==='query-effects',cpuBatch:emit==='query-batch'});
+    process.stdout.write(emit==='query-effects'?canonical(result.effects)+'\n':emit==='query-batch'?result.cpuBatch:result.core);
   }else{
-  if(emit==='query-effects')throw new TypeError('r03-cli-options: query-effects requires --query-request');
+  if(emit==='query-effects'||emit==='query-batch')throw new TypeError('r03-cli-options: Query output requires --query-request');
   const input = JSON.parse(await readFile(options.get("--input"), "utf8"));
   const requests = emit === "run" ? JSON.parse(options.get("--requests") ?? "[{}]") : undefined;
   const compile = emit === "hir" ? compileHir : compileProgram;

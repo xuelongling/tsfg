@@ -48,15 +48,15 @@ public:
 };
 }
 void registerDialect(mlir::DialectRegistry &registry){registry.insert<QueryDialect>();}
-static mlir::LogicalResult verify(mlir::ModuleOp module,Json *effects){
-  Model m;
-  if(m.metadata(module)&&m.files()&&m.ast()&&m.types()&&m.declarations()&&m.scalars()&&m.bodies()&&m.scalarClosure()&&
-    verifyOperations(module,m)&&mlir::succeeded(mlir::verify(module))&&
-    (!effects||collectEffects(module,m,*effects)))return mlir::success();
-  auto d=module.emitError();d<<"["<<m.error.code<<"] "<<m.error.message;
-  if(!m.error.path.empty())d<<" ("<<m.error.path<<":"<<m.error.range.start<<":"<<m.error.range.end<<")";
+bool Model::verify(mlir::ModuleOp module){
+  return metadata(module)&&files()&&ast()&&types()&&declarations()&&scalars()&&bodies()&&scalarClosure()&&
+    verifyOperations(module,*this)&&mlir::succeeded(mlir::verify(module));
+}
+mlir::LogicalResult Model::diagnose(mlir::ModuleOp module){
+  auto d=module.emitError();d<<"["<<error.code<<"] "<<error.message;
+  if(!error.path.empty())d<<" ("<<error.path<<":"<<error.range.start<<":"<<error.range.end<<")";
   return mlir::failure();
 }
-mlir::LogicalResult verifyAndBind(mlir::ModuleOp module){return verify(module,nullptr);}
-mlir::LogicalResult analyzeEffects(mlir::ModuleOp module,Json &effects){return verify(module,&effects);}
+mlir::LogicalResult verifyAndBind(mlir::ModuleOp module){Model m;return m.verify(module)?mlir::success():m.diagnose(module);}
+mlir::LogicalResult analyzeEffects(mlir::ModuleOp module,Json &effects){Model m;return m.verify(module)&&collectEffects(module,m,effects)?mlir::success():m.diagnose(module);}
 } // namespace tsfg::systemQuery
