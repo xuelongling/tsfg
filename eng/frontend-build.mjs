@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: MIT
 import { createHash } from "node:crypto";
 import { spawnSync } from "node:child_process";
-import { mkdtemp, mkdir, readFile, realpath, rm, stat, writeFile } from "node:fs/promises";
+import { mkdtemp, mkdir, readFile, realpath, stat, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import path from "node:path";
 import { pathToFileURL } from "node:url";
@@ -108,7 +108,8 @@ export async function executeFrontendTarget({ command, productRoot, sourceRoot, 
     if (error.code !== "ENOENT") throw error;
   });
   const stage = await mkdtemp(path.join(tempRoot, "tsfg-frontend-"));
-  try {
+  // Retain build inputs and failed stages with their original process evidence.
+  {
     await mkdir(out, { recursive: true });
     const executable = path.join(out, "tsfg-frontend.exe");
     const env = {
@@ -251,10 +252,8 @@ export async function executeFrontendTarget({ command, productRoot, sourceRoot, 
       executable, executableSha256: binarySha256,
       // Dynamic process evidence is report-only and excluded from the canonical
       // input-set digest, intake ledger and executable identity.
-      executionEvidence, executions, goEnvironment,
+      executionEvidence, executions, goEnvironment, retainedStage: stage,
       ...(testOutput === undefined ? {} : { tests: { status: "passed", command: "node --test tests/r02b/frontend.test.mjs", output: testOutput } }),
       executionMode: "local-development", isolation: "not-enforced" };
-  } finally {
-    await rm(stage, { recursive: true, force: true });
   }
 }
