@@ -6,6 +6,7 @@ import path from "node:path";
 import { sourceGitEnvironment } from "./intake-ledger.mjs";
 import { mlirCommittedSourceBytes, readMlirStagedSourcePolicy, assertMlirStagedSourceSelection,
   deriveMlirStagedSource, qualifyMlirStagedSourceEntry } from "./mlir-source-legal.mjs";
+import { inspectMlirSdkProvenance, verifyMlirSdkNoticeRecord } from "./mlir-sdk.mjs";
 const digest = bytes => `sha256:${createHash("sha256").update(bytes).digest("hex")}`;
 const within = (root, file) => {
   const relative = path.relative(root, file);
@@ -165,10 +166,16 @@ export async function verifyMlirStagedSourceInputs({ source, sourceEntries, file
   }
 }
 
-export async function retainedNoticeBundle({ source, sourceEntries, productRoot, identity, legal, commandRole }) {
+export async function retainedNoticeBundle({ source, sourceEntries, productRoot, identity, legal, commandRole, sdk = null, serialize }) {
   const lock = JSON.parse(await readFile(path.join(productRoot, "eng/mlir-source-notices.lock.json"), "utf8"));
   if (lock.schemaVersion !== "1" || lock.baseCommit !== identity.baseCommit || lock.sourceCommit !== identity.sourceCommit)
     throw new MlirBuildError("Original notice retention mapping has another source identity", "mlir-source-license");
+  if (sdk) {
+    const proof = inspectMlirSdkProvenance(sdk, productRoot);
+    verifyMlirSdkNoticeRecord(lock, proof.sourceNotices, identity, serialize, legal.approvalLockSha256);
+    return { inputs: [], bundle: { schemaVersion: "1", baseCommit: identity.baseCommit, sourceCommit: identity.sourceCommit,
+      role: "compiler-side-M01", approvalLockSha256: legal.approvalLockSha256, purpose: lock.purpose, files: lock.files } };
+  }
   const entries = new Map(sourceEntries.map(entry => [entry.repositoryRelativePath, entry]));
   const inputs = [];
   // Registration belongs to the selected static consumer, never to a caller tag.

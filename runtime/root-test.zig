@@ -354,3 +354,7 @@ test "recursive frame entry and return clean every allocation failure" {
         .failed => return error.UnexpectedRequestFailure,
     }
 }
+
+test "opcode33 dispatch regression suite is aggregated" {
+    _ = @import("opcode33-test.zig");
+}

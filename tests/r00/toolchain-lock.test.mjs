@@ -258,11 +258,18 @@ test("toolchain lock content-locks both debug closures and bootstrap tools", asy
       new RegExp(nodeArtifact.executableSha256.slice("sha256:".length)),
     );
   }
-  assert.doesNotMatch(
-    await readFile(path.join(repositoryRoot, "eng", "tsfg-build.mjs"), "utf8"),
-    /execFileSync\(["']tar["']/,
-    "prefetch must not fall back to a system tar executable",
-  );
+  for (const module of ["build-tool-closure.mjs", "build-archive-extract.mjs"]) {
+    const implementation = await readFile(path.join(repositoryRoot, "eng", module), "utf8");
+    const acquisitionOrExtraction = module === "build-tool-closure.mjs"
+      ? /async function acquireArchive\(/
+      : /async function extractArchive\(/;
+    assert.match(implementation, acquisitionOrExtraction, `${module} must contain its actual implementation`);
+    assert.doesNotMatch(
+      implementation,
+      /execFileSync\(["']tar["']/,
+      `${module} must not fall back to a system tar executable`,
+    );
+  }
   const linuxLauncher = await readFile(
     path.join(repositoryRoot, "eng", "tsfg-build"),
     "utf8",

@@ -21,8 +21,10 @@ use builtin f32/f64 types and fixed-width lowercase hexadecimal StringAttrs.
 The complete current contract is exact-match 0.9.0, wire 9 and capability 20.
 Float type codes are 12/13, constant opcode 32 and unary plus opcode 33. Existing
 numeric arithmetic, negation and comparisons accept matching float types;
-bitwise operations, shifts and bitwise not remain integer-only. Reserved draft
-opcodes 29..31 do not introduce globals or host calls into this implementation.
+bitwise operations, shifts and bitwise not remain integer-only. M08 alone did
+not implement module/host records; the current M13 registered shape uses
+opcodes29/30 for typed globals (including f32/f64) and31 for explicitly
+authorized i32 host calls. See contracts/bytecode.md for their table layout.
 
 Each arithmetic operation rounds separately to its declared width, without
 fusion. Subnormals are preserved. Arithmetic NaNs, including unary arithmetic,

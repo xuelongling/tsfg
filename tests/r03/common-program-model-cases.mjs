@@ -1,0 +1,93 @@
+// SPDX-License-Identifier: MIT
+// Private abstract-graph/layout units. These are not Source-produced facts and
+// carry no Source, Core, Runtime or execution qualification.
+import {i32TypeId,scalarTypeIds,sha256} from '../../compiler/identity.mjs';
+import {commonMeter} from '../../compiler/common-program-common.mjs';
+import {createCommonGraph} from '../../compiler/common-program-plan.mjs';
+import {commonAbstract} from '../../compiler/common-program-abstract.mjs';
+import {commonMethods} from '../../compiler/common-program-methods.mjs';
+const u=sha256('tsfg.type\0undefined'),box=sha256('unit:Box'),value=sha256('unit:Value'),nested=sha256('unit:Nested');
+const range={start:0,end:1};
+const field=(owner,name,type)=>({id:owner+'/'+name,sourceBinding:owner+'/'+name,type,name,owner});
+export function commonFactoryModel(kind='reference',callInLoop=false) {
+  const leaf=field(kind==='reference'?box:value,'n',i32TypeId),inner=field(nested,'inner',value);
+  const rows=[{id:i32TypeId,kind:'scalar',name:'i32'},{id:u,kind:'undefined'},
+    {id:box,kind:'reference',fields:kind==='reference'?[leaf]:[]},{id:value,kind:'value',fields:kind!=='reference'?[leaf]:[]},
+    {id:nested,kind:'value',fields:[inner]}];
+  const resultType=kind==='nested'?nested:kind==='reference'?box:value,bindings=new Map(),fields=new Map();
+  for(const type of rows)for(const f of type.fields??[]){fields.set(f.id,f);bindings.set(f.sourceBinding,{id:f.sourceBinding,type:f.type,role:'field'});}
+  const model={types:new Map(rows.map(t=>[t.id,t])),spend:commonMeter(1000000),payload:'payload:unit',fields,bindings,globals:new Map(),
+    limits:{registersPerFunction:4096,blocksPerFunction:256,instructionsPerFunction:8192},
+    hir:{types:rows,functions:[],globals:[],snapshot:{payload:{compatibilityWitnesses:[],entryCompatibilityRoots:[]}},closure:{roots:[{kind:'application',target:'entry'}]}}};
+  const plans=[],owners=new Map();
+  function plan(id,returnType,parameterTypes=[]) {
+    const parameters=parameterTypes.map((type,i)=>({id:id+'/p'+i,type}));for(const p of parameters)bindings.set(p.id,{...p,role:'parameter'});
+    const owner={id,returnType,sourcePath:'/unit-model.ts'},graph=createCommonGraph(model,owner),entry=graph.newBlock(parameterTypes),p={owner,graph,entry,parameters,returnType};
+    plans.push(p);owners.set(id,owner);return p;
+  }
+  const emit=(p,b,name,args,type,props={})=>p.graph.emit(b,name,args,type,props,range);
+  const ret=(p,b,v)=>p.graph.terminal(b,'func.return',[v],[],{},range);
+  function call(p,b,target,arg) {
+    const normal=p.graph.newBlock([resultType]),thrown=p.graph.newBlock([model.payload]);
+    p.graph.terminal(b,'invoke',[arg],[normal,thrown],{function_id:target,signature_hash:'unit'},range);
+    p.graph.terminal(thrown,'return_throw',[{...thrown.parameters[0]}],[],{},range);return {block:normal,value:{...normal.parameters[0]}};
+  }
+  const make=plan('make',resultType,[i32TypeId]);let object=emit(make,make.entry,kind==='reference'?'allocate_reference':'construct_value',[],kind==='reference'?box:value,{type:kind==='reference'?box:value,construction:'unit'});
+  emit(make,make.entry,'field_store',[object,{...make.entry.parameters[0]}],null,{field:leaf.id,initialize:false});
+  if(kind==='nested'){
+    const outer=emit(make,make.entry,'construct_value',[],nested,{type:nested,construction:'unit'});
+    emit(make,make.entry,'field_store',[outer,emit(make,make.entry,'value_copy',[object],value,{type:value})],null,{field:inner.id,initialize:true});object=outer;
+  }
+  ret(make,make.entry,kind==='reference'?object:emit(make,make.entry,'value_copy',[object],resultType,{type:resultType}));
+  const wrap=plan('wrap',resultType,[i32TypeId]),wrapped=call(wrap,wrap.entry,'make',{...wrap.entry.parameters[0]});ret(wrap,wrapped.block,wrapped.value);
+  const entry=plan('entry',i32TypeId),absence=emit(entry,entry.entry,'undefined',[],u),view=emit(entry,entry.entry,'assert',[absence],i32TypeId,{operator:'as'});
+  const first=call(entry,entry.entry,'wrap',view);let block=first.block,loop=null;
+  if(callInLoop){loop=entry.graph.newBlock();entry.graph.branch(block,loop,[],range);block=loop;}
+  const one=emit(entry,block,'constant',[],i32TypeId,{decimal:'1',token:'1'}),second=call(entry,block,'wrap',one);block=second.block;
+  let old=first.value;if(kind==='nested')old=emit(entry,block,'field_load',[old],value,{field:inner.id});
+  const loaded=emit(entry,block,'field_load',[old],i32TypeId,{field:leaf.id}),result=emit(entry,block,'binary',[loaded,one],i32TypeId,{operator:'+'});
+  if(loop)entry.graph.branch(block,loop,[],range);
+  else ret(entry,block,result);
+  model.functions=owners;model.hir.functions=[...owners.values()].map(fn=>({...fn,sourceBinding:fn.id}));
+  return {program:{model,plans},entryId:entry.owner.id,loaded:loaded.name};
+}
+export function commonReferenceBodyModel(count,scalar=false) {
+  const root=sha256('unit:Leaf'),base=sha256('unit:Base'),wide=sha256('unit:Wide'),union=sha256('unit:Leaf/U'),fieldType=scalar?scalarTypeIds.i64:union;
+  const fields=Array.from({length:count},(_,i)=>field(i<count/2?base:wide,'f'+i,fieldType));
+  const types=[{id:i32TypeId,kind:'scalar',name:'i32'},{id:scalarTypeIds.i64,kind:'scalar',name:'i64'},{id:u,kind:'undefined'},
+    {id:root,kind:'reference',fields:[]},{id:union,kind:'union',members:[root,u]},
+    {id:base,kind:'reference',fields:fields.filter(f=>f.owner===base)},{id:wide,kind:'reference',base,fields:fields.filter(f=>f.owner===wide)}];
+  const model={types:new Map(types.map(t=>[t.id,t])),bindings:new Map(fields.map(f=>[f.sourceBinding,{id:f.sourceBinding,type:f.type,role:'field'}])),
+    spend:commonMeter(1000000),payload:'payload:unit',hir:{types}},a=commonAbstract(model),seeds=new Map();
+  for(const f of fields){const v=a.empty();for(const id of scalar?[fieldType]:[root,u])v.tags.add(id);seeds.set(f.sourceBinding,v);}
+  return {program:{model,plans:[]},values:{abstract:a,fieldSeeds:seeds,globalSeeds:new Map(),elementSeeds:new Map(),capacity:{observed:new Map(),contexts:new Map()}},wide};
+}
+export function commonMethodModel(mode='override') {
+  const base=sha256('unit:MethodBase'),middle=sha256('unit:MethodMiddle'),derived=sha256('unit:MethodDerived');
+  const rows=[{id:i32TypeId,kind:'scalar',name:'i32'},
+    {id:base,kind:'reference',fields:[],methods:['base.m']},
+    {id:middle,kind:'reference',base,fields:[],methods:mode==='override'?['middle.m']:[]},
+    {id:derived,kind:'reference',...(mode==='structural'?{}:{base:middle}),fields:[],methods:mode==='inherited'?[]:['derived.m']}];
+  const bindings=new Map(),functions=new Map(),plans=[],model={types:new Map(rows.map(t=>[t.id,t])),bindings,functions,fields:new Map(),globals:new Map(),
+    spend:commonMeter(1000000),payload:'payload:unit',hir:{types:rows,functions:[],globals:[],snapshot:{payload:{compatibilityWitnesses:[],entryCompatibilityRoots:[]}},closure:{roots:[{kind:'application',target:'entry'}]}}};
+  function plan(id,ownerType=null,overrideTarget=null) {
+    const owner={id,name:ownerType?'m':'entry',kind:ownerType?'method':'source',ownerType,overrideTarget,signatureHash:'unit:'+id,returnType:i32TypeId,sourcePath:'/unit-model.ts'},
+      parameters=ownerType?[{id:id+'/this',type:ownerType}]:[],graph=createCommonGraph(model,owner),entry=graph.newBlock(parameters.map(p=>p.type)),result={owner,graph,entry,parameters,returnType:i32TypeId};
+    for(const p of parameters)bindings.set(p.id,{...p,role:'receiver'});functions.set(id,owner);plans.push(result);return result;
+  }
+  for(const [id,type,target]of /** @type {[string,string,string|null][]} */([['base.m',base,null],...(mode==='override'?[['middle.m',middle,'base.m']]:[]),
+    ...(mode==='inherited'?[]:[['derived.m',derived,mode==='override'?'middle.m':null]])])) {
+    const p=plan(id,type,target),decimal=id==='base.m'?'1':id==='middle.m'?'2':'3',one=p.graph.emit(p.entry,'constant',[],i32TypeId,{decimal,token:decimal},range);p.graph.terminal(p.entry,'func.return',[one],[],{},range);
+  }
+  const entry=plan('entry'),receiver=entry.graph.emit(entry.entry,'allocate_reference',[],derived,{type:derived,construction:'unit'},range),
+    normal=entry.graph.newBlock([i32TypeId]),thrown=entry.graph.newBlock([model.payload]);
+  const view=entry.graph.emit(entry.entry,'view',[receiver],base,{target:base},range);
+  entry.graph.terminal(normal,'func.return',[{...normal.parameters[0]}],[],{},range);
+  entry.graph.terminal(thrown,'return_throw',[{...thrown.parameters[0]}],[],{},range);
+  model.hir.functions=[...functions.values()].map(fn=>({...fn,sourceBinding:fn.id,parameters:[]}));
+  for(const row of rows)Object.assign(row,{sourceType:row.id});
+  if(mode==='structural')model.hir.snapshot.payload.compatibilityWitnesses.push({compatibility:{sourceType:derived,targetType:base,origin:{source:'/unit-model.ts',...range},members:[{source:'derived.m',target:'base.m'}]}});
+  const dispatch=commonMethods(model.hir,model.spend).dispatch('base.m',base);
+  entry.graph.terminal(entry.entry,'invoke_method',[view],[normal,thrown],{function_id:'base.m',signature_hash:'unit:base.m',dispatch},range);
+  return {model,plans};
+}

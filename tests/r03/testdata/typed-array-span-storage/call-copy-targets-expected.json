@@ -1,0 +1,43 @@
+{
+  "frozenAt": "2026-10-23T21:54:20.809Z",
+  "actor": "Root independent normative expectation; frozen before any Source25m packet",
+  "scope": "R01 value parameter copy and actual selected method targets; normative expected only, no guest/IR/VM execution claim",
+  "source": [
+    {
+      "path": "E:/ws/pro_tsfg/.scratch/tsfg_r03/M25-source-generic-array-checks-20261022/span-call-copy-positive-source.ts",
+      "bytes": 262,
+      "sha256": "95b8a8c0581e532e48fd974c73fa36cd5505ec001af89de13b80e40321f2e0f9"
+    },
+    {
+      "path": "E:/ws/pro_tsfg/.scratch/tsfg_r03/M25-source-generic-array-checks-20261022/span-call-targets-negative-a-source.ts",
+      "bytes": 308,
+      "sha256": "93162830f6996ba5d34309be2018210212481e539569f8f9213af243956dd392"
+    },
+    {
+      "path": "E:/ws/pro_tsfg/.scratch/tsfg_r03/M25-source-generic-array-checks-20261022/span-call-targets-negative-b-source.ts",
+      "bytes": 308,
+      "sha256": "c6880202d7581f09aa4c028b14c55868e0e2dd49af59fbb35d4e81f2bd2125e8"
+    }
+  ],
+  "positive": {
+    "function": "valueArg",
+    "expectedStatic": "accept",
+    "normativeResult": 1,
+    "reason": "Free function first value parameter is copied; change mutates only its independent field plane. v.span remains bound to A, B Span is dead after call, so B resize precedes final A read legally."
+  },
+  "negative": {
+    "functions": [
+      "shrinkA",
+      "shrinkB"
+    ],
+    "expectedStatic": "r03-d-readspan-structural-conflict for each",
+    "reason": "Actual union receiver selects L.set writing B or R.set preserving A; both start from same call-entry field snapshot, so h.span can still borrow either A or B. Each corresponding structural resize conflicts before last field read.",
+    "anchors": {
+      "shrinkA": 278,
+      "shrinkB": 278
+    },
+    "requests": "Two full independent negative Sources/requests required: public cold build reports single first cause. Do not drop functions/facts from captured packet."
+  },
+  "unknown": "Missing summary or actual target cannot retain an exact old field projection; no hand-authored producer authority.",
+  "previousSourceProposal": "Original two-export source not captured/qualified; normative expectation unchanged, split only to observe both independent export first causes."
+}

@@ -29,7 +29,8 @@ inline bool read(mlir::ModuleOp module, Identity &out) {
   Identity value;
   value.sourcePath = text("tsfg_core.source_path");
   const auto length = module->getAttrOfType<mlir::IntegerAttr>("tsfg_core.source_length");
-  if (!validSourcePath(value.sourcePath, false) ||
+  // The owned Source VFS profile excludes colons; ordinary Core paths do not.
+  if (value.sourcePath.contains(':') || !validSourcePath(value.sourcePath, false) ||
       !bytecode::decodeHash(text("tsfg_core.input_identity"), value.input) ||
       !bytecode::decodeHash(text("tsfg_core.source_hash"), value.source) ||
       !length || !length.getType().isSignlessInteger(64) || length.getInt() < 0 ||

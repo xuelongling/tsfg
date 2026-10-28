@@ -9,7 +9,7 @@ import {fileURLToPath} from 'node:url';
 import {canonical,sha256} from '../../compiler/identity.mjs';
 
 const fixture=await readFile(new URL('./testdata/formal-cold-profile/owned-snapshot-hir.json',import.meta.url));
-assert.equal(sha256(fixture),'sha256:331ed141e873e7da26e2bbd65301d1e5f1b7eb61dcd3b6ee61800a52bb00ae6b');
+assert.equal(sha256(fixture),'sha256:5f22b4e99e09737ef6d58c544fc44a107d8fc0b6dc9d0c00ea52a9f837af8ae7');
 const {hir}=JSON.parse(fixture.toString('utf8'));
 const cli=fileURLToPath(new URL('../../tooling/tsfgc.mjs',import.meta.url));
 
@@ -70,7 +70,7 @@ if(process.env.TSFG_CORE_IR_EXE){
     assert.equal(wire.status,0,wire.stdout.toString('utf8')+wire.stderr.toString('utf8'));
     assert.equal(wire.stderr.length,0);
     assert.equal(wire.stdout.subarray(0,8).toString('ascii'),'TSFGTBC0');
-    assert.equal(wire.stdout.readUInt32LE(8),10);
+    assert.equal(wire.stdout.readUInt32LE(8),12);
     assert.equal(wire.stdout.readUInt32LE(44),wire.stdout.length);
     assert.equal('sha256:'+wire.stdout.subarray(48,80).toString('hex'),sha256(wire.stdout.subarray(80)));
   });

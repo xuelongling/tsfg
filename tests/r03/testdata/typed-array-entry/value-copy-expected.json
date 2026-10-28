@@ -1,0 +1,67 @@
+{
+  "family": "tsfg.r03.value-copy-source-expectations",
+  "version": 1,
+  "author": "/root",
+  "authority": "Frozen from exact Source before any publicGo packet or producer plan. Runtime numbers are R03 accepted @tsfgValue semantics, not official TypeScript JS runtime results. No Source program execution claimed.",
+  "source": {
+    "path": "/src/main.ts",
+    "text": "class Box{n:i32=1;}\n@tsfgValue class V{x:i32=1;child:Box=new Box();}\nfunction change(p:V):i32{p.x=7;p.child.n=9;return p.x;}\nfunction pass(p:V):V{return p;}\nexport function f():i32{const a=new V();const b=a;b.x=2;b.child.n=3;return a.x+a.child.n;}\nexport function g():i32{const a=new V();const n=change(a);const b=pass(a);b.x=5;return a.x+a.child.n+n;}\nexport function h():i32{const a=new V();const before=a.x;let b:V=new V();b=a;b.x=2;const early=b.x;b.x=4;return before+early+a.x;}\nexport function valueAt(a:V[],i:u32):V{return a[i];}\n",
+    "bytes": 537,
+    "utf16": 537,
+    "sha256": "ced1af67617e9541e2eeb5716eaa23f11d62a89b01c28fa0ed159c28b2ab56a2"
+  },
+  "nominal": {
+    "Box": "reference class, same child handle identity survives value copies",
+    "V": "exact @tsfgValue inline value, x field plane independent per copy, child reference identity shared"
+  },
+  "exports": [
+    "f",
+    "g",
+    "h",
+    "valueAt"
+  ],
+  "helpers": [
+    "change",
+    "pass"
+  ],
+  "staticCopies": {
+    "f": [
+      "const b=a copies inline V field storage",
+      "b.x write2 leaves a.x1",
+      "b.child.n write3 reaches same Box as a.child"
+    ],
+    "g": [
+      "change(a) passes V by value, its p.x7 leaves a.x1",
+      "p.child.n9 mutates shared child",
+      "pass(a) param/return by value and const b call-result by value",
+      "b.x5 leaves a.x1"
+    ],
+    "h": [
+      "b=a assignment copies V plane; discarded original b has a different construction",
+      "before=a.x remains1 after b.x2 and4",
+      "early=b.x observes preceding2, not later4",
+      "a.x remains1"
+    ],
+    "valueAt": [
+      "checked Array read must still perform dynamic bounds/initialization validation",
+      "return copies the successful inline V payload, x and child tag/identity retained; no default substituted"
+    ]
+  },
+  "normalResults": {
+    "f": 4,
+    "g": 17,
+    "h": 4,
+    "valueAt": "by-value existing admitted V element after actual checked read success"
+  },
+  "negativeOracles": [
+    "Reject b.x change leaking into a.x",
+    "Reject loss/copy-allocation of shared child reference identity",
+    "Reject call p.x mutation leaking to caller a.x",
+    "Reject pass result aliasing original inline field storage",
+    "Reject early scalar snapshot reading later write4",
+    "Do not turn V declaration/constructor defaults into initialized external Array element",
+    "Do not use narrow static view to filter actual active values",
+    "Do not remove checked read, synthesize Source versions, fake runtime execution or grant wholeModule/VM acceptance"
+  ],
+  "sourceQualification": "The official checker and publicGo DTO prove typed symbols, fields, nominal value decorator, body order and UTF16 anchors only; compiler consumers prove copy storage; fullVM/runtime remains OPEN/STOP where applicable."
+}

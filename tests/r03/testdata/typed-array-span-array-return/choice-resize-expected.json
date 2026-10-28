@@ -1,0 +1,20 @@
+{
+  "frozenBeforeSourceProducerImplementation": true,
+  "source": {
+    "path": "E:/ws/pro_tsfg/.scratch/tsfg_r03/M25-source-generic-array-checks-20261022/span-array-choice-resize-source.ts",
+    "bytes": 314,
+    "sha256": "a233abed741ca9c70848fb95a3444111215b1796d04f0b605772e852e633e626"
+  },
+  "semantics": {
+    "arrays": {
+      "a": "length1, slot0 original Span(x)",
+      "b": "length1, slot0 original Span(y)"
+    },
+    "choice": "unknown runtime flag selects exactly one receiver a or b",
+    "resize": "chosen.length=0 truncates only chosen; each candidate may retain its old length1/slot0",
+    "required": "Never publish a and b as definitely empty. If joined extents differ or selected receiver is unknown, exact extent is unknown and old possible payload/source families remain conservative. Returning a can still carry the x Span when flag=true.",
+    "negative": "x.length=0 cannot be justified by false complete-empty return proof. Precise structural conflict or explicit pending is conservative; successful empty owner projection is not.",
+    "control": "A unique receiver may retain exact strong update; two choices whose extents truly agree may meet exactly. No permanent ban on choices, resize, calls or arrays."
+  },
+  "qualification": "Source original facts only; Node component/cold consumer and C++ IR are separate. Earlier productionplanes RED33236 is not a Source/IR run."
+}

@@ -6,13 +6,18 @@ import { readFileSync, writeFileSync } from "node:fs";
 import { chmod, mkdir, mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import path from "node:path";
-import test from "node:test";
+import test, { mock } from "node:test";
+import * as fsPromises from "node:fs/promises";
+import * as os from "node:os";
+import * as identityModule from "../../eng/build-identity.mjs";
+import * as linuxSandbox from "../../eng/build-linux-sandbox.mjs";
+import * as windowsSandbox from "../../eng/build-windows-sandbox.mjs";
+import * as toolchain from "../../eng/build-toolchain.mjs";
+import { canonicalize } from "../../eng/build-data.mjs";
+import { WINDOWS_NETWORK_ISOLATION } from "../../eng/build-errors.mjs";
+import { createBuildPolicy } from "../../eng/build-policy.mjs";
+import { payloadOptions } from "../../eng/build-options.mjs";
 
-const source = await readFile(new URL("../../eng/tsfg-build.mjs", import.meta.url), "utf8");
-const start = source.indexOf("async function testSmoke(");
-const end = source.indexOf("\nconst SYNTHETIC_CHANGE_SEMANTICS", start);
-assert.ok(start >= 0 && end > start);
-const testSmokeSource = source.slice(start, end);
 const digest = (bytes) => `sha256:${createHash("sha256").update(bytes).digest("hex")}`;
 
 async function exercise({ target = "windows-x86_64-msvc", profile = "debug",
@@ -29,36 +34,36 @@ async function exercise({ target = "windows-x86_64-msvc", profile = "debug",
     sha256: digest(bytes),
   }));
   const identity = { buildIdentity: { target, profile }, buildInputSet: { entries: [] } };
-  const metadata = { ...identity, buildPolicy: {}, development: false, dirty: false,
-    publishable: true, networkIsolation: {}, payloads };
+  const metadata = {
+    ...identity,
+    buildPolicy: createBuildPolicy(target, profile, payloadOptions(new Map())),
+    development: false, dirty: false, publishable: true,
+    networkIsolation: WINDOWS_NETWORK_ISOLATION, payloads,
+  };
   const calls = [];
   const writes = [];
   let preservedCollision;
+  const moduleMocks = [];
   try {
     await mkdir(path.join(output, "bin"), { recursive: true });
     await writeFile(cppPath, cpp, { flag: "wx" });
     await writeFile(path.join(output, ...payloads[1].path.split("/")), zig, { flag: "wx" });
-    await writeFile(path.join(output, "build-metadata.json"), JSON.stringify(metadata), { flag: "wx" });
+    await writeFile(path.join(output, "build-metadata.json"), `${canonicalize(metadata)}\n`, { flag: "wx" });
     // Execute the complete production function, including case construction,
     // metadata checks, real file reads/hashes/exclusive writes and cleanup.
-    // Only identity/sandbox preparation and native execution are test doubles;
+    // Module mocks replace only identity/sandbox preparation and native execution;
     // this regression never starts a compiler, sandbox, or native smoke process.
-    const dependencies = {
-      path, randomUUID, mkdir, mkdtemp, rm, chmod, digest,
-      tmpdir: () => root,
-      process: { platform: windows ? "win32" : "linux" },
-      ConfigurationError: Error, TestFailureError: Error, WorkspaceMismatchError: Error,
-      canonicalize: JSON.stringify,
-      readCanonicalJson: async (file) => JSON.parse(await readFile(file, "utf8")),
-      readRegularFile: (file) => readFile(file),
-      payloadOptions: () => ({}), createBuildPolicy: () => ({}),
-      createBuildIdentity: async () => identity,
-      WINDOWS_NETWORK_ISOLATION: {},
-      materializeBuildInputs: async () => {},
-      compileSandbox: async () => ({ executable: "unused-sandbox" }),
-      verifyWindowsSandboxControl: async () => ({ executable: "unused-sandbox" }),
-      verifyWindowsSandboxBoundary: () => {}, closureToolPath: () => "unused-shell",
-      writeFile: async (file, bytes, options) => {
+    const mockModule = (specifier, namedExports) => {
+      // Builtin namespaces contain a default object with nonconfigurable constants.
+      // Mock only named bindings; preserve the real functions for unrelated exports.
+      const { default: _default, ...exports } = namedExports;
+      moduleMocks.push(mock.module(new URL(specifier, import.meta.url).href, { namedExports: exports }));
+    };
+    moduleMocks.push(mock.module("node:process", {
+      defaultExport: { platform: windows ? "win32" : "linux" },
+    }));
+    mockModule("node:os", { ...os, tmpdir: () => root });
+    mockModule("node:fs/promises", { ...fsPromises, writeFile: async (file, bytes, options) => {
         assert.equal(options.flag, "wx", "payload writes must remain exclusive");
         writes.push(file);
         if (collision) await writeFile(file, "existing unrelated bytes", { flag: "wx" });
@@ -68,7 +73,24 @@ async function exercise({ target = "windows-x86_64-msvc", profile = "debug",
           if (collision) preservedCollision = await readFile(file, "utf8");
           throw error;
         }
-      },
+      } });
+    mockModule("../../eng/build-identity.mjs", {
+      ...identityModule,
+      createBuildIdentity: async () => identity,
+      materializeBuildInputs: async () => {},
+    });
+    mockModule("../../eng/build-linux-sandbox.mjs", {
+      ...linuxSandbox,
+      compileSandbox: async () => ({ executable: "unused-sandbox" }),
+    });
+    mockModule("../../eng/build-windows-sandbox.mjs", {
+      ...windowsSandbox,
+      verifyWindowsSandboxControl: async () => ({ executable: "unused-sandbox" }),
+      verifyWindowsSandboxBoundary: () => {},
+    });
+    mockModule("../../eng/build-toolchain.mjs", { ...toolchain, closureToolPath: () => "unused-shell" });
+    mockModule("../../eng/build-runtime-execution.mjs", {
+      observeHostPlatform: async () => { throw new Error("package runtime seam is outside this fixture"); },
       runSmokeExecutable: (name, executable, outputRoot, _runtime, _sandbox,
         _sandboxRoot, _shell, _deniedRoot, arguments_, executionMode) => {
         assert.deepEqual(readFileSync(executable), name === "zig-smoke" ? zig : cpp);
@@ -80,10 +102,10 @@ async function exercise({ target = "windows-x86_64-msvc", profile = "debug",
           ? { stdout: "", stderr: "tsfg-r00-zig-smoke: ok\n" }
           : { stdout: `tsfg-r00-cpp-smoke: ${arguments_.length ? "baseline fallback ok" : "ok"}${windows ? "\r\n" : "\n"}`, stderr: "" };
       },
-    };
-    const testSmoke = new Function(...Object.keys(dependencies), `return (${testSmokeSource});`)(
-      ...Object.values(dependencies),
-    );
+    });
+    const { testSmoke } = await import(new URL(
+      `../../eng/build-smoke.mjs?cpu-fixture=${randomUUID()}`, import.meta.url,
+    ).href);
     const options = new Map([["--target", target], ["--profile", profile], ["--out", output]]);
     if (baseline) options.set("--cpu-fixture", "x86-64-v2");
     const run = testSmoke(options, { platform: target }, { root }, "blocked");
@@ -106,6 +128,7 @@ async function exercise({ target = "windows-x86_64-msvc", profile = "debug",
     }
     for (const file of writes) await assert.rejects(readFile(file), { code: "ENOENT" });
   } finally {
+    for (const moduleMock of moduleMocks.reverse()) moduleMock.restore();
     const relative = path.relative(tmpdir(), root);
     assert.ok(relative && !relative.startsWith("..") && !path.isAbsolute(relative));
     await rm(root, { recursive: true, force: true });

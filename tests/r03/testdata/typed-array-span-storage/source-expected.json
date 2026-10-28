@@ -1,0 +1,120 @@
+{
+  "family": "tsfg.span-storage-source-only-expectations",
+  "version": 1,
+  "frozenBeforePacketsOrConsumerOutput": true,
+  "inputs": {
+    "positive": {
+      "path": "E:/ws/pro_tsfg/.scratch/tsfg_r03/M25-source-generic-array-checks-20261022/span-storage-positive-source.ts",
+      "bytes": 616,
+      "sha256": "85d12f0ac3a08c8940c25d2a7dd3eef1bcf7840993a465feda70831aa283340d",
+      "sourceText": "class Holder{constructor(public span:ReadSpan<i32>){}}\n@tsfgValue class ValueHolder{constructor(public span:ReadSpan<i32>){}}\nfunction wrap(a:i32[]):Holder{return new Holder(readSpan(a,0,1));}\nexport function local():i32{const a:i32[]=[1];const h:Holder=new Holder(readSpan(a,0,1));const alias:Holder=h;return alias.span[0];}\nexport function copied():i32{const a:i32[]=[1];const h:ValueHolder=new ValueHolder(readSpan(a,0,1));const copy:ValueHolder=h;const b:i32[]=[2];h.span=readSpan(b,0,1);b.length=0;return copy.span[0];}\nexport function returned():i32{const a:i32[]=[1];const h:Holder=wrap(a);return h.span[0];}\n"
+    },
+    "negative": {
+      "path": "E:/ws/pro_tsfg/.scratch/tsfg_r03/M25-source-generic-array-checks-20261022/span-storage-negative-source.ts",
+      "bytes": 224,
+      "sha256": "7929780238f7ecb16edf0a1a775c1da6e035f31b14ce948e794d554ce536b30e",
+      "sourceText": "class Holder{constructor(public span:ReadSpan<i32>){}}\nexport function conflict():i32{const a:i32[]=[1];const h:Holder=new Holder(readSpan(a,0,1));const alias:Holder=h;const same:i32[]=a;same.length=0;return alias.span[0];}\n"
+    }
+  },
+  "authority": [
+    "R01 5.1 lines114/116: value field planes copy; reference aliases share the object.",
+    "R01 5.4 line142 and accepted ADR0020/R03 Q11: actual owner lifetime and last use govern storage/capture/return; no blanket field-storage ban.",
+    "Q11 existing-element visibility is not a structure mutation exemption; changing length during an active family remains forbidden."
+  ],
+  "positive": {
+    "status": "accepted with complete actual owner/storage/lifetime proof",
+    "local": {
+      "normalSuccessResult": 1,
+      "storage": "Holder h and alias have one shared field plane",
+      "familyOwner": "local Array a",
+      "lastUse": {
+        "text": "alias.span[0]",
+        "start": 310,
+        "end": 323
+      },
+      "creation": {
+        "text": "const h:Holder=new Holder(readSpan(a,0,1))",
+        "start": 239,
+        "end": 281
+      },
+      "escape": false
+    },
+    "copied": {
+      "normalSuccessResult": 1,
+      "copyPlane": "copy is independent of h",
+      "containedOwner": "copy.span and original h.span share Array a before overwrite",
+      "copy": {
+        "text": "const copy:ValueHolder=h",
+        "start": 426,
+        "end": 450
+      },
+      "overwrite": {
+        "text": "h.span=readSpan(b,0,1)",
+        "start": 469,
+        "end": 491
+      },
+      "unaffectedRead": {
+        "text": "copy.span[0]",
+        "start": 510,
+        "end": 522
+      },
+      "readOwner": "a, never b",
+      "noChangeToCopyOnOverwrite": true,
+      "permittedShrink": {
+        "text": "b.length=0",
+        "start": 492,
+        "end": 502
+      },
+      "reason": "New h.span borrows b but h/span do not escape and have no later use; the later copy.span read keeps only Array a borrowed."
+    },
+    "returned": {
+      "normalSuccessResult": 1,
+      "projection": "wrap formal Array slot0 -> returned Holder field span -> caller actual Array a",
+      "helperReturn": {
+        "text": "return new Holder(readSpan(a,0,1))",
+        "start": 156,
+        "end": 190
+      },
+      "call": {
+        "text": "const h:Holder=wrap(a)",
+        "start": 574,
+        "end": 596
+      },
+      "lastUse": {
+        "text": "return h.span[0]",
+        "start": 597,
+        "end": 613
+      },
+      "newArrayInHelper": false
+    },
+    "allocations": 4,
+    "spanCreations": 4,
+    "finalFieldReads": 3,
+    "notGranted": [
+      "Source facts do not prove active families or runtime payloads.",
+      "Native parameter-property empty definition is not a Source undefined literal; successful construction establishes the actual stored view.",
+      "No box/copy of the Array owner and no reinterpretation of a new view as Array object identity."
+    ]
+  },
+  "negative": {
+    "status": "static active borrow conflict",
+    "normalSuccessResult": null,
+    "storage": "Holder h and alias share one field plane; same aliases Array a",
+    "conflict": {
+      "text": "same.length=0",
+      "start": 187,
+      "end": 200
+    },
+    "laterUse": {
+      "text": "alias.span[0]",
+      "start": 208,
+      "end": 221
+    },
+    "reason": "The stored view family remains live through the later field read; its owner is the Array resized through same.",
+    "notAllowed": [
+      "Deferring this known active structural conflict to the checked read trap.",
+      "Treating reference alias as an independent value plane or ending borrow at constructor/copy completion."
+    ]
+  },
+  "qualifications": "Source-only semantic derivation. No packet/plan/Core output, Source execution, IR execution or VM observation used."
+}

@@ -1,0 +1,79 @@
+{
+  "family": "tsfg.finite-dense-length.source-expected",
+  "version": 1,
+  "provenance": "Derived only from Root-frozen source text and accepted Q11/Q13 before reading any new packet, plan or Core output.",
+  "positive": {
+    "sourceSHA": "7a2906d93d4f958e1fdefe881e8d8c283143a0d819d1568486d6199f1f8b885d",
+    "sourceText": "export function same():i32{const a:i32[]=[1];const s:ReadSpan<i32>=readSpan(a,0,1);a.length=1;return s[0];}\nexport function alias():i32{const a:i32[]=[1,2];const b:i32[]=a;const s:ReadSpan<i32>=readSpan(b,0,1);a.length=2;return s[0];}\nexport function afterShrink():i32{const a:i32[]=[1,2];a.length=1;const s:ReadSpan<i32>=readSpan(a,0,1);a.length=1;return s[0];}\n",
+    "cases": [
+      {
+        "previous": [
+          1
+        ],
+        "resizeText": [
+          "a.length=1"
+        ],
+        "nonStructural": [
+          true
+        ],
+        "requested": [
+          1
+        ],
+        "name": "same",
+        "active": [
+          true
+        ]
+      },
+      {
+        "previous": [
+          2
+        ],
+        "resizeText": [
+          "a.length=2"
+        ],
+        "nonStructural": [
+          true
+        ],
+        "requested": [
+          2
+        ],
+        "name": "alias",
+        "active": [
+          true
+        ]
+      },
+      {
+        "previous": [
+          2,
+          1
+        ],
+        "resizeText": [
+          "a.length=1",
+          "a.length=1"
+        ],
+        "nonStructural": [
+          false,
+          true
+        ],
+        "requested": [
+          1,
+          1
+        ],
+        "name": "afterShrink",
+        "active": [
+          false,
+          true
+        ]
+      }
+    ]
+  },
+  "negative": {
+    "sourceSHA": "c1a31e038b629c541b9b584996e9a38fefe767c91f07f7ad04d596ea76d3d393",
+    "sourceText": "export function run():i32{const a:i32[]=[1];const s:ReadSpan<i32>=readSpan(a,0,1);a.length=0;return s[0];}\n",
+    "diagnostic": "r03-d-readspan-structural-conflict",
+    "sourceKind": "directResize",
+    "primary": "a.length=0",
+    "lastUse": "s[0]"
+  },
+  "qualification": "Static Source facts/HIR/ReadSpanPlan and emitted typed CFG only. No C++ IR, payload program or VM execution."
+}

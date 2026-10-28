@@ -1,0 +1,18 @@
+{
+  "file": "d492bab9d09c7361df36964216815e4e28a5f6982adb2c22bf6d52b8d64a463b-package.json",
+  "bytes": 11568,
+  "sha256": "dd8b2de58eaa2fd7e56af33ab49076389c8ae3c950ce38ad0bb671d7744f65f9",
+  "source": {
+    "path": "E:/ws/pro_tsfg/.scratch/tsfg_r03/M25-source-generic-array-checks-20261022/WIDE-FIELD-ALIAS-FACTS-PUBLIC01-captures/d492bab9d09c7361df36964216815e4e28a5f6982adb2c22bf6d52b8d64a463b-source.ts",
+    "bytes": 181,
+    "sha256": "d492bab9d09c7361df36964216815e4e28a5f6982adb2c22bf6d52b8d64a463b"
+  },
+  "request": {
+    "path": "E:/ws/pro_tsfg/.scratch/tsfg_r03/M25-source-generic-array-checks-20261022/WIDE-FIELD-ALIAS-FACTS-PUBLIC01-captures/d492bab9d09c7361df36964216815e4e28a5f6982adb2c22bf6d52b8d64a463b-request.json",
+    "bytes": 1750,
+    "sha256": "ff07b811f02d3501fa5df72f8346cce966c777e6e0929956936326a294ee4c0e"
+  },
+  "externalManifestSHA256": "b0a87f91951c95a727b4c30d05d68a481e777c3f56e24e6ecfae7d0066c6d19f",
+  "sourceExecutionIdentity": "16fd plus single Source test WIP; e55d stores same bytes",
+  "qualification": "Official public Go facts, not Source or VM execution"
+}

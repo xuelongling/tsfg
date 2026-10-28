@@ -8,6 +8,7 @@ import { syncBuiltinESMExports } from 'node:module';
 import path from 'node:path';
 import {fileURLToPath} from 'node:url';
 import test from 'node:test';
+import coreSourceCatalog from '../../compiler/core-ir/sources.json' with {type:'json'};
 import { Readable } from 'node:stream';
 import { materializeSource, readMlirPhysicalSource, MlirBuildError } from '../../eng/mlir-build-inputs.mjs';
 import { selectMlirCommandRole, selectMlirBuildPhase, finishMlirPlanning } from '../../eng/mlir-command.mjs';
@@ -468,17 +469,21 @@ test('static planning completion preserves the native build continuation and rej
   assert.deepEqual(await readdir(input.stage), []);
 });
 
-// The current dev main is the shared ordinary command implementation.
 test('native materialization retains its complete raw fixture without a static transformation policy',async()=>{
   const {root,git,identity,entries}=await fixture();
   const result=await materializeSource(identity,git,path.join(root,'native-staged'));
   assert.deepEqual(result.entries,entries);
 });
-test('dev generic main is an exact ordinary product dependency, not a native backend label',async()=>{
-  const root=await createMlirFixture('static-generic-main-');
-  const roots={source:path.join(root,'source'),product:path.join(root,'product'),build:path.join(root,'build'),
-    productInputs:new Set(['compiler/core-ir/main.cpp'])};
-  assert.doesNotThrow(()=>assertMlirRoleDependency(staticRole,path.join(roots.product,'compiler/core-ir/main.cpp'),roots));
+test('the static catalog selects static-main and excludes the distinct native main',async()=>{
+  const root=await createMlirFixture('static-selected-main-');
+  const productInputs=new Set([coreSourceCatalog.common,coreSourceCatalog.static].flatMap(group=>
+    [...group.sources,...group.headers].map(name=>'compiler/core-ir/'+name).concat(group.externalHeaders)));
+  assert(productInputs.has('compiler/core-ir/static-main.cpp'));
+  assert(!productInputs.has('compiler/core-ir/main.cpp'));
+  const roots={source:path.join(root,'source'),product:path.join(root,'product'),build:path.join(root,'build'),productInputs};
+  assert.doesNotThrow(()=>assertMlirRoleDependency(staticRole,path.join(roots.product,'compiler/core-ir/static-main.cpp'),roots));
+  assert.throws(()=>assertMlirRoleDependency(staticRole,path.join(roots.product,'compiler/core-ir/main.cpp'),roots),
+    {issueCode:'mlir-source-integrity'});
 });
 
 // Public CLI rejection is checked before any source or runtime intake can begin.

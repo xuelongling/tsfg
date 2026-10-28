@@ -7,10 +7,10 @@ import {buildHir,verifyHir,printHir,readHir} from '../../compiler/hir.mjs';
 import {admittedConversionScope,admittedInputScope} from '../../compiler/conversions.mjs';
 import {canonical,sha256} from '../../compiler/identity.mjs';
 
-// Actual M10 full149 output, with current exact 0.10 Snapshot and HIR hashes.
-// No checker nodes, headers, signatures or Source bodies were regenerated.
+// Actual M10 full149 Snapshot bytes, rebuilt by the current public HIR0.13 builder.
+// Source Snapshot bytes, checker facts, signatures and Source bodies remain original.
 const bytes=await readFile(new URL('./testdata/formal-cold-profile/owned-snapshot-hir.json',import.meta.url));
-assert.equal(sha256(bytes),'sha256:331ed141e873e7da26e2bbd65301d1e5f1b7eb61dcd3b6ee61800a52bb00ae6b');
+assert.equal(sha256(bytes),'sha256:5f22b4e99e09737ef6d58c544fc44a107d8fc0b6dc9d0c00ea52a9f837af8ae7');
 const baseline=JSON.parse(bytes.toString('utf8'));
 
 function moduleScopedPair(auxiliary){
@@ -36,7 +36,7 @@ function moduleScopedPair(auxiliary){
   return pair;
 }
 
-test('actual current formal 0.10 Snapshot and HIR retain their cold public roundtrip',()=>{
+test('actual formal Snapshot0.10 and builder-owned HIR0.13 retain their cold public roundtrip',()=>{
   assert.doesNotThrow(()=>validateFrontendSnapshot(baseline.snapshot));
   assert.equal(buildHir(baseline.snapshot).status,'ok');
   assert.doesNotThrow(()=>verifyHir(baseline.hir));

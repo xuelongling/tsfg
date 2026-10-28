@@ -1,0 +1,95 @@
+{
+  "basis": "Offsets counted only from complete independent authored expected model and frozen wire field widths; not SUT decoding",
+  "function_count": 324,
+  "functions": [
+    {
+      "role": 326,
+      "id": 330,
+      "return_type": 443,
+      "register_count": 446,
+      "block_count": 448,
+      "instruction_count": 450,
+      "instructions": [
+        484,
+        500,
+        516,
+        532,
+        552,
+        568,
+        584,
+        604,
+        620,
+        636,
+        656,
+        672,
+        692,
+        708,
+        728,
+        744,
+        760,
+        780,
+        800,
+        820
+      ]
+    },
+    {
+      "role": 836,
+      "id": 840,
+      "return_type": 956,
+      "register_count": 959,
+      "block_count": 961,
+      "instruction_count": 963,
+      "instructions": [
+        973,
+        989
+      ]
+    },
+    {
+      "role": 1005,
+      "id": 1009,
+      "return_type": 1125,
+      "register_count": 1128,
+      "block_count": 1130,
+      "instruction_count": 1132,
+      "instructions": [
+        1158,
+        1174,
+        1190,
+        1210,
+        1226,
+        1242,
+        1258,
+        1278,
+        1294,
+        1314,
+        1330,
+        1346,
+        1362
+      ]
+    },
+    {
+      "role": 1378,
+      "id": 1382,
+      "return_type": 1498,
+      "register_count": 1501,
+      "block_count": 1503,
+      "instruction_count": 1505,
+      "instructions": [
+        1515,
+        1531
+      ]
+    },
+    {
+      "role": 1547,
+      "id": 1551,
+      "return_type": 1672,
+      "register_count": 1675,
+      "block_count": 1677,
+      "instruction_count": 1679,
+      "instructions": [
+        1689,
+        1705
+      ]
+    }
+  ]
+}

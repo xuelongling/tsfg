@@ -1,0 +1,503 @@
+{
+  "status": "INDEPENDENT_CONTRACT_EXPECTATION_NOT_RUN",
+  "frozen": {
+    "path": "E:/ws/pro_tsfg/.scratch/tsfg_r03/M26c-readspan-return-origin-checks-20261019/interface-frozen-metadata-corrected-REV2.json",
+    "bytes": 667530,
+    "sha256": "e9887966e68cd5dcbb042095f344f4a63d41b6070835ba37ccd5057758358e4d"
+  },
+  "cases": [
+    {
+      "name": "before",
+      "authority": {
+        "path": "E:/ws/pro_tsfg/.scratch/tsfg_r03/M26c-readspan-return-origin-checks-20261019/interface-frozen-metadata-corrected-REV2.json",
+        "bytes": 667530,
+        "sha256": "e9887966e68cd5dcbb042095f344f4a63d41b6070835ba37ccd5057758358e4d"
+      },
+      "expectedDiagnostic": {
+        "code": "r03-d-readspan-structural-conflict",
+        "ruleId": "r01-span",
+        "phase": "hir",
+        "message": "active ReadSpan may overlap a structural Array operation",
+        "primary": {
+          "sourceId": "/readspan26c/app.ts",
+          "start": 255,
+          "end": 264
+        },
+        "related": [
+          {
+            "kind": "borrow-origin",
+            "sourceId": "/readspan26c/app.ts",
+            "start": 194,
+            "end": 211
+          },
+          {
+            "kind": "borrow-alias",
+            "sourceId": "/readspan26c/app.ts",
+            "start": 215,
+            "end": 252
+          },
+          {
+            "kind": "borrow-last-use",
+            "sourceId": "/readspan26c/app.ts",
+            "start": 268,
+            "end": 272
+          }
+        ],
+        "conflict": {
+          "functionId": "sha256:b2e7190152c20c7ebdd539fe670a827c3088e77c8ef3be62496417c6cb5f58c1",
+          "operationPath": [
+            "body",
+            3,
+            "expression"
+          ],
+          "sequence": 4,
+          "viewId": "sha256:676fa4d2ef2b21a9f33bfa12b710b9aa0dab2e8aa1818342f33029a2f0902a08",
+          "viewOwner": {
+            "kind": "allocation",
+            "functionId": "sha256:b2e7190152c20c7ebdd539fe670a827c3088e77c8ef3be62496417c6cb5f58c1",
+            "allocationSite": "sha256:d4c63afb914180f1562d4d6eba4dd528724e604dd42e44a3b09afc8b3ad37475",
+            "callPath": []
+          },
+          "structuralOwner": {
+            "kind": "allocation",
+            "functionId": "sha256:b2e7190152c20c7ebdd539fe670a827c3088e77c8ef3be62496417c6cb5f58c1",
+            "allocationSite": "sha256:d4c63afb914180f1562d4d6eba4dd528724e604dd42e44a3b09afc8b3ad37475",
+            "callPath": []
+          },
+          "lastUsePath": [
+            "body",
+            4,
+            "expression"
+          ],
+          "sourceKind": "fixedCall",
+          "target": "sha256:8acf70e6fad6d0d190c9c655690a629e7f8bb911c4b45e0821aecb73b094fd18",
+          "parameterIndex": 0,
+          "consumedDigest": "sha256:daa8b34e0dde11f5911d30c70ed2ddf097fd0eb2961aa6dcaeb9efe25052c866",
+          "scopeDigest": "sha256:11353f3ccd6f7d47576377416f63848a3567e58ac4dc89a8c77621e63cffb7b3",
+          "publishedDigest": "sha256:b88d1a975734e4ea8a4ed17a8723092fbc98c7f74aa6b0ea374897f0ad4444f5"
+        }
+      },
+      "sourceAndPackageUnchanged": true
+    },
+    {
+      "name": "after",
+      "authority": {
+        "path": "E:/ws/pro_tsfg/.scratch/tsfg_r03/M26c-readspan-return-origin-checks-20261019/interface-frozen-metadata-corrected-REV2.json",
+        "bytes": 667530,
+        "sha256": "e9887966e68cd5dcbb042095f344f4a63d41b6070835ba37ccd5057758358e4d"
+      },
+      "expectedDiagnostic": {
+        "code": "r03-d-core-array-capability",
+        "ruleId": "r01-ts-baseline",
+        "phase": "lowering",
+        "message": "Array Core lowering supports only the complete local-owner no-call subset",
+        "primary": {
+          "sourceId": "/readspan26c/app.ts",
+          "start": 18,
+          "end": 34
+        }
+      },
+      "sourceAndPackageUnchanged": true
+    },
+    {
+      "name": "const-alias-return",
+      "authority": {
+        "path": "E:/ws/pro_tsfg/.scratch/tsfg_r03/M26c-readspan-return-origin-checks-20261019/independent-return-adjacent-oracle-part1-metadata-corrected-REV2.json",
+        "bytes": 568808,
+        "sha256": "ec4fdc9fcdd28f4e06e539c5101ab3ea1ae28497db926c85a197e2149909680e"
+      },
+      "expectedDiagnostic": {
+        "code": "r03-d-core-array-capability",
+        "ruleId": "r01-ts-baseline",
+        "phase": "lowering",
+        "message": "Array Core lowering supports only the complete local-owner no-call subset",
+        "primary": {
+          "sourceId": "/readspan26c-adjacent/app.ts",
+          "start": 18,
+          "end": 34
+        }
+      },
+      "sourceAndPackageUnchanged": true
+    },
+    {
+      "name": "tail-forward-return",
+      "authority": {
+        "path": "E:/ws/pro_tsfg/.scratch/tsfg_r03/M26c-readspan-return-origin-checks-20261019/independent-return-adjacent-oracle-part1-metadata-corrected-REV2.json",
+        "bytes": 568808,
+        "sha256": "ec4fdc9fcdd28f4e06e539c5101ab3ea1ae28497db926c85a197e2149909680e"
+      },
+      "expectedDiagnostic": {
+        "code": "r03-d-core-array-capability",
+        "ruleId": "r01-ts-baseline",
+        "phase": "lowering",
+        "message": "Array Core lowering supports only the complete local-owner no-call subset",
+        "primary": {
+          "sourceId": "/readspan26c-adjacent/app.ts",
+          "start": 18,
+          "end": 34
+        }
+      },
+      "sourceAndPackageUnchanged": true
+    },
+    {
+      "name": "bound-forward-return",
+      "authority": {
+        "path": "E:/ws/pro_tsfg/.scratch/tsfg_r03/M26c-readspan-return-origin-checks-20261019/independent-return-adjacent-oracle-part1-metadata-corrected-REV2.json",
+        "bytes": 568808,
+        "sha256": "ec4fdc9fcdd28f4e06e539c5101ab3ea1ae28497db926c85a197e2149909680e"
+      },
+      "expectedDiagnostic": {
+        "code": "r03-d-core-array-capability",
+        "ruleId": "r01-ts-baseline",
+        "phase": "lowering",
+        "message": "Array Core lowering supports only the complete local-owner no-call subset",
+        "primary": {
+          "sourceId": "/readspan26c-adjacent/app.ts",
+          "start": 18,
+          "end": 34
+        }
+      },
+      "sourceAndPackageUnchanged": true
+    },
+    {
+      "name": "discarded-return-call",
+      "authority": {
+        "path": "E:/ws/pro_tsfg/.scratch/tsfg_r03/M26c-readspan-return-origin-checks-20261019/independent-return-adjacent-oracle-part1-metadata-corrected-REV2.json",
+        "bytes": 568808,
+        "sha256": "ec4fdc9fcdd28f4e06e539c5101ab3ea1ae28497db926c85a197e2149909680e"
+      },
+      "expectedDiagnostic": {
+        "code": "r03-d-core-array-capability",
+        "ruleId": "r01-ts-baseline",
+        "phase": "lowering",
+        "message": "Array Core lowering supports only the complete local-owner no-call subset",
+        "primary": {
+          "sourceId": "/readspan26c-adjacent/app.ts",
+          "start": 18,
+          "end": 34
+        }
+      },
+      "sourceAndPackageUnchanged": true
+    },
+    {
+      "name": "mixed-original-slots",
+      "authority": {
+        "path": "E:/ws/pro_tsfg/.scratch/tsfg_r03/M26c-readspan-return-origin-checks-20261019/independent-return-adjacent-oracle-part1-metadata-corrected-REV2.json",
+        "bytes": 568808,
+        "sha256": "ec4fdc9fcdd28f4e06e539c5101ab3ea1ae28497db926c85a197e2149909680e"
+      },
+      "expectedDiagnostic": {
+        "code": "r03-d-core-array-capability",
+        "ruleId": "r01-ts-baseline",
+        "phase": "lowering",
+        "message": "Array Core lowering supports only the complete local-owner no-call subset",
+        "primary": {
+          "sourceId": "/readspan26c-adjacent/app.ts",
+          "start": 24,
+          "end": 32
+        }
+      },
+      "sourceAndPackageUnchanged": true
+    },
+    {
+      "name": "local-fresh-return-escape",
+      "authority": {
+        "path": "E:/ws/pro_tsfg/.scratch/tsfg_r03/M26c-readspan-return-origin-checks-20261019/independent-return-adjacent-oracle-part1-metadata-corrected-REV2.json",
+        "bytes": 568808,
+        "sha256": "ec4fdc9fcdd28f4e06e539c5101ab3ea1ae28497db926c85a197e2149909680e"
+      },
+      "expectedDiagnostic": {
+        "code": "r03-d-readspan-return-escape",
+        "ruleId": "r01-span",
+        "phase": "hir",
+        "message": "ReadSpan return may escape a local Array owner",
+        "primary": {
+          "sourceId": "/readspan26c-adjacent/app.ts",
+          "start": 114,
+          "end": 115
+        }
+      },
+      "sourceAndPackageUnchanged": true
+    },
+    {
+      "name": "array-parameter-return-capability",
+      "authority": {
+        "path": "E:/ws/pro_tsfg/.scratch/tsfg_r03/M26c-readspan-return-origin-checks-20261019/independent-return-adjacent-oracle-part1-metadata-corrected-REV2.json",
+        "bytes": 568808,
+        "sha256": "ec4fdc9fcdd28f4e06e539c5101ab3ea1ae28497db926c85a197e2149909680e"
+      },
+      "expectedDiagnostic": {
+        "code": "r03-d-readspan-return-capability",
+        "ruleId": "r01-span",
+        "phase": "hir",
+        "message": "ReadSpan return source is outside the required view-parameter profile",
+        "primary": {
+          "sourceId": "/readspan26c-adjacent/app.ts",
+          "start": 98,
+          "end": 99
+        }
+      },
+      "sourceAndPackageUnchanged": true
+    },
+    {
+      "name": "same-owner-distinct-family-before",
+      "authority": {
+        "path": "E:/ws/pro_tsfg/.scratch/tsfg_r03/M26c-readspan-return-origin-checks-20261019/independent-return-adjacent-oracle-part2-metadata-corrected-REV2.json",
+        "bytes": 494026,
+        "sha256": "16f5f98030d6859955e0884b2fb9046aa26fcb4ec1694ba731b52ac439f96c9e"
+      },
+      "expectedDiagnostic": {
+        "code": "r03-d-readspan-structural-conflict",
+        "ruleId": "r01-span",
+        "phase": "hir",
+        "message": "active ReadSpan may overlap a structural Array operation",
+        "primary": {
+          "sourceId": "/readspan26c-adjacent/app.ts",
+          "start": 336,
+          "end": 345
+        },
+        "related": [
+          {
+            "kind": "borrow-origin",
+            "sourceId": "/readspan26c-adjacent/app.ts",
+            "start": 274,
+            "end": 291
+          },
+          {
+            "kind": "borrow-alias",
+            "sourceId": "/readspan26c-adjacent/app.ts",
+            "start": 295,
+            "end": 333
+          },
+          {
+            "kind": "borrow-last-use",
+            "sourceId": "/readspan26c-adjacent/app.ts",
+            "start": 349,
+            "end": 353
+          }
+        ],
+        "conflict": {
+          "functionId": "sha256:f4d38d8a70c0228ed4fa1f5bd19661f944b6092af6b5cafed2ae028acced9a91",
+          "operationPath": [
+            "body",
+            4,
+            "expression"
+          ],
+          "sequence": 5,
+          "viewId": "sha256:4deba0dc51e58a915ae316d4eed84850805f1439b4708f9863f4fcc00c71e42f",
+          "viewOwner": {
+            "kind": "allocation",
+            "functionId": "sha256:f4d38d8a70c0228ed4fa1f5bd19661f944b6092af6b5cafed2ae028acced9a91",
+            "allocationSite": "sha256:81ba62d9fafd7795c545bcce2131a39154bc06dcfb63f6014eef6358d4abb04a",
+            "callPath": []
+          },
+          "structuralOwner": {
+            "kind": "allocation",
+            "functionId": "sha256:f4d38d8a70c0228ed4fa1f5bd19661f944b6092af6b5cafed2ae028acced9a91",
+            "allocationSite": "sha256:81ba62d9fafd7795c545bcce2131a39154bc06dcfb63f6014eef6358d4abb04a",
+            "callPath": []
+          },
+          "lastUsePath": [
+            "body",
+            5,
+            "expression"
+          ],
+          "sourceKind": "fixedCall",
+          "target": "sha256:752a0378e40e4b2b47c77db663f40e92128094624c19ac13fa9893ade2818b04",
+          "parameterIndex": 0,
+          "consumedDigest": "sha256:c61207732d2751c8ad0ce04ab2ba3dd8043d97e72dbdbc7c28e92359fe2d7b4b",
+          "scopeDigest": "sha256:c8de12e6d7b93a00b0e0428578f53a5885cc4da8016a27348ec6d0fb672549ed",
+          "publishedDigest": "sha256:181da0dec8fa79f2091ce1f392447978153527bab1af027d93aa0bef11a5e764"
+        }
+      },
+      "sourceAndPackageUnchanged": true
+    },
+    {
+      "name": "same-owner-distinct-family-after",
+      "authority": {
+        "path": "E:/ws/pro_tsfg/.scratch/tsfg_r03/M26c-readspan-return-origin-checks-20261019/independent-return-adjacent-oracle-part2-metadata-corrected-REV2.json",
+        "bytes": 494026,
+        "sha256": "16f5f98030d6859955e0884b2fb9046aa26fcb4ec1694ba731b52ac439f96c9e"
+      },
+      "expectedDiagnostic": {
+        "code": "r03-d-core-array-capability",
+        "ruleId": "r01-ts-baseline",
+        "phase": "lowering",
+        "message": "Array Core lowering supports only the complete local-owner no-call subset",
+        "primary": {
+          "sourceId": "/readspan26c-adjacent/app.ts",
+          "start": 16,
+          "end": 32
+        }
+      },
+      "sourceAndPackageUnchanged": true
+    },
+    {
+      "name": "initializer-array-density-forgets-old-exact",
+      "authority": {
+        "path": "E:/ws/pro_tsfg/.scratch/tsfg_r03/M26c-readspan-return-origin-checks-20261019/independent-return-adjacent-oracle-part2-metadata-corrected-REV2.json",
+        "bytes": 494026,
+        "sha256": "16f5f98030d6859955e0884b2fb9046aa26fcb4ec1694ba731b52ac439f96c9e"
+      },
+      "expectedDiagnostic": {
+        "code": "r03-d-readspan-structural-conflict",
+        "ruleId": "r01-span",
+        "phase": "hir",
+        "message": "active ReadSpan may overlap a structural Array operation",
+        "primary": {
+          "sourceId": "/readspan26c-adjacent/app.ts",
+          "start": 63,
+          "end": 75
+        },
+        "related": [
+          {
+            "kind": "borrow-origin",
+            "sourceId": "/readspan26c-adjacent/app.ts",
+            "start": 26,
+            "end": 42
+          },
+          {
+            "kind": "borrow-last-use",
+            "sourceId": "/readspan26c-adjacent/app.ts",
+            "start": 86,
+            "end": 87
+          }
+        ],
+        "conflict": {
+          "functionId": "sha256:d36c6f2209b1ade25ff657208d552c00f1f103911b376a36ec294768ceefcd10",
+          "operationPath": [
+            "body",
+            0
+          ],
+          "sequence": 0,
+          "viewId": "sha256:5dc75b305095f2072d171fac4a0215e29ffd2daa5971061d6772b69438b8025c",
+          "viewOwner": {
+            "kind": "parameter",
+            "functionId": "sha256:d36c6f2209b1ade25ff657208d552c00f1f103911b376a36ec294768ceefcd10",
+            "index": 1
+          },
+          "structuralOwner": {
+            "kind": "parameter",
+            "functionId": "sha256:d36c6f2209b1ade25ff657208d552c00f1f103911b376a36ec294768ceefcd10",
+            "index": 0
+          },
+          "lastUsePath": [
+            "body",
+            1,
+            "value"
+          ],
+          "sourceKind": "directResize"
+        }
+      },
+      "sourceAndPackageUnchanged": true
+    },
+    {
+      "name": "events100",
+      "authority": {
+        "path": "E:/ws/pro_tsfg/.scratch/tsfg_r03/M26c-readspan-return-origin-checks-20261019/independent-return-events100101-oracle-metadata-corrected-REV2.json",
+        "bytes": 1241548,
+        "sha256": "85d2555bd7b2bdff161d5eeb4e6d899cc4fd94ed538c8c1441576bb344cbf781"
+      },
+      "expectedDiagnostic": {
+        "code": "r03-d-core-array-capability",
+        "ruleId": "r01-ts-baseline",
+        "phase": "lowering",
+        "message": "Array Core lowering supports only the complete local-owner no-call subset",
+        "primary": {
+          "sourceId": "/readspan26c-events/app.ts",
+          "start": 18,
+          "end": 34
+        }
+      },
+      "sourceAndPackageUnchanged": true
+    },
+    {
+      "name": "events101",
+      "authority": {
+        "path": "E:/ws/pro_tsfg/.scratch/tsfg_r03/M26c-readspan-return-origin-checks-20261019/independent-return-events100101-oracle-metadata-corrected-REV2.json",
+        "bytes": 1241548,
+        "sha256": "85d2555bd7b2bdff161d5eeb4e6d899cc4fd94ed538c8c1441576bb344cbf781"
+      },
+      "expectedDiagnostic": {
+        "code": "r03-d-readspan-limit",
+        "ruleId": "r01-input-boundary",
+        "phase": "hir",
+        "message": "ReadSpan analysis exceeds work limit"
+      },
+      "sourceAndPackageUnchanged": true
+    },
+    {
+      "name": "familyUses50",
+      "authority": {
+        "path": "E:/ws/pro_tsfg/.scratch/tsfg_r03/M26c-readspan-return-origin-checks-20261019/independent-return-family-uses5051-oracle-metadata-corrected-REV2.json",
+        "bytes": 1179231,
+        "sha256": "ca3ff4bea5a9eb22d57ab89126147187ef213868074a427a99723439d1fce289"
+      },
+      "expectedDiagnostic": {
+        "code": "r03-d-core-array-capability",
+        "ruleId": "r01-ts-baseline",
+        "phase": "lowering",
+        "message": "Array Core lowering supports only the complete local-owner no-call subset",
+        "primary": {
+          "sourceId": "/readspan26c-events/app.ts",
+          "start": 18,
+          "end": 34
+        }
+      },
+      "sourceAndPackageUnchanged": true
+    },
+    {
+      "name": "familyUses51",
+      "authority": {
+        "path": "E:/ws/pro_tsfg/.scratch/tsfg_r03/M26c-readspan-return-origin-checks-20261019/independent-return-family-uses5051-oracle-metadata-corrected-REV2.json",
+        "bytes": 1179231,
+        "sha256": "ca3ff4bea5a9eb22d57ab89126147187ef213868074a427a99723439d1fce289"
+      },
+      "expectedDiagnostic": {
+        "code": "r03-d-readspan-limit",
+        "ruleId": "r01-input-boundary",
+        "phase": "hir",
+        "message": "ReadSpan analysis exceeds work limit"
+      },
+      "sourceAndPackageUnchanged": true
+    },
+    {
+      "name": "return-global-1024",
+      "authority": {
+        "path": "E:/ws/pro_tsfg/.scratch/tsfg_r03/M26c-readspan-return-origin-checks-20261019/independent-return-global-1024-oracle-metadata-corrected-REV2.json",
+        "bytes": 8983583,
+        "sha256": "f9d1956513228763f19df4b188745ebf2c60e7add365751408c106ea8b96401d"
+      },
+      "expectedDiagnostic": {
+        "code": "r03-d-core-array-capability",
+        "ruleId": "r01-ts-baseline",
+        "phase": "lowering",
+        "message": "Array Core lowering supports only the complete local-owner no-call subset",
+        "primary": {
+          "sourceId": "/readspan26c-events/app.ts",
+          "start": 18,
+          "end": 34
+        }
+      },
+      "sourceAndPackageUnchanged": true
+    },
+    {
+      "name": "return-global-1025",
+      "authority": {
+        "path": "E:/ws/pro_tsfg/.scratch/tsfg_r03/M26c-readspan-return-origin-checks-20261019/independent-return-global-1025-oracle-metadata-corrected-REV2.json",
+        "bytes": 5590720,
+        "sha256": "0e45adb427a4f0c710aae447eb59f43c7d3920d54582beb2aa4e04ebc6768888"
+      },
+      "expectedDiagnostic": {
+        "code": "r03-d-readspan-limit",
+        "ruleId": "r01-input-boundary",
+        "phase": "hir",
+        "message": "ReadSpan analysis exceeds work limit"
+      },
+      "sourceAndPackageUnchanged": true
+    }
+  ],
+  "rule": "Existing owner/borrow/constructor errors occur first. If preparation/borrow accepts, existing Core gate rejects first original Source-order Array/view parameter range; only if absent use first local-view initializer. No actual output used.",
+  "newProducerOutputRead": false,
+  "executed": false
+}

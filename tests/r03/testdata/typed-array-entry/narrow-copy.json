@@ -1,0 +1,18 @@
+{
+  "file": "f4c560c1f293a59abf4c3d836bccef920b526ed7397aac56bbd02107c5a6e4fe-package.json",
+  "bytes": 13507,
+  "sha256": "f617b2c9bc47b2d7bae438860428a9d8f0f4d160dc90437f0bc54d97a00fcb64",
+  "source": {
+    "path": "E:/ws/pro_tsfg/.scratch/tsfg_r03/M25-source-generic-array-checks-20261022/NARROW-COPY-STORE-FACTS-PUBLIC01-captures/f4c560c1f293a59abf4c3d836bccef920b526ed7397aac56bbd02107c5a6e4fe-source.ts",
+    "bytes": 223,
+    "sha256": "f4c560c1f293a59abf4c3d836bccef920b526ed7397aac56bbd02107c5a6e4fe"
+  },
+  "request": {
+    "path": "E:/ws/pro_tsfg/.scratch/tsfg_r03/M25-source-generic-array-checks-20261022/NARROW-COPY-STORE-FACTS-PUBLIC01-captures/f4c560c1f293a59abf4c3d836bccef920b526ed7397aac56bbd02107c5a6e4fe-request.json",
+    "bytes": 1792,
+    "sha256": "1366eaabd0a0eb96b614fb51bcec4d48d3acfc9f6db8f4c5064a53b0c88b888a"
+  },
+  "externalManifestSHA256": "66cd8886a2960dc3838c9a1e26a12fdbd003406bf0d00b88df82b3164344b8cb",
+  "sourceExecutionIdentity": "e55 plus single Go test WIP; d13c stores same bytes",
+  "qualification": "Official public Go facts only; no Source/VM execution"
+}

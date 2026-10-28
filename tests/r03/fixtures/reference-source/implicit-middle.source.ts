@@ -1,0 +1,1 @@
+export class Base { value: number = 1; constructor(seed: number) { this.value = seed; } } export class Middle extends Base { extra: number = 2; } export class Leaf extends Middle { constructor(seed: number) { super(seed); } make(seed: number): Middle { return new Middle(seed); } }

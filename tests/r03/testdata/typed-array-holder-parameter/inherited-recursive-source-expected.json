@@ -1,0 +1,18 @@
+{
+  "family": "tsfg.holder-inherited-recursive-independent-expected",
+  "version": 1,
+  "source": {
+    "path": "E:/ws/pro_tsfg/.scratch/tsfg_r03/M25-source-generic-array-checks-20261022/holder-inherited-recursive-conflict-source.ts",
+    "bytes": 324,
+    "sha256": "248cd10ed24b1e83d1d38fd2cfea8e4f7cc812837ad27e3d11ddad0b5d9d345e"
+  },
+  "expectation": "Never accept the actual conflicting recursive B field use. Require either proved structural conflict or precise unresolved recursive aggregate context. Inherited declaration H.span remains the original field, D.base=H must transmit contains. Productive recursion ability remains OPEN until actual valid proof.",
+  "primary": {
+    "start": 149,
+    "end": 159
+  },
+  "lastUse": {
+    "start": 192,
+    "end": 201
+  }
+}

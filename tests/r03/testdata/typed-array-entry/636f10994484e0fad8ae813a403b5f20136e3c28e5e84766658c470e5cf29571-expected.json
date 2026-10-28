@@ -1,0 +1,280 @@
+{
+  "family": "tsfg.finite-array-incoming-control-source-expectation",
+  "version": 1,
+  "authority": "Derived only from exact Source and existing bool/presence/control contract before any new packet, plan or Core output; independently confirmed by Root.",
+  "source": {
+    "path": "E:/ws/pro_tsfg/.scratch/tsfg_r03/M25-source-generic-array-checks-20261022/ARRAY-CALLER-CONTROL-PUBLIC02-source.ts",
+    "bytes": 1093,
+    "sha256": "636f10994484e0fad8ae813a403b5f20136e3c28e5e84766658c470e5cf29571",
+    "text": "function read(a:(i32|undefined)[],i:u32):i32|undefined{return a[i];}\nfunction readDeadOnly(a:(i32|undefined)[],i:u32):i32|undefined{return a[i];}\nexport function runIf():i32|undefined{const dead:(i32|undefined)[]=[undefined];if(false){read(dead,0);}const live:(i32|undefined)[]=[1];return read(live,0);}\nexport function runWhile():i32|undefined{const dead:(i32|undefined)[]=[undefined];while(false){read(dead,0);}const live:(i32|undefined)[]=[1];return read(live,0);}\nexport function runAnd():i32|undefined{const dead:(i32|undefined)[]=[undefined];false&&(read(dead,0)===undefined);const live:(i32|undefined)[]=[1];return read(live,0);}\nexport function runOr():i32|undefined{const dead:(i32|undefined)[]=[undefined];true||(read(dead,0)===undefined);const live:(i32|undefined)[]=[1];return read(live,0);}\nexport function runDeadOnly():i32{const dead:(i32|undefined)[]=[undefined];if(false){readDeadOnly(dead,0);}return 0;}\nexport function runUnknown(flag:bool):i32|undefined{const dead:(i32|undefined)[]=[undefined];if(flag){read(dead,0);}const live:(i32|undefined)[]=[1];return read(live,0);}\n"
+  },
+  "inputStatus": "prepared exact Source; public checked packet not produced at this freeze",
+  "helper": "read",
+  "helperRead": [
+    62,
+    66
+  ],
+  "preceding": [
+    {
+      "caller": "runIf",
+      "binding": "live",
+      "kind": "initial",
+      "origin": [
+        279,
+        280
+      ]
+    },
+    {
+      "caller": "runWhile",
+      "binding": "live",
+      "kind": "initial",
+      "origin": [
+        443,
+        444
+      ]
+    },
+    {
+      "caller": "runAnd",
+      "binding": "live",
+      "kind": "initial",
+      "origin": [
+        612,
+        613
+      ]
+    },
+    {
+      "caller": "runOr",
+      "binding": "live",
+      "kind": "initial",
+      "origin": [
+        779,
+        780
+      ]
+    },
+    {
+      "caller": "runUnknown",
+      "binding": "live",
+      "kind": "initial",
+      "origin": [
+        1068,
+        1069
+      ]
+    },
+    {
+      "caller": "runUnknown",
+      "binding": "dead",
+      "kind": "initial",
+      "origin": [
+        1004,
+        1013
+      ]
+    }
+  ],
+  "excluded": [
+    {
+      "caller": "runIf",
+      "binding": "dead",
+      "kind": "initial",
+      "origin": [
+        214,
+        223
+      ]
+    },
+    {
+      "caller": "runWhile",
+      "binding": "dead",
+      "kind": "initial",
+      "origin": [
+        375,
+        384
+      ]
+    },
+    {
+      "caller": "runAnd",
+      "binding": "dead",
+      "kind": "initial",
+      "origin": [
+        537,
+        546
+      ]
+    },
+    {
+      "caller": "runOr",
+      "binding": "dead",
+      "kind": "initial",
+      "origin": [
+        705,
+        714
+      ]
+    }
+  ],
+  "deadOnly": {
+    "helper": "readDeadOnly",
+    "read": [
+      139,
+      143
+    ],
+    "status": "pending",
+    "versions": [],
+    "sources": [],
+    "initial": {
+      "caller": "runDeadOnly",
+      "binding": "dead",
+      "kind": "initial",
+      "origin": [
+        868,
+        877
+      ]
+    }
+  },
+  "globalInitials": [
+    {
+      "caller": "runIf",
+      "binding": "live",
+      "kind": "initial",
+      "origin": [
+        279,
+        280
+      ]
+    },
+    {
+      "caller": "runWhile",
+      "binding": "live",
+      "kind": "initial",
+      "origin": [
+        443,
+        444
+      ]
+    },
+    {
+      "caller": "runAnd",
+      "binding": "live",
+      "kind": "initial",
+      "origin": [
+        612,
+        613
+      ]
+    },
+    {
+      "caller": "runOr",
+      "binding": "live",
+      "kind": "initial",
+      "origin": [
+        779,
+        780
+      ]
+    },
+    {
+      "caller": "runUnknown",
+      "binding": "live",
+      "kind": "initial",
+      "origin": [
+        1068,
+        1069
+      ]
+    },
+    {
+      "caller": "runUnknown",
+      "binding": "dead",
+      "kind": "initial",
+      "origin": [
+        1004,
+        1013
+      ]
+    },
+    {
+      "caller": "runIf",
+      "binding": "dead",
+      "kind": "initial",
+      "origin": [
+        214,
+        223
+      ]
+    },
+    {
+      "caller": "runWhile",
+      "binding": "dead",
+      "kind": "initial",
+      "origin": [
+        375,
+        384
+      ]
+    },
+    {
+      "caller": "runAnd",
+      "binding": "dead",
+      "kind": "initial",
+      "origin": [
+        537,
+        546
+      ]
+    },
+    {
+      "caller": "runOr",
+      "binding": "dead",
+      "kind": "initial",
+      "origin": [
+        705,
+        714
+      ]
+    },
+    {
+      "caller": "runDeadOnly",
+      "binding": "dead",
+      "kind": "initial",
+      "origin": [
+        868,
+        877
+      ]
+    }
+  ],
+  "staticCallOccurrences": 11,
+  "definitionReadTypes": [
+    "i32",
+    "undefined"
+  ],
+  "fixedResultTypes": [
+    "i32",
+    "undefined"
+  ],
+  "controls": [
+    {
+      "caller": "runIf",
+      "form": "if(false)",
+      "dead": false
+    },
+    {
+      "caller": "runWhile",
+      "form": "while(false)",
+      "dead": false
+    },
+    {
+      "caller": "runAnd",
+      "form": "false && RHS",
+      "dead": false
+    },
+    {
+      "caller": "runOr",
+      "form": "true || RHS",
+      "dead": false
+    },
+    {
+      "caller": "runUnknown",
+      "form": "if(flag:bool)",
+      "dead": true
+    },
+    {
+      "caller": "runDeadOnly",
+      "form": "if(false)",
+      "dead": false
+    }
+  ],
+  "invariants": [
+    "Five live initial versions plus the unknown-flag dead U initial are the six possible incoming sources for common read.",
+    "Exclude the other four known-dead U versions; their identical type is insufficient to detect stale source claims.",
+    "The dead-only helper has no productive incoming caller; it stays pending with empty versions/sources and acquires no instance from capacity.",
+    "All eleven initial operands, eleven static call occurrences, original helper bodies and checked operations retain their Source identities.",
+    "Unknown/pending/unproductive conditions keep both paths; boolean TypeId is never truth evidence.",
+    "CarrierMaximum and fixed ABI retain their finite union; no per-caller static narrowing or program execution is asserted."
+  ]
+}

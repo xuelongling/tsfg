@@ -1,15 +1,18 @@
 // SPDX-License-Identifier: MIT
 #include "dialect.h"
-#include "mlir/IR/BuiltinOps.h"
-#include "mlir/IR/DialectRegistry.h"
+#include "string-core.h"
+#include "module.h"
+#include "reference.h"
+#include "finite-domain.h"
+#include "scalar_ops.h"
 #include "mlir/IR/Dialect.h"
 #include "mlir/IR/DialectImplementation.h"
+#include "mlir/IR/DialectRegistry.h"
 #include "mlir/IR/TypeSupport.h"
-#include "mlir/IR/OpDefinition.h"
 #include <string>
 
 namespace tsfg {
-constexpr llvm::StringLiteral scalarNames[] = {"none", "i32", "bool", "i8", "i16", "i64", "u8", "u16", "u32", "u64", "isize", "usize", "f32", "f64"};
+constexpr llvm::StringLiteral scalarNames[] = {"none", "i32", "bool", "i8", "i16", "i64", "u8", "u16", "u32", "u64", "isize", "usize", "f32", "f64", "string"};
 struct IntegerStorage : public mlir::TypeStorage {
   using KeyTy = uint8_t;
   explicit IntegerStorage(uint8_t code) : code(code) {}
@@ -32,6 +35,7 @@ uint8_t typeCode(mlir::Type type) {
   if (type.isSignlessInteger(1)) return 2;
   if (type.isF32()) return 12;
   if (type.isF64()) return 13;
+  if (llvm::isa<strings::StringType>(type)) return 14;
   if (auto integer = llvm::dyn_cast<IntegerType>(type)) return integer.code();
   return 0;
 }
@@ -72,56 +76,32 @@ bool constantBits(mlir::Operation *operation, uint64_t &bits) {
   if (w < 64) bits &= (uint64_t(1) << w) - 1;
   return true;
 }
-class FuelOp : public mlir::Op<FuelOp, mlir::OpTrait::ZeroOperands,
-                             mlir::OpTrait::ZeroResults,
-                             mlir::OpTrait::ZeroRegions> {
-public:
-  using Op::Op;
-  MLIR_DEFINE_EXPLICIT_INTERNAL_INLINE_TYPE_ID(FuelOp)
-  static llvm::StringRef getOperationName() { return "tsfg_core.fuel"; }
-  static llvm::ArrayRef<llvm::StringRef> getAttributeNames() {
-    static const llvm::StringRef names[] = {"event"};
-    return names;
-  }
-  mlir::LogicalResult verify() {
-    auto event = getOperation()->getAttrOfType<mlir::IntegerAttr>("event");
-    if (!event || !event.getType().isSignlessInteger(32) ||
-        (event.getInt() != 1 && event.getInt() != 2))
-      return emitOpError("[core-ir-fuel] requires event 1 or 2 as i32");
-    return mlir::success();
-  }
-};
-class ConstantOp : public mlir::Op<ConstantOp, mlir::OpTrait::ZeroOperands,
-                                    mlir::OpTrait::OneResult,
-                                    mlir::OpTrait::ZeroRegions> {
-public:
-  using Op::Op;
-  MLIR_DEFINE_EXPLICIT_INTERNAL_INLINE_TYPE_ID(ConstantOp)
-  static llvm::StringRef getOperationName() { return "tsfg_core.constant"; }
-  static llvm::ArrayRef<llvm::StringRef> getAttributeNames() {
-    static const llvm::StringRef names[] = {"value"};
-    return names;
-  }
-  mlir::LogicalResult verify() {
-    uint64_t bits;
-    if (!constantBits(getOperation(), bits))
-      return emitOpError("[core-ir-type] requires an exact in-range integer/bool constant matching its result type");
-    return mlir::success();
-  }
-};
+mlir::LogicalResult FuelOp::verify() {
+  auto event = getOperation()->getAttrOfType<mlir::IntegerAttr>("event");
+  if (!event || !event.getType().isSignlessInteger(32) ||
+      (event.getInt() != 1 && event.getInt() != 2))
+    return emitOpError("[core-ir-fuel] requires event 1 or 2 as i32");
+  return mlir::success();
+}
+mlir::LogicalResult ConstantOp::verify() {
+  uint64_t bits;
+  if (!constantBits(getOperation(), bits))
+    return emitOpError("[core-ir-type] requires an exact in-range integer/bool constant matching its result type");
+  return mlir::success();
+}
 
-enum class ScalarKind { Arithmetic, Float, Integer, Shift, Comparison, Equality, Boolean };
+enum class ScalarKind { Arithmetic, Positive, Integer, Shift, Comparison, Equality, Boolean };
 bool scalarTypes(mlir::Operation *operation, ScalarKind kind) {
   const auto result = operation->getResult(0).getType();
   const auto first = operation->getOperand(0).getType();
   const auto code = typeCode(first);
-  if (!code) return false;
+  if (!code || code == 14) return false;
   if (kind == ScalarKind::Shift) return integer(code) && result == first && operation->getOperand(1).getType().isSignlessInteger(32);
   for (mlir::Value operand : operation->getOperands())
     if (operand.getType() != first) return false;
   if (kind == ScalarKind::Integer) return integer(code) && result == first;
   if (kind == ScalarKind::Arithmetic) return (integer(code) || floating(code)) && result == first;
-  if (kind == ScalarKind::Float) return floating(code) && result == first;
+  if (kind == ScalarKind::Positive) return (floating(code) || code == 1) && result == first;
   if (!result.isSignlessInteger(1)) return false;
   if (kind == ScalarKind::Comparison) return integer(code) || floating(code);
   if (kind == ScalarKind::Boolean) return first.isSignlessInteger(1);
@@ -156,7 +136,7 @@ TSFG_SCALAR_OPERATION(AndOp, "and", mlir::OpTrait::NOperands<2>::Impl, Integer)
 TSFG_SCALAR_OPERATION(OrOp, "or", mlir::OpTrait::NOperands<2>::Impl, Integer)
 TSFG_SCALAR_OPERATION(XorOp, "xor", mlir::OpTrait::NOperands<2>::Impl, Integer)
 TSFG_SCALAR_OPERATION(NegOp, "neg", mlir::OpTrait::OneOperand, Arithmetic)
-TSFG_SCALAR_OPERATION(PosOp, "pos", mlir::OpTrait::OneOperand, Float)
+TSFG_SCALAR_OPERATION(PosOp, "pos", mlir::OpTrait::OneOperand, Positive)
 TSFG_SCALAR_OPERATION(NotOp, "not", mlir::OpTrait::OneOperand, Integer)
 TSFG_SCALAR_OPERATION(BoolNotOp, "bool_not", mlir::OpTrait::OneOperand, Boolean)
 TSFG_SCALAR_OPERATION(EqOp, "eq", mlir::OpTrait::NOperands<2>::Impl, Equality)
@@ -171,8 +151,8 @@ bool conversionTypes(mlir::Operation *operation, unsigned mode) {
   const auto source = typeCode(operation->getOperand(0).getType());
   const auto target = typeCode(operation->getResult(0).getType());
   if (!(integer(source) || floating(source)) || !(integer(target) || floating(target))) return false;
-  if (mode == 35) return integer(source) && integer(target);
-  if (mode == 36) return width(source) == width(target);
+  if (mode == 41) return integer(source) && integer(target);
+  if (mode == 42) return width(source) == width(target);
   return true;
 }
 #define TSFG_CONVERSION_OPERATION(Class, Name, Mode) \
@@ -187,9 +167,9 @@ public: \
     return mlir::success(); \
   } \
 };
-TSFG_CONVERSION_OPERATION(CheckedConversionOp, "convert_checked", 34)
-TSFG_CONVERSION_OPERATION(WrapConversionOp, "convert_wrap", 35)
-TSFG_CONVERSION_OPERATION(ReinterpretOp, "reinterpret", 36)
+TSFG_CONVERSION_OPERATION(CheckedConversionOp, "convert_checked", 40)
+TSFG_CONVERSION_OPERATION(WrapConversionOp, "convert_wrap", 41)
+TSFG_CONVERSION_OPERATION(ReinterpretOp, "reinterpret", 42)
 #undef TSFG_CONVERSION_OPERATION
 
 class CoreDialect : public mlir::Dialect {
@@ -200,27 +180,43 @@ public:
       : Dialect(getDialectNamespace(), context, mlir::TypeID::get<CoreDialect>()) {
     addOperations<FuelOp, ConstantOp, AddOp, SubOp, MulOp, DivOp, RemOp, ShlOp,
                   ShrOp, UshrOp, AndOp, OrOp, XorOp, NegOp, NotOp, BoolNotOp,
-                  EqOp, NeOp, LtOp, LeOp, GtOp, GeOp, PosOp,
-                  CheckedConversionOp, WrapConversionOp, ReinterpretOp>();
-    addTypes<IntegerType>();
+                  EqOp, NeOp, LtOp, LeOp, GtOp, GeOp, PosOp, CheckedConversionOp, WrapConversionOp, ReinterpretOp, GlobalLoadOp, GlobalStoreOp, AuthorizedHostOp,
+                  ReferenceAllocOp, ReferenceBaseOp, ReferenceViewOp, ReferenceFieldReadOp,
+                  ReferenceFieldWriteOp, ReferenceCallOp, ReferenceIdentityOp,
+                  DomainNumericUseOp, DomainLiteralOp, DomainViewOp, DomainCopyOp, DomainRefineOp, DomainReadSpanOp, DomainArrayCreateOp, DomainArrayReadOp,
+                  DomainArrayStoreOp, DomainArrayResizeOp, DomainArrayLengthOp,
+                  DomainIdentityEqualOp, DomainPresenceEqualOp, DomainMemberPresentOp, DomainConstructOp, DomainSuperOp,
+                  DomainInitializeFieldsOp, DomainFieldDefineOp, DomainFieldInitializeOp,
+                  DomainMethodCallOp, DomainFieldReadOp, DomainFieldStoreOp>();
+    addTypes<IntegerType, ReferenceType, FiniteDomainType>();
   }
   mlir::Type parseType(mlir::DialectAsmParser &parser) const override {
     llvm::StringRef keyword; std::string name;
-    if (parser.parseKeyword(&keyword) || keyword != "integer" || parser.parseLess() || parser.parseString(&name) || parser.parseGreater()) return {};
+    if (parser.parseKeyword(&keyword) || parser.parseLess() || parser.parseString(&name) || parser.parseGreater()) return {};
+    if (keyword == "ref") return ReferenceType::get(getContext(), name);
+    if (keyword == "domain") {
+      if (finiteDomainIdentity(name)) return FiniteDomainType::get(getContext(), name);
+      parser.emitError(parser.getNameLoc(), "[core-ir-finite-domain] invalid descriptor identity"); return {};
+    }
+    if (keyword != "integer") return {};
     for (uint8_t code = 3; code <= 11; ++code) if (name == scalarNames[code]) return IntegerType::get(getContext(), code);
     parser.emitError(parser.getNameLoc(), "[core-ir-type] unknown nominal integer"); return {};
   }
   void printType(mlir::Type type, mlir::DialectAsmPrinter &printer) const override {
+    if (auto reference = llvm::dyn_cast<ReferenceType>(type)) { printer << "ref<\"" << reference.key() << "\">"; return; }
+    if (auto domain = llvm::dyn_cast<FiniteDomainType>(type)) { printer << "domain<\"" << domain.key() << "\">"; return; }
     printer << "integer<\"" << scalarNames[llvm::cast<IntegerType>(type).code()] << "\">";
   }
 };
-ScalarOp scalarOp(mlir::Operation *op) {
-  if (llvm::isa<FuelOp>(op)) return ScalarOp::Fuel;
-  if (llvm::isa<ConstantOp>(op)) return ScalarOp::Constant;
-  if (llvm::isa<CheckedConversionOp>(op)) return ScalarOp::Checked;
-  if (llvm::isa<WrapConversionOp>(op)) return ScalarOp::Wrap;
-  if (llvm::isa<ReinterpretOp>(op)) return ScalarOp::Reinterpret;
-  return ScalarOp::Other;
+
+mlir::Type scalarType(mlir::MLIRContext *context, llvm::StringRef name) {
+  if (name == "i32") return mlir::IntegerType::get(context,32);
+  if (name == "bool") return mlir::IntegerType::get(context,1);
+  if (name == "f32") return mlir::Float32Type::get(context);
+  if (name == "f64") return mlir::Float64Type::get(context);
+  if (name == "string") return strings::StringType::get(context);
+  for (uint8_t code = 3; code <= 11; ++code) if (name == scalarNames[code]) return IntegerType::get(context,code);
+  return {};
 }
 llvm::StringRef scalarName(uint8_t code) { return scalarNames[code]; }
 void registerCoreDialect(mlir::DialectRegistry &registry) { registry.insert<CoreDialect>(); }

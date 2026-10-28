@@ -1,0 +1,101 @@
+[
+  {
+    "file": "view-short-rebind-package.json",
+    "sha256": "84fe20c21c52cc39b7d4b9fdec05d79a454843e5b1e2342f69cd814cbf9dbab9",
+    "name": "view-short-rebind",
+    "source": {
+      "path": "E:/ws/pro_tsfg/.scratch/tsfg_r03/M25-source-generic-array-checks-20261022/ARRAY-CONSUMER-SEMANTIC-EDGES-PUBLIC01-captures/244b6613252e61751a73ce360f1edd88fdd7cf32376d28e451cb7d68bd7180ac-source.ts",
+      "bytes": 184,
+      "sha256": "244b6613252e61751a73ce360f1edd88fdd7cf32376d28e451cb7d68bd7180ac"
+    },
+    "capture": "E:/ws/pro_tsfg/.scratch/tsfg_r03/M25-source-generic-array-checks-20261022/ARRAY-CONSUMER-SEMANTIC-EDGES-PUBLIC01-captures/244b6613252e61751a73ce360f1edd88fdd7cf32376d28e451cb7d68bd7180ac-package.json"
+  },
+  {
+    "file": "override-active-view-package.json",
+    "sha256": "d2b555c92da23aae84319250eff0c2c2484cd44e51c66baf4b09b36261c0cc70",
+    "name": "override-active-view",
+    "source": {
+      "path": "E:/ws/pro_tsfg/.scratch/tsfg_r03/M25-source-generic-array-checks-20261022/ARRAY-CONSUMER-SEMANTIC-EDGES-PUBLIC01-captures/1c8475e95c4e542ac42dc6fbb612c074a5ad32aaa6e9343e1b110516194f0c83-source.ts",
+      "bytes": 199,
+      "sha256": "1c8475e95c4e542ac42dc6fbb612c074a5ad32aaa6e9343e1b110516194f0c83"
+    },
+    "capture": "E:/ws/pro_tsfg/.scratch/tsfg_r03/M25-source-generic-array-checks-20261022/ARRAY-CONSUMER-SEMANTIC-EDGES-PUBLIC01-captures/1c8475e95c4e542ac42dc6fbb612c074a5ad32aaa6e9343e1b110516194f0c83-package.json"
+  },
+  {
+    "capture": "E:/ws/pro_tsfg/.scratch/tsfg_r03/M25-source-generic-array-checks-20261022/ARRAY-DENSITY-STRUCTURAL-METHOD-GREEN01-captures/0d28d50a2b12cac5aed119e422348e768d3a875922b3efda72623ab26932b0de-package.json",
+    "file": "or-alias-density-neighbor-package.json",
+    "sha256": "f6e7a0322f0ae732b3f0947fa7fe8cb8c8d5296994ab0f082bdfb7715c4a7839",
+    "source": {
+      "path": "E:/ws/pro_tsfg/.scratch/tsfg_r03/M25-source-generic-array-checks-20261022/ARRAY-DENSITY-STRUCTURAL-METHOD-GREEN01-captures/0d28d50a2b12cac5aed119e422348e768d3a875922b3efda72623ab26932b0de-source.ts",
+      "bytes": 126,
+      "sha256": "0d28d50a2b12cac5aed119e422348e768d3a875922b3efda72623ab26932b0de"
+    },
+    "name": "or-alias-density-neighbor"
+  },
+  {
+    "capture": "E:/ws/pro_tsfg/.scratch/tsfg_r03/M25-source-generic-array-checks-20261022/ARRAY-DENSITY-STRUCTURAL-METHOD-GREEN01-captures/70b9a34a51d0126807c18d15e64ef43aec5c6a09149ae564135be44070bec97b-package.json",
+    "file": "structural-method-active-package.json",
+    "sha256": "8c4e299c03d18eccc981fe67bd89d41679c39dc8f539d5b6a3b83054afd3fe44",
+    "source": {
+      "path": "E:/ws/pro_tsfg/.scratch/tsfg_r03/M25-source-generic-array-checks-20261022/ARRAY-DENSITY-STRUCTURAL-METHOD-GREEN01-captures/70b9a34a51d0126807c18d15e64ef43aec5c6a09149ae564135be44070bec97b-source.ts",
+      "bytes": 193,
+      "sha256": "70b9a34a51d0126807c18d15e64ef43aec5c6a09149ae564135be44070bec97b"
+    },
+    "name": "structural-method-active"
+  },
+  {
+    "capture": "E:/ws/pro_tsfg/.scratch/tsfg_r03/M25-source-generic-array-checks-20261022/ARRAY-DENSITY-STRUCTURAL-METHOD-GREEN01-captures/9e829293c95d3b70c37163a366a92f3d316474f2cfb3677aa3800b1e73bf560a-package.json",
+    "file": "conditional-array-rebind-neighbor-package.json",
+    "sha256": "ce693fa56647d226bace9bbc367064ec6985846a501e0840cf7944c478bad378",
+    "source": {
+      "path": "E:/ws/pro_tsfg/.scratch/tsfg_r03/M25-source-generic-array-checks-20261022/ARRAY-DENSITY-STRUCTURAL-METHOD-GREEN01-captures/9e829293c95d3b70c37163a366a92f3d316474f2cfb3677aa3800b1e73bf560a-source.ts",
+      "bytes": 134,
+      "sha256": "9e829293c95d3b70c37163a366a92f3d316474f2cfb3677aa3800b1e73bf560a"
+    },
+    "name": "conditional-array-rebind-neighbor"
+  },
+  {
+    "capture": "E:/ws/pro_tsfg/.scratch/tsfg_r03/M25-source-generic-array-checks-20261022/ARRAY-DENSITY-STRUCTURAL-METHOD-GREEN01-captures/ea84dece070b91193b8be04a3aec89bf1c7aa59f936d00d349b785e5f8ea4c12-package.json",
+    "file": "structural-method-after-use-package.json",
+    "sha256": "faa284aa711a16ff6b5297474a66658113a3f732a6afed28b1a9c2027880b5bd",
+    "source": {
+      "path": "E:/ws/pro_tsfg/.scratch/tsfg_r03/M25-source-generic-array-checks-20261022/ARRAY-DENSITY-STRUCTURAL-METHOD-GREEN01-captures/ea84dece070b91193b8be04a3aec89bf1c7aa59f936d00d349b785e5f8ea4c12-source.ts",
+      "bytes": 207,
+      "sha256": "ea84dece070b91193b8be04a3aec89bf1c7aa59f936d00d349b785e5f8ea4c12"
+    },
+    "name": "structural-method-after-use"
+  },
+  {
+    "capture": "E:/ws/pro_tsfg/.scratch/tsfg_r03/M25-source-generic-array-checks-20261022/ARRAY-DENSITY-STRUCTURAL-METHOD-GREEN01-captures/fda7b2386f018d5bf0e0cad8a03e64ee73fa44d1b59661d4fede65ccdcae8cc1-package.json",
+    "file": "density-short-shrink-package.json",
+    "sha256": "68025aab9c33f4bf443036b83f81cb0dd80831eb8f3ecd5a626c29a2ff6f2915",
+    "source": {
+      "path": "E:/ws/pro_tsfg/.scratch/tsfg_r03/M25-source-generic-array-checks-20261022/ARRAY-DENSITY-STRUCTURAL-METHOD-GREEN01-captures/fda7b2386f018d5bf0e0cad8a03e64ee73fa44d1b59661d4fede65ccdcae8cc1-source.ts",
+      "bytes": 102,
+      "sha256": "fda7b2386f018d5bf0e0cad8a03e64ee73fa44d1b59661d4fede65ccdcae8cc1"
+    },
+    "name": "density-short-shrink"
+  },
+  {
+    "name": "view-short-nullish",
+    "sha256": "d45b3e09287b0e9f636701505a2226ada37a2cd90fe5162c81045a1f94aeeb36",
+    "source": {
+      "path": "E:/ws/pro_tsfg/.scratch/tsfg_r03/M25-source-generic-array-checks-20261022/ARRAY-NULLISH-SEMANTIC-RED01-captures/9ffc7e14e8f6b49b0f11890c9e2c68ff46b0bb7104b1d3d3a8e8d6f4142af7ae-source.ts",
+      "bytes": 194,
+      "sha256": "9ffc7e14e8f6b49b0f11890c9e2c68ff46b0bb7104b1d3d3a8e8d6f4142af7ae"
+    },
+    "capture": "E:/ws/pro_tsfg/.scratch/tsfg_r03/M25-source-generic-array-checks-20261022/ARRAY-NULLISH-SEMANTIC-RED01-captures/9ffc7e14e8f6b49b0f11890c9e2c68ff46b0bb7104b1d3d3a8e8d6f4142af7ae-package.json",
+    "file": "view-short-nullish-package.json"
+  },
+  {
+    "name": "density-short-nullish",
+    "sha256": "4160ee4ed35f0688bdf89e2f0bc7b5ae89d7888d1eea08099c404e5c2b1045eb",
+    "source": {
+      "path": "E:/ws/pro_tsfg/.scratch/tsfg_r03/M25-source-generic-array-checks-20261022/ARRAY-NULLISH-DENSITY-GREEN01-captures/f0c6ed7105e48faca5bf0ac331d8d29cef0c10c6e697cebcb3726611c0748391-source.ts",
+      "bytes": 112,
+      "sha256": "f0c6ed7105e48faca5bf0ac331d8d29cef0c10c6e697cebcb3726611c0748391"
+    },
+    "capture": "E:/ws/pro_tsfg/.scratch/tsfg_r03/M25-source-generic-array-checks-20261022/ARRAY-NULLISH-DENSITY-GREEN01-captures/f0c6ed7105e48faca5bf0ac331d8d29cef0c10c6e697cebcb3726611c0748391-package.json",
+    "file": "density-short-nullish-package.json"
+  }
+]

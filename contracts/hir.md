@@ -1,6 +1,6 @@
 <!-- SPDX-License-Identifier: MIT -->
 
-# tsfg.hir 0.10.0
+# tsfg.hir 0.13.0
 
 M10 includes ordinary scalar assignment, compound/update results and bool/nullish
 short circuit assignment; see docs/r03-ordinary-expressions.md. Bare locals own
@@ -9,6 +9,8 @@ definite initialization gates ordinary reads; `??=` safely initializes the
 absent path. Default/coalescing targets use official declared annotation
 members, separately from incoming parameter omission masks and narrowed reads.
 Every local state and phi/transfer slot contributes to Runtime memory accounting.
+
+Current exact development format. The ordinary scalar/module256-function limit remains. The module execution extension below retains complete code and metadata independently of its selected initialization plan. The explicit selected string-facts context additionally admits1..64 zero-parameter functions with nominal managed String constants or explicit concat operations and returns. HIR0.13 and the exact Core0.12/wire12 exchange have independent schema identities; the scalar emitter still admits the concrete512-function generic closure.
 
 `createCompilerSession` reuses owned HIR/Core/R04 output only for an unchanged
 checked Snapshot identity, compiler input fingerprint and source-built producer
@@ -27,7 +29,7 @@ and typed scalar expression tree, and freezes all data. It retains no
 Snapshot-local reference or upstream session. `lowerHir` consumes only HIR.
 
 This exact same-repository development format has no published or supported
-older consumer. Its supported capability is 1..128 named nominal integer/bool/f32/f64 functions,
+older consumer. Its supported capability is 1..256 named nominal integer/bool/f32/f64 functions,
 each with 0..64 typed scalar parameters, structured blocks, if/else, while,
 local declarations, simple assignments and scalar returns; each body contains
 at most128 statements. Parameters use declaration-order `p0`, `p1`, ...
@@ -91,7 +93,7 @@ Every parameter owns presence spans and its ordered initializer. Payload reads
 require dominating proof of presence; null/undefined states cannot expose their
 canonical zero payload. Callee entry fuel precedes ordered defaults, which only
 run for omitted/undefined arguments after every caller argument has completed.
-CoreIR0.10 carries the explicit logical parameter mask table and independently
+CoreIR0.12 carries the explicit logical parameter mask table and independently
 recomputes logical identity while checking its payload/state physical signature.
 
 Finite local annotations retain payload and state through assignments, groups,
@@ -103,7 +105,9 @@ are checked against the declared annotation, separately from incoming omission.
 Rehashing source or exchanging same-shaped fields cannot waive these guards.
 
 Records must be objects, and logical source paths follow the same normalized
-path rules as R04. Source content retains original UTF-16 anchors and must
+rooted path rules, retaining the ordinary Source path prohibition on colons.
+Core logical metadata also accepts owned package paths containing colons; it
+preserves their bytes without host filesystem access. Source content retains original UTF-16 anchors and must
 contain well-formed Unicode. Invalid UTF-8/JSON, a leading wire BOM or malformed
 owned values fail with `r03-hir-invalid`; well-formed noncanonical serialization
 fails with `r03-hir-canonical`.
@@ -125,7 +129,7 @@ transfer in parallel in R04. The entry and each while header carry explicit
 `tsfg_core.fuel` events before condition operations. Source conditions, braces,
 else clauses and nested statement delimiters are checked against owned anchors.
 
-Core exchange0.9.0 uses registered typed scalar operations and fuel plus official
+The current Core exchange0.12.0 uses registered typed scalar operations and fuel plus official
 `cf.br`/`cf.cond_br`, `func.call`, `func.return` and MLIR block arguments. Each
 function owns its identity, signature, return type and range attributes; module
 source and target attributes remain global. The C++ consumer resolves every
@@ -139,18 +143,97 @@ claimed. Logical events remain explicit and cannot be replaced with physical
 instruction accounting. Full/incremental compiler outputs and formal Runtime
 results are tested across source/control changes.
 
-M07 expands this exact-match development contract to the complete nominal integer family. See docs/r03-integer-vm.md and the registered schema for type codes, pointer DataLayout and wire9/capability20. Previous0.5 artifacts and mixed schema identities are rejected; no compatibility window is promised. Existing i32/bool identities, source anchors, complete verifier and logical/physical budget ordering remain in force.
+The current registry sets HIR to0.13.0 and Core/bytecode to0.12.0, wire12 and capability119; FrontendSnapshot remains the genuine current0.10.0 producer and schema. They include nominal integers, bool, f32/f64 and owned module/authorized-host records. docs/r03-integer-vm.md records the earlier M07 wire6/capability17 slice; it does not describe the current wire. Old and mixed schema identities are rejected, and no older-format compatibility window is promised. Scalar identities, original source anchors, complete verification and logical/physical budget ordering remain in force.
 
-M09 registers `minimal-conversions-v5` with 286 monomorphic ordinary TS function declarations: `checked_<target>_from_<source>`, `wrap_<target>_from_<source>` and `reinterpret_<target>_from_<source>`. The current numeric slice contains 144 checked, 100 integer wrap and 42 equal-width reinterpret entries. Bool remains available elsewhere; this numeric slice does not decide future bool conversion semantics. `as` continues to be excluded from numeric conversion.
+Module-mode HIR owns complete source, module, global, host-import and closure
+records. Functions retain their sourcePath and source/module-initialization
+kind. Global references and assignments preserve binding identity, exact scalar
+type (including f32/f64), binding origin and original source anchors. Ordered
+roots and dependency initialization are distinct from ordinary source calls;
+generated initializers are lifecycle-only. The verifier checks all supplied
+owned facts before closure pruning. These records lower to the prospective wire9
+module tables described by contracts/bytecode.md, rather than a second format.
 
-Only the officially checked symbol with the exact admitted declaration bytes, range, signature and unique nominal brand symbols produces a conversion fact. Same-spelling valid user or shadow declarations use normal calls and execute their bodies. Owned origin facts carry declaration digest/path/range, entry ID, version and role-specific brand identifier ranges. Snapshot binds the complete VFS/config/library scope; HIR retains that independently owned `inputScope`, whose canonical SHA256 equals `inputIdentity`, and validates each origin against its admitted declaration. Backend operations retain no upstream AST or checker objects.
+Generic concrete owned HIR remains its distinct candidate-v1 cold format. `lowerGenericHir` independently validates package context, instance linkage, signatures, original metadata/anchors and complete closure before using the ordinary scalar emitter. It emits the current exact Core0.12 version and bytecode schema hash as `lowerHir`; neither fabricated source content nor a second lowering is introduced. `compilePackage` routes its owned frontend result through the shared producer and unchanged formal-artifact input checks. This source route alone is not evidence that candidate Source/Runtime executables were admitted or run. The complete previous registry/source/artifact combination is the rollback unit; old Core0.8/wire8 and mixed schema identities reject.
 
-Core0.9/wire9/capability20 register op34 `convert_checked`, op35 `convert_wrap` and op36 `reinterpret`, preserving op29–31 reservations and op32–33 floats. Each 16-byte record contains opcode:u8, exact result nominal type:u8, result register:u16, operand register:u16, exact source nominal type:u8, reserved-zero:u8, UTF16 source start/end:u32. Producer and independent loader check the legal source/result pair, reserved bits, dominance/register use and original source range. Numeric reinterpret requires equal width; wrap requires two integer types. Old/mixed identities reject immediately.
+## Selected string-facts projection history (0.11.0)
 
-Checked integer conversion compares exact mathematical range. Integer→float and float narrowing round directly to the target with nearest ties-even; finite input rounding to infinity traps. Float→integer first rejects NaN/infinity, then truncates toward zero before exact range checking, so negative fractions truncating to zero are valid unsigned inputs. Float→float preserves signed infinity and canonicalizes every NaN to target quiet NaN (`7fc00000` or `7ff8000000000000`), including checked same-width conversion. Integer wrap is modulo target width with signed target interpretation. Reinterpret transports every raw bit, including signaling NaN, sign, payload and signed zero.
+The existing buildHir/verifyHir/readHir/printHir/lowerHir interfaces accept an optional
+stringFactsContext. V1 has exactly the own data fields factsBytes and expectedPackageId;
+v2 additionally requires factsVersion:2. An explicit factsVersion:1, unknown version,
+accessor, Proxy or extra field rejects. Single-argument scalar/module and other
+candidate interfaces remain unchanged; neither package bytes nor HIR selects a reader.
+The job supplies its actual expectedPackageId independently of the persisted input.
 
-Each conversion evaluates its one operand exactly once at the caller and is one scalar operation, without a conversion callee/frame/depth check or entry Fuel. Ordinary enclosing calls retain their existing depth/Fuel and left-to-right argument rules. Checked failures are `r01-t-conversion-nonfinite` or `r01-t-conversion-range`, Rule `r01-conversions`, anchored to the original conversion expression and executing FunctionId. Unused checked conversions retain traps; the first reached failure ends the request and the host releases it.
+V1 still uses the unchanged complete string-facts v1 package. V2 uses the same family,
+exact version2/schema79d8f807, through readStringFactsV2Candidate and
+writeStringFactsV2Candidate. The strict cold boundary validates complete files,
+owners, ranges, budgets and identities without parsing TypeScript or proving Source
+semantics. A structurally self-consistent false package cannot replace the selected
+actual job in HIR, even if it has been re-signed.
 
-Cold consumers independently validate the admitted scope profile: exact configuration keys/values, numeric target, normalized in-root source/declaration file roles, unique sorted VFS records and declared library roots. Each owned conversion origin additionally carries the producer projection’s `inputIdentity`, which must equal the whole admitted scope identity. This rejects reusing an origin across scopes; the digest is not cryptographic authentication of official checker execution. Valid extra declaration files and pre-conversion v1–v4 profiles remain supported. A body-bearing function in the complete ordinary function table with the entry name prohibits a conversion route at both Snapshot and HIR boundaries, even if the call’s spelling and declaration anchors match.
+Every source, function, nominal type/signature, UTF16 range and ordered unit is
+compared with the selected complete package; build input canonical bytes must also
+match it exactly. String return types use managedReference/string and the nominal
+tsfg.type-NUL-string identity. V1 returns stringConstant; v2 returns stringConcat
+with operatorRange and independent left/right stringConstant leaves. The operation
+is retained, never evaluated or folded into a result. Empty arrays, NUL, isolated
+and reversed surrogate units and normalization-distinct values remain exact.
+There is no heap handle, ABI tag, parser, decoded replacement string or session cache.
 
-When admitting a conversion, both cold Snapshot and independent HIR consumers require the complete ordinary-function table to cover the entire root source modulo inherited trivia. Actual source declaration names and matching body-closing spans bind each function range; omitted or merged body ranges cannot hide an ordinary same-name implementation. This is bounded source/structure verification of the current function-only profile, not authentication of checker execution. Ordinary non-conversion and previously admitted v1–v4 profiles retain their existing rules.
+That historical HIR wire family used exact0.11 identity and JCS+oneLF. Old0.10/mixed
+metadata rejects; v1 facts remain unchanged and old HIR goldens migrate only their
+root version/schemaHash. Each cold read/print/verify requires its selected facts
+context again; overwriting caller context cannot be rescued by a hidden cache.
+String-profile JSON has2MiB byte,64 depth,200000 token and1MiB string limits;
+source bytes65536/functions64/per-leaf16384/concat32768/total leaf65536 bounds
+precede copying, identity hashes or projection comparisons. The shared JSON walker
+rejects behavioral graphs; the common native-view snapshot avoids caller getters,
+iterators and prototype traversal, with the original view offset preserved.
+
+Cold v2 failures retain r03-string-facts codes, r01-input-boundary/phase input and
+causes. HIR failures retain context/invalid/limit/canonical categories and use the
+verified facts' function, return, concat, plus or individual leaf primary anchor.
+That historical projection kept Core exchange0.9 via x-coreExchangeVersion. A fully verified String lowerHir
+remains explicitly unsupported: no Core String, Runtime/VM execution, Frontend012
+admission, physical storage or StringView is supplied here.
+
+## Ordinary expression restoration (0.12.0)
+
+The0.12.0 restoration introduced the declared286 checked/wrap/
+reinterpret origins and finite parameter/local presence. Conversion origin binds
+the exact declaration entry/span, brands, declaration digest and complete admitted
+input scope; a name alone cannot grant conversion semantics. The scalar Source
+consumer independently checks write/update operators, local mutability, declaration
+presence and official presenceFlow against original source spans. Plain as remains
+a type assertion, never a numerical conversion.
+
+The shared SSA emitter captures the compound-assignment old payload before its RHS,
+returns the pre-update value for postfix, and carries payload/state together through
+ordinary expression, branch and loop joins. Default initializers, optional omission
+and explicit undefined/null are retained until this single lowering. Formal output
+uses the current exact Core/wire presence metadata and the original source anchors. This is
+ordinary scalar consumption; private managed-reference candidates do not provide
+an alternative default/absence execution path.
+
+## Complete module ordinary expressions (0.13.0)
+
+Module HIR retains the exact normalized inputScope and each module external flag,
+with source/declaration hashes, original bindings and configured Host declarations.
+The ordinary scalar verifier consumes both module bodies and defaults using the
+original source and module visibility context. Writable storage does not confer
+write permission on imports. Compound/update/global operations retain one source
+evaluation path; all original functions are preserved. Closure discovery visits
+parameter defaults before the body and keeps execution selection distinct from
+code retention. The formal exchange is Core0.12/wire12; independent private
+Core0.9 candidates retain their own explicit identities and grant no module
+execution admission. Old or mixed HIR0.12 metadata rejects. See the
+[module instance design](../docs/r03-module-aot.md).
+
+## Formal frontend boundary
+
+Every ordinary scalar and module HIR owns the complete admitted `inputScope`; the canonical scope hash equals `inputIdentity`. Every scalar or module function owns `parameterInitializers`, including an empty array for a generated zero-parameter initializer. Ordinary HIR keeps the closed scalar input profile and rejects isolated compilation-closure facts. Module extensions require the complete original sources, modules, globals, Host declarations and closure, with independently verified visibility and initialization.
+
+The current official Snapshot0.10 producer has no complete multi-file module facts. Its ordinary output is not restamped or supplemented with invented empty module tables. Module Source acceptance remains open until genuine producer facts are available and accepted.
+
+The separately selected String-facts profile retains its existing exact single-source, all-string, zero-parameter, single-return shape and independently verified caller-selected facts context. It has no scalar `inputScope` or `parameterInitializers`; it cannot carry module tables or mix scalar functions. This profile does not admit Source module facts or relax scalar/default/presence validation.

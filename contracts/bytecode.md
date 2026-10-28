@@ -1,12 +1,17 @@
 <!-- SPDX-License-Identifier: MIT -->
 
-# tsfg.bytecode 0.10.0
+# tsfg.bytecode 0.12.0
 
-Bare local initialization uses a zero payload and private counted i32 state
-without changing public parameter masks. Nullish assignment tests the state
-before RHS effects and merges both slots. Verified ordinary payload use requires
-definite initialization and presence; every caller/callee/state/phi/transfer
-slot is charged to the unchanged 16384-byte default request budget.
+Core0.12 / wire12 retains nominal managed String type14 and adds numeric conversions
+and logical parameter presence under capability119. The complete
+String operation, root and output contract is described in [formal String](../docs/r03-formal-string-runtime.md)
+and the exact machine schema. Compiler/reader and ordinary compilation evidence remain
+separate from formal guest execution and Runtime certification.
+
+The binding-origin rules introduced in0.9 remain unchanged: ordinary globals use
+`tsfg.global`; generated default expression bindings use the exact
+`tsfg.default-export-binding.v1` recipe in the schema. Flags0/1/2 retain their
+meaning and3/unknown flags reject. Display names grant no generated authority.
 
 This exact, same-repository development format is the formal R04 compiler to
 Zig Runtime seam. It has no published or supported older external consumer.
@@ -15,28 +20,44 @@ invalidate caches and are rejected. The registry owns version and JCS schema
 hash. The JSON schema owns wire field order and bounds.
 
 All integers use little endian. The 80-byte header is magic `TSFGTBC0`, u32 wire
-version 10, raw 32-byte schema SHA256, u32 total length and raw 32-byte SHA256 of
+version 12, raw 32-byte schema SHA256, u32 total length and raw 32-byte SHA256 of
 the payload. UTF8 strings have a u32 length, no terminator or padding. The
 checksum supplies integrity, not publisher authenticity. Target/triple and LLVM
 DataLayout are fixed in the schema. LLVM derives i32 and pointer size/alignment; Zig checks
 its actual target. Logical source paths preserve the leading root slash and
-never cause a host file read. Empty/dot/parent components, backslashes and drive
-colons reject. Entity identity domains remain unchanged: SHA256 of
-`tsfg.type\0<scalar>`, `tsfg.signature\0(<comma-separated scalar parameters>)-><scalar>` and
+never cause a host file read. Colons are ordinary logical characters, including
+within a path component; they never designate a host drive. Invalid UTF8, NUL,
+empty/dot/parent components and backslashes reject. The primary source must end
+in .ts and cannot be a declaration .d.ts; module source tables retain declaration
+paths for host declarations. Exact path bytes remain in IDs and source maps.
+Entity identity domains remain unchanged: SHA256 of
+`tsfg.type\0<nominal type>`, `tsfg.signature\0(<comma-separated nominal type parameters>)-><scalar>` and
 `tsfg.function\0<sourcePath>\0<name>\0<signatureHashHex>`.
 
-Capability52 admits 1..128 nominal integer/bool/f32/f64 functions, each with 0..64 logical parameters and at most128 physical payload/state parameters,
-up to256 reachable blocks,4096 SSA registers and8192 instructions. Global
+Capability51 admits 1..512 nominal integer/bool/f32/f64/String functions, each with 0..64 typed parameters,
+up to256 reachable blocks,4096 SSA registers and8192 instructions. Existing function/per-function bounds and execution budgets remain unchanged. Existing u16 function counts and low-u16 call targets represent512
+without a record-layout change. Global
 payload fields are target/triple/layout strings, i32 size/alignment u16, pointer bits/alignment u16,
-capability u32, input/source hashes, logical source path, source length u32 and
-function count u16. Each function has FunctionId/signature/return-type hashes,
+capability u32, input/source hashes, logical source path, source length u32,
+moduleMode u8 and function count u16. moduleMode0 always has its explicit zero
+byte before the function count; it has no module tables. moduleMode1 inserts
+sources, modules, globals, hosts, roots and initialization tables, in that order,
+between mode and function count. Table counts/records and bounds are in the
+registered machine schema. Module-mode functions add sourceIndex u16,
+initializer u8 and reserved-zero u8 before the ordinary function descriptor.
+Each function has FunctionId/signature/return-type hashes,
 name string, source start/end u32, return type u8, parameter count u8 and
-physical parameter types u8, logical parameter count u8 and one presence mask
-u8 per logical parameter, followed by register/block/instruction counts u16 and its
+parameter types u8, followed by register/block/instruction counts u16 and its
 block table and instruction sequences. Each block
 has parameterCount u16, each parameter's register u16/type u8/reserved zero u8,
 then instructionCount u16. Registers are globally unique in block order: block
-parameters followed by scalar results. Block arguments are phi values.
+parameters followed by typed results. Block arguments are phi values.
+
+Global load/store opcodes29/30 carry a type code1..14, register, global index
+and source range. The store initialization flag distinguishes its unique
+initializer from later assignment; table binding origin controls write permission.
+Opcode31 is the explicitly authorized i32 host call. Module, global, root and
+initializer associations are verified before requests execute.
 
 Scalar and return records retain their 16-byte layout: opcode/type u8, register
 u16, payload u32, original UTF16 start/end u32. Existing opcodes 1..23 and their
@@ -50,14 +71,10 @@ Call opcode27 uses the result type/register and low-u16 target function index
 with high-u16 reserved0; it appends argument count u16 and ordered argument
 registers u16. Call source ranges belong to the caller. Every target signature,
 argument arity/type and return type is checked before any request executes.
-Core and the independent loader reject directly constant illegal state values,
-disallowed absent members and directly nonzero absent payloads. This bounded
-constant check does not claim abstract evaluation of arbitrary scalar SSA.
-Computed states and payloads are validated at every real callee entrance,
-before its defaults, effects or entry fuel; violations use `r05-presence-state`
-at the caller's call anchor. Loader constant violations use `r04-presence-state`
-with a byte offset. Legal absent payloads are always initialized to zero.
 Type codes1/2 retain i32/bool. Codes3..11 are i8/i16/i64/u8/u16/u32/u64/isize/usize.
+Codes12/13 are f32/f64. Float constants use opcode32 followed by canonical raw
+u64 bits (zero extended for f32); unary plus uses opcode33. Strict arithmetic,
+NaN transport and raw-hex requests follow docs/r03-float-vm.md.
 Constant opcode28 has the standard scalar record with a zero u32 payload,
 followed by u64 canonical zero extended low-width bits. Signed values use
 two's complement low-width bits. High bits outside the concrete width reject
@@ -76,26 +93,11 @@ do not constrain unrelated branches. Unknown/truncated/trailing inputs reject.
 A verified module owns immutable bytes and predecoded instructions behind an
 opaque handle. Edge arguments are read into temporary values before destination
 phi registers are written, preserving parallel transfer even for loop swaps.
-`eval_bytecode` takes a verified module, FunctionId, typed scalar argument and
+`eval_bytecode` takes a verified module, FunctionId, typed argument and
 capability tables and explicit request limits. Its public host accepts
 `{type:"<concrete integer>",value:"<canonical in-range decimal>"}` and
 `{type:"bool",value:true|false}` argument records; optional `signatureHash`
 must match the selected function. Unsupported capabilities reject at preflight.
-M10 also accepts logical `{type:"undefined",value:null}` and
-`{type:"null",value:null}` records when the parameter permits that state.
-Omission requires an optional/default parameter. Masks use bit0 undefined,
-bit1 null, bit2 optional and bit3 default; optional requires undefined, and
-default requires both optional and undefined. Nonzero masks append `@` plus
-two lowercase hexadecimal digits to the logical signature's scalar name.
-Every logical slot consumes its scalar payload and, when mask&3 is nonzero,
-an i32 state. All consumers reconstruct and verify each physical position.
-State0 is present, state1 undefined and state2 null; absent payload bits are
-canonical zero and invalid states or payloads reject at the actual VM call
-boundary. Defaults run only for state1, in callee parameter order after all
-caller operands. The64 logical capacity and16384-byte default memory budget
-remain; physical registers, states, phi transfers and every caller/callee
-frame contribute to actual allocation accounting. Previous and mixed exchange
-identities reject before execution.
 Runtime contains no source
 parser, JavaScript fallback, frontend, MLIR or LLVM. Canonical serialize returns
 identical verified bytes; inspect prints typed CFG and original source anchors.
@@ -123,8 +125,8 @@ Integer arithmetic wraps, guarded division/remainder and shift traps keep their
 R01 codes, Rules and operation anchors. The first actual trap ends the request;
 unreached branches/short-circuit operands cannot fail early. Runtime frees its
 frame, activeRequests returns0 and the same host accepts later requests. It
-runs no user catch/finally or callbacks and promises no rollback. Managed roots,
-borrows, user exceptions and side effects remain later capability obligations.
+runs no user catch/finally or callbacks and promises no rollback. String roots and result ownership use the managed Handle lifecycle. Other managed
+domains and user exceptions retain their separate capability obligations.
 
 Load failures carry `r04-*` and byte offsets, never untrusted source attribution.
 Request preflight errors keep `r05-request-function`, `r05-request-arguments`
@@ -134,14 +136,111 @@ The `TSFGREQ1` transport remains u32 count plus length-delimited R04 packets,
 1..128 matching requests and total1MiB/no trailing bytes, served by one Runtime.
 It adds no language semantics.
 
-M07 expands this exact-match development contract to the complete nominal integer family. See docs/r03-integer-vm.md and the registered schema for type codes, pointer DataLayout and wire9/capability20. Previous0.5 artifacts and mixed schema identities are rejected; no compatibility window is promised. Existing i32/bool identities, source anchors, complete verifier and logical/physical budget ordering remain in force.
+The current formal development producer/reader requires Core0.12, wire12 and
+capability119. FrontendSnapshot is0.9; HIR is0.13.
+Private marked profiles retain their own exact Core0.9 metadata and verifiers;
+they are never accepted as formal packets. Old unmarked formal0.9/0.10, wire9/10,
+wrong schema hashes and mixed identities reject. Scalar identities, original
+source anchors, complete verification and logical/physical ordering remain.
 
-M09 registers `minimal-conversions-v5` with 286 monomorphic ordinary TS function declarations: `checked_<target>_from_<source>`, `wrap_<target>_from_<source>` and `reinterpret_<target>_from_<source>`. The current numeric slice contains 144 checked, 100 integer wrap and 42 equal-width reinterpret entries. Bool remains available elsewhere; this numeric slice does not decide future bool conversion semantics. `as` continues to be excluded from numeric conversion.
+Historically, the0.8 global operation type-range registration corrected an omitted
+description of already implemented f32/f64 support. At that earlier correction,
+Contract SemVer0.8.0 and wire8 remained unchanged; its JCS schema hash and derived
+Contract Set ID changed atomically across producer, loader and fixtures under
+accepted ECP-0002. That historical correction did not establish formal Runtime
+acceptance. The subsequent0.9 candidate used wire9;0.10 used wire10 with its own exact schema.
 
-Only the officially checked symbol with the exact admitted declaration bytes, range, signature and unique nominal brand symbols produces a conversion fact. Same-spelling valid user or shadow declarations use normal calls and execute their bodies. Owned origin facts carry declaration digest/path/range, entry ID, version and role-specific brand identifier ranges. Snapshot binds the complete VFS/config/library scope; HIR retains that independently owned `inputScope`, whose canonical SHA256 equals `inputIdentity`, and validates each origin against its admitted declaration. Backend operations retain no upstream AST or checker objects.
+Historically, the0.9 producer/reader rejected wire8 and Core0.8;0.10 also rejected wire9 and unmarked formal0.9. The generic owned-HIR candidate still proves its own package/instance linkage before emitting concrete scalar Core operations; Runtime receives no generic definitions or Source session. Source package/IO/HIR family adoption and Source executable admission remain separate.
 
-Core0.9/wire9/capability20 register op34 `convert_checked`, op35 `convert_wrap` and op36 `reinterpret`, preserving op29–31 reservations and op32–33 floats. Each 16-byte record contains opcode:u8, exact result nominal type:u8, result register:u16, operand register:u16, exact source nominal type:u8, reserved-zero:u8, UTF16 source start/end:u32. Producer and independent loader check the legal source/result pair, reserved bits, dominance/register use and original source range. Numeric reinterpret requires equal width; wrap requires two integer types. Old/mixed identities reject immediately.
+## Numeric conversions and logical parameter presence
 
-Checked integer conversion compares exact mathematical range. Integer→float and float narrowing round directly to the target with nearest ties-even; finite input rounding to infinity traps. Float→integer first rejects NaN/infinity, then truncates toward zero before exact range checking, so negative fractions truncating to zero are valid unsigned inputs. Float→float preserves signed infinity and canonicalizes every NaN to target quiet NaN (`7fc00000` or `7ff8000000000000`), including checked same-width conversion. Integer wrap is modulo target width with signed target interpretation. Reinterpret transports every raw bit, including signaling NaN, sign, payload and signed zero.
+The exact current development identity is Core0.12.0 / wire12, capability119.
+String opcodes34..39 retain their meanings. New opcodes40/41/42 encode checked,
+integer wrap and equal-width numeric reinterpret respectively. Each16-byte record
+contains destination type:u8 and register:u16, operand register:u16, source
+nominal type:u8 and reserved:u8=0, then original UTF16 start/end:u32. All286
+entries retain the established R01 conversion semantics: checked float-to-integer
+first truncates toward zero and then checks the exact destination range, rejecting
+NaN/infinity separately. Checked floating results round directly to the destination
+format, ties to even; a finite result rounding to infinity is a range trap.
+Checked NaNs become the target canonical NaN, while reinterpret preserves every bit.
+Wrap sign-extends a signed mathematical integer before retaining destination low bits.
+An operand is evaluated once, without a conversion callee/depth/entry-fuel event.
 
-Each conversion evaluates its one operand exactly once at the caller and is one scalar operation, without a conversion callee/frame/depth check or entry Fuel. Ordinary enclosing calls retain their existing depth/Fuel and left-to-right argument rules. Checked failures are `r01-t-conversion-nonfinite` or `r01-t-conversion-range`, Rule `r01-conversions`, anchored to the original conversion expression and executing FunctionId. Unused checked conversions retain traps; the first reached failure ends the request and the host releases it.
+After physical parameter count:u8 and its type bytes, every function descriptor
+contains logical count:u8 and one presence mask:u8 per logical parameter. The
+limits are128 physical and64 logical. Mask bits0/1 allow undefined/null, bit2
+allows omission, bit3 marks a default; optional requires undefined and default
+requires both optional and undefined. Nonzero masks apply only to scalar1..13.
+A logical payload is followed by an i32 state iff mask&3:0 present,1 undefined,
+2 null. A nonzero state requires an all-zero payload. Direct known malformed
+carriers reject in Core/loader; computed carriers are checked before callee frame
+admission, depth and entry fuel. Request rejection is r05-request-arguments and
+a malformed guest carrier is r05-presence-state, distinct from arithmetic traps.
+
+Logical signature tokens append @0 plus the lowercase mask digit only for a
+nonzero mask; mask0 retains the original nominal signature/function identity.
+Source calls evaluate supplied operands left to right and explicitly fill omitted
+optional carriers. Defaults evaluate only for state1; state2 never triggers them.
+The existing ordinary compiler ABI0.3 consumes the complete physical Core signature
+using the same canonical8-byte slots; absence is explicitly payload0 plus state1/2.
+Its callback adds9 conversion-nonfinite,10 conversion-range and11 invalid guest
+presence. The wrapper rejects malformed carriers without invoking a guest/event.
+
+Finite local declarations retain their initialized payload/state and dominating presence proof; a private undefined state never authorizes an absent public parameter. Default initializers run in parameter order after callee entry fuel and all caller arguments. Every physical register, state, phi/transfer slot and caller/callee frame contributes to actual memory accounting.
+
+Old wire10, old schema hashes and mixed versions are rejected; there is no fallback
+reader. Private0.9 candidates retain their independently registered exact identities.
+
+## Complete module universe and execution plan (0.12.0)
+
+All original functions, module/source/global/Host declarations and indexes remain
+in the formal packet. The initialization count is0..moduleCount, not necessarily
+moduleCount. Compiler and Runtime independently derive the selected functions,
+owner modules and required Host declarations from explicit roots, direct calls,
+global accesses and static dependencies. Parameter defaults have already entered
+the ordinary function CFG. Ordered-root dependency DFS followed by UTF8-sorted
+retained owners must equal the serialized initializer sequence exactly. Cycles
+visit once; unselected modules do not initialize. Public module requests must name
+a declared root. Only selected Host capability IDs require grants and trigger
+Host admission; unused metadata grants no authority. Complete validation still
+checks unselected functions and declarations. Old0.11/wire11 identities reject.
+See [ordinary instance ABI](../docs/r03-module-aot.md) for the separate linked
+AOT consumer, storage ownership and precise lifecycle/failure channels.
+
+## ABI4 failure identities
+
+This table makes the existing stable diagnostics explicit; it does not change
+wire12, ABI4 layout, operation semantics or the separate Host event numbers.
+Failure `kind`/`reason` are the stored ABI4 integers, not event IDs.
+
+| Failure | kind | reason | Code | Rule |
+| --- | --- | --- | --- | --- |
+| Division by zero | 1 | 1 | `r01-t-divide-zero` | `r01-division` |
+| Remainder by zero | 1 | 2 | `r01-t-remainder-zero` | `r01-division` |
+| Invalid shift count | 1 | 3 | `r01-t-shift-count` | `r01-shifts` |
+| Rejected nonfinite checked conversion | 1 | 4 | `r01-t-conversion-nonfinite` | `r01-conversions` |
+| Checked conversion outside target range | 1 | 5 | `r01-t-conversion-range` | `r01-conversions` |
+| TDZ global read/write | 4 | 6 | `r01-e-reference` | `r01-modules` |
+| Semantic Fuel exhausted | 1 | 7 | `r01-t-fuel` | `r01-fuel` |
+| Active depth exhausted | 1 | 8 | `r01-t-depth` | `r01-depth` |
+
+The checked-conversion rule determines when a nonfinite value is rejected;
+this row does not reject signed infinity for a float-to-float conversion that
+the conversion contract permits. In particular, event9/nonfinite and event10/
+range remain notifications; neither is the corresponding stored ABI reason.
+The first source failure and its original function/source/UTF16 anchor remain
+authoritative. A memo replay preserves that same identity without guest events.
+
+Request-level kind3 reasons10,11,12/15,13,14 map respectively to
+`r05-request-instance`, `r05-request-function`, `r05-request-arguments`,
+`r05-request-capability`, `r05-request-host-contract`. An unsupported JSON
+request kind is a preflight `r05-request-kind`; it is not an ABI guest failure.
+Physical failures and otherwise unsupported ABI failure identities become
+`r05-execution-abort`, never an invented language trap.
+
+The shared CLI shape, public-root preflight attribution, duration-zero meaning
+and per-mode instance lifetime are explicit in the
+[typed CLI contract](../docs/r03-module-aot.md#typed-cli-request-and-outcome-contract).
+These diagnostic/transport clauses do not qualify a build, Host resource
+certificate, physical event-count model, Source producer, VM or RF.

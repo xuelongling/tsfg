@@ -115,6 +115,144 @@ APFloat-exception conversion headers are not registered. Explicit project
 license grants and their stated exception mechanisms are checked per file;
 absence of a file SPDX annotation is recorded, never filled with a guessed one.
 
+The M18 complete69TU target's captured CMake/Ninja plan exposed1379 previously
+unregistered mandatory paths. Its supplement retains all5394 prior entry
+objects and all five original license materials. The supplement relies on the
+two LLVM/MLIR project license materials and adds1378 exact files:1367 carry
+the original Apache-2.0 WITH LLVM-exception SPDX declaration;11 have no local
+declaration and are recorded under the explicit project grant after checking
+every relevant ancestor for the two third-party exception mechanisms. No local
+SPDX is invented, and no optional backend or Runtime consumption is admitted.
+Original algorithm-source citations remain retained as source attribution
+rather than inferred additional license terms.
+
+The separately accepted SDKv2 input role uses the exact locked6601 inventory.
+Its finite source supplement retains all6772 existing entry objects in order
+and all five complete original materials, then adds180 exact source members
+from that SDK inventory. These180 are distinct from the1378 captured
+CMake-plan additions; they are not claimed to all occur in the current2925
+planned-source set. The fixed Git/source and SDK-lock raw hashes agree for
+each addition.179 preserve their original Apache-2.0 WITH LLVM-exception SPDX
+headers. `llvm/lib/CodeGen/AsmPrinter/DIEHashAttributes.def` has no local
+header and is recorded under the complete LLVM project grant, with no invented
+SPDX, after the existing40 relevant ancestor checks. Original references to
+algorithms and factual documentation remain attributed. This supplement
+adds no license, source version, target, optional-library or Runtime role.
+The resulting6952-entry registration leaves exactly the copied-table path
+below unresolved in the SDK source-membership join, with no raw-hash mismatch.
+The SDK reader rejects it before reading the first external SDK body.
+
+The M14 direct-source static configure exposed four mandatory templates:
+`llvm/include/module.modulemap.build`,
+`llvm/tools/llvm-config/BuildVariables.inc.in`, and the two
+`llvm/utils/llvm-lit/llvm-lit.in` and `llvm-lit.cmd.in` wrappers. The finite
+supplement appends their exact four objects to make6956 entries, preserving all
+prior6952 objects in order and all five original legal materials. Their fixed
+base and source blobs agree; ordinary physical bytes match their strict UTF-8
+Git objects without normalization. BuildVariables retains its original Apache
+SPDX header. The other three have no local SPDX and use the explicit LLVM
+project grant, which includes configuration files, after checking the seven
+relevant ancestors and complete original texts for both stated third-party
+exception mechanisms. No SPDX is invented or file-specific exception expanded.
+
+Direct-source preconfigure classification includes selected `.in` templates and
+`module.modulemap.build` as well as the existing CMake inputs. It does not
+discover or register another path: every selected configuration input still
+passes the fixed registration, physical-byte and notice checks before CMake.
+Existing test/example/documentation exclusions and SDK configuration kinds and
+physical membership remain unchanged. Registration and template generation
+grant no permission to execute llvm-lit or prove a configured/link closure;
+actual CMake/Ninja dependencies must still reconcile before a target build.
+
+M14's actual static Configure declarations exposed1190 additional fixed Git
+blobs needed for source presence, rather than the earlier360 first-missing
+diagnostics. The finite supplement appends1190 inspected objects to make8146
+entries, preserving the prior6956 objects in order and all five original
+materials. Every physical file matches its fixed Git blob and strict UTF-8 raw
+hash.1174 retain their original Apache SPDX header;16 have no local SPDX and
+use the explicit original project grant without inventing an annotation.
+The370 relevant ancestor directories contain only the original root, LLVM and
+MLIR project licenses. Complete original leading attributions remain intact.
+
+ComplexToStandard and PolynomialApproximation retain their complete original
+Apache headers and verbatim Cephes, StackOverflow and mathematical-paper
+citations. The existing algorithm-source attribution rule covers their fixed
+coefficients and MLIR expressions; a formula or algorithm reference alone does
+not establish copied implementation or additional license terms. This is no
+claim of an independent external-code license audit or a new license grant.
+GPU EliminateBarriers retains its complete original Polygeist implementation
+attribution and existing Apache LLVM expression. The official Polygeist
+[LICENSE](https://github.com/llvm/Polygeist/blob/c0fd591a92ba5ed26ecd0a8df4732c71d6730255/LICENSE)
+(blob `117691b3b9af2be33ef2f5e3aa4e28a43ec4a616`,13205 bytes, SHA256
+`f2db94d30c9657f2556732f3e80973d49fc4d093eede0a54ffda88152296f695`)
+is unchanged at the snapshot before LLVM's July2023 adaptation. Its complete
+Apache2.0 and LLVM exception terms match the retained MLIR license after
+whitespace comparison and excluding the separate project-introduction sentence;
+the two raw originals differ and remain independently retained. This exact
+source supplement preserves all8144 prior objects and the five materials.
+The exact MPIToLLVM supplement appends one object, preserving all8145 prior
+objects and the five original materials. Its selected expression is
+`(Apache-2.0 WITH LLVM-exception) AND mpich2`, limited to this fixed source and
+compiler-side-M01 direct-static role. The original LLVM SPDX header and complete
+Argonne/MPICH pointer remain unchanged. The complete official
+[COPYRIGHT](https://github.com/pmodels/mpich/blob/e0b3d1dd2c62c80048e5fc3b60d0b24e0d2a863d/COPYRIGHT)
+is retained verbatim in the descriptor:1893 bytes, blob
+`f33ad73b89bf3e3a967fba9650df0e6d28e5a569`, SHA256
+`60fc73dd0d561c98aa1987fcd68c57be2fcb55add62ad69d3a35f42e10967399`.
+Its separate terms and prologue/source-listing notice obligations are retained;
+the original Apache header does not erase them. This exact scoped adoption
+does not expand the global license list or grant another file/version/role.
+
+Only the independently pinned build lock creates an opaque staged-source policy.
+The sole supported descriptor
+kind is `prepend-mpich-copyright-comment-v1`, limited to the exact MPIToLLVM path,
+source commit and compiler-side-M01 direct-static role. Unknown fields, caller
+overrides, other roles, notice hash changes and comment-terminator injection
+refuse before source consumption. Owned synthetic fixtures are not approvals.
+The policy captures identity matching privately and enforces it whenever the MPI
+mapping is requested, derived or qualified, including a full-source route that
+could contain it. Unrelated selected sources retain their existing scope; the
+legal reader's complete immutable-source checks remain in force.
+
+The adopted descriptor keeps the original31514-byte source identity separate
+from its33414-byte staged identity. Their SHA256 values are
+`03f6877003751099bbfcf06b1baf976969f74f9b040a09544f97279ae6590349` and
+`fb3c5a436b11efc34f1ba733636688d1f377c673504da4e2fa2f4be0b26ba7c0`.
+The original blob/raw SHA and complete attribution remain intact. After
+qualifying those bytes, materialization prepends a C++ comment containing the
+independently identified original MPICH
+COPYRIGHT to the separate staged copy. The descriptor binds the original source,
+complete notice and derived byte count/SHA. This is an explicit transformation,
+not a checkout normalization or an unchanged Git object. Precompile and dependency
+guards check actual staged bytes; source snapshots and traces retain both
+identities, while the source Build Input Set hashes the actual staged input.
+
+Notice retention also covers a transformed file materialized only for configure
+presence, with a separate `materializedSourceNotices` provenance section. It does
+not invent target compiler consumption. The original source stays unmodified;
+the complete notice accompanies the staged prologue and its retained provenance.
+This registration resolves the exact source-specific legal/notice input gap.
+Fresh actual staging/configuration still requires the applicable phase release;
+it has not run for this registration. SDK/native transfer, final dependency
+closure, compilation, source redistribution, execution and Runtime remain
+unqualified by this adoption.
+
+This supplement permits conditional source presence for the fixed direct static
+Core configuration. It grants no optional-library/backend compilation,
+generated/installed output, execution or Runtime role. Source selection still
+requires the current physical, notice and hash checks; a complete actual Ninja
+plan and final compiler/link dependencies remain unqualified. SDKv2 inventory,
+its historical provenance, and the copied X86 table refusal remain unchanged.
+
+The original native/full-source copied table remains unregistered:
+`llvm/lib/Target/X86/MCTargetDesc/X86InstComments.cpp`. Although its header has
+the standard LLVM SPDX declaration, its TernlogFunctions table is attributed
+as copied from an external DougallJ Gist. The exact upstream source and
+introduction commit are known, but a source-specific grant for that copied
+material has not been established. The strict reader therefore still rejects
+this path, and the complete normal Core source build remains blocked. This
+does not revoke the independently established provenance of other entries.
+
 Shared TargetParser generation consumes some AArch64, ARM, PowerPC and RISCV
 TableGen inputs even with only the X86 backend enabled. Their exact discovered
 dependencies are registered individually. Four files without local license

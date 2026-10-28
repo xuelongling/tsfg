@@ -1,0 +1,309 @@
+{
+  "family": "tsfg.m26d-independent-array-origin-cold-oracle",
+  "version": 1,
+  "status": "FROZEN_STATIC_EXPECTATIONS_BEFORE_COLD_SUT_OUTPUT",
+  "approvedPlan": {
+    "path": "E:/ws/pro_tsfg/.scratch/tsfg_r03/M26d-array-readspan-return-checks-20261019/oracle/cold-array-path-plan.json",
+    "bytes": 18187,
+    "sha256": "c1985d5eacb95622a5f3f2f2bc19be39c118e2a9a023a043114f454ac2247280"
+  },
+  "gold": {
+    "file": "readspan-array-origin-return-slots-forward-oracle.json",
+    "bytes": 377329,
+    "sha256": "6a5bca48d0764f50ba1ddc2b32048267962d666544f7538f73d8f59cb84921aa"
+  },
+  "actualManifest": {
+    "path": "E:/ws/pro_tsfg/.scratch/tsfg_r03/M26d-array-readspan-return-checks-20261019/actual-source-slots-forward/manifest.json",
+    "bytes": 5943,
+    "sha256": "1aba4fb0aa1d65998c0cae9b4d46d52f400031cd35cdcb5bf6328f79ec839dca"
+  },
+  "method": "Only frozen independent slots/forward gold, approved cold plan and static public boundary order; author read no new SUT output and runs no SUT. No legacy39/helper/production edits. Readers receive canonical forged data bytes, all data-based report hirDigest values match the supplied HIR, all six semantic fixed variants use exact v4 per-row/publication rehash. Accessors are deliberately non-JSON and never canonicalized; they retain clean original wire bytes and reject before any getter read.",
+  "expectedDiagnostics": {
+    "hirInvalidNoPrimary": {
+      "code": "r03-array-hir-invalid",
+      "ruleId": "r01-input-boundary",
+      "phase": "hir",
+      "message": "r03-array-hir-invalid: invalid selected Array HIR"
+    },
+    "hirInvalidAtSelectCall": {
+      "code": "r03-array-hir-invalid",
+      "ruleId": "r01-input-boundary",
+      "phase": "hir",
+      "message": "r03-array-hir-invalid: invalid selected Array HIR",
+      "primary": {
+        "sourceId": "/readspan26d-semantic/app.ts",
+        "start": 342,
+        "end": 363
+      }
+    },
+    "hirContextNoPrimary": {
+      "code": "r03-array-hir-context",
+      "ruleId": "r01-input-boundary",
+      "phase": "hir",
+      "message": "r03-array-hir-context: invalid selected Array HIR"
+    },
+    "arrayCallsIdentity": {
+      "code": "r03-d-array-call-effects-identity",
+      "ruleId": "r01-call-contract",
+      "phase": "analysis",
+      "message": "r03-d-array-call-effects-identity: invalid fixed Array owner publication"
+    },
+    "arrayCallsBase": {
+      "code": "r03-d-array-call-effects",
+      "ruleId": "r01-call-contract",
+      "phase": "analysis",
+      "message": "r03-d-array-call-effects: invalid fixed Array owner publication"
+    },
+    "arrayCallsReport": {
+      "code": "r03-d-array-call-effects-report",
+      "ruleId": "r01-call-contract",
+      "phase": "analysis",
+      "message": "r03-d-array-call-effects-report: invalid fixed Array owner publication"
+    },
+    "selectReturnOriginContract": {
+      "code": "r03-d-array-call-effects-contract",
+      "ruleId": "r01-call-contract",
+      "phase": "analysis",
+      "message": "r03-d-array-call-effects-contract: invalid fixed Array owner publication",
+      "functionId": "sha256:770ea8125d8a6a0ae1618571ac42468f5ce382490bf29f75846eff7300e0e551",
+      "facet": "returnOrigin",
+      "primary": {
+        "sourceId": "/readspan26d-semantic/app.ts",
+        "start": 0,
+        "end": 146
+      }
+    },
+    "selectRead3Contract": {
+      "code": "r03-d-array-call-effects-contract",
+      "ruleId": "r01-call-contract",
+      "phase": "analysis",
+      "message": "r03-d-array-call-effects-contract: invalid fixed Array owner publication",
+      "functionId": "sha256:770ea8125d8a6a0ae1618571ac42468f5ce382490bf29f75846eff7300e0e551",
+      "facet": "parameter:3:read",
+      "primary": {
+        "sourceId": "/readspan26d-semantic/app.ts",
+        "start": 0,
+        "end": 146
+      }
+    }
+  },
+  "anchors": {
+    "name": "mixed-slots-repeated-owner-then-view-helper",
+    "selectFunctionId": "sha256:770ea8125d8a6a0ae1618571ac42468f5ce382490bf29f75846eff7300e0e551",
+    "selectRange": {
+      "start": 0,
+      "end": 146
+    },
+    "actualFullSlot": 3,
+    "caller": "sha256:72a0679adf4de745af652cccc13e61d45f4c8a41596cae8551841514bdd942e6",
+    "selectCallRange": {
+      "start": 342,
+      "end": 363
+    },
+    "oldFamilyId": "sha256:11522a7dc1baf2f5b1a2d69704543925201cb230a44e5fb77da16e4e0d77ee7e",
+    "newFamilyId": "sha256:65823a8557ba8a09372394ee80ec1ca721b16ddb64b0f1c4064a407294be33ff",
+    "oldLastUse": 2,
+    "newCreate": 3,
+    "newUses": [
+      5,
+      6,
+      7
+    ],
+    "newLastUse": 7
+  },
+  "matrices": {
+    "hirFive": [
+      "buildHir",
+      "verifyHir",
+      "printHir",
+      "readHir",
+      "lowerHir"
+    ],
+    "callsFour": [
+      "analyzeArrayCalls",
+      "verifyArrayCalls",
+      "printArrayCalls",
+      "readArrayCalls"
+    ],
+    "hirGetterObjectReject": [
+      "verifyHir",
+      "printHir",
+      "lowerHir",
+      "analyzeArrayCalls",
+      "verifyArrayCalls",
+      "printArrayCalls",
+      "readArrayCalls"
+    ]
+  },
+  "cases": [
+    {
+      "id": "plan-returned-slot",
+      "source": "mixed",
+      "matrix": "forged-hir",
+      "diagnosticRef": "hirInvalidAtSelectCall",
+      "change": "Only plan.calls[select].returnedView.index 3 -> 1; mirror report.calls and set report.hirDigest=SHA256(JCS(forgedHir)). Full fixed context stays correct."
+    },
+    {
+      "id": "plan-returned-owner",
+      "source": "mixed",
+      "matrix": "forged-hir",
+      "diagnosticRef": "hirInvalidAtSelectCall",
+      "change": "Replace plan.calls[select].returnedView.owner with exact select parameter3 owner in the wrong caller domain; mirror report.calls and recompute report.hirDigest."
+    },
+    {
+      "id": "call-result-root-owner",
+      "source": "mixed",
+      "matrix": "forged-hir",
+      "diagnosticRef": "hirInvalidNoPrimary",
+      "change": "Replace caller new-root.owner with select parameter3 owner; keep view/event identities and correct fixed context; recompute report.hirDigest."
+    },
+    {
+      "id": "call-result-family-id",
+      "source": "mixed",
+      "matrix": "forged-hir",
+      "diagnosticRef": "hirInvalidNoPrimary",
+      "change": "Replace new-family viewId with sha256: plus64 zeroes consistently in its root, grouped uses, new-create/result-alias/read events. Preserve source path/ranges and owners; recompute report.hirDigest."
+    },
+    {
+      "id": "merge-owner-equal-families",
+      "source": "mixed",
+      "matrix": "forged-hir",
+      "diagnosticRef": "hirInvalidNoPrimary",
+      "change": "Wrongly keep one caller old family, transfer w/q bindings and uses/events into it and omit the separate callResult root. Its backing owner equals the real new family, which must not authorize merging. Recompute report.hirDigest."
+    },
+    {
+      "id": "last-use-and-use-events",
+      "source": "mixed",
+      "matrix": "forged-hir",
+      "diagnosticRef": "hirInvalidNoPrimary",
+      "change": "Plausibly shorten new family useEvents [5,6,7] -> [5,6] and lastUseEvent7 -> 6, retaining final source read event. Recompute report.hirDigest."
+    },
+    {
+      "id": "call-result-create-origin",
+      "source": "mixed",
+      "matrix": "forged-hir",
+      "diagnosticRef": "hirInvalidNoPrimary",
+      "change": "Change new root.origin.createEvent3 -> 1 (the producing effect); other root/event identity stays same. Recompute report.hirDigest."
+    },
+    {
+      "id": "call-result-event-order",
+      "source": "mixed",
+      "matrix": "forged-hir",
+      "diagnosticRef": "hirInvalidNoPrimary",
+      "change": "Swap optional grouped completion2 and new-create3, renumber their sequence fields and the new root.createEvent to2; retain original full call/ranges. Root origin mismatch is encountered first, so no primary. Recompute report.hirDigest."
+    },
+    {
+      "id": "call-result-event-call-index",
+      "source": "mixed",
+      "matrix": "forged-hir",
+      "diagnosticRef": "hirInvalidAtSelectCall",
+      "change": "Change only new-create event.callIndex0 -> 1, a real but different ordinary call. Recompute report.hirDigest."
+    },
+    {
+      "id": "call-result-event-parameter-index",
+      "source": "mixed",
+      "matrix": "forged-hir",
+      "diagnosticRef": "hirInvalidAtSelectCall",
+      "change": "Change only new-create event.parameterIndex3 -> 1, a real original Array slot. Recompute report.hirDigest."
+    },
+    {
+      "id": "bound-result-null",
+      "source": "mixed",
+      "matrix": "forged-hir",
+      "diagnosticRef": "hirInvalidNoPrimary",
+      "change": "Change bound callResult root.binding and its create-event.binding to null; retain actual w declaration, q alias and all original source. Recompute report.hirDigest."
+    },
+    {
+      "id": "tail-result-nonnull",
+      "source": "forward",
+      "matrix": "forged-hir",
+      "diagnosticRef": "hirInvalidNoPrimary",
+      "change": "Change forward2 ephemeral root.binding and corresponding new-create/return bindings from null to its actual Array parameter BindingId. No synthetic binding or source edits. Recompute report.hirDigest."
+    },
+    {
+      "id": "plan-publication-hash",
+      "source": "mixed",
+      "matrix": "forged-hir",
+      "diagnosticRef": "hirContextNoPrimary",
+      "change": "Change plan.publication.publishedDigest to a different valid sha256 and recompute report.hirDigest only; fixed context remains complete and correct."
+    },
+    {
+      "id": "hir-descriptor-identity-hash",
+      "source": "mixed",
+      "matrix": "forged-hir",
+      "diagnosticRef": "hirInvalidNoPrimary",
+      "change": "Change hir.format.schemaHash to a different valid sha256, keep family/version/current Source bytes/context, recompute report.hirDigest. This is selected descriptor identity, not an API/version pseudo-negative."
+    },
+    {
+      "id": "return-slot-array1",
+      "source": "mixed",
+      "matrix": "contract-all-nine",
+      "diagnosticRef": "selectReturnOriginContract",
+      "change": "select.upper.returnOrigin={kind:parameter,index:1}; keep full original parameter slots1,3,4 and flags."
+    },
+    {
+      "id": "return-slot-view4",
+      "source": "mixed",
+      "matrix": "contract-all-nine",
+      "diagnosticRef": "selectReturnOriginContract",
+      "change": "select.upper.returnOrigin={kind:parameter,index:4}; this is a real nominal ReadSpan slot, while actual returned owner source is original Array slot3."
+    },
+    {
+      "id": "return-slot-scalar0",
+      "source": "mixed",
+      "matrix": "identity-five-four",
+      "change": "select.upper.returnOrigin={kind:parameter,index:0}; real f64 slot remains scalar despite correct context version/shape/digests."
+    },
+    {
+      "id": "return-slot-scalar2",
+      "source": "mixed",
+      "matrix": "identity-five-four",
+      "change": "select.upper.returnOrigin={kind:parameter,index:2}; real u32 slot remains scalar despite correct context version/shape/digests."
+    },
+    {
+      "id": "return-null-empty-authorization",
+      "source": "mixed",
+      "matrix": "contract-all-nine",
+      "diagnosticRef": "selectReturnOriginContract",
+      "change": "select.upper.returnOrigin=null; null is valid empty authorization, not permission to infer a returned slot."
+    },
+    {
+      "id": "required-read-undercoverage",
+      "source": "mixed",
+      "matrix": "contract-all-nine",
+      "diagnosticRef": "selectRead3Contract",
+      "change": "Keep exact returnOrigin3, set only select.upper.parameters[index3].read=false. Actual intrinsic read remains required even if a later use changes."
+    },
+    {
+      "id": "context-row-digest",
+      "source": "mixed",
+      "matrix": "identity-five-four",
+      "change": "Keep complete correct body/slots/version and use a different valid SHA for select row.digest; recompute publication expectedDigest around the entire mutated row table, so only the per-row content digest is invalid."
+    },
+    {
+      "id": "report-only-returned-owner",
+      "source": "mixed",
+      "matrix": "report-only",
+      "change": "Keep original HIR/actual packet/context and correct report.hirDigest=SHA256(JCS(originalHir)), forge report.calls[select].returnedView.owner to a wrong parameter owner; all version/hash fields otherwise current."
+    },
+    {
+      "id": "hir-call-result-owner-getter",
+      "source": "mixed",
+      "matrix": "hir-getter",
+      "change": "On a cloned mixed candidate replace only new-root.owner with enumerable accessor; preserve the original getter function reference and increment counter if invoked. Do not serialize this object. Object-taking HIR/report boundaries must reject before reading it."
+    },
+    {
+      "id": "fixed-return-origin-getter",
+      "source": "mixed",
+      "matrix": "context-getter",
+      "change": "Replace select.upper.returnOrigin with enumerable accessor in otherwise current fixed context. Budget/shape preflight must not invoke it. Do not compute JCS/digests through the accessor."
+    }
+  ],
+  "expectedTAP": {
+    "originalFacts": 2,
+    "mutantParents": 24,
+    "publicSeamChildren": 216,
+    "total": 242
+  },
+  "expectationStatus": "Expected outcomes are not observed passes. Any contrary actual result is retained for independent analysis, never used to rewrite this literal."
+}

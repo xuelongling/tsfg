@@ -1,0 +1,37 @@
+{
+  "sourceSha256": "845e8a6f8ab49b635e4d01bfbcf869c7a4469949e46f5e58046f4db0b1b41bde",
+  "packetSha256": "c883ec80681f116c2d6409b5f216958639dfbdd13bca9c7aa872676fc9945f46",
+  "inputAuthority": "existing complete public Source facts; source-level expectation frozen before this consumer RED and implementation",
+  "expected": {
+    "status": "error",
+    "code": "r03-d-readspan-structural-conflict",
+    "selectedOwner": {
+      "parameterFunction": "first",
+      "parameterName": "b",
+      "callerFunction": "run",
+      "callerAllocationBinding": "b",
+      "excludedPriorAllocationBinding": "a"
+    },
+    "write": {
+      "text": "o.h.span = readSpan(b, 0, 1)",
+      "start": 133,
+      "end": 161
+    },
+    "primary": {
+      "text": "b.length = 0",
+      "start": 163,
+      "end": 175
+    },
+    "lastUse": {
+      "text": "o.h.span[0]",
+      "start": 184,
+      "end": 195
+    },
+    "rules": [
+      "The current actual H receiver behind o.h shares its reference field plane with the caller",
+      "The strong nested field write selects the B Span for the later normal read; old A does not supply that read",
+      "B resize occurs before the actual last use and must diagnose the callee resize, not generic origin/context pending",
+      "No static type, Published effect, frame token, layout count or old plan supplies the B instance"
+    ]
+  }
+}

@@ -1,0 +1,27 @@
+{
+  "schema": "tsfg.managed-string-concat-oracle.v1",
+  "basis": "Independent literal UTF16 code units and canonical WTF8 bytes; R01 Q10 and ADR0019; no SUT output",
+  "vectors": [
+    {"id":"empty","leftUnits":[],"leftBytes":[],"rightUnits":[],"rightBytes":[],"resultUnits":[],"resultBytes":[]},
+    {"id":"empty-nul","leftUnits":[],"leftBytes":[],"rightUnits":[0],"rightBytes":[0],"resultUnits":[0],"resultBytes":[0]},
+    {"id":"nul-empty","leftUnits":[0],"leftBytes":[0],"rightUnits":[],"rightBytes":[],"resultUnits":[0],"resultBytes":[0]},
+    {"id":"ascii","leftUnits":[65,66],"leftBytes":[65,66],"rightUnits":[67,68],"rightBytes":[67,68],"resultUnits":[65,66,67,68],"resultBytes":[65,66,67,68]},
+    {"id":"two-three-byte","leftUnits":[2047],"leftBytes":[223,191],"rightUnits":[2048],"rightBytes":[224,160,128],"resultUnits":[2047,2048],"resultBytes":[223,191,224,160,128]},
+    {"id":"min-split-pair","leftUnits":[55296],"leftBytes":[237,160,128],"rightUnits":[56320],"rightBytes":[237,176,128],"resultUnits":[55296,56320],"resultBytes":[240,144,128,128]},
+    {"id":"emoji-split-pair","leftUnits":[55357],"leftBytes":[237,160,189],"rightUnits":[56832],"rightBytes":[237,184,128],"resultUnits":[55357,56832],"resultBytes":[240,159,152,128]},
+    {"id":"max-split-pair","leftUnits":[56319],"leftBytes":[237,175,191],"rightUnits":[57343],"rightBytes":[237,191,191],"resultUnits":[56319,57343],"resultBytes":[244,143,191,191]},
+    {"id":"prefix-suffix-pair","leftUnits":[65,55296],"leftBytes":[65,237,160,128],"rightUnits":[56320,90],"rightBytes":[237,176,128,90],"resultUnits":[65,55296,56320,90],"resultBytes":[65,240,144,128,128,90]},
+    {"id":"high-empty","leftUnits":[55296],"leftBytes":[237,160,128],"rightUnits":[],"rightBytes":[],"resultUnits":[55296],"resultBytes":[237,160,128]},
+    {"id":"empty-low","leftUnits":[],"leftBytes":[],"rightUnits":[56320],"rightBytes":[237,176,128],"resultUnits":[56320],"resultBytes":[237,176,128]},
+    {"id":"high-high","leftUnits":[55296],"leftBytes":[237,160,128],"rightUnits":[55357],"rightBytes":[237,160,189],"resultUnits":[55296,55357],"resultBytes":[237,160,128,237,160,189]},
+    {"id":"low-high","leftUnits":[56320],"leftBytes":[237,176,128],"rightUnits":[55296],"rightBytes":[237,160,128],"resultUnits":[56320,55296],"resultBytes":[237,176,128,237,160,128]},
+    {"id":"low-low","leftUnits":[56320],"leftBytes":[237,176,128],"rightUnits":[57343],"rightBytes":[237,191,191],"resultUnits":[56320,57343],"resultBytes":[237,176,128,237,191,191]},
+    {"id":"nul-interrupts-pair","leftUnits":[55296,0],"leftBytes":[237,160,128,0],"rightUnits":[56320],"rightBytes":[237,176,128],"resultUnits":[55296,0,56320],"resultBytes":[237,160,128,0,237,176,128]},
+    {"id":"no-normalization","leftUnits":[101],"leftBytes":[101],"rightUnits":[769],"rightBytes":[204,129],"resultUnits":[101,769],"resultBytes":[101,204,129]},
+    {"id":"precomposed-distinct","leftUnits":[233],"leftBytes":[195,169],"rightUnits":[],"rightBytes":[],"resultUnits":[233],"resultBytes":[195,169]},
+    {"id":"bmp-boundaries","leftUnits":[127,128,2047],"leftBytes":[127,194,128,223,191],"rightUnits":[2048,55295,57344,65535],"rightBytes":[224,160,128,237,159,191,238,128,128,239,191,191],"resultUnits":[127,128,2047,2048,55295,57344,65535],"resultBytes":[127,194,128,223,191,224,160,128,237,159,191,238,128,128,239,191,191]},
+    {"id":"two-existing-pairs","leftUnits":[55357,56832],"leftBytes":[240,159,152,128],"rightUnits":[55296,56320],"rightBytes":[240,144,128,128],"resultUnits":[55357,56832,55296,56320],"resultBytes":[240,159,152,128,240,144,128,128]},
+    {"id":"join-before-existing-pair","leftUnits":[55296],"leftBytes":[237,160,128],"rightUnits":[56320,55296,56320],"rightBytes":[237,176,128,240,144,128,128],"resultUnits":[55296,56320,55296,56320],"resultBytes":[240,144,128,128,240,144,128,128]},
+    {"id":"join-after-existing-pair","leftUnits":[55296,56320,56319],"leftBytes":[240,144,128,128,237,175,191],"rightUnits":[57343],"rightBytes":[237,191,191],"resultUnits":[55296,56320,56319,57343],"resultBytes":[240,144,128,128,244,143,191,191]}
+  ]
+}

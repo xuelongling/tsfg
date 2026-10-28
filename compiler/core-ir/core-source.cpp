@@ -9,7 +9,7 @@ bool validUtf8(llvm::StringRef text) {
 bool validSourcePath(llvm::StringRef path, bool allowDeclarations) {
   if (path.empty() || path.size() > 4096 || !path.starts_with("/") || !path.ends_with(".ts") ||
       (!allowDeclarations && path.ends_with(".d.ts")) || path.contains('\0') ||
-      path.contains('\\') || path.contains(':') || !validUtf8(path)) return false;
+      path.contains('\\') || !validUtf8(path)) return false;
   path = path.drop_front();
   while (true) {
     auto [component, remaining] = path.split('/');

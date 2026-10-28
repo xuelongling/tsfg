@@ -1,0 +1,30 @@
+{
+  "family": "tsfg.holder-productive-flow-independent-expected",
+  "version": 1,
+  "cases": [
+    {
+      "name": "holder-live-fallthrough",
+      "source": {
+        "name": "holder-live-fallthrough",
+        "path": "E:/ws/pro_tsfg/.scratch/tsfg_r03/M25-source-generic-array-checks-20261022/holder-live-fallthrough-source.ts",
+        "bytes": 295,
+        "sha256": "8402a3f17e71dfe9a94258d35681f06b8f9a39da6949f4145a55d19881e74f59"
+      },
+      "expectedStatus": "ok",
+      "semantic": "Only the live else arm supplies again=false; the then return cannot erase that truth. Every real recursive continuation reaches a productive Span read. No array values are evaluated.",
+      "required": "Consume original caller allocation a for all actual field uses; verifyHir and print/read roundtrip pass. No synthetic family or arbitrary pending accepted."
+    },
+    {
+      "name": "holder-once-boolean-loop",
+      "source": {
+        "name": "holder-once-boolean-loop",
+        "path": "E:/ws/pro_tsfg/.scratch/tsfg_r03/M25-source-generic-array-checks-20261022/holder-once-boolean-loop-source.ts",
+        "bytes": 274,
+        "sha256": "ca870421e26abd983af804cb1c8fd1288ee510418af9430d0b8f067031e3af01"
+      },
+      "expectedStatus": "ok",
+      "semantic": "The false child enters while once, sets again=true, then the real boolean condition becomes false and reaches the Span read. First condition true is not an invariant true proof.",
+      "required": "Consume original caller allocation a for all actual field uses; verifyHir and print/read roundtrip pass. No synthetic family or arbitrary pending accepted."
+    }
+  ]
+}

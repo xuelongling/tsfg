@@ -1,0 +1,79 @@
+{
+  "family": "tsfg.finite-array-incoming-source-expectation",
+  "version": 1,
+  "authority": "Hand-derived solely from the frozen Source text and existing successful dense-store/read semantics, before the new packet or consumer output exists.",
+  "source": {
+    "path": "E:/ws/pro_tsfg/.scratch/tsfg_r03/M25-source-generic-array-checks-20261022/ARRAY-CALLER-ENTRY-HISTORY-PUBLIC01-source.ts",
+    "bytes": 256,
+    "sha256": "49e8a3038cfca9e6b979e6c759b77cf054183509b682fd04be86d5f0a454e3c1",
+    "text": "function read(a:(i32|undefined)[],i:u32):i32|undefined{return a[i];}\nexport function runU():i32|undefined{const a:(i32|undefined)[]=[1];a[0]=undefined;return read(a,0);}\nexport function runI():i32|undefined{const b:(i32|undefined)[]=[2];return read(b,0);}\n"
+  },
+  "inputStatus": "prepared exact Source; public checked facts not produced yet; no Source execution qualification",
+  "helper": "read",
+  "callers": [
+    "runU",
+    "runI"
+  ],
+  "index": {
+    "value": 0,
+    "authority": "Every actual direct caller passes literal 0; helper is internal, not a host entry."
+  },
+  "helperRead": [
+    62,
+    66
+  ],
+  "preceding": [
+    {
+      "caller": "runU",
+      "kind": "store",
+      "origin": [
+        136,
+        150
+      ],
+      "rhs": [
+        141,
+        150
+      ],
+      "types": [
+        "undefined"
+      ]
+    },
+    {
+      "caller": "runI",
+      "kind": "initial",
+      "origin": [
+        234,
+        235
+      ],
+      "types": [
+        "i32"
+      ]
+    }
+  ],
+  "excluded": [
+    {
+      "caller": "runU",
+      "kind": "initial",
+      "origin": [
+        133,
+        134
+      ],
+      "reason": "The successful same-index undefined write precedes the call and replaces this initial version."
+    }
+  ],
+  "definitionReadTypes": [
+    "i32",
+    "undefined"
+  ],
+  "fixedResultTypes": [
+    "i32",
+    "undefined"
+  ],
+  "invariants": [
+    "One canonical helper read meets all real caller entry paths, not just the first caller processed.",
+    "Each selected version stays bound to its own original successful write/initial operand and Source anchor.",
+    "Both actual call operands, helper body, checked Array reads/stores and fixed definition ABI remain present.",
+    "No assertion of per-caller static return narrowing is required. This is a definition-level incoming memory union, not an executed instance or program result.",
+    "External host resources, absent productive callers and unresolved aliases cannot acquire length/initialization from a carrier or ABI alternative."
+  ]
+}

@@ -7,7 +7,7 @@ import test from "node:test";
 // Public seams: verified native Core CLI and its versioned R04 output.
 const executable = process.env.TSFG_CORE_IR_EXE;
 const sha = value => createHash("sha256").update(value).digest("hex");
-const schema = "6e1a281d385887750208b8ff69339e91407811128ce7ef3e68b43d3b0663c0b8";
+const schema = "fec456a47f509480d96f65e5c03d465c7c204d60f09630e71b19c714d4aaafa7";
 const at = (start = 10, end = 20) => `tsfg_source.start = ${start} : i64, tsfg_source.end = ${end} : i64`;
 const signature = (parameters = [], result = "i32") => sha(`tsfg.signature\0(${parameters.join(",")})->${result}`);
 const id = (name, parameters = [], result = "i32") => sha(`tsfg.function\0/main.ts\0${name}\0${signature(parameters, result)}`);
@@ -15,7 +15,7 @@ const attrs = (name, parameters = [], result = "i32") => `tsfg_core.function_id 
 const entry = `"tsfg_core.fuel"() {event = 1 : i32, ${at(0, 100)}} : () -> ()`;
 const returned = (value = "%value", type = "i32") => `"func.return"(${value}) {${at()}} : (${type}) -> ()`;
 const source = functions => `module attributes {
-  tsfg_core.version = "0.10.0", tsfg_core.bytecode_schema = "sha256:${schema}",
+  tsfg_core.version = "0.12.0", tsfg_core.bytecode_schema = "sha256:${schema}",
   tsfg_core.target = "windows-x86_64-msvc", tsfg_core.triple = "x86_64-pc-windows-msvc",
   tsfg_core.data_layout = "e-m:w-p270:32:32-p271:32:32-p272:64:64-i64:64-i128:128-f80:128-n8:16:32:64-S128",
   tsfg_core.input_identity = "sha256:${sha("owned-input")}", tsfg_core.source_hash = "sha256:${sha("owned-source")}",
@@ -40,7 +40,7 @@ const ok = result => assert.equal(result.status, 0, result.stderr?.toString());
 // Independent reader of the public packet, with literal behavior expectations.
 function wire(packet) {
   assert.equal(packet.subarray(0, 8).toString(), "TSFGTBC0");
-  assert.equal(packet.readUInt32LE(8), 10);
+  assert.equal(packet.readUInt32LE(8), 12);
   assert.equal(packet.subarray(12, 44).toString("hex"), schema);
   assert.equal(packet.readUInt32LE(44), packet.length);
   assert.equal(packet.subarray(48, 80).toString("hex"), sha(packet.subarray(80)));
@@ -53,9 +53,10 @@ function wire(packet) {
   assert.equal(string(), "windows-x86_64-msvc");
   assert.equal(string(), "x86_64-pc-windows-msvc");
   assert.equal(string(), "e-m:w-p270:32:32-p271:32:32-p272:64:64-i64:64-i128:128-f80:128-n8:16:32:64-S128");
-  assert.deepEqual([u16(), u16(), u16(), u16(), u32()], [4, 4, 64, 8, 52]);
+  assert.deepEqual([u16(), u16(), u16(), u16(), u32()], [4, 4, 64, 8, 119]);
   assert.equal(hash(), sha("owned-input")); assert.equal(hash(), sha("owned-source"));
   assert.equal(string(), "/main.ts"); assert.equal(u32(), 100);
+  assert.equal(u8(), 0); // ordinary single-source module mode
   const functions = [], count = u16();
   for (let i = 0; i < count; i++) {
     const identity = hash(), signatureHash = hash(), typeId = hash(), name = string();
@@ -153,7 +154,7 @@ test("Every Core command rejects malformed calls and unused function metadata be
   const input = forward();
   const unused = source(`func.func @unused(%arg: i32) -> i32 attributes {${attrs("unused", ["i32"])}} { ${returned("%arg")} }`);
   const invalids = [
-    input.replace('tsfg_core.version = "0.10.0"', 'tsfg_core.version = "0.4.0"'),
+    input.replace('tsfg_core.version = "0.12.0"', 'tsfg_core.version = "0.4.0"'),
     input.replace(schema, "0".repeat(64)),
     input.replace('tsfg_core.source_path = "/main.ts"', 'tsfg_core.source_path = "/../main.ts"'),
     input.replace('tsfg_core.source_length = 100 : i64', `tsfg_core.source_length = 100 : i64, tsfg_core.function_id = "sha256:${id("first", ["i32"])}"`),
@@ -195,10 +196,10 @@ test("Core enforces bounded function tables and parameter lists at their exact l
   const [fn] = wire(maximalParameters.stdout);
   assert.equal(fn.parameters.length, 64);
   assert.equal(fn.registers, 64);
-  const maximalFunctions = invoke(source(functions(128)), "--emit-bytecode");
+  const maximalFunctions = invoke(source(functions(512)), "--emit-bytecode");
   ok(maximalFunctions);
-  assert.equal(wire(maximalFunctions.stdout).length, 128);
-  for (const invalid of [source(parameterFunction(65)), source(functions(129)), source("")]) {
+  assert.equal(wire(maximalFunctions.stdout).length, 512);
+  for (const invalid of [source(parameterFunction(65)), source(functions(513)), source("")]) {
     const failed = invoke(invalid, "--emit-bytecode");
     assert.equal(failed.status, 3, failed.stderr.toString());
     assert.equal(failed.stdout.length, 0);

@@ -31,7 +31,7 @@ function packet(options={}) {
   const payload=Buffer.concat([
     str("windows-x86_64-msvc"),str("x86_64-pc-windows-msvc"),
     str("e-m:w-p270:32:32-p271:32:32-p272:64:64-i64:64-i128:128-f80:128-n8:16:32:64-S128"),
-    u16(4),u16(4),u16(64),u16(8),u32(52),hash("input"),hash("source"),str("/fixture.ts"),u32(400),u16(2),
+    u16(4),u16(4),u16(64),u16(8),u32(119),hash("input"),hash("source"),str("/fixture.ts"),u32(400),u8(0),u16(2),
     functionBytes("caller",callerSignature,0,100,[1,2],3,[
       instruction(26,0,0,1,0,100),instruction(27,options.resultType??2,2,options.target??1,50,80,options.arguments??[0,1]),
       instruction(2,2,2,0,80,90),
@@ -40,7 +40,7 @@ function packet(options={}) {
       instruction(options.calleeFuel??26,0,0,1,200,300),instruction(2,2,1,0,250,260),
     ]),
   ]);
-  return Buffer.concat([Buffer.from("TSFGTBC0"),u32(10),Buffer.from("6e1a281d385887750208b8ff69339e91407811128ce7ef3e68b43d3b0663c0b8","hex"),u32(80+payload.length),hash(payload),payload]);
+  return Buffer.concat([Buffer.from("TSFGTBC0"),u32(12),Buffer.from("fec456a47f509480d96f65e5c03d465c7c204d60f09630e71b19c714d4aaafa7","hex"),u32(80+payload.length),hash(payload),payload]);
 }
 function invoke(bytes,args=[]) {
   assert.match(process.env.TSFG_VM_EXE,/^E:[\\/]/i);

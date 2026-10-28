@@ -35,6 +35,19 @@ fn observe(host: *runtime.Runtime, module: *const runtime.VerifiedModule, argume
     try std.testing.expectEqual(@as(usize, 0), host.activeRequests());
     return result;
 }
+fn rejectUnchanged(host: *runtime.Runtime, module: *const runtime.VerifiedModule, id: runtime.FunctionId, arguments: []const runtime.TypedValue, capabilities: []const runtime.Capability, expected: []const u8) !void {
+    const before = State.read();
+    const result = runtime.eval_bytecode(host, module, id, arguments, capabilities,
+        .{ .depth = 0, .memory_bytes = 0, .instruction_budget = 0, .semantic_fuel = 0 });
+    const after = State.read();
+    try std.testing.expectEqual(before.environment.mxcsr, after.environment.mxcsr);
+    try std.testing.expectEqual(before.environment.x87_control, after.environment.x87_control);
+    try std.testing.expectEqual(before.status, after.status);
+    try std.testing.expectEqualSlices(u8, &before.x87, &after.x87);
+    try std.testing.expectEqualStrings(expected, result.failed.code);
+    try std.testing.expectEqual(@as(u64, 0), result.failed.fuel_consumed);
+    try std.testing.expectEqual(@as(usize, 0), host.activeRequests());
+}
 fn load(bytes: []const u8) !*runtime.VerifiedModule {
     return switch (runtime.load(std.testing.allocator, bytes)) {
         .loaded => |module| module,
@@ -60,6 +73,11 @@ fn exercise(comptime code: u8, success_bytes: []const u8, trap_bytes: []const u8
     try std.testing.expectEqualStrings("execution-abort", aborted.failed.category);
     const recovered = try observe(&host, success, &args, .{});
     try std.testing.expectEqual(@as(u64, 1), recovered.returned.result.bits());
+    const id = runtime.functions(success)[0].info.function_id;
+    try rejectUnchanged(&host, success, [_]u8{0} ** 32, &args, &.{}, "r05-request-function");
+    try rejectUnchanged(&host, success, id, &.{}, &.{}, "r05-request-arguments");
+    try rejectUnchanged(&host, success, id, &args, &.{.{ .id = 31 }}, "r05-request-capability");
+    try rejectUnchanged(&host, success, id, &args, &.{}, "r01-t-depth");
 }
 
 test "actual VM requests restore caller MXCSR and leave altered x87 status unchanged on the executing thread" {

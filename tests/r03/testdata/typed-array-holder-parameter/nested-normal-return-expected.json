@@ -1,0 +1,331 @@
+{
+  "kind": "Independent Source-to-formal-Core nested normal-return validation expectation",
+  "status": "STATIC PREPARATION ONLY; no new CLI/SDK/Source/guest execution",
+  "main": "e4f6edd6e392c078235765d06f2a2f9612aa957e",
+  "mainTree": "f5ce8b7504358a904c34ad40030de4857a4eafc0",
+  "longBase": "d6b9756656c790664919a21b1834d7988d649255",
+  "actualRoute": {
+    "intake": "compiler/typed-array-facts.mjs readTypedArrayFacts(bytes)",
+    "hir": "compiler/hir.mjs buildHir(facts,{family:tsfg.array-facts-context-candidate,version:2,factsBytes,expectedPackageId},publicationContext)",
+    "publication": "tests/r03/typed-array-publication-fixtures.mjs staticPublication, retaining complete independent fixed upper authority; no actual instance seed",
+    "lowering": "compiler/hir.mjs lowerFormalHir(built.hir,context,publicationContext); only after ordinary verified HIR status ok",
+    "runner": "tests/r03/generic-core-package-capture.mjs invokeCore(input, --canonicalize), TSFG_CORE_IR_EXE and TSFG_TEST_STORAGE supplied by Root",
+    "cli": [
+      "<Root-qualified-Core04-executable>",
+      "--canonicalize"
+    ],
+    "stdin": "exact ordinary producer Core0.12 output, no private candidate/DTO reconstruction",
+    "consumer": "core-command.cpp registers Core dialect and parses MLIR; verifyCoreModule -> finite::verifyModule; generic canonical printer",
+    "accept": {
+      "exit": 0,
+      "stderrBytes": 0,
+      "secondCommand": "--canonicalize",
+      "secondInput": "first exact stdout",
+      "secondOutput": "byte-equal canonical fixed point"
+    },
+    "refuse": {
+      "exit": 3,
+      "stdoutBytes": 0,
+      "note": "A pre-HIR Source rejection is not a C++ CLI rejection; actual negative Core gold must be separately authorized/derived, without bypassing the ordinary producer."
+    }
+  },
+  "existingCases": [
+    {
+      "id": "single-holder-normal-return",
+      "relative": "typed-array-span-storage/85d12f0ac3a08c8940c25d2a7dd3eef1bcf7840993a465feda70831aa283340d-package.json",
+      "token": "return new Holder(readSpan(a,0,1))",
+      "expected": "ordinary producer ok; official Core canonicalize exit0 then exact canonical fixed point",
+      "coverage": "same-frame aggregate return containing a directly created Span; does not enter foreign nested reference cursor",
+      "package": {
+        "path": "E:/ws/pro_tsfg/.scratch/tsfg_r03/worktrees/r03-m25-formal-array-root01/tcfg/tests/r03/testdata/typed-array-span-storage/85d12f0ac3a08c8940c25d2a7dd3eef1bcf7840993a465feda70831aa283340d-package.json",
+        "bytes": 29062,
+        "sha256": "4f54e484e19e751647e15fd7932571538e00ca5d60f20c2bf456b13600170778"
+      },
+      "source": {
+        "bytes": 616,
+        "sha256": "85d12f0ac3a08c8940c25d2a7dd3eef1bcf7840993a465feda70831aa283340d",
+        "anchor": {
+          "start": 156,
+          "end": 190,
+          "text": "return new Holder(readSpan(a,0,1))"
+        }
+      }
+    },
+    {
+      "id": "local-managed-owner-return",
+      "relative": "typed-array-span-storage/cf4a3838eaa0cd571c1cd8ad4a268ecda53f4b3cf198b8885f184913a93f5dfb-package.json",
+      "token": "return new H(readSpan(a,0,1))",
+      "expected": "ordinary producer ok; actual managed typed Array root retained; official Core canonicalize exit0 expected, not yet run",
+      "coverage": "single-level local Array owner retention, not foreign nested object",
+      "package": {
+        "path": "E:/ws/pro_tsfg/.scratch/tsfg_r03/worktrees/r03-m25-formal-array-root01/tcfg/tests/r03/testdata/typed-array-span-storage/cf4a3838eaa0cd571c1cd8ad4a268ecda53f4b3cf198b8885f184913a93f5dfb-package.json",
+        "bytes": 11215,
+        "sha256": "aca22df55b6f43ec9a258c74a1e674c3fb5e0d4dba77fe1b65fb9c2f50809762"
+      },
+      "source": {
+        "bytes": 168,
+        "sha256": "cf4a3838eaa0cd571c1cd8ad4a268ecda53f4b3cf198b8885f184913a93f5dfb",
+        "anchor": {
+          "start": 86,
+          "end": 115,
+          "text": "return new H(readSpan(a,0,1))"
+        }
+      }
+    },
+    {
+      "id": "nested-caller-field-read",
+      "relative": "typed-array-holder-parameter/557183421922732fd587c41773d33f3aaf23fc72dd8529ccf06eb74b2855a7bc-package.json",
+      "token": "o.h.span[0]",
+      "expected": "ordinary producer ok; actual A source; official Core canonicalize exit0 expected, not yet run",
+      "coverage": "actual nested field receiver and entry-call use; helper returns scalar, no aggregate normal-return root",
+      "package": {
+        "path": "E:/ws/pro_tsfg/.scratch/tsfg_r03/worktrees/r03-m25-formal-array-root01/tcfg/tests/r03/testdata/typed-array-holder-parameter/557183421922732fd587c41773d33f3aaf23fc72dd8529ccf06eb74b2855a7bc-package.json",
+        "bytes": 15449,
+        "sha256": "07984692dc9ec054a9bed952df89a2c6e9ff7eda189d4a48595430a569c0f8d1"
+      },
+      "source": {
+        "bytes": 245,
+        "sha256": "557183421922732fd587c41773d33f3aaf23fc72dd8529ccf06eb74b2855a7bc",
+        "anchor": {
+          "start": 130,
+          "end": 141,
+          "text": "o.h.span[0]"
+        }
+      }
+    },
+    {
+      "id": "callee-resize-return-last-use",
+      "relative": "typed-array-span-storage/c7b6c0c87af39d02653c8a2b37090227e442fdf90357b73194e71f32ed8b3be2-package.json",
+      "token": "a.length=0",
+      "expected": "Node r03-d-readspan-structural-conflict at callee resize and later aggregate return/read demand; no Core IR generated by ordinary lowerFormalHir",
+      "coverage": "unsafe resize before aggregate escape, but Source-to-HIR rejects before CLI; cannot claim a C++ negative",
+      "package": {
+        "path": "E:/ws/pro_tsfg/.scratch/tsfg_r03/worktrees/r03-m25-formal-array-root01/tcfg/tests/r03/testdata/typed-array-span-storage/c7b6c0c87af39d02653c8a2b37090227e442fdf90357b73194e71f32ed8b3be2-package.json",
+        "bytes": 13330,
+        "sha256": "3cd4657c3ba3ebf92e13324584b0a0e8073ce77794380c20d35e36b73913afa8"
+      },
+      "source": {
+        "bytes": 199,
+        "sha256": "c7b6c0c87af39d02653c8a2b37090227e442fdf90357b73194e71f32ed8b3be2",
+        "anchor": {
+          "start": 108,
+          "end": 118,
+          "text": "a.length=0"
+        }
+      }
+    },
+    {
+      "id": "independent-unknown-method-entry",
+      "relative": "typed-array-holder-parameter/1dde441db1967ef0a9c49f9ae6848a66b68e50294f1c8a02da070d65fad64c2d-package.json",
+      "token": "x.span[0]",
+      "expected": "Node r03-d-readspan-origin at 297..306 despite one known safe C context; ordinary lowering stops; unknown host entry may not be closed by known caller",
+      "coverage": "existing actual unknown-source negative control, not a foreign nested aggregate return",
+      "package": {
+        "path": "E:/ws/pro_tsfg/.scratch/tsfg_r03/worktrees/r03-m25-formal-array-root01/tcfg/tests/r03/testdata/typed-array-holder-parameter/1dde441db1967ef0a9c49f9ae6848a66b68e50294f1c8a02da070d65fad64c2d-package.json",
+        "bytes": 27575,
+        "sha256": "e662af28b403fd7d323617d680576f4a33c7a966ede881cbf964f06b1821d9ea"
+      },
+      "source": {
+        "bytes": 508,
+        "sha256": "1dde441db1967ef0a9c49f9ae6848a66b68e50294f1c8a02da070d65fad64c2d",
+        "anchor": {
+          "start": 297,
+          "end": 306,
+          "text": "x.span[0]"
+        }
+      }
+    }
+  ],
+  "exactCoverage": {
+    "sufficient": false,
+    "reason": "No existing complete program combines a foreign inner() construction stored in an outer aggregate field with normal return of that outer root. Existing single Holder return and nested scalar read are distinct programs and cannot be spliced.",
+    "newSourceRequirements": [
+      "complete official selected inner call and its actual a operand",
+      "real H and O constructors plus parameter-property field identities",
+      "wrap return of O and caller .h.span[0] UTF16/owned symbols",
+      "negative exact callee Array resize before normal return preserving Source body/order"
+    ],
+    "requestedSourceCases": [
+      {
+        "id": "positive",
+        "path": "E:/ws/pro_tsfg/.scratch/tsfg_r03/M25-formal-array-checks-20261022/nested-normal-return-positive-source.ts",
+        "bytes": 264,
+        "sha256": "c77b564a95855b0806eae40717bf88fa6ecad644dbe2a8226b154fd9432e82ce",
+        "sourceText": "class H{constructor(public span:ReadSpan<i32>){}}\nclass O{constructor(public h:H){}}\nfunction inner(a:i32[]):H{return new H(readSpan(a,0,1));}\nfunction wrap(a:i32[]):O{return new O(inner(a));}\nexport function run():i32{const a:i32[]=[1];return wrap(a).h.span[0];}\n",
+        "expected": {
+          "status": "ok",
+          "code": null,
+          "owner": "actual caller A",
+          "staticSourceFactsDoNotGrantBorrow": true,
+          "allActualSelectedOutcomesMustClose": true
+        },
+        "anchors": {
+          "innerConstruction": {
+            "start": 118,
+            "end": 140,
+            "text": "new H(readSpan(a,0,1))"
+          },
+          "spanCreation": {
+            "start": 124,
+            "end": 139,
+            "text": "readSpan(a,0,1)"
+          },
+          "outerConstruction": {
+            "start": 175,
+            "end": 190,
+            "text": "new O(inner(a))"
+          },
+          "wrapNormalReturn": {
+            "start": 168,
+            "end": 190,
+            "text": "return new O(inner(a))"
+          },
+          "oldCall": null,
+          "newCall": {
+            "start": 244,
+            "end": 251,
+            "text": "wrap(a)"
+          },
+          "resize": null,
+          "lastUse": {
+            "start": 244,
+            "end": 261,
+            "text": "wrap(a).h.span[0]"
+          }
+        },
+        "qualification": "Only full actual Source packets may fill this input. No DTO splicing, second interpreter, guest/IR/native execution or cached allocation identity. The positive cases require actual complete current-field/activation evidence; generic pending does not meet acceptance."
+      },
+      {
+        "id": "activation-independent",
+        "path": "E:/ws/pro_tsfg/.scratch/tsfg_r03/M25-formal-array-checks-20261022/nested-normal-return-activation-independent-source.ts",
+        "bytes": 337,
+        "sha256": "0e1ab858598228d583ee4293f5da169793e5befdfc680ceec7412964dde93eef",
+        "sourceText": "class H{constructor(public span:ReadSpan<i32>){}}\nclass O{constructor(public h:H){}}\nfunction inner(a:i32[]):H{return new H(readSpan(a,0,1));}\nfunction wrap(a:i32[]):O{return new O(inner(a));}\nexport function run():i32{const a:i32[]=[1];const b:i32[]=[2];const old:O=wrap(a);const current:O=wrap(b);a.length=0;return current.h.span[0];}\n",
+        "expected": {
+          "status": "ok",
+          "code": null,
+          "owner": "actual caller B; old A borrow has no later use",
+          "staticSourceFactsDoNotGrantBorrow": true,
+          "allActualSelectedOutcomesMustClose": true
+        },
+        "anchors": {
+          "innerConstruction": {
+            "start": 118,
+            "end": 140,
+            "text": "new H(readSpan(a,0,1))"
+          },
+          "spanCreation": {
+            "start": 124,
+            "end": 139,
+            "text": "readSpan(a,0,1)"
+          },
+          "outerConstruction": {
+            "start": 175,
+            "end": 190,
+            "text": "new O(inner(a))"
+          },
+          "wrapNormalReturn": {
+            "start": 168,
+            "end": 190,
+            "text": "return new O(inner(a))"
+          },
+          "oldCall": {
+            "start": 267,
+            "end": 274,
+            "text": "wrap(a)"
+          },
+          "newCall": {
+            "start": 291,
+            "end": 298,
+            "text": "wrap(b)"
+          },
+          "resize": {
+            "start": 299,
+            "end": 309,
+            "text": "a.length=0"
+          },
+          "lastUse": {
+            "start": 317,
+            "end": 334,
+            "text": "current.h.span[0]"
+          }
+        },
+        "qualification": "Only full actual Source packets may fill this input. No DTO splicing, second interpreter, guest/IR/native execution or cached allocation identity. The positive cases require actual complete current-field/activation evidence; generic pending does not meet acceptance."
+      },
+      {
+        "id": "activation-conflict",
+        "path": "E:/ws/pro_tsfg/.scratch/tsfg_r03/M25-formal-array-checks-20261022/nested-normal-return-activation-conflict-source.ts",
+        "bytes": 337,
+        "sha256": "7abb52af47984076f5505990cb4b607df611a106b1789b1aae8105b9e604f09a",
+        "sourceText": "class H{constructor(public span:ReadSpan<i32>){}}\nclass O{constructor(public h:H){}}\nfunction inner(a:i32[]):H{return new H(readSpan(a,0,1));}\nfunction wrap(a:i32[]):O{return new O(inner(a));}\nexport function run():i32{const a:i32[]=[1];const b:i32[]=[2];const old:O=wrap(a);const current:O=wrap(b);b.length=0;return current.h.span[0];}\n",
+        "expected": {
+          "status": "error",
+          "code": "r03-d-readspan-structural-conflict",
+          "owner": "actual caller B in both selected view use and structural effect",
+          "staticSourceFactsDoNotGrantBorrow": true,
+          "allActualSelectedOutcomesMustClose": true
+        },
+        "anchors": {
+          "innerConstruction": {
+            "start": 118,
+            "end": 140,
+            "text": "new H(readSpan(a,0,1))"
+          },
+          "spanCreation": {
+            "start": 124,
+            "end": 139,
+            "text": "readSpan(a,0,1)"
+          },
+          "outerConstruction": {
+            "start": 175,
+            "end": 190,
+            "text": "new O(inner(a))"
+          },
+          "wrapNormalReturn": {
+            "start": 168,
+            "end": 190,
+            "text": "return new O(inner(a))"
+          },
+          "oldCall": {
+            "start": 267,
+            "end": 274,
+            "text": "wrap(a)"
+          },
+          "newCall": {
+            "start": 291,
+            "end": 298,
+            "text": "wrap(b)"
+          },
+          "resize": {
+            "start": 299,
+            "end": 309,
+            "text": "b.length=0"
+          },
+          "lastUse": {
+            "start": 317,
+            "end": 334,
+            "text": "current.h.span[0]"
+          }
+        },
+        "qualification": "Only full actual Source packets may fill this input. No DTO splicing, second interpreter, guest/IR/native execution or cached allocation identity. The positive cases require actual complete current-field/activation evidence; generic pending does not meet acceptance."
+      }
+    ],
+    "sourceScope": "Root-authorized exact three complete programs frozen before Source capture. The former one-resize-in-wrap proposal is not a requested input; requested activation negatives use the same two actual wrap calls and differ only caller resize A/B.",
+    "requiredSourceFacts": [
+      "same two actual selected wrap call occurrences with ordered A/B arguments in activation cases",
+      "one lexical inner H construct and O constructor call reached under each actual wrap invocation",
+      "H.span and O.h parameter-property field identities with actual constructor parameters",
+      "exact Span start0/count1 and both independent caller Array allocations",
+      "normal return O and current.h.span[0] UTF16/owned symbols",
+      "caller resize A versus B preserving complete Source body and order"
+    ]
+  },
+  "baselinePlan": "If Core04 succeeds and actual exact positive input is available, Root may build f237 single old lifetime CPP with every other exact same current input as a separate identified official binary. Do not copy new executable/object as old; whether baseline build is needed depends on actual final input/consumer failure.",
+  "notClaimed": [
+    "formal IR semantic PASS",
+    "exact e4f cursor causal RED/GREEN",
+    "VM execution or formal wire qualification",
+    "activation/unique/noalias/range authority from type/retained token"
+  ],
+  "mainProductUnchanged": true
+}

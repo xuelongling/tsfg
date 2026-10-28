@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: MIT
 import { readFile } from "node:fs/promises";
-import { compileHir, compileProgram, compileOwnedHir, compileSystemQuery, compileCommonBorrowProof, runBytecode } from "../compiler/pipeline.mjs";
+import { compileHir, compileProgram, compileOwnedHir, compileOwnedStaticProgram, compileStaticProgram, compileSystemQuery, compileCommonBorrowProof, runBytecode } from "../compiler/pipeline.mjs";
 import {readCommonProgramHir} from '../compiler/common-program-hir.mjs';
 import {commonJson} from '../compiler/common-program-common.mjs';
 import { printHir, readHir } from "../compiler/hir.mjs";
@@ -17,10 +17,10 @@ try {
   const emit = options.get("--emit") ?? "run";
   const inputKind = options.get("--input-kind") ?? "source";
   if (!["source", "hir"].includes(inputKind) || inputKind === "hir" &&
-      (!["hir", "core", "bytecode", "run"].includes(emit) || ["--frontend", "--query-request", "--publication", "--kernel-request"].some(key => options.has(key))))
-    throw new TypeError("r03-cli-options: --input-kind source|hir; HIR requires --emit hir|core|bytecode|run without Source, Query or borrow inputs");
-  if (!["hir", "core", "bytecode", "run", "query-effects", "query-batch", "query-llvm", "query-llvm-ir", "query-tmeta", "borrow-proof"].includes(emit) || !options.has("--input"))
-    throw new TypeError("r03-cli-options: --input <owned-input.json> and --emit hir|core|bytecode|run are required");
+      (!["hir", "core", "bytecode", "program-object", "run"].includes(emit) || ["--frontend", "--query-request", "--publication", "--kernel-request"].some(key => options.has(key))))
+    throw new TypeError("r03-cli-options: --input-kind source|hir; HIR requires --emit hir|core|bytecode|program-object|run without Source, Query or borrow inputs");
+  if (!["hir", "core", "bytecode", "program-object", "run", "query-effects", "query-batch", "query-llvm", "query-llvm-ir", "query-tmeta", "borrow-proof"].includes(emit) || !options.has("--input"))
+    throw new TypeError("r03-cli-options: --input <owned-input.json> and --emit hir|core|bytecode|program-object|run are required");
   if(emit==='borrow-proof'){
     if(!options.has('--publication')||!options.has('--kernel-request')||!options.has('--core')||['--frontend','--vm','--requests','--query-request'].some(key=>options.has(key)))
       throw new TypeError('r03-cli-options: borrow-proof requires complete Common HIR, fixed --publication, --kernel-request and --core');
@@ -39,7 +39,8 @@ try {
   const bytes = await readFile(options.get("--input"));
   const input = inputKind === "hir" ? readHir(bytes) : JSON.parse(bytes.toString("utf8"));
   const requests = emit === "run" ? JSON.parse(options.get("--requests") ?? "[{}]") : undefined;
-  const compile = inputKind === "hir" ? compileOwnedHir : emit === "hir" ? compileHir : compileProgram;
+  const compile = inputKind === "hir" ? (emit === "program-object" ? compileOwnedStaticProgram : compileOwnedHir)
+    : emit === "hir" ? compileHir : emit === "program-object" ? compileStaticProgram : compileProgram;
   const result = inputKind === "hir" && emit === "hir" ? { status: "ok", hir: input }
     : await compile(input, { frontend: options.get("--frontend"), core: options.get("--core") });
   if (result.status !== "ok") {
@@ -48,6 +49,7 @@ try {
   } else if (emit === "hir") process.stdout.write(printHir(result.hir));
   else if (emit === "core") process.stdout.write(result.core);
   else if (emit === "bytecode") process.stdout.write(result.bytecode);
+  else if (emit === "program-object") process.stdout.write(result.object);
   else {
     try {
       process.stdout.write(`${JSON.stringify(await runBytecode(result.bytecode, {

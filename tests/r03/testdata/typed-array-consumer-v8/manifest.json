@@ -1,0 +1,318 @@
+[
+  {
+    "capture": "E:/ws/pro_tsfg/.scratch/tsfg_r03/M25-source-generic-array-checks-20261022/ARRAY-CONSUMER-MIGRATION-FACTS-PUBLIC01-captures/31989dbbd7426eecf25959584d0df5ae3bb1fb3a3b3562565f92f2020ab2491a-package.json",
+    "file": "full-fresh-aliases-package.json",
+    "packageId": "sha256:a188925c137105384a843c5ef14af8d89ad4bbfe9b8d3125ed0396d6f3889e00",
+    "name": "full-fresh-aliases",
+    "sha256": "c5bbac2a1aba19e7d6cc7c078cb88beb28f1f318f8d766639f89fa1425fa1de5",
+    "requestId": "sha256:036f2e403e59c83516c1037b742492bc6eba397ffd8b619fbb600237fcdfb3ed",
+    "source": {
+      "path": "E:/ws/pro_tsfg/.scratch/tsfg_r03/M25-source-generic-array-checks-20261022/ARRAY-CONSUMER-MIGRATION-FACTS-PUBLIC01-captures/31989dbbd7426eecf25959584d0df5ae3bb1fb3a3b3562565f92f2020ab2491a-source.ts",
+      "bytes": 661,
+      "sha256": "31989dbbd7426eecf25959584d0df5ae3bb1fb3a3b3562565f92f2020ab2491a"
+    }
+  },
+  {
+    "capture": "E:/ws/pro_tsfg/.scratch/tsfg_r03/M25-source-generic-array-checks-20261022/ARRAY-CONSUMER-MIGRATION-FACTS-PUBLIC01-captures/4b1348c501995435468eaa52e835ff02f4789b6191de7bb684b5b95a9d54c3de-package.json",
+    "file": "empty-checked-read-package.json",
+    "packageId": "sha256:71160f2cca7ac941c12b6bf9e26004436ea3bb12a8d22b6afa947b30ef64ea76",
+    "name": "empty-checked-read",
+    "sha256": "2103036d93b001558f6bdcfae9ae31b2be9f899a2ace6723f23d5ad32860107a",
+    "requestId": "sha256:8bfbab7046a72db0e30b3d1c5970a55b06d0cceefe5e143e6135dc9757122a50",
+    "source": {
+      "path": "E:/ws/pro_tsfg/.scratch/tsfg_r03/M25-source-generic-array-checks-20261022/ARRAY-CONSUMER-MIGRATION-FACTS-PUBLIC01-captures/4b1348c501995435468eaa52e835ff02f4789b6191de7bb684b5b95a9d54c3de-source.ts",
+      "bytes": 161,
+      "sha256": "4b1348c501995435468eaa52e835ff02f4789b6191de7bb684b5b95a9d54c3de"
+    }
+  },
+  {
+    "capture": "E:/ws/pro_tsfg/.scratch/tsfg_r03/M25-source-generic-array-checks-20261022/ARRAY-CONSUMER-MIGRATION-FACTS-PUBLIC01-captures/d12cd5ec57f23856755a96f888b711eb3c619baeb124377cefcc2a77b9841ec2-package.json",
+    "file": "length-equal-checked-read-package.json",
+    "packageId": "sha256:a1e3baa0149bbad3b87a5f2b73c9334c918ce381cd6b9e03a6906b907d305ee5",
+    "name": "length-equal-checked-read",
+    "sha256": "4b2d29b168c6a6172f2f0e429771e6fe66c017fa8d9e616dfc187e238fb02ce0",
+    "requestId": "sha256:5046f3e2bb208f83f23dcdc887ea234952dedf320c375575f334df96c97e88f5",
+    "source": {
+      "path": "E:/ws/pro_tsfg/.scratch/tsfg_r03/M25-source-generic-array-checks-20261022/ARRAY-CONSUMER-MIGRATION-FACTS-PUBLIC01-captures/d12cd5ec57f23856755a96f888b711eb3c619baeb124377cefcc2a77b9841ec2-source.ts",
+      "bytes": 152,
+      "sha256": "d12cd5ec57f23856755a96f888b711eb3c619baeb124377cefcc2a77b9841ec2"
+    }
+  },
+  {
+    "capture": "E:/ws/pro_tsfg/.scratch/tsfg_r03/M25-source-generic-array-checks-20261022/ARRAY-CONSUMER-MIGRATION-FACTS-PUBLIC01-captures/6ea5f7461d3cbfdf1d691dde67e72c6594e2495a5a96424b9f87612db9bf5a94-package.json",
+    "file": "far-oob-checked-read-package.json",
+    "packageId": "sha256:9d0d1d80d0b50539030e8f42bd40b6c3d4bb9ffa4d310409b4b2f91f173503e3",
+    "name": "far-oob-checked-read",
+    "sha256": "2e61413889431067a1fdc875ebbccae585d96ece32c92ad2a484c31e90a128b2",
+    "requestId": "sha256:e54b3582a49a706799dd2a0bf7c5d7ca169ef01e7b73aca6b61cc5e3fabf1fb6",
+    "source": {
+      "path": "E:/ws/pro_tsfg/.scratch/tsfg_r03/M25-source-generic-array-checks-20261022/ARRAY-CONSUMER-MIGRATION-FACTS-PUBLIC01-captures/6ea5f7461d3cbfdf1d691dde67e72c6594e2495a5a96424b9f87612db9bf5a94-source.ts",
+      "bytes": 185,
+      "sha256": "6ea5f7461d3cbfdf1d691dde67e72c6594e2495a5a96424b9f87612db9bf5a94"
+    }
+  },
+  {
+    "capture": "E:/ws/pro_tsfg/.scratch/tsfg_r03/M25-source-generic-array-checks-20261022/ARRAY-CONSUMER-MIGRATION-FACTS-PUBLIC01-captures/44394d84c971c557802627f9635c3b951c679a07fdfe1b0d042c70ffb62cad79-package.json",
+    "file": "dense-overwrite-package.json",
+    "packageId": "sha256:d1f318ed1ce2c09e53bdb57eb270723f8f7730f6982c7e1be06e629a510c1ec3",
+    "name": "dense-overwrite",
+    "sha256": "55d9e1eb236a657409cf5a9eb002c35ce8f73650a7dd08ef33979745f9f26d0f",
+    "requestId": "sha256:1f55b5d1cafd0cb3f70176785fd40f1cd8524c1767800bbdd4aa22084c6fa54b",
+    "source": {
+      "path": "E:/ws/pro_tsfg/.scratch/tsfg_r03/M25-source-generic-array-checks-20261022/ARRAY-CONSUMER-MIGRATION-FACTS-PUBLIC01-captures/44394d84c971c557802627f9635c3b951c679a07fdfe1b0d042c70ffb62cad79-source.ts",
+      "bytes": 97,
+      "sha256": "44394d84c971c557802627f9635c3b951c679a07fdfe1b0d042c70ffb62cad79"
+    }
+  },
+  {
+    "capture": "E:/ws/pro_tsfg/.scratch/tsfg_r03/M25-source-generic-array-checks-20261022/ARRAY-CONSUMER-MIGRATION-FACTS-PUBLIC01-captures/8b9f20931ebfef6b72136ed82ee100eaa23532307ff6c22267c1c9667ada3f1b-package.json",
+    "file": "dynamic-owner-aliases-package.json",
+    "packageId": "sha256:f9b8d4a3c700face1de7f1791fb2e5b91c861f10d79a6d5d0556802349884063",
+    "name": "dynamic-owner-aliases",
+    "sha256": "5c289591098827f3566f74722c7e2d256c6d04cd5b44cd6bfbc534f156f3bf94",
+    "requestId": "sha256:a0491052b58ddcb1bbf2d0ff56ac641e6f789cfc95d69c1c543c969c00746698",
+    "source": {
+      "path": "E:/ws/pro_tsfg/.scratch/tsfg_r03/M25-source-generic-array-checks-20261022/ARRAY-CONSUMER-MIGRATION-FACTS-PUBLIC01-captures/8b9f20931ebfef6b72136ed82ee100eaa23532307ff6c22267c1c9667ada3f1b-source.ts",
+      "bytes": 390,
+      "sha256": "8b9f20931ebfef6b72136ed82ee100eaa23532307ff6c22267c1c9667ada3f1b"
+    }
+  },
+  {
+    "capture": "E:/ws/pro_tsfg/.scratch/tsfg_r03/M25-source-generic-array-checks-20261022/ARRAY-CONSUMER-MIGRATION-FACTS-PUBLIC01-captures/a18cf474d51dbf51567fc1cb4fbbe373ea261a892ce4cd30573a29b5fd0eaef1-package.json",
+    "file": "empty-append-rhs-shrink-package.json",
+    "packageId": "sha256:415f645f47477f89cf53ad92c1232158a8ccae094413f321d61a6f04196ed2dd",
+    "name": "empty-append-rhs-shrink",
+    "sha256": "f04c038ea06d2fc75fd287329191635719949ae9798e80b4651b767bf171e3f6",
+    "requestId": "sha256:7dea536456cf2712b02af170d40083ec777ae64302b3c54eaeb7ca011d673852",
+    "source": {
+      "path": "E:/ws/pro_tsfg/.scratch/tsfg_r03/M25-source-generic-array-checks-20261022/ARRAY-CONSUMER-MIGRATION-FACTS-PUBLIC01-captures/a18cf474d51dbf51567fc1cb4fbbe373ea261a892ce4cd30573a29b5fd0eaef1-source.ts",
+      "bytes": 170,
+      "sha256": "a18cf474d51dbf51567fc1cb4fbbe373ea261a892ce4cd30573a29b5fd0eaef1"
+    }
+  },
+  {
+    "capture": "E:/ws/pro_tsfg/.scratch/tsfg_r03/M25-source-generic-array-checks-20261022/ARRAY-CONSUMER-MIGRATION-FACTS-PUBLIC01-captures/d8b2074697b9f6129980357ed110c7c7021423d7d1052fcc7fde18096a00b026-package.json",
+    "file": "uncertain-dense-length-package.json",
+    "packageId": "sha256:b201af6a012d79d22600b00a48516839489bb0774501f10c6600f0a569fa56b5",
+    "name": "uncertain-dense-length",
+    "sha256": "9ae04116d4f32b2d79efef1b9fc6c7637c61349e483e9232b4b1b926db9337a5",
+    "requestId": "sha256:24e50a32be60ad52bba9fd35b4d88461c9f6605304c97718a3be0cb3dfb5f886",
+    "source": {
+      "path": "E:/ws/pro_tsfg/.scratch/tsfg_r03/M25-source-generic-array-checks-20261022/ARRAY-CONSUMER-MIGRATION-FACTS-PUBLIC01-captures/d8b2074697b9f6129980357ed110c7c7021423d7d1052fcc7fde18096a00b026-source.ts",
+      "bytes": 217,
+      "sha256": "d8b2074697b9f6129980357ed110c7c7021423d7d1052fcc7fde18096a00b026"
+    }
+  },
+  {
+    "capture": "E:/ws/pro_tsfg/.scratch/tsfg_r03/M25-source-generic-array-checks-20261022/ARRAY-CONSUMER-MIGRATION-FACTS-PUBLIC01-captures/8136679113e7fdb625b1a4c7ee144d9830c4f29ad070611156f3f17afd191bb6-package.json",
+    "file": "tail-array-call-return-local-escape-package.json",
+    "packageId": "sha256:03114f7ebf93274ec9a082f9a6f167914bd600073eef81f935d4b2ee80073d43",
+    "name": "tail-array-call-return-local-escape",
+    "sha256": "98a54ca0644c507b4a74e2e1419f55d3c7c8747e09301ca6666384516abbc177",
+    "requestId": "sha256:1bdd81d7b29779d05108ea6ff29034b3fd9c8683be0df30d4a767a8cafe96f15",
+    "source": {
+      "path": "E:/ws/pro_tsfg/.scratch/tsfg_r03/M25-source-generic-array-checks-20261022/ARRAY-CONSUMER-MIGRATION-FACTS-PUBLIC01-captures/8136679113e7fdb625b1a4c7ee144d9830c4f29ad070611156f3f17afd191bb6-source.ts",
+      "bytes": 229,
+      "sha256": "8136679113e7fdb625b1a4c7ee144d9830c4f29ad070611156f3f17afd191bb6"
+    }
+  },
+  {
+    "capture": "E:/ws/pro_tsfg/.scratch/tsfg_r03/M25-source-generic-array-checks-20261022/ARRAY-CONSUMER-MIGRATION-FACTS-PUBLIC01-captures/adbcd73e9c75395c6927f2ea9d9afb2261c7582d631c461ef988243f3168eee6-package.json",
+    "file": "reachable-forty-root-call-results-package.json",
+    "packageId": "sha256:6640b6aa287741481cfa3c6b41b91431d736ed22cbab2acdb540b30f1638f44a",
+    "name": "reachable-forty-root-call-results",
+    "sha256": "983df658890035f1301ee57139c26f25f80f157fe98635f1755524d9e85a3597",
+    "requestId": "sha256:00efc46be5b01570d6ccc58417fdd48ea267975739e588c5f2b7bbec9d394238",
+    "source": {
+      "path": "E:/ws/pro_tsfg/.scratch/tsfg_r03/M25-source-generic-array-checks-20261022/ARRAY-CONSUMER-MIGRATION-FACTS-PUBLIC01-captures/adbcd73e9c75395c6927f2ea9d9afb2261c7582d631c461ef988243f3168eee6-source.ts",
+      "bytes": 1160,
+      "sha256": "adbcd73e9c75395c6927f2ea9d9afb2261c7582d631c461ef988243f3168eee6"
+    }
+  },
+  {
+    "requestId": "sha256:a40224a033439594c96921400142b37dfb6794b8ed8fb142c6b7d6a595bbc859",
+    "file": "box-view-return-package.json",
+    "capture": "E:/ws/pro_tsfg/.scratch/tsfg_r03/M25-source-generic-array-checks-20261022/ARRAY-CONSUMER-BORROWS-FACTS-PUBLIC01-captures/6ddbcfee5fbc16f13f5732cc7be275113629792a03bc3a4af488995127470911-package.json",
+    "packageId": "sha256:a7f4e0611922cbfdd458f2644622269174e4c030ad7507b55ea5704d4aab5e4f",
+    "sha256": "997580a0539bfde8958d19b229220588300b8300580310c12b64831ab45c94f2",
+    "source": {
+      "path": "E:/ws/pro_tsfg/.scratch/tsfg_r03/M25-source-generic-array-checks-20261022/ARRAY-CONSUMER-BORROWS-FACTS-PUBLIC01-captures/6ddbcfee5fbc16f13f5732cc7be275113629792a03bc3a4af488995127470911-source.ts",
+      "bytes": 165,
+      "sha256": "6ddbcfee5fbc16f13f5732cc7be275113629792a03bc3a4af488995127470911"
+    },
+    "name": "box-view-return"
+  },
+  {
+    "requestId": "sha256:474d6e80ba87dbd87b4818d4bf70874d70b80688875469ed3cbf0b810221cb45",
+    "file": "union-active-structural-write-package.json",
+    "capture": "E:/ws/pro_tsfg/.scratch/tsfg_r03/M25-source-generic-array-checks-20261022/ARRAY-CONSUMER-BORROWS-FACTS-PUBLIC01-captures/f878e461f8f0aa8f38b9e19fdd4c5f28cbb43a45c838a195cb66defd7149b834-package.json",
+    "packageId": "sha256:e9f92c015dfafeb205e7aa228f8525a73d4b6acdda3117bfc474cade2a5ff725",
+    "sha256": "fa655dbacae2e3543fae2524aa6de0b3e48bfbf32657608121d682d025673c16",
+    "source": {
+      "path": "E:/ws/pro_tsfg/.scratch/tsfg_r03/M25-source-generic-array-checks-20261022/ARRAY-CONSUMER-BORROWS-FACTS-PUBLIC01-captures/f878e461f8f0aa8f38b9e19fdd4c5f28cbb43a45c838a195cb66defd7149b834-source.ts",
+      "bytes": 214,
+      "sha256": "f878e461f8f0aa8f38b9e19fdd4c5f28cbb43a45c838a195cb66defd7149b834"
+    },
+    "name": "union-active-structural-write"
+  },
+  {
+    "requestId": "sha256:b42126dfdbb61608480cb55ad3c7a32903a7c0f26614aa180fcd51178fe34d12",
+    "file": "union-view-return-package.json",
+    "capture": "E:/ws/pro_tsfg/.scratch/tsfg_r03/M25-source-generic-array-checks-20261022/ARRAY-CONSUMER-BORROWS-FACTS-PUBLIC01-captures/36a52bb567ca0a63e266de15a62fb25cb35b3750d0ab051d55a33ed9333d8713-package.json",
+    "packageId": "sha256:90e08cfd367466f78c13d05b8e0d2f14a4e615d5e9f1914a232688d1c5f47fdc",
+    "sha256": "e846fe978799da9c1de2fe642d9c16b7413fba13eaea73d069baeaffc52b12b7",
+    "source": {
+      "path": "E:/ws/pro_tsfg/.scratch/tsfg_r03/M25-source-generic-array-checks-20261022/ARRAY-CONSUMER-BORROWS-FACTS-PUBLIC01-captures/36a52bb567ca0a63e266de15a62fb25cb35b3750d0ab051d55a33ed9333d8713-source.ts",
+      "bytes": 199,
+      "sha256": "36a52bb567ca0a63e266de15a62fb25cb35b3750d0ab051d55a33ed9333d8713"
+    },
+    "name": "union-view-return"
+  },
+  {
+    "name": "fixed-call-upper",
+    "source": {
+      "path": "E:/ws/pro_tsfg/.scratch/tsfg_r03/M25-source-generic-array-checks-20261022/ARRAY-CONSUMER-BORROW-EDGES-FACTS-PUBLIC01-captures/463993c2815b95ba29190f444eebc06e6cbc88e00173dcfe366236cf5c220496-source.ts",
+      "bytes": 183,
+      "sha256": "463993c2815b95ba29190f444eebc06e6cbc88e00173dcfe366236cf5c220496"
+    },
+    "sha256": "a1034e69a1713d24d6c40625fc7884b031fc3036078a9ec1466b72563adf04ef",
+    "requestId": "sha256:44cd8a741b9e9a7c5fb53c3cdd93486b4e478865e4614c6ad2ebfac6ade55946",
+    "packageId": "sha256:381d926ceda5f3f44bac8aeb624d7d092f0164ccf0c77659c2045d56a88565bd",
+    "capture": "E:/ws/pro_tsfg/.scratch/tsfg_r03/M25-source-generic-array-checks-20261022/ARRAY-CONSUMER-BORROW-EDGES-FACTS-PUBLIC01-captures/463993c2815b95ba29190f444eebc06e6cbc88e00173dcfe366236cf5c220496-package.json",
+    "file": "fixed-call-upper-package.json"
+  },
+  {
+    "name": "after-last-use",
+    "source": {
+      "path": "E:/ws/pro_tsfg/.scratch/tsfg_r03/M25-source-generic-array-checks-20261022/ARRAY-CONSUMER-BORROW-EDGES-FACTS-PUBLIC01-captures/7141acd70c7be28d396aae9e8182081ac0b5d53e296b85b6879a6e02bdb053d2-source.ts",
+      "bytes": 162,
+      "sha256": "7141acd70c7be28d396aae9e8182081ac0b5d53e296b85b6879a6e02bdb053d2"
+    },
+    "sha256": "7bffd1f4ad1a03db258b70be4e24014f7fc3cb144db2a85b6fc1fc9e4a26c15a",
+    "requestId": "sha256:af3ad3f60c944119fb447eebd2ec4d0aba0c873c407961620a212ba3403c2329",
+    "packageId": "sha256:3726a1eca111c8465a3c46aa2e1e5718d9fa6c045c26238c38d9ecaccfa61ab6",
+    "capture": "E:/ws/pro_tsfg/.scratch/tsfg_r03/M25-source-generic-array-checks-20261022/ARRAY-CONSUMER-BORROW-EDGES-FACTS-PUBLIC01-captures/7141acd70c7be28d396aae9e8182081ac0b5d53e296b85b6879a6e02bdb053d2-package.json",
+    "file": "after-last-use-package.json"
+  },
+  {
+    "name": "view-parameter-alias",
+    "source": {
+      "path": "E:/ws/pro_tsfg/.scratch/tsfg_r03/M25-source-generic-array-checks-20261022/ARRAY-CONSUMER-BORROW-EDGES-FACTS-PUBLIC01-captures/86fc44c25a8a23732caf354ba35731fc834773dba5d73d34940472836adbb2cb-source.ts",
+      "bytes": 284,
+      "sha256": "86fc44c25a8a23732caf354ba35731fc834773dba5d73d34940472836adbb2cb"
+    },
+    "sha256": "0e363e2a42febcdff078e56e23e514f4ecb1329823fc580ecdb33d05fcda2300",
+    "requestId": "sha256:0fc65acc3553f8ed459213aa1388c9921a554d2ab3bd3aed7b02d7f76bf8a9f6",
+    "packageId": "sha256:b130cab9332689c4b431ec71913d5c4c0dd813a2772e2d3618c502d4228c4810",
+    "capture": "E:/ws/pro_tsfg/.scratch/tsfg_r03/M25-source-generic-array-checks-20261022/ARRAY-CONSUMER-BORROW-EDGES-FACTS-PUBLIC01-captures/86fc44c25a8a23732caf354ba35731fc834773dba5d73d34940472836adbb2cb-package.json",
+    "file": "view-parameter-alias-package.json"
+  },
+  {
+    "name": "serial-overwrite",
+    "source": {
+      "path": "E:/ws/pro_tsfg/.scratch/tsfg_r03/M25-source-generic-array-checks-20261022/ARRAY-CONSUMER-BORROW-EDGES-FACTS-PUBLIC01-captures/77d250b0a0b65a10cee8232cb44785a07d52827567bdb604c0ba6703ddc5a89d-source.ts",
+      "bytes": 143,
+      "sha256": "77d250b0a0b65a10cee8232cb44785a07d52827567bdb604c0ba6703ddc5a89d"
+    },
+    "sha256": "71f9430b2b06210ef0dc76e44b14bfd6969dbea68d1edfce57a1b8d709a3505e",
+    "requestId": "sha256:17cd394b1658f629d5530d77359cd8368f78defaa14022bd8854cf9c7334464b",
+    "packageId": "sha256:dda77195e7ba391202ff58e11932f8e9c284dc9fd2de1ff94931285b7e7356f8",
+    "capture": "E:/ws/pro_tsfg/.scratch/tsfg_r03/M25-source-generic-array-checks-20261022/ARRAY-CONSUMER-BORROW-EDGES-FACTS-PUBLIC01-captures/77d250b0a0b65a10cee8232cb44785a07d52827567bdb604c0ba6703ddc5a89d-package.json",
+    "file": "serial-overwrite-package.json"
+  },
+  {
+    "name": "value-view-return",
+    "source": {
+      "path": "E:/ws/pro_tsfg/.scratch/tsfg_r03/M25-source-generic-array-checks-20261022/ARRAY-CONSUMER-BORROW-EDGES-FACTS-PUBLIC01-captures/6f5697078dee9d0bccdfc9a3a3e60294c01db9f0ad94da3186c7302aefe587f7-source.ts",
+      "bytes": 182,
+      "sha256": "6f5697078dee9d0bccdfc9a3a3e60294c01db9f0ad94da3186c7302aefe587f7"
+    },
+    "sha256": "2ff355bf66577e3a1c30e772803a4a73370374c572447d6d21c0b2a43b289463",
+    "requestId": "sha256:aa7e015db84ae9e63520c6d85899e187e9583fdb3aaa0d015ea481db1b8e1a88",
+    "packageId": "sha256:9264c735376ef9b150b708d63360f8539df1576e3e973ff629bea3af6feb53ff",
+    "capture": "E:/ws/pro_tsfg/.scratch/tsfg_r03/M25-source-generic-array-checks-20261022/ARRAY-CONSUMER-BORROW-EDGES-FACTS-PUBLIC01-captures/6f5697078dee9d0bccdfc9a3a3e60294c01db9f0ad94da3186c7302aefe587f7-package.json",
+    "file": "value-view-return-package.json"
+  },
+  {
+    "batchQualification": "individual actual subcase PASS; complete original5 batch FAIL on independent short boolean source",
+    "name": "global1024",
+    "packageId": "sha256:adea45437b6839ec2483459e29078c9620506fe7866293110a108712a66ed7c3",
+    "file": "global1024-package.json",
+    "sha256": "b7ba19d7420c4c92e547fb8426154eb36f3c71b1341242a3a5c6cab70d13418e",
+    "capture": "E:/ws/pro_tsfg/.scratch/tsfg_r03/M25-source-generic-array-checks-20261022/ARRAY-CONSUMER-REMAINING-ORDERED-FACTS-PUBLIC01-captures/99c59399b10be9f94a54bedb1f05100343d15d8db90c27473d7c44e7c786daf8-package.json",
+    "source": {
+      "path": "E:/ws/pro_tsfg/.scratch/tsfg_r03/M25-source-generic-array-checks-20261022/ARRAY-CONSUMER-REMAINING-ORDERED-FACTS-PUBLIC01-captures/99c59399b10be9f94a54bedb1f05100343d15d8db90c27473d7c44e7c786daf8-source.ts",
+      "bytes": 6391,
+      "sha256": "99c59399b10be9f94a54bedb1f05100343d15d8db90c27473d7c44e7c786daf8"
+    },
+    "requestId": "sha256:5d727aca28c4677ad5a21fd83f88fa33bd23224da81c7cfb6452327d12d98afc"
+  },
+  {
+    "batchQualification": "individual actual subcase PASS; complete original5 batch FAIL on independent short boolean source",
+    "name": "global1025",
+    "packageId": "sha256:61303d3aec7c6ed0b75d8119e929a44ae145576dcdf95bd7ac90351c7e7f7a78",
+    "file": "global1025-package.json",
+    "sha256": "19edd31799bee6db38b55def13447ed7b7afdf5dacbb3712d077bc47773f9fb8",
+    "capture": "E:/ws/pro_tsfg/.scratch/tsfg_r03/M25-source-generic-array-checks-20261022/ARRAY-CONSUMER-REMAINING-ORDERED-FACTS-PUBLIC01-captures/172343c4f195cf1b5c50762dcd73da2bd9a0e55959d980956a3d29f366ff5713-package.json",
+    "source": {
+      "path": "E:/ws/pro_tsfg/.scratch/tsfg_r03/M25-source-generic-array-checks-20261022/ARRAY-CONSUMER-REMAINING-ORDERED-FACTS-PUBLIC01-captures/172343c4f195cf1b5c50762dcd73da2bd9a0e55959d980956a3d29f366ff5713-source.ts",
+      "bytes": 6404,
+      "sha256": "172343c4f195cf1b5c50762dcd73da2bd9a0e55959d980956a3d29f366ff5713"
+    },
+    "requestId": "sha256:c739e643f2ab16357fbe4685ba083de0efd820c89d62d4e7cb70d3ce9f57bc29"
+  },
+  {
+    "batchQualification": "individual actual subcase PASS; complete original5 batch FAIL on independent short boolean source",
+    "name": "generic-union-parameter-scc",
+    "packageId": "sha256:4902ca60184ce36a1b38264018a2f16effbbe4140aa83898bea3f310a5ab1b8e",
+    "file": "generic-union-parameter-scc-package.json",
+    "sha256": "f72ae71c5378830c8f5294e4c14b6e2d3f333daa0b40800715c040eac5bcd720",
+    "capture": "E:/ws/pro_tsfg/.scratch/tsfg_r03/M25-source-generic-array-checks-20261022/ARRAY-CONSUMER-REMAINING-ORDERED-FACTS-PUBLIC01-captures/c86d34ed55b680ea23a8605b0f7d46dcd34634b67b1d42341c625b9583401b16-package.json",
+    "source": {
+      "path": "E:/ws/pro_tsfg/.scratch/tsfg_r03/M25-source-generic-array-checks-20261022/ARRAY-CONSUMER-REMAINING-ORDERED-FACTS-PUBLIC01-captures/c86d34ed55b680ea23a8605b0f7d46dcd34634b67b1d42341c625b9583401b16-source.ts",
+      "bytes": 300,
+      "sha256": "c86d34ed55b680ea23a8605b0f7d46dcd34634b67b1d42341c625b9583401b16"
+    },
+    "requestId": "sha256:afc6d06446d091321b49db221d4e67931fcf7d052d4d89afd5755e687a753ee5"
+  },
+  {
+    "batchQualification": "individual carrier subcase PASS; complete5 batch failure on separate short source preserved",
+    "capture": "E:/ws/pro_tsfg/.scratch/tsfg_r03/M25-source-generic-array-checks-20261022/ARRAY-CONSUMER-REMAINING-ORDERED-FACTS-PUBLIC01-captures/dc47d14cce567c5bd50180ab39ce7f247ab75dd8c96c8f589828b48f5a41b993-package.json",
+    "name": "ordered-carrier-refinement",
+    "sha256": "681e133e493624a192d0ddc69bb2eed9d4494f873b0331d332596b87e442db12",
+    "packageId": "sha256:e16ad5bd2c2e3da027dad89d2610e0561dd33d8df3d0dca2d1225d3fbd947208",
+    "source": {
+      "path": "E:/ws/pro_tsfg/.scratch/tsfg_r03/M25-source-generic-array-checks-20261022/ARRAY-CONSUMER-REMAINING-ORDERED-FACTS-PUBLIC01-captures/dc47d14cce567c5bd50180ab39ce7f247ab75dd8c96c8f589828b48f5a41b993-source.ts",
+      "bytes": 105,
+      "sha256": "dc47d14cce567c5bd50180ab39ce7f247ab75dd8c96c8f589828b48f5a41b993"
+    },
+    "file": "ordered-carrier-refinement-package.json",
+    "requestId": "sha256:1d2bdb562edd4b437b775f5ef89844ab0f17840488017a34e94843e8cdbd717f"
+  },
+  {
+    "requestId": "sha256:2c2ae2bd346aa23940f6579652edc97adea984d001de50a62b86617550737dea",
+    "packageId": "sha256:fc3f0015b4b5356a3f8a124590700e048b0df37d19fea61d5f18617dd258f3e1",
+    "capture": "E:/ws/pro_tsfg/.scratch/tsfg_r03/M25-source-generic-array-checks-20261022/ARRAY-CONSUMER-CONSTRUCTOR-ACTIVE-VIEW-FACTS-PUBLIC02-captures/119256d898018b6ea566a0fe21935be52d9c99f7324ada9bb3fe79c2c879687e-package.json",
+    "sha256": "c1489ec6ab4db6f8e345dfb2c5a292a0baf2d614e89bb2b21b91b82033b57519",
+    "file": "explicit-constructor-active-view-package.json",
+    "name": "explicit-constructor-active-view",
+    "source": {
+      "path": "E:/ws/pro_tsfg/.scratch/tsfg_r03/M25-source-generic-array-checks-20261022/ARRAY-CONSUMER-CONSTRUCTOR-ACTIVE-VIEW-FACTS-PUBLIC02-captures/119256d898018b6ea566a0fe21935be52d9c99f7324ada9bb3fe79c2c879687e-source.ts",
+      "bytes": 143,
+      "sha256": "119256d898018b6ea566a0fe21935be52d9c99f7324ada9bb3fe79c2c879687e"
+    }
+  },
+  {
+    "requestId": "sha256:bc2d9831385b3a4e442ee32efbedcb2913b7e07a3c0dc7e2f0d02e31081bcf1e",
+    "packageId": "sha256:cfd58b2669b14e15c82298b17085fc8c32be43249390c856dd9844b31e43570d",
+    "capture": "E:/ws/pro_tsfg/.scratch/tsfg_r03/M25-source-generic-array-checks-20261022/ARRAY-CONSUMER-CONSTRUCTOR-ACTIVE-VIEW-FACTS-PUBLIC02-captures/454e5a55f90e55c8322546b25b14a8357fde317ac5ab3d435f6134ba1c0ae5af-package.json",
+    "sha256": "fee9a659713b29fe896a948102629fdf04c206535c502939184a0ae64d66d3d8",
+    "file": "implicit-constructor-forward-active-view-package.json",
+    "name": "implicit-constructor-forward-active-view",
+    "source": {
+      "path": "E:/ws/pro_tsfg/.scratch/tsfg_r03/M25-source-generic-array-checks-20261022/ARRAY-CONSUMER-CONSTRUCTOR-ACTIVE-VIEW-FACTS-PUBLIC02-captures/454e5a55f90e55c8322546b25b14a8357fde317ac5ab3d435f6134ba1c0ae5af-source.ts",
+      "bytes": 163,
+      "sha256": "454e5a55f90e55c8322546b25b14a8357fde317ac5ab3d435f6134ba1c0ae5af"
+    }
+  }
+]

@@ -3,19 +3,19 @@ const std = @import("std");
 const Allocator = std.mem.Allocator;
 const bytecode = @import("bytecode.zig");
 const vm = @import("vm.zig");
-/// A serial host request context. Concurrent hosts use separate Runtime values.
-pub const Runtime = struct {
-    allocator: Allocator,
-    active_requests: usize = 0,
-    pub fn init(allocator: Allocator) Runtime {
-        return .{ .allocator = allocator };
-    }
-    pub fn activeRequests(self: *const Runtime) usize {
-        return self.active_requests;
-    }
-};
+const managed = @import("managed-heap.zig");
 
-pub fn eval_bytecode(host: *Runtime, module: *const bytecode.VerifiedModule, function_id: bytecode.FunctionId, arguments: []const vm.TypedValue, capabilities: []const vm.Capability, limits: vm.RequestLimits) vm.RequestOutcome {
+pub const Runtime = @import("runtime-state.zig").Runtime;
+
+pub inline fn eval_bytecode(host: *Runtime, module: *const bytecode.VerifiedModule, function_id: bytecode.FunctionId, arguments: []const vm.TypedValue, capabilities: []const vm.Capability, limits: vm.RequestLimits) vm.RequestOutcome {
+    const scope = host.heap.beginScope() catch {
+        // Physical resource/owner exhaustion uses the established request abort
+        // identity, never the catchable managed-exception channel.
+        return .{ .failed = .{ .code = "r05-execution-abort", .category = "execution-abort",
+            .function_id = function_id, .source = bytecode.moduleInfoView(module).source,
+            .fuel_remaining = limits.semantic_fuel } };
+    };
+    defer host.heap.endScope(scope) catch unreachable;
     host.active_requests += 1;
     defer host.active_requests -= 1;
     return vm.evaluate(host.allocator, module, function_id, arguments, capabilities, limits);

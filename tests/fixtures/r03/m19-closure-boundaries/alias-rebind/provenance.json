@@ -1,0 +1,39 @@
+{
+  "origin": {
+    "kind": "owned-go-response",
+    "producerBaseOid": "8d106b6768521c21b9ef4e7a69df023977d71b09",
+    "producerDirty": true,
+    "testedInputSetHash": "sha256:12f5d80b083b2b1d7bed7163d7b2dafd757cd7c908fb123611d1df3f4d500f1b",
+    "requestSha256": "sha256:e6880436946c8a1619e097206c7b431b9f464eb4e866a6c2484cbf55014c5a52",
+    "responseSha256": "sha256:8e2e0715cd92fcb91d701beaba18624184d2102d73a878151afa33cc975d3529"
+  },
+  "deliveryOid": "d954555abfc9f0a9886fb28e81fdb18828a4a314",
+  "execution": {
+    "pid": 956,
+    "baseTree": "c3a129a366e5dbb5ecb0ca25e9f4aaf3a8edd707",
+    "rawLogSha256": "sha256:83978c2e439eb19832368d4894a004c6de599b2319f43d6f4d95e36eac910fd8",
+    "summarySha256": "sha256:bd6c9602fe6f205afd6d51eda8605e046447608d8a1f9950c40e879ab2510772"
+  },
+  "sourceTest": "TestFrontendCommandFunctionValueRebindingAndAssignmentFacts",
+  "frames": {
+    "request": {
+      "tag": "TSFG_FUNCTION_VALUE_BOUNDARY_REQUEST_V1",
+      "bytes": 2076,
+      "sha256": "sha256:e6880436946c8a1619e097206c7b431b9f464eb4e866a6c2484cbf55014c5a52"
+    },
+    "response": {
+      "tag": "TSFG_FUNCTION_VALUE_BOUNDARY_RESPONSE_V1",
+      "bytes": 5335,
+      "sha256": "sha256:8e2e0715cd92fcb91d701beaba18624184d2102d73a878151afa33cc975d3529"
+    },
+    "original": {
+      "tag": "TSFG_FUNCTION_VALUE_BOUNDARY_ORIGINAL_V1",
+      "bytes": 1716,
+      "sha256": "sha256:e3128cecf36b4468e57a6f3470e994c71f66c774743f3714e51e39169979a619"
+    }
+  },
+  "testedInputSetReference": {
+    "path": "../../m19-function-values/provenance.json",
+    "sha256": "sha256:53875a3dd1b5171e7b50ac5650cc496d43332389f1cb9e7fef162a408b7facc9"
+  }
+}

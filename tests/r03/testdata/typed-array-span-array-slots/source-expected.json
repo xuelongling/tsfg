@@ -1,0 +1,27 @@
+{
+  "family": "tsfg.span-array-slots-independent-expected",
+  "version": 1,
+  "frozenBeforeProducerAndConsumerImplementation": true,
+  "cases": [
+    {
+      "name": "span-array-slot-overwrite",
+      "expected": "ok",
+      "owner": "b",
+      "reason": "Exact alias store supersedes oldA in shared slot before resizeA; checked slotload/Spanread use B",
+      "path": "E:/ws/pro_tsfg/.scratch/tsfg_r03/M25-source-generic-array-checks-20261022/span-array-slot-overwrite-source.ts",
+      "bytes": 199,
+      "sha256": "f0f4a3e0a384a08fdfe7532a6bd86e63f52e3f6c3704cf53a60f0dfee2629979"
+    },
+    {
+      "name": "span-array-slot-live-conflict",
+      "expected": "error",
+      "owner": "a",
+      "reason": "Stored A Span remains live through real slotload/Spanread after actualA resize; preserve original conflict/use anchors",
+      "path": "E:/ws/pro_tsfg/.scratch/tsfg_r03/M25-source-generic-array-checks-20261022/span-array-slot-live-conflict-source.ts",
+      "bytes": 122,
+      "sha256": "b4bd2f22d26d08776a42b4fd85a466e2d3cb24cb8152f977dd5aaa6803146504"
+    }
+  ],
+  "sourceBoundary": "Official full source/type/Symbol/ordered binding/store/load/UTF16 facts only; producer must not read semantic oracle or confer borrow admission",
+  "consumerBoundary": "Real alias-shared slot version, overwrite kill, scalar dynamic checked ops and original owner/use/conflict anchors; Node public HIR verify/print-read, no payload evaluation/TypeId value guessing or hand-made DTO"
+}

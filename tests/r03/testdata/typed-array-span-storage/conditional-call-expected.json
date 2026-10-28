@@ -1,0 +1,20 @@
+{
+  "frozenAt": "2026-10-23T22:30:39.881Z",
+  "actor": "Root from independent Spec counterexample; frozen before any25o public Source packet and before production repair",
+  "candidateTree": "f701e49e4563b29a4cef4f5da23793f4fcbe24b3",
+  "source": {
+    "path": "E:/ws/pro_tsfg/.scratch/tsfg_r03/M25-source-generic-array-checks-20261022/span-conditional-call-source.ts",
+    "bytes": 270,
+    "sha256": "c15281c7bd30d12041f78a2d7d0b65b66ca6c3f3ac5b78607af2a0af669c2f22"
+  },
+  "expected": "Reject at original a.length=0 as r03-d-readspan-structural-conflict",
+  "mutationStart": 240,
+  "lastUseStart": 258,
+  "reason": "If flag is false the helper is not called and H.span still borrows A through the final checked field read; if true it can borrow B. The analysis must include no-call prestate with called outcomes and cannot authorize A resize by discarding the skipped branch.",
+  "rules": [
+    "R01 section5.4",
+    "ADR0020 every alias and true last-use",
+    "No new unconditional if/union/source ban"
+  ],
+  "qualification": "Static counterexample only so far; actual public Source packet and consumer causal RED must be obtained, no guest/IR/VM execution."
+}

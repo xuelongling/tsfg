@@ -1,0 +1,238 @@
+{
+  "family": "tsfg.core-nullable-candidate",
+  "version": 1,
+  "profile": "i32-null-undefined-internal-v1",
+  "status": "private-candidate-not-formal-adoption",
+  "base": {
+    "coreVersion": "0.9.0",
+    "bytecodeSchema": "sha256:3dea6ce5de996dfa3e7141cced985243ea74ac9bb80f03636c6694343118f2a6",
+    "target": "windows-x86_64-msvc",
+    "sourceMode": "single-source"
+  },
+  "marker": {
+    "name": "tsfg_core.nullable",
+    "exactKeys": [
+      "family",
+      "version",
+      "schema",
+      "profile"
+    ],
+    "versionAttribute": "signless-i32",
+    "schema": "sha256:JCS(this descriptor)"
+  },
+  "types": {
+    "dialect": "tsfg_nullable",
+    "mnemonic": "i32",
+    "payload": "i32",
+    "masks": [
+      {
+        "mask": 1,
+        "undefined": true,
+        "null": false
+      },
+      {
+        "mask": 2,
+        "undefined": false,
+        "null": true
+      },
+      {
+        "mask": 3,
+        "undefined": true,
+        "null": true
+      }
+    ],
+    "canonicalScalarRecord": {
+      "kind": "scalar",
+      "name": "one existing scalar name"
+    },
+    "canonicalNullableRecord": {
+      "kind": "nullable-i32",
+      "undefined": "required boolean",
+      "null": "required boolean"
+    },
+    "scalarNames": [
+      "i32",
+      "bool",
+      "i8",
+      "i16",
+      "i64",
+      "u8",
+      "u16",
+      "u32",
+      "u64",
+      "isize",
+      "usize",
+      "f32",
+      "f64"
+    ],
+    "noImplicitMaskConversion": true
+  },
+  "carrier": {
+    "bits": 64,
+    "payloadBits": [
+      0,
+      31
+    ],
+    "tagBits": [
+      32,
+      33
+    ],
+    "reservedZeroBits": [
+      34,
+      63
+    ],
+    "tags": {
+      "present": 0,
+      "undefined": 1,
+      "null": 2
+    },
+    "present": "low32 contain raw i32 two-complement bits; no sign extension into high32",
+    "absence": "low32 are zero and tag belongs to declared mask",
+    "invalidTags": [
+      3
+    ],
+    "allocation": false,
+    "boxing": false,
+    "gcRoot": false
+  },
+  "operations": [
+    {
+      "name": "tsfg_nullable.wrap_i32",
+      "operands": [
+        "i32"
+      ],
+      "results": [
+        "nullable-i32"
+      ],
+      "attributes": [],
+      "transfer": "present"
+    },
+    {
+      "name": "tsfg_nullable.absence",
+      "operands": [],
+      "results": [
+        "nullable-i32"
+      ],
+      "attributes": [
+        "tag:signless-i32 exact 1 or 2 allowed by result mask"
+      ],
+      "transfer": "exact tag"
+    },
+    {
+      "name": "tsfg_nullable.tag_test",
+      "operands": [
+        "nullable-i32"
+      ],
+      "results": [
+        "bool"
+      ],
+      "attributes": [
+        "tag:signless-i32 exact 0,1,2"
+      ],
+      "transfer": "exact operand/tag predicate"
+    },
+    {
+      "name": "tsfg_nullable.get",
+      "operands": [
+        "nullable-i32"
+      ],
+      "results": [
+        "i32"
+      ],
+      "attributes": [],
+      "proof": "nonempty possibleTags subset {present}"
+    },
+    {
+      "name": "tsfg_nullable.retype",
+      "operands": [
+        "nullable-i32"
+      ],
+      "results": [
+        "nullable-i32"
+      ],
+      "attributes": [],
+      "proof": "nonempty possibleTags subset result allowedTags",
+      "transfer": "unchanged carrier and possibleTags"
+    }
+  ],
+  "roles": {
+    "functionAttribute": "tsfg_nullable.role:entry|internal",
+    "entryCount": 1,
+    "entry": "all parameters and return are one of the 13 existing host scalars; first test uses i32",
+    "internal": "parameters and return are existing scalars or nullable-i32 masks1/2/3",
+    "functionTypes": "func.call/func.return/cf edges use exact MLIR types; mask changes require retype",
+    "ordinaryOperations": "existing scalar operand/result rules retained; no nullable operand accepted by old eq/ne/const/arithmetic/bitwise/ordered compare/not",
+    "candidateWithoutMarker": "reject any candidate operation, type, result, operand or block argument",
+    "forbidden": [
+      "reference candidate",
+      "module tables",
+      "module initializer",
+      "global storage/load/store",
+      "host call",
+      "native metadata",
+      "nested regions",
+      "unknown operations",
+      "unknown attributes"
+    ],
+    "hostAdmission": "reject internal selection and non-scalar full signature before initialization, state mutation or effects"
+  },
+  "identity": {
+    "algorithm": "SHA256(UTF8(domain + NUL + prefixedCoreSchemaHash + NUL + JCS(record)))",
+    "typeDomain": "tsfg.core-nullable-candidate.type.v1",
+    "signatureDomain": "tsfg.core-nullable-candidate.signature.v1",
+    "functionDomain": "tsfg.core-nullable-candidate.function.v1",
+    "signatureRecord": {
+      "parameters": "ordered array of prefixed type hashes",
+      "returnType": "prefixed type hash"
+    },
+    "functionRecord": {
+      "name": "exact function name",
+      "signatureHash": "prefixed signature hash",
+      "source": {
+        "path": "exact canonical logical path",
+        "digest": "prefixed SHA256 source hash"
+      }
+    },
+    "strings": "strict UTF8, no NUL, no normalization; canonical logical paths retain colon and reject dot segments/backslash"
+  },
+  "proof": {
+    "sets": {
+      "present": 1,
+      "undefined": 2,
+      "null": 4
+    },
+    "declarationAllowedTags": "1 | (mask << 1)",
+    "entryArguments": "full declared allowed set",
+    "definitions": "immutable SSA register identity; no stale proof across new definitions",
+    "branch": "direct tag_test predicate filters exact operand identity on true and false edges",
+    "phi": "union actual predecessor argument sets after edge filtering",
+    "call": "result resets to full callee declaration set; no body-specialized inference",
+    "copyReturnRetype": "preserve complete carrier and proven possible tags",
+    "fixedPoint": "monotone finite dependency worklist; complete before validating proof uses",
+    "empty": "never grants get or retype proof",
+    "cycles": "retain existing entry/loop semantic-fuel and no unmetered-cycle requirements",
+    "deadBlocks": "reject structurally unreachable blocks; infeasible-edge empty facts never grant proof",
+    "capacity": "precheck bounds and capacity from verified block/register/instruction counts; at most three inserted tag bits per flow state"
+  },
+  "limits": {
+    "inputBytes": 8388608,
+    "functions": 512,
+    "parametersPerFunction": 64,
+    "registersPerFunction": 4096,
+    "blocksPerFunction": 256,
+    "instructionsPerFunction": 8192,
+    "flowStatesPerFunction": 1048576,
+    "insertedTagBitsPerFunction": 3145728,
+    "nameUTF8Bytes": 256,
+    "pathUTF8Bytes": 4096
+  },
+  "verification": "complete module metadata, identities, types, roles, dominance, CFG, fuel and tag proof before publishing bytes",
+  "canonicalization": "stable generic MLIR print; canonical read-print and verified identity optimize preserve operations, anchors and roles",
+  "formalBytecode": {
+    "command": "--emit-bytecode",
+    "exitCode": 3,
+    "diagnostic": "[r04-core-nullable-unsupported]",
+    "stdoutBytes": 0
+  },
+  "futurePrivateWire": "separate exact descriptor/schema and explicit command bound to this Core schema; never TSFGTBC0/wire9 fallback"
+}

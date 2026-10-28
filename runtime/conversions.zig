@@ -75,8 +75,8 @@ fn toInteger(exact: Exact, target: u8) Outcome {
 }
 
 pub fn convert(opcode: u8, bits: u64, source: u8, target: u8) Outcome {
-    if (opcode == 36) return .{ .value = bits & contract.mask(target) };
-    if (opcode == 35) {
+    if (opcode == 42) return .{ .value = bits & contract.mask(target) };
+    if (opcode == 41) {
         const extended: u64 = if (contract.signedType(source)) @bitCast(contract.signedValue(bits, source)) else bits;
         return .{ .value = extended & contract.mask(target) };
     }

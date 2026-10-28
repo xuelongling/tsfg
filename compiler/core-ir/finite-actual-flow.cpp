@@ -1,0 +1,393 @@
+// SPDX-License-Identifier: MIT
+// Representation carriers are upper bounds, not allocation/payload facts.
+// Reconstruct the monotone IR flow before deciding which ABI slots are closed.
+#include "finite-module.h"
+#include "finite-array-flow.h"
+#include "finite-control-paths.h"
+#include "dialect.h"
+#include "mlir/Dialect/ControlFlow/IR/ControlFlowOps.h"
+#include <algorithm>
+
+namespace tsfg::finite {
+namespace {
+std::string attr(mlir::Operation *op, llvm::StringRef key) {
+  const auto value=op->getAttrOfType<mlir::StringAttr>(key);
+  return value?value.getValue().str():std::string();
+}
+struct ActualFlow {
+  ModuleProof &proof;
+  static constexpr size_t noGate=PayloadFlow::none;
+  PayloadFlow flow;
+  ArrayFlow::Role role;
+  bool controlOnly;
+  bool memorySources;
+  llvm::DenseMap<mlir::Value,size_t> values;
+  std::map<std::string,size_t> returns,completions;
+  std::map<mlir::Block *,size_t> normalBlocks;
+  std::map<mlir::Operation *,size_t> normalResults,normalInputs;
+  static constexpr const char *normalAtom="@tsfg.normal-completion";
+  std::map<std::string,std::string> constructions;
+  bool valid=true;
+  ActualFlow(ModuleProof &value,ArrayFlow::Role mode,bool control=false,bool memory=false):proof(value),flow(value.remaining),role(mode),controlOnly(control),memorySources(memory){}
+
+  size_t node() { const auto id=flow.node();valid&=id!=PayloadFlow::none;return id; }
+  size_t value(mlir::Value item) {
+    const auto found=values.find(item);if(found!=values.end())return found->second;
+    const auto result=node();values.try_emplace(item,result);
+    size_t gate=noGate;
+    if(auto *op=item.getDefiningOp()) {
+      const auto found=normalResults.find(op);if(found!=normalResults.end())gate=found->second;
+    }else if(auto argument=llvm::dyn_cast<mlir::BlockArgument>(item)) {
+      const auto found=normalBlocks.find(argument.getOwner());if(found!=normalBlocks.end())gate=found->second;
+    }
+    if(gate!=noGate)valid&=flow.guard(result,gate,normalAtom);
+    return result;
+  }
+  bool insert(size_t id, const std::string &type) {
+    if(!proof.charge())return false;
+    // An existing native implementation temporary (String compare's i32) is
+    // not a fabricated Source type. Recognize only the fixed native interface.
+    bool native=false;if(!proof.catalog.count(type))for(unsigned code=1;code<=13;++code) {
+      if(!proof.charge())return false;
+      native|=type==hash(std::string("tsfg.type\0",10)+scalarName(code).str());
+    }
+    if(!proof.catalog.count(type)&&!native)return proof.reject("actual IR seed has no concrete semantic/native authority");
+    return flow.seed(id,type)||proof.reject(flow.error());
+  }
+  bool pending(size_t id) { return flow.unknown(id)||proof.reject(flow.error()); }
+  bool edge(size_t from,size_t to,size_t gate=noGate,std::string selected={},std::string filter={},bool equal=true,bool pendingOnly=false) {
+    return valid&&(flow.connect({from,to,gate,std::move(selected),std::move(filter),equal,pendingOnly})||proof.reject(flow.error()));
+  }
+  bool copy(mlir::Value from,mlir::Value to) { const auto a=value(from),b=value(to);return edge(a,b); }
+  bool call(mlir::Operation *op,const std::string &target,size_t sourceOffset,size_t targetOffset,
+            size_t gate=noGate,const std::string &selected={},bool forwardResult=true) {
+    if(!proof.functions.count(target))return proof.reject("actual flow call leaves owned closure");
+    auto fn=proof.functions.at(target);
+    if(sourceOffset>op->getNumOperands()||targetOffset>fn.getNumArguments()||
+       op->getNumOperands()-sourceOffset<fn.getNumArguments()-targetOffset)return proof.reject("actual call argument prefix");
+    for(size_t i=targetOffset;i<fn.getNumArguments();++i) {
+      const auto a=value(op->getOperand(sourceOffset+i-targetOffset)),b=value(fn.getArgument(i));
+      if(!edge(a,b,gate,selected,i==0&&gate!=noGate?selected:std::string()))return false;
+    }
+    if(forwardResult&&op->getNumResults()) {
+      if(!returns.count(target))return proof.reject("actual call result has no return slot");
+      const auto to=value(op->getResult(0));if(!edge(returns.at(target),to,gate,selected))return false;
+    }
+    return true;
+  }
+  bool operation(mlir::Operation *op,const std::string &function) {
+    for(const auto result:op->getResults())value(result);
+    if(!valid)return proof.reject(flow.error());
+    if(auto branch=llvm::dyn_cast<mlir::cf::BranchOp>(op)) {
+      if(!controlOnly&&role==ArrayFlow::Role::OrderedPayload&&!proof.mayTraverse(op,0))return true;
+      for(size_t i=0;i<branch.getDestOperands().size();++i)if(!copy(branch.getDestOperands()[i],branch.getDest()->getArgument(i)))return false;
+      return true;
+    }
+    if(auto branch=llvm::dyn_cast<mlir::cf::CondBranchOp>(op)) {
+      if(controlOnly||role==ArrayFlow::Role::CarrierMaximum||proof.mayTraverse(op,0))
+        for(size_t i=0;i<branch.getTrueDestOperands().size();++i)if(!copy(branch.getTrueDestOperands()[i],branch.getTrueDest()->getArgument(i)))return false;
+      if(controlOnly||role==ArrayFlow::Role::CarrierMaximum||proof.mayTraverse(op,1))
+        for(size_t i=0;i<branch.getFalseDestOperands().size();++i)if(!copy(branch.getFalseDestOperands()[i],branch.getFalseDest()->getArgument(i)))return false;
+      return true;
+    }
+    if(auto returned=llvm::dyn_cast<mlir::func::ReturnOp>(op)) {
+      return returned.getNumOperands()==0||edge(value(returned.getOperand(0)),returns.at(function));
+    }
+    if(llvm::isa<mlir::func::CallOp>(op))return call(op,attr(op,"tsfg_core.function_id"),0,0);
+    const auto name=op->getName().getStringRef();
+    if(name=="tsfg_core.domain.numeric_use") {
+      if(!controlOnly&&role==ArrayFlow::Role::OrderedPayload&&!proof.mayTraverse(op,0))return true;
+      return edge(value(op->getOperand(0)),value(op->getSuccessor(0)->getArgument(0)),
+        noGate,{},attr(op,"target_type"));
+    }
+    if(name=="tsfg_core.domain.construct"||name=="tsfg_core.domain.super") {
+      const auto found=constructions.find(attr(op,"construction"));if(found==constructions.end())return proof.reject("actual construction body");
+      if(name=="tsfg_core.domain.super")return call(op,found->second,0,0,noGate,{},false);
+      const auto result=value(op->getResult(0)),receiver=value(proof.functions.at(found->second).getArgument(0)),allocated=node();
+      // The body receives the actual allocation before it completes. Only the
+      // public expression result waits for successful constructor completion.
+      if(!flow.guard(allocated,normalInputs.at(op),normalAtom))return proof.reject(flow.error());
+      return insert(allocated,attr(op,"view_type"))&&edge(allocated,receiver)&&edge(allocated,result)&&
+        call(op,found->second,0,1,noGate,{},false);
+    }
+    if(name=="tsfg_core.domain.method_call") {
+      Json dispatch=nullptr;if(!arrays::ownerproof::parseCanonical(attr(op,"dispatch")+"\n",dispatch)||!dispatch.getAsArray())return false;
+      const auto receiver=value(op->getOperand(0));
+      for(const auto &item:*dispatch.getAsArray()) {
+        if(!proof.charge()||!item.getAsObject())return false;const auto &arm=*item.getAsObject();
+        if(!call(op,string(arm,"functionId"),0,0,receiver,string(arm,"actualType")))return false;
+      }
+      return true;
+    }
+    if(name=="tsfg_core.domain.view"||name=="tsfg_core.domain.refine"||name=="tsfg_core.domain.copy") {
+      std::string filter;bool equal=true;
+      if(name=="tsfg_core.domain.refine") {
+        Json predicate=nullptr;if(!arrays::ownerproof::parseCanonical(attr(op,"presence_proof")+"\n",predicate)||!predicate.getAsObject())return false;
+        filter=string(*predicate.getAsObject(),"type");equal=*predicate.getAsObject()->getBoolean("equal");
+      }
+      return edge(value(op->getOperand(0)),value(op->getResult(0)),noGate,{},filter,equal);
+    }
+    if(name=="tsfg_core.domain.field_read") {
+      const auto result=value(op->getResult(0));
+      if(controlOnly&&!memorySources)return pending(result);
+      if(proof.unprovedMemoryReads.count(op)||!proof.fieldReadInputs.count(op))return pending(result);
+      for(const auto input:proof.fieldReadInputs.at(op))if(!edge(value(input),result))return false;
+      const auto projected=proof.fieldReadSources.find(op);
+      if(projected!=proof.fieldReadSources.end())for(const auto &source:projected->second){
+        for(const auto &type:source.introduced)if(!proof.charge()||!insert(result,type))return false;
+        for(auto dependency:source.dependencies){
+          if(!proof.charge())return false;const auto input=value(dependency);
+          if(!flow.requireEvidence(input)||!edge(input,result,noGate,{},{},true,true))return proof.reject(flow.error());
+        }
+      }
+      if(proof.fieldReadUndefined.count(op)&&!insert(result,hash(std::string("tsfg.type\0undefined",19))))return false;
+      return true;
+    }
+    if(name=="tsfg_core.domain.array_read") {
+      if(!controlOnly)return true; // Coupled owner/element equations below.
+      const auto result=value(op->getResult(0));const auto sources=proof.arrayReadInputs.find(op);
+      if(!memorySources||sources==proof.arrayReadInputs.end())return pending(result);
+      for(const auto source:sources->second)if(!proof.charge()||!edge(value(source),result))return false;
+      const auto projected=proof.arrayReadSources.find(op);
+      if(projected!=proof.arrayReadSources.end())for(const auto &source:projected->second){
+        for(const auto &type:source.introduced)if(!proof.charge()||!insert(result,type))return false;
+        for(auto dependency:source.dependencies){
+          if(!proof.charge())return false;const auto input=value(dependency);
+          if(!flow.requireEvidence(input)||!edge(input,result,noGate,{},{},true,true))return proof.reject(flow.error());
+        }
+      }
+      return true;
+    }
+    if(name=="tsfg_core.domain.literal"||name=="tsfg_core.domain.array_create"||name=="tsfg_core.domain.read_span")
+      return insert(value(op->getResult(0)),attr(op,"view_type"));
+    if(nativePayloadOperation(op))for(const auto result:op->getResults()) {
+      const auto *bound=valueDomain(proof,result.getType());const auto to=value(result);
+      if(!bound||bound->alternatives.size()!=1)return proof.reject("primitive result has no exact native/String identity");
+      // A typed native result is conditional on productive operands. In
+      // particular a numeric-use success block never seeds a fictitious i32.
+      auto source=node();if(!insert(source,bound->alternatives[0]))return false;
+      for(const auto input:op->getOperands()) {
+        const auto *actual=valueDomain(proof,input.getType());
+        if(!actual||actual->alternatives.empty())return proof.reject("native operation input has no semantic carrier");
+        const auto next=node();
+        for(const auto &type:actual->alternatives)if(!proof.charge()||!edge(source,next,value(input),type))return false;
+        source=next;
+      }
+      if(!edge(source,to))return false;
+    }
+    else if(op->getNumResults())return proof.reject("result-producing operation lacks an independent actual-flow rule");
+    return true;
+  }
+  bool bounds() {
+    for(const auto &[item,id]:values) {
+      const auto *carrier=valueDomain(proof,item.getType());const auto &evidence=*flow.evidence(id);
+      if(!proof.charge()||!carrier||flow.covers(id,{carrier->alternatives.begin(),carrier->alternatives.end()})==PayloadFlow::Fit::Mismatch)
+        return proof.reject("actual IR propagation exceeds an SSA representation carrier");
+      if(role==ArrayFlow::Role::OrderedPayload&&!evidence.pending&&!evidence.alternatives.empty())
+        proof.actualPayloads.try_emplace(item,evidence);
+    }
+    for(auto &[function,fn]:proof.functions) {
+      const auto &abi=*proof.abi.at(function);const auto &parameters=*abi.getArray("parameters");
+      bool pendingBound=false;
+      for(size_t index=0;index<fn.getNumArguments();++index) {
+        if(!proof.charge())return false;const auto &computed=*flow.evidence(value(fn.getArgument(index)));
+        const auto &declared=proof.domains.at(parameters[index].getAsString()->str()).alternatives;
+        if(computed.pending||computed.alternatives.empty())pendingBound=true;
+        else if((role==ArrayFlow::Role::CarrierMaximum?flow.exact(value(fn.getArgument(index)),{declared.begin(),declared.end()}):
+          flow.covers(value(fn.getArgument(index)),{declared.begin(),declared.end()}))!=PayloadFlow::Fit::Proven)
+          return proof.reject("closed parameter ABI contains unproved extra actual alternatives");
+      }
+      if(returns.count(function)) {
+        const auto &computed=*flow.evidence(returns.at(function));
+        const auto &declared=proof.domains.at(abi.getString("result")->str()).alternatives;
+        if(role==ArrayFlow::Role::OrderedPayload&&!computed.pending&&!computed.alternatives.empty())
+          proof.actualReturns.emplace(function,computed);
+        // A recursive/divergent return equation with no productive seed is not
+        // permission to change the published signature into a bottom ABI.
+        if(computed.pending||(computed.alternatives.empty()&&!proof.trapOnlyFunctions.count(function)))pendingBound=true;
+        else if(!computed.alternatives.empty()&&((role==ArrayFlow::Role::CarrierMaximum?flow.exact(returns.at(function),{declared.begin(),declared.end()}):
+          flow.covers(returns.at(function),{declared.begin(),declared.end()}))!=PayloadFlow::Fit::Proven))
+          return proof.reject("closed result ABI differs from the independently reached return payloads");
+      }
+      if(pendingBound)proof.unprovedActualBounds.insert(function);
+    }
+    return true;
+  }
+  bool controlPaths(bool *changed) {
+    ControlPaths paths(proof.remaining);
+    std::map<mlir::Block *,size_t> blocks;
+    std::map<std::pair<mlir::Operation *,unsigned>,size_t> edges;
+    for(auto &[id,fn]:proof.functions)for(auto &block:fn.getBody()) {
+      if(!proof.charge())return false;const auto key=paths.block();
+      if(key==PayloadFlow::none)return proof.reject(paths.error());blocks.emplace(&block,key);
+      if(&block==&fn.getBody().front()&&!paths.entry(key))return proof.reject(paths.error());
+    }
+    for(auto &[id,fn]:proof.functions)for(auto &block:fn.getBody()) {
+      if(!proof.charge())return false;auto *terminator=block.getTerminator();ControlPaths::Predicate predicate;
+      if(auto branch=llvm::dyn_cast<mlir::cf::CondBranchOp>(terminator)) {
+        auto *condition=branch.getCondition().getDefiningOp();
+        if(condition&&condition->getName().getStringRef()=="tsfg_core.constant"&&typeCode(branch.getCondition().getType())==2) {
+          uint64_t bits=0;if(!constantBits(condition,bits))return proof.reject("conditional Boolean literal authority");
+          predicate.literal=bits!=0;
+        }else if(memorySources&&condition&&condition->getName().getStringRef()=="tsfg_core.domain.member_present") {
+          const auto found=proof.memberOutcomes.find(condition);
+          if(found!=proof.memberOutcomes.end()&&found->second.size()==1)predicate.literal=*found->second.begin();
+        }else if(condition&&condition->getName().getStringRef()=="tsfg_core.domain.presence_equal") {
+          for(unsigned i=0;i<2;++i) {
+            if(!proof.charge())return false;auto *literal=condition->getOperand(i).getDefiningOp();
+            if(!literal||literal->getName().getStringRef()!="tsfg_core.domain.literal")continue;
+            predicate.tested=attr(literal,"view_type");predicate.equal=attr(condition,"operator")=="===";
+            predicate.input=flow.evidence(value(condition->getOperand(1-i)));
+            if(!predicate.input)return proof.reject("conditional predicate has no solved IR origin");break;
+          }
+        }
+      }
+      if(terminator->getName().getStringRef()=="tsfg_core.domain.numeric_use") {
+        predicate.tested=attr(terminator,"target_type");predicate.equal=true;
+        predicate.input=flow.evidence(value(terminator->getOperand(0)));
+        if(!predicate.input)return proof.reject("numeric use has no solved original payload");
+      }
+      bool stopped=false;
+      for(auto &op:block) {
+        if(!proof.charge())return false;const auto found=proof.selectedCallees.find(&op);
+        if(found!=proof.selectedCallees.end()&&!found->second.empty()) {
+          bool all=true;for(const auto &target:found->second)if(!proof.charge()||!proof.trapOnlyFunctions.count(target))all=false;
+          stopped|=all;
+        }
+      }
+      for(unsigned i=0;!stopped&&i<terminator->getNumSuccessors();++i) {
+        if(!proof.charge())return false;
+        // Earlier edge proofs were established on a conservative superset.
+        // Refinement is monotone; omitted paths never provide phi operands.
+        if(memorySources&&!proof.mayTraverse(terminator,i))continue;
+        const auto edge=paths.edge(blocks.at(&block),blocks.at(terminator->getSuccessor(i)),predicate,i==0);
+        if(edge==PayloadFlow::none)return proof.reject(paths.error());edges.emplace(std::make_pair(terminator,i),edge);
+      }
+    }
+    if(!paths.solve())return proof.reject(paths.error());
+    std::set<mlir::Block *> possible;std::set<std::pair<mlir::Operation *,unsigned>> selected;
+    for(const auto &[block,id]:blocks){if(!proof.charge())return false;if(paths.reaches(id))possible.insert(block);}
+    for(const auto &[edge,id]:edges){if(!proof.charge())return false;if(paths.traverses(id))selected.insert(edge);}
+    // Least fixed point of positively known trap frontiers. A cycle or an
+    // empty recursive return equation has no seed and therefore stays unknown.
+    auto trapped=proof.trapOnlyFunctions;std::set<mlir::Block *> dead;bool grew;
+    const auto stoppedCall=[&](mlir::Operation *op) {
+      const auto found=proof.selectedCallees.find(op);
+      if(found==proof.selectedCallees.end()||found->second.empty())return false;
+      for(const auto &target:found->second)if(!proof.charge()||!trapped.count(target))return false;
+      return true;
+    };
+    do {
+      grew=false;
+      for(auto &[id,fn]:proof.functions)for(auto &block:fn.getBody()) {
+        if(!proof.charge())return false;if(dead.count(&block))continue;
+        bool trap=false;
+        for(auto &op:block){if(!proof.charge())return false;trap|=stoppedCall(&op);}
+        auto *end=block.getTerminator();
+        if(end->getName().getStringRef()=="tsfg_core.domain.numeric_use") {
+          const auto *input=flow.evidence(value(end->getOperand(0)));
+          trap|=input&&!input->pending&&!input->alternatives.empty()&&!input->alternatives.count(attr(end,"target_type"));
+        }
+        bool outgoing=false,all=true;
+        for(unsigned i=0;i<end->getNumSuccessors();++i) {
+          if(!proof.charge())return false;if(!selected.count({end,i}))continue;
+          outgoing=true;all&=dead.count(end->getSuccessor(i))!=0;
+        }
+        if(trap||(outgoing&&all)){dead.insert(&block);grew=true;}
+      }
+      for(auto &[id,fn]:proof.functions)if(dead.count(&fn.getBody().front())&&trapped.insert(id).second)grew=true;
+    }while(grew);
+    std::set<mlir::Operation *> operations;
+    for(auto &[id,fn]:proof.functions)for(auto &block:fn.getBody())if(possible.count(&block))for(auto &op:block) {
+      if(!proof.charge())return false;operations.insert(&op);if(stoppedCall(&op))break;
+    }
+    if(changed) {
+      if(!proof.charge(possible.size()+selected.size()+operations.size()+trapped.size()))return false;
+      *changed=possible!=proof.possibleBlocks||selected!=proof.possibleEdges||
+        operations!=proof.possibleOperations||trapped!=proof.trapOnlyFunctions;
+    }
+    proof.possibleBlocks=std::move(possible);proof.possibleEdges=std::move(selected);
+    proof.possibleOperations=std::move(operations);proof.trapOnlyFunctions=std::move(trapped);
+    proof.controlReady=true;return true;
+  }
+  bool normalGraph() {
+    // Completion atoms are internal control evidence, never semantic TypeIds,
+    // payload capacity, a runtime value or a producer-provided completion flag.
+    for(auto &[id,fn]:proof.functions) {
+      completions.emplace(id,node());
+      for(auto &block:fn.getBody()){if(!proof.charge())return false;normalBlocks.emplace(&block,node());}
+    }
+    struct Call {size_t before,after;mlir::Operation *op;};std::vector<Call> calls;
+    for(auto &[id,fn]:proof.functions)for(auto &block:fn.getBody()) {
+      auto current=normalBlocks.at(&block);
+      if(&block==&fn.getBody().front()&&!flow.seed(current,normalAtom))return proof.reject(flow.error());
+      for(auto &op:block) {
+        if(!proof.charge())return false;
+        normalInputs.emplace(&op,current);
+        const auto found=proof.selectedCallees.find(&op);
+        if(found!=proof.selectedCallees.end()&&!found->second.empty()) {
+          const auto next=node();calls.push_back({current,next,&op});current=next;
+        }
+        normalResults.emplace(&op,current);
+      }
+    }
+    for(const auto &call:calls)for(const auto &target:proof.selectedCallees.at(call.op)) {
+      if(!proof.charge()||!completions.count(target))return proof.reject("normal call completion leaves owned closure");
+      const auto completion=completions.at(target);
+      if(!proof.trapOnlyFunctions.count(target)&&!flow.requireEvidence(completion))return proof.reject(flow.error());
+      if(!edge(call.before,call.after,completion,normalAtom))return false;
+    }
+    for(auto &[id,fn]:proof.functions)for(auto &block:fn.getBody()) {
+      if(!proof.charge())return false;auto *op=block.getTerminator();const auto current=normalResults.at(op);
+      if(auto returned=llvm::dyn_cast<mlir::func::ReturnOp>(op)) {
+        if(returned.getNumOperands()==0){if(!edge(current,completions.at(id)))return false;}
+        else {
+          const auto *bound=valueDomain(proof,returned.getOperand(0).getType());if(!bound)return false;
+          for(const auto &type:bound->alternatives)if(!proof.charge()||
+              !edge(current,completions.at(id),value(returned.getOperand(0)),type))return false;
+        }
+      }
+      for(unsigned i=0;i<op->getNumSuccessors();++i) {
+        if(!proof.charge())return false;
+        if(!controlOnly&&role==ArrayFlow::Role::OrderedPayload&&!proof.mayTraverse(op,i))continue;
+        if(op->getName().getStringRef()=="tsfg_core.domain.numeric_use") {
+          if(!edge(current,normalBlocks.at(op->getSuccessor(i)),value(op->getOperand(0)),attr(op,"target_type")))return false;
+        }else if(!edge(current,normalBlocks.at(op->getSuccessor(i))))return false;
+      }
+    }
+    return valid||proof.reject(flow.error());
+  }
+  bool run(bool *changed=nullptr) {
+    for(auto &[id,fn]:proof.functions) {
+      const auto &contract=*proof.callable.at(id);
+      if(string(contract,"role")=="construction-body")constructions.emplace(string(contract,"construction"),id);
+      if(proof.abi.at(id)->get("result")->kind()!=Json::Null)returns.emplace(id,node());
+    }
+    if(!normalGraph())return false;
+    for(auto &[id,fn]:proof.functions)for(auto &block:fn.getBody())for(const auto argument:block.getArguments())value(argument);
+    if(!valid)return proof.reject(flow.error());
+    for(const auto &[argument,types]:proof.definitionParameters)for(const auto &type:types)if(!insert(value(argument),type))return false;
+    for(auto &[id,fn]:proof.functions)for(auto &block:fn.getBody())for(auto &op:block)
+      if(!proof.charge()||((controlOnly||role==ArrayFlow::Role::CarrierMaximum||proof.mayExecute(&op))&&!operation(&op,id)))return false;
+    // A conservative control prepass uses the very same real-IR payload
+    // normalizer. Memory inputs remain unknown; no producer ledger/capacity
+    // alternative or unverified read claim can prune a path here.
+    if(controlOnly)return flow.solve()?controlPaths(changed):proof.reject(flow.error());
+    ArrayFlow arrays(proof,flow,[this](mlir::Value item){return value(item);},role);
+    if(!arrays.build())return proof.reject(flow.error().empty()?"actual Array owner normalization":flow.error());
+    if(!valid||!flow.solve())return proof.reject(flow.error());
+    if(!arrays.finish())return proof.reject(flow.error().empty()?"actual Array backing/read evidence":flow.error());
+    return bounds();
+  }
+};
+}
+bool verifyActualFlow(ModuleProof &proof) {
+  // The same IR normalizer/engine proves two different obligations. Maximum
+  // ABI evidence is never copied into the ordered actual-value seed ledger.
+  return ActualFlow{proof,ArrayFlow::Role::CarrierMaximum}.run()&&
+    ActualFlow{proof,ArrayFlow::Role::OrderedPayload}.run();
+}
+bool verifyControlPaths(ModuleProof &proof,bool memorySources,bool *changed) {
+  return ActualFlow{proof,ArrayFlow::Role::OrderedPayload,true,memorySources}.run(changed);
+}
+} // namespace tsfg::finite

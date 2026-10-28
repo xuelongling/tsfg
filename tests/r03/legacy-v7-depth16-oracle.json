@@ -1,0 +1,2751 @@
+{
+  "family": "tsfg.r03.legacy-v5-depth16-oracle",
+  "version": 5,
+  "cases": [
+    {
+      "analysis": {
+        "calls": [
+          {
+            "arguments": [],
+            "consumedDigest": "sha256:b77d07e7401ca8bfe04db7f98d1f6507756c3a03a9d4169abd97ab99f22c405d",
+            "expressionPath": [
+              "body",
+              0,
+              "value"
+            ],
+            "functionId": "sha256:0b9d85b9b9b4663e246599cab0730d8e6b8d06cec06ef5964bb87f62acf0f759",
+            "publishedLocal": null,
+            "range": {
+              "end": 291,
+              "start": 287
+            },
+            "signatureHash": "sha256:1a3c0248ecb7e498007af6b22ac9e18eb5df6b9390677401805ce98ab2934d96",
+            "target": "sha256:c62d90112b153b8ee7c8fbe00b9ffcf034830a28cdda036033a52f3b2bf610d8",
+            "returnedView": null
+          },
+          {
+            "arguments": [],
+            "consumedDigest": "sha256:e2bfcee02ca2fbffaa090ac170f7293020b157a7480898a82ba234bbddd087a7",
+            "expressionPath": [
+              "body",
+              0,
+              "value"
+            ],
+            "functionId": "sha256:15c9ca49f34d45ea5c08d2bdcec2d3d489a400fe2596ad7fbf800bd89d178da0",
+            "publishedLocal": null,
+            "range": {
+              "end": 255,
+              "start": 251
+            },
+            "signatureHash": "sha256:1a3c0248ecb7e498007af6b22ac9e18eb5df6b9390677401805ce98ab2934d96",
+            "target": "sha256:0b9d85b9b9b4663e246599cab0730d8e6b8d06cec06ef5964bb87f62acf0f759",
+            "returnedView": null
+          },
+          {
+            "arguments": [],
+            "consumedDigest": "sha256:1f84c1c118bb9bbc954c906a25150e92a47d589d6d3d389a36718539cda578f0",
+            "expressionPath": [
+              "body",
+              0,
+              "value"
+            ],
+            "functionId": "sha256:232e2809e64449332c8bfe92cd58a394caf29d9c1863d0aaa1d29530d4d9ea16",
+            "publishedLocal": null,
+            "range": {
+              "end": 554,
+              "start": 549
+            },
+            "signatureHash": "sha256:1a3c0248ecb7e498007af6b22ac9e18eb5df6b9390677401805ce98ab2934d96",
+            "target": "sha256:7b3be569be9936a15749fec3ed743bfbb31f0c4d76c95dcfbe7ae79a6c725908",
+            "returnedView": null
+          },
+          {
+            "arguments": [],
+            "consumedDigest": "sha256:1c58b006db6f29864f7281b383ab5a6840cf2bb6646de9a161cd8201fdf94c5f",
+            "expressionPath": [
+              "body",
+              0,
+              "value"
+            ],
+            "functionId": "sha256:5b48c83e49f1ab585aa962a8e2e44b06b6f1b1a50955dbf86c02f89d2bda5289",
+            "publishedLocal": null,
+            "range": {
+              "end": 147,
+              "start": 143
+            },
+            "signatureHash": "sha256:1a3c0248ecb7e498007af6b22ac9e18eb5df6b9390677401805ce98ab2934d96",
+            "target": "sha256:6b96c4d9cf0b2631d239b15d0988718643957f4cc00919a1c50efb62f3b2233a",
+            "returnedView": null
+          },
+          {
+            "arguments": [],
+            "consumedDigest": "sha256:67ce0ec21294b55ba51f5fe47fb99ba844a1de4611ec36f76b5066af60885f00",
+            "expressionPath": [
+              "body",
+              0,
+              "value"
+            ],
+            "functionId": "sha256:66c692a80648e02b6d5c9f3e2600380331f3be1eb653163a5c98e5caa6dedbff",
+            "publishedLocal": null,
+            "range": {
+              "end": 39,
+              "start": 35
+            },
+            "signatureHash": "sha256:1a3c0248ecb7e498007af6b22ac9e18eb5df6b9390677401805ce98ab2934d96",
+            "target": "sha256:c38f42fc30436a18b798a836784b895e4e808af4c9cbba42157c45be15686913",
+            "returnedView": null
+          },
+          {
+            "arguments": [],
+            "consumedDigest": "sha256:42d94bb6fc116709a6248c7425eef0cad6b7cc7f89a26067b04d1ef55ea09c9a",
+            "expressionPath": [
+              "body",
+              0,
+              "value"
+            ],
+            "functionId": "sha256:6b96c4d9cf0b2631d239b15d0988718643957f4cc00919a1c50efb62f3b2233a",
+            "publishedLocal": null,
+            "range": {
+              "end": 183,
+              "start": 179
+            },
+            "signatureHash": "sha256:1a3c0248ecb7e498007af6b22ac9e18eb5df6b9390677401805ce98ab2934d96",
+            "target": "sha256:a0aee9872e4e1167eb610bf50c2ccd932af06c1afd308e4dac23d71e93892a55",
+            "returnedView": null
+          },
+          {
+            "arguments": [],
+            "consumedDigest": "sha256:f685acd3fd3025e3b82229a9cc50aaa8ae5187494ea5d332bae330d9577ba1fc",
+            "expressionPath": [
+              "body",
+              0,
+              "value"
+            ],
+            "functionId": "sha256:6d3f5868cc6700bd4581721dd0e321bb1013c26272c265da7fe21804737c6fce",
+            "publishedLocal": null,
+            "range": {
+              "end": 516,
+              "start": 511
+            },
+            "signatureHash": "sha256:1a3c0248ecb7e498007af6b22ac9e18eb5df6b9390677401805ce98ab2934d96",
+            "target": "sha256:232e2809e64449332c8bfe92cd58a394caf29d9c1863d0aaa1d29530d4d9ea16",
+            "returnedView": null
+          },
+          {
+            "arguments": [],
+            "consumedDigest": "sha256:ff52edb1f39ba60a5815a2a06f16b9f9367aad43e8203cedcae52ae048ed9678",
+            "expressionPath": [
+              "body",
+              0,
+              "value"
+            ],
+            "functionId": "sha256:76c3ab315cfc78e32d378a6549448acb86283e092e95c36602108e121b4dfe90",
+            "publishedLocal": null,
+            "range": {
+              "end": 111,
+              "start": 107
+            },
+            "signatureHash": "sha256:1a3c0248ecb7e498007af6b22ac9e18eb5df6b9390677401805ce98ab2934d96",
+            "target": "sha256:5b48c83e49f1ab585aa962a8e2e44b06b6f1b1a50955dbf86c02f89d2bda5289",
+            "returnedView": null
+          },
+          {
+            "arguments": [],
+            "consumedDigest": "sha256:7e0a44106de4f7a7c79e2547d218cd3269e019ad34eb3a19e5622d080d6b8dfc",
+            "expressionPath": [
+              "body",
+              0,
+              "value"
+            ],
+            "functionId": "sha256:97cd47ee986bab4d5fed10bda5455c164402a2dc3f719dfe48654c9434c83b2e",
+            "publishedLocal": null,
+            "range": {
+              "end": 402,
+              "start": 397
+            },
+            "signatureHash": "sha256:1a3c0248ecb7e498007af6b22ac9e18eb5df6b9390677401805ce98ab2934d96",
+            "target": "sha256:cfff658dd10fb0596f1110e3757a0cde7e4c97566a6a1fed565ca3c4f962eaf1",
+            "returnedView": null
+          },
+          {
+            "arguments": [],
+            "consumedDigest": "sha256:8b52f5e0d8ea73d649408bca7f1429c0898f0921cd4075782631c2ac50b009ab",
+            "expressionPath": [
+              "body",
+              0,
+              "value"
+            ],
+            "functionId": "sha256:a0aee9872e4e1167eb610bf50c2ccd932af06c1afd308e4dac23d71e93892a55",
+            "publishedLocal": null,
+            "range": {
+              "end": 219,
+              "start": 215
+            },
+            "signatureHash": "sha256:1a3c0248ecb7e498007af6b22ac9e18eb5df6b9390677401805ce98ab2934d96",
+            "target": "sha256:15c9ca49f34d45ea5c08d2bdcec2d3d489a400fe2596ad7fbf800bd89d178da0",
+            "returnedView": null
+          },
+          {
+            "arguments": [],
+            "consumedDigest": "sha256:1b332119c455380e8408a67b84e3c093ca6eedba866f3ccddd72f36de1e4abf8",
+            "expressionPath": [
+              "body",
+              0,
+              "value"
+            ],
+            "functionId": "sha256:b636910e07cb0cb031bf0fd2eb8cce17255cc683b59dc3000397b41675cc190c",
+            "publishedLocal": null,
+            "range": {
+              "end": 478,
+              "start": 473
+            },
+            "signatureHash": "sha256:1a3c0248ecb7e498007af6b22ac9e18eb5df6b9390677401805ce98ab2934d96",
+            "target": "sha256:6d3f5868cc6700bd4581721dd0e321bb1013c26272c265da7fe21804737c6fce",
+            "returnedView": null
+          },
+          {
+            "arguments": [],
+            "consumedDigest": "sha256:6fd07367b6a45ebb552da0d7640cb47be9b08067a5d11bbc4815c7a929f97a6a",
+            "expressionPath": [
+              "body",
+              0,
+              "value"
+            ],
+            "functionId": "sha256:ba8ed99f857e0f98ddaf7075d33d44e047fd564fef3fc4ae52f9e63a5b4045db",
+            "publishedLocal": null,
+            "range": {
+              "end": 364,
+              "start": 359
+            },
+            "signatureHash": "sha256:1a3c0248ecb7e498007af6b22ac9e18eb5df6b9390677401805ce98ab2934d96",
+            "target": "sha256:97cd47ee986bab4d5fed10bda5455c164402a2dc3f719dfe48654c9434c83b2e",
+            "returnedView": null
+          },
+          {
+            "arguments": [],
+            "consumedDigest": "sha256:681ed6b9fe1d2e9241ae104e128f1debf96989cf178a2fb616e2c8119426c266",
+            "expressionPath": [
+              "body",
+              0,
+              "value"
+            ],
+            "functionId": "sha256:c38f42fc30436a18b798a836784b895e4e808af4c9cbba42157c45be15686913",
+            "publishedLocal": null,
+            "range": {
+              "end": 75,
+              "start": 71
+            },
+            "signatureHash": "sha256:1a3c0248ecb7e498007af6b22ac9e18eb5df6b9390677401805ce98ab2934d96",
+            "target": "sha256:76c3ab315cfc78e32d378a6549448acb86283e092e95c36602108e121b4dfe90",
+            "returnedView": null
+          },
+          {
+            "arguments": [],
+            "consumedDigest": "sha256:b81ece0469197a99061fb40d51d9a558ab04757173816a0e788e91d1cf12b578",
+            "expressionPath": [
+              "body",
+              0,
+              "value"
+            ],
+            "functionId": "sha256:c62d90112b153b8ee7c8fbe00b9ffcf034830a28cdda036033a52f3b2bf610d8",
+            "publishedLocal": null,
+            "range": {
+              "end": 327,
+              "start": 323
+            },
+            "signatureHash": "sha256:1a3c0248ecb7e498007af6b22ac9e18eb5df6b9390677401805ce98ab2934d96",
+            "target": "sha256:ba8ed99f857e0f98ddaf7075d33d44e047fd564fef3fc4ae52f9e63a5b4045db",
+            "returnedView": null
+          },
+          {
+            "arguments": [],
+            "consumedDigest": "sha256:2fdb7970f2864ab35f0edf3b4f2be2918423cd02133ab2410be42635d919716e",
+            "expressionPath": [
+              "body",
+              0,
+              "value"
+            ],
+            "functionId": "sha256:cfff658dd10fb0596f1110e3757a0cde7e4c97566a6a1fed565ca3c4f962eaf1",
+            "publishedLocal": null,
+            "range": {
+              "end": 440,
+              "start": 435
+            },
+            "signatureHash": "sha256:1a3c0248ecb7e498007af6b22ac9e18eb5df6b9390677401805ce98ab2934d96",
+            "target": "sha256:b636910e07cb0cb031bf0fd2eb8cce17255cc683b59dc3000397b41675cc190c",
+            "returnedView": null
+          }
+        ],
+        "contracts": [
+          {
+            "digest": "sha256:e2bfcee02ca2fbffaa090ac170f7293020b157a7480898a82ba234bbddd087a7",
+            "functionId": "sha256:0b9d85b9b9b4663e246599cab0730d8e6b8d06cec06ef5964bb87f62acf0f759",
+            "signatureHash": "sha256:1a3c0248ecb7e498007af6b22ac9e18eb5df6b9390677401805ce98ab2934d96",
+            "upper": {
+              "local": {
+                "read": false,
+                "structural": false,
+                "write": false
+              },
+              "parameters": [],
+              "returnOrigin": null
+            }
+          },
+          {
+            "digest": "sha256:8b52f5e0d8ea73d649408bca7f1429c0898f0921cd4075782631c2ac50b009ab",
+            "functionId": "sha256:15c9ca49f34d45ea5c08d2bdcec2d3d489a400fe2596ad7fbf800bd89d178da0",
+            "signatureHash": "sha256:1a3c0248ecb7e498007af6b22ac9e18eb5df6b9390677401805ce98ab2934d96",
+            "upper": {
+              "local": {
+                "read": false,
+                "structural": false,
+                "write": false
+              },
+              "parameters": [],
+              "returnOrigin": null
+            }
+          },
+          {
+            "digest": "sha256:f685acd3fd3025e3b82229a9cc50aaa8ae5187494ea5d332bae330d9577ba1fc",
+            "functionId": "sha256:232e2809e64449332c8bfe92cd58a394caf29d9c1863d0aaa1d29530d4d9ea16",
+            "signatureHash": "sha256:1a3c0248ecb7e498007af6b22ac9e18eb5df6b9390677401805ce98ab2934d96",
+            "upper": {
+              "local": {
+                "read": false,
+                "structural": false,
+                "write": false
+              },
+              "parameters": [],
+              "returnOrigin": null
+            }
+          },
+          {
+            "digest": "sha256:ff52edb1f39ba60a5815a2a06f16b9f9367aad43e8203cedcae52ae048ed9678",
+            "functionId": "sha256:5b48c83e49f1ab585aa962a8e2e44b06b6f1b1a50955dbf86c02f89d2bda5289",
+            "signatureHash": "sha256:1a3c0248ecb7e498007af6b22ac9e18eb5df6b9390677401805ce98ab2934d96",
+            "upper": {
+              "local": {
+                "read": false,
+                "structural": false,
+                "write": false
+              },
+              "parameters": [],
+              "returnOrigin": null
+            }
+          },
+          {
+            "digest": "sha256:873015d9f359fe6582af523dcd329d9716db0b2ed1e96c0c3315b3ce2b9c63a5",
+            "functionId": "sha256:66c692a80648e02b6d5c9f3e2600380331f3be1eb653163a5c98e5caa6dedbff",
+            "signatureHash": "sha256:1a3c0248ecb7e498007af6b22ac9e18eb5df6b9390677401805ce98ab2934d96",
+            "upper": {
+              "local": {
+                "read": false,
+                "structural": false,
+                "write": false
+              },
+              "parameters": [],
+              "returnOrigin": null
+            }
+          },
+          {
+            "digest": "sha256:1c58b006db6f29864f7281b383ab5a6840cf2bb6646de9a161cd8201fdf94c5f",
+            "functionId": "sha256:6b96c4d9cf0b2631d239b15d0988718643957f4cc00919a1c50efb62f3b2233a",
+            "signatureHash": "sha256:1a3c0248ecb7e498007af6b22ac9e18eb5df6b9390677401805ce98ab2934d96",
+            "upper": {
+              "local": {
+                "read": false,
+                "structural": false,
+                "write": false
+              },
+              "parameters": [],
+              "returnOrigin": null
+            }
+          },
+          {
+            "digest": "sha256:1b332119c455380e8408a67b84e3c093ca6eedba866f3ccddd72f36de1e4abf8",
+            "functionId": "sha256:6d3f5868cc6700bd4581721dd0e321bb1013c26272c265da7fe21804737c6fce",
+            "signatureHash": "sha256:1a3c0248ecb7e498007af6b22ac9e18eb5df6b9390677401805ce98ab2934d96",
+            "upper": {
+              "local": {
+                "read": false,
+                "structural": false,
+                "write": false
+              },
+              "parameters": [],
+              "returnOrigin": null
+            }
+          },
+          {
+            "digest": "sha256:681ed6b9fe1d2e9241ae104e128f1debf96989cf178a2fb616e2c8119426c266",
+            "functionId": "sha256:76c3ab315cfc78e32d378a6549448acb86283e092e95c36602108e121b4dfe90",
+            "signatureHash": "sha256:1a3c0248ecb7e498007af6b22ac9e18eb5df6b9390677401805ce98ab2934d96",
+            "upper": {
+              "local": {
+                "read": false,
+                "structural": false,
+                "write": false
+              },
+              "parameters": [],
+              "returnOrigin": null
+            }
+          },
+          {
+            "digest": "sha256:1f84c1c118bb9bbc954c906a25150e92a47d589d6d3d389a36718539cda578f0",
+            "functionId": "sha256:7b3be569be9936a15749fec3ed743bfbb31f0c4d76c95dcfbe7ae79a6c725908",
+            "signatureHash": "sha256:1a3c0248ecb7e498007af6b22ac9e18eb5df6b9390677401805ce98ab2934d96",
+            "upper": {
+              "local": {
+                "read": false,
+                "structural": false,
+                "write": false
+              },
+              "parameters": [],
+              "returnOrigin": null
+            }
+          },
+          {
+            "digest": "sha256:6fd07367b6a45ebb552da0d7640cb47be9b08067a5d11bbc4815c7a929f97a6a",
+            "functionId": "sha256:97cd47ee986bab4d5fed10bda5455c164402a2dc3f719dfe48654c9434c83b2e",
+            "signatureHash": "sha256:1a3c0248ecb7e498007af6b22ac9e18eb5df6b9390677401805ce98ab2934d96",
+            "upper": {
+              "local": {
+                "read": false,
+                "structural": false,
+                "write": false
+              },
+              "parameters": [],
+              "returnOrigin": null
+            }
+          },
+          {
+            "digest": "sha256:42d94bb6fc116709a6248c7425eef0cad6b7cc7f89a26067b04d1ef55ea09c9a",
+            "functionId": "sha256:a0aee9872e4e1167eb610bf50c2ccd932af06c1afd308e4dac23d71e93892a55",
+            "signatureHash": "sha256:1a3c0248ecb7e498007af6b22ac9e18eb5df6b9390677401805ce98ab2934d96",
+            "upper": {
+              "local": {
+                "read": false,
+                "structural": false,
+                "write": false
+              },
+              "parameters": [],
+              "returnOrigin": null
+            }
+          },
+          {
+            "digest": "sha256:2fdb7970f2864ab35f0edf3b4f2be2918423cd02133ab2410be42635d919716e",
+            "functionId": "sha256:b636910e07cb0cb031bf0fd2eb8cce17255cc683b59dc3000397b41675cc190c",
+            "signatureHash": "sha256:1a3c0248ecb7e498007af6b22ac9e18eb5df6b9390677401805ce98ab2934d96",
+            "upper": {
+              "local": {
+                "read": false,
+                "structural": false,
+                "write": false
+              },
+              "parameters": [],
+              "returnOrigin": null
+            }
+          },
+          {
+            "digest": "sha256:b81ece0469197a99061fb40d51d9a558ab04757173816a0e788e91d1cf12b578",
+            "functionId": "sha256:ba8ed99f857e0f98ddaf7075d33d44e047fd564fef3fc4ae52f9e63a5b4045db",
+            "signatureHash": "sha256:1a3c0248ecb7e498007af6b22ac9e18eb5df6b9390677401805ce98ab2934d96",
+            "upper": {
+              "local": {
+                "read": false,
+                "structural": false,
+                "write": false
+              },
+              "parameters": [],
+              "returnOrigin": null
+            }
+          },
+          {
+            "digest": "sha256:67ce0ec21294b55ba51f5fe47fb99ba844a1de4611ec36f76b5066af60885f00",
+            "functionId": "sha256:c38f42fc30436a18b798a836784b895e4e808af4c9cbba42157c45be15686913",
+            "signatureHash": "sha256:1a3c0248ecb7e498007af6b22ac9e18eb5df6b9390677401805ce98ab2934d96",
+            "upper": {
+              "local": {
+                "read": false,
+                "structural": false,
+                "write": false
+              },
+              "parameters": [],
+              "returnOrigin": null
+            }
+          },
+          {
+            "digest": "sha256:b77d07e7401ca8bfe04db7f98d1f6507756c3a03a9d4169abd97ab99f22c405d",
+            "functionId": "sha256:c62d90112b153b8ee7c8fbe00b9ffcf034830a28cdda036033a52f3b2bf610d8",
+            "signatureHash": "sha256:1a3c0248ecb7e498007af6b22ac9e18eb5df6b9390677401805ce98ab2934d96",
+            "upper": {
+              "local": {
+                "read": false,
+                "structural": false,
+                "write": false
+              },
+              "parameters": [],
+              "returnOrigin": null
+            }
+          },
+          {
+            "digest": "sha256:7e0a44106de4f7a7c79e2547d218cd3269e019ad34eb3a19e5622d080d6b8dfc",
+            "functionId": "sha256:cfff658dd10fb0596f1110e3757a0cde7e4c97566a6a1fed565ca3c4f962eaf1",
+            "signatureHash": "sha256:1a3c0248ecb7e498007af6b22ac9e18eb5df6b9390677401805ce98ab2934d96",
+            "upper": {
+              "local": {
+                "read": false,
+                "structural": false,
+                "write": false
+              },
+              "parameters": [],
+              "returnOrigin": null
+            }
+          }
+        ],
+        "format": {
+          "family": "tsfg.array-calls-candidate",
+          "version": 8,
+          "schemaHash": "sha256:391d1e7e87f7b3b83dc15fe6a1732c843f97777a1d807259aeb989a26b7622eb"
+        },
+        "functions": [
+          {
+            "dependencies": [
+              {
+                "digest": "sha256:b77d07e7401ca8bfe04db7f98d1f6507756c3a03a9d4169abd97ab99f22c405d",
+                "functionId": "sha256:c62d90112b153b8ee7c8fbe00b9ffcf034830a28cdda036033a52f3b2bf610d8"
+              }
+            ],
+            "derived": {
+              "owners": [],
+              "reads": [],
+              "structural": [],
+              "writes": []
+            },
+            "effective": {
+              "owners": [],
+              "reads": [],
+              "structural": [],
+              "writes": []
+            },
+            "functionId": "sha256:0b9d85b9b9b4663e246599cab0730d8e6b8d06cec06ef5964bb87f62acf0f759",
+            "derivedReturnOrigin": null,
+            "effectiveReturnOrigin": null
+          },
+          {
+            "dependencies": [
+              {
+                "digest": "sha256:e2bfcee02ca2fbffaa090ac170f7293020b157a7480898a82ba234bbddd087a7",
+                "functionId": "sha256:0b9d85b9b9b4663e246599cab0730d8e6b8d06cec06ef5964bb87f62acf0f759"
+              }
+            ],
+            "derived": {
+              "owners": [],
+              "reads": [],
+              "structural": [],
+              "writes": []
+            },
+            "effective": {
+              "owners": [],
+              "reads": [],
+              "structural": [],
+              "writes": []
+            },
+            "functionId": "sha256:15c9ca49f34d45ea5c08d2bdcec2d3d489a400fe2596ad7fbf800bd89d178da0",
+            "derivedReturnOrigin": null,
+            "effectiveReturnOrigin": null
+          },
+          {
+            "dependencies": [
+              {
+                "digest": "sha256:1f84c1c118bb9bbc954c906a25150e92a47d589d6d3d389a36718539cda578f0",
+                "functionId": "sha256:7b3be569be9936a15749fec3ed743bfbb31f0c4d76c95dcfbe7ae79a6c725908"
+              }
+            ],
+            "derived": {
+              "owners": [],
+              "reads": [],
+              "structural": [],
+              "writes": []
+            },
+            "effective": {
+              "owners": [],
+              "reads": [],
+              "structural": [],
+              "writes": []
+            },
+            "functionId": "sha256:232e2809e64449332c8bfe92cd58a394caf29d9c1863d0aaa1d29530d4d9ea16",
+            "derivedReturnOrigin": null,
+            "effectiveReturnOrigin": null
+          },
+          {
+            "dependencies": [
+              {
+                "digest": "sha256:1c58b006db6f29864f7281b383ab5a6840cf2bb6646de9a161cd8201fdf94c5f",
+                "functionId": "sha256:6b96c4d9cf0b2631d239b15d0988718643957f4cc00919a1c50efb62f3b2233a"
+              }
+            ],
+            "derived": {
+              "owners": [],
+              "reads": [],
+              "structural": [],
+              "writes": []
+            },
+            "effective": {
+              "owners": [],
+              "reads": [],
+              "structural": [],
+              "writes": []
+            },
+            "functionId": "sha256:5b48c83e49f1ab585aa962a8e2e44b06b6f1b1a50955dbf86c02f89d2bda5289",
+            "derivedReturnOrigin": null,
+            "effectiveReturnOrigin": null
+          },
+          {
+            "dependencies": [
+              {
+                "digest": "sha256:67ce0ec21294b55ba51f5fe47fb99ba844a1de4611ec36f76b5066af60885f00",
+                "functionId": "sha256:c38f42fc30436a18b798a836784b895e4e808af4c9cbba42157c45be15686913"
+              }
+            ],
+            "derived": {
+              "owners": [],
+              "reads": [],
+              "structural": [],
+              "writes": []
+            },
+            "effective": {
+              "owners": [],
+              "reads": [],
+              "structural": [],
+              "writes": []
+            },
+            "functionId": "sha256:66c692a80648e02b6d5c9f3e2600380331f3be1eb653163a5c98e5caa6dedbff",
+            "derivedReturnOrigin": null,
+            "effectiveReturnOrigin": null
+          },
+          {
+            "dependencies": [
+              {
+                "digest": "sha256:42d94bb6fc116709a6248c7425eef0cad6b7cc7f89a26067b04d1ef55ea09c9a",
+                "functionId": "sha256:a0aee9872e4e1167eb610bf50c2ccd932af06c1afd308e4dac23d71e93892a55"
+              }
+            ],
+            "derived": {
+              "owners": [],
+              "reads": [],
+              "structural": [],
+              "writes": []
+            },
+            "effective": {
+              "owners": [],
+              "reads": [],
+              "structural": [],
+              "writes": []
+            },
+            "functionId": "sha256:6b96c4d9cf0b2631d239b15d0988718643957f4cc00919a1c50efb62f3b2233a",
+            "derivedReturnOrigin": null,
+            "effectiveReturnOrigin": null
+          },
+          {
+            "dependencies": [
+              {
+                "digest": "sha256:f685acd3fd3025e3b82229a9cc50aaa8ae5187494ea5d332bae330d9577ba1fc",
+                "functionId": "sha256:232e2809e64449332c8bfe92cd58a394caf29d9c1863d0aaa1d29530d4d9ea16"
+              }
+            ],
+            "derived": {
+              "owners": [],
+              "reads": [],
+              "structural": [],
+              "writes": []
+            },
+            "effective": {
+              "owners": [],
+              "reads": [],
+              "structural": [],
+              "writes": []
+            },
+            "functionId": "sha256:6d3f5868cc6700bd4581721dd0e321bb1013c26272c265da7fe21804737c6fce",
+            "derivedReturnOrigin": null,
+            "effectiveReturnOrigin": null
+          },
+          {
+            "dependencies": [
+              {
+                "digest": "sha256:ff52edb1f39ba60a5815a2a06f16b9f9367aad43e8203cedcae52ae048ed9678",
+                "functionId": "sha256:5b48c83e49f1ab585aa962a8e2e44b06b6f1b1a50955dbf86c02f89d2bda5289"
+              }
+            ],
+            "derived": {
+              "owners": [],
+              "reads": [],
+              "structural": [],
+              "writes": []
+            },
+            "effective": {
+              "owners": [],
+              "reads": [],
+              "structural": [],
+              "writes": []
+            },
+            "functionId": "sha256:76c3ab315cfc78e32d378a6549448acb86283e092e95c36602108e121b4dfe90",
+            "derivedReturnOrigin": null,
+            "effectiveReturnOrigin": null
+          },
+          {
+            "dependencies": [],
+            "derived": {
+              "owners": [],
+              "reads": [],
+              "structural": [],
+              "writes": []
+            },
+            "effective": {
+              "owners": [],
+              "reads": [],
+              "structural": [],
+              "writes": []
+            },
+            "functionId": "sha256:7b3be569be9936a15749fec3ed743bfbb31f0c4d76c95dcfbe7ae79a6c725908",
+            "derivedReturnOrigin": null,
+            "effectiveReturnOrigin": null
+          },
+          {
+            "dependencies": [
+              {
+                "digest": "sha256:7e0a44106de4f7a7c79e2547d218cd3269e019ad34eb3a19e5622d080d6b8dfc",
+                "functionId": "sha256:cfff658dd10fb0596f1110e3757a0cde7e4c97566a6a1fed565ca3c4f962eaf1"
+              }
+            ],
+            "derived": {
+              "owners": [],
+              "reads": [],
+              "structural": [],
+              "writes": []
+            },
+            "effective": {
+              "owners": [],
+              "reads": [],
+              "structural": [],
+              "writes": []
+            },
+            "functionId": "sha256:97cd47ee986bab4d5fed10bda5455c164402a2dc3f719dfe48654c9434c83b2e",
+            "derivedReturnOrigin": null,
+            "effectiveReturnOrigin": null
+          },
+          {
+            "dependencies": [
+              {
+                "digest": "sha256:8b52f5e0d8ea73d649408bca7f1429c0898f0921cd4075782631c2ac50b009ab",
+                "functionId": "sha256:15c9ca49f34d45ea5c08d2bdcec2d3d489a400fe2596ad7fbf800bd89d178da0"
+              }
+            ],
+            "derived": {
+              "owners": [],
+              "reads": [],
+              "structural": [],
+              "writes": []
+            },
+            "effective": {
+              "owners": [],
+              "reads": [],
+              "structural": [],
+              "writes": []
+            },
+            "functionId": "sha256:a0aee9872e4e1167eb610bf50c2ccd932af06c1afd308e4dac23d71e93892a55",
+            "derivedReturnOrigin": null,
+            "effectiveReturnOrigin": null
+          },
+          {
+            "dependencies": [
+              {
+                "digest": "sha256:1b332119c455380e8408a67b84e3c093ca6eedba866f3ccddd72f36de1e4abf8",
+                "functionId": "sha256:6d3f5868cc6700bd4581721dd0e321bb1013c26272c265da7fe21804737c6fce"
+              }
+            ],
+            "derived": {
+              "owners": [],
+              "reads": [],
+              "structural": [],
+              "writes": []
+            },
+            "effective": {
+              "owners": [],
+              "reads": [],
+              "structural": [],
+              "writes": []
+            },
+            "functionId": "sha256:b636910e07cb0cb031bf0fd2eb8cce17255cc683b59dc3000397b41675cc190c",
+            "derivedReturnOrigin": null,
+            "effectiveReturnOrigin": null
+          },
+          {
+            "dependencies": [
+              {
+                "digest": "sha256:6fd07367b6a45ebb552da0d7640cb47be9b08067a5d11bbc4815c7a929f97a6a",
+                "functionId": "sha256:97cd47ee986bab4d5fed10bda5455c164402a2dc3f719dfe48654c9434c83b2e"
+              }
+            ],
+            "derived": {
+              "owners": [],
+              "reads": [],
+              "structural": [],
+              "writes": []
+            },
+            "effective": {
+              "owners": [],
+              "reads": [],
+              "structural": [],
+              "writes": []
+            },
+            "functionId": "sha256:ba8ed99f857e0f98ddaf7075d33d44e047fd564fef3fc4ae52f9e63a5b4045db",
+            "derivedReturnOrigin": null,
+            "effectiveReturnOrigin": null
+          },
+          {
+            "dependencies": [
+              {
+                "digest": "sha256:681ed6b9fe1d2e9241ae104e128f1debf96989cf178a2fb616e2c8119426c266",
+                "functionId": "sha256:76c3ab315cfc78e32d378a6549448acb86283e092e95c36602108e121b4dfe90"
+              }
+            ],
+            "derived": {
+              "owners": [],
+              "reads": [],
+              "structural": [],
+              "writes": []
+            },
+            "effective": {
+              "owners": [],
+              "reads": [],
+              "structural": [],
+              "writes": []
+            },
+            "functionId": "sha256:c38f42fc30436a18b798a836784b895e4e808af4c9cbba42157c45be15686913",
+            "derivedReturnOrigin": null,
+            "effectiveReturnOrigin": null
+          },
+          {
+            "dependencies": [
+              {
+                "digest": "sha256:b81ece0469197a99061fb40d51d9a558ab04757173816a0e788e91d1cf12b578",
+                "functionId": "sha256:ba8ed99f857e0f98ddaf7075d33d44e047fd564fef3fc4ae52f9e63a5b4045db"
+              }
+            ],
+            "derived": {
+              "owners": [],
+              "reads": [],
+              "structural": [],
+              "writes": []
+            },
+            "effective": {
+              "owners": [],
+              "reads": [],
+              "structural": [],
+              "writes": []
+            },
+            "functionId": "sha256:c62d90112b153b8ee7c8fbe00b9ffcf034830a28cdda036033a52f3b2bf610d8",
+            "derivedReturnOrigin": null,
+            "effectiveReturnOrigin": null
+          },
+          {
+            "dependencies": [
+              {
+                "digest": "sha256:2fdb7970f2864ab35f0edf3b4f2be2918423cd02133ab2410be42635d919716e",
+                "functionId": "sha256:b636910e07cb0cb031bf0fd2eb8cce17255cc683b59dc3000397b41675cc190c"
+              }
+            ],
+            "derived": {
+              "owners": [],
+              "reads": [],
+              "structural": [],
+              "writes": []
+            },
+            "effective": {
+              "owners": [],
+              "reads": [],
+              "structural": [],
+              "writes": []
+            },
+            "functionId": "sha256:cfff658dd10fb0596f1110e3757a0cde7e4c97566a6a1fed565ca3c4f962eaf1",
+            "derivedReturnOrigin": null,
+            "effectiveReturnOrigin": null
+          }
+        ],
+        "hirDigest": "sha256:230fc0b7a39f70be1574c4dd0ca97ccbd37e03c4eacbef665fdc2cbaebd238cc",
+        "inputIdentity": "sha256:f3ad0db0cd54c0bd0dcecdfa46321e99ccb6809dbd464e17f66a29897570f412",
+        "publishedDigest": "sha256:9e8c7dbf4c663357b928cba32aad314120155900a36cc789e3682d9b4b37a2e8",
+        "scopeDigest": "sha256:56d9aa112571e764fa232eb7191632c15ca069c9c41976794113514c17f8d489"
+      },
+      "context": {
+        "contracts": [
+          {
+            "digest": "sha256:e2bfcee02ca2fbffaa090ac170f7293020b157a7480898a82ba234bbddd087a7",
+            "functionId": "sha256:0b9d85b9b9b4663e246599cab0730d8e6b8d06cec06ef5964bb87f62acf0f759",
+            "signatureHash": "sha256:1a3c0248ecb7e498007af6b22ac9e18eb5df6b9390677401805ce98ab2934d96",
+            "upper": {
+              "local": {
+                "read": false,
+                "structural": false,
+                "write": false
+              },
+              "parameters": [],
+              "returnOrigin": null
+            }
+          },
+          {
+            "digest": "sha256:8b52f5e0d8ea73d649408bca7f1429c0898f0921cd4075782631c2ac50b009ab",
+            "functionId": "sha256:15c9ca49f34d45ea5c08d2bdcec2d3d489a400fe2596ad7fbf800bd89d178da0",
+            "signatureHash": "sha256:1a3c0248ecb7e498007af6b22ac9e18eb5df6b9390677401805ce98ab2934d96",
+            "upper": {
+              "local": {
+                "read": false,
+                "structural": false,
+                "write": false
+              },
+              "parameters": [],
+              "returnOrigin": null
+            }
+          },
+          {
+            "digest": "sha256:f685acd3fd3025e3b82229a9cc50aaa8ae5187494ea5d332bae330d9577ba1fc",
+            "functionId": "sha256:232e2809e64449332c8bfe92cd58a394caf29d9c1863d0aaa1d29530d4d9ea16",
+            "signatureHash": "sha256:1a3c0248ecb7e498007af6b22ac9e18eb5df6b9390677401805ce98ab2934d96",
+            "upper": {
+              "local": {
+                "read": false,
+                "structural": false,
+                "write": false
+              },
+              "parameters": [],
+              "returnOrigin": null
+            }
+          },
+          {
+            "digest": "sha256:ff52edb1f39ba60a5815a2a06f16b9f9367aad43e8203cedcae52ae048ed9678",
+            "functionId": "sha256:5b48c83e49f1ab585aa962a8e2e44b06b6f1b1a50955dbf86c02f89d2bda5289",
+            "signatureHash": "sha256:1a3c0248ecb7e498007af6b22ac9e18eb5df6b9390677401805ce98ab2934d96",
+            "upper": {
+              "local": {
+                "read": false,
+                "structural": false,
+                "write": false
+              },
+              "parameters": [],
+              "returnOrigin": null
+            }
+          },
+          {
+            "digest": "sha256:873015d9f359fe6582af523dcd329d9716db0b2ed1e96c0c3315b3ce2b9c63a5",
+            "functionId": "sha256:66c692a80648e02b6d5c9f3e2600380331f3be1eb653163a5c98e5caa6dedbff",
+            "signatureHash": "sha256:1a3c0248ecb7e498007af6b22ac9e18eb5df6b9390677401805ce98ab2934d96",
+            "upper": {
+              "local": {
+                "read": false,
+                "structural": false,
+                "write": false
+              },
+              "parameters": [],
+              "returnOrigin": null
+            }
+          },
+          {
+            "digest": "sha256:1c58b006db6f29864f7281b383ab5a6840cf2bb6646de9a161cd8201fdf94c5f",
+            "functionId": "sha256:6b96c4d9cf0b2631d239b15d0988718643957f4cc00919a1c50efb62f3b2233a",
+            "signatureHash": "sha256:1a3c0248ecb7e498007af6b22ac9e18eb5df6b9390677401805ce98ab2934d96",
+            "upper": {
+              "local": {
+                "read": false,
+                "structural": false,
+                "write": false
+              },
+              "parameters": [],
+              "returnOrigin": null
+            }
+          },
+          {
+            "digest": "sha256:1b332119c455380e8408a67b84e3c093ca6eedba866f3ccddd72f36de1e4abf8",
+            "functionId": "sha256:6d3f5868cc6700bd4581721dd0e321bb1013c26272c265da7fe21804737c6fce",
+            "signatureHash": "sha256:1a3c0248ecb7e498007af6b22ac9e18eb5df6b9390677401805ce98ab2934d96",
+            "upper": {
+              "local": {
+                "read": false,
+                "structural": false,
+                "write": false
+              },
+              "parameters": [],
+              "returnOrigin": null
+            }
+          },
+          {
+            "digest": "sha256:681ed6b9fe1d2e9241ae104e128f1debf96989cf178a2fb616e2c8119426c266",
+            "functionId": "sha256:76c3ab315cfc78e32d378a6549448acb86283e092e95c36602108e121b4dfe90",
+            "signatureHash": "sha256:1a3c0248ecb7e498007af6b22ac9e18eb5df6b9390677401805ce98ab2934d96",
+            "upper": {
+              "local": {
+                "read": false,
+                "structural": false,
+                "write": false
+              },
+              "parameters": [],
+              "returnOrigin": null
+            }
+          },
+          {
+            "digest": "sha256:1f84c1c118bb9bbc954c906a25150e92a47d589d6d3d389a36718539cda578f0",
+            "functionId": "sha256:7b3be569be9936a15749fec3ed743bfbb31f0c4d76c95dcfbe7ae79a6c725908",
+            "signatureHash": "sha256:1a3c0248ecb7e498007af6b22ac9e18eb5df6b9390677401805ce98ab2934d96",
+            "upper": {
+              "local": {
+                "read": false,
+                "structural": false,
+                "write": false
+              },
+              "parameters": [],
+              "returnOrigin": null
+            }
+          },
+          {
+            "digest": "sha256:6fd07367b6a45ebb552da0d7640cb47be9b08067a5d11bbc4815c7a929f97a6a",
+            "functionId": "sha256:97cd47ee986bab4d5fed10bda5455c164402a2dc3f719dfe48654c9434c83b2e",
+            "signatureHash": "sha256:1a3c0248ecb7e498007af6b22ac9e18eb5df6b9390677401805ce98ab2934d96",
+            "upper": {
+              "local": {
+                "read": false,
+                "structural": false,
+                "write": false
+              },
+              "parameters": [],
+              "returnOrigin": null
+            }
+          },
+          {
+            "digest": "sha256:42d94bb6fc116709a6248c7425eef0cad6b7cc7f89a26067b04d1ef55ea09c9a",
+            "functionId": "sha256:a0aee9872e4e1167eb610bf50c2ccd932af06c1afd308e4dac23d71e93892a55",
+            "signatureHash": "sha256:1a3c0248ecb7e498007af6b22ac9e18eb5df6b9390677401805ce98ab2934d96",
+            "upper": {
+              "local": {
+                "read": false,
+                "structural": false,
+                "write": false
+              },
+              "parameters": [],
+              "returnOrigin": null
+            }
+          },
+          {
+            "digest": "sha256:2fdb7970f2864ab35f0edf3b4f2be2918423cd02133ab2410be42635d919716e",
+            "functionId": "sha256:b636910e07cb0cb031bf0fd2eb8cce17255cc683b59dc3000397b41675cc190c",
+            "signatureHash": "sha256:1a3c0248ecb7e498007af6b22ac9e18eb5df6b9390677401805ce98ab2934d96",
+            "upper": {
+              "local": {
+                "read": false,
+                "structural": false,
+                "write": false
+              },
+              "parameters": [],
+              "returnOrigin": null
+            }
+          },
+          {
+            "digest": "sha256:b81ece0469197a99061fb40d51d9a558ab04757173816a0e788e91d1cf12b578",
+            "functionId": "sha256:ba8ed99f857e0f98ddaf7075d33d44e047fd564fef3fc4ae52f9e63a5b4045db",
+            "signatureHash": "sha256:1a3c0248ecb7e498007af6b22ac9e18eb5df6b9390677401805ce98ab2934d96",
+            "upper": {
+              "local": {
+                "read": false,
+                "structural": false,
+                "write": false
+              },
+              "parameters": [],
+              "returnOrigin": null
+            }
+          },
+          {
+            "digest": "sha256:67ce0ec21294b55ba51f5fe47fb99ba844a1de4611ec36f76b5066af60885f00",
+            "functionId": "sha256:c38f42fc30436a18b798a836784b895e4e808af4c9cbba42157c45be15686913",
+            "signatureHash": "sha256:1a3c0248ecb7e498007af6b22ac9e18eb5df6b9390677401805ce98ab2934d96",
+            "upper": {
+              "local": {
+                "read": false,
+                "structural": false,
+                "write": false
+              },
+              "parameters": [],
+              "returnOrigin": null
+            }
+          },
+          {
+            "digest": "sha256:b77d07e7401ca8bfe04db7f98d1f6507756c3a03a9d4169abd97ab99f22c405d",
+            "functionId": "sha256:c62d90112b153b8ee7c8fbe00b9ffcf034830a28cdda036033a52f3b2bf610d8",
+            "signatureHash": "sha256:1a3c0248ecb7e498007af6b22ac9e18eb5df6b9390677401805ce98ab2934d96",
+            "upper": {
+              "local": {
+                "read": false,
+                "structural": false,
+                "write": false
+              },
+              "parameters": [],
+              "returnOrigin": null
+            }
+          },
+          {
+            "digest": "sha256:7e0a44106de4f7a7c79e2547d218cd3269e019ad34eb3a19e5622d080d6b8dfc",
+            "functionId": "sha256:cfff658dd10fb0596f1110e3757a0cde7e4c97566a6a1fed565ca3c4f962eaf1",
+            "signatureHash": "sha256:1a3c0248ecb7e498007af6b22ac9e18eb5df6b9390677401805ce98ab2934d96",
+            "upper": {
+              "local": {
+                "read": false,
+                "structural": false,
+                "write": false
+              },
+              "parameters": [],
+              "returnOrigin": null
+            }
+          }
+        ],
+        "expectedDigest": "sha256:9e8c7dbf4c663357b928cba32aad314120155900a36cc789e3682d9b4b37a2e8",
+        "family": "tsfg.array-publication-context-candidate",
+        "mode": "fixed",
+        "scopeDigest": "sha256:56d9aa112571e764fa232eb7191632c15ca069c9c41976794113514c17f8d489",
+        "version": 4
+      },
+      "contractPin": {
+        "bytes": 257929,
+        "sha256": "f7dd26e2d3929d718dcf6fd930436b0b0d2c602a67c1e165badd9173ceabcc73"
+      },
+      "coreError": {
+        "code": "r03-d-core-array-capability",
+        "message": "Array Core lowering supports only the complete local-owner no-call subset",
+        "phase": "lowering",
+        "primary": {
+          "end": 39,
+          "sourceId": "/array-owner23e/app.ts",
+          "start": 35
+        },
+        "ruleId": "r01-ts-baseline"
+      },
+      "factsContext": {
+        "expectedPackageId": "sha256:f3ad0db0cd54c0bd0dcecdfa46321e99ccb6809dbd464e17f66a29897570f412",
+        "factsBytes": "{\"family\":\"tsfg.array-facts-package-candidate\",\"packageId\":\"sha256:f3ad0db0cd54c0bd0dcecdfa46321e99ccb6809dbd464e17f66a29897570f412\",\"payload\":{\"arrayLength\":{\"declarationRange\":{\"end\":290,\"start\":275},\"id\":\"sha256:8a15099652ad0aa13b95ca5e230158b507063eae8d48d15e48678eb61d23408d\",\"kind\":\"property\",\"name\":\"length\",\"nameRange\":{\"end\":281,\"start\":275},\"officialType\":\"number\",\"ownerType\":\"array.f64\",\"sourcePath\":\"/array-owner23e/minimal-arrays-v3.d.ts\",\"typeRange\":{\"end\":289,\"start\":283},\"writeType\":\"u32\"},\"config\":{\"allowJs\":false,\"noEmit\":true,\"strict\":true},\"declarations\":{\"paths\":[\"/array-owner23e/minimal-arrays-v3.d.ts\"],\"version\":\"minimal-arrays-v3\"},\"diagnostics\":[],\"exports\":[{\"functionId\":\"sha256:386997bae5e651e20bfab46edfb6bd6d6c2a29c660a5092a7d68ffe860081b9b\",\"name\":\"f0\"}],\"files\":[{\"byteLength\":594,\"content\":\"export function f0(): f64 { return f1(); }\\nfunction f1(): f64 { return f2(); }\\nfunction f2(): f64 { return f3(); }\\nfunction f3(): f64 { return f4(); }\\nfunction f4(): f64 { return f5(); }\\nfunction f5(): f64 { return f6(); }\\nfunction f6(): f64 { return f7(); }\\nfunction f7(): f64 { return f8(); }\\nfunction f8(): f64 { return f9(); }\\nfunction f9(): f64 { return f10(); }\\nfunction f10(): f64 { return f11(); }\\nfunction f11(): f64 { return f12(); }\\nfunction f12(): f64 { return f13(); }\\nfunction f13(): f64 { return f14(); }\\nfunction f14(): f64 { return f15(); }\\nfunction f15(): f64 { return 1.0; }\\n\",\"path\":\"/array-owner23e/app.ts\",\"sha256\":\"161ba7da8476f79f72b367122642a953d5a82802d4a4a309001f6bc9c0f61847\",\"utf16Length\":594},{\"byteLength\":484,\"content\":\"// SPDX-License-Identifier: MIT\\ninterface Object {}\\ninterface Function {}\\ninterface CallableFunction {}\\ninterface NewableFunction {}\\ninterface IArguments {}\\ninterface String {}\\ninterface Number {}\\ninterface Boolean {}\\ninterface RegExp {}\\ninterface Array<T> { [n: number]: T; length: number; }\\ntype f64 = number;\\ntype u32 = number;\\ninterface ReadSpan<T> { readonly [n: number]: T; readonly length: u32; }\\ndeclare function readSpan<T>(owner: T[], start: u32, length: u32): ReadSpan<T>;\\n\",\"path\":\"/array-owner23e/minimal-arrays-v3.d.ts\",\"sha256\":\"282b335a6e0e0493fa74a3c1dd56f234f8c679079acdaf0600cefb8306c26415\",\"utf16Length\":484}],\"functions\":[{\"bindings\":[],\"body\":[{\"kind\":\"return\",\"range\":{\"end\":40,\"start\":28},\"value\":{\"arguments\":[],\"callee\":\"sha256:9a9616ee5567a9ca06d1d4922cfb0277e35d064285ea6cf97c44fb1eea775909\",\"calleeRange\":{\"end\":37,\"start\":35},\"kind\":\"directCall\",\"range\":{\"end\":39,\"start\":35},\"type\":\"f64\"}}],\"declarationRange\":{\"end\":42,\"start\":0},\"id\":\"sha256:386997bae5e651e20bfab46edfb6bd6d6c2a29c660a5092a7d68ffe860081b9b\",\"name\":\"f0\",\"nameRange\":{\"end\":18,\"start\":16},\"parameters\":[],\"returnAnnotationRange\":{\"end\":25,\"start\":22},\"returnType\":\"f64\",\"sourcePath\":\"/array-owner23e/app.ts\"},{\"bindings\":[],\"body\":[{\"kind\":\"return\",\"range\":{\"end\":76,\"start\":64},\"value\":{\"arguments\":[],\"callee\":\"sha256:994b10be705d793b1c17022d006078036de772bbcc852b889db8839b47125888\",\"calleeRange\":{\"end\":73,\"start\":71},\"kind\":\"directCall\",\"range\":{\"end\":75,\"start\":71},\"type\":\"f64\"}}],\"declarationRange\":{\"end\":78,\"start\":43},\"id\":\"sha256:9a9616ee5567a9ca06d1d4922cfb0277e35d064285ea6cf97c44fb1eea775909\",\"name\":\"f1\",\"nameRange\":{\"end\":54,\"start\":52},\"parameters\":[],\"returnAnnotationRange\":{\"end\":61,\"start\":58},\"returnType\":\"f64\",\"sourcePath\":\"/array-owner23e/app.ts\"},{\"bindings\":[],\"body\":[{\"kind\":\"return\",\"range\":{\"end\":112,\"start\":100},\"value\":{\"arguments\":[],\"callee\":\"sha256:d076e7c2a51e6b99b7339606bd6f30af6c170324b73c791f1bcdd590a08033bb\",\"calleeRange\":{\"end\":109,\"start\":107},\"kind\":\"directCall\",\"range\":{\"end\":111,\"start\":107},\"type\":\"f64\"}}],\"declarationRange\":{\"end\":114,\"start\":79},\"id\":\"sha256:994b10be705d793b1c17022d006078036de772bbcc852b889db8839b47125888\",\"name\":\"f2\",\"nameRange\":{\"end\":90,\"start\":88},\"parameters\":[],\"returnAnnotationRange\":{\"end\":97,\"start\":94},\"returnType\":\"f64\",\"sourcePath\":\"/array-owner23e/app.ts\"},{\"bindings\":[],\"body\":[{\"kind\":\"return\",\"range\":{\"end\":148,\"start\":136},\"value\":{\"arguments\":[],\"callee\":\"sha256:9a2612f478059d5c8bc983d0742027862e11b74d9738340fea526bcf8a135f29\",\"calleeRange\":{\"end\":145,\"start\":143},\"kind\":\"directCall\",\"range\":{\"end\":147,\"start\":143},\"type\":\"f64\"}}],\"declarationRange\":{\"end\":150,\"start\":115},\"id\":\"sha256:d076e7c2a51e6b99b7339606bd6f30af6c170324b73c791f1bcdd590a08033bb\",\"name\":\"f3\",\"nameRange\":{\"end\":126,\"start\":124},\"parameters\":[],\"returnAnnotationRange\":{\"end\":133,\"start\":130},\"returnType\":\"f64\",\"sourcePath\":\"/array-owner23e/app.ts\"},{\"bindings\":[],\"body\":[{\"kind\":\"return\",\"range\":{\"end\":184,\"start\":172},\"value\":{\"arguments\":[],\"callee\":\"sha256:faca5ccfe4b0323179ca30699a2a3b2b6d3c4458d06a06939c7ddc4f43200a37\",\"calleeRange\":{\"end\":181,\"start\":179},\"kind\":\"directCall\",\"range\":{\"end\":183,\"start\":179},\"type\":\"f64\"}}],\"declarationRange\":{\"end\":186,\"start\":151},\"id\":\"sha256:9a2612f478059d5c8bc983d0742027862e11b74d9738340fea526bcf8a135f29\",\"name\":\"f4\",\"nameRange\":{\"end\":162,\"start\":160},\"parameters\":[],\"returnAnnotationRange\":{\"end\":169,\"start\":166},\"returnType\":\"f64\",\"sourcePath\":\"/array-owner23e/app.ts\"},{\"bindings\":[],\"body\":[{\"kind\":\"return\",\"range\":{\"end\":220,\"start\":208},\"value\":{\"arguments\":[],\"callee\":\"sha256:72f001e98b981cccf42e9ffaff1a2990dc8d5a370e4f457dc4f2a046b8843d88\",\"calleeRange\":{\"end\":217,\"start\":215},\"kind\":\"directCall\",\"range\":{\"end\":219,\"start\":215},\"type\":\"f64\"}}],\"declarationRange\":{\"end\":222,\"start\":187},\"id\":\"sha256:faca5ccfe4b0323179ca30699a2a3b2b6d3c4458d06a06939c7ddc4f43200a37\",\"name\":\"f5\",\"nameRange\":{\"end\":198,\"start\":196},\"parameters\":[],\"returnAnnotationRange\":{\"end\":205,\"start\":202},\"returnType\":\"f64\",\"sourcePath\":\"/array-owner23e/app.ts\"},{\"bindings\":[],\"body\":[{\"kind\":\"return\",\"range\":{\"end\":256,\"start\":244},\"value\":{\"arguments\":[],\"callee\":\"sha256:454064111993467ada3aeb8acc2f1ae90f08ea5c337d4900892b426abc2deb12\",\"calleeRange\":{\"end\":253,\"start\":251},\"kind\":\"directCall\",\"range\":{\"end\":255,\"start\":251},\"type\":\"f64\"}}],\"declarationRange\":{\"end\":258,\"start\":223},\"id\":\"sha256:72f001e98b981cccf42e9ffaff1a2990dc8d5a370e4f457dc4f2a046b8843d88\",\"name\":\"f6\",\"nameRange\":{\"end\":234,\"start\":232},\"parameters\":[],\"returnAnnotationRange\":{\"end\":241,\"start\":238},\"returnType\":\"f64\",\"sourcePath\":\"/array-owner23e/app.ts\"},{\"bindings\":[],\"body\":[{\"kind\":\"return\",\"range\":{\"end\":292,\"start\":280},\"value\":{\"arguments\":[],\"callee\":\"sha256:c645eaf4e92da9f7c38d7d520cf51ee94171c9467d40ca1ffe5c9c6fe7aa2c8f\",\"calleeRange\":{\"end\":289,\"start\":287},\"kind\":\"directCall\",\"range\":{\"end\":291,\"start\":287},\"type\":\"f64\"}}],\"declarationRange\":{\"end\":294,\"start\":259},\"id\":\"sha256:454064111993467ada3aeb8acc2f1ae90f08ea5c337d4900892b426abc2deb12\",\"name\":\"f7\",\"nameRange\":{\"end\":270,\"start\":268},\"parameters\":[],\"returnAnnotationRange\":{\"end\":277,\"start\":274},\"returnType\":\"f64\",\"sourcePath\":\"/array-owner23e/app.ts\"},{\"bindings\":[],\"body\":[{\"kind\":\"return\",\"range\":{\"end\":328,\"start\":316},\"value\":{\"arguments\":[],\"callee\":\"sha256:3b63ad9c666378a07f2db07fa71d56107ffb8c8844acfc50f4eae4f96eb9b539\",\"calleeRange\":{\"end\":325,\"start\":323},\"kind\":\"directCall\",\"range\":{\"end\":327,\"start\":323},\"type\":\"f64\"}}],\"declarationRange\":{\"end\":330,\"start\":295},\"id\":\"sha256:c645eaf4e92da9f7c38d7d520cf51ee94171c9467d40ca1ffe5c9c6fe7aa2c8f\",\"name\":\"f8\",\"nameRange\":{\"end\":306,\"start\":304},\"parameters\":[],\"returnAnnotationRange\":{\"end\":313,\"start\":310},\"returnType\":\"f64\",\"sourcePath\":\"/array-owner23e/app.ts\"},{\"bindings\":[],\"body\":[{\"kind\":\"return\",\"range\":{\"end\":365,\"start\":352},\"value\":{\"arguments\":[],\"callee\":\"sha256:e51db20993ab6bcb09ccf6cec0ff00e89c6cf8e7208cbd921ae0206932e4f785\",\"calleeRange\":{\"end\":362,\"start\":359},\"kind\":\"directCall\",\"range\":{\"end\":364,\"start\":359},\"type\":\"f64\"}}],\"declarationRange\":{\"end\":367,\"start\":331},\"id\":\"sha256:3b63ad9c666378a07f2db07fa71d56107ffb8c8844acfc50f4eae4f96eb9b539\",\"name\":\"f9\",\"nameRange\":{\"end\":342,\"start\":340},\"parameters\":[],\"returnAnnotationRange\":{\"end\":349,\"start\":346},\"returnType\":\"f64\",\"sourcePath\":\"/array-owner23e/app.ts\"},{\"bindings\":[],\"body\":[{\"kind\":\"return\",\"range\":{\"end\":403,\"start\":390},\"value\":{\"arguments\":[],\"callee\":\"sha256:cb56359ee155b76bd0681f396f0528a7a9454ec7b031312c14fe05170fef02bb\",\"calleeRange\":{\"end\":400,\"start\":397},\"kind\":\"directCall\",\"range\":{\"end\":402,\"start\":397},\"type\":\"f64\"}}],\"declarationRange\":{\"end\":405,\"start\":368},\"id\":\"sha256:e51db20993ab6bcb09ccf6cec0ff00e89c6cf8e7208cbd921ae0206932e4f785\",\"name\":\"f10\",\"nameRange\":{\"end\":380,\"start\":377},\"parameters\":[],\"returnAnnotationRange\":{\"end\":387,\"start\":384},\"returnType\":\"f64\",\"sourcePath\":\"/array-owner23e/app.ts\"},{\"bindings\":[],\"body\":[{\"kind\":\"return\",\"range\":{\"end\":441,\"start\":428},\"value\":{\"arguments\":[],\"callee\":\"sha256:45c21b99c0ae84a8878e559a07dc11aa3b247df547330cd652200d72d9ff43ec\",\"calleeRange\":{\"end\":438,\"start\":435},\"kind\":\"directCall\",\"range\":{\"end\":440,\"start\":435},\"type\":\"f64\"}}],\"declarationRange\":{\"end\":443,\"start\":406},\"id\":\"sha256:cb56359ee155b76bd0681f396f0528a7a9454ec7b031312c14fe05170fef02bb\",\"name\":\"f11\",\"nameRange\":{\"end\":418,\"start\":415},\"parameters\":[],\"returnAnnotationRange\":{\"end\":425,\"start\":422},\"returnType\":\"f64\",\"sourcePath\":\"/array-owner23e/app.ts\"},{\"bindings\":[],\"body\":[{\"kind\":\"return\",\"range\":{\"end\":479,\"start\":466},\"value\":{\"arguments\":[],\"callee\":\"sha256:846c4e90159d7029a5cb5313cda3843120be5e1cbbae4a3cfb97cb91c5fcbc30\",\"calleeRange\":{\"end\":476,\"start\":473},\"kind\":\"directCall\",\"range\":{\"end\":478,\"start\":473},\"type\":\"f64\"}}],\"declarationRange\":{\"end\":481,\"start\":444},\"id\":\"sha256:45c21b99c0ae84a8878e559a07dc11aa3b247df547330cd652200d72d9ff43ec\",\"name\":\"f12\",\"nameRange\":{\"end\":456,\"start\":453},\"parameters\":[],\"returnAnnotationRange\":{\"end\":463,\"start\":460},\"returnType\":\"f64\",\"sourcePath\":\"/array-owner23e/app.ts\"},{\"bindings\":[],\"body\":[{\"kind\":\"return\",\"range\":{\"end\":517,\"start\":504},\"value\":{\"arguments\":[],\"callee\":\"sha256:317f2feba6b435f821768fc79e53863b5776a36bf21d30bd40e5a8182bf0e5c7\",\"calleeRange\":{\"end\":514,\"start\":511},\"kind\":\"directCall\",\"range\":{\"end\":516,\"start\":511},\"type\":\"f64\"}}],\"declarationRange\":{\"end\":519,\"start\":482},\"id\":\"sha256:846c4e90159d7029a5cb5313cda3843120be5e1cbbae4a3cfb97cb91c5fcbc30\",\"name\":\"f13\",\"nameRange\":{\"end\":494,\"start\":491},\"parameters\":[],\"returnAnnotationRange\":{\"end\":501,\"start\":498},\"returnType\":\"f64\",\"sourcePath\":\"/array-owner23e/app.ts\"},{\"bindings\":[],\"body\":[{\"kind\":\"return\",\"range\":{\"end\":555,\"start\":542},\"value\":{\"arguments\":[],\"callee\":\"sha256:eb2843d89a00f6bd3766bce707e6dc349f23c8767b44da5f55f695887901bc9b\",\"calleeRange\":{\"end\":552,\"start\":549},\"kind\":\"directCall\",\"range\":{\"end\":554,\"start\":549},\"type\":\"f64\"}}],\"declarationRange\":{\"end\":557,\"start\":520},\"id\":\"sha256:317f2feba6b435f821768fc79e53863b5776a36bf21d30bd40e5a8182bf0e5c7\",\"name\":\"f14\",\"nameRange\":{\"end\":532,\"start\":529},\"parameters\":[],\"returnAnnotationRange\":{\"end\":539,\"start\":536},\"returnType\":\"f64\",\"sourcePath\":\"/array-owner23e/app.ts\"},{\"bindings\":[],\"body\":[{\"kind\":\"return\",\"range\":{\"end\":591,\"start\":580},\"value\":{\"bits\":\"3ff0000000000000\",\"kind\":\"numericLiteral\",\"range\":{\"end\":590,\"start\":587},\"token\":\"1.0\",\"type\":\"f64\"}}],\"declarationRange\":{\"end\":593,\"start\":558},\"id\":\"sha256:eb2843d89a00f6bd3766bce707e6dc349f23c8767b44da5f55f695887901bc9b\",\"name\":\"f15\",\"nameRange\":{\"end\":570,\"start\":567},\"parameters\":[],\"returnAnnotationRange\":{\"end\":577,\"start\":574},\"returnType\":\"f64\",\"sourcePath\":\"/array-owner23e/app.ts\"}],\"positionUnit\":\"utf16\",\"readSpanIntrinsic\":{\"declarationRange\":{\"end\":483,\"start\":404},\"id\":\"sha256:894419bca7875c61ed42fc4dd665b21d422598acac6f074d8f8b76e9794ba8ec\",\"kind\":\"intrinsic\",\"name\":\"readSpan\",\"nameRange\":{\"end\":429,\"start\":421},\"parameters\":[{\"declarationRange\":{\"end\":443,\"start\":433},\"name\":\"owner\",\"nameRange\":{\"end\":438,\"start\":433},\"typeRange\":{\"end\":443,\"start\":440}},{\"declarationRange\":{\"end\":455,\"start\":445},\"name\":\"start\",\"nameRange\":{\"end\":450,\"start\":445},\"typeRange\":{\"end\":455,\"start\":452}},{\"declarationRange\":{\"end\":468,\"start\":457},\"name\":\"length\",\"nameRange\":{\"end\":463,\"start\":457},\"typeRange\":{\"end\":468,\"start\":465}}],\"returnTypeRange\":{\"end\":482,\"start\":471},\"sourcePath\":\"/array-owner23e/minimal-arrays-v3.d.ts\",\"typeParameterRange\":{\"end\":431,\"start\":430}},\"readSpanLength\":{\"declarationRange\":{\"end\":401,\"start\":380},\"id\":\"sha256:59bb62c08c44255796c966889d454a17165e4530b9985775f9d69a3ba8b211c0\",\"kind\":\"property\",\"name\":\"length\",\"nameRange\":{\"end\":395,\"start\":389},\"officialType\":\"number\",\"ownerType\":\"readspan.f64\",\"readType\":\"u32\",\"readonly\":true,\"sourcePath\":\"/array-owner23e/minimal-arrays-v3.d.ts\",\"typeRange\":{\"end\":400,\"start\":397}},\"rootFile\":\"/array-owner23e/app.ts\",\"sourceRoot\":\"/array-owner23e\",\"types\":[{\"declarationRange\":{\"end\":311,\"start\":293},\"id\":\"f64\",\"kind\":\"scalar\",\"nameRange\":{\"end\":301,\"start\":298},\"sourcePath\":\"/array-owner23e/minimal-arrays-v3.d.ts\"},{\"declarationRange\":{\"end\":292,\"start\":238},\"elementType\":\"f64\",\"id\":\"array.f64\",\"indexSignatureRange\":{\"end\":274,\"start\":259},\"kind\":\"array\",\"nameRange\":{\"end\":253,\"start\":248},\"sourcePath\":\"/array-owner23e/minimal-arrays-v3.d.ts\"},{\"declarationRange\":{\"end\":330,\"start\":312},\"id\":\"u32\",\"kind\":\"scalar\",\"nameRange\":{\"end\":320,\"start\":317},\"sourcePath\":\"/array-owner23e/minimal-arrays-v3.d.ts\"},{\"declarationRange\":{\"end\":403,\"start\":331},\"elementType\":\"f64\",\"id\":\"readspan.f64\",\"indexSignatureRange\":{\"end\":379,\"start\":355},\"kind\":\"readSpan\",\"nameRange\":{\"end\":349,\"start\":341},\"readonly\":true,\"sourcePath\":\"/array-owner23e/minimal-arrays-v3.d.ts\"}]},\"requestId\":\"sha256:997c30ee7c29fcb2b239a6b83e292770d9e66f03101c87812da8922b58d121a2\",\"schemaHash\":\"sha256:d2ee930b76b8fd5c2270ad69579c9c61377831a97034d3a8890d8aa770ebabc2\",\"version\":7}\n",
+        "family": "tsfg.array-facts-context-candidate",
+        "version": 1
+      },
+      "family": "tsfg.array-call-depth16-independent-oracle",
+      "hir": {
+        "arrayLength": {
+          "declarationRange": {
+            "end": 290,
+            "start": 275
+          },
+          "id": "sha256:8a15099652ad0aa13b95ca5e230158b507063eae8d48d15e48678eb61d23408d",
+          "kind": "property",
+          "name": "length",
+          "nameRange": {
+            "end": 281,
+            "start": 275
+          },
+          "officialType": "number",
+          "ownerType": "sha256:74dab77c8fbdacf6cf058e37cac033757417c808d57ee23a9c8866565202cb68",
+          "sourcePath": "/array-owner23e/minimal-arrays-v3.d.ts",
+          "typeRange": {
+            "end": 289,
+            "start": 283
+          },
+          "writeType": "sha256:b72109639ea1cc95816abe01a09e7e4c78c11902a1251c00090a5715cf9b979c"
+        },
+        "exports": [
+          {
+            "functionId": "sha256:66c692a80648e02b6d5c9f3e2600380331f3be1eb653163a5c98e5caa6dedbff",
+            "name": "f0"
+          }
+        ],
+        "facts": {
+          "requestId": "sha256:997c30ee7c29fcb2b239a6b83e292770d9e66f03101c87812da8922b58d121a2",
+          "schemaHash": "sha256:d2ee930b76b8fd5c2270ad69579c9c61377831a97034d3a8890d8aa770ebabc2",
+          "version": 7
+        },
+        "format": {
+          "family": "tsfg.array-hir-candidate",
+          "version": 8,
+          "schemaHash": "sha256:073fac908486f522ecd8beaa1f684bdbb102f60c97ff49e215a53d58f0ee7a0d"
+        },
+        "functions": [
+          {
+            "body": [
+              {
+                "kind": "return",
+                "range": {
+                  "end": 40,
+                  "start": 28
+                },
+                "value": {
+                  "arguments": [],
+                  "calleeRange": {
+                    "end": 37,
+                    "start": 35
+                  },
+                  "kind": "arrayDirectCall",
+                  "range": {
+                    "end": 39,
+                    "start": 35
+                  },
+                  "signatureHash": "sha256:1a3c0248ecb7e498007af6b22ac9e18eb5df6b9390677401805ce98ab2934d96",
+                  "sourceCallee": "sha256:9a9616ee5567a9ca06d1d4922cfb0277e35d064285ea6cf97c44fb1eea775909",
+                  "target": "sha256:c38f42fc30436a18b798a836784b895e4e808af4c9cbba42157c45be15686913",
+                  "type": "sha256:dfbc72c48bec549ea679cd6aff531f9ebef95e001f6ae0bf419d2f33bf988a6c"
+                }
+              }
+            ],
+            "id": "sha256:66c692a80648e02b6d5c9f3e2600380331f3be1eb653163a5c98e5caa6dedbff",
+            "name": "f0",
+            "nameRange": {
+              "end": 18,
+              "start": 16
+            },
+            "parameters": [],
+            "range": {
+              "end": 42,
+              "start": 0
+            },
+            "returnAnnotationRange": {
+              "end": 25,
+              "start": 22
+            },
+            "returnType": {
+              "id": "sha256:dfbc72c48bec549ea679cd6aff531f9ebef95e001f6ae0bf419d2f33bf988a6c",
+              "kind": "scalar",
+              "name": "f64"
+            },
+            "signatureHash": "sha256:1a3c0248ecb7e498007af6b22ac9e18eb5df6b9390677401805ce98ab2934d96",
+            "sourceBinding": "sha256:386997bae5e651e20bfab46edfb6bd6d6c2a29c660a5092a7d68ffe860081b9b",
+            "sourcePath": "/array-owner23e/app.ts"
+          },
+          {
+            "body": [
+              {
+                "kind": "return",
+                "range": {
+                  "end": 76,
+                  "start": 64
+                },
+                "value": {
+                  "arguments": [],
+                  "calleeRange": {
+                    "end": 73,
+                    "start": 71
+                  },
+                  "kind": "arrayDirectCall",
+                  "range": {
+                    "end": 75,
+                    "start": 71
+                  },
+                  "signatureHash": "sha256:1a3c0248ecb7e498007af6b22ac9e18eb5df6b9390677401805ce98ab2934d96",
+                  "sourceCallee": "sha256:994b10be705d793b1c17022d006078036de772bbcc852b889db8839b47125888",
+                  "target": "sha256:76c3ab315cfc78e32d378a6549448acb86283e092e95c36602108e121b4dfe90",
+                  "type": "sha256:dfbc72c48bec549ea679cd6aff531f9ebef95e001f6ae0bf419d2f33bf988a6c"
+                }
+              }
+            ],
+            "id": "sha256:c38f42fc30436a18b798a836784b895e4e808af4c9cbba42157c45be15686913",
+            "name": "f1",
+            "nameRange": {
+              "end": 54,
+              "start": 52
+            },
+            "parameters": [],
+            "range": {
+              "end": 78,
+              "start": 43
+            },
+            "returnAnnotationRange": {
+              "end": 61,
+              "start": 58
+            },
+            "returnType": {
+              "id": "sha256:dfbc72c48bec549ea679cd6aff531f9ebef95e001f6ae0bf419d2f33bf988a6c",
+              "kind": "scalar",
+              "name": "f64"
+            },
+            "signatureHash": "sha256:1a3c0248ecb7e498007af6b22ac9e18eb5df6b9390677401805ce98ab2934d96",
+            "sourceBinding": "sha256:9a9616ee5567a9ca06d1d4922cfb0277e35d064285ea6cf97c44fb1eea775909",
+            "sourcePath": "/array-owner23e/app.ts"
+          },
+          {
+            "body": [
+              {
+                "kind": "return",
+                "range": {
+                  "end": 112,
+                  "start": 100
+                },
+                "value": {
+                  "arguments": [],
+                  "calleeRange": {
+                    "end": 109,
+                    "start": 107
+                  },
+                  "kind": "arrayDirectCall",
+                  "range": {
+                    "end": 111,
+                    "start": 107
+                  },
+                  "signatureHash": "sha256:1a3c0248ecb7e498007af6b22ac9e18eb5df6b9390677401805ce98ab2934d96",
+                  "sourceCallee": "sha256:d076e7c2a51e6b99b7339606bd6f30af6c170324b73c791f1bcdd590a08033bb",
+                  "target": "sha256:5b48c83e49f1ab585aa962a8e2e44b06b6f1b1a50955dbf86c02f89d2bda5289",
+                  "type": "sha256:dfbc72c48bec549ea679cd6aff531f9ebef95e001f6ae0bf419d2f33bf988a6c"
+                }
+              }
+            ],
+            "id": "sha256:76c3ab315cfc78e32d378a6549448acb86283e092e95c36602108e121b4dfe90",
+            "name": "f2",
+            "nameRange": {
+              "end": 90,
+              "start": 88
+            },
+            "parameters": [],
+            "range": {
+              "end": 114,
+              "start": 79
+            },
+            "returnAnnotationRange": {
+              "end": 97,
+              "start": 94
+            },
+            "returnType": {
+              "id": "sha256:dfbc72c48bec549ea679cd6aff531f9ebef95e001f6ae0bf419d2f33bf988a6c",
+              "kind": "scalar",
+              "name": "f64"
+            },
+            "signatureHash": "sha256:1a3c0248ecb7e498007af6b22ac9e18eb5df6b9390677401805ce98ab2934d96",
+            "sourceBinding": "sha256:994b10be705d793b1c17022d006078036de772bbcc852b889db8839b47125888",
+            "sourcePath": "/array-owner23e/app.ts"
+          },
+          {
+            "body": [
+              {
+                "kind": "return",
+                "range": {
+                  "end": 148,
+                  "start": 136
+                },
+                "value": {
+                  "arguments": [],
+                  "calleeRange": {
+                    "end": 145,
+                    "start": 143
+                  },
+                  "kind": "arrayDirectCall",
+                  "range": {
+                    "end": 147,
+                    "start": 143
+                  },
+                  "signatureHash": "sha256:1a3c0248ecb7e498007af6b22ac9e18eb5df6b9390677401805ce98ab2934d96",
+                  "sourceCallee": "sha256:9a2612f478059d5c8bc983d0742027862e11b74d9738340fea526bcf8a135f29",
+                  "target": "sha256:6b96c4d9cf0b2631d239b15d0988718643957f4cc00919a1c50efb62f3b2233a",
+                  "type": "sha256:dfbc72c48bec549ea679cd6aff531f9ebef95e001f6ae0bf419d2f33bf988a6c"
+                }
+              }
+            ],
+            "id": "sha256:5b48c83e49f1ab585aa962a8e2e44b06b6f1b1a50955dbf86c02f89d2bda5289",
+            "name": "f3",
+            "nameRange": {
+              "end": 126,
+              "start": 124
+            },
+            "parameters": [],
+            "range": {
+              "end": 150,
+              "start": 115
+            },
+            "returnAnnotationRange": {
+              "end": 133,
+              "start": 130
+            },
+            "returnType": {
+              "id": "sha256:dfbc72c48bec549ea679cd6aff531f9ebef95e001f6ae0bf419d2f33bf988a6c",
+              "kind": "scalar",
+              "name": "f64"
+            },
+            "signatureHash": "sha256:1a3c0248ecb7e498007af6b22ac9e18eb5df6b9390677401805ce98ab2934d96",
+            "sourceBinding": "sha256:d076e7c2a51e6b99b7339606bd6f30af6c170324b73c791f1bcdd590a08033bb",
+            "sourcePath": "/array-owner23e/app.ts"
+          },
+          {
+            "body": [
+              {
+                "kind": "return",
+                "range": {
+                  "end": 184,
+                  "start": 172
+                },
+                "value": {
+                  "arguments": [],
+                  "calleeRange": {
+                    "end": 181,
+                    "start": 179
+                  },
+                  "kind": "arrayDirectCall",
+                  "range": {
+                    "end": 183,
+                    "start": 179
+                  },
+                  "signatureHash": "sha256:1a3c0248ecb7e498007af6b22ac9e18eb5df6b9390677401805ce98ab2934d96",
+                  "sourceCallee": "sha256:faca5ccfe4b0323179ca30699a2a3b2b6d3c4458d06a06939c7ddc4f43200a37",
+                  "target": "sha256:a0aee9872e4e1167eb610bf50c2ccd932af06c1afd308e4dac23d71e93892a55",
+                  "type": "sha256:dfbc72c48bec549ea679cd6aff531f9ebef95e001f6ae0bf419d2f33bf988a6c"
+                }
+              }
+            ],
+            "id": "sha256:6b96c4d9cf0b2631d239b15d0988718643957f4cc00919a1c50efb62f3b2233a",
+            "name": "f4",
+            "nameRange": {
+              "end": 162,
+              "start": 160
+            },
+            "parameters": [],
+            "range": {
+              "end": 186,
+              "start": 151
+            },
+            "returnAnnotationRange": {
+              "end": 169,
+              "start": 166
+            },
+            "returnType": {
+              "id": "sha256:dfbc72c48bec549ea679cd6aff531f9ebef95e001f6ae0bf419d2f33bf988a6c",
+              "kind": "scalar",
+              "name": "f64"
+            },
+            "signatureHash": "sha256:1a3c0248ecb7e498007af6b22ac9e18eb5df6b9390677401805ce98ab2934d96",
+            "sourceBinding": "sha256:9a2612f478059d5c8bc983d0742027862e11b74d9738340fea526bcf8a135f29",
+            "sourcePath": "/array-owner23e/app.ts"
+          },
+          {
+            "body": [
+              {
+                "kind": "return",
+                "range": {
+                  "end": 220,
+                  "start": 208
+                },
+                "value": {
+                  "arguments": [],
+                  "calleeRange": {
+                    "end": 217,
+                    "start": 215
+                  },
+                  "kind": "arrayDirectCall",
+                  "range": {
+                    "end": 219,
+                    "start": 215
+                  },
+                  "signatureHash": "sha256:1a3c0248ecb7e498007af6b22ac9e18eb5df6b9390677401805ce98ab2934d96",
+                  "sourceCallee": "sha256:72f001e98b981cccf42e9ffaff1a2990dc8d5a370e4f457dc4f2a046b8843d88",
+                  "target": "sha256:15c9ca49f34d45ea5c08d2bdcec2d3d489a400fe2596ad7fbf800bd89d178da0",
+                  "type": "sha256:dfbc72c48bec549ea679cd6aff531f9ebef95e001f6ae0bf419d2f33bf988a6c"
+                }
+              }
+            ],
+            "id": "sha256:a0aee9872e4e1167eb610bf50c2ccd932af06c1afd308e4dac23d71e93892a55",
+            "name": "f5",
+            "nameRange": {
+              "end": 198,
+              "start": 196
+            },
+            "parameters": [],
+            "range": {
+              "end": 222,
+              "start": 187
+            },
+            "returnAnnotationRange": {
+              "end": 205,
+              "start": 202
+            },
+            "returnType": {
+              "id": "sha256:dfbc72c48bec549ea679cd6aff531f9ebef95e001f6ae0bf419d2f33bf988a6c",
+              "kind": "scalar",
+              "name": "f64"
+            },
+            "signatureHash": "sha256:1a3c0248ecb7e498007af6b22ac9e18eb5df6b9390677401805ce98ab2934d96",
+            "sourceBinding": "sha256:faca5ccfe4b0323179ca30699a2a3b2b6d3c4458d06a06939c7ddc4f43200a37",
+            "sourcePath": "/array-owner23e/app.ts"
+          },
+          {
+            "body": [
+              {
+                "kind": "return",
+                "range": {
+                  "end": 256,
+                  "start": 244
+                },
+                "value": {
+                  "arguments": [],
+                  "calleeRange": {
+                    "end": 253,
+                    "start": 251
+                  },
+                  "kind": "arrayDirectCall",
+                  "range": {
+                    "end": 255,
+                    "start": 251
+                  },
+                  "signatureHash": "sha256:1a3c0248ecb7e498007af6b22ac9e18eb5df6b9390677401805ce98ab2934d96",
+                  "sourceCallee": "sha256:454064111993467ada3aeb8acc2f1ae90f08ea5c337d4900892b426abc2deb12",
+                  "target": "sha256:0b9d85b9b9b4663e246599cab0730d8e6b8d06cec06ef5964bb87f62acf0f759",
+                  "type": "sha256:dfbc72c48bec549ea679cd6aff531f9ebef95e001f6ae0bf419d2f33bf988a6c"
+                }
+              }
+            ],
+            "id": "sha256:15c9ca49f34d45ea5c08d2bdcec2d3d489a400fe2596ad7fbf800bd89d178da0",
+            "name": "f6",
+            "nameRange": {
+              "end": 234,
+              "start": 232
+            },
+            "parameters": [],
+            "range": {
+              "end": 258,
+              "start": 223
+            },
+            "returnAnnotationRange": {
+              "end": 241,
+              "start": 238
+            },
+            "returnType": {
+              "id": "sha256:dfbc72c48bec549ea679cd6aff531f9ebef95e001f6ae0bf419d2f33bf988a6c",
+              "kind": "scalar",
+              "name": "f64"
+            },
+            "signatureHash": "sha256:1a3c0248ecb7e498007af6b22ac9e18eb5df6b9390677401805ce98ab2934d96",
+            "sourceBinding": "sha256:72f001e98b981cccf42e9ffaff1a2990dc8d5a370e4f457dc4f2a046b8843d88",
+            "sourcePath": "/array-owner23e/app.ts"
+          },
+          {
+            "body": [
+              {
+                "kind": "return",
+                "range": {
+                  "end": 292,
+                  "start": 280
+                },
+                "value": {
+                  "arguments": [],
+                  "calleeRange": {
+                    "end": 289,
+                    "start": 287
+                  },
+                  "kind": "arrayDirectCall",
+                  "range": {
+                    "end": 291,
+                    "start": 287
+                  },
+                  "signatureHash": "sha256:1a3c0248ecb7e498007af6b22ac9e18eb5df6b9390677401805ce98ab2934d96",
+                  "sourceCallee": "sha256:c645eaf4e92da9f7c38d7d520cf51ee94171c9467d40ca1ffe5c9c6fe7aa2c8f",
+                  "target": "sha256:c62d90112b153b8ee7c8fbe00b9ffcf034830a28cdda036033a52f3b2bf610d8",
+                  "type": "sha256:dfbc72c48bec549ea679cd6aff531f9ebef95e001f6ae0bf419d2f33bf988a6c"
+                }
+              }
+            ],
+            "id": "sha256:0b9d85b9b9b4663e246599cab0730d8e6b8d06cec06ef5964bb87f62acf0f759",
+            "name": "f7",
+            "nameRange": {
+              "end": 270,
+              "start": 268
+            },
+            "parameters": [],
+            "range": {
+              "end": 294,
+              "start": 259
+            },
+            "returnAnnotationRange": {
+              "end": 277,
+              "start": 274
+            },
+            "returnType": {
+              "id": "sha256:dfbc72c48bec549ea679cd6aff531f9ebef95e001f6ae0bf419d2f33bf988a6c",
+              "kind": "scalar",
+              "name": "f64"
+            },
+            "signatureHash": "sha256:1a3c0248ecb7e498007af6b22ac9e18eb5df6b9390677401805ce98ab2934d96",
+            "sourceBinding": "sha256:454064111993467ada3aeb8acc2f1ae90f08ea5c337d4900892b426abc2deb12",
+            "sourcePath": "/array-owner23e/app.ts"
+          },
+          {
+            "body": [
+              {
+                "kind": "return",
+                "range": {
+                  "end": 328,
+                  "start": 316
+                },
+                "value": {
+                  "arguments": [],
+                  "calleeRange": {
+                    "end": 325,
+                    "start": 323
+                  },
+                  "kind": "arrayDirectCall",
+                  "range": {
+                    "end": 327,
+                    "start": 323
+                  },
+                  "signatureHash": "sha256:1a3c0248ecb7e498007af6b22ac9e18eb5df6b9390677401805ce98ab2934d96",
+                  "sourceCallee": "sha256:3b63ad9c666378a07f2db07fa71d56107ffb8c8844acfc50f4eae4f96eb9b539",
+                  "target": "sha256:ba8ed99f857e0f98ddaf7075d33d44e047fd564fef3fc4ae52f9e63a5b4045db",
+                  "type": "sha256:dfbc72c48bec549ea679cd6aff531f9ebef95e001f6ae0bf419d2f33bf988a6c"
+                }
+              }
+            ],
+            "id": "sha256:c62d90112b153b8ee7c8fbe00b9ffcf034830a28cdda036033a52f3b2bf610d8",
+            "name": "f8",
+            "nameRange": {
+              "end": 306,
+              "start": 304
+            },
+            "parameters": [],
+            "range": {
+              "end": 330,
+              "start": 295
+            },
+            "returnAnnotationRange": {
+              "end": 313,
+              "start": 310
+            },
+            "returnType": {
+              "id": "sha256:dfbc72c48bec549ea679cd6aff531f9ebef95e001f6ae0bf419d2f33bf988a6c",
+              "kind": "scalar",
+              "name": "f64"
+            },
+            "signatureHash": "sha256:1a3c0248ecb7e498007af6b22ac9e18eb5df6b9390677401805ce98ab2934d96",
+            "sourceBinding": "sha256:c645eaf4e92da9f7c38d7d520cf51ee94171c9467d40ca1ffe5c9c6fe7aa2c8f",
+            "sourcePath": "/array-owner23e/app.ts"
+          },
+          {
+            "body": [
+              {
+                "kind": "return",
+                "range": {
+                  "end": 365,
+                  "start": 352
+                },
+                "value": {
+                  "arguments": [],
+                  "calleeRange": {
+                    "end": 362,
+                    "start": 359
+                  },
+                  "kind": "arrayDirectCall",
+                  "range": {
+                    "end": 364,
+                    "start": 359
+                  },
+                  "signatureHash": "sha256:1a3c0248ecb7e498007af6b22ac9e18eb5df6b9390677401805ce98ab2934d96",
+                  "sourceCallee": "sha256:e51db20993ab6bcb09ccf6cec0ff00e89c6cf8e7208cbd921ae0206932e4f785",
+                  "target": "sha256:97cd47ee986bab4d5fed10bda5455c164402a2dc3f719dfe48654c9434c83b2e",
+                  "type": "sha256:dfbc72c48bec549ea679cd6aff531f9ebef95e001f6ae0bf419d2f33bf988a6c"
+                }
+              }
+            ],
+            "id": "sha256:ba8ed99f857e0f98ddaf7075d33d44e047fd564fef3fc4ae52f9e63a5b4045db",
+            "name": "f9",
+            "nameRange": {
+              "end": 342,
+              "start": 340
+            },
+            "parameters": [],
+            "range": {
+              "end": 367,
+              "start": 331
+            },
+            "returnAnnotationRange": {
+              "end": 349,
+              "start": 346
+            },
+            "returnType": {
+              "id": "sha256:dfbc72c48bec549ea679cd6aff531f9ebef95e001f6ae0bf419d2f33bf988a6c",
+              "kind": "scalar",
+              "name": "f64"
+            },
+            "signatureHash": "sha256:1a3c0248ecb7e498007af6b22ac9e18eb5df6b9390677401805ce98ab2934d96",
+            "sourceBinding": "sha256:3b63ad9c666378a07f2db07fa71d56107ffb8c8844acfc50f4eae4f96eb9b539",
+            "sourcePath": "/array-owner23e/app.ts"
+          },
+          {
+            "body": [
+              {
+                "kind": "return",
+                "range": {
+                  "end": 403,
+                  "start": 390
+                },
+                "value": {
+                  "arguments": [],
+                  "calleeRange": {
+                    "end": 400,
+                    "start": 397
+                  },
+                  "kind": "arrayDirectCall",
+                  "range": {
+                    "end": 402,
+                    "start": 397
+                  },
+                  "signatureHash": "sha256:1a3c0248ecb7e498007af6b22ac9e18eb5df6b9390677401805ce98ab2934d96",
+                  "sourceCallee": "sha256:cb56359ee155b76bd0681f396f0528a7a9454ec7b031312c14fe05170fef02bb",
+                  "target": "sha256:cfff658dd10fb0596f1110e3757a0cde7e4c97566a6a1fed565ca3c4f962eaf1",
+                  "type": "sha256:dfbc72c48bec549ea679cd6aff531f9ebef95e001f6ae0bf419d2f33bf988a6c"
+                }
+              }
+            ],
+            "id": "sha256:97cd47ee986bab4d5fed10bda5455c164402a2dc3f719dfe48654c9434c83b2e",
+            "name": "f10",
+            "nameRange": {
+              "end": 380,
+              "start": 377
+            },
+            "parameters": [],
+            "range": {
+              "end": 405,
+              "start": 368
+            },
+            "returnAnnotationRange": {
+              "end": 387,
+              "start": 384
+            },
+            "returnType": {
+              "id": "sha256:dfbc72c48bec549ea679cd6aff531f9ebef95e001f6ae0bf419d2f33bf988a6c",
+              "kind": "scalar",
+              "name": "f64"
+            },
+            "signatureHash": "sha256:1a3c0248ecb7e498007af6b22ac9e18eb5df6b9390677401805ce98ab2934d96",
+            "sourceBinding": "sha256:e51db20993ab6bcb09ccf6cec0ff00e89c6cf8e7208cbd921ae0206932e4f785",
+            "sourcePath": "/array-owner23e/app.ts"
+          },
+          {
+            "body": [
+              {
+                "kind": "return",
+                "range": {
+                  "end": 441,
+                  "start": 428
+                },
+                "value": {
+                  "arguments": [],
+                  "calleeRange": {
+                    "end": 438,
+                    "start": 435
+                  },
+                  "kind": "arrayDirectCall",
+                  "range": {
+                    "end": 440,
+                    "start": 435
+                  },
+                  "signatureHash": "sha256:1a3c0248ecb7e498007af6b22ac9e18eb5df6b9390677401805ce98ab2934d96",
+                  "sourceCallee": "sha256:45c21b99c0ae84a8878e559a07dc11aa3b247df547330cd652200d72d9ff43ec",
+                  "target": "sha256:b636910e07cb0cb031bf0fd2eb8cce17255cc683b59dc3000397b41675cc190c",
+                  "type": "sha256:dfbc72c48bec549ea679cd6aff531f9ebef95e001f6ae0bf419d2f33bf988a6c"
+                }
+              }
+            ],
+            "id": "sha256:cfff658dd10fb0596f1110e3757a0cde7e4c97566a6a1fed565ca3c4f962eaf1",
+            "name": "f11",
+            "nameRange": {
+              "end": 418,
+              "start": 415
+            },
+            "parameters": [],
+            "range": {
+              "end": 443,
+              "start": 406
+            },
+            "returnAnnotationRange": {
+              "end": 425,
+              "start": 422
+            },
+            "returnType": {
+              "id": "sha256:dfbc72c48bec549ea679cd6aff531f9ebef95e001f6ae0bf419d2f33bf988a6c",
+              "kind": "scalar",
+              "name": "f64"
+            },
+            "signatureHash": "sha256:1a3c0248ecb7e498007af6b22ac9e18eb5df6b9390677401805ce98ab2934d96",
+            "sourceBinding": "sha256:cb56359ee155b76bd0681f396f0528a7a9454ec7b031312c14fe05170fef02bb",
+            "sourcePath": "/array-owner23e/app.ts"
+          },
+          {
+            "body": [
+              {
+                "kind": "return",
+                "range": {
+                  "end": 479,
+                  "start": 466
+                },
+                "value": {
+                  "arguments": [],
+                  "calleeRange": {
+                    "end": 476,
+                    "start": 473
+                  },
+                  "kind": "arrayDirectCall",
+                  "range": {
+                    "end": 478,
+                    "start": 473
+                  },
+                  "signatureHash": "sha256:1a3c0248ecb7e498007af6b22ac9e18eb5df6b9390677401805ce98ab2934d96",
+                  "sourceCallee": "sha256:846c4e90159d7029a5cb5313cda3843120be5e1cbbae4a3cfb97cb91c5fcbc30",
+                  "target": "sha256:6d3f5868cc6700bd4581721dd0e321bb1013c26272c265da7fe21804737c6fce",
+                  "type": "sha256:dfbc72c48bec549ea679cd6aff531f9ebef95e001f6ae0bf419d2f33bf988a6c"
+                }
+              }
+            ],
+            "id": "sha256:b636910e07cb0cb031bf0fd2eb8cce17255cc683b59dc3000397b41675cc190c",
+            "name": "f12",
+            "nameRange": {
+              "end": 456,
+              "start": 453
+            },
+            "parameters": [],
+            "range": {
+              "end": 481,
+              "start": 444
+            },
+            "returnAnnotationRange": {
+              "end": 463,
+              "start": 460
+            },
+            "returnType": {
+              "id": "sha256:dfbc72c48bec549ea679cd6aff531f9ebef95e001f6ae0bf419d2f33bf988a6c",
+              "kind": "scalar",
+              "name": "f64"
+            },
+            "signatureHash": "sha256:1a3c0248ecb7e498007af6b22ac9e18eb5df6b9390677401805ce98ab2934d96",
+            "sourceBinding": "sha256:45c21b99c0ae84a8878e559a07dc11aa3b247df547330cd652200d72d9ff43ec",
+            "sourcePath": "/array-owner23e/app.ts"
+          },
+          {
+            "body": [
+              {
+                "kind": "return",
+                "range": {
+                  "end": 517,
+                  "start": 504
+                },
+                "value": {
+                  "arguments": [],
+                  "calleeRange": {
+                    "end": 514,
+                    "start": 511
+                  },
+                  "kind": "arrayDirectCall",
+                  "range": {
+                    "end": 516,
+                    "start": 511
+                  },
+                  "signatureHash": "sha256:1a3c0248ecb7e498007af6b22ac9e18eb5df6b9390677401805ce98ab2934d96",
+                  "sourceCallee": "sha256:317f2feba6b435f821768fc79e53863b5776a36bf21d30bd40e5a8182bf0e5c7",
+                  "target": "sha256:232e2809e64449332c8bfe92cd58a394caf29d9c1863d0aaa1d29530d4d9ea16",
+                  "type": "sha256:dfbc72c48bec549ea679cd6aff531f9ebef95e001f6ae0bf419d2f33bf988a6c"
+                }
+              }
+            ],
+            "id": "sha256:6d3f5868cc6700bd4581721dd0e321bb1013c26272c265da7fe21804737c6fce",
+            "name": "f13",
+            "nameRange": {
+              "end": 494,
+              "start": 491
+            },
+            "parameters": [],
+            "range": {
+              "end": 519,
+              "start": 482
+            },
+            "returnAnnotationRange": {
+              "end": 501,
+              "start": 498
+            },
+            "returnType": {
+              "id": "sha256:dfbc72c48bec549ea679cd6aff531f9ebef95e001f6ae0bf419d2f33bf988a6c",
+              "kind": "scalar",
+              "name": "f64"
+            },
+            "signatureHash": "sha256:1a3c0248ecb7e498007af6b22ac9e18eb5df6b9390677401805ce98ab2934d96",
+            "sourceBinding": "sha256:846c4e90159d7029a5cb5313cda3843120be5e1cbbae4a3cfb97cb91c5fcbc30",
+            "sourcePath": "/array-owner23e/app.ts"
+          },
+          {
+            "body": [
+              {
+                "kind": "return",
+                "range": {
+                  "end": 555,
+                  "start": 542
+                },
+                "value": {
+                  "arguments": [],
+                  "calleeRange": {
+                    "end": 552,
+                    "start": 549
+                  },
+                  "kind": "arrayDirectCall",
+                  "range": {
+                    "end": 554,
+                    "start": 549
+                  },
+                  "signatureHash": "sha256:1a3c0248ecb7e498007af6b22ac9e18eb5df6b9390677401805ce98ab2934d96",
+                  "sourceCallee": "sha256:eb2843d89a00f6bd3766bce707e6dc349f23c8767b44da5f55f695887901bc9b",
+                  "target": "sha256:7b3be569be9936a15749fec3ed743bfbb31f0c4d76c95dcfbe7ae79a6c725908",
+                  "type": "sha256:dfbc72c48bec549ea679cd6aff531f9ebef95e001f6ae0bf419d2f33bf988a6c"
+                }
+              }
+            ],
+            "id": "sha256:232e2809e64449332c8bfe92cd58a394caf29d9c1863d0aaa1d29530d4d9ea16",
+            "name": "f14",
+            "nameRange": {
+              "end": 532,
+              "start": 529
+            },
+            "parameters": [],
+            "range": {
+              "end": 557,
+              "start": 520
+            },
+            "returnAnnotationRange": {
+              "end": 539,
+              "start": 536
+            },
+            "returnType": {
+              "id": "sha256:dfbc72c48bec549ea679cd6aff531f9ebef95e001f6ae0bf419d2f33bf988a6c",
+              "kind": "scalar",
+              "name": "f64"
+            },
+            "signatureHash": "sha256:1a3c0248ecb7e498007af6b22ac9e18eb5df6b9390677401805ce98ab2934d96",
+            "sourceBinding": "sha256:317f2feba6b435f821768fc79e53863b5776a36bf21d30bd40e5a8182bf0e5c7",
+            "sourcePath": "/array-owner23e/app.ts"
+          },
+          {
+            "body": [
+              {
+                "kind": "return",
+                "range": {
+                  "end": 591,
+                  "start": 580
+                },
+                "value": {
+                  "bits": "3ff0000000000000",
+                  "kind": "floating",
+                  "range": {
+                    "end": 590,
+                    "start": 587
+                  },
+                  "token": "1.0",
+                  "type": "sha256:dfbc72c48bec549ea679cd6aff531f9ebef95e001f6ae0bf419d2f33bf988a6c"
+                }
+              }
+            ],
+            "id": "sha256:7b3be569be9936a15749fec3ed743bfbb31f0c4d76c95dcfbe7ae79a6c725908",
+            "name": "f15",
+            "nameRange": {
+              "end": 570,
+              "start": 567
+            },
+            "parameters": [],
+            "range": {
+              "end": 593,
+              "start": 558
+            },
+            "returnAnnotationRange": {
+              "end": 577,
+              "start": 574
+            },
+            "returnType": {
+              "id": "sha256:dfbc72c48bec549ea679cd6aff531f9ebef95e001f6ae0bf419d2f33bf988a6c",
+              "kind": "scalar",
+              "name": "f64"
+            },
+            "signatureHash": "sha256:1a3c0248ecb7e498007af6b22ac9e18eb5df6b9390677401805ce98ab2934d96",
+            "sourceBinding": "sha256:eb2843d89a00f6bd3766bce707e6dc349f23c8767b44da5f55f695887901bc9b",
+            "sourcePath": "/array-owner23e/app.ts"
+          }
+        ],
+        "inputIdentity": "sha256:f3ad0db0cd54c0bd0dcecdfa46321e99ccb6809dbd464e17f66a29897570f412",
+        "readSpanIntrinsic": {
+          "declarationRange": {
+            "end": 483,
+            "start": 404
+          },
+          "id": "sha256:894419bca7875c61ed42fc4dd665b21d422598acac6f074d8f8b76e9794ba8ec",
+          "kind": "intrinsic",
+          "name": "readSpan",
+          "nameRange": {
+            "end": 429,
+            "start": 421
+          },
+          "parameters": [
+            {
+              "declarationRange": {
+                "end": 443,
+                "start": 433
+              },
+              "name": "owner",
+              "nameRange": {
+                "end": 438,
+                "start": 433
+              },
+              "typeRange": {
+                "end": 443,
+                "start": 440
+              }
+            },
+            {
+              "declarationRange": {
+                "end": 455,
+                "start": 445
+              },
+              "name": "start",
+              "nameRange": {
+                "end": 450,
+                "start": 445
+              },
+              "typeRange": {
+                "end": 455,
+                "start": 452
+              }
+            },
+            {
+              "declarationRange": {
+                "end": 468,
+                "start": 457
+              },
+              "name": "length",
+              "nameRange": {
+                "end": 463,
+                "start": 457
+              },
+              "typeRange": {
+                "end": 468,
+                "start": 465
+              }
+            }
+          ],
+          "returnTypeRange": {
+            "end": 482,
+            "start": 471
+          },
+          "sourcePath": "/array-owner23e/minimal-arrays-v3.d.ts",
+          "typeParameterRange": {
+            "end": 431,
+            "start": 430
+          }
+        },
+        "readSpanLength": {
+          "declarationRange": {
+            "end": 401,
+            "start": 380
+          },
+          "id": "sha256:59bb62c08c44255796c966889d454a17165e4530b9985775f9d69a3ba8b211c0",
+          "kind": "property",
+          "name": "length",
+          "nameRange": {
+            "end": 395,
+            "start": 389
+          },
+          "officialType": "number",
+          "ownerType": "sha256:6130247c334f8a7ba10e89f40381e26b0877d57f96860df21befbe668bb6545e",
+          "readType": "sha256:b72109639ea1cc95816abe01a09e7e4c78c11902a1251c00090a5715cf9b979c",
+          "readonly": true,
+          "sourcePath": "/array-owner23e/minimal-arrays-v3.d.ts",
+          "typeRange": {
+            "end": 400,
+            "start": 397
+          }
+        },
+        "rootFile": "/array-owner23e/app.ts",
+        "sources": [
+          {
+            "content": "export function f0(): f64 { return f1(); }\nfunction f1(): f64 { return f2(); }\nfunction f2(): f64 { return f3(); }\nfunction f3(): f64 { return f4(); }\nfunction f4(): f64 { return f5(); }\nfunction f5(): f64 { return f6(); }\nfunction f6(): f64 { return f7(); }\nfunction f7(): f64 { return f8(); }\nfunction f8(): f64 { return f9(); }\nfunction f9(): f64 { return f10(); }\nfunction f10(): f64 { return f11(); }\nfunction f11(): f64 { return f12(); }\nfunction f12(): f64 { return f13(); }\nfunction f13(): f64 { return f14(); }\nfunction f14(): f64 { return f15(); }\nfunction f15(): f64 { return 1.0; }\n",
+            "hash": "sha256:161ba7da8476f79f72b367122642a953d5a82802d4a4a309001f6bc9c0f61847",
+            "path": "/array-owner23e/app.ts"
+          },
+          {
+            "content": "// SPDX-License-Identifier: MIT\ninterface Object {}\ninterface Function {}\ninterface CallableFunction {}\ninterface NewableFunction {}\ninterface IArguments {}\ninterface String {}\ninterface Number {}\ninterface Boolean {}\ninterface RegExp {}\ninterface Array<T> { [n: number]: T; length: number; }\ntype f64 = number;\ntype u32 = number;\ninterface ReadSpan<T> { readonly [n: number]: T; readonly length: u32; }\ndeclare function readSpan<T>(owner: T[], start: u32, length: u32): ReadSpan<T>;\n",
+            "hash": "sha256:282b335a6e0e0493fa74a3c1dd56f234f8c679079acdaf0600cefb8306c26415",
+            "path": "/array-owner23e/minimal-arrays-v3.d.ts"
+          }
+        ],
+        "target": {
+          "llvmDataLayout": "e-m:w-p270:32:32-p271:32:32-p272:64:64-i64:64-i128:128-f80:128-n8:16:32:64-S128",
+          "target": "windows-x86_64-msvc",
+          "triple": "x86_64-pc-windows-msvc"
+        },
+        "types": [
+          {
+            "declarationRange": {
+              "end": 311,
+              "start": 293
+            },
+            "id": "sha256:dfbc72c48bec549ea679cd6aff531f9ebef95e001f6ae0bf419d2f33bf988a6c",
+            "kind": "scalar",
+            "name": "f64",
+            "nameRange": {
+              "end": 301,
+              "start": 298
+            },
+            "sourcePath": "/array-owner23e/minimal-arrays-v3.d.ts"
+          },
+          {
+            "declarationRange": {
+              "end": 292,
+              "start": 238
+            },
+            "elementType": "sha256:dfbc72c48bec549ea679cd6aff531f9ebef95e001f6ae0bf419d2f33bf988a6c",
+            "id": "sha256:74dab77c8fbdacf6cf058e37cac033757417c808d57ee23a9c8866565202cb68",
+            "indexSignatureRange": {
+              "end": 274,
+              "start": 259
+            },
+            "kind": "managedReference",
+            "name": "Array",
+            "nameRange": {
+              "end": 253,
+              "start": 248
+            },
+            "sourcePath": "/array-owner23e/minimal-arrays-v3.d.ts"
+          },
+          {
+            "declarationRange": {
+              "end": 330,
+              "start": 312
+            },
+            "id": "sha256:b72109639ea1cc95816abe01a09e7e4c78c11902a1251c00090a5715cf9b979c",
+            "kind": "scalar",
+            "name": "u32",
+            "nameRange": {
+              "end": 320,
+              "start": 317
+            },
+            "sourcePath": "/array-owner23e/minimal-arrays-v3.d.ts"
+          },
+          {
+            "declarationRange": {
+              "end": 403,
+              "start": 331
+            },
+            "elementType": "sha256:dfbc72c48bec549ea679cd6aff531f9ebef95e001f6ae0bf419d2f33bf988a6c",
+            "id": "sha256:6130247c334f8a7ba10e89f40381e26b0877d57f96860df21befbe668bb6545e",
+            "indexSignatureRange": {
+              "end": 379,
+              "start": 355
+            },
+            "kind": "view",
+            "name": "ReadSpan",
+            "nameRange": {
+              "end": 349,
+              "start": 341
+            },
+            "readonly": true,
+            "sourcePath": "/array-owner23e/minimal-arrays-v3.d.ts"
+          }
+        ]
+      },
+      "independentMetrics": {
+        "analysis": {
+          "bytes": 19239,
+          "depth": 6,
+          "stringBytes": 71,
+          "tokens": 1162
+        },
+        "context": {
+          "bytes": 5778,
+          "depth": 6,
+          "stringBytes": 71,
+          "tokens": 317
+        },
+        "hir": {
+          "bytes": 20490,
+          "depth": 8,
+          "stringBytes": 594,
+          "tokens": 1367
+        },
+        "package": {
+          "bytes": 12061,
+          "depth": 9,
+          "stringBytes": 594,
+          "tokens": 1188
+        },
+        "request": {
+          "bytes": 1516,
+          "depth": 5,
+          "stringBytes": 594,
+          "tokens": 42
+        }
+      },
+      "inheritedMetrics": {
+        "analysis": {
+          "bytes": 19239,
+          "depth": 6,
+          "stringBytes": 71,
+          "tokens": 1162
+        },
+        "context": {
+          "bytes": 5778,
+          "depth": 6,
+          "stringBytes": 71,
+          "tokens": 317
+        },
+        "hir": {
+          "bytes": 22323,
+          "depth": 8,
+          "stringBytes": 594,
+          "tokens": 1533
+        },
+        "package": {
+          "bytes": 13626,
+          "depth": 9,
+          "stringBytes": 594,
+          "tokens": 1352
+        },
+        "request": {
+          "bytes": 1671,
+          "depth": 5,
+          "stringBytes": 594,
+          "tokens": 42
+        }
+      },
+      "inheritedProvenance": {
+        "method": "Whole old16 Source/functions/checked graph and fixed publication are identical except frozen private4 and actual DTS metadata; old analysis1 to4 only format/input/hirDigest",
+        "official": {
+          "checks": [
+            "fresh all4diagnostics0",
+            "complete original source+new484BDTS closure",
+            "all14 original DTS declarations and exact readonly/generic symbols",
+            "full function/header/argument/resolvedsignature/alias/UTF16 roles",
+            "whole original body equal except new DTS Array.length identity",
+            "no view syntax and no liveness plan",
+            "no producer projection invoked"
+          ],
+          "consumedPaths": [
+            "/array-owner23e/app.ts",
+            "/array-owner23e/minimal-arrays-v3.d.ts"
+          ],
+          "counters": {
+            "anchors": 145,
+            "calls": 15,
+            "functions": 16,
+            "statements": 16
+          },
+          "diagnostics": {
+            "global": 0,
+            "program": 0,
+            "semantic": 0,
+            "syntax": 0
+          },
+          "genericTypeParameter": {
+            "end": 431,
+            "start": 430
+          },
+          "readonlyIndexer": true,
+          "readonlyLength": true,
+          "sourceRangeRoles": 95,
+          "viewInterfaceTypeParameter": {
+            "end": 351,
+            "start": 350
+          }
+        },
+        "productImported": false,
+        "productionOutputSampled": false
+      },
+      "metrics": {
+        "analysis": {
+          "bytes": 20755,
+          "depth": 6,
+          "tokens": 1288,
+          "stringBytes": 71
+        },
+        "context": {
+          "bytes": 6098,
+          "depth": 6,
+          "tokens": 349,
+          "stringBytes": 71
+        },
+        "hir": {
+          "bytes": 22323,
+          "depth": 8,
+          "tokens": 1533,
+          "stringBytes": 594
+        },
+        "package": {
+          "bytes": 13626,
+          "depth": 9,
+          "tokens": 1352,
+          "stringBytes": 594
+        },
+        "request": {
+          "bytes": 1671,
+          "depth": 5,
+          "tokens": 42,
+          "stringBytes": 594
+        }
+      },
+      "migration": {
+        "executionCredit": {
+          "GC": false,
+          "VM": false,
+          "coreV5": "NOT_RUN",
+          "formalWire": false,
+          "newBudgets": "NOT_VERIFIED",
+          "official": "Inherited old original-AST result for byte-identical source/DTS only",
+          "productV5": "NOT_RUN",
+          "runtime": false,
+          "sourceV5": "NOT_RUN"
+        },
+        "historicalSTOPRetained": true,
+        "inheritedEvidence": {
+          "official": {
+            "check": "IndependentDepth16Official",
+            "pid": 31792,
+            "qualified": true,
+            "sourceAndDTSByteExact": true
+          },
+          "productV4": {
+            "check": "ProductArrayFinal",
+            "credit": "Old complete depth16 oracle in qualified v4 suite; no v5 credit",
+            "pid": 22164,
+            "qualified": true
+          },
+          "sourceV4": {
+            "status": "UNKNOWN_NOT_MATCHED_TO_SOURCEWHOLE_CASE"
+          },
+          "wholeIndependent": {
+            "check": "IndependentDepth16Whole",
+            "credit": "Complete independent old depth16 HIR/context/report and call facets preserved",
+            "pid": 34304,
+            "qualified": true
+          }
+        },
+        "invariants": {
+          "analysis": {
+            "changedFields": [
+              "/calls/0/consumedDigest",
+              "/calls/1/consumedDigest",
+              "/calls/2/consumedDigest",
+              "/calls/3/consumedDigest",
+              "/calls/4/consumedDigest",
+              "/calls/5/consumedDigest",
+              "/calls/6/consumedDigest",
+              "/calls/7/consumedDigest",
+              "/calls/8/consumedDigest",
+              "/calls/9/consumedDigest",
+              "/calls/10/consumedDigest",
+              "/calls/11/consumedDigest",
+              "/calls/12/consumedDigest",
+              "/calls/13/consumedDigest",
+              "/calls/14/consumedDigest",
+              "/contracts/0/digest",
+              "/contracts/1/digest",
+              "/contracts/2/digest",
+              "/contracts/3/digest",
+              "/contracts/4/digest",
+              "/contracts/5/digest",
+              "/contracts/6/digest",
+              "/contracts/7/digest",
+              "/contracts/8/digest",
+              "/contracts/9/digest",
+              "/contracts/10/digest",
+              "/contracts/11/digest",
+              "/contracts/12/digest",
+              "/contracts/13/digest",
+              "/contracts/14/digest",
+              "/contracts/15/digest",
+              "/format/schemaHash",
+              "/format/version",
+              "/functions/0/dependencies/0/digest",
+              "/functions/1/dependencies/0/digest",
+              "/functions/2/dependencies/0/digest",
+              "/functions/3/dependencies/0/digest",
+              "/functions/4/dependencies/0/digest",
+              "/functions/5/dependencies/0/digest",
+              "/functions/6/dependencies/0/digest",
+              "/functions/7/dependencies/0/digest",
+              "/functions/9/dependencies/0/digest",
+              "/functions/10/dependencies/0/digest",
+              "/functions/11/dependencies/0/digest",
+              "/functions/12/dependencies/0/digest",
+              "/functions/13/dependencies/0/digest",
+              "/functions/14/dependencies/0/digest",
+              "/functions/15/dependencies/0/digest",
+              "/hirDigest",
+              "/inputIdentity",
+              "/publishedDigest",
+              "/scopeDigest"
+            ],
+            "semantic": {
+              "bytes": 10606,
+              "sha256": "7278bee9a3e9095bcf4334b2d9b71299b99304c82fc8515668218f60f3edb9b4"
+            },
+            "semanticExact": true
+          },
+          "hirBodySourcesTypesMetadataExact": true,
+          "hirChangedFields": [
+            "/facts/requestId",
+            "/facts/schemaHash",
+            "/facts/version",
+            "/format/schemaHash",
+            "/format/version",
+            "/inputIdentity"
+          ],
+          "hirSemantic": {
+            "bytes": 21891,
+            "sha256": "f6d6af84057379c422484e769a2175a6a827acb1b22d6a4b05be45071f061715"
+          },
+          "newPackage": {
+            "bytes": 13626,
+            "sha256": "bbe19a4a12da8c8e6023f48ad414204603ed9be5dc016e35573886559a80c336"
+          },
+          "newRequest": {
+            "bytes": 1671,
+            "sha256": "53c9f3f92e126b192542253889770b222e21f43663210bee5c2e7817ac434afb"
+          },
+          "oldPackage": {
+            "bytes": 13626,
+            "sha256": "be98d03d2050b84d150d2e5764d5cbac3e4a60d208652c18206cde178fe41f13"
+          },
+          "oldRequest": {
+            "bytes": 1671,
+            "sha256": "0e209e78d4b8a7e43b07b431a53cbd8948b3a0888f6259815e6f4ba9c1ce4f16"
+          },
+          "originalAllSlotsUpperExact": true,
+          "packageChangedFields": [
+            "/packageId",
+            "/requestId",
+            "/schemaHash",
+            "/version"
+          ],
+          "payloadAfter": {
+            "bytes": 13296,
+            "sha256": "c52e1def95fed967e2bd4a06960a9fe2e389e2f016cafe2f02463c2b78591836"
+          },
+          "payloadBefore": {
+            "bytes": 13296,
+            "sha256": "c52e1def95fed967e2bd4a06960a9fe2e389e2f016cafe2f02463c2b78591836"
+          },
+          "payloadExact": true,
+          "requestChangedFields": [
+            "/version"
+          ],
+          "requestInputExact": true,
+          "scope": {
+            "exports": [
+              {
+                "functionId": "sha256:66c692a80648e02b6d5c9f3e2600380331f3be1eb653163a5c98e5caa6dedbff",
+                "name": "f0"
+              }
+            ],
+            "functions": [
+              {
+                "functionId": "sha256:0b9d85b9b9b4663e246599cab0730d8e6b8d06cec06ef5964bb87f62acf0f759",
+                "name": "f7",
+                "parameterTypes": [],
+                "returnType": "f64",
+                "signatureHash": "sha256:1a3c0248ecb7e498007af6b22ac9e18eb5df6b9390677401805ce98ab2934d96",
+                "sourcePath": "/array-owner23e/app.ts"
+              },
+              {
+                "functionId": "sha256:15c9ca49f34d45ea5c08d2bdcec2d3d489a400fe2596ad7fbf800bd89d178da0",
+                "name": "f6",
+                "parameterTypes": [],
+                "returnType": "f64",
+                "signatureHash": "sha256:1a3c0248ecb7e498007af6b22ac9e18eb5df6b9390677401805ce98ab2934d96",
+                "sourcePath": "/array-owner23e/app.ts"
+              },
+              {
+                "functionId": "sha256:232e2809e64449332c8bfe92cd58a394caf29d9c1863d0aaa1d29530d4d9ea16",
+                "name": "f14",
+                "parameterTypes": [],
+                "returnType": "f64",
+                "signatureHash": "sha256:1a3c0248ecb7e498007af6b22ac9e18eb5df6b9390677401805ce98ab2934d96",
+                "sourcePath": "/array-owner23e/app.ts"
+              },
+              {
+                "functionId": "sha256:5b48c83e49f1ab585aa962a8e2e44b06b6f1b1a50955dbf86c02f89d2bda5289",
+                "name": "f3",
+                "parameterTypes": [],
+                "returnType": "f64",
+                "signatureHash": "sha256:1a3c0248ecb7e498007af6b22ac9e18eb5df6b9390677401805ce98ab2934d96",
+                "sourcePath": "/array-owner23e/app.ts"
+              },
+              {
+                "functionId": "sha256:66c692a80648e02b6d5c9f3e2600380331f3be1eb653163a5c98e5caa6dedbff",
+                "name": "f0",
+                "parameterTypes": [],
+                "returnType": "f64",
+                "signatureHash": "sha256:1a3c0248ecb7e498007af6b22ac9e18eb5df6b9390677401805ce98ab2934d96",
+                "sourcePath": "/array-owner23e/app.ts"
+              },
+              {
+                "functionId": "sha256:6b96c4d9cf0b2631d239b15d0988718643957f4cc00919a1c50efb62f3b2233a",
+                "name": "f4",
+                "parameterTypes": [],
+                "returnType": "f64",
+                "signatureHash": "sha256:1a3c0248ecb7e498007af6b22ac9e18eb5df6b9390677401805ce98ab2934d96",
+                "sourcePath": "/array-owner23e/app.ts"
+              },
+              {
+                "functionId": "sha256:6d3f5868cc6700bd4581721dd0e321bb1013c26272c265da7fe21804737c6fce",
+                "name": "f13",
+                "parameterTypes": [],
+                "returnType": "f64",
+                "signatureHash": "sha256:1a3c0248ecb7e498007af6b22ac9e18eb5df6b9390677401805ce98ab2934d96",
+                "sourcePath": "/array-owner23e/app.ts"
+              },
+              {
+                "functionId": "sha256:76c3ab315cfc78e32d378a6549448acb86283e092e95c36602108e121b4dfe90",
+                "name": "f2",
+                "parameterTypes": [],
+                "returnType": "f64",
+                "signatureHash": "sha256:1a3c0248ecb7e498007af6b22ac9e18eb5df6b9390677401805ce98ab2934d96",
+                "sourcePath": "/array-owner23e/app.ts"
+              },
+              {
+                "functionId": "sha256:7b3be569be9936a15749fec3ed743bfbb31f0c4d76c95dcfbe7ae79a6c725908",
+                "name": "f15",
+                "parameterTypes": [],
+                "returnType": "f64",
+                "signatureHash": "sha256:1a3c0248ecb7e498007af6b22ac9e18eb5df6b9390677401805ce98ab2934d96",
+                "sourcePath": "/array-owner23e/app.ts"
+              },
+              {
+                "functionId": "sha256:97cd47ee986bab4d5fed10bda5455c164402a2dc3f719dfe48654c9434c83b2e",
+                "name": "f10",
+                "parameterTypes": [],
+                "returnType": "f64",
+                "signatureHash": "sha256:1a3c0248ecb7e498007af6b22ac9e18eb5df6b9390677401805ce98ab2934d96",
+                "sourcePath": "/array-owner23e/app.ts"
+              },
+              {
+                "functionId": "sha256:a0aee9872e4e1167eb610bf50c2ccd932af06c1afd308e4dac23d71e93892a55",
+                "name": "f5",
+                "parameterTypes": [],
+                "returnType": "f64",
+                "signatureHash": "sha256:1a3c0248ecb7e498007af6b22ac9e18eb5df6b9390677401805ce98ab2934d96",
+                "sourcePath": "/array-owner23e/app.ts"
+              },
+              {
+                "functionId": "sha256:b636910e07cb0cb031bf0fd2eb8cce17255cc683b59dc3000397b41675cc190c",
+                "name": "f12",
+                "parameterTypes": [],
+                "returnType": "f64",
+                "signatureHash": "sha256:1a3c0248ecb7e498007af6b22ac9e18eb5df6b9390677401805ce98ab2934d96",
+                "sourcePath": "/array-owner23e/app.ts"
+              },
+              {
+                "functionId": "sha256:ba8ed99f857e0f98ddaf7075d33d44e047fd564fef3fc4ae52f9e63a5b4045db",
+                "name": "f9",
+                "parameterTypes": [],
+                "returnType": "f64",
+                "signatureHash": "sha256:1a3c0248ecb7e498007af6b22ac9e18eb5df6b9390677401805ce98ab2934d96",
+                "sourcePath": "/array-owner23e/app.ts"
+              },
+              {
+                "functionId": "sha256:c38f42fc30436a18b798a836784b895e4e808af4c9cbba42157c45be15686913",
+                "name": "f1",
+                "parameterTypes": [],
+                "returnType": "f64",
+                "signatureHash": "sha256:1a3c0248ecb7e498007af6b22ac9e18eb5df6b9390677401805ce98ab2934d96",
+                "sourcePath": "/array-owner23e/app.ts"
+              },
+              {
+                "functionId": "sha256:c62d90112b153b8ee7c8fbe00b9ffcf034830a28cdda036033a52f3b2bf610d8",
+                "name": "f8",
+                "parameterTypes": [],
+                "returnType": "f64",
+                "signatureHash": "sha256:1a3c0248ecb7e498007af6b22ac9e18eb5df6b9390677401805ce98ab2934d96",
+                "sourcePath": "/array-owner23e/app.ts"
+              },
+              {
+                "functionId": "sha256:cfff658dd10fb0596f1110e3757a0cde7e4c97566a6a1fed565ca3c4f962eaf1",
+                "name": "f11",
+                "parameterTypes": [],
+                "returnType": "f64",
+                "signatureHash": "sha256:1a3c0248ecb7e498007af6b22ac9e18eb5df6b9390677401805ce98ab2934d96",
+                "sourcePath": "/array-owner23e/app.ts"
+              }
+            ],
+            "profile": "array-readspan-owner-relative-fixed-v2",
+            "rootFile": "/array-owner23e/app.ts"
+          },
+          "sourceFiles": [
+            {
+              "bytes": 594,
+              "contentDigestVerified": true,
+              "declaredSHA256": "161ba7da8476f79f72b367122642a953d5a82802d4a4a309001f6bc9c0f61847",
+              "path": "/array-owner23e/app.ts",
+              "sha256": "161ba7da8476f79f72b367122642a953d5a82802d4a4a309001f6bc9c0f61847",
+              "utf16Length": 594
+            },
+            {
+              "bytes": 484,
+              "contentDigestVerified": true,
+              "declaredSHA256": "282b335a6e0e0493fa74a3c1dd56f234f8c679079acdaf0600cefb8306c26415",
+              "path": "/array-owner23e/minimal-arrays-v3.d.ts",
+              "sha256": "282b335a6e0e0493fa74a3c1dd56f234f8c679079acdaf0600cefb8306c26415",
+              "utf16Length": 484
+            }
+          ],
+          "workExact": true
+        },
+        "method": "Exact field-directed pure-data v4-to-v5 migration; no source program or producer executed",
+        "outputAvailability": {
+          "diagnosticFields": {
+            "coreError": [
+              "code",
+              "message",
+              "phase",
+              "primary",
+              "ruleId"
+            ]
+          },
+          "fullAnalysis": true,
+          "fullFixedContext": true,
+          "fullHIR": true,
+          "fullPackage": true,
+          "fullPlan": false,
+          "fullRequest": true,
+          "missingIsNotFabricated": null,
+          "preConsumerAnalysis": false
+        },
+        "schemaChecks": {
+          "analysis": {
+            "metrics": {
+              "bytes": 19239,
+              "depth": 6,
+              "stringBytes": 71,
+              "tokens": 1162
+            },
+            "schemaValid": true
+          },
+          "context": {
+            "metrics": {
+              "bytes": 5778,
+              "depth": 6,
+              "stringBytes": 71,
+              "tokens": 317
+            },
+            "schemaValid": true
+          },
+          "hir": {
+            "metrics": {
+              "bytes": 22323,
+              "depth": 8,
+              "stringBytes": 594,
+              "tokens": 1533
+            },
+            "schemaValid": true
+          },
+          "package": {
+            "metrics": {
+              "bytes": 13626,
+              "depth": 9,
+              "stringBytes": 594,
+              "tokens": 1352
+            },
+            "schemaValid": true
+          },
+          "request": {
+            "metrics": {
+              "bytes": 1671,
+              "depth": 5,
+              "stringBytes": 594,
+              "tokens": 42
+            },
+            "schemaValid": true
+          }
+        },
+        "source": {
+          "caseJCS": {
+            "bytes": 67016,
+            "sha256": "7ab375d9a6c8c710867948c39ff5c91caa5e02c210fe269b52c374f4b99b2cc0"
+          },
+          "caseName": "forward-chain16",
+          "path": "E:/ws/pro_tsfg/.scratch/tsfg_r03/M26-readspan-last-use-checks-20261019/independent-depth16-oracle-v4.json"
+        }
+      },
+      "name": "forward-chain16",
+      "packageText": "{\"family\":\"tsfg.array-facts-package-candidate\",\"packageId\":\"sha256:f3ad0db0cd54c0bd0dcecdfa46321e99ccb6809dbd464e17f66a29897570f412\",\"payload\":{\"arrayLength\":{\"declarationRange\":{\"end\":290,\"start\":275},\"id\":\"sha256:8a15099652ad0aa13b95ca5e230158b507063eae8d48d15e48678eb61d23408d\",\"kind\":\"property\",\"name\":\"length\",\"nameRange\":{\"end\":281,\"start\":275},\"officialType\":\"number\",\"ownerType\":\"array.f64\",\"sourcePath\":\"/array-owner23e/minimal-arrays-v3.d.ts\",\"typeRange\":{\"end\":289,\"start\":283},\"writeType\":\"u32\"},\"config\":{\"allowJs\":false,\"noEmit\":true,\"strict\":true},\"declarations\":{\"paths\":[\"/array-owner23e/minimal-arrays-v3.d.ts\"],\"version\":\"minimal-arrays-v3\"},\"diagnostics\":[],\"exports\":[{\"functionId\":\"sha256:386997bae5e651e20bfab46edfb6bd6d6c2a29c660a5092a7d68ffe860081b9b\",\"name\":\"f0\"}],\"files\":[{\"byteLength\":594,\"content\":\"export function f0(): f64 { return f1(); }\\nfunction f1(): f64 { return f2(); }\\nfunction f2(): f64 { return f3(); }\\nfunction f3(): f64 { return f4(); }\\nfunction f4(): f64 { return f5(); }\\nfunction f5(): f64 { return f6(); }\\nfunction f6(): f64 { return f7(); }\\nfunction f7(): f64 { return f8(); }\\nfunction f8(): f64 { return f9(); }\\nfunction f9(): f64 { return f10(); }\\nfunction f10(): f64 { return f11(); }\\nfunction f11(): f64 { return f12(); }\\nfunction f12(): f64 { return f13(); }\\nfunction f13(): f64 { return f14(); }\\nfunction f14(): f64 { return f15(); }\\nfunction f15(): f64 { return 1.0; }\\n\",\"path\":\"/array-owner23e/app.ts\",\"sha256\":\"161ba7da8476f79f72b367122642a953d5a82802d4a4a309001f6bc9c0f61847\",\"utf16Length\":594},{\"byteLength\":484,\"content\":\"// SPDX-License-Identifier: MIT\\ninterface Object {}\\ninterface Function {}\\ninterface CallableFunction {}\\ninterface NewableFunction {}\\ninterface IArguments {}\\ninterface String {}\\ninterface Number {}\\ninterface Boolean {}\\ninterface RegExp {}\\ninterface Array<T> { [n: number]: T; length: number; }\\ntype f64 = number;\\ntype u32 = number;\\ninterface ReadSpan<T> { readonly [n: number]: T; readonly length: u32; }\\ndeclare function readSpan<T>(owner: T[], start: u32, length: u32): ReadSpan<T>;\\n\",\"path\":\"/array-owner23e/minimal-arrays-v3.d.ts\",\"sha256\":\"282b335a6e0e0493fa74a3c1dd56f234f8c679079acdaf0600cefb8306c26415\",\"utf16Length\":484}],\"functions\":[{\"bindings\":[],\"body\":[{\"kind\":\"return\",\"range\":{\"end\":40,\"start\":28},\"value\":{\"arguments\":[],\"callee\":\"sha256:9a9616ee5567a9ca06d1d4922cfb0277e35d064285ea6cf97c44fb1eea775909\",\"calleeRange\":{\"end\":37,\"start\":35},\"kind\":\"directCall\",\"range\":{\"end\":39,\"start\":35},\"type\":\"f64\"}}],\"declarationRange\":{\"end\":42,\"start\":0},\"id\":\"sha256:386997bae5e651e20bfab46edfb6bd6d6c2a29c660a5092a7d68ffe860081b9b\",\"name\":\"f0\",\"nameRange\":{\"end\":18,\"start\":16},\"parameters\":[],\"returnAnnotationRange\":{\"end\":25,\"start\":22},\"returnType\":\"f64\",\"sourcePath\":\"/array-owner23e/app.ts\"},{\"bindings\":[],\"body\":[{\"kind\":\"return\",\"range\":{\"end\":76,\"start\":64},\"value\":{\"arguments\":[],\"callee\":\"sha256:994b10be705d793b1c17022d006078036de772bbcc852b889db8839b47125888\",\"calleeRange\":{\"end\":73,\"start\":71},\"kind\":\"directCall\",\"range\":{\"end\":75,\"start\":71},\"type\":\"f64\"}}],\"declarationRange\":{\"end\":78,\"start\":43},\"id\":\"sha256:9a9616ee5567a9ca06d1d4922cfb0277e35d064285ea6cf97c44fb1eea775909\",\"name\":\"f1\",\"nameRange\":{\"end\":54,\"start\":52},\"parameters\":[],\"returnAnnotationRange\":{\"end\":61,\"start\":58},\"returnType\":\"f64\",\"sourcePath\":\"/array-owner23e/app.ts\"},{\"bindings\":[],\"body\":[{\"kind\":\"return\",\"range\":{\"end\":112,\"start\":100},\"value\":{\"arguments\":[],\"callee\":\"sha256:d076e7c2a51e6b99b7339606bd6f30af6c170324b73c791f1bcdd590a08033bb\",\"calleeRange\":{\"end\":109,\"start\":107},\"kind\":\"directCall\",\"range\":{\"end\":111,\"start\":107},\"type\":\"f64\"}}],\"declarationRange\":{\"end\":114,\"start\":79},\"id\":\"sha256:994b10be705d793b1c17022d006078036de772bbcc852b889db8839b47125888\",\"name\":\"f2\",\"nameRange\":{\"end\":90,\"start\":88},\"parameters\":[],\"returnAnnotationRange\":{\"end\":97,\"start\":94},\"returnType\":\"f64\",\"sourcePath\":\"/array-owner23e/app.ts\"},{\"bindings\":[],\"body\":[{\"kind\":\"return\",\"range\":{\"end\":148,\"start\":136},\"value\":{\"arguments\":[],\"callee\":\"sha256:9a2612f478059d5c8bc983d0742027862e11b74d9738340fea526bcf8a135f29\",\"calleeRange\":{\"end\":145,\"start\":143},\"kind\":\"directCall\",\"range\":{\"end\":147,\"start\":143},\"type\":\"f64\"}}],\"declarationRange\":{\"end\":150,\"start\":115},\"id\":\"sha256:d076e7c2a51e6b99b7339606bd6f30af6c170324b73c791f1bcdd590a08033bb\",\"name\":\"f3\",\"nameRange\":{\"end\":126,\"start\":124},\"parameters\":[],\"returnAnnotationRange\":{\"end\":133,\"start\":130},\"returnType\":\"f64\",\"sourcePath\":\"/array-owner23e/app.ts\"},{\"bindings\":[],\"body\":[{\"kind\":\"return\",\"range\":{\"end\":184,\"start\":172},\"value\":{\"arguments\":[],\"callee\":\"sha256:faca5ccfe4b0323179ca30699a2a3b2b6d3c4458d06a06939c7ddc4f43200a37\",\"calleeRange\":{\"end\":181,\"start\":179},\"kind\":\"directCall\",\"range\":{\"end\":183,\"start\":179},\"type\":\"f64\"}}],\"declarationRange\":{\"end\":186,\"start\":151},\"id\":\"sha256:9a2612f478059d5c8bc983d0742027862e11b74d9738340fea526bcf8a135f29\",\"name\":\"f4\",\"nameRange\":{\"end\":162,\"start\":160},\"parameters\":[],\"returnAnnotationRange\":{\"end\":169,\"start\":166},\"returnType\":\"f64\",\"sourcePath\":\"/array-owner23e/app.ts\"},{\"bindings\":[],\"body\":[{\"kind\":\"return\",\"range\":{\"end\":220,\"start\":208},\"value\":{\"arguments\":[],\"callee\":\"sha256:72f001e98b981cccf42e9ffaff1a2990dc8d5a370e4f457dc4f2a046b8843d88\",\"calleeRange\":{\"end\":217,\"start\":215},\"kind\":\"directCall\",\"range\":{\"end\":219,\"start\":215},\"type\":\"f64\"}}],\"declarationRange\":{\"end\":222,\"start\":187},\"id\":\"sha256:faca5ccfe4b0323179ca30699a2a3b2b6d3c4458d06a06939c7ddc4f43200a37\",\"name\":\"f5\",\"nameRange\":{\"end\":198,\"start\":196},\"parameters\":[],\"returnAnnotationRange\":{\"end\":205,\"start\":202},\"returnType\":\"f64\",\"sourcePath\":\"/array-owner23e/app.ts\"},{\"bindings\":[],\"body\":[{\"kind\":\"return\",\"range\":{\"end\":256,\"start\":244},\"value\":{\"arguments\":[],\"callee\":\"sha256:454064111993467ada3aeb8acc2f1ae90f08ea5c337d4900892b426abc2deb12\",\"calleeRange\":{\"end\":253,\"start\":251},\"kind\":\"directCall\",\"range\":{\"end\":255,\"start\":251},\"type\":\"f64\"}}],\"declarationRange\":{\"end\":258,\"start\":223},\"id\":\"sha256:72f001e98b981cccf42e9ffaff1a2990dc8d5a370e4f457dc4f2a046b8843d88\",\"name\":\"f6\",\"nameRange\":{\"end\":234,\"start\":232},\"parameters\":[],\"returnAnnotationRange\":{\"end\":241,\"start\":238},\"returnType\":\"f64\",\"sourcePath\":\"/array-owner23e/app.ts\"},{\"bindings\":[],\"body\":[{\"kind\":\"return\",\"range\":{\"end\":292,\"start\":280},\"value\":{\"arguments\":[],\"callee\":\"sha256:c645eaf4e92da9f7c38d7d520cf51ee94171c9467d40ca1ffe5c9c6fe7aa2c8f\",\"calleeRange\":{\"end\":289,\"start\":287},\"kind\":\"directCall\",\"range\":{\"end\":291,\"start\":287},\"type\":\"f64\"}}],\"declarationRange\":{\"end\":294,\"start\":259},\"id\":\"sha256:454064111993467ada3aeb8acc2f1ae90f08ea5c337d4900892b426abc2deb12\",\"name\":\"f7\",\"nameRange\":{\"end\":270,\"start\":268},\"parameters\":[],\"returnAnnotationRange\":{\"end\":277,\"start\":274},\"returnType\":\"f64\",\"sourcePath\":\"/array-owner23e/app.ts\"},{\"bindings\":[],\"body\":[{\"kind\":\"return\",\"range\":{\"end\":328,\"start\":316},\"value\":{\"arguments\":[],\"callee\":\"sha256:3b63ad9c666378a07f2db07fa71d56107ffb8c8844acfc50f4eae4f96eb9b539\",\"calleeRange\":{\"end\":325,\"start\":323},\"kind\":\"directCall\",\"range\":{\"end\":327,\"start\":323},\"type\":\"f64\"}}],\"declarationRange\":{\"end\":330,\"start\":295},\"id\":\"sha256:c645eaf4e92da9f7c38d7d520cf51ee94171c9467d40ca1ffe5c9c6fe7aa2c8f\",\"name\":\"f8\",\"nameRange\":{\"end\":306,\"start\":304},\"parameters\":[],\"returnAnnotationRange\":{\"end\":313,\"start\":310},\"returnType\":\"f64\",\"sourcePath\":\"/array-owner23e/app.ts\"},{\"bindings\":[],\"body\":[{\"kind\":\"return\",\"range\":{\"end\":365,\"start\":352},\"value\":{\"arguments\":[],\"callee\":\"sha256:e51db20993ab6bcb09ccf6cec0ff00e89c6cf8e7208cbd921ae0206932e4f785\",\"calleeRange\":{\"end\":362,\"start\":359},\"kind\":\"directCall\",\"range\":{\"end\":364,\"start\":359},\"type\":\"f64\"}}],\"declarationRange\":{\"end\":367,\"start\":331},\"id\":\"sha256:3b63ad9c666378a07f2db07fa71d56107ffb8c8844acfc50f4eae4f96eb9b539\",\"name\":\"f9\",\"nameRange\":{\"end\":342,\"start\":340},\"parameters\":[],\"returnAnnotationRange\":{\"end\":349,\"start\":346},\"returnType\":\"f64\",\"sourcePath\":\"/array-owner23e/app.ts\"},{\"bindings\":[],\"body\":[{\"kind\":\"return\",\"range\":{\"end\":403,\"start\":390},\"value\":{\"arguments\":[],\"callee\":\"sha256:cb56359ee155b76bd0681f396f0528a7a9454ec7b031312c14fe05170fef02bb\",\"calleeRange\":{\"end\":400,\"start\":397},\"kind\":\"directCall\",\"range\":{\"end\":402,\"start\":397},\"type\":\"f64\"}}],\"declarationRange\":{\"end\":405,\"start\":368},\"id\":\"sha256:e51db20993ab6bcb09ccf6cec0ff00e89c6cf8e7208cbd921ae0206932e4f785\",\"name\":\"f10\",\"nameRange\":{\"end\":380,\"start\":377},\"parameters\":[],\"returnAnnotationRange\":{\"end\":387,\"start\":384},\"returnType\":\"f64\",\"sourcePath\":\"/array-owner23e/app.ts\"},{\"bindings\":[],\"body\":[{\"kind\":\"return\",\"range\":{\"end\":441,\"start\":428},\"value\":{\"arguments\":[],\"callee\":\"sha256:45c21b99c0ae84a8878e559a07dc11aa3b247df547330cd652200d72d9ff43ec\",\"calleeRange\":{\"end\":438,\"start\":435},\"kind\":\"directCall\",\"range\":{\"end\":440,\"start\":435},\"type\":\"f64\"}}],\"declarationRange\":{\"end\":443,\"start\":406},\"id\":\"sha256:cb56359ee155b76bd0681f396f0528a7a9454ec7b031312c14fe05170fef02bb\",\"name\":\"f11\",\"nameRange\":{\"end\":418,\"start\":415},\"parameters\":[],\"returnAnnotationRange\":{\"end\":425,\"start\":422},\"returnType\":\"f64\",\"sourcePath\":\"/array-owner23e/app.ts\"},{\"bindings\":[],\"body\":[{\"kind\":\"return\",\"range\":{\"end\":479,\"start\":466},\"value\":{\"arguments\":[],\"callee\":\"sha256:846c4e90159d7029a5cb5313cda3843120be5e1cbbae4a3cfb97cb91c5fcbc30\",\"calleeRange\":{\"end\":476,\"start\":473},\"kind\":\"directCall\",\"range\":{\"end\":478,\"start\":473},\"type\":\"f64\"}}],\"declarationRange\":{\"end\":481,\"start\":444},\"id\":\"sha256:45c21b99c0ae84a8878e559a07dc11aa3b247df547330cd652200d72d9ff43ec\",\"name\":\"f12\",\"nameRange\":{\"end\":456,\"start\":453},\"parameters\":[],\"returnAnnotationRange\":{\"end\":463,\"start\":460},\"returnType\":\"f64\",\"sourcePath\":\"/array-owner23e/app.ts\"},{\"bindings\":[],\"body\":[{\"kind\":\"return\",\"range\":{\"end\":517,\"start\":504},\"value\":{\"arguments\":[],\"callee\":\"sha256:317f2feba6b435f821768fc79e53863b5776a36bf21d30bd40e5a8182bf0e5c7\",\"calleeRange\":{\"end\":514,\"start\":511},\"kind\":\"directCall\",\"range\":{\"end\":516,\"start\":511},\"type\":\"f64\"}}],\"declarationRange\":{\"end\":519,\"start\":482},\"id\":\"sha256:846c4e90159d7029a5cb5313cda3843120be5e1cbbae4a3cfb97cb91c5fcbc30\",\"name\":\"f13\",\"nameRange\":{\"end\":494,\"start\":491},\"parameters\":[],\"returnAnnotationRange\":{\"end\":501,\"start\":498},\"returnType\":\"f64\",\"sourcePath\":\"/array-owner23e/app.ts\"},{\"bindings\":[],\"body\":[{\"kind\":\"return\",\"range\":{\"end\":555,\"start\":542},\"value\":{\"arguments\":[],\"callee\":\"sha256:eb2843d89a00f6bd3766bce707e6dc349f23c8767b44da5f55f695887901bc9b\",\"calleeRange\":{\"end\":552,\"start\":549},\"kind\":\"directCall\",\"range\":{\"end\":554,\"start\":549},\"type\":\"f64\"}}],\"declarationRange\":{\"end\":557,\"start\":520},\"id\":\"sha256:317f2feba6b435f821768fc79e53863b5776a36bf21d30bd40e5a8182bf0e5c7\",\"name\":\"f14\",\"nameRange\":{\"end\":532,\"start\":529},\"parameters\":[],\"returnAnnotationRange\":{\"end\":539,\"start\":536},\"returnType\":\"f64\",\"sourcePath\":\"/array-owner23e/app.ts\"},{\"bindings\":[],\"body\":[{\"kind\":\"return\",\"range\":{\"end\":591,\"start\":580},\"value\":{\"bits\":\"3ff0000000000000\",\"kind\":\"numericLiteral\",\"range\":{\"end\":590,\"start\":587},\"token\":\"1.0\",\"type\":\"f64\"}}],\"declarationRange\":{\"end\":593,\"start\":558},\"id\":\"sha256:eb2843d89a00f6bd3766bce707e6dc349f23c8767b44da5f55f695887901bc9b\",\"name\":\"f15\",\"nameRange\":{\"end\":570,\"start\":567},\"parameters\":[],\"returnAnnotationRange\":{\"end\":577,\"start\":574},\"returnType\":\"f64\",\"sourcePath\":\"/array-owner23e/app.ts\"}],\"positionUnit\":\"utf16\",\"readSpanIntrinsic\":{\"declarationRange\":{\"end\":483,\"start\":404},\"id\":\"sha256:894419bca7875c61ed42fc4dd665b21d422598acac6f074d8f8b76e9794ba8ec\",\"kind\":\"intrinsic\",\"name\":\"readSpan\",\"nameRange\":{\"end\":429,\"start\":421},\"parameters\":[{\"declarationRange\":{\"end\":443,\"start\":433},\"name\":\"owner\",\"nameRange\":{\"end\":438,\"start\":433},\"typeRange\":{\"end\":443,\"start\":440}},{\"declarationRange\":{\"end\":455,\"start\":445},\"name\":\"start\",\"nameRange\":{\"end\":450,\"start\":445},\"typeRange\":{\"end\":455,\"start\":452}},{\"declarationRange\":{\"end\":468,\"start\":457},\"name\":\"length\",\"nameRange\":{\"end\":463,\"start\":457},\"typeRange\":{\"end\":468,\"start\":465}}],\"returnTypeRange\":{\"end\":482,\"start\":471},\"sourcePath\":\"/array-owner23e/minimal-arrays-v3.d.ts\",\"typeParameterRange\":{\"end\":431,\"start\":430}},\"readSpanLength\":{\"declarationRange\":{\"end\":401,\"start\":380},\"id\":\"sha256:59bb62c08c44255796c966889d454a17165e4530b9985775f9d69a3ba8b211c0\",\"kind\":\"property\",\"name\":\"length\",\"nameRange\":{\"end\":395,\"start\":389},\"officialType\":\"number\",\"ownerType\":\"readspan.f64\",\"readType\":\"u32\",\"readonly\":true,\"sourcePath\":\"/array-owner23e/minimal-arrays-v3.d.ts\",\"typeRange\":{\"end\":400,\"start\":397}},\"rootFile\":\"/array-owner23e/app.ts\",\"sourceRoot\":\"/array-owner23e\",\"types\":[{\"declarationRange\":{\"end\":311,\"start\":293},\"id\":\"f64\",\"kind\":\"scalar\",\"nameRange\":{\"end\":301,\"start\":298},\"sourcePath\":\"/array-owner23e/minimal-arrays-v3.d.ts\"},{\"declarationRange\":{\"end\":292,\"start\":238},\"elementType\":\"f64\",\"id\":\"array.f64\",\"indexSignatureRange\":{\"end\":274,\"start\":259},\"kind\":\"array\",\"nameRange\":{\"end\":253,\"start\":248},\"sourcePath\":\"/array-owner23e/minimal-arrays-v3.d.ts\"},{\"declarationRange\":{\"end\":330,\"start\":312},\"id\":\"u32\",\"kind\":\"scalar\",\"nameRange\":{\"end\":320,\"start\":317},\"sourcePath\":\"/array-owner23e/minimal-arrays-v3.d.ts\"},{\"declarationRange\":{\"end\":403,\"start\":331},\"elementType\":\"f64\",\"id\":\"readspan.f64\",\"indexSignatureRange\":{\"end\":379,\"start\":355},\"kind\":\"readSpan\",\"nameRange\":{\"end\":349,\"start\":341},\"readonly\":true,\"sourcePath\":\"/array-owner23e/minimal-arrays-v3.d.ts\"}]},\"requestId\":\"sha256:997c30ee7c29fcb2b239a6b83e292770d9e66f03101c87812da8922b58d121a2\",\"schemaHash\":\"sha256:d2ee930b76b8fd5c2270ad69579c9c61377831a97034d3a8890d8aa770ebabc2\",\"version\":7}\n",
+      "requestText": "{\"family\":\"tsfg.array-facts-request-candidate\",\"input\":{\"config\":{\"allowJs\":false,\"noEmit\":true,\"strict\":true},\"declarations\":{\"paths\":[\"/array-owner23e/minimal-arrays-v3.d.ts\"],\"version\":\"minimal-arrays-v3\"},\"files\":[{\"content\":\"export function f0(): f64 { return f1(); }\\nfunction f1(): f64 { return f2(); }\\nfunction f2(): f64 { return f3(); }\\nfunction f3(): f64 { return f4(); }\\nfunction f4(): f64 { return f5(); }\\nfunction f5(): f64 { return f6(); }\\nfunction f6(): f64 { return f7(); }\\nfunction f7(): f64 { return f8(); }\\nfunction f8(): f64 { return f9(); }\\nfunction f9(): f64 { return f10(); }\\nfunction f10(): f64 { return f11(); }\\nfunction f11(): f64 { return f12(); }\\nfunction f12(): f64 { return f13(); }\\nfunction f13(): f64 { return f14(); }\\nfunction f14(): f64 { return f15(); }\\nfunction f15(): f64 { return 1.0; }\\n\",\"path\":\"/array-owner23e/app.ts\",\"sha256\":\"161ba7da8476f79f72b367122642a953d5a82802d4a4a309001f6bc9c0f61847\"},{\"content\":\"// SPDX-License-Identifier: MIT\\ninterface Object {}\\ninterface Function {}\\ninterface CallableFunction {}\\ninterface NewableFunction {}\\ninterface IArguments {}\\ninterface String {}\\ninterface Number {}\\ninterface Boolean {}\\ninterface RegExp {}\\ninterface Array<T> { [n: number]: T; length: number; }\\ntype f64 = number;\\ntype u32 = number;\\ninterface ReadSpan<T> { readonly [n: number]: T; readonly length: u32; }\\ndeclare function readSpan<T>(owner: T[], start: u32, length: u32): ReadSpan<T>;\\n\",\"path\":\"/array-owner23e/minimal-arrays-v3.d.ts\",\"sha256\":\"282b335a6e0e0493fa74a3c1dd56f234f8c679079acdaf0600cefb8306c26415\"}],\"rootFile\":\"/array-owner23e/app.ts\",\"sourceRoot\":\"/array-owner23e\"},\"version\":7}\n",
+      "sourceBundlePin": {
+        "bytes": 18326,
+        "sha256": "dc3879d5e1c6aca40e38a943263e0166e12b1a82080a8a479f7e523a9f6705f5"
+      },
+      "version": 4,
+      "work": {
+        "arrayArgumentRows": 0,
+        "arrayOwners": 0,
+        "cloneMembers": 0,
+        "derivedMemberTransfers": 0,
+        "effectiveMemberTransfers": 0,
+        "meaning": "bounded analysis meter only; empty owner sets do not imply runtime purity or no trap/allocation/GC",
+        "statementVisits": 16,
+        "total": 16
+      }
+    }
+  ],
+  "crosspin": {
+    "interface": {
+      "path": "E:/ws/pro_tsfg/.scratch/tsfg_r03/M23f-array-owner-scc-checks-20261019/interface-frozen.json",
+      "bytes": 9193,
+      "sha256": "000e7af23a8ad45c5bb0407eeb0697e3ef5eb6c9b250bc2fdba77a15f3a158fa"
+    },
+    "descriptorPins": {
+      "facts": {
+        "path": "contracts/array-facts-candidate.schema.json",
+        "bytes": 38696,
+        "sha256": "8e85b3eb913a5717b75d3e5d4942eaadce9faaa97b99b7a22614c6c193469384",
+        "schemaHash": "sha256:8e85b3eb913a5717b75d3e5d4942eaadce9faaa97b99b7a22614c6c193469384",
+        "recipe": "JCS+LF",
+        "hashInputBytes": 38696
+      },
+      "hir": {
+        "path": "contracts/array-hir-candidate.schema.json",
+        "bytes": 48303,
+        "sha256": "45158f435186c4e0bcb3a84b0a40be108c0f0b6e9cc803557be706e8b9541f5d",
+        "schemaHash": "sha256:45158f435186c4e0bcb3a84b0a40be108c0f0b6e9cc803557be706e8b9541f5d",
+        "recipe": "JCS+LF",
+        "hashInputBytes": 48303
+      },
+      "analysis": {
+        "path": "contracts/array-calls-candidate.schema.json",
+        "bytes": 12464,
+        "sha256": "571894b9724c4ceb187bee4341e75b4b5e79ba3a613daae7942a3ee794d31e4e",
+        "schemaHash": "sha256:571894b9724c4ceb187bee4341e75b4b5e79ba3a613daae7942a3ee794d31e4e",
+        "recipe": "JCS+LF",
+        "hashInputBytes": 12464
+      },
+      "core": {
+        "path": "contracts/core-array-candidate.schema.json",
+        "bytes": 26834,
+        "sha256": "f83a28c2b082dd5524740eefd388b379067d20816b7eaff4bf03edef84ffa29b",
+        "schemaHash": "sha256:9b0061bf1f8bbcd92c2ecc6f3c382d67408ae4b9f2f8ea5de942fb3dd13493ea",
+        "recipe": "JCS-no-LF",
+        "hashInputBytes": 26833
+      }
+    },
+    "descriptorFullBytesMatch": true
+  },
+  "frozenContract": {
+    "path": "E:/ws/pro_tsfg/.scratch/tsfg_r03/M23f-array-owner-scc-checks-20261019/interface-frozen.json",
+    "bytes": 9193,
+    "sha256": "000e7af23a8ad45c5bb0407eeb0697e3ef5eb6c9b250bc2fdba77a15f3a158fa"
+  },
+  "v7Migration": {
+    "kind": "IDENTITY_ONLY_FROM_PRIOR_INDEPENDENT_EXPECTATIONS",
+    "original": {
+      "repositoryRelativePath": "tests/r03/legacy-v6-depth16-oracle.json",
+      "bytes": 166285,
+      "sha256": "b138b484e1dbeb51ee411ff95bde38d1c18325ab663a40118776102a8e93612c"
+    },
+    "privateVersion": 7,
+    "producerImported": false,
+    "producerOutputSampled": false,
+    "semantics": "Source payload/ranges/types/slots, owner effects/plans/work and complete diagnostics preserved; only frame/schema/request/package/scope/publication/HIR-report/Core metadata identities rebound.",
+    "historicalProof": "Original version6 file remains unchanged as the prior-identity reference; inherited official/provenance fields remain historical, not new Source7 output credit."
+  }
+}
