@@ -165,13 +165,14 @@ export async function verifyMlirStagedSourceInputs({ source, sourceEntries, file
   }
 }
 
-export async function retainedNoticeBundle({ source, sourceEntries, productRoot, identity, legal }) {
+export async function retainedNoticeBundle({ source, sourceEntries, productRoot, identity, legal, commandRole }) {
   const lock = JSON.parse(await readFile(path.join(productRoot, "eng/mlir-source-notices.lock.json"), "utf8"));
   if (lock.schemaVersion !== "1" || lock.baseCommit !== identity.baseCommit || lock.sourceCommit !== identity.sourceCommit)
     throw new MlirBuildError("Original notice retention mapping has another source identity", "mlir-source-license");
   const entries = new Map(sourceEntries.map(entry => [entry.repositoryRelativePath, entry]));
   const inputs = [];
-  const policy = sourceEntries.some(entry => entry.stagedTransform) ? await readMlirStagedSourcePolicy(identity) : null;
+  // Registration belongs to the selected static consumer, never to a caller tag.
+  const policy = commandRole === "static" ? await readMlirStagedSourcePolicy(identity) : null;
   const materializedSourceNotices = [];
   for (const entry of sourceEntries) {
     const d = policy ? qualifyMlirStagedSourceEntry(policy, entry) : null;

@@ -300,9 +300,9 @@ export async function executeMlirTarget({ options, runtime, tools, productRoot, 
     // this verified tool closure; required symbols must resolve in these exact
     // libraries rather than finding an ambient Visual Studio installation.
     // The locked UCRT declares each POSIX compatibility name with the exact
-    // same x64 C ABI as its underscored entry. Resolve only the four names
-    // observed in real LLVMSupport linking; no replacement implementation.
-    const lockedCrtAliases = ["lseek", "write", "read", "close"].map(name => `/alternatename:${name}=_${name}`).join(" ");
+    // same x64 C ABI as its underscored entry. Resolve only the five names
+    // observed in real LLVMSupport/IRReader linking; no replacement implementation.
+    const lockedCrtAliases = ["lseek", "write", "read", "close", "strdup"].map(name => `/alternatename:${name}=_${name}`).join(" ");
     const lockedCrtFlags = `/nodefaultlib libcmtd.lib libvcruntimed.lib libucrtd.lib libcpmtd.lib kernel32.lib ${lockedCrtAliases}`;
     const compilerLauncher = [tools.node, path.join(product, "eng/mlir-compiler-launcher.mjs"), tools.clangcl, source, product, build]
       .map(cmakePath).join(";");
@@ -383,7 +383,7 @@ export async function executeMlirTarget({ options, runtime, tools, productRoot, 
     await runLogged(tools.cmake, ["--build", cmakePath(build), "--target", command.target, "--parallel", "4"], stage, env, path.join(stage, "build.log"));
     const trace = await collectConsumedInputs({ tools, build, source, sourceEntries, product,
       productEntries: productIdentity.buildInputSet.entries, runtime, env, stage, command });
-    const notices = await retainedNoticeBundle({ source, sourceEntries, productRoot, identity, legal });
+    const notices = await retainedNoticeBundle({ source, sourceEntries, productRoot, identity, legal, commandRole: command.role });
     const consumedPaths = trace.files.map(file => file.repositoryRelativePath).filter(name => !["UPSTREAM.toml", "llvm/LICENSE.TXT", "mlir/LICENSE.TXT"].includes(name));
     const consumedLegal = await readMlirSourceBuildLegalInputs({ sourceRoot, git, paths: consumedPaths });
     await writeFile(path.join(stage, "actual-consumption-legal.json"), serialize(consumedLegal));
