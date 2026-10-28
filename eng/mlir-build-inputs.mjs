@@ -71,8 +71,8 @@ export async function readMlirPhysicalSource(source, absolute, entry) {
 }
 
 export async function materializeSource(identity, git, destination, selection = null) {
-  const stagedPolicy = selection ? await readMlirStagedSourcePolicy(identity) : null;
-  if (selection) assertMlirStagedSourceSelection(stagedPolicy, selection);
+  const stagedPolicy = await readMlirStagedSourcePolicy(identity);
+  assertMlirStagedSourceSelection(stagedPolicy, selection);
   const rawTree = gitBytes(git, identity.sourceRoot,
     ["ls-tree", "-r", "-z", identity.sourceCommit, "--", "llvm", "mlir", "cmake", "third-party", "UPSTREAM.toml"]);
   const tree = rawTree.toString("utf8").split("\0").filter(Boolean).map(line => {

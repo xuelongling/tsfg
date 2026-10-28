@@ -132,11 +132,9 @@ export async function readMlirSourceBuildLegalInputs({ sourceRoot, git, paths, r
       if (!file) reject(`No qualified mandatory build input: ${name}`);
       return file;
     });
-    if (sdk) {
-      const staged = stagedPolicy({ lock, sha256: registrationHash }, lock);
-      if (selected.some(file => mlirStagedSourceDescriptor(staged, file.path)))
-        reject("Staged transformations cannot transfer to the SDK role");
-    }
+    const staged = stagedPolicy({ lock, sha256: registrationHash }, lock);
+    if (sdk && selected.some(file => mlirStagedSourceDescriptor(staged, file.path)))
+      reject("Staged transformations cannot transfer to the SDK role");
     // Historical registration hashes identify the original build. The current
     // finite mapping independently qualifies every selected physical member.
     const identity = proof ? { baseCommit: proof.sourceNotices.baseCommit, sourceCommit: proof.identity.sourceCommit } :

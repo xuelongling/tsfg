@@ -127,7 +127,9 @@ test("Build Input declaration includes both debug target control and smoke input
   assert.equal(registry["tsfg.frontend-snapshot"].semver, "0.10.0");
   assert.equal(
     declaration.entries.some(({ path: inputPath }) =>
-      inputPath.endsWith(".test.mjs") || inputPath.includes("fixture") || inputPath.includes("report")),
+      inputPath.endsWith(".test.mjs")
+      || /(?:^|\/)(?:fixtures?|reports?)(?:\/|$)/.test(inputPath)
+      || /(?:^|\/)(?:[^/]*-)?report\.json$/.test(inputPath)),
     false,
   );
   const toolchainLock = JSON.parse(await readFile(
