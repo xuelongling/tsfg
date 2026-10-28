@@ -17,7 +17,7 @@ const canonical = value => Array.isArray(value) ? '[' + value.map(canonical).joi
     : JSON.stringify(value);
 const clone = value => structuredClone(value);
 const signed = pkg => {
-  pkg.packageId = 'sha256:' + hash('tsfg-owned-generic-package/v6\n' + canonical(pkg.payload));
+  pkg.packageId = 'sha256:' + hash('tsfg-owned-generic-package/v7\n' + canonical(pkg.payload));
   return Buffer.from(canonical(pkg));
 };
 const definitions = pkg => {
@@ -26,10 +26,10 @@ const definitions = pkg => {
   assert.ok(leaf && route); return { leaf, route };
 };
 const loaded = async () => {
-  const bytes = await fixture('generic-conditional-call-package-v6.json');
-  const instance = await fixture('generic-conditional-call-instance-v6.json');
-  assert.deepEqual([bytes.length, hash(bytes)], [3097, '6600f1e9f20865e4e2abc92a3f281fa8dd18b1766d9ac848b21193ebedbbc35f']);
-  assert.deepEqual([instance.length, hash(instance)], [2722, '644cec181a838ab74daa98ca6945afa4403ea53dc94cca2dea6609dd61a8d303']);
+  const bytes = await fixture('generic-conditional-call-package-v7.json');
+  const instance = await fixture('generic-conditional-call-instance-v7.json');
+  assert.deepEqual([bytes.length, hash(bytes)], [3097, '6f8f9eb9b09f4c6aebdd647f0a9cec5d2f9cfc13a771b13325f0949189a9f4cf']);
+  assert.deepEqual([instance.length, hash(instance)], [2722, 'e5d733e7ce89d55921d83aeb7532de91e5e1a1e116095aa53d4be28a1ce099b8']);
   const record = JSON.parse(instance.toString('utf8'));
   return { bytes, pkg: decodeGenericPackage(bytes), record };
 };
@@ -39,7 +39,7 @@ const failure = (run, code) => assert.throws(run, error => error instanceof Type
 const predecessors = await Promise.all([1, 2, 3, 4, 5].map(version =>
   fixture('generic-package-source-v' + version + '.json')));
 
-test('conditional-call private6 rejects exact predecessors and mixed contract claims', async t => {
+test('conditional-call private7 rejects exact predecessors and mixed contract claims', async t => {
   const { pkg } = await loaded();
   for (const version of [1, 2, 3, 4, 5]) {
     await t.test('complete predecessor' + version, async () =>
@@ -72,12 +72,11 @@ test('conditional-call private6 rejects exact predecessors and mixed contract cl
   });
 });
 
-test('conditional-call private6 rejects unsupported cold call shapes before facts', async t => {
+test('conditional-call private7 rejects unsupported cold call shapes before facts', async t => {
   const { pkg, record } = await loaded();
   /** @type {Array<[string, (leaf: any, route: any) => void]>} */
   const cases = [
     ['unknown-callee', (leaf, route) => { route.body.definition = 'f'.repeat(64); }],
-    ['self-call', (leaf, route) => { route.body.definition = route.key; }],
     ['concrete-boolean-argument', (leaf, route) => { route.body.typeArguments[0].kind = 'boolean'; }],
     ['concrete-number-argument', (leaf, route) => { route.body.typeArguments[0].kind = 'number'; }],
     ['foreign-type-parameter', (leaf, route) => { route.body.typeArguments[0].parameter = 1; }],
@@ -87,10 +86,6 @@ test('conditional-call private6 rejects unsupported cold call shapes before fact
     ['extra-value', (leaf, route) => { route.body.arguments.push(clone(route.body.arguments[0])); }],
     ['foreign-value', (leaf, route) => { route.body.arguments[0].parameter = 1; }],
     ['nested-call', (leaf, route) => { route.body.arguments[0] = clone(route.body); }],
-    ['conditional-call-chain', (leaf, route) => {
-      leaf.body = clone(route.body); leaf.body.origin = { start: 122, end: 127 };
-      leaf.body.arguments[0].origin = { start: 122, end: 127 };
-    }],
     ['callee-ordinary-signature', leaf => {
       leaf.parameters[0].type = { kind: 'parameter', parameter: 0 };
       leaf.returnType = { kind: 'parameter', parameter: 0 };
@@ -106,7 +101,7 @@ test('conditional-call private6 rejects unsupported cold call shapes before fact
     assert.deepEqual(bytes, before);
   });
   await t.test('mapped-call-full-packet-control-and-call-bodied-callee-chain', async () => {
-    const mapped = decodeGenericPackage(await fixture('generic-mapped-signature-package-v6.json'));
+    const mapped = decodeGenericPackage(await fixture('generic-mapped-signature-package-v7.json'));
     const indexed = mapped.payload.definitions[0].returnType;
     const positive = clone(pkg), { leaf, route } = definitions(positive);
     for (const def of [leaf, route]) { def.parameters[0].type = clone(indexed); def.returnType = clone(indexed); }
@@ -121,8 +116,8 @@ test('conditional-call private6 rejects unsupported cold call shapes before fact
     changed.leaf.body.origin = { start: 122, end: 127 };
     changed.leaf.body.arguments[0].origin = { start: 122, end: 127 };
     const rejected = signed(bad);
-    failure(() => decodeGenericPackage(rejected), 'generic-package-reference');
-    failure(() => validateGenericInstanceResult(rejected, record.result, record.requests), 'generic-package-reference');
+    assert.deepEqual(decodeGenericPackage(rejected), bad);
+    failure(() => validateGenericInstanceResult(rejected, record.result, record.requests), 'generic-instance-identity');
   });
 });
 

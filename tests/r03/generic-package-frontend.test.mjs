@@ -11,7 +11,7 @@ import { runLockedFrontend } from '../../compiler/frontend-execution.mjs';
 
 // Captured from the real Go Source handler. These bytes establish protocol/HIR
 // correspondence, not execution or admission of a Source executable.
-const fixtureBytes = await readFile(new URL('./fixtures/generic-package-io-source-v6.json', import.meta.url));
+const fixtureBytes = await readFile(new URL('./fixtures/generic-package-io-source-v7.json', import.meta.url));
 const cases = JSON.parse(fixtureBytes.toString('utf8')).cases;
 const instantiate = cases.find(item => item.name === 'instantiate-ok');
 const exported = cases.find(item => item.name === 'export-ok');
@@ -26,7 +26,7 @@ const rejected = error => error instanceof Error && /^(generic-package|generic-i
 test('package frontend imports real Source export bytes and six-instance cold HIR', async () => {
   const { readGenericPackageFrontendResponse } = await frontend();
   assert.equal(fixtureBytes.length, 16733);
-  assert.equal(sha256(fixtureBytes), 'sha256:2d8e76421132ef6db3e1ff2b7e1ebde318d4789a9d45622d5c13cd4f318afab6');
+  assert.equal(sha256(fixtureBytes), 'sha256:cd2d186ed9d11245d57d465658b8010ef879abc56a73d111ef5003648b19a785');
   const pkg = readGenericPackageFrontendResponse(bytes(exported.request), bytes(exported.response));
   assert.equal(pkg.status, 'ok');
   assert.equal(pkg.requestId, exported.response.requestId);

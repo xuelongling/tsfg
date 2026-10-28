@@ -3,9 +3,9 @@ import { canonical, sha256, own } from "./identity.mjs";
 import { checkGenericJsonValueBudget, genericPackageJsonPolicy } from "./generic-json-budget.mjs";
 
 export const genericPackageFormat = own({
-  family: "tsfg-owned-generic-package", version: 6,
-  schemaHash: "c6b6baa76be25f6ac4f619867273208c9adb595030f12e7c54a200ed8c677789",
-  semanticProfile: "tsfg-owned-scalar-generics-host-v6", declarationProfile: "minimal-scalars-v2",
+  family: "tsfg-owned-generic-package", version: 7,
+  schemaHash: "2e9d1e07016b6f8ce5f48bf8a3508491eaf1ce7e6fd43bf497c133f65c8dff94",
+  semanticProfile: "tsfg-owned-scalar-generics-host-v7", declarationProfile: "minimal-scalars-v2",
   capabilities: ["conditional-generic-call", "conditional-signature", "explicit-type-arguments", "mapped-indexed-generic-call", "mapped-indexed-signature", "number-add", "scalar-generics", "single-module"],
 });
 export const genericPackageLimits = Object.freeze({ bytes: genericPackageJsonPolicy.bytes, declarationBytes: 1048576,
@@ -86,7 +86,7 @@ export function genericDefinitionKey(definition, payload) {
 /** Hash the protocol Payload: definitions/files must already have canonical order. */
 export function genericPackageId(payload) {
   checkGenericJsonValueBudget(payload);
-  return sha256("tsfg-owned-generic-package/v6\n" + canonical(payload));
+  return sha256("tsfg-owned-generic-package/v7\n" + canonical(payload));
 }
 
 /** Structural admission only. Official Source checking remains the semantic authority. */
@@ -245,8 +245,7 @@ export function normalizeGenericPackage(input, ordered = false) {
             && expression.arguments.length === 1 && expression.arguments[0].kind === "parameter"
             && expression.arguments[0].parameter === 0 && callee.typeParameters.length === 1
             && callee.parameters.length === 1 && canonical(callee.parameters[0].type) === canonical(definition.returnType)
-            && canonical(callee.returnType) === canonical(definition.returnType)
-            && callee.body.kind === "parameter" && callee.body.parameter === 0, "reference");
+            && canonical(callee.returnType) === canonical(definition.returnType), "reference");
         }
       }
       pending.push(...expression.arguments);

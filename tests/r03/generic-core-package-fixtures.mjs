@@ -9,7 +9,7 @@ import { encodeGenericPackageRequest, encodeGenericPackageResponse } from '../..
 import { readGenericPackageFrontendResponse } from '../../compiler/generic-package-frontend.mjs';
 export const sha = value => createHash('sha256').update(value).digest('hex');
 export const expectedSchema = '3dea6ce5de996dfa3e7141cced985243ea74ac9bb80f03636c6694343118f2a6';
-const literal = JSON.parse(await readFile(new URL('./fixtures/generic-package-io-source-v6.json', import.meta.url), 'utf8'));
+const literal = JSON.parse(await readFile(new URL('./fixtures/generic-package-io-source-v7.json', import.meta.url), 'utf8'));
 export function officialHir() {
   // This persisted six-case fixture has existing real Source qualification.
   // Re-encoding preserves the unmodified request/response value and identities.

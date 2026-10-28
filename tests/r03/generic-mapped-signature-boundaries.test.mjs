@@ -17,11 +17,11 @@ const signature = pkg => definition(pkg).returnType;
 const reseal = pkg => { pkg.packageId = genericPackageId(pkg.payload); return pkg; };
 const fixture = name => readFile(new URL('./fixtures/' + name, import.meta.url));
 async function actual() {
-  const names = ['generic-mapped-signature-package-v6.json', 'generic-mapped-signature-instance-v6.json',
+  const names = ['generic-mapped-signature-package-v7.json', 'generic-mapped-signature-instance-v7.json',
     'generic-mapped-signature.source.ts', 'generic-mapped-signature.declaration.d.ts'];
   const bytes = await Promise.all(names.map(fixture));
-  const pins = [[2165, 'ef3d3858feb524909a5fcebd3024c7b4c4ace19701386cec0bc3cf94351364fd'],
-    [1485, '7a04de74add85eddac1ce3dce00307b98d10b66b61afa765ad068af7b9ad91bd'],
+  const pins = [[2165, '2efb70895fcfae713b20d8b91310b7be218e90db14bee411679fff673f21564e'],
+    [1485, '67001dd982b5ddc61758b8aa14f4e43b88479273de5f67692a641a3ba2c216e8'],
     [122, 'eae49419fbca1d64bc6c55bb871da4b0d6eb942bdcd8cf14dbb09da903d6c356'],
     [362, 'd629059f5175a580a8a7b19531c7d8cff1bfa7b61320f6638cf4ee25fbf5a141']];
   bytes.forEach((value, index) => assert.deepEqual([value.length, sha(value)], pins[index]));
@@ -180,15 +180,13 @@ test('mapped binder and value roles exclude collisions inner references nested t
     rejectPackage(pkg, v => { signature(v).indexed.object.mapped.value[field] = {}; });
 });
 
-test('mapped signatures retain original slots and reject malformed or recursive bodies', async () => {
+test('mapped signatures retain original slots and reject malformed bodies', async () => {
   const { pkg } = await actual();
   const changes = [d => { d.typeParameters.push('U'); }, d => { d.parameters = []; },
     d => { d.parameters.push({ ...clone(d.parameters[0]), name: 'other' }); },
     d => { d.parameters[0].type = { kind: 'boolean', parameter: 0 }; },
     d => { d.returnType = { kind: 'number', parameter: 0 }; }, d => { d.returnType = conditional(); },
     d => { d.body.parameter = 1; },
-    d => { d.body = { ...d.body, kind: 'call', definition: d.key,
-      typeArguments: [{ kind: 'parameter', parameter: 0 }], arguments: [clone(d.body)] }; },
     d => { d.body = { ...d.body, kind: 'number-add', arguments: [clone(d.body), clone(d.body)] }; },
     d => { d.returnType.indexed.object.mapped.binder = 'J'; },
     d => { d.returnType.indexed.object.mapped.value.kind = 'number'; }];

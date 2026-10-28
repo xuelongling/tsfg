@@ -16,7 +16,7 @@ const canonical = value => Array.isArray(value) ? '[' + value.map(canonical).joi
   : value !== null && typeof value === 'object'
     ? '{' + Object.keys(value).sort().map(key => JSON.stringify(key) + ':' + canonical(value[key])).join(',') + '}'
     : JSON.stringify(value);
-const packageDomain = 'tsfg-owned-generic-package/v6\n';
+const packageDomain = 'tsfg-owned-generic-package/v7\n';
 const definitionDomain = 'tsfg:generic-definition:v1\n';
 const definitionKey = (def, payload, domain = definitionDomain) => hash(domain + canonical({ name: def.name,
   origin: def.origin, scope: payload.scope, source: payload.source }));
@@ -57,9 +57,9 @@ function rekey(pkg, domain = definitionDomain) {
 /** @typedef {[name:string,length:number,sha256:string]} FixturePin */
 /** @type {FixturePin[]} */
 const firstPins = [
-  ['generic-mapped-call-package-v6.json', 3264, '94a1251a3adacc6261fdbb5d143bf247be36bc2d8a9f674fbfa60200d3c2f585'],
-  ['generic-mapped-call-instance-v6.json', 2722, 'cdb726277192efb39b6ffc5ec2c319aa5101287299d7aa39b048c8f6929c0073'],
-  ['generic-mapped-call-first-whole-oracle-v6.json', 7370, 'fe290a59120a86fe916793d0cf4bd3f9305a0c121abec1fcb6100f989922ba61'],
+  ['generic-mapped-call-package-v7.json', 3264, '8633025233403d6f0e52054773ae154f58db5dde82bb251946564be3be626310'],
+  ['generic-mapped-call-instance-v7.json', 2722, '7db6e158cdc60a96ded54137c9d58befa3af56b791e896b838c661438f292c8f'],
+  ['generic-mapped-call-first-whole-oracle-v7.json', 7370, '5a780b34cadd55421ca418e80a7764e0359b53bedf180fee4d85be6d092d2c2f'],
 ];
 /** @param {FixturePin} pin */
 async function pinned([name, length, sha]) {
@@ -89,16 +89,16 @@ function rejectPacket(pkg, record, category = 'reference') {
 test('fresh v6 mapped-direct and conditional controls precede complete mapped-call admission', async () => {
   /** @type {[FixturePin,FixturePin][]} */
   const controls = [
-    [['generic-mapped-signature-package-v6.json', 2165, 'ef3d3858feb524909a5fcebd3024c7b4c4ace19701386cec0bc3cf94351364fd'],
-      ['generic-mapped-signature-instance-v6.json', 1485, '7a04de74add85eddac1ce3dce00307b98d10b66b61afa765ad068af7b9ad91bd']],
-    [['generic-conditional-call-package-v6.json', 3097, '6600f1e9f20865e4e2abc92a3f281fa8dd18b1766d9ac848b21193ebedbbc35f'],
-      ['generic-conditional-call-instance-v6.json', 2722, '644cec181a838ab74daa98ca6945afa4403ea53dc94cca2dea6609dd61a8d303']],
+    [['generic-mapped-signature-package-v7.json', 2165, '2efb70895fcfae713b20d8b91310b7be218e90db14bee411679fff673f21564e'],
+      ['generic-mapped-signature-instance-v7.json', 1485, '67001dd982b5ddc61758b8aa14f4e43b88479273de5f67692a641a3ba2c216e8']],
+    [['generic-conditional-call-package-v7.json', 3097, '6f8f9eb9b09f4c6aebdd647f0a9cec5d2f9cfc13a771b13325f0949189a9f4cf'],
+      ['generic-conditional-call-instance-v7.json', 2722, 'e5d733e7ce89d55921d83aeb7532de91e5e1a1e116095aa53d4be28a1ce099b8']],
   ];
   for (const [packagePin, recordPin] of controls) {
     const bytes = await pinned(packagePin), record = JSON.parse((await pinned(recordPin)).toString('utf8'));
     const recordBefore = canonical(record), bytesBefore = Buffer.from(bytes);
     const pkg = decodeGenericPackage(bytes);
-    assert.equal(pkg.version, 6); assert.deepEqual(Buffer.from(encodeGenericPackage(pkg)), bytes);
+    assert.equal(pkg.version, 7); assert.deepEqual(Buffer.from(encodeGenericPackage(pkg)), bytes);
     assert.deepEqual(validateGenericInstanceResult(bytes, record.result, record.requests), record.result);
     assert.equal(canonical(record), recordBefore); assert.deepEqual(bytes, bytesBefore);
   }
@@ -115,12 +115,6 @@ test('mapped one-hop rejects forbidden cold call relations without partial consu
   const { pkg, record } = await loaded();
   /** @type {Array<[string, (pkg: any, leaf: any, route: any) => void]>} */
   const cases = [
-    ['self', (p, leaf, route) => { route.body.definition = route.key; }],
-    ['mutual', (p, leaf, route) => { leaf.body = callBody(leaf, route.key); }],
-    ['chain', (p, leaf) => {
-      const bottom = clone(leaf); bottom.name = 'bottom'; bottom.key = definitionKey(bottom, p.payload);
-      leaf.body = callBody(leaf, bottom.key); p.payload.definitions.push(bottom);
-    }],
     ['nested', (p, leaf, route) => { route.body.arguments[0] = clone(route.body); }],
     ['type-slot1', (p, leaf, route) => { route.body.typeArguments[0].parameter = 1; }],
     ['concrete-boolean', (p, leaf, route) => { route.body.typeArguments[0] = { kind: 'boolean', parameter: 0 }; }],
@@ -166,7 +160,7 @@ test('mapped one-hop compares complete signatures instead of structural TS equiv
   });
 });
 
-test('mapped private6 rejects v5 mixed claims and independent wrong identity domains', async t => {
+test('mapped private7 rejects v5 mixed claims and independent wrong identity domains', async t => {
   const { pkg, record } = await loaded();
   /** @type {Array<[string, (pkg: any) => void, string]>} */
   const cases = [
@@ -214,7 +208,7 @@ test('mapped public records reject unknown null and behavioral inputs with zero 
   for (const [name, mutate] of changes) await t.test(name, () => { const value = clone(pkg); mutate(value); rejectPacket(value, record, 'schema'); });
   for (const [from, to, category] of [
     ['{"family":', '{"family":"x","family":', 'json'],
-    ['"version":6', '"version":6e0', 'canonical'],
+    ['"version":7', '"version":7e0', 'canonical'],
     ['{"family":', ' {"family":', 'canonical'],
   ]) {
     const text = bytes.toString('utf8'); assert.ok(text.includes(from));

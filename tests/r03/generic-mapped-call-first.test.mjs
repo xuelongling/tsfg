@@ -13,19 +13,19 @@ import { buildGenericHir, verifyGenericHir, printGenericHir, readGenericHir, low
 // This test never launches Source, C++, CoreCLI, VM or any host tool.
 // Local preimage hashing deliberately stays independent of production helpers.
 const pins = [
-  { name: 'generic-mapped-call-first-whole-oracle-v6.json', bytes: 7370,
-    sha256: 'fe290a59120a86fe916793d0cf4bd3f9305a0c121abec1fcb6100f989922ba61' },
-  { name: 'generic-mapped-call-first-hir-v6.json', bytes: 6064,
-    sha256: '75f17cd57206162300e652bad28e2567d09b3393abc62178a4699f87f319f2d3' },
-  { name: 'generic-mapped-call-first-core-v6.mlir', bytes: 4268,
-    sha256: 'c96dfec68f33694e851371828180bbca397c1051b3d4db3e8dbfdccacffa56ed' },
-  { name: 'generic-mapped-call-package-v6.json', bytes: 3264,
-    sha256: '94a1251a3adacc6261fdbb5d143bf247be36bc2d8a9f674fbfa60200d3c2f585' },
-  { name: 'generic-mapped-call-instance-v6.json', bytes: 2722,
-    sha256: 'cdb726277192efb39b6ffc5ec2c319aa5101287299d7aa39b048c8f6929c0073' },
+  { name: 'generic-mapped-call-first-whole-oracle-v7.json', bytes: 7370,
+    sha256: '5a780b34cadd55421ca418e80a7764e0359b53bedf180fee4d85be6d092d2c2f' },
+  { name: 'generic-mapped-call-first-hir-v7.json', bytes: 6064,
+    sha256: '502378e3cd82f3d4fbfadd2477bbece7178dfc500fd4fb106b0216778c5418e0' },
+  { name: 'generic-mapped-call-first-core-v7.mlir', bytes: 4269,
+    sha256: 'bb804d28e3524883fd93e97264a7c1172189c77c3a2ca1b7203e50e79f0e9336' },
+  { name: 'generic-mapped-call-package-v7.json', bytes: 3264,
+    sha256: '8633025233403d6f0e52054773ae154f58db5dde82bb251946564be3be626310' },
+  { name: 'generic-mapped-call-instance-v7.json', bytes: 2722,
+    sha256: '7db6e158cdc60a96ded54137c9d58befa3af56b791e896b838c661438f292c8f' },
 ];
-const profile = 'tsfg-owned-scalar-generics-host-v6';
-const schema = 'c6b6baa76be25f6ac4f619867273208c9adb595030f12e7c54a200ed8c677789';
+const profile = 'tsfg-owned-scalar-generics-host-v7';
+const schema = '2e9d1e07016b6f8ce5f48bf8a3508491eaf1ce7e6fd43bf497c133f65c8dff94';
 /** @type {Record<string,string>} */
 const scalarIds = {
   bool: 'sha256:811afa3745352bcd218d039b4539ec7e7ca8d103420dbc4c8ab8d6119e850721',
@@ -59,7 +59,7 @@ async function inputs() {
     literalPackage: JSON.parse(packageBytes.toString('utf8')), record: JSON.parse(instanceBytes.toString('utf8')) };
 }
 
-test('actual private6 mapped-call provenance equals complete independent source and cold instance oracle', async () => {
+test('actual private7 mapped-call provenance equals complete independent source and cold instance oracle', async () => {
   const data = await inputs();
   const { oracle, expectedHir, literalPackage: pkg, record } = data;
   assert.equal(data.packageBytes.toString('utf8'), jcs(oracle.package));
@@ -69,7 +69,7 @@ test('actual private6 mapped-call provenance equals complete independent source 
   assert.equal(data.wholeBytes.toString('utf8'), jcs(oracle) + '\n');
   assert.equal(data.hirBytes.toString('utf8'), jcs(expectedHir) + '\n');
   assert.equal(pkg.family, 'tsfg-owned-generic-package');
-  assert.equal(pkg.version, 6); assert.equal(pkg.schemaHash, schema);
+  assert.equal(pkg.version, 7); assert.equal(pkg.schemaHash, schema);
   assert.equal(pkg.payload.semanticProfile, profile); assert.equal(pkg.payload.scope, 'package:mapped-call');
   assert.deepEqual(pkg.payload.capabilities, ['conditional-generic-call', 'conditional-signature',
     'explicit-type-arguments', 'mapped-indexed-generic-call', 'mapped-indexed-signature',
@@ -122,8 +122,8 @@ test('actual private6 mapped-call provenance equals complete independent source 
   assert.equal(source.sourceText.slice(110, 115), 'value');
   assert.equal(source.sourceText.slice(224, 238), 'leaf<T>(value)');
   assert.equal(source.sourceText.slice(232, 237), 'value');
-  assert.equal(pkg.packageId, 'sha256:' + hash('tsfg-owned-generic-package/v6\n' + jcs(pkg.payload)));
-  assert.equal(pkg.packageId, 'sha256:ca9700a7256148919f190f53d7a7664635bf90f663f6c56442a842a909604122');
+  assert.equal(pkg.packageId, 'sha256:' + hash('tsfg-owned-generic-package/v7\n' + jcs(pkg.payload)));
+  assert.equal(pkg.packageId, 'sha256:145e9a44a29f8575a8c9765eaaa4873ff020db98b39bd5fab94298e14904abfa');
   assert.deepEqual(record.requests, ['boolean', 'number'].map(kind =>
     ({ definition: route.key, typeArguments: [{ kind, parameter: 0 }] })));
   assert.equal(record.result.packageId, pkg.packageId); assert.equal(record.result.semanticProfile, profile);
@@ -138,7 +138,7 @@ test('actual private6 mapped-call provenance equals complete independent source 
     else assert.equal(record.result.roots[record.requests.indexOf(item)], key);
   }
   assert.deepEqual(expectedHir.format, { family: 'tsfg.generic-concrete-hir-candidate',
-    version: 6, linkageAlgorithm: 'tsfg.generic-linkage.v1', semanticProfile: profile });
+    version: 7, linkageAlgorithm: 'tsfg.generic-linkage.v1', semanticProfile: profile });
   assert.deepEqual(expectedHir.context, { packageId: pkg.packageId, scope: pkg.payload.scope, semanticProfile: profile });
   assert.deepEqual(expectedHir.source, pkg.payload.source);
   assert.equal(expectedHir.inputIdentity, 'sha256:' + hash('tsfg:generic-concrete-hir-input:v1\n'
@@ -146,7 +146,7 @@ test('actual private6 mapped-call provenance equals complete independent source 
       target: expectedHir.target, source: pkg.payload.source })));
 });
 
-test('actual private6 mapped calls roundtrip complete owned HIR and preserve four-function Core SSA', async () => {
+test('actual private7 mapped calls roundtrip complete owned HIR and preserve four-function Core SSA', async () => {
   const data = await inputs();
   const { oracle, expectedHir, literalPackage, record } = data;
   const originalBuffers = data.buffers.map(bytes => Buffer.from(bytes));

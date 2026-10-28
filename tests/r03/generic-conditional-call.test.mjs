@@ -7,25 +7,25 @@ import { decodeGenericPackage, encodeGenericPackage } from '../../compiler/gener
 import { validateGenericInstanceResult } from '../../compiler/generic-instance.mjs';
 import { buildGenericHir, verifyGenericHir, printGenericHir, readGenericHir, lowerGenericHir } from '../../compiler/generic-hir.mjs';
 
-// These are fresh private6 records from the passing Source35864 named case,
-// captured after official diagnostics and source-free cold import. Identity literals were independently calculated from
+// These fresh private7 records are matched to official Source output by this
+// ticket's current-fixture-qualification.json. Identity literals were independently calculated from
 // protocol preimages, without a production identity helper. The complete Core
 // oracle is independently hand-worked for the current v1 identities and sorted
 // four-function SSA, never current emitter output;
 // this test grants no C++/SourceEXE/VM execution credit.
-const rows = [{"key":"01fa351467cb0fb5b922a792ec099e003c24e875c3245821f55f8cb106c4db0a","definition":"687fa67b1f43e2e94aa1f8c5aeb8184422c54c2d40494746c7dd72c39b61831b","name":"route","scalar":"bool","argument":"boolean","signature":"sha256:176f0c2d74ef9b180f6aa17b92935546bf3661b0a8944833e96892a14d968395","functionId":"sha256:e2819d092fa44772c9b7224b1e03fc172a7720b282ebe3cf84a9527b57cf9153"},{"key":"1f6fa4533dba0058c46b98124e95ebc13b727bc9dd34f13e0bc1716ac106e092","definition":"849780ec99159f78393505e159003d11b694f6387149cadc1398deab4c2a8db1","name":"leaf","scalar":"bool","argument":"boolean","signature":"sha256:176f0c2d74ef9b180f6aa17b92935546bf3661b0a8944833e96892a14d968395","functionId":"sha256:d8582cf60ce1603b959dfd4f27811afc7192e17a1a8f7ac5ccfd3eb8251e8c18"},{"key":"921ab4589cb37e8e438939c6a01f0868e6653080306599398efc82391a681575","definition":"849780ec99159f78393505e159003d11b694f6387149cadc1398deab4c2a8db1","name":"leaf","scalar":"f64","argument":"number","signature":"sha256:f195c19035b7f0da83780c5c50afe3060a0d4ea3a577e4b70726f5905aab8059","functionId":"sha256:bba01dbd434bdbefb3819ba78de8fe16c77cb052ac7f6d985672064c10778d0a"},{"key":"980850427745740acd76bef8a2c710435975d9865ea066428ed4a0b72d62dcb2","definition":"687fa67b1f43e2e94aa1f8c5aeb8184422c54c2d40494746c7dd72c39b61831b","name":"route","scalar":"f64","argument":"number","signature":"sha256:f195c19035b7f0da83780c5c50afe3060a0d4ea3a577e4b70726f5905aab8059","functionId":"sha256:845f0988a21203796fdeaf9f4853c431658587288a16f5075a767dc1c9020104"}];
-const expectedPackageId = "sha256:4189655c791bbe9d93ef5bfd3bb6bb988350d06d697a4795b5e00ae79a441f7b";
-const expectedInputId = "sha256:5deb63d61e7328ca2c64df7f3f8c1ce64cb0c0f39cbcfc2b95914c1ebc9c6fd0";
+const rows = [{"key":"870a7e4275a1e26885be2f7d1bf2f1903939a431b739d034baf4afe142864149","definition":"687fa67b1f43e2e94aa1f8c5aeb8184422c54c2d40494746c7dd72c39b61831b","name":"route","scalar":"bool","argument":"boolean","signature":"sha256:176f0c2d74ef9b180f6aa17b92935546bf3661b0a8944833e96892a14d968395","functionId":"sha256:0c678a1261f7d0b2004fd8b38b79903bbeb93e2606b09af6b87fe8bcb8558c70"},{"key":"0affb79f50d524699f70197c0d24e5931384f609cd066e5bdafc535d7e46de33","definition":"849780ec99159f78393505e159003d11b694f6387149cadc1398deab4c2a8db1","name":"leaf","scalar":"bool","argument":"boolean","signature":"sha256:176f0c2d74ef9b180f6aa17b92935546bf3661b0a8944833e96892a14d968395","functionId":"sha256:7c64403e6b4f3d605864a32613ded019533b58a61412e493e3f1413a512feb3e"},{"key":"5d1a397612ee125a0005c4732300377432c8c33e9f6598a0970ecfe31adf8e0f","definition":"849780ec99159f78393505e159003d11b694f6387149cadc1398deab4c2a8db1","name":"leaf","scalar":"f64","argument":"number","signature":"sha256:f195c19035b7f0da83780c5c50afe3060a0d4ea3a577e4b70726f5905aab8059","functionId":"sha256:4d712635572d84b947dceba66f7a8c31a1256e066d7c2901f0de0b8fba02d3ae"},{"key":"fa5134d2098f61a3d151b5fc1628cb2e6a0b6deb6139b546a9a71e26565114f7","definition":"687fa67b1f43e2e94aa1f8c5aeb8184422c54c2d40494746c7dd72c39b61831b","name":"route","scalar":"f64","argument":"number","signature":"sha256:f195c19035b7f0da83780c5c50afe3060a0d4ea3a577e4b70726f5905aab8059","functionId":"sha256:2a7f241aefa7dcba146ec1041b987904f981b382d8c7f22be4b68cb86d50f621"}].sort((a,b)=>a.key < b.key ? -1 : 1);
+const expectedPackageId = "sha256:0b30dfa460bbad343483bd383280de0e0af796cb47d69ba38ed311213a1cfd91";
+const expectedInputId = "sha256:c11295c6044cace67f33292d49f9d768ee1f2025dd6112def1f26992973e4b39";
 const expectedTarget = {"llvmDataLayout":"e-m:w-p270:32:32-p271:32:32-p272:64:64-i64:64-i128:128-f80:128-n8:16:32:64-S128","target":"windows-x86_64-msvc","triple":"x86_64-pc-windows-msvc"};
 const expectedSource = "// 😀\nexport function leaf<U>(value: U extends boolean ? boolean : number): U extends boolean ? boolean : number { return value; }\nexport function route<T>(value: T extends boolean ? boolean : number): T extends boolean ? boolean : number { return leaf<T>(value); }";
-const schema = 'c6b6baa76be25f6ac4f619867273208c9adb595030f12e7c54a200ed8c677789';
-const profile = 'tsfg-owned-scalar-generics-host-v6';
+const schema = '2e9d1e07016b6f8ce5f48bf8a3508491eaf1ce7e6fd43bf497c133f65c8dff94';
+const profile = 'tsfg-owned-scalar-generics-host-v7';
 const pins = [
-  ['generic-conditional-call-package-v6.json', 3097, '6600f1e9f20865e4e2abc92a3f281fa8dd18b1766d9ac848b21193ebedbbc35f'],
-  ['generic-conditional-call-instance-v6.json', 2722, '644cec181a838ab74daa98ca6945afa4403ea53dc94cca2dea6609dd61a8d303'],
+  ['generic-conditional-call-package-v7.json', 3097, '6f8f9eb9b09f4c6aebdd647f0a9cec5d2f9cfc13a771b13325f0949189a9f4cf'],
+  ['generic-conditional-call-instance-v7.json', 2722, 'e5d733e7ce89d55921d83aeb7532de91e5e1a1e116095aa53d4be28a1ce099b8'],
   ['generic-conditional-call.source.ts', 267, '0f7d41e4184bea4af390fd1e4671be1eee5847fc4fa092e95a39dbce55297fda'],
   ['generic-conditional-call.declaration.d.ts', 362, 'd629059f5175a580a8a7b19531c7d8cff1bfa7b61320f6638cf4ee25fbf5a141'],
-  ['generic-conditional-call-core-v6.mlir', 4268, '3675f0f5e91d6403a088ce5bb5228781994acf067e54aaee09d08d467d249d6d'],
+  ['generic-conditional-call-core-v7.mlir', 4269, 'a52014b1ebe6ac85a7c5acae224b7f6142f312918599cfcdaef6bd2706d5fa06'],
 ];
 /** @type {Record<string,string>} */
 const scalarIds = {
@@ -35,14 +35,14 @@ const scalarIds = {
 const hash = value => createHash('sha256').update(value).digest('hex');
 const fixture = name => readFile(new URL('./fixtures/' + name, import.meta.url));
 
-test('actual private6 conditional calls preserve four cold functions and original SSA forwarding', async () => {
+test('actual private7 conditional calls preserve four cold functions and original SSA forwarding', async () => {
   const inputs = await Promise.all(pins.map(async ([name, length, sha]) => {
     const bytes = await fixture(name); assert.equal(bytes.length, length); assert.equal(hash(bytes), sha); return bytes;
   }));
   const [packageBytes, instanceBytes, sourceBytes, declarationBytes, coreOracle] = inputs;
   const pkg = decodeGenericPackage(packageBytes), record = JSON.parse(instanceBytes.toString('utf8'));
   const before = JSON.stringify({ pkg, record });
-  assert.equal(pkg.version, 6); assert.equal(pkg.schemaHash, schema); assert.equal(pkg.packageId, expectedPackageId);
+  assert.equal(pkg.version, 7); assert.equal(pkg.schemaHash, schema); assert.equal(pkg.packageId, expectedPackageId);
   assert.equal(pkg.payload.semanticProfile, profile); assert.equal(pkg.payload.scope, 'package:conditional-call');
   assert.deepEqual(pkg.payload.capabilities, ['conditional-generic-call', 'conditional-signature', 'explicit-type-arguments',
     'mapped-indexed-generic-call', 'mapped-indexed-signature', 'number-add', 'scalar-generics', 'single-module']);
@@ -78,7 +78,7 @@ test('actual private6 conditional calls preserve four cold functions and origina
   const hir = buildGenericHir(packageBytes, record.result, record.requests), text = printGenericHir(hir);
   const cold = readGenericHir(Buffer.from(text)); assert.deepEqual(verifyGenericHir(cold), hir);
   assert.equal(printGenericHir(cold), text);
-  assert.deepEqual(cold.format, { family: 'tsfg.generic-concrete-hir-candidate', version: 6,
+  assert.deepEqual(cold.format, { family: 'tsfg.generic-concrete-hir-candidate', version: 7,
     linkageAlgorithm: 'tsfg.generic-linkage.v1', semanticProfile: profile });
   assert.deepEqual(cold.context, { packageId: expectedPackageId, scope: 'package:conditional-call', semanticProfile: profile });
   assert.deepEqual(cold.source, pkg.payload.source); assert.equal(Object.hasOwn(cold.source, 'content'), false);
