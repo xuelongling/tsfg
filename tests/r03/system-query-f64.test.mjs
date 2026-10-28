@@ -38,7 +38,7 @@ for(const [name,operator,operation]of cases)test('actual f64 '+name+' retains wi
 /** @type {[string,(payload:ReturnType<typeof actual>['packet']['payload'])=>void][]} */
 const mutations=[
   ['mixed RHS width',payload=>{payload.systems[0].loops[0].statements[0].value.value.type='f32';payload.systems[0].loops[0].statements[0].value.value.flowType='f32';}],
-  ['different operator Source anchor',payload=>{payload.systems[0].loops[0].statements[0].value.operator='-=';}],
+  ['different operator Source anchor',payload=>{const value=payload.systems[0].loops[0].statements[0].value;value.operator=value.operator==='-='?'+=':'-=';}],
   ['operator range',payload=>{payload.systems[0].loops[0].statements[0].value.operatorRange.start++;}],
   ['Read borrow',payload=>{payload.systems[0].loops[0].bindings[0].mode='read';}],
   ['readonly field',payload=>{const loop=payload.systems[0].loops[0];payload.types.find(row=>row.id===loop.bindings[0].componentType).fields.find(row=>row.name==='x').readonly=true;}]

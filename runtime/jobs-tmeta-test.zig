@@ -272,6 +272,7 @@ test "Store batch directory and release retain the original borrowed session" {
 }
 
 test {
+    _ = @import("jobs-effects-test.zig");
     _ = @import("jobs-query-test.zig");
     _ = @import("jobs-test.zig");
     _ = @import("jobs-layout-test.zig");
