@@ -101,7 +101,7 @@ for(const [name,,operation]of cases)test('official static compound '+name+' pres
     assert.deepEqual(events,name==='nested'?['load','store','mul','store','load','scaledX','store']:['load','update',operation,'store','load','scaledX','store']);
   }
   if(name==='sub'){
-    assert.equal(run('sub-roundtrip','--roundtrip',result.core),result.core);
+    assert.equal(run('sub-roundtrip','--canonicalize',result.core),result.core);
     assert.equal(run('sub-llvm-cold','--canonicalize-llvm-ir',result.cpuLLVM),result.cpuLLVM);
   }
 });
