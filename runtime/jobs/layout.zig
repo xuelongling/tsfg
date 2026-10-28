@@ -22,6 +22,7 @@ pub const Target = struct {
 pub const Expected = struct { inputIdentity: []const u8, hirDigest: []const u8, target: Target = Target.native };
 pub const Payload = struct { components: []const []const u8, hirDigest: []const u8, inputIdentity: []const u8, target: Target, types: []const Type };
 const Envelope = struct { family: []const u8, payload: []const u8, payloadHash: []const u8, schemaHash: []const u8, version: u32 };
+const Identity = union(enum) { external: Expected, catalog: []const u8 };
 const Budget = struct {
     remaining: usize = 1000000,
     fn charge(self: *Budget, count: usize) Error!void {
@@ -34,8 +35,16 @@ const Budget = struct {
 pub const Layout = struct {
     arena: std.heap.ArenaAllocator,
     payload: Payload,
+    payload_hash: [71]u8,
 
     pub fn load(allocator: std.mem.Allocator, bytes: []const u8, expected: Expected) !Layout {
+        return decode(allocator, bytes, .{ .external = expected });
+    }
+    /// Query metadata binds its complete verified catalog, rather than a Common HIR module.
+    pub fn loadCatalog(allocator: std.mem.Allocator, bytes: []const u8, input_identity: []const u8) !Layout {
+        return decode(allocator, bytes, .{ .catalog = input_identity });
+    }
+    fn decode(allocator: std.mem.Allocator, bytes: []const u8, identity: Identity) !Layout {
         if (bytes.len == 0 or bytes.len > max_bytes or bytes[bytes.len - 1] != '\n') return error.InvalidLayout;
         var budget: Budget = .{};
         try budget.charge(bytes.len);
@@ -89,12 +98,26 @@ pub const Layout = struct {
         const canonical_payload = try std.json.Stringify.valueAlloc(owned, payload, .{});
         const canonical_envelope = try std.json.Stringify.valueAlloc(owned, env, .{});
         if (!std.mem.eql(u8, canonical_payload, env.payload) or !std.mem.eql(u8, canonical_envelope, bytes[0 .. bytes.len - 1])) return error.InvalidLayout;
-        if (!digestId(payload.inputIdentity) or !digestId(payload.hirDigest) or !std.mem.eql(u8, payload.inputIdentity, expected.inputIdentity) or !std.mem.eql(u8, payload.hirDigest, expected.hirDigest)) return error.IdentityMismatch;
+        const input_identity = switch (identity) {
+            .external => |expected| expected.inputIdentity,
+            .catalog => |expected| expected,
+        };
+        const target = switch (identity) {
+            .external => |expected| expected.target,
+            .catalog => Target.native,
+        };
+        if (!digestId(payload.inputIdentity) or !digestId(payload.hirDigest) or !std.mem.eql(u8, payload.inputIdentity, input_identity)) return error.IdentityMismatch;
+        switch (identity) {
+            .external => |expected| if (!std.mem.eql(u8, payload.hirDigest, expected.hirDigest)) {
+                return error.IdentityMismatch;
+            },
+            .catalog => {},
+        }
         inline for (std.meta.fields(Target)) |field| {
-            if (!std.mem.eql(u8, @field(payload.target, field.name), @field(expected.target, field.name)) or !std.mem.eql(u8, @field(payload.target, field.name), @field(Target.native, field.name))) return error.WrongTarget;
+            if (!std.mem.eql(u8, @field(payload.target, field.name), @field(target, field.name)) or !std.mem.eql(u8, @field(payload.target, field.name), @field(Target.native, field.name))) return error.WrongTarget;
         }
         if (payload.types.len == 0 or payload.types.len > 4096 or payload.components.len > 4096) return error.LayoutLimit;
-        var result: Layout = .{ .arena = arena, .payload = payload };
+        var result: Layout = .{ .arena = arena, .payload = payload, .payload_hash = rendered };
         var component_count: usize = 0;
         for (payload.types, 0..) |row, index| {
             try budget.charge(1 + row.fields.len);
@@ -134,6 +157,20 @@ pub const Layout = struct {
         @memset(states, 0);
         const heights = try owned.alloc(u8, payload.types.len);
         for (payload.types, 0..) |_, index| _ = try result.visit(index, states, heights, &budget, 0);
+        switch (identity) {
+            .external => {},
+            .catalog => {
+                const catalog = try std.json.Stringify.valueAlloc(owned, .{ .components = payload.components, .target = payload.target, .types = payload.types }, .{});
+                var catalog_hash = std.crypto.hash.sha2.Sha256.init(.{});
+                catalog_hash.update(catalog);
+                catalog_hash.update("\n");
+                catalog_hash.final(&digest);
+                const catalog_hex = std.fmt.bytesToHex(digest, .lower);
+                @memcpy(rendered[7..], &catalog_hex);
+                if (!std.mem.eql(u8, payload.hirDigest, &rendered)) return error.IdentityMismatch;
+            },
+        }
+        result.arena = arena;
         return result;
     }
 

@@ -1,5 +1,5 @@
 // SPDX-License-Identifier: MIT
-#include "array-owner-json.h"
+#include "array-owner-json-policy.h"
 #include "llvm/ADT/APFloat.h"
 #include "llvm/Support/Error.h"
 #include <algorithm>
@@ -8,6 +8,7 @@ namespace tsfg::arrays::ownerproof {
 namespace {
 class Parser {
   llvm::StringRef raw;
+  const JsonPolicy &policy;
   size_t at=0;
   JsonStatus status;
   bool fail(JsonError error=JsonError::Input) { if (status) status.error=error; return false; }
@@ -15,7 +16,7 @@ class Parser {
     if (counter == maximum) return fail(JsonError::Limit);
     ++counter; return true;
   }
-  bool token() { return charge(status.counts.tokens,jsonTokenLimit); }
+  bool token() { return charge(status.counts.tokens,policy.tokens); }
   void whitespace() { while (at<raw.size() && (raw[at]==' ' || raw[at]=='\t' || raw[at]=='\r' || raw[at]=='\n')) ++at; }
   bool take(char c) { if (at<raw.size() && raw[at]==c) { ++at; return true; } return false; }
   bool digit() const { return at<raw.size() && raw[at]>='0' && raw[at]<='9'; }
@@ -120,7 +121,7 @@ class Parser {
     if (!token()) return false;
     if (raw[at]=='"') {
       std::string text;
-      if (!quoted(text,coreText ? jsonByteLimit : jsonStringLimit)) return false;
+      if (!quoted(text,coreText ? policy.bytes : policy.stringBytes)) return false;
       out=Json(std::move(text)); return true;
     }
     if (raw[at]=='n') return literal("null",Json(nullptr),out);
@@ -129,7 +130,7 @@ class Parser {
     if (raw[at]=='-' || digit()) return number(out);
     const char opening=raw[at];
     if (opening!='{' && opening!='[') return fail();
-    if (depth>=jsonDepthLimit) return fail(JsonError::Limit);
+    if (depth>=policy.depth) return fail(JsonError::Limit);
     status.counts.depth=std::max(status.counts.depth,depth+1); ++at;
     whitespace();
     if (opening=='[') {
@@ -149,9 +150,9 @@ class Parser {
     if (take('}')) { if (!token()) return false; out=Json(std::move(object)); return true; }
     for (;;) {
       if (at==raw.size() || raw[at]!='"') return fail();
-      if (!charge(status.counts.members,jsonMemberLimit) || !token()) return false;
+      if (!charge(status.counts.members,policy.members) || !token()) return false;
       std::string key;
-      if (!quoted(key,jsonStringLimit)) return false;
+      if (!quoted(key,policy.stringBytes)) return false;
       // Compare decoded keys before LLVM can overwrite an existing property.
       if (object.find(key)!=object.end()) return fail();
       whitespace(); if (!take(':')) return fail();
@@ -164,20 +165,23 @@ class Parser {
     }
   }
 public:
-  explicit Parser(llvm::StringRef raw) : raw(raw) {}
+  Parser(llvm::StringRef raw,const JsonPolicy &policy) : raw(raw),policy(policy) {}
   JsonStatus run(Json &out) {
-    if (raw.size()>jsonByteLimit+1) { fail(JsonError::Limit); return status; }
+    if (raw.size()>policy.bytes+1) { fail(JsonError::Limit); return status; }
     if (value(out,0)) { whitespace(); if (at!=raw.size()) fail(); }
     return status;
   }
 };
 } // namespace
 JsonStatus parseCanonical(llvm::StringRef raw,Json &admitted) {
+  return parseCanonical(raw,admitted,JsonPolicy{});
+}
+JsonStatus parseCanonical(llvm::StringRef raw,Json &admitted,const JsonPolicy &policy) {
   Json candidate(nullptr);
-  auto parsed=Parser(raw).run(candidate);
+  auto parsed=Parser(raw,policy).run(candidate);
   if (!parsed) return parsed;
   std::string canonical;
-  auto encoded=encodeCanonical(candidate,canonical,JsonMode::Envelope);
+  auto encoded=encodeCanonical(candidate,canonical,policy,JsonMode::Envelope);
   if (!encoded) return encoded;
   if (canonical!=raw) { encoded.error=JsonError::Canonical; return encoded; }
   admitted=std::move(candidate); return encoded;

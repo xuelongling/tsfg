@@ -1,5 +1,5 @@
 // SPDX-License-Identifier: MIT
-#include "array-owner-json.h"
+#include "array-owner-json-policy.h"
 #include <algorithm>
 #include <charconv>
 #include <cmath>
@@ -96,6 +96,7 @@ bool keyLess(llvm::StringRef left, llvm::StringRef right) {
 }
 class Canonical {
   JsonMode mode;
+  const JsonPolicy &policy;
   std::string *output;
   JsonStatus status;
   bool fail(JsonError error) { if (status) status.error=error; return false; }
@@ -104,7 +105,7 @@ class Canonical {
     counter+=amount; return true;
   }
   bool emit(llvm::StringRef text) {
-    if (!charge(status.counts.bytes,text.size(),jsonByteLimit)) return false;
+    if (!charge(status.counts.bytes,text.size(),policy.bytes)) return false;
     if (output) output->append(text.data(),text.size());
     return true;
   }
@@ -132,7 +133,7 @@ class Canonical {
     }
     return emit("\"");
   }
-  bool token(size_t amount=1) { return charge(status.counts.tokens,amount,jsonTokenLimit); }
+  bool token(size_t amount=1) { return charge(status.counts.tokens,amount,policy.tokens); }
   bool walk(const Json &value, unsigned depth, bool coreText=false) {
     if (!token()) return false;
     if (value.getAsNull()) return emit("null");
@@ -141,8 +142,8 @@ class Canonical {
       std::string text;
       return jsondetail::numberText(*number,text) ? emit(text) : fail(JsonError::Input);
     }
-    if (auto text=value.getAsString()) return quote(*text,coreText ? jsonByteLimit : jsonStringLimit);
-    if (depth >= jsonDepthLimit) return fail(JsonError::Limit);
+    if (auto text=value.getAsString()) return quote(*text,coreText ? policy.bytes : policy.stringBytes);
+    if (depth >= policy.depth) return fail(JsonError::Limit);
     status.counts.depth=std::max(status.counts.depth,depth+1);
     if (auto array=value.getAsArray()) {
       if (!emit("[")) return false;
@@ -165,9 +166,9 @@ class Canonical {
     }
     size_t index=0;
     const auto property=[&](llvm::StringRef key,const Json &child) {
-      if (!charge(status.counts.members,1,jsonMemberLimit) || !token()) return false;
+      if (!charge(status.counts.members,1,policy.members) || !token()) return false;
       if (index++ && !emit(",")) return false;
-      return quote(key,jsonStringLimit) && emit(":") &&
+      return quote(key,policy.stringBytes) && emit(":") &&
         walk(child,depth+1,mode==JsonMode::Envelope && depth==0 && key=="coreText");
     };
     if (output) { for (const auto &entry : ordered) if (!property(entry.key,*entry.value)) return false; }
@@ -175,19 +176,22 @@ class Canonical {
     return token() && emit("}");
   }
 public:
-  Canonical(JsonMode mode,std::string *output=nullptr) : mode(mode),output(output) {}
+  Canonical(JsonMode mode,const JsonPolicy &policy,std::string *output=nullptr) : mode(mode),policy(policy),output(output) {}
   JsonStatus run(const Json &value) { walk(value,0); return status; }
 };
 bool equalCounts(const JsonCounts &a,const JsonCounts &b) {
   return a.bytes==b.bytes && a.tokens==b.tokens && a.members==b.members && a.depth==b.depth;
 }
 } // namespace
-JsonStatus measureCanonical(const Json &value,JsonMode mode) { return Canonical(mode).run(value); }
+JsonStatus measureCanonical(const Json &value,JsonMode mode) { return Canonical(mode,JsonPolicy{}).run(value); }
 JsonStatus encodeCanonical(const Json &value,std::string &output,JsonMode mode) {
-  const auto measured=measureCanonical(value,mode);
+  return encodeCanonical(value,output,JsonPolicy{},mode);
+}
+JsonStatus encodeCanonical(const Json &value,std::string &output,const JsonPolicy &policy,JsonMode mode) {
+  const auto measured=Canonical(mode,policy).run(value);
   if (!measured) return measured;
   std::string encoded; encoded.reserve(measured.counts.bytes+1);
-  auto written=Canonical(mode,&encoded).run(value);
+  auto written=Canonical(mode,policy,&encoded).run(value);
   if (!written) return written;
   if (!equalCounts(measured.counts,written.counts)) { written.error=JsonError::Input; return written; }
   encoded+='\n'; output=std::move(encoded); return written;

@@ -59,10 +59,12 @@
     "system-query-ops.cpp",
     "system-query-scalars.cpp",
     "system-query-source.cpp",
+    "system-query-tmeta.cpp",
     "system-query-types.cpp",
     "system-query.cpp"
   ],
   "headers": [
+    "array-owner-json-policy.h",
     "array-owner-json.h",
     "bytecode_encoding.h",
     "common-program-actual.h",

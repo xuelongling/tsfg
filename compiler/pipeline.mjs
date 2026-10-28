@@ -10,6 +10,7 @@ import { canonical, sha256 } from "./identity.mjs";
 import {readSystemQueryFacts} from './system-query-facts.mjs';
 import {emitSystemQueryCore} from './system-query-core.mjs';
 import {readSystemQueryEffects} from './system-query-effects.mjs';
+import {readSystemQueryTmeta} from './system-query-tmeta.mjs';
 import {commonProgramCore} from './common-program-core.mjs';
 import {readCommonBorrowProof} from './common-program-borrow-proof.mjs';
 import registry from "../contracts/registry.json" with { type: "json" };
@@ -47,16 +48,18 @@ function consume(executable, args, input) {
 
 /** Compile complete owned Query input through the independent static consumer.
  * @param {Uint8Array} bytes @param {unknown} context
- * @param {{core:string,optimize?:boolean,effects?:boolean,cpuBatch?:boolean,cpuLLVM?:'dialect'|'ir'}} options
+ * @param {{core:string,optimize?:boolean,effects?:boolean,cpuBatch?:boolean,cpuLLVM?:'dialect'|'ir',tmeta?:boolean}} options
  */
 export async function compileSystemQuery(bytes,context,options){
   const facts=readSystemQueryFacts(bytes,context);
   const executable=await verifiedConsumer(options.core,'core');
   const core=consume(executable,['--system-query',options.optimize?'--optimize':'--canonicalize'],emitSystemQueryCore(facts,context)).toString('utf8');
   const effects=options.effects?readSystemQueryEffects(consume(executable,['--system-query','--effects'],core),facts,context):undefined;
-  const cpuBatch=options.cpuBatch?consume(executable,['--system-query','--cpu-batch'],core).toString('utf8'):undefined;
+  const checkedBatch=options.cpuBatch||options.tmeta?consume(executable,['--system-query','--cpu-batch'],core).toString('utf8'):core;
+  const cpuBatch=options.cpuBatch?checkedBatch:undefined;
   const cpuLLVM=options.cpuLLVM?consume(executable,['--system-query',options.cpuLLVM==='ir'?'--llvm-ir':'--cpu-llvm'],cpuBatch??core).toString('utf8'):undefined;
-  return {status:'ok',facts,core,effects,...(cpuBatch===undefined?{}:{cpuBatch}),...(cpuLLVM===undefined?{}:{cpuLLVM})};
+  const tmeta=options.tmeta?readSystemQueryTmeta(consume(executable,['--system-query','--tmeta'],checkedBatch),facts,context,checkedBatch):undefined;
+  return {status:'ok',facts,core,effects,...(cpuBatch===undefined?{}:{cpuBatch}),...(cpuLLVM===undefined?{}:{cpuLLVM}),...(tmeta===undefined?{}:{tmeta})};
 }
 
 /** Existing complete Common HIR/fixed bounds to the independent static proof.

@@ -22,6 +22,7 @@ pub const Store = struct {
     metadata: std.heap.ArenaAllocator,
     components: []Component,
     capacity: usize,
+    layout_identity: [71]u8,
     archetypes: std.ArrayListUnmanaged(Archetype) = .empty,
     slots: std.ArrayListUnmanaged(Slot) = .empty,
     leases: std.ArrayListUnmanaged(Lease) = .empty,
@@ -39,7 +40,7 @@ pub const Store = struct {
             const row = source.find(id).?;
             components[index] = .{ .id = try own.dupe(u8, row.id), .size = row.byteSize, .stride = row.stride, .alignment = .fromByteUnits(row.alignment) };
         }
-        return .{ .allocator = allocator, .metadata = metadata, .components = components, .capacity = chunk_capacity };
+        return .{ .allocator = allocator, .metadata = metadata, .components = components, .capacity = chunk_capacity, .layout_identity = source.payload_hash };
     }
     fn lock(self: *Store) void {
         while (!self.mutex.tryLock()) std.atomic.spinLoopHint();
@@ -275,6 +276,11 @@ pub const Store = struct {
             self.store.lock();
             defer self.store.mutex.unlock();
             return (try self.store.queryBatch(self.token, self.index)).chunk.len;
+        }
+        pub fn columnCount(self: Batch) !usize {
+            self.store.lock();
+            defer self.store.mutex.unlock();
+            return (try self.store.queryBatch(self.token, self.index)).state.selection.len;
         }
         pub fn column(self: Batch, index: usize) !struct { component: []const u8, stride: usize, access: Access } {
             self.store.lock();

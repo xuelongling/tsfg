@@ -34,4 +34,8 @@ mlir::LogicalResult verifyCpuLLVM(mlir::ModuleOp,commonProgram::Json *effects=nu
 // The caller has checked/lowered this owned LLVM dialect module.
 int printCpuLLVMIR(mlir::ModuleOp);
 int canonicalizeCpuLLVMIR(llvm::StringRef,mlir::MLIRContext &);
+// Complete development .tmeta Query data, never a published callable entry.
+mlir::LogicalResult produceTmeta(mlir::ModuleOp,commonProgram::Json &);
+int printTmeta(const commonProgram::Json &);
+int canonicalizeTmeta(llvm::StringRef,mlir::MLIRContext &);
 } // namespace tsfg::systemQuery
