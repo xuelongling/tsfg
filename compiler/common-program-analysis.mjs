@@ -81,9 +81,9 @@ function prepare(input,publication) {
     check(Array.isArray(row.upper.captures),'publication');let previous;
     for(const c of row.upper.captures){spend();record(c,['slot',...flags]);const slot=slotByKey.get(c.slot);
       // Binding assignments are checked at Source/HIR. This upper also covers
-      // writes through an Array held by an immutable lexical binding.
-      const array=slot&&types.get(slot.type)?.kind==='array';
-      check(slot&&(!previous||previous<c.slot)&&flags.every(flag=>typeof c[flag]==='boolean')&&(!c.write||slot.writable||array),'publication');previous=c.slot;}
+      // writes through an Array or reference held by an immutable binding.
+      const mutableValue=slot&&['array','reference'].includes(types.get(slot.type)?.kind);
+      check(slot&&(!previous||previous<c.slot)&&flags.every(flag=>typeof c[flag]==='boolean')&&(!c.write||slot.writable||mutableValue),'publication');previous=c.slot;}
     const {digest,...body}=row;check(digest===contractDigest(body),'publication-identity');records.set(row.functionId,row);
   }
   const scope=scopeDigest(hir,spend);check(publication.scopeDigest===scope&&publication.expectedDigest===publicationDigest(scope,publication.contracts),'publication-identity');

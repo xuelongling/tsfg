@@ -143,13 +143,30 @@ RegionHolding::RegionHolding(ActualCheck &c,const std::string &id,const RegionVa
       if(!field(*layout->second,"parent").getAsNull()&&!stored->second.count("/parent"))complete=false;
     }else if(!check.types.count(type)){complete=false;continue;}
     if(!env){const auto &shape=*check.types.at(type);const auto kind=string(field(shape,"kind")),element=string(field(shape,"elementType"));
-      if((kind!="array"&&kind!="readSpan")||!check.types.count(element)||string(field(*check.types.at(element),"kind"))!="scalar")stableComplete=false;
+      if(kind=="reference"||kind=="value"){
+        auto current=type;std::set<std::string> bases;
+        while(!current.empty()){
+          if(!check.step())return;
+          if(!check.types.count(current)||!bases.insert(current).second){stableComplete=false;break;}
+          const auto &owner=*check.types.at(current);
+          for(const auto &member:items(field(owner,"fields"))){
+            if(!check.step())return;const auto memberType=string(field(member,"type"));
+            auto edge=stored->second.find("/field/"+string(field(member,"id")));
+            if(edge==stored->second.end()){complete=false;continue;}
+            const auto memberKind=check.types.count(memberType)?string(field(*check.types.at(memberType),"kind")):std::string();
+            if(field(member,"readonly").getAsBoolean()!=true&&
+              !((memberKind=="scalar"||memberKind=="string")&&edge->second.known&&edge->second.empty&&!edge->second.opaque&&edge->second.roots.empty()))stableComplete=false;
+          }
+          current=string(field(owner,"base"));
+        }
+      }else if((kind!="array"&&kind!="readSpan")||!check.types.count(element)||string(field(*check.types.at(element),"kind"))!="scalar")stableComplete=false;
     }
     if(!env&&string(field(*check.types.at(type),"kind"))=="readSpan"){
       auto owner=stored->second.find("/owner");if(owner==stored->second.end()){complete=false;continue;}if(!check.step(regionWeight(owner->second)))return;owners.emplace(ref,owner->second);
     }
     for(const auto &[slot,edge]:stored->second){if(!check.step(regionWeight(edge)))return;if(edge.opaque)complete=false;
-      if(!env&&(!check.types.count(type)||string(field(*check.types.at(type),"kind"))!="readSpan"||slot!="/owner")&&!edge.roots.empty())stableComplete=false;
+      const auto kind=env?std::string():string(field(*check.types.at(type),"kind"));
+      if(!env&&kind!="reference"&&kind!="value"&&(kind!="readSpan"||slot!="/owner")&&!edge.roots.empty())stableComplete=false;
       pending.insert(pending.end(),edge.roots.begin(),edge.roots.end());}
   }
   if(!check.e.message.empty())return;ownership=std::make_shared<ReturnOwnership>(check,v,heap);

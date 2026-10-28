@@ -427,7 +427,8 @@ struct BorrowTrace::Impl {
     }else{
       const auto key=context.function->id+"/"+std::to_string(op.range.start)+":"+std::to_string(op.range.end);auto upper=c.p.callableSites.find(key);
       if(!c.need(upper!=c.p.callableSites.end(),"borrow indirect fixed target authority missing"))return;
-      offset=1;if(upper->second.top||upper->second.functions.empty()){boundary.conservative=true;boundary.owner.pending=true;}
+      offset=1;if(upper->second.top||upper->second.functions.empty())boundary.conservative=true;
+      if(upper->second.top)boundary.owner.pending=true;
       if(!step(upper->second.functions.size()))return;targets.assign(upper->second.functions.begin(),upper->second.functions.end());
     }
     for(const auto &id:targets){
@@ -491,7 +492,8 @@ struct BorrowTrace::Impl {
       for(const auto &id:bound.regions){if(!step())return false;auto scope=c.regions.scopes.find(id);if(scope!=c.regions.scopes.end()){scope->second.blocked=true;scope->second.hard|=hard;}}
       // A missing allowed implementation is never permission to narrow the
       // fixed table. Unknown/incomplete calls retain entry use/effect/escape.
-      effect(at,bound.owner);if(!step(bound.arguments.size()))return false;uses[at].insert(bound.arguments.begin(),bound.arguments.end());
+      effect(at,bound.owner);if(!step(bound.arguments.size()))return false;
+      if(!bound.arguments.empty())uses[at].insert(bound.arguments.begin(),bound.arguments.end());
       if(bound.escaping&&hard)lifetime=locations.at(at);
     }return c.e.message.empty();
   }

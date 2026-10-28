@@ -75,7 +75,8 @@ bool SourceBodies::expression(const Json &v,bool target,const std::string &expec
   if(!target){
     const auto declaredKind=string(field(*model.types.at(type),"kind"));
     if(!model.need(relations,"complete Source relation ledger missing")||!relations->expression(v,expected,source->path))return false;
-    if(!model.need(logical(actual,type),"expression flow is not a valid declared view")||
+    const bool inheritedReference=declaredKind=="reference"&&string(field(*model.types.at(actual),"kind"))=="reference"&&assignment(model,actual,type);
+    if(!model.need(logical(actual,type)||inheritedReference,"expression flow is not a valid declared view")||
       !model.need(!llvm::is_contained(llvm::ArrayRef<llvm::StringRef>{"scalar","string","undefined","null","void"},declaredKind)||actual==type,"primitive declared/flow type differs"))return false;
   }
   const auto sequence=[&](std::vector<Json> parts){return source->sequence(field(v,"range"),parts);};

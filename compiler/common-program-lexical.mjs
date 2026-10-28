@@ -4,12 +4,12 @@
 import {originId} from './typed-array-schema.mjs';
 import {commonTypeSyntax,commonCallableNameRange} from './common-program-source.mjs';
 import {commonCheck as check,commonSame as same} from './common-program-common.mjs';
-export function validateCommonLexical(payload,grammars,types,coverage,spend) {
+export function validateCommonLexical(payload,grammars,types,coverage,spend,visible) {
   spend(payload.functions.length+payload.types.length);const functions=new Map(payload.functions.map(fn=>[fn.id,fn]));
   for(const type of types.values())if(type.constructor)functions.set(type.constructor.id,type.constructor);
-  for(const alias of payload.typeAliases){spend();const g=grammars.get(alias.sourcePath);check(g&&types.get(alias.type)?.kind==='function','type-alias');
+  for(const alias of payload.typeAliases){spend();const g=grammars.get(alias.sourcePath);check(g&&['function','reference'].includes(types.get(alias.type)?.kind),'type-alias');
     check(alias.id===originId(alias.sourcePath,alias.nameRange),'type-alias');g.name(alias.nameRange,alias.name);
-    commonTypeSyntax(g,alias.annotationRange,alias.type,types,spend,payload.typeAliases);
+    commonTypeSyntax(g,alias.annotationRange,alias.type,types,spend,payload.typeAliases,visible.get(alias.sourcePath));
     g.sequence(alias.declarationRange,['type',alias.nameRange,'=',alias.annotationRange],true);coverage.get(alias.sourcePath).push(alias.declarationRange);
   }
   const bodyRange=fn=>{const g=grammars.get(fn.sourcePath),at=g.indices(fn.declarationRange);let cursor=fn.returnAnnotationRange?g.indices(fn.returnAnnotationRange).end:g.indices(commonCallableNameRange(g,fn,types)).end;

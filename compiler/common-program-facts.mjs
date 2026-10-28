@@ -68,14 +68,31 @@ export function verifyCommonProgramFacts(value) {
     for(const global of p.globals.filter(row=>row.sourcePath===module.sourcePath)){const row=global.binding;
       check(['let','const','default-export'].includes(global.bindingKind)&&row.kind==='global'&&row.writable===(global.bindingKind==='let'),'global');}
     for(const edge of module.imports){spend();check(modules.has(edge.sourcePath)&&['import','export','export-star'].includes(edge.kind),'module');sourceRange(edge.range,g.text);coverage.get(module.sourcePath).push(edge.range);
-      for(const alias of edge.bindings){spend();const definition=target(alias.target);check(definition&&targetPath(definition)===alias.targetSourcePath,'module');
-        check(alias.kind==='namespace'?alias.target===edge.sourcePath&&alias.targetSourcePath===edge.sourcePath
+      check(edge.specifier.startsWith('./')||edge.specifier.startsWith('../'),'module');
+      const resolved=module.sourcePath.split('/').slice(0,-1);
+      for(const part of edge.specifier.split('/')){spend();if(!part||part==='.')continue;if(part==='..'){check(resolved.length>1,'module');resolved.pop();}else resolved.push(part);}
+      const path=resolved.join('/');check((path.endsWith('.ts')?path:path+'.ts')===edge.sourcePath,'module','module edge does not resolve to actual retained module');
+      const bounds=g.indices(edge.range),keyword=edge.kind==='import'?'import':'export';let from=bounds.end;
+      if(g.tokens[from-1].text===';')from--;
+      check(from>=bounds.first+3&&g.tokens[bounds.first].text===keyword,'module','original module edge keyword differs');
+      const quoted=g.tokens[from-1].text;
+      check(g.tokens[from-2].text==='from'&&(quoted==='"'+edge.specifier+'"'||quoted==="'"+edge.specifier+"'"),'module','original module specifier differs');
+      const star=g.tokens[bounds.first+1].text==='*',parts=[keyword,...(star?(edge.kind==='import'?['*','as']:['*']):['{'])];let index=0;
+      for(const alias of edge.bindings){spend();const definition=target(alias.target);check(definition&&targetPath(definition)===alias.targetSourcePath
+        &&(alias.kind==='namespace'?modules.has(alias.target):alias.kind==='function'?functions.has(alias.target):alias.kind==='global'?globals.has(alias.target):alias.kind==='type'&&types.has(alias.target)),'module');
+        check(alias.kind==='namespace'?alias.imported==='*'&&alias.target===edge.sourcePath&&alias.targetSourcePath===edge.sourcePath
           :modules.get(edge.sourcePath).exports.some(e=>e.name===alias.imported&&e.target===alias.target&&e.targetSourcePath===alias.targetSourcePath),'module');
         sourceRange(alias.range,g.text,edge.range);
-        if(alias.localBinding!==null){check(alias.nameRange&&alias.localBinding===originId(module.sourcePath,alias.nameRange),'identity');sourceRange(alias.nameRange,g.text,edge.range);
+        if(index++&&!star)parts.push(',');
+        if(star){if(edge.kind==='import')parts.push(alias.nameRange);}else{parts.push(alias.range);g.sequence(alias.range,[alias.imported,...(alias.name===alias.imported?[]:['as',alias.name])]);}
+        if(alias.localBinding!==null){check(edge.kind==='import'&&alias.nameRange&&alias.localBinding===originId(module.sourcePath,alias.nameRange),'identity');sourceRange(alias.nameRange,g.text,edge.range);
+          g.name(alias.nameRange,alias.name);
           check(!scope.has(alias.name),'scope');scope.set(alias.name,alias.target);
           if(alias.kind==='namespace')for(const exported of modules.get(edge.sourcePath).exports){spend();scope.set(alias.name+'.'+exported.name,exported.target);}}
-      }}
+        else check(edge.kind!=='import'&&alias.nameRange===null,'module');
+      }
+      if(!star)parts.push('}');parts.push('from',quoted);g.sequence(edge.range,parts,true);
+    }
     for(const host of p.hostImports){spend();if(!scope.has(host.name))scope.set(host.name,host.id);}
     let previous;
     for(const e of module.exports){spend();const definition=target(e.target);check(definition&&targetPath(definition)===e.targetSourcePath
@@ -107,12 +124,12 @@ export function verifyCommonProgramFacts(value) {
       check(field.readonly===prefix.includes('readonly'),'permission');
       const colon=bounds.first+next+1;check(all[colon]?.text===':','source');const end=field.initializer?g.indices(field.initializer.range).first-1:bounds.end-(all[bounds.end-1].text===';'?1:0);
       if(field.initializer)check(all[end].text==='=','source');const annotationRange={start:all[colon+1].start,end:all[end-1].end};
-      commonTypeSyntax(g,annotationRange,field.type,types,spend,p.typeAliases);
+      commonTypeSyntax(g,annotationRange,field.type,types,spend,p.typeAliases,visible.get(row.sourcePath));
       check(index===0||row.fields[index-1].origin.start<field.origin.start,'source');
     }
   }
-  validateCommonLexical(p,grammars,types,coverage,spend);
-  validateCommonDeclarations(p,grammars,types,spend);validateCommonBodies(p,sources,types,grammars,visible,spend);
+  validateCommonLexical(p,grammars,types,coverage,spend,visible);
+  validateCommonDeclarations(p,grammars,types,spend,visible);validateCommonBodies(p,sources,types,grammars,visible,spend);
   for(const [path,segments]of coverage)grammars.get(path).complete(segments);
   const tuples=roots=>roots.map(({kind,sourcePath,name})=>({kind,sourcePath,name}));
   const closure=normalizeClosure({roots:tuples(p.closure.roots),requiredRoots:tuples(p.closure.requiredRoots)});

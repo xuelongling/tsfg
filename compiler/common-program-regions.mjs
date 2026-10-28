@@ -183,6 +183,15 @@ export function commonRegions(spend){
       }else if(types.get(node.type)?.kind==='array'){
         if(types.get(types.get(node.type).elementType)?.kind!=='scalar')return false;
         for(const stored of slots.values()){spend(weight(stored));if(stored.opaque||stored.roots.size)return false;}
+      }else if(['reference','value'].includes(types.get(node.type)?.kind)){
+        let type=types.get(node.type);const seen=new Set();
+        while(type){spend();if(seen.has(type.id))return false;seen.add(type.id);
+          for(const field of type.fields){spend();const current=slots.get('field/'+field.id);if(!current)return false;
+            // A readonly edge can hold a mutable Array. A writable scalar field
+            // cannot remove an owning child; a writable managed edge can.
+            if(field.readonly!==true&&(!['scalar','string'].includes(types.get(field.type)?.kind)||current.opaque||current.roots.size||current.empty!==true))return false;}
+          type=type.base?types.get(type.base):null;
+        }
       }else if(types.get(node.type)?.kind!=='readSpan')return false;
       for(const stored of slots.values()){spend();if(stored.opaque)return false;}
     }

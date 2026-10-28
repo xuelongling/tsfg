@@ -23,7 +23,7 @@ export function validateCommonBodies(payload,sources,types,grammars,visibility,s
   }
   function typeAnnotation(path,range,type) {
     const g=grammars.get(path);check(g,'source');
-    for(const origin of commonTypeSyntax(g,range,type,types,spend,payload.typeAliases))registerOrigin(path,origin.range,origin.type);
+    for(const origin of commonTypeSyntax(g,range,type,types,spend,payload.typeAliases,visibility.get(path)))registerOrigin(path,origin.range,origin.type);
   }
   for(const alias of payload.typeAliases){spend();typeAnnotation(alias.sourcePath,alias.annotationRange,alias.type);}
   for(const fn of [...payload.functions,...payload.types.flatMap(row=>row.constructor?[row.constructor]:[])]) {
@@ -103,8 +103,8 @@ export function validateCommonBodies(payload,sources,types,grammars,visibility,s
         if(!globals.has(value.binding)&&!inventory.has(value.binding)){
           const owner=functions.get(entry.lexicalOwner),kind=type(entry.declaredType).kind;
           check(ancestors.some(owner=>{spend();return owner.id===entry.lexicalOwner;}),'capture');
-          const initialized=entry.kind==='local'&&['scalar','string','readSpan','array','function'].includes(kind)&&owner.body.some(row=>{spend();return ['constDeclaration','letDeclaration'].includes(row.kind)&&row.binding===entry.id&&row.initializer;});
-          const parameter=entry.kind==='parameter'&&['scalar','string','readSpan','array','function'].includes(kind)&&owner.parameters.some(row=>{spend();return row.id===entry.id;});
+          const initialized=entry.kind==='local'&&['scalar','string','readSpan','array','function','reference'].includes(kind)&&owner.body.some(row=>{spend();return ['constDeclaration','letDeclaration'].includes(row.kind)&&row.binding===entry.id&&row.initializer;});
+          const parameter=entry.kind==='parameter'&&['scalar','string','readSpan','array','function','reference'].includes(kind)&&owner.parameters.some(row=>{spend();return row.id===entry.id;});
           check(initialized||parameter,'capture');
           if(!captureObserved.has(entry.id))captureObserved.set(entry.id,[]);captureObserved.get(entry.id).push({range:{...value.range},read:!target||readTarget,write:target});
         }else if(!globals.has(value.binding))check(declared.has(value.binding),'binding');if(target)check(entry.writable,'permission');return;
@@ -175,7 +175,7 @@ export function validateCommonBodies(payload,sources,types,grammars,visibility,s
         value.arguments.forEach((arg,i)=>child(arg,false,signature.parameters[i]));
         if(value.kind==='new'||value.kind==='superConstruct') {
           const owner=types.get(value.kind==='new'?value.type:value.callee);check(owner&&same(signature,owner.construction.signature)&&value.callee===owner.id,'construction');
-          if(value.kind==='new')check(value.flowType===owner.id&&identifierName(text(value.calleeRange))===owner.nominalKey.declarationPath.at(-1),'construction');
+          if(value.kind==='new'){const name=identifierName(text(value.calleeRange));check(value.flowType===owner.id&&(name===owner.nominalKey.declarationPath.at(-1)||local.get(name)===owner.id),'construction');}
           else check(fn.ownerType&&types.get(fn.ownerType).base===owner.id&&text(value.calleeRange)==='super','construction');
         }else if(value.kind==='hostCall'){
           const host=hosts.get(value.callee);check(host&&same(signature,host.signature)&&value.type===host.returnType

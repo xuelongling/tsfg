@@ -266,7 +266,14 @@ export function analyzeCommonGraphs({model,plans},records=null,options={borrowPr
               check(indirect||method||model.functions.get(p.function_id)?.kind!=='method','capability','method call requires explicit finite dispatch',details);
               if(method){check(!args[0].unknown,'capability','method receiver has no proved actual nominal type',details);
                 for(const tag of args[0].tags){spend();check(p.dispatch.some(row=>{spend();return row.receiver_type===tag;}),'capability','actual receiver has no verified method target',{...details,actualType:tag});}}
-              const complete=(target,value,heap,versionHeap,created)=>{const after=a.clone(state);for(const [slot,v]of heap)update(after.heap,slot,v);regions.heapJoin(after.regions,versionHeap,created);edge(target,after,blocks.get(target).parameters.length?[value]:[],true);};
+              const complete=(target,value,heap,versionHeap)=>{
+                const after=a.clone(state);for(const [slot,v]of heap)update(after.heap,slot,v);
+                // A completed call supplies an already joined exit snapshot.
+                // Joining it again with the pre-call heap invents an opaque
+                // predecessor for fields initialized by the callee.
+                for(const [id,slots]of regions.heapCopy(versionHeap)){spend();after.regions.set(id,slots);}
+                edge(target,after,blocks.get(target).parameters.length?[value]:[],true);
+              };
               if(indirect)spend(args[0].pairs.size);const alternatives=indirect?[...args[0].pairs.values()].map(pair=>({target:pair.functionId,environment:pair.environment})):method?p.dispatch:[{target:p.function_id}];
               if(indirect){for(const tag of args[0].tags){spend();check(types.get(tag)?.kind==='function','capability','actual indirect operand is not callable',details);}
                 check(!args[0].unknown||p.targets.top,'callable-contract','actual unknown callee exceeds finite upper',details);
@@ -294,7 +301,7 @@ export function analyzeCommonGraphs({model,plans},records=null,options={borrowPr
                 spend();call.callers.add(c.id);
                 spend(call.createdRegions.size);for(const id of call.createdRegions)c.createdRegions.add(id);
                 observer?.call(point,call,c,op.successors);
-                if(call.normal)complete(op.successors[0],call.returned,call.normalHeap,call.normalRegions,call.createdRegions);if(call.language)complete(op.successors[1],call.thrown,call.languageHeap,call.languageRegions,call.createdRegions);
+                if(call.normal)complete(op.successors[0],call.returned,call.normalHeap,call.normalRegions);if(call.language)complete(op.successors[1],call.thrown,call.languageHeap,call.languageRegions);
               }continues=false;
             }else if(name==='cf.br'||name==='route'){edge(op.successors[0],state,args);continues=false;}
             else if(name==='cf.cond_br') {

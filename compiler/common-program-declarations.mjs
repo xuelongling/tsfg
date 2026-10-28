@@ -5,7 +5,7 @@ import {canonical,sha256} from './identity.mjs';
 import {commonCheck as check} from './common-program-common.mjs';
 import {commonTypeSyntax,commonCallableNameRange} from './common-program-source.mjs';
 
-export function validateCommonDeclarations(payload,grammars,types,spend) {
+export function validateCommonDeclarations(payload,grammars,types,spend,visible) {
   const functions=new Map([...payload.functions,...payload.types.flatMap(row=>row.constructor?[row.constructor]:[])].map(fn=>[fn.id,fn]));
   for(const fn of functions.values()) {
     spend();const g=grammars.get(fn.sourcePath),all=g.tokens,bounds=g.indices(fn.declarationRange),nameRange=commonCallableNameRange(g,fn,types),name=g.indices(nameRange);
@@ -20,9 +20,9 @@ export function validateCommonDeclarations(payload,grammars,types,spend) {
       check(modifiers.every(token=>['public','private','protected','readonly'].includes(token)),'capability');
       check(p.annotationRange,'capability','complete concrete parameter annotation required');
       g.sequence(p.declarationRange,[...modifiers,p.nameRange,':',p.annotationRange]);
-      commonTypeSyntax(g,p.annotationRange,p.declaredType,types,spend,payload.typeAliases);
+      commonTypeSyntax(g,p.annotationRange,p.declaredType,types,spend,payload.typeAliases,visible.get(fn.sourcePath));
     }
-    if(fn.returnAnnotationRange)commonTypeSyntax(g,fn.returnAnnotationRange,fn.returnType,types,spend,payload.typeAliases);
+    if(fn.returnAnnotationRange)commonTypeSyntax(g,fn.returnAnnotationRange,fn.returnType,types,spend,payload.typeAliases,visible.get(fn.sourcePath));
     else check(fn.name==='constructor'||fn.returnType==='void','source');
     let start=fn.returnAnnotationRange?g.indices(fn.returnAnnotationRange).end:name.end;
     while(start<bounds.end&&all[start].text!=='{'){spend();start++;}
