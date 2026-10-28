@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: MIT
 #include "common-program-retention.h"
 namespace tsfg::commonProgram {
-static bool scalarCapture(ActualCheck &c,const Json &reader,const std::string &key){
+static bool childlessCapture(ActualCheck &c,const Json &reader,const std::string &key){
   if(!c.holdingSlotsReady){
     std::map<std::string,std::pair<std::string,const Json *>> slots;
     for(const auto &[id,layout]:c.environments)for(const auto &slot:items(field(*layout,"slots"))){
@@ -12,8 +12,9 @@ static bool scalarCapture(ActualCheck &c,const Json &reader,const std::string &k
   }
   auto found=c.holdingSlots.find(key);if(found==c.holdingSlots.end()||!found->second.second)return false;
   const auto &slot=*found->second.second;const auto typeId=field(slot,"type").getAsString();if(!typeId||!c.step(typeId->size()/64+1))return false;const auto type=c.types.find(typeId->str());
-  if(type==c.types.end()||string(field(*type->second,"kind"))!="scalar"||field(slot,"writable").getAsBoolean()!=true)return false;
-  auto layout=field(reader,"lexicalEnvironment").getAsString();std::set<std::string> seen;
+  if(type==c.types.end()||(string(field(*type->second,"kind"))!="scalar"&&string(field(*type->second,"kind"))!="string")||field(slot,"writable").getAsBoolean()!=true)return false;
+  // Source/HIR validation owns activation identity and its parent chain.
+  auto layout=field(reader,"activationEnvironment").getAsString();if(!layout)layout=field(reader,"lexicalEnvironment").getAsString();std::set<std::string> seen;
   while(layout&&!layout->empty()){
     if(!c.step(layout->size()/64+2))return false;const auto id=layout->str();if(!seen.insert(id).second)return false;auto current=c.environments.find(id);if(current==c.environments.end())return false;
     if(*layout==found->second.first)return true;layout=field(*current->second,"parent").getAsString();
@@ -26,7 +27,7 @@ bool holdingCall(ActualCheck &c,const std::string &id,bool privateReader){
   if(privateReader&&upper.escape)return false;
   if(upper.unknownHost||upper.await||upper.lock||!upper.reads.empty()||!upper.writes.empty()||!upper.hostReads.empty()||!upper.hostWrites.empty())return false;
   for(const auto &access:upper.parameters){if(!c.step())return false;if(access.write||access.structural)return false;}
-  for(const auto &[slot,access]:upper.captures){if(!c.step(slot.size()/64+1))return false;if(access.structural||access.write&&!scalarCapture(c,source,slot))return false;}
+  for(const auto &[slot,access]:upper.captures){if(!c.step(slot.size()/64+1))return false;if(access.structural||access.write&&!childlessCapture(c,source,slot))return false;}
   auto fn=c.functions.find(id);if(fn==c.functions.end())return false;
   for(const auto &block:fn->second->blocks)for(const auto &op:block.operations){if(!c.step())return false;if(c.unresolvedCalls.count(&op))return false;}
   return c.e.message.empty();
@@ -132,11 +133,12 @@ RegionHolding::RegionHolding(ActualCheck &c,const std::string &id,const RegionVa
       for(const auto &slot:items(field(*layout->second,"slots"))){if(!check.step())return;const auto key="/slot/"+string(field(slot,"key"));
         if(!stored->second.count(key))complete=false;
         const auto type=string(field(slot,"type"));auto edge=stored->second.find(key);
-        const bool scalar=check.types.count(type)&&string(field(*check.types.at(type),"kind"))=="scalar";
+        // Immutable String has a managed GC root but no Array/Span holding child.
+        const bool childless=check.types.count(type)&&(string(field(*check.types.at(type),"kind"))=="scalar"||string(field(*check.types.at(type),"kind"))=="string");
         if(field(slot,"writable").getAsBoolean()!=false&&
-          !(field(slot,"writable").getAsBoolean()==true&&scalar&&edge!=stored->second.end()&&edge->second.known&&edge->second.empty&&!edge->second.opaque&&edge->second.roots.empty()))stableComplete=false;
+          !(field(slot,"writable").getAsBoolean()==true&&childless&&edge!=stored->second.end()&&edge->second.known&&edge->second.empty&&!edge->second.opaque&&edge->second.roots.empty()))stableComplete=false;
         if(!check.types.count(type))stableComplete=false;
-        else if(string(field(*check.types.at(type),"kind"))!="scalar"&&(edge==stored->second.end()||edge->second.empty||edge->second.roots.empty()))stableComplete=false;
+        else if(!childless&&(edge==stored->second.end()||edge->second.empty||edge->second.roots.empty()))stableComplete=false;
       }
       if(!field(*layout->second,"parent").getAsNull()&&!stored->second.count("/parent"))complete=false;
     }else if(!check.types.count(type)){complete=false;continue;}

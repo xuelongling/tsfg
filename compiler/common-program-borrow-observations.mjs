@@ -3,16 +3,17 @@
 import {commonBorrowGraph} from './common-program-borrows.mjs';
 import {commonCheck as check} from './common-program-common.mjs';
 import {commonBorrowEvents} from './common-program-borrow-events.mjs';
-// Code permission and current graph holding are separate. A scalar capture
-// write may change a number, but it cannot replace an owning reference edge.
+// Code permission and current graph holding are separate. Scalar and immutable
+// String writes cannot replace an Array/Span owning child edge. String itself
+// remains a managed GC root in carrier selection.
 export function commonClosureHolding({model,objects,records,closedTarget}){
   const {spend,types}=model,parents=new Map(),bounds=new Map();let slots=null;
-  function scalarWrite(id,key){
+  function childlessWrite(id,key){
     if(slots===null){slots=new Map();for(const layout of model.environments.values()){
       spend(layout.slots.length+1);for(const slot of layout.slots)slots.set(slot.key,slots.has(slot.key)?null:{layout:layout.id,slot});}}
-    spend();const row=slots.get(key);if(!row||row.slot.writable!==true||types.get(row.slot.type)?.kind!=='scalar')return false;
+    spend();const row=slots.get(key);if(!row||row.slot.writable!==true||!['scalar','string'].includes(types.get(row.slot.type)?.kind))return false;
     if(!parents.has(id)){
-      const reachable=new Set();let layout=model.functions.get(id)?.lexicalEnvironment,valid=true;
+      const fn=model.functions.get(id),reachable=new Set();let layout=fn?.activationEnvironment??fn?.lexicalEnvironment,valid=true;
       while(layout){spend();if(reachable.has(layout)||!model.environments.has(layout)){valid=false;break;}
         reachable.add(layout);layout=model.environments.get(layout).parent;}
       parents.set(id,valid?reachable:null);
@@ -24,7 +25,7 @@ export function commonClosureHolding({model,objects,records,closedTarget}){
     if(!upper||upper.facets.unknownHost!==false||upper.facets.escape!==false||upper.facets.await!==false||upper.facets.lock!==false)return false;
     if(upper.globals.reads.length||upper.globals.writes.length||upper.hostResources.reads.length||upper.hostResources.writes.length)return false;
     for(const row of upper.parameters){spend();if(row.write!==false||row.structural!==false)return false;}
-    for(const row of upper.captures){spend();if(row.structural!==false||row.write!==false&&!scalarWrite(id,row.slot))return false;}
+    for(const row of upper.captures){spend();if(row.structural!==false||row.write!==false&&!childlessWrite(id,row.slot))return false;}
     return true;
   }
   function permitsCode(id){

@@ -178,7 +178,7 @@ export function commonRegions(spend){
       if(node.type.startsWith('env:')){
         const layout=environments.get(node.type.slice(4));if(!layout)return false;
         for(const slot of layout.slots){spend();const current=slots.get('slot/'+slot.key);if(!current)return false;
-          if(slot.writable!==false&&(slot.writable!==true||types.get(slot.type)?.kind!=='scalar'||current.opaque||current.roots.size||current.empty!==true))return false;}
+          if(slot.writable!==false&&(slot.writable!==true||!['scalar','string'].includes(types.get(slot.type)?.kind)||current.opaque||current.roots.size||current.empty!==true))return false;}
         if(layout.parent&&!slots.has('parent'))return false;
       }else if(types.get(node.type)?.kind==='array'){
         if(types.get(types.get(node.type).elementType)?.kind!=='scalar')return false;

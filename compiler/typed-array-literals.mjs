@@ -37,7 +37,7 @@ export function typedArrayStringUnits(token) {
     if(character==='u'||character==='x') {
       const braced=character==='u'&&token[index+1]==='{',start=index+(braced?2:1);
       const end=braced?token.indexOf('}',start):start+(character==='u'?4:2),digits=token.slice(start,end);
-      check(end>start&&end<token.length-1&&/^[0-9a-fA-F]+$/.test(digits)
+      check(end>start&&(braced?end<token.length-1:end<=token.length-1)&&/^[0-9a-fA-F]+$/.test(digits)
         &&(braced?digits.length<=6:digits.length===(character==='u'?4:2)),'literal');
       const point=Number.parseInt(digits,16);check(point<=0x10ffff,'literal');
       const decoded=String.fromCodePoint(point);for(let n=0;n<decoded.length;n++)result.push(decoded.charCodeAt(n));
