@@ -157,11 +157,11 @@
 
 - Core IR→寄存器字节码 lowering、常量池、函数签名、异常表、根图和源映射。
 - 加载前验证器：类型、CFG、调用、异常区域、资源限额、ABI hash 和能力检查。
-- Zig 预解码解释器、紧凑帧、标量专用指令、字段/调用缓存与 superinstruction。
+- Zig 预解码解释器、紧凑帧、标量专用指令、按有效期管理的字段/调用缓存与保持语义事件的少量 superinstruction。
 - 唯一公开执行 interface：verified module + FunctionId + 类型化参数帧 + capability table。
 - 指令级、函数级、模块级测试，恶意输入 fuzz 和资源配额测试。
 
-**阶段验收**：未经验证模块不能执行；当前子集的实际源码通过正式入口执行并满足 oracle；损坏字节码、越界和资源限额失败可重放。引用/异常一旦支持，其根图、回收与传播测试同时通过。预解码后的进一步缓存和 superinstruction 作为性能任务，不阻挡基础执行正确性。
+**阶段验收**：未经验证模块不能执行；当前子集的实际源码通过正式入口执行并满足 oracle；损坏字节码、越界和资源限额失败可重放。引用/异常一旦支持，其根图、回收与传播测试同时通过。预解码后的进一步缓存和 superinstruction 作为性能任务，不阻挡基础执行正确性。按[交付顺序](interpreter-execution-design.md#delivery)先测执行数据布局，再选择有限融合；尾调用/寄存器缓存为条件性实验，保持 Fuel、trap、根与调试事件。
 
 **联合验收**：当前 VM 能力同时满足[跨 Tier 调用](execution-boundary-acceptance.md#tier-calls)与[根生命周期](execution-boundary-acceptance.md#gc-lifetime)的适用项，覆盖临时根、控制流传参和异常清理。
 
@@ -217,7 +217,7 @@
 
 **阶段验收**：从首个 AOT 功能起，本轮支持范围的 conformance 在同目标 VM/AOT debug/release 一致；所有差异必须归类或修复。新增双后端 op 必须附差分用例。生成预算、reducer、随机压力逐步加入；跨平台全矩阵在 R13，GPU/并行采用各自关系。
 
-**联合验收**：将[三组执行边界场景](execution-boundary-acceptance.md)纳入当前能力的 oracle／差分覆盖；复用适用结果，不重复要求已通过且输入未变的检查。
+**联合验收**：将[三组执行边界场景](execution-boundary-acceptance.md)纳入当前能力的 oracle／差分覆盖；新增解释器优化按[语义事件](interpreter-execution-design.md#fusion)验证首次失败、此前副作用和预算，按[测量规则](interpreter-execution-design.md#measurement)比较同配置结果。复用适用结果，不重复要求已通过且输入未变的检查。
 
 **依赖**：对应 R05/R07 可运行能力；测试框架和 oracle 随实现进入，W2 初始通过后可启动热更及 CPU 计算，不等待全语言/全目标认证。
 
@@ -251,11 +251,13 @@
 - `Read<T>`/`Write<T>`/Query 借用 interface、静态读写集合和冲突图。
 - `tsfg.query`、`tsfg.chunk`、`tsfg.parallel_for` lowering，循环融合、别名/边界分析和向量化。
 - Zig work-stealing JobSystem、确定性/非确定性模式、取消、错误与调试检查。
-- 解释执行与 AOT 使用同一用户模型和 `.tmeta`，无手工 Job/Burst 旁路。
+- 解释执行与 AOT 使用同一用户模型和 `.tmeta`，无手工 Job/Burst 旁路；合法 Query/Chunk 内核可采用预编译批量 handler 与经验证的 SIMD 多版本实现。
 
-**阶段验收**：先验证组件布局、存储和串行 Query，再验证完整访问集合、冲突图、并行/取消/异常与竞争负例；最后针对代表性 workload 加入向量化和有基线的性能验收。每层通过真实源码调用，保持同一用户模型；最终 Windows 验收包含完整 CPU Jobs 能力。
+**阶段验收**：先验证组件布局、存储和串行 Query，再验证完整访问集合和适用的冲突图。并行 Jobs、批量解释内核与 AOT 向量化按各自依赖推进，分别验证取消/异常、竞争负例及对应的代表性 workload 和性能基线。每层通过真实源码调用，保持同一用户模型；最终 Windows 验收包含完整 CPU Jobs 能力。
 
-**依赖**：存储可在基础布局/生命周期就绪后开展；串行 Query 依赖当前语言与执行接口；并行依赖效果分析和借用检查；向量化依赖对应 AOT 能力，不等待所有 R08 场景。
+**联合验收**：批量解释执行满足[批处理与 SIMD 条件](interpreter-execution-design.md#batch)，覆盖别名/依赖、短路、首次失败与此前写入、尾部/对齐和 ISA 分派；语义证明不成立时保持既定标量顺序。
+
+**依赖**：存储可在基础布局/生命周期就绪后开展；串行 Query 依赖当前语言与执行接口；并行依赖效果分析和借用检查；批量 VM 依赖对应内核语义与合法性证明，AOT 向量化另依赖对应后端能力，二者不互设整阶段前置，也不等待所有 R08 场景。
 
 ### R11：显式 GPU Kernel 与设备后端
 
