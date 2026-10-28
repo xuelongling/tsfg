@@ -47,7 +47,7 @@ function consume(executable, args, input) {
 
 /** Compile complete owned Query input through the independent static consumer.
  * @param {Uint8Array} bytes @param {unknown} context
- * @param {{core:string,optimize?:boolean,effects?:boolean,cpuBatch?:boolean}} options
+ * @param {{core:string,optimize?:boolean,effects?:boolean,cpuBatch?:boolean,cpuLLVM?:'dialect'|'ir'}} options
  */
 export async function compileSystemQuery(bytes,context,options){
   const facts=readSystemQueryFacts(bytes,context);
@@ -55,7 +55,8 @@ export async function compileSystemQuery(bytes,context,options){
   const core=consume(executable,['--system-query',options.optimize?'--optimize':'--canonicalize'],emitSystemQueryCore(facts,context)).toString('utf8');
   const effects=options.effects?readSystemQueryEffects(consume(executable,['--system-query','--effects'],core),facts,context):undefined;
   const cpuBatch=options.cpuBatch?consume(executable,['--system-query','--cpu-batch'],core).toString('utf8'):undefined;
-  return {status:'ok',facts,core,effects,...(cpuBatch===undefined?{}:{cpuBatch})};
+  const cpuLLVM=options.cpuLLVM?consume(executable,['--system-query',options.cpuLLVM==='ir'?'--llvm-ir':'--cpu-llvm'],cpuBatch??core).toString('utf8'):undefined;
+  return {status:'ok',facts,core,effects,...(cpuBatch===undefined?{}:{cpuBatch}),...(cpuLLVM===undefined?{}:{cpuLLVM})};
 }
 
 /** Existing complete Common HIR/fixed bounds to the independent static proof.

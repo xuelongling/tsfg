@@ -55,6 +55,7 @@
     "system-query-bodies.cpp",
     "system-query-declarations.cpp",
     "system-query-effects.cpp",
+    "system-query-llvm.cpp",
     "system-query-ops.cpp",
     "system-query-scalars.cpp",
     "system-query-source.cpp",

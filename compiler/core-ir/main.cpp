@@ -425,7 +425,7 @@ int main(int argc, char **argv) {
   const bool query = argc == 3 && llvm::StringRef(argv[1]) == "--system-query";
   const auto command = argc == 2 || common || query ? llvm::StringRef(argv[common || query ? 2 : 1]) : llvm::StringRef();
   if ((argc != 2 && !common && !query) || (command != "--canonicalize" &&
-      command != "--optimize" && !(common && (command == "--component-layouts" || command == "--borrow-proof")) && !(query && (command == "--effects" || command == "--cpu-batch")) && (common || query || command != "--emit-bytecode"))) {
+      command != "--optimize" && !(common && (command == "--component-layouts" || command == "--borrow-proof")) && !(query && (command == "--effects" || command == "--cpu-batch" || command == "--cpu-llvm" || command == "--llvm-ir" || command == "--canonicalize-llvm-ir")) && (common || query || command != "--emit-bytecode"))) {
     llvm::errs() << "[core-ir-command] expected --canonicalize with IR on stdin\n";
     return 2;
   }
@@ -443,10 +443,11 @@ int main(int argc, char **argv) {
   mlir::DialectRegistry registry;
   tsfg::registerCoreDialect(registry);
   if (common) tsfg::commonProgram::registerDialect(registry);
-  if (query) {tsfg::systemQuery::registerDialect(registry);tsfg::systemQuery::registerBatchDialects(registry);}
+  if (query) {tsfg::systemQuery::registerDialect(registry);tsfg::systemQuery::registerBatchDialects(registry);tsfg::systemQuery::registerCpuLLVMDialects(registry);}
   registry.insert<mlir::func::FuncDialect, mlir::cf::ControlFlowDialect>();
   mlir::MLIRContext context(registry);
   context.disableMultithreading();
+  if(query&&command=="--canonicalize-llvm-ir")return tsfg::systemQuery::canonicalizeCpuLLVMIR(input->getBuffer(),context);
   auto module = mlir::parseSourceString<mlir::ModuleOp>(input->getBuffer(), &context);
   if (!module) {
     llvm::errs() << "[core-ir-invalid] parse or verification failed\n";
@@ -454,6 +455,17 @@ int main(int argc, char **argv) {
   }
   if (common) return tsfg::commonProgram::runCoreModule(*module, command);
   if (query) {
+    if(tsfg::systemQuery::isCpuLLVM(*module)){
+      if(command=="--cpu-batch"){llvm::errs()<<"[core-ir-query-llvm] LLVM dialect is not a batch input\n";return 3;}
+      tsfg::commonProgram::Json effects=nullptr;
+      if(mlir::failed(tsfg::systemQuery::verifyCpuLLVM(*module,command=="--effects"?&effects:nullptr)))return 3;
+      if(command=="--llvm-ir")return tsfg::systemQuery::printCpuLLVMIR(*module);
+      return command=="--effects"?tsfg::commonProgram::printCoreJson(effects):tsfg::commonProgram::printCoreModule(*module);
+    }
+    if(command=="--cpu-llvm"||command=="--llvm-ir"){
+      if(mlir::failed(tsfg::systemQuery::lowerCpuLLVM(*module)))return 3;
+      return command=="--llvm-ir"?tsfg::systemQuery::printCpuLLVMIR(*module):tsfg::commonProgram::printCoreModule(*module);
+    }
     if(tsfg::systemQuery::isCpuBatch(*module)){
       tsfg::commonProgram::Json effects=nullptr;
       if(mlir::failed(tsfg::systemQuery::verifyCpuBatch(*module,command=="--effects"?&effects:nullptr)))return 3;

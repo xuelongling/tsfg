@@ -106,10 +106,13 @@ export function assertMlirRoleDependency(command, absolute, { source, product, b
     reject('Static dependency selected an unqualified LLVM backend: ' + name);
   if (within(product, absolute) && nativeProduct.test(path.relative(product, absolute).replaceAll('\\', '/')))
     reject('Static dependency selected a native product implementation: ' + name);
-  const sharedTypes = within(build, absolute) &&
-    sharedTypeLibrary.test(path.relative(build, absolute).replaceAll('\\', '/'));
+  const buildName = within(build, absolute) ? path.relative(build, absolute).replaceAll('\\', '/') : '';
+  const sharedTypes = sharedTypeLibrary.test(buildName);
+  // LLVM backend objects live directly under the build-root lib/Target.
+  // MLIR's tools/mlir/lib/Target instead contains generic IR translators.
   if ((backendLibrary.test(name) && !sharedTypes) ||
-      (within(build, absolute) && /(?:^|\/)(?:lib\/Target\/(?!CMake)|[^/]*tsfg-core-ir(?:\.dir|\.exe|\.pdb))/.test(name)))
+      /^lib\/Target\/(?!CMake)/.test(buildName) ||
+      /(?:^|\/)[^/]*tsfg-core-ir(?:\.dir|\.exe|\.pdb)/.test(buildName))
     reject('Static dependency selected a native/backend build artifact: ' + name);
 }
 

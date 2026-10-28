@@ -214,6 +214,23 @@ test('planned/final source and link admission rejects native and backend edges b
     inputRoots: [roots.source, roots.product], command: staticRole }), { issueCode: 'mlir-source-integrity' });
 });
 
+test('static role distinguishes generic LLVM IR export objects from LLVM backend build-root objects', () => {
+  const roots = { source: 'E:/static-role-source', product: 'E:/static-role-product', build: 'E:/static-role-build' };
+  assert.doesNotThrow(() => assertMlirRoleDependency(staticRole, path.join(roots.build,
+    'tools/mlir/lib/Target/LLVMIR/CMakeFiles/obj.MLIRTargetLLVMIRExport.dir/DebugTranslation.cpp.obj'), roots));
+  for (const file of [
+    path.join(roots.build, 'lib/Target/X86/CMakeFiles/LLVMX86CodeGen.dir/X86ISelLowering.cpp.obj'),
+    path.join(roots.source, 'llvm/lib/Target/X86/X86TargetMachine.cpp'),
+    path.join(roots.build, 'lib/LLVMX86Desc.lib'),
+    path.join(roots.build, 'lib/LLVMCodeGen.lib'),
+    path.join(roots.product, 'compiler/core-ir/native_cost.cpp'),
+    path.join(roots.build, 'bin/tsfg-core-ir.exe'),
+    path.join(roots.build, 'other/LLVMCodeGenTypes.lib'),
+  ]) assert.throws(() => assertMlirRoleDependency(staticRole, file, roots), { issueCode: 'mlir-source-integrity' });
+  for (const name of ['LLVMCodeGenTypes.lib', 'libLLVMCodeGenTypes.a'])
+    assert.doesNotThrow(() => assertMlirRoleDependency(staticRole, path.join(roots.build, 'lib', name), roots));
+});
+
 test('unknown ordinary source and EVAL dependencies report the exact gap before body access', async () => {
   const root = await createMlirFixture('static-missing-dependency-');
   const source = path.join(root, 'source'), build = path.join(root, 'build');

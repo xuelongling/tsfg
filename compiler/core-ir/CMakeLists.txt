@@ -62,6 +62,13 @@ foreach(_tsfg_index RANGE ${_tsfg_core_last})
   string(JSON _tsfg_source GET "${_tsfg_core_manifest}" sources ${_tsfg_index})
   list(APPEND _tsfg_core_sources "${_tsfg_source}")
 endforeach()
+set(_tsfg_core_libraries
+  MLIRIR MLIRParser MLIRFuncDialect MLIRControlFlowDialect
+  MLIRArithDialect MLIRSCFDialect MLIRMemRefDialect
+  MLIRSCFToControlFlow MLIRArithToLLVM MLIRMemRefToLLVM MLIRFuncToLLVM
+  MLIRControlFlowToLLVM MLIRReconcileUnrealizedCasts MLIRLLVMDialect
+  MLIRTargetLLVMIRExport MLIRBuiltinToLLVMIRTranslation
+  MLIRLLVMToLLVMIRTranslation LLVMAsmParser LLVMCore)
 if(TSFG_CORE_BUILD_ROLE STREQUAL "static")
   # This dev directory contains the complete manifest-owned generic implementation;
   # no native adapter or target backend is selected by the static role.
@@ -69,12 +76,10 @@ if(TSFG_CORE_BUILD_ROLE STREQUAL "static")
     set(USE_SHARED "")
     set(LLVM_LINK_COMPONENTS Support)
     add_llvm_executable(tsfg-core-static DISABLE_LLVM_LINK_LLVM_DYLIB ${_tsfg_core_sources})
-    target_link_libraries(tsfg-core-static PRIVATE MLIRIR MLIRParser MLIRFuncDialect MLIRControlFlowDialect
-      MLIRArithDialect MLIRSCFDialect MLIRMemRefDialect LLVMCore)
+    target_link_libraries(tsfg-core-static PRIVATE ${_tsfg_core_libraries})
   endfunction()
   add_tsfg_static_core_tool()
 else()
   add_llvm_executable(tsfg-core-ir ${_tsfg_core_sources})
-  target_link_libraries(tsfg-core-ir PRIVATE MLIRIR MLIRParser MLIRFuncDialect MLIRControlFlowDialect
-    MLIRArithDialect MLIRSCFDialect MLIRMemRefDialect LLVMCore)
+  target_link_libraries(tsfg-core-ir PRIVATE ${_tsfg_core_libraries})
 endif()

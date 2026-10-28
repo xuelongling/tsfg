@@ -26,4 +26,12 @@ void registerBatchDialects(mlir::DialectRegistry &);
 bool isCpuBatch(mlir::ModuleOp);
 mlir::LogicalResult lowerCpuBatch(mlir::ModuleOp);
 mlir::LogicalResult verifyCpuBatch(mlir::ModuleOp,commonProgram::Json *effects=nullptr);
+// Generic LLVM IR only: no object emission, loading or execution authority.
+void registerCpuLLVMDialects(mlir::DialectRegistry &);
+bool isCpuLLVM(mlir::ModuleOp);
+mlir::LogicalResult lowerCpuLLVM(mlir::ModuleOp);
+mlir::LogicalResult verifyCpuLLVM(mlir::ModuleOp,commonProgram::Json *effects=nullptr);
+// The caller has checked/lowered this owned LLVM dialect module.
+int printCpuLLVMIR(mlir::ModuleOp);
+int canonicalizeCpuLLVMIR(llvm::StringRef,mlir::MLIRContext &);
 } // namespace tsfg::systemQuery
