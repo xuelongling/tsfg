@@ -170,7 +170,7 @@ bool returnedAlternatives(const std::string &mode){
   const auto i32=scalar("i32"),u32=scalar("u32"),boolean=scalar("bool");const std::string array="alternative:Array",span="alternative:Span",callable="alternative:Fn";
   types.emplace(array,Object{{"id",array},{"kind","array"},{"elementType",i32}});types.emplace(span,Object{{"id",span},{"kind","readSpan"},{"elementType",i32}});
   types.emplace(callable,Object{{"id",callable},{"kind","function"},{"parameters",Array{}},{"returnType",u32}});
-  const bool pure=mode=="alternative-pure",bad=mode=="alternative-bad"||mode=="alternative-throw-bad";
+  const bool pure=mode=="alternative-pure",bad=mode=="alternative-bad"||mode=="alternative-throw-bad",duplicateKey=mode=="alternative-duplicate-slot-key";
   const auto completion=llvm::StringRef(mode).contains("throw")?"return_throw":"func.return";
   Function root;root.id="root";root.path="/actual-return-alternatives.ts";root.role="function";root.range={0,100};
   root.blocks={{{0},{op("invoke",noRegister,"",{},Object{{"function_id","factoryA"}},{1,2})}},
@@ -187,18 +187,20 @@ bool returnedAlternatives(const std::string &mode){
   p.functions.push_back(std::move(root));sources.emplace("root",Object{{"id","root"},{"ownerType",nullptr},{"lexicalParent",nullptr},{"lexicalEnvironment",nullptr},{"activationEnvironment",nullptr},{"parameters",Array{Object{{"id","flag"},{"type",boolean}}}}});
   for(const auto suffix:{"A","B"}){
     const std::string factory="factory"+std::string(suffix),reader="reader"+std::string(suffix),layout="L"+std::string(suffix);const bool bare=pure&&std::string(suffix)=="B";
-    layouts.emplace(layout,Object{{"id",layout},{"parent",nullptr},{"slots",Array{Object{{"key","a"},{"binding","a"},{"type",array}},Object{{"key","r"},{"binding","r"},{"type",span}}}}});
+    // The negative control collides only the key, retaining distinct owners and bindings.
+    const auto aBinding=factory+"/a",rBinding=factory+"/r",aKey=duplicateKey?std::string("duplicate/a"):aBinding,rKey=rBinding;
+    layouts.emplace(layout,Object{{"id",layout},{"parent",nullptr},{"slots",Array{Object{{"key",aKey},{"binding",aBinding},{"type",array}},Object{{"key",rKey},{"binding",rBinding},{"type",span}}}}});
     const bool incoming=bad,ownerArgument=bad&&std::string(suffix)=="A";
     Function f;f.id=factory;f.path="/actual-return-alternatives.ts";f.role="function";f.range={10,20};f.blocks.push_back({ownerArgument?std::vector<uint16_t>{8,9}:incoming?std::vector<uint16_t>{8}:std::vector<uint16_t>{},{}});
     if(!bare)f.blocks[0].operations={op("env_alloc",0,"env:"+layout,{},Object{{"layout",layout}}),op("constant",1,i32,{},Object{{"decimal","1"}}),op("constant",2,u32,{},Object{{"decimal","0"}}),op("constant",3,u32,{},Object{{"decimal","1"}}),
       op("array_create",4,array,{1}),op("array_create",5,array,{1}),op("readspan",6,span,{4,2,3}),
-      op("env_init",noRegister,"",{0,uint16_t(incoming?8:6)},Object{{"layout",layout},{"binding","r"},{"key","r"}}),
-      op("env_init",noRegister,"",{0,uint16_t(ownerArgument?9:incoming?5:4)},Object{{"layout",layout},{"binding","a"},{"key","a"}})};
+      op("env_init",noRegister,"",{0,uint16_t(incoming?8:6)},Object{{"layout",layout},{"binding",rBinding},{"key",rKey}}),
+      op("env_init",noRegister,"",{0,uint16_t(ownerArgument?9:incoming?5:4)},Object{{"layout",layout},{"binding",aBinding},{"key",aKey}})};
     f.blocks[0].operations.push_back(op("make_closure",7,callable,bare?std::vector<uint16_t>{}:std::vector<uint16_t>{0},Object{{"function_id",reader},{"signature_hash","sig"},{"environment_layout",bare?Json(nullptr):Json(layout)}}));f.blocks[0].operations.push_back(op("func.return",noRegister,"",{7}));p.functions.push_back(std::move(f));
     Function r;r.id=reader;r.path="/actual-return-alternatives.ts";r.role="function";r.range={20,30};r.blocks.push_back({bare?std::vector<uint16_t>{}:std::vector<uint16_t>{0},{op("func.return")}});p.functions.push_back(std::move(r));
-    sources.emplace(factory,Object{{"id",factory},{"ownerType",nullptr},{"lexicalParent",nullptr},{"lexicalEnvironment",nullptr},{"activationEnvironment",bare?Json(nullptr):Json(layout)},{"parameters",incoming?Json(Array{Object{{"id","borrow"},{"type",span}}}):Json(Array{})}});
+    sources.emplace(factory,Object{{"id",factory},{"ownerType",nullptr},{"lexicalParent",nullptr},{"lexicalEnvironment",nullptr},{"activationEnvironment",bare?Json(nullptr):Json(layout)},{"parameters",incoming?Json(Array{Object{{"id",factory+"/borrow"},{"type",span}}}):Json(Array{})}});
     if(incoming)c.views[factory+"/8"]=span;
-    if(ownerArgument){sources.at(factory).getAsObject()->getArray("parameters")->push_back(Object{{"id","owner"},{"type",array}});c.views[factory+"/9"]=array;}
+    if(ownerArgument){sources.at(factory).getAsObject()->getArray("parameters")->push_back(Object{{"id",factory+"/owner"},{"type",array}});c.views[factory+"/9"]=array;}
     sources.emplace(reader,Object{{"id",reader},{"ownerType",nullptr},{"lexicalParent",factory},{"lexicalEnvironment",bare?Json(nullptr):Json(layout)},{"activationEnvironment",nullptr},{"parameters",Array{}}});
   }
   for(const auto &[id,row]:types)c.types.emplace(id,&row);for(const auto &[id,row]:layouts)c.environments.emplace(id,&row);
@@ -207,14 +209,14 @@ bool returnedAlternatives(const std::string &mode){
   for(const auto &[id,context]:c.contexts)if(context.function->id=="root")joined|=(llvm::StringRef(mode).contains("throw")?context.thrown:context.returned).callables.size()==2;
   if(!solved||!joined){llvm::errs()<<"actual factory code/environment alternatives were not joined\n";return false;}
   const bool accepted=verifyCommonBorrows(c);
-  const bool expected=bad?!accepted&&e.code=="core-ir-common-borrow"&&llvm::StringRef(e.message).contains("unproved")&&e.range.start==90:accepted;
+  const bool expected=duplicateKey?!accepted&&e.code=="core-ir-common-actual"&&e.message=="borrow capture has duplicate lexical slot authority":bad?!accepted&&e.code=="core-ir-common-borrow"&&llvm::StringRef(e.message).contains("unproved")&&e.range.start==90:accepted;
   if(!expected)llvm::errs()<<mode<<": "<<e.code<<" "<<e.message<<"\n";return expected;
 }
 }
 int main(int argc,char **argv){
   const std::vector<std::string> boundaries={"weak-environment","alternative-environments","same-owner-environments","owner-or-undefined","unclosed-environment","zero-work"};
   std::vector<std::string> all={"held","restored","throw-held","parent","descriptor","replaced","throw-replaced","may-owner","resized","local-gate","parameter-gate","capture-effects"};all.insert(all.end(),boundaries.begin(),boundaries.end());
-  for(const auto *name:{"alternative-held","alternative-pure","alternative-throw","alternative-bad","alternative-throw-bad"})all.push_back(name);
+  for(const auto *name:{"alternative-held","alternative-pure","alternative-throw","alternative-bad","alternative-throw-bad","alternative-duplicate-slot-key"})all.push_back(name);
   for(const auto *name:{"captured-readonly","captured-all-writers","captured-fixed-new-writer","captured-fixed-broader","captured-external-top"})all.push_back(name);
   for(const auto *name:{"local-readonly","local-owner","local-sibling","local-fixed-new-writer"})all.push_back(name);
   std::vector<std::string> selected=argc>1?std::vector<std::string>(argv+1,argv+argc):all;size_t failed=0;
